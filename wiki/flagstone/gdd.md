@@ -1,8 +1,6 @@
 # Flagstone: game design document (v0.1)
 
-**Status:** draft v0.1. First assembled 2026-10-22 from the 2026-10-14 strategy PRD, the [vision](vision.md), the approved
-milestone plan, the filed features and cards, and the original design notes (the "Project Moho" document, see
-[Origins](#origins)). Order of work is in the [roadmap](roadmap.md). Open questions are at the [end](#open-questions).
+**Status:** draft v0.1. Order of work is in the [roadmap](roadmap.md). Open questions are at the [end](#open-questions).
 
 **Working pitch:** a colony base-builder on editable voxel terrain. You direct a small group of pawns to mine and
 build, the colony grows by automating what pawns do by hand, and at any moment you can drop into one pawn's eyes and
@@ -115,8 +113,7 @@ crash, a fall through the world, or lost progress.
 
 ## 8 Deferred ideas
 
-Intent only, not decomposed. Each waits for a named consumer. Items marked *(origins)* come from the original design
-notes and are candidates, not decisions.
+Intent only, not decomposed. Each waits for a named consumer. Setting and system ideas are candidates, not decisions.
 
 **Next after the prototype**
 - Automation: machines and logistics doing what hand-mining did.
@@ -125,29 +122,29 @@ notes and are candidates, not decisions.
 - Combat, hostile pressure, needs and moods.
 
 **Setting candidates** (the setting is deliberately undecided)
-- *(origins)* An overseer sent by a megacorporation to mine an alien world for a prized resource, one planet per level,
+An overseer sent by a megacorporation to mine an alien world for a prized resource, one planet per level,
   with the corporation corrupt and hiding what it knows about the place. Fits the "alien corporation" candidate in the
   vision.
-- *(origins)* Planets as levels, each gated by a prohibition the player works around with upgrades (no ice planet until
+Planets as levels, each gated by a prohibition the player works around with upgrades (no ice planet until
   units have internal heating). The vision's "worlds reached through portals" is the same idea in a different
   wrapper.
-- *(origins)* Planet types: desert, jungle, ice, asteroid, volcanic, storm, ocean. Resources: copper, iron, coal,
+Planet types: desert, jungle, ice, asteroid, volcanic, storm, ocean. Resources: copper, iron, coal,
   lead, crystals and gas for fuel, a rare objective ore.
-- *(origins)* Indigenous life, ancient constructs and a fungus that grows over bases as passive pressure.
+Indigenous life, ancient constructs and a fungus that grows over bases as passive pressure.
 
 **Systems**
-- *(origins)* Dual-purpose units, where mining gear is repurposed for fights and combat abilities help mining (a
+Dual-purpose units, where mining gear is repurposed for fights and combat abilities help mining (a
   "harden" mode that also protects against cave-ins). Combat should feel improvised.
-- *(origins)* Cave-ins that block paths, slow units and hurt those nearby.
-- *(origins)* Supply costs for ammunition and repairs, so a turret-ringed base is expensive to keep running.
-- *(origins)* Unit customisation from parts, then perks from a skill tree. First-person control buffs the possessed
+Cave-ins that block paths, slow units and hurt those nearby.
+Supply costs for ammunition and repairs, so a turret-ringed base is expensive to keep running.
+Unit customisation from parts, then perks from a skill tree. First-person control buffs the possessed
   unit.
-- *(origins)* Patrol routes for mining and transport vehicles that carry materials along player-built paths.
-- *(origins)* Score by resources gathered against resources available, and timed hold-out levels.
-- *(origins)* A voiced guide or mission AI, tutorial levels set in a mining academy.
+Patrol routes for mining and transport vehicles that carry materials along player-built paths.
+Score by resources gathered against resources available, and timed hold-out levels.
+A voiced guide or mission AI, tutorial levels set in a mining academy.
 - Third-person pawn model, richer movement, other worlds.
 
-**Audio direction** *(origins)*: ambient, loopable and low, reflecting the environment (insectoid life gets short
+**Audio direction:** ambient, loopable and low, reflecting the environment (insectoid life gets short
 erratic music, machines get electronic), with voiced tutorials and tooltips as an aim.
 
 ## Open questions
@@ -158,23 +155,7 @@ For Justin; the defaults above hold if left unanswered.
 - **Q2.** Playtest bugs beyond spawn, mesh gaps and persistence? They shape the polish round.
 - **Q3.** Hauling and stockpile zones: the cards settled on colony totals. Do you still want real hauling after the
   prototype, or is the instant bank the design?
-- **Q4.** Which origins ideas (section 8) are worth promoting to the vision, and which are dropped?
+- **Q4.** Which deferred ideas (section 8) are worth promoting to the vision, and which are dropped?
 - **Q5.** When the setting is picked, does it become a vision decision or a per-world choice?
 
 Questions for the Tech Lead are on the issues, not here.
-
-## Origins
-
-The first design notes (written as an RTS mining game) imagined a third-person isometric RTS with
-a tier-based tech tree, deformable terrain, optional first-person control that buffs units, and an alien setting. The
-current game keeps the deformable terrain, the isometric camera and optional first-person control. It differs in four
-ways:
-
-| Original | Now |
-|---|---|
-| RTS: commands to units, base on a tech tree | Colony control: mark work, pawns self-assign |
-| One objective ore per level, scored | An open mine, build, automate loop with no score |
-| First-person control buffs the unit | First person is possession; no buff, no player-only rules |
-| Fixed setting (megacorp, alien planets) | Setting undecided and swappable |
-
-What it still contributes is the deferred ideas in section 8.

@@ -59,7 +59,7 @@ Secondary loops (run away, wait it out) exist but are smaller and obvious.
 
 Each system states the question its prototype must answer, the design, and its cut line.
 
-### 4.1 Items and loadout (keystone, not in your list but everything depends on it)
+### 4.1 Items and loadout (keystone: everything depends on it)
 
 - **Question:** can one data-driven item model carry weapons, mags, rounds, meds, food, repair kits and tools without special cases?
 - Items are defined in data files (moddable), not code. Three classes: **weapons** (held, fire or strike), **consumables** (used up: rounds, meds, food, parts, kits) and **tools** (held or applied: toolkit, crowbar, detector). The tool class exists from Phase 2; the first tool item, the toolkit, arrives in Phase 3 (§4.3), and the rest wait until the world has something for them to act on. Items differ by make, condition, contents and attachments, never by rarity tier or random affix.
@@ -170,7 +170,7 @@ Each system states the question its prototype must answer, the design, and its c
 - Currency plus barter value on every item. Traders buy below and sell above value; faction standing shifts prices.
 - **Ledger:** after every job, a breakdown: payout and loot value against rounds fired, component wear (valued at repair cost), armor wear, meds and food used. Net profit is the headline number.
 - **Jobs:** templated (fetch, hunt, recover, deliver, escort), generated from the Director's world state, not hand-written quests.
-- **Cut lines:** player-owned stash economy, investments, "fund things" (TBD in your notes) until the core ledger proves out.
+- **Cut lines:** player-owned stash economy, investments, "fund things" (TBD) until the core ledger proves out.
 
 ### 4.10 Living world: the Director (A-Life equivalent, name TBD)
 
@@ -292,22 +292,24 @@ Why this order:
 
 ## 9 Open questions
 
-1. **Setting:** ~~fictional or real?~~ Decided: original, vaguely dystopian sci-fi. Still open: neglected corner of a sophisticated world, or truly post-apocalyptic? (Not blocking until Phase 6.)
+Settled entries keep their numbers so references stay stable.
+
+1. **Setting:** Original, vaguely dystopian sci-fi. Open: neglected corner of a sophisticated world, or truly post-apocalyptic? (Not blocking until Phase 6.)
 2. **Co-op timing:** if co-op is real, it constrains the Director and sim authority early. Recommend: design single-player, keep sim state serializable, decide co-op after Phase 5.
 3. **Pivot decision point:** recommend revisiting Destiny-like vs Arma-like vs single-player after Phase 6, when the ledger and jobs are playable.
-4. ~~**Bleeding:**~~ Decided: must-have, Phase 4.
-5. ~~**Head HP at 0:**~~ Decided: instant death.
-6. ~~**Death penalty:**~~ Decided: a difficulty option, either reload on death or permadeath. Phase 1 uses restart.
-7. ~~**Ballistics:**~~ Decided: hitscan in Phase 1; physics-based projectiles are a long-term goal.
-8. **Difficulty:** your idea of difficulty toggling complexity rather than damage fits pillar 4; sliders per system make modding easier too. Confirm before Phase 5.
+4. **Bleeding:** must-have, Phase 4.
+5. **Head HP at 0:** instant death.
+6. **Death penalty:** a difficulty option, either reload on death or permadeath. Phase 1 uses restart.
+7. **Ballistics:** hitscan in Phase 1; physics-based projectiles are a long-term goal.
+8. **Difficulty:** difficulty that toggles complexity rather than damage fits pillar 4; sliders per system make modding easier too. Confirm before Phase 5.
 9. **Director name:** placeholder "the Director".
-10. ~~**Enemy grades:**~~ Decided: five (rookie, novice, experienced, veteran, professional), fixed for life until Phase 7; legend for named NPCs deferred; grades change behavior, never HP or damage.
+10. **Enemy grades:** five (rookie, novice, experienced, veteran, professional), fixed for life until Phase 7; legend for named NPCs deferred; grades change behavior, never HP or damage.
 11. **Suppression:** AI behavior only at first. Does it get a player-side effect once wounds exist (Phase 4)? The head-wound vision effects (§4.7) are the natural reuse.
 12. **Difficulty and AI:** is AI sophistication (grade mix, tactics on or off) part of the complexity toggles in Q8? Decide with Q8.
 13. **Rank-up:** may the Director raise an enemy's grade over time (Phase 7 nice-to-have)?
-14. **Skills that grow:** Decided in principle (2026-10-22): attributes and stats never grow; a separate skill layer may grow with use and buff stats through §4.12's modifier layer. Deferred: no milestone needs it, and the first version must state its anti-grind rule (a skill may not rise from an action that costs nothing on the ledger). Attribute names (Strength, …) are also still TBD.
+14. **Skills that grow:** attributes and stats never grow; a separate skill layer may grow with use and buff stats through §4.12's modifier layer. Deferred: no milestone needs it, and the first version must state its anti-grind rule (a skill may not rise from an action that costs nothing on the ledger). Attribute names (Strength, …) are also still TBD.
 15. **Starting backgrounds:** different baseline attribute sheets and starting kits (Anomaly's faction start) as a one-time pick. Decide at Phase 6 with the hub.
-16. ~~**Character screen:**~~ Decided: raw numbers (kg, %) with load thresholds marked, since the screen is a deliberate inspection; the HUD shows only the white, yellow or red load icon (§3.3).
+16. **Character screen:** raw numbers (kg, %) with load thresholds marked, since the screen is a deliberate inspection; the HUD shows only the white, yellow or red load icon (§3.3).
 17. **Grid view timing:** after which playtest does the inventory gain the drag-and-drop grid view over its cell data (§4.1)? Default: after FPS-M2's list has been played.
 18. **Special equipment:** weapons and armor only, or individual components too? What counts as a drawback? Decide before the first such item is carded (after Phase 4).
 19. **Left and right arms:** one arm penalty table for now. Does a dominant-arm distinction (two-handed aim lost with either, pistol hand matters) earn its animation and handedness cost? Decide after the Phase 4 playtest.

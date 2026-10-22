@@ -1,6 +1,6 @@
 # Searchlight roadmap
 
-The FPS line's milestones, in order. The phases and their questions are in the [GDD](game-design-document.md) §7; this page adds each milestone's entry gate, exit goal and cut lines. Engine items are numbered as in the [engine roadmap](../engine/roadmap.md). Item status lives on the [project board](https://github.com/users/WrackedFella/projects/1); this page holds order, not status.
+The FPS line's milestones, in order. The phases and their questions are in the [GDD](game-design-document.md) §7; this page adds each milestone's entry gate, exit goal and cut lines. Engine items are numbered as in the [engine roadmap](../engine/roadmap.md); dependencies on other lines are in the [roadmap](../roadmap.md). Item status lives on the [project board](https://github.com/users/WrackedFella/projects/1); this page holds order, not status.
 
 **Rule from the GDD:** each phase becomes a feature only after the previous one is approved. So this plan fixes milestones and exit goals, not cards. Only FPS-M1 and FPS-M1.1 have cards.
 
@@ -8,17 +8,17 @@ Milestone names follow ISO 2145: FPS-M*n* delivers GDD Phase *n*; FPS-M1.1 and F
 
 ## 1 Overview
 
-| Milestone | GDD phase | Question it answers | Engine gate | State (2026-10-22) |
-|---|---|---|---|---|
-| FPS-M1 Arena baseline | 1 | Does the gunplay feel weighty? | none hard; stopgaps in use | All cards merged; Justin's waves and score playtest is the exit |
-| FPS-M1.1 Menus (FPS-F3) | 1 to 2 bridge | Can a player start, pause and tune the game without the console? | engine request #444 (ENG-F18) | Feature #457; cards #458 to #460 await build, #512 mouse look merged |
-| FPS-M1.2 Stance and body (FPS-F4) | 1.2 | Does posture change where I stand and when I peek? | #544 with ENG-F33; #543 for the body | Direction agreed; no cards |
-| FPS-M2 Items and loadout | 2 | Does one item model carry everything? | ENG-F18-09 #407, ENG-F19 #231, ENG-F26 #359 | Not started |
-| FPS-M3 Wear, repair, ledger | 3 | Does wear drive scavenging? | none new | Not started |
-| FPS-M4 Wounds and healing | 4 | Does limb damage create good downtime? | none new | Not started |
-| FPS-M5 Time, survival, rest | 5 | Do survival stats add pressure, not chores? | game clock scaling; save and load | Not started |
-| FPS-M6 Hub and jobs | 6 | Does profit-as-score change behavior? | level switching; save and load | Not started |
-| FPS-M7 Director | 7 | Does the world feel alive on little machinery? | headless sim; navigation | Not started |
+| Milestone | GDD phase | Question it answers | Engine gate |
+|---|---|---|---|
+| FPS-M1 Arena baseline | 1 | Does the gunplay feel weighty? | none hard; stopgaps in use |
+| FPS-M1.1 Menus (FPS-F3) | 1 to 2 bridge | Can a player start, pause and tune the game without the console? | engine request #444 (ENG-F18) |
+| FPS-M1.2 Stance and body (FPS-F4) | 1.2 | Does posture change where I stand and when I peek? | #544 with ENG-F33; #543 for the body |
+| FPS-M2 Items and loadout | 2 | Does one item model carry everything? | ENG-F18-09 #407, ENG-F19 #231, ENG-F26 #359 |
+| FPS-M3 Wear, repair, ledger | 3 | Does wear drive scavenging? | none new |
+| FPS-M4 Wounds and healing | 4 | Does limb damage create good downtime? | none new |
+| FPS-M5 Time, survival, rest | 5 | Do survival stats add pressure, not chores? | game clock scaling; save and load |
+| FPS-M6 Hub and jobs | 6 | Does profit-as-score change behavior? | level switching; save and load |
+| FPS-M7 Director | 7 | Does the world feel alive on little machinery? | headless sim; navigation |
 
 Order is the GDD's: systems arrive in the order they create costs, so the ledger has something to measure. Enemy AI lands in slices alongside the phases (GDD §7).
 
@@ -33,7 +33,7 @@ Order is the GDD's: systems arrive in the order they create costs, so the ledger
 ## 3 FPS-M1 Arena baseline (FPS-F2 #297)
 
 - **Exit goal:** a player fights escalating waves in the baked arena, dies and restarts, with weighty rifle feel and per-body-part damage. Justin playtests and approves; that opens FPS-M2, enemy grades slice 1 and FPS-M1.2 slice 1.
-- **Cut lines (decided):** per-enemy routes, wave banners, pauses, high scores, crouch, physics projectiles.
+- **Cut lines:** per-enemy routes, wave banners, pauses, high scores, crouch, physics projectiles.
 - **Known gaps accepted:** non-positional sound (ENG-F16 #228), title-bar HUD instead of text (#315 / ENG-F18-09 #407), local seeded RNG instead of #316 / ENG-F6-01 #335.
 - **TL risk:** the title-bar HUD stops being enough once FPS-M2 needs inventory. That gates FPS-M2, not FPS-M1.
 
@@ -94,7 +94,7 @@ Runs in slices parallel to FPS-M2; needs no items or UI beyond one slider in the
 - **Outcome:** trader hub, job board, currency, full per-job ledger; the arena becomes the job site and waves and score retire from the default experience.
 - **Entry gate:** level switching carrying player state (§10 item 10), save and load. Needs a hub and one or two zone maps.
 - **Decisions due:** GDD §9 Q1 (setting), Q3 (pivot point), Q15 (starting backgrounds).
-- **Natural v1 candidate:** the engine roadmap's ENG-M3 gate wants the seam list unchanged by the last two FPS features; this is the earliest playable game rather than a prototype.
+- **Earliest playable game:** the first milestone that is a game rather than a prototype; the cross-line v1 gate in the [roadmap](../roadmap.md#milestone-gates-that-span-lines) uses it.
 
 ## 11 FPS-M7 Director (Phase 7)
 
@@ -104,32 +104,18 @@ Runs in slices parallel to FPS-M2; needs no items or UI beyond one slider in the
 
 ## 12 Engine requests from this line
 
-Flagged to Justin; the Engine project designs them.
+The engine lane designs the answers.
 
-| Request | State (2026-10-22, confirm on the board) | Needed by |
+| Request | Engine item | Needed by |
 |---|---|---|
-| #444 menus and settings controls | answered by ENG-F18 settings screen (2.11.6) | FPS-M1.1 build |
-| #315 on-screen text | answered by ENG-F18-09 #407, not built | FPS-M2 entry |
-| #316 seeded replayable RNG | open; ENG-F6-01 #335 | before FPS-M2 if it matters |
-| ENG-F16 #228 positional audio | open | enemy AI slice 2 (gunshots alert groups) |
-| ENG-F17 #229 navigation and cover queries | navigation landed (ENG-F17-01, -02); cover and exposure queries open | enemy AI slice 2 |
-| ENG-F19 #231 layered content | open | FPS-M2 entry |
-| ENG-F26 #359 key actions | open | FPS-M2; held-action toggles |
-| #543 skinned animated characters | open | FPS-M1.2 slice 3 |
-| #544 lean and stance transitions, prone hull | open | FPS-M1.2 slice 2 |
+| #444 menus and settings controls | ENG-F18 settings screen (2.11.6) | FPS-M1.1 build |
+| #315 on-screen text | ENG-F18-09 #407 | FPS-M2 entry |
+| #316 seeded replayable RNG | ENG-F6-01 #335 | before FPS-M2 if it matters |
+| ENG-F16 #228 positional audio | ENG-F16 | enemy AI slice 2 (gunshots alert groups) |
+| ENG-F17 #229 navigation and cover queries | ENG-F17-01 and -02 (navigation); cover and exposure queries | enemy AI slice 2 |
+| ENG-F19 #231 layered content | ENG-F19 | FPS-M2 entry |
+| ENG-F26 #359 key actions | ENG-F26 | FPS-M2; held-action toggles |
+| #543 skinned animated characters | #543 | FPS-M1.2 slice 3 |
+| #544 lean and stance transitions, prone hull | #544 | FPS-M1.2 slice 2 |
 
 New requests come from FPS-M3 onward (workbench interaction, save kinds, level switching). File them when a milestone's feature is drafted.
-
-## 13 Next steps
-
-1. Playtest and approve FPS-M1; record the result.
-2. Ask the Engine project to schedule ENG-F18-09, ENG-F19 and ENG-F26, which gate FPS-M2.
-3. Open FPS-M2 as a feature proposal via `/devflow:business-analyst`; start the enemy grades slice 1 and FPS-M1.2 slice 1 in parallel.
-
-## 14 Decisions
-
-| Date | Decision | Record |
-|---|---|---|
-| 2026-10-19 | Milestone plan approved: one milestone per GDD phase, cards only for the next | this page |
-| 2026-10-21 | Milestones are FPS-M*n* with ISO 2145 numbering; M-A to M-G retired | [`_STANDARDS.md`](../../_todo/_STANDARDS.md) |
-| 2026-10-22 | Roadmaps live in the wiki under their line; `_todo/ROADMAP.md` is an index | [roadmap index](../../_todo/ROADMAP.md) |

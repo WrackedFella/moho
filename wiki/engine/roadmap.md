@@ -1,13 +1,14 @@
 # Engine roadmap
 
-The order in which engine work is tackled, and why, as milestones with gates. The milestones are shared: the game lines' own sequences are [Flagstone](../flagstone/roadmap.md) and [Searchlight](../searchlight/roadmap.md). [`_todo/README.md`](../../_todo/README.md)
+The order in which engine work is tackled, as milestones with gates. Milestones are named `ENG-M<n>`. Gates and
+dependencies that span lines are in the [cross-line roadmap](../roadmap.md). [`_todo/README.md`](../../_todo/README.md)
 indexes what exists; this file sequences it. Item status is not tracked here; it lives on the
-[project board](https://github.com/users/WrackedFella/projects/1). Update this file when a milestone gate closes, an item moves between phases, or a decision is made.
+[project board](https://github.com/users/WrackedFella/projects/1).
 
-**Now:** ENG-M0 and ENG-M1 are done. ENG-M2 is open, in waves (wave 1 started 2026-10-14): the only
-milestone planned to card level (rolling wave, [`_STANDARDS.md`](../../_todo/_STANDARDS.md#5-milestones)).
+ENG-M0 and ENG-M1 are done. ENG-M2 is open, in waves, and is the only milestone planned to card level (rolling wave,
+[`_STANDARDS.md`](../../_todo/_STANDARDS.md#5-milestones)).
 
-## ENG-M0 — Foundation (done 2026-10-05)
+## ENG-M0 — Foundation (done)
 
 **Intent:** Feature work can start safely.
 **Gate:** [ENG-F8](https://github.com/WrackedFella/moho/issues/61) criteria (verified).
@@ -26,7 +27,7 @@ and can run alongside 0.2–0.3.
 | 0.6 | [ENG-F2-01](https://github.com/WrackedFella/moho/issues/94) rewritten to [ADR-0006](../../_todo/adr/0006-save-format-contract.md) (decision only) | G4 | — |
 
 
-## ENG-M1 — Both game lines can start (done 2026-10-14)
+## ENG-M1 — Both game lines can start (done)
 
 **Intent:** Each game line builds on the engine on its own, without forking it: the
 strategy game on the shared loop, and the FPS as a prototype arena shooter
@@ -52,7 +53,7 @@ just before the work that needs them, not sooner.
 | 1.9 | [ENG-F11](https://github.com/WrackedFella/moho/issues/81): shared app loop, headless tick, engine `GameClock` | before FPS-F2 |
 | 1.10 | [ENG-F12](https://github.com/WrackedFella/moho/issues/82): game-defined input actions; replaces the former 1.5 | before FPS-F2; after 1.11 |
 | 1.12 | [ADR-0011](../../_todo/adr/0011-simulation-stays-network-ready.md): simulation stays network-ready | now (session B) |
-| 1.1 | Save-format migration to [ADR-0006](../../_todo/adr/0006-save-format-contract.md) ([ENG-F2-01](https://github.com/WrackedFella/moho/issues/94)), envelope in the engine | done 2026-10-08; SG-F4's mark persistence is the first new persisted type |
+| 1.1 | Save-format migration to [ADR-0006](../../_todo/adr/0006-save-format-contract.md) ([ENG-F2-01](https://github.com/WrackedFella/moho/issues/94)), envelope in the engine | done; SG-F4's mark persistence is the first new persisted type |
 | 1.13 | [ENG-F20](https://github.com/WrackedFella/moho/issues/104): a wgpu or egui upgrade touches one crate | after 1.9; before 1.16 and [ENG-F18](https://github.com/WrackedFella/moho/issues/230) |
 | 1.14 | [ADR-0012](../../_todo/adr/0012-engine-crate-map-for-m2.md): engine crate map, modules first; names the seam list | before ENG-F11 is specced |
 | 1.3 | [ENG-F9](https://github.com/WrackedFella/moho/issues/234): domain tests catch behaviour changes | carried to ENG-M2 (2.11) |
@@ -80,8 +81,8 @@ files and can run together; a later wave waits on the cards named in its row.
 | 3 | [ENG-F22-06](https://github.com/WrackedFella/moho/issues/173), [ENG-F22-07](https://github.com/WrackedFella/moho/issues/174) | After ENG-F22-02 (same voxel and lighting files); ENG-F22-06 also after ENG-F22-16, which moved the blocky vertices it pins. Both before ENG-F10-03 branches |
 | 4 | [ENG-F22-05](https://github.com/WrackedFella/moho/issues/172), [ENG-F22-08](https://github.com/WrackedFella/moho/issues/175), [ENG-F22-04](https://github.com/WrackedFella/moho/issues/171), [ENG-F22-09](https://github.com/WrackedFella/moho/issues/176), [ENG-F22-10](https://github.com/WrackedFella/moho/issues/177), [ENG-F22-11](https://github.com/WrackedFella/moho/issues/178) | 05 and 08 after 01; 04 after 13; 09, 10 and 11 after 03. 09 before ENG-F21 moves the controller |
 | 5 | [ENG-F22-12](https://github.com/WrackedFella/moho/issues/179), [ENG-F22-20](https://github.com/WrackedFella/moho/issues/187), [ENG-F22-21](https://github.com/WrackedFella/moho/issues/245), [ENG-F22-22](https://github.com/WrackedFella/moho/issues/261), [ENG-F22-24](https://github.com/WrackedFella/moho/issues/263) | 12 after 04 and 14; 20 after 09 and 10; 21 after 10 (same physics test module as 20); 22 and 24 have no dependency |
-| 6 | [ENG-F22-19](https://github.com/WrackedFella/moho/issues/186) | After 13 and 04; re-specced 2026-10-14 with no file shared with 12 or 23, so 12, 19 and 23 run in parallel |
-| 7 | [ENG-F22-23](https://github.com/WrackedFella/moho/issues/262) | No dependency since the 2026-10-14 re-spec (disjoint files from 12 and 19) |
+| 6 | [ENG-F22-19](https://github.com/WrackedFella/moho/issues/186) | After 13 and 04; no file shared with 12 or 23, so 12, 19 and 23 run in parallel |
+| 7 | [ENG-F22-23](https://github.com/WrackedFella/moho/issues/262) | No dependency (disjoint files from 12 and 19) |
 
 ### 1.18 Card order (1.18–1.20)
 
@@ -97,29 +98,24 @@ Cards in one lane share files, so each waits on the one before it.
 
 **Intent:** The engine carries both games' current scopes, ranked by what the game
 lines ask for.
-**Gate:** whatever the games need for a V1 release. ENG-M2 runs in waves; Justin declares it
-done when the games' requirements are adequately met. Each wave is planned from the
+**Gate:** the engine meets what the games need for a V1 release (cross-line gate:
+[roadmap](../roadmap.md#milestone-gates-that-span-lines)). ENG-M2 runs in waves; each wave is planned from the
 open engine requests (label `engine-request`) when the one before it nears its end.
-Engine requests answered here: #302, #304–#307, #315, #316, #402, #425 (answered by #428), #435 (#303 goes to the strategy
-line, as an [SG-F4](https://github.com/WrackedFella/moho/issues/310) card).
+Engine requests answered here: #302, #304–#307, #315, #316, #402, #425 (answered by #428), #435. #303 (routing over
+changing terrain) is strategy-line work, not an engine item.
 
-**Current wave set (decided 2026-10-14), all must hold:**
-- **FPS:** [GDD](../searchlight/game-design-document.md) §7 Phase 1–2 playable on
-  engine-line crates: [ENG-F16](https://github.com/WrackedFella/moho/issues/228),
+**Gate items, all must hold:**
+- [ENG-F16](https://github.com/WrackedFella/moho/issues/228),
   [ENG-F17](https://github.com/WrackedFella/moho/issues/229),
   [ENG-F18](https://github.com/WrackedFella/moho/issues/230) and
   [ENG-F19](https://github.com/WrackedFella/moho/issues/231) done.
-- **Strategy:** [SG-F1](https://github.com/WrackedFella/moho/issues/311),
-  [SG-F2](https://github.com/WrackedFella/moho/issues/308),
-  [SG-F5](https://github.com/WrackedFella/moho/issues/309) and
-  [SG-F4](https://github.com/WrackedFella/moho/issues/310) done.
 - **Save:** saves use the [ADR-0006](../../_todo/adr/0006-save-format-contract.md) envelope
-  ([ENG-F2-01](https://github.com/WrackedFella/moho/issues/94), done 2026-10-08).
-  SG-F4's "marked block survives save and load" card adds the first new persisted type.
+  ([ENG-F2-01](https://github.com/WrackedFella/moho/issues/94), done); each game line adds its own save kinds
+  ([ADR-0016](../../_todo/adr/0016-game-lines-own-their-save-kinds.md)).
 
 Not gate items, but in ENG-M2: [ENG-F25](https://github.com/WrackedFella/moho/issues/346) (before SG-F4's marks-persist card), ENG-F23, ENG-F24, [ENG-F9](https://github.com/WrackedFella/moho/issues/234),
 [ENG-F6](https://github.com/WrackedFella/moho/issues/233) seeded RNG, pause and speed, the bug cards, and the engine's own goals
-(graphics and physics are goals in their own right, Justin 2026-10-21): ENG-F28, ENG-F29, ENG-F31 and
+(graphics and physics are goals in their own right): ENG-F28, ENG-F29, ENG-F31 and
 [ENG-F32](https://github.com/WrackedFella/moho/issues/491) movement momentum and footing. Perf criteria are measured on the lowest target GPU, a GTX 1080.
 
 ### Engine waves
@@ -132,13 +128,13 @@ its consumers near, not when the earlier wave fully closes.
 | 2.1 | [ENG-F21-03](https://github.com/WrackedFella/moho/issues/330): a character that leaves the ground keeps its momentum (`moho_physics`, reproduce first) | #302 | possession, FPS movement | 1 | — |
 | 2.2 | [ENG-F18-01](https://github.com/WrackedFella/moho/issues/331): saved settings survive a later console command (binary, `flagstone_ui`) | #179 comment | strategy settings; FPS via ENG-F18 | 1 | — |
 | 2.3 | [ENG-F18-02](https://github.com/WrackedFella/moho/issues/332): menu music plays from `assets/` (`flagstone_ui`) | #186 check | strategy start menu | 1 | — |
-| 2.3.1 | [ENG-F18-03](https://github.com/WrackedFella/moho/issues/333): Escape pauses the game in place instead of reloading the world (binary, `flagstone_ui`) | Justin, 2026-10-14 | strategy play; FPS via ENG-F18 | 1 | — |
+| 2.3.1 | [ENG-F18-03](https://github.com/WrackedFella/moho/issues/333): Escape pauses the game in place instead of reloading the world (binary, `flagstone_ui`) | Justin | strategy play; FPS via ENG-F18 | 1 | — |
 | 2.4 | [ENG-F16](https://github.com/WrackedFella/moho/issues/228) positional audio, with the `moho_audio` system tests deferred from ENG-F22 (priority) | — | FPS GDD §10; strategy cues | 1 | — |
 | 2.5 | [ENG-F6](https://github.com/WrackedFella/moho/issues/233) seeded RNG (reopened): [ENG-F6-01](https://github.com/WrackedFella/moho/issues/335) | #316 | FPS-F2-02 (#299); strategy world gen | 1 | — |
 | 2.5.1 | [ENG-F25](https://github.com/WrackedFella/moho/issues/346) a game line adds save files without changing the engine ([ADR-0016](../../_todo/adr/0016-game-lines-own-their-save-kinds.md)): [ENG-F25-01](https://github.com/WrackedFella/moho/issues/347) (priority) | — | SG-F4 marks persist; FPS saves | 1 | before SG-F4's marks-persist card |
 | 2.6 | [ENG-F23](https://github.com/WrackedFella/moho/issues/327): the game knows what is under the pointer (new) | #304 | SG-F5 select; SG-F4 mark; SG-F3 place | 2 | — |
 | 2.7 | [ENG-F24](https://github.com/WrackedFella/moho/issues/328): the game marks places in the world (new): markers first | #305 | SG-F5, SG-F4, SG-F3 | 2 | — |
-| 2.8 | [ENG-F9](https://github.com/WrackedFella/moho/issues/234) domain tests catch behaviour changes (from ENG-M1's 1.3); done 2026-10-21 (#478) | — | SG-F4 | 2–3 | before SG-F4 |
+| 2.8 | [ENG-F9](https://github.com/WrackedFella/moho/issues/234) domain tests catch behaviour changes (from ENG-M1's 1.3); done (#478) | — | SG-F4 | 2–3 | before SG-F4 |
 | 2.9 | [ENG-F11-04](https://github.com/WrackedFella/moho/issues/334): the simulation pauses and runs at 1x, 2x or 3x (`moho_app`) | #307 | SG-F4 follow-up; FPS pause | 3 | SG-F4's skeleton |
 | 2.10 | [ENG-F24-03](https://github.com/WrackedFella/moho/issues/329): the game hides the world above a chosen height (renderer) | #306 | SG-F4 underground marks | 3 | ENG-F24's first card |
 | 2.11 | [ENG-F18](https://github.com/WrackedFella/moho/issues/230) console (priority): [ENG-F18-05](https://github.com/WrackedFella/moho/issues/403) the FPS opens a console and runs its own commands, then [ENG-F18-06](https://github.com/WrackedFella/moho/issues/404) renderer and sound commands | #402 | FPS-F2-06; FPS feature testing | 2 | #403 after #401 (FPS-F2-03, shares searchlight's game module) |
@@ -147,17 +143,17 @@ its consumers near, not when the earlier wave fully closes.
 | 2.11.3 | [ENG-F18-09](https://github.com/WrackedFella/moho/issues/407): a game draws text on screen from its own crates (pulled forward) | #315 | FPS Phase 2 HUD | 2 | #403; after #376; rebases on #406 if that lands first (`moho_ui_shell` host) |
 | 2.11.4 | [ENG-F18-10](https://github.com/WrackedFella/moho/issues/428): a game prints a line in its console after it acts on a command | #425 | FPS-F2-06 `tgm` | 2 | #403 |
 | 2.11.5 | [ENG-F18-16](https://github.com/WrackedFella/moho/issues/447): the player sets how often the world autosaves | #435 | SG-F2-03 (#343) | 1–2 gaps | flagstone's read after #343 |
-| 2.11.6 | [ENG-F18](https://github.com/WrackedFella/moho/issues/230) settings screen, modal stack and keybind capture on the shell; unblocked 2026-10-21 by [#444](https://github.com/WrackedFella/moho/issues/444) and [FPS-F3](https://github.com/WrackedFella/moho/issues/457) | #444 | FPS-F3 menus | 4 | #444 is its spec; capture after ENG-F26 |
+| 2.11.6 | [ENG-F18](https://github.com/WrackedFella/moho/issues/230) settings screen, modal stack and keybind capture on the shell; specified by [#444](https://github.com/WrackedFella/moho/issues/444) and [FPS-F3](https://github.com/WrackedFella/moho/issues/457) | #444 | FPS-F3 menus | 4 | #444 is its spec; capture after ENG-F26 |
 | 2.12 | [ENG-F19](https://github.com/WrackedFella/moho/issues/231) layered content | — | FPS Phase 2 | 4 | — |
-| 2.13 | [ENG-F17](https://github.com/WrackedFella/moho/issues/229) navigation over static levels (FPS uses waypoints until then) | — | FPS enemy chase and patrol | 4 | — |
-| 2.14 | [ENG-F26](https://github.com/WrackedFella/moho/issues/359): one key carries tap, hold, modifier and toggle actions (new; `moho_input`, settings display) | Justin, 2026-10-15 | strategy sprint toggle; FPS reload, check mag, unjam | 4 | before ENG-F18's keybind card |
-| 2.15 | [ENG-F27](https://github.com/WrackedFella/moho/issues/361): the game lines are called flagstone and searchlight; one card per line ([#362](https://github.com/WrackedFella/moho/issues/362) FPS, [#363](https://github.com/WrackedFella/moho/issues/363) strategy) | Justin, 2026-10-15 | ENG-F5 split (ENG-M3) | 1–2 gaps | cards done; #362 after #358; #363 after #355, before #331 |
-| 2.16 | [ENG-F28](https://github.com/WrackedFella/moho/issues/373): mouse look feels like a Source game (raw, per-frame look; sensitivity, smoothing, acceleration and vsync settings) | Justin, 2026-10-15 | FPS prototype feel; strategy first-person camera | 2 | prefs and settings cards after #331, #333, #354, #405 |
+| 2.13 | [ENG-F17](https://github.com/WrackedFella/moho/issues/229) navigation over static levels (ENG-F17-01 and -02 landed; cover and exposure queries open) | — | FPS enemy chase and patrol | 4 | — |
+| 2.14 | [ENG-F26](https://github.com/WrackedFella/moho/issues/359): one key carries tap, hold, modifier and toggle actions (new; `moho_input`, settings display) | Justin | strategy sprint toggle; FPS reload, check mag, unjam | 4 | before ENG-F18's keybind card |
+| 2.15 | [ENG-F27](https://github.com/WrackedFella/moho/issues/361): the game lines are called flagstone and searchlight; one card per line ([#362](https://github.com/WrackedFella/moho/issues/362) FPS, [#363](https://github.com/WrackedFella/moho/issues/363) strategy) | Justin | ENG-F5 split (ENG-M3) | 1–2 gaps | cards done; #362 after #358; #363 after #355, before #331 |
+| 2.16 | [ENG-F28](https://github.com/WrackedFella/moho/issues/373): mouse look feels like a Source game (raw, per-frame look; sensitivity, smoothing, acceleration and vsync settings) | Justin | FPS prototype feel; strategy first-person camera | 2 | prefs and settings cards after #331, #333, #354, #405 |
 | 2.17 | [ENG-F29](https://github.com/WrackedFella/moho/issues/479): light reads true in caves, at night and under open sky (light composition; not a gate item) | — | SG-F7-05 and #474 checks; searchlight arena ambient | 2 | -01 lands with SG-F7-05; -02 after #469; -03 and -04 follow; -04 then [-05 bloom](https://github.com/WrackedFella/moho/issues/503) by the end of ENG-M2; [-06 auto-exposure](https://github.com/WrackedFella/moho/issues/504) opens ENG-M3, tuned once beside ENG-F30 |
-| 2.18 | [ENG-F31](https://github.com/WrackedFella/moho/issues/481): mirrors and water reflect the world (mirrors, SSR, water; not a gate item) | Justin, 2026-10-21 (must-have) | searchlight arena mirror and pool | 4 | after ENG-F29-04; its plane declaration is a new seam (ADR), settled before the ENG-F5 split gate |
-| 2.19 | [ENG-F32](https://github.com/WrackedFella/moho/issues/491): movement keeps its momentum and its footing (Source `accelerate`, half-step gravity, shape-cast ground and stick-to-floor, crease clip, queued effects with the ADR superseding [ADR-0014](../../_todo/adr/0014-characters-move-by-velocity.md), jump re-press, one gravity, hull as game data, replay determinism test; not a gate item) | Justin, 2026-10-21 | searchlight feel; flagstone possession; ENG-F33, ENG-F34 and the ENG-M3 ADR-0011 proof build on it | 2–3 | [#494](https://github.com/WrackedFella/moho/issues/494), [#495](https://github.com/WrackedFella/moho/issues/495), [#496](https://github.com/WrackedFella/moho/issues/496) first (one TL thread, shared `movement.rs`), then [#497](https://github.com/WrackedFella/moho/issues/497), then the rest; `moho_physics` only, so it runs beside every renderer and UI item |
+| 2.18 | [ENG-F31](https://github.com/WrackedFella/moho/issues/481): mirrors and water reflect the world (mirrors, SSR, water; not a gate item) | Justin (must-have) | searchlight arena mirror and pool | 4 | after ENG-F29-04; its plane declaration is a new seam (ADR), settled before the ENG-F5 split gate |
+| 2.19 | [ENG-F32](https://github.com/WrackedFella/moho/issues/491): movement keeps its momentum and its footing (Source `accelerate`, half-step gravity, shape-cast ground and stick-to-floor, crease clip, queued effects with the ADR superseding [ADR-0014](../../_todo/adr/0014-characters-move-by-velocity.md), jump re-press, one gravity, hull as game data, replay determinism test; not a gate item) | Justin | searchlight feel; flagstone possession; ENG-F33, ENG-F34 and the ENG-M3 ADR-0011 proof build on it | 2–3 | [#494](https://github.com/WrackedFella/moho/issues/494), [#495](https://github.com/WrackedFella/moho/issues/495), [#496](https://github.com/WrackedFella/moho/issues/496) first (one TL thread, shared `movement.rs`), then [#497](https://github.com/WrackedFella/moho/issues/497), then the rest; `moho_physics` only, so it runs beside every renderer and UI item |
 
-- **Wave 1, start now:** the bugs, ENG-F16, ENG-F6 and ENG-F25. They need no other ENG-M2 work.
+- **Wave 1:** the bugs, ENG-F16, ENG-F6 and ENG-F25. They need no other ENG-M2 work.
 - **Wave 2, before SG-F5 and SG-F4:** ENG-F23 and ENG-F24 unblock SG-F5; ENG-F9 comes before SG-F4.
   ENG-F28 (mouse feel) runs alongside; its settings cards queue behind the wave-1 prefs cards and ENG-F18-07.
   The ENG-F18 console (2.11, 2.11.1, 2.11.4) is pulled into wave 2 so the FPS can test features with it,
@@ -178,7 +174,6 @@ its consumers near, not when the earlier wave fully closes.
 | Source-style baked FPS lighting tier | A second pipeline for one line | A measured FPS interior quality gap, or a target GPU that can't afford the dynamic path |
 | DDGI-style probes | Leaks and blur aren't measured yet | ENG-F30 shows unacceptable leaks or blur |
 | Box-projected room probes; Hi-Z, stochastic and temporal SSR | SSR cost, noise and indoor misses not measured | SSR exists and misses or noise look wrong |
-| Strategy water | Needs voxel water in strategy terrain first | Justin schedules it |
 | One global Low/Medium/High graphics preset | Too few Video rows yet | Four or more renderer quality rows (after ENG-F30) |
 | Auto-exposure ([ENG-F29-06](https://github.com/WrackedFella/moho/issues/504)) | Tuned against the scene's energy, which ENG-F30 changes; doing it first means tuning twice | Start of ENG-M3, beside the ENG-F30 skeleton |
 | Movement rules as data: modes, crouch, clearance, braking split, jump assists, air control, surface friction ([ENG-F33](https://github.com/WrackedFella/moho/issues/492)) | Builds on ENG-F32's step order; a feature on its own | ENG-M3 |
@@ -193,7 +188,7 @@ its consumers near, not when the earlier wave fully closes.
 
 **Intent:** The engine's remaining seams land, then the boundary is settled and versioned.
 A seam added after the split crosses three repos, so the features that add one come first
-(Justin's "sweeping changes first" rule, 2026-10-21).
+(sweeping changes first).
 **Gate (all must hold):**
 - The [ENG-F5](https://github.com/WrackedFella/moho/issues/232) gate: licences and the third-party
   notices file; the seam list named in [ADR-0012](../../_todo/adr/0012-engine-crate-map-for-m2.md) is unchanged by the last two
@@ -208,8 +203,8 @@ Carded when ENG-M2 closes, in this order of dependency; none is a gate item on i
 | # | Item | After | Note |
 |---|---|---|---|
 | 3.1 | [ENG-F29-06](https://github.com/WrackedFella/moho/issues/504) exposure adapts to the scene | #485 | Opens ENG-M3 so it is tuned once against the final energy |
-| 3.2 | [ENG-F30](https://github.com/WrackedFella/moho/issues/480) light bounces off what's around it: skeleton on strategy terrain, then sun, emissive, FPS voxelisation | #485; GPU named (GTX 1080, 2 ms at 1080p) | Research on Fable when carded (Justin, 2026-10-21); adds the volume-feed seam |
-| 3.2.1 | [ENG-F35](https://github.com/WrackedFella/moho/issues/509) the sim knows how lit a place is (FPS stealth; direct light from sim data through rays, ADR-0011) | — (slice 4, a coarse bounce grid fed by static lights so a bounce-lit room reads as lit, after ENG-F30's FPS voxelisation slice) | Adds the light-model seam (own ADR in its first card); carded with ENG-M3; approved by Justin 2026-10-21 |
+| 3.2 | [ENG-F30](https://github.com/WrackedFella/moho/issues/480) light bounces off what's around it: skeleton on strategy terrain, then sun, emissive, FPS voxelisation | #485; GPU named (GTX 1080, 2 ms at 1080p) | Researched when carded; adds the volume-feed seam |
+| 3.2.1 | [ENG-F35](https://github.com/WrackedFella/moho/issues/509) the sim knows how lit a place is (FPS stealth; direct light from sim data through rays, ADR-0011) | — (slice 4, a coarse bounce grid fed by static lights so a bounce-lit room reads as lit, after ENG-F30's FPS voxelisation slice) | Adds the light-model seam (own ADR in its first card); carded with ENG-M3 |
 | 3.3 | [ENG-F33](https://github.com/WrackedFella/moho/issues/492) movement rules are game data | ENG-F32 | Modes, crouch, clearance, braking split, jump assists, air control, surface friction |
 | 3.4 | [ENG-F34](https://github.com/WrackedFella/moho/issues/493) characters and bodies move each other | ENG-F32-03, -04 | Absorbs ENG-F21's deferred props row; adds the collision-policy and contact-event seams |
 | 3.5 | ADR-0011 two-sim proof | ENG-F32-09 | One test; before any netcode ADR |
@@ -247,49 +242,40 @@ process-wide counters (ADR-0011 rule 3) are fixed where SG-F4 and SG-F7 rework t
 [ENG-F1-08](../../_todo/engine/ENG-F1-engine-hygiene/ENG-F1-08-headless-app-tests.md) (headless app wiring tests),
 [ENG-F1-10](https://github.com/WrackedFella/moho/issues/246) (key capture stops listening on a conflict; pair with [#392](https://github.com/WrackedFella/moho/issues/392), which collapses the keybind test tiers, ex ENG-F1-04).
 
-## Decisions
+## Engine rules
 
-| Date | Decision | Record |
-|---|---|---|
-| 2026-10-02 | Foundation gate defines when feature work starts | [ENG-F8](https://github.com/WrackedFella/moho/issues/61) |
-| 2026-10-02 | Crates belong to one line; dependencies point game → engine; checked in `just check` | [ADR-0005](../../_todo/adr/0005-crate-lines-and-dependency-direction.md) |
-| 2026-10-02 | Typed entity stores now; `hecs` when a consumer needs an ECS | [ADR-0004](../../_todo/adr/0004-entity-storage-without-a-general-ecs.md) |
-| 2026-10-02 | Save format: postcard envelope; old saves break, no promise before v1.0 | [ADR-0006](../../_todo/adr/0006-save-format-contract.md) |
-| 2026-10-02 | Closed-source commercial sale; licence policy | [ADR-0007](../../_todo/adr/0007-third-party-licence-policy.md) |
-| 2026-10-02 | Keep winit; drop Wayland title bar to clear `ttf-parser` | [ADR-0008](../../_todo/adr/0008-keep-winit-for-windowing-and-input.md) |
-| 2026-10-04 | [ENG-F6](https://github.com/WrackedFella/moho/issues/233) parked: simulation already steps at a fixed 1/60 s; no determinism defect found | [ENG-F6](https://github.com/WrackedFella/moho/issues/233) Notes |
-| 2026-10-04 | Simulation time comes from one fixed tick; no separate clock | [ADR-0009](../../_todo/adr/0009-simulation-time-is-one-fixed-tick.md) |
-| 2026-10-05 | G1 amended: `paste` also arrives via `rapier3d`, so its ignore moves to ENG-F2-04 (G3 covers it); gate verified and closed | [ENG-F8](https://github.com/WrackedFella/moho/issues/61) |
-| 2026-10-05 | The engine sees world geometry as meshes; voxels move to a strategy-line crate | [ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md) |
-| 2026-10-05 | Repo-split gate requires an agnostic engine and the FPS as a settled second consumer | [ENG-F5](https://github.com/WrackedFella/moho/issues/232) |
-| 2026-10-06 | ADR-0010 accepted; ADR-0002 superseded, ADR-0003 narrowed to engine-wide events | [ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md) |
-| 2026-10-05 | Multiplayer later or never; no design may close it | [ADR-0011](../../_todo/adr/0011-simulation-stays-network-ready.md) |
-| 2026-10-05 | Shared app loop is an engine crate ([ENG-F11](https://github.com/WrackedFella/moho/issues/81)); input is engine actions ([ENG-F12](https://github.com/WrackedFella/moho/issues/82)), replacing 1.5 | [ENG-F11](https://github.com/WrackedFella/moho/issues/81), [ENG-F12](https://github.com/WrackedFella/moho/issues/82) |
-| 2026-10-05 | Mods data-only now (layered roots, override by stable id); scripted mods later, own ADR | [ENG-F19](https://github.com/WrackedFella/moho/issues/231) |
-| 2026-10-05 | No dependency assumed; audit verdicts keep / replace / fork / homebrew / drop | [ENG-F13](https://github.com/WrackedFella/moho/issues/83) |
-| 2026-10-05 | Map format: glTF 2.0 recommended (audit confirms); importer engine, map loader FPS-line | [ENG-F14](https://github.com/WrackedFella/moho/issues/226) |
-| 2026-10-06 | Milestones with gates; only the next milestone is carded | [`_STANDARDS.md`](../../_todo/_STANDARDS.md#5-milestones) |
-| 2026-10-06 | ENG-F6's tick criterion moves to ENG-F11; ENG-F6 keeps seeded RNG | [ENG-F6](https://github.com/WrackedFella/moho/issues/233) |
-| 2026-10-07 | Audit gives economical and lean verdicts per crate, user calls each; large well-maintained crates green-lit; follow-ups go under ENG-F2 or the feature reworking that code | [ENG-F13](https://github.com/WrackedFella/moho/issues/83) |
-| 2026-10-07 | Dependency calls recorded: `noise`, `crossbeam-channel`, `pollster`, `phf`, `log`/`env_logger` leave; `ini` stays; `rodio` + own gain/pan for ENG-F16 | [audit](../../_todo/engine/ENG-F13-dependency-audit/audit.md) |
-| 2026-10-07 | Engine crate map decided in an ADR before ENG-F11 (modules first) | [ADR-0012](../../_todo/adr/0012-engine-crate-map-for-m2.md) |
-| 2026-10-07 | Generic controller and camera are an engine feature | [ENG-F21](https://github.com/WrackedFella/moho/issues/123) |
-| 2026-10-07 | Fast-moving stacks (wgpu/egui, rapier/glam) upgrade once per milestone close; ENG-F20 (containment) approved and placed in ENG-M1, before engine features build on the renderer | [ENG-F2](https://github.com/WrackedFella/moho/issues/93) |
-| 2026-10-08 | ENG-F10's voxel move no longer waits on SG-F1-04, SG-F2-03 and SG-F2-02 (unfiled, Strategy lane planning-only); it waits on the ENG-F22 voxel cards instead | [ENG-F10](https://github.com/WrackedFella/moho/issues/80) Notes |
-| 2026-10-09 | ENG-M1 means both game lines can start: ENG-F14, F15 and F21 (what the FPS arena prototype needs and would otherwise copy) join its gate from ENG-M2; ENG-F20 moves before ENG-F18 and the ENG-M1-close upgrade instead of before all engine features | ENG-M1 section |
-| 2026-10-14 | ENG-M1 gate verified and closed; ENG-F9 and ENG-F22's remaining cards carried to ENG-M2 | ENG-M1 and ENG-M2 sections |
-| 2026-10-14 | ENG-M2 is ranked by the game lines' engine requests and runs in waves; its gate is what the games need for V1, declared met by Justin. ENG-F16 is the priority; SG-F5 and SG-F4 join the gate; SG-F4 comes before SG-F3; #303 routing is strategy-line | ENG-M2 section |
-| 2026-10-14 | New ENG-F23 (pointer to world ray, #304) and ENG-F24 (world markers and height slice, #305, #306); ENG-F18 gains on-screen text (#315) and one prefs owner; ENG-F6 reopened for seeded RNG (#316) | ENG-M2 section; [ENG-F18](https://github.com/WrackedFella/moho/issues/230), [ENG-F6](https://github.com/WrackedFella/moho/issues/233) |
-| 2026-10-14 | Game lines own their save kinds; the engine keeps only the envelope framing. ENG-F25 lands in wave 1, before SG-F4's marks-persist card | [ADR-0016](../../_todo/adr/0016-game-lines-own-their-save-kinds.md), [ENG-F25](https://github.com/WrackedFella/moho/issues/346) |
-| 2026-10-15 | New ENG-F26 (tap, hold, modifier and toggle bindings) in ENG-M2 wave 4, not a gate item. Brings back the modifier chords ENG-F12 dropped on 2026-10-08, now with a consumer; hold timing counts ticks (ADR-0011) | [ENG-F26](https://github.com/WrackedFella/moho/issues/359) |
-| 2026-10-15 | The strategy line is renamed flagstone and the FPS line searchlight inside the monorepo, ahead of the split; engine crates keep `moho_`, and SG-/FPS- IDs stay | [ENG-F27](https://github.com/WrackedFella/moho/issues/361) |
-| 2026-10-15 | New ENG-F28 (Source-like mouse look) in ENG-M2 wave 2, not a gate item: look turns every frame ahead of the tick that consumes it (ADR-0011 holds), raw by default, settings in the same feature | [ENG-F28](https://github.com/WrackedFella/moho/issues/373) |
-| 2026-10-16 | ENG-F18's console moves to wave 2 for FPS testing (#402): games inherit the engine's commands and add their own, a taken name is refused; game settings persist in each game's own prefs file. Strategy migration and on-screen text stay in wave 4 | [ENG-F18](https://github.com/WrackedFella/moho/issues/230) |
-| 2026-10-20 | ENG-F18-09 on-screen text (#407) moves to wave 2, after #376, so the FPS HUD doesn't wait for the rest of ENG-F18 | [ENG-F18](https://github.com/WrackedFella/moho/issues/230) |
-| 2026-10-20 | ENG-F18's settings screen, modal stack and keybind capture wait for the FPS project's menu spec; ENG-F19's "saves record the active root list" is deferred until a game both saves and loads content | [ENG-F18](https://github.com/WrackedFella/moho/issues/230), [ENG-F19](https://github.com/WrackedFella/moho/issues/231) |
-| 2026-10-20 | An engine request closes when the engine work that answers it merges; the game line's card tracks adoption | [agentic workflow](../process/agentic-workflow.md) |
-| 2026-10-21 | Lowest target GPU is a GTX 1080; every renderer perf criterion is measured on it at 1080p | ENG-M2 and ENG-M3 sections |
-| 2026-10-21 | Physics floor and API fixes in ENG-M2 as [ENG-F32](https://github.com/WrackedFella/moho/issues/491) (Source `accelerate` reverses #271 deviation 1; overbounce 1.0; queued effects supersede ADR-0014 in one card; Q2 last and only if Q1 proves useful); movement rules as data ([ENG-F33](https://github.com/WrackedFella/moho/issues/492)) and characters and bodies ([ENG-F34](https://github.com/WrackedFella/moho/issues/493)) in M3. Bloom in ENG-M2 ([ENG-F29-05](https://github.com/WrackedFella/moho/issues/503)), auto-exposure opens ENG-M3 ([ENG-F29-06](https://github.com/WrackedFella/moho/issues/504)) | [ENG-F32](https://github.com/WrackedFella/moho/issues/491) |
-| 2026-10-21 | ENG-M3 widens to "seams land, then split": ENG-F30, F33, F34 and the ADR-0011 two-sim proof precede ENG-F5. Multiplayer is co-op only; its enablers are ENG-F32-04 and -09 and the ENG-M3 proof; the netcode ADR and a co-op session are ENG-M5+, pulled by the first co-op GDD | ENG-M3 section, ENG-M5+ |
-| 2026-10-21 | Game AI stays in the lines; the engine offers queries (navigation, rays, gameplay light). FPS stealth reads direct light from sim data through ENG-F35 (ENG-M3, before the split; a coarse bounce grid follows ENG-F30's FPS slice) | [AI direction](https://github.com/WrackedFella/moho/issues/229) |
-| 2026-10-21 | Lighting is one dynamic engine path for both lines; baked lightmaps only as an FPS tier on a measured gap. Short-term light composition in ENG-M2 (ENG-F29); mirrors, SSR and water in ENG-M2 wave 4 (ENG-F31, must-have), bounce light after ENG-M2 (ENG-F30); every effect has a player-facing on/off and detail setting in the Video tab | [ENG-F29](https://github.com/WrackedFella/moho/issues/479), [ENG-F30](https://github.com/WrackedFella/moho/issues/480), [ENG-F31](https://github.com/WrackedFella/moho/issues/481) |
+Standing rules that order the work above. Each links its record.
+
+**Structure and dependencies**
+- Crates belong to one line; dependencies point game to engine; `just check` enforces it ([ADR-0005](../../_todo/adr/0005-crate-lines-and-dependency-direction.md)).
+- Entities live in typed stores; `hecs` arrives when a consumer needs an ECS ([ADR-0004](../../_todo/adr/0004-entity-storage-without-a-general-ecs.md)).
+- The engine crate map is decided in an ADR, modules first ([ADR-0012](../../_todo/adr/0012-engine-crate-map-for-m2.md)). The shared app loop is an engine crate ([ENG-F11](https://github.com/WrackedFella/moho/issues/81)); input is game-defined actions ([ENG-F12](https://github.com/WrackedFella/moho/issues/82)), with modifier chords returning through [ENG-F26](https://github.com/WrackedFella/moho/issues/359), where hold timing counts ticks.
+- The engine sees world geometry as meshes; voxels live in a strategy-line crate ([ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md), which supersedes ADR-0002 and narrows ADR-0003 to engine-wide events).
+- Map format is glTF 2.0; the importer is an engine feature and the map loader belongs to the line ([ENG-F14](https://github.com/WrackedFella/moho/issues/226)).
+- A generic character controller and camera are an engine feature ([ENG-F21](https://github.com/WrackedFella/moho/issues/123)).
+- The lines are named flagstone and searchlight inside the monorepo; engine crates keep `moho_`, and SG-/FPS- IDs stay ([ENG-F27](https://github.com/WrackedFella/moho/issues/361)).
+- The repo split gate (ENG-M3) requires an agnostic engine and a settled second consumer ([ENG-F5](https://github.com/WrackedFella/moho/issues/232)).
+
+**Simulation, saves and multiplayer**
+- Simulation time comes from one fixed 1/60 s tick, with no separate clock ([ADR-0009](../../_todo/adr/0009-simulation-time-is-one-fixed-tick.md)); the tick criterion belongs to ENG-F11, and [ENG-F6](https://github.com/WrackedFella/moho/issues/233) holds seeded RNG.
+- The simulation stays network-ready ([ADR-0011](../../_todo/adr/0011-simulation-stays-network-ready.md)). Multiplayer is co-op only with a trusted host; no design may close it. Its enablers are ENG-F32-04 and -09 and the ENG-M3 two-simulation proof; the netcode ADR and a co-op session are ENG-M5+.
+- Saves use a postcard envelope; old saves break and no compatibility is promised before v1.0 ([ADR-0006](../../_todo/adr/0006-save-format-contract.md)). Game lines own their save kinds; the engine keeps only the envelope framing ([ADR-0016](../../_todo/adr/0016-game-lines-own-their-save-kinds.md)).
+- Look turns every frame ahead of the tick that consumes it, raw by default, with its settings in the same feature ([ENG-F28](https://github.com/WrackedFella/moho/issues/373)).
+
+**Dependencies and licences**
+- Third-party licences allow closed-source commercial sale ([ADR-0007](../../_todo/adr/0007-third-party-licence-policy.md)). winit stays, with the Wayland title bar dropped to clear `ttf-parser` ([ADR-0008](../../_todo/adr/0008-keep-winit-for-windowing-and-input.md)).
+- No dependency is assumed. The audit gives a keep, replace, fork, homebrew or drop verdict per crate and large well-maintained crates are green-lit; follow-ups go under ENG-F2 or the feature reworking that code ([ENG-F13](https://github.com/WrackedFella/moho/issues/83)). `noise`, `crossbeam-channel`, `pollster`, `phf` and `log`/`env_logger` leave; `ini` stays; ENG-F16 uses `rodio` with its own gain and pan ([audit](../../_todo/engine/ENG-F13-dependency-audit/audit.md)).
+- Fast-moving stacks (wgpu/egui, rapier/glam) upgrade once per milestone close, behind the containment in [ENG-F20](https://github.com/WrackedFella/moho/issues/104). The `paste` ignore sits with ENG-F2-04 ([ENG-F8](https://github.com/WrackedFella/moho/issues/61), G3).
+
+**Content, console and UI**
+- Mods are data-only (layered roots, override by stable id); scripted mods get their own ADR later ([ENG-F19](https://github.com/WrackedFella/moho/issues/231)). Saves record the active root list once a game both saves and loads content.
+- A game inherits the engine's console commands and adds its own; a taken name is refused. Game settings persist in each game's own prefs file ([ENG-F18](https://github.com/WrackedFella/moho/issues/230)). The settings screen, modal stack and keybind capture follow the game's menu spec.
+
+**Graphics and physics**
+- Lowest target GPU is a GTX 1080; every renderer perf criterion is measured on it at 1080p. It is a floor, never a filter.
+- Lighting is one dynamic engine path; baked lightmaps exist only as a line-specific tier on a measured gap. Every effect has a player-facing on/off and detail setting in the Video tab ([ENG-F29](https://github.com/WrackedFella/moho/issues/479), [ENG-F30](https://github.com/WrackedFella/moho/issues/480), [ENG-F31](https://github.com/WrackedFella/moho/issues/481)).
+- Game AI stays in the lines; the engine offers queries (navigation, rays, gameplay light). Gameplay light reaches the simulation through ENG-F35.
+- Movement follows Source `accelerate` (reversing #271 deviation 1) with overbounce 1.0; queued effects supersede [ADR-0014](../../_todo/adr/0014-characters-move-by-velocity.md) in one card ([ENG-F32](https://github.com/WrackedFella/moho/issues/491)). Movement rules as data ([ENG-F33](https://github.com/WrackedFella/moho/issues/492)) and characters and bodies ([ENG-F34](https://github.com/WrackedFella/moho/issues/493)) are ENG-M3.
+
+**Planning**
+- Milestones carry gates and only the next one is carded ([`_STANDARDS.md`](../../_todo/_STANDARDS.md#5-milestones)).
