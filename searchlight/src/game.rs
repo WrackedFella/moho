@@ -569,7 +569,6 @@ impl Stage {
             .map(|left| (EDGE_ALPHA * left / EDGE_TICKS) as u8);
     }
 
-    /// Takes the crosshair, damage bars and death tint off the screen.
     fn hide_hud(&self) {
         self.crosshair
             .lock()
@@ -636,7 +635,6 @@ impl Stage {
         draw_scene(&mut self.scene, renderer, eye, aspect);
     }
 
-    /// Draws an empty world, for the frames the main menu covers the arena.
     fn draw_backdrop(&mut self, renderer: &mut dyn RendererBackend) {
         let aspect = self.aspect();
         draw_scene(
@@ -714,7 +712,6 @@ impl SearchlightGame {
         }
     }
 
-    /// Starts on the main menu with the arena not running, instead of in play.
     #[must_use]
     pub fn with_main_menu(mut self) -> Self {
         self.screen = Screen::MainMenu;
@@ -742,7 +739,6 @@ impl SearchlightGame {
         }
     }
 
-    /// Carries out the menu item the player chose.
     fn choose(&mut self, ctx: &mut EventContext<'_>, action: MenuAction) {
         match action {
             MenuAction::Play => {
@@ -2826,7 +2822,6 @@ mod mutation_tests {
         game.frame(&mut ctx, 0.5);
     }
 
-    /// Vertices the crosshair layer would draw right now.
     fn crosshair_vertices(game: &SearchlightGame) -> usize {
         let mut crosshair = game
             .stage
