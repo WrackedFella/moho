@@ -2223,6 +2223,51 @@ mod tests {
     }
 
     #[test]
+    fn the_action_map_sees_no_input_while_the_main_menu_shows() {
+        use moho_input::Action;
+        use winit::event::DeviceId;
+
+        let mut game = turning_menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.event(&mut ctx, Event::Window(WindowEvent::Focused(true)));
+
+        for input in [
+            Input::Key(Key::W),
+            Input::Key(Key::Space),
+            Input::Key(Key::R),
+            Input::Mouse(MouseButton::Left),
+        ] {
+            game.route_input(&mut ctx, input, true, false);
+        }
+        game.event(
+            &mut ctx,
+            Event::Window(WindowEvent::CursorMoved {
+                device_id: DeviceId::dummy(),
+                position: winit::dpi::PhysicalPosition::new(12.0, 34.0),
+            }),
+        );
+        game.event(
+            &mut ctx,
+            Event::Device(DeviceEvent::MouseMotion {
+                delta: (40.0, 30.0),
+            }),
+        );
+        game.input.sample_frame(Duration::from_millis(16));
+        let frame = game.input.end_tick();
+
+        assert_eq!(game.screen, Screen::MainMenu);
+        for &action in SearchlightAction::ALL {
+            assert!(!frame.held(action), "{action:?} held");
+            assert!(!frame.pressed(action), "{action:?} pressed");
+            assert!(!frame.released(action), "{action:?} released");
+        }
+        assert_eq!(frame.look(), (0.0, 0.0));
+        assert_eq!(frame.pointer(), None);
+        assert_eq!(frame.press_pointer(), None);
+    }
+
+    #[test]
     fn escape_at_the_main_menu_does_nothing() {
         let mut game = menu_game();
         let clock = GameClock::default();
