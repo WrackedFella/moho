@@ -1,8 +1,9 @@
 # Searchlight
 
-**Source:** `searchlight/src/`, `searchlight/assets/`, `searchlight/content/`, `moho_ui_shell/src/`.
+**Source:** `searchlight/src/`, `moho_level/src/nav.rs`, `searchlight/assets/`, `searchlight/content/`, `moho_ui_shell/src/`.
 **Decisions:** [ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md),
-[ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md).
+[ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md),
+[ADR-0019](../../_todo/adr/0019-navigation-is-an-engine-seam.md).
 
 `searchlight` is the FPS line's engine adapter: a library and the `searchlight` binary. Rules
 (`Rifle`, `Magazine`, `Body`, `BodyProfile`) come from `searchlight_rules`; windowing, loop,
@@ -30,12 +31,12 @@ flowchart LR
 
 | Module | Role |
 |---|---|
-| `arena` | Loads `assets/arena.glb` through `moho_level`; `ArenaMarkers` sorts named markers by kind and orders waypoints into the patrol route; `Arena` is the loaded level the sim starts from (meshes, spawns, route, cover points) and builds the world colliders |
+| `arena` | Loads `assets/arena.glb` through `moho_level`; `ArenaMarkers` sorts named markers by kind and orders waypoints into the patrol route; `Arena` is the loaded level the sim starts from (meshes, spawns, route, cover points, `nav`) and builds the world colliders; `Arena::from_level` also builds the `NavMesh` for `nav_profile` (the player-sized capsule plus clearance) and fails with `ArenaError::Nav` when that fails |
 | `tuning` | `tuning(&RifleDef)`: builds the `SimConfig`, taking the rifle's numbers from the definition |
 | `input` | `SearchlightAction` set and default bindings; `build_action_map` builds the `ActionMap` at startup, with mouse look (`look_settings`: sensitivity, smoothing, invert Y) taken from `Prefs`, and a sensitivity not above zero falling back to the default 3.0; `SearchlightCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on Enter) |
 | `tag` | `SurfaceTag` (`World`, `Part { target, part }` or `Player(part)`) and its lossless round trip through the engine's opaque `moho_physics::HitTag` |
 | `shot` | `resolve_shot`: first tagged surface along a `ShotRay` in the `PhysicsWorld` |
-| `brain` | `Brain`: the enemy state machine (`Patrol`, `Engage`, `Cover`, `Chase`), pure over `glam` types; `Percept` in, `Intent` out; `EnemyTuning` holds its numbers |
+| `brain` | `Brain`: the enemy state machine (`Patrol`, `Engage`, `Cover`, `Chase`), pure over `glam` types; `Percept` and a `steer` function in, `Intent` out; `EnemyTuning` holds its numbers |
 | `cover` | `pick` and `offer`: choose the nearest free cover point a hurt enemy should run to, using world-only rays against the player (`Threat`) |
 | `sim` | `SearchlightSim`: player character and body, rifle, spare magazines, dummies and enemies; emits `Feedback`; counts player kills |
 | `wave` | `WaveTuning` (first wave size, growth per wave, points per kill; zero size or growth is refused) and `WaveState` (running wave, enemies still to spawn, score) as plain numbers, no physics |
@@ -121,7 +122,11 @@ The next `Percept` carries `hurt` and `offer`. With an offer a `Patrol`, `Chase`
 holding the claim. After `cover_ticks` without arriving it fights where it stands. Without an
 offer it turns to `Engage` on the shooter's position. An `Engage` that loses sight falls to
 `Chase`, walking to the last seen position until it arrives or `chase_ticks` pass, then
-resumes `Patrol`; sight during `Chase` re-engages. Enemy shots use the shot path below; a hit on the player emits
+resumes `Patrol`; sight during `Chase` re-engages. `Chase` heads for the next corner (the one after
+its own position) of the `moho_level::NavMesh` path from the enemy to the last seen position (`SearchlightSim` supplies
+this as `steer`, with the goal first dropped onto the floor below it, so a player lost mid-jump is still chased), so enemies walk around obstacles; arrival is still measured to the last seen
+position. With no path (the position is off the mesh or unreachable) the enemy resumes `Patrol`
+at once. Sight and shot rays are not affected by the navmesh. Enemy shots use the shot path below; a hit on the player emits
 `Feedback::PlayerHit`, and a dead player emits `Feedback::PlayerDied`.
 
 ## 6 Shot path

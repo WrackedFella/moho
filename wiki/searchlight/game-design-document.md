@@ -1,6 +1,6 @@
 # FPS-F1 — Game Design Document (v0.3)
 
-**Status:** draft v0.3, approved for Phase 1 (v0.3 adds pillar 2, the item lifecycle rule, the planning rule in §7, §4.12 stats and the §4.7 wound states). Writing this page is
+**Status:** draft v0.3, approved for Phase 1 (v0.3 adds pillar 2, the item lifecycle rule, §4.12 player and weapon stats, the planning rule in §7 and the §4.7 wound states). Writing this page is
 [FPS-F1](../../_todo/searchlight/FPS-F1-game-design-document/_feature.md)'s deliverable. Open questions are in §9.
 **Working pitch:** a survival-focused looter shooter with realistic gunplay, where your gear is your character, your rig is the game, and every fight is a line on a ledger.
 **Working target:** single-player first, co-op later, mod support a priority. Pivots (Destiny-like, Arma-like) are open questions, not commitments (§9).

@@ -2,12 +2,14 @@
 //! spawn, dummy, enemy, waypoint and cover points.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use glam::Vec3;
-use moho_level::{Level, LevelError, LevelMarker};
+use moho_level::{AgentProfile, Level, LevelError, LevelMarker, NavBuildError, NavMesh};
 use moho_physics::PhysicsWorld;
 use moho_render_api::{WorldMesh, WorldMeshId};
 
+use crate::sim::{CAPSULE_RADIUS, STAND_HEIGHT};
 use crate::tag::SurfaceTag;
 
 /// One nominal tick, enough for a step to index freshly added colliders.
@@ -35,6 +37,9 @@ pub enum ArenaError {
     /// A waypoint's suffix is not a number, or repeats an earlier waypoint's number.
     #[error("arena waypoint `{marker}` needs a unique numeric suffix")]
     BadWaypoint { marker: String },
+    /// The walkable area could not be built from the level's meshes.
+    #[error(transparent)]
+    Nav(#[from] NavBuildError),
 }
 
 /// The arena's markers, grouped by kind. Within a kind, markers keep file order.
@@ -150,20 +155,41 @@ pub struct Arena {
     /// The loop every enemy patrols, in order.
     pub route: Vec<Vec3>,
     pub covers: Vec<Vec3>,
+    /// Where an enemy of [`nav_profile`] size can walk.
+    pub nav: Arc<NavMesh>,
+}
+
+/// Extra metres of clearance on top of the capsule radius, so paths do not graze corners.
+const NAV_CLEARANCE: f32 = 0.1;
+
+/// The agent the arena's navmesh is built for: the player-sized capsule.
+pub fn nav_profile() -> AgentProfile {
+    AgentProfile {
+        radius: CAPSULE_RADIUS + NAV_CLEARANCE,
+        height: 2.0 * STAND_HEIGHT,
+        max_climb: 0.5,
+        max_slope: std::f32::consts::FRAC_PI_4,
+    }
 }
 
 impl Arena {
     /// The arena `level` and its `markers` describe.
-    pub fn from_level(level: &Level, markers: &ArenaMarkers) -> Self {
+    ///
+    /// # Errors
+    /// [`ArenaError::Nav`] when the walkable area cannot be built.
+    pub fn from_level(level: &Level, markers: &ArenaMarkers) -> Result<Self, ArenaError> {
         let positions = |list: &[LevelMarker]| list.iter().map(|marker| marker.position).collect();
-        Self {
-            meshes: level.meshes.iter().map(|m| m.mesh.clone()).collect(),
+        let meshes: Vec<WorldMesh> = level.meshes.iter().map(|m| m.mesh.clone()).collect();
+        let nav = Arc::new(NavMesh::build(&meshes, nav_profile())?);
+        Ok(Self {
+            meshes,
+            nav,
             player_spawn: markers.player_spawn.position,
             dummy_spawns: positions(&markers.dummies),
             enemy_spawns: positions(&markers.enemy_spawns),
             route: markers.patrol_route(),
             covers: positions(&markers.covers),
-        }
+        })
     }
 
     /// A physics world whose static colliders are this arena's meshes, tagged
@@ -245,6 +271,69 @@ mod tests {
 
     fn shipped_arena() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/arena.glb")
+    }
+
+    #[test]
+    fn the_nav_profile_is_the_player_capsule_with_clearance_and_the_specified_limits() {
+        let profile = nav_profile();
+
+        assert!(
+            (profile.radius - (CAPSULE_RADIUS + 0.1)).abs() < 1e-6,
+            "{profile:?}"
+        );
+        assert!((profile.height - 2.3).abs() < 1e-6, "{profile:?}");
+        assert!((profile.max_climb - 0.5).abs() < 1e-6, "{profile:?}");
+        assert!(
+            (profile.max_slope - std::f32::consts::FRAC_PI_4).abs() < 1e-6,
+            "{profile:?}"
+        );
+    }
+
+    #[test]
+    fn the_shipped_arena_navmesh_joins_every_spawn_and_waypoint() {
+        let (level, markers) = load(&shipped_arena()).expect("the shipped arena loads");
+        let arena = Arena::from_level(&level, &markers).expect("the shipped arena builds");
+        let places: Vec<(String, Vec3)> =
+            std::iter::once(("player spawn".to_owned(), arena.player_spawn))
+                .chain(
+                    arena
+                        .enemy_spawns
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| (format!("enemy spawn {i}"), *p)),
+                )
+                .chain(
+                    arena
+                        .route
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| (format!("waypoint {i}"), *p)),
+                )
+                .collect();
+
+        let unjoined: Vec<&str> = places
+            .iter()
+            .filter(|(_, place)| arena.nav.path(arena.player_spawn, *place).is_none())
+            .map(|(name, _)| name.as_str())
+            .collect();
+        let legs: Vec<usize> = (0..arena.route.len())
+            .filter(|&i| {
+                let next = arena.route[(i + 1) % arena.route.len()];
+                arena.nav.path(arena.route[i], next).is_none()
+            })
+            .collect();
+
+        assert!(places.len() > 2, "the arena has too few places to join");
+        assert_eq!(
+            unjoined,
+            Vec::<&str>::new(),
+            "no path from the player spawn"
+        );
+        assert_eq!(
+            legs,
+            Vec::<usize>::new(),
+            "no path from waypoint to the next"
+        );
     }
 
     #[test]
