@@ -281,20 +281,17 @@ impl FrameProcessor {
 
         let moon_base_intensity = self.calculate_moon_intensity(moon_dir, time);
 
-        let (ambient_color, ambient_intensity) = self.calculate_ambient_lighting(time);
-
         let lighting = moho_renderer::LightingGpu {
             sun_direction: [sun_dir.x, sun_dir.y, sun_dir.z, sun_intensity],
             sun_color: [1.0, 0.95, 0.8, 0.0],
             moon_direction: [moon_dir.x, moon_dir.y, moon_dir.z, moon_base_intensity],
             moon_color: [0.7, 0.8, 0.9, 0.0],
-            ambient: [
-                ambient_color[0],
-                ambient_color[1],
-                ambient_color[2],
-                ambient_intensity,
-            ],
+            ambient: self.calculate_ambient_lighting(time),
             params: [time, app.debug_mode as f32, 0.0, 0.0],
+            // The renderer fills the sky palette from the time of day.
+            sky_zenith: [0.0; 4],
+            sky_horizon: [0.0; 4],
+            sky_ground: [0.0; 4],
         };
         renderer.update_lighting(lighting);
     }
@@ -323,29 +320,20 @@ impl FrameProcessor {
         }
     }
 
-    /// Calculate ambient lighting based on time of day
-    /// Returns (color, intensity)
-    fn calculate_ambient_lighting(&self, time: f32) -> ([f32; 3], f32) {
-        // Night: 0-5, 21-24 (very low, blue-tinted)
-        // Dawn: 5-7 (increasing, warm tint)
-        // Day: 7-17 (full brightness, neutral)
-        // Dusk: 17-21 (decreasing, warm tint)
+    /// Returns the ambient uniform: sky-ambient strength in w, xyz unused
+    fn calculate_ambient_lighting(&self, time: f32) -> [f32; 4] {
         if (7.0..17.0).contains(&time) {
-            // Day: full brightness, cool ambient
-            ([0.4, 0.5, 0.6], 0.15)
+            [0.0, 0.0, 0.0, 0.15]
         } else if (5.0..7.0).contains(&time) {
-            // Dawn: increasing brightness, warm tint
             let t = (time - 5.0) / 2.0; // 0-1 over 2 hours
             let intensity = 0.05 + t * 0.10; // 0.05 -> 0.15
-            ([0.5, 0.45, 0.4], intensity)
+            [0.0, 0.0, 0.0, intensity]
         } else if (17.0..21.0).contains(&time) {
-            // Dusk: decreasing brightness, warm tint
             let t = (time - 17.0) / 4.0; // 0-1 over 4 hours
             let intensity = 0.15 - t * 0.10; // 0.15 -> 0.05
-            ([0.5, 0.4, 0.35], intensity)
+            [0.0, 0.0, 0.0, intensity]
         } else {
-            // Night: very low brightness, blue tint
-            ([0.3, 0.35, 0.5], 0.05)
+            [0.0, 0.0, 0.0, 0.05]
         }
     }
 
@@ -654,28 +642,30 @@ mod tests {
     }
 
     #[test]
-    fn ambient_lighting_by_time() {
+    fn ambient_strength_by_time() {
         let processor = FrameProcessor::new();
         let cases = [
-            (12.0, [0.4, 0.5, 0.6], 0.15),
-            (23.0, [0.3, 0.35, 0.5], 0.05),
-            (5.0, [0.5, 0.45, 0.4], 0.05),
-            (6.0, [0.5, 0.45, 0.4], 0.10),
-            (6.99, [0.5, 0.45, 0.4], 0.1495),
-            (18.0, [0.5, 0.4, 0.35], 0.125),
-            (19.0, [0.5, 0.4, 0.35], 0.10),
+            (12.0, 0.15),
+            (23.0, 0.05),
+            (5.0, 0.05),
+            (6.0, 0.10),
+            (6.99, 0.1495),
+            (18.0, 0.125),
+            (19.0, 0.10),
         ];
 
-        for (time, expected_color, expected_intensity) in cases {
-            let (color, intensity) = processor.calculate_ambient_lighting(time);
+        for (time, expected_strength) in cases {
+            let ambient = processor.calculate_ambient_lighting(time);
 
-            assert!(
-                glam::Vec3::from(color).abs_diff_eq(glam::Vec3::from(expected_color), 1e-6),
-                "colour at {time}: {color:?}"
+            assert_eq!(
+                ambient[..3],
+                [0.0, 0.0, 0.0],
+                "colour channels are unused at {time}: {ambient:?}"
             );
             assert!(
-                (intensity - expected_intensity).abs() < 1e-6,
-                "intensity at {time}: expected {expected_intensity}, got {intensity}"
+                (ambient[3] - expected_strength).abs() < 1e-6,
+                "strength at {time}: expected {expected_strength}, got {}",
+                ambient[3]
             );
         }
     }

@@ -75,19 +75,20 @@ fn parse_quit(_args: &[&str]) -> Result<(EngineCommand, String), String> {
     Ok((EngineCommand::Quit, "Quitting".to_owned()))
 }
 
-const DEBUG_VIEW_NAMES: [&str; 6] = [
+const DEBUG_VIEW_NAMES: [&str; 7] = [
     "None",
     "Normals",
     "Bias",
     "Shadows",
     "Light Level",
     "Point Lights",
+    "Sky Ambient",
 ];
 const QUALITY_NAMES: [&str; 5] = ["Off", "Low", "Medium", "High", "Ultra"];
 
 fn parse_debug_view(args: &[&str]) -> Result<(EngineCommand, String), String> {
     let Some(arg) = args.first() else {
-        return Err("Usage: r_debug_view <mode> (0=None, 1=Normals, 2=Bias, 3=Shadows, 4=LightLevel, 5=PointLights)".to_owned());
+        return Err("Usage: r_debug_view <mode> (0=None, 1=Normals, 2=Bias, 3=Shadows, 4=LightLevel, 5=PointLights, 6=SkyAmbient)".to_owned());
     };
     let mode = arg
         .parse::<u32>()
@@ -95,7 +96,7 @@ fn parse_debug_view(args: &[&str]) -> Result<(EngineCommand, String), String> {
     let name = usize::try_from(mode)
         .ok()
         .and_then(|i| DEBUG_VIEW_NAMES.get(i))
-        .ok_or_else(|| "Debug view must be between 0 and 5".to_owned())?;
+        .ok_or_else(|| "Debug view must be between 0 and 6".to_owned())?;
     Ok((
         EngineCommand::DebugView(mode),
         format!("Debug view set to: {name} ({mode})"),
@@ -193,7 +194,7 @@ impl<G> Registry<G> {
                 engine("quit", "quit", "exit the game", Handler::Engine(parse_quit)),
                 engine(
                     "r_debug_view",
-                    "r_debug_view <0-5>",
+                    "r_debug_view <0-6>",
                     "set the debug view (0=None, 3=Shadows)",
                     Handler::Engine(parse_debug_view),
                 ),
@@ -262,7 +263,7 @@ mod tests {
 
     use super::*;
 
-    const DEBUG_VIEW_USAGE: &str = "Usage: r_debug_view <mode> (0=None, 1=Normals, 2=Bias, 3=Shadows, 4=LightLevel, 5=PointLights)";
+    const DEBUG_VIEW_USAGE: &str = "Usage: r_debug_view <mode> (0=None, 1=Normals, 2=Bias, 3=Shadows, 4=LightLevel, 5=PointLights, 6=SkyAmbient)";
     const SHADOW_USAGE: &str =
         "Usage: r_shadow_quality <0-4> (0=Off, 1=Low, 2=Med, 3=High, 4=Ultra)";
     const SSAO_USAGE: &str = "Usage: r_ssao_quality <0-4> (0=Off, 1=Low, 2=Med, 3=High, 4=Ultra)";
@@ -340,7 +341,7 @@ mod tests {
         let help = help_lines(&console);
         assert_eq!(help.len(), 8, "{help:?}");
         for prefix in [
-            "  r_debug_view <0-5> - ",
+            "  r_debug_view <0-6> - ",
             "  r_shadow_quality <0-4> - ",
             "  r_ssao_quality <0-4> - ",
             "  audio_cue <path> <x> <y> <z> [volume] - ",
@@ -431,6 +432,7 @@ mod tests {
             (3, "Shadows"),
             (4, "Light Level"),
             (5, "Point Lights"),
+            (6, "Sky Ambient"),
         ] {
             rows.push((
                 format!("r_debug_view {mode}"),
@@ -439,7 +441,7 @@ mod tests {
             ));
         }
         for (arg, reply) in [
-            ("6", "Debug view must be between 0 and 5"),
+            ("7", "Debug view must be between 0 and 6"),
             ("x", "Invalid mode. Must be a number."),
         ] {
             rows.push((format!("r_debug_view {arg}"), None, vec![reply.to_owned()]));

@@ -1,6 +1,6 @@
 # Rendering
 
-**Source:** `moho_render_api/src/` (`world_geometry.rs`), `moho_renderer/src/` (`scene.rs`,
+**Source:** `moho_render_api/src/` (`world_geometry.rs`), `moho_renderer/src/` (`scene.rs`, `sky.rs`,
 `world_meshes.rs`, `markers.rs`, `renderer.rs`, `render_ops/`, `shadow.rs`, `ssao.rs`, `ui_pass/`), `moho_render_api/src/ui_paint.rs`, `moho_render_api/src/marker.rs`, `flagstone/src/app/world_geometry.rs`, `flagstone/src/app/cut_caps.rs`, `flagstone/src/app/view_level.rs`, `flagstone_voxel/src/mesh/cap.rs`,
 `shaders/`, `moho_level/src/`.
 **Decisions:** [ADR-0001](../../_todo/adr/0001-render-api-boundary.md),
@@ -189,12 +189,17 @@ The last lighting step in `shaders/fragment.wgsl` combines the two per-vertex li
 channels:
 
 ```wgsl
-color = color * max(sky_exposed, MIN_SKY_AMBIENT)
+color = celestial * max(sky_exposed, MIN_SKY_AMBIENT)   // sun and moon
+      + ao * point_light_contrib
+      + sky_ambient
       + albedo * ao * block_light_rgb * BLOCK_LIGHT_GAIN
 ```
 
-Sky exposure gates everything lit before this step, sun, moon, ambient and point lights
-(floor `MIN_SKY_AMBIENT` = 0.1); block light
+Sky exposure gates the sun and moon terms (floor `MIN_SKY_AMBIENT` = 0.1). Point lights
+are not gated. Sky ambient is separate: an ambient cube over the sky palette (zenith up,
+ground down, horizon on the sides) weighted by the normal, scaled by `ambient.w`, sky
+exposure and a multibounce AO term. The palette is computed per frame from the time of
+day in `moho_renderer/src/sky.rs` and shared by the skybox. Block light
 adds on top, so torches and emissive blocks light caves and night surfaces the sky
 leaves dark. A surface with no block light (entity meshes, level files) draws as sky
 exposure alone. Block light next to a strong emitter can push a channel past 1;

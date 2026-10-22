@@ -21,6 +21,7 @@ mod scene;
 pub use moho_render_api::LightDesc;
 pub use scene::Scene;
 mod gpu_types;
+mod sky;
 pub use gpu_types::{
     CameraGpu, CascadedShadowMatrixGpu, LightingGpu, MAX_SHADOW_LIGHTS, MultiLightShadowGpu,
     ShadowMatrixGpu,

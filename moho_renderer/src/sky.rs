@@ -1,0 +1,237 @@
+//! The sky's zenith, horizon and ground colours by time of day.
+
+/// The three sky colours the skybox and the ambient light both read.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SkyPalette {
+    pub zenith: [f32; 3],
+    pub horizon: [f32; 3],
+    pub ground: [f32; 3],
+}
+
+impl SkyPalette {
+    fn lerp(self, to: Self, t: f32) -> Self {
+        let mix = |a: [f32; 3], b: [f32; 3]| [0, 1, 2].map(|i| a[i] + (b[i] - a[i]) * t);
+        Self {
+            zenith: mix(self.zenith, to.zenith),
+            horizon: mix(self.horizon, to.horizon),
+            ground: mix(self.ground, to.ground),
+        }
+    }
+
+    /// Zenith, horizon and ground as uniform `vec4`s, w unused.
+    pub(crate) fn to_gpu(self) -> [[f32; 4]; 3] {
+        [self.zenith, self.horizon, self.ground].map(|[r, g, b]| [r, g, b, 0.0])
+    }
+}
+
+const NIGHT: SkyPalette = SkyPalette {
+    zenith: [0.05, 0.05, 0.15],
+    horizon: [0.1, 0.1, 0.2],
+    ground: [0.05, 0.05, 0.1],
+};
+const DAWN: SkyPalette = SkyPalette {
+    zenith: [0.3, 0.5, 0.7],
+    horizon: [1.0, 0.6, 0.4],
+    ground: [0.2, 0.15, 0.2],
+};
+const DAY: SkyPalette = SkyPalette {
+    zenith: [0.5, 0.85, 0.95],
+    horizon: [0.85, 0.95, 0.98],
+    ground: [0.6, 0.65, 0.7],
+};
+const DUSK: SkyPalette = SkyPalette {
+    zenith: [0.3, 0.4, 0.6],
+    horizon: [1.0, 0.5, 0.3],
+    ground: [0.2, 0.15, 0.15],
+};
+
+/// Palette keyframes `(hour, palette)`. Between two keys the palette blends by smoothstep;
+/// before the first and after the last it is night. Equal neighbouring palettes hold a period.
+const KEYFRAMES: [(f32, SkyPalette); 6] = [
+    (5.0, NIGHT),
+    (7.0, DAWN),
+    (8.0, DAY),
+    (17.0, DAY),
+    (21.0, DUSK),
+    (22.0, NIGHT),
+];
+
+fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// The sky palette at `time_of_day` hours; hours outside `0..24` wrap into it.
+pub fn sky_palette(time_of_day: f32) -> SkyPalette {
+    let hour = time_of_day.rem_euclid(24.0);
+    KEYFRAMES
+        .windows(2)
+        .find(|pair| hour >= pair[0].0 && hour < pair[1].0)
+        .map_or(NIGHT, |pair| {
+            let (start, from) = pair[0];
+            let (end, to) = pair[1];
+            from.lerp(to, smoothstep(start, end, hour))
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use proptest::prelude::*;
+
+    use super::*;
+
+    const TOLERANCE: f32 = 1e-5;
+
+    fn assert_colour_eq(actual: [f32; 3], expected: [f32; 3], what: &str) {
+        for channel in 0..3 {
+            assert!(
+                (actual[channel] - expected[channel]).abs() < TOLERANCE,
+                "{what}: expected {expected:?}, got {actual:?}"
+            );
+        }
+    }
+
+    fn assert_palette_eq(actual: SkyPalette, expected: SkyPalette, what: &str) {
+        assert_colour_eq(actual.zenith, expected.zenith, &format!("{what} zenith"));
+        assert_colour_eq(actual.horizon, expected.horizon, &format!("{what} horizon"));
+        assert_colour_eq(actual.ground, expected.ground, &format!("{what} ground"));
+    }
+
+    const NIGHT: SkyPalette = SkyPalette {
+        zenith: [0.05, 0.05, 0.15],
+        horizon: [0.1, 0.1, 0.2],
+        ground: [0.05, 0.05, 0.1],
+    };
+    const DAY: SkyPalette = SkyPalette {
+        zenith: [0.5, 0.85, 0.95],
+        horizon: [0.85, 0.95, 0.98],
+        ground: [0.6, 0.65, 0.7],
+    };
+    /// Halfway between night and dawn: `smoothstep(5, 7, 6) == 0.5`.
+    const SIX_OCLOCK: SkyPalette = SkyPalette {
+        zenith: [0.175, 0.275, 0.425],
+        horizon: [0.55, 0.35, 0.3],
+        ground: [0.125, 0.1, 0.15],
+    };
+    /// Halfway between day and dusk: `smoothstep(17, 21, 19) == 0.5`.
+    const SEVEN_PM: SkyPalette = SkyPalette {
+        zenith: [0.4, 0.625, 0.775],
+        horizon: [0.925, 0.725, 0.64],
+        ground: [0.4, 0.4, 0.425],
+    };
+
+    #[test]
+    fn palette_matches_the_skybox_at_each_period() {
+        let table = [
+            (2.0, NIGHT),
+            (6.0, SIX_OCLOCK),
+            (12.0, DAY),
+            (19.0, SEVEN_PM),
+            (23.0, NIGHT),
+        ];
+
+        for (hour, expected) in table {
+            assert_palette_eq(sky_palette(hour), expected, &format!("{hour} h"));
+        }
+    }
+
+    #[test]
+    fn palette_blends_by_smoothstep_not_linearly() {
+        // smoothstep(5, 7, 5.5) = smoothstep(17, 21, 18) = 0.15625
+        let t = 0.15625_f32;
+        let dawn_horizon = [1.0_f32, 0.6, 0.4];
+        let dusk_ground = [0.2_f32, 0.15, 0.15];
+
+        let early_dawn = sky_palette(5.5);
+        let early_dusk = sky_palette(18.0);
+
+        let mix = |a: [f32; 3], b: [f32; 3]| [0, 1, 2].map(|i| a[i] + (b[i] - a[i]) * t);
+        assert_colour_eq(
+            early_dawn.horizon,
+            mix(NIGHT.horizon, dawn_horizon),
+            "5.5 h horizon",
+        );
+        assert_colour_eq(
+            early_dusk.ground,
+            mix(DAY.ground, dusk_ground),
+            "18 h ground",
+        );
+    }
+
+    #[test]
+    fn palette_has_no_jump_at_any_period_boundary() {
+        for hour in [5.0_f32, 7.0, 8.0, 17.0, 21.0, 22.0] {
+            let distance = max_channel_distance(sky_palette(hour - 1e-4), sky_palette(hour));
+            assert!(distance < 1e-3, "palette jumps {distance} at {hour} h");
+        }
+    }
+
+    #[test]
+    fn palette_blends_dawn_into_day_and_dusk_into_night_over_an_hour() {
+        let half = |a: [f32; 3], b: [f32; 3]| [0, 1, 2].map(|i| (a[i] + b[i]) / 2.0);
+        let dawn_zenith = [0.3_f32, 0.5, 0.7];
+        let dusk_horizon = [1.0_f32, 0.5, 0.3];
+
+        assert_colour_eq(
+            sky_palette(7.5).zenith,
+            half(dawn_zenith, DAY.zenith),
+            "7.5 h zenith",
+        );
+        assert_palette_eq(sky_palette(8.0), DAY, "8 h");
+        assert_colour_eq(
+            sky_palette(21.5).horizon,
+            half(dusk_horizon, NIGHT.horizon),
+            "21.5 h horizon",
+        );
+        assert_palette_eq(sky_palette(22.0), NIGHT, "22 h");
+    }
+
+    #[test]
+    fn palette_wraps_hours_into_a_day() {
+        for (hour, same_as) in [
+            (26.0, 2.0),
+            (30.0, 6.0),
+            (-1.0, 23.0),
+            (-18.0, 6.0),
+            (36.0, 12.0),
+        ] {
+            assert_palette_eq(
+                sky_palette(hour),
+                sky_palette(same_as),
+                &format!("{hour} h wraps to {same_as} h"),
+            );
+        }
+    }
+
+    #[test]
+    fn palette_is_continuous_across_the_24_to_0_wrap() {
+        let before = sky_palette(24.0 - 1e-4);
+        let after = sky_palette(0.0);
+
+        assert_palette_eq(before, after, "midnight");
+    }
+
+    fn max_channel_distance(a: SkyPalette, b: SkyPalette) -> f32 {
+        [
+            (a.zenith, b.zenith),
+            (a.horizon, b.horizon),
+            (a.ground, b.ground),
+        ]
+        .into_iter()
+        .flat_map(|(x, y)| (0..3).map(move |i| (x[i] - y[i]).abs()))
+        .fold(0.0, f32::max)
+    }
+
+    proptest! {
+        #[test]
+        fn palette_is_continuous_across_period_boundaries(t in 0.0f32..24.0) {
+            let step = 1e-3;
+
+            let distance = max_channel_distance(sky_palette(t), sky_palette(t + step));
+
+            // The steepest blend (dusk to night horizon over one hour) moves 1.35 units
+            // per hour at its peak, so a thousandth of an hour stays under this.
+            prop_assert!(distance < 5e-3, "palette jumps {distance} between {t} and {}", t + step);
+        }
+    }
+}

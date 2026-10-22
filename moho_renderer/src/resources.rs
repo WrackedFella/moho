@@ -127,7 +127,7 @@ impl ResourcePool {
     ///
     /// This creates:
     /// - Camera buffer (80 bytes for view/proj matrices)
-    /// - Lighting buffer (96 bytes for sun/moon/ambient with defaults)
+    /// - Lighting buffer (144 bytes: sun/moon/ambient and the sky palette, with defaults)
     /// - Material buffer (32 bytes for 1 initial white material)
     /// - Camera bind group (combines above 3 buffers)
     /// - Depth texture (matches surface dimensions)
@@ -260,7 +260,7 @@ impl ResourcePool {
 
     /// Create the lighting uniform buffer with default lighting.
     ///
-    /// Size: 96 bytes (6 vec4s: sun_dir, sun_col, moon_dir, moon_col, ambient, time_of_day)
+    /// Size: `size_of::<LightingGpu>()`.
     fn create_lighting_buffer(device: &wgpu::Device) -> wgpu::Buffer {
         let initial_lighting = LightingGpu::default();
         device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

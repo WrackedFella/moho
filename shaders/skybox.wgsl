@@ -14,8 +14,11 @@ struct Lighting {
     sun_color: vec4<f32>,      // xyz = color, w = unused
     moon_direction: vec4<f32>, // xyz = direction (normalized), w = intensity
     moon_color: vec4<f32>,     // xyz = color, w = unused
-    ambient: vec4<f32>,        // xyz = color, w = intensity
+    ambient: vec4<f32>,        // w = sky-ambient strength, xyz = unused
     time_of_day: vec4<f32>,    // x = 0-24 hours, yzw = unused
+    sky_zenith: vec4<f32>,     // xyz = colour, w = unused
+    sky_horizon: vec4<f32>,    // xyz = colour, w = unused
+    sky_ground: vec4<f32>,     // xyz = colour, w = unused
 }
 
 @group(0) @binding(0)
@@ -114,80 +117,14 @@ fn inverse_mat4(m: mat4x4<f32>) -> mat4x4<f32> {
     );
 }
 
-// Calculate sky colors based on time of day
-fn get_sky_colors(time: f32) -> array<vec3<f32>, 3> {
-    // Time periods:
-    // Night:   0-5, 21-24 (deep blue/black)
-    // Dawn:    5-7 (warm oranges/pinks)
-    // Day:     7-17 (robin's egg blue)
-    // Dusk:    17-21 (warm oranges/reds)
-    
-    var zenith: vec3<f32>;
-    var horizon: vec3<f32>;
-    var ground: vec3<f32>;
-    
-    // Night colors (0-5, 21-24)
-    let night_zenith = vec3<f32>(0.05, 0.05, 0.15);   // Very dark blue
-    let night_horizon = vec3<f32>(0.1, 0.1, 0.2);     // Slightly lighter dark blue
-    let night_ground = vec3<f32>(0.05, 0.05, 0.1);    // Almost black
-    
-    // Dawn colors (5-7)
-    let dawn_zenith = vec3<f32>(0.3, 0.5, 0.7);       // Deep blue
-    let dawn_horizon = vec3<f32>(1.0, 0.6, 0.4);      // Orange/pink
-    let dawn_ground = vec3<f32>(0.2, 0.15, 0.2);      // Dark purple
-    
-    // Day colors (7-17)
-    let day_zenith = vec3<f32>(0.5, 0.85, 0.95);      // Robin's egg blue
-    let day_horizon = vec3<f32>(0.85, 0.95, 0.98);    // Almost white cyan
-    let day_ground = vec3<f32>(0.6, 0.65, 0.7);       // Light gray
-    
-    // Dusk colors (17-21)
-    let dusk_zenith = vec3<f32>(0.3, 0.4, 0.6);       // Deep blue
-    let dusk_horizon = vec3<f32>(1.0, 0.5, 0.3);      // Orange/red
-    let dusk_ground = vec3<f32>(0.2, 0.15, 0.15);     // Dark brown
-    
-    if (time >= 0.0 && time < 5.0) {
-        // Night (0-5)
-        zenith = night_zenith;
-        horizon = night_horizon;
-        ground = night_ground;
-    } else if (time >= 5.0 && time < 7.0) {
-        // Dawn transition (5-7)
-        let t = smoothstep(5.0, 7.0, time);
-        zenith = mix(night_zenith, dawn_zenith, t);
-        horizon = mix(night_horizon, dawn_horizon, t);
-        ground = mix(night_ground, dawn_ground, t);
-    } else if (time >= 7.0 && time < 17.0) {
-        // Day (7-17)
-        zenith = day_zenith;
-        horizon = day_horizon;
-        ground = day_ground;
-    } else if (time >= 17.0 && time < 21.0) {
-        // Dusk transition (17-21)
-        let t = smoothstep(17.0, 21.0, time);
-        zenith = mix(day_zenith, dusk_zenith, t);
-        horizon = mix(day_horizon, dusk_horizon, t);
-        ground = mix(day_ground, dusk_ground, t);
-    } else {
-        // Night (21-24)
-        zenith = night_zenith;
-        horizon = night_horizon;
-        ground = night_ground;
-    }
-    
-    return array<vec3<f32>, 3>(zenith, horizon, ground);
-}
-
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let dir = normalize(in.world_pos);
-    let time = lighting.time_of_day.x;
-    
-    // Get sky colors based on time of day
-    let colors = get_sky_colors(time);
-    let zenith_color = colors[0];
-    let horizon_color = colors[1];
-    let ground_color = colors[2];
+
+    // Sky colours come from the lighting uniform, shared with the ambient light
+    let zenith_color = lighting.sky_zenith.xyz;
+    let horizon_color = lighting.sky_horizon.xyz;
+    let ground_color = lighting.sky_ground.xyz;
     
     // Interpolate based on vertical direction
     let t = dir.y; // -1 (down) to 1 (up)

@@ -1266,6 +1266,16 @@ mod tests {
         }
 
         #[test]
+        fn playing_frame_uploads_the_sky_ambient_strength_by_day() {
+            let mut app = playing_app();
+            let mut fake = FakeRenderer::default();
+
+            run_frame_at(&mut app, &mut fake, 12.0);
+
+            assert_eq!(fake.lightings[0].ambient, [0.0, 0.0, 0.0, 0.15]);
+        }
+
+        #[test]
         fn playing_frame_uploads_zero_sun_intensity_by_night() {
             let mut app = playing_app();
             let mut fake = FakeRenderer::default();

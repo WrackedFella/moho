@@ -15,7 +15,7 @@ Commands are case-insensitive on the first token; arguments are whitespace-separ
 | `noclip` | | Toggle noclip |
 | `sun` | `<yaw> <pitch>` | Sun direction in degrees |
 | `time` | `<0-24>` | Time of day in hours: 0 midnight, 6 dawn, 12 noon, 18 dusk |
-| `r_debug_view` | `<mode>` | 0 None, 1 Normals, 2 Bias, 3 Shadows, 4 LightLevel, 5 PointLights; other values are rejected with a message |
+| `r_debug_view` | `<mode>` | 0 None, 1 Normals, 2 Bias, 3 Shadows, 4 LightLevel, 5 PointLights, 6 SkyAmbient; other values are rejected with a message |
 | `r_shadow_quality` | `<0-4>` | Off, Low, Med, High, Ultra |
 | `r_ssao_quality` | `<0-4>` | Off, Low, Med, High, Ultra |
 | `spawn` | `<type> [args]` | `torch`, `light` (args `r g b`), `cube`, `sphere`; placed by raycast from the camera |
@@ -44,7 +44,7 @@ Out-of-range quality values are rejected with a message. Unknown commands print 
 | Command | Args | Effect |
 |---|---|---|
 | `help`, `clear`, `quit` | | As above |
-| `r_debug_view` | `<0-5>` | Debug view, same modes as above; overrides the game's lighting value in every later lighting update (`Renderer::set_debug_view`) |
+| `r_debug_view` | `<0-6>` | Debug view, same modes as above; overrides the game's lighting value in every later lighting update (`Renderer::set_debug_view`) |
 | `r_shadow_quality` | `<0-4>` | As above |
 | `r_ssao_quality` | `<0-4>` | As above |
 | `audio_cue` | `<path> <x> <y> <z> [volume]` | Play a sound at a world position in metres (volume defaults to 1.0); non-finite numbers are rejected |
