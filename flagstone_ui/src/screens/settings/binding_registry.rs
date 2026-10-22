@@ -49,6 +49,7 @@ impl BindingRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use moho_input::Modifiers;
     use moho_input::bindings::Input;
 
     fn registry() -> BindingRegistry {
@@ -155,6 +156,27 @@ mod tests {
         registry.set_binding(
             StrategyAction::MoveForward,
             vec![Binding::key(Key::W), Binding::key(Key::R).held()],
+        );
+
+        assert_eq!(
+            registry.find_conflict(Key::R, StrategyAction::MoveLeft),
+            None
+        );
+        assert_eq!(
+            registry.find_conflict(Key::W, StrategyAction::MoveLeft),
+            Some(StrategyAction::MoveForward)
+        );
+    }
+
+    #[test]
+    fn find_conflict_ignores_a_chord_on_the_key() {
+        let mut registry = registry();
+        registry.set_binding(
+            StrategyAction::MoveForward,
+            vec![
+                Binding::key(Key::W),
+                Binding::key(Key::R).with(Modifiers::CTRL),
+            ],
         );
 
         assert_eq!(

@@ -4,11 +4,13 @@
 //! property. Failing tests identify exactly which guarantee broke.
 
 use flagstone_voxel::{
-    LightPropagator, MaterialLighting, MaterialType, VoxelGrid, dirty_chunks_below,
-    recompute_sky_exposure,
+    LightFrameBudget, LightPropagator, LightSystem, MaterialLighting, MaterialType, VoxelGrid,
+    dirty_chunks_below, recompute_sky_exposure,
 };
 use glam::{IVec3, Vec3};
+use moho_core::events::EventBus;
 use proptest::prelude::*;
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1034,4 +1036,180 @@ proptest! {
             IVec3::splat(21 + 16),
         );
     }
+}
+
+#[test]
+fn sky_recompute_reports_whether_any_exposure_bit_changed() {
+    let mut grid = grid_16();
+    let cp = IVec3::ZERO;
+    let block = IVec3::new(3, 8, 3);
+    grid.chunk_light_mut(cp);
+
+    let first = recompute_sky_exposure(&mut grid, cp);
+    grid.chunk_light_mut(cp).sky_dirty = true;
+    let unchanged = recompute_sky_exposure(&mut grid, cp);
+    grid.mutator().place(block, 0, None);
+    let shadowed = recompute_sky_exposure(&mut grid, cp);
+    grid.chunk_light_mut(cp).sky_dirty = true;
+    let shadowed_again = recompute_sky_exposure(&mut grid, cp);
+    grid.mutator().remove(block);
+    let uncovered = recompute_sky_exposure(&mut grid, cp);
+    let clean = recompute_sky_exposure(&mut grid, cp);
+
+    assert!(first, "a fresh chunk light gains its exposed bits");
+    assert!(!unchanged, "the same blocks give the same bits");
+    assert!(shadowed, "a new roof shadows voxels");
+    assert!(!shadowed_again, "recomputing the same roof changes nothing");
+    assert!(uncovered, "removing the roof exposes voxels again");
+    assert!(!clean, "a chunk that is not sky_dirty reports no change");
+}
+
+// ---------------------------------------------------------------------------
+// Chunk arrival
+// ---------------------------------------------------------------------------
+
+const REGION_X: i32 = 3;
+const REGION_Y: i32 = 2;
+const REGION_Z: i32 = 3;
+const REGION_CHUNKS: usize = (REGION_X * REGION_Y * REGION_Z) as usize;
+
+/// Material 0 is opaque, 1 a transparent marker, 2 a torch.
+fn region_grid() -> VoxelGrid {
+    let mut grid = grid_16();
+    make_transparent(&mut grid);
+    make_torch(&mut grid);
+    for index in 0..REGION_CHUNKS {
+        grid.chunk_light_mut(region_chunk(index));
+    }
+    grid
+}
+
+fn region_chunk(index: usize) -> IVec3 {
+    let index = index as i32;
+    IVec3::new(
+        index % REGION_X,
+        (index / REGION_X) % REGION_Y,
+        index / (REGION_X * REGION_Y),
+    )
+}
+
+/// One random block: local position, then whether it emits (else it is opaque).
+type RandomBlock = (i32, i32, i32, bool);
+
+fn random_blocks() -> impl Strategy<Value = Vec<RandomBlock>> {
+    proptest::collection::vec((0..16, 0..16, 0..16, any::<bool>()), 0..6)
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(8))]
+
+    /// Whatever order chunks stream in, light and sky end up as if the whole
+    /// world had been built first and lit in one pass.
+    #[test]
+    fn prop_chunks_arriving_in_any_order_match_a_fresh_fill(
+        per_chunk in proptest::collection::vec(random_blocks(), REGION_CHUNKS),
+        order in Just((0..REGION_CHUNKS).collect::<Vec<usize>>()).prop_shuffle(),
+        batch_sizes in proptest::collection::vec(1usize..=6, REGION_CHUNKS),
+    ) {
+        // Every chunk holds a transparent marker so none is an absent all-air chunk.
+        let mut reference = region_grid();
+        for (index, blocks) in per_chunk.iter().enumerate() {
+            let min = region_chunk(index) * 16;
+            reference.mutator().place(min, 1, None);
+            for &(x, y, z, emits) in blocks {
+                reference.mutator().place(min + IVec3::new(x, y, z), if emits { 2 } else { 0 }, None);
+            }
+        }
+        let bytes: Vec<Vec<u8>> = (0..REGION_CHUNKS)
+            .map(|index| reference.serialize_chunk(region_chunk(index)).expect("chunk holds blocks"))
+            .collect();
+
+        let mut light_system = LightSystem::new(
+            region_grid(),
+            Arc::new(EventBus::new()),
+            LightFrameBudget::default(),
+        );
+        let mut remaining = order.as_slice();
+        for size in batch_sizes {
+            if remaining.is_empty() {
+                break;
+            }
+            let (batch, rest) = remaining.split_at(size.min(remaining.len()));
+            remaining = rest;
+            let mut chunks = Vec::new();
+            for &index in batch {
+                let chunk = region_chunk(index);
+                light_system
+                    .grid_mut()
+                    .deserialize_chunk_into(chunk, &bytes[index])
+                    .unwrap();
+                chunks.push(chunk);
+            }
+            light_system.light_arrived_chunks(&chunks);
+        }
+        prop_assert!(remaining.is_empty(), "every chunk arrived");
+
+        LightPropagator::new().flood_fill_block_lights(&mut reference);
+        for layer in (0..REGION_Y).rev() {
+            for index in 0..REGION_CHUNKS {
+                let chunk = region_chunk(index);
+                if chunk.y == layer {
+                    recompute_sky_exposure(&mut reference, chunk);
+                }
+            }
+        }
+
+        let grid = light_system.grid();
+        for x in 0..REGION_X * 16 {
+            for y in 0..REGION_Y * 16 {
+                for z in 0..REGION_Z * 16 {
+                    let pos = IVec3::new(x, y, z);
+                    prop_assert_eq!(rgb(grid, pos), rgb(&reference, pos), "block light at {:?}", pos);
+                    prop_assert_eq!(sky(grid, pos), sky(&reference, pos), "sky at {:?}", pos);
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Removal re-seeding
+// ---------------------------------------------------------------------------
+
+/// Removes the light of an air voxel next to a block that still holds `planted`
+/// light, far from the origin. Returns the light left in the air voxel.
+fn light_left_after_removal(block_material: u32, planted: [u8; 3]) -> [u8; 3] {
+    let mut grid = grid_16();
+    make_transparent(&mut grid);
+    grid.material_registry.set_lighting(
+        2,
+        MaterialLighting {
+            emission: [5, 0, 0],
+            opacity_cost: 15,
+        },
+    );
+    let air = IVec3::new(2, 1, 3) * 16 + IVec3::new(3, 3, 3);
+    let block = air + IVec3::X;
+    grid.mutator().place(block, block_material, None);
+    grid.set_block_light_rgb(air, [9, 0, 0]);
+    grid.set_block_light_rgb(block, planted);
+
+    LightPropagator::new().remove_light(&mut grid, air);
+
+    rgb(&grid, air)
+}
+
+#[test]
+fn removal_does_not_reseed_from_light_left_in_an_opaque_non_emitter() {
+    assert_eq!(light_left_after_removal(0, [10, 0, 0]), [0, 0, 0]);
+}
+
+#[test]
+fn removal_reseeds_from_an_opaque_emitter_holding_its_light() {
+    assert_eq!(light_left_after_removal(2, [10, 0, 0]), [9, 0, 0]);
+}
+
+#[test]
+fn removal_reseeds_from_a_transparent_block_holding_survivor_light() {
+    assert_eq!(light_left_after_removal(1, [10, 0, 0]), [9, 0, 0]);
 }

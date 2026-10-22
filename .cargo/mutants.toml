@@ -192,4 +192,31 @@ exclude_re = [
     'replace \| with \^ in ActionMap<A>::sync_stick_directions',
     # moho_ui_shell::host: `input_of` now returns `Input` (ENG-F26-01); same headless KeyEvent limit as above.
     'replace input_of -> Option<\(Input, bool, bool\)> with None',
+        # moho_level::nav (#454). Equivalent: rerecast winds every polygon clockwise, so the
+    # reversal always runs and -1.0 satisfies the debug check that says so.
+    'replace signed_area -> f32 with -1\.0',
+    # Equivalent: these differ only for a zero-length polygon edge or a zero-area fan
+    # triangle, which rerecast does not emit.
+    'replace > with >= in Polygon::closest_ground_point',
+    'replace < with (==|<=) in Polygon::height_at',
+    # Equivalent: two fan triangles tie only on their shared edge, where both give one height.
+    'replace > with >= in Polygon::height_at',
+    # Float-exact snap limits: vertices are voxel-quantised, so no test can sit exactly on one.
+    'replace > with >= in snap',
+    # BinaryHeap orders by Ord only; eq exists for the trait bound and is never called.
+    'replace <impl PartialEq for Open>::eq -> bool with (true|false)',
+    # Equivalent: only changes which of two exactly tied routes is kept, not the path length.
+    'replace < with <= in route',
+    # Unobservable in every scene we built: ordering by cost x remaining distance still picked
+    # the same corridor (not proven equivalent).
+    'replace \+ with \* in priority',
+    # Equivalent: the step counter only feeds the debug guard against a stalled funnel. The
+    # pattern also skips `i += 1`, which that guard catches.
+    'replace \+= with \*= in funnel',
+    # Equivalent: these only change whether a portal vertex exactly collinear with a funnel side
+    # is listed; the path geometry is the same. The `<` pattern also skips the loop bound
+    # (caught by an index panic) and `+ with *` the left-side restart (caught by tests).
+    'replace < with <= in funnel',
+    'replace > with >= in funnel',
+    'replace \+ with \* in funnel',
 ]

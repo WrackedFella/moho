@@ -198,16 +198,15 @@ impl AppInitializer {
     }
 }
 
-/// Builds the action map a game runs on from `config`: the prefs' bindings, the
-/// scaled mouse sensitivity, the mouse-smoothing switch and the invert-Y
-/// switch. Shared by startup and by adopting saved settings so the two can't drift
-/// apart.
+/// Builds the action map a game runs on from `config`. Shared by startup and by
+/// adopting saved settings so the two can't drift apart.
 pub(crate) fn build_actions(config: &AppConfig) -> ActionMap<StrategyAction> {
     let mut actions = ActionMap::new(load_bindings(&config.prefs), config.mouse_sensitivity);
     actions.set_look(LookSettings {
         look_per_count: config.mouse_sensitivity,
         smoothing: config.mouse_smoothing,
         invert_y: config.invert_mouse_y,
+        acceleration: config.mouse_acceleration,
     });
     actions
 }
@@ -250,6 +249,33 @@ mod tests {
             actions.end_tick().look(),
             (5.0 * source_look_per_count(250.0), 0.0)
         );
+    }
+
+    #[test]
+    fn build_actions_applies_mouse_acceleration_from_prefs() {
+        let base = Prefs::default().with_mouse_acceleration_strength(0.04);
+        let mut on = build_actions(&AppConfig::from_prefs_struct(
+            base.clone().with_mouse_acceleration(true),
+        ));
+        let mut off = build_actions(&AppConfig::from_prefs_struct(
+            base.with_mouse_acceleration(false),
+        ));
+
+        for actions in [&mut on, &mut off] {
+            actions.mouse_motion(10.0, 0.0);
+            actions.sample_frame(Duration::from_millis(10));
+        }
+        let plain = 10.0 * source_look_per_count(3.0);
+        let accelerated = 10.0 * (source_look_per_count(3.0) + source_look_per_count(0.04));
+
+        // 10 counts over 10 ms is 1 count/ms.
+        assert_eq!(off.end_tick().look(), (plain, 0.0));
+        let (yaw, pitch) = on.end_tick().look();
+        assert!(
+            (yaw - accelerated).abs() < 1e-6,
+            "yaw {yaw}, want {accelerated}"
+        );
+        assert_eq!(pitch, 0.0);
     }
 
     #[test]

@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use glam::{Quat, Vec3};
+use moho_core::rng::{SimRng, StreamId};
 use moho_physics::{
     CharacterCommand, CharacterHandle, CharacterState, HitVolume, MoveSettings, PhysicsWorld,
     first_person_view,
@@ -189,24 +190,12 @@ struct Target {
     hurt: Option<Vec3>,
 }
 
-/// SplitMix64: a small seeded generator, so enemy spread repeats for a seed.
-#[derive(Debug)]
-struct SplitMix64(u64);
+/// The engine stream enemy aim error draws from; later draws add streams of their own.
+const SPREAD_STREAM: StreamId = StreamId::named("searchlight.enemy_spread");
 
-impl SplitMix64 {
-    fn next_u64(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
-    }
-
-    /// Uniform in `[-1, 1)`.
-    fn next_signed(&mut self) -> f32 {
-        let unit = (self.next_u64() >> 40) as f32 / (1u64 << 24) as f32;
-        unit * 2.0 - 1.0
-    }
+/// The next draw of `rng`, uniform in `[-1, 1)`.
+fn next_signed(rng: &mut SimRng) -> f32 {
+    rng.next_f32() * 2.0 - 1.0
 }
 
 /// The world, the player, the rifle, the dummies and the enemies.
@@ -233,7 +222,7 @@ pub struct SearchlightSim {
     /// Offset from the player's capsule centre to the part the enemies aim at, before the
     /// player's yaw is applied.
     aim_offset: Vec3,
-    rng: SplitMix64,
+    rng: SimRng,
     weapon: Weapon,
     outbox: Vec<Feedback>,
     /// Lethal player shots on enemies since the sim was built or last restarted.
@@ -349,7 +338,7 @@ impl SearchlightSim {
             covers: spawns.covers.clone(),
             enemy: config.enemy,
             aim_offset,
-            rng: SplitMix64(config.enemy.seed),
+            rng: SimRng::new(config.enemy.seed, SPREAD_STREAM),
             weapon: Weapon::Ready,
             outbox: Vec::new(),
             kills: 0,
@@ -545,8 +534,8 @@ impl SearchlightSim {
         let forward = direction.normalize_or_zero();
         let right = forward.cross(Vec3::Y).normalize_or(Vec3::X);
         let up = right.cross(forward);
-        let across = self.rng.next_signed() * self.enemy.aim_error;
-        let rise = self.rng.next_signed() * self.enemy.aim_error;
+        let across = next_signed(&mut self.rng) * self.enemy.aim_error;
+        let rise = next_signed(&mut self.rng) * self.enemy.aim_error;
         forward + right * across + up * rise
     }
 
@@ -2672,6 +2661,20 @@ mod enemy_tests {
     }
 
     #[test]
+    fn restart_replays_the_spread_of_a_fresh_start() {
+        let (mut restarted, arena, config) = dead_player_in_a_busy_arena();
+        let mut fresh = SearchlightSim::start(arena, config);
+        assert_ne!(restarted.rng, fresh.rng, "enemies fired before the restart");
+
+        restarted.tick(&restart(), DT);
+
+        let aim = Vec3::new(0.0, 0.0, 5.0);
+        for _ in 0..4 {
+            assert_eq!(restarted.with_spread(aim), fresh.with_spread(aim));
+        }
+    }
+
+    #[test]
     fn a_dead_player_in_an_arena_sim_restarts_to_a_living_one() {
         let mut sim = SearchlightSim::start(arena_with(&[], Vec3::ZERO, &[], &[]), config());
         sim.player_body.hit(BodyPart::Torso, 1_000);
@@ -3212,47 +3215,46 @@ mod pinned_behaviour_tests {
         );
     }
 
-    #[test]
-    fn splitmix64_from_seed_zero_matches_the_published_reference_outputs() {
-        let mut rng = SplitMix64(0);
-
-        let outputs = [rng.next_u64(), rng.next_u64(), rng.next_u64()];
-
-        assert_eq!(
-            outputs,
-            [
-                0xE220_A839_7B1D_CDAF,
-                0x6E78_9E6A_A1B9_65F4,
-                0x06C4_5D18_8009_454F
-            ]
-        );
+    fn draws(seed: u64) -> [u32; 4] {
+        let mut rng = SimRng::new(seed, SPREAD_STREAM);
+        std::array::from_fn(|_| (next_signed(&mut rng) * 2f32.powi(23) + 2f32.powi(23)) as u32)
     }
 
     #[test]
-    fn splitmix64_from_another_seed_matches_its_reference_outputs() {
-        let mut rng = SplitMix64(7);
-
-        let outputs = [rng.next_u64(), rng.next_u64(), rng.next_u64()];
-
-        assert_eq!(
-            outputs,
-            [
-                0x63CB_E1E4_5932_0DD7,
-                0x044C_3CD7_F43C_661C,
-                0xE698_4080_BAB1_2A02
-            ]
-        );
+    fn spread_signed_draws_for_seed_7_are_pinned() {
+        // Top 24 bits of the first four draws are 11041070, 1582717, 8475421, 1962916,
+        // mapped to [-1, 1) as k / 2^24 * 2 - 1 (re-derived outside Rust).
+        assert_eq!(draws(7), [11_041_070, 1_582_717, 8_475_421, 1_962_916]);
+        let mut rng = SimRng::new(7, SPREAD_STREAM);
+        assert_close(next_signed(&mut rng), 0.316_198);
+        assert_close(next_signed(&mut rng), -0.811_325);
+        assert_close(next_signed(&mut rng), 0.010_348);
+        assert_close(next_signed(&mut rng), -0.766_002);
     }
 
     #[test]
-    fn next_signed_maps_the_top_24_bits_onto_minus_one_to_one() {
-        let mut rng = SplitMix64(0);
+    fn different_seeds_draw_different_spread() {
+        assert_eq!(draws(0), [7_626_714, 13_892_238, 15_447_443, 11_324_399]);
+        assert_ne!(draws(7), draws(0));
+    }
 
-        let values = [rng.next_signed(), rng.next_signed(), rng.next_signed()];
+    #[test]
+    fn the_default_enemy_seed_is_zero() {
+        assert_eq!(EnemyTuning::default().seed, 0);
+    }
 
-        assert_close(values[0], 0.766_622);
-        assert_close(values[1], -0.136_944);
-        assert_close(values[2], -0.947_132);
+    #[test]
+    fn a_zero_aim_error_never_moves_the_aim() {
+        let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        config.enemy.aim_error = 0.0;
+        config.enemy.seed = 7;
+        let mut sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
+        let before = sim.rng.clone();
+
+        let aimed = sim.with_spread(Vec3::new(0.0, 0.0, 5.0));
+
+        assert!(aimed.abs_diff_eq(Vec3::Z, 1e-6), "{aimed:?}");
+        assert_ne!(sim.rng, before, "the draws are still consumed");
     }
 
     #[test]
@@ -3283,15 +3285,12 @@ mod pinned_behaviour_tests {
         config.enemy.aim_error = 0.5;
         config.enemy.seed = 7;
         let mut sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
-        let mut reference = SplitMix64(7);
-        let across = reference.next_signed() * 0.5;
-        let rise = reference.next_signed() * 0.5;
 
         let aimed = sim.with_spread(Vec3::new(0.0, 0.0, 5.0));
 
         // Facing +Z the right-hand axis is -X and up is +Y.
         assert!(
-            aimed.abs_diff_eq(Vec3::new(-across, rise, 1.0), 1e-5),
+            aimed.abs_diff_eq(Vec3::new(-0.158_099, -0.405_663, 1.0), 1e-5),
             "{aimed:?}"
         );
     }

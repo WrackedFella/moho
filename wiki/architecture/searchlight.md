@@ -7,9 +7,9 @@
 `searchlight` is the FPS line's engine adapter: a library and the `searchlight` binary. Rules
 (`Rifle`, `Magazine`, `Body`, `BodyProfile`) come from `searchlight_rules`; windowing, loop,
 physics, level loading, input, audio and rendering come from engine crates. It depends on no
-strategy crate ([overview](overview.md#lines-and-rules)).
+strategy crate ([overview](overview.md#2-lines-and-rules)).
 
-## Layers
+## 1 Layers
 
 ```mermaid
 flowchart LR
@@ -32,7 +32,7 @@ flowchart LR
 |---|---|
 | `arena` | Loads `assets/arena.glb` through `moho_level`; `ArenaMarkers` sorts named markers by kind and orders waypoints into the patrol route; `Arena` is the loaded level the sim starts from (meshes, spawns, route, cover points) and builds the world colliders |
 | `tuning` | `tuning(&RifleDef)`: builds the `SimConfig`, taking the rifle's numbers from the definition |
-| `input` | `SearchlightAction` set and default bindings; `SearchlightCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on Enter) |
+| `input` | `SearchlightAction` set and default bindings; `build_action_map` builds the `ActionMap` at startup, with mouse look (`look_settings`: sensitivity, smoothing, invert Y) taken from `Prefs`, and a sensitivity not above zero falling back to the default 3.0; `SearchlightCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on Enter) |
 | `tag` | `SurfaceTag` (`World`, `Part { target, part }` or `Player(part)`) and its lossless round trip through the engine's opaque `moho_physics::HitTag` |
 | `shot` | `resolve_shot`: first tagged surface along a `ShotRay` in the `PhysicsWorld` |
 | `brain` | `Brain`: the enemy state machine (`Patrol`, `Engage`, `Cover`, `Chase`), pure over `glam` types; `Percept` in, `Intent` out; `EnemyTuning` holds its numbers |
@@ -52,7 +52,7 @@ flowchart LR
 exits the binary. `tuning::tuning` combines them with the numbers still set in code (speeds, body
 profile, `EnemyTuning`, the player part enemies aim at) as a `SimConfig`.
 
-## Console
+## 2 Console
 
 `SearchlightGame` owns a `moho_ui_shell::UiShell` behind an `Arc<Mutex<_>>` and composes it with the
 crosshair through `UiLayers` as the renderer's one UI source. Every key and button goes to the
@@ -77,7 +77,7 @@ and carried on every tick as `SearchlightCommand::god_mode`. While on, enemy hit
 `Feedback::PlayerHit` but do not damage the player's `Body`; it does not revive a dead player.
 The title status line appends `GOD MODE` (`hud::god_mode_text`).
 
-## Tick
+## 3 Tick
 
 `SearchlightSim::tick(command, dt)` lets the enemies perceive and move, moves the player character,
 steps the physics world, applies weapon actions, then resolves the shots the enemies decided
@@ -89,7 +89,7 @@ enemies. `SearchlightSim::new` builds one with dummies only. A sim started from 
 `Arena` and `SimConfig`; once the player is dead, `tick` reads only `SearchlightCommand::restart` and
 rebuilds the sim from them.
 
-## Waves
+## 4 Waves
 
 `ArenaMode::new(arena, config, waves)` builds the sim with `Start::Empty` (`SearchlightSim::with_start`):
 dummies and the player stand, enemy markers are remembered but unoccupied. Each
@@ -101,7 +101,7 @@ none alive. Spawned enemies take the next target number after the dummies; the d
 Nothing spawns while the player is dead; the restart rebuilds the sim empty and begins wave 1
 with no score. `SearchlightGame` reads `wave()` and `score()` for the HUD.
 
-## Enemies
+## 5 Enemies
 
 Each tick an enemy casts a sight ray from its eye to the player's aim point (the part chosen
 by `SimConfig::enemy_aim_at`) and sets `Percept::target` only when that ray strikes a
@@ -109,8 +109,8 @@ by `SimConfig::enemy_aim_at`) and sets `Percept::target` only when that ray stri
 fraction, yaw delta, fire). `Patrol` walks the route in order, wrapping; a target inside
 `sight_range` and `view_half_angle` starts `Engage`, which stands and faces the target while it
 stays visible, fires after `reaction_ticks` of continuous sight, within `fire_cone` of the
-bearing and off cooldown. Aim error comes from a seeded generator (`EnemyTuning::seed`), so
-runs repeat.
+bearing and off cooldown. Aim error comes from the `searchlight.enemy_spread` `SimRng` stream, started from
+`EnemyTuning::seed`, so runs repeat and a restart replays a fresh start.
 
 When the player wounds an enemy (a non-lethal hit), the sim records the player's position on
 that enemy (`Target::hurt`) and, from the `Arena` cover points, asks `cover::offer` for a
@@ -124,7 +124,7 @@ offer it turns to `Engage` on the shooter's position. An `Engage` that loses sig
 resumes `Patrol`; sight during `Chase` re-engages. Enemy shots use the shot path below; a hit on the player emits
 `Feedback::PlayerHit`, and a dead player emits `Feedback::PlayerDied`.
 
-## Shot path
+## 6 Shot path
 
 Player and enemy shots go through one route:
 
@@ -139,7 +139,7 @@ Tag encoding: `0` is `World`; a `Part` is `1 + ((target << 3) | part_index)`, wi
 (`dummy_hit_volumes`), one per `BodyPart`, tagged with the target number; the player carries the
 same boxes tagged `Player` (`player_hit_volumes`).
 
-## Arena contract
+## 7 Arena contract
 
 Markers are node names in the glTF file. `player_spawn` is required and unique; at least one
 `dummy_NN` is required; `enemy_spawn_NN` and `cover_NN` are optional (cover points feed `Arena::covers`; without them hurt enemies stand and fight; full-height `screen_NN` walls are plain geometry with no marker). `waypoint_NN` is optional

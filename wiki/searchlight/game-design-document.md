@@ -26,7 +26,7 @@ Each pillar is a filter: a feature that serves none of them is cut.
 
 ## 3 Core loop
 
-### Macro loop (the hamster wheel)
+### 3.1 Macro loop (the hamster wheel)
 
 1. **Take a job** (fetch, hunt, escort, recover, deliver) with a known payout.
 2. **Prepare:** spend money and items to kit out (ammo, mags, meds, food, repairs).
@@ -38,13 +38,13 @@ Each pillar is a filter: a feature that serves none of them is cut.
 
 Secondary loops (run away, wait it out) exist but are smaller and obvious.
 
-### Rules vs modes
+### 3.2 Rules vs modes
 
 - **Core rules** (weapons, items, wounds, survival, economy, Director) know nothing about score, rounds, waves or match timers.
 - **Arena scaffolding** (waves, score, round timer, restart) lives in a separate **mode layer** used to test the core rules in Phases 1–5. It is retired as the default experience in Phase 6, when the arena becomes a job site.
 - **Arena as a long-term mode** stays possible on the same layer: an optional mode (an in-world fighting pit, or a standalone arena mode) with its own scoring. It is not a commitment.
 
-### Micro loop (moment to moment)
+### 3.3 Micro loop (moment to moment)
 
 - **Movement:** grounded and weighty. Walk / sprint / crouch / prone (prone is a cut candidate). Stamina limits sprint; carry weight limits stamina. No slide, no double jump, no mantle in Phase 1.
 - **Combat:** few rounds to kill, unforgiving positional damage. Reloading is a commitment (mag in hand, round in chamber). Weapons can fail.

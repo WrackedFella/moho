@@ -41,7 +41,7 @@ flowchart LR
     P -->|"Prefs::save"| F
 ```
 
-## Running prefs and saving
+## 1 Running prefs and saving
 
 `App::prefs` is the running copy; `App::prefs_path` is where the app saves it (`None` for
 a headless `App`, so its console commands never touch the user's file; a Settings screen
@@ -57,23 +57,27 @@ opened there still saves to the default path).
   `App::adopt_settings`.
 - **`adopt_settings`** replaces `App::prefs` and rebuilds the input `ActionMap` through
   `build_actions`, the same function startup uses, so new bindings, sensitivity,
-  invert-Y and mouse smoothing apply without a restart. It also queues `AudioSettings::from_prefs`
+  invert-Y, mouse smoothing and mouse acceleration apply without a restart. It also queues `AudioSettings::from_prefs`
   (`moho_audio`), which the next frame applies to the audio engine. It does not write the file.
 - **Startup** builds the same `AudioSettings` from the loaded prefs and applies it on the
   first frame. Each category volume is its pref divided by ten and clamped to 0..=1; 0 is silent.
 
-## Keys
+## 2 Keys
 
 | Section | Key | Accepted values | Default |
 |---|---|---|---|
 | `[prefs]` | `mouse_sensitivity` | finite float, Source scale (see below) | `3` |
 | | `invert_mouse_y` | `true` `false` `1` `0` (any case) | `false` |
 | | `mouse_smoothing` | `true` `false` `1` `0` (any case) | `false` |
+| | `mouse_acceleration` | `true` `false` `1` `0` (any case) | `false` |
+| | `mouse_acceleration_strength` | finite float, Source `m_customaccel_scale` scale; negatives load unchanged and act as 0; the Settings screen clamps the value to 0 to 1 when shown | `0.04` |
 | `[bindings]` | one key per action id | binding list | per action, below |
 | `[audio]` | `sound_effect_volume` `music_volume` `ui_volume` `voice_volume` | finite float on a 0 to 10 scale (the UI offers 0.0 to 10.0), written with 1 decimal | `8.0` `6.0` `7.0` `9.0` |
 | `[graphics]` | `shadow_quality` `ssao_quality` | unsigned integer; the UI offers 0 (off) to 4 (ultra) | `3` `3` |
 | `[video]` | `window_mode` | `Windowed` \| `Fullscreen` \| `Borderless`, exact case | `Windowed` |
 | | `window_width` `window_height` | unsigned integer pixels | `1920` `1080` |
+| | `vsync` | `true` \| `false`; whether presented frames wait for the display refresh | `true` |
+| | `fps_max` | unsigned integer frames per second applied while `vsync` is off; `0` is uncapped; the Video tab's cap control clamps a value above 1000 to 1000 when shown | `300` |
 | `[world]` | `load_radius` `unload_radius` | integer chunks | `8` `12` |
 | | `chunks_per_frame` | unsigned integer, 1 or more | `4` |
 | `[content]` | `mods` | comma-separated mod names, order kept, blanks dropped; see [content format](content-format.md#mods) | none |
@@ -82,6 +86,10 @@ opened there still saves to the default path).
 `mouse_sensitivity` is on Source's scale: one count turns `0.022` degrees times the
 value (`source_look_per_count`, `moho_input/src/action_map.rs`), so `3` is the default feel.
 `invert_mouse_y` negates the mouse's vertical counts only; the stick is unaffected.
+`mouse_acceleration_strength` applies only while `mouse_acceleration` is on. It adds
+`source_look_per_count(strength)` look per count for each count per millisecond of mouse
+speed. Values carry over from Source's `m_customaccel_scale` only approximately: Source's
+acceleration varies with frame rate, and ours matches it at 1000 fps.
 
 `[bindings]` is stored by `Prefs` as raw text (`Prefs::bindings`, `Prefs::set_bindings`);
 the game interprets it. `ActionBindings::load` (`moho_input`) reads it against the
@@ -92,7 +100,7 @@ action keeps its default (`flagstone_ui::actions::load_bindings` logs them): an 
 action id, or a value with any unrecognised key. A `[bindings]` line with no `=` is a
 malformed prefs line. `console` is reserved in every game's `[bindings]`: it is the
 engine console's key (`moho_ui_shell`, default backtick; an unbound or unreadable value, or one
-with a `Hold ` item, falls back to backtick), not a game action. The pre-`[bindings]` `key_*` lines under `[prefs]` are unknown
+with a `Hold ` item or a chord, falls back to backtick), not a game action. The pre-`[bindings]` `key_*` lines under `[prefs]` are unknown
 keys and ignored.
 
 A binding list is comma-separated key names (`W`, `Spacebar, Enter`); an action may
@@ -103,8 +111,9 @@ punctuation spelled as a word (`Comma`, `Semicolon`, `LeftBracket`, ...), `Arrow
 `Alt` bound on their own. `Key::parse` also accepts the aliases `Up`, `Esc`, `Return`,
 `Space`, `Control` and the punctuation glyphs, but in `prefs.ini` write punctuation as
 words: the INI reader cuts a line at `;` or `#`, reads a line with `[` as a section
-header, and `,` separates list items. There is no modifier syntax such as `Ctrl+W`
-and no numeric key codes.
+header, and `,` separates list items. There are no numeric key codes.
+
+A chord prefixes a key or mouse button with `Ctrl+`, `Shift+` and `Alt+` (`Ctrl+R`, `Shift+Mouse Left`, `Hold Ctrl+R`; the `Hold ` prefix stays outermost). Modifiers parse in any order and case and are written back as Ctrl, Shift, Alt. A repeated modifier, a modifier equal to the bound key itself (`Ctrl+Ctrl`), a pad input (`Ctrl+Pad West`), an empty input or any other prefix (`Control+R`) is an unrecognised key and warns. `Shift+Ctrl` (a modifier key under another modifier) is valid. Resolution is in [input](../architecture/input-and-state.md).
 
 `[debug]` is a game-owned section of named values (a game's debug toggles), stored raw like
 `[bindings]` and written only when non-empty. `Prefs::debug_value` reads one;
@@ -140,7 +149,7 @@ Audio sections map to `AudioCategory` in `moho_audio/src/audio_source.rs`: `Soun
 
 World keys drive [world streaming](../architecture/world-streaming.md).
 
-## Example
+## 3 Example
 
 ```ini
 [prefs]
@@ -164,6 +173,8 @@ ssao_quality=3
 window_mode=Windowed
 window_width=1280
 window_height=720
+vsync=true
+fps_max=300
 
 [world]
 load_radius=8

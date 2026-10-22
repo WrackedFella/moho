@@ -75,7 +75,7 @@ flowchart LR
 - `AudioSystem` is not `Send`/`Sync` and stays on the main thread.
 - Event-bus history costs ~4.9× per publish when enabled; it is off by default.
 - The UI takes input precedence: `InputDispatcher` stops at the first consumer
-  ([input](architecture/input-and-state.md#input-routing)).
+  ([input](architecture/input-and-state.md#1-input-routing)).
 
 ## Conventions
 

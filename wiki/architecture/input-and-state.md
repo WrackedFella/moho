@@ -4,7 +4,7 @@
 `moho_core/src/pointer.rs`, `flagstone/src/app/game.rs` (`Game::event`, `poll_gamepads`), `flagstone/src/main.rs` (`handle_keyboard_input`), `flagstone_ui/src/app_state/game_state.rs`,
 `flagstone_ui/src/app_state/state_coordinator.rs`, `flagstone_ui/src/screens/pause.rs`, `moho_ui_shell/src/console/` (console key routing).
 
-## Input routing
+## 1 Input routing
 
 Every `WindowEvent` the runner forwards reaches `Game::event` (`App::handle_window_event`) and goes through this order. The first stage that
 consumes the event ends the path.
@@ -69,10 +69,12 @@ which returns an `ActionFrame` and resets the per-tick state:
 - `look`: the pending look that rendered frames sampled with `ActionMap::sample_frame(frame_dt)` since the last tick (read with `pending_look`); a tick consumes exactly what the last frame showed. The right stick adds `PAD_LOOK_PER_SECOND` times its deflection per second of frame time (after a
   small dead zone), on top of the mouse input below. The mouse part is the motion accumulated since the previous frame, its vertical part negated first when `LookSettings::invert_y` is on (the stick share is never inverted), smoothed when `LookSettings::smoothing`
   is on (a two-sample mean of raw counts, `MouseSmoothing` in `moho_input/src/filter.rs`, which loses no motion),
-  then scaled by `LookSettings::look_per_count` (radians per count, from the Source-scale sensitivity pref via `source_look_per_count`). `PAD_LOOK_PER_SECOND` is a half turn per second at the default sensitivity. `ActionMap::set_look` applies new settings. Motion is unnegated; `App::command` inverts it for
+  then scaled by `LookSettings::look_per_count` (radians per count, from the Source-scale sensitivity pref via `source_look_per_count`) plus `LookSettings::acceleration` times the mouse speed (the smoothed counts' length per millisecond of frame time; 0 when acceleration is off or the frame time is zero). `PAD_LOOK_PER_SECOND` is a half turn per second at the default sensitivity. `ActionMap::set_look` applies new settings. Motion is unnegated; `App::command` inverts it for
   yaw and pitch.
 
 A `Binding` is an `Input` (key, mouse button or pad input) plus a `Trigger`: `Press` or `Hold`. A `Hold` binding fires once its input has been down `Action::HOLD_TICKS` ticks (default `DEFAULT_HOLD_TICKS`, 18; one value per game, at least 1) and the action then stays held until release. An input that any action binds with `Hold` is split: its `Press` bindings no longer fire on press but as a tap (pressed and released in the same tick) when the input is released before the threshold; a release at or after maturing is not a tap. An input with no `Hold` binding fires `Press` bindings on press as usual. Searchlight uses this on `R`: tap reloads, hold checks the magazine.
+
+A `Binding` also carries `Modifiers`, a set of Ctrl, Shift and Alt that must be down with its input (a chord such as `Ctrl+R` or `Shift+Mouse Left`; pad inputs take none). When a key or mouse button goes down, the map resolves which modifier set it acts under: of the sets bound on that input and currently held, the one with the most modifiers wins, ties going Ctrl, then Shift, then Alt; no match means no modifiers, so an unbound chord falls through to the plain action. The set is fixed at the press and not re-read until release, so releasing a modifier first does not refire the plain binding and pressing one late does not turn the press into a chord. A binding is active only while the input's resolved set equals the binding's. A modifier key keeps its own bindings while it carries a chord. Hold splitting applies per (input, modifier set), so `Hold Ctrl+R` leaves plain `R` presses unsplit.
 
 A stick direction binding is down while its axis is at or past `STICK_DIRECTION_THRESHOLD`.
 An action is held when any of its bindings is active under the rules above. A frame holds at most 64 actions.
@@ -80,11 +82,11 @@ The map also tracks the pointer in physical pixels: `ActionFrame::pointer` is it
 
 Bindings persist in the `[bindings]` section of [prefs](../reference/prefs-format.md).
 
-## Pointer picking
+## 2 Pointer picking
 
 In the isometric view, a tick with `Select` pressed turns `press_pointer` into a world `Ray` with `moho_core::pointer::screen_ray` (view and projection of the frame the player saw, window size as viewport) and carries it in the command as `select`. The ray, not the pixel, is the command, so it replays without a window. The apply step casts it with `flagstone_game::raycast::raycast_surface` over `POINTER_RAY_RANGE` and stores the result in `App::pointer_hit`; a miss clears it. First-person never selects.
 
-## GameState
+## 3 GameState
 
 `flagstone_ui::GameState` decides input routing, rendering, cursor and whether the
 simulation runs. `can_transition_to` is the legality table; `StateTransitionCoordinator`
