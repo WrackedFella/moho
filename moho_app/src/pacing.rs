@@ -265,6 +265,52 @@ mod tests {
     }
 
     #[test]
+    fn a_pacer_with_an_interval_is_capped() {
+        assert!(FramePacer::new(Some(INTERVAL)).is_capped());
+        assert!(FramePacer::from_fps(NonZeroU32::new(60)).is_capped());
+    }
+
+    #[test]
+    fn an_uncapped_pacer_is_not_capped_and_never_redraws_on_wake() {
+        let t0 = Instant::now();
+        let mut pacer = FramePacer::new(None);
+        let before_any_frame = pacer.redraw_on_wake(t0);
+        pacer.frame_drawn(t0);
+
+        assert!(!pacer.is_capped());
+        assert!(!before_any_frame);
+        assert!(!pacer.redraw_on_wake(t0));
+        assert!(!pacer.redraw_on_wake(t0 + INTERVAL * 3));
+    }
+
+    #[test]
+    fn redraw_on_wake_is_true_when_capped_and_due() {
+        let t0 = Instant::now();
+        let mut pacer = FramePacer::new(Some(INTERVAL));
+        pacer.frame_drawn(t0);
+
+        assert!(pacer.redraw_on_wake(t0 + INTERVAL));
+        assert!(pacer.redraw_on_wake(t0 + INTERVAL * 3));
+    }
+
+    #[test]
+    fn redraw_on_wake_is_false_when_capped_and_not_yet_due() {
+        let t0 = Instant::now();
+        let mut pacer = FramePacer::new(Some(INTERVAL));
+        pacer.frame_drawn(t0);
+
+        assert!(!pacer.redraw_on_wake(t0));
+        assert!(!pacer.redraw_on_wake(t0 + INTERVAL / 2));
+    }
+
+    #[test]
+    fn redraw_on_wake_is_true_when_capped_before_the_first_frame() {
+        let pacer = FramePacer::new(Some(INTERVAL));
+
+        assert!(pacer.redraw_on_wake(Instant::now()));
+    }
+
+    #[test]
     fn no_fps_cap_is_uncapped() {
         let t0 = Instant::now();
         let mut pacer = FramePacer::from_fps(None);

@@ -451,6 +451,60 @@ mod tests {
     }
 
     #[test]
+    fn frame_cap_is_none_while_vsync_is_on_even_with_fps_max_set() {
+        let mut prefs = Prefs::default();
+        prefs.set_vsync(true);
+        prefs.set_fps_max(144);
+
+        assert_eq!(prefs.frame_cap(), None);
+    }
+
+    #[test]
+    fn frame_cap_is_none_when_vsync_is_off_and_fps_max_is_zero() {
+        let mut prefs = Prefs::default();
+        prefs.set_vsync(false);
+        prefs.set_fps_max(0);
+
+        assert_eq!(prefs.frame_cap(), None);
+    }
+
+    #[test]
+    fn frame_cap_is_fps_max_when_vsync_is_off() {
+        let mut prefs = Prefs::default();
+        prefs.set_vsync(false);
+
+        prefs.set_fps_max(144);
+        let custom = prefs.frame_cap();
+        prefs.set_fps_max(300);
+        let default_cap = prefs.frame_cap();
+
+        assert_eq!(custom, std::num::NonZeroU32::new(144));
+        assert_eq!(default_cap, std::num::NonZeroU32::new(300));
+    }
+
+    #[test]
+    fn vsync_mut_edits_are_visible_through_vsync() {
+        let mut prefs = Prefs::default();
+
+        *prefs.vsync_mut() = false;
+        let after_off = prefs.vsync();
+        *prefs.vsync_mut() = true;
+        let after_on = prefs.vsync();
+
+        assert!(!after_off);
+        assert!(after_on);
+    }
+
+    #[test]
+    fn fps_max_mut_edits_are_visible_through_fps_max() {
+        let mut prefs = Prefs::default();
+
+        *prefs.fps_max_mut() = 144;
+
+        assert_eq!(prefs.fps_max(), 144);
+    }
+
+    #[test]
     fn video_setters_replace_the_defaults() {
         let mut prefs = Prefs::default();
 
