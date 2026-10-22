@@ -125,6 +125,7 @@ struct Tick<'a> {
     route: &'a [Vec3],
     percept: &'a Percept,
     tuning: &'a EnemyTuning,
+    steer: &'a dyn Fn(Vec3) -> Option<Vec3>,
     max_turn: f32,
 }
 
@@ -230,12 +231,15 @@ impl Tick<'_> {
         if arrived || ticks >= self.tuning.chase_ticks {
             return self.patrol(next);
         }
+        let Some(corner) = (self.steer)(last_seen) else {
+            return self.patrol(next);
+        };
         let brain = Brain::Chase {
             next,
             last_seen,
             ticks: ticks + 1,
         };
-        (brain, self.walk_to(last_seen, self.tuning.patrol_speed))
+        (brain, self.walk_to(corner, self.tuning.patrol_speed))
     }
 
     fn cover(
@@ -308,12 +312,14 @@ impl Brain {
 
     /// Advance one tick of `dt` seconds and say what the enemy does.
     ///
-    /// `route` must not be empty.
+    /// `route` must not be empty. `steer` maps a goal to the next point on the way to it, or
+    /// `None` when the goal is unreachable.
     pub fn think(
         &mut self,
         route: &[Vec3],
         percept: &Percept,
         tuning: &EnemyTuning,
+        steer: &dyn Fn(Vec3) -> Option<Vec3>,
         dt: f32,
     ) -> Intent {
         if let Some(shooter) = percept.hurt {
@@ -327,6 +333,7 @@ impl Brain {
             route,
             percept,
             tuning,
+            steer,
             max_turn: tuning.turn_rate * dt,
         };
         let (brain, intent) = match *self {
@@ -423,6 +430,11 @@ mod tests {
         }
     }
 
+    /// A steer function for open ground: the way to a goal is straight at it.
+    fn straight(goal: Vec3) -> Option<Vec3> {
+        Some(goal)
+    }
+
     fn bearing(angle: f32, distance: f32) -> Vec3 {
         Vec3::new(angle.sin(), 0.0, angle.cos()) * distance
     }
@@ -455,7 +467,7 @@ mod tests {
         let route = [Vec3::new(0.0, 0.0, 10.0)];
         let mut brain = Brain::Patrol { next: 0 };
 
-        let intent = brain.think(&route, &at_origin(0.0, None), &tuning(), DT);
+        let intent = brain.think(&route, &at_origin(0.0, None), &tuning(), &straight, DT);
 
         assert_eq!(intent.forward, 0.5);
         assert!(intent.yaw_delta.abs() < 1e-5, "{intent:?}");
@@ -476,13 +488,13 @@ mod tests {
         };
 
         let mut inside = Brain::Patrol { next: 1 };
-        inside.think(&route, &near(route[1], 1.9), &tuning, DT);
+        inside.think(&route, &near(route[1], 1.9), &tuning, &straight, DT);
         let mut on_edge = Brain::Patrol { next: 1 };
-        on_edge.think(&route, &near(route[1], 2.0), &tuning, DT);
+        on_edge.think(&route, &near(route[1], 2.0), &tuning, &straight, DT);
         let mut outside = Brain::Patrol { next: 1 };
-        outside.think(&route, &near(route[1], 2.1), &tuning, DT);
+        outside.think(&route, &near(route[1], 2.1), &tuning, &straight, DT);
         let mut last = Brain::Patrol { next: 3 };
-        last.think(&route, &near(route[3], 0.5), &tuning, DT);
+        last.think(&route, &near(route[3], 0.5), &tuning, &straight, DT);
 
         assert_eq!(inside, Brain::Patrol { next: 2 });
         assert_eq!(on_edge, Brain::Patrol { next: 2 });
@@ -502,7 +514,7 @@ mod tests {
             prop_assume!(gap.abs() < PI - 0.01);
             let mut brain = Brain::Patrol { next: 0 };
 
-            let intent = brain.think(&route, &at_origin(yaw, None), &tuning, DT);
+            let intent = brain.think(&route, &at_origin(yaw, None), &tuning, &straight, DT);
 
             let step = tuning.turn_rate * DT;
             let expected = gap.clamp(-step, step);
@@ -519,7 +531,7 @@ mod tests {
         let mut brain = Brain::Patrol { next: 0 };
 
         let fired: Vec<bool> = (0..8)
-            .map(|_| brain.think(&route, &percept, &tuning, DT).fire)
+            .map(|_| brain.think(&route, &percept, &tuning, &straight, DT).fire)
             .collect();
 
         assert_eq!(
@@ -542,7 +554,7 @@ mod tests {
         let fires_at = |off_by: f32| {
             let mut brain = ready;
             let percept = at_origin(0.0, Some(bearing(off_by, 10.0)));
-            brain.think(&route, &percept, &tuning, DT)
+            brain.think(&route, &percept, &tuning, &straight, DT)
         };
 
         let inside = fires_at(0.09);
@@ -569,6 +581,7 @@ mod tests {
                 &route,
                 &at_origin(0.0, Some(bearing(angle, distance))),
                 &tuning,
+                &straight,
                 DT,
             );
             matches!(brain, Brain::Engage { .. })
@@ -595,7 +608,7 @@ mod tests {
             last_seen: Vec3::ZERO,
         };
 
-        let intent = brain.think(&route, &behind, &tuning, DT);
+        let intent = brain.think(&route, &behind, &tuning, &straight, DT);
 
         assert!(matches!(brain, Brain::Engage { next: 1, .. }), "{brain:?}");
         assert!(intent.yaw_delta > 0.0, "it should turn to face: {intent:?}");
@@ -657,7 +670,7 @@ mod tests {
         let route = square();
         let tuning = tuning();
         (0..ticks)
-            .map(|_| brain.think(&route, percept, &tuning, DT))
+            .map(|_| brain.think(&route, percept, &tuning, &straight, DT))
             .collect()
     }
 
@@ -899,7 +912,7 @@ mod tests {
         let mut percept = first;
         let mut intents = Vec::new();
         for _ in 0..ticks {
-            let intent = brain.think(&route, &percept, &tuning, DT);
+            let intent = brain.think(&route, &percept, &tuning, &straight, DT);
             percept = at_origin(percept.yaw + intent.yaw_delta, target);
             intents.push(intent);
         }
@@ -1051,5 +1064,65 @@ mod tests {
         assert!(matches!(brain, Brain::Chase { .. }), "{brain:?}");
         assert_eq!(engaged(None).claim(), None);
         assert_eq!(chasing(Vec3::ZERO, 0).claim(), None);
+    }
+
+    #[test]
+    fn a_chase_with_no_path_resumes_the_patrol() {
+        let route = square();
+        let tuning = tuning();
+        let last_seen = Vec3::new(-10.0, 0.0, 0.0);
+        let mut brain = chasing(last_seen, 0);
+        let nowhere = |_: Vec3| None;
+
+        let intent = brain.think(&route, &at_origin(0.0, None), &tuning, &nowhere, DT);
+
+        assert_eq!(brain, Brain::Patrol { next: 2 });
+        let to_waypoint = turn_towards(&at_origin(0.0, None), route[2], tuning.turn_rate * DT).0;
+        let to_last_seen = turn_towards(&at_origin(0.0, None), last_seen, tuning.turn_rate * DT).0;
+        assert_ne!(to_waypoint, to_last_seen, "the bearings must differ");
+        assert_eq!(intent.forward, tuning.patrol_speed);
+        assert_eq!(intent.yaw_delta, to_waypoint);
+        assert!(!intent.fire);
+    }
+
+    #[test]
+    fn a_chasing_enemy_turns_toward_the_steered_corner_not_the_goal() {
+        let route = square();
+        let tuning = tuning();
+        let goal = Vec3::new(0.0, 0.0, 10.0);
+        let corner = Vec3::new(10.0, 0.0, 0.0);
+        let around = |asked: Vec3| (asked == goal).then_some(corner);
+        let mut brain = chasing(goal, 0);
+
+        let intent = brain.think(&route, &at_origin(0.0, None), &tuning, &around, DT);
+
+        assert!(
+            matches!(brain, Brain::Chase { last_seen, .. } if last_seen == goal),
+            "{brain:?}"
+        );
+        assert_eq!(intent.yaw_delta, tuning.turn_rate * DT);
+        assert_eq!(intent.forward, tuning.patrol_speed);
+    }
+
+    #[test]
+    fn a_chase_measures_arrival_to_the_last_seen_position_not_the_steered_corner() {
+        let route = square();
+        let tuning = tuning();
+        let last_seen = Vec3::new(0.0, 0.0, 30.0);
+        let beside_us = Vec3::new(0.5, 0.0, 0.0);
+        let around = |_: Vec3| Some(beside_us);
+        let mut brain = chasing(last_seen, 0);
+
+        let intent = brain.think(&route, &at_origin(0.0, None), &tuning, &around, DT);
+
+        assert_eq!(
+            brain,
+            Brain::Chase {
+                next: 2,
+                last_seen,
+                ticks: 1
+            }
+        );
+        assert_eq!(intent.forward, tuning.patrol_speed);
     }
 }
