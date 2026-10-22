@@ -544,6 +544,9 @@ impl<'a> Renderer<'a> {
         if let Some(reason) = choice.fallback {
             tracing::warn!(reason, "vsync stays on");
         }
+        if choice.mode == self.config.present_mode {
+            return;
+        }
         self.config.present_mode = choice.mode;
         self.surface.configure(&self.device, &self.config);
     }

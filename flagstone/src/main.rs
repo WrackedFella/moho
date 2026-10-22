@@ -74,15 +74,6 @@ enum RenderRequest {
     Vsync(bool),
 }
 
-/// The frame-rate cap `prefs` asks for: none while vsync paces frames or `fps_max` is 0.
-fn effective_frame_cap(prefs: &Prefs) -> Option<std::num::NonZeroU32> {
-    if prefs.vsync() {
-        None
-    } else {
-        std::num::NonZeroU32::new(prefs.fps_max())
-    }
-}
-
 struct App {
     entities: SceneEntities,
     scene: moho_renderer::Scene,
@@ -192,7 +183,7 @@ impl App {
             self.pending_render
                 .push(RenderRequest::Vsync(config.prefs.vsync()));
         }
-        self.set_pending_frame_cap(effective_frame_cap(&config.prefs));
+        self.set_pending_frame_cap(config.prefs.frame_cap());
         self.prefs = config.prefs;
     }
 

@@ -428,7 +428,7 @@ impl moho_app::Game for App {
         crate::app::renderer_setup::init_renderer_and_ui(self, ctx.window, &mut *ctx.renderer);
         crate::app::renderer_setup::apply_video_settings(&self.prefs, ctx.window);
         ctx.renderer.set_vsync(self.prefs.vsync());
-        self.set_pending_frame_cap(crate::effective_frame_cap(&self.prefs));
+        self.set_pending_frame_cap(self.prefs.frame_cap());
         self.initial_render(ctx);
     }
 

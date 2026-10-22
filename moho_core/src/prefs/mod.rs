@@ -184,6 +184,15 @@ impl Prefs {
     pub fn fps_max(&self) -> u32 {
         self.fps_max
     }
+    /// The frame-rate cap these prefs ask for: none while vsync paces frames or
+    /// `fps_max` is 0.
+    pub fn frame_cap(&self) -> Option<std::num::NonZeroU32> {
+        if self.vsync {
+            None
+        } else {
+            std::num::NonZeroU32::new(self.fps_max)
+        }
+    }
 
     // --- Mutable accessors (for egui widget binding) ---
 
