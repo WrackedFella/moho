@@ -75,9 +75,9 @@ Each crate belongs to exactly one line ([ADR-0005](../../_todo/adr/0005-crate-li
 Voxels live in the flagstone-line `flagstone_voxel` ([ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md));
 the engine sees world geometry only as meshes.
 
-## 3 Target crate graph (M2)
+## 3 Target crate graph (ENG-M2)
 
-Where the M1–M2 engine work lands, from [ADR-0012](../../_todo/adr/0012-engine-crate-map-for-m2.md)
+Where the ENG-M1–ENG-M2 engine work lands, from [ADR-0012](../../_todo/adr/0012-engine-crate-map-for-m2.md)
 (Proposed). Capabilities land as modules of an existing crate first; a new crate needs a
 deployable, reuse or compile-time boundary. Dashed boxes are crates that don't exist yet, or (`moho_app`) exist with only part of the listed scope: today the window and event loop, accumulator, `GameClock` and `Game` trait.
 Edges are the intended direction, not a list each crate must have.

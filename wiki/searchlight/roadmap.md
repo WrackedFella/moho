@@ -4,7 +4,7 @@ The FPS line's milestones, in order. The phases and their questions are in the [
 
 **Rule from the GDD:** each phase becomes a feature only after the previous one is approved. So this plan fixes milestones and exit goals, not cards. Only FPS-M1 and FPS-M1.1 have cards.
 
-Milestone names follow ISO 2145: FPS-M*n* delivers GDD Phase *n*; FPS-M1.1 and FPS-M1.2 are bridges. Bare M1, M2 are engine milestones.
+Milestone names follow ISO 2145: FPS-M*n* delivers GDD Phase *n*; FPS-M1.1 and FPS-M1.2 are bridges.
 
 ## 1 Overview
 
@@ -51,8 +51,8 @@ Runs in slices parallel to FPS-M2; needs no items or UI beyond one slider in the
 | Slice | Content | Needs from the engine |
 |---|---|---|
 | 1 Lean and head bob | Lean with clearance, hit volumes follow the lean, head-bob camera and slider | nothing new |
-| 2 Crouch and prone | Both stances with timed transitions and speed rules; prone's oriented hull; hit volumes and enemy aim follow the stance | ENG-F33 #492 and #544 (engine M3) |
-| 3 Visible body | Rigged first-person body and shadow; enemies on the same rigs; hit volumes ride the bones | #543 skinned characters (engine M5+ unless pulled forward) |
+| 2 Crouch and prone | Both stances with timed transitions and speed rules; prone's oriented hull; hit volumes and enemy aim follow the stance | ENG-F33 #492 and #544 (ENG-M3) |
+| 3 Visible body | Rigged first-person body and shadow; enemies on the same rigs; hit volumes ride the bones | #543 skinned characters (ENG-M5+ unless pulled forward) |
 
 - **Exit:** in the arena a player crouched behind the 1.4 m crates is hit only when leaning, on head or arm; a prone player behind the same crate is not seen at all.
 - **Cut lines:** weapon collision against the ground, prone dive, enemies going prone, variable crouch height, side-step, blind fire, mantle, slide, vault.
@@ -94,7 +94,7 @@ Runs in slices parallel to FPS-M2; needs no items or UI beyond one slider in the
 - **Outcome:** trader hub, job board, currency, full per-job ledger; the arena becomes the job site and waves and score retire from the default experience.
 - **Entry gate:** level switching carrying player state (§10 item 10), save and load. Needs a hub and one or two zone maps.
 - **Decisions due:** GDD §9 Q1 (setting), Q3 (pivot point), Q15 (starting backgrounds).
-- **Natural v1 candidate:** the engine roadmap's M3 gate wants the seam list unchanged by the last two FPS features; this is the earliest playable game rather than a prototype.
+- **Natural v1 candidate:** the engine roadmap's ENG-M3 gate wants the seam list unchanged by the last two FPS features; this is the earliest playable game rather than a prototype.
 
 ## 11 FPS-M7 Director (Phase 7)
 

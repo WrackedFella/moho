@@ -25,7 +25,7 @@ meaning of a frame.
 
 ## 3 Non-goals
 
-- A general-purpose engine or editor for third parties. Editor tooling is M5+ and pulled by a consumer.
+- A general-purpose engine or editor for third parties. Editor tooling is ENG-M5+ and pulled by a consumer.
 - A general ECS ([ADR-0004](../../_todo/adr/0004-entity-storage-without-a-general-ecs.md)).
 - Game rules, content or terrain: voxels belong to the strategy line ([ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md)).
 - Competitive multiplayer. Multiplayer means co-op with a trusted host, and may never ship.
