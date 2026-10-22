@@ -1,6 +1,6 @@
 # 0019 — Navigation over static levels is engine seam 11
 
-**Status:** Proposed (2026-10-21; extends [0012](0012-engine-crate-map-for-m2.md))
+**Status:** Accepted (2026-10-21; extends [0012](0012-engine-crate-map-for-m2.md))
 
 ## Context
 

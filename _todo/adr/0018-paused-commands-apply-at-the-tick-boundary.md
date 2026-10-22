@@ -1,6 +1,6 @@
 # 0018 — Paused commands apply at the tick boundary
 
-**Status:** Proposed (narrows [0011](0011-simulation-stays-network-ready.md) rule 1)
+**Status:** Accepted (narrows [0011](0011-simulation-stays-network-ready.md) rule 1)
 
 ## Context
 
