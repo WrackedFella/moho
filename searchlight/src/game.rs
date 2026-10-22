@@ -399,7 +399,6 @@ impl Stage {
         }
     }
 
-    /// Captures the cursor in the stage's window, if it has one.
     fn capture_cursor(&mut self) {
         #[cfg(test)]
         {

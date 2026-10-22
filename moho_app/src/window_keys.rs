@@ -9,15 +9,11 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 /// What the runner does with one observed key event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Observed {
-    /// Hand the event to the game.
     Pass,
-    /// Drop the event.
     Swallow,
-    /// Drop the event and flip the window mode.
     Flip,
 }
 
-/// How the window fills the screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum WindowMode {
     #[default]
@@ -26,7 +22,6 @@ pub enum WindowMode {
 }
 
 impl WindowMode {
-    /// The other mode.
     pub fn toggled(self) -> Self {
         match self {
             WindowMode::Windowed => WindowMode::Borderless,
@@ -55,7 +50,6 @@ impl ToggleKeys {
         }
     }
 
-    /// Classifies one key event.
     pub fn observe(&mut self, code: KeyCode, pressed: bool, repeat: bool) -> Observed {
         match code {
             KeyCode::AltLeft => self.alt_left = pressed,
