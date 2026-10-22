@@ -50,7 +50,7 @@ Moho's instances:
 - **Engine requests:** a game lane files the *Engine request* issue template; the
   engine lane designs the answer. The layering check enforces the dependency half. A request
   closes when the engine work that answers it merges; the game line's card tracks adoption.
-- **Shared files:** `_todo/ROADMAP.md`, `_todo/README.md`, `CLAUDE.md`, the root
+- **Shared files:** `_todo/ROADMAP.md`, the roadmaps in `wiki/*/roadmap.md`, `_todo/README.md`, `CLAUDE.md`, the root
   `Cargo.toml` and `scripts/layering.txt` are edited only by planning sessions.
 - **Broad moves:** for example ENG-F10's voxel extraction.
 - **Lane context:** a line's own crates carry a short `CLAUDE.md` pointing at its design doc.

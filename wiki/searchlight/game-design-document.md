@@ -245,7 +245,7 @@ Principle: build the cheapest playable baseline first, then add systems in the o
 
 Planning rule for complex systems: start with the simplest feature set we know we need, playtest, then add or remove to taste. If the inventory wants more management, move toward Tarkov; if less, toward unmodified STALKER. Data shapes that are expensive to retrofit (item size, container cells, ordered rounds) go in first; the UI that exploits them comes when playtest asks for it.
 
-Milestones follow the phases: FPS-M*n* delivers Phase *n*, and FPS-M1.1 (menus) sits between Phases 1 and 2. The plan is `milestone-plan.md` in the project files.
+Milestones follow the phases: FPS-M*n* delivers Phase *n*, and FPS-M1.1 (menus) sits between Phases 1 and 2. The plan is the [Searchlight roadmap](roadmap.md).
 
 | Phase | Name | Adds | Answers | Map |
 |---|---|---|---|---|
@@ -259,7 +259,7 @@ Milestones follow the phases: FPS-M*n* delivers Phase *n*, and FPS-M1.1 (menus) 
 | 7 | **Director** | Zone graph, factions, offline dice sim, daily planning, live handover | Does the world feel alive with this little machinery? | 3–5 pre-made zones |
 | Later | Depth | Attachments, ammo crafting, armor depth, damage types, anomalies/artifacts | — | — |
 
-Stance and body (1.2) runs in slices parallel to Phase 2, like enemy AI: lean and head bob first (nothing new from the engine), crouch and prone when the engine's per-mode hulls land, the visible body when skinned characters do. Plan: `stance-lean-player-body-proposal.md` in the project files.
+Stance and body (1.2) runs in slices parallel to Phase 2, like enemy AI: lean and head bob first (nothing new from the engine), crouch and prone when the engine's per-mode hulls land, the visible body when skinned characters do. Plan: the FPS-M1.2 section of the [Searchlight roadmap](roadmap.md#5-fps-m12-stance-and-body-fps-f4).
 
 Enemy AI (§4.11) is not a phase of its own; it lands in slices alongside the phases:
 - **After Phase 1 approval, parallel to Phase 2:** enemy grades (five grades as data; accuracy, reaction time, pauses, cover use; waves shift up the ladder). Needs no items, UI or navigation.

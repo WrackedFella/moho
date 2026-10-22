@@ -4,7 +4,7 @@ Engineering docs for the Moho workspace: a shared engine and two game lines
 (strategy, FPS). Written for a developer who already knows the domain: terse, with
 a diagram where one helps.
 
-Planning (features, work items, ADRs, roadmap) lives in [`_todo/`](../_todo/README.md).
+Planning (features, work items, ADRs) lives in [`_todo/`](../_todo/README.md); the roadmaps live here, one per line.
 This wiki describes how the system **is**; `_todo/` describes what it **will be**.
 
 ## Map
@@ -35,6 +35,7 @@ flowchart LR
 | Edit `config/prefs.ini` | [reference/prefs-format](reference/prefs-format.md) |
 | Run the agentic workflow | [process/agentic-workflow](process/agentic-workflow.md) |
 | Know what the games should become | [flagstone/vision](flagstone/vision.md), [searchlight/game-design-document](searchlight/game-design-document.md) |
+| See what order the work goes in | [engine](engine/roadmap.md), [flagstone](flagstone/roadmap.md), [searchlight](searchlight/roadmap.md) roadmaps |
 | Know why a boundary exists | [ADRs](../_todo/adr/README.md) |
 
 ## Contents
@@ -67,6 +68,7 @@ flowchart LR
 - [Adding console commands](guides/adding-console-commands.md)
 - [Flagstone vision](flagstone/vision.md) · [FPS design document](searchlight/game-design-document.md) (draft)
 - [Agentic workflow](process/agentic-workflow.md)
+- Roadmaps: [engine](engine/roadmap.md) · [Flagstone](flagstone/roadmap.md) · [Searchlight](searchlight/roadmap.md)
 
 ## Known constraints
 
