@@ -139,6 +139,8 @@ const KNOWN_KEYS: &[(&str, &str, Setter)] = &[
     ("video", "window_height", |p, s| {
         set(&mut p.window_resolution.1, parse_u32(s))
     }),
+    ("video", "vsync", |p, s| set(&mut p.vsync, parse_bool(s))),
+    ("video", "fps_max", |p, s| set(&mut p.fps_max, parse_u32(s))),
     ("world", "load_radius", |p, s| {
         set(&mut p.world_load_radius, parse_u32(s))
     }),
@@ -396,6 +398,8 @@ mod tests {
                 ("window_mode", "Borderless"),
                 ("window_width", "1280"),
                 ("window_height", "720"),
+                ("vsync", "false"),
+                ("fps_max", "144"),
             ],
         ),
         (
@@ -441,6 +445,8 @@ mod tests {
         p.set_ssao_quality(2);
         p.set_window_mode(WindowMode::Borderless);
         p.set_window_resolution(1280, 720);
+        p.set_vsync(false);
+        p.set_fps_max(144);
         p.world_load_radius = 5;
         p.world_unload_radius = 9;
         p.world_chunks_per_frame = 2;
@@ -479,6 +485,8 @@ mod tests {
                 "video.window_height",
                 format!("{:?}", p.window_resolution().1),
             ),
+            ("video.vsync", format!("{:?}", p.vsync())),
+            ("video.fps_max", format!("{:?}", p.fps_max())),
             ("world.load_radius", format!("{:?}", p.world_load_radius())),
             (
                 "world.unload_radius",
@@ -538,6 +546,8 @@ mod tests {
             ("graphics", "shadow_quality", "high"),
             ("video", "window_mode", "Windowd"),
             ("video", "window_width", "-1920"),
+            ("video", "vsync", "off"),
+            ("video", "fps_max", "-1"),
             ("world", "chunks_per_frame", "0"),
         ];
         let default = snapshot(&Prefs::default());
@@ -645,6 +655,49 @@ mod tests {
             assert!(ini.contains(&format!("mouse_acceleration={on}\n")), "{ini}");
             assert!(ini.contains("mouse_acceleration_strength=0.25\n"), "{ini}");
         }
+    }
+
+    #[test]
+    fn vsync_round_trips() {
+        for on in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config").join("prefs.ini");
+            let mut prefs = Prefs::default();
+            prefs.set_vsync(on);
+
+            prefs.save_to(&path).unwrap();
+            let (loaded, warnings) = Prefs::load_from(&path);
+
+            assert_eq!(warnings, vec![], "vsync {on}");
+            assert_eq!(loaded.vsync(), on);
+            assert!(prefs.to_ini_string().contains(&format!("vsync={on}\n")));
+        }
+    }
+
+    #[test]
+    fn fps_max_round_trips() {
+        for cap in [0, 144, 1000] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config").join("prefs.ini");
+            let mut prefs = Prefs::default();
+            prefs.set_fps_max(cap);
+
+            prefs.save_to(&path).unwrap();
+            let (loaded, warnings) = Prefs::load_from(&path);
+
+            assert_eq!(warnings, vec![], "cap {cap}");
+            assert_eq!(loaded.fps_max(), cap);
+            assert!(prefs.to_ini_string().contains(&format!("fps_max={cap}\n")));
+        }
+    }
+
+    #[test]
+    fn vsync_and_fps_max_default_when_the_keys_are_absent() {
+        let (prefs, issues) = Prefs::parse("[video]\nwindow_width=1280\n");
+
+        assert_eq!(issues, vec![]);
+        assert!(prefs.vsync());
+        assert_eq!(prefs.fps_max(), 300);
     }
 
     #[test]
@@ -973,6 +1026,8 @@ mod tests {
              window_mode=Windowed\n\
              window_width=1920\n\
              window_height=1080\n\
+             vsync=true\n\
+             fps_max=300\n\
              \n[world]\n\
              load_radius=8\n\
              unload_radius=12\n\
@@ -1037,8 +1092,9 @@ mod tests {
             (0u32..=4, 0u32..=4),
             (window_mode_strategy(), any::<u32>(), any::<u32>()),
             (any::<u32>(), any::<u32>(), 1u32..=u32::MAX),
+            (any::<bool>(), any::<u32>()),
         )
-            .prop_map(|(sens, smoothing, vols, quality, video, world)| {
+            .prop_map(|(sens, smoothing, vols, quality, video, world, present)| {
                 let mut p = Prefs::default();
                 *p.mouse_sensitivity_mut() = sens;
                 *p.mouse_smoothing_mut() = smoothing;
@@ -1050,6 +1106,8 @@ mod tests {
                 p.set_ssao_quality(quality.1);
                 p.set_window_mode(video.0);
                 p.set_window_resolution(video.1, video.2);
+                p.set_vsync(present.0);
+                p.set_fps_max(present.1);
                 p.world_load_radius = world.0;
                 p.world_unload_radius = world.1;
                 p.world_chunks_per_frame = world.2;

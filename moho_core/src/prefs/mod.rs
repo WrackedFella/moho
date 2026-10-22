@@ -67,6 +67,8 @@ pub struct Prefs {
     // Video settings
     window_mode: WindowMode,
     window_resolution: (u32, u32),
+    vsync: bool,
+    fps_max: u32,
     // World / streaming settings
     world_load_radius: u32,
     world_unload_radius: u32,
@@ -174,6 +176,23 @@ impl Prefs {
     pub fn window_resolution(&self) -> (u32, u32) {
         self.window_resolution
     }
+    /// Whether presented frames wait for the display refresh.
+    pub fn vsync(&self) -> bool {
+        self.vsync
+    }
+    /// Frame-rate cap applied while vsync is off; 0 is uncapped.
+    pub fn fps_max(&self) -> u32 {
+        self.fps_max
+    }
+    /// The frame-rate cap these prefs ask for: none while vsync paces frames or
+    /// `fps_max` is 0.
+    pub fn frame_cap(&self) -> Option<std::num::NonZeroU32> {
+        if self.vsync {
+            None
+        } else {
+            std::num::NonZeroU32::new(self.fps_max)
+        }
+    }
 
     // --- Mutable accessors (for egui widget binding) ---
 
@@ -223,6 +242,22 @@ impl Prefs {
         self.window_resolution = (width, height);
     }
 
+    pub fn vsync_mut(&mut self) -> &mut bool {
+        &mut self.vsync
+    }
+
+    pub fn fps_max_mut(&mut self) -> &mut u32 {
+        &mut self.fps_max
+    }
+
+    pub fn set_vsync(&mut self, on: bool) {
+        self.vsync = on;
+    }
+
+    pub fn set_fps_max(&mut self, fps: u32) {
+        self.fps_max = fps;
+    }
+
     // --- Builder methods (for construction in tests) ---
 
     pub fn with_mouse_sensitivity(mut self, v: f32) -> Self {
@@ -266,6 +301,8 @@ impl Default for Prefs {
             // Default video settings
             window_mode: WindowMode::Windowed,
             window_resolution: (1920, 1080),
+            vsync: true,
+            fps_max: 300,
             // Default streaming settings
             world_load_radius: 8,
             world_unload_radius: 12,
@@ -310,6 +347,8 @@ impl Prefs {
              window_mode={window_mode}\n\
              window_width={width}\n\
              window_height={height}\n\
+             vsync={vsync}\n\
+             fps_max={fps_max}\n\
              \n[world]\n\
              load_radius={load}\n\
              unload_radius={unload}\n\
@@ -328,6 +367,8 @@ impl Prefs {
             window_mode = self.window_mode.as_str(),
             width = self.window_resolution.0,
             height = self.window_resolution.1,
+            vsync = self.vsync,
+            fps_max = self.fps_max,
             load = self.world_load_radius,
             unload = self.world_unload_radius,
             chunks = self.world_chunks_per_frame,
@@ -397,6 +438,81 @@ mod tests {
 
         assert!(dir.path().join("config/prefs.ini").is_file());
         assert_eq!(loaded, prefs);
+    }
+
+    #[test]
+    fn vsync_is_on_by_default() {
+        assert!(Prefs::default().vsync());
+    }
+
+    #[test]
+    fn fps_max_is_300_by_default() {
+        assert_eq!(Prefs::default().fps_max(), 300);
+    }
+
+    #[test]
+    fn frame_cap_is_none_while_vsync_is_on_even_with_fps_max_set() {
+        let mut prefs = Prefs::default();
+        prefs.set_vsync(true);
+        prefs.set_fps_max(144);
+
+        assert_eq!(prefs.frame_cap(), None);
+    }
+
+    #[test]
+    fn frame_cap_is_none_when_vsync_is_off_and_fps_max_is_zero() {
+        let mut prefs = Prefs::default();
+        prefs.set_vsync(false);
+        prefs.set_fps_max(0);
+
+        assert_eq!(prefs.frame_cap(), None);
+    }
+
+    #[test]
+    fn frame_cap_is_fps_max_when_vsync_is_off() {
+        let mut prefs = Prefs::default();
+        prefs.set_vsync(false);
+
+        prefs.set_fps_max(144);
+        let custom = prefs.frame_cap();
+        prefs.set_fps_max(300);
+        let default_cap = prefs.frame_cap();
+
+        assert_eq!(custom, std::num::NonZeroU32::new(144));
+        assert_eq!(default_cap, std::num::NonZeroU32::new(300));
+    }
+
+    #[test]
+    fn vsync_mut_edits_are_visible_through_vsync() {
+        let mut prefs = Prefs::default();
+
+        *prefs.vsync_mut() = false;
+        let after_off = prefs.vsync();
+        *prefs.vsync_mut() = true;
+        let after_on = prefs.vsync();
+
+        assert!(!after_off);
+        assert!(after_on);
+    }
+
+    #[test]
+    fn fps_max_mut_edits_are_visible_through_fps_max() {
+        let mut prefs = Prefs::default();
+
+        *prefs.fps_max_mut() = 144;
+
+        assert_eq!(prefs.fps_max(), 144);
+    }
+
+    #[test]
+    fn video_setters_replace_the_defaults() {
+        let mut prefs = Prefs::default();
+
+        prefs.set_vsync(false);
+        prefs.set_fps_max(0);
+
+        assert!(!prefs.vsync());
+        assert_eq!(prefs.fps_max(), 0);
     }
 
     #[test]
