@@ -20,7 +20,7 @@ Issue labels such as `M2` mean ENG-M2.
 
 | Gate | Holds when | Line items involved |
 |---|---|---|
-| ENG-M2 (engine MVP) | The engine carries the current scope of both games and the save envelope is in use | FPS Phase 1 and 2 playable on engine crates (FPS-M1, FPS-M2 entries); SG-F1, SG-F2, SG-F4 and SG-F5 done (STRAT-M1 to STRAT-M3). Declared met by Justin |
+| ENG-M2 (engine MVP) | The engine carries the current scope of both games and the save envelope is in use | FPS Phase 1 and 2 playable on engine crates (FPS-M1, FPS-M2 entries); SG-F1, SG-F2, SG-F4 and SG-F5 done (STRAT-M1 to STRAT-M3; the rest of SG-F1 sits in STRAT-M4 but is still required). Declared met by Justin |
 | ENG-M3 (v1.0 and split) | The ENG-F5 gate holds: licences and the third-party notices file; the seam list in ADR-0012 is unchanged by the last two FPS features; the `v1.0` tag; ADR-0011 two-simulation proof | The last two FPS features before the split; FPS-M6 is the earliest playable game rather than a prototype and so the natural last of them |
 
 STRAT-M1 to STRAT-M4 run inside ENG-M2. STRAT-M1 and STRAT-M2 may overlap.
