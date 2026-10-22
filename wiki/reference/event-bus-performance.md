@@ -2,13 +2,13 @@
 
 **Source:** `moho_core` benches. Usage rules: [best practices](event-bus-best-practices.md).
 
-## Benchmark Results Summary
+## 1 Benchmark Results Summary
 
 All benchmarks run on release build with optimizations enabled.
 
-### Key Performance Metrics
+### 1.1 Key Performance Metrics
 
-#### 1. Basic Publishing Overhead
+#### 1.1.1 Basic Publishing Overhead
 - **No subscribers**: `315.98 ns` (baseline)
 - **Single subscriber**: `388.70 ns` (+73 ns overhead, ~23% increase)
 - **5 subscribers**: `427.80 ns` (+112 ns from baseline)
@@ -17,20 +17,20 @@ All benchmarks run on release build with optimizations enabled.
 
 **Analysis**: Linear scaling with subscriber count (~13-14 ns per additional subscriber). Excellent performance for typical game scenarios (1-10 subscribers per event type).
 
-#### 2. High-Frequency Event Publishing
+#### 1.1.2 High-Frequency Event Publishing
 - **1000 events**: `87.591 µs` (87.6 ns per event average)
 - **Throughput**: ~11.4 million events/second
 
 **Analysis**: Outstanding performance. At 60 FPS, this supports 1,460 events per frame with only 87µs overhead (0.52% of 16.6ms frame budget).
 
-#### 3. Concurrent Publishing (Multi-threaded)
+#### 1.1.3 Concurrent Publishing (Multi-threaded)
 - **2 threads × 100 events**: `236.96 µs` (1.18 µs per event)
 - **4 threads × 100 events**: `470.37 µs` (1.18 µs per event)
 - **8 threads × 100 events**: `701.79 µs` (0.88 µs per event)
 
 **Analysis**: Good multi-threaded scalability. Thread synchronization overhead visible but acceptable. RwLock contention increases with thread count as expected.
 
-#### 4. Event History Overhead
+#### 1.1.4 Event History Overhead
 - **History disabled**: `65.813 ns`
 - **History enabled**: `324.82 ns` (4.9× overhead)
 
@@ -38,7 +38,7 @@ All benchmarks run on release build with optimizations enabled.
 
 **Recommendation**: ✅ Keep history disabled by default, enable only during development/debugging.
 
-#### 5. Event Size Impact
+#### 1.1.5 Event Size Impact
 - **Small event** (no data - ButtonClick): `110.17 ns`
 - **Medium event** (2 fields - KeyPressed): `335.50 ns`
 - **Large event** (String - MenuShown): `418.35 ns`
@@ -47,12 +47,12 @@ All benchmarks run on release build with optimizations enabled.
 
 **Recommendation**: ✅ Use `&'static str` or entity IDs for frequent events instead of owned Strings.
 
-#### 6. Subscribe Operation
+#### 1.1.6 Subscribe Operation
 - **Per subscribe call**: `103.55 ns`
 
 **Analysis**: Very fast. Subscribing is cheap enough to do during initialization without concern.
 
-#### 7. Realistic Game Loop Simulation
+#### 1.1.7 Realistic Game Loop Simulation
 - **5 events per frame** (FrameStart, MouseMoved, MenuShown, MenuNavigate, FrameEnd): `900.55 ns`
 - **Frame budget usage**: 0.9 µs / 16,666 µs = **0.0054%**
 
@@ -60,9 +60,9 @@ All benchmarks run on release build with optimizations enabled.
 
 ---
 
-## Performance Conclusions
+## 2 Performance Conclusions
 
-### ✅ Production Ready
+### 2.1 ✅ Production Ready
 The event bus has **excellent performance characteristics** for a game engine:
 
 1. **Sub-microsecond latency**: Single events process in ~400 ns with typical subscriber counts
@@ -70,7 +70,7 @@ The event bus has **excellent performance characteristics** for a game engine:
 3. **Negligible frame impact**: <1% of 16ms budget even with 1000+ events/frame
 4. **Good thread scaling**: Multi-threaded publishing works well up to 8 threads
 
-### ⚠️ Performance Considerations
+### 2.2 ⚠️ Performance Considerations
 
 1. **Event History**: 4.9× overhead when enabled
    - **Action**: Keep disabled by default ✅ Already implemented
@@ -88,7 +88,7 @@ The event bus has **excellent performance characteristics** for a game engine:
    - **Action**: No changes needed - performance is still excellent
    - RwLock is appropriate for our use case
 
-### 📊 Frame Budget Analysis
+### 2.3 📊 Frame Budget Analysis
 
 At **60 FPS** (16.66ms per frame):
 - **Current**: 0.9 µs for 5 events = 0.0054% of frame
@@ -99,16 +99,16 @@ At **60 FPS** (16.66ms per frame):
 
 ---
 
-## Optimization Opportunities (Future)
+## 3 Optimization Opportunities (Future)
 
-### Not Recommended (Premature)
+### 3.1 Not Recommended (Premature)
 These would add complexity for minimal gain:
 
 1. ❌ **Lock-free event queue**: Current RwLock overhead is ~300 ns - negligible
 2. ❌ **Event pooling**: Clone overhead is minimal for small events
 3. ❌ **Inline handlers**: Would prevent dynamic subscription
 
-### Potentially Valuable (If Needed)
+### 3.2 Potentially Valuable (If Needed)
 
 1. ✅ **Fix cascading deadlock** (already planned in EVENT_BUS.md)
    - Two-phase execution or lock-free queue
@@ -129,17 +129,17 @@ These would add complexity for minimal gain:
 
 ---
 
-## Comparison to Industry Standards
+## 4 Comparison to Industry Standards
 
-### Unity C# Event System
+### 4.1 Unity C# Event System
 - Typical overhead: **1-5 µs** per event
 - Our system: **0.4 µs** (~10× faster)
 
-### Unreal Engine Delegates
+### 4.2 Unreal Engine Delegates
 - Typical overhead: **500 ns - 2 µs** per broadcast
 - Our system: **0.4 µs** (comparable to faster end)
 
-### GDScript Signals (Godot)
+### 4.3 GDScript Signals (Godot)
 - Typical overhead: **2-10 µs** per signal
 - Our system: **0.4 µs** (~5-25× faster)
 
@@ -147,24 +147,24 @@ These would add complexity for minimal gain:
 
 ---
 
-## Recommendations
+## 5 Recommendations
 
-### Immediate Actions ✅
+### 5.1 Immediate Actions ✅
 1. **No optimization needed** - current performance is excellent
 2. **Keep history disabled by default** - already done
 3. **Document best practices** for event design (prefer small payloads)
 
-### Future Enhancements (Low Priority)
+### 5.2 Future Enhancements (Low Priority)
 1. Fix cascading deadlock (usability > performance)
 2. Add event batching API if profiling shows need
 3. Consider lazy history formatting if debugging overhead is issue
 
-### Production Deployment ✅
+### 5.3 Production Deployment ✅
 The event bus is **ready for production use** with no performance concerns.
 
 ---
 
-## Performance Test Coverage
+## 6 Performance Test Coverage
 
 ✅ **Baseline overhead**: No subscribers  
 ✅ **Subscriber scaling**: 1, 5, 10, 20 subscribers  
@@ -179,7 +179,7 @@ All critical performance paths are benchmarked and verified.
 
 ---
 
-## Benchmark Environment
+## 7 Benchmark Environment
 
 - **Build**: Release with optimizations (`--release`)
 - **Tool**: Criterion.rs (industry standard Rust benchmarking)

@@ -1,6 +1,6 @@
 //! Conversions between egui input and engine keys, and binding display labels.
 
-use moho_input::bindings::{Binding, Trigger};
+use moho_input::bindings::Binding;
 use moho_input::key::Key;
 
 /// `None` for egui keys the engine does not name.
@@ -85,14 +85,15 @@ pub fn binding_label(bindings: &[Binding]) -> String {
     labels.join(", ")
 }
 
-/// `key` in place of the plain key and mouse bindings in `existing`, followed by the rest in order.
+/// `key` in place of the plain key and mouse bindings in `existing`, followed by the holds,
+/// chords and pad bindings in order.
 pub fn rebind_key(existing: &[Binding], key: Key) -> Vec<Binding> {
     std::iter::once(Binding::key(key))
         .chain(
             existing
                 .iter()
                 .copied()
-                .filter(|b| b.is_pad() || b.trigger != Trigger::Press),
+                .filter(|b| b.is_pad() || !b.is_plain()),
         )
         .collect()
 }
@@ -100,6 +101,7 @@ pub fn rebind_key(existing: &[Binding], key: Key) -> Vec<Binding> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use moho_input::Modifiers;
     use moho_input::key::MouseButton;
     use moho_input::pad::{PadButton, PadInput};
 
@@ -219,6 +221,30 @@ mod tests {
             ]
         );
         assert_eq!(binding_label(&rebound), "E, Hold Q, Hold Mouse Right");
+    }
+
+    #[test]
+    fn rebind_key_keeps_chord_bindings() {
+        let ctrl_q = Binding::key(Key::Q).with(Modifiers::CTRL);
+        let shift_right = Binding::mouse(MouseButton::Right).with(Modifiers::SHIFT);
+        let existing = [
+            Binding::key(Key::W),
+            ctrl_q,
+            Binding::mouse(MouseButton::Right),
+            shift_right,
+            ctrl_q.held(),
+        ];
+
+        let rebound = rebind_key(&existing, Key::E);
+
+        assert_eq!(
+            rebound,
+            [Binding::key(Key::E), ctrl_q, shift_right, ctrl_q.held()]
+        );
+        assert_eq!(
+            binding_label(&rebound),
+            "E, Ctrl+Q, Shift+Mouse Right, Hold Ctrl+Q"
+        );
     }
 
     #[test]

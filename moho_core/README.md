@@ -2,9 +2,9 @@
 
 Core engine types and foundational systems for the Moho game engine. This crate provides the fundamental building blocks used across the engine.
 
-## Core Systems
+## 1 Core Systems
 
-### Event Bus
+### 1.1 Event Bus
 
 Thread-safe, type-safe publish/subscribe system for decoupled communication between engine systems.
 
@@ -81,7 +81,7 @@ for audio_event in rx.try_iter() {
 
 See `../wiki/reference/event-bus-best-practices.md` for detailed usage patterns.
 
-### GameClock
+### 1.2 GameClock
 
 24-hour day/night cycle system with asymmetric timescale (day vs night).
 
@@ -121,7 +121,7 @@ clock.set_time_of_day(12.0); // Set to noon
 clock.set_time_of_day(0.0);  // Set to midnight
 ```
 
-### Camera
+### 1.3 Camera
 
 Orbital camera with configurable movement and rotation.
 
@@ -149,7 +149,7 @@ let view = camera.view_matrix();
 let proj = camera.projection_matrix(aspect_ratio);
 ```
 
-## Testing
+## 2 Testing
 
 ```bash
 # All tests
@@ -166,12 +166,12 @@ cargo bench --bench event_bus_bench
 - 24 unit tests (event bus, game clock, input)
 - 8 doc tests (event bus examples)
 
-## Performance Characteristics
+## 3 Performance Characteristics
 
 - **Event Bus**: <0.01% frame time (60 FPS target)
 - **GameClock**: <0.1ms per frame
 
-## Thread Safety
+## 4 Thread Safety
 
 - **EventBus**: `Send + Sync` (Arc<RwLock<_>>)
 - **GameClock**: Not thread-safe (single-threaded update)

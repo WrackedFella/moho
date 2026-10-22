@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use winit::event::{DeviceEvent, ElementState, WindowEvent};
 
-use crate::bindings::{Action, ActionBindings, Binding, Input, Trigger};
+use crate::bindings::{Action, ActionBindings, Binding, Input, Modifiers, Trigger};
 use crate::filter::{DeadzoneFilter, MouseSmoothing};
 use crate::key::{Key, MouseButton};
 use crate::pad::{PadButton, PadInput, Stick, StickAxis, StickDir};
@@ -36,6 +36,11 @@ pub struct LookSettings {
     pub smoothing: bool,
     /// Negates the mouse's Y counts; the stick is unaffected.
     pub invert_y: bool,
+    /// Extra look units per count for each count per millisecond of mouse speed; 0 is off.
+    ///
+    /// Linear in speed like Source's `m_customaccel 1` with exponent 1; the speed is the
+    /// smoothed counts' length over the frame duration. The stick is unaffected.
+    pub acceleration: f32,
 }
 
 impl LookSettings {
@@ -45,6 +50,7 @@ impl LookSettings {
             look_per_count,
             smoothing: false,
             invert_y: false,
+            acceleration: 0.0,
         }
     }
 }
@@ -103,14 +109,23 @@ impl<A: Action> ActionFrame<A> {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
+struct Down {
+    ticks: u32,
+    /// Fixed at the press and not re-read until release.
+    modifiers: Modifiers,
+}
+
 /// Collects input events; frames sample look, and each tick reports it with the edges.
 #[derive(Debug)]
 pub struct ActionMap<A: Action> {
     bindings: ActionBindings<A>,
-    /// Inputs now down, each with the ticks it has been down.
-    down: HashMap<Input, u32>,
-    /// Inputs some action binds with `Hold`: their `Press` bindings fire on a quick release.
-    split: HashSet<Input>,
+    /// Inputs now down, each with the ticks it has been down and the modifier set its press
+    /// resolved to.
+    down: HashMap<Input, Down>,
+    /// Inputs some action binds with `Hold`, per modifier set: their `Press` bindings with
+    /// that set fire on a quick release.
+    split: HashSet<(Input, Modifiers)>,
     held: u64,
     pressed: u64,
     released: u64,
@@ -134,7 +149,7 @@ impl<A: Action> ActionMap<A> {
             .iter()
             .flat_map(|&action| bindings.get(action))
             .filter(|binding| binding.trigger == Trigger::Hold)
-            .map(|binding| binding.input)
+            .map(|binding| (binding.input, binding.modifiers))
             .collect();
         Self {
             bindings,
@@ -251,8 +266,8 @@ impl<A: Action> ActionMap<A> {
 
     /// The only read: reports this tick's edges and look, then starts the next tick.
     pub fn end_tick(&mut self) -> ActionFrame<A> {
-        for ticks in self.down.values_mut() {
-            *ticks = ticks.saturating_add(1);
+        for down in self.down.values_mut() {
+            down.ticks = down.ticks.saturating_add(1);
         }
         self.refresh_held(0);
         let frame = ActionFrame {
@@ -281,16 +296,51 @@ impl<A: Action> ActionMap<A> {
             if self.down.contains_key(&input) {
                 return None;
             }
-            self.down.insert(input, 0);
+            let modifiers = self.resolve_modifiers(input);
+            self.down.insert(
+                input,
+                Down {
+                    ticks: 0,
+                    modifiers,
+                },
+            );
             return Some(0);
         }
-        let ticks = self.down.remove(&input)?;
-        let quick = self.split.contains(&input) && ticks < A::HOLD_TICKS;
-        Some(if quick { self.press_actions(input) } else { 0 })
+        let Down { ticks, modifiers } = self.down.remove(&input)?;
+        let quick = self.split.contains(&(input, modifiers)) && ticks < A::HOLD_TICKS;
+        Some(if quick {
+            self.press_actions(input, modifiers)
+        } else {
+            0
+        })
     }
 
-    fn press_actions(&self, input: Input) -> u64 {
-        self.actions_where(|b| b.input == input && b.trigger == Trigger::Press)
+    /// The bound modifier set that `input` pressed now acts under: of the sets bound on it
+    /// that are held, the highest ranked; `NONE` when no chord matches.
+    fn resolve_modifiers(&self, input: Input) -> Modifiers {
+        if input.is_pad() {
+            return Modifiers::NONE;
+        }
+        let held = self.down.keys().filter(|&&other| other != input).fold(
+            Modifiers::NONE,
+            |set, &other| match other {
+                Input::Key(key) => set.and(Modifiers::of_key(key)),
+                Input::Mouse(_) | Input::Pad(_) => set,
+            },
+        );
+        A::ALL
+            .iter()
+            .flat_map(|&action| self.bindings.get(action))
+            .filter(|b| b.input == input && held.contains(b.modifiers))
+            .map(|b| b.modifiers)
+            .max_by_key(|modifiers| modifiers.rank())
+            .unwrap_or(Modifiers::NONE)
+    }
+
+    fn press_actions(&self, input: Input, modifiers: Modifiers) -> u64 {
+        self.actions_where(|b| {
+            b.input == input && b.modifiers == modifiers && b.trigger == Trigger::Press
+        })
     }
 
     fn actions_where(&self, matches: impl Fn(&Binding) -> bool) -> u64 {
@@ -301,16 +351,20 @@ impl<A: Action> ActionMap<A> {
             .fold(0, |mask, (index, _)| mask | 1 << index)
     }
 
-    fn binding_down(&self, input: Input, trigger: Trigger) -> bool {
-        self.down.get(&input).is_some_and(|&ticks| match trigger {
-            Trigger::Press => !self.split.contains(&input),
-            Trigger::Hold => ticks >= A::HOLD_TICKS,
+    fn binding_down(&self, binding: &Binding) -> bool {
+        let set = (binding.input, binding.modifiers);
+        self.down.get(&binding.input).is_some_and(|down| {
+            down.modifiers == binding.modifiers
+                && match binding.trigger {
+                    Trigger::Press => !self.split.contains(&set),
+                    Trigger::Hold => down.ticks >= A::HOLD_TICKS,
+                }
         })
     }
 
     /// Recomputes the held mask; `taps` are actions that press and release in this tick.
     fn refresh_held(&mut self, taps: u64) {
-        let held = self.actions_where(|b| self.binding_down(b.input, b.trigger));
+        let held = self.actions_where(|b| self.binding_down(b));
         let taps = taps & !held;
         self.pressed |= (held & !self.held) | taps;
         self.released |= (self.held & !held) | taps;
@@ -346,10 +400,14 @@ impl<A: Action> ActionMap<A> {
         } else {
             counts
         };
-        let mouse = (
-            counts.0 * self.look.look_per_count,
-            counts.1 * self.look.look_per_count,
-        );
+        let frame_ms = frame_dt.as_secs_f32() * 1000.0;
+        let speed = if frame_ms > 0.0 {
+            counts.0.hypot(counts.1) / frame_ms
+        } else {
+            0.0
+        };
+        let per_count = self.look.look_per_count + self.look.acceleration * speed;
+        let mouse = (counts.0 * per_count, counts.1 * per_count);
         let (stick_x, stick_y) = self.stick_look(frame_dt);
         (mouse.0 + stick_x, mouse.1 + stick_y)
     }
@@ -395,8 +453,9 @@ pub fn handle_device_event<A: Action>(map: &mut ActionMap<A>, event: &DeviceEven
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bindings::Binding;
+    use crate::bindings::{Binding, Modifiers};
     use std::collections::BTreeMap;
+    use winit::keyboard::{KeyCode, PhysicalKey};
 
     /// A power-of-two fraction of a second, so stick arithmetic is exact in f32.
     const FRAME: Duration = Duration::from_micros(15_625);
@@ -569,6 +628,7 @@ mod tests {
                 look_per_count: 2.0,
                 smoothing,
                 invert_y: false,
+                acceleration: 0.0,
             });
 
             map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
@@ -847,6 +907,7 @@ mod tests {
             look_per_count,
             smoothing: true,
             invert_y: false,
+            acceleration: 0.0,
         });
         map
     }
@@ -931,6 +992,7 @@ mod tests {
             look_per_count: 1.0,
             smoothing: true,
             invert_y: false,
+            acceleration: 0.0,
         });
         map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
         map.mouse_motion(2.0, 0.0);
@@ -967,6 +1029,7 @@ mod tests {
             look_per_count: 1.0,
             smoothing: true,
             invert_y: false,
+            acceleration: 0.0,
         });
         map.sample_frame(FRAME);
         let after = map.end_tick().look();
@@ -999,6 +1062,7 @@ mod tests {
             look_per_count: 2.0,
             smoothing: true,
             invert_y: false,
+            acceleration: 0.0,
         });
         map.sample_frame(FRAME);
         let after = map.end_tick().look();
@@ -1459,6 +1523,7 @@ mod tests {
         let mut map = pad_map(look_per_count);
         map.set_look(LookSettings {
             invert_y: true,
+            acceleration: 0.0,
             ..LookSettings::raw(look_per_count)
         });
         map
@@ -1498,6 +1563,7 @@ mod tests {
             look_per_count: 0.5,
             smoothing: true,
             invert_y: true,
+            acceleration: 0.0,
         });
         for map in [&mut normal, &mut inverted] {
             map.mouse_motion(40.0, -100.0);
@@ -1558,11 +1624,176 @@ mod tests {
         );
     }
 
+    const TEN_MS: Duration = Duration::from_millis(10);
+
+    fn accelerated(look_per_count: f32, acceleration: f32) -> ActionMap<TestAction> {
+        let mut map = pad_map(look_per_count);
+        map.set_look(LookSettings {
+            acceleration,
+            ..LookSettings::raw(look_per_count)
+        });
+        map
+    }
+
+    fn assert_near(actual: (f32, f32), expected: (f32, f32)) {
+        let near = |a: f32, e: f32| (a - e).abs() <= 1e-4 * e.abs().max(1.0);
+        assert!(
+            near(actual.0, expected.0) && near(actual.1, expected.1),
+            "expected {expected:?}, got {actual:?}"
+        );
+    }
+
+    /// Total yaw of `counts_per_frame` fed over `frames` frames of `dt` each.
+    fn total_yaw(
+        mut map: ActionMap<TestAction>,
+        counts_per_frame: f64,
+        frames: usize,
+        dt: Duration,
+    ) -> f32 {
+        let mut total = 0.0;
+        for _ in 0..frames {
+            map.mouse_motion(counts_per_frame, 0.0);
+            map.sample_frame(dt);
+            total += map.end_tick().look().0;
+        }
+        total
+    }
+
+    #[test]
+    fn without_acceleration_speed_does_not_change_the_turn() {
+        let fast = total_yaw(map(1.0), 100.0, 1, TEN_MS);
+        let slow = total_yaw(map(1.0), 10.0, 10, TEN_MS);
+
+        assert_eq!(fast, 100.0);
+        assert_eq!(slow, 100.0);
+    }
+
+    #[test]
+    fn acceleration_turns_a_fast_motion_further() {
+        let fast = total_yaw(accelerated(1.0, 0.5), 100.0, 1, TEN_MS);
+        let slow = total_yaw(accelerated(1.0, 0.5), 10.0, 10, TEN_MS);
+
+        assert!(fast > slow, "fast {fast}, slow {slow}");
+        assert_near((fast, slow), (600.0, 150.0));
+    }
+
+    #[test]
+    fn zero_strength_acceleration_matches_off() {
+        let mut off = pad_map(0.7);
+        let mut zero = accelerated(0.7, 0.0);
+        for map in [&mut off, &mut zero] {
+            map.mouse_motion(123.0, -45.0);
+            map.sample_frame(TEN_MS);
+        }
+
+        assert_eq!(zero.end_tick().look(), off.end_tick().look());
+    }
+
+    #[test]
+    fn zero_frame_dt_sample_is_not_accelerated() {
+        let mut map = accelerated(2.0, 1000.0);
+
+        map.mouse_motion(10.0, -5.0);
+        map.sample_frame(Duration::ZERO);
+
+        assert_eq!(map.end_tick().look(), (20.0, -10.0));
+    }
+
+    #[test]
+    fn acceleration_speed_is_the_diagonal_counts_per_millisecond() {
+        let mut map = accelerated(2.0, 0.1);
+
+        map.mouse_motion(-30.0, 40.0);
+        map.sample_frame(TEN_MS);
+
+        // hypot(30, 40) = 50 counts over 10 ms is 5 counts/ms: 2 + 0.1 * 5 per count.
+        assert_near(map.end_tick().look(), (-75.0, 100.0));
+    }
+
+    #[test]
+    fn acceleration_uses_the_smoothed_counts() {
+        let mut map = map(1.0);
+        map.set_look(LookSettings {
+            smoothing: true,
+            acceleration: 0.5,
+            ..LookSettings::raw(1.0)
+        });
+
+        map.mouse_motion(10.0, 4.0);
+        map.sample_frame(TEN_MS);
+
+        // Smoothing releases (5, 2) in the first frame.
+        let factor = 1.0 + 0.5 * (5.0f32.hypot(2.0) / 10.0);
+        assert_near(map.end_tick().look(), (5.0 * factor, 2.0 * factor));
+    }
+
+    #[test]
+    fn acceleration_scales_with_the_frame_duration() {
+        let mut short = accelerated(1.0, 0.5);
+        let mut long = accelerated(1.0, 0.5);
+
+        short.mouse_motion(100.0, 0.0);
+        short.sample_frame(Duration::from_millis(5));
+        long.mouse_motion(100.0, 0.0);
+        long.sample_frame(Duration::from_millis(20));
+
+        assert_near(short.end_tick().look(), (100.0 * (1.0 + 0.5 * 20.0), 0.0));
+        assert_near(long.end_tick().look(), (100.0 * (1.0 + 0.5 * 5.0), 0.0));
+    }
+
+    #[test]
+    fn stick_is_not_accelerated() {
+        let mut off = pad_map(1.0);
+        let mut on = accelerated(1.0, 5.0);
+        for map in [&mut off, &mut on] {
+            map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
+            map.pad_axis(Stick::RightStick, StickAxis::Y, -0.5);
+            map.sample_frame(FRAME);
+        }
+
+        assert_eq!(on.end_tick().look(), off.end_tick().look());
+    }
+
+    #[test]
+    fn acceleration_applies_only_to_the_mouse_share_of_mixed_look() {
+        let mut map = accelerated(1.0, 0.5);
+
+        map.pad_axis(Stick::RightStick, StickAxis::X, 1.0);
+        map.mouse_motion(100.0, 0.0);
+        map.sample_frame(TEN_MS);
+        let stick = PAD_LOOK_PER_SECOND * TEN_MS.as_secs_f32();
+
+        assert_near(map.end_tick().look(), (600.0 + stick, 0.0));
+    }
+
     mod proptests {
         use super::*;
         use proptest::prelude::*;
 
         proptest! {
+            #[test]
+            fn acceleration_never_reduces_the_turn(
+                dx in -500i32..500,
+                dy in -500i32..500,
+                dt_micros in 0u64..50_000,
+                acceleration in 0.0f32..2.0,
+                look_per_count in 0.001f32..3.0,
+            ) {
+                let dt = Duration::from_micros(dt_micros);
+                let mut plain = map(look_per_count);
+                let mut fast = accelerated(look_per_count, acceleration);
+                for map in [&mut plain, &mut fast] {
+                    map.mouse_motion(f64::from(dx), f64::from(dy));
+                    map.sample_frame(dt);
+                }
+
+                let plain = plain.end_tick().look();
+                let fast = fast.end_tick().look();
+
+                prop_assert!(fast.0.abs() >= plain.0.abs(), "yaw {fast:?} vs {plain:?}");
+                prop_assert!(fast.1.abs() >= plain.1.abs(), "pitch {fast:?} vs {plain:?}");
+            }
+
             #[test]
             fn prop_turn_total_is_independent_of_frame_split(
                 counts in proptest::collection::vec(-40i32..40, 1..24),
@@ -2209,6 +2440,427 @@ mod tests {
         assert!(!frames[HOLD - 2].held(Weapon::Check));
         assert!(frames[HOLD - 1].pressed(Weapon::Check));
         assert!(frames.iter().all(|f| !f.pressed(Weapon::Reload)));
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+    enum Gun {
+        Reload,
+        Unjam,
+        Check,
+        Fire,
+        Bash,
+        Descend,
+        Sprint,
+    }
+
+    impl Action for Gun {
+        const ALL: &'static [Self] = &[
+            Gun::Reload,
+            Gun::Unjam,
+            Gun::Check,
+            Gun::Fire,
+            Gun::Bash,
+            Gun::Descend,
+            Gun::Sprint,
+        ];
+
+        fn name(self) -> &'static str {
+            match self {
+                Gun::Reload => "reload",
+                Gun::Unjam => "unjam",
+                Gun::Check => "check",
+                Gun::Fire => "fire",
+                Gun::Bash => "bash",
+                Gun::Descend => "descend",
+                Gun::Sprint => "sprint",
+            }
+        }
+
+        fn default_bindings(self) -> &'static [Binding] {
+            &[]
+        }
+    }
+
+    const CTRL: Modifiers = Modifiers::CTRL;
+    const SHIFT: Modifiers = Modifiers::SHIFT;
+    const ALT: Modifiers = Modifiers::ALT;
+
+    fn gun_map(bound: &[(Gun, Vec<Binding>)]) -> ActionMap<Gun> {
+        let (mut bindings, warnings) = ActionBindings::<Gun>::load(&BTreeMap::new());
+        assert_eq!(warnings, vec![]);
+        for (action, list) in bound {
+            bindings.set(*action, list.clone());
+        }
+        ActionMap::new(bindings, 1.0)
+    }
+
+    fn reload_and_unjam(unjam: Binding) -> ActionMap<Gun> {
+        gun_map(&[
+            (Gun::Reload, vec![Binding::key(Key::R)]),
+            (Gun::Unjam, vec![unjam]),
+        ])
+    }
+
+    fn physical(code: KeyCode) -> Key {
+        Key::from_winit(PhysicalKey::Code(code)).expect("a named key")
+    }
+
+    #[test]
+    fn chord_fires_instead_of_the_plain_action() {
+        let rows = [
+            ("left Ctrl", CTRL, physical(KeyCode::ControlLeft)),
+            ("right Ctrl", CTRL, physical(KeyCode::ControlRight)),
+            ("Shift", SHIFT, Key::Shift),
+            ("Alt", ALT, Key::Alt),
+        ];
+
+        for (name, modifiers, modifier_key) in rows {
+            let mut map = reload_and_unjam(Binding::key(Key::R).with(modifiers));
+
+            map.key(modifier_key, true);
+            map.key(Key::R, true);
+            let frame = map.end_tick();
+
+            assert!(frame.pressed(Gun::Unjam), "{name}");
+            assert!(frame.held(Gun::Unjam), "{name}");
+            assert!(!frame.pressed(Gun::Reload), "{name}");
+            assert!(!frame.held(Gun::Reload), "{name}");
+        }
+    }
+
+    #[test]
+    fn chord_works_on_a_mouse_button() {
+        let mut map = gun_map(&[
+            (Gun::Fire, vec![Binding::mouse(MouseButton::Left)]),
+            (
+                Gun::Bash,
+                vec![Binding::mouse(MouseButton::Left).with(CTRL)],
+            ),
+        ]);
+
+        map.key(Key::Ctrl, true);
+        map.mouse_button(MouseButton::Left, true);
+        let frame = map.end_tick();
+
+        assert!(frame.pressed(Gun::Bash));
+        assert!(frame.held(Gun::Bash));
+        assert!(!frame.pressed(Gun::Fire));
+        assert!(!frame.held(Gun::Fire));
+    }
+
+    #[test]
+    fn unbound_chord_falls_through_to_the_plain_action() {
+        let mut map = reload_and_unjam(Binding::key(Key::R).with(CTRL));
+
+        map.key(Key::Shift, true);
+        map.key(Key::R, true);
+        let frame = map.end_tick();
+        map.key(Key::R, false);
+        let up = map.end_tick();
+
+        assert!(frame.pressed(Gun::Reload));
+        assert!(frame.held(Gun::Reload));
+        assert!(!frame.pressed(Gun::Unjam));
+        assert!(!frame.held(Gun::Unjam));
+        assert!(up.released(Gun::Reload));
+        assert!(!up.held(Gun::Reload));
+    }
+
+    #[test]
+    fn modifier_keeps_its_own_action_during_a_chord() {
+        let mut map = gun_map(&[
+            (Gun::Descend, vec![Binding::key(Key::Ctrl)]),
+            (Gun::Unjam, vec![Binding::key(Key::R).with(CTRL)]),
+            (Gun::Reload, vec![Binding::key(Key::R)]),
+        ]);
+
+        map.key(Key::Ctrl, true);
+        map.key(Key::R, true);
+        let frame = map.end_tick();
+        let next = map.end_tick();
+
+        assert!(frame.held(Gun::Descend));
+        assert!(next.held(Gun::Descend));
+        assert!(frame.pressed(Gun::Unjam));
+        assert!(frame.held(Gun::Unjam));
+        assert!(!frame.pressed(Gun::Reload));
+    }
+
+    #[test]
+    fn releasing_the_modifier_first_does_not_refire() {
+        let mut map = reload_and_unjam(Binding::key(Key::R).with(CTRL));
+
+        map.key(Key::Ctrl, true);
+        map.key(Key::R, true);
+        let both_down = map.end_tick();
+        map.key(Key::Ctrl, false);
+        map.key(Key::R, true);
+        let ctrl_up = map.end_tick();
+        map.key(Key::R, false);
+        let r_up = map.end_tick();
+        let after = map.end_tick();
+
+        let frames = [&both_down, &ctrl_up, &r_up, &after];
+        let unjam_presses = frames.iter().filter(|f| f.pressed(Gun::Unjam)).count();
+        assert_eq!(unjam_presses, 1);
+        assert!(both_down.pressed(Gun::Unjam));
+        assert!(ctrl_up.held(Gun::Unjam), "unjam outlives its modifier");
+        assert!(!ctrl_up.released(Gun::Unjam));
+        assert!(r_up.released(Gun::Unjam));
+        assert!(!r_up.held(Gun::Unjam));
+        for frame in frames {
+            assert!(!frame.pressed(Gun::Reload));
+            assert!(!frame.held(Gun::Reload));
+        }
+    }
+
+    #[test]
+    fn most_specific_bound_chord_wins() {
+        let plain = Binding::key(Key::R);
+        let on = |modifiers: Modifiers| Binding::key(Key::R).with(modifiers);
+        let ctrl_shift = CTRL.and(SHIFT);
+        let ctrl_alt = CTRL.and(ALT);
+        let shift_alt = SHIFT.and(ALT);
+        let both = [Key::Ctrl, Key::Shift];
+        let both_reversed = [Key::Shift, Key::Ctrl];
+        let shift_alt_keys = [Key::Shift, Key::Alt];
+        let alt_shift_keys = [Key::Alt, Key::Shift];
+        let all_three = [Key::Ctrl, Key::Shift, Key::Alt];
+        let all_three_reversed = [Key::Alt, Key::Shift, Key::Ctrl];
+        // (name, binding that should lose, binding that should win, modifier keys held in order)
+        let cases = [
+            ("Ctrl+R over R", plain, on(CTRL), both.as_slice()),
+            (
+                "Ctrl+Shift+R over Ctrl+R",
+                on(CTRL),
+                on(ctrl_shift),
+                both.as_slice(),
+            ),
+            (
+                "Ctrl+Shift+R over Ctrl+R, modifiers held in the other order",
+                on(CTRL),
+                on(ctrl_shift),
+                both_reversed.as_slice(),
+            ),
+            (
+                "Ctrl+R over Shift+R, Ctrl first",
+                on(SHIFT),
+                on(CTRL),
+                both.as_slice(),
+            ),
+            (
+                "Ctrl+R over Shift+R, Shift first",
+                on(SHIFT),
+                on(CTRL),
+                both_reversed.as_slice(),
+            ),
+            (
+                "Shift+R over Alt+R, Shift first",
+                on(ALT),
+                on(SHIFT),
+                shift_alt_keys.as_slice(),
+            ),
+            (
+                "Shift+R over Alt+R, Alt first",
+                on(ALT),
+                on(SHIFT),
+                alt_shift_keys.as_slice(),
+            ),
+            (
+                "Ctrl+Alt+R over Shift+Alt+R, Ctrl first",
+                on(shift_alt),
+                on(ctrl_alt),
+                all_three.as_slice(),
+            ),
+            (
+                "Ctrl+Alt+R over Shift+Alt+R, Alt first",
+                on(shift_alt),
+                on(ctrl_alt),
+                all_three_reversed.as_slice(),
+            ),
+        ];
+
+        for (name, loser, winner, held) in cases {
+            for winner_is_earlier in [false, true] {
+                let (earlier, later, winning, losing) = if winner_is_earlier {
+                    (winner, loser, Gun::Reload, Gun::Unjam)
+                } else {
+                    (loser, winner, Gun::Unjam, Gun::Reload)
+                };
+                let mut map = gun_map(&[(Gun::Reload, vec![earlier]), (Gun::Unjam, vec![later])]);
+                for &key in held {
+                    map.key(key, true);
+                }
+
+                map.key(Key::R, true);
+                let frame = map.end_tick();
+
+                let label =
+                    format!("{name}, winner earlier in the action list: {winner_is_earlier}");
+                assert!(frame.pressed(winning), "{label}");
+                assert!(frame.held(winning), "{label}");
+                assert!(!frame.pressed(losing), "{label}");
+                assert!(!frame.held(losing), "{label}");
+            }
+        }
+    }
+
+    #[test]
+    fn modifier_pressed_after_the_key_does_not_rechord() {
+        let mut map = reload_and_unjam(Binding::key(Key::R).with(CTRL));
+
+        map.key(Key::R, true);
+        let first = map.end_tick();
+        map.key(Key::Ctrl, true);
+        let second = map.end_tick();
+        map.key(Key::Ctrl, false);
+        let third = map.end_tick();
+
+        assert!(first.pressed(Gun::Reload));
+        for frame in [&first, &second, &third] {
+            assert!(frame.held(Gun::Reload));
+            assert!(!frame.held(Gun::Unjam));
+            assert!(!frame.pressed(Gun::Unjam));
+        }
+        assert!(!second.pressed(Gun::Reload));
+    }
+
+    #[test]
+    fn hold_of_a_chord_is_its_own_binding() {
+        let chord = Binding::key(Key::R).with(CTRL);
+        let bound = [
+            (Gun::Reload, vec![Binding::key(Key::R)]),
+            (Gun::Unjam, vec![chord]),
+            (Gun::Check, vec![chord.held()]),
+        ];
+
+        let mut tapped = gun_map(&bound);
+        tapped.key(Key::Ctrl, true);
+        tapped.key(Key::R, true);
+        let tap_down = ticks(&mut tapped, 3);
+        tapped.key(Key::R, false);
+        let tap_up = tapped.end_tick();
+
+        let mut held = gun_map(&bound);
+        held.key(Key::Ctrl, true);
+        held.key(Key::R, true);
+        let hold_down = ticks(&mut held, HOLD);
+        held.key(Key::R, false);
+        let hold_up = held.end_tick();
+
+        let mut plain = gun_map(&bound);
+        plain.key(Key::R, true);
+        let plain_down = plain.end_tick();
+        let plain_steady = ticks(&mut plain, 3);
+        plain.key(Key::R, false);
+        let plain_up = plain.end_tick();
+        let plain_after = plain.end_tick();
+
+        for frame in &tap_down {
+            assert!(!frame.pressed(Gun::Unjam) && !frame.held(Gun::Unjam));
+        }
+        assert!(tap_up.pressed(Gun::Unjam), "a quick release taps the chord");
+        assert!(tap_up.released(Gun::Unjam));
+        assert!(!tap_up.pressed(Gun::Check));
+        assert!(!tap_up.pressed(Gun::Reload));
+        let matured = hold_down.last().unwrap();
+        assert!(matured.pressed(Gun::Check));
+        assert!(matured.held(Gun::Check));
+        assert!(hold_down.iter().all(|f| !f.pressed(Gun::Unjam)));
+        assert!(hold_down.iter().all(|f| !f.pressed(Gun::Reload)));
+        assert!(hold_up.released(Gun::Check));
+        assert!(!hold_up.pressed(Gun::Unjam), "a matured hold is not a tap");
+        assert!(
+            plain_down.pressed(Gun::Reload),
+            "the plain key is not split by the chord's hold"
+        );
+        assert!(plain_down.held(Gun::Reload));
+        assert!(plain_steady.iter().all(|f| f.held(Gun::Reload)));
+        assert!(plain_steady.iter().all(|f| !f.pressed(Gun::Reload)));
+        assert!(plain_up.released(Gun::Reload));
+        assert!(!plain_up.held(Gun::Reload));
+        assert!(
+            !plain_up.pressed(Gun::Reload) && !plain_after.pressed(Gun::Reload),
+            "releasing the plain key is not a second press"
+        );
+        let plain_frames = [&plain_down, &plain_up, &plain_after];
+        assert!(
+            plain_frames
+                .into_iter()
+                .chain(&plain_steady)
+                .all(|f| !f.pressed(Gun::Check) && !f.held(Gun::Check)),
+            "the chord's hold never fires on the plain key"
+        );
+    }
+
+    #[test]
+    fn pads_ignore_held_modifiers() {
+        let west = PadInput::Button(PadButton::West);
+        let mut map = gun_map(&[
+            (Gun::Descend, vec![Binding::key(Key::Ctrl)]),
+            (Gun::Fire, vec![Binding::pad(west)]),
+            (Gun::Bash, vec![Binding::pad(west).with(CTRL)]),
+        ]);
+
+        map.key(Key::Ctrl, true);
+        map.pad_button(PadButton::West, true);
+        let frame = map.end_tick();
+
+        assert!(frame.pressed(Gun::Fire));
+        assert!(frame.held(Gun::Fire));
+        assert!(!frame.pressed(Gun::Bash));
+        assert!(!frame.held(Gun::Bash));
+    }
+
+    #[test]
+    fn tap_of_a_split_chord_uses_the_set_from_press_time() {
+        let chord = Binding::key(Key::R).with(CTRL);
+        let mut map = gun_map(&[
+            (Gun::Reload, vec![Binding::key(Key::R)]),
+            (Gun::Unjam, vec![chord]),
+            (Gun::Check, vec![chord.held()]),
+        ]);
+
+        map.key(Key::Ctrl, true);
+        map.key(Key::R, true);
+        let down = map.end_tick();
+        map.key(Key::Ctrl, false);
+        let ctrl_up = map.end_tick();
+        map.key(Key::R, false);
+        let r_up = map.end_tick();
+        let after = map.end_tick();
+
+        let frames = [&down, &ctrl_up, &r_up, &after];
+        let unjam_presses = frames.iter().filter(|f| f.pressed(Gun::Unjam)).count();
+        assert_eq!(unjam_presses, 1);
+        assert!(r_up.pressed(Gun::Unjam), "the tap lands on release");
+        for frame in frames {
+            assert!(!frame.pressed(Gun::Reload));
+            assert!(!frame.held(Gun::Reload));
+            assert!(!frame.pressed(Gun::Check));
+            assert!(!frame.held(Gun::Check));
+        }
+    }
+
+    #[test]
+    fn a_modifier_key_can_carry_a_chord() {
+        let mut map = gun_map(&[
+            (Gun::Sprint, vec![Binding::key(Key::Shift)]),
+            (Gun::Descend, vec![Binding::key(Key::Ctrl)]),
+            (Gun::Bash, vec![Binding::key(Key::Ctrl).with(SHIFT)]),
+        ]);
+
+        map.key(Key::Shift, true);
+        map.key(Key::Ctrl, true);
+        let frame = map.end_tick();
+        let next = map.end_tick();
+
+        assert!(frame.pressed(Gun::Bash));
+        assert!(frame.held(Gun::Bash));
+        assert!(!frame.pressed(Gun::Descend));
+        assert!(!frame.held(Gun::Descend));
+        assert!(frame.held(Gun::Sprint));
+        assert!(next.held(Gun::Sprint));
     }
 
     /// The spec's rules for one split key, written independently of `ActionMap`.

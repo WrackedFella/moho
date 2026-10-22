@@ -91,6 +91,12 @@ impl GenerationProcessor {
         // Pre-generate the spawn-column chunks synchronously so that get_height and
         // physics colliders are ready before the character controller is placed.
         let preloaded = self.preload_spawn_area(&terrain_config, app);
+        // Light the grid before anything meshes it.
+        if let Some(ls) = app.light_system.as_mut() {
+            let loaded: Vec<glam::IVec3> = ls.grid().chunk_positions().collect();
+            ls.light_arrived_chunks(&loaded);
+            ls.emit_dirty_events();
+        }
         // Also publish events so the streaming pipeline keeps them in sync.
         for pos in &preloaded {
             app.event_bus
@@ -494,6 +500,70 @@ mod tests {
             drawn.len(),
             with_geometry,
             "one draw per chunk with geometry"
+        );
+    }
+
+    #[test]
+    fn completed_generation_lights_preloaded_chunks() {
+        let mut app = App::headless();
+        let spec = flagstone_game::scene_builders::WorldSpec {
+            name: "headless-test-completed-lit".to_string(),
+            seed: Some(7),
+            size_xz: 64,
+            day_length_seconds: 600.0,
+            night_length_seconds: 420.0,
+            initial_time_of_day: 6.0,
+        };
+        let scene_bytes = flagstone_game::scene_persistence::encode_to_bytes(
+            &flagstone_game::scene::SceneEntities::default(),
+            None,
+            &[],
+        )
+        .expect("encode empty scene");
+        // Above the preloaded terrain, so only the handed-in grid holds this chunk.
+        let emitter = glam::IVec3::new(3, 200, 3);
+        let mut grid = flagstone_voxel::VoxelGrid::new(16);
+        let emitter_material =
+            grid.material_registry
+                .register(flagstone_voxel::MaterialType::Lambertian {
+                    albedo: glam::Vec3::ONE,
+                });
+        grid.material_registry.set_lighting(
+            emitter_material,
+            flagstone_voxel::MaterialLighting {
+                emission: [15, 8, 2],
+                opacity_cost: 0,
+            },
+        );
+        grid.mutator().place(emitter, emitter_material, None);
+        let _ = app.world_event_rx.try_iter().count();
+
+        GenerationProcessor::new().handle_completed(
+            &mut app,
+            scene_bytes,
+            spec,
+            flagstone_game::scene_builders::TerrainConfig::default(),
+            grid,
+        );
+
+        let grid = app.light_system.as_ref().expect("light system").grid();
+        assert_eq!(grid.block_light_rgb_at(emitter), [15, 8, 2]);
+        assert_eq!(
+            grid.block_light_rgb_at(emitter + glam::IVec3::X),
+            [14, 7, 1],
+            "the emitter's neighbour is lit before the first tick"
+        );
+        let dirtied: Vec<glam::IVec3> = app
+            .world_event_rx
+            .try_iter()
+            .filter_map(|event| match event {
+                flagstone_voxel::WorldEvent::ChunkMeshDirty { chunk_pos, .. } => Some(chunk_pos),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            dirtied.contains(&glam::IVec3::new(0, 12, 0)),
+            "the lit chunk is queued for re-meshing: {dirtied:?}"
         );
     }
 }

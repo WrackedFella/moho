@@ -80,8 +80,6 @@ one into the engine is a new seam, so it needs its own ADR
   in kind. Bounce from dynamic lights (flashlights, muzzle flashes) arrives in a
   later ENG-F35 slice; until then it is invisible to the AI.
 - Existing code that breaks a rule is fixed when its owning feature next reworks it,
-  not in a sweep. Known case: `searchlight`'s sim seeds a private `SplitMix64`
-  instead of a `SimRng` stream. It is seeded and replays, so only the stream rule
-  (6) is unmet; it moves to `SimRng` when the brain is next reworked.
+  not in a sweep.
 - Cost: each line writes its own decision code, and a line that wants a framework
   later builds or picks it for itself.

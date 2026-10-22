@@ -10,7 +10,7 @@
 [0012](../../_todo/adr/0012-engine-crate-map-for-m2.md),
 [0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md).
 
-## Crate graph
+## 1 Crate graph
 
 Arrows run from dependent to dependency; colour is the line from `scripts/layering.txt`.
 The `flagstone` binary depends on all of them and is omitted from the edges.
@@ -60,7 +60,7 @@ through one path (ray, surface tag, part, rule call) for player and enemy alike
 `moho_app` owns the window and winit event loop; the binary implements its `Game` trait and hands it
 to `moho_app::run` ([frame loop](frame-loop.md)).
 
-## Lines and rules
+## 2 Lines and rules
 
 Each crate belongs to exactly one line ([ADR-0005](../../_todo/adr/0005-crate-lines-and-dependency-direction.md)).
 `just check` enforces these over normal and build edges:
@@ -75,7 +75,7 @@ Each crate belongs to exactly one line ([ADR-0005](../../_todo/adr/0005-crate-li
 Voxels live in the flagstone-line `flagstone_voxel` ([ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md));
 the engine sees world geometry only as meshes.
 
-## Target crate graph (M2)
+## 3 Target crate graph (M2)
 
 Where the M1–M2 engine work lands, from [ADR-0012](../../_todo/adr/0012-engine-crate-map-for-m2.md)
 (Proposed). Capabilities land as modules of an existing crate first; a new crate needs a
@@ -127,14 +127,14 @@ Changes from today:
 
 The searchlight line sits beside the flagstone line and depends only on engine crates.
 
-### Engine seams
+### 3.1 Engine seams
 
 The public APIs the [ENG-F5](https://github.com/WrackedFella/moho/issues/232)
 gate holds fixed: game plug-in interface, world-geometry contract, action map, physics
 queries, spatial audio, content roots, save envelope, scene import. Adding or changing
 one is an ADR-level change.
 
-## Fixed-step loop (`moho_app`)
+## 4 Fixed-step loop (`moho_app`)
 
 Window-free scheduling for any game line ([ADR-0009](../../_todo/adr/0009-simulation-time-is-one-fixed-tick.md)).
 
@@ -151,7 +151,7 @@ Invariants: ticks per frame are capped by `max_catch_up_ticks` (default 5) and t
 dropped except the sub-tick remainder (the cap scales with `SimSpeed`); `tick_hz` must be non-zero (`FixedStep::new` panics); `TickContext::tick` counts from 0.
 Pause and speed are loop state, not simulation state ([ADR-0018](../../_todo/adr/0018-paused-commands-apply-at-the-tick-boundary.md)): while paused no tick runs and the sub-tick remainder is untouched, the game's `command()` goes to `Game::apply_while_paused(next_tick, command)` before the frame, and tick index and simulation time do not move.
 
-## Runtime composition
+## 5 Runtime composition
 
 `App::from_config` (`flagstone/src/app/initializer.rs`) builds each subsystem and passes dependencies
 explicitly. There is no service locator. The window, renderer and `AudioSystem` are created by
@@ -168,23 +168,23 @@ flowchart LR
     chans --> loop["Game::tick / Game::frame<br/>drain receivers"]
 ```
 
-## Where state lives
+## 6 Where state lives
 
 | State | Owner |
 |---|---|
 | Voxel grid, light | `flagstone_voxel::LightSystem` (owns the grid) |
-| Chunk meshes | `ChunkStore` in `flagstone_voxel`; the renderer holds its own copy as `WorldMeshes` ([rendering](rendering.md#world-geometry)) |
+| Chunk meshes | `ChunkStore` in `flagstone_voxel`; the renderer holds its own copy as `WorldMeshes` ([rendering](rendering.md#2-world-geometry)) |
 | Actors (spheres, cubes) | `ActorStore` in `flagstone_game` |
 | Time of day | `moho_app::GameClock`, owned by the loop and advanced after each `Game::tick` |
-| App mode | `flagstone_ui::GameState` ([input-and-state](input-and-state.md#gamestate)) |
+| App mode | `flagstone_ui::GameState` ([input-and-state](input-and-state.md#3-gamestate)) |
 | GPU resources | `moho_renderer`; game types reach it only through `moho_render_api` ([rendering](rendering.md)) |
 | Prefs | `moho_core::prefs::Prefs` ([format](../reference/prefs-format.md)) |
 | Simulation randomness | `moho_core::rng::SimRng`, one per system, held by value in that system's state and keyed by `StreamId::named(<system name>)`. Integer-only SplitMix64, so a seed and stream replay identically on every platform; the sequence is pinned by tests, and changing it breaks saved games and replays. Not `Copy`: duplicate only with an explicit `clone` |
-| Player character, noclip | `PhysicsController` (`flagstone/src/app/physics_controller.rs`): `player` is a `CharacterHandle` into `moho_physics::PhysicsWorld`, which holds each character's `CharacterState` (position, velocity, yaw, pitch, grounded; `moho_physics/src/world/character.rs`). Per-tick movement rules are the pure `moho_physics::step` (`moho_physics/src/movement.rs`), driven by a `CharacterCommand` and game-supplied `MoveSettings`; an airborne tick applies gravity in two halves around the slide, so displacement matches constant gravity at any tick rate and a landing's impact speed is the mid-tick fall speed; the game owns the tuning (`STRATEGY_MOVE_SETTINGS` in `flagstone/src/app/event_loop/frame_processor.rs`). A grounded walker follows walkable slopes (vertical speed tracks the ground, horizontal speed is kept) and is snapped down onto ground within `GROUND_SNAP`, so it stays on ground that levels out (a ramp onto a plateau) but leaves with its momentum where the ground falls away; the slide reports the surface under the capsule as `Slide::ground` (`moho_physics/src/movement.rs`). It also keeps the player's pre-tick state for the [frame camera](frame-loop.md#frame-camera) (`moho_physics::first_person_view`, `moho_physics/src/camera.rs`), reset on spawn and teleport. `reset` clears the handle and that state |
+| Player character, noclip | `PhysicsController` (`flagstone/src/app/physics_controller.rs`): `player` is a `CharacterHandle` into `moho_physics::PhysicsWorld`, which holds each character's `CharacterState` (position, velocity, yaw, pitch, grounded; `moho_physics/src/world/character.rs`). Per-tick movement rules are the pure `moho_physics::step` (`moho_physics/src/movement.rs`), driven by a `CharacterCommand` and game-supplied `MoveSettings`; an airborne tick applies gravity in two halves around the slide, so displacement matches constant gravity at any tick rate and a landing's impact speed is the mid-tick fall speed; the game owns the tuning (`STRATEGY_MOVE_SETTINGS` in `flagstone/src/app/event_loop/frame_processor.rs`). A grounded walker follows walkable slopes (vertical speed tracks the ground, horizontal speed is kept) and is snapped down onto ground within `GROUND_SNAP`, so it stays on ground that levels out (a ramp onto a plateau) but leaves with its momentum where the ground falls away; the slide reports the surface under the capsule as `Slide::ground` (`moho_physics/src/movement.rs`). It also keeps the player's pre-tick state for the [frame camera](frame-loop.md#41-frame-camera) (`moho_physics::first_person_view`, `moho_physics/src/camera.rs`), reset on spawn and teleport. `reset` clears the handle and that state |
 
 Entities live in typed stores; there is no general ECS (ADR-0004).
 
-## Logging
+## 7 Logging
 
 All crates emit `tracing` events (`tracing::info!(count = n, "message")`, structured
 fields over interpolated text); the `log` facade is not a workspace dependency.
@@ -192,6 +192,6 @@ fields over interpolated text); the `log` facade is not a workspace dependency.
 (default `info`), and also receives `log` records from third-party dependencies.
 Library crates never install a subscriber.
 
-## Next
+## 8 Next
 
 [Frame loop](frame-loop.md) · [Searchlight](searchlight.md) · [Events](events.md) · [Rendering](rendering.md)
