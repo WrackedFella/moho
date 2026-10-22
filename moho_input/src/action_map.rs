@@ -387,9 +387,9 @@ impl<A: Action> ActionMap<A> {
         self.latched ^= (rising | taps) & self.toggled;
         self.raw_held = raw;
         let held = (raw & !self.toggled) | self.latched;
-        let taps = taps & !self.toggled;
-        self.pressed |= (held & !self.held) | taps;
-        self.released |= (self.held & !held) | taps;
+        let plain_taps = taps & !self.toggled;
+        self.pressed |= (held & !self.held) | plain_taps;
+        self.released |= (self.held & !held) | plain_taps;
         self.held = held;
     }
 

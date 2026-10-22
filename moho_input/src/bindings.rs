@@ -206,6 +206,32 @@ pub enum ActionMode {
     Toggle,
 }
 
+impl ActionMode {
+    /// The name written to prefs.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Hold => "hold",
+            Self::Toggle => "toggle",
+        }
+    }
+
+    /// Reads a prefs value, ignoring case and surrounding whitespace.
+    pub fn parse(value: &str) -> Option<Self> {
+        let value = value.trim();
+        [Self::Hold, Self::Toggle]
+            .into_iter()
+            .find(|mode| value.eq_ignore_ascii_case(mode.name()))
+    }
+
+    pub const fn is_toggle(self) -> bool {
+        matches!(self, Self::Toggle)
+    }
+
+    pub const fn from_toggle(toggle: bool) -> Self {
+        if toggle { Self::Toggle } else { Self::Hold }
+    }
+}
+
 /// A line of the `[bindings]` section that could not be used.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BindingWarning {
@@ -274,11 +300,7 @@ impl<A: Action> ActionBindings<A> {
 
     /// `Hold` unless the action is toggleable and set to `Toggle`.
     pub fn mode(&self, action: A) -> ActionMode {
-        if self.toggled.contains(&action) {
-            ActionMode::Toggle
-        } else {
-            ActionMode::Hold
-        }
+        ActionMode::from_toggle(self.toggled.contains(&action))
     }
 
     /// Setting `Toggle` on a non-toggleable action is ignored: such an action has no toggle.
@@ -302,7 +324,7 @@ impl<A: Action> ActionBindings<A> {
                 .iter()
                 .copied()
                 .find(|a| a.name() == name && a.toggleable());
-            let mode = parse_mode(value);
+            let mode = ActionMode::parse(value);
             match (action, mode) {
                 (Some(action), Some(mode)) => self.set_mode(action, mode),
                 _ => warnings.push(BindingWarning {
@@ -319,26 +341,8 @@ impl<A: Action> ActionBindings<A> {
         A::ALL
             .iter()
             .filter(|a| a.toggleable())
-            .map(|&a| (a.name().to_string(), mode_name(self.mode(a)).to_string()))
+            .map(|&a| (a.name().to_string(), self.mode(a).name().to_string()))
             .collect()
-    }
-}
-
-fn parse_mode(value: &str) -> Option<ActionMode> {
-    let value = value.trim();
-    if value.eq_ignore_ascii_case("hold") {
-        Some(ActionMode::Hold)
-    } else if value.eq_ignore_ascii_case("toggle") {
-        Some(ActionMode::Toggle)
-    } else {
-        None
-    }
-}
-
-const fn mode_name(mode: ActionMode) -> &'static str {
-    match mode {
-        ActionMode::Hold => "hold",
-        ActionMode::Toggle => "toggle",
     }
 }
 

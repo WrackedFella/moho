@@ -48,14 +48,10 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                     let row_width =
                         label_width + KEYBIND_BUTTON_WIDTH + ui.spacing().item_spacing.x;
                     let clicked = ui.allocate_ui(egui::vec2(row_width, 28.0), keybind).inner;
-                    let mut toggled = menu.state.get_staged_mode(action) == ActionMode::Toggle;
+                    let mut toggled = menu.state.get_staged_mode(action).is_toggle();
                     if ui.checkbox(&mut toggled, "Toggle").changed() {
-                        let mode = if toggled {
-                            ActionMode::Toggle
-                        } else {
-                            ActionMode::Hold
-                        };
-                        menu.state.set_staged_mode(action, mode);
+                        menu.state
+                            .set_staged_mode(action, ActionMode::from_toggle(toggled));
                     }
                     clicked
                 })
