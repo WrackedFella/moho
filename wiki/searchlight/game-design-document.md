@@ -1,8 +1,8 @@
 # FPS-F1 — Game Design Document (v0.3)
 
-**Status:** draft v0.3, approved for Phase 1. Writing this page is
+**Status:** draft v0.3, approved for Phase 1 (v0.3 adds pillar 2, the item lifecycle rule, the planning rule in §7 and §4.12 stats). Writing this page is
 [FPS-F1](../../_todo/searchlight/FPS-F1-game-design-document/_feature.md)'s deliverable. Open questions are in §9.
-**Working pitch:** a survival-focused looter shooter with realistic gunplay, where your gear is your character and every fight is a line on a ledger.
+**Working pitch:** a survival-focused looter shooter with realistic gunplay, where your gear is your character, your rig is the game, and every fight is a line on a ledger.
 **Working target:** single-player first, co-op later, mod support a priority. Pivots (Destiny-like, Arma-like) are open questions, not commitments (§9).
 
 ---
@@ -12,10 +12,11 @@
 Each pillar is a filter: a feature that serves none of them is cut.
 
 1. **Gear is your character.** No levels, no stat points. Capability comes from what you carry and its condition, on a body whose attributes are fixed (§4.12). Skills that grow with use are a deferred layer that buffs gear, never replaces it (§9 Q14).
-2. **Every encounter has a price.** Rounds, component wear, armor damage, meds, food, time. Success is measured as profit, not kills or survival.
-3. **Difficulty comes from systems, not sponges.** Enemies die to a few well-placed rounds; danger comes from jams, wounds, scarcity and bad decisions. Armor is the only legitimate source of tankiness.
-4. **The world doesn't wait for you.** Factions, creatures and independents pursue their own goals; you arrive into consequences.
-5. **The Zone is unknowable.** (Area X / Roadside Picnic.) Anomalies and artifacts are never fully explained; wrongness is ambient, not a jump scare.
+2. **You are always short of something.** Managing what you carry, where it sits, what condition it is in and how many uses it has left is core play, not a menu chore. Non-renewable items set the pace: the player is constantly scavenging for the next thing that runs out.
+3. **Every encounter has a price.** Rounds, component wear, armor damage, meds, food, time. Success is measured as profit, not kills or survival.
+4. **Difficulty comes from systems, not sponges.** Enemies die to a few well-placed rounds; danger comes from jams, wounds, scarcity and bad decisions. Armor is the only legitimate source of tankiness.
+5. **The world doesn't wait for you.** Factions, creatures and independents pursue their own goals; you arrive into consequences.
+6. **The Zone is unknowable.** (Area X / Roadside Picnic.) Anomalies and artifacts are never fully explained; wrongness is ambient, not a jump scare.
 
 ## 2 Genre and setting
 
@@ -35,6 +36,8 @@ Each pillar is a filter: a feature that serves none of them is cut.
 5. **Recover:** wounds force downtime (healing timers); survival stats force rest and food.
 6. **Take stock:** repair, craft ammo/food/meds, sell loot.
 7. **Ledger:** did income beat expenditure? Profit is the score.
+
+The wheel turns on scarcity: you grind resources to improve your rig so you can grind better resources, until death ends the run (permadeath at the hardcore end of §9 Q6). Every system below either creates a shortage or lets the player answer one.
 
 Secondary loops (run away, wait it out) exist but are smaller and obvious.
 
@@ -56,11 +59,17 @@ Each system states the question its prototype must answer, the design, and its c
 
 ### 4.1 Items and loadout (keystone, not in your list but everything depends on it)
 
-- **Question:** can one data-driven item model carry weapons, mags, rounds, meds, food and repair kits without special cases?
-- Items are defined in data files (moddable), not code.
-- **Loadout slots:** weapon slots (2 primary + sidearm), **belt/vest** slots (fast access: mags, meds, grenades), **backpack** (slow: open inventory screen, time passes, you're vulnerable).
-- Carry weight against the player's carry capacity (§4.12) drives stamina and speed through load thresholds.
-- **Cut line:** grid/Tetris inventory is out; weight plus slot count only.
+- **Question:** can one data-driven item model carry weapons, mags, rounds, meds, food, repair kits and tools without special cases?
+- Items are defined in data files (moddable), not code. Three classes: **weapons** (held, fire or strike), **consumables** (used up: rounds, meds, food, parts, kits) and **tools** (held or applied: toolkit, crowbar, detector). Items differ by make, condition, contents and attachments, never by rarity tier or random affix.
+- **Lifecycle rule:** an item with a **condition (%)** can be repaired; an item with a **number of uses (#)** cannot, and leaves the game when spent. Never both on one item. Balancing the spawn rate, job rewards and burn rate of the #-items is the game loop's main tuning knob (pillar 2).
+- **Three layers of access:** *hands* (what you hold), the *rig* (belt and vest: fast slots reached by hotkeys, no screen) and the *backpack* (everything else, reached through the inventory screen while time keeps passing). Anything used in a fight must already be on the rig; reload never looks in the backpack.
+- **Gear defines your containers:** the rig and the backpack are items. A rig sets how many fast slots you have and of which kind; a backpack sets how much you can carry. Changing what you wear changes the shape of your inventory. Worn gear weighs what it weighs.
+- **Equipment slots:** primary 1, primary 2, sidearm, rig, backpack, body armor, helmet. A suit slot arrives with anomalies.
+- **Grid inventory is the destination, not the start.** Items carry a size and containers a cell count from the first data file, so a Tarkov-style grid can be added without reshaping the data. The first inventory screen is a list over that data (capacity enforced by cells and weight, no dragging); the grid view is added to taste after playtest (§7, §9 Q17).
+- **Looting:** bodies and containers open a side-by-side screen and take time. Pickups go to the backpack unless the player puts them on the rig. The player's own dropped magazine returns to a free rig slot on pick-up; a gameplay setting (backpack or rig) comes later.
+- Carry weight against the player's carry capacity (§4.12) drives stamina and speed through load thresholds: fine, slowed, no sprint, cannot move.
+- **Special equipment (later):** sci-fi items that are situational and carry a drawback (a gravity gun, an x-ray sight as a weapon component). Hard rule: never an overpowered weapon or armor. Shape is open (§9 Q18).
+- **Cut lines:** stashes until the ledger proves out (§4.9); rarity, colour or affix loot; detectors and artifact slots until anomalies exist; the grid view until the list has been playtested.
 
 ### 4.2 Firearms and magazines
 
@@ -72,7 +81,8 @@ Each system states the question its prototype must answer, the design, and its c
   - **Retention reload:** slower; current mag goes to a belt/vest slot or backpack.
 - **Load mags:** filling mags from loose rounds takes time and happens out of combat (or very riskily in it).
 - **Check mag:** an action that gives an approximate count (full / about half / nearly empty), exact when out of combat.
-- **Cut lines:** mixed ammo types in one mag (the ordered stack allows it, but no UI for it in the prototype); clips/stripper clips; dual-feed weapons.
+- **Mixed rounds:** round types are data (FMJ, AP, HP and so on), and the ordered stack holds any mix. Loading from different loose stacks in sequence is how a player mixes a mag; the rules fire them in order. This is a standing test case for the magazine model.
+- **Cut lines:** a dedicated mixing UI beyond choosing which stack to load from; clips/stripper clips; dual-feed weapons.
 
 ### 4.3 Weapon components, durability and repair
 
@@ -89,6 +99,7 @@ Each system states the question its prototype must answer, the design, and its c
 - Wear per shot is driven by the round type and the weapon's own quality.
 - **Repair parts** are keyed by `(component, weapon class)`, and some by caliber: e.g. "rifle bolt parts", "5.45 barrel". Generic toolkits raise the cap of what can be repaired; parts restore condition.
 - Repair at a workbench (safe location) is better than field repair.
+- **Cleaning is weapon repair.** A cleaning kit restores condition to a whole weapon or to one component; the kit has a number of uses and is gone when spent (§4.1 lifecycle rule). Kits are crafted, bought or found; their ingredients are items that can also be used on their own.
 - Weapons are also **sources of parts**: dismantle a junk weapon to salvage its components.
 - **Cut line:** more than 4 components; per-weapon unique parts.
 
@@ -110,6 +121,8 @@ Each system states the question its prototype must answer, the design, and its c
 
 - **Recommendation: simplify to a single condition value per armor piece** for the prototype.
 - Armor has a protection class per body region it covers (head, torso). Hits reduce condition; protection falls with condition.
+- Armor occupies the body armor and helmet slots (§4.1); the rig is a separate slot, so protection and fast access are bought separately.
+- Armor is repaired like weapons are cleaned (§4.3): a repair kit with limited uses, applied to the whole piece or, once armor has parts, to one part.
 - **Deferred:** damage types (burn, chemical, psi, shock) until a weapon or anomaly produces them; multi-component armor.
 
 ### 4.7 Wounds and healing
@@ -184,7 +197,7 @@ Each system states the question its prototype must answer, the design, and its c
 - **Question:** can one modifier layer carry gear, load, wounds, stance and survival so the player can always answer "why am I slow"?
 - **Attributes are fixed.** The player has a short sheet of base attributes (names TBD; Strength governs carry capacity) that never change over a character's life. Gear may augment an attribute (an exoskeleton adds Strength) or a stat directly (boots add speed). Everyone starts with the same sheet; starting backgrounds are a §9 fork.
 - **Stats** are what systems read. Six at most: **carry capacity**, **movement speed**, **stamina** (pool and recovery), **steadiness** (sway, breath settle), **recoil control** (kick absorbed, return to aim), **handling** (reload, mag check, swap, stance change). Each stat is its attribute's baseline plus whatever is true right now; nothing is stored or levelled.
-- **Not stats:** toughness or a health pool (armor is the only tankiness, pillar 3; HP stays as §4.7); vision and hearing (head wounds and dizziness are screen and audio **effects**); luck, loot find or trade.
+- **Not stats:** toughness or a health pool (armor is the only tankiness, pillar 4; HP stays as §4.7); vision and hearing (head wounds and dizziness are screen and audio **effects**); luck, loot find or trade.
 - **Weapon stats** belong to the gun and come from its class, components and condition (§4.3) and attachments (§4.4): **kick** (vertical, horizontal), **spread**, **weight and balance**, **ergonomics**, **reliability**. Damage is the round's (§4.2). **Seam rule:** what reaches the screen is the weapon stat shaped by the player stat: kick felt is kick less recoil control; sway seen is weight and balance less steadiness; reload time is ergonomics scaled by handling. A better gun and a steadier body both help, and the player can tell which did.
 - **Modifier layer:** every source declares its changes in three verbs, **add** ("+8 kg carry"), **scale** ("speed −15%") and **cap** ("no sprint"). Adds, then scales, then caps, then a per-stat floor. Sources: equipment (per item while worn; its weight into load), load (thresholds against carry capacity: fine, slowed, no sprint, cannot move), wounds (§4.7), stance (crouch, prone, lean while held), survival (§4.8), meds and food (timed, and **suppression** of another source: painkillers mask wounds), artifacts (later), skills (deferred, §9 Q14).
 - **Items reach the sheet by the repair rule:** an item with a % contributes by its condition and comes back when repaired or cleaned; an item with a number of uses is a timed change that consumes a use and is never a permanent source. The body follows the same rule: limb HP is a %, healing is repair. Wasting injuries (§4.7) are the one permanent change, and only downward.
@@ -220,6 +233,8 @@ No procedural geometry in scope. Generation is limited to *what* is placed *wher
 
 Principle: build the cheapest playable baseline first, then add systems in the order they **create costs**, so the ledger has something to measure by the time it arrives. Each phase ends playable and answers its question from §4.
 
+Planning rule for complex systems: start with the simplest feature set we know we need, playtest, then add or remove to taste. If the inventory wants more management, move toward Tarkov; if less, toward unmodified STALKER. Data shapes that are expensive to retrofit (item size, container cells, ordered rounds) go in first; the UI that exploits them comes when playtest asks for it.
+
 Milestones follow the phases: FPS-M*n* delivers Phase *n*, and FPS-M1.1 (menus) sits between Phases 1 and 2. The plan is `milestone-plan.md` in the project files.
 
 | Phase | Name | Adds | Answers | Map |
@@ -245,7 +260,7 @@ Why this order:
 - **Items before wear:** repair parts, mags and meds are all items; building them without the item model means rebuilding them.
 - **Wear before wounds:** wear is testable on a range with no AI changes; wounds need the AI to hit you meaningfully, which Phase 1–2 AI already does.
 - **Survival after wounds:** survival stats only matter once time passes and downtime exists, which healing timers create.
-- **Ledger early (Phase 3), economy later (Phase 6):** a post-round cost report tests pillar 2 cheaply before building traders and jobs.
+- **Ledger early (Phase 3), economy later (Phase 6):** a post-round cost report tests pillar 3 cheaply before building traders and jobs.
 - **Arena scaffolding is disposable:** score, waves and timers sit in the mode layer (§3), so dropping them in Phase 6 touches no core rules.
 - **Director last:** it needs zones, factions and AI to sim; it's also the system most at risk from a pivot (§9 Q2).
 
@@ -270,7 +285,7 @@ Why this order:
 5. ~~**Head HP at 0:**~~ Decided: instant death.
 6. ~~**Death penalty:**~~ Decided: a difficulty option, either reload on death or permadeath. Phase 1 uses restart.
 7. ~~**Ballistics:**~~ Decided: hitscan in Phase 1; physics-based projectiles are a long-term goal.
-8. **Difficulty:** your idea of difficulty toggling complexity rather than damage fits pillar 3; sliders per system make modding easier too. Confirm before Phase 5.
+8. **Difficulty:** your idea of difficulty toggling complexity rather than damage fits pillar 4; sliders per system make modding easier too. Confirm before Phase 5.
 9. **Director name:** placeholder "the Director".
 10. ~~**Enemy grades:**~~ Decided: five (rookie, novice, experienced, veteran, professional), fixed for life until Phase 7; legend for named NPCs deferred; grades change behavior, never HP or damage.
 11. **Suppression:** AI behavior only at first. Does it get a player-side effect (blurred view, spread penalty) once wounds exist (Phase 4)?
@@ -279,6 +294,8 @@ Why this order:
 14. **Skills that grow:** Decided in principle (2026-10-22): attributes and stats never grow; a separate skill layer may grow with use and buff stats through §4.12's modifier layer. Deferred: no milestone needs it, and the first version must state its anti-grind rule (a skill may not rise from an action that costs nothing on the ledger). Attribute names (Strength, …) are also still TBD.
 15. **Starting backgrounds:** different baseline attribute sheets and starting kits (Anomaly's faction start) as a one-time pick. Decide at Phase 6 with the hub.
 16. **Character screen:** raw numbers (kg, %) or bands (light, heavy)? Recommend numbers, since the screen is a deliberate inspection, not a HUD readout.
+17. **Grid view timing:** after which playtest does the inventory gain the drag-and-drop grid view over its cell data (§4.1)? Default: after FPS-M2's list has been played.
+18. **Special equipment:** weapons and armor only, or individual components too? What counts as a drawback? Decide before the first such item is carded (after Phase 4).
 
 ## 10 Engine fit and engine requests
 
