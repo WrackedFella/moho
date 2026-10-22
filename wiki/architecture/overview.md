@@ -53,7 +53,7 @@ flowchart TD
 Blue is the engine line, green is the flagstone line, orange is the searchlight line.
 `searchlight_rules` holds plain serialisable weapon and body rules (`Rifle`, `Magazine`, `Body`)
 with no engine dependency. `searchlight` is the only searchlight-line crate that reaches the engine: a library
-plus the `searchlight` binary, described in [Searchlight](searchlight.md). Every shot resolves
+plus the `searchlight` binary, described in [Searchlight](../searchlight/architecture.md). Every shot resolves
 through one path (ray, surface tag, part, rule call) for player and enemy alike
 ([ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md)).
 `moho_ui_shell` is the engine's only egui-facing crate: the console every game opens and adds commands to, the egui host that draws it, and the screen text a game sets each frame (`UiShell::set_texts` with `ScreenText` and `Anchor`, `moho_ui_shell/src/text.rs`; each call replaces the list and refuses a size that is not finite and positive, painted under the console and cleared by the frame that paints it) ([ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md)).
@@ -198,4 +198,4 @@ Library crates never install a subscriber.
 
 ## 8 Next
 
-[Frame loop](frame-loop.md) · [Searchlight](searchlight.md) · [Events](events.md) · [Rendering](rendering.md)
+[Frame loop](frame-loop.md) · [Searchlight](../searchlight/architecture.md) · [Events](events.md) · [Rendering](rendering.md)
