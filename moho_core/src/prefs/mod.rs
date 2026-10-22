@@ -74,6 +74,7 @@ pub struct Prefs {
     world_unload_radius: u32,
     world_chunks_per_frame: u32,
     bindings: BTreeMap<String, String>,
+    action_modes: BTreeMap<String, String>,
     debug: BTreeMap<String, String>,
     content_mods: Vec<String>,
 }
@@ -125,6 +126,15 @@ impl Prefs {
 
     pub fn set_bindings(&mut self, section: BTreeMap<String, String>) {
         self.bindings = section;
+    }
+
+    /// The raw `[action_modes]` section: action name to unparsed mode.
+    pub fn action_modes(&self) -> &BTreeMap<String, String> {
+        &self.action_modes
+    }
+
+    pub fn set_action_modes(&mut self, section: BTreeMap<String, String>) {
+        self.action_modes = section;
     }
 
     /// The content mod names to load after the base root, in load order.
@@ -320,6 +330,7 @@ impl Default for Prefs {
             world_unload_radius: 12,
             world_chunks_per_frame: 4,
             bindings: BTreeMap::new(),
+            action_modes: BTreeMap::new(),
             debug: BTreeMap::new(),
             content_mods: Vec::new(),
         }
@@ -654,6 +665,44 @@ mod tests {
 
         assert_eq!(issues, vec![]);
         assert_eq!(parsed.bindings(), &raw);
+    }
+
+    #[test]
+    fn action_modes_section_round_trips() {
+        let raw: BTreeMap<String, String> = [
+            ("sprint", "toggle"),
+            ("crouch", "Hold"),
+            ("not_an_action", "sometimes"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let mut prefs = Prefs::default();
+        prefs.set_action_modes(raw.clone());
+
+        let (parsed, issues) = Prefs::parse(&prefs.to_ini_string());
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(parsed.action_modes(), &raw);
+        assert!(parsed.bindings().is_empty());
+    }
+
+    #[test]
+    fn no_action_modes_section_is_written_when_empty() {
+        let text = Prefs::default().to_ini_string();
+
+        assert!(!text.contains("[action_modes]"), "{text}");
+    }
+
+    #[test]
+    fn hand_written_action_modes_section_is_read_verbatim() {
+        let (prefs, issues) = Prefs::parse("[action_modes]\nsprint = Toggle\n");
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(
+            prefs.action_modes().get("sprint").map(String::as_str),
+            Some("Toggle")
+        );
     }
 
     #[test]

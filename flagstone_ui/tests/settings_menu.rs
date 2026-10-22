@@ -635,6 +635,90 @@ fn rebinding_keeps_chord_bindings() {
     );
 }
 
+fn toggle_labels(output: &egui::FullOutput) -> usize {
+    rendered_text(output)
+        .lines()
+        .filter(|line| *line == "Toggle")
+        .count()
+}
+
+fn find_text_pos(shape: &egui::epaint::Shape, wanted: &str) -> Option<egui::Pos2> {
+    match shape {
+        egui::epaint::Shape::Text(text) if text.galley.text() == wanted => Some(text.pos),
+        egui::epaint::Shape::Vec(shapes) => shapes.iter().find_map(|s| find_text_pos(s, wanted)),
+        _ => None,
+    }
+}
+
+/// Clicks the text `wanted` as drawn by `menu`, over three frames of one context.
+fn click_text(menu: &mut SettingsMenu, wanted: &str) {
+    let ctx = egui::Context::default();
+    let layout = run_ui(&ctx, egui::RawInput::default(), |ui| {
+        menu.render(ui);
+    });
+    let pos = layout
+        .shapes
+        .iter()
+        .find_map(|clipped| find_text_pos(&clipped.shape, wanted))
+        .unwrap_or_else(|| panic!("{wanted:?} is not drawn:\n{}", rendered_text(&layout)))
+        + egui::vec2(4.0, 4.0);
+    let button = |pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    for events in [
+        vec![egui::Event::PointerMoved(pos)],
+        vec![button(true)],
+        vec![button(false)],
+    ] {
+        let input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        run_ui(&ctx, input, |ui| {
+            menu.render(ui);
+        });
+    }
+}
+
+/// Only an action the game marks toggleable shows the hold/toggle choice.
+#[test]
+fn only_toggleable_rows_show_a_toggle() {
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+
+    let output = render_frame(&mut menu, vec![]);
+
+    assert_eq!(
+        toggle_labels(&output),
+        1,
+        "one Toggle, on the Sprint row, in:\n{}",
+        rendered_text(&output)
+    );
+}
+
+/// Ticking a row's Toggle and saving writes the mode to `[action_modes]`.
+#[test]
+fn saving_a_toggle_writes_action_modes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("prefs.ini");
+    let mut menu = SettingsMenu::with_prefs_at(Prefs::default(), path.clone());
+    assert!(!menu.has_unsaved_changes());
+
+    click_text(&mut menu, "Toggle");
+
+    assert!(menu.has_unsaved_changes(), "the click staged a change");
+    menu.apply_staged_changes().unwrap();
+    let (saved, issues) = Prefs::load_from(&path);
+    assert_eq!(issues, vec![]);
+    assert_eq!(
+        saved.action_modes().get("sprint").map(String::as_str),
+        Some("toggle")
+    );
+    assert_eq!(saved.action_modes().get("move_forward"), None);
+}
+
 /// Runs one frame and clears its texture delta; egui asserts in debug builds
 /// that a non-empty delta is not dropped, and these tests never paint it.
 fn run_ui(

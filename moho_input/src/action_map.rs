@@ -453,7 +453,7 @@ pub fn handle_device_event<A: Action>(map: &mut ActionMap<A>, event: &DeviceEven
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bindings::{Binding, Modifiers};
+    use crate::bindings::{ActionMode, Binding, Modifiers};
     use std::collections::BTreeMap;
     use winit::keyboard::{KeyCode, PhysicalKey};
 
@@ -1926,6 +1926,258 @@ mod tests {
 
     fn ticks<A: Action>(map: &mut ActionMap<A>, count: usize) -> Vec<ActionFrame<A>> {
         (0..count).map(|_| map.end_tick()).collect()
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+    enum Mover {
+        Sprint,
+        Jump,
+        Check,
+    }
+
+    impl Action for Mover {
+        const ALL: &'static [Self] = &[Mover::Sprint, Mover::Jump, Mover::Check];
+
+        fn name(self) -> &'static str {
+            match self {
+                Mover::Sprint => "sprint",
+                Mover::Jump => "jump",
+                Mover::Check => "check",
+            }
+        }
+
+        fn default_bindings(self) -> &'static [Binding] {
+            match self {
+                Mover::Sprint => const { &[Binding::key(Key::Shift)] },
+                Mover::Jump => const { &[Binding::key(Key::Space)] },
+                Mover::Check => const { &[Binding::key(Key::R).held()] },
+            }
+        }
+
+        fn toggleable(self) -> bool {
+            self == Mover::Sprint
+        }
+    }
+
+    fn mover_map(mode: ActionMode) -> ActionMap<Mover> {
+        let (mut bindings, _) = ActionBindings::<Mover>::load(&BTreeMap::new());
+        bindings.set_mode(Mover::Sprint, mode);
+        ActionMap::new(bindings, 1.0)
+    }
+
+    #[test]
+    fn toggle_mode_latches_on_press() {
+        let mut map = mover_map(ActionMode::Toggle);
+
+        map.key(Key::Shift, true);
+        let down = map.end_tick();
+        map.key(Key::Shift, false);
+        let up = map.end_tick();
+        let later = map.end_tick();
+
+        assert!(down.held(Mover::Sprint));
+        assert!(down.pressed(Mover::Sprint));
+        assert!(up.held(Mover::Sprint), "still held after the release");
+        assert!(!up.released(Mover::Sprint));
+        assert!(!up.pressed(Mover::Sprint));
+        assert!(later.held(Mover::Sprint));
+        assert!(!later.released(Mover::Sprint));
+    }
+
+    #[test]
+    fn toggle_mode_latches_a_press_and_release_in_one_tick() {
+        let mut map = mover_map(ActionMode::Toggle);
+
+        map.key(Key::Shift, true);
+        map.key(Key::Shift, false);
+        let frame = map.end_tick();
+        let next = map.end_tick();
+
+        assert!(frame.held(Mover::Sprint));
+        assert!(frame.pressed(Mover::Sprint));
+        assert!(next.held(Mover::Sprint));
+    }
+
+    #[test]
+    fn toggle_mode_leaves_other_actions_following_their_keys() {
+        let mut map = mover_map(ActionMode::Toggle);
+
+        map.key(Key::Space, true);
+        let down = map.end_tick();
+        map.key(Key::Space, false);
+        let up = map.end_tick();
+
+        assert!(down.held(Mover::Jump));
+        assert!(!down.held(Mover::Sprint));
+        assert!(!up.held(Mover::Jump));
+        assert!(up.released(Mover::Jump));
+    }
+
+    #[test]
+    fn second_press_clears_the_toggle() {
+        let mut map = mover_map(ActionMode::Toggle);
+        map.key(Key::Shift, true);
+        map.key(Key::Shift, false);
+        map.end_tick();
+
+        map.key(Key::Shift, true);
+        let second = map.end_tick();
+        map.key(Key::Shift, false);
+        let up = map.end_tick();
+        let later = map.end_tick();
+
+        assert!(second.released(Mover::Sprint), "released in that tick");
+        assert!(!second.held(Mover::Sprint));
+        assert!(!second.pressed(Mover::Sprint));
+        assert!(!up.held(Mover::Sprint));
+        assert!(!up.released(Mover::Sprint));
+        assert!(!later.held(Mover::Sprint));
+    }
+
+    #[test]
+    fn third_press_latches_again() {
+        let mut map = mover_map(ActionMode::Toggle);
+
+        for _ in 0..2 {
+            map.key(Key::Shift, true);
+            map.end_tick();
+            map.key(Key::Shift, false);
+            map.end_tick();
+        }
+        map.key(Key::Shift, true);
+        let third = map.end_tick();
+        map.key(Key::Shift, false);
+        let up = map.end_tick();
+
+        assert!(third.held(Mover::Sprint));
+        assert!(third.pressed(Mover::Sprint));
+        assert!(up.held(Mover::Sprint), "latched again past the release");
+    }
+
+    #[test]
+    fn os_key_repeat_does_not_flip_the_toggle() {
+        let mut map = mover_map(ActionMode::Toggle);
+
+        map.key(Key::Shift, true);
+        map.end_tick();
+        map.key(Key::Shift, true);
+        let repeat = map.end_tick();
+        map.key(Key::Shift, false);
+        let up = map.end_tick();
+
+        assert!(repeat.held(Mover::Sprint));
+        assert!(!repeat.released(Mover::Sprint));
+        assert!(up.held(Mover::Sprint), "one press latched once");
+    }
+
+    #[test]
+    fn release_all_clears_the_toggle() {
+        type Interrupt = fn(&mut ActionMap<Mover>);
+        let interruptions: [(&str, Interrupt); 2] = [
+            ("focus lost", |map| {
+                handle_window_event(map, &WindowEvent::Focused(false));
+            }),
+            ("release_all", |map| map.release_all()),
+        ];
+
+        for (name, interrupt) in interruptions {
+            let mut map = mover_map(ActionMode::Toggle);
+            map.key(Key::Shift, true);
+            map.key(Key::Shift, false);
+            map.end_tick();
+
+            interrupt(&mut map);
+            let frame = map.end_tick();
+            let next = map.end_tick();
+
+            assert!(!frame.held(Mover::Sprint), "{name}");
+            assert!(frame.released(Mover::Sprint), "{name}");
+            assert!(!next.held(Mover::Sprint), "{name}");
+            assert!(!next.released(Mover::Sprint), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_press_after_release_all_latches_again() {
+        let mut map = mover_map(ActionMode::Toggle);
+        map.key(Key::Shift, true);
+        map.key(Key::Shift, false);
+        map.end_tick();
+        map.release_all();
+        map.end_tick();
+
+        map.key(Key::Shift, true);
+        let frame = map.end_tick();
+
+        assert!(frame.held(Mover::Sprint));
+        assert!(frame.pressed(Mover::Sprint));
+    }
+
+    #[test]
+    fn pad_disconnect_keeps_the_toggle() {
+        let (mut bindings, _) = ActionBindings::<Mover>::load(&BTreeMap::new());
+        bindings.set_mode(Mover::Sprint, ActionMode::Toggle);
+        bindings.set(
+            Mover::Sprint,
+            vec![Binding::pad(PadInput::Button(PadButton::LeftThumb))],
+        );
+        let mut map = ActionMap::new(bindings, 1.0);
+        map.pad_button(PadButton::LeftThumb, true);
+        map.pad_button(PadButton::LeftThumb, false);
+        map.end_tick();
+
+        map.pad_disconnected();
+        let frame = map.end_tick();
+
+        assert!(frame.held(Mover::Sprint));
+        assert!(!frame.released(Mover::Sprint));
+    }
+
+    #[test]
+    fn hold_mode_follows_the_key() {
+        let (untouched, _) = ActionBindings::<Mover>::load(&BTreeMap::new());
+        let maps = [
+            ("explicit hold", mover_map(ActionMode::Hold)),
+            ("default", ActionMap::new(untouched, 1.0)),
+        ];
+
+        for (mode, mut map) in maps {
+            map.key(Key::Shift, true);
+            let down = map.end_tick();
+            map.key(Key::Shift, false);
+            let up = map.end_tick();
+
+            assert!(down.held(Mover::Sprint), "{mode:?}");
+            assert!(down.pressed(Mover::Sprint), "{mode:?}");
+            assert!(!up.held(Mover::Sprint), "{mode:?}");
+            assert!(up.released(Mover::Sprint), "{mode:?}");
+        }
+    }
+
+    #[test]
+    fn tap_on_a_split_key_flips_the_toggle() {
+        let (mut bindings, _) = ActionBindings::<Mover>::load(&BTreeMap::new());
+        bindings.set_mode(Mover::Sprint, ActionMode::Toggle);
+        bindings.set(Mover::Sprint, vec![Binding::key(Key::R)]);
+        let mut map = ActionMap::new(bindings, 1.0);
+        map.key(Key::R, true);
+        let down = ticks(&mut map, 5);
+
+        map.key(Key::R, false);
+        let first = map.end_tick();
+        let after = map.end_tick();
+        map.key(Key::R, true);
+        map.key(Key::R, false);
+        let second = map.end_tick();
+        let end = map.end_tick();
+
+        assert!(down.iter().all(|f| !f.held(Mover::Sprint)));
+        assert!(first.held(Mover::Sprint), "the tap latches the toggle");
+        assert!(first.pressed(Mover::Sprint));
+        assert!(after.held(Mover::Sprint));
+        assert!(!second.held(Mover::Sprint), "the next tap clears it");
+        assert!(second.released(Mover::Sprint));
+        assert!(!end.held(Mover::Sprint));
     }
 
     #[test]

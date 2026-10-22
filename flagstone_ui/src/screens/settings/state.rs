@@ -7,7 +7,7 @@ use super::SettingsField;
 use super::binding_registry::BindingRegistry;
 use crate::actions::StrategyAction;
 use crate::prefs::{Prefs, WindowMode};
-use moho_input::bindings::Binding;
+use moho_input::bindings::{ActionMode, Binding};
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -145,6 +145,16 @@ impl SettingsState {
         self.mark_dirty(SettingsField::Binding(action));
     }
 
+    /// The staged mode of one action.
+    pub fn get_staged_mode(&self, action: StrategyAction) -> ActionMode {
+        self.staged_bindings.get_mode(action)
+    }
+
+    /// Replace the staged mode of one action.
+    pub fn set_staged_mode(&mut self, action: StrategyAction, mode: ActionMode) {
+        self.staged_bindings.set_mode(action, mode);
+    }
+
     /// Stage a window mode and mark it dirty.
     pub fn set_window_mode(&mut self, mode: WindowMode) {
         self.staged.set_window_mode(mode);
@@ -251,6 +261,60 @@ mod tests {
 
         assert!(state.is_binding_modified(StrategyAction::MoveForward));
         assert!(!state.is_binding_modified(StrategyAction::MoveLeft));
+    }
+
+    #[test]
+    fn mode_change_marks_the_row_dirty_and_reverts() {
+        let mut state = SettingsState::from_prefs(Prefs::default());
+        assert_eq!(
+            state.get_staged_mode(StrategyAction::Sprint),
+            ActionMode::Hold
+        );
+
+        state.set_staged_mode(StrategyAction::Sprint, ActionMode::Toggle);
+
+        assert_eq!(
+            state.get_staged_mode(StrategyAction::Sprint),
+            ActionMode::Toggle
+        );
+        assert!(state.is_dirty());
+        assert!(state.is_field_dirty(SettingsField::Binding(StrategyAction::Sprint)));
+        assert!(!state.is_field_dirty(SettingsField::Binding(StrategyAction::MoveForward)));
+        assert!(state.is_binding_modified(StrategyAction::Sprint));
+        assert!(!state.is_binding_modified(StrategyAction::MoveForward));
+
+        state.revert_changes();
+
+        assert!(!state.is_dirty());
+        assert_eq!(
+            state.get_staged_mode(StrategyAction::Sprint),
+            ActionMode::Hold
+        );
+        assert!(!state.is_binding_modified(StrategyAction::Sprint));
+    }
+
+    #[test]
+    fn setting_the_mode_back_to_the_saved_one_is_not_modified() {
+        let mut state = SettingsState::from_prefs(Prefs::default());
+
+        state.set_staged_mode(StrategyAction::Sprint, ActionMode::Toggle);
+        state.set_staged_mode(StrategyAction::Sprint, ActionMode::Hold);
+
+        assert!(!state.is_binding_modified(StrategyAction::Sprint));
+    }
+
+    #[test]
+    fn saved_modes_are_read_from_prefs() {
+        let (prefs, issues) = Prefs::parse("[action_modes]\nsprint = toggle\n");
+        assert_eq!(issues, vec![]);
+
+        let state = SettingsState::from_prefs(prefs);
+
+        assert_eq!(
+            state.get_staged_mode(StrategyAction::Sprint),
+            ActionMode::Toggle
+        );
+        assert!(!state.is_binding_modified(StrategyAction::Sprint));
     }
 
     #[test]

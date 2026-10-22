@@ -190,6 +190,20 @@ pub trait Action: Copy + Eq + Hash + Debug + 'static {
 
     /// Ticks an input must stay down before a `Hold` binding fires, one value per game; at least 1.
     const HOLD_TICKS: u32 = DEFAULT_HOLD_TICKS;
+
+    /// Whether the player may choose between holding the input and toggling the action.
+    fn toggleable(self) -> bool {
+        false
+    }
+}
+
+/// How the player drives a toggleable action: held while the input is down, or latched
+/// on and off by presses.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ActionMode {
+    #[default]
+    Hold,
+    Toggle,
 }
 
 /// A line of the `[bindings]` section that could not be used.
@@ -253,6 +267,20 @@ impl<A: Action> ActionBindings<A> {
 
     pub fn set(&mut self, action: A, bindings: Vec<Binding>) {
         self.map.insert(action, bindings);
+    }
+
+    pub fn mode(&self, _action: A) -> ActionMode {
+        ActionMode::Hold
+    }
+
+    pub fn set_mode(&mut self, _action: A, _mode: ActionMode) {}
+
+    pub fn load_modes(&mut self, _section: &BTreeMap<String, String>) -> Vec<BindingWarning> {
+        Vec::new()
+    }
+
+    pub fn modes_to_section(&self) -> BTreeMap<String, String> {
+        BTreeMap::new()
     }
 }
 
@@ -350,6 +378,10 @@ mod tests {
                 TestAction::MoveForward => const { &[Binding::key(Key::W)] },
                 TestAction::Jump => const { &[Binding::key(Key::Space)] },
             }
+        }
+
+        fn toggleable(self) -> bool {
+            self == TestAction::Jump
         }
     }
 
@@ -855,6 +887,116 @@ mod tests {
             "Hold Ctrl+R"
         );
         assert_eq!(Binding::key(Key::R).label(), "R");
+    }
+
+    fn warned_names(warnings: &[BindingWarning]) -> Vec<&str> {
+        warnings.iter().map(|w| w.name.as_str()).collect()
+    }
+
+    #[test]
+    fn actions_default_to_hold() {
+        let (bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+
+        for &action in TestAction::ALL {
+            assert_eq!(bindings.mode(action), ActionMode::Hold, "{}", action.name());
+        }
+    }
+
+    #[test]
+    fn mode_on_a_non_toggleable_action_warns() {
+        let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+
+        let warnings = bindings.load_modes(&section(&[("move_forward", "toggle")]));
+
+        assert_eq!(
+            warnings,
+            vec![BindingWarning {
+                name: "move_forward".to_string(),
+                value: "toggle".to_string(),
+            }]
+        );
+        assert_eq!(bindings.mode(TestAction::MoveForward), ActionMode::Hold);
+        assert!(!bindings.modes_to_section().contains_key("move_forward"));
+    }
+
+    #[test]
+    fn modes_round_trip() {
+        for mode in [ActionMode::Toggle, ActionMode::Hold] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("prefs.ini");
+            let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+            bindings.set_mode(TestAction::Jump, mode);
+            let mut prefs = Prefs::default();
+            prefs.set_action_modes(bindings.modes_to_section());
+            std::fs::write(&path, prefs.to_ini_string()).unwrap();
+
+            let (reloaded, prefs_warnings) = Prefs::load_from(&path);
+            let (mut restored, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+            let mode_warnings = restored.load_modes(reloaded.action_modes());
+
+            assert_eq!(prefs_warnings, vec![], "{mode:?}");
+            assert_eq!(mode_warnings, vec![], "{mode:?}");
+            assert_eq!(restored.mode(TestAction::Jump), mode, "{mode:?}");
+            assert_eq!(restored.mode(TestAction::MoveForward), ActionMode::Hold);
+        }
+    }
+
+    #[test]
+    fn toggle_is_written_by_name() {
+        let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+        bindings.set_mode(TestAction::Jump, ActionMode::Toggle);
+
+        let written = bindings.modes_to_section();
+
+        assert_eq!(written["jump"], "toggle");
+    }
+
+    #[test]
+    fn mode_values_are_case_insensitive() {
+        for (value, mode) in [
+            ("toggle", ActionMode::Toggle),
+            ("Toggle", ActionMode::Toggle),
+            ("TOGGLE", ActionMode::Toggle),
+            ("hold", ActionMode::Hold),
+            ("Hold", ActionMode::Hold),
+        ] {
+            let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+
+            let warnings = bindings.load_modes(&section(&[("jump", value)]));
+
+            assert_eq!(warnings, vec![], "{value}");
+            assert_eq!(bindings.mode(TestAction::Jump), mode, "{value}");
+        }
+    }
+
+    #[test]
+    fn bad_mode_warns_and_keeps_hold() {
+        let cases = [
+            ("jump", "sometimes", "jump"),
+            ("teleport", "toggle", "teleport"),
+        ];
+
+        for (action, value, reported) in cases {
+            let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+
+            let warnings = bindings.load_modes(&section(&[(action, value)]));
+
+            assert_eq!(warned_names(&warnings), [reported], "{action}={value}");
+            assert_eq!(warnings[0].value, value, "{action}={value}");
+            for &a in TestAction::ALL {
+                assert_eq!(bindings.mode(a), ActionMode::Hold, "{action}={value}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_bad_mode_line_does_not_disturb_a_valid_one() {
+        let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+
+        let warnings = bindings.load_modes(&section(&[("jump", "toggle"), ("teleport", "hold")]));
+
+        assert_eq!(warned_names(&warnings), ["teleport"]);
+        assert_eq!(bindings.mode(TestAction::Jump), ActionMode::Toggle);
     }
 
     #[test]
