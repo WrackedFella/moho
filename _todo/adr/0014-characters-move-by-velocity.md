@@ -1,6 +1,6 @@
 # 0014 — Characters move by velocity; physics only resolves contact
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 

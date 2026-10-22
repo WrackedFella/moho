@@ -1,6 +1,6 @@
 # 0021 — Game AI lives in the lines; the engine answers queries
 
-**Status:** Proposed (applies [0011](0011-simulation-stays-network-ready.md) to AI)
+**Status:** Accepted (applies [0011](0011-simulation-stays-network-ready.md) to AI)
 
 ## Context
 
