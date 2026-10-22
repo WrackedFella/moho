@@ -67,9 +67,11 @@ impl ToggleKeys {
                 Observed::Pass
             };
         }
-        if self.swallowed.contains(&code) {
+        if repeat && self.swallowed.contains(&code) {
             return Observed::Swallow;
         }
+        // A fresh press means the earlier release never arrived.
+        self.swallowed.remove(&code);
         if repeat || !self.is_toggle(code) {
             return Observed::Pass;
         }
@@ -77,7 +79,7 @@ impl ToggleKeys {
         Observed::Flip
     }
 
-    /// Forgets held modifiers: their releases go to another window.
+    /// Forgets held modifiers and swallowed keys: their releases go to another window.
     pub fn focus_lost(&mut self) {
         self.alt_left = false;
         self.alt_right = false;
@@ -230,5 +232,38 @@ mod tests {
     fn toggling_flips_windowed_and_borderless_both_ways() {
         assert_eq!(WindowMode::Windowed.toggled(), WindowMode::Borderless);
         assert_eq!(WindowMode::Borderless.toggled(), WindowMode::Windowed);
+    }
+
+    #[test]
+    fn a_new_press_after_a_lost_release_flips_again() {
+        let mut keys = f11();
+
+        keys.observe(KeyCode::F11, true, false);
+        let second = keys.observe(KeyCode::F11, true, false);
+
+        assert_eq!(second, Observed::Flip);
+    }
+
+    #[test]
+    fn a_plain_enter_after_a_lost_alt_enter_release_passes() {
+        let mut keys = f11();
+        keys.observe(KeyCode::AltLeft, true, false);
+        keys.observe(KeyCode::Enter, true, false);
+        keys.observe(KeyCode::AltLeft, false, false);
+
+        let plain = keys.observe(KeyCode::Enter, true, false);
+
+        assert_eq!(plain, Observed::Pass);
+    }
+
+    #[test]
+    fn enter_repeating_after_alt_goes_down_does_not_flip() {
+        let mut keys = f11();
+        keys.observe(KeyCode::Enter, true, false);
+        keys.observe(KeyCode::AltLeft, true, false);
+
+        let repeat = keys.observe(KeyCode::Enter, true, true);
+
+        assert_eq!(repeat, Observed::Pass);
     }
 }
