@@ -81,10 +81,11 @@ Each system states the question its prototype must answer, the design, and its c
 - **Reload (key):** swaps to the next compatible mag on the rig. Two variants:
   - **Fast reload:** current mag drops to the ground (recoverable).
   - **Retention reload:** slower; current mag goes to a rig slot or the backpack.
+- **Tactical vs empty reload:** a reload is quicker when a round is chambered (swap the mag and keep firing) than when the chamber is empty (swap, then charge the weapon); a gun that ran dry is the slowest case. Both times belong to the weapon, and handling scales them (§4.12). The fast and retention variants add their own time (§9 Q26). Reloading early costs the rounds left in the mag unless it is retained; reloading late costs time at the worst moment. With no ammo count on the HUD (§3.3), judging that is the decision the physical-mag model exists to create.
 - **Load mags:** filling mags from loose rounds takes time and happens out of combat (or very riskily in it).
 - **Check mag:** an action that gives an approximate count (full / about half / nearly empty), exact when out of combat.
 - **Mixed rounds:** round types are data (FMJ, AP, HP and so on), and the ordered stack holds any mix. Loading from different loose stacks in sequence is how a player mixes a mag; the rules fire them in order. This is a standing test case for the magazine model.
-- **Cut lines:** a dedicated mixing UI beyond choosing which stack to load from; clips/stripper clips; dual-feed weapons.
+- **Cut lines:** per-weapon-class reload mechanics (open bolt, pump, bolt hold-open); a separate chamber-check action; a dedicated mixing UI beyond choosing which stack to load from; clips/stripper clips; dual-feed weapons.
 
 ### 4.3 Weapon components, durability and repair
 
@@ -319,6 +320,7 @@ Settled entries keep their numbers so references stay stable.
 23. **Tool slots:** the slot list (§4.1) has none. Reserve quick tool slots with the first tool item (the Phase 3 toolkit), or let tools live on the rig? Decide with that card.
 24. **One-handed weapons:** a Broken arm caps the player to one-handed weapons (§4.7), so the item model needs that class or flag. Name it when Phase 2 is carded; pistols are the first case.
 25. **Ledger scope:** the Phase 3 end-of-round ledger and the Phase 6 full ledger (§4.9) list overlapping lines. Which lines belong to Phase 3 (rounds, wear, armor, meds), and which wait for the economy (payouts, loot value, food, lodging)?
+26. **Reload time stacking:** do the fast and retention variants (§4.2) add to the tactical or empty reload time, or replace it? Default: add, the simplest rule that keeps both choices meaningful. Decide when the variants are carded; only one reload exists today.
 
 ## 10 Engine fit and engine requests
 
