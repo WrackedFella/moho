@@ -2155,6 +2155,52 @@ mod tests {
     }
 
     #[test]
+    fn toggle_mode_latches_the_resolved_chord_and_hold_mask() {
+        let chord = Modifiers::CTRL.and(Modifiers::SHIFT);
+        let mapped = |binding: Binding| {
+            let (mut bindings, _) = ActionBindings::<Mover>::load(&BTreeMap::new());
+            bindings.set_mode(Mover::Sprint, ActionMode::Toggle);
+            bindings.set(Mover::Sprint, vec![binding]);
+            ActionMap::new(bindings, 1.0)
+        };
+
+        let mut map = mapped(Binding::key(Key::Q).with(chord));
+        map.key(Key::Q, true);
+        map.key(Key::Q, false);
+        let bare = map.end_tick();
+        map.key(Key::Shift, true);
+        map.key(Key::Q, true);
+        map.key(Key::Q, false);
+        let partial = map.end_tick();
+        map.key(Key::Ctrl, true);
+        map.key(Key::Q, true);
+        let full = map.end_tick();
+        map.key(Key::Q, false);
+        map.key(Key::Ctrl, false);
+        map.key(Key::Shift, false);
+        let released = map.end_tick();
+        let later = map.end_tick();
+
+        assert!(!bare.held(Mover::Sprint), "Q alone is not the chord");
+        assert!(!partial.held(Mover::Sprint), "Shift+Q is not the chord");
+        assert!(full.held(Mover::Sprint) && full.pressed(Mover::Sprint));
+        assert!(released.held(Mover::Sprint), "latched past the release");
+        assert!(later.held(Mover::Sprint));
+
+        let mut map = mapped(Binding::key(Key::Space).held());
+        map.key(Key::Space, true);
+        let waiting = ticks(&mut map, HOLD - 1);
+        let matured = map.end_tick();
+        map.key(Key::Space, false);
+        let up = map.end_tick();
+
+        assert!(waiting.iter().all(|f| !f.held(Mover::Sprint)));
+        assert!(matured.held(Mover::Sprint) && matured.pressed(Mover::Sprint));
+        assert!(up.held(Mover::Sprint), "latched past the release");
+        assert!(!up.released(Mover::Sprint));
+    }
+
+    #[test]
     fn tap_on_a_split_key_flips_the_toggle() {
         let (mut bindings, _) = ActionBindings::<Mover>::load(&BTreeMap::new());
         bindings.set_mode(Mover::Sprint, ActionMode::Toggle);

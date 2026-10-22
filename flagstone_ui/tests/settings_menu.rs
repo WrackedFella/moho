@@ -696,6 +696,18 @@ fn only_toggleable_rows_show_a_toggle() {
         "one Toggle, on the Sprint row, in:\n{}",
         rendered_text(&output)
     );
+    let find = |wanted: &str| {
+        output
+            .shapes
+            .iter()
+            .find_map(|clipped| find_text_pos(&clipped.shape, wanted))
+            .unwrap_or_else(|| panic!("{wanted:?} is not drawn:\n{}", rendered_text(&output)))
+    };
+    let (sprint, toggle) = (find("Sprint:"), find("Toggle"));
+    assert!(
+        (sprint.y - toggle.y).abs() < 8.0,
+        "Toggle at {toggle:?} is not on the Sprint row at {sprint:?}"
+    );
 }
 
 /// Ticking a row's Toggle and saving writes the mode to `[action_modes]`.

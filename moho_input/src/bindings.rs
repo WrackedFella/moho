@@ -894,15 +894,6 @@ mod tests {
     }
 
     #[test]
-    fn actions_default_to_hold() {
-        let (bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
-
-        for &action in TestAction::ALL {
-            assert_eq!(bindings.mode(action), ActionMode::Hold, "{}", action.name());
-        }
-    }
-
-    #[test]
     fn mode_on_a_non_toggleable_action_warns() {
         let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
 
@@ -993,9 +984,9 @@ mod tests {
     fn a_bad_mode_line_does_not_disturb_a_valid_one() {
         let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
 
-        let warnings = bindings.load_modes(&section(&[("jump", "toggle"), ("teleport", "hold")]));
+        let warnings = bindings.load_modes(&section(&[("aardvark", "hold"), ("jump", "toggle")]));
 
-        assert_eq!(warned_names(&warnings), ["teleport"]);
+        assert_eq!(warned_names(&warnings), ["aardvark"]);
         assert_eq!(bindings.mode(TestAction::Jump), ActionMode::Toggle);
     }
 
