@@ -65,10 +65,10 @@ Each system states the question its prototype must answer, the design, and its c
 - **Three layers of access:** *hands* (what you hold), the *rig* (belt and vest: fast slots reached by hotkeys, no screen) and the *backpack* (everything else, reached through the inventory screen while time keeps passing). Anything used in a fight must already be on the rig; reload never looks in the backpack.
 - **Gear defines your containers:** the rig and the backpack are items. A rig sets how many fast slots you have and of which kind; a backpack sets how much you can carry. Changing what you wear changes the shape of your inventory. Worn gear weighs what it weighs.
 - **Equipment slots:** primary 1, primary 2, sidearm, rig, backpack, body armor, helmet. A suit slot arrives with anomalies.
-- **Grid inventory is the destination, not the start.** Items carry a size and containers a cell count from the first data file, so a Tarkov-style grid can be added without reshaping the data. The first inventory screen is a list over that data (capacity enforced by cells and weight, no dragging); the grid view is added to taste after playtest (§7, §9 Q14).
+- **Grid inventory is the destination, not the start.** Items carry a size and containers a cell count from the first data file, so a Tarkov-style grid can be added without reshaping the data. The first inventory screen is a list over that data (capacity enforced by cells and weight, no dragging); the grid view is added to taste after playtest (§7, §9 Q17).
 - **Looting:** bodies and containers open a side-by-side screen and take time. Pickups go to the backpack unless the player puts them on the rig. The player's own dropped magazine returns to a free rig slot on pick-up; a gameplay setting (backpack or rig) comes later.
-- Carry weight drives stamina and speed; overloaded forbids sprint, a hard cap stops movement.
-- **Special equipment (later):** sci-fi items that are situational and carry a drawback (a gravity gun, an x-ray sight as a weapon component). Hard rule: never an overpowered weapon or armor. Shape is open (§9 Q15).
+- Carry weight against the player's carry capacity (§4.12) drives stamina and speed through load thresholds: fine, slowed, no sprint, cannot move.
+- **Special equipment (later):** sci-fi items that are situational and carry a drawback (a gravity gun, an x-ray sight as a weapon component). Hard rule: never an overpowered weapon or armor. Shape is open (§9 Q18).
 - **Cut lines:** stashes until the ledger proves out (§4.9); rarity, colour or affix loot; detectors and artifact slots until anomalies exist; the grid view until the list has been playtested.
 
 ### 4.2 Firearms and magazines
@@ -277,8 +277,8 @@ Why this order:
 11. **Suppression:** AI behavior only at first. Does it get a player-side effect (blurred view, spread penalty) once wounds exist (Phase 4)?
 12. **Difficulty and AI:** is AI sophistication (grade mix, tactics on or off) part of the complexity toggles in Q8? Decide with Q8.
 13. **Rank-up:** may the Director raise an enemy's grade over time (Phase 7 nice-to-have)?
-14. **Grid view timing:** after which playtest does the inventory gain the drag-and-drop grid view over its cell data (§4.1)? Default: after FPS-M2's list has been played.
-15. **Special equipment:** weapons and armor only, or individual components too? What counts as a drawback? Decide before the first such item is carded (after Phase 4).
+17. **Grid view timing:** after which playtest does the inventory gain the drag-and-drop grid view over its cell data (§4.1)? Default: after FPS-M2's list has been played.
+18. **Special equipment:** weapons and armor only, or individual components too? What counts as a drawback? Decide before the first such item is carded (after Phase 4).
 
 ## 10 Engine fit and engine requests
 
