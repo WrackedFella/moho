@@ -1,6 +1,6 @@
 # 0017 — The UI shell and debug values are engine seams
 
-**Status:** Proposed (2026-10-16; extends [0012](0012-engine-crate-map-for-m2.md))
+**Status:** Accepted (2026-10-16; extends [0012](0012-engine-crate-map-for-m2.md))
 
 ## Context
 

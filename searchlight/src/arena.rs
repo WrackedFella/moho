@@ -2,12 +2,14 @@
 //! spawn, dummy, enemy, waypoint and cover points.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use glam::Vec3;
-use moho_level::{Level, LevelError, LevelMarker};
+use moho_level::{AgentProfile, Level, LevelError, LevelMarker, NavBuildError, NavMesh};
 use moho_physics::PhysicsWorld;
 use moho_render_api::{WorldMesh, WorldMeshId};
 
+use crate::sim::{CAPSULE_RADIUS, STAND_HEIGHT};
 use crate::tag::SurfaceTag;
 
 /// One nominal tick, enough for a step to index freshly added colliders.
@@ -35,6 +37,12 @@ pub enum ArenaError {
     /// A waypoint's suffix is not a number, or repeats an earlier waypoint's number.
     #[error("arena waypoint `{marker}` needs a unique numeric suffix")]
     BadWaypoint { marker: String },
+    /// The walkable area could not be built from the level's meshes.
+    #[error(transparent)]
+    Nav(#[from] NavBuildError),
+    /// The arena has enemy spawns, but no enemy spawn has a path to any waypoint.
+    #[error("no path from any enemy spawn reaches a waypoint")]
+    NoReachableWaypoint,
 }
 
 /// The arena's markers, grouped by kind. Within a kind, markers keep file order.
@@ -127,12 +135,16 @@ fn waypoint_number(marker: &LevelMarker) -> Option<u32> {
 impl ArenaMarkers {
     /// The patrol loop: every `waypoint_NN` position, in numeric order of `NN`.
     pub fn patrol_route(&self) -> Vec<Vec3> {
-        let mut waypoints: Vec<&LevelMarker> = self.waypoints.iter().collect();
-        waypoints.sort_by_key(|marker| waypoint_number(marker));
-        waypoints
+        self.ordered_waypoints()
             .into_iter()
             .map(|marker| marker.position)
             .collect()
+    }
+
+    fn ordered_waypoints(&self) -> Vec<&LevelMarker> {
+        let mut waypoints: Vec<&LevelMarker> = self.waypoints.iter().collect();
+        waypoints.sort_by_key(|marker| waypoint_number(marker));
+        waypoints
     }
 }
 
@@ -150,20 +162,63 @@ pub struct Arena {
     /// The loop every enemy patrols, in order.
     pub route: Vec<Vec3>,
     pub covers: Vec<Vec3>,
+    /// Where an enemy of [`nav_profile`] size can walk.
+    pub nav: Arc<NavMesh>,
+}
+
+/// Extra metres of clearance on top of the capsule radius, so paths do not graze corners.
+const NAV_CLEARANCE: f32 = 0.1;
+
+/// The agent the arena's navmesh is built for: the player-sized capsule.
+pub fn nav_profile() -> AgentProfile {
+    AgentProfile {
+        radius: CAPSULE_RADIUS + NAV_CLEARANCE,
+        height: 2.0 * STAND_HEIGHT,
+        max_climb: 0.5,
+        max_slope: std::f32::consts::FRAC_PI_4,
+    }
 }
 
 impl Arena {
     /// The arena `level` and its `markers` describe.
-    pub fn from_level(level: &Level, markers: &ArenaMarkers) -> Self {
+    ///
+    /// # Errors
+    /// [`ArenaError::Nav`] when the walkable area cannot be built;
+    /// [`ArenaError::NoReachableWaypoint`] when there are enemy spawns but no waypoint is
+    /// reachable from any of them. A waypoint no enemy spawn reaches is dropped from the
+    /// route with a warning.
+    pub fn from_level(level: &Level, markers: &ArenaMarkers) -> Result<Self, ArenaError> {
         let positions = |list: &[LevelMarker]| list.iter().map(|marker| marker.position).collect();
-        Self {
-            meshes: level.meshes.iter().map(|m| m.mesh.clone()).collect(),
+        let meshes: Vec<WorldMesh> = level.meshes.iter().map(|m| m.mesh.clone()).collect();
+        let nav = Arc::new(NavMesh::build(&meshes, nav_profile())?);
+        let enemy_spawns: Vec<Vec3> = positions(&markers.enemy_spawns);
+        let mut route = Vec::new();
+        for waypoint in markers.ordered_waypoints() {
+            let reached = enemy_spawns.is_empty()
+                || enemy_spawns
+                    .iter()
+                    .any(|&spawn| nav.path(spawn, waypoint.position).is_some());
+            if reached {
+                route.push(waypoint.position);
+            } else {
+                tracing::warn!(
+                    waypoint = waypoint.name,
+                    "no path reaches the waypoint; the patrol skips it"
+                );
+            }
+        }
+        if !enemy_spawns.is_empty() && route.is_empty() {
+            return Err(ArenaError::NoReachableWaypoint);
+        }
+        Ok(Self {
+            meshes,
+            nav,
             player_spawn: markers.player_spawn.position,
             dummy_spawns: positions(&markers.dummies),
-            enemy_spawns: positions(&markers.enemy_spawns),
-            route: markers.patrol_route(),
+            enemy_spawns,
+            route,
             covers: positions(&markers.covers),
-        }
+        })
     }
 
     /// A physics world whose static colliders are this arena's meshes, tagged
@@ -245,6 +300,74 @@ mod tests {
 
     fn shipped_arena() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/arena.glb")
+    }
+
+    #[test]
+    fn the_nav_profile_is_the_player_capsule_with_clearance_and_the_specified_limits() {
+        let profile = nav_profile();
+
+        assert!(
+            (profile.radius - (CAPSULE_RADIUS + 0.1)).abs() < 1e-6,
+            "{profile:?}"
+        );
+        assert!((profile.height - 2.3).abs() < 1e-6, "{profile:?}");
+        assert!((profile.max_climb - 0.5).abs() < 1e-6, "{profile:?}");
+        assert!(
+            (profile.max_slope - std::f32::consts::FRAC_PI_4).abs() < 1e-6,
+            "{profile:?}"
+        );
+    }
+
+    #[test]
+    fn the_shipped_arena_navmesh_joins_every_spawn_and_waypoint() {
+        let (level, markers) = load(&shipped_arena()).expect("the shipped arena loads");
+        let arena = Arena::from_level(&level, &markers).expect("the shipped arena builds");
+        let places: Vec<(String, Vec3)> =
+            std::iter::once(("player spawn".to_owned(), arena.player_spawn))
+                .chain(
+                    arena
+                        .enemy_spawns
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| (format!("enemy spawn {i}"), *p)),
+                )
+                .chain(
+                    arena
+                        .route
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| (format!("waypoint {i}"), *p)),
+                )
+                .collect();
+
+        let unjoined: Vec<&str> = places
+            .iter()
+            .filter(|(_, place)| arena.nav.path(arena.player_spawn, *place).is_none())
+            .map(|(name, _)| name.as_str())
+            .collect();
+        let legs: Vec<usize> = (0..arena.route.len())
+            .filter(|&i| {
+                let next = arena.route[(i + 1) % arena.route.len()];
+                arena.nav.path(arena.route[i], next).is_none()
+            })
+            .collect();
+
+        assert_eq!(
+            arena.route,
+            markers.patrol_route(),
+            "load dropped a shipped waypoint no enemy spawn reaches"
+        );
+        assert!(places.len() > 2, "the arena has too few places to join");
+        assert_eq!(
+            unjoined,
+            Vec::<&str>::new(),
+            "no path from the player spawn"
+        );
+        assert_eq!(
+            legs,
+            Vec::<usize>::new(),
+            "no path from waypoint to the next"
+        );
     }
 
     #[test]
@@ -428,6 +551,133 @@ mod tests {
             ["enemy_spawn_01", "enemy_spawn_02"]
         );
         assert_eq!(names(&markers.covers), ["cover_01"]);
+    }
+
+    /// A 20 m floor with a 3 m tall island, too high to climb, in one corner.
+    /// `waypoints` are `(name, position)` pairs; the enemy spawns on the floor.
+    fn island_level(waypoints: &[(&str, Vec3)]) -> Level {
+        let solid = |min: Vec3, max: Vec3| LevelMesh {
+            mesh: box_mesh(min, max),
+            material: None,
+        };
+        let mut markers = vec![
+            marker("player_spawn", Vec3::new(-5.0, 0.0, -5.0)),
+            marker("dummy_01", Vec3::new(-5.0, 0.0, 5.0)),
+            marker("enemy_spawn_01", Vec3::new(0.0, 0.0, 0.0)),
+        ];
+        markers.extend(waypoints.iter().map(|&(name, at)| marker(name, at)));
+        Level {
+            meshes: vec![
+                solid(Vec3::new(-10.0, -1.0, -10.0), Vec3::new(10.0, 0.0, 10.0)),
+                solid(Vec3::new(4.0, 0.0, -8.0), Vec3::new(8.0, 3.0, -4.0)),
+            ],
+            markers,
+        }
+    }
+
+    const ON_FLOOR: Vec3 = Vec3::new(-5.0, 0.0, 5.0);
+    const OTHER_ON_FLOOR: Vec3 = Vec3::new(5.0, 0.0, 5.0);
+    const ON_ISLAND: Vec3 = Vec3::new(6.0, 3.0, -6.0);
+
+    fn build(level: &Level) -> Result<Arena, ArenaError> {
+        let markers = ArenaMarkers::from_level(level).expect("a valid marker set");
+        Arena::from_level(level, &markers)
+    }
+
+    #[test]
+    fn a_waypoint_no_spawn_reaches_is_dropped_from_the_route() {
+        let level = island_level(&[
+            ("waypoint_03", OTHER_ON_FLOOR),
+            ("waypoint_02", ON_ISLAND),
+            ("waypoint_01", ON_FLOOR),
+        ]);
+
+        let arena = build(&level).expect("two waypoints are reachable");
+
+        let spawn = arena.enemy_spawns[0];
+        assert!(
+            arena.nav.path(spawn, ON_ISLAND).is_none(),
+            "the island must be unreachable for this test to mean anything"
+        );
+        assert_eq!(arena.route, [ON_FLOOR, OTHER_ON_FLOOR]);
+    }
+
+    #[test]
+    fn dropping_a_waypoint_warns_with_its_name() {
+        let level = island_level(&[
+            ("waypoint_01", ON_FLOOR),
+            ("waypoint_02", ON_ISLAND),
+            ("waypoint_03", OTHER_ON_FLOOR),
+        ]);
+
+        let log = logged(|| {
+            build(&level).expect("two waypoints are reachable");
+        });
+
+        assert!(log.contains("WARN"), "{log}");
+        assert!(log.contains("waypoint_02"), "{log}");
+        assert!(!log.contains("waypoint_01"), "{log}");
+        assert!(!log.contains("waypoint_03"), "{log}");
+    }
+
+    #[test]
+    fn a_route_with_every_waypoint_reachable_is_kept_whole_and_silent() {
+        let level = island_level(&[("waypoint_02", OTHER_ON_FLOOR), ("waypoint_01", ON_FLOOR)]);
+
+        let mut arena = None;
+        let log = logged(|| arena = Some(build(&level).expect("both are reachable")));
+
+        assert_eq!(arena.expect("built").route, [ON_FLOOR, OTHER_ON_FLOOR]);
+        assert!(!log.contains("WARN"), "{log}");
+    }
+
+    #[test]
+    fn an_arena_whose_waypoints_no_spawn_reaches_is_an_error() {
+        let level = island_level(&[("waypoint_01", ON_ISLAND)]);
+
+        let error = build(&level).unwrap_err();
+
+        assert!(
+            matches!(error, ArenaError::NoReachableWaypoint),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn waypoints_are_not_checked_when_there_are_no_enemy_spawns() {
+        let mut level = island_level(&[("waypoint_01", ON_ISLAND)]);
+        level.markers.retain(|m| m.name != "enemy_spawn_01");
+
+        let arena = build(&level).expect("nothing walks the route");
+
+        assert_eq!(arena.route, [ON_ISLAND]);
+    }
+
+    /// Collects what `tracing` writes while `run` executes.
+    fn logged(run: impl FnOnce()) -> String {
+        use std::io::Write;
+        use std::sync::Mutex;
+
+        struct Sink(Arc<Mutex<Vec<u8>>>);
+        impl Write for Sink {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().expect("log sink").extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let writer = Arc::clone(&buffer);
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || Sink(Arc::clone(&writer)))
+            .with_ansi(false)
+            .finish();
+        tracing::subscriber::with_default(subscriber, run);
+        let bytes = buffer.lock().expect("log sink").clone();
+        String::from_utf8(bytes).expect("log output is utf-8")
     }
 
     #[test]

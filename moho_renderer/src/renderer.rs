@@ -10,6 +10,7 @@ pub struct Renderer<'a> {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    present_modes: Vec<wgpu::PresentMode>,
     pipeline: wgpu::RenderPipeline,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
@@ -101,6 +102,7 @@ impl<'a> Renderer<'a> {
             device: device_setup.device,
             queue: device_setup.queue,
             config: device_setup.config,
+            present_modes: device_setup.present_modes,
             pipeline: pipeline_setup.main_pipeline().clone(),
             camera_buffer: resources.camera_buffer,
             camera_bind_group: resources.camera_bind_group,
@@ -158,6 +160,7 @@ impl<'a> Renderer<'a> {
 
     /// Update lighting parameters and write to GPU buffer.
     pub fn update_lighting(&mut self, lighting: crate::gpu_types::LightingGpu) {
+        let lighting = lighting_with_sky_palette(lighting);
         let lighting = lighting_with_debug_view(lighting, self.debug_view);
         self.shadow.current_lighting = lighting;
         self.queue
@@ -535,6 +538,20 @@ impl<'a> Renderer<'a> {
         self.shadow.pcss_settings.quality = quality_enum;
     }
 
+    /// Sets whether presented frames wait for the display refresh. Stays on when the GPU
+    /// has no low-latency mode.
+    pub fn set_vsync(&mut self, on: bool) {
+        let choice = crate::device::choose_present_mode(on, &self.present_modes);
+        if let Some(reason) = choice.fallback {
+            tracing::warn!(reason, "vsync stays on");
+        }
+        if choice.mode == self.config.present_mode {
+            return;
+        }
+        self.config.present_mode = choice.mode;
+        self.surface.configure(&self.device, &self.config);
+    }
+
     pub fn set_view_height(&mut self, height: Option<f32>) {
         self.view_height = height;
     }
@@ -687,6 +704,21 @@ impl<'a> Renderer<'a> {
     }
 }
 
+/// `lighting` with the sky palette fields (`sky_zenith`, `sky_horizon`, `sky_ground`)
+/// filled from the time of day in `params[0]`; a game's values in those fields are replaced.
+fn lighting_with_sky_palette(
+    lighting: crate::gpu_types::LightingGpu,
+) -> crate::gpu_types::LightingGpu {
+    let [sky_zenith, sky_horizon, sky_ground] =
+        crate::sky::sky_palette(lighting.params[0]).to_gpu();
+    crate::gpu_types::LightingGpu {
+        sky_zenith,
+        sky_horizon,
+        sky_ground,
+        ..lighting
+    }
+}
+
 /// `lighting` with the shader's debug mode (`params[1]`) replaced by `debug_view`; `None`
 /// keeps the game's own value.
 fn lighting_with_debug_view(
@@ -756,7 +788,53 @@ mod tests {
             moon_color: [0.1, 0.1, 0.3, 0.0],
             ambient: [0.2, 0.2, 0.25, 0.3],
             params: [13.5, 2.0, 7.0, 9.0],
+            ..LightingGpu::default()
         }
+    }
+
+    fn rgb(v: [f32; 4]) -> [f32; 3] {
+        [v[0], v[1], v[2]]
+    }
+
+    #[test]
+    fn update_lighting_fills_the_palette_from_the_time_of_day() {
+        for hour in [2.0, 6.0, 12.0, 19.0, 23.0] {
+            let lighting = LightingGpu {
+                params: [hour, 2.0, 7.0, 9.0],
+                ..game_lighting()
+            };
+
+            let filled = lighting_with_sky_palette(lighting);
+
+            let palette = crate::sky::sky_palette(hour);
+            assert_eq!(rgb(filled.sky_zenith), palette.zenith, "zenith at {hour} h");
+            assert_eq!(
+                rgb(filled.sky_horizon),
+                palette.horizon,
+                "horizon at {hour} h"
+            );
+            assert_eq!(rgb(filled.sky_ground), palette.ground, "ground at {hour} h");
+            assert_eq!(filled.params, lighting.params, "params untouched");
+            assert_eq!(filled.ambient, lighting.ambient, "ambient untouched");
+            assert_eq!(filled.sun_direction, lighting.sun_direction);
+        }
+    }
+
+    #[test]
+    fn a_games_sky_fields_are_replaced() {
+        let lighting = LightingGpu {
+            sky_zenith: [9.0, 9.0, 9.0, 9.0],
+            sky_horizon: [8.0, 8.0, 8.0, 8.0],
+            sky_ground: [7.0, 7.0, 7.0, 7.0],
+            ..game_lighting()
+        };
+
+        let filled = lighting_with_sky_palette(lighting);
+
+        let palette = crate::sky::sky_palette(13.5);
+        assert_eq!(rgb(filled.sky_zenith), palette.zenith);
+        assert_eq!(rgb(filled.sky_horizon), palette.horizon);
+        assert_eq!(rgb(filled.sky_ground), palette.ground);
     }
 
     #[test]

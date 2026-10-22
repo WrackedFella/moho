@@ -1,13 +1,14 @@
 # Searchlight
 
-**Source:** `searchlight/src/`, `searchlight/assets/`, `searchlight/content/`, `moho_ui_shell/src/`.
+**Source:** `searchlight/src/`, `moho_level/src/nav.rs`, `searchlight/assets/`, `searchlight/content/`, `moho_ui_shell/src/`.
 **Decisions:** [ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md),
-[ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md).
+[ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md),
+[ADR-0019](../../_todo/adr/0019-navigation-is-an-engine-seam.md).
 
 `searchlight` is the FPS line's engine adapter: a library and the `searchlight` binary. Rules
 (`Rifle`, `Magazine`, `Body`, `BodyProfile`) come from `searchlight_rules`; windowing, loop,
 physics, level loading, input, audio and rendering come from engine crates. It depends on no
-strategy crate ([overview](overview.md#2-lines-and-rules)).
+strategy crate ([overview](../architecture/overview.md#2-lines-and-rules)).
 
 ## 1 Layers
 
@@ -30,12 +31,12 @@ flowchart LR
 
 | Module | Role |
 |---|---|
-| `arena` | Loads `assets/arena.glb` through `moho_level`; `ArenaMarkers` sorts named markers by kind and orders waypoints into the patrol route; `Arena` is the loaded level the sim starts from (meshes, spawns, route, cover points) and builds the world colliders |
+| `arena` | Loads `assets/arena.glb` through `moho_level`; `ArenaMarkers` sorts named markers by kind and orders waypoints into the patrol route; `Arena` is the loaded level the sim starts from (meshes, spawns, route, cover points, `nav`) and builds the world colliders; `Arena::from_level` also builds the `NavMesh` for `nav_profile` (the player-sized capsule plus clearance) and fails with `ArenaError::Nav` when that fails; it also drops waypoints no enemy spawn has a navmesh path to (logged as a warning) and fails with `ArenaError::NoReachableWaypoint` when none is left |
 | `tuning` | `tuning(&RifleDef)`: builds the `SimConfig`, taking the rifle's numbers from the definition |
 | `input` | `SearchlightAction` set and default bindings; `build_action_map` builds the `ActionMap` at startup, with mouse look (`look_settings`: sensitivity, smoothing, invert Y) taken from `Prefs`, and a sensitivity not above zero falling back to the default 3.0; `SearchlightCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on Enter) |
 | `tag` | `SurfaceTag` (`World`, `Part { target, part }` or `Player(part)`) and its lossless round trip through the engine's opaque `moho_physics::HitTag` |
 | `shot` | `resolve_shot`: first tagged surface along a `ShotRay` in the `PhysicsWorld` |
-| `brain` | `Brain`: the enemy state machine (`Patrol`, `Engage`, `Cover`, `Chase`), pure over `glam` types; `Percept` in, `Intent` out; `EnemyTuning` holds its numbers |
+| `brain` | `Brain`: the enemy state machine (`Patrol`, `Engage`, `Cover`, `Chase`), pure over `glam` types; `Percept` and a `steer` function in, `Intent` out; `EnemyTuning` holds its numbers |
 | `cover` | `pick` and `offer`: choose the nearest free cover point a hurt enemy should run to, using world-only rays against the player (`Threat`) |
 | `sim` | `SearchlightSim`: player character and body, rifle, spare magazines, dummies and enemies; emits `Feedback`; counts player kills |
 | `wave` | `WaveTuning` (first wave size, growth per wave, points per kill; zero size or growth is refused) and `WaveState` (running wave, enemies still to spawn, score) as plain numbers, no physics |
@@ -48,7 +49,7 @@ flowchart LR
 `SearchlightSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
 `Feedback` is the only output: `SearchlightSim::tick` queues it, the game drains it
 (`drain_feedback`) and reacts. `TICK_HZ` is 60. The rifle's numbers (damage, cooldown, reload, range, magazine size) load from
-`content/weapons.toml` at start ([content format](../reference/content-format.md)); a load failure
+`content/weapons.toml`, then the mods listed in prefs (`mods/<name>/weapons.toml`), at start ([content format](../reference/content-format.md)); a load failure
 exits the binary. `tuning::tuning` combines them with the numbers still set in code (speeds, body
 profile, `EnemyTuning`, the player part enemies aim at) as a `SimConfig`.
 
@@ -108,7 +109,7 @@ with no score. `SearchlightGame` reads `wave()` and `score()` for the HUD.
 Each tick an enemy casts a sight ray from its eye to the player's aim point (the part chosen
 by `SimConfig::enemy_aim_at`) and sets `Percept::target` only when that ray strikes a
 `SurfaceTag::Player`, so walls block sight. `Brain::think` returns an `Intent` (forward
-fraction, yaw delta, fire). `Patrol` walks the route in order, wrapping; a target inside
+fraction, yaw delta, fire). `Patrol` walks the route in order, wrapping, heading for the next corner of the navmesh path to the waypoint (the same `steer` as `Chase`; straight at the waypoint when there is no path), with arrival measured to the waypoint; a target inside
 `sight_range` and `view_half_angle` starts `Engage`, which stands and faces the target while it
 stays visible, fires after `reaction_ticks` of continuous sight, within `fire_cone` of the
 bearing and off cooldown. Aim error comes from the `searchlight.enemy_spread` `SimRng` stream, started from
@@ -123,7 +124,11 @@ The next `Percept` carries `hurt` and `offer`. With an offer a `Patrol`, `Chase`
 holding the claim. After `cover_ticks` without arriving it fights where it stands. Without an
 offer it turns to `Engage` on the shooter's position. An `Engage` that loses sight falls to
 `Chase`, walking to the last seen position until it arrives or `chase_ticks` pass, then
-resumes `Patrol`; sight during `Chase` re-engages. Enemy shots use the shot path below; a hit on the player emits
+resumes `Patrol`; sight during `Chase` re-engages. `Chase` heads for the next corner (the one after
+its own position) of the `moho_level::NavMesh` path from the enemy to the last seen position (`SearchlightSim` supplies
+this as `steer`, with the goal first dropped onto the floor below it, so a player lost mid-jump is still chased), so enemies walk around obstacles; arrival is still measured to the last seen
+position. With no path (the position is off the mesh or unreachable) the enemy resumes `Patrol`
+at once. Sight and shot rays are not affected by the navmesh. Enemy shots use the shot path below; a hit on the player emits
 `Feedback::PlayerHit`, and a dead player emits `Feedback::PlayerDied`.
 
 ## 6 Shot path
@@ -146,7 +151,7 @@ same boxes tagged `Player` (`player_hit_volumes`).
 Markers are node names in the glTF file. `player_spawn` is required and unique; at least one
 `dummy_NN` is required; `enemy_spawn_NN` and `cover_NN` are optional (cover points feed `Arena::covers`; without them hurt enemies stand and fight; full-height `screen_NN` walls are plain geometry with no marker). `waypoint_NN` is optional
 unless an `enemy_spawn_NN` exists, then at least one is required (`ArenaError::MissingMarker`);
-the patrol route follows the waypoint numbers, not file order. Each
+the patrol route follows the waypoint numbers, not file order. A waypoint that no enemy spawn can walk to is dropped from the route with a warning; if enemy spawns exist and no waypoint is reachable, loading fails with `ArenaError::NoReachableWaypoint`. Waypoints are not checked when there are no enemy spawns. Each
 `cover_NN` carries a `shielded_from` extra (`+x`, `-x`, `+z`, `-z`). Spawns are floor points;
 `SearchlightSim::new` lifts capsule centres by `STAND_HEIGHT`. Errors surface as `ArenaError`.
 

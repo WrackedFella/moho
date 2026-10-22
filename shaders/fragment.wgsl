@@ -569,6 +569,22 @@ fn calculate_point_light(
     return diffuse + specular;
 }
 
+// Valve ambient cube (Mitchell et al. 2006): six colours weighted by the squared normal.
+// The palette is the same at every azimuth, so +-X and +-Z share the horizon colour.
+fn sky_ambient_cube(n: vec3<f32>) -> vec3<f32> {
+    let n2 = n * n;
+    let vertical = select(lighting.sky_ground.xyz, lighting.sky_zenith.xyz, n.y >= 0.0);
+    return (n2.x + n2.z) * lighting.sky_horizon.xyz + n2.y * vertical;
+}
+
+// Jimenez et al. 2016 multibounce: bright albedo loses less light in crevices.
+fn multibounce_ao(ao: f32, albedo: vec3<f32>) -> vec3<f32> {
+    let a = 2.0404 * albedo - 0.3324;
+    let b = -4.7951 * albedo + 0.6417;
+    let c = 2.7552 * albedo + 0.6903;
+    return max(vec3(ao), ((ao * a + b) * ao + c) * ao);
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if (in.world_pos.y > camera.cam_pos.w) {
@@ -582,8 +598,6 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let moon_dir = normalize(lighting.moon_direction.xyz);
     let moon_intensity = lighting.moon_direction.w;
     let moon_col = lighting.moon_color.xyz;
-    let ambient_col = lighting.ambient.xyz;
-    let ambient_intensity = lighting.ambient.w;
     
     let N = normalize(in.normal);
     let L = sun_dir;
@@ -662,7 +676,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // We don't implement true refraction here (no background sampling), but
     // use a Fresnel-based specular term and reduce diffuse contribution so
     // the object appears reflective/transparent rather than fully diffuse.
-    var color: vec3<f32> = vec3<f32>(0.0, 0.0, 0.0);
+    var celestial: vec3<f32> = vec3<f32>(0.0, 0.0, 0.0);
     if (ref_idx > 0.0) {
         // Schlick's approximation for Fresnel
         let r0 = (1.0 - ref_idx) / (1.0 + ref_idx);
@@ -684,13 +698,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let trans = final_albedo * (1.0 - F) * 0.6 * sun_col * sun_intensity * sun_shadow;
         let trans_moon = final_albedo * (1.0 - F) * 0.6 * moon_col * moon_intensity * 0.5 * moon_shadow;
 
-        // Reduce ambient in shadowed areas AND on back-facing surfaces
-        // Use minimum of both shadows for ambient darkening
-        let combined_shadow = min(sun_shadow, moon_shadow);
-        let shadow_darkening = mix(0.2, 1.0, combined_shadow);
-        let backface_darkening = mix(0.15, 1.0, diff);
-        let total_darkening = shadow_darkening * backface_darkening;
-        color = ambient_col * ambient_intensity * final_albedo * 0.1 * total_darkening + ao * (spec_diel + trans + spec_diel_moon + trans_moon);
+        celestial = ao * (spec_diel + trans + spec_diel_moon + trans_moon);
         // approximate alpha: more reflective (higher F) -> less transmitted
         // we bias alpha so very slight translucency remains even for weakly
         // refractive materials.
@@ -730,17 +738,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         let spec_color = final_albedo * spec_strength * spec_highlight * sun_col * sun_intensity * sun_shadow;
         let spec_color_moon = final_albedo * spec_strength * spec_highlight_moon * moon_col * moon_intensity * 0.5 * moon_shadow;
 
-        // Reduce ambient in shadowed areas AND on back-facing surfaces
-        // Surfaces in complete shadow should be much darker
-        // Also darken surfaces facing away from light (diff close to 0)
-        // Use minimum of both shadows for ambient darkening
-        let combined_shadow = min(sun_shadow, moon_shadow);
-        let shadow_darkening = mix(0.2, 1.0, combined_shadow); // Darken by 80% in full shadow
-        let backface_darkening = mix(0.15, 1.0, diff); // Darken by 85% when facing away
-        let total_darkening = shadow_darkening * backface_darkening;
-        color = ambient_col * ambient_intensity * final_albedo * total_darkening + ao * (diff_color + spec_color + diff_color_moon + spec_color_moon);
+        celestial = ao * (diff_color + spec_color + diff_color_moon + spec_color_moon);
     }
     
+    // Ambient from the sky palette by facing. Dielectrics keep their weak ambient.
+    let ambient_scale = select(1.0, 0.1, ref_idx > 0.0);
+    let sky_ambient = final_albedo * sky_ambient_cube(N) * lighting.ambient.w * ambient_scale
+        * in.sky_exposed * multibounce_ao(ao, final_albedo);
+
     // Accumulate dynamic point light contributions
     // Iterate over all active point lights and add their contributions
     let num_lights = dynamic_lights.light_count.x;
@@ -779,9 +784,6 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
             
             point_light_contrib += contrib;
         }
-        
-        // Add point light contribution with AO applied
-        color += ao * point_light_contrib;
     }
     
     // DEBUG: Visualize shadow coordinates (comment out for normal rendering)
@@ -790,12 +792,16 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Color gradient = inside bounds (shows UV coords)
     // return vec4<f32>(debug_shadow_coords(in.light_space_pos), 1.0);
     
-    // Sky exposure gates everything lit above (sun, moon, ambient, point lights); block
-    // light adds on top so it can light surfaces the sky leaves dark.
+    // Sky exposure gates only sun and moon. Sky ambient scales by exposure itself, point
+    // lights are not sky light, and block light adds on top so it can light surfaces the
+    // sky leaves dark.
     // TODO: Implement proper light occlusion - blocks should prevent light from
     // reaching surfaces in crevices/caves (requires transparency checks in propagation)
     let sky_gate = max(vec3<f32>(in.sky_exposed), vec3<f32>(MIN_SKY_AMBIENT));
-    color = color * sky_gate + final_albedo * ao * in.block_light_rgb * BLOCK_LIGHT_GAIN;
+    let color = celestial * sky_gate
+        + ao * point_light_contrib
+        + sky_ambient
+        + final_albedo * ao * in.block_light_rgb * BLOCK_LIGHT_GAIN;
     
     // For dielectrics we computed `alpha` above; otherwise alpha is opaque.
     var out_alpha: f32 = 1.0;
@@ -828,6 +834,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     } else if (debug_mode == 5u) {
         // Mode 5: Point Lights Contribution
         return vec4<f32>(point_light_contrib, 1.0);
+    } else if (debug_mode == 6u) {
+        // Mode 6: Sky Ambient alone
+        return vec4<f32>(sky_ambient, 1.0);
     }
 
     return vec4<f32>(color, out_alpha);

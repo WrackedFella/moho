@@ -550,7 +550,7 @@ mod tests {
             "  help - ",
             "  clear - ",
             "  quit - ",
-            "  r_debug_view <0-5> - ",
+            "  r_debug_view <0-6> - ",
             "  r_shadow_quality <0-4> - ",
             "  r_ssao_quality <0-4> - ",
             "  audio_cue <path> <x> <y> <z> [volume] - ",

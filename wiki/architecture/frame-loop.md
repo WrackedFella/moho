@@ -17,12 +17,13 @@ flowchart TD
 
     NE["new_events"] --> acc["FixedStep accumulates<br/>time since last wake"]
     acc --> tk["per due tick:<br/>Game::command, Game::tick,<br/>then GameClock advance"]
-    tk --> cf["control flow: wait until next tick"]
+
+    AW["about_to_wait<br/>(after the iteration's events)"] --> cf["capped and frame due: request_redraw;<br/>wait until the earlier of the next tick<br/>and the next frame deadline"]
 
     WE["window_event"] --> route{"runner::route"}
     route -- RedrawRequested --> wp["if paused: Game::command,<br/>then Game::apply_while_paused"] --> fr["Game::frame(alpha, frame_dt)"]
     fr --> req["apply set_paused / set_speed<br/>from the next tick"]
-    req --> rr["request_redraw<br/>unless exiting"]
+    req --> rr["request_redraw<br/>unless exiting or capped"]
     route -- toggle key --> wm["flip windowed / borderless,<br/>Game::window_mode_changed"]
     route -- Resized --> rs["renderer.resize, then Game::event"]
     route -- CloseRequested --> ev["Game::event, then exit"]
@@ -36,7 +37,8 @@ Init failures (window, renderer) end `run` with an `AppError`; audio failure onl
 `FrameContext::renderer` and `audio` are `None` under `HeadlessLoop`, which drives the
 same `command`/`tick`/`frame` without a window (`init` and `event` never run).
 Every frame requests the next redraw, so frames run at the presentation rate and look turns the view on each one; `FrameContext::frame_dt` is the time since the previous frame, capped at `tick_length` times `max_catch_up_ticks`. Time beyond `max_catch_up_ticks` is dropped ([overview](overview.md#4-fixed-step-loop-moho_app)).
-Window mode: before any game callback, `window_event` feeds key and focus events to `ToggleKeys` (`window_keys.rs`) when `AppConfig::toggle_keys` is `Some`. Alt+Enter and the configured `Input`s flip between `WindowMode::Windowed` and `WindowMode::Borderless` (winit borderless fullscreen); the runner consumes the press, its repeats and its release, so the game never sees them, then calls `Game::window_mode_changed`. Losing focus clears held-Alt state. With `None`, no event is observed and nothing flips. Searchlight sets F11 ([searchlight](searchlight.md#2-console)); flagstone sets `None`.
+A game caps the frame rate with `FrameContext::set_frame_cap(Option<NonZeroU32>)` (frames per second); a game that never calls it is uncapped. The runner holds a `FramePacer` (`moho_app/src/pacing.rs`) that times the next frame from when the last one was actually drawn. Uncapped frames request the next redraw themselves. When capped, a frame does not: `about_to_wait` requests a redraw once the pacer is due, and sets the wait to `WaitUntil(min(next tick, next frame due))`. It runs after the iteration's events, so it sees the frame just drawn; an overdue deadline is not waited on (the loop waits for the next tick until the requested redraw arrives). Any `RedrawRequested`, including OS-originated ones (expose, resize), is a frame and restarts the pacer's interval. Ticks keep their own schedule, so a low cap never slows the simulation. `App` hands the cap to the loop from its prefs: none while vsync is on (the display paces frames) or `fps_max` is 0, else `fps_max`.
+Window mode: before any game callback, `window_event` feeds key and focus events to `ToggleKeys` (`window_keys.rs`) when `AppConfig::toggle_keys` is `Some`. Alt+Enter and the configured `Input`s flip between `WindowMode::Windowed` and `WindowMode::Borderless` (winit borderless fullscreen); the runner consumes the press, its repeats and its release, so the game never sees them, then calls `Game::window_mode_changed`. Losing focus clears held-Alt state. With `None`, no event is observed and nothing flips. Searchlight sets F11 ([searchlight](../searchlight/architecture.md)); flagstone sets `None`.
 A game pauses or changes `SimSpeed` through `set_paused` / `set_speed` on its event or frame context; the loop applies the request after the callback returns, from the next tick. While paused the loop runs no tick and still renders every frame ([ADR-0018](../../_todo/adr/0018-paused-commands-apply-at-the-tick-boundary.md)).
 
 ## 2 `Game::tick` order (`App`)

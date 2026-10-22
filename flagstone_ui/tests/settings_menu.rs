@@ -14,6 +14,7 @@ use flagstone_ui::UiComponent;
 use flagstone_ui::actions::StrategyAction;
 use flagstone_ui::prefs::Prefs;
 use flagstone_ui::screens::SettingsMenu;
+use moho_input::Modifiers;
 use moho_input::bindings::Binding;
 use moho_input::key::Key;
 use moho_input::pad::{PadButton, PadInput, Stick, StickDir};
@@ -607,6 +608,30 @@ fn rebinding_sprint_keeps_its_hold_bindings() {
     assert!(
         text.lines().any(|l| l == "E, Hold Q"),
         "sprint row missing in:\n{text}"
+    );
+}
+
+/// Rebinding a row replaces its plain key and keeps its chord bindings, in the settings text too.
+#[test]
+fn rebinding_keeps_chord_bindings() {
+    let (prefs, issues) = Prefs::parse("[bindings]\nmove_forward = W, Ctrl+Q\n");
+    assert_eq!(issues, vec![]);
+    let mut menu = SettingsMenu::with_prefs(prefs);
+    menu.start_listening(0);
+
+    menu.apply_key_while_listening(Key::E);
+
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [
+            Binding::key(Key::E),
+            Binding::key(Key::Q).with(Modifiers::CTRL)
+        ]
+    );
+    let text = rendered_text(&render_frame(&mut menu, vec![]));
+    assert!(
+        text.lines().any(|l| l == "E, Ctrl+Q"),
+        "move forward row missing in:\n{text}"
     );
 }
 

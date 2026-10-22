@@ -25,13 +25,20 @@ pub struct LightingGpu {
     pub moon_direction: [f32; 4],
     /// Moon color (rgb) and unused (w)
     pub moon_color: [f32; 4],
-    /// Ambient light color (rgb) and intensity (w)
+    /// Sky-ambient strength (w); xyz unused. The ambient colour comes from the sky palette.
     pub ambient: [f32; 4],
     /// Shader parameters:
     /// x = Time of day (0-24 hours)
-    /// y = Debug Mode (0=None, 1=Normals, 2=Bias, 3=Cascades, 4=Shadows)
+    /// y = Debug Mode (0=None, 1=Normals, 2=Bias, 3=Shadows, 4=Light level, 5=Point lights, 6=Sky ambient)
     /// zw = Unused
     pub params: [f32; 4],
+    /// Sky zenith colour (rgb) and unused (w). The renderer fills it from the time of
+    /// day in `params[0]`; a game's value is replaced.
+    pub sky_zenith: [f32; 4],
+    /// Sky horizon colour (rgb) and unused (w). Filled by the renderer.
+    pub sky_horizon: [f32; 4],
+    /// Sky ground colour (rgb) and unused (w). Filled by the renderer.
+    pub sky_ground: [f32; 4],
 }
 
 /// GPU-visible shadow matrix for light-space transformation (single shadow map - legacy)
@@ -226,6 +233,7 @@ impl Default for CascadedShadowMatrixGpu {
 
 impl Default for LightingGpu {
     fn default() -> Self {
+        let [sky_zenith, sky_horizon, sky_ground] = crate::sky::sky_palette(6.0).to_gpu();
         Self {
             // Default sun direction: lower in the sky (morning/evening light)
             // Normalized from approximately (0.7, 0.3, 0.6) for ~20° elevation
@@ -236,10 +244,12 @@ impl Default for LightingGpu {
             moon_direction: [0.0, -1.0, 0.0, 0.3], // Pointing down, intensity=0.3
             // Silver-blue moonlight
             moon_color: [0.7, 0.8, 0.9, 0.0],
-            // Reduced ambient light to make shadows more visible
-            ambient: [0.4, 0.5, 0.6, 0.1], // Cool ambient, intensity=0.1 (reduced from 0.3)
+            ambient: [0.0, 0.0, 0.0, 0.1],
             // Default to dawn (6:00)
             params: [6.0, 0.0, 0.0, 0.0],
+            sky_zenith,
+            sky_horizon,
+            sky_ground,
         }
     }
 }
@@ -250,7 +260,7 @@ mod tests {
     #[test]
     fn sizes_are_expected() {
         assert_eq!(std::mem::size_of::<CameraGpu>(), 80);
-        assert_eq!(std::mem::size_of::<LightingGpu>(), 96); // 6 vec4s: sun_dir, sun_col, moon_dir, moon_col, ambient, time_of_day
+        assert_eq!(std::mem::size_of::<LightingGpu>(), 144); // 9 vec4s
         assert_eq!(std::mem::size_of::<ShadowMatrixGpu>(), 64);
         // CascadedShadowMatrixGpu: 2 matrices (2x64 bytes = 128 bytes) + 1 vec4 (16 bytes) = 144 bytes
         assert_eq!(std::mem::size_of::<CascadedShadowMatrixGpu>(), 144);
@@ -261,6 +271,27 @@ mod tests {
             MAX_SHADOW_LIGHTS * std::mem::size_of::<ShadowMatrixGpu>() + 32,
             "one matrix slot per shadow light, plus two vec4s"
         );
+    }
+
+    #[test]
+    fn lighting_default_carries_the_dawn_sky_palette() {
+        let lighting = LightingGpu::default();
+
+        let palette = crate::sky::sky_palette(6.0);
+
+        assert_eq!(lighting.params[0], 6.0);
+        let rgb = |v: [f32; 4]| [v[0], v[1], v[2]];
+        assert_eq!(rgb(lighting.sky_zenith), palette.zenith);
+        assert_eq!(rgb(lighting.sky_horizon), palette.horizon);
+        assert_eq!(rgb(lighting.sky_ground), palette.ground);
+    }
+
+    #[test]
+    fn sky_fields_follow_params_so_existing_offsets_hold() {
+        assert_eq!(std::mem::offset_of!(LightingGpu, params), 80);
+        assert_eq!(std::mem::offset_of!(LightingGpu, sky_zenith), 96);
+        assert_eq!(std::mem::offset_of!(LightingGpu, sky_horizon), 112);
+        assert_eq!(std::mem::offset_of!(LightingGpu, sky_ground), 128);
     }
 
     #[test]

@@ -13,8 +13,19 @@
 //! and gates only the sky-hemisphere ambient term in the renderer.
 
 use super::grid::VoxelGrid;
-use super::light_storage::{self, CHUNK_SIZE, CHUNK_USIZE};
+use super::light_storage::{self, CHUNK_SIZE, CHUNK_USIZE, reading_chunk_offsets};
 use glam::IVec3;
+use std::collections::HashSet;
+
+/// What a sky-exposure recompute changed.
+#[derive(Debug, Default)]
+pub(crate) struct SkyChange {
+    /// Whether any `sky_exposed` bit of the chunk changed.
+    pub(crate) any: bool,
+    /// Offsets of the face-neighbour chunks whose surfaces read a changed bit on the
+    /// chunk's outer layer.
+    pub(crate) borders: HashSet<IVec3>,
+}
 
 /// Bring the lighting state for `chunk_pos` up-to-date with respect to
 /// sky-exposure, if needed. No-op when the chunk's `sky_dirty` is false (or
@@ -29,11 +40,17 @@ use glam::IVec3;
 /// Returns whether any `sky_exposed` bit changed; a freshly allocated chunk
 /// light starts with every bit clear.
 pub fn recompute_sky_exposure(grid: &mut VoxelGrid, chunk_pos: IVec3) -> bool {
+    recompute_sky_change(grid, chunk_pos).any
+}
+
+/// [`recompute_sky_exposure`] reporting which face layers had changed bits too.
+pub(crate) fn recompute_sky_change(grid: &mut VoxelGrid, chunk_pos: IVec3) -> SkyChange {
+    let mut change = SkyChange::default();
     if !grid.supports_lighting() {
-        return false;
+        return change;
     }
     if !grid.chunk_light(chunk_pos).is_none_or(|cl| cl.sky_dirty) {
-        return false;
+        return change;
     }
 
     // Step 1: rebuild this chunk's column_max_y from authoritative block data.
@@ -54,7 +71,6 @@ pub fn recompute_sky_exposure(grid: &mut VoxelGrid, chunk_pos: IVec3) -> bool {
 
     // Step 3: write sky_exposed bits.
     let cl = grid.chunk_light_mut(chunk_pos);
-    let mut changed = false;
     for lx in 0..CHUNK_SIZE {
         for lz in 0..CHUNK_SIZE {
             let col_h_world = world_column_height(&stacked, lx, lz);
@@ -65,13 +81,18 @@ pub fn recompute_sky_exposure(grid: &mut VoxelGrid, chunk_pos: IVec3) -> bool {
                     None => true,
                 };
                 let idx = light_storage::local_index(lx, ly, lz);
-                changed |= cl.sky_exposed_at(idx) != exposed;
+                if cl.sky_exposed_at(idx) != exposed {
+                    change.any = true;
+                    change
+                        .borders
+                        .extend(reading_chunk_offsets(IVec3::new(lx, ly, lz)));
+                }
                 cl.set_sky_exposed(idx, exposed);
             }
         }
     }
     cl.sky_dirty = false;
-    changed
+    change
 }
 
 /// Scan blocks in `chunk_pos`'s footprint and compute per-(x,z) chunk-local

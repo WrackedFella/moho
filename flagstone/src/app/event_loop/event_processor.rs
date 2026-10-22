@@ -833,8 +833,8 @@ mod tests {
         ];
         let light_system = app.light_system.as_mut().expect("light system");
         let grid = light_system.grid_mut();
-        for pos in &batch[..2] {
-            grid.mutator().place(*pos, 1, None);
+        for pos in [placed_at, batch[0], batch[1]] {
+            grid.mutator().place(pos, 1, None);
         }
         for pos in [placed_at, batch[0], batch[1], batch[2]] {
             grid.set_block_light_rgb(pos, [10, 0, 0]);
@@ -856,15 +856,14 @@ mod tests {
         let light_system = app.light_system.as_mut().expect("light system");
         assert_eq!(
             light_system.pending_jobs(),
-            3,
-            "one for the opaque placement, one per batched block, none for the empty position"
+            4,
+            "one for the opaque placement, one per batched position, the empty one included"
         );
-        assert_eq!(light_system.process_frame(), 3);
+        assert_eq!(light_system.process_frame(), 4);
         let grid = light_system.grid();
-        for pos in [placed_at, batch[0], batch[1]] {
-            assert_eq!(grid.block_light_rgb_at(pos), [0, 0, 0], "{pos} cleared");
+        for pos in [placed_at, batch[0], batch[1], batch[2]] {
+            assert_eq!(grid.block_light_rgb_at(pos), [0, 0, 0], "{pos} reconciled");
         }
-        assert_eq!(grid.block_light_rgb_at(batch[2]), [10, 0, 0]);
     }
 
     #[test]
@@ -1216,6 +1215,33 @@ mod tests {
             app.pending_render.is_empty(),
             "no window, so nothing is queued for the renderer"
         );
+    }
+
+    #[test]
+    fn adopting_vsync_off_queues_a_vsync_request() {
+        let mut app = App::headless();
+        let mut off = Prefs::default();
+        off.set_vsync(false);
+
+        app.adopt_settings(off);
+
+        assert!(
+            matches!(app.pending_render.as_slice(), [RenderRequest::Vsync(false)]),
+            "queued {} requests",
+            app.pending_render.len()
+        );
+    }
+
+    #[test]
+    fn unchanged_vsync_queues_no_render_request() {
+        let mut app = App::headless();
+        let mut other_change = Prefs::default();
+        other_change.set_fps_max(60);
+
+        app.adopt_settings(other_change);
+        app.adopt_settings(Prefs::default());
+
+        assert!(app.pending_render.is_empty());
     }
 
     #[test]

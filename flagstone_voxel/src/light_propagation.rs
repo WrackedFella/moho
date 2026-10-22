@@ -12,9 +12,12 @@
 //! - **remove_light**: two-queue removal — dark wave clears source-lit voxels,
 //!   then re-seeds cleared emitter blocks from their emission and relights from
 //!   adjacent voxels still lit by surviving sources.
+//! - **update_at**: reconcile one position with the grid after any edit there.
 
 use super::grid::VoxelGrid;
-use super::light_storage::{self, CHUNK_SIZE, CHUNK_VOLUME, ChunkLight, idx_to_local, local_index};
+use super::light_storage::{
+    self, CHUNK_SIZE, CHUNK_VOLUME, ChunkLight, idx_to_local, local_index, reading_chunk_offsets,
+};
 use glam::IVec3;
 use std::collections::{HashSet, VecDeque};
 
@@ -86,6 +89,47 @@ impl LightPropagator {
         let mut affected = HashSet::new();
         for ch in [LightChannel::R, LightChannel::G, LightChannel::B] {
             self.two_queue_remove(grid, pos, ch, &mut affected);
+        }
+        affected.into_iter().collect()
+    }
+
+    /// Reconcile the light at `pos` with the grid as it is now, whatever edit
+    /// was made there: light the old block held or blocked is cleared, a block
+    /// that lets light through is refilled from its brighter neighbours, and an
+    /// emitter is lit at its emission.
+    /// Idempotent, so jobs for the same position may repeat or run in any order.
+    /// Returns the chunk positions where a value was written.
+    pub fn update_at(&mut self, grid: &mut VoxelGrid, pos: IVec3) -> Vec<IVec3> {
+        if !grid.supports_lighting() {
+            return vec![];
+        }
+        let lighting = grid
+            .material_at(pos)
+            .map(|mat_id| grid.material_registry.lighting(mat_id));
+        let opaque = lighting.is_some_and(|l| l.is_opaque());
+        let emission = lighting.map_or([0; 3], |l| l.emission);
+        let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(pos);
+        let mut affected = std::collections::HashSet::new();
+        for ch in [LightChannel::R, LightChannel::G, LightChannel::B] {
+            let target = |grid: &VoxelGrid| {
+                let through = if opaque {
+                    0
+                } else {
+                    neighbours(pos)
+                        .map(|nb| Self::read_world(grid, nb, ch).saturating_sub(1))
+                        .max()
+                        .unwrap_or(0)
+                };
+                emission[ch as usize].max(through)
+            };
+            // A voxel's light alone decides what it passes on, so a dark wave is
+            // only needed when the level here must fall.
+            let mut level = target(grid);
+            if Self::read_ch(grid, chunk_pos, idx, ch) > level {
+                self.two_queue_remove(grid, pos, ch, &mut affected);
+                level = target(grid);
+            }
+            self.bfs_add(grid, pos, level, ch, &mut affected);
         }
         affected.into_iter().collect()
     }
@@ -196,6 +240,12 @@ impl LightPropagator {
     }
 
     #[inline]
+    fn read_world(grid: &VoxelGrid, world: IVec3, ch: LightChannel) -> u8 {
+        let (chunk_pos, idx, _) = light_storage::world_to_chunk_local(world);
+        Self::read_ch(grid, chunk_pos, idx, ch)
+    }
+
+    #[inline]
     fn write_ch(grid: &mut VoxelGrid, chunk_pos: IVec3, idx: usize, ch: LightChannel, v: u8) {
         let cl = grid.chunk_light_mut(chunk_pos);
         match ch {
@@ -221,7 +271,6 @@ impl LightPropagator {
             idx,
             level,
         });
-        affected.insert(chunk_pos);
         self.drain(grid, ch, affected);
     }
 
@@ -257,7 +306,7 @@ impl LightPropagator {
             // Fully opaque blocks absorb — no propagation through them.
             if grid
                 .material_at(nb_world)
-                .is_some_and(|mat_id| grid.material_registry.opacity_cost(mat_id) >= 15)
+                .is_some_and(|mat_id| grid.material_registry.lighting(mat_id).is_opaque())
             {
                 continue;
             }
@@ -280,7 +329,7 @@ impl LightPropagator {
                 continue;
             }
             Self::write_ch(grid, node.chunk_pos, node.idx, ch, node.level);
-            affected.insert(node.chunk_pos);
+            mark_light_write(grid, node.chunk_pos, node.idx, affected);
             self.enqueue_neighbours(grid, node, ch);
         }
     }
@@ -332,7 +381,7 @@ impl LightPropagator {
             debug_assert_eq!(stored, node.level);
             // Clear this voxel.
             Self::write_ch(grid, node.chunk_pos, node.idx, ch, 0);
-            affected.insert(node.chunk_pos);
+            mark_light_write(grid, node.chunk_pos, node.idx, affected);
 
             let world = node.chunk_pos * CHUNK_SIZE + idx_to_local(node.idx);
             // A surviving emitter's own voxel must read its emission again; a
@@ -372,6 +421,17 @@ impl LightPropagator {
         relight.retain(|n| is_light_source(grid, *n));
         self.bfs_add_nodes(grid, &emitters, &relight, ch, affected);
     }
+}
+
+/// Records a light write at `idx` of `chunk_pos`: the chunk itself, and the loaded chunks
+/// across the face layers the voxel lies on, whose surfaces read it.
+fn mark_light_write(grid: &VoxelGrid, chunk_pos: IVec3, idx: usize, affected: &mut HashSet<IVec3>) {
+    affected.insert(chunk_pos);
+    affected.extend(
+        reading_chunk_offsets(idx_to_local(idx))
+            .map(|offset| chunk_pos + offset)
+            .filter(|&across| grid.has_chunk(across)),
+    );
 }
 
 /// Whether the light stored at `node` can spread: it sits in a transparent

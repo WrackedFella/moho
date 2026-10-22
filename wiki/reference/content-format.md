@@ -23,11 +23,22 @@ range = 100.0
 ```
 
 `searchlight` keeps its base root at `searchlight/content/` (`searchlight::content_root`).
+Mod roots live under `mods/<name>/` in the working directory (`searchlight::mods_dir`), each
+holding the same `<kind>.toml` files.
+
+## Mods
+
+`[content] mods = a, b` in the game's prefs file ([prefs format](prefs-format.md)) lists
+mod names in load order. `ContentRoots::with_mods(mods_dir, names)` appends
+`mods_dir/<name>` per name after the base, so later mods override earlier ones. A name must
+be non-empty ASCII letters, digits, `_` or `-` (`ContentError::InvalidRootName`); a missing
+folder is `ContentError::MissingRoot`. A mod defines only the ids it changes, and each
+entry it defines must be complete.
 
 ## Loading
 
 - `ContentRoots::base(path)` builds the root list; a missing folder is
-  `ContentError::MissingRoot`. Roots are ordered base first; a later root's entry replaces
+  `ContentError::MissingRoot`. Roots are ordered base first, then mods; a later root's entry replaces
   an earlier one with the same id whole, not field by field.
 - `load_kind::<T>(&roots, "weapons")` reads `<root>/weapons.toml` from every root (a
   missing file is skipped) and deserializes each table as `T`, giving `Definitions<T>`.
@@ -36,8 +47,8 @@ range = 100.0
 ## Errors
 
 Every failure is a `ContentError` naming the file, and the id where one applies: `Unreadable`,
-`Syntax` (TOML, with line and column), `Invalid` (an entry does not fit its type) and
-`MissingId`. The reason is collapsed to one line. A game treats any of them as fatal at
+`Syntax` (TOML, with line and column), `Invalid` (an entry does not fit its type, including
+a mod entry missing a field), `MissingId`, and the root errors above. The reason is collapsed to one line. A game treats any of them as fatal at
 start: the `searchlight` binary logs the error and exits with failure.
 
 ## Definition types

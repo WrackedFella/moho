@@ -186,6 +186,7 @@ impl App {
                 RenderRequest::ShadowQuality(quality) => renderer.set_shadow_quality(quality),
                 RenderRequest::SsaoQuality(quality) => renderer.set_ssao_quality(quality),
                 RenderRequest::ViewHeight(height) => renderer.set_view_height(height),
+                RenderRequest::Vsync(on) => renderer.set_vsync(on),
             }
         }
     }
@@ -426,6 +427,8 @@ impl moho_app::Game for App {
         self.viewport = glam::UVec2::new(size.width, size.height);
         crate::app::renderer_setup::init_renderer_and_ui(self, ctx.window, &mut *ctx.renderer);
         crate::app::renderer_setup::apply_video_settings(&self.prefs, ctx.window);
+        ctx.renderer.set_vsync(self.prefs.vsync());
+        self.set_pending_frame_cap(self.prefs.frame_cap());
         self.initial_render(ctx);
     }
 
@@ -439,6 +442,9 @@ impl moho_app::Game for App {
     fn frame(&mut self, ctx: &mut moho_app::FrameContext<'_>, alpha: f32) {
         let frame_processor = FrameProcessor::new();
 
+        if std::mem::take(&mut self.frame_cap_changed) {
+            ctx.set_frame_cap(self.pending_frame_cap);
+        }
         self.poll_gamepads();
         if self.game_state == GameState::Playing
             && self.input.focused
@@ -721,6 +727,7 @@ mod tests {
         shadow_qualities: Vec<u8>,
         ssao_qualities: Vec<u8>,
         view_heights: Vec<Option<f32>>,
+        vsyncs: Vec<bool>,
         lightings: Vec<LightingGpu>,
         frames_begun: u32,
         cameras: Vec<(glam::Mat4, glam::Mat4, glam::Vec3)>,
@@ -783,6 +790,9 @@ mod tests {
         }
         fn set_view_height(&mut self, height: Option<f32>) {
             self.view_heights.push(height);
+        }
+        fn set_vsync(&mut self, on: bool) {
+            self.vsyncs.push(on);
         }
     }
 
@@ -1020,6 +1030,7 @@ mod tests {
 
     mod frame {
         use super::*;
+        use moho_core::prefs::Prefs;
 
         #[test]
         fn queued_point_light_reaches_the_renderer_and_the_queue_empties() {
@@ -1071,6 +1082,116 @@ mod tests {
 
             assert_eq!(fake.view_heights, vec![Some(12.5), None]);
             assert!(app.pending_render.is_empty());
+        }
+
+        #[test]
+        fn adopting_vsync_off_reaches_the_renderer() {
+            let mut app = playing_app();
+            let mut fake = FakeRenderer::default();
+            let mut off = Prefs::default();
+            off.set_vsync(false);
+
+            app.adopt_settings(off);
+            run_frame(&mut app, &mut fake);
+
+            assert_eq!(fake.vsyncs, vec![false]);
+            assert!(app.pending_render.is_empty());
+        }
+
+        #[test]
+        fn adopting_vsync_back_on_reaches_the_renderer_after_off() {
+            let mut app = playing_app();
+            let mut fake = FakeRenderer::default();
+            let mut off = Prefs::default();
+            off.set_vsync(false);
+
+            app.adopt_settings(off);
+            app.adopt_settings(Prefs::default());
+            run_frame(&mut app, &mut fake);
+
+            assert_eq!(fake.vsyncs, vec![false, true]);
+        }
+
+        #[test]
+        fn adopting_unchanged_vsync_does_not_touch_the_renderer() {
+            let mut app = playing_app();
+            let mut fake = FakeRenderer::default();
+
+            app.adopt_settings(Prefs::default());
+            run_frame(&mut app, &mut fake);
+
+            assert!(fake.vsyncs.is_empty());
+        }
+
+        /// The cap `frame` hands the loop after the game adopts `prefs`; fails the test
+        /// if `frame` hands it none at all.
+        fn cap_handed_to_the_loop(prefs: Prefs) -> Option<std::num::NonZeroU32> {
+            let mut app = playing_app();
+            app.adopt_settings(prefs);
+            let clock = GameClock::default();
+            let mut ctx = FrameContext::new(tick(), &clock, None, None);
+
+            Game::frame(&mut app, &mut ctx, 0.5);
+
+            ctx.requested_frame_cap()
+                .expect("frame hands the loop a cap request")
+        }
+
+        #[test]
+        fn vsync_off_hands_the_default_cap_to_the_loop() {
+            let mut prefs = Prefs::default();
+            prefs.set_vsync(false);
+
+            let cap = cap_handed_to_the_loop(prefs);
+
+            assert_eq!(cap, std::num::NonZeroU32::new(300));
+        }
+
+        #[test]
+        fn vsync_off_hands_the_configured_cap_to_the_loop() {
+            let mut prefs = Prefs::default();
+            prefs.set_vsync(false);
+            prefs.set_fps_max(144);
+
+            let cap = cap_handed_to_the_loop(prefs);
+
+            assert_eq!(cap, std::num::NonZeroU32::new(144));
+        }
+
+        #[test]
+        fn zero_cap_hands_no_cap_to_the_loop() {
+            let mut prefs = Prefs::default();
+            prefs.set_vsync(false);
+            prefs.set_fps_max(0);
+
+            let cap = cap_handed_to_the_loop(prefs);
+
+            assert_eq!(cap, None);
+        }
+
+        #[test]
+        fn vsync_on_hands_no_cap_to_the_loop() {
+            let mut prefs = Prefs::default();
+            prefs.set_fps_max(60);
+
+            let cap = cap_handed_to_the_loop(prefs);
+
+            assert_eq!(cap, None);
+        }
+
+        #[test]
+        fn frame_after_vsync_is_turned_back_on_lifts_the_cap() {
+            let mut app = playing_app();
+            let mut off = Prefs::default();
+            off.set_vsync(false);
+            app.adopt_settings(off);
+            app.adopt_settings(Prefs::default());
+            let clock = GameClock::default();
+            let mut ctx = FrameContext::new(tick(), &clock, None, None);
+
+            Game::frame(&mut app, &mut ctx, 0.5);
+
+            assert_eq!(ctx.requested_frame_cap(), Some(None));
         }
 
         #[test]
@@ -1142,6 +1263,16 @@ mod tests {
 
             assert_eq!(fake.lightings.len(), 1);
             assert_eq!(fake.lightings[0].sun_direction[3], 1.0);
+        }
+
+        #[test]
+        fn playing_frame_uploads_the_sky_ambient_strength_by_day() {
+            let mut app = playing_app();
+            let mut fake = FakeRenderer::default();
+
+            run_frame_at(&mut app, &mut fake, 12.0);
+
+            assert_eq!(fake.lightings[0].ambient, [0.0, 0.0, 0.0, 0.15]);
         }
 
         #[test]

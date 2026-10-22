@@ -53,7 +53,7 @@ flowchart TD
 Blue is the engine line, green is the flagstone line, orange is the searchlight line.
 `searchlight_rules` holds plain serialisable weapon and body rules (`Rifle`, `Magazine`, `Body`)
 with no engine dependency. `searchlight` is the only searchlight-line crate that reaches the engine: a library
-plus the `searchlight` binary, described in [Searchlight](searchlight.md). Every shot resolves
+plus the `searchlight` binary, described in [Searchlight](../searchlight/architecture.md). Every shot resolves
 through one path (ray, surface tag, part, rule call) for player and enemy alike
 ([ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md)).
 `moho_ui_shell` is the engine's only egui-facing crate: the console every game opens and adds commands to, the egui host that draws it, and the screen text a game sets each frame (`UiShell::set_texts` with `ScreenText` and `Anchor`, `moho_ui_shell/src/text.rs`; each call replaces the list and refuses a size that is not finite and positive, painted under the console and cleared by the frame that paints it) ([ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md)).
@@ -75,9 +75,9 @@ Each crate belongs to exactly one line ([ADR-0005](../../_todo/adr/0005-crate-li
 Voxels live in the flagstone-line `flagstone_voxel` ([ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md));
 the engine sees world geometry only as meshes.
 
-## 3 Target crate graph (M2)
+## 3 Target crate graph (ENG-M2)
 
-Where the M1–M2 engine work lands, from [ADR-0012](../../_todo/adr/0012-engine-crate-map-for-m2.md)
+Where the ENG-M1–ENG-M2 engine work lands, from [ADR-0012](../../_todo/adr/0012-engine-crate-map-for-m2.md)
 (Proposed). Capabilities land as modules of an existing crate first; a new crate needs a
 deployable, reuse or compile-time boundary. Dashed boxes are crates that don't exist yet, or (`moho_app`) exist with only part of the listed scope: today the window and event loop, accumulator, `GameClock` and `Game` trait.
 Edges are the intended direction, not a list each crate must have.
@@ -122,8 +122,11 @@ Changes from today:
 
 - Scene import (ENG-F14) is its own crate, `moho_level`: a headless server needs level
   collision without linking `wgpu` or `winit`.
-- Navigation (ENG-F17) and the character controller and camera (ENG-F21) are modules of
-  an engine crate unless their specs name a boundary.
+- Navigation (`moho_level::NavMesh`: walkable polygons built from world meshes for an
+  `AgentProfile`, and corner paths between points) is a module of `moho_level`
+  ([ADR-0019](../../_todo/adr/0019-navigation-is-an-engine-seam.md)). The character
+  controller and camera (ENG-F21) are modules of an engine crate unless their specs name a
+  boundary.
 
 The searchlight line sits beside the flagstone line and depends only on engine crates.
 
@@ -131,7 +134,8 @@ The searchlight line sits beside the flagstone line and depends only on engine c
 
 The public APIs the [ENG-F5](https://github.com/WrackedFella/moho/issues/232)
 gate holds fixed: game plug-in interface, world-geometry contract, action map, physics
-queries, spatial audio, content roots, save envelope, scene import. Adding or changing
+queries, spatial audio, content roots, save envelope, scene import, navigation
+([ADR-0019](../../_todo/adr/0019-navigation-is-an-engine-seam.md)). Adding or changing
 one is an ADR-level change.
 
 ## 4 Fixed-step loop (`moho_app`)
@@ -180,7 +184,7 @@ flowchart LR
 | GPU resources | `moho_renderer`; game types reach it only through `moho_render_api` ([rendering](rendering.md)) |
 | Prefs | `moho_core::prefs::Prefs` ([format](../reference/prefs-format.md)) |
 | Simulation randomness | `moho_core::rng::SimRng`, one per system, held by value in that system's state and keyed by `StreamId::named(<system name>)`. Integer-only SplitMix64, so a seed and stream replay identically on every platform; the sequence is pinned by tests, and changing it breaks saved games and replays. Not `Copy`: duplicate only with an explicit `clone` |
-| Player character, noclip | `PhysicsController` (`flagstone/src/app/physics_controller.rs`): `player` is a `CharacterHandle` into `moho_physics::PhysicsWorld`, which holds each character's `CharacterState` (position, velocity, yaw, pitch, grounded; `moho_physics/src/world/character.rs`). Per-tick movement rules are the pure `moho_physics::step` (`moho_physics/src/movement.rs`), driven by a `CharacterCommand` and game-supplied `MoveSettings`; the game owns the tuning (`STRATEGY_MOVE_SETTINGS` in `flagstone/src/app/event_loop/frame_processor.rs`). A grounded walker follows walkable slopes (vertical speed tracks the ground, horizontal speed is kept) and is snapped down onto ground within `GROUND_SNAP`, so it stays on ground that levels out (a ramp onto a plateau) but leaves with its momentum where the ground falls away; the slide reports the surface under the capsule as `Slide::ground` (`moho_physics/src/movement.rs`). It also keeps the player's pre-tick state for the [frame camera](frame-loop.md#41-frame-camera) (`moho_physics::first_person_view`, `moho_physics/src/camera.rs`), reset on spawn and teleport. `reset` clears the handle and that state |
+| Player character, noclip | `PhysicsController` (`flagstone/src/app/physics_controller.rs`): `player` is a `CharacterHandle` into `moho_physics::PhysicsWorld`, which holds each character's `CharacterState` (position, velocity, yaw, pitch, grounded; `moho_physics/src/world/character.rs`). Per-tick movement rules are the pure `moho_physics::step` (`moho_physics/src/movement.rs`), driven by a `CharacterCommand` and game-supplied `MoveSettings`; an airborne tick applies gravity in two halves around the slide, so displacement matches constant gravity at any tick rate and a landing's impact speed is the mid-tick fall speed; the game owns the tuning (`STRATEGY_MOVE_SETTINGS` in `flagstone/src/app/event_loop/frame_processor.rs`). A grounded walker follows walkable slopes (vertical speed tracks the ground, horizontal speed is kept) and is snapped down onto ground within `GROUND_SNAP`, so it stays on ground that levels out (a ramp onto a plateau) but leaves with its momentum where the ground falls away; the slide reports the surface under the capsule as `Slide::ground` (`moho_physics/src/movement.rs`). It also keeps the player's pre-tick state for the [frame camera](frame-loop.md#41-frame-camera) (`moho_physics::first_person_view`, `moho_physics/src/camera.rs`), reset on spawn and teleport. `reset` clears the handle and that state |
 
 Entities live in typed stores; there is no general ECS (ADR-0004).
 
@@ -194,4 +198,4 @@ Library crates never install a subscriber.
 
 ## 8 Next
 
-[Frame loop](frame-loop.md) · [Searchlight](searchlight.md) · [Events](events.md) · [Rendering](rendering.md)
+[Frame loop](frame-loop.md) · [Searchlight](../searchlight/architecture.md) · [Events](events.md) · [Rendering](rendering.md)

@@ -9,7 +9,7 @@ splits the `console` entry from the game's own `[bindings]` (`split_console_bind
 neither loader warns about the other's key.
 
 `Prefs::load` creates the file with defaults if it is missing. Missing sections or keys
-take their defaults silently. `Prefs::save` writes every key below.
+take their defaults silently. `Prefs::save` writes every key below; `[content]` is written only when `mods` is non-empty.
 
 Anything else that can't be used is logged as a warning and falls back:
 
@@ -76,8 +76,11 @@ opened there still saves to the default path).
 | `[graphics]` | `shadow_quality` `ssao_quality` | unsigned integer; the UI offers 0 (off) to 4 (ultra) | `3` `3` |
 | `[video]` | `window_mode` | `Windowed` \| `Fullscreen` \| `Borderless`, exact case | `Windowed` |
 | | `window_width` `window_height` | unsigned integer pixels | `1920` `1080` |
+| | `vsync` | `true` \| `false`; whether presented frames wait for the display refresh | `true` |
+| | `fps_max` | unsigned integer frames per second applied while `vsync` is off; `0` is uncapped; the Video tab's cap control clamps a value above 1000 to 1000 when shown | `300` |
 | `[world]` | `load_radius` `unload_radius` | integer chunks | `8` `12` |
 | | `chunks_per_frame` | unsigned integer, 1 or more | `4` |
+| `[content]` | `mods` | comma-separated mod names, order kept, blanks dropped; see [content format](content-format.md#mods) | none |
 | `[debug]` | one key per game debug value | free text, see below | none |
 
 `mouse_sensitivity` is on Source's scale: one count turns `0.022` degrees times the
@@ -97,7 +100,7 @@ action keeps its default (`flagstone_ui::actions::load_bindings` logs them): an 
 action id, or a value with any unrecognised key. A `[bindings]` line with no `=` is a
 malformed prefs line. `console` is reserved in every game's `[bindings]`: it is the
 engine console's key (`moho_ui_shell`, default backtick; an unbound or unreadable value, or one
-with a `Hold ` item, falls back to backtick), not a game action. The pre-`[bindings]` `key_*` lines under `[prefs]` are unknown
+with a `Hold ` item or a chord, falls back to backtick), not a game action. The pre-`[bindings]` `key_*` lines under `[prefs]` are unknown
 keys and ignored.
 
 A binding list is comma-separated key names (`W`, `Spacebar, Enter`); an action may
@@ -108,8 +111,9 @@ punctuation spelled as a word (`Comma`, `Semicolon`, `LeftBracket`, ...), `Arrow
 `Alt` bound on their own. `Key::parse` also accepts the aliases `Up`, `Esc`, `Return`,
 `Space`, `Control` and the punctuation glyphs, but in `prefs.ini` write punctuation as
 words: the INI reader cuts a line at `;` or `#`, reads a line with `[` as a section
-header, and `,` separates list items. There is no modifier syntax such as `Ctrl+W`
-and no numeric key codes.
+header, and `,` separates list items. There are no numeric key codes.
+
+A chord prefixes a key or mouse button with `Ctrl+`, `Shift+` and `Alt+` (`Ctrl+R`, `Shift+Mouse Left`, `Hold Ctrl+R`; the `Hold ` prefix stays outermost). Modifiers parse in any order and case and are written back as Ctrl, Shift, Alt. A repeated modifier, a modifier equal to the bound key itself (`Ctrl+Ctrl`), a pad input (`Ctrl+Pad West`), an empty input or any other prefix (`Control+R`) is an unrecognised key and warns. `Shift+Ctrl` (a modifier key under another modifier) is valid. Resolution is in [input](../architecture/input-and-state.md).
 
 `[debug]` is a game-owned section of named values (a game's debug toggles), stored raw like
 `[bindings]` and written only when non-empty. `Prefs::debug_value` reads one;
@@ -169,6 +173,8 @@ ssao_quality=3
 window_mode=Windowed
 window_width=1280
 window_height=720
+vsync=true
+fps_max=300
 
 [world]
 load_radius=8

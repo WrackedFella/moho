@@ -43,11 +43,47 @@ impl fmt::Display for DeviceInitError {
 
 impl Error for DeviceInitError {}
 
+/// The surface present mode picked for a vsync setting, and why vsync stays on
+/// when the GPU offers no low-latency mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PresentChoice {
+    pub mode: wgpu::PresentMode,
+    /// Set when vsync was turned off but the GPU has no mode that skips the display wait.
+    pub fallback: Option<&'static str>,
+}
+
+/// Picks the present mode for `vsync` from the modes the surface `supported`.
+///
+/// On gives `Fifo`. Off gives `Immediate`, else `Mailbox`, else `Fifo` with a fallback reason.
+pub fn choose_present_mode(vsync: bool, supported: &[wgpu::PresentMode]) -> PresentChoice {
+    use wgpu::PresentMode::{Fifo, Immediate, Mailbox};
+
+    if vsync {
+        return PresentChoice {
+            mode: Fifo,
+            fallback: None,
+        };
+    }
+    match [Immediate, Mailbox]
+        .into_iter()
+        .find(|mode| supported.contains(mode))
+    {
+        Some(mode) => PresentChoice {
+            mode,
+            fallback: None,
+        },
+        None => PresentChoice {
+            mode: Fifo,
+            fallback: Some("the GPU offers neither Immediate nor Mailbox presentation"),
+        },
+    }
+}
+
 /// Complete device setup including instance, surface, adapter, device, queue, and config
 pub struct DeviceSetup<'a> {
     pub(crate) _instance: wgpu::Instance,
     pub(crate) surface: wgpu::Surface<'a>,
-    pub(crate) _adapter: wgpu::Adapter,
+    pub(crate) present_modes: Vec<wgpu::PresentMode>,
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
     pub(crate) config: wgpu::SurfaceConfiguration,
@@ -142,7 +178,8 @@ impl<'a> DeviceSetup<'a> {
         .map_err(|e| DeviceInitError::DeviceCreation(format!("{e:?}")))?;
 
         // 6. Configure Surface
-        let supported_formats = surface.get_capabilities(&adapter).formats;
+        let capabilities = surface.get_capabilities(&adapter);
+        let supported_formats = capabilities.formats;
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: supported_formats[0],
@@ -166,7 +203,7 @@ impl<'a> DeviceSetup<'a> {
         Ok(DeviceSetup {
             _instance: instance,
             surface,
-            _adapter: adapter,
+            present_modes: capabilities.present_modes,
             device,
             queue,
             config,
@@ -181,5 +218,65 @@ impl<'a> DeviceSetup<'a> {
     /// Get the surface size as (width, height)
     pub fn surface_size(&self) -> (u32, u32) {
         (self.config.width, self.config.height)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wgpu::PresentMode;
+
+    const ALL: [PresentMode; 4] = [
+        PresentMode::Fifo,
+        PresentMode::FifoRelaxed,
+        PresentMode::Mailbox,
+        PresentMode::Immediate,
+    ];
+
+    #[test]
+    fn vsync_on_chooses_fifo() {
+        let choice = choose_present_mode(true, &ALL);
+
+        assert_eq!(choice.mode, PresentMode::Fifo);
+        assert_eq!(choice.fallback, None);
+    }
+
+    #[test]
+    fn vsync_off_prefers_immediate_then_mailbox() {
+        let with_immediate = choose_present_mode(false, &ALL);
+        let mailbox_only = choose_present_mode(false, &[PresentMode::Fifo, PresentMode::Mailbox]);
+
+        assert_eq!(with_immediate.mode, PresentMode::Immediate);
+        assert_eq!(with_immediate.fallback, None);
+        assert_eq!(mailbox_only.mode, PresentMode::Mailbox);
+        assert_eq!(mailbox_only.fallback, None);
+    }
+
+    #[test]
+    fn vsync_off_without_immediate_or_mailbox_keeps_fifo_with_a_reason() {
+        let choice = choose_present_mode(false, &[PresentMode::Fifo, PresentMode::FifoRelaxed]);
+
+        assert_eq!(choice.mode, PresentMode::Fifo);
+        assert!(choice.fallback.is_some_and(|reason| !reason.is_empty()));
+    }
+
+    #[test]
+    fn vsync_off_never_picks_fifo_relaxed() {
+        let choice = choose_present_mode(false, &[PresentMode::FifoRelaxed, PresentMode::Fifo]);
+
+        assert_eq!(choice.mode, PresentMode::Fifo);
+    }
+
+    #[test]
+    fn vsync_on_ignores_low_latency_modes_and_gives_no_reason() {
+        let choice = choose_present_mode(true, &[PresentMode::Immediate, PresentMode::Fifo]);
+
+        assert_eq!(
+            choice,
+            PresentChoice {
+                mode: PresentMode::Fifo,
+                fallback: None
+            }
+        );
     }
 }

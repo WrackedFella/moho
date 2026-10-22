@@ -49,6 +49,7 @@ mod tests {
     use super::*;
     use crate::{RIFLE_ID, content_root};
     use moho_core::content::{ContentError, ContentRoots, load_kind};
+    use moho_core::prefs::Prefs;
     use searchlight_rules::FireBehaviour;
 
     fn load_rifle(weapons: &str) -> (tempfile::TempDir, Result<RifleDef, ContentError>) {
@@ -136,5 +137,67 @@ mod tests {
         assert_eq!(config.cooldown_ticks, 6);
         assert_eq!(config.reload_ticks, 120);
         assert!((config.range - 100.0).abs() < f32::EPSILON);
+    }
+
+    fn rifle_toml(capacity: u32, damage: u32) -> String {
+        format!(
+            "[rifle]\nmagazine_capacity = {capacity}\ndamage = {damage}\nfire = \"semi_auto\"\ncooldown_ticks = 6\nreload_ticks = 120\nrange = 100.0\n"
+        )
+    }
+
+    fn write_root(dir: &std::path::Path, weapons: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join("weapons.toml"), weapons).unwrap();
+    }
+
+    fn rifle_with_prefs(
+        base: &std::path::Path,
+        mods: &std::path::Path,
+        prefs_text: &str,
+    ) -> Result<RifleDef, ContentError> {
+        let (prefs, issues) = Prefs::parse(prefs_text);
+        assert_eq!(issues, vec![]);
+        let roots = ContentRoots::base(base)?.with_mods(mods, prefs.content_mods())?;
+        load_kind::<RifleDef>(&roots, "weapons")
+            .and_then(|definitions| definitions.require(RIFLE_ID).cloned())
+    }
+
+    #[test]
+    fn mod_heavy_raises_capacity_to_40() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("content");
+        let mods = dir.path().join("mods");
+        write_root(&base, &rifle_toml(30, 30));
+        write_root(&mods.join("heavy"), &rifle_toml(40, 30));
+
+        let rifle = rifle_with_prefs(&base, &mods, "[content]\nmods = heavy\n").unwrap();
+
+        let config = tuning(&rifle).unwrap();
+        assert_eq!(config.rifle.magazine().capacity(), 40);
+        for spare in &config.spares {
+            assert_eq!(spare.capacity(), 40);
+            assert_eq!(spare.rounds(), 40);
+        }
+    }
+
+    #[test]
+    fn a_mod_rifle_missing_a_field_does_not_inherit_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("content");
+        let mods = dir.path().join("mods");
+        write_root(&base, &rifle_toml(30, 30));
+        write_root(
+            &mods.join("heavy"),
+            "[rifle]\ndamage = 30\nfire = \"semi_auto\"\ncooldown_ticks = 6\nreload_ticks = 120\nrange = 100.0\n",
+        );
+
+        let error = rifle_with_prefs(&base, &mods, "[content]\nmods = heavy\n").unwrap_err();
+
+        let ContentError::Invalid { file, id, reason } = &error else {
+            panic!("expected Invalid, got {error:?}");
+        };
+        assert_eq!(file, &mods.join("heavy").join("weapons.toml"));
+        assert_eq!(id, "rifle");
+        assert!(reason.contains("magazine_capacity"), "{reason}");
     }
 }

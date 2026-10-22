@@ -22,7 +22,7 @@ vertex buffers, so they are packed with no padding (`UiVertex`: `Float32x2`, `Fl
 |---|---|---|
 | `CameraGpu` | 80 B (5 × vec4) | uniform, group 0 binding 0 |
 | `MaterialGpu` | 32 B (2 × vec4) | storage array, group 0 binding 1 |
-| `LightingGpu` | 96 B (6 × vec4) | uniform, group 0 binding 2 |
+| `LightingGpu` | 144 B (9 × vec4) | uniform, group 0 binding 2 |
 | `DynamicLightsGpu` | 2064 B (16 + 64 × 32) | storage, group 0 binding 5 |
 | `MultiLightShadowGpu` | 288 B (4 × mat4 + 2 × vec4) | uniform, group 1 binding 0 |
 | `PointLightGpu` | 32 B (2 × vec4) | element of `DynamicLightsGpu` |
@@ -46,8 +46,9 @@ nearest sampler for the PCSS blocker search (3).
 | | `sun_color` | xyz colour |
 | | `moon_direction` | xyz normalized direction, w intensity |
 | | `moon_color` | xyz colour |
-| | `ambient` | xyz colour, w intensity |
+| | `ambient` | w sky-ambient strength; xyz unused |
 | | `params` | x time of day 0–24, y debug mode |
+| | `sky_zenith`, `sky_horizon`, `sky_ground` | xyz sky palette colour; filled by the renderer from `params.x` |
 | `MaterialGpu` | `albedo` | xyz albedo (terrain: top-face colour) |
 | | `params` | xyz `[fuzz, ref_idx, transparent]` (terrain: side-face colour), w emissive |
 | `MultiLightShadowGpu` | `light0`–`light3` | one mat4 each: Sun, Moon, Dynamic 1, Dynamic 2 |
@@ -73,6 +74,9 @@ Notes:
   materials reuse `params.xyz` for the side-face colour; `params.w > 0` bypasses lighting.
 - `LightingGpu.params.y` is the debug view mode set by `r_debug_view`
   ([console commands](console-commands.md)).
+- `Renderer::update_lighting` overwrites the three sky palette fields from `params.x`
+  (`moho_renderer/src/sky.rs`); a game's values there are ignored. The skybox and the
+  main fragment shader read the same fields.
 - View-height cut (`r_view_height`): `view_height_uniform` maps `None` and non-finite
   heights to `f32::MAX` (no cut, not infinity: WGSL may assume none). The main and
   marker fragment shaders discard world y above `CameraGpu.cam_pos.w` (the marker shader adds the `marker_inflate` override constant, `MARKER_INFLATE`, so a box grown onto the cut keeps its top); the shadow pass

@@ -225,3 +225,60 @@ fn vertex_input_locations_match_the_main_pipeline_layout() {
         "the per-vertex material is a u32 at location 13"
     );
 }
+
+/// Offsets and total size of `Lighting` as naga lays it out in `source`.
+fn lighting_layout(label: &str, source: &str) -> (Vec<(String, u32)>, u32) {
+    let module = validate(label, source, Capabilities::empty());
+    let (_, ty) = module
+        .types
+        .iter()
+        .find(|(_, t)| t.name.as_deref() == Some("Lighting"))
+        .unwrap_or_else(|| panic!("{label} declares struct Lighting"));
+    let naga::TypeInner::Struct { members, span } = &ty.inner else {
+        panic!("{label}: Lighting is not a struct");
+    };
+    let members = members
+        .iter()
+        .map(|m| (m.name.clone().unwrap_or_default(), m.offset))
+        .collect();
+    (members, *span)
+}
+
+#[test]
+fn lighting_struct_matches_lighting_gpu_in_every_shader() {
+    use moho_renderer::LightingGpu;
+    use std::mem::{offset_of, size_of};
+
+    let skybox_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../shaders/skybox.wgsl");
+    let skybox = std::fs::read_to_string(&skybox_path)
+        .unwrap_or_else(|e| panic!("failed to read shader {}: {e}", skybox_path.display()));
+    let main = moho_renderer::pipeline::main_shader_source();
+    let expected_tail = [
+        ("sky_zenith", offset_of!(LightingGpu, sky_zenith)),
+        ("sky_horizon", offset_of!(LightingGpu, sky_horizon)),
+        ("sky_ground", offset_of!(LightingGpu, sky_ground)),
+    ];
+
+    for (label, source) in [("main shader", main.as_str()), ("skybox.wgsl", &skybox)] {
+        let (members, span) = lighting_layout(label, source);
+
+        assert_eq!(span as usize, size_of::<LightingGpu>(), "{label}: span");
+        assert_eq!(members.len(), 9, "{label}: member count {members:?}");
+        let offsets: Vec<u32> = members.iter().map(|(_, o)| *o).collect();
+        assert_eq!(
+            offsets,
+            (0..9).map(|i| i * 16).collect::<Vec<u32>>(),
+            "{label}: one vec4 per member"
+        );
+        assert_eq!(
+            offsets[5] as usize,
+            offset_of!(LightingGpu, params),
+            "{label}: params offset"
+        );
+        for (i, (name, offset)) in expected_tail.iter().enumerate() {
+            let (member_name, member_offset) = &members[6 + i];
+            assert_eq!(member_name, name, "{label}: member {}", 6 + i);
+            assert_eq!(*member_offset as usize, *offset, "{label}: {name} offset");
+        }
+    }
+}
