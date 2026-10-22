@@ -140,7 +140,7 @@ impl<G: Game> ApplicationHandler for Runner<G> {
         self.last_frame = self.last_wake;
     }
 
-    fn new_events(&mut self, event_loop: &ActiveEventLoop, _cause: StartCause) {
+    fn new_events(&mut self, _event_loop: &ActiveEventLoop, _cause: StartCause) {
         if self.window.is_none() {
             return;
         }
@@ -150,13 +150,20 @@ impl<G: Game> ApplicationHandler for Runner<G> {
         self.last_wake = now;
 
         self.sim.run_ticks(&mut self.game, elapsed);
+    }
 
-        let next_tick = now + self.sim.until_next_tick();
-        if self.pacer.redraw_on_wake(now)
-            && let Some(window) = &self.window
-        {
+    /// Schedules the next wake after the iteration's events, so a frame drawn in this
+    /// iteration has already moved the pacer's deadline.
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(window) = &self.window else {
+            return;
+        };
+
+        let now = Instant::now();
+        if self.pacer.redraw_on_wake(now) {
             window.request_redraw();
         }
+        let next_tick = self.last_wake + self.sim.until_next_tick();
         event_loop.set_control_flow(ControlFlow::WaitUntil(self.pacer.wake_at(now, next_tick)));
     }
 
