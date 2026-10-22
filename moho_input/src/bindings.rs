@@ -995,6 +995,43 @@ mod tests {
     }
 
     #[test]
+    fn actions_are_not_toggleable_unless_the_game_says_so() {
+        #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+        enum PlainAction {
+            Fire,
+            Reload,
+        }
+
+        impl Action for PlainAction {
+            const ALL: &'static [Self] = &[PlainAction::Fire, PlainAction::Reload];
+
+            fn name(self) -> &'static str {
+                match self {
+                    PlainAction::Fire => "fire",
+                    PlainAction::Reload => "reload",
+                }
+            }
+
+            fn default_bindings(self) -> &'static [Binding] {
+                &[]
+            }
+        }
+
+        for &action in PlainAction::ALL {
+            assert!(!action.toggleable(), "{}", action.name());
+        }
+    }
+
+    #[test]
+    fn mode_converts_to_and_from_the_toggle_flag() {
+        assert!(!ActionMode::Hold.is_toggle());
+        assert!(ActionMode::Toggle.is_toggle());
+        for toggle in [false, true] {
+            assert_eq!(ActionMode::from_toggle(toggle).is_toggle(), toggle);
+        }
+    }
+
+    #[test]
     fn toggle_is_written_by_name() {
         let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
         bindings.set_mode(TestAction::Jump, ActionMode::Toggle);
