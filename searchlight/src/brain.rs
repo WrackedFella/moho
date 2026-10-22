@@ -167,9 +167,11 @@ impl Tick<'_> {
         } else {
             next
         };
+        let goal = self.route[next];
+        let heading = (self.steer)(goal).unwrap_or(goal);
         (
             Brain::Patrol { next },
-            self.walk_to(self.route[next], self.tuning.patrol_speed),
+            self.walk_to(heading, self.tuning.patrol_speed),
         )
     }
 
@@ -1102,6 +1104,51 @@ mod tests {
         );
         assert_eq!(intent.yaw_delta, tuning.turn_rate * DT);
         assert_eq!(intent.forward, tuning.patrol_speed);
+    }
+
+    #[test]
+    fn a_patrolling_enemy_turns_toward_the_steered_corner() {
+        let route = square();
+        let tuning = tuning();
+        let corner = Vec3::new(10.0, 0.0, 0.0);
+        let around = |asked: Vec3| (asked == route[2]).then_some(corner);
+        let mut brain = Brain::Patrol { next: 2 };
+
+        let intent = brain.think(&route, &at_origin(0.0, None), &tuning, &around, DT);
+
+        assert_eq!(brain, Brain::Patrol { next: 2 });
+        assert_eq!(intent.yaw_delta, tuning.turn_rate * DT);
+        assert_eq!(intent.forward, tuning.patrol_speed);
+    }
+
+    #[test]
+    fn a_patrol_with_no_path_walks_straight_to_the_waypoint() {
+        let route = square();
+        let tuning = tuning();
+        let nowhere = |_: Vec3| None;
+        let mut brain = Brain::Patrol { next: 1 };
+
+        let intent = brain.think(&route, &at_origin(0.0, None), &tuning, &nowhere, DT);
+
+        let to_waypoint = turn_towards(&at_origin(0.0, None), route[1], tuning.turn_rate * DT).0;
+        assert_ne!(to_waypoint, 0.0, "the waypoint must be off the heading");
+        assert_eq!(brain, Brain::Patrol { next: 1 });
+        assert_eq!(intent.yaw_delta, to_waypoint);
+        assert_eq!(intent.forward, tuning.patrol_speed);
+    }
+
+    #[test]
+    fn a_patrol_measures_arrival_to_the_waypoint_not_the_steered_corner() {
+        let route = square();
+        let tuning = tuning();
+        let far_corner = Vec3::new(0.0, 0.0, 50.0);
+        let around = |_: Vec3| Some(far_corner);
+        let mut brain = Brain::Patrol { next: 1 };
+        let beside_waypoint = at(route[1] + Vec3::new(0.0, 0.0, 1.0), None);
+
+        brain.think(&route, &beside_waypoint, &tuning, &around, DT);
+
+        assert_eq!(brain, Brain::Patrol { next: 2 });
     }
 
     #[test]

@@ -2198,6 +2198,38 @@ mod enemy_tests {
     }
 
     #[test]
+    fn a_patrolling_enemy_walks_around_cover_to_the_next_waypoint() {
+        let first = Vec3::new(-10.0, 0.0, 0.0);
+        let second = Vec3::new(10.0, 0.0, 0.0);
+        let cover = (Vec3::new(-1.0, 0.0, -6.0), Vec3::new(1.0, 3.0, 6.0));
+        let arena = arena_with(
+            &[cover],
+            Vec3::new(0.0, 0.0, 25.0),
+            &[first],
+            &[first, second],
+        );
+        let mut config = config();
+        // Too short to ever notice the player, so only the route moves the enemy.
+        config.enemy.sight_range = 0.5;
+        let mut sim = SearchlightSim::start(arena, config);
+        let mut closest = f32::MAX;
+
+        for _ in 0..2400 {
+            sim.tick(&idle(), DT);
+            let at = sim
+                .enemy_state(0)
+                .expect("nothing hurts the enemy")
+                .position;
+            closest = closest.min(horizontal(at, second));
+        }
+
+        assert!(
+            closest < 1.0,
+            "the second waypoint was never reached, closest {closest} m"
+        );
+    }
+
+    #[test]
     fn an_enemy_spawns_facing_its_nearest_waypoint_and_walks_to_it() {
         let arena = arena_with(
             &[],
