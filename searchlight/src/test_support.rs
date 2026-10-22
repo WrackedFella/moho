@@ -6,11 +6,12 @@ use glam::Vec3;
 use moho_input::Action;
 use moho_input::action_map::ActionMap;
 use moho_input::bindings::Input;
+use moho_level::NavMesh;
 use moho_physics::{MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::{BodyPart, BodyProfile, Magazine, Rifle};
 
-use crate::arena::Arena;
+use crate::arena::{Arena, nav_profile};
 use crate::brain::EnemyTuning;
 use crate::input::SearchlightAction;
 use crate::sim::SimConfig;
@@ -155,11 +156,14 @@ pub(crate) fn arena_with(
     route: &[Vec3],
 ) -> Arc<Arena> {
     let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
+    let meshes: Vec<WorldMesh> = std::iter::once(&floor)
+        .chain(boxes)
+        .map(|&(min, max)| box_mesh(min, max))
+        .collect();
+    let nav = Arc::new(NavMesh::build(&meshes, nav_profile()).expect("box worlds build a navmesh"));
     Arc::new(Arena {
-        meshes: std::iter::once(&floor)
-            .chain(boxes)
-            .map(|&(min, max)| box_mesh(min, max))
-            .collect(),
+        meshes,
+        nav,
         player_spawn: player,
         dummy_spawns: Vec::new(),
         enemy_spawns: enemies.to_vec(),

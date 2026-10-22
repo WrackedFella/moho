@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use glam::{Quat, Vec3};
 use moho_core::rng::{SimRng, StreamId};
+use moho_level::NavMesh;
 use moho_physics::{
     CharacterCommand, CharacterHandle, CharacterState, HitVolume, MoveSettings, PhysicsWorld,
     first_person_view,
@@ -218,6 +219,8 @@ pub struct SearchlightSim {
     player_max_health: u32,
     route: Vec<Vec3>,
     covers: Vec<Vec3>,
+    /// The arena's walkable area; empty for a sim without enemies.
+    nav: Arc<NavMesh>,
     enemy: EnemyTuning,
     /// Offset from the player's capsule centre to the part the enemies aim at, before the
     /// player's yaw is applied.
@@ -242,6 +245,7 @@ struct Spawns {
     markers: Vec<Vec3>,
     route: Vec<Vec3>,
     covers: Vec<Vec3>,
+    nav: Arc<NavMesh>,
 }
 
 /// A target standing on the floor point `spawn` as target number `index`. With a `route` it is
@@ -295,6 +299,7 @@ impl SearchlightSim {
             markers: Vec::new(),
             route: Vec::new(),
             covers: Vec::new(),
+            nav: Arc::default(),
         };
         Self::assemble(world, spawns, config)
     }
@@ -336,6 +341,7 @@ impl SearchlightSim {
             player_max_health: config.body.max_health,
             route: spawns.route.clone(),
             covers: spawns.covers.clone(),
+            nav: spawns.nav.clone(),
             enemy: config.enemy,
             aim_offset,
             rng: SimRng::new(config.enemy.seed, SPREAD_STREAM),
@@ -426,6 +432,7 @@ impl SearchlightSim {
             })
             .collect();
         let mut firing = Vec::new();
+        let nav = &self.nav;
         for (index, target) in self.targets.iter_mut().enumerate().skip(self.dummy_count) {
             let (Some(handle), Some(brain)) = (target.handle, target.brain.as_mut()) else {
                 continue;
@@ -470,7 +477,13 @@ impl SearchlightSim {
                 hurt,
                 offer,
             };
-            let intent = brain.think(&self.route, &percept, &self.enemy, dt);
+            let position = state.position;
+            let world = &self.world;
+            let steer = |goal| {
+                nav.path(position, cover::floor_below(world, goal))
+                    .and_then(|path| path.get(1).copied())
+            };
+            let intent = brain.think(&self.route, &percept, &self.enemy, &steer, dt);
             claims[index] = brain.claim();
             let command = CharacterCommand {
                 forward: intent.forward,
@@ -692,6 +705,7 @@ impl SearchlightSim {
             markers: arena.enemy_spawns.clone(),
             route: arena.route.clone(),
             covers: arena.covers.clone(),
+            nav: Arc::clone(&arena.nav),
         };
         Self::assemble(arena.physics_world(), spawns, config)
     }
@@ -2147,7 +2161,7 @@ mod enemy_tests {
     fn an_enemy_walks_a_full_lap_of_the_shipped_arena() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/arena.glb");
         let (level, markers) = arena::load(&path).expect("the shipped arena loads");
-        let mut arena = Arena::from_level(&level, &markers);
+        let mut arena = Arena::from_level(&level, &markers).expect("the shipped arena builds");
         arena.enemy_spawns.truncate(1);
         let route = arena.route.clone();
         let mut config = config();
@@ -2822,7 +2836,7 @@ mod enemy_tests {
     fn an_enemy_in_the_shipped_arena_takes_cover_when_shot() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/arena.glb");
         let (level, markers) = arena::load(&path).expect("the shipped arena loads");
-        let mut arena = Arena::from_level(&level, &markers);
+        let mut arena = Arena::from_level(&level, &markers).expect("the shipped arena builds");
         arena.enemy_spawns.retain(|spawn| spawn.x.abs() < 0.1);
         assert_eq!(
             arena.enemy_spawns.len(),
@@ -3076,6 +3090,217 @@ mod enemy_tests {
         assert!(
             patrolling_again,
             "the enemy never walked its route again: {:?}",
+            enemy_at(&sim, 0)
+        );
+    }
+
+    /// Waist high: sight and shot rays pass over it, a walking enemy cannot. Across the straight
+    /// line between the enemy and the player, and ending well short of both sides' spawns.
+    const LOW_BARRIER: (Vec3, Vec3) = (Vec3::new(-3.0, 0.0, 4.9), Vec3::new(3.0, 1.0, 5.1));
+
+    /// How far the position the enemy remembers may sit from the player's centre where it lost
+    /// sight: the aim offset to the torso, plus a tick of the player's running.
+    const LAST_SEEN_SLACK: f32 = 0.5;
+
+    #[test]
+    fn a_chasing_enemy_walks_around_a_wall_to_the_last_seen_position() {
+        let mut config = cover_config();
+        // The player is lost by running out of range, not by a wall in the way.
+        config.enemy.sight_range = 13.0;
+        let mut sim = SearchlightSim::start(duel(&[LOW_BARRIER]), config);
+        let flee = |first: bool| SearchlightCommand {
+            movement: CharacterCommand {
+                forward: 1.0,
+                yaw_delta: if first { std::f32::consts::PI } else { 0.0 },
+                ..CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        let first_shot = shoot_at(&sim, 0);
+        sim.tick(&first_shot, DT);
+        sim.drain_feedback();
+
+        let mut closest_z = f32::MAX;
+        let mut lost_at = None;
+        let mut closest_to_lost = f32::MAX;
+        for tick in 0..500 {
+            sim.tick(&flee(tick == 0), DT);
+            sim.drain_feedback();
+            let enemy = enemy_at(&sim, 0);
+            closest_z = closest_z.min(enemy.z);
+            if lost_at.is_none() && matches!(sim.targets[0].brain, Some(Brain::Chase { .. })) {
+                lost_at = Some(sim.player().position);
+            }
+            if let Some(lost) = lost_at {
+                closest_to_lost = closest_to_lost.min(horizontal(enemy, lost));
+            }
+        }
+
+        assert!(lost_at.is_some(), "the enemy never lost the player");
+        assert!(
+            sim.player().position.z < -10.0,
+            "the player never ran out of the enemy's range: {:?}",
+            sim.player().position
+        );
+        assert!(
+            closest_z < 0.0,
+            "the enemy never got past the barrier at z = 5, closest z {closest_z}"
+        );
+        let reach = sim.enemy.arrive_radius + LAST_SEEN_SLACK;
+        assert!(
+            closest_to_lost <= reach,
+            "the enemy never reached the place it lost the player {lost_at:?}, closest {closest_to_lost} m"
+        );
+    }
+
+    #[test]
+    fn an_enemy_that_loses_a_player_at_a_jump_apex_keeps_chasing_toward_them() {
+        let mut sim = SearchlightSim::start(duel(&[]), cover_config());
+        run(&mut sim, &script(10, &[]));
+        let standing = sim.player().position.y;
+        let jump = SearchlightCommand {
+            movement: CharacterCommand {
+                jump: true,
+                ..CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        sim.tick(&jump, DT);
+        sim.drain_feedback();
+        let mut apex = sim.player().position;
+        for _ in 0..120 {
+            sim.tick(&idle(), DT);
+            sim.drain_feedback();
+            if sim.player().position.y < apex.y {
+                break;
+            }
+            apex = sim.player().position;
+        }
+        assert!(
+            apex.y - standing > 0.9,
+            "the jump never rose well off the floor: {apex:?}, standing at {standing}"
+        );
+        // Nothing can be seen beyond a metre from now on; the player is still airborne.
+        sim.enemy.sight_range = 1.0;
+        let before = enemy_at(&sim, 0);
+        let airborne = sim.player().position;
+
+        sim.tick(&idle(), DT);
+        sim.drain_feedback();
+        let after_losing_sight = sim.targets[0].brain;
+        for _ in 0..5 {
+            sim.tick(&idle(), DT);
+            sim.drain_feedback();
+        }
+
+        assert!(
+            airborne.y - standing > 0.9,
+            "the player landed before sight was lost: {airborne:?}"
+        );
+        assert!(
+            matches!(after_losing_sight, Some(Brain::Chase { .. })),
+            "the enemy should keep chasing: {after_losing_sight:?}"
+        );
+        assert!(
+            horizontal(enemy_at(&sim, 0), airborne) < horizontal(before, airborne) - 0.05,
+            "the enemy did not walk toward the player: {before:?} -> {:?}",
+            enemy_at(&sim, 0)
+        );
+    }
+
+    /// Full height: neither sight nor a walking enemy passes it. It runs east from just beside
+    /// the straight line between the enemy and the player to the edge of the floor, so the only
+    /// way past is the west end.
+    const FULL_WALL: (Vec3, Vec3) = (Vec3::new(-0.2, 0.0, 4.0), Vec3::new(30.0, 4.0, 4.4));
+
+    #[test]
+    fn a_chasing_enemy_rounds_a_full_height_wall_to_where_it_lost_the_player() {
+        let mut config = cover_config();
+        config.enemy.arrive_radius = 1.0;
+        config.enemy.chase_ticks = 900;
+        // The player is lost to the wall, and runs on out of range of the wall's west end.
+        config.enemy.sight_range = 11.0;
+        let arena = arena_with(
+            &[FULL_WALL],
+            Vec3::new(-3.0, 0.0, 0.0),
+            &[ENEMY_SPAWN],
+            &[TOWARD_PLAYER, Vec3::new(0.0, 0.0, 25.0)],
+        );
+        let mut sim = SearchlightSim::start(arena, config);
+        let step_east = |first: bool| SearchlightCommand {
+            movement: CharacterCommand {
+                forward: 1.0,
+                yaw_delta: if first { FRAC_PI_2 } else { 0.0 },
+                ..CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        let mut lost_at = None;
+        let mut closest_to_lost = f32::MAX;
+
+        for tick in 0..900 {
+            let command = if tick < 240 {
+                step_east(tick == 0)
+            } else {
+                idle()
+            };
+            sim.tick(&command, DT);
+            sim.drain_feedback();
+            if lost_at.is_none() && matches!(sim.targets[0].brain, Some(Brain::Chase { .. })) {
+                lost_at = Some(sim.player().position);
+            }
+            if let Some(lost) = lost_at {
+                closest_to_lost = closest_to_lost.min(horizontal(enemy_at(&sim, 0), lost));
+            }
+        }
+
+        let lost = lost_at.expect("the enemy never lost the player");
+        let reach = sim.enemy.arrive_radius + LAST_SEEN_SLACK;
+        assert!(
+            closest_to_lost <= reach,
+            "the enemy never reached {lost:?}, closest {closest_to_lost} m"
+        );
+    }
+
+    /// A box the player can stand on but no enemy can climb: taller than the 0.5 m autostep.
+    const PLATEAU: (Vec3, Vec3) = (Vec3::new(-2.0, 0.0, -2.0), Vec3::new(2.0, 1.5, 2.0));
+
+    #[test]
+    fn an_enemy_that_loses_a_player_it_cannot_reach_resumes_its_patrol() {
+        let top = Vec3::new(0.0, PLATEAU.1.y, 0.0);
+        let arena = arena_with(&[PLATEAU], top, &[ENEMY_SPAWN], &[TOWARD_PLAYER]);
+        let mut sim = SearchlightSim::start(arena, cover_config());
+        run(&mut sim, &script(10, &[]));
+        let engaged = matches!(sim.targets[0].brain, Some(Brain::Engage { .. }));
+        // Nothing can be seen beyond a metre from now on.
+        sim.enemy.sight_range = 1.0;
+
+        sim.tick(&idle(), DT);
+        sim.drain_feedback();
+        let after_losing_sight = sim.targets[0].brain;
+        let mut closest_z = f32::MAX;
+        for _ in 0..600 {
+            sim.tick(&idle(), DT);
+            sim.drain_feedback();
+            closest_z = closest_z.min(enemy_at(&sim, 0).z);
+        }
+
+        assert!(
+            sim.player().position.y > 1.0,
+            "the player is not on the box"
+        );
+        assert!(engaged, "the enemy never engaged the player on the box");
+        assert!(
+            matches!(after_losing_sight, Some(Brain::Patrol { .. })),
+            "the enemy should give up at once: {after_losing_sight:?}"
+        );
+        assert!(
+            closest_z > TOWARD_PLAYER.z - 1.0,
+            "the enemy walked toward the box, closest z {closest_z}"
+        );
+        assert!(
+            horizontal(enemy_at(&sim, 0), TOWARD_PLAYER) < 1.0,
+            "the enemy is not at its waypoint: {:?}",
             enemy_at(&sim, 0)
         );
     }

@@ -53,7 +53,7 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
         .nth(1)
         .map_or_else(|| assets().join("arena.glb"), PathBuf::from);
     let (level, markers) = arena::load(&arena_path)?;
-    let arena = Arc::new(Arena::from_level(&level, &markers));
+    let arena = Arc::new(Arena::from_level(&level, &markers)?);
     let mode = ArenaMode::new(arena.clone(), tuning(&rifle)?, WaveTuning::default());
     let (console_section, game_section) = split_console_binding(prefs.bindings());
     let (bindings, warnings) = ActionBindings::load(&game_section);

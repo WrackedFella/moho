@@ -32,4 +32,5 @@ ADRs written before ENG-F27 (2026-10-15) keep the crate names of their day. Read
 | [0016](0016-game-lines-own-their-save-kinds.md) | Game lines own their save kinds and versions; the envelope stays content-blind | Accepted |
 | [0017](0017-ui-shell-and-debug-values-are-engine-seams.md) | The UI shell and debug values are engine seams | Proposed |
 | [0018](0018-paused-commands-apply-at-the-tick-boundary.md) | While paused, a command applies at the next tick boundary without a tick; pause and speed are loop state | Proposed |
+| [0019](0019-navigation-is-an-engine-seam.md) | Navigation over static levels is engine seam 11: a navmesh from world meshes, path queries answered by engine code | Proposed |
 | [0021](0021-game-ai-lives-in-the-lines.md) | Game AI lives in the lines; the engine answers queries, and AI acts through player commands, sim-only perception and seeded randomness | Proposed |
