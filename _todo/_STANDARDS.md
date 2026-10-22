@@ -8,7 +8,7 @@ How work items are organized and written. Applies to every project line.
 _todo/
   README.md                     <- index: lines and features
   _STANDARDS.md                 <- this file
-  ROADMAP.md                    <- order of work: milestones, gates, decisions
+  (order of work: ../wiki/engine/roadmap.md)
   adr/NNNN-<slug>.md            <- architecture decision records (index: adr/README.md)
   engine/ENG-F<n>-<slug>/       <- engine crates (anything that ships in moho-engine)
   flagstone/SG-F<n>-<slug>/     <- strategy/base-builder game
@@ -76,7 +76,7 @@ not in a sweep.
 
 ## 5 Milestones
 
-[`ROADMAP.md`](ROADMAP.md) orders work as milestones (M0, M1, ...). Each has
+[`roadmap.md`](../wiki/engine/roadmap.md) orders work as milestones (M0, M1, ...). Each has
 an **Intent** line and a **Gate** list; a milestone closes when every gate item
 holds.
 

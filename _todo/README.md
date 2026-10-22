@@ -5,10 +5,10 @@ Three project lines sharing one repo until the split
 lifecycle: [`_STANDARDS.md`](_STANDARDS.md). Each item's record is its GitHub issue, and its state lives on the
 [project board](https://github.com/users/WrackedFella/projects/1); files under the line
 folders are unapproved drafts or reference material. Architecture decisions:
-[`adr/`](adr/README.md). Order of work: [`ROADMAP.md`](ROADMAP.md).
+[`adr/`](adr/README.md). Order of work: [`roadmap`](../wiki/engine/roadmap.md).
 
 The Foundation gate ([ENG-F8](https://github.com/WrackedFella/moho/issues/61)) holds; feature work is open. Milestones
-and their gates are in [`ROADMAP.md`](ROADMAP.md).
+and their gates are in [`roadmap`](../wiki/engine/roadmap.md).
 
 **Planning review checklist item: commercial licensing.** Decided 2026-10-02 in
 [ADR-0007](adr/0007-third-party-licence-policy.md); the text below is the original prompt. Before the review closes,
