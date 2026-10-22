@@ -145,7 +145,6 @@ impl SettingsState {
         self.mark_dirty(SettingsField::Binding(action));
     }
 
-    /// The staged mode of one action.
     pub fn get_staged_mode(&self, action: StrategyAction) -> ActionMode {
         self.staged_bindings.get_mode(action)
     }
