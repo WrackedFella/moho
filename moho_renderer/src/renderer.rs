@@ -537,8 +537,8 @@ impl<'a> Renderer<'a> {
         self.shadow.pcss_settings.quality = quality_enum;
     }
 
-    /// Choose whether presented frames wait for the display refresh, and reconfigure
-    /// the surface. Turning vsync off on a GPU with no low-latency mode keeps vsync on.
+    /// Sets whether presented frames wait for the display refresh. Stays on when the GPU
+    /// has no low-latency mode.
     pub fn set_vsync(&mut self, on: bool) {
         let choice = crate::device::choose_present_mode(on, &self.present_modes);
         if let Some(reason) = choice.fallback {

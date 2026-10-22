@@ -221,8 +221,7 @@ mod tests {
         output.shapes.iter().find_map(|c| find(&c.shape, needle))
     }
 
-    /// Drags the cap's value box rightwards with the mouse and returns the staged cap
-    /// afterwards.
+    /// Drags the cap's value box rightwards; returns the staged cap afterwards.
     fn cap_after_dragging(vsync_on: bool) -> u32 {
         let mut prefs = Prefs::default();
         prefs.set_fps_max(144);

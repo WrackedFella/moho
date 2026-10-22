@@ -15,7 +15,6 @@ pub struct FramePacer {
 }
 
 impl FramePacer {
-    /// A pacer drawing at most one frame per `interval`; `None` is uncapped.
     pub fn new(interval: Option<Duration>) -> Self {
         Self {
             interval,
@@ -23,12 +22,10 @@ impl FramePacer {
         }
     }
 
-    /// A pacer drawing at most `fps` frames per second; `None` is uncapped.
     pub fn from_fps(fps: Option<NonZeroU32>) -> Self {
         Self::new(fps.map(|fps| Duration::from_secs(1) / fps.get()))
     }
 
-    /// Whether the pacer limits the frame rate.
     pub fn is_capped(&self) -> bool {
         self.interval.is_some()
     }
@@ -44,7 +41,6 @@ impl FramePacer {
         Some(self.last_frame? + self.interval?)
     }
 
-    /// Records that a frame was drawn at `now`.
     pub fn frame_drawn(&mut self, now: Instant) {
         self.last_frame = Some(now);
     }
