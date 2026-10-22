@@ -118,6 +118,9 @@ jobs:
       - name: Reviewer App token
         id: app
         if: steps.pr.outputs.skip != 'true' && vars.REVIEWER_APP_ID != ''
+        # A bad key must not stop reviews: the output stays empty and the review posts with
+        # the default token.
+        continue-on-error: true
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ vars.REVIEWER_APP_ID }}
