@@ -34,7 +34,10 @@ flowchart LR
 | Edit tunable game numbers (weapons) | [reference/content-format](reference/content-format.md) |
 | Edit `config/prefs.ini` | [reference/prefs-format](reference/prefs-format.md) |
 | Run the agentic workflow | [process/agentic-workflow](process/agentic-workflow.md) |
-| Know what the games should become | [flagstone/vision](flagstone/vision.md), [searchlight/game-design-document](searchlight/game-design-document.md) |
+| Know what the engine is for | [engine/](engine/README.md): [vision](engine/vision.md), [roadmap](engine/roadmap.md) |
+| Know what the strategy game should become | [flagstone/](flagstone/README.md): [vision](flagstone/vision.md), [GDD](flagstone/gdd.md), [roadmap](flagstone/roadmap.md) |
+| Know what the FPS game should become | [searchlight/](searchlight/README.md): [GDD](searchlight/game-design-document.md), [roadmap](searchlight/roadmap.md) |
+| See the order of work across lines | [roadmap](roadmap.md) |
 | Know why a boundary exists | [ADRs](../_todo/adr/README.md) |
 
 ## Contents
@@ -48,7 +51,6 @@ flowchart LR
 - [World streaming](architecture/world-streaming.md): chunk lifecycle.
 - [Rendering](architecture/rendering.md): render API boundary, pass order.
 - [Console](architecture/console.md): debug console data flow.
-- [Searchlight](searchlight/architecture.md): `searchlight` arena, shot path, sim, game adapter.
 
 **Reference**
 
@@ -65,7 +67,10 @@ flowchart LR
 **Guides, design, process**
 
 - [Adding console commands](guides/adding-console-commands.md)
-- [Flagstone vision](flagstone/vision.md) · [FPS design document](searchlight/game-design-document.md) (draft)
+- [Roadmap](roadmap.md): cross-line milestone gates and dependencies
+- [Engine](engine/README.md): [vision](engine/vision.md) · [roadmap](engine/roadmap.md)
+- [Flagstone](flagstone/README.md): [vision](flagstone/vision.md) · [GDD](flagstone/gdd.md) (draft) · [roadmap](flagstone/roadmap.md)
+- [Searchlight](searchlight/README.md): [GDD](searchlight/game-design-document.md) (draft) · [roadmap](searchlight/roadmap.md) · [architecture](searchlight/architecture.md)
 - [Agentic workflow](process/agentic-workflow.md)
 
 ## Known constraints

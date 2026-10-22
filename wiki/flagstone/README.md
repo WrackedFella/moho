@@ -9,7 +9,7 @@ say "strategy".
 |---|---|
 | [Vision](vision.md) | What stays true across features: the game, design principles, feature arc |
 | [Game design document](gdd.md) | What the player experiences: pillars, modes, loop, systems, deferred ideas, open questions |
-| [Roadmap](roadmap.md) | Milestones FM1–FM4, feature order, engine dependencies, strategy decisions |
+| [Roadmap](roadmap.md) | Milestones STRAT-M1 to STRAT-M4, feature order, engine dependencies, strategy decisions |
 
 Not here: card and feature text, status and specs (GitHub issues and the [board](https://github.com/users/WrackedFella/moho/issues));
-unfiled drafts ([`_todo/flagstone/`](../../_todo/flagstone/)); the engine and FPS roadmap ([`_todo/ROADMAP.md`](../../_todo/ROADMAP.md)).
+unfiled drafts ([`_todo/flagstone/`](../../_todo/flagstone/)); the cross-line [roadmap](../roadmap.md).
