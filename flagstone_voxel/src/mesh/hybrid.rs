@@ -70,15 +70,19 @@ pub(crate) fn coarse_face_material(
     unreachable!("a solid coarse cell has a solid block in one of its two face layers")
 }
 
+/// The block that field sample `sample` of chunk `chunk_base`'s padded density field stands
+/// for: the field is padded by one block, so sample `i` is block `chunk_base + i - 1`.
+fn sample_block(chunk_base: IVec3, sample: [usize; 3]) -> BlockPos {
+    chunk_base + IVec3::from_array(sample.map(|c| c as i32)) - IVec3::ONE
+}
+
 /// The face material of the block that field sample `sample` of chunk `chunk_base`'s
-/// padded density field stands for. The field is padded by one block, so sample `i` is
-/// block `chunk_base + i - 1`.
+/// padded density field stands for (see [`sample_block`]).
 ///
 /// # Panics
 /// If the sample is air: only solid samples are looked up.
 pub(crate) fn sample_face_material(grid: &VoxelGrid, chunk_base: IVec3, sample: [usize; 3]) -> u32 {
-    let sample = IVec3::new(sample[0] as i32, sample[1] as i32, sample[2] as i32);
-    grid.face_material_at(chunk_base + sample - IVec3::ONE)
+    grid.face_material_at(sample_block(chunk_base, sample))
         .expect("marching cubes asks for the material of solid samples only")
 }
 
@@ -209,9 +213,15 @@ impl HybridMeshGenerator {
         let density_field =
             Self::create_selective_density_field(grid, chunk_pos, chunk_size, only_smooth);
         let base = chunk_pos * chunk_size;
-        let mut mesh = MarchingCubes::generate_mesh(&density_field, chunk_size as usize, |s| {
-            sample_face_material(grid, base, s)
-        });
+        let mut mesh = MarchingCubes::generate_mesh(
+            &density_field,
+            chunk_size as usize,
+            |s| sample_face_material(grid, base, s),
+            |s| {
+                let block = sample_block(base, s);
+                (grid.block_light_rgb_at(block), grid.sky_exposed_at(block))
+            },
+        );
 
         let offset = (chunk_pos * chunk_size).as_vec3() + Vec3::splat(DENSITY_SAMPLE_TO_WORLD);
         for vertex in &mut mesh.vertices {
@@ -280,7 +290,7 @@ impl HybridMeshGenerator {
         for (x, plane) in field.iter_mut().enumerate() {
             for (y, row) in plane.iter_mut().enumerate() {
                 for (z, col) in row.iter_mut().enumerate() {
-                    let world_pos = base_pos + IVec3::new(x as i32 - 1, y as i32 - 1, z as i32 - 1);
+                    let world_pos = sample_block(base_pos, [x, y, z]);
 
                     let is_solid = match grid.is_smooth_at(world_pos) {
                         Some(smooth) => !only_smooth || smooth,
@@ -1176,6 +1186,210 @@ mod tests {
             assert_one_material_per_triangle(&coarse, &allowed)?;
             for cap in &caps {
                 assert_one_material_per_triangle(cap, &allowed)?;
+            }
+        }
+    }
+
+    fn assert_vertex_light(
+        mesh: &VoxelMesh,
+        i: usize,
+        rgb: [u8; 3],
+        sky: bool,
+        why: &str,
+    ) -> Result<(), TestCaseError> {
+        let want_rgb = rgb.map(|c| f32::from(c) / 15.0);
+        let want_sky = if sky { 1.0f32 } else { 0.0 };
+        for (got, want) in mesh.block_light_rgb[i].iter().zip(&want_rgb) {
+            prop_assert!(
+                (got - want).abs() < 1e-6,
+                "{}: vertex {:?} block light {:?}, expected {:?}",
+                why,
+                mesh.vertices[i],
+                mesh.block_light_rgb[i],
+                want_rgb
+            );
+        }
+        prop_assert_eq!(
+            mesh.sky_exposed[i],
+            want_sky,
+            "{}: vertex {:?} sky exposure",
+            why,
+            mesh.vertices[i]
+        );
+        let combined = (want_rgb[0].max(want_rgb[1]).max(want_rgb[2]) + want_sky * 0.1).min(1.0);
+        prop_assert!(
+            (mesh.light_level[i] - combined).abs() < 1e-6,
+            "{}: vertex {:?} light level {}, expected {}",
+            why,
+            mesh.vertices[i],
+            mesh.light_level[i],
+            combined
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn smooth_vertices_under_a_cover_block_are_not_sky_exposed() {
+        let mut blocks = solid_box([2, 0, 2], [13, 7, 13], 1);
+        blocks.extend(solid_box([8, 9, 8], [9, 9, 9], 100));
+        let mut grid = grid_with(blocks);
+        for x in 1..=14 {
+            for z in 1..=14 {
+                for y in 0..=12 {
+                    let pos = IVec3::new(x, y, z);
+                    let under_cover = (8..=9).contains(&x) && (8..=9).contains(&z) && y == 8;
+                    grid.set_sky_exposed(pos, y >= 8 && !under_cover && !grid.is_solid_at(pos));
+                }
+            }
+        }
+
+        let mesh = chunk_mesh(&grid);
+
+        let mut covered = 0;
+        let mut open = 0;
+        for (i, v) in mesh.vertices.iter().enumerate() {
+            let on_ground_top = mesh.geometry_type[i] == 0
+                && (v[1] - 8.0).abs() < 1e-3
+                && (3.0..12.0).contains(&v[0])
+                && (3.0..12.0).contains(&v[2]);
+            if !on_ground_top {
+                continue;
+            }
+            let under_cover = [8.5, 9.5].contains(&v[0]) && [8.5, 9.5].contains(&v[2]);
+            if under_cover {
+                covered += 1;
+                assert_eq!(mesh.sky_exposed[i], 0.0, "covered ground at {v:?}");
+            } else {
+                open += 1;
+                assert_eq!(mesh.sky_exposed[i], 1.0, "open ground at {v:?}");
+            }
+        }
+        assert!(covered >= 4, "ground under the cover is meshed: {covered}");
+        assert!(open > 0, "open ground beside it is meshed");
+    }
+
+    #[test]
+    fn smooth_vertices_carry_the_light_of_their_air_sample() {
+        let pocket = 7..=9;
+        let mut grid = grid_with(solid_box([3, 3, 3], [12, 12, 12], 1));
+        for x in 3..=12 {
+            for y in 3..=12 {
+                for z in 3..=12 {
+                    let pos = IVec3::new(x, y, z);
+                    grid.set_block_light_rgb(pos, [15, 15, 15]);
+                    grid.set_sky_exposed(pos, true);
+                }
+            }
+        }
+        for x in pocket.clone() {
+            for y in pocket.clone() {
+                for z in pocket.clone() {
+                    let pos = IVec3::new(x, y, z);
+                    assert!(grid.clear_block(pos));
+                    grid.set_block_light_rgb(
+                        pos,
+                        [
+                            ((x - 6) * 3) as u8,
+                            ((y - 6) * 3) as u8,
+                            ((z - 6) * 3) as u8,
+                        ],
+                    );
+                    grid.set_sky_exposed(pos, (x + y + z) % 2 == 0);
+                }
+            }
+        }
+
+        let mesh = chunk_mesh(&grid);
+
+        let mut walls = 0;
+        for (i, v) in mesh.vertices.iter().enumerate() {
+            if !v.iter().all(|c| (7.0 - 1e-3..=10.0 + 1e-3).contains(c)) {
+                continue;
+            }
+            walls += 1;
+            let air = v.map(|c| (c.floor() as i32).clamp(7, 9));
+            let rgb = [(air[0] - 6) * 3, (air[1] - 6) * 3, (air[2] - 6) * 3].map(|c| c as u8);
+            let sky = (air[0] + air[1] + air[2]) % 2 == 0;
+            assert_vertex_light(
+                &mesh,
+                i,
+                rgb,
+                sky,
+                &format!("pocket wall, air voxel {air:?}"),
+            )
+            .unwrap();
+        }
+        assert!(walls >= 54, "the pocket's walls are meshed: {walls}");
+    }
+
+    #[test]
+    fn smooth_vertices_on_a_chunk_edge_read_the_diagonal_chunk() {
+        let mut grid = grid_with(solid_box([2, 0, 2], [15, 16, 13], 1));
+        let edge_air = IVec3::new(16, 16, 8);
+        grid.set_block_light_rgb(edge_air, [9, 4, 2]);
+        grid.set_sky_exposed(edge_air, false);
+
+        let mesh = chunk_mesh(&grid);
+
+        let edge_vertices: Vec<usize> = (0..mesh.vertices.len())
+            .filter(|&i| mesh.vertices[i] == [16.0, 16.5, 8.5])
+            .collect();
+        assert!(!edge_vertices.is_empty(), "the chunk meshes the edge voxel");
+        for i in edge_vertices {
+            assert_vertex_light(&mesh, i, [9, 4, 2], false, "voxel in the diagonal chunk").unwrap();
+        }
+    }
+
+    /// The voxel on the air side of the edge `vertex` lies on: smooth vertices sit at
+    /// block centres on two axes and on a block boundary along the edge's axis.
+    fn air_voxel_of(grid: &VoxelGrid, vertex: [f32; 3]) -> IVec3 {
+        let edge_axis = (0..3)
+            .find(|&a| (vertex[a] - vertex[a].round()).abs() < 1e-3)
+            .expect("a vertex lies on a block boundary along its edge");
+        let lower = IVec3::from(vertex.map(|c| c.floor() as i32));
+        let mut upper = lower;
+        let boundary = vertex[edge_axis].round() as i32;
+        upper[edge_axis] = boundary;
+        let mut below = lower;
+        below[edge_axis] = boundary - 1;
+        let air: Vec<IVec3> = [below, upper]
+            .into_iter()
+            .filter(|&p| grid.is_smooth_at(p) != Some(true))
+            .collect();
+        assert_eq!(air.len(), 1, "one air sample on the edge of {vertex:?}");
+        air[0]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(32))]
+
+        #[test]
+        fn prop_every_vertex_light_comes_from_an_air_sample(
+            cells in prop::collection::vec((0..16i32, 0..16i32, 0..16i32), 1..120),
+            lights in prop::collection::vec(
+                ((-1..=16i32, -1..=16i32, -1..=16i32), (0..=15u8, 0..=15u8, 0..=15u8), any::<bool>()),
+                0..400,
+            ),
+        ) {
+            let mut grid = grid_with(cells.iter().map(|&(x, y, z)| ([x, y, z], 1, None)));
+            for ((x, y, z), (r, g, b), sky) in lights {
+                let pos = IVec3::new(x, y, z);
+                grid.set_block_light_rgb(pos, [r, g, b]);
+                grid.set_sky_exposed(pos, sky);
+            }
+
+            let mesh = chunk_mesh(&grid);
+
+            prop_assert_eq!(mesh.block_light_rgb.len(), mesh.vertices.len());
+            for (i, vertex) in mesh.vertices.iter().enumerate() {
+                let air = air_voxel_of(&grid, *vertex);
+                assert_vertex_light(
+                    &mesh,
+                    i,
+                    grid.block_light_rgb_at(air),
+                    grid.sky_exposed_at(air),
+                    &format!("air voxel {air:?}"),
+                )?;
             }
         }
     }

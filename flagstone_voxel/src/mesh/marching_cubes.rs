@@ -27,6 +27,9 @@ impl MarchingCubes {
     /// # Arguments
     /// * `density_field` - 3D density field where values > 0.5 are solid
     /// * `chunk_size` - Size of the chunk (typically 16x16x16)
+    /// * `material_at` - Material of a solid field sample
+    /// * `light_at` - Block light and sky exposure of a field sample; each vertex takes
+    ///   the light of the air sample of the edge it lies on
     ///
     /// # Returns
     /// A `VoxelMesh` with smooth geometry and computed normals
@@ -34,6 +37,7 @@ impl MarchingCubes {
         density_field: &[[[f32; 18]; 18]; 18],
         chunk_size: usize,
         material_at: impl Fn([usize; 3]) -> u32,
+        light_at: impl Fn([usize; 3]) -> ([u8; 3], bool),
     ) -> VoxelMesh {
         // Marching Cubes implementation currently requires chunk_size=16
         // because density_field is hardcoded to [18][18][18] (16+2 padding)
@@ -53,16 +57,10 @@ impl MarchingCubes {
         for x in 1..=chunk_size {
             for y in 1..=chunk_size {
                 for z in 1..=chunk_size {
-                    Self::process_cell(density_field, x, y, z, &mut mesh, &material_at);
+                    Self::process_cell(density_field, x, y, z, &mut mesh, &material_at, &light_at);
                 }
             }
         }
-
-        // Smooth terrain: default to fully sky-exposed until trilinear light sampling lands.
-        let n = mesh.vertices.len();
-        mesh.light_level = vec![1.0f32; n];
-        mesh.block_light_rgb = vec![[0.0f32; 3]; n];
-        mesh.sky_exposed = vec![1.0f32; n];
 
         mesh
     }
@@ -99,6 +97,7 @@ impl MarchingCubes {
         z: usize,
         mesh: &mut VoxelMesh,
         material_at: &impl Fn([usize; 3]) -> u32,
+        light_at: &impl Fn([usize; 3]) -> ([u8; 3], bool),
     ) {
         // Get the 8 corner values for this cube
         let corners = [
@@ -123,6 +122,7 @@ impl MarchingCubes {
         // Find vertices along edges where surface crosses
         let mut edge_vertices = [[0.0f32; 3]; 12];
         let mut edge_gradients = [[0.0f32; 3]; 12];
+        let mut edge_light = [([0u8; 3], false); 12];
         let iso_level = 0.5;
 
         for i in 0..12 {
@@ -143,6 +143,7 @@ impl MarchingCubes {
                     t,
                 );
                 edge_gradients[i] = Self::edge_gradient(density_field, (s0, d0), (s1, d1), t);
+                edge_light[i] = light_at(if d0 <= iso_level { s0 } else { s1 });
             }
         }
 
@@ -158,6 +159,9 @@ impl MarchingCubes {
 
                 mesh.normals
                     .push(Self::outward_normal(edge_gradients[edge_idx as usize]));
+
+                let (block_light, sky_exposed) = edge_light[edge_idx as usize];
+                mesh.push_light(block_light, sky_exposed);
 
                 // Smooth terrain doesn't need complex AO - use density as simple approximation
                 // Lower density (near surface) = less occlusion
@@ -889,7 +893,7 @@ mod tests {
         let mut field = [[[0.0f32; 18]; 18]; 18];
         field[5][5][5] = 0.5;
 
-        let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0);
+        let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0, |_| ([0; 3], true));
 
         assert!(
             mesh.indices.is_empty(),
@@ -947,7 +951,7 @@ mod tests {
     #[test]
     fn test_empty_density_field() {
         let field = [[[0.0f32; 18]; 18]; 18];
-        let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0);
+        let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0, |_| ([0; 3], true));
 
         // Empty field should produce no geometry
         assert_eq!(mesh.vertices.len(), 0);
@@ -960,7 +964,7 @@ mod tests {
             (6..=7).flat_map(|x| (6..=7).flat_map(move |y| (6..=7).map(move |z| (x, y, z))));
         let field = solid_samples_field(solid);
 
-        let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0);
+        let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0, |_| ([0; 3], true));
 
         assert!(!mesh.vertices.is_empty(), "solid must produce geometry");
         assert!(!mesh.indices.is_empty());
@@ -991,7 +995,7 @@ mod tests {
         let mut field = [[[0.0f32; 18]; 18]; 18];
         field[8][8][8] = 0.5;
 
-        let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0);
+        let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0, |_| ([0; 3], true));
 
         assert!(mesh.vertices.is_empty());
         assert!(mesh.indices.is_empty());
@@ -1036,7 +1040,7 @@ mod tests {
         for sample in [(8, 8, 8), (16, 16, 16)] {
             let field = solid_samples_field([sample]);
 
-            let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0);
+            let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0, |_| ([0; 3], true));
 
             // A lone sample is an octahedron: 8 triangles, none dropped.
             assert_eq!(mesh.vertices.len(), 24, "lone voxel at {sample:?}");
@@ -1050,7 +1054,7 @@ mod tests {
         // Between the two solids, both edge endpoints have a flat central difference.
         let field = solid_samples_field([(6, 8, 8), (8, 8, 8)]);
 
-        let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0);
+        let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0, |_| ([0; 3], true));
 
         assert_eq!(mesh.vertices.len(), 48, "two separate octahedra");
         for (v, n) in mesh.vertices.iter().zip(&mesh.normals) {
@@ -1070,7 +1074,12 @@ mod tests {
         // (-1, 0, 0), giving (-0.75, 0.25, 0.25): outward (3, -1, -1) / sqrt(11).
         let solid =
             (15..=16).flat_map(|x| (15..=16).flat_map(move |y| (15..=16).map(move |z| (x, y, z))));
-        let mesh = MarchingCubes::generate_mesh(&solid_samples_field(solid), 16, |_| 0);
+        let mesh = MarchingCubes::generate_mesh(
+            &solid_samples_field(solid),
+            16,
+            |_| 0,
+            |_| ([0; 3], true),
+        );
 
         let i = mesh
             .vertices
@@ -1091,7 +1100,7 @@ mod tests {
             (6..=7).flat_map(|x| (6..=7).flat_map(move |y| (6..=7).map(move |z| (x, y, z))));
         let field = solid_samples_field(solid);
 
-        let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0);
+        let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0, |_| ([0; 3], true));
 
         assert_normals_point_away_from(&mesh, [6.5, 6.5, 6.5]);
     }
@@ -1102,7 +1111,7 @@ mod tests {
         let solid =
             (1..=16).flat_map(|x| (1..=16).flat_map(move |y| (1..=16).map(move |z| (x, y, z))));
         let field = solid_samples_field(solid);
-        let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0);
+        let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0, |_| ([0; 3], true));
 
         let vertex_count = mesh.vertices.len() as u32;
         for &idx in &mesh.indices {
@@ -1136,7 +1145,7 @@ mod tests {
         }
         let origin = Vec3::new(CELL[0] as f32, CELL[1] as f32, CELL[2] as f32);
 
-        let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0);
+        let mesh = MarchingCubes::generate_mesh(&field, 16, |_| 0, |_| ([0; 3], true));
 
         let vertex = |i: u32| {
             let v = mesh.vertices[i as usize];
@@ -1191,7 +1200,7 @@ mod tests {
         let mut field = [[[0.0f32; 18]; 18]; 18];
         field[8][8][8] = d0;
         field[9][8][8] = d1;
-        MarchingCubes::generate_mesh(&field, 16, |_| 0)
+        MarchingCubes::generate_mesh(&field, 16, |_| 0, |_| ([0; 3], true))
     }
 
     #[test]
@@ -1325,7 +1334,7 @@ mod tests {
         let field = solid_samples_field([(8, 8, 8), (9, 8, 8)]);
         let material_at = |sample: [usize; 3]| if sample == [8, 8, 8] { 1 } else { 2 };
 
-        let mesh = MarchingCubes::generate_mesh(&field, 16, material_at);
+        let mesh = MarchingCubes::generate_mesh(&field, 16, material_at, |_| ([0; 3], true));
 
         assert_eq!(mesh.material.len(), mesh.vertices.len());
         let mut left = 0;

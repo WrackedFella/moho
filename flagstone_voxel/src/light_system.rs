@@ -32,7 +32,7 @@
 use super::grid::VoxelGrid;
 use super::light_jobs::{LightFrameBudget, LightJobQueue, LightUpdateJob};
 use super::light_propagation::LightPropagator;
-use super::light_sky::{dirty_chunks_below, recompute_sky_exposure};
+use super::light_sky::{dirty_chunks_below, recompute_sky_change};
 use crate::events::{BlockChangeReason, WorldEvent};
 use glam::{IVec3, Vec3};
 use moho_core::events::EventBus;
@@ -145,7 +145,7 @@ impl LightSystem {
                 .into_iter()
                 .flat_map(|r| r.affected_chunks),
         );
-        self.refresh_sky();
+        self.refresh_sky(&[]);
 
         completed
     }
@@ -153,8 +153,9 @@ impl LightSystem {
     /// Recompute sky exposure of every `sky_dirty` chunk, topmost first within
     /// each column so a lower chunk reads current heights above it. Chunks with
     /// blocks whose exposure changed join the affected set; a chunk without
-    /// blocks has no mesh to rebuild.
-    fn refresh_sky(&mut self) {
+    /// blocks has no mesh to rebuild. Chunks across a changed outer layer join too,
+    /// except for `arriving` chunks, whose neighbours are re-meshed by the arrival itself.
+    fn refresh_sky(&mut self, arriving: &[IVec3]) {
         let mut dirty: Vec<IVec3> = self
             .grid
             .lit_chunk_positions()
@@ -162,8 +163,18 @@ impl LightSystem {
             .collect();
         dirty.sort_unstable_by_key(|cp| (cp.x, cp.z, std::cmp::Reverse(cp.y)));
         for chunk_pos in dirty {
-            if recompute_sky_exposure(&mut self.grid, chunk_pos) && self.grid.has_chunk(chunk_pos) {
+            let change = recompute_sky_change(&mut self.grid, chunk_pos);
+            if change.any && self.grid.has_chunk(chunk_pos) {
                 self.affected_chunks.insert(chunk_pos);
+            }
+            if !change.borders.is_empty() && !arriving.contains(&chunk_pos) {
+                self.affected_chunks.extend(
+                    change
+                        .borders
+                        .iter()
+                        .map(|&offset| chunk_pos + offset)
+                        .filter(|&across| self.grid.has_chunk(across)),
+                );
             }
         }
     }
@@ -189,7 +200,7 @@ impl LightSystem {
         for (&(x, z), &top) in &highest {
             dirty_chunks_below(&mut self.grid, IVec3::new(x, top, z));
         }
-        self.refresh_sky();
+        self.refresh_sky(chunks);
         let changed = LightPropagator::new().light_arrived(&mut self.grid, chunks);
         self.affected_chunks.extend(changed);
     }
@@ -1010,5 +1021,142 @@ mod tests {
             );
         }
         assert!(received.lock().unwrap().contains(&arriving));
+    }
+
+    #[test]
+    fn light_change_on_a_chunk_face_dirties_the_chunk_across_it() {
+        use crate::grid::MaterialLighting;
+        // (source, block across the border, voxel on the light's last layer, expected chunks)
+        let sides = [
+            (
+                IVec3::new(13, 8, 8),
+                IVec3::new(16, 8, 8),
+                IVec3::new(15, 8, 8),
+                [IVec3::ZERO, IVec3::new(1, 0, 0)],
+            ),
+            (
+                IVec3::new(2, 8, 8),
+                IVec3::new(-1, 8, 8),
+                IVec3::new(0, 8, 8),
+                [IVec3::ZERO, IVec3::new(-1, 0, 0)],
+            ),
+        ];
+
+        for adding in [true, false] {
+            for (source, across, face_voxel, chunks) in sides {
+                let why = format!("adding {adding}, source {source:?}");
+                let (mut light_system, received) = unbounded_system();
+                light_system.grid_mut().material_registry.set_lighting(
+                    1,
+                    MaterialLighting {
+                        emission: [3, 0, 0],
+                        opacity_cost: 0,
+                    },
+                );
+                light_system.grid_mut().place_block(across, 0, None);
+                if adding {
+                    light_system.grid_mut().place_block(source, 1, None);
+                }
+                settle(&mut light_system, &received);
+                if adding {
+                    light_system.handle_event(&placed(source, 1));
+                } else {
+                    LightPropagator::new().add_light_rgb(
+                        light_system.grid_mut(),
+                        source,
+                        [3, 0, 0],
+                    );
+                    assert_eq!(
+                        light_system.grid().block_light_rgb_at(face_voxel),
+                        [1, 0, 0],
+                        "{why}: the light reaches the chunk's face layer"
+                    );
+                    light_system.handle_event(&removed(source));
+                }
+
+                light_system.process_frame();
+                light_system.emit_dirty_events();
+
+                let expected_face = if adding { [1, 0, 0] } else { [0, 0, 0] };
+                assert_eq!(
+                    light_system.grid().block_light_rgb_at(face_voxel),
+                    expected_face,
+                    "{why}"
+                );
+                assert_eq!(
+                    light_system.grid().block_light_rgb_at(across),
+                    [0, 0, 0],
+                    "{why}: the light stops at the border"
+                );
+                assert_published_once_each(&received, &HashSet::from(chunks));
+            }
+        }
+    }
+
+    #[test]
+    fn sky_change_on_a_chunk_face_dirties_the_chunk_across_it() {
+        let (mut light_system, received) = unbounded_system();
+        solid_ground(&mut light_system);
+        settle(&mut light_system, &received);
+
+        dig(&mut light_system, (1, 1), 33, 16);
+        light_system.process_frame();
+        light_system.emit_dirty_events();
+
+        assert!(light_system.grid().sky_exposed_at(IVec3::new(1, 16, 1)));
+        assert!(!light_system.grid().sky_exposed_at(IVec3::new(1, 15, 1)));
+        assert_published_once_each(
+            &received,
+            &HashSet::from([IVec3::ZERO, IVec3::new(0, 1, 0), IVec3::new(0, 2, 0)]),
+        );
+    }
+
+    #[test]
+    fn light_change_on_a_chunk_edge_dirties_the_diagonal_chunk_that_reads_it() {
+        use crate::grid::MaterialLighting;
+        let source = IVec3::new(16, 16, 8);
+        let loaded = [
+            IVec3::new(5, 5, 5),
+            IVec3::new(20, 5, 5),
+            IVec3::new(5, 20, 5),
+            IVec3::new(20, 20, 5),
+        ];
+        let expected = HashSet::from([
+            IVec3::ZERO,
+            IVec3::new(1, 0, 0),
+            IVec3::new(0, 1, 0),
+            IVec3::new(1, 1, 0),
+        ]);
+
+        for adding in [true, false] {
+            let (mut light_system, received) = unbounded_system();
+            light_system.grid_mut().material_registry.set_lighting(
+                1,
+                MaterialLighting {
+                    emission: [1, 0, 0],
+                    opacity_cost: 0,
+                },
+            );
+            for pos in loaded {
+                light_system.grid_mut().place_block(pos, 0, None);
+            }
+            if adding {
+                light_system.grid_mut().place_block(source, 1, None);
+            }
+            settle(&mut light_system, &received);
+            if adding {
+                light_system.handle_event(&placed(source, 1));
+            } else {
+                LightPropagator::new().add_light_rgb(light_system.grid_mut(), source, [1, 0, 0]);
+                light_system.handle_event(&removed(source));
+            }
+
+            light_system.process_frame();
+            light_system.emit_dirty_events();
+
+            let lit = if adding { [1, 0, 0] } else { [0, 0, 0] };
+            assert_eq!(light_system.grid().block_light_rgb_at(source), lit);
+            assert_published_once_each(&received, &expected);
+        }
     }
 }

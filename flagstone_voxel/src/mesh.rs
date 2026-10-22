@@ -51,4 +51,15 @@ impl VoxelMesh {
             material: Vec::new(),
         }
     }
+
+    /// Appends one vertex's light channels from the raw block light and sky exposure of
+    /// the voxel it reads; `light_level` is the compat blend of the two.
+    pub(crate) fn push_light(&mut self, block_light: [u8; 3], sky_exposed: bool) {
+        let rgb = block_light.map(|c| f32::from(c) / 15.0);
+        let sky = if sky_exposed { 1.0f32 } else { 0.0 };
+        let brightest = rgb[0].max(rgb[1]).max(rgb[2]);
+        self.light_level.push((brightest + sky * 0.1).min(1.0));
+        self.block_light_rgb.push(rgb);
+        self.sky_exposed.push(sky);
+    }
 }

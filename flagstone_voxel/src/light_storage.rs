@@ -12,7 +12,7 @@
 //!
 //! `CHUNK_SIZE = 16` is hardcoded; non-16 grids do not get lighting.
 
-use glam::IVec3;
+use glam::{IVec3, UVec3};
 
 pub const CHUNK_SIZE: i32 = 16;
 pub const CHUNK_USIZE: usize = CHUNK_SIZE as usize;
@@ -28,6 +28,24 @@ pub fn local_index(x: i32, y: i32, z: i32) -> usize {
         "local_index out of range: ({x}, {y}, {z})"
     );
     (x as usize) + (y as usize) * CHUNK_USIZE + (z as usize) * CHUNK_USIZE * CHUNK_USIZE
+}
+
+/// Offsets of the neighbour chunks whose meshes read the voxel at chunk-local `local`.
+///
+/// A blocky face reads the voxel in front of it, so a voxel on an outer layer is read by
+/// the face neighbour across that layer. The smooth mesher reads its chunk plus one voxel
+/// past each positive face, so a voxel on a low layer is also read by the chunks below it
+/// on any combination of those axes, diagonals included.
+pub(crate) fn reading_chunk_offsets(local: IVec3) -> impl Iterator<Item = IVec3> {
+    let low = local.cmpeq(IVec3::ZERO).bitmask();
+    let high = local.cmpeq(IVec3::splat(CHUNK_SIZE - 1)).bitmask();
+    let below = (1..8)
+        .filter(move |&axes| axes & low == axes)
+        .map(|axes| -UVec3::new(axes & 1, (axes >> 1) & 1, (axes >> 2) & 1).as_ivec3());
+    let above = (0..3)
+        .filter(move |&axis| high & (1 << axis) != 0)
+        .map(|axis| IVec3::AXES[axis]);
+    below.chain(above)
 }
 
 /// Chunk-local (x, y, z) of a linear index; the inverse of [`local_index`].
@@ -173,6 +191,44 @@ impl Default for ChunkLight {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn reading_chunks_are_the_blocky_face_neighbours_and_the_smooth_chunks_below() {
+        let set = |offsets: &[[i32; 3]]| -> HashSet<IVec3> {
+            offsets.iter().map(|&o| IVec3::from_array(o)).collect()
+        };
+        // (chunk-local voxel, chunks that read it)
+        let rows = [
+            ([8, 8, 8], set(&[])),
+            ([15, 8, 8], set(&[[1, 0, 0]])),
+            ([15, 15, 15], set(&[[1, 0, 0], [0, 1, 0], [0, 0, 1]])),
+            ([0, 8, 8], set(&[[-1, 0, 0]])),
+            ([0, 0, 8], set(&[[-1, 0, 0], [0, -1, 0], [-1, -1, 0]])),
+            (
+                [0, 0, 0],
+                set(&[
+                    [-1, 0, 0],
+                    [0, -1, 0],
+                    [0, 0, -1],
+                    [-1, -1, 0],
+                    [-1, 0, -1],
+                    [0, -1, -1],
+                    [-1, -1, -1],
+                ]),
+            ),
+            ([0, 15, 8], set(&[[-1, 0, 0], [0, 1, 0]])),
+        ];
+        for (local, expected) in rows {
+            let got: Vec<IVec3> = reading_chunk_offsets(IVec3::from_array(local)).collect();
+            assert_eq!(got.len(), expected.len(), "{local:?}: {got:?}");
+            assert_eq!(
+                got.into_iter().collect::<HashSet<_>>(),
+                expected,
+                "{local:?}"
+            );
+        }
+    }
 
     #[test]
     fn local_index_corners() {

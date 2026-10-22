@@ -2,7 +2,7 @@
 
 **Source:** `flagstone/src/app/chunk_streamer.rs`, `flagstone/src/app/event_loop/frame_processor.rs`
 (`update_chunk_streaming`, `update_light_system`), `event_processor.rs` (`process_world_events`),
-`flagstone/src/app/world_geometry.rs`, `flagstone_voxel/src/` (`light_system.rs`, `streaming.rs`, `light_jobs.rs`).
+`flagstone/src/app/world_geometry.rs`, `flagstone_voxel/src/` (`light_system.rs`, `light_storage.rs`, `streaming.rs`, `light_jobs.rs`, `mesh.rs`).
 Voxels live in the flagstone-line `flagstone_voxel` per [ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md).
 
 ## Chunk lifecycle
@@ -56,6 +56,14 @@ Chunks are 16³ voxels; columns span chunk Y 0..=8.
   cleared, emitters are seeded, and light is refilled from lit neighbour chunks, so their
   first mesh is built from lit data.
 - Sky exposure of edited columns is recomputed once per frame, topmost chunk first.
+- Meshes bake light per vertex (`VoxelMesh::push_light`: block light, sky exposure, and the
+  blended `light_level`) from the air each surface faces: a blocky face reads the voxel in
+  front of it, a smooth vertex the air sample of its edge. A light or sky-exposure change
+  on a chunk's outer layer therefore also dirties the loaded chunks that read that voxel:
+  the face neighbour across the layer (blocky faces), and, because the smooth mesher reads
+  one voxel past each positive face, the chunks below it on every low axis, diagonals
+  included (`light_storage::reading_chunk_offsets`). Chunks arriving in the grid are exempt from
+  the sky part; their neighbours are re-meshed by the arrival itself.
 - `process_world_events` forwards every world event to the light system, then re-meshes each
   dirty chunk once per batch, however many events named it.
 - The light system processes edits within a per-frame block budget, prioritised by distance to
