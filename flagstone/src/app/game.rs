@@ -186,7 +186,7 @@ impl App {
                 RenderRequest::ShadowQuality(quality) => renderer.set_shadow_quality(quality),
                 RenderRequest::SsaoQuality(quality) => renderer.set_ssao_quality(quality),
                 RenderRequest::ViewHeight(height) => renderer.set_view_height(height),
-                RenderRequest::Vsync(_) => {}
+                RenderRequest::Vsync(on) => renderer.set_vsync(on),
             }
         }
     }
@@ -427,6 +427,8 @@ impl moho_app::Game for App {
         self.viewport = glam::UVec2::new(size.width, size.height);
         crate::app::renderer_setup::init_renderer_and_ui(self, ctx.window, &mut *ctx.renderer);
         crate::app::renderer_setup::apply_video_settings(&self.prefs, ctx.window);
+        ctx.renderer.set_vsync(self.prefs.vsync());
+        self.set_pending_frame_cap(crate::effective_frame_cap(&self.prefs));
         self.initial_render(ctx);
     }
 
@@ -440,6 +442,9 @@ impl moho_app::Game for App {
     fn frame(&mut self, ctx: &mut moho_app::FrameContext<'_>, alpha: f32) {
         let frame_processor = FrameProcessor::new();
 
+        if std::mem::take(&mut self.frame_cap_changed) {
+            ctx.set_frame_cap(self.pending_frame_cap);
+        }
         self.poll_gamepads();
         if self.game_state == GameState::Playing
             && self.input.focused
@@ -1118,8 +1123,9 @@ mod tests {
             assert!(fake.vsyncs.is_empty());
         }
 
-        /// The cap `frame` hands the loop after the game adopts `prefs`.
-        fn cap_handed_to_the_loop(prefs: Prefs) -> Option<Option<std::num::NonZeroU32>> {
+        /// The cap `frame` hands the loop after the game adopts `prefs`; fails the test
+        /// if `frame` hands it none at all.
+        fn cap_handed_to_the_loop(prefs: Prefs) -> Option<std::num::NonZeroU32> {
             let mut app = playing_app();
             app.adopt_settings(prefs);
             let clock = GameClock::default();
@@ -1128,6 +1134,7 @@ mod tests {
             Game::frame(&mut app, &mut ctx, 0.5);
 
             ctx.requested_frame_cap()
+                .expect("frame hands the loop a cap request")
         }
 
         #[test]
@@ -1137,7 +1144,7 @@ mod tests {
 
             let cap = cap_handed_to_the_loop(prefs);
 
-            assert_eq!(cap, Some(std::num::NonZeroU32::new(300)));
+            assert_eq!(cap, std::num::NonZeroU32::new(300));
         }
 
         #[test]
@@ -1148,7 +1155,7 @@ mod tests {
 
             let cap = cap_handed_to_the_loop(prefs);
 
-            assert_eq!(cap, Some(std::num::NonZeroU32::new(144)));
+            assert_eq!(cap, std::num::NonZeroU32::new(144));
         }
 
         #[test]
@@ -1159,7 +1166,7 @@ mod tests {
 
             let cap = cap_handed_to_the_loop(prefs);
 
-            assert_eq!(cap, Some(None));
+            assert_eq!(cap, None);
         }
 
         #[test]
@@ -1169,7 +1176,7 @@ mod tests {
 
             let cap = cap_handed_to_the_loop(prefs);
 
-            assert_eq!(cap, Some(None));
+            assert_eq!(cap, None);
         }
 
         #[test]

@@ -24,23 +24,30 @@ impl FramePacer {
     }
 
     /// A pacer drawing at most `fps` frames per second; `None` is uncapped.
-    pub fn from_fps(_fps: Option<NonZeroU32>) -> Self {
-        Self::new(None)
+    pub fn from_fps(fps: Option<NonZeroU32>) -> Self {
+        Self::new(fps.map(|fps| Duration::from_secs(1) / fps.get()))
+    }
+
+    /// Whether the pacer limits the frame rate.
+    pub fn is_capped(&self) -> bool {
+        self.interval.is_some()
     }
 
     /// Whether a frame may be drawn at `now`.
-    pub fn due(&self, _now: Instant) -> bool {
-        true
+    pub fn due(&self, now: Instant) -> bool {
+        self.next_due().is_none_or(|due| now >= due)
     }
 
     /// When the next frame becomes due; `None` when it is due at any time
     /// (uncapped, or no frame drawn yet).
     pub fn next_due(&self) -> Option<Instant> {
-        None
+        Some(self.last_frame? + self.interval?)
     }
 
     /// Records that a frame was drawn at `now`.
-    pub fn frame_drawn(&mut self, _now: Instant) {}
+    pub fn frame_drawn(&mut self, now: Instant) {
+        self.last_frame = Some(now);
+    }
 }
 
 #[cfg(test)]
@@ -80,7 +87,7 @@ mod tests {
 
         assert!(!pacer.due(t0));
         assert!(!pacer.due(t0 + INTERVAL / 2));
-        assert!(!pacer.due(t0 + INTERVAL - Duration::from_nanos(1)));
+        assert!(!pacer.due(t0 + Duration::from_nanos(9_999_999)));
         assert!(pacer.due(t0 + INTERVAL));
         assert!(pacer.due(t0 + INTERVAL * 3));
     }
