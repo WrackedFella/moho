@@ -1,9 +1,10 @@
 //! Player input: the action set, its default bindings and the per-tick command.
 
-use moho_input::Action;
-use moho_input::action_map::ActionFrame;
-use moho_input::bindings::Binding;
+use moho_core::prefs::Prefs;
+use moho_input::action_map::{ActionFrame, ActionMap, source_look_per_count};
+use moho_input::bindings::{ActionBindings, Binding};
 use moho_input::key::{Key, MouseButton};
+use moho_input::{Action, LookSettings};
 use moho_physics::CharacterCommand;
 
 /// Everything the player can ask of the prototype.
@@ -62,6 +63,37 @@ impl Action for SearchlightAction {
             SearchlightAction::Restart => const { &[Binding::key(Key::Enter)] },
         }
     }
+}
+
+/// Look settings from `prefs`. A sensitivity not above zero would freeze or reverse the
+/// view, so it falls back to the preferences default; smoothing and invert Y are unaffected.
+pub fn look_settings(prefs: &Prefs) -> LookSettings {
+    let saved = prefs.mouse_sensitivity();
+    let sensitivity = if saved > 0.0 {
+        saved
+    } else {
+        tracing::warn!(
+            saved,
+            "Mouse sensitivity must be above zero; using the default"
+        );
+        Prefs::default().mouse_sensitivity()
+    };
+    LookSettings {
+        look_per_count: source_look_per_count(sensitivity),
+        smoothing: prefs.mouse_smoothing(),
+        invert_y: prefs.invert_mouse_y(),
+    }
+}
+
+/// The action map for `bindings`, with mouse look following `prefs`.
+pub fn build_action_map(
+    bindings: ActionBindings<SearchlightAction>,
+    prefs: &Prefs,
+) -> ActionMap<SearchlightAction> {
+    let look = look_settings(prefs);
+    let mut map = ActionMap::new(bindings, look.look_per_count);
+    map.set_look(look);
+    map
 }
 
 /// One tick of player intent: movement plus the weapon edges that began this tick.
@@ -350,5 +382,128 @@ mod look_direction_tests {
 
         assert!(right < 0.0, "{right}");
         assert!(left > 0.0, "{left}");
+    }
+}
+
+#[cfg(test)]
+mod look_settings_tests {
+    use std::collections::BTreeMap;
+    use std::time::Duration;
+
+    use super::*;
+
+    const FRAME: Duration = Duration::from_millis(16);
+
+    fn prefs_with(mutate: impl FnOnce(&mut Prefs)) -> Prefs {
+        let mut prefs = Prefs::default();
+        mutate(&mut prefs);
+        prefs
+    }
+
+    fn map_for(prefs: &Prefs) -> ActionMap<SearchlightAction> {
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        build_action_map(bindings, prefs)
+    }
+
+    fn look_after_motion(prefs: &Prefs, dx: f64, dy: f64) -> (f32, f32) {
+        let mut map = map_for(prefs);
+        map.mouse_motion(dx, dy);
+        map.sample_frame(FRAME);
+        let command = SearchlightCommand::from_frame(&map.end_tick());
+        (command.movement.yaw_delta, command.movement.pitch_delta)
+    }
+
+    #[test]
+    fn default_prefs_give_the_previous_look() {
+        assert_eq!(
+            look_settings(&Prefs::default()),
+            LookSettings::raw(source_look_per_count(3.0))
+        );
+    }
+
+    #[test]
+    fn higher_sensitivity_turns_further() {
+        let faster = prefs_with(|p| *p.mouse_sensitivity_mut() = 6.0);
+
+        let settings = look_settings(&faster);
+        let (yaw, _) = look_after_motion(&faster, 10.0, 0.0);
+        let (default_yaw, _) = look_after_motion(&Prefs::default(), 10.0, 0.0);
+
+        assert_eq!(settings.look_per_count, source_look_per_count(6.0));
+        assert!(settings.look_per_count > source_look_per_count(3.0));
+        assert!(yaw.abs() > default_yaw.abs(), "{yaw} vs {default_yaw}");
+    }
+
+    #[test]
+    fn smoothing_and_invert_y_pass_through_independently() {
+        let smooth = look_settings(&prefs_with(|p| *p.mouse_smoothing_mut() = true));
+        let inverted = look_settings(&prefs_with(|p| *p.invert_mouse_y_mut() = true));
+
+        assert!(smooth.smoothing && !smooth.invert_y);
+        assert!(inverted.invert_y && !inverted.smoothing);
+    }
+
+    #[test]
+    fn invert_y_negates_vertical_look_only() {
+        let inverted = prefs_with(|p| *p.invert_mouse_y_mut() = true);
+
+        let (yaw, pitch) = look_after_motion(&Prefs::default(), 7.0, 5.0);
+        let (inv_yaw, inv_pitch) = look_after_motion(&inverted, 7.0, 5.0);
+
+        assert!(yaw != 0.0 && pitch != 0.0);
+        assert_eq!(inv_yaw, yaw);
+        assert_eq!(inv_pitch, -pitch);
+    }
+
+    #[test]
+    fn smoothing_eases_the_view() {
+        let smooth = prefs_with(|p| *p.mouse_smoothing_mut() = true);
+
+        let (_, raw_pitch) = look_after_motion(&Prefs::default(), 0.0, 10.0);
+        let (_, eased_pitch) = look_after_motion(&smooth, 0.0, 10.0);
+
+        assert!(eased_pitch != 0.0, "{eased_pitch}");
+        assert!(
+            eased_pitch.abs() < raw_pitch.abs(),
+            "{eased_pitch} vs {raw_pitch}"
+        );
+    }
+
+    #[test]
+    fn non_positive_sensitivity_uses_the_default() {
+        for bad in [0.0, -1.0] {
+            let prefs = prefs_with(|p| {
+                *p.mouse_sensitivity_mut() = bad;
+                *p.mouse_smoothing_mut() = true;
+                *p.invert_mouse_y_mut() = true;
+            });
+
+            assert_eq!(
+                look_settings(&prefs),
+                LookSettings {
+                    look_per_count: source_look_per_count(3.0),
+                    smoothing: true,
+                    invert_y: true,
+                },
+                "sensitivity {bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_malformed_look_value_keeps_the_others() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("searchlight.ini");
+        std::fs::write(
+            &path,
+            "[prefs]\nmouse_sensitivity=fast\ninvert_mouse_y=true\n",
+        )
+        .unwrap();
+
+        let (prefs, _) = Prefs::load_from(&path);
+
+        let settings = look_settings(&prefs);
+        assert_eq!(settings.look_per_count, source_look_per_count(3.0));
+        assert!(settings.invert_y);
     }
 }
