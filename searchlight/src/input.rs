@@ -82,6 +82,7 @@ pub fn look_settings(prefs: &Prefs) -> LookSettings {
         look_per_count: source_look_per_count(sensitivity),
         smoothing: prefs.mouse_smoothing(),
         invert_y: prefs.invert_mouse_y(),
+        acceleration: 0.0,
     }
 }
 
@@ -484,6 +485,7 @@ mod look_settings_tests {
                     look_per_count: source_look_per_count(3.0),
                     smoothing: true,
                     invert_y: true,
+                    acceleration: 0.0,
                 },
                 "sensitivity {bad}"
             );
