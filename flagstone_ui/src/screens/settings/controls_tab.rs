@@ -10,6 +10,10 @@ use moho_input::bindings::ActionMode;
 
 const KEYBIND_BUTTON_WIDTH: f32 = 120.0;
 
+fn keybind_row_width(label_width: f32, item_spacing: f32) -> f32 {
+    label_width + KEYBIND_BUTTON_WIDTH + item_spacing
+}
+
 pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
     ui.vertical_centered(|ui| {
         // Controls Section Header
@@ -45,8 +49,7 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                 ui.horizontal(|ui| {
                     // keybind_control fills the width it is given, so bound it to leave
                     // room for the checkbox on the same row.
-                    let row_width =
-                        label_width + KEYBIND_BUTTON_WIDTH + ui.spacing().item_spacing.x;
+                    let row_width = keybind_row_width(label_width, ui.spacing().item_spacing.x);
                     let clicked = ui.allocate_ui(egui::vec2(row_width, 28.0), keybind).inner;
                     let mut toggled = menu.state.get_staged_mode(action).is_toggle();
                     if ui.checkbox(&mut toggled, "Toggle").changed() {
@@ -232,6 +235,11 @@ mod tests {
     use super::*;
     use crate::UiComponent;
     use crate::prefs::Prefs;
+
+    #[test]
+    fn keybind_row_width_is_label_plus_button_plus_spacing() {
+        assert_eq!(keybind_row_width(150.0, 8.0), 278.0);
+    }
 
     fn render_menu(menu: &mut SettingsMenu) -> egui::FullOutput {
         let ctx = egui::Context::default();
