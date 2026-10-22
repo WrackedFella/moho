@@ -31,7 +31,7 @@ flowchart LR
 
 | Module | Role |
 |---|---|
-| `arena` | Loads `assets/arena.glb` through `moho_level`; `ArenaMarkers` sorts named markers by kind and orders waypoints into the patrol route; `Arena` is the loaded level the sim starts from (meshes, spawns, route, cover points, `nav`) and builds the world colliders; `Arena::from_level` also builds the `NavMesh` for `nav_profile` (the player-sized capsule plus clearance) and fails with `ArenaError::Nav` when that fails |
+| `arena` | Loads `assets/arena.glb` through `moho_level`; `ArenaMarkers` sorts named markers by kind and orders waypoints into the patrol route; `Arena` is the loaded level the sim starts from (meshes, spawns, route, cover points, `nav`) and builds the world colliders; `Arena::from_level` also builds the `NavMesh` for `nav_profile` (the player-sized capsule plus clearance) and fails with `ArenaError::Nav` when that fails; it also drops waypoints no enemy spawn has a navmesh path to (logged as a warning) and fails with `ArenaError::NoReachableWaypoint` when none is left |
 | `tuning` | `tuning(&RifleDef)`: builds the `SimConfig`, taking the rifle's numbers from the definition |
 | `input` | `SearchlightAction` set and default bindings; `build_action_map` builds the `ActionMap` at startup, with mouse look (`look_settings`: sensitivity, smoothing, invert Y) taken from `Prefs`, and a sensitivity not above zero falling back to the default 3.0; `SearchlightCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on Enter) |
 | `tag` | `SurfaceTag` (`World`, `Part { target, part }` or `Player(part)`) and its lossless round trip through the engine's opaque `moho_physics::HitTag` |
@@ -107,7 +107,7 @@ with no score. `SearchlightGame` reads `wave()` and `score()` for the HUD.
 Each tick an enemy casts a sight ray from its eye to the player's aim point (the part chosen
 by `SimConfig::enemy_aim_at`) and sets `Percept::target` only when that ray strikes a
 `SurfaceTag::Player`, so walls block sight. `Brain::think` returns an `Intent` (forward
-fraction, yaw delta, fire). `Patrol` walks the route in order, wrapping; a target inside
+fraction, yaw delta, fire). `Patrol` walks the route in order, wrapping, heading for the next corner of the navmesh path to the waypoint (the same `steer` as `Chase`; straight at the waypoint when there is no path), with arrival measured to the waypoint; a target inside
 `sight_range` and `view_half_angle` starts `Engage`, which stands and faces the target while it
 stays visible, fires after `reaction_ticks` of continuous sight, within `fire_cone` of the
 bearing and off cooldown. Aim error comes from the `searchlight.enemy_spread` `SimRng` stream, started from
@@ -149,7 +149,7 @@ same boxes tagged `Player` (`player_hit_volumes`).
 Markers are node names in the glTF file. `player_spawn` is required and unique; at least one
 `dummy_NN` is required; `enemy_spawn_NN` and `cover_NN` are optional (cover points feed `Arena::covers`; without them hurt enemies stand and fight; full-height `screen_NN` walls are plain geometry with no marker). `waypoint_NN` is optional
 unless an `enemy_spawn_NN` exists, then at least one is required (`ArenaError::MissingMarker`);
-the patrol route follows the waypoint numbers, not file order. Each
+the patrol route follows the waypoint numbers, not file order. A waypoint that no enemy spawn can walk to is dropped from the route with a warning; if enemy spawns exist and no waypoint is reachable, loading fails with `ArenaError::NoReachableWaypoint`. Waypoints are not checked when there are no enemy spawns. Each
 `cover_NN` carries a `shielded_from` extra (`+x`, `-x`, `+z`, `-z`). Spawns are floor points;
 `SearchlightSim::new` lifts capsule centres by `STAND_HEIGHT`. Errors surface as `ArenaError`.
 
