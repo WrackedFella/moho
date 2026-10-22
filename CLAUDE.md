@@ -42,7 +42,7 @@ cargo run -p searchlight           # the FPS prototype
   deviations and decisions go in an issue comment. Implementation PRs edit no `_todo/`
   item file (`_todo/_STANDARDS.md`, Issues and branches).
 - **Planning:** index `_todo/README.md`, rules `_todo/_STANDARDS.md` (features first,
-  IDs like `SG-F1-04`, card lifecycle). Check `_todo/ROADMAP.md` for order before
+  IDs like `SG-F1-04`, card lifecycle). Check `_todo/ROADMAP.md` (strategy: `wiki/flagstone/roadmap.md`) for order before
   picking up work.
 - **Environment setup command:** `bash scripts/cloud-tools.sh` (cloud threads only;
   text-only threads skip it).
@@ -55,7 +55,7 @@ cargo run -p searchlight           # the FPS prototype
 - **Local planning files are drafts.** A card or feature in `_todo/` exists only until
   it is approved; the approving thread files the issue and deletes the file
   (`_todo/_STANDARDS.md`, Drafts).
-- **ADRs:** `_todo/adr/`. Order of work: `_todo/ROADMAP.md`.
+- **ADRs:** `_todo/adr/`. Order of work: `_todo/ROADMAP.md`; strategy line: `wiki/flagstone/roadmap.md`.
 - **Docs directory:** `wiki/`, sections and conventions in `wiki/README.md`. The
   orchestrator keeps it current through `/devflow:wiki`; new pages are flagged in the
   PR, and PR review is their approval. The wiki is the documentation source of

@@ -34,7 +34,8 @@ flowchart LR
 | Edit tunable game numbers (weapons) | [reference/content-format](reference/content-format.md) |
 | Edit `config/prefs.ini` | [reference/prefs-format](reference/prefs-format.md) |
 | Run the agentic workflow | [process/agentic-workflow](process/agentic-workflow.md) |
-| Know what the games should become | [flagstone/vision](flagstone/vision.md), [searchlight/game-design-document](searchlight/game-design-document.md) |
+| Know what the strategy game should become | [flagstone/](flagstone/README.md): [vision](flagstone/vision.md), [GDD](flagstone/gdd.md), [roadmap](flagstone/roadmap.md) |
+| Know what the FPS game should become | [searchlight/game-design-document](searchlight/game-design-document.md) |
 | Know why a boundary exists | [ADRs](../_todo/adr/README.md) |
 
 ## Contents
@@ -65,7 +66,8 @@ flowchart LR
 **Guides, design, process**
 
 - [Adding console commands](guides/adding-console-commands.md)
-- [Flagstone vision](flagstone/vision.md) · [FPS design document](searchlight/game-design-document.md) (draft)
+- [Flagstone](flagstone/README.md): [vision](flagstone/vision.md) · [GDD](flagstone/gdd.md) (draft) · [roadmap](flagstone/roadmap.md)
+- [FPS design document](searchlight/game-design-document.md) (draft)
 - [Agentic workflow](process/agentic-workflow.md)
 
 ## Known constraints

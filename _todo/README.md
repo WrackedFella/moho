@@ -21,7 +21,7 @@ the audit at the v1 gate ([ENG-F5](https://github.com/WrackedFella/moho/issues/2
 | Line | Folder | Focus |
 |---|---|---|
 | Engine | [`engine/`](engine/) | Shared crates; hygiene and debt land opportunistically |
-| Strategy/base-builder | [`flagstone/`](flagstone/) | **Primary** |
+| Strategy/base-builder | [`flagstone/`](flagstone/) | **Primary**; GDD and roadmap in [`wiki/flagstone/`](../wiki/flagstone/README.md) |
 | FPS | [`searchlight/`](searchlight/) | GDD only until it defines real scope |
 
 ## engine/
