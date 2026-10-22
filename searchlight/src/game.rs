@@ -366,6 +366,9 @@ struct Stage {
     status: String,
     title: String,
     shell: Arc<Mutex<UiShell<ConsoleCommand>>>,
+    /// Times the cursor was captured, windowed or not, so tests can see it.
+    #[cfg(test)]
+    cursor_captures: u32,
 }
 
 impl Stage {
@@ -391,6 +394,8 @@ impl Stage {
             shell: Arc::new(Mutex::new(UiShell::new(
                 console_commands::console(&BTreeMap::new()).0,
             ))),
+            #[cfg(test)]
+            cursor_captures: 0,
         }
     }
 
@@ -837,7 +842,7 @@ mod tests {
     use std::time::Duration;
 
     use glam::Vec3;
-    use moho_app::{GameClock, HeadlessLoop, LoopConfig};
+    use moho_app::{GameClock, HeadlessLoop, LoopConfig, WindowMode};
     use moho_core::prefs::Prefs;
     use moho_input::bindings::ActionBindings;
     use winit::event::{DeviceEvent, WindowEvent};
@@ -1277,6 +1282,39 @@ mod tests {
         headless.advance(&mut game, Duration::ZERO);
 
         assert!(game.sim().pending_feedback().is_empty());
+    }
+
+    #[test]
+    fn window_mode_changed_releases_held_keys_and_recaptures_the_cursor_in_play() {
+        let mut game = turning_game(false);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.route_input(&mut ctx, Input::Key(Key::W), true, false);
+        mouse(&mut game, 40.0, 30.0);
+        draw_frame(&mut game, &mut SettingsRenderer::default());
+        assert_ne!(game.input.pending_look(), (0.0, 0.0));
+
+        game.window_mode_changed(&mut ctx, WindowMode::Borderless);
+        let command = game.command();
+
+        assert_eq!(command.movement.forward, 0.0);
+        assert_eq!(game.input.pending_look(), (0.0, 0.0));
+        assert_eq!(game.stage.cursor_captures, 1);
+    }
+
+    #[test]
+    fn window_mode_changed_leaves_the_cursor_free_in_the_pause_menu() {
+        let mut game = turning_game(false);
+        let clock = GameClock::default();
+        mouse(&mut game, 40.0, 30.0);
+        draw_frame(&mut game, &mut SettingsRenderer::default());
+        open_the_console(&mut game, &clock);
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        game.window_mode_changed(&mut ctx, WindowMode::Windowed);
+
+        assert_eq!(game.input.pending_look(), (0.0, 0.0));
+        assert_eq!(game.stage.cursor_captures, 0);
     }
 
     /// The `alpha` the view tests draw with.

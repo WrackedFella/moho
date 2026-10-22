@@ -78,6 +78,7 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
             window_title: WINDOW_TITLE.to_owned(),
             loop_config: LoopConfig::new(TICK_HZ),
             init_audio: true,
+            toggle_keys: None,
         },
     )?;
     Ok(ExitCode::SUCCESS)

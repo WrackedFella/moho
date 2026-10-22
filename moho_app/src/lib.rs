@@ -4,6 +4,7 @@ pub mod clock;
 pub mod fixed_step;
 pub mod headless;
 pub mod runner;
+pub mod window_keys;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,6 +18,7 @@ pub use clock::GameClock;
 pub use fixed_step::{FixedStep, LoopConfig, SimSpeed};
 pub use headless::HeadlessLoop;
 pub use runner::run;
+pub use window_keys::{Observed, ToggleKeys, WindowMode};
 
 /// Per-tick context handed to [`Game::tick`].
 #[derive(Debug)]
@@ -218,6 +220,9 @@ pub struct AppConfig {
     /// Whether to create an [`AudioSystem`]; a failure to create one is logged
     /// and the game runs without audio.
     pub init_audio: bool,
+    /// Inputs that flip the window between windowed and borderless; `None` leaves
+    /// only Alt+Enter.
+    pub toggle_keys: Option<Vec<moho_input::bindings::Input>>,
 }
 
 /// Why [`run`] stopped with an error.
@@ -249,6 +254,9 @@ pub trait Game {
     /// Called for every window and device event the runner does not consume;
     /// never called headless.
     fn event(&mut self, _ctx: &mut EventContext<'_>, _event: Event) {}
+
+    /// Called after the runner flipped the window to `mode`; never called headless.
+    fn window_mode_changed(&mut self, _ctx: &mut EventContext<'_>, _mode: WindowMode) {}
 
     /// Applies `command` while the loop is paused, at the boundary before tick `next_tick`.
     ///
