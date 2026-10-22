@@ -68,7 +68,7 @@ jobs:
           prompt: /devflow:refine ${{ github.event.issue.number }}
           claude_args: |
             --max-turns 100
-            --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running."
+            --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never end your turn with a status message: after a skill or subagent returns, continue with the next step. Stop only after the final report, or after pausing with a comment and the agent-paused label."
             --add-dir /home/runner/.claude/plugins/cache
             --allowedTools "Bash(gh issue:*),Bash(gh api:*),Bash(git log:*),Bash(git show:*),Edit,Write,Task,Skill"
       # The action hides the run's output, so a denial shows only as a count. List what was
@@ -80,6 +80,8 @@ jobs:
         run: |
           [ -f "$EXECUTION_FILE" ] || exit 0
           {
+            echo "### Run result"
+            jq -r '.[] | select(.type == "result") | "- subtype `\(.subtype)`, turns \(.num_turns)"' "$EXECUTION_FILE"
             echo "### Denied commands"
             jq -r '.[] | select(.type == "result") | .permission_denials[]? | "- `\(.tool_name)`: \((.tool_input.command // .tool_input.file_path // "") | tostring | .[0:200])"' "$EXECUTION_FILE"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -146,7 +148,7 @@ jobs:
           prompt: /devflow:orchestrate ${{ github.event.issue.number || inputs.issue }}
           claude_args: |
             --max-turns 200
-            --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running."
+            --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never end your turn with a status message: after a skill or subagent returns, continue with the next step. Stop only after the final report, or after pausing with a comment and the agent-paused label."
             --add-dir /home/runner/.claude/plugins/cache
             --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue:*),Bash(gh pr:*),Bash(gh run list:*),Bash(gh run view:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(rg:*),Bash(grep:*),Bash(jq:*),Bash(mkdir:*),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/board *),Edit,Write,Task,Skill"
       # The action hides the run's output, so a denial shows only as a count. List what was
@@ -158,6 +160,8 @@ jobs:
         run: |
           [ -f "$EXECUTION_FILE" ] || exit 0
           {
+            echo "### Run result"
+            jq -r '.[] | select(.type == "result") | "- subtype `\(.subtype)`, turns \(.num_turns)"' "$EXECUTION_FILE"
             echo "### Denied commands"
             jq -r '.[] | select(.type == "result") | .permission_denials[]? | "- `\(.tool_name)`: \((.tool_input.command // .tool_input.file_path // "") | tostring | .[0:200])"' "$EXECUTION_FILE"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -168,9 +172,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ISSUE: ${{ github.event.issue.number || inputs.issue }}
         run: |
-          gh pr list --repo "$GITHUB_REPOSITORY" --state open \
-            --search "\"Closes #$ISSUE\" in:body" --json number --jq '.[].number' |
-          while read -r pr; do
+          prs=$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" --paginate \
+            --jq ".[] | select((.body // \"\") | test(\"Closes #$ISSUE([^0-9]|$)\")) | .number")
+          for pr in $prs; do
             gh workflow run pr-review.yml --repo "$GITHUB_REPOSITORY" \
               --ref "${{ github.event.repository.default_branch }}" -f pr="$pr" -f round=1
           done
+          [ -n "$prs" ] && exit 0
+          # No PR is fine only when the run paused for an answer.
+          if gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' |
+            grep -qx agent-paused; then
+            exit 0
+          fi
+          msg="Orchestrate #$ISSUE ended with no open PR and no agent-paused label"
+          echo "::error::$msg"
+          echo "### Outcome" >> "$GITHUB_STEP_SUMMARY"
+          echo "$msg. Resume with: gh workflow run claude.yml --ref dev -f issue=$ISSUE" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
