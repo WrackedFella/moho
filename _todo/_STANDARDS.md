@@ -8,7 +8,7 @@ How work items are organized and written. Applies to every project line.
 _todo/
   README.md                     <- index: lines and features
   _STANDARDS.md                 <- this file
-  ROADMAP.md                    <- order of work: milestones, gates, decisions
+  ROADMAP.md                    <- stub: the roadmaps live in wiki/roadmap.md and wiki/{engine,flagstone,searchlight}/roadmap.md
   adr/NNNN-<slug>.md            <- architecture decision records (index: adr/README.md)
   engine/ENG-F<n>-<slug>/       <- engine crates (anything that ships in moho-engine)
   flagstone/SG-F<n>-<slug>/     <- strategy/base-builder game
@@ -76,12 +76,12 @@ not in a sweep.
 
 ## 5 Milestones
 
-[`ROADMAP.md`](ROADMAP.md) orders work as milestones (M0, M1, ...). Each has
+Each line's roadmap ([engine](../wiki/engine/roadmap.md), [flagstone](../wiki/flagstone/roadmap.md), [searchlight](../wiki/searchlight/roadmap.md)) orders work as milestones; [`wiki/roadmap.md`](../wiki/roadmap.md) coordinates them. Each has
 an **Intent** line and a **Gate** list; a milestone closes when every gate item
 holds.
 
-Numbering follows `devflow:engineering-standards` (Document numbering). The engine's milestones
-stay bare (M0, M1, ...); a game line's carry its prefix (`FPS-M1`) so the series never collide.
+Numbering follows `devflow:engineering-standards` (Document numbering). Every milestone carries its line prefix
+(`ENG-M2`, `STRAT-M1`, `FPS-M1`) so the series never collide.
 
 Only the next open milestone is carded. Later milestones hold intent and gate
 only (their features may exist as drafts, without cards) and are detailed

@@ -8,7 +8,7 @@
 `searchlight` is the FPS line's engine adapter: a library and the `searchlight` binary. Rules
 (`Rifle`, `Magazine`, `Body`, `BodyProfile`) come from `searchlight_rules`; windowing, loop,
 physics, level loading, input, audio and rendering come from engine crates. It depends on no
-strategy crate ([overview](overview.md#2-lines-and-rules)).
+strategy crate ([overview](../architecture/overview.md#2-lines-and-rules)).
 
 ## 1 Layers
 

@@ -53,7 +53,7 @@ flowchart TD
 Blue is the engine line, green is the flagstone line, orange is the searchlight line.
 `searchlight_rules` holds plain serialisable weapon and body rules (`Rifle`, `Magazine`, `Body`)
 with no engine dependency. `searchlight` is the only searchlight-line crate that reaches the engine: a library
-plus the `searchlight` binary, described in [Searchlight](searchlight.md). Every shot resolves
+plus the `searchlight` binary, described in [Searchlight](../searchlight/architecture.md). Every shot resolves
 through one path (ray, surface tag, part, rule call) for player and enemy alike
 ([ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md)).
 `moho_ui_shell` is the engine's only egui-facing crate: the console every game opens and adds commands to, the egui host that draws it, and the screen text a game sets each frame (`UiShell::set_texts` with `ScreenText` and `Anchor`, `moho_ui_shell/src/text.rs`; each call replaces the list and refuses a size that is not finite and positive, painted under the console and cleared by the frame that paints it) ([ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md)).
@@ -75,9 +75,9 @@ Each crate belongs to exactly one line ([ADR-0005](../../_todo/adr/0005-crate-li
 Voxels live in the flagstone-line `flagstone_voxel` ([ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md));
 the engine sees world geometry only as meshes.
 
-## 3 Target crate graph (M2)
+## 3 Target crate graph (ENG-M2)
 
-Where the M1–M2 engine work lands, from [ADR-0012](../../_todo/adr/0012-engine-crate-map-for-m2.md)
+Where the ENG-M1–ENG-M2 engine work lands, from [ADR-0012](../../_todo/adr/0012-engine-crate-map-for-m2.md)
 (Proposed). Capabilities land as modules of an existing crate first; a new crate needs a
 deployable, reuse or compile-time boundary. Dashed boxes are crates that don't exist yet, or (`moho_app`) exist with only part of the listed scope: today the window and event loop, accumulator, `GameClock` and `Game` trait.
 Edges are the intended direction, not a list each crate must have.
@@ -198,4 +198,4 @@ Library crates never install a subscriber.
 
 ## 8 Next
 
-[Frame loop](frame-loop.md) · [Searchlight](searchlight.md) · [Events](events.md) · [Rendering](rendering.md)
+[Frame loop](frame-loop.md) · [Searchlight](../searchlight/architecture.md) · [Events](events.md) · [Rendering](rendering.md)

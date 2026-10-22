@@ -1,7 +1,7 @@
 # Flagstone — vision
 
 The design intent behind the flagstone line. Features and their order live in the
-[roadmap](../../_todo/ROADMAP.md) and the GitHub issues. This page holds what stays true across features.
+[roadmap](roadmap.md) and the GitHub issues. This page holds what stays true across features.
 
 ## The game
 
@@ -37,7 +37,7 @@ A base-builder and mining game played from above:
 
 ## Feature arc
 
-Features and their order live in the [roadmap](../../_todo/ROADMAP.md); the issues are the record.
+Features and their order live in the [roadmap](roadmap.md); the issues are the record. Player-facing design is in the [GDD](gdd.md).
 
 1. A saved world comes back as left ([SG-F2](https://github.com/WrackedFella/moho/issues/308)).
 2. Strategy view and possession: pan, select, step into a pawn ([SG-F5](https://github.com/WrackedFella/moho/issues/309)).
