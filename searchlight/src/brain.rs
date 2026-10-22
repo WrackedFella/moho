@@ -167,9 +167,11 @@ impl Tick<'_> {
         } else {
             next
         };
+        let goal = self.route[next];
+        let heading = (self.steer)(goal).unwrap_or(goal);
         (
             Brain::Patrol { next },
-            self.walk_to(self.route[next], self.tuning.patrol_speed),
+            self.walk_to(heading, self.tuning.patrol_speed),
         )
     }
 

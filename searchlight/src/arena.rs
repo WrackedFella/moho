@@ -135,12 +135,16 @@ fn waypoint_number(marker: &LevelMarker) -> Option<u32> {
 impl ArenaMarkers {
     /// The patrol loop: every `waypoint_NN` position, in numeric order of `NN`.
     pub fn patrol_route(&self) -> Vec<Vec3> {
-        let mut waypoints: Vec<&LevelMarker> = self.waypoints.iter().collect();
-        waypoints.sort_by_key(|marker| waypoint_number(marker));
-        waypoints
+        self.ordered_waypoints()
             .into_iter()
             .map(|marker| marker.position)
             .collect()
+    }
+
+    fn ordered_waypoints(&self) -> Vec<&LevelMarker> {
+        let mut waypoints: Vec<&LevelMarker> = self.waypoints.iter().collect();
+        waypoints.sort_by_key(|marker| waypoint_number(marker));
+        waypoints
     }
 }
 
@@ -179,18 +183,40 @@ impl Arena {
     /// The arena `level` and its `markers` describe.
     ///
     /// # Errors
-    /// [`ArenaError::Nav`] when the walkable area cannot be built.
+    /// [`ArenaError::Nav`] when the walkable area cannot be built;
+    /// [`ArenaError::NoReachableWaypoint`] when there are enemy spawns but no waypoint is
+    /// reachable from any of them. A waypoint no enemy spawn reaches is dropped from the
+    /// route with a warning.
     pub fn from_level(level: &Level, markers: &ArenaMarkers) -> Result<Self, ArenaError> {
         let positions = |list: &[LevelMarker]| list.iter().map(|marker| marker.position).collect();
         let meshes: Vec<WorldMesh> = level.meshes.iter().map(|m| m.mesh.clone()).collect();
         let nav = Arc::new(NavMesh::build(&meshes, nav_profile())?);
+        let enemy_spawns: Vec<Vec3> = positions(&markers.enemy_spawns);
+        let mut route = Vec::new();
+        for waypoint in markers.ordered_waypoints() {
+            let reached = enemy_spawns.is_empty()
+                || enemy_spawns
+                    .iter()
+                    .any(|&spawn| nav.path(spawn, waypoint.position).is_some());
+            if reached {
+                route.push(waypoint.position);
+            } else {
+                tracing::warn!(
+                    waypoint = waypoint.name,
+                    "no path reaches the waypoint; the patrol skips it"
+                );
+            }
+        }
+        if !enemy_spawns.is_empty() && route.is_empty() {
+            return Err(ArenaError::NoReachableWaypoint);
+        }
         Ok(Self {
             meshes,
             nav,
             player_spawn: markers.player_spawn.position,
             dummy_spawns: positions(&markers.dummies),
-            enemy_spawns: positions(&markers.enemy_spawns),
-            route: markers.patrol_route(),
+            enemy_spawns,
+            route,
             covers: positions(&markers.covers),
         })
     }
