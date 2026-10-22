@@ -46,7 +46,8 @@ Secondary loops (run away, wait it out) exist but are smaller and obvious.
 
 ### 3.3 Micro loop (moment to moment)
 
-- **Movement:** grounded and weighty. Walk / sprint / crouch / prone (prone is a cut candidate). Stamina limits sprint; carry weight limits stamina. No slide, no double jump, no mantle in Phase 1.
+- **Movement:** grounded and weighty. Walk / sprint / crouch / prone, with lean as the peek in every stance. Stance changes take time and pass through crouch; prone crawls, cannot sprint or jump and turns slowly. Stamina limits sprint; carry weight limits stamina. No slide, no double jump, no mantle in Phase 1.
+- **Your body is in the world:** the player's hit volumes follow stance and lean, so what sticks out of cover is what gets hit (the cover rule applied to the player). Head bob is a setting; every held action (sprint, crouch, prone, lean) is hold or toggle by a checkbox beside its keybinding.
 - **Combat:** few rounds to kill, unforgiving positional damage. Reloading is a commitment (mag in hand, round in chamber). Weapons can fail.
 - **Information:** limited HUD. Ammo count is not shown as a number; you check the mag (an action). Condition is inspected, not displayed constantly.
 
@@ -211,6 +212,7 @@ Milestones follow the phases: FPS-M*n* delivers Phase *n*, and FPS-M1.1 (menus) 
 | Phase | Name | Adds | Answers | Map |
 |---|---|---|---|---|
 | 1 | **Arena baseline** | Movement, one rifle, **mags + chamber from day one**, **per-body-part hit volumes from day one**, basic AI (patrol, take cover, shoot, chase), waves, death/restart | Does the gunplay feel weighty? | Pre-made arena |
+| 1.2 | **Stance and body** | Crouch, prone, lean in every stance, head bob, hit volumes follow posture; a visible first-person body once the engine has skinned characters | Does posture change where I stand and when I peek? | Arena |
 | 2 | **Items and loadout** | Data-driven items, belt/vest vs backpack, loot drops from enemies, 3 weapons in 2 calibers | Does one item model carry everything? | Arena |
 | 3 | **Weapon wear and repair** | 4 components, jams, repair parts and workbench, dismantling; **end-of-round ledger** (rounds + wear valued) | Does wear drive scavenging? | Arena + range |
 | 4 | **Wounds and healing** | Limb HP, Player HP, bleeding, first/secondary aid, meds as data, buff meds | Does limb damage create good downtime? | Arena + range |
@@ -218,6 +220,8 @@ Milestones follow the phases: FPS-M*n* delivers Phase *n*, and FPS-M1.1 (menus) 
 | 6 | **Hub and jobs** | Trader hub, job board, currency, full ledger per job; arena becomes "the job site" | Does profit-as-score change player behavior? | Hub + 1–2 pre-made zones |
 | 7 | **Director** | Zone graph, factions, offline dice sim, daily planning, live handover | Does the world feel alive with this little machinery? | 3–5 pre-made zones |
 | Later | Depth | Attachments, ammo crafting, armor depth, damage types, anomalies/artifacts | — | — |
+
+Stance and body (1.2) runs in slices parallel to Phase 2, like enemy AI: lean and head bob first (nothing new from the engine), crouch and prone when the engine's per-mode hulls land, the visible body when skinned characters do. Plan: `stance-lean-player-body-proposal.md` in the project files.
 
 Enemy AI (§4.11) is not a phase of its own; it lands in slices alongside the phases:
 - **After Phase 1 approval, parallel to Phase 2:** enemy grades (five grades as data; accuracy, reaction time, pauses, cover use; waves shift up the ladder). Needs no items, UI or navigation.
@@ -277,7 +281,7 @@ What the game must be able to do (needs, not solutions). Generic needs belong in
 
 1. **Load a static level from a file:** render meshes, build colliders, and expose named markers (spawns, loot points, boundaries, safe spots). Meshes and colliders are covered by [ENG-F10](https://github.com/WrackedFella/moho/issues/80); the file format and markers are not. *(Phase 1)*
 2. **Hit a specific body part:** raycast against world geometry and against named hit volumes attached to a character, returning which part was hit. *(Phase 1)*
-3. **Render characters:** at minimum rigid segmented bodies (Phase 1); skeletal animation later. *(Phase 1 / later)*
+3. **Render characters:** at minimum rigid segmented bodies (Phase 1); skinned, animated characters with bone attachments later, filed as [#543](https://github.com/WrackedFella/moho/issues/543). *(Phase 1 / later)*
 4. **AI navigation on non-voxel maps:** compute walkable paths and cover points over an arbitrary static level, and tell whether a spot is exposed to a given position (group tactics, §4.11). *(Phase 1 stopgap; group tactics need it)*
 5. **Positional 3D audio:** gunshots and footsteps located and attenuated in space, so players can place fire and callouts and enemies can hear shots. *(Phase 1)*
 6. **FPS-owned UI:** HUD, inventory, and menus that don't depend on the strategy game's UI; the generic parts move to the engine. *(Phase 1–2)*
@@ -286,3 +290,4 @@ What the game must be able to do (needs, not solutions). Generic needs belong in
 9. **Save and load world state:** player, inventory, zone and actor state (ADR-0006 contract). *(Phase 5–6)*
 10. **Switch between levels:** unload one zone and load another, carrying player state across. *(Phase 6)*
 11. **Headless simulation:** run the offline world sim without rendering (ENG-F6 is related). *(Phase 7)*
+12. **Posture:** crouch and prone hulls with clearance, lean with clearance in every stance, stance changes that take ticks. Crouch is [ENG-F33](https://github.com/WrackedFella/moho/issues/492); lean and prone are filed as [#544](https://github.com/WrackedFella/moho/issues/544). *(Phase 1.2)*
