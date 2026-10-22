@@ -8,6 +8,19 @@ use rerecast::{ConfigBuilder, HeightfieldBuilder, PolygonNavmesh, TriMesh};
 
 use super::{AgentProfile, NavBuildError, Polygon};
 
+/// The most heightfield columns one build may allocate (2048 × 2048). A tiny agent over a
+/// large level would otherwise take gigabytes and minutes.
+const MAX_COLUMNS: u64 = 1 << 22;
+
+/// Columns of a heightfield `width` by `depth` cells, rounded as rerecast rounds them.
+fn columns(width: f32, depth: f32) -> u64 {
+    (width + 0.5) as u64 * (depth + 0.5) as u64
+}
+
+fn fits(columns: u64) -> bool {
+    columns <= MAX_COLUMNS
+}
+
 fn fail(stage: &str, error: impl Display) -> NavBuildError {
     NavBuildError(format!("{stage}: {error}"))
 }
@@ -76,6 +89,15 @@ pub(super) fn polygons<'a>(
         ..Default::default()
     }
     .build();
+
+    let width = (aabb.max.x - aabb.min.x) / config.cell_size;
+    let depth = (aabb.max.z - aabb.min.z) / config.cell_size;
+    if !fits(columns(width, depth)) {
+        return Err(fail(
+            "profile",
+            format!("{profile:?} needs more than {MAX_COLUMNS} cells over these meshes"),
+        ));
+    }
 
     let mut heightfield = HeightfieldBuilder {
         aabb,
@@ -155,4 +177,22 @@ fn signed_area(vertices: &[Vec3]) -> f32 {
         .zip(next)
         .map(|(a, b)| a.x * b.z - b.x * a.z)
         .sum()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn columns_round_each_side_to_the_nearest_cell() {
+        assert_eq!(columns(10.0, 20.0), 200);
+        assert_eq!(columns(10.4, 19.6), 200);
+        assert_eq!(columns(10.6, 0.4), 0);
+    }
+
+    #[test]
+    fn a_field_fits_up_to_the_column_limit() {
+        assert!(fits(MAX_COLUMNS));
+        assert!(!fits(MAX_COLUMNS + 1));
+    }
 }

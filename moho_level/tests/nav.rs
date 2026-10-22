@@ -440,6 +440,20 @@ fn a_path_from_a_point_to_itself_is_that_point_snapped() {
 }
 
 #[test]
+fn an_agent_too_small_for_the_level_fails_the_build_instead_of_allocating_the_field() {
+    // Cells are radius / 3, so a 3 cm agent needs 2100 x 2100 cells over 21 m: just past the
+    // limit, so a build that wrongly went ahead would still finish quickly.
+    let big_floor = box_mesh(Vec3::new(-10.5, -1.0, -10.5), Vec3::new(10.5, 0.0, 10.5));
+    let tiny = AgentProfile {
+        radius: 0.03,
+        ..PROFILE
+    };
+
+    assert!(NavMesh::build([&big_floor], tiny).is_err());
+    assert!(NavMesh::build([&big_floor], PROFILE).is_ok());
+}
+
+#[test]
 fn an_agent_profile_that_cannot_describe_a_walker_fails_the_build() {
     let world = [floor()];
     let build_with = |change: fn(&mut AgentProfile)| {
