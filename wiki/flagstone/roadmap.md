@@ -1,0 +1,82 @@
+# Flagstone: roadmap
+
+**Status:** living. Owns the order of strategy work: milestones, feature sequence, gates and decisions.
+Item status is not tracked here; it lives on the [project board](https://github.com/users/WrackedFella/projects/1)
+and in the issues. The shared [engine and FPS roadmap](../../_todo/ROADMAP.md) owns M0–M5, the engine waves
+and the FPS line; the engine items this page names (the 2.x numbers) are defined there.
+
+Design intent is in the [vision](vision.md) and the [GDD](gdd.md). Update this page when a milestone gate
+closes, a feature moves, or a decision is made.
+
+## Milestones
+
+Four milestones named for what the player can do. They sit inside the shared roadmap's M2. FM1 and FM2 may
+overlap: their cards touch different code, and the only shared surface is the load path.
+
+```mermaid
+flowchart LR
+    FM1["FM1 Trust the world<br/>SG-F2, SG-F1-04"] --> FM3
+    FM2["FM2 Run the colony from above<br/>SG-F5"] --> FM3
+    FM3["FM3 Pawns dig what I mark<br/>SG-F4"] --> FM4["FM4 Build, find ore, polish<br/>SG-F3, SG-F6, polish round"]
+    FM3 -.-> L["SG-F7 light follows edits"]
+```
+
+| Milestone | Intent | Gate | Features |
+|---|---|---|---|
+| **FM1 Trust the world** | A world loads where I left it, mining never tears it, and what I mine tells me so. Fix this before building on it. | SG-F2 exit criteria hold; SG-F1-04 shipped | [SG-F2](https://github.com/WrackedFella/moho/issues/308), SG-F1-04 |
+| **FM2 Run the colony from above** | Strategy mode is a place to be: pan, zoom, select a pawn, step into it and back. | SG-F5 exit criteria hold | [SG-F5](https://github.com/WrackedFella/moho/issues/309) |
+| **FM3 Pawns dig what I mark** | The colony does something without me at the controls; the first job loop that later job types reuse. | SG-F4 exit criteria hold, including marks surviving save and load | [SG-F4](https://github.com/WrackedFella/moho/issues/310) |
+| **FM4 Build, find ore, polish** | The loop closes (mine, build, progress) and the game stops feeling like a prototype. | None in M2 | [SG-F3](https://github.com/WrackedFella/moho/issues/312), SG-F6, rest of SG-F1, polish round |
+
+Order inside FM1: spawn on solid ground and survive quit/crash first (in parallel), then no see-through gaps,
+with the pickup popup any time. Inside FM2: camera and possess-and-return in parallel, then click-select.
+SG-F4's card-writing pass starts during FM2 so FM3 does not stall behind it.
+
+Only the open milestone is carded. SG-F3 and later hold intent and exit criteria until the roadmap reaches them.
+
+## Features
+
+Feature order, with the engine items each needs. SG-F3 and SG-F6 are not M2 gate items.
+
+| # | Feature | Engine items it needs | Notes |
+|---|---|---|---|
+| S.1 | [SG-F1](https://github.com/WrackedFella/moho/issues/311) possessing a pawn feels right | 2.1 for feel | — |
+| S.2 | [SG-F2](https://github.com/WrackedFella/moho/issues/308) a saved world comes back as I left it: [SG-F2-01](https://github.com/WrackedFella/moho/issues/341), [SG-F2-03](https://github.com/WrackedFella/moho/issues/343), [SG-F2-02](https://github.com/WrackedFella/moho/issues/342) | none | ENG-F10-03 is done, so these no longer race the voxel move; its load-path card covers the #264 gap (scene load skips releasing held keys) |
+| S.3 | [SG-F5](https://github.com/WrackedFella/moho/issues/309) run the colony from above, step into a pawn | 2.6, 2.7 (both done) | block and pawn picking are strategy-line; its pan, zoom and possess cards can run alongside S.2 |
+| S.4 | [SG-F4](https://github.com/WrackedFella/moho/issues/310) pawns dig what I mark | 2.8 (2.5.1, 2.7 done; 2.9, 2.10 delivered, adopt after the skeleton) | first new persisted type; #303 voxel routing is its card. Before SG-F3 |
+| S.4.1 | [SG-F7](https://github.com/WrackedFella/moho/issues/470) light follows what I dig and build: [SG-F7-01](https://github.com/WrackedFella/moho/issues/471) → [SG-F7-02](https://github.com/WrackedFella/moho/issues/472); [SG-F7-03](https://github.com/WrackedFella/moho/issues/473) after #467; [SG-F7-04](https://github.com/WrackedFella/moho/issues/474) (first emissive block) after #473 and [ENG-F24-05](https://github.com/WrackedFella/moho/issues/469); SG-F7-05 with ENG-F29-01; [SG-F7-06](https://github.com/WrackedFella/moho/issues/482) (smooth AO) after SG-F7-05 | ENG-F24-05 (#469) for SG-F7-04; 2.17 ENG-F29-01 for SG-F7-05 | M2 (Justin, 2026-10-21); dug shafts and caves need correct sky light for S.4 |
+| S.5 | [SG-F3](https://github.com/WrackedFella/moho/issues/312) buildings and construction (not a gate item) | 2.7 (placement preview) | after SG-F4 |
+| S.6 | SG-F6 new worlds look intentional ([draft](../../_todo/flagstone/SG-F6-world-generation/_feature.md), not filed; not a gate item) | none | waits for the user to rank the world-generation problems |
+
+## Open dependencies
+
+- **Navigation over changing terrain** ([#303](https://github.com/WrackedFella/moho/issues/303)) is strategy-line
+  work inside SG-F4 and its biggest unknown. It decides whether SG-F4 is the first consumer of an entity-component
+  system ([ADR-0004](../../_todo/adr/0004-entity-storage-without-a-general-ecs.md)).
+- **World generation ranking.** SG-F6 has no exit criteria until Justin ranks the world-generation problems
+  (see the [GDD open questions](gdd.md#open-questions)).
+- **Possession feel** (rest of SG-F1) gets cards after the FM2 playtest, not before.
+
+## Out of scope for now
+
+| Idea | Why it waits | Revisit when |
+|---|---|---|
+| Strategy water | Needs voxel water in strategy terrain first | Justin schedules it |
+| Shared pathfinding between strategy routes and the engine's static-level navigation | Neither exists yet | Both exist |
+| Automation, progression, needs, combat, other worlds | No named consumer | Their features are proposed ([GDD, deferred ideas](gdd.md#deferred-ideas)) |
+
+## Decisions
+
+| Date | Decision | Record |
+|---|---|---|
+| 2026-10-04 | [SG-F2-03](https://github.com/WrackedFella/moho/issues/343) is reproduce-first and no longer waits on the save-format migration | [SG-F2-03](https://github.com/WrackedFella/moho/issues/343) |
+| 2026-10-14 | Strategy mode is the primary game; first person is possession of one pawn. Strategy order is SG-F2, SG-F5, SG-F4, SG-F3 (pawns before buildings); SG-F1 any time, SG-F6 once ranked; gameplay UI and sound ride inside each feature | [SG-F5](https://github.com/WrackedFella/moho/issues/309), [SG-F4](https://github.com/WrackedFella/moho/issues/310), [SG-F3](https://github.com/WrackedFella/moho/issues/312) |
+| 2026-10-19 | Strategy plan in four milestones named for what the player can do: trust the world (SG-F2, SG-F1-04), run the colony from above (SG-F5), pawns dig what I mark (SG-F4), build and polish (SG-F3, SG-F6); the first two may overlap, and the SG-F4 BA pass starts during SG-F5 | [flagstone-milestones](https://github.com/WrackedFella/moho/issues/308) |
+| 2026-10-21 | New SG-F7 (light follows edits) in M2; the first emissive block (glowing crystal, solid-colour emission) lands with it | [SG-F7](https://github.com/WrackedFella/moho/issues/470) |
+| 2026-10-22 | Strategy GDD and roadmap move into the wiki under `wiki/flagstone/`; the shared roadmap keeps the engine and FPS lines and links here | This page |
+
+## Where things live
+
+- Feature and card text, status and specs: the GitHub issues and the board.
+- Draft features not yet filed: [`_todo/flagstone/`](../../_todo/flagstone/).
+- Planning rules (IDs, card lifecycle): [`_todo/_STANDARDS.md`](../../_todo/_STANDARDS.md).
