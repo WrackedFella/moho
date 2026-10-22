@@ -153,6 +153,15 @@ const KNOWN_KEYS: &[(&str, &str, Setter)] = &[
             parse_u32(s).filter(|&v| v > 0),
         )
     }),
+    ("content", "mods", |p, s| {
+        p.content_mods = s
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .collect();
+        Some(())
+    }),
 ];
 
 type SectionKeys = HashMap<String, Option<String>>;
@@ -302,6 +311,22 @@ mod tests {
     use crate::prefs::WindowMode;
     use proptest::prelude::*;
     use std::fmt::Write as _;
+
+    #[test]
+    fn content_mods_keep_their_order() {
+        let (prefs, issues) = Prefs::parse("[content]\nmods =  b , a,, c ,\n");
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(prefs.content_mods(), ["b", "a", "c"]);
+    }
+
+    #[test]
+    fn an_empty_content_mods_value_lists_no_mods() {
+        let (prefs, issues) = Prefs::parse("[content]\nmods = , ,\n");
+
+        assert_eq!(issues, vec![]);
+        assert!(prefs.content_mods().is_empty());
+    }
 
     #[test]
     fn warning_display_names_file_and_detail_for_each_issue() {

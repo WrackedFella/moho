@@ -9,7 +9,7 @@ splits the `console` entry from the game's own `[bindings]` (`split_console_bind
 neither loader warns about the other's key.
 
 `Prefs::load` creates the file with defaults if it is missing. Missing sections or keys
-take their defaults silently. `Prefs::save` writes every key below.
+take their defaults silently. `Prefs::save` writes every key below; `[content]` is written only when `mods` is non-empty.
 
 Anything else that can't be used is logged as a warning and falls back:
 
@@ -80,6 +80,7 @@ opened there still saves to the default path).
 | | `fps_max` | unsigned integer frames per second applied while `vsync` is off; `0` is uncapped; the Video tab's cap control clamps a value above 1000 to 1000 when shown | `300` |
 | `[world]` | `load_radius` `unload_radius` | integer chunks | `8` `12` |
 | | `chunks_per_frame` | unsigned integer, 1 or more | `4` |
+| `[content]` | `mods` | comma-separated mod names, order kept, blanks dropped; see [content format](content-format.md#mods) | none |
 | `[debug]` | one key per game debug value | free text, see below | none |
 
 `mouse_sensitivity` is on Source's scale: one count turns `0.022` degrees times the
