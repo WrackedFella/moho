@@ -314,6 +314,11 @@ Settled entries keep their numbers so references stay stable.
 18. **Special equipment:** weapons and armor only, or individual components too? What counts as a drawback? Decide before the first such item is carded (after Phase 4).
 19. **Left and right arms:** one arm penalty table for now. Does a dominant-arm distinction (two-handed aim lost with either, pistol hand matters) earn its animation and handedness cost? Decide after the Phase 4 playtest.
 20. **Temporary head statuses:** a concussion right after a blow to the head (dizziness, short blackouts behind an accessibility toggle) as an event status on top of the damage curve. Deferred; decide from the Phase 4 playtest.
+21. **Inventory in awkward postures:** may the inventory screen open while prone or leaning, and does it cost extra time? Default: it opens in every stance at the usual cost; revisit after the FPS-M1.2 playtest.
+22. **Repair vocabulary:** repair parts, cleaning kits, armor repair kits and the toolkit (which raises the repair cap, §4.3) are four items with one rule each. Does the toolkit carry uses, a condition, or neither (§4.1 lifecycle rule)? Decide before FPS-M3 is carded, with what the Phase 3 ledger values as "repair cost".
+23. **Tool slots:** the slot list (§4.1) has none. Reserve quick tool slots with the first tool item (the Phase 3 toolkit), or let tools live on the rig? Decide with that card.
+24. **One-handed weapons:** a Broken arm caps the player to one-handed weapons (§4.7), so the item model needs that class or flag. Name it when Phase 2 is carded; pistols are the first case.
+25. **Ledger scope:** the Phase 3 end-of-round ledger and the Phase 6 full ledger (§4.9) list overlapping lines. Which lines belong to Phase 3 (rounds, wear, armor, meds), and which wait for the economy (payouts, loot value, food, lodging)?
 
 ## 10 Engine fit and engine requests
 
