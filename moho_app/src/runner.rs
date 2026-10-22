@@ -85,27 +85,27 @@ struct Runner<G: Game> {
     error: Option<AppError>,
 }
 
-impl<G: Game> Runner<G> {
-    /// Feeds key and focus events to the toggle detector; without one everything passes.
-    fn observe_toggle(&mut self, event: &WindowEvent) -> Observed {
-        let Some(toggles) = &mut self.toggles else {
-            return Observed::Pass;
-        };
-        match event {
-            WindowEvent::KeyboardInput { event, .. } => match event.physical_key {
-                PhysicalKey::Code(code) => {
-                    toggles.observe(code, event.state.is_pressed(), event.repeat)
-                }
-                PhysicalKey::Unidentified(_) => Observed::Pass,
-            },
-            WindowEvent::Focused(false) => {
-                toggles.focus_lost();
-                Observed::Pass
+/// Feeds key and focus events to the toggle detector; without one everything passes.
+fn observe_toggle(toggles: Option<&mut ToggleKeys>, event: &WindowEvent) -> Observed {
+    let Some(toggles) = toggles else {
+        return Observed::Pass;
+    };
+    match event {
+        WindowEvent::KeyboardInput { event, .. } => match event.physical_key {
+            PhysicalKey::Code(code) => {
+                toggles.observe(code, event.state.is_pressed(), event.repeat)
             }
-            _ => Observed::Pass,
+            PhysicalKey::Unidentified(_) => Observed::Pass,
+        },
+        WindowEvent::Focused(false) => {
+            toggles.focus_lost();
+            Observed::Pass
         }
+        _ => Observed::Pass,
     }
+}
 
+impl<G: Game> Runner<G> {
     fn flip_window_mode(&mut self, event_loop: &ActiveEventLoop) {
         self.mode = self.mode.toggled();
         if let Some(window) = &self.window {
@@ -207,7 +207,7 @@ impl<G: Game> ApplicationHandler for Runner<G> {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
-        match self.observe_toggle(&event) {
+        match observe_toggle(self.toggles.as_mut(), &event) {
             Observed::Pass => {}
             Observed::Swallow => return,
             Observed::Flip => {
@@ -336,5 +336,26 @@ mod tests {
         for event in &others {
             assert_eq!(route(event), Route::Forward, "{event:?}");
         }
+    }
+
+    #[test]
+    fn losing_focus_forgets_a_held_alt_so_enter_alone_passes() {
+        use winit::keyboard::KeyCode;
+
+        let mut toggles = ToggleKeys::new(Vec::new());
+        toggles.observe(KeyCode::AltLeft, true, false);
+
+        let observed = observe_toggle(Some(&mut toggles), &WindowEvent::Focused(false));
+
+        assert_eq!(observed, Observed::Pass);
+        assert_eq!(toggles.observe(KeyCode::Enter, true, false), Observed::Pass);
+    }
+
+    #[test]
+    fn without_a_detector_every_event_passes() {
+        assert_eq!(
+            observe_toggle(None, &WindowEvent::Focused(false)),
+            Observed::Pass
+        );
     }
 }
