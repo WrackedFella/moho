@@ -223,6 +223,9 @@ impl RendererBackend for Renderer<'_> {
     fn set_ui_source(&mut self, source: Option<UiSource>) {
         self.set_ui_source(source);
     }
+    fn set_vsync(&mut self, on: bool) {
+        self.set_vsync(on);
+    }
     fn set_debug_view(&mut self, mode: Option<u32>) {
         self.set_debug_view(mode);
     }

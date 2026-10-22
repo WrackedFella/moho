@@ -74,6 +74,15 @@ enum RenderRequest {
     Vsync(bool),
 }
 
+/// The frame-rate cap `prefs` asks for: none while vsync paces frames or `fps_max` is 0.
+fn effective_frame_cap(prefs: &Prefs) -> Option<std::num::NonZeroU32> {
+    if prefs.vsync() {
+        None
+    } else {
+        std::num::NonZeroU32::new(prefs.fps_max())
+    }
+}
+
 struct App {
     entities: SceneEntities,
     scene: moho_renderer::Scene,
@@ -98,6 +107,10 @@ struct App {
 
     // Renderer changes queued by the tick, applied by `frame`
     pending_render: Vec<RenderRequest>,
+
+    /// Frame cap `frame` hands to the loop once `frame_cap_changed`; `None` is no cap.
+    pending_frame_cap: Option<std::num::NonZeroU32>,
+    frame_cap_changed: bool,
 
     saves_dir: std::path::PathBuf,
 
@@ -175,7 +188,17 @@ impl App {
         let config = crate::app::config::AppConfig::from_prefs_struct(prefs);
         self.input.actions = crate::app::initializer::build_actions(&config);
         self.pending_audio_settings = Some(moho_audio::AudioSettings::from_prefs(&config.prefs));
+        if config.prefs.vsync() != self.prefs.vsync() {
+            self.pending_render
+                .push(RenderRequest::Vsync(config.prefs.vsync()));
+        }
+        self.set_pending_frame_cap(effective_frame_cap(&config.prefs));
         self.prefs = config.prefs;
+    }
+
+    fn set_pending_frame_cap(&mut self, cap: Option<std::num::NonZeroU32>) {
+        self.pending_frame_cap = cap;
+        self.frame_cap_changed = true;
     }
 
     fn from_config(config: crate::app::config::AppConfig) -> Self {
@@ -215,6 +238,8 @@ impl App {
             mesh_handle: 0,
             cube_mesh_handle: 0,
             pending_render: Vec::new(),
+            pending_frame_cap: None,
+            frame_cap_changed: false,
             saves_dir: std::path::PathBuf::from("saves"),
             exit_requested: false,
             main_menu_requested: false,

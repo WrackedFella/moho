@@ -55,10 +55,27 @@ pub struct PresentChoice {
 /// Picks the present mode for `vsync` from the modes the surface `supported`.
 ///
 /// On gives `Fifo`. Off gives `Immediate`, else `Mailbox`, else `Fifo` with a fallback reason.
-pub fn choose_present_mode(_vsync: bool, _supported: &[wgpu::PresentMode]) -> PresentChoice {
-    PresentChoice {
-        mode: wgpu::PresentMode::Fifo,
-        fallback: None,
+pub fn choose_present_mode(vsync: bool, supported: &[wgpu::PresentMode]) -> PresentChoice {
+    use wgpu::PresentMode::{Fifo, Immediate, Mailbox};
+
+    if vsync {
+        return PresentChoice {
+            mode: Fifo,
+            fallback: None,
+        };
+    }
+    match [Immediate, Mailbox]
+        .into_iter()
+        .find(|mode| supported.contains(mode))
+    {
+        Some(mode) => PresentChoice {
+            mode,
+            fallback: None,
+        },
+        None => PresentChoice {
+            mode: Fifo,
+            fallback: Some("the GPU offers neither Immediate nor Mailbox presentation"),
+        },
     }
 }
 
@@ -66,7 +83,7 @@ pub fn choose_present_mode(_vsync: bool, _supported: &[wgpu::PresentMode]) -> Pr
 pub struct DeviceSetup<'a> {
     pub(crate) _instance: wgpu::Instance,
     pub(crate) surface: wgpu::Surface<'a>,
-    pub(crate) _adapter: wgpu::Adapter,
+    pub(crate) present_modes: Vec<wgpu::PresentMode>,
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
     pub(crate) config: wgpu::SurfaceConfiguration,
@@ -161,7 +178,8 @@ impl<'a> DeviceSetup<'a> {
         .map_err(|e| DeviceInitError::DeviceCreation(format!("{e:?}")))?;
 
         // 6. Configure Surface
-        let supported_formats = surface.get_capabilities(&adapter).formats;
+        let capabilities = surface.get_capabilities(&adapter);
+        let supported_formats = capabilities.formats;
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: supported_formats[0],
@@ -185,7 +203,7 @@ impl<'a> DeviceSetup<'a> {
         Ok(DeviceSetup {
             _instance: instance,
             surface,
-            _adapter: adapter,
+            present_modes: capabilities.present_modes,
             device,
             queue,
             config,

@@ -48,6 +48,8 @@ pub struct FrameContext<'a> {
     audio: Option<&'a mut AudioSystem>,
     exit_requested: bool,
     requests: LoopRequests,
+    frame_cap: Option<NonZeroU32>,
+    frame_cap_requested: bool,
 }
 
 impl<'a> FrameContext<'a> {
@@ -67,6 +69,8 @@ impl<'a> FrameContext<'a> {
             audio,
             exit_requested: false,
             requests: LoopRequests::default(),
+            frame_cap: None,
+            frame_cap_requested: false,
         }
     }
 
@@ -119,12 +123,15 @@ impl<'a> FrameContext<'a> {
     }
 
     /// Asks the runner to draw at most `fps` frames per second; `None` removes the cap.
-    pub fn set_frame_cap(&mut self, _fps: Option<NonZeroU32>) {}
+    pub fn set_frame_cap(&mut self, fps: Option<NonZeroU32>) {
+        self.frame_cap = fps;
+        self.frame_cap_requested = true;
+    }
 
     /// The last frame cap the game asked for: `None` if it never asked, `Some(None)`
     /// if it asked for no cap.
     pub fn requested_frame_cap(&self) -> Option<Option<NonZeroU32>> {
-        None
+        self.frame_cap_requested.then_some(self.frame_cap)
     }
 
     pub(crate) fn loop_requests(&self) -> LoopRequests {

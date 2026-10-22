@@ -233,6 +233,14 @@ impl Prefs {
         self.window_resolution = (width, height);
     }
 
+    pub fn vsync_mut(&mut self) -> &mut bool {
+        &mut self.vsync
+    }
+
+    pub fn fps_max_mut(&mut self) -> &mut u32 {
+        &mut self.fps_max
+    }
+
     pub fn set_vsync(&mut self, on: bool) {
         self.vsync = on;
     }
@@ -330,6 +338,8 @@ impl Prefs {
              window_mode={window_mode}\n\
              window_width={width}\n\
              window_height={height}\n\
+             vsync={vsync}\n\
+             fps_max={fps_max}\n\
              \n[world]\n\
              load_radius={load}\n\
              unload_radius={unload}\n\
@@ -348,6 +358,8 @@ impl Prefs {
             window_mode = self.window_mode.as_str(),
             width = self.window_resolution.0,
             height = self.window_resolution.1,
+            vsync = self.vsync,
+            fps_max = self.fps_max,
             load = self.world_load_radius,
             unload = self.world_unload_radius,
             chunks = self.world_chunks_per_frame,

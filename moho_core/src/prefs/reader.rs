@@ -139,6 +139,8 @@ const KNOWN_KEYS: &[(&str, &str, Setter)] = &[
     ("video", "window_height", |p, s| {
         set(&mut p.window_resolution.1, parse_u32(s))
     }),
+    ("video", "vsync", |p, s| set(&mut p.vsync, parse_bool(s))),
+    ("video", "fps_max", |p, s| set(&mut p.fps_max, parse_u32(s))),
     ("world", "load_radius", |p, s| {
         set(&mut p.world_load_radius, parse_u32(s))
     }),

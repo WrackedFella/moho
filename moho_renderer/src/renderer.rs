@@ -10,6 +10,7 @@ pub struct Renderer<'a> {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    present_modes: Vec<wgpu::PresentMode>,
     pipeline: wgpu::RenderPipeline,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
@@ -101,6 +102,7 @@ impl<'a> Renderer<'a> {
             device: device_setup.device,
             queue: device_setup.queue,
             config: device_setup.config,
+            present_modes: device_setup.present_modes,
             pipeline: pipeline_setup.main_pipeline().clone(),
             camera_buffer: resources.camera_buffer,
             camera_bind_group: resources.camera_bind_group,
@@ -533,6 +535,17 @@ impl<'a> Renderer<'a> {
             _ => crate::shadow::PcssQuality::Medium,
         };
         self.shadow.pcss_settings.quality = quality_enum;
+    }
+
+    /// Choose whether presented frames wait for the display refresh, and reconfigure
+    /// the surface. Turning vsync off on a GPU with no low-latency mode keeps vsync on.
+    pub fn set_vsync(&mut self, on: bool) {
+        let choice = crate::device::choose_present_mode(on, &self.present_modes);
+        if let Some(reason) = choice.fallback {
+            tracing::warn!(reason, "vsync stays on");
+        }
+        self.config.present_mode = choice.mode;
+        self.surface.configure(&self.device, &self.config);
     }
 
     pub fn set_view_height(&mut self, height: Option<f32>) {

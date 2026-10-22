@@ -172,7 +172,7 @@ fn slider_row(
 
 /// A labelled "Enable" checkbox for one boolean pref, decorated and marked dirty
 /// while it differs from the saved value.
-fn toggle_row(
+pub(super) fn toggle_row(
     menu: &mut SettingsMenu,
     ui: &mut egui::Ui,
     label_width: f32,

@@ -1,8 +1,9 @@
 /// Renders the Video tab content.
 ///
 /// Provides window mode and resolution settings.
-use super::SettingsMenu;
-use crate::prefs::{RESOLUTION_PRESETS, WindowMode};
+use super::controls_tab::toggle_row;
+use super::{SettingsField, SettingsMenu};
+use crate::prefs::{Prefs, RESOLUTION_PRESETS, WindowMode};
 
 pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
     ui.vertical_centered(|ui| {
@@ -109,7 +110,59 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
                 });
             });
         }
+
+        ui.add_space(8.0);
+
+        toggle_row(
+            menu,
+            ui,
+            label_width,
+            "Vsync:",
+            SettingsField::Vsync,
+            Prefs::vsync,
+            Prefs::vsync_mut,
+        );
+
+        ui.add_space(8.0);
+
+        frame_cap_row(menu, ui, label_width);
     });
+}
+
+/// The frame-rate cap, editable only while staged vsync is off.
+fn frame_cap_row(menu: &mut SettingsMenu, ui: &mut egui::Ui, label_width: f32) {
+    let cap_enabled = !menu.state.staged().vsync();
+    let is_dirty = menu.state.staged().fps_max() != menu.state.prefs().fps_max();
+
+    ui.horizontal(|ui| {
+        ui.allocate_ui_with_layout(
+            egui::vec2(label_width, 28.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.add_enabled(cap_enabled, egui::Label::new("Frame-rate cap:"));
+            },
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_enabled_ui(cap_enabled, |ui| {
+                let drag = ui.add(
+                    egui::DragValue::new(menu.state.staged_mut().fps_max_mut())
+                        .range(0..=1000)
+                        .custom_formatter(|value, _| {
+                            if value == 0.0 {
+                                "Unlimited".to_owned()
+                            } else {
+                                format!("{value:.0}")
+                            }
+                        }),
+                );
+                SettingsMenu::paint_dirty_decor(ui, &drag, is_dirty);
+            });
+        });
+    });
+
+    if is_dirty {
+        menu.state.mark_dirty(SettingsField::FpsMax);
+    }
 }
 
 fn mode_label(mode: WindowMode) -> &'static str {

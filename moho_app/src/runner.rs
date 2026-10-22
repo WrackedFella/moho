@@ -3,6 +3,8 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::pacing::FramePacer;
+
 use moho_audio::AudioSystem;
 use moho_renderer::RendererBackend;
 use winit::application::ApplicationHandler;
@@ -56,6 +58,7 @@ pub fn run<G: Game + 'static>(game: G, config: AppConfig) -> Result<(), AppError
         audio: None,
         last_wake: Instant::now(),
         last_frame: Instant::now(),
+        pacer: FramePacer::default(),
         error: None,
     };
 
@@ -75,6 +78,7 @@ struct Runner<G: Game> {
     audio: Option<AudioSystem>,
     last_wake: Instant,
     last_frame: Instant,
+    pacer: FramePacer,
     error: Option<AppError>,
 }
 
@@ -147,7 +151,18 @@ impl<G: Game> ApplicationHandler for Runner<G> {
 
         self.sim.run_ticks(&mut self.game, elapsed);
 
-        event_loop.set_control_flow(ControlFlow::WaitUntil(now + self.sim.until_next_tick()));
+        let next_tick = now + self.sim.until_next_tick();
+        let wake = match self.pacer.next_due() {
+            Some(frame_due) => next_tick.min(frame_due),
+            None => next_tick,
+        };
+        if self.pacer.is_capped()
+            && self.pacer.due(now)
+            && let Some(window) = &self.window
+        {
+            window.request_redraw();
+        }
+        event_loop.set_control_flow(ControlFlow::WaitUntil(wake));
     }
 
     fn window_event(
@@ -173,10 +188,17 @@ impl<G: Game> ApplicationHandler for Runner<G> {
                 self.game.frame(&mut ctx, self.sim.alpha());
                 let requests = ctx.loop_requests();
                 let exit = ctx.exit_requested();
+                let frame_cap = ctx.requested_frame_cap();
                 self.sim.apply_requests(requests);
+                if let Some(fps) = frame_cap {
+                    self.pacer = FramePacer::from_fps(fps);
+                }
+                self.pacer.frame_drawn(now);
                 if exit {
                     event_loop.exit();
-                } else if let Some(window) = &self.window {
+                } else if !self.pacer.is_capped()
+                    && let Some(window) = &self.window
+                {
                     window.request_redraw();
                 }
                 return;
