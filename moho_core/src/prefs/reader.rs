@@ -106,6 +106,12 @@ const KNOWN_KEYS: &[(&str, &str, Setter)] = &[
     ("prefs", "invert_mouse_y", |p, s| {
         set(&mut p.invert_mouse_y, parse_bool(s))
     }),
+    ("prefs", "mouse_acceleration", |p, s| {
+        set(&mut p.mouse_acceleration, parse_bool(s))
+    }),
+    ("prefs", "mouse_acceleration_strength", |p, s| {
+        set(&mut p.mouse_acceleration_strength, parse_f32(s))
+    }),
     ("audio", "sound_effect_volume", |p, s| {
         set(&mut p.audio_sound_effect_volume, parse_f32(s))
     }),
@@ -621,6 +627,60 @@ mod tests {
     }
 
     #[test]
+    fn acceleration_settings_round_trip() {
+        for on in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config").join("prefs.ini");
+            let prefs = Prefs::default()
+                .with_mouse_acceleration(on)
+                .with_mouse_acceleration_strength(0.25);
+
+            prefs.save_to(&path).unwrap();
+            let (loaded, warnings) = Prefs::load_from(&path);
+
+            assert_eq!(warnings, vec![], "acceleration {on}");
+            assert_eq!(loaded.mouse_acceleration(), on);
+            assert_eq!(loaded.mouse_acceleration_strength(), 0.25);
+            let ini = prefs.to_ini_string();
+            assert!(ini.contains(&format!("mouse_acceleration={on}\n")), "{ini}");
+            assert!(ini.contains("mouse_acceleration_strength=0.25\n"), "{ini}");
+        }
+    }
+
+    #[test]
+    fn negative_acceleration_strength_loads_unchanged() {
+        let (prefs, issues) = Prefs::parse("[prefs]\nmouse_acceleration_strength=-0.2\n");
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(prefs.mouse_acceleration_strength(), -0.2);
+    }
+
+    #[test]
+    fn acceleration_defaults_when_the_keys_are_absent() {
+        let (prefs, issues) = Prefs::parse("[prefs]\nmouse_sensitivity=2\n");
+
+        assert_eq!(issues, vec![]);
+        assert!(!prefs.mouse_acceleration());
+        assert_eq!(prefs.mouse_acceleration_strength(), 0.04);
+    }
+
+    #[test]
+    fn malformed_acceleration_warns_and_keeps_defaults() {
+        let (prefs, issues) =
+            Prefs::parse("[prefs]\nmouse_acceleration=yes\nmouse_acceleration_strength=fast\n");
+
+        assert_eq!(
+            issues,
+            vec![
+                malformed("prefs", "mouse_acceleration", Some("yes")),
+                malformed("prefs", "mouse_acceleration_strength", Some("fast")),
+            ]
+        );
+        assert!(!prefs.mouse_acceleration());
+        assert_eq!(prefs.mouse_acceleration_strength(), 0.04);
+    }
+
+    #[test]
     fn a_saved_sensitivity_is_read_unchanged_on_the_new_scale() {
         let (prefs, issues) = Prefs::parse("[prefs]\nmouse_sensitivity=1\n");
 
@@ -899,6 +959,8 @@ mod tests {
              mouse_sensitivity=3\n\
              mouse_smoothing=false\n\
              invert_mouse_y=false\n\
+             mouse_acceleration=false\n\
+             mouse_acceleration_strength=0.04\n\
              \n[audio]\n\
              sound_effect_volume=8.0\n\
              music_volume=6.0\n\

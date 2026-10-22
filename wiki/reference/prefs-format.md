@@ -57,7 +57,7 @@ opened there still saves to the default path).
   `App::adopt_settings`.
 - **`adopt_settings`** replaces `App::prefs` and rebuilds the input `ActionMap` through
   `build_actions`, the same function startup uses, so new bindings, sensitivity,
-  invert-Y and mouse smoothing apply without a restart. It also queues `AudioSettings::from_prefs`
+  invert-Y, mouse smoothing and mouse acceleration apply without a restart. It also queues `AudioSettings::from_prefs`
   (`moho_audio`), which the next frame applies to the audio engine. It does not write the file.
 - **Startup** builds the same `AudioSettings` from the loaded prefs and applies it on the
   first frame. Each category volume is its pref divided by ten and clamped to 0..=1; 0 is silent.
@@ -69,6 +69,8 @@ opened there still saves to the default path).
 | `[prefs]` | `mouse_sensitivity` | finite float, Source scale (see below) | `3` |
 | | `invert_mouse_y` | `true` `false` `1` `0` (any case) | `false` |
 | | `mouse_smoothing` | `true` `false` `1` `0` (any case) | `false` |
+| | `mouse_acceleration` | `true` `false` `1` `0` (any case) | `false` |
+| | `mouse_acceleration_strength` | finite float, Source `m_customaccel_scale` scale; negatives load unchanged and act as 0; the Settings screen clamps the value to 0 to 1 when shown | `0.04` |
 | `[bindings]` | one key per action id | binding list | per action, below |
 | `[audio]` | `sound_effect_volume` `music_volume` `ui_volume` `voice_volume` | finite float on a 0 to 10 scale (the UI offers 0.0 to 10.0), written with 1 decimal | `8.0` `6.0` `7.0` `9.0` |
 | `[graphics]` | `shadow_quality` `ssao_quality` | unsigned integer; the UI offers 0 (off) to 4 (ultra) | `3` `3` |
@@ -81,6 +83,10 @@ opened there still saves to the default path).
 `mouse_sensitivity` is on Source's scale: one count turns `0.022` degrees times the
 value (`source_look_per_count`, `moho_input/src/action_map.rs`), so `3` is the default feel.
 `invert_mouse_y` negates the mouse's vertical counts only; the stick is unaffected.
+`mouse_acceleration_strength` applies only while `mouse_acceleration` is on. It adds
+`source_look_per_count(strength)` look per count for each count per millisecond of mouse
+speed. Values carry over from Source's `m_customaccel_scale` only approximately: Source's
+acceleration varies with frame rate, and ours matches it at 1000 fps.
 
 `[bindings]` is stored by `Prefs` as raw text (`Prefs::bindings`, `Prefs::set_bindings`);
 the game interprets it. `ActionBindings::load` (`moho_input`) reads it against the

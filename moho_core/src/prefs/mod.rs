@@ -54,6 +54,8 @@ pub struct Prefs {
     mouse_sensitivity: f32,
     mouse_smoothing: bool,
     invert_mouse_y: bool,
+    mouse_acceleration: bool,
+    mouse_acceleration_strength: f32,
     // Audio settings (values 0.0 to 10.0)
     audio_sound_effect_volume: f32,
     audio_music_volume: f32,
@@ -133,6 +135,12 @@ impl Prefs {
     pub fn invert_mouse_y(&self) -> bool {
         self.invert_mouse_y
     }
+    pub fn mouse_acceleration(&self) -> bool {
+        self.mouse_acceleration
+    }
+    pub fn mouse_acceleration_strength(&self) -> f32 {
+        self.mouse_acceleration_strength
+    }
     pub fn sound_effect_volume(&self) -> f32 {
         self.audio_sound_effect_volume
     }
@@ -177,6 +185,12 @@ impl Prefs {
     }
     pub fn invert_mouse_y_mut(&mut self) -> &mut bool {
         &mut self.invert_mouse_y
+    }
+    pub fn mouse_acceleration_mut(&mut self) -> &mut bool {
+        &mut self.mouse_acceleration
+    }
+    pub fn mouse_acceleration_strength_mut(&mut self) -> &mut f32 {
+        &mut self.mouse_acceleration_strength
     }
     pub fn sound_effect_volume_mut(&mut self) -> &mut f32 {
         &mut self.audio_sound_effect_volume
@@ -223,6 +237,14 @@ impl Prefs {
         self.invert_mouse_y = v;
         self
     }
+    pub fn with_mouse_acceleration(mut self, v: bool) -> Self {
+        self.mouse_acceleration = v;
+        self
+    }
+    pub fn with_mouse_acceleration_strength(mut self, v: f32) -> Self {
+        self.mouse_acceleration_strength = v;
+        self
+    }
 }
 
 impl Default for Prefs {
@@ -231,6 +253,8 @@ impl Default for Prefs {
             mouse_sensitivity: 3.0,
             mouse_smoothing: false,
             invert_mouse_y: false,
+            mouse_acceleration: false,
+            mouse_acceleration_strength: 0.04,
             // Audio volumes use a 0 to 10 scale
             audio_sound_effect_volume: 8.0,
             audio_music_volume: 6.0,
@@ -272,6 +296,8 @@ impl Prefs {
              mouse_sensitivity={mouse_sensitivity}\n\
              mouse_smoothing={mouse_smoothing}\n\
              invert_mouse_y={invert_mouse_y}\n\
+             mouse_acceleration={mouse_acceleration}\n\
+             mouse_acceleration_strength={mouse_acceleration_strength}\n\
              \n[audio]\n\
              sound_effect_volume={sfx:.1}\n\
              music_volume={music:.1}\n\
@@ -291,6 +317,8 @@ impl Prefs {
             mouse_sensitivity = self.mouse_sensitivity,
             mouse_smoothing = self.mouse_smoothing,
             invert_mouse_y = self.invert_mouse_y,
+            mouse_acceleration = self.mouse_acceleration,
+            mouse_acceleration_strength = self.mouse_acceleration_strength,
             sfx = self.audio_sound_effect_volume,
             music = self.audio_music_volume,
             ui = self.audio_ui_volume,
@@ -387,6 +415,14 @@ mod tests {
     }
 
     #[test]
+    fn acceleration_is_off_by_default() {
+        let prefs = Prefs::default();
+
+        assert!(!prefs.mouse_acceleration());
+        assert_eq!(prefs.mouse_acceleration_strength(), 0.04);
+    }
+
+    #[test]
     fn with_invert_mouse_y_sets_the_flag() {
         assert!(Prefs::default().with_invert_mouse_y(true).invert_mouse_y());
         assert!(
@@ -404,6 +440,27 @@ mod tests {
         *prefs.invert_mouse_y_mut() = true;
 
         assert!(prefs.invert_mouse_y());
+    }
+
+    #[test]
+    fn mouse_acceleration_mut_edits_the_flag() {
+        let mut prefs = Prefs::default().with_mouse_acceleration(false);
+
+        *prefs.mouse_acceleration_mut() = true;
+        let after_enable = prefs.mouse_acceleration();
+        *prefs.mouse_acceleration_mut() = false;
+
+        assert!(after_enable);
+        assert!(!prefs.mouse_acceleration());
+    }
+
+    #[test]
+    fn mouse_acceleration_strength_mut_edits_the_value() {
+        let mut prefs = Prefs::default();
+
+        *prefs.mouse_acceleration_strength_mut() = 0.25;
+
+        assert_eq!(prefs.mouse_acceleration_strength(), 0.25);
     }
 
     #[test]
