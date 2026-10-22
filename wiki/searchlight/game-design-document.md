@@ -1,6 +1,6 @@
 # FPS-F1 — Game Design Document (v0.3)
 
-**Status:** draft v0.3, approved for Phase 1 (v0.3 adds pillar 2, the item lifecycle rule, §4.12 player and weapon stats, and the planning rule in §7). Writing this page is
+**Status:** draft v0.3, approved for Phase 1 (v0.3 adds pillar 2, the item lifecycle rule, §4.12 player and weapon stats, the planning rule in §7 and the §4.7 wound penalties). Writing this page is
 [FPS-F1](../../_todo/searchlight/FPS-F1-game-design-document/_feature.md)'s deliverable. Open questions are in §9.
 **Working pitch:** a survival-focused looter shooter with realistic gunplay, where your gear is your character, your rig is the game, and every fight is a line on a ledger.
 **Working target:** single-player first, co-op later, mod support a priority. Pivots (Destiny-like, Arma-like) are open questions, not commitments (§9).
@@ -128,21 +128,29 @@ Each system states the question its prototype must answer, the design, and its c
 ### 4.7 Wounds and healing
 
 - **Question:** does separating limb health from life health create interesting downtime decisions?
-- **Body parts:** head, torso, left arm, right arm, left leg, right leg. Each has its own HP.
-- **Player HP** is separate. Hits damage the part, and a share flows to Player HP (head and torso a larger share). Player HP at 0 is death. Limbs at 0 are **disabled**, not fatal.
-- **Location effects (initial):** each part declares stat changes against §4.12 by its condition, plus effects that are not stats; it never writes a stat directly, so meds can mask it and the character screen can explain it.
-  - Head: steadiness down; vision blur (effect); at 0 = death
-  - Torso: stamina cap and recovery down
-  - Arms: steadiness, recoil control and handling down; disabled arm forces one-handed (pistol only)
-  - Legs: movement speed down; disabled leg caps "no sprint" and shows as a limp
-- **First aid (quick):** adds **temporary HP** to a part. Temp HP decays over time. Does **not** restore Player HP.
-- **Secondary aid (post):** **locks in** current temp HP as real HP, applies a debuff (dizziness, faster hunger/thirst/fatigue), and starts a **heal over time** on Player HP.
-- **Player HP regen sources (always over time):** secondary aid, resting at a safe location, food, some meds.
-- **Meds are data:** each defines target parts (head+torso, arms, legs, all), aid type (first / secondary), potency, duration, side effects, buffs. Quality tiers vary the combo.
-- **Buff meds:** caffeine (fatigue down, thirst up), painkillers (damage-effect suppression, not real healing; masks wound penalties), etc.
-- **Bleeding (must-have, Phase 4):** wounds can bleed, draining Player HP until treated. Severity scales with the hit. Bandages and tourniquets stop it; first aid alone may not.
-- **Compounding injuries (nice-to-have):** using a damaged limb worsens it: sprinting on a broken leg, looting or reloading with a broken hand, aiming with a wounded arm. Turns "keep going" into a cost decision.
-- **Disease and wasting injuries (nice-to-have):** untreated wounds that slowly degrade (infection, wasting), cutting max HP or survival stats until treated.
+- **Body parts:** head, torso, left arm, right arm, left leg, right leg. Head and limbs each have a status pool; the torso has none.
+- **Player HP** is separate. Hits damage the part, and a share flows to Player HP (head and torso a larger share). Player HP at 0 is death. Limbs at 0 are **disabled**, not fatal; head at 0 is death.
+- **Penalties scale with damage:** a part's debuffs start once its status falls to 80 % and grow in inverse proportion to what is left, so the last few points hurt far more than the first. One curve shape for every part except the torso; at 0 a limb is **Broken** (disabled). Each part declares stat changes against §4.12 by its status, plus effects that are not stats; it never writes a stat directly, so meds can mask it and the character screen can explain it. Penalties of different parts add; for two limbs of a kind the worse limb sets the penalty and the second adds a flat extra once both are below 80 %.
+  - Head: steadiness down; tunnel vision (vignette) and blur as effects, worsening with damage until sight is near impossible close to 0. At 0 = death. Temporary statuses such as a concussion right after a blow to the head, with dizziness or blackouts, are deferred (§9 Q20).
+  - Torso: a special case with no debuffs. Torso hits drain Player HP, carry the larger share, and are the main source of bleeding.
+  - Arms: steadiness, recoil control and handling down. Broken: that arm holds nothing; one Broken arm caps the player to one-handed weapons, two Broken arms to no aiming or firing (moving, inventory and meds still work). No left/right distinction yet (§9 Q19).
+  - Legs: sprint speed and stamina while sprinting down first, then walk speed; a limp in camera and footstep rhythm grows with the penalty. **Running on a leg below 60 % causes more damage**, to the leg and to Player HP: the "keep going" cost decision is core, not a nice-to-have. Broken: no sprint, walk capped low, no jump or climb, more fall damage. Both Broken: crawl pace. The player can always move.
+- **Reading the body:** world first, menu second (§3.3). A limp, a grunt on sprint, trembling sights and blur tell the player before the inspect screen (a body silhouette coloured by part status) confirms it.
+- **Healing always reaches max.** Nothing in the base game lowers a pool's maximum (wasting injuries, below, are the nice-to-have exception). Limbs can be healed on the spot with the right first- and secondary-aid combination. **Player HP never heals on the spot:** it returns over game time through **recovery timers**, fastest while resting or asleep at a safe spot (§4.8), and the more damage, the longer the wait. High-tier, debuff-heavy meds can speed it for a fight, but the intended experience is nursing wounds: waiting out the timer by crafting, trading or other downtime. The decision this creates is the one the game is built on: sit out the timer and pay for food and lodging, or take a job at half strength.
+- **Treatment is layered;** each layer is its own item, so the rig decides what you can fix in the field:
+  - **Bleeding (must-have, Phase 4):** wounds can bleed, draining Player HP until treated. Severity scales with the hit. Bandages and tourniquets stop it and do not restore status; a tourniquet caps its limb's effective status at 60 % while applied. First aid alone may not stop a bleed.
+  - **First aid (quick):** fills the part with **temporary status** to full, so its penalties stop (or ease, for weaker kits) while the temp status lasts. Temp status is shown in its own colour (GAMMA's yellow against white for real status); it decays and the penalties return. Does **not** restore Player HP. The cheap fix that buys time.
+  - **Secondary aid (post):** **locks in** the part's current temp status as real status, applies a debuff (dizziness, faster hunger/thirst/fatigue) and starts a **heal over time** on Player HP. Used after first aid, out of combat; the combination is how a limb is healed in the field.
+  - **Splint:** turns a Broken limb into **Splinted**: usable at the penalties of a heavily damaged limb, with a recovery timer that sleep advances; full status when it runs out. A surgical kit that skips the timer is to taste after Phase 4.
+  - **Painkillers:** mask a part's penalties for a duration, never change its status, cannot mask Broken; side effects (thirst, later dizziness). The "keep fighting" trade.
+- **Player HP regen sources (always over time, never instant):** recovery timers, secondary aid's heal over time, resting at a safe location, food, high-tier meds with heavy side effects.
+- **Meds are perishables and data:** every medical item carries a number of uses (§4.1 lifecycle rule) and leaves the game when spent; none has a condition. Each defines a **tier** and one or more **aid roles** (first, secondary, splint, mask): a bandage is first aid only, a surgical kit secondary only, a high-tier medkit can be both at once. Plus target parts (head+torso, arms, legs, all), potency, duration, side effects, buffs. Bandage, tourniquet and splint are one use; first aid, secondary aid and painkillers are multi-use kits. Spawn rate, job rewards and burn rate of meds are half of the loop's scarcity tuning (pillar 2).
+- **Med crafting (later):** higher tiers bundle lower-tier items that also work alone (bandage, painkillers and anti-radiation drugs into one medkit, as Anomaly does). Not a linear ladder: the bundle is convenient but spends every component on use, so the player weighs loose items against the kit. Phase 4 ships a simple tier list; the bundle rule arrives with crafting.
+- **Buff meds:** caffeine (fatigue down, thirst up), painkillers (above), etc.
+- **Enemies share the model:** the same body, curve and penalty table apply to human enemies, so a leg hit stops a push and an arm hit widens spread (§4.11). First Phase 4 cut is player only; enemies are the first add-to-taste step (§7).
+- **Phase 4 first cut** (§7 planning rule): the penalty curve, player penalties, leg compounding, bleeding with bandages, first and secondary aid, splint, inspect screen. **To taste, in order:** enemy debuffs; painkiller masking; tourniquet as a distinct item; temporary head statuses (concussion, blackouts); arm compounding and left/right arms; surgical kit, med crafting and quality tiers.
+- **Compounding injuries:** legs are core (above). For arms, a nice-to-have: looting or reloading with a damaged hand, or aiming with a wounded arm, costs status. Actions that cost status, no new mechanism.
+- **Disease and wasting injuries (nice-to-have):** untreated wounds that slowly degrade (infection, wasting), cutting max HP or survival stats until treated. The one exception to "healing always reaches max"; it needs its own decision.
 - **Cut lines:** radiation (until anomalies exist). Nice-to-haves come after Phase 4's core proves out.
 
 ### 4.8 Survival stats
@@ -184,7 +192,7 @@ Each system states the question its prototype must answer, the design, and its c
   - *Strength:* one number derived from the profile, used by the offline sim (§4.10) so live fights and dice-rolled fights agree on who is tougher.
 - **Readability:** the player can tell grades two or more steps apart from behavior and gear in the first fight, without a label. Neighbouring grades show over several fights. Tactics are announced (callouts, visible moves), so a push or a flank is fair, not clairvoyant.
 - **Fixed for life** until Phase 7. Enemies ranking up over time is a nice-to-have for the Director; players will rarely see it.
-- **Encounter group:** a small unit (2 to 4 at first) that acts as one. Members share alerts; a gunshot or a sighting alerts nearby groups. A group coordinator chooses the group's stance (push, hold, fall back) from its strength against the threat and its state (ammo, wounded). Fire and maneuver is the base tactic: some members suppress while others move.
+- **Encounter group:** a small unit (2 to 4 at first) that acts as one. Members share alerts; a gunshot or a sighting alerts nearby groups. A group coordinator chooses the group's stance (push, hold, fall back) from its strength against the threat and its state (ammo, wounded). Wounds use the player's body model (§4.7): a leg wound slows a member and keeps it from pushing, an arm wound widens its spread, a head wound slows its reaction; grades stay fixed, so a wound is a temporary modifier on the execution layer, never a demotion. Enemies do not treat themselves until Phase 7. Fire and maneuver is the base tactic: some members suppress while others move.
 - **Leader:** one member per group, normally its highest grade. While a member is near and in sight of the leader, its effective grade is raised one step, never above the leader's own grade. Kill the leader and the lift ends at once.
 - **Two tiers:** the Director (§4.10) is strategic: it decides which groups exist, where, and what they are after. The group coordinator is tactical and runs only while the group is live. A group is one object in both: live behavior when the player is present, one strength-weighted dice roll when not.
 - **Factions:** a faction sets a group's relations (the §4.10 matrix) and its grade mix and gear. Relations first matter between faction and player. Enemy-versus-enemy fights come with the live zone in Phase 7.
@@ -242,7 +250,7 @@ Milestones follow the phases: FPS-M*n* delivers Phase *n*, and FPS-M1.1 (menus) 
 | 1 | **Arena baseline** | Movement, one rifle, **mags + chamber from day one**, **per-body-part hit volumes from day one**, basic AI (patrol, take cover, shoot, chase), waves, death/restart | Does the gunplay feel weighty? | Pre-made arena |
 | 2 | **Items and loadout** | Data-driven items, belt/vest vs backpack, loot drops from enemies, 3 weapons in 2 calibers | Does one item model carry everything? | Arena |
 | 3 | **Weapon wear and repair** | 4 components, jams, repair parts and workbench, dismantling; **end-of-round ledger** (rounds + wear valued) | Does wear drive scavenging? | Arena + range |
-| 4 | **Wounds and healing** | Limb HP, Player HP, bleeding, first/secondary aid, meds as data, buff meds | Does limb damage create good downtime? | Arena + range |
+| 4 | **Wounds and healing** | Damage-scaled penalties, leg compounding, recovery timers, bleeding, first/secondary aid, splint, meds as perishable data; enemy wounds to taste | Does limb damage create good downtime? | Arena + range |
 | 5 | **Time, survival, rest** | Game clock/day cycle, hunger/thirst/fatigue, sleep at a safe spot, healing timers advance on sleep | Do survival stats add pressure, not chores? | Arena + safe room |
 | 6 | **Hub and jobs** | Trader hub, job board, currency, full ledger per job; arena becomes "the job site" | Does profit-as-score change player behavior? | Hub + 1–2 pre-made zones |
 | 7 | **Director** | Zone graph, factions, offline dice sim, daily planning, live handover | Does the world feel alive with this little machinery? | 3–5 pre-made zones |
@@ -288,7 +296,7 @@ Why this order:
 8. **Difficulty:** your idea of difficulty toggling complexity rather than damage fits pillar 4; sliders per system make modding easier too. Confirm before Phase 5.
 9. **Director name:** placeholder "the Director".
 10. ~~**Enemy grades:**~~ Decided: five (rookie, novice, experienced, veteran, professional), fixed for life until Phase 7; legend for named NPCs deferred; grades change behavior, never HP or damage.
-11. **Suppression:** AI behavior only at first. Does it get a player-side effect (blurred view, spread penalty) once wounds exist (Phase 4)?
+11. **Suppression:** AI behavior only at first. Does it get a player-side effect once wounds exist (Phase 4)? The head-wound vision effects (§4.7) are the natural reuse.
 12. **Difficulty and AI:** is AI sophistication (grade mix, tactics on or off) part of the complexity toggles in Q8? Decide with Q8.
 13. **Rank-up:** may the Director raise an enemy's grade over time (Phase 7 nice-to-have)?
 14. **Skills that grow:** Decided in principle (2026-10-22): attributes and stats never grow; a separate skill layer may grow with use and buff stats through §4.12's modifier layer. Deferred: no milestone needs it, and the first version must state its anti-grind rule (a skill may not rise from an action that costs nothing on the ledger). Attribute names (Strength, …) are also still TBD.
@@ -296,6 +304,8 @@ Why this order:
 16. **Character screen:** raw numbers (kg, %) or bands (light, heavy)? Recommend numbers, since the screen is a deliberate inspection, not a HUD readout.
 17. **Grid view timing:** after which playtest does the inventory gain the drag-and-drop grid view over its cell data (§4.1)? Default: after FPS-M2's list has been played.
 18. **Special equipment:** weapons and armor only, or individual components too? What counts as a drawback? Decide before the first such item is carded (after Phase 4).
+19. **Left and right arms:** one arm penalty table for now. Does a dominant-arm distinction (two-handed aim lost with either, pistol hand matters) earn its animation and handedness cost? Decide after the Phase 4 playtest.
+20. **Temporary head statuses:** a concussion right after a blow to the head (dizziness, short blackouts behind an accessibility toggle) as an event status on top of the damage curve. Deferred; decide from the Phase 4 playtest.
 
 ## 10 Engine fit and engine requests
 
