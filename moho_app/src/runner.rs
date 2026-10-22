@@ -152,17 +152,12 @@ impl<G: Game> ApplicationHandler for Runner<G> {
         self.sim.run_ticks(&mut self.game, elapsed);
 
         let next_tick = now + self.sim.until_next_tick();
-        let wake = match self.pacer.next_due() {
-            Some(frame_due) => next_tick.min(frame_due),
-            None => next_tick,
-        };
-        if self.pacer.is_capped()
-            && self.pacer.due(now)
+        if self.pacer.redraw_on_wake(now)
             && let Some(window) = &self.window
         {
             window.request_redraw();
         }
-        event_loop.set_control_flow(ControlFlow::WaitUntil(wake));
+        event_loop.set_control_flow(ControlFlow::WaitUntil(self.pacer.wake_at(now, next_tick)));
     }
 
     fn window_event(
@@ -191,7 +186,7 @@ impl<G: Game> ApplicationHandler for Runner<G> {
                 let frame_cap = ctx.requested_frame_cap();
                 self.sim.apply_requests(requests);
                 if let Some(fps) = frame_cap {
-                    self.pacer = FramePacer::from_fps(fps);
+                    self.pacer.set_fps(fps);
                 }
                 self.pacer.frame_drawn(now);
                 if exit {

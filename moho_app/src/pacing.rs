@@ -51,13 +51,21 @@ impl FramePacer {
 
     /// When the runner should next wake: the frame deadline while it is still in the
     /// future and before `next_tick`, otherwise `next_tick`.
-    pub fn wake_at(&self, _now: Instant, next_tick: Instant) -> Instant {
-        self.next_due().map_or(next_tick, |due| next_tick.min(due))
+    pub fn wake_at(&self, now: Instant, next_tick: Instant) -> Instant {
+        self.next_due()
+            .filter(|&due| due > now)
+            .map_or(next_tick, |due| next_tick.min(due))
     }
 
     /// Changes the cap to `fps` (`None` is uncapped), keeping the last drawn frame.
     pub fn set_fps(&mut self, fps: Option<NonZeroU32>) {
-        *self = Self::from_fps(fps);
+        self.interval = fps.map(|fps| Duration::from_secs(1) / fps.get());
+    }
+
+    /// Whether the runner should request a redraw on waking at `now`: the pacer is
+    /// capped and a frame is due. Uncapped frames chain from the previous redraw.
+    pub fn redraw_on_wake(&self, now: Instant) -> bool {
+        self.is_capped() && self.due(now)
     }
 }
 
