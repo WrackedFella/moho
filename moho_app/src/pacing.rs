@@ -48,6 +48,17 @@ impl FramePacer {
     pub fn frame_drawn(&mut self, now: Instant) {
         self.last_frame = Some(now);
     }
+
+    /// When the runner should next wake: the frame deadline while it is still in the
+    /// future and before `next_tick`, otherwise `next_tick`.
+    pub fn wake_at(&self, _now: Instant, next_tick: Instant) -> Instant {
+        self.next_due().map_or(next_tick, |due| next_tick.min(due))
+    }
+
+    /// Changes the cap to `fps` (`None` is uncapped), keeping the last drawn frame.
+    pub fn set_fps(&mut self, fps: Option<NonZeroU32>) {
+        *self = Self::from_fps(fps);
+    }
 }
 
 #[cfg(test)]
@@ -136,6 +147,117 @@ mod tests {
         pacer.frame_drawn(t0);
 
         assert_eq!(pacer.next_due(), Some(t0 + Duration::from_millis(10)));
+    }
+
+    #[test]
+    fn wake_at_uncapped_waits_for_the_next_tick() {
+        let now = Instant::now();
+        let next_tick = now + INTERVAL;
+        let mut pacer = FramePacer::new(None);
+        pacer.frame_drawn(now);
+
+        assert_eq!(pacer.wake_at(now, next_tick), next_tick);
+    }
+
+    #[test]
+    fn wake_at_capped_before_first_frame_waits_for_the_next_tick() {
+        let now = Instant::now();
+        let next_tick = now + INTERVAL;
+        let pacer = FramePacer::new(Some(INTERVAL));
+
+        assert_eq!(pacer.wake_at(now, next_tick), next_tick);
+    }
+
+    #[test]
+    fn wake_at_wakes_for_a_future_frame_due_before_the_next_tick() {
+        let t0 = Instant::now();
+        let now = t0 + INTERVAL / 4;
+        let next_tick = t0 + INTERVAL * 5;
+        let mut pacer = FramePacer::new(Some(INTERVAL));
+        pacer.frame_drawn(t0);
+
+        assert_eq!(pacer.wake_at(now, next_tick), t0 + INTERVAL);
+    }
+
+    #[test]
+    fn wake_at_prefers_the_next_tick_when_the_frame_is_due_after_it() {
+        let t0 = Instant::now();
+        let now = t0 + INTERVAL / 4;
+        let next_tick = t0 + INTERVAL / 2;
+        let mut pacer = FramePacer::new(Some(INTERVAL));
+        pacer.frame_drawn(t0);
+
+        assert_eq!(pacer.wake_at(now, next_tick), next_tick);
+    }
+
+    #[test]
+    fn wake_at_ignores_an_overdue_frame_and_waits_for_the_next_tick() {
+        let t0 = Instant::now();
+        let now = t0 + INTERVAL * 2;
+        let next_tick = now + INTERVAL;
+        let mut pacer = FramePacer::new(Some(INTERVAL));
+        pacer.frame_drawn(t0);
+
+        assert_eq!(pacer.wake_at(now, next_tick), next_tick);
+    }
+
+    #[test]
+    fn wake_at_ignores_a_frame_due_exactly_now() {
+        let t0 = Instant::now();
+        let now = t0 + INTERVAL;
+        let next_tick = now + INTERVAL;
+        let mut pacer = FramePacer::new(Some(INTERVAL));
+        pacer.frame_drawn(t0);
+
+        assert_eq!(pacer.wake_at(now, next_tick), next_tick);
+    }
+
+    #[test]
+    fn set_fps_to_the_same_cap_keeps_the_last_frame() {
+        let t0 = Instant::now();
+        let mut pacer = FramePacer::from_fps(NonZeroU32::new(100));
+        pacer.frame_drawn(t0);
+
+        pacer.set_fps(NonZeroU32::new(100));
+
+        assert!(!pacer.due(t0 + INTERVAL / 2));
+        assert_eq!(pacer.next_due(), Some(t0 + INTERVAL));
+    }
+
+    #[test]
+    fn set_fps_to_a_different_cap_uses_the_new_interval_from_the_last_frame() {
+        let t0 = Instant::now();
+        let mut pacer = FramePacer::from_fps(NonZeroU32::new(100));
+        pacer.frame_drawn(t0);
+
+        pacer.set_fps(NonZeroU32::new(50));
+
+        assert_eq!(pacer.next_due(), Some(t0 + Duration::from_millis(20)));
+        assert!(!pacer.due(t0 + INTERVAL));
+    }
+
+    #[test]
+    fn set_fps_none_makes_the_pacer_uncapped_and_always_due() {
+        let t0 = Instant::now();
+        let mut pacer = FramePacer::from_fps(NonZeroU32::new(100));
+        pacer.frame_drawn(t0);
+
+        pacer.set_fps(None);
+
+        assert!(!pacer.is_capped());
+        assert!(pacer.due(t0));
+        assert_eq!(pacer.next_due(), None);
+    }
+
+    #[test]
+    fn set_fps_from_uncapped_to_a_cap_applies_to_the_last_frame() {
+        let t0 = Instant::now();
+        let mut pacer = FramePacer::from_fps(None);
+        pacer.frame_drawn(t0);
+
+        pacer.set_fps(NonZeroU32::new(100));
+
+        assert_eq!(pacer.next_due(), Some(t0 + INTERVAL));
     }
 
     #[test]
