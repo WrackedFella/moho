@@ -352,6 +352,11 @@ mod tests {
             })
             .collect();
 
+        assert_eq!(
+            arena.route,
+            markers.patrol_route(),
+            "load dropped a shipped waypoint no enemy spawn reaches"
+        );
         assert!(places.len() > 2, "the arena has too few places to join");
         assert_eq!(
             unjoined,
