@@ -1,6 +1,6 @@
 # Frame loop
 
-**Source:** `moho_app/src/` (`runner.rs`, `lib.rs`, `headless.rs`, `fixed_step.rs`, `clock.rs`), `flagstone/src/app/game.rs`
+**Source:** `moho_app/src/` (`runner.rs`, `lib.rs`, `window_keys.rs`, `headless.rs`, `fixed_step.rs`, `clock.rs`), `flagstone/src/app/game.rs`
 (`impl moho_app::Game for App`), `flagstone/src/app/event_loop/`.
 **Related:** [ADR-0009](../../_todo/adr/0009-simulation-time-is-one-fixed-tick.md) (fixed tick).
 
@@ -23,6 +23,7 @@ flowchart TD
     route -- RedrawRequested --> wp["if paused: Game::command,<br/>then Game::apply_while_paused"] --> fr["Game::frame(alpha, frame_dt)"]
     fr --> req["apply set_paused / set_speed<br/>from the next tick"]
     req --> rr["request_redraw<br/>unless exiting"]
+    route -- toggle key --> wm["flip windowed / borderless,<br/>Game::window_mode_changed"]
     route -- Resized --> rs["renderer.resize, then Game::event"]
     route -- CloseRequested --> ev["Game::event, then exit"]
     route -- other --> ev2["Game::event"]
@@ -35,6 +36,7 @@ Init failures (window, renderer) end `run` with an `AppError`; audio failure onl
 `FrameContext::renderer` and `audio` are `None` under `HeadlessLoop`, which drives the
 same `command`/`tick`/`frame` without a window (`init` and `event` never run).
 Every frame requests the next redraw, so frames run at the presentation rate and look turns the view on each one; `FrameContext::frame_dt` is the time since the previous frame, capped at `tick_length` times `max_catch_up_ticks`. Time beyond `max_catch_up_ticks` is dropped ([overview](overview.md#4-fixed-step-loop-moho_app)).
+Window mode: before any game callback, `window_event` feeds key and focus events to `ToggleKeys` (`window_keys.rs`) when `AppConfig::toggle_keys` is `Some`. Alt+Enter and the configured `Input`s flip between `WindowMode::Windowed` and `WindowMode::Borderless` (winit borderless fullscreen); the runner consumes the press, its repeats and its release, so the game never sees them, then calls `Game::window_mode_changed`. Losing focus clears held-Alt state. With `None`, no event is observed and nothing flips. Searchlight sets F11 ([searchlight](searchlight.md#2-console)); flagstone sets `None`.
 A game pauses or changes `SimSpeed` through `set_paused` / `set_speed` on its event or frame context; the loop applies the request after the callback returns, from the next tick. While paused the loop runs no tick and still renders every frame ([ADR-0018](../../_todo/adr/0018-paused-commands-apply-at-the-tick-boundary.md)).
 
 ## 2 `Game::tick` order (`App`)

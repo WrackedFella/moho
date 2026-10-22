@@ -69,6 +69,8 @@ replaces the anchored lines the next `ui_frame` paints under the console, and th
 game sets its full text every `Game::frame`. A frame the renderer skips leaves no stale text. Use a few
 fixed sizes; each new size grows the font atlas.
 
+Window mode: `main.rs` passes F11 as `AppConfig::toggle_keys` (Alt+Enter always works). After a flip the runner calls `SearchlightGame::window_mode_changed`, which releases held keys, drops pending look and, unless the shell captures input, grabs the cursor again, since the platform loses key releases and the grab across the change.
+
 Game commands (`tgm [0|1]`) queue as `ConsoleCommand` on the console. `SearchlightGame` drains them
 at the start of each `command()` sample (`apply_console_commands`), applies them in order, saves
 a changed value through `DebugSettings` (a failed save is logged, not fatal) and echoes a bare
