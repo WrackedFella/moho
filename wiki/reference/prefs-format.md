@@ -99,7 +99,7 @@ action keeps its default (`flagstone_ui::actions::load_bindings` logs them): an 
 action id, or a value with any unrecognised key. A `[bindings]` line with no `=` is a
 malformed prefs line. `console` is reserved in every game's `[bindings]`: it is the
 engine console's key (`moho_ui_shell`, default backtick; an unbound or unreadable value, or one
-with a `Hold ` item, falls back to backtick), not a game action. The pre-`[bindings]` `key_*` lines under `[prefs]` are unknown
+with a `Hold ` item or a chord, falls back to backtick), not a game action. The pre-`[bindings]` `key_*` lines under `[prefs]` are unknown
 keys and ignored.
 
 A binding list is comma-separated key names (`W`, `Spacebar, Enter`); an action may
@@ -110,8 +110,9 @@ punctuation spelled as a word (`Comma`, `Semicolon`, `LeftBracket`, ...), `Arrow
 `Alt` bound on their own. `Key::parse` also accepts the aliases `Up`, `Esc`, `Return`,
 `Space`, `Control` and the punctuation glyphs, but in `prefs.ini` write punctuation as
 words: the INI reader cuts a line at `;` or `#`, reads a line with `[` as a section
-header, and `,` separates list items. There is no modifier syntax such as `Ctrl+W`
-and no numeric key codes.
+header, and `,` separates list items. There are no numeric key codes.
+
+A chord prefixes a key or mouse button with `Ctrl+`, `Shift+` and `Alt+` (`Ctrl+R`, `Shift+Mouse Left`, `Hold Ctrl+R`; the `Hold ` prefix stays outermost). Modifiers parse in any order and case and are written back as Ctrl, Shift, Alt. A repeated modifier, a modifier equal to the bound key itself (`Ctrl+Ctrl`), a pad input (`Ctrl+Pad West`), an empty input or any other prefix (`Control+R`) is an unrecognised key and warns. `Shift+Ctrl` (a modifier key under another modifier) is valid. Resolution is in [input](../architecture/input-and-state.md).
 
 `[debug]` is a game-owned section of named values (a game's debug toggles), stored raw like
 `[bindings]` and written only when non-empty. `Prefs::debug_value` reads one;
