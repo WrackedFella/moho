@@ -1219,6 +1219,33 @@ mod tests {
     }
 
     #[test]
+    fn adopting_vsync_off_queues_a_vsync_request() {
+        let mut app = App::headless();
+        let mut off = Prefs::default();
+        off.set_vsync(false);
+
+        app.adopt_settings(off);
+
+        assert!(
+            matches!(app.pending_render.as_slice(), [RenderRequest::Vsync(false)]),
+            "queued {} requests",
+            app.pending_render.len()
+        );
+    }
+
+    #[test]
+    fn unchanged_vsync_queues_no_render_request() {
+        let mut app = App::headless();
+        let mut other_change = Prefs::default();
+        other_change.set_fps_max(60);
+
+        app.adopt_settings(other_change);
+        app.adopt_settings(Prefs::default());
+
+        assert!(app.pending_render.is_empty());
+    }
+
+    #[test]
     fn view_height_event_queues_a_render_request() {
         let mut app = App::headless();
         app.event_bus

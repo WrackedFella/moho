@@ -517,9 +517,79 @@ mod tests {
 
         let y = state(&world, h).position.y;
         assert!(
-            (y - 9.725).abs() < 1e-4,
-            "10 frames of -18 m/s^2 should drop 0.275 m, y={y}"
+            (y - 9.75).abs() < 1e-4,
+            "10 frames of -18 m/s^2 should drop g*t^2/2 = 0.25 m, y={y}"
         );
+    }
+
+    /// Settles on a floor at `dt`, jumps once at 6.5 m/s under 18 m/s^2, and returns how high
+    /// the centre got above its resting height.
+    fn jump_peak(dt: f32) -> f32 {
+        let settings = MoveSettings {
+            jump_speed: 6.5,
+            ..test_settings()
+        };
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        let h = world.add_character(Vec3::new(0.0, 1.2, 0.0));
+        for _ in 0..(1.0 / dt) as usize {
+            world
+                .move_character(h, &idle(), &settings, dt)
+                .expect("character is live");
+            world.step(dt);
+        }
+        let rest = state(&world, h).position.y;
+        assert!(state(&world, h).grounded, "settled before the jump");
+        let jump = CharacterCommand {
+            jump: true,
+            ..idle()
+        };
+
+        let mut peak = rest;
+        for tick in 0..(2.0 / dt) as usize {
+            let command = if tick == 0 { jump } else { idle() };
+            world
+                .move_character(h, &command, &settings, dt)
+                .expect("character is live");
+            world.step(dt);
+            peak = peak.max(state(&world, h).position.y);
+        }
+
+        peak - rest
+    }
+
+    #[test]
+    fn jump_peaks_at_v_squared_over_2g_at_60_hz() {
+        let height = jump_peak(1.0 / 60.0);
+
+        assert!((height - 1.1736).abs() < 0.01, "peak {height}, want 1.1736");
+    }
+
+    #[test]
+    fn jump_peaks_at_v_squared_over_2g_at_120_hz() {
+        let height = jump_peak(1.0 / 120.0);
+
+        assert!((height - 1.1736).abs() < 0.01, "peak {height}, want 1.1736");
+    }
+
+    #[test]
+    fn fall_of_5_m_lands_on_the_tick_nearest_sqrt_2h_over_g() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        let h = world.add_character(Vec3::new(0.0, 5.0 + 1.15, 0.0));
+        world.step(DT);
+
+        let mut landed_on = None;
+        for tick in 1..=120 {
+            move_idle(&mut world, h);
+            world.step(DT);
+            if state(&world, h).grounded {
+                landed_on = Some(tick);
+                break;
+            }
+        }
+
+        assert_eq!(landed_on, Some(45), "sqrt(2*5/18)*60 = 44.7");
     }
 
     #[test]

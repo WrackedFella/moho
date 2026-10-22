@@ -33,7 +33,7 @@ flowchart LR
 |---|---|
 | `arena` | Loads `assets/arena.glb` through `moho_level`; `ArenaMarkers` sorts named markers by kind and orders waypoints into the patrol route; `Arena` is the loaded level the sim starts from (meshes, spawns, route, cover points, `nav`) and builds the world colliders; `Arena::from_level` also builds the `NavMesh` for `nav_profile` (the player-sized capsule plus clearance) and fails with `ArenaError::Nav` when that fails |
 | `tuning` | `tuning(&RifleDef)`: builds the `SimConfig`, taking the rifle's numbers from the definition |
-| `input` | `SearchlightAction` set and default bindings; `SearchlightCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on Enter) |
+| `input` | `SearchlightAction` set and default bindings; `build_action_map` builds the `ActionMap` at startup, with mouse look (`look_settings`: sensitivity, smoothing, invert Y) taken from `Prefs`, and a sensitivity not above zero falling back to the default 3.0; `SearchlightCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on Enter) |
 | `tag` | `SurfaceTag` (`World`, `Part { target, part }` or `Player(part)`) and its lossless round trip through the engine's opaque `moho_physics::HitTag` |
 | `shot` | `resolve_shot`: first tagged surface along a `ShotRay` in the `PhysicsWorld` |
 | `brain` | `Brain`: the enemy state machine (`Patrol`, `Engage`, `Cover`, `Chase`), pure over `glam` types; `Percept` and a `steer` function in, `Intent` out; `EnemyTuning` holds its numbers |
@@ -110,8 +110,8 @@ by `SimConfig::enemy_aim_at`) and sets `Percept::target` only when that ray stri
 fraction, yaw delta, fire). `Patrol` walks the route in order, wrapping; a target inside
 `sight_range` and `view_half_angle` starts `Engage`, which stands and faces the target while it
 stays visible, fires after `reaction_ticks` of continuous sight, within `fire_cone` of the
-bearing and off cooldown. Aim error comes from a seeded generator (`EnemyTuning::seed`), so
-runs repeat.
+bearing and off cooldown. Aim error comes from the `searchlight.enemy_spread` `SimRng` stream, started from
+`EnemyTuning::seed`, so runs repeat and a restart replays a fresh start.
 
 When the player wounds an enemy (a non-lethal hit), the sim records the player's position on
 that enemy (`Target::hurt`) and, from the `Arena` cover points, asks `cover::offer` for a

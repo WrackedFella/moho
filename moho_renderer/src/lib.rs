@@ -142,6 +142,8 @@ pub trait RendererBackend {
     /// Set the provider of UI paint data, pulled in `submit_frame` and drawn
     /// over the scene; `None` clears it. No-op by default.
     fn set_ui_source(&mut self, _source: Option<UiSource>) {}
+    /// Choose whether presented frames wait for the display refresh. No-op by default.
+    fn set_vsync(&mut self, _on: bool) {}
     /// Override the debug view mode in the lighting the shader reads; `None` leaves the
     /// game's own value. No-op by default.
     fn set_debug_view(&mut self, _mode: Option<u32>) {}
@@ -220,6 +222,9 @@ impl RendererBackend for Renderer<'_> {
     }
     fn set_ui_source(&mut self, source: Option<UiSource>) {
         self.set_ui_source(source);
+    }
+    fn set_vsync(&mut self, on: bool) {
+        self.set_vsync(on);
     }
     fn set_debug_view(&mut self, mode: Option<u32>) {
         self.set_debug_view(mode);

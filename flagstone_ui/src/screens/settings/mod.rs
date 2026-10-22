@@ -26,12 +26,16 @@ pub(super) enum SettingsField {
     MouseSensitivity,
     InvertMouseY,
     MouseSmoothing,
+    MouseAcceleration,
+    MouseAccelerationStrength,
     AudioSoundEffect,
     AudioMusic,
     AudioUI,
     AudioVoice,
     WindowMode,
     WindowResolution,
+    Vsync,
+    FpsMax,
 }
 
 pub struct SettingsMenu {

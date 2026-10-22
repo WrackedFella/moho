@@ -8,13 +8,18 @@ use moho_core::prefs::Prefs;
 use moho_input::LookSettings;
 use moho_input::action_map::source_look_per_count;
 
-/// The look settings `prefs` ask for: its Source-scale sensitivity as radians per
-/// count, its mouse-smoothing switch and its invert-Y switch.
+/// The look settings `prefs` ask for, with sensitivity converted from Source scale to
+/// radians per count. Acceleration is zero while off or when the strength is negative.
 pub fn look_settings(prefs: &Prefs) -> LookSettings {
     LookSettings {
         look_per_count: source_look_per_count(prefs.mouse_sensitivity()),
         smoothing: prefs.mouse_smoothing(),
         invert_y: prefs.invert_mouse_y(),
+        acceleration: if prefs.mouse_acceleration() {
+            source_look_per_count(prefs.mouse_acceleration_strength().max(0.0))
+        } else {
+            0.0
+        },
     }
 }
 
@@ -47,6 +52,9 @@ pub struct AppConfig {
 
     /// Whether the mouse's Y axis is inverted.
     pub invert_mouse_y: bool,
+
+    /// Extra look units per count for each count per millisecond; 0 is off.
+    pub mouse_acceleration: f32,
 
     /// Preferences object (contains keybindings and other settings)
     pub prefs: Prefs,
@@ -85,6 +93,7 @@ impl AppConfig {
             mouse_sensitivity: look.look_per_count,
             mouse_smoothing: look.smoothing,
             invert_mouse_y: look.invert_y,
+            mouse_acceleration: look.acceleration,
             prefs,
         }
     }
@@ -152,6 +161,7 @@ impl AppConfigBuilder {
             mouse_sensitivity: self.mouse_sensitivity.unwrap_or(base.mouse_sensitivity),
             mouse_smoothing: self.mouse_smoothing.unwrap_or(base.mouse_smoothing),
             invert_mouse_y: base.invert_mouse_y,
+            mouse_acceleration: base.mouse_acceleration,
             prefs: base.prefs,
         }
     }
@@ -185,6 +195,7 @@ mod tests {
                 look_per_count: source_look_per_count(2.0),
                 smoothing: true,
                 invert_y: false,
+                acceleration: 0.0,
             }
         );
         assert_eq!(
@@ -193,8 +204,26 @@ mod tests {
                 look_per_count: source_look_per_count(2.0),
                 smoothing: false,
                 invert_y: false,
+                acceleration: 0.0,
             }
         );
+    }
+
+    #[test]
+    fn look_settings_pass_strength_only_when_on() {
+        let on = Prefs::default()
+            .with_mouse_acceleration(true)
+            .with_mouse_acceleration_strength(0.3);
+        let off = Prefs::default()
+            .with_mouse_acceleration(false)
+            .with_mouse_acceleration_strength(0.3);
+        let negative = Prefs::default()
+            .with_mouse_acceleration(true)
+            .with_mouse_acceleration_strength(-0.2);
+
+        assert_eq!(look_settings(&on).acceleration, source_look_per_count(0.3));
+        assert_eq!(look_settings(&off).acceleration, 0.0);
+        assert_eq!(look_settings(&negative).acceleration, 0.0);
     }
 
     #[test]

@@ -1619,6 +1619,47 @@ mod tests {
             .collect()
     }
 
+    /// The cap triangles (at `sixty_fourths` of the cell's height) and wall triangles of
+    /// a one-cell grid that don't take their nearest solid corner's material, and how
+    /// many cap triangles were checked.
+    fn nearest_block_mismatches(cube_index: u8, sixty_fourths: u32) -> (Vec<String>, usize) {
+        let height = sixty_fourths as f32 / 64.0;
+        let grid = cell_grid(cube_index);
+        let cut = CELL_ORIGIN.y as f32 + 0.5 + height - CAP_PROBE;
+
+        let in_cap = triangles_in_cell(&cap(&grid, cut), Some(height));
+        let wall_mesh = HybridMeshGenerator::generate_chunk_mesh(&grid, IVec3::ZERO, CHUNK);
+        let in_wall = triangles_in_cell(&wall_mesh, None);
+        let cap_count = in_cap.len();
+        let mismatches = in_cap
+            .into_iter()
+            .map(|t| ("cap", t))
+            .chain(in_wall.into_iter().map(|t| ("wall", t)))
+            .filter_map(|(kind, (centroid, materials))| {
+                let corner = nearest_solid_corner(cube_index, centroid);
+                let expected = [CORNER_MATERIAL_BASE + corner as u32; 3];
+                (materials != expected).then(|| {
+                    format!("{kind} triangle at {centroid:?}: {materials:?}, expected {expected:?}")
+                })
+            })
+            .collect();
+        (mismatches, cap_count)
+    }
+
+    #[test]
+    fn cap_triangles_on_a_corner_distance_tie_take_the_lowest_corner() {
+        // Each cut puts a cap triangle's centroid equally near two solid corners.
+        for (cube_index, sixty_fourths) in [(190, 23), (235, 41), (239, 41), (254, 23)] {
+            let (mismatches, cap_count) = nearest_block_mismatches(cube_index, sixty_fourths);
+
+            assert_ne!(cap_count, 0, "cube index {cube_index} has a cap");
+            assert!(
+                mismatches.is_empty(),
+                "cube index {cube_index}, {sixty_fourths}/64: {mismatches:#?}"
+            );
+        }
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(64))]
 
@@ -1627,31 +1668,13 @@ mod tests {
             cube_index in 1..=255u8,
             sixty_fourths in (1..=63u32).prop_filter("the middle height is lifted", |n| *n != 32),
         ) {
-            let height = sixty_fourths as f32 / 64.0;
-            let grid = cell_grid(cube_index);
-            let cut = CELL_ORIGIN.y as f32 + 0.5 + height - CAP_PROBE;
+            let (mismatches, cap_count) = nearest_block_mismatches(cube_index, sixty_fourths);
 
-            let cap_mesh = cap(&grid, cut);
-            let wall_mesh = HybridMeshGenerator::generate_chunk_mesh(&grid, IVec3::ZERO, CHUNK);
-
-            let in_cap = triangles_in_cell(&cap_mesh, Some(height));
-            prop_assume!(!in_cap.is_empty());
-            for (centroid, materials) in in_cap {
-                let corner = nearest_solid_corner(cube_index, centroid);
-                prop_assert_eq!(
-                    materials,
-                    [CORNER_MATERIAL_BASE + corner as u32; 3],
-                    "cap triangle at {:?}, cube index {}", centroid, cube_index
-                );
-            }
-            for (centroid, materials) in triangles_in_cell(&wall_mesh, None) {
-                let corner = nearest_solid_corner(cube_index, centroid);
-                prop_assert_eq!(
-                    materials,
-                    [CORNER_MATERIAL_BASE + corner as u32; 3],
-                    "wall triangle at {:?}, cube index {}", centroid, cube_index
-                );
-            }
+            prop_assume!(cap_count != 0);
+            prop_assert!(
+                mismatches.is_empty(),
+                "cube index {}, {}/64: {:#?}", cube_index, sixty_fourths, mismatches
+            );
         }
     }
 
