@@ -3,8 +3,10 @@
 pub mod clock;
 pub mod fixed_step;
 pub mod headless;
+pub mod pacing;
 pub mod runner;
 
+use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -114,6 +116,15 @@ impl<'a> FrameContext<'a> {
     /// The last speed the game asked for, if it asked.
     pub fn requested_speed(&self) -> Option<SimSpeed> {
         self.requests.speed
+    }
+
+    /// Asks the runner to draw at most `fps` frames per second; `None` removes the cap.
+    pub fn set_frame_cap(&mut self, _fps: Option<NonZeroU32>) {}
+
+    /// The last frame cap the game asked for: `None` if it never asked, `Some(None)`
+    /// if it asked for no cap.
+    pub fn requested_frame_cap(&self) -> Option<Option<NonZeroU32>> {
+        None
     }
 
     pub(crate) fn loop_requests(&self) -> LoopRequests {
@@ -431,6 +442,22 @@ mod tests {
         assert_eq!(paused, Some(true));
         assert_eq!(resumed, Some(false));
         assert_eq!(ctx.requested_speed(), Some(SimSpeed::X3));
+    }
+
+    #[test]
+    fn frame_context_records_the_frame_cap_request() {
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(TICK, &clock, None, None);
+        let untouched = ctx.requested_frame_cap();
+
+        ctx.set_frame_cap(NonZeroU32::new(144));
+        let capped = ctx.requested_frame_cap();
+        ctx.set_frame_cap(None);
+        let uncapped = ctx.requested_frame_cap();
+
+        assert_eq!(untouched, None);
+        assert_eq!(capped, Some(NonZeroU32::new(144)));
+        assert_eq!(uncapped, Some(None));
     }
 
     #[test]

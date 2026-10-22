@@ -34,6 +34,8 @@ pub(super) enum SettingsField {
     AudioVoice,
     WindowMode,
     WindowResolution,
+    Vsync,
+    FpsMax,
 }
 
 pub struct SettingsMenu {

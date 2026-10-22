@@ -71,6 +71,7 @@ enum RenderRequest {
     ShadowQuality(u8),
     SsaoQuality(u8),
     ViewHeight(Option<f32>),
+    Vsync(bool),
 }
 
 struct App {

@@ -119,3 +119,151 @@ fn mode_label(mode: WindowMode) -> &'static str {
         WindowMode::Borderless => "Borderless",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::UiComponent;
+    use crate::overlays::test_support::{input, run_ui};
+    use crate::prefs::Prefs;
+    use crate::screens::SettingsTab;
+    use crate::screens::settings::SettingsField;
+
+    fn video_menu(prefs: Prefs) -> SettingsMenu {
+        let mut menu = SettingsMenu::with_prefs(prefs);
+        menu.set_active_tab(SettingsTab::Video);
+        menu
+    }
+
+    fn render_menu(menu: &mut SettingsMenu) -> egui::FullOutput {
+        let ctx = egui::Context::default();
+        run_ui(&ctx, egui::RawInput::default(), |ui| {
+            menu.render(ui);
+        })
+    }
+
+    fn has_dirty_decor(output: &egui::FullOutput) -> bool {
+        fn find(shape: &egui::epaint::Shape) -> bool {
+            match shape {
+                egui::epaint::Shape::Rect(r) => {
+                    r.fill == egui::Color32::from_rgba_premultiplied(150, 150, 150, 60)
+                }
+                egui::epaint::Shape::Vec(v) => v.iter().any(find),
+                _ => false,
+            }
+        }
+        output.shapes.iter().any(|c| find(&c.shape))
+    }
+
+    fn text_center(output: &egui::FullOutput, needle: &str) -> Option<egui::Pos2> {
+        fn find(shape: &egui::epaint::Shape, needle: &str) -> Option<egui::Pos2> {
+            match shape {
+                egui::epaint::Shape::Text(t) if t.galley.text().contains(needle) => {
+                    Some(t.pos + t.galley.rect.center().to_vec2())
+                }
+                egui::epaint::Shape::Vec(v) => v.iter().find_map(|s| find(s, needle)),
+                _ => None,
+            }
+        }
+        output.shapes.iter().find_map(|c| find(&c.shape, needle))
+    }
+
+    /// Drags the cap's value box rightwards with the mouse and returns the staged cap
+    /// afterwards.
+    fn cap_after_dragging(vsync_on: bool) -> u32 {
+        let mut prefs = Prefs::default();
+        prefs.set_fps_max(144);
+        let mut menu = video_menu(prefs);
+        menu.state.staged_mut().set_vsync(vsync_on);
+        let ctx = egui::Context::default();
+        let mut frame = |events: Vec<egui::Event>| {
+            run_ui(&ctx, input(events), |ui| {
+                menu.render(ui);
+            })
+        };
+        frame(vec![]);
+        let layout = frame(vec![]);
+        let target = text_center(&layout, "144").expect("the cap value box is drawn");
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let moved = target + egui::vec2(120.0, 0.0);
+
+        frame(vec![egui::Event::PointerMoved(target)]);
+        frame(vec![button(target, true)]);
+        frame(vec![egui::Event::PointerMoved(
+            target + egui::vec2(60.0, 0.0),
+        )]);
+        frame(vec![egui::Event::PointerMoved(moved)]);
+        frame(vec![button(moved, false)]);
+        frame(vec![]);
+
+        menu.state.staged().fps_max()
+    }
+
+    #[test]
+    fn changed_vsync_is_dirty_and_decorated() {
+        let mut menu = video_menu(Prefs::default());
+        menu.state.staged_mut().set_vsync(false);
+
+        let output = render_menu(&mut menu);
+
+        assert!(menu.has_unsaved_changes());
+        assert!(menu.state.is_field_dirty(SettingsField::Vsync));
+        assert!(!menu.state.is_field_dirty(SettingsField::FpsMax));
+        assert!(has_dirty_decor(&output));
+        assert!(text_center(&output, "Vsync").is_some());
+    }
+
+    #[test]
+    fn changed_frame_rate_cap_is_dirty_and_decorated() {
+        let mut menu = video_menu(Prefs::default());
+        menu.state.staged_mut().set_vsync(false);
+        menu.state.staged_mut().set_fps_max(144);
+
+        let output = render_menu(&mut menu);
+
+        assert!(menu.state.is_field_dirty(SettingsField::FpsMax));
+        assert!(has_dirty_decor(&output));
+        assert!(text_center(&output, "Frame-rate cap").is_some());
+    }
+
+    #[test]
+    fn untouched_video_tab_is_not_dirty_or_decorated() {
+        let mut menu = video_menu(Prefs::default());
+
+        let output = render_menu(&mut menu);
+
+        assert!(!menu.has_unsaved_changes());
+        assert!(!has_dirty_decor(&output));
+        assert!(text_center(&output, "Vsync").is_some());
+    }
+
+    #[test]
+    fn zero_cap_is_shown_as_unlimited() {
+        let mut menu = video_menu(Prefs::default());
+        menu.state.staged_mut().set_vsync(false);
+        menu.state.staged_mut().set_fps_max(0);
+
+        let output = render_menu(&mut menu);
+
+        assert!(text_center(&output, "Unlimited").is_some());
+    }
+
+    #[test]
+    fn cap_is_disabled_while_vsync_is_on() {
+        let cap = cap_after_dragging(true);
+
+        assert_eq!(cap, 144);
+    }
+
+    #[test]
+    fn cap_is_editable_while_vsync_is_off() {
+        let cap = cap_after_dragging(false);
+
+        assert!(cap > 144, "cap after drag: {cap}");
+    }
+}

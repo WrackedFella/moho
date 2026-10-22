@@ -67,6 +67,8 @@ pub struct Prefs {
     // Video settings
     window_mode: WindowMode,
     window_resolution: (u32, u32),
+    vsync: bool,
+    fps_max: u32,
     // World / streaming settings
     world_load_radius: u32,
     world_unload_radius: u32,
@@ -174,6 +176,14 @@ impl Prefs {
     pub fn window_resolution(&self) -> (u32, u32) {
         self.window_resolution
     }
+    /// Whether presented frames wait for the display refresh.
+    pub fn vsync(&self) -> bool {
+        self.vsync
+    }
+    /// Frame-rate cap applied while vsync is off; 0 is uncapped.
+    pub fn fps_max(&self) -> u32 {
+        self.fps_max
+    }
 
     // --- Mutable accessors (for egui widget binding) ---
 
@@ -223,6 +233,14 @@ impl Prefs {
         self.window_resolution = (width, height);
     }
 
+    pub fn set_vsync(&mut self, on: bool) {
+        self.vsync = on;
+    }
+
+    pub fn set_fps_max(&mut self, fps: u32) {
+        self.fps_max = fps;
+    }
+
     // --- Builder methods (for construction in tests) ---
 
     pub fn with_mouse_sensitivity(mut self, v: f32) -> Self {
@@ -266,6 +284,8 @@ impl Default for Prefs {
             // Default video settings
             window_mode: WindowMode::Windowed,
             window_resolution: (1920, 1080),
+            vsync: true,
+            fps_max: 300,
             // Default streaming settings
             world_load_radius: 8,
             world_unload_radius: 12,
@@ -397,6 +417,27 @@ mod tests {
 
         assert!(dir.path().join("config/prefs.ini").is_file());
         assert_eq!(loaded, prefs);
+    }
+
+    #[test]
+    fn vsync_is_on_by_default() {
+        assert!(Prefs::default().vsync());
+    }
+
+    #[test]
+    fn fps_max_is_300_by_default() {
+        assert_eq!(Prefs::default().fps_max(), 300);
+    }
+
+    #[test]
+    fn video_setters_replace_the_defaults() {
+        let mut prefs = Prefs::default();
+
+        prefs.set_vsync(false);
+        prefs.set_fps_max(0);
+
+        assert!(!prefs.vsync());
+        assert_eq!(prefs.fps_max(), 0);
     }
 
     #[test]
