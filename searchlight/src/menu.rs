@@ -238,6 +238,76 @@ mod tests {
     }
 
     #[test]
+    fn rows_are_centred_on_the_screen_one_pitch_apart() {
+        let menu = Menu::main();
+
+        let offsets: Vec<[f32; 2]> = menu.texts().iter().map(|text| text.offset).collect();
+
+        assert_eq!(offsets, [[0.0, -ROW_PITCH], [0.0, 0.0], [0.0, ROW_PITCH]]);
+    }
+
+    #[test]
+    fn only_the_selected_row_carries_the_selected_colour() {
+        let mut menu = Menu::main();
+        let colours =
+            |menu: &Menu| -> Vec<[u8; 4]> { menu.texts().iter().map(|text| text.color).collect() };
+
+        let first = colours(&menu);
+        menu.down();
+        let second = colours(&menu);
+
+        assert_eq!(first, [SELECTED_COLOR, COLOR, COLOR]);
+        assert_eq!(second, [COLOR, SELECTED_COLOR, COLOR]);
+    }
+
+    #[test]
+    fn a_click_is_a_hit_just_inside_a_row_band_and_a_miss_on_its_edge() {
+        let menu = Menu::main();
+        let [cx, cy] = [SCREEN[0] / 2.0, SCREEN[1] / 2.0];
+        let half_width = ROW_WIDTH / 2.0;
+        let half_pitch = ROW_PITCH / 2.0;
+        let inside = 0.5;
+
+        let just_inside_right = menu.click([cx + half_width - inside, cy], SCREEN);
+        let on_right_edge = menu.click([cx + half_width, cy], SCREEN);
+        let just_inside_left = menu.click([cx - half_width + inside, cy], SCREEN);
+        let on_left_edge = menu.click([cx - half_width, cy], SCREEN);
+        let below_middle_inside = menu.click([cx, cy + half_pitch - inside], SCREEN);
+        let below_middle_edge = menu.click([cx, cy + half_pitch], SCREEN);
+        let above_middle_inside = menu.click([cx, cy - half_pitch + inside], SCREEN);
+        let above_middle_edge = menu.click([cx, cy - half_pitch], SCREEN);
+        let last_row_bottom_inside = menu.click([cx, cy + ROW_PITCH + half_pitch - inside], SCREEN);
+        let last_row_bottom_edge = menu.click([cx, cy + ROW_PITCH + half_pitch], SCREEN);
+        let first_row_top_inside = menu.click([cx, cy - ROW_PITCH - half_pitch + inside], SCREEN);
+        let first_row_top_edge = menu.click([cx, cy - ROW_PITCH - half_pitch], SCREEN);
+
+        assert_eq!(just_inside_right, Some(MenuAction::Settings));
+        assert_eq!(on_right_edge, None);
+        assert_eq!(just_inside_left, Some(MenuAction::Settings));
+        assert_eq!(on_left_edge, None);
+        assert_eq!(below_middle_inside, Some(MenuAction::Settings));
+        assert_eq!(below_middle_edge, None);
+        assert_eq!(above_middle_inside, Some(MenuAction::Settings));
+        assert_eq!(above_middle_edge, None);
+        assert_eq!(last_row_bottom_inside, Some(MenuAction::Quit));
+        assert_eq!(last_row_bottom_edge, None);
+        assert_eq!(first_row_top_inside, Some(MenuAction::Play));
+        assert_eq!(first_row_top_edge, None);
+    }
+
+    #[test]
+    fn hit_testing_follows_the_screen_centre_of_a_non_default_window() {
+        let menu = Menu::main();
+        let screen = [1000.0, 400.0];
+
+        let at_its_centre = menu.click([500.0, 200.0], screen);
+        let at_the_default_centre = menu.click([SCREEN[0] / 2.0, SCREEN[1] / 2.0], screen);
+
+        assert_eq!(at_its_centre, Some(MenuAction::Settings));
+        assert_eq!(at_the_default_centre, None);
+    }
+
+    #[test]
     fn the_selected_item_is_drawn_in_a_different_colour_and_rows_do_not_overlap() {
         let mut menu = Menu::main();
         let colours =

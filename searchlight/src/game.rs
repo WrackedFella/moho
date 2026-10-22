@@ -355,6 +355,17 @@ fn capture_cursor(window: &Window) {
     }
 }
 
+/// A window size of `physical` pixels in logical points, at `scale` pixels per point.
+fn logical_size(physical: winit::dpi::PhysicalSize<u32>, scale: f64) -> [f32; 2] {
+    let size = physical.to_logical::<f32>(scale);
+    [size.width, size.height]
+}
+
+/// A position of `physical` pixels in logical points, at `scale` pixels per point.
+fn logical_point(physical: [f64; 2], scale: f64) -> [f32; 2] {
+    [(physical[0] / scale) as f32, (physical[1] / scale) as f32]
+}
+
 /// Everything drawn or heard; the sim knows nothing of it.
 #[derive(Debug)]
 struct Stage {
@@ -409,8 +420,7 @@ impl Stage {
     /// The window size in logical points; a windowless stage reports 1280 by 720.
     fn screen_points(&self) -> [f32; 2] {
         self.window.as_ref().map_or([1280.0, 720.0], |window| {
-            let size = window.inner_size().to_logical::<f32>(window.scale_factor());
-            [size.width, size.height]
+            logical_size(window.inner_size(), window.scale_factor())
         })
     }
 
@@ -717,10 +727,16 @@ impl SearchlightGame {
         self.screen != Screen::Playing || self.stage.shell().captures_input()
     }
 
+    /// Whether the window opens with the cursor captured: only when it opens in play, since the
+    /// main menu needs a free pointer.
+    fn captures_cursor_on_start(&self) -> bool {
+        self.screen == Screen::Playing
+    }
+
     /// The cursor moved to `physical`, in physical pixels from the window's top left.
     fn cursor_moved(&mut self, physical: [f64; 2]) {
         let scale = self.stage.scale_factor();
-        self.cursor = [(physical[0] / scale) as f32, (physical[1] / scale) as f32];
+        self.cursor = logical_point(physical, scale);
         if self.screen == Screen::MainMenu {
             self.menu.hover(self.cursor, self.stage.screen_points());
         }
@@ -915,7 +931,7 @@ impl Game for SearchlightGame {
 
     fn init(&mut self, ctx: &mut InitContext<'_>) {
         self.stage.window = Some(ctx.window.clone());
-        if self.screen == Screen::Playing {
+        if self.captures_cursor_on_start() {
             self.stage.capture_cursor();
         }
         self.stage.shell().attach(ctx.window.clone());
@@ -2251,6 +2267,96 @@ mod tests {
         assert_eq!(game.sim().player(), player);
         assert_eq!(game.sim().enemy_state(0), enemy);
         assert_eq!((game.mode.wave(), game.mode.score()), (wave, score));
+    }
+
+    #[test]
+    fn a_repeated_enter_on_the_main_menu_chooses_nothing() {
+        let mut game = menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        press_keys(&mut game, &mut ctx, &[Key::ArrowUp]);
+        assert_eq!(game.menu.selected(), Some(MenuAction::Quit));
+
+        game.route_input(&mut ctx, Input::Key(Key::Enter), true, true);
+
+        assert!(!ctx.exit_requested());
+        assert_eq!(game.screen, Screen::MainMenu);
+    }
+
+    #[test]
+    fn a_repeated_left_button_press_over_an_item_chooses_nothing() {
+        let mut game = menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let quit = row_point(&game, 2);
+        game.cursor_moved(quit);
+
+        game.route_input(&mut ctx, Input::Mouse(MouseButton::Left), true, true);
+
+        assert!(!ctx.exit_requested());
+        assert_eq!(game.screen, Screen::MainMenu);
+        assert!(!game.stage.cursor_captured);
+    }
+
+    #[test]
+    fn a_repeated_arrow_key_still_moves_the_selection() {
+        let mut game = menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        game.route_input(&mut ctx, Input::Key(Key::ArrowDown), true, true);
+
+        assert_eq!(game.menu.selected(), Some(MenuAction::Settings));
+    }
+
+    #[test]
+    fn moving_the_cursor_during_play_does_not_select_a_menu_item() {
+        let mut game = game_with_a_moving_enemy();
+        let quit = [640.0, 360.0 + 56.0];
+
+        game.cursor_moved(quit);
+
+        assert_eq!(game.menu.selected(), Some(MenuAction::Play));
+        assert_eq!(game.cursor, [640.0, 416.0]);
+    }
+
+    #[test]
+    fn moving_the_cursor_over_a_menu_item_selects_it() {
+        let mut game = menu_game();
+        let quit = row_point(&game, 2);
+
+        game.cursor_moved(quit);
+
+        assert_eq!(game.menu.selected(), Some(MenuAction::Quit));
+    }
+
+    #[test]
+    fn physical_cursor_positions_are_divided_by_the_scale_factor() {
+        assert_eq!(logical_point([200.0, 100.0], 2.0), [100.0, 50.0]);
+        assert_eq!(logical_point([30.0, 45.0], 1.5), [20.0, 30.0]);
+        assert_eq!(logical_point([7.0, 9.0], 1.0), [7.0, 9.0]);
+    }
+
+    #[test]
+    fn a_physical_window_size_is_divided_by_the_scale_factor() {
+        let size = winit::dpi::PhysicalSize::new(2560, 1440);
+
+        assert_eq!(logical_size(size, 2.0), [1280.0, 720.0]);
+        assert_eq!(logical_size(size, 1.0), [2560.0, 1440.0]);
+    }
+
+    #[test]
+    fn a_windowless_stage_reports_the_default_size_and_scale() {
+        let stage = Stage::new();
+
+        assert_eq!(stage.screen_points(), [1280.0, 720.0]);
+        assert_eq!(stage.scale_factor(), 1.0);
+    }
+
+    #[test]
+    fn only_a_game_that_opens_in_play_captures_the_cursor_on_start() {
+        assert!(game_with_a_moving_enemy().captures_cursor_on_start());
+        assert!(!menu_game().captures_cursor_on_start());
     }
 
     #[test]
