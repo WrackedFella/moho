@@ -1042,6 +1042,15 @@ mod tests {
     }
 
     #[test]
+    fn set_mode_toggle_on_a_non_toggleable_action_is_ignored() {
+        let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+
+        bindings.set_mode(TestAction::MoveForward, ActionMode::Toggle);
+
+        assert_eq!(bindings.mode(TestAction::MoveForward), ActionMode::Hold);
+    }
+
+    #[test]
     fn mode_values_are_case_insensitive() {
         for (value, mode) in [
             ("toggle", ActionMode::Toggle),
