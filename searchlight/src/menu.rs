@@ -1,15 +1,33 @@
 //! The main menu as a pure value: which item is selected, what a key or a click on it
 //! chooses, and the text that draws it. It owns no window and no input state.
 
-use moho_ui_shell::ScreenText;
+use moho_ui_shell::{Anchor, ScreenText};
+
+/// Font size of every row.
+const ROW_SIZE: f32 = 36.0;
+/// Distance between row centres, in logical points; at least [`ROW_SIZE`] so rows do not overlap.
+const ROW_PITCH: f32 = 56.0;
+/// Width of a row's clickable band, centred on the screen.
+const ROW_WIDTH: f32 = 240.0;
+const SELECTED_COLOR: [u8; 4] = [255, 220, 80, 255];
+const COLOR: [u8; 4] = [220, 220, 220, 255];
 
 /// What choosing a menu item asks the game to do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuAction {
     Play,
-    Resume,
     Settings,
     Quit,
+}
+
+impl MenuAction {
+    fn label(self) -> &'static str {
+        match self {
+            MenuAction::Play => "Play",
+            MenuAction::Settings => "Settings",
+            MenuAction::Quit => "Quit",
+        }
+    }
 }
 
 /// A column of items, one of them selected, laid out around the screen centre.
@@ -23,7 +41,7 @@ impl Menu {
     /// Play, Settings and Quit, in that order, with Play selected.
     pub fn main() -> Self {
         Self {
-            items: Vec::new(),
+            items: vec![MenuAction::Play, MenuAction::Settings, MenuAction::Quit],
             selected: 0,
         }
     }
@@ -34,30 +52,66 @@ impl Menu {
     }
 
     /// Selects the previous item, wrapping from the first to the last.
-    pub fn up(&mut self) {}
+    pub fn up(&mut self) {
+        self.selected = (self.selected + self.items.len() - 1) % self.items.len();
+    }
 
     /// Selects the next item, wrapping from the last to the first.
-    pub fn down(&mut self) {}
+    pub fn down(&mut self) {
+        self.selected = (self.selected + 1) % self.items.len();
+    }
 
     /// The selected item's action.
     pub fn activate(&self) -> MenuAction {
-        MenuAction::Resume
+        self.items[self.selected]
     }
 
     /// Selects the item under `point`, in logical points from the top left of a window
     /// `screen` points across; false, selecting nothing, when the point is over no item.
-    pub fn hover(&mut self, _point: [f32; 2], _screen: [f32; 2]) -> bool {
-        false
+    pub fn hover(&mut self, point: [f32; 2], screen: [f32; 2]) -> bool {
+        let Some(row) = self.row_at(point, screen) else {
+            return false;
+        };
+        self.selected = row;
+        true
     }
 
     /// The action of the item under `point` (see [`Menu::hover`]), if any.
-    pub fn click(&self, _point: [f32; 2], _screen: [f32; 2]) -> Option<MenuAction> {
-        None
+    pub fn click(&self, point: [f32; 2], screen: [f32; 2]) -> Option<MenuAction> {
+        self.row_at(point, screen).map(|row| self.items[row])
     }
 
     /// One centre-anchored text per item, top to bottom; the selected one in its own colour.
     pub fn texts(&self) -> Vec<ScreenText> {
-        Vec::new()
+        self.items
+            .iter()
+            .enumerate()
+            .map(|(row, item)| ScreenText {
+                text: item.label().to_owned(),
+                anchor: Anchor::Center,
+                offset: [0.0, self.row_offset(row)],
+                size: ROW_SIZE,
+                color: if row == self.selected {
+                    SELECTED_COLOR
+                } else {
+                    COLOR
+                },
+            })
+            .collect()
+    }
+
+    /// Vertical offset of row `row`'s centre from the screen centre.
+    fn row_offset(&self, row: usize) -> f32 {
+        (row as f32 - (self.items.len() - 1) as f32 / 2.0) * ROW_PITCH
+    }
+
+    fn row_at(&self, point: [f32; 2], screen: [f32; 2]) -> Option<usize> {
+        if (point[0] - screen[0] / 2.0).abs() >= ROW_WIDTH / 2.0 {
+            return None;
+        }
+        (0..self.items.len()).find(|&row| {
+            (point[1] - screen[1] / 2.0 - self.row_offset(row)).abs() < ROW_PITCH / 2.0
+        })
     }
 }
 

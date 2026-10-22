@@ -10,7 +10,7 @@ use moho_app::{Event, EventContext, FrameContext, Game, InitContext, TickContext
 use moho_audio::AudioSystem;
 use moho_input::action_map::{ActionMap, handle_device_event, handle_window_event};
 use moho_input::bindings::Input;
-use moho_input::key::Key;
+use moho_input::key::{Key, MouseButton};
 use moho_physics::{CharacterState, first_person_view};
 use moho_render_api::{
     InstanceGpu, MaterialGpu, MaterialKey, RenderMaterial, Renderable, UiFrame, UiFrameSource,
@@ -28,7 +28,7 @@ use crate::console_commands::{self, ConsoleCommand, GodModeArg};
 use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
 use crate::input::{SearchlightAction, SearchlightCommand, look_to_turn};
-use crate::menu::Menu;
+use crate::menu::{Menu, MenuAction};
 use crate::mode::ArenaMode;
 use crate::sim::{Feedback, SearchlightSim, dummy_at, dummy_hit_volumes};
 use crate::tag::SurfaceTag;
@@ -254,6 +254,8 @@ struct Crosshair {
     dead: bool,
     /// Opacity of the damage bar on each screen edge, indexed front, right, behind, left.
     edges: [u8; 4],
+    /// Whether the main menu covers the view: nothing is drawn.
+    hidden: bool,
 }
 
 impl Crosshair {
@@ -265,6 +267,9 @@ impl Crosshair {
 
 impl UiFrameSource for Crosshair {
     fn ui_frame(&mut self, size_in_pixels: [u32; 2]) -> Option<UiFrame> {
+        if self.hidden {
+            return None;
+        }
         let size = [size_in_pixels[0] as f32, size_in_pixels[1] as f32];
         let (cx, cy) = (size[0] / 2.0, size[1] / 2.0);
         let (near, far, half) = (Self::GAP, Self::GAP + Self::LENGTH, Self::THICKNESS / 2.0);
@@ -354,6 +359,8 @@ fn capture_cursor(window: &Window) {
 #[derive(Debug)]
 struct Stage {
     scene: Scene,
+    /// Drawn instead of `scene` behind the main menu, so the dormant arena stays untouched.
+    backdrop: Scene,
     segments: Vec<Segment>,
     dummy_material: u32,
     struck_material: u32,
@@ -379,6 +386,7 @@ impl Stage {
         let enemy_material = scene.material_table.find_or_push(&Paint::Enemy);
         Self {
             scene,
+            backdrop: Scene::new(),
             segments: Vec::new(),
             dummy_material,
             struck_material,
@@ -400,7 +408,25 @@ impl Stage {
 
     /// The window size in logical points; a windowless stage reports 1280 by 720.
     fn screen_points(&self) -> [f32; 2] {
-        [1280.0, 720.0]
+        self.window.as_ref().map_or([1280.0, 720.0], |window| {
+            let size = window.inner_size().to_logical::<f32>(window.scale_factor());
+            [size.width, size.height]
+        })
+    }
+
+    /// Physical pixels per logical point; a windowless stage reports 1.
+    fn scale_factor(&self) -> f64 {
+        self.window
+            .as_ref()
+            .map_or(1.0, |window| window.scale_factor())
+    }
+
+    /// Captures the cursor for mouse look, if there is a window to capture it in.
+    fn capture_cursor(&mut self) {
+        if let Some(window) = &self.window {
+            capture_cursor(window);
+        }
+        self.cursor_captured = true;
     }
 
     /// The console shell. Never hold the guard across `draw`: the renderer locks the shell
@@ -526,10 +552,19 @@ impl Stage {
             .crosshair
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        hud.hidden = false;
         hud.dead = dead;
         hud.edges = self
             .edge_left
             .map(|left| (EDGE_ALPHA * left / EDGE_TICKS) as u8);
+    }
+
+    /// Takes the crosshair, damage bars and death tint off the screen.
+    fn hide_hud(&self) {
+        self.crosshair
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .hidden = true;
     }
 
     fn play_shot(&self, audio: Option<&mut AudioSystem>) {
@@ -587,25 +622,42 @@ impl Stage {
     }
 
     fn draw(&mut self, renderer: &mut dyn RendererBackend, eye: (Mat4, Vec3)) {
-        renderer.update_lighting(lighting());
-        let (view, eye) = eye;
-        let projection = glam::camera::rh::proj::directx::perspective(
-            FOV_DEGREES.to_radians(),
-            self.aspect(),
-            NEAR,
-            FAR,
-        );
-        let no_actors: &[NoActor] = &[];
-        if let Err(error) = self.scene.render(
+        let aspect = self.aspect();
+        draw_scene(&mut self.scene, renderer, eye, aspect);
+    }
+
+    /// Draws an empty world, for the frames the main menu covers the arena.
+    fn draw_backdrop(&mut self, renderer: &mut dyn RendererBackend) {
+        let aspect = self.aspect();
+        draw_scene(
+            &mut self.backdrop,
             renderer,
-            no_actors,
-            no_actors,
-            NO_MESH,
-            NO_MESH,
-            (view, projection, eye),
-        ) {
-            tracing::warn!(%error, "skipped frame");
-        }
+            (Mat4::IDENTITY, Vec3::ZERO),
+            aspect,
+        );
+    }
+}
+
+fn draw_scene(
+    scene: &mut Scene,
+    renderer: &mut dyn RendererBackend,
+    eye: (Mat4, Vec3),
+    aspect: f32,
+) {
+    renderer.update_lighting(lighting());
+    let (view, eye) = eye;
+    let projection =
+        glam::camera::rh::proj::directx::perspective(FOV_DEGREES.to_radians(), aspect, NEAR, FAR);
+    let no_actors: &[NoActor] = &[];
+    if let Err(error) = scene.render(
+        renderer,
+        no_actors,
+        no_actors,
+        NO_MESH,
+        NO_MESH,
+        (view, projection, eye),
+    ) {
+        tracing::warn!(%error, "skipped frame");
     }
 }
 
@@ -621,6 +673,8 @@ enum Screen {
 pub struct SearchlightGame {
     screen: Screen,
     menu: Menu,
+    /// The cursor's last position, in logical points from the window's top left.
+    cursor: [f32; 2],
     mode: ArenaMode,
     input: ActionMap<SearchlightAction>,
     /// The player as the tick before the last left them, for blending the view.
@@ -639,6 +693,7 @@ impl SearchlightGame {
         Self {
             screen: Screen::Playing,
             menu: Menu::main(),
+            cursor: [0.0, 0.0],
             mode,
             input,
             previous,
@@ -651,12 +706,68 @@ impl SearchlightGame {
 
     /// Starts on the main menu with the arena not running, instead of in play.
     #[must_use]
-    pub fn with_main_menu(self) -> Self {
+    pub fn with_main_menu(mut self) -> Self {
+        self.screen = Screen::MainMenu;
         self
     }
 
+    /// Whether input goes to the console or the menu instead of the game: the loop pauses,
+    /// the action map is fed nothing and no look is sampled.
+    fn input_captured(&self) -> bool {
+        self.screen != Screen::Playing || self.stage.shell().captures_input()
+    }
+
     /// The cursor moved to `physical`, in physical pixels from the window's top left.
-    fn cursor_moved(&mut self, _physical: [f64; 2]) {}
+    fn cursor_moved(&mut self, physical: [f64; 2]) {
+        let scale = self.stage.scale_factor();
+        self.cursor = [(physical[0] / scale) as f32, (physical[1] / scale) as f32];
+        if self.screen == Screen::MainMenu {
+            self.menu.hover(self.cursor, self.stage.screen_points());
+        }
+    }
+
+    /// Carries out the menu item the player chose.
+    fn choose(&mut self, ctx: &mut EventContext<'_>, action: MenuAction) {
+        match action {
+            MenuAction::Play => {
+                self.screen = Screen::Playing;
+                // Whatever was pressed or moved over the menu must not act in the arena.
+                self.input.release_all();
+                self.input.discard_edges();
+                self.input.reset_look();
+                self.stage.capture_cursor();
+            }
+            MenuAction::Settings => {}
+            MenuAction::Quit => ctx.request_exit(),
+        }
+    }
+
+    /// A key or button press on the main menu; releases and Escape do nothing.
+    fn menu_input(
+        &mut self,
+        ctx: &mut EventContext<'_>,
+        input: Input,
+        pressed: bool,
+        repeat: bool,
+    ) {
+        if !pressed {
+            return;
+        }
+        match input {
+            Input::Key(Key::ArrowUp) => self.menu.up(),
+            Input::Key(Key::ArrowDown) => self.menu.down(),
+            Input::Key(Key::Enter) if !repeat => {
+                let action = self.menu.activate();
+                self.choose(ctx, action);
+            }
+            Input::Mouse(MouseButton::Left) if !repeat => {
+                if let Some(action) = self.menu.click(self.cursor, self.stage.screen_points()) {
+                    self.choose(ctx, action);
+                }
+            }
+            _ => {}
+        }
+    }
 
     /// Starts in the god mode `settings` holds and saves every change to it.
     #[must_use]
@@ -726,6 +837,19 @@ impl SearchlightGame {
         self
     }
 
+    /// A frame of the main menu: the title bare, the HUD hidden, an empty world and the
+    /// menu text for the shell to paint.
+    fn menu_frame(&mut self, ctx: &mut FrameContext<'_>) {
+        self.stage.refresh_title("");
+        self.stage.hide_hud();
+        if let Err(error) = self.stage.shell().set_texts(self.menu.texts()) {
+            tracing::warn!(%error, "main menu text not shown");
+        }
+        if let Some(renderer) = ctx.renderer() {
+            self.stage.draw_backdrop(renderer);
+        }
+    }
+
     /// Where one key or button press or release goes: the console sees it first, so a game
     /// action bound to the console key never shadows it. The window-event path calls this once
     /// it has an `Input`, so it is testable without a winit `KeyEvent`.
@@ -742,6 +866,9 @@ impl SearchlightGame {
             // the console.
             Routing::Opened => self.input.release_all(),
             Routing::Console | Routing::Closed => {}
+            Routing::Game if self.screen == Screen::MainMenu => {
+                self.menu_input(ctx, input, pressed, repeat);
+            }
             Routing::Game => {
                 if pressed && !repeat && input == Input::Key(Key::Escape) {
                     ctx.request_exit();
@@ -765,7 +892,7 @@ impl Game for SearchlightGame {
         // The paused loop asks every frame and drops the command; ending the tick would
         // consume the look the frames showed and snap the view back. Edges are dropped
         // instead, so a press made as the console opened does not act when it closes.
-        if self.stage.shell().captures_input() {
+        if self.input_captured() {
             self.input.discard_edges();
             return SearchlightCommand::default();
         }
@@ -787,13 +914,15 @@ impl Game for SearchlightGame {
     }
 
     fn init(&mut self, ctx: &mut InitContext<'_>) {
-        capture_cursor(ctx.window);
+        self.stage.window = Some(ctx.window.clone());
+        if self.screen == Screen::Playing {
+            self.stage.capture_cursor();
+        }
         self.stage.shell().attach(ctx.window.clone());
         let crosshair: UiSource = self.stage.crosshair.clone();
         let shell: UiSource = self.stage.shell.clone();
         let layers: UiSource = Arc::new(Mutex::new(UiLayers::new(vec![crosshair, shell])));
         ctx.renderer.set_ui_source(Some(layers));
-        self.stage.window = Some(ctx.window.clone());
     }
 
     fn event(&mut self, ctx: &mut EventContext<'_>, event: Event) {
@@ -806,20 +935,25 @@ impl Game for SearchlightGame {
                     let routing = self.route_input(ctx, input, pressed, repeat);
                     self.stage.shell().feed(&event, routing);
                 } else if self.stage.shell().on_window_event(&event) == Routing::Game {
-                    handle_window_event(&mut self.input, &event);
+                    if let WindowEvent::CursorMoved { position, .. } = event {
+                        self.cursor_moved([position.x, position.y]);
+                    }
+                    if self.screen == Screen::Playing {
+                        handle_window_event(&mut self.input, &event);
+                    }
                 }
             }
             Event::Device(event) => {
-                if self.focused && !self.stage.shell().captures_input() {
+                if self.focused && !self.input_captured() {
                     handle_device_event(&mut self.input, &event);
                 }
             }
         }
-        ctx.set_paused(self.stage.shell().captures_input());
+        ctx.set_paused(self.input_captured());
     }
 
     fn frame(&mut self, ctx: &mut FrameContext<'_>, alpha: f32) {
-        let captured = self.stage.shell().captures_input();
+        let captured = self.input_captured();
         ctx.set_paused(captured);
         if self.focused && !captured {
             self.input.sample_frame(ctx.frame_dt);
@@ -835,6 +969,10 @@ impl Game for SearchlightGame {
                     .show_hit_edge(hud::hit_edge(player.position, player.yaw, from));
             }
             self.stage.react(&feedback, ctx.audio());
+        }
+        if self.screen == Screen::MainMenu {
+            self.menu_frame(ctx);
+            return;
         }
         let sim = self.mode.sim();
         let dead = sim.player_body().is_dead();

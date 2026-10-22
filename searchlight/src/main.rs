@@ -70,7 +70,8 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
         .with_shell(UiShell::new(console))
         .with_debug_settings(debug_settings)
         .with_arena(arena.meshes.clone(), &arena.dummy_spawns)
-        .with_shot_sound(&assets().join("rifle_shot.wav"));
+        .with_shot_sound(&assets().join("rifle_shot.wav"))
+        .with_main_menu();
 
     moho_app::run(
         game,
