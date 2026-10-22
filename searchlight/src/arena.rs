@@ -40,6 +40,9 @@ pub enum ArenaError {
     /// The walkable area could not be built from the level's meshes.
     #[error(transparent)]
     Nav(#[from] NavBuildError),
+    /// The arena has enemy spawns, but no enemy spawn has a path to any waypoint.
+    #[error("no path from any enemy spawn reaches a waypoint")]
+    NoReachableWaypoint,
 }
 
 /// The arena's markers, grouped by kind. Within a kind, markers keep file order.
@@ -517,6 +520,133 @@ mod tests {
             ["enemy_spawn_01", "enemy_spawn_02"]
         );
         assert_eq!(names(&markers.covers), ["cover_01"]);
+    }
+
+    /// A 20 m floor with a 3 m tall island, too high to climb, in one corner.
+    /// `waypoints` are `(name, position)` pairs; the enemy spawns on the floor.
+    fn island_level(waypoints: &[(&str, Vec3)]) -> Level {
+        let solid = |min: Vec3, max: Vec3| LevelMesh {
+            mesh: box_mesh(min, max),
+            material: None,
+        };
+        let mut markers = vec![
+            marker("player_spawn", Vec3::new(-5.0, 0.0, -5.0)),
+            marker("dummy_01", Vec3::new(-5.0, 0.0, 5.0)),
+            marker("enemy_spawn_01", Vec3::new(0.0, 0.0, 0.0)),
+        ];
+        markers.extend(waypoints.iter().map(|&(name, at)| marker(name, at)));
+        Level {
+            meshes: vec![
+                solid(Vec3::new(-10.0, -1.0, -10.0), Vec3::new(10.0, 0.0, 10.0)),
+                solid(Vec3::new(4.0, 0.0, -8.0), Vec3::new(8.0, 3.0, -4.0)),
+            ],
+            markers,
+        }
+    }
+
+    const ON_FLOOR: Vec3 = Vec3::new(-5.0, 0.0, 5.0);
+    const OTHER_ON_FLOOR: Vec3 = Vec3::new(5.0, 0.0, 5.0);
+    const ON_ISLAND: Vec3 = Vec3::new(6.0, 3.0, -6.0);
+
+    fn build(level: &Level) -> Result<Arena, ArenaError> {
+        let markers = ArenaMarkers::from_level(level).expect("a valid marker set");
+        Arena::from_level(level, &markers)
+    }
+
+    #[test]
+    fn a_waypoint_no_spawn_reaches_is_dropped_from_the_route() {
+        let level = island_level(&[
+            ("waypoint_03", OTHER_ON_FLOOR),
+            ("waypoint_02", ON_ISLAND),
+            ("waypoint_01", ON_FLOOR),
+        ]);
+
+        let arena = build(&level).expect("two waypoints are reachable");
+
+        let spawn = arena.enemy_spawns[0];
+        assert!(
+            arena.nav.path(spawn, ON_ISLAND).is_none(),
+            "the island must be unreachable for this test to mean anything"
+        );
+        assert_eq!(arena.route, [ON_FLOOR, OTHER_ON_FLOOR]);
+    }
+
+    #[test]
+    fn dropping_a_waypoint_warns_with_its_name() {
+        let level = island_level(&[
+            ("waypoint_01", ON_FLOOR),
+            ("waypoint_02", ON_ISLAND),
+            ("waypoint_03", OTHER_ON_FLOOR),
+        ]);
+
+        let log = logged(|| {
+            build(&level).expect("two waypoints are reachable");
+        });
+
+        assert!(log.contains("WARN"), "{log}");
+        assert!(log.contains("waypoint_02"), "{log}");
+        assert!(!log.contains("waypoint_01"), "{log}");
+        assert!(!log.contains("waypoint_03"), "{log}");
+    }
+
+    #[test]
+    fn a_route_with_every_waypoint_reachable_is_kept_whole_and_silent() {
+        let level = island_level(&[("waypoint_02", OTHER_ON_FLOOR), ("waypoint_01", ON_FLOOR)]);
+
+        let mut arena = None;
+        let log = logged(|| arena = Some(build(&level).expect("both are reachable")));
+
+        assert_eq!(arena.expect("built").route, [ON_FLOOR, OTHER_ON_FLOOR]);
+        assert!(!log.contains("WARN"), "{log}");
+    }
+
+    #[test]
+    fn an_arena_whose_waypoints_no_spawn_reaches_is_an_error() {
+        let level = island_level(&[("waypoint_01", ON_ISLAND)]);
+
+        let error = build(&level).unwrap_err();
+
+        assert!(
+            matches!(error, ArenaError::NoReachableWaypoint),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn waypoints_are_not_checked_when_there_are_no_enemy_spawns() {
+        let mut level = island_level(&[("waypoint_01", ON_ISLAND)]);
+        level.markers.retain(|m| m.name != "enemy_spawn_01");
+
+        let arena = build(&level).expect("nothing walks the route");
+
+        assert_eq!(arena.route, [ON_ISLAND]);
+    }
+
+    /// Collects what `tracing` writes while `run` executes.
+    fn logged(run: impl FnOnce()) -> String {
+        use std::io::Write;
+        use std::sync::Mutex;
+
+        struct Sink(Arc<Mutex<Vec<u8>>>);
+        impl Write for Sink {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().expect("log sink").extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let writer = Arc::clone(&buffer);
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || Sink(Arc::clone(&writer)))
+            .with_ansi(false)
+            .finish();
+        tracing::subscriber::with_default(subscriber, run);
+        let bytes = buffer.lock().expect("log sink").clone();
+        String::from_utf8(bytes).expect("log output is utf-8")
     }
 
     #[test]
