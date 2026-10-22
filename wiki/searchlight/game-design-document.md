@@ -250,8 +250,8 @@ Milestones follow the phases: FPS-M*n* delivers Phase *n*, and FPS-M1.1 (menus) 
 |---|---|---|---|---|
 | 1 | **Arena baseline** | Movement, one rifle, **mags + chamber from day one**, **per-body-part hit volumes from day one**, basic AI (patrol, take cover, shoot, chase), waves, death/restart | Does the gunplay feel weighty? | Pre-made arena |
 | 1.2 | **Stance and body** | Crouch, prone, lean in every stance, head bob, hit volumes follow posture; a visible first-person body once the engine has skinned characters | Does posture change where I stand and when I peek? | Arena |
-| 2 | **Items and loadout** | Data-driven items, belt/vest vs backpack, loot drops from enemies, 3 weapons in 2 calibers | Does one item model carry everything? | Arena |
-| 3 | **Weapon wear and repair** | 4 components, jams, repair parts and workbench, dismantling; **end-of-round ledger** (rounds + wear valued) | Does wear drive scavenging? | Arena + range |
+| 2 | **Items and loadout** | Data-driven items with the % or # uses lifecycle rule, belt/vest vs backpack, loot drops from enemies, 3 weapons in 2 calibers | Does one item model carry everything? | Arena |
+| 3 | **Weapon wear and repair** | 4 components, jams, repair parts and workbench, dismantling, limited-use cleaning kits crafted from components that also work alone; **end-of-round ledger** (rounds + wear valued) | Does wear drive scavenging? | Arena + range |
 | 4 | **Wounds and healing** | Damage-scaled penalties, leg compounding, recovery timers, bleeding, first/secondary aid, splint, meds as perishable data; enemy wounds to taste | Does limb damage create good downtime? | Arena + range |
 | 5 | **Time, survival, rest** | Game clock/day cycle, hunger/thirst/fatigue, sleep at a safe spot, healing timers advance on sleep | Do survival stats add pressure, not chores? | Arena + safe room |
 | 6 | **Hub and jobs** | Trader hub, job board, currency, full ledger per job; arena becomes "the job site" | Does profit-as-score change player behavior? | Hub + 1–2 pre-made zones |
