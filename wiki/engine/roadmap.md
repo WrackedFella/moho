@@ -236,6 +236,29 @@ edits data); ADR-0011's rules cover netcode, and after ENG-F32-04 every change t
 character's state is a recorded command or effect. Voxel ids that still come from
 process-wide counters (ADR-0011 rule 3) are fixed where SG-F4 and SG-F7 rework that code.
 
+### Research queue
+
+Each topic is researched before it is carded, in this order. A topic ends in findings and, where it changes a seam, an
+ADR; none is a gate item. The lowest target GPU (a GTX 1080) is a floor, never a filter: an option it cannot run is
+recorded as an optional high-end tier instead of being dropped.
+
+| # | Topic | Question | Lands in |
+|---|---|---|---|
+| R.1 | Netcode for host-authoritative co-op | Which model fits ADR-0011: host runs AI, actors replicate behaviour to clients | Netcode ADR, ENG-M5+ |
+| R.2 | Determinism | What bit-equality costs across platforms (rapier `enhanced-determinism`, float order) beyond the ENG-M3 two-sim proof | Feeds R.1 |
+| R.3 | Audio | Whether rodio carries occlusion, reverb and spatial mixing, or a mixer sits above it | After ENG-F16 |
+| R.4 | Mod scripting | WASM, Lua or data-only extension; sandbox and API surface | Scripted-mods ADR, ENG-M5+ |
+| R.5 | Asset pipeline and streaming | Import, bake, hot reload, async load at level scale | Before ENG-M4 packaging |
+| R.6 | Strategy-scale pathfinding | Flow fields and hierarchical A* for many pawns; shared with ENG-F17 or separate | When the shared-A* idea row fires |
+| R.7 | Voxel terrain at scale | Transvoxel-style seams and LOD beyond the current chunk set | Flagstone line request |
+| R.8 | Post-processing | Temporal anti-aliasing, upscaling, shadows beyond cascades, volumetrics, particles, decals | ENG-M4 |
+
+### Optional high-end tier
+
+Hardware ray tracing (for example Bevy Solari) is an optional tier above the dynamic GI path, never a requirement. The
+GTX 1080 floor keeps the software path (ENG-F30) as the default; the tier is carded after ENG-M2 and sized as ENG-M3 or
+ENG-M4 work once ENG-F30 shows what the software path leaves on the table.
+
 ## Backlog (opportunistic, when touching the area)
 
 [ENG-F1-01](../../_todo/engine/ENG-F1-engine-hygiene/ENG-F1-01-constructor-size-cleanup.md)/[02](../../_todo/engine/ENG-F1-engine-hygiene/ENG-F1-02-error-handling-backlog.md)/[03](../../_todo/engine/ENG-F1-engine-hygiene/ENG-F1-03-god-module-splits.md)/[05](../../_todo/engine/ENG-F1-engine-hygiene/ENG-F1-05-material-model-revisit.md)/[07](../../_todo/engine/ENG-F1-engine-hygiene/ENG-F1-07-lint-ratchet.md), [ENG-F3-01](../../_todo/engine/ENG-F3-renderer-pipeline-cleanup/ENG-F3-01-bind-group-split.md)/[02](../../_todo/engine/ENG-F3-renderer-pipeline-cleanup/ENG-F3-02-frustum-culling-sorting.md), [ENG-F4](../../_todo/engine/ENG-F4-terrain-rendering-debt/_feature.md)-*,
