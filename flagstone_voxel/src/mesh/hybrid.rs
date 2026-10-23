@@ -70,10 +70,17 @@ pub(crate) fn coarse_face_material(
     unreachable!("a solid coarse cell has a solid block in one of its two face layers")
 }
 
+/// How many blocks past each chunk face the padded density field reaches.
+pub(crate) const SAMPLE_REACH: i32 = 1;
+
+/// Samples per axis of a chunk's padded density field.
+const DENSITY_FIELD_SIZE: usize = 16 + SAMPLE_REACH as usize + SAMPLE_REACH as usize;
+
 /// The block that field sample `sample` of chunk `chunk_base`'s padded density field stands
-/// for: the field is padded by one block, so sample `i` is block `chunk_base + i - 1`.
+/// for: the field is padded by [`SAMPLE_REACH`] blocks, so sample `i` is block
+/// `chunk_base + i - SAMPLE_REACH`.
 fn sample_block(chunk_base: IVec3, sample: [usize; 3]) -> BlockPos {
-    chunk_base + IVec3::from_array(sample.map(|c| c as i32)) - IVec3::ONE
+    chunk_base + IVec3::from_array(sample.map(|c| c as i32)) - IVec3::splat(SAMPLE_REACH)
 }
 
 /// The face material of the block that field sample `sample` of chunk `chunk_base`'s
@@ -84,6 +91,23 @@ fn sample_block(chunk_base: IVec3, sample: [usize; 3]) -> BlockPos {
 pub(crate) fn sample_face_material(grid: &VoxelGrid, chunk_base: IVec3, sample: [usize; 3]) -> u32 {
     grid.face_material_at(sample_block(chunk_base, sample))
         .expect("marching cubes asks for the material of solid samples only")
+}
+
+/// The chunks whose mesh geometry reads `block` (smooth normals of the positive neighbour
+/// also read a block at local 15, which this set leaves out): its own chunk plus, on each axis where the block
+/// sits within [`SAMPLE_REACH`] of the chunk's negative edge, the negative neighbour
+/// (whose padded density field reaches [`SAMPLE_REACH`] blocks past its far edge).
+/// Yields 1, 2, 4 or 8 chunks.
+pub fn chunks_meshed_from(block: BlockPos, chunk_size: i32) -> impl Iterator<Item = IVec3> {
+    let own = VoxelGrid::get_chunk_pos(block, chunk_size);
+    let on_edge = block
+        .rem_euclid(IVec3::splat(chunk_size))
+        .cmplt(IVec3::splat(SAMPLE_REACH));
+    (0..8i32).filter_map(move |mask| {
+        let step = IVec3::new(mask & 1, (mask >> 1) & 1, mask >> 2);
+        let allowed = step.cmpeq(IVec3::ZERO) | on_edge;
+        allowed.all().then_some(own - step)
+    })
 }
 
 /// Classifies the content of a chunk
@@ -282,8 +306,8 @@ impl HybridMeshGenerator {
         chunk_pos: IVec3,
         chunk_size: i32,
         only_smooth: bool,
-    ) -> [[[f32; 18]; 18]; 18] {
-        let mut field = [[[0.0f32; 18]; 18]; 18];
+    ) -> [[[f32; DENSITY_FIELD_SIZE]; DENSITY_FIELD_SIZE]; DENSITY_FIELD_SIZE] {
+        let mut field = [[[0.0f32; DENSITY_FIELD_SIZE]; DENSITY_FIELD_SIZE]; DENSITY_FIELD_SIZE];
         let base_pos = chunk_pos * chunk_size;
 
         // Sample with padding (-1 to chunk_size+1)
@@ -561,6 +585,95 @@ mod tests {
             assert_eq!(smooth, expected_smooth, "material {material}");
             assert_eq!(blocky, expected_blocky, "material {material}");
         }
+    }
+
+    fn meshed_from_sized(block: [i32; 3], chunk_size: i32) -> Vec<[i32; 3]> {
+        let mut chunks: Vec<[i32; 3]> = chunks_meshed_from(IVec3::from(block), chunk_size)
+            .map(|chunk| chunk.to_array())
+            .collect();
+        chunks.sort_unstable();
+        chunks
+    }
+
+    fn meshed_from(block: [i32; 3]) -> Vec<[i32; 3]> {
+        meshed_from_sized(block, 16)
+    }
+
+    #[test]
+    fn chunks_meshed_from_counts_one_two_four_or_eight_chunks() {
+        type Row = (&'static str, [i32; 3], i32, Vec<[i32; 3]>);
+        let rows: Vec<Row> = vec![
+            ("interior", [5, 5, 5], 16, vec![[0, 0, 0]]),
+            ("far corner of own chunk", [15, 15, 15], 16, vec![[0, 0, 0]]),
+            ("x face", [0, 5, 5], 16, vec![[-1, 0, 0], [0, 0, 0]]),
+            ("y face", [5, 0, 5], 16, vec![[0, -1, 0], [0, 0, 0]]),
+            ("z face", [5, 5, 0], 16, vec![[0, 0, -1], [0, 0, 0]]),
+            (
+                "xy edge",
+                [0, 0, 5],
+                16,
+                vec![[-1, -1, 0], [-1, 0, 0], [0, -1, 0], [0, 0, 0]],
+            ),
+            (
+                "xz edge",
+                [0, 5, 0],
+                16,
+                vec![[-1, 0, -1], [-1, 0, 0], [0, 0, -1], [0, 0, 0]],
+            ),
+            (
+                "yz edge",
+                [5, 0, 0],
+                16,
+                vec![[0, -1, -1], [0, -1, 0], [0, 0, -1], [0, 0, 0]],
+            ),
+            (
+                "corner",
+                [0, 0, 0],
+                16,
+                vec![
+                    [-1, -1, -1],
+                    [-1, -1, 0],
+                    [-1, 0, -1],
+                    [-1, 0, 0],
+                    [0, -1, -1],
+                    [0, -1, 0],
+                    [0, 0, -1],
+                    [0, 0, 0],
+                ],
+            ),
+            (
+                "x face with 32-block chunks",
+                [32, 5, 5],
+                32,
+                vec![[0, 0, 0], [1, 0, 0]],
+            ),
+        ];
+
+        for (name, block, chunk_size, expected) in rows {
+            assert_eq!(meshed_from_sized(block, chunk_size), expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn chunks_meshed_from_uses_negative_neighbours_only() {
+        assert_eq!(meshed_from([16, 5, 5]), vec![[0, 0, 0], [1, 0, 0]]);
+        assert_eq!(meshed_from([5, 32, 5]), vec![[0, 1, 0], [0, 2, 0]]);
+        assert_eq!(meshed_from([5, 5, 16]), vec![[0, 0, 0], [0, 0, 1]]);
+        assert_eq!(
+            meshed_from([16, 16, 5]),
+            vec![[0, 0, 0], [0, 1, 0], [1, 0, 0], [1, 1, 0]]
+        );
+        assert_eq!(meshed_from([15, 15, 15]), vec![[0, 0, 0]]);
+    }
+
+    #[test]
+    fn chunks_meshed_from_handles_negative_world_coordinates() {
+        assert_eq!(meshed_from([-1, -1, -1]), vec![[-1, -1, -1]]);
+        assert_eq!(meshed_from([-16, -1, -1]), vec![[-2, -1, -1], [-1, -1, -1]]);
+        assert_eq!(
+            meshed_from([-16, -1, -32]),
+            vec![[-2, -1, -3], [-2, -1, -2], [-1, -1, -3], [-1, -1, -2]]
+        );
     }
 
     #[test]

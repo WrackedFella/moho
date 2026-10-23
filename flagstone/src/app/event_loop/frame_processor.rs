@@ -60,7 +60,17 @@ impl FrameProcessor {
             self.update_game_state_fps_kcc(app, dt);
         } else {
             // Flying camera / noclip / RTS
-            let (view, proj, eye) = app.simulation.apply_input(dt);
+            let grid = app
+                .light_system
+                .as_ref()
+                .map(flagstone_voxel::LightSystem::grid);
+            // Top face of the highest solid block in the column; `None` when the column is unloaded or has no solid block.
+            let ground = |x: f32, z: f32| {
+                grid?
+                    .get_height(x.floor() as i32, z.floor() as i32)
+                    .map(|top| top as f32 + 1.0)
+            };
+            let (view, proj, eye) = app.simulation.apply_input(dt, ground);
             app.camera = (view, proj, eye);
         }
 

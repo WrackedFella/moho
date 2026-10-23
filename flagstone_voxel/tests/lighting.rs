@@ -4,8 +4,8 @@
 //! property. Failing tests identify exactly which guarantee broke.
 
 use flagstone_voxel::{
-    LightFrameBudget, LightPropagator, LightSystem, MaterialLighting, MaterialType, VoxelGrid,
-    dirty_chunks_below, recompute_sky_exposure,
+    CRYSTAL_EMISSION, CRYSTAL_MATERIAL_ID, LightFrameBudget, LightPropagator, LightSystem,
+    MaterialLighting, MaterialType, VoxelGrid, dirty_chunks_below, recompute_sky_exposure,
 };
 use glam::{IVec3, Vec3};
 use moho_core::events::EventBus;
@@ -1560,4 +1560,76 @@ fn removal_reseeds_from_an_opaque_emitter_holding_its_light() {
 #[test]
 fn removal_reseeds_from_a_transparent_block_holding_survivor_light() {
     assert_eq!(light_left_after_removal(1, [10, 0, 0]), [9, 0, 0]);
+}
+
+// ---------------------------------------------------------------------------
+// Glowing crystal
+// ---------------------------------------------------------------------------
+
+const POCKET_MIN: IVec3 = IVec3::new(5, 5, 5);
+const POCKET_MAX: IVec3 = IVec3::new(7, 7, 7);
+const CRYSTAL_POS: IVec3 = IVec3::new(6, 5, 6);
+
+/// A 3x3x3 air pocket sealed by a one-block stone shell, a crystal on its
+/// floor, lit as a freshly loaded chunk.
+fn lit_crystal_cave() -> LightSystem {
+    let mut grid = grid_16();
+    for x in 4..=8 {
+        for y in 4..=8 {
+            for z in 4..=8 {
+                let pos = IVec3::new(x, y, z);
+                if pos.cmplt(POCKET_MIN).any() || pos.cmpgt(POCKET_MAX).any() {
+                    grid.mutator().place(pos, 2, None);
+                }
+            }
+        }
+    }
+    grid.mutator().place(CRYSTAL_POS, CRYSTAL_MATERIAL_ID, None);
+    let mut light_system =
+        LightSystem::new(grid, Arc::new(EventBus::new()), LightFrameBudget::default());
+
+    light_system.light_arrived_chunks(&[IVec3::ZERO]);
+
+    light_system
+}
+
+#[test]
+fn crystal_in_a_sealed_cave_lights_the_air_beside_it_on_arrival() {
+    let light_system = lit_crystal_cave();
+
+    let beside = [
+        IVec3::new(5, 5, 6),
+        IVec3::new(7, 5, 6),
+        IVec3::new(6, 5, 5),
+        IVec3::new(6, 5, 7),
+        IVec3::new(6, 6, 6),
+    ];
+
+    let expected = CRYSTAL_EMISSION.map(|channel| channel - 1);
+    for pos in beside {
+        assert_eq!(rgb(light_system.grid(), pos), expected, "air at {pos:?}");
+    }
+}
+
+#[test]
+fn mining_crystal_returns_its_cave_to_dark() {
+    let mut light_system = lit_crystal_cave();
+    assert_ne!(
+        rgb(light_system.grid(), IVec3::new(6, 6, 6)),
+        [0; 3],
+        "lit before the crystal is mined"
+    );
+
+    let grid = light_system.grid_mut();
+    grid.mutator().remove(CRYSTAL_POS);
+    LightPropagator::new().update_at(grid, CRYSTAL_POS);
+
+    for x in POCKET_MIN.x..=POCKET_MAX.x {
+        for y in POCKET_MIN.y..=POCKET_MAX.y {
+            for z in POCKET_MIN.z..=POCKET_MAX.z {
+                let pos = IVec3::new(x, y, z);
+                assert_eq!(rgb(light_system.grid(), pos), [0; 3], "cave at {pos:?}");
+            }
+        }
+    }
 }

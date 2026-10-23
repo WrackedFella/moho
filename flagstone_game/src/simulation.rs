@@ -20,9 +20,16 @@ impl SimulationController {
     }
 
     /// Applies the pending input and returns the resulting camera `(view, proj, cam_pos)`.
-    pub fn apply_input(&mut self, dt: f32) -> (Mat4, Mat4, Vec3) {
+    ///
+    /// `ground_height(x, z)` is the surface height at that world column, `None` where the
+    /// column is not loaded.
+    pub fn apply_input(
+        &mut self,
+        dt: f32,
+        ground_height: impl Fn(f32, f32) -> Option<f32>,
+    ) -> (Mat4, Mat4, Vec3) {
         self.player_controller
-            .apply_input(&self.controller_input, dt);
+            .apply_input(&self.controller_input, dt, ground_height);
 
         controller_to_camera(&self.player_controller)
     }
@@ -77,7 +84,7 @@ mod tests {
             let mut sim = SimulationController::new(Vec3::new(1.0, 2.0, 3.0));
             sim.controller_input_mut().forward = 1.0;
 
-            let (view, proj, cam_pos) = sim.apply_input(0.5);
+            let (view, proj, cam_pos) = sim.apply_input(0.5, |_, _| None);
 
             assert_vec3_near(sim.position(), Vec3::new(1.0, 2.0, 5.0));
             assert_vec3_near(cam_pos, Vec3::new(1.0, 2.0, 5.0));
@@ -86,6 +93,21 @@ mod tests {
             assert_eq!(view, expected_view);
             assert_eq!(proj, expected_proj);
             assert_eq!(cam_pos, expected_pos);
+        }
+
+        #[test]
+        fn apply_input_when_isometric_keeps_the_returned_eye_above_the_ground() {
+            let mut sim = SimulationController::new(Vec3::ZERO);
+            sim.set_camera_mode(CameraMode::Isometric);
+            sim.look_at(Vec3::new(0.0, 0.0, 0.0));
+
+            let (_, _, cam_pos) =
+                sim.apply_input(1.0 / 60.0, |x, _| Some(if x < 5.0 { 0.0 } else { 30.0 }));
+
+            assert!(
+                cam_pos.y >= 30.0 + crate::controller::CAMERA_CLEARANCE - EPS,
+                "eye {cam_pos:?}"
+            );
         }
     }
 

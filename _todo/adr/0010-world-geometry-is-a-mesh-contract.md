@@ -1,6 +1,6 @@
 # 0010 — The engine sees world geometry as meshes; voxels belong to the strategy line
 
-**Status:** Accepted (2026-10-06; supersedes [0002](0002-voxel-and-materials-stay-in-core.md) and narrows [0003](0003-core-owns-event-types.md))
+**Status:** Accepted (2026-10-06; supersedes [0002](0002-voxel-and-materials-stay-in-core.md) and narrows [0003](0003-core-owns-event-types.md); amended by [0025](0025-world-meshes-are-placed-per-frame.md): a mesh may be placed at per-frame transforms instead of drawing only at the identity)
 
 ## Context
 
