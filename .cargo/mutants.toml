@@ -222,5 +222,7 @@ exclude_re = [
     'replace < with <= in funnel',
     'replace > with >= in funnel',
     'replace \+ with \* in funnel',
-    'replace <impl Game for SearchlightGame>::init with \(\)'
+    'replace <impl Game for SearchlightGame>::init with \(\)',
+    # The negation only gates the skip warning; the filter returns the un-negated mode check.
+    'delete ! in triangle_primitives',
 ]
