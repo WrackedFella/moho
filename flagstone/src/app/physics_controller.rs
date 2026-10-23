@@ -13,8 +13,9 @@ pub struct PhysicsController {
     pub noclip: bool,
     /// The player's state before the latest tick, for blending the view.
     previous: Option<moho_physics::CharacterState>,
-    /// A teleport is queued: the next tick records its result as `previous` too, so the view
-    /// does not blend across it.
+    /// A teleport or look is queued and not yet applied: the view has no states to blend until
+    /// the next tick applies it, and that tick records its result as `previous` too, so the view
+    /// does not blend across the change.
     snap_view: bool,
 }
 
@@ -56,10 +57,14 @@ impl PhysicsController {
         self.previous = pw.character(handle);
     }
 
-    /// The player's state before and after the latest tick, if there is a player.
+    /// The player's state before and after the latest tick, if there is a player and no
+    /// teleport or look is waiting for the next tick to apply.
     pub fn player_states(
         &self,
     ) -> Option<(moho_physics::CharacterState, moho_physics::CharacterState)> {
+        if self.snap_view {
+            return None;
+        }
         let current = self.world.as_ref()?.character(self.player?)?;
         Some((self.previous?, current))
     }
@@ -99,6 +104,7 @@ impl PhysicsController {
                 moho_physics::CharacterEffect::SetLook { yaw, pitch },
             )
             .expect("the player handle belongs to the current world");
+            self.snap_view = true;
         }
     }
 

@@ -135,7 +135,9 @@ impl PhysicsWorld {
                 collider,
                 velocity: Vec3::ZERO,
                 yaw: spawn.yaw,
-                pitch: spawn.pitch,
+                pitch: spawn
+                    .pitch
+                    .clamp(-movement::PITCH_LIMIT, movement::PITCH_LIMIT),
                 grounded: false,
                 effects: Vec::new(),
             },
