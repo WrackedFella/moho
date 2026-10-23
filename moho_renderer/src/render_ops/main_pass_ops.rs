@@ -15,7 +15,7 @@ use wgpu::{BindGroup, Buffer, CommandEncoder, RenderPipeline, TextureView};
 ///
 /// # Arguments
 /// * `encoder` - Command encoder for recording the render pass
-/// * `frame_view` - Surface texture view to render into
+/// * `hdr_view` - HDR target view to render into
 /// * `depth_view` - Depth texture view for depth testing
 /// * `skybox_pipeline` - Pipeline for rendering skybox
 /// * `skybox_vertex_buffer` - Vertex buffer containing skybox geometry
@@ -30,7 +30,7 @@ use wgpu::{BindGroup, Buffer, CommandEncoder, RenderPipeline, TextureView};
 #[allow(clippy::too_many_arguments)] // Render operations naturally have many parameters
 pub fn render_main_pass(
     encoder: &mut CommandEncoder,
-    frame_view: &TextureView,
+    hdr_view: &TextureView,
     depth_view: &TextureView,
     skybox_pipeline: &RenderPipeline,
     skybox_vertex_buffer: &Buffer,
@@ -46,7 +46,7 @@ pub fn render_main_pass(
     let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("batched-rpass"),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view: frame_view,
+            view: hdr_view,
             resolve_target: None,
             ops: wgpu::Operations {
                 load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),

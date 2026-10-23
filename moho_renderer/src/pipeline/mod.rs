@@ -181,14 +181,14 @@ impl PipelineSetup {
             device,
             &main_shader,
             &main_pipeline_layout,
-            config.format,
+            crate::tone_map::HDR_FORMAT,
             depth_format,
         );
         let skybox_pipeline = Self::create_skybox_render_pipeline(
             device,
             &skybox_shader,
             &skybox_pipeline_layout,
-            config.format,
+            crate::tone_map::HDR_FORMAT,
             depth_format,
         );
         let marker_pipeline = marker::create_marker_pipeline(
@@ -234,7 +234,7 @@ impl PipelineSetup {
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
         layout: &wgpu::PipelineLayout,
-        surface_format: wgpu::TextureFormat,
+        color_format: wgpu::TextureFormat,
         depth_format: wgpu::TextureFormat,
     ) -> wgpu::RenderPipeline {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -267,7 +267,7 @@ impl PipelineSetup {
                 entry_point: Some("fs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
+                    format: color_format,
                     blend: Some(wgpu::BlendState {
                         color: wgpu::BlendComponent {
                             src_factor: wgpu::BlendFactor::SrcAlpha,
@@ -316,7 +316,7 @@ impl PipelineSetup {
         device: &wgpu::Device,
         shader: &wgpu::ShaderModule,
         layout: &wgpu::PipelineLayout,
-        surface_format: wgpu::TextureFormat,
+        color_format: wgpu::TextureFormat,
         depth_format: wgpu::TextureFormat,
     ) -> wgpu::RenderPipeline {
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -337,7 +337,7 @@ impl PipelineSetup {
                 entry_point: Some("fs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
+                    format: color_format,
                     blend: None, // No blending for skybox
                     write_mask: wgpu::ColorWrites::ALL,
                 })],

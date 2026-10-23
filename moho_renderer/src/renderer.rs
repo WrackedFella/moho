@@ -46,6 +46,10 @@ pub struct Renderer<'a> {
     pending_fill_count: usize,
     /// Debug view that replaces the game's own in every lighting update, once one is set.
     debug_view: Option<u32>,
+    hdr_target: crate::tone_map::HdrTarget,
+    tone_map: crate::tone_map::ToneMapPass,
+    exposure: f32,
+    tone_map_enabled: bool,
 }
 
 impl<'a> Renderer<'a> {
@@ -96,6 +100,18 @@ impl<'a> Renderer<'a> {
 
         let ui_pass = crate::ui_pass::UiPass::new(&device_setup.device, device_setup.config.format);
 
+        let hdr_target = crate::tone_map::HdrTarget::new(
+            &device_setup.device,
+            device_setup.config.width,
+            device_setup.config.height,
+        );
+        let tone_map = crate::tone_map::ToneMapPass::new(
+            &device_setup.device,
+            device_setup.config.format,
+            &hdr_target,
+        );
+        tone_map.set_params(&device_setup.queue, 1.0, true);
+
         let mut renderer = Self {
             window,
             surface: device_setup.surface,
@@ -135,6 +151,10 @@ impl<'a> Renderer<'a> {
             pending_markers: Vec::new(),
             pending_fill_count: 0,
             debug_view: None,
+            hdr_target,
+            tone_map,
+            exposure: 1.0,
+            tone_map_enabled: true,
         };
 
         // Recreate camera bind group with SSAO textures if available
@@ -272,6 +292,8 @@ impl<'a> Renderer<'a> {
         });
         self.depth_texture_view =
             depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.hdr_target = crate::tone_map::HdrTarget::new(&self.device, width, height);
+        self.tone_map.rebind(&self.device, &self.hdr_target);
 
         if let Some(ssao) = &mut self.ssao {
             ssao.resize(&self.device, width, height);
@@ -556,6 +578,25 @@ impl<'a> Renderer<'a> {
         self.view_height = height;
     }
 
+    /// Set the tone-map exposure from a Brightness value (see [`brightness_exposure`]).
+    ///
+    /// [`brightness_exposure`]: crate::brightness_exposure
+    pub fn set_brightness(&mut self, brightness: f32) {
+        self.exposure = crate::tone_map::brightness_exposure(brightness);
+        self.write_tone_map_params();
+    }
+
+    /// Turn the tone-map curve on or off; off passes the HDR scene through unchanged.
+    pub fn set_tone_map(&mut self, enabled: bool) {
+        self.tone_map_enabled = enabled;
+        self.write_tone_map_params();
+    }
+
+    fn write_tone_map_params(&self) {
+        self.tone_map
+            .set_params(&self.queue, self.exposure, self.tone_map_enabled);
+    }
+
     pub fn set_ssao_quality(&mut self, quality: u8) {
         let quality_enum = match quality {
             0 => crate::ssao::SsaoQuality::Off,
@@ -606,7 +647,8 @@ impl<'a> Renderer<'a> {
         }
     }
 
-    /// Flush all queued draws (shadow passes, main pass, markers, SSAO) and present
+    /// Flush all queued draws (shadow passes, main pass into the HDR target, tone-map pass,
+    /// markers, SSAO, UI) and present
     /// the frame. No-op if `begin_frame` wasn't called or didn't acquire a
     /// surface texture.
     pub fn submit_frame(&mut self) {
@@ -647,7 +689,7 @@ impl<'a> Renderer<'a> {
 
         crate::render_ops::main_pass_ops::render_main_pass(
             &mut encoder,
-            frame_view,
+            self.hdr_target.view(),
             &self.depth_texture_view,
             &self.skybox_pipeline,
             &self.skybox_vertex_buffer,
@@ -660,6 +702,8 @@ impl<'a> Renderer<'a> {
             &self.mesh_table,
             &offsets,
         );
+
+        self.tone_map.render(&mut encoder, frame_view);
 
         if !self.pending_markers.is_empty() {
             self.marker_buffers

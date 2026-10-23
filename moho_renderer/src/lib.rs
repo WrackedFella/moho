@@ -241,6 +241,12 @@ impl RendererBackend for Renderer<'_> {
     fn set_view_height(&mut self, height: Option<f32>) {
         self.set_view_height(height);
     }
+    fn set_brightness(&mut self, brightness: f32) {
+        self.set_brightness(brightness);
+    }
+    fn set_tone_map(&mut self, enabled: bool) {
+        self.set_tone_map(enabled);
+    }
     fn enqueue_markers(
         &mut self,
         fills: &[moho_render_api::MarkerGpu],

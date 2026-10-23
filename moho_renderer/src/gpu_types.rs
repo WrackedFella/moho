@@ -58,7 +58,17 @@ pub struct ShadowMatrixGpu {
 pub struct ToneMapGpu {
     pub exposure: f32,
     pub enabled: u32,
-    pub _pad: [u32; 1],
+    _pad: [u32; 2],
+}
+
+impl ToneMapGpu {
+    pub fn new(exposure: f32, enabled: bool) -> Self {
+        Self {
+            exposure,
+            enabled: u32::from(enabled),
+            _pad: [0; 2],
+        }
+    }
 }
 
 /// Maximum number of shadow-casting lights supported

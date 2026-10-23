@@ -26,7 +26,7 @@ pub fn skybox_shader_source() -> String {
 
 /// WGSL source of the tone-map pass shader.
 pub fn tonemap_shader_source() -> &'static str {
-    ""
+    include_str!("../../../shaders/tonemap.wgsl")
 }
 
 /// WGSL source of the UI pass shader.
