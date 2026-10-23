@@ -159,7 +159,30 @@ fn ground_move(velocity: &mut Vec3, wish: Vec3, magnitude: f32, settings: &MoveS
     );
 }
 
-/// Remove the velocity into every surface that blocked the slide, reporting each as an impact.
+/// Most distinct blocking planes [`clip`] resolves; more than this stops the character.
+const MAX_CLIP_PLANES: usize = 5;
+
+/// Normals with a dot product above this count as one plane.
+const SAME_PLANE_DOT: f32 = 0.99;
+
+/// A blocking plane: the collider, the surface normal as reported, and the normal clipped against.
+type BlockingPlane = (ColliderHandle, Vec3, Vec3);
+
+/// Replace non-finite components of `velocity` with zero (logged) and clamp each component to
+/// `±max`.
+fn checked(velocity: Vec3, max: f32) -> Vec3 {
+    let mut components = velocity.to_array();
+    for component in &mut components {
+        if !component.is_finite() {
+            tracing::warn!(?velocity, "non-finite velocity component reset to zero");
+            *component = 0.0;
+        }
+        *component = component.clamp(-max, max);
+    }
+    Vec3::from_array(components)
+}
+
+/// Remove the velocity into the surfaces that blocked the slide, reporting each as an impact.
 ///
 /// A hit blocks when the asked motion faces it and the slide moved less into it than asked,
 /// or when it is the surface an airborne character just landed on. A walker (`walking`) is
@@ -167,6 +190,15 @@ fn ground_move(velocity: &mut Vec3, wish: Vec3, magnitude: f32, settings: &MoveS
 /// edges of steps neither stop nor clip it. Every other surface is judged on the horizontal
 /// plane for a walker, as in Source's `WalkMove`, so a lift over a step never reads as
 /// blocking and clipping never gives a walker vertical velocity.
+///
+/// The blocking planes are merged where their normals nearly coincide (the first collider is
+/// kept) and the result is chosen as in Quake's `PM_SlideMove`, from the incoming velocity
+/// alone so the plane order does not matter:
+/// - more than [`MAX_CLIP_PLANES`] planes stop the character;
+/// - a velocity clipped against one plane (overbounce 1.0) that enters no other plane is taken;
+/// - otherwise two planes slide the character along their crease, and any other count stops it.
+///
+/// One impact is reported per plane, its speed the incoming velocity's speed into it.
 fn clip(
     velocity: &mut Vec3,
     asked: Vec3,
@@ -174,7 +206,11 @@ fn clip(
     walking: bool,
     airborne_before: bool,
 ) -> Vec<Impact> {
+    let primal = *velocity;
     let mut impacts = Vec::new();
+    let mut planes = [(ColliderHandle::invalid(), Vec3::ZERO, Vec3::ZERO); MAX_CLIP_PLANES];
+    let mut count = 0;
+    let mut overflowed = false;
     for &(collider, surface) in &slid.hits {
         if walking && slid.grounded && surface.y >= WALKABLE_NORMAL_Y {
             continue;
@@ -191,17 +227,57 @@ fn clip(
         let lands_on = airborne_before && slid.grounded && surface.y > 0.0;
         let blocked = asked.dot(normal) < 0.0
             && (lands_on || moved.dot(normal) > asked.dot(normal) + BLOCKED_EPSILON);
-        let into = velocity.dot(normal);
-        if blocked && into < 0.0 {
-            impacts.push(Impact {
-                collider,
-                normal: surface,
-                speed: -into,
-            });
-            *velocity -= normal * into;
+        let into = primal.dot(normal);
+        if !blocked || into >= 0.0 {
+            continue;
         }
+        if planes[..count]
+            .iter()
+            .any(|plane| plane.2.dot(normal) > SAME_PLANE_DOT)
+        {
+            continue;
+        }
+        if count == MAX_CLIP_PLANES {
+            overflowed = true;
+            break;
+        }
+        planes[count] = (collider, surface, normal);
+        count += 1;
+        impacts.push(Impact {
+            collider,
+            normal: surface,
+            speed: -into,
+        });
+    }
+
+    let planes: &[BlockingPlane] = &planes[..count];
+    if overflowed {
+        *velocity = Vec3::ZERO;
+    } else if !planes.is_empty() {
+        *velocity = slide_along(primal, planes);
     }
     impacts
+}
+
+/// The velocity `primal` becomes against `planes`: see [`clip`].
+fn slide_along(primal: Vec3, planes: &[BlockingPlane]) -> Vec3 {
+    for (i, &(_, _, normal)) in planes.iter().enumerate() {
+        let clipped = primal - normal * primal.dot(normal);
+        let enters_another = planes
+            .iter()
+            .enumerate()
+            .any(|(j, plane)| j != i && clipped.dot(plane.2) < 0.0);
+        if !enters_another {
+            return clipped;
+        }
+    }
+    match planes {
+        [(_, _, a), (_, _, b)] => {
+            let crease = a.cross(*b).normalize_or_zero();
+            crease * crease.dot(primal)
+        }
+        _ => Vec3::ZERO,
+    }
 }
 
 /// `look` (yaw, pitch) turned by `delta` with pitch clamped at [`PITCH_LIMIT`]; the one
@@ -248,11 +324,14 @@ fn apply(state: &mut CharacterState, effect: CharacterEffect) {
 /// 2. a jump adds `jump_speed` to the vertical velocity;
 /// 3. half a tick of gravity (`v.y -= g·dt/2`), unless walking;
 /// 4. friction and acceleration (walking) or air acceleration;
+///    4b. the velocity is checked: a non-finite component becomes 0 and each component is
+///    clamped to `±max_velocity`, so the slide runs at most at that speed;
 /// 5. `slide` receives `asked = v·dt`;
-/// 6. the velocity is clipped against what the slide hit;
+/// 6. the velocity is clipped against what the slide hit (see `clip`);
 /// 7. the other half of gravity, unless walking;
 /// 8. settle: a walker that ends the tick grounded moves along its ground, keeping its
-///    horizontal velocity; a landing zeroes the vertical velocity.
+///    horizontal velocity; a landing zeroes the vertical velocity;
+/// 9. the velocity is checked again, so stored state is bounded.
 ///
 /// The two halves around the move give an airborne tick the exact displacement under constant
 /// gravity at any tick rate. A landing's impact speed is therefore the mid-tick downward speed.
@@ -304,6 +383,8 @@ pub fn step(
         );
     }
 
+    state.velocity = checked(state.velocity, settings.max_velocity);
+
     let asked = state.velocity * dt;
     let slid = slide(state, asked);
     state.position += slid.translation;
@@ -314,6 +395,7 @@ pub fn step(
     }
 
     settle(state, &slid, walking, asked, dt);
+    state.velocity = checked(state.velocity, settings.max_velocity);
     impacts
 }
 
@@ -2157,6 +2239,20 @@ mod tests {
                     "{impact:?}"
                 );
             }
+        }
+
+        #[test]
+        fn landing_into_a_floor_and_wall_seam_keeps_the_speed_along_the_wall() {
+            let velocity = Vec3::new(3.0, -5.0, 10.0);
+
+            let (after, impacts) = clipped(velocity, &[Vec3::Y, Vec3::NEG_Z]);
+
+            assert!(
+                (after - Vec3::new(3.0, 0.0, 0.0)).length() < 1e-5,
+                "{after:?}"
+            );
+            assert!((impact_on(&impacts, 0).speed - 5.0).abs() < 1e-5);
+            assert!((impact_on(&impacts, 1).speed - 10.0).abs() < 1e-5);
         }
 
         #[test]
