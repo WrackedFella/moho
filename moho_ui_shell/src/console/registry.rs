@@ -49,6 +49,8 @@ pub enum EngineCommand {
     DebugView(u32),
     ShadowQuality(u8),
     SsaoQuality(u8),
+    /// Tone-map curve on or off, for this session only.
+    ToneMap(bool),
     PlaySoundAt {
         path: std::path::PathBuf,
         position: glam::Vec3,
@@ -303,6 +305,29 @@ mod tests {
             Some(EngineCommand::DebugView(3)),
             &["Debug view set to: Shadows (3)"],
         );
+    }
+
+    #[test]
+    fn r_tonemap_parses_0_and_1_and_refuses_2() {
+        for (line, expected) in [
+            ("r_tonemap 0", EngineCommand::ToneMap(false)),
+            ("r_tonemap 1", EngineCommand::ToneMap(true)),
+        ] {
+            let (engine, game, printed) = run_line(line);
+
+            assert_eq!(engine, [expected], "{line}");
+            assert!(game.is_empty(), "{line}");
+            assert_eq!(printed.len(), 1, "{line}: {printed:?}");
+        }
+        for line in ["r_tonemap 2", "r_tonemap x", "r_tonemap -1", "r_tonemap"] {
+            let (engine, game, printed) = run_line(line);
+
+            assert!(engine.is_empty(), "{line}: {engine:?}");
+            assert!(game.is_empty(), "{line}");
+            assert_eq!(printed.len(), 1, "{line}: {printed:?}");
+        }
+        let (_, _, usage) = run_line("r_tonemap");
+        assert!(usage[0].starts_with("Usage: r_tonemap"), "{usage:?}");
     }
 
     #[test]

@@ -24,7 +24,7 @@ mod gpu_types;
 mod sky;
 pub use gpu_types::{
     CameraGpu, CascadedShadowMatrixGpu, LightingGpu, MAX_SHADOW_LIGHTS, MultiLightShadowGpu,
-    ShadowMatrixGpu,
+    ShadowMatrixGpu, ToneMapGpu,
 };
 pub use moho_render_api::{InstanceGpu, MaterialGpu};
 mod block_on;
@@ -57,6 +57,8 @@ pub use builder::RendererBuilder;
 
 mod renderer;
 pub use renderer::Renderer;
+mod tone_map;
+pub use tone_map::brightness_exposure;
 
 /// Object-safe renderer backend trait.
 ///
@@ -152,6 +154,12 @@ pub trait RendererBackend {
     /// A non-finite height counts as `None`. Sticky until changed. No-op by
     /// default.
     fn set_view_height(&mut self, _height: Option<f32>) {}
+    /// Set the Brightness exposure multiplier applied by the tone-map pass (clamped
+    /// to `[0.5, 2.0]`, NaN gives 1.0). No-op by default.
+    fn set_brightness(&mut self, _brightness: f32) {}
+    /// Turn the tone-map curve on or off; off draws the scene as it was before the
+    /// pass existed. Session-only. No-op by default.
+    fn set_tone_map(&mut self, _enabled: bool) {}
     /// Queue the frame's box markers to draw over the world: translucent
     /// `fills` and edge-only `outlines`, each sorted far to near. Called once
     /// per frame after the transparent draws and before `submit_frame`. No-op

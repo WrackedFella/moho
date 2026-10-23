@@ -183,6 +183,10 @@ impl Prefs {
     pub fn ssao_quality(&self) -> u32 {
         self.graphics_ssao_quality
     }
+    /// Scene exposure multiplier, within `0.5..=2.0`.
+    pub fn brightness(&self) -> f32 {
+        0.0
+    }
     pub fn world_load_radius(&self) -> u32 {
         self.world_load_radius
     }
@@ -255,6 +259,9 @@ impl Prefs {
     pub fn set_ssao_quality(&mut self, quality: u32) {
         self.graphics_ssao_quality = quality.min(MAX_GRAPHICS_QUALITY);
     }
+
+    /// Stores the scene exposure multiplier, clamped to `0.5..=2.0`; NaN gives the default.
+    pub fn set_brightness(&mut self, _brightness: f32) {}
 
     pub fn set_window_mode(&mut self, mode: WindowMode) {
         self.window_mode = mode;
@@ -475,6 +482,48 @@ mod tests {
 
         assert!(dir.path().join("config/prefs.ini").is_file());
         assert_eq!(loaded, prefs);
+    }
+
+    #[test]
+    fn brightness_defaults_to_one() {
+        assert_eq!(Prefs::default().brightness(), 1.0);
+    }
+
+    #[test]
+    fn brightness_round_trips() {
+        for brightness in [0.5, 0.75, 1.0, 1.5, 2.0] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config").join("prefs.ini");
+            let mut prefs = Prefs::default();
+            prefs.set_brightness(brightness);
+
+            prefs.save_to(&path).unwrap();
+            let (loaded, warnings) = Prefs::load_from(&path);
+
+            assert_eq!(warnings, vec![], "brightness {brightness}");
+            assert_eq!(loaded.brightness(), brightness);
+            assert!(
+                prefs
+                    .to_ini_string()
+                    .contains(&format!("brightness={brightness:.2}\n"))
+            );
+        }
+    }
+
+    #[test]
+    fn brightness_clamps_to_range() {
+        let mut prefs = Prefs::default();
+
+        prefs.set_brightness(0.1);
+        let low = prefs.brightness();
+        prefs.set_brightness(9.0);
+        let high = prefs.brightness();
+        prefs.set_brightness(f32::NAN);
+        let nan = prefs.brightness();
+
+        assert_eq!(low, 0.5);
+        assert_eq!(high, 2.0);
+        assert_eq!(nan, 1.0);
     }
 
     #[test]

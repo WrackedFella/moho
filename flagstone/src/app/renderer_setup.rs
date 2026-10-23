@@ -212,6 +212,13 @@ fn register_entity_mesh(
     )
 }
 
+/// Applies the saved render settings (quality and Brightness) to `renderer` at start.
+pub fn apply_saved_render_settings(
+    _prefs: &moho_core::prefs::Prefs,
+    _renderer: &mut dyn moho_renderer::RendererBackend,
+) {
+}
+
 pub fn apply_video_settings(prefs: &moho_core::prefs::Prefs, window: &Window) {
     use moho_core::prefs::WindowMode;
     use winit::dpi::PhysicalSize;
@@ -230,13 +237,16 @@ pub fn apply_video_settings(prefs: &moho_core::prefs::Prefs, window: &Window) {
 
 #[cfg(test)]
 mod tests {
-    use super::register_entity_mesh;
+    use super::{apply_saved_render_settings, register_entity_mesh};
+    use moho_core::prefs::Prefs;
     use moho_renderer::{FrameError, InstanceGpu, LightingGpu, MaterialGpu, RendererBackend};
 
     /// Records the per-vertex channels of each indexed-mesh registration.
     #[derive(Default)]
     struct ChannelRecorder {
         meshes: Vec<RecordedMesh>,
+        brightnesses: Vec<f32>,
+        shadow_qualities: Vec<u8>,
     }
 
     struct RecordedMesh {
@@ -296,8 +306,26 @@ mod tests {
         }
         fn set_light_position(&mut self, _id: u32, _position: glam::Vec3) {}
         fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
-        fn set_shadow_quality(&mut self, _quality: u8) {}
+        fn set_shadow_quality(&mut self, quality: u8) {
+            self.shadow_qualities.push(quality);
+        }
         fn set_ssao_quality(&mut self, _quality: u8) {}
+        fn set_brightness(&mut self, brightness: f32) {
+            self.brightnesses.push(brightness);
+        }
+    }
+
+    #[test]
+    fn startup_applies_the_saved_brightness() {
+        let mut prefs = Prefs::default();
+        prefs.set_brightness(1.5);
+        prefs.set_shadow_quality(2);
+        let mut renderer = ChannelRecorder::default();
+
+        apply_saved_render_settings(&prefs, &mut renderer);
+
+        assert_eq!(renderer.brightnesses, vec![1.5]);
+        assert_eq!(renderer.shadow_qualities, vec![2]);
     }
 
     /// Block light adds to surface colour, so an entity carrying any would draw

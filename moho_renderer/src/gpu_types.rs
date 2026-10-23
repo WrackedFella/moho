@@ -52,6 +52,15 @@ pub struct ShadowMatrixGpu {
     pub sm3: [f32; 4],
 }
 
+/// Uniform for the tone-map pass.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct ToneMapGpu {
+    pub exposure: f32,
+    pub enabled: u32,
+    pub _pad: [u32; 1],
+}
+
 /// Maximum number of shadow-casting lights supported
 pub const MAX_SHADOW_LIGHTS: usize = 4;
 
@@ -262,6 +271,7 @@ mod tests {
         assert_eq!(std::mem::size_of::<CameraGpu>(), 80);
         assert_eq!(std::mem::size_of::<LightingGpu>(), 144); // 9 vec4s
         assert_eq!(std::mem::size_of::<ShadowMatrixGpu>(), 64);
+        assert_eq!(std::mem::size_of::<ToneMapGpu>(), 16);
         // CascadedShadowMatrixGpu: 2 matrices (2x64 bytes = 128 bytes) + 1 vec4 (16 bytes) = 144 bytes
         assert_eq!(std::mem::size_of::<CascadedShadowMatrixGpu>(), 144);
         // MultiLightShadowGpu: 4 matrices (4x64 bytes = 256 bytes) + 2 vec4s (32 bytes) = 288 bytes

@@ -721,6 +721,20 @@ mod tests {
     }
 
     #[test]
+    fn non_finite_brightness_falls_back() {
+        for raw in ["NaN", "inf", "-inf", "bright"] {
+            let (prefs, issues) = Prefs::parse(&format!("[graphics]\nbrightness={raw}\n"));
+
+            assert_eq!(
+                issues,
+                vec![malformed("graphics", "brightness", Some(raw))],
+                "{raw}"
+            );
+            assert_eq!(prefs.brightness(), 1.0, "{raw}");
+        }
+    }
+
+    #[test]
     fn vsync_and_fps_max_default_when_the_keys_are_absent() {
         let (prefs, issues) = Prefs::parse("[video]\nwindow_width=1280\n");
 
@@ -1051,6 +1065,7 @@ mod tests {
              \n[graphics]\n\
              shadow_quality=3\n\
              ssao_quality=3\n\
+             brightness=1.00\n\
              \n[video]\n\
              window_mode=Windowed\n\
              window_width=1920\n\

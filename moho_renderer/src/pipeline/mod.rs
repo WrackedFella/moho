@@ -37,7 +37,9 @@ mod layouts;
 mod marker;
 mod shaders;
 
-pub use shaders::{main_shader_source, skybox_shader_source, ui_shader_source};
+pub use shaders::{
+    main_shader_source, skybox_shader_source, tonemap_shader_source, ui_shader_source,
+};
 
 use crate::types::{GpuInstance, Vertex};
 

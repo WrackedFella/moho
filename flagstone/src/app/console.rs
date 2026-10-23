@@ -365,6 +365,25 @@ mod tests {
     }
 
     #[test]
+    fn tone_map_command_queues_the_request() {
+        let mut app = App::headless();
+        let before = app.prefs.clone();
+
+        apply_engine_command(&mut app, &EngineCommand::ToneMap(false));
+        apply_engine_command(&mut app, &EngineCommand::ToneMap(true));
+
+        assert!(
+            matches!(
+                app.pending_render.as_slice(),
+                [RenderRequest::ToneMap(false), RenderRequest::ToneMap(true)]
+            ),
+            "queued {} requests",
+            app.pending_render.len()
+        );
+        assert_eq!(app.prefs, before, "session-only: no prefs change");
+    }
+
+    #[test]
     fn debug_view_command_sets_the_debug_mode() {
         let mut app = App::headless();
         apply_engine_command(&mut app, &EngineCommand::DebugView(3));

@@ -36,6 +36,7 @@ pub(super) enum SettingsField {
     WindowResolution,
     Vsync,
     FpsMax,
+    Brightness,
 }
 
 pub struct SettingsMenu {
