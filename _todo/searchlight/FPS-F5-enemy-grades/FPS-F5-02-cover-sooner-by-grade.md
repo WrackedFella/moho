@@ -4,7 +4,6 @@
 **Status:** Draft
 **Gate class:** unset
 **Labels:** line:fps
-**Note:** written for the recommended cover trigger (near misses and hits); revise if Justin picks otherwise.
 
 ## Summary
 

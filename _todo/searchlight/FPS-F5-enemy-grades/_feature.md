@@ -59,7 +59,7 @@ Scenario: Later waves sit higher on the ladder
 
 | Question | Decision | Why / cost of the alternative |
 |---|---|---|
-| What sends an enemy to cover? | **Open, Justin decides.** Recommended: being shot at (a near miss) as well as being hit; low grades react late or only to hits | Today only a hit sends an enemy to cover. Hits-only is cheaper but rookie and pro both die or hide on the first hit, so the tell is weak. Near misses are new perception, and slice 2 suppression needs them anyway |
+| What sends an enemy to cover? | Being shot at (a near miss) as well as being hit; low grades react late or only to hits | Today only a hit sends an enemy to cover. Hits-only is cheaper but rookie and pro both die or hide on the first hit, so the tell is weak. Near misses are new perception, and slice 2 suppression needs them anyway |
 | Grade fixed for an enemy's life? | Yes (GDD §4.11) | Rank-up is a Phase 7 Director nice-to-have |
 | Does grade change damage dealt or health? | No, neither | Pillar: no bullet sponges (GDD §6); difficulty shifts the mix only |
 | "Pauses before or between bursts" | One dial: fire cadence. Lower grades fire fewer shots over the same time | Enemies fire single shots today; bursts are new weapon behavior with no other caller yet |
@@ -87,7 +87,7 @@ Scenario: Later waves sit higher on the ladder
 | Item | Delivers | Depends on |
 |---|---|---|
 | FPS-F5-01 Enemies open fire, aim and keep firing by grade | Grade ladder; reaction, aim, cadence per grade; toughness and damage unchanged; console forces the grade; default spawns are *experienced* | none |
-| FPS-F5-02 Better-graded enemies take cover sooner | Cover timing per grade (trigger per the open decision above) | -01 |
+| FPS-F5-02 Better-graded enemies take cover sooner | Cover timing per grade; near misses count as being under fire | -01 |
 | FPS-F5-03 Later waves field better-graded enemies | Wave grade mix shifting up the ladder | -01 |
 
 -02 and -03 are independent of each other.
