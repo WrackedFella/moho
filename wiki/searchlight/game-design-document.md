@@ -1,6 +1,6 @@
-# FPS-F1 — Game Design Document (v0.3)
+# FPS-F1 — Game Design Document (v0.4)
 
-**Status:** draft v0.3, approved for Phase 1 (v0.3 adds pillar 2, the item lifecycle rule, §4.12 player and weapon stats, the planning rule in §7 and the §4.7 wound penalties). Writing this page is
+**Status:** draft v0.4, approved for Phase 1 (v0.3 added pillar 2, the item lifecycle rule, §4.12 player and weapon stats, the planning rule in §7 and the §4.7 wound penalties; v0.4 adds the prototype gate in §7, gear that adds containers, the attachment system and a mocked grenade in the prototype, and a shotgun with a tube-fed reload). Writing this page is
 [FPS-F1](../../_todo/searchlight/FPS-F1-game-design-document/_feature.md)'s deliverable. Open questions are in §9.
 **Working pitch:** a survival-focused looter shooter with realistic gunplay, where your gear is your character, your rig is the game, and every fight is a line on a ledger.
 **Working target:** single-player first, co-op later, mod support a priority. Pivots (Destiny-like, Arma-like) are open questions, not commitments (§9).
@@ -65,7 +65,7 @@ Each system states the question its prototype must answer, the design, and its c
 - Items are defined in data files (moddable), not code. Four classes: **weapons** (held, fire or strike), **consumables** (used up: rounds, meds, food, parts, kits), **tools** (held or applied: toolkit, crowbar, detector) and **gear** (worn or fitted, neither used up nor held: rigs, magazines, later backpacks and armor). The tool class exists from Phase 2; the first tool item, the toolkit, arrives in Phase 3 (§4.3), and the rest wait until the world has something for them to act on. Items differ by make, condition, contents and attachments, never by rarity tier or random affix.
 - **Lifecycle rule:** an item with a **condition (%)** can be repaired; an item with a **number of uses (#)** cannot, and leaves the game when spent. Never both on one item; an item with neither (attachments, magazines for now) does not change. Balancing the spawn rate, job rewards and burn rate of the #-items is the game loop's main tuning knob (pillar 2).
 - **Three layers of access:** *hands* (what you hold), the *rig* (belt and vest: fast slots reached by hotkeys, no screen) and the *backpack* (everything else, reached through the inventory screen while time keeps passing). Anything used in a fight must already be on the rig; reload never looks in the backpack.
-- **Gear defines your containers:** the rig and the backpack are items. A rig sets how many fast slots you have and of which kind; a backpack sets how much you can carry. Changing what you wear changes the shape of your inventory. Worn gear weighs what it weighs.
+- **Gear defines your containers:** the rig and the backpack are items. A rig sets how many fast slots you have and of which kind; a backpack sets how much you can carry. Changing what you wear changes the shape of your inventory. Worn gear weighs what it weighs. Any gear item may declare containers, so base armor and clothing add some rig slots (a tracksuit has pockets): lighter armor weighs less and gives fewer slots, heavier armor gives more weight to carry and slows the player more (§4.6). How armor slots combine with a rig's is open (§9 Q27).
 - **Equipment slots:** primary 1, primary 2, sidearm, rig, backpack, body armor, helmet. A suit slot arrives with anomalies.
 - **Grid inventory is the destination, not the start.** Items carry a size and containers a cell count from the first data file, so a Tarkov-style grid can be added without reshaping the data. The first inventory screen is a list over that data (capacity enforced by cells and weight, no dragging); the grid view is added to taste after playtest (§7, §9 Q17).
 - **Looting:** bodies and containers open a side-by-side screen and take time. Pickups go to the backpack unless the player puts them on the rig. The player's own dropped magazine returns to a free rig slot on pick-up; a gameplay setting (backpack or rig) comes later.
@@ -85,7 +85,8 @@ Each system states the question its prototype must answer, the design, and its c
 - **Load mags:** filling mags from loose rounds takes time and happens out of combat (or very riskily in it).
 - **Check mag:** an action that gives an approximate count (full / about half / nearly empty), exact when out of combat.
 - **Mixed rounds:** round types are data (FMJ, AP, HP and so on), and the ordered stack holds any mix. Loading from different loose stacks in sequence is how a player mixes a mag; the rules fire them in order. This is a standing test case for the magazine model.
-- **Cut lines:** per-weapon-class reload mechanics (open bolt, pump, bolt hold-open); a separate chamber-check action; a dedicated mixing UI beyond choosing which stack to load from; clips/stripper clips; dual-feed weapons.
+- **Reload styles:** the prototype shows more than one. Detachable magazines (rifle, SMG, pistol) and a **tube-fed shotgun** loaded one round at a time, interruptible by firing; a double-barrel break-action is optional. The tube is an integral magazine, so the ordered round stack and chamber rules carry it unchanged. The shotgun arrives in Phase 3, where the action component (§4.3) lives.
+- **Cut lines:** other per-weapon-class reload mechanics (open bolt, bolt hold-open, pump action beyond the tube); a separate chamber-check action; a dedicated mixing UI beyond choosing which stack to load from; clips/stripper clips; dual-feed weapons.
 
 ### 4.3 Weapon components, durability and repair
 
@@ -111,7 +112,8 @@ Each system states the question its prototype must answer, the design, and its c
 - **Question:** can attachments be slot-based and still feel like a real rail system?
 - Slots: muzzle, optic, under-barrel, side rail, stock, mag well. Compatibility by mount type (rail, dovetail, proprietary).
 - Attachments are items and do not wear (initially).
-- **Cut line (deferred until after Phase 3):** "extensions" (conversion kits, caliber swaps, attachments with their own components).
+- **Prototype scope:** the attachment *system* lands after Phase 3 (§7, Phase 3.1): slots and mount types in data, fit rules, and swapping a scope and/or a laser sight at run time. The attachment items themselves are mocked: one scope and one laser, crude in effect and art. Weapon components (§4.3) are items and swap by the same fit rules, which makes weapons modular.
+- **Cut line (deferred past the prototype):** "extensions" (conversion kits, caliber swaps, attachments with their own components), rail variety beyond the first mount types, a weapon-mounted light, magnified second views.
 
 ### 4.5 Ammunition crafting
 
@@ -124,7 +126,7 @@ Each system states the question its prototype must answer, the design, and its c
 
 - **Recommendation: simplify to a single condition value per armor piece** for the prototype.
 - Armor has a protection class per body region it covers (head, torso). Hits reduce condition; protection falls with condition.
-- Armor occupies the body armor and helmet slots (§4.1); the rig is a separate slot, so protection and fast access are bought separately. The slots exist in Phase 2 and ship no items; armor items arrive in Phase 3 with their wear, so armor damage joins the first ledger.
+- Armor occupies the body armor and helmet slots (§4.1); the rig is a separate slot, so protection and fast access are bought separately. Base armor and clothing also add some rig slots (§4.1). Heavy armor is heavy and slows the player further, a movement-speed scale declared through the modifier layer (§4.12); light armor trades protection for weight and slots. The slots exist in Phase 2 and ship no items; armor items arrive in Phase 3 with their wear, so armor damage joins the first ledger.
 - Armor is repaired like weapons are cleaned (§4.3): a repair kit with limited uses, applied to the whole piece or, once armor has parts, to one part.
 - **Deferred:** damage types (burn, chemical, psi, shock) until a weapon or anomaly produces them; multi-component armor.
 
@@ -201,7 +203,7 @@ Each system states the question its prototype must answer, the design, and its c
 - **Two tiers:** the Director (§4.10) is strategic: it decides which groups exist, where, and what they are after. The group coordinator is tactical and runs only while the group is live. A group is one object in both: live behavior when the player is present, one strength-weighted dice roll when not.
 - **Factions:** a faction sets a group's relations (the §4.10 matrix) and its grade mix and gear. Relations first matter between faction and player. Enemy-versus-enemy fights come with the live zone in Phase 7.
 - **Wildlife:** the same group model, simplified: a pack with an alpha as leader, surround and flank, flee when the alpha dies or the pack is hurt. No cover, grenades or suppression. Packs differ by species data, not code.
-- **Grenades:** veterans use them to flush a player from cover. Gated on thrown objects and area damage, so cut until after Phase 4.
+- **Grenades:** veterans use them to flush a player from cover. Real thrown objects and area damage are cut until after the prototype. The prototype gets a **mocked grenade system** after Phase 4 (§7, Phase 4.1): the throw spawns an object on the ground where the thrower looks, a sound cue plays, and the object despawns. It proves the item, throw and cue path for the player; damage and AI use come with the real version.
 - **Cut lines:** morale and surrender, dialogue, voice lines beyond a few callouts, enemies that open doors or use vehicles, learning from the player, a player-side suppression effect (first version is AI behavior only), predator-prey ecosystems.
 
 ### 4.12 Player and weapon stats
@@ -247,6 +249,8 @@ Principle: build the cheapest playable baseline first, then add systems in the o
 
 Planning rule for complex systems: start with the simplest feature set we know we need, playtest, then add or remove to taste. If the inventory wants more management, move toward Tarkov; if less, toward unmodified STALKER. Data shapes that are expensive to retrofit (item size, container cells, ordered rounds) go in first; the UI that exploits them comes when playtest asks for it.
 
+**Prototype gate:** the prototype is done when Phases 1 through 5 and the inserts 1.2, 3.1 and 4.1 are playable, with enemy grades and group tactics (§4.11) and placeholder art and animation (free or generated assets, not production quality) in place. Test levels with scripted states (spawn enemies and items, set a limb, set a survival meter, advance the clock) are part of the gate. The systems are the deliverable: a mocked attachment or grenade counts when the system around it is real. At the gate `dev` is promoted to `main`, and the repository split is considered with the Engine project. Cut order if time presses: grenades, then attachments, then the fifth archetype.
+
 Milestones follow the phases: FPS-M*n* delivers Phase *n*, and FPS-M1.1 (menus) sits between Phases 1 and 2. The plan is the [Searchlight roadmap](roadmap.md).
 
 | Phase | Name | Adds | Answers | Map |
@@ -254,12 +258,14 @@ Milestones follow the phases: FPS-M*n* delivers Phase *n*, and FPS-M1.1 (menus) 
 | 1 | **Arena baseline** | Movement, one rifle, **mags + chamber from day one**, **per-body-part hit volumes from day one**, basic AI (patrol, take cover, shoot, chase), waves, death/restart | Does the gunplay feel weighty? | Pre-made arena |
 | 1.2 | **Stance and body** | Crouch, prone, lean in every stance, head bob, hit volumes follow posture; a visible first-person body once the engine has skinned characters | Does posture change where I stand and when I peek? | Arena |
 | 2 | **Items and loadout** | Data-driven items with the % or # uses lifecycle rule, rig and backpack as items, a tool class, carry weight through the stat layer (§4.12), loot drops from enemies, 3 weapons in 2 calibers | Does one item model carry everything? | Arena |
-| 3 | **Weapon wear and repair** | 4 components, jams, repair parts and workbench, dismantling, armor items and their wear, the toolkit, limited-use cleaning kits crafted from components that also work alone; **end-of-round ledger** (rounds + wear valued) | Does wear drive scavenging? | Arena + range |
+| 3 | **Weapon wear and repair** | 4 components, jams, repair parts and workbench, dismantling, armor items and their wear, the toolkit, limited-use cleaning kits crafted from components that also work alone; a tube-fed shotgun (§4.2); **end-of-round ledger** (rounds + wear valued) | Does wear drive scavenging? | Arena + range |
+| 3.1 | **Attachments** | The attachment system (§4.4): mount types, slots, fit rules, swap a scope and/or a laser; items mocked; weapon components swap by the same rules | Can a weapon be rebuilt in the field without special cases? | Arena + range |
 | 4 | **Wounds and healing** | A minimal game clock, damage-scaled penalties, leg compounding, recovery timers, bleeding, first/secondary aid, splint, meds as perishable data; enemy wounds to taste | Does limb damage create good downtime? | Arena + range |
+| 4.1 | **Grenades (mocked)** | A grenade item and throw: an object spawns on the ground at the sight point, a sound cue plays, the object despawns (§4.11). Cuttable | Does a throwable fit the item model? | Arena + range |
 | 5 | **Time, survival, rest** | Day cycle, time scaling and skipping, hunger/thirst/fatigue, sleep at a safe spot, healing timers advance on sleep | Do survival stats add pressure, not chores? | Arena + safe room |
 | 6 | **Hub and jobs** | Trader hub, job board, currency, full ledger per job; arena becomes "the job site" | Does profit-as-score change player behavior? | Hub + 1–2 pre-made zones |
 | 7 | **Director** | Zone graph, factions, offline dice sim, daily planning, live handover | Does the world feel alive with this little machinery? | 3–5 pre-made zones |
-| Later | Depth | Attachments, ammo crafting, armor depth, damage types, anomalies/artifacts | — | — |
+| Later | Depth | Richer attachments and extensions, ammo crafting, armor depth, real grenades with area damage, damage types, anomalies/artifacts | — | — |
 
 Stance and body (1.2) runs in slices parallel to Phase 2, like enemy AI: lean and head bob first (nothing new from the engine), crouch and prone when the engine's per-mode hulls land, the visible body when skinned characters do. Plan: the FPS-M1.2 section of the [Searchlight roadmap](roadmap.md#5-fps-m12-stance-and-body-fps-f4).
 
@@ -296,7 +302,7 @@ Why this order:
 Settled entries keep their numbers so references stay stable.
 
 1. **Setting:** Original, vaguely dystopian sci-fi. Open: neglected corner of a sophisticated world, or truly post-apocalyptic? (Not blocking until Phase 6.)
-2. **Co-op timing:** if co-op is real, it constrains the Director and sim authority early. Recommend: design single-player, keep sim state serializable, decide co-op after Phase 5.
+2. **Co-op timing:** the engine targets co-op for up to four players with a trusted host that runs the AI, and a casual competitive mode stays possible. The simulation takes one command per player slot, host actions read slot 0 only, and the host resolves hits. The game's co-op design waits until after Phase 5.
 3. **Pivot decision point:** recommend revisiting Destiny-like vs Arma-like vs single-player after Phase 6, when the ledger and jobs are playable.
 4. **Bleeding:** must-have, Phase 4.
 5. **Head HP at 0:** instant death.
@@ -321,6 +327,8 @@ Settled entries keep their numbers so references stay stable.
 24. **One-handed weapons:** a Broken arm caps the player to one-handed weapons (§4.7), so the item model needs that class or flag. Name it when Phase 2 is carded; pistols are the first case.
 25. **Ledger scope:** the Phase 3 end-of-round ledger and the Phase 6 full ledger (§4.9) list overlapping lines. Which lines belong to Phase 3 (rounds, wear, armor, meds), and which wait for the economy (payouts, loot value, food, lodging)?
 26. **Reload time stacking:** do the fast and retention variants (§4.2) add to the tactical or empty reload time, or replace it? Default: add, the simplest rule that keeps both choices meaningful. Decide when the variants are carded; only one reload exists today.
+
+27. **Armor and rig slots:** base armor and clothing add rig slots (§4.1). Settle when armor is carded (FPS-F7-02 and the Phase 3 armor feature): how many slots a piece gives, whether they stack with a rig's or the larger wins, whether clothing is its own layer or an armor piece with no protection, whether armor slots count as fast (rig) or backpack, and how slots trade against weight and speed.
 
 ## 10 Engine fit and engine requests
 

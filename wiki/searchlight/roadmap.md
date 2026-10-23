@@ -15,12 +15,16 @@ Milestone names follow ISO 2145: FPS-M*n* delivers GDD Phase *n*; FPS-M1.1 and F
 | FPS-M1.2 Stance and body (FPS-F4) | 1.2 | Does posture change where I stand and when I peek? | #544 with ENG-F33 #492; #543 for the rig; all by FPS-M2 |
 | FPS-M2 Items and loadout | 2 | Does one item model carry everything? | ENG-F18-09 #407, ENG-F19 #231, ENG-F26 #359; #600 loose objects (FPS-F9); #543 for reload animation (FPS-F8) |
 | FPS-M3 Wear, repair, ledger | 3 | Does wear drive scavenging? | none new |
+| FPS-M3.1 Attachments | 3.1 | Can a weapon be rebuilt in the field without special cases? | sockets, zoom and reticle, beam and dot (engine requests) |
 | FPS-M4 Wounds and healing | 4 | Does limb damage create good downtime? | none new |
+| FPS-M4.1 Grenades (mocked) | 4.1 | Does a throwable fit the item model? | none beyond runtime spawn and positional audio |
 | FPS-M5 Time, survival, rest | 5 | Do survival stats add pressure, not chores? | game clock scaling; save and load |
 | FPS-M6 Hub and jobs | 6 | Does profit-as-score change behavior? | level switching; save and load |
 | FPS-M7 Director | 7 | Does the world feel alive on little machinery? | headless sim; navigation |
 
 Order is the GDD's: systems arrive in the order they create costs, so the ledger has something to measure. Enemy AI lands in slices alongside the phases (GDD §7).
+
+**Prototype gate:** FPS-M1 through FPS-M5 with FPS-M1.2, FPS-M3.1 and FPS-M4.1, group tactics, placeholder art and animation, and test levels with scripted states ([section 13](#13-prototype-gate)). The systems are the deliverable; attachment and grenade items are mocked.
 
 ## 2 Features
 
@@ -80,8 +84,17 @@ Runs in slices parallel to FPS-M2; needs no items or UI beyond one slider in the
 - **Outcome:** four components per weapon with condition, jams, repair parts, a workbench, dismantling, limited-use cleaning kits, armor items with wear, the toolkit, and an end-of-round ledger valuing rounds and wear.
 - **Entry gate:** FPS-M2 approved. Needs a second baked map for a range (authoring, not engine).
 - **Exit goal:** after a fight the ledger shows a cost, and a player chooses to scavenge for parts because of it.
-- **Cut lines:** more than four components, per-weapon unique parts, attachments and ammo crafting (GDD "Later").
-- **Enemy AI slice 2** (group alerts, leader lift, fire and maneuver) lands before this milestone.
+- **Added to scope (2026-10-23):** armor items give base rig slots and heavier armor slows the player further (GDD §4.1, §4.6, open question Q27: settle it when armor is carded, together with FPS-F7-02 [#604](https://github.com/WrackedFella/moho/issues/604)); a tube-fed shotgun, so the line shows several reload styles (GDD §4.2); round penetration against armor condition; weapon components are items that swap by fit rules.
+- **Cut lines:** more than four components, per-weapon unique parts, ammo crafting (GDD "Later"). Attachments move to FPS-M3.1.
+- **Enemy AI slice 2** (group alerts, leader lift, fire and maneuver, suppressive fire) lands before this milestone. It is a feature of its own, to be filed as the next free FPS feature; engine needs are #228 and #229 plus flanking queries.
+
+## 7.1 FPS-M3.1 Attachments (GDD Phase 3.1)
+
+- **Outcome:** the attachment system: slots and mount types in data, fit rules, swap a scope and/or a laser sight at run time. The items are mocked, one scope and one laser. Weapon components swap by the same rules.
+- **Entry gate:** FPS-M3 approved (components are items).
+- **Exit goal:** a player swaps the scope or laser on a weapon, and the sight picture or beam changes; a new attachment is a data file.
+- **Cut lines:** conversion kits, caliber swaps, rail variety past the first mount types, weapon-mounted light, magnified second view.
+- **Engine requests:** weapon assembled from sockets, field of view and reticle, beam and dot (running list kept with the project).
 
 ## 8 FPS-M4 Wounds and healing (Phase 4)
 
@@ -89,11 +102,19 @@ Runs in slices parallel to FPS-M2; needs no items or UI beyond one slider in the
 - **Exit goal:** a leg or arm wound changes what the player does next, and treating it costs time and items.
 - **To taste, in order:** enemy debuffs, painkiller masking, tourniquet, temporary head statuses, arm compounding and left or right arms, surgical kit and med crafting.
 - **Cut lines:** radiation; disease and wasting injuries until the core proves out.
+- **Screen and audio effects** driven by wound state (vignette, blur, sway, muffling) and a ground clip for a leg-broken character (forced prone, §4.7) are part of the milestone.
+
+## 8.1 FPS-M4.1 Grenades, mocked (GDD Phase 4.1)
+
+- **Outcome:** a grenade is an item; throwing it spawns an object on the ground where the player looks, plays a sound cue and despawns it.
+- **Exit goal:** a throwable goes through the same item, use and host-resolved command path as everything else, with no special case.
+- **Cut lines:** area damage, thrown-body physics, AI grenades. First thing to cut if time presses.
+- **Engine:** none beyond runtime spawn and positional audio (#228).
 
 ## 9 FPS-M5 Time, survival, rest (Phase 5)
 
 - **Outcome:** game clock scaling and skipping, hunger, thirst, fatigue, sleep at a safe room with healing timers advancing.
-- **Entry gate:** game clock scaled over the tick (GDD §10 item 8; pause and speed #334), save and load for world state (§10 item 9; ENG-F25 #346).
+- **Entry gate:** game clock scaled over the tick (GDD §10 item 8; pause and speed #334). Save and load for world state (§10 item 9; ENG-F25 #346) is not needed for the prototype gate, which has no continue; it gates FPS-M6.
 - **Decisions due:** GDD §9 Q8 (difficulty as complexity toggles) and Q2 (co-op timing).
 - **Cut lines:** temperature, disease, spoilage.
 
@@ -129,3 +150,10 @@ The engine lane designs the answers.
 | #615 ragdoll bodies | #615 | after FPS-M2: FPS-F9-05 (deferred) |
 
 New requests come from FPS-M3 onward (workbench interaction, save kinds, level switching). File them when a milestone's feature is drafted.
+
+## 13 Prototype gate
+
+- **Scope:** FPS-M1 to FPS-M5, plus FPS-M1.2, FPS-M3.1 and FPS-M4.1; enemy grades and group tactics; placeholder art and animation (weapons, magazines, gear, player and enemy models; stand, crouch, prone, walk, run, crawl, lean, a ground clip for the injured) from free or generated assets; test levels with scripted states (FPS-F9, FPS-F10, plus a debug action per milestone: set a limb, set a survival meter, advance the clock).
+- **At the gate:** playtest, promote `dev` to `main`, and take the split to the Engine project. The plan is to split at FPS-M5 completion; the cross-line gate in the [roadmap](../roadmap.md#milestone-gates-that-span-lines) still names FPS-M6 and changes only when the Engine project agrees.
+- **Cut order if time presses:** grenades (FPS-M4.1), then attachments (FPS-M3.1), then the fifth archetype.
+- **Critical path:** the engine requests #543, #544, #492 and #600 for FPS-M2.
