@@ -134,27 +134,21 @@ pub fn resolve_lean(
     frame: &ActionFrame<SearchlightAction>,
     previous: Option<LeanSide>,
 ) -> Option<LeanSide> {
-    let side = |action| {
-        (
-            frame.held(action) || frame.pressed(action),
-            frame.pressed(action),
-        )
+    let action = |side| match side {
+        LeanSide::Left => SearchlightAction::LeanLeft,
+        LeanSide::Right => SearchlightAction::LeanRight,
     };
-    let (left_held, left_pressed) = side(SearchlightAction::LeanLeft);
-    let (right_held, right_pressed) = side(SearchlightAction::LeanRight);
-    if right_pressed {
-        Some(LeanSide::Right)
-    } else if left_pressed {
-        Some(LeanSide::Left)
-    } else {
-        match previous {
-            Some(LeanSide::Left) if left_held => Some(LeanSide::Left),
-            Some(LeanSide::Right) if right_held => Some(LeanSide::Right),
-            _ if right_held => Some(LeanSide::Right),
-            _ if left_held => Some(LeanSide::Left),
-            _ => None,
-        }
-    }
+    let pressed = |side: &LeanSide| frame.pressed(action(*side));
+    let held = |side: &LeanSide| {
+        let action = action(*side);
+        frame.held(action) || frame.pressed(action)
+    };
+    let sides = [LeanSide::Right, LeanSide::Left];
+    sides
+        .into_iter()
+        .find(pressed)
+        .or(previous.filter(held))
+        .or_else(|| sides.into_iter().find(held))
 }
 
 /// Yaw and pitch deltas for a look. Mouse motion is right- and down-positive; positive yaw

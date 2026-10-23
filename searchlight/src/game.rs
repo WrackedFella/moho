@@ -1168,19 +1168,17 @@ impl Game for SearchlightGame {
                 look_to_turn(self.input.pending_look()),
             );
             let tuning = sim.lean_tuning();
-            let blend = |from: f32, to: f32| from + alpha * (to - from);
-            let shift = blend(
-                self.previous_lean.shift(tuning),
-                sim.player_lean().shift(tuning),
-            );
-            let roll = blend(
-                self.previous_lean.roll(tuning),
-                sim.player_lean().roll(tuning),
-            );
+            let from = self.previous_lean.amount();
+            let amount = from + alpha * (sim.player_lean().amount() - from);
             let yaw = view.forward.x.atan2(view.forward.z);
-            let eye = view.eye + lean_offset(yaw, shift);
-            self.stage
-                .draw(renderer, (rolled_view_matrix(eye, view.forward, roll), eye));
+            let eye = view.eye + lean_offset(yaw, amount * tuning.shift);
+            self.stage.draw(
+                renderer,
+                (
+                    rolled_view_matrix(eye, view.forward, amount * tuning.roll),
+                    eye,
+                ),
+            );
         }
     }
 }

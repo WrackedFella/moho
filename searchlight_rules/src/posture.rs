@@ -64,12 +64,13 @@ impl Lean {
             Some(LeanSide::Right) => 1.0,
         };
         let remaining = target - self.amount;
-        let moved = if tuning.blend_seconds > 0.0 {
-            (dt / tuning.blend_seconds).min(remaining.abs())
+        let max_step = if tuning.blend_seconds > 0.0 {
+            // Never negative or NaN, which would make the clamp below panic.
+            (dt / tuning.blend_seconds).max(0.0)
         } else {
-            remaining.abs()
+            f32::INFINITY
         };
-        let amount = self.amount + remaining.signum() * moved;
+        let amount = self.amount + remaining.clamp(-max_step, max_step);
         Lean {
             amount: amount.clamp(-reach.left, reach.right),
         }

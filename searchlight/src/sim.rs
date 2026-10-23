@@ -393,13 +393,14 @@ impl SearchlightSim {
             return;
         }
         let firing = self.move_enemies(dt);
-        let settings = if command.lean.is_some() {
-            MoveSettings {
-                max_speed: self.move_settings.max_speed * self.lean_tuning.speed_factor,
-                ..self.move_settings
-            }
+        let factor = if command.lean.is_some() {
+            self.lean_tuning.speed_factor
         } else {
-            self.move_settings
+            1.0
+        };
+        let settings = MoveSettings {
+            max_speed: self.move_settings.max_speed * factor,
+            ..self.move_settings
         };
         self.world
             .move_character(self.player, &command.movement, &settings, dt)
@@ -440,7 +441,7 @@ impl SearchlightSim {
     /// upright eye.
     fn lean_reach(&self) -> LeanReach {
         let state = self.player();
-        let eye = state.position + Vec3::Y * self.eye_height;
+        let eye = self.upright_eye(&state);
         let shift = self.lean_tuning.shift;
         let room = |direction: Vec3| {
             let strike = resolve_shot(
@@ -685,7 +686,7 @@ impl SearchlightSim {
         let strike = resolve_shot(
             &self.world,
             ShotRay {
-                origin: self.player_eye(),
+                origin: self.leaned_eye(&state),
                 direction: view.forward,
                 range: self.range,
                 ignore: Some(self.player),
@@ -765,9 +766,17 @@ impl SearchlightSim {
     /// Where the player's eye is after the last tick: the upright eye shifted sideways by the
     /// lean.
     pub fn player_eye(&self) -> Vec3 {
-        let state = self.player();
-        let upright = first_person_view(&state, &state, self.eye_height, 1.0, (0.0, 0.0)).eye;
-        upright + lean_offset(state.yaw, self.lean.shift(&self.lean_tuning))
+        self.leaned_eye(&self.player())
+    }
+
+    /// The eye straight above `state`, before any lean.
+    fn upright_eye(&self, state: &CharacterState) -> Vec3 {
+        state.position + Vec3::Y * self.eye_height
+    }
+
+    /// The upright eye of `state` shifted sideways by the lean.
+    fn leaned_eye(&self, state: &CharacterState) -> Vec3 {
+        self.upright_eye(state) + lean_offset(state.yaw, self.lean.shift(&self.lean_tuning))
     }
 
     /// How far the player leans after the last tick.
