@@ -46,7 +46,8 @@ adds weapons, calibers and carry weight on top; FPS-M3 adds wear and the first
   from data; enemies carrying items from data; searching a body (takes time); a list
   inventory screen showing rig, backpack and an opened body side by side; moving items
   between them; loading a magazine from loose rounds (takes time per round); one tool
-  item defined in data that can be carried (no use).
+  item defined in data that can be carried (no use); an equipment table in the arena
+  whose spawners hand the player one magazine or a handful of rounds per use.
 - Out: more weapons and calibers, equipment slots, carry weight's effect on movement,
   the rig strip on the HUD (all FPS-F7); grid view; anything with wear.
 
@@ -59,6 +60,7 @@ adds weapons, calibers and carry weight on top; FPS-M3 adds wear and the first
 | Where loot comes from | Dead enemies only, as containers searched through a screen | Crates and world piles need loot points; the arena has none |
 | What the arena tests | Starting kit is short of rounds; waves outpace it unless the player loots | Without scarcity the item model has nothing to prove in play (pillar 2) |
 | Rounds | Loose rounds are a stack consumable keyed by caliber and type; a stack has a count, not uses | Uses (#) are for kits and meds; a stack splits and merges, uses do not |
+| Equipment table | Arena scaffolding: one magazine per use, rounds in a stack of 10 per use, amounts in data. Scarcity exit criterion is judged without it | Testing loading and mixing needs supply on demand; it sits in the mode layer (§3.2) so zones never inherit it |
 | Retention on reload | Ejected magazine goes back to the rig slot it came from | Fast reload (drop to the ground) waits; one reload exists today (§9 Q26) |
 
 ## Deferred
@@ -73,6 +75,7 @@ adds weapons, calibers and carry weight on top; FPS-M3 adds wear and the first
 | Item inspection, icons, 3D preview | Text list is enough to test the loop | After playtest |
 | Bodies despawning | Arena runs are short; bodies stay until restart | Dead enemies' sim cost becomes a problem |
 | Stash | Cut until the ledger (§4.1) | FPS-M6 |
+| A "next wave" control so the player chooses when the next wave spawns | Arena scaffolding, not an item behavior | Next arena or mode-layer card, or with FPS-F5 (enemy grades) |
 
 ## Items
 
@@ -82,6 +85,7 @@ adds weapons, calibers and carry weight on top; FPS-M3 adds wear and the first
 | FPS-F6-02, the player searches a dead enemy and takes what it carried (body as container, inventory screen with rig, backpack and body) |
 | FPS-F6-03, the player loads magazines from loose rounds, mixed types fire in order |
 | FPS-F6-04, the arena starts the player short of rounds (starting kit and enemy loot tuned in data) |
+| FPS-F6-05, the arena's equipment table hands out magazines and rounds (spawners as items or markers, amounts in data) |
 
 Titles only until the feature is approved.
 
