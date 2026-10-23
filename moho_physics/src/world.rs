@@ -60,7 +60,7 @@ impl PhysicsWorld {
 
         let character_controller = KinematicCharacterController {
             autostep: Some(CharacterAutostep {
-                max_height: CharacterLength::Absolute(0.5),
+                max_height: CharacterLength::Absolute(crate::movement::STEP_HEIGHT),
                 min_width: CharacterLength::Absolute(0.2),
                 include_dynamic_bodies: false,
             }),

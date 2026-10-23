@@ -276,11 +276,12 @@ impl PhysicsWorld {
 mod tests {
     use super::super::test_support::TEST_TAG;
     use super::super::test_support::{
-        floor_mesh, quad_mesh, stairs_mesh, step_box_mesh, test_settings, wall_mesh,
+        floor_mesh, quad_mesh, seam_floor_meshes, stairs_mesh, step_box_mesh, test_settings,
+        wall_mesh,
     };
     use super::super::{HitTag, RayHit, RayQuery};
     use super::*;
-    use moho_render_api::WorldMeshId;
+    use moho_render_api::{WorldMesh, WorldMeshId};
 
     const DT: f32 = 1.0 / 60.0;
 
@@ -1171,6 +1172,252 @@ mod tests {
         );
         assert!(after.position.z > 2.0 + 4.0 * 0.3, "{:?}", after.position);
         assert!(after.grounded, "{after:?}");
+    }
+
+    fn searchlight_settings() -> MoveSettings {
+        MoveSettings {
+            max_speed: 6.0,
+            ground_accel: 80.0,
+            friction: 10.0,
+            stop_speed: 1.0,
+            air_accel: 20.0,
+            air_speed_cap: 1.0,
+            gravity: 18.0,
+            jump_speed: 6.5,
+        }
+    }
+
+    /// A character resting on the world at `at`, facing `yaw` and carrying `velocity`.
+    fn resting_then_moving(
+        world: &mut PhysicsWorld,
+        at: Vec3,
+        yaw: f32,
+        velocity: Vec3,
+    ) -> CharacterHandle {
+        let h = world.add_character(at);
+        world.set_character_look(h, yaw, 0.0).unwrap();
+        settle_on_floor(world, &[h]);
+        assert!(state(world, h).grounded, "resting before the test starts");
+        world.add_character_velocity(h, velocity).unwrap();
+        h
+    }
+
+    /// One tick of `command` at searchlight's settings: the state after it and its impacts.
+    fn searchlight_tick(
+        world: &mut PhysicsWorld,
+        handle: CharacterHandle,
+        command: &CharacterCommand,
+    ) -> (CharacterState, Vec<Impact>) {
+        let impacts = world
+            .move_character(handle, command, &searchlight_settings(), DT)
+            .expect("character is live");
+        world.step(DT);
+        let impacts = impacts.into_iter().filter(|i| i.speed > 1e-3).collect();
+        (state(world, handle), impacts)
+    }
+
+    /// Walks from the top landing of five `rise` m steps (0.3 m treads) at 6 m/s facing -Z
+    /// down to the bottom floor, asserting it is grounded after every tick and takes no impact.
+    fn assert_descends_stairs_grounded(rise: f32) {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        world.set_world_mesh(
+            WorldMeshId(1),
+            &stairs_mesh(5, rise, 0.3, 2.0, 4.0),
+            TEST_TAG,
+        );
+        let landing_y = 5.0 * rise + 1.15;
+        let h = resting_then_moving(
+            &mut world,
+            Vec3::new(0.0, landing_y + 0.05, 6.0),
+            std::f32::consts::PI,
+            Vec3::new(0.0, 0.0, -6.0),
+        );
+        let forward = CharacterCommand {
+            forward: 1.0,
+            ..idle()
+        };
+        let mut reached_the_bottom = false;
+
+        for tick in 0..200 {
+            let (now, impacts) = searchlight_tick(&mut world, h, &forward);
+
+            assert!(now.grounded, "rise {rise}, tick {tick}: airborne, {now:?}");
+            assert!(
+                impacts.is_empty(),
+                "rise {rise}, tick {tick}: {impacts:?}, {now:?}"
+            );
+            if now.position.z < 1.0 {
+                reached_the_bottom = true;
+                break;
+            }
+        }
+
+        let end = state(&world, h);
+        assert!(reached_the_bottom, "never got down: {end:?}");
+        assert!(
+            (end.position.y - 1.15).abs() < 0.1,
+            "rise {rise}: standing on the bottom floor: {end:?}"
+        );
+    }
+
+    #[test]
+    fn walking_down_0_2_m_stairs_stays_grounded_without_impacts() {
+        assert_descends_stairs_grounded(0.2);
+    }
+
+    #[test]
+    fn walking_down_0_3_m_stairs_stays_grounded_without_impacts() {
+        assert_descends_stairs_grounded(0.3);
+    }
+
+    #[test]
+    fn walking_down_0_45_m_stairs_stays_grounded_without_impacts() {
+        assert_descends_stairs_grounded(0.45);
+    }
+
+    /// Level ground at y = 0 that ends at z = 1.
+    fn ledge_mesh() -> WorldMesh {
+        quad_mesh(
+            &[
+                [-10.0, 0.0, -10.0],
+                [10.0, 0.0, -10.0],
+                [10.0, 0.0, 1.0],
+                [-10.0, 0.0, 1.0],
+            ],
+            &[0, 2, 1, 0, 3, 2],
+        )
+    }
+
+    #[test]
+    fn walker_with_its_centre_over_a_ledge_edge_stays_grounded() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &ledge_mesh(), TEST_TAG);
+        let h = world.add_character(Vec3::new(0.0, 1.2, 0.0));
+        settle_on_floor(&mut world, &[h]);
+        assert!(state(&world, h).grounded);
+        // Centre 0.2 m past the edge and 6 cm up: the rim hangs more than the controller's own
+        // snap distance above the edge, so only the ground query keeps the walker standing.
+        let over_the_void = Vec3::new(0.0, 1.21, 1.2);
+        world.set_character_position(h, over_the_void).unwrap();
+
+        let (now, impacts) = searchlight_tick(&mut world, h, &idle());
+
+        assert!(now.grounded, "{now:?}");
+        assert!(impacts.is_empty(), "{impacts:?}");
+        assert!(
+            (1.0..over_the_void.y - 0.05).contains(&now.position.y),
+            "lowered onto the edge, not through it: {now:?}"
+        );
+    }
+
+    #[test]
+    fn walking_off_a_drop_taller_than_the_step_height_falls() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(-6.0, 6.0, 0.6), TEST_TAG);
+        let floor = world
+            .world_mesh_collider(WorldMeshId(0))
+            .expect("floor registered");
+        let platform_y = 0.6 + 1.15;
+        let h = resting_then_moving(
+            &mut world,
+            Vec3::new(0.0, platform_y + 0.05, -3.0),
+            0.0,
+            Vec3::new(0.0, 0.0, 6.0),
+        );
+        let forward = CharacterCommand {
+            forward: 1.0,
+            ..idle()
+        };
+        let mut left_the_ground_at = None;
+        let mut impacts = Vec::new();
+
+        for _ in 0..90 {
+            let (now, tick_impacts) = searchlight_tick(&mut world, h, &forward);
+            impacts.extend(tick_impacts);
+            if left_the_ground_at.is_none() && !now.grounded {
+                left_the_ground_at = Some(now);
+            }
+        }
+
+        let left = left_the_ground_at.expect("walked off a 0.6 m drop and never fell");
+        assert!(
+            left.position.z <= 0.3 + 0.1 + 1e-3,
+            "airborne within a tick of the capsule clearing the edge: {left:?}"
+        );
+        assert!(
+            left.position.y > platform_y - 0.2,
+            "not lowered down the drop before falling: {left:?}"
+        );
+        let landing = impacts
+            .iter()
+            .find(|i| i.collider == floor)
+            .expect("the fall lands on the floor with an impact");
+        assert!(landing.speed > 3.0, "{landing:?}");
+    }
+
+    #[test]
+    fn jumping_on_a_stair_is_airborne_on_that_tick() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        world.set_world_mesh(
+            WorldMeshId(1),
+            &stairs_mesh(5, 0.2, 0.3, 2.0, 4.0),
+            TEST_TAG,
+        );
+        let h = resting_then_moving(
+            &mut world,
+            Vec3::new(0.0, 1.0 + 1.15 + 0.05, 3.3),
+            std::f32::consts::PI,
+            Vec3::ZERO,
+        );
+        let before = state(&world, h);
+        let jump = CharacterCommand {
+            forward: 1.0,
+            jump: true,
+            ..idle()
+        };
+
+        let (after, _) = searchlight_tick(&mut world, h, &jump);
+
+        assert!(!after.grounded, "{after:?}");
+        assert!(
+            (after.velocity.y - (6.5 - 18.0 * DT)).abs() < 0.05,
+            "{:?}",
+            after.velocity
+        );
+        assert!(after.position.y > before.position.y, "{before:?} {after:?}");
+    }
+
+    #[test]
+    fn crossing_a_seam_between_two_meshes_stays_grounded() {
+        for offset in 0..10 {
+            let mut world = PhysicsWorld::new();
+            for (id, mesh) in seam_floor_meshes(0.025).iter().enumerate() {
+                world.set_world_mesh(WorldMeshId(id as u64), mesh, TEST_TAG);
+            }
+            let start = Vec3::new(0.0, 1.2, -1.5 + offset as f32 * 0.01);
+            let h = resting_then_moving(&mut world, start, 0.0, Vec3::new(0.0, 0.0, 6.0));
+            let forward = CharacterCommand {
+                forward: 1.0,
+                ..idle()
+            };
+
+            for tick in 0..30 {
+                let (now, impacts) = searchlight_tick(&mut world, h, &forward);
+
+                assert!(
+                    now.grounded,
+                    "offset {offset}, tick {tick}: airborne, {now:?}"
+                );
+                assert!(
+                    impacts.is_empty(),
+                    "offset {offset}, tick {tick}: {impacts:?}"
+                );
+            }
+            assert!(state(&world, h).position.z > 1.0, "crossed the seam");
+        }
     }
 
     #[test]

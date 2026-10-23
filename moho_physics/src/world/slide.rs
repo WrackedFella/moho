@@ -85,7 +85,7 @@ impl Slider<'_> {
                 return Slide {
                     translation,
                     grounded: true,
-                    ground: self.ground_under(start.translation + translation),
+                    ground: self.ground_below(start.translation + translation),
                     hits,
                 };
             }
@@ -99,7 +99,7 @@ impl Slider<'_> {
             grounded: plain.grounded,
             // Only a walker reads its ground, and only a character that started grounded walks.
             ground: was_grounded
-                .then(|| self.ground_under(start.translation + plain.translation))
+                .then(|| self.ground_below(start.translation + plain.translation))
                 .flatten(),
             hits,
         }
@@ -118,11 +118,18 @@ impl Slider<'_> {
             .expect("character colliders are capsules");
         let reach = capsule.half_height() + capsule.radius + GROUND_REACH_MARGIN;
         let ray = Ray::new(centre, -Vec3::Y);
-        let (_, hit) = self.queries.cast_ray_and_get_normal(&ray, reach, true)?;
+        let (collider, hit) = self.queries.cast_ray_and_get_normal(&ray, reach, true)?;
         (hit.normal.y >= WALKABLE_NORMAL_Y).then(|| Ground {
             normal: hit.normal,
             gap: hit.time_of_impact - (capsule.half_height() + capsule.radius / hit.normal.y),
+            collider,
+            point: ray.point_at(hit.time_of_impact),
         })
+    }
+
+    /// The walkable surface the capsule centred at `centre` stands on.
+    pub(super) fn ground_below(&self, centre: Vec3) -> Option<Ground> {
+        self.ground_under(centre)
     }
 
     /// The surface under a character the controller grounded without reporting a hit.
@@ -192,7 +199,7 @@ impl Slider<'_> {
 #[cfg(test)]
 mod tests {
     use super::super::test_support::TEST_TAG;
-    use super::super::test_support::{quad_mesh, slope_mesh, step_box_mesh};
+    use super::super::test_support::{quad_mesh, seam_floor_meshes, slope_mesh, step_box_mesh};
     use super::super::PhysicsWorld;
     use super::*;
     use moho_render_api::{WorldMesh, WorldMeshId};
@@ -394,9 +401,23 @@ mod tests {
 
     /// Runs `check` with a slider for a standard character capsule over `meshes`.
     fn with_slider<T>(meshes: &[WorldMesh], check: impl FnOnce(&Slider) -> T) -> T {
+        with_slider_and_colliders(meshes, |slider, _| check(slider))
+    }
+
+    /// Like [`with_slider`], also giving the collider of each mesh, in order.
+    fn with_slider_and_colliders<T>(
+        meshes: &[WorldMesh],
+        check: impl FnOnce(&Slider, &[ColliderHandle]) -> T,
+    ) -> T {
         let mut world = PhysicsWorld::new();
+        let mut colliders = Vec::new();
         for (id, mesh) in meshes.iter().enumerate() {
             world.set_world_mesh(WorldMeshId(id as u64), mesh, TEST_TAG);
+            colliders.push(
+                world
+                    .world_mesh_collider(WorldMeshId(id as u64))
+                    .expect("mesh registered"),
+            );
         }
         world.step(1.0 / 60.0);
         let queries = world.broad_phase.as_query_pipeline(
@@ -412,7 +433,116 @@ mod tests {
             shape: capsule.as_ref(),
             dt: 1.0 / 60.0,
         };
-        check(&slider)
+        check(&slider, &colliders)
+    }
+
+    /// A character centre's height 2 cm above where a capsule rests on level ground at y = 0.
+    const HOVER_Y: f32 = 1.17;
+
+    #[test]
+    fn ground_below_finds_a_ledge_under_the_flat_base_with_the_centre_over_the_void() {
+        let ledge = [ground(0.0, -10.0, 1.0)];
+
+        for past in [0.1_f32, 0.2] {
+            let centre = Vec3::new(0.0, HOVER_Y, 1.0 + past);
+
+            let (found, colliders) = with_slider_and_colliders(&ledge, |slider, colliders| {
+                (slider.ground_below(centre), colliders.to_vec())
+            });
+
+            let found = found.unwrap_or_else(|| panic!("{past} m past the edge: no ground"));
+            assert!(found.normal.distance(Vec3::Y) < 1e-3, "{past}: {found:?}");
+            assert_eq!(found.collider, colliders[0], "{past}: {found:?}");
+            assert!(found.point.y.abs() < 0.02, "{past}: {found:?}");
+            assert!(found.point.z <= 1.0 + 1e-3, "{past}: {found:?}");
+            assert!(
+                (-1e-3..0.15).contains(&found.gap),
+                "{past}: the capsule hangs just above the edge: {found:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ground_below_finds_no_ledge_past_the_flat_base() {
+        let ledge = [ground(0.0, -10.0, 1.0)];
+        let centre = Vec3::new(0.0, HOVER_Y, 1.25);
+
+        let found = with_slider(&ledge, |slider| slider.ground_below(centre));
+
+        assert_eq!(found, None);
+    }
+
+    /// An upper step with its top at 0.3 m ending in a nosing at z = 1, and the lower floor
+    /// at y = 0 beyond it.
+    fn nosing_over_a_lower_step() -> [WorldMesh; 2] {
+        [ground(0.0, 1.0, 10.0), step_box_mesh(-3.0, 4.0, 0.3)]
+    }
+
+    /// Where the capsule centre stands on the upper step's top.
+    const UPPER_STEP_REST_Y: f32 = 0.3 + 1.15;
+
+    #[test]
+    fn ground_below_sees_the_lower_step_past_a_nosing() {
+        let centre = Vec3::new(0.0, UPPER_STEP_REST_Y, 1.25);
+
+        let (found, colliders) =
+            with_slider_and_colliders(&nosing_over_a_lower_step(), |slider, colliders| {
+                (slider.ground_below(centre), colliders.to_vec())
+            });
+
+        let found = found.expect("the lower step is under the flat base");
+        assert!(found.normal.distance(Vec3::Y) < 1e-3, "{found:?}");
+        assert_eq!(found.collider, colliders[0], "the lower floor: {found:?}");
+        assert!(found.point.y.abs() < 0.02, "{found:?}");
+    }
+
+    #[test]
+    fn ground_gap_stops_where_the_capsule_meets_the_nosing() {
+        let centre = Vec3::new(0.0, UPPER_STEP_REST_Y, 1.25);
+        let distance_to_the_lower_step = 0.3;
+
+        let found = with_slider(&nosing_over_a_lower_step(), |slider| {
+            slider.ground_below(centre)
+        })
+        .expect("the lower step is under the flat base");
+
+        assert!(
+            found.gap > 0.05 && found.gap < 0.2,
+            "the capsule can drop only until its rim meets the nosing: {found:?}"
+        );
+        assert!(found.gap < distance_to_the_lower_step, "{found:?}");
+    }
+
+    #[test]
+    fn ground_below_reads_a_vertical_normal_on_a_step_edge() {
+        let upper_step = [step_box_mesh(-3.0, 4.0, 0.3)];
+        let centre = Vec3::new(0.0, UPPER_STEP_REST_Y, 1.1);
+
+        let (found, colliders) = with_slider_and_colliders(&upper_step, |slider, colliders| {
+            (slider.ground_below(centre), colliders.to_vec())
+        });
+
+        let found = found.expect("the step's top is under the flat base");
+        assert!(
+            found.normal.distance(Vec3::Y) < 1e-3,
+            "the face normal, not the tilted edge normal: {found:?}"
+        );
+        assert_eq!(found.collider, colliders[0], "{found:?}");
+        assert!((found.point.y - 0.3).abs() < 0.02, "{found:?}");
+        assert!(found.point.z <= 1.0 + 1e-3, "{found:?}");
+    }
+
+    #[test]
+    fn ground_below_bridges_a_seam_between_two_meshes() {
+        let seam = seam_floor_meshes(0.025);
+        let centre = Vec3::new(0.0, HOVER_Y, 0.0);
+
+        let found = with_slider(&seam, |slider| slider.ground_below(centre))
+            .expect("the capsule spans the 2.5 cm seam");
+
+        assert!(found.normal.distance(Vec3::Y) < 1e-3, "{found:?}");
+        assert!(found.point.y.abs() < 0.02, "{found:?}");
+        assert!((-0.01..0.05).contains(&found.gap), "{found:?}");
     }
 
     #[test]

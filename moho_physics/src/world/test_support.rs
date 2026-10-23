@@ -55,6 +55,15 @@ pub(crate) fn slope_mesh(z_from: f32, y_from: f32, z_to: f32, y_to: f32) -> Worl
     )
 }
 
+/// Level ground at y = 0 made of two meshes, one for z in [-10, -`seam`/2] and one for z in
+/// [`seam`/2, 10], leaving a `seam` m wide gap along z = 0.
+pub(crate) fn seam_floor_meshes(seam: f32) -> [WorldMesh; 2] {
+    [
+        slope_mesh(-10.0, 0.0, -seam / 2.0, 0.0),
+        slope_mesh(seam / 2.0, 0.0, 10.0, 0.0),
+    ]
+}
+
 /// A wall in the plane `z`, spanning x in [-10, 10] and y in [0, 10], facing -Z.
 pub(crate) fn wall_mesh(z: f32) -> WorldMesh {
     quad_mesh(

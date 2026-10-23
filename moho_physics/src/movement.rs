@@ -77,6 +77,10 @@ pub struct Ground {
     pub normal: Vec3,
     /// How far the capsule hangs above the face's plane, in metres, measured straight down.
     pub gap: f32,
+    /// The collider the face belongs to.
+    pub collider: ColliderHandle,
+    /// The contact point on the face, in world space.
+    pub point: Vec3,
 }
 
 /// Tolerance, in metres, on "the slide moved less into a surface than asked".
@@ -96,6 +100,10 @@ pub(crate) const WALKABLE_NORMAL_Y: f32 = std::f32::consts::FRAC_1_SQRT_2;
 /// carrying a ramp's upward speed over a crest asks an upward move, which the controller
 /// does not snap, and hops.
 pub(crate) const GROUND_SNAP: f32 = 0.1;
+
+/// Tallest step, in metres, a walker climbs and the furthest a level or downhill walker is
+/// lowered onto ground.
+pub(crate) const STEP_HEIGHT: f32 = 0.5;
 
 /// Vertical speed below which a character counts as resting rather than rising.
 ///
@@ -251,7 +259,7 @@ pub fn step(
         state.velocity.y -= half_gravity;
     }
 
-    settle(state, &slid, walking);
+    settle(state, &slid, walking, asked);
     impacts
 }
 
@@ -271,7 +279,7 @@ fn along_ground(velocity: Vec3, normal: Vec3) -> f32 {
 /// The lowering is not collision-checked: it drops onto the plane of the face under the
 /// centre, so a ledge under the capsule's rim but not its centre can be overlapped by up to
 /// [`GROUND_SNAP`] until the next slide resolves it.
-fn settle(state: &mut CharacterState, slid: &Slide, walking: bool) {
+fn settle(state: &mut CharacterState, slid: &Slide, walking: bool, _asked: Vec3) {
     let hanging = slid
         .ground
         .filter(|ground| walking && !slid.grounded && ground.gap <= GROUND_SNAP);
@@ -309,6 +317,16 @@ mod tests {
             yaw: 0.0,
             pitch: 0.0,
             grounded,
+        }
+    }
+
+    /// A walkable face of `normal` that the capsule hangs `gap` above.
+    fn face(normal: Vec3, gap: f32) -> Ground {
+        Ground {
+            normal,
+            gap,
+            collider: collider(),
+            point: Vec3::ZERO,
         }
     }
 
@@ -350,10 +368,7 @@ mod tests {
             Slide {
                 translation,
                 grounded: landed,
-                ground: landed.then_some(Ground {
-                    normal: Vec3::Y,
-                    gap: 0.0,
-                }),
+                ground: landed.then_some(face(Vec3::Y, 0.0)),
                 hits,
             }
         }
@@ -831,7 +846,7 @@ mod tests {
             move |asked| Slide {
                 translation: asked,
                 grounded: true,
-                ground: normal.map(|normal| Ground { normal, gap: 0.0 }),
+                ground: normal.map(|normal| face(normal, 0.0)),
                 hits: Vec::new(),
             }
         }
@@ -869,10 +884,7 @@ mod tests {
             step(&mut state, &forward(), &frictionless(), DT, |asked| Slide {
                 translation: asked,
                 grounded: false,
-                ground: Some(Ground {
-                    normal: slope_normal(25.0),
-                    gap: 1.0,
-                }),
+                ground: Some(face(slope_normal(25.0), 1.0)),
                 hits: Vec::new(),
             });
 
@@ -889,7 +901,7 @@ mod tests {
             move |asked| Slide {
                 translation: asked,
                 grounded,
-                ground: Some(Ground { normal, gap }),
+                ground: Some(face(normal, gap)),
                 hits: Vec::new(),
             }
         }
@@ -952,15 +964,85 @@ mod tests {
         }
 
         #[test]
-        fn walker_hanging_beyond_the_snap_distance_is_left_airborne_where_it_is() {
+        fn walker_hanging_within_the_step_height_on_a_level_move_is_lowered() {
+            for gap in [GROUND_SNAP + 0.01, 0.3, STEP_HEIGHT] {
+                let after = run_over(walker_at_speed(0.0), &forward(), over(false, Vec3::Y, gap));
+
+                assert!(after.grounded, "gap {gap}: {after:?}");
+                assert!(
+                    (after.position.y - (START_Y - gap)).abs() < 1e-5,
+                    "gap {gap}: {after:?}"
+                );
+                assert_eq!(after.velocity.y, 0.0, "gap {gap}");
+            }
+        }
+
+        #[test]
+        fn walker_on_a_downhill_move_is_lowered_within_the_step_height() {
+            let descent = -1.0;
+
             let after = run_over(
-                walker_at_speed(0.0),
+                walker_at_speed(descent),
+                &forward(),
+                over(false, Vec3::Y, 0.3),
+            );
+
+            assert!(after.grounded, "{after:?}");
+            let expected_y = START_Y + descent * DT - 0.3;
+            assert!((after.position.y - expected_y).abs() < 1e-5, "{after:?}");
+        }
+
+        #[test]
+        fn walker_rising_is_lowered_only_within_the_snap_distance() {
+            let climb = 1.0;
+
+            let near = run_over(
+                walker_at_speed(climb),
+                &forward(),
+                over(false, Vec3::Y, GROUND_SNAP),
+            );
+            let far = run_over(
+                walker_at_speed(climb),
                 &forward(),
                 over(false, Vec3::Y, GROUND_SNAP + 0.01),
             );
 
-            assert!(!after.grounded, "{after:?}");
-            assert!((after.position.y - START_Y).abs() < 1e-5, "{after:?}");
+            assert!(near.grounded, "{near:?}");
+            assert!(
+                (near.position.y - (START_Y + climb * DT - GROUND_SNAP)).abs() < 1e-5,
+                "{near:?}"
+            );
+            assert!(!far.grounded, "a rising walker keeps its launch: {far:?}");
+            assert!(
+                (far.position.y - (START_Y + climb * DT)).abs() < 1e-5,
+                "{far:?}"
+            );
+        }
+
+        #[test]
+        fn walker_hanging_beyond_the_snap_distance_is_left_airborne_where_it_is() {
+            let level_far = run_over(
+                walker_at_speed(0.0),
+                &forward(),
+                over(false, Vec3::Y, STEP_HEIGHT + 0.01),
+            );
+            let rising = 1.0;
+            let rising_far = run_over(
+                walker_at_speed(rising),
+                &forward(),
+                over(false, Vec3::Y, GROUND_SNAP + 0.01),
+            );
+
+            assert!(!level_far.grounded, "{level_far:?}");
+            assert!(
+                (level_far.position.y - START_Y).abs() < 1e-5,
+                "{level_far:?}"
+            );
+            assert!(!rising_far.grounded, "{rising_far:?}");
+            assert!(
+                (rising_far.position.y - (START_Y + rising * DT)).abs() < 1e-5,
+                "{rising_far:?}"
+            );
         }
 
         #[test]
@@ -1325,7 +1407,7 @@ mod tests {
             move |asked| Slide {
                 translation: asked,
                 grounded: true,
-                ground: ground.map(|normal| Ground { normal, gap: 0.0 }),
+                ground: ground.map(|normal| face(normal, 0.0)),
                 hits: Vec::new(),
             }
         }
