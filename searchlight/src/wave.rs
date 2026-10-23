@@ -99,11 +99,12 @@ pub struct WaveState {
 impl WaveState {
     /// Wave 1 with nothing spawned yet and no score.
     pub fn begin(tuning: &WaveTuning) -> Self {
+        let size = tuning.size(1);
         Self {
             wave: 1,
-            to_spawn: tuning.size(1),
+            to_spawn: size,
             score: 0,
-            grades: tuning.mix().grades(1, tuning.size(1), None),
+            grades: tuning.mix().grades(1, size, None),
         }
     }
 

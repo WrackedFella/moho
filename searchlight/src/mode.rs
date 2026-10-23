@@ -53,11 +53,12 @@ impl ArenaMode {
             free.len(),
         );
         self.seen_kills = kills;
+        let grades = self.waves.grades();
         let first = self.waves.spawned() - spawn;
         let mut spawned = 0;
         for (&marker, index) in free.iter().zip(first..first + spawn) {
             let grade = forced
-                .or_else(|| self.waves.grades().grade_of(index))
+                .or_else(|| grades.grade_of(index))
                 .unwrap_or_default();
             if let Err(error) = self.sim.spawn_enemy(marker, grade) {
                 tracing::warn!(%error, marker, "wave enemy not spawned");

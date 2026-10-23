@@ -34,11 +34,7 @@ impl WaveGrades {
 
     /// Enemies of `grade`.
     pub fn count(&self, grade: Grade) -> u32 {
-        Grade::LADDER
-            .iter()
-            .zip(self.counts)
-            .find_map(|(&on_ladder, count)| (on_ladder == grade).then_some(count))
-            .unwrap_or(0)
+        self.counts[grade as usize]
     }
 
     /// Enemies of experienced grade or better.
@@ -67,34 +63,29 @@ fn shares(step: &[u32; 5]) -> (u128, u128) {
     (high, total)
 }
 
-/// Splits `count` among `weights` by largest remainder, ties to the lower index; all of it on
-/// the first when the weights sum to zero.
-fn split(count: u32, weights: &[u32]) -> Vec<u32> {
+/// Splits `count` into `parts` by `weights` with largest remainder, ties to the lower index;
+/// all of it on the first part when the weights sum to zero.
+fn split(count: u32, weights: &[u32], parts: &mut [u32]) {
     let total: u64 = weights.iter().map(|&w| u64::from(w)).sum();
-    let mut parts = vec![0; weights.len()];
     if total == 0 {
+        parts.fill(0);
         if let Some(first) = parts.first_mut() {
             *first = count;
         }
-        return parts;
+        return;
     }
-    let mut remainders = Vec::with_capacity(weights.len());
-    for (part, &weight) in parts.iter_mut().zip(weights) {
+    let mut remainders = [0u64; 5];
+    for ((part, remainder), &weight) in parts.iter_mut().zip(&mut remainders).zip(weights) {
         let scaled = u64::from(count) * u64::from(weight);
-        *part = saturating_u32(scaled / total);
-        remainders.push(scaled % total);
+        *part = u32::try_from(scaled / total).unwrap_or(count);
+        *remainder = scaled % total;
     }
     let left = count - parts.iter().sum::<u32>();
     let mut order: Vec<usize> = (0..weights.len()).collect();
     order.sort_by_key(|&index| (std::cmp::Reverse(remainders[index]), index));
-    for (&index, _) in order.iter().zip(0..left) {
+    for &index in order.iter().take(left as usize) {
         parts[index] += 1;
     }
-    parts
-}
-
-fn saturating_u32(value: impl TryInto<u32>) -> u32 {
-    value.try_into().unwrap_or(u32::MAX)
 }
 
 /// Per-wave grade weights, one step per wave from wave 1; the last step holds past the end.
@@ -152,14 +143,11 @@ impl GradeMix {
                 let scaled = u128::from(before.experienced_and_above()) * u128::from(size);
                 scaled.div_ceil(u128::from(before.size()))
             });
-        let high = saturating_u32(wanted.max(carried)).min(size);
-        let (low_counts, high_counts) = (
-            split(size - high, &step[..FIRST_HIGH]),
-            split(high, &step[FIRST_HIGH..]),
-        );
+        let high = u32::try_from(wanted.max(carried).min(u128::from(size))).unwrap_or(size);
         let mut counts = [0; 5];
-        counts[..FIRST_HIGH].copy_from_slice(&low_counts);
-        counts[FIRST_HIGH..].copy_from_slice(&high_counts);
+        let (low_counts, high_counts) = counts.split_at_mut(FIRST_HIGH);
+        split(size - high, &step[..FIRST_HIGH], low_counts);
+        split(high, &step[FIRST_HIGH..], high_counts);
         WaveGrades { counts }
     }
 }
