@@ -1752,6 +1752,81 @@ mod tests {
         assert!(sim.player_eye().distance(standing_eye(&sim)) < 1e-4);
     }
 
+    #[test]
+    fn sidestepping_into_a_wall_while_leaned_pulls_the_lean_in() {
+        const FACE: f32 = -1.5;
+        let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
+        let wall = (Vec3::new(FACE - 1.0, 0.0, -5.0), Vec3::new(FACE, 4.0, 5.0));
+        let mut sim = SearchlightSim::new(
+            world_with(&[floor, wall]),
+            Vec3::ZERO,
+            &[],
+            test_config(rifle_with(5), vec![]),
+        );
+        hold(&mut sim, &leaning(Some(LeanSide::Right)), SETTLE_TICKS);
+        assert!((sim.player_lean().amount() - 1.0).abs() < 1e-4);
+        let sidestep = SearchlightCommand {
+            movement: CharacterCommand {
+                right: 1.0,
+                ..CharacterCommand::default()
+            },
+            lean: Some(LeanSide::Right),
+            ..SearchlightCommand::default()
+        };
+
+        for tick in 0..400 {
+            sim.tick(&sidestep, DT);
+
+            let gap = sim.player_eye().x - FACE;
+            assert!(
+                gap >= 0.15 - 1e-3,
+                "tick {tick}: the eye is {gap} m from the wall"
+            );
+        }
+
+        assert!(
+            sim.player().position.x < -0.8,
+            "the player never reached the wall: {:?}",
+            sim.player().position
+        );
+        assert!(
+            sim.player_lean().amount() < 1.0,
+            "still a full lean against the wall"
+        );
+    }
+
+    #[test]
+    fn a_shot_on_the_first_lean_tick_leaves_from_the_part_leaned_eye() {
+        let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
+        let plinth = (Vec3::new(-1.0, 0.0, 7.0), Vec3::new(1.0, 0.3, 9.0));
+        // Its edge at x = -0.01 blocks the upright line (x = 0) but not an eye already 0.023 m
+        // to the right, which is where the first lean tick puts it.
+        let wall = (Vec3::new(-0.01, 0.0, 3.0), Vec3::new(2.0, 4.0, 4.0));
+        let mut sim = SearchlightSim::new(
+            world_with(&[floor, plinth, wall]),
+            Vec3::ZERO,
+            &[Vec3::new(-0.175, 0.3, 8.0)],
+            test_config(rifle_with(5), vec![]),
+        );
+        let shot = SearchlightCommand {
+            fire: true,
+            lean: Some(LeanSide::Right),
+            ..SearchlightCommand::default()
+        };
+
+        sim.tick(&shot, DT);
+
+        let sideways = standing_eye(&sim).x - sim.player_eye().x;
+        assert!(
+            sideways > 0.01 + 1e-3 && sideways < 0.05,
+            "the first tick should lean a little: {sideways}"
+        );
+        assert!(
+            hit(&mut sim),
+            "the shot should leave from the eye as leaned that tick"
+        );
+    }
+
     mod waves {
         use super::*;
         use crate::test_support::arena_with;

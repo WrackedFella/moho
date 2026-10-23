@@ -528,6 +528,19 @@ mod tests {
     }
 
     #[test]
+    fn a_lean_tap_shorter_than_a_tick_leans_that_tick_only() {
+        let mut map = fresh_map();
+        press(&mut map, SearchlightAction::LeanLeft);
+        release(&mut map, SearchlightAction::LeanLeft);
+
+        let tapped = lean_after(&mut map, None);
+        let next = lean_after(&mut map, tapped);
+
+        assert_eq!(tapped, Some(LeanSide::Left));
+        assert_eq!(next, None);
+    }
+
+    #[test]
     fn q_and_e_pressed_on_one_tick_lean_right() {
         let mut map = fresh_map();
         press(&mut map, SearchlightAction::LeanLeft);

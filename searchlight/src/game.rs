@@ -1437,6 +1437,46 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_restart_after_dying_while_leaned_draws_the_first_frame_upright() {
+        let mut game = game();
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let lean_right = SearchlightCommand {
+            lean: Some(LeanSide::Right),
+            ..SearchlightCommand::default()
+        };
+        for _ in 0..30 {
+            tick_with(&mut game, &mut clock, &lean_right);
+        }
+        assert!(game.sim().player_lean().amount() > 0.99);
+        game.mode.sim_mut().kill_player();
+        tick_with(&mut game, &mut clock, &lean_right);
+        assert!(game.sim().player_body().is_dead());
+
+        tick_with(&mut game, &mut clock, &restart_command());
+
+        assert!(!game.sim().player_body().is_dead());
+        let standing = game.sim().player().position + Vec3::Y * game.sim().eye_height();
+        for alpha in [0.0, 0.5] {
+            let mut renderer = SettingsRenderer::default();
+            let ctx_clock = GameClock::default();
+            let mut ctx = FrameContext::new(TICK, &ctx_clock, Some(&mut renderer), None);
+            game.frame(&mut ctx, alpha);
+            let view = *renderer.views.last().expect("a frame began");
+
+            let eye = view.inverse().w_axis.truncate();
+            let up = view.transpose().col(1).truncate();
+            assert!(
+                eye.distance(standing) < 1e-3,
+                "alpha {alpha}: the eye is {eye:?}, standing is {standing:?}"
+            );
+            assert!(
+                up.distance(Vec3::Y) < 1e-3,
+                "alpha {alpha}: the view is rolled, up is {up:?}"
+            );
+        }
+    }
+
     const BACKTICK: Input = Input::Key(Key::Backtick);
     const TICK: Duration = Duration::from_millis(16);
 
