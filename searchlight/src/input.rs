@@ -151,10 +151,12 @@ mod tests {
     use std::collections::BTreeMap;
 
     use moho_input::action_map::ActionMap;
-    use moho_input::bindings::{ActionBindings, Input};
+    use moho_input::bindings::{ActionBindings, Input, Modifiers};
 
     use super::*;
     use crate::test_support::press;
+
+    const NONE: Modifiers = Modifiers::NONE;
 
     const FRAME: std::time::Duration = std::time::Duration::from_millis(16);
 
@@ -306,23 +308,27 @@ mod tests {
     }
 
     #[test]
-    fn enter_is_bound_to_restart() {
+    fn f8_is_bound_to_restart() {
         let (bindings, warnings) = ActionBindings::load(&BTreeMap::new());
         assert!(warnings.is_empty());
         let mut map = ActionMap::<SearchlightAction>::new(bindings, 1.0);
-        map.key(Key::Enter, true);
+        map.key(Key::F8, true);
 
         let pressed = SearchlightCommand::from_frame(&map.end_tick());
         let held = SearchlightCommand::from_frame(&map.end_tick());
-        map.key(Key::Enter, false);
+        map.key(Key::F8, false);
         let released = SearchlightCommand::from_frame(&map.end_tick());
-        map.key(Key::Enter, true);
+        map.key(Key::F8, true);
         let again = SearchlightCommand::from_frame(&map.end_tick());
+        map.key(Key::F8, false);
+        map.key(Key::Enter, true);
+        let enter = SearchlightCommand::from_frame(&map.end_tick());
 
         assert_eq!(
             SearchlightAction::Restart.default_bindings(),
-            [Binding::key(Key::Enter)]
+            [Binding::key(Key::F8)]
         );
+        assert!(!enter.restart);
         assert!(SearchlightAction::ALL.contains(&SearchlightAction::Restart));
         assert_eq!(
             [
@@ -334,6 +340,31 @@ mod tests {
             [true, false, false, true]
         );
         assert!(!pressed.fire && !pressed.reload && !pressed.check);
+    }
+
+    #[test]
+    fn searchlight_default_bindings_name_no_protected_key() {
+        let protected = [
+            Key::Enter,
+            Key::Escape,
+            Key::ArrowUp,
+            Key::ArrowDown,
+            Key::ArrowLeft,
+            Key::ArrowRight,
+        ];
+
+        for &action in SearchlightAction::ALL {
+            for binding in action.default_bindings() {
+                let on_protected_key = protected
+                    .iter()
+                    .any(|&key| binding.input == Input::Key(key) && binding.modifiers == NONE);
+                assert!(!on_protected_key, "{}: {}", action.name(), binding.name());
+                assert!(!binding.is_protected(), "{}", action.name());
+            }
+        }
+        let (bindings, _) = ActionBindings::<SearchlightAction>::load(&BTreeMap::new());
+        let (_, warnings) = ActionBindings::<SearchlightAction>::load(&bindings.to_section());
+        assert_eq!(warnings, vec![]);
     }
 
     #[test]

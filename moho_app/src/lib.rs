@@ -22,7 +22,9 @@ pub use fixed_step::{FixedStep, LoopConfig, SimSpeed};
 pub use headless::HeadlessLoop;
 pub(crate) use loop_requests::LoopRequests;
 pub use runner::run;
-pub use window_keys::{Observed, ToggleKeys, WindowMode};
+pub use window_keys::{
+    FULLSCREEN_BINDING, Observed, ToggleKeys, WindowMode, split_fullscreen_binding,
+};
 
 /// Per-tick context handed to [`Game::tick`].
 #[derive(Debug)]
