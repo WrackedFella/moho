@@ -70,12 +70,15 @@ pub struct Slide {
     pub hits: Vec<(ColliderHandle, Vec3)>,
 }
 
-/// The walkable surface under a character's centre.
+/// The walkable surface under a character's capsule.
+///
+/// `normal`, `collider` and `point` describe the face under the capsule's base; `gap` can stop
+/// on a different surface, such as the nosing a walker rolls off before reaching the step below.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Ground {
     /// The face normal.
     pub normal: Vec3,
-    /// How far the capsule hangs above the face's plane, in metres, measured straight down.
+    /// How far the capsule can drop before it touches anything, in metres, cast straight down.
     pub gap: f32,
     /// The collider the face belongs to.
     pub collider: ColliderHandle,
