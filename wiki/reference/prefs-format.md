@@ -115,6 +115,8 @@ header, and `,` separates list items. There are no numeric key codes.
 
 A chord prefixes a key or mouse button with `Ctrl+`, `Shift+` and `Alt+` (`Ctrl+R`, `Shift+Mouse Left`, `Hold Ctrl+R`; the `Hold ` prefix stays outermost). Modifiers parse in any order and case and are written back as Ctrl, Shift, Alt. A repeated modifier, a modifier equal to the bound key itself (`Ctrl+Ctrl`), a pad input (`Ctrl+Pad West`), an empty input or any other prefix (`Control+R`) is an unrecognised key and warns. `Shift+Ctrl` (a modifier key under another modifier) is valid. Resolution is in [input](../architecture/input-and-state.md).
 
+`[action_modes]` is stored raw like `[bindings]` (`Prefs::action_modes`, `Prefs::set_action_modes`) and written only when non-empty. Each key is the stable `name()` of a toggleable action, each value `hold` or `toggle` (any case, surrounding whitespace ignored). `ActionBindings::load_modes` reads it; `modes_to_section` writes every toggleable action, `Hold` included. An unknown action, a non-toggleable action or an unknown value yields a `BindingWarning` and the action stays `Hold`.
+
 `[debug]` is a game-owned section of named values (a game's debug toggles), stored raw like
 `[bindings]` and written only when non-empty. `Prefs::debug_value` reads one;
 `Prefs::set_debug_value` stores one and returns `DebugValueError` for a name or value

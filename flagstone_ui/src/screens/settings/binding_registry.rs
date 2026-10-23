@@ -1,6 +1,6 @@
 //! Registry of the settings screen's bindings, with conflict detection.
 
-use moho_input::bindings::{ActionBindings, Binding};
+use moho_input::bindings::{ActionBindings, ActionMode, Binding};
 use moho_input::key::Key;
 use moho_ui_shell::CONSOLE_BINDING;
 
@@ -28,6 +28,7 @@ impl BindingRegistry {
             section.insert(CONSOLE_BINDING.to_owned(), console.clone());
         }
         prefs.set_bindings(section);
+        prefs.set_action_modes(self.bindings.modes_to_section());
     }
 
     /// The listed row (other than `exclude`) already bound to `key`, if any.
@@ -43,6 +44,14 @@ impl BindingRegistry {
 
     pub fn get_binding(&self, action: StrategyAction) -> &[Binding] {
         self.bindings.get(action)
+    }
+
+    pub fn get_mode(&self, action: StrategyAction) -> ActionMode {
+        self.bindings.mode(action)
+    }
+
+    pub fn set_mode(&mut self, action: StrategyAction, mode: ActionMode) {
+        self.bindings.set_mode(action, mode);
     }
 }
 
@@ -84,6 +93,26 @@ mod tests {
             reloaded.get_binding(StrategyAction::MoveForward),
             [Binding::key(Key::Q)]
         );
+    }
+
+    #[test]
+    fn write_to_prefs_round_trips_modes() {
+        let mut prefs = Prefs::default();
+        let mut registry = BindingRegistry::from_prefs(&prefs);
+        registry.set_mode(StrategyAction::Sprint, ActionMode::Toggle);
+
+        registry.write_to_prefs(&mut prefs);
+
+        let reloaded = BindingRegistry::from_prefs(&prefs);
+        assert_eq!(
+            prefs.action_modes().get("sprint").map(String::as_str),
+            Some("toggle")
+        );
+        assert_eq!(
+            reloaded.get_mode(StrategyAction::Sprint),
+            ActionMode::Toggle
+        );
+        assert_eq!(reloaded, registry);
     }
 
     #[test]
