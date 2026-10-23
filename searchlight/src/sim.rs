@@ -860,14 +860,23 @@ mod tests {
     use std::f32::consts::FRAC_PI_2;
 
     use moho_physics::CharacterCommand;
-    use searchlight_rules::MagazineLevel;
+    use searchlight_rules::{ItemId, Loadout, MagazineLevel, Rig, RigSpec};
 
     use super::*;
     use crate::tag::SurfaceTag;
-    use crate::test_support::{DT, flat_floor, mag, room, test_config};
+    use crate::test_support::{DT, flat_floor, foreign_mag, mag, rifle_from, room, test_config};
 
     fn rifle_with(rounds: u32) -> Rifle {
-        Rifle::loaded(mag(30, rounds))
+        rifle_from(mag(30, rounds))
+    }
+
+    fn empty_rig(slots: u32) -> Rig {
+        Rig::new(
+            ItemId::new("test_rig"),
+            &RigSpec {
+                magazine_slots: slots,
+            },
+        )
     }
 
     fn idle() -> SearchlightCommand {
@@ -1019,9 +1028,8 @@ mod tests {
 
     #[test]
     fn checking_the_magazine_reports_its_level() {
-        let chambered_only = Rifle::loaded(mag(30, 1));
-        let mut rifle = chambered_only;
-        rifle.reload(Some(mag(30, 30)));
+        let mut rifle = rifle_from(mag(30, 1));
+        rifle.reload(mag(30, 30)).expect("the test magazine fits");
         let mut sim = arena_sim(rifle, vec![]);
 
         let full = run(&mut sim, &[check()]);
@@ -1096,7 +1104,7 @@ mod tests {
                 rounds,
                 "chambered {chambered}"
             );
-            assert_eq!(sim.spares(), [ejected], "chambered {chambered}");
+            assert_eq!(sim.rig().slots(), [Some(ejected)], "chambered {chambered}");
             assert!(sim.rifle().is_chambered());
         }
     }
@@ -1212,28 +1220,64 @@ mod tests {
     }
 
     #[test]
-    fn reloading_with_no_spare_magazine_changes_nothing() {
+    fn reloading_with_an_empty_rig_starts_no_reload() {
         let cases = [
             (rifle_with(10), Feedback::Fired, (true, 8)),
             (rifle_with(0), Feedback::Dry, (false, 0)),
         ];
         for (rifle, pulled, rounds) in cases {
-            let chambered = rifle.is_chambered();
-            let mut sim = charging_sim(rifle, vec![], 10, 4);
-            let mut script = vec![reload(), pull()];
-            script.extend([idle(); 14]);
+            for free_slots in [0, 3] {
+                let chambered = rifle.is_chambered();
+                let mut config = test_config(rifle.clone(), vec![]);
+                config.reload_ticks = 10;
+                config.charge_ticks = 4;
+                config.loadout = Loadout::new(rifle.clone(), empty_rig(free_slots));
+                let mut sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
+                let mut script = vec![reload(), pull()];
+                script.extend([idle(); 14]);
 
-            let ticks = run(&mut sim, &script);
+                let ticks = run(&mut sim, &script);
 
-            assert_eq!(ticks[0], [], "chambered {chambered}");
-            assert_eq!(ticks[1], [pulled], "chambered {chambered}");
-            assert!(
-                ticks[2..].iter().all(Vec::is_empty),
-                "chambered {chambered}: {ticks:?}"
-            );
-            assert_eq!(sim_rounds(&sim), rounds, "chambered {chambered}");
-            assert!(sim.spares().is_empty(), "chambered {chambered}");
+                let label = format!("chambered {chambered}, {free_slots} free slots");
+                assert_eq!(ticks[0], [], "{label}");
+                assert_eq!(ticks[1], [pulled], "{label}");
+                assert!(ticks[2..].iter().all(Vec::is_empty), "{label}: {ticks:?}");
+                assert_eq!(sim_rounds(&sim), rounds, "{label}");
+                assert_eq!(sim.rig().magazines().count(), 0, "{label}");
+            }
         }
+    }
+
+    #[test]
+    fn a_rig_holding_only_magazines_of_another_well_starts_no_reload() {
+        let mut sim = charging_sim(rifle_with(10), vec![foreign_mag(30, 30)], 10, 4);
+        let mut script = vec![reload(), pull()];
+        script.extend([idle(); 14]);
+
+        let ticks = run(&mut sim, &script);
+
+        assert_eq!(ticks[0], []);
+        assert_eq!(ticks[1], [Feedback::Fired]);
+        assert!(ticks[2..].iter().all(Vec::is_empty), "{ticks:?}");
+        assert_eq!(sim_rounds(&sim), (true, 8));
+        assert_eq!(sim.rig().slots(), [Some(foreign_mag(30, 30))]);
+    }
+
+    #[test]
+    fn a_finished_reload_leaves_the_empty_magazine_on_the_rig() {
+        let mut sim = arena_sim(rifle_with(1), vec![mag(30, 30)]);
+
+        let mid = run(&mut sim, &[reload(), idle(), idle(), idle(), idle()]);
+        let held_mid_reload = (sim.rifle().magazine().clone(), sim.rig().slots().to_vec());
+        let rest = run(&mut sim, &[idle(); 6]);
+
+        assert!(mid.iter().all(Vec::is_empty), "{mid:?}");
+        assert_eq!(held_mid_reload.0, mag(30, 0));
+        assert_eq!(held_mid_reload.1, [Some(mag(30, 30))]);
+        assert!(rest[..5].iter().all(Vec::is_empty), "{rest:?}");
+        assert_eq!(rest[5], [Feedback::ReloadDone]);
+        assert_eq!(sim.rifle().magazine(), &mag(30, 30));
+        assert_eq!(sim.rig().slots(), [Some(mag(30, 0))]);
     }
 
     #[test]
@@ -1372,7 +1416,7 @@ mod tests {
         use crate::test_support::arena_with;
 
         fn config() -> SimConfig {
-            test_config(Rifle::loaded(mag(30, 30)), vec![])
+            test_config(rifle_from(mag(30, 30)), vec![])
         }
 
         fn idle() -> SearchlightCommand {
@@ -1671,7 +1715,7 @@ mod dummy_pose_tests {
     use searchlight_rules::BodyPart;
 
     use super::*;
-    use crate::test_support::{DT, flat_floor, mag, test_config};
+    use crate::test_support::{DT, flat_floor, mag, rifle_from, test_config};
 
     #[test]
     fn a_dummy_still_takes_hits_where_it_stood_after_many_ticks() {
@@ -1683,7 +1727,7 @@ mod dummy_pose_tests {
             .into_iter()
             .find(|v| v.tag == torso.into())
             .expect("a torso volume");
-        let mut config = test_config(Rifle::loaded(mag(30, 5)), vec![]);
+        let mut config = test_config(rifle_from(mag(30, 5)), vec![]);
         config.eye_height = volume.offset.y;
         let mut sim = SearchlightSim::new(
             flat_floor(),
@@ -1713,10 +1757,10 @@ mod adversarial_tests {
     use searchlight_rules::{BodyPart, MagazineLevel};
 
     use super::*;
-    use crate::test_support::{DT, flat_floor, mag, test_config};
+    use crate::test_support::{DT, flat_floor, mag, rifle_from, test_config};
 
     fn rifle_with(rounds: u32) -> Rifle {
-        Rifle::loaded(mag(30, rounds))
+        rifle_from(mag(30, rounds))
     }
 
     fn idle() -> SearchlightCommand {
@@ -2030,7 +2074,8 @@ mod adversarial_tests {
             .collect();
         assert_eq!(done, [10], "{ticks:?}");
         assert_eq!(sim.rifle().magazine(), &mag(30, 30));
-        assert_eq!(sim.spares().len(), 2);
+        assert_eq!(sim.rig().magazines().count(), 2);
+        assert_eq!(sim.rig().free_slots(), 0);
     }
 }
 
@@ -2039,7 +2084,7 @@ mod hit_volume_and_cooldown_tests {
     use moho_physics::HitTag;
 
     use super::*;
-    use crate::test_support::{DT, flat_floor, mag, test_config};
+    use crate::test_support::{DT, flat_floor, mag, rifle_from, test_config};
 
     fn offset_of(volumes: &[HitVolume; 6], part: BodyPart) -> Vec3 {
         let tag = HitTag::from(SurfaceTag::Part { target: 4, part });
@@ -2079,7 +2124,7 @@ mod hit_volume_and_cooldown_tests {
 
     /// Ticks that fired when the trigger is pulled on each of `ticks` consecutive ticks.
     fn fired_ticks(cooldown_ticks: u32, ticks: usize) -> Vec<usize> {
-        let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        let mut config = test_config(rifle_from(mag(30, 30)), vec![]);
         config.cooldown_ticks = cooldown_ticks;
         let mut sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
         let pull = SearchlightCommand {
@@ -2105,7 +2150,7 @@ mod hit_volume_and_cooldown_tests {
     /// Whether a level shot at a dummy `distance` ahead, from `eye_height` and sideways
     /// offset `x`, reports a hit.
     fn level_shot_hits(eye_height: f32, x: f32, distance: f32) -> bool {
-        let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        let mut config = test_config(rifle_from(mag(30, 30)), vec![]);
         config.eye_height = eye_height;
         let mut sim = SearchlightSim::new(
             flat_floor(),
@@ -2161,7 +2206,7 @@ mod hit_volume_and_cooldown_tests {
 
     #[test]
     fn eye_height_reports_the_configured_height() {
-        let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        let mut config = test_config(rifle_from(mag(30, 30)), vec![]);
         config.eye_height = 1.6;
 
         let sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
@@ -2179,7 +2224,7 @@ mod enemy_tests {
 
     use super::*;
     use crate::arena;
-    use crate::test_support::{DT, arena_with, mag, test_config};
+    use crate::test_support::{DT, arena_with, mag, rifle_from, test_config};
 
     /// Height of the head volume's centre above the capsule centre: a level shot from here
     /// strikes a standing body's head.
@@ -2188,7 +2233,7 @@ mod enemy_tests {
     const PLAYER_ONE_SHOT: u32 = 60;
 
     fn config() -> SimConfig {
-        let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        let mut config = test_config(rifle_from(mag(30, 30)), vec![]);
         config.eye_height = HEAD_HEIGHT;
         config
     }
@@ -2806,6 +2851,40 @@ mod enemy_tests {
     }
 
     #[test]
+    fn a_restart_after_a_reload_restores_the_kit_from_the_config() {
+        let arena = arena_with(&[], Vec3::ZERO, &[ENEMY_SPAWN], &[TOWARD_PLAYER]);
+        let mut config = test_config(rifle_from(mag(30, 10)), vec![mag(30, 30)]);
+        config.eye_height = HEAD_HEIGHT;
+        config.enemy.damage = 100;
+        config.enemy.reaction_ticks = 40;
+        let fresh = SearchlightSim::start(arena.clone(), config.clone());
+        let mut sim = SearchlightSim::start(arena, config);
+        let reload = SearchlightCommand {
+            reload: true,
+            ..idle()
+        };
+        let mut dead = false;
+        for tick in 0..2000 {
+            sim.tick(&if tick == 0 { reload } else { idle() }, DT);
+            dead |= sim.drain_feedback().iter().any(player_died);
+            if dead {
+                break;
+            }
+        }
+        assert!(dead, "the player never died");
+        assert_ne!(
+            sim.rig(),
+            fresh.rig(),
+            "the reload should have moved magazines"
+        );
+
+        sim.tick(&restart(), DT);
+
+        assert_eq!(sim.rig(), fresh.rig());
+        assert_eq!(sim.rifle(), fresh.rifle());
+    }
+
+    #[test]
     fn restart_after_death_matches_a_fresh_start() {
         let (mut restarted, arena, config) = dead_player_in_a_busy_arena();
         let mut fresh = SearchlightSim::start(arena, config);
@@ -2820,7 +2899,7 @@ mod enemy_tests {
         assert_eq!(restarted.player_body(), fresh.player_body());
         assert!(!restarted.player_body().is_dead());
         assert_eq!(restarted.rifle(), fresh.rifle());
-        assert_eq!(restarted.spares(), fresh.spares());
+        assert_eq!(restarted.rig(), fresh.rig());
         assert_eq!(restarted.enemy_count(), fresh.enemy_count());
         for index in 0..fresh.enemy_count() {
             assert_eq!(
@@ -3597,7 +3676,7 @@ mod enemy_tests {
 #[cfg(test)]
 mod pinned_behaviour_tests {
     use super::*;
-    use crate::test_support::{DT, arena_with, flat_floor, mag, test_config};
+    use crate::test_support::{DT, arena_with, flat_floor, mag, rifle_from, test_config};
 
     fn assert_close(actual: f32, expected: f32) {
         assert!(
@@ -3636,7 +3715,7 @@ mod pinned_behaviour_tests {
 
     #[test]
     fn a_zero_aim_error_never_moves_the_aim() {
-        let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        let mut config = test_config(rifle_from(mag(30, 30)), vec![]);
         config.enemy.aim_error = 0.0;
         config.enemy.seed = 7;
         let mut sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
@@ -3672,7 +3751,7 @@ mod pinned_behaviour_tests {
 
     #[test]
     fn spread_turns_the_aim_by_the_next_two_draws_across_and_up() {
-        let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        let mut config = test_config(rifle_from(mag(30, 30)), vec![]);
         config.enemy.aim_error = 0.5;
         config.enemy.seed = 7;
         let mut sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
@@ -3688,7 +3767,7 @@ mod pinned_behaviour_tests {
 
     #[test]
     fn the_sim_reports_the_configured_maximum_health() {
-        let config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        let config = test_config(rifle_from(mag(30, 30)), vec![]);
         let sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
 
         assert_eq!(sim.player_max_health(), 100);
@@ -3704,7 +3783,7 @@ mod pinned_behaviour_tests {
         ))
         .clone();
         arena.dummy_spawns = vec![Vec3::new(-10.0, 0.0, -10.0)];
-        let config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        let config = test_config(rifle_from(mag(30, 30)), vec![]);
 
         let sim = SearchlightSim::start(Arc::new(arena), config);
 
@@ -3719,7 +3798,7 @@ mod pinned_behaviour_tests {
 
     #[test]
     fn a_sim_without_enemies_has_none() {
-        let config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        let config = test_config(rifle_from(mag(30, 30)), vec![]);
         let sim = SearchlightSim::new(
             flat_floor(),
             Vec3::ZERO,
@@ -3742,7 +3821,7 @@ mod pinned_behaviour_tests {
             &[Vec3::new(0.0, 0.0, 10.0)],
             &[Vec3::new(0.0, 0.0, 6.0)],
         );
-        let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        let mut config = test_config(rifle_from(mag(30, 30)), vec![]);
         config.eye_height = 0.72;
         let mut sim = SearchlightSim::start(arena, config);
 
@@ -3768,7 +3847,7 @@ mod pinned_behaviour_tests {
 #[cfg(test)]
 mod god_mode_tests {
     use super::*;
-    use crate::test_support::{DT, arena_with, mag, test_config};
+    use crate::test_support::{DT, arena_with, mag, rifle_from, test_config};
 
     fn duel_sim(aim_at: BodyPart) -> SearchlightSim {
         let arena = arena_with(
@@ -3777,7 +3856,7 @@ mod god_mode_tests {
             &[Vec3::new(0.0, 0.0, 10.0)],
             &[Vec3::new(0.0, 0.0, 6.0)],
         );
-        let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        let mut config = test_config(rifle_from(mag(30, 30)), vec![]);
         config.eye_height = 0.72;
         config.enemy_aim_at = aim_at;
         SearchlightSim::start(arena, config)

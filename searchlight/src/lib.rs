@@ -9,6 +9,7 @@ pub mod debug_settings;
 pub mod game;
 pub mod hud;
 pub mod input;
+pub mod kit;
 pub mod menu;
 pub mod mode;
 pub mod shot;

@@ -103,12 +103,12 @@ impl Magazine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::item::{Caliber, ItemId, MagazineWell};
+    use crate::test_support::{id, mag, mag_of, spec};
     use proptest::prelude::*;
 
     fn level_of(capacity: u32, rounds: u32) -> MagazineLevel {
-        Magazine::new(capacity, rounds)
-            .expect("test rounds fit the capacity")
-            .level()
+        mag(capacity, rounds).level()
     }
 
     #[test]
@@ -150,8 +150,8 @@ mod tests {
     }
 
     #[test]
-    fn new_rejects_rounds_over_capacity() {
-        let over = Magazine::new(30, 31);
+    fn filled_rejects_rounds_over_capacity() {
+        let over = Magazine::filled(id("mag"), &spec("rifle", 30), &id("ball"), 31);
 
         assert_eq!(
             over,
@@ -163,32 +163,110 @@ mod tests {
     }
 
     #[test]
-    fn new_accepts_a_full_magazine() {
-        let full = Magazine::new(30, 30).expect("a full magazine fits its capacity");
+    fn filled_accepts_a_full_magazine() {
+        let full = Magazine::filled(id("mag"), &spec("rifle", 30), &id("ball"), 30)
+            .expect("a full magazine fits its capacity");
 
         assert_eq!(full.capacity(), 30);
         assert_eq!(full.rounds(), 30);
     }
 
     #[test]
-    fn capacity_returns_the_constructed_capacity() {
-        let magazine = Magazine::new(30, 7).expect("rounds fit the capacity");
+    fn empty_holds_no_rounds_and_keeps_the_spec() {
+        let spec = spec("rifle", 30);
 
+        let magazine = Magazine::empty(id("mag_rifle"), &spec);
+
+        assert_eq!(magazine.rounds(), 0);
+        assert_eq!(magazine.capacity(), 30);
+        assert_eq!(magazine.level(), MagazineLevel::Empty);
+        assert_eq!(magazine.item(), &ItemId::new("mag_rifle"));
+        assert_eq!(magazine.well(), &MagazineWell::new("rifle"));
+        assert_eq!(magazine.caliber(), &Caliber::new("5.56x45"));
+    }
+
+    #[test]
+    fn filled_keeps_identity_and_counts_the_rounds() {
+        let magazine = mag_of("mag_a", "rifle", 30, 7);
+
+        assert_eq!(magazine.item(), &ItemId::new("mag_a"));
         assert_eq!(magazine.capacity(), 30);
         assert_eq!(magazine.rounds(), 7);
     }
 
     #[test]
     fn zero_capacity_magazine_is_empty_without_dividing_by_zero() {
-        let magazine = Magazine::new(0, 0).expect("zero rounds fit zero capacity");
+        let magazine = mag(0, 0);
 
         assert_eq!(magazine.level(), MagazineLevel::Empty);
         assert_eq!(magazine.capacity(), 0);
     }
 
     #[test]
+    fn load_refuses_a_round_when_the_magazine_is_full() {
+        let mut magazine = mag(2, 2);
+
+        let result = magazine.load(id("ball"));
+
+        assert_eq!(result, Err(MagazineError::Full { capacity: 2 }));
+        assert_eq!(magazine.rounds(), 2);
+    }
+
+    #[test]
+    fn load_into_a_zero_capacity_magazine_is_refused() {
+        let mut magazine = mag(0, 0);
+
+        let result = magazine.load(id("ball"));
+
+        assert_eq!(result, Err(MagazineError::Full { capacity: 0 }));
+    }
+
+    #[test]
+    fn load_adds_one_round_up_to_capacity() {
+        let mut magazine = mag(2, 0);
+
+        assert_eq!(magazine.load(id("ball")), Ok(()));
+        assert_eq!(magazine.rounds(), 1);
+        assert_eq!(magazine.load(id("ball")), Ok(()));
+        assert_eq!(magazine.rounds(), 2);
+        assert_eq!(magazine.level(), MagazineLevel::Full);
+    }
+
+    #[test]
+    fn pop_on_an_empty_magazine_returns_nothing() {
+        let mut magazine = mag(30, 0);
+
+        let round = magazine.pop();
+
+        assert_eq!(round, None);
+        assert_eq!(magazine.rounds(), 0);
+    }
+
+    #[test]
+    fn rounds_fire_last_loaded_first() {
+        let mut magazine = Magazine::empty(id("mag"), &spec("rifle", 3));
+        for round in ["a", "b", "c"] {
+            magazine.load(id(round)).expect("room for three rounds");
+        }
+
+        let popped: Vec<Option<ItemId>> = (0..4).map(|_| magazine.pop()).collect();
+
+        assert_eq!(popped, [Some(id("c")), Some(id("b")), Some(id("a")), None]);
+        assert_eq!(magazine.rounds(), 0);
+    }
+
+    #[test]
+    fn filled_stacks_the_given_round_type() {
+        let mut magazine = mag_of("mag", "rifle", 5, 2);
+
+        assert_eq!(magazine.pop(), Some(id("ball")));
+        assert_eq!(magazine.pop(), Some(id("ball")));
+        assert_eq!(magazine.pop(), None);
+    }
+
+    #[test]
     fn deserialize_rejects_rounds_over_capacity() {
-        let json = r#"{"capacity":30,"rounds":40}"#;
+        let json = r#"{"item":"mag","well":"rifle","caliber":"5.56x45","capacity":2,"rounds":["a","b","c"]}"#;
 
         let result = serde_json::from_str::<Magazine>(json);
 
@@ -199,13 +277,17 @@ mod tests {
     }
 
     #[test]
-    fn serialized_magazine_round_trips_equal() {
-        let original = Magazine::new(30, 7).expect("rounds fit the capacity");
+    fn serialized_magazine_round_trips_equal_with_round_order() {
+        let mut original = Magazine::empty(id("mag"), &spec("rifle", 30));
+        for round in ["a", "b", "c"] {
+            original.load(id(round)).expect("room");
+        }
 
         let json = serde_json::to_string(&original).expect("magazine serializes");
-        let restored: Magazine = serde_json::from_str(&json).expect("valid data deserializes");
+        let mut restored: Magazine = serde_json::from_str(&json).expect("valid data deserializes");
 
         assert_eq!(restored, original);
+        assert_eq!(restored.pop(), Some(id("c")));
     }
 
     proptest! {
@@ -219,6 +301,43 @@ mod tests {
             prop_assert!(low_level <= high_level);
             prop_assert_eq!(low_level == MagazineLevel::Empty, lo == 0);
             prop_assert_eq!(high_level == MagazineLevel::Full, hi == capacity);
+        }
+
+        #[test]
+        fn rounds_always_pop_in_reverse_of_load_order(
+            names in proptest::collection::vec(0u8..6, 0..40),
+        ) {
+            let mut magazine = Magazine::empty(id("mag"), &spec("rifle", 40));
+            for name in &names {
+                magazine.load(id(&format!("r{name}"))).expect("at most 40 rounds");
+            }
+
+            let mut popped = Vec::new();
+            while let Some(round) = magazine.pop() {
+                popped.push(round);
+            }
+
+            let expected: Vec<ItemId> = names.iter().rev().map(|n| id(&format!("r{n}"))).collect();
+            prop_assert_eq!(popped, expected);
+            prop_assert_eq!(magazine.rounds(), 0);
+        }
+
+        #[test]
+        fn rounds_count_tracks_loads_and_pops(loads in 0u32..30, pops in 0u32..40) {
+            let mut magazine = mag(30, 0);
+            for _ in 0..loads {
+                magazine.load(id("ball")).expect("at most 30 rounds");
+            }
+
+            let mut popped = 0;
+            for _ in 0..pops {
+                if magazine.pop().is_some() {
+                    popped += 1;
+                }
+            }
+
+            prop_assert_eq!(popped, loads.min(pops));
+            prop_assert_eq!(magazine.rounds(), loads - loads.min(pops));
         }
     }
 }
