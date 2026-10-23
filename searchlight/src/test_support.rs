@@ -190,6 +190,7 @@ pub(crate) fn enemy_tuning() -> EnemyTuning {
         cover_ticks: 240,
         chase_ticks: 600,
         cover_hide_height: 0.9,
+        near_miss_radius: 1.5,
         seed: 7,
     }
 }

@@ -48,6 +48,11 @@ impl Grade {
         }
     }
 
+    /// How many near misses put an enemy of this grade under fire; `None` means only a hit does.
+    pub fn near_misses_to_cover(self) -> Option<u32> {
+        None
+    }
+
     /// The grade's scales; experienced is 1.0 on all three, so it is the base tuning.
     pub fn dials(self) -> GradeDials {
         let (reaction, aim_error, cooldown) = match self {
@@ -156,6 +161,40 @@ mod tests {
             assert_eq!(got_reaction, reaction, "{grade:?} reaction");
             assert_eq!(got_cooldown, cooldown, "{grade:?} cooldown");
             assert!((got_aim - aim).abs() < 1e-6, "{grade:?} aim {got_aim}");
+        }
+    }
+
+    /// `None` (only a hit counts) ranks worst.
+    fn near_miss_rank(grade: Grade) -> u32 {
+        grade.near_misses_to_cover().unwrap_or(u32::MAX)
+    }
+
+    #[test]
+    fn each_grade_takes_no_more_near_misses_than_the_one_below() {
+        for pair in Grade::LADDER.windows(2) {
+            assert!(
+                near_miss_rank(pair[1]) <= near_miss_rank(pair[0]),
+                "{pair:?}"
+            );
+        }
+        assert!(
+            near_miss_rank(Grade::Professional) < near_miss_rank(Grade::Rookie),
+            "a professional must react to near misses sooner than a rookie"
+        );
+    }
+
+    #[test]
+    fn the_near_miss_counts_are_pinned() {
+        let expected = [
+            (Grade::Rookie, None),
+            (Grade::Novice, Some(3)),
+            (Grade::Experienced, Some(2)),
+            (Grade::Veteran, Some(1)),
+            (Grade::Professional, Some(1)),
+        ];
+
+        for (grade, count) in expected {
+            assert_eq!(grade.near_misses_to_cover(), count, "{grade:?}");
         }
     }
 

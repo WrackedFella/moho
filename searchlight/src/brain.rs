@@ -67,6 +67,8 @@ pub struct EnemyTuning {
     pub chase_ticks: u32,
     /// Metres above a cover marker at which the player must be unable to see the enemy.
     pub cover_hide_height: f32,
+    /// Metres from an enemy's capsule centre within which a player's shot is a near miss.
+    pub near_miss_radius: f32,
     pub seed: u64,
 }
 
@@ -87,6 +89,7 @@ impl Default for EnemyTuning {
             cover_ticks: 240,
             chase_ticks: 600,
             cover_hide_height: 0.9,
+            near_miss_radius: 1.5,
             seed: 0,
         }
     }
@@ -443,6 +446,7 @@ mod tests {
             cover_ticks: 5,
             chase_ticks: 7,
             cover_hide_height: 0.9,
+            near_miss_radius: 1.5,
             seed: 7,
         }
     }
