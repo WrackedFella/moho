@@ -86,6 +86,12 @@ pub(crate) fn sample_face_material(grid: &VoxelGrid, chunk_base: IVec3, sample: 
         .expect("marching cubes asks for the material of solid samples only")
 }
 
+/// The chunks whose meshes read `block`: its own chunk plus every chunk that samples it.
+/// Stub: only the block's own chunk.
+pub fn chunks_meshed_from(block: BlockPos, chunk_size: i32) -> impl Iterator<Item = IVec3> {
+    std::iter::once(VoxelGrid::get_chunk_pos(block, chunk_size))
+}
+
 /// Classifies the content of a chunk
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChunkContent {
@@ -561,6 +567,57 @@ mod tests {
             assert_eq!(smooth, expected_smooth, "material {material}");
             assert_eq!(blocky, expected_blocky, "material {material}");
         }
+    }
+
+    fn meshed_from(block: [i32; 3]) -> Vec<[i32; 3]> {
+        let mut chunks: Vec<[i32; 3]> = chunks_meshed_from(IVec3::from(block), 16)
+            .map(|chunk| chunk.to_array())
+            .collect();
+        chunks.sort_unstable();
+        chunks
+    }
+
+    #[test]
+    fn chunks_meshed_from_counts_one_two_four_or_eight_chunks() {
+        let rows = [
+            ("interior", [5, 5, 5], 1),
+            ("far corner of own chunk", [15, 15, 15], 1),
+            ("x face", [0, 5, 5], 2),
+            ("y face", [5, 0, 5], 2),
+            ("z face", [5, 5, 0], 2),
+            ("xy edge", [0, 0, 5], 4),
+            ("xz edge", [0, 5, 0], 4),
+            ("yz edge", [5, 0, 0], 4),
+            ("corner", [0, 0, 0], 8),
+        ];
+
+        for (name, block, expected) in rows {
+            let chunks = meshed_from(block);
+
+            assert_eq!(chunks.len(), expected, "{name}: {chunks:?}");
+        }
+    }
+
+    #[test]
+    fn chunks_meshed_from_uses_negative_neighbours_only() {
+        assert_eq!(meshed_from([16, 5, 5]), vec![[0, 0, 0], [1, 0, 0]]);
+        assert_eq!(meshed_from([5, 32, 5]), vec![[0, 1, 0], [0, 2, 0]]);
+        assert_eq!(meshed_from([5, 5, 16]), vec![[0, 0, 0], [0, 0, 1]]);
+        assert_eq!(
+            meshed_from([16, 16, 5]),
+            vec![[0, 0, 0], [0, 1, 0], [1, 0, 0], [1, 1, 0]]
+        );
+        assert_eq!(meshed_from([15, 15, 15]), vec![[0, 0, 0]]);
+    }
+
+    #[test]
+    fn chunks_meshed_from_handles_negative_world_coordinates() {
+        assert_eq!(meshed_from([-1, -1, -1]), vec![[-1, -1, -1]]);
+        assert_eq!(meshed_from([-16, -1, -1]), vec![[-2, -1, -1], [-1, -1, -1]]);
+        assert_eq!(
+            meshed_from([-16, -1, -32]),
+            vec![[-2, -1, -3], [-2, -1, -2], [-1, -1, -3], [-1, -1, -2]]
+        );
     }
 
     #[test]

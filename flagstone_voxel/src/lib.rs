@@ -46,7 +46,7 @@ pub use light_system::LightSystem;
 pub use materials::{DIRT, GRASS, IRON_ORE, MaterialType, STONE};
 pub use mesh::{
     BlockyMeshGenerator, CAP_PROBE, ChunkContent, HybridMeshGenerator, MarchingCubes, VoxelMesh,
-    cap_chunk_layers, cut_cap_mesh,
+    cap_chunk_layers, chunks_meshed_from, cut_cap_mesh,
 };
 pub use modification::VoxelMutator;
 pub use streaming::StreamingConfig;
