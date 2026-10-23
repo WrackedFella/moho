@@ -61,6 +61,20 @@ fn fullscreen_for(mode: WindowMode) -> Option<Fullscreen> {
     }
 }
 
+fn mode_of(fullscreen: Option<Fullscreen>) -> WindowMode {
+    if fullscreen.is_some() {
+        WindowMode::Borderless
+    } else {
+        WindowMode::Windowed
+    }
+}
+
+/// The mode to switch to when a game asked for one that differs from `current`.
+fn mode_change(requests: LoopRequests, current: WindowMode) -> Option<WindowMode> {
+    let wanted = requests.window_mode_after(current);
+    (wanted != current).then_some(wanted)
+}
+
 /// Runs `game` in a window until it asks to exit or the window closes.
 ///
 /// # Errors
@@ -129,10 +143,9 @@ fn observe_toggle(toggles: Option<&mut ToggleKeys>, event: &WindowEvent) -> Obse
 impl<G: Game> Runner<G> {
     /// Switches the window to the mode a game asked for during a callback, if it differs.
     fn apply_requested_mode(&mut self, requests: LoopRequests) {
-        let wanted = requests.window_mode_after(self.mode);
-        if wanted == self.mode {
+        let Some(wanted) = mode_change(requests, self.mode) else {
             return;
-        }
+        };
         if let Some(window) = &self.window {
             window.set_fullscreen(fullscreen_for(wanted));
         }
@@ -141,11 +154,10 @@ impl<G: Game> Runner<G> {
 
     fn flip_window_mode(&mut self, event_loop: &ActiveEventLoop) {
         // The OS can leave fullscreen on its own, so the window is the truth, not `self.mode`.
-        let current = match &self.window {
-            Some(window) if window.fullscreen().is_some() => WindowMode::Borderless,
-            Some(_) => WindowMode::Windowed,
-            None => self.mode,
-        };
+        let current = self
+            .window
+            .as_ref()
+            .map_or(self.mode, |window| mode_of(window.fullscreen()));
         self.mode = current.toggled();
         if let Some(window) = &self.window {
             window.set_fullscreen(fullscreen_for(self.mode));
@@ -441,5 +453,31 @@ mod tests {
             observe_toggle(None, &WindowEvent::Focused(false)),
             Observed::Pass
         );
+    }
+
+    #[test]
+    fn each_mode_maps_to_its_fullscreen_setting_and_back() {
+        for mode in [WindowMode::Windowed, WindowMode::Borderless] {
+            assert_eq!(mode_of(fullscreen_for(mode)), mode);
+        }
+        assert_eq!(fullscreen_for(WindowMode::Windowed), None);
+        assert_eq!(
+            fullscreen_for(WindowMode::Borderless),
+            Some(Fullscreen::Borderless(None))
+        );
+    }
+
+    #[test]
+    fn a_requested_mode_that_differs_is_applied_and_one_that_matches_is_not() {
+        let mut requests = LoopRequests::default();
+        assert_eq!(mode_change(requests, WindowMode::Windowed), None);
+
+        requests.window_mode = Some(WindowMode::Borderless);
+
+        assert_eq!(
+            mode_change(requests, WindowMode::Windowed),
+            Some(WindowMode::Borderless)
+        );
+        assert_eq!(mode_change(requests, WindowMode::Borderless), None);
     }
 }
