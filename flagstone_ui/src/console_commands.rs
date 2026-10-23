@@ -537,6 +537,21 @@ mod tests {
     }
 
     #[test]
+    fn help_shows_the_debug_view_range_as_zero_to_seven() {
+        let mut console = console();
+
+        console.submit("help");
+
+        let printed: Vec<String> = console.output().lines().iter().cloned().collect();
+        assert!(
+            printed
+                .iter()
+                .any(|l| l.starts_with("  r_debug_view <0-7> - ")),
+            "{printed:?}"
+        );
+    }
+
+    #[test]
     fn help_lists_engine_and_strategy_commands() {
         let mut console = console();
 

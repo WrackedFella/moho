@@ -78,6 +78,7 @@ fn window_title(status: &str) -> String {
 #[derive(Clone, Copy, Debug)]
 enum Paint {
     Arena,
+    ArenaFloor,
     Dummy,
     Enemy,
     Struck,
@@ -88,7 +89,7 @@ impl RenderMaterial for Paint {
         // World meshes draw as terrain: `albedo` colours up-facing surfaces, `params.xyz`
         // the rest, and `params.w > 0` makes the surface glow its colour.
         let (top, side, glow) = match self {
-            Paint::Arena => ([0.62, 0.62, 0.64], [0.42, 0.43, 0.46], 0.0),
+            Paint::Arena | Paint::ArenaFloor => ([0.62, 0.62, 0.64], [0.42, 0.43, 0.46], 0.0),
             Paint::Dummy => ([0.85, 0.6, 0.2], [0.7, 0.48, 0.16], 0.0),
             Paint::Enemy => ([0.3, 0.4, 0.62], [0.22, 0.3, 0.5], 0.0),
             Paint::Struck => ([1.0, 0.15, 0.1], [1.0, 0.15, 0.1], 1.0),
@@ -475,6 +476,16 @@ impl Stage {
                 self.dummy_material,
             );
         }
+    }
+
+    /// [`Self::add_arena`] with each mesh painted by its glTF material name.
+    fn add_named_arena(
+        &mut self,
+        meshes: Vec<WorldMesh>,
+        _material_names: &[Option<String>],
+        dummy_spawns: &[Vec3],
+    ) {
+        self.add_arena(meshes, dummy_spawns);
     }
 
     fn react(&mut self, feedback: &Feedback, audio: Option<&mut AudioSystem>) {
@@ -3630,6 +3641,41 @@ mod enemy_and_hud_tests {
     fn is_paint(material: MaterialGpu, paint: Paint) -> bool {
         let expected = paint.to_gpu();
         (material.albedo, material.params) == (expected.albedo, expected.params)
+    }
+
+    #[test]
+    fn the_arena_floor_draws_in_the_glossy_paint() {
+        let floor_at = Vec3::new(0.0, -0.5, 0.0);
+        let wall_at = Vec3::new(10.0, 1.0, 0.0);
+        let mut stage = Stage::new();
+        stage.add_named_arena(
+            vec![
+                box_mesh(floor_at, Vec3::new(30.0, 0.5, 30.0)),
+                box_mesh(wall_at, Vec3::new(0.5, 1.0, 5.0)),
+            ],
+            &[Some("floor".to_owned()), Some("wall".to_owned())],
+            &[],
+        );
+        let mut renderer = RecordingRenderer::default();
+
+        stage.draw(&mut renderer, (Mat4::IDENTITY, Vec3::ZERO));
+        let drawn = renderer.drawn();
+
+        let material_at = |centre: Vec3| {
+            drawn
+                .iter()
+                .find(|d| d.0.abs_diff_eq(centre, 1e-4))
+                .map(|d| d.2)
+                .expect("the mesh is drawn")
+        };
+        let floor = material_at(floor_at);
+        let wall = material_at(wall_at);
+        assert_eq!(floor.albedo[3], 0.6, "floor gloss");
+        assert_eq!(wall.albedo[3], 0.0, "wall gloss");
+        let flat = Paint::Arena.to_gpu();
+        assert_eq!(floor.albedo[..3], flat.albedo[..3], "floor top colour");
+        assert_eq!(floor.params, flat.params, "floor side colour");
+        assert!(is_paint(wall, Paint::Arena));
     }
 
     #[test]

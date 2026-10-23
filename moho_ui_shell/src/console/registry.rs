@@ -305,6 +305,37 @@ mod tests {
     }
 
     #[test]
+    fn debug_view_accepts_zero_through_seven_and_refuses_eight() {
+        for mode in 0..=7u32 {
+            let (engine, game, printed) = run_line(&format!("r_debug_view {mode}"));
+
+            assert_eq!(engine, [EngineCommand::DebugView(mode)], "mode {mode}");
+            assert!(game.is_empty(), "mode {mode}");
+            assert_eq!(printed.len(), 1, "mode {mode}: {printed:?}");
+        }
+
+        let (engine, game, printed) = run_line("r_debug_view 8");
+
+        assert!(engine.is_empty(), "{engine:?}");
+        assert!(game.is_empty());
+        assert_eq!(printed.len(), 1, "{printed:?}");
+        assert!(printed[0].contains('7'), "the refusal names the range: {printed:?}");
+    }
+
+    #[test]
+    fn help_shows_the_debug_view_range_as_zero_to_seven() {
+        let (mut console, _) = Console::<Cmd>::new(&std::collections::BTreeMap::new());
+        console.submit("help");
+
+        let help = help_lines(&console);
+
+        assert!(
+            help.iter().any(|l| l.starts_with("  r_debug_view <0-7> - ")),
+            "{help:?}"
+        );
+    }
+
+    #[test]
     fn audio_cue_parses_position_and_default_volume() {
         assert_reply(
             "audio_cue searchlight/assets/rifle_shot.wav 2 0 0",

@@ -153,6 +153,8 @@ impl ArenaMarkers {
 #[derive(Debug, Clone)]
 pub struct Arena {
     pub meshes: Vec<WorldMesh>,
+    /// The glTF material name of each of `meshes`, in the same order.
+    pub material_names: Vec<Option<String>>,
     /// Floor point the player starts on.
     pub player_spawn: Vec3,
     /// Floor points of the training dummies.
@@ -212,6 +214,7 @@ impl Arena {
         }
         Ok(Self {
             meshes,
+            material_names: Vec::new(),
             nav,
             player_spawn: markers.player_spawn.position,
             dummy_spawns: positions(&markers.dummies),
@@ -582,6 +585,20 @@ mod tests {
     fn build(level: &Level) -> Result<Arena, ArenaError> {
         let markers = ArenaMarkers::from_level(level).expect("a valid marker set");
         Arena::from_level(level, &markers)
+    }
+
+    #[test]
+    fn arena_meshes_keep_their_gltf_material_names() {
+        let mut level = island_level(&[("waypoint_01", ON_FLOOR)]);
+        level.meshes[0].material = Some("floor".to_owned());
+
+        let arena = build(&level).expect("the level builds");
+
+        assert_eq!(
+            arena.material_names,
+            [Some("floor".to_owned()), None],
+            "one name per mesh, in mesh order"
+        );
     }
 
     #[test]

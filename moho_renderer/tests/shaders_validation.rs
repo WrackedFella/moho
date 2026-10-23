@@ -44,6 +44,31 @@ fn main_shader_source_parses_and_validates() {
 }
 
 #[test]
+fn skybox_shader_source_parses_and_validates() {
+    let source = moho_renderer::pipeline::skybox_shader_source();
+
+    let module = validate("skybox shader", &source, Capabilities::empty());
+
+    let entry_points: Vec<&str> = module
+        .entry_points
+        .iter()
+        .map(|e| e.name.as_str())
+        .collect();
+    assert!(entry_points.contains(&"vs_main"), "{entry_points:?}");
+    assert!(entry_points.contains(&"fs_main"), "{entry_points:?}");
+}
+
+#[test]
+fn skybox_and_main_shader_share_sky_gradient() {
+    let skybox = moho_renderer::pipeline::skybox_shader_source();
+    let main = moho_renderer::pipeline::main_shader_source();
+
+    for (label, source) in [("skybox", &skybox), ("main", &main)] {
+        assert!(source.contains("sky_gradient"), "{label} shader");
+    }
+}
+
+#[test]
 fn skybox_shader_parses_and_validates() {
     validate_file("skybox.wgsl", Capabilities::empty());
 }
