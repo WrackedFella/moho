@@ -74,7 +74,7 @@ pub(crate) fn coarse_face_material(
 pub(crate) const SAMPLE_REACH: i32 = 1;
 
 /// Samples per axis of a chunk's padded density field.
-const DENSITY_FIELD_SIZE: usize = 16 + 2 * SAMPLE_REACH as usize;
+const DENSITY_FIELD_SIZE: usize = 16 + SAMPLE_REACH as usize + SAMPLE_REACH as usize;
 
 /// The block that field sample `sample` of chunk `chunk_base`'s padded density field stands
 /// for: the field is padded by [`SAMPLE_REACH`] blocks, so sample `i` is block
