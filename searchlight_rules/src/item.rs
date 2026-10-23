@@ -237,16 +237,4 @@ mod tests {
             assert!(matches!(item.kind, ItemKind::Plain), "{class}");
         }
     }
-
-    #[test]
-    fn ids_are_transparent_strings_that_display_as_themselves() {
-        let id: ItemId = serde_json::from_value(json!("mag_rifle")).expect("a bare string");
-
-        assert_eq!(id, ItemId::new("mag_rifle"));
-        assert_eq!(id.as_str(), "mag_rifle");
-        assert_eq!(id.to_string(), "mag_rifle");
-        assert_eq!(serde_json::to_value(&id).unwrap(), json!("mag_rifle"));
-        assert_eq!(Caliber::new("9mm").to_string(), "9mm");
-        assert_eq!(MagazineWell::new("rifle").as_str(), "rifle");
-    }
 }

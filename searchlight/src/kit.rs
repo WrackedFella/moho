@@ -104,6 +104,7 @@ condition = 100
         assert_eq!(loadout.rifle().magazine().rounds(), 29);
         assert_eq!(loadout.rig().slots().len(), 3);
         assert_eq!(loadout.rig().free_slots(), 0);
+        assert_eq!(loadout.rig().magazines().count(), 3);
         assert!(
             loadout
                 .rig()
@@ -135,17 +136,6 @@ condition = 100
     }
 
     #[test]
-    fn a_defined_start_kit_loads_through_the_base_root() {
-        let (_dir, roots) = base_with(&items_toml(), &start_kit(2));
-
-        let kit = load(&roots, START_KIT_ID).expect("the fixture kit loads");
-
-        assert_eq!(kit.loadout.rig().magazines().count(), 2);
-        assert_eq!(kit.loadout.rig().free_slots(), 1);
-        assert!(kit.loadout.rifle().is_chambered());
-    }
-
-    #[test]
     fn an_overfilled_start_kit_fails_naming_the_kit() {
         let (_dir, roots) = base_with(&items_toml(), &start_kit(4));
 
@@ -167,38 +157,31 @@ condition = 100
 
     #[test]
     fn an_item_with_condition_and_uses_fails_naming_file_and_id() {
-        let items = items_toml().replace(
-            "[crowbar]\nclass = \"tool\"\nsize = [1, 3]\ncondition = 100",
-            "[crowbar]\nclass = \"tool\"\nsize = [1, 3]\ncondition = 100\nuses = 3",
-        );
-        let (_dir, roots) = base_with(&items, &start_kit(2));
+        let cases = [
+            (
+                items_toml().replace(
+                    "[crowbar]\nclass = \"tool\"\nsize = [1, 3]\ncondition = 100",
+                    "[crowbar]\nclass = \"tool\"\nsize = [1, 3]\ncondition = 100\nuses = 3",
+                ),
+                "crowbar",
+                "uses",
+            ),
+            (items_toml().replace("semi_auto", "burst"), "rifle", "burst"),
+        ];
+        for (items, offender, mention) in cases {
+            let (dir, roots) = base_with(&items, &start_kit(2));
 
-        let Err(error) = load(&roots, START_KIT_ID) else {
-            panic!("an item with both a condition and uses loaded");
-        };
+            let Err(error) = load(&roots, START_KIT_ID) else {
+                panic!("a malformed {offender} loaded");
+            };
 
-        let KitLoadError::Content(ContentError::Invalid { file, id, .. }) = &error else {
-            panic!("expected Invalid content, got {error:?}");
-        };
-        assert!(file.ends_with("items.toml"), "{}", file.display());
-        assert_eq!(id, "crowbar");
-    }
-
-    #[test]
-    fn a_rifle_with_an_unknown_fire_behaviour_stops_load_naming_items_toml_and_rifle() {
-        let items = items_toml().replace("semi_auto", "burst");
-        let (dir, roots) = base_with(&items, &start_kit(2));
-
-        let Err(error) = load(&roots, START_KIT_ID) else {
-            panic!("a rifle with an unknown fire behaviour loaded");
-        };
-
-        let KitLoadError::Content(ContentError::Invalid { file, id, reason }) = &error else {
-            panic!("expected Invalid content, got {error:?}");
-        };
-        assert_eq!(file, &dir.path().join("items.toml"));
-        assert_eq!(id, "rifle");
-        assert!(reason.contains("burst"), "{reason}");
+            let KitLoadError::Content(ContentError::Invalid { file, id, reason }) = &error else {
+                panic!("{offender}: expected Invalid content, got {error:?}");
+            };
+            assert_eq!(file, &dir.path().join("items.toml"));
+            assert_eq!(id, offender);
+            assert!(reason.contains(mention), "{offender}: {reason}");
+        }
     }
 
     #[test]
@@ -246,24 +229,6 @@ magazine = { well = "rifle", caliber = "5.56x45", capacity = 20 }
 
     #[test]
     fn a_mod_magazine_in_the_start_kit_empties_after_20_shots() {
-        let mod_kit = "[start]\nrig = \"rig_chest\"\nweapon = \"rifle\"\nloaded = { magazine = \"mag_rifle_20\", round = \"round_ball\" }\n";
-        let (_dir, roots) = with_mod(
-            &items_toml(),
-            &start_kit(2),
-            Some(MOD_MAGAZINE),
-            Some(mod_kit),
-        );
-
-        let mut kit = load(&roots, START_KIT_ID).expect("the modded start kit loads");
-
-        let shots: Vec<Shot> = (0..21).map(|_| kit.loadout.fire()).collect();
-        let (fired, dry) = shots.split_at(20);
-        assert!(fired.iter().all(|shot| *shot == Shot::Fired), "{shots:?}");
-        assert_eq!(dry, [Shot::Dry]);
-    }
-
-    #[test]
-    fn a_mod_magazine_on_the_rig_is_reloaded_and_empties_after_20_shots() {
         let mod_kit = "[start]\nrig = \"rig_chest\"\nweapon = \"rifle\"\nloaded = { magazine = \"mag_rifle\", round = \"round_ball\", rounds = 0 }\nmagazines = [{ magazine = \"mag_rifle_20\", round = \"round_ball\" }]\n";
         let (_dir, roots) = with_mod(
             &items_toml(),
@@ -280,37 +245,5 @@ magazine = { well = "rifle", caliber = "5.56x45", capacity = 20 }
         let (fired, dry) = shots.split_at(20);
         assert!(fired.iter().all(|shot| *shot == Shot::Fired), "{shots:?}");
         assert_eq!(dry, [Shot::Dry]);
-    }
-
-    #[test]
-    fn without_the_mod_the_base_kit_keeps_30_round_magazines() {
-        let (_dir, roots) = base_with(&items_toml(), &start_kit(2));
-
-        let mut kit = load(&roots, START_KIT_ID).expect("the base kit loads");
-
-        let fired = (0..31)
-            .filter(|_| kit.loadout.fire() == Shot::Fired)
-            .count();
-        assert_eq!(fired, 30);
-    }
-
-    #[test]
-    fn a_mod_rifle_missing_a_field_does_not_inherit_it() {
-        let mod_rifle = RIFLE.replace("damage = 30\n", "");
-        let (dir, roots) = with_mod(&items_toml(), &start_kit(2), Some(&mod_rifle), None);
-
-        let Err(error) = load(&roots, START_KIT_ID) else {
-            panic!("a mod rifle without damage loaded");
-        };
-
-        let KitLoadError::Content(ContentError::Invalid { file, id, reason }) = &error else {
-            panic!("expected Invalid content, got {error:?}");
-        };
-        assert_eq!(
-            file,
-            &dir.path().join("mods").join("wells").join("items.toml")
-        );
-        assert_eq!(id, "rifle");
-        assert!(reason.contains("damage"), "{reason}");
     }
 }

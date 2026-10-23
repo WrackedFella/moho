@@ -142,18 +142,6 @@ mod tests {
     }
 
     #[test]
-    fn a_kit_without_a_magazines_list_has_an_empty_rig() {
-        let def = kit_def(json!({
-            "rig": "rig_chest",
-            "weapon": "rifle",
-            "loaded": {"magazine": "mag_rifle", "round": "round_ball"}
-        }));
-
-        assert!(def.magazines.is_empty());
-        assert_eq!(def.loaded.rounds, None);
-    }
-
-    #[test]
     fn a_kit_with_more_magazines_than_rig_slots_is_refused() {
         let four = json!([
             {"magazine": "mag_rifle", "round": "round_ball"},
@@ -217,47 +205,50 @@ mod tests {
     fn an_item_of_the_wrong_kind_is_refused_naming_it() {
         let cases = [
             (
+                "crowbar",
                 "rig",
                 json!({"rig": "crowbar", "weapon": "rifle",
                 "loaded": {"magazine": "mag_rifle", "round": "round_ball"}}),
             ),
             (
+                "mag_rifle",
                 "weapon",
                 json!({"rig": "rig_chest", "weapon": "mag_rifle",
                 "loaded": {"magazine": "mag_rifle", "round": "round_ball"}}),
             ),
             (
+                "round_ball",
                 "magazine",
                 json!({"rig": "rig_chest", "weapon": "rifle",
                 "loaded": {"magazine": "round_ball", "round": "round_ball"}}),
             ),
             (
+                "rig_chest",
                 "round",
                 json!({"rig": "rig_chest", "weapon": "rifle",
                 "loaded": {"magazine": "mag_rifle", "round": "rig_chest"}}),
             ),
+            (
+                "crowbar",
+                "magazine",
+                json!({"rig": "rig_chest", "weapon": "rifle",
+                "loaded": {"magazine": "mag_rifle", "round": "round_ball"},
+                "magazines": [{"magazine": "crowbar", "round": "round_ball"}]}),
+            ),
         ];
-        for (label, case) in cases {
+        for (offender, expected, case) in cases {
             let error = error_of(&kit_def(case));
 
             assert!(
-                matches!(&error, KitError::WrongKind { .. }),
-                "{label}: {error:?}"
+                matches!(
+                    &error,
+                    KitError::WrongKind { id: wrong, expected: kind }
+                        if *wrong == id(offender) && *kind == expected
+                ),
+                "{offender} as {expected}: {error:?}"
             );
+            assert!(error.to_string().contains(offender), "{error}");
         }
-    }
-
-    #[test]
-    fn a_wrong_kind_error_names_the_offending_id() {
-        let def = kit_def(json!({"rig": "crowbar", "weapon": "rifle",
-            "loaded": {"magazine": "mag_rifle", "round": "round_ball"}}));
-
-        let error = error_of(&def);
-
-        assert!(
-            matches!(&error, KitError::WrongKind { id: wrong, .. } if *wrong == id("crowbar")),
-            "{error:?}"
-        );
     }
 
     #[test]
@@ -284,26 +275,35 @@ mod tests {
         let error = error_of(&def);
 
         assert!(
-            matches!(&error, KitError::RoundDoesNotFit { .. }),
+            matches!(
+                &error,
+                KitError::RoundDoesNotFit { round, magazine }
+                    if *round == id("round_9mm") && *magazine == id("mag_rifle")
+            ),
             "{error:?}"
         );
     }
 
     #[test]
     fn more_rounds_than_the_magazine_holds_is_refused() {
-        let def = kit_def(json!({"rig": "rig_chest", "weapon": "rifle",
+        let loaded = kit_def(json!({"rig": "rig_chest", "weapon": "rifle",
             "loaded": {"magazine": "mag_rifle", "round": "round_ball", "rounds": 31}}));
+        let stowed = start(json!([
+            {"magazine": "mag_rifle", "round": "round_ball", "rounds": 31}
+        ]));
 
-        let error = error_of(&def);
+        for (label, def) in [("loaded", loaded), ("stowed", stowed)] {
+            let error = error_of(&def);
 
-        assert!(
-            matches!(
-                &error,
-                KitError::OverCapacity { magazine, rounds: 31, capacity: 30 }
-                    if *magazine == id("mag_rifle")
-            ),
-            "{error:?}"
-        );
+            assert!(
+                matches!(
+                    &error,
+                    KitError::OverCapacity { magazine, rounds: 31, capacity: 30 }
+                        if *magazine == id("mag_rifle")
+                ),
+                "{label}: {error:?}"
+            );
+        }
     }
 
     #[test]

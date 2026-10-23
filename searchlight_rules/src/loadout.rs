@@ -76,24 +76,21 @@ mod tests {
 
     #[test]
     fn reload_with_an_empty_rig_changes_nothing() {
-        let mut loadout = loadout(mag_of("spent", "rifle", 30, 10), &[None, None, None]);
-        let before = loadout.clone();
+        let layouts: [Vec<Option<Magazine>>; 3] = [
+            vec![None, None, None],
+            vec![],
+            vec![Some(mag_of("pistol_mag", "pistol", 15, 15))],
+        ];
+        for layout in layouts {
+            let mut loadout = loadout(mag_of("spent", "rifle", 30, 10), &layout);
+            let before = loadout.clone();
 
-        assert!(!loadout.can_reload());
-        let reloaded = loadout.reload();
+            assert!(!loadout.can_reload(), "{layout:?}");
+            let reloaded = loadout.reload();
 
-        assert!(!reloaded);
-        assert_eq!(loadout, before);
-    }
-
-    #[test]
-    fn a_rig_with_no_slots_cannot_reload() {
-        let mut loadout = loadout(mag_of("spent", "rifle", 30, 10), &[]);
-        let before = loadout.clone();
-
-        assert!(!loadout.can_reload());
-        assert!(!loadout.reload());
-        assert_eq!(loadout, before);
+            assert!(!reloaded, "{layout:?}");
+            assert_eq!(loadout, before, "{layout:?}");
+        }
     }
 
     #[test]
@@ -120,17 +117,6 @@ mod tests {
             loadout.rig().slots(),
             [Some(wrong), Some(mag_of("spent", "rifle", 30, 9))]
         );
-    }
-
-    #[test]
-    fn a_rig_holding_only_magazines_that_do_not_fit_cannot_reload() {
-        let wrong = mag_of("pistol_mag", "pistol", 15, 15);
-        let mut loadout = loadout(mag_of("spent", "rifle", 30, 10), &[Some(wrong)]);
-        let before = loadout.clone();
-
-        assert!(!loadout.can_reload());
-        assert!(!loadout.reload());
-        assert_eq!(loadout, before);
     }
 
     #[test]

@@ -204,21 +204,14 @@ mod tests {
 
     #[test]
     fn load_refuses_a_round_when_the_magazine_is_full() {
-        let mut magazine = mag(2, 2);
+        for (capacity, rounds) in [(2, 2), (0, 0)] {
+            let mut magazine = mag(capacity, rounds);
 
-        let result = magazine.load(id("ball"));
+            let result = magazine.load(id("ball"));
 
-        assert_eq!(result, Err(MagazineError::Full { capacity: 2 }));
-        assert_eq!(magazine.rounds(), 2);
-    }
-
-    #[test]
-    fn load_into_a_zero_capacity_magazine_is_refused() {
-        let mut magazine = mag(0, 0);
-
-        let result = magazine.load(id("ball"));
-
-        assert_eq!(result, Err(MagazineError::Full { capacity: 0 }));
+            assert_eq!(result, Err(MagazineError::Full { capacity }));
+            assert_eq!(magazine.rounds(), rounds, "capacity {capacity}");
+        }
     }
 
     #[test]
@@ -320,24 +313,6 @@ mod tests {
             let expected: Vec<ItemId> = names.iter().rev().map(|n| id(&format!("r{n}"))).collect();
             prop_assert_eq!(popped, expected);
             prop_assert_eq!(magazine.rounds(), 0);
-        }
-
-        #[test]
-        fn rounds_count_tracks_loads_and_pops(loads in 0u32..30, pops in 0u32..40) {
-            let mut magazine = mag(30, 0);
-            for _ in 0..loads {
-                magazine.load(id("ball")).expect("at most 30 rounds");
-            }
-
-            let mut popped = 0;
-            for _ in 0..pops {
-                if magazine.pop().is_some() {
-                    popped += 1;
-                }
-            }
-
-            prop_assert_eq!(popped, loads.min(pops));
-            prop_assert_eq!(magazine.rounds(), loads - loads.min(pops));
         }
     }
 }

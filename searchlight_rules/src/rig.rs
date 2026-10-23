@@ -165,4 +165,12 @@ mod tests {
         assert_eq!(items(&rig), [None, None, some("a")]);
         assert_eq!(rig.free_slots(), 2);
     }
+
+    #[test]
+    #[should_panic(expected = "occupied")]
+    fn put_into_an_occupied_slot_panics_rather_than_dropping_a_magazine() {
+        let mut rig = rig_with(&[Some("a")]);
+
+        rig.put(0, named("b"));
+    }
 }

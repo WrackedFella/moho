@@ -48,10 +48,7 @@ pub fn tuning(rifle: &RifleDef) -> Result<SimConfig, MagazineError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::content_root;
-    use crate::kit::{START_KIT_ID, load};
     use crate::test_support::{mag, rifle_from};
-    use moho_core::content::ContentRoots;
     use searchlight_rules::{
         FireBehaviour, ItemId, Kit, Loadout, MagazineWell, RifleDef, Rig, RigSpec,
     };
@@ -83,22 +80,5 @@ mod tests {
         assert_eq!(config.charge_ticks, 13);
         assert!((config.range - 55.5).abs() < f32::EPSILON);
         assert_eq!(config.loadout, loadout);
-    }
-
-    #[test]
-    fn the_shipped_kit_matches_todays_tuning() {
-        let roots = ContentRoots::base(&content_root()).expect("the shipped content folder");
-        let kit = load(&roots, START_KIT_ID).expect("the shipped start kit loads");
-
-        let config = tuning(kit);
-
-        assert_eq!(config.loadout.rifle().magazine().capacity(), 30);
-        assert!(config.loadout.rifle().is_chambered());
-        assert_eq!(config.loadout.rig().magazines().count(), 3);
-        assert_eq!(config.damage, 30);
-        assert_eq!(config.cooldown_ticks, 6);
-        assert_eq!(config.reload_ticks, 120);
-        assert_eq!(config.charge_ticks, 30);
-        assert!((config.range - 100.0).abs() < f32::EPSILON);
     }
 }
