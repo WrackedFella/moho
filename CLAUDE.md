@@ -52,6 +52,7 @@ cargo run -p searchlight           # the FPS prototype
   - `moho_core/**`
   - `flagstone_voxel/**`
   - `flagstone_game/**`
+  - `moho_level/**`
   - `searchlight_rules/**`
   - `moho_physics/src/movement.rs`
   Adapters, UI wiring and config are glue: the weekly full run mutates them, PRs don't.
