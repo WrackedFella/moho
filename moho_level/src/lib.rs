@@ -6,6 +6,7 @@ mod buffers;
 mod error;
 mod marker;
 mod mesh;
+mod model;
 pub mod nav;
 
 use std::borrow::Cow;
@@ -15,6 +16,7 @@ use glam::Mat4;
 
 pub use error::{LevelError, LevelErrorKind};
 pub use marker::LevelMarker;
+pub use model::{MODEL_MATERIAL_VARIANT, Model, ModelMaterial, ModelMesh, ModelNode, load_model};
 use moho_render_api::WorldMesh;
 pub use nav::{AgentProfile, NavBuildError, NavMesh};
 
