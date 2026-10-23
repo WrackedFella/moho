@@ -3,6 +3,8 @@ use wgpu::util::DeviceExt;
 
 use crate::gpu_types::MAX_SHADOW_LIGHTS;
 
+mod light_matrix;
+
 /// Number of cascaded shadow map cascades (legacy - kept for compatibility)
 /// Reduced to 2 for performance (50% fewer shadow passes and memory)
 pub const NUM_SHADOW_CASCADES: u32 = 2;

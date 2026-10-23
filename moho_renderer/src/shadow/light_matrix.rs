@@ -1,0 +1,211 @@
+//! Sun and moon shadow matrices as plain functions over glam types, so they run without a GPU.
+
+use glam::Mat4;
+use glam::Vec3;
+
+use super::{ActiveShadowLight, PcssSettings};
+use crate::gpu_types::MultiLightShadowGpu;
+
+pub(super) fn light_view_projection(_light_dir: Vec3, _center: Vec3) -> Mat4 {
+    todo!()
+}
+
+pub(super) fn active_shadow_lights(
+    _sun: (Mat4, f32),
+    _moon: (Mat4, f32),
+) -> Vec<ActiveShadowLight> {
+    todo!()
+}
+
+pub(super) fn multi_light_gpu(
+    _sun: Mat4,
+    _moon: Mat4,
+    _intensities: (f32, f32),
+    _pcss: &PcssSettings,
+) -> MultiLightShadowGpu {
+    todo!()
+}
+
+#[cfg(test)]
+mod tests {
+    use proptest::prelude::*;
+
+    use super::*;
+    use crate::shadow::{
+        LightType, MIN_SHADOW_LIGHT_INTENSITY, PcssQuality, SHADOW_DISTANCE, SHADOW_MAP_SIZE,
+    };
+
+    fn above_horizon() -> impl Strategy<Value = Vec3> {
+        (-1.0f32..1.0, 0.05f32..1.0, -1.0f32..1.0)
+            .prop_map(|(x, y, z)| Vec3::new(x, y, z).normalize())
+    }
+
+    fn any_position() -> impl Strategy<Value = Vec3> {
+        (-500.0f32..500.0, -50.0f32..200.0, -500.0f32..500.0)
+            .prop_map(|(x, y, z)| Vec3::new(x, y, z))
+    }
+
+    fn direction_on_sphere() -> impl Strategy<Value = Vec3> {
+        (-1.0f32..1.0, -1.0f32..1.0, -1.0f32..1.0)
+            .prop_filter("non-degenerate", |(x, y, z)| x * x + y * y + z * z > 1e-3)
+            .prop_map(|(x, y, z)| Vec3::new(x, y, z).normalize())
+    }
+
+    proptest! {
+        #[test]
+        fn points_within_shadow_distance_map_inside_the_clip_volume(
+            light in above_horizon(),
+            camera in any_position(),
+            offset in direction_on_sphere(),
+        ) {
+            let matrix = light_view_projection(light, camera);
+            let point = camera + offset * SHADOW_DISTANCE;
+
+            let clip = matrix.project_point3(point);
+
+            let slack = 1e-3;
+            prop_assert!(clip.x.abs() <= 1.0 + slack, "x {} outside", clip.x);
+            prop_assert!(clip.y.abs() <= 1.0 + slack, "y {} outside", clip.y);
+            prop_assert!((-slack..=1.0 + slack).contains(&clip.z), "depth {} outside 0..1", clip.z);
+        }
+
+        #[test]
+        fn world_origin_lands_on_a_whole_texel(light in above_horizon(), camera in any_position()) {
+            let clip = light_view_projection(light, camera).project_point3(Vec3::ZERO);
+
+            let half_map = SHADOW_MAP_SIZE as f32 / 2.0;
+            for axis in [clip.x * half_map, clip.y * half_map] {
+                prop_assert!((axis - axis.round()).abs() < 1e-2, "texel coordinate {axis}");
+            }
+        }
+
+        #[test]
+        fn snapping_shifts_the_camera_by_under_one_texel(light in above_horizon(), camera in any_position()) {
+            let snapped = light_view_projection(light, camera);
+            let unsnapped_origin_clip = unsnapped_clip(light, camera, Vec3::ZERO);
+            let snapped_origin_clip = snapped.project_point3(Vec3::ZERO);
+
+            let half_map = SHADOW_MAP_SIZE as f32 / 2.0;
+            let shift_x = (snapped_origin_clip.x - unsnapped_origin_clip.x) * half_map;
+            let shift_y = (snapped_origin_clip.y - unsnapped_origin_clip.y) * half_map;
+            prop_assert!((-1.01..=0.01).contains(&shift_x), "x shift {shift_x} texels");
+            prop_assert!((-1.01..=0.01).contains(&shift_y), "y shift {shift_y} texels");
+        }
+    }
+
+    /// Clip-space position of `point` under the same view and projection without the snap.
+    fn unsnapped_clip(light: Vec3, camera: Vec3, point: Vec3) -> Vec3 {
+        let light = light.normalize();
+        let view = glam::camera::rh::view::look_at_mat4(
+            camera + light * SHADOW_DISTANCE * 2.0,
+            camera,
+            Vec3::Y,
+        );
+        let radius = SHADOW_DISTANCE * 1.5;
+        let projection = glam::camera::rh::proj::directx::orthographic(
+            -radius,
+            radius,
+            -radius,
+            radius,
+            1.0,
+            SHADOW_DISTANCE * 3.0,
+        );
+        (projection * view).project_point3(point)
+    }
+
+    #[test]
+    fn light_straight_overhead_gives_a_finite_matrix() {
+        for light in [Vec3::Y, Vec3::NEG_Y] {
+            let matrix = light_view_projection(light, Vec3::new(12.0, 3.0, -7.0));
+
+            assert!(
+                matrix.to_cols_array().iter().all(|v| v.is_finite()),
+                "non-finite element for {light}: {matrix:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn overhead_light_still_maps_nearby_points_into_the_shadow_map() {
+        let camera = Vec3::new(12.0, 3.0, -7.0);
+        let matrix = light_view_projection(Vec3::Y, camera);
+
+        let clip = matrix.project_point3(camera);
+
+        assert!(clip.x.abs() < 1.0 && clip.y.abs() < 1.0, "{clip:?}");
+        assert!((0.0..=1.0).contains(&clip.z), "{clip:?}");
+    }
+
+    fn marker(scale: f32) -> Mat4 {
+        Mat4::from_scale(Vec3::splat(scale))
+    }
+
+    #[test]
+    fn only_lights_above_the_floor_are_active() {
+        let floor = MIN_SHADOW_LIGHT_INTENSITY;
+        let cases: [(f32, f32, &[LightType]); 5] = [
+            (1.0, 0.5, &[LightType::Sun, LightType::Moon]),
+            (1.0, 0.0, &[LightType::Sun]),
+            (0.0, 0.5, &[LightType::Moon]),
+            (0.0, 0.0, &[]),
+            (floor, floor, &[]),
+        ];
+
+        for (sun, moon, expected) in cases {
+            let lights = active_shadow_lights((marker(1.0), sun), (marker(2.0), moon));
+
+            let types: Vec<LightType> = lights.iter().map(|l| l.light_type).collect();
+            assert_eq!(types, expected, "sun {sun}, moon {moon}");
+        }
+    }
+
+    #[test]
+    fn active_lights_carry_slot_matrix_and_intensity() {
+        let lights = active_shadow_lights((marker(1.0), 0.8), (marker(2.0), 0.4));
+
+        assert_eq!(lights[0].light_index, 0);
+        assert_eq!(lights[0].matrix, marker(1.0));
+        assert_eq!(lights[0].intensity, 0.8);
+        assert_eq!(lights[1].light_index, 1);
+        assert_eq!(lights[1].matrix, marker(2.0));
+        assert_eq!(lights[1].intensity, 0.4);
+    }
+
+    #[test]
+    fn gpu_block_packs_sun_moon_and_identity_slots() {
+        let sun = marker(1.0) * Mat4::from_translation(Vec3::new(1.0, 2.0, 3.0));
+        let moon = marker(2.0) * Mat4::from_translation(Vec3::new(4.0, 5.0, 6.0));
+        let pcss = PcssSettings {
+            quality: PcssQuality::High,
+            light_size: 0.07,
+            ..Default::default()
+        };
+
+        let gpu = multi_light_gpu(sun, moon, (0.9, 0.3), &pcss);
+
+        let sun_cols = sun.to_cols_array_2d();
+        let moon_cols = moon.to_cols_array_2d();
+        assert_eq!(
+            [gpu.light0_m0, gpu.light0_m1, gpu.light0_m2, gpu.light0_m3],
+            sun_cols
+        );
+        assert_eq!(
+            [gpu.light1_m0, gpu.light1_m1, gpu.light1_m2, gpu.light1_m3],
+            moon_cols
+        );
+        let identity = Mat4::IDENTITY.to_cols_array_2d();
+        assert_eq!(
+            [gpu.light2_m0, gpu.light2_m1, gpu.light2_m2, gpu.light2_m3],
+            identity
+        );
+        assert_eq!(
+            [gpu.light3_m0, gpu.light3_m1, gpu.light3_m2, gpu.light3_m3],
+            identity
+        );
+        assert_eq!(gpu.light_intensities, [0.9, 0.3, 0.0, 0.0]);
+        assert_eq!(
+            gpu.metadata,
+            [SHADOW_DISTANCE, 0.07, PcssQuality::High as u32 as f32, 0.0]
+        );
+    }
+}
