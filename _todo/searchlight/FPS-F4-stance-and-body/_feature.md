@@ -19,9 +19,9 @@ body to act on.
 
 | Slice | Content | Engine items it needs |
 |---|---|---|
-| 1 Lean and head bob | Lean while standing with clearance; hit volumes and enemy sight follow it; head bob and its setting | none |
+| 1 Lean, placeholder body, head bob | Lean while standing with clearance; hit volumes and enemy sight follow it; a placeholder segmented body that follows the lean and casts a shadow; a debug view of the hit volumes; head bob and its setting | none |
 | 2 Crouch and prone | Both stances with timed transitions and speed rules; prone's oriented hull; lean extends to crouched and prone; hit volumes and enemy aim follow the stance | ENG-F33 #492, #544 |
-| 3 Visible body | Rigged first-person body and shadow; enemies on the same rig; hit volumes ride the bones | #543 |
+| 3 Rigged body | Rigged first-person body and shadow replace the placeholder; enemies on the same rig; hit volumes ride the bones | #543 |
 
 ## Exit criteria
 - Behind tall arena cover, a standing player who isn't leaning takes no hits from enemies on
@@ -31,7 +31,8 @@ body to act on.
   arm; a prone player behind the same crate is not seen at all.
 - A wall beside the player stops a lean short, and a low ceiling refuses standing up; the view
   never passes through geometry.
-- Looking down shows the player's legs, and the player casts a shadow.
+- The player casts a shadow that leans with the player (slice 1).
+- Looking down shows the player's rigged legs (slice 3).
 - A head bob of 0 % keeps the view still; the setting survives a relaunch.
 - Justin playtests and approves each slice's feel.
 
@@ -70,11 +71,13 @@ body to act on.
 | FPS-F4-01 The player leans around a corner to look and shoot |
 | FPS-F4-02 Enemies see and hit what a lean exposes |
 | FPS-F4-03 Footsteps bob the view, and the player sets how much |
+| FPS-F4-04 The player sees their own body's shadow, and can show the hit volumes |
 | Slice 2 cards: carded when ENG-F33 #492 and #544 are scheduled |
 | Slice 3 cards: carded when #543 is scheduled |
 
 ## Notes
-- FPS-F4-02 builds on -01. FPS-F4-03 is independent of both. Slice 2 extends -01 and -02.
+- FPS-F4-02 builds on -01. FPS-F4-03 is independent of both. FPS-F4-04's boxes are independent; its lean scenario needs -01. Slice 2 extends -01, -02 and -04; slice 3 replaces -04's boxes.
+- Reload animation is FPS-F8 (hands and reload), after slice 3, not this feature.
 - FPS-F4-03 adds a Head bob slider row to FPS-F3-03 #460's settings table (scope edit to #460
   on approval); until #460 lands the setting is reached from the console.
 - TL: can the sim's existing ray queries carry the lean clearance check, or does thin geometry
