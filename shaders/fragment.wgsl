@@ -788,7 +788,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     
     // Ambient from the sky palette by facing. Metals diffuse less, and dielectrics keep a
     // weak ambient that the reflected share (1 - F) cannot exceed.
-    let metal_ambient_scale = select(1.0, 0.3, fuzz > 0.01);
+    let metal_ambient_scale = mix(1.0, 0.3, step(0.01, fuzz));
     let ambient_scale = select(metal_ambient_scale, 0.1 * (1.0 - dielectric_fresnel), ref_idx > 0.0);
     let sky_ambient = final_albedo * sky_ambient_cube(N) * lighting.ambient.w * ambient_scale
         * in.sky_exposed * multibounce_ao(ao, final_albedo);

@@ -66,6 +66,24 @@ fn skybox_and_main_shader_share_sky_gradient() {
     for (label, source) in [("skybox", &skybox), ("main", &main)] {
         assert!(source.contains("sky_gradient"), "{label} shader");
     }
+
+    let module = validate("skybox shader", &skybox, Capabilities::empty());
+    let gradients: Vec<_> = module
+        .functions
+        .iter()
+        .filter(|(_, f)| f.name.as_deref() == Some("sky_gradient"))
+        .map(|(handle, _)| handle)
+        .collect();
+    assert_eq!(gradients.len(), 1, "sky_gradient defined once");
+    let fs_main = module
+        .entry_points
+        .iter()
+        .find(|e| e.name == "fs_main")
+        .expect("skybox fs_main");
+    let calls_gradient = fs_main.function.body.iter().any(|statement| {
+        matches!(statement, naga::Statement::Call { function, .. } if *function == gradients[0])
+    });
+    assert!(calls_gradient, "skybox fs_main calls sky_gradient");
 }
 
 #[test]
