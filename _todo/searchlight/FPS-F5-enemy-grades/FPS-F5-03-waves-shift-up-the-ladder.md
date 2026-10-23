@@ -14,7 +14,7 @@ later waves are harder because their enemies are better, not tougher.
 
 - A grade mix for each wave, tunable as data; wave 1 is mostly rookie and novice.
 - The share of experienced-and-above never falls from one wave to the next.
-- A forced grade (FPS-F5-01) overrides the mix while it is set.
+- The mix replaces the all-experienced default from FPS-F5-01; a forced grade overrides the mix while it is set.
 
 ## Acceptance criteria
 
