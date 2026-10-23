@@ -248,6 +248,7 @@ mod tests {
         meshes: Vec<RecordedMesh>,
         brightnesses: Vec<f32>,
         shadow_qualities: Vec<u8>,
+        bloom_qualities: Vec<u8>,
     }
 
     struct RecordedMesh {
@@ -311,9 +312,23 @@ mod tests {
             self.shadow_qualities.push(quality);
         }
         fn set_ssao_quality(&mut self, _quality: u8) {}
+        fn set_bloom_quality(&mut self, quality: u8) {
+            self.bloom_qualities.push(quality);
+        }
         fn set_brightness(&mut self, brightness: f32) {
             self.brightnesses.push(brightness);
         }
+    }
+
+    #[test]
+    fn startup_applies_the_saved_bloom() {
+        let mut prefs = Prefs::default();
+        prefs.set_bloom(1);
+        let mut renderer = ChannelRecorder::default();
+
+        apply_saved_render_settings(&prefs, &mut renderer);
+
+        assert_eq!(renderer.bloom_qualities, vec![1]);
     }
 
     #[test]

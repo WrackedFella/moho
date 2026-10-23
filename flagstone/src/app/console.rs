@@ -368,6 +368,19 @@ mod tests {
     }
 
     #[test]
+    fn bloom_command_saves_prefs() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("prefs.ini");
+        let mut app = headless_saving_to(&path);
+        apply_engine_command(&mut app, &EngineCommand::BloomQuality(1));
+
+        tick(&mut app);
+
+        assert_eq!(app.prefs.bloom(), 1);
+        assert_eq!(Prefs::load_from(&path).0.bloom(), 1);
+    }
+
+    #[test]
     fn tone_map_command_queues_the_request() {
         let mut app = App::headless();
         let before = app.prefs.clone();

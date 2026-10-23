@@ -19,6 +19,7 @@ pub fn apply_engine_command(command: &EngineCommand, ctx: &mut FrameContext<'_>)
         EngineCommand::SsaoQuality(quality) => {
             with_renderer(command, ctx, |r| r.set_ssao_quality(*quality));
         }
+        EngineCommand::BloomQuality(_) => {}
         EngineCommand::ToneMap(enabled) => {
             with_renderer(command, ctx, |r| r.set_tone_map(*enabled));
         }
@@ -71,6 +72,7 @@ mod tests {
         ssao: Vec<u8>,
         debug_view: Vec<Option<u32>>,
         tone_map: Vec<bool>,
+        bloom: Vec<u8>,
     }
 
     impl RendererBackend for FakeRenderer {
@@ -120,6 +122,28 @@ mod tests {
         fn set_tone_map(&mut self, enabled: bool) {
             self.tone_map.push(enabled);
         }
+        fn set_bloom_quality(&mut self, quality: u8) {
+            self.bloom.push(quality);
+        }
+    }
+
+    #[test]
+    fn bloom_quality_reaches_the_renderer() {
+        let clock = GameClock::default();
+        let mut renderer = FakeRenderer::default();
+        {
+            let backend: &mut dyn RendererBackend = &mut renderer;
+            let mut ctx = FrameContext::new(Duration::from_millis(16), &clock, Some(backend), None);
+
+            apply_engine_command(&EngineCommand::BloomQuality(0), &mut ctx);
+            apply_engine_command(&EngineCommand::BloomQuality(2), &mut ctx);
+        }
+
+        assert_eq!(renderer.bloom, vec![0, 2]);
+        assert!(renderer.shadow.is_empty());
+        assert!(renderer.ssao.is_empty());
+        assert!(renderer.tone_map.is_empty());
+        assert!(renderer.debug_view.is_empty());
     }
 
     #[test]
@@ -181,6 +205,7 @@ mod tests {
             EngineCommand::DebugView(3),
             EngineCommand::ShadowQuality(0),
             EngineCommand::SsaoQuality(4),
+            EngineCommand::BloomQuality(2),
             EngineCommand::ToneMap(true),
             EngineCommand::PlaySoundAt {
                 path: "searchlight/assets/rifle_shot.wav".into(),

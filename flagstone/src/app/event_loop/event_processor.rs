@@ -1218,6 +1218,28 @@ mod tests {
     }
 
     #[test]
+    fn set_bloom_quality_saves_and_queues_the_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = prefs_file(&dir);
+        let mut app = headless_saving_to(&path);
+        app.event_bus
+            .publish(DebugEvent::SetBloomQuality { quality: 1 });
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        assert_eq!(app.prefs.bloom(), 1);
+        assert_eq!(Prefs::load_from(&path).0.bloom(), 1);
+        assert!(
+            matches!(
+                app.pending_render.as_slice(),
+                [RenderRequest::BloomQuality(1)]
+            ),
+            "queued {} requests",
+            app.pending_render.len()
+        );
+    }
+
+    #[test]
     fn adopting_vsync_off_queues_a_vsync_request() {
         let mut app = App::headless();
         let mut off = Prefs::default();

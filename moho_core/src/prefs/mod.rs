@@ -188,6 +188,10 @@ impl Prefs {
     pub fn ssao_quality(&self) -> u32 {
         self.graphics_ssao_quality
     }
+    /// Bloom quality: 0=Off, 1=Low, 2=High.
+    pub fn bloom(&self) -> u32 {
+        0
+    }
     /// Scene exposure multiplier, within `0.5..=2.0`.
     pub fn brightness(&self) -> f32 {
         self.graphics_brightness
@@ -263,6 +267,11 @@ impl Prefs {
 
     pub fn set_ssao_quality(&mut self, quality: u32) {
         self.graphics_ssao_quality = quality.min(MAX_GRAPHICS_QUALITY);
+    }
+
+    /// Stores the bloom quality, clamped to `0..=2`.
+    pub fn set_bloom(&mut self, _quality: u32) {
+        todo!()
     }
 
     /// Stores the scene exposure multiplier, clamped to `0.5..=2.0`; NaN gives the default.
@@ -538,6 +547,41 @@ mod tests {
         assert_eq!(low, 0.5);
         assert_eq!(high, 2.0);
         assert_eq!(nan, 1.0);
+    }
+
+    #[test]
+    fn bloom_defaults_to_high() {
+        assert_eq!(Prefs::default().bloom(), 2);
+    }
+
+    #[test]
+    fn bloom_round_trips() {
+        for quality in [0, 1, 2] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config").join("prefs.ini");
+            let mut prefs = Prefs::default();
+            prefs.set_bloom(quality);
+
+            prefs.save_to(&path).unwrap();
+            let (loaded, warnings) = Prefs::load_from(&path);
+
+            assert_eq!(warnings, vec![], "bloom {quality}");
+            assert_eq!(loaded.bloom(), quality);
+            assert!(prefs.to_ini_string().contains(&format!("bloom={quality}\n")));
+        }
+    }
+
+    #[test]
+    fn bloom_clamps_to_high() {
+        let mut prefs = Prefs::default();
+
+        prefs.set_bloom(3);
+        let above = prefs.bloom();
+        prefs.set_bloom(u32::MAX);
+        let max = prefs.bloom();
+
+        assert_eq!(above, 2);
+        assert_eq!(max, 2);
     }
 
     #[test]

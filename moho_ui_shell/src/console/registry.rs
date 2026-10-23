@@ -49,6 +49,8 @@ pub enum EngineCommand {
     DebugView(u32),
     ShadowQuality(u8),
     SsaoQuality(u8),
+    /// Bloom level: 0=Off, 1=Low, 2=High.
+    BloomQuality(u8),
     /// Tone-map curve on or off, for this session only.
     ToneMap(bool),
     PlaySoundAt {
@@ -343,6 +345,26 @@ mod tests {
         }
         let (_, _, usage) = run_line("r_tonemap");
         assert!(usage[0].starts_with("Usage: r_tonemap"), "{usage:?}");
+    }
+
+    #[test]
+    fn r_bloom_parses_0_to_2_and_refuses_3() {
+        for level in 0..=2u8 {
+            let (engine, game, printed) = run_line(&format!("r_bloom {level}"));
+
+            assert_eq!(engine, [EngineCommand::BloomQuality(level)], "level {level}");
+            assert!(game.is_empty(), "level {level}");
+            assert_eq!(printed.len(), 1, "level {level}: {printed:?}");
+        }
+        for line in ["r_bloom 3", "r_bloom x", "r_bloom -1", "r_bloom 1.5", "r_bloom"] {
+            let (engine, game, printed) = run_line(line);
+
+            assert!(engine.is_empty(), "{line}: {engine:?}");
+            assert!(game.is_empty(), "{line}");
+            assert_eq!(printed.len(), 1, "{line}: {printed:?}");
+        }
+        let (_, _, usage) = run_line("r_bloom");
+        assert!(usage[0].starts_with("Usage: r_bloom"), "{usage:?}");
     }
 
     #[test]

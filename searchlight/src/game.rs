@@ -891,6 +891,9 @@ impl SearchlightGame {
         }
     }
 
+    /// Hands the renderer the Bloom level the debug settings' prefs hold.
+    fn apply_saved_bloom(&self, _renderer: &mut dyn RendererBackend) {}
+
     /// Applies the console's queued commands in order, saves god mode once if they changed it,
     /// and reports the value after each bare `tgm`.
     fn apply_console_commands(&mut self) {
@@ -1599,6 +1602,7 @@ mod tests {
         ssao: Vec<u8>,
         debug_view: Vec<Option<u32>>,
         brightness: Vec<f32>,
+        bloom: Vec<u8>,
         /// The view matrix of every frame begun.
         views: Vec<Mat4>,
     }
@@ -1654,6 +1658,24 @@ mod tests {
         fn set_brightness(&mut self, brightness: f32) {
             self.brightness.push(brightness);
         }
+        fn set_bloom_quality(&mut self, quality: u8) {
+            self.bloom.push(quality);
+        }
+    }
+
+    /// `Game::init` needs a window, so this drives the Bloom step it runs.
+    #[test]
+    fn init_applies_the_saved_bloom() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut prefs = Prefs::default();
+        prefs.set_bloom(1);
+        let settings = DebugSettings::new(prefs, dir.path().join("searchlight.ini"));
+        let game = game().with_debug_settings(settings);
+        let mut renderer = SettingsRenderer::default();
+
+        game.apply_saved_bloom(&mut renderer);
+
+        assert_eq!(renderer.bloom, vec![1]);
     }
 
     /// `Game::init` needs a window, so this drives the brightness step it runs.
