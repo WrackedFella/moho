@@ -34,10 +34,12 @@ concurrency:
 jobs:
   review:
     name: Review and fix
+    # Off unless the repository variable PR_REVIEW_ENABLED is `true`.
     if: >-
-      github.event_name == 'workflow_dispatch'
-      || (github.event.pull_request.head.repo.full_name == github.repository
-          && !github.event.pull_request.draft)
+      vars.PR_REVIEW_ENABLED == 'true'
+      && (github.event_name == 'workflow_dispatch'
+          || (github.event.pull_request.head.repo.full_name == github.repository
+              && !github.event.pull_request.draft))
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
