@@ -51,6 +51,18 @@ pub fn resolve_shot(world: &PhysicsWorld, ray: ShotRay) -> Option<Strike> {
     })
 }
 
+/// Whether the segment from `origin` to `end` comes within `radius` of `point`.
+pub fn passes_within(origin: Vec3, end: Vec3, point: Vec3, radius: f32) -> bool {
+    let segment = end - origin;
+    let length_squared = segment.length_squared();
+    let along = if length_squared > 0.0 {
+        ((point - origin).dot(segment) / length_squared).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    point.distance(origin + segment * along) <= radius
+}
+
 #[cfg(test)]
 mod tests {
     use searchlight_rules::BodyPart;
@@ -224,6 +236,71 @@ mod tests {
 
         assert_eq!(short, None);
         assert!(long.is_some());
+    }
+
+    #[test]
+    fn passes_within_measures_to_the_closest_point_of_the_segment() {
+        let origin = Vec3::ZERO;
+        let end = Vec3::new(10.0, 0.0, 0.0);
+        let cases = [
+            ("beside the middle, inside", Vec3::new(5.0, 0.9, 0.0), true),
+            (
+                "beside the middle, outside",
+                Vec3::new(5.0, 1.1, 0.0),
+                false,
+            ),
+            ("beside the middle, across", Vec3::new(5.0, 0.0, -0.9), true),
+            ("exactly at the radius", Vec3::new(5.0, 1.0, 0.0), true),
+            ("beyond the end, near it", Vec3::new(10.8, 0.5, 0.0), true),
+            (
+                "beyond the end, off the line",
+                Vec3::new(11.2, 0.0, 0.0),
+                false,
+            ),
+            (
+                "far beyond the end, on the line",
+                Vec3::new(12.0, 0.0, 0.0),
+                false,
+            ),
+            (
+                "behind the origin, near it",
+                Vec3::new(-0.8, 0.5, 0.0),
+                true,
+            ),
+            (
+                "behind the origin, off the line",
+                Vec3::new(-2.0, 0.0, 0.0),
+                false,
+            ),
+        ];
+
+        for (name, point, expected) in cases {
+            assert_eq!(passes_within(origin, end, point, 1.0), expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn passes_within_uses_the_closest_point_of_a_slanted_segment() {
+        let origin = Vec3::ZERO;
+        let end = Vec3::new(10.0, 10.0, 0.0);
+        let point = Vec3::new(10.0, 0.0, 0.0);
+
+        let inside = passes_within(origin, end, point, 7.1);
+        let outside = passes_within(origin, end, point, 7.0);
+
+        assert!(inside, "the point is 7.07 m from the segment");
+        assert!(!outside);
+    }
+
+    #[test]
+    fn passes_within_a_zero_length_segment_is_a_distance_to_a_point() {
+        let at = Vec3::new(3.0, 1.0, 2.0);
+
+        let near = passes_within(at, at, at + Vec3::new(0.0, 0.9, 0.0), 1.0);
+        let far = passes_within(at, at, at + Vec3::new(0.0, 1.1, 0.0), 1.0);
+
+        assert!(near);
+        assert!(!far);
     }
 
     #[test]
