@@ -58,15 +58,18 @@ pub struct ShadowMatrixGpu {
 pub struct ToneMapGpu {
     pub exposure: f32,
     pub enabled: u32,
-    _pad: [u32; 2],
+    /// Weight of the bloom chain added before exposure; 0 skips the bloom read.
+    pub bloom_intensity: f32,
+    _pad: u32,
 }
 
 impl ToneMapGpu {
-    pub fn new(exposure: f32, enabled: bool) -> Self {
+    pub fn new(exposure: f32, enabled: bool, bloom_intensity: f32) -> Self {
         Self {
             exposure,
             enabled: u32::from(enabled),
-            _pad: [0; 2],
+            bloom_intensity,
+            _pad: 0,
         }
     }
 }

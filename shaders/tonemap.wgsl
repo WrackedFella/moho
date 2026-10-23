@@ -1,12 +1,13 @@
-// Tone-map pass: reads the HDR scene texel 1:1 and writes the swapchain.
+// Tone-map pass: reads the HDR scene texel 1:1, adds the bloom chain's mip 0, and writes
+// the swapchain.
 // The curve is Khronos PBR Neutral's highlight compression without its toe offset:
 // identity below START_COMPRESSION, hue-preserving roll-off above it.
 
 struct ToneMap {
     exposure: f32,
     enabled: u32,
+    bloom_intensity: f32,
     pad0: u32,
-    pad1: u32,
 }
 
 @group(0) @binding(0)
@@ -14,6 +15,12 @@ var hdr_texture: texture_2d<f32>;
 
 @group(0) @binding(1)
 var<uniform> tone_map: ToneMap;
+
+@group(0) @binding(2)
+var bloom_texture: texture_2d<f32>;
+
+@group(0) @binding(3)
+var bloom_sampler: sampler;
 
 const START_COMPRESSION: f32 = 0.76;
 const DESATURATION: f32 = 0.15;
@@ -40,7 +47,13 @@ fn neutral_shoulder(color: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_main(@builtin(position) frag_coord: vec4<f32>) -> @location(0) vec4<f32> {
-    let hdr = textureLoad(hdr_texture, vec2<i32>(frag_coord.xy), 0);
+    var hdr = textureLoad(hdr_texture, vec2<i32>(frag_coord.xy), 0);
+    // Skipped at zero so bloom Off leaves the scene bit-identical.
+    if (tone_map.bloom_intensity > 0.0) {
+        let uv = frag_coord.xy / vec2<f32>(textureDimensions(hdr_texture));
+        let bloom = textureSampleLevel(bloom_texture, bloom_sampler, uv, 0.0).rgb;
+        hdr = vec4<f32>(hdr.rgb + tone_map.bloom_intensity * bloom, hdr.a);
+    }
     if (tone_map.enabled == 0u) {
         return hdr;
     }

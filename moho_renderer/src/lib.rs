@@ -28,6 +28,7 @@ pub use gpu_types::{
 };
 pub use moho_render_api::{InstanceGpu, MaterialGpu};
 mod block_on;
+mod bloom;
 mod markers;
 mod ui_pass;
 pub use markers::{MARKER_INFLATE, MarkerDraws, Markers};
@@ -157,9 +158,12 @@ pub trait RendererBackend {
     /// Set the Brightness exposure multiplier applied by the tone-map pass (clamped
     /// to `[0.5, 2.0]`, NaN gives 1.0). No-op by default.
     fn set_brightness(&mut self, _brightness: f32) {}
-    /// Turn the tone-map curve on or off; off passes the HDR scene through
-    /// unchanged. Session-only. No-op by default.
+    /// Turn the tone-map curve on or off; off skips the curve and passes the
+    /// HDR scene through, still adding bloom when it is enabled. Session-only. No-op by default.
     fn set_tone_map(&mut self, _enabled: bool) {}
+    /// Set the bloom quality: 0 Off, 1 Low, 2 High; any other value gives High. Off adds
+    /// no bloom at all. No-op by default.
+    fn set_bloom_quality(&mut self, _quality: u8) {}
     /// Queue the frame's box markers to draw over the world: translucent
     /// `fills` and edge-only `outlines`, each sorted far to near. Called once
     /// per frame after the transparent draws and before `submit_frame`. No-op
@@ -246,6 +250,9 @@ impl RendererBackend for Renderer<'_> {
     }
     fn set_tone_map(&mut self, enabled: bool) {
         self.set_tone_map(enabled);
+    }
+    fn set_bloom_quality(&mut self, quality: u8) {
+        self.set_bloom_quality(quality);
     }
     fn enqueue_markers(
         &mut self,

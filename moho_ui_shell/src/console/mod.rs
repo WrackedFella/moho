@@ -471,7 +471,7 @@ pub(crate) mod tests {
         console.submit("help");
 
         let help = help_lines(&console);
-        assert_eq!(help.len(), 9, "{help:?}");
+        assert_eq!(help.len(), 10, "{help:?}");
         let names = [
             "help",
             "clear",
@@ -479,6 +479,7 @@ pub(crate) mod tests {
             "r_debug_view",
             "r_shadow_quality",
             "r_ssao_quality",
+            "r_bloom",
             "r_tonemap",
             "audio_cue",
             "tgm",
@@ -487,7 +488,7 @@ pub(crate) mod tests {
             assert!(line.starts_with(&format!("  {name}")), "{line:?}");
             assert!(line.contains(" - "), "{line:?}");
         }
-        assert_eq!(help[8], "  tgm [0|1] - toggle god mode");
+        assert_eq!(help[9], "  tgm [0|1] - toggle god mode");
     }
 
     #[test]

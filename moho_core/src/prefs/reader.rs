@@ -130,6 +130,10 @@ const KNOWN_KEYS: &[(&str, &str, Setter)] = &[
     ("graphics", "ssao_quality", |p, s| {
         set(&mut p.graphics_ssao_quality, parse_u32(s))
     }),
+    ("graphics", "bloom", |p, s| {
+        p.set_bloom(parse_u32(s)?);
+        Some(())
+    }),
     ("graphics", "brightness", |p, s| {
         p.set_brightness(parse_f32(s)?);
         Some(())
@@ -1069,6 +1073,7 @@ mod tests {
              \n[graphics]\n\
              shadow_quality=3\n\
              ssao_quality=3\n\
+             bloom=2\n\
              brightness=1.00\n\
              \n[video]\n\
              window_mode=Windowed\n\

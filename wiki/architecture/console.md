@@ -65,6 +65,7 @@ as for any other publisher.
 | `DebugView(m)` (engine) | `GraphicsEvent::DebugViewChanged` | `process_graphics_events` |
 | `ShadowQuality(q)` (engine) | `DebugEvent::SetShadowQuality` | `process_debug_events` |
 | `SsaoQuality(q)` (engine) | `DebugEvent::SetSsaoQuality` | `process_debug_events` |
+| `BloomQuality(q)` (engine) | `DebugEvent::SetBloomQuality` | `process_debug_events` |
 | `PlaySoundAt` (engine) | `AudioEvent::PlaySoundAt` | audio system |
 | `ToggleGodMode` | `DebugEvent::ToggleGodMode { enabled: true }` | `process_debug_events` (logs only; not implemented) |
 | `ToggleNoclip` | `DebugEvent::ToggleCollision { enabled: <current noclip> }` | sets `physics.noclip` to the opposite |

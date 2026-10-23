@@ -507,6 +507,13 @@ impl EventProcessor {
                         .push(RenderRequest::SsaoQuality(quality as u8));
                 }
             }
+            DebugEvent::SetBloomQuality { quality } => {
+                tracing::info!(quality, "Setting bloom quality");
+                app.prefs.set_bloom(quality);
+                app.save_prefs();
+                app.pending_render
+                    .push(RenderRequest::BloomQuality(app.prefs.bloom() as u8));
+            }
             DebugEvent::ShowMarker {
                 id,
                 min,
@@ -1271,6 +1278,28 @@ mod tests {
         assert!(
             app.pending_render.is_empty(),
             "no window, so nothing is queued for the renderer"
+        );
+    }
+
+    #[test]
+    fn set_bloom_quality_saves_and_queues_the_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = prefs_file(&dir);
+        let mut app = headless_saving_to(&path);
+        app.event_bus
+            .publish(DebugEvent::SetBloomQuality { quality: 1 });
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        assert_eq!(app.prefs.bloom(), 1);
+        assert_eq!(Prefs::load_from(&path).0.bloom(), 1);
+        assert!(
+            matches!(
+                app.pending_render.as_slice(),
+                [RenderRequest::BloomQuality(1)]
+            ),
+            "queued {} requests",
+            app.pending_render.len()
         );
     }
 

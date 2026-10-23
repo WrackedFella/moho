@@ -173,6 +173,12 @@ impl SettingsState {
         self.mark_dirty(SettingsField::Brightness);
     }
 
+    /// Stage a Bloom level (0=Off, 1=Low, 2=High) and mark it dirty.
+    pub fn set_bloom(&mut self, quality: u32) {
+        self.staged.set_bloom(quality);
+        self.mark_dirty(SettingsField::Bloom);
+    }
+
     /// Whether the staged bindings or mode of `action` differ from the saved ones.
     pub fn is_binding_modified(&self, action: StrategyAction) -> bool {
         self.staged_bindings.get_binding(action) != self.saved_bindings.get_binding(action)
@@ -284,6 +290,33 @@ mod tests {
 
         assert!(!state.is_dirty());
         assert_eq!(state.prefs().brightness(), 0.75);
+    }
+
+    #[test]
+    fn staging_bloom_marks_the_tab_dirty() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state =
+            SettingsState::from_prefs_at(Prefs::default(), dir.path().join("prefs.ini"));
+        assert!(!state.is_dirty());
+
+        state.set_bloom(0);
+
+        assert!(state.is_dirty());
+        assert!(state.is_field_dirty(SettingsField::Bloom));
+        assert!(!state.is_field_dirty(SettingsField::Brightness));
+        assert_eq!(state.staged().bloom(), 0);
+        assert_eq!(state.prefs().bloom(), 2);
+
+        state.revert_changes();
+
+        assert!(!state.is_dirty());
+        assert_eq!(state.staged().bloom(), 2);
+
+        state.set_bloom(1);
+        state.apply_changes().unwrap();
+
+        assert!(!state.is_dirty());
+        assert_eq!(state.prefs().bloom(), 1);
     }
 
     #[test]
