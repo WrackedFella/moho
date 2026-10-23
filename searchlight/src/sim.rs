@@ -88,6 +88,8 @@ pub struct SimConfig {
     /// Ticks a reload takes: pressed on tick `t`, it completes on tick `t + reload_ticks`,
     /// where the new magazine is in and the rifle can fire again.
     pub reload_ticks: u32,
+    /// Extra ticks a reload takes when the chamber is empty.
+    pub charge_ticks: u32,
     /// Pools of the dummies', enemies' and the player's bodies.
     pub body: BodyProfile,
     pub rifle: Rifle,
@@ -210,6 +212,7 @@ pub struct SearchlightSim {
     damage: u32,
     cooldown_ticks: u32,
     reload_ticks: u32,
+    charge_ticks: u32,
     rifle: Rifle,
     spares: Vec<Magazine>,
     /// Indexed by target number: the dummies, then the enemies.
@@ -333,6 +336,7 @@ impl SearchlightSim {
             damage: config.damage,
             cooldown_ticks: config.cooldown_ticks,
             reload_ticks: config.reload_ticks,
+            charge_ticks: config.charge_ticks,
             rifle: config.rifle.clone(),
             spares: config.spares.clone(),
             targets,
@@ -1035,21 +1039,123 @@ mod tests {
         assert!(sim.rifle().is_chambered());
     }
 
+    /// A sim with a 10-tick reload and the given charge time.
+    fn charging_sim(
+        rifle: Rifle,
+        spares: Vec<Magazine>,
+        reload_ticks: u32,
+        charge_ticks: u32,
+    ) -> SearchlightSim {
+        let mut config = test_config(rifle, spares);
+        config.reload_ticks = reload_ticks;
+        config.charge_ticks = charge_ticks;
+        SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config)
+    }
+
+    /// A reload pressed on tick 0, `idles` idle ticks, then a pull.
+    fn reload_wait_pull(idles: usize) -> Vec<SearchlightCommand> {
+        let mut script = vec![reload()];
+        script.extend(std::iter::repeat_n(idle(), idles));
+        script.push(pull());
+        script
+    }
+
     #[test]
     fn the_rifle_cannot_fire_while_reloading() {
-        let mut sim = arena_sim(rifle_with(10), vec![mag(30, 30)]);
+        for (rifle, duration) in [(rifle_with(10), 10), (rifle_with(0), 14)] {
+            let chambered = rifle.is_chambered();
+            let mut sim = charging_sim(rifle, vec![mag(30, 30)], 10, 4);
+            let mut script = vec![reload()];
+            script.extend(std::iter::repeat_n(pull(), duration - 1));
+            script.push(idle());
+
+            let ticks = run(&mut sim, &script);
+
+            assert!(
+                fired_on(&ticks).is_empty(),
+                "chambered {chambered}: fired during the reload"
+            );
+            assert!(
+                ticks.iter().flatten().all(|fb| *fb != Feedback::Dry),
+                "chambered {chambered}: dry feedback during the reload"
+            );
+            assert_eq!(ticks[duration], [Feedback::ReloadDone], "chambered {chambered}");
+            assert_eq!(sim.rifle().magazine().capacity(), 30);
+            assert!(sim.rifle().is_chambered());
+        }
+    }
+
+    #[test]
+    fn a_tactical_reload_ends_on_exactly_the_reload_tick() {
+        let mut early = charging_sim(rifle_with(10), vec![mag(30, 30)], 10, 4);
+        let mut on_time = charging_sim(rifle_with(10), vec![mag(30, 30)], 10, 4);
+
+        let before = run(&mut early, &reload_wait_pull(8));
+        let after = run(&mut on_time, &reload_wait_pull(9));
+
+        assert!(fired_on(&before).is_empty());
+        assert_eq!(before[8], []);
+        assert_eq!(after[10], [Feedback::ReloadDone, Feedback::Fired]);
+        assert_eq!(sim_rounds(&on_time), (true, 29));
+    }
+
+    /// Whether a round is chambered, and the rounds in the inserted magazine.
+    fn sim_rounds(sim: &SearchlightSim) -> (bool, u32) {
+        (sim.rifle().is_chambered(), sim.rifle().magazine().rounds())
+    }
+
+    #[test]
+    fn an_empty_chamber_reload_ends_after_reload_plus_charge_ticks() {
+        let mut early = charging_sim(rifle_with(0), vec![mag(30, 30)], 10, 4);
+        let mut on_time = charging_sim(rifle_with(0), vec![mag(30, 30)], 10, 4);
+
+        let before = run(&mut early, &reload_wait_pull(12));
+        let after = run(&mut on_time, &reload_wait_pull(13));
+
+        assert!(before.iter().flatten().next().is_none(), "{before:?}");
+        assert_eq!(after[..14], vec![vec![]; 14][..]);
+        assert_eq!(after[14], [Feedback::ReloadDone, Feedback::Fired]);
+        assert_eq!(sim_rounds(&on_time), (true, 28));
+    }
+
+    #[test]
+    fn a_chambered_round_with_an_empty_magazine_reloads_tactically() {
+        let mut early = charging_sim(rifle_with(1), vec![mag(30, 30)], 10, 4);
+        let mut on_time = charging_sim(rifle_with(1), vec![mag(30, 30)], 10, 4);
+        assert_eq!(sim_rounds(&early), (true, 0));
+
+        let before = run(&mut early, &reload_wait_pull(8));
+        let after = run(&mut on_time, &reload_wait_pull(9));
+
+        assert!(fired_on(&before).is_empty());
+        assert_eq!(before[8], []);
+        assert_eq!(after[10], [Feedback::ReloadDone, Feedback::Fired]);
+    }
+
+    #[test]
+    fn an_empty_chamber_pays_the_charge_even_with_an_empty_spare() {
+        let mut sim = charging_sim(rifle_with(0), vec![mag(30, 0)], 10, 4);
         let mut script = vec![reload()];
-        script.extend([pull(); 5]);
-        script.extend([idle(); 5]);
+        script.extend([idle(); 14]);
 
         let ticks = run(&mut sim, &script);
 
-        assert!(fired_on(&ticks).is_empty(), "fired during the reload");
-        assert!(ticks.iter().flatten().all(|fb| *fb != Feedback::Dry));
-        assert_eq!(ticks[10], [Feedback::ReloadDone]);
-        assert_eq!(sim.rifle().magazine(), &mag(30, 30));
-        assert!(sim.rifle().is_chambered());
-        assert_eq!(sim.spares(), [mag(30, 9)]);
+        assert_eq!(ticks[..14], vec![vec![]; 14][..]);
+        assert_eq!(ticks[14], [Feedback::ReloadDone]);
+        assert_eq!(sim_rounds(&sim), (false, 0));
+    }
+
+    #[test]
+    fn an_instant_reload_still_charges_on_an_empty_chamber() {
+        let mut sim = charging_sim(rifle_with(0), vec![mag(30, 30)], 0, 4);
+        let mut script = vec![reload()];
+        script.extend([idle(); 3]);
+        script.push(pull());
+
+        let ticks = run(&mut sim, &script);
+
+        assert_eq!(ticks[..4], vec![vec![]; 4][..]);
+        assert_eq!(ticks[4], [Feedback::ReloadDone, Feedback::Fired]);
     }
 
     #[test]
@@ -1100,6 +1206,20 @@ mod tests {
         );
         assert_eq!(fired_on(&ticks), [11]);
         assert_eq!(sim.rifle().magazine().rounds(), 8);
+    }
+
+    #[test]
+    fn reloading_an_empty_chamber_with_no_spare_magazine_changes_nothing() {
+        let mut sim = charging_sim(rifle_with(0), vec![], 10, 4);
+        let mut script = vec![reload()];
+        script.extend([idle(); 14]);
+        script.push(pull());
+
+        let ticks = run(&mut sim, &script);
+
+        assert_eq!(ticks[..15], vec![vec![]; 15][..]);
+        assert_eq!(ticks[15], [Feedback::Dry]);
+        assert_eq!(sim_rounds(&sim), (false, 0));
     }
 
     #[test]

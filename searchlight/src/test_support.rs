@@ -117,6 +117,7 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
         damage: 30,
         cooldown_ticks: 3,
         reload_ticks: 10,
+        charge_ticks: 0,
         body: test_profile(),
         rifle,
         spares,

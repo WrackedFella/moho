@@ -27,6 +27,8 @@ pub struct RifleDef {
     pub cooldown_ticks: u32,
     /// Ticks a reload takes.
     pub reload_ticks: u32,
+    /// Extra ticks a reload takes when the chamber is empty, to charge the rifle.
+    pub charge_ticks: u32,
     /// How far a shot reaches, in metres.
     pub range: f32,
 }
@@ -43,6 +45,7 @@ mod tests {
             "fire": "semi_auto",
             "cooldown_ticks": 6,
             "reload_ticks": 120,
+            "charge_ticks": 30,
             "range": 100.0
         })
     }
@@ -59,9 +62,20 @@ mod tests {
                 fire: FireBehaviour::SemiAuto,
                 cooldown_ticks: 6,
                 reload_ticks: 120,
+                charge_ticks: 30,
                 range: 100.0,
             }
         );
+    }
+
+    #[test]
+    fn a_rifle_without_charge_ticks_is_refused() {
+        let mut value = valid();
+        value.as_object_mut().unwrap().remove("charge_ticks");
+
+        let error = serde_json::from_value::<RifleDef>(value).unwrap_err();
+
+        assert!(error.to_string().contains("charge_ticks"), "{error}");
     }
 
     #[test]
