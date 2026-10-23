@@ -78,9 +78,12 @@ A `Binding` also carries `Modifiers`, a set of Ctrl, Shift and Alt that must be 
 
 A stick direction binding is down while its axis is at or past `STICK_DIRECTION_THRESHOLD`.
 An action is held when any of its bindings is active under the rules above. A frame holds at most 64 actions.
+
+An action opts into a player-chosen mode with `Action::toggleable` (default false; `StrategyAction::Sprint` is the only one). `ActionBindings` stores an `ActionMode` per toggleable action (`Hold`, the default, or `Toggle`; `moho_input/src/bindings.rs`). In `Toggle` mode the map keeps a latch per action: a rising edge or a tap of the resolved mask flips it, and the reported held bit and the `pressed` / `released` edges follow the latch. `release_all` clears the latches. Non-toggleable actions always read as `Hold`. The Settings controls tab shows a hold/toggle checkbox beside a toggleable action's binding.
+
 The map also tracks the pointer in physical pixels: `ActionFrame::pointer` is its position at the end of the tick (`None` outside the window), and `press_pointer` is its position at the last mouse press in the tick. `StrategyAction::Select` (left mouse by default) is the strategy view's primary pointer action.
 
-Bindings persist in the `[bindings]` section of [prefs](../reference/prefs-format.md).
+Bindings persist in the `[bindings]` section of [prefs](../reference/prefs-format.md), and modes in `[action_modes]`.
 
 ## 2 Pointer picking
 

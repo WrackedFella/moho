@@ -80,6 +80,10 @@ impl Action for StrategyAction {
             StrategyAction::Select => &SELECT,
         }
     }
+
+    fn toggleable(self) -> bool {
+        self == StrategyAction::Sprint
+    }
 }
 
 /// Reads the strategy bindings from prefs, warning about each line that fell back to a default.
@@ -87,9 +91,12 @@ impl Action for StrategyAction {
 pub fn load_bindings(prefs: &Prefs) -> ActionBindings<StrategyAction> {
     let mut section = prefs.bindings().clone();
     section.remove(CONSOLE_BINDING);
-    let (bindings, warnings) = ActionBindings::load(&section);
+    let (mut bindings, warnings) = ActionBindings::load(&section);
     for w in warnings {
         tracing::warn!(action = %w.name, value = %w.value, "Unusable binding, default kept");
+    }
+    for w in bindings.load_modes(prefs.action_modes()) {
+        tracing::warn!(action = %w.name, value = %w.value, "Unusable action mode, hold kept");
     }
     bindings
 }
@@ -97,6 +104,7 @@ pub fn load_bindings(prefs: &Prefs) -> ActionBindings<StrategyAction> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use moho_input::bindings::ActionMode;
     use moho_input::key::{Key, MouseButton};
     use moho_input::pad::{PadButton, PadInput, Stick, StickDir};
 
@@ -166,6 +174,40 @@ mod tests {
             .map(|&(a, n, k, p)| (a, n, vec![Binding::key(k), p]))
             .collect();
         assert_eq!(actual, want);
+    }
+
+    #[test]
+    fn only_sprint_is_toggleable() {
+        for &action in StrategyAction::ALL {
+            assert_eq!(
+                action.toggleable(),
+                action == StrategyAction::Sprint,
+                "{}",
+                action.name()
+            );
+        }
+    }
+
+    #[test]
+    fn saved_action_modes_load_into_the_bindings() {
+        let (prefs, _) = Prefs::parse("[action_modes]\nsprint = toggle\n");
+
+        let bindings = load_bindings(&prefs);
+
+        assert_eq!(bindings.mode(StrategyAction::Sprint), ActionMode::Toggle);
+        assert_eq!(bindings.mode(StrategyAction::Jump), ActionMode::Hold);
+    }
+
+    #[test]
+    fn unparseable_action_mode_warns_naming_sprint_and_keeps_hold() {
+        let (prefs, _) = Prefs::parse("[action_modes]\nsprint = sometimes\n");
+        let mut loaded = None;
+
+        let log = logged(|| loaded = Some(load_bindings(&prefs)));
+
+        let bindings = loaded.expect("bindings loaded");
+        assert!(log.contains("sprint"), "no warning naming sprint: {log}");
+        assert_eq!(bindings.mode(StrategyAction::Sprint), ActionMode::Hold);
     }
 
     #[test]
