@@ -74,6 +74,10 @@ fn window_title(status: &str) -> String {
     }
 }
 
+/// The glTF material name of the arena meshes that draw glossy.
+const FLOOR_MATERIAL: &str = "floor";
+const ARENA_FLOOR_GLOSS: f32 = 0.6;
+
 /// Surface colours of the greybox world.
 #[derive(Clone, Copy, Debug)]
 enum Paint {
@@ -94,8 +98,13 @@ impl RenderMaterial for Paint {
             Paint::Enemy => ([0.3, 0.4, 0.62], [0.22, 0.3, 0.5], 0.0),
             Paint::Struck => ([1.0, 0.15, 0.1], [1.0, 0.15, 0.1], 1.0),
         };
+        // `albedo.w` is a world mesh's gloss.
+        let gloss = match self {
+            Paint::ArenaFloor => ARENA_FLOOR_GLOSS,
+            Paint::Arena | Paint::Dummy | Paint::Enemy | Paint::Struck => 0.0,
+        };
         MaterialGpu {
-            albedo: [top[0], top[1], top[2], 0.0],
+            albedo: [top[0], top[1], top[2], gloss],
             params: [side[0], side[1], side[2], glow],
         }
     }
@@ -459,12 +468,31 @@ impl Stage {
     }
 
     fn add_arena(&mut self, meshes: Vec<WorldMesh>, dummy_spawns: &[Vec3]) {
+        self.add_named_arena(meshes, &[], dummy_spawns);
+    }
+
+    /// Draws `meshes` as the arena, the one named `floor` in the glossy [`Paint::ArenaFloor`]
+    /// and the rest, or any past the end of `material_names`, in [`Paint::Arena`].
+    fn add_named_arena(
+        &mut self,
+        meshes: Vec<WorldMesh>,
+        material_names: &[Option<String>],
+        dummy_spawns: &[Vec3],
+    ) {
         let arena_material = self.scene.material_table.find_or_push(&Paint::Arena);
+        let floor_material = self.scene.material_table.find_or_push(&Paint::ArenaFloor);
         for (index, mesh) in meshes.into_iter().enumerate() {
+            let is_floor = material_names
+                .get(index)
+                .is_some_and(|name| name.as_deref() == Some(FLOOR_MATERIAL));
             self.scene.world_meshes_mut().upsert(
                 crate::arena::arena_mesh_id(index),
                 mesh,
-                arena_material,
+                if is_floor {
+                    floor_material
+                } else {
+                    arena_material
+                },
             );
         }
         self.dummy_count = dummy_spawns.len();
@@ -476,16 +504,6 @@ impl Stage {
                 self.dummy_material,
             );
         }
-    }
-
-    /// [`Self::add_arena`] with each mesh painted by its glTF material name.
-    fn add_named_arena(
-        &mut self,
-        meshes: Vec<WorldMesh>,
-        _material_names: &[Option<String>],
-        dummy_spawns: &[Vec3],
-    ) {
-        self.add_arena(meshes, dummy_spawns);
     }
 
     fn react(&mut self, feedback: &Feedback, audio: Option<&mut AudioSystem>) {
@@ -880,6 +898,20 @@ impl SearchlightGame {
     #[must_use]
     pub fn with_arena(mut self, meshes: Vec<WorldMesh>, dummy_spawns: &[Vec3]) -> Self {
         self.stage.add_arena(meshes, dummy_spawns);
+        self
+    }
+
+    /// Like [`Self::with_arena`], with `material_names` (one per mesh) choosing each mesh's
+    /// paint: meshes named `floor` draw glossy.
+    #[must_use]
+    pub fn with_named_arena(
+        mut self,
+        meshes: Vec<WorldMesh>,
+        material_names: &[Option<String>],
+        dummy_spawns: &[Vec3],
+    ) -> Self {
+        self.stage
+            .add_named_arena(meshes, material_names, dummy_spawns);
         self
     }
 

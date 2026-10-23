@@ -192,6 +192,7 @@ impl Arena {
     pub fn from_level(level: &Level, markers: &ArenaMarkers) -> Result<Self, ArenaError> {
         let positions = |list: &[LevelMarker]| list.iter().map(|marker| marker.position).collect();
         let meshes: Vec<WorldMesh> = level.meshes.iter().map(|m| m.mesh.clone()).collect();
+        let material_names = level.meshes.iter().map(|m| m.material.clone()).collect();
         let nav = Arc::new(NavMesh::build(&meshes, nav_profile())?);
         let enemy_spawns: Vec<Vec3> = positions(&markers.enemy_spawns);
         let mut route = Vec::new();
@@ -214,7 +215,7 @@ impl Arena {
         }
         Ok(Self {
             meshes,
-            material_names: Vec::new(),
+            material_names,
             nav,
             player_spawn: markers.player_spawn.position,
             dummy_spawns: positions(&markers.dummies),

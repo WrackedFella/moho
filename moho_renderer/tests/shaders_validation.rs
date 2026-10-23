@@ -69,11 +69,6 @@ fn skybox_and_main_shader_share_sky_gradient() {
 }
 
 #[test]
-fn skybox_shader_parses_and_validates() {
-    validate_file("skybox.wgsl", Capabilities::empty());
-}
-
-#[test]
 fn shadow_shader_parses_and_validates() {
     validate_file("shadow.wgsl", Capabilities::IMMEDIATES);
 }
@@ -274,9 +269,7 @@ fn lighting_struct_matches_lighting_gpu_in_every_shader() {
     use moho_renderer::LightingGpu;
     use std::mem::{offset_of, size_of};
 
-    let skybox_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../shaders/skybox.wgsl");
-    let skybox = std::fs::read_to_string(&skybox_path)
-        .unwrap_or_else(|e| panic!("failed to read shader {}: {e}", skybox_path.display()));
+    let skybox = moho_renderer::pipeline::skybox_shader_source();
     let main = moho_renderer::pipeline::main_shader_source();
     let expected_tail = [
         ("sky_zenith", offset_of!(LightingGpu, sky_zenith)),
@@ -284,7 +277,7 @@ fn lighting_struct_matches_lighting_gpu_in_every_shader() {
         ("sky_ground", offset_of!(LightingGpu, sky_ground)),
     ];
 
-    for (label, source) in [("main shader", main.as_str()), ("skybox.wgsl", &skybox)] {
+    for (label, source) in [("main shader", main.as_str()), ("skybox shader", &skybox)] {
         let (members, span) = lighting_layout(label, source);
 
         assert_eq!(span as usize, size_of::<LightingGpu>(), "{label}: span");

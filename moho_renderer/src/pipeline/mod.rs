@@ -66,8 +66,6 @@ pub const MAIN_INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_at
 /// Error type for pipeline initialization failures.
 #[derive(Debug)]
 pub enum PipelineInitError {
-    /// Failed to load skybox shader from disk
-    SkyboxShaderLoad(String),
     /// Camera buffer size calculation failed
     CameraBufferSize(String),
     /// Lighting buffer size calculation failed
@@ -81,7 +79,6 @@ pub enum PipelineInitError {
 impl std::fmt::Display for PipelineInitError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::SkyboxShaderLoad(msg) => write!(f, "Failed to load skybox shader: {msg}"),
             Self::CameraBufferSize(msg) => write!(f, "Camera buffer size error: {msg}"),
             Self::LightingBufferSize(msg) => write!(f, "Lighting buffer size error: {msg}"),
             Self::ShadowMatrixSize(msg) => write!(f, "Shadow matrix size error: {msg}"),
@@ -163,7 +160,7 @@ impl PipelineSetup {
         config: &wgpu::SurfaceConfiguration,
     ) -> Result<Self, PipelineInitError> {
         // 1. Load and compile shaders
-        let (main_shader, skybox_shader) = shaders::load_shaders(device)?;
+        let (main_shader, skybox_shader) = shaders::load_shaders(device);
 
         // 2. Create bind group layouts
         let camera_bgl = layouts::create_camera_bind_group_layout(device)?;
