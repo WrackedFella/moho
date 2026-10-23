@@ -165,21 +165,14 @@ const MAX_CLIP_PLANES: usize = 5;
 /// Normals with a dot product above this count as one plane.
 const SAME_PLANE_DOT: f32 = 0.99;
 
-/// A blocking plane: the collider, the surface normal as reported, and the normal clipped against.
-type BlockingPlane = (ColliderHandle, Vec3, Vec3);
-
 /// Replace non-finite components of `velocity` with zero (logged) and clamp each component to
 /// `±max`.
 fn checked(velocity: Vec3, max: f32) -> Vec3 {
-    let mut components = velocity.to_array();
-    for component in &mut components {
-        if !component.is_finite() {
-            tracing::warn!(?velocity, "non-finite velocity component reset to zero");
-            *component = 0.0;
-        }
-        *component = component.clamp(-max, max);
+    if !velocity.is_finite() {
+        tracing::warn!(?velocity, "non-finite velocity component reset to zero");
     }
-    Vec3::from_array(components)
+    Vec3::select(velocity.is_finite_mask(), velocity, Vec3::ZERO)
+        .clamp(Vec3::splat(-max), Vec3::splat(max))
 }
 
 /// Remove the velocity into the surfaces that blocked the slide, reporting each as an impact.
@@ -192,7 +185,7 @@ fn checked(velocity: Vec3, max: f32) -> Vec3 {
 /// blocking and clipping never gives a walker vertical velocity.
 ///
 /// The blocking planes are merged where their normals nearly coincide (the first collider is
-/// kept) and the result is chosen as in Quake's `PM_SlideMove`, from the incoming velocity
+/// kept) and the result is chosen as in Quake's `SV_FlyMove`, from the incoming velocity
 /// alone so the plane order does not matter:
 /// - more than [`MAX_CLIP_PLANES`] planes stop the character;
 /// - a velocity clipped against one plane (overbounce 1.0) that enters no other plane is taken;
@@ -208,9 +201,8 @@ fn clip(
 ) -> Vec<Impact> {
     let primal = *velocity;
     let mut impacts = Vec::new();
-    let mut planes = [(ColliderHandle::invalid(), Vec3::ZERO, Vec3::ZERO); MAX_CLIP_PLANES];
+    let mut planes = [Vec3::ZERO; MAX_CLIP_PLANES];
     let mut count = 0;
-    let mut overflowed = false;
     for &(collider, surface) in &slid.hits {
         if walking && slid.grounded && surface.y >= WALKABLE_NORMAL_Y {
             continue;
@@ -233,15 +225,15 @@ fn clip(
         }
         if planes[..count]
             .iter()
-            .any(|plane| plane.2.dot(normal) > SAME_PLANE_DOT)
+            .any(|plane| plane.dot(normal) > SAME_PLANE_DOT)
         {
             continue;
         }
         if count == MAX_CLIP_PLANES {
-            overflowed = true;
-            break;
+            *velocity = Vec3::ZERO;
+            return impacts;
         }
-        planes[count] = (collider, surface, normal);
+        planes[count] = normal;
         count += 1;
         impacts.push(Impact {
             collider,
@@ -250,31 +242,28 @@ fn clip(
         });
     }
 
-    let planes: &[BlockingPlane] = &planes[..count];
-    if overflowed {
-        *velocity = Vec3::ZERO;
-    } else if !planes.is_empty() {
-        *velocity = slide_along(primal, planes);
+    if count > 0 {
+        *velocity = slide_along(primal, &planes[..count]);
     }
     impacts
 }
 
 /// The velocity `primal` becomes against `planes`: see [`clip`].
-fn slide_along(primal: Vec3, planes: &[BlockingPlane]) -> Vec3 {
-    for (i, &(_, _, normal)) in planes.iter().enumerate() {
-        let clipped = primal - normal * primal.dot(normal);
+fn slide_along(primal: Vec3, planes: &[Vec3]) -> Vec3 {
+    for (i, &normal) in planes.iter().enumerate() {
+        let clipped = primal.reject_from_normalized(normal);
         let enters_another = planes
             .iter()
             .enumerate()
-            .any(|(j, plane)| j != i && clipped.dot(plane.2) < 0.0);
+            .any(|(j, plane)| j != i && clipped.dot(*plane) < 0.0);
         if !enters_another {
             return clipped;
         }
     }
     match planes {
-        [(_, _, a), (_, _, b)] => {
+        [a, b] => {
             let crease = a.cross(*b).normalize_or_zero();
-            crease * crease.dot(primal)
+            primal.project_onto_normalized(crease)
         }
         _ => Vec3::ZERO,
     }
