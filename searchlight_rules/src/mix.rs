@@ -352,6 +352,13 @@ mod tests {
     }
 
     #[test]
+    fn the_default_mix_is_one_new_accepts() {
+        let default = GradeMix::default();
+
+        assert_eq!(GradeMix::new(default.steps.clone()), Ok(default));
+    }
+
+    #[test]
     fn a_wave_of_the_largest_size_is_split_without_overflow() {
         let mix = mix(vec![[u32::MAX; 5]]);
         let previous = mix.grades(1, u32::MAX, None);
