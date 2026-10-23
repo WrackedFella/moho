@@ -65,8 +65,8 @@ on static meshes too; the mesh needs no `materials` channel, so the placement's 
 applies. Placements on an id that is not live are skipped. `Scene::render` groups the
 placements of a mesh into one instanced draw and clears them before `begin_frame`, so a
 frame skipped for a lost surface consumes them too. Placed meshes cast and receive shadows
-and take part in SSAO like static ones, and never touch physics. Normals use the model
-matrix, so non-uniform scale on a general mesh is not yet correct (ENG-F39).
+and take part in SSAO like static ones, and never touch physics. Normals use the cofactor
+of the placement's upper 3x3 (`normal_to_world`, 2.2), so non-uniform scale lights correctly.
 
 The binary adapts voxel chunks in `flagstone/src/app/world_geometry.rs`: `chunk_mesh_id` packs
 the chunk position at 21 bits per signed axis, `chunk_world_mesh` converts a
