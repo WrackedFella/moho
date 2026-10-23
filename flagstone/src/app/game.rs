@@ -197,7 +197,7 @@ impl App {
                 }
                 RenderRequest::ShadowQuality(quality) => renderer.set_shadow_quality(quality),
                 RenderRequest::SsaoQuality(quality) => renderer.set_ssao_quality(quality),
-                RenderRequest::BloomQuality(_) => {}
+                RenderRequest::BloomQuality(quality) => renderer.set_bloom_quality(quality),
                 RenderRequest::ViewHeight(height) => renderer.set_view_height(height),
                 RenderRequest::Vsync(on) => renderer.set_vsync(on),
                 RenderRequest::Brightness(brightness) => renderer.set_brightness(brightness),

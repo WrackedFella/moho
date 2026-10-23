@@ -892,7 +892,11 @@ impl SearchlightGame {
     }
 
     /// Hands the renderer the Bloom level the debug settings' prefs hold.
-    fn apply_saved_bloom(&self, _renderer: &mut dyn RendererBackend) {}
+    fn apply_saved_bloom(&self, renderer: &mut dyn RendererBackend) {
+        if let Some(settings) = &self.debug_settings {
+            renderer.set_bloom_quality(settings.prefs().bloom() as u8);
+        }
+    }
 
     /// Applies the console's queued commands in order, saves god mode once if they changed it,
     /// and reports the value after each bare `tgm`.
@@ -1090,6 +1094,7 @@ impl Game for SearchlightGame {
         let layers: UiSource = Arc::new(Mutex::new(UiLayers::new(vec![crosshair, shell])));
         ctx.renderer.set_ui_source(Some(layers));
         self.apply_saved_brightness(&mut *ctx.renderer);
+        self.apply_saved_bloom(&mut *ctx.renderer);
     }
 
     fn window_mode_changed(&mut self, _ctx: &mut EventContext<'_>, mode: WindowMode) {

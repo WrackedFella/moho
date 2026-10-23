@@ -64,6 +64,7 @@ pub struct Prefs {
     // Graphics settings
     graphics_shadow_quality: u32, // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
     graphics_ssao_quality: u32,   // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
+    graphics_bloom: u32,          // 0=Off, 1=Low, 2=High
     graphics_brightness: f32,
     // Video settings
     window_mode: WindowMode,
@@ -81,6 +82,7 @@ pub struct Prefs {
 }
 
 const MAX_GRAPHICS_QUALITY: u32 = 4;
+const MAX_BLOOM_QUALITY: u32 = 2;
 /// Brightness is a linear exposure multiplier.
 const MIN_BRIGHTNESS: f32 = 0.5;
 const MAX_BRIGHTNESS: f32 = 2.0;
@@ -190,7 +192,7 @@ impl Prefs {
     }
     /// Bloom quality: 0=Off, 1=Low, 2=High.
     pub fn bloom(&self) -> u32 {
-        0
+        self.graphics_bloom
     }
     /// Scene exposure multiplier, within `0.5..=2.0`.
     pub fn brightness(&self) -> f32 {
@@ -270,8 +272,8 @@ impl Prefs {
     }
 
     /// Stores the bloom quality, clamped to `0..=2`.
-    pub fn set_bloom(&mut self, _quality: u32) {
-        todo!()
+    pub fn set_bloom(&mut self, quality: u32) {
+        self.graphics_bloom = quality.min(MAX_BLOOM_QUALITY);
     }
 
     /// Stores the scene exposure multiplier, clamped to `0.5..=2.0`; NaN gives the default.
@@ -347,6 +349,7 @@ impl Default for Prefs {
             // Default graphics settings (High)
             graphics_shadow_quality: 3,
             graphics_ssao_quality: 3,
+            graphics_bloom: MAX_BLOOM_QUALITY,
             graphics_brightness: DEFAULT_BRIGHTNESS,
             // Default video settings
             window_mode: WindowMode::Windowed,
@@ -395,6 +398,7 @@ impl Prefs {
              \n[graphics]\n\
              shadow_quality={shadow}\n\
              ssao_quality={ssao}\n\
+             bloom={bloom}\n\
              brightness={brightness:.2}\n\
              \n[video]\n\
              window_mode={window_mode}\n\
@@ -417,6 +421,7 @@ impl Prefs {
             voice = self.audio_voice_volume,
             shadow = self.graphics_shadow_quality,
             ssao = self.graphics_ssao_quality,
+            bloom = self.graphics_bloom,
             brightness = self.graphics_brightness,
             window_mode = self.window_mode.as_str(),
             width = self.window_resolution.0,
@@ -567,7 +572,11 @@ mod tests {
 
             assert_eq!(warnings, vec![], "bloom {quality}");
             assert_eq!(loaded.bloom(), quality);
-            assert!(prefs.to_ini_string().contains(&format!("bloom={quality}\n")));
+            assert!(
+                prefs
+                    .to_ini_string()
+                    .contains(&format!("bloom={quality}\n"))
+            );
         }
     }
 

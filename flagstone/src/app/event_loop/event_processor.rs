@@ -523,6 +523,13 @@ impl EventProcessor {
                         .push(RenderRequest::SsaoQuality(quality as u8));
                 }
             }
+            DebugEvent::SetBloomQuality { quality } => {
+                tracing::info!(quality, "Setting bloom quality");
+                app.prefs.set_bloom(quality);
+                app.save_prefs();
+                app.pending_render
+                    .push(RenderRequest::BloomQuality(app.prefs.bloom() as u8));
+            }
             DebugEvent::ShowMarker {
                 id,
                 min,

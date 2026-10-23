@@ -190,6 +190,10 @@ impl App {
             self.pending_render
                 .push(RenderRequest::Brightness(config.prefs.brightness()));
         }
+        if config.prefs.bloom() != self.prefs.bloom() {
+            self.pending_render
+                .push(RenderRequest::BloomQuality(config.prefs.bloom() as u8));
+        }
         self.set_pending_frame_cap(config.prefs.frame_cap());
         self.prefs = config.prefs;
     }

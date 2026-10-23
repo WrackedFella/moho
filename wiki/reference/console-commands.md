@@ -18,6 +18,7 @@ Commands are case-insensitive on the first token; arguments are whitespace-separ
 | `r_debug_view` | `<mode>` | 0 None, 1 Normals, 2 Bias, 3 Shadows, 4 LightLevel, 5 PointLights, 6 SkyAmbient, 7 SkyReflection; other values are rejected with a message |
 | `r_shadow_quality` | `<0-4>` | Off, Low, Med, High, Ultra |
 | `r_ssao_quality` | `<0-4>` | Off, Low, Med, High, Ultra |
+| `r_bloom` | `<0-2>` | Off, Low, High; saved to `[graphics] bloom` in flagstone, session-only in searchlight; other values are rejected |
 | `r_tonemap` | `<0\|1>` | Tone-map curve off or on for this session (not saved); other values are rejected |
 | `spawn` | `<type> [args]` | `torch`, `light` (args `r g b`), `cube`, `sphere`; placed by raycast from the camera |
 | `audio_cue` | `<path> <x> <y> <z> [volume]` | Play a sound at a world position in metres (volume defaults to 1.0); non-finite numbers are rejected |
@@ -48,6 +49,7 @@ Out-of-range quality values are rejected with a message. Unknown commands print 
 | `r_debug_view` | `<0-7>` | Debug view, same modes as above; overrides the game's lighting value in every later lighting update (`Renderer::set_debug_view`) |
 | `r_shadow_quality` | `<0-4>` | As above |
 | `r_ssao_quality` | `<0-4>` | As above |
+| `r_bloom` | `<0-2>` | As above |
 | `r_tonemap` | `<0\|1>` | As above |
 | `audio_cue` | `<path> <x> <y> <z> [volume]` | Play a sound at a world position in metres (volume defaults to 1.0); non-finite numbers are rejected |
 

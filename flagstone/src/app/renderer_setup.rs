@@ -210,13 +210,14 @@ fn register_entity_mesh(
     )
 }
 
-/// Applies the saved render settings (quality and Brightness) to `renderer` at start.
+/// Applies the saved render settings (quality, Bloom and Brightness) to `renderer` at start.
 pub fn apply_saved_render_settings(
     prefs: &moho_core::prefs::Prefs,
     renderer: &mut dyn moho_renderer::RendererBackend,
 ) {
     renderer.set_shadow_quality(prefs.shadow_quality() as u8);
     renderer.set_ssao_quality(prefs.ssao_quality() as u8);
+    renderer.set_bloom_quality(prefs.bloom() as u8);
     renderer.set_brightness(prefs.brightness());
 }
 

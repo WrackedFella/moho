@@ -130,6 +130,43 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
         ui.add_space(8.0);
 
         brightness_row(menu, ui, label_width);
+
+        ui.add_space(8.0);
+
+        bloom_row(menu, ui, label_width);
+    });
+}
+
+const BLOOM_LEVELS: [&str; 3] = ["Off", "Low", "High"];
+
+/// The Bloom combo: Off, Low or High.
+fn bloom_row(menu: &mut SettingsMenu, ui: &mut egui::Ui, label_width: f32) {
+    let staged = menu.state.staged().bloom();
+    let is_dirty = staged != menu.state.prefs().bloom();
+
+    ui.horizontal(|ui| {
+        ui.allocate_ui_with_layout(
+            egui::vec2(label_width, 28.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.label("Bloom:");
+            },
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let mut current = staged;
+            let combo = egui::ComboBox::from_id_salt("bloom_combo")
+                .selected_text(BLOOM_LEVELS[staged as usize])
+                .width(120.0)
+                .show_ui(ui, |ui| {
+                    for (level, label) in (0u32..).zip(BLOOM_LEVELS) {
+                        ui.selectable_value(&mut current, level, label);
+                    }
+                });
+            if current != staged {
+                menu.state.set_bloom(current);
+            }
+            SettingsMenu::paint_dirty_decor(ui, &combo.response, is_dirty);
+        });
     });
 }
 

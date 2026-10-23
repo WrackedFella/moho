@@ -81,6 +81,11 @@ pub fn apply_engine_command(app: &mut App, command: &EngineCommand) {
                 quality: u32::from(*quality),
             });
         }
+        EngineCommand::BloomQuality(quality) => {
+            app.event_bus.publish(DebugEvent::SetBloomQuality {
+                quality: u32::from(*quality),
+            });
+        }
         EngineCommand::ToneMap(enabled) => {
             app.pending_render.push(RenderRequest::ToneMap(*enabled));
         }

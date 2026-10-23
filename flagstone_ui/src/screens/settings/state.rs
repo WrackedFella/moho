@@ -174,8 +174,9 @@ impl SettingsState {
     }
 
     /// Stage a Bloom level (0=Off, 1=Low, 2=High) and mark it dirty.
-    pub fn set_bloom(&mut self, _quality: u32) {
-        todo!()
+    pub fn set_bloom(&mut self, quality: u32) {
+        self.staged.set_bloom(quality);
+        self.mark_dirty(SettingsField::Bloom);
     }
 
     /// Whether the staged bindings or mode of `action` differ from the saved ones.
