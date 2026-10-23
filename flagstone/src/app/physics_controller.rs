@@ -446,14 +446,19 @@ mod tests {
     }
 
     #[test]
-    fn set_player_look_turns_the_player_character() {
+    fn set_player_look_applies_on_the_next_tick() {
         let mut controller = PhysicsController::new();
         controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
 
         controller.set_player_look(0.7, -0.3);
 
-        let state = player_state(&controller);
-        assert_eq!((state.yaw, state.pitch), (0.7, -0.3));
+        let queued = player_state(&controller);
+        assert_eq!((queued.yaw, queued.pitch), (0.0, 0.0), "not yet applied");
+        let moved = controller
+            .move_character(&idle(), &strategy_settings(), DT)
+            .expect("player is live");
+        assert_eq!((moved.yaw, moved.pitch), (0.7, -0.3));
+        assert_eq!(player_state(&controller), moved);
     }
 
     #[test]
@@ -475,24 +480,31 @@ mod tests {
     }
 
     #[test]
-    fn teleport_moves_the_player_and_zeroes_velocity() {
+    fn teleport_moves_the_player_on_the_next_tick_and_zeroes_velocity() {
         let mut controller = PhysicsController::new();
         controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
         for _ in 0..10 {
             controller.move_character(&idle(), &strategy_settings(), DT);
         }
         assert!(player_state(&controller).velocity.y < 0.0);
+        let before = player_state(&controller);
         let target = glam::Vec3::new(3.0, 20.0, -4.0);
 
         controller.teleport_character(target);
 
-        let state = player_state(&controller);
-        assert!(state.position.distance(target) < 1e-4, "{state:?}");
-        assert_eq!(state.velocity, glam::Vec3::ZERO);
+        assert_eq!(player_state(&controller), before, "not yet applied");
+        let state = controller
+            .move_character(&idle(), &strategy_settings(), DT)
+            .expect("player is live");
+        assert!(state.position.distance(target) < 0.01, "{state:?}");
+        assert!(
+            (state.velocity - glam::Vec3::new(0.0, -18.0 * DT, 0.0)).length() < 1e-4,
+            "velocity restarted from rest: {state:?}"
+        );
     }
 
     #[test]
-    fn teleport_resets_previous_state() {
+    fn teleport_is_not_blended_by_the_view() {
         let mut controller = PhysicsController::new();
         controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
         for _ in 0..10 {
@@ -500,8 +512,20 @@ mod tests {
         }
 
         controller.teleport_character(glam::Vec3::new(3.0, 20.0, -4.0));
+        let teleported = controller
+            .move_character(&idle(), &strategy_settings(), DT)
+            .expect("player is live");
 
-        assert_eq!(controller.previous, Some(player_state(&controller)));
+        let (previous, current) = controller.player_states().expect("player is live");
+        assert_eq!(previous, teleported, "the view starts from the arrival");
+        assert_eq!(current, teleported);
+        let after = controller
+            .move_character(&idle(), &strategy_settings(), DT)
+            .expect("player is live");
+        let (previous, current) = controller.player_states().expect("player is live");
+        assert_eq!(previous, teleported, "the next tick blends again");
+        assert_eq!(current, after);
+        assert_ne!(previous, current);
     }
 
     #[test]

@@ -1,12 +1,13 @@
 use super::query::{encode_tag, HitTag};
 use super::slide::Slider;
 use super::PhysicsWorld;
-use crate::movement::{self, CharacterCommand, Impact, MoveSettings};
+use crate::movement::{self, CharacterCommand, CharacterEffect, Impact, MoveSettings};
 use glam::{Quat, Vec3};
 use rapier3d::prelude::{
     ColliderBuilder, ColliderHandle, InteractionGroups, Pose, QueryFilter, RigidBodyBuilder,
     RigidBodyHandle,
 };
+use serde::{Deserialize, Serialize};
 
 /// Opaque identity of one character in a [`PhysicsWorld`].
 ///
@@ -28,6 +29,27 @@ pub struct CharacterState {
     pub pitch: f32,
     /// Standing on walkable ground after the last tick.
     pub grounded: bool,
+}
+
+/// A character's starting state: where it stands and which way it faces.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CharacterSpawn {
+    /// Capsule centre, world space.
+    pub position: Vec3,
+    /// Facing in radians; 0 faces +Z.
+    pub yaw: f32,
+    /// Look angle in radians, positive up.
+    pub pitch: f32,
+}
+
+impl From<Vec3> for CharacterSpawn {
+    fn from(position: Vec3) -> Self {
+        Self {
+            position,
+            yaw: 0.0,
+            pitch: 0.0,
+        }
+    }
 }
 
 /// A box in the character's body frame, rotated by its facing about +Y, offset from the
@@ -88,7 +110,8 @@ impl PhysicsWorld {
     }
 
     /// Add a kinematic character (capsule) to the world.
-    pub fn add_character(&mut self, position: Vec3) -> CharacterHandle {
+    pub fn add_character(&mut self, spawn: impl Into<CharacterSpawn>) -> CharacterHandle {
+        let position = spawn.into().position;
         let body = RigidBodyBuilder::kinematic_position_based()
             .translation(position)
             .build();
@@ -203,7 +226,7 @@ impl PhysicsWorld {
             dt,
         };
 
-        let impacts = movement::step(&mut state, command, settings, dt, |asked| {
+        let impacts = movement::step(&mut state, command, &[], settings, dt, |_, asked| {
             slider.slide(&pose, asked, was_grounded)
         });
 
@@ -213,6 +236,21 @@ impl PhysicsWorld {
             .store(&state);
         self.place_body(handle, state.position, state.yaw);
         Ok(impacts)
+    }
+
+    /// Queue `effect` to apply at the start of the character's next step.
+    ///
+    /// # Errors
+    /// [`UnknownCharacter`] if `handle` was removed.
+    pub fn queue_effect(
+        &mut self,
+        handle: CharacterHandle,
+        _effect: CharacterEffect,
+    ) -> Result<(), UnknownCharacter> {
+        if !self.characters.contains_key(&handle) {
+            return Err(UnknownCharacter);
+        }
+        Ok(())
     }
 
     /// Teleport the character to `position` and zero its velocity.
@@ -417,8 +455,21 @@ mod tests {
         assert!(state(&world, h).grounded);
     }
 
+    /// Queue a teleport that drops the velocity.
+    fn teleport(world: &mut PhysicsWorld, handle: CharacterHandle, position: Vec3) {
+        world
+            .queue_effect(
+                handle,
+                CharacterEffect::Teleport {
+                    position,
+                    keep_velocity: false,
+                },
+            )
+            .unwrap();
+    }
+
     #[test]
-    fn set_character_position_teleports_and_stops_falling() {
+    fn teleport_effect_moves_the_character_on_the_next_tick_and_stops_falling() {
         let mut world = PhysicsWorld::new();
         let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
         for _ in 0..10 {
@@ -429,38 +480,70 @@ mod tests {
             (speed + 3.0).abs() < 1e-4,
             "10 airborne frames at -18 should give -3.0, v={speed}"
         );
-
+        let before = state(&world, h);
         let target = Vec3::new(3.0, 20.0, -4.0);
-        let teleported = world.set_character_position(h, target);
 
-        assert_eq!(teleported, Ok(()));
-        assert_eq!(state(&world, h).position, target);
-        assert_eq!(state(&world, h).velocity.y, 0.0);
+        let queued = world.queue_effect(
+            h,
+            CharacterEffect::Teleport {
+                position: target,
+                keep_velocity: false,
+            },
+        );
+
+        assert_eq!(queued, Ok(()));
+        assert_eq!(state(&world, h), before, "queueing changes nothing yet");
+        move_idle(&mut world, h);
+        let after = state(&world, h);
+        assert!(
+            after.position.distance(target) < 0.01,
+            "one tick of falling from the target, {:?}",
+            after.position
+        );
+        assert!(
+            (after.velocity.y + 18.0 * DT).abs() < 1e-4,
+            "the fall restarted from rest, v={}",
+            after.velocity.y
+        );
     }
 
     #[test]
-    fn teleport_zeroes_velocity() {
+    fn queued_add_velocity_then_teleport_leaves_the_character_at_rest() {
         let mut world = PhysicsWorld::new();
         let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
         world
-            .add_character_velocity(h, Vec3::new(3.0, 4.0, 5.0))
+            .queue_effect(h, CharacterEffect::AddVelocity(Vec3::new(3.0, 4.0, 5.0)))
             .unwrap();
+        teleport(&mut world, h, Vec3::new(1.0, 20.0, 1.0));
 
-        world
-            .set_character_position(h, Vec3::new(1.0, 20.0, 1.0))
-            .unwrap();
+        move_idle(&mut world, h);
 
-        assert_eq!(state(&world, h).velocity, Vec3::ZERO);
+        let after = state(&world, h);
+        assert_eq!(after.position.x, 1.0);
+        assert_eq!(after.position.z, 1.0);
+        assert_eq!(after.velocity.x, 0.0);
+        assert_eq!(after.velocity.z, 0.0);
+        assert!(
+            (after.velocity.y + 18.0 * DT).abs() < 1e-4,
+            "only the tick's gravity is left, {:?}",
+            after.velocity
+        );
     }
 
     #[test]
     fn test_character_horizontal_movement() {
         let (mut world, h) = standing_on_floor();
         world
-            .set_character_look(h, std::f32::consts::FRAC_PI_2, 0.0)
+            .queue_effect(
+                h,
+                CharacterEffect::SetLook {
+                    yaw: std::f32::consts::FRAC_PI_2,
+                    pitch: 0.0,
+                },
+            )
             .unwrap();
         world
-            .add_character_velocity(h, Vec3::new(4.0, 0.0, 0.0))
+            .queue_effect(h, CharacterEffect::AddVelocity(Vec3::new(4.0, 0.0, 0.0)))
             .unwrap();
         let start = state(&world, h).position;
         let forward = CharacterCommand {
@@ -603,7 +686,10 @@ mod tests {
         let first_before = state(&world, first).position;
         let second_before = state(&world, second);
         world
-            .add_character_velocity(first, Vec3::new(3.0, 0.0, 0.0))
+            .queue_effect(
+                first,
+                CharacterEffect::AddVelocity(Vec3::new(3.0, 0.0, 0.0)),
+            )
             .unwrap();
         let second_before_move = state(&world, second);
 
@@ -726,41 +812,209 @@ mod tests {
             move_idle(&mut world, second);
         }
 
-        world
-            .set_character_position(first, Vec3::new(0.0, 20.0, 0.0))
-            .unwrap();
+        teleport(&mut world, first, Vec3::new(0.0, 20.0, 0.0));
+        move_idle(&mut world, first);
+        move_idle(&mut world, second);
 
         let kept = state(&world, second).velocity.y;
-        assert!((kept + 3.0).abs() < 1e-4, "second keeps -3.0, v={kept}");
-        assert_eq!(state(&world, first).velocity, Vec3::ZERO);
+        assert!(
+            (kept + 3.3).abs() < 1e-4,
+            "second keeps falling, -3.0 and one more tick of gravity, v={kept}"
+        );
+        let restarted = state(&world, first).velocity.y;
+        assert!(
+            (restarted + 0.3).abs() < 1e-4,
+            "first restarted from rest, v={restarted}"
+        );
     }
 
     #[test]
-    fn add_character_velocity_changes_only_that_character() {
+    fn effects_for_one_character_leave_the_others_alone() {
         let mut world = PhysicsWorld::new();
         let first = world.add_character(Vec3::new(-4.0, 10.0, 0.0));
         let second = world.add_character(Vec3::new(4.0, 10.0, 0.0));
 
-        let set = world.add_character_velocity(first, Vec3::new(0.0, 8.0, 0.0));
+        let queued = world.queue_effect(
+            first,
+            CharacterEffect::AddVelocity(Vec3::new(0.0, 8.0, 0.0)),
+        );
 
-        assert_eq!(set, Ok(()));
-        assert_eq!(state(&world, first).velocity, Vec3::new(0.0, 8.0, 0.0));
-        assert_eq!(state(&world, second).velocity, Vec3::ZERO);
+        assert_eq!(queued, Ok(()));
+        assert_eq!(state(&world, first).velocity, Vec3::ZERO, "not yet applied");
+        move_idle(&mut world, first);
+        move_idle(&mut world, second);
+        let lifted = state(&world, first).velocity;
+        let alone = state(&world, second).velocity;
+        assert!(
+            (lifted - Vec3::new(0.0, 8.0 - 18.0 * DT, 0.0)).length() < 1e-4,
+            "{lifted:?}"
+        );
+        assert!(
+            (alone - Vec3::new(0.0, -18.0 * DT, 0.0)).length() < 1e-4,
+            "{alone:?}"
+        );
     }
 
     #[test]
-    fn added_velocities_accumulate() {
+    fn queued_velocities_accumulate() {
         let mut world = PhysicsWorld::new();
         let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
 
         world
-            .add_character_velocity(h, Vec3::new(1.0, 2.0, 3.0))
+            .queue_effect(h, CharacterEffect::AddVelocity(Vec3::new(1.0, 2.0, 3.0)))
             .unwrap();
         world
-            .add_character_velocity(h, Vec3::new(1.0, 0.0, -1.0))
+            .queue_effect(h, CharacterEffect::AddVelocity(Vec3::new(1.0, 0.0, -1.0)))
             .unwrap();
+        move_idle(&mut world, h);
 
-        assert_eq!(state(&world, h).velocity, Vec3::new(2.0, 2.0, 2.0));
+        let velocity = state(&world, h).velocity;
+        assert!(
+            (velocity - Vec3::new(2.0, 2.0 - 18.0 * DT, 2.0)).length() < 1e-4,
+            "{velocity:?}"
+        );
+    }
+
+    #[test]
+    fn queued_set_and_add_velocity_apply_in_queue_order() {
+        let mut world = PhysicsWorld::new();
+        let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
+        let set = CharacterEffect::SetVelocity(Vec3::new(0.0, 0.0, 6.0));
+        let add = CharacterEffect::AddVelocity(Vec3::new(1.0, 0.0, 0.0));
+        let mut set_then_add = PhysicsWorld::new();
+        let g = set_then_add.add_character(Vec3::new(0.0, 10.0, 0.0));
+        world.queue_effect(h, add).unwrap();
+        world.queue_effect(h, set).unwrap();
+        set_then_add.queue_effect(g, set).unwrap();
+        set_then_add.queue_effect(g, add).unwrap();
+
+        move_idle(&mut world, h);
+        move_idle(&mut set_then_add, g);
+
+        assert_eq!(state(&world, h).velocity.x, 0.0, "the set came last");
+        assert_eq!(state(&set_then_add, g).velocity.x, 1.0, "the add came last");
+    }
+
+    #[test]
+    fn effect_queued_after_the_move_applies_on_the_next_tick() {
+        let (mut world, h) = standing_on_floor();
+        move_idle(&mut world, h);
+        let after_move = state(&world, h);
+
+        let queued = world.queue_effect(h, CharacterEffect::AddVelocity(Vec3::new(5.0, 0.0, 0.0)));
+
+        assert_eq!(queued, Ok(()));
+        assert_eq!(state(&world, h), after_move, "queueing changes nothing");
+        world
+            .move_character(h, &idle(), &frictionless(), DT)
+            .unwrap();
+        world.step(DT);
+        let next = state(&world, h);
+        assert!(
+            (next.velocity.x - 5.0).abs() < 1e-3,
+            "the next tick carries it: {:?}",
+            next.velocity
+        );
+        assert!(
+            (next.position.x - after_move.position.x - 5.0 * DT).abs() < 1e-3,
+            "and asks its motion: {:?} from {:?}",
+            next.position,
+            after_move.position
+        );
+    }
+
+    /// 300 ticks of commands with effects queued along the way, ending on a floor with a step.
+    fn mixed_script() -> Vec<(CharacterCommand, Vec<CharacterEffect>)> {
+        (0..300_u32)
+            .map(|tick| {
+                let command = CharacterCommand {
+                    forward: if tick % 90 < 60 { 1.0 } else { 0.0 },
+                    right: if tick % 110 < 20 { 0.5 } else { 0.0 },
+                    yaw_delta: if tick % 40 < 10 { 0.03 } else { -0.01 },
+                    pitch_delta: 0.0,
+                    jump: tick % 70 == 5,
+                };
+                let effects = match tick {
+                    20 => vec![CharacterEffect::AddVelocity(Vec3::new(0.0, 0.0, 2.0))],
+                    60 => vec![CharacterEffect::SetLook {
+                        yaw: 0.2,
+                        pitch: 0.1,
+                    }],
+                    100 => vec![
+                        CharacterEffect::AddVelocity(Vec3::new(5.0, 0.0, 0.0)),
+                        CharacterEffect::Teleport {
+                            position: Vec3::new(0.0, 1.5, -4.0),
+                            keep_velocity: false,
+                        },
+                    ],
+                    150 => vec![CharacterEffect::SetVelocity(Vec3::new(1.0, 0.0, 2.0))],
+                    200 => vec![CharacterEffect::Teleport {
+                        position: Vec3::new(2.0, 3.0, 0.0),
+                        keep_velocity: true,
+                    }],
+                    250 => vec![
+                        CharacterEffect::AddVelocity(Vec3::new(-3.0, 4.0, 0.0)),
+                        CharacterEffect::SetLook {
+                            yaw: -1.0,
+                            pitch: 0.0,
+                        },
+                    ],
+                    _ => Vec::new(),
+                };
+                (command, effects)
+            })
+            .collect()
+    }
+
+    /// Runs `script` from a fresh world and returns the bit pattern of every tick's position.
+    fn play(script: &[(CharacterCommand, Vec<CharacterEffect>)]) -> Vec<[u32; 3]> {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 6.0, 0.45), TEST_TAG);
+        let h = world.add_character(CharacterSpawn {
+            position: Vec3::new(0.0, 1.5, 0.0),
+            yaw: 0.0,
+            pitch: 0.0,
+        });
+        script
+            .iter()
+            .map(|(command, effects)| {
+                for effect in effects {
+                    world.queue_effect(h, *effect).unwrap();
+                }
+                world
+                    .move_character(h, command, &strategy_settings(), DT)
+                    .unwrap();
+                world.step(DT);
+                let position = state(&world, h).position;
+                [position.x, position.y, position.z].map(f32::to_bits)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn replaying_commands_and_effects_reproduces_positions_exactly() {
+        let script = mixed_script();
+        let recording = play(&script);
+        let bytes = postcard::to_allocvec(&script).expect("the script serialises");
+        let replayed: Vec<(CharacterCommand, Vec<CharacterEffect>)> =
+            postcard::from_bytes(&bytes).expect("the script deserialises");
+
+        let rerun = play(&replayed);
+
+        assert_eq!(rerun.len(), 300);
+        assert_eq!(rerun, recording);
+        let without_effects: Vec<_> = script.iter().map(|(c, _)| (*c, Vec::new())).collect();
+        assert_ne!(
+            play(&without_effects),
+            recording,
+            "the effects changed where the character went"
+        );
+        let teleported = Vec3::from_array(recording[100].map(f32::from_bits));
+        assert!(
+            teleported.distance(Vec3::new(0.0, 1.5, -4.0)) < 0.5,
+            "the tick-100 teleport took hold: {teleported:?}"
+        );
     }
 
     #[test]
@@ -776,43 +1030,121 @@ mod tests {
     }
 
     #[test]
-    fn add_velocity_on_removed_handle_is_refused() {
+    fn queueing_for_a_removed_character_is_refused() {
         let mut world = PhysicsWorld::new();
         let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
         world.remove_character(h).unwrap();
+        let effects = [
+            CharacterEffect::AddVelocity(Vec3::new(0.0, 8.0, 0.0)),
+            CharacterEffect::SetVelocity(Vec3::ZERO),
+            CharacterEffect::Teleport {
+                position: Vec3::ONE,
+                keep_velocity: false,
+            },
+            CharacterEffect::SetLook {
+                yaw: 0.7,
+                pitch: -0.3,
+            },
+        ];
 
-        let set = world.add_character_velocity(h, Vec3::new(0.0, 8.0, 0.0));
+        for effect in effects {
+            let queued = world.queue_effect(h, effect);
 
-        assert_eq!(set, Err(UnknownCharacter));
+            assert_eq!(queued, Err(UnknownCharacter), "{effect:?}");
+        }
     }
 
     #[test]
-    fn set_character_look_sets_facing_and_leaves_position_and_velocity() {
+    fn removing_a_character_drops_its_queue() {
+        let mut world = PhysicsWorld::new();
+        let old = world.add_character(Vec3::new(0.0, 10.0, 0.0));
+        world
+            .queue_effect(old, CharacterEffect::AddVelocity(Vec3::new(9.0, 0.0, 0.0)))
+            .unwrap();
+        world.remove_character(old).unwrap();
+        let new = world.add_character(Vec3::new(0.0, 10.0, 0.0));
+
+        move_idle(&mut world, new);
+
+        let velocity = state(&world, new).velocity;
+        assert!(
+            (velocity - Vec3::new(0.0, -18.0 * DT, 0.0)).length() < 1e-4,
+            "nothing queued for the removed character reaches the new one: {velocity:?}"
+        );
+        assert_eq!(
+            world.queue_effect(old, CharacterEffect::SetVelocity(Vec3::ZERO)),
+            Err(UnknownCharacter)
+        );
+    }
+
+    #[test]
+    fn set_look_effect_sets_facing_on_the_next_tick_and_keeps_velocity() {
         let mut world = PhysicsWorld::new();
         let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
         world
-            .add_character_velocity(h, Vec3::new(1.0, 0.0, 0.0))
+            .queue_effect(h, CharacterEffect::AddVelocity(Vec3::new(1.0, 0.0, 0.0)))
+            .unwrap();
+        world
+            .queue_effect(
+                h,
+                CharacterEffect::SetLook {
+                    yaw: 0.7,
+                    pitch: -0.3,
+                },
+            )
             .unwrap();
         let before = state(&world, h);
 
-        let set = world.set_character_look(h, 0.7, -0.3);
+        move_idle(&mut world, h);
 
         let after = state(&world, h);
-        assert_eq!(set, Ok(()));
+        assert_eq!(
+            (before.yaw, before.pitch),
+            (0.0, 0.0),
+            "not applied at queue time"
+        );
         assert_eq!((after.yaw, after.pitch), (0.7, -0.3));
-        assert_eq!(after.position, before.position);
-        assert_eq!(after.velocity, before.velocity);
+        assert_eq!(after.velocity.x, 1.0);
+        assert!((after.position.x - DT).abs() < 1e-5, "{:?}", after.position);
     }
 
     #[test]
-    fn set_character_look_on_removed_handle_is_refused() {
+    fn spawn_look_is_the_characters_initial_facing() {
         let mut world = PhysicsWorld::new();
-        let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
-        world.remove_character(h).unwrap();
+        let position = Vec3::new(1.0, 10.0, 2.0);
 
-        let set = world.set_character_look(h, 0.7, -0.3);
+        let h = world.add_character(CharacterSpawn {
+            position,
+            yaw: 0.7,
+            pitch: -0.3,
+        });
+        let plain = world.add_character(position);
 
-        assert_eq!(set, Err(UnknownCharacter));
+        assert_eq!(
+            world.character(h),
+            Some(CharacterState {
+                position,
+                velocity: Vec3::ZERO,
+                yaw: 0.7,
+                pitch: -0.3,
+                grounded: false,
+            })
+        );
+        assert_eq!(state(&world, plain).yaw, 0.0, "a bare position faces 0");
+    }
+
+    #[test]
+    fn spawn_round_trips_through_postcard() {
+        let spawn = CharacterSpawn {
+            position: Vec3::new(1.0, 2.0, 3.0),
+            yaw: 0.5,
+            pitch: -0.25,
+        };
+
+        let bytes = postcard::to_allocvec(&spawn).expect("the spawn serialises");
+
+        let back: CharacterSpawn = postcard::from_bytes(&bytes).expect("the spawn deserialises");
+        assert_eq!(back, spawn);
     }
 
     #[test]
@@ -842,7 +1174,7 @@ mod tests {
             .world_mesh_collider(WorldMeshId(1))
             .expect("wall registered");
         world
-            .add_character_velocity(h, Vec3::new(0.0, 0.0, 10.0))
+            .queue_effect(h, CharacterEffect::AddVelocity(Vec3::new(0.0, 0.0, 10.0)))
             .unwrap();
 
         let impacts = run(&mut world, h, &frictionless(), 40);
@@ -862,7 +1194,10 @@ mod tests {
         world.set_world_mesh(WorldMeshId(1), &wall_mesh(2.0), TEST_TAG);
         let along = 4.0 * std::f32::consts::FRAC_1_SQRT_2;
         world
-            .add_character_velocity(h, Vec3::new(along, 0.0, along))
+            .queue_effect(
+                h,
+                CharacterEffect::AddVelocity(Vec3::new(along, 0.0, along)),
+            )
             .unwrap();
 
         let impacts = run(&mut world, h, &frictionless(), 90);
@@ -888,7 +1223,7 @@ mod tests {
             .expect("floor registered");
         let h = world.add_character(Vec3::new(0.0, 3.0, 0.0));
         world
-            .add_character_velocity(h, Vec3::new(0.0, -12.0, 0.0))
+            .queue_effect(h, CharacterEffect::AddVelocity(Vec3::new(0.0, -12.0, 0.0)))
             .unwrap();
         let no_gravity = MoveSettings {
             gravity: 0.0,
@@ -911,7 +1246,7 @@ mod tests {
         let (mut world, h) = standing_on_floor();
         let start = state(&world, h).position;
         world
-            .add_character_velocity(h, Vec3::new(5.0, 0.0, 0.0))
+            .queue_effect(h, CharacterEffect::AddVelocity(Vec3::new(5.0, 0.0, 0.0)))
             .unwrap();
 
         move_idle(&mut world, h);
@@ -938,7 +1273,7 @@ mod tests {
         let (mut world, h) = standing_on_floor();
         world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 6.0, 0.45), TEST_TAG);
         world
-            .add_character_velocity(h, Vec3::new(0.0, 0.0, 3.0))
+            .queue_effect(h, CharacterEffect::AddVelocity(Vec3::new(0.0, 0.0, 3.0)))
             .unwrap();
 
         let start = state(&world, h).position;
@@ -974,7 +1309,7 @@ mod tests {
             .world_mesh_collider(WorldMeshId(1))
             .expect("step registered");
         world
-            .add_character_velocity(h, Vec3::new(0.0, 0.0, 3.0))
+            .queue_effect(h, CharacterEffect::AddVelocity(Vec3::new(0.0, 0.0, 3.0)))
             .unwrap();
 
         let impacts = run(&mut world, h, &frictionless(), 60);
@@ -1063,7 +1398,7 @@ mod tests {
         settle_on_floor(&mut world, &[h]);
         assert!(state(&world, h).grounded);
         world
-            .add_character_velocity(h, Vec3::new(0.0, 0.0, 3.0))
+            .queue_effect(h, CharacterEffect::AddVelocity(Vec3::new(0.0, 0.0, 3.0)))
             .unwrap();
         let mut impacts = Vec::new();
         let mut left_ground = false;
@@ -1097,7 +1432,7 @@ mod tests {
             .expect("floor registered");
         let start_y = state(&world, h).position.y;
         world
-            .add_character_velocity(h, Vec3::new(0.0, 5.0, 0.0))
+            .queue_effect(h, CharacterEffect::AddVelocity(Vec3::new(0.0, 5.0, 0.0)))
             .unwrap();
 
         let first = world
@@ -1194,11 +1529,16 @@ mod tests {
         yaw: f32,
         velocity: Vec3,
     ) -> CharacterHandle {
-        let h = world.add_character(at);
-        world.set_character_look(h, yaw, 0.0).unwrap();
+        let h = world.add_character(CharacterSpawn {
+            position: at,
+            yaw,
+            pitch: 0.0,
+        });
         settle_on_floor(world, &[h]);
         assert!(state(world, h).grounded, "resting before the test starts");
-        world.add_character_velocity(h, velocity).unwrap();
+        world
+            .queue_effect(h, CharacterEffect::AddVelocity(velocity))
+            .unwrap();
         h
     }
 
@@ -1307,21 +1647,32 @@ mod tests {
         let h = world.add_character(Vec3::new(0.0, 1.2, 0.0));
         settle_on_floor(&mut world, &[h]);
         assert!(state(&world, h).grounded);
-        // Centre 0.2 m past the edge and 6 cm up: the rim hangs more than the controller's own
-        // snap distance above the edge, so only the ground query keeps the walker standing.
-        let over_the_void = Vec3::new(0.0, 1.21, 1.2);
-        world.set_character_position(h, over_the_void).unwrap();
+        let forward = CharacterCommand {
+            forward: 1.0,
+            ..idle()
+        };
+        let mut ticks_over_the_edge = 0;
 
-        let (now, impacts) = searchlight_tick(&mut world, h, &idle());
+        for tick in 0..60 {
+            let (now, impacts) = searchlight_tick(&mut world, h, &forward);
 
-        assert!(now.grounded, "{now:?}");
-        assert!(impacts.is_empty(), "{impacts:?}");
-        // Rim resting on the edge a skin's width away: 0.85 + sqrt((0.3 + 0.0115)^2 - 0.2^2).
-        // Lowering onto the floor's plane instead would end near 1.15.
-        assert!(
-            (1.075..1.11).contains(&now.position.y),
-            "lowered until the capsule meets the edge: {now:?}"
-        );
+            // Past the edge by 5 to 25 cm the rim hangs further than the controller's own snap
+            // distance above it at times, so only the ground query keeps the walker standing.
+            let past = now.position.z - 1.0;
+            if (0.05..0.25).contains(&past) {
+                ticks_over_the_edge += 1;
+                assert!(now.grounded, "tick {tick}: {now:?}");
+                assert!(impacts.is_empty(), "tick {tick}: {impacts:?}");
+                // Rim resting on the edge a skin's width away: 0.85 + sqrt((0.3 + 0.0115)^2 - past^2).
+                let on_the_rim = 0.85 + (0.3115_f32.powi(2) - past.powi(2)).sqrt();
+                assert!(
+                    (now.position.y - on_the_rim).abs() < 0.03,
+                    "tick {tick}: lowered until the capsule meets the edge, rim height {on_the_rim}: {now:?}"
+                );
+            }
+        }
+
+        assert!(ticks_over_the_edge > 0, "never walked over the edge");
     }
 
     #[test]
@@ -1625,7 +1976,13 @@ mod tests {
         let (mut world, h) = standing_on_floor();
         world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 6.0, 0.45), TEST_TAG);
         world
-            .set_character_look(h, std::f32::consts::FRAC_PI_4, 0.0)
+            .queue_effect(
+                h,
+                CharacterEffect::SetLook {
+                    yaw: std::f32::consts::FRAC_PI_4,
+                    pitch: 0.0,
+                },
+            )
             .unwrap();
         let forward = CharacterCommand {
             forward: 1.0,
@@ -1650,9 +2007,7 @@ mod tests {
         let (mut world, h) = standing_on_floor();
         world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 6.0, height), TEST_TAG);
         let rest_y = state(&world, h).position.y;
-        world
-            .set_character_position(h, Vec3::new(0.0, rest_y, 2.0 - 0.3 - 0.03))
-            .unwrap();
+        teleport(&mut world, h, Vec3::new(0.0, rest_y, 2.0 - 0.3 - 0.03));
         for _ in 0..10 {
             world
                 .move_character(h, &idle(), &strategy_settings(), DT)
@@ -1740,7 +2095,7 @@ mod tests {
             .expect("step registered");
         let h = world.add_character(Vec3::new(0.0, 1.15 + 0.1, 2.0 - 0.3 - 0.03));
         world
-            .add_character_velocity(h, Vec3::new(0.0, -1.0, 3.0))
+            .queue_effect(h, CharacterEffect::AddVelocity(Vec3::new(0.0, -1.0, 3.0)))
             .unwrap();
         world.step(DT);
         assert!(!state(&world, h).grounded);
@@ -1770,7 +2125,7 @@ mod tests {
             .expect("floor registered");
         let h = world.add_character(Vec3::new(0.0, 3.0, 0.0));
         world
-            .add_character_velocity(h, Vec3::new(0.0, -12.0, 0.0))
+            .queue_effect(h, CharacterEffect::AddVelocity(Vec3::new(0.0, -12.0, 0.0)))
             .unwrap();
         world.step(DT);
         let no_gravity = MoveSettings {
@@ -2143,12 +2498,19 @@ mod tests {
     }
 
     #[test]
-    fn setting_the_look_turns_the_volumes() {
-        let (mut world, h) = arm_on_plus_x();
-
-        world
-            .set_character_look(h, std::f32::consts::PI, 0.0)
-            .unwrap();
+    fn spawn_look_turns_the_volumes_before_any_tick() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        let h = world.add_character(CharacterSpawn {
+            position: Vec3::new(0.0, 1.2, 0.0),
+            yaw: std::f32::consts::PI,
+            pitch: 0.0,
+        });
+        attach(
+            &mut world,
+            h,
+            volume(Vec3::new(0.4, 0.0, 0.0), Vec3::new(0.1, 0.3, 0.1), ARM),
+        );
         world.step(DT);
 
         let face = arm_face_from_minus_x(&world, h).expect("the arm turned to -X");
@@ -2159,12 +2521,17 @@ mod tests {
     fn teleporting_keeps_the_volumes_facing() {
         let (mut world, h) = arm_on_plus_x();
         world
-            .set_character_look(h, std::f32::consts::PI, 0.0)
+            .queue_effect(
+                h,
+                CharacterEffect::SetLook {
+                    yaw: std::f32::consts::PI,
+                    pitch: 0.0,
+                },
+            )
             .unwrap();
+        teleport(&mut world, h, Vec3::new(2.0, 1.2, 0.0));
 
-        world
-            .set_character_position(h, Vec3::new(2.0, 1.2, 0.0))
-            .unwrap();
+        move_idle(&mut world, h);
         world.step(DT);
 
         let face = arm_face_from_minus_x(&world, h).expect("the arm stays at -X");
@@ -2204,8 +2571,15 @@ mod tests {
         );
 
         world
-            .set_character_look(h, std::f32::consts::FRAC_PI_2, 0.0)
+            .queue_effect(
+                h,
+                CharacterEffect::SetLook {
+                    yaw: std::f32::consts::FRAC_PI_2,
+                    pitch: 0.0,
+                },
+            )
             .unwrap();
+        move_idle(&mut world, h);
         world.step(DT);
 
         let at = state(&world, h).position;
@@ -2263,8 +2637,11 @@ mod tests {
         }
 
         fn rest_at(world: &mut PhysicsWorld, at: Vec3, yaw: f32) -> CharacterHandle {
-            let h = world.add_character(at);
-            world.set_character_look(h, yaw, 0.0).unwrap();
+            let h = world.add_character(CharacterSpawn {
+                position: at,
+                yaw,
+                pitch: 0.0,
+            });
             for _ in 0..60 {
                 tick(world, h, &idle());
             }

@@ -6,12 +6,27 @@
 use crate::world::CharacterState;
 use glam::Vec3;
 use rapier3d::geometry::ColliderHandle;
+use serde::{Deserialize, Serialize};
 
 /// Largest pitch magnitude in radians, short of straight up or down.
 pub const PITCH_LIMIT: f32 = 1.54;
 
+/// A change to a character from outside the step, applied in queue order at the start of its
+/// next step.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum CharacterEffect {
+    /// Add to the velocity.
+    AddVelocity(Vec3),
+    /// Replace the velocity.
+    SetVelocity(Vec3),
+    /// Set the position; zero the velocity unless `keep_velocity`; clear `grounded`.
+    Teleport { position: Vec3, keep_velocity: bool },
+    /// Replace the look, with pitch clamped to [`PITCH_LIMIT`].
+    SetLook { yaw: f32, pitch: f32 },
+}
+
 /// One tick's movement intent for a character.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct CharacterCommand {
     /// Move axis along the facing, -1 (back) to 1 (forward); yaw 0 faces +Z. Combined with
     /// `right`, input longer than 1 is scaled down to 1.
@@ -213,9 +228,10 @@ pub(crate) fn turned_look(look: (f32, f32), delta: (f32, f32)) -> (f32, f32) {
 pub fn step(
     state: &mut CharacterState,
     command: &CharacterCommand,
+    _effects: &[CharacterEffect],
     settings: &MoveSettings,
     dt: f32,
-    slide: impl FnOnce(Vec3) -> Slide,
+    slide: impl FnOnce(&CharacterState, Vec3) -> Slide,
 ) -> Vec<Impact> {
     (state.yaw, state.pitch) = turned_look(
         (state.yaw, state.pitch),
@@ -254,7 +270,7 @@ pub fn step(
     }
 
     let asked = state.velocity * dt;
-    let slid = slide(asked);
+    let slid = slide(state, asked);
     state.position += slid.translation;
 
     let impacts = clip(&mut state.velocity, asked, &slid, walking, airborne_before);
@@ -315,6 +331,17 @@ mod tests {
 
     fn collider() -> ColliderHandle {
         ColliderHandle::invalid()
+    }
+
+    /// [`super::step`] with no queued effects and a slide that only sees the asked motion.
+    fn step(
+        state: &mut CharacterState,
+        command: &CharacterCommand,
+        settings: &MoveSettings,
+        dt: f32,
+        slide: impl FnOnce(Vec3) -> Slide,
+    ) -> Vec<Impact> {
+        super::step(state, command, &[], settings, dt, |_, asked| slide(asked))
     }
 
     fn state_at(position: Vec3, velocity: Vec3, grounded: bool) -> CharacterState {
@@ -1956,6 +1983,283 @@ mod tests {
                 walk(&mut state, &command, &test_settings());
                 prop_assert!(state.pitch.abs() <= PITCH_LIMIT, "{}", state.pitch);
             }
+        }
+    }
+
+    #[test]
+    fn commands_and_effects_round_trip_through_postcard() {
+        let commands = [
+            CharacterCommand::default(),
+            CharacterCommand {
+                forward: 1.0,
+                right: -0.5,
+                yaw_delta: 0.25,
+                pitch_delta: -0.125,
+                jump: true,
+            },
+        ];
+        let effects = [
+            CharacterEffect::AddVelocity(Vec3::new(1.0, -2.0, 3.5)),
+            CharacterEffect::SetVelocity(Vec3::new(0.0, 8.0, -1.0)),
+            CharacterEffect::Teleport {
+                position: Vec3::new(3.0, 20.0, -4.0),
+                keep_velocity: true,
+            },
+            CharacterEffect::Teleport {
+                position: Vec3::ZERO,
+                keep_velocity: false,
+            },
+            CharacterEffect::SetLook {
+                yaw: 0.7,
+                pitch: -0.3,
+            },
+        ];
+
+        let command_bytes = postcard::to_allocvec(&commands).expect("commands serialise");
+        let effect_bytes = postcard::to_allocvec(&effects).expect("effects serialise");
+
+        let back_commands: [CharacterCommand; 2] =
+            postcard::from_bytes(&command_bytes).expect("commands deserialise");
+        let back_effects: [CharacterEffect; 5] =
+            postcard::from_bytes(&effect_bytes).expect("effects deserialise");
+        assert_eq!(back_commands, commands);
+        assert_eq!(back_effects, effects);
+    }
+
+    mod effects {
+        use super::*;
+        use crate::movement::step as step_with_effects;
+
+        /// One step on a flat floor at y = 0 that slides from wherever the step starts it.
+        fn on_floor(
+            state: &mut CharacterState,
+            command: &CharacterCommand,
+            effects: &[CharacterEffect],
+        ) -> Vec<Impact> {
+            step_with_effects(
+                state,
+                command,
+                effects,
+                &test_settings(),
+                DT,
+                |from, asked| flat_floor(from.position.y)(asked),
+            )
+        }
+
+        /// The motion the step asked for and the state the slide started from.
+        fn ask_in_open_air(
+            state: &mut CharacterState,
+            effects: &[CharacterEffect],
+        ) -> (Vec3, CharacterState) {
+            let mut seen = None;
+            step_with_effects(
+                state,
+                &CharacterCommand::default(),
+                effects,
+                &test_settings(),
+                DT,
+                |from, asked| {
+                    seen = Some((asked, *from));
+                    open_air(asked)
+                },
+            );
+            seen.expect("the step slid")
+        }
+
+        #[test]
+        fn add_velocity_applies_before_gravity_and_the_move() {
+            let settings = test_settings();
+            let mut walker = standing();
+            let mut faller = state_at(Vec3::new(0.0, 50.0, 0.0), Vec3::ZERO, false);
+
+            on_floor(
+                &mut walker,
+                &CharacterCommand::default(),
+                &[CharacterEffect::AddVelocity(Vec3::new(3.0, 0.0, 0.0))],
+            );
+            let (asked, _) = ask_in_open_air(
+                &mut faller,
+                &[CharacterEffect::AddVelocity(Vec3::new(0.0, 4.0, 0.0))],
+            );
+
+            let after_friction = 3.0 * (1.0 - settings.friction * DT);
+            assert!(
+                (walker.velocity.x - after_friction).abs() < 1e-4,
+                "friction acts on the added speed: {:?}",
+                walker.velocity
+            );
+            assert!(
+                (walker.position.x - after_friction * DT).abs() < 1e-5,
+                "{:?}",
+                walker.position
+            );
+            assert!(
+                (asked.y - (4.0 - settings.gravity * DT / 2.0) * DT).abs() < 1e-6,
+                "the added speed rises under half a tick of gravity, asked y = {}",
+                asked.y
+            );
+        }
+
+        #[test]
+        fn add_velocity_then_teleport_ends_at_the_target_at_rest() {
+            let target = Vec3::new(10.0, 0.0, -3.0);
+            let mut state = standing();
+            let mut started_from = None;
+            let effects = [
+                CharacterEffect::AddVelocity(Vec3::new(5.0, 0.0, 0.0)),
+                CharacterEffect::Teleport {
+                    position: target,
+                    keep_velocity: false,
+                },
+            ];
+
+            step_with_effects(
+                &mut state,
+                &CharacterCommand::default(),
+                &effects,
+                &test_settings(),
+                DT,
+                |from, asked| {
+                    started_from = Some(*from);
+                    flat_floor(from.position.y)(asked)
+                },
+            );
+
+            let from = started_from.expect("the step slid");
+            assert_eq!(from.position, target, "the slide starts at the teleport");
+            assert_eq!(state.position, target);
+            assert_eq!(state.velocity, Vec3::ZERO);
+            assert!(state.grounded, "{state:?}");
+        }
+
+        #[test]
+        fn set_velocity_replaces_it() {
+            let mut state = state_at(Vec3::new(0.0, 50.0, 0.0), Vec3::new(1.0, 2.0, 3.0), false);
+
+            let (asked, _) = ask_in_open_air(
+                &mut state,
+                &[CharacterEffect::SetVelocity(Vec3::new(0.0, 0.0, 6.0))],
+            );
+
+            assert!(
+                (asked - Vec3::new(0.0, -18.0 * DT / 2.0 * DT, 6.0 * DT)).length() < 1e-6,
+                "{asked:?}"
+            );
+            assert!(
+                (state.velocity - Vec3::new(0.0, -18.0 * DT, 6.0)).length() < 1e-5,
+                "{:?}",
+                state.velocity
+            );
+        }
+
+        #[test]
+        fn teleport_keeping_velocity_keeps_it() {
+            let target = Vec3::new(7.0, 60.0, 8.0);
+            let mut state = state_at(Vec3::new(0.0, 50.0, 0.0), Vec3::new(2.0, 0.0, 3.0), false);
+
+            let (asked, from) = ask_in_open_air(
+                &mut state,
+                &[CharacterEffect::Teleport {
+                    position: target,
+                    keep_velocity: true,
+                }],
+            );
+
+            assert_eq!(from.position, target);
+            assert!(
+                (asked - Vec3::new(2.0 * DT, -18.0 * DT / 2.0 * DT, 3.0 * DT)).length() < 1e-6,
+                "{asked:?}"
+            );
+            assert!(
+                (state.position - (target + asked)).length() < 1e-5,
+                "{:?}",
+                state.position
+            );
+            assert!(
+                (state.velocity - Vec3::new(2.0, -18.0 * DT, 3.0)).length() < 1e-5,
+                "{:?}",
+                state.velocity
+            );
+        }
+
+        #[test]
+        fn teleport_clears_grounded() {
+            let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, 0.0, 2.0), true);
+
+            let (asked, from) = ask_in_open_air(
+                &mut state,
+                &[CharacterEffect::Teleport {
+                    position: Vec3::new(5.0, 40.0, 5.0),
+                    keep_velocity: true,
+                }],
+            );
+
+            assert!(
+                !from.grounded,
+                "the old ground says nothing about the new place"
+            );
+            assert!(
+                (asked.y + 18.0 * DT / 2.0 * DT).abs() < 1e-6,
+                "the tick runs airborne, so gravity acts: asked y = {}",
+                asked.y
+            );
+            assert!(!state.grounded, "{state:?}");
+        }
+
+        #[test]
+        fn set_look_replaces_the_look_before_the_commands_turn() {
+            let mut state = standing();
+            state.yaw = 1.0;
+            state.pitch = 0.5;
+            let command = CharacterCommand {
+                forward: 1.0,
+                yaw_delta: 0.5,
+                pitch_delta: 0.25,
+                ..CharacterCommand::default()
+            };
+
+            on_floor(
+                &mut state,
+                &command,
+                &[CharacterEffect::SetLook {
+                    yaw: 0.25,
+                    pitch: -0.5,
+                }],
+            );
+
+            assert!((state.yaw - 0.75).abs() < 1e-6, "{}", state.yaw);
+            assert!((state.pitch + 0.25).abs() < 1e-6, "{}", state.pitch);
+            assert!(
+                (state.velocity.x.atan2(state.velocity.z) - 0.75).abs() < 1e-4,
+                "the move faces the turned look: {:?}",
+                state.velocity
+            );
+        }
+
+        #[test]
+        fn set_look_clamps_pitch() {
+            let mut up = standing();
+            let mut down = standing();
+
+            on_floor(
+                &mut up,
+                &CharacterCommand::default(),
+                &[CharacterEffect::SetLook {
+                    yaw: 0.0,
+                    pitch: 3.0,
+                }],
+            );
+            on_floor(
+                &mut down,
+                &CharacterCommand::default(),
+                &[CharacterEffect::SetLook {
+                    yaw: 0.0,
+                    pitch: -3.0,
+                }],
+            );
+
+            assert_eq!(up.pitch, PITCH_LIMIT);
+            assert_eq!(down.pitch, -PITCH_LIMIT);
         }
     }
 }
