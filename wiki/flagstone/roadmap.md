@@ -19,6 +19,7 @@ flowchart LR
     S2["STRAT-M2 Run the colony from above<br/>SG-F5"] --> S3
     S3["STRAT-M3 Pawns dig what I mark<br/>SG-F4"] --> S4["STRAT-M4 Build, find ore, polish<br/>SG-F3, SG-F6, polish round"]
     S3 -.-> L["SG-F7 light follows edits"]
+    S4 -.-> S5["STRAT-M5 A colony of kinds (proposed)<br/>roles, then pawn kinds"]
 ```
 
 | Milestone | Intent | Gate | Features |
@@ -27,6 +28,7 @@ flowchart LR
 | **STRAT-M2 Run the colony from above** | Strategy mode is a place to be: pan, zoom, select a pawn, step into it and back. | SG-F5 exit criteria hold | [SG-F5](https://github.com/WrackedFella/moho/issues/309) |
 | **STRAT-M3 Pawns dig what I mark** | The colony does something without me at the controls; the first job loop that later job types reuse. | SG-F4 exit criteria hold, including marks surviving save and load | [SG-F4](https://github.com/WrackedFella/moho/issues/310) |
 | **STRAT-M4 Build, find ore, polish** | The loop closes (mine, build, progress) and the game stops feeling like a prototype. | SG-F1 exit criteria hold: possessed pawns mine and pick up as well as commanded ones. SG-F3 and SG-F6 are not ENG-M2 gate items | [SG-F3](https://github.com/WrackedFella/moho/issues/312), SG-F6, rest of SG-F1, polish round |
+| **STRAT-M5 A colony of kinds** (proposed 2026-10-23, not approved) | Colonists take roles, and the colony shares its world with other kinds of pawn. | Proposed: roles steer which job a colonist takes; a first creature kind lives in the world on the same rules as colonists | Roles, then pawn kinds (not filed); see the [GDD](gdd.md#44-pawn-kinds-and-roles-direction-post-prototype) |
 
 Order inside STRAT-M1: spawn on solid ground and survive quit/crash first (in parallel), then no see-through gaps,
 with the pickup popup any time. Inside STRAT-M2: camera and possess-and-return in parallel, then click-select.
@@ -47,12 +49,18 @@ Feature order, with the engine items each needs. SG-F1, SG-F2, SG-F4 and SG-F5 a
 | S.4.1 | [SG-F7](https://github.com/WrackedFella/moho/issues/470) light follows what I dig and build: [SG-F7-01](https://github.com/WrackedFella/moho/issues/471) → [SG-F7-02](https://github.com/WrackedFella/moho/issues/472); [SG-F7-03](https://github.com/WrackedFella/moho/issues/473) after #467; [SG-F7-04](https://github.com/WrackedFella/moho/issues/474) (first emissive block) after #473 and [ENG-F24-05](https://github.com/WrackedFella/moho/issues/469); SG-F7-05 with ENG-F29-01; [SG-F7-06](https://github.com/WrackedFella/moho/issues/482) (smooth AO) after SG-F7-05 | ENG-F24-05 (#469) for SG-F7-04; 2.17 ENG-F29-01 for SG-F7-05 | ENG-M2; dug shafts and caves need correct sky light for S.4 |
 | S.5 | [SG-F3](https://github.com/WrackedFella/moho/issues/312) buildings and construction (not a gate item) | 2.7 (placement preview) | after SG-F4 |
 | S.6 | SG-F6 new worlds look intentional ([draft](../../_todo/flagstone/SG-F6-world-generation/_feature.md), not filed; not a gate item) | none | waits for the user to rank the world-generation problems |
+| S.7 (proposed) | Pawn roles: colonists take a role that steers which job they pick (not filed) | none | after SG-F3, the second job type; stays on typed stores |
+| S.8 (proposed) | Pawn kinds: a first creature kind, wildlife by default (not filed) | none | after S.7; its first card moves pawns into an ECS ([ADR-0023](../../_todo/adr/0023-pawn-kinds-share-components.md), proposed). Hostile creatures wait for combat |
 
 ## Open dependencies
 
 - **Navigation over changing terrain** ([#303](https://github.com/WrackedFella/moho/issues/303)) is strategy-line
-  work inside SG-F4 and its biggest unknown. It decides whether SG-F4 is the first consumer of an entity-component
-  system ([ADR-0004](../../_todo/adr/0004-entity-storage-without-a-general-ecs.md)).
+  work inside SG-F4 and its biggest unknown. SG-F4 stays on typed stores (#436, #437 specs); the entity-component
+  system arrives with the second pawn kind ([ADR-0004](../../_todo/adr/0004-entity-storage-without-a-general-ecs.md),
+  [ADR-0023](../../_todo/adr/0023-pawn-kinds-share-components.md), proposed).
+- **Pawn kinds and roles** (Justin, 2026-10-23): animals, monsters and colonist roles are coming. STRAT-M5 is a
+  proposal; it changes no order inside STRAT-M1 to STRAT-M4. Which creature comes first, whether creatures can be possessed and how
+  roles rank jobs are [GDD Q6 and Q7](gdd.md#open-questions).
 - **World generation ranking.** SG-F6 has no exit criteria until Justin ranks the world-generation problems
   (see the [GDD open questions](gdd.md#open-questions)).
 - **Possession feel** (rest of SG-F1) is required for ENG-M2. It gets cards after the STRAT-M2 playtest, not before, and the playtest covers mining while possessed as well as mining by command.

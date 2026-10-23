@@ -1,4 +1,4 @@
-# 0023 — World meshes are placed per frame
+# 0025 — World meshes are placed per frame
 
 **Status:** Accepted on merge of #648; amends [0010](0010-world-geometry-is-a-mesh-contract.md): a world mesh may also be placed at transforms the game sets each frame
 

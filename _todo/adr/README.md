@@ -23,7 +23,7 @@ ADRs written before ENG-F27 (2026-10-15) keep the crate names of their day. Read
 | [0007](0007-third-party-licence-policy.md) | Third-party licences stay compatible with closed-source commercial sale | Accepted |
 | [0008](0008-keep-winit-for-windowing-and-input.md) | Keep winit; gamepads via `gilrs` when needed | Accepted |
 | [0009](0009-simulation-time-is-one-fixed-tick.md) | Simulation time comes from one fixed tick; no separate clock | Accepted |
-| [0010](0010-world-geometry-is-a-mesh-contract.md) | The engine sees world geometry as meshes; voxels belong to the strategy line | Accepted; amended by 0023 |
+| [0010](0010-world-geometry-is-a-mesh-contract.md) | The engine sees world geometry as meshes; voxels belong to the strategy line | Accepted; amended by 0025 |
 | [0011](0011-simulation-stays-network-ready.md) | The simulation advances only from per-tick commands over plain data, so replay and later netcode stay possible | Accepted; narrowed by 0018 |
 | [0012](0012-engine-crate-map-for-m2.md) | Engine capabilities land as modules first; crate map and seam list for M1–M2 | Accepted |
 | [0013](0013-ui-reaches-the-renderer-as-paint-data.md) | UI reaches the renderer as plain paint data; the renderer owns UI drawing | Accepted |
@@ -35,4 +35,5 @@ ADRs written before ENG-F27 (2026-10-15) keep the crate names of their day. Read
 | [0019](0019-navigation-is-an-engine-seam.md) | Navigation over static levels is engine seam 11: a navmesh from world meshes, path queries answered by engine code | Accepted |
 | [0021](0021-game-ai-lives-in-the-lines.md) | Game AI lives in the lines; the engine answers queries, and AI acts through player commands, sim-only perception and seeded randomness | Accepted |
 | [0022](0022-character-changes-are-tick-input.md) | Every change to a character from outside the step is a queued effect, plain data applied in order at the start of its next step | Accepted |
-| [0023](0023-world-meshes-are-placed-per-frame.md) | World meshes are placed per frame: upload once, place at game-set transforms; placements last one frame | Accepted on merge of #648 |
+| [0023](0023-pawn-kinds-share-components.md) | Pawn kinds are component sets driven by one controller; flagstone moves pawns into `hecs` with the second pawn kind | Proposed |
+| [0025](0025-world-meshes-are-placed-per-frame.md) | World meshes are placed per frame: upload once, place at game-set transforms; placements last one frame | Accepted on merge of #648 |

@@ -59,7 +59,7 @@ registered, and an empty mesh counts as a remove. A static mesh draws once at th
 identity, one draw per mesh in id order.
 
 A mesh that moves is uploaded once with `upsert_movable(id, mesh)` and drawn only where
-the game places it ([ADR-0023](../../_todo/adr/0023-world-meshes-are-placed-per-frame.md)).
+the game places it ([ADR-0025](../../_todo/adr/0025-world-meshes-are-placed-per-frame.md)).
 `place(id, Affine3A, material)` adds one copy for the current frame, any number per id and
 on static meshes too; the mesh needs no `materials` channel, so the placement's material
 applies. Placements on an id that is not live are skipped. `Scene::render` groups the
