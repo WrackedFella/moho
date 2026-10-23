@@ -256,14 +256,13 @@ struct Spawns {
     nav: Arc<NavMesh>,
 }
 
-/// A target standing on the floor point `spawn` as target number `index`. With a `route` it is
-/// an enemy of `grade`, facing the nearest waypoint; without, a dummy.
+/// A target standing on the floor point `spawn` as target number `index`. With a route and a
+/// grade it is an enemy of that grade, facing the nearest waypoint; without, a dummy.
 fn new_target(
     world: &mut PhysicsWorld,
     index: usize,
     spawn: Vec3,
-    route: Option<&[Vec3]>,
-    grade: Grade,
+    enemy: Option<(&[Vec3], Grade)>,
     profile: BodyProfile,
 ) -> Target {
     let (target, centre) = dummy_at(index, spawn);
@@ -273,7 +272,7 @@ fn new_target(
             .add_hit_volume(handle, volume)
             .expect("the target was added a moment ago");
     }
-    let enemy = route.map(|route| {
+    let enemy = enemy.map(|(route, grade)| {
         let (nearest, yaw) = nearest_waypoint(spawn, route);
         world
             .set_character_look(handle, yaw, 0.0)
@@ -331,15 +330,9 @@ impl SearchlightSim {
             .offset;
         let mut targets = Vec::new();
         for (index, &spawn) in spawns.dummies.iter().chain(&spawns.enemies).enumerate() {
-            let route = (index >= spawns.dummies.len()).then_some(spawns.route.as_slice());
-            targets.push(new_target(
-                &mut world,
-                index,
-                spawn,
-                route,
-                Grade::default(),
-                config.body,
-            ));
+            let enemy = (index >= spawns.dummies.len())
+                .then_some((spawns.route.as_slice(), Grade::default()));
+            targets.push(new_target(&mut world, index, spawn, enemy, config.body));
         }
         // Index the new hit volumes so the first tick's rays can strike them.
         world.step(SETTLE_DT);
@@ -758,8 +751,7 @@ impl SearchlightSim {
             &mut self.world,
             index,
             spawn,
-            Some(&self.route),
-            grade,
+            Some((&self.route, grade)),
             self.origin.1.body,
         );
         self.targets.push(target);
