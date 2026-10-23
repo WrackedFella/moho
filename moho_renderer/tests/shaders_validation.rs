@@ -213,6 +213,54 @@ fn marker_shader_declares_the_inflate_override() {
     );
 }
 
+#[test]
+fn bloom_shader_declares_threshold_and_knee_overrides() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../shaders/bloom.wgsl");
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read shader {}: {e}", path.display()));
+
+    let module = validate("bloom.wgsl", &source, Capabilities::empty());
+
+    let entry_points: Vec<&str> = module
+        .entry_points
+        .iter()
+        .map(|e| e.name.as_str())
+        .collect();
+    for expected in ["vs_main", "fs_prefilter", "fs_downsample", "fs_upsample"] {
+        assert!(
+            entry_points.contains(&expected),
+            "{expected} missing: {entry_points:?}"
+        );
+    }
+    let prefilter = module
+        .entry_points
+        .iter()
+        .find(|e| e.name == "fs_prefilter")
+        .expect("fs_prefilter");
+    for name in ["bloom_threshold", "bloom_knee"] {
+        let (handle, declared) = module
+            .overrides
+            .iter()
+            .find(|(_, o)| o.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("bloom.wgsl declares `override {name}`"));
+        assert_eq!(
+            module.types[declared.ty].inner,
+            naga::TypeInner::Scalar(naga::Scalar::F32),
+            "{name} is an f32"
+        );
+        assert!(declared.init.is_none(), "the pipeline supplies {name}");
+        assert!(
+            std::iter::once(&prefilter.function)
+                .chain(module.functions.iter().map(|(_, f)| f))
+                .any(|f| f
+                    .expressions
+                    .iter()
+                    .any(|(_, e)| matches!(e, naga::Expression::Override(h) if *h == handle))),
+            "the prefilter reads {name}"
+        );
+    }
+}
+
 /// The WGSL type a shader input must have to read an attribute of `format`.
 fn wgsl_type_of(format: wgpu::VertexFormat) -> naga::TypeInner {
     use naga::{Scalar, TypeInner, VectorSize};

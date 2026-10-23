@@ -28,6 +28,7 @@ pub use gpu_types::{
 };
 pub use moho_render_api::{InstanceGpu, MaterialGpu};
 mod block_on;
+mod bloom;
 mod markers;
 mod ui_pass;
 pub use markers::{MARKER_INFLATE, MarkerDraws, Markers};
