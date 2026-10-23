@@ -1,29 +1,122 @@
 //! Sun and moon shadow matrices as plain functions over glam types, so they run without a GPU.
 
-use glam::Mat4;
-use glam::Vec3;
+use glam::camera::rh::{proj::directx::orthographic, view::look_at_mat4};
+use glam::{Mat4, Vec3, Vec4};
 
-use super::{ActiveShadowLight, PcssSettings};
+use super::{
+    ActiveShadowLight, CASCADE_RADIUS_MULTIPLIER, LightType, MIN_SHADOW_LIGHT_INTENSITY,
+    PcssSettings, SHADOW_DISTANCE, SHADOW_MAP_SIZE,
+};
 use crate::gpu_types::MultiLightShadowGpu;
 
-pub(super) fn light_view_projection(_light_dir: Vec3, _center: Vec3) -> Mat4 {
-    todo!()
+/// Above this `|light_dir · Y|` the look-at's `forward × up` is too close to zero to normalise.
+const OVERHEAD_DOT: f32 = 0.999;
+
+/// View-projection of a directional light covering `SHADOW_DISTANCE` around `center`.
+/// `light_dir` points toward the light.
+pub(super) fn light_view_projection(light_dir: Vec3, center: Vec3) -> Mat4 {
+    let light_dir = light_dir.normalize();
+    let light_distance = SHADOW_DISTANCE * 2.0;
+    let light_pos = center + light_dir * light_distance;
+
+    // A light parallel to Y makes look_at's `forward × up` zero, which normalises to NaN.
+    let up = if light_dir.dot(Vec3::Y).abs() > OVERHEAD_DOT {
+        Vec3::Z
+    } else {
+        Vec3::Y
+    };
+    let light_view = look_at_mat4(light_pos, center, up);
+
+    let radius = SHADOW_DISTANCE * CASCADE_RADIUS_MULTIPLIER;
+    let world_units_per_texel = (2.0 * radius) / SHADOW_MAP_SIZE as f32;
+    let light_proj = orthographic(
+        -radius,
+        radius,
+        -radius,
+        radius,
+        1.0,
+        light_distance + SHADOW_DISTANCE,
+    );
+
+    // Maps -1..1 Z to 0..1 Z.
+    let correction_matrix = Mat4::from_cols(
+        Vec4::new(1.0, 0.0, 0.0, 0.0),
+        Vec4::new(0.0, 1.0, 0.0, 0.0),
+        Vec4::new(0.0, 0.0, 0.5, 0.0),
+        Vec4::new(0.0, 0.0, 0.5, 1.0),
+    );
+
+    // Snap the world origin to the texel grid so the map doesn't shimmer as the camera moves.
+    let origin_light_space = light_view.transform_point3(Vec3::ZERO);
+    let snapped_x = (origin_light_space.x / world_units_per_texel).floor() * world_units_per_texel;
+    let snapped_y = (origin_light_space.y / world_units_per_texel).floor() * world_units_per_texel;
+    let snap = Mat4::from_translation(Vec3::new(
+        snapped_x - origin_light_space.x,
+        snapped_y - origin_light_space.y,
+        0.0,
+    ));
+
+    correction_matrix * light_proj * snap * light_view
 }
 
-pub(super) fn active_shadow_lights(
-    _sun: (Mat4, f32),
-    _moon: (Mat4, f32),
-) -> Vec<ActiveShadowLight> {
-    todo!()
+/// The lights that cast a shadow this frame: sun in slot 0, moon in slot 1, each only when its
+/// intensity is above `MIN_SHADOW_LIGHT_INTENSITY`.
+pub(super) fn active_shadow_lights(sun: (Mat4, f32), moon: (Mat4, f32)) -> Vec<ActiveShadowLight> {
+    [(LightType::Sun, 0, sun), (LightType::Moon, 1, moon)]
+        .into_iter()
+        .filter(|(_, _, (_, intensity))| *intensity > MIN_SHADOW_LIGHT_INTENSITY)
+        .map(
+            |(light_type, light_index, (matrix, intensity))| ActiveShadowLight {
+                light_type,
+                light_index,
+                matrix,
+                intensity,
+            },
+        )
+        .collect()
 }
 
+/// The shader's shadow block: sun and moon matrices, identity for the two unused slots.
 pub(super) fn multi_light_gpu(
-    _sun: Mat4,
-    _moon: Mat4,
-    _intensities: (f32, f32),
-    _pcss: &PcssSettings,
+    sun: Mat4,
+    moon: Mat4,
+    (sun_intensity, moon_intensity): (f32, f32),
+    pcss: &PcssSettings,
 ) -> MultiLightShadowGpu {
-    todo!()
+    let sun_cols = sun.to_cols_array_2d();
+    let moon_cols = moon.to_cols_array_2d();
+    let unused = Mat4::IDENTITY.to_cols_array_2d();
+
+    MultiLightShadowGpu {
+        light0_m0: sun_cols[0],
+        light0_m1: sun_cols[1],
+        light0_m2: sun_cols[2],
+        light0_m3: sun_cols[3],
+
+        light1_m0: moon_cols[0],
+        light1_m1: moon_cols[1],
+        light1_m2: moon_cols[2],
+        light1_m3: moon_cols[3],
+
+        light2_m0: unused[0],
+        light2_m1: unused[1],
+        light2_m2: unused[2],
+        light2_m3: unused[3],
+
+        light3_m0: unused[0],
+        light3_m1: unused[1],
+        light3_m2: unused[2],
+        light3_m3: unused[3],
+
+        light_intensities: [sun_intensity, moon_intensity, 0.0, 0.0],
+        // [shadow_distance, light_size, pcss_quality, view-height cut (set per frame by shadow_ops)]
+        metadata: [
+            SHADOW_DISTANCE,
+            pcss.light_size,
+            pcss.quality as u32 as f32,
+            0.0,
+        ],
+    }
 }
 
 #[cfg(test)]
