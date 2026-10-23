@@ -166,7 +166,8 @@ command encoder:
 flowchart LR
     A["flatten instances<br/>upload to instance buffer"] --> B["shadow passes<br/>shadow_ops"]
     B --> C["main pass into HDR target<br/>skybox, then geometry<br/>main_pass_ops"]
-    C --> T["tone-map pass<br/>HDR target to swapchain"]
+    C --> L["bloom chain<br/>prefilter, downsample, upsample<br/>skipped when Off"]
+    L --> T["tone-map pass<br/>HDR target + bloom to swapchain"]
     T --> K["marker pass<br/>marker_pass_ops<br/>only when markers exist"]
     K --> D["SSAO compute<br/>from depth"]
     D --> U["UI pass<br/>draw_ui"]
@@ -175,13 +176,24 @@ flowchart LR
 
 The egui UI is drawn by the UI pass from paint data (below); `finish_frame` only submits
 and presents. Shader sources are `shaders/*.wgsl` (`common`, `sky`, `vertex`,
-`fragment`, `shadow`, `skybox`, `gtao`, `ssao_blur`, `pcss`, `instance`, `ui`, `marker`, `tonemap`).
+`fragment`, `shadow`, `skybox`, `gtao`, `ssao_blur`, `pcss`, `instance`, `ui`, `marker`, `bloom`, `tonemap`).
 
 The skybox and main pipelines render into an `Rgba16Float` HDR target (`tone_map::HdrTarget`,
-recreated on resize), not the swapchain. `tone_map::ToneMapPass` then resolves it to the
-swapchain in `shaders/tonemap.wgsl`: exposure multiplier, then a hue-preserving highlight
-roll-off (identity below 0.76). With the curve off the HDR scene is copied unchanged.
-Markers and the UI draw after it, straight onto the swapchain, so neither is tone-mapped.
+recreated on resize), not the swapchain. `bloom::BloomChain` (`shaders/bloom.wgsl`, after
+Jimenez 2014) then blurs its bright pixels into an `Rgba16Float` mip chain, one render pass
+per step: a 13-tap prefilter with the Karis average and a soft-knee threshold
+(`bloom_threshold` 1.0, `bloom_knee` 0.25, pipeline overrides) from the HDR target into
+mip 0, 13-tap downsamples down the chain, then 3×3 tent upsamples blended additively back
+up it. High starts at half resolution with 6 levels, Low at quarter with 5
+(`mip_extents`); the mips are recreated on resize and on a quality change
+(`RendererBackend::set_bloom_quality`). A pixel at or below the threshold adds nothing.
+`tone_map::ToneMapPass` then resolves the HDR target to the swapchain in
+`shaders/tonemap.wgsl`: mip 0 added at `bloom_intensity` (0.5 / level count, so Low and
+High are equally strong), exposure multiplier, then a hue-preserving highlight roll-off
+(identity below 0.76). Bloom Off skips the chain, sets the intensity to 0 and binds a 1×1
+black texture, so the frame matches no bloom exactly. With the curve off the bloomed HDR
+scene is copied unchanged. Markers and the UI draw after it, straight onto the swapchain,
+so none of them is tone-mapped or bloomed.
 
 Present mode: the surface starts on `Fifo` and the renderer keeps the present modes the
 surface supports. `RendererBackend::set_vsync(on)` picks the mode with

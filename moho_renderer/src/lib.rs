@@ -161,6 +161,9 @@ pub trait RendererBackend {
     /// Turn the tone-map curve on or off; off passes the HDR scene through
     /// unchanged. Session-only. No-op by default.
     fn set_tone_map(&mut self, _enabled: bool) {}
+    /// Set the bloom quality: 0 Off, 1 Low, 2 High; any other value gives High. Off adds
+    /// no bloom at all. No-op by default.
+    fn set_bloom_quality(&mut self, _quality: u8) {}
     /// Queue the frame's box markers to draw over the world: translucent
     /// `fills` and edge-only `outlines`, each sorted far to near. Called once
     /// per frame after the transparent draws and before `submit_frame`. No-op
@@ -247,6 +250,9 @@ impl RendererBackend for Renderer<'_> {
     }
     fn set_tone_map(&mut self, enabled: bool) {
         self.set_tone_map(enabled);
+    }
+    fn set_bloom_quality(&mut self, quality: u8) {
+        self.set_bloom_quality(quality);
     }
     fn enqueue_markers(
         &mut self,
