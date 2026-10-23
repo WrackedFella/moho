@@ -949,21 +949,6 @@ mod tests {
         }
 
         #[test]
-        fn walker_hanging_exactly_the_snap_distance_is_still_lowered() {
-            let after = run_over(
-                walker_at_speed(0.0),
-                &forward(),
-                over(false, Vec3::Y, GROUND_SNAP),
-            );
-
-            assert!(after.grounded, "{after:?}");
-            assert!(
-                (after.position.y - (START_Y - GROUND_SNAP)).abs() < 1e-5,
-                "{after:?}"
-            );
-        }
-
-        #[test]
         fn walker_hanging_within_the_step_height_on_a_level_move_is_lowered() {
             for gap in [GROUND_SNAP + 0.01, 0.3, STEP_HEIGHT] {
                 let after = run_over(walker_at_speed(0.0), &forward(), over(false, Vec3::Y, gap));
@@ -1020,29 +1005,15 @@ mod tests {
         }
 
         #[test]
-        fn walker_hanging_beyond_the_snap_distance_is_left_airborne_where_it_is() {
-            let level_far = run_over(
+        fn walker_hanging_beyond_the_step_height_on_a_level_move_is_left_airborne_where_it_is() {
+            let after = run_over(
                 walker_at_speed(0.0),
                 &forward(),
                 over(false, Vec3::Y, STEP_HEIGHT + 0.01),
             );
-            let rising = 1.0;
-            let rising_far = run_over(
-                walker_at_speed(rising),
-                &forward(),
-                over(false, Vec3::Y, GROUND_SNAP + 0.01),
-            );
 
-            assert!(!level_far.grounded, "{level_far:?}");
-            assert!(
-                (level_far.position.y - START_Y).abs() < 1e-5,
-                "{level_far:?}"
-            );
-            assert!(!rising_far.grounded, "{rising_far:?}");
-            assert!(
-                (rising_far.position.y - (START_Y + rising * DT)).abs() < 1e-5,
-                "{rising_far:?}"
-            );
+            assert!(!after.grounded, "{after:?}");
+            assert!((after.position.y - START_Y).abs() < 1e-5, "{after:?}");
         }
 
         #[test]

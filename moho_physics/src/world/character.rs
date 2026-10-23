@@ -1305,9 +1305,11 @@ mod tests {
 
         assert!(now.grounded, "{now:?}");
         assert!(impacts.is_empty(), "{impacts:?}");
+        // Rim resting on the edge a skin's width away: 0.85 + sqrt((0.3 + 0.0115)^2 - 0.2^2).
+        // Lowering onto the floor's plane instead would end near 1.15.
         assert!(
-            (1.0..over_the_void.y - 0.05).contains(&now.position.y),
-            "lowered onto the edge, not through it: {now:?}"
+            (1.075..1.11).contains(&now.position.y),
+            "lowered until the capsule meets the edge: {now:?}"
         );
     }
 

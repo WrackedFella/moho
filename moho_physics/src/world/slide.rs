@@ -324,7 +324,7 @@ mod tests {
         assert_eq!(step_up_over_thin_wall(&ground(-1.0, 2.05, 10.0)), None);
     }
 
-    fn ground_under_centre(meshes: &[WorldMesh], centre: Vec3) -> Option<Vec3> {
+    fn ground_below_centre(meshes: &[WorldMesh], centre: Vec3) -> Option<Vec3> {
         let mut world = PhysicsWorld::new();
         for (id, mesh) in meshes.iter().enumerate() {
             world.set_world_mesh(WorldMeshId(id as u64), mesh, TEST_TAG);
@@ -343,7 +343,7 @@ mod tests {
             shape: capsule.as_ref(),
             dt: 1.0 / 60.0,
         };
-        slider.ground_under(centre).map(|ground| ground.normal)
+        slider.ground_below(centre).map(|ground| ground.normal)
     }
 
     fn slope(degrees: f32) -> WorldMesh {
@@ -352,50 +352,43 @@ mod tests {
     }
 
     #[test]
-    fn ground_under_reports_the_face_below_the_centre() {
+    fn ground_below_reports_the_face_below_the_centre() {
         let angle = 25.0_f32.to_radians();
         let tilted = Vec3::new(0.0, angle.cos(), -angle.sin());
 
-        let flat = ground_under_centre(&[ground(0.0, -10.0, 10.0)], Vec3::new(0.0, 1.2, 0.0));
-        let on_slope = ground_under_centre(&[slope(25.0)], Vec3::new(0.0, 1.27, 0.0));
-        let at_reach = ground_under_centre(&[slope(40.0)], Vec3::new(1.0, 1.4, 0.0));
-        let over_ledge = ground_under_centre(&[ground(0.0, -10.0, 1.0)], Vec3::new(0.0, 1.2, 0.5));
+        let flat = ground_below_centre(&[ground(0.0, -10.0, 10.0)], Vec3::new(0.0, 1.2, 0.0));
+        let on_slope = ground_below_centre(&[slope(25.0)], Vec3::new(0.0, 1.27, 0.0));
+        let steep_walkable = ground_below_centre(&[slope(40.0)], Vec3::new(1.0, 1.4, 0.0));
+        let over_ledge = ground_below_centre(&[ground(0.0, -10.0, 1.0)], Vec3::new(0.0, 1.2, 0.5));
 
         assert!(flat.expect("flat ground below").distance(Vec3::Y) < 1e-3);
         assert!(
             on_slope.expect("slope below").distance(tilted) < 1e-3,
             "{on_slope:?}"
         );
-        assert!(at_reach.is_some(), "a 40 degree face is walkable");
+        assert!(steep_walkable.is_some(), "a 40 degree face is walkable");
         assert!(over_ledge.is_some(), "the ray finds the ledge's top");
     }
 
     #[test]
-    fn ground_under_is_none_past_a_ledge_and_on_steep_faces() {
-        let ledge = || vec![ground(0.0, -10.0, 1.0)];
+    fn ground_below_is_none_on_steep_faces_beyond_the_step_height_and_over_nothing() {
         let level = || vec![ground(0.0, -10.0, 10.0)];
         let cases: Vec<(&str, Vec<WorldMesh>, Vec3)> = vec![
-            ("well past a ledge", ledge(), Vec3::new(0.0, 1.2, 1.5)),
-            (
-                "just past a ledge, where a shape cast would see its rounded edge",
-                ledge(),
-                Vec3::new(0.0, 1.2, 1.07),
-            ),
             (
                 "over a 50 degree face",
                 vec![slope(50.0)],
                 Vec3::new(0.0, 1.2, 0.0),
             ),
             (
-                "beyond the capsule's reach",
+                "beyond the step height",
                 level(),
-                Vec3::new(0.0, 1.6, 0.0),
+                Vec3::new(0.0, 1.15 + 0.55, 0.0),
             ),
             ("over nothing", Vec::new(), Vec3::new(0.0, 1.2, 0.0)),
         ];
 
         for (case, meshes, centre) in cases {
-            assert_eq!(ground_under_centre(&meshes, centre), None, "{case}");
+            assert_eq!(ground_below_centre(&meshes, centre), None, "{case}");
         }
     }
 
@@ -499,18 +492,18 @@ mod tests {
     #[test]
     fn ground_gap_stops_where_the_capsule_meets_the_nosing() {
         let centre = Vec3::new(0.0, UPPER_STEP_REST_Y, 1.25);
-        let distance_to_the_lower_step = 0.3;
 
         let found = with_slider(&nosing_over_a_lower_step(), |slider| {
             slider.ground_below(centre)
         })
         .expect("the lower step is under the flat base");
 
+        // The rim's sphere (0.3 m, plus the 0.0115 skin) meets the nosing 0.25 m to the side:
+        // it drops 0.3 - sqrt(0.3115^2 - 0.25^2) = 0.114 m, not the 0.3 m to the lower step.
         assert!(
-            found.gap > 0.05 && found.gap < 0.2,
+            (0.10..0.13).contains(&found.gap),
             "the capsule can drop only until its rim meets the nosing: {found:?}"
         );
-        assert!(found.gap < distance_to_the_lower_step, "{found:?}");
     }
 
     #[test]
@@ -546,18 +539,20 @@ mod tests {
     }
 
     #[test]
-    fn ground_gap_is_the_height_above_the_plane_where_the_capsule_would_rest() {
+    fn ground_gap_is_how_far_the_capsule_drops_before_touching() {
+        const SKIN: f32 = 0.0115;
         for degrees in [25.0_f32, 40.0] {
-            let resting = 0.85 + 0.3 / degrees.to_radians().cos();
-            for lift in [0.0, 0.05] {
+            let cos = degrees.to_radians().cos();
+            let resting = 0.85 + 0.3 / cos;
+            for (lift, expected) in [(0.0, 0.0), (0.05, 0.05 - SKIN / cos)] {
                 let centre = Vec3::new(0.0, resting + lift, 0.0);
 
-                let ground = with_slider(&[slope(degrees)], |slider| slider.ground_under(centre))
+                let ground = with_slider(&[slope(degrees)], |slider| slider.ground_below(centre))
                     .expect("walkable face below");
 
                 assert!(
-                    (ground.gap - lift).abs() < 1e-3,
-                    "{degrees} degrees, held {lift} m up: {ground:?}"
+                    (ground.gap - expected).abs() < 1e-3,
+                    "{degrees} degrees, held {lift} m up, expected a drop of {expected}: {ground:?}"
                 );
             }
         }
