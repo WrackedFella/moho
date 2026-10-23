@@ -187,6 +187,8 @@ impl App {
                 RenderRequest::SsaoQuality(quality) => renderer.set_ssao_quality(quality),
                 RenderRequest::ViewHeight(height) => renderer.set_view_height(height),
                 RenderRequest::Vsync(on) => renderer.set_vsync(on),
+                RenderRequest::Brightness(brightness) => renderer.set_brightness(brightness),
+                RenderRequest::ToneMap(enabled) => renderer.set_tone_map(enabled),
             }
         }
     }
@@ -728,6 +730,8 @@ mod tests {
         ssao_qualities: Vec<u8>,
         view_heights: Vec<Option<f32>>,
         vsyncs: Vec<bool>,
+        brightnesses: Vec<f32>,
+        tone_maps: Vec<bool>,
         lightings: Vec<LightingGpu>,
         frames_begun: u32,
         cameras: Vec<(glam::Mat4, glam::Mat4, glam::Vec3)>,
@@ -793,6 +797,12 @@ mod tests {
         }
         fn set_vsync(&mut self, on: bool) {
             self.vsyncs.push(on);
+        }
+        fn set_brightness(&mut self, brightness: f32) {
+            self.brightnesses.push(brightness);
+        }
+        fn set_tone_map(&mut self, enabled: bool) {
+            self.tone_maps.push(enabled);
         }
     }
 
@@ -1081,6 +1091,20 @@ mod tests {
             run_frame(&mut app, &mut fake);
 
             assert_eq!(fake.view_heights, vec![Some(12.5), None]);
+            assert!(app.pending_render.is_empty());
+        }
+
+        #[test]
+        fn brightness_request_reaches_the_renderer() {
+            let mut app = playing_app();
+            let mut fake = FakeRenderer::default();
+            app.pending_render.push(RenderRequest::Brightness(1.5));
+            app.pending_render.push(RenderRequest::ToneMap(false));
+
+            run_frame(&mut app, &mut fake);
+
+            assert_eq!(fake.brightnesses, vec![1.5]);
+            assert_eq!(fake.tone_maps, vec![false]);
             assert!(app.pending_render.is_empty());
         }
 

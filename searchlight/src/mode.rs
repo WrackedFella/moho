@@ -30,13 +30,14 @@ impl ArenaMode {
             tuning: waves,
             seen_kills: 0,
         };
-        mode.step_waves(Grade::default());
+        mode.step_waves(None);
         mode
     }
 
-    /// Scores the sim's new kills and spawns the wave's enemies, each of `grade`, at the first
-    /// free markers; none while the player is dead.
-    fn step_waves(&mut self, grade: Grade) {
+    /// Scores the sim's new kills and spawns the wave's enemies at the first free markers, each
+    /// of `forced` or else the grade the wave's mix gives its place in the wave; none while the
+    /// player is dead.
+    fn step_waves(&mut self, forced: Option<Grade>) {
         let kills = self.sim.kills();
         let scan = !self.sim.player_body().is_dead()
             && (self.waves.to_spawn() != 0 || self.sim.enemies_alive() == 0);
@@ -52,8 +53,13 @@ impl ArenaMode {
             free.len(),
         );
         self.seen_kills = kills;
+        let grades = self.waves.grades();
+        let first = self.waves.spawned() - spawn;
         let mut spawned = 0;
-        for &marker in free.iter().take(spawn as usize) {
+        for (&marker, index) in free.iter().zip(first..first + spawn) {
+            let grade = forced
+                .or_else(|| grades.grade_of(index))
+                .unwrap_or_default();
             if let Err(error) = self.sim.spawn_enemy(marker, grade) {
                 tracing::warn!(%error, marker, "wave enemy not spawned");
                 break;
@@ -72,7 +78,7 @@ impl ArenaMode {
             self.waves = WaveState::begin(&self.tuning);
             self.seen_kills = 0;
         }
-        self.step_waves(command.forced_grade.unwrap_or_default());
+        self.step_waves(command.forced_grade);
     }
 
     pub fn sim(&self) -> &SearchlightSim {
@@ -103,11 +109,11 @@ impl ArenaMode {
 #[cfg(test)]
 mod tests {
     use glam::Vec3;
-    use searchlight_rules::Rifle;
+    use searchlight_rules::GradeMix;
 
     use super::*;
     use crate::sim::STAND_HEIGHT;
-    use crate::test_support::{DT, arena_with, mag, test_config};
+    use crate::test_support::{DT, arena_with, mag, rifle_from, test_config};
 
     fn idle() -> SearchlightCommand {
         SearchlightCommand::default()
@@ -129,13 +135,18 @@ mod tests {
 
     /// Enemies that neither see the player nor leave their markers.
     fn calm_config() -> SimConfig {
-        let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        let mut config = test_config(rifle_from(mag(30, 30)), vec![]);
         config.enemy.sight_range = 0.5;
         config.enemy.patrol_speed = 0.0;
         config
     }
 
     fn tuning(first_size: u32, growth: u32, score_per_kill: u32) -> WaveTuning {
+        mixed_tuning(first_size, growth, score_per_kill)
+            .with_mix(GradeMix::only(Grade::Experienced))
+    }
+
+    fn mixed_tuning(first_size: u32, growth: u32, score_per_kill: u32) -> WaveTuning {
         WaveTuning::new(first_size, growth, score_per_kill).expect("a valid tuning")
     }
 
@@ -391,20 +402,70 @@ mod tests {
             .collect()
     }
 
+    /// Kills every enemy standing and ticks with `command`, so the next wave comes.
+    fn clear_wave_with(mode: &mut ArenaMode, command: &SearchlightCommand) {
+        for index in 0..mode.sim().enemy_count() {
+            if mode.sim().enemy_state(index).is_some() {
+                mode.sim_mut().kill_enemy(index);
+            }
+        }
+        mode.tick(command, DT);
+    }
+
+    fn clear_wave(mode: &mut ArenaMode) {
+        clear_wave_with(mode, &idle());
+    }
+
+    const WAVE_ONE_OF_TEN: [Grade; 10] = [
+        Grade::Rookie,
+        Grade::Rookie,
+        Grade::Rookie,
+        Grade::Rookie,
+        Grade::Rookie,
+        Grade::Novice,
+        Grade::Novice,
+        Grade::Novice,
+        Grade::Novice,
+        Grade::Experienced,
+    ];
+
     #[test]
-    fn an_unforced_wave_spawns_experienced_enemies() {
-        let mut mode = calm_mode(4, tuning(1, 2, 100));
-        let first = grades_from(&mode, 0);
-        mode.sim_mut().kill_enemy(0);
+    fn an_unforced_first_wave_spawns_mostly_rookies_and_novices() {
+        let mode = calm_mode(12, mixed_tuning(10, 2, 100));
 
-        mode.tick(&idle(), DT);
+        let grades = grades_from(&mode, 0);
 
-        assert_eq!(first, [Some(Grade::Experienced)]);
-        assert_eq!(mode.sim().enemy_count(), 4);
+        assert_eq!(grades, WAVE_ONE_OF_TEN.map(Some));
+    }
+
+    #[test]
+    fn wave_five_spawns_a_larger_high_share_than_wave_one() {
+        let mut mode = calm_mode(12, mixed_tuning(2, 2, 100));
+        let wave_one = grades_from(&mode, 0);
+        for _ in 1..5 {
+            clear_wave(&mut mode);
+        }
+
+        let wave_five = grades_from(&mode, 20);
+
+        assert_eq!(mode.wave(), 5);
+        assert_eq!(mode.sim().enemy_count(), 30);
+        assert_eq!(wave_one, [Some(Grade::Rookie), Some(Grade::Novice)]);
         assert_eq!(
-            grades_from(&mode, 1),
-            [Some(Grade::Experienced); 3],
-            "the second wave"
+            wave_five,
+            [
+                Grade::Rookie,
+                Grade::Novice,
+                Grade::Novice,
+                Grade::Experienced,
+                Grade::Experienced,
+                Grade::Experienced,
+                Grade::Experienced,
+                Grade::Veteran,
+                Grade::Veteran,
+                Grade::Professional,
+            ]
+            .map(Some)
         );
     }
 
@@ -442,19 +503,130 @@ mod tests {
     }
 
     #[test]
-    fn clearing_the_force_spawns_experienced_again() {
-        let mut mode = calm_mode(4, tuning(1, 2, 100));
-        mode.sim_mut().kill_enemy(0);
-        mode.tick(&forcing(Some(Grade::Rookie)), DT);
-        for index in 1..4 {
+    fn a_forced_professional_fills_the_wave_a_restart_brings() {
+        let mut mode = calm_mode(4, mixed_tuning(2, 2, 100));
+        let before = grades_from(&mode, 0);
+        mode.sim_mut().kill_player();
+        mode.tick(&idle(), DT);
+
+        mode.tick(
+            &SearchlightCommand {
+                restart: true,
+                forced_grade: Some(Grade::Professional),
+                ..SearchlightCommand::default()
+            },
+            DT,
+        );
+
+        assert_eq!(before, [Some(Grade::Rookie), Some(Grade::Novice)]);
+        assert_eq!(mode.wave(), 1);
+        assert_eq!(mode.sim().enemy_count(), 2);
+        assert_eq!(grades_from(&mode, 0), [Some(Grade::Professional); 2]);
+    }
+
+    #[test]
+    fn clearing_the_force_spawns_the_mix_again() {
+        let mut mode = calm_mode(2, mixed_tuning(2, 2, 100));
+        clear_wave_with(&mut mode, &forcing(Some(Grade::Veteran)));
+        let forced = grades_from(&mode, 2);
+        for index in 2..4 {
             mode.sim_mut().kill_enemy(index);
         }
 
         mode.tick(&forcing(None), DT);
 
-        assert_eq!(mode.sim().enemy_count(), 8);
-        assert_eq!(grades_from(&mode, 1)[..3], [Some(Grade::Rookie); 3]);
-        assert_eq!(grades_from(&mode, 4), [Some(Grade::Experienced); 4]);
+        assert_eq!(mode.wave(), 2);
+        assert_eq!(mode.sim().enemy_count(), 6);
+        assert_eq!(forced, [Some(Grade::Veteran); 2]);
+        assert_eq!(
+            grades_from(&mode, 4),
+            [Some(Grade::Novice), Some(Grade::Experienced)],
+            "the third and fourth of a wave of rookie, rookie, novice, experienced"
+        );
+    }
+
+    #[test]
+    fn a_wave_held_back_by_busy_markers_keeps_its_grades_in_order() {
+        let mut mode = calm_mode(1, mixed_tuning(2, 2, 100));
+
+        for _ in 0..5 {
+            let newest = mode.sim().enemy_count() - 1;
+            mode.sim_mut().kill_enemy(newest);
+            mode.tick(&idle(), DT);
+        }
+
+        assert_eq!(mode.wave(), 2);
+        assert_eq!(
+            grades_from(&mode, 0),
+            [
+                Grade::Rookie,
+                Grade::Novice,
+                Grade::Rookie,
+                Grade::Rookie,
+                Grade::Novice,
+                Grade::Experienced,
+            ]
+            .map(Some)
+        );
+    }
+
+    #[test]
+    fn a_restart_begins_the_mix_again_from_wave_one() {
+        let mut mode = calm_mode(4, mixed_tuning(2, 2, 100));
+        clear_wave(&mut mode);
+        assert_eq!(mode.wave(), 2);
+        mode.sim_mut().kill_player();
+        mode.tick(&idle(), DT);
+
+        mode.tick(&restart(), DT);
+
+        assert_eq!(mode.wave(), 1);
+        assert_eq!(mode.sim().enemy_count(), 2);
+        assert_eq!(
+            grades_from(&mode, 0),
+            [Some(Grade::Rookie), Some(Grade::Novice)]
+        );
+    }
+
+    #[test]
+    fn a_forced_wave_does_not_feed_the_next_waves_floor() {
+        let mut mode = calm_mode(8, mixed_tuning(2, 2, 100));
+        clear_wave_with(&mut mode, &forcing(Some(Grade::Professional)));
+        let forced = grades_from(&mode, 2);
+
+        clear_wave_with(&mut mode, &forcing(None));
+
+        assert_eq!(forced, [Some(Grade::Professional); 4]);
+        assert_eq!(mode.wave(), 3);
+        assert_eq!(mode.sim().enemy_count(), 12);
+        assert_eq!(
+            grades_from(&mode, 6),
+            [
+                Grade::Rookie,
+                Grade::Rookie,
+                Grade::Novice,
+                Grade::Novice,
+                Grade::Experienced,
+                Grade::Experienced,
+            ]
+            .map(Some)
+        );
+    }
+
+    #[test]
+    fn an_enemy_whose_marker_turns_out_blocked_keeps_its_grade() {
+        let close = [Vec3::new(0.0, 0.0, 12.0), Vec3::new(0.4, 0.0, 12.0)];
+        let arena = arena_with(&[], Vec3::ZERO, &close, &[Vec3::new(0.0, 0.0, 25.0)]);
+        let mut mode = ArenaMode::new(arena, calm_config(), mixed_tuning(2, 2, 100));
+        mode.sim_mut().kill_enemy(0);
+
+        mode.tick(&idle(), DT);
+
+        assert_eq!(mode.wave(), 1);
+        assert_eq!(
+            grades_from(&mode, 0),
+            [Some(Grade::Rookie), Some(Grade::Novice)]
+        );
     }
 
     #[test]

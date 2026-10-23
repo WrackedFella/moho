@@ -27,6 +27,7 @@ vertex buffers, so they are packed with no padding (`UiVertex`: `Float32x2`, `Fl
 | `MultiLightShadowGpu` | 288 B (4 × mat4 + 2 × vec4) | uniform, group 1 binding 0 |
 | `PointLightGpu` | 32 B (2 × vec4) | element of `DynamicLightsGpu` |
 | `ShadowMatrixGpu` | 64 B | legacy single shadow map |
+| `ToneMapGpu` | 16 B (f32 exposure, u32 enabled, 2 × u32 pad) | uniform, tone-map pass group 0 binding 1 (`ToneMap` in `shaders/tonemap.wgsl`); binding 0 is the HDR texture |
 | `InstanceGpu` | 80 B (mat4 + 4 × u32) | per-instance vertex buffer |
 | `MarkerGpu` | 48 B (3 × vec4) | per-instance vertex buffer, marker pass |
 | `Vertex` (`moho_renderer/src/types.rs`) | 56 B (packed, 14 × 4 B) | per-vertex buffer, main pass |

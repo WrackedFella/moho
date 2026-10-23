@@ -30,7 +30,7 @@ flowchart TD
     app["moho_app<br/>window, fixed-step loop, Game trait"]:::engine
     level["moho_level<br/>glTF level loader"]:::engine
     shell["moho_ui_shell<br/>egui host, console,<br/>UI layers"]:::engine
-    fps["searchlight_rules<br/>rifle, magazine, body damage,<br/>enemy grades"]:::fps
+    fps["searchlight_rules<br/>items, rifle, rig, body damage,<br/>enemy grades"]:::fps
     fpsgame["searchlight<br/>arena, shots, sim, binary"]:::fps
 
     ui --> renderer & input & core & game & shell
@@ -51,8 +51,8 @@ flowchart TD
 ```
 
 Blue is the engine line, green is the flagstone line, orange is the searchlight line.
-`searchlight_rules` holds plain weapon, body and enemy-grade rules (`Rifle`, `Magazine`, `Body`,
-`Grade`) with no engine dependency. `searchlight` is the only searchlight-line crate that reaches the engine: a library
+`searchlight_rules` holds plain serialisable item, weapon, body and enemy-grade rules (`ItemDef`, `Rifle`, `Magazine`, `Rig`, `Loadout`, `Kit`, `Body`, `Grade`)
+with no engine dependency. `searchlight` is the only searchlight-line crate that reaches the engine: a library
 plus the `searchlight` binary, described in [Searchlight](../searchlight/architecture.md). Every shot resolves
 through one path (ray, surface tag, part, rule call) for player and enemy alike
 ([ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md)).

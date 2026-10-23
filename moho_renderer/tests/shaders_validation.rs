@@ -144,6 +144,21 @@ fn ui_shader_parses_and_validates() {
 }
 
 #[test]
+fn tonemap_shader_parses_and_validates() {
+    let source = moho_renderer::pipeline::tonemap_shader_source();
+
+    let module = validate("tonemap shader", source, Capabilities::empty());
+
+    let entry_points: Vec<&str> = module
+        .entry_points
+        .iter()
+        .map(|e| e.name.as_str())
+        .collect();
+    assert!(entry_points.contains(&"vs_main"), "{entry_points:?}");
+    assert!(entry_points.contains(&"fs_main"), "{entry_points:?}");
+}
+
+#[test]
 fn marker_shader_parses_and_validates() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../shaders/marker.wgsl");
     let source = std::fs::read_to_string(&path)

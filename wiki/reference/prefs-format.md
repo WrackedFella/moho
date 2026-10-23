@@ -74,6 +74,7 @@ opened there still saves to the default path).
 | `[bindings]` | one key per action id | binding list | per action, below |
 | `[audio]` | `sound_effect_volume` `music_volume` `ui_volume` `voice_volume` | finite float on a 0 to 10 scale (the UI offers 0.0 to 10.0), written with 1 decimal | `8.0` `6.0` `7.0` `9.0` |
 | `[graphics]` | `shadow_quality` `ssao_quality` | unsigned integer; the UI offers 0 (off) to 4 (ultra) | `3` `3` |
+| | `brightness` | finite float, clamped to 0.5 to 2.0, written with 2 decimals; NaN, infinity or text is malformed and gives the default | `1.00` |
 | `[video]` | `window_mode` | `Windowed` \| `Fullscreen` \| `Borderless`, exact case | `Windowed` |
 | | `window_width` `window_height` | unsigned integer pixels | `1920` `1080` |
 | | `vsync` | `true` \| `false`; whether presented frames wait for the display refresh | `true` |
@@ -177,6 +178,7 @@ music_volume=5.0
 [graphics]
 shadow_quality=3
 ssao_quality=3
+brightness=1.00
 
 [video]
 window_mode=Windowed

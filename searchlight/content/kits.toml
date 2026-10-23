@@ -1,0 +1,9 @@
+[start]
+rig = "rig_chest"
+weapon = "rifle"
+loaded = { magazine = "mag_rifle", round = "round_rifle_ball" }
+magazines = [
+    { magazine = "mag_rifle", round = "round_rifle_ball" },
+    { magazine = "mag_rifle", round = "round_rifle_ball" },
+    { magazine = "mag_rifle", round = "round_rifle_ball" },
+]

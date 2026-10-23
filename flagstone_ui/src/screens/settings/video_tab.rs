@@ -126,6 +126,38 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
         ui.add_space(8.0);
 
         frame_cap_row(menu, ui, label_width);
+
+        ui.add_space(8.0);
+
+        brightness_row(menu, ui, label_width);
+    });
+}
+
+/// The Brightness slider, shown as a percentage of the default exposure.
+fn brightness_row(menu: &mut SettingsMenu, ui: &mut egui::Ui, label_width: f32) {
+    let staged = menu.state.staged().brightness();
+    let is_dirty = (staged - menu.state.prefs().brightness()).abs() > f32::EPSILON;
+
+    ui.horizontal(|ui| {
+        ui.allocate_ui_with_layout(
+            egui::vec2(label_width, 28.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.label("Brightness:");
+            },
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let mut percent = staged * 100.0;
+            let slider = ui.add(
+                egui::Slider::new(&mut percent, 50.0..=200.0)
+                    .suffix("%")
+                    .max_decimals(0),
+            );
+            if slider.changed() {
+                menu.state.set_brightness(percent / 100.0);
+            }
+            SettingsMenu::paint_dirty_decor(ui, &slider, is_dirty);
+        });
     });
 }
 

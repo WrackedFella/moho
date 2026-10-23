@@ -4,7 +4,7 @@ use flagstone_ui::console_commands::StrategyConsoleCommand;
 use moho_core::events::{AudioEvent, DebugEvent, GraphicsEvent, UiEvent};
 use moho_ui_shell::EngineCommand;
 
-use crate::App;
+use crate::{App, RenderRequest};
 
 /// Applies one strategy console command to `app` by publishing the event whose handler does the
 /// work in the same tick.
@@ -80,6 +80,9 @@ pub fn apply_engine_command(app: &mut App, command: &EngineCommand) {
             app.event_bus.publish(DebugEvent::SetSsaoQuality {
                 quality: u32::from(*quality),
             });
+        }
+        EngineCommand::ToneMap(enabled) => {
+            app.pending_render.push(RenderRequest::ToneMap(*enabled));
         }
         EngineCommand::PlaySoundAt {
             path,
@@ -362,6 +365,25 @@ mod tests {
 
         assert_eq!(app.prefs.ssao_quality(), 3);
         assert_eq!(Prefs::load_from(&path).0.ssao_quality(), 3);
+    }
+
+    #[test]
+    fn tone_map_command_queues_the_request() {
+        let mut app = App::headless();
+        let before = app.prefs.clone();
+
+        apply_engine_command(&mut app, &EngineCommand::ToneMap(false));
+        apply_engine_command(&mut app, &EngineCommand::ToneMap(true));
+
+        assert!(
+            matches!(
+                app.pending_render.as_slice(),
+                [RenderRequest::ToneMap(false), RenderRequest::ToneMap(true)]
+            ),
+            "queued {} requests",
+            app.pending_render.len()
+        );
+        assert_eq!(app.prefs, before, "session-only: no prefs change");
     }
 
     #[test]

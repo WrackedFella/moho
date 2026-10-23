@@ -167,6 +167,12 @@ impl SettingsState {
         self.mark_dirty(SettingsField::WindowResolution);
     }
 
+    /// Stage a Brightness (clamped by the prefs) and mark it dirty.
+    pub fn set_brightness(&mut self, brightness: f32) {
+        self.staged.set_brightness(brightness);
+        self.mark_dirty(SettingsField::Brightness);
+    }
+
     /// Whether the staged bindings or mode of `action` differ from the saved ones.
     pub fn is_binding_modified(&self, action: StrategyAction) -> bool {
         self.staged_bindings.get_binding(action) != self.saved_bindings.get_binding(action)
@@ -251,6 +257,33 @@ mod tests {
         assert!(!state.is_dirty());
         assert_eq!(state.staged().window_mode(), WindowMode::Windowed);
         assert_eq!(state.staged().window_resolution(), (1920, 1080));
+    }
+
+    #[test]
+    fn staging_brightness_marks_the_tab_dirty() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state =
+            SettingsState::from_prefs_at(Prefs::default(), dir.path().join("prefs.ini"));
+        assert!(!state.is_dirty());
+
+        state.set_brightness(1.5);
+
+        assert!(state.is_dirty());
+        assert!(state.is_field_dirty(SettingsField::Brightness));
+        assert!(!state.is_field_dirty(SettingsField::Vsync));
+        assert_eq!(state.staged().brightness(), 1.5);
+        assert_eq!(state.prefs().brightness(), 1.0);
+
+        state.revert_changes();
+
+        assert!(!state.is_dirty());
+        assert_eq!(state.staged().brightness(), 1.0);
+
+        state.set_brightness(0.75);
+        state.apply_changes().unwrap();
+
+        assert!(!state.is_dirty());
+        assert_eq!(state.prefs().brightness(), 0.75);
     }
 
     #[test]
