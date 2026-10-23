@@ -10,7 +10,7 @@ mod paletted;
 pub use self::paletted::CHUNK_FILE;
 use self::paletted::PalettedChunk;
 use super::light_storage::{self, CHUNK_SIZE as LIGHT_CHUNK_SIZE, ChunkLight, idx_to_local};
-use crate::materials::{DIRT, GRASS, IRON_ORE, MaterialType, STONE};
+use crate::materials::{CRYSTAL, CRYSTAL_EMISSION, DIRT, GRASS, IRON_ORE, MaterialType, STONE};
 use glam::{IVec3, Vec3};
 use std::collections::HashMap;
 
@@ -97,6 +97,19 @@ impl MaterialRegistry {
             });
         }
         registry.set_resource_material(1, 3);
+
+        let crystal = registry.register(MaterialType::Emissive {
+            color: CRYSTAL,
+            intensity: 1.0,
+        });
+        debug_assert_eq!(crystal, CRYSTAL_MATERIAL_ID);
+        registry.set_lighting(
+            CRYSTAL_MATERIAL_ID,
+            MaterialLighting {
+                emission: CRYSTAL_EMISSION,
+                opacity_cost: 15,
+            },
+        );
 
         registry
     }

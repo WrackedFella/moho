@@ -165,15 +165,15 @@ pub(crate) fn determine_resource_id(
     }
 }
 
+/// Chance that a block inside the crystal depth band is a crystal.
+const CRYSTAL_CHANCE: f32 = 0.002;
+
+/// Mixed into the seed so the crystal roll is independent of the ore roll.
+const CRYSTAL_SALT: u32 = 0x5EED_C257;
+
 /// Whether the block at `(x, y, z)` in a column of `column_height` is a glowing crystal.
-pub(crate) fn determine_crystal(
-    _column_height: i32,
-    _y: i32,
-    _x: i32,
-    _z: i32,
-    _seed: u32,
-) -> bool {
-    false
+pub(crate) fn determine_crystal(column_height: i32, y: i32, x: i32, z: i32, seed: u32) -> bool {
+    y > 5 && y < column_height - 8 && pos_hash(x, y, z, seed ^ CRYSTAL_SALT) < CRYSTAL_CHANCE
 }
 
 /// Chunk size constant — must match `light_storage::CHUNK_SIZE`.
@@ -436,7 +436,7 @@ mod tests {
 
         assert_eq!(
             measured,
-            (16_667_745_297_482_914_019, 67_114, 5_792, 0),
+            (17_813_487_417_460_971_201, 67_114, 5_781, 98),
             "world generation output changed; update these pins only when the change is deliberate"
         );
     }
@@ -454,7 +454,7 @@ mod tests {
 
         assert_eq!(
             measured,
-            (3_431_315_624_261_164_992, 265_476, 22_876, 0),
+            (3_247_777_566_613_322_200, 265_476, 22_840, 414),
             "world generation output changed; update these pins only when the change is deliberate"
         );
     }
