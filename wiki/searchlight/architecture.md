@@ -37,9 +37,9 @@ flowchart LR
 | `tuning` | `tuning(Kit)`: builds the `SimConfig`, taking the rifle's numbers from the kit's weapon and the player's `Loadout` from the kit |
 | `input` | `SearchlightAction` set and default bindings; `build_action_map` builds the `ActionMap` at startup, with mouse look (`look_settings`: sensitivity, smoothing, invert Y) taken from `Prefs`, and a sensitivity not above zero falling back to the default 3.0; `SearchlightCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on F8) |
 | `tag` | `SurfaceTag` (`World`, `Part { target, part }` or `Player(part)`) and its lossless round trip through the engine's opaque `moho_physics::HitTag` |
-| `shot` | `resolve_shot`: first tagged surface along a `ShotRay` in the `PhysicsWorld` |
+| `shot` | `resolve_shot`: first tagged surface along a `ShotRay` in the `PhysicsWorld`; `passes_within`: whether a shot segment comes within a radius of a point |
 | `brain` | `Brain`: the enemy state machine (`Patrol`, `Engage`, `Cover`, `Chase`), pure over `glam` types; `Percept` and a `steer` function in, `Intent` out; `EnemyTuning` holds its numbers; `EnemyTuning::graded` scales reaction, cooldown and aim error by a `Grade` ([enemies](#5-enemies)) |
-| `cover` | `pick` and `offer`: choose the nearest free cover point a hurt enemy should run to, using world-only rays against the player (`Threat`) |
+| `cover` | `pick` and `offer`: choose the nearest free cover point an enemy under fire should run to, using world-only rays against the player (`Threat`) |
 | `sim` | `SearchlightSim`: player character and body, `Loadout` (rifle and `Rig` of spare magazines), dummies and enemies; emits `Feedback`; counts player kills |
 | `wave` | `WaveTuning` (first wave size, growth per wave, points per kill, grade mix; zero size or growth is refused) and `WaveState` (running wave, enemies still to spawn, the wave's grades, score) as plain numbers, no physics |
 | `mode` | `ArenaMode`: the arena as a game mode. Owns a `SearchlightSim` started empty, scores its kills and spawns each wave's enemies, graded by the wave's mix, at free enemy markers |
@@ -138,11 +138,16 @@ stays visible, fires after `reaction_ticks` of continuous sight, within `fire_co
 bearing and off cooldown. Aim error comes from the `searchlight.enemy_spread` `SimRng` stream, started from
 `EnemyTuning::seed`, so runs repeat and a restart replays a fresh start.
 
-When the player wounds an enemy (a non-lethal hit), the sim records the player's position on
-that enemy (`Target::hurt`) and, from the `Arena` cover points, asks `cover::offer` for a
+An enemy is put under fire by a non-lethal hit, or by near misses. Every player shot that
+passes within `EnemyTuning::near_miss_radius` of a living enemy's capsule centre
+(`shot::passes_within`, on the segment from the eye to the strike point or the rifle's range)
+counts a near miss on that enemy, except the enemy the shot hit. When the count reaches
+`Grade::near_misses_to_cover` (`None` for a rookie, so only a hit moves it) the count resets and
+the enemy is under fire. The sim then records the player's position on
+that enemy (`Target::under_fire`) and, from the `Arena` cover points, asks `cover::offer` for a
 point within `cover_range` that no other enemy holds (`Brain::claim`), that the player cannot
 see at `cover_hide_height`, and from which a standing enemy can still shoot the player.
-The next `Percept` carries `hurt` and `offer`. With an offer a `Patrol`, `Chase` or unheld
+The next `Percept` carries `under_fire` and `offer`. With an offer a `Patrol`, `Chase` or unheld
 `Engage` brain enters `Cover`: it runs at full speed to the point, then `Engage`s there
 holding the claim. After `cover_ticks` without arriving it fights where it stands. Without an
 offer it turns to `Engage` on the shooter's position. An `Engage` that loses sight falls to
@@ -174,7 +179,7 @@ same boxes tagged `Player` (`player_hit_volumes`).
 ## 7 Arena contract
 
 Markers are node names in the glTF file. `player_spawn` is required and unique; at least one
-`dummy_NN` is required; `enemy_spawn_NN` and `cover_NN` are optional (cover points feed `Arena::covers`; without them hurt enemies stand and fight; full-height `screen_NN` walls are plain geometry with no marker). `waypoint_NN` is optional
+`dummy_NN` is required; `enemy_spawn_NN` and `cover_NN` are optional (cover points feed `Arena::covers`; without them enemies under fire stand and fight; full-height `screen_NN` walls are plain geometry with no marker). `waypoint_NN` is optional
 unless an `enemy_spawn_NN` exists, then at least one is required (`ArenaError::MissingMarker`);
 the patrol route follows the waypoint numbers, not file order. A waypoint that no enemy spawn can walk to is dropped from the route with a warning; if enemy spawns exist and no waypoint is reachable, loading fails with `ArenaError::NoReachableWaypoint`. Waypoints are not checked when there are no enemy spawns. Each
 `cover_NN` carries a `shielded_from` extra (`+x`, `-x`, `+z`, `-z`). A mesh whose glTF material is named `floor` draws glossy (`SearchlightGame::with_named_arena`); every other mesh draws matte. Spawns are floor points;
