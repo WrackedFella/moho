@@ -1,6 +1,6 @@
 //! Action-keyed bindings: what a game declares, and how they persist.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Debug;
 use std::hash::Hash;
 
@@ -190,6 +190,46 @@ pub trait Action: Copy + Eq + Hash + Debug + 'static {
 
     /// Ticks an input must stay down before a `Hold` binding fires, one value per game; at least 1.
     const HOLD_TICKS: u32 = DEFAULT_HOLD_TICKS;
+
+    /// Whether the player may choose between holding the input and toggling the action.
+    fn toggleable(self) -> bool {
+        false
+    }
+}
+
+/// How the player drives a toggleable action: held while the input is down, or latched
+/// on and off by presses.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ActionMode {
+    #[default]
+    Hold,
+    Toggle,
+}
+
+impl ActionMode {
+    /// The name written to prefs.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Hold => "hold",
+            Self::Toggle => "toggle",
+        }
+    }
+
+    /// Reads a prefs value, ignoring case and surrounding whitespace.
+    pub fn parse(value: &str) -> Option<Self> {
+        let value = value.trim();
+        [Self::Hold, Self::Toggle]
+            .into_iter()
+            .find(|mode| value.eq_ignore_ascii_case(mode.name()))
+    }
+
+    pub const fn is_toggle(self) -> bool {
+        matches!(self, Self::Toggle)
+    }
+
+    pub const fn from_toggle(toggle: bool) -> Self {
+        if toggle { Self::Toggle } else { Self::Hold }
+    }
 }
 
 /// A line of the `[bindings]` section that could not be used.
@@ -205,6 +245,8 @@ pub struct BindingWarning {
 pub struct ActionBindings<A: Action> {
     /// Holds every action in `A::ALL`; `defaults` fills it and `set` only replaces.
     map: HashMap<A, Vec<Binding>>,
+    /// Only toggleable actions set to `Toggle` appear; every other action reads as `Hold`.
+    toggled: HashSet<A>,
 }
 
 impl<A: Action> ActionBindings<A> {
@@ -214,6 +256,7 @@ impl<A: Action> ActionBindings<A> {
                 .iter()
                 .map(|&a| (a, a.default_bindings().to_vec()))
                 .collect(),
+            toggled: HashSet::new(),
         }
     }
 
@@ -253,6 +296,53 @@ impl<A: Action> ActionBindings<A> {
 
     pub fn set(&mut self, action: A, bindings: Vec<Binding>) {
         self.map.insert(action, bindings);
+    }
+
+    /// `Hold` unless the action is toggleable and set to `Toggle`.
+    pub fn mode(&self, action: A) -> ActionMode {
+        ActionMode::from_toggle(self.toggled.contains(&action))
+    }
+
+    /// Setting `Toggle` on a non-toggleable action is ignored: such an action has no toggle.
+    pub fn set_mode(&mut self, action: A, mode: ActionMode) {
+        if !action.toggleable() {
+            return;
+        }
+        match mode {
+            ActionMode::Toggle => self.toggled.insert(action),
+            ActionMode::Hold => self.toggled.remove(&action),
+        };
+    }
+
+    /// Reads the raw `[action_modes]` section. Each unusable line (unknown value, unknown
+    /// action, or an action that is not toggleable) yields a warning and leaves that action
+    /// in `Hold`.
+    pub fn load_modes(&mut self, section: &BTreeMap<String, String>) -> Vec<BindingWarning> {
+        let mut warnings = Vec::new();
+        for (name, value) in section {
+            let action = A::ALL
+                .iter()
+                .copied()
+                .find(|a| a.name() == name && a.toggleable());
+            let mode = ActionMode::parse(value);
+            match (action, mode) {
+                (Some(action), Some(mode)) => self.set_mode(action, mode),
+                _ => warnings.push(BindingWarning {
+                    name: name.clone(),
+                    value: value.clone(),
+                }),
+            }
+        }
+        warnings
+    }
+
+    /// Writes every toggleable action, including those left at `Hold`.
+    pub fn modes_to_section(&self) -> BTreeMap<String, String> {
+        A::ALL
+            .iter()
+            .filter(|a| a.toggleable())
+            .map(|&a| (a.name().to_string(), self.mode(a).name().to_string()))
+            .collect()
     }
 }
 
@@ -350,6 +440,10 @@ mod tests {
                 TestAction::MoveForward => const { &[Binding::key(Key::W)] },
                 TestAction::Jump => const { &[Binding::key(Key::Space)] },
             }
+        }
+
+        fn toggleable(self) -> bool {
+            self == TestAction::Jump
         }
     }
 
@@ -855,6 +949,153 @@ mod tests {
             "Hold Ctrl+R"
         );
         assert_eq!(Binding::key(Key::R).label(), "R");
+    }
+
+    fn warned_names(warnings: &[BindingWarning]) -> Vec<&str> {
+        warnings.iter().map(|w| w.name.as_str()).collect()
+    }
+
+    #[test]
+    fn mode_on_a_non_toggleable_action_warns() {
+        let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+
+        let warnings = bindings.load_modes(&section(&[("move_forward", "toggle")]));
+
+        assert_eq!(
+            warnings,
+            vec![BindingWarning {
+                name: "move_forward".to_string(),
+                value: "toggle".to_string(),
+            }]
+        );
+        assert_eq!(bindings.mode(TestAction::MoveForward), ActionMode::Hold);
+        assert!(!bindings.modes_to_section().contains_key("move_forward"));
+    }
+
+    #[test]
+    fn modes_round_trip() {
+        for mode in [ActionMode::Toggle, ActionMode::Hold] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("prefs.ini");
+            let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+            bindings.set_mode(TestAction::Jump, mode);
+            let mut prefs = Prefs::default();
+            prefs.set_action_modes(bindings.modes_to_section());
+            std::fs::write(&path, prefs.to_ini_string()).unwrap();
+
+            let (reloaded, prefs_warnings) = Prefs::load_from(&path);
+            let (mut restored, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+            let mode_warnings = restored.load_modes(reloaded.action_modes());
+
+            assert_eq!(prefs_warnings, vec![], "{mode:?}");
+            assert_eq!(mode_warnings, vec![], "{mode:?}");
+            assert_eq!(restored.mode(TestAction::Jump), mode, "{mode:?}");
+            assert_eq!(restored.mode(TestAction::MoveForward), ActionMode::Hold);
+        }
+    }
+
+    #[test]
+    fn actions_are_not_toggleable_unless_the_game_says_so() {
+        #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+        enum PlainAction {
+            Fire,
+            Reload,
+        }
+
+        impl Action for PlainAction {
+            const ALL: &'static [Self] = &[PlainAction::Fire, PlainAction::Reload];
+
+            fn name(self) -> &'static str {
+                match self {
+                    PlainAction::Fire => "fire",
+                    PlainAction::Reload => "reload",
+                }
+            }
+
+            fn default_bindings(self) -> &'static [Binding] {
+                &[]
+            }
+        }
+
+        for &action in PlainAction::ALL {
+            assert!(!action.toggleable(), "{}", action.name());
+        }
+    }
+
+    #[test]
+    fn mode_converts_to_and_from_the_toggle_flag() {
+        assert!(!ActionMode::Hold.is_toggle());
+        assert!(ActionMode::Toggle.is_toggle());
+        for toggle in [false, true] {
+            assert_eq!(ActionMode::from_toggle(toggle).is_toggle(), toggle);
+        }
+    }
+
+    #[test]
+    fn toggle_is_written_by_name() {
+        let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+        bindings.set_mode(TestAction::Jump, ActionMode::Toggle);
+
+        let written = bindings.modes_to_section();
+
+        assert_eq!(written["jump"], "toggle");
+    }
+
+    #[test]
+    fn set_mode_toggle_on_a_non_toggleable_action_is_ignored() {
+        let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+
+        bindings.set_mode(TestAction::MoveForward, ActionMode::Toggle);
+
+        assert_eq!(bindings.mode(TestAction::MoveForward), ActionMode::Hold);
+    }
+
+    #[test]
+    fn mode_values_are_case_insensitive() {
+        for (value, mode) in [
+            ("toggle", ActionMode::Toggle),
+            ("Toggle", ActionMode::Toggle),
+            ("TOGGLE", ActionMode::Toggle),
+            ("hold", ActionMode::Hold),
+            ("Hold", ActionMode::Hold),
+        ] {
+            let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+
+            let warnings = bindings.load_modes(&section(&[("jump", value)]));
+
+            assert_eq!(warnings, vec![], "{value}");
+            assert_eq!(bindings.mode(TestAction::Jump), mode, "{value}");
+        }
+    }
+
+    #[test]
+    fn bad_mode_warns_and_keeps_hold() {
+        let cases = [
+            ("jump", "sometimes", "jump"),
+            ("teleport", "toggle", "teleport"),
+        ];
+
+        for (action, value, reported) in cases {
+            let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+
+            let warnings = bindings.load_modes(&section(&[(action, value)]));
+
+            assert_eq!(warned_names(&warnings), [reported], "{action}={value}");
+            assert_eq!(warnings[0].value, value, "{action}={value}");
+            for &a in TestAction::ALL {
+                assert_eq!(bindings.mode(a), ActionMode::Hold, "{action}={value}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_bad_mode_line_does_not_disturb_a_valid_one() {
+        let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+
+        let warnings = bindings.load_modes(&section(&[("aardvark", "hold"), ("jump", "toggle")]));
+
+        assert_eq!(warned_names(&warnings), ["aardvark"]);
+        assert_eq!(bindings.mode(TestAction::Jump), ActionMode::Toggle);
     }
 
     #[test]
