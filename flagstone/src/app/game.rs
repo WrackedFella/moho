@@ -2333,12 +2333,35 @@ mod tests {
         #[test]
         fn edge_pan_is_ignored_outside_focused_strategy_mode() {
             let cases = [
-                ("first person, focused", CameraMode::FirstPerson, true),
-                ("strategy, unfocused", CameraMode::Isometric, false),
+                (
+                    "first person, focused",
+                    CameraMode::FirstPerson,
+                    true,
+                    GameState::Playing,
+                ),
+                (
+                    "strategy, unfocused",
+                    CameraMode::Isometric,
+                    false,
+                    GameState::Playing,
+                ),
+                (
+                    "strategy, focused, paused",
+                    CameraMode::Isometric,
+                    true,
+                    GameState::Paused,
+                ),
+                (
+                    "strategy, focused, menu",
+                    CameraMode::Isometric,
+                    true,
+                    GameState::Menu,
+                ),
             ];
 
-            for (name, mode, focused) in cases {
+            for (name, mode, focused, state) in cases {
                 let mut app = strategy_app(mode);
+                app.game_state = state;
                 app.input.focused = focused;
                 app.input.actions.pointer_moved(0.0, 0.0);
 

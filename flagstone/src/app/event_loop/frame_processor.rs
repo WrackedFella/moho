@@ -63,7 +63,7 @@ impl FrameProcessor {
                 .light_system
                 .as_ref()
                 .map(flagstone_voxel::LightSystem::grid);
-            // Top face of the highest solid block in the column; `None` when unloaded.
+            // Top face of the highest solid block in the column; `None` when the column is unloaded or has no solid block.
             let ground = |x: f32, z: f32| {
                 grid?
                     .get_height(x.floor() as i32, z.floor() as i32)
