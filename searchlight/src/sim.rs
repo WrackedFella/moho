@@ -11,15 +11,21 @@ use moho_physics::{
     first_person_view,
 };
 use searchlight_rules::{
-    Body, BodyPart, BodyProfile, Grade, HitReport, Loadout, MagazineLevel, Rifle, Rig, Shot,
+    Body, BodyPart, BodyProfile, Grade, HitReport, Lean, LeanReach, LeanSide, LeanTuning, Loadout,
+    MagazineLevel, Rifle, Rig, Shot,
 };
 
 use crate::arena::{Arena, SETTLE_DT};
 use crate::brain::{Brain, EnemyTuning, Percept};
 use crate::cover::{self, Threat};
 use crate::input::SearchlightCommand;
+use crate::lean::lean_offset;
 use crate::shot::{ShotRay, Strike, resolve_shot};
 use crate::tag::SurfaceTag;
+
+/// How far past a full lean the reach rays go, in metres, so the eye and the near plane stay
+/// off a wall.
+const LEAN_CLEARANCE: f32 = 0.15;
 
 /// Height of a character's capsule centre above its feet, in metres.
 pub const STAND_HEIGHT: f32 = 1.15;
@@ -99,6 +105,8 @@ pub struct SimConfig {
     pub enemy: EnemyTuning,
     /// The player's part the enemies aim at.
     pub enemy_aim_at: BodyPart,
+    /// How far and how fast the player leans, and how much it slows walking.
+    pub lean: LeanTuning,
 }
 
 /// Something the player should see, hear or read, in the order it happened.
@@ -235,6 +243,8 @@ pub struct SearchlightSim {
     aim_offset: Vec3,
     rng: SimRng,
     weapon: Weapon,
+    lean: Lean,
+    lean_tuning: LeanTuning,
     outbox: Vec<Feedback>,
     /// Lethal player shots on enemies since the sim was built or last restarted.
     kills: u32,
@@ -358,6 +368,8 @@ impl SearchlightSim {
             aim_offset,
             rng: SimRng::new(config.enemy.seed, SPREAD_STREAM),
             weapon: Weapon::Ready,
+            lean: Lean::default(),
+            lean_tuning: config.lean,
             outbox: Vec::new(),
             kills: 0,
             origin: (spawns, config),
@@ -367,8 +379,8 @@ impl SearchlightSim {
     /// Runs one tick of `dt` seconds.
     ///
     /// While the player is dead only `command.restart` is read, and it puts every character
-    /// back at its spawn, as a fresh sim over the same world would have them. Otherwise the enemies perceive and move, the player moves, the
-    /// world steps, the player's weapon actions apply, then the enemies that decided to fire
+    /// back at its spawn, as a fresh sim over the same world would have them. Otherwise the enemies perceive and move, the player moves (slower while a lean is held), the
+    /// world steps, the player's lean blends within the room beside it, the player's weapon actions apply, then the enemies that decided to fire
     /// do, and enemies that died leave the world.
     pub fn tick(&mut self, command: &SearchlightCommand, dt: f32) {
         if self.player_body.is_dead() {
@@ -378,10 +390,20 @@ impl SearchlightSim {
             return;
         }
         let firing = self.move_enemies(dt);
+        let factor = if command.lean.is_some() {
+            self.lean_tuning.speed_factor
+        } else {
+            1.0
+        };
+        let settings = MoveSettings {
+            max_speed: self.move_settings.max_speed * factor,
+            ..self.move_settings
+        };
         self.world
-            .move_character(self.player, &command.movement, &self.move_settings, dt)
+            .move_character(self.player, &command.movement, &settings, dt)
             .expect("the sim never removes the player");
         self.world.step(dt);
+        self.step_lean(command.lean, dt);
 
         self.advance_weapon();
         if command.fire {
@@ -399,6 +421,46 @@ impl SearchlightSim {
         self.remove_dead_enemies();
         if self.player_body.is_dead() {
             self.outbox.push(Feedback::PlayerDied);
+        }
+    }
+
+    /// Blends the lean toward `want`, held short of any wall beside the player.
+    fn step_lean(&mut self, want: Option<LeanSide>, dt: f32) {
+        let reach = if want.is_none() && self.lean.amount() == 0.0 {
+            LeanReach::FULL
+        } else {
+            self.lean_reach()
+        };
+        self.lean = self.lean.step(want, reach, dt, &self.lean_tuning);
+    }
+
+    /// How much of a full lean each side has room for, from one level ray per side out of the
+    /// upright eye.
+    fn lean_reach(&self) -> LeanReach {
+        let state = self.player();
+        let eye = self.upright_eye(&state);
+        let shift = self.lean_tuning.shift;
+        let room = |direction: Vec3| {
+            let strike = resolve_shot(
+                &self.world,
+                ShotRay {
+                    origin: eye,
+                    direction,
+                    range: shift + LEAN_CLEARANCE,
+                    ignore: Some(self.player),
+                },
+            );
+            match strike {
+                Some(strike) if shift > 0.0 => {
+                    ((strike.distance - LEAN_CLEARANCE) / shift).clamp(0.0, 1.0)
+                }
+                _ => 1.0,
+            }
+        };
+        let right = lean_offset(state.yaw, 1.0);
+        LeanReach {
+            left: room(-right),
+            right: room(right),
         }
     }
 
@@ -621,7 +683,7 @@ impl SearchlightSim {
         let strike = resolve_shot(
             &self.world,
             ShotRay {
-                origin: view.eye,
+                origin: self.leaned_eye(&state),
                 direction: view.forward,
                 range: self.range,
                 ignore: Some(self.player),
@@ -694,6 +756,30 @@ impl SearchlightSim {
     /// Height of the player's eye above the capsule centre, in metres.
     pub fn eye_height(&self) -> f32 {
         self.eye_height
+    }
+
+    /// Where the player's eye is after the last tick: the upright eye shifted sideways by the
+    /// lean.
+    pub fn player_eye(&self) -> Vec3 {
+        self.leaned_eye(&self.player())
+    }
+
+    fn upright_eye(&self, state: &CharacterState) -> Vec3 {
+        state.position + Vec3::Y * self.eye_height
+    }
+
+    fn leaned_eye(&self, state: &CharacterState) -> Vec3 {
+        self.upright_eye(state) + lean_offset(state.yaw, self.lean.shift(&self.lean_tuning))
+    }
+
+    /// How far the player leans after the last tick.
+    pub fn player_lean(&self) -> Lean {
+        self.lean
+    }
+
+    /// What a full lean looks like and how it blends.
+    pub fn lean_tuning(&self) -> &LeanTuning {
+        &self.lean_tuning
     }
 
     pub fn rifle(&self) -> &Rifle {
@@ -1430,6 +1516,360 @@ mod tests {
         assert_eq!(pending, [Feedback::Fired]);
         assert_eq!(drained, pending);
         assert!(sim.pending_feedback().is_empty());
+    }
+
+    use crate::test_support::world_with;
+    use searchlight_rules::LeanSide;
+
+    /// Ticks that settle any lean: twice the blend time.
+    const SETTLE_TICKS: usize = 30;
+
+    fn leaning(side: Option<LeanSide>) -> SearchlightCommand {
+        SearchlightCommand {
+            lean: side,
+            ..SearchlightCommand::default()
+        }
+    }
+
+    fn walking(side: Option<LeanSide>) -> SearchlightCommand {
+        SearchlightCommand {
+            movement: CharacterCommand {
+                forward: 1.0,
+                ..CharacterCommand::default()
+            },
+            lean: side,
+            ..SearchlightCommand::default()
+        }
+    }
+
+    fn hold(sim: &mut SearchlightSim, command: &SearchlightCommand, ticks: usize) {
+        for _ in 0..ticks {
+            sim.tick(command, DT);
+        }
+    }
+
+    fn standing_eye(sim: &SearchlightSim) -> Vec3 {
+        sim.player().position + Vec3::Y * sim.eye_height()
+    }
+
+    fn open_sim() -> SearchlightSim {
+        arena_sim(rifle_with(5), vec![])
+    }
+
+    #[test]
+    fn holding_lean_left_settles_the_eye_0_35_m_left() {
+        let mut sim = open_sim();
+
+        hold(&mut sim, &leaning(Some(LeanSide::Left)), SETTLE_TICKS);
+
+        let offset = sim.player_eye() - standing_eye(&sim);
+        assert!(
+            offset.distance(Vec3::new(0.35, 0.0, 0.0)) < 1e-3,
+            "left is +X at yaw 0: {offset:?}"
+        );
+        assert!((sim.player_lean().amount() + 1.0).abs() < 1e-4);
+        let roll = sim.player_lean().roll(sim.lean_tuning());
+        assert!(
+            (roll + 12.0_f32.to_radians()).abs() < 1e-4,
+            "rolled toward the left: {roll}"
+        );
+    }
+
+    #[test]
+    fn holding_lean_right_settles_the_eye_0_35_m_right() {
+        let mut sim = open_sim();
+
+        hold(&mut sim, &leaning(Some(LeanSide::Right)), SETTLE_TICKS);
+
+        let offset = sim.player_eye() - standing_eye(&sim);
+        assert!(
+            offset.distance(Vec3::new(-0.35, 0.0, 0.0)) < 1e-3,
+            "right is -X at yaw 0: {offset:?}"
+        );
+        assert!((sim.player_lean().amount() - 1.0).abs() < 1e-4);
+        let roll = sim.player_lean().roll(sim.lean_tuning());
+        assert!(
+            (roll - 12.0_f32.to_radians()).abs() < 1e-4,
+            "rolled toward the right: {roll}"
+        );
+    }
+
+    #[test]
+    fn a_lean_follows_the_players_facing() {
+        let mut sim = open_sim();
+        let turn_left = SearchlightCommand {
+            movement: CharacterCommand {
+                yaw_delta: FRAC_PI_2,
+                ..CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        sim.tick(&turn_left, DT);
+
+        hold(&mut sim, &leaning(Some(LeanSide::Right)), SETTLE_TICKS);
+
+        let offset = sim.player_eye() - standing_eye(&sim);
+        assert!(
+            offset.distance(Vec3::new(0.0, 0.0, 0.35)) < 1e-3,
+            "facing +X, right is +Z: {offset:?}"
+        );
+    }
+
+    #[test]
+    fn releasing_the_lean_returns_the_eye_to_standing() {
+        let mut sim = open_sim();
+        hold(&mut sim, &leaning(Some(LeanSide::Left)), SETTLE_TICKS);
+        assert!(
+            (sim.player_lean().amount() + 1.0).abs() < 1e-4,
+            "the lean never settled"
+        );
+
+        hold(&mut sim, &leaning(None), SETTLE_TICKS);
+
+        assert!(sim.player_eye().distance(standing_eye(&sim)) < 1e-4);
+        assert_eq!(sim.player_lean().amount(), 0.0);
+        assert_eq!(sim.player_lean().roll(sim.lean_tuning()), 0.0);
+    }
+
+    #[test]
+    fn the_first_lean_tick_moves_the_eye_less_than_a_full_lean() {
+        let mut sim = open_sim();
+
+        sim.tick(&leaning(Some(LeanSide::Left)), DT);
+
+        let sideways = sim.player_eye().x - standing_eye(&sim).x;
+        assert!(sideways > 0.0, "the eye did not move left: {sideways}");
+        assert!(sideways < 0.35 - 0.05, "the lean snapped: {sideways}");
+        let amount = sim.player_lean().amount();
+        assert!(amount < 0.0 && amount > -1.0, "{amount}");
+    }
+
+    #[test]
+    fn a_wall_0_15_m_beside_the_capsule_stops_the_lean_short_of_it() {
+        const FACE: f32 = 0.45;
+        let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
+        let along_x = |near: f32, far: f32| (Vec3::new(near, 0.0, -5.0), Vec3::new(far, 4.0, 5.0));
+        let along_z = |near: f32, far: f32| (Vec3::new(-5.0, 0.0, near), Vec3::new(5.0, 4.0, far));
+        // Facing +X (yaw a quarter turn) the player's right is +Z and its left is -Z.
+        let cases = [
+            (LeanSide::Left, 0.0, along_x(FACE, FACE + 1.0)),
+            (LeanSide::Right, 0.0, along_x(-FACE - 1.0, -FACE)),
+            (LeanSide::Left, FRAC_PI_2, along_z(-FACE - 1.0, -FACE)),
+            (LeanSide::Right, FRAC_PI_2, along_z(FACE, FACE + 1.0)),
+        ];
+        for (side, yaw, wall) in cases {
+            let mut sim = SearchlightSim::new(
+                world_with(&[floor, wall]),
+                Vec3::ZERO,
+                &[],
+                test_config(rifle_with(5), vec![]),
+            );
+            let turn = SearchlightCommand {
+                movement: CharacterCommand {
+                    yaw_delta: yaw,
+                    ..CharacterCommand::default()
+                },
+                ..SearchlightCommand::default()
+            };
+            sim.tick(&turn, DT);
+
+            hold(&mut sim, &leaning(Some(side)), SETTLE_TICKS);
+
+            let out = sim.player_eye() - standing_eye(&sim);
+            let sideways = out.length();
+            assert!(
+                sideways <= FACE - 0.15 + 1e-3,
+                "{side:?} at yaw {yaw}: the eye is {sideways} m out, within 0.15 m of the wall at {FACE}"
+            );
+            let amount = sim.player_lean().amount().abs();
+            assert!(
+                amount < 1.0,
+                "{side:?} at yaw {yaw}: a full lean against a wall"
+            );
+            assert!(
+                (amount - (FACE - 0.15) / 0.35).abs() < 0.02,
+                "{side:?} at yaw {yaw}: the lean should use all the room, got {amount}"
+            );
+        }
+    }
+
+    #[test]
+    fn walking_while_leaning_covers_less_ground_than_walking_upright() {
+        let travelled = |side: Option<LeanSide>| {
+            let mut sim = open_sim();
+            hold(&mut sim, &walking(side), 60);
+            sim.player().position.z
+        };
+
+        let upright = travelled(None);
+        let leaning = travelled(Some(LeanSide::Left));
+
+        assert!(upright > 1.0, "upright barely moved: {upright}");
+        assert!(leaning > 0.5, "a lean should slow, not stop: {leaning}");
+        assert!(
+            leaning < upright * 0.75,
+            "leaning {leaning} m vs upright {upright} m"
+        );
+    }
+
+    /// A dummy on a 0.3 m plinth 8 m ahead whose torso, 0.4 m wide, spans both the upright
+    /// eye's line (x = 0) and the line of an eye leaned fully right (x = -0.35) at eye
+    /// height; with `corner`, a wall across the upright line that leaves the right-leaned
+    /// line open.
+    fn corner_sim(corner: bool) -> SearchlightSim {
+        let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
+        let plinth = (Vec3::new(-1.0, 0.0, 7.0), Vec3::new(1.0, 0.3, 9.0));
+        let wall = (Vec3::new(-0.2, 0.0, 3.0), Vec3::new(2.0, 4.0, 4.0));
+        let boxes: Vec<_> = [Some(floor), Some(plinth), corner.then_some(wall)]
+            .into_iter()
+            .flatten()
+            .collect();
+        SearchlightSim::new(
+            world_with(&boxes),
+            Vec3::ZERO,
+            &[Vec3::new(-0.175, 0.3, 8.0)],
+            test_config(rifle_with(5), vec![]),
+        )
+    }
+
+    fn fire_while(sim: &mut SearchlightSim, side: Option<LeanSide>) {
+        hold(sim, &leaning(side), SETTLE_TICKS);
+        let shot = SearchlightCommand {
+            fire: true,
+            lean: side,
+            ..SearchlightCommand::default()
+        };
+        sim.tick(&shot, DT);
+    }
+
+    fn hit(sim: &mut SearchlightSim) -> bool {
+        sim.drain_feedback()
+            .iter()
+            .any(|fb| matches!(fb, Feedback::Hit { target: 0, .. }))
+    }
+
+    #[test]
+    fn without_the_corner_the_same_upright_shot_hits_the_dummy() {
+        let mut upright = corner_sim(false);
+
+        fire_while(&mut upright, None);
+
+        assert!(hit(&mut upright), "the dummy should stand in the open line");
+        assert!(upright.dummy_body(0).expect("a dummy").health() < 100);
+    }
+
+    #[test]
+    fn a_leaned_shot_hits_a_dummy_visible_only_past_the_corner() {
+        let mut upright = corner_sim(true);
+        let mut leaned = corner_sim(true);
+
+        fire_while(&mut upright, None);
+        fire_while(&mut leaned, Some(LeanSide::Right));
+
+        assert!(
+            !hit(&mut upright),
+            "the corner should cover the upright eye"
+        );
+        assert_eq!(upright.dummy_body(0).expect("a dummy").health(), 100);
+        assert!(hit(&mut leaned), "the leaned eye sees past the corner");
+        assert!(leaned.dummy_body(0).expect("a dummy").health() < 100);
+    }
+
+    #[test]
+    fn restart_stands_the_player_upright() {
+        let mut sim = open_sim();
+        hold(&mut sim, &leaning(Some(LeanSide::Left)), SETTLE_TICKS);
+        assert!(
+            sim.player_lean().amount() < -0.99,
+            "the lean never settled before the restart"
+        );
+        sim.kill_player();
+
+        sim.tick(
+            &SearchlightCommand {
+                restart: true,
+                ..SearchlightCommand::default()
+            },
+            DT,
+        );
+
+        assert_eq!(sim.player_lean().amount(), 0.0);
+        assert!(sim.player_eye().distance(standing_eye(&sim)) < 1e-4);
+    }
+
+    #[test]
+    fn sidestepping_into_a_wall_while_leaned_pulls_the_lean_in() {
+        const FACE: f32 = -1.5;
+        let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
+        let wall = (Vec3::new(FACE - 1.0, 0.0, -5.0), Vec3::new(FACE, 4.0, 5.0));
+        let mut sim = SearchlightSim::new(
+            world_with(&[floor, wall]),
+            Vec3::ZERO,
+            &[],
+            test_config(rifle_with(5), vec![]),
+        );
+        hold(&mut sim, &leaning(Some(LeanSide::Right)), SETTLE_TICKS);
+        assert!((sim.player_lean().amount() - 1.0).abs() < 1e-4);
+        let sidestep = SearchlightCommand {
+            movement: CharacterCommand {
+                right: 1.0,
+                ..CharacterCommand::default()
+            },
+            lean: Some(LeanSide::Right),
+            ..SearchlightCommand::default()
+        };
+
+        for tick in 0..400 {
+            sim.tick(&sidestep, DT);
+
+            let gap = sim.player_eye().x - FACE;
+            assert!(
+                gap >= 0.15 - 1e-3,
+                "tick {tick}: the eye is {gap} m from the wall"
+            );
+        }
+
+        assert!(
+            sim.player().position.x < -0.8,
+            "the player never reached the wall: {:?}",
+            sim.player().position
+        );
+        assert!(
+            sim.player_lean().amount() < 1.0,
+            "still a full lean against the wall"
+        );
+    }
+
+    #[test]
+    fn a_shot_on_the_first_lean_tick_leaves_from_the_part_leaned_eye() {
+        let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
+        let plinth = (Vec3::new(-1.0, 0.0, 7.0), Vec3::new(1.0, 0.3, 9.0));
+        // Its edge at x = -0.01 blocks the upright line (x = 0) but not an eye already 0.023 m
+        // to the right, which is where the first lean tick puts it.
+        let wall = (Vec3::new(-0.01, 0.0, 3.0), Vec3::new(2.0, 4.0, 4.0));
+        let mut sim = SearchlightSim::new(
+            world_with(&[floor, plinth, wall]),
+            Vec3::ZERO,
+            &[Vec3::new(-0.175, 0.3, 8.0)],
+            test_config(rifle_with(5), vec![]),
+        );
+        let shot = SearchlightCommand {
+            fire: true,
+            lean: Some(LeanSide::Right),
+            ..SearchlightCommand::default()
+        };
+
+        sim.tick(&shot, DT);
+
+        let sideways = standing_eye(&sim).x - sim.player_eye().x;
+        assert!(
+            sideways > 0.01 + 1e-3 && sideways < 0.05,
+            "the first tick should lean a little: {sideways}"
+        );
+        assert!(
+            hit(&mut sim),
+            "the shot should leave from the eye as leaned that tick"
+        );
     }
 
     mod waves {

@@ -18,7 +18,7 @@ use moho_render_api::{
     WorldMeshId,
 };
 use moho_renderer::{LightingGpu, RendererBackend, Scene, WorldMeshes};
-use searchlight_rules::Grade;
+use searchlight_rules::{Grade, Lean, LeanSide};
 use winit::event::WindowEvent;
 use winit::window::{CursorGrabMode, Window};
 
@@ -28,7 +28,8 @@ use moho_ui_shell::{Routing, UiLayers, UiShell, apply_engine_command};
 use crate::console_commands::{self, ConsoleCommand, GodModeArg};
 use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
-use crate::input::{SearchlightAction, SearchlightCommand, look_to_turn};
+use crate::input::{SearchlightAction, SearchlightCommand, look_to_turn, resolve_lean};
+use crate::lean::{lean_offset, rolled_view_matrix};
 use crate::menu::{Menu, MenuAction};
 use crate::mode::ArenaMode;
 use crate::sim::{Feedback, SearchlightSim, dummy_at, dummy_hit_volumes};
@@ -743,6 +744,10 @@ pub struct SearchlightGame {
     input: ActionMap<SearchlightAction>,
     /// The player as the tick before the last left them, for blending the view.
     previous: CharacterState,
+    /// The player's lean as the tick before the last left it, blended like `previous`.
+    previous_lean: Lean,
+    /// The side the last command held a lean toward, for the most-recent-press rule.
+    lean_side: Option<LeanSide>,
     /// Whether the window has focus; look is sampled only while it does.
     focused: bool,
     stage: Stage,
@@ -768,6 +773,8 @@ impl SearchlightGame {
             mode,
             input,
             previous,
+            previous_lean: Lean::default(),
+            lean_side: None,
             focused: true,
             stage: Stage::new(),
             god_mode: false,
@@ -1043,21 +1050,27 @@ impl Game for SearchlightGame {
         // instead, so a press made as the console opened does not act when it closes.
         if self.input_captured() {
             self.input.discard_edges();
+            self.lean_side = None;
             return SearchlightCommand::default();
         }
+        let frame = self.input.end_tick();
+        self.lean_side = resolve_lean(&frame, self.lean_side);
         SearchlightCommand {
             god_mode: self.god_mode,
             forced_grade: self.forced_grade,
-            ..SearchlightCommand::from_frame(&self.input.end_tick())
+            lean: self.lean_side,
+            ..SearchlightCommand::from_frame(&frame)
         }
     }
 
     fn tick(&mut self, ctx: &mut TickContext<'_>, command: &SearchlightCommand) {
         self.previous = self.mode.sim().player();
+        self.previous_lean = self.mode.sim().player_lean();
         let was_dead = self.mode.sim().player_body().is_dead();
         self.mode.tick(command, ctx.tick_length.as_secs_f32());
         if was_dead && !self.mode.sim().player_body().is_dead() {
             self.previous = self.mode.sim().player();
+            self.previous_lean = self.mode.sim().player_lean();
             self.stage.status.clear();
         }
         self.stage.tick_flashes();
@@ -1154,14 +1167,26 @@ impl Game for SearchlightGame {
         }
         self.stage.sync_enemies(self.mode.sim());
         if let Some(renderer) = ctx.renderer() {
+            let sim = self.mode.sim();
             let view = first_person_view(
                 &self.previous,
-                &self.mode.sim().player(),
-                self.mode.sim().eye_height(),
+                &sim.player(),
+                sim.eye_height(),
                 alpha,
                 look_to_turn(self.input.pending_look()),
             );
-            self.stage.draw(renderer, (view.view_matrix(), view.eye));
+            let tuning = sim.lean_tuning();
+            let from = self.previous_lean.amount();
+            let amount = from + alpha * (sim.player_lean().amount() - from);
+            let yaw = view.forward.x.atan2(view.forward.z);
+            let eye = view.eye + lean_offset(yaw, amount * tuning.shift);
+            self.stage.draw(
+                renderer,
+                (
+                    rolled_view_matrix(eye, view.forward, amount * tuning.roll),
+                    eye,
+                ),
+            );
         }
     }
 }
@@ -1180,7 +1205,7 @@ mod tests {
     use super::*;
     use crate::sim::Feedback;
     use crate::test_support::{arena_with, mag, press, rifle_from, test_config, wave_tuning};
-    use searchlight_rules::Grade;
+    use searchlight_rules::{Grade, LeanSide};
 
     fn game() -> SearchlightGame {
         let mode = ArenaMode::new(
@@ -1336,6 +1361,126 @@ mod tests {
         assert_eq!(game.previous, before);
         assert_ne!(game.previous, game.sim().player());
         assert!(!game.stage.status.is_empty());
+    }
+
+    #[test]
+    fn holding_q_puts_lean_left_on_the_command() {
+        let mut game = game();
+        press(game.input_mut(), SearchlightAction::LeanLeft);
+
+        let first = game.command();
+        let held = game.command();
+        press(game.input_mut(), SearchlightAction::LeanRight);
+        let switched = game.command();
+        let both_held = game.command();
+        game.input_mut().key(Key::E, false);
+        let back = game.command();
+        game.input_mut().key(Key::Q, false);
+        let released = game.command();
+
+        assert_eq!(
+            [
+                first.lean,
+                held.lean,
+                switched.lean,
+                both_held.lean,
+                back.lean,
+                released.lean
+            ],
+            [
+                Some(LeanSide::Left),
+                Some(LeanSide::Left),
+                Some(LeanSide::Right),
+                Some(LeanSide::Right),
+                Some(LeanSide::Left),
+                None
+            ]
+        );
+    }
+
+    #[test]
+    fn a_captured_input_command_leans_nowhere() {
+        let mut game = game();
+        let clock = GameClock::default();
+        press(game.input_mut(), SearchlightAction::LeanLeft);
+        assert_eq!(game.command().lean, Some(LeanSide::Left));
+        open_the_console(&mut game, &clock);
+
+        let command = game.command();
+
+        assert_eq!(command.lean, None);
+    }
+
+    #[test]
+    fn the_drawn_eye_blends_the_lean_between_ticks() {
+        let mut game = game();
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let lean_left = SearchlightCommand {
+            lean: Some(LeanSide::Left),
+            ..SearchlightCommand::default()
+        };
+        tick_with(&mut game, &mut clock, &lean_left);
+        tick_with(&mut game, &mut clock, &lean_left);
+        let mut renderer = SettingsRenderer::default();
+
+        let view = draw_frame(&mut game, &mut renderer);
+
+        let tick = 1.0 / 60.0 / 0.25;
+        let blended = tick + ALPHA * (2.0 * tick - tick);
+        let standing = game.sim().player().position + Vec3::Y * game.sim().eye_height();
+        let eye = view.inverse().w_axis.truncate();
+        assert!(
+            (eye.x - standing.x - 0.35 * blended).abs() < 1e-3,
+            "the eye should sit {} m left, at {eye:?}",
+            0.35 * blended
+        );
+        assert!((eye.y - standing.y).abs() < 1e-3 && (eye.z - standing.z).abs() < 1e-3);
+        let up = view.transpose().col(1).truncate();
+        let roll = blended * 12.0_f32.to_radians();
+        assert!(
+            (up.x - roll.sin()).abs() < 1e-3,
+            "the view should roll {roll} rad left, up is {up:?}"
+        );
+    }
+
+    #[test]
+    fn a_restart_after_dying_while_leaned_draws_the_first_frame_upright() {
+        let mut game = game();
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let lean_right = SearchlightCommand {
+            lean: Some(LeanSide::Right),
+            ..SearchlightCommand::default()
+        };
+        for _ in 0..30 {
+            tick_with(&mut game, &mut clock, &lean_right);
+        }
+        assert!(game.sim().player_lean().amount() > 0.99);
+        game.mode.sim_mut().kill_player();
+        tick_with(&mut game, &mut clock, &lean_right);
+        assert!(game.sim().player_body().is_dead());
+
+        tick_with(&mut game, &mut clock, &restart_command());
+
+        assert!(!game.sim().player_body().is_dead());
+        let standing = game.sim().player().position + Vec3::Y * game.sim().eye_height();
+        for alpha in [0.0, 0.5] {
+            let mut renderer = SettingsRenderer::default();
+            let ctx_clock = GameClock::default();
+            let mut ctx = FrameContext::new(TICK, &ctx_clock, Some(&mut renderer), None);
+            game.frame(&mut ctx, alpha);
+            let view = *renderer.views.last().expect("a frame began");
+
+            let eye = view.inverse().w_axis.truncate();
+            let up = view.transpose().col(1).truncate();
+            assert!(
+                eye.distance(standing) < 1e-3,
+                "alpha {alpha}: the eye is {eye:?}, standing is {standing:?}"
+            );
+            assert!(
+                up.distance(Vec3::Y) < 1e-3,
+                "alpha {alpha}: the view is rolled, up is {up:?}"
+            );
+        }
     }
 
     const BACKTICK: Input = Input::Key(Key::Backtick);

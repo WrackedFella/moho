@@ -10,8 +10,8 @@ use moho_level::NavMesh;
 use moho_physics::{MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::{
-    BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId, Loadout, Magazine, MagazineSpec,
-    MagazineWell, Rifle, Rig, RigSpec,
+    BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId, LeanTuning, Loadout, Magazine,
+    MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
 };
 
 use crate::arena::{Arena, nav_profile};
@@ -169,6 +169,12 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
         loadout: Loadout::new(rifle, rig),
         enemy: enemy_tuning(),
         enemy_aim_at: BodyPart::Torso,
+        lean: LeanTuning {
+            shift: 0.35,
+            roll: 12.0_f32.to_radians(),
+            blend_seconds: 0.25,
+            speed_factor: 0.5,
+        },
     }
 }
 
