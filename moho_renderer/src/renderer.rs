@@ -47,6 +47,7 @@ pub struct Renderer<'a> {
     /// Debug view that replaces the game's own in every lighting update, once one is set.
     debug_view: Option<u32>,
     hdr_target: crate::tone_map::HdrTarget,
+    bloom: crate::bloom::BloomChain,
     tone_map: crate::tone_map::ToneMapPass,
     exposure: f32,
     tone_map_enabled: bool,
@@ -105,12 +106,19 @@ impl<'a> Renderer<'a> {
             device_setup.config.width,
             device_setup.config.height,
         );
+        let bloom = crate::bloom::BloomChain::new(
+            &device_setup.device,
+            hdr_target.view(),
+            (device_setup.config.width, device_setup.config.height),
+            crate::bloom::BloomQuality::High,
+        );
         let tone_map = crate::tone_map::ToneMapPass::new(
             &device_setup.device,
             device_setup.config.format,
             &hdr_target,
+            bloom.output(),
         );
-        tone_map.set_params(&device_setup.queue, 1.0, true);
+        tone_map.set_params(&device_setup.queue, 1.0, true, bloom.intensity());
 
         let mut renderer = Self {
             window,
@@ -152,6 +160,7 @@ impl<'a> Renderer<'a> {
             pending_fill_count: 0,
             debug_view: None,
             hdr_target,
+            bloom,
             tone_map,
             exposure: 1.0,
             tone_map_enabled: true,
@@ -293,7 +302,10 @@ impl<'a> Renderer<'a> {
         self.depth_texture_view =
             depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
         self.hdr_target = crate::tone_map::HdrTarget::new(&self.device, width, height);
-        self.tone_map.rebind(&self.device, &self.hdr_target);
+        self.bloom
+            .resize(&self.device, self.hdr_target.view(), (width, height));
+        self.tone_map
+            .rebind(&self.device, &self.hdr_target, self.bloom.output());
 
         if let Some(ssao) = &mut self.ssao {
             ssao.resize(&self.device, width, height);
@@ -586,15 +598,33 @@ impl<'a> Renderer<'a> {
         self.write_tone_map_params();
     }
 
-    /// Turn the tone-map curve on or off; off passes the HDR scene through unchanged.
+    /// Turn the tone-map curve on or off; off skips the curve and passes the HDR scene
+    /// through, still adding bloom when it is enabled.
     pub fn set_tone_map(&mut self, enabled: bool) {
         self.tone_map_enabled = enabled;
         self.write_tone_map_params();
     }
 
-    fn write_tone_map_params(&self) {
+    /// Set the bloom quality: 0 Off, 1 Low, 2 High; any other value gives High.
+    pub fn set_bloom_quality(&mut self, quality: u8) {
+        let quality = crate::bloom::BloomQuality::from_u8(quality);
+        if quality == self.bloom.quality() {
+            return;
+        }
+        self.bloom
+            .set_quality(&self.device, self.hdr_target.view(), quality);
         self.tone_map
-            .set_params(&self.queue, self.exposure, self.tone_map_enabled);
+            .rebind(&self.device, &self.hdr_target, self.bloom.output());
+        self.write_tone_map_params();
+    }
+
+    fn write_tone_map_params(&self) {
+        self.tone_map.set_params(
+            &self.queue,
+            self.exposure,
+            self.tone_map_enabled,
+            self.bloom.intensity(),
+        );
     }
 
     pub fn set_ssao_quality(&mut self, quality: u8) {
@@ -647,8 +677,8 @@ impl<'a> Renderer<'a> {
         }
     }
 
-    /// Flush all queued draws (shadow passes, main pass into the HDR target, tone-map pass,
-    /// markers, SSAO, UI) and present
+    /// Flush all queued draws (shadow passes, main pass into the HDR target, bloom chain,
+    /// tone-map pass, markers, SSAO, UI) and present
     /// the frame. No-op if `begin_frame` wasn't called or didn't acquire a
     /// surface texture.
     pub fn submit_frame(&mut self) {
@@ -703,6 +733,7 @@ impl<'a> Renderer<'a> {
             &offsets,
         );
 
+        self.bloom.render(&mut encoder);
         self.tone_map.render(&mut encoder, frame_view);
 
         if !self.pending_markers.is_empty() {

@@ -70,6 +70,7 @@ enum RenderRequest {
     },
     ShadowQuality(u8),
     SsaoQuality(u8),
+    BloomQuality(u8),
     ViewHeight(Option<f32>),
     Vsync(bool),
     Brightness(f32),
@@ -188,6 +189,10 @@ impl App {
         if config.prefs.brightness() != self.prefs.brightness() {
             self.pending_render
                 .push(RenderRequest::Brightness(config.prefs.brightness()));
+        }
+        if config.prefs.bloom() != self.prefs.bloom() {
+            self.pending_render
+                .push(RenderRequest::BloomQuality(config.prefs.bloom() as u8));
         }
         self.set_pending_frame_cap(config.prefs.frame_cap());
         self.prefs = config.prefs;
@@ -662,6 +667,26 @@ mod tests {
             .collect();
         assert_eq!(queued, vec![1.5]);
         assert_eq!(app.prefs.brightness(), 1.5);
+    }
+
+    #[test]
+    fn adopting_settings_queues_the_bloom_quality() {
+        let mut app = App::headless();
+        let mut dimmer = Prefs::default();
+        dimmer.set_bloom(1);
+
+        app.adopt_settings(dimmer);
+
+        let queued: Vec<u8> = app
+            .pending_render
+            .iter()
+            .filter_map(|request| match request {
+                RenderRequest::BloomQuality(value) => Some(*value),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(queued, vec![1]);
+        assert_eq!(app.prefs.bloom(), 1);
     }
 
     #[test]

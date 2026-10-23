@@ -1,4 +1,4 @@
-//! HDR scene target and the tone-map pass that resolves it to the swapchain.
+//! HDR scene target and the tone-map pass that resolves it, plus bloom, to the swapchain.
 
 use crate::gpu_types::ToneMapGpu;
 
@@ -50,20 +50,23 @@ impl HdrTarget {
     }
 }
 
-/// Fullscreen pass that tone-maps an [`HdrTarget`] onto a swapchain view.
+/// Fullscreen pass that tone-maps an [`HdrTarget`], with a bloom texture added, onto a
+/// swapchain view.
 pub(crate) struct ToneMapPass {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
     bind_group: wgpu::BindGroup,
     uniform: wgpu::Buffer,
+    bloom_sampler: wgpu::Sampler,
 }
 
 impl ToneMapPass {
-    /// Builds the pass for a swapchain of `surface_format`, reading `hdr`.
+    /// Builds the pass for a swapchain of `surface_format`, reading `hdr` and `bloom`.
     pub(crate) fn new(
         device: &wgpu::Device,
         surface_format: wgpu::TextureFormat,
         hdr: &HdrTarget,
+        bloom: &wgpu::TextureView,
     ) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("tonemap-bgl"),
@@ -88,6 +91,22 @@ impl ToneMapPass {
                             std::mem::size_of::<ToneMapGpu>() as u64
                         ),
                     },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
             ],
@@ -132,20 +151,29 @@ impl ToneMapPass {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let bind_group = Self::create_bind_group(device, &bind_group_layout, hdr, &uniform);
+        let bloom_sampler = crate::bloom::linear_clamp_sampler(device, "tonemap-bloom-sampler");
+        let bind_group = Self::create_bind_group(
+            device,
+            &bind_group_layout,
+            [hdr.view(), bloom],
+            &uniform,
+            &bloom_sampler,
+        );
         Self {
             pipeline,
             bind_group_layout,
             bind_group,
             uniform,
+            bloom_sampler,
         }
     }
 
     fn create_bind_group(
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
-        hdr: &HdrTarget,
+        [hdr, bloom]: [&wgpu::TextureView; 2],
         uniform: &wgpu::Buffer,
+        bloom_sampler: &wgpu::Sampler,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("tonemap-bind-group"),
@@ -153,25 +181,50 @@ impl ToneMapPass {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(hdr.view()),
+                    resource: wgpu::BindingResource::TextureView(hdr),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: uniform.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(bloom),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(bloom_sampler),
+                },
             ],
         })
     }
 
-    /// Points the pass at a recreated HDR target.
-    pub(crate) fn rebind(&mut self, device: &wgpu::Device, hdr: &HdrTarget) {
-        self.bind_group =
-            Self::create_bind_group(device, &self.bind_group_layout, hdr, &self.uniform);
+    /// Points the pass at a recreated HDR target or bloom texture.
+    pub(crate) fn rebind(
+        &mut self,
+        device: &wgpu::Device,
+        hdr: &HdrTarget,
+        bloom: &wgpu::TextureView,
+    ) {
+        self.bind_group = Self::create_bind_group(
+            device,
+            &self.bind_group_layout,
+            [hdr.view(), bloom],
+            &self.uniform,
+            &self.bloom_sampler,
+        );
     }
 
-    /// Writes the exposure and curve switch the next [`render`](Self::render) reads.
-    pub(crate) fn set_params(&self, queue: &wgpu::Queue, exposure: f32, enabled: bool) {
-        let gpu = ToneMapGpu::new(exposure, enabled);
+    /// Writes the exposure, curve switch and bloom weight the next
+    /// [`render`](Self::render) reads.
+    pub(crate) fn set_params(
+        &self,
+        queue: &wgpu::Queue,
+        exposure: f32,
+        enabled: bool,
+        bloom_intensity: f32,
+    ) {
+        let gpu = ToneMapGpu::new(exposure, enabled, bloom_intensity);
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&gpu));
     }
 

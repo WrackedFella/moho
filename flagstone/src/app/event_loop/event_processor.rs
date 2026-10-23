@@ -8,7 +8,7 @@
 
 use crate::input_event::InputEvent;
 use crate::{App, RenderRequest};
-use flagstone_voxel::{BlockChangeReason, VoxelChunk, WorldEvent};
+use flagstone_voxel::{BlockChangeReason, CRYSTAL_MATERIAL_ID, VoxelChunk, WorldEvent};
 use moho_core::events::{GraphicsEvent, UiEvent};
 use moho_render_api::{Marker, MarkerId};
 use std::collections::HashSet;
@@ -18,8 +18,6 @@ const MOUSE_WHEEL_ZOOM_FACTOR: f32 = 0.5;
 const SPAWN_RAYCAST_MAX_DISTANCE: f32 = 100.0;
 const SPAWN_NORMAL_OFFSET: f32 = 0.5;
 const SPAWN_FALLBACK_DISTANCE: f32 = 5.0;
-/// Placeholder material ID for torch blocks.
-const TORCH_MATERIAL_ID: u32 = 3; // TODO: look up from MaterialRegistry
 /// Maximum reach for the player's direct mining action — shorter than
 /// `SPAWN_RAYCAST_MAX_DISTANCE`, which is a debug-console placement aid, not
 /// a gameplay reach limit.
@@ -373,33 +371,17 @@ impl EventProcessor {
                     tracing::info!(entity_type = %entity_type, pos = ?spawn_pos, "Spawning entity");
 
                     match entity_type.to_lowercase().as_str() {
-                        "torch" => {
-                            // Set block to torch
-                            // Assuming torch ID is 3 (need to verify or look up)
-                            // For now, let's use a hardcoded ID or look it up if possible
-                            // MaterialRegistry is in VoxelGrid but not easily accessible by name here
-                            // Let's assume 3 for now as a placeholder
-                            let torch_id = TORCH_MATERIAL_ID;
+                        "crystal" => {
                             let block_pos = glam::IVec3::new(
                                 spawn_pos.x.floor() as i32,
                                 spawn_pos.y.floor() as i32,
                                 spawn_pos.z.floor() as i32,
                             );
 
-                            // Use LightSystem to handle block placement if available (it handles events)
-                            // Or modify grid directly and notify
-
-                            // Better approach: Publish BlockPlaced event
-                            // But we are in event processor, we can modify app state directly
-
-                            // If we have light system, use it to handle events?
-                            // Actually, we should modify the grid and let the system react
-
-                            // Let's use the event bus to trigger block placement properly
-                            // This ensures all systems (light, mesh) get notified
+                            // The event path lets the light and mesh systems react.
                             app.event_bus.publish(WorldEvent::BlockPlaced {
                                 position: block_pos,
-                                material_id: torch_id,
+                                material_id: CRYSTAL_MATERIAL_ID,
                                 reason: BlockChangeReason::Player,
                             });
                         }
@@ -524,6 +506,13 @@ impl EventProcessor {
                     app.pending_render
                         .push(RenderRequest::SsaoQuality(quality as u8));
                 }
+            }
+            DebugEvent::SetBloomQuality { quality } => {
+                tracing::info!(quality, "Setting bloom quality");
+                app.prefs.set_bloom(quality);
+                app.save_prefs();
+                app.pending_render
+                    .push(RenderRequest::BloomQuality(app.prefs.bloom() as u8));
             }
             DebugEvent::ShowMarker {
                 id,
@@ -664,9 +653,43 @@ mod tests {
     }
 
     #[test]
-    fn spawn_torch_publishes_torch_placement_at_the_spawn_block() {
+    fn spawn_crystal_publishes_crystal_placement_at_the_spawn_block() {
         let mut app = App::headless();
-        let placed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let placed = collect_block_placements(&app);
+        publish_spawn(&app, "crystal");
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        let expected = fallback_spawn_pos(&app).floor().as_ivec3();
+        assert_eq!(
+            *placed.lock().unwrap(),
+            vec![(
+                expected,
+                flagstone_voxel::CRYSTAL_MATERIAL_ID,
+                BlockChangeReason::Player
+            )]
+        );
+        assert!(app.entities.actors.spheres().is_empty());
+        assert!(app.entities.actors.cubes().is_empty());
+    }
+
+    #[test]
+    fn spawn_torch_places_nothing() {
+        let mut app = App::headless();
+        let placed = collect_block_placements(&app);
+        publish_spawn(&app, "torch");
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        assert!(placed.lock().unwrap().is_empty());
+        assert!(app.entities.actors.spheres().is_empty());
+        assert!(app.entities.actors.cubes().is_empty());
+    }
+
+    type Placements = std::sync::Arc<std::sync::Mutex<Vec<(glam::IVec3, u32, BlockChangeReason)>>>;
+
+    fn collect_block_placements(app: &App) -> Placements {
+        let placed = Placements::default();
         let sink = std::sync::Arc::clone(&placed);
         app.event_bus.subscribe(move |e: &WorldEvent| {
             if let WorldEvent::BlockPlaced {
@@ -680,17 +703,7 @@ mod tests {
                     .push((*position, *material_id, reason.clone()));
             }
         });
-        publish_spawn(&app, "torch");
-
-        EventProcessor::new().process_debug_events(&mut app);
-
-        let expected = fallback_spawn_pos(&app).floor().as_ivec3();
-        assert_eq!(
-            *placed.lock().unwrap(),
-            vec![(expected, TORCH_MATERIAL_ID, BlockChangeReason::Player)]
-        );
-        assert!(app.entities.actors.spheres().is_empty());
-        assert!(app.entities.actors.cubes().is_empty());
+        placed
     }
 
     #[test]
@@ -1265,6 +1278,28 @@ mod tests {
         assert!(
             app.pending_render.is_empty(),
             "no window, so nothing is queued for the renderer"
+        );
+    }
+
+    #[test]
+    fn set_bloom_quality_saves_and_queues_the_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = prefs_file(&dir);
+        let mut app = headless_saving_to(&path);
+        app.event_bus
+            .publish(DebugEvent::SetBloomQuality { quality: 1 });
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        assert_eq!(app.prefs.bloom(), 1);
+        assert_eq!(Prefs::load_from(&path).0.bloom(), 1);
+        assert!(
+            matches!(
+                app.pending_render.as_slice(),
+                [RenderRequest::BloomQuality(1)]
+            ),
+            "queued {} requests",
+            app.pending_render.len()
         );
     }
 

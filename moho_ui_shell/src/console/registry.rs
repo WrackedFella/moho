@@ -49,6 +49,8 @@ pub enum EngineCommand {
     DebugView(u32),
     ShadowQuality(u8),
     SsaoQuality(u8),
+    /// Bloom level: 0=Off, 1=Low, 2=High.
+    BloomQuality(u8),
     /// Tone-map curve on or off, for this session only.
     ToneMap(bool),
     PlaySoundAt {
@@ -144,6 +146,21 @@ fn parse_ssao_quality(args: &[&str]) -> Result<(EngineCommand, String), String> 
     ))
 }
 
+fn parse_bloom(args: &[&str]) -> Result<(EngineCommand, String), String> {
+    const USAGE: &str = "Usage: r_bloom <0-2> (0=Off, 1=Low, 2=High)";
+    let arg = args.first().ok_or_else(|| USAGE.to_owned())?;
+    let (quality, name) = match *arg {
+        "0" => (0, "Off"),
+        "1" => (1, "Low"),
+        "2" => (2, "High"),
+        _ => return Err("Bloom must be 0, 1 or 2".to_owned()),
+    };
+    Ok((
+        EngineCommand::BloomQuality(quality),
+        format!("Bloom set to: {name} ({quality})"),
+    ))
+}
+
 fn parse_tone_map(args: &[&str]) -> Result<(EngineCommand, String), String> {
     match args.first().copied() {
         Some("0") => Ok((EngineCommand::ToneMap(false), "Tone map off".to_owned())),
@@ -221,6 +238,12 @@ impl<G> Registry<G> {
                     "r_ssao_quality <0-4>",
                     "set SSAO quality (Off/Low/Med/High/Ultra)",
                     Handler::Engine(parse_ssao_quality),
+                ),
+                engine(
+                    "r_bloom",
+                    "r_bloom <0-2>",
+                    "set bloom quality (Off/Low/High)",
+                    Handler::Engine(parse_bloom),
                 ),
                 engine(
                     "r_tonemap",
@@ -346,6 +369,36 @@ mod tests {
     }
 
     #[test]
+    fn r_bloom_parses_0_to_2_and_refuses_3() {
+        for level in 0..=2u8 {
+            let (engine, game, printed) = run_line(&format!("r_bloom {level}"));
+
+            assert_eq!(
+                engine,
+                [EngineCommand::BloomQuality(level)],
+                "level {level}"
+            );
+            assert!(game.is_empty(), "level {level}");
+            assert_eq!(printed.len(), 1, "level {level}: {printed:?}");
+        }
+        for line in [
+            "r_bloom 3",
+            "r_bloom x",
+            "r_bloom -1",
+            "r_bloom 1.5",
+            "r_bloom",
+        ] {
+            let (engine, game, printed) = run_line(line);
+
+            assert!(engine.is_empty(), "{line}: {engine:?}");
+            assert!(game.is_empty(), "{line}");
+            assert_eq!(printed.len(), 1, "{line}: {printed:?}");
+        }
+        let (_, _, usage) = run_line("r_bloom");
+        assert!(usage[0].starts_with("Usage: r_bloom"), "{usage:?}");
+    }
+
+    #[test]
     fn debug_view_accepts_zero_through_seven_and_refuses_eight() {
         for mode in 0..=7u32 {
             let (engine, game, printed) = run_line(&format!("r_debug_view {mode}"));
@@ -415,11 +468,12 @@ mod tests {
         console.submit("help");
 
         let help = help_lines(&console);
-        assert_eq!(help.len(), 9, "{help:?}");
+        assert_eq!(help.len(), 10, "{help:?}");
         for prefix in [
             "  r_debug_view <0-7> - ",
             "  r_shadow_quality <0-4> - ",
             "  r_ssao_quality <0-4> - ",
+            "  r_bloom <0-2> - ",
             "  r_tonemap <0|1> - ",
             "  audio_cue <path> <x> <y> <z> [volume] - ",
         ] {
@@ -430,7 +484,7 @@ mod tests {
             );
         }
         assert_eq!(
-            help[8], "  tgm [0|1] - toggle god mode",
+            help[9], "  tgm [0|1] - toggle god mode",
             "game rows stay last"
         );
     }
@@ -441,6 +495,7 @@ mod tests {
             "r_debug_view",
             "r_shadow_quality",
             "r_ssao_quality",
+            "r_bloom",
             "audio_cue",
         ] {
             let (mut console, _) = Console::<Cmd>::new(&std::collections::BTreeMap::new());
@@ -680,9 +735,9 @@ mod tests {
             })
         );
         let help = help_lines(&console);
-        assert_eq!(help.len(), 9, "{help:?}");
+        assert_eq!(help.len(), 10, "{help:?}");
         assert_eq!(help.iter().filter(|l| l.starts_with("  quit")).count(), 1);
-        assert_eq!(help[8], "  tgm [0|1] - toggle god mode");
+        assert_eq!(help[9], "  tgm [0|1] - toggle god mode");
     }
 
     #[test]

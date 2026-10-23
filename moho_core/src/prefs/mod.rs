@@ -64,6 +64,7 @@ pub struct Prefs {
     // Graphics settings
     graphics_shadow_quality: u32, // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
     graphics_ssao_quality: u32,   // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
+    graphics_bloom: u32,          // 0=Off, 1=Low, 2=High
     graphics_brightness: f32,
     // Video settings
     window_mode: WindowMode,
@@ -81,6 +82,7 @@ pub struct Prefs {
 }
 
 const MAX_GRAPHICS_QUALITY: u32 = 4;
+const MAX_BLOOM_QUALITY: u32 = 2;
 /// Brightness is a linear exposure multiplier.
 const MIN_BRIGHTNESS: f32 = 0.5;
 const MAX_BRIGHTNESS: f32 = 2.0;
@@ -188,6 +190,10 @@ impl Prefs {
     pub fn ssao_quality(&self) -> u32 {
         self.graphics_ssao_quality
     }
+    /// Bloom quality: 0=Off, 1=Low, 2=High.
+    pub fn bloom(&self) -> u32 {
+        self.graphics_bloom
+    }
     /// Scene exposure multiplier, within `0.5..=2.0`.
     pub fn brightness(&self) -> f32 {
         self.graphics_brightness
@@ -265,6 +271,11 @@ impl Prefs {
         self.graphics_ssao_quality = quality.min(MAX_GRAPHICS_QUALITY);
     }
 
+    /// Stores the bloom quality, clamped to `0..=2`.
+    pub fn set_bloom(&mut self, quality: u32) {
+        self.graphics_bloom = quality.min(MAX_BLOOM_QUALITY);
+    }
+
     /// Stores the scene exposure multiplier, clamped to `0.5..=2.0`; NaN gives the default.
     pub fn set_brightness(&mut self, brightness: f32) {
         self.graphics_brightness = if brightness.is_nan() {
@@ -338,6 +349,7 @@ impl Default for Prefs {
             // Default graphics settings (High)
             graphics_shadow_quality: 3,
             graphics_ssao_quality: 3,
+            graphics_bloom: MAX_BLOOM_QUALITY,
             graphics_brightness: DEFAULT_BRIGHTNESS,
             // Default video settings
             window_mode: WindowMode::Windowed,
@@ -386,6 +398,7 @@ impl Prefs {
              \n[graphics]\n\
              shadow_quality={shadow}\n\
              ssao_quality={ssao}\n\
+             bloom={bloom}\n\
              brightness={brightness:.2}\n\
              \n[video]\n\
              window_mode={window_mode}\n\
@@ -408,6 +421,7 @@ impl Prefs {
             voice = self.audio_voice_volume,
             shadow = self.graphics_shadow_quality,
             ssao = self.graphics_ssao_quality,
+            bloom = self.graphics_bloom,
             brightness = self.graphics_brightness,
             window_mode = self.window_mode.as_str(),
             width = self.window_resolution.0,
@@ -538,6 +552,45 @@ mod tests {
         assert_eq!(low, 0.5);
         assert_eq!(high, 2.0);
         assert_eq!(nan, 1.0);
+    }
+
+    #[test]
+    fn bloom_defaults_to_high() {
+        assert_eq!(Prefs::default().bloom(), 2);
+    }
+
+    #[test]
+    fn bloom_round_trips() {
+        for quality in [0, 1, 2] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config").join("prefs.ini");
+            let mut prefs = Prefs::default();
+            prefs.set_bloom(quality);
+
+            prefs.save_to(&path).unwrap();
+            let (loaded, warnings) = Prefs::load_from(&path);
+
+            assert_eq!(warnings, vec![], "bloom {quality}");
+            assert_eq!(loaded.bloom(), quality);
+            assert!(
+                prefs
+                    .to_ini_string()
+                    .contains(&format!("bloom={quality}\n"))
+            );
+        }
+    }
+
+    #[test]
+    fn bloom_clamps_to_high() {
+        let mut prefs = Prefs::default();
+
+        prefs.set_bloom(3);
+        let above = prefs.bloom();
+        prefs.set_bloom(u32::MAX);
+        let max = prefs.bloom();
+
+        assert_eq!(above, 2);
+        assert_eq!(max, 2);
     }
 
     #[test]

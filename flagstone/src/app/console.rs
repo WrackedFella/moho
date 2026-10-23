@@ -81,6 +81,11 @@ pub fn apply_engine_command(app: &mut App, command: &EngineCommand) {
                 quality: u32::from(*quality),
             });
         }
+        EngineCommand::BloomQuality(quality) => {
+            app.event_bus.publish(DebugEvent::SetBloomQuality {
+                quality: u32::from(*quality),
+            });
+        }
         EngineCommand::ToneMap(enabled) => {
             app.pending_render.push(RenderRequest::ToneMap(*enabled));
         }
@@ -365,6 +370,19 @@ mod tests {
 
         assert_eq!(app.prefs.ssao_quality(), 3);
         assert_eq!(Prefs::load_from(&path).0.ssao_quality(), 3);
+    }
+
+    #[test]
+    fn bloom_command_saves_prefs() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("prefs.ini");
+        let mut app = headless_saving_to(&path);
+        apply_engine_command(&mut app, &EngineCommand::BloomQuality(1));
+
+        tick(&mut app);
+
+        assert_eq!(app.prefs.bloom(), 1);
+        assert_eq!(Prefs::load_from(&path).0.bloom(), 1);
     }
 
     #[test]

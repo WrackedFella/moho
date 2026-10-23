@@ -35,6 +35,9 @@ pub enum DebugEvent {
     /// Set SSAO quality
     SetSsaoQuality { quality: u32 },
 
+    /// Set bloom quality: 0=Off, 1=Low, 2=High
+    SetBloomQuality { quality: u32 },
+
     /// Show or replace a box marker; `min` and `max` are world positions in metres
     ShowMarker {
         id: u64,
