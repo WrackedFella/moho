@@ -1,12 +1,12 @@
 # Searchlight
 
-**Source:** `searchlight/src/`, `moho_level/src/nav.rs`, `searchlight/assets/`, `searchlight/content/`, `moho_ui_shell/src/`.
+**Source:** `searchlight/src/`, `searchlight_rules/src/posture.rs`, `moho_level/src/nav.rs`, `searchlight/assets/`, `searchlight/content/`, `moho_ui_shell/src/`.
 **Decisions:** [ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md),
 [ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md),
 [ADR-0019](../../_todo/adr/0019-navigation-is-an-engine-seam.md).
 
 `searchlight` is the FPS line's engine adapter: a library and the `searchlight` binary. Rules
-(`Rifle`, `Magazine`, `Rig`, `Loadout`, `Body`, `BodyProfile`, `Grade`) and item and kit definitions come from `searchlight_rules`; windowing, loop,
+(`Rifle`, `Magazine`, `Rig`, `Loadout`, `Body`, `BodyProfile`, `Grade`, `Lean`, `LeanTuning`) and item and kit definitions come from `searchlight_rules`; windowing, loop,
 physics, level loading, input, audio and rendering come from engine crates. It depends on no
 strategy crate ([overview](../architecture/overview.md#2-lines-and-rules)).
 
@@ -20,6 +20,7 @@ flowchart LR
     mode --> wave["wave.rs<br/>WaveTuning, WaveState"]
     mode --> sim["sim.rs<br/>SearchlightSim"]
     game --> input["input.rs<br/>SearchlightAction, SearchlightCommand"]
+    game --> lean["lean.rs<br/>eye offset, rolled view"]
     game --> hud["hud.rs<br/>status wording"]
     game --> menu["menu.rs<br/>Menu, MenuAction"]
     sim --> brain["brain.rs<br/>enemy Brain"]
@@ -35,7 +36,8 @@ flowchart LR
 | `arena` | Loads `assets/arena.glb` through `moho_level`; `ArenaMarkers` sorts named markers by kind and orders waypoints into the patrol route; `Arena` is the loaded level the sim starts from (meshes and their glTF material names, spawns, route, cover points, `nav`) and builds the world colliders; `Arena::from_level` also builds the `NavMesh` for `nav_profile` (the player-sized capsule plus clearance) and fails with `ArenaError::Nav` when that fails; it also drops waypoints no enemy spawn has a navmesh path to (logged as a warning) and fails with `ArenaError::NoReachableWaypoint` when none is left |
 | `kit` | `kit::load(roots, START_KIT_ID)`: loads `items` and `kits` through the content roots and resolves the `start` kit into a `searchlight_rules::Kit` (weapon numbers plus a ready `Loadout`); `KitLoadError` separates content errors from an invalid kit |
 | `tuning` | `tuning(Kit)`: builds the `SimConfig`, taking the rifle's numbers from the kit's weapon and the player's `Loadout` from the kit |
-| `input` | `SearchlightAction` set and default bindings; `build_action_map` builds the `ActionMap` at startup, with mouse look (`look_settings`: sensitivity, smoothing, invert Y) taken from `Prefs`, and a sensitivity not above zero falling back to the default 3.0; `SearchlightCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on F8) |
+| `input` | `SearchlightAction` set and default bindings; `build_action_map` builds the `ActionMap` at startup, with mouse look (`look_settings`: sensitivity, smoothing, invert Y) taken from `Prefs`, and a sensitivity not above zero falling back to the default 3.0; `SearchlightCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on F8); `resolve_lean` turns the held `LeanLeft` and `LeanRight` actions (Q, E) into one `LeanSide` |
+| `lean` | `lean_offset` (horizontal eye shift for a lean at a yaw) and `rolled_view_matrix` (view with up tipped about forward); pure `glam` maths the game and sim share ([posture](#8-posture)) |
 | `tag` | `SurfaceTag` (`World`, `Part { target, part }` or `Player(part)`) and its lossless round trip through the engine's opaque `moho_physics::HitTag` |
 | `shot` | `resolve_shot`: first tagged surface along a `ShotRay` in the `PhysicsWorld`; `passes_within`: whether a shot segment comes within a radius of a point |
 | `brain` | `Brain`: the enemy state machine (`Patrol`, `Engage`, `Cover`, `Chase`), pure over `glam` types; `Percept` and a `steer` function in, `Intent` out; `EnemyTuning` holds its numbers; `EnemyTuning::graded` scales reaction, cooldown and aim error by a `Grade` ([enemies](#5-enemies)) |
@@ -101,8 +103,9 @@ The title status line appends `GOD MODE` (`hud::god_mode_text`).
 
 ## 3 Tick
 
-`SearchlightSim::tick(command, dt)` lets the enemies perceive and move, moves the player character,
-steps the physics world, applies weapon actions, then resolves the shots the enemies decided
+`SearchlightSim::tick(command, dt)` lets the enemies perceive and move, moves the player character
+(slower while a lean is held), steps the physics world, blends the player's lean ([posture](#8-posture)),
+applies weapon actions, then resolves the shots the enemies decided
 on and removes enemies that died. The rifle is in one state at a time (ready, cooling down
 after a shot, reloading); cooldown and reload are tick counts. A reload takes `reload_ticks`, plus
 `charge_ticks` when the chamber is empty. It swaps in the next fitting magazine from the `Rig`
@@ -188,3 +191,27 @@ the patrol route follows the waypoint numbers, not file order. A waypoint that n
 `assets/arena.glb` and `assets/rifle_shot.wav` are generated by
 `assets/tools/make_arena.py`; see [`assets/README.md`](../../searchlight/assets/README.md) for
 regeneration and licence. A replacement arena must keep the marker names.
+
+## 8 Posture
+
+Lean is the one posture so far. `searchlight_rules::posture` owns the rules: `LeanSide`, `LeanTuning`
+(`shift` metres, `roll` radians, `blend_seconds`, `speed_factor`; set in `tuning::tuning`), `LeanReach`
+(room for a full lean on each side, each in `[0, 1]`) and `Lean`, the signed amount in `[-1, 1]` (negative
+left). `Lean::step` blends the amount toward the wanted side by `dt / blend_seconds`, held within the reach;
+a `blend_seconds` not above zero snaps.
+
+Flow per tick:
+
+1. `SearchlightGame::command` resolves the held side with `input::resolve_lean`: a side pressed this tick wins
+   (right on a same-tick tie), else the previous side while still held, else whichever side is held. It is
+   carried as `SearchlightCommand::lean`, `None` while the console or a menu captures input.
+2. `SearchlightSim::tick` scales walking speed by `speed_factor` while `lean` is `Some`, then `step_lean`
+   blends `player_lean`. Reach comes from one level ray per side from the upright eye, so a wall beside
+   the player stops the lean short; with no lean wanted and none held it is `LeanReach::FULL`.
+3. The player's eye (`SearchlightSim::player_eye`) is the upright eye shifted along the player's right by
+   `lean * shift`. The player's shots leave from it, after the lean has stepped that tick. Enemy sight and
+   the player's hit volumes do not follow the lean yet.
+
+The lean is blended between the last two ticks at draw time like the player's position; `SearchlightGame::frame`
+shifts the eye with `lean_offset` and rolls the view by `lean * roll` through `rolled_view_matrix`. A restart
+resets the previous lean so the first frame is upright.

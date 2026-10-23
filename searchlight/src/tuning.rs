@@ -1,7 +1,7 @@
 //! The simulation's tuning, with the rifle's numbers taken from its definition.
 
 use moho_physics::MoveSettings;
-use searchlight_rules::{BodyPart, BodyProfile, Kit};
+use searchlight_rules::{BodyPart, BodyProfile, Kit, LeanTuning};
 
 use crate::brain::EnemyTuning;
 use crate::sim::SimConfig;
@@ -35,6 +35,12 @@ pub fn tuning(kit: Kit) -> SimConfig {
         loadout,
         enemy: EnemyTuning::default(),
         enemy_aim_at: BodyPart::Torso,
+        lean: LeanTuning {
+            shift: 0.35,
+            roll: 12.0_f32.to_radians(),
+            blend_seconds: 0.25,
+            speed_factor: 0.5,
+        },
     }
 }
 
@@ -73,5 +79,30 @@ mod tests {
         assert_eq!(config.charge_ticks, 13);
         assert!((config.range - 55.5).abs() < f32::EPSILON);
         assert_eq!(config.loadout, loadout);
+    }
+
+    #[test]
+    fn the_shipped_lean_is_0_35_m_and_12_degrees() {
+        let mut rig = Rig::new(ItemId::new("test_rig"), &RigSpec { magazine_slots: 1 });
+        rig.stow(mag(17, 17)).unwrap();
+        let kit = Kit {
+            weapon: RifleDef {
+                well: MagazineWell::new("test"),
+                damage: 30,
+                fire: FireBehaviour::SemiAuto,
+                cooldown_ticks: 6,
+                reload_ticks: 120,
+                charge_ticks: 30,
+                range: 100.0,
+            },
+            loadout: Loadout::new(rifle_from(mag(17, 17)), rig),
+        };
+
+        let config = tuning(kit);
+
+        assert_eq!(config.lean.shift, 0.35);
+        assert!((config.lean.roll - 12.0_f32.to_radians()).abs() < 1e-6);
+        assert_eq!(config.lean.blend_seconds, 0.25);
+        assert_eq!(config.lean.speed_factor, 0.5);
     }
 }

@@ -1,18 +1,26 @@
 //! The rapier collide-and-slide behind [`crate::movement::step`].
 
-use crate::movement::{Ground, Slide, WALKABLE_NORMAL_Y};
+use crate::movement::{Ground, Slide, STEP_HEIGHT, WALKABLE_NORMAL_Y};
 use glam::Vec3;
 use rapier3d::control::{
     CharacterLength, EffectiveCharacterMovement, KinematicCharacterController,
 };
+use rapier3d::parry::query::ShapeCastHit;
 use rapier3d::parry::query::ShapeCastOptions;
+use rapier3d::parry::shape::Cylinder;
 use rapier3d::prelude::{ColliderHandle, Pose, QueryPipeline, Ray, Shape};
 
 /// How far below a grounded landing to look for the surface it landed on, in metres.
 const GROUND_PROBE: f32 = 0.1;
 
-/// How far past the capsule's lowest point the ground ray reaches, in metres.
-const GROUND_REACH_MARGIN: f32 = 0.3;
+/// Half the height of the thin cylinder whose flat base reads the ground, in metres.
+const FLAT_BASE_HALF_HEIGHT: f32 = 0.005;
+
+/// How far above and below the ground contact the face-normal ray reaches, in metres.
+const FACE_PROBE: f32 = 0.05;
+
+/// How far the face-normal ray starts inside the contact point, in metres.
+const EDGE_INSET: f32 = 0.01;
 
 /// Surfaces facing down at least this much (`normal.y` below its negative) are ceilings, not risers.
 const CEILING_NORMAL_Y: f32 = 0.3;
@@ -85,7 +93,7 @@ impl Slider<'_> {
                 return Slide {
                     translation,
                     grounded: true,
-                    ground: self.ground_under(start.translation + translation),
+                    ground: self.ground_below(start.translation + translation),
                     hits,
                 };
             }
@@ -99,30 +107,108 @@ impl Slider<'_> {
             grounded: plain.grounded,
             // Only a walker reads its ground, and only a character that started grounded walks.
             ground: was_grounded
-                .then(|| self.ground_under(start.translation + plain.translation))
+                .then(|| self.ground_below(start.translation + plain.translation))
                 .flatten(),
             hits,
         }
     }
 
-    /// The walkable surface straight under `centre`, or `None` when a ray cast down from it
-    /// finds none within the capsule's half-height plus a margin.
+    /// The walkable surface the capsule centred at `centre` stands on, within [`STEP_HEIGHT`]
+    /// of it, or `None` when there is none.
     ///
-    /// A ray, unlike a shape cast, ignores the capsule's rounded base, so it reads the face the
-    /// centre stands over rather than a ledge edge the base merely overlaps. The gap is how far
-    /// the capsule hangs above that face's plane, measured on the ray.
-    pub(super) fn ground_under(&self, centre: Vec3) -> Option<Ground> {
+    /// Two casts straight down. A thin flat-based cylinder reads the face under the capsule:
+    /// unlike the capsule's rounded base it reports a face normal on step edges and across
+    /// seams, and its radius, tied to the walkable angle, is the perch margin. The capsule
+    /// itself, cast down to its skin offset, gives the gap: how far it can drop before it
+    /// touches anything.
+    pub(super) fn ground_below(&self, centre: Vec3) -> Option<Ground> {
         let capsule = self
             .shape
             .as_capsule()
             .expect("character colliders are capsules");
-        let reach = capsule.half_height() + capsule.radius + GROUND_REACH_MARGIN;
-        let ray = Ray::new(centre, -Vec3::Y);
-        let (_, hit) = self.queries.cast_ray_and_get_normal(&ray, reach, true)?;
-        (hit.normal.y >= WALKABLE_NORMAL_Y).then(|| Ground {
-            normal: hit.normal,
-            gap: hit.time_of_impact - (capsule.half_height() + capsule.radius / hit.normal.y),
+        let CharacterLength::Absolute(skin) = self.controller.offset else {
+            panic!("the world builds its character controller with an absolute skin offset");
+        };
+
+        let base_radius = capsule.radius * (1.0 - WALKABLE_NORMAL_Y * WALKABLE_NORMAL_Y).sqrt();
+        let base = Cylinder::new(FLAT_BASE_HALF_HEIGHT, base_radius);
+        let base_at = Pose::from_translation(centre - Vec3::Y * capsule.half_height());
+        let (collider, face) = self.queries.cast_shape(
+            &base_at,
+            -Vec3::Y,
+            &base,
+            cast_within(capsule.radius + STEP_HEIGHT),
+        )?;
+        let normal = self.face_normal(collider, &face, centre);
+        if normal.y < WALKABLE_NORMAL_Y {
+            return None;
+        }
+
+        let at = Pose::from_translation(centre);
+        let skinned = ShapeCastOptions {
+            target_distance: skin,
+            ..cast_within(STEP_HEIGHT)
+        };
+        let gap = match self.queries.cast_shape(&at, -Vec3::Y, self.shape, skinned) {
+            Some((_, drop)) => drop.time_of_impact,
+            // Near a mesh boundary the skinned cast can miss though the flat base hit.
+            None => {
+                match self
+                    .queries
+                    .cast_shape(&at, -Vec3::Y, self.shape, cast_within(STEP_HEIGHT))
+                {
+                    Some((_, drop)) => {
+                        let cosine = drop.normal1.y.max(WALKABLE_NORMAL_Y);
+                        (drop.time_of_impact - skin / cosine).max(0.0)
+                    }
+                    None => (face.time_of_impact + FLAT_BASE_HALF_HEIGHT - capsule.radius - skin)
+                        .max(0.0),
+                }
+            }
+        };
+        Some(Ground {
+            normal,
+            gap,
+            collider,
+            point: face.witness1,
         })
+    }
+
+    /// The face normal of the ground the flat base touched at `hit`, or the cast's own normal
+    /// when neither lookup finds one.
+    ///
+    /// A shape cast that touches a mesh edge or a triangle boundary reports a normal tilted
+    /// toward the shape, and its search noise tilts even a flat floor's by a few millionths;
+    /// either would give a walker a spurious vertical speed along its ground. The hit
+    /// triangle's own normal is exact. When the cast touches a riser's top edge the riser
+    /// ties with the tread for first contact and its normal is not walkable, so a ray down onto
+    /// the contact, nudged toward the cast's axis `centre` so an exact edge contact lands on the
+    /// tread, reads the tread instead.
+    fn face_normal(&self, collider: ColliderHandle, hit: &ShapeCastHit, centre: Vec3) -> Vec3 {
+        let Some(found) = self.queries.colliders.get(collider) else {
+            return hit.normal1;
+        };
+        let triangle = found
+            .shape()
+            .as_trimesh()
+            .and_then(|mesh| mesh.triangle(hit.subshape1).normal())
+            .map(|normal| found.position().rotation * normal)
+            .map(|world| if world.y < 0.0 { -world } else { world })
+            .filter(|normal| normal.y >= WALKABLE_NORMAL_Y);
+        triangle
+            .or_else(|| {
+                let inward = (centre - hit.witness1).with_y(0.0).normalize_or_zero();
+                let origin = hit.witness1 + inward * EDGE_INSET + Vec3::Y * FACE_PROBE;
+                let ray = Ray::new(origin, -Vec3::Y);
+                match self
+                    .queries
+                    .cast_ray_and_get_normal(&ray, 2.0 * FACE_PROBE, true)
+                {
+                    Some((handle, ray_hit)) if handle == collider => Some(ray_hit.normal),
+                    _ => None,
+                }
+            })
+            .unwrap_or(hit.normal1)
     }
 
     /// The surface under a character the controller grounded without reporting a hit.
@@ -192,7 +278,7 @@ impl Slider<'_> {
 #[cfg(test)]
 mod tests {
     use super::super::test_support::TEST_TAG;
-    use super::super::test_support::{quad_mesh, slope_mesh, step_box_mesh};
+    use super::super::test_support::{quad_mesh, seam_floor_meshes, slope_mesh, step_box_mesh};
     use super::super::PhysicsWorld;
     use super::*;
     use moho_render_api::{WorldMesh, WorldMeshId};
@@ -317,7 +403,7 @@ mod tests {
         assert_eq!(step_up_over_thin_wall(&ground(-1.0, 2.05, 10.0)), None);
     }
 
-    fn ground_under_centre(meshes: &[WorldMesh], centre: Vec3) -> Option<Vec3> {
+    fn ground_below_centre(meshes: &[WorldMesh], centre: Vec3) -> Option<Vec3> {
         let mut world = PhysicsWorld::new();
         for (id, mesh) in meshes.iter().enumerate() {
             world.set_world_mesh(WorldMeshId(id as u64), mesh, TEST_TAG);
@@ -336,7 +422,7 @@ mod tests {
             shape: capsule.as_ref(),
             dt: 1.0 / 60.0,
         };
-        slider.ground_under(centre).map(|ground| ground.normal)
+        slider.ground_below(centre).map(|ground| ground.normal)
     }
 
     fn slope(degrees: f32) -> WorldMesh {
@@ -345,58 +431,65 @@ mod tests {
     }
 
     #[test]
-    fn ground_under_reports_the_face_below_the_centre() {
+    fn ground_below_reports_the_face_below_the_centre() {
         let angle = 25.0_f32.to_radians();
         let tilted = Vec3::new(0.0, angle.cos(), -angle.sin());
 
-        let flat = ground_under_centre(&[ground(0.0, -10.0, 10.0)], Vec3::new(0.0, 1.2, 0.0));
-        let on_slope = ground_under_centre(&[slope(25.0)], Vec3::new(0.0, 1.27, 0.0));
-        let at_reach = ground_under_centre(&[slope(40.0)], Vec3::new(1.0, 1.4, 0.0));
-        let over_ledge = ground_under_centre(&[ground(0.0, -10.0, 1.0)], Vec3::new(0.0, 1.2, 0.5));
+        let flat = ground_below_centre(&[ground(0.0, -10.0, 10.0)], Vec3::new(0.0, 1.2, 0.0));
+        let on_slope = ground_below_centre(&[slope(25.0)], Vec3::new(0.0, 1.27, 0.0));
+        let steep_walkable = ground_below_centre(&[slope(40.0)], Vec3::new(1.0, 1.4, 0.0));
+        let over_ledge = ground_below_centre(&[ground(0.0, -10.0, 1.0)], Vec3::new(0.0, 1.2, 0.5));
 
         assert!(flat.expect("flat ground below").distance(Vec3::Y) < 1e-3);
         assert!(
             on_slope.expect("slope below").distance(tilted) < 1e-3,
             "{on_slope:?}"
         );
-        assert!(at_reach.is_some(), "a 40 degree face is walkable");
+        assert!(steep_walkable.is_some(), "a 40 degree face is walkable");
         assert!(over_ledge.is_some(), "the ray finds the ledge's top");
     }
 
     #[test]
-    fn ground_under_is_none_past_a_ledge_and_on_steep_faces() {
-        let ledge = || vec![ground(0.0, -10.0, 1.0)];
+    fn ground_below_is_none_on_steep_faces_beyond_the_step_height_and_over_nothing() {
         let level = || vec![ground(0.0, -10.0, 10.0)];
         let cases: Vec<(&str, Vec<WorldMesh>, Vec3)> = vec![
-            ("well past a ledge", ledge(), Vec3::new(0.0, 1.2, 1.5)),
-            (
-                "just past a ledge, where a shape cast would see its rounded edge",
-                ledge(),
-                Vec3::new(0.0, 1.2, 1.07),
-            ),
             (
                 "over a 50 degree face",
                 vec![slope(50.0)],
                 Vec3::new(0.0, 1.2, 0.0),
             ),
             (
-                "beyond the capsule's reach",
+                "beyond the step height",
                 level(),
-                Vec3::new(0.0, 1.6, 0.0),
+                Vec3::new(0.0, 1.15 + 0.55, 0.0),
             ),
             ("over nothing", Vec::new(), Vec3::new(0.0, 1.2, 0.0)),
         ];
 
         for (case, meshes, centre) in cases {
-            assert_eq!(ground_under_centre(&meshes, centre), None, "{case}");
+            assert_eq!(ground_below_centre(&meshes, centre), None, "{case}");
         }
     }
 
     /// Runs `check` with a slider for a standard character capsule over `meshes`.
     fn with_slider<T>(meshes: &[WorldMesh], check: impl FnOnce(&Slider) -> T) -> T {
+        with_slider_and_colliders(meshes, |slider, _| check(slider))
+    }
+
+    /// Like [`with_slider`], also giving the collider of each mesh, in order.
+    fn with_slider_and_colliders<T>(
+        meshes: &[WorldMesh],
+        check: impl FnOnce(&Slider, &[ColliderHandle]) -> T,
+    ) -> T {
         let mut world = PhysicsWorld::new();
+        let mut colliders = Vec::new();
         for (id, mesh) in meshes.iter().enumerate() {
             world.set_world_mesh(WorldMeshId(id as u64), mesh, TEST_TAG);
+            colliders.push(
+                world
+                    .world_mesh_collider(WorldMeshId(id as u64))
+                    .expect("mesh registered"),
+            );
         }
         world.step(1.0 / 60.0);
         let queries = world.broad_phase.as_query_pipeline(
@@ -412,22 +505,181 @@ mod tests {
             shape: capsule.as_ref(),
             dt: 1.0 / 60.0,
         };
-        check(&slider)
+        check(&slider, &colliders)
+    }
+
+    /// A character centre's height 2 cm above where a capsule rests on level ground at y = 0.
+    const HOVER_Y: f32 = 1.17;
+
+    #[test]
+    fn ground_below_finds_a_ledge_under_the_flat_base_with_the_centre_over_the_void() {
+        let ledge = [ground(0.0, -10.0, 1.0)];
+
+        for past in [0.1_f32, 0.2] {
+            let centre = Vec3::new(0.0, HOVER_Y, 1.0 + past);
+
+            let (found, colliders) = with_slider_and_colliders(&ledge, |slider, colliders| {
+                (slider.ground_below(centre), colliders.to_vec())
+            });
+
+            let found = found.unwrap_or_else(|| panic!("{past} m past the edge: no ground"));
+            assert!(found.normal.distance(Vec3::Y) < 1e-3, "{past}: {found:?}");
+            assert_eq!(found.collider, colliders[0], "{past}: {found:?}");
+            assert!(found.point.y.abs() < 0.02, "{past}: {found:?}");
+            assert!(found.point.z <= 1.0 + 1e-3, "{past}: {found:?}");
+            assert!(
+                (-1e-3..0.15).contains(&found.gap),
+                "{past}: the capsule hangs just above the edge: {found:?}"
+            );
+        }
     }
 
     #[test]
-    fn ground_gap_is_the_height_above_the_plane_where_the_capsule_would_rest() {
+    fn ground_below_finds_the_tread_just_behind_a_nosing_edge() {
+        let ledge = [ground(0.0, -10.0, 1.0)];
+
+        for z in [0.975_f32, 0.985, 0.995] {
+            for y in [1.17_f32, 1.2] {
+                let centre = Vec3::new(0.0, y, z);
+
+                let found = with_slider(&ledge, |slider| slider.ground_below(centre))
+                    .unwrap_or_else(|| panic!("z {z}, y {y}: no ground over the tread"));
+
+                assert!(
+                    found.normal.distance(Vec3::Y) < 1e-3,
+                    "z {z}, y {y}: {found:?}"
+                );
+                // The drop stops a 0.0115 skin short of the tread.
+                let drop = y - 1.15 - 0.0115;
+                assert!(
+                    (found.gap - drop).abs() < 0.005,
+                    "z {z}, y {y}: gap should be about {drop}: {found:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ground_below_reads_a_downward_wound_floor_as_walkable() {
+        let floor_facing_down = quad_mesh(
+            &[
+                [-10.0, 0.0, -10.0],
+                [10.0, 0.0, -10.0],
+                [10.0, 0.0, 1.0],
+                [-10.0, 0.0, 1.0],
+            ],
+            &[0, 1, 2, 0, 2, 3],
+        );
+        // The centre is past the floor's edge, so the face-normal ray nudged toward it misses
+        // and only the triangle's own (flipped) normal can answer.
+        let centre = Vec3::new(0.0, HOVER_Y, 1.2);
+
+        let found = with_slider(&[floor_facing_down], |slider| slider.ground_below(centre))
+            .expect("a floor wound the other way is still ground");
+
+        // The cast's own normal here is tilted by about 1e-4; only the triangle's exact normal,
+        // flipped upward, is vertical to this tolerance.
+        assert!(found.normal.distance(Vec3::Y) < 1e-6, "{found:?}");
+    }
+
+    #[test]
+    fn ground_below_finds_no_ledge_past_the_flat_base() {
+        let ledge = [ground(0.0, -10.0, 1.0)];
+        let centre = Vec3::new(0.0, HOVER_Y, 1.25);
+
+        let found = with_slider(&ledge, |slider| slider.ground_below(centre));
+
+        assert_eq!(found, None);
+    }
+
+    /// An upper step with its top at 0.3 m ending in a nosing at z = 1, and the lower floor
+    /// at y = 0 beyond it.
+    fn nosing_over_a_lower_step() -> [WorldMesh; 2] {
+        [ground(0.0, 1.0, 10.0), step_box_mesh(-3.0, 4.0, 0.3)]
+    }
+
+    /// Where the capsule centre stands on the upper step's top.
+    const UPPER_STEP_REST_Y: f32 = 0.3 + 1.15;
+
+    #[test]
+    fn ground_below_sees_the_lower_step_past_a_nosing() {
+        let centre = Vec3::new(0.0, UPPER_STEP_REST_Y, 1.25);
+
+        let (found, colliders) =
+            with_slider_and_colliders(&nosing_over_a_lower_step(), |slider, colliders| {
+                (slider.ground_below(centre), colliders.to_vec())
+            });
+
+        let found = found.expect("the lower step is under the flat base");
+        assert!(found.normal.distance(Vec3::Y) < 1e-3, "{found:?}");
+        assert_eq!(found.collider, colliders[0], "the lower floor: {found:?}");
+        assert!(found.point.y.abs() < 0.02, "{found:?}");
+    }
+
+    #[test]
+    fn ground_gap_stops_where_the_capsule_meets_the_nosing() {
+        let centre = Vec3::new(0.0, UPPER_STEP_REST_Y, 1.25);
+
+        let found = with_slider(&nosing_over_a_lower_step(), |slider| {
+            slider.ground_below(centre)
+        })
+        .expect("the lower step is under the flat base");
+
+        // The rim's sphere (0.3 m, plus the 0.0115 skin) meets the nosing 0.25 m to the side:
+        // it drops 0.3 - sqrt(0.3115^2 - 0.25^2) = 0.114 m, not the 0.3 m to the lower step.
+        assert!(
+            (0.10..0.13).contains(&found.gap),
+            "the capsule can drop only until its rim meets the nosing: {found:?}"
+        );
+    }
+
+    #[test]
+    fn ground_below_reads_a_vertical_normal_on_a_step_edge() {
+        let upper_step = [step_box_mesh(-3.0, 4.0, 0.3)];
+        let centre = Vec3::new(0.0, UPPER_STEP_REST_Y, 1.1);
+
+        let (found, colliders) = with_slider_and_colliders(&upper_step, |slider, colliders| {
+            (slider.ground_below(centre), colliders.to_vec())
+        });
+
+        let found = found.expect("the step's top is under the flat base");
+        assert!(
+            found.normal.distance(Vec3::Y) < 1e-3,
+            "the face normal, not the tilted edge normal: {found:?}"
+        );
+        assert_eq!(found.collider, colliders[0], "{found:?}");
+        assert!((found.point.y - 0.3).abs() < 0.02, "{found:?}");
+        assert!(found.point.z <= 1.0 + 1e-3, "{found:?}");
+    }
+
+    #[test]
+    fn ground_below_bridges_a_seam_between_two_meshes() {
+        let seam = seam_floor_meshes(0.025);
+        let centre = Vec3::new(0.0, HOVER_Y, 0.0);
+
+        let found = with_slider(&seam, |slider| slider.ground_below(centre))
+            .expect("the capsule spans the 2.5 cm seam");
+
+        assert!(found.normal.distance(Vec3::Y) < 1e-3, "{found:?}");
+        assert!(found.point.y.abs() < 0.02, "{found:?}");
+        assert!((-0.01..0.05).contains(&found.gap), "{found:?}");
+    }
+
+    #[test]
+    fn ground_gap_is_how_far_the_capsule_drops_before_touching() {
+        const SKIN: f32 = 0.0115;
         for degrees in [25.0_f32, 40.0] {
-            let resting = 0.85 + 0.3 / degrees.to_radians().cos();
-            for lift in [0.0, 0.05] {
+            let cos = degrees.to_radians().cos();
+            let resting = 0.85 + 0.3 / cos;
+            for (lift, expected) in [(0.0, 0.0), (0.05, 0.05 - SKIN / cos)] {
                 let centre = Vec3::new(0.0, resting + lift, 0.0);
 
-                let ground = with_slider(&[slope(degrees)], |slider| slider.ground_under(centre))
+                let ground = with_slider(&[slope(degrees)], |slider| slider.ground_below(centre))
                     .expect("walkable face below");
 
                 assert!(
-                    (ground.gap - lift).abs() < 1e-3,
-                    "{degrees} degrees, held {lift} m up: {ground:?}"
+                    (ground.gap - expected).abs() < 1e-3,
+                    "{degrees} degrees, held {lift} m up, expected a drop of {expected}: {ground:?}"
                 );
             }
         }
