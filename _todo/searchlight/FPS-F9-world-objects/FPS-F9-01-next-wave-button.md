@@ -79,6 +79,10 @@ Scenario: A restart clears a waiting wave
 ## Notes
 - TL: a use from any slot is resolved from that slot's own eye; host actions ignore slots
   other than 0. The sim holds one player today, so prove it at the command level.
+- TL: no engine request expected. The engine's tagged ray and marker properties cover the
+  look test and placement; a static tagged volume (today only meshes and character hit
+  volumes carry tags) is the one gap to check. If flagstone later needs the same use
+  mechanic, the generic part moves to the engine then (second-consumer rule).
 - TL: the prompt needs on-screen text (#407); until it lands, the title-bar HUD carries it.
 - TL: the use key joins the keybindings #460 shows and ENG-F26 #359 rebinds.
 - Out: an automatic timer, calling a wave early, a console alternative (FPS-F9 deferred).
