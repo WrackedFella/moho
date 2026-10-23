@@ -9,8 +9,9 @@
 The reload gets its two variants (GDD §4.2): a fast reload drops the old magazine to the
 ground with its rounds, and the retention reload (the only one today) stows it and takes
 longer. Picking up your own dropped magazine puts it in a free rig slot (GDD §4.1).
-Until #600 lands, a dropped magazine rests on the floor under the player, like any
-dropped item from #606. Depends on #606 (FPS-F7-03, dropping and picking up).
+A dropped magazine is a world item: it rests under the player and is picked up with the
+use key (FPS-F9-03, #616), and falls and settles once FPS-F9-04 lands. Depends on
+FPS-F9-03.
 
 ## Deliverables
 - Two reload inputs: retention (as today) and fast. Default binding: tap reload for
