@@ -1,5 +1,7 @@
 //! Waves of enemies and the score for killing them, as plain numbers: no physics, no markers.
 
+use searchlight_rules::{GradeMix, WaveGrades};
+
 const DEFAULT_FIRST_SIZE: u32 = 2;
 const DEFAULT_GROWTH: u32 = 2;
 const DEFAULT_SCORE_PER_KILL: u32 = 100;
@@ -17,11 +19,12 @@ pub enum WaveTuningError {
 }
 
 /// How big the waves are and what a kill is worth.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WaveTuning {
     first_size: u32,
     growth: u32,
     score_per_kill: u32,
+    mix: GradeMix,
 }
 
 impl WaveTuning {
@@ -41,7 +44,17 @@ impl WaveTuning {
             first_size,
             growth,
             score_per_kill,
+            mix: GradeMix::default(),
         })
+    }
+
+    /// These waves with `mix` as their grades.
+    pub fn with_mix(self, mix: GradeMix) -> Self {
+        Self { mix, ..self }
+    }
+
+    pub fn mix(&self) -> &GradeMix {
+        &self.mix
     }
 
     pub fn first_size(&self) -> u32 {
@@ -69,6 +82,7 @@ impl Default for WaveTuning {
             first_size: DEFAULT_FIRST_SIZE,
             growth: DEFAULT_GROWTH,
             score_per_kill: DEFAULT_SCORE_PER_KILL,
+            mix: GradeMix::default(),
         }
     }
 }
@@ -79,6 +93,7 @@ pub struct WaveState {
     wave: u32,
     to_spawn: u32,
     score: u32,
+    grades: WaveGrades,
 }
 
 impl WaveState {
@@ -88,7 +103,18 @@ impl WaveState {
             wave: 1,
             to_spawn: tuning.size(1),
             score: 0,
+            grades: tuning.mix().grades(1, tuning.size(1), None),
         }
+    }
+
+    /// The running wave's grade counts.
+    pub fn grades(&self) -> WaveGrades {
+        todo!()
+    }
+
+    /// Enemies of the running wave handed out so far.
+    pub fn spawned(&self) -> u32 {
+        todo!()
     }
 
     /// The running wave, counting from 1.
@@ -139,6 +165,7 @@ impl WaveState {
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
+    use searchlight_rules::Grade;
 
     use super::*;
 
@@ -355,5 +382,80 @@ mod tests {
 
         assert_eq!(spawned, 2);
         assert_eq!(state.to_spawn(), 0);
+    }
+
+    fn counts(grades: WaveGrades) -> [u32; 5] {
+        Grade::LADDER.map(|grade| grades.count(grade))
+    }
+
+    #[test]
+    fn begin_takes_wave_one_from_the_mix() {
+        let default = tuning(2, 2, 100);
+        let veterans = tuning(3, 2, 100).with_mix(GradeMix::only(Grade::Veteran));
+
+        let from_default = WaveState::begin(&default);
+        let from_veterans = WaveState::begin(&veterans);
+
+        assert_eq!(default.mix(), &GradeMix::default());
+        assert_eq!(veterans.mix(), &GradeMix::only(Grade::Veteran));
+        assert_eq!(counts(from_default.grades()), [1, 1, 0, 0, 0]);
+        assert_eq!(counts(from_veterans.grades()), [0, 0, 0, 3, 0]);
+        assert_eq!((veterans.first_size(), veterans.growth()), (3, 2));
+    }
+
+    #[test]
+    fn the_next_wave_is_built_on_the_one_before() {
+        let tuning = WaveTuning::default();
+        let mut state = WaveState::begin(&tuning);
+        let mut high = Vec::new();
+
+        state.step(&tuning, 0, 0, 100);
+        while state.wave() < 8 {
+            high.push(state.grades().experienced_and_above());
+            state.step(&tuning, 0, 0, 100);
+        }
+
+        assert_eq!(state.wave(), 8);
+        assert_eq!(high, [0, 1, 2, 4, 7, 10, 13]);
+        assert_eq!(state.grades().size(), 16);
+        assert_eq!(state.grades().experienced_and_above(), 15);
+        assert_eq!(
+            counts(state.grades()),
+            counts(chain_to(&tuning, 8)),
+            "the same chain the mix builds"
+        );
+    }
+
+    fn chain_to(tuning: &WaveTuning, wave: u32) -> WaveGrades {
+        let mut previous = None;
+        for number in 1..=wave {
+            previous = Some(tuning.mix().grades(number, tuning.size(number), previous));
+        }
+        previous.expect("at least one wave")
+    }
+
+    #[test]
+    fn spawned_counts_the_wave_handed_out() {
+        let tuning = tuning(5, 1, 10);
+        let mut state = WaveState::begin(&tuning);
+        let at_start = state.spawned();
+
+        state.step(&tuning, 0, 0, 2);
+        let after_two = state.spawned();
+        state.step(&tuning, 0, 2, 1);
+        let after_three = state.spawned();
+        state.unspawned(1);
+        let after_a_give_back = state.spawned();
+        state.step(&tuning, 0, 2, 10);
+        let all = state.spawned();
+        state.step(&tuning, 0, 0, 1);
+
+        assert_eq!(
+            (at_start, after_two, after_three, after_a_give_back, all),
+            (0, 2, 3, 2, 5)
+        );
+        assert_eq!(state.wave(), 2);
+        assert_eq!(state.spawned(), 1);
+        assert_eq!(state.grades().size(), 6);
     }
 }
