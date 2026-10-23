@@ -141,13 +141,11 @@ mod tests {
         config
     }
 
-    /// Waves of experienced enemies only.
     fn tuning(first_size: u32, growth: u32, score_per_kill: u32) -> WaveTuning {
         mixed_tuning(first_size, growth, score_per_kill)
             .with_mix(GradeMix::only(Grade::Experienced))
     }
 
-    /// Waves with the default grade mix.
     fn mixed_tuning(first_size: u32, growth: u32, score_per_kill: u32) -> WaveTuning {
         WaveTuning::new(first_size, growth, score_per_kill).expect("a valid tuning")
     }

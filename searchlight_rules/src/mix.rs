@@ -27,12 +27,10 @@ pub struct WaveGrades {
 const FIRST_HIGH: usize = 2;
 
 impl WaveGrades {
-    /// Enemies in the wave.
     pub fn size(&self) -> u32 {
         self.counts.iter().sum()
     }
 
-    /// Enemies of `grade`.
     pub fn count(&self, grade: Grade) -> u32 {
         self.counts[grade as usize]
     }

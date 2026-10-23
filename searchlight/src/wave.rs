@@ -108,7 +108,6 @@ impl WaveState {
         }
     }
 
-    /// The running wave's grade counts.
     pub fn grades(&self) -> WaveGrades {
         self.grades
     }
