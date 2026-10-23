@@ -2284,6 +2284,72 @@ mod tests {
         }
 
         #[test]
+        fn two_teleports_in_one_tick_end_at_the_second() {
+            let first = Vec3::new(1.0, 0.0, 1.0);
+            let second = Vec3::new(7.0, 0.0, -2.0);
+            let mut state = state_at(Vec3::ZERO, Vec3::new(3.0, 0.0, 0.0), true);
+            let mut started_from = None;
+            let effects = [
+                CharacterEffect::Teleport {
+                    position: first,
+                    keep_velocity: false,
+                },
+                CharacterEffect::Teleport {
+                    position: second,
+                    keep_velocity: false,
+                },
+            ];
+
+            step(
+                &mut state,
+                &CharacterCommand::default(),
+                &effects,
+                &test_settings(),
+                DT,
+                |from, asked| {
+                    started_from = Some(*from);
+                    flat_floor(from.position.y)(asked)
+                },
+            );
+
+            let from = started_from.expect("the step slid");
+            assert_eq!(from.position, second);
+            assert_eq!(from.velocity.x, 0.0);
+            assert_eq!(from.velocity.z, 0.0);
+            assert_eq!(state.position, second);
+            assert_eq!(state.velocity, Vec3::ZERO);
+        }
+
+        #[test]
+        fn teleport_keeping_velocity_on_a_grounded_walker_runs_that_tick_airborne() {
+            let mut state = state_at(Vec3::ZERO, Vec3::new(5.0, 0.0, 0.0), true);
+
+            let (asked, _) = ask_in_open_air(
+                &mut state,
+                &[CharacterEffect::Teleport {
+                    position: Vec3::new(0.0, 40.0, 0.0),
+                    keep_velocity: true,
+                }],
+            );
+
+            assert!(
+                (asked.x - 5.0 * DT).abs() < 1e-6,
+                "no ground friction: asked x = {}",
+                asked.x
+            );
+            assert!(
+                (asked.y + 18.0 * DT / 2.0 * DT).abs() < 1e-6,
+                "half a tick of gravity: asked y = {}",
+                asked.y
+            );
+            assert!(
+                (state.velocity.x - 5.0).abs() < 1e-5,
+                "{:?}",
+                state.velocity
+            );
+        }
+
+        #[test]
         fn set_look_clamps_pitch() {
             let mut up = standing();
             let mut down = standing();

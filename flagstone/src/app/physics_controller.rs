@@ -525,6 +525,30 @@ mod tests {
     }
 
     #[test]
+    fn a_kill_plane_teleport_followed_by_two_ticks_blends_only_the_second() {
+        let mut controller = PhysicsController::new();
+        controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
+        for _ in 0..10 {
+            controller.move_character(&idle(), &strategy_settings(), DT);
+        }
+
+        controller.teleport_character(glam::Vec3::new(3.0, 20.0, -4.0));
+        let first = controller
+            .move_character(&idle(), &strategy_settings(), DT)
+            .expect("player is live");
+        let (previous, current) = controller.player_states().expect("player is live");
+        assert_eq!((previous, current), (first, first), "snapped on arrival");
+        let second = controller
+            .move_character(&idle(), &strategy_settings(), DT)
+            .expect("player is live");
+
+        let (previous, current) = controller.player_states().expect("player is live");
+        assert_eq!(previous, first);
+        assert_eq!(current, second);
+        assert_ne!(first, second);
+    }
+
+    #[test]
     fn teleport_is_not_blended_by_the_view() {
         let mut controller = PhysicsController::new();
         controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));

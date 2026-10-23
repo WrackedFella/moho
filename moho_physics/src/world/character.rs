@@ -2646,6 +2646,43 @@ mod tests {
     }
 
     #[test]
+    fn set_look_then_a_command_turn_in_the_same_tick_compose() {
+        let (mut world, h) = standing_on_floor();
+        attach(
+            &mut world,
+            h,
+            volume(Vec3::new(0.0, 0.0, 0.4), Vec3::new(0.1, 0.3, 0.1), ARM),
+        );
+        world
+            .queue_effect(
+                h,
+                CharacterEffect::SetLook {
+                    yaw: 1.0,
+                    pitch: 0.0,
+                },
+            )
+            .unwrap();
+        let turn = CharacterCommand {
+            yaw_delta: 0.25,
+            ..idle()
+        };
+
+        world
+            .move_character(h, &turn, &test_settings(), DT)
+            .unwrap();
+        world.step(DT);
+
+        let after = state(&world, h);
+        assert!((after.yaw - 1.25).abs() < 1e-6, "{after:?}");
+        let facing = Vec3::new(1.25_f32.sin(), 0.0, 1.25_f32.cos());
+        let hit = cast(&world, after.position + facing * 3.0, -facing, None)
+            .expect("the forward arm swung to yaw 1.25");
+        assert_eq!(hit.tag, ARM);
+        let reach = (hit.point - after.position).dot(facing);
+        assert!((reach - 0.5).abs() < 0.02, "arm face at {reach}: {hit:?}");
+    }
+
+    #[test]
     fn a_quarter_turn_swings_a_forward_volume_toward_plus_x() {
         let (mut world, h) = standing_on_floor();
         attach(
