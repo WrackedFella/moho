@@ -131,10 +131,30 @@ pub struct SearchlightCommand {
 /// The lean side held this tick: a side pressed this tick wins (right on a same-tick tie),
 /// otherwise `previous` while it is still held, otherwise whichever side is held.
 pub fn resolve_lean(
-    _frame: &ActionFrame<SearchlightAction>,
-    _previous: Option<LeanSide>,
+    frame: &ActionFrame<SearchlightAction>,
+    previous: Option<LeanSide>,
 ) -> Option<LeanSide> {
-    None
+    let side = |action| {
+        (
+            frame.held(action) || frame.pressed(action),
+            frame.pressed(action),
+        )
+    };
+    let (left_held, left_pressed) = side(SearchlightAction::LeanLeft);
+    let (right_held, right_pressed) = side(SearchlightAction::LeanRight);
+    if right_pressed {
+        Some(LeanSide::Right)
+    } else if left_pressed {
+        Some(LeanSide::Left)
+    } else {
+        match previous {
+            Some(LeanSide::Left) if left_held => Some(LeanSide::Left),
+            Some(LeanSide::Right) if right_held => Some(LeanSide::Right),
+            _ if right_held => Some(LeanSide::Right),
+            _ if left_held => Some(LeanSide::Left),
+            _ => None,
+        }
+    }
 }
 
 /// Yaw and pitch deltas for a look. Mouse motion is right- and down-positive; positive yaw

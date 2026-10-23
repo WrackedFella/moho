@@ -53,22 +53,36 @@ impl Lean {
     #[must_use]
     pub fn step(
         self,
-        _want: Option<LeanSide>,
-        _reach: LeanReach,
-        _dt: f32,
-        _tuning: &LeanTuning,
+        want: Option<LeanSide>,
+        reach: LeanReach,
+        dt: f32,
+        tuning: &LeanTuning,
     ) -> Lean {
-        self
+        let target = match want {
+            None => 0.0,
+            Some(LeanSide::Left) => -1.0,
+            Some(LeanSide::Right) => 1.0,
+        };
+        let remaining = target - self.amount;
+        let moved = if tuning.blend_seconds > 0.0 {
+            (dt / tuning.blend_seconds).min(remaining.abs())
+        } else {
+            remaining.abs()
+        };
+        let amount = self.amount + remaining.signum() * moved;
+        Lean {
+            amount: amount.clamp(-reach.left, reach.right),
+        }
     }
 
     /// The sideways shift in metres, positive right.
-    pub fn shift(self, _tuning: &LeanTuning) -> f32 {
-        0.0
+    pub fn shift(self, tuning: &LeanTuning) -> f32 {
+        self.amount * tuning.shift
     }
 
     /// The roll in radians, positive right.
-    pub fn roll(self, _tuning: &LeanTuning) -> f32 {
-        0.0
+    pub fn roll(self, tuning: &LeanTuning) -> f32 {
+        self.amount * tuning.roll
     }
 }
 

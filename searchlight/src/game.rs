@@ -18,7 +18,7 @@ use moho_render_api::{
     WorldMeshId,
 };
 use moho_renderer::{LightingGpu, RendererBackend, Scene, WorldMeshes};
-use searchlight_rules::Grade;
+use searchlight_rules::{Grade, Lean, LeanSide};
 use winit::event::WindowEvent;
 use winit::window::{CursorGrabMode, Window};
 
@@ -28,7 +28,8 @@ use moho_ui_shell::{Routing, UiLayers, UiShell, apply_engine_command};
 use crate::console_commands::{self, ConsoleCommand, GodModeArg};
 use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
-use crate::input::{SearchlightAction, SearchlightCommand, look_to_turn};
+use crate::input::{SearchlightAction, SearchlightCommand, look_to_turn, resolve_lean};
+use crate::lean::{lean_offset, rolled_view_matrix};
 use crate::menu::{Menu, MenuAction};
 use crate::mode::ArenaMode;
 use crate::sim::{Feedback, SearchlightSim, dummy_at, dummy_hit_volumes};
@@ -743,6 +744,10 @@ pub struct SearchlightGame {
     input: ActionMap<SearchlightAction>,
     /// The player as the tick before the last left them, for blending the view.
     previous: CharacterState,
+    /// The player's lean as the tick before the last left it, blended like `previous`.
+    previous_lean: Lean,
+    /// The side the last command held a lean toward, for the most-recent-press rule.
+    lean_side: Option<LeanSide>,
     /// Whether the window has focus; look is sampled only while it does.
     focused: bool,
     stage: Stage,
@@ -768,6 +773,8 @@ impl SearchlightGame {
             mode,
             input,
             previous,
+            previous_lean: Lean::default(),
+            lean_side: None,
             focused: true,
             stage: Stage::new(),
             god_mode: false,
@@ -1036,21 +1043,27 @@ impl Game for SearchlightGame {
         // instead, so a press made as the console opened does not act when it closes.
         if self.input_captured() {
             self.input.discard_edges();
+            self.lean_side = None;
             return SearchlightCommand::default();
         }
+        let frame = self.input.end_tick();
+        self.lean_side = resolve_lean(&frame, self.lean_side);
         SearchlightCommand {
             god_mode: self.god_mode,
             forced_grade: self.forced_grade,
-            ..SearchlightCommand::from_frame(&self.input.end_tick())
+            lean: self.lean_side,
+            ..SearchlightCommand::from_frame(&frame)
         }
     }
 
     fn tick(&mut self, ctx: &mut TickContext<'_>, command: &SearchlightCommand) {
         self.previous = self.mode.sim().player();
+        self.previous_lean = self.mode.sim().player_lean();
         let was_dead = self.mode.sim().player_body().is_dead();
         self.mode.tick(command, ctx.tick_length.as_secs_f32());
         if was_dead && !self.mode.sim().player_body().is_dead() {
             self.previous = self.mode.sim().player();
+            self.previous_lean = self.mode.sim().player_lean();
             self.stage.status.clear();
         }
         self.stage.tick_flashes();
@@ -1146,14 +1159,28 @@ impl Game for SearchlightGame {
         }
         self.stage.sync_enemies(self.mode.sim());
         if let Some(renderer) = ctx.renderer() {
+            let sim = self.mode.sim();
             let view = first_person_view(
                 &self.previous,
-                &self.mode.sim().player(),
-                self.mode.sim().eye_height(),
+                &sim.player(),
+                sim.eye_height(),
                 alpha,
                 look_to_turn(self.input.pending_look()),
             );
-            self.stage.draw(renderer, (view.view_matrix(), view.eye));
+            let tuning = sim.lean_tuning();
+            let blend = |from: f32, to: f32| from + alpha * (to - from);
+            let shift = blend(
+                self.previous_lean.shift(tuning),
+                sim.player_lean().shift(tuning),
+            );
+            let roll = blend(
+                self.previous_lean.roll(tuning),
+                sim.player_lean().roll(tuning),
+            );
+            let yaw = view.forward.x.atan2(view.forward.z);
+            let eye = view.eye + lean_offset(yaw, shift);
+            self.stage
+                .draw(renderer, (rolled_view_matrix(eye, view.forward, roll), eye));
         }
     }
 }

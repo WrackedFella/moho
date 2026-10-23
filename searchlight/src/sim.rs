@@ -11,16 +11,21 @@ use moho_physics::{
     first_person_view,
 };
 use searchlight_rules::{
-    Body, BodyPart, BodyProfile, Grade, HitReport, Lean, LeanTuning, Magazine, MagazineLevel,
-    Rifle, Shot,
+    Body, BodyPart, BodyProfile, Grade, HitReport, Lean, LeanReach, LeanSide, LeanTuning, Magazine,
+    MagazineLevel, Rifle, Shot,
 };
 
 use crate::arena::{Arena, SETTLE_DT};
 use crate::brain::{Brain, EnemyTuning, Percept};
 use crate::cover::{self, Threat};
 use crate::input::SearchlightCommand;
+use crate::lean::lean_offset;
 use crate::shot::{ShotRay, Strike, resolve_shot};
 use crate::tag::SurfaceTag;
+
+/// How far past a full lean the reach rays go, in metres, so the eye and the near plane stay
+/// off a wall.
+const LEAN_CLEARANCE: f32 = 0.15;
 
 /// Height of a character's capsule centre above its feet, in metres.
 pub const STAND_HEIGHT: f32 = 1.15;
@@ -388,10 +393,19 @@ impl SearchlightSim {
             return;
         }
         let firing = self.move_enemies(dt);
+        let settings = if command.lean.is_some() {
+            MoveSettings {
+                max_speed: self.move_settings.max_speed * self.lean_tuning.speed_factor,
+                ..self.move_settings
+            }
+        } else {
+            self.move_settings
+        };
         self.world
-            .move_character(self.player, &command.movement, &self.move_settings, dt)
+            .move_character(self.player, &command.movement, &settings, dt)
             .expect("the sim never removes the player");
         self.world.step(dt);
+        self.step_lean(command.lean, dt);
 
         self.advance_weapon();
         if command.fire {
@@ -409,6 +423,46 @@ impl SearchlightSim {
         self.remove_dead_enemies();
         if self.player_body.is_dead() {
             self.outbox.push(Feedback::PlayerDied);
+        }
+    }
+
+    /// Blends the lean toward `want`, held short of any wall beside the player.
+    fn step_lean(&mut self, want: Option<LeanSide>, dt: f32) {
+        let reach = if want.is_none() && self.lean.amount() == 0.0 {
+            LeanReach::FULL
+        } else {
+            self.lean_reach()
+        };
+        self.lean = self.lean.step(want, reach, dt, &self.lean_tuning);
+    }
+
+    /// How much of a full lean each side has room for, from one level ray per side out of the
+    /// upright eye.
+    fn lean_reach(&self) -> LeanReach {
+        let state = self.player();
+        let eye = state.position + Vec3::Y * self.eye_height;
+        let shift = self.lean_tuning.shift;
+        let room = |direction: Vec3| {
+            let strike = resolve_shot(
+                &self.world,
+                ShotRay {
+                    origin: eye,
+                    direction,
+                    range: shift + LEAN_CLEARANCE,
+                    ignore: Some(self.player),
+                },
+            );
+            match strike {
+                Some(strike) if shift > 0.0 => {
+                    ((strike.distance - LEAN_CLEARANCE) / shift).clamp(0.0, 1.0)
+                }
+                _ => 1.0,
+            }
+        };
+        let right = lean_offset(state.yaw, 1.0);
+        LeanReach {
+            left: room(-right),
+            right: room(right),
         }
     }
 
@@ -631,7 +685,7 @@ impl SearchlightSim {
         let strike = resolve_shot(
             &self.world,
             ShotRay {
-                origin: view.eye,
+                origin: self.player_eye(),
                 direction: view.forward,
                 range: self.range,
                 ignore: Some(self.player),
@@ -712,7 +766,8 @@ impl SearchlightSim {
     /// lean.
     pub fn player_eye(&self) -> Vec3 {
         let state = self.player();
-        first_person_view(&state, &state, self.eye_height, 1.0, (0.0, 0.0)).eye
+        let upright = first_person_view(&state, &state, self.eye_height, 1.0, (0.0, 0.0)).eye;
+        upright + lean_offset(state.yaw, self.lean.shift(&self.lean_tuning))
     }
 
     /// How far the player leans after the last tick.
