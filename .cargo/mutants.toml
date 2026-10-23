@@ -19,11 +19,11 @@ exclude_re = [
     # they use is tested through `route`.
     "ApplicationHandler for Runner",
     # Needs `ActiveEventLoop` and a window: it calls `Window::set_fullscreen`. The toggle
-    X# decision is tested through `ToggleKeys`.
-    X'replace Runner<G>::flip_window_mode with \(\)',
+    # decision is tested through `ToggleKeys`.
+    'replace Runner<G>::flip_window_mode with \(\)',
     # winit's `KeyEvent` cannot be built outside winit, so this arm is unreachable from tests; the
-    X# classification it feeds is tested through `ToggleKeys::observe`.
-    X'delete match arm WindowEvent::KeyboardInput\{event, \.\.\} in observe_toggle',
+    # classification it feeds is tested through `ToggleKeys::observe`.
+    'delete match arm WindowEvent::KeyboardInput\{event, \.\.\} in observe_toggle',
     'replace run -> Result<\(\), AppError> with Ok\(\(\)\)',
     # `Game::init` only runs once the runner has created a real window.
     'replace <impl moho_app::Game for App>::init with \(\)',
