@@ -15,14 +15,18 @@ pub const PITCH_LIMIT: f32 = 1.54;
 /// next step.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum CharacterEffect {
-    /// Add to the velocity.
     AddVelocity(Vec3),
-    /// Replace the velocity.
     SetVelocity(Vec3),
     /// Set the position; zero the velocity unless `keep_velocity`; clear `grounded`.
-    Teleport { position: Vec3, keep_velocity: bool },
+    Teleport {
+        position: Vec3,
+        keep_velocity: bool,
+    },
     /// Replace the look, with pitch clamped to [`PITCH_LIMIT`].
-    SetLook { yaw: f32, pitch: f32 },
+    SetLook {
+        yaw: f32,
+        pitch: f32,
+    },
 }
 
 /// One tick's movement intent for a character.
@@ -207,7 +211,6 @@ pub(crate) fn turned_look(look: (f32, f32), delta: (f32, f32)) -> (f32, f32) {
     )
 }
 
-/// Apply one queued effect to `state`.
 fn apply(state: &mut CharacterState, effect: CharacterEffect) {
     match effect {
         CharacterEffect::AddVelocity(velocity) => state.velocity += velocity,

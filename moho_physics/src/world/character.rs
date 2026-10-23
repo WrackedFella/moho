@@ -419,7 +419,6 @@ mod tests {
         assert!(state(&world, h).grounded);
     }
 
-    /// Queue a teleport that drops the velocity.
     fn teleport(world: &mut PhysicsWorld, handle: CharacterHandle, position: Vec3) {
         world
             .queue_effect(

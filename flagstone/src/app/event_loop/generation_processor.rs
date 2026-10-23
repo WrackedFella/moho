@@ -266,7 +266,6 @@ impl GenerationProcessor {
 
         let spawn_pos = glam::Vec3::new(0.0, terrain_y + 3.0, 0.0);
 
-        // Spawn character controller facing the simulation camera
         let (yaw, pitch) = app.simulation.yaw_pitch();
         app.physics.spawn_player(moho_physics::CharacterSpawn {
             position: spawn_pos,
