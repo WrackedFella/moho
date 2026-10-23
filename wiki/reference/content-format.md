@@ -71,7 +71,7 @@ are the file's contract.
 | Kind | Id | Type | Fields |
 |---|---|---|---|
 | `items` | any item id | `searchlight_rules::ItemDef` | `class` (`weapon`, `consumable`, `tool`, `gear`), `size` (`[width, height]`, each at least 1), `condition` (0 to 100) or `uses`, never both, and at most one section: `weapon`, `magazine`, `round` or `rig` |
-| `kits` | `start` (`START_KIT_ID`) | `searchlight_rules::KitDef` | `rig`, `weapon`, `loaded`, `magazines` (item ids) |
+| `kits` | `start` (`START_KIT_ID`) | `searchlight_rules::KitDef` | `rig` and `weapon` (item ids), `loaded`, `magazines` (magazine entries, below) |
 
 Item sections (`ItemKind`), each valid only on its class:
 
