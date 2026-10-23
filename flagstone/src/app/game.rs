@@ -3,7 +3,9 @@
 use crate::app::event_loop::{EventProcessor, FrameProcessor, GenerationProcessor};
 use crate::game_state::GameState;
 use crate::{App, RenderRequest};
-use flagstone_game::controller::{CameraMode, ControllerInput, controller_to_camera};
+use flagstone_game::controller::{
+    CameraMode, ControllerInput, EDGE_PAN_MARGIN_PX, controller_to_camera, edge_pan_axes,
+};
 use flagstone_game::raycast::raycast_surface;
 use flagstone_ui::actions::StrategyAction;
 use flagstone_ui::console_commands::StrategyConsoleCommand;
@@ -49,8 +51,18 @@ impl App {
             f32::from(u8::from(is_active(positive))) - f32::from(u8::from(is_active(negative)))
         };
 
-        let forward = axis(StrategyAction::MoveForward, StrategyAction::MoveBack);
-        let right = axis(StrategyAction::MoveRight, StrategyAction::MoveLeft);
+        let edge_pan = if self.simulation.camera_mode() == CameraMode::Isometric
+            && self.game_state == GameState::Playing
+            && self.input.focused
+        {
+            edge_pan_axes(frame.pointer(), self.viewport, EDGE_PAN_MARGIN_PX)
+        } else {
+            glam::Vec2::ZERO
+        };
+        let forward = (axis(StrategyAction::MoveForward, StrategyAction::MoveBack) + edge_pan.y)
+            .clamp(-1.0, 1.0);
+        let right = (axis(StrategyAction::MoveRight, StrategyAction::MoveLeft) + edge_pan.x)
+            .clamp(-1.0, 1.0);
         // No up/down in isometric mode
         let up = if self.simulation.camera_mode() == CameraMode::FirstPerson {
             axis(StrategyAction::Ascend, StrategyAction::Descend)

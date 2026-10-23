@@ -14,6 +14,8 @@ const ISOMETRIC_CAMERA_OFFSET: Vec3 = Vec3::new(10.0, 10.0, 10.0);
 const RTS_MIN_HEIGHT: f32 = 5.0;
 const RTS_MAX_HEIGHT: f32 = 50.0;
 const RTS_DEFAULT_HEIGHT: f32 = 20.0;
+/// Rate, per second, at which the focus height eases toward the ground under it.
+const RTS_FOLLOW_RATE: f32 = 6.0;
 
 const DEFAULT_FOV_DEG: f32 = 45.0;
 const DEFAULT_ASPECT_RATIO: f32 = 16.0 / 9.0;
@@ -104,11 +106,18 @@ impl PlayerController {
         self.pitch = (self.pitch + pitch_delta).clamp(-PITCH_LIMIT_RAD, PITCH_LIMIT_RAD);
     }
 
+    /// Advance the controller by `dt` seconds of `input`.
+    ///
+    /// `ground_height(x, z)` is the surface height at a world column, `None` when the
+    /// column is not loaded. It only affects `Isometric` mode: the focus height eases
+    /// toward the ground under the focus, then the focus is raised so the eye stays at
+    /// least [`CAMERA_CLEARANCE`] above the surface under the eye. Each rule is skipped
+    /// when its own column is `None`. Pan speed scales with `rts_height`.
     pub fn apply_input(
         &mut self,
         input: &ControllerInput,
         dt: f32,
-        _ground_height: impl Fn(f32, f32) -> Option<f32>,
+        ground_height: impl Fn(f32, f32) -> Option<f32>,
     ) {
         match self.camera_mode {
             CameraMode::FirstPerson => {
@@ -168,7 +177,25 @@ impl PlayerController {
                 // No up/down movement in isometric mode
 
                 if dir.length_squared() > 0.0 {
-                    self.rts_look_target += dir.normalize_or_zero() * self.speed * dt;
+                    let zoom_scaled_speed = self.speed * self.rts_height / RTS_DEFAULT_HEIGHT;
+                    self.rts_look_target += dir.normalize_or_zero() * zoom_scaled_speed * dt;
+                }
+
+                // Follow: ease the focus height toward the ground under the focus.
+                if let Some(ground) = ground_height(self.rts_look_target.x, self.rts_look_target.z)
+                {
+                    let ease = 1.0 - (-RTS_FOLLOW_RATE * dt).exp();
+                    self.rts_look_target.y += (ground - self.rts_look_target.y) * ease;
+                }
+
+                // Clamp: raise the whole camera when the eye would sit inside the terrain.
+                let eye = self.rts_look_target
+                    + ISOMETRIC_CAMERA_OFFSET * self.rts_height / RTS_DEFAULT_HEIGHT;
+                if let Some(surface) = ground_height(eye.x, eye.z) {
+                    let shortfall = surface + CAMERA_CLEARANCE - eye.y;
+                    if shortfall > 0.0 {
+                        self.rts_look_target.y += shortfall;
+                    }
                 }
             }
         }
@@ -179,8 +206,24 @@ impl PlayerController {
 /// pixels in a window of `viewport` pixels. Screen top is forward, screen right is right.
 /// Zero away from the `margin_px` band at each edge, and when the pointer is `None` (left
 /// the window) or outside the viewport.
-pub fn edge_pan_axes(_pointer: Option<(f32, f32)>, _viewport: UVec2, _margin_px: f32) -> Vec2 {
-    Vec2::ZERO
+pub fn edge_pan_axes(pointer: Option<(f32, f32)>, viewport: UVec2, margin_px: f32) -> Vec2 {
+    let Some((x, y)) = pointer else {
+        return Vec2::ZERO;
+    };
+    let (w, h) = (viewport.x as f32, viewport.y as f32);
+    if !(0.0..w).contains(&x) || !(0.0..h).contains(&y) {
+        return Vec2::ZERO;
+    }
+    let band = |pos: f32, extent: f32| {
+        if pos < margin_px {
+            -1.0
+        } else if pos >= extent - margin_px {
+            1.0
+        } else {
+            0.0
+        }
+    };
+    Vec2::new(band(x, w), -band(y, h))
 }
 
 /// Convert a PlayerController into a camera (view, proj, cam_pos).
@@ -802,7 +845,7 @@ mod tests {
             let inside = MARGIN - 1.0;
             let outside = MARGIN + 1.0;
             // (name, pointer, expected sign of (right, forward))
-            let table: [(&str, Option<(f32, f32)>, (f32, f32)); 19] = [
+            let table = [
                 ("left edge", Some((0.0, cy)), (-1.0, 0.0)),
                 ("right edge", Some((w - 1.0, cy)), (1.0, 0.0)),
                 ("top edge", Some((cx, 0.0)), (0.0, 1.0)),
