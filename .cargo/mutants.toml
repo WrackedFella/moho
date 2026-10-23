@@ -6,7 +6,22 @@ minimum_test_timeout = 60
 # GPU, windowing and egui-adapter code has no headless tests, so every mutant
 # there would read as missed without telling us anything.
 exclude_globs = [
-    "moho_renderer/**",
+    # moho_renderer: only the files that hold wgpu resources are excluded; the pure ones
+    # (shadow/light_matrix, sky, markers, world_meshes, lights, materials, ...) are mutated.
+    "moho_renderer/src/builder.rs",
+    "moho_renderer/src/device.rs",
+    "moho_renderer/src/lib.rs",
+    "moho_renderer/src/mesh_renderer.rs",
+    "moho_renderer/src/pipeline/**",
+    "moho_renderer/src/render_ops/**",
+    "moho_renderer/src/renderer.rs",
+    "moho_renderer/src/resources.rs",
+    "moho_renderer/src/shadow.rs",
+    "moho_renderer/src/ssao.rs",
+    "moho_renderer/src/tone_map.rs",
+    "moho_renderer/src/types.rs",
+    "moho_renderer/src/ui_pass.rs",
+    "moho_renderer/src/ui_pass/**",
     "flagstone_ui/src/adapter/**",
     "flagstone/src/main.rs",
     "flagstone/src/app/renderer_setup.rs",
@@ -223,5 +238,8 @@ exclude_re = [
     'replace > with >= in funnel',
     'replace \+ with \* in funnel',
     'replace <impl Game for SearchlightGame>::init with \(\)',
-    'movement\.rs.*delete ! in checked', # checked's warn condition: log-only, no log capture in tests
+    'movement\.rs.*delete ! in checked', # checked's warn condition: log-only, no log capture in tests,
+    # moho_renderer::block_on. Hangs rather than survives: a waker that never wakes leaves the
+    # polled future parked, so only the timeout stops it.
+    'replace <impl Wake for ThreadWaker>::wake with \(\)',
 ]
