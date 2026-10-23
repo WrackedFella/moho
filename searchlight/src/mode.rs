@@ -422,6 +422,27 @@ mod tests {
     }
 
     #[test]
+    fn a_forced_grade_holds_for_the_wave_a_restart_brings() {
+        let mut mode = calm_mode(4, tuning(2, 2, 100));
+        mode.tick(&forcing(Some(Grade::Rookie)), DT);
+        mode.sim_mut().kill_player();
+        mode.tick(&forcing(Some(Grade::Rookie)), DT);
+
+        mode.tick(
+            &SearchlightCommand {
+                restart: true,
+                forced_grade: Some(Grade::Rookie),
+                ..SearchlightCommand::default()
+            },
+            DT,
+        );
+
+        assert_eq!(mode.wave(), 1);
+        assert_eq!(mode.sim().enemy_count(), 2);
+        assert_eq!(grades_from(&mode, 0), [Some(Grade::Rookie); 2]);
+    }
+
+    #[test]
     fn clearing_the_force_spawns_experienced_again() {
         let mut mode = calm_mode(4, tuning(1, 2, 100));
         mode.sim_mut().kill_enemy(0);
