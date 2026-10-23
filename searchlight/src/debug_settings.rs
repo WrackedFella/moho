@@ -3,7 +3,7 @@
 use std::io;
 use std::path::PathBuf;
 
-use moho_core::prefs::Prefs;
+use moho_core::prefs::{Prefs, WindowMode};
 
 const GOD_MODE: &str = "god_mode";
 
@@ -32,6 +32,20 @@ impl DebugSettings {
         self.prefs
             .set_debug_value(GOD_MODE, if on { "1" } else { "0" })
             .expect("\"god_mode\" with \"1\" or \"0\" is a name and value prefs always accepts");
+        self.prefs.save_to(&self.path)
+    }
+
+    /// The window mode the prefs hold.
+    pub fn window_mode(&self) -> WindowMode {
+        self.prefs.window_mode()
+    }
+
+    /// Stores the window mode and saves the prefs file; the value is kept if the save fails.
+    ///
+    /// # Errors
+    /// The I/O error if the file cannot be written.
+    pub fn set_window_mode(&mut self, mode: WindowMode) -> io::Result<()> {
+        self.prefs.set_window_mode(mode);
         self.prefs.save_to(&self.path)
     }
 }
@@ -125,6 +139,49 @@ mod tests {
         assert_eq!(saved.debug_value("other_value"), Some("kept"));
         assert_eq!(saved.debug_value("god_mode"), Some("1"));
         assert_eq!(saved.mouse_sensitivity(), 2.5);
+    }
+
+    #[test]
+    fn window_mode_round_trips_through_the_prefs_file_and_keeps_other_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("searchlight.ini");
+        let mut prefs = Prefs::default().with_mouse_sensitivity(2.5);
+        prefs.set_bindings(std::collections::BTreeMap::from([(
+            "jump".to_owned(),
+            "F".to_owned(),
+        )]));
+        prefs.set_debug_value("other_value", "kept").unwrap();
+        let mut settings = DebugSettings::new(prefs, path.clone());
+        settings.set_god_mode(true).unwrap();
+
+        settings.set_window_mode(WindowMode::Borderless).unwrap();
+        let borderless = settings_at(&path);
+        settings.set_window_mode(WindowMode::Windowed).unwrap();
+        let windowed = settings_at(&path);
+
+        assert_eq!(borderless.window_mode(), WindowMode::Borderless);
+        assert_eq!(windowed.window_mode(), WindowMode::Windowed);
+        assert_eq!(settings.window_mode(), WindowMode::Windowed);
+        assert_eq!(
+            windowed.prefs.bindings().get("jump").map(String::as_str),
+            Some("F")
+        );
+        assert_eq!(windowed.prefs.debug_value("other_value"), Some("kept"));
+        assert!(windowed.god_mode());
+        assert_eq!(windowed.prefs.mouse_sensitivity(), 2.5);
+    }
+
+    #[test]
+    fn a_failed_save_keeps_the_window_mode_for_the_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, "a file, not a directory").unwrap();
+        let mut settings = DebugSettings::new(Prefs::default(), blocker.join("searchlight.ini"));
+
+        let saved = settings.set_window_mode(WindowMode::Borderless);
+
+        assert!(saved.is_err());
+        assert_eq!(settings.window_mode(), WindowMode::Borderless);
     }
 
     #[test]

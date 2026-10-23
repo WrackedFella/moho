@@ -678,6 +678,16 @@ enum Screen {
     Playing,
 }
 
+/// The mode the window opens in for a saved `mode`: both fullscreen kinds open borderless.
+pub fn start_window_mode(mode: moho_core::prefs::WindowMode) -> WindowMode {
+    match mode {
+        moho_core::prefs::WindowMode::Windowed => WindowMode::Windowed,
+        moho_core::prefs::WindowMode::Fullscreen | moho_core::prefs::WindowMode::Borderless => {
+            WindowMode::Borderless
+        }
+    }
+}
+
 /// The FPS prototype's game: one arena mode and the input that drives it.
 #[derive(Debug)]
 pub struct SearchlightGame {
@@ -944,7 +954,18 @@ impl Game for SearchlightGame {
         ctx.renderer.set_ui_source(Some(layers));
     }
 
-    fn window_mode_changed(&mut self, _ctx: &mut EventContext<'_>, _mode: WindowMode) {
+    fn window_mode_changed(&mut self, _ctx: &mut EventContext<'_>, mode: WindowMode) {
+        if let Some(settings) = &mut self.debug_settings
+            && start_window_mode(settings.window_mode()) != mode
+        {
+            let saved = match mode {
+                WindowMode::Windowed => moho_core::prefs::WindowMode::Windowed,
+                WindowMode::Borderless => moho_core::prefs::WindowMode::Borderless,
+            };
+            if let Err(error) = settings.set_window_mode(saved) {
+                tracing::warn!(%error, ?mode, "window mode not saved");
+            }
+        }
         // The platform drops held keys' releases and the grab across a mode change.
         self.input.release_all();
         self.input.reset_look();
@@ -1949,6 +1970,68 @@ mod tests {
             game.sim().player_body().health(),
             game.sim().player_max_health()
         );
+    }
+
+    fn saved_window_mode(path: &std::path::Path) -> Option<moho_core::prefs::WindowMode> {
+        // Loading a missing file writes defaults, so look before loading.
+        if !path.exists() {
+            return None;
+        }
+        let (saved, _) = Prefs::load_from(path);
+        Some(saved.window_mode())
+    }
+
+    #[test]
+    fn a_saved_borderless_or_fullscreen_mode_starts_borderless_and_windowed_starts_windowed() {
+        use moho_core::prefs::WindowMode as Saved;
+
+        let table = [
+            (Saved::Windowed, WindowMode::Windowed),
+            (Saved::Fullscreen, WindowMode::Borderless),
+            (Saved::Borderless, WindowMode::Borderless),
+        ];
+
+        for (saved, expected) in table {
+            assert_eq!(start_window_mode(saved), expected, "{saved:?}");
+        }
+    }
+
+    #[test]
+    fn a_flip_saves_the_new_mode() {
+        use moho_core::prefs::WindowMode as Saved;
+
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        game.window_mode_changed(&mut ctx, WindowMode::Borderless);
+        let borderless = saved_window_mode(&path);
+        game.window_mode_changed(&mut ctx, WindowMode::Windowed);
+        let windowed = saved_window_mode(&path);
+
+        assert_eq!(borderless, Some(Saved::Borderless));
+        assert_eq!(windowed, Some(Saved::Windowed));
+    }
+
+    #[test]
+    fn a_requested_mode_is_not_saved_twice_or_looped() {
+        use moho_core::prefs::WindowMode as Saved;
+
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.window_mode_changed(&mut ctx, WindowMode::Borderless);
+        assert_eq!(saved_window_mode(&path), Some(Saved::Borderless));
+        std::fs::remove_file(&path).unwrap();
+
+        game.window_mode_changed(&mut ctx, WindowMode::Borderless);
+
+        assert_eq!(saved_window_mode(&path), None, "saved a mode already saved");
+        assert_eq!(ctx.requested_window_mode(), None, "asked for a mode again");
     }
 
     #[test]

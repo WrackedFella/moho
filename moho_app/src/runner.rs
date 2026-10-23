@@ -15,7 +15,7 @@ use winit::window::{Fullscreen, Window, WindowAttributes, WindowId};
 
 use crate::{
     AppConfig, AppError, Event, EventContext, FrameContext, Game, HeadlessLoop, InitContext,
-    Observed, ToggleKeys, WindowMode,
+    LoopRequests, Observed, ToggleKeys, WindowMode,
 };
 
 /// What the runner does with a window event.
@@ -44,6 +44,37 @@ pub(crate) fn route(event: &WindowEvent) -> Route {
     }
 }
 
+/// The attributes the window is created with: borderless fullscreen from the start when the
+/// config asks for it, so the window never shows windowed first.
+pub(crate) fn window_attributes(config: &AppConfig) -> WindowAttributes {
+    let attributes = WindowAttributes::default().with_title(config.window_title.clone());
+    match config.window_mode {
+        WindowMode::Windowed => attributes,
+        WindowMode::Borderless => attributes.with_fullscreen(Some(Fullscreen::Borderless(None))),
+    }
+}
+
+fn fullscreen_for(mode: WindowMode) -> Option<Fullscreen> {
+    match mode {
+        WindowMode::Windowed => None,
+        WindowMode::Borderless => Some(Fullscreen::Borderless(None)),
+    }
+}
+
+fn mode_of(fullscreen: Option<Fullscreen>) -> WindowMode {
+    if fullscreen.is_some() {
+        WindowMode::Borderless
+    } else {
+        WindowMode::Windowed
+    }
+}
+
+/// The mode to switch to when a game asked for one that differs from `current`.
+fn mode_change(requests: LoopRequests, current: WindowMode) -> Option<WindowMode> {
+    let wanted = requests.window_mode_after(current);
+    (wanted != current).then_some(wanted)
+}
+
 /// Runs `game` in a window until it asks to exit or the window closes.
 ///
 /// # Errors
@@ -55,9 +86,9 @@ pub fn run<G: Game + 'static>(game: G, config: AppConfig) -> Result<(), AppError
     let mut runner = Runner {
         sim: HeadlessLoop::new(config.loop_config),
         game,
+        mode: config.window_mode,
         config,
         toggles,
-        mode: WindowMode::Windowed,
         window: None,
         renderer: None,
         audio: None,
@@ -110,23 +141,40 @@ fn observe_toggle(toggles: Option<&mut ToggleKeys>, event: &WindowEvent) -> Obse
 }
 
 impl<G: Game> Runner<G> {
-    fn flip_window_mode(&mut self, event_loop: &ActiveEventLoop) {
-        self.mode = self.mode.toggled();
+    /// The OS can leave fullscreen on its own, so the window is the truth, not `self.mode`.
+    fn current_mode(&self) -> WindowMode {
+        self.window
+            .as_ref()
+            .map_or(self.mode, |window| mode_of(window.fullscreen()))
+    }
+
+    /// Switches the window to the mode a game asked for during a callback, if it differs.
+    fn apply_requested_mode(&mut self, requests: LoopRequests) {
+        let Some(wanted) = mode_change(requests, self.current_mode()) else {
+            return;
+        };
         if let Some(window) = &self.window {
-            window.set_fullscreen(match self.mode {
-                WindowMode::Windowed => None,
-                WindowMode::Borderless => Some(Fullscreen::Borderless(None)),
-            });
+            window.set_fullscreen(fullscreen_for(wanted));
+        }
+        self.mode = wanted;
+    }
+
+    fn flip_window_mode(&mut self, event_loop: &ActiveEventLoop) {
+        self.mode = self.current_mode().toggled();
+        if let Some(window) = &self.window {
+            window.set_fullscreen(fullscreen_for(self.mode));
         }
         let mut ctx = EventContext::new(
             self.sim.clock(),
             self.renderer.as_deref_mut(),
             self.audio.as_mut(),
-        );
+        )
+        .with_window_mode(self.mode);
         self.game.window_mode_changed(&mut ctx, self.mode);
         let requests = ctx.loop_requests();
         let exit = ctx.exit_requested();
         self.sim.apply_requests(requests);
+        self.apply_requested_mode(requests);
         if exit {
             event_loop.exit();
         }
@@ -139,8 +187,7 @@ impl<G: Game> ApplicationHandler for Runner<G> {
             return;
         }
 
-        let attributes = WindowAttributes::default().with_title(self.config.window_title.clone());
-        let window = match event_loop.create_window(attributes) {
+        let window = match event_loop.create_window(window_attributes(&self.config)) {
             Ok(window) => Arc::new(window),
             Err(e) => {
                 self.error = Some(AppError::Window(e.to_string()));
@@ -240,18 +287,21 @@ impl<G: Game> ApplicationHandler for Runner<G> {
                 let now = Instant::now();
                 let frame_dt = self.sim.capped_frame_dt(now - self.last_frame);
                 self.last_frame = now;
+                let mode = self.current_mode();
                 let mut ctx = FrameContext::new(
                     self.sim.tick_length(),
                     self.sim.clock(),
                     self.renderer.as_deref_mut(),
                     self.audio.as_mut(),
-                );
+                )
+                .with_window_mode(mode);
                 ctx.frame_dt = frame_dt;
                 self.game.frame(&mut ctx, self.sim.alpha());
                 let requests = ctx.loop_requests();
                 let exit = ctx.exit_requested();
                 let frame_cap = ctx.requested_frame_cap();
                 self.sim.apply_requests(requests);
+                self.apply_requested_mode(requests);
                 if let Some(fps) = frame_cap {
                     self.pacer.set_fps(fps);
                 }
@@ -273,15 +323,18 @@ impl<G: Game> ApplicationHandler for Runner<G> {
             Route::Close | Route::Forward => {}
         }
 
+        let mode = self.current_mode();
         let mut ctx = EventContext::new(
             self.sim.clock(),
             self.renderer.as_deref_mut(),
             self.audio.as_mut(),
-        );
+        )
+        .with_window_mode(mode);
         self.game.event(&mut ctx, Event::Window(event));
         let requests = ctx.loop_requests();
         let exit = ctx.exit_requested();
         self.sim.apply_requests(requests);
+        self.apply_requested_mode(requests);
         if exit || route == Route::Close {
             event_loop.exit();
         }
@@ -293,15 +346,18 @@ impl<G: Game> ApplicationHandler for Runner<G> {
         _device_id: DeviceId,
         event: DeviceEvent,
     ) {
+        let mode = self.current_mode();
         let mut ctx = EventContext::new(
             self.sim.clock(),
             self.renderer.as_deref_mut(),
             self.audio.as_mut(),
-        );
+        )
+        .with_window_mode(mode);
         self.game.event(&mut ctx, Event::Device(event));
         let requests = ctx.loop_requests();
         let exit = ctx.exit_requested();
         self.sim.apply_requests(requests);
+        self.apply_requested_mode(requests);
         if exit {
             event_loop.exit();
         }
@@ -312,6 +368,27 @@ impl<G: Game> ApplicationHandler for Runner<G> {
 mod tests {
     use super::*;
     use winit::dpi::{PhysicalPosition, PhysicalSize};
+
+    fn config(window_mode: WindowMode) -> AppConfig {
+        AppConfig {
+            window_title: "Title".to_owned(),
+            loop_config: crate::LoopConfig::new(60),
+            init_audio: false,
+            toggle_keys: None,
+            window_mode,
+        }
+    }
+
+    #[test]
+    fn a_borderless_config_builds_fullscreen_window_attributes() {
+        let borderless = window_attributes(&config(WindowMode::Borderless));
+        let windowed = window_attributes(&config(WindowMode::Windowed));
+
+        assert_eq!(borderless.fullscreen, Some(Fullscreen::Borderless(None)));
+        assert_eq!(windowed.fullscreen, None);
+        assert_eq!(borderless.title, "Title");
+        assert_eq!(windowed.title, "Title");
+    }
 
     #[test]
     fn resized_routes_to_resize_with_the_new_size() {
@@ -381,5 +458,31 @@ mod tests {
             observe_toggle(None, &WindowEvent::Focused(false)),
             Observed::Pass
         );
+    }
+
+    #[test]
+    fn each_mode_maps_to_its_fullscreen_setting_and_back() {
+        for mode in [WindowMode::Windowed, WindowMode::Borderless] {
+            assert_eq!(mode_of(fullscreen_for(mode)), mode);
+        }
+        assert_eq!(fullscreen_for(WindowMode::Windowed), None);
+        assert_eq!(
+            fullscreen_for(WindowMode::Borderless),
+            Some(Fullscreen::Borderless(None))
+        );
+    }
+
+    #[test]
+    fn a_requested_mode_that_differs_is_applied_and_one_that_matches_is_not() {
+        let mut requests = LoopRequests::default();
+        assert_eq!(mode_change(requests, WindowMode::Windowed), None);
+
+        requests.window_mode = Some(WindowMode::Borderless);
+
+        assert_eq!(
+            mode_change(requests, WindowMode::Windowed),
+            Some(WindowMode::Borderless)
+        );
+        assert_eq!(mode_change(requests, WindowMode::Borderless), None);
     }
 }

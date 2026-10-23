@@ -81,7 +81,7 @@ look, and captures the cursor; `Quit` exits; `Settings` does nothing yet. Each m
 title status, sets the menu's `ScreenText` rows on the shell and draws the stage backdrop instead of the
 arena scene, so the dormant sim is untouched. Console routing still comes first.
 
-Window mode: `main.rs` passes F11 as `AppConfig::toggle_keys` (Alt+Enter always works). After a flip the runner calls `SearchlightGame::window_mode_changed`, which releases held keys, drops pending look and, unless the shell captures input, grabs the cursor again, since the platform loses key releases and the grab across the change.
+Window mode: `main.rs` passes F11 as `AppConfig::toggle_keys` (Alt+Enter always works). After a flip the runner calls `SearchlightGame::window_mode_changed`, which releases held keys, drops pending look and, unless the shell captures input, grabs the cursor again, since the platform loses key releases and the grab across the change. The mode persists: `window_mode_changed` saves it to the prefs file through `DebugSettings` (skipped when it already matches), and `main.rs` reads it at startup through `start_window_mode` into `AppConfig::window_mode`; a saved `Fullscreen` opens borderless ([prefs format](../reference/prefs-format.md)).
 
 Game commands (`tgm [0|1]`) queue as `ConsoleCommand` on the console. `SearchlightGame` drains them
 at the start of each `command()` sample (`apply_console_commands`), applies them in order, saves
