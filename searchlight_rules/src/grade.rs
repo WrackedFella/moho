@@ -50,7 +50,12 @@ impl Grade {
 
     /// How many near misses put an enemy of this grade under fire; `None` means only a hit does.
     pub fn near_misses_to_cover(self) -> Option<u32> {
-        None
+        match self {
+            Grade::Rookie => None,
+            Grade::Novice => Some(3),
+            Grade::Experienced => Some(2),
+            Grade::Veteran | Grade::Professional => Some(1),
+        }
     }
 
     /// The grade's scales; experienced is 1.0 on all three, so it is the base tuning.

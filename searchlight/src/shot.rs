@@ -53,8 +53,14 @@ pub fn resolve_shot(world: &PhysicsWorld, ray: ShotRay) -> Option<Strike> {
 
 /// Whether the segment from `origin` to `end` comes within `radius` of `point`.
 pub fn passes_within(origin: Vec3, end: Vec3, point: Vec3, radius: f32) -> bool {
-    let _ = (origin, end, point, radius);
-    false
+    let segment = end - origin;
+    let length_squared = segment.length_squared();
+    let along = if length_squared > 0.0 {
+        ((point - origin).dot(segment) / length_squared).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    point.distance(origin + segment * along) <= radius
 }
 
 #[cfg(test)]

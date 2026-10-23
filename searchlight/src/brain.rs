@@ -16,13 +16,14 @@ pub struct Percept {
     pub yaw: f32,
     /// The player's aim point, set only when the sight ray reached a player part.
     pub target: Option<Vec3>,
-    /// The player's position when it fired, set the tick after a non-lethal hit.
-    pub hurt: Option<Vec3>,
-    /// A cover point to run to; set by the sim only when `hurt`.
+    /// The player's position when it fired, set the tick after a non-lethal hit, or a near miss
+    /// that reached the grade's count.
+    pub under_fire: Option<Vec3>,
+    /// A cover point to run to; set by the sim only when `under_fire`.
     pub offer: Option<CoverOffer>,
 }
 
-/// A cover point the sim offers to a hurt enemy.
+/// A cover point the sim offers to an enemy under fire.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CoverOffer {
     pub index: usize,
@@ -59,7 +60,7 @@ pub struct EnemyTuning {
     pub arrive_radius: f32,
     /// Radians either side of the target bearing within which the enemy may fire.
     pub fire_cone: f32,
-    /// Metres within which a hurt enemy is offered a cover point.
+    /// Metres within which an enemy under fire is offered a cover point.
     pub cover_range: f32,
     /// Ticks a running-to-cover enemy tries before it gives up and fights where it is.
     pub cover_ticks: u32,
@@ -295,8 +296,8 @@ impl Brain {
         }
     }
 
-    /// Being hit reveals the shooter; a brain not yet in cover takes an offered point.
-    fn react_to_hurt(&mut self, shooter: Vec3, offer: Option<CoverOffer>) {
+    /// Coming under fire reveals the shooter; a brain not yet in cover takes an offered point.
+    fn react_to_fire(&mut self, shooter: Vec3, offer: Option<CoverOffer>) {
         match (*self, offer) {
             (
                 Self::Patrol { next }
@@ -342,8 +343,8 @@ impl Brain {
         steer: &dyn Fn(Vec3) -> Option<Vec3>,
         dt: f32,
     ) -> Intent {
-        if let Some(shooter) = percept.hurt {
-            self.react_to_hurt(shooter, percept.offer);
+        if let Some(shooter) = percept.under_fire {
+            self.react_to_fire(shooter, percept.offer);
         }
         let engaged = matches!(self, Self::Engage { .. });
         let seen = percept
@@ -504,7 +505,7 @@ mod tests {
             position: Vec3::ZERO,
             yaw,
             target,
-            hurt: None,
+            under_fire: None,
             offer: None,
         }
     }
@@ -543,7 +544,7 @@ mod tests {
             position: waypoint + Vec3::new(0.0, 0.0, gap),
             yaw: 0.0,
             target: None,
-            hurt: None,
+            under_fire: None,
             offer: None,
         };
 
@@ -693,7 +694,7 @@ mod tests {
 
     fn hurt_by(shooter: Vec3, offer: Option<CoverOffer>, target: Option<Vec3>) -> Percept {
         Percept {
-            hurt: Some(shooter),
+            under_fire: Some(shooter),
             offer,
             ..at_origin(0.0, target)
         }

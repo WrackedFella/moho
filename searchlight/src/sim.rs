@@ -18,7 +18,7 @@ use crate::arena::{Arena, SETTLE_DT};
 use crate::brain::{Brain, EnemyTuning, Percept};
 use crate::cover::{self, Threat};
 use crate::input::SearchlightCommand;
-use crate::shot::{ShotRay, Strike, resolve_shot};
+use crate::shot::{ShotRay, Strike, passes_within, resolve_shot};
 use crate::tag::SurfaceTag;
 
 /// Height of a character's capsule centre above its feet, in metres.
@@ -189,8 +189,9 @@ struct Target {
     body: Body,
     /// `None` for a dummy.
     enemy: Option<Enemy>,
-    /// Where the player stood when it wounded this enemy; read by the next percept step.
-    hurt: Option<Vec3>,
+    /// Where the player stood when it put this enemy under fire, by a non-lethal hit or a near
+    /// miss that reached the grade's count; read by the next percept step.
+    under_fire: Option<Vec3>,
     /// Near misses taken since the last time this enemy was put under fire.
     near_misses: u32,
 }
@@ -288,7 +289,7 @@ fn new_target(
         handle: Some(handle),
         body: Body::new(profile),
         enemy,
-        hurt: None,
+        under_fire: None,
         near_misses: 0,
     }
 }
@@ -468,8 +469,8 @@ impl SearchlightSim {
                 },
             )
             .is_some_and(|strike| matches!(strike.tag, SurfaceTag::Player(_)));
-            let hurt = target.hurt.take();
-            let offer = hurt.and_then(|_| {
+            let under_fire = target.under_fire.take();
+            let offer = under_fire.and_then(|_| {
                 let taken: Vec<usize> = claims
                     .iter()
                     .enumerate()
@@ -490,7 +491,7 @@ impl SearchlightSim {
                 position: state.position,
                 yaw: state.yaw,
                 target: sees_player.then_some(aim),
-                hurt,
+                under_fire,
                 offer,
             };
             let position = state.position;
@@ -630,14 +631,53 @@ impl SearchlightSim {
                 ignore: Some(self.player),
             },
         );
-        let Some(Strike {
+        let end = strike.map_or(view.eye + view.forward * self.range, |strike| strike.point);
+        let struck = match strike {
+            Some(Strike {
+                tag: SurfaceTag::Part { target, .. },
+                ..
+            }) => Some(usize::from(target)),
+            _ => None,
+        };
+        self.record_near_misses(view.eye, end, struck, state.position);
+        if let Some(Strike {
             tag: SurfaceTag::Part { target, part },
             ..
         }) = strike
-        else {
-            return;
-        };
-        self.apply_player_hit(target, part, self.damage, state.position);
+        {
+            self.apply_player_hit(target, part, self.damage, state.position);
+        }
+    }
+
+    /// Counts a near miss for every living enemy but `struck` that the shot from `origin` to
+    /// `end` passed within its graded radius of, and puts those whose count reached their
+    /// grade's under fire from `from`.
+    fn record_near_misses(&mut self, origin: Vec3, end: Vec3, struck: Option<usize>, from: Vec3) {
+        for (index, target) in self.targets.iter_mut().enumerate().skip(self.dummy_count) {
+            let (Some(handle), Some(enemy)) = (target.handle, target.enemy) else {
+                continue;
+            };
+            if struck == Some(index) {
+                continue;
+            }
+            let centre = self
+                .world
+                .character(handle)
+                .expect("a living enemy is in the world")
+                .position;
+            let radius = self.enemy.graded(enemy.grade).near_miss_radius;
+            if !passes_within(origin, end, centre, radius) {
+                continue;
+            }
+            let Some(needed) = enemy.grade.near_misses_to_cover() else {
+                continue;
+            };
+            target.near_misses += 1;
+            if target.near_misses >= needed {
+                target.near_misses = 0;
+                target.under_fire = Some(from);
+            }
+        }
     }
 
     /// Lands a player's hit of `damage` on `part` of target `target`, shot from `from`: wounds
@@ -652,7 +692,7 @@ impl SearchlightSim {
         let is_dead = struck.body.is_dead();
         if struck.enemy.is_some() {
             if !is_dead {
-                struck.hurt = Some(from);
+                struck.under_fire = Some(from);
             } else if !was_dead {
                 self.kills += 1;
             }
