@@ -802,7 +802,7 @@ mod tests {
             let inside = MARGIN - 1.0;
             let outside = MARGIN + 1.0;
             // (name, pointer, expected sign of (right, forward))
-            let table: [(&str, Option<(f32, f32)>, (f32, f32)); 17] = [
+            let table: [(&str, Option<(f32, f32)>, (f32, f32)); 19] = [
                 ("left edge", Some((0.0, cy)), (-1.0, 0.0)),
                 ("right edge", Some((w - 1.0, cy)), (1.0, 0.0)),
                 ("top edge", Some((cx, 0.0)), (0.0, 1.0)),
@@ -844,6 +844,16 @@ mod tests {
                     Some((w + 50.0, cy)),
                     (0.0, 0.0),
                 ),
+                (
+                    "pointer left of the viewport",
+                    Some((-50.0, cy)),
+                    (0.0, 0.0),
+                ),
+                (
+                    "pointer below the viewport",
+                    Some((cx, h + 50.0)),
+                    (0.0, 0.0),
+                ),
             ];
 
             for (name, pointer, (right, forward)) in table {
@@ -854,30 +864,97 @@ mod tests {
             }
         }
 
+        #[test]
+        fn edge_pan_axes_follow_the_given_margin_and_viewport() {
+            let wide_margin = 40.0;
+            let small = UVec2::new(800, 600);
+            // (name, viewport, margin, pointer, expected sign of (right, forward))
+            let table = [
+                (
+                    "inside a 40 px margin",
+                    VIEWPORT,
+                    wide_margin,
+                    (30.0, 360.0),
+                    (-1.0, 0.0),
+                ),
+                (
+                    "outside a 40 px margin",
+                    VIEWPORT,
+                    wide_margin,
+                    (50.0, 360.0),
+                    (0.0, 0.0),
+                ),
+                (
+                    "right edge of an 800 px window",
+                    small,
+                    MARGIN,
+                    (799.0, 300.0),
+                    (1.0, 0.0),
+                ),
+                (
+                    "1000 px is off an 800 px window",
+                    small,
+                    MARGIN,
+                    (1000.0, 300.0),
+                    (0.0, 0.0),
+                ),
+                (
+                    "bottom edge of a 600 px window",
+                    small,
+                    MARGIN,
+                    (400.0, 599.0),
+                    (0.0, -1.0),
+                ),
+                (
+                    "centre of a 600 px window",
+                    small,
+                    MARGIN,
+                    (400.0, 300.0),
+                    (0.0, 0.0),
+                ),
+            ];
+
+            for (name, viewport, margin, pointer, (right, forward)) in table {
+                let axes = edge_pan_axes(Some(pointer), viewport, margin);
+
+                assert_eq!(sign(axes.x), right, "{name}: {axes}");
+                assert_eq!(sign(axes.y), forward, "{name}: {axes}");
+            }
+        }
+
         proptest! {
             #[test]
             fn edge_pan_axes_stay_within_unit_range_and_vanish_in_the_interior(
-                x in -200.0f32..1500.0,
-                y in -200.0f32..900.0,
+                width in 200u32..2000,
+                height in 200u32..1200,
+                margin in 4.0f32..64.0,
+                x_fraction in -0.2f32..1.2,
+                y_fraction in -0.2f32..1.2,
             ) {
-                let axes = edge_pan_axes(Some((x, y)), VIEWPORT, MARGIN);
+                let (w, h) = (width as f32, height as f32);
+                let (x, y) = (x_fraction * w, y_fraction * h);
+
+                let axes = edge_pan_axes(Some((x, y)), UVec2::new(width, height), margin);
 
                 prop_assert!(axes.x.abs() <= 1.0 && axes.y.abs() <= 1.0, "{axes}");
-                let interior = x > MARGIN && x < 1280.0 - MARGIN && y > MARGIN && y < 720.0 - MARGIN;
+                let interior = x > margin && x < w - margin && y > margin && y < h - margin;
                 if interior {
                     prop_assert_eq!(axes, Vec2::ZERO);
                 }
-                let on_screen = (0.0..1280.0).contains(&x) && (0.0..720.0).contains(&y);
-                if on_screen && x < MARGIN {
+                let on_screen = (0.0..w).contains(&x) && (0.0..h).contains(&y);
+                if !on_screen {
+                    prop_assert_eq!(axes, Vec2::ZERO);
+                }
+                if on_screen && x < margin {
                     prop_assert!(axes.x < 0.0, "{axes}");
                 }
-                if on_screen && x >= 1280.0 - MARGIN {
+                if on_screen && x >= w - margin {
                     prop_assert!(axes.x > 0.0, "{axes}");
                 }
-                if on_screen && y < MARGIN {
+                if on_screen && y < margin {
                     prop_assert!(axes.y > 0.0, "{axes}");
                 }
-                if on_screen && y >= 720.0 - MARGIN {
+                if on_screen && y >= h - margin {
                     prop_assert!(axes.y < 0.0, "{axes}");
                 }
             }
@@ -890,12 +967,17 @@ mod tests {
                 focus_x in -50.0f32..50.0,
                 focus_z in -50.0f32..50.0,
                 height in RTS_MIN_HEIGHT..RTS_MAX_HEIGHT,
+                zoom_delta in -5.0f32..5.0,
             ) {
                 let surface = move |x: f32, z: f32| base + slope_x * x + slope_z * z;
                 let focus = Vec3::new(focus_x, surface(focus_x, focus_z), focus_z);
                 let mut pc = strategy_at(focus, height);
+                let input = ControllerInput {
+                    zoom_delta,
+                    ..Default::default()
+                };
 
-                pc.apply_input(&ControllerInput::default(), TICK, |x, z| Some(surface(x, z)));
+                pc.apply_input(&input, TICK, |x, z| Some(surface(x, z)));
 
                 let eye = eye_of(&pc);
                 let floor = surface(eye.x, eye.z) + CAMERA_CLEARANCE;
@@ -984,8 +1066,58 @@ mod tests {
         }
 
         #[test]
+        fn unloaded_columns_are_skipped_by_the_rule_that_needs_them() {
+            let idle = ControllerInput::default();
+
+            // Only the focus column is loaded: the focus still eases to its ground.
+            let mut focus_only = strategy_at(Vec3::new(0.0, 7.0, 0.0), RTS_MIN_HEIGHT);
+            for _ in 0..600 {
+                focus_only.apply_input(&idle, TICK, |x, _| (x < 1.0).then_some(0.0));
+            }
+
+            // Only the eye column is loaded, under a wall: the eye is still raised.
+            let mut eye_only = strategy_at(Vec3::new(0.0, 7.0, 0.0), RTS_MIN_HEIGHT);
+            eye_only.apply_input(&idle, TICK, |x, _| (x >= 1.0).then_some(30.0));
+
+            assert!(
+                focus_only.rts_look_target.y.abs() < 0.05,
+                "focus settled at {}",
+                focus_only.rts_look_target.y
+            );
+            let eye = eye_of(&eye_only);
+            assert!(
+                (eye.y - (30.0 + CAMERA_CLEARANCE)).abs() < 1e-3,
+                "eye {eye}"
+            );
+        }
+
+        #[test]
+        fn camera_does_not_stay_raised_after_leaving_a_hill() {
+            let mut pc = strategy_at(Vec3::ZERO, RTS_DEFAULT_HEIGHT);
+            let idle = ControllerInput::default();
+            let wall = |x: f32, _: f32| Some(if x >= 5.0 { 30.0 } else { 0.0 });
+            let flat = |_: f32, _: f32| Some(0.0);
+
+            for _ in 0..60 {
+                pc.apply_input(&idle, TICK, wall);
+            }
+            let raised = pc.rts_look_target.y;
+            for _ in 0..600 {
+                pc.apply_input(&idle, TICK, flat);
+            }
+
+            assert!(raised > 20.0, "the wall raised the focus to {raised}");
+            assert!(
+                pc.rts_look_target.y.abs() < 0.05,
+                "focus stayed at {}",
+                pc.rts_look_target.y
+            );
+        }
+
+        #[test]
         fn pan_speed_grows_with_zoom_height() {
-            for height in [RTS_MIN_HEIGHT, RTS_DEFAULT_HEIGHT, RTS_MAX_HEIGHT] {
+            // (rts_height, metres panned in one second)
+            for (height, expected) in [(5.0, 1.0), (20.0, 4.0), (50.0, 10.0)] {
                 let mut pc = strategy_at(Vec3::ZERO, height);
                 let input = ControllerInput {
                     forward: 1.0,
@@ -994,7 +1126,6 @@ mod tests {
 
                 pc.apply_input(&input, 1.0, NO_GROUND);
 
-                let expected = DEFAULT_MOVE_SPEED * height / RTS_DEFAULT_HEIGHT;
                 let moved = horizontal(pc.rts_look_target).length();
                 assert!(
                     (moved - expected).abs() < 1e-3,

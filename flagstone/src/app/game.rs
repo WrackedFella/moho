@@ -2319,26 +2319,22 @@ mod tests {
         }
 
         #[test]
-        fn edge_pan_is_ignored_in_first_person() {
-            let mut app = strategy_app(CameraMode::FirstPerson);
-            app.input.actions.pointer_moved(0.0, 0.0);
+        fn edge_pan_is_ignored_outside_focused_strategy_mode() {
+            let cases = [
+                ("first person, focused", CameraMode::FirstPerson, true),
+                ("strategy, unfocused", CameraMode::Isometric, false),
+            ];
 
-            let command = Game::command(&mut app);
+            for (name, mode, focused) in cases {
+                let mut app = strategy_app(mode);
+                app.input.focused = focused;
+                app.input.actions.pointer_moved(0.0, 0.0);
 
-            assert_eq!(command.input.forward, 0.0);
-            assert_eq!(command.input.right, 0.0);
-        }
+                let command = Game::command(&mut app);
 
-        #[test]
-        fn edge_pan_is_ignored_while_the_window_is_unfocused() {
-            let mut app = strategy_app(CameraMode::Isometric);
-            app.input.focused = false;
-            app.input.actions.pointer_moved(0.0, 0.0);
-
-            let command = Game::command(&mut app);
-
-            assert_eq!(command.input.forward, 0.0);
-            assert_eq!(command.input.right, 0.0);
+                assert_eq!(command.input.forward, 0.0, "{name}");
+                assert_eq!(command.input.right, 0.0, "{name}");
+            }
         }
 
         #[test]
@@ -2350,7 +2346,7 @@ mod tests {
                 .as_mut()
                 .expect("App starts with a light system")
                 .grid_mut();
-            // A 45 degree slope rising toward +x and +z: the column at x has its top block at y = x.
+            // A 45 degree slope rising toward +x only: the column at x has its top block at y = x.
             for x in 2..30 {
                 for z in 2..30 {
                     for y in [x - 1, x] {
