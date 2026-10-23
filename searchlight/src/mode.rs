@@ -30,13 +30,13 @@ impl ArenaMode {
             tuning: waves,
             seen_kills: 0,
         };
-        mode.step_waves();
+        mode.step_waves(Grade::default());
         mode
     }
 
-    /// Scores the sim's new kills and spawns the wave's enemies at the first free markers; none
-    /// while the player is dead.
-    fn step_waves(&mut self) {
+    /// Scores the sim's new kills and spawns the wave's enemies, each of `grade`, at the first
+    /// free markers; none while the player is dead.
+    fn step_waves(&mut self, grade: Grade) {
         let kills = self.sim.kills();
         let scan = !self.sim.player_body().is_dead()
             && (self.waves.to_spawn() != 0 || self.sim.enemies_alive() == 0);
@@ -54,7 +54,7 @@ impl ArenaMode {
         self.seen_kills = kills;
         let mut spawned = 0;
         for &marker in free.iter().take(spawn as usize) {
-            if let Err(error) = self.sim.spawn_enemy(marker, Grade::default()) {
+            if let Err(error) = self.sim.spawn_enemy(marker, grade) {
                 tracing::warn!(%error, marker, "wave enemy not spawned");
                 break;
             }
@@ -72,7 +72,7 @@ impl ArenaMode {
             self.waves = WaveState::begin(&self.tuning);
             self.seen_kills = 0;
         }
-        self.step_waves();
+        self.step_waves(command.forced_grade.unwrap_or_default());
     }
 
     pub fn sim(&self) -> &SearchlightSim {

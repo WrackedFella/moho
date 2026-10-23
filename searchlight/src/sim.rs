@@ -186,9 +186,17 @@ struct Target {
     /// `None` once an enemy died and left the world.
     handle: Option<CharacterHandle>,
     body: Body,
-    brain: Option<Brain>,
+    /// `None` for a dummy.
+    enemy: Option<Enemy>,
     /// Where the player stood when it wounded this enemy; read by the next percept step.
     hurt: Option<Vec3>,
+}
+
+/// What makes a target an enemy: its state machine and the skill it plays with.
+#[derive(Clone, Copy, Debug)]
+struct Enemy {
+    brain: Brain,
+    grade: Grade,
 }
 
 /// The engine stream enemy aim error draws from; later draws add streams of their own.
@@ -249,12 +257,13 @@ struct Spawns {
 }
 
 /// A target standing on the floor point `spawn` as target number `index`. With a `route` it is
-/// an enemy, facing the nearest waypoint; without, a dummy.
+/// an enemy of `grade`, facing the nearest waypoint; without, a dummy.
 fn new_target(
     world: &mut PhysicsWorld,
     index: usize,
     spawn: Vec3,
     route: Option<&[Vec3]>,
+    grade: Grade,
     profile: BodyProfile,
 ) -> Target {
     let (target, centre) = dummy_at(index, spawn);
@@ -264,17 +273,20 @@ fn new_target(
             .add_hit_volume(handle, volume)
             .expect("the target was added a moment ago");
     }
-    let brain = route.map(|route| {
+    let enemy = route.map(|route| {
         let (nearest, yaw) = nearest_waypoint(spawn, route);
         world
             .set_character_look(handle, yaw, 0.0)
             .expect("the enemy was added a moment ago");
-        Brain::Patrol { next: nearest }
+        Enemy {
+            brain: Brain::Patrol { next: nearest },
+            grade,
+        }
     });
     Target {
         handle: Some(handle),
         body: Body::new(profile),
-        brain,
+        enemy,
         hurt: None,
     }
 }
@@ -320,7 +332,14 @@ impl SearchlightSim {
         let mut targets = Vec::new();
         for (index, &spawn) in spawns.dummies.iter().chain(&spawns.enemies).enumerate() {
             let route = (index >= spawns.dummies.len()).then_some(spawns.route.as_slice());
-            targets.push(new_target(&mut world, index, spawn, route, config.body));
+            targets.push(new_target(
+                &mut world,
+                index,
+                spawn,
+                route,
+                Grade::default(),
+                config.body,
+            ));
         }
         // Index the new hit volumes so the first tick's rays can strike them.
         world.step(SETTLE_DT);
@@ -427,16 +446,17 @@ impl SearchlightSim {
             .map(|target| {
                 target
                     .handle
-                    .and(target.brain)
-                    .and_then(|brain| brain.claim())
+                    .and(target.enemy)
+                    .and_then(|enemy| enemy.brain.claim())
             })
             .collect();
         let mut firing = Vec::new();
         let nav = &self.nav;
         for (index, target) in self.targets.iter_mut().enumerate().skip(self.dummy_count) {
-            let (Some(handle), Some(brain)) = (target.handle, target.brain.as_mut()) else {
+            let (Some(handle), Some(enemy)) = (target.handle, target.enemy.as_mut()) else {
                 continue;
             };
+            let tuning = self.enemy.graded(enemy.grade);
             let state = self
                 .world
                 .character(handle)
@@ -447,7 +467,7 @@ impl SearchlightSim {
                 ShotRay {
                     origin: eye,
                     direction: aim - eye,
-                    range: self.enemy.sight_range,
+                    range: tuning.sight_range,
                     ignore: Some(handle),
                 },
             )
@@ -467,7 +487,7 @@ impl SearchlightSim {
                     state.position,
                     threat,
                     STAND_HEIGHT + self.eye_height,
-                    &self.enemy,
+                    &tuning,
                 )
             });
             let percept = Percept {
@@ -483,8 +503,10 @@ impl SearchlightSim {
                 nav.path(position, cover::floor_below(world, goal))
                     .and_then(|path| path.get(1).copied())
             };
-            let intent = brain.think(&self.route, &percept, &self.enemy, &steer, dt);
-            claims[index] = brain.claim();
+            let intent = enemy
+                .brain
+                .think(&self.route, &percept, &tuning, &steer, dt);
+            claims[index] = enemy.brain.claim();
             let command = CharacterCommand {
                 forward: intent.forward,
                 yaw_delta: intent.yaw_delta,
@@ -508,15 +530,19 @@ impl SearchlightSim {
                 break;
             }
             let target = &self.targets[index];
-            let Some(handle) = target.handle.filter(|_| !target.body.is_dead()) else {
+            let (Some(handle), Some(enemy)) = (
+                target.handle.filter(|_| !target.body.is_dead()),
+                target.enemy,
+            ) else {
                 continue;
             };
+            let tuning = self.enemy.graded(enemy.grade);
             let state = self
                 .world
                 .character(handle)
                 .expect("a living enemy is in the world");
             let eye = state.position + Vec3::Y * self.eye_height;
-            let direction = self.with_spread(self.player_aim_point() - eye);
+            let direction = self.with_spread(self.player_aim_point() - eye, tuning.aim_error);
             self.outbox.push(Feedback::EnemyFired {
                 target: u16::try_from(index).expect("target numbers fit a u16"),
             });
@@ -525,7 +551,7 @@ impl SearchlightSim {
                 ShotRay {
                     origin: eye,
                     direction,
-                    range: self.enemy.sight_range,
+                    range: tuning.sight_range,
                     ignore: Some(handle),
                 },
             );
@@ -535,7 +561,7 @@ impl SearchlightSim {
             }) = strike
             {
                 if !god_mode {
-                    self.player_body.hit(part, self.enemy.damage);
+                    self.player_body.hit(part, tuning.damage);
                 }
                 self.outbox.push(Feedback::PlayerHit { part, from: eye });
             }
@@ -543,12 +569,12 @@ impl SearchlightSim {
     }
 
     /// `direction` turned off by up to `aim_error` radians either way across and up.
-    fn with_spread(&mut self, direction: Vec3) -> Vec3 {
+    fn with_spread(&mut self, direction: Vec3, aim_error: f32) -> Vec3 {
         let forward = direction.normalize_or_zero();
         let right = forward.cross(Vec3::Y).normalize_or(Vec3::X);
         let up = right.cross(forward);
-        let across = next_signed(&mut self.rng) * self.enemy.aim_error;
-        let rise = next_signed(&mut self.rng) * self.enemy.aim_error;
+        let across = next_signed(&mut self.rng) * aim_error;
+        let rise = next_signed(&mut self.rng) * aim_error;
         forward + right * across + up * rise
     }
 
@@ -630,7 +656,7 @@ impl SearchlightSim {
         let was_dead = struck.body.is_dead();
         let report = struck.body.hit(part, damage);
         let is_dead = struck.body.is_dead();
-        if struck.brain.is_some() {
+        if struck.enemy.is_some() {
             if !is_dead {
                 struck.hurt = Some(from);
             } else if !was_dead {
@@ -710,12 +736,13 @@ impl SearchlightSim {
         Self::assemble(arena.physics_world(), spawns, config)
     }
 
-    /// Adds one enemy at enemy spawn marker `marker`, set up like a marker-start enemy.
+    /// Adds one enemy of `grade` at enemy spawn marker `marker`, set up like a marker-start
+    /// enemy.
     ///
     /// # Errors
     /// If there is no such marker, a character stands on it, or the new enemy's target number
     /// does not fit a `u16`.
-    pub fn spawn_enemy(&mut self, marker: usize, _grade: Grade) -> Result<(), SpawnError> {
+    pub fn spawn_enemy(&mut self, marker: usize, grade: Grade) -> Result<(), SpawnError> {
         let spawn = *self
             .origin
             .0
@@ -732,6 +759,7 @@ impl SearchlightSim {
             index,
             spawn,
             Some(&self.route),
+            grade,
             self.origin.1.body,
         );
         self.targets.push(target);
@@ -830,8 +858,11 @@ impl SearchlightSim {
 
     /// The grade enemy `index` (enemy order) was spawned with, dead or alive, or `None` if
     /// there is no such enemy.
-    pub fn enemy_grade(&self, _index: usize) -> Option<Grade> {
-        todo!()
+    pub fn enemy_grade(&self, index: usize) -> Option<Grade> {
+        self.targets
+            .get(self.dummy_count + index)?
+            .enemy
+            .map(|enemy| enemy.grade)
     }
 
     /// Enemy `index`'s character after the last tick, or `None` if there is no such enemy or it
@@ -2421,7 +2452,7 @@ mod enemy_tests {
         let aim = probe.player_aim_point();
         let clipped = (0..count(&ticks, enemy_fired))
             .filter(|_| {
-                let direction = probe.with_spread(aim - eye);
+                let direction = probe.with_spread(aim - eye, probe.enemy.aim_error);
                 matches!(
                     resolve_shot(
                         &probe.world,
@@ -2726,7 +2757,10 @@ mod enemy_tests {
 
         let aim = Vec3::new(0.0, 0.0, 5.0);
         for _ in 0..4 {
-            assert_eq!(restarted.with_spread(aim), fresh.with_spread(aim));
+            assert_eq!(
+                restarted.with_spread(aim, restarted.enemy.aim_error),
+                fresh.with_spread(aim, fresh.enemy.aim_error)
+            );
         }
     }
 
@@ -3170,7 +3204,12 @@ mod enemy_tests {
             sim.drain_feedback();
             let enemy = enemy_at(&sim, 0);
             closest_z = closest_z.min(enemy.z);
-            if lost_at.is_none() && matches!(sim.targets[0].brain, Some(Brain::Chase { .. })) {
+            if lost_at.is_none()
+                && matches!(
+                    sim.targets[0].enemy.map(|enemy| enemy.brain),
+                    Some(Brain::Chase { .. })
+                )
+            {
                 lost_at = Some(sim.player().position);
             }
             if let Some(lost) = lost_at {
@@ -3229,7 +3268,7 @@ mod enemy_tests {
 
         sim.tick(&idle(), DT);
         sim.drain_feedback();
-        let after_losing_sight = sim.targets[0].brain;
+        let after_losing_sight = sim.targets[0].enemy.map(|enemy| enemy.brain);
         for _ in 0..5 {
             sim.tick(&idle(), DT);
             sim.drain_feedback();
@@ -3288,7 +3327,12 @@ mod enemy_tests {
             };
             sim.tick(&command, DT);
             sim.drain_feedback();
-            if lost_at.is_none() && matches!(sim.targets[0].brain, Some(Brain::Chase { .. })) {
+            if lost_at.is_none()
+                && matches!(
+                    sim.targets[0].enemy.map(|enemy| enemy.brain),
+                    Some(Brain::Chase { .. })
+                )
+            {
                 lost_at = Some(sim.player().position);
             }
             if let Some(lost) = lost_at {
@@ -3313,13 +3357,16 @@ mod enemy_tests {
         let arena = arena_with(&[PLATEAU], top, &[ENEMY_SPAWN], &[TOWARD_PLAYER]);
         let mut sim = SearchlightSim::start(arena, cover_config());
         run(&mut sim, &script(10, &[]));
-        let engaged = matches!(sim.targets[0].brain, Some(Brain::Engage { .. }));
+        let engaged = matches!(
+            sim.targets[0].enemy.map(|enemy| enemy.brain),
+            Some(Brain::Engage { .. })
+        );
         // Nothing can be seen beyond a metre from now on.
         sim.enemy.sight_range = 1.0;
 
         sim.tick(&idle(), DT);
         sim.drain_feedback();
-        let after_losing_sight = sim.targets[0].brain;
+        let after_losing_sight = sim.targets[0].enemy.map(|enemy| enemy.brain);
         let mut closest_z = f32::MAX;
         for _ in 0..600 {
             sim.tick(&idle(), DT);
@@ -3518,7 +3565,7 @@ mod pinned_behaviour_tests {
         let mut sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
         let before = sim.rng.clone();
 
-        let aimed = sim.with_spread(Vec3::new(0.0, 0.0, 5.0));
+        let aimed = sim.with_spread(Vec3::new(0.0, 0.0, 5.0), sim.enemy.aim_error);
 
         assert!(aimed.abs_diff_eq(Vec3::Z, 1e-6), "{aimed:?}");
         assert_ne!(sim.rng, before, "the draws are still consumed");
@@ -3553,7 +3600,7 @@ mod pinned_behaviour_tests {
         config.enemy.seed = 7;
         let mut sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
 
-        let aimed = sim.with_spread(Vec3::new(0.0, 0.0, 5.0));
+        let aimed = sim.with_spread(Vec3::new(0.0, 0.0, 5.0), sim.enemy.aim_error);
 
         // Facing +Z the right-hand axis is -X and up is +Y.
         assert!(

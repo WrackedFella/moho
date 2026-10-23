@@ -113,7 +113,8 @@ pub struct SearchlightCommand {
     /// God mode is on: a level, carried on every tick like a pause.
     pub god_mode: bool,
     /// The grade every enemy spawned this tick gets, or `None` for the normal grade: a level,
-    /// carried on every tick.
+    /// carried on every tick. A host action like `god_mode`: once commands are per player
+    /// slot, only slot 0's is read.
     pub forced_grade: Option<Grade>,
 }
 

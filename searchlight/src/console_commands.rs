@@ -46,6 +46,32 @@ pub fn parse_fullscreen(args: &[&str]) -> Result<(ConsoleCommand, String), Strin
     }
 }
 
+/// The `grade` usage line, listing every grade in ladder order.
+fn grade_usage() -> String {
+    let names: Vec<&str> = Grade::LADDER.into_iter().map(Grade::name).collect();
+    format!("grade <{}|off>", names.join("|"))
+}
+
+/// Parses `grade <name>` and `grade off`; anything else prints the usage.
+pub fn parse_grade(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    match args {
+        ["off"] => Ok((
+            ConsoleCommand::ForceGrade(None),
+            "Grade force cleared".to_owned(),
+        )),
+        [name] => name
+            .parse::<Grade>()
+            .map(|grade| {
+                (
+                    ConsoleCommand::ForceGrade(Some(grade)),
+                    format!("Grade forced: {}", grade.name()),
+                )
+            })
+            .map_err(|_| format!("Usage: {}", grade_usage())),
+        _ => Err(format!("Usage: {}", grade_usage())),
+    }
+}
+
 /// The FPS console with the game's commands registered. Reads the `console` key from the
 /// game's `[bindings]` section.
 pub fn console(
@@ -68,6 +94,14 @@ pub fn console(
             parse: parse_fullscreen,
         })
         .expect("\"fullscreen\" is not an engine command and is registered once");
+    console
+        .register(CommandSpec {
+            name: "grade".to_owned(),
+            usage: grade_usage(),
+            help: "force the grade of new enemies".to_owned(),
+            parse: parse_grade,
+        })
+        .expect("\"grade\" is not an engine command and is registered once");
     (console, warnings)
 }
 
@@ -230,7 +264,7 @@ mod tests {
 
         let lines = printed(&console);
         let expected = format!("  {GRADE_USAGE} - force the grade of new enemies");
-        assert!(lines.iter().any(|line| *line == expected), "{lines:?}");
+        assert!(lines.contains(&expected), "{lines:?}");
     }
 
     #[test]

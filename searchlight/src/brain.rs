@@ -95,8 +95,14 @@ impl Default for EnemyTuning {
 impl EnemyTuning {
     /// This tuning as an enemy of `grade` plays it: reaction, cooldown and aim error scaled by
     /// the grade's dials, every other field as it is.
-    pub fn graded(&self, _grade: Grade) -> EnemyTuning {
-        todo!()
+    pub fn graded(&self, grade: Grade) -> EnemyTuning {
+        let dials = grade.dials();
+        EnemyTuning {
+            reaction_ticks: dials.reaction_ticks(self.reaction_ticks),
+            cooldown_ticks: dials.cooldown_ticks(self.cooldown_ticks),
+            aim_error: dials.aim_error(self.aim_error),
+            ..*self
+        }
     }
 }
 

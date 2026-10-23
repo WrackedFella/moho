@@ -39,36 +39,57 @@ impl Grade {
 
     /// The lower-case name the grade parses from.
     pub fn name(self) -> &'static str {
-        todo!()
+        match self {
+            Grade::Rookie => "rookie",
+            Grade::Novice => "novice",
+            Grade::Experienced => "experienced",
+            Grade::Veteran => "veteran",
+            Grade::Professional => "professional",
+        }
     }
 
+    /// The grade's scales; experienced is 1.0 on all three, so it is the base tuning.
     pub fn dials(self) -> GradeDials {
-        todo!()
+        let (reaction, aim_error, cooldown) = match self {
+            Grade::Rookie => (2.0, 3.0, 2.0),
+            Grade::Novice => (1.5, 2.0, 1.5),
+            Grade::Experienced => (1.0, 1.0, 1.0),
+            Grade::Veteran => (0.75, 0.6, 0.85),
+            Grade::Professional => (0.5, 0.35, 0.7),
+        };
+        GradeDials {
+            reaction,
+            aim_error,
+            cooldown,
+        }
     }
 }
 
 impl FromStr for Grade {
     type Err = UnknownGrade;
 
-    fn from_str(_name: &str) -> Result<Self, Self::Err> {
-        todo!()
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        Grade::LADDER
+            .into_iter()
+            .find(|grade| grade.name() == name)
+            .ok_or_else(|| UnknownGrade(name.to_owned()))
     }
 }
 
 impl GradeDials {
     /// `base` ticks of reaction, scaled and rounded.
-    pub fn reaction_ticks(self, _base: u32) -> u32 {
-        todo!()
+    pub fn reaction_ticks(self, base: u32) -> u32 {
+        (base as f32 * self.reaction).round() as u32
     }
 
     /// `base` ticks between shots, scaled and rounded.
-    pub fn cooldown_ticks(self, _base: u32) -> u32 {
-        todo!()
+    pub fn cooldown_ticks(self, base: u32) -> u32 {
+        (base as f32 * self.cooldown).round() as u32
     }
 
     /// `base` radians of aim error, scaled.
-    pub fn aim_error(self, _base: f32) -> f32 {
-        todo!()
+    pub fn aim_error(self, base: f32) -> f32 {
+        base * self.aim_error
     }
 }
 

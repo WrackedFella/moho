@@ -18,6 +18,7 @@ use moho_render_api::{
     WorldMeshId,
 };
 use moho_renderer::{LightingGpu, RendererBackend, Scene, WorldMeshes};
+use searchlight_rules::Grade;
 use winit::event::WindowEvent;
 use winit::window::{CursorGrabMode, Window};
 
@@ -714,6 +715,10 @@ pub struct SearchlightGame {
     focused: bool,
     stage: Stage,
     god_mode: bool,
+    /// The grade the `grade` command forces on new enemies; not saved, a force is a tuning
+    /// session's lever. A host action like `god_mode`: once commands are per player slot, only
+    /// slot 0's is read.
+    forced_grade: Option<Grade>,
     debug_settings: Option<DebugSettings>,
     /// A `fullscreen` command waiting for a frame, the first place a window mode can be
     /// requested.
@@ -734,6 +739,7 @@ impl SearchlightGame {
             focused: true,
             stage: Stage::new(),
             god_mode: false,
+            forced_grade: None,
             debug_settings: None,
             flip_window_pending: false,
         }
@@ -860,7 +866,7 @@ impl SearchlightGame {
                 }
                 ConsoleCommand::GodMode(GodModeArg::Set(on)) => self.god_mode = on,
                 ConsoleCommand::Fullscreen => self.flip_window_pending = true,
-                ConsoleCommand::ForceGrade(_) => {}
+                ConsoleCommand::ForceGrade(grade) => self.forced_grade = grade,
             }
         }
         if self.god_mode != before
@@ -988,6 +994,7 @@ impl Game for SearchlightGame {
         }
         SearchlightCommand {
             god_mode: self.god_mode,
+            forced_grade: self.forced_grade,
             ..SearchlightCommand::from_frame(&self.input.end_tick())
         }
     }
