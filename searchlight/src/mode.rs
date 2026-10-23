@@ -109,11 +109,11 @@ impl ArenaMode {
 #[cfg(test)]
 mod tests {
     use glam::Vec3;
-    use searchlight_rules::{GradeMix, Rifle};
+    use searchlight_rules::GradeMix;
 
     use super::*;
     use crate::sim::STAND_HEIGHT;
-    use crate::test_support::{DT, arena_with, mag, test_config};
+    use crate::test_support::{DT, arena_with, mag, rifle_from, test_config};
 
     fn idle() -> SearchlightCommand {
         SearchlightCommand::default()
@@ -135,7 +135,7 @@ mod tests {
 
     /// Enemies that neither see the player nor leave their markers.
     fn calm_config() -> SimConfig {
-        let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        let mut config = test_config(rifle_from(mag(30, 30)), vec![]);
         config.enemy.sight_range = 0.5;
         config.enemy.patrol_speed = 0.0;
         config

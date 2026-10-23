@@ -9,7 +9,10 @@ use moho_input::bindings::Input;
 use moho_level::NavMesh;
 use moho_physics::{MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
-use searchlight_rules::{BodyPart, BodyProfile, Grade, GradeMix, Magazine, Rifle};
+use searchlight_rules::{
+    BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId, Loadout, Magazine, MagazineSpec,
+    MagazineWell, Rifle, Rig, RigSpec,
+};
 
 use crate::arena::{Arena, nav_profile};
 use crate::brain::EnemyTuning;
@@ -82,8 +85,41 @@ pub(crate) fn flat_floor() -> PhysicsWorld {
     world_with(&[(Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0))])
 }
 
+/// A magazine of the `test` well holding `rounds` of `test_round`.
 pub(crate) fn mag(capacity: u32, rounds: u32) -> Magazine {
-    Magazine::new(capacity, rounds).expect("test rounds fit the capacity")
+    let spec = MagazineSpec {
+        well: MagazineWell::new("test"),
+        caliber: Caliber::new("test"),
+        capacity,
+    };
+    Magazine::filled(
+        ItemId::new("test_mag"),
+        &spec,
+        &ItemId::new("test_round"),
+        rounds,
+    )
+    .expect("test rounds fit the capacity")
+}
+
+/// A magazine of a well the `test` rifle does not take.
+pub(crate) fn foreign_mag(capacity: u32, rounds: u32) -> Magazine {
+    let spec = MagazineSpec {
+        well: MagazineWell::new("foreign"),
+        caliber: Caliber::new("test"),
+        capacity,
+    };
+    Magazine::filled(
+        ItemId::new("foreign_mag"),
+        &spec,
+        &ItemId::new("test_round"),
+        rounds,
+    )
+    .expect("test rounds fit the capacity")
+}
+
+/// A rifle taking the `test` well, loaded from `magazine`.
+pub(crate) fn rifle_from(magazine: Magazine) -> Rifle {
+    Rifle::loaded(MagazineWell::new("test"), magazine).expect("test magazines fit the test well")
 }
 
 pub(crate) fn test_move_settings() -> MoveSettings {
@@ -108,8 +144,19 @@ pub(crate) fn test_profile() -> BodyProfile {
     }
 }
 
-/// Tuning with a 3-tick cooldown, 10-tick reload, 30 damage and the given rifle and spares.
+/// Tuning with a 3-tick cooldown, 10-tick reload, 30 damage and the given rifle, with
+/// `spares` stowed in order on a rig that has one slot per spare.
 pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
+    let slots = u32::try_from(spares.len()).expect("a handful of test spares");
+    let mut rig = Rig::new(
+        ItemId::new("test_rig"),
+        &RigSpec {
+            magazine_slots: slots,
+        },
+    );
+    for spare in spares {
+        rig.stow(spare).expect("the rig has a slot per spare");
+    }
     SimConfig {
         move_settings: test_move_settings(),
         eye_height: 0.7,
@@ -119,8 +166,7 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
         reload_ticks: 10,
         charge_ticks: 0,
         body: test_profile(),
-        rifle,
-        spares,
+        loadout: Loadout::new(rifle, rig),
         enemy: enemy_tuning(),
         enemy_aim_at: BodyPart::Torso,
     }

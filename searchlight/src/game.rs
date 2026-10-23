@@ -1171,13 +1171,13 @@ mod tests {
 
     use super::*;
     use crate::sim::Feedback;
-    use crate::test_support::{arena_with, mag, press, test_config, wave_tuning};
-    use searchlight_rules::{Grade, Rifle};
+    use crate::test_support::{arena_with, mag, press, rifle_from, test_config, wave_tuning};
+    use searchlight_rules::Grade;
 
     fn game() -> SearchlightGame {
         let mode = ArenaMode::new(
             arena_with(&[], Vec3::ZERO, &[], &[]),
-            test_config(Rifle::loaded(mag(30, 5)), vec![]),
+            test_config(rifle_from(mag(30, 5)), vec![]),
             wave_tuning(1),
         );
         let (bindings, _) = ActionBindings::load(&BTreeMap::new());
@@ -1197,7 +1197,7 @@ mod tests {
     }
 
     fn arena_config() -> crate::sim::SimConfig {
-        let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        let mut config = test_config(rifle_from(mag(30, 30)), vec![]);
         config.eye_height = 0.72;
         config.enemy.damage = 100;
         config.enemy.reaction_ticks = 30;
@@ -3465,8 +3465,7 @@ mod mutation_tests {
     }
 
     fn game_with_an_arena_on_the_main_menu() -> SearchlightGame {
-        use crate::test_support::{arena_with, mag, test_config, wave_tuning};
-        use searchlight_rules::Rifle;
+        use crate::test_support::{arena_with, mag, rifle_from, test_config, wave_tuning};
 
         let mode = ArenaMode::new(
             arena_with(
@@ -3475,7 +3474,7 @@ mod mutation_tests {
                 &[Vec3::new(0.0, 0.0, 10.0)],
                 &[Vec3::new(0.0, 0.0, 6.0)],
             ),
-            test_config(Rifle::loaded(mag(30, 30)), vec![]),
+            test_config(rifle_from(mag(30, 30)), vec![]),
             wave_tuning(1),
         );
         let (bindings, _) = moho_input::bindings::ActionBindings::load(&BTreeMap::new());
@@ -3680,11 +3679,11 @@ mod enemy_and_hud_tests {
     use std::collections::HashMap;
 
     use moho_renderer::FrameError;
-    use searchlight_rules::{Grade, Rifle};
+    use searchlight_rules::Grade;
 
     use super::*;
     use crate::sim::Start;
-    use crate::test_support::{arena_with, mag, test_config};
+    use crate::test_support::{arena_with, mag, rifle_from, test_config};
 
     /// Keeps the vertices of every mesh uploaded and the draws of the last frame.
     #[derive(Default)]
@@ -3765,7 +3764,7 @@ mod enemy_and_hud_tests {
     }
 
     fn sim_of(arena: Arc<crate::arena::Arena>) -> SearchlightSim {
-        SearchlightSim::start(arena, test_config(Rifle::loaded(mag(30, 30)), vec![]))
+        SearchlightSim::start(arena, test_config(rifle_from(mag(30, 30)), vec![]))
     }
 
     /// One enemy at (3, 0, 4) whose only waypoint is ten metres to +X, so it faces +X.
@@ -3942,7 +3941,7 @@ mod enemy_and_hud_tests {
             &markers,
             &[Vec3::new(13.0, 0.0, 4.0)],
         );
-        let config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        let config = test_config(rifle_from(mag(30, 30)), vec![]);
         let mut sim = SearchlightSim::with_start(arena, config, Start::Empty);
         for marker in 0..markers.len() {
             sim.spawn_enemy(marker, Grade::default())
