@@ -2100,6 +2100,20 @@ mod tests {
             (after, impacts)
         }
 
+        /// The impact reported for the plane that `clipped` numbered `index`.
+        fn impact_on(impacts: &[Impact], index: u32) -> &Impact {
+            let found = impacts
+                .iter()
+                .filter(|impact| impact.collider == handle(index))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                found.len(),
+                1,
+                "one impact on collider {index}: {impacts:?}"
+            );
+            found[0]
+        }
+
         #[test]
         fn velocity_entering_two_planes_lies_along_their_cross_product() {
             let [a, b] = wedge(std::f32::consts::FRAC_PI_6);
@@ -2117,11 +2131,30 @@ mod tests {
                 "the speed along the crease is kept: {after:?}"
             );
             assert_eq!(impacts.len(), 2, "{impacts:?}");
-            for (impact, normal) in impacts.iter().zip([a, b]) {
+            for (index, normal) in [a, b].into_iter().enumerate() {
+                let impact = impact_on(&impacts, index as u32);
                 assert_eq!(impact.normal, normal);
                 assert!(
                     (impact.speed + velocity.dot(normal)).abs() < 1e-5,
                     "measured from the incoming velocity: {impact:?}"
+                );
+            }
+
+            let slot = wedge(5.0f32.to_radians());
+            let into_the_slot = Vec3::new(0.0, 0.0, 10.0);
+
+            let (after, impacts) = clipped(into_the_slot, &slot);
+
+            assert!(
+                after.length() < 1e-5,
+                "the crease of a narrow slot is perpendicular to the motion: {after:?}"
+            );
+            assert_eq!(impacts.len(), 2, "{impacts:?}");
+            for (index, normal) in slot.into_iter().enumerate() {
+                let impact = impact_on(&impacts, index as u32);
+                assert!(
+                    (impact.speed + into_the_slot.dot(normal)).abs() < 1e-5,
+                    "{impact:?}"
                 );
             }
         }
@@ -2136,7 +2169,8 @@ mod tests {
 
             assert!(after.length() < 1e-5, "{after:?}");
             assert_eq!(impacts.len(), 3, "{impacts:?}");
-            for (impact, normal) in impacts.iter().zip([a, b, ceiling]) {
+            for (index, normal) in [a, b, ceiling].into_iter().enumerate() {
+                let impact = impact_on(&impacts, index as u32);
                 assert!(
                     (impact.speed + velocity.dot(normal)).abs() < 1e-5,
                     "{impact:?}"
@@ -2148,11 +2182,97 @@ mod tests {
         fn repeated_hits_on_one_plane_report_one_impact() {
             let wall = Vec3::new(0.0, 0.0, -1.0);
 
-            let (after, impacts) = clipped(Vec3::new(0.0, 0.0, 10.0), &[wall; 5]);
+            let (after, impacts) = clipped(Vec3::new(3.0, 0.0, 10.0), &[wall; 20]);
 
             assert_eq!(impacts.len(), 1, "{impacts:?}");
             assert!((impacts[0].speed - 10.0).abs() < 1e-5, "{impacts:?}");
+            assert!(
+                (after - Vec3::new(3.0, 0.0, 0.0)).length() < 1e-5,
+                "merged before the plane cap, so the wall clips instead of stopping: {after:?}"
+            );
+        }
+
+        /// Three planes facing `Vec3::new(3.0, 0.0, 10.0)`, clipping against the first of which
+        /// leaves a velocity that enters neither of the others.
+        fn clearing_planes() -> [Vec3; 3] {
+            [
+                Vec3::new(0.0, 0.0, -1.0),
+                Vec3::new(0.6, 0.0, -0.8),
+                Vec3::new(0.28, -0.6, -0.75).normalize(),
+            ]
+        }
+
+        #[test]
+        fn a_single_clip_that_clears_the_other_planes_wins_over_stopping() {
+            let velocity = Vec3::new(3.0, 0.0, 10.0);
+            let planes = clearing_planes();
+
+            let (after, impacts) = clipped(velocity, &planes);
+
+            assert!(
+                (after - Vec3::new(3.0, 0.0, 0.0)).length() < 1e-5,
+                "{after:?}"
+            );
+            assert_eq!(impacts.len(), 3, "{impacts:?}");
+            for (index, normal) in planes.into_iter().enumerate() {
+                let impact = impact_on(&impacts, index as u32);
+                assert_eq!(impact.normal, normal);
+                assert!(
+                    (impact.speed + velocity.dot(normal)).abs() < 1e-5,
+                    "{impact:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn more_than_five_planes_stop_the_character() {
+            let velocity = Vec3::new(3.0, 0.0, 10.0);
+            let planes = [
+                clearing_planes().as_slice(),
+                &[
+                    Vec3::new(0.3, 0.5, -0.8).normalize(),
+                    Vec3::new(0.1, -0.3, -0.9).normalize(),
+                    Vec3::new(0.5, 0.4, -0.7).normalize(),
+                ],
+            ]
+            .concat();
+
+            let (after, impacts) = clipped(velocity, &planes);
+
             assert!(after.length() < 1e-5, "{after:?}");
+            for impact in &impacts {
+                let index = impact.collider.into_raw_parts().0 as usize;
+                assert!(
+                    (impact.speed + velocity.dot(planes[index])).abs() < 1e-5,
+                    "any reported impact is measured from the incoming velocity: {impact:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn three_planes_without_a_single_clip_stop_in_any_order() {
+            let velocity = Vec3::new(-3.405, 5.769, -3.936);
+            let planes = [
+                Vec3::new(-0.122, -0.959, -0.254).normalize(),
+                Vec3::new(-0.652, -0.522, 0.55).normalize(),
+                Vec3::new(-0.415, -0.028, 0.909).normalize(),
+            ];
+            let orders = [
+                [0, 1, 2],
+                [0, 2, 1],
+                [1, 0, 2],
+                [1, 2, 0],
+                [2, 0, 1],
+                [2, 1, 0],
+            ];
+
+            for order in orders {
+                let ordered = order.map(|index| planes[index]);
+
+                let (after, _) = clipped(velocity, &ordered);
+
+                assert!(after.length() < 1e-5, "order {order:?}: {after:?}");
+            }
         }
 
         #[test]
@@ -2170,17 +2290,6 @@ mod tests {
                 (after - Vec3::new(3.0, 0.0, 0.0)).length() < 1e-5,
                 "{after:?}"
             );
-        }
-
-        #[test]
-        fn a_clip_that_reverses_the_velocity_stops_it() {
-            let slot = wedge(5.0f32.to_radians());
-            let velocity = Vec3::new(0.0, 0.0, 10.0);
-
-            let (after, impacts) = clipped(velocity, &slot);
-
-            assert!(after.length() < 1e-5, "{after:?}");
-            assert_eq!(impacts.len(), 2, "{impacts:?}");
         }
 
         fn sorted(mut impacts: Vec<Impact>) -> Vec<Impact> {
@@ -2271,55 +2380,39 @@ mod tests {
 
         #[test]
         fn a_1000_m_s_set_velocity_slides_at_max_velocity() {
-            let set = CharacterEffect::SetVelocity(Vec3::new(1000.0, -1000.0, 1000.0));
+            let set = CharacterEffect::SetVelocity(Vec3::new(1000.0, -1000.0, 60.0));
 
             let (asked, _) = open_air_step(&[set]);
 
-            let expected = Vec3::new(MAX, -MAX, MAX) * DT;
-            assert!((asked - expected).length() < 1e-5, "{asked:?}");
-        }
-
-        #[test]
-        fn a_set_velocity_within_max_velocity_slides_unchanged() {
-            let set = CharacterEffect::SetVelocity(Vec3::new(60.0, 0.0, -45.0));
-
-            let (asked, _) = open_air_step(&[set]);
-
-            assert!((asked.x - 60.0 * DT).abs() < 1e-6, "{asked:?}");
-            assert!((asked.z + 45.0 * DT).abs() < 1e-6, "{asked:?}");
-        }
-
-        #[test]
-        fn a_nan_velocity_component_resets_to_zero() {
-            let set = CharacterEffect::SetVelocity(Vec3::new(f32::NAN, 0.0, 3.0));
-
-            let (asked, after) = open_air_step(&[set]);
-
-            assert_eq!(asked.x, 0.0, "{asked:?}");
-            assert_eq!(after.velocity.x, 0.0, "{:?}", after.velocity);
-            assert!(
-                (after.velocity.z - 3.0).abs() < 1e-6,
-                "{:?}",
-                after.velocity
+            assert_eq!(asked.x, MAX * DT, "clamped to the maximum: {asked:?}");
+            assert_eq!(
+                asked.y,
+                -MAX * DT,
+                "clamped after the half tick of gravity, not before: {asked:?}"
             );
-            assert!(after.position.is_finite(), "{:?}", after.position);
+            assert_eq!(
+                asked.z,
+                60.0 * DT,
+                "within the maximum, unchanged: {asked:?}"
+            );
         }
 
         #[test]
-        fn an_infinite_velocity_component_resets_to_zero() {
-            let set =
-                CharacterEffect::SetVelocity(Vec3::new(f32::INFINITY, f32::NEG_INFINITY, 3.0));
+        fn a_non_finite_velocity_component_resets_to_zero() {
+            for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                let set = CharacterEffect::SetVelocity(Vec3::new(bad, 0.0, 3.0));
 
-            let (asked, after) = open_air_step(&[set]);
+                let (asked, after) = open_air_step(&[set]);
 
-            assert_eq!(asked.x, 0.0, "{asked:?}");
-            assert_eq!(after.velocity.x, 0.0, "{:?}", after.velocity);
-            assert!(after.velocity.y.abs() <= MAX, "{:?}", after.velocity);
-            assert!(
-                (after.velocity.z - 3.0).abs() < 1e-6,
-                "{:?}",
-                after.velocity
-            );
+                assert_eq!(asked.x, 0.0, "{bad}: {asked:?}");
+                assert_eq!(after.velocity.x, 0.0, "{bad}: {:?}", after.velocity);
+                assert!(
+                    (after.velocity.z - 3.0).abs() < 1e-6,
+                    "{bad}: {:?}",
+                    after.velocity
+                );
+                assert!(after.position.is_finite(), "{bad}: {:?}", after.position);
+            }
         }
 
         proptest! {
