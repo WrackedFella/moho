@@ -3,7 +3,7 @@ name: Claude comment
 # Answers an `@claude` comment on an issue or pull request, for example to resolve a
 # merge conflict on a PR. Only repository owners, members and collaborators trigger it,
 # so an outside commenter cannot spend the agent's budget or push to a branch.
-# Issue runs from the `agent-ready` label live in claude.yml.
+# Issue runs from the `agent-ready` label, and replies to a paused run, live in claude.yml.
 on:
   issue_comment:
     types: [created]
@@ -26,6 +26,7 @@ jobs:
     if: >-
       contains(github.event.comment.body, '@claude')
       && github.event.comment.user.type != 'Bot'
+      && !contains(github.event.issue.labels.*.name, 'agent-paused')
       && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
     runs-on: ubuntu-latest
     timeout-minutes: 30
