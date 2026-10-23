@@ -308,7 +308,8 @@ fn apply(state: &mut CharacterState, effect: CharacterEffect) {
 ///
 /// The order within a tick:
 /// 0. the queued effects apply in order; a teleport clears `grounded`, so that tick runs
-///    airborne and settle finds the ground;
+///    airborne and settle finds the ground; the velocity is then checked as in 4b, so friction
+///    never meets an infinite speed;
 /// 1. the look turns;
 /// 2. a jump adds `jump_speed` to the vertical velocity;
 /// 3. half a tick of gravity (`v.y -= g·dt/2`), unless walking;
@@ -335,6 +336,7 @@ pub fn step(
     for effect in effects {
         apply(state, *effect);
     }
+    state.velocity = checked(state.velocity, settings.max_velocity);
 
     (state.yaw, state.pitch) = turned_look(
         (state.yaw, state.pitch),
@@ -2349,6 +2351,7 @@ mod tests {
             let (after, impacts) = clipped(velocity, &planes);
 
             assert!(after.length() < 1e-5, "{after:?}");
+            assert_eq!(impacts.len(), MAX_CLIP_PLANES, "{impacts:?}");
             for impact in &impacts {
                 let index = impact.collider.into_raw_parts().0 as usize;
                 assert!(
@@ -2522,6 +2525,23 @@ mod tests {
                 );
                 assert!(after.position.is_finite(), "{bad}: {:?}", after.position);
             }
+        }
+
+        #[test]
+        fn a_non_finite_velocity_on_the_ground_keeps_its_finite_components() {
+            let mut state = standing();
+            state.velocity = Vec3::new(f32::INFINITY, 0.0, 3.0);
+
+            step_without_effects(
+                &mut state,
+                &CharacterCommand::default(),
+                &test_settings(),
+                DT,
+                flat_floor(0.0),
+            );
+
+            assert_eq!(state.velocity.x, 0.0, "{:?}", state.velocity);
+            assert!(state.velocity.z > 0.0, "{:?}", state.velocity);
         }
 
         proptest! {

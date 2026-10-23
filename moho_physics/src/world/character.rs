@@ -1349,6 +1349,11 @@ mod tests {
                 after.velocity
             );
         }
+        assert!(
+            after.velocity.with_y(0.0).length() <= 1e-3,
+            "stopped in the corner: {:?}",
+            after.velocity
+        );
     }
 
     #[test]
