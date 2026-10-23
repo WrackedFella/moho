@@ -111,12 +111,49 @@ fn vertex_normals_go_through_normal_to_world() {
         3,
         "one cross per cofactor column"
     );
+    assert_eq!(math_calls(naga::MathFunction::Normalize), 1);
     assert_eq!(
         math_calls(naga::MathFunction::Sign),
-        1,
-        "the determinant sign keeps mirrored normals outward"
+        0,
+        "sign(det) is 0 for a flattened placement and would zero the normal"
     );
-    assert_eq!(math_calls(naga::MathFunction::Normalize), 1);
+    let normal_fn = &module.functions[definitions[0]];
+    let selects = normal_fn
+        .expressions
+        .iter()
+        .filter(|(_, e)| matches!(e, naga::Expression::Select { .. }))
+        .count();
+    assert_eq!(
+        selects, 1,
+        "the determinant picks +1 or -1, so mirrored normals stay outward"
+    );
+    // Column k of the matrix argument, as `m[k]`.
+    let column = |handle: naga::Handle<naga::Expression>| match normal_fn.expressions[handle] {
+        naga::Expression::AccessIndex { base, index } => matches!(
+            normal_fn.expressions[base],
+            naga::Expression::FunctionArgument(0)
+        )
+        .then_some(index),
+        _ => None,
+    };
+    let crosses: Vec<_> = normal_fn
+        .expressions
+        .iter()
+        .filter_map(|(_, e)| match *e {
+            naga::Expression::Math {
+                fun: naga::MathFunction::Cross,
+                arg,
+                arg1: Some(arg1),
+                ..
+            } => Some((column(arg), column(arg1))),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        crosses,
+        [(Some(1), Some(2)), (Some(2), Some(0)), (Some(0), Some(1))],
+        "cofactor columns c1 x c2, c2 x c0, c0 x c1"
+    );
     let vs_main = module
         .entry_points
         .iter()
