@@ -410,6 +410,47 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_protected_console_key_falls_back_to_backtick() {
+        for key in [
+            Key::Enter,
+            Key::Escape,
+            Key::ArrowUp,
+            Key::ArrowDown,
+            Key::ArrowLeft,
+            Key::ArrowRight,
+        ] {
+            let entry = Binding::key(key).name();
+            let (mut console, warnings) = Console::<Cmd>::new(&bindings(&entry));
+
+            let protected = console.on_key(Input::Key(key), true, false);
+            let routing = console.on_key(BACKTICK, true, false);
+
+            assert_eq!(warnings.len(), 1, "{entry}: {warnings:?}");
+            assert_eq!(warnings[0].name, CONSOLE_BINDING, "{entry}");
+            assert_eq!(warnings[0].value, entry, "{entry}");
+            assert_eq!(protected, Routing::Game, "{entry}");
+            assert_eq!(routing, Routing::Opened, "{entry}");
+        }
+    }
+
+    #[test]
+    fn the_console_key_can_be_any_free_key() {
+        for key in [Key::F1, Key::F8, Key::F12, Key::Space, Key::Backslash] {
+            let entry = Binding::key(key).name();
+            let (mut console, warnings) = Console::<Cmd>::new(&bindings(&entry));
+
+            let opened = console.on_key(Input::Key(key), true, false);
+            let closed = console.on_key(Input::Key(key), true, false);
+            let default_key = console.on_key(BACKTICK, true, false);
+
+            assert_eq!(warnings, vec![], "{entry}");
+            assert_eq!(opened, Routing::Opened, "{entry}");
+            assert_eq!(closed, Routing::Closed, "{entry}");
+            assert_eq!(default_key, Routing::Game, "{entry}");
+        }
+    }
+
+    #[test]
     fn entries_other_than_console_are_the_games_and_are_not_read() {
         let section = BTreeMap::from([
             ("jump".to_owned(), "Nonsense".to_owned()),

@@ -1,10 +1,60 @@
 //! Window-mode toggle keys: the runner consumes them so the game never sees them.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
-use moho_input::bindings::Input;
+use moho_input::bindings::{Action, ActionBindings, Binding, Input};
 use moho_input::key::Key;
 use winit::keyboard::{KeyCode, PhysicalKey};
+
+/// The reserved `[bindings]` entry that names the fullscreen key.
+pub const FULLSCREEN_BINDING: &str = "fullscreen";
+
+/// Splits the `fullscreen` entry out of a `[bindings]` section: the keys that toggle
+/// fullscreen besides Alt+Enter, and the rest of the section for the game's own loader.
+///
+/// An absent entry gives F11. An entry that does not parse, names a protected key alone, or
+/// holds anything but plain keys (a chord, hold or mouse button, which `ToggleKeys` cannot
+/// match) logs a warning and also gives F11.
+pub fn split_fullscreen_binding(
+    section: &BTreeMap<String, String>,
+) -> (Option<Vec<Input>>, BTreeMap<String, String>) {
+    let mut rest = section.clone();
+    let Some(value) = rest.remove(FULLSCREEN_BINDING) else {
+        return (Some(vec![DEFAULT_FULLSCREEN_KEY]), rest);
+    };
+    let entry = BTreeMap::from([(FULLSCREEN_BINDING.to_owned(), value.clone())]);
+    let (loaded, warnings) = ActionBindings::<FullscreenKey>::load(&entry);
+    let bindings = loaded.get(FullscreenKey);
+    let usable = warnings.is_empty()
+        && !bindings.is_empty()
+        && bindings
+            .iter()
+            .all(|b| b.is_plain() && matches!(b.input, Input::Key(_)));
+    if usable {
+        let keys = bindings.iter().map(|b| b.input).collect();
+        return (Some(keys), rest);
+    }
+    tracing::warn!(value = %value, "unusable fullscreen binding; keeping F11");
+    (Some(vec![DEFAULT_FULLSCREEN_KEY]), rest)
+}
+
+const DEFAULT_FULLSCREEN_KEY: Input = Input::Key(Key::F11);
+
+/// The fullscreen key as an action, so it loads and validates like any other binding.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct FullscreenKey;
+
+impl Action for FullscreenKey {
+    const ALL: &'static [Self] = &[FullscreenKey];
+
+    fn name(self) -> &'static str {
+        FULLSCREEN_BINDING
+    }
+
+    fn default_bindings(self) -> &'static [Binding] {
+        const { &[Binding::key(Key::F11)] }
+    }
+}
 
 /// What the runner does with one observed key event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -265,5 +315,117 @@ mod tests {
         let repeat = keys.observe(KeyCode::Enter, true, true);
 
         assert_eq!(repeat, Observed::Pass);
+    }
+
+    fn section(lines: &[(&str, &str)]) -> BTreeMap<String, String> {
+        lines
+            .iter()
+            .map(|&(k, v)| (k.to_owned(), v.to_owned()))
+            .collect()
+    }
+
+    /// Runs `run` and returns its result with what `tracing` wrote meanwhile.
+    fn logged<T>(run: impl FnOnce() -> T) -> (T, String) {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+
+        struct Sink(Arc<Mutex<Vec<u8>>>);
+        impl Write for Sink {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().expect("log sink").extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let writer = Arc::clone(&buffer);
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || Sink(Arc::clone(&writer)))
+            .with_ansi(false)
+            .finish();
+        let result = tracing::subscriber::with_default(subscriber, run);
+        let bytes = buffer.lock().expect("log sink").clone();
+        (
+            result,
+            String::from_utf8(bytes).expect("log output is utf-8"),
+        )
+    }
+
+    #[test]
+    fn a_rebound_fullscreen_key_toggles_and_f11_then_passes() {
+        let raw = section(&[(FULLSCREEN_BINDING, "F8"), ("jump", "Space")]);
+
+        let ((fullscreen, rest), log) = logged(|| split_fullscreen_binding(&raw));
+        let mut keys = ToggleKeys::new(fullscreen.expect("a usable entry gives its keys"));
+        let f11_press = keys.observe(KeyCode::F11, true, false);
+        let f11_release = keys.observe(KeyCode::F11, false, false);
+        let f8_press = keys.observe(KeyCode::F8, true, false);
+        let f8_release = keys.observe(KeyCode::F8, false, false);
+
+        assert_eq!(f11_press, Observed::Pass);
+        assert_eq!(f11_release, Observed::Pass);
+        assert_eq!(f8_press, Observed::Flip);
+        assert_eq!(f8_release, Observed::Swallow);
+        assert_eq!(rest, section(&[("jump", "Space")]));
+        assert_eq!(log, "");
+    }
+
+    #[test]
+    fn alt_enter_still_toggles_with_a_rebound_key() {
+        let raw = section(&[(FULLSCREEN_BINDING, "F8")]);
+        let (fullscreen, _) = split_fullscreen_binding(&raw);
+        let mut keys = ToggleKeys::new(fullscreen.expect("a usable entry gives its keys"));
+
+        keys.observe(KeyCode::AltLeft, true, false);
+        let press = keys.observe(KeyCode::Enter, true, false);
+        let release = keys.observe(KeyCode::Enter, false, false);
+
+        assert_eq!(press, Observed::Flip);
+        assert_eq!(release, Observed::Swallow);
+    }
+
+    #[test]
+    fn an_absent_fullscreen_entry_keeps_f11_without_a_warning() {
+        let raw = section(&[("jump", "Space")]);
+
+        let ((fullscreen, rest), log) = logged(|| split_fullscreen_binding(&raw));
+
+        assert_eq!(fullscreen, Some(vec![Input::Key(Key::F11)]));
+        assert_eq!(rest, raw);
+        assert_eq!(log, "");
+    }
+
+    #[test]
+    fn an_unusable_or_protected_fullscreen_value_keeps_f11_with_a_warning() {
+        let values = [
+            "Nonsense",
+            "Enter",
+            "Escape",
+            "ArrowUp",
+            "ArrowDown",
+            "ArrowLeft",
+            "ArrowRight",
+            "Hold Enter",
+            "Unbound",
+            "Ctrl+F8",
+            "Hold F8",
+            "Mouse Left",
+        ];
+
+        for value in values {
+            let raw = section(&[(FULLSCREEN_BINDING, value), ("jump", "Space")]);
+
+            let ((fullscreen, rest), log) = logged(|| split_fullscreen_binding(&raw));
+            let mut keys = ToggleKeys::new(fullscreen.expect("the default stands in"));
+            let f11 = keys.observe(KeyCode::F11, true, false);
+
+            assert_eq!(f11, Observed::Flip, "{value}");
+            assert_eq!(rest, section(&[("jump", "Space")]), "{value}");
+            assert!(log.contains("WARN"), "{value}: {log:?}");
+            assert!(log.contains(value), "{value}: {log:?}");
+        }
     }
 }

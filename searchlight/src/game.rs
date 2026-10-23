@@ -1159,6 +1159,30 @@ mod tests {
     }
 
     #[test]
+    fn a_dead_player_restarts_with_f8_and_enter_does_nothing() {
+        let (mut game, mut clock) = game_with_a_player_dead_away_from_the_spawn();
+        let spawn = SearchlightSim::start(arena_arena(), arena_config()).player();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.route_input(&mut ctx, Input::Key(Key::Enter), true, false);
+        game.route_input(&mut ctx, Input::Key(Key::Enter), false, false);
+        let enter = game.command();
+        tick_with(&mut game, &mut clock, &enter);
+        let dead_after_enter = game.sim().player_body().is_dead();
+
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.route_input(&mut ctx, Input::Key(Key::F8), true, false);
+        game.route_input(&mut ctx, Input::Key(Key::F8), false, false);
+        let f8 = game.command();
+        tick_with(&mut game, &mut clock, &f8);
+
+        assert!(!enter.restart);
+        assert!(dead_after_enter, "Enter restarted the game");
+        assert!(f8.restart);
+        assert!(!game.sim().player_body().is_dead());
+        assert_eq!(game.sim().player(), spawn);
+    }
+
+    #[test]
     fn restarting_clears_the_status_line() {
         let (mut game, mut clock) = game_with_a_player_dead_away_from_the_spawn();
 

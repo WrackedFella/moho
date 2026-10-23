@@ -102,7 +102,7 @@ pub fn god_mode_text(vitals: &str, god_mode: bool) -> String {
 
 /// What the dead player reads in the title, or `None` while alive.
 pub fn death_text(dead: bool) -> Option<&'static str> {
-    dead.then_some("Dead - press Enter to restart")
+    dead.then_some("Dead - press F8 to restart")
 }
 
 /// A translucent rectangle in screen pixels, colour as straight RGBA.
@@ -161,10 +161,7 @@ mod feedback_tests {
         let dead_title = vitals_text(dead, 3, 200);
 
         assert_eq!(alive_title, "HP 70/100 | Wave 3  Score 200");
-        assert_eq!(
-            dead_title,
-            "Dead - press Enter to restart | Wave 3  Score 200"
-        );
+        assert_eq!(dead_title, "Dead - press F8 to restart | Wave 3  Score 200");
     }
 
     #[test]
@@ -270,7 +267,7 @@ mod feedback_tests {
         assert_eq!((dead.min, dead.max), ([0.0, 0.0], [800.0, 600.0]));
         assert!(dead.rgba[3] > 0 && dead.rgba[3] < 255, "{dead:?}");
         assert_eq!(death_text(false), None);
-        assert_eq!(death_text(true), Some("Dead - press Enter to restart"));
+        assert_eq!(death_text(true), Some("Dead - press F8 to restart"));
     }
 }
 

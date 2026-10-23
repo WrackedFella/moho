@@ -251,7 +251,7 @@ fn modifier_key_can_be_bound() {
 fn confirming_conflict_removes_only_the_contested_key_from_a_multi_key_row() {
     use flagstone_ui::screens::Screen;
 
-    let (prefs, issues) = Prefs::parse("[bindings]\nmove_forward = W, ArrowUp\n");
+    let (prefs, issues) = Prefs::parse("[bindings]\nmove_forward = W, Z\n");
     assert_eq!(issues, vec![]);
     let mut menu = SettingsMenu::with_prefs(prefs);
     menu.start_listening(1);
@@ -260,7 +260,7 @@ fn confirming_conflict_removes_only_the_contested_key_from_a_multi_key_row() {
     assert!(Screen::take_pending_modal(&mut menu).is_some());
     Screen::on_modal_confirm(&mut menu);
 
-    assert_eq!(menu.get_staged_binding(0), [Binding::key(Key::ArrowUp)]);
+    assert_eq!(menu.get_staged_binding(0), [Binding::key(Key::Z)]);
     assert_eq!(
         menu.get_staged_binding(1),
         [Binding::key(Key::W), pad_stick(StickDir::Left)]

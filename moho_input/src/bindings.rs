@@ -143,6 +143,23 @@ impl Binding {
         self == Self::press(self.input)
     }
 
+    /// Enter, Escape or an arrow key with no modifiers, on any trigger: menus and dialogs
+    /// read these directly, so no action may sit on one alone. A chord on them is allowed.
+    pub fn is_protected(self) -> bool {
+        self.modifiers == Modifiers::NONE
+            && matches!(
+                self.input,
+                Input::Key(
+                    Key::Enter
+                        | Key::Escape
+                        | Key::ArrowUp
+                        | Key::ArrowDown
+                        | Key::ArrowLeft
+                        | Key::ArrowRight
+                )
+            )
+    }
+
     /// Persisted name: the input's, prefixed by `Hold ` for a hold binding.
     pub fn name(self) -> String {
         self.decorate(self.input.name())
@@ -261,7 +278,8 @@ impl<A: Action> ActionBindings<A> {
     }
 
     /// Reads the raw `[bindings]` section. Absent actions and unusable lines keep
-    /// their defaults; each unusable line yields a warning.
+    /// their defaults; each unusable line, including one holding a protected binding, yields
+    /// a warning.
     pub fn load(section: &BTreeMap<String, String>) -> (Self, Vec<BindingWarning>) {
         let mut loaded = Self::defaults();
         let mut warnings = Vec::new();
@@ -269,7 +287,7 @@ impl<A: Action> ActionBindings<A> {
             let action = A::ALL.iter().copied().find(|a| a.name() == name);
             let parsed = action.and_then(|_| parse_list(value));
             match (action, parsed) {
-                (Some(action), Some(bindings)) => {
+                (Some(action), Some(bindings)) if !bindings.iter().any(|b| b.is_protected()) => {
                     loaded.map.insert(action, bindings);
                 }
                 _ => warnings.push(BindingWarning {
@@ -1119,6 +1137,93 @@ mod tests {
             let names: Vec<_> = warnings.iter().map(|w| w.name.as_str()).collect();
             assert_eq!(names, ["jump"], "{bad}");
             assert_defaults_except(&bindings, &[]);
+        }
+    }
+
+    const PROTECTED_KEYS: [Key; 6] = [
+        Key::Enter,
+        Key::Escape,
+        Key::ArrowUp,
+        Key::ArrowDown,
+        Key::ArrowLeft,
+        Key::ArrowRight,
+    ];
+
+    #[test]
+    fn a_protected_key_alone_is_refused_with_a_warning_and_the_default_kept() {
+        let mut values: Vec<String> = PROTECTED_KEYS
+            .iter()
+            .map(|&key| Binding::key(key).name())
+            .collect();
+        values.push("Hold Enter".to_owned());
+        values.push(format!("F, {}", Binding::key(Key::Escape).name()));
+
+        for value in values {
+            let (bindings, warnings) =
+                ActionBindings::<TestAction>::load(&section(&[("jump", &value)]));
+
+            assert_eq!(
+                warnings,
+                vec![BindingWarning {
+                    name: "jump".to_owned(),
+                    value: value.clone(),
+                }],
+                "{value}"
+            );
+            assert_defaults_except(&bindings, &[]);
+        }
+    }
+
+    #[test]
+    fn a_chord_on_a_protected_key_is_accepted() {
+        let (bindings, warnings) =
+            ActionBindings::<TestAction>::load(&section(&[("jump", "Ctrl+Enter")]));
+
+        assert_eq!(warnings, vec![]);
+        assert_eq!(
+            bindings.get(TestAction::Jump),
+            [Binding::key(Key::Enter).with(Modifiers::CTRL)]
+        );
+    }
+
+    #[test]
+    fn only_an_unmodified_enter_escape_or_arrow_is_protected() {
+        for key in PROTECTED_KEYS {
+            let plain = Binding::key(key);
+
+            assert!(plain.is_protected(), "{}", plain.name());
+            assert!(plain.held().is_protected(), "{}", plain.held().name());
+            assert!(
+                !plain.with(Modifiers::SHIFT).is_protected(),
+                "Shift+{}",
+                plain.name()
+            );
+            assert!(
+                !plain.with(Modifiers::ALT).held().is_protected(),
+                "Hold Alt+{}",
+                plain.name()
+            );
+        }
+        for free in [Binding::key(Key::F8), Binding::key(Key::Space)] {
+            assert!(!free.is_protected(), "{}", free.name());
+        }
+        assert!(!Binding::mouse(MouseButton::Left).is_protected());
+    }
+
+    #[test]
+    fn a_function_key_can_be_bound() {
+        for key in [Key::F1, Key::F8, Key::F11, Key::F12] {
+            let name = Binding::key(key).name();
+            let (bindings, warnings) =
+                ActionBindings::<TestAction>::load(&section(&[("jump", &name)]));
+            let mut map = crate::action_map::ActionMap::new(bindings, 1.0);
+            map.key(key, true);
+
+            let frame = map.end_tick();
+
+            assert_eq!(warnings, vec![], "{name}");
+            assert!(frame.pressed(TestAction::Jump), "{name}");
+            assert!(!frame.pressed(TestAction::MoveForward), "{name}");
         }
     }
 }
