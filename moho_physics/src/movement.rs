@@ -66,6 +66,8 @@ pub struct MoveSettings {
     pub jump_speed: f32,
     /// Largest speed along any one axis, m/s.
     pub max_velocity: f32,
+    /// Held jump jumps again on landing.
+    pub autohop: bool,
 }
 
 /// One surface the character lost speed into this tick.
@@ -459,6 +461,7 @@ mod tests {
             yaw: 0.0,
             pitch: 0.0,
             grounded,
+            jump_held: false,
         }
     }
 
@@ -751,6 +754,7 @@ mod tests {
                     gravity: 18.0,
                     jump_speed: 8.0,
                     max_velocity: 90.0,
+                    autohop: false,
                 };
                 let mut state = standing();
 
@@ -785,6 +789,7 @@ mod tests {
                 gravity: 18.0,
                 jump_speed: 6.5,
                 max_velocity: 90.0,
+                autohop: false,
             };
             let diagonal = CharacterCommand {
                 forward: 1.0,
@@ -1653,6 +1658,92 @@ mod tests {
 
             assert!(state.grounded);
             assert_eq!(state.velocity.y, 0.0);
+        }
+
+        fn jump_command(jump: bool) -> CharacterCommand {
+            CharacterCommand {
+                jump,
+                ..CharacterCommand::default()
+            }
+        }
+
+        fn took_off(state: &CharacterState) -> bool {
+            let expected = test_settings().jump_speed - 18.0 * DT;
+            !state.grounded && (state.velocity.y - expected).abs() < 1e-3
+        }
+
+        #[test]
+        fn a_one_tick_jump_from_rest_jumps() {
+            let mut state = standing();
+            assert!(!state.jump_held, "the character starts with jump up");
+
+            walk(&mut state, &jump_command(true), &test_settings());
+
+            assert!(took_off(&state), "{state:?}");
+        }
+
+        #[test]
+        fn a_press_made_in_the_air_and_held_does_not_jump_on_landing() {
+            let mut state = state_at(Vec3::new(0.0, 0.1, 0.0), Vec3::new(0.0, -3.0, 0.0), false);
+            let held = jump_command(true);
+            walk(&mut state, &held, &test_settings());
+            assert!(!state.grounded, "still falling after the first tick");
+            walk(&mut state, &held, &test_settings());
+            assert!(state.grounded, "landed on the second tick: {state:?}");
+
+            walk(&mut state, &held, &test_settings());
+
+            assert!(state.grounded, "stayed on the ground: {state:?}");
+            assert!(
+                state.velocity.y.abs() < 1e-4,
+                "no jump from a press made before landing: {:?}",
+                state.velocity
+            );
+            walk(&mut state, &jump_command(false), &test_settings());
+            walk(&mut state, &held, &test_settings());
+            assert!(took_off(&state), "release then press jumps: {state:?}");
+        }
+
+        proptest! {
+            #[test]
+            fn jump_held_follows_the_command_every_tick(
+                started_held in any::<bool>(),
+                autohop in any::<bool>(),
+                presses in prop::collection::vec(any::<bool>(), 1..40),
+            ) {
+                let settings = MoveSettings { autohop, ..test_settings() };
+                let mut state = standing();
+                state.jump_held = started_held;
+
+                for (tick, jump) in presses.into_iter().enumerate() {
+                    walk(&mut state, &jump_command(jump), &settings);
+
+                    prop_assert_eq!(state.jump_held, jump, "tick {}", tick);
+                }
+            }
+        }
+
+        #[test]
+        fn a_teleport_does_not_release_jump() {
+            let mut state = standing();
+            state.jump_held = true;
+            let teleport = [CharacterEffect::Teleport {
+                position: Vec3::new(0.0, 0.001, 0.0),
+                keep_velocity: false,
+            }];
+            let on_floor = |from: &CharacterState, asked| flat_floor(from.position.y)(asked);
+            let held = jump_command(true);
+            super::step(&mut state, &held, &teleport, &test_settings(), DT, on_floor);
+            assert!(state.grounded, "the teleported character landed: {state:?}");
+
+            super::step(&mut state, &held, &[], &test_settings(), DT, on_floor);
+
+            assert!(state.grounded, "stayed on the ground: {state:?}");
+            assert!(
+                state.velocity.y.abs() < 1e-4,
+                "the hold carried through the teleport: {:?}",
+                state.velocity
+            );
         }
     }
 

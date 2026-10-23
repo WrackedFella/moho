@@ -27,6 +27,7 @@ const STRATEGY_MOVE_SETTINGS: moho_physics::MoveSettings = moho_physics::MoveSet
     gravity: 18.0,
     jump_speed: 8.0,
     max_velocity: 90.0,
+    autohop: true,
 };
 
 /// Handles frame timing and game state updates

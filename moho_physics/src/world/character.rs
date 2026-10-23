@@ -29,6 +29,9 @@ pub struct CharacterState {
     pub pitch: f32,
     /// Standing on walkable ground after the last tick.
     pub grounded: bool,
+    /// The last tick's command had jump down; a held jump needs a release before the next
+    /// take-off unless the settings allow autohop.
+    pub jump_held: bool,
 }
 
 /// A character's starting state: where it stands and which way it faces.
@@ -76,6 +79,7 @@ pub(super) struct Character {
     yaw: f32,
     pitch: f32,
     grounded: bool,
+    jump_held: bool,
     /// Changes from outside the step, applied in order by the next `move_character`.
     effects: Vec<CharacterEffect>,
 }
@@ -89,6 +93,7 @@ impl Character {
             yaw: self.yaw,
             pitch: self.pitch,
             grounded: self.grounded,
+            jump_held: self.jump_held,
         }
     }
 
@@ -98,6 +103,7 @@ impl Character {
         self.yaw = state.yaw;
         self.pitch = state.pitch;
         self.grounded = state.grounded;
+        self.jump_held = state.jump_held;
     }
 }
 
@@ -139,6 +145,7 @@ impl PhysicsWorld {
                     .pitch
                     .clamp(-movement::PITCH_LIMIT, movement::PITCH_LIMIT),
                 grounded: false,
+                jump_held: false,
                 effects: Vec::new(),
             },
         );
@@ -602,6 +609,83 @@ mod tests {
         assert!((height - 1.1736).abs() < 0.01, "peak {height}, want 1.1736");
     }
 
+    /// Moves one tick under `command` and returns the vertical speed it gave a character
+    /// that ends the tick rising; a landing's stop is not a gain.
+    fn tick_gain(
+        world: &mut PhysicsWorld,
+        handle: CharacterHandle,
+        command: &CharacterCommand,
+        settings: &MoveSettings,
+    ) -> f32 {
+        let before = state(world, handle).velocity.y;
+        world
+            .move_character(handle, command, settings, DT)
+            .expect("character is live");
+        world.step(DT);
+        let after = state(world, handle).velocity.y;
+        if after > 0.0 {
+            after - before
+        } else {
+            0.0
+        }
+    }
+
+    #[test]
+    fn holding_jump_through_a_landing_does_not_jump_again() {
+        let settings = test_settings();
+        let (mut world, h) = standing_on_floor();
+        let held = CharacterCommand {
+            jump: true,
+            ..idle()
+        };
+        let take_off = settings.jump_speed / 2.0;
+
+        let take_offs = (0..120)
+            .filter(|_| tick_gain(&mut world, h, &held, &settings) > take_off)
+            .count();
+
+        assert_eq!(take_offs, 1, "one jump, none on the landing");
+        assert!(state(&world, h).grounded, "back on the floor");
+        let released = tick_gain(&mut world, h, &idle(), &settings);
+        let pressed = tick_gain(&mut world, h, &held, &settings);
+        assert!(released < take_off, "a release is not a jump: {released}");
+        assert!(pressed > take_off, "the new press jumps: {pressed}");
+    }
+
+    #[test]
+    fn autohop_jumps_again_on_the_landing_tick() {
+        let settings = MoveSettings {
+            autohop: true,
+            ..test_settings()
+        };
+        let (mut world, h) = standing_on_floor();
+        let held = CharacterCommand {
+            jump: true,
+            ..idle()
+        };
+        tick_gain(&mut world, h, &held, &settings);
+        assert!(!state(&world, h).grounded, "the first tick took off");
+        let mut landed = false;
+        for _ in 0..120 {
+            tick_gain(&mut world, h, &held, &settings);
+            if state(&world, h).grounded {
+                landed = true;
+                break;
+            }
+        }
+        assert!(landed, "the jump comes down within two seconds");
+
+        tick_gain(&mut world, h, &held, &settings);
+
+        let after = state(&world, h);
+        assert!(!after.grounded, "left the floor again: {after:?}");
+        assert!(
+            (after.velocity.y - (settings.jump_speed - 18.0 * DT)).abs() < 1e-3,
+            "left with the jump speed: {:?}",
+            after.velocity
+        );
+    }
+
     #[test]
     fn fall_of_5_m_lands_on_the_tick_nearest_sqrt_2h_over_g() {
         let mut world = PhysicsWorld::new();
@@ -718,6 +802,7 @@ mod tests {
                 yaw: 0.0,
                 pitch: 0.0,
                 grounded: false,
+                jump_held: false,
             })
         );
     }
@@ -1198,6 +1283,7 @@ mod tests {
                 yaw: 0.7,
                 pitch: -0.3,
                 grounded: false,
+                jump_held: false,
             })
         );
         assert_eq!(state(&world, plain).yaw, 0.0, "a bare position faces 0");
@@ -1658,6 +1744,7 @@ mod tests {
             gravity: 18.0,
             jump_speed: 8.0,
             max_velocity: 90.0,
+            autohop: true,
         }
     }
 
@@ -1716,6 +1803,7 @@ mod tests {
             gravity: 18.0,
             jump_speed: 6.5,
             max_velocity: 90.0,
+            autohop: false,
         }
     }
 
