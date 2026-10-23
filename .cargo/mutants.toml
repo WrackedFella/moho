@@ -104,7 +104,7 @@ exclude_re = [
     # static level geometry does not move in it.
     'arena\.rs:\d+:\d+: replace / with [%\*]$',
     # Equivalent: a zero cooldown leaves the weapon `Ready` on the next advance either way.
-    SearchlightSim::pull_trigger
+    'replace > with >= in SearchlightSim::pull_trigger',
     # Equivalent: the target number is shifted past the three part-index bits, so OR and
     # XOR agree.
     'replace \| with \^ in <impl From<SurfaceTag> for HitTag>::from',
@@ -132,7 +132,7 @@ exclude_re = [
     # searchlight::sim. Equivalent: `hurt` is read only for a living enemy brain; a dummy has no
     # brain and a dead enemy leaves the world before the next tick reads it, so `||` stores a
     # value nothing consumes.
-    SearchlightSim::resolve_player_shot
+    'replace && with \|\| in SearchlightSim::resolve_player_shot',
     # searchlight::cover. Hangs rather than survives: the mutated step walks the ray backwards, so
     # it strikes the same character forever and only the timeout stops it.
     'replace \+ with - in world_blocks',
