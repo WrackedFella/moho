@@ -254,7 +254,7 @@ struct Crosshair {
     dead: bool,
     /// Opacity of the damage bar on each screen edge, indexed front, right, behind, left.
     edges: [u8; 4],
-    /// Whether the main menu covers the view: nothing is drawn.
+    /// Whether a menu owns the view's overlay: nothing is drawn.
     hidden: bool,
 }
 
@@ -439,6 +439,17 @@ impl Stage {
             grab_cursor(window);
         }
         self.cursor_captured = true;
+    }
+
+    /// Frees the cursor for menus: visible and no longer confined to the window.
+    fn release_cursor(&mut self) {
+        if let Some(window) = &self.window {
+            window.set_cursor_visible(true);
+            if let Err(error) = window.set_cursor_grab(CursorGrabMode::None) {
+                tracing::warn!(%error, "cursor could not be released");
+            }
+        }
+        self.cursor_captured = false;
     }
 
     /// The console shell. Never hold the guard across `draw`: the renderer locks the shell
@@ -742,27 +753,44 @@ impl SearchlightGame {
             .as_ref()
             .map_or(1.0, |window| window.scale_factor());
         self.cursor = logical_point(physical, scale);
-        if self.screen == Screen::MainMenu {
+        if self.in_menu() {
             self.menu.hover(self.cursor, self.stage.screen_points());
         }
     }
 
+    fn in_menu(&self) -> bool {
+        matches!(self.screen, Screen::MainMenu | Screen::Paused)
+    }
+
+    /// Leaves a menu for the arena with the cursor captured.
+    fn enter_play(&mut self) {
+        self.screen = Screen::Playing;
+        // Whatever was pressed or moved over the menu must not act in the arena.
+        self.input.release_all();
+        self.input.discard_edges();
+        self.input.reset_look();
+        self.stage.capture_cursor();
+    }
+
+    /// Stops play behind the pause menu with the cursor free.
+    fn pause(&mut self) {
+        self.screen = Screen::Paused;
+        self.menu = Menu::pause();
+        self.input.release_all();
+        self.input.discard_edges();
+        self.input.reset_look();
+        self.stage.release_cursor();
+    }
+
     fn choose(&mut self, ctx: &mut EventContext<'_>, action: MenuAction) {
         match action {
-            MenuAction::Play => {
-                self.screen = Screen::Playing;
-                // Whatever was pressed or moved over the menu must not act in the arena.
-                self.input.release_all();
-                self.input.discard_edges();
-                self.input.reset_look();
-                self.stage.capture_cursor();
-            }
-            MenuAction::Resume | MenuAction::Settings => {}
+            MenuAction::Play | MenuAction::Resume => self.enter_play(),
+            MenuAction::Settings => {}
             MenuAction::Quit => ctx.request_exit(),
         }
     }
 
-    /// A key or button press on the main menu; releases and Escape do nothing.
+    /// A key or button press on a menu; releases do nothing, and Escape resumes the pause menu.
     fn menu_input(
         &mut self,
         ctx: &mut EventContext<'_>,
@@ -779,6 +807,9 @@ impl SearchlightGame {
             Input::Key(Key::Enter) if !repeat => {
                 let action = self.menu.activate();
                 self.choose(ctx, action);
+            }
+            Input::Key(Key::Escape) if !repeat && self.screen == Screen::Paused => {
+                self.enter_play();
             }
             Input::Mouse(MouseButton::Left) if !repeat => {
                 if let Some(action) = self.menu.click(self.cursor, self.stage.screen_points()) {
@@ -857,14 +888,19 @@ impl SearchlightGame {
         self
     }
 
+    /// Hands the menu text to the shell to paint.
+    fn show_menu_texts(&self) {
+        if let Err(error) = self.stage.shell().set_texts(self.menu.texts()) {
+            tracing::warn!(%error, "menu text not shown");
+        }
+    }
+
     /// A frame of the main menu: the title bare, the HUD hidden, an empty world and the
     /// menu text for the shell to paint.
     fn menu_frame(&mut self, ctx: &mut FrameContext<'_>) {
         self.stage.refresh_title("");
         self.stage.hide_hud();
-        if let Err(error) = self.stage.shell().set_texts(self.menu.texts()) {
-            tracing::warn!(%error, "main menu text not shown");
-        }
+        self.show_menu_texts();
         if let Some(renderer) = ctx.renderer() {
             self.stage.draw_backdrop(renderer);
         }
@@ -886,12 +922,13 @@ impl SearchlightGame {
             // the console.
             Routing::Opened => self.input.release_all(),
             Routing::Console | Routing::Closed => {}
-            Routing::Game if self.screen == Screen::MainMenu => {
+            Routing::Game if self.in_menu() => {
                 self.menu_input(ctx, input, pressed, repeat);
             }
             Routing::Game => {
                 if pressed && !repeat && input == Input::Key(Key::Escape) {
-                    ctx.request_exit();
+                    self.pause();
+                    return routing;
                 }
                 match input {
                     Input::Key(key) => self.input.key(key, pressed),
@@ -923,6 +960,10 @@ impl Game for SearchlightGame {
     }
 
     fn tick(&mut self, ctx: &mut TickContext<'_>, command: &SearchlightCommand) {
+        // The loop learns of a pause from the next frame, so a tick can still arrive first.
+        if self.screen == Screen::Paused {
+            return;
+        }
         self.previous = self.mode.sim().player();
         let was_dead = self.mode.sim().player_body().is_dead();
         self.mode.tick(command, ctx.tick_length.as_secs_f32());
@@ -1013,6 +1054,10 @@ impl Game for SearchlightGame {
         let vitals = hud::god_mode_text(&vitals, self.god_mode);
         self.stage.refresh_title(&vitals);
         self.stage.refresh_hud(dead);
+        if self.screen == Screen::Paused {
+            self.stage.hide_hud();
+            self.show_menu_texts();
+        }
         self.stage.sync_enemies(self.mode.sim());
         if let Some(renderer) = ctx.renderer() {
             let view = first_person_view(
