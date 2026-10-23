@@ -44,8 +44,46 @@ fn main_shader_source_parses_and_validates() {
 }
 
 #[test]
-fn skybox_shader_parses_and_validates() {
-    validate_file("skybox.wgsl", Capabilities::empty());
+fn skybox_shader_source_parses_and_validates() {
+    let source = moho_renderer::pipeline::skybox_shader_source();
+
+    let module = validate("skybox shader", &source, Capabilities::empty());
+
+    let entry_points: Vec<&str> = module
+        .entry_points
+        .iter()
+        .map(|e| e.name.as_str())
+        .collect();
+    assert!(entry_points.contains(&"vs_main"), "{entry_points:?}");
+    assert!(entry_points.contains(&"fs_main"), "{entry_points:?}");
+}
+
+#[test]
+fn skybox_and_main_shader_share_sky_gradient() {
+    let skybox = moho_renderer::pipeline::skybox_shader_source();
+    let main = moho_renderer::pipeline::main_shader_source();
+
+    for (label, source) in [("skybox", &skybox), ("main", &main)] {
+        assert!(source.contains("sky_gradient"), "{label} shader");
+    }
+
+    let module = validate("skybox shader", &skybox, Capabilities::empty());
+    let gradients: Vec<_> = module
+        .functions
+        .iter()
+        .filter(|(_, f)| f.name.as_deref() == Some("sky_gradient"))
+        .map(|(handle, _)| handle)
+        .collect();
+    assert_eq!(gradients.len(), 1, "sky_gradient defined once");
+    let fs_main = module
+        .entry_points
+        .iter()
+        .find(|e| e.name == "fs_main")
+        .expect("skybox fs_main");
+    let calls_gradient = fs_main.function.body.iter().any(|statement| {
+        matches!(statement, naga::Statement::Call { function, .. } if *function == gradients[0])
+    });
+    assert!(calls_gradient, "skybox fs_main calls sky_gradient");
 }
 
 #[test]
@@ -249,9 +287,7 @@ fn lighting_struct_matches_lighting_gpu_in_every_shader() {
     use moho_renderer::LightingGpu;
     use std::mem::{offset_of, size_of};
 
-    let skybox_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../shaders/skybox.wgsl");
-    let skybox = std::fs::read_to_string(&skybox_path)
-        .unwrap_or_else(|e| panic!("failed to read shader {}: {e}", skybox_path.display()));
+    let skybox = moho_renderer::pipeline::skybox_shader_source();
     let main = moho_renderer::pipeline::main_shader_source();
     let expected_tail = [
         ("sky_zenith", offset_of!(LightingGpu, sky_zenith)),
@@ -259,7 +295,7 @@ fn lighting_struct_matches_lighting_gpu_in_every_shader() {
         ("sky_ground", offset_of!(LightingGpu, sky_ground)),
     ];
 
-    for (label, source) in [("main shader", main.as_str()), ("skybox.wgsl", &skybox)] {
+    for (label, source) in [("main shader", main.as_str()), ("skybox shader", &skybox)] {
         let (members, span) = lighting_layout(label, source);
 
         assert_eq!(span as usize, size_of::<LightingGpu>(), "{label}: span");

@@ -74,10 +74,16 @@ fn window_title(status: &str) -> String {
     }
 }
 
+/// The glTF material name of the arena meshes that draw glossy.
+const FLOOR_MATERIAL: &str = "floor";
+
+const ARENA_FLOOR_GLOSS: f32 = 0.6;
+
 /// Surface colours of the greybox world.
 #[derive(Clone, Copy, Debug)]
 enum Paint {
     Arena,
+    ArenaFloor,
     Dummy,
     Enemy,
     Struck,
@@ -87,14 +93,21 @@ impl RenderMaterial for Paint {
     fn to_gpu(&self) -> MaterialGpu {
         // World meshes draw as terrain: `albedo` colours up-facing surfaces, `params.xyz`
         // the rest, and `params.w > 0` makes the surface glow its colour.
-        let (top, side, glow) = match self {
-            Paint::Arena => ([0.62, 0.62, 0.64], [0.42, 0.43, 0.46], 0.0),
-            Paint::Dummy => ([0.85, 0.6, 0.2], [0.7, 0.48, 0.16], 0.0),
-            Paint::Enemy => ([0.3, 0.4, 0.62], [0.22, 0.3, 0.5], 0.0),
-            Paint::Struck => ([1.0, 0.15, 0.1], [1.0, 0.15, 0.1], 1.0),
+        // `albedo.w` is a world mesh's gloss.
+        let (top, side, glow, gloss) = match self {
+            Paint::Arena => ([0.62, 0.62, 0.64], [0.42, 0.43, 0.46], 0.0, 0.0),
+            Paint::ArenaFloor => (
+                [0.62, 0.62, 0.64],
+                [0.42, 0.43, 0.46],
+                0.0,
+                ARENA_FLOOR_GLOSS,
+            ),
+            Paint::Dummy => ([0.85, 0.6, 0.2], [0.7, 0.48, 0.16], 0.0, 0.0),
+            Paint::Enemy => ([0.3, 0.4, 0.62], [0.22, 0.3, 0.5], 0.0, 0.0),
+            Paint::Struck => ([1.0, 0.15, 0.1], [1.0, 0.15, 0.1], 1.0, 0.0),
         };
         MaterialGpu {
-            albedo: [top[0], top[1], top[2], 0.0],
+            albedo: [top[0], top[1], top[2], gloss],
             params: [side[0], side[1], side[2], glow],
         }
     }
@@ -458,12 +471,31 @@ impl Stage {
     }
 
     fn add_arena(&mut self, meshes: Vec<WorldMesh>, dummy_spawns: &[Vec3]) {
+        self.add_named_arena(meshes, &[], dummy_spawns);
+    }
+
+    /// Draws `meshes` as the arena, the one named `floor` in the glossy [`Paint::ArenaFloor`]
+    /// and the rest, or any past the end of `material_names`, in [`Paint::Arena`].
+    fn add_named_arena(
+        &mut self,
+        meshes: Vec<WorldMesh>,
+        material_names: &[Option<String>],
+        dummy_spawns: &[Vec3],
+    ) {
         let arena_material = self.scene.material_table.find_or_push(&Paint::Arena);
+        let floor_material = self.scene.material_table.find_or_push(&Paint::ArenaFloor);
         for (index, mesh) in meshes.into_iter().enumerate() {
+            let is_floor = material_names
+                .get(index)
+                .is_some_and(|name| name.as_deref() == Some(FLOOR_MATERIAL));
             self.scene.world_meshes_mut().upsert(
                 crate::arena::arena_mesh_id(index),
                 mesh,
-                arena_material,
+                if is_floor {
+                    floor_material
+                } else {
+                    arena_material
+                },
             );
         }
         self.dummy_count = dummy_spawns.len();
@@ -895,6 +927,20 @@ impl SearchlightGame {
     #[must_use]
     pub fn with_arena(mut self, meshes: Vec<WorldMesh>, dummy_spawns: &[Vec3]) -> Self {
         self.stage.add_arena(meshes, dummy_spawns);
+        self
+    }
+
+    /// Like [`Self::with_arena`], with `material_names` (one per mesh) choosing each mesh's
+    /// paint: meshes named `floor` draw glossy.
+    #[must_use]
+    pub fn with_named_arena(
+        mut self,
+        meshes: Vec<WorldMesh>,
+        material_names: &[Option<String>],
+        dummy_spawns: &[Vec3],
+    ) -> Self {
+        self.stage
+            .add_named_arena(meshes, material_names, dummy_spawns);
         self
     }
 
@@ -3715,6 +3761,41 @@ mod enemy_and_hud_tests {
     fn is_paint(material: MaterialGpu, paint: Paint) -> bool {
         let expected = paint.to_gpu();
         (material.albedo, material.params) == (expected.albedo, expected.params)
+    }
+
+    #[test]
+    fn the_arena_floor_draws_in_the_glossy_paint() {
+        let floor_at = Vec3::new(0.0, -0.5, 0.0);
+        let wall_at = Vec3::new(10.0, 1.0, 0.0);
+        let mut stage = Stage::new();
+        stage.add_named_arena(
+            vec![
+                box_mesh(floor_at, Vec3::new(30.0, 0.5, 30.0)),
+                box_mesh(wall_at, Vec3::new(0.5, 1.0, 5.0)),
+            ],
+            &[Some("floor".to_owned()), Some("wall".to_owned())],
+            &[],
+        );
+        let mut renderer = RecordingRenderer::default();
+
+        stage.draw(&mut renderer, (Mat4::IDENTITY, Vec3::ZERO));
+        let drawn = renderer.drawn();
+
+        let material_at = |centre: Vec3| {
+            drawn
+                .iter()
+                .find(|d| d.0.abs_diff_eq(centre, 1e-4))
+                .map(|d| d.2)
+                .expect("the mesh is drawn")
+        };
+        let floor = material_at(floor_at);
+        let wall = material_at(wall_at);
+        assert_eq!(floor.albedo[3], 0.6, "floor gloss");
+        assert_eq!(wall.albedo[3], 0.0, "wall gloss");
+        let flat = Paint::Arena.to_gpu();
+        assert_eq!(floor.albedo[..3], flat.albedo[..3], "floor top colour");
+        assert_eq!(floor.params, flat.params, "floor side colour");
+        assert!(is_paint(wall, Paint::Arena));
     }
 
     #[test]

@@ -5,6 +5,8 @@ use bytemuck::{Pod, Zeroable};
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct MaterialGpu {
+    /// `xyz` is the colour. `w` is, for world meshes (object_type 0), gloss 0..1
+    /// with 0 = matte; for other objects it is unused.
     pub albedo: [f32; 4],
     pub params: [f32; 4],
 }

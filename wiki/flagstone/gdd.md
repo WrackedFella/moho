@@ -108,7 +108,7 @@ crash, a fall through the world, or lost progress.
 
 - Needs, moods, health, combat and enemies. The loop must be fun with only work and building.
 - Ground items as world entities. Yields live in the pawn's inventory and in colony totals.
-- Multiplayer (the simulation stays network-ready, nothing more).
+- Playing co-op in the prototype. The prototype stays single-player; the co-op target below only constrains the design (ADR-0011).
 - Any setting, story or factions.
 
 ## 8 Deferred ideas
@@ -116,6 +116,11 @@ crash, a fall through the world, or lost progress.
 Intent only, not decomposed. Each waits for a named consumer. Setting and system ideas are candidates, not decisions.
 
 **Next after the prototype**
+- Co-op multiplayer (target decided 2026-10-23): up to 4 players, aiming at 2, with a trusted host that runs the AI.
+  The engine will give `moho_app::Game::tick` one command per player slot (ENG-F37, ENG-M3). Flagstone reads slot 0
+  only and stays single-player until a co-op GDD exists. `StrategyCommand.console` and engine commands are host
+  actions, read from slot 0 only. If co-op ever uses lockstep, the whole sim (voxel edits, light jobs,
+  pathfinding, AI) must be bit-exact across machines; engine R.2 sizes that cost.
 - Automation: machines and logistics doing what hand-mining did.
 - Progression: unlocks gating buildings and tools, setting-neutral.
 - Stockpile zones and hauling as a real activity (the prototype uses colony totals).
