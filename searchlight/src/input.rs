@@ -60,7 +60,7 @@ impl Action for SearchlightAction {
             SearchlightAction::CheckMagazine => {
                 const { &[Binding::key(Key::C), Binding::key(Key::R).held()] }
             }
-            SearchlightAction::Restart => const { &[Binding::key(Key::Enter)] },
+            SearchlightAction::Restart => const { &[Binding::key(Key::F8)] },
         }
     }
 }

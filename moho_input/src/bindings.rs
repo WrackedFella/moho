@@ -146,7 +146,18 @@ impl Binding {
     /// Enter, Escape or an arrow key with no modifiers, on any trigger: menus and dialogs
     /// read these directly, so no action may sit on one alone. A chord on them is allowed.
     pub fn is_protected(self) -> bool {
-        false
+        self.modifiers == Modifiers::NONE
+            && matches!(
+                self.input,
+                Input::Key(
+                    Key::Enter
+                        | Key::Escape
+                        | Key::ArrowUp
+                        | Key::ArrowDown
+                        | Key::ArrowLeft
+                        | Key::ArrowRight
+                )
+            )
     }
 
     /// Persisted name: the input's, prefixed by `Hold ` for a hold binding.
@@ -267,7 +278,8 @@ impl<A: Action> ActionBindings<A> {
     }
 
     /// Reads the raw `[bindings]` section. Absent actions and unusable lines keep
-    /// their defaults; each unusable line yields a warning.
+    /// their defaults; each unusable line, including one holding a protected binding, yields
+    /// a warning.
     pub fn load(section: &BTreeMap<String, String>) -> (Self, Vec<BindingWarning>) {
         let mut loaded = Self::defaults();
         let mut warnings = Vec::new();
@@ -275,7 +287,7 @@ impl<A: Action> ActionBindings<A> {
             let action = A::ALL.iter().copied().find(|a| a.name() == name);
             let parsed = action.and_then(|_| parse_list(value));
             match (action, parsed) {
-                (Some(action), Some(bindings)) => {
+                (Some(action), Some(bindings)) if !bindings.iter().any(|b| b.is_protected()) => {
                     loaded.map.insert(action, bindings);
                 }
                 _ => warnings.push(BindingWarning {

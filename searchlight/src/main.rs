@@ -5,11 +5,10 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use moho_app::{AppConfig, LoopConfig};
+use moho_app::{AppConfig, LoopConfig, split_fullscreen_binding};
 use moho_core::content::{ContentError, ContentRoots, load_kind};
 use moho_core::prefs::Prefs;
-use moho_input::bindings::{ActionBindings, Input};
-use moho_input::key::Key;
+use moho_input::bindings::ActionBindings;
 use moho_ui_shell::UiShell;
 use searchlight::arena::{self, Arena};
 use searchlight::console_commands;
@@ -27,11 +26,6 @@ fn load_rifle(mods: &[String]) -> Result<RifleDef, ContentError> {
     let roots = ContentRoots::base(&content_root())?.with_mods(&mods_dir(), mods)?;
     let weapons = load_kind::<RifleDef>(&roots, "weapons")?;
     weapons.require(RIFLE_ID).cloned()
-}
-
-/// Keys that flip windowed and borderless fullscreen, besides Alt+Enter.
-fn toggle_keys() -> Vec<Input> {
-    vec![Input::Key(Key::F11)]
 }
 
 fn assets() -> PathBuf {
@@ -61,7 +55,8 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
     let (level, markers) = arena::load(&arena_path)?;
     let arena = Arc::new(Arena::from_level(&level, &markers)?);
     let mode = ArenaMode::new(arena.clone(), tuning(&rifle)?, WaveTuning::default());
-    let (console_section, game_section) = split_console_binding(prefs.bindings());
+    let (toggle_keys, bindings_section) = split_fullscreen_binding(prefs.bindings());
+    let (console_section, game_section) = split_console_binding(&bindings_section);
     let (bindings, warnings) = ActionBindings::load(&game_section);
     for warning in warnings {
         tracing::warn!(?warning, "bindings");
@@ -86,7 +81,7 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
             window_title: WINDOW_TITLE.to_owned(),
             loop_config: LoopConfig::new(TICK_HZ),
             init_audio: true,
-            toggle_keys: Some(toggle_keys()),
+            toggle_keys,
             window_mode,
         },
     )?;

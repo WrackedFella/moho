@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use moho_input::bindings::Input;
+use moho_input::bindings::{Action, ActionBindings, Binding, Input};
 use moho_input::key::Key;
 use winit::keyboard::{KeyCode, PhysicalKey};
 
@@ -12,13 +12,48 @@ pub const FULLSCREEN_BINDING: &str = "fullscreen";
 /// Splits the `fullscreen` entry out of a `[bindings]` section: the keys that toggle
 /// fullscreen besides Alt+Enter, and the rest of the section for the game's own loader.
 ///
-/// An absent entry gives F11. An entry that does not parse, or names a protected key alone,
-/// logs a warning and also gives F11.
+/// An absent entry gives F11. An entry that does not parse, names a protected key alone, or
+/// holds anything but plain keys (a chord, hold or mouse button, which `ToggleKeys` cannot
+/// match) logs a warning and also gives F11.
 pub fn split_fullscreen_binding(
     section: &BTreeMap<String, String>,
 ) -> (Option<Vec<Input>>, BTreeMap<String, String>) {
-    let _ = section;
-    todo!("read the fullscreen entry")
+    let mut rest = section.clone();
+    let Some(value) = rest.remove(FULLSCREEN_BINDING) else {
+        return (Some(vec![DEFAULT_FULLSCREEN_KEY]), rest);
+    };
+    let entry = BTreeMap::from([(FULLSCREEN_BINDING.to_owned(), value.clone())]);
+    let (loaded, warnings) = ActionBindings::<FullscreenKey>::load(&entry);
+    let bindings = loaded.get(FullscreenKey);
+    let usable = warnings.is_empty()
+        && !bindings.is_empty()
+        && bindings
+            .iter()
+            .all(|b| b.is_plain() && matches!(b.input, Input::Key(_)));
+    if usable {
+        let keys = bindings.iter().map(|b| b.input).collect();
+        return (Some(keys), rest);
+    }
+    tracing::warn!(value = %value, "unusable fullscreen binding; keeping F11");
+    (Some(vec![DEFAULT_FULLSCREEN_KEY]), rest)
+}
+
+const DEFAULT_FULLSCREEN_KEY: Input = Input::Key(Key::F11);
+
+/// The fullscreen key as an action, so it loads and validates like any other binding.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct FullscreenKey;
+
+impl Action for FullscreenKey {
+    const ALL: &'static [Self] = &[FullscreenKey];
+
+    fn name(self) -> &'static str {
+        FULLSCREEN_BINDING
+    }
+
+    fn default_bindings(self) -> &'static [Binding] {
+        const { &[Binding::key(Key::F11)] }
+    }
 }
 
 /// What the runner does with one observed key event.
@@ -313,7 +348,10 @@ mod tests {
             .finish();
         let result = tracing::subscriber::with_default(subscriber, run);
         let bytes = buffer.lock().expect("log sink").clone();
-        (result, String::from_utf8(bytes).expect("log output is utf-8"))
+        (
+            result,
+            String::from_utf8(bytes).expect("log output is utf-8"),
+        )
     }
 
     #[test]
