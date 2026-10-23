@@ -9,6 +9,7 @@ glam = { workspace = true }
 winit = { workspace = true }
 moho_renderer = { path = "../moho_renderer" }
 moho_audio = { path = "../moho_audio" }
+moho_input = { path = "../moho_input" }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 

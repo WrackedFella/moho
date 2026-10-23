@@ -64,6 +64,18 @@ pub enum Key {
     Shift,
     Ctrl,
     Alt,
+    F1,
+    F2,
+    F3,
+    F4,
+    F5,
+    F6,
+    F7,
+    F8,
+    F9,
+    F10,
+    F11,
+    F12,
 }
 
 impl Key {
@@ -128,6 +140,18 @@ impl Key {
         Key::Shift,
         Key::Ctrl,
         Key::Alt,
+        Key::F1,
+        Key::F2,
+        Key::F3,
+        Key::F4,
+        Key::F5,
+        Key::F6,
+        Key::F7,
+        Key::F8,
+        Key::F9,
+        Key::F10,
+        Key::F11,
+        Key::F12,
     ];
 
     /// Canonical persisted name; `parse` accepts it back. Punctuation is spelled
@@ -193,6 +217,18 @@ impl Key {
             Key::Shift => "Shift",
             Key::Ctrl => "Ctrl",
             Key::Alt => "Alt",
+            Key::F1 => "F1",
+            Key::F2 => "F2",
+            Key::F3 => "F3",
+            Key::F4 => "F4",
+            Key::F5 => "F5",
+            Key::F6 => "F6",
+            Key::F7 => "F7",
+            Key::F8 => "F8",
+            Key::F9 => "F9",
+            Key::F10 => "F10",
+            Key::F11 => "F11",
+            Key::F12 => "F12",
         }
     }
 
@@ -313,6 +349,18 @@ impl Key {
             KeyCode::ShiftLeft | KeyCode::ShiftRight => Key::Shift,
             KeyCode::ControlLeft | KeyCode::ControlRight => Key::Ctrl,
             KeyCode::AltLeft | KeyCode::AltRight => Key::Alt,
+            KeyCode::F1 => Key::F1,
+            KeyCode::F2 => Key::F2,
+            KeyCode::F3 => Key::F3,
+            KeyCode::F4 => Key::F4,
+            KeyCode::F5 => Key::F5,
+            KeyCode::F6 => Key::F6,
+            KeyCode::F7 => Key::F7,
+            KeyCode::F8 => Key::F8,
+            KeyCode::F9 => Key::F9,
+            KeyCode::F10 => Key::F10,
+            KeyCode::F11 => Key::F11,
+            KeyCode::F12 => Key::F12,
             _ => return None,
         })
     }
@@ -428,6 +476,18 @@ mod tests {
             Key::Shift => 56,
             Key::Ctrl => 57,
             Key::Alt => 58,
+            Key::F1 => 59,
+            Key::F2 => 60,
+            Key::F3 => 61,
+            Key::F4 => 62,
+            Key::F5 => 63,
+            Key::F6 => 64,
+            Key::F7 => 65,
+            Key::F8 => 66,
+            Key::F9 => 67,
+            Key::F10 => 68,
+            Key::F11 => 69,
+            Key::F12 => 70,
         }
     }
 
@@ -451,8 +511,8 @@ mod tests {
     fn all_lists_every_variant_exactly_once() {
         let ordinals: HashSet<usize> = Key::ALL.iter().map(|&k| ordinal(k)).collect();
 
-        assert_eq!(Key::ALL.len(), 59);
-        assert_eq!(ordinals, (0..59).collect::<HashSet<_>>());
+        assert_eq!(Key::ALL.len(), 71);
+        assert_eq!(ordinals, (0..71).collect::<HashSet<_>>());
     }
 
     #[test]
@@ -593,6 +653,18 @@ mod tests {
             (C::ControlRight, Key::Ctrl),
             (C::AltLeft, Key::Alt),
             (C::AltRight, Key::Alt),
+            (C::F1, Key::F1),
+            (C::F2, Key::F2),
+            (C::F3, Key::F3),
+            (C::F4, Key::F4),
+            (C::F5, Key::F5),
+            (C::F6, Key::F6),
+            (C::F7, Key::F7),
+            (C::F8, Key::F8),
+            (C::F9, Key::F9),
+            (C::F10, Key::F10),
+            (C::F11, Key::F11),
+            (C::F12, Key::F12),
         ];
 
         let mut reached = HashSet::new();
@@ -609,7 +681,7 @@ mod tests {
     #[test]
     fn from_winit_leaves_unnamed_codes_unmapped() {
         for code in [
-            KeyCode::F5,
+            KeyCode::F13,
             KeyCode::Insert,
             KeyCode::SuperLeft,
             KeyCode::Numpad1,
@@ -653,6 +725,62 @@ mod tests {
         assert_eq!(Key::Space.label(), "Spacebar");
         assert_eq!(Key::ArrowUp.label(), "ArrowUp");
         assert_eq!(Key::Ctrl.label(), "Ctrl");
+    }
+
+    #[test]
+    fn function_keys_round_trip_through_name_and_parse() {
+        let function_keys = [
+            Key::F1,
+            Key::F2,
+            Key::F3,
+            Key::F4,
+            Key::F5,
+            Key::F6,
+            Key::F7,
+            Key::F8,
+            Key::F9,
+            Key::F10,
+            Key::F11,
+            Key::F12,
+        ];
+
+        for (index, key) in function_keys.into_iter().enumerate() {
+            let expected = format!("F{}", index + 1);
+
+            assert_eq!(key.name(), expected);
+            assert_eq!(Key::parse(&expected), Some(key), "{expected}");
+            assert_eq!(
+                Key::parse(&expected.to_lowercase()),
+                Some(key),
+                "{expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn from_winit_maps_f1_to_f12() {
+        let codes = [
+            (KeyCode::F1, Key::F1),
+            (KeyCode::F2, Key::F2),
+            (KeyCode::F3, Key::F3),
+            (KeyCode::F4, Key::F4),
+            (KeyCode::F5, Key::F5),
+            (KeyCode::F6, Key::F6),
+            (KeyCode::F7, Key::F7),
+            (KeyCode::F8, Key::F8),
+            (KeyCode::F9, Key::F9),
+            (KeyCode::F10, Key::F10),
+            (KeyCode::F11, Key::F11),
+            (KeyCode::F12, Key::F12),
+        ];
+
+        for (code, expected) in codes {
+            assert_eq!(
+                Key::from_winit(PhysicalKey::Code(code)),
+                Some(expected),
+                "{code:?}"
+            );
+        }
     }
 
     #[test]
