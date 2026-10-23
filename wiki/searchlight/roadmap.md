@@ -12,8 +12,8 @@ Milestone names follow ISO 2145: FPS-M*n* delivers GDD Phase *n*; FPS-M1.1 and F
 |---|---|---|---|
 | FPS-M1 Arena baseline | 1 | Does the gunplay feel weighty? | none hard; stopgaps in use |
 | FPS-M1.1 Menus (FPS-F3) | 1 to 2 bridge | Can a player start, pause and tune the game without the console? | engine request #444 (ENG-F18) |
-| FPS-M1.2 Stance and body (FPS-F4) | 1.2 | Does posture change where I stand and when I peek? | #544 with ENG-F33; #543 for the body |
-| FPS-M2 Items and loadout | 2 | Does one item model carry everything? | ENG-F18-09 #407, ENG-F19 #231, ENG-F26 #359 |
+| FPS-M1.2 Stance and body (FPS-F4) | 1.2 | Does posture change where I stand and when I peek? | #544 with ENG-F33 #492; #543 for the rig; all by FPS-M2 |
+| FPS-M2 Items and loadout | 2 | Does one item model carry everything? | ENG-F18-09 #407, ENG-F19 #231, ENG-F26 #359; #600 loose objects (FPS-F9); #543 for reload animation (FPS-F8) |
 | FPS-M3 Wear, repair, ledger | 3 | Does wear drive scavenging? | none new |
 | FPS-M4 Wounds and healing | 4 | Does limb damage create good downtime? | none new |
 | FPS-M5 Time, survival, rest | 5 | Do survival stats add pressure, not chores? | game clock scaling; save and load |
@@ -52,19 +52,27 @@ Runs in slices parallel to FPS-M2; needs no items or UI beyond one slider in the
 |---|---|---|
 | 1 Lean and head bob | Lean with clearance, hit volumes follow the lean, head-bob camera and slider | nothing new |
 | 2 Crouch and prone | Both stances with timed transitions and speed rules; prone's oriented hull; hit volumes and enemy aim follow the stance | ENG-F33 #492 and #544 (ENG-M3) |
-| 3 Visible body | Rigged first-person body and shadow; enemies on the same rigs; hit volumes ride the bones | #543 skinned characters (ENG-M5+ unless pulled forward) |
+| 3 Visible body | Rigged first-person body and shadow; enemies on the same rigs; hit volumes ride the bones | #543 skinned characters, needed by FPS-M2 |
 
-- **Exit:** in the arena a player crouched behind the 1.4 m crates is hit only when leaning, on head or arm; a prone player behind the same crate is not seen at all.
-- **Cut lines:** weapon collision against the ground, prone dive, enemies going prone, variable crouch height, side-step, blind fire, mantle, slide, vault.
+- **All three slices land by FPS-M2's exit** (Justin, 2026-10-23). That asks the engine lane to schedule #492's crouch and clearance slices, #544 and #543 earlier than their current slots (ENG-M3, ENG-M3 and ENG-M5+).
+- **Placeholder body before the rig:** slice 1 adds a segmented player body (one box per body part, as the enemies have) that follows lean and stance and casts a shadow, plus a console toggle that draws the hit volumes ([FPS-F4-04](https://github.com/WrackedFella/moho/issues/611)). It needs no engine work and gives visual feedback until #543 lands; slice 3 replaces it.
+- **Exit:** in the arena a player crouched behind the 1.4 m crates is hit only when leaning, on head or arm; a prone player behind the same crate is not seen at all. The shadow follows the lean (slice 1); looking down shows the legs (slice 3).
+- **Cut lines:** weapon collision against the ground, prone dive, enemies going prone, variable crouch height, side-step, blind fire, mantle, slide, vault. If #543 can't give the sim deterministic bone poses, hit volumes follow a per-stance pose table instead of the bones and the rig only shows things; cover behaves the same.
 - **Held actions:** hold or toggle per keybinding lands with ENG-F26; until then lean is hold and crouch is toggle.
 
 ## 6 FPS-M2 Items and loadout (GDD Phase 2)
 
 - **Outcome:** the player carries a rig and a backpack, enemies drop loot through their bodies, and three weapons in two calibers come from one data-driven item model. Magazines are items holding an ordered stack of rounds, mixed types allowed.
 - **Scope notes (GDD §4.1, §4.12):** item size and container cells in the first data file with a list view over them; three item classes; armor slots present with no items; the stat layer is born here with carry capacity, movement speed and stamina; a weight readout.
-- **Entry gate:** FPS-M1 approved. Engine: on-screen text (#407), layered content (#231), tap and hold keys (#359).
-- **Exit goal:** one item model carries a weapon, a magazine, rounds and a consumable with no special-case code; a data file adds an item without code.
-- **Cut lines:** the grid view (after the list is played, GDD §9 Q17), stash, a dedicated mixing UI, rarity or affixes.
+- **Features:** [FPS-F6](https://github.com/WrackedFella/moho/issues/590) scavenging loop (looting for rounds), then [FPS-F7](https://github.com/WrackedFella/moho/issues/591) loadout and load, beside [FPS-F9](https://github.com/WrackedFella/moho/issues/616) world objects and interactables and [FPS-F10](https://github.com/WrackedFella/moho/issues/617) test levels and a proving ground. FPS-F8 (hands and reload animation) lands in this milestone too, after FPS-F4 slice 3; it is drafted once #543 is scheduled.
+- **World objects (FPS-F9):** dropped items, and the old magazine from FPS-F7's fast reload (FPS-F7-06, GDD §4.2), are loose objects in the world, picked up by looking at them; a magazine keeps its rounds. FPS-F9-03 drops them static on the floor under the drop point; FPS-F9-04 makes them fall, tumble and settle, on engine request [#600](https://github.com/WrackedFella/moho/issues/600). Ragdoll bodies (FPS-F9-05, engine request [#615](https://github.com/WrackedFella/moho/issues/615)) are deferred past FPS-M2.
+- **Proving ground (FPS-F10):** a test level with distance targets and cover heights, a sandbox mode, and spawn and reset controls, so stance, weapons and world objects are tested outside the waves.
+- **Reload animation (FPS-F8):** first-person hands and weapon with a clip per reload variant (tactical, empty-chamber, fast drop); the magazine moves from weapon to hand and, on a fast reload, leaves the hand as an FPS-F9-04 loose object; the hand takes a picked-up item (on FPS-F9-03). The sim never waits on animation except for reload, whose time the sim decides and the clip shows. Engine: #543. Until then reloads stay invisible.
+- **Multiplayer fit:** loose objects are host-simulated and pick-ups host-resolved, like hits; hit volumes come from sim state, never a client's animation.
+- **Entry gate:** FPS-M1 approved. Engine: on-screen text (#407), layered content (#231), tap and hold keys (#359); #600 for FPS-F9-04; #543 for FPS-F8.
+- **Exit goal:** one item model carries a weapon, a magazine, rounds and a consumable with no special-case code; a data file adds an item without code. A fast reload drops a magazine that lands, settles and can be picked up with its rounds; the player's model reloads it.
+- **Cut lines:** the grid view (after the list is played, GDD §9 Q17), stash, a dedicated mixing UI, rarity or affixes. Loose objects: no pushing or kicking them (ENG-F34 #493), no shooting them, no impact sounds until contact events exist; the arena caps their number and removes the oldest. Animation: no IK, ragdolls, procedural recoil, root motion, retargeting or facial animation; enemies reload invisibly to start. If #543 or the reload art lags, FPS-F8 is the first thing to move to FPS-M3.
+- **Art risk:** CC0 placeholder rigs and locomotion clips exist (ADR-0007: Quaternius, Kenney, Khronos samples); CC0 first-person reload clips mostly don't. Expect to hand-key two or three crude clips; that is authoring work, not engine work.
 - **Risk:** the largest scope jump. Split in two features if the first card set is too big: (1) item model and loot, (2) inventory UI. The Tech Lead decides.
 
 ## 7 FPS-M3 Wear, repair, ledger (Phase 3)
@@ -115,7 +123,9 @@ The engine lane designs the answers.
 | ENG-F17 #229 navigation and cover queries | ENG-F17-01 and -02 (navigation); cover and exposure queries | enemy AI slice 2 |
 | ENG-F19 #231 layered content | ENG-F19 | FPS-M2 entry |
 | ENG-F26 #359 key actions | ENG-F26 | FPS-M2; held-action toggles |
-| #543 skinned animated characters | #543 | FPS-M1.2 slice 3 |
-| #544 lean and stance transitions, prone hull | #544 | FPS-M1.2 slice 2 |
+| #543 skinned animated characters, bone attachments, sim-timed and layered clips | #543 | FPS-M2: FPS-M1.2 slice 3, FPS-F8 |
+| #544 lean and stance transitions, prone hull | #544 with ENG-F33 #492 (crouch and clearance) | FPS-M2: FPS-M1.2 slice 2 |
+| #600 loose objects fall, settle and are picked up | #600 (ENG-F34 #493 is related) | FPS-M2: FPS-F9-04 |
+| #615 ragdoll bodies | #615 | after FPS-M2: FPS-F9-05 (deferred) |
 
 New requests come from FPS-M3 onward (workbench interaction, save kinds, level switching). File them when a milestone's feature is drafted.
