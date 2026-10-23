@@ -178,7 +178,7 @@ enum Weapon {
     Ready,
     /// A shot was just fired; ready again when the count of ticks left runs out.
     Cooling(u32),
-    /// A magazine swap is under way; done when the count of ticks left runs out.
+    /// A reload is under way; done when the count of ticks left runs out.
     Reloading(u32),
 }
 
@@ -655,7 +655,7 @@ impl SearchlightSim {
         let total = if self.rifle.is_chambered() {
             self.reload_ticks
         } else {
-            self.reload_ticks + self.charge_ticks
+            self.reload_ticks.saturating_add(self.charge_ticks)
         };
         if total == 0 {
             self.finish_reload();
@@ -1171,6 +1171,15 @@ mod tests {
 
         assert_eq!(ticks[..4], vec![vec![]; 4][..]);
         assert_eq!(ticks[4], [Feedback::ReloadDone, Feedback::Fired]);
+    }
+
+    #[test]
+    fn an_overlong_reload_plus_charge_saturates_instead_of_wrapping() {
+        let mut sim = charging_sim(rifle_with(0), vec![mag(30, 30)], u32::MAX, 1);
+
+        let ticks = run(&mut sim, &[reload(), idle(), pull()]);
+
+        assert!(ticks.iter().all(Vec::is_empty), "{ticks:?}");
     }
 
     #[test]
