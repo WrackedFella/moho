@@ -385,7 +385,6 @@ mod tests {
         }
     }
 
-    /// The grades of enemies `from..` in enemy order.
     fn grades_from(mode: &ArenaMode, from: usize) -> Vec<Option<Grade>> {
         (from..mode.sim().enemy_count())
             .map(|index| mode.sim().enemy_grade(index))

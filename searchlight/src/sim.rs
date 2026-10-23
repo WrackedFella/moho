@@ -192,7 +192,6 @@ struct Target {
     hurt: Option<Vec3>,
 }
 
-/// What makes a target an enemy: its state machine and the skill it plays with.
 #[derive(Clone, Copy, Debug)]
 struct Enemy {
     brain: Brain,
@@ -3805,7 +3804,7 @@ mod grade_tests {
     const ENEMY_SPAWN: Vec3 = Vec3::new(0.0, 0.0, 10.0);
     const TOWARD_PLAYER: Vec3 = Vec3::new(0.0, 0.0, 6.0);
 
-    /// Today's enemy numbers: a 30-tick reaction and a 12-tick cooldown, so grades separate.
+    /// A 30-tick reaction and 12-tick cooldown, so grades separate.
     fn config() -> SimConfig {
         let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
         config.eye_height = 0.72;
@@ -3830,7 +3829,6 @@ mod grade_tests {
         }
     }
 
-    /// The feedback of each of `ticks` ticks under `god_mode`.
     fn run(sim: &mut SearchlightSim, ticks: usize, god_mode: bool) -> Vec<Vec<Feedback>> {
         (0..ticks)
             .map(|_| {
@@ -3885,7 +3883,6 @@ mod grade_tests {
         );
     }
 
-    /// Shots and hits on the player of one enemy of `grade` firing for 600 ticks.
     fn shots_and_hits(grade: Grade) -> (usize, usize) {
         let mut config = config();
         // A rookie's 0.06 rad strays 0.6 m at this range, wider than the player's body.
@@ -4018,7 +4015,6 @@ mod grade_tests {
         }
     }
 
-    /// The player's health once the enemy of `grade` has landed its first hit.
     fn health_after_first_hit(grade: Grade) -> u32 {
         let mut sim = duel(grade, config());
         assert_eq!(sim.enemy_grade(0), Some(grade));

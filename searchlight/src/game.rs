@@ -2101,7 +2101,6 @@ mod tests {
         assert_eq!(after_off, [false, false, false]);
     }
 
-    /// Types `line` and runs one `command()`, returning the grade force it carries.
     fn grade_tick(game: &mut SearchlightGame, line: &str) -> Option<Grade> {
         type_into_console(game, line);
         game.command().forced_grade
