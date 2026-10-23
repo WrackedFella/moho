@@ -36,14 +36,15 @@ pub use chunk_store::ChunkStore;
 pub use events::{BlockChangeReason, WorldEvent};
 pub use face::FaceDirection;
 pub use grid::{
-    BlockData, BlockPos, CHUNK_FILE, MaterialLighting, MaterialRegistry, ResourceData, VoxelGrid,
+    BlockData, BlockPos, CHUNK_FILE, CRYSTAL_MATERIAL_ID, MaterialLighting, MaterialRegistry,
+    ResourceData, VoxelGrid,
 };
 pub use light_jobs::{JobId, LightFrameBudget, LightJobQueue, LightUpdateJob, LightUpdateResult};
 pub use light_propagation::{LightChannel, LightPropagator};
 pub use light_sky::{dirty_chunks_below, recompute_sky_exposure};
 pub use light_storage::{CHUNK_SIZE as LIGHT_CHUNK_SIZE, ChunkLight};
 pub use light_system::LightSystem;
-pub use materials::{DIRT, GRASS, IRON_ORE, MaterialType, STONE};
+pub use materials::{CRYSTAL, CRYSTAL_EMISSION, DIRT, GRASS, IRON_ORE, MaterialType, STONE};
 pub use mesh::{
     BlockyMeshGenerator, CAP_PROBE, ChunkContent, HybridMeshGenerator, MarchingCubes, VoxelMesh,
     cap_chunk_layers, cut_cap_mesh,

@@ -17,6 +17,9 @@ use std::collections::HashMap;
 /// Integer vector for grid coordinates
 pub type BlockPos = IVec3;
 
+/// Registry id of the glowing crystal material.
+pub const CRYSTAL_MATERIAL_ID: u32 = 4;
+
 /// Chunk size constant used throughout this module.
 const CHUNK_SIZE_I32: i32 = LIGHT_CHUNK_SIZE;
 
@@ -1049,6 +1052,26 @@ mod tests {
             );
         }
         assert_eq!(registry.material(4), None);
+    }
+
+    #[test]
+    fn crystal_is_an_opaque_emitter() {
+        let registry = MaterialRegistry::new();
+
+        let lighting = registry.lighting(CRYSTAL_MATERIAL_ID);
+        let material = registry
+            .material(CRYSTAL_MATERIAL_ID)
+            .expect("the crystal is registered");
+
+        assert_eq!(CRYSTAL_MATERIAL_ID, 4);
+        assert_eq!(lighting.emission, crate::CRYSTAL_EMISSION);
+        assert!(lighting.is_emissive());
+        assert_eq!(lighting.opacity_cost, 15);
+        assert!(lighting.is_opaque());
+        assert!(
+            matches!(material, MaterialType::Emissive { color, .. } if *color == crate::CRYSTAL)
+        );
+        assert!(material.to_gpu().params[3] > 0.0, "drawn unlit and bright");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use crate::biome::{BiomeMap, BiomeParams, BiomeType, OreLayout};
 use crate::perlin::Perlin;
-use flagstone_voxel::BlockPos;
+use flagstone_voxel::{BlockPos, CRYSTAL_MATERIAL_ID};
 use serde::{Deserialize, Serialize};
 
 /// Parameters describing a new world request coming from the UI or other
@@ -165,6 +165,17 @@ pub(crate) fn determine_resource_id(
     }
 }
 
+/// Whether the block at `(x, y, z)` in a column of `column_height` is a glowing crystal.
+pub(crate) fn determine_crystal(
+    _column_height: i32,
+    _y: i32,
+    _x: i32,
+    _z: i32,
+    _seed: u32,
+) -> bool {
+    false
+}
+
 /// Chunk size constant — must match `light_storage::CHUNK_SIZE`.
 const CHUNK_SIZE: i32 = 16;
 
@@ -205,6 +216,10 @@ pub fn generate_chunk(
 
             for y in y_start..y_end {
                 if !is_solid(&noise, x, y, z, &biome, &params) {
+                    continue;
+                }
+                if determine_crystal(column_height, y, x, z, config.seed) {
+                    blocks.push((BlockPos::new(x, y, z), CRYSTAL_MATERIAL_ID, None));
                     continue;
                 }
                 let material_id = determine_material_id(column_height, y, &params);
@@ -301,15 +316,89 @@ mod tests {
         blocks.iter().filter(|(_, _, r)| *r == Some(1)).count()
     }
 
+    fn crystal_count(blocks: &[Block]) -> usize {
+        blocks
+            .iter()
+            .filter(|(_, m, _)| *m == CRYSTAL_MATERIAL_ID)
+            .count()
+    }
+
+    #[test]
+    fn seeded_world_has_crystal_only_below_its_surface() {
+        let blocks = world_blocks(&small_config(42));
+        let mut column_tops = std::collections::HashMap::new();
+        for (p, _, _) in &blocks {
+            let top = column_tops.entry((p.x, p.z)).or_insert(p.y);
+            *top = (*top).max(p.y);
+        }
+
+        let crystals: Vec<&Block> = blocks
+            .iter()
+            .filter(|(_, m, _)| *m == CRYSTAL_MATERIAL_ID)
+            .collect();
+
+        assert!(!crystals.is_empty(), "a seeded world holds crystal");
+        for (p, _, _) in crystals {
+            let top = column_tops[&(p.x, p.z)];
+            assert!(top > p.y, "crystal at {p:?} has solid block above it");
+            assert!(
+                top - p.y >= 8,
+                "crystal at {p:?} sits 8 or more below the column top {top}"
+            );
+        }
+    }
+
+    #[test]
+    fn crystal_blocks_carry_no_resource() {
+        let blocks = world_blocks(&small_config(42));
+
+        let crystals: Vec<&Block> = blocks
+            .iter()
+            .filter(|(_, m, _)| *m == CRYSTAL_MATERIAL_ID)
+            .collect();
+
+        assert!(!crystals.is_empty(), "a seeded world holds crystal");
+        for (p, _, resource) in crystals {
+            assert_eq!(*resource, None, "crystal at {p:?}");
+        }
+    }
+
+    #[test]
+    fn determine_crystal_stays_between_bedrock_band_and_surface_margin() {
+        let column_height = 20;
+        let mut inside = 0;
+
+        for x in 0..64 {
+            for z in 0..64 {
+                for y in 0..=column_height + 1 {
+                    let crystal = determine_crystal(column_height, y, x, z, 42);
+                    if !(6..column_height - 8).contains(&y) {
+                        assert!(!crystal, "no crystal at y={y}");
+                    } else if crystal {
+                        inside += 1;
+                    }
+                }
+            }
+        }
+
+        assert!(inside > 0, "crystal appears inside the band");
+        assert!(inside < 200, "crystal stays rare: {inside}");
+    }
+
     #[test]
     fn default_world_matches_its_pinned_fingerprint() {
         let blocks = world_blocks(&small_config(42));
 
-        let measured = (fingerprint(&blocks), blocks.len(), ore_count(&blocks));
+        let measured = (
+            fingerprint(&blocks),
+            blocks.len(),
+            ore_count(&blocks),
+            crystal_count(&blocks),
+        );
 
         assert_eq!(
             measured,
-            (16_667_745_297_482_914_019, 67_114, 5_792),
+            (16_667_745_297_482_914_019, 67_114, 5_792, 0),
             "world generation output changed; update these pins only when the change is deliberate"
         );
     }
@@ -318,11 +407,16 @@ mod tests {
     fn all_biome_world_matches_its_pinned_fingerprint() {
         let blocks = world_blocks(&all_biome_config());
 
-        let measured = (fingerprint(&blocks), blocks.len(), ore_count(&blocks));
+        let measured = (
+            fingerprint(&blocks),
+            blocks.len(),
+            ore_count(&blocks),
+            crystal_count(&blocks),
+        );
 
         assert_eq!(
             measured,
-            (3_431_315_624_261_164_992, 265_476, 22_876),
+            (3_431_315_624_261_164_992, 265_476, 22_876, 0),
             "world generation output changed; update these pins only when the change is deliberate"
         );
     }
