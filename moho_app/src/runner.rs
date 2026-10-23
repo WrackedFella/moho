@@ -141,9 +141,16 @@ fn observe_toggle(toggles: Option<&mut ToggleKeys>, event: &WindowEvent) -> Obse
 }
 
 impl<G: Game> Runner<G> {
+    /// The OS can leave fullscreen on its own, so the window is the truth, not `self.mode`.
+    fn current_mode(&self) -> WindowMode {
+        self.window
+            .as_ref()
+            .map_or(self.mode, |window| mode_of(window.fullscreen()))
+    }
+
     /// Switches the window to the mode a game asked for during a callback, if it differs.
     fn apply_requested_mode(&mut self, requests: LoopRequests) {
-        let Some(wanted) = mode_change(requests, self.mode) else {
+        let Some(wanted) = mode_change(requests, self.current_mode()) else {
             return;
         };
         if let Some(window) = &self.window {
@@ -153,12 +160,7 @@ impl<G: Game> Runner<G> {
     }
 
     fn flip_window_mode(&mut self, event_loop: &ActiveEventLoop) {
-        // The OS can leave fullscreen on its own, so the window is the truth, not `self.mode`.
-        let current = self
-            .window
-            .as_ref()
-            .map_or(self.mode, |window| mode_of(window.fullscreen()));
-        self.mode = current.toggled();
+        self.mode = self.current_mode().toggled();
         if let Some(window) = &self.window {
             window.set_fullscreen(fullscreen_for(self.mode));
         }
@@ -285,13 +287,14 @@ impl<G: Game> ApplicationHandler for Runner<G> {
                 let now = Instant::now();
                 let frame_dt = self.sim.capped_frame_dt(now - self.last_frame);
                 self.last_frame = now;
+                let mode = self.current_mode();
                 let mut ctx = FrameContext::new(
                     self.sim.tick_length(),
                     self.sim.clock(),
                     self.renderer.as_deref_mut(),
                     self.audio.as_mut(),
                 )
-                .with_window_mode(self.mode);
+                .with_window_mode(mode);
                 ctx.frame_dt = frame_dt;
                 self.game.frame(&mut ctx, self.sim.alpha());
                 let requests = ctx.loop_requests();
@@ -320,12 +323,13 @@ impl<G: Game> ApplicationHandler for Runner<G> {
             Route::Close | Route::Forward => {}
         }
 
+        let mode = self.current_mode();
         let mut ctx = EventContext::new(
             self.sim.clock(),
             self.renderer.as_deref_mut(),
             self.audio.as_mut(),
         )
-        .with_window_mode(self.mode);
+        .with_window_mode(mode);
         self.game.event(&mut ctx, Event::Window(event));
         let requests = ctx.loop_requests();
         let exit = ctx.exit_requested();
@@ -342,12 +346,13 @@ impl<G: Game> ApplicationHandler for Runner<G> {
         _device_id: DeviceId,
         event: DeviceEvent,
     ) {
+        let mode = self.current_mode();
         let mut ctx = EventContext::new(
             self.sim.clock(),
             self.renderer.as_deref_mut(),
             self.audio.as_mut(),
         )
-        .with_window_mode(self.mode);
+        .with_window_mode(mode);
         self.game.event(&mut ctx, Event::Device(event));
         let requests = ctx.loop_requests();
         let exit = ctx.exit_requested();
