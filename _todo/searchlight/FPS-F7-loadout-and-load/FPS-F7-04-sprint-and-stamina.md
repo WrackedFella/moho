@@ -46,6 +46,12 @@ Scenario: Load at the no-sprint threshold takes sprint away
   When the player presses sprint
   Then the player moves at the slowed speed
   And the character screen lists load as capping sprint
+
+Scenario: Sprint is refused while leaning
+  Given the player is leaning
+  When the player presses sprint
+  Then the player keeps the leaning movement speed
+  And stamina does not drain
 ```
 
 ## Verification
@@ -55,4 +61,4 @@ Scenario: Load at the no-sprint threshold takes sprint away
 ## Notes
 - No stamina bar on the HUD (GDD §3.3 limited HUD); breathing or other cues are a
   later presentation pass.
-- Sprint while crouched or prone belongs to stance (FPS-F4).
+- Sprint while crouched or prone belongs to stance (FPS-F4). The leaning rule comes from FPS-F4; its scenario applies once lean has landed, whichever card lands second carries it.
