@@ -14,7 +14,7 @@ stops the lean short.
 - Holding Q leans left, holding E leans right; releasing returns upright.
 - The lean blends in and out over a short time rather than snapping.
 - A wall on the lean side stops the lean short; the view never passes through geometry.
-- While a lean is held the player moves at reduced speed and cannot sprint.
+- While a lean is held the player moves slower than walking.
 - Shots fired while leaning leave from the leaned eye.
 
 ## Acceptance criteria
@@ -51,10 +51,10 @@ Scenario: The most recently pressed side wins
   Then the player leans right
   And releasing E while Q is still held leans left again
 
-Scenario: No sprint while leaning
+Scenario: Moving while leaning is slower than walking
   Given the player holds Q
-  When the player presses sprint and moves forward
-  Then the player moves at the leaning speed, slower than walking
+  When the player moves forward
+  Then the player moves slower than walking upright
 
 Scenario: A shot fired while leaning leaves from the leaned eye
   Given the player is fully leaning right at a corner with a target visible only past it
@@ -66,8 +66,8 @@ Scenario: A shot fired while leaning leaves from the leaned eye
 1. In the arena, stand beside a tall cover corner and hold E: the view peeks past the corner
    and rolls; release and it returns smoothly.
 2. Hold Q against a wall: the lean stops short with no view through the wall.
-3. Lean while walking: movement is slow and sprint does nothing.
+3. Lean while walking: movement is slower than walking upright.
 
 ## Notes
-Lean is part of the per-tick command (feature decision). Hold-or-toggle and rebinding wait on
+Lean is part of the per-tick command (feature decision). Sprint arrives with FPS-F7 and is refused while a lean is held. Hold-or-toggle and rebinding wait on
 ENG-F26 #359.

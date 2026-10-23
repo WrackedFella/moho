@@ -6,13 +6,12 @@
 **Labels:** line:fps
 
 ## Summary
-The view bobs with the player's steps, more when sprinting than walking, and is still when
-standing. A head-bob setting from 0 to 100 % scales it, is saved, and is set from the console
+The view bobs with the player's steps, scaled by speed, and is still when standing. A head-bob setting from 0 to 100 % scales it, is saved, and is set from the console
 now and from the Settings screen once FPS-F3-03 #460 lands.
 
 ## Deliverables
-- The view bobs while walking, more while sprinting, and not at all while standing still or
-  airborne.
+- The view bobs while moving on the ground, more the faster the player moves, and not at all
+  while standing still or airborne.
 - Head bob never moves the aim ray or the player's hit volumes.
 - A head-bob setting, 0 to 100 %, default moderate, saved across launches.
 - A console command reads and sets it.
@@ -28,12 +27,12 @@ Scenario Outline: Bob follows movement
     | moving        | amount                      |
     | standing still| none                        |
     | walking       | present                     |
-    | sprinting     | larger than walking         |
+    | leaning and walking | smaller than walking  |
     | airborne      | none                        |
 
 Scenario: 0 % keeps the view still
   Given head bob is at 0 %
-  When the player sprints for a full step cycle
+  When the player walks for a full step cycle
   Then the view does not bob
 
 Scenario: Bob does not move the aim
@@ -53,9 +52,8 @@ Scenario: Out-of-range values are refused
 ```
 
 ## Verification
-1. Walk then sprint in the arena: the bob is visible, larger when sprinting, and feels grounded,
-   not seasick.
-2. Set head bob to 0 % from the console: the view is still while sprinting.
+1. Walk in the arena: the bob is visible and feels grounded, not seasick.
+2. Set head bob to 0 % from the console: the view is still while walking.
 
 ## Notes
-The Settings slider behaves as every #460 setting (staged, Apply persists).
+Sprint (FPS-F7) bobs more than walking by the same speed rule. The Settings slider behaves as every #460 setting (staged, Apply persists).
