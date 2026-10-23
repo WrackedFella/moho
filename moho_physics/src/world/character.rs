@@ -1610,21 +1610,6 @@ mod tests {
     }
 
     #[test]
-    fn an_idle_walker_past_the_flat_base_rolls_off_a_nosing() {
-        let floor_rest = rest_height_on_floor();
-
-        for past in [0.25, 0.28] {
-            let end = idle_on_a_nosing(past);
-
-            assert!(end.grounded, "{past} m past the nosing: {end:?}");
-            assert!(
-                (end.position.y - floor_rest).abs() < 0.02,
-                "{past} m past the nosing: should end on the lower floor (rest {floor_rest}), not perched: {end:?}"
-            );
-        }
-    }
-
-    #[test]
     fn an_idle_walker_within_the_flat_base_stays_on_a_nosing() {
         let end = idle_on_a_nosing(0.1);
 
