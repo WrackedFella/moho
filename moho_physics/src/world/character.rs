@@ -1198,6 +1198,22 @@ mod tests {
     }
 
     #[test]
+    fn spawn_pitch_is_clamped() {
+        let mut world = PhysicsWorld::new();
+        let spawn = |pitch| CharacterSpawn {
+            position: Vec3::new(0.0, 10.0, 0.0),
+            yaw: 0.0,
+            pitch,
+        };
+
+        let up = world.add_character(spawn(3.0));
+        let down = world.add_character(spawn(-3.0));
+
+        assert_eq!(state(&world, up).pitch, crate::movement::PITCH_LIMIT);
+        assert_eq!(state(&world, down).pitch, -crate::movement::PITCH_LIMIT);
+    }
+
+    #[test]
     fn spawn_round_trips_through_postcard() {
         let spawn = CharacterSpawn {
             position: Vec3::new(1.0, 2.0, 3.0),
@@ -1741,7 +1757,7 @@ mod tests {
             "carried over the edge: {now:?}"
         );
         assert!(now.grounded, "{now:?}");
-        assert!(impacts.iter().all(|i| i.speed <= 1e-3), "{impacts:?}");
+        assert!(impacts.is_empty(), "{impacts:?}");
         // Rim resting on the lip's edge a skin's width away, 6 cm below the floor:
         // -0.06 + 0.85 + sqrt((0.3 + 0.0115)^2 - 0.2^2) = 1.029. Lowering onto the lip's plane
         // instead would end near 1.09.

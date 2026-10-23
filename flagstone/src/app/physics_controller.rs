@@ -549,6 +549,43 @@ mod tests {
     }
 
     #[test]
+    fn player_states_are_withheld_until_a_queued_teleport_applies() {
+        let mut controller = PhysicsController::new();
+        controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
+        for _ in 0..10 {
+            controller.move_character(&idle(), &strategy_settings(), DT);
+        }
+        assert!(controller.player_states().is_some());
+
+        controller.teleport_character(glam::Vec3::new(3.0, 20.0, -4.0));
+
+        assert_eq!(controller.player_states(), None);
+        let moved = controller
+            .move_character(&idle(), &strategy_settings(), DT)
+            .expect("player is live");
+        assert_eq!(controller.player_states(), Some((moved, moved)));
+    }
+
+    #[test]
+    fn player_states_are_withheld_until_a_queued_look_applies() {
+        let mut controller = PhysicsController::new();
+        controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
+        for _ in 0..10 {
+            controller.move_character(&idle(), &strategy_settings(), DT);
+        }
+        assert!(controller.player_states().is_some());
+
+        controller.set_player_look(0.7, -0.3);
+
+        assert_eq!(controller.player_states(), None);
+        let moved = controller
+            .move_character(&idle(), &strategy_settings(), DT)
+            .expect("player is live");
+        assert_eq!((moved.yaw, moved.pitch), (0.7, -0.3));
+        assert_eq!(controller.player_states(), Some((moved, moved)));
+    }
+
+    #[test]
     fn teleport_is_not_blended_by_the_view() {
         let mut controller = PhysicsController::new();
         controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
