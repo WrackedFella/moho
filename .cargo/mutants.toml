@@ -19,11 +19,11 @@ exclude_re = [
     # they use is tested through `route`.
     "ApplicationHandler for Runner",
     # Needs `ActiveEventLoop` and a window: it calls `Window::set_fullscreen`. The toggle
-    # decision is tested through `ToggleKeys`.
-    'replace Runner<G>::flip_window_mode with \(\)',
+    X# decision is tested through `ToggleKeys`.
+    X'replace Runner<G>::flip_window_mode with \(\)',
     # winit's `KeyEvent` cannot be built outside winit, so this arm is unreachable from tests; the
-    # classification it feeds is tested through `ToggleKeys::observe`.
-    'delete match arm WindowEvent::KeyboardInput\{event, \.\.\} in observe_toggle',
+    X# classification it feeds is tested through `ToggleKeys::observe`.
+    X'delete match arm WindowEvent::KeyboardInput\{event, \.\.\} in observe_toggle',
     'replace run -> Result<\(\), AppError> with Ok\(\(\)\)',
     # `Game::init` only runs once the runner has created a real window.
     'replace <impl moho_app::Game for App>::init with \(\)',
@@ -31,8 +31,6 @@ exclude_re = [
     'delete match arm "light" in EventProcessor::handle_debug_event',
     'delete match arm DebugEvent::SetShadowQuality\{quality\} in EventProcessor::handle_debug_event',
     'delete match arm DebugEvent::SetSsaoQuality\{quality\} in EventProcessor::handle_debug_event',
-    # Equivalent while every file kind is at version 1; drop when one bumps.
-    'replace FileKind::current_version -> u16 with 1$',
     # Equivalent: the fallback is a single-axis vector and only its sign survives
     # normalisation, which dividing by the density step keeps.
     'replace \* with / in MarchingCubes::edge_gradient',
@@ -41,8 +39,6 @@ exclude_re = [
     'replace & with [|^] in MarchingCubes::process_cell',
     # Equivalent: a zero direction normalises to zero, so moving by it changes nothing.
     'replace > with >= in PlayerController::apply_input',
-    # Equivalent: a grounded character at exactly 0 vertical speed is set to 0.
-    'replace < with <= in PhysicsWorld::move_character',
     # Equivalent: the three axis fields occupy disjoint bits, so OR and XOR agree.
     'replace \| with \^ in chunk_mesh_id',
     # Equivalent: ctrl, shift and alt occupy disjoint bits, so OR and XOR agree.
@@ -98,9 +94,8 @@ exclude_re = [
     'replace capture_cursor with \(\)',
     'delete match arm Feedback::Fired in Stage::react',
     'replace Stage::play_shot with \(\)',
-    'replace <impl Game for FpsGame>::(init|event) with \(\)',
     # Not proven equivalent: `init` grabs the cursor on the real window, which needs a display.
-    'replace <impl Game for SearchlightGame>::init with \(\)',
+    'replace <impl Game for SearchlightGame>::(init|event) with \(\)',
     # The title text is `window_title`, tested; what is left is comparing with the shown title and
     # calling `Window::set_title`, which needs a real window.
     'replace Stage::refresh_title with \(\)',
@@ -109,7 +104,7 @@ exclude_re = [
     # static level geometry does not move in it.
     'arena\.rs:\d+:\d+: replace / with [%\*]$',
     # Equivalent: a zero cooldown leaves the weapon `Ready` on the next advance either way.
-    'replace > with >= in FpsSim::pull_trigger',
+    SearchlightSim::pull_trigger
     # Equivalent: the target number is shifted past the three part-index bits, so OR and
     # XOR agree.
     'replace \| with \^ in <impl From<SurfaceTag> for HitTag>::from',
@@ -137,7 +132,7 @@ exclude_re = [
     # searchlight::sim. Equivalent: `hurt` is read only for a living enemy brain; a dummy has no
     # brain and a dead enemy leaves the world before the next tick reads it, so `||` stores a
     # value nothing consumes.
-    'replace && with \|\| in FpsSim::resolve_player_shot',
+    SearchlightSim::resolve_player_shot
     # searchlight::cover. Hangs rather than survives: the mutated step walks the ray backwards, so
     # it strikes the same character forever and only the timeout stops it.
     'replace \+ with - in world_blocks',
