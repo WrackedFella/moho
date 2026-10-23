@@ -206,6 +206,23 @@ mod tests {
         (projection * view).project_point3(point)
     }
 
+    proptest! {
+        #[test]
+        fn camera_maps_to_the_middle_of_the_map_at_a_fixed_depth(
+            light in above_horizon(),
+            camera in any_position(),
+        ) {
+            let clip = light_view_projection(light, camera).project_point3(camera);
+
+            // Depth is 0.5 + 0.5 * (2000 - 1) / (3000 - 1): the camera is 2 * SHADOW_DISTANCE into
+            // a 3 * SHADOW_DISTANCE volume, and the 0..1 correction stacks on an already-0..1 ortho.
+            let texel = 2.0 / SHADOW_MAP_SIZE as f32;
+            prop_assert!(clip.x.abs() <= texel, "x {}", clip.x);
+            prop_assert!(clip.y.abs() <= texel, "y {}", clip.y);
+            prop_assert!((clip.z - 0.8333).abs() < 1e-3, "depth {}", clip.z);
+        }
+    }
+
     #[test]
     fn light_straight_overhead_gives_a_finite_matrix() {
         for light in [Vec3::Y, Vec3::NEG_Y] {
