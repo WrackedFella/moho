@@ -17,7 +17,7 @@ flowchart TD
         LA["chunks enter the grid"] --> LL["LightSystem::light_arrived_chunks<br/>(synchronous)"]
         LL --> D2
         LS["LightSystem::process_frame<br/>(budgeted)"] --> D2["emit_dirty_events →<br/>ChunkMeshDirty"]
-        EDIT["block edit (mine, place)"] --> D3["ChunkMeshDirty for each chunk<br/>in chunks_meshed_from(block)"]
+        EDIT["block edit (mine, place)"] --> D3["ChunkMeshDirty<br/>(mine: each chunk in chunks_meshed_from(block))"]
     end
     D1 & D2 & D3 --> CH[("world channel")]
     CH --> PW["process_world_events"]
@@ -32,11 +32,14 @@ flowchart TD
 Neighbours are re-meshed on load because a neighbour meshed before this chunk existed
 has an exposed edge face; it must re-sample to close the seam.
 
-A mined block dirties every chunk whose mesh reads it, not only its own: the padded density
-field of a chunk reaches `SAMPLE_REACH` (1) block past its far edge, so a block on a chunk's
-negative face, edge or corner also dirties the negative neighbours (1, 2, 4 or 8 chunks).
-`chunks_meshed_from` in
-[`flagstone_voxel/src/mesh/hybrid.rs`](../../flagstone_voxel/src/mesh/hybrid.rs) yields that set.
+A mined block dirties every chunk whose geometry reads it, not only its own: the padded
+density field of a chunk reaches `SAMPLE_REACH` (1) block past its far edge, so a block on a
+chunk's negative face, edge or corner also dirties the negative neighbours (1, 2, 4 or 8
+chunks). `chunks_meshed_from` in
+[`flagstone_voxel/src/mesh/hybrid.rs`](../../flagstone_voxel/src/mesh/hybrid.rs) yields that
+set. It covers geometry only: smooth normals of the positive neighbour read a block one
+further in, so shading there can stay stale until that chunk is next meshed. Placing a block
+keeps its previous dirty set.
 
 ## Parameters
 

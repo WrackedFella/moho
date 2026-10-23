@@ -93,7 +93,8 @@ pub(crate) fn sample_face_material(grid: &VoxelGrid, chunk_base: IVec3, sample: 
         .expect("marching cubes asks for the material of solid samples only")
 }
 
-/// The chunks whose meshes read `block`: its own chunk plus, on each axis where the block
+/// The chunks whose mesh geometry reads `block` (smooth normals of the positive neighbour
+/// also read a block at local 15, which this set leaves out): its own chunk plus, on each axis where the block
 /// sits within [`SAMPLE_REACH`] of the chunk's negative edge, the negative neighbour
 /// (whose padded density field reaches [`SAMPLE_REACH`] blocks past its far edge).
 /// Yields 1, 2, 4 or 8 chunks.
