@@ -77,7 +77,6 @@ fn window_title(status: &str) -> String {
 /// The glTF material name of the arena meshes that draw glossy.
 const FLOOR_MATERIAL: &str = "floor";
 
-/// Gloss of the arena floor's paint.
 const ARENA_FLOOR_GLOSS: f32 = 0.6;
 
 /// Surface colours of the greybox world.

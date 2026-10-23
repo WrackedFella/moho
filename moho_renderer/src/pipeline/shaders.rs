@@ -31,12 +31,8 @@ pub fn ui_shader_source() -> &'static str {
 
 /// Load and compile all shader modules.
 ///
-/// Both modules are built from sources embedded at compile time
-/// ([`main_shader_source`], [`skybox_shader_source`]).
-///
-/// # Returns
-///
-/// A tuple of (main_shader, skybox_shader).
+/// Returns `(main_shader, skybox_shader)`, built from [`main_shader_source`] and
+/// [`skybox_shader_source`].
 pub fn load_shaders(device: &wgpu::Device) -> (wgpu::ShaderModule, wgpu::ShaderModule) {
     let main_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("shader"),

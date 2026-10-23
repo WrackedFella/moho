@@ -681,7 +681,6 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let is_terrain = in.object_type == 0u;
     let fuzz    = select(mat.params.x, 0.0, is_terrain);
     let ref_idx = select(mat.params.y, 0.0, is_terrain);
-    // World meshes carry gloss in albedo.w; every other object leaves it unused.
     let gloss = select(0.0, clamp(mat.albedo.w, 0.0, 1.0), is_terrain);
 
     // Emissive short-circuit: skip all lighting, output flat colour * intensity.
@@ -707,7 +706,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // the object appears reflective/transparent rather than fully diffuse.
     var celestial: vec3<f32> = vec3<f32>(0.0, 0.0, 0.0);
     var dielectric_fresnel = 0.0;
-    // Sky reflection inputs: stay at zero reflectance unless a branch below sets them.
+    // Sky reflection inputs; reflectance stays zero unless a branch below sets them.
     var reflects = false;
     var reflect_f0 = vec3<f32>(0.0);
     var reflect_roughness = 0.0;
@@ -892,7 +891,6 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         // Mode 6: Sky Ambient alone
         return vec4<f32>(sky_ambient, 1.0);
     } else if (debug_mode == 7u) {
-        // Mode 7: Sky Reflection alone
         return vec4<f32>(sky_reflected, 1.0);
     }
 
