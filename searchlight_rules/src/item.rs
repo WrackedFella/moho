@@ -136,6 +136,29 @@ pub enum ItemKind {
     Plain,
 }
 
+impl ItemKind {
+    /// The class an item with this kind's section must have; `None` for a kind with no section.
+    pub(crate) fn required_class(&self) -> Option<ItemClass> {
+        match self {
+            Self::Weapon(_) => Some(ItemClass::Weapon),
+            Self::Magazine(_) | Self::Rig(_) => Some(ItemClass::Gear),
+            Self::Round(_) => Some(ItemClass::Consumable),
+            Self::Plain => None,
+        }
+    }
+
+    /// The data key of this kind's section; `None` for a kind with no section.
+    fn section_name(&self) -> Option<&'static str> {
+        match self {
+            Self::Weapon(_) => Some("weapon"),
+            Self::Magazine(_) => Some("magazine"),
+            Self::Round(_) => Some("round"),
+            Self::Rig(_) => Some("rig"),
+            Self::Plain => None,
+        }
+    }
+}
+
 /// An item as defined in data.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(try_from = "RawItemDef")]
@@ -217,28 +240,21 @@ impl TryFrom<RawItemDef> for ItemDef {
             return Err(ItemDefError::ZeroSize);
         }
         let class = raw.class;
-        let (section, needs, kind) = match (raw.weapon, raw.magazine, raw.round, raw.rig) {
-            (None, None, None, None) => {
-                return Ok(Self {
-                    class,
-                    size: Size { width, height },
-                    lifecycle,
-                    kind: ItemKind::Plain,
-                });
-            }
-            (Some(weapon), None, None, None) => {
-                ("weapon", ItemClass::Weapon, ItemKind::Weapon(weapon))
-            }
-            (None, Some(magazine), None, None) => {
-                ("magazine", ItemClass::Gear, ItemKind::Magazine(magazine))
-            }
-            (None, None, Some(round), None) => {
-                ("round", ItemClass::Consumable, ItemKind::Round(round))
-            }
-            (None, None, None, Some(rig)) => ("rig", ItemClass::Gear, ItemKind::Rig(rig)),
-            _ => return Err(ItemDefError::TwoSections),
-        };
-        if class != needs {
+        let mut sections = [
+            raw.weapon.map(ItemKind::Weapon),
+            raw.magazine.map(ItemKind::Magazine),
+            raw.round.map(ItemKind::Round),
+            raw.rig.map(ItemKind::Rig),
+        ]
+        .into_iter()
+        .flatten();
+        let kind = sections.next().unwrap_or(ItemKind::Plain);
+        if sections.next().is_some() {
+            return Err(ItemDefError::TwoSections);
+        }
+        if let (Some(needs), Some(section)) = (kind.required_class(), kind.section_name())
+            && class != needs
+        {
             return Err(ItemDefError::SectionForClass { section, class });
         }
         Ok(Self {

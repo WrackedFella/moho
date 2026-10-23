@@ -61,17 +61,23 @@ struct RawMagazine {
     rounds: Vec<ItemId>,
 }
 
+/// Saturates at `u32::MAX`, which any `u32` capacity then rejects or equals.
+fn round_count(rounds: &[ItemId]) -> u32 {
+    u32::try_from(rounds.len()).unwrap_or(u32::MAX)
+}
+
+fn check_capacity(rounds: u32, capacity: u32) -> Result<(), MagazineError> {
+    if rounds > capacity {
+        return Err(MagazineError::OverCapacity { rounds, capacity });
+    }
+    Ok(())
+}
+
 impl TryFrom<RawMagazine> for Magazine {
     type Error = MagazineError;
 
     fn try_from(raw: RawMagazine) -> Result<Self, Self::Error> {
-        let held = u32::try_from(raw.rounds.len()).unwrap_or(u32::MAX);
-        if held > raw.capacity {
-            return Err(MagazineError::OverCapacity {
-                rounds: held,
-                capacity: raw.capacity,
-            });
-        }
+        check_capacity(round_count(&raw.rounds), raw.capacity)?;
         Ok(Self {
             item: raw.item,
             well: raw.well,
@@ -106,12 +112,7 @@ impl Magazine {
         round: &ItemId,
         count: u32,
     ) -> Result<Self, MagazineError> {
-        if count > spec.capacity {
-            return Err(MagazineError::OverCapacity {
-                rounds: count,
-                capacity: spec.capacity,
-            });
-        }
+        check_capacity(count, spec.capacity)?;
         let mut magazine = Self::empty(item, spec);
         magazine.rounds = vec![round.clone(); count as usize];
         Ok(magazine)
@@ -164,8 +165,7 @@ impl Magazine {
     /// Rounds currently held.
     #[must_use]
     pub fn rounds(&self) -> u32 {
-        // Held rounds never exceed the u32 capacity, so the length fits.
-        u32::try_from(self.rounds.len()).unwrap_or(u32::MAX)
+        round_count(&self.rounds)
     }
 
     /// Approximate fill, for HUD display without exact counts.
