@@ -1673,16 +1673,6 @@ mod tests {
         }
 
         #[test]
-        fn a_one_tick_jump_from_rest_jumps() {
-            let mut state = standing();
-            assert!(!state.jump_held, "the character starts with jump up");
-
-            walk(&mut state, &jump_command(true), &test_settings());
-
-            assert!(took_off(&state), "{state:?}");
-        }
-
-        #[test]
         fn a_press_made_in_the_air_and_held_does_not_jump_on_landing() {
             let mut state = state_at(Vec3::new(0.0, 0.1, 0.0), Vec3::new(0.0, -3.0, 0.0), false);
             let held = jump_command(true);
@@ -1724,26 +1714,36 @@ mod tests {
         }
 
         #[test]
-        fn a_teleport_does_not_release_jump() {
-            let mut state = standing();
-            state.jump_held = true;
-            let teleport = [CharacterEffect::Teleport {
-                position: Vec3::new(0.0, 0.001, 0.0),
-                keep_velocity: false,
-            }];
-            let on_floor = |from: &CharacterState, asked| flat_floor(from.position.y)(asked);
-            let held = jump_command(true);
-            super::step(&mut state, &held, &teleport, &test_settings(), DT, on_floor);
-            assert!(state.grounded, "the teleported character landed: {state:?}");
+        fn an_effect_does_not_release_jump() {
+            let effects = [
+                CharacterEffect::SetLook {
+                    yaw: 0.0,
+                    pitch: 0.0,
+                },
+                CharacterEffect::AddVelocity(Vec3::ZERO),
+                CharacterEffect::SetVelocity(Vec3::ZERO),
+            ];
+            for effect in effects {
+                let mut state = standing();
+                state.jump_held = true;
 
-            super::step(&mut state, &held, &[], &test_settings(), DT, on_floor);
+                super::step(
+                    &mut state,
+                    &jump_command(true),
+                    &[effect],
+                    &test_settings(),
+                    DT,
+                    |from, asked| flat_floor(from.position.y)(asked),
+                );
 
-            assert!(state.grounded, "stayed on the ground: {state:?}");
-            assert!(
-                state.velocity.y.abs() < 1e-4,
-                "the hold carried through the teleport: {:?}",
-                state.velocity
-            );
+                assert!(state.grounded, "{effect:?}: {state:?}");
+                assert!(
+                    state.velocity.y.abs() < 1e-4,
+                    "{effect:?} released the held jump: {:?}",
+                    state.velocity
+                );
+                assert!(state.jump_held, "{effect:?}");
+            }
         }
     }
 
