@@ -97,10 +97,13 @@ game's `Action` enum: each key is an action's stable `name()`, each value a bind
 list. Absent actions keep their defaults; `ActionBindings::to_section` writes every
 action, defaults included. Line problems are returned as `BindingWarning`s and the
 action keeps its default (`flagstone_ui::actions::load_bindings` logs them): an unknown
-action id, or a value with any unrecognised key. A `[bindings]` line with no `=` is a
+action id, a value with any unrecognised key, or a value holding a protected binding (see below). A `[bindings]` line with no `=` is a
 malformed prefs line. `console` is reserved in every game's `[bindings]`: it is the
 engine console's key (`moho_ui_shell`, default backtick; an unbound or unreadable value, or one
-with a `Hold ` item or a chord, falls back to backtick), not a game action. The pre-`[bindings]` `key_*` lines under `[prefs]` are unknown
+with a `Hold ` item or a chord, falls back to backtick), not a game action. `fullscreen` is reserved likewise: it names the
+key that flips windowed and borderless fullscreen besides Alt+Enter (`moho_app::split_fullscreen_binding`;
+default F11; a value that does not parse, is a protected key, or holds a chord, `Hold ` item or mouse button
+warns and falls back to F11). The game loader never sees it. The pre-`[bindings]` `key_*` lines under `[prefs]` are unknown
 keys and ignored.
 
 A binding list is comma-separated key names (`W`, `Spacebar, Enter`); an action may
@@ -112,6 +115,10 @@ punctuation spelled as a word (`Comma`, `Semicolon`, `LeftBracket`, ...), `Arrow
 `Space`, `Control` and the punctuation glyphs, but in `prefs.ini` write punctuation as
 words: the INI reader cuts a line at `;` or `#`, reads a line with `[` as a section
 header, and `,` separates list items. There are no numeric key codes.
+
+A protected binding is an unmodified Enter, Escape or arrow key on any trigger (`Binding::is_protected`):
+menus and dialogs read those keys directly, so `ActionBindings::load` refuses it with a warning and the
+action keeps its default. A chord on them (`Ctrl+Enter`) is allowed, and defaults must not use one.
 
 A chord prefixes a key or mouse button with `Ctrl+`, `Shift+` and `Alt+` (`Ctrl+R`, `Shift+Mouse Left`, `Hold Ctrl+R`; the `Hold ` prefix stays outermost). Modifiers parse in any order and case and are written back as Ctrl, Shift, Alt. A repeated modifier, a modifier equal to the bound key itself (`Ctrl+Ctrl`), a pad input (`Ctrl+Pad West`), an empty input or any other prefix (`Control+R`) is an unrecognised key and warns. `Shift+Ctrl` (a modifier key under another modifier) is valid. Resolution is in [input](../architecture/input-and-state.md).
 
@@ -161,7 +168,7 @@ mouse_smoothing=false
 
 [bindings]
 move_forward=W
-jump=Spacebar, Enter
+jump=Spacebar, F8
 descend=Unbound
 
 [audio]
