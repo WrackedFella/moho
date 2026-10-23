@@ -31,6 +31,7 @@ pub fn tuning(rifle: &RifleDef) -> Result<SimConfig, MagazineError> {
         damage: rifle.damage,
         cooldown_ticks: rifle.cooldown_ticks,
         reload_ticks: rifle.reload_ticks,
+        charge_ticks: rifle.charge_ticks,
         body: BodyProfile {
             max_health: 100,
             head_status: 30,
@@ -61,7 +62,7 @@ mod tests {
         (dir, rifle)
     }
 
-    const CAPACITY_20: &str = "[rifle]\nmagazine_capacity = 20\ndamage = 30\nfire = \"semi_auto\"\ncooldown_ticks = 6\nreload_ticks = 120\nrange = 100.0\n";
+    const CAPACITY_20: &str = "[rifle]\nmagazine_capacity = 20\ndamage = 30\nfire = \"semi_auto\"\ncooldown_ticks = 6\nreload_ticks = 120\ncharge_ticks = 30\nrange = 100.0\n";
 
     #[test]
     fn a_rifle_defined_with_capacity_20_gives_full_magazines_of_20() {
@@ -88,6 +89,7 @@ mod tests {
             fire: FireBehaviour::SemiAuto,
             cooldown_ticks: 9,
             reload_ticks: 77,
+            charge_ticks: 13,
             range: 55.5,
         };
 
@@ -96,6 +98,7 @@ mod tests {
         assert_eq!(config.damage, 41);
         assert_eq!(config.cooldown_ticks, 9);
         assert_eq!(config.reload_ticks, 77);
+        assert_eq!(config.charge_ticks, 13);
         assert!((config.range - 55.5).abs() < f32::EPSILON);
         assert_eq!(config.rifle.magazine().capacity(), 17);
         assert!(config.rifle.is_chambered());
@@ -136,12 +139,13 @@ mod tests {
         assert_eq!(config.damage, 30);
         assert_eq!(config.cooldown_ticks, 6);
         assert_eq!(config.reload_ticks, 120);
+        assert_eq!(config.charge_ticks, 30);
         assert!((config.range - 100.0).abs() < f32::EPSILON);
     }
 
     fn rifle_toml(capacity: u32, damage: u32) -> String {
         format!(
-            "[rifle]\nmagazine_capacity = {capacity}\ndamage = {damage}\nfire = \"semi_auto\"\ncooldown_ticks = 6\nreload_ticks = 120\nrange = 100.0\n"
+            "[rifle]\nmagazine_capacity = {capacity}\ndamage = {damage}\nfire = \"semi_auto\"\ncooldown_ticks = 6\nreload_ticks = 120\ncharge_ticks = 30\nrange = 100.0\n"
         )
     }
 
@@ -188,7 +192,7 @@ mod tests {
         write_root(&base, &rifle_toml(30, 30));
         write_root(
             &mods.join("heavy"),
-            "[rifle]\ndamage = 30\nfire = \"semi_auto\"\ncooldown_ticks = 6\nreload_ticks = 120\nrange = 100.0\n",
+            "[rifle]\ndamage = 30\nfire = \"semi_auto\"\ncooldown_ticks = 6\nreload_ticks = 120\ncharge_ticks = 30\nrange = 100.0\n",
         );
 
         let error = rifle_with_prefs(&base, &mods, "[content]\nmods = heavy\n").unwrap_err();
