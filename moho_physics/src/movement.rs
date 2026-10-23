@@ -207,12 +207,38 @@ pub(crate) fn turned_look(look: (f32, f32), delta: (f32, f32)) -> (f32, f32) {
     )
 }
 
+/// Apply one queued effect to `state`.
+fn apply(state: &mut CharacterState, effect: CharacterEffect) {
+    match effect {
+        CharacterEffect::AddVelocity(velocity) => state.velocity += velocity,
+        CharacterEffect::SetVelocity(velocity) => state.velocity = velocity,
+        CharacterEffect::Teleport {
+            position,
+            keep_velocity,
+        } => {
+            state.position = position;
+            if !keep_velocity {
+                state.velocity = Vec3::ZERO;
+            }
+            state.grounded = false;
+        }
+        CharacterEffect::SetLook { yaw, pitch } => {
+            state.yaw = yaw;
+            state.pitch = pitch.clamp(-PITCH_LIMIT, PITCH_LIMIT);
+        }
+    }
+}
+
 /// Advance `state` by one tick of `dt` seconds and report the impacts.
 ///
 /// `slide` receives the displacement the tick asks for and reports what the world
-/// allowed. The look turns first, so a turn and a move in one command face the new way.
+/// allowed, along with the state it starts from, which a teleport may have moved. The queued
+/// `effects` apply first, in order, so a replay of commands and effects reproduces the run.
+/// The look turns next, so a turn and a move in one command face the new way.
 ///
 /// The order within a tick:
+/// 0. the queued effects apply in order; a teleport clears `grounded`, so that tick runs
+///    airborne and settle finds the ground;
 /// 1. the look turns;
 /// 2. a jump adds `jump_speed` to the vertical velocity;
 /// 3. half a tick of gravity (`v.y -= g·dt/2`), unless walking;
@@ -228,11 +254,15 @@ pub(crate) fn turned_look(look: (f32, f32), delta: (f32, f32)) -> (f32, f32) {
 pub fn step(
     state: &mut CharacterState,
     command: &CharacterCommand,
-    _effects: &[CharacterEffect],
+    effects: &[CharacterEffect],
     settings: &MoveSettings,
     dt: f32,
     slide: impl FnOnce(&CharacterState, Vec3) -> Slide,
 ) -> Vec<Impact> {
+    for effect in effects {
+        apply(state, *effect);
+    }
+
     (state.yaw, state.pitch) = turned_look(
         (state.yaw, state.pitch),
         (command.yaw_delta, command.pitch_delta),

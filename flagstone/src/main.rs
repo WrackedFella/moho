@@ -324,11 +324,14 @@ impl App {
             .unwrap_or(10) as f32;
 
         let spawn_pos = glam::Vec3::new(saved_pos.x, terrain_y + 3.0, saved_pos.z);
-        self.physics.spawn_player(spawn_pos);
+        let (yaw, pitch) = self.simulation.yaw_pitch();
+        self.physics.spawn_player(moho_physics::CharacterSpawn {
+            position: spawn_pos,
+            yaw,
+            pitch,
+        });
 
         // Align the simulation Y to match physics spawn (avoids terrain clipping).
-        let (yaw, pitch) = self.simulation.yaw_pitch();
-        self.physics.set_player_look(yaw, pitch);
         self.simulation
             .set_position_yaw_pitch(spawn_pos, yaw, pitch);
 

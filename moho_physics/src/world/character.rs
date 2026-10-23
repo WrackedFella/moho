@@ -76,6 +76,8 @@ pub(super) struct Character {
     yaw: f32,
     pitch: f32,
     grounded: bool,
+    /// Changes from outside the step, applied in order by the next `move_character`.
+    effects: Vec<CharacterEffect>,
 }
 
 impl Character {
@@ -111,9 +113,10 @@ impl PhysicsWorld {
 
     /// Add a kinematic character (capsule) to the world.
     pub fn add_character(&mut self, spawn: impl Into<CharacterSpawn>) -> CharacterHandle {
-        let position = spawn.into().position;
+        let spawn = spawn.into();
+        let position = spawn.position;
         let body = RigidBodyBuilder::kinematic_position_based()
-            .translation(position)
+            .pose(Pose::from_parts(position, Quat::from_rotation_y(spawn.yaw)))
             .build();
         let body_handle = self.rigid_body_set.insert(body);
 
@@ -131,9 +134,10 @@ impl PhysicsWorld {
             Character {
                 collider,
                 velocity: Vec3::ZERO,
-                yaw: 0.0,
-                pitch: 0.0,
+                yaw: spawn.yaw,
+                pitch: spawn.pitch,
                 grounded: false,
+                effects: Vec::new(),
             },
         );
 
@@ -202,11 +206,11 @@ impl PhysicsWorld {
         settings: &MoveSettings,
         dt: f32,
     ) -> Result<Vec<Impact>, UnknownCharacter> {
-        let character = self.characters.get(&handle).ok_or(UnknownCharacter)?;
+        let character = self.characters.get_mut(&handle).ok_or(UnknownCharacter)?;
         let collider_handle = character.collider;
+        let effects = std::mem::take(&mut character.effects);
         let pose = *self.rigid_body_set[handle.0].position();
         let mut state = character.state(pose.translation);
-        let was_grounded = state.grounded;
 
         // Transient QueryPipeline view without this character's capsule and hit volumes, nor
         // any other character's hit volumes; capsules still meet capsules.
@@ -226,9 +230,17 @@ impl PhysicsWorld {
             dt,
         };
 
-        let impacts = movement::step(&mut state, command, &[], settings, dt, |_, asked| {
-            slider.slide(&pose, asked, was_grounded)
-        });
+        let impacts = movement::step(
+            &mut state,
+            command,
+            &effects,
+            settings,
+            dt,
+            |from, asked| {
+                let start = Pose::from_parts(from.position, pose.rotation);
+                slider.slide(&start, asked, from.grounded)
+            },
+        );
 
         self.characters
             .get_mut(&handle)
@@ -245,61 +257,13 @@ impl PhysicsWorld {
     pub fn queue_effect(
         &mut self,
         handle: CharacterHandle,
-        _effect: CharacterEffect,
-    ) -> Result<(), UnknownCharacter> {
-        if !self.characters.contains_key(&handle) {
-            return Err(UnknownCharacter);
-        }
-        Ok(())
-    }
-
-    /// Teleport the character to `position` and zero its velocity.
-    ///
-    /// # Errors
-    /// [`UnknownCharacter`] if `handle` was removed.
-    pub fn set_character_position(
-        &mut self,
-        handle: CharacterHandle,
-        position: Vec3,
-    ) -> Result<(), UnknownCharacter> {
-        let character = self.characters.get_mut(&handle).ok_or(UnknownCharacter)?;
-        character.velocity = Vec3::ZERO;
-        let yaw = character.yaw;
-        self.place_body(handle, position, yaw);
-        Ok(())
-    }
-
-    /// Add `velocity` to the character's current velocity (knockback).
-    ///
-    /// # Errors
-    /// [`UnknownCharacter`] if `handle` was removed.
-    pub fn add_character_velocity(
-        &mut self,
-        handle: CharacterHandle,
-        velocity: Vec3,
+        effect: CharacterEffect,
     ) -> Result<(), UnknownCharacter> {
         self.characters
             .get_mut(&handle)
             .ok_or(UnknownCharacter)?
-            .velocity += velocity;
-        Ok(())
-    }
-
-    /// Set the character's facing without moving it.
-    ///
-    /// # Errors
-    /// [`UnknownCharacter`] if `handle` was removed.
-    pub fn set_character_look(
-        &mut self,
-        handle: CharacterHandle,
-        yaw: f32,
-        pitch: f32,
-    ) -> Result<(), UnknownCharacter> {
-        let character = self.characters.get_mut(&handle).ok_or(UnknownCharacter)?;
-        character.yaw = yaw;
-        character.pitch = pitch;
-        let position = self.rigid_body_set[handle.0].position().translation;
-        self.place_body(handle, position, yaw);
+            .effects
+            .push(effect);
         Ok(())
     }
 

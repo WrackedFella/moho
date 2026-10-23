@@ -13,6 +13,9 @@ pub struct PhysicsController {
     pub noclip: bool,
     /// The player's state before the latest tick, for blending the view.
     previous: Option<moho_physics::CharacterState>,
+    /// A teleport is queued: the next tick records its result as `previous` too, so the view
+    /// does not blend across it.
+    snap_view: bool,
 }
 
 impl PhysicsController {
@@ -24,6 +27,7 @@ impl PhysicsController {
             player: None,
             noclip: false,
             previous: None,
+            snap_view: false,
         }
     }
 
@@ -33,11 +37,12 @@ impl PhysicsController {
         self.test_bodies.clear();
         self.player = None;
         self.previous = None;
+        self.snap_view = false;
         self.noclip = false;
     }
 
-    /// Place the player character at `position`, replacing any previous one.
-    pub fn spawn_player(&mut self, position: glam::Vec3) {
+    /// Place the player character at `spawn`, replacing any previous one.
+    pub fn spawn_player(&mut self, spawn: impl Into<moho_physics::CharacterSpawn>) {
         let Some(pw) = self.world.as_mut() else {
             return;
         };
@@ -45,8 +50,9 @@ impl PhysicsController {
             pw.remove_character(previous)
                 .expect("the player handle belongs to the current world");
         }
-        let handle = pw.add_character(position);
+        let handle = pw.add_character(spawn);
         self.player = Some(handle);
+        self.snap_view = false;
         self.previous = pw.character(handle);
     }
 
@@ -77,23 +83,38 @@ impl PhysicsController {
         let pw = self.world.as_mut()?;
         self.previous = pw.character(handle);
         pw.move_character(handle, command, settings, dt).ok()?;
-        pw.character(handle)
+        let moved = pw.character(handle);
+        if std::mem::take(&mut self.snap_view) {
+            self.previous = moved;
+        }
+        moved
     }
 
-    /// Face the player character `yaw`/`pitch`, so the next tick turns from the view on screen.
+    /// Queue facing the player character `yaw`/`pitch`, so the next tick turns from the view on
+    /// screen.
     pub fn set_player_look(&mut self, yaw: f32, pitch: f32) {
         if let (Some(pw), Some(handle)) = (self.world.as_mut(), self.player) {
-            pw.set_character_look(handle, yaw, pitch)
-                .expect("the player handle belongs to the current world");
+            pw.queue_effect(
+                handle,
+                moho_physics::CharacterEffect::SetLook { yaw, pitch },
+            )
+            .expect("the player handle belongs to the current world");
         }
     }
 
-    /// Teleport the player (e.g. respawn after falling off the map).
+    /// Queue a teleport of the player (e.g. respawn after falling off the map), applied by the
+    /// next tick, which the view does not blend across.
     pub fn teleport_character(&mut self, pos: glam::Vec3) {
         if let (Some(pw), Some(handle)) = (self.world.as_mut(), self.player) {
-            pw.set_character_position(handle, pos)
-                .expect("the player handle belongs to the current world");
-            self.previous = pw.character(handle);
+            pw.queue_effect(
+                handle,
+                moho_physics::CharacterEffect::Teleport {
+                    position: pos,
+                    keep_velocity: false,
+                },
+            )
+            .expect("the player handle belongs to the current world");
+            self.snap_view = true;
         }
     }
 
