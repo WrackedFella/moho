@@ -1,6 +1,6 @@
 # 0014 — Characters move by velocity; physics only resolves contact
 
-**Status:** Accepted
+**Status:** Superseded by [0022](0022-character-changes-are-tick-input.md)
 
 ## Context
 
