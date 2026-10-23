@@ -4303,6 +4303,8 @@ mod grade_tests {
     const LOW_WALL: (Vec3, Vec3) = (Vec3::new(0.5, 0.0, 9.0), Vec3::new(9.0, 1.2, 9.2));
     /// Behind `LOW_WALL` as seen from the player.
     const SHIELDED: Vec3 = Vec3::new(4.0, 0.0, 10.0);
+    /// A second point behind `LOW_WALL`, for a second enemy to run to.
+    const SECOND_SHIELDED: Vec3 = Vec3::new(6.0, 0.0, 10.0);
     /// Closer to the shot at `ENEMY_SPAWN` than the radius, and clear of its capsule.
     const BESIDE_SPAWN: Vec3 = Vec3::new(-1.0, 0.0, 10.0);
     /// Between the player and the enemy at the full width of the arena.
@@ -4327,9 +4329,13 @@ mod grade_tests {
     /// The player at the origin and one enemy of `grade` ten metres ahead, with a shielded
     /// cover point in reach and `boxes` in the way.
     fn cover_duel(grade: Grade, boxes: &[(Vec3, Vec3)]) -> SearchlightSim {
+        cover_duel_with(grade, boxes, cover_config())
+    }
+
+    fn cover_duel_with(grade: Grade, boxes: &[(Vec3, Vec3)], config: SimConfig) -> SearchlightSim {
         let mut arena = (*arena_with(boxes, Vec3::ZERO, &[ENEMY_SPAWN], &[TOWARD_PLAYER])).clone();
         arena.covers = vec![SHIELDED];
-        let mut sim = SearchlightSim::with_start(Arc::new(arena), cover_config(), Start::Empty);
+        let mut sim = SearchlightSim::with_start(Arc::new(arena), config, Start::Empty);
         sim.spawn_enemy(0, grade).expect("the marker is free");
         sim
     }
@@ -4337,7 +4343,14 @@ mod grade_tests {
     /// A trigger pull with the player turned to pass `wide` metres to the side of the enemy
     /// at `ENEMY_SPAWN`; the player's rifle has no spread.
     fn fire_wide(sim: &SearchlightSim, wide: f32) -> SearchlightCommand {
-        let bearing = -(wide / ENEMY_SPAWN.z).asin();
+        fire_past(sim, ENEMY_SPAWN, wide)
+    }
+
+    /// A trigger pull passing `wide` metres to the -x side of the floor point `at`.
+    fn fire_past(sim: &SearchlightSim, at: Vec3, wide: f32) -> SearchlightCommand {
+        let from = sim.player().position;
+        let distance = horizontal(at, from);
+        let bearing = (at.x - from.x).atan2(at.z - from.z) - (wide / distance).asin();
         SearchlightCommand {
             movement: CharacterCommand {
                 yaw_delta: bearing - sim.player().yaw,
@@ -4362,11 +4375,17 @@ mod grade_tests {
 
     /// Plays `ticks` ticks with a shot `wide` metres off the enemy on each tick in `pulls`
     /// (counted from now), and returns the first tick the enemy stood at the shielded point.
-    fn play(
+    fn play(sim: &mut SearchlightSim, ticks: usize, pulls: &[usize], wide: f32) -> Option<usize> {
+        play_until(sim, ticks, pulls, wide, at_shielded_point)
+    }
+
+    /// As [`play`], returning the first tick `done` holds after.
+    fn play_until(
         sim: &mut SearchlightSim,
         ticks: usize,
         pulls: &[usize],
         wide: f32,
+        done: impl Fn(&SearchlightSim) -> bool,
     ) -> Option<usize> {
         for tick in 0..ticks {
             let command = if pulls.contains(&tick) {
@@ -4376,11 +4395,22 @@ mod grade_tests {
             };
             sim.tick(&command, DT);
             sim.drain_feedback();
-            if at_shielded_point(sim) {
+            if done(sim) {
                 return Some(tick);
             }
         }
         None
+    }
+
+    fn tick_with(sim: &mut SearchlightSim, command: &SearchlightCommand) {
+        sim.tick(command, DT);
+        sim.drain_feedback();
+    }
+
+    fn idle_for(sim: &mut SearchlightSim, ticks: usize) {
+        for _ in 0..ticks {
+            tick_with(sim, &SearchlightCommand::default());
+        }
     }
 
     /// `count` pulls, `PULL_GAP` ticks apart.
@@ -4402,18 +4432,38 @@ mod grade_tests {
 
     #[test]
     fn a_professional_reaches_cover_before_a_rookie_under_the_same_near_misses() {
-        let mut professional = cover_duel(Grade::Professional, &[LOW_WALL]);
-        let mut rookie = cover_duel(Grade::Rookie, &[LOW_WALL]);
+        // Both enemies take the same near misses, then the same wound on the same tick.
+        const WOUND_TICK: usize = 20;
+        let arrival = |grade: Grade| {
+            let mut sim = cover_duel(grade, &[LOW_WALL]);
+            let from = sim.player().position;
+            for tick in 0..400 {
+                let command = if tick < WOUND_TICK && pulls(3).contains(&tick) {
+                    fire_wide(&sim, NEAR)
+                } else {
+                    SearchlightCommand::default()
+                };
+                if tick == WOUND_TICK {
+                    sim.apply_player_hit(0, BodyPart::Head, 30, from);
+                }
+                tick_with(&mut sim, &command);
+                if at_shielded_point(&sim) {
+                    return Some(tick);
+                }
+            }
+            None
+        };
 
-        let professional_at = play(&mut professional, 300, &pulls(3), NEAR);
-        let rookie_at = play(&mut rookie, 300, &pulls(3), NEAR);
+        let professional = arrival(Grade::Professional);
+        let rookie = arrival(Grade::Rookie);
 
+        let (Some(professional), Some(rookie)) = (professional, rookie) else {
+            panic!("both reach cover: professional {professional:?}, rookie {rookie:?}");
+        };
         assert!(
-            professional_at.is_some(),
-            "the professional never reached cover: {:?}",
-            enemy_at(&professional, 0)
+            professional < rookie,
+            "professional at tick {professional}, rookie at tick {rookie}"
         );
-        assert_eq!(rookie_at, None, "the rookie ran for cover on near misses");
     }
 
     #[test]
@@ -4447,7 +4497,11 @@ mod grade_tests {
             "the rookie moved to {:?}",
             enemy_at(&rookie, 0)
         );
-        assert_eq!(claim_of(&rookie, 0), None, "the rookie claimed a cover point");
+        assert_eq!(
+            claim_of(&rookie, 0),
+            None,
+            "the rookie claimed a cover point"
+        );
     }
 
     #[test]
@@ -4476,7 +4530,10 @@ mod grade_tests {
             near_at.is_some(),
             "the control shots 1 m wide did not move the professional"
         );
-        assert_eq!(far_at, None, "shots 4 m wide sent the professional to cover");
+        assert_eq!(
+            far_at, None,
+            "shots 4 m wide sent the professional to cover"
+        );
         assert!(
             horizontal(enemy_at(&far, 0), ENEMY_SPAWN) < 0.5,
             "the professional moved to {:?}",
@@ -4513,7 +4570,10 @@ mod grade_tests {
             open_at.is_some(),
             "the control shots without the wall did not move the professional"
         );
-        assert_eq!(walled_at, None, "a shot the wall stopped scared the professional");
+        assert_eq!(
+            walled_at, None,
+            "a shot the wall stopped scared the professional"
+        );
         assert!(
             horizontal(enemy_at(&walled, 0), ENEMY_SPAWN) < 0.5,
             "the professional moved to {:?}",
@@ -4530,26 +4590,129 @@ mod grade_tests {
             &[TOWARD_PLAYER],
         );
         let mut arena = (*arena).clone();
-        arena.covers = vec![SHIELDED];
+        arena.covers = vec![SHIELDED, SECOND_SHIELDED];
         let mut sim = SearchlightSim::with_start(Arc::new(arena), cover_config(), Start::Empty);
         sim.spawn_enemy(0, Grade::Experienced)
             .expect("the first marker is free");
         sim.spawn_enemy(1, Grade::Experienced)
             .expect("the second marker is free");
+        let in_cover = |position: Vec3| {
+            [SHIELDED, SECOND_SHIELDED]
+                .iter()
+                .any(|cover| horizontal(position, *cover) < 1.0)
+        };
 
-        let reached = play(&mut sim, 300, &[0], 0.0);
+        let reached = play_until(&mut sim, 300, &[0], 0.0, |sim| in_cover(enemy_at(sim, 0)));
+        let held = horizontal(enemy_at(&sim, 1), BESIDE_SPAWN);
+        let first_shot_count = enemy_target(&sim, 0).near_misses;
+        let second_shot = fire_past(&sim, BESIDE_SPAWN, NEAR);
+        tick_with(&mut sim, &second_shot);
+        idle_for(&mut sim, 300);
 
         assert!(
             reached.is_some(),
             "the struck enemy stayed at {:?}",
             enemy_at(&sim, 0)
         );
-        assert_eq!(enemy_target(&sim, 0).near_misses, 0, "the struck enemy");
-        assert_eq!(enemy_target(&sim, 1).near_misses, 1, "the bystander");
+        assert_eq!(first_shot_count, 0, "the struck enemy took a near miss");
         assert!(
-            horizontal(enemy_at(&sim, 1), BESIDE_SPAWN) < 0.5,
-            "one near miss moved the experienced bystander to {:?}",
+            held < 0.5,
+            "the first shot, which hit the other enemy, moved the experienced bystander"
+        );
+        assert!(
+            in_cover(enemy_at(&sim, 1)),
+            "the bystander did not run for cover on its second near miss: {:?}",
             enemy_at(&sim, 1)
         );
+    }
+
+    #[test]
+    fn a_near_miss_count_starts_again_after_it_sends_an_enemy_to_cover() {
+        let mut sim = cover_duel(Grade::Experienced, &[LOW_WALL]);
+        let mut near_misses_after_shot = Vec::new();
+
+        for _ in 0..3 {
+            let at = enemy_at(&sim, 0);
+            let shot = fire_past(&sim, at, NEAR);
+            tick_with(&mut sim, &shot);
+            near_misses_after_shot.push(enemy_target(&sim, 0).near_misses);
+            idle_for(&mut sim, 10);
+        }
+
+        assert_eq!(near_misses_after_shot, [1, 0, 1]);
+    }
+
+    #[test]
+    fn a_shot_that_strikes_a_wall_beside_an_enemy_is_a_near_miss() {
+        // The shot ends on this box's face at about (-1.0, 1.9, 10.4), 1.3 m from the enemy.
+        let beside = (Vec3::new(-1.6, 0.0, 10.4), Vec3::new(-0.8, 3.0, 10.8));
+        let mut sim = cover_duel(Grade::Professional, &[LOW_WALL, beside]);
+
+        let shot = fire_wide(&sim, NEAR);
+        tick_with(&mut sim, &shot);
+        let player = sim.player();
+        let strike = resolve_shot(
+            &sim.world,
+            ShotRay {
+                origin: player.position + Vec3::Y * sim.eye_height,
+                direction: Vec3::new(player.yaw.sin(), 0.0, player.yaw.cos()),
+                range: sim.range,
+                ignore: Some(sim.player),
+            },
+        )
+        .expect("the shot strikes the box");
+        let reached = play(&mut sim, 300, &[], NEAR);
+
+        assert_eq!(strike.tag, SurfaceTag::World);
+        assert!(
+            (10.3..10.6).contains(&strike.point.z),
+            "the shot did not end on the box: {strike:?}"
+        );
+        assert!(
+            reached.is_some(),
+            "the professional stayed at {:?}",
+            enemy_at(&sim, 0)
+        );
+    }
+
+    #[test]
+    fn a_dead_enemy_and_a_dummy_take_no_near_miss() {
+        let mut arena =
+            (*arena_with(&[LOW_WALL], Vec3::ZERO, &[ENEMY_SPAWN], &[TOWARD_PLAYER])).clone();
+        arena.covers = vec![SHIELDED];
+        // Within the radius of the shot but clear of its path.
+        arena.dummy_spawns = vec![Vec3::new(0.0, 0.0, 11.5)];
+        let mut sim = SearchlightSim::with_start(Arc::new(arena), cover_config(), Start::Empty);
+        sim.spawn_enemy(0, Grade::Experienced)
+            .expect("the marker is free");
+        sim.kill_enemy(0);
+        tick_with(&mut sim, &SearchlightCommand::default());
+        let shot = fire_wide(&sim, NEAR);
+
+        tick_with(&mut sim, &shot);
+        idle_for(&mut sim, 30);
+
+        assert_eq!(sim.enemies_alive(), 0);
+        assert_eq!(enemy_target(&sim, 0).near_misses, 0, "the dead enemy");
+        assert_eq!(sim.targets[0].near_misses, 0, "the dummy");
+    }
+
+    #[test]
+    fn the_near_miss_radius_sets_how_close_a_shot_must_pass() {
+        let mut tight = cover_config();
+        tight.enemy.near_miss_radius = 0.5;
+        let mut wide = cover_config();
+        wide.enemy.near_miss_radius = 5.0;
+        let mut ignored = cover_duel_with(Grade::Professional, &[LOW_WALL], tight);
+        let mut counted = cover_duel_with(Grade::Professional, &[LOW_WALL], wide);
+
+        let ignored_at = play(&mut ignored, 300, &pulls(3), NEAR);
+        let counted_at = play(&mut counted, 300, &pulls(3), FAR);
+
+        assert!(
+            counted_at.is_some(),
+            "a 5 m radius did not count a shot 4 m wide"
+        );
+        assert_eq!(ignored_at, None, "a 0.5 m radius counted a shot 1 m wide");
     }
 }

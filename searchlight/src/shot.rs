@@ -238,14 +238,34 @@ mod tests {
         let end = Vec3::new(10.0, 0.0, 0.0);
         let cases = [
             ("beside the middle, inside", Vec3::new(5.0, 0.9, 0.0), true),
-            ("beside the middle, outside", Vec3::new(5.0, 1.1, 0.0), false),
+            (
+                "beside the middle, outside",
+                Vec3::new(5.0, 1.1, 0.0),
+                false,
+            ),
             ("beside the middle, across", Vec3::new(5.0, 0.0, -0.9), true),
             ("exactly at the radius", Vec3::new(5.0, 1.0, 0.0), true),
             ("beyond the end, near it", Vec3::new(10.8, 0.5, 0.0), true),
-            ("beyond the end, off the line", Vec3::new(11.2, 0.0, 0.0), false),
-            ("far beyond the end, on the line", Vec3::new(12.0, 0.0, 0.0), false),
-            ("behind the origin, near it", Vec3::new(-0.8, 0.5, 0.0), true),
-            ("behind the origin, off the line", Vec3::new(-2.0, 0.0, 0.0), false),
+            (
+                "beyond the end, off the line",
+                Vec3::new(11.2, 0.0, 0.0),
+                false,
+            ),
+            (
+                "far beyond the end, on the line",
+                Vec3::new(12.0, 0.0, 0.0),
+                false,
+            ),
+            (
+                "behind the origin, near it",
+                Vec3::new(-0.8, 0.5, 0.0),
+                true,
+            ),
+            (
+                "behind the origin, off the line",
+                Vec3::new(-2.0, 0.0, 0.0),
+                false,
+            ),
         ];
 
         for (name, point, expected) in cases {
