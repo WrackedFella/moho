@@ -29,7 +29,7 @@ pub fn tonemap_shader_source() -> &'static str {
     include_str!("../../../shaders/tonemap.wgsl")
 }
 
-/// WGSL source of the bloom chain's shader.
+/// WGSL source of the bloom prefilter, downsample and upsample shader.
 pub fn bloom_shader_source() -> &'static str {
     include_str!("../../../shaders/bloom.wgsl")
 }

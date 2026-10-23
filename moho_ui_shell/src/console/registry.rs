@@ -242,7 +242,7 @@ impl<G> Registry<G> {
                 engine(
                     "r_bloom",
                     "r_bloom <0-2>",
-                    "set bloom for this session (Off/Low/High)",
+                    "set bloom quality (Off/Low/High)",
                     Handler::Engine(parse_bloom),
                 ),
                 engine(

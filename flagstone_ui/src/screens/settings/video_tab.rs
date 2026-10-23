@@ -139,7 +139,6 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
 
 const BLOOM_LEVELS: [&str; 3] = ["Off", "Low", "High"];
 
-/// The Bloom combo: Off, Low or High.
 fn bloom_row(menu: &mut SettingsMenu, ui: &mut egui::Ui, label_width: f32) {
     let staged = menu.state.staged().bloom();
     let is_dirty = staged != menu.state.prefs().bloom();

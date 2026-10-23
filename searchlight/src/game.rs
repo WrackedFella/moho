@@ -891,7 +891,6 @@ impl SearchlightGame {
         }
     }
 
-    /// Hands the renderer the Bloom level the debug settings' prefs hold.
     fn apply_saved_bloom(&self, renderer: &mut dyn RendererBackend) {
         if let Some(settings) = &self.debug_settings {
             renderer.set_bloom_quality(settings.prefs().bloom() as u8);

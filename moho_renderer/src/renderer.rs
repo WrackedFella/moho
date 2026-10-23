@@ -598,7 +598,8 @@ impl<'a> Renderer<'a> {
         self.write_tone_map_params();
     }
 
-    /// Turn the tone-map curve on or off; off passes the HDR scene through unchanged.
+    /// Turn the tone-map curve on or off; off skips the curve and passes the HDR scene
+    /// through, still adding bloom when it is enabled.
     pub fn set_tone_map(&mut self, enabled: bool) {
         self.tone_map_enabled = enabled;
         self.write_tone_map_params();

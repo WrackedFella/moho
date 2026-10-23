@@ -47,7 +47,7 @@ flowchart LR
 a headless `App`, so its console commands never touch the user's file; a Settings screen
 opened there still saves to the default path).
 
-- **Console graphics commands** (`SetShadowQuality`, `SetSsaoQuality`) update `App::prefs`
+- **Console graphics commands** (`SetShadowQuality`, `SetSsaoQuality`, `SetBloomQuality`) update `App::prefs`
   and call `App::save_prefs`, with or without a window; a failed write is logged.
 - **Settings screen** is seeded from `App::prefs` when it opens
   (`EguiAdapter::open_settings`), so a console change made earlier is not overwritten

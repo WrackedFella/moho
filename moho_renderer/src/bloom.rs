@@ -53,6 +53,16 @@ pub(crate) fn mip_extents(width: u32, height: u32, quality: BloomQuality) -> Vec
     .collect()
 }
 
+/// [`mip_extents`] cut after the first 1x1 level: a texture holds mips only until both
+/// sides reach 1 px, and wgpu rejects the repeated 1x1 levels past that.
+pub(crate) fn mip_level_extents(width: u32, height: u32, quality: BloomQuality) -> Vec<(u32, u32)> {
+    let mut extents = mip_extents(width, height, quality);
+    if let Some(first_unit) = extents.iter().position(|&e| e == (1, 1)) {
+        extents.truncate(first_unit + 1);
+    }
+    extents
+}
+
 /// Strength of the bloom added in the composite; Low and High add the same total.
 pub(crate) fn bloom_intensity(quality: BloomQuality) -> f32 {
     match quality.shape() {
@@ -259,12 +269,7 @@ impl BloomChain {
     }
 
     fn rebuild(&mut self, device: &wgpu::Device, hdr: &wgpu::TextureView) {
-        let mut extents = mip_extents(self.size.0, self.size.1, self.quality);
-        // A texture holds mips only until both sides reach 1 px; the levels past that
-        // would repeat 1x1 and wgpu rejects them.
-        if let Some(first_unit) = extents.iter().position(|&e| e == (1, 1)) {
-            extents.truncate(first_unit + 1);
-        }
+        let extents = mip_level_extents(self.size.0, self.size.1, self.quality);
         self.levels = extents
             .first()
             .map(|&first| self.create_levels(device, hdr, first, extents.len() as u32));
@@ -470,7 +475,27 @@ mod tests {
         assert_eq!(BloomQuality::from_u8(255), BloomQuality::High);
     }
 
+    #[test]
+    fn level_extents_stop_at_the_first_unit_level() {
+        let extents = mip_level_extents(40, 30, BloomQuality::High);
+
+        assert_eq!(extents, vec![(20, 15), (10, 7), (5, 3), (2, 1), (1, 1)]);
+    }
+
     proptest! {
+        #[test]
+        fn level_extents_fit_the_texture_mip_chain(
+            width in 1u32..=16_384,
+            height in 1u32..=16_384,
+            quality in prop_oneof![Just(BloomQuality::Low), Just(BloomQuality::High)],
+        ) {
+            let extents = mip_level_extents(width, height, quality);
+
+            let max_levels = width.max(height).ilog2() as usize + 1;
+            prop_assert!(extents.len() <= max_levels, "{extents:?}");
+            prop_assert!(extents.iter().filter(|&&e| e == (1, 1)).count() <= 1, "{extents:?}");
+        }
+
         #[test]
         fn levels_never_go_below_one_pixel(
             width in 1u32..=16_384,
