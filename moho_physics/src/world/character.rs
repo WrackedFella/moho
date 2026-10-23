@@ -280,14 +280,17 @@ impl PhysicsWorld {
 mod tests {
     use super::super::test_support::TEST_TAG;
     use super::super::test_support::{
-        floor_mesh, quad_mesh, seam_floor_meshes, stairs_mesh, step_box_mesh, test_settings,
-        wall_mesh,
+        corner_mesh, floor_mesh, quad_mesh, seam_floor_meshes, stairs_mesh, step_box_mesh,
+        test_settings, wall_mesh,
     };
     use super::super::{HitTag, RayHit, RayQuery};
     use super::*;
     use moho_render_api::{WorldMesh, WorldMeshId};
 
     const DT: f32 = 1.0 / 60.0;
+
+    /// Half of the 60 degree inside corner the corner tests run into.
+    const CORNER_HALF_ANGLE: f32 = std::f32::consts::FRAC_PI_6;
 
     fn state(world: &PhysicsWorld, handle: CharacterHandle) -> CharacterState {
         world.character(handle).expect("character is live")
@@ -553,6 +556,7 @@ mod tests {
     fn jump_peak(dt: f32) -> f32 {
         let settings = MoveSettings {
             jump_speed: 6.5,
+            max_velocity: 90.0,
             ..test_settings()
         };
         let mut world = PhysicsWorld::new();
@@ -1296,6 +1300,110 @@ mod tests {
         assert!(after.position.x > 2.0, "kept sliding: {:?}", after.position);
     }
 
+    /// A standing character, a floor and a 60 degree inside corner with its apex at `apex_z`.
+    /// Returns the colliders of the +X wall and the -X wall.
+    fn world_with_corner(apex_z: f32) -> (PhysicsWorld, CharacterHandle, [ColliderHandle; 2]) {
+        let (mut world, h) = standing_on_floor();
+        let [plus_x, minus_x] = corner_mesh(Vec3::new(0.0, 0.0, apex_z), CORNER_HALF_ANGLE);
+        world.set_world_mesh(WorldMeshId(1), &plus_x, TEST_TAG);
+        world.set_world_mesh(WorldMeshId(2), &minus_x, TEST_TAG);
+        let walls = [WorldMeshId(1), WorldMeshId(2)].map(|id| {
+            world
+                .world_mesh_collider(id)
+                .expect("corner wall registered")
+        });
+        (world, h, walls)
+    }
+
+    /// Normals of the walls from [`corner_mesh`], in the same order.
+    fn corner_normals() -> [Vec3; 2] {
+        let (sin, cos) = CORNER_HALF_ANGLE.sin_cos();
+        [Vec3::new(-cos, 0.0, -sin), Vec3::new(cos, 0.0, -sin)]
+    }
+
+    #[test]
+    fn running_into_a_60_degree_corner_stops_with_one_impact_per_wall() {
+        let (mut world, h, walls) = world_with_corner(5.0);
+        world
+            .queue_effect(h, CharacterEffect::AddVelocity(Vec3::new(0.0, 0.0, 10.0)))
+            .unwrap();
+
+        let impacts = run(&mut world, h, &frictionless(), 60);
+
+        for wall in walls {
+            let count = impacts.iter().filter(|i| i.collider == wall).count();
+            assert_eq!(count, 1, "wall {wall:?} in {impacts:?}");
+        }
+        assert_eq!(impacts.len(), 2, "{impacts:?}");
+        let after = state(&world, h);
+        assert!(
+            after.position.z > 2.0 && after.position.z < 5.0,
+            "reached the corner: {:?}",
+            after.position
+        );
+        for normal in corner_normals() {
+            let into = -after.velocity.dot(normal);
+            assert!(
+                into <= 1e-3,
+                "speed into {normal:?} is {into}: {:?}",
+                after.velocity
+            );
+        }
+    }
+
+    #[test]
+    fn holding_forward_into_a_corner_reports_at_most_one_impact_per_wall_per_tick() {
+        let (mut world, h, walls) = world_with_corner(3.0);
+        let forward = CharacterCommand {
+            forward: 1.0,
+            ..CharacterCommand::default()
+        };
+        let mut impacts_in_the_corner = 0;
+
+        for tick in 0..120 {
+            let impacts = world
+                .move_character(h, &forward, &test_settings(), DT)
+                .expect("character is live");
+            world.step(DT);
+
+            for wall in walls {
+                let count = impacts.iter().filter(|i| i.collider == wall).count();
+                assert!(
+                    count <= 1,
+                    "tick {tick}: wall {wall:?} reported {count} times in {impacts:?}"
+                );
+            }
+            impacts_in_the_corner += impacts.len();
+        }
+
+        assert!(impacts_in_the_corner > 0, "never reached the corner");
+        assert!(state(&world, h).position.z < 3.0);
+    }
+
+    #[test]
+    fn a_1000_m_s_character_stops_at_a_1_m_wall() {
+        let (mut world, h) = standing_on_floor();
+        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(5.0, 1.0, 10.0), TEST_TAG);
+        world
+            .queue_effect(h, CharacterEffect::SetVelocity(Vec3::new(0.0, 0.0, 1000.0)))
+            .unwrap();
+
+        let impacts = run(&mut world, h, &frictionless(), 60);
+
+        let after = state(&world, h);
+        assert!(
+            after.position.z < 5.0 && after.position.z > 3.0,
+            "ended beside the near face: {:?}",
+            after.position
+        );
+        assert_eq!(impacts.len(), 1, "{impacts:?}");
+        assert!(
+            (impacts[0].speed - 90.0).abs() < 1e-2,
+            "the slide ran at max_velocity: {:?}",
+            impacts[0]
+        );
+    }
+
     #[test]
     fn landing_reports_fall_speed_and_zeroes_vertical_velocity() {
         let mut world = PhysicsWorld::new();
@@ -1544,6 +1652,7 @@ mod tests {
             air_speed_cap: 6.0,
             gravity: 18.0,
             jump_speed: 8.0,
+            max_velocity: 90.0,
         }
     }
 
@@ -1601,6 +1710,7 @@ mod tests {
             air_speed_cap: 1.0,
             gravity: 18.0,
             jump_speed: 6.5,
+            max_velocity: 90.0,
         }
     }
 

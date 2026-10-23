@@ -1,4 +1,5 @@
 use crate::movement::MoveSettings;
+use glam::Vec3;
 use moho_render_api::WorldMesh;
 
 /// Tuning where ground accel x dt exceeds the friction drop, so "at speed" means 4 m/s.
@@ -12,6 +13,7 @@ pub(crate) fn test_settings() -> MoveSettings {
         air_speed_cap: 0.8,
         gravity: 18.0,
         jump_speed: 8.0,
+        max_velocity: 90.0,
     }
 }
 
@@ -75,6 +77,42 @@ pub(crate) fn wall_mesh(z: f32) -> WorldMesh {
         ],
         &[0, 2, 1, 0, 3, 2],
     )
+}
+
+/// Length in metres of each wall of [`corner_mesh`].
+pub(crate) const CORNER_WALL_LENGTH: f32 = 10.0;
+
+/// An inside corner of two walls, each [`CORNER_WALL_LENGTH`] long and spanning y in [0, 10],
+/// meeting at `apex` (the y of `apex` is ignored).
+///
+/// The walls open toward -Z, `half_angle` radians either side of that axis, so a character
+/// running along +Z meets both. The first mesh is the wall on the +X side with its front
+/// facing (-cos, 0, -sin) of `half_angle`; the second is the mirror on the -X side with its
+/// front facing (cos, 0, -sin).
+pub(crate) fn corner_mesh(apex: Vec3, half_angle: f32) -> [WorldMesh; 2] {
+    let (sin, cos) = half_angle.sin_cos();
+    [
+        corner_wall(apex, Vec3::new(sin, 0.0, -cos), Vec3::new(-cos, 0.0, -sin)),
+        corner_wall(apex, Vec3::new(-sin, 0.0, -cos), Vec3::new(cos, 0.0, -sin)),
+    ]
+}
+
+/// A wall running from `apex` along `direction`, wound so its front faces `facing`.
+fn corner_wall(apex: Vec3, direction: Vec3, facing: Vec3) -> WorldMesh {
+    let far = apex + direction * CORNER_WALL_LENGTH;
+    let verts = [
+        [apex.x, 0.0, apex.z],
+        [far.x, 0.0, far.z],
+        [far.x, 10.0, far.z],
+        [apex.x, 10.0, apex.z],
+    ];
+    let front = Vec3::new(direction.z, 0.0, -direction.x);
+    let idxs: &[u32] = if front.dot(facing) > 0.0 {
+        &[0, 2, 1, 0, 3, 2]
+    } else {
+        &[0, 1, 2, 0, 2, 3]
+    };
+    quad_mesh(&verts, idxs)
 }
 
 /// A closed box spanning x in [-10, 10], y in [0, `height`] and z in [`z_front`, `z_front + depth`].
