@@ -334,7 +334,7 @@ mod tests {
     }
 
     /// [`super::step`] with no queued effects and a slide that only sees the asked motion.
-    fn step(
+    fn step_without_effects(
         state: &mut CharacterState,
         command: &CharacterCommand,
         settings: &MoveSettings,
@@ -413,7 +413,7 @@ mod tests {
         command: &CharacterCommand,
         settings: &MoveSettings,
     ) -> Vec<Impact> {
-        step(state, command, settings, DT, flat_floor(state.position.y))
+        step_without_effects(state, command, settings, DT, flat_floor(state.position.y))
     }
 
     mod ground {
@@ -896,7 +896,7 @@ mod tests {
         fn walker_without_a_ground_normal_keeps_its_vertical_speed() {
             let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, -1.87, 4.0), true);
 
-            step(&mut state, &forward(), &frictionless(), DT, on_ground(None));
+            step_without_effects(&mut state, &forward(), &frictionless(), DT, on_ground(None));
 
             assert!(
                 (state.velocity.y + 1.87).abs() < 1e-4,
@@ -915,7 +915,7 @@ mod tests {
         fn walker_whose_slide_ends_airborne_is_not_flattened_onto_the_ground() {
             let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, -1.0, 4.0), true);
 
-            step(&mut state, &forward(), &frictionless(), DT, |asked| Slide {
+            step_without_effects(&mut state, &forward(), &frictionless(), DT, |asked| Slide {
                 translation: asked,
                 grounded: false,
                 ground: Some(face(slope_normal(25.0), 1.0)),
@@ -945,7 +945,7 @@ mod tests {
             command: &CharacterCommand,
             slide: impl FnOnce(Vec3) -> Slide,
         ) -> CharacterState {
-            step(&mut state, command, &frictionless(), DT, slide);
+            step_without_effects(&mut state, command, &frictionless(), DT, slide);
             state
         }
 
@@ -1127,7 +1127,7 @@ mod tests {
             let climb = 4.0 * 25.0_f32.to_radians().tan();
             let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, climb, 4.0), true);
 
-            step(
+            step_without_effects(
                 &mut state,
                 &forward(),
                 &frictionless(),
@@ -1167,7 +1167,7 @@ mod tests {
                 ground_move(&mut expected, Vec3::Z, 1.0, &settings, DT);
                 let mut state = state_at(Vec3::ZERO, start, true);
 
-                step(&mut state, &forward(), &settings, DT, on_ground(Some(normal)));
+                step_without_effects(&mut state, &forward(), &settings, DT, on_ground(Some(normal)));
 
                 prop_assert!(state.grounded);
                 prop_assert!(
@@ -1199,7 +1199,7 @@ mod tests {
         use super::*;
 
         fn drift(state: &mut CharacterState, command: &CharacterCommand) {
-            step(state, command, &test_settings(), DT, open_air_slide);
+            step_without_effects(state, command, &test_settings(), DT, open_air_slide);
         }
 
         fn open_air_slide(asked: Vec3) -> Slide {
@@ -1215,7 +1215,7 @@ mod tests {
             };
             let mut airborne_ticks = 0;
 
-            step(&mut state, &jump, &test_settings(), DT, flat_floor(0.0));
+            step_without_effects(&mut state, &jump, &test_settings(), DT, flat_floor(0.0));
             for _ in 0..200 {
                 if state.grounded {
                     break;
@@ -1313,7 +1313,7 @@ mod tests {
             };
             let mut asked = Vec3::ZERO;
 
-            step(&mut state, &jump, &settings, DT, |wanted| {
+            step_without_effects(&mut state, &jump, &settings, DT, |wanted| {
                 asked = wanted;
                 open_air(wanted)
             });
@@ -1340,7 +1340,7 @@ mod tests {
             );
             let mut asked = Vec3::ZERO;
 
-            step(
+            step_without_effects(
                 &mut state,
                 &CharacterCommand::default(),
                 &test_settings(),
@@ -1409,7 +1409,7 @@ mod tests {
                 ..forward()
             };
 
-            step(&mut state, &jump, &test_settings(), DT, |asked| Slide {
+            step_without_effects(&mut state, &jump, &test_settings(), DT, |asked| Slide {
                 translation: asked,
                 grounded: false,
                 ground: None,
@@ -1450,7 +1450,7 @@ mod tests {
                 ..forward()
             };
 
-            step(
+            step_without_effects(
                 &mut state,
                 &jump,
                 &settings,
@@ -1470,7 +1470,7 @@ mod tests {
         fn upward_speed_above_the_horizontal_speed_is_airborne_even_on_flat_ground() {
             let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, 2.0, 1.0), true);
 
-            step(
+            step_without_effects(
                 &mut state,
                 &CharacterCommand::default(),
                 &test_settings(),
@@ -1502,7 +1502,7 @@ mod tests {
         fn upward_velocity_is_airborne_even_when_slide_says_grounded() {
             let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, 5.0, 0.0), true);
 
-            step(
+            step_without_effects(
                 &mut state,
                 &CharacterCommand::default(),
                 &test_settings(),
@@ -1527,7 +1527,7 @@ mod tests {
         fn grounded_slide_zeroes_downward_speed() {
             let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, -3.0, 0.0), false);
 
-            step(
+            step_without_effects(
                 &mut state,
                 &CharacterCommand::default(),
                 &test_settings(),
@@ -1620,7 +1620,7 @@ mod tests {
         fn blocked_hit_clips_velocity_and_reports_the_speed_into_it() {
             let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, 0.0, 10.0), true);
 
-            let impacts = step(
+            let impacts = step_without_effects(
                 &mut state,
                 &CharacterCommand::default(),
                 &frictionless(),
@@ -1645,7 +1645,7 @@ mod tests {
             let along = 4.0 * std::f32::consts::FRAC_1_SQRT_2;
             let mut state = state_at(Vec3::ZERO, Vec3::new(along, 0.0, along), true);
 
-            let impacts = step(
+            let impacts = step_without_effects(
                 &mut state,
                 &CharacterCommand::default(),
                 &frictionless(),
@@ -1672,7 +1672,7 @@ mod tests {
         fn hit_that_did_not_block_motion_reports_nothing_and_keeps_velocity() {
             let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, 0.0, 3.0), true);
 
-            let impacts = step(
+            let impacts = step_without_effects(
                 &mut state,
                 &CharacterCommand::default(),
                 &frictionless(),
@@ -1697,7 +1697,7 @@ mod tests {
         fn step_up_lift_with_a_riser_hit_reports_nothing_and_keeps_velocity() {
             let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, 0.0, 3.0), true);
 
-            let impacts = step(
+            let impacts = step_without_effects(
                 &mut state,
                 &CharacterCommand::default(),
                 &frictionless(),
@@ -1722,7 +1722,7 @@ mod tests {
         fn corner_with_two_blocking_normals_on_one_collider_reports_both() {
             let mut state = state_at(Vec3::ZERO, Vec3::new(3.0, 0.0, 3.0), true);
 
-            let impacts = step(
+            let impacts = step_without_effects(
                 &mut state,
                 &CharacterCommand::default(),
                 &frictionless(),
@@ -1754,7 +1754,7 @@ mod tests {
         fn same_wall_hit_twice_in_one_slide_reports_once() {
             let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, 0.0, 10.0), true);
 
-            let impacts = step(
+            let impacts = step_without_effects(
                 &mut state,
                 &CharacterCommand::default(),
                 &frictionless(),
@@ -1774,7 +1774,7 @@ mod tests {
         fn landing_beside_a_wall_the_slide_was_not_stopped_by_reports_no_wall_impact() {
             let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, -2.0, 3.0), false);
 
-            let impacts = step(
+            let impacts = step_without_effects(
                 &mut state,
                 &CharacterCommand::default(),
                 &frictionless(),
@@ -1795,7 +1795,7 @@ mod tests {
         fn moving_short_by_exactly_the_tolerance_is_not_blocked() {
             let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, 0.0, 30.0), false);
 
-            let impacts = step(
+            let impacts = step_without_effects(
                 &mut state,
                 &CharacterCommand::default(),
                 &frictionless(),
@@ -1833,7 +1833,7 @@ mod tests {
             let settings = test_settings();
             let mut state = state_at(Vec3::new(0.0, 0.1, 0.0), Vec3::new(0.0, -12.0, 0.0), false);
 
-            let impacts = step(
+            let impacts = step_without_effects(
                 &mut state,
                 &CharacterCommand::default(),
                 &settings,
@@ -1859,7 +1859,7 @@ mod tests {
             };
             let mut state = state_at(Vec3::new(0.0, 0.1, 0.0), Vec3::new(0.0, -12.0, 0.0), false);
 
-            let impacts = step(
+            let impacts = step_without_effects(
                 &mut state,
                 &CharacterCommand::default(),
                 &settings,
@@ -1885,7 +1885,8 @@ mod tests {
             ..CharacterCommand::default()
         };
 
-        let impacts = step(&mut state, &command, &test_settings(), 0.0, flat_floor(0.0));
+        let impacts =
+            step_without_effects(&mut state, &command, &test_settings(), 0.0, flat_floor(0.0));
 
         assert!(impacts.is_empty(), "{impacts:?}");
         assert_eq!(state.position, Vec3::new(1.0, 0.0, 2.0));
@@ -1907,8 +1908,10 @@ mod tests {
         let mut first = start;
         let mut second = start;
 
-        let first_impacts = step(&mut first, &command, &test_settings(), DT, flat_floor(0.0));
-        let second_impacts = step(&mut second, &command, &test_settings(), DT, flat_floor(0.0));
+        let first_impacts =
+            step_without_effects(&mut first, &command, &test_settings(), DT, flat_floor(0.0));
+        let second_impacts =
+            step_without_effects(&mut second, &command, &test_settings(), DT, flat_floor(0.0));
 
         assert_eq!(first, second);
         assert_eq!(first_impacts, second_impacts);
@@ -1960,7 +1963,7 @@ mod tests {
             state.yaw = yaw;
             let before = state.velocity.dot(wish);
 
-            step(&mut state, &command, &settings, DT, open_air);
+            step_without_effects(&mut state, &command, &settings, DT, open_air);
 
             let after = state.velocity.dot(wish);
             prop_assert!(
@@ -2028,7 +2031,6 @@ mod tests {
 
     mod effects {
         use super::*;
-        use crate::movement::step as step_with_effects;
 
         /// One step on a flat floor at y = 0 that slides from wherever the step starts it.
         fn on_floor(
@@ -2036,7 +2038,7 @@ mod tests {
             command: &CharacterCommand,
             effects: &[CharacterEffect],
         ) -> Vec<Impact> {
-            step_with_effects(
+            step(
                 state,
                 command,
                 effects,
@@ -2051,10 +2053,18 @@ mod tests {
             state: &mut CharacterState,
             effects: &[CharacterEffect],
         ) -> (Vec3, CharacterState) {
+            ask_in_open_air_under(state, &CharacterCommand::default(), effects)
+        }
+
+        fn ask_in_open_air_under(
+            state: &mut CharacterState,
+            command: &CharacterCommand,
+            effects: &[CharacterEffect],
+        ) -> (Vec3, CharacterState) {
             let mut seen = None;
-            step_with_effects(
+            step(
                 state,
-                &CharacterCommand::default(),
+                command,
                 effects,
                 &test_settings(),
                 DT,
@@ -2070,15 +2080,15 @@ mod tests {
         fn add_velocity_applies_before_gravity_and_the_move() {
             let settings = test_settings();
             let mut walker = standing();
-            let mut faller = state_at(Vec3::new(0.0, 50.0, 0.0), Vec3::ZERO, false);
+            let mut lifted = standing();
 
             on_floor(
                 &mut walker,
                 &CharacterCommand::default(),
                 &[CharacterEffect::AddVelocity(Vec3::new(3.0, 0.0, 0.0))],
             );
-            let (asked, _) = ask_in_open_air(
-                &mut faller,
+            let (asked, from) = ask_in_open_air(
+                &mut lifted,
                 &[CharacterEffect::AddVelocity(Vec3::new(0.0, 4.0, 0.0))],
             );
 
@@ -2095,9 +2105,11 @@ mod tests {
             );
             assert!(
                 (asked.y - (4.0 - settings.gravity * DT / 2.0) * DT).abs() < 1e-6,
-                "the added speed rises under half a tick of gravity, asked y = {}",
+                "a grounded character given upward speed runs airborne, so half a tick of gravity acts: asked y = {}",
                 asked.y
             );
+            assert!(!lifted.grounded, "{lifted:?}");
+            assert!(from.velocity.y > 0.0, "{from:?}");
         }
 
         #[test]
@@ -2113,7 +2125,7 @@ mod tests {
                 },
             ];
 
-            step_with_effects(
+            step(
                 &mut state,
                 &CharacterCommand::default(),
                 &effects,
@@ -2185,9 +2197,14 @@ mod tests {
         #[test]
         fn teleport_clears_grounded() {
             let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, 0.0, 2.0), true);
+            let jump = CharacterCommand {
+                jump: true,
+                ..CharacterCommand::default()
+            };
 
-            let (asked, from) = ask_in_open_air(
+            let (asked, from) = ask_in_open_air_under(
                 &mut state,
+                &jump,
                 &[CharacterEffect::Teleport {
                     position: Vec3::new(5.0, 40.0, 5.0),
                     keep_velocity: true,
@@ -2200,7 +2217,7 @@ mod tests {
             );
             assert!(
                 (asked.y + 18.0 * DT / 2.0 * DT).abs() < 1e-6,
-                "the tick runs airborne, so gravity acts: asked y = {}",
+                "the tick runs airborne: gravity acts and the jump does not launch: asked y = {}",
                 asked.y
             );
             assert!(!state.grounded, "{state:?}");
@@ -2240,10 +2257,18 @@ mod tests {
         fn set_look_clamps_pitch() {
             let mut up = standing();
             let mut down = standing();
+            let back_down = CharacterCommand {
+                pitch_delta: -0.5,
+                ..CharacterCommand::default()
+            };
+            let back_up = CharacterCommand {
+                pitch_delta: 0.5,
+                ..CharacterCommand::default()
+            };
 
             on_floor(
                 &mut up,
-                &CharacterCommand::default(),
+                &back_down,
                 &[CharacterEffect::SetLook {
                     yaw: 0.0,
                     pitch: 3.0,
@@ -2251,15 +2276,23 @@ mod tests {
             );
             on_floor(
                 &mut down,
-                &CharacterCommand::default(),
+                &back_up,
                 &[CharacterEffect::SetLook {
                     yaw: 0.0,
                     pitch: -3.0,
                 }],
             );
 
-            assert_eq!(up.pitch, PITCH_LIMIT);
-            assert_eq!(down.pitch, -PITCH_LIMIT);
+            assert!(
+                (up.pitch - (PITCH_LIMIT - 0.5)).abs() < 1e-6,
+                "{}",
+                up.pitch
+            );
+            assert!(
+                (down.pitch - (0.5 - PITCH_LIMIT)).abs() < 1e-6,
+                "{}",
+                down.pitch
+            );
         }
     }
 }

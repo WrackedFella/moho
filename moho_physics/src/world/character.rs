@@ -508,29 +508,6 @@ mod tests {
     }
 
     #[test]
-    fn queued_add_velocity_then_teleport_leaves_the_character_at_rest() {
-        let mut world = PhysicsWorld::new();
-        let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
-        world
-            .queue_effect(h, CharacterEffect::AddVelocity(Vec3::new(3.0, 4.0, 5.0)))
-            .unwrap();
-        teleport(&mut world, h, Vec3::new(1.0, 20.0, 1.0));
-
-        move_idle(&mut world, h);
-
-        let after = state(&world, h);
-        assert_eq!(after.position.x, 1.0);
-        assert_eq!(after.position.z, 1.0);
-        assert_eq!(after.velocity.x, 0.0);
-        assert_eq!(after.velocity.z, 0.0);
-        assert!(
-            (after.velocity.y + 18.0 * DT).abs() < 1e-4,
-            "only the tick's gravity is left, {:?}",
-            after.velocity
-        );
-    }
-
-    #[test]
     fn test_character_horizontal_movement() {
         let (mut world, h) = standing_on_floor();
         world
@@ -834,24 +811,33 @@ mod tests {
         let first = world.add_character(Vec3::new(-4.0, 10.0, 0.0));
         let second = world.add_character(Vec3::new(4.0, 10.0, 0.0));
 
-        let queued = world.queue_effect(
+        let queued_first = world.queue_effect(
             first,
             CharacterEffect::AddVelocity(Vec3::new(0.0, 8.0, 0.0)),
         );
+        let queued_second = world.queue_effect(
+            second,
+            CharacterEffect::SetVelocity(Vec3::new(0.0, 0.0, -2.0)),
+        );
 
-        assert_eq!(queued, Ok(()));
+        assert_eq!((queued_first, queued_second), (Ok(()), Ok(())));
         assert_eq!(state(&world, first).velocity, Vec3::ZERO, "not yet applied");
-        move_idle(&mut world, first);
+        assert_eq!(
+            state(&world, second).velocity,
+            Vec3::ZERO,
+            "not yet applied"
+        );
         move_idle(&mut world, second);
+        move_idle(&mut world, first);
         let lifted = state(&world, first).velocity;
-        let alone = state(&world, second).velocity;
+        let set = state(&world, second).velocity;
         assert!(
             (lifted - Vec3::new(0.0, 8.0 - 18.0 * DT, 0.0)).length() < 1e-4,
-            "{lifted:?}"
+            "first gets only its own: {lifted:?}"
         );
         assert!(
-            (alone - Vec3::new(0.0, -18.0 * DT, 0.0)).length() < 1e-4,
-            "{alone:?}"
+            (set - Vec3::new(0.0, -18.0 * DT, -2.0)).length() < 1e-4,
+            "second gets only its own: {set:?}"
         );
     }
 
@@ -876,23 +862,48 @@ mod tests {
     }
 
     #[test]
-    fn queued_set_and_add_velocity_apply_in_queue_order() {
-        let mut world = PhysicsWorld::new();
-        let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
-        let set = CharacterEffect::SetVelocity(Vec3::new(0.0, 0.0, 6.0));
+    fn queued_effects_apply_in_queue_order() {
         let add = CharacterEffect::AddVelocity(Vec3::new(1.0, 0.0, 0.0));
-        let mut set_then_add = PhysicsWorld::new();
-        let g = set_then_add.add_character(Vec3::new(0.0, 10.0, 0.0));
-        world.queue_effect(h, add).unwrap();
-        world.queue_effect(h, set).unwrap();
-        set_then_add.queue_effect(g, set).unwrap();
-        set_then_add.queue_effect(g, add).unwrap();
+        let set = CharacterEffect::SetVelocity(Vec3::new(0.0, 0.0, 6.0));
+        let big_add = CharacterEffect::AddVelocity(Vec3::new(3.0, 4.0, 5.0));
+        let to = CharacterEffect::Teleport {
+            position: Vec3::new(1.0, 20.0, 1.0),
+            keep_velocity: false,
+        };
+        let gravity = -18.0 * DT;
+        let cases = [
+            (
+                "add then teleport",
+                [big_add, to],
+                Vec3::new(0.0, gravity, 0.0),
+            ),
+            ("add then set", [add, set], Vec3::new(0.0, gravity, 6.0)),
+            ("set then add", [set, add], Vec3::new(1.0, gravity, 6.0)),
+        ];
 
-        move_idle(&mut world, h);
-        move_idle(&mut set_then_add, g);
+        for (what, queue, expected) in cases {
+            let mut world = PhysicsWorld::new();
+            let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
+            for effect in queue {
+                world.queue_effect(h, effect).unwrap();
+            }
 
-        assert_eq!(state(&world, h).velocity.x, 0.0, "the set came last");
-        assert_eq!(state(&set_then_add, g).velocity.x, 1.0, "the add came last");
+            move_idle(&mut world, h);
+
+            let after = state(&world, h);
+            assert!(
+                (after.velocity - expected).length() < 1e-4,
+                "{what}: {:?}, expected {expected:?}",
+                after.velocity
+            );
+            if what == "add then teleport" {
+                assert_eq!(
+                    (after.position.x, after.position.z),
+                    (1.0, 1.0),
+                    "{what}: at the teleport target"
+                );
+            }
+        }
     }
 
     #[test]
@@ -966,16 +977,54 @@ mod tests {
             .collect()
     }
 
-    /// Runs `script` from a fresh world and returns the bit pattern of every tick's position.
-    fn play(script: &[(CharacterCommand, Vec<CharacterEffect>)]) -> Vec<[u32; 3]> {
+    #[test]
+    fn a_queued_teleport_moves_the_body_only_on_the_next_move() {
+        let (mut world, h) = standing_on_floor();
+        attach(
+            &mut world,
+            h,
+            volume(Vec3::new(0.0, 0.1, 0.0), Vec3::new(0.25, 0.4, 0.15), TORSO),
+        );
+        world.step(DT);
+        let old = state(&world, h).position;
+        let target = Vec3::new(6.0, 1.2, 5.0);
+        let torso_at = |world: &PhysicsWorld, at: Vec3| {
+            cast(world, at + Vec3::new(-3.0, 0.1, 0.0), Vec3::X, None).map(|hit| hit.tag)
+        };
+
+        teleport(&mut world, h, target);
+        world.step(DT);
+
+        assert_eq!(torso_at(&world, old), Some(TORSO), "still at the old place");
+        assert_eq!(torso_at(&world, target), None, "not yet at the target");
+        move_idle(&mut world, h);
+        world.step(DT);
+        assert_eq!(torso_at(&world, old), None, "gone from the old place");
+        assert_eq!(torso_at(&world, target), Some(TORSO), "now at the target");
+    }
+
+    type Script = Vec<(CharacterCommand, Vec<CharacterEffect>)>;
+
+    fn floor_and_step_world() -> PhysicsWorld {
         let mut world = PhysicsWorld::new();
         world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
         world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 6.0, 0.45), TEST_TAG);
-        let h = world.add_character(CharacterSpawn {
+        world
+    }
+
+    fn recorded_spawn() -> CharacterSpawn {
+        CharacterSpawn {
             position: Vec3::new(0.0, 1.5, 0.0),
             yaw: 0.0,
             pitch: 0.0,
-        });
+        }
+    }
+
+    /// Runs `script` for the recorded character alone in a fresh world, effects queued right
+    /// before the tick's move, and returns every tick's position.
+    fn replay(script: &Script) -> Vec<Vec3> {
+        let mut world = floor_and_step_world();
+        let h = world.add_character(recorded_spawn());
         script
             .iter()
             .map(|(command, effects)| {
@@ -986,34 +1035,114 @@ mod tests {
                     .move_character(h, command, &strategy_settings(), DT)
                     .unwrap();
                 world.step(DT);
-                let position = state(&world, h).position;
-                [position.x, position.y, position.z].map(f32::to_bits)
+                state(&world, h).position
             })
             .collect()
+    }
+
+    /// The recorded character's positions in a busy world: a second character with effects of
+    /// its own moves first each tick, the recorded one carries a hit volume that rays query,
+    /// and its effects are queued right after the previous tick's move.
+    fn record(script: &Script) -> Vec<Vec3> {
+        let mut world = floor_and_step_world();
+        let other = world.add_character(Vec3::new(-8.0, 1.2, -8.0));
+        let h = world.add_character(recorded_spawn());
+        attach(
+            &mut world,
+            h,
+            volume(Vec3::new(0.0, 0.7, 0.0), Vec3::new(0.2, 0.15, 0.2), HEAD),
+        );
+        let others_effects = |tick: usize| match tick {
+            10 => vec![CharacterEffect::SetVelocity(Vec3::new(0.0, 0.0, 1.5))],
+            50 => vec![CharacterEffect::Teleport {
+                position: Vec3::new(-8.0, 1.5, -6.0),
+                keep_velocity: false,
+            }],
+            120 => vec![CharacterEffect::AddVelocity(Vec3::new(0.0, 5.0, 0.0))],
+            200 => vec![CharacterEffect::SetLook {
+                yaw: 1.0,
+                pitch: 0.0,
+            }],
+            _ => Vec::new(),
+        };
+        for effect in &script[0].1 {
+            world.queue_effect(h, *effect).unwrap();
+        }
+        let mut positions = Vec::new();
+        for (tick, (command, _)) in script.iter().enumerate() {
+            for effect in others_effects(tick) {
+                world.queue_effect(other, effect).unwrap();
+            }
+            world
+                .move_character(other, &idle(), &strategy_settings(), DT)
+                .unwrap();
+            world
+                .move_character(h, command, &strategy_settings(), DT)
+                .unwrap();
+            if let Some((_, next)) = script.get(tick + 1) {
+                for effect in next {
+                    world.queue_effect(h, *effect).unwrap();
+                }
+            }
+            world.step(DT);
+            let position = state(&world, h).position;
+            let head = cast(
+                &world,
+                position + Vec3::new(-3.0, 0.7, 0.0),
+                Vec3::X,
+                Some(other),
+            )
+            .unwrap_or_else(|| panic!("tick {tick}: the ray found no head at {position:?}"));
+            assert_eq!(head.tag, HEAD, "tick {tick}");
+            positions.push(position);
+        }
+        positions
+    }
+
+    fn assert_same_positions(actual: &[Vec3], expected: &[Vec3]) {
+        assert_eq!(actual.len(), expected.len(), "tick counts");
+        let diverged = actual
+            .iter()
+            .zip(expected)
+            .position(|(a, e)| a.to_array().map(f32::to_bits) != e.to_array().map(f32::to_bits));
+        if let Some(tick) = diverged {
+            panic!(
+                "first divergence at tick {tick}: {:?}, recorded {:?}",
+                actual[tick], expected[tick]
+            );
+        }
     }
 
     #[test]
     fn replaying_commands_and_effects_reproduces_positions_exactly() {
         let script = mixed_script();
-        let recording = play(&script);
+        let recording = record(&script);
         let bytes = postcard::to_allocvec(&script).expect("the script serialises");
-        let replayed: Vec<(CharacterCommand, Vec<CharacterEffect>)> =
-            postcard::from_bytes(&bytes).expect("the script deserialises");
+        let replayed: Script = postcard::from_bytes(&bytes).expect("the script deserialises");
 
-        let rerun = play(&replayed);
+        let rerun = replay(&replayed);
 
         assert_eq!(rerun.len(), 300);
-        assert_eq!(rerun, recording);
-        let without_effects: Vec<_> = script.iter().map(|(c, _)| (*c, Vec::new())).collect();
+        assert_same_positions(&rerun, &recording);
+        let lowest = recording.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+        assert!(
+            lowest > 1.0,
+            "the script stays on the floor, lowest y {lowest}"
+        );
+        assert!(
+            recording.iter().any(|p| (p.y - (0.45 + 1.15)).abs() < 0.1),
+            "some tick rests at step-top height"
+        );
+        let without_effects: Script = script.iter().map(|(c, _)| (*c, Vec::new())).collect();
         assert_ne!(
-            play(&without_effects),
+            replay(&without_effects),
             recording,
             "the effects changed where the character went"
         );
-        let teleported = Vec3::from_array(recording[100].map(f32::from_bits));
         assert!(
-            teleported.distance(Vec3::new(0.0, 1.5, -4.0)) < 0.5,
-            "the tick-100 teleport took hold: {teleported:?}"
+            recording[100].distance(Vec3::new(0.0, 1.5, -4.0)) < 0.5,
+            "the tick-100 teleport took hold: {:?}",
+            recording[100]
         );
     }
 
@@ -1032,48 +1161,20 @@ mod tests {
     #[test]
     fn queueing_for_a_removed_character_is_refused() {
         let mut world = PhysicsWorld::new();
-        let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
-        world.remove_character(h).unwrap();
-        let effects = [
-            CharacterEffect::AddVelocity(Vec3::new(0.0, 8.0, 0.0)),
-            CharacterEffect::SetVelocity(Vec3::ZERO),
-            CharacterEffect::Teleport {
-                position: Vec3::ONE,
-                keep_velocity: false,
-            },
-            CharacterEffect::SetLook {
-                yaw: 0.7,
-                pitch: -0.3,
-            },
-        ];
-
-        for effect in effects {
-            let queued = world.queue_effect(h, effect);
-
-            assert_eq!(queued, Err(UnknownCharacter), "{effect:?}");
-        }
-    }
-
-    #[test]
-    fn removing_a_character_drops_its_queue() {
-        let mut world = PhysicsWorld::new();
         let old = world.add_character(Vec3::new(0.0, 10.0, 0.0));
-        world
-            .queue_effect(old, CharacterEffect::AddVelocity(Vec3::new(9.0, 0.0, 0.0)))
-            .unwrap();
+        let effect = CharacterEffect::AddVelocity(Vec3::new(9.0, 0.0, 0.0));
+        world.queue_effect(old, effect).unwrap();
         world.remove_character(old).unwrap();
         let new = world.add_character(Vec3::new(0.0, 10.0, 0.0));
 
+        let queued = world.queue_effect(old, effect);
         move_idle(&mut world, new);
 
+        assert_eq!(queued, Err(UnknownCharacter));
         let velocity = state(&world, new).velocity;
         assert!(
             (velocity - Vec3::new(0.0, -18.0 * DT, 0.0)).length() < 1e-4,
             "nothing queued for the removed character reaches the new one: {velocity:?}"
-        );
-        assert_eq!(
-            world.queue_effect(old, CharacterEffect::SetVelocity(Vec3::ZERO)),
-            Err(UnknownCharacter)
         );
     }
 
@@ -1627,14 +1728,14 @@ mod tests {
         assert_descends_stairs_grounded(0.45);
     }
 
-    /// Level ground at y = 0 that ends at z = 1.
-    fn ledge_mesh() -> WorldMesh {
+    /// A rectangle spanning x in [-10, 10] and z in [`z_from`, `z_to`] at height `y`, facing up.
+    fn level_strip(y: f32, z_from: f32, z_to: f32) -> WorldMesh {
         quad_mesh(
             &[
-                [-10.0, 0.0, -10.0],
-                [10.0, 0.0, -10.0],
-                [10.0, 0.0, 1.0],
-                [-10.0, 0.0, 1.0],
+                [-10.0, y, z_from],
+                [10.0, y, z_from],
+                [10.0, y, z_to],
+                [-10.0, y, z_to],
             ],
             &[0, 2, 1, 0, 3, 2],
         )
@@ -1642,37 +1743,49 @@ mod tests {
 
     #[test]
     fn walker_with_its_centre_over_a_ledge_edge_stays_grounded() {
+        // Floor to z = 0.9, then a lip 6 cm lower to z = 1.0, then void.
         let mut world = PhysicsWorld::new();
-        world.set_world_mesh(WorldMeshId(0), &ledge_mesh(), TEST_TAG);
-        let h = world.add_character(Vec3::new(0.0, 1.2, 0.0));
+        world.set_world_mesh(WorldMeshId(0), &level_strip(0.0, -10.0, 0.9), TEST_TAG);
+        world.set_world_mesh(WorldMeshId(1), &level_strip(-0.06, 0.9, 1.0), TEST_TAG);
+        let h = world.add_character(Vec3::new(0.0, 1.2, 0.6));
         settle_on_floor(&mut world, &[h]);
-        assert!(state(&world, h).grounded);
-        let forward = CharacterCommand {
+        let resting = state(&world, h);
+        assert!(resting.grounded);
+        // One tick that carries the centre 0.2 m past the lip's edge: the rim there hangs
+        // 0.14 m above the lip, more than the controller's own 0.1 m snap, so only the ground
+        // query keeps the walker standing.
+        let past_the_edge = 1.2;
+        let speed = (past_the_edge - resting.position.z) / DT;
+        let lunge = MoveSettings {
+            max_speed: speed,
+            ground_accel: 2.0 * speed / DT,
+            friction: 0.0,
+            ..test_settings()
+        };
+        let carry = CharacterCommand {
             forward: 1.0,
             ..idle()
         };
-        let mut ticks_over_the_edge = 0;
 
-        for tick in 0..60 {
-            let (now, impacts) = searchlight_tick(&mut world, h, &forward);
+        let impacts = world
+            .move_character(h, &carry, &lunge, DT)
+            .expect("character is live");
+        world.step(DT);
 
-            // Past the edge by 5 to 25 cm the rim hangs further than the controller's own snap
-            // distance above it at times, so only the ground query keeps the walker standing.
-            let past = now.position.z - 1.0;
-            if (0.05..0.25).contains(&past) {
-                ticks_over_the_edge += 1;
-                assert!(now.grounded, "tick {tick}: {now:?}");
-                assert!(impacts.is_empty(), "tick {tick}: {impacts:?}");
-                // Rim resting on the edge a skin's width away: 0.85 + sqrt((0.3 + 0.0115)^2 - past^2).
-                let on_the_rim = 0.85 + (0.3115_f32.powi(2) - past.powi(2)).sqrt();
-                assert!(
-                    (now.position.y - on_the_rim).abs() < 0.03,
-                    "tick {tick}: lowered until the capsule meets the edge, rim height {on_the_rim}: {now:?}"
-                );
-            }
-        }
-
-        assert!(ticks_over_the_edge > 0, "never walked over the edge");
+        let now = state(&world, h);
+        assert!(
+            (now.position.z - past_the_edge).abs() < 1e-3,
+            "carried over the edge: {now:?}"
+        );
+        assert!(now.grounded, "{now:?}");
+        assert!(impacts.iter().all(|i| i.speed <= 1e-3), "{impacts:?}");
+        // Rim resting on the lip's edge a skin's width away, 6 cm below the floor:
+        // -0.06 + 0.85 + sqrt((0.3 + 0.0115)^2 - 0.2^2) = 1.029. Lowering onto the lip's plane
+        // instead would end near 1.09.
+        assert!(
+            (1.015..1.05).contains(&now.position.y),
+            "lowered until the capsule meets the lip's edge: {now:?}"
+        );
     }
 
     #[test]
@@ -1989,6 +2102,8 @@ mod tests {
             ..idle()
         };
 
+        let start = state(&world, h).position;
+
         let impacts = hold(&mut world, h, &forward, 120);
 
         let after = state(&world, h);
@@ -1999,6 +2114,11 @@ mod tests {
             after.position
         );
         assert!(after.grounded, "{after:?}");
+        let travelled = after.position - start;
+        assert!(
+            travelled.x > 0.5 && (travelled.x - travelled.z).abs() < 0.5,
+            "kept its 45 degree heading: {travelled:?}"
+        );
     }
 
     /// Stands the character against the riser of a step of `height`, jumps with forward
