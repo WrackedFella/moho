@@ -6,11 +6,14 @@ use std::collections::BTreeMap;
 use moho_input::bindings::BindingWarning;
 use moho_ui_shell::Console;
 use moho_ui_shell::console::registry::CommandSpec;
+use searchlight_rules::Grade;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConsoleCommand {
     GodMode(GodModeArg),
     Fullscreen,
+    /// Force the grade of new enemies, or with `None` clear the force.
+    ForceGrade(Option<Grade>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -161,6 +164,73 @@ mod tests {
 
         assert_eq!(queued, vec![ConsoleCommand::Fullscreen]);
         assert_eq!(refused, (vec![], "Usage: fullscreen".to_owned()));
+    }
+
+    const GRADE_USAGE: &str = "grade <rookie|novice|experienced|veteran|professional|off>";
+
+    #[test]
+    fn grade_with_a_name_queues_the_force_and_prints_it() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        for grade in Grade::LADDER {
+            console.submit(&format!("grade {}", grade.name()));
+
+            assert_eq!(
+                console.take_commands(),
+                vec![ConsoleCommand::ForceGrade(Some(grade))],
+                "{grade:?}"
+            );
+            assert_eq!(
+                last_line(&console),
+                format!("Grade forced: {}", grade.name())
+            );
+        }
+    }
+
+    #[test]
+    fn grade_off_queues_a_clear() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        console.submit("grade off");
+
+        assert_eq!(
+            console.take_commands(),
+            vec![ConsoleCommand::ForceGrade(None)]
+        );
+        assert_eq!(last_line(&console), "Grade force cleared");
+    }
+
+    #[test]
+    fn grade_refuses_an_unknown_name_listing_the_five_grades() {
+        for line in [
+            "grade legend",
+            "grade",
+            "grade rookie novice",
+            "grade Rookie",
+        ] {
+            let (mut console, _) = console(&BTreeMap::new());
+
+            console.submit(line);
+
+            assert!(console.take_commands().is_empty(), "{line}");
+            let reply = last_line(&console);
+            assert!(reply.contains(GRADE_USAGE), "{line}: {reply:?}");
+            for grade in Grade::LADDER {
+                assert!(reply.contains(grade.name()), "{line}: {reply:?}");
+            }
+            assert!(!reply.starts_with("Grade"), "{line}: {reply:?}");
+        }
+    }
+
+    #[test]
+    fn help_lists_grade() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        console.submit("help");
+
+        let lines = printed(&console);
+        let expected = format!("  {GRADE_USAGE} - force the grade of new enemies");
+        assert!(lines.iter().any(|line| *line == expected), "{lines:?}");
     }
 
     #[test]

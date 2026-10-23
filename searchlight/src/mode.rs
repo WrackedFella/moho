@@ -3,6 +3,8 @@
 
 use std::sync::Arc;
 
+use searchlight_rules::Grade;
+
 use crate::arena::Arena;
 use crate::input::SearchlightCommand;
 use crate::sim::{Feedback, SearchlightSim, SimConfig, Start};
@@ -52,7 +54,7 @@ impl ArenaMode {
         self.seen_kills = kills;
         let mut spawned = 0;
         for &marker in free.iter().take(spawn as usize) {
-            if let Err(error) = self.sim.spawn_enemy(marker) {
+            if let Err(error) = self.sim.spawn_enemy(marker, Grade::default()) {
                 tracing::warn!(%error, marker, "wave enemy not spawned");
                 break;
             }
@@ -374,6 +376,65 @@ mod tests {
         assert_eq!(mode.wave(), 1);
         assert_eq!(mode.sim().enemy_count(), 2);
         assert_eq!(mode.sim().enemies_alive(), 1);
+    }
+
+    fn forcing(grade: Option<Grade>) -> SearchlightCommand {
+        SearchlightCommand {
+            forced_grade: grade,
+            ..SearchlightCommand::default()
+        }
+    }
+
+    /// The grades of enemies `from..` in enemy order.
+    fn grades_from(mode: &ArenaMode, from: usize) -> Vec<Option<Grade>> {
+        (from..mode.sim().enemy_count())
+            .map(|index| mode.sim().enemy_grade(index))
+            .collect()
+    }
+
+    #[test]
+    fn an_unforced_wave_spawns_experienced_enemies() {
+        let mut mode = calm_mode(4, tuning(1, 2, 100));
+        let first = grades_from(&mode, 0);
+        mode.sim_mut().kill_enemy(0);
+
+        mode.tick(&idle(), DT);
+
+        assert_eq!(first, [Some(Grade::Experienced)]);
+        assert_eq!(mode.sim().enemy_count(), 4);
+        assert_eq!(
+            grades_from(&mode, 1),
+            [Some(Grade::Experienced); 3],
+            "the second wave"
+        );
+    }
+
+    #[test]
+    fn a_forced_grade_sets_every_new_spawn() {
+        let mut mode = calm_mode(4, tuning(1, 2, 100));
+        mode.sim_mut().kill_enemy(0);
+
+        mode.tick(&forcing(Some(Grade::Rookie)), DT);
+
+        assert_eq!(mode.sim().enemy_count(), 4);
+        assert_eq!(grades_from(&mode, 0)[0], Some(Grade::Experienced));
+        assert_eq!(grades_from(&mode, 1), [Some(Grade::Rookie); 3]);
+    }
+
+    #[test]
+    fn clearing_the_force_spawns_experienced_again() {
+        let mut mode = calm_mode(4, tuning(1, 2, 100));
+        mode.sim_mut().kill_enemy(0);
+        mode.tick(&forcing(Some(Grade::Rookie)), DT);
+        for index in 1..4 {
+            mode.sim_mut().kill_enemy(index);
+        }
+
+        mode.tick(&forcing(None), DT);
+
+        assert_eq!(mode.sim().enemy_count(), 8);
+        assert_eq!(grades_from(&mode, 1)[..3], [Some(Grade::Rookie); 3]);
+        assert_eq!(grades_from(&mode, 4), [Some(Grade::Experienced); 4]);
     }
 
     #[test]

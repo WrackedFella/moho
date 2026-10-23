@@ -11,7 +11,7 @@ use moho_physics::{
     first_person_view,
 };
 use searchlight_rules::{
-    Body, BodyPart, BodyProfile, HitReport, Magazine, MagazineLevel, Rifle, Shot,
+    Body, BodyPart, BodyProfile, Grade, HitReport, Magazine, MagazineLevel, Rifle, Shot,
 };
 
 use crate::arena::{Arena, SETTLE_DT};
@@ -715,7 +715,7 @@ impl SearchlightSim {
     /// # Errors
     /// If there is no such marker, a character stands on it, or the new enemy's target number
     /// does not fit a `u16`.
-    pub fn spawn_enemy(&mut self, marker: usize) -> Result<(), SpawnError> {
+    pub fn spawn_enemy(&mut self, marker: usize, _grade: Grade) -> Result<(), SpawnError> {
         let spawn = *self
             .origin
             .0
@@ -826,6 +826,12 @@ impl SearchlightSim {
         self.targets
             .get(self.dummy_count + index)
             .map(|enemy| &enemy.body)
+    }
+
+    /// The grade enemy `index` (enemy order) was spawned with, dead or alive, or `None` if
+    /// there is no such enemy.
+    pub fn enemy_grade(&self, _index: usize) -> Option<Grade> {
+        todo!()
     }
 
     /// Enemy `index`'s character after the last tick, or `None` if there is no such enemy or it
@@ -1285,7 +1291,7 @@ mod tests {
             let mut sim = empty_sim(&[Vec3::new(5.0, 0.0, 10.0), Vec3::new(-5.0, 0.0, 10.0)]);
             assert_eq!(sim.enemy_count(), 0);
 
-            let spawned = sim.spawn_enemy(1);
+            let spawned = sim.spawn_enemy(1, Grade::Experienced);
 
             assert_eq!(spawned, Ok(()));
             assert_eq!(sim.enemy_count(), 1);
@@ -1305,7 +1311,8 @@ mod tests {
                 &[Vec3::new(10.0, 0.0, 10.0), AHEAD],
             );
             let mut sim = SearchlightSim::with_start(arena, config(), Start::Empty);
-            sim.spawn_enemy(0).expect("the marker is free");
+            sim.spawn_enemy(0, Grade::Experienced)
+                .expect("the marker is free");
 
             let spawned = sim.enemy_state(0).expect("the enemy spawned");
             for _ in 0..30 {
@@ -1323,7 +1330,8 @@ mod tests {
                 (*arena_with(&[], Vec3::ZERO, &[Vec3::new(0.0, 0.0, 10.0)], &[AHEAD])).clone();
             arena.dummy_spawns = vec![Vec3::new(-8.0, 0.0, 4.0), Vec3::new(-4.0, 0.0, 4.0)];
             let mut sim = SearchlightSim::with_start(Arc::new(arena), config(), Start::Empty);
-            sim.spawn_enemy(0).expect("the marker is free");
+            sim.spawn_enemy(0, Grade::Experienced)
+                .expect("the marker is free");
 
             sim.tick(&pull(), DT);
 
@@ -1333,13 +1341,14 @@ mod tests {
         #[test]
         fn a_respawned_enemy_takes_a_new_target_number_and_the_dead_keep_theirs() {
             let mut sim = empty_sim(&[Vec3::new(0.0, 0.0, 10.0)]);
-            sim.spawn_enemy(0).expect("the marker is free");
+            sim.spawn_enemy(0, Grade::Experienced)
+                .expect("the marker is free");
             sim.kill_enemy(0);
             sim.tick(&idle(), DT);
             assert_eq!(sim.enemies_alive(), 0);
             sim.drain_feedback();
 
-            let respawned = sim.spawn_enemy(0);
+            let respawned = sim.spawn_enemy(0, Grade::Experienced);
             sim.tick(&pull(), DT);
 
             assert_eq!(respawned, Ok(()));
@@ -1354,7 +1363,8 @@ mod tests {
             let mut sim = empty_sim(&[Vec3::new(0.0, 0.0, 10.0), Vec3::new(0.0, 0.0, 20.0)]);
             let before = sim.free_enemy_spawns();
 
-            sim.spawn_enemy(0).expect("the marker is free");
+            sim.spawn_enemy(0, Grade::Experienced)
+                .expect("the marker is free");
             let while_occupied = sim.free_enemy_spawns();
             sim.kill_enemy(0);
             sim.tick(&idle(), DT);
@@ -1394,9 +1404,9 @@ mod tests {
         fn spawn_enemy_refuses_an_occupied_or_unknown_marker() {
             let mut sim = empty_sim(&[Vec3::new(0.0, 0.0, 10.0)]);
 
-            let unknown = sim.spawn_enemy(1);
-            let first = sim.spawn_enemy(0);
-            let occupied = sim.spawn_enemy(0);
+            let unknown = sim.spawn_enemy(1, Grade::Experienced);
+            let first = sim.spawn_enemy(0, Grade::Experienced);
+            let occupied = sim.spawn_enemy(0, Grade::Experienced);
 
             assert_eq!(unknown, Err(SpawnError::UnknownMarker { marker: 1 }));
             assert_eq!(first, Ok(()));
@@ -1426,8 +1436,8 @@ mod tests {
         #[test]
         fn kills_counts_player_kills_and_resets_on_restart() {
             let mut sim = empty_sim(&[Vec3::new(-3.0, 0.0, 10.0), Vec3::new(3.0, 0.0, 10.0)]);
-            sim.spawn_enemy(0).expect("free");
-            sim.spawn_enemy(1).expect("free");
+            sim.spawn_enemy(0, Grade::Experienced).expect("free");
+            sim.spawn_enemy(1, Grade::Experienced).expect("free");
             let none = sim.kills();
 
             sim.kill_enemy(0);
@@ -1448,7 +1458,7 @@ mod tests {
         #[test]
         fn an_empty_start_survives_restart() {
             let mut sim = empty_sim(&[Vec3::new(-3.0, 0.0, 10.0), Vec3::new(3.0, 0.0, 10.0)]);
-            sim.spawn_enemy(0).expect("free");
+            sim.spawn_enemy(0, Grade::Experienced).expect("free");
             sim.kill_player();
 
             sim.tick(&restart(), DT);
@@ -1456,7 +1466,7 @@ mod tests {
             assert!(!sim.player_body().is_dead());
             assert_eq!(sim.enemy_count(), 0);
             assert_eq!(sim.free_enemy_spawns(), [0, 1]);
-            assert_eq!(sim.spawn_enemy(0), Ok(()));
+            assert_eq!(sim.spawn_enemy(0, Grade::Experienced), Ok(()));
             assert_eq!(sim.enemy_count(), 1);
         }
 
@@ -1493,7 +1503,7 @@ mod tests {
         #[test]
         fn a_non_lethal_hit_on_an_enemy_is_not_a_kill_and_the_lethal_one_is() {
             let mut sim = empty_sim(&[Vec3::new(0.0, 0.0, 10.0)]);
-            sim.spawn_enemy(0).expect("free");
+            sim.spawn_enemy(0, Grade::Experienced).expect("free");
             // The 3-tick cooldown allows the second pull on tick 3; two 30-damage head hits kill.
             let mut kills_after = Vec::new();
             for tick in 0..4 {
@@ -1520,7 +1530,7 @@ mod tests {
         #[test]
         fn a_dead_enemy_is_counted_once_however_long_it_lies() {
             let mut sim = empty_sim(&[Vec3::new(0.0, 0.0, 10.0)]);
-            sim.spawn_enemy(0).expect("free");
+            sim.spawn_enemy(0, Grade::Experienced).expect("free");
 
             sim.kill_enemy(0);
             for _ in 0..5 {
@@ -3745,5 +3755,248 @@ mod god_mode_tests {
         run(&mut sim, 10, true);
 
         assert!(sim.player_body().is_dead());
+    }
+}
+
+#[cfg(test)]
+mod grade_tests {
+    use super::*;
+    use crate::test_support::{DT, arena_with, mag, test_config};
+
+    const ENEMY_SPAWN: Vec3 = Vec3::new(0.0, 0.0, 10.0);
+    const TOWARD_PLAYER: Vec3 = Vec3::new(0.0, 0.0, 6.0);
+
+    /// Today's enemy numbers: a 30-tick reaction and a 12-tick cooldown, so grades separate.
+    fn config() -> SimConfig {
+        let mut config = test_config(Rifle::loaded(mag(30, 30)), vec![]);
+        config.eye_height = 0.72;
+        config.enemy.reaction_ticks = 30;
+        config.enemy.cooldown_ticks = 12;
+        config.enemy.aim_error = 0.0;
+        config
+    }
+
+    /// The player at the origin and one enemy of `grade` ten metres ahead, facing the player.
+    fn duel(grade: Grade, config: SimConfig) -> SearchlightSim {
+        let arena = arena_with(&[], Vec3::ZERO, &[ENEMY_SPAWN], &[TOWARD_PLAYER]);
+        let mut sim = SearchlightSim::with_start(arena, config, Start::Empty);
+        sim.spawn_enemy(0, grade).expect("the marker is free");
+        sim
+    }
+
+    fn command(god_mode: bool) -> SearchlightCommand {
+        SearchlightCommand {
+            god_mode,
+            ..SearchlightCommand::default()
+        }
+    }
+
+    /// The feedback of each of `ticks` ticks under `god_mode`.
+    fn run(sim: &mut SearchlightSim, ticks: usize, god_mode: bool) -> Vec<Vec<Feedback>> {
+        (0..ticks)
+            .map(|_| {
+                sim.tick(&command(god_mode), DT);
+                sim.drain_feedback()
+            })
+            .collect()
+    }
+
+    fn count(ticks: &[Vec<Feedback>], matches: impl Fn(&Feedback) -> bool) -> usize {
+        ticks.iter().flatten().filter(|fb| matches(fb)).count()
+    }
+
+    fn enemy_fired(feedback: &Feedback) -> bool {
+        matches!(feedback, Feedback::EnemyFired { .. })
+    }
+
+    fn player_hit(feedback: &Feedback) -> bool {
+        matches!(feedback, Feedback::PlayerHit { .. })
+    }
+
+    fn first_shot_tick(grade: Grade) -> Option<usize> {
+        let mut sim = duel(grade, config());
+        run(&mut sim, 150, true)
+            .iter()
+            .position(|tick| tick.iter().any(enemy_fired))
+    }
+
+    #[test]
+    fn a_professional_fires_its_first_shot_before_a_rookie() {
+        let rookie = first_shot_tick(Grade::Rookie);
+        let professional = first_shot_tick(Grade::Professional);
+
+        let (Some(rookie), Some(professional)) = (rookie, professional) else {
+            panic!("both fire within 150 ticks: rookie {rookie:?}, professional {professional:?}");
+        };
+        assert!(
+            professional < rookie,
+            "professional {professional}, rookie {rookie}"
+        );
+    }
+
+    /// Shots and hits on the player of one enemy of `grade` firing for 600 ticks.
+    fn shots_and_hits(grade: Grade) -> (usize, usize) {
+        let mut config = config();
+        // A rookie's 0.06 rad strays 0.6 m at this range, wider than the player's body.
+        config.enemy.aim_error = 0.02;
+        config.enemy.seed = 11;
+        let mut sim = duel(grade, config);
+
+        let ticks = run(&mut sim, 600, true);
+
+        (count(&ticks, enemy_fired), count(&ticks, player_hit))
+    }
+
+    #[test]
+    fn hits_on_the_player_never_fall_up_the_ladder() {
+        let results: Vec<(Grade, (usize, usize))> = Grade::LADDER
+            .into_iter()
+            .map(|grade| (grade, shots_and_hits(grade)))
+            .collect();
+
+        for pair in results.windows(2) {
+            let ((below, (_, below_hits)), (grade, (_, hits))) = (pair[0], pair[1]);
+            assert!(
+                hits >= below_hits,
+                "{grade:?} hit {hits}, {below:?} hit {below_hits}: {results:?}"
+            );
+        }
+        let (rookie_shots, rookie_hits) = results[0].1;
+        let (professional_shots, professional_hits) = results[4].1;
+        assert!(rookie_hits < rookie_shots, "the rookie never missed");
+        assert_eq!(
+            professional_hits, professional_shots,
+            "the professional missed"
+        );
+        assert!(professional_hits > rookie_hits, "{results:?}");
+    }
+
+    #[test]
+    fn a_professional_fires_more_shots_than_a_rookie_in_the_same_time() {
+        let shots = |grade| {
+            let mut sim = duel(grade, config());
+            count(&run(&mut sim, 300, true), enemy_fired)
+        };
+
+        let rookie = shots(Grade::Rookie);
+        let professional = shots(Grade::Professional);
+
+        assert!(rookie > 0, "the rookie never fired");
+        assert!(professional > rookie, "{professional} vs {rookie}");
+    }
+
+    /// An enemy of `grade` out of sight of the player, as the only target.
+    fn calm_enemy(grade: Grade) -> SearchlightSim {
+        let mut config = config();
+        config.enemy.sight_range = 0.5;
+        config.enemy.patrol_speed = 0.0;
+        duel(grade, config)
+    }
+
+    /// How many hits of the fixed sequence it takes to kill the enemy of `grade`.
+    fn hits_to_kill(grade: Grade) -> usize {
+        let mut sim = calm_enemy(grade);
+        let sequence = [
+            (BodyPart::Torso, 30),
+            (BodyPart::LeftArm, 20),
+            (BodyPart::Torso, 25),
+            (BodyPart::Head, 10),
+            (BodyPart::RightLeg, 30),
+            (BodyPart::Torso, 30),
+            (BodyPart::Torso, 30),
+        ];
+        let from = sim.player().position;
+        for (hit, (part, damage)) in sequence.into_iter().enumerate() {
+            sim.apply_player_hit(0, part, damage, from);
+            let dead = sim.enemy_body(0).expect("the enemy exists").is_dead();
+            if dead {
+                return hit + 1;
+            }
+        }
+        panic!("{grade:?} survived the whole sequence");
+    }
+
+    #[test]
+    fn every_grade_dies_on_the_same_hit_as_an_experienced_enemy() {
+        let experienced = hits_to_kill(Grade::Experienced);
+
+        assert!(experienced > 1, "the sequence kills in one hit");
+        for grade in [
+            Grade::Rookie,
+            Grade::Novice,
+            Grade::Veteran,
+            Grade::Professional,
+        ] {
+            let sim = calm_enemy(grade);
+            assert_eq!(sim.enemy_grade(0), Some(grade));
+            assert_eq!(hits_to_kill(grade), experienced, "{grade:?}");
+        }
+    }
+
+    /// The player's health once the enemy of `grade` has landed its first hit.
+    fn health_after_first_hit(grade: Grade) -> u32 {
+        let mut sim = duel(grade, config());
+        assert_eq!(sim.enemy_grade(0), Some(grade));
+        for _ in 0..150 {
+            sim.tick(&command(false), DT);
+            if sim.drain_feedback().iter().any(player_hit) {
+                return sim.player_body().health();
+            }
+        }
+        panic!("{grade:?} never hit the player");
+    }
+
+    #[test]
+    fn one_hit_from_any_grade_costs_the_player_the_same_health() {
+        let experienced = health_after_first_hit(Grade::Experienced);
+
+        let rookie = health_after_first_hit(Grade::Rookie);
+        let professional = health_after_first_hit(Grade::Professional);
+
+        assert_eq!(experienced, 90);
+        assert_eq!(rookie, experienced);
+        assert_eq!(professional, experienced);
+    }
+
+    #[test]
+    fn marker_start_and_restarted_enemies_are_experienced() {
+        let arena = arena_with(
+            &[],
+            Vec3::ZERO,
+            &[ENEMY_SPAWN, Vec3::new(3.0, 0.0, 10.0)],
+            &[TOWARD_PLAYER],
+        );
+        let mut sim = SearchlightSim::start(arena, config());
+        let at_start = (sim.enemy_grade(0), sim.enemy_grade(1), sim.enemy_grade(2));
+        sim.kill_player();
+
+        sim.tick(
+            &SearchlightCommand {
+                restart: true,
+                ..SearchlightCommand::default()
+            },
+            DT,
+        );
+
+        assert_eq!(
+            at_start,
+            (Some(Grade::Experienced), Some(Grade::Experienced), None)
+        );
+        assert_eq!(sim.enemy_count(), 2);
+        assert_eq!(sim.enemy_grade(0), Some(Grade::Experienced));
+        assert_eq!(sim.enemy_grade(1), Some(Grade::Experienced));
+        assert_eq!(sim.enemy_grade(2), None);
+    }
+
+    #[test]
+    fn a_spawned_enemy_keeps_its_grade_after_it_dies() {
+        let mut sim = duel(Grade::Veteran, config());
+        assert_eq!(sim.enemy_grade(0), Some(Grade::Veteran));
+
+        sim.kill_enemy(0);
+        sim.tick(&command(false), DT);
+
+        assert_eq!(sim.enemies_alive(), 0);
+        assert_eq!(sim.enemy_grade(0), Some(Grade::Veteran));
     }
 }
