@@ -48,7 +48,6 @@ impl Menu {
         }
     }
 
-    /// Resume, Settings and Quit, in that order, with Resume selected.
     pub fn pause() -> Self {
         Self {
             items: vec![MenuAction::Resume, MenuAction::Settings, MenuAction::Quit],

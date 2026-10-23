@@ -441,7 +441,6 @@ impl Stage {
         self.cursor_captured = true;
     }
 
-    /// Frees the cursor for menus: visible and no longer confined to the window.
     fn release_cursor(&mut self) {
         if let Some(window) = &self.window {
             window.set_cursor_visible(true);
@@ -762,7 +761,6 @@ impl SearchlightGame {
         matches!(self.screen, Screen::MainMenu | Screen::Paused)
     }
 
-    /// Leaves a menu for the arena with the cursor captured.
     fn enter_play(&mut self) {
         self.screen = Screen::Playing;
         // Whatever was pressed or moved over the menu must not act in the arena.
@@ -772,7 +770,6 @@ impl SearchlightGame {
         self.stage.capture_cursor();
     }
 
-    /// Stops play behind the pause menu with the cursor free.
     fn pause(&mut self) {
         self.screen = Screen::Paused;
         self.menu = Menu::pause();
@@ -888,7 +885,6 @@ impl SearchlightGame {
         self
     }
 
-    /// Hands the menu text to the shell to paint.
     fn show_menu_texts(&self) {
         if let Err(error) = self.stage.shell().set_texts(self.menu.texts()) {
             tracing::warn!(%error, "menu text not shown");
@@ -2524,7 +2520,6 @@ mod tests {
         assert_eq!(after_release.movement.forward, 0.0);
     }
 
-    /// A game in play with a moving enemy, a visible-size look, focus and the cursor captured.
     fn playing_game() -> SearchlightGame {
         let mut game = game_with_a_moving_enemy();
         game.input_mut()
@@ -2541,7 +2536,6 @@ mod tests {
         game
     }
 
-    /// Presses and releases Escape in play and checks the game paused.
     fn pause(game: &mut SearchlightGame, ctx: &mut EventContext<'_>) {
         press_keys(game, ctx, &[Key::Escape]);
         assert_eq!(game.screen, Screen::Paused, "Escape did not pause");
