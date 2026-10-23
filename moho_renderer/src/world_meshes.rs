@@ -4,14 +4,21 @@ use crate::RendererBackend;
 use moho_render_api::{InstanceGpu, WorldMesh, WorldMeshId};
 use std::collections::BTreeMap;
 
+/// How a mesh draws: once at identity, or only where placed.
+#[derive(Debug, Clone, Copy)]
+enum Kind {
+    Static { material_idx: u32 },
+    Movable,
+}
+
 /// A mesh waiting for the next `flush`; `None` is a queued remove.
-type Pending = Option<(WorldMesh, u32)>;
+type Pending = Option<(WorldMesh, Kind)>;
 
 /// A mesh uploaded to the backend.
 #[derive(Debug, Clone, Copy)]
 struct Live {
     handle: u32,
-    material_idx: u32,
+    kind: Kind,
 }
 
 /// Queues world-mesh changes and applies them to a backend on `flush`.
@@ -21,6 +28,7 @@ struct Live {
 pub struct WorldMeshes {
     live: BTreeMap<WorldMeshId, Live>,
     pending: BTreeMap<WorldMeshId, Pending>,
+    placements: BTreeMap<WorldMeshId, Vec<(glam::Affine3A, u32)>>,
 }
 
 impl WorldMeshes {
@@ -33,8 +41,35 @@ impl WorldMeshes {
         if mesh.is_empty() {
             self.remove(id);
         } else {
-            self.pending.insert(id, Some((mesh, material_idx)));
+            self.pending
+                .insert(id, Some((mesh, Kind::Static { material_idx })));
         }
+    }
+
+    /// Queue adding or replacing a mesh that draws only where placed, so moving it
+    /// never re-uploads. An empty mesh is a remove.
+    pub fn upsert_movable(&mut self, id: WorldMeshId, mesh: WorldMesh) {
+        if mesh.is_empty() {
+            self.remove(id);
+        } else {
+            self.pending.insert(id, Some((mesh, Kind::Movable)));
+        }
+    }
+
+    /// Append a placement of the mesh under `id` for this frame, drawn with `material`.
+    ///
+    /// Not checked against live ids here: an upsert queued the same frame is
+    /// flushed before draws, and a placement on an id that is not live is skipped.
+    pub fn place(&mut self, id: WorldMeshId, transform: glam::Affine3A, material: u32) {
+        self.placements
+            .entry(id)
+            .or_default()
+            .push((transform, material));
+    }
+
+    /// Drop every placement; the renderer calls this each frame.
+    pub fn clear_placements(&mut self) {
+        self.placements.clear();
     }
 
     /// Queue removing the mesh under `id`.
@@ -48,7 +83,7 @@ impl WorldMeshes {
             if let Some(old) = self.live.remove(&id) {
                 backend.unregister_mesh(old.handle);
             }
-            let Some((mesh, material_idx)) = change else {
+            let Some((mesh, kind)) = change else {
                 continue;
             };
             let light_level: Vec<f32> = mesh
@@ -56,10 +91,14 @@ impl WorldMeshes {
                 .iter()
                 .map(|rgb| rgb[0].max(rgb[1]).max(rgb[2]))
                 .collect();
-            let material: Vec<u32> = mesh.materials().map_or_else(
-                || vec![material_idx; mesh.positions().len()],
-                <[u32]>::to_vec,
-            );
+            // An empty slice makes the backend defer every vertex to the instance material.
+            let material: Vec<u32> = match (mesh.materials(), kind) {
+                (Some(materials), _) => materials.to_vec(),
+                (None, Kind::Static { material_idx }) => {
+                    vec![material_idx; mesh.positions().len()]
+                }
+                (None, Kind::Movable) => Vec::new(),
+            };
             let handle = backend.register_indexed_mesh(
                 mesh.positions(),
                 mesh.normals(),
@@ -71,27 +110,33 @@ impl WorldMeshes {
                 &material,
                 mesh.indices(),
             );
-            self.live.insert(
-                id,
-                Live {
-                    handle,
-                    material_idx,
-                },
-            );
+            self.live.insert(id, Live { handle, kind });
         }
     }
 
-    /// One identity-transform instance per live mesh, as `(backend handle, instance)`.
+    /// Instances as `(backend handle, instance)`: each static mesh at identity, then
+    /// every placement of a live id in id order and call order.
     pub fn draws(&self) -> impl Iterator<Item = (u32, InstanceGpu)> + '_ {
-        self.live.values().map(|live| {
-            let instance = InstanceGpu {
-                model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                material: live.material_idx,
-                object_type: 0, // terrain: the fragment shader colours by normal
-                padding: [0, 0],
-            };
-            (live.handle, instance)
-        })
+        // object_type 0: terrain, the fragment shader colours by normal
+        let instance = |model: glam::Mat4, material: u32| InstanceGpu {
+            model: model.to_cols_array_2d(),
+            material,
+            object_type: 0,
+            padding: [0, 0],
+        };
+        let statics = self.live.values().filter_map(move |live| match live.kind {
+            Kind::Static { material_idx } => {
+                Some((live.handle, instance(glam::Mat4::IDENTITY, material_idx)))
+            }
+            Kind::Movable => None,
+        });
+        let placed = self.placements.iter().flat_map(move |(id, placements)| {
+            let handle = self.live.get(id).map(|live| live.handle);
+            placements.iter().filter_map(move |(transform, material)| {
+                handle.map(|h| (h, instance(glam::Mat4::from(*transform), *material)))
+            })
+        });
+        statics.chain(placed)
     }
 }
 
@@ -421,9 +466,236 @@ mod tests {
         assert_eq!(handles, vec![backend.handle_with_index_count(9)]);
     }
 
+    fn at(x: f32) -> glam::Affine3A {
+        glam::Affine3A::from_translation(glam::Vec3::new(x, 0.0, 0.0))
+    }
+
+    fn model_of(transform: glam::Affine3A) -> [[f32; 4]; 4] {
+        glam::Mat4::from(transform).to_cols_array_2d()
+    }
+
+    const IDENTITY: [[f32; 4]; 4] = [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ];
+
+    #[test]
+    fn moving_a_placed_mesh_registers_it_once() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.flush(&mut backend);
+
+        for x in [1.0, 2.0, 3.0] {
+            meshes.place(A, at(x), 0);
+            meshes.flush(&mut backend);
+
+            let drawn = draws(&meshes);
+            assert_eq!(drawn.len(), 1, "one instance per frame at x = {x}");
+            assert_eq!(drawn[0].0, backend.handle_with_index_count(3));
+            assert_eq!(drawn[0].1.model, model_of(at(x)));
+            meshes.clear_placements();
+        }
+
+        assert_eq!(backend.registered.len(), 1, "moving never re-uploads");
+        assert!(backend.unregistered.is_empty());
+    }
+
+    #[test]
+    fn placement_material_reaches_the_instance_and_vertices_defer() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.flush(&mut backend);
+
+        meshes.place(A, at(1.0), 3);
+        meshes.place(A, at(2.0), 5);
+
+        let materials: Vec<u32> = draws(&meshes).iter().map(|(_, i)| i.material).collect();
+        assert_eq!(materials, vec![3, 5]);
+        assert_eq!(
+            backend.materials,
+            vec![Vec::<u32>::new()],
+            "an empty material slice makes the vertices defer to the instance material"
+        );
+    }
+
+    #[test]
+    fn movable_mesh_with_materials_channel_uploads_it() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        let with_materials = mesh(1)
+            .with_materials(vec![2, 5, 9])
+            .expect("one material per vertex");
+
+        meshes.upsert_movable(A, with_materials);
+        meshes.flush(&mut backend);
+
+        assert_eq!(backend.materials, vec![vec![2, 5, 9]]);
+    }
+
+    #[test]
+    fn unplaced_movable_mesh_draws_nothing_and_stays_registered() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.flush(&mut backend);
+        meshes.place(A, at(1.0), 0);
+        assert_eq!(draws(&meshes).len(), 1, "drawn on the frame it is placed");
+
+        meshes.clear_placements();
+        meshes.flush(&mut backend);
+
+        assert!(draws(&meshes).is_empty());
+        assert_eq!(backend.live_handles().len(), 1, "still uploaded");
+        assert!(backend.unregistered.is_empty());
+    }
+
+    #[test]
+    fn movable_mesh_has_no_identity_draw() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+
+        meshes.upsert_movable(A, mesh(1));
+        meshes.flush(&mut backend);
+
+        assert_eq!(backend.registered.len(), 1, "the movable mesh is uploaded");
+        assert!(draws(&meshes).is_empty());
+    }
+
+    #[test]
+    fn placing_a_static_mesh_adds_a_copy() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert(A, mesh(1), 7);
+        meshes.flush(&mut backend);
+
+        meshes.place(A, at(4.0), 9);
+
+        let drawn = draws(&meshes);
+        let handle = backend.handle_with_index_count(3);
+        assert_eq!(drawn.len(), 2);
+        assert_eq!((drawn[0].0, drawn[0].1.model), (handle, IDENTITY));
+        assert_eq!(drawn[0].1.material, 7);
+        assert_eq!((drawn[1].0, drawn[1].1.model), (handle, model_of(at(4.0))));
+        assert_eq!(drawn[1].1.material, 9);
+    }
+
+    #[test]
+    fn placement_on_a_missing_or_removed_id_is_skipped() {
+        let c = WorldMeshId(3);
+        let never_upserted = WorldMeshId(9);
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.upsert_movable(c, mesh(2));
+        meshes.flush(&mut backend);
+
+        meshes.place(never_upserted, at(1.0), 0);
+        meshes.place(A, at(2.0), 0);
+        meshes.remove(A);
+        meshes.place(c, at(3.0), 0);
+        meshes.flush(&mut backend);
+
+        let drawn = draws(&meshes);
+        assert_eq!(drawn.len(), 1, "only the live id's placement draws");
+        let c_handle = backend.handle_with_index_count(6);
+        assert_eq!(
+            (drawn[0].0, drawn[0].1.model),
+            (c_handle, model_of(at(3.0)))
+        );
+    }
+
+    #[test]
+    fn placements_pair_with_their_own_mesh_across_ids() {
+        let c = WorldMeshId(3);
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.upsert_movable(B, mesh(2));
+        meshes.upsert(c, mesh(3), 0);
+        meshes.flush(&mut backend);
+        let a_handle = backend.handle_with_index_count(3);
+        let b_handle = backend.handle_with_index_count(6);
+        let c_handle = backend.handle_with_index_count(9);
+
+        meshes.place(B, at(10.0), 0);
+        meshes.place(A, at(20.0), 0);
+        meshes.place(B, at(11.0), 0);
+        meshes.place(c, at(30.0), 0);
+
+        let drawn: Vec<(u32, [[f32; 4]; 4])> =
+            draws(&meshes).iter().map(|(h, i)| (*h, i.model)).collect();
+        assert_eq!(
+            drawn,
+            vec![
+                (c_handle, IDENTITY),
+                (a_handle, model_of(at(20.0))),
+                (b_handle, model_of(at(10.0))),
+                (b_handle, model_of(at(11.0))),
+                (c_handle, model_of(at(30.0))),
+            ]
+        );
+    }
+
+    #[test]
+    fn mesh_upserted_and_placed_in_one_frame_draws() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+
+        meshes.upsert_movable(A, mesh(1));
+        meshes.place(A, at(2.0), 4);
+        meshes.flush(&mut backend);
+
+        let drawn = draws(&meshes);
+        assert_eq!(drawn.len(), 1);
+        assert_eq!(drawn[0].1.model, model_of(at(2.0)));
+        assert_eq!(drawn[0].1.material, 4);
+    }
+
+    #[test]
+    fn upserting_with_the_other_kind_switches_it() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert(A, mesh(1), 0);
+        meshes.flush(&mut backend);
+        let first = backend.handle_with_index_count(3);
+        assert_eq!(draws(&meshes).len(), 1, "static draws at identity");
+
+        meshes.upsert_movable(A, mesh(2));
+        meshes.flush(&mut backend);
+
+        assert!(draws(&meshes).is_empty(), "movable draws only where placed");
+        assert_eq!(backend.unregistered, vec![first]);
+        meshes.place(A, at(1.0), 0);
+        let drawn = draws(&meshes);
+        assert_eq!(drawn.len(), 1);
+        assert_eq!(drawn[0].1.model, model_of(at(1.0)));
+
+        meshes.clear_placements();
+        meshes.upsert(A, mesh(3), 0);
+        meshes.flush(&mut backend);
+
+        let drawn = draws(&meshes);
+        assert_eq!(drawn.len(), 1, "static again, with no placements");
+        assert_eq!(drawn[0].1.model, IDENTITY);
+        assert_eq!(backend.live_handles().len(), 1, "one live upload");
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Kind {
+        Static,
+        Movable,
+    }
+
     #[derive(Clone, Debug)]
     enum Op {
         Upsert(u64, bool),
+        UpsertMovable(u64, bool),
+        Place(u64),
+        ClearPlacements,
         Remove(u64),
         Flush,
     }
@@ -431,6 +703,9 @@ mod tests {
     fn ops() -> impl Strategy<Value = Vec<Op>> {
         let op = prop_oneof![
             (0u64..4, any::<bool>()).prop_map(|(id, non_empty)| Op::Upsert(id, non_empty)),
+            (0u64..4, any::<bool>()).prop_map(|(id, non_empty)| Op::UpsertMovable(id, non_empty)),
+            (0u64..5).prop_map(Op::Place),
+            Just(Op::ClearPlacements),
             (0u64..4).prop_map(Op::Remove),
             Just(Op::Flush),
         ];
@@ -442,29 +717,51 @@ mod tests {
         fn live_handles_match_live_ids(ops in ops()) {
             let mut meshes = WorldMeshes::new();
             let mut backend = RecordingBackend::default();
-            let mut model: BTreeMap<u64, bool> = BTreeMap::new();
+            let mut model: BTreeMap<u64, Kind> = BTreeMap::new();
+            let mut placed: Vec<u64> = Vec::new();
 
             for op in ops {
                 match op {
                     Op::Upsert(id, non_empty) => {
                         meshes.upsert(WorldMeshId(id), mesh(usize::from(non_empty)), 0);
-                        model.insert(id, non_empty);
+                        if non_empty {
+                            model.insert(id, Kind::Static);
+                        } else {
+                            model.remove(&id);
+                        }
+                    }
+                    Op::UpsertMovable(id, non_empty) => {
+                        meshes.upsert_movable(WorldMeshId(id), mesh(usize::from(non_empty)));
+                        if non_empty {
+                            model.insert(id, Kind::Movable);
+                        } else {
+                            model.remove(&id);
+                        }
+                    }
+                    Op::Place(id) => {
+                        meshes.place(WorldMeshId(id), at(1.0), 0);
+                        placed.push(id);
+                    }
+                    Op::ClearPlacements => {
+                        meshes.clear_placements();
+                        placed.clear();
                     }
                     Op::Remove(id) => {
                         meshes.remove(WorldMeshId(id));
-                        model.insert(id, false);
+                        model.remove(&id);
                     }
                     Op::Flush => meshes.flush(&mut backend),
                 }
             }
             meshes.flush(&mut backend);
 
-            let expected = model.values().filter(|live| **live).count();
+            let statics = model.values().filter(|k| **k == Kind::Static).count();
+            let placements = placed.iter().filter(|id| model.contains_key(id)).count();
             let drawn: Vec<u32> = draws(&meshes).iter().map(|(h, _)| *h).collect();
             let drawn_set: BTreeSet<u32> = drawn.iter().copied().collect();
-            prop_assert_eq!(drawn.len(), expected, "one draw per live id");
-            prop_assert_eq!(drawn_set.len(), drawn.len(), "no handle drawn twice");
-            prop_assert_eq!(backend.live_handles(), drawn_set, "no leaked or dangling handle");
+            prop_assert_eq!(drawn.len(), statics + placements, "one instance per static id and per live placement");
+            prop_assert!(drawn_set.is_subset(&backend.live_handles()), "only live handles are drawn");
+            prop_assert_eq!(backend.live_handles().len(), model.len(), "one upload per live id, none leaked");
             let freed: BTreeSet<u32> = backend.unregistered.iter().copied().collect();
             prop_assert_eq!(freed.len(), backend.unregistered.len(), "no handle freed twice");
             prop_assert!(freed.iter().all(|h| backend.registered.iter().any(|(r, _)| r == h)));
