@@ -145,13 +145,19 @@ its consumers near, not when the earlier wave fully closes.
 | 2.11.5 | [ENG-F18-16](https://github.com/WrackedFella/moho/issues/447): the player sets how often the world autosaves | #435 | SG-F2-03 (#343) | 1–2 gaps | flagstone's read after #343 |
 | 2.11.6 | [ENG-F18](https://github.com/WrackedFella/moho/issues/230) settings screen, modal stack and keybind capture on the shell; specified by [#444](https://github.com/WrackedFella/moho/issues/444) and [FPS-F3](https://github.com/WrackedFella/moho/issues/457) | #444 | FPS-F3 menus | 4 | #444 is its spec; capture after ENG-F26 |
 | 2.12 | [ENG-F19](https://github.com/WrackedFella/moho/issues/231) layered content | — | FPS Phase 2 | 4 | — |
-| 2.13 | [ENG-F17](https://github.com/WrackedFella/moho/issues/229) navigation over static levels (ENG-F17-01 and -02 landed; cover and exposure queries open) | — | FPS enemy chase and patrol | 4 | — |
+| 2.13 | [ENG-F17](https://github.com/WrackedFella/moho/issues/229) navigation over static levels (done; cover, exposure and hidden-route queries move to ENG-F42, ENG-M3 row 3.4c) | — | FPS enemy chase and patrol | 4 | — |
 | 2.14 | [ENG-F26](https://github.com/WrackedFella/moho/issues/359): one key carries tap, hold, modifier and toggle actions (new; `moho_input`, settings display) | Justin | strategy sprint toggle; FPS reload, check mag, unjam | 4 | before ENG-F18's keybind card |
 | 2.15 | [ENG-F27](https://github.com/WrackedFella/moho/issues/361): the game lines are called flagstone and searchlight; one card per line ([#362](https://github.com/WrackedFella/moho/issues/362) FPS, [#363](https://github.com/WrackedFella/moho/issues/363) strategy) | Justin | ENG-F5 split (ENG-M3) | 1–2 gaps | cards done; #362 after #358; #363 after #355, before #331 |
 | 2.16 | [ENG-F28](https://github.com/WrackedFella/moho/issues/373): mouse look feels like a Source game (raw, per-frame look; sensitivity, smoothing, acceleration and vsync settings) | Justin | FPS prototype feel; strategy first-person camera | 2 | prefs and settings cards after #331, #333, #354, #405 |
 | 2.17 | [ENG-F29](https://github.com/WrackedFella/moho/issues/479): light reads true in caves, at night and under open sky (light composition; not a gate item) | — | SG-F7-05 and #474 checks; searchlight arena ambient | 2 | -01 lands with SG-F7-05; -02 after #469; -03 and -04 follow; -04 then [-05 bloom](https://github.com/WrackedFella/moho/issues/503) by the end of ENG-M2; [-06 auto-exposure](https://github.com/WrackedFella/moho/issues/504) opens ENG-M3, tuned once beside ENG-F30 |
 | 2.18 | [ENG-F31](https://github.com/WrackedFella/moho/issues/481): mirrors and water reflect the world (mirrors, SSR, water; not a gate item) | Justin (must-have) | searchlight arena mirror and pool | 4 | after ENG-F29-04; its plane declaration is a new seam (ADR), settled before the ENG-F5 split gate |
 | 2.19 | [ENG-F32](https://github.com/WrackedFella/moho/issues/491): movement keeps its momentum and its footing (Source `accelerate`, half-step gravity, shape-cast ground and stick-to-floor, crease clip, queued effects with the ADR superseding [ADR-0014](../../_todo/adr/0014-characters-move-by-velocity.md), jump re-press, one gravity, hull as game data, replay determinism test; not a gate item) | Justin | searchlight feel; flagstone possession; ENG-F33, ENG-F34 and the ENG-M3 ADR-0011 proof build on it | 2–3 | [#494](https://github.com/WrackedFella/moho/issues/494), [#495](https://github.com/WrackedFella/moho/issues/495), [#496](https://github.com/WrackedFella/moho/issues/496) first (one TL thread, shared `movement.rs`), then [#497](https://github.com/WrackedFella/moho/issues/497), then the rest; `moho_physics` only, so it runs beside every renderer and UI item |
+| 2.20 | ENG-F38 (draft): meshes move without being uploaded again (transform per mesh handle, instances; amends seam 2) | Searchlight list 2.4 | enemies, loose objects, models, effects | 5 | first in wave 5 |
+| 2.21 | [#600](https://github.com/WrackedFella/moho/issues/600): loose objects fall, tumble, settle and are picked up | #600 | FPS-F9-04 | 5 | 2.20 |
+| 2.22 | ENG-F39 (draft) slices 1 to 3: models with named nodes and textured materials, sockets, rig and clips with sim-readable bone poses | [#543](https://github.com/WrackedFella/moho/issues/543); list 2.6, 2.12, 2.13 | FPS-F12-01, FPS-F4 slice 3, FPS-F12-02 | 5 | 2.20; beside 2.21 |
+| 2.23 | ENG-F40 (draft) slice 1: muzzle flash, tracer and impact marks expire on their own | list 2.9 | FPS-M2 gunplay feel | 5 | 2.20 |
+| 2.24 | ENG-F14-03 (draft): markers carry their size | list 2.2 | FPS-F10 test levels, FPS-M5 safe rooms | 5 | — |
+| 2.25 | [#544](https://github.com/WrackedFella/moho/issues/544) lean and stance transitions, prone hull, with [ENG-F33](https://github.com/WrackedFella/moho/issues/492)'s crouch and clearance slices (pulled from ENG-M3; the rest of ENG-F33 stays there) | #544 | FPS-M1.2 slice 2 | 5 | ENG-F32 |
 
 - **Wave 1:** the bugs, ENG-F16, ENG-F6 and ENG-F25. They need no other ENG-M2 work.
 - **Wave 2, before SG-F5 and SG-F4:** ENG-F23 and ENG-F24 unblock SG-F5; ENG-F9 comes before SG-F4.
@@ -161,8 +167,12 @@ its consumers near, not when the earlier wave fully closes.
 - **Wave 3, SG-F4 follow-ups:** pause and speed, then the height slice, once SG-F4's walking skeleton exists.
   ENG-F32 (2.19) spans waves 2 and 3 in `moho_physics`, which nothing else in ENG-M2 touches; its API cards
   (#494–#497) go first because every later physics card would otherwise add callers.
-- **Wave 4, before FPS Phase 2:** the rest of ENG-F18 (2.11.2, and 2.11.6 once the FPS menus are specced),
-  ENG-F19, ENG-F17 and ENG-F26 (before ENG-F18's keybind capture, which builds on it).
+- **Wave 4, before FPS Phase 2:** the rest of ENG-F18 (2.11.2, and 2.11.6 once the FPS menus are specced;
+  2.11.6 includes the inventory list, two panes and tooltips from #444's 2026-10-23 comment), ENG-F19, ENG-F17 and
+  ENG-F26 (before ENG-F18's keybind capture, which builds on it).
+- **Wave 5, during FPS Phase 2:** what FPS-M2 needs after its entry (FPS Phase 2 is in ENG-M2's cross-line gate).
+  ENG-F38 goes first, since loose objects, models and effects draw through it; then #600 and ENG-F39 in parallel.
+  #543 moves here from ENG-M5+, and #544 with ENG-F33's crouch slices from ENG-M3, as the FPS line asked (2026-10-23).
 
 ### Out of ENG-M2
 
@@ -176,7 +186,7 @@ its consumers near, not when the earlier wave fully closes.
 | Box-projected room probes; Hi-Z, stochastic and temporal SSR | SSR cost, noise and indoor misses not measured | SSR exists and misses or noise look wrong |
 | One global Low/Medium/High graphics preset | Too few Video rows yet | Four or more renderer quality rows (after ENG-F30) |
 | Auto-exposure ([ENG-F29-06](https://github.com/WrackedFella/moho/issues/504)) | Tuned against the scene's energy, which ENG-F30 changes; doing it first means tuning twice | Start of ENG-M3, beside the ENG-F30 skeleton |
-| Movement rules as data: modes, crouch, clearance, braking split, jump assists, air control, surface friction ([ENG-F33](https://github.com/WrackedFella/moho/issues/492)) | Builds on ENG-F32's step order; a feature on its own | ENG-M3 |
+| Movement rules as data: modes, braking split, jump assists, air control, surface friction ([ENG-F33](https://github.com/WrackedFella/moho/issues/492); crouch and clearance are in wave 5, row 2.25) | Builds on ENG-F32's step order; a feature on its own | ENG-M3 |
 | Characters and bodies move each other: push, weight, moving ground, char-vs-char, lookahead, contact events, CCD ([ENG-F34](https://github.com/WrackedFella/moho/issues/493)) | The biggest physics effort; needs ENG-F32's ground collider and effects | ENG-M3 |
 | Fire-time fraction (Q1) and sub-tick jump (Q2, last, only if Q1 proves useful) | Q2 changes the step's shape; neither is needed for feel at one fixed rate | ENG-M5+ |
 | Netcode ADR and a co-op session | Co-op for up to 4 players on both lines; ADR-0011, ENG-F32-04 and -09 and the per-slot tick input (ENG-F37, 3.4a) keep it open at near-zero cost | ENG-M5+, pulled by the first co-op GDD |
@@ -208,8 +218,14 @@ Carded when ENG-M2 closes, in this order of dependency; none is a gate item on i
 | 3.3 | [ENG-F33](https://github.com/WrackedFella/moho/issues/492) movement rules are game data | ENG-F32 | Modes, crouch, clearance, braking split, jump assists, air control, surface friction |
 | 3.4 | [ENG-F34](https://github.com/WrackedFella/moho/issues/493) characters and bodies move each other | ENG-F32-03, -04 | Absorbs ENG-F21's deferred props row; adds the collision-policy and contact-event seams |
 | 3.4a | [ENG-F37](https://github.com/WrackedFella/moho/issues/592) the tick takes one command per player slot (`moho_app::Game`, seam 1 in ADR-0012) | — | Changes an existing seam, so it lands before the split; games keep reading slot 0 |
+| 3.4b | ENG-F39 (draft) slices 4 to 6: blends, layers, sim-timed and interruptible clips; bone-to-bone and detach; first-person view | 2.22 | FPS-F8, FPS-M4 writhe, FPS-M3.1 |
+| 3.4c | ENG-F42 (draft) AI asks the level for hidden routes and cover (extends seam 11) | ENG-F17 | Early: before FPS-F11-03 (#630) |
+| 3.4d | ENG-F40 (draft) slices 2 and 3: beam and dot, then particles | 2.23; R.8a for slice 3 | FPS-M3.1 laser; smoke and bursts |
+| 3.4e | ENG-F41 (draft) screen and sound follow game values | R.3 | Before FPS-M4 |
+| 3.4f | Level unload and switch (ENG-F14's Deferred row) | — | FPS-M6 is the named consumer; lands before the split so scene import (seam 8) doesn't change across repos |
+| 3.4g | #444's drag-and-drop grid | 2.11.6 | After the FPS list view is playtested |
 | 3.5 | ADR-0011 two-sim proof | ENG-F32-09, 3.4a | One test that records per-slot commands; before any netcode ADR |
-| 3.6 | [ENG-F5](https://github.com/WrackedFella/moho/issues/232) split | 3.2–3.5 (with 3.4a), ENG-F35 | Gate |
+| 3.6 | [ENG-F5](https://github.com/WrackedFella/moho/issues/232) split | 3.2–3.5 (with 3.4a to 3.4g), ENG-F35; FPS-M5 complete | Gate; the later of this row's items and FPS-M5 completion ([roadmap](../roadmap.md#milestone-gates-that-span-lines)) |
 
 The global graphics preset (Out of ENG-M2) is revisited once 3.2 lands and four or more Video rows exist.
 
@@ -239,7 +255,7 @@ process-wide counters (ADR-0011 rule 3) are fixed where SG-F4 and SG-F7 rework t
 
 ### Research queue
 
-Each topic is researched before it is carded, in this order. A topic ends in findings and, where it changes a seam, an
+Each topic is researched before it is carded, in this order (R.8a, split from R.8, runs after R.3). A topic ends in findings and, where it changes a seam, an
 ADR; none is a gate item. The lowest target GPU (a GTX 1080) is a floor, never a filter: an option it cannot run is
 recorded as an optional high-end tier instead of being dropped.
 
@@ -247,12 +263,13 @@ recorded as an optional high-end tier instead of being dropped.
 |---|---|---|---|
 | R.1 | Netcode for host-authoritative co-op | Which model fits ADR-0011: host runs AI, actors replicate behaviour to clients | Netcode ADR, ENG-M5+ |
 | R.2 | Determinism | What bit-equality costs across platforms (rapier `enhanced-determinism`, float order) beyond the ENG-M3 two-sim proof | Feeds R.1 |
-| R.3 | Audio | Whether rodio carries occlusion, reverb and spatial mixing, or a mixer sits above it | After ENG-F16 |
+| R.3 | Audio | Whether rodio carries occlusion, reverb, spatial mixing, per-sound handles and a filtered mix bus, or a mixer sits above it | Before ENG-F41 |
+| R.8a | Particles and decals | CPU or GPU particles, decal method, cost on a GTX 1080 | Before ENG-F40 slice 3 |
 | R.4 | Mod scripting | WASM, Lua or data-only extension; sandbox and API surface | Scripted-mods ADR, ENG-M5+ |
 | R.5 | Asset pipeline and streaming | Import, bake, hot reload, async load at level scale | Before ENG-M4 packaging |
 | R.6 | Strategy-scale pathfinding | Flow fields and hierarchical A* for many pawns; shared with ENG-F17 or separate | When the shared-A* idea row fires |
 | R.7 | Voxel terrain at scale | Transvoxel-style seams and LOD beyond the current chunk set | Flagstone line request |
-| R.8 | Post-processing | Temporal anti-aliasing, upscaling, shadows beyond cascades, volumetrics, particles, decals | ENG-M4 |
+| R.8 | Post-processing | Temporal anti-aliasing, upscaling, shadows beyond cascades, volumetrics | ENG-M4 |
 
 ### Optional high-end tier
 

@@ -21,7 +21,7 @@ Issue labels such as `M2` mean ENG-M2.
 | Gate | Holds when | Line items involved |
 |---|---|---|
 | ENG-M2 (engine MVP) | The engine carries the current scope of both games and the save envelope is in use | FPS Phase 1 and 2 playable on engine crates (FPS-M1, FPS-M2 entries); SG-F1, SG-F2, SG-F4 and SG-F5 done (STRAT-M1 to STRAT-M3; the rest of SG-F1 sits in STRAT-M4 but is still required). Declared met by Justin |
-| ENG-M3 (v1.0 and split) | The ENG-F5 gate holds: licences and the third-party notices file; the seam list in ADR-0012 is unchanged by the last two FPS features; the `v1.0` tag; ADR-0011 two-simulation proof | The last two FPS features before the split; FPS-M6 is the earliest playable game rather than a prototype and so the natural last of them. The FPS line proposes splitting at FPS-M5 completion instead ([prototype gate](searchlight/roadmap.md#13-prototype-gate)); this row stands until the Engine project agrees |
+| ENG-M3 (v1.0 and split) | The ENG-F5 gate holds: licences and the third-party notices file; the seam list in ADR-0012 is unchanged by the last two FPS features; the `v1.0` tag; ADR-0011 two-simulation proof | The last two FPS features before the split are FPS-M4.1 and FPS-M5 ([prototype gate](searchlight/roadmap.md#13-prototype-gate)); the split follows FPS-M5 completion or the ENG-F5 gate, whichever is later. Every engine seam the prototype uses, and level unload for FPS-M6, lands before FPS-M4.1 starts (engine roadmap rows 2.20 to 2.25 and 3.4b to 3.4g) |
 
 STRAT-M1 to STRAT-M4 run inside ENG-M2. STRAT-M1 and STRAT-M2 may overlap.
 
@@ -43,12 +43,15 @@ Engine item numbers are those of the [engine roadmap](engine/roadmap.md).
 | Strategy console | Shared console | 2.11.2 ENG-F18-08 |
 | FPS-M1 | Seeded RNG; positional audio (stopgaps in use) | 2.5 ENG-F6-01; 2.4 ENG-F16 |
 | FPS-M1.1 menus | Settings screen, modal stack | 2.11.6 ENG-F18 (spec: #444) |
-| FPS-M1.2 slice 2 | Movement rules as data; lean and stance transitions | ENG-F33 #492 (ENG-M3), #544 |
-| FPS-M1.2 slice 3 | Skinned animated characters | #543 (ENG-M5+ unless pulled forward) |
+| FPS-M1.2 slice 2 | Crouch and clearance; lean and stance transitions | ENG-F33 #492's crouch slices with #544 (2.25, ENG-M2 wave 5) |
+| FPS-M1.2 slice 3 | Skinned animated characters | #543 through ENG-F39 slices 1 to 3 (2.22, ENG-M2 wave 5) |
 | FPS-M2 | On-screen text; layered content; tap and hold keys | 2.11.3 ENG-F18-09 #407; 2.12 ENG-F19 #231; 2.14 ENG-F26 #359 |
-| FPS enemy AI slice 2 | Positional audio; cover and exposure queries | 2.4 ENG-F16; ENG-F17 |
+| FPS-M2 | Moving meshes; loose objects; models, sockets and rig; flash, tracer and impact marks; marker size | 2.20 ENG-F38; 2.21 #600; 2.22 ENG-F39; 2.23 ENG-F40; 2.24 ENG-F14-03 |
+| FPS enemy AI slice 2 | Positional audio; hidden routes and cover | 2.4 ENG-F16; 3.4c ENG-F42 |
+| FPS-M3.1 | Beam and dot; first-person view | 3.4d ENG-F40; 3.4b ENG-F39 |
+| FPS-M4 | Screen and sound follow game values; blended, sim-timed clips | 3.4e ENG-F41; 3.4b ENG-F39 |
 | FPS-M5 | Game clock scaling; save and load | ENG-F11-04 and the game clock; 2.5.1 ENG-F25 |
-| FPS-M6 | Level switching carrying player state | Unscheduled |
+| FPS-M6 | Level switching carrying player state | 3.4f level unload and switch (before the split) |
 | FPS-M7 | Headless simulation; navigation for live actors | ENG-F6 #233 related; ENG-F17 |
 
 ## Dependencies: engine items serve lines
