@@ -560,6 +560,29 @@ mod tests {
     }
 
     #[test]
+    fn ground_below_reads_a_downward_wound_floor_as_walkable() {
+        let floor_facing_down = quad_mesh(
+            &[
+                [-10.0, 0.0, -10.0],
+                [10.0, 0.0, -10.0],
+                [10.0, 0.0, 1.0],
+                [-10.0, 0.0, 1.0],
+            ],
+            &[0, 1, 2, 0, 2, 3],
+        );
+        // The centre is past the floor's edge, so the face-normal ray nudged toward it misses
+        // and only the triangle's own (flipped) normal can answer.
+        let centre = Vec3::new(0.0, HOVER_Y, 1.2);
+
+        let found = with_slider(&[floor_facing_down], |slider| slider.ground_below(centre))
+            .expect("a floor wound the other way is still ground");
+
+        // The cast's own normal here is tilted by about 1e-4; only the triangle's exact normal,
+        // flipped upward, is vertical to this tolerance.
+        assert!(found.normal.distance(Vec3::Y) < 1e-6, "{found:?}");
+    }
+
+    #[test]
     fn ground_below_finds_no_ledge_past_the_flat_base() {
         let ledge = [ground(0.0, -10.0, 1.0)];
         let centre = Vec3::new(0.0, HOVER_Y, 1.25);

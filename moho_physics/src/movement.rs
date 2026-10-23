@@ -970,6 +970,27 @@ mod tests {
         }
 
         #[test]
+        fn walker_with_a_tiny_rising_ask_still_gets_the_step_height_reach() {
+            // Float noise in a level ground normal asks a few millionths of a metre upward,
+            // under REST_SPEED * DT, which must not shorten the reach to the snap distance.
+            let noise = 3e-4;
+            let asked_y = noise * DT;
+            assert!(asked_y > 0.0 && asked_y < REST_SPEED * DT);
+
+            let after = run_over(
+                walker_at_speed(noise),
+                &forward(),
+                over(false, Vec3::Y, 0.3),
+            );
+
+            assert!(after.grounded, "{after:?}");
+            assert!(
+                (after.position.y - (START_Y + asked_y - 0.3)).abs() < 1e-5,
+                "{after:?}"
+            );
+        }
+
+        #[test]
         fn walker_on_a_downhill_move_is_lowered_within_the_step_height() {
             let descent = -1.0;
 
