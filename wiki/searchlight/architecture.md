@@ -40,8 +40,8 @@ flowchart LR
 | `brain` | `Brain`: the enemy state machine (`Patrol`, `Engage`, `Cover`, `Chase`), pure over `glam` types; `Percept` and a `steer` function in, `Intent` out; `EnemyTuning` holds its numbers; `EnemyTuning::graded` scales reaction, cooldown and aim error by a `Grade` ([enemies](#5-enemies)) |
 | `cover` | `pick` and `offer`: choose the nearest free cover point a hurt enemy should run to, using world-only rays against the player (`Threat`) |
 | `sim` | `SearchlightSim`: player character and body, rifle, spare magazines, dummies and enemies; emits `Feedback`; counts player kills |
-| `wave` | `WaveTuning` (first wave size, growth per wave, points per kill; zero size or growth is refused) and `WaveState` (running wave, enemies still to spawn, score) as plain numbers, no physics |
-| `mode` | `ArenaMode`: the arena as a game mode. Owns a `SearchlightSim` started empty, scores its kills and spawns each wave's enemies at free enemy markers |
+| `wave` | `WaveTuning` (first wave size, growth per wave, points per kill, grade mix; zero size or growth is refused) and `WaveState` (running wave, enemies still to spawn, the wave's grades, score) as plain numbers, no physics |
+| `mode` | `ArenaMode`: the arena as a game mode. Owns a `SearchlightSim` started empty, scores its kills and spawns each wave's enemies, graded by the wave's mix, at free enemy markers |
 | `hud` | Text for rifle state, hits, health, death and the wave and score line; the hit-edge direction; the death overlay |
 | `menu` | `Menu`: the main menu (Play, Settings, Quit) or pause menu (Resume, Settings, Quit) as a pure value (selection with wrap, hover and click hit-testing in logical points, the `ScreenText` rows that draw it); `MenuAction` is what choosing an item asks the game to do |
 | `console_commands` | Builds the FPS `Console` from the game's `[bindings]`; the game's own commands register here (`tgm`, `fullscreen` and `grade`, parsed into `ConsoleCommand`) |
@@ -117,11 +117,13 @@ rebuilds the sim from them.
 dummies and the player stand, enemy markers are remembered but unoccupied. Each
 `ArenaMode::tick` runs the sim, then `WaveState::step` with the sim's new kills and the number of
 free markers (`SearchlightSim::free_enemy_spawns`: no living character within two `CAPSULE_RADIUS`) and
-spawns that many enemies through `SearchlightSim::spawn_enemy`, each of the command's `forced_grade` or `Grade::default()` (experienced); the force applies to enemies spawned after it, including the wave a restart brings. Wave 1 holds `first_size` enemies and each
+spawns that many enemies through `SearchlightSim::spawn_enemy`. An enemy's grade is the command's `forced_grade` when set, else the wave's mix grade for its place in the wave (`WaveGrades::grade_of`, lowest grade first); the force applies to enemies spawned after it, including the wave a restart brings. Wave 1 holds `first_size` enemies and each
 later wave `growth` more; the next wave begins when the current one has nothing left to spawn and
 none alive. Spawned enemies take the next target number after the dummies; the dead keep theirs.
 Nothing spawns while the player is dead; the restart rebuilds the sim empty and begins wave 1
 with no score. `SearchlightGame` reads `wave()` and `score()` for the HUD.
+
+The wave's grades come from `searchlight_rules::GradeMix` (`WaveTuning::mix`, default `GradeMix::default`): one row of five weights per wave in `Grade::LADDER` order, the last row holding past the end. `GradeMix::grades(wave, size, previous)` gives the wave's `WaveGrades` (a count per grade): the experienced-and-above count is the row's share of `size`, rounded half up and raised to carry the previous wave's share over, then each half is split among its grades by weight (largest remainder). `GradeMix::new` refuses an empty mix, an all-zero row and a row whose experienced-and-above share falls below the row before. `WaveState` draws its `WaveGrades` when a wave begins and `spawned()` gives the place of the next enemy in it.
 
 ## 5 Enemies
 
