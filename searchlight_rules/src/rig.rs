@@ -1,3 +1,92 @@
+//! A rig: slots that carry spare magazines.
+
+use crate::item::{ItemId, RigSpec};
+use crate::magazine::Magazine;
+
+/// A worn rig with a fixed number of magazine slots and a cursor for the next reload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rig {
+    item: ItemId,
+    slots: Vec<Option<Magazine>>,
+    next: usize,
+}
+
+impl Rig {
+    /// A rig of the item `item` with every slot free.
+    #[must_use]
+    pub fn new(item: ItemId, spec: &RigSpec) -> Self {
+        Self {
+            item,
+            slots: vec![None; spec.magazine_slots as usize],
+            next: 0,
+        }
+    }
+
+    /// The item this rig is an instance of.
+    #[must_use]
+    pub fn item(&self) -> &ItemId {
+        &self.item
+    }
+
+    /// The slots in order, free ones as `None`.
+    #[must_use]
+    pub fn slots(&self) -> &[Option<Magazine>] {
+        &self.slots
+    }
+
+    /// How many slots are free.
+    #[must_use]
+    pub fn free_slots(&self) -> usize {
+        self.slots.iter().filter(|slot| slot.is_none()).count()
+    }
+
+    /// The magazines on the rig, in slot order.
+    pub fn magazines(&self) -> impl Iterator<Item = &Magazine> {
+        self.slots.iter().flatten()
+    }
+
+    /// Puts `magazine` in the first free slot and returns its index.
+    ///
+    /// # Errors
+    ///
+    /// Gives the magazine back when no slot is free.
+    pub fn stow(&mut self, magazine: Magazine) -> Result<usize, Magazine> {
+        match self.slots.iter().position(Option::is_none) {
+            Some(index) => {
+                self.slots[index] = Some(magazine);
+                Ok(index)
+            }
+            None => Err(magazine),
+        }
+    }
+
+    /// Takes the first magazine satisfying `fits`, scanning from the cursor and wrapping,
+    /// and moves the cursor past its slot. Nothing changes when none qualifies.
+    pub(crate) fn take_next(
+        &mut self,
+        fits: impl Fn(&Magazine) -> bool,
+    ) -> Option<(usize, Magazine)> {
+        let count = self.slots.len();
+        let index = (0..count)
+            .map(|offset| (self.next + offset) % count)
+            .find(|&index| self.slots[index].as_ref().is_some_and(&fits))?;
+        self.next = (index + 1) % count;
+        self.slots[index].take().map(|magazine| (index, magazine))
+    }
+
+    /// Puts `magazine` in the free slot `slot`.
+    ///
+    /// # Panics
+    ///
+    /// When `slot` is out of range or occupied: callers put back into a slot they just
+    /// freed, and overwriting would silently drop a magazine.
+    pub(crate) fn put(&mut self, slot: usize, magazine: Magazine) {
+        let target = &mut self.slots[slot];
+        assert!(target.is_none(), "rig slot {slot} is occupied");
+        *target = Some(magazine);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

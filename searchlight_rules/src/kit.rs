@@ -1,3 +1,178 @@
+//! Starting kits: a rig, a rifle and magazines named by item id, resolved against item data.
+
+use crate::item::{ItemDef, ItemId, ItemKind};
+use crate::loadout::Loadout;
+use crate::magazine::Magazine;
+use crate::rifle::Rifle;
+use crate::rig::Rig;
+use crate::weapon::RifleDef;
+use serde::Deserialize;
+use thiserror::Error;
+
+/// A magazine in a kit: which magazine item, which round it holds, and how many.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KitMagazine {
+    /// The magazine item.
+    pub magazine: ItemId,
+    /// The round item stacked in it.
+    pub round: ItemId,
+    /// Rounds held; a full magazine when absent.
+    #[serde(default)]
+    pub rounds: Option<u32>,
+}
+
+/// A kit as defined in data.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KitDef {
+    /// The rig item worn.
+    pub rig: ItemId,
+    /// The weapon item carried.
+    pub weapon: ItemId,
+    /// The magazine in the weapon.
+    pub loaded: KitMagazine,
+    /// Magazines on the rig, stowed in order.
+    #[serde(default)]
+    pub magazines: Vec<KitMagazine>,
+}
+
+/// A resolved kit: the weapon's numbers and what the player carries.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Kit {
+    /// The weapon's definition.
+    pub weapon: RifleDef,
+    /// The rifle and rig, ready to play.
+    pub loadout: Loadout,
+}
+
+/// Why a kit could not be resolved.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum KitError {
+    /// An id the kit names has no item.
+    #[error("unknown item \"{id}\"")]
+    UnknownItem {
+        /// The id.
+        id: ItemId,
+    },
+    /// An item is not the kind its place in the kit needs.
+    #[error("item \"{id}\" is not a {expected}")]
+    WrongKind {
+        /// The id.
+        id: ItemId,
+        /// The kind needed.
+        expected: &'static str,
+    },
+    /// More magazines than the rig has slots.
+    #[error("{magazines} magazines do not fit the {slots} slots of rig \"{rig}\"")]
+    RigOverfilled {
+        /// The rig item.
+        rig: ItemId,
+        /// Its slots.
+        slots: u32,
+        /// Magazines listed.
+        magazines: usize,
+    },
+    /// The loaded magazine is for another well than the weapon's.
+    #[error("magazine \"{magazine}\" does not fit weapon \"{weapon}\"")]
+    MagazineDoesNotFit {
+        /// The magazine item.
+        magazine: ItemId,
+        /// The weapon item.
+        weapon: ItemId,
+    },
+    /// The round is of another caliber than the magazine's.
+    #[error("round \"{round}\" does not fit magazine \"{magazine}\"")]
+    RoundDoesNotFit {
+        /// The round item.
+        round: ItemId,
+        /// The magazine item.
+        magazine: ItemId,
+    },
+    /// More rounds than the magazine holds.
+    #[error("{rounds} rounds exceed the capacity {capacity} of magazine \"{magazine}\"")]
+    OverCapacity {
+        /// The magazine item.
+        magazine: ItemId,
+        /// Rounds listed.
+        rounds: u32,
+        /// The magazine's capacity.
+        capacity: u32,
+    },
+}
+
+impl KitDef {
+    /// Resolves the kit's ids through `lookup`.
+    ///
+    /// # Errors
+    ///
+    /// A [`KitError`] naming the offending item: unknown, of the wrong kind, a round of
+    /// another caliber, too many rounds, a loaded magazine the weapon cannot take, or more
+    /// magazines than the rig has slots. Rig magazines that do not fit the weapon are allowed.
+    pub fn resolve<'a>(
+        &self,
+        lookup: impl Fn(&ItemId) -> Option<&'a ItemDef>,
+    ) -> Result<Kit, KitError> {
+        let find = |id: &ItemId| lookup(id).ok_or_else(|| KitError::UnknownItem { id: id.clone() });
+        let wrong = |id: &ItemId, expected| KitError::WrongKind {
+            id: id.clone(),
+            expected,
+        };
+
+        let ItemKind::Rig(rig_spec) = &find(&self.rig)?.kind else {
+            return Err(wrong(&self.rig, "rig"));
+        };
+        let ItemKind::Weapon(weapon) = &find(&self.weapon)?.kind else {
+            return Err(wrong(&self.weapon, "weapon"));
+        };
+
+        let build = |entry: &KitMagazine| -> Result<Magazine, KitError> {
+            let ItemKind::Magazine(spec) = &find(&entry.magazine)?.kind else {
+                return Err(wrong(&entry.magazine, "magazine"));
+            };
+            let ItemKind::Round(round) = &find(&entry.round)?.kind else {
+                return Err(wrong(&entry.round, "round"));
+            };
+            if round.caliber != spec.caliber {
+                return Err(KitError::RoundDoesNotFit {
+                    round: entry.round.clone(),
+                    magazine: entry.magazine.clone(),
+                });
+            }
+            let rounds = entry.rounds.unwrap_or(spec.capacity);
+            Magazine::filled(entry.magazine.clone(), spec, &entry.round, rounds).map_err(|_| {
+                KitError::OverCapacity {
+                    magazine: entry.magazine.clone(),
+                    rounds,
+                    capacity: spec.capacity,
+                }
+            })
+        };
+
+        let in_hand = build(&self.loaded)?;
+        let rifle = Rifle::loaded(weapon.well.clone(), in_hand).map_err(|_| {
+            KitError::MagazineDoesNotFit {
+                magazine: self.loaded.magazine.clone(),
+                weapon: self.weapon.clone(),
+            }
+        })?;
+        let mut rig = Rig::new(self.rig.clone(), rig_spec);
+        for entry in &self.magazines {
+            rig.stow(build(entry)?)
+                .map_err(|_| KitError::RigOverfilled {
+                    rig: self.rig.clone(),
+                    slots: rig_spec.magazine_slots,
+                    magazines: self.magazines.len(),
+                })?;
+        }
+        Ok(Kit {
+            weapon: weapon.clone(),
+            loadout: Loadout::new(rifle, rig),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,7 +296,7 @@ mod tests {
             .rig()
             .slots()
             .iter()
-            .map(|slot| slot.as_ref().map(|m| m.rounds()))
+            .map(|slot| slot.as_ref().map(Magazine::rounds))
             .collect();
         assert_eq!(rounds, [Some(5), Some(6), None]);
     }

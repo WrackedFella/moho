@@ -1,3 +1,255 @@
+//! Items defined in data: one model for weapons, magazines, rounds, rigs and tools.
+
+use crate::weapon::RifleDef;
+use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::num::NonZeroU32;
+use thiserror::Error;
+
+macro_rules! string_id {
+    ($(#[$doc:meta])* $name:ident) => {
+        $(#[$doc])*
+        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+        #[serde(transparent)]
+        pub struct $name(String);
+
+        impl $name {
+            /// Wraps `id` as given; whether it names anything is checked where it is looked up.
+            #[must_use]
+            pub fn new(id: impl Into<String>) -> Self {
+                Self(id.into())
+            }
+
+            /// The id as text.
+            #[must_use]
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(&self.0)
+            }
+        }
+    };
+}
+
+string_id!(
+    /// The id an item is defined under.
+    ItemId
+);
+string_id!(
+    /// A round's caliber; a round loads into a magazine of the same caliber.
+    Caliber
+);
+string_id!(
+    /// The kind of magazine well a weapon has; a magazine fits a weapon with the same well.
+    MagazineWell
+);
+
+/// What an item is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemClass {
+    /// Fired or swung.
+    Weapon,
+    /// Used up.
+    Consumable,
+    /// Held and used, not used up.
+    Tool,
+    /// Worn or fitted, neither used up nor held: rigs and magazines.
+    Gear,
+}
+
+impl fmt::Display for ItemClass {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Weapon => "weapon",
+            Self::Consumable => "consumable",
+            Self::Tool => "tool",
+            Self::Gear => "gear",
+        })
+    }
+}
+
+/// Footprint in inventory cells, at least 1 by 1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Size {
+    /// Cells across.
+    pub width: u8,
+    /// Cells down.
+    pub height: u8,
+}
+
+/// How an item wears, if it does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lifecycle {
+    /// Neither wears nor is used up.
+    Unchanging,
+    /// Condition from 0 (worn out) to 100 (new).
+    Condition(u8),
+    /// A number of uses left.
+    Uses(NonZeroU32),
+}
+
+/// The round section of an item definition.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoundSpec {
+    /// Caliber of the round.
+    pub caliber: Caliber,
+}
+
+/// The magazine section of an item definition.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MagazineSpec {
+    /// The well it fits.
+    pub well: MagazineWell,
+    /// The caliber it takes.
+    pub caliber: Caliber,
+    /// Rounds it holds.
+    pub capacity: u32,
+}
+
+/// The rig section of an item definition.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RigSpec {
+    /// Magazines the rig carries.
+    pub magazine_slots: u32,
+}
+
+/// What an item does beyond being carried.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ItemKind {
+    /// A weapon.
+    Weapon(RifleDef),
+    /// A magazine.
+    Magazine(MagazineSpec),
+    /// A round.
+    Round(RoundSpec),
+    /// A magazine rig.
+    Rig(RigSpec),
+    /// Nothing beyond its class, like a tool.
+    Plain,
+}
+
+/// An item as defined in data.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(try_from = "RawItemDef")]
+pub struct ItemDef {
+    /// What the item is for.
+    pub class: ItemClass,
+    /// Inventory footprint.
+    pub size: Size,
+    /// Wear or uses.
+    pub lifecycle: Lifecycle,
+    /// What the item does.
+    pub kind: ItemKind,
+}
+
+/// Why an item definition was refused.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum ItemDefError {
+    /// Both lifecycle keys were given.
+    #[error("an item has either a condition or uses, not both")]
+    ConditionAndUses,
+    /// Condition is a percentage.
+    #[error("condition {condition} is over 100")]
+    ConditionOver100 {
+        /// The value given.
+        condition: u8,
+    },
+    /// A side of the size was 0.
+    #[error("size must be at least 1 by 1")]
+    ZeroSize,
+    /// A section that the item's class does not take.
+    #[error("a {section} section does not belong on an item of class {class}")]
+    SectionForClass {
+        /// The section given.
+        section: &'static str,
+        /// The item's class.
+        class: ItemClass,
+    },
+    /// More than one section was given.
+    #[error("an item takes at most one section")]
+    TwoSections,
+}
+
+/// Unvalidated wire form of an [`ItemDef`].
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawItemDef {
+    class: ItemClass,
+    size: [u8; 2],
+    condition: Option<u8>,
+    uses: Option<NonZeroU32>,
+    weapon: Option<RifleDef>,
+    magazine: Option<MagazineSpec>,
+    round: Option<RoundSpec>,
+    rig: Option<RigSpec>,
+}
+
+impl RawItemDef {
+    fn lifecycle(&self) -> Result<Lifecycle, ItemDefError> {
+        match (self.condition, self.uses) {
+            (Some(_), Some(_)) => Err(ItemDefError::ConditionAndUses),
+            (Some(condition), None) if condition > 100 => {
+                Err(ItemDefError::ConditionOver100 { condition })
+            }
+            (Some(condition), None) => Ok(Lifecycle::Condition(condition)),
+            (None, Some(uses)) => Ok(Lifecycle::Uses(uses)),
+            (None, None) => Ok(Lifecycle::Unchanging),
+        }
+    }
+}
+
+impl TryFrom<RawItemDef> for ItemDef {
+    type Error = ItemDefError;
+
+    fn try_from(raw: RawItemDef) -> Result<Self, Self::Error> {
+        let lifecycle = raw.lifecycle()?;
+        let [width, height] = raw.size;
+        if width == 0 || height == 0 {
+            return Err(ItemDefError::ZeroSize);
+        }
+        let class = raw.class;
+        let (section, needs, kind) = match (raw.weapon, raw.magazine, raw.round, raw.rig) {
+            (None, None, None, None) => {
+                return Ok(Self {
+                    class,
+                    size: Size { width, height },
+                    lifecycle,
+                    kind: ItemKind::Plain,
+                });
+            }
+            (Some(weapon), None, None, None) => {
+                ("weapon", ItemClass::Weapon, ItemKind::Weapon(weapon))
+            }
+            (None, Some(magazine), None, None) => {
+                ("magazine", ItemClass::Gear, ItemKind::Magazine(magazine))
+            }
+            (None, None, Some(round), None) => {
+                ("round", ItemClass::Consumable, ItemKind::Round(round))
+            }
+            (None, None, None, Some(rig)) => ("rig", ItemClass::Gear, ItemKind::Rig(rig)),
+            _ => return Err(ItemDefError::TwoSections),
+        };
+        if class != needs {
+            return Err(ItemDefError::SectionForClass { section, class });
+        }
+        Ok(Self {
+            class,
+            size: Size { width, height },
+            lifecycle,
+            kind,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

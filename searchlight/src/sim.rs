@@ -11,7 +11,7 @@ use moho_physics::{
     first_person_view,
 };
 use searchlight_rules::{
-    Body, BodyPart, BodyProfile, HitReport, Magazine, MagazineLevel, Rifle, Shot,
+    Body, BodyPart, BodyProfile, HitReport, Loadout, MagazineLevel, Rifle, Rig, Shot,
 };
 
 use crate::arena::{Arena, SETTLE_DT};
@@ -92,9 +92,8 @@ pub struct SimConfig {
     pub charge_ticks: u32,
     /// Pools of the dummies', enemies' and the player's bodies.
     pub body: BodyProfile,
-    pub rifle: Rifle,
-    /// Magazines the player can reload from, used first to last.
-    pub spares: Vec<Magazine>,
+    /// The rifle in hand and the rig it reloads from.
+    pub loadout: Loadout,
     /// How every enemy notices, aims and fires. `damage` and `cooldown_ticks` here are the
     /// enemies'; the fields above are the player's.
     pub enemy: EnemyTuning,
@@ -213,8 +212,7 @@ pub struct SearchlightSim {
     cooldown_ticks: u32,
     reload_ticks: u32,
     charge_ticks: u32,
-    rifle: Rifle,
-    spares: Vec<Magazine>,
+    loadout: Loadout,
     /// Indexed by target number: the dummies, then the enemies.
     targets: Vec<Target>,
     dummy_count: usize,
@@ -337,8 +335,7 @@ impl SearchlightSim {
             cooldown_ticks: config.cooldown_ticks,
             reload_ticks: config.reload_ticks,
             charge_ticks: config.charge_ticks,
-            rifle: config.rifle.clone(),
-            spares: config.spares.clone(),
+            loadout: config.loadout.clone(),
             targets,
             dummy_count: spawns.dummies.len(),
             player_body: Body::new(config.body),
@@ -384,7 +381,7 @@ impl SearchlightSim {
         }
         if command.check {
             self.outbox
-                .push(Feedback::MagazineLevel(self.rifle.magazine().level()));
+                .push(Feedback::MagazineLevel(self.rifle().magazine().level()));
         }
 
         self.fire_enemies(&firing, command.god_mode);
@@ -590,7 +587,7 @@ impl SearchlightSim {
         if self.weapon != Weapon::Ready {
             return;
         }
-        match self.rifle.fire() {
+        match self.loadout.fire() {
             Shot::Dry => self.outbox.push(Feedback::Dry),
             Shot::Fired => {
                 self.outbox.push(Feedback::Fired);
@@ -649,10 +646,10 @@ impl SearchlightSim {
     }
 
     fn begin_reload(&mut self) {
-        if matches!(self.weapon, Weapon::Reloading(_)) || self.spares.is_empty() {
+        if matches!(self.weapon, Weapon::Reloading(_)) || !self.loadout.can_reload() {
             return;
         }
-        let total = if self.rifle.is_chambered() {
+        let total = if self.loadout.rifle().is_chambered() {
             self.reload_ticks
         } else {
             self.reload_ticks.saturating_add(self.charge_ticks)
@@ -664,11 +661,9 @@ impl SearchlightSim {
         }
     }
 
-    /// Swaps in the first spare magazine; the ejected one goes to the back of the line.
+    /// Swaps in the next magazine from the rig; the ejected one takes its slot.
     fn finish_reload(&mut self) {
-        let spare = (!self.spares.is_empty()).then(|| self.spares.remove(0));
-        if let Some(ejected) = self.rifle.reload(spare) {
-            self.spares.push(ejected);
+        if self.loadout.reload() {
             self.outbox.push(Feedback::ReloadDone);
         }
     }
@@ -686,12 +681,12 @@ impl SearchlightSim {
     }
 
     pub fn rifle(&self) -> &Rifle {
-        &self.rifle
+        self.loadout.rifle()
     }
 
-    /// Magazines left to reload from.
-    pub fn spares(&self) -> &[Magazine] {
-        &self.spares
+    /// The rig the player reloads from.
+    pub fn rig(&self) -> &Rig {
+        self.loadout.rig()
     }
 
     /// The body of dummy `target`, or `None` if there is no such dummy.
@@ -860,7 +855,7 @@ mod tests {
     use std::f32::consts::FRAC_PI_2;
 
     use moho_physics::CharacterCommand;
-    use searchlight_rules::{ItemId, Loadout, MagazineLevel, Rig, RigSpec};
+    use searchlight_rules::{ItemId, Loadout, Magazine, MagazineLevel, Rig, RigSpec};
 
     use super::*;
     use crate::tag::SurfaceTag;
@@ -1240,7 +1235,7 @@ mod tests {
 
                 let label = format!("chambered {chambered}, {free_slots} free slots");
                 assert_eq!(ticks[0], [], "{label}");
-                assert_eq!(ticks[1], [pulled], "{label}");
+                assert_eq!(ticks[1], std::slice::from_ref(&pulled), "{label}");
                 assert!(ticks[2..].iter().all(Vec::is_empty), "{label}: {ticks:?}");
                 assert_eq!(sim_rounds(&sim), rounds, "{label}");
                 assert_eq!(sim.rig().magazines().count(), 0, "{label}");

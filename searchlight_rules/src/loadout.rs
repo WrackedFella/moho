@@ -1,3 +1,60 @@
+//! One player's carried state: the rifle in hand and the rig that feeds it.
+
+use crate::rifle::{Rifle, Shot};
+use crate::rig::Rig;
+
+/// A rifle and the rig it reloads from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Loadout {
+    rifle: Rifle,
+    rig: Rig,
+}
+
+impl Loadout {
+    /// A loadout of `rifle` and `rig`.
+    #[must_use]
+    pub fn new(rifle: Rifle, rig: Rig) -> Self {
+        Self { rifle, rig }
+    }
+
+    /// The rifle in hand.
+    #[must_use]
+    pub fn rifle(&self) -> &Rifle {
+        &self.rifle
+    }
+
+    /// The rig being worn.
+    #[must_use]
+    pub fn rig(&self) -> &Rig {
+        &self.rig
+    }
+
+    /// Pulls the rifle's trigger.
+    pub fn fire(&mut self) -> Shot {
+        self.rifle.fire()
+    }
+
+    /// Whether the rig holds a magazine that fits the rifle.
+    #[must_use]
+    pub fn can_reload(&self) -> bool {
+        self.rig.magazines().any(|m| self.rifle.fits(m))
+    }
+
+    /// Takes the next fitting magazine from the rig and puts the ejected one in the slot
+    /// that frees. Returns `false`, changing nothing, when no magazine fits.
+    pub fn reload(&mut self) -> bool {
+        let rifle = &mut self.rifle;
+        let Some((slot, spare)) = self.rig.take_next(|m| rifle.fits(m)) else {
+            return false;
+        };
+        let Ok(ejected) = rifle.reload(spare) else {
+            unreachable!("take_next only yields magazines that fit the rifle");
+        };
+        self.rig.put(slot, ejected);
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

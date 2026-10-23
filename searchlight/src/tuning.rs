@@ -1,21 +1,15 @@
 //! The simulation's tuning, with the rifle's numbers taken from its definition.
 
 use moho_physics::MoveSettings;
-use searchlight_rules::{BodyPart, BodyProfile, Magazine, MagazineError, Rifle, RifleDef};
+use searchlight_rules::{BodyPart, BodyProfile, Kit};
 
 use crate::brain::EnemyTuning;
 use crate::sim::SimConfig;
 
-const SPARE_MAGAZINES: usize = 3;
-
-/// Builds the simulation tuning around `rifle`.
-///
-/// # Errors
-///
-/// [`MagazineError`] when the definition's magazine cannot be built.
-pub fn tuning(rifle: &RifleDef) -> Result<SimConfig, MagazineError> {
-    let full = Magazine::new(rifle.magazine_capacity, rifle.magazine_capacity)?;
-    Ok(SimConfig {
+/// Builds the simulation tuning around the starting `kit`: its weapon's numbers and its loadout.
+pub fn tuning(kit: Kit) -> SimConfig {
+    let Kit { weapon, loadout } = kit;
+    SimConfig {
         move_settings: MoveSettings {
             max_speed: 6.0,
             ground_accel: 80.0,
@@ -27,22 +21,21 @@ pub fn tuning(rifle: &RifleDef) -> Result<SimConfig, MagazineError> {
             jump_speed: 6.5,
         },
         eye_height: 0.7,
-        range: rifle.range,
-        damage: rifle.damage,
-        cooldown_ticks: rifle.cooldown_ticks,
-        reload_ticks: rifle.reload_ticks,
-        charge_ticks: rifle.charge_ticks,
+        range: weapon.range,
+        damage: weapon.damage,
+        cooldown_ticks: weapon.cooldown_ticks,
+        reload_ticks: weapon.reload_ticks,
+        charge_ticks: weapon.charge_ticks,
         body: BodyProfile {
             max_health: 100,
             head_status: 30,
             arm_status: 60,
             leg_status: 60,
         },
-        rifle: Rifle::loaded(full.clone()),
-        spares: vec![full; SPARE_MAGAZINES],
+        loadout,
         enemy: EnemyTuning::default(),
         enemy_aim_at: BodyPart::Torso,
-    })
+    }
 }
 
 #[cfg(test)]

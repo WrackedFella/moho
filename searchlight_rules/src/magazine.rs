@@ -1,5 +1,6 @@
 //! Magazine capacity, rounds and the approximate fill level.
 
+use crate::item::{Caliber, ItemId, MagazineSpec, MagazineWell};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -12,6 +13,12 @@ pub enum MagazineError {
     OverCapacity {
         /// Rounds requested.
         rounds: u32,
+        /// Capacity of the magazine.
+        capacity: u32,
+    },
+    /// A round was loaded into a magazine already at capacity.
+    #[error("the magazine is full at {capacity} rounds")]
+    Full {
         /// Capacity of the magazine.
         capacity: u32,
     },
@@ -32,40 +39,120 @@ pub enum MagazineLevel {
     Full,
 }
 
-/// A magazine holding up to `capacity` rounds.
+/// A magazine item holding an ordered stack of rounds, up to its capacity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "RawMagazine")]
 pub struct Magazine {
-    pub(crate) capacity: u32,
-    pub(crate) rounds: u32,
+    item: ItemId,
+    well: MagazineWell,
+    caliber: Caliber,
+    capacity: u32,
+    /// Last loaded is last in the vector and fires first.
+    rounds: Vec<ItemId>,
 }
 
-/// Unvalidated wire form of a [`Magazine`], checked by [`Magazine::new`] on deserialize.
+/// Unvalidated wire form of a [`Magazine`], checked on deserialize.
 #[derive(Deserialize)]
 struct RawMagazine {
+    item: ItemId,
+    well: MagazineWell,
+    caliber: Caliber,
     capacity: u32,
-    rounds: u32,
+    rounds: Vec<ItemId>,
 }
 
 impl TryFrom<RawMagazine> for Magazine {
     type Error = MagazineError;
 
     fn try_from(raw: RawMagazine) -> Result<Self, Self::Error> {
-        Self::new(raw.capacity, raw.rounds)
+        let held = u32::try_from(raw.rounds.len()).unwrap_or(u32::MAX);
+        if held > raw.capacity {
+            return Err(MagazineError::OverCapacity {
+                rounds: held,
+                capacity: raw.capacity,
+            });
+        }
+        Ok(Self {
+            item: raw.item,
+            well: raw.well,
+            caliber: raw.caliber,
+            capacity: raw.capacity,
+            rounds: raw.rounds,
+        })
     }
 }
 
 impl Magazine {
-    /// Builds a magazine holding `rounds` of `capacity`.
+    /// An empty magazine of the item `item` described by `spec`.
+    #[must_use]
+    pub fn empty(item: ItemId, spec: &MagazineSpec) -> Self {
+        Self {
+            item,
+            well: spec.well.clone(),
+            caliber: spec.caliber.clone(),
+            capacity: spec.capacity,
+            rounds: Vec::new(),
+        }
+    }
+
+    /// A magazine holding `count` rounds of type `round`.
     ///
     /// # Errors
     ///
-    /// [`MagazineError::OverCapacity`] when `rounds` exceeds `capacity`.
-    pub fn new(capacity: u32, rounds: u32) -> Result<Self, MagazineError> {
-        if rounds > capacity {
-            return Err(MagazineError::OverCapacity { rounds, capacity });
+    /// [`MagazineError::OverCapacity`] when `count` exceeds the capacity.
+    pub fn filled(
+        item: ItemId,
+        spec: &MagazineSpec,
+        round: &ItemId,
+        count: u32,
+    ) -> Result<Self, MagazineError> {
+        if count > spec.capacity {
+            return Err(MagazineError::OverCapacity {
+                rounds: count,
+                capacity: spec.capacity,
+            });
         }
-        Ok(Self { capacity, rounds })
+        let mut magazine = Self::empty(item, spec);
+        magazine.rounds = vec![round.clone(); count as usize];
+        Ok(magazine)
+    }
+
+    /// Loads `round` on top of the stack.
+    ///
+    /// # Errors
+    ///
+    /// [`MagazineError::Full`] when the magazine is at capacity.
+    pub fn load(&mut self, round: ItemId) -> Result<(), MagazineError> {
+        if self.rounds() >= self.capacity {
+            return Err(MagazineError::Full {
+                capacity: self.capacity,
+            });
+        }
+        self.rounds.push(round);
+        Ok(())
+    }
+
+    /// Takes the round loaded last.
+    pub fn pop(&mut self) -> Option<ItemId> {
+        self.rounds.pop()
+    }
+
+    /// The item this magazine is an instance of.
+    #[must_use]
+    pub fn item(&self) -> &ItemId {
+        &self.item
+    }
+
+    /// The well it fits.
+    #[must_use]
+    pub fn well(&self) -> &MagazineWell {
+        &self.well
+    }
+
+    /// The caliber it takes.
+    #[must_use]
+    pub fn caliber(&self) -> &Caliber {
+        &self.caliber
     }
 
     /// Maximum rounds the magazine holds.
@@ -77,18 +164,20 @@ impl Magazine {
     /// Rounds currently held.
     #[must_use]
     pub fn rounds(&self) -> u32 {
-        self.rounds
+        // Held rounds never exceed the u32 capacity, so the length fits.
+        u32::try_from(self.rounds.len()).unwrap_or(u32::MAX)
     }
 
     /// Approximate fill, for HUD display without exact counts.
     #[must_use]
     pub fn level(&self) -> MagazineLevel {
+        let rounds = self.rounds();
         // Widened so the comparisons against quarters of capacity cannot overflow.
-        let scaled = u64::from(self.rounds) * 4;
+        let scaled = u64::from(rounds) * 4;
         let capacity = u64::from(self.capacity);
-        if self.rounds == 0 {
+        if rounds == 0 {
             MagazineLevel::Empty
-        } else if self.rounds == self.capacity {
+        } else if rounds == self.capacity {
             MagazineLevel::Full
         } else if scaled <= capacity {
             MagazineLevel::NearlyEmpty

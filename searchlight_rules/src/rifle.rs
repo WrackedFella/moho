@@ -1,7 +1,9 @@
 //! A rifle: one chambered round plus a magazine.
 
+use crate::item::{ItemId, MagazineWell};
 use crate::magazine::Magazine;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 /// Outcome of pulling the trigger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -12,37 +14,74 @@ pub enum Shot {
     Dry,
 }
 
+/// Why a magazine could not be put into a rifle.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[non_exhaustive]
+pub enum RifleError {
+    /// The magazine is for another well.
+    #[error("magazine {magazine} does not fit a {well} well")]
+    DoesNotFit {
+        /// The magazine's item.
+        magazine: ItemId,
+        /// The rifle's well.
+        well: MagazineWell,
+    },
+}
+
 /// A rifle with a chamber and a magazine.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rifle {
-    chambered: bool,
+    well: MagazineWell,
+    chamber: Option<ItemId>,
     magazine: Magazine,
 }
 
 impl Rifle {
-    /// A rifle with `magazine` inserted and one round chambered from it, if it has any.
-    #[must_use]
-    pub fn loaded(magazine: Magazine) -> Self {
+    /// A rifle taking `well`, with `magazine` inserted and one round chambered from it,
+    /// if it has any.
+    ///
+    /// # Errors
+    ///
+    /// [`RifleError::DoesNotFit`] when the magazine is for another well.
+    pub fn loaded(well: MagazineWell, magazine: Magazine) -> Result<Self, RifleError> {
         let mut rifle = Self {
-            chambered: false,
+            well,
+            chamber: None,
             magazine,
         };
+        if !rifle.fits(&rifle.magazine) {
+            return Err(RifleError::DoesNotFit {
+                magazine: rifle.magazine.item().clone(),
+                well: rifle.well,
+            });
+        }
         rifle.feed();
-        rifle
+        Ok(rifle)
     }
 
     /// Chambers a round from the magazine when the chamber is empty.
     fn feed(&mut self) {
-        if !self.chambered && self.magazine.rounds > 0 {
-            self.magazine.rounds -= 1;
-            self.chambered = true;
+        if self.chamber.is_none() {
+            self.chamber = self.magazine.pop();
         }
+    }
+
+    /// Whether `magazine` is for this rifle's well.
+    #[must_use]
+    pub fn fits(&self, magazine: &Magazine) -> bool {
+        magazine.well() == &self.well
     }
 
     /// Whether a round is chambered.
     #[must_use]
     pub fn is_chambered(&self) -> bool {
-        self.chambered
+        self.chamber.is_some()
+    }
+
+    /// The chambered round, if any.
+    #[must_use]
+    pub fn chamber(&self) -> Option<&ItemId> {
+        self.chamber.as_ref()
     }
 
     /// The inserted magazine.
@@ -53,10 +92,9 @@ impl Rifle {
 
     /// Spends the chambered round, then chambers the next from the magazine.
     pub fn fire(&mut self) -> Shot {
-        if !self.chambered {
+        if self.chamber.take().is_none() {
             return Shot::Dry;
         }
-        self.chambered = false;
         self.feed();
         Shot::Fired
     }
@@ -64,12 +102,17 @@ impl Rifle {
     /// Swaps in `spare` and returns the ejected magazine.
     ///
     /// The chambered round stays; an empty chamber is fed from the new magazine.
-    /// With no spare nothing changes and `None` is returned.
-    pub fn reload(&mut self, spare: Option<Magazine>) -> Option<Magazine> {
-        let spare = spare?;
+    ///
+    /// # Errors
+    ///
+    /// Gives `spare` back, with the rifle unchanged, when it does not fit the well.
+    pub fn reload(&mut self, spare: Magazine) -> Result<Magazine, Magazine> {
+        if !self.fits(&spare) {
+            return Err(spare);
+        }
         let ejected = std::mem::replace(&mut self.magazine, spare);
         self.feed();
-        Some(ejected)
+        Ok(ejected)
     }
 }
 

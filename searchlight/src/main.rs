@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use moho_app::{AppConfig, LoopConfig, split_fullscreen_binding};
-use moho_core::content::{ContentError, ContentRoots, load_kind};
+use moho_core::content::ContentRoots;
 use moho_core::prefs::Prefs;
 use moho_input::bindings::ActionBindings;
 use moho_ui_shell::UiShell;
@@ -15,17 +15,17 @@ use searchlight::console_commands;
 use searchlight::debug_settings::DebugSettings;
 use searchlight::game::{SearchlightGame, WINDOW_TITLE, start_window_mode};
 use searchlight::input::build_action_map;
+use searchlight::kit::{self, START_KIT_ID};
 use searchlight::mode::ArenaMode;
 use searchlight::tuning::tuning;
 use searchlight::wave::WaveTuning;
-use searchlight::{RIFLE_ID, TICK_HZ, content_root, mods_dir, prefs_path, split_console_binding};
-use searchlight_rules::RifleDef;
+use searchlight::{TICK_HZ, content_root, mods_dir, prefs_path, split_console_binding};
+use searchlight_rules::Kit;
 
-/// Loads the rifle definition from the base content folder and the listed mod roots.
-fn load_rifle(mods: &[String]) -> Result<RifleDef, ContentError> {
+/// Loads the starting kit from the base content folder and the listed mod roots.
+fn load_start_kit(mods: &[String]) -> Result<Kit, Box<dyn Error>> {
     let roots = ContentRoots::base(&content_root())?.with_mods(&mods_dir(), mods)?;
-    let weapons = load_kind::<RifleDef>(&roots, "weapons")?;
-    weapons.require(RIFLE_ID).cloned()
+    Ok(kit::load(&roots, START_KIT_ID)?)
 }
 
 fn assets() -> PathBuf {
@@ -41,8 +41,8 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
     for warning in prefs_warnings {
         tracing::warn!(%warning, "Preferences load fallback");
     }
-    let rifle = match load_rifle(prefs.content_mods()) {
-        Ok(rifle) => rifle,
+    let start_kit = match load_start_kit(prefs.content_mods()) {
+        Ok(kit) => kit,
         Err(error) => {
             tracing::error!(%error, "Content failed to load");
             return Ok(ExitCode::FAILURE);
@@ -54,7 +54,7 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
         .map_or_else(|| assets().join("arena.glb"), PathBuf::from);
     let (level, markers) = arena::load(&arena_path)?;
     let arena = Arc::new(Arena::from_level(&level, &markers)?);
-    let mode = ArenaMode::new(arena.clone(), tuning(&rifle)?, WaveTuning::default());
+    let mode = ArenaMode::new(arena.clone(), tuning(start_kit), WaveTuning::default());
     let (toggle_keys, bindings_section) = split_fullscreen_binding(prefs.bindings());
     let (console_section, game_section) = split_console_binding(&bindings_section);
     let (bindings, warnings) = ActionBindings::load(&game_section);

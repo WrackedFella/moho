@@ -1,5 +1,6 @@
 //! The rifle's tunable numbers, as a definition a content file can supply.
 
+use crate::item::MagazineWell;
 use serde::Deserialize;
 
 /// How a trigger pull becomes shots, named by id in definition files.
@@ -17,8 +18,8 @@ pub enum FireBehaviour {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RifleDef {
-    /// Rounds a full magazine holds.
-    pub magazine_capacity: u32,
+    /// The magazine well the rifle takes.
+    pub well: MagazineWell,
     /// Damage of one hit.
     pub damage: u32,
     /// How a pull becomes shots.

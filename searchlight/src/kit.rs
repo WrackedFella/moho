@@ -1,3 +1,47 @@
+//! Loads the starting kit from item and kit definitions in the content roots.
+
+use moho_core::content::{ContentError, ContentRoots, load_kind};
+use searchlight_rules::{ItemDef, ItemId, Kit, KitDef, KitError};
+use thiserror::Error;
+
+/// The id of the kit a run starts with.
+pub const START_KIT_ID: &str = "start";
+
+/// Why a kit could not be loaded.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum KitLoadError {
+    /// A definitions file or id could not be loaded.
+    #[error(transparent)]
+    Content(#[from] ContentError),
+    /// The kit's items do not make a valid kit.
+    #[error("kit \"{kit}\": {source}")]
+    Kit {
+        /// The kit's id.
+        kit: String,
+        /// What is wrong with it.
+        #[source]
+        source: KitError,
+    },
+}
+
+/// Loads `items` and `kits` through `roots` and resolves the kit `kit`.
+///
+/// # Errors
+///
+/// [`KitLoadError::Content`] when a file or entry is malformed or `kit` is undefined;
+/// [`KitLoadError::Kit`] when the kit names an unknown or unsuitable item.
+pub fn load(roots: &ContentRoots, kit: &str) -> Result<Kit, KitLoadError> {
+    let items = load_kind::<ItemDef>(roots, "items")?;
+    let kits = load_kind::<KitDef>(roots, "kits")?;
+    kits.require(kit)?
+        .resolve(|id: &ItemId| items.get(id.as_str()))
+        .map_err(|source| KitLoadError::Kit {
+            kit: kit.to_owned(),
+            source,
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
