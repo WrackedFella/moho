@@ -18,6 +18,7 @@ use moho_render_api::{
     WorldMeshId,
 };
 use moho_renderer::{LightingGpu, RendererBackend, Scene, WorldMeshes};
+use searchlight_rules::Grade;
 use winit::event::WindowEvent;
 use winit::window::{CursorGrabMode, Window};
 
@@ -746,6 +747,10 @@ pub struct SearchlightGame {
     focused: bool,
     stage: Stage,
     god_mode: bool,
+    /// The grade the `grade` command forces on new enemies; not saved, a force is a tuning
+    /// session's lever. A host action like `god_mode`: once commands are per player slot, only
+    /// slot 0's is read.
+    forced_grade: Option<Grade>,
     debug_settings: Option<DebugSettings>,
     /// A `fullscreen` command waiting for a frame, the first place a window mode can be
     /// requested.
@@ -766,6 +771,7 @@ impl SearchlightGame {
             focused: true,
             stage: Stage::new(),
             god_mode: false,
+            forced_grade: None,
             debug_settings: None,
             flip_window_pending: false,
         }
@@ -892,6 +898,7 @@ impl SearchlightGame {
                 }
                 ConsoleCommand::GodMode(GodModeArg::Set(on)) => self.god_mode = on,
                 ConsoleCommand::Fullscreen => self.flip_window_pending = true,
+                ConsoleCommand::ForceGrade(grade) => self.forced_grade = grade,
             }
         }
         if self.god_mode != before
@@ -1033,6 +1040,7 @@ impl Game for SearchlightGame {
         }
         SearchlightCommand {
             god_mode: self.god_mode,
+            forced_grade: self.forced_grade,
             ..SearchlightCommand::from_frame(&self.input.end_tick())
         }
     }
@@ -1164,6 +1172,7 @@ mod tests {
     use super::*;
     use crate::sim::Feedback;
     use crate::test_support::{arena_with, mag, press, rifle_from, test_config, wave_tuning};
+    use searchlight_rules::Grade;
 
     fn game() -> SearchlightGame {
         let mode = ArenaMode::new(
@@ -2136,6 +2145,45 @@ mod tests {
 
         assert_eq!(later, [true, true, true]);
         assert_eq!(after_off, [false, false, false]);
+    }
+
+    fn grade_tick(game: &mut SearchlightGame, line: &str) -> Option<Grade> {
+        type_into_console(game, line);
+        game.command().forced_grade
+    }
+
+    #[test]
+    fn a_grade_forced_in_the_console_rides_on_every_command() {
+        let mut game = game();
+        let before = game.command().forced_grade;
+
+        let forced = grade_tick(&mut game, "grade rookie");
+        let later: Vec<Option<Grade>> = (0..3).map(|_| game.command().forced_grade).collect();
+        let cleared = grade_tick(&mut game, "grade off");
+        let after_off: Vec<Option<Grade>> = (0..3).map(|_| game.command().forced_grade).collect();
+
+        assert_eq!(before, None);
+        assert_eq!(forced, Some(Grade::Rookie));
+        assert_eq!(later, [Some(Grade::Rookie); 3]);
+        assert_eq!(cleared, None);
+        assert_eq!(after_off, [None; 3]);
+    }
+
+    #[test]
+    fn an_unknown_grade_leaves_the_force_unchanged() {
+        let mut game = game();
+        grade_tick(&mut game, "grade professional");
+
+        let after_legend = grade_tick(&mut game, "grade legend");
+        let after_bare = grade_tick(&mut game, "grade");
+
+        assert_eq!(after_legend, Some(Grade::Professional));
+        assert_eq!(after_bare, Some(Grade::Professional));
+        let lines = console_lines(&game);
+        let reply = lines.last().expect("the console replied");
+        for grade in Grade::LADDER {
+            assert!(reply.contains(grade.name()), "{reply:?}");
+        }
     }
 
     #[test]
@@ -3631,6 +3679,7 @@ mod enemy_and_hud_tests {
     use std::collections::HashMap;
 
     use moho_renderer::FrameError;
+    use searchlight_rules::Grade;
 
     use super::*;
     use crate::sim::Start;
@@ -3895,7 +3944,8 @@ mod enemy_and_hud_tests {
         let config = test_config(rifle_from(mag(30, 30)), vec![]);
         let mut sim = SearchlightSim::with_start(arena, config, Start::Empty);
         for marker in 0..markers.len() {
-            sim.spawn_enemy(marker).expect("the marker is free");
+            sim.spawn_enemy(marker, Grade::default())
+                .expect("the marker is free");
         }
         let mut stage = Stage::new();
         let mut renderer = RecordingRenderer::default();
@@ -3908,7 +3958,8 @@ mod enemy_and_hud_tests {
             },
             1.0 / 60.0,
         );
-        sim.spawn_enemy(0).expect("the restart emptied the markers");
+        sim.spawn_enemy(0, Grade::default())
+            .expect("the restart emptied the markers");
         assert_eq!(sim.enemy_count(), 1);
 
         let after = drawn_after_sync(&mut stage, &mut renderer, &sim).len();

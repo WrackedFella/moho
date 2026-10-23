@@ -6,6 +6,7 @@ use moho_input::bindings::{ActionBindings, Binding};
 use moho_input::key::{Key, MouseButton};
 use moho_input::{Action, LookSettings};
 use moho_physics::CharacterCommand;
+use searchlight_rules::Grade;
 
 /// Everything the player can ask of the prototype.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -111,6 +112,10 @@ pub struct SearchlightCommand {
     pub restart: bool,
     /// God mode is on: a level, carried on every tick like a pause.
     pub god_mode: bool,
+    /// The grade every enemy spawned this tick gets, or `None` for the normal grade: a level,
+    /// carried on every tick. A host action like `god_mode`: once commands are per player
+    /// slot, only slot 0's is read.
+    pub forced_grade: Option<Grade>,
 }
 
 /// Yaw and pitch deltas for a look. Mouse motion is right- and down-positive; positive yaw
@@ -142,6 +147,7 @@ impl SearchlightCommand {
             check: frame.pressed(SearchlightAction::CheckMagazine),
             restart: frame.pressed(SearchlightAction::Restart),
             god_mode: false,
+            forced_grade: None,
         }
     }
 }

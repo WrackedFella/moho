@@ -1,6 +1,8 @@
-//! Platform-free rules for the FPS line: items, magazine, rifle, loadout and body damage.
+//! Platform-free rules for the FPS line: items, magazine, rifle, loadout, body damage and enemy
+//! grades.
 
 mod body;
+mod grade;
 mod item;
 mod kit;
 mod loadout;
@@ -12,6 +14,7 @@ mod test_support;
 mod weapon;
 
 pub use body::{Body, BodyPart, BodyProfile, HitReport};
+pub use grade::{Grade, GradeDials, UnknownGrade};
 pub use item::{
     Caliber, ItemClass, ItemDef, ItemDefError, ItemId, ItemKind, Lifecycle, MagazineSpec,
     MagazineWell, RigSpec, RoundSpec, Size,
