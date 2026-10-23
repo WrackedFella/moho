@@ -424,13 +424,6 @@ impl Stage {
         })
     }
 
-    /// Physical pixels per logical point; a windowless stage reports 1.
-    fn scale_factor(&self) -> f64 {
-        self.window
-            .as_ref()
-            .map_or(1.0, |window| window.scale_factor())
-    }
-
     /// Captures the cursor for mouse look, if there is a window to capture it in.
     fn capture_cursor(&mut self) {
         if let Some(window) = &self.window {
@@ -732,7 +725,12 @@ impl SearchlightGame {
 
     /// The cursor moved to `physical`, in physical pixels from the window's top left.
     fn cursor_moved(&mut self, physical: [f64; 2]) {
-        let scale = self.stage.scale_factor();
+        // A windowless stage reports a scale of 1.
+        let scale = self
+            .stage
+            .window
+            .as_ref()
+            .map_or(1.0, |window| window.scale_factor());
         self.cursor = logical_point(physical, scale);
         if self.screen == Screen::MainMenu {
             self.menu.hover(self.cursor, self.stage.screen_points());
@@ -2387,11 +2385,10 @@ mod tests {
     }
 
     #[test]
-    fn a_windowless_stage_reports_the_default_size_and_scale() {
+    fn a_windowless_stage_reports_the_default_size() {
         let stage = Stage::new();
 
         assert_eq!(stage.screen_points(), [1280.0, 720.0]);
-        assert_eq!(stage.scale_factor(), 1.0);
     }
 
     #[test]
@@ -3110,6 +3107,25 @@ mod enemy_and_hud_tests {
         stage.sync_enemies(sim);
         stage.draw(renderer, (Mat4::IDENTITY, Vec3::ZERO));
         renderer.drawn()
+    }
+
+    #[test]
+    fn the_backdrop_draws_its_own_scene_and_not_the_arena() {
+        let mut stage = Stage::new();
+        stage.add_arena(vec![box_mesh(Vec3::new(50.0, 0.0, 0.0), Vec3::ONE)], &[]);
+        let backdrop_material = stage.backdrop.material_table.find_or_push(&Paint::Arena);
+        stage.backdrop.world_meshes_mut().upsert(
+            WorldMeshId(1),
+            box_mesh(Vec3::new(-7.0, 0.0, 0.0), Vec3::ONE),
+            backdrop_material,
+        );
+        let mut renderer = RecordingRenderer::default();
+
+        stage.draw_backdrop(&mut renderer);
+        let drawn = renderer.drawn();
+
+        assert_eq!(drawn.len(), 1);
+        assert_eq!(drawn[0].0, Vec3::new(-7.0, 0.0, 0.0));
     }
 
     fn is_paint(material: MaterialGpu, paint: Paint) -> bool {
