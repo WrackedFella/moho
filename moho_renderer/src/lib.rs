@@ -157,8 +157,8 @@ pub trait RendererBackend {
     /// Set the Brightness exposure multiplier applied by the tone-map pass (clamped
     /// to `[0.5, 2.0]`, NaN gives 1.0). No-op by default.
     fn set_brightness(&mut self, _brightness: f32) {}
-    /// Turn the tone-map curve on or off; off draws the scene as it was before the
-    /// pass existed. Session-only. No-op by default.
+    /// Turn the tone-map curve on or off; off passes the HDR scene through
+    /// unchanged. Session-only. No-op by default.
     fn set_tone_map(&mut self, _enabled: bool) {}
     /// Queue the frame's box markers to draw over the world: translucent
     /// `fills` and edge-only `outlines`, each sorted far to near. Called once
