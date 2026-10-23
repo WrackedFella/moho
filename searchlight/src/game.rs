@@ -2584,6 +2584,7 @@ mod tests {
         let health = game.sim().player_body().health();
 
         pause(&mut game, &mut ctx);
+        headless.advance(&mut game, Duration::ZERO);
         game.event(&mut ctx, motion());
         run_frames(&mut game, &mut headless, 10);
         press_keys(&mut game, &mut ctx, &[Key::Enter]);
@@ -2630,9 +2631,19 @@ mod tests {
             game.route_input(&mut ctx, input, true, false);
         }
         mouse(&mut game, 40.0, 30.0);
+        let frame = game.input_mut().end_tick();
         let command = game.command();
 
         assert_eq!(game.screen, Screen::Paused);
+        for action in [
+            SearchlightAction::MoveForward,
+            SearchlightAction::Jump,
+            SearchlightAction::Reload,
+            SearchlightAction::Fire,
+        ] {
+            assert!(!frame.held(action), "{action:?} held while paused");
+            assert!(!frame.pressed(action), "{action:?} pressed while paused");
+        }
         assert_eq!(command.movement.forward, 0.0);
         assert!(!command.movement.jump);
         assert_eq!(command.movement.yaw_delta, 0.0);
@@ -3274,6 +3285,24 @@ mod mutation_tests {
         assert_eq!(crosshair_vertices(&game), 0, "crosshair drawn while paused");
         let menu = menu.expect("the pause menu text makes the shell draw");
         assert!(!menu.meshes.is_empty());
+    }
+
+    #[test]
+    fn a_frame_after_resuming_draws_the_crosshair_again() {
+        let mut game = game_with_an_arena_on_the_main_menu();
+        let mut renderer = FakeRenderer::default();
+        let clock = moho_app::GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.route_input(&mut ctx, Input::Key(Key::Enter), true, false);
+        game.route_input(&mut ctx, Input::Key(Key::Escape), true, false);
+        frame_with(&mut game, &mut renderer);
+        assert_eq!(crosshair_vertices(&game), 0);
+
+        game.route_input(&mut ctx, Input::Key(Key::Escape), true, false);
+        frame_with(&mut game, &mut renderer);
+
+        assert_eq!(game.screen, Screen::Playing);
+        assert_eq!(crosshair_vertices(&game), 16);
     }
 
     #[test]
