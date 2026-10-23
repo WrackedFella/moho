@@ -104,13 +104,8 @@ fn build(document: &gltf::Document, buffers: &[Cow<'_, [u8]>]) -> Result<Model, 
             materials,
         },
     };
-    if let Some(scene) = document
-        .default_scene()
-        .or_else(|| document.scenes().next())
-    {
-        for node in scene.nodes() {
-            walk.node(&node, None)?;
-        }
+    for node in crate::scene_roots(document) {
+        walk.node(&node, None)?;
     }
     Ok(walk.model)
 }
@@ -136,16 +131,7 @@ impl Walk<'_> {
         if let Some(mesh) = node.mesh() {
             // The mesh is placed under `rest`, so a mirrored node must flip its own winding.
             let flip_winding = rest.matrix3.determinant() < 0.0;
-            for primitive in mesh.primitives() {
-                if primitive.mode() != gltf::mesh::Mode::Triangles {
-                    tracing::warn!(
-                        mesh = mesh.name().unwrap_or_default(),
-                        index = mesh.index(),
-                        mode = ?primitive.mode(),
-                        "skipping non-triangle primitive"
-                    );
-                    continue;
-                }
+            for primitive in mesh::triangle_primitives(&mesh) {
                 let converted = mesh::convert(
                     &mesh,
                     &primitive,

@@ -73,15 +73,19 @@ fn build(
         meshes: Vec::new(),
         markers: Vec::new(),
     };
-    if let Some(scene) = document
-        .default_scene()
-        .or_else(|| document.scenes().next())
-    {
-        for node in scene.nodes() {
-            walk.node(&node, Mat4::IDENTITY)?;
-        }
+    for node in scene_roots(document) {
+        walk.node(&node, Mat4::IDENTITY)?;
     }
     Ok((walk.meshes, walk.markers))
+}
+
+/// Root nodes of the default scene, or of the first scene when none is the default.
+fn scene_roots(document: &gltf::Document) -> impl Iterator<Item = gltf::Node<'_>> {
+    document
+        .default_scene()
+        .or_else(|| document.scenes().next())
+        .into_iter()
+        .flat_map(|scene| scene.nodes())
 }
 
 /// Mark `node` visited, refusing one reached twice: glTF node graphs must be trees, and
@@ -110,23 +114,10 @@ impl Walk<'_> {
         let world = parent * Mat4::from_cols_array_2d(&node.transform().matrix());
         self.markers.extend(marker::from_node(node, world));
         if let Some(mesh) = node.mesh() {
-            for primitive in mesh.primitives() {
-                if primitive.mode() != gltf::mesh::Mode::Triangles {
-                    tracing::warn!(
-                        mesh = mesh.name().unwrap_or_default(),
-                        index = mesh.index(),
-                        mode = ?primitive.mode(),
-                        "skipping non-triangle primitive"
-                    );
-                    continue;
-                }
-                let converted = mesh::convert(
-                    &mesh,
-                    &primitive,
-                    world,
-                    world.determinant() < 0.0,
-                    self.buffers,
-                )?;
+            let flip_winding = world.determinant() < 0.0;
+            for primitive in mesh::triangle_primitives(&mesh) {
+                let converted =
+                    mesh::convert(&mesh, &primitive, world, flip_winding, self.buffers)?;
                 self.meshes.push(LevelMesh {
                     mesh: converted,
                     material: primitive.material().name().map(str::to_owned),

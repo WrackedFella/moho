@@ -7,6 +7,25 @@ use moho_render_api::WorldMesh;
 
 use crate::error::LevelErrorKind;
 
+/// The triangle primitives of `mesh`; any other mode is skipped with a warning.
+pub(crate) fn triangle_primitives<'a>(
+    mesh: &gltf::Mesh<'a>,
+) -> impl Iterator<Item = gltf::Primitive<'a>> {
+    let (name, index) = (mesh.name().unwrap_or_default(), mesh.index());
+    mesh.primitives().filter(move |primitive| {
+        let triangles = primitive.mode() == gltf::mesh::Mode::Triangles;
+        if !triangles {
+            tracing::warn!(
+                mesh = name,
+                index,
+                mode = ?primitive.mode(),
+                "skipping non-triangle primitive"
+            );
+        }
+        triangles
+    })
+}
+
 /// Convert `primitive` with `world` baked into its vertices. `flip_winding` swaps each
 /// triangle's last two indices; callers pass whether the transform they place the mesh
 /// under mirrors it.
