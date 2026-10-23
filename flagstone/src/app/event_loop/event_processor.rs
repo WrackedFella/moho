@@ -778,7 +778,8 @@ mod tests {
             .as_mut()
             .expect("App starts with a light system")
             .grid_mut();
-        for x in 14..=18 {
+        // Solid only from x = 16, so the negative-x neighbour chunk holds no blocks at all.
+        for x in 16..=18 {
             for y in 68..=72 {
                 for z in 1..=3 {
                     grid.mutator()

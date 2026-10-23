@@ -569,32 +569,70 @@ mod tests {
         }
     }
 
-    fn meshed_from(block: [i32; 3]) -> Vec<[i32; 3]> {
-        let mut chunks: Vec<[i32; 3]> = chunks_meshed_from(IVec3::from(block), 16)
+    fn meshed_from_sized(block: [i32; 3], chunk_size: i32) -> Vec<[i32; 3]> {
+        let mut chunks: Vec<[i32; 3]> = chunks_meshed_from(IVec3::from(block), chunk_size)
             .map(|chunk| chunk.to_array())
             .collect();
         chunks.sort_unstable();
         chunks
     }
 
+    fn meshed_from(block: [i32; 3]) -> Vec<[i32; 3]> {
+        meshed_from_sized(block, 16)
+    }
+
     #[test]
     fn chunks_meshed_from_counts_one_two_four_or_eight_chunks() {
-        let rows = [
-            ("interior", [5, 5, 5], 1),
-            ("far corner of own chunk", [15, 15, 15], 1),
-            ("x face", [0, 5, 5], 2),
-            ("y face", [5, 0, 5], 2),
-            ("z face", [5, 5, 0], 2),
-            ("xy edge", [0, 0, 5], 4),
-            ("xz edge", [0, 5, 0], 4),
-            ("yz edge", [5, 0, 0], 4),
-            ("corner", [0, 0, 0], 8),
+        type Row = (&'static str, [i32; 3], i32, Vec<[i32; 3]>);
+        let rows: Vec<Row> = vec![
+            ("interior", [5, 5, 5], 16, vec![[0, 0, 0]]),
+            ("far corner of own chunk", [15, 15, 15], 16, vec![[0, 0, 0]]),
+            ("x face", [0, 5, 5], 16, vec![[-1, 0, 0], [0, 0, 0]]),
+            ("y face", [5, 0, 5], 16, vec![[0, -1, 0], [0, 0, 0]]),
+            ("z face", [5, 5, 0], 16, vec![[0, 0, -1], [0, 0, 0]]),
+            (
+                "xy edge",
+                [0, 0, 5],
+                16,
+                vec![[-1, -1, 0], [-1, 0, 0], [0, -1, 0], [0, 0, 0]],
+            ),
+            (
+                "xz edge",
+                [0, 5, 0],
+                16,
+                vec![[-1, 0, -1], [-1, 0, 0], [0, 0, -1], [0, 0, 0]],
+            ),
+            (
+                "yz edge",
+                [5, 0, 0],
+                16,
+                vec![[0, -1, -1], [0, -1, 0], [0, 0, -1], [0, 0, 0]],
+            ),
+            (
+                "corner",
+                [0, 0, 0],
+                16,
+                vec![
+                    [-1, -1, -1],
+                    [-1, -1, 0],
+                    [-1, 0, -1],
+                    [-1, 0, 0],
+                    [0, -1, -1],
+                    [0, -1, 0],
+                    [0, 0, -1],
+                    [0, 0, 0],
+                ],
+            ),
+            (
+                "x face with 32-block chunks",
+                [32, 5, 5],
+                32,
+                vec![[0, 0, 0], [1, 0, 0]],
+            ),
         ];
 
-        for (name, block, expected) in rows {
-            let chunks = meshed_from(block);
-
-            assert_eq!(chunks.len(), expected, "{name}: {chunks:?}");
+        for (name, block, chunk_size, expected) in rows {
+            assert_eq!(meshed_from_sized(block, chunk_size), expected, "{name}");
         }
     }
 

@@ -118,19 +118,31 @@ fn assert_same_mesh(
     incremental: &VoxelMesh,
     full: &VoxelMesh,
 ) -> Result<(), TestCaseError> {
-    prop_assert_eq!(
-        &incremental.vertices,
-        &full.vertices,
-        "vertices of {}",
-        chunk
-    );
-    prop_assert_eq!(&incremental.indices, &full.indices, "indices of {}", chunk);
-    prop_assert_eq!(&incremental.normals, &full.normals, "normals of {}", chunk);
-    prop_assert_eq!(
-        &incremental.material,
-        &full.material,
-        "materials of {}",
-        chunk
+    assert_same_stream(chunk, "vertices", &incremental.vertices, &full.vertices)?;
+    assert_same_stream(chunk, "indices", &incremental.indices, &full.indices)?;
+    assert_same_stream(chunk, "normals", &incremental.normals, &full.normals)?;
+    assert_same_stream(chunk, "materials", &incremental.material, &full.material)
+}
+
+/// Fails naming the chunk, the stream and the first differing index, not the whole arrays.
+fn assert_same_stream<T: PartialEq + std::fmt::Debug>(
+    chunk: IVec3,
+    stream: &str,
+    incremental: &[T],
+    full: &[T],
+) -> Result<(), TestCaseError> {
+    let first_difference =
+        (0..incremental.len().max(full.len())).find(|&i| incremental.get(i) != full.get(i));
+    prop_assert!(
+        first_difference.is_none(),
+        "{} of chunk {} differ at index {:?}: incremental {:?}, full {:?} (lengths {} and {})",
+        stream,
+        chunk,
+        first_difference,
+        first_difference.map(|i| incremental.get(i)),
+        first_difference.map(|i| full.get(i)),
+        incremental.len(),
+        full.len()
     );
     Ok(())
 }
@@ -152,14 +164,14 @@ proptest! {
 
     #[test]
     fn remeshing_the_dependents_equals_a_full_remesh(
-        heights in prop::collection::vec(1..9i32, 9),
+        heights in prop::collection::vec(4..9i32, 9),
         extra in prop::collection::vec((0..48i32, 0..10i32, 0..48i32), 0..200),
         removals in prop::collection::vec((seam_biased(48), 0..8i32, seam_biased(48)), 1..12),
     ) {
         let mut grid = VoxelGrid::new(CHUNK);
         for x in 0..48 {
             for z in 0..48 {
-                let height = heights[((x / 16) * 3 + z / 16) as usize].max(4);
+                let height = heights[((x / 16) * 3 + z / 16) as usize];
                 fill_column(&mut grid, x, z, height);
             }
         }
@@ -195,10 +207,18 @@ fn surface_stays_closed_after_removal_beside_an_intersection() {
     let mut meshes = mesh_all(&grid, region);
     assert_eq!(open_edges(&meshes, lo, hi), 0, "the ridge starts closed");
 
-    for (x, z) in [(20, 19), (26, 25), (37, 36)] {
+    for (x, z) in [(20, 19), (26, 25), (37, 36), (32, 32), (16, 17)] {
         let top = IVec3::new(x, x.min(z) / 2 + 1, z);
+        let own = flagstone_voxel::VoxelGrid::get_chunk_pos(top, CHUNK);
+        let before = meshes[&own].vertices.clone();
         assert!(grid.clear_block(top));
+
         remesh(&grid, &mut meshes, chunks_meshed_from(top, CHUNK));
+
+        assert_ne!(
+            meshes[&own].vertices, before,
+            "removing {top} changes {own}"
+        );
     }
 
     assert_eq!(open_edges(&meshes, lo, hi), 0);
