@@ -14,7 +14,7 @@ use moho_ui_shell::UiShell;
 use searchlight::arena::{self, Arena};
 use searchlight::console_commands;
 use searchlight::debug_settings::DebugSettings;
-use searchlight::game::{SearchlightGame, WINDOW_TITLE};
+use searchlight::game::{SearchlightGame, WINDOW_TITLE, start_window_mode};
 use searchlight::input::build_action_map;
 use searchlight::mode::ArenaMode;
 use searchlight::tuning::tuning;
@@ -67,6 +67,7 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
         tracing::warn!(?warning, "bindings");
     }
     let actions = build_action_map(bindings, &prefs);
+    let window_mode = start_window_mode(prefs.window_mode());
     let debug_settings = DebugSettings::new(prefs, prefs_path());
     let (console, console_warnings) = console_commands::console(&console_section);
     for warning in console_warnings {
@@ -85,6 +86,7 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
             loop_config: LoopConfig::new(TICK_HZ),
             init_audio: true,
             toggle_keys: Some(toggle_keys()),
+            window_mode,
         },
     )?;
     Ok(ExitCode::SUCCESS)

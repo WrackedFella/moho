@@ -44,6 +44,13 @@ pub(crate) fn route(event: &WindowEvent) -> Route {
     }
 }
 
+/// The attributes the window is created with: borderless fullscreen from the start when the
+/// config asks for it, so the window never shows windowed first.
+pub(crate) fn window_attributes(config: &AppConfig) -> WindowAttributes {
+    let _ = config;
+    todo!("title from the config, fullscreen only for Borderless")
+}
+
 /// Runs `game` in a window until it asks to exit or the window closes.
 ///
 /// # Errors
@@ -312,6 +319,27 @@ impl<G: Game> ApplicationHandler for Runner<G> {
 mod tests {
     use super::*;
     use winit::dpi::{PhysicalPosition, PhysicalSize};
+
+    fn config(window_mode: WindowMode) -> AppConfig {
+        AppConfig {
+            window_title: "Title".to_owned(),
+            loop_config: crate::LoopConfig::new(60),
+            init_audio: false,
+            toggle_keys: None,
+            window_mode,
+        }
+    }
+
+    #[test]
+    fn a_borderless_config_builds_fullscreen_window_attributes() {
+        let borderless = window_attributes(&config(WindowMode::Borderless));
+        let windowed = window_attributes(&config(WindowMode::Windowed));
+
+        assert_eq!(borderless.fullscreen, Some(Fullscreen::Borderless(None)));
+        assert_eq!(windowed.fullscreen, None);
+        assert_eq!(borderless.title, "Title");
+        assert_eq!(windowed.title, "Title");
+    }
 
     #[test]
     fn resized_routes_to_resize_with_the_new_size() {

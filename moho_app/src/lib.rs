@@ -3,6 +3,7 @@
 pub mod clock;
 pub mod fixed_step;
 pub mod headless;
+mod loop_requests;
 pub mod pacing;
 pub mod runner;
 pub mod window_keys;
@@ -19,6 +20,7 @@ use winit::window::Window;
 pub use clock::GameClock;
 pub use fixed_step::{FixedStep, LoopConfig, SimSpeed};
 pub use headless::HeadlessLoop;
+pub(crate) use loop_requests::LoopRequests;
 pub use runner::run;
 pub use window_keys::{Observed, ToggleKeys, WindowMode};
 
@@ -30,13 +32,6 @@ pub struct TickContext<'a> {
     pub tick_length: Duration,
     /// Advanced by the loop after the game's tick.
     pub clock: &'a mut GameClock,
-}
-
-/// Pause and speed changes a game asked for, applied by the loop from the next tick.
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct LoopRequests {
-    pub(crate) paused: Option<bool>,
-    pub(crate) speed: Option<SimSpeed>,
 }
 
 /// Per-frame context handed to [`Game::frame`].
@@ -74,6 +69,30 @@ impl<'a> FrameContext<'a> {
             frame_cap: None,
             frame_cap_requested: false,
         }
+    }
+
+    /// Sets the window mode [`FrameContext::window_mode`] reports.
+    #[must_use]
+    pub fn with_window_mode(self, mode: WindowMode) -> Self {
+        let _ = mode;
+        todo!("store the runner's current window mode")
+    }
+
+    /// The runner's current window mode.
+    pub fn window_mode(&self) -> WindowMode {
+        todo!("the mode given to `with_window_mode`, Windowed by default")
+    }
+
+    /// Asks the runner to switch the window to `mode` once this frame is handled;
+    /// [`Game::window_mode_changed`] is not called for it.
+    pub fn set_window_mode(&mut self, mode: WindowMode) {
+        let _ = mode;
+        todo!("queue the request in LoopRequests")
+    }
+
+    /// The last window mode the game asked for, if it asked.
+    pub fn requested_window_mode(&self) -> Option<WindowMode> {
+        todo!("the queued request")
     }
 
     pub(crate) fn headless(tick_length: Duration, clock: &'a GameClock) -> Self {
@@ -174,6 +193,30 @@ impl<'a> EventContext<'a> {
         }
     }
 
+    /// Sets the window mode [`EventContext::window_mode`] reports.
+    #[must_use]
+    pub fn with_window_mode(self, mode: WindowMode) -> Self {
+        let _ = mode;
+        todo!("store the runner's current window mode")
+    }
+
+    /// The runner's current window mode.
+    pub fn window_mode(&self) -> WindowMode {
+        todo!("the mode given to `with_window_mode`, Windowed by default")
+    }
+
+    /// Asks the runner to switch the window to `mode` once this event is handled;
+    /// [`Game::window_mode_changed`] is not called for it.
+    pub fn set_window_mode(&mut self, mode: WindowMode) {
+        let _ = mode;
+        todo!("queue the request in LoopRequests")
+    }
+
+    /// The last window mode the game asked for, if it asked.
+    pub fn requested_window_mode(&self) -> Option<WindowMode> {
+        todo!("the queued request")
+    }
+
     pub fn clock(&self) -> &'a GameClock {
         self.clock
     }
@@ -241,6 +284,8 @@ pub struct AppConfig {
     /// Inputs that flip the window between windowed and borderless, besides the
     /// always-on Alt+Enter; `None` leaves window handling to the game, so nothing flips.
     pub toggle_keys: Option<Vec<moho_input::bindings::Input>>,
+    /// The mode the window opens in; the runner's current mode starts here.
+    pub window_mode: WindowMode,
 }
 
 /// Why [`run`] stopped with an error.

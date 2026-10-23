@@ -615,6 +615,12 @@ impl Stage {
     }
 }
 
+/// The mode the window opens in for a saved `mode`: both fullscreen kinds open borderless.
+pub fn start_window_mode(mode: moho_core::prefs::WindowMode) -> WindowMode {
+    let _ = mode;
+    todo!("Fullscreen and Borderless open Borderless, Windowed opens Windowed")
+}
+
 /// The FPS prototype's game: one arena mode and the input that drives it.
 #[derive(Debug)]
 pub struct SearchlightGame {
@@ -1778,6 +1784,68 @@ mod tests {
             game.sim().player_body().health(),
             game.sim().player_max_health()
         );
+    }
+
+    fn saved_window_mode(path: &std::path::Path) -> Option<moho_core::prefs::WindowMode> {
+        // Loading a missing file writes defaults, so look before loading.
+        if !path.exists() {
+            return None;
+        }
+        let (saved, _) = Prefs::load_from(path);
+        Some(saved.window_mode())
+    }
+
+    #[test]
+    fn a_saved_borderless_or_fullscreen_mode_starts_borderless_and_windowed_starts_windowed() {
+        use moho_core::prefs::WindowMode as Saved;
+
+        let table = [
+            (Saved::Windowed, WindowMode::Windowed),
+            (Saved::Fullscreen, WindowMode::Borderless),
+            (Saved::Borderless, WindowMode::Borderless),
+        ];
+
+        for (saved, expected) in table {
+            assert_eq!(start_window_mode(saved), expected, "{saved:?}");
+        }
+    }
+
+    #[test]
+    fn a_flip_saves_the_new_mode() {
+        use moho_core::prefs::WindowMode as Saved;
+
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        game.window_mode_changed(&mut ctx, WindowMode::Borderless);
+        let borderless = saved_window_mode(&path);
+        game.window_mode_changed(&mut ctx, WindowMode::Windowed);
+        let windowed = saved_window_mode(&path);
+
+        assert_eq!(borderless, Some(Saved::Borderless));
+        assert_eq!(windowed, Some(Saved::Windowed));
+    }
+
+    #[test]
+    fn a_requested_mode_is_not_saved_twice_or_looped() {
+        use moho_core::prefs::WindowMode as Saved;
+
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.window_mode_changed(&mut ctx, WindowMode::Borderless);
+        assert_eq!(saved_window_mode(&path), Some(Saved::Borderless));
+        std::fs::remove_file(&path).unwrap();
+
+        game.window_mode_changed(&mut ctx, WindowMode::Borderless);
+
+        assert_eq!(saved_window_mode(&path), None, "saved a mode already saved");
+        assert_eq!(ctx.requested_window_mode(), None, "asked for a mode again");
     }
 
     #[test]
