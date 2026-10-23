@@ -41,7 +41,8 @@ pub struct CharacterCommand {
     pub yaw_delta: f32,
     /// Look change this tick, in radians; positive looks up.
     pub pitch_delta: f32,
-    /// Jump if grounded.
+    /// Jump was down at some point during the tick. A grounded character jumps on a press, and
+    /// on a held jump only with [`MoveSettings::autohop`].
     pub jump: bool,
 }
 
@@ -313,7 +314,8 @@ fn apply(state: &mut CharacterState, effect: CharacterEffect) {
 ///    airborne and settle finds the ground; the velocity is then checked as in 4b, so friction
 ///    never meets an infinite speed;
 /// 1. the look turns;
-/// 2. a jump adds `jump_speed` to the vertical velocity;
+/// 2. a jump adds `jump_speed` to the vertical velocity: a grounded character jumps when
+///    jump is down and was up last tick, or held with `autohop`;
 /// 3. half a tick of gravity (`v.y -= g·dt/2`), unless walking;
 /// 4. friction and acceleration (walking) or air acceleration;
 ///    4b. the velocity is checked: a non-finite component becomes 0 and each component is
@@ -323,7 +325,8 @@ fn apply(state: &mut CharacterState, effect: CharacterEffect) {
 /// 7. the other half of gravity, unless walking;
 /// 8. settle: a walker that ends the tick grounded moves along its ground, keeping its
 ///    horizontal velocity; a landing zeroes the vertical velocity;
-/// 9. the velocity is checked again, so stored state is bounded.
+/// 9. the velocity is checked again, so stored state is bounded, and `jump_held` records the
+///    command's `jump`, whether or not the character jumped.
 ///
 /// The two halves around the move give an airborne tick the exact displacement under constant
 /// gravity at any tick rate. A landing's impact speed is therefore the mid-tick downward speed.
@@ -351,7 +354,7 @@ pub fn step(
     let wish = wish_vector.normalize_or_zero();
     let magnitude = wish_vector.length().min(1.0);
 
-    let jumped = state.grounded && command.jump;
+    let jumped = state.grounded && command.jump && (!state.jump_held || settings.autohop);
     if jumped {
         state.velocity.y += settings.jump_speed;
     }
@@ -389,6 +392,7 @@ pub fn step(
 
     settle(state, &slid, walking, asked, dt);
     state.velocity = checked(state.velocity, settings.max_velocity);
+    state.jump_held = command.jump;
     impacts
 }
 
