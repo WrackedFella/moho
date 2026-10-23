@@ -191,14 +191,12 @@ impl PlayerController {
                     self.rts_look_target += dir.normalize_or_zero() * zoom_scaled_speed * dt;
                 }
 
-                // Follow: ease the focus height toward the ground under the focus.
                 if let Some(ground) = ground_height(self.rts_look_target.x, self.rts_look_target.z)
                 {
                     let ease = 1.0 - (-RTS_FOLLOW_RATE * dt).exp();
                     self.rts_look_target.y += (ground - self.rts_look_target.y) * ease;
                 }
 
-                // Clamp: raise the whole camera when the eye would sit inside the terrain.
                 let eye = self.isometric_eye();
                 if let Some(surface) = ground_height(eye.x, eye.z) {
                     self.rts_look_target.y += (surface + CAMERA_CLEARANCE - eye.y).max(0.0);
