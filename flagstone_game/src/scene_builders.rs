@@ -173,7 +173,12 @@ const CRYSTAL_SALT: u32 = 0x5EED_C257;
 
 /// Whether the block at `(x, y, z)` in a column of `column_height` is a glowing crystal.
 pub(crate) fn determine_crystal(column_height: i32, y: i32, x: i32, z: i32, seed: u32) -> bool {
-    y > 5 && y < column_height - 8 && pos_hash(x, y, z, seed ^ CRYSTAL_SALT) < CRYSTAL_CHANCE
+    y > 5 && y < column_height - 8 && crystal_roll_hits(pos_hash(x, y, z, seed ^ CRYSTAL_SALT))
+}
+
+/// Whether a positional hash roll in `[0, 1)` lands inside the crystal chance.
+fn crystal_roll_hits(roll: f32) -> bool {
+    roll < CRYSTAL_CHANCE
 }
 
 /// Chunk size constant — must match `light_storage::CHUNK_SIZE`.
@@ -379,6 +384,14 @@ mod tests {
             }
         }
         found
+    }
+
+    #[test]
+    fn crystal_roll_excludes_the_chance_boundary() {
+        assert!(crystal_roll_hits(0.0));
+        assert!(crystal_roll_hits(CRYSTAL_CHANCE * 0.5));
+        assert!(!crystal_roll_hits(CRYSTAL_CHANCE));
+        assert!(!crystal_roll_hits(0.5));
     }
 
     #[test]
