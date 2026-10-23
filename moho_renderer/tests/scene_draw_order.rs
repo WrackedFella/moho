@@ -4,12 +4,14 @@
 use glam::Vec3;
 use moho_render_api::{
     InstanceGpu, Marker, MarkerGpu, MarkerId, MarkerStyle, MaterialGpu, MaterialKey,
-    RenderMaterial, Renderable,
+    RenderMaterial, Renderable, WorldMesh, WorldMeshId,
 };
 use moho_renderer::{FrameError, LightingGpu, RendererBackend, Scene};
 
 const SPHERE_MESH: u32 = 1;
 const CUBE_MESH: u32 = 2;
+/// The handle the recording renderer hands out for uploaded world meshes.
+const WORLD_MESH: u32 = 7;
 
 #[derive(Copy, Clone, Debug)]
 struct TestMaterial {
@@ -104,6 +106,7 @@ struct RecordingRenderer {
     marker_batches: Vec<Vec<MarkerGpu>>,
     outline_batches: Vec<Vec<MarkerGpu>>,
     calls: Vec<Call>,
+    fail_begin_frame: bool,
 }
 
 impl RecordingRenderer {
@@ -131,7 +134,7 @@ impl RendererBackend for RecordingRenderer {
         _material: &[u32],
         _indices: &[u32],
     ) -> u32 {
-        0
+        WORLD_MESH
     }
     fn unregister_mesh(&mut self, _mesh: u32) {}
     fn add_point_light(
@@ -151,7 +154,11 @@ impl RendererBackend for RecordingRenderer {
     fn set_shadow_quality(&mut self, _quality: u8) {}
     fn set_ssao_quality(&mut self, _quality: u8) {}
     fn begin_frame(&mut self, _camera: (glam::Mat4, glam::Mat4, Vec3)) -> Result<(), FrameError> {
-        Ok(())
+        if self.fail_begin_frame {
+            Err(FrameError::SurfaceUnavailable)
+        } else {
+            Ok(())
+        }
     }
     fn enqueue_draw(&mut self, mesh: u32, instances: &[InstanceGpu]) {
         self.draws.push(Draw {
@@ -304,6 +311,78 @@ fn materials_upload_only_when_table_changed() {
     render_frame(&mut scene, &mut renderer, &with_new_material, &[]);
 
     assert_eq!(renderer.material_uploads, vec![1, 2]);
+}
+
+fn triangle() -> WorldMesh {
+    WorldMesh::new(
+        vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+        vec![[0.0, 1.0, 0.0]; 3],
+        vec![1.0; 3],
+        vec![[1.0; 3]; 3],
+        vec![1.0; 3],
+        vec![0; 3],
+        vec![0, 1, 2],
+    )
+    .expect("well-formed test mesh")
+}
+
+fn at(x: f32) -> glam::Affine3A {
+    glam::Affine3A::from_translation(Vec3::new(x, 0.0, 0.0))
+}
+
+#[test]
+fn placements_of_one_mesh_are_one_draw_in_placement_order() {
+    let mut scene = Scene::new();
+    let mut renderer = RecordingRenderer::default();
+    let world = scene.world_meshes_mut();
+    world.upsert_movable(WorldMeshId(1), triangle());
+    world.place(WorldMeshId(1), at(3.0), 0);
+    world.place(WorldMeshId(1), at(1.0), 0);
+    world.place(WorldMeshId(1), at(2.0), 0);
+
+    render_frame(&mut scene, &mut renderer, &[], &[]);
+
+    assert_eq!(
+        renderer.non_empty_draws(),
+        vec![&draw(WORLD_MESH, &[3.0, 1.0, 2.0])]
+    );
+}
+
+#[test]
+fn failed_begin_frame_still_consumes_placements() {
+    let mut scene = Scene::new();
+    let mut renderer = RecordingRenderer::default();
+    let camera = (glam::Mat4::IDENTITY, glam::Mat4::IDENTITY, Vec3::ZERO);
+    let world = scene.world_meshes_mut();
+    world.upsert_movable(WorldMeshId(1), triangle());
+    world.place(WorldMeshId(1), at(1.0), 0);
+    renderer.fail_begin_frame = true;
+
+    let skipped =
+        scene.render::<Prop, Prop>(&mut renderer, &[], &[], SPHERE_MESH, CUBE_MESH, camera);
+
+    assert!(skipped.is_err(), "the frame is skipped");
+    renderer.fail_begin_frame = false;
+
+    render_frame(&mut scene, &mut renderer, &[], &[]);
+
+    assert!(
+        renderer.non_empty_draws().is_empty(),
+        "the skipped frame's placement must not carry over: {:?}",
+        renderer.draws
+    );
+
+    scene
+        .world_meshes_mut()
+        .place(WorldMeshId(1), at(2.0), 0);
+
+    render_frame(&mut scene, &mut renderer, &[], &[]);
+
+    assert_eq!(
+        renderer.non_empty_draws(),
+        vec![&draw(WORLD_MESH, &[2.0])],
+        "the mesh is still uploaded and draws when placed again"
+    );
 }
 
 const AMBER: [f32; 4] = [1.0, 0.75, 0.0, 0.4];
