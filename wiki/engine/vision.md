@@ -28,7 +28,9 @@ meaning of a frame.
 - A general-purpose engine or editor for third parties. Editor tooling is ENG-M5+ and pulled by a consumer.
 - A general ECS ([ADR-0004](../../_todo/adr/0004-entity-storage-without-a-general-ecs.md)).
 - Game rules, content or terrain: voxels belong to the strategy line ([ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md)).
-- Competitive multiplayer. Multiplayer means co-op with a trusted host, and may never ship.
+- Competitive multiplayer as a target. Multiplayer is co-op on both lines with a trusted host that runs
+  the AI, for up to 4 players. A casual competitive mode on private servers stays possible; nothing is
+  built for it until a line asks.
 
 ## 4 Constraints
 

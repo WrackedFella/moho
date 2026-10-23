@@ -56,3 +56,4 @@ Out-of-range quality values are rejected with a message. Unknown commands print 
 | Command | Args | Effect |
 |---|---|---|
 | `tgm` | `[0\|1]` | God mode: no argument toggles, `1` on, `0` off. Enemy hits stop damaging the player. Stored as `god_mode` under `[debug]` in the game's prefs file, so it persists across runs |
+| `fullscreen` | none | Flips between windowed and borderless fullscreen and prints the new mode. Saved like the F11 and Alt+Enter flips |
