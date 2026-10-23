@@ -366,6 +366,14 @@ fn mirrored_node_flips_its_mesh_winding() {
 }
 
 #[test]
+fn zero_scale_node_keeps_its_mesh_winding() {
+    // Zero scale gives a zero determinant: not a mirror, so no winding flip.
+    let collapsed = winding(floor_prim(0.0), [0.0, 1.0, 1.0]);
+
+    assert_eq!(collapsed, vec![0, 1, 2, 0, 2, 3]);
+}
+
+#[test]
 fn node_reached_twice_fails_naming_the_path() {
     let mut scene = Scene::new();
     scene.meshes = vec![vec![cube_prim()]];
