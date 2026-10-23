@@ -8,6 +8,7 @@ use crate::magazine::Magazine;
 pub struct Rig {
     item: ItemId,
     slots: Vec<Option<Magazine>>,
+    /// Slot the next scan starts from; may equal the slot count, as the scan wraps it.
     next: usize,
 }
 
@@ -70,7 +71,7 @@ impl Rig {
         let index = (0..count)
             .map(|offset| (self.next + offset) % count)
             .find(|&index| self.slots[index].as_ref().is_some_and(&fits))?;
-        self.next = (index + 1) % count;
+        self.next = index + 1;
         self.slots[index].take().map(|magazine| (index, magazine))
     }
 
