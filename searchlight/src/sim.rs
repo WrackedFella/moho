@@ -522,12 +522,10 @@ impl SearchlightSim {
                 break;
             }
             let target = &self.targets[index];
-            let (Some(handle), Some(enemy)) = (
-                target.handle.filter(|_| !target.body.is_dead()),
-                target.enemy,
-            ) else {
+            let Some(handle) = target.handle.filter(|_| !target.body.is_dead()) else {
                 continue;
             };
+            let enemy = target.enemy.expect("only enemies fire");
             let tuning = self.enemy.graded(enemy.grade);
             let state = self
                 .world
