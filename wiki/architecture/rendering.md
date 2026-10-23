@@ -118,6 +118,45 @@ default scene, plus a `LevelMarker` per named node without a mesh
 The loader does not register meshes: the caller assigns `WorldMeshId`s and sends each
 mesh to `WorldMeshes` and `PhysicsWorld` as above.
 
+### 2.2 Model files
+
+`moho_level::load_model(path)` reads the same glTF dialect into a `Model`
+(`moho_level/src/model.rs`; [ADR-0024](../../_todo/adr/0024-models-are-gltf-data-placed-by-node.md)).
+It shares the buffer rules and `LevelError` of 2.1, but keeps node structure instead of baking it:
+
+- `Model` is immutable data: `ModelNode`s in walk order (name, parent index always lower than
+  the node's own, `local` and `rest` transforms), `ModelMesh`es (a `WorldMesh` in node space, node
+  index, optional material index) and `ModelMaterial`s (name, linear base colour). No GPU handles,
+  no per-instance state;
+- the game uploads each mesh once as movable and, each frame, places it at the transform
+  `Model::placements(root)` yields (`root * rest`); posing feeds placement and never mutates the
+  model;
+- `ModelMaterial` implements `RenderMaterial` under `MODEL_MATERIAL_VARIANT`; the game owns mesh
+  ids and material indices;
+- a glTF mesh shared by several nodes is converted once per node;
+- the vertex shader transforms normals by the cofactor of the instance's upper 3x3 (`normal_to_world`
+  in `shaders/vertex.wgsl`), so non-uniform scale lights correctly. A mirrored root draws
+  inside-out under back-face culling, so games place with positive-determinant roots.
+
+The game glue, once per model and once per frame:
+
+```rust
+// Load time: one id per model mesh, each uploaded once; each material registered once.
+for (mesh, &id) in model.meshes().iter().zip(&ids) {
+    world_meshes.upsert_movable(id, mesh.mesh.clone());
+}
+let mats: Vec<u32> = model
+    .meshes()
+    .iter()
+    .map(|m| materials.find_or_push(model.material_of(m)))
+    .collect();
+
+// Each frame: no mesh data moves, only transforms.
+for (i, t) in model.placements(root) {
+    world_meshes.place(ids[i], t, mats[i]);
+}
+```
+
 ## 3 Cut-face caps
 
 The strategy HUD's view-height slider (`RtsHud`, `ViewHeightHud`) chooses the cut as a block
