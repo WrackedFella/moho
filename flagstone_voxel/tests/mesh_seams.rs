@@ -224,3 +224,100 @@ fn surface_stays_closed_after_removal_beside_an_intersection() {
 
     assert_eq!(open_edges(&meshes, lo, hi), 0);
 }
+
+const STRUCTURE: u32 = 100;
+
+/// Rolling terrain heights, spherical cave cuts `(x, y, z, radius)`, floating slabs
+/// `(x, y, z, size, thickness)` and structure blocks.
+type Shape = (
+    Vec<i32>,
+    Vec<(i32, i32, i32, i32)>,
+    Vec<(i32, i32, i32, i32, i32)>,
+    Vec<(i32, i32, i32)>,
+);
+
+fn shape() -> impl Strategy<Value = Shape> {
+    (
+        prop::collection::vec(5..10i32, 4),
+        prop::collection::vec((seam_biased(32), 1..8i32, seam_biased(32), 2..5i32), 0..4),
+        prop::collection::vec(
+            (
+                seam_biased(24),
+                10..16i32,
+                seam_biased(24),
+                3..9i32,
+                1..3i32,
+            ),
+            0..3,
+        ),
+        prop::collection::vec((seam_biased(32), 0..10i32, seam_biased(32)), 0..12),
+    )
+}
+
+/// Offsets of a `size` x `height` x `size` box.
+fn box_offsets(size: i32, height: i32) -> Vec<IVec3> {
+    let mut offsets = Vec::new();
+    for x in 0..size {
+        for y in 0..height {
+            for z in 0..size {
+                offsets.push(IVec3::new(x, y, z));
+            }
+        }
+    }
+    offsets
+}
+
+fn build(shape: &Shape) -> VoxelGrid {
+    let (heights, caves, slabs, structures) = shape;
+    let mut grid = VoxelGrid::new(CHUNK);
+    for x in 0..32 {
+        for z in 0..32 {
+            fill_column(&mut grid, x, z, heights[((x / 16) * 2 + z / 16) as usize]);
+        }
+    }
+    for &(x, y, z, size, thick) in slabs {
+        for offset in box_offsets(size, thick) {
+            grid.mutator()
+                .place(IVec3::new(x, y, z) + offset, SOIL, None);
+        }
+    }
+    for &(x, y, z, r) in caves {
+        for offset in box_offsets(2 * r + 1, 2 * r + 1) {
+            let d = offset - IVec3::splat(r);
+            if d.length_squared() <= r * r {
+                grid.clear_block(IVec3::new(x, y, z) + d);
+            }
+        }
+    }
+    for &(x, y, z) in structures {
+        grid.mutator().place(IVec3::new(x, y, z), STRUCTURE, None);
+    }
+    grid
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(24))]
+
+    #[test]
+    fn surface_stays_closed_after_removal_in_caves_overhangs_and_mixed_chunks(
+        shape in shape(),
+        (x, above, z) in (seam_biased(32), 0..20i32, seam_biased(32)),
+    ) {
+        let mut grid = build(&shape);
+        let region = chunk_box([0, 0, 0], [2, 2, 2]);
+        let (lo, hi) = ([-0.5, -0.5, -0.5], [31.5, 31.5, 31.5]);
+        let mut meshes = mesh_all(&grid, region);
+        prop_assume!(open_edges(&meshes, lo, hi) == 0);
+        let block = (0..=above)
+            .rev()
+            .map(|y| IVec3::new(x, y, z))
+            .find(|&p| grid.material_at(p).is_some());
+        prop_assume!(block.is_some());
+        let block = block.expect("assumed present above");
+        assert!(grid.clear_block(block));
+
+        remesh(&grid, &mut meshes, chunks_meshed_from(block, CHUNK));
+
+        prop_assert_eq!(open_edges(&meshes, lo, hi), 0, "removing {} opened an edge", block);
+    }
+}
