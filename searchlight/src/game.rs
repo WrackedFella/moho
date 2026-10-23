@@ -76,6 +76,8 @@ fn window_title(status: &str) -> String {
 
 /// The glTF material name of the arena meshes that draw glossy.
 const FLOOR_MATERIAL: &str = "floor";
+
+/// Gloss of the arena floor's paint.
 const ARENA_FLOOR_GLOSS: f32 = 0.6;
 
 /// Surface colours of the greybox world.
@@ -92,16 +94,18 @@ impl RenderMaterial for Paint {
     fn to_gpu(&self) -> MaterialGpu {
         // World meshes draw as terrain: `albedo` colours up-facing surfaces, `params.xyz`
         // the rest, and `params.w > 0` makes the surface glow its colour.
-        let (top, side, glow) = match self {
-            Paint::Arena | Paint::ArenaFloor => ([0.62, 0.62, 0.64], [0.42, 0.43, 0.46], 0.0),
-            Paint::Dummy => ([0.85, 0.6, 0.2], [0.7, 0.48, 0.16], 0.0),
-            Paint::Enemy => ([0.3, 0.4, 0.62], [0.22, 0.3, 0.5], 0.0),
-            Paint::Struck => ([1.0, 0.15, 0.1], [1.0, 0.15, 0.1], 1.0),
-        };
         // `albedo.w` is a world mesh's gloss.
-        let gloss = match self {
-            Paint::ArenaFloor => ARENA_FLOOR_GLOSS,
-            Paint::Arena | Paint::Dummy | Paint::Enemy | Paint::Struck => 0.0,
+        let (top, side, glow, gloss) = match self {
+            Paint::Arena => ([0.62, 0.62, 0.64], [0.42, 0.43, 0.46], 0.0, 0.0),
+            Paint::ArenaFloor => (
+                [0.62, 0.62, 0.64],
+                [0.42, 0.43, 0.46],
+                0.0,
+                ARENA_FLOOR_GLOSS,
+            ),
+            Paint::Dummy => ([0.85, 0.6, 0.2], [0.7, 0.48, 0.16], 0.0, 0.0),
+            Paint::Enemy => ([0.3, 0.4, 0.62], [0.22, 0.3, 0.5], 0.0, 0.0),
+            Paint::Struck => ([1.0, 0.15, 0.1], [1.0, 0.15, 0.1], 1.0, 0.0),
         };
         MaterialGpu {
             albedo: [top[0], top[1], top[2], gloss],
