@@ -6,7 +6,7 @@
 relative to the working directory. The FPS (`searchlight`) keeps its own file,
 `config/searchlight.ini` (`searchlight::prefs_path`), read with `Prefs::load_from`. It
 splits the `console` entry from the game's own `[bindings]` (`split_console_binding`) so
-neither loader warns about the other's key.
+neither loader warns about the other's key. It splits the `fullscreen` entry first (`split_fullscreen_binding`).
 
 `Prefs::load` creates the file with defaults if it is missing. Missing sections or keys
 take their defaults silently. `Prefs::save` writes every key below; `[content]` is written only when `mods` is non-empty.
@@ -100,9 +100,9 @@ action keeps its default (`flagstone_ui::actions::load_bindings` logs them): an 
 action id, a value with any unrecognised key, or a value holding a protected binding (see below). A `[bindings]` line with no `=` is a
 malformed prefs line. `console` is reserved in every game's `[bindings]`: it is the
 engine console's key (`moho_ui_shell`, default backtick; an unbound or unreadable value, or one
-with a `Hold ` item or a chord, falls back to backtick), not a game action. `fullscreen` is reserved likewise: it names the
+with a `Hold ` item or a chord, falls back to backtick), not a game action. In Searchlight `fullscreen` is reserved likewise (flagstone does not reserve it and reports it as an unknown action): it names the
 key that flips windowed and borderless fullscreen besides Alt+Enter (`moho_app::split_fullscreen_binding`;
-default F11; a value that does not parse, is a protected key, or holds a chord, `Hold ` item or mouse button
+default F11; an empty or `Unbound` value, one that does not parse, is a protected key, or holds a chord, `Hold ` item or mouse button
 warns and falls back to F11). The game loader never sees it. The pre-`[bindings]` `key_*` lines under `[prefs]` are unknown
 keys and ignored.
 

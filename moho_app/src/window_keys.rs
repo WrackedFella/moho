@@ -409,6 +409,10 @@ mod tests {
             "ArrowLeft",
             "ArrowRight",
             "Hold Enter",
+            "Unbound",
+            "Ctrl+F8",
+            "Hold F8",
+            "Mouse Left",
         ];
 
         for value in values {
