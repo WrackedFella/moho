@@ -16,6 +16,7 @@ const COLOR: [u8; 4] = [220, 220, 220, 255];
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuAction {
     Play,
+    Resume,
     Settings,
     Quit,
 }
@@ -24,6 +25,7 @@ impl MenuAction {
     fn label(self) -> &'static str {
         match self {
             MenuAction::Play => "Play",
+            MenuAction::Resume => "Resume",
             MenuAction::Settings => "Settings",
             MenuAction::Quit => "Quit",
         }
@@ -44,6 +46,11 @@ impl Menu {
             items: vec![MenuAction::Play, MenuAction::Settings, MenuAction::Quit],
             selected: 0,
         }
+    }
+
+    /// Resume, Settings and Quit, in that order, with Resume selected.
+    pub fn pause() -> Self {
+        Self::main()
     }
 
     /// The selected item's action.
@@ -152,6 +159,21 @@ mod tests {
             [MenuAction::Play, MenuAction::Settings, MenuAction::Quit]
         );
         assert_eq!(Menu::main().selected(), Some(MenuAction::Play));
+    }
+
+    #[test]
+    fn the_pause_menu_lists_resume_settings_quit_in_order() {
+        let mut menu = Menu::pause();
+
+        let labels: Vec<String> = menu.texts().into_iter().map(|t| t.text).collect();
+        let actions = actions_in_order(&mut menu);
+
+        assert_eq!(labels, ["Resume", "Settings", "Quit"]);
+        assert_eq!(
+            actions,
+            [MenuAction::Resume, MenuAction::Settings, MenuAction::Quit]
+        );
+        assert_eq!(Menu::pause().selected(), Some(MenuAction::Resume));
     }
 
     #[test]

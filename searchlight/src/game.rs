@@ -676,6 +676,7 @@ fn draw_scene(
 enum Screen {
     MainMenu,
     Playing,
+    Paused,
 }
 
 /// The FPS prototype's game: one arena mode and the input that drives it.
@@ -756,7 +757,7 @@ impl SearchlightGame {
                 self.input.reset_look();
                 self.stage.capture_cursor();
             }
-            MenuAction::Settings => {}
+            MenuAction::Resume | MenuAction::Settings => {}
             MenuAction::Quit => ctx.request_exit(),
         }
     }
@@ -1374,7 +1375,7 @@ mod tests {
     }
 
     #[test]
-    fn escape_with_the_console_open_does_not_exit() {
+    fn escape_with_the_console_open_closes_only_the_console() {
         let mut game = game();
         let clock = GameClock::default();
         open_the_console(&mut game, &clock);
@@ -1385,34 +1386,40 @@ mod tests {
         assert_eq!(routing, Routing::Closed);
         assert!(!ctx.exit_requested());
         assert!(!game.stage.shell.lock().unwrap().captures_input());
+        assert_eq!(game.screen, Screen::Playing);
     }
 
     #[test]
-    fn an_escape_repeat_after_the_console_closed_does_not_exit() {
+    fn an_escape_repeat_in_play_does_not_pause() {
         let mut game = game();
         let clock = GameClock::default();
-        open_the_console(&mut game, &clock);
         let mut ctx = EventContext::new(&clock, None, None);
-        let escape = Input::Key(Key::Escape);
 
-        let closing = game.route_input(&mut ctx, escape, true, false);
-        let repeated = game.route_input(&mut ctx, escape, true, true);
+        let routing = game.route_input(&mut ctx, Input::Key(Key::Escape), true, true);
 
-        assert_eq!(closing, Routing::Closed);
-        assert_eq!(repeated, Routing::Game);
+        assert_eq!(routing, Routing::Game);
+        assert_eq!(game.screen, Screen::Playing);
         assert!(!ctx.exit_requested());
     }
 
     #[test]
-    fn escape_with_the_console_closed_exits() {
+    fn escape_in_play_pauses_frees_the_cursor_and_does_not_exit() {
         let mut game = game();
+        game.stage.capture_cursor();
         let clock = GameClock::default();
         let mut ctx = EventContext::new(&clock, None, None);
 
         let routing = game.route_input(&mut ctx, Input::Key(Key::Escape), true, false);
+        game.event(&mut ctx, motion());
 
         assert_eq!(routing, Routing::Game);
-        assert!(ctx.exit_requested());
+        assert_eq!(game.screen, Screen::Paused);
+        assert!(!game.stage.cursor_captured);
+        assert!(!ctx.exit_requested());
+        assert_eq!(ctx.requested_paused(), Some(true));
+        assert_eq!(game.menu.selected(), Some(MenuAction::Resume));
+        let labels: Vec<String> = game.menu.texts().into_iter().map(|t| t.text).collect();
+        assert_eq!(labels, ["Resume", "Settings", "Quit"]);
     }
 
     #[test]
@@ -2471,6 +2478,249 @@ mod tests {
         assert_eq!(game.input.pending_look(), (0.0, 0.0));
         assert_eq!(after_release.movement.forward, 0.0);
     }
+
+    /// A game in play with a moving enemy, a visible-size look, focus and the cursor captured.
+    fn playing_game() -> SearchlightGame {
+        let mut game = game_with_a_moving_enemy();
+        game.input_mut()
+            .set_look(moho_input::action_map::LookSettings {
+                look_per_count: 0.002,
+                smoothing: false,
+                invert_y: false,
+                acceleration: 0.0,
+            });
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.event(&mut ctx, Event::Window(WindowEvent::Focused(true)));
+        game.stage.capture_cursor();
+        game
+    }
+
+    /// Presses and releases Escape in play and checks the game paused.
+    fn pause(game: &mut SearchlightGame, ctx: &mut EventContext<'_>) {
+        press_keys(game, ctx, &[Key::Escape]);
+        assert_eq!(game.screen, Screen::Paused, "Escape did not pause");
+    }
+
+    /// Everything a pause must leave as it found it.
+    fn world_of(game: &SearchlightGame) -> (CharacterState, Option<CharacterState>, u32, u32, u32) {
+        (
+            game.sim().player(),
+            game.sim().enemy_state(0),
+            game.mode.wave(),
+            game.mode.score(),
+            game.sim().rifle().magazine().rounds(),
+        )
+    }
+
+    #[test]
+    fn resuming_by_the_menu_item_or_escape_restores_play_and_recaptures_the_cursor() {
+        let ways: [&[Key]; 2] = [&[Key::Enter], &[Key::Escape]];
+
+        for way in ways {
+            let mut game = playing_game();
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+            pause(&mut game, &mut ctx);
+            assert!(!game.stage.cursor_captured, "{way:?}");
+
+            press_keys(&mut game, &mut ctx, way);
+            game.event(&mut ctx, motion());
+
+            assert_eq!(game.screen, Screen::Playing, "{way:?}");
+            assert!(game.stage.cursor_captured, "{way:?}");
+            assert_eq!(ctx.requested_paused(), Some(false), "{way:?}");
+            assert!(!ctx.exit_requested(), "{way:?}");
+        }
+    }
+
+    #[test]
+    fn the_world_is_unchanged_across_a_pause_and_resume() {
+        let mut game = playing_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        headless.step(&mut game, 10);
+        let before = world_of(&game);
+        let health = game.sim().player_body().health();
+
+        pause(&mut game, &mut ctx);
+        game.event(&mut ctx, motion());
+        run_frames(&mut game, &mut headless, 10);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+
+        assert_eq!(game.screen, Screen::Playing);
+        assert_eq!(world_of(&game), before);
+        assert_eq!(game.sim().player_body().health(), health);
+    }
+
+    #[test]
+    fn thirty_seconds_while_paused_run_no_tick() {
+        let mut game = playing_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        headless.step(&mut game, 1);
+        pause(&mut game, &mut ctx);
+        headless.advance(&mut game, Duration::ZERO);
+        let (world, next_tick) = (world_of(&game), headless.next_tick());
+
+        for _ in 0..1800 {
+            headless.advance(&mut game, Duration::from_secs(1) / 60);
+        }
+
+        assert!(headless.paused());
+        assert_eq!(headless.next_tick(), next_tick);
+        assert_eq!(world_of(&game), world);
+    }
+
+    #[test]
+    fn movement_look_and_fire_while_paused_change_nothing() {
+        let mut game = playing_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        pause(&mut game, &mut ctx);
+
+        game.cursor_moved([0.0, 0.0]);
+        for input in [
+            Input::Key(Key::W),
+            Input::Key(Key::Space),
+            Input::Key(Key::R),
+            Input::Mouse(MouseButton::Left),
+        ] {
+            game.route_input(&mut ctx, input, true, false);
+        }
+        mouse(&mut game, 40.0, 30.0);
+        let command = game.command();
+
+        assert_eq!(game.screen, Screen::Paused);
+        assert_eq!(command.movement.forward, 0.0);
+        assert!(!command.movement.jump);
+        assert_eq!(command.movement.yaw_delta, 0.0);
+        assert_eq!(command.movement.pitch_delta, 0.0);
+        assert!(!command.fire);
+        assert!(!command.reload);
+        assert_eq!(game.input.pending_look(), (0.0, 0.0));
+        assert!(!ctx.exit_requested());
+    }
+
+    #[test]
+    fn a_key_held_at_the_pause_does_not_move_the_player_after_resume() {
+        let mut game = playing_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.route_input(&mut ctx, Input::Key(Key::W), true, false);
+        game.route_input(&mut ctx, Input::Mouse(MouseButton::Left), true, false);
+        assert_eq!(game.command().movement.forward, 1.0);
+
+        pause(&mut game, &mut ctx);
+        game.route_input(&mut ctx, Input::Key(Key::W), false, false);
+        game.route_input(&mut ctx, Input::Mouse(MouseButton::Left), false, false);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        let resumed = game.command();
+        game.route_input(&mut ctx, Input::Key(Key::W), true, false);
+        let pressed_again = game.command();
+
+        assert_eq!(game.screen, Screen::Playing);
+        assert_eq!(resumed.movement.forward, 0.0);
+        assert!(!resumed.fire);
+        assert_eq!(pressed_again.movement.forward, 1.0);
+    }
+
+    #[test]
+    fn a_key_still_held_at_the_resume_does_not_stick() {
+        let mut game = playing_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.route_input(&mut ctx, Input::Key(Key::W), true, false);
+
+        pause(&mut game, &mut ctx);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        let resumed = game.command();
+        game.route_input(&mut ctx, Input::Key(Key::W), false, false);
+        let after_release = game.command();
+
+        assert_eq!(game.screen, Screen::Playing);
+        assert_eq!(resumed.movement.forward, 0.0);
+        assert_eq!(after_release.movement.forward, 0.0);
+    }
+
+    #[test]
+    fn mouse_motion_while_paused_does_not_turn_the_resumed_view() {
+        let mut game = playing_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        pause(&mut game, &mut ctx);
+
+        mouse(&mut game, 400.0, 300.0);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        let command = game.command();
+
+        assert_eq!(game.screen, Screen::Playing);
+        assert_eq!(command.movement.yaw_delta, 0.0);
+        assert_eq!(command.movement.pitch_delta, 0.0);
+        assert_eq!(game.input.pending_look(), (0.0, 0.0));
+    }
+
+    #[test]
+    fn quit_on_the_pause_menu_requests_exit() {
+        let mut game = playing_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        pause(&mut game, &mut ctx);
+        assert!(!ctx.exit_requested());
+
+        press_keys(
+            &mut game,
+            &mut ctx,
+            &[Key::ArrowDown, Key::ArrowDown, Key::Enter],
+        );
+
+        assert_eq!(game.menu.selected(), Some(MenuAction::Quit));
+        assert!(ctx.exit_requested());
+        assert_eq!(game.screen, Screen::Paused);
+    }
+
+    #[test]
+    fn settings_on_the_pause_menu_changes_nothing_and_stays_paused() {
+        let mut game = playing_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        pause(&mut game, &mut ctx);
+        let world = world_of(&game);
+
+        press_keys(&mut game, &mut ctx, &[Key::ArrowDown, Key::Enter]);
+        game.event(&mut ctx, motion());
+
+        assert_eq!(game.menu.selected(), Some(MenuAction::Settings));
+        assert_eq!(game.screen, Screen::Paused);
+        assert!(!ctx.exit_requested());
+        assert!(!game.stage.cursor_captured);
+        assert_eq!(ctx.requested_paused(), Some(true));
+        assert_eq!(world_of(&game), world);
+    }
+
+    #[test]
+    fn escape_while_dead_pauses_and_enter_restarts_only_after_resume() {
+        let (mut game, clock) = game_with_a_player_dead_away_from_the_spawn();
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        pause(&mut game, &mut ctx);
+        let enter = Input::Key(Key::Enter);
+        game.route_input(&mut ctx, enter, true, false);
+        game.route_input(&mut ctx, enter, false, false);
+        let after_resume = game.command();
+        game.route_input(&mut ctx, enter, true, false);
+        let restart = game.command();
+
+        assert_eq!(game.screen, Screen::Playing);
+        assert!(
+            !after_resume.restart,
+            "the Enter that resumed also restarted"
+        );
+        assert!(restart.restart, "Enter restarts once playing again");
+        assert!(!ctx.exit_requested());
+    }
 }
 
 #[cfg(test)]
@@ -2958,6 +3208,33 @@ mod mutation_tests {
             "arena, dummy and enemy boxes"
         );
         assert_eq!(crosshair_vertices(&game), 16);
+    }
+
+    #[test]
+    fn a_paused_frame_still_draws_the_world_but_not_the_crosshair() {
+        let mut game = game_with_an_arena_on_the_main_menu();
+        let mut renderer = FakeRenderer::default();
+        let clock = moho_app::GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.route_input(&mut ctx, Input::Key(Key::Enter), true, false);
+        frame_with(&mut game, &mut renderer);
+        assert_eq!(crosshair_vertices(&game), 16);
+
+        game.route_input(&mut ctx, Input::Key(Key::Escape), true, false);
+        frame_with(&mut game, &mut renderer);
+        let shown = game.stage.enemies.iter().filter(|rig| rig.shown).count();
+        let menu = game.stage.shell().ui_frame([1280, 720]);
+
+        assert_eq!(game.screen, Screen::Paused);
+        assert_eq!(
+            renderer.draws.len(),
+            1 + 6 + 7,
+            "arena, dummy and enemy boxes"
+        );
+        assert_eq!(shown, 1);
+        assert_eq!(crosshair_vertices(&game), 0, "crosshair drawn while paused");
+        let menu = menu.expect("the pause menu text makes the shell draw");
+        assert!(!menu.meshes.is_empty());
     }
 
     #[test]
