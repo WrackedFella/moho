@@ -157,7 +157,7 @@ its consumers near, not when the earlier wave fully closes.
 | 2.22 | [ENG-F39](https://github.com/WrackedFella/moho/issues/635) slices 1 to 3: models with named nodes and textured materials, sockets, rig and clips with sim-readable bone poses | [#543](https://github.com/WrackedFella/moho/issues/543); list 2.6, 2.12, 2.13 | FPS-F12-01, FPS-F4 slice 3, FPS-F12-02 | 5 | 2.20; beside 2.21 |
 | 2.23 | [ENG-F40](https://github.com/WrackedFella/moho/issues/636) slice 1: muzzle flash, tracer and impact marks expire on their own | list 2.9 | FPS-M2 gunplay feel | 5 | 2.20 |
 | 2.24 | [ENG-F14-03](https://github.com/WrackedFella/moho/issues/639): markers carry their size | list 2.2 | FPS-F10 test levels, FPS-M5 safe rooms | 5 | — |
-| 2.25 | [#544](https://github.com/WrackedFella/moho/issues/544) lean and stance transitions, prone hull, with [ENG-F33](https://github.com/WrackedFella/moho/issues/492)'s crouch and clearance slices (pulled from ENG-M3; the rest of ENG-F33 stays there) | #544 | FPS-M1.2 slice 2 | 5 | ENG-F32 |
+| 2.25 | [ENG-F43](https://github.com/WrackedFella/moho/issues/642): characters crouch, go prone and lean, with clearance (hit volumes the game poses, crouch with a clearance query, prone through crouch, lean; answers [#544](https://github.com/WrackedFella/moho/issues/544) and takes crouch from [ENG-F33](https://github.com/WrackedFella/moho/issues/492)) | #544 | FPS-M1.2 slice 2 | 5 | ENG-F32 through [#501](https://github.com/WrackedFella/moho/issues/501) and [#502](https://github.com/WrackedFella/moho/issues/502); one chain with ENG-F32's last cards: #497 → #498 → #499 → #500 → #643 → #501 → #502 → #644 → #645 → #646 |
 
 - **Wave 1:** the bugs, ENG-F16, ENG-F6 and ENG-F25. They need no other ENG-M2 work.
 - **Wave 2, before SG-F5 and SG-F4:** ENG-F23 and ENG-F24 unblock SG-F5; ENG-F9 comes before SG-F4.
@@ -172,7 +172,7 @@ its consumers near, not when the earlier wave fully closes.
   ENG-F26 (before ENG-F18's keybind capture, which builds on it).
 - **Wave 5, during FPS Phase 2:** what FPS-M2 needs after its entry (FPS Phase 2 is in ENG-M2's cross-line gate).
   ENG-F38 goes first, since loose objects, models and effects draw through it; then #600 and ENG-F39 in parallel.
-  #543 moves here from ENG-M5+, and #544 with ENG-F33's crouch slices from ENG-M3, as the FPS line asked (2026-10-23).
+  #543 moves here from ENG-M5+, and #544 with ENG-F33's crouch as ENG-F43, as the FPS line asked (2026-10-23).
 
 ### Out of ENG-M2
 
@@ -186,7 +186,7 @@ its consumers near, not when the earlier wave fully closes.
 | Box-projected room probes; Hi-Z, stochastic and temporal SSR | SSR cost, noise and indoor misses not measured | SSR exists and misses or noise look wrong |
 | One global Low/Medium/High graphics preset | Too few Video rows yet | Four or more renderer quality rows (after ENG-F30) |
 | Auto-exposure ([ENG-F29-06](https://github.com/WrackedFella/moho/issues/504)) | Tuned against the scene's energy, which ENG-F30 changes; doing it first means tuning twice | Start of ENG-M3, beside the ENG-F30 skeleton |
-| Movement rules as data: modes, braking split, jump assists, air control, surface friction ([ENG-F33](https://github.com/WrackedFella/moho/issues/492); crouch and clearance are in wave 5, row 2.25) | Builds on ENG-F32's step order; a feature on its own | ENG-M3 |
+| Movement rules as data: modes, braking split, jump assists, air control, surface friction ([ENG-F33](https://github.com/WrackedFella/moho/issues/492); crouch and the clearance query are [ENG-F43](https://github.com/WrackedFella/moho/issues/642), wave 5, row 2.25) | Builds on ENG-F32's step order; a feature on its own | ENG-M3 |
 | Characters and bodies move each other: push, weight, moving ground, char-vs-char, lookahead, contact events, CCD ([ENG-F34](https://github.com/WrackedFella/moho/issues/493)) | The biggest physics effort; needs ENG-F32's ground collider and effects | ENG-M3 |
 | Fire-time fraction (Q1) and sub-tick jump (Q2, last, only if Q1 proves useful) | Q2 changes the step's shape; neither is needed for feel at one fixed rate | ENG-M5+ |
 | Netcode ADR and a co-op session | Co-op for up to 4 players on both lines; ADR-0011, ENG-F32-04 and -09 and the per-slot tick input (ENG-F37, 3.4a) keep it open at near-zero cost | ENG-M5+, pulled by the first co-op GDD |
@@ -215,7 +215,7 @@ Carded when ENG-M2 closes, in this order of dependency; none is a gate item on i
 | 3.1 | [ENG-F29-06](https://github.com/WrackedFella/moho/issues/504) exposure adapts to the scene | #485 | Opens ENG-M3 so it is tuned once against the final energy |
 | 3.2 | [ENG-F30](https://github.com/WrackedFella/moho/issues/480) light bounces off what's around it: skeleton on strategy terrain, then sun, emissive, FPS voxelisation | #485; GPU named (GTX 1080, 2 ms at 1080p) | Researched when carded; adds the volume-feed seam |
 | 3.2.1 | [ENG-F35](https://github.com/WrackedFella/moho/issues/509) the sim knows how lit a place is (FPS stealth; direct light from sim data through rays, ADR-0011) | — (slice 4, a coarse bounce grid fed by static lights so a bounce-lit room reads as lit, after ENG-F30's FPS voxelisation slice) | Adds the light-model seam (own ADR in its first card); carded with ENG-M3 |
-| 3.3 | [ENG-F33](https://github.com/WrackedFella/moho/issues/492) movement rules are game data | ENG-F32 | Modes, crouch, clearance, braking split, jump assists, air control, surface friction |
+| 3.3 | [ENG-F33](https://github.com/WrackedFella/moho/issues/492) movement rules are game data | ENG-F32 | Modes, unstick, braking split, jump assists, air control, surface friction (crouch is ENG-F43, row 2.25) |
 | 3.4 | [ENG-F34](https://github.com/WrackedFella/moho/issues/493) characters and bodies move each other | ENG-F32-03, -04 | Absorbs ENG-F21's deferred props row; adds the collision-policy and contact-event seams |
 | 3.4a | [ENG-F37](https://github.com/WrackedFella/moho/issues/592) the tick takes one command per player slot (`moho_app::Game`, seam 1 in ADR-0012) | — | Changes an existing seam, so it lands before the split; games keep reading slot 0 |
 | 3.4b | [ENG-F39](https://github.com/WrackedFella/moho/issues/635) slices 4 to 6: blends, layers, sim-timed and interruptible clips; bone-to-bone and detach; first-person view | 2.22 | FPS-F8, FPS-M4 writhe, FPS-M3.1 |
