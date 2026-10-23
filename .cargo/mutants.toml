@@ -18,6 +18,12 @@ exclude_re = [
     # The winit handler methods need a display, which tests don't have; the routing
     # they use is tested through `route`.
     "ApplicationHandler for Runner",
+    # Needs `ActiveEventLoop` and a window: it calls `Window::set_fullscreen`. The toggle
+    # decision is tested through `ToggleKeys`.
+    'replace Runner<G>::flip_window_mode with \(\)',
+    # winit's `KeyEvent` cannot be built outside winit, so this arm is unreachable from tests; the
+    # classification it feeds is tested through `ToggleKeys::observe`.
+    'delete match arm WindowEvent::KeyboardInput\{event, \.\.\} in observe_toggle',
     'replace run -> Result<\(\), AppError> with Ok\(\(\)\)',
     # `Game::init` only runs once the runner has created a real window.
     'replace <impl moho_app::Game for App>::init with \(\)',
@@ -93,6 +99,8 @@ exclude_re = [
     'delete match arm Feedback::Fired in Stage::react',
     'replace Stage::play_shot with \(\)',
     'replace <impl Game for FpsGame>::(init|event) with \(\)',
+    # Not proven equivalent: `init` grabs the cursor on the real window, which needs a display.
+    'replace <impl Game for SearchlightGame>::init with \(\)',
     # The title text is `window_title`, tested; what is left is comparing with the shown title and
     # calling `Window::set_title`, which needs a real window.
     'replace Stage::refresh_title with \(\)',
