@@ -99,6 +99,24 @@ fn vertex_normals_go_through_normal_to_world() {
         .map(|(handle, _)| handle)
         .collect();
     assert_eq!(definitions.len(), 1, "normal_to_world defined once");
+    let math_calls = |fun: naga::MathFunction| {
+        module.functions[definitions[0]]
+            .expressions
+            .iter()
+            .filter(|(_, e)| matches!(e, naga::Expression::Math { fun: f, .. } if *f == fun))
+            .count()
+    };
+    assert_eq!(
+        math_calls(naga::MathFunction::Cross),
+        3,
+        "one cross per cofactor column"
+    );
+    assert_eq!(
+        math_calls(naga::MathFunction::Sign),
+        1,
+        "the determinant sign keeps mirrored normals outward"
+    );
+    assert_eq!(math_calls(naga::MathFunction::Normalize), 1);
     let vs_main = module
         .entry_points
         .iter()
@@ -127,6 +145,8 @@ fn any_vec3() -> impl proptest::strategy::Strategy<Value = glam::Vec3> {
 }
 
 proptest::proptest! {
+    /// Proves the derivation `normal_to_world` encodes (cofactor times the determinant's
+    /// sign equals the inverse transpose, mirrored matrices included), not the WGSL itself.
     #[test]
     fn cofactor_with_determinant_sign_matches_inverse_transpose(
         c0 in any_vec3(), c1 in any_vec3(), c2 in any_vec3(), n in any_vec3(),

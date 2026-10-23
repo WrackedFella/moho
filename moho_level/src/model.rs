@@ -111,7 +111,7 @@ impl Model {
 
 #[cfg(test)]
 mod tests {
-    use glam::{Affine3A, Quat, Vec3};
+    use glam::{Affine3A, Mat3, Vec3};
     use moho_render_api::{RenderMaterial, WorldMesh};
 
     use super::{MODEL_MATERIAL_VARIANT, Model, ModelMaterial, ModelMesh, ModelNode};
@@ -146,21 +146,6 @@ mod tests {
         }
     }
 
-    fn two_mesh_model() -> Model {
-        Model {
-            nodes: vec![
-                node(Some("a"), None, Affine3A::from_translation(Vec3::X)),
-                node(
-                    Some("b"),
-                    Some(0),
-                    Affine3A::from_translation(Vec3::new(1.0, 2.0, 0.0)),
-                ),
-            ],
-            meshes: vec![mesh_on(0), mesh_on(1)],
-            materials: Vec::new(),
-        }
-    }
-
     fn colour(rgba: [f32; 4]) -> ModelMaterial {
         ModelMaterial {
             name: None,
@@ -176,53 +161,72 @@ mod tests {
     }
 
     #[test]
-    fn placing_at_a_new_root_changes_only_transforms() {
-        let model = two_mesh_model();
-        let first = Affine3A::from_translation(Vec3::new(5.0, 0.0, 0.0));
-        let second = Affine3A::from_rotation_translation(
-            Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
-            Vec3::new(0.0, 3.0, 0.0),
-        );
-
-        let before: Vec<_> = model.placements(first).collect();
-        let after: Vec<_> = model.placements(second).collect();
-
-        let ids = |placed: &[(usize, Affine3A)]| placed.iter().map(|p| p.0).collect::<Vec<_>>();
-        assert_eq!(ids(&before), vec![0, 1]);
-        assert_eq!(ids(&after), vec![0, 1]);
-        for (placed, root) in [(&before, first), (&after, second)] {
-            for &(mesh, transform) in placed {
-                assert_affine_near(
-                    transform,
-                    root * model.nodes()[model.meshes()[mesh].node].rest,
-                );
-            }
-        }
-        assert_eq!(model.meshes()[0].mesh.positions(), triangle().positions());
-        assert_ne!(before[1].1, after[1].1);
-    }
-
-    #[test]
     fn three_roots_give_one_placement_per_mesh_each_in_call_order() {
-        let model = two_mesh_model();
-        let roots = [
-            Affine3A::from_translation(Vec3::new(10.0, 0.0, 0.0)),
-            Affine3A::from_scale(Vec3::splat(2.0)),
-            Affine3A::from_translation(Vec3::new(0.0, 0.0, -4.0)),
+        // Meshes sit on nodes 2, 2 and 1 behind a mesh-less node 0, so a mesh index
+        // is never its own node index.
+        let model = Model {
+            nodes: vec![
+                node(
+                    Some("pivot"),
+                    None,
+                    Affine3A::from_translation(Vec3::Z * 3.0),
+                ),
+                node(
+                    Some("a"),
+                    Some(0),
+                    Affine3A::from_translation(Vec3::new(1.0, 0.0, 3.0)),
+                ),
+                node(
+                    Some("b"),
+                    Some(0),
+                    Affine3A::from_translation(Vec3::new(0.0, 2.0, 3.0)),
+                ),
+            ],
+            meshes: vec![mesh_on(2), mesh_on(2), mesh_on(1)],
+            materials: Vec::new(),
+        };
+        let shifted = Affine3A::from_translation(Vec3::new(10.0, 0.0, 0.0));
+        let doubled = Affine3A::from_scale(Vec3::splat(2.0));
+        let lowered = Affine3A::from_translation(Vec3::new(0.0, 0.0, -4.0));
+        let scale_two =
+            |t: Vec3| Affine3A::from_mat3_translation(Mat3::from_diagonal(Vec3::splat(2.0)), t);
+        let translated = |t: Vec3| Affine3A::from_translation(t);
+
+        let at_shifted: Vec<_> = model.placements(shifted).collect();
+        let at_doubled: Vec<_> = model.placements(doubled).collect();
+        let at_lowered: Vec<_> = model.placements(lowered).collect();
+
+        let expected = [
+            (
+                at_shifted,
+                [
+                    translated(Vec3::new(10.0, 2.0, 3.0)),
+                    translated(Vec3::new(10.0, 2.0, 3.0)),
+                    translated(Vec3::new(11.0, 0.0, 3.0)),
+                ],
+            ),
+            (
+                at_doubled,
+                [
+                    scale_two(Vec3::new(0.0, 4.0, 6.0)),
+                    scale_two(Vec3::new(0.0, 4.0, 6.0)),
+                    scale_two(Vec3::new(2.0, 0.0, 6.0)),
+                ],
+            ),
+            (
+                at_lowered,
+                [
+                    translated(Vec3::new(0.0, 2.0, -1.0)),
+                    translated(Vec3::new(0.0, 2.0, -1.0)),
+                    translated(Vec3::new(1.0, 0.0, -1.0)),
+                ],
+            ),
         ];
-
-        let placed: Vec<Vec<_>> = roots
-            .iter()
-            .map(|&r| model.placements(r).collect())
-            .collect();
-
-        assert_eq!(placed.len(), 3);
-        for (root, copy) in roots.iter().zip(&placed) {
-            assert_eq!(copy.len(), model.meshes().len());
-            for (expected_mesh, &(mesh, transform)) in copy.iter().enumerate() {
-                assert_eq!(mesh, expected_mesh);
-                let offset = model.nodes()[model.meshes()[mesh].node].rest;
-                assert_affine_near(transform, *root * offset);
+        for (placed, transforms) in expected {
+            let ids: Vec<usize> = placed.iter().map(|p| p.0).collect();
+            assert_eq!(ids, vec![0, 1, 2]);
+            for (&(_, actual), want) in placed.iter().zip(transforms) {
+                assert_affine_near(actual, want);
             }
         }
     }
@@ -257,18 +261,18 @@ mod tests {
 
     #[test]
     fn model_material_keys_differ_by_colour_and_use_the_model_variant() {
-        let red = colour([1.0, 0.0, 0.0, 1.0]);
-        let green = colour([0.0, 1.0, 0.0, 1.0]);
+        let grey = colour([0.5, 0.5, 0.5, 1.0]);
+        let less_red = colour([0.25, 0.5, 0.5, 1.0]);
+        let less_green = colour([0.5, 0.25, 0.5, 1.0]);
+        let less_blue = colour([0.5, 0.5, 0.25, 1.0]);
 
-        let red_key = red.dedup_key();
+        let grey_key = grey.dedup_key();
 
-        assert_eq!(red_key.variant, MODEL_MATERIAL_VARIANT);
+        assert_eq!(grey_key.variant, MODEL_MATERIAL_VARIANT);
         assert_eq!(MODEL_MATERIAL_VARIANT, 0x80);
-        assert_eq!(red_key, colour([1.0, 0.0, 0.0, 1.0]).dedup_key());
-        assert_ne!(red_key, green.dedup_key());
-        assert_ne!(
-            colour([0.5, 0.5, 0.5, 1.0]).dedup_key(),
-            colour([0.5, 0.5, 0.25, 1.0]).dedup_key()
-        );
+        assert_eq!(grey_key, colour([0.5, 0.5, 0.5, 1.0]).dedup_key());
+        assert_ne!(grey_key, less_red.dedup_key());
+        assert_ne!(grey_key, less_green.dedup_key());
+        assert_ne!(grey_key, less_blue.dedup_key());
     }
 }

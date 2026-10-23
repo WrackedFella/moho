@@ -7,7 +7,8 @@ use moho_level::{LevelErrorKind, ModelMaterial, load_model};
 use serde_json::json;
 
 use crate::support::{
-    Node, Prim, Scene, Xform, cube_prim, floor_prim, line_prim, write_gltf, write_gltf_edited,
+    Node, Prim, Scene, Xform, cube_prim, floor_prim, line_prim, write_glb, write_gltf,
+    write_gltf_edited,
 };
 
 fn assert_affine_near(actual: Affine3A, expected: Affine3A) {
@@ -26,9 +27,26 @@ fn assert_vec_near(actual: Vec3, expected: Vec3) {
 
 #[test]
 fn two_node_model_places_each_mesh_at_root_times_its_node_offset() {
-    let mut scene = Scene::with_meshes(vec![vec![cube_prim()], vec![floor_prim(0.0)]]);
-    scene.nodes[0].xform = Xform::translate([1.0, 0.0, 0.0]);
-    scene.nodes[1].xform = Xform::translate([0.0, 2.0, 0.0]);
+    let mut scene = Scene::new();
+    scene.meshes = vec![vec![cube_prim()], vec![floor_prim(0.0)]];
+    scene.nodes = vec![
+        Node {
+            xform: Xform::translate([0.0, 0.0, 3.0]),
+            children: vec![1, 2],
+            ..Node::default()
+        },
+        Node {
+            xform: Xform::translate([1.0, 0.0, 0.0]),
+            mesh: Some(0),
+            ..Node::default()
+        },
+        Node {
+            xform: Xform::translate([0.0, 2.0, 0.0]),
+            mesh: Some(1),
+            ..Node::default()
+        },
+    ];
+    scene.roots = vec![0];
     let (_dir, path) = write_gltf(&scene);
     let root = Affine3A::from_rotation_translation(
         Quat::from_rotation_y(FRAC_PI_2),
@@ -42,19 +60,95 @@ fn two_node_model_places_each_mesh_at_root_times_its_node_offset() {
     assert_eq!(placed.len(), 2);
     assert_eq!(placed[0].0, 0);
     assert_eq!(placed[1].0, 1);
+    let parent = Affine3A::from_translation(Vec3::new(0.0, 0.0, 3.0));
     assert_affine_near(
         placed[0].1,
-        root * Affine3A::from_translation(Vec3::new(1.0, 0.0, 0.0)),
+        root * parent * Affine3A::from_translation(Vec3::new(1.0, 0.0, 0.0)),
     );
     assert_affine_near(
         placed[1].1,
-        root * Affine3A::from_translation(Vec3::new(0.0, 2.0, 0.0)),
+        root * parent * Affine3A::from_translation(Vec3::new(0.0, 2.0, 0.0)),
     );
     let cube = &model.meshes()[0].mesh;
     assert!(
         cube.positions().iter().all(|p| p[0].abs() <= 0.5 + 1e-5),
         "vertices stay in node space, not baked with the node offset"
     );
+}
+
+#[test]
+fn model_meshes_have_neutral_baked_channels() {
+    let scene = Scene::with_meshes(vec![vec![cube_prim()], vec![floor_prim(0.0)]]);
+    let (_dir, path) = write_gltf(&scene);
+
+    let model = load_model(&path).expect("model loads");
+
+    assert_eq!(model.meshes().len(), 2);
+    for placed in model.meshes() {
+        let n = placed.mesh.positions().len();
+        assert_eq!(placed.mesh.ao(), vec![1.0; n]);
+        assert_eq!(placed.mesh.light_rgb(), vec![[0.0; 3]; n]);
+        assert_eq!(placed.mesh.sky_exposure(), vec![1.0; n]);
+        assert_eq!(placed.mesh.surface(), vec![0; n]);
+    }
+}
+
+#[test]
+fn glb_model_loads_its_meshes_from_the_embedded_blob() {
+    let scene = Scene::with_meshes(vec![vec![cube_prim()], vec![floor_prim(0.0)]]);
+    let (_dir, path) = write_glb(&scene);
+
+    let model = load_model(&path).expect("glb loads");
+
+    assert_eq!(model.meshes().len(), 2);
+    assert_eq!(model.meshes()[0].mesh.positions().len(), 24);
+    assert_eq!(model.meshes()[1].mesh.positions()[0], [-10.0, 0.0, -10.0]);
+}
+
+#[test]
+fn nodes_are_in_walk_order_from_the_default_scene() {
+    let mut scene = Scene::new();
+    scene.meshes = vec![vec![cube_prim()], vec![floor_prim(0.0)]];
+    scene.nodes = vec![
+        Node {
+            xform: Xform::translate([1.0, 0.0, 0.0]),
+            mesh: Some(0),
+            name: Some("child".into()),
+            ..Node::default()
+        },
+        Node {
+            xform: Xform::translate([0.0, 2.0, 0.0]),
+            children: vec![0],
+            name: Some("parent".into()),
+            ..Node::default()
+        },
+        Node {
+            mesh: Some(1),
+            name: Some("other".into()),
+            ..Node::default()
+        },
+    ];
+    scene.roots = vec![1];
+    let (_dir, path) = write_gltf_edited(&scene, |doc| {
+        doc["scenes"]
+            .as_array_mut()
+            .expect("scenes is an array")
+            .push(json!({ "nodes": [2] }));
+    });
+
+    let model = load_model(&path).expect("model loads");
+
+    let names: Vec<_> = model.nodes().iter().map(|n| n.name.as_deref()).collect();
+    assert_eq!(names, vec![Some("parent"), Some("child")]);
+    assert_eq!(model.nodes()[0].parent, None);
+    assert_eq!(model.nodes()[1].parent, Some(0));
+    assert_affine_near(
+        model.nodes()[1].rest,
+        Affine3A::from_translation(Vec3::new(1.0, 2.0, 0.0)),
+    );
+    assert!(model.node("other").is_none());
+    assert_eq!(model.meshes().len(), 1);
+    assert_eq!(model.meshes()[0].node, 1);
 }
 
 #[test]
@@ -191,21 +285,21 @@ fn base_colour_factor_becomes_the_material_colour() {
     let scene = red_and_plain_scene();
     let (_dir, path) = write_gltf_edited(&scene, |doc| {
         doc["materials"][0]["pbrMetallicRoughness"] =
-            json!({ "baseColorFactor": [1.0, 0.0, 0.0, 1.0] });
+            json!({ "baseColorFactor": [0.5, 0.25, 0.0, 1.0] });
     });
 
     let model = load_model(&path).expect("model loads");
 
     assert_eq!(model.materials().len(), 2);
     assert_eq!(model.materials()[0].name.as_deref(), Some("red"));
-    assert_eq!(model.materials()[0].base_colour, [1.0, 0.0, 0.0, 1.0]);
+    assert_eq!(model.materials()[0].base_colour, [0.5, 0.25, 0.0, 1.0]);
     assert_eq!(model.materials()[1].name.as_deref(), Some("plain"));
     assert_eq!(model.materials()[1].base_colour, [1.0; 4]);
     assert_eq!(model.meshes()[0].material, Some(1));
     assert_eq!(model.meshes()[1].material, Some(0));
     assert_eq!(
         model.material_of(&model.meshes()[1]).base_colour,
-        [1.0, 0.0, 0.0, 1.0]
+        [0.5, 0.25, 0.0, 1.0]
     );
     assert_eq!(model.material_of(&model.meshes()[0]).base_colour, [1.0; 4]);
 }
@@ -234,15 +328,41 @@ fn winding(prim: Prim, scale: [f32; 3]) -> Vec<u32> {
     model.meshes()[0].mesh.indices().to_vec()
 }
 
+/// Winding of a mesh on a child node under a mesh-less parent.
+fn nested_winding(parent_scale: [f32; 3], child_scale: [f32; 3]) -> Vec<u32> {
+    let mut scene = Scene::new();
+    scene.meshes = vec![vec![floor_prim(0.0)]];
+    scene.nodes = vec![
+        Node {
+            xform: Xform::scale(parent_scale),
+            children: vec![1],
+            ..Node::default()
+        },
+        Node {
+            xform: Xform::scale(child_scale),
+            mesh: Some(0),
+            ..Node::default()
+        },
+    ];
+    scene.roots = vec![0];
+    let (_dir, path) = write_gltf(&scene);
+    let model = load_model(&path).expect("model loads");
+    model.meshes()[0].mesh.indices().to_vec()
+}
+
 #[test]
 fn mirrored_node_flips_its_mesh_winding() {
     let upright = winding(floor_prim(0.0), [1.0, 1.0, 1.0]);
     let doubled = winding(floor_prim(0.0), [2.0, 2.0, 2.0]);
     let mirrored = winding(floor_prim(0.0), [-1.0, 1.0, 1.0]);
+    let mirrored_parent = nested_winding([-1.0, 1.0, 1.0], [1.0, 1.0, 1.0]);
+    let mirrored_both = nested_winding([-1.0, 1.0, 1.0], [-1.0, 1.0, 1.0]);
 
     assert_eq!(upright, vec![0, 1, 2, 0, 2, 3]);
     assert_eq!(doubled, upright);
     assert_eq!(mirrored, vec![0, 2, 1, 0, 3, 2]);
+    assert_eq!(mirrored_parent, mirrored);
+    assert_eq!(mirrored_both, upright);
 }
 
 #[test]
