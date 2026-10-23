@@ -4,14 +4,21 @@ use crate::RendererBackend;
 use moho_render_api::{InstanceGpu, WorldMesh, WorldMeshId};
 use std::collections::BTreeMap;
 
+/// How a mesh draws: once at identity, or only where placed.
+#[derive(Debug, Clone, Copy)]
+enum Kind {
+    Static { material_idx: u32 },
+    Movable,
+}
+
 /// A mesh waiting for the next `flush`; `None` is a queued remove.
-type Pending = Option<(WorldMesh, u32)>;
+type Pending = Option<(WorldMesh, Kind)>;
 
 /// A mesh uploaded to the backend.
 #[derive(Debug, Clone, Copy)]
 struct Live {
     handle: u32,
-    material_idx: u32,
+    kind: Kind,
 }
 
 /// Queues world-mesh changes and applies them to a backend on `flush`.
@@ -21,6 +28,7 @@ struct Live {
 pub struct WorldMeshes {
     live: BTreeMap<WorldMeshId, Live>,
     pending: BTreeMap<WorldMeshId, Pending>,
+    placements: BTreeMap<WorldMeshId, Vec<(glam::Affine3A, u32)>>,
 }
 
 impl WorldMeshes {
@@ -33,21 +41,36 @@ impl WorldMeshes {
         if mesh.is_empty() {
             self.remove(id);
         } else {
-            self.pending.insert(id, Some((mesh, material_idx)));
+            self.pending
+                .insert(id, Some((mesh, Kind::Static { material_idx })));
         }
     }
 
-    // TEMPORARY STUB: no behaviour yet; replaced when the movable-mesh card is implemented.
-    /// Queue adding or replacing a mesh that draws only where placed.
-    pub fn upsert_movable(&mut self, _id: WorldMeshId, _mesh: WorldMesh) {}
+    /// Queue adding or replacing a mesh that draws only where placed, so moving it
+    /// never re-uploads. An empty mesh is a remove.
+    pub fn upsert_movable(&mut self, id: WorldMeshId, mesh: WorldMesh) {
+        if mesh.is_empty() {
+            self.remove(id);
+        } else {
+            self.pending.insert(id, Some((mesh, Kind::Movable)));
+        }
+    }
 
-    // TEMPORARY STUB: no behaviour yet.
-    /// Append a placement of the mesh under `id` for this frame.
-    pub fn place(&mut self, _id: WorldMeshId, _transform: glam::Affine3A, _material: u32) {}
+    /// Append a placement of the mesh under `id` for this frame, drawn with `material`.
+    ///
+    /// Not checked against live ids here: an upsert queued the same frame is
+    /// flushed before draws, and a placement on an id that is not live is skipped.
+    pub fn place(&mut self, id: WorldMeshId, transform: glam::Affine3A, material: u32) {
+        self.placements
+            .entry(id)
+            .or_default()
+            .push((transform, material));
+    }
 
-    // TEMPORARY STUB: no behaviour yet.
-    /// Drop every placement.
-    pub fn clear_placements(&mut self) {}
+    /// Drop every placement; the renderer calls this each frame so placements are per-frame.
+    pub fn clear_placements(&mut self) {
+        self.placements.clear();
+    }
 
     /// Queue removing the mesh under `id`.
     pub fn remove(&mut self, id: WorldMeshId) {
@@ -60,7 +83,7 @@ impl WorldMeshes {
             if let Some(old) = self.live.remove(&id) {
                 backend.unregister_mesh(old.handle);
             }
-            let Some((mesh, material_idx)) = change else {
+            let Some((mesh, kind)) = change else {
                 continue;
             };
             let light_level: Vec<f32> = mesh
@@ -68,10 +91,14 @@ impl WorldMeshes {
                 .iter()
                 .map(|rgb| rgb[0].max(rgb[1]).max(rgb[2]))
                 .collect();
-            let material: Vec<u32> = mesh.materials().map_or_else(
-                || vec![material_idx; mesh.positions().len()],
-                <[u32]>::to_vec,
-            );
+            // An empty slice makes the backend defer every vertex to the instance material.
+            let material: Vec<u32> = match (mesh.materials(), kind) {
+                (Some(materials), _) => materials.to_vec(),
+                (None, Kind::Static { material_idx }) => {
+                    vec![material_idx; mesh.positions().len()]
+                }
+                (None, Kind::Movable) => Vec::new(),
+            };
             let handle = backend.register_indexed_mesh(
                 mesh.positions(),
                 mesh.normals(),
@@ -83,27 +110,33 @@ impl WorldMeshes {
                 &material,
                 mesh.indices(),
             );
-            self.live.insert(
-                id,
-                Live {
-                    handle,
-                    material_idx,
-                },
-            );
+            self.live.insert(id, Live { handle, kind });
         }
     }
 
-    /// One identity-transform instance per live mesh, as `(backend handle, instance)`.
+    /// Instances as `(backend handle, instance)`: each static mesh at identity, then
+    /// every placement of a live id in id order and call order.
     pub fn draws(&self) -> impl Iterator<Item = (u32, InstanceGpu)> + '_ {
-        self.live.values().map(|live| {
-            let instance = InstanceGpu {
-                model: glam::Mat4::IDENTITY.to_cols_array_2d(),
-                material: live.material_idx,
-                object_type: 0, // terrain: the fragment shader colours by normal
-                padding: [0, 0],
-            };
-            (live.handle, instance)
-        })
+        // object_type 0: terrain, the fragment shader colours by normal
+        let instance = |model: glam::Mat4, material: u32| InstanceGpu {
+            model: model.to_cols_array_2d(),
+            material,
+            object_type: 0,
+            padding: [0, 0],
+        };
+        let statics = self.live.values().filter_map(move |live| match live.kind {
+            Kind::Static { material_idx } => {
+                Some((live.handle, instance(glam::Mat4::IDENTITY, material_idx)))
+            }
+            Kind::Movable => None,
+        });
+        let placed = self.placements.iter().flat_map(move |(id, placements)| {
+            let handle = self.live.get(id).map(|live| live.handle);
+            placements.iter().filter_map(move |(transform, material)| {
+                handle.map(|h| (h, instance(glam::Mat4::from(*transform), *material)))
+            })
+        });
+        statics.chain(placed)
     }
 }
 
@@ -569,7 +602,10 @@ mod tests {
         let drawn = draws(&meshes);
         assert_eq!(drawn.len(), 1, "only the live id's placement draws");
         let c_handle = backend.handle_with_index_count(6);
-        assert_eq!((drawn[0].0, drawn[0].1.model), (c_handle, model_of(at(3.0))));
+        assert_eq!(
+            (drawn[0].0, drawn[0].1.model),
+            (c_handle, model_of(at(3.0)))
+        );
     }
 
     #[test]

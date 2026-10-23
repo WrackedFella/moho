@@ -1,7 +1,0 @@
-# Seeds for failure cases proptest has generated in the past. It is
-# automatically read and these particular cases re-run before any
-# novel cases are generated.
-#
-# It is recommended to check this file in to source control so that
-# everyone who runs the test benefits from these saved cases.
-cc b604a6672415dbc40afebc8d317d9d9ff57b8da7937327aa0c8e55c136b40eb5 # shrinks to ops = [UpsertMovable(0, true)]

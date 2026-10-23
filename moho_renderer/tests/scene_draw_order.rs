@@ -372,9 +372,7 @@ fn failed_begin_frame_still_consumes_placements() {
         renderer.draws
     );
 
-    scene
-        .world_meshes_mut()
-        .place(WorldMeshId(1), at(2.0), 0);
+    scene.world_meshes_mut().place(WorldMeshId(1), at(2.0), 0);
 
     render_frame(&mut scene, &mut renderer, &[], &[]);
 
