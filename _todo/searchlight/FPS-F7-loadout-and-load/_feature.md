@@ -53,7 +53,7 @@ Closes FPS-M2's exit goal.
 | Question | Decision | Why / cost of the alternative |
 |---|---|---|
 | Which three weapons | The current rifle in its caliber; a pistol and an SMG sharing a pistol caliber | A shared caliber tests that rounds are keyed by caliber and magazines by weapon, the case the item model must get right |
-| Sprint and stamina | Born here: sprint exists and stamina limits it, and load caps it | Two of the three Phase 2 stats need them, and "no sprint" is a load threshold. Cost: a new movement mechanic. Alternative: load affects speed only, stamina waits |
+| Sprint and stamina | Born here (Justin, 2026-10-23): sprint exists, stamina limits it, load caps it | Two of the three Phase 2 stats need them, and "no sprint" is a load threshold. Cost: a new movement mechanic |
 | Stat layer verbs | Add, scale and cap from the start, as §4.12 | Retrofitting a verb changes every source's declaration |
 | One-handed weapons (§9 Q24) | A weapon property in data, read by nothing until FPS-M4 | Naming it now keeps the pistol's data stable |
 | Armor slots | Present and empty | GDD §4.6; slots are cheap, items need wear (FPS-M3) |
