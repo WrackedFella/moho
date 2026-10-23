@@ -114,11 +114,6 @@ mod tests {
     }
 
     #[test]
-    fn a_new_lean_is_upright() {
-        assert_eq!(Lean::default().amount(), 0.0);
-    }
-
-    #[test]
     fn one_step_moves_part_way_toward_the_side() {
         let right = Lean::default().step(Some(LeanSide::Right), LeanReach::FULL, DT, &tuning());
         let left = Lean::default().step(Some(LeanSide::Left), LeanReach::FULL, DT, &tuning());
@@ -200,21 +195,6 @@ mod tests {
     }
 
     #[test]
-    fn a_zero_reach_on_the_wanted_side_keeps_the_lean_upright() {
-        let walled = LeanReach {
-            left: 0.0,
-            right: 1.0,
-        };
-        let mut lean = Lean::default();
-
-        for _ in 0..120 {
-            lean = lean.step(Some(LeanSide::Left), walled, DT, &tuning());
-        }
-
-        assert_eq!(lean.amount(), 0.0);
-    }
-
-    #[test]
     fn shift_and_roll_are_linear_in_the_amount_and_positive_to_the_right() {
         let tuning = tuning();
         let half = Lean::default().step(Some(LeanSide::Right), LeanReach::FULL, 0.125, &tuning);
@@ -257,23 +237,7 @@ mod tests {
         }
 
         #[test]
-        fn open_space_never_moves_the_lean_more_than_dt_over_blend_per_step(
-            tuning in any_tuning(),
-            wants in proptest::collection::vec((any_side(), 0.001f32..0.5), 1..40),
-        ) {
-            let mut lean = Lean::default();
-
-            for (want, dt) in wants {
-                let next = lean.step(want, LeanReach::FULL, dt, &tuning);
-
-                let limit = dt / tuning.blend_seconds + 1e-5;
-                prop_assert!((next.amount() - lean.amount()).abs() <= limit, "{lean:?} -> {next:?}");
-                lean = next;
-            }
-        }
-
-        #[test]
-        fn open_space_moves_toward_the_wanted_side_and_never_away(
+        fn open_space_moves_toward_the_wanted_side_by_exactly_the_blend_step_or_the_remainder(
             tuning in any_tuning(),
             start in -1.0f32..=1.0,
             want in any_side(),
@@ -293,9 +257,13 @@ mod tests {
 
             let next = from.step(want, LeanReach::FULL, dt, &tuning);
 
-            let before = (target - from.amount()).abs();
-            let after = (target - next.amount()).abs();
-            prop_assert!(after <= before + 1e-5, "{from:?} -> {next:?} toward {target}");
+            let remaining = target - from.amount();
+            let moved = (dt / tuning.blend_seconds).min(remaining.abs());
+            let expected = from.amount() + remaining.signum() * moved;
+            prop_assert!(
+                (next.amount() - expected).abs() < 1e-5,
+                "{from:?} -> {next:?} toward {target}, expected {expected}"
+            );
         }
 
         #[test]

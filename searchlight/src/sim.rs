@@ -1548,55 +1548,49 @@ mod tests {
     fn a_wall_0_15_m_beside_the_capsule_stops_the_lean_short_of_it() {
         const FACE: f32 = 0.45;
         let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
+        let along_x = |near: f32, far: f32| (Vec3::new(near, 0.0, -5.0), Vec3::new(far, 4.0, 5.0));
+        let along_z = |near: f32, far: f32| (Vec3::new(-5.0, 0.0, near), Vec3::new(5.0, 4.0, far));
+        // Facing +X (yaw a quarter turn) the player's right is +Z and its left is -Z.
         let cases = [
-            (
-                LeanSide::Left,
-                (Vec3::new(FACE, 0.0, -5.0), Vec3::new(FACE + 1.0, 4.0, 5.0)),
-            ),
-            (
-                LeanSide::Right,
-                (
-                    Vec3::new(-FACE - 1.0, 0.0, -5.0),
-                    Vec3::new(-FACE, 4.0, 5.0),
-                ),
-            ),
+            (LeanSide::Left, 0.0, along_x(FACE, FACE + 1.0)),
+            (LeanSide::Right, 0.0, along_x(-FACE - 1.0, -FACE)),
+            (LeanSide::Left, FRAC_PI_2, along_z(-FACE - 1.0, -FACE)),
+            (LeanSide::Right, FRAC_PI_2, along_z(FACE, FACE + 1.0)),
         ];
-        for (side, wall) in cases {
+        for (side, yaw, wall) in cases {
             let mut sim = SearchlightSim::new(
                 world_with(&[floor, wall]),
                 Vec3::ZERO,
                 &[],
                 test_config(rifle_with(5), vec![]),
             );
+            let turn = SearchlightCommand {
+                movement: CharacterCommand {
+                    yaw_delta: yaw,
+                    ..CharacterCommand::default()
+                },
+                ..SearchlightCommand::default()
+            };
+            sim.tick(&turn, DT);
 
             hold(&mut sim, &leaning(Some(side)), SETTLE_TICKS);
 
-            let eye = sim.player_eye();
-            let sideways = (eye.x - sim.player().position.x).abs();
+            let out = sim.player_eye() - standing_eye(&sim);
+            let sideways = out.length();
             assert!(
                 sideways <= FACE - 0.15 + 1e-3,
-                "{side:?}: the eye is {sideways} m out, within 0.15 m of the wall at {FACE}"
+                "{side:?} at yaw {yaw}: the eye is {sideways} m out, within 0.15 m of the wall at {FACE}"
             );
             let amount = sim.player_lean().amount().abs();
-            assert!(amount < 1.0, "{side:?}: a full lean against a wall");
+            assert!(
+                amount < 1.0,
+                "{side:?} at yaw {yaw}: a full lean against a wall"
+            );
             assert!(
                 (amount - (FACE - 0.15) / 0.35).abs() < 0.02,
-                "{side:?}: the lean should use all the room, got {amount}"
+                "{side:?} at yaw {yaw}: the lean should use all the room, got {amount}"
             );
         }
-    }
-
-    #[test]
-    fn the_most_recent_command_side_drives_the_lean_through_upright() {
-        let mut sim = open_sim();
-        hold(&mut sim, &leaning(Some(LeanSide::Left)), SETTLE_TICKS);
-
-        hold(&mut sim, &leaning(Some(LeanSide::Right)), 8);
-
-        let mid = sim.player_lean().amount();
-        assert!(mid > -1.0 + 0.1 && mid < 1.0 - 0.1, "{mid}");
-        hold(&mut sim, &leaning(Some(LeanSide::Right)), SETTLE_TICKS);
-        assert!((sim.player_lean().amount() - 1.0).abs() < 1e-4);
     }
 
     #[test]
@@ -1618,15 +1612,22 @@ mod tests {
         );
     }
 
-    /// A wall across the line from the upright eye that leaves the line 0.35 m to the
-    /// right open, and a dummy behind it on that open line.
-    fn corner_sim() -> SearchlightSim {
+    /// A dummy on a 0.3 m plinth 8 m ahead whose torso, 0.4 m wide, spans both the upright
+    /// eye's line (x = 0) and the line of an eye leaned fully right (x = -0.35) at eye
+    /// height; with `corner`, a wall across the upright line that leaves the right-leaned
+    /// line open.
+    fn corner_sim(corner: bool) -> SearchlightSim {
         let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
-        let corner = (Vec3::new(-0.2, 0.0, 3.0), Vec3::new(2.0, 4.0, 4.0));
+        let plinth = (Vec3::new(-1.0, 0.0, 7.0), Vec3::new(1.0, 0.3, 9.0));
+        let wall = (Vec3::new(-0.2, 0.0, 3.0), Vec3::new(2.0, 4.0, 4.0));
+        let boxes: Vec<_> = [Some(floor), Some(plinth), corner.then_some(wall)]
+            .into_iter()
+            .flatten()
+            .collect();
         SearchlightSim::new(
-            world_with(&[floor, corner]),
+            world_with(&boxes),
             Vec3::ZERO,
-            &[Vec3::new(-0.35, 0.0, 8.0)],
+            &[Vec3::new(-0.175, 0.3, 8.0)],
             test_config(rifle_with(5), vec![]),
         )
     }
@@ -1641,19 +1642,30 @@ mod tests {
         sim.tick(&shot, DT);
     }
 
+    fn hit(sim: &mut SearchlightSim) -> bool {
+        sim.drain_feedback()
+            .iter()
+            .any(|fb| matches!(fb, Feedback::Hit { target: 0, .. }))
+    }
+
+    #[test]
+    fn without_the_corner_the_same_upright_shot_hits_the_dummy() {
+        let mut upright = corner_sim(false);
+
+        fire_while(&mut upright, None);
+
+        assert!(hit(&mut upright), "the dummy should stand in the open line");
+        assert!(upright.dummy_body(0).expect("a dummy").health() < 100);
+    }
+
     #[test]
     fn a_leaned_shot_hits_a_dummy_visible_only_past_the_corner() {
-        let mut upright = corner_sim();
-        let mut leaned = corner_sim();
+        let mut upright = corner_sim(true);
+        let mut leaned = corner_sim(true);
 
         fire_while(&mut upright, None);
         fire_while(&mut leaned, Some(LeanSide::Right));
 
-        let hit = |sim: &mut SearchlightSim| {
-            sim.drain_feedback()
-                .iter()
-                .any(|fb| matches!(fb, Feedback::Hit { target: 0, .. }))
-        };
         assert!(
             !hit(&mut upright),
             "the corner should cover the upright eye"

@@ -519,13 +519,15 @@ mod tests {
     }
 
     #[test]
-    fn a_sampled_frame_carries_no_lean_for_the_game_to_fill() {
+    fn both_keys_held_with_no_previous_side_lean_right() {
         let mut map = fresh_map();
         press(&mut map, SearchlightAction::LeanLeft);
+        press(&mut map, SearchlightAction::LeanRight);
+        let _first = map.end_tick();
 
-        let command = SearchlightCommand::from_frame(&map.end_tick());
+        let held = lean_after(&mut map, None);
 
-        assert_eq!(command.lean, None);
+        assert_eq!(held, Some(LeanSide::Right));
     }
 }
 

@@ -63,11 +63,6 @@ mod tests {
     }
 
     #[test]
-    fn no_shift_is_no_offset() {
-        assert!(close(lean_offset(1.3, 0.0), Vec3::ZERO));
-    }
-
-    #[test]
     fn a_right_roll_tips_the_view_up_toward_the_right() {
         let eye = Vec3::new(1.0, 2.0, 3.0);
 

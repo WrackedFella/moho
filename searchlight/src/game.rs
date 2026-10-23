@@ -1339,6 +1339,7 @@ mod tests {
         let held = game.command();
         press(game.input_mut(), SearchlightAction::LeanRight);
         let switched = game.command();
+        let both_held = game.command();
         game.input_mut().key(Key::E, false);
         let back = game.command();
         game.input_mut().key(Key::Q, false);
@@ -1349,12 +1350,14 @@ mod tests {
                 first.lean,
                 held.lean,
                 switched.lean,
+                both_held.lean,
                 back.lean,
                 released.lean
             ],
             [
                 Some(LeanSide::Left),
                 Some(LeanSide::Left),
+                Some(LeanSide::Right),
                 Some(LeanSide::Right),
                 Some(LeanSide::Left),
                 None
@@ -1390,7 +1393,7 @@ mod tests {
         let view = draw_frame(&mut game, &mut renderer);
 
         let tick = 1.0 / 60.0 / 0.25;
-        let blended = (tick + 2.0 * tick) / 2.0;
+        let blended = tick + ALPHA * (2.0 * tick - tick);
         let standing = game.sim().player().position + Vec3::Y * game.sim().eye_height();
         let eye = view.inverse().w_axis.truncate();
         assert!(

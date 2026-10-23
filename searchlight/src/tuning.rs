@@ -151,6 +151,18 @@ mod tests {
         assert!((config.range - 100.0).abs() < f32::EPSILON);
     }
 
+    #[test]
+    fn the_shipped_lean_is_0_35_m_and_12_degrees() {
+        let (_dir, rifle) = load_rifle(CAPACITY_20);
+
+        let config = tuning(&rifle.unwrap()).unwrap();
+
+        assert_eq!(config.lean.shift, 0.35);
+        assert!((config.lean.roll - 12.0_f32.to_radians()).abs() < 1e-6);
+        assert_eq!(config.lean.blend_seconds, 0.25);
+        assert_eq!(config.lean.speed_factor, 0.5);
+    }
+
     fn rifle_toml(capacity: u32, damage: u32) -> String {
         format!(
             "[rifle]\nmagazine_capacity = {capacity}\ndamage = {damage}\nfire = \"semi_auto\"\ncooldown_ticks = 6\nreload_ticks = 120\ncharge_ticks = 30\nrange = 100.0\n"
