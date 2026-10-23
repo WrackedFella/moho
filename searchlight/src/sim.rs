@@ -4613,6 +4613,18 @@ mod grade_tests {
             "the professional moved to {:?}",
             enemy_at(&walled, 0)
         );
+
+        let mut open = cover_duel(Grade::Experienced, &[LOW_WALL]);
+        let mut walled = cover_duel(Grade::Experienced, &[LOW_WALL, TALL_WALL]);
+        play(&mut open, 30, &pulls(1), NEAR);
+        play(&mut walled, 30, &pulls(1), NEAR);
+
+        assert_eq!(enemy_target(&open, 0).near_misses, 1, "the control shot");
+        assert_eq!(
+            enemy_target(&walled, 0).near_misses,
+            0,
+            "a shot the wall stopped counted as a near miss"
+        );
     }
 
     #[test]
