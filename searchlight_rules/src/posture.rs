@@ -209,6 +209,18 @@ mod tests {
     }
 
     #[test]
+    fn a_zero_blend_time_snaps_even_on_a_zero_length_step() {
+        let snap = LeanTuning {
+            blend_seconds: 0.0,
+            ..tuning()
+        };
+
+        let lean = Lean::default().step(Some(LeanSide::Left), LeanReach::FULL, 0.0, &snap);
+
+        assert_eq!(lean.amount(), -1.0);
+    }
+
+    #[test]
     fn a_limited_reach_holds_the_lean_at_that_fraction() {
         let reach = LeanReach {
             left: 0.4,
