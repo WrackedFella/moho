@@ -199,7 +199,7 @@ fn render_frame_from(
     let camera = (glam::Mat4::IDENTITY, glam::Mat4::IDENTITY, eye);
     scene
         .render::<Prop, Prop>(renderer, spheres, cubes, SPHERE_MESH, CUBE_MESH, camera)
-        .expect("recording renderer's begin_frame always succeeds");
+        .expect("render_frame_from is only used with a recording renderer that is not set to fail begin_frame");
 }
 
 fn draw(mesh: u32, xs: &[f32]) -> Draw {

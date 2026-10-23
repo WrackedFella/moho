@@ -609,6 +609,38 @@ mod tests {
     }
 
     #[test]
+    fn placements_pair_with_their_own_mesh_across_ids() {
+        let c = WorldMeshId(3);
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.upsert_movable(B, mesh(2));
+        meshes.upsert(c, mesh(3), 0);
+        meshes.flush(&mut backend);
+        let a_handle = backend.handle_with_index_count(3);
+        let b_handle = backend.handle_with_index_count(6);
+        let c_handle = backend.handle_with_index_count(9);
+
+        meshes.place(B, at(10.0), 0);
+        meshes.place(A, at(20.0), 0);
+        meshes.place(B, at(11.0), 0);
+        meshes.place(c, at(30.0), 0);
+
+        let drawn: Vec<(u32, [[f32; 4]; 4])> =
+            draws(&meshes).iter().map(|(h, i)| (*h, i.model)).collect();
+        assert_eq!(
+            drawn,
+            vec![
+                (c_handle, IDENTITY),
+                (a_handle, model_of(at(20.0))),
+                (b_handle, model_of(at(10.0))),
+                (b_handle, model_of(at(11.0))),
+                (c_handle, model_of(at(30.0))),
+            ]
+        );
+    }
+
+    #[test]
     fn mesh_upserted_and_placed_in_one_frame_draws() {
         let mut meshes = WorldMeshes::new();
         let mut backend = RecordingBackend::default();
