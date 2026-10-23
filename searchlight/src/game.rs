@@ -715,6 +715,9 @@ pub struct SearchlightGame {
     stage: Stage,
     god_mode: bool,
     debug_settings: Option<DebugSettings>,
+    /// A `fullscreen` command waiting for a frame, the first place a window mode can be
+    /// requested.
+    flip_window_pending: bool,
 }
 
 impl SearchlightGame {
@@ -732,6 +735,7 @@ impl SearchlightGame {
             stage: Stage::new(),
             god_mode: false,
             debug_settings: None,
+            flip_window_pending: false,
         }
     }
 
@@ -843,9 +847,9 @@ impl SearchlightGame {
             return;
         }
         let before = self.god_mode;
-        for ConsoleCommand::GodMode(arg) in queued {
-            match arg {
-                GodModeArg::Toggle => {
+        for command in queued {
+            match command {
+                ConsoleCommand::GodMode(GodModeArg::Toggle) => {
                     self.god_mode = !self.god_mode;
                     let text = if self.god_mode {
                         "God mode: on"
@@ -854,7 +858,8 @@ impl SearchlightGame {
                     };
                     self.stage.shell().console_mut().print(text);
                 }
-                GodModeArg::Set(on) => self.god_mode = on,
+                ConsoleCommand::GodMode(GodModeArg::Set(on)) => self.god_mode = on,
+                ConsoleCommand::Fullscreen => self.flip_window_pending = true,
             }
         }
         if self.god_mode != before
@@ -862,6 +867,27 @@ impl SearchlightGame {
             && let Err(error) = settings.set_god_mode(self.god_mode)
         {
             tracing::warn!(%error, god_mode = self.god_mode, "god mode not saved");
+        }
+    }
+
+    /// Saves `mode`, releases held keys and re-grabs the cursor after the window changed mode.
+    fn window_mode_applied(&mut self, mode: WindowMode) {
+        if let Some(settings) = &mut self.debug_settings
+            && start_window_mode(settings.window_mode()) != mode
+        {
+            let saved = match mode {
+                WindowMode::Windowed => moho_core::prefs::WindowMode::Windowed,
+                WindowMode::Borderless => moho_core::prefs::WindowMode::Borderless,
+            };
+            if let Err(error) = settings.set_window_mode(saved) {
+                tracing::warn!(%error, ?mode, "window mode not saved");
+            }
+        }
+        // The platform drops held keys' releases and the grab across a mode change.
+        self.input.release_all();
+        self.input.reset_look();
+        if !self.input_captured() {
+            self.stage.capture_cursor();
         }
     }
 
@@ -989,23 +1015,7 @@ impl Game for SearchlightGame {
     }
 
     fn window_mode_changed(&mut self, _ctx: &mut EventContext<'_>, mode: WindowMode) {
-        if let Some(settings) = &mut self.debug_settings
-            && start_window_mode(settings.window_mode()) != mode
-        {
-            let saved = match mode {
-                WindowMode::Windowed => moho_core::prefs::WindowMode::Windowed,
-                WindowMode::Borderless => moho_core::prefs::WindowMode::Borderless,
-            };
-            if let Err(error) = settings.set_window_mode(saved) {
-                tracing::warn!(%error, ?mode, "window mode not saved");
-            }
-        }
-        // The platform drops held keys' releases and the grab across a mode change.
-        self.input.release_all();
-        self.input.reset_look();
-        if !self.input_captured() {
-            self.stage.capture_cursor();
-        }
+        self.window_mode_applied(mode);
     }
 
     fn event(&mut self, ctx: &mut EventContext<'_>, event: Event) {
@@ -1044,6 +1054,15 @@ impl Game for SearchlightGame {
         let engine_commands = self.stage.shell().console_mut().take_engine_commands();
         for command in &engine_commands {
             apply_engine_command(command, ctx);
+        }
+        if std::mem::take(&mut self.flip_window_pending) {
+            let mode = ctx.window_mode().toggled();
+            ctx.set_window_mode(mode);
+            self.stage.shell().console_mut().print(match mode {
+                WindowMode::Windowed => "Window mode: windowed",
+                WindowMode::Borderless => "Window mode: fullscreen",
+            });
+            self.window_mode_applied(mode);
         }
         for feedback in self.mode.drain_feedback() {
             if let Feedback::PlayerHit { from, .. } = feedback {
@@ -1594,6 +1613,75 @@ mod tests {
 
         assert_eq!(game.input.pending_look(), (0.0, 0.0));
         assert_eq!(game.stage.cursor_captures, 0);
+    }
+
+    /// Enters `fullscreen` in the open console and runs one frame with the window in `mode`.
+    fn fullscreen_frame(game: &mut SearchlightGame, mode: WindowMode) -> Option<WindowMode> {
+        type_into_console(game, "fullscreen");
+        game.command();
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(TICK, &clock, None, None).with_window_mode(mode);
+        game.frame(&mut ctx, 0.5);
+        ctx.requested_window_mode()
+    }
+
+    #[test]
+    fn the_fullscreen_console_command_flips_the_mode_and_prints_it() {
+        for (before, after, text) in [
+            (
+                WindowMode::Windowed,
+                WindowMode::Borderless,
+                "Window mode: fullscreen",
+            ),
+            (
+                WindowMode::Borderless,
+                WindowMode::Windowed,
+                "Window mode: windowed",
+            ),
+        ] {
+            let mut game = turning_game(false);
+            let clock = GameClock::default();
+            open_the_console(&mut game, &clock);
+
+            let requested = fullscreen_frame(&mut game, before);
+
+            assert_eq!(requested, Some(after), "{before:?}");
+            assert_eq!(
+                console_lines(&game).last().map(String::as_str),
+                Some(text),
+                "{before:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_fullscreen_command_flips_once_per_entry() {
+        let mut game = turning_game(false);
+        let clock = GameClock::default();
+        open_the_console(&mut game, &clock);
+        fullscreen_frame(&mut game, WindowMode::Windowed);
+        let mut ctx = FrameContext::new(TICK, &clock, None, None);
+
+        game.frame(&mut ctx, 0.5);
+
+        assert_eq!(ctx.requested_window_mode(), None);
+    }
+
+    #[test]
+    fn the_fullscreen_command_saves_the_mode_and_releases_held_keys() {
+        use moho_core::prefs::WindowMode as Saved;
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = turning_game(false).with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.route_input(&mut ctx, Input::Key(Key::W), true, false);
+        open_the_console(&mut game, &clock);
+
+        fullscreen_frame(&mut game, WindowMode::Windowed);
+
+        assert_eq!(saved_window_mode(&path), Some(Saved::Borderless));
+        assert_eq!(game.input.pending_look(), (0.0, 0.0));
     }
 
     /// The `alpha` the view tests draw with.
@@ -2854,7 +2942,7 @@ mod tests {
     }
 
     #[test]
-    fn escape_while_dead_pauses_and_enter_restarts_only_after_resume() {
+    fn escape_while_dead_pauses_and_restart_works_only_after_resume() {
         let (mut game, clock) = game_with_a_player_dead_away_from_the_spawn();
         let mut ctx = EventContext::new(&clock, None, None);
 
@@ -2863,7 +2951,7 @@ mod tests {
         game.route_input(&mut ctx, enter, true, false);
         game.route_input(&mut ctx, enter, false, false);
         let after_resume = game.command();
-        game.route_input(&mut ctx, enter, true, false);
+        game.route_input(&mut ctx, Input::Key(Key::F8), true, false);
         let restart = game.command();
 
         assert_eq!(game.screen, Screen::Playing);
@@ -2871,7 +2959,7 @@ mod tests {
             !after_resume.restart,
             "the Enter that resumed also restarted"
         );
-        assert!(restart.restart, "Enter restarts once playing again");
+        assert!(restart.restart, "F8 restarts once playing again");
         assert!(!ctx.exit_requested());
     }
 }

@@ -10,6 +10,7 @@ use moho_ui_shell::console::registry::CommandSpec;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConsoleCommand {
     GodMode(GodModeArg),
+    Fullscreen,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,6 +35,14 @@ pub fn parse_tgm(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
     }
 }
 
+/// Parses `fullscreen`; it takes no arguments.
+pub fn parse_fullscreen(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    match args {
+        [] => Ok((ConsoleCommand::Fullscreen, String::new())),
+        _ => Err("Usage: fullscreen".to_owned()),
+    }
+}
+
 /// The FPS console with the game's commands registered. Reads the `console` key from the
 /// game's `[bindings]` section.
 pub fn console(
@@ -48,6 +57,14 @@ pub fn console(
             parse: parse_tgm,
         })
         .expect("\"tgm\" is not an engine command and is registered once");
+    console
+        .register(CommandSpec {
+            name: "fullscreen".to_owned(),
+            usage: "fullscreen".to_owned(),
+            help: "toggle fullscreen".to_owned(),
+            parse: parse_fullscreen,
+        })
+        .expect("\"fullscreen\" is not an engine command and is registered once");
     (console, warnings)
 }
 
@@ -129,6 +146,34 @@ mod tests {
         let lines = printed(&console);
         assert!(
             lines.iter().any(|line| line.starts_with("  tgm [0|1] - ")),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn fullscreen_takes_no_arguments_and_rejects_extra_ones() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        console.submit("fullscreen");
+        let queued = console.take_commands();
+        console.submit("fullscreen now");
+        let refused = (console.take_commands(), last_line(&console));
+
+        assert_eq!(queued, vec![ConsoleCommand::Fullscreen]);
+        assert_eq!(refused, (vec![], "Usage: fullscreen".to_owned()));
+    }
+
+    #[test]
+    fn help_lists_fullscreen() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        console.submit("help");
+
+        let lines = printed(&console);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("  fullscreen - toggle")),
             "{lines:?}"
         );
     }
