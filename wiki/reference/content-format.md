@@ -19,6 +19,7 @@ damage = 30
 fire = "semi_auto"
 cooldown_ticks = 6
 reload_ticks = 120
+charge_ticks = 30
 range = 100.0
 ```
 
@@ -59,7 +60,7 @@ are the file's contract.
 
 | Kind | Id | Type | Fields |
 |---|---|---|---|
-| `weapons` | `rifle` (`RIFLE_ID`) | `searchlight_rules::RifleDef` | `magazine_capacity`, `damage`, `fire` (`semi_auto`), `cooldown_ticks`, `reload_ticks`, `range` (metres) |
+| `weapons` | `rifle` (`RIFLE_ID`) | `searchlight_rules::RifleDef` | `magazine_capacity`, `damage`, `fire` (`semi_auto`), `cooldown_ticks`, `reload_ticks`, `charge_ticks` (ticks added to a reload when the chamber is empty), `range` (metres) |
 
 `searchlight::tuning::tuning(&RifleDef)` builds the `SimConfig` from a definition; the
 remaining sim numbers (movement, body profile, enemy tuning) are still set in code.

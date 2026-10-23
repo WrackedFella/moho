@@ -6,7 +6,7 @@
 [ADR-0019](../../_todo/adr/0019-navigation-is-an-engine-seam.md).
 
 `searchlight` is the FPS line's engine adapter: a library and the `searchlight` binary. Rules
-(`Rifle`, `Magazine`, `Body`, `BodyProfile`) come from `searchlight_rules`; windowing, loop,
+(`Rifle`, `Magazine`, `Body`, `BodyProfile`, `Grade`) come from `searchlight_rules`; windowing, loop,
 physics, level loading, input, audio and rendering come from engine crates. It depends on no
 strategy crate ([overview](../architecture/overview.md#2-lines-and-rules)).
 
@@ -37,20 +37,20 @@ flowchart LR
 | `input` | `SearchlightAction` set and default bindings; `build_action_map` builds the `ActionMap` at startup, with mouse look (`look_settings`: sensitivity, smoothing, invert Y) taken from `Prefs`, and a sensitivity not above zero falling back to the default 3.0; `SearchlightCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on F8) |
 | `tag` | `SurfaceTag` (`World`, `Part { target, part }` or `Player(part)`) and its lossless round trip through the engine's opaque `moho_physics::HitTag` |
 | `shot` | `resolve_shot`: first tagged surface along a `ShotRay` in the `PhysicsWorld` |
-| `brain` | `Brain`: the enemy state machine (`Patrol`, `Engage`, `Cover`, `Chase`), pure over `glam` types; `Percept` and a `steer` function in, `Intent` out; `EnemyTuning` holds its numbers |
+| `brain` | `Brain`: the enemy state machine (`Patrol`, `Engage`, `Cover`, `Chase`), pure over `glam` types; `Percept` and a `steer` function in, `Intent` out; `EnemyTuning` holds its numbers; `EnemyTuning::graded` scales reaction, cooldown and aim error by a `Grade` ([enemies](#5-enemies)) |
 | `cover` | `pick` and `offer`: choose the nearest free cover point a hurt enemy should run to, using world-only rays against the player (`Threat`) |
 | `sim` | `SearchlightSim`: player character and body, rifle, spare magazines, dummies and enemies; emits `Feedback`; counts player kills |
 | `wave` | `WaveTuning` (first wave size, growth per wave, points per kill; zero size or growth is refused) and `WaveState` (running wave, enemies still to spawn, score) as plain numbers, no physics |
 | `mode` | `ArenaMode`: the arena as a game mode. Owns a `SearchlightSim` started empty, scores its kills and spawns each wave's enemies at free enemy markers |
 | `hud` | Text for rifle state, hits, health, death and the wave and score line; the hit-edge direction; the death overlay |
 | `menu` | `Menu`: the main menu (Play, Settings, Quit) or pause menu (Resume, Settings, Quit) as a pure value (selection with wrap, hover and click hit-testing in logical points, the `ScreenText` rows that draw it); `MenuAction` is what choosing an item asks the game to do |
-| `console_commands` | Builds the FPS `Console` from the game's `[bindings]`; the game's own commands register here (`tgm` and `fullscreen`, parsed into `ConsoleCommand`) |
+| `console_commands` | Builds the FPS `Console` from the game's `[bindings]`; the game's own commands register here (`tgm`, `fullscreen` and `grade`, parsed into `ConsoleCommand`) |
 | `debug_settings` | `DebugSettings`: the loaded `Prefs` and its path; reads and saves the game's `[debug]` values (`god_mode`) |
 | `game` | `SearchlightGame`, the `moho_app::Game` implementation: samples look every frame while focused, playing and the console is closed (the camera draws the sim turned by the pending look, and `input::look_to_turn` is the one look mapping for command and camera), samples input, ticks the `ArenaMode`, turns `Feedback` into sound, title status line, hit flash, damage-direction edge, death tint and crosshair; asks the loop to pause while the shell captures input (console open) or a menu shows (main or pause), so the sim freezes instead of ticking with an ignored command; while it does, `command()` still applies console commands but does not end the action-map tick, so the look already shown stays pending and is not lost |
 
 `SearchlightSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
 `Feedback` is the only output: `SearchlightSim::tick` queues it, the game drains it
-(`drain_feedback`) and reacts. `TICK_HZ` is 60. The rifle's numbers (damage, cooldown, reload, range, magazine size) load from
+(`drain_feedback`) and reacts. `TICK_HZ` is 60. The rifle's numbers (damage, cooldown, reload, charge, range, magazine size) load from
 `content/weapons.toml`, then the mods listed in prefs (`mods/<name>/weapons.toml`), at start ([content format](../reference/content-format.md)); a load failure
 exits the binary. `tuning::tuning` combines them with the numbers still set in code (speeds, body
 profile, `EnemyTuning`, the player part enemies aim at) as a `SimConfig`.
@@ -88,7 +88,7 @@ pause menu resumes. Console routing still comes first.
 
 Window mode: `main.rs` passes the `fullscreen` binding (default F11) as `AppConfig::toggle_keys` (Alt+Enter always works). After a flip the runner calls `SearchlightGame::window_mode_changed`, which releases held keys, drops pending look and, unless the shell captures input, grabs the cursor again, since the platform loses key releases and the grab across the change. The mode persists: `window_mode_changed` saves it to the prefs file through `DebugSettings` (skipped when it already matches), and `main.rs` reads it at startup through `start_window_mode` into `AppConfig::window_mode`; a saved `Fullscreen` opens borderless ([prefs format](../reference/prefs-format.md)). The `fullscreen` console command queues a flag in `command()` (no context there); the next `frame()` requests the toggled mode from the runner, prints it, and runs the same `window_mode_applied` step (the runner does not call `window_mode_changed` for a mode the game asked for).
 
-Game commands (`tgm [0|1]`) queue as `ConsoleCommand` on the console. `SearchlightGame` drains them
+Game commands (`tgm [0|1]`, `grade <name|off>`) queue as `ConsoleCommand` on the console. `SearchlightGame` drains them
 at the start of each `command()` sample (`apply_console_commands`), applies them in order, saves
 a changed value through `DebugSettings` (a failed save is logged, not fatal) and echoes a bare
 toggle's result to the console. God mode is loaded from `[debug]` at start (`with_debug_settings`)
@@ -96,12 +96,15 @@ and carried on every tick as `SearchlightCommand::god_mode`. While on, enemy hit
 `Feedback::PlayerHit` but do not damage the player's `Body`; it does not revive a dead player.
 The title status line appends `GOD MODE` (`hud::god_mode_text`).
 
+`grade` sets `SearchlightGame`'s forced grade, carried on every tick as `SearchlightCommand::forced_grade`. It is not saved to prefs ([enemies](#5-enemies)).
+
 ## 3 Tick
 
 `SearchlightSim::tick(command, dt)` lets the enemies perceive and move, moves the player character,
 steps the physics world, applies weapon actions, then resolves the shots the enemies decided
 on and removes enemies that died. The rifle is in one state at a time (ready, cooling down
-after a shot, reloading); cooldown and reload are tick counts.
+after a shot, reloading); cooldown and reload are tick counts. A reload takes `reload_ticks`, plus
+`charge_ticks` when the chamber is empty.
 
 `SearchlightSim::start(arena, config)` builds the full sim: targets are numbered dummies first, then
 enemies. `SearchlightSim::new` builds one with dummies only. A sim started from an arena keeps the
@@ -114,7 +117,7 @@ rebuilds the sim from them.
 dummies and the player stand, enemy markers are remembered but unoccupied. Each
 `ArenaMode::tick` runs the sim, then `WaveState::step` with the sim's new kills and the number of
 free markers (`SearchlightSim::free_enemy_spawns`: no living character within two `CAPSULE_RADIUS`) and
-spawns that many enemies through `SearchlightSim::spawn_enemy`. Wave 1 holds `first_size` enemies and each
+spawns that many enemies through `SearchlightSim::spawn_enemy`, each of the command's `forced_grade` or `Grade::default()` (experienced); the force applies to enemies spawned after it, including the wave a restart brings. Wave 1 holds `first_size` enemies and each
 later wave `growth` more; the next wave begins when the current one has nothing left to spawn and
 none alive. Spawned enemies take the next target number after the dummies; the dead keep theirs.
 Nothing spawns while the player is dead; the restart rebuilds the sim empty and begins wave 1
@@ -146,6 +149,8 @@ this as `steer`, with the goal first dropped onto the floor below it, so a playe
 position. With no path (the position is off the mesh or unreachable) the enemy resumes `Patrol`
 at once. Sight and shot rays are not affected by the navmesh. Enemy shots use the shot path below; a hit on the player emits
 `Feedback::PlayerHit`, and a dead player emits `Feedback::PlayerDied`.
+
+Each enemy has a `searchlight_rules::Grade` (`Rookie`, `Novice`, `Experienced`, `Veteran`, `Professional`), fixed at `spawn_enemy` and readable with `SearchlightSim::enemy_grade`. `Grade::dials` gives three scales over the base `SimConfig` enemy tuning; `EnemyTuning::graded` applies them to `reaction_ticks`, `cooldown_ticks` and `aim_error` and leaves every other field. Experienced is 1.0 on all three, so it is the base tuning. A grade changes behaviour only: health, damage and hit volumes are the same for every grade ([GDD 4.11](game-design-document.md)). Marker-start enemies are experienced.
 
 ## 6 Shot path
 

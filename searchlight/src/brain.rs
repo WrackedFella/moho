@@ -6,6 +6,7 @@
 use std::f32::consts::PI;
 
 use glam::Vec3;
+use searchlight_rules::Grade;
 
 /// What the enemy knows this tick.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -87,6 +88,20 @@ impl Default for EnemyTuning {
             chase_ticks: 600,
             cover_hide_height: 0.9,
             seed: 0,
+        }
+    }
+}
+
+impl EnemyTuning {
+    /// This tuning as an enemy of `grade` plays it: reaction, cooldown and aim error scaled by
+    /// the grade's dials, every other field as it is.
+    pub fn graded(&self, grade: Grade) -> EnemyTuning {
+        let dials = grade.dials();
+        EnemyTuning {
+            reaction_ticks: dials.reaction_ticks(self.reaction_ticks),
+            cooldown_ticks: dials.cooldown_ticks(self.cooldown_ticks),
+            aim_error: dials.aim_error(self.aim_error),
+            ..*self
         }
     }
 }
@@ -430,6 +445,45 @@ mod tests {
             cover_hide_height: 0.9,
             seed: 7,
         }
+    }
+
+    #[test]
+    fn graded_experienced_is_the_tuning_itself() {
+        for base in [tuning(), EnemyTuning::default()] {
+            let graded = base.graded(Grade::Experienced);
+
+            assert_eq!(graded, base);
+        }
+    }
+
+    #[test]
+    fn grading_changes_only_reaction_cooldown_and_aim_error() {
+        let base = EnemyTuning {
+            aim_error: 0.05,
+            ..tuning()
+        };
+
+        for grade in Grade::LADDER {
+            let dials = grade.dials();
+            let expected = EnemyTuning {
+                reaction_ticks: dials.reaction_ticks(base.reaction_ticks),
+                cooldown_ticks: dials.cooldown_ticks(base.cooldown_ticks),
+                aim_error: dials.aim_error(base.aim_error),
+                ..base
+            };
+
+            let graded = base.graded(grade);
+
+            assert_eq!(graded, expected, "{grade:?}");
+        }
+        let rookie = base.graded(Grade::Rookie);
+        assert_eq!(rookie.reaction_ticks, 6);
+        assert_eq!(rookie.cooldown_ticks, 8);
+        assert!(
+            (rookie.aim_error - 0.15).abs() < 1e-6,
+            "{}",
+            rookie.aim_error
+        );
     }
 
     /// A steer function for open ground: the way to a goal is straight at it.
