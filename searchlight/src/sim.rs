@@ -632,27 +632,22 @@ impl SearchlightSim {
             },
         );
         let end = strike.map_or(view.eye + view.forward * self.range, |strike| strike.point);
-        let struck = match strike {
-            Some(Strike {
-                tag: SurfaceTag::Part { target, .. },
-                ..
-            }) => Some(usize::from(target)),
+        let hit = strike.and_then(|strike| match strike.tag {
+            SurfaceTag::Part { target, part } => Some((target, part)),
             _ => None,
-        };
+        });
+        let struck = hit.map(|(target, _)| usize::from(target));
         self.record_near_misses(view.eye, end, struck, state.position);
-        if let Some(Strike {
-            tag: SurfaceTag::Part { target, part },
-            ..
-        }) = strike
-        {
+        if let Some((target, part)) = hit {
             self.apply_player_hit(target, part, self.damage, state.position);
         }
     }
 
     /// Counts a near miss for every living enemy but `struck` that the shot from `origin` to
-    /// `end` passed within its graded radius of, and puts those whose count reached their
+    /// `end` passed within the near-miss radius of, and puts those whose count reached their
     /// grade's under fire from `from`.
     fn record_near_misses(&mut self, origin: Vec3, end: Vec3, struck: Option<usize>, from: Vec3) {
+        let radius = self.enemy.near_miss_radius;
         for (index, target) in self.targets.iter_mut().enumerate().skip(self.dummy_count) {
             let (Some(handle), Some(enemy)) = (target.handle, target.enemy) else {
                 continue;
@@ -660,18 +655,17 @@ impl SearchlightSim {
             if struck == Some(index) {
                 continue;
             }
+            let Some(needed) = enemy.grade.near_misses_to_cover() else {
+                continue;
+            };
             let centre = self
                 .world
                 .character(handle)
                 .expect("a living enemy is in the world")
                 .position;
-            let radius = self.enemy.graded(enemy.grade).near_miss_radius;
             if !passes_within(origin, end, centre, radius) {
                 continue;
             }
-            let Some(needed) = enemy.grade.near_misses_to_cover() else {
-                continue;
-            };
             target.near_misses += 1;
             if target.near_misses >= needed {
                 target.near_misses = 0;
