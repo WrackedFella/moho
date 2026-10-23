@@ -223,4 +223,5 @@ exclude_re = [
     'replace > with >= in funnel',
     'replace \+ with \* in funnel',
     'replace <impl Game for SearchlightGame>::init with \(\)'
+    'movement\.rs.*delete ! in checked', # checked's warn condition: log-only, no log capture in tests
 ]
