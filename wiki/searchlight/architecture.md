@@ -50,7 +50,7 @@ flowchart LR
 
 `SearchlightSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
 `Feedback` is the only output: `SearchlightSim::tick` queues it, the game drains it
-(`drain_feedback`) and reacts. `TICK_HZ` is 60. The rifle's numbers (damage, cooldown, reload, range, magazine size) load from
+(`drain_feedback`) and reacts. `TICK_HZ` is 60. The rifle's numbers (damage, cooldown, reload, charge, range, magazine size) load from
 `content/weapons.toml`, then the mods listed in prefs (`mods/<name>/weapons.toml`), at start ([content format](../reference/content-format.md)); a load failure
 exits the binary. `tuning::tuning` combines them with the numbers still set in code (speeds, body
 profile, `EnemyTuning`, the player part enemies aim at) as a `SimConfig`.
@@ -101,7 +101,8 @@ The title status line appends `GOD MODE` (`hud::god_mode_text`).
 `SearchlightSim::tick(command, dt)` lets the enemies perceive and move, moves the player character,
 steps the physics world, applies weapon actions, then resolves the shots the enemies decided
 on and removes enemies that died. The rifle is in one state at a time (ready, cooling down
-after a shot, reloading); cooldown and reload are tick counts.
+after a shot, reloading); cooldown and reload are tick counts. A reload takes `reload_ticks`, plus
+`charge_ticks` when the chamber is empty.
 
 `SearchlightSim::start(arena, config)` builds the full sim: targets are numbered dummies first, then
 enemies. `SearchlightSim::new` builds one with dummies only. A sim started from an arena keeps the

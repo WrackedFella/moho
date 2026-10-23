@@ -85,9 +85,8 @@ pub struct SimConfig {
     /// Ticks between one shot and the next allowed pull: shots on ticks `t` and
     /// `t + cooldown_ticks` are both allowed, one on `t + cooldown_ticks - 1` is not.
     pub cooldown_ticks: u32,
-    /// Ticks a tactical reload (round in the chamber) takes: pressed on tick `t`, it
-    /// completes on tick `t + reload_ticks`, where the new magazine is in and the rifle
-    /// can fire again.
+    /// Ticks a tactical reload (round in the chamber) takes: pressed on tick `t`, the
+    /// rifle can fire again on tick `t + reload_ticks`.
     pub reload_ticks: u32,
     /// Ticks added to `reload_ticks` when the chamber is empty at the press.
     pub charge_ticks: u32,
@@ -1045,7 +1044,6 @@ mod tests {
         assert!(sim.rifle().is_chambered());
     }
 
-    /// A sim with a 10-tick reload and the given charge time.
     fn charging_sim(
         rifle: Rifle,
         spares: Vec<Magazine>,
@@ -1058,7 +1056,6 @@ mod tests {
         SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config)
     }
 
-    /// A reload pressed on tick 0, `idles` idle ticks, then a pull.
     fn reload_wait_pull(idles: usize) -> Vec<SearchlightCommand> {
         let mut script = vec![reload()];
         script.extend(std::iter::repeat_n(idle(), idles));
@@ -1118,7 +1115,6 @@ mod tests {
         assert_eq!(sim_rounds(&on_time), (true, 29));
     }
 
-    /// Whether a round is chambered, and the rounds in the inserted magazine.
     fn sim_rounds(sim: &SearchlightSim) -> (bool, u32) {
         (sim.rifle().is_chambered(), sim.rifle().magazine().rounds())
     }
