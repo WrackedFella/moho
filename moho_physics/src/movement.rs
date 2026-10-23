@@ -262,7 +262,7 @@ pub fn step(
         state.velocity.y -= half_gravity;
     }
 
-    settle(state, &slid, walking, asked);
+    settle(state, &slid, walking, asked, dt);
     impacts
 }
 
@@ -276,11 +276,13 @@ fn along_ground(velocity: Vec3, normal: Vec3) -> f32 {
 ///
 /// A walker hanging above walkable ground is lowered by [`Ground::gap`] when that is within
 /// reach, as in Source's `StayOnGround`: [`STEP_HEIGHT`] for a level or downward `asked`
-/// motion, [`GROUND_SNAP`] for a rising one, so a ramp's crest still launches. A walker that
-/// ends grounded keeps its horizontal velocity and follows its ground; any other character
-/// ends grounded only if not rising, and a landing zeroes its vertical speed.
-fn settle(state: &mut CharacterState, slid: &Slide, walking: bool, asked: Vec3) {
-    let reach = if asked.y <= 0.0 {
+/// motion, [`GROUND_SNAP`] for a rising one, so a ramp's crest still launches. Motion counts
+/// as rising only above [`REST_SPEED`] over `dt`, so the float noise of a ground normal on
+/// level ground does not shorten the reach. A walker that ends grounded keeps its horizontal
+/// velocity and follows its ground; any other character ends grounded only if not rising, and
+/// a landing zeroes its vertical speed.
+fn settle(state: &mut CharacterState, slid: &Slide, walking: bool, asked: Vec3, dt: f32) {
+    let reach = if asked.y <= REST_SPEED * dt {
         STEP_HEIGHT
     } else {
         GROUND_SNAP

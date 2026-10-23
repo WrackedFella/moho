@@ -5,6 +5,7 @@ use glam::Vec3;
 use rapier3d::control::{
     CharacterLength, EffectiveCharacterMovement, KinematicCharacterController,
 };
+use rapier3d::parry::query::ShapeCastHit;
 use rapier3d::parry::query::ShapeCastOptions;
 use rapier3d::parry::shape::Cylinder;
 use rapier3d::prelude::{ColliderHandle, Pose, QueryPipeline, Ray, Shape};
@@ -17,6 +18,9 @@ const FLAT_BASE_HALF_HEIGHT: f32 = 0.005;
 
 /// How far above and below the ground contact the face-normal ray reaches, in metres.
 const FACE_PROBE: f32 = 0.05;
+
+/// How far the face-normal ray starts inside the contact point, in metres.
+const EDGE_INSET: f32 = 0.01;
 
 /// Surfaces facing down at least this much (`normal.y` below its negative) are ceilings, not risers.
 const CEILING_NORMAL_Y: f32 = 0.3;
@@ -123,7 +127,7 @@ impl Slider<'_> {
             .as_capsule()
             .expect("character colliders are capsules");
         let CharacterLength::Absolute(skin) = self.controller.offset else {
-            return None;
+            panic!("the world builds its character controller with an absolute skin offset");
         };
 
         let base_radius = capsule.radius * (1.0 - WALKABLE_NORMAL_Y * WALKABLE_NORMAL_Y).sqrt();
@@ -135,43 +139,76 @@ impl Slider<'_> {
             &base,
             cast_within(capsule.radius + STEP_HEIGHT),
         )?;
-        let normal = self.face_normal_at(collider, face.witness1, face.normal1);
+        let normal = self.face_normal(collider, &face, centre);
         if normal.y < WALKABLE_NORMAL_Y {
             return None;
         }
 
-        let options = ShapeCastOptions {
+        let at = Pose::from_translation(centre);
+        let skinned = ShapeCastOptions {
             target_distance: skin,
             ..cast_within(STEP_HEIGHT)
         };
-        let (_, drop) = self.queries.cast_shape(
-            &Pose::from_translation(centre),
-            -Vec3::Y,
-            self.shape,
-            options,
-        )?;
+        let gap = match self.queries.cast_shape(&at, -Vec3::Y, self.shape, skinned) {
+            Some((_, drop)) => drop.time_of_impact,
+            // Near a mesh boundary the skinned cast can miss though the flat base hit.
+            None => {
+                match self
+                    .queries
+                    .cast_shape(&at, -Vec3::Y, self.shape, cast_within(STEP_HEIGHT))
+                {
+                    Some((_, drop)) => {
+                        let cosine = drop.normal1.y.max(WALKABLE_NORMAL_Y);
+                        (drop.time_of_impact - skin / cosine).max(0.0)
+                    }
+                    None => (face.time_of_impact + FLAT_BASE_HALF_HEIGHT - capsule.radius - skin)
+                        .max(0.0),
+                }
+            }
+        };
         Some(Ground {
             normal,
-            gap: drop.time_of_impact,
+            gap,
             collider,
             point: face.witness1,
         })
     }
 
-    /// The face of `collider` at `point`, or `reported` when a ray down onto `point` misses it.
+    /// The face normal of the ground the flat base touched at `hit`, or the cast's own normal
+    /// when neither lookup finds one.
     ///
     /// A shape cast that touches a mesh edge or a triangle boundary reports a normal tilted
     /// toward the shape, and its search noise tilts even a flat floor's by a few millionths;
-    /// either would give a walker a spurious vertical speed along its ground.
-    fn face_normal_at(&self, collider: ColliderHandle, point: Vec3, reported: Vec3) -> Vec3 {
-        let ray = Ray::new(point + Vec3::Y * FACE_PROBE, -Vec3::Y);
-        match self
-            .queries
-            .cast_ray_and_get_normal(&ray, 2.0 * FACE_PROBE, true)
-        {
-            Some((handle, hit)) if handle == collider => hit.normal,
-            _ => reported,
-        }
+    /// either would give a walker a spurious vertical speed along its ground. The hit
+    /// triangle's own normal is exact. When the cast touches a riser's top edge the riser
+    /// ties with the tread for first contact and its normal is not walkable, so a ray down onto
+    /// the contact, nudged toward the cast's axis `centre` so an exact edge contact lands on the
+    /// tread, reads the tread instead.
+    fn face_normal(&self, collider: ColliderHandle, hit: &ShapeCastHit, centre: Vec3) -> Vec3 {
+        let Some(found) = self.queries.colliders.get(collider) else {
+            return hit.normal1;
+        };
+        let triangle = found
+            .shape()
+            .as_trimesh()
+            .and_then(|mesh| mesh.triangle(hit.subshape1).normal())
+            .map(|normal| found.position().rotation * normal)
+            .map(|world| if world.y < 0.0 { -world } else { world })
+            .filter(|normal| normal.y >= WALKABLE_NORMAL_Y);
+        triangle
+            .or_else(|| {
+                let inward = (centre - hit.witness1).with_y(0.0).normalize_or_zero();
+                let origin = hit.witness1 + inward * EDGE_INSET + Vec3::Y * FACE_PROBE;
+                let ray = Ray::new(origin, -Vec3::Y);
+                match self
+                    .queries
+                    .cast_ray_and_get_normal(&ray, 2.0 * FACE_PROBE, true)
+                {
+                    Some((handle, ray_hit)) if handle == collider => Some(ray_hit.normal),
+                    _ => None,
+                }
+            })
+            .unwrap_or(hit.normal1)
     }
 
     /// The surface under a character the controller grounded without reporting a hit.
