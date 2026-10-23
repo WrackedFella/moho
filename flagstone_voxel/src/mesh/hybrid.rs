@@ -94,15 +94,16 @@ pub(crate) fn sample_face_material(grid: &VoxelGrid, chunk_base: IVec3, sample: 
 }
 
 /// The chunks whose meshes read `block`: its own chunk plus, on each axis where the block
-/// sits within [`SAMPLE_REACH`] of the chunk's negative edge, the negative neighbour (whose padded density field
-/// reaches [`SAMPLE_REACH`] blocks past its far edge). Yields 1, 2, 4 or 8 chunks.
+/// sits within [`SAMPLE_REACH`] of the chunk's negative edge, the negative neighbour
+/// (whose padded density field reaches [`SAMPLE_REACH`] blocks past its far edge).
+/// Yields 1, 2, 4 or 8 chunks.
 pub fn chunks_meshed_from(block: BlockPos, chunk_size: i32) -> impl Iterator<Item = IVec3> {
     let own = VoxelGrid::get_chunk_pos(block, chunk_size);
     let on_edge = block
         .rem_euclid(IVec3::splat(chunk_size))
         .cmplt(IVec3::splat(SAMPLE_REACH));
     (0..8i32).filter_map(move |mask| {
-        let step = IVec3::new(mask & 1, (mask >> 1) & 1, (mask >> 2) & 1);
+        let step = IVec3::new(mask & 1, (mask >> 1) & 1, mask >> 2);
         let allowed = step.cmpeq(IVec3::ZERO) | on_edge;
         allowed.all().then_some(own - step)
     })

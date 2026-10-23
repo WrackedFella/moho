@@ -254,7 +254,6 @@ fn shape() -> impl Strategy<Value = Shape> {
     )
 }
 
-/// Offsets of a `size` x `height` x `size` box.
 fn box_offsets(size: i32, height: i32) -> Vec<IVec3> {
     let mut offsets = Vec::new();
     for x in 0..size {
