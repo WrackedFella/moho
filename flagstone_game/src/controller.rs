@@ -912,6 +912,30 @@ mod tests {
         }
 
         #[test]
+        fn edge_pan_axes_pin_the_exact_margin_band_boundary_pixels() {
+            let viewport = UVec2::new(800, 600);
+            let margin = 32.0;
+            // (name, pointer, expected (right, forward))
+            let table = [
+                ("x on the low margin line", (32.0, 300.0), (0.0, 0.0)),
+                ("x just inside the low band", (31.0, 300.0), (-1.0, 0.0)),
+                ("x just before the high band", (767.0, 300.0), (0.0, 0.0)),
+                ("x on the high band start", (768.0, 300.0), (1.0, 0.0)),
+                ("y on the low margin line", (400.0, 32.0), (0.0, 0.0)),
+                ("y just inside the low band", (400.0, 31.0), (0.0, 1.0)),
+                ("y just before the high band", (400.0, 567.0), (0.0, 0.0)),
+                ("y on the high band start", (400.0, 568.0), (0.0, -1.0)),
+            ];
+
+            for (name, pointer, (right, forward)) in table {
+                let axes = edge_pan_axes(Some(pointer), viewport, margin);
+
+                assert_eq!(sign(axes.x), right, "{name}: {axes}");
+                assert_eq!(sign(axes.y), forward, "{name}: {axes}");
+            }
+        }
+
+        #[test]
         fn edge_pan_axes_follow_the_given_margin_and_viewport() {
             let wide_margin = 40.0;
             let small = UVec2::new(800, 600);
