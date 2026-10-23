@@ -57,3 +57,4 @@ Out-of-range quality values are rejected with a message. Unknown commands print 
 |---|---|---|
 | `tgm` | `[0\|1]` | God mode: no argument toggles, `1` on, `0` off. Enemy hits stop damaging the player. Stored as `god_mode` under `[debug]` in the game's prefs file, so it persists across runs |
 | `fullscreen` | none | Flips between windowed and borderless fullscreen and prints the new mode. Saved like the F11 and Alt+Enter flips |
+| `grade` | `<rookie\|novice\|experienced\|veteran\|professional\|off>` | Forces the grade of enemies spawned from then on; `off` clears the force. Not saved; applies to later waves and restarts, not to enemies already alive |
