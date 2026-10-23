@@ -43,6 +43,16 @@ pub struct LevelMesh {
 /// Returns a [`LevelError`] naming `path` when the file cannot be read, is not
 /// glTF, references an unreadable buffer, or holds a malformed mesh.
 pub fn load(path: &Path) -> Result<Level, LevelError> {
+    let (meshes, markers) = with_buffers(path, build)?;
+    Ok(Level { meshes, markers })
+}
+
+/// Read and parse the glTF at `path`, resolve its buffers and run `f` on them; every
+/// failure, including `f`'s, is a [`LevelError`] naming `path`.
+fn with_buffers<T>(
+    path: &Path,
+    f: impl FnOnce(&gltf::Document, &[Cow<'_, [u8]>]) -> Result<T, LevelErrorKind>,
+) -> Result<T, LevelError> {
     let fail = |kind| LevelError::new(path, kind);
     let gltf = {
         let bytes = std::fs::read(path).map_err(|e| fail(LevelErrorKind::Read(e)))?;
@@ -50,8 +60,7 @@ pub fn load(path: &Path) -> Result<Level, LevelError> {
     };
     let dir = path.parent().unwrap_or_else(|| Path::new(""));
     let buffers = buffers::resolve(&gltf.document, gltf.blob.as_deref(), dir).map_err(fail)?;
-    let (meshes, markers) = build(&gltf.document, &buffers).map_err(fail)?;
-    Ok(Level { meshes, markers })
+    f(&gltf.document, &buffers).map_err(fail)
 }
 
 fn build(
@@ -75,6 +84,17 @@ fn build(
     Ok((walk.meshes, walk.markers))
 }
 
+/// Mark `node` visited, refusing one reached twice: glTF node graphs must be trees, and
+/// a cycle would otherwise recurse forever.
+fn mark_seen(seen: &mut [bool], node: &gltf::Node<'_>) -> Result<(), LevelErrorKind> {
+    if std::mem::replace(&mut seen[node.index()], true) {
+        return Err(LevelErrorKind::NotGltf(
+            format!("node {} has more than one parent", node.index()).into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Depth-first scene walk; `seen` refuses a node reached twice, since glTF node
 /// graphs must be trees and a cycle would otherwise recurse forever.
 struct Walk<'a> {
@@ -86,11 +106,7 @@ struct Walk<'a> {
 
 impl Walk<'_> {
     fn node(&mut self, node: &gltf::Node<'_>, parent: Mat4) -> Result<(), LevelErrorKind> {
-        if std::mem::replace(&mut self.seen[node.index()], true) {
-            return Err(LevelErrorKind::NotGltf(
-                format!("node {} has more than one parent", node.index()).into(),
-            ));
-        }
+        mark_seen(&mut self.seen, node)?;
         let world = parent * Mat4::from_cols_array_2d(&node.transform().matrix());
         self.markers.extend(marker::from_node(node, world));
         if let Some(mesh) = node.mesh() {
@@ -104,8 +120,17 @@ impl Walk<'_> {
                     );
                     continue;
                 }
-                self.meshes
-                    .push(mesh::convert(&mesh, &primitive, world, self.buffers)?);
+                let converted = mesh::convert(
+                    &mesh,
+                    &primitive,
+                    world,
+                    world.determinant() < 0.0,
+                    self.buffers,
+                )?;
+                self.meshes.push(LevelMesh {
+                    mesh: converted,
+                    material: primitive.material().name().map(str::to_owned),
+                });
             }
         }
         for child in node.children() {

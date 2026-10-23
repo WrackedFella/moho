@@ -1,11 +1,12 @@
 //! Model import: a glTF file becomes plain data a game places node by node.
 
+use std::borrow::Cow;
 use std::path::Path;
 
-use glam::Affine3A;
+use glam::{Affine3A, Mat4};
 use moho_render_api::{MaterialGpu, MaterialKey, RenderMaterial, WorldMesh};
 
-use crate::LevelError;
+use crate::{LevelError, LevelErrorKind, mesh};
 
 /// `MaterialKey::variant` of every [`ModelMaterial`]; outside the variants searchlight
 /// (0..4) and flagstone (0, 1) use, so a game that also uses `0x80` would merge keys.
@@ -58,11 +59,22 @@ impl ModelMaterial {
 
 impl RenderMaterial for ModelMaterial {
     fn to_gpu(&self) -> MaterialGpu {
-        todo!()
+        let [r, g, b, _] = self.base_colour;
+        MaterialGpu {
+            albedo: [r, g, b, 0.0],
+            params: [r, g, b, 0.0],
+        }
     }
 
     fn dedup_key(&self) -> MaterialKey {
-        todo!()
+        let [r, g, b, _] = self.base_colour;
+        MaterialKey {
+            variant: MODEL_MATERIAL_VARIANT,
+            albedo_bits: [r.to_bits(), g.to_bits(), b.to_bits()],
+            fuzz_bits: 0,
+            ref_idx_bits: 0,
+            extra_bits: [0; 3],
+        }
     }
 }
 
@@ -72,40 +84,120 @@ impl RenderMaterial for ModelMaterial {
 /// Returns a [`LevelError`] naming `path` when the file cannot be read, is not glTF,
 /// references an unreadable buffer, reaches a node twice, or holds a malformed mesh.
 pub fn load_model(path: &Path) -> Result<Model, LevelError> {
-    let _ = path;
-    todo!()
+    crate::with_buffers(path, build)
+}
+
+fn build(document: &gltf::Document, buffers: &[Cow<'_, [u8]>]) -> Result<Model, LevelErrorKind> {
+    let materials = document
+        .materials()
+        .map(|m| ModelMaterial {
+            name: m.name().map(str::to_owned),
+            base_colour: m.pbr_metallic_roughness().base_color_factor(),
+        })
+        .collect();
+    let mut walk = Walk {
+        buffers,
+        seen: vec![false; document.nodes().len()],
+        model: Model {
+            nodes: Vec::new(),
+            meshes: Vec::new(),
+            materials,
+        },
+    };
+    if let Some(scene) = document
+        .default_scene()
+        .or_else(|| document.scenes().next())
+    {
+        for node in scene.nodes() {
+            walk.node(&node, None)?;
+        }
+    }
+    Ok(walk.model)
+}
+
+struct Walk<'a> {
+    buffers: &'a [Cow<'a, [u8]>],
+    seen: Vec<bool>,
+    model: Model,
+}
+
+impl Walk<'_> {
+    fn node(&mut self, node: &gltf::Node<'_>, parent: Option<usize>) -> Result<(), LevelErrorKind> {
+        crate::mark_seen(&mut self.seen, node)?;
+        let local = Affine3A::from_mat4(Mat4::from_cols_array_2d(&node.transform().matrix()));
+        let rest = parent.map_or(local, |p| self.model.nodes[p].rest * local);
+        let index = self.model.nodes.len();
+        self.model.nodes.push(ModelNode {
+            name: node.name().map(str::to_owned),
+            parent,
+            local,
+            rest,
+        });
+        if let Some(mesh) = node.mesh() {
+            // The mesh is placed under `rest`, so a mirrored node must flip its own winding.
+            let flip_winding = rest.matrix3.determinant() < 0.0;
+            for primitive in mesh.primitives() {
+                if primitive.mode() != gltf::mesh::Mode::Triangles {
+                    tracing::warn!(
+                        mesh = mesh.name().unwrap_or_default(),
+                        index = mesh.index(),
+                        mode = ?primitive.mode(),
+                        "skipping non-triangle primitive"
+                    );
+                    continue;
+                }
+                let converted = mesh::convert(
+                    &mesh,
+                    &primitive,
+                    Mat4::IDENTITY,
+                    flip_winding,
+                    self.buffers,
+                )?;
+                self.model.meshes.push(ModelMesh {
+                    mesh: converted,
+                    node: index,
+                    material: primitive.material().index(),
+                });
+            }
+        }
+        for child in node.children() {
+            self.node(&child, Some(index))?;
+        }
+        Ok(())
+    }
 }
 
 impl Model {
     pub fn nodes(&self) -> &[ModelNode] {
-        todo!()
+        &self.nodes
     }
 
     pub fn meshes(&self) -> &[ModelMesh] {
-        todo!()
+        &self.meshes
     }
 
     pub fn materials(&self) -> &[ModelMaterial] {
-        todo!()
+        &self.materials
     }
 
     /// The first node called `name` in walk order.
     pub fn node(&self, name: &str) -> Option<&ModelNode> {
-        let _ = name;
-        todo!()
+        self.nodes.iter().find(|n| n.name.as_deref() == Some(name))
     }
 
     /// The material `mesh` draws with.
     pub fn material_of(&self, mesh: &ModelMesh) -> &ModelMaterial {
-        let _ = mesh;
-        todo!()
+        mesh.material
+            .and_then(|i| self.materials.get(i))
+            .unwrap_or(&ModelMaterial::GLTF_DEFAULT)
     }
 
     /// For each mesh in order, its index and `root * nodes[mesh.node].rest`.
     pub fn placements(&self, root: Affine3A) -> impl Iterator<Item = (usize, Affine3A)> + '_ {
-        let _ = root;
-        let placed: std::iter::Empty<(usize, Affine3A)> = todo!();
-        placed
+        self.meshes
+            .iter()
+            .enumerate()
+            .map(move |(i, m)| (i, root * self.nodes[m.node].rest))
     }
 }
 

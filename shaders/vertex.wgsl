@@ -1,3 +1,14 @@
+// Cofactor of `m` (inverse-transpose times det): exact under non-uniform scale without an
+// inverse; the determinant's sign keeps mirrored transforms' normals facing out.
+fn normal_to_world(m: mat3x3<f32>, n: vec3<f32>) -> vec3<f32> {
+    let c0 = m[0];
+    let c1 = m[1];
+    let c2 = m[2];
+    let cofactor = mat3x3<f32>(cross(c1, c2), cross(c2, c0), cross(c0, c1));
+    let det = dot(c0, cofactor[0]);
+    return normalize(cofactor * n * sign(det));
+}
+
 @vertex
 fn vs_main(v: VertexIn, i: InstanceIn) -> VsOut {
     var out: VsOut;
@@ -20,10 +31,8 @@ fn vs_main(v: VertexIn, i: InstanceIn) -> VsOut {
     out.clip = vec4<f32>(dot(r0, world_pos), dot(r1, world_pos), dot(r2, world_pos), dot(r3, world_pos));
     out.material = select(i.material, v.material, v.material != 0xffffffffu);
     
-    // transform vertex normal (w=0) by model matrix rows
-    let nvec = vec4<f32>(v.normal, 0.0);
-    let n_ws = vec3<f32>(dot(row0, nvec), dot(row1, nvec), dot(row2, nvec));
-    out.normal = normalize(n_ws);
+    let model3 = mat3x3<f32>(i.model_col0.xyz, i.model_col1.xyz, i.model_col2.xyz);
+    out.normal = normal_to_world(model3, v.normal);
     out.world_pos = vec3<f32>(world_pos.x, world_pos.y, world_pos.z);
     
     // Transform to light space for shadow mapping (using light 0 = sun matrix)

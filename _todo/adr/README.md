@@ -36,4 +36,5 @@ ADRs written before ENG-F27 (2026-10-15) keep the crate names of their day. Read
 | [0021](0021-game-ai-lives-in-the-lines.md) | Game AI lives in the lines; the engine answers queries, and AI acts through player commands, sim-only perception and seeded randomness | Accepted |
 | [0022](0022-character-changes-are-tick-input.md) | Every change to a character from outside the step is a queued effect, plain data applied in order at the start of its next step | Accepted |
 | [0023](0023-pawn-kinds-share-components.md) | Pawn kinds are component sets driven by one controller; flagstone moves pawns into `hecs` with the second pawn kind | Proposed |
+| [0024](0024-models-are-gltf-data-placed-by-node.md) | Models are glTF data the game places node by node: import in `moho_level`, immutable `Model`, game-owned mesh ids, cofactor normals | Accepted on merge of #651 |
 | [0025](0025-world-meshes-are-placed-per-frame.md) | World meshes are placed per frame: upload once, place at game-set transforms; placements last one frame | Accepted on merge of #648 |
