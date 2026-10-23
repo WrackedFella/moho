@@ -10,7 +10,7 @@ use moho_app::{Event, EventContext, FrameContext, Game, InitContext, TickContext
 use moho_audio::AudioSystem;
 use moho_input::action_map::{ActionMap, handle_device_event, handle_window_event};
 use moho_input::bindings::Input;
-use moho_input::key::Key;
+use moho_input::key::{Key, MouseButton};
 use moho_physics::{CharacterState, first_person_view};
 use moho_render_api::{
     InstanceGpu, MaterialGpu, MaterialKey, RenderMaterial, Renderable, UiFrame, UiFrameSource,
@@ -28,6 +28,7 @@ use crate::console_commands::{self, ConsoleCommand, GodModeArg};
 use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
 use crate::input::{SearchlightAction, SearchlightCommand, look_to_turn};
+use crate::menu::{Menu, MenuAction};
 use crate::mode::ArenaMode;
 use crate::sim::{Feedback, SearchlightSim, dummy_at, dummy_hit_volumes};
 use crate::tag::SurfaceTag;
@@ -253,6 +254,8 @@ struct Crosshair {
     dead: bool,
     /// Opacity of the damage bar on each screen edge, indexed front, right, behind, left.
     edges: [u8; 4],
+    /// Whether the main menu covers the view: nothing is drawn.
+    hidden: bool,
 }
 
 impl Crosshair {
@@ -264,6 +267,9 @@ impl Crosshair {
 
 impl UiFrameSource for Crosshair {
     fn ui_frame(&mut self, size_in_pixels: [u32; 2]) -> Option<UiFrame> {
+        if self.hidden {
+            return None;
+        }
         let size = [size_in_pixels[0] as f32, size_in_pixels[1] as f32];
         let (cx, cy) = (size[0] / 2.0, size[1] / 2.0);
         let (near, far, half) = (Self::GAP, Self::GAP + Self::LENGTH, Self::THICKNESS / 2.0);
@@ -349,10 +355,23 @@ fn grab_cursor(window: &Window) {
     }
 }
 
+/// A window size of `physical` pixels in logical points, at `scale` pixels per point.
+fn logical_size(physical: winit::dpi::PhysicalSize<u32>, scale: f64) -> [f32; 2] {
+    let size = physical.to_logical::<f32>(scale);
+    [size.width, size.height]
+}
+
+/// A position of `physical` pixels in logical points, at `scale` pixels per point.
+fn logical_point(physical: [f64; 2], scale: f64) -> [f32; 2] {
+    [(physical[0] / scale) as f32, (physical[1] / scale) as f32]
+}
+
 /// Everything drawn or heard; the sim knows nothing of it.
 #[derive(Debug)]
 struct Stage {
     scene: Scene,
+    /// Drawn instead of `scene` behind the main menu, so the dormant arena stays untouched.
+    backdrop: Scene,
     segments: Vec<Segment>,
     dummy_material: u32,
     struck_material: u32,
@@ -366,6 +385,8 @@ struct Stage {
     status: String,
     title: String,
     shell: Arc<Mutex<UiShell<ConsoleCommand>>>,
+    /// Whether the cursor is captured for mouse look.
+    cursor_captured: bool,
     /// Times the cursor was captured, windowed or not, so tests can see it.
     #[cfg(test)]
     cursor_captures: u32,
@@ -379,6 +400,7 @@ impl Stage {
         let enemy_material = scene.material_table.find_or_push(&Paint::Enemy);
         Self {
             scene,
+            backdrop: Scene::new(),
             segments: Vec::new(),
             dummy_material,
             struck_material,
@@ -394,11 +416,20 @@ impl Stage {
             shell: Arc::new(Mutex::new(UiShell::new(
                 console_commands::console(&BTreeMap::new()).0,
             ))),
+            cursor_captured: false,
             #[cfg(test)]
             cursor_captures: 0,
         }
     }
 
+    /// The window size in logical points; a windowless stage reports 1280 by 720.
+    fn screen_points(&self) -> [f32; 2] {
+        self.window.as_ref().map_or([1280.0, 720.0], |window| {
+            logical_size(window.inner_size(), window.scale_factor())
+        })
+    }
+
+    /// Captures the cursor for mouse look, if there is a window to capture it in.
     fn capture_cursor(&mut self) {
         #[cfg(test)]
         {
@@ -407,6 +438,7 @@ impl Stage {
         if let Some(window) = &self.window {
             grab_cursor(window);
         }
+        self.cursor_captured = true;
     }
 
     /// The console shell. Never hold the guard across `draw`: the renderer locks the shell
@@ -532,10 +564,18 @@ impl Stage {
             .crosshair
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        hud.hidden = false;
         hud.dead = dead;
         hud.edges = self
             .edge_left
             .map(|left| (EDGE_ALPHA * left / EDGE_TICKS) as u8);
+    }
+
+    fn hide_hud(&self) {
+        self.crosshair
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .hidden = true;
     }
 
     fn play_shot(&self, audio: Option<&mut AudioSystem>) {
@@ -593,26 +633,49 @@ impl Stage {
     }
 
     fn draw(&mut self, renderer: &mut dyn RendererBackend, eye: (Mat4, Vec3)) {
-        renderer.update_lighting(lighting());
-        let (view, eye) = eye;
-        let projection = glam::camera::rh::proj::directx::perspective(
-            FOV_DEGREES.to_radians(),
-            self.aspect(),
-            NEAR,
-            FAR,
-        );
-        let no_actors: &[NoActor] = &[];
-        if let Err(error) = self.scene.render(
-            renderer,
-            no_actors,
-            no_actors,
-            NO_MESH,
-            NO_MESH,
-            (view, projection, eye),
-        ) {
-            tracing::warn!(%error, "skipped frame");
-        }
+        let aspect = self.aspect();
+        draw_scene(&mut self.scene, renderer, eye, aspect);
     }
+
+    fn draw_backdrop(&mut self, renderer: &mut dyn RendererBackend) {
+        let aspect = self.aspect();
+        draw_scene(
+            &mut self.backdrop,
+            renderer,
+            (Mat4::IDENTITY, Vec3::ZERO),
+            aspect,
+        );
+    }
+}
+
+fn draw_scene(
+    scene: &mut Scene,
+    renderer: &mut dyn RendererBackend,
+    eye: (Mat4, Vec3),
+    aspect: f32,
+) {
+    renderer.update_lighting(lighting());
+    let (view, eye) = eye;
+    let projection =
+        glam::camera::rh::proj::directx::perspective(FOV_DEGREES.to_radians(), aspect, NEAR, FAR);
+    let no_actors: &[NoActor] = &[];
+    if let Err(error) = scene.render(
+        renderer,
+        no_actors,
+        no_actors,
+        NO_MESH,
+        NO_MESH,
+        (view, projection, eye),
+    ) {
+        tracing::warn!(%error, "skipped frame");
+    }
+}
+
+/// What the player is looking at: the main menu, or the arena.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Screen {
+    MainMenu,
+    Playing,
 }
 
 /// The mode the window opens in for a saved `mode`: both fullscreen kinds open borderless.
@@ -628,6 +691,10 @@ pub fn start_window_mode(mode: moho_core::prefs::WindowMode) -> WindowMode {
 /// The FPS prototype's game: one arena mode and the input that drives it.
 #[derive(Debug)]
 pub struct SearchlightGame {
+    screen: Screen,
+    menu: Menu,
+    /// The cursor's last position, in logical points from the window's top left.
+    cursor: [f32; 2],
     mode: ArenaMode,
     input: ActionMap<SearchlightAction>,
     /// The player as the tick before the last left them, for blending the view.
@@ -644,6 +711,9 @@ impl SearchlightGame {
     pub fn new(mode: ArenaMode, input: ActionMap<SearchlightAction>) -> Self {
         let previous = mode.sim().player();
         Self {
+            screen: Screen::Playing,
+            menu: Menu::main(),
+            cursor: [0.0, 0.0],
             mode,
             input,
             previous,
@@ -651,6 +721,80 @@ impl SearchlightGame {
             stage: Stage::new(),
             god_mode: false,
             debug_settings: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_main_menu(mut self) -> Self {
+        self.screen = Screen::MainMenu;
+        self
+    }
+
+    /// Whether input goes to the console or the menu instead of the game: the loop pauses,
+    /// the action map is fed nothing and no look is sampled.
+    fn input_captured(&self) -> bool {
+        self.screen != Screen::Playing || self.stage.shell().captures_input()
+    }
+
+    /// Whether the window opens with the cursor captured: only when it opens in play, since the
+    /// main menu needs a free pointer.
+    fn captures_cursor_on_start(&self) -> bool {
+        self.screen == Screen::Playing
+    }
+
+    /// The cursor moved to `physical`, in physical pixels from the window's top left.
+    fn cursor_moved(&mut self, physical: [f64; 2]) {
+        // A windowless stage reports a scale of 1.
+        let scale = self
+            .stage
+            .window
+            .as_ref()
+            .map_or(1.0, |window| window.scale_factor());
+        self.cursor = logical_point(physical, scale);
+        if self.screen == Screen::MainMenu {
+            self.menu.hover(self.cursor, self.stage.screen_points());
+        }
+    }
+
+    fn choose(&mut self, ctx: &mut EventContext<'_>, action: MenuAction) {
+        match action {
+            MenuAction::Play => {
+                self.screen = Screen::Playing;
+                // Whatever was pressed or moved over the menu must not act in the arena.
+                self.input.release_all();
+                self.input.discard_edges();
+                self.input.reset_look();
+                self.stage.capture_cursor();
+            }
+            MenuAction::Settings => {}
+            MenuAction::Quit => ctx.request_exit(),
+        }
+    }
+
+    /// A key or button press on the main menu; releases and Escape do nothing.
+    fn menu_input(
+        &mut self,
+        ctx: &mut EventContext<'_>,
+        input: Input,
+        pressed: bool,
+        repeat: bool,
+    ) {
+        if !pressed {
+            return;
+        }
+        match input {
+            Input::Key(Key::ArrowUp) => self.menu.up(),
+            Input::Key(Key::ArrowDown) => self.menu.down(),
+            Input::Key(Key::Enter) if !repeat => {
+                let action = self.menu.activate();
+                self.choose(ctx, action);
+            }
+            Input::Mouse(MouseButton::Left) if !repeat => {
+                if let Some(action) = self.menu.click(self.cursor, self.stage.screen_points()) {
+                    self.choose(ctx, action);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -722,6 +866,19 @@ impl SearchlightGame {
         self
     }
 
+    /// A frame of the main menu: the title bare, the HUD hidden, an empty world and the
+    /// menu text for the shell to paint.
+    fn menu_frame(&mut self, ctx: &mut FrameContext<'_>) {
+        self.stage.refresh_title("");
+        self.stage.hide_hud();
+        if let Err(error) = self.stage.shell().set_texts(self.menu.texts()) {
+            tracing::warn!(%error, "main menu text not shown");
+        }
+        if let Some(renderer) = ctx.renderer() {
+            self.stage.draw_backdrop(renderer);
+        }
+    }
+
     /// Where one key or button press or release goes: the console sees it first, so a game
     /// action bound to the console key never shadows it. The window-event path calls this once
     /// it has an `Input`, so it is testable without a winit `KeyEvent`.
@@ -738,6 +895,9 @@ impl SearchlightGame {
             // the console.
             Routing::Opened => self.input.release_all(),
             Routing::Console | Routing::Closed => {}
+            Routing::Game if self.screen == Screen::MainMenu => {
+                self.menu_input(ctx, input, pressed, repeat);
+            }
             Routing::Game => {
                 if pressed && !repeat && input == Input::Key(Key::Escape) {
                     ctx.request_exit();
@@ -761,7 +921,7 @@ impl Game for SearchlightGame {
         // The paused loop asks every frame and drops the command; ending the tick would
         // consume the look the frames showed and snap the view back. Edges are dropped
         // instead, so a press made as the console opened does not act when it closes.
-        if self.stage.shell().captures_input() {
+        if self.input_captured() {
             self.input.discard_edges();
             return SearchlightCommand::default();
         }
@@ -784,7 +944,9 @@ impl Game for SearchlightGame {
 
     fn init(&mut self, ctx: &mut InitContext<'_>) {
         self.stage.window = Some(ctx.window.clone());
-        self.stage.capture_cursor();
+        if self.captures_cursor_on_start() {
+            self.stage.capture_cursor();
+        }
         self.stage.shell().attach(ctx.window.clone());
         let crosshair: UiSource = self.stage.crosshair.clone();
         let shell: UiSource = self.stage.shell.clone();
@@ -807,7 +969,7 @@ impl Game for SearchlightGame {
         // The platform drops held keys' releases and the grab across a mode change.
         self.input.release_all();
         self.input.reset_look();
-        if !self.stage.shell().captures_input() {
+        if !self.input_captured() {
             self.stage.capture_cursor();
         }
     }
@@ -822,20 +984,25 @@ impl Game for SearchlightGame {
                     let routing = self.route_input(ctx, input, pressed, repeat);
                     self.stage.shell().feed(&event, routing);
                 } else if self.stage.shell().on_window_event(&event) == Routing::Game {
-                    handle_window_event(&mut self.input, &event);
+                    if let WindowEvent::CursorMoved { position, .. } = event {
+                        self.cursor_moved([position.x, position.y]);
+                    }
+                    if self.screen == Screen::Playing {
+                        handle_window_event(&mut self.input, &event);
+                    }
                 }
             }
             Event::Device(event) => {
-                if self.focused && !self.stage.shell().captures_input() {
+                if self.focused && !self.input_captured() {
                     handle_device_event(&mut self.input, &event);
                 }
             }
         }
-        ctx.set_paused(self.stage.shell().captures_input());
+        ctx.set_paused(self.input_captured());
     }
 
     fn frame(&mut self, ctx: &mut FrameContext<'_>, alpha: f32) {
-        let captured = self.stage.shell().captures_input();
+        let captured = self.input_captured();
         ctx.set_paused(captured);
         if self.focused && !captured {
             self.input.sample_frame(ctx.frame_dt);
@@ -851,6 +1018,10 @@ impl Game for SearchlightGame {
                     .show_hit_edge(hud::hit_edge(player.position, player.yaw, from));
             }
             self.stage.react(&feedback, ctx.audio());
+        }
+        if self.screen == Screen::MainMenu {
+            self.menu_frame(ctx);
+            return;
         }
         let sim = self.mode.sim();
         let dead = sim.player_body().is_dead();
@@ -1919,6 +2090,470 @@ mod tests {
         assert!(on && later);
         assert!(!off);
     }
+
+    use crate::menu::MenuAction;
+    use moho_input::key::MouseButton;
+
+    const FRAME: Duration = Duration::from_micros(16_667);
+
+    fn menu_game() -> SearchlightGame {
+        game_with_a_moving_enemy().with_main_menu()
+    }
+
+    /// A menu game whose look is set up so mouse motion would turn the view.
+    fn turning_menu_game() -> SearchlightGame {
+        let mut game = menu_game();
+        game.input_mut()
+            .set_look(moho_input::action_map::LookSettings {
+                look_per_count: 0.002,
+                smoothing: false,
+                invert_y: false,
+                acceleration: 0.0,
+            });
+        game
+    }
+
+    fn press_keys(game: &mut SearchlightGame, ctx: &mut EventContext<'_>, keys: &[Key]) {
+        for &key in keys {
+            game.route_input(ctx, Input::Key(key), true, false);
+            game.route_input(ctx, Input::Key(key), false, false);
+        }
+    }
+
+    /// Where menu row `row` is drawn, in physical pixels; the test window has scale 1.
+    fn row_point(game: &SearchlightGame, row: usize) -> [f64; 2] {
+        let texts = game.menu.texts();
+        assert!(row < texts.len(), "no menu row {row} in {texts:?}");
+        let [width, height] = game.stage.screen_points();
+        [
+            f64::from(width / 2.0 + texts[row].offset[0]),
+            f64::from(height / 2.0 + texts[row].offset[1]),
+        ]
+    }
+
+    fn click_at(game: &mut SearchlightGame, ctx: &mut EventContext<'_>, at: [f64; 2]) {
+        let left = Input::Mouse(MouseButton::Left);
+        game.cursor_moved(at);
+        game.route_input(ctx, left, true, false);
+        game.route_input(ctx, left, false, false);
+    }
+
+    fn motion() -> Event {
+        Event::Device(DeviceEvent::MouseMotion { delta: (1.0, 1.0) })
+    }
+
+    /// Runs `frames` frames of the headless loop and returns the enemy's pose afterwards.
+    fn run_frames(
+        game: &mut SearchlightGame,
+        headless: &mut HeadlessLoop<SearchlightGame>,
+        frames: u32,
+    ) -> Option<CharacterState> {
+        for _ in 0..frames {
+            headless.advance(game, FRAME);
+        }
+        game.sim().enemy_state(0)
+    }
+
+    #[test]
+    fn a_game_with_a_main_menu_asks_the_loop_to_pause_and_runs_no_ticks() {
+        let mut game = menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        headless.advance(&mut game, Duration::ZERO);
+        let (enemy, player, next_tick) = (
+            game.sim().enemy_state(0),
+            game.sim().player(),
+            headless.next_tick(),
+        );
+
+        game.event(&mut ctx, motion());
+        let after = run_frames(&mut game, &mut headless, 120);
+
+        assert_eq!(game.screen, Screen::MainMenu);
+        assert_eq!(ctx.requested_paused(), Some(true));
+        assert!(headless.paused());
+        assert_eq!(headless.next_tick(), next_tick);
+        assert_eq!(after, enemy);
+        assert_eq!(game.sim().player(), player);
+        assert!(!game.stage.cursor_captured);
+    }
+
+    #[test]
+    fn a_game_built_with_new_still_starts_in_play() {
+        let mut game = game_with_a_moving_enemy();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        let enemy = game.sim().enemy_state(0);
+
+        game.event(&mut ctx, motion());
+        let after = run_frames(&mut game, &mut headless, 30);
+
+        assert_eq!(game.screen, Screen::Playing);
+        assert_eq!(ctx.requested_paused(), Some(false));
+        assert!(!headless.paused());
+        assert_ne!(after, enemy);
+    }
+
+    #[test]
+    fn play_starts_the_arena_and_captures_the_cursor() {
+        let mut game = menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        headless.advance(&mut game, Duration::ZERO);
+        let enemy = game.sim().enemy_state(0);
+
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        game.event(&mut ctx, motion());
+        let after = run_frames(&mut game, &mut headless, 30);
+
+        assert_eq!(game.screen, Screen::Playing);
+        assert!(game.stage.cursor_captured);
+        assert_eq!(ctx.requested_paused(), Some(false));
+        assert!(!headless.paused());
+        assert_ne!(after, enemy, "the arena runs once Play is chosen");
+        assert!(!ctx.exit_requested());
+    }
+
+    #[test]
+    fn play_from_the_menu_is_a_fresh_first_wave() {
+        let mut game = menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        headless.advance(&mut game, Duration::ZERO);
+        let standing = game.sim().enemy_state(0);
+        let on_the_menu = run_frames(&mut game, &mut headless, 60);
+
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        game.event(&mut ctx, motion());
+
+        assert_eq!(on_the_menu, standing, "no tick ran before Play");
+        assert_eq!(game.screen, Screen::Playing);
+        assert!(game.stage.cursor_captured);
+        assert_eq!(
+            game.sim().enemy_state(0),
+            standing,
+            "Play ticks nothing itself"
+        );
+        assert_eq!((game.mode.wave(), game.mode.score()), (1, 0));
+        assert!(!game.sim().player_body().is_dead());
+        assert_eq!(
+            game.sim().player_body().health(),
+            game.sim().player_max_health()
+        );
+        assert_eq!(game.sim().enemies_alive(), 1);
+    }
+
+    #[test]
+    fn quit_on_the_main_menu_requests_exit() {
+        let mut game = menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        press_keys(
+            &mut game,
+            &mut ctx,
+            &[Key::ArrowDown, Key::ArrowDown, Key::Enter],
+        );
+
+        assert_eq!(game.menu.selected(), Some(MenuAction::Quit));
+        assert!(ctx.exit_requested());
+        assert_eq!(game.screen, Screen::MainMenu);
+    }
+
+    #[test]
+    fn the_arrow_keys_and_enter_choose_play() {
+        let sequences: [&[Key]; 3] = [
+            &[Key::Enter],
+            &[Key::ArrowDown, Key::ArrowUp, Key::Enter],
+            &[Key::ArrowDown, Key::ArrowDown, Key::ArrowDown, Key::Enter],
+        ];
+
+        for keys in sequences {
+            let mut game = menu_game();
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+
+            press_keys(&mut game, &mut ctx, keys);
+
+            assert_eq!(game.screen, Screen::Playing, "{keys:?}");
+            assert!(game.stage.cursor_captured, "{keys:?}");
+            assert!(!ctx.exit_requested(), "{keys:?}");
+        }
+    }
+
+    #[test]
+    fn a_click_on_play_starts_the_arena() {
+        let mut game = menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        press_keys(&mut game, &mut ctx, &[Key::ArrowUp]);
+        assert_eq!(game.menu.selected(), Some(MenuAction::Quit));
+
+        click_at(&mut game, &mut ctx, [0.0, 0.0]);
+        let after_a_miss = (game.screen, ctx.exit_requested());
+        let play = row_point(&game, 0);
+        click_at(&mut game, &mut ctx, play);
+        let command = game.command();
+
+        assert_eq!(after_a_miss, (Screen::MainMenu, false));
+        assert_eq!(game.screen, Screen::Playing);
+        assert!(game.stage.cursor_captured);
+        assert!(!ctx.exit_requested());
+        assert!(!command.fire, "the click that chose Play did not fire");
+    }
+
+    #[test]
+    fn a_click_acts_on_the_item_the_cursor_last_moved_over() {
+        let mut game = menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let quit = row_point(&game, 2);
+
+        click_at(&mut game, &mut ctx, quit);
+
+        assert!(ctx.exit_requested());
+        assert_eq!(game.screen, Screen::MainMenu);
+    }
+
+    #[test]
+    fn movement_look_and_fire_do_not_reach_the_sim_at_the_main_menu() {
+        let mut game = turning_menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.event(&mut ctx, Event::Window(WindowEvent::Focused(true)));
+
+        game.cursor_moved([0.0, 0.0]);
+        for input in [
+            Input::Key(Key::W),
+            Input::Key(Key::Space),
+            Input::Key(Key::R),
+            Input::Mouse(MouseButton::Left),
+        ] {
+            game.route_input(&mut ctx, input, true, false);
+        }
+        game.event(
+            &mut ctx,
+            Event::Device(DeviceEvent::MouseMotion {
+                delta: (40.0, 30.0),
+            }),
+        );
+        let command = game.command();
+
+        assert_eq!(game.screen, Screen::MainMenu);
+        assert_eq!(command.movement.forward, 0.0);
+        assert!(!command.movement.jump);
+        assert_eq!(command.movement.yaw_delta, 0.0);
+        assert_eq!(command.movement.pitch_delta, 0.0);
+        assert!(!command.fire);
+        assert!(!command.reload);
+        assert_eq!(game.input.pending_look(), (0.0, 0.0));
+        assert!(!ctx.exit_requested());
+    }
+
+    #[test]
+    fn the_action_map_sees_no_input_while_the_main_menu_shows() {
+        use moho_input::Action;
+        use winit::event::DeviceId;
+
+        let mut game = turning_menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.event(&mut ctx, Event::Window(WindowEvent::Focused(true)));
+
+        for input in [
+            Input::Key(Key::W),
+            Input::Key(Key::Space),
+            Input::Key(Key::R),
+            Input::Mouse(MouseButton::Left),
+        ] {
+            game.route_input(&mut ctx, input, true, false);
+        }
+        game.event(
+            &mut ctx,
+            Event::Window(WindowEvent::CursorMoved {
+                device_id: DeviceId::dummy(),
+                position: winit::dpi::PhysicalPosition::new(12.0, 34.0),
+            }),
+        );
+        game.event(
+            &mut ctx,
+            Event::Device(DeviceEvent::MouseMotion {
+                delta: (40.0, 30.0),
+            }),
+        );
+        game.input.sample_frame(Duration::from_millis(16));
+        let frame = game.input.end_tick();
+
+        assert_eq!(game.screen, Screen::MainMenu);
+        for &action in SearchlightAction::ALL {
+            assert!(!frame.held(action), "{action:?} held");
+            assert!(!frame.pressed(action), "{action:?} pressed");
+            assert!(!frame.released(action), "{action:?} released");
+        }
+        assert_eq!(frame.look(), (0.0, 0.0));
+        assert_eq!(frame.pointer(), None);
+        assert_eq!(frame.press_pointer(), None);
+    }
+
+    #[test]
+    fn escape_at_the_main_menu_does_nothing() {
+        let mut game = menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        let routing = game.route_input(&mut ctx, Input::Key(Key::Escape), true, false);
+        game.route_input(&mut ctx, Input::Key(Key::Escape), false, false);
+
+        assert_eq!(routing, Routing::Game);
+        assert!(!ctx.exit_requested());
+        assert_eq!(game.screen, Screen::MainMenu);
+        assert_eq!(game.menu.selected(), Some(MenuAction::Play));
+        assert!(!game.stage.cursor_captured);
+    }
+
+    #[test]
+    fn settings_on_the_main_menu_changes_nothing() {
+        let mut game = menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let (player, enemy, wave, score) = (
+            game.sim().player(),
+            game.sim().enemy_state(0),
+            game.mode.wave(),
+            game.mode.score(),
+        );
+
+        press_keys(&mut game, &mut ctx, &[Key::ArrowDown, Key::Enter]);
+        let settings = row_point(&game, 1);
+        click_at(&mut game, &mut ctx, settings);
+        game.event(&mut ctx, motion());
+
+        assert_eq!(game.menu.selected(), Some(MenuAction::Settings));
+        assert_eq!(game.screen, Screen::MainMenu);
+        assert!(!ctx.exit_requested());
+        assert!(!game.stage.cursor_captured);
+        assert_eq!(ctx.requested_paused(), Some(true));
+        assert_eq!(game.sim().player(), player);
+        assert_eq!(game.sim().enemy_state(0), enemy);
+        assert_eq!((game.mode.wave(), game.mode.score()), (wave, score));
+    }
+
+    #[test]
+    fn a_repeated_enter_on_the_main_menu_chooses_nothing() {
+        let mut game = menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        press_keys(&mut game, &mut ctx, &[Key::ArrowUp]);
+        assert_eq!(game.menu.selected(), Some(MenuAction::Quit));
+
+        game.route_input(&mut ctx, Input::Key(Key::Enter), true, true);
+
+        assert!(!ctx.exit_requested());
+        assert_eq!(game.screen, Screen::MainMenu);
+    }
+
+    #[test]
+    fn a_repeated_left_button_press_over_an_item_chooses_nothing() {
+        let mut game = menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let quit = row_point(&game, 2);
+        game.cursor_moved(quit);
+
+        game.route_input(&mut ctx, Input::Mouse(MouseButton::Left), true, true);
+
+        assert!(!ctx.exit_requested());
+        assert_eq!(game.screen, Screen::MainMenu);
+        assert!(!game.stage.cursor_captured);
+    }
+
+    #[test]
+    fn a_repeated_arrow_key_still_moves_the_selection() {
+        let mut game = menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        game.route_input(&mut ctx, Input::Key(Key::ArrowDown), true, true);
+
+        assert_eq!(game.menu.selected(), Some(MenuAction::Settings));
+    }
+
+    #[test]
+    fn moving_the_cursor_during_play_does_not_select_a_menu_item() {
+        let mut game = game_with_a_moving_enemy();
+        let quit = [640.0, 360.0 + 56.0];
+
+        game.cursor_moved(quit);
+
+        assert_eq!(game.menu.selected(), Some(MenuAction::Play));
+        assert_eq!(game.cursor, [640.0, 416.0]);
+    }
+
+    #[test]
+    fn moving_the_cursor_over_a_menu_item_selects_it() {
+        let mut game = menu_game();
+        let quit = row_point(&game, 2);
+
+        game.cursor_moved(quit);
+
+        assert_eq!(game.menu.selected(), Some(MenuAction::Quit));
+    }
+
+    #[test]
+    fn physical_cursor_positions_are_divided_by_the_scale_factor() {
+        assert_eq!(logical_point([200.0, 100.0], 2.0), [100.0, 50.0]);
+        assert_eq!(logical_point([30.0, 45.0], 1.5), [20.0, 30.0]);
+        assert_eq!(logical_point([7.0, 9.0], 1.0), [7.0, 9.0]);
+    }
+
+    #[test]
+    fn a_physical_window_size_is_divided_by_the_scale_factor() {
+        let size = winit::dpi::PhysicalSize::new(2560, 1440);
+
+        assert_eq!(logical_size(size, 2.0), [1280.0, 720.0]);
+        assert_eq!(logical_size(size, 1.0), [2560.0, 1440.0]);
+    }
+
+    #[test]
+    fn a_windowless_stage_reports_the_default_size() {
+        let stage = Stage::new();
+
+        assert_eq!(stage.screen_points(), [1280.0, 720.0]);
+    }
+
+    #[test]
+    fn only_a_game_that_opens_in_play_captures_the_cursor_on_start() {
+        assert!(game_with_a_moving_enemy().captures_cursor_on_start());
+        assert!(!menu_game().captures_cursor_on_start());
+    }
+
+    #[test]
+    fn a_key_held_into_play_does_not_stick_after_play() {
+        let mut game = turning_menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.event(&mut ctx, Event::Window(WindowEvent::Focused(true)));
+        game.input.key(Key::W, true);
+        game.input.mouse_button(MouseButton::Left, true);
+        game.input.mouse_motion(400.0, 300.0);
+
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        let command = game.command();
+        game.route_input(&mut ctx, Input::Key(Key::W), false, false);
+        let after_release = game.command();
+
+        assert_eq!(game.screen, Screen::Playing);
+        assert_eq!(command.movement.forward, 0.0);
+        assert!(!command.fire);
+        assert_eq!(command.movement.yaw_delta, 0.0);
+        assert_eq!(command.movement.pitch_delta, 0.0);
+        assert_eq!(game.input.pending_look(), (0.0, 0.0));
+        assert_eq!(after_release.movement.forward, 0.0);
+    }
 }
 
 #[cfg(test)]
@@ -2327,6 +2962,98 @@ mod mutation_tests {
         assert_eq!(stage.segments[0].flash_left, 10);
         assert_eq!(FLASH_TICKS, 10);
     }
+
+    fn game_with_an_arena_on_the_main_menu() -> SearchlightGame {
+        use crate::test_support::{arena_with, mag, test_config, wave_tuning};
+        use searchlight_rules::Rifle;
+
+        let mode = ArenaMode::new(
+            arena_with(
+                &[],
+                Vec3::ZERO,
+                &[Vec3::new(0.0, 0.0, 10.0)],
+                &[Vec3::new(0.0, 0.0, 6.0)],
+            ),
+            test_config(Rifle::loaded(mag(30, 30)), vec![]),
+            wave_tuning(1),
+        );
+        let (bindings, _) = moho_input::bindings::ActionBindings::load(&BTreeMap::new());
+        SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
+            .with_arena(
+                vec![box_mesh(Vec3::ZERO, Vec3::ONE)],
+                &[Vec3::new(5.0, 0.0, 5.0)],
+            )
+            .with_main_menu()
+    }
+
+    fn frame_with(game: &mut SearchlightGame, renderer: &mut FakeRenderer) {
+        let clock = moho_app::GameClock::default();
+        let backend: &mut dyn RendererBackend = renderer;
+        let mut ctx = FrameContext::new(
+            std::time::Duration::from_millis(16),
+            &clock,
+            Some(backend),
+            None,
+        );
+        game.frame(&mut ctx, 0.5);
+    }
+
+    fn crosshair_vertices(game: &SearchlightGame) -> usize {
+        let mut crosshair = game
+            .stage
+            .crosshair
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        crosshair.ui_frame([800, 600]).map_or(0, |frame| {
+            frame.meshes.iter().map(|m| m.vertices.len()).sum()
+        })
+    }
+
+    #[test]
+    fn the_main_menu_frame_draws_no_world_mesh_or_crosshair() {
+        let mut game = game_with_an_arena_on_the_main_menu();
+        let mut renderer = FakeRenderer::default();
+
+        frame_with(&mut game, &mut renderer);
+        let menu_draws = renderer.draws.len();
+        let menu_crosshair = crosshair_vertices(&game);
+        let menu_enemies = game.stage.enemies.iter().filter(|rig| rig.shown).count();
+
+        assert_eq!(menu_draws, 0, "world meshes drawn behind the menu");
+        assert_eq!(menu_crosshair, 0, "crosshair drawn on the menu");
+        assert_eq!(menu_enemies, 0, "enemies synced behind the menu");
+    }
+
+    #[test]
+    fn the_arena_and_crosshair_appear_on_the_first_frame_after_play() {
+        let mut game = game_with_an_arena_on_the_main_menu();
+        let mut renderer = FakeRenderer::default();
+        frame_with(&mut game, &mut renderer);
+        let clock = moho_app::GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        game.route_input(&mut ctx, Input::Key(Key::Enter), true, false);
+        frame_with(&mut game, &mut renderer);
+
+        assert_eq!(
+            renderer.draws.len(),
+            1 + 6 + 7,
+            "arena, dummy and enemy boxes"
+        );
+        assert_eq!(crosshair_vertices(&game), 16);
+    }
+
+    #[test]
+    fn the_main_menu_frame_hands_the_menu_text_to_the_shell() {
+        let mut game = game_with_an_arena_on_the_main_menu();
+        let mut renderer = FakeRenderer::default();
+
+        frame_with(&mut game, &mut renderer);
+        let drawn = game.stage.shell().ui_frame([1280, 720]);
+
+        let frame = drawn.expect("the menu text makes the shell draw with the console closed");
+        assert!(!frame.meshes.is_empty());
+    }
 }
 
 #[cfg(test)]
@@ -2514,6 +3241,25 @@ mod enemy_and_hud_tests {
         stage.sync_enemies(sim);
         stage.draw(renderer, (Mat4::IDENTITY, Vec3::ZERO));
         renderer.drawn()
+    }
+
+    #[test]
+    fn the_backdrop_draws_its_own_scene_and_not_the_arena() {
+        let mut stage = Stage::new();
+        stage.add_arena(vec![box_mesh(Vec3::new(50.0, 0.0, 0.0), Vec3::ONE)], &[]);
+        let backdrop_material = stage.backdrop.material_table.find_or_push(&Paint::Arena);
+        stage.backdrop.world_meshes_mut().upsert(
+            WorldMeshId(1),
+            box_mesh(Vec3::new(-7.0, 0.0, 0.0), Vec3::ONE),
+            backdrop_material,
+        );
+        let mut renderer = RecordingRenderer::default();
+
+        stage.draw_backdrop(&mut renderer);
+        let drawn = renderer.drawn();
+
+        assert_eq!(drawn.len(), 1);
+        assert_eq!(drawn[0].0, Vec3::new(-7.0, 0.0, 0.0));
     }
 
     fn is_paint(material: MaterialGpu, paint: Paint) -> bool {

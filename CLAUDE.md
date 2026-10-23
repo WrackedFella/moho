@@ -13,7 +13,7 @@ to get green; the Ratchet group in the root `Cargo.toml` only shrinks.
 ```bash
 just check                         # the gate
 just test -E 'package(moho_core)'  # one crate; -E 'test(name)' for one test
-just mutants                       # mutation-test changes since origin/dev; exit 2 = survivor
+just mutants                       # mutation-test domain-path changes since origin/dev; exit 2 = survivor
 just deny                          # licenses, advisories, sources
 bash scripts/cloud-tools.sh        # cloud threads only, before the first build
 gh workflow run CI --ref <branch>  # all three OSes on a branch (PRs into dev run Linux only)
@@ -47,8 +47,15 @@ cargo run -p searchlight           # the FPS prototype
 - **Environment setup command:** `bash scripts/cloud-tools.sh` (cloud threads only;
   text-only threads skip it).
 - **Implement a ready item:** `/devflow:orchestrate <issue>`.
-- **Domain-logic paths** (gate class `domain`): rules in `flagstone_game`, `moho_core`, `flagstone_voxel`, `searchlight_rules`, and the movement step in `moho_physics` (ADR-0014).
-  Adapters, UI wiring and config are glue.
+- **Domain-logic paths** (gate class `domain`; also the scope of `just mutants` and CI's
+  `Mutants (diff)`, which read the globs below through `scripts/domain-paths.sh`):
+  - `moho_core/**`
+  - `flagstone_voxel/**`
+  - `flagstone_game/**`
+  - `moho_level/**`
+  - `searchlight_rules/**`
+  - `moho_physics/src/movement.rs`
+  Adapters, UI wiring and config are glue: the weekly full run mutates them, PRs don't.
 - **Human review points:** `Card review: required`, `Domain-test review: agent` (values: `required`,
   `agent`, `not required`; `agent` = no pause, `devflow:test-critic` attacks the failing
   tests before implementation and the PR carries its findings). Switches and runtimes: `_todo/WORKFLOW.md`.

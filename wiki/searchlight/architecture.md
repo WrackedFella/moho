@@ -21,6 +21,7 @@ flowchart LR
     mode --> sim["sim.rs<br/>SearchlightSim"]
     game --> input["input.rs<br/>SearchlightAction, SearchlightCommand"]
     game --> hud["hud.rs<br/>status wording"]
+    game --> menu["menu.rs<br/>Menu, MenuAction"]
     sim --> brain["brain.rs<br/>enemy Brain"]
     sim --> cover["cover.rs<br/>cover choice"]
     sim --> shot["shot.rs<br/>resolve_shot"]
@@ -42,9 +43,10 @@ flowchart LR
 | `wave` | `WaveTuning` (first wave size, growth per wave, points per kill; zero size or growth is refused) and `WaveState` (running wave, enemies still to spawn, score) as plain numbers, no physics |
 | `mode` | `ArenaMode`: the arena as a game mode. Owns a `SearchlightSim` started empty, scores its kills and spawns each wave's enemies at free enemy markers |
 | `hud` | Text for rifle state, hits, health, death and the wave and score line; the hit-edge direction; the death overlay |
+| `menu` | `Menu`: the main menu as a pure value (Play, Settings, Quit; selection with wrap, hover and click hit-testing in logical points, the `ScreenText` rows that draw it); `MenuAction` is what choosing an item asks the game to do |
 | `console_commands` | Builds the FPS `Console` from the game's `[bindings]`; the game's own commands register here (`tgm`, parsed into `ConsoleCommand`) |
 | `debug_settings` | `DebugSettings`: the loaded `Prefs` and its path; reads and saves the game's `[debug]` values (`god_mode`) |
-| `game` | `SearchlightGame`, the `moho_app::Game` implementation: samples look every frame while focused and the console is closed (the camera draws the sim turned by the pending look, and `input::look_to_turn` is the one look mapping for command and camera), samples input, ticks the `ArenaMode`, turns `Feedback` into sound, title status line, hit flash, damage-direction edge, death tint and crosshair; asks the loop to pause while the shell captures input (console open), so the sim freezes instead of ticking with an ignored command; while it does, `command()` still applies console commands but does not end the action-map tick, so the look already shown stays pending and is not lost |
+| `game` | `SearchlightGame`, the `moho_app::Game` implementation: samples look every frame while focused, playing and the console is closed (the camera draws the sim turned by the pending look, and `input::look_to_turn` is the one look mapping for command and camera), samples input, ticks the `ArenaMode`, turns `Feedback` into sound, title status line, hit flash, damage-direction edge, death tint and crosshair; asks the loop to pause while the shell captures input (console open) or the main menu shows, so the sim freezes instead of ticking with an ignored command; while it does, `command()` still applies console commands but does not end the action-map tick, so the look already shown stays pending and is not lost |
 
 `SearchlightSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
 `Feedback` is the only output: `SearchlightSim::tick` queues it, the game drains it
@@ -65,10 +67,19 @@ frame through `apply_engine_command`, which reaches the renderer (`RendererBacke
 through `FrameContext`; with neither present the command is dropped. Console commands are hidden debug commands
 ([ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md)).
 
-The shell can also draw game text (searchlight does not use it yet): `UiShell::set_texts(Vec<ScreenText>)`
+The shell can also draw game text (the main menu is drawn this way, see below): `UiShell::set_texts(Vec<ScreenText>)`
 replaces the anchored lines the next `ui_frame` paints under the console, and that frame clears them, so a
 game sets its full text every `Game::frame`. A frame the renderer skips leaves no stale text. Use a few
 fixed sizes; each new size grows the font atlas.
+
+The binary starts on the main menu (`SearchlightGame::with_main_menu`); a game built without it starts
+in play. `SearchlightGame` holds a `Screen` (`MainMenu` or `Playing`). On the menu the loop is paused
+like an open console, the action map is fed nothing and the cursor stays free; the window opens with the
+cursor captured only when it starts in play. Up and Down move the selection, Enter or a left click on a
+row chooses it, and hovering selects. `Play` switches to `Playing`, drops any held input, pending edges and
+look, and captures the cursor; `Quit` exits; `Settings` does nothing yet. Each menu frame hides the HUD and
+title status, sets the menu's `ScreenText` rows on the shell and draws the stage backdrop instead of the
+arena scene, so the dormant sim is untouched. Console routing still comes first.
 
 Window mode: `main.rs` passes F11 as `AppConfig::toggle_keys` (Alt+Enter always works). After a flip the runner calls `SearchlightGame::window_mode_changed`, which releases held keys, drops pending look and, unless the shell captures input, grabs the cursor again, since the platform loses key releases and the grab across the change. The mode persists: `window_mode_changed` saves it to the prefs file through `DebugSettings` (skipped when it already matches), and `main.rs` reads it at startup through `start_window_mode` into `AppConfig::window_mode`; a saved `Fullscreen` opens borderless ([prefs format](../reference/prefs-format.md)).
 
