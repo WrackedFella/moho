@@ -239,19 +239,21 @@ impl EventProcessor {
             return;
         };
 
-        let chunk_pos =
-            flagstone_voxel::VoxelGrid::get_chunk_pos(outcome.block_pos, grid.chunk_size());
+        let dirty_chunks: Vec<_> =
+            flagstone_voxel::chunks_meshed_from(outcome.block_pos, grid.chunk_size()).collect();
 
         app.event_bus.publish(WorldEvent::BlockRemoved {
             position: outcome.block_pos,
             old_material_id: outcome.old_material_id,
             reason: BlockChangeReason::Player,
         });
-        app.event_bus.publish(WorldEvent::ChunkMeshDirty {
-            chunk_pos,
-            terrain_dirty: true,
-            structure_dirty: true,
-        });
+        for chunk_pos in dirty_chunks {
+            app.event_bus.publish(WorldEvent::ChunkMeshDirty {
+                chunk_pos,
+                terrain_dirty: true,
+                structure_dirty: true,
+            });
+        }
 
         if let Some(y) = outcome.yield_ {
             tracing::debug!(
@@ -793,7 +795,7 @@ mod tests {
         let dirty_sink = std::sync::Arc::clone(&dirty);
         app.event_bus.subscribe(move |e: &WorldEvent| match e {
             WorldEvent::BlockRemoved { position, .. } => {
-                removed_sink.lock().unwrap().push(*position)
+                removed_sink.lock().unwrap().push(*position);
             }
             WorldEvent::ChunkMeshDirty { chunk_pos, .. } => {
                 dirty_sink.lock().unwrap().insert(*chunk_pos);

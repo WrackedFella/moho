@@ -70,10 +70,17 @@ pub(crate) fn coarse_face_material(
     unreachable!("a solid coarse cell has a solid block in one of its two face layers")
 }
 
+/// How many blocks past each chunk face the padded density field reaches.
+pub(crate) const SAMPLE_REACH: i32 = 1;
+
+/// Samples per axis of a chunk's padded density field.
+const DENSITY_FIELD_SIZE: usize = 16 + 2 * SAMPLE_REACH as usize;
+
 /// The block that field sample `sample` of chunk `chunk_base`'s padded density field stands
-/// for: the field is padded by one block, so sample `i` is block `chunk_base + i - 1`.
+/// for: the field is padded by [`SAMPLE_REACH`] blocks, so sample `i` is block
+/// `chunk_base + i - SAMPLE_REACH`.
 fn sample_block(chunk_base: IVec3, sample: [usize; 3]) -> BlockPos {
-    chunk_base + IVec3::from_array(sample.map(|c| c as i32)) - IVec3::ONE
+    chunk_base + IVec3::from_array(sample.map(|c| c as i32)) - IVec3::splat(SAMPLE_REACH)
 }
 
 /// The face material of the block that field sample `sample` of chunk `chunk_base`'s
@@ -86,10 +93,19 @@ pub(crate) fn sample_face_material(grid: &VoxelGrid, chunk_base: IVec3, sample: 
         .expect("marching cubes asks for the material of solid samples only")
 }
 
-/// The chunks whose meshes read `block`: its own chunk plus every chunk that samples it.
-/// Stub: only the block's own chunk.
+/// The chunks whose meshes read `block`: its own chunk plus, on each axis where the block
+/// sits on the chunk's negative edge, the negative neighbour (whose padded density field
+/// reaches [`SAMPLE_REACH`] blocks past its far edge). Yields 1, 2, 4 or 8 chunks.
 pub fn chunks_meshed_from(block: BlockPos, chunk_size: i32) -> impl Iterator<Item = IVec3> {
-    std::iter::once(VoxelGrid::get_chunk_pos(block, chunk_size))
+    let own = VoxelGrid::get_chunk_pos(block, chunk_size);
+    let on_edge = block
+        .rem_euclid(IVec3::splat(chunk_size))
+        .cmpeq(IVec3::ZERO);
+    (0..8i32).filter_map(move |mask| {
+        let step = IVec3::new(mask & 1, (mask >> 1) & 1, (mask >> 2) & 1);
+        let allowed = step.cmpeq(IVec3::ZERO) | on_edge;
+        allowed.all().then_some(own - step)
+    })
 }
 
 /// Classifies the content of a chunk
@@ -288,8 +304,8 @@ impl HybridMeshGenerator {
         chunk_pos: IVec3,
         chunk_size: i32,
         only_smooth: bool,
-    ) -> [[[f32; 18]; 18]; 18] {
-        let mut field = [[[0.0f32; 18]; 18]; 18];
+    ) -> [[[f32; DENSITY_FIELD_SIZE]; DENSITY_FIELD_SIZE]; DENSITY_FIELD_SIZE] {
+        let mut field = [[[0.0f32; DENSITY_FIELD_SIZE]; DENSITY_FIELD_SIZE]; DENSITY_FIELD_SIZE];
         let base_pos = chunk_pos * chunk_size;
 
         // Sample with padding (-1 to chunk_size+1)
