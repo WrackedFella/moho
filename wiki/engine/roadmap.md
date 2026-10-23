@@ -179,7 +179,7 @@ its consumers near, not when the earlier wave fully closes.
 | Movement rules as data: modes, crouch, clearance, braking split, jump assists, air control, surface friction ([ENG-F33](https://github.com/WrackedFella/moho/issues/492)) | Builds on ENG-F32's step order; a feature on its own | ENG-M3 |
 | Characters and bodies move each other: push, weight, moving ground, char-vs-char, lookahead, contact events, CCD ([ENG-F34](https://github.com/WrackedFella/moho/issues/493)) | The biggest physics effort; needs ENG-F32's ground collider and effects | ENG-M3 |
 | Fire-time fraction (Q1) and sub-tick jump (Q2, last, only if Q1 proves useful) | Q2 changes the step's shape; neither is needed for feel at one fixed rate | ENG-M5+ |
-| Netcode ADR and a co-op session | Co-op for up to 4 players on both lines; ADR-0011, ENG-F32-04 and -09 and the per-slot tick input (3.4a) keep it open at near-zero cost | ENG-M5+, pulled by the first co-op GDD |
+| Netcode ADR and a co-op session | Co-op for up to 4 players on both lines; ADR-0011, ENG-F32-04 and -09 and the per-slot tick input (ENG-F37, 3.4a) keep it open at near-zero cost | ENG-M5+, pulled by the first co-op GDD |
 | Engine perception (sight, hearing, factions) | One consumer | Strategy pawns fight |
 | AI and nav debug draw | No request | First AI or nav debugging pain on either line |
 | Per-tick AI budget | Not measured | Cost at 50 pawns or Director handover |
@@ -207,7 +207,7 @@ Carded when ENG-M2 closes, in this order of dependency; none is a gate item on i
 | 3.2.1 | [ENG-F35](https://github.com/WrackedFella/moho/issues/509) the sim knows how lit a place is (FPS stealth; direct light from sim data through rays, ADR-0011) | — (slice 4, a coarse bounce grid fed by static lights so a bounce-lit room reads as lit, after ENG-F30's FPS voxelisation slice) | Adds the light-model seam (own ADR in its first card); carded with ENG-M3 |
 | 3.3 | [ENG-F33](https://github.com/WrackedFella/moho/issues/492) movement rules are game data | ENG-F32 | Modes, crouch, clearance, braking split, jump assists, air control, surface friction |
 | 3.4 | [ENG-F34](https://github.com/WrackedFella/moho/issues/493) characters and bodies move each other | ENG-F32-03, -04 | Absorbs ENG-F21's deferred props row; adds the collision-policy and contact-event seams |
-| 3.4a | The tick takes one command per player slot (`moho_app::Game`, seam 1 in ADR-0012) | — | Changes an existing seam, so it lands before the split; games keep reading slot 0 |
+| 3.4a | [ENG-F37](https://github.com/WrackedFella/moho/issues/592) the tick takes one command per player slot (`moho_app::Game`, seam 1 in ADR-0012) | — | Changes an existing seam, so it lands before the split; games keep reading slot 0 |
 | 3.5 | ADR-0011 two-sim proof | ENG-F32-09, 3.4a | One test that records per-slot commands; before any netcode ADR |
 | 3.6 | [ENG-F5](https://github.com/WrackedFella/moho/issues/232) split | 3.2–3.5 (with 3.4a), ENG-F35 | Gate |
 
@@ -282,7 +282,7 @@ Standing rules that order the work above. Each links its record.
 
 **Simulation, saves and multiplayer**
 - Simulation time comes from one fixed 1/60 s tick, with no separate clock ([ADR-0009](../../_todo/adr/0009-simulation-time-is-one-fixed-tick.md)); the tick criterion belongs to ENG-F11, and [ENG-F6](https://github.com/WrackedFella/moho/issues/233) holds seeded RNG.
-- The simulation stays network-ready ([ADR-0011](../../_todo/adr/0011-simulation-stays-network-ready.md)). Multiplayer is co-op on both lines for up to 4 players, with a trusted host that runs the AI; a casual competitive mode on private servers stays possible and nothing is built for it. No design may close either. The tick takes one command per player slot before the split (3.4a). Its enablers are ENG-F32-04 and -09, the per-slot tick input and the ENG-M3 two-simulation proof; the netcode ADR and a co-op session are ENG-M5+.
+- The simulation stays network-ready ([ADR-0011](../../_todo/adr/0011-simulation-stays-network-ready.md)). Multiplayer is co-op on both lines for up to 4 players, with a trusted host that runs the AI; a casual competitive mode on private servers stays possible and nothing is built for it. No design may close either. The tick takes one command per player slot before the split (ENG-F37, 3.4a). Its enablers are ENG-F32-04 and -09, the per-slot tick input and the ENG-M3 two-simulation proof; the netcode ADR and a co-op session are ENG-M5+.
 - Saves use a postcard envelope; old saves break and no compatibility is promised before v1.0 ([ADR-0006](../../_todo/adr/0006-save-format-contract.md)). Game lines own their save kinds; the engine keeps only the envelope framing ([ADR-0016](../../_todo/adr/0016-game-lines-own-their-save-kinds.md)).
 - Look turns every frame ahead of the tick that consumes it, raw by default, with its settings in the same feature ([ENG-F28](https://github.com/WrackedFella/moho/issues/373)).
 
