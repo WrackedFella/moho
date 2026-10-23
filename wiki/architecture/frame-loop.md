@@ -125,3 +125,13 @@ current tick turned by the pending look: what frames sampled (`ActionMap::sample
 resets it on spawn and `reset`. A queued teleport or look is applied by the next tick, so until then `player_states()` withholds the stale states and the tick camera, already at the new place, is drawn; that tick then records `previous` as its own result, so the eye does not blend across the jump. In every other first-person case (free-cam, or outside play) the tick camera is drawn
 turned by the pending look (`PlayerController::turned`), with no eye blend; in isometric the tick camera is drawn
 unchanged. Frames sample look only while Playing, focused and in first person; otherwise the pending look stays frozen and still drawn.
+
+The isometric (strategy) camera is a free pan over the terrain, separate from the pawn.
+Pan input is the move axes plus an edge-pan term (`flagstone_game::controller::edge_pan_axes`,
+band `EDGE_PAN_MARGIN_PX`) added only while Playing, focused and isometric, then clamped to
+-1..1; a pointer that left the window pans nothing. `PlayerController::apply_input` takes a
+`ground_height(x, z)` lookup (via `SimulationController::apply_input`; the non-KCC branch of
+`FrameProcessor` supplies it from the `LightSystem` grid): the focus height eases toward the
+ground under the focus, then the focus is raised so the eye stays `CAMERA_CLEARANCE` above
+the surface under the eye. A column that is not loaded skips its rule. Pan speed scales with
+the zoom height (`rts_height`).
