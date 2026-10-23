@@ -145,13 +145,12 @@ fn parse_ssao_quality(args: &[&str]) -> Result<(EngineCommand, String), String> 
 }
 
 fn parse_tone_map(args: &[&str]) -> Result<(EngineCommand, String), String> {
-    let (enabled, reply) = match args.first().copied() {
-        None => return Err("Usage: r_tonemap <0|1> (0=Off, 1=On)".to_owned()),
-        Some("0") => (false, "Tone map off"),
-        Some("1") => (true, "Tone map on"),
-        Some(_) => return Err("Tone map must be 0 or 1".to_owned()),
-    };
-    Ok((EngineCommand::ToneMap(enabled), reply.to_owned()))
+    match args.first().copied() {
+        Some("0") => Ok((EngineCommand::ToneMap(false), "Tone map off".to_owned())),
+        Some("1") => Ok((EngineCommand::ToneMap(true), "Tone map on".to_owned())),
+        None => Err("Usage: r_tonemap <0|1> (0=Off, 1=On)".to_owned()),
+        Some(_) => Err("Tone map must be 0 or 1".to_owned()),
+    }
 }
 
 /// A console argument as a finite `f32`; `None` for text, NaN or infinity.
