@@ -35,3 +35,4 @@ ADRs written before ENG-F27 (2026-10-15) keep the crate names of their day. Read
 | [0019](0019-navigation-is-an-engine-seam.md) | Navigation over static levels is engine seam 11: a navmesh from world meshes, path queries answered by engine code | Accepted |
 | [0021](0021-game-ai-lives-in-the-lines.md) | Game AI lives in the lines; the engine answers queries, and AI acts through player commands, sim-only perception and seeded randomness | Accepted |
 | [0022](0022-character-changes-are-tick-input.md) | Every change to a character from outside the step is a queued effect, plain data applied in order at the start of its next step | Accepted |
+| [0023](0023-pawn-kinds-share-components.md) | Pawn kinds are component sets driven by one controller; flagstone moves pawns into `hecs` with the second pawn kind | Proposed |

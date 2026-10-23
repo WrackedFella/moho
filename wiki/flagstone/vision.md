@@ -25,6 +25,11 @@ A base-builder and mining game played from above:
   drives player and AI units the same way. AI pawns reuse the player's actions
   (`Pawn::mine` takes plain `glam` types, with no input coupling). Where that would
   overcomplicate a piece, choose the simpler option.
+- **Pawns come in kinds and roles.** The colony is not only colonists: creatures
+  (wildlife, and later hostile ones) are pawns too, and colonists take roles that decide
+  which work they pick up. A kind is a set of capabilities, not a separate kind of unit
+  with its own rules; every kind is driven through the same controller, and a role is a
+  filter on the one shared job list. What the creatures are belongs to the setting.
 - **Terrain is editable voxels.** The terrain engine belongs to this line, not the
   shared engine ([ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md)).
 - **Mining will become sub-grid deformation.** Today a block breaks whole. Later, a
@@ -32,8 +37,10 @@ A base-builder and mining game played from above:
   block-destruction step inside `Pawn::mine` may assume whole blocks. Its signature and
   the deposit contract (`ResourceYield { resource_id, amount }`) must not.
 - **Build for a named consumer.** Systems arrive with the feature that needs them.
-  An example is SG-F4, pawns that dig what the player marks, which is the first possible ECS consumer
-  ([ADR-0004](../../_todo/adr/0004-entity-storage-without-a-general-ecs.md)).
+  An example is the entity-component system: SG-F4, pawns that dig what the player marks,
+  stays on typed stores, and pawns move to an ECS when a second pawn kind arrives
+  ([ADR-0004](../../_todo/adr/0004-entity-storage-without-a-general-ecs.md),
+  [ADR-0023](../../_todo/adr/0023-pawn-kinds-share-components.md), proposed).
 
 ## Feature arc
 
@@ -45,4 +52,6 @@ Features and their order live in the [roadmap](roadmap.md); the issues are the r
 4. Buildings placed from a build menu and constructed by pawns ([SG-F3](https://github.com/WrackedFella/moho/issues/312)).
 5. Possession polish: pickup feedback ([SG-F1](https://github.com/WrackedFella/moho/issues/311)).
 6. World generation polish ([SG-F6](../../_todo/flagstone/SG-F6-world-generation/_feature.md), draft).
-7. Automation and progression (not yet planned).
+7. Pawn roles and pawn kinds: colonists take roles, then creatures join the colony's
+   world (proposed, not yet planned).
+8. Automation and progression (not yet planned).

@@ -71,7 +71,7 @@ crash, a fall through the world, or lost progress.
 - A pawn walks to the work, digs it and the yield joins the colony totals shown in the HUD.
 - Marks are shared by all pawns, survive save and load, and can be set through a height cut.
 - A direct move order overrides a pawn's own work (should).
-- Pawns differ by move speed and carry capacity only (should). Per-pawn job priorities are deferred.
+- Pawns differ by move speed and carry capacity only (should). Per-pawn job priorities are deferred (roles, [4.4](#44-pawn-kinds-and-roles-direction-post-prototype)).
 
 ### 4.3 Buildings
 - A build menu lists what is available; choosing one shows a placement preview that is valid or invalid.
@@ -81,6 +81,19 @@ crash, a fall through the world, or lost progress.
 - First buildings are generic (storage, workbench, wall, floor) with no setting flavour.
 - Buildings can be deconstructed for a partial refund (should). The build menu is a general action menu that
   follows the selection, not a buildings-only list (should).
+
+### 4.4 Pawn kinds and roles (direction, post-prototype)
+Not prototype scope; recorded so the prototype's pawn and job design leaves room for it.
+- **Roles.** A colonist takes a role (for example miner or builder) that decides which marked work it picks up
+  first and which it ignores. The player sets roles from the colony view. Roles become worth having once there are
+  two job types: digging (SG-F4) and constructing (SG-F3).
+- **Kinds.** Not every pawn is a colonist. Wildlife wanders the world and reacts to the colony; hostile creatures
+  come later with combat. Every kind walks the same terrain by the same rules as a colonist and is driven the same
+  way, whether by its own behaviour or, where the kind allows it, by the player possessing it.
+- **A kind is what it can do.** Kinds differ by the capabilities they carry (moving, carrying, taking jobs,
+  fighting), not by separate rules. A creature with no job capability is never given work; a colonist without a
+  role takes any job.
+- What the creatures are (insects, beasts, constructs) belongs to the setting and stays undecided.
 
 ## 5 Possession mode
 
@@ -124,7 +137,8 @@ Intent only, not decomposed. Each waits for a named consumer. Setting and system
 - Automation: machines and logistics doing what hand-mining did.
 - Progression: unlocks gating buildings and tools, setting-neutral.
 - Stockpile zones and hauling as a real activity (the prototype uses colony totals).
-- Combat, hostile pressure, needs and moods.
+- Pawn roles, then pawn kinds (wildlife, later hostile creatures); see [4.4](#44-pawn-kinds-and-roles-direction-post-prototype).
+- Combat, hostile pressure, needs and moods. Hostile creatures arrive with combat.
 
 **Setting candidates** (the setting is deliberately undecided)
 An overseer sent by a megacorporation to mine an alien world for a prized resource, one planet per level,
@@ -162,5 +176,9 @@ For Justin; the defaults above hold if left unanswered.
   prototype, or is the instant bank the design?
 - **Q4.** Which deferred ideas (section 8) are worth promoting to the vision, and which are dropped?
 - **Q5.** When the setting is picked, does it become a vision decision or a per-world choice?
+- **Q6.** Pawn kinds: which comes first after colonists, passive wildlife (no combat needed) or hostile creatures
+  (needs combat)? Default: wildlife first. Can the player possess a creature, or only colonists?
+- **Q7.** Roles: one role per colonist, or a ranked list of jobs per colonist as in RimWorld? Default: one role, with
+  "any job" as the fallback.
 
 Questions for the Tech Lead are on the issues, not here.
