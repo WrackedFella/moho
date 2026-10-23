@@ -8,13 +8,13 @@ use crate::{SimSpeed, WindowMode};
 pub(crate) struct LoopRequests {
     pub(crate) paused: Option<bool>,
     pub(crate) speed: Option<SimSpeed>,
+    pub(crate) window_mode: Option<WindowMode>,
 }
 
 impl LoopRequests {
     /// The window mode the runner holds once these requests are applied to `current`.
     pub(crate) fn window_mode_after(self, current: WindowMode) -> WindowMode {
-        let _ = current;
-        todo!("the requested window mode, else `current`")
+        self.window_mode.unwrap_or(current)
     }
 }
 
@@ -34,12 +34,17 @@ mod tests {
 
         event.set_window_mode(WindowMode::Borderless);
         frame.set_window_mode(WindowMode::Borderless);
-        let from_event = event.loop_requests().window_mode_after(WindowMode::Windowed);
-        let from_frame = frame.loop_requests().window_mode_after(WindowMode::Windowed);
+        let from_event = event
+            .loop_requests()
+            .window_mode_after(WindowMode::Windowed);
+        let from_frame = frame
+            .loop_requests()
+            .window_mode_after(WindowMode::Windowed);
         let back_from_event = {
             let mut ctx = EventContext::new(&clock, None, None);
             ctx.set_window_mode(WindowMode::Windowed);
-            ctx.loop_requests().window_mode_after(WindowMode::Borderless)
+            ctx.loop_requests()
+                .window_mode_after(WindowMode::Borderless)
         };
 
         assert_eq!(from_event, WindowMode::Borderless);
@@ -52,7 +57,9 @@ mod tests {
         let clock = GameClock::default();
         let ctx = EventContext::new(&clock, None, None);
 
-        let kept = ctx.loop_requests().window_mode_after(WindowMode::Borderless);
+        let kept = ctx
+            .loop_requests()
+            .window_mode_after(WindowMode::Borderless);
 
         assert_eq!(kept, WindowMode::Borderless);
         assert_eq!(ctx.requested_window_mode(), None);
@@ -74,7 +81,8 @@ mod tests {
     #[test]
     fn a_request_does_not_change_the_mode_the_context_reports() {
         let clock = GameClock::default();
-        let mut event = EventContext::new(&clock, None, None).with_window_mode(WindowMode::Windowed);
+        let mut event =
+            EventContext::new(&clock, None, None).with_window_mode(WindowMode::Windowed);
         let mut frame =
             FrameContext::new(TICK, &clock, None, None).with_window_mode(WindowMode::Windowed);
 

@@ -617,8 +617,12 @@ impl Stage {
 
 /// The mode the window opens in for a saved `mode`: both fullscreen kinds open borderless.
 pub fn start_window_mode(mode: moho_core::prefs::WindowMode) -> WindowMode {
-    let _ = mode;
-    todo!("Fullscreen and Borderless open Borderless, Windowed opens Windowed")
+    match mode {
+        moho_core::prefs::WindowMode::Windowed => WindowMode::Windowed,
+        moho_core::prefs::WindowMode::Fullscreen | moho_core::prefs::WindowMode::Borderless => {
+            WindowMode::Borderless
+        }
+    }
 }
 
 /// The FPS prototype's game: one arena mode and the input that drives it.
@@ -788,7 +792,18 @@ impl Game for SearchlightGame {
         ctx.renderer.set_ui_source(Some(layers));
     }
 
-    fn window_mode_changed(&mut self, _ctx: &mut EventContext<'_>, _mode: WindowMode) {
+    fn window_mode_changed(&mut self, _ctx: &mut EventContext<'_>, mode: WindowMode) {
+        if let Some(settings) = &mut self.debug_settings
+            && start_window_mode(settings.window_mode()) != mode
+        {
+            let saved = match mode {
+                WindowMode::Windowed => moho_core::prefs::WindowMode::Windowed,
+                WindowMode::Borderless => moho_core::prefs::WindowMode::Borderless,
+            };
+            if let Err(error) = settings.set_window_mode(saved) {
+                tracing::warn!(%error, ?mode, "window mode not saved");
+            }
+        }
         // The platform drops held keys' releases and the grab across a mode change.
         self.input.release_all();
         self.input.reset_look();

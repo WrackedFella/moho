@@ -47,6 +47,7 @@ pub struct FrameContext<'a> {
     requests: LoopRequests,
     frame_cap: Option<NonZeroU32>,
     frame_cap_requested: bool,
+    window_mode: WindowMode,
 }
 
 impl<'a> FrameContext<'a> {
@@ -68,31 +69,31 @@ impl<'a> FrameContext<'a> {
             requests: LoopRequests::default(),
             frame_cap: None,
             frame_cap_requested: false,
+            window_mode: WindowMode::Windowed,
         }
     }
 
     /// Sets the window mode [`FrameContext::window_mode`] reports.
     #[must_use]
-    pub fn with_window_mode(self, mode: WindowMode) -> Self {
-        let _ = mode;
-        todo!("store the runner's current window mode")
+    pub fn with_window_mode(mut self, mode: WindowMode) -> Self {
+        self.window_mode = mode;
+        self
     }
 
     /// The runner's current window mode.
     pub fn window_mode(&self) -> WindowMode {
-        todo!("the mode given to `with_window_mode`, Windowed by default")
+        self.window_mode
     }
 
     /// Asks the runner to switch the window to `mode` once this frame is handled;
     /// [`Game::window_mode_changed`] is not called for it.
     pub fn set_window_mode(&mut self, mode: WindowMode) {
-        let _ = mode;
-        todo!("queue the request in LoopRequests")
+        self.requests.window_mode = Some(mode);
     }
 
     /// The last window mode the game asked for, if it asked.
     pub fn requested_window_mode(&self) -> Option<WindowMode> {
-        todo!("the queued request")
+        self.requests.window_mode
     }
 
     pub(crate) fn headless(tick_length: Duration, clock: &'a GameClock) -> Self {
@@ -174,6 +175,7 @@ pub struct EventContext<'a> {
     audio: Option<&'a mut AudioSystem>,
     exit_requested: bool,
     requests: LoopRequests,
+    window_mode: WindowMode,
 }
 
 impl<'a> EventContext<'a> {
@@ -190,31 +192,31 @@ impl<'a> EventContext<'a> {
             audio,
             exit_requested: false,
             requests: LoopRequests::default(),
+            window_mode: WindowMode::Windowed,
         }
     }
 
     /// Sets the window mode [`EventContext::window_mode`] reports.
     #[must_use]
-    pub fn with_window_mode(self, mode: WindowMode) -> Self {
-        let _ = mode;
-        todo!("store the runner's current window mode")
+    pub fn with_window_mode(mut self, mode: WindowMode) -> Self {
+        self.window_mode = mode;
+        self
     }
 
     /// The runner's current window mode.
     pub fn window_mode(&self) -> WindowMode {
-        todo!("the mode given to `with_window_mode`, Windowed by default")
+        self.window_mode
     }
 
     /// Asks the runner to switch the window to `mode` once this event is handled;
     /// [`Game::window_mode_changed`] is not called for it.
     pub fn set_window_mode(&mut self, mode: WindowMode) {
-        let _ = mode;
-        todo!("queue the request in LoopRequests")
+        self.requests.window_mode = Some(mode);
     }
 
     /// The last window mode the game asked for, if it asked.
     pub fn requested_window_mode(&self) -> Option<WindowMode> {
-        todo!("the queued request")
+        self.requests.window_mode
     }
 
     pub fn clock(&self) -> &'a GameClock {

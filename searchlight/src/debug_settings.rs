@@ -37,7 +37,7 @@ impl DebugSettings {
 
     /// The window mode the prefs hold.
     pub fn window_mode(&self) -> WindowMode {
-        todo!("the prefs' window mode")
+        self.prefs.window_mode()
     }
 
     /// Stores the window mode and saves the prefs file; the value is kept if the save fails.
@@ -45,8 +45,8 @@ impl DebugSettings {
     /// # Errors
     /// The I/O error if the file cannot be written.
     pub fn set_window_mode(&mut self, mode: WindowMode) -> io::Result<()> {
-        let _ = mode;
-        todo!("store the mode, then save the prefs")
+        self.prefs.set_window_mode(mode);
+        self.prefs.save_to(&self.path)
     }
 }
 
