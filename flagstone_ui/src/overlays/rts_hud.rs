@@ -191,6 +191,34 @@ mod tests {
         (ctx, hud, intents)
     }
 
+    fn drawn_texts(data: &HudData) -> Vec<String> {
+        let ctx = egui::Context::default();
+        let mut hud = RtsHud::new();
+        frame(&ctx, &mut hud, data, Vec::new());
+        texts(&frame(&ctx, &mut hud, data, Vec::new()))
+    }
+
+    #[test]
+    fn strategy_hud_names_the_mode() {
+        let strategy = strategy_data(TOP);
+        let first_person = HudData {
+            is_fps_mode: true,
+            ..strategy_data(TOP)
+        };
+
+        let in_strategy = drawn_texts(&strategy);
+        let in_first_person = drawn_texts(&first_person);
+
+        assert!(
+            in_strategy.contains(&"Strategy".to_string()),
+            "{in_strategy:?}"
+        );
+        assert!(
+            !in_first_person.contains(&"Strategy".to_string()),
+            "{in_first_person:?}"
+        );
+    }
+
     #[test]
     fn dragging_the_slider_records_a_level() {
         let target = TOP - 8;

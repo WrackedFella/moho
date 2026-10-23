@@ -38,6 +38,8 @@ pub enum StrategyAction {
     Jump,
     /// The strategy view's primary pointer action.
     Select,
+    /// Toggles between the strategy view and first person.
+    Possess,
 }
 
 impl Action for StrategyAction {
@@ -51,6 +53,7 @@ impl Action for StrategyAction {
         StrategyAction::Sprint,
         StrategyAction::Jump,
         StrategyAction::Select,
+        StrategyAction::Possess,
     ];
 
     fn name(self) -> &'static str {
@@ -64,6 +67,7 @@ impl Action for StrategyAction {
             StrategyAction::Sprint => "sprint",
             StrategyAction::Jump => "jump",
             StrategyAction::Select => "select",
+            StrategyAction::Possess => "possess",
         }
     }
 
@@ -78,6 +82,7 @@ impl Action for StrategyAction {
             StrategyAction::Descend => &DESCEND,
             StrategyAction::Sprint => &SPRINT,
             StrategyAction::Select => &SELECT,
+            StrategyAction::Possess => &[],
         }
     }
 
@@ -165,7 +170,7 @@ mod tests {
 
         let actual: Vec<_> = StrategyAction::ALL
             .iter()
-            .filter(|&&a| a != StrategyAction::Select)
+            .filter(|&&a| !matches!(a, StrategyAction::Select | StrategyAction::Possess))
             .map(|a| (*a, a.name(), a.default_bindings().to_vec()))
             .collect();
 
@@ -218,6 +223,41 @@ mod tests {
             [Binding::mouse(MouseButton::Left)]
         );
         assert!(StrategyAction::ALL.contains(&StrategyAction::Select));
+    }
+
+    #[test]
+    fn possess_defaults_to_tab_and_collides_with_no_other_default() {
+        let possess = StrategyAction::Possess.default_bindings();
+        let others: Vec<Binding> = StrategyAction::ALL
+            .iter()
+            .filter(|&&a| a != StrategyAction::Possess)
+            .flat_map(|a| a.default_bindings().iter().copied())
+            .collect();
+
+        assert_eq!(StrategyAction::Possess.name(), "possess");
+        assert!(StrategyAction::ALL.contains(&StrategyAction::Possess));
+        assert!(possess.contains(&Binding::key(Key::Tab)), "{possess:?}");
+        assert!(
+            possess.iter().all(|binding| !others.contains(binding)),
+            "{possess:?} collides with another default"
+        );
+    }
+
+    #[test]
+    fn saved_bindings_without_possess_load_its_default() {
+        let (prefs, _) = Prefs::parse("[bindings]\nmove_forward = Q\n");
+
+        let bindings = load_bindings(&prefs);
+
+        assert_eq!(
+            bindings.get(StrategyAction::Possess),
+            StrategyAction::Possess.default_bindings()
+        );
+        assert!(
+            bindings
+                .get(StrategyAction::Possess)
+                .contains(&Binding::key(Key::Tab))
+        );
     }
 
     #[test]

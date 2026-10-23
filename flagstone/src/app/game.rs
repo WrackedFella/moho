@@ -29,6 +29,9 @@ pub struct StrategyCommand {
     ///
     /// A ray rather than a pixel, so the command replays without a window.
     pub select: Option<Ray>,
+    /// Whether the possess key was pressed since the last tick: switch between the strategy
+    /// view and first person.
+    pub toggle_view: bool,
     /// Strategy console commands typed since the last tick.
     pub console: Vec<StrategyConsoleCommand>,
     /// Engine console commands typed since the last tick.
@@ -102,6 +105,7 @@ impl App {
             },
             jump,
             select,
+            toggle_view: false,
             console: Vec::new(),
             engine: Vec::new(),
         }
@@ -649,6 +653,181 @@ mod tests {
         assert!(!cmd.jump);
     }
 
+    /// The key the possess action is bound to by default.
+    const POSSESS_KEY: moho_input::key::Key = moho_input::key::Key::Tab;
+
+    fn tap_possess(app: &mut App) {
+        app.input.actions.key(POSSESS_KEY, true);
+        app.input.actions.key(POSSESS_KEY, false);
+    }
+
+    /// One loop step: sample the command, then run the tick with it.
+    fn step(app: &mut App) -> StrategyCommand {
+        let command = Game::command(app);
+        tick_app(app, &command);
+        command
+    }
+
+    fn pose(app: &App) -> (glam::Vec3, (f32, f32)) {
+        (app.simulation.position(), app.simulation.yaw_pitch())
+    }
+
+    fn strategy_app() -> App {
+        let mut app = playing_app();
+        app.simulation.set_camera_mode(CameraMode::Isometric);
+        app
+    }
+
+    /// The cues published so far, oldest first; `ButtonClick` and the like are not cues here.
+    fn cues(app: &App) -> Vec<&'static str> {
+        app.event_bus.process_deferred();
+        let mut cues = Vec::new();
+        while let Ok(event) = app.audio_event_rx.try_recv() {
+            match event {
+                moho_core::events::AudioEvent::Confirm => cues.push("confirm"),
+                moho_core::events::AudioEvent::Cancel => cues.push("cancel"),
+                _ => {}
+            }
+        }
+        cues
+    }
+
+    #[test]
+    fn possess_enters_first_person_at_the_pawns_pose() {
+        let mut app = strategy_app();
+        let before = pose(&app);
+        tap_possess(&mut app);
+
+        let command = step(&mut app);
+
+        assert!(command.toggle_view);
+        assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+        assert_eq!(pose(&app), before);
+        assert_eq!(before, (glam::Vec3::new(10.0, 20.0, 30.0), (0.7, 0.0)));
+    }
+
+    #[test]
+    fn possess_return_possess_restores_the_same_pawn_pose() {
+        let mut app = strategy_app();
+        let before = pose(&app);
+
+        tap_possess(&mut app);
+        step(&mut app);
+        tap_possess(&mut app);
+        step(&mut app);
+        let in_strategy = app.simulation.camera_mode();
+        tap_possess(&mut app);
+        step(&mut app);
+
+        assert_eq!(in_strategy, CameraMode::Isometric);
+        assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+        assert_eq!(pose(&app), before);
+    }
+
+    #[test]
+    fn possess_key_in_first_person_switches_to_strategy() {
+        let mut app = playing_app();
+        app.simulation.set_camera_mode(CameraMode::FirstPerson);
+        tap_possess(&mut app);
+
+        step(&mut app);
+
+        assert_eq!(app.simulation.camera_mode(), CameraMode::Isometric);
+    }
+
+    #[test]
+    fn mode_switch_applies_on_the_next_tick_not_on_the_key_event() {
+        let mut app = strategy_app();
+
+        tap_possess(&mut app);
+        let on_key = app.simulation.camera_mode();
+        let command = Game::command(&mut app);
+        let on_sample = app.simulation.camera_mode();
+        tick_app(&mut app, &command);
+
+        assert!(command.toggle_view, "the press is in the command");
+        assert_eq!(on_key, CameraMode::Isometric);
+        assert_eq!(on_sample, CameraMode::Isometric);
+        assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+    }
+
+    #[test]
+    fn a_tap_shorter_than_a_tick_still_switches_once() {
+        let mut app = strategy_app();
+        tap_possess(&mut app);
+
+        let first = step(&mut app);
+        let second = step(&mut app);
+
+        assert!(first.toggle_view);
+        assert!(!second.toggle_view, "one tap is one toggle");
+        assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+    }
+
+    #[test]
+    fn held_possess_key_switches_once() {
+        let mut app = strategy_app();
+        app.input.actions.key(POSSESS_KEY, true);
+
+        let first = step(&mut app);
+        // OS key repeat while the key stays down.
+        app.input.actions.key(POSSESS_KEY, true);
+        let second = step(&mut app);
+        let third = step(&mut app);
+
+        assert!(first.toggle_view);
+        assert!(!second.toggle_view && !third.toggle_view);
+        assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+    }
+
+    #[test]
+    fn pawn_does_not_move_while_in_strategy_mode() {
+        let mut app = standing_app();
+        tap_possess(&mut app);
+        step(&mut app);
+        assert_eq!(app.simulation.camera_mode(), CameraMode::Isometric);
+        let frozen = pose(&app);
+        hold(&mut app, StrategyAction::MoveForward);
+        hold(&mut app, StrategyAction::MoveRight);
+        hold(&mut app, StrategyAction::Jump);
+
+        for _ in 0..10 {
+            step(&mut app);
+        }
+
+        assert_eq!(pose(&app), frozen);
+    }
+
+    #[test]
+    fn switch_publishes_the_placeholder_cue() {
+        let mut app = strategy_app();
+        cues(&app);
+
+        tap_possess(&mut app);
+        step(&mut app);
+        let entering = cues(&app);
+        tap_possess(&mut app);
+        step(&mut app);
+        let returning = cues(&app);
+
+        assert_eq!(entering, ["confirm"]);
+        assert_eq!(returning, ["cancel"]);
+    }
+
+    #[test]
+    fn possess_is_ignored_outside_playing() {
+        let mut app = strategy_app();
+        app.game_state = GameState::Menu;
+        cues(&app);
+        tap_possess(&mut app);
+
+        let command = step(&mut app);
+
+        assert!(!command.toggle_view);
+        assert_eq!(app.simulation.camera_mode(), CameraMode::Isometric);
+        assert!(cues(&app).is_empty());
+    }
+
     use std::time::Duration;
 
     const TICKS: u32 = 120;
@@ -1042,10 +1221,14 @@ mod tests {
             let mut app = playing_app();
             app.simulation.set_camera_mode(CameraMode::FirstPerson);
 
-            app.toggle_camera_mode();
+            tap_possess(&mut app);
+            let command = Game::command(&mut app);
+            app.apply_command(&command);
             assert_eq!(app.simulation.camera_mode(), CameraMode::Isometric);
 
-            app.toggle_camera_mode();
+            tap_possess(&mut app);
+            let command = Game::command(&mut app);
+            app.apply_command(&command);
             assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
         }
     }
