@@ -1,5 +1,6 @@
 //! The rifle's tunable numbers, as a definition a content file can supply.
 
+use crate::item::MagazineWell;
 use serde::Deserialize;
 
 /// How a trigger pull becomes shots, named by id in definition files.
@@ -17,8 +18,8 @@ pub enum FireBehaviour {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RifleDef {
-    /// Rounds a full magazine holds.
-    pub magazine_capacity: u32,
+    /// The magazine well the rifle takes.
+    pub well: MagazineWell,
     /// Damage of one hit.
     pub damage: u32,
     /// How a pull becomes shots.
@@ -36,11 +37,12 @@ pub struct RifleDef {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::item::MagazineWell;
     use serde_json::json;
 
     fn valid() -> serde_json::Value {
         json!({
-            "magazine_capacity": 30,
+            "well": "rifle",
             "damage": 30,
             "fire": "semi_auto",
             "cooldown_ticks": 6,
@@ -57,7 +59,7 @@ mod tests {
         assert_eq!(
             rifle,
             RifleDef {
-                magazine_capacity: 30,
+                well: MagazineWell::new("rifle"),
                 damage: 30,
                 fire: FireBehaviour::SemiAuto,
                 cooldown_ticks: 6,
@@ -79,9 +81,19 @@ mod tests {
     }
 
     #[test]
-    fn a_rifle_without_magazine_capacity_is_refused() {
+    fn a_rifle_without_a_magazine_well_is_refused() {
         let mut value = valid();
-        value.as_object_mut().unwrap().remove("magazine_capacity");
+        value.as_object_mut().unwrap().remove("well");
+
+        let error = serde_json::from_value::<RifleDef>(value).unwrap_err();
+
+        assert!(error.to_string().contains("well"), "{error}");
+    }
+
+    #[test]
+    fn a_rifle_that_still_names_a_magazine_capacity_is_refused() {
+        let mut value = valid();
+        value["magazine_capacity"] = json!(30);
 
         let error = serde_json::from_value::<RifleDef>(value).unwrap_err();
 
@@ -101,10 +113,10 @@ mod tests {
     #[test]
     fn an_unknown_rifle_field_is_refused() {
         let mut value = valid();
-        value["magazine_capcity"] = json!(20);
+        value["dammage"] = json!(20);
 
         let error = serde_json::from_value::<RifleDef>(value).unwrap_err();
 
-        assert!(error.to_string().contains("magazine_capcity"), "{error}");
+        assert!(error.to_string().contains("dammage"), "{error}");
     }
 }
