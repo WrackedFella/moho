@@ -2245,6 +2245,30 @@ mod tests {
         }
 
         #[test]
+        fn planes_exactly_at_the_merge_threshold_stay_separate() {
+            let tilted = Vec3::new((1.0f32 - 0.99 * 0.99).sqrt(), 0.0, -0.99);
+            assert_eq!(Vec3::NEG_Z.dot(tilted), SAME_PLANE_DOT);
+
+            let (_, impacts) = clipped(Vec3::new(0.0, 0.0, 10.0), &[Vec3::NEG_Z, tilted]);
+
+            assert_eq!(impacts.len(), 2, "{impacts:?}");
+        }
+
+        #[test]
+        fn a_clip_that_slides_exactly_along_another_plane_does_not_enter_it() {
+            let velocity = Vec3::new(0.0, -3.0, 10.0);
+            let normals = [
+                Vec3::NEG_Z,
+                Vec3::new(-0.6, 0.0, -0.8),
+                Vec3::new(0.6, 0.0, -0.8),
+            ];
+
+            let (after, _) = clipped(velocity, &normals);
+
+            assert_eq!(after, Vec3::new(0.0, -3.0, 0.0));
+        }
+
+        #[test]
         fn three_blocking_planes_stop_the_character() {
             let [a, b] = wedge(std::f32::consts::FRAC_PI_6);
             let ceiling = Vec3::new(0.0, -1.0, 0.0);
