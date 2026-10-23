@@ -239,19 +239,21 @@ impl EventProcessor {
             return;
         };
 
-        let chunk_pos =
-            flagstone_voxel::VoxelGrid::get_chunk_pos(outcome.block_pos, grid.chunk_size());
+        let dirty_chunks: Vec<_> =
+            flagstone_voxel::chunks_meshed_from(outcome.block_pos, grid.chunk_size()).collect();
 
         app.event_bus.publish(WorldEvent::BlockRemoved {
             position: outcome.block_pos,
             old_material_id: outcome.old_material_id,
             reason: BlockChangeReason::Player,
         });
-        app.event_bus.publish(WorldEvent::ChunkMeshDirty {
-            chunk_pos,
-            terrain_dirty: true,
-            structure_dirty: true,
-        });
+        for chunk_pos in dirty_chunks {
+            app.event_bus.publish(WorldEvent::ChunkMeshDirty {
+                chunk_pos,
+                terrain_dirty: true,
+                structure_dirty: true,
+            });
+        }
 
         if let Some(y) = outcome.yield_ {
             tracing::debug!(
@@ -762,6 +764,55 @@ mod tests {
             mined.z == 3 && mined.x == 4,
             "the block facing the camera is mined: {mined:?}"
         );
+    }
+
+    #[test]
+    fn mining_a_chunk_edge_block_dirties_the_negative_neighbours() {
+        let mut app = App::headless();
+        app.game_state = crate::game_state::GameState::Playing;
+        app.simulation
+            .set_camera_mode(flagstone_game::controller::CameraMode::FirstPerson);
+        app.pawn.select_slot(flagstone_game::pawn::TOOL_SLOT);
+        // The camera looks down -Z at block (16, 70, 3): local x 0 of chunk (1, 4, 0).
+        app.camera.0 = glam::Mat4::from_translation(glam::Vec3::new(16.5, 70.5, 6.5)).inverse();
+        let grid = app
+            .light_system
+            .as_mut()
+            .expect("App starts with a light system")
+            .grid_mut();
+        // Solid only from x = 16, so the negative-x neighbour chunk holds no blocks at all.
+        for x in 16..=18 {
+            for y in 68..=72 {
+                for z in 1..=3 {
+                    grid.mutator()
+                        .place(flagstone_voxel::BlockPos::new(x, y, z), 1, None);
+                }
+            }
+        }
+        let removed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dirty = std::sync::Arc::new(std::sync::Mutex::new(HashSet::new()));
+        let removed_sink = std::sync::Arc::clone(&removed);
+        let dirty_sink = std::sync::Arc::clone(&dirty);
+        app.event_bus.subscribe(move |e: &WorldEvent| match e {
+            WorldEvent::BlockRemoved { position, .. } => {
+                removed_sink.lock().unwrap().push(*position);
+            }
+            WorldEvent::ChunkMeshDirty { chunk_pos, .. } => {
+                dirty_sink.lock().unwrap().insert(*chunk_pos);
+            }
+            _ => {}
+        });
+
+        EventProcessor::new().handle_input_event(&mut app, InputEvent::MineRequested);
+
+        assert_eq!(
+            *removed.lock().unwrap(),
+            vec![flagstone_voxel::BlockPos::new(16, 70, 3)]
+        );
+        let expected: HashSet<glam::IVec3> = [glam::IVec3::new(1, 4, 0), glam::IVec3::new(0, 4, 0)]
+            .into_iter()
+            .collect();
+        assert_eq!(*dirty.lock().unwrap(), expected);
     }
 
     #[test]
