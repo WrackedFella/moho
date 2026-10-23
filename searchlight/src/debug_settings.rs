@@ -19,6 +19,11 @@ impl DebugSettings {
         Self { prefs, path }
     }
 
+    /// The loaded prefs, for settings the game only reads.
+    pub fn prefs(&self) -> &Prefs {
+        &self.prefs
+    }
+
     /// Whether god mode is stored as on; an absent or unrecognised value reads as off.
     pub fn god_mode(&self) -> bool {
         self.prefs.debug_value(GOD_MODE) == Some("1")

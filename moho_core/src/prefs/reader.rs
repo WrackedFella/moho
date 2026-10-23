@@ -130,6 +130,10 @@ const KNOWN_KEYS: &[(&str, &str, Setter)] = &[
     ("graphics", "ssao_quality", |p, s| {
         set(&mut p.graphics_ssao_quality, parse_u32(s))
     }),
+    ("graphics", "brightness", |p, s| {
+        p.set_brightness(parse_f32(s)?);
+        Some(())
+    }),
     ("video", "window_mode", |p, s| {
         set(&mut p.window_mode, WindowMode::parse(s))
     }),
@@ -721,6 +725,20 @@ mod tests {
     }
 
     #[test]
+    fn non_finite_brightness_falls_back() {
+        for raw in ["NaN", "inf", "-inf", "bright"] {
+            let (prefs, issues) = Prefs::parse(&format!("[graphics]\nbrightness={raw}\n"));
+
+            assert_eq!(
+                issues,
+                vec![malformed("graphics", "brightness", Some(raw))],
+                "{raw}"
+            );
+            assert_eq!(prefs.brightness(), 1.0, "{raw}");
+        }
+    }
+
+    #[test]
     fn vsync_and_fps_max_default_when_the_keys_are_absent() {
         let (prefs, issues) = Prefs::parse("[video]\nwindow_width=1280\n");
 
@@ -1051,6 +1069,7 @@ mod tests {
              \n[graphics]\n\
              shadow_quality=3\n\
              ssao_quality=3\n\
+             brightness=1.00\n\
              \n[video]\n\
              window_mode=Windowed\n\
              window_width=1920\n\

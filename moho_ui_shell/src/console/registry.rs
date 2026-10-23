@@ -49,6 +49,8 @@ pub enum EngineCommand {
     DebugView(u32),
     ShadowQuality(u8),
     SsaoQuality(u8),
+    /// Tone-map curve on or off, for this session only.
+    ToneMap(bool),
     PlaySoundAt {
         path: std::path::PathBuf,
         position: glam::Vec3,
@@ -142,6 +144,15 @@ fn parse_ssao_quality(args: &[&str]) -> Result<(EngineCommand, String), String> 
     ))
 }
 
+fn parse_tone_map(args: &[&str]) -> Result<(EngineCommand, String), String> {
+    match args.first().copied() {
+        Some("0") => Ok((EngineCommand::ToneMap(false), "Tone map off".to_owned())),
+        Some("1") => Ok((EngineCommand::ToneMap(true), "Tone map on".to_owned())),
+        None => Err("Usage: r_tonemap <0|1> (0=Off, 1=On)".to_owned()),
+        Some(_) => Err("Tone map must be 0 or 1".to_owned()),
+    }
+}
+
 /// A console argument as a finite `f32`; `None` for text, NaN or infinity.
 fn parse_finite(arg: &str) -> Option<f32> {
     arg.parse::<f32>().ok().filter(|n| n.is_finite())
@@ -210,6 +221,12 @@ impl<G> Registry<G> {
                     "r_ssao_quality <0-4>",
                     "set SSAO quality (Off/Low/Med/High/Ultra)",
                     Handler::Engine(parse_ssao_quality),
+                ),
+                engine(
+                    "r_tonemap",
+                    "r_tonemap <0|1>",
+                    "toggle the tone map for this session (0=Off, 1=On)",
+                    Handler::Engine(parse_tone_map),
                 ),
                 engine(
                     "audio_cue",
@@ -306,6 +323,29 @@ mod tests {
     }
 
     #[test]
+    fn r_tonemap_parses_0_and_1_and_refuses_2() {
+        for (line, expected) in [
+            ("r_tonemap 0", EngineCommand::ToneMap(false)),
+            ("r_tonemap 1", EngineCommand::ToneMap(true)),
+        ] {
+            let (engine, game, printed) = run_line(line);
+
+            assert_eq!(engine, [expected], "{line}");
+            assert!(game.is_empty(), "{line}");
+            assert_eq!(printed.len(), 1, "{line}: {printed:?}");
+        }
+        for line in ["r_tonemap 2", "r_tonemap x", "r_tonemap -1", "r_tonemap"] {
+            let (engine, game, printed) = run_line(line);
+
+            assert!(engine.is_empty(), "{line}: {engine:?}");
+            assert!(game.is_empty(), "{line}");
+            assert_eq!(printed.len(), 1, "{line}: {printed:?}");
+        }
+        let (_, _, usage) = run_line("r_tonemap");
+        assert!(usage[0].starts_with("Usage: r_tonemap"), "{usage:?}");
+    }
+
+    #[test]
     fn debug_view_accepts_zero_through_seven_and_refuses_eight() {
         for mode in 0..=7u32 {
             let (engine, game, printed) = run_line(&format!("r_debug_view {mode}"));
@@ -375,11 +415,12 @@ mod tests {
         console.submit("help");
 
         let help = help_lines(&console);
-        assert_eq!(help.len(), 8, "{help:?}");
+        assert_eq!(help.len(), 9, "{help:?}");
         for prefix in [
             "  r_debug_view <0-7> - ",
             "  r_shadow_quality <0-4> - ",
             "  r_ssao_quality <0-4> - ",
+            "  r_tonemap <0|1> - ",
             "  audio_cue <path> <x> <y> <z> [volume] - ",
         ] {
             let line = help.iter().find(|l| l.starts_with(prefix));
@@ -389,7 +430,7 @@ mod tests {
             );
         }
         assert_eq!(
-            help[7], "  tgm [0|1] - toggle god mode",
+            help[8], "  tgm [0|1] - toggle god mode",
             "game rows stay last"
         );
     }
@@ -639,9 +680,9 @@ mod tests {
             })
         );
         let help = help_lines(&console);
-        assert_eq!(help.len(), 8, "{help:?}");
+        assert_eq!(help.len(), 9, "{help:?}");
         assert_eq!(help.iter().filter(|l| l.starts_with("  quit")).count(), 1);
-        assert_eq!(help[7], "  tgm [0|1] - toggle god mode");
+        assert_eq!(help[8], "  tgm [0|1] - toggle god mode");
     }
 
     #[test]

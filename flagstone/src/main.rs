@@ -72,6 +72,8 @@ enum RenderRequest {
     SsaoQuality(u8),
     ViewHeight(Option<f32>),
     Vsync(bool),
+    Brightness(f32),
+    ToneMap(bool),
 }
 
 struct App {
@@ -182,6 +184,10 @@ impl App {
         if config.prefs.vsync() != self.prefs.vsync() {
             self.pending_render
                 .push(RenderRequest::Vsync(config.prefs.vsync()));
+        }
+        if config.prefs.brightness() != self.prefs.brightness() {
+            self.pending_render
+                .push(RenderRequest::Brightness(config.prefs.brightness()));
         }
         self.set_pending_frame_cap(config.prefs.frame_cap());
         self.prefs = config.prefs;
@@ -633,6 +639,26 @@ mod tests {
 
         let volume = pending_sfx(&app).expect("adopting settings queues audio settings");
         assert!((volume - 0.3).abs() < 1e-6, "volume={volume}");
+    }
+
+    #[test]
+    fn adopting_settings_queues_the_brightness() {
+        let mut app = App::headless();
+        let mut brighter = Prefs::default();
+        brighter.set_brightness(1.5);
+
+        app.adopt_settings(brighter);
+
+        let queued: Vec<f32> = app
+            .pending_render
+            .iter()
+            .filter_map(|request| match request {
+                RenderRequest::Brightness(value) => Some(*value),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(queued, vec![1.5]);
+        assert_eq!(app.prefs.brightness(), 1.5);
     }
 
     #[test]

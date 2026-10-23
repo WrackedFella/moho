@@ -1,7 +1,7 @@
 # Rendering
 
 **Source:** `moho_render_api/src/` (`world_geometry.rs`), `moho_renderer/src/` (`scene.rs`, `sky.rs`,
-`world_meshes.rs`, `markers.rs`, `renderer.rs`, `render_ops/`, `shadow.rs`, `ssao.rs`, `ui_pass/`), `moho_render_api/src/ui_paint.rs`, `moho_render_api/src/marker.rs`, `flagstone/src/app/world_geometry.rs`, `flagstone/src/app/cut_caps.rs`, `flagstone/src/app/view_level.rs`, `flagstone_voxel/src/mesh/cap.rs`,
+`world_meshes.rs`, `markers.rs`, `renderer.rs`, `render_ops/`, `shadow.rs`, `ssao.rs`, `tone_map.rs`, `ui_pass/`), `moho_render_api/src/ui_paint.rs`, `moho_render_api/src/marker.rs`, `flagstone/src/app/world_geometry.rs`, `flagstone/src/app/cut_caps.rs`, `flagstone/src/app/view_level.rs`, `flagstone_voxel/src/mesh/cap.rs`,
 `shaders/`, `moho_level/src/`.
 **Decisions:** [ADR-0001](../../_todo/adr/0001-render-api-boundary.md),
 [ADR-0013](../../_todo/adr/0013-ui-reaches-the-renderer-as-paint-data.md).
@@ -165,8 +165,9 @@ command encoder:
 ```mermaid
 flowchart LR
     A["flatten instances<br/>upload to instance buffer"] --> B["shadow passes<br/>shadow_ops"]
-    B --> C["main pass<br/>skybox, then geometry<br/>main_pass_ops"]
-    C --> K["marker pass<br/>marker_pass_ops<br/>only when markers exist"]
+    B --> C["main pass into HDR target<br/>skybox, then geometry<br/>main_pass_ops"]
+    C --> T["tone-map pass<br/>HDR target to swapchain"]
+    T --> K["marker pass<br/>marker_pass_ops<br/>only when markers exist"]
     K --> D["SSAO compute<br/>from depth"]
     D --> U["UI pass<br/>draw_ui"]
     U --> E["finish_frame<br/>submit, present"]
@@ -174,7 +175,13 @@ flowchart LR
 
 The egui UI is drawn by the UI pass from paint data (below); `finish_frame` only submits
 and presents. Shader sources are `shaders/*.wgsl` (`common`, `sky`, `vertex`,
-`fragment`, `shadow`, `skybox`, `gtao`, `ssao_blur`, `pcss`, `instance`, `ui`, `marker`).
+`fragment`, `shadow`, `skybox`, `gtao`, `ssao_blur`, `pcss`, `instance`, `ui`, `marker`, `tonemap`).
+
+The skybox and main pipelines render into an `Rgba16Float` HDR target (`tone_map::HdrTarget`,
+recreated on resize), not the swapchain. `tone_map::ToneMapPass` then resolves it to the
+swapchain in `shaders/tonemap.wgsl`: exposure multiplier, then a hue-preserving highlight
+roll-off (identity below 0.76). With the curve off the HDR scene is copied unchanged.
+Markers and the UI draw after it, straight onto the swapchain, so neither is tone-mapped.
 
 Present mode: the surface starts on `Fifo` and the renderer keeps the present modes the
 surface supports. `RendererBackend::set_vsync(on)` picks the mode with
@@ -263,6 +270,8 @@ blending, sRGB vertex colours, no custom paint callbacks.
 |---|---|---|
 | Shadow quality 0–4 | `graphics.shadow_quality`, `r_shadow_quality` | Off/Low/Med/High/Ultra |
 | SSAO quality 0–4 | `graphics.ssao_quality`, `r_ssao_quality` | Samples 0/4/8/16/32 |
+| Brightness 0.5–2.0 | `graphics.brightness`, Video tab slider | Linear exposure multiplier into the tone-map pass (`RendererBackend::set_brightness`, `brightness_exposure`); clamped, NaN gives 1.0; applied at start by `apply_saved_render_settings` |
+| Tone map 0/1 | `r_tonemap <0\|1>` | `RendererBackend::set_tone_map`; session-only, on at start, not saved |
 | Debug view | `r_debug_view <mode>` | `Lighting.params.y` |
 | View-height cut | `r_view_height <metres\|off>` | `Renderer::set_view_height`; sticky; cuts world, markers and shadows; the binary caps the cut ([below](#3-cut-face-caps)) |
 | Shadow map size | `SHADOW_MAP_SIZE` = 4096 | `shadow.rs` |
