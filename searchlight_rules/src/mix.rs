@@ -128,13 +128,6 @@ mod tests {
     }
 
     #[test]
-    fn wave_one_of_two_is_a_rookie_and_a_novice() {
-        let grades = GradeMix::default().grades(1, 2, None);
-
-        assert_eq!(counts(&grades), [1, 1, 0, 0, 0]);
-    }
-
-    #[test]
     fn wave_five_has_a_larger_high_share_than_wave_one() {
         let waves = chain(&GradeMix::default(), 5, default_size);
 
@@ -244,13 +237,34 @@ mod tests {
     fn an_equal_share_is_accepted() {
         assert!(GradeMix::new(vec![[1, 1, 1, 0, 0], [2, 2, 2, 0, 0]]).is_ok());
         assert!(GradeMix::new(vec![[1, 0, 1, 0, 0], [1, 0, 0, 1, 0]]).is_ok());
-        assert!(
-            GradeMix::new(vec![
-                [1_000_000_000, 1_000_000_000, 1_000_000_000, 0, 0],
-                [1_000_000_000, 0, 1_000_000_000, 0, 0],
-            ])
-            .is_ok()
-        );
+    }
+
+    #[test]
+    fn a_rising_share_of_large_weights_is_accepted_without_overflow() {
+        let result = GradeMix::new(vec![
+            [1_000_000_000, 1_000_000_000, 1_000_000_000, 0, 0],
+            [1_000_000_000, 0, 1_000_000_000, 0, 0],
+        ]);
+
+        assert!(result.is_ok(), "{result:?}");
+    }
+
+    #[test]
+    fn a_half_share_rounds_up() {
+        let half = mix(vec![[1, 0, 1, 0, 0]]).grades(1, 5, None);
+        let tenth = GradeMix::default().grades(1, 5, None);
+
+        assert_eq!(counts(&half), [2, 0, 3, 0, 0]);
+        assert_eq!(counts(&tenth), [2, 2, 1, 0, 0]);
+    }
+
+    #[test]
+    fn a_floor_raised_group_with_no_weight_goes_to_its_lowest_grade() {
+        let previous = GradeMix::only(Grade::Veteran).grades(1, 2, None);
+
+        let grades = GradeMix::only(Grade::Rookie).grades(1, 4, Some(previous));
+
+        assert_eq!(counts(&grades), [0, 0, 4, 0, 0]);
     }
 
     #[test]
@@ -302,7 +316,7 @@ mod tests {
 
     #[test]
     fn grade_of_lists_lowest_grades_first_and_none_past_the_end() {
-        let grades = chain(&GradeMix::default(), 5, default_size)[4];
+        let grades = mix(vec![[1, 2, 4, 2, 1]]).grades(1, 10, None);
         let expected = [
             Grade::Rookie,
             Grade::Novice,

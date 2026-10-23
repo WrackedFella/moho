@@ -419,19 +419,7 @@ mod tests {
         assert_eq!(high, [0, 1, 2, 4, 7, 10, 13]);
         assert_eq!(state.grades().size(), 16);
         assert_eq!(state.grades().experienced_and_above(), 15);
-        assert_eq!(
-            counts(state.grades()),
-            counts(chain_to(&tuning, 8)),
-            "the same chain the mix builds"
-        );
-    }
-
-    fn chain_to(tuning: &WaveTuning, wave: u32) -> WaveGrades {
-        let mut previous = None;
-        for number in 1..=wave {
-            previous = Some(tuning.mix().grades(number, tuning.size(number), previous));
-        }
-        previous.expect("at least one wave")
+        assert_eq!(counts(state.grades()), [0, 1, 5, 5, 5]);
     }
 
     #[test]

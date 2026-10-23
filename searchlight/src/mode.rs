@@ -567,6 +567,49 @@ mod tests {
     }
 
     #[test]
+    fn a_restart_begins_the_mix_again_from_wave_one() {
+        let mut mode = calm_mode(4, mixed_tuning(2, 2, 100));
+        clear_wave(&mut mode);
+        assert_eq!(mode.wave(), 2);
+        mode.sim_mut().kill_player();
+        mode.tick(&idle(), DT);
+
+        mode.tick(&restart(), DT);
+
+        assert_eq!(mode.wave(), 1);
+        assert_eq!(mode.sim().enemy_count(), 2);
+        assert_eq!(
+            grades_from(&mode, 0),
+            [Some(Grade::Rookie), Some(Grade::Novice)]
+        );
+    }
+
+    #[test]
+    fn a_forced_wave_does_not_feed_the_next_waves_floor() {
+        let mut mode = calm_mode(8, mixed_tuning(2, 2, 100));
+        clear_wave_with(&mut mode, &forcing(Some(Grade::Professional)));
+        let forced = grades_from(&mode, 2);
+
+        clear_wave_with(&mut mode, &forcing(None));
+
+        assert_eq!(forced, [Some(Grade::Professional); 4]);
+        assert_eq!(mode.wave(), 3);
+        assert_eq!(mode.sim().enemy_count(), 12);
+        assert_eq!(
+            grades_from(&mode, 6),
+            [
+                Grade::Rookie,
+                Grade::Rookie,
+                Grade::Novice,
+                Grade::Novice,
+                Grade::Experienced,
+                Grade::Experienced,
+            ]
+            .map(Some)
+        );
+    }
+
+    #[test]
     fn an_enemy_whose_marker_turns_out_blocked_keeps_its_grade() {
         let close = [Vec3::new(0.0, 0.0, 12.0), Vec3::new(0.4, 0.0, 12.0)];
         let arena = arena_with(&[], Vec3::ZERO, &close, &[Vec3::new(0.0, 0.0, 25.0)]);
