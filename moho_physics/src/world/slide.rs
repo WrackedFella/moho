@@ -1,18 +1,22 @@
 //! The rapier collide-and-slide behind [`crate::movement::step`].
 
-use crate::movement::{Ground, Slide, WALKABLE_NORMAL_Y};
+use crate::movement::{Ground, Slide, STEP_HEIGHT, WALKABLE_NORMAL_Y};
 use glam::Vec3;
 use rapier3d::control::{
     CharacterLength, EffectiveCharacterMovement, KinematicCharacterController,
 };
 use rapier3d::parry::query::ShapeCastOptions;
+use rapier3d::parry::shape::Cylinder;
 use rapier3d::prelude::{ColliderHandle, Pose, QueryPipeline, Ray, Shape};
 
 /// How far below a grounded landing to look for the surface it landed on, in metres.
 const GROUND_PROBE: f32 = 0.1;
 
-/// How far past the capsule's lowest point the ground ray reaches, in metres.
-const GROUND_REACH_MARGIN: f32 = 0.3;
+/// Half the height of the thin cylinder whose flat base reads the ground, in metres.
+const FLAT_BASE_HALF_HEIGHT: f32 = 0.005;
+
+/// How far above and below the ground contact the face-normal ray reaches, in metres.
+const FACE_PROBE: f32 = 0.05;
 
 /// Surfaces facing down at least this much (`normal.y` below its negative) are ceilings, not risers.
 const CEILING_NORMAL_Y: f32 = 0.3;
@@ -105,31 +109,69 @@ impl Slider<'_> {
         }
     }
 
-    /// The walkable surface straight under `centre`, or `None` when a ray cast down from it
-    /// finds none within the capsule's half-height plus a margin.
+    /// The walkable surface the capsule centred at `centre` stands on, within [`STEP_HEIGHT`]
+    /// of it, or `None` when there is none.
     ///
-    /// A ray, unlike a shape cast, ignores the capsule's rounded base, so it reads the face the
-    /// centre stands over rather than a ledge edge the base merely overlaps. The gap is how far
-    /// the capsule hangs above that face's plane, measured on the ray.
-    pub(super) fn ground_under(&self, centre: Vec3) -> Option<Ground> {
+    /// Two casts straight down. A thin flat-based cylinder reads the face under the capsule:
+    /// unlike the capsule's rounded base it reports a face normal on step edges and across
+    /// seams, and its radius, tied to the walkable angle, is the perch margin. The capsule
+    /// itself, cast down to its skin offset, gives the gap: how far it can drop before it
+    /// touches anything.
+    pub(super) fn ground_below(&self, centre: Vec3) -> Option<Ground> {
         let capsule = self
             .shape
             .as_capsule()
             .expect("character colliders are capsules");
-        let reach = capsule.half_height() + capsule.radius + GROUND_REACH_MARGIN;
-        let ray = Ray::new(centre, -Vec3::Y);
-        let (collider, hit) = self.queries.cast_ray_and_get_normal(&ray, reach, true)?;
-        (hit.normal.y >= WALKABLE_NORMAL_Y).then(|| Ground {
-            normal: hit.normal,
-            gap: hit.time_of_impact - (capsule.half_height() + capsule.radius / hit.normal.y),
+        let CharacterLength::Absolute(skin) = self.controller.offset else {
+            return None;
+        };
+
+        let base_radius = capsule.radius * (1.0 - WALKABLE_NORMAL_Y * WALKABLE_NORMAL_Y).sqrt();
+        let base = Cylinder::new(FLAT_BASE_HALF_HEIGHT, base_radius);
+        let base_at = Pose::from_translation(centre - Vec3::Y * capsule.half_height());
+        let (collider, face) = self.queries.cast_shape(
+            &base_at,
+            -Vec3::Y,
+            &base,
+            cast_within(capsule.radius + STEP_HEIGHT),
+        )?;
+        let normal = self.face_normal_at(collider, face.witness1, face.normal1);
+        if normal.y < WALKABLE_NORMAL_Y {
+            return None;
+        }
+
+        let options = ShapeCastOptions {
+            target_distance: skin,
+            ..cast_within(STEP_HEIGHT)
+        };
+        let (_, drop) = self.queries.cast_shape(
+            &Pose::from_translation(centre),
+            -Vec3::Y,
+            self.shape,
+            options,
+        )?;
+        Some(Ground {
+            normal,
+            gap: drop.time_of_impact,
             collider,
-            point: ray.point_at(hit.time_of_impact),
+            point: face.witness1,
         })
     }
 
-    /// The walkable surface the capsule centred at `centre` stands on.
-    pub(super) fn ground_below(&self, centre: Vec3) -> Option<Ground> {
-        self.ground_under(centre)
+    /// The face of `collider` at `point`, or `reported` when a ray down onto `point` misses it.
+    ///
+    /// A shape cast that touches a mesh edge or a triangle boundary reports a normal tilted
+    /// toward the shape, and its search noise tilts even a flat floor's by a few millionths;
+    /// either would give a walker a spurious vertical speed along its ground.
+    fn face_normal_at(&self, collider: ColliderHandle, point: Vec3, reported: Vec3) -> Vec3 {
+        let ray = Ray::new(point + Vec3::Y * FACE_PROBE, -Vec3::Y);
+        match self
+            .queries
+            .cast_ray_and_get_normal(&ray, 2.0 * FACE_PROBE, true)
+        {
+            Some((handle, hit)) if handle == collider => hit.normal,
+            _ => reported,
+        }
     }
 
     /// The surface under a character the controller grounded without reporting a hit.

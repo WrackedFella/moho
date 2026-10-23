@@ -63,8 +63,8 @@ pub struct Impact {
 pub struct Slide {
     pub translation: Vec3,
     pub grounded: bool,
-    /// The walkable surface straight under the capsule's centre after the slide; `None` when
-    /// there is none or the character started the slide airborne.
+    /// The walkable surface under the capsule after the slide, within [`STEP_HEIGHT`]; `None`
+    /// when there is none or the character started the slide airborne.
     pub ground: Option<Ground>,
     /// Each surface touched, with its normal.
     pub hits: Vec<(ColliderHandle, Vec3)>,
@@ -271,18 +271,20 @@ fn along_ground(velocity: Vec3, normal: Vec3) -> f32 {
 
 /// Settle `state` onto the ground after the slide and clip.
 ///
-/// A walker hanging within [`GROUND_SNAP`] above walkable ground is lowered onto it, as in
-/// Source's `StayOnGround`. A walker that ends grounded keeps its horizontal velocity and
-/// follows its ground; any other character ends grounded only if not rising, and a landing
-/// zeroes its vertical speed.
-///
-/// The lowering is not collision-checked: it drops onto the plane of the face under the
-/// centre, so a ledge under the capsule's rim but not its centre can be overlapped by up to
-/// [`GROUND_SNAP`] until the next slide resolves it.
-fn settle(state: &mut CharacterState, slid: &Slide, walking: bool, _asked: Vec3) {
+/// A walker hanging above walkable ground is lowered by [`Ground::gap`] when that is within
+/// reach, as in Source's `StayOnGround`: [`STEP_HEIGHT`] for a level or downward `asked`
+/// motion, [`GROUND_SNAP`] for a rising one, so a ramp's crest still launches. A walker that
+/// ends grounded keeps its horizontal velocity and follows its ground; any other character
+/// ends grounded only if not rising, and a landing zeroes its vertical speed.
+fn settle(state: &mut CharacterState, slid: &Slide, walking: bool, asked: Vec3) {
+    let reach = if asked.y <= 0.0 {
+        STEP_HEIGHT
+    } else {
+        GROUND_SNAP
+    };
     let hanging = slid
         .ground
-        .filter(|ground| walking && !slid.grounded && ground.gap <= GROUND_SNAP);
+        .filter(|ground| walking && !slid.grounded && ground.gap <= reach);
     if let Some(ground) = hanging {
         state.position.y -= ground.gap.max(0.0);
     }
