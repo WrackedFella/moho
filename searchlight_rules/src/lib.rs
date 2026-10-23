@@ -1,5 +1,5 @@
-//! Platform-free rules for the FPS line: items, magazine, rifle, loadout, body damage and enemy
-//! grades.
+//! Platform-free rules for the FPS line: items, magazine, rifle, loadout, body damage, enemy
+//! grades and the grade mix of each wave.
 
 mod body;
 mod grade;
@@ -7,6 +7,7 @@ mod item;
 mod kit;
 mod loadout;
 mod magazine;
+mod mix;
 mod rifle;
 mod rig;
 #[cfg(test)]
@@ -22,6 +23,7 @@ pub use item::{
 pub use kit::{Kit, KitDef, KitError, KitMagazine};
 pub use loadout::Loadout;
 pub use magazine::{Magazine, MagazineError, MagazineLevel};
+pub use mix::{GradeMix, GradeMixError, WaveGrades};
 pub use rifle::{Rifle, RifleError, Shot};
 pub use rig::Rig;
 pub use weapon::{FireBehaviour, RifleDef};

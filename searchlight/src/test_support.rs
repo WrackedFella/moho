@@ -10,8 +10,8 @@ use moho_level::NavMesh;
 use moho_physics::{MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::{
-    BodyPart, BodyProfile, Caliber, ItemId, Loadout, Magazine, MagazineSpec, MagazineWell, Rifle,
-    Rig, RigSpec,
+    BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId, Loadout, Magazine, MagazineSpec,
+    MagazineWell, Rifle, Rig, RigSpec,
 };
 
 use crate::arena::{Arena, nav_profile};
@@ -220,9 +220,12 @@ pub(crate) fn arena_with(
     })
 }
 
-/// Waves that open with `first_size` enemies, grow by one and score 100 a kill.
+/// Waves of experienced enemies that open with `first_size` enemies, grow by one and score 100
+/// a kill.
 pub(crate) fn wave_tuning(first_size: u32) -> WaveTuning {
-    WaveTuning::new(first_size, 1, 100).expect("a positive first wave and growth are valid")
+    WaveTuning::new(first_size, 1, 100)
+        .expect("a positive first wave and growth are valid")
+        .with_mix(GradeMix::only(Grade::Experienced))
 }
 
 /// Presses the first default binding of `action` on `map`.
