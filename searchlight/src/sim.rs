@@ -382,8 +382,8 @@ impl SearchlightSim {
     /// Runs one tick of `dt` seconds.
     ///
     /// While the player is dead only `command.restart` is read, and it puts every character
-    /// back at its spawn, as a fresh sim over the same world would have them. Otherwise the enemies perceive and move, the player moves, the
-    /// world steps, the player's weapon actions apply, then the enemies that decided to fire
+    /// back at its spawn, as a fresh sim over the same world would have them. Otherwise the enemies perceive and move, the player moves (slower while a lean is held), the
+    /// world steps, the player's lean blends within the room beside it, the player's weapon actions apply, then the enemies that decided to fire
     /// do, and enemies that died leave the world.
     pub fn tick(&mut self, command: &SearchlightCommand, dt: f32) {
         if self.player_body.is_dead() {

@@ -71,8 +71,16 @@ impl Lean {
             f32::INFINITY
         };
         let amount = self.amount + remaining.clamp(-max_step, max_step);
+        // A reach outside [0, 1] or NaN is read as the nearest bound, so the clamp cannot panic.
+        let room = |side: f32| {
+            if side.is_nan() {
+                0.0
+            } else {
+                side.clamp(0.0, 1.0)
+            }
+        };
         Lean {
-            amount: amount.clamp(-reach.left, reach.right),
+            amount: amount.clamp(-room(reach.left), room(reach.right)),
         }
     }
 
@@ -100,6 +108,28 @@ mod tests {
             blend_seconds: 0.25,
             speed_factor: 0.5,
         }
+    }
+
+    #[test]
+    fn a_reach_outside_zero_to_one_or_nan_is_read_as_the_nearest_bound() {
+        let settled = |reach| Lean::default().step(Some(LeanSide::Left), reach, 1.0, &tuning());
+
+        let negative = settled(LeanReach {
+            left: -0.5,
+            right: 0.0,
+        });
+        let nan = settled(LeanReach {
+            left: f32::NAN,
+            right: f32::NAN,
+        });
+        let wide = settled(LeanReach {
+            left: 2.0,
+            right: 2.0,
+        });
+
+        assert_eq!(negative.amount(), 0.0);
+        assert_eq!(nan.amount(), 0.0);
+        assert_eq!(wide.amount(), -1.0);
     }
 
     const DT: f32 = 1.0 / 60.0;

@@ -102,8 +102,9 @@ The title status line appends `GOD MODE` (`hud::god_mode_text`).
 
 ## 3 Tick
 
-`SearchlightSim::tick(command, dt)` lets the enemies perceive and move, moves the player character,
-steps the physics world, applies weapon actions, then resolves the shots the enemies decided
+`SearchlightSim::tick(command, dt)` lets the enemies perceive and move, moves the player character
+(slower while a lean is held), steps the physics world, blends the player's lean ([posture](#8-posture)),
+applies weapon actions, then resolves the shots the enemies decided
 on and removes enemies that died. The rifle is in one state at a time (ready, cooling down
 after a shot, reloading); cooldown and reload are tick counts. A reload takes `reload_ticks`, plus
 `charge_ticks` when the chamber is empty.
