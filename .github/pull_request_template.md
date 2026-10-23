@@ -14,8 +14,8 @@ Closes #
 - [ ] Gate class: domain tests were reviewed before implementation (by you or `devflow:test-critic`, findings below) / glue
 
 ## Mutation testing
-<!-- `just mutants` on the changed code: caught / missed / unviable. Justify any
-     surviving mutant judged equivalent. -->
+<!-- `just mutants` on the changed domain code: caught / missed / unviable. Justify any
+     surviving mutant judged equivalent. Write "glue only" when nothing changed in scope. -->
 
 ## Quality passes
 - [ ] `/devflow:comment-audit` run on the diff

@@ -116,15 +116,14 @@ jobs:
 
       - run: just deny
 
-  # Informational: mutation-tests only the code this PR changes. Survivors mean the
-  # new tests don't prove behavior; not a required check.
+  # Mutation-tests the domain code this PR changes (CLAUDE.md's domain paths; glue is left to
+  # the weekly full run). A survivor fails the check: the new tests don't prove behavior.
   mutants:
     name: Mutants (diff)
     needs: plan
     if: github.event_name == 'pull_request' && (github.base_ref == 'dev' || startsWith(github.base_ref, 'feature/'))
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.plan.outputs.code == 'true'

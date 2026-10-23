@@ -41,14 +41,20 @@ deny:
 cov:
     cargo llvm-cov nextest --workspace --all-features --lcov --output-path lcov.info
 
-# Mutation-test code changed since branching from `base`, including uncommitted
-# work. Exit 2 means a mutant survived.
+# Mutation-test domain code changed since branching from `base`, including uncommitted
+# work. Glue (adapters, UI, windowing) is out of scope: its tests can't reach it, and the
+# weekly full run covers it. The scope is CLAUDE.md's domain paths. Exit 2 means a mutant
+# survived.
 mutants base=base:
+    #!/usr/bin/env bash
+    set -euo pipefail
     mkdir -p target
     git diff "$(git merge-base {{base}} HEAD)" > target/mutants.diff
-    cargo mutants --workspace --all-features --in-diff target/mutants.diff
+    scope=()
+    while IFS= read -r glob; do scope+=(--file "$glob"); done < <(scripts/domain-paths.sh)
+    cargo mutants --workspace --all-features --in-diff target/mutants.diff "${scope[@]}"
 
-# Full mutation run; slow, meant for scheduled CI.
+# Full mutation run over every crate, glue included; slow, meant for scheduled CI.
 mutants-full:
     cargo mutants --workspace --all-features
 

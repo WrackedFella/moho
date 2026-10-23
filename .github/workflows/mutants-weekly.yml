@@ -1,7 +1,7 @@
 name: Mutants (weekly)
 
-# Full mutation run over the workspace; surfaces test-quality decay that per-PR
-# diff runs can't see. Survivors are reviewed, not gated.
+# Full mutation run over the workspace, glue included; surfaces test-quality decay that
+# per-PR diff runs (domain code only) can't see. Survivors are reviewed, not gated.
 #
 # Sharded so no single runner holds every mutant and one lost shard doesn't lose the rest.
 on:
