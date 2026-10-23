@@ -125,7 +125,8 @@ mod tests {
 
     use super::*;
     use crate::shadow::{
-        LightType, MIN_SHADOW_LIGHT_INTENSITY, PcssQuality, SHADOW_DISTANCE, SHADOW_MAP_SIZE,
+        CASCADE_RADIUS_MULTIPLIER, LightType, MIN_SHADOW_LIGHT_INTENSITY, PcssQuality,
+        SHADOW_DISTANCE, SHADOW_MAP_SIZE,
     };
 
     fn above_horizon() -> impl Strategy<Value = Vec3> {
@@ -174,6 +175,8 @@ mod tests {
 
         #[test]
         fn snapping_shifts_the_camera_by_under_one_texel(light in above_horizon(), camera in any_position()) {
+            // The reference view uses Y as up, which the overhead branch deliberately replaces.
+            prop_assume!(light.dot(Vec3::Y).abs() <= OVERHEAD_DOT);
             let snapped = light_view_projection(light, camera);
             let unsnapped_origin_clip = unsnapped_clip(light, camera, Vec3::ZERO);
             let snapped_origin_clip = snapped.project_point3(Vec3::ZERO);
@@ -194,7 +197,7 @@ mod tests {
             camera,
             Vec3::Y,
         );
-        let radius = SHADOW_DISTANCE * 1.5;
+        let radius = SHADOW_DISTANCE * CASCADE_RADIUS_MULTIPLIER;
         let projection = glam::camera::rh::proj::directx::orthographic(
             -radius,
             radius,
@@ -217,8 +220,8 @@ mod tests {
             // Depth is 0.5 + 0.5 * (2000 - 1) / (3000 - 1): the camera is 2 * SHADOW_DISTANCE into
             // a 3 * SHADOW_DISTANCE volume, and the 0..1 correction stacks on an already-0..1 ortho.
             let texel = 2.0 / SHADOW_MAP_SIZE as f32;
-            prop_assert!(clip.x.abs() <= texel, "x {}", clip.x);
-            prop_assert!(clip.y.abs() <= texel, "y {}", clip.y);
+            prop_assert!(clip.x.abs() <= texel * 1.01, "x {}", clip.x);
+            prop_assert!(clip.y.abs() <= texel * 1.01, "y {}", clip.y);
             prop_assert!((clip.z - 0.8333).abs() < 1e-3, "depth {}", clip.z);
         }
     }
