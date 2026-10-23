@@ -55,8 +55,18 @@ material ([GPU ABI](../reference/gpu-abi.md)).
 `moho_renderer::WorldMeshes` (reached via `Scene::world_meshes_mut`) queues
 `upsert(id, mesh, material_idx)` and `remove(id)`. `Scene::render` calls `flush`
 first: replaced or removed meshes are unregistered from the backend, new ones are
-registered, and an empty mesh counts as a remove. Opaque world meshes are drawn one
-draw per mesh in id order.
+registered, and an empty mesh counts as a remove. A static mesh draws once at the
+identity, one draw per mesh in id order.
+
+A mesh that moves is uploaded once with `upsert_movable(id, mesh)` and drawn only where
+the game places it ([ADR-0023](../../_todo/adr/0023-world-meshes-are-placed-per-frame.md)).
+`place(id, Affine3A, material)` adds one copy for the current frame, any number per id and
+on static meshes too; the mesh needs no `materials` channel, so the placement's material
+applies. Placements on an id that is not live are skipped. `Scene::render` groups the
+placements of a mesh into one instanced draw and clears them before `begin_frame`, so a
+frame skipped for a lost surface consumes them too. Placed meshes cast and receive shadows
+and take part in SSAO like static ones, and never touch physics. Normals use the model
+matrix, so non-uniform scale on a general mesh is not yet correct (ENG-F39).
 
 The binary adapts voxel chunks in `flagstone/src/app/world_geometry.rs`: `chunk_mesh_id` packs
 the chunk position at 21 bits per signed axis, `chunk_world_mesh` converts a
@@ -147,8 +157,9 @@ sequenceDiagram
     participant S as Scene::render
     participant B as RendererBackend
     S->>S: prepare: collect instances, dedup materials,<br/>split opaque / transparent
+    S->>S: flush world meshes, group placements per mesh,<br/>clear placements
     S->>B: begin_frame(camera)<br/>upload camera, cull lights, update shadow matrices,<br/>acquire surface
-    S->>B: enqueue_draw(cubes, spheres, each world mesh)
+    S->>B: enqueue_draw(cubes, spheres, each world mesh<br/>with all its instances)
     S->>B: enqueue_draw(transparent, sorted back-to-front)
     S->>B: enqueue_markers(fills, outlines, each sorted far to near)
     S->>B: submit_frame()

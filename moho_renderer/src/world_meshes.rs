@@ -67,7 +67,7 @@ impl WorldMeshes {
             .push((transform, material));
     }
 
-    /// Drop every placement; the renderer calls this each frame so placements are per-frame.
+    /// Drop every placement; the renderer calls this each frame.
     pub fn clear_placements(&mut self) {
         self.placements.clear();
     }
