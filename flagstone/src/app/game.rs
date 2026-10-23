@@ -2217,6 +2217,171 @@ mod tests {
         }
     }
 
+    mod strategy_camera {
+        use super::*;
+        use flagstone_game::controller::CAMERA_CLEARANCE;
+        use glam::{UVec2, Vec3};
+
+        const VIEWPORT: UVec2 = UVec2::new(1280, 720);
+
+        /// A strategy view over an empty world, the window focused and `VIEWPORT` pixels wide.
+        fn strategy_app(mode: CameraMode) -> App {
+            let mut app = standing_app();
+            app.simulation.set_camera_mode(mode);
+            app.simulation.look_at(Vec3::new(8.0, 0.0, 8.0));
+            app.viewport = VIEWPORT;
+            app.input.focused = true;
+            app
+        }
+
+        fn tick_once(app: &mut App) -> StrategyCommand {
+            let command = Game::command(app);
+            tick_app(app, &command);
+            command
+        }
+
+        fn pawn_state(app: &App) -> moho_physics::CharacterState {
+            let handle = app.physics.player.expect("the pawn was spawned");
+            app.physics
+                .world
+                .as_ref()
+                .expect("physics world")
+                .character(handle)
+                .expect("the pawn exists")
+        }
+
+        #[test]
+        fn strategy_pan_leaves_the_pawn_where_it_was() {
+            let mut app = strategy_app(CameraMode::Isometric);
+            hold(&mut app, StrategyAction::MoveForward);
+            tick_once(&mut app);
+            let pawn = app.simulation.position();
+            let body = pawn_state(&app).position;
+            let eye = app.camera.2;
+
+            for _ in 0..60 {
+                tick_once(&mut app);
+            }
+
+            assert_eq!(app.simulation.position(), pawn);
+            assert!(pawn_state(&app).position.distance(body) < 1e-4);
+            assert!(
+                app.camera.2.distance(eye) > 3.0,
+                "the eye moved from {eye} to {}",
+                app.camera.2
+            );
+        }
+
+        #[test]
+        fn pointer_at_the_screen_edge_pans_toward_it() {
+            let forward = Vec3::new(-1.0, 0.0, -1.0).normalize();
+            let right = Vec3::new(1.0, 0.0, -1.0).normalize();
+            let rows = [
+                ("left", (0.0, 360.0), -right),
+                ("right", (1279.0, 360.0), right),
+                ("top", (640.0, 0.0), forward),
+                ("bottom", (640.0, 719.0), -forward),
+            ];
+
+            for (name, (x, y), direction) in rows {
+                let mut app = strategy_app(CameraMode::Isometric);
+                let start = app.simulation.player_controller.rts_look_target;
+                app.input.actions.pointer_moved(x, y);
+
+                let command = tick_once(&mut app);
+
+                let moved = app.simulation.player_controller.rts_look_target - start;
+                let step = app.simulation.player_controller.speed * tick().as_secs_f32();
+                assert!(
+                    command.input.forward != 0.0 || command.input.right != 0.0,
+                    "{name}: no pan in the command"
+                );
+                assert!(moved.length() > 0.9 * step, "{name}: moved {moved}");
+                assert!(
+                    moved.normalize().dot(direction) > 0.99,
+                    "{name}: moved {moved}"
+                );
+            }
+        }
+
+        #[test]
+        fn pointer_outside_the_window_does_not_pan() {
+            let mut app = strategy_app(CameraMode::Isometric);
+            let start = app.simulation.player_controller.rts_look_target;
+            app.input.actions.pointer_moved(0.0, 0.0);
+            app.input.actions.pointer_left();
+
+            let command = tick_once(&mut app);
+
+            assert_eq!(command.input.forward, 0.0);
+            assert_eq!(command.input.right, 0.0);
+            assert_eq!(app.simulation.player_controller.rts_look_target, start);
+        }
+
+        #[test]
+        fn edge_pan_is_ignored_in_first_person() {
+            let mut app = strategy_app(CameraMode::FirstPerson);
+            app.input.actions.pointer_moved(0.0, 0.0);
+
+            let command = Game::command(&mut app);
+
+            assert_eq!(command.input.forward, 0.0);
+            assert_eq!(command.input.right, 0.0);
+        }
+
+        #[test]
+        fn edge_pan_is_ignored_while_the_window_is_unfocused() {
+            let mut app = strategy_app(CameraMode::Isometric);
+            app.input.focused = false;
+            app.input.actions.pointer_moved(0.0, 0.0);
+
+            let command = Game::command(&mut app);
+
+            assert_eq!(command.input.forward, 0.0);
+            assert_eq!(command.input.right, 0.0);
+        }
+
+        #[test]
+        fn strategy_camera_clears_a_hillside_in_the_grid() {
+            let mut app = strategy_app(CameraMode::Isometric);
+            app.simulation.player_controller.rts_height = 5.0;
+            let grid = app
+                .light_system
+                .as_mut()
+                .expect("App starts with a light system")
+                .grid_mut();
+            // A 45 degree slope rising toward +x and +z: the column at x has its top block at y = x.
+            for x in 2..30 {
+                for z in 2..30 {
+                    for y in [x - 1, x] {
+                        grid.mutator()
+                            .place(flagstone_voxel::BlockPos::new(x, y, z), 1, None);
+                    }
+                }
+            }
+            app.simulation.look_at(Vec3::new(10.5, 11.0, 10.5));
+            hold(&mut app, StrategyAction::MoveBack);
+
+            for tick_number in 0..120 {
+                tick_once(&mut app);
+
+                let eye = app.camera.2;
+                let top = app
+                    .light_system
+                    .as_ref()
+                    .expect("light system")
+                    .grid()
+                    .get_height(eye.x.floor() as i32, eye.z.floor() as i32)
+                    .expect("the eye is over loaded ground");
+                let floor = top as f32 + 1.0 + CAMERA_CLEARANCE;
+                assert!(
+                    eye.y >= floor - 1e-3,
+                    "tick {tick_number}: eye {eye} below {floor}"
+                );
+            }
+        }
+    }
+
     mod day_night {
         use super::*;
 

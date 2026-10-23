@@ -59,7 +59,7 @@ impl FrameProcessor {
             self.update_game_state_fps_kcc(app, dt);
         } else {
             // Flying camera / noclip / RTS
-            let (view, proj, eye) = app.simulation.apply_input(dt);
+            let (view, proj, eye) = app.simulation.apply_input(dt, |_, _| None);
             app.camera = (view, proj, eye);
         }
 
