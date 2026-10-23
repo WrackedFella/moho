@@ -13,6 +13,10 @@ pub struct PhysicsController {
     pub noclip: bool,
     /// The player's state before the latest tick, for blending the view.
     previous: Option<moho_physics::CharacterState>,
+    /// A teleport or look is queued and not yet applied: the view has no states to blend until
+    /// the next tick applies it, and that tick records its result as `previous` too, so the view
+    /// does not blend across the change.
+    snap_view: bool,
 }
 
 impl PhysicsController {
@@ -24,6 +28,7 @@ impl PhysicsController {
             player: None,
             noclip: false,
             previous: None,
+            snap_view: false,
         }
     }
 
@@ -33,11 +38,12 @@ impl PhysicsController {
         self.test_bodies.clear();
         self.player = None;
         self.previous = None;
+        self.snap_view = false;
         self.noclip = false;
     }
 
-    /// Place the player character at `position`, replacing any previous one.
-    pub fn spawn_player(&mut self, position: glam::Vec3) {
+    /// Place the player character at `spawn`, replacing any previous one.
+    pub fn spawn_player(&mut self, spawn: impl Into<moho_physics::CharacterSpawn>) {
         let Some(pw) = self.world.as_mut() else {
             return;
         };
@@ -45,15 +51,20 @@ impl PhysicsController {
             pw.remove_character(previous)
                 .expect("the player handle belongs to the current world");
         }
-        let handle = pw.add_character(position);
+        let handle = pw.add_character(spawn);
         self.player = Some(handle);
+        self.snap_view = false;
         self.previous = pw.character(handle);
     }
 
-    /// The player's state before and after the latest tick, if there is a player.
+    /// The player's state before and after the latest tick, if there is a player and no
+    /// teleport or look is waiting for the next tick to apply.
     pub fn player_states(
         &self,
     ) -> Option<(moho_physics::CharacterState, moho_physics::CharacterState)> {
+        if self.snap_view {
+            return None;
+        }
         let current = self.world.as_ref()?.character(self.player?)?;
         Some((self.previous?, current))
     }
@@ -77,23 +88,39 @@ impl PhysicsController {
         let pw = self.world.as_mut()?;
         self.previous = pw.character(handle);
         pw.move_character(handle, command, settings, dt).ok()?;
-        pw.character(handle)
+        let moved = pw.character(handle);
+        if std::mem::take(&mut self.snap_view) {
+            self.previous = moved;
+        }
+        moved
     }
 
-    /// Face the player character `yaw`/`pitch`, so the next tick turns from the view on screen.
+    /// Queue facing the player character `yaw`/`pitch`, so the next tick turns from the view on
+    /// screen.
     pub fn set_player_look(&mut self, yaw: f32, pitch: f32) {
         if let (Some(pw), Some(handle)) = (self.world.as_mut(), self.player) {
-            pw.set_character_look(handle, yaw, pitch)
-                .expect("the player handle belongs to the current world");
+            pw.queue_effect(
+                handle,
+                moho_physics::CharacterEffect::SetLook { yaw, pitch },
+            )
+            .expect("the player handle belongs to the current world");
+            self.snap_view = true;
         }
     }
 
-    /// Teleport the player (e.g. respawn after falling off the map).
+    /// Queue a teleport of the player (e.g. respawn after falling off the map), applied by the
+    /// next tick, which the view does not blend across.
     pub fn teleport_character(&mut self, pos: glam::Vec3) {
         if let (Some(pw), Some(handle)) = (self.world.as_mut(), self.player) {
-            pw.set_character_position(handle, pos)
-                .expect("the player handle belongs to the current world");
-            self.previous = pw.character(handle);
+            pw.queue_effect(
+                handle,
+                moho_physics::CharacterEffect::Teleport {
+                    position: pos,
+                    keep_velocity: false,
+                },
+            )
+            .expect("the player handle belongs to the current world");
+            self.snap_view = true;
         }
     }
 
@@ -446,14 +473,19 @@ mod tests {
     }
 
     #[test]
-    fn set_player_look_turns_the_player_character() {
+    fn set_player_look_applies_on_the_next_tick() {
         let mut controller = PhysicsController::new();
         controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
 
         controller.set_player_look(0.7, -0.3);
 
-        let state = player_state(&controller);
-        assert_eq!((state.yaw, state.pitch), (0.7, -0.3));
+        let queued = player_state(&controller);
+        assert_eq!((queued.yaw, queued.pitch), (0.0, 0.0), "not yet applied");
+        let moved = controller
+            .move_character(&idle(), &strategy_settings(), DT)
+            .expect("player is live");
+        assert_eq!((moved.yaw, moved.pitch), (0.7, -0.3));
+        assert_eq!(player_state(&controller), moved);
     }
 
     #[test]
@@ -475,24 +507,31 @@ mod tests {
     }
 
     #[test]
-    fn teleport_moves_the_player_and_zeroes_velocity() {
+    fn teleport_moves_the_player_on_the_next_tick_and_zeroes_velocity() {
         let mut controller = PhysicsController::new();
         controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
         for _ in 0..10 {
             controller.move_character(&idle(), &strategy_settings(), DT);
         }
         assert!(player_state(&controller).velocity.y < 0.0);
+        let before = player_state(&controller);
         let target = glam::Vec3::new(3.0, 20.0, -4.0);
 
         controller.teleport_character(target);
 
-        let state = player_state(&controller);
-        assert!(state.position.distance(target) < 1e-4, "{state:?}");
-        assert_eq!(state.velocity, glam::Vec3::ZERO);
+        assert_eq!(player_state(&controller), before, "not yet applied");
+        let state = controller
+            .move_character(&idle(), &strategy_settings(), DT)
+            .expect("player is live");
+        assert!(state.position.distance(target) < 0.01, "{state:?}");
+        assert!(
+            (state.velocity - glam::Vec3::new(0.0, -18.0 * DT, 0.0)).length() < 1e-4,
+            "velocity restarted from rest: {state:?}"
+        );
     }
 
     #[test]
-    fn teleport_resets_previous_state() {
+    fn a_kill_plane_teleport_followed_by_two_ticks_blends_only_the_second() {
         let mut controller = PhysicsController::new();
         controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
         for _ in 0..10 {
@@ -500,8 +539,81 @@ mod tests {
         }
 
         controller.teleport_character(glam::Vec3::new(3.0, 20.0, -4.0));
+        let first = controller
+            .move_character(&idle(), &strategy_settings(), DT)
+            .expect("player is live");
+        let (previous, current) = controller.player_states().expect("player is live");
+        assert_eq!((previous, current), (first, first), "snapped on arrival");
+        let second = controller
+            .move_character(&idle(), &strategy_settings(), DT)
+            .expect("player is live");
 
-        assert_eq!(controller.previous, Some(player_state(&controller)));
+        let (previous, current) = controller.player_states().expect("player is live");
+        assert_eq!(previous, first);
+        assert_eq!(current, second);
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn player_states_are_withheld_until_a_queued_teleport_applies() {
+        let mut controller = PhysicsController::new();
+        controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
+        for _ in 0..10 {
+            controller.move_character(&idle(), &strategy_settings(), DT);
+        }
+        assert!(controller.player_states().is_some());
+
+        controller.teleport_character(glam::Vec3::new(3.0, 20.0, -4.0));
+
+        assert_eq!(controller.player_states(), None);
+        let moved = controller
+            .move_character(&idle(), &strategy_settings(), DT)
+            .expect("player is live");
+        assert_eq!(controller.player_states(), Some((moved, moved)));
+    }
+
+    #[test]
+    fn player_states_are_withheld_until_a_queued_look_applies() {
+        let mut controller = PhysicsController::new();
+        controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
+        for _ in 0..10 {
+            controller.move_character(&idle(), &strategy_settings(), DT);
+        }
+        assert!(controller.player_states().is_some());
+
+        controller.set_player_look(0.7, -0.3);
+
+        assert_eq!(controller.player_states(), None);
+        let moved = controller
+            .move_character(&idle(), &strategy_settings(), DT)
+            .expect("player is live");
+        assert_eq!((moved.yaw, moved.pitch), (0.7, -0.3));
+        assert_eq!(controller.player_states(), Some((moved, moved)));
+    }
+
+    #[test]
+    fn teleport_is_not_blended_by_the_view() {
+        let mut controller = PhysicsController::new();
+        controller.spawn_player(glam::Vec3::new(0.0, 50.0, 0.0));
+        for _ in 0..10 {
+            controller.move_character(&idle(), &strategy_settings(), DT);
+        }
+
+        controller.teleport_character(glam::Vec3::new(3.0, 20.0, -4.0));
+        let teleported = controller
+            .move_character(&idle(), &strategy_settings(), DT)
+            .expect("player is live");
+
+        let (previous, current) = controller.player_states().expect("player is live");
+        assert_eq!(previous, teleported, "the view starts from the arrival");
+        assert_eq!(current, teleported);
+        let after = controller
+            .move_character(&idle(), &strategy_settings(), DT)
+            .expect("player is live");
+        let (previous, current) = controller.player_states().expect("player is live");
+        assert_eq!(previous, teleported, "the next tick blends again");
+        assert_eq!(current, after);
+        assert_ne!(previous, current);
     }
 
     #[test]

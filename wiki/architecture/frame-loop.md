@@ -122,6 +122,6 @@ A `FrameError` skips the frame with a `warn`. Pass order inside the renderer:
 between the player's last two tick states by `alpha` (0 = previous tick, 1 = current) via
 `moho_physics::first_person_view` (`moho_physics/src/camera.rs`); look comes from the
 current tick turned by the pending look: what frames sampled (`ActionMap::sample_frame`) and no tick has consumed yet, pitch clamped with the same f32 operations as `moho_physics::step`, so the next tick lands on exactly the drawn angles. `PhysicsController` keeps the pre-tick state (`previous`) for this and
-resets it on spawn, teleport and `reset`. In every other first-person case (free-cam, or outside play) the tick camera is drawn
+resets it on spawn and `reset`. A queued teleport or look is applied by the next tick, so until then `player_states()` withholds the stale states and the tick camera, already at the new place, is drawn; that tick then records `previous` as its own result, so the eye does not blend across the jump. In every other first-person case (free-cam, or outside play) the tick camera is drawn
 turned by the pending look (`PlayerController::turned`), with no eye blend; in isometric the tick camera is drawn
 unchanged. Frames sample look only while Playing, focused and in first person; otherwise the pending look stays frozen and still drawn.

@@ -7,8 +7,8 @@ use glam::{Quat, Vec3};
 use moho_core::rng::{SimRng, StreamId};
 use moho_level::NavMesh;
 use moho_physics::{
-    CharacterCommand, CharacterHandle, CharacterState, HitVolume, MoveSettings, PhysicsWorld,
-    first_person_view,
+    CharacterCommand, CharacterHandle, CharacterSpawn, CharacterState, HitVolume, MoveSettings,
+    PhysicsWorld, first_person_view,
 };
 use searchlight_rules::{
     Body, BodyPart, BodyProfile, Grade, HitReport, Lean, LeanReach, LeanSide, LeanTuning, Loadout,
@@ -279,22 +279,24 @@ fn new_target(
     profile: BodyProfile,
 ) -> Target {
     let (target, centre) = dummy_at(index, spawn);
-    let handle = world.add_character(centre);
+    let (enemy, yaw) = match enemy {
+        Some((route, grade)) => {
+            let (nearest, yaw) = nearest_waypoint(spawn, route);
+            let brain = Brain::Patrol { next: nearest };
+            (Some(Enemy { brain, grade }), yaw)
+        }
+        None => (None, 0.0),
+    };
+    let handle = world.add_character(CharacterSpawn {
+        position: centre,
+        yaw,
+        pitch: 0.0,
+    });
     for volume in dummy_hit_volumes(target) {
         world
             .add_hit_volume(handle, volume)
             .expect("the target was added a moment ago");
     }
-    let enemy = enemy.map(|(route, grade)| {
-        let (nearest, yaw) = nearest_waypoint(spawn, route);
-        world
-            .set_character_look(handle, yaw, 0.0)
-            .expect("the enemy was added a moment ago");
-        Enemy {
-            brain: Brain::Patrol { next: nearest },
-            grade,
-        }
-    });
     Target {
         handle: Some(handle),
         body: Body::new(profile),
