@@ -19,7 +19,7 @@ Commands are case-insensitive on the first token; arguments are whitespace-separ
 | `r_shadow_quality` | `<0-4>` | Off, Low, Med, High, Ultra |
 | `r_ssao_quality` | `<0-4>` | Off, Low, Med, High, Ultra |
 | `r_tonemap` | `<0\|1>` | Tone-map curve off or on for this session (not saved); other values are rejected |
-| `spawn` | `<type> [args]` | `torch`, `light` (args `r g b`), `cube`, `sphere`; placed by raycast from the camera |
+| `spawn` | `<type> [args]` | `crystal`, `light` (args `r g b`), `cube`, `sphere`; placed by raycast from the camera |
 | `audio_cue` | `<path> <x> <y> <z> [volume]` | Play a sound at a world position in metres (volume defaults to 1.0); non-finite numbers are rejected |
 | `marker` | `<id> <x> <y> <z> [size] [fill\|outline]` | Box from the corner `x y z` to `+size` (default 1) on each axis, in metres, drawn translucent (`fill`, default) or as edges only (`outline`); the same id replaces the marker; id is a non-negative integer, size must be finite and above zero |
 | `marker_clear` | `[id]` | Remove one marker, or all |

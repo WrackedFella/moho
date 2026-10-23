@@ -8,7 +8,7 @@
 
 use crate::input_event::InputEvent;
 use crate::{App, RenderRequest};
-use flagstone_voxel::{BlockChangeReason, VoxelChunk, WorldEvent};
+use flagstone_voxel::{BlockChangeReason, CRYSTAL_MATERIAL_ID, VoxelChunk, WorldEvent};
 use moho_core::events::{GraphicsEvent, UiEvent};
 use moho_render_api::{Marker, MarkerId};
 use std::collections::HashSet;
@@ -18,8 +18,6 @@ const MOUSE_WHEEL_ZOOM_FACTOR: f32 = 0.5;
 const SPAWN_RAYCAST_MAX_DISTANCE: f32 = 100.0;
 const SPAWN_NORMAL_OFFSET: f32 = 0.5;
 const SPAWN_FALLBACK_DISTANCE: f32 = 5.0;
-/// Placeholder material ID for torch blocks.
-const TORCH_MATERIAL_ID: u32 = 3; // TODO: look up from MaterialRegistry
 /// Maximum reach for the player's direct mining action — shorter than
 /// `SPAWN_RAYCAST_MAX_DISTANCE`, which is a debug-console placement aid, not
 /// a gameplay reach limit.
@@ -373,33 +371,17 @@ impl EventProcessor {
                     tracing::info!(entity_type = %entity_type, pos = ?spawn_pos, "Spawning entity");
 
                     match entity_type.to_lowercase().as_str() {
-                        "torch" => {
-                            // Set block to torch
-                            // Assuming torch ID is 3 (need to verify or look up)
-                            // For now, let's use a hardcoded ID or look it up if possible
-                            // MaterialRegistry is in VoxelGrid but not easily accessible by name here
-                            // Let's assume 3 for now as a placeholder
-                            let torch_id = TORCH_MATERIAL_ID;
+                        "crystal" => {
                             let block_pos = glam::IVec3::new(
                                 spawn_pos.x.floor() as i32,
                                 spawn_pos.y.floor() as i32,
                                 spawn_pos.z.floor() as i32,
                             );
 
-                            // Use LightSystem to handle block placement if available (it handles events)
-                            // Or modify grid directly and notify
-
-                            // Better approach: Publish BlockPlaced event
-                            // But we are in event processor, we can modify app state directly
-
-                            // If we have light system, use it to handle events?
-                            // Actually, we should modify the grid and let the system react
-
-                            // Let's use the event bus to trigger block placement properly
-                            // This ensures all systems (light, mesh) get notified
+                            // The event path lets the light and mesh systems react.
                             app.event_bus.publish(WorldEvent::BlockPlaced {
                                 position: block_pos,
-                                material_id: torch_id,
+                                material_id: CRYSTAL_MATERIAL_ID,
                                 reason: BlockChangeReason::Player,
                             });
                         }
