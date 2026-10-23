@@ -6,6 +6,7 @@
 
 mod blocky;
 mod cap;
+mod contact_ao;
 mod hybrid;
 mod marching_cubes;
 
