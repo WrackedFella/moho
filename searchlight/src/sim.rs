@@ -106,7 +106,7 @@ pub struct SimConfig {
     pub enemy: EnemyTuning,
     /// The player's part the enemies aim at.
     pub enemy_aim_at: BodyPart,
-    /// How far, how fast and how slowly the player leans.
+    /// How far and how fast the player leans, and how much it slows walking.
     pub lean: LeanTuning,
 }
 
@@ -769,12 +769,10 @@ impl SearchlightSim {
         self.leaned_eye(&self.player())
     }
 
-    /// The eye straight above `state`, before any lean.
     fn upright_eye(&self, state: &CharacterState) -> Vec3 {
         state.position + Vec3::Y * self.eye_height
     }
 
-    /// The upright eye of `state` shifted sideways by the lean.
     fn leaned_eye(&self, state: &CharacterState) -> Vec3 {
         self.upright_eye(state) + lean_offset(state.yaw, self.lean.shift(&self.lean_tuning))
     }
@@ -1511,7 +1509,6 @@ mod tests {
         }
     }
 
-    /// The eye of a player standing upright where `sim`'s player stands, facing its way.
     fn standing_eye(sim: &SearchlightSim) -> Vec3 {
         sim.player().position + Vec3::Y * sim.eye_height()
     }

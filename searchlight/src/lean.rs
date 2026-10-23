@@ -24,7 +24,6 @@ mod tests {
 
     const ROLL: f32 = 0.2;
 
-    /// The view's up axis in world space.
     fn up_of(view: Mat4) -> Vec3 {
         view.transpose().col(1).truncate()
     }
