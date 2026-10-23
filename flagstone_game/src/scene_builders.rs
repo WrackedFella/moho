@@ -1,6 +1,6 @@
 use crate::biome::{BiomeMap, BiomeParams, BiomeType, OreLayout};
 use crate::perlin::Perlin;
-use flagstone_voxel::BlockPos;
+use flagstone_voxel::{BlockPos, CRYSTAL_MATERIAL_ID};
 use serde::{Deserialize, Serialize};
 
 /// Parameters describing a new world request coming from the UI or other
@@ -165,6 +165,22 @@ pub(crate) fn determine_resource_id(
     }
 }
 
+/// Chance that a block inside the crystal depth band is a crystal.
+const CRYSTAL_CHANCE: f32 = 0.002;
+
+/// Mixed into the seed so the crystal roll is independent of the ore roll.
+const CRYSTAL_SALT: u32 = 0x5EED_C257;
+
+/// Whether the block at `(x, y, z)` in a column of `column_height` is a glowing crystal.
+pub(crate) fn determine_crystal(column_height: i32, y: i32, x: i32, z: i32, seed: u32) -> bool {
+    y > 5 && y < column_height - 8 && crystal_roll_hits(pos_hash(x, y, z, seed ^ CRYSTAL_SALT))
+}
+
+/// Whether a positional hash roll in `[0, 1)` lands inside the crystal chance.
+fn crystal_roll_hits(roll: f32) -> bool {
+    roll < CRYSTAL_CHANCE
+}
+
 /// Chunk size constant — must match `light_storage::CHUNK_SIZE`.
 const CHUNK_SIZE: i32 = 16;
 
@@ -205,6 +221,10 @@ pub fn generate_chunk(
 
             for y in y_start..y_end {
                 if !is_solid(&noise, x, y, z, &biome, &params) {
+                    continue;
+                }
+                if determine_crystal(column_height, y, x, z, config.seed) {
+                    blocks.push((BlockPos::new(x, y, z), CRYSTAL_MATERIAL_ID, None));
                     continue;
                 }
                 let material_id = determine_material_id(column_height, y, &params);
@@ -301,15 +321,135 @@ mod tests {
         blocks.iter().filter(|(_, _, r)| *r == Some(1)).count()
     }
 
+    fn crystal_count(blocks: &[Block]) -> usize {
+        blocks
+            .iter()
+            .filter(|(_, m, _)| *m == CRYSTAL_MATERIAL_ID)
+            .count()
+    }
+
+    #[test]
+    fn seeded_world_has_crystal_only_below_its_surface() {
+        let blocks = world_blocks(&small_config(42));
+        let mut column_tops = std::collections::HashMap::new();
+        for (p, _, _) in &blocks {
+            let top = column_tops.entry((p.x, p.z)).or_insert(p.y);
+            *top = (*top).max(p.y);
+        }
+
+        let crystals: Vec<&Block> = blocks
+            .iter()
+            .filter(|(_, m, _)| *m == CRYSTAL_MATERIAL_ID)
+            .collect();
+
+        assert!(!crystals.is_empty(), "a seeded world holds crystal");
+        for (p, _, _) in crystals {
+            let top = column_tops[&(p.x, p.z)];
+            assert!(top > p.y, "crystal at {p:?} has solid block above it");
+            assert!(
+                top - p.y >= 8,
+                "crystal at {p:?} sits 8 or more below the column top {top}"
+            );
+        }
+    }
+
+    #[test]
+    fn crystal_blocks_carry_no_resource() {
+        let blocks = world_blocks(&small_config(42));
+
+        let crystals: Vec<&Block> = blocks
+            .iter()
+            .filter(|(_, m, _)| *m == CRYSTAL_MATERIAL_ID)
+            .collect();
+
+        assert!(!crystals.is_empty(), "a seeded world holds crystal");
+        for (p, _, resource) in crystals {
+            assert_eq!(*resource, None, "crystal at {p:?}");
+        }
+    }
+
+    const CRYSTAL_TEST_COLUMN: i32 = 20;
+
+    /// Crystal positions in the 64x64 scan of a column of `CRYSTAL_TEST_COLUMN`,
+    /// over the heights `ys`.
+    fn crystal_positions(ys: std::ops::RangeInclusive<i32>, seed: u32) -> Vec<(i32, i32, i32)> {
+        let mut found = Vec::new();
+        for x in 0..64 {
+            for z in 0..64 {
+                for y in ys.clone() {
+                    if determine_crystal(CRYSTAL_TEST_COLUMN, y, x, z, seed) {
+                        found.push((x, y, z));
+                    }
+                }
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn crystal_roll_excludes_the_chance_boundary() {
+        assert!(crystal_roll_hits(0.0));
+        assert!(crystal_roll_hits(CRYSTAL_CHANCE * 0.5));
+        assert!(!crystal_roll_hits(CRYSTAL_CHANCE));
+        assert!(!crystal_roll_hits(0.5));
+    }
+
+    #[test]
+    fn determine_crystal_never_fires_outside_the_depth_band() {
+        let near_bedrock = crystal_positions(0..=5, 42);
+        let near_surface = crystal_positions(CRYSTAL_TEST_COLUMN - 8..=CRYSTAL_TEST_COLUMN + 1, 42);
+
+        assert!(near_bedrock.is_empty(), "{near_bedrock:?}");
+        assert!(near_surface.is_empty(), "{near_surface:?}");
+    }
+
+    #[test]
+    fn determine_crystal_is_rare_but_present_inside_the_depth_band() {
+        let inside = crystal_positions(6..=CRYSTAL_TEST_COLUMN - 9, 42);
+
+        assert!(!inside.is_empty(), "crystal appears inside the band");
+        assert!(inside.len() < 100, "crystal stays rare: {}", inside.len());
+    }
+
+    #[test]
+    fn crystal_uses_its_own_hash_salt_not_the_ore_roll() {
+        let band = crystal_positions(6..=CRYSTAL_TEST_COLUMN - 9, 42);
+
+        let crystal_without_ore = band
+            .iter()
+            .any(|&(x, y, z)| determine_resource_id(CRYSTAL_TEST_COLUMN, y, x, z, 42).is_none());
+
+        assert!(!band.is_empty(), "crystal appears inside the band");
+        assert!(
+            crystal_without_ore,
+            "every crystal also rolled ore, so the hash salt is shared"
+        );
+    }
+
+    #[test]
+    fn crystal_positions_differ_between_seeds() {
+        let seed_42 = crystal_positions(6..=CRYSTAL_TEST_COLUMN - 9, 42);
+        let seed_43 = crystal_positions(6..=CRYSTAL_TEST_COLUMN - 9, 43);
+
+        assert!(!seed_42.is_empty(), "seed 42 has crystal");
+        assert!(!seed_43.is_empty(), "seed 43 has crystal");
+        assert_ne!(seed_42, seed_43);
+    }
+
     #[test]
     fn default_world_matches_its_pinned_fingerprint() {
         let blocks = world_blocks(&small_config(42));
 
-        let measured = (fingerprint(&blocks), blocks.len(), ore_count(&blocks));
+        let measured = (
+            fingerprint(&blocks),
+            blocks.len(),
+            ore_count(&blocks),
+            crystal_count(&blocks),
+        );
 
         assert_eq!(
             measured,
-            (16_667_745_297_482_914_019, 67_114, 5_792),
+            (17_813_487_417_460_971_201, 67_114, 5_781, 98),
             "world generation output changed; update these pins only when the change is deliberate"
         );
     }
@@ -318,11 +458,16 @@ mod tests {
     fn all_biome_world_matches_its_pinned_fingerprint() {
         let blocks = world_blocks(&all_biome_config());
 
-        let measured = (fingerprint(&blocks), blocks.len(), ore_count(&blocks));
+        let measured = (
+            fingerprint(&blocks),
+            blocks.len(),
+            ore_count(&blocks),
+            crystal_count(&blocks),
+        );
 
         assert_eq!(
             measured,
-            (3_431_315_624_261_164_992, 265_476, 22_876),
+            (3_247_777_566_613_322_200, 265_476, 22_840, 414),
             "world generation output changed; update these pins only when the change is deliberate"
         );
     }

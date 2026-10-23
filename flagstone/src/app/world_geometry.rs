@@ -219,7 +219,7 @@ pub(crate) mod tests {
     use crate::app::event_loop::event_processor::EventProcessor;
     use crate::app::event_loop::frame_processor::FrameProcessor;
     use crate::game_state::GameState;
-    use flagstone_voxel::WorldEvent;
+    use flagstone_voxel::{CRYSTAL_MATERIAL_ID, WorldEvent};
     use moho_render_api::RenderMaterial;
     use moho_renderer::RendererBackend;
     use proptest::prelude::*;
@@ -886,7 +886,7 @@ pub(crate) mod tests {
         let mesh = chunk_world_mesh(&chunk, &app.terrain_palette).expect("well-formed chunk");
 
         let drawn = mesh.materials().expect("per-vertex materials");
-        for id in [50, 100, 4, u32::MAX] {
+        for id in [50, 100, 5, u32::MAX] {
             assert_eq!(
                 app.terrain_palette.index(id),
                 app.terrain_material_idx,
@@ -916,15 +916,30 @@ pub(crate) mod tests {
 
         let palette = TerrainPalette::new(&registry, &mut scene.material_table, fallback);
 
-        assert_eq!(registry.len(), 4);
+        assert_eq!(registry.len(), 5);
         for id in 0..registry.len() as u32 {
             let expected = registry.material(id).expect("registered").to_gpu();
             let stored = scene.material_table.as_slice()[palette.index(id) as usize];
             assert_eq!(stored.albedo, expected.albedo, "material {id} albedo");
             assert_eq!(stored.params, expected.params, "material {id} params");
         }
-        let distinct: HashSet<u32> = (0..4).map(|id| palette.index(id)).collect();
-        assert_eq!(distinct.len(), 4, "four materials, four table entries");
+        let distinct: HashSet<u32> = (0..5).map(|id| palette.index(id)).collect();
+        assert_eq!(distinct.len(), 5, "five materials, five table entries");
+    }
+
+    #[test]
+    fn terrain_palette_draws_the_crystal_as_an_emissive_entry() {
+        let mut scene = Scene::new();
+        let fallback = register_terrain_material(&mut scene);
+
+        let palette = TerrainPalette::new(
+            &MaterialRegistry::new(),
+            &mut scene.material_table,
+            fallback,
+        );
+
+        let stored = scene.material_table.as_slice()[palette.index(CRYSTAL_MATERIAL_ID) as usize];
+        assert!(stored.params[3] > 0.0, "the crystal ignores scene lighting");
     }
 
     #[test]
@@ -940,8 +955,8 @@ pub(crate) mod tests {
         assert_eq!(palette.index(1), cut_face, "dirt");
         assert_eq!(
             scene.material_table.as_slice().len(),
-            4,
-            "stone and ore are new"
+            5,
+            "stone, ore and crystal are new"
         );
     }
 

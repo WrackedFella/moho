@@ -8,6 +8,9 @@ pub const DIRT: Vec3 = Vec3::new(0.6, 0.5, 0.4);
 pub const STONE: Vec3 = Vec3::new(0.5, 0.5, 0.5);
 /// Iron ore, drawn instead of the stone it sits in.
 pub const IRON_ORE: Vec3 = Vec3::new(0.62, 0.30, 0.16);
+pub const CRYSTAL: Vec3 = Vec3::new(0.40, 0.85, 0.95);
+/// Per-channel block light a crystal emits.
+pub const CRYSTAL_EMISSION: [u8; 3] = [6, 12, 15];
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum MaterialType {
