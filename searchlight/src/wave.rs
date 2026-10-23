@@ -109,12 +109,12 @@ impl WaveState {
 
     /// The running wave's grade counts.
     pub fn grades(&self) -> WaveGrades {
-        todo!()
+        self.grades
     }
 
     /// Enemies of the running wave handed out so far.
     pub fn spawned(&self) -> u32 {
-        todo!()
+        self.grades.size() - self.to_spawn
     }
 
     /// The running wave, counting from 1.
@@ -147,6 +147,9 @@ impl WaveState {
         if self.to_spawn == 0 && alive == 0 {
             self.wave = self.wave.saturating_add(1);
             self.to_spawn = tuning.size(self.wave);
+            self.grades = tuning
+                .mix()
+                .grades(self.wave, self.to_spawn, Some(self.grades));
         }
         let spawn = u32::try_from(free_spawns)
             .unwrap_or(u32::MAX)

@@ -23,27 +23,78 @@ pub struct WaveGrades {
     counts: [u32; 5],
 }
 
+/// Where the experienced-and-above grades start on the ladder.
+const FIRST_HIGH: usize = 2;
+
 impl WaveGrades {
     /// Enemies in the wave.
     pub fn size(&self) -> u32 {
-        todo!()
+        self.counts.iter().sum()
     }
 
     /// Enemies of `grade`.
-    pub fn count(&self, _grade: Grade) -> u32 {
-        todo!()
+    pub fn count(&self, grade: Grade) -> u32 {
+        Grade::LADDER
+            .iter()
+            .zip(self.counts)
+            .find_map(|(&on_ladder, count)| (on_ladder == grade).then_some(count))
+            .unwrap_or(0)
     }
 
     /// Enemies of experienced grade or better.
     pub fn experienced_and_above(&self) -> u32 {
-        todo!()
+        self.counts[FIRST_HIGH..].iter().sum()
     }
 
     /// The grade of the wave's `index`th enemy in spawn order, lowest grade first; `None` past
     /// the end.
-    pub fn grade_of(&self, _index: u32) -> Option<Grade> {
-        todo!()
+    pub fn grade_of(&self, index: u32) -> Option<Grade> {
+        let mut before = 0u32;
+        for (grade, count) in Grade::LADDER.into_iter().zip(self.counts) {
+            before = before.saturating_add(count);
+            if index < before {
+                return Some(grade);
+            }
+        }
+        None
     }
+}
+
+/// The experienced-and-above weight and the total weight of `step`.
+fn shares(step: &[u32; 5]) -> (u128, u128) {
+    let high = step[FIRST_HIGH..].iter().map(|&w| u128::from(w)).sum();
+    let total = step.iter().map(|&w| u128::from(w)).sum();
+    (high, total)
+}
+
+/// Splits `count` among `weights` by largest remainder, ties to the lower index; all of it on
+/// the first when the weights sum to zero.
+fn split(count: u32, weights: &[u32]) -> Vec<u32> {
+    let total: u64 = weights.iter().map(|&w| u64::from(w)).sum();
+    let mut parts = vec![0; weights.len()];
+    if total == 0 {
+        if let Some(first) = parts.first_mut() {
+            *first = count;
+        }
+        return parts;
+    }
+    let mut remainders = Vec::with_capacity(weights.len());
+    for (part, &weight) in parts.iter_mut().zip(weights) {
+        let scaled = u64::from(count) * u64::from(weight);
+        *part = saturating_u32(scaled / total);
+        remainders.push(scaled % total);
+    }
+    let left = count - parts.iter().sum::<u32>();
+    let mut order: Vec<usize> = (0..weights.len()).collect();
+    order.sort_by_key(|&index| (std::cmp::Reverse(remainders[index]), index));
+    for (&index, _) in order.iter().zip(0..left) {
+        parts[index] += 1;
+    }
+    parts
+}
+
+fn saturating_u32(value: impl TryInto<u32>) -> u32 {
+    value.try_into().unwrap_or(u32::MAX)
 }
 
 /// Per-wave grade weights, one step per wave from wave 1; the last step holds past the end.
@@ -58,26 +109,73 @@ impl GradeMix {
     /// # Errors
     /// If `steps` is empty, a step's weights are all zero, or a step's experienced-and-above
     /// share is below the step before it.
-    pub fn new(_steps: Vec<[u32; 5]>) -> Result<Self, GradeMixError> {
-        todo!()
+    pub fn new(steps: Vec<[u32; 5]>) -> Result<Self, GradeMixError> {
+        if steps.is_empty() {
+            return Err(GradeMixError::Empty);
+        }
+        let mut before: Option<(u128, u128)> = None;
+        for (step, wave) in steps.iter().zip(1..) {
+            let (high, total) = shares(step);
+            if total == 0 {
+                return Err(GradeMixError::NoWeight { wave });
+            }
+            if before.is_some_and(|(prev_high, prev_total)| high * prev_total < prev_high * total) {
+                return Err(GradeMixError::ShareFalls { wave });
+            }
+            before = Some((high, total));
+        }
+        Ok(Self { steps })
     }
 
     /// Every enemy of every wave is `grade`.
-    pub fn only(_grade: Grade) -> Self {
-        Self::default()
+    pub fn only(grade: Grade) -> Self {
+        Self {
+            steps: vec![Grade::LADDER.map(|on_ladder| u32::from(on_ladder == grade))],
+        }
     }
 
     /// The counts for `wave` (from 1) of `size` enemies, never with a smaller
     /// experienced-and-above share than `previous`, the wave before.
-    pub fn grades(&self, _wave: u32, _size: u32, _previous: Option<WaveGrades>) -> WaveGrades {
-        WaveGrades { counts: [0; 5] }
+    ///
+    /// The experienced-and-above count is the step's share of `size`, rounded half up, raised
+    /// to carry the share of `previous` over; each of the two groups is then split among its
+    /// grades by weight.
+    pub fn grades(&self, wave: u32, size: u32, previous: Option<WaveGrades>) -> WaveGrades {
+        let last = self.steps.len() - 1;
+        let step =
+            &self.steps[usize::try_from(wave.saturating_sub(1)).map_or(last, |at| at.min(last))];
+        let (share, total) = shares(step);
+        let wanted = (2 * u128::from(size) * share + total) / (2 * total);
+        let carried = previous
+            .filter(|before| before.size() != 0)
+            .map_or(0, |before| {
+                let scaled = u128::from(before.experienced_and_above()) * u128::from(size);
+                scaled.div_ceil(u128::from(before.size()))
+            });
+        let high = saturating_u32(wanted.max(carried)).min(size);
+        let (low_counts, high_counts) = (
+            split(size - high, &step[..FIRST_HIGH]),
+            split(high, &step[FIRST_HIGH..]),
+        );
+        let mut counts = [0; 5];
+        counts[..FIRST_HIGH].copy_from_slice(&low_counts);
+        counts[FIRST_HIGH..].copy_from_slice(&high_counts);
+        WaveGrades { counts }
     }
 }
 
 impl Default for GradeMix {
     fn default() -> Self {
         Self {
-            steps: vec![[0, 0, 1, 0, 0]],
+            steps: vec![
+                [5, 4, 1, 0, 0],
+                [4, 4, 2, 0, 0],
+                [3, 3, 3, 1, 0],
+                [2, 3, 3, 2, 0],
+                [1, 2, 4, 2, 1],
+                [1, 1, 3, 3, 2],
+                [0, 1, 3, 3, 3],
+            ],
         }
     }
 }
@@ -265,6 +363,18 @@ mod tests {
         let grades = GradeMix::only(Grade::Rookie).grades(1, 4, Some(previous));
 
         assert_eq!(counts(&grades), [0, 0, 4, 0, 0]);
+    }
+
+    #[test]
+    fn a_wave_of_the_largest_size_is_split_without_overflow() {
+        let mix = mix(vec![[u32::MAX; 5]]);
+        let previous = mix.grades(1, u32::MAX, None);
+
+        let grades = mix.grades(2, u32::MAX, Some(previous));
+
+        assert_eq!(grades.size(), u32::MAX);
+        assert!(grades.experienced_and_above() >= previous.experienced_and_above());
+        assert_eq!(grades.grade_of(u32::MAX - 1), Some(Grade::Professional));
     }
 
     #[test]
