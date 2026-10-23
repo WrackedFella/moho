@@ -106,6 +106,16 @@ impl PlayerController {
         self.pitch = (self.pitch + pitch_delta).clamp(-PITCH_LIMIT_RAD, PITCH_LIMIT_RAD);
     }
 
+    /// Strategy zoom height relative to the default; scales pan speed and eye distance.
+    fn zoom_ratio(&self) -> f32 {
+        self.rts_height / RTS_DEFAULT_HEIGHT
+    }
+
+    /// Strategy camera eye: the focus offset along the isometric diagonal by the zoom.
+    fn isometric_eye(&self) -> Vec3 {
+        self.rts_look_target + ISOMETRIC_CAMERA_OFFSET * self.zoom_ratio()
+    }
+
     /// Advance the controller by `dt` seconds of `input`.
     ///
     /// `ground_height(x, z)` is the surface height at a world column, `None` when the
@@ -177,7 +187,7 @@ impl PlayerController {
                 // No up/down movement in isometric mode
 
                 if dir.length_squared() > 0.0 {
-                    let zoom_scaled_speed = self.speed * self.rts_height / RTS_DEFAULT_HEIGHT;
+                    let zoom_scaled_speed = self.speed * self.zoom_ratio();
                     self.rts_look_target += dir.normalize_or_zero() * zoom_scaled_speed * dt;
                 }
 
@@ -189,13 +199,9 @@ impl PlayerController {
                 }
 
                 // Clamp: raise the whole camera when the eye would sit inside the terrain.
-                let eye = self.rts_look_target
-                    + ISOMETRIC_CAMERA_OFFSET * self.rts_height / RTS_DEFAULT_HEIGHT;
+                let eye = self.isometric_eye();
                 if let Some(surface) = ground_height(eye.x, eye.z) {
-                    let shortfall = surface + CAMERA_CLEARANCE - eye.y;
-                    if shortfall > 0.0 {
-                        self.rts_look_target.y += shortfall;
-                    }
+                    self.rts_look_target.y += (surface + CAMERA_CLEARANCE - eye.y).max(0.0);
                 }
             }
         }
@@ -253,9 +259,7 @@ pub fn controller_to_camera(pc: &PlayerController) -> (Mat4, Mat4, Vec3) {
         CameraMode::Isometric => {
             // RTS camera: birds-eye view with zoomable height
             // Camera distance scales with height for consistent zoom feel
-            let height_ratio = pc.rts_height / RTS_DEFAULT_HEIGHT;
-            let camera_offset = ISOMETRIC_CAMERA_OFFSET * height_ratio;
-            let eye = pc.rts_look_target + camera_offset;
+            let eye = pc.isometric_eye();
             let center = pc.rts_look_target;
             let up = Vec3::Y;
             let view = look_at_mat4(eye, center, up);
