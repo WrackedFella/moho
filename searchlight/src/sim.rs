@@ -85,10 +85,11 @@ pub struct SimConfig {
     /// Ticks between one shot and the next allowed pull: shots on ticks `t` and
     /// `t + cooldown_ticks` are both allowed, one on `t + cooldown_ticks - 1` is not.
     pub cooldown_ticks: u32,
-    /// Ticks a reload takes: pressed on tick `t`, it completes on tick `t + reload_ticks`,
-    /// where the new magazine is in and the rifle can fire again.
+    /// Ticks a tactical reload (round in the chamber) takes: pressed on tick `t`, it
+    /// completes on tick `t + reload_ticks`, where the new magazine is in and the rifle
+    /// can fire again.
     pub reload_ticks: u32,
-    /// Extra ticks a reload takes when the chamber is empty.
+    /// Ticks added to `reload_ticks` when the chamber is empty at the press.
     pub charge_ticks: u32,
     /// Pools of the dummies', enemies' and the player's bodies.
     pub body: BodyProfile,
@@ -652,10 +653,15 @@ impl SearchlightSim {
         if matches!(self.weapon, Weapon::Reloading(_)) || self.spares.is_empty() {
             return;
         }
-        if self.reload_ticks == 0 {
+        let total = if self.rifle.is_chambered() {
+            self.reload_ticks
+        } else {
+            self.reload_ticks + self.charge_ticks
+        };
+        if total == 0 {
             self.finish_reload();
         } else {
-            self.weapon = Weapon::Reloading(self.reload_ticks);
+            self.weapon = Weapon::Reloading(total);
         }
     }
 
@@ -1083,8 +1089,16 @@ mod tests {
                 ticks.iter().flatten().all(|fb| *fb != Feedback::Dry),
                 "chambered {chambered}: dry feedback during the reload"
             );
-            assert_eq!(ticks[duration], [Feedback::ReloadDone], "chambered {chambered}");
-            assert_eq!(sim.rifle().magazine().rounds(), rounds, "chambered {chambered}");
+            assert_eq!(
+                ticks[duration],
+                [Feedback::ReloadDone],
+                "chambered {chambered}"
+            );
+            assert_eq!(
+                sim.rifle().magazine().rounds(),
+                rounds,
+                "chambered {chambered}"
+            );
             assert_eq!(sim.spares(), [ejected], "chambered {chambered}");
             assert!(sim.rifle().is_chambered());
         }

@@ -25,9 +25,9 @@ pub struct RifleDef {
     pub fire: FireBehaviour,
     /// Ticks between one shot and the next allowed pull.
     pub cooldown_ticks: u32,
-    /// Ticks a reload takes.
+    /// Ticks a tactical reload (round in the chamber) takes.
     pub reload_ticks: u32,
-    /// Extra ticks a reload takes when the chamber is empty, to charge the rifle.
+    /// Ticks added to `reload_ticks` when the chamber is empty, to charge the rifle.
     pub charge_ticks: u32,
     /// How far a shot reaches, in metres.
     pub range: f32,
