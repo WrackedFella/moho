@@ -64,6 +64,7 @@ pub struct Prefs {
     // Graphics settings
     graphics_shadow_quality: u32, // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
     graphics_ssao_quality: u32,   // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
+    graphics_brightness: f32,
     // Video settings
     window_mode: WindowMode,
     window_resolution: (u32, u32),
@@ -80,6 +81,10 @@ pub struct Prefs {
 }
 
 const MAX_GRAPHICS_QUALITY: u32 = 4;
+/// Brightness is a linear exposure multiplier.
+const MIN_BRIGHTNESS: f32 = 0.5;
+const MAX_BRIGHTNESS: f32 = 2.0;
+const DEFAULT_BRIGHTNESS: f32 = 1.0;
 
 /// Why a debug name or value was refused.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -185,7 +190,7 @@ impl Prefs {
     }
     /// Scene exposure multiplier, within `0.5..=2.0`.
     pub fn brightness(&self) -> f32 {
-        0.0
+        self.graphics_brightness
     }
     pub fn world_load_radius(&self) -> u32 {
         self.world_load_radius
@@ -261,7 +266,13 @@ impl Prefs {
     }
 
     /// Stores the scene exposure multiplier, clamped to `0.5..=2.0`; NaN gives the default.
-    pub fn set_brightness(&mut self, _brightness: f32) {}
+    pub fn set_brightness(&mut self, brightness: f32) {
+        self.graphics_brightness = if brightness.is_nan() {
+            DEFAULT_BRIGHTNESS
+        } else {
+            brightness.clamp(MIN_BRIGHTNESS, MAX_BRIGHTNESS)
+        };
+    }
 
     pub fn set_window_mode(&mut self, mode: WindowMode) {
         self.window_mode = mode;
@@ -327,6 +338,7 @@ impl Default for Prefs {
             // Default graphics settings (High)
             graphics_shadow_quality: 3,
             graphics_ssao_quality: 3,
+            graphics_brightness: DEFAULT_BRIGHTNESS,
             // Default video settings
             window_mode: WindowMode::Windowed,
             window_resolution: (1920, 1080),
@@ -374,6 +386,7 @@ impl Prefs {
              \n[graphics]\n\
              shadow_quality={shadow}\n\
              ssao_quality={ssao}\n\
+             brightness={brightness:.2}\n\
              \n[video]\n\
              window_mode={window_mode}\n\
              window_width={width}\n\
@@ -395,6 +408,7 @@ impl Prefs {
             voice = self.audio_voice_volume,
             shadow = self.graphics_shadow_quality,
             ssao = self.graphics_ssao_quality,
+            brightness = self.graphics_brightness,
             window_mode = self.window_mode.as_str(),
             width = self.window_resolution.0,
             height = self.window_resolution.1,

@@ -130,6 +130,10 @@ const KNOWN_KEYS: &[(&str, &str, Setter)] = &[
     ("graphics", "ssao_quality", |p, s| {
         set(&mut p.graphics_ssao_quality, parse_u32(s))
     }),
+    ("graphics", "brightness", |p, s| {
+        p.set_brightness(parse_f32(s)?);
+        Some(())
+    }),
     ("video", "window_mode", |p, s| {
         set(&mut p.window_mode, WindowMode::parse(s))
     }),

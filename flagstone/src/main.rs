@@ -185,6 +185,10 @@ impl App {
             self.pending_render
                 .push(RenderRequest::Vsync(config.prefs.vsync()));
         }
+        if config.prefs.brightness() != self.prefs.brightness() {
+            self.pending_render
+                .push(RenderRequest::Brightness(config.prefs.brightness()));
+        }
         self.set_pending_frame_cap(config.prefs.frame_cap());
         self.prefs = config.prefs;
     }

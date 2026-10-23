@@ -872,7 +872,11 @@ impl SearchlightGame {
     }
 
     /// Hands the renderer the Brightness the debug settings' prefs hold.
-    fn apply_saved_brightness(&self, _renderer: &mut dyn RendererBackend) {}
+    fn apply_saved_brightness(&self, renderer: &mut dyn RendererBackend) {
+        if let Some(settings) = &self.debug_settings {
+            renderer.set_brightness(settings.prefs().brightness());
+        }
+    }
 
     /// Applies the console's queued commands in order, saves god mode once if they changed it,
     /// and reports the value after each bare `tgm`.

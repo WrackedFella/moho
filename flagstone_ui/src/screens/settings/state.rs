@@ -168,7 +168,10 @@ impl SettingsState {
     }
 
     /// Stage a Brightness (clamped by the prefs) and mark it dirty.
-    pub fn set_brightness(&mut self, _brightness: f32) {}
+    pub fn set_brightness(&mut self, brightness: f32) {
+        self.staged.set_brightness(brightness);
+        self.mark_dirty(SettingsField::Brightness);
+    }
 
     /// Whether the staged bindings or mode of `action` differ from the saved ones.
     pub fn is_binding_modified(&self, action: StrategyAction) -> bool {

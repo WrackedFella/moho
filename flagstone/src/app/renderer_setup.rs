@@ -26,9 +26,7 @@ pub fn init_renderer_and_ui(
     window: &Arc<Window>,
     renderer: &mut dyn moho_renderer::RendererBackend,
 ) {
-    // Apply initial quality settings
-    renderer.set_shadow_quality(app.prefs.shadow_quality() as u8);
-    renderer.set_ssao_quality(app.prefs.ssao_quality() as u8);
+    apply_saved_render_settings(&app.prefs, renderer);
 
     let (vertices, normals, indices) = flagstone_game::actors::Sphere::unit_sphere_indexed(16, 16);
     let mesh_handle = register_entity_mesh(renderer, &vertices, &normals, &indices);
@@ -214,9 +212,12 @@ fn register_entity_mesh(
 
 /// Applies the saved render settings (quality and Brightness) to `renderer` at start.
 pub fn apply_saved_render_settings(
-    _prefs: &moho_core::prefs::Prefs,
-    _renderer: &mut dyn moho_renderer::RendererBackend,
+    prefs: &moho_core::prefs::Prefs,
+    renderer: &mut dyn moho_renderer::RendererBackend,
 ) {
+    renderer.set_shadow_quality(prefs.shadow_quality() as u8);
+    renderer.set_ssao_quality(prefs.ssao_quality() as u8);
+    renderer.set_brightness(prefs.brightness());
 }
 
 pub fn apply_video_settings(prefs: &moho_core::prefs::Prefs, window: &Window) {

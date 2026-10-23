@@ -187,7 +187,8 @@ impl App {
                 RenderRequest::SsaoQuality(quality) => renderer.set_ssao_quality(quality),
                 RenderRequest::ViewHeight(height) => renderer.set_view_height(height),
                 RenderRequest::Vsync(on) => renderer.set_vsync(on),
-                RenderRequest::Brightness(_) | RenderRequest::ToneMap(_) => {}
+                RenderRequest::Brightness(brightness) => renderer.set_brightness(brightness),
+                RenderRequest::ToneMap(enabled) => renderer.set_tone_map(enabled),
             }
         }
     }

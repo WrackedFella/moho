@@ -19,7 +19,9 @@ pub fn apply_engine_command(command: &EngineCommand, ctx: &mut FrameContext<'_>)
         EngineCommand::SsaoQuality(quality) => {
             with_renderer(command, ctx, |r| r.set_ssao_quality(*quality));
         }
-        EngineCommand::ToneMap(_) => {}
+        EngineCommand::ToneMap(enabled) => {
+            with_renderer(command, ctx, |r| r.set_tone_map(*enabled));
+        }
         EngineCommand::PlaySoundAt {
             path,
             position,

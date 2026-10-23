@@ -560,7 +560,7 @@ mod tests {
         let printed: Vec<String> = console.output().lines().iter().cloned().collect();
         let echo = printed.iter().position(|l| l == "> help");
         let help = &printed[echo.expect("help is echoed") + 1..];
-        assert_eq!(help.len(), 15, "{help:?}");
+        assert_eq!(help.len(), 16, "{help:?}");
         for prefix in [
             "  help - ",
             "  clear - ",
@@ -568,6 +568,7 @@ mod tests {
             "  r_debug_view <0-7> - ",
             "  r_shadow_quality <0-4> - ",
             "  r_ssao_quality <0-4> - ",
+            "  r_tonemap <0|1> - ",
             "  audio_cue <path> <x> <y> <z> [volume] - ",
             "  god - ",
             "  noclip - ",

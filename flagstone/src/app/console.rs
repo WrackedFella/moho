@@ -4,7 +4,7 @@ use flagstone_ui::console_commands::StrategyConsoleCommand;
 use moho_core::events::{AudioEvent, DebugEvent, GraphicsEvent, UiEvent};
 use moho_ui_shell::EngineCommand;
 
-use crate::App;
+use crate::{App, RenderRequest};
 
 /// Applies one strategy console command to `app` by publishing the event whose handler does the
 /// work in the same tick.
@@ -80,6 +80,9 @@ pub fn apply_engine_command(app: &mut App, command: &EngineCommand) {
             app.event_bus.publish(DebugEvent::SetSsaoQuality {
                 quality: u32::from(*quality),
             });
+        }
+        EngineCommand::ToneMap(enabled) => {
+            app.pending_render.push(RenderRequest::ToneMap(*enabled));
         }
         EngineCommand::PlaySoundAt {
             path,
