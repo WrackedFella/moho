@@ -46,7 +46,7 @@ flowchart LR
 | `menu` | `Menu`: the main menu (Play, Settings, Quit) or pause menu (Resume, Settings, Quit) as a pure value (selection with wrap, hover and click hit-testing in logical points, the `ScreenText` rows that draw it); `MenuAction` is what choosing an item asks the game to do |
 | `console_commands` | Builds the FPS `Console` from the game's `[bindings]`; the game's own commands register here (`tgm`, parsed into `ConsoleCommand`) |
 | `debug_settings` | `DebugSettings`: the loaded `Prefs` and its path; reads and saves the game's `[debug]` values (`god_mode`) |
-| `game` | `SearchlightGame`, the `moho_app::Game` implementation: samples look every frame while focused, playing and the console is closed (the camera draws the sim turned by the pending look, and `input::look_to_turn` is the one look mapping for command and camera), samples input, ticks the `ArenaMode`, turns `Feedback` into sound, title status line, hit flash, damage-direction edge, death tint and crosshair; asks the loop to pause while the shell captures input (console open) or the main menu shows, so the sim freezes instead of ticking with an ignored command; while it does, `command()` still applies console commands but does not end the action-map tick, so the look already shown stays pending and is not lost |
+| `game` | `SearchlightGame`, the `moho_app::Game` implementation: samples look every frame while focused, playing and the console is closed (the camera draws the sim turned by the pending look, and `input::look_to_turn` is the one look mapping for command and camera), samples input, ticks the `ArenaMode`, turns `Feedback` into sound, title status line, hit flash, damage-direction edge, death tint and crosshair; asks the loop to pause while the shell captures input (console open) or a menu shows (main or pause), so the sim freezes instead of ticking with an ignored command; while it does, `command()` still applies console commands but does not end the action-map tick, so the look already shown stays pending and is not lost |
 
 `SearchlightSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
 `Feedback` is the only output: `SearchlightSim::tick` queues it, the game drains it
@@ -60,8 +60,8 @@ profile, `EnemyTuning`, the player part enemies aim at) as a `SimConfig`.
 `SearchlightGame` owns a `moho_ui_shell::UiShell` behind an `Arc<Mutex<_>>` and composes it with the
 crosshair through `UiLayers` as the renderer's one UI source. Every key and button goes to the
 shell first (`route_input`): the console toggle key opens it, `release_all` drops held game keys,
-and while it is open input does not reach the game. Escape closes the console instead of
-exiting. Engine commands typed in the console (`quit`, `r_debug_view`, `r_shadow_quality`,
+and while it is open input does not reach the game. Escape closes the console and does not
+pause. Engine commands typed in the console (`quit`, `r_debug_view`, `r_shadow_quality`,
 `r_ssao_quality`, `audio_cue`) return as `EngineCommand` values and apply on the next
 frame through `apply_engine_command`, which reaches the renderer (`RendererBackend`) and audio
 through `FrameContext`; with neither present the command is dropped. Console commands are hidden debug commands
@@ -83,7 +83,7 @@ arena scene, so the dormant sim is untouched.
 
 Escape in play (when the console did not take it) switches to `Paused`: it swaps in the pause menu, drops held
 input, pending edges and look, and frees the cursor. The paused frame keeps the arena scene, hides the HUD and
-draws the menu rows over it; `tick` ignores any tick that still arrives before the loop sees the pause. Escape on the
+draws the menu rows over it. Escape on the
 pause menu resumes. Console routing still comes first.
 
 Window mode: `main.rs` passes F11 as `AppConfig::toggle_keys` (Alt+Enter always works). After a flip the runner calls `SearchlightGame::window_mode_changed`, which releases held keys, drops pending look and, unless the shell captures input, grabs the cursor again, since the platform loses key releases and the grab across the change.

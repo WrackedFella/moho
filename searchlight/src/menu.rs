@@ -1,4 +1,4 @@
-//! The main menu as a pure value: which item is selected, what a key or a click on it
+//! The main and pause menus as a pure value: which item is selected, what a key or a click on it
 //! chooses, and the text that draws it. It owns no window and no input state.
 
 use moho_ui_shell::{Anchor, ScreenText};

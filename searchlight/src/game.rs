@@ -956,10 +956,6 @@ impl Game for SearchlightGame {
     }
 
     fn tick(&mut self, ctx: &mut TickContext<'_>, command: &SearchlightCommand) {
-        // The loop learns of a pause from the next frame, so a tick can still arrive first.
-        if self.screen == Screen::Paused {
-            return;
-        }
         self.previous = self.mode.sim().player();
         let was_dead = self.mode.sim().player_body().is_dead();
         self.mode.tick(command, ctx.tick_length.as_secs_f32());
