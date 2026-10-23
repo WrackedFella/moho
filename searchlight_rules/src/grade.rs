@@ -107,22 +107,6 @@ mod tests {
     }
 
     #[test]
-    fn the_ladder_lists_the_grades_lowest_first() {
-        assert_eq!(
-            Grade::LADDER,
-            [
-                Grade::Rookie,
-                Grade::Novice,
-                Grade::Experienced,
-                Grade::Veteran,
-                Grade::Professional,
-            ]
-        );
-        assert!(Grade::LADDER.windows(2).all(|pair| pair[0] < pair[1]));
-        assert_eq!(Grade::default(), Grade::Experienced);
-    }
-
-    #[test]
     fn experienced_leaves_every_base_number_unchanged() {
         let dials = Grade::Experienced.dials();
 

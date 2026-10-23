@@ -3823,14 +3823,26 @@ mod grade_tests {
     #[test]
     fn a_professional_fires_its_first_shot_before_a_rookie() {
         let rookie = first_shot_tick(Grade::Rookie);
+        let experienced = first_shot_tick(Grade::Experienced);
         let professional = first_shot_tick(Grade::Professional);
 
-        let (Some(rookie), Some(professional)) = (rookie, professional) else {
-            panic!("both fire within 150 ticks: rookie {rookie:?}, professional {professional:?}");
+        let (Some(rookie), Some(experienced), Some(professional)) =
+            (rookie, experienced, professional)
+        else {
+            panic!(
+                "all fire within 150 ticks: rookie {rookie:?}, experienced {experienced:?}, \
+                 professional {professional:?}"
+            );
         };
         assert!(
             professional < rookie,
             "professional {professional}, rookie {rookie}"
+        );
+        assert_eq!(rookie - experienced, 30, "base reaction 30 doubled to 60");
+        assert_eq!(
+            experienced - professional,
+            15,
+            "base reaction 30 halved to 15"
         );
     }
 
@@ -3873,16 +3885,46 @@ mod grade_tests {
 
     #[test]
     fn a_professional_fires_more_shots_than_a_rookie_in_the_same_time() {
-        let shots = |grade| {
+        // The ticks of each shot in the 120 ticks from the enemy's own first shot.
+        let shot_ticks = |grade| -> Vec<usize> {
             let mut sim = duel(grade, config());
-            count(&run(&mut sim, 300, true), enemy_fired)
+            let ticks = run(&mut sim, 300, true);
+            let first = ticks
+                .iter()
+                .position(|tick| tick.iter().any(enemy_fired))
+                .expect("the enemy fires within 300 ticks");
+            ticks
+                .iter()
+                .enumerate()
+                .skip(first)
+                .take(120)
+                .filter(|(_, tick)| tick.iter().any(enemy_fired))
+                .map(|(at, _)| at)
+                .collect()
+        };
+        let gaps = |ticks: &[usize]| -> Vec<usize> {
+            ticks.windows(2).map(|pair| pair[1] - pair[0]).collect()
         };
 
-        let rookie = shots(Grade::Rookie);
-        let professional = shots(Grade::Professional);
+        let rookie = shot_ticks(Grade::Rookie);
+        let experienced = shot_ticks(Grade::Experienced);
+        let professional = shot_ticks(Grade::Professional);
 
-        assert!(rookie > 0, "the rookie never fired");
-        assert!(professional > rookie, "{professional} vs {rookie}");
+        assert!(rookie.len() > 1, "the rookie never fired twice");
+        assert!(
+            professional.len() > rookie.len(),
+            "{professional:?} vs {rookie:?}"
+        );
+        assert!(gaps(&rookie).iter().all(|&gap| gap == 24), "{rookie:?}");
+        assert!(
+            gaps(&experienced).iter().all(|&gap| gap == 12),
+            "{experienced:?}"
+        );
+        assert!(
+            gaps(&professional).iter().all(|&gap| gap == 8),
+            "{professional:?}"
+        );
+        assert!(experienced.len() > 1 && professional.len() > 1);
     }
 
     /// An enemy of `grade` out of sight of the player, as the only target.
@@ -3893,9 +3935,11 @@ mod grade_tests {
         duel(grade, config)
     }
 
-    /// How many hits of the fixed sequence it takes to kill the enemy of `grade`.
-    fn hits_to_kill(grade: Grade) -> usize {
+    /// The enemy of `grade`'s body after each hit of a fixed sequence, up to and including the
+    /// killing one.
+    fn bodies_until_dead(grade: Grade) -> Vec<Body> {
         let mut sim = calm_enemy(grade);
+        let mut bodies = Vec::new();
         let sequence = [
             (BodyPart::Torso, 30),
             (BodyPart::LeftArm, 20),
@@ -3906,11 +3950,13 @@ mod grade_tests {
             (BodyPart::Torso, 30),
         ];
         let from = sim.player().position;
-        for (hit, (part, damage)) in sequence.into_iter().enumerate() {
+        for (part, damage) in sequence {
             sim.apply_player_hit(0, part, damage, from);
-            let dead = sim.enemy_body(0).expect("the enemy exists").is_dead();
+            let body = sim.enemy_body(0).expect("the enemy exists").clone();
+            let dead = body.is_dead();
+            bodies.push(body);
             if dead {
-                return hit + 1;
+                return bodies;
             }
         }
         panic!("{grade:?} survived the whole sequence");
@@ -3918,9 +3964,9 @@ mod grade_tests {
 
     #[test]
     fn every_grade_dies_on_the_same_hit_as_an_experienced_enemy() {
-        let experienced = hits_to_kill(Grade::Experienced);
+        let experienced = bodies_until_dead(Grade::Experienced);
 
-        assert!(experienced > 1, "the sequence kills in one hit");
+        assert!(experienced.len() > 1, "the sequence kills in one hit");
         for grade in [
             Grade::Rookie,
             Grade::Novice,
@@ -3929,7 +3975,7 @@ mod grade_tests {
         ] {
             let sim = calm_enemy(grade);
             assert_eq!(sim.enemy_grade(0), Some(grade));
-            assert_eq!(hits_to_kill(grade), experienced, "{grade:?}");
+            assert_eq!(bodies_until_dead(grade), experienced, "{grade:?}");
         }
     }
 
@@ -3968,6 +4014,11 @@ mod grade_tests {
         );
         let mut sim = SearchlightSim::start(arena, config());
         let at_start = (sim.enemy_grade(0), sim.enemy_grade(1), sim.enemy_grade(2));
+        sim.kill_enemy(0);
+        sim.tick(&command(true), DT);
+        sim.spawn_enemy(0, Grade::Rookie)
+            .expect("the dead enemy left marker 0");
+        let spawned = sim.enemy_grade(2);
         sim.kill_player();
 
         sim.tick(
@@ -3982,6 +4033,7 @@ mod grade_tests {
             at_start,
             (Some(Grade::Experienced), Some(Grade::Experienced), None)
         );
+        assert_eq!(spawned, Some(Grade::Rookie));
         assert_eq!(sim.enemy_count(), 2);
         assert_eq!(sim.enemy_grade(0), Some(Grade::Experienced));
         assert_eq!(sim.enemy_grade(1), Some(Grade::Experienced));

@@ -452,7 +452,10 @@ mod tests {
 
     #[test]
     fn grading_changes_only_reaction_cooldown_and_aim_error() {
-        let base = EnemyTuning::default();
+        let base = EnemyTuning {
+            aim_error: 0.05,
+            ..tuning()
+        };
 
         for grade in Grade::LADDER {
             let dials = grade.dials();
@@ -468,10 +471,10 @@ mod tests {
             assert_eq!(graded, expected, "{grade:?}");
         }
         let rookie = base.graded(Grade::Rookie);
-        assert_eq!(rookie.reaction_ticks, 60);
-        assert_eq!(rookie.cooldown_ticks, 24);
+        assert_eq!(rookie.reaction_ticks, 6);
+        assert_eq!(rookie.cooldown_ticks, 8);
         assert!(
-            (rookie.aim_error - 0.09).abs() < 1e-6,
+            (rookie.aim_error - 0.15).abs() < 1e-6,
             "{}",
             rookie.aim_error
         );
