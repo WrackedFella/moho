@@ -9,7 +9,7 @@ use moho_input::bindings::Input;
 use moho_level::NavMesh;
 use moho_physics::{MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
-use searchlight_rules::{BodyPart, BodyProfile, Magazine, Rifle};
+use searchlight_rules::{BodyPart, BodyProfile, LeanTuning, Magazine, Rifle};
 
 use crate::arena::{Arena, nav_profile};
 use crate::brain::EnemyTuning;
@@ -123,6 +123,12 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
         spares,
         enemy: enemy_tuning(),
         enemy_aim_at: BodyPart::Torso,
+        lean: LeanTuning {
+            shift: 0.35,
+            roll: 12.0_f32.to_radians(),
+            blend_seconds: 0.25,
+            speed_factor: 0.5,
+        },
     }
 }
 

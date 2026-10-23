@@ -1,7 +1,9 @@
 //! The simulation's tuning, with the rifle's numbers taken from its definition.
 
 use moho_physics::MoveSettings;
-use searchlight_rules::{BodyPart, BodyProfile, Magazine, MagazineError, Rifle, RifleDef};
+use searchlight_rules::{
+    BodyPart, BodyProfile, LeanTuning, Magazine, MagazineError, Rifle, RifleDef,
+};
 
 use crate::brain::EnemyTuning;
 use crate::sim::SimConfig;
@@ -42,6 +44,12 @@ pub fn tuning(rifle: &RifleDef) -> Result<SimConfig, MagazineError> {
         spares: vec![full; SPARE_MAGAZINES],
         enemy: EnemyTuning::default(),
         enemy_aim_at: BodyPart::Torso,
+        lean: LeanTuning {
+            shift: 0.35,
+            roll: 12.0_f32.to_radians(),
+            blend_seconds: 0.25,
+            speed_factor: 0.5,
+        },
     })
 }
 

@@ -1172,7 +1172,7 @@ mod tests {
     use super::*;
     use crate::sim::Feedback;
     use crate::test_support::{arena_with, mag, press, test_config, wave_tuning};
-    use searchlight_rules::{Grade, Rifle};
+    use searchlight_rules::{Grade, LeanSide, Rifle};
 
     fn game() -> SearchlightGame {
         let mode = ArenaMode::new(
@@ -1328,6 +1328,83 @@ mod tests {
         assert_eq!(game.previous, before);
         assert_ne!(game.previous, game.sim().player());
         assert!(!game.stage.status.is_empty());
+    }
+
+    #[test]
+    fn holding_q_puts_lean_left_on_the_command() {
+        let mut game = game();
+        press(game.input_mut(), SearchlightAction::LeanLeft);
+
+        let first = game.command();
+        let held = game.command();
+        press(game.input_mut(), SearchlightAction::LeanRight);
+        let switched = game.command();
+        game.input_mut().key(Key::E, false);
+        let back = game.command();
+        game.input_mut().key(Key::Q, false);
+        let released = game.command();
+
+        assert_eq!(
+            [
+                first.lean,
+                held.lean,
+                switched.lean,
+                back.lean,
+                released.lean
+            ],
+            [
+                Some(LeanSide::Left),
+                Some(LeanSide::Left),
+                Some(LeanSide::Right),
+                Some(LeanSide::Left),
+                None
+            ]
+        );
+    }
+
+    #[test]
+    fn a_captured_input_command_leans_nowhere() {
+        let mut game = game();
+        let clock = GameClock::default();
+        press(game.input_mut(), SearchlightAction::LeanLeft);
+        assert_eq!(game.command().lean, Some(LeanSide::Left));
+        open_the_console(&mut game, &clock);
+
+        let command = game.command();
+
+        assert_eq!(command.lean, None);
+    }
+
+    #[test]
+    fn the_drawn_eye_blends_the_lean_between_ticks() {
+        let mut game = game();
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let lean_left = SearchlightCommand {
+            lean: Some(LeanSide::Left),
+            ..SearchlightCommand::default()
+        };
+        tick_with(&mut game, &mut clock, &lean_left);
+        tick_with(&mut game, &mut clock, &lean_left);
+        let mut renderer = SettingsRenderer::default();
+
+        let view = draw_frame(&mut game, &mut renderer);
+
+        let tick = 1.0 / 60.0 / 0.25;
+        let blended = (tick + 2.0 * tick) / 2.0;
+        let standing = game.sim().player().position + Vec3::Y * game.sim().eye_height();
+        let eye = view.inverse().w_axis.truncate();
+        assert!(
+            (eye.x - standing.x - 0.35 * blended).abs() < 1e-3,
+            "the eye should sit {} m left, at {eye:?}",
+            0.35 * blended
+        );
+        assert!((eye.y - standing.y).abs() < 1e-3 && (eye.z - standing.z).abs() < 1e-3);
+        let up = view.transpose().col(1).truncate();
+        let roll = blended * 12.0_f32.to_radians();
+        assert!(
+            (up.x - roll.sin()).abs() < 1e-3,
+            "the view should roll {roll} rad left, up is {up:?}"
+        );
     }
 
     const BACKTICK: Input = Input::Key(Key::Backtick);

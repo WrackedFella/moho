@@ -6,7 +6,7 @@ use moho_input::bindings::{ActionBindings, Binding};
 use moho_input::key::{Key, MouseButton};
 use moho_input::{Action, LookSettings};
 use moho_physics::CharacterCommand;
-use searchlight_rules::Grade;
+use searchlight_rules::{Grade, LeanSide};
 
 /// Everything the player can ask of the prototype.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -20,6 +20,8 @@ pub enum SearchlightAction {
     Reload,
     CheckMagazine,
     Restart,
+    LeanLeft,
+    LeanRight,
 }
 
 impl Action for SearchlightAction {
@@ -33,6 +35,8 @@ impl Action for SearchlightAction {
         SearchlightAction::Reload,
         SearchlightAction::CheckMagazine,
         SearchlightAction::Restart,
+        SearchlightAction::LeanLeft,
+        SearchlightAction::LeanRight,
     ];
 
     fn name(self) -> &'static str {
@@ -46,6 +50,8 @@ impl Action for SearchlightAction {
             SearchlightAction::Reload => "reload",
             SearchlightAction::CheckMagazine => "check_magazine",
             SearchlightAction::Restart => "restart",
+            SearchlightAction::LeanLeft => "lean_left",
+            SearchlightAction::LeanRight => "lean_right",
         }
     }
 
@@ -62,6 +68,8 @@ impl Action for SearchlightAction {
                 const { &[Binding::key(Key::C), Binding::key(Key::R).held()] }
             }
             SearchlightAction::Restart => const { &[Binding::key(Key::F8)] },
+            SearchlightAction::LeanLeft => const { &[Binding::key(Key::Q)] },
+            SearchlightAction::LeanRight => const { &[Binding::key(Key::E)] },
         }
     }
 }
@@ -116,6 +124,17 @@ pub struct SearchlightCommand {
     /// carried on every tick. A host action like `god_mode`: once commands are per player
     /// slot, only slot 0's is read.
     pub forced_grade: Option<Grade>,
+    /// The side the player holds a lean toward, after key resolution.
+    pub lean: Option<LeanSide>,
+}
+
+/// The lean side held this tick: a side pressed this tick wins (right on a same-tick tie),
+/// otherwise `previous` while it is still held, otherwise whichever side is held.
+pub fn resolve_lean(
+    _frame: &ActionFrame<SearchlightAction>,
+    _previous: Option<LeanSide>,
+) -> Option<LeanSide> {
+    None
 }
 
 /// Yaw and pitch deltas for a look. Mouse motion is right- and down-positive; positive yaw
@@ -148,6 +167,7 @@ impl SearchlightCommand {
             restart: frame.pressed(SearchlightAction::Restart),
             god_mode: false,
             forced_grade: None,
+            lean: None,
         }
     }
 }
@@ -391,6 +411,121 @@ mod tests {
         let command = SearchlightCommand::from_frame(&map.end_tick());
 
         assert_eq!(command, SearchlightCommand::default());
+    }
+
+    /// Ends the tick on `map` and resolves its lean against `previous`.
+    fn lean_after(
+        map: &mut ActionMap<SearchlightAction>,
+        previous: Option<LeanSide>,
+    ) -> Option<LeanSide> {
+        resolve_lean(&map.end_tick(), previous)
+    }
+
+    #[test]
+    fn a_lean_key_alone_leans_to_its_side_while_held_and_stops_on_release() {
+        let mut map = fresh_map();
+        press(&mut map, SearchlightAction::LeanLeft);
+        let down = lean_after(&mut map, None);
+        let held = lean_after(&mut map, down);
+        release(&mut map, SearchlightAction::LeanLeft);
+        let up = lean_after(&mut map, held);
+        press(&mut map, SearchlightAction::LeanRight);
+        let right = lean_after(&mut map, up);
+
+        assert_eq!(
+            [down, held, up, right],
+            [
+                Some(LeanSide::Left),
+                Some(LeanSide::Left),
+                None,
+                Some(LeanSide::Right)
+            ]
+        );
+    }
+
+    #[test]
+    fn no_lean_key_means_no_lean_even_after_a_lean() {
+        let mut map = fresh_map();
+
+        let idle = lean_after(&mut map, Some(LeanSide::Left));
+
+        assert_eq!(idle, None);
+    }
+
+    #[test]
+    fn a_key_already_held_with_no_previous_side_still_leans() {
+        let mut map = fresh_map();
+        press(&mut map, SearchlightAction::LeanLeft);
+        let _first = map.end_tick();
+
+        let held = lean_after(&mut map, None);
+
+        assert_eq!(held, Some(LeanSide::Left));
+    }
+
+    #[test]
+    fn pressing_e_while_q_is_held_leans_right() {
+        let mut map = fresh_map();
+        press(&mut map, SearchlightAction::LeanLeft);
+        let left = lean_after(&mut map, None);
+        press(&mut map, SearchlightAction::LeanRight);
+
+        let both = lean_after(&mut map, left);
+        let still = lean_after(&mut map, both);
+
+        assert_eq!(left, Some(LeanSide::Left));
+        assert_eq!(both, Some(LeanSide::Right));
+        assert_eq!(still, Some(LeanSide::Right));
+    }
+
+    #[test]
+    fn pressing_q_while_e_is_held_leans_left() {
+        let mut map = fresh_map();
+        press(&mut map, SearchlightAction::LeanRight);
+        let right = lean_after(&mut map, None);
+        press(&mut map, SearchlightAction::LeanLeft);
+
+        let both = lean_after(&mut map, right);
+
+        assert_eq!(both, Some(LeanSide::Left));
+    }
+
+    #[test]
+    fn releasing_e_with_q_still_held_leans_left() {
+        let mut map = fresh_map();
+        press(&mut map, SearchlightAction::LeanLeft);
+        let left = lean_after(&mut map, None);
+        press(&mut map, SearchlightAction::LeanRight);
+        let right = lean_after(&mut map, left);
+        release(&mut map, SearchlightAction::LeanRight);
+
+        let back = lean_after(&mut map, right);
+        let steady = lean_after(&mut map, back);
+
+        assert_eq!(right, Some(LeanSide::Right));
+        assert_eq!(back, Some(LeanSide::Left));
+        assert_eq!(steady, Some(LeanSide::Left));
+    }
+
+    #[test]
+    fn q_and_e_pressed_on_one_tick_lean_right() {
+        let mut map = fresh_map();
+        press(&mut map, SearchlightAction::LeanLeft);
+        press(&mut map, SearchlightAction::LeanRight);
+
+        let tied = lean_after(&mut map, None);
+
+        assert_eq!(tied, Some(LeanSide::Right));
+    }
+
+    #[test]
+    fn a_sampled_frame_carries_no_lean_for_the_game_to_fill() {
+        let mut map = fresh_map();
+        press(&mut map, SearchlightAction::LeanLeft);
+
+        let command = SearchlightCommand::from_frame(&map.end_tick());
+
+        assert_eq!(command.lean, None);
     }
 }
 
