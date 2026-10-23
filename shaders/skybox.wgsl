@@ -122,24 +122,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let dir = normalize(in.world_pos);
 
     // Sky colours come from the lighting uniform, shared with the ambient light
-    let zenith_color = lighting.sky_zenith.xyz;
-    let horizon_color = lighting.sky_horizon.xyz;
-    let ground_color = lighting.sky_ground.xyz;
-    
-    // Interpolate based on vertical direction
-    let t = dir.y; // -1 (down) to 1 (up)
-    
-    var sky_color: vec3<f32>;
-    if (t > 0.0) {
-        // Above horizon: blend from horizon to zenith
-        let blend = smoothstep(0.0, 0.6, t);
-        sky_color = mix(horizon_color, zenith_color, blend);
-    } else {
-        // Below horizon: fade to ground color
-        let blend = smoothstep(0.0, -0.3, t);
-        sky_color = mix(horizon_color, ground_color, blend);
-    }
-    
+    var sky_color = sky_gradient(
+        dir,
+        lighting.sky_zenith.xyz,
+        lighting.sky_horizon.xyz,
+        lighting.sky_ground.xyz
+    );
+
     // Add sun disk
     let sun_dir = normalize(lighting.sun_direction.xyz);
     let sun_col = lighting.sun_color.xyz;

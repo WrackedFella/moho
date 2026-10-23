@@ -49,7 +49,7 @@ nearest sampler for the PCSS blocker search (3).
 | | `ambient` | w sky-ambient strength; xyz unused |
 | | `params` | x time of day 0–24, y debug mode |
 | | `sky_zenith`, `sky_horizon`, `sky_ground` | xyz sky palette colour; filled by the renderer from `params.x` |
-| `MaterialGpu` | `albedo` | xyz albedo (terrain: top-face colour) |
+| `MaterialGpu` | `albedo` | xyz albedo (terrain: top-face colour); w gloss 0..1 for world meshes (`object_type` 0), 0 = matte, unused otherwise |
 | | `params` | xyz `[fuzz, ref_idx, transparent]` (terrain: side-face colour), w emissive |
 | `MultiLightShadowGpu` | `light0`–`light3` | one mat4 each: Sun, Moon, Dynamic 1, Dynamic 2 |
 | | `light_intensities` | x sun, y moon, z dyn 1, w dyn 2 |

@@ -162,6 +162,7 @@ pub(crate) fn arena_with(
         .collect();
     let nav = Arc::new(NavMesh::build(&meshes, nav_profile()).expect("box worlds build a navmesh"));
     Arc::new(Arena {
+        material_names: vec![None; meshes.len()],
         meshes,
         nav,
         player_spawn: player,

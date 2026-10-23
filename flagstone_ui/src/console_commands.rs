@@ -537,6 +537,21 @@ mod tests {
     }
 
     #[test]
+    fn help_shows_the_debug_view_range_as_zero_to_seven() {
+        let mut console = console();
+
+        console.submit("help");
+
+        let printed: Vec<String> = console.output().lines().iter().cloned().collect();
+        assert!(
+            printed
+                .iter()
+                .any(|l| l.starts_with("  r_debug_view <0-7> - ")),
+            "{printed:?}"
+        );
+    }
+
+    #[test]
     fn help_lists_engine_and_strategy_commands() {
         let mut console = console();
 
@@ -550,7 +565,7 @@ mod tests {
             "  help - ",
             "  clear - ",
             "  quit - ",
-            "  r_debug_view <0-6> - ",
+            "  r_debug_view <0-7> - ",
             "  r_shadow_quality <0-4> - ",
             "  r_ssao_quality <0-4> - ",
             "  audio_cue <path> <x> <y> <z> [volume] - ",

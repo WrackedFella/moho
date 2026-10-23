@@ -585,6 +585,33 @@ fn multibounce_ao(ao: f32, albedo: vec3<f32>) -> vec3<f32> {
     return max(vec3(ao), ((ao * a + b) * ao + c) * ao);
 }
 
+// Sky mirrored by a surface with Fresnel reflectance `f0` and roughness `r` (0 = mirror).
+// Rough surfaces bend the reflection toward the normal and blur it toward the ambient cube.
+// Sky exposure scales it outright, so a covered surface reflects exactly nothing.
+fn sky_reflection(
+    f0: vec3<f32>,
+    r: f32,
+    n: vec3<f32>,
+    v: vec3<f32>,
+    ao: f32,
+    sky_exposed: f32,
+) -> vec3<f32> {
+    let refl = reflect(-v, n);
+    let dominant = normalize(mix(refl, n, r * r));
+    let env = mix(
+        sky_gradient(
+            dominant,
+            lighting.sky_zenith.xyz,
+            lighting.sky_horizon.xyz,
+            lighting.sky_ground.xyz
+        ),
+        sky_ambient_cube(n),
+        r
+    );
+    let fresnel = f0 + (max(vec3(1.0 - r), f0) - f0) * pow(1.0 - saturate(dot(n, v)), 5.0);
+    return fresnel * env * mix(1.0, 0.4, r) * sky_exposed * ao;
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if (in.world_pos.y > camera.cam_pos.w) {
@@ -654,6 +681,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let is_terrain = in.object_type == 0u;
     let fuzz    = select(mat.params.x, 0.0, is_terrain);
     let ref_idx = select(mat.params.y, 0.0, is_terrain);
+    let gloss = select(0.0, clamp(mat.albedo.w, 0.0, 1.0), is_terrain);
 
     // Emissive short-circuit: skip all lighting, output flat colour * intensity.
     // Any material with params.w > 0 is treated as self-illuminating.
@@ -677,12 +705,20 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // use a Fresnel-based specular term and reduce diffuse contribution so
     // the object appears reflective/transparent rather than fully diffuse.
     var celestial: vec3<f32> = vec3<f32>(0.0, 0.0, 0.0);
+    var dielectric_fresnel = 0.0;
+    // Sky reflection inputs; reflectance stays zero unless a branch below sets them.
+    var reflects = false;
+    var reflect_f0 = vec3<f32>(0.0);
+    var reflect_roughness = 0.0;
     if (ref_idx > 0.0) {
         // Schlick's approximation for Fresnel
         let r0 = (1.0 - ref_idx) / (1.0 + ref_idx);
         let R0 = r0 * r0;
         let cos_theta = max(dot(N, V), 0.0);
         let F = R0 + (1.0 - R0) * pow(1.0 - cos_theta, 5.0);
+        dielectric_fresnel = F;
+        reflects = true;
+        reflect_f0 = vec3<f32>(R0);
 
         // Strong, sharp specular for dielectrics; use a high exponent
         // Apply sun shadow to sun lighting
@@ -708,7 +744,16 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         // For metals, fuzz represents surface roughness (0 = smooth, 1 = rough)
         // Detect if this is a metal: fuzz > 0.01 indicates metallic material
         let is_metal = step(0.01, fuzz);
-        
+        if (is_metal > 0.5) {
+            reflects = true;
+            reflect_f0 = final_albedo;
+            reflect_roughness = clamp(fuzz, 0.0, 1.0);
+        } else if (gloss > 0.0) {
+            reflects = true;
+            reflect_f0 = vec3<f32>(0.04);
+            reflect_roughness = 1.0 - gloss;
+        }
+
         // For metals: reduce diffuse, increase specular
         // For lambertian: normal diffuse, minimal specular
         let diff_strength = mix(1.0, 0.3, is_metal);
@@ -741,10 +786,17 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         celestial = ao * (diff_color + spec_color + diff_color_moon + spec_color_moon);
     }
     
-    // Ambient from the sky palette by facing. Dielectrics keep their weak ambient.
-    let ambient_scale = select(1.0, 0.1, ref_idx > 0.0);
+    // Ambient from the sky palette by facing. Metals diffuse less, and dielectrics keep a
+    // weak ambient that the reflected share (1 - F) cannot exceed.
+    let metal_ambient_scale = mix(1.0, 0.3, step(0.01, fuzz));
+    let ambient_scale = select(metal_ambient_scale, 0.1 * (1.0 - dielectric_fresnel), ref_idx > 0.0);
     let sky_ambient = final_albedo * sky_ambient_cube(N) * lighting.ambient.w * ambient_scale
         * in.sky_exposed * multibounce_ao(ao, final_albedo);
+    // Outside the sky-exposure floor below, so zero exposure reflects exactly nothing.
+    var sky_reflected = vec3<f32>(0.0);
+    if (reflects) {
+        sky_reflected = sky_reflection(reflect_f0, reflect_roughness, N, V, ao, in.sky_exposed);
+    }
 
     // Accumulate dynamic point light contributions
     // Iterate over all active point lights and add their contributions
@@ -801,6 +853,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let color = celestial * sky_gate
         + ao * point_light_contrib
         + sky_ambient
+        + sky_reflected
         + final_albedo * ao * in.block_light_rgb * BLOCK_LIGHT_GAIN;
     
     // For dielectrics we computed `alpha` above; otherwise alpha is opaque.
@@ -837,6 +890,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     } else if (debug_mode == 6u) {
         // Mode 6: Sky Ambient alone
         return vec4<f32>(sky_ambient, 1.0);
+    } else if (debug_mode == 7u) {
+        return vec4<f32>(sky_reflected, 1.0);
     }
 
     return vec4<f32>(color, out_alpha);

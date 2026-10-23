@@ -120,3 +120,32 @@ impl RenderMaterial for MaterialType {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_material_type_writes_gloss_zero() {
+        let materials = [
+            MaterialType::Lambertian { albedo: GRASS },
+            MaterialType::Metal {
+                albedo: STONE,
+                fuzz: 0.3,
+            },
+            MaterialType::Dielectric { ref_indx: 1.5 },
+            MaterialType::Emissive {
+                color: IRON_ORE,
+                intensity: 2.0,
+            },
+            MaterialType::VoxelTerrain {
+                top_albedo: GRASS,
+                side_albedo: DIRT,
+            },
+        ];
+
+        for material in materials {
+            assert_eq!(material.to_gpu().albedo[3], 0.0, "{material:?}");
+        }
+    }
+}

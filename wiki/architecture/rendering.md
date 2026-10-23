@@ -173,7 +173,7 @@ flowchart LR
 ```
 
 The egui UI is drawn by the UI pass from paint data (below); `finish_frame` only submits
-and presents. Shader sources are `shaders/*.wgsl` (`common`, `vertex`,
+and presents. Shader sources are `shaders/*.wgsl` (`common`, `sky`, `vertex`,
 `fragment`, `shadow`, `skybox`, `gtao`, `ssao_blur`, `pcss`, `instance`, `ui`, `marker`).
 
 Present mode: the surface starts on `Fifo` and the renderer keeps the present modes the
@@ -192,6 +192,7 @@ channels:
 color = celestial * max(sky_exposed, MIN_SKY_AMBIENT)   // sun and moon
       + ao * point_light_contrib
       + sky_ambient
+      + sky_reflected
       + albedo * ao * block_light_rgb * BLOCK_LIGHT_GAIN
 ```
 
@@ -199,8 +200,15 @@ Sky exposure gates the sun and moon terms (floor `MIN_SKY_AMBIENT` = 0.1). Point
 are not gated. Sky ambient is separate: an ambient cube over the sky palette (zenith up,
 ground down, horizon on the sides) weighted by the normal, scaled by `ambient.w`, sky
 exposure and a multibounce AO term. The palette is computed per frame from the time of
-day in `moho_renderer/src/sky.rs` and shared by the skybox. Block light
-adds on top, so torches and emissive blocks light caves and night surfaces the sky
+day in `moho_renderer/src/sky.rs` and shared by the skybox.
+
+Sky reflection (`sky_reflected`) is the sky gradient mirrored by metals (`fuzz` as roughness),
+dielectrics (Fresnel) and glossy world meshes (`MaterialGpu.albedo.w`, roughness `1 - gloss`),
+scaled by sky exposure outright, so a covered surface reflects nothing; debug view 7 shows it alone.
+`shaders/sky.wgsl` holds `sky_gradient`, concatenated ahead of both the main and skybox shaders
+(`main_shader_source`, `skybox_shader_source`), so a mirror shows the sky the player sees.
+
+Block light adds on top, so torches and emissive blocks light caves and night surfaces the sky
 leaves dark. A surface with no block light (entity meshes, level files) draws as sky
 exposure alone. Block light next to a strong emitter can push a channel past 1;
 `BLOCK_LIGHT_GAIN` (1.0) is the tuning knob.
