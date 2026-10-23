@@ -1034,7 +1034,7 @@ mod tests {
     fn default_registry_holds_grass_dirt_stone_and_iron_ore_as_terrain_materials() {
         let registry = MaterialRegistry::new();
 
-        assert_eq!(registry.len(), 4);
+        assert_eq!(registry.len(), 5);
         let expected = [
             (Vec3::new(0.3, 0.6, 0.3), Vec3::new(0.6, 0.5, 0.4)),
             (Vec3::new(0.6, 0.5, 0.4), Vec3::new(0.6, 0.5, 0.4)),
@@ -1051,7 +1051,15 @@ mod tests {
                 "material {id}"
             );
         }
-        assert_eq!(registry.material(4), None);
+        assert_eq!(
+            registry.material(4),
+            Some(&MaterialType::Emissive {
+                color: crate::CRYSTAL,
+                intensity: 1.0
+            }),
+            "material 4 is the crystal"
+        );
+        assert_eq!(registry.material(5), None);
     }
 
     #[test]
@@ -1105,7 +1113,7 @@ mod tests {
         };
 
         assert!(!default.is_empty());
-        assert_eq!(default.len(), 4);
+        assert_eq!(default.len(), 5);
         assert!(none.is_empty());
         assert_eq!(none.len(), 0);
     }

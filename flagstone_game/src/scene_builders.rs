@@ -363,26 +363,64 @@ mod tests {
         }
     }
 
-    #[test]
-    fn determine_crystal_stays_between_bedrock_band_and_surface_margin() {
-        let column_height = 20;
-        let mut inside = 0;
+    const CRYSTAL_TEST_COLUMN: i32 = 20;
 
+    /// Crystal positions in the 64x64 scan of a column of `CRYSTAL_TEST_COLUMN`,
+    /// over the heights `ys`.
+    fn crystal_positions(ys: std::ops::RangeInclusive<i32>, seed: u32) -> Vec<(i32, i32, i32)> {
+        let mut found = Vec::new();
         for x in 0..64 {
             for z in 0..64 {
-                for y in 0..=column_height + 1 {
-                    let crystal = determine_crystal(column_height, y, x, z, 42);
-                    if !(6..column_height - 8).contains(&y) {
-                        assert!(!crystal, "no crystal at y={y}");
-                    } else if crystal {
-                        inside += 1;
+                for y in ys.clone() {
+                    if determine_crystal(CRYSTAL_TEST_COLUMN, y, x, z, seed) {
+                        found.push((x, y, z));
                     }
                 }
             }
         }
+        found
+    }
 
-        assert!(inside > 0, "crystal appears inside the band");
-        assert!(inside < 200, "crystal stays rare: {inside}");
+    #[test]
+    fn determine_crystal_never_fires_outside_the_depth_band() {
+        let near_bedrock = crystal_positions(0..=5, 42);
+        let near_surface = crystal_positions(CRYSTAL_TEST_COLUMN - 8..=CRYSTAL_TEST_COLUMN + 1, 42);
+
+        assert!(near_bedrock.is_empty(), "{near_bedrock:?}");
+        assert!(near_surface.is_empty(), "{near_surface:?}");
+    }
+
+    #[test]
+    fn determine_crystal_is_rare_but_present_inside_the_depth_band() {
+        let inside = crystal_positions(6..=CRYSTAL_TEST_COLUMN - 9, 42);
+
+        assert!(!inside.is_empty(), "crystal appears inside the band");
+        assert!(inside.len() < 100, "crystal stays rare: {}", inside.len());
+    }
+
+    #[test]
+    fn crystal_uses_its_own_hash_salt_not_the_ore_roll() {
+        let band = crystal_positions(6..=CRYSTAL_TEST_COLUMN - 9, 42);
+
+        let crystal_without_ore = band
+            .iter()
+            .any(|&(x, y, z)| determine_resource_id(CRYSTAL_TEST_COLUMN, y, x, z, 42).is_none());
+
+        assert!(!band.is_empty(), "crystal appears inside the band");
+        assert!(
+            crystal_without_ore,
+            "every crystal also rolled ore, so the hash salt is shared"
+        );
+    }
+
+    #[test]
+    fn crystal_positions_differ_between_seeds() {
+        let seed_42 = crystal_positions(6..=CRYSTAL_TEST_COLUMN - 9, 42);
+        let seed_43 = crystal_positions(6..=CRYSTAL_TEST_COLUMN - 9, 43);
+
+        assert!(!seed_42.is_empty(), "seed 42 has crystal");
+        assert!(!seed_43.is_empty(), "seed 43 has crystal");
+        assert_ne!(seed_42, seed_43);
     }
 
     #[test]
