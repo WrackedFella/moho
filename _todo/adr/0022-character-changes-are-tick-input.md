@@ -1,10 +1,10 @@
 # 0022 — Character changes are tick input
 
-**Status:** Accepted (on merge); supersedes [0014](0014-characters-move-by-velocity.md) (accepted 2026-10-12)
+**Status:** Accepted (2026-10-21); supersedes [0014](0014-characters-move-by-velocity.md) (accepted 2026-10-12)
 
 ## Context
 
-[ADR-0014](0014-characters-move-by-velocity.md) split character movement into a velocity in state, rules in one pure step, and impacts reported. Its file still read Proposed although it was accepted on 2026-10-12. Three `PhysicsWorld` setters (position, added velocity, look) wrote character state outside the step. A replay or a predicting client of the command stream had no record of those writes, and when two systems wrote in one tick, call order decided the result. [ADR-0011](0011-simulation-stays-network-ready.md) promises that replays need only the initial state and the command sequence.
+[ADR-0014](0014-characters-move-by-velocity.md) split character movement into a velocity in state, rules in one pure step, and impacts reported. Three `PhysicsWorld` setters (position, added velocity, look) wrote character state outside the step. A replay or a predicting client of the command stream had no record of those writes, and when two systems wrote in one tick, call order decided the result. [ADR-0011](0011-simulation-stays-network-ready.md) promises that replays need only the initial state and the command sequence.
 
 ## Decision
 
