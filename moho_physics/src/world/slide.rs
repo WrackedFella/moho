@@ -498,6 +498,31 @@ mod tests {
     }
 
     #[test]
+    fn ground_below_finds_the_tread_just_behind_a_nosing_edge() {
+        let ledge = [ground(0.0, -10.0, 1.0)];
+
+        for z in [0.975_f32, 0.985, 0.995] {
+            for y in [1.17_f32, 1.2] {
+                let centre = Vec3::new(0.0, y, z);
+
+                let found = with_slider(&ledge, |slider| slider.ground_below(centre))
+                    .unwrap_or_else(|| panic!("z {z}, y {y}: no ground over the tread"));
+
+                assert!(
+                    found.normal.distance(Vec3::Y) < 1e-3,
+                    "z {z}, y {y}: {found:?}"
+                );
+                // The drop stops a 0.0115 skin short of the tread.
+                let drop = y - 1.15 - 0.0115;
+                assert!(
+                    (found.gap - drop).abs() < 0.005,
+                    "z {z}, y {y}: gap should be about {drop}: {found:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn ground_below_finds_no_ledge_past_the_flat_base() {
         let ledge = [ground(0.0, -10.0, 1.0)];
         let centre = Vec3::new(0.0, HOVER_Y, 1.25);

@@ -1216,9 +1216,19 @@ mod tests {
         (state(world, handle), impacts)
     }
 
-    /// Walks from the top landing of five `rise` m steps (0.3 m treads) at 6 m/s facing -Z
-    /// down to the bottom floor, asserting it is grounded after every tick and takes no impact.
+    /// Walks down five `rise` m steps (0.3 m treads) from the top landing at 2, 4 and 6 m/s and
+    /// from 20 start positions 1.37 cm apart, so the ticks meet the nosings at every phase.
     fn assert_descends_stairs_grounded(rise: f32) {
+        for speed in [2.0, 4.0, 6.0] {
+            for k in 0..20 {
+                assert_descends_stairs_grounded_from(rise, speed, 4.0 + k as f32 * 0.0137);
+            }
+        }
+    }
+
+    /// Walks from the landing at `start_z` at `speed` facing -Z down to the bottom floor,
+    /// asserting it is grounded after every tick and takes no impact.
+    fn assert_descends_stairs_grounded_from(rise: f32, speed: f32, start_z: f32) {
         let mut world = PhysicsWorld::new();
         world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
         world.set_world_mesh(
@@ -1229,23 +1239,24 @@ mod tests {
         let landing_y = 5.0 * rise + 1.15;
         let h = resting_then_moving(
             &mut world,
-            Vec3::new(0.0, landing_y + 0.05, 6.0),
+            Vec3::new(0.0, landing_y + 0.05, start_z),
             std::f32::consts::PI,
-            Vec3::new(0.0, 0.0, -6.0),
+            Vec3::new(0.0, 0.0, -speed),
         );
         let forward = CharacterCommand {
             forward: 1.0,
             ..idle()
         };
+        let what = format!("rise {rise}, {speed} m/s, start z {start_z}");
         let mut reached_the_bottom = false;
 
-        for tick in 0..200 {
+        for tick in 0..300 {
             let (now, impacts) = searchlight_tick(&mut world, h, &forward);
 
-            assert!(now.grounded, "rise {rise}, tick {tick}: airborne, {now:?}");
+            assert!(now.grounded, "{what}, tick {tick}: airborne, {now:?}");
             assert!(
                 impacts.is_empty(),
-                "rise {rise}, tick {tick}: {impacts:?}, {now:?}"
+                "{what}, tick {tick}: {impacts:?}, {now:?}"
             );
             if now.position.z < 1.0 {
                 reached_the_bottom = true;
@@ -1254,10 +1265,10 @@ mod tests {
         }
 
         let end = state(&world, h);
-        assert!(reached_the_bottom, "never got down: {end:?}");
+        assert!(reached_the_bottom, "{what}: never got down: {end:?}");
         assert!(
             (end.position.y - 1.15).abs() < 0.1,
-            "rise {rise}: standing on the bottom floor: {end:?}"
+            "{what}: standing on the bottom floor: {end:?}"
         );
     }
 
@@ -1574,6 +1585,53 @@ mod tests {
         assert!(
             (end.position.y - rest_height_on_floor()).abs() < 0.02,
             "stepped down onto the floor: {end:?}"
+        );
+    }
+
+    /// A 0.3 m step over a floor, nosing at z = 1, with an idle walker whose centre is `past` m
+    /// beyond the nosing, placed with its rim just above the nosing (0.85 + sqrt((0.3 + 0.0115)^2
+    /// - past^2) above the step top); returns the walker after 120 idle ticks.
+    fn idle_on_a_nosing(past: f32) -> CharacterState {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(-3.0, 4.0, 0.3), TEST_TAG);
+        let on_the_nosing_y = 0.3 + 0.85 + (0.3115_f32 * 0.3115 - past * past).sqrt();
+        let h = resting_then_moving(
+            &mut world,
+            Vec3::new(0.0, on_the_nosing_y + 0.003, 1.0 + past),
+            0.0,
+            Vec3::ZERO,
+        );
+
+        for _ in 0..120 {
+            searchlight_tick(&mut world, h, &idle());
+        }
+        state(&world, h)
+    }
+
+    #[test]
+    fn an_idle_walker_past_the_flat_base_rolls_off_a_nosing() {
+        let floor_rest = rest_height_on_floor();
+
+        for past in [0.25, 0.28] {
+            let end = idle_on_a_nosing(past);
+
+            assert!(end.grounded, "{past} m past the nosing: {end:?}");
+            assert!(
+                (end.position.y - floor_rest).abs() < 0.02,
+                "{past} m past the nosing: should end on the lower floor (rest {floor_rest}), not perched: {end:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_idle_walker_within_the_flat_base_stays_on_a_nosing() {
+        let end = idle_on_a_nosing(0.1);
+
+        assert!(end.grounded, "{end:?}");
+        assert!(
+            (end.position.y - (0.3 + 1.15)).abs() < 0.03,
+            "still on the step top: {end:?}"
         );
     }
 
