@@ -7,6 +7,11 @@ use std::collections::HashMap;
 /// Gravity of the rigid-body world only; characters use [`MoveSettings::gravity`].
 const GRAVITY: f32 = -18.0;
 
+/// Gap, in metres, the character controller keeps between the capsule and what it touches.
+///
+/// Fixed rather than relative to the hull so a different hull keeps the same skin.
+const SKIN_OFFSET: f32 = 0.0115;
+
 mod character;
 mod query;
 mod slide;
@@ -60,11 +65,12 @@ impl PhysicsWorld {
 
         let character_controller = KinematicCharacterController {
             autostep: Some(CharacterAutostep {
-                max_height: CharacterLength::Absolute(0.5),
+                max_height: CharacterLength::Absolute(crate::movement::STEP_HEIGHT),
                 min_width: CharacterLength::Absolute(0.2),
                 include_dynamic_bodies: false,
             }),
             snap_to_ground: Some(CharacterLength::Absolute(crate::movement::GROUND_SNAP)),
+            offset: CharacterLength::Absolute(SKIN_OFFSET),
             max_slope_climb_angle: crate::movement::WALKABLE_NORMAL_Y.acos(),
             ..Default::default()
         };

@@ -63,20 +63,27 @@ pub struct Impact {
 pub struct Slide {
     pub translation: Vec3,
     pub grounded: bool,
-    /// The walkable surface straight under the capsule's centre after the slide; `None` when
-    /// there is none or the character started the slide airborne.
+    /// The walkable surface under the capsule after the slide, within [`STEP_HEIGHT`]; `None`
+    /// when there is none or the character started the slide airborne.
     pub ground: Option<Ground>,
     /// Each surface touched, with its normal.
     pub hits: Vec<(ColliderHandle, Vec3)>,
 }
 
-/// The walkable surface under a character's centre.
+/// The walkable surface under a character's capsule.
+///
+/// `normal`, `collider` and `point` describe the face under the capsule's base; `gap` can stop
+/// on a different surface, such as the nosing a walker rolls off before reaching the step below.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Ground {
     /// The face normal.
     pub normal: Vec3,
-    /// How far the capsule hangs above the face's plane, in metres, measured straight down.
+    /// How far the capsule can drop before it touches anything, in metres, cast straight down.
     pub gap: f32,
+    /// The collider the face belongs to.
+    pub collider: ColliderHandle,
+    /// The contact point on the face, in world space.
+    pub point: Vec3,
 }
 
 /// Tolerance, in metres, on "the slide moved less into a surface than asked".
@@ -96,6 +103,10 @@ pub(crate) const WALKABLE_NORMAL_Y: f32 = std::f32::consts::FRAC_1_SQRT_2;
 /// carrying a ramp's upward speed over a crest asks an upward move, which the controller
 /// does not snap, and hops.
 pub(crate) const GROUND_SNAP: f32 = 0.1;
+
+/// Tallest step, in metres, a walker climbs and the furthest a level or downhill walker is
+/// lowered onto ground.
+pub(crate) const STEP_HEIGHT: f32 = 0.5;
 
 /// Vertical speed below which a character counts as resting rather than rising.
 ///
@@ -251,7 +262,7 @@ pub fn step(
         state.velocity.y -= half_gravity;
     }
 
-    settle(state, &slid, walking);
+    settle(state, &slid, walking, asked, dt);
     impacts
 }
 
@@ -263,18 +274,22 @@ fn along_ground(velocity: Vec3, normal: Vec3) -> f32 {
 
 /// Settle `state` onto the ground after the slide and clip.
 ///
-/// A walker hanging within [`GROUND_SNAP`] above walkable ground is lowered onto it, as in
-/// Source's `StayOnGround`. A walker that ends grounded keeps its horizontal velocity and
-/// follows its ground; any other character ends grounded only if not rising, and a landing
-/// zeroes its vertical speed.
-///
-/// The lowering is not collision-checked: it drops onto the plane of the face under the
-/// centre, so a ledge under the capsule's rim but not its centre can be overlapped by up to
-/// [`GROUND_SNAP`] until the next slide resolves it.
-fn settle(state: &mut CharacterState, slid: &Slide, walking: bool) {
+/// A walker hanging above walkable ground is lowered by [`Ground::gap`] when that is within
+/// reach, as in Source's `StayOnGround`: [`STEP_HEIGHT`] for a level or downward `asked`
+/// motion, [`GROUND_SNAP`] for a rising one, so a ramp's crest still launches. Motion counts
+/// as rising only above [`REST_SPEED`] over `dt`, so the float noise of a ground normal on
+/// level ground does not shorten the reach. A walker that ends grounded keeps its horizontal
+/// velocity and follows its ground; any other character ends grounded only if not rising, and
+/// a landing zeroes its vertical speed.
+fn settle(state: &mut CharacterState, slid: &Slide, walking: bool, asked: Vec3, dt: f32) {
+    let reach = if asked.y <= REST_SPEED * dt {
+        STEP_HEIGHT
+    } else {
+        GROUND_SNAP
+    };
     let hanging = slid
         .ground
-        .filter(|ground| walking && !slid.grounded && ground.gap <= GROUND_SNAP);
+        .filter(|ground| walking && !slid.grounded && ground.gap <= reach);
     if let Some(ground) = hanging {
         state.position.y -= ground.gap.max(0.0);
     }
@@ -309,6 +324,16 @@ mod tests {
             yaw: 0.0,
             pitch: 0.0,
             grounded,
+        }
+    }
+
+    /// A walkable face of `normal` that the capsule hangs `gap` above.
+    fn face(normal: Vec3, gap: f32) -> Ground {
+        Ground {
+            normal,
+            gap,
+            collider: collider(),
+            point: Vec3::ZERO,
         }
     }
 
@@ -350,10 +375,7 @@ mod tests {
             Slide {
                 translation,
                 grounded: landed,
-                ground: landed.then_some(Ground {
-                    normal: Vec3::Y,
-                    gap: 0.0,
-                }),
+                ground: landed.then_some(face(Vec3::Y, 0.0)),
                 hits,
             }
         }
@@ -831,7 +853,7 @@ mod tests {
             move |asked| Slide {
                 translation: asked,
                 grounded: true,
-                ground: normal.map(|normal| Ground { normal, gap: 0.0 }),
+                ground: normal.map(|normal| face(normal, 0.0)),
                 hits: Vec::new(),
             }
         }
@@ -869,10 +891,7 @@ mod tests {
             step(&mut state, &forward(), &frictionless(), DT, |asked| Slide {
                 translation: asked,
                 grounded: false,
-                ground: Some(Ground {
-                    normal: slope_normal(25.0),
-                    gap: 1.0,
-                }),
+                ground: Some(face(slope_normal(25.0), 1.0)),
                 hits: Vec::new(),
             });
 
@@ -889,7 +908,7 @@ mod tests {
             move |asked| Slide {
                 translation: asked,
                 grounded,
-                ground: Some(Ground { normal, gap }),
+                ground: Some(face(normal, gap)),
                 hits: Vec::new(),
             }
         }
@@ -937,26 +956,88 @@ mod tests {
         }
 
         #[test]
-        fn walker_hanging_exactly_the_snap_distance_is_still_lowered() {
+        fn walker_hanging_within_the_step_height_on_a_level_move_is_lowered() {
+            for gap in [GROUND_SNAP + 0.01, 0.3, STEP_HEIGHT] {
+                let after = run_over(walker_at_speed(0.0), &forward(), over(false, Vec3::Y, gap));
+
+                assert!(after.grounded, "gap {gap}: {after:?}");
+                assert!(
+                    (after.position.y - (START_Y - gap)).abs() < 1e-5,
+                    "gap {gap}: {after:?}"
+                );
+                assert_eq!(after.velocity.y, 0.0, "gap {gap}");
+            }
+        }
+
+        #[test]
+        fn walker_with_a_tiny_rising_ask_still_gets_the_step_height_reach() {
+            // Float noise in a level ground normal asks a few millionths of a metre upward,
+            // under REST_SPEED * DT, which must not shorten the reach to the snap distance.
+            let noise = 3e-4;
+            let asked_y = noise * DT;
+            assert!(asked_y > 0.0 && asked_y < REST_SPEED * DT);
+
             let after = run_over(
-                walker_at_speed(0.0),
+                walker_at_speed(noise),
                 &forward(),
-                over(false, Vec3::Y, GROUND_SNAP),
+                over(false, Vec3::Y, 0.3),
             );
 
             assert!(after.grounded, "{after:?}");
             assert!(
-                (after.position.y - (START_Y - GROUND_SNAP)).abs() < 1e-5,
+                (after.position.y - (START_Y + asked_y - 0.3)).abs() < 1e-5,
                 "{after:?}"
             );
         }
 
         #[test]
-        fn walker_hanging_beyond_the_snap_distance_is_left_airborne_where_it_is() {
+        fn walker_on_a_downhill_move_is_lowered_within_the_step_height() {
+            let descent = -1.0;
+
+            let after = run_over(
+                walker_at_speed(descent),
+                &forward(),
+                over(false, Vec3::Y, 0.3),
+            );
+
+            assert!(after.grounded, "{after:?}");
+            let expected_y = START_Y + descent * DT - 0.3;
+            assert!((after.position.y - expected_y).abs() < 1e-5, "{after:?}");
+        }
+
+        #[test]
+        fn walker_rising_is_lowered_only_within_the_snap_distance() {
+            let climb = 1.0;
+
+            let near = run_over(
+                walker_at_speed(climb),
+                &forward(),
+                over(false, Vec3::Y, GROUND_SNAP),
+            );
+            let far = run_over(
+                walker_at_speed(climb),
+                &forward(),
+                over(false, Vec3::Y, GROUND_SNAP + 0.01),
+            );
+
+            assert!(near.grounded, "{near:?}");
+            assert!(
+                (near.position.y - (START_Y + climb * DT - GROUND_SNAP)).abs() < 1e-5,
+                "{near:?}"
+            );
+            assert!(!far.grounded, "a rising walker keeps its launch: {far:?}");
+            assert!(
+                (far.position.y - (START_Y + climb * DT)).abs() < 1e-5,
+                "{far:?}"
+            );
+        }
+
+        #[test]
+        fn walker_hanging_beyond_the_step_height_on_a_level_move_is_left_airborne_where_it_is() {
             let after = run_over(
                 walker_at_speed(0.0),
                 &forward(),
-                over(false, Vec3::Y, GROUND_SNAP + 0.01),
+                over(false, Vec3::Y, STEP_HEIGHT + 0.01),
             );
 
             assert!(!after.grounded, "{after:?}");
@@ -1325,7 +1406,7 @@ mod tests {
             move |asked| Slide {
                 translation: asked,
                 grounded: true,
-                ground: ground.map(|normal| Ground { normal, gap: 0.0 }),
+                ground: ground.map(|normal| face(normal, 0.0)),
                 hits: Vec::new(),
             }
         }
