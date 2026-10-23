@@ -132,6 +132,7 @@ pub(crate) fn test_move_settings() -> MoveSettings {
         air_speed_cap: 0.8,
         gravity: 18.0,
         jump_speed: 8.0,
+        max_velocity: 90.0,
     }
 }
 

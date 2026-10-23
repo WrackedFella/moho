@@ -23,6 +23,7 @@ fn character_dropped_on_loaded_floor_stands_on_it() {
         air_speed_cap: 0.8,
         gravity: 18.0,
         jump_speed: 8.0,
+        max_velocity: 90.0,
     };
     let handle = world.add_character(Vec3::new(0.0, 2.0 + capsule_centre_above_base, 0.0));
 
