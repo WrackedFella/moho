@@ -589,6 +589,7 @@ fn app_config() -> moho_app::AppConfig {
         window_title: "Flagstone".into(),
         loop_config: moho_app::LoopConfig::new(flagstone_game::TICK_HZ),
         init_audio: true,
+        toggle_keys: None,
     }
 }
 

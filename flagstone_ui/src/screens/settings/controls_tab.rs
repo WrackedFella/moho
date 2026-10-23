@@ -5,6 +5,14 @@ use super::key_mapping::binding_label;
 use super::types::{BINDING_ROWS, display_name};
 use super::{FormControls, SettingsField, SettingsMenu};
 use crate::prefs::Prefs;
+use moho_input::Action;
+use moho_input::bindings::ActionMode;
+
+const KEYBIND_BUTTON_WIDTH: f32 = 120.0;
+
+fn keybind_row_width(label_width: f32, item_spacing: f32) -> f32 {
+    label_width + KEYBIND_BUTTON_WIDTH + item_spacing
+}
 
 pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
     ui.vertical_centered(|ui| {
@@ -26,14 +34,34 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
         for (id, action) in BINDING_ROWS.into_iter().enumerate() {
             let is_dirty = menu.state.is_binding_modified(action);
             let label = binding_label(menu.state.get_staged_binding(action));
-            let clicked = FormControls::keybind_control(
-                ui,
-                &format!("{}:", display_name(action)),
-                &label,
-                is_dirty,
-                menu.is_listening_for(id),
-                label_width,
-            );
+            let is_listening = menu.is_listening_for(id);
+            let keybind = |ui: &mut egui::Ui| {
+                FormControls::keybind_control(
+                    ui,
+                    &format!("{}:", display_name(action)),
+                    &label,
+                    is_dirty,
+                    is_listening,
+                    label_width,
+                )
+            };
+            let clicked = if action.toggleable() {
+                ui.horizontal(|ui| {
+                    // keybind_control fills the width it is given, so bound it to leave
+                    // room for the checkbox on the same row.
+                    let row_width = keybind_row_width(label_width, ui.spacing().item_spacing.x);
+                    let clicked = ui.allocate_ui(egui::vec2(row_width, 28.0), keybind).inner;
+                    let mut toggled = menu.state.get_staged_mode(action).is_toggle();
+                    if ui.checkbox(&mut toggled, "Toggle").changed() {
+                        menu.state
+                            .set_staged_mode(action, ActionMode::from_toggle(toggled));
+                    }
+                    clicked
+                })
+                .inner
+            } else {
+                keybind(ui)
+            };
             if clicked {
                 menu.start_listening(id);
             }
@@ -207,6 +235,11 @@ mod tests {
     use super::*;
     use crate::UiComponent;
     use crate::prefs::Prefs;
+
+    #[test]
+    fn keybind_row_width_is_label_plus_button_plus_spacing() {
+        assert_eq!(keybind_row_width(150.0, 8.0), 278.0);
+    }
 
     fn render_menu(menu: &mut SettingsMenu) -> egui::FullOutput {
         let ctx = egui::Context::default();

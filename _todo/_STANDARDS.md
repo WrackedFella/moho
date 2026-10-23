@@ -268,7 +268,8 @@ something observable when finished.
 ## 12 Definition of Done (shared; don't repeat per card)
 
 - `just check` passes.
-- Agent-written tests survive mutation testing on the changed code (`just mutants`).
+- Agent-written tests survive mutation testing on the changed domain code (`just mutants`;
+  glue is covered by the weekly full run).
 - `/devflow:comment-audit` run on the diff.
 - `/devflow:wiki` run on the diff: the PR lists the pages updated or says none were
   needed.

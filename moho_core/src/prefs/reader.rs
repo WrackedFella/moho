@@ -243,6 +243,10 @@ impl Prefs {
                 issues.extend(read_raw_section(name, keys, &mut prefs.bindings));
                 continue;
             }
+            if name == "action_modes" {
+                issues.extend(read_raw_section(name, keys, &mut prefs.action_modes));
+                continue;
+            }
             if name == "debug" {
                 issues.extend(read_raw_section(name, keys, &mut prefs.debug));
                 continue;

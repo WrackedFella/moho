@@ -1870,6 +1870,7 @@ version = "0.1.0"
 dependencies = [
  "glam 0.33.12",
  "moho_audio",
+ "moho_input",
  "moho_renderer",
  "proptest",
  "thiserror 2.0.20",
