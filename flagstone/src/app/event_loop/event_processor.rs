@@ -664,9 +664,43 @@ mod tests {
     }
 
     #[test]
-    fn spawn_torch_publishes_torch_placement_at_the_spawn_block() {
+    fn spawn_crystal_publishes_crystal_placement_at_the_spawn_block() {
         let mut app = App::headless();
-        let placed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let placed = collect_block_placements(&app);
+        publish_spawn(&app, "crystal");
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        let expected = fallback_spawn_pos(&app).floor().as_ivec3();
+        assert_eq!(
+            *placed.lock().unwrap(),
+            vec![(
+                expected,
+                flagstone_voxel::CRYSTAL_MATERIAL_ID,
+                BlockChangeReason::Player
+            )]
+        );
+        assert!(app.entities.actors.spheres().is_empty());
+        assert!(app.entities.actors.cubes().is_empty());
+    }
+
+    #[test]
+    fn spawn_torch_places_nothing() {
+        let mut app = App::headless();
+        let placed = collect_block_placements(&app);
+        publish_spawn(&app, "torch");
+
+        EventProcessor::new().process_debug_events(&mut app);
+
+        assert!(placed.lock().unwrap().is_empty());
+        assert!(app.entities.actors.spheres().is_empty());
+        assert!(app.entities.actors.cubes().is_empty());
+    }
+
+    type Placements = std::sync::Arc<std::sync::Mutex<Vec<(glam::IVec3, u32, BlockChangeReason)>>>;
+
+    fn collect_block_placements(app: &App) -> Placements {
+        let placed = Placements::default();
         let sink = std::sync::Arc::clone(&placed);
         app.event_bus.subscribe(move |e: &WorldEvent| {
             if let WorldEvent::BlockPlaced {
@@ -680,17 +714,7 @@ mod tests {
                     .push((*position, *material_id, reason.clone()));
             }
         });
-        publish_spawn(&app, "torch");
-
-        EventProcessor::new().process_debug_events(&mut app);
-
-        let expected = fallback_spawn_pos(&app).floor().as_ivec3();
-        assert_eq!(
-            *placed.lock().unwrap(),
-            vec![(expected, TORCH_MATERIAL_ID, BlockChangeReason::Player)]
-        );
-        assert!(app.entities.actors.spheres().is_empty());
-        assert!(app.entities.actors.cubes().is_empty());
+        placed
     }
 
     #[test]
