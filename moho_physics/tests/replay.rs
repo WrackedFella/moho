@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 
 const TICKS: usize = 600;
 const DT: f32 = 1.0 / 60.0;
+/// The cuboid's launch velocity; it slides to rest well before the noisy phase.
+const BOX_VELOCITY: Vec3 = Vec3::new(0.5, 0.0, 0.3);
 const SEED: u64 = 0x5EED_0502;
 
 /// Effects queued before the tick's moves, then each character's command, in creation order.
@@ -154,7 +156,7 @@ struct Scene {
 }
 
 /// Floor, a 0.3 m step, a wall corner, two characters and a dynamic cuboid in their path.
-fn build_scene() -> Scene {
+fn build_scene(box_velocity: Vec3) -> Scene {
     let mut world = PhysicsWorld::new();
     let tag = HitTag(1);
     world.set_world_mesh(WorldMeshId(1), &floor(), tag);
@@ -169,15 +171,14 @@ fn build_scene() -> Scene {
         body: CharacterBody::default(),
     });
     let second = world.add_character(CharacterSpawn {
-        position: Vec3::new(2.5, 1.2, -4.0),
-        yaw: -0.4,
+        position: Vec3::new(3.6, 1.2, -4.0),
+        yaw: 0.0,
         pitch: 0.2,
         body: CharacterBody::default(),
     });
     let cuboid = world.add_dynamic_cuboid(Vec3::new(0.0, 0.6, 4.0), 0.5, 0.5, 0.5);
     let body = &mut world.rigid_body_set[cuboid];
-    body.set_linvel(Vec3::new(0.8, 0.0, -1.5), true);
-    body.set_angvel(Vec3::new(0.0, 1.0, 0.3), true);
+    body.set_linvel(box_velocity, true);
 
     Scene {
         world,
@@ -209,10 +210,17 @@ fn random_effect(rng: &mut Lcg) -> CharacterEffect {
     }
 }
 
+/// Drops character 0 onto the resting cuboid, so contact pushes it.
+const BOX_HIT_TICK: usize = 250;
+const BOX_HIT: CharacterEffect = CharacterEffect::Teleport {
+    position: Vec3::new(0.05, 1.2, 4.03),
+    keep_velocity: false,
+};
+
 /// Ticks of straight walking into the cuboid before the noise starts.
 const APPROACH_TICKS: usize = 200;
 
-/// 600 ticks: both characters first walk forward into the cuboid (one jumping the step), then
+/// 600 ticks: both characters first walk forward (one jumping the step, the other along the wall corner), then
 /// steer noisily with jump presses, a held-jump stretch and an effect now and then.
 fn make_script() -> Vec<TickInput> {
     let mut rng = Lcg(SEED);
@@ -234,6 +242,9 @@ fn make_script() -> Vec<TickInput> {
             }
             if tick >= APPROACH_TICKS && rng.chance(12) {
                 effects.push(((rng.next_u32() >> 16) as usize % 2, random_effect(&mut rng)));
+            }
+            if tick == BOX_HIT_TICK {
+                effects.push((0, BOX_HIT));
             }
             TickInput { effects, commands }
         })
@@ -257,7 +268,10 @@ fn snapshot(scene: &Scene) -> Snapshot {
 
 /// Runs `script` in a fresh scene; element `t` is the state after tick `t`.
 fn run(script: &[TickInput]) -> Vec<Snapshot> {
-    let mut scene = build_scene();
+    run_in(build_scene(BOX_VELOCITY), script)
+}
+
+fn run_in(mut scene: Scene, script: &[TickInput]) -> Vec<Snapshot> {
     let settings = settings();
     script
         .iter()
@@ -286,14 +300,23 @@ fn bits3(v: Vec3) -> [u32; 3] {
 
 /// Every compared field of one character, as raw bits.
 fn character_fields(state: &CharacterState) -> [(&'static str, [u32; 3]); 7] {
+    let CharacterState {
+        position,
+        velocity,
+        yaw,
+        pitch,
+        grounded,
+        jump_held,
+        eye,
+    } = *state;
     [
-        ("position", bits3(state.position)),
-        ("velocity", bits3(state.velocity)),
-        ("yaw", [state.yaw.to_bits(), 0, 0]),
-        ("pitch", [state.pitch.to_bits(), 0, 0]),
-        ("grounded", [u32::from(state.grounded), 0, 0]),
-        ("jump_held", [u32::from(state.jump_held), 0, 0]),
-        ("eye", bits3(state.eye)),
+        ("position", bits3(position)),
+        ("velocity", bits3(velocity)),
+        ("yaw", [yaw.to_bits(), 0, 0]),
+        ("pitch", [pitch.to_bits(), 0, 0]),
+        ("grounded", [u32::from(grounded), 0, 0]),
+        ("jump_held", [u32::from(jump_held), 0, 0]),
+        ("eye", bits3(eye)),
     ]
 }
 
@@ -398,24 +421,42 @@ fn a_recorded_run_replays_bit_for_bit_on_every_tick() {
 /// Guards the comparison against passing because nothing happened.
 fn assert_run_exercises_the_world(script: &[TickInput], run: &[Snapshot]) {
     assert_eq!(run.len(), TICKS);
-    let kinds = |pick: fn(&CharacterEffect) -> bool| effects_of(script).any(pick);
-    assert!(kinds(|e| matches!(e, CharacterEffect::AddVelocity(_))));
-    assert!(kinds(|e| matches!(e, CharacterEffect::SetVelocity(_))));
-    assert!(kinds(|e| matches!(
-        e,
-        CharacterEffect::Teleport {
-            keep_velocity: true,
-            ..
-        }
-    )));
-    assert!(kinds(|e| matches!(
-        e,
-        CharacterEffect::Teleport {
-            keep_velocity: false,
-            ..
-        }
-    )));
-    assert!(kinds(|e| matches!(e, CharacterEffect::SetLook { .. })));
+    let kinds = |pick: fn(&CharacterEffect) -> bool, kind: &str| {
+        assert!(effects_of(script).any(pick), "script has no {kind}");
+    };
+    kinds(
+        |e| matches!(e, CharacterEffect::AddVelocity(_)),
+        "AddVelocity",
+    );
+    kinds(
+        |e| matches!(e, CharacterEffect::SetVelocity(_)),
+        "SetVelocity",
+    );
+    kinds(
+        |e| {
+            matches!(
+                e,
+                CharacterEffect::Teleport {
+                    keep_velocity: true,
+                    ..
+                }
+            )
+        },
+        "Teleport keeping velocity",
+    );
+    kinds(
+        |e| {
+            matches!(
+                e,
+                CharacterEffect::Teleport {
+                    keep_velocity: false,
+                    ..
+                }
+            )
+        },
+        "Teleport zeroing velocity",
+    );
+    kinds(|e| matches!(e, CharacterEffect::SetLook { .. }), "SetLook");
 
     for index in 0..2 {
         let positions: Vec<Vec3> = run.iter().map(|s| s.characters[index].position).collect();
@@ -435,15 +476,36 @@ fn assert_run_exercises_the_world(script: &[TickInput], run: &[Snapshot]) {
         );
     }
 
-    let start = run[0].box_translation;
-    let moved = run
+    let idle: Vec<TickInput> = script
         .iter()
-        .map(|s| (s.box_translation - start).length())
-        .fold(0.0, f32::max);
-    assert!(moved > 0.1, "the box never moved: {moved}");
+        .map(|_| TickInput {
+            effects: Vec::new(),
+            commands: [CharacterCommand::default(); 2],
+        })
+        .collect();
+    let idle_run = self::run(&idle);
+    let pushed_ticks = run
+        .iter()
+        .zip(&idle_run)
+        .skip(APPROACH_TICKS)
+        .filter(|(a, b)| a.box_translation.distance(b.box_translation) > 0.01)
+        .count();
     assert!(
-        run.iter().any(|s| s.box_rotation != run[0].box_rotation),
-        "the box never turned"
+        pushed_ticks > 100,
+        "the box differs from an idle run on only {pushed_ticks} ticks"
+    );
+
+    let corner = Vec3::new(4.0, 0.0, 8.0);
+    let closest = run
+        .iter()
+        .map(|s| {
+            let p = s.characters[1].position;
+            Vec3::new(p.x, 0.0, p.z).distance(corner)
+        })
+        .fold(f32::MAX, f32::min);
+    assert!(
+        closest < 0.7,
+        "no character reached the wall corner: {closest}"
     );
 }
 
@@ -492,6 +554,7 @@ fn a_tick_of_commands_and_effects_round_trips_through_postcard() {
     assert_eq!(back, vec![tick]);
 }
 
+/// Effects apply within their tick's move, so the change shows in that same tick.
 #[test]
 fn a_one_ulp_change_to_one_effect_breaks_the_replay() {
     let script = make_script();
@@ -499,7 +562,7 @@ fn a_one_ulp_change_to_one_effect_breaks_the_replay() {
     let (tick, slot) = script
         .iter()
         .enumerate()
-        .skip(100)
+        .skip(APPROACH_TICKS)
         .find_map(|(tick, t)| {
             let slot = t
                 .effects
@@ -507,7 +570,7 @@ fn a_one_ulp_change_to_one_effect_breaks_the_replay() {
                 .position(|(_, e)| matches!(e, CharacterEffect::AddVelocity(_)))?;
             Some((tick, slot))
         })
-        .expect("the script has an AddVelocity effect after tick 100");
+        .expect("the script has an AddVelocity effect after the approach");
     let mut altered = script.clone();
     altered[tick].effects[slot].1 = one_ulp_off(altered[tick].effects[slot].1);
 
@@ -515,9 +578,22 @@ fn a_one_ulp_change_to_one_effect_breaks_the_replay() {
 
     let divergence = first_divergence(&recorded, &replayed)
         .expect("a one-ulp change to a recorded effect must show in the replay");
-    assert!(
-        divergence.tick >= tick,
-        "diverged at tick {} before the altered effect at tick {tick}",
-        divergence.tick
+    assert_eq!(divergence.tick, tick, "{divergence:?}");
+}
+
+#[test]
+fn a_one_ulp_change_to_the_box_launch_velocity_breaks_the_replay() {
+    let script = make_script();
+    let recorded = run(&script);
+    let nudged = Vec3::new(
+        flip_lowest_bit(BOX_VELOCITY.x),
+        BOX_VELOCITY.y,
+        BOX_VELOCITY.z,
     );
+
+    let replayed = run_in(build_scene(nudged), &script);
+
+    let divergence = first_divergence(&recorded, &replayed)
+        .expect("a one-ulp change to the box must show in the replay");
+    assert_eq!(divergence.entity, "box", "{divergence:?}");
 }
