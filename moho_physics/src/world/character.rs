@@ -2321,24 +2321,24 @@ mod tests {
         );
     }
 
-    /// Idles the round-cylinder character nominally `past` m past the nosing for 120 ticks,
-    /// asserting grounded and no impact on every tick; returns the settled distance past the
-    /// nosing, checked against `window`, and the end state.
+    /// Drops the round-cylinder character nominally `past` m past the nosing and idles it for
+    /// 120 ticks, asserting grounded and no impact on every tick after it lands; returns its
+    /// distance past the nosing on the landing tick, checked against `window`, and the end state.
     fn round_cylinder_idles_past_a_nosing(
         past: f32,
         window: std::ops::Range<f32>,
     ) -> (f32, CharacterState) {
-        let (mut world, h) = round_cylinder_on_a_nosing(past);
-        let settled = settled_past(&world, h, window);
+        let (mut world, h, landed, ticks) =
+            land_on_a_nosing(round_cylinder_body(), 0.3 + 0.915 + 0.05, past, window);
 
-        for tick in 0..120 {
+        for tick in ticks..120 {
             let (now, impacts) = searchlight_tick(&mut world, h, &idle());
 
             assert!(now.grounded, "tick {tick}: airborne, {now:?}");
             assert!(impacts.is_empty(), "tick {tick}: {impacts:?}, {now:?}");
         }
 
-        (settled, state(&world, h))
+        (landed, state(&world, h))
     }
 
     #[test]
@@ -2898,29 +2898,69 @@ mod tests {
         }
     }
 
-    /// The settled walker's distance past the nosing at z = 1, after checking it is in `window`.
-    fn settled_past(world: &PhysicsWorld, h: CharacterHandle, window: std::ops::Range<f32>) -> f32 {
-        let past = state(world, h).position.z - 1.0;
-        assert!(
-            window.contains(&past),
-            "settled {past} m past, not in {window:?}"
-        );
-        past
+    /// Drops a character of `body` from `y` onto the 0.3 m step of [`walker_on_a_nosing`] with its
+    /// centre nominally `past` m beyond the nosing, idling until its first grounded tick. Returns
+    /// the world, the character, its distance past the nosing on that tick (checked against
+    /// `window`: a walker that perches can already be rolling off by the time it has settled) and
+    /// the ticks run.
+    fn land_on_a_nosing(
+        body: CharacterBody,
+        y: f32,
+        past: f32,
+        window: std::ops::Range<f32>,
+    ) -> (PhysicsWorld, CharacterHandle, f32, usize) {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(-3.0, 4.0, 0.3), TEST_TAG);
+        let h = world.add_character(CharacterSpawn {
+            position: Vec3::new(0.0, y, 1.0 + past),
+            yaw: 0.0,
+            pitch: 0.0,
+            body,
+        });
+
+        for tick in 1..=60 {
+            let (now, _) = searchlight_tick(&mut world, h, &idle());
+            if now.grounded {
+                let landed = now.position.z - 1.0;
+                assert!(
+                    window.contains(&landed),
+                    "landed {landed} m past, not in {window:?}"
+                );
+                return (world, h, landed, tick);
+            }
+        }
+        panic!("never landed");
     }
 
-    /// The perch margin is the flat base radius, 0.3 * sin 45 = 0.2121 m. The outside case sits
+    /// The capsule's rest height with its rim just above the nosing, `past` m beyond it.
+    fn capsule_on_the_nosing_y(past: f32) -> f32 {
+        0.3 + 0.85 + (0.3115_f32 * 0.3115 - past * past).sqrt() + 0.003
+    }
+
+    /// The perch margin is the flat base radius, 0.3 * sin 45 = 0.2121 m. The outside case lands
     /// between it and 0.3115 * sin 45 = 0.2203 m, where a rule keyed to the nosing's normal being
-    /// non-walkable would start rolling, so only the flat base separates the two. Settling
-    /// drifts a walker about 4.5 mm outward, hence the nominal placements.
+    /// non-walkable would start rolling, so only the flat base separates the two. Landing drifts
+    /// a walker about 4.5 mm outward, so the distance is read on the landing tick.
     #[test]
     fn the_perch_margin_is_the_flat_base_radius() {
-        let (mut inside_world, inside_h) = walker_on_a_nosing(0.200);
-        let (mut outside_world, outside_h) = walker_on_a_nosing(0.2115);
-        let inside_past = settled_past(&inside_world, inside_h, 0.19..0.212);
-        let outside_past = settled_past(&outside_world, outside_h, 0.212..0.2203);
+        let (mut inside_world, inside_h, inside_past, inside_ticks) = land_on_a_nosing(
+            CharacterBody::default(),
+            capsule_on_the_nosing_y(0.200),
+            0.200,
+            0.19..0.2121,
+        );
+        let (mut outside_world, outside_h, outside_past, outside_ticks) = land_on_a_nosing(
+            CharacterBody::default(),
+            capsule_on_the_nosing_y(0.213),
+            0.213,
+            0.2121..0.2203,
+        );
 
-        for _ in 0..120 {
+        for _ in inside_ticks..120 {
             searchlight_tick(&mut inside_world, inside_h, &idle());
+        }
+        for _ in outside_ticks..120 {
             searchlight_tick(&mut outside_world, outside_h, &idle());
         }
 
