@@ -359,8 +359,8 @@ impl PhysicsWorld {
 mod tests {
     use super::super::test_support::TEST_TAG;
     use super::super::test_support::{
-        corner_mesh, doorway_mesh, floor_mesh, quad_mesh, seam_floor_meshes, stairs_mesh,
-        step_box_mesh, test_settings, wall_mesh,
+        corner_mesh, doorway_mesh, floor_mesh, quad_mesh, seam_floor_meshes, slope_mesh,
+        stairs_mesh, step_box_mesh, test_settings, wall_mesh,
     };
     use super::super::{HitTag, RayHit, RayQuery};
     use super::*;
@@ -2300,6 +2300,17 @@ mod tests {
         );
     }
 
+    #[test]
+    fn round_cylinder_hull_rolls_off_past_its_flat_base() {
+        let end = idle_past_a_nosing(0.39);
+
+        assert!(end.grounded, "{end:?}");
+        assert!(
+            (end.position.y - 0.915).abs() < 0.03,
+            "rolled onto the floor, not resting on the rim at 1.17: {end:?}"
+        );
+    }
+
     fn add_with_body(body: CharacterBody) {
         let mut world = PhysicsWorld::new();
         world.add_character(CharacterSpawn {
@@ -2763,10 +2774,10 @@ mod tests {
         );
     }
 
-    /// A 0.3 m step over a floor, nosing at z = 1, with an idle walker whose centre is `past` m
+    /// A 0.3 m step over a floor, nosing at z = 1, with a settled walker whose centre is `past` m
     /// beyond the nosing, placed with its rim just above the nosing (0.85 + sqrt((0.3 + 0.0115)^2
-    /// - past^2) above the step top); returns the walker after 120 idle ticks.
-    fn idle_on_a_nosing(past: f32) -> CharacterState {
+    /// - past^2) above the step top).
+    fn walker_on_a_nosing(past: f32) -> (PhysicsWorld, CharacterHandle) {
         let mut world = PhysicsWorld::new();
         world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
         world.set_world_mesh(WorldMeshId(1), &step_box_mesh(-3.0, 4.0, 0.3), TEST_TAG);
@@ -2777,6 +2788,12 @@ mod tests {
             0.0,
             Vec3::ZERO,
         );
+        (world, h)
+    }
+
+    /// [`walker_on_a_nosing`] after 120 idle ticks.
+    fn idle_on_a_nosing(past: f32) -> CharacterState {
+        let (mut world, h) = walker_on_a_nosing(past);
 
         for _ in 0..120 {
             searchlight_tick(&mut world, h, &idle());
@@ -2793,6 +2810,142 @@ mod tests {
             (end.position.y - (0.3 + 1.15)).abs() < 0.03,
             "still on the step top: {end:?}"
         );
+    }
+
+    #[test]
+    fn an_idle_walker_past_the_flat_base_rolls_off_a_nosing() {
+        for past in [0.22, 0.25, 0.28] {
+            let (mut world, h) = walker_on_a_nosing(past);
+
+            for tick in 0..120 {
+                let (now, impacts) = searchlight_tick(&mut world, h, &idle());
+
+                assert!(
+                    now.grounded,
+                    "{past} m past, tick {tick}: airborne, {now:?}"
+                );
+                assert!(
+                    impacts.is_empty(),
+                    "{past} m past, tick {tick}: {impacts:?}, {now:?}"
+                );
+            }
+
+            let end = state(&world, h);
+            assert!(
+                (end.position.y - rest_height_on_floor()).abs() < 0.03,
+                "{past} m past: stands on the lower floor: {end:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_perch_margin_is_the_flat_base_radius() {
+        let inside = idle_on_a_nosing(0.205);
+        let outside = idle_on_a_nosing(0.215);
+
+        assert!(
+            inside.position.y > 0.3 + 1.0 && (inside.position.z - 1.205).abs() < 0.01,
+            "0.205 m past, inside the 0.212 m flat base: still perched on the nosing: {inside:?}"
+        );
+        assert!(
+            (outside.position.y - rest_height_on_floor()).abs() < 0.03,
+            "0.215 m past, outside the flat base: rolled onto the floor: {outside:?}"
+        );
+    }
+
+    /// Walks down three `rise` m steps (0.3 m treads) at `speed`, which is also the walker's top
+    /// speed, from `start_z`; asserts it is grounded after every tick and takes no impact.
+    fn assert_descends_stairs_slowly(rise: f32, speed: f32, start_z: f32) {
+        let settings = MoveSettings {
+            max_speed: speed,
+            ..searchlight_settings()
+        };
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        world.set_world_mesh(
+            WorldMeshId(1),
+            &stairs_mesh(3, rise, 0.3, 2.0, 4.0),
+            TEST_TAG,
+        );
+        let h = resting_then_moving(
+            &mut world,
+            Vec3::new(0.0, 3.0 * rise + 1.15 + 0.05, start_z),
+            std::f32::consts::PI,
+            Vec3::new(0.0, 0.0, -speed),
+        );
+        let forward = CharacterCommand {
+            forward: 1.0,
+            ..idle()
+        };
+        let what = format!("rise {rise}, {speed} m/s, start z {start_z}");
+        let mut reached_the_bottom = false;
+
+        for tick in 0..1500 {
+            let impacts = world
+                .move_character(h, &forward, &settings, DT)
+                .expect("character is live");
+            world.step(DT);
+            let now = state(&world, h);
+
+            assert!(now.grounded, "{what}, tick {tick}: airborne, {now:?}");
+            assert!(
+                impacts.iter().all(|i| i.speed <= 1e-3),
+                "{what}, tick {tick}: {impacts:?}, {now:?}"
+            );
+            if now.position.z < 1.0 {
+                reached_the_bottom = true;
+                break;
+            }
+        }
+
+        let end = state(&world, h);
+        assert!(reached_the_bottom, "{what}: never got down: {end:?}");
+        assert!(
+            (end.position.y - rest_height_on_floor()).abs() < 0.1,
+            "{what}: standing on the bottom floor: {end:?}"
+        );
+    }
+
+    #[test]
+    fn walking_down_stairs_slowly_stays_grounded_without_impacts() {
+        for rise in [0.2, 0.3, 0.45] {
+            for speed in [0.25, 0.5, 1.0, 1.5] {
+                for k in 0..20 {
+                    assert_descends_stairs_slowly(rise, speed, 3.0 + k as f32 * 0.0137);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_walker_against_a_steep_face_is_not_pushed() {
+        let rise = 60.0_f32.to_radians().tan();
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        // A 60 degree face rising from the floor at z = 1; the capsule's rounded base meets it
+        // at z = 0.827.
+        world.set_world_mesh(
+            WorldMeshId(1),
+            &slope_mesh(1.0, 0.0, 3.0, 2.0 * rise),
+            TEST_TAG,
+        );
+        let h = resting_then_moving(
+            &mut world,
+            Vec3::new(0.0, rest_height_on_floor(), 0.84),
+            0.0,
+            Vec3::ZERO,
+        );
+
+        for tick in 0..120 {
+            let (now, impacts) = searchlight_tick(&mut world, h, &idle());
+
+            assert!(now.grounded, "tick {tick}: airborne, {now:?}");
+            assert!(impacts.is_empty(), "tick {tick}: {impacts:?}, {now:?}");
+            assert!(
+                (now.position - Vec3::new(0.0, rest_height_on_floor(), 0.84)).length() < 0.02,
+                "tick {tick}: pushed off the face: {now:?}"
+            );
+        }
     }
 
     #[test]

@@ -31,6 +31,18 @@ const STEP_SNAP: f32 = 0.05;
 /// Horizontal motion left over below this many metres is not stepped up.
 const STEP_MIN_PROGRESS: f32 = 1e-3;
 
+/// The least speed, in m/s, at which a walker resting on an edge outside its flat base moves off it.
+#[cfg(test)]
+const ROLL_OFF_SPEED: f32 = 1.0;
+
+/// How far to shift a walker on an edge, in metres, beyond its own `outward` motion this tick:
+/// what [`ROLL_OFF_SPEED`] over `dt` lacks, at most `clearance`.
+#[cfg(test)]
+fn top_up(_outward: f32, _clearance: f32, _dt: f32) -> f32 {
+    // TODO: stub for the roll-off tests; the implementation returns the clamped shortfall.
+    0.0
+}
+
 /// A shape cast that reports any contact within `distance`, measured from surface to surface.
 fn cast_within(distance: f32) -> ShapeCastOptions {
     ShapeCastOptions {
@@ -310,7 +322,9 @@ impl Slider<'_> {
 #[cfg(test)]
 mod tests {
     use super::super::test_support::TEST_TAG;
-    use super::super::test_support::{quad_mesh, seam_floor_meshes, slope_mesh, step_box_mesh};
+    use super::super::test_support::{
+        quad_mesh, seam_floor_meshes, slope_mesh, step_box_mesh, wall_mesh,
+    };
     use super::super::PhysicsWorld;
     use super::*;
     use crate::movement::CharacterBody;
@@ -747,5 +761,62 @@ mod tests {
         let ground = slid.ground.expect("standing on the step top");
         assert!(ground.normal.distance(Vec3::Y) < 1e-3, "{ground:?}");
         assert!(ground.gap.abs() < 0.05, "{ground:?}");
+    }
+
+    /// A walker idle on the nosing of [`nosing_over_a_lower_step`], its centre 0.25 m past it and
+    /// its rim a skin's width from it, slid for one tick with `extra` meshes in the world.
+    fn idle_slide_on_the_nosing(extra: Option<WorldMesh>) -> Slide {
+        let mut meshes = nosing_over_a_lower_step().to_vec();
+        meshes.extend(extra);
+        let on_the_nosing = Pose::from_translation(Vec3::new(
+            0.0,
+            0.3 + 0.85 + (0.3115_f32 * 0.3115 - 0.25 * 0.25).sqrt(),
+            1.25,
+        ));
+
+        with_slider(&meshes, |slider| {
+            slider.slide(&on_the_nosing, Vec3::ZERO, true)
+        })
+    }
+
+    #[test]
+    fn the_roll_off_stops_at_a_wall() {
+        // The capsule's front, plus its skin offset, is 1.5615; the wall is 4 mm beyond that.
+        let free = idle_slide_on_the_nosing(None);
+        let walled = idle_slide_on_the_nosing(Some(wall_mesh(1.5655)));
+
+        assert!(
+            (free.translation.z - ROLL_OFF_SPEED / 60.0).abs() < 1e-3,
+            "an idle walker on the edge is shifted outward by the roll-off speed: {free:?}"
+        );
+        assert!(!free.grounded, "{free:?}");
+        assert!(
+            walled.translation.z < 0.0045,
+            "the wall blocks the shift: {walled:?}"
+        );
+        assert!(walled.hits.is_empty(), "{walled:?}");
+    }
+
+    #[test]
+    fn the_top_up_fills_only_what_the_walker_lacks() {
+        let dt = 1.0 / 60.0;
+        let wanted = ROLL_OFF_SPEED * dt;
+
+        let own_motion_at_speed = top_up(wanted, 1.0, dt);
+        let own_motion_above_speed = top_up(wanted * 2.0, 1.0, dt);
+        let idle = top_up(0.0, 1.0, dt);
+        let half_way = top_up(wanted / 2.0, 1.0, dt);
+        let moving_inward = top_up(-0.01, 1.0, dt);
+        let capped = top_up(0.0, 0.005, dt);
+
+        assert_eq!(own_motion_at_speed, 0.0);
+        assert_eq!(own_motion_above_speed, 0.0);
+        assert!((idle - wanted).abs() < 1e-6, "{idle}");
+        assert!((half_way - wanted / 2.0).abs() < 1e-6, "{half_way}");
+        assert!(
+            (moving_inward - (wanted + 0.01)).abs() < 1e-6,
+            "{moving_inward}"
+        );
+        assert_eq!(capped, 0.005);
     }
 }
