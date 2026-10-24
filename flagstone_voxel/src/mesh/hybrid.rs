@@ -10,6 +10,7 @@ use super::blocky::BlockyMeshGenerator;
 use super::contact_ao::contact_ao;
 use super::marching_cubes::{MarchingCubes, SurfaceSample};
 use glam::{IVec3, Vec3};
+use std::cell::Cell;
 
 // Shift from marching-cubes field-index space to world space (excluding the chunk origin).
 // Without it smooth terrain sits half a unit off-centre, misaligned with the blocky
@@ -109,7 +110,7 @@ const AO_RING_REACH: i32 = 1;
 ///   last blocks (its padded field reaches no further), so a block within that of the
 ///   positive edge is read.
 ///
-/// Yields 1, 2, 4 or 8 chunks.
+/// Yields 1, 2, 4 or 8 chunks for a `chunk_size` over `SAMPLE_REACH + 2 * AO_RING_REACH`.
 pub fn chunks_meshed_from(block: BlockPos, chunk_size: i32) -> impl Iterator<Item = IVec3> {
     let own = VoxelGrid::get_chunk_pos(block, chunk_size);
     let local = block.rem_euclid(IVec3::splat(chunk_size));
@@ -251,16 +252,24 @@ impl HybridMeshGenerator {
         let density_field =
             Self::create_selective_density_field(grid, chunk_pos, chunk_size, only_smooth);
         let base = chunk_pos * chunk_size;
+        // Cells sharing an edge ask for the same air sample; occlusion costs 26 lookups.
+        let occlusion: Vec<Cell<Option<f32>>> = vec![Cell::new(None); 18 * 18 * 18];
         let mut mesh = MarchingCubes::generate_mesh(
             &density_field,
             chunk_size as usize,
             |s| sample_face_material(grid, base, s),
             |s| {
                 let block = sample_block(base, s);
+                let cached = &occlusion[(s[0] * 18 + s[1]) * 18 + s[2]];
+                let ambient_occlusion = cached.get().unwrap_or_else(|| {
+                    let ao = contact_ao(|p| grid.is_solid_at(p), block);
+                    cached.set(Some(ao));
+                    ao
+                });
                 SurfaceSample {
                     block_light: grid.block_light_rgb_at(block),
                     sky_exposed: grid.sky_exposed_at(block),
-                    ambient_occlusion: contact_ao(|p| grid.is_solid_at(p), block),
+                    ambient_occlusion,
                 }
             },
         );
@@ -1713,7 +1722,7 @@ mod tests {
     }
 
     /// A slab with a one-wide crevice between two walls in the chunk, with `extra` blocks
-    /// on the open ground beside it, placed at chunk-local `local` + `origin`.
+    /// on the open ground beside it, all offset by `origin`.
     fn crevice_terrain(origin: IVec3, extra: &[(i32, i32, i32)]) -> VoxelGrid {
         let mut blocks = solid_box([1, 0, 1], [14, 5, 14], 1);
         blocks.extend(solid_box([1, 6, 1], [5, 10, 14], 1));

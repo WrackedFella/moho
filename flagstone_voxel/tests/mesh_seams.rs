@@ -114,8 +114,7 @@ fn edge_removal_remeshing_the_dependents_leaves_no_open_edge() {
 }
 
 /// Compares the geometry (vertex positions and indices) and the ambient occlusion. Normals
-/// come from central differences, so a block at local 15 also shades the positive
-/// neighbour; that stale shading is a known seam that opens no gap and is out of scope here.
+/// are not compared.
 fn assert_same_mesh(
     chunk: IVec3,
     incremental: &VoxelMesh,
