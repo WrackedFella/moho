@@ -5,7 +5,7 @@ use crate::movement::{self, CharacterCommand, CharacterEffect, Impact, MoveSetti
 use glam::{Quat, Vec3};
 use rapier3d::prelude::{
     ColliderBuilder, ColliderHandle, InteractionGroups, Pose, QueryFilter, RigidBodyBuilder,
-    RigidBodyHandle,
+    RigidBodyHandle, SharedShape,
 };
 use serde::{Deserialize, Serialize};
 
@@ -61,6 +61,8 @@ impl From<Vec3> for CharacterSpawn {
 pub struct HitVolume {
     /// Box centre relative to the capsule centre, in the body frame.
     pub offset: Vec3,
+    /// Rotation in the body frame, applied before `offset`.
+    pub rotation: Quat,
     /// Box half-sizes along the body frame's axes.
     pub half_extents: Vec3,
     /// Tag reported when a ray hits this volume.
@@ -75,6 +77,8 @@ pub struct UnknownCharacter;
 /// Per-character state; the capsule's body handle is the map key.
 pub(super) struct Character {
     collider: ColliderHandle,
+    /// Hit volume colliders, in the order the game last set them.
+    volumes: Vec<ColliderHandle>,
     velocity: Vec3,
     yaw: f32,
     pitch: f32,
@@ -139,6 +143,7 @@ impl PhysicsWorld {
             handle,
             Character {
                 collider,
+                volumes: Vec::new(),
                 velocity: Vec3::ZERO,
                 yaw: spawn.yaw,
                 pitch: spawn
@@ -154,33 +159,56 @@ impl PhysicsWorld {
         handle
     }
 
-    /// Attach a hit volume to the character's body.
+    /// Replace all of the character's hit volumes with `volumes`.
     ///
-    /// The volume follows the body when the world steps, never blocks movement or props, and
-    /// is removed with the character.
+    /// The volumes take effect when the world steps: rays cast before the next step may see
+    /// the old poses, or a mix of old poses and new shapes and tags. They follow the body,
+    /// never block movement or props, and are removed with the character. An unchanged count
+    /// updates the colliders in place; any other count rebuilds them.
     ///
     /// # Errors
     /// [`UnknownCharacter`] if `handle` was removed.
-    pub fn add_hit_volume(
+    pub fn set_hit_volumes(
         &mut self,
         handle: CharacterHandle,
-        volume: HitVolume,
+        volumes: &[HitVolume],
     ) -> Result<(), UnknownCharacter> {
-        if !self.characters.contains_key(&handle) {
-            return Err(UnknownCharacter);
+        let character = self.characters.get_mut(&handle).ok_or(UnknownCharacter)?;
+
+        if character.volumes.len() != volumes.len() {
+            for stale in character.volumes.drain(..) {
+                self.collider_set.remove(
+                    stale,
+                    &mut self.island_manager,
+                    &mut self.rigid_body_set,
+                    &mut self.soft_body_set,
+                    true,
+                );
+            }
+            for _ in volumes {
+                let collider = ColliderBuilder::cuboid(1.0, 1.0, 1.0)
+                    .sensor(true)
+                    .collision_groups(InteractionGroups::none())
+                    .build();
+                let inserted = self.collider_set.insert_with_parent(
+                    collider,
+                    handle.0,
+                    &mut self.rigid_body_set,
+                );
+                character.volumes.push(inserted);
+            }
         }
-        let collider = ColliderBuilder::cuboid(
-            volume.half_extents.x,
-            volume.half_extents.y,
-            volume.half_extents.z,
-        )
-        .translation(volume.offset)
-        .sensor(true)
-        .collision_groups(InteractionGroups::none())
-        .user_data(encode_tag(volume.tag))
-        .build();
-        self.collider_set
-            .insert_with_parent(collider, handle.0, &mut self.rigid_body_set);
+
+        for (&collider, volume) in character.volumes.iter().zip(volumes) {
+            let collider = &mut self.collider_set[collider];
+            collider.set_position_wrt_parent(Pose::from_parts(volume.offset, volume.rotation));
+            collider.set_shape(SharedShape::cuboid(
+                volume.half_extents.x,
+                volume.half_extents.y,
+                volume.half_extents.z,
+            ));
+            collider.user_data = encode_tag(volume.tag);
+        }
         Ok(())
     }
 
@@ -1056,7 +1084,7 @@ mod tests {
     #[test]
     fn a_queued_teleport_moves_the_body_only_on_the_next_move() {
         let (mut world, h) = standing_on_floor();
-        attach(
+        set_one_volume(
             &mut world,
             h,
             volume(Vec3::new(0.0, 0.1, 0.0), Vec3::new(0.25, 0.4, 0.15), TORSO),
@@ -1123,7 +1151,7 @@ mod tests {
         let mut world = floor_and_step_world();
         let other = world.add_character(Vec3::new(-8.0, 1.2, -8.0));
         let h = world.add_character(recorded_spawn());
-        attach(
+        set_one_volume(
             &mut world,
             h,
             volume(Vec3::new(0.0, 0.7, 0.0), Vec3::new(0.2, 0.15, 0.2), HEAD),
@@ -2484,15 +2512,20 @@ mod tests {
     fn volume(offset: Vec3, half_extents: Vec3, tag: HitTag) -> HitVolume {
         HitVolume {
             offset,
+            rotation: Quat::IDENTITY,
             half_extents,
             tag,
         }
     }
 
-    fn attach(world: &mut PhysicsWorld, handle: CharacterHandle, volume: HitVolume) {
+    fn set_volumes(world: &mut PhysicsWorld, handle: CharacterHandle, volumes: &[HitVolume]) {
         world
-            .add_hit_volume(handle, volume)
+            .set_hit_volumes(handle, volumes)
             .expect("character is live");
+    }
+
+    fn set_one_volume(world: &mut PhysicsWorld, handle: CharacterHandle, volume: HitVolume) {
+        set_volumes(world, handle, &[volume]);
     }
 
     fn cast(
@@ -2511,15 +2544,13 @@ mod tests {
 
     /// A head above a torso, both centred on the character.
     fn attach_head_and_torso(world: &mut PhysicsWorld, handle: CharacterHandle) {
-        attach(
+        set_volumes(
             world,
             handle,
-            volume(Vec3::new(0.0, 0.7, 0.0), Vec3::new(0.2, 0.15, 0.2), HEAD),
-        );
-        attach(
-            world,
-            handle,
-            volume(Vec3::new(0.0, 0.1, 0.0), Vec3::new(0.25, 0.4, 0.15), TORSO),
+            &[
+                volume(Vec3::new(0.0, 0.7, 0.0), Vec3::new(0.2, 0.15, 0.2), HEAD),
+                volume(Vec3::new(0.0, 0.1, 0.0), Vec3::new(0.25, 0.4, 0.15), TORSO),
+            ],
         );
     }
 
@@ -2576,12 +2607,178 @@ mod tests {
     }
 
     #[test]
-    fn volumes_turn_with_the_character() {
+    fn ray_through_a_gap_between_volumes_hits_the_wall() {
         let (mut world, h) = standing_on_floor();
-        attach(
+        world.set_world_mesh(WorldMeshId(1), &wall_mesh(3.0), TEST_TAG);
+        set_volumes(
             &mut world,
             h,
-            volume(Vec3::new(0.4, 0.0, 0.0), Vec3::new(0.1, 0.3, 0.1), ARM),
+            &[
+                volume(Vec3::new(0.0, 0.1, 0.0), Vec3::new(0.25, 0.4, 0.15), TORSO),
+                volume(Vec3::new(0.7, 0.1, 0.0), Vec3::new(0.1, 0.4, 0.15), ARM),
+            ],
+        );
+        world.step(DT);
+        let at = state(&world, h).position;
+
+        let through_gap = cast(&world, at + Vec3::new(0.45, 0.1, -3.0), Vec3::Z, None);
+        let through_arm = cast(&world, at + Vec3::new(0.7, 0.1, -3.0), Vec3::Z, None);
+
+        let through_gap = through_gap.expect("the wall is behind the gap");
+        assert_eq!(through_gap.tag, TEST_TAG);
+        assert!((through_gap.point.z - 3.0).abs() < 1e-3, "{through_gap:?}");
+        assert_eq!(through_arm.map(|hit| hit.tag), Some(ARM));
+    }
+
+    #[test]
+    fn ray_ignoring_the_shooter_hits_the_other_characters_torso() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        let shooter = world.add_character(Vec3::new(0.0, 1.2, -2.0));
+        let target = world.add_character(Vec3::new(0.0, 1.2, 2.0));
+        settle_on_floor(&mut world, &[shooter, target]);
+        set_volumes(
+            &mut world,
+            shooter,
+            &[volume(
+                Vec3::new(0.0, 0.7, 0.0),
+                Vec3::new(0.2, 0.3, 0.2),
+                HEAD,
+            )],
+        );
+        set_volumes(
+            &mut world,
+            target,
+            &[
+                volume(Vec3::new(0.0, 0.1, 0.0), Vec3::new(0.25, 0.4, 0.15), TORSO),
+                volume(Vec3::new(0.0, 0.95, 0.0), Vec3::new(0.2, 0.2, 0.2), ARM),
+            ],
+        );
+        world.step(DT);
+        let muzzle = state(&world, shooter).position + Vec3::new(0.0, 0.45, 0.0);
+
+        let ignoring = cast(&world, muzzle, Vec3::Z, Some(shooter));
+
+        let ignoring = ignoring.expect("the target's torso is in line");
+        assert_eq!(ignoring.tag, TORSO);
+        assert!((ignoring.distance - 3.85).abs() < 0.02, "{ignoring:?}");
+    }
+
+    #[test]
+    fn overlapping_volumes_do_not_stop_a_walking_character() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        let walker = world.add_character(Vec3::new(0.0, 1.2, -1.5));
+        let standing = world.add_character(Vec3::new(0.0, 1.2, 1.5));
+        settle_on_floor(&mut world, &[walker, standing]);
+        let reach = Vec3::new(0.3, 0.4, 0.3);
+        set_volumes(
+            &mut world,
+            walker,
+            &[volume(Vec3::new(0.0, 0.0, 0.8), reach, ARM)],
+        );
+        set_volumes(
+            &mut world,
+            standing,
+            &[volume(Vec3::new(0.0, 0.0, -0.8), reach, ARM)],
+        );
+        world.step(DT);
+        let forward = CharacterCommand {
+            forward: 1.0,
+            ..idle()
+        };
+
+        trace(&mut world, walker, &forward, &test_settings(), 150);
+
+        let gap = state(&world, standing).position.z - state(&world, walker).position.z;
+        assert!(
+            (gap - 0.6).abs() < 0.08,
+            "capsules of radius 0.3 meet with centres 0.6 apart, gap={gap}"
+        );
+    }
+
+    #[test]
+    fn removing_a_character_removes_its_volumes() {
+        let mut world = PhysicsWorld::new();
+        let colliders = world.collider_set.len();
+        let h = world.add_character(Vec3::new(0.0, 1.2, 0.0));
+        attach_head_and_torso(&mut world, h);
+        world.step(DT);
+        let head_ray = |world: &PhysicsWorld| cast(world, Vec3::new(-3.0, 1.9, 0.0), Vec3::X, None);
+        assert_eq!(head_ray(&world).map(|hit| hit.tag), Some(HEAD));
+
+        world.remove_character(h).unwrap();
+        world.step(DT);
+
+        assert_eq!(head_ray(&world), None);
+        assert_eq!(world.collider_set.len(), colliders);
+    }
+
+    #[test]
+    fn replaced_volumes_are_hit_where_the_game_put_them() {
+        let (mut world, h) = standing_on_floor();
+        let size = Vec3::new(0.2, 0.15, 0.2);
+        set_volumes(
+            &mut world,
+            h,
+            &[volume(Vec3::new(0.0, 0.7, 0.0), size, HEAD)],
+        );
+        world.step(DT);
+        let at = state(&world, h).position;
+
+        set_volumes(
+            &mut world,
+            h,
+            &[volume(Vec3::new(0.35, 0.7, 0.0), size, HEAD)],
+        );
+        world.step(DT);
+        let new_head = cast(&world, at + Vec3::new(0.35, 0.7, -3.0), Vec3::Z, None);
+        let old_head = cast(&world, at + Vec3::new(0.0, 0.7, -3.0), Vec3::Z, None);
+
+        assert_eq!(new_head.map(|hit| hit.tag), Some(HEAD), "at {at:?}");
+        assert_eq!(old_head, None, "nothing is left where the head was");
+    }
+
+    #[test]
+    fn a_rotated_volume_lies_along_its_rotation() {
+        let (mut world, h) = standing_on_floor();
+        let centre = Vec3::new(0.0, 0.1, 0.0);
+        let mut torso = volume(centre, Vec3::new(0.25, 0.4, 0.15), TORSO);
+        torso.rotation = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+        set_volumes(&mut world, h, &[torso]);
+        world.step(DT);
+        let at = state(&world, h).position;
+        let below = Vec3::new(0.0, -0.8, 0.0);
+
+        let through_centre = cast(&world, at + below, Vec3::Y, None);
+        let along_long_axis = cast(&world, at + below + Vec3::new(0.0, 0.0, 0.3), Vec3::Y, None);
+        let past_long_axis = cast(&world, at + below + Vec3::new(0.0, 0.0, 0.5), Vec3::Y, None);
+
+        let through_centre = through_centre.expect("a ray through the centre hits the torso");
+        assert_eq!(through_centre.tag, TORSO);
+        assert!(
+            (through_centre.point.y - (at.y + centre.y - 0.15)).abs() < 0.02,
+            "the 0.4 half-extent lies along Z, so the box is 0.15 deep in Y: {through_centre:?}"
+        );
+        assert_eq!(
+            along_long_axis.map(|hit| hit.tag),
+            Some(TORSO),
+            "0.3 m along Z is inside the rotated long axis"
+        );
+        assert_eq!(past_long_axis, None, "0.5 m along Z is beyond it");
+    }
+
+    #[test]
+    fn volumes_turn_with_the_body() {
+        let (mut world, h) = standing_on_floor();
+        set_volumes(
+            &mut world,
+            h,
+            &[volume(
+                Vec3::new(0.4, 0.0, 0.0),
+                Vec3::new(0.1, 0.3, 0.1),
+                ARM,
+            )],
         );
         world.step(DT);
         let at = state(&world, h).position;
@@ -2618,123 +2815,54 @@ mod tests {
     }
 
     #[test]
-    fn ray_through_a_gap_between_volumes_hits_the_wall() {
+    fn replacing_with_fewer_volumes_removes_the_rest() {
         let (mut world, h) = standing_on_floor();
-        world.set_world_mesh(WorldMeshId(1), &wall_mesh(3.0), TEST_TAG);
-        attach(
-            &mut world,
-            h,
-            volume(Vec3::new(0.0, 0.1, 0.0), Vec3::new(0.25, 0.4, 0.15), TORSO),
-        );
-        attach(
-            &mut world,
-            h,
-            volume(Vec3::new(0.7, 0.1, 0.0), Vec3::new(0.1, 0.4, 0.15), ARM),
-        );
+        let head = volume(Vec3::new(0.0, 0.7, 0.0), Vec3::new(0.2, 0.15, 0.2), HEAD);
+        let torso = volume(Vec3::new(0.0, 0.1, 0.0), Vec3::new(0.25, 0.4, 0.15), TORSO);
+        let colliders = world.collider_set.len();
+        set_volumes(&mut world, h, &[head, torso]);
         world.step(DT);
         let at = state(&world, h).position;
-
-        let through_gap = cast(&world, at + Vec3::new(0.45, 0.1, -3.0), Vec3::Z, None);
-        let through_arm = cast(&world, at + Vec3::new(0.7, 0.1, -3.0), Vec3::Z, None);
-
-        let through_gap = through_gap.expect("the wall is behind the gap");
-        assert_eq!(through_gap.tag, TEST_TAG);
-        assert!((through_gap.point.z - 3.0).abs() < 1e-3, "{through_gap:?}");
-        assert_eq!(through_arm.map(|hit| hit.tag), Some(ARM));
-    }
-
-    #[test]
-    fn ray_ignoring_the_shooter_hits_the_other_characters_torso() {
-        let mut world = PhysicsWorld::new();
-        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
-        let shooter = world.add_character(Vec3::new(0.0, 1.2, -2.0));
-        let target = world.add_character(Vec3::new(0.0, 1.2, 2.0));
-        settle_on_floor(&mut world, &[shooter, target]);
-        attach(
-            &mut world,
-            shooter,
-            volume(Vec3::new(0.0, 0.7, 0.0), Vec3::new(0.2, 0.3, 0.2), HEAD),
-        );
-        attach(
-            &mut world,
-            target,
-            volume(Vec3::new(0.0, 0.1, 0.0), Vec3::new(0.25, 0.4, 0.15), TORSO),
-        );
-        attach(
-            &mut world,
-            target,
-            volume(Vec3::new(0.0, 0.95, 0.0), Vec3::new(0.2, 0.2, 0.2), ARM),
-        );
-        world.step(DT);
-        let muzzle = state(&world, shooter).position + Vec3::new(0.0, 0.45, 0.0);
-
-        let ignoring = cast(&world, muzzle, Vec3::Z, Some(shooter));
-
-        let ignoring = ignoring.expect("the target's torso is in line");
-        assert_eq!(ignoring.tag, TORSO);
-        assert!((ignoring.distance - 3.85).abs() < 0.02, "{ignoring:?}");
-    }
-
-    #[test]
-    fn overlapping_volumes_do_not_stop_a_walking_character() {
-        let mut world = PhysicsWorld::new();
-        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
-        let walker = world.add_character(Vec3::new(0.0, 1.2, -1.5));
-        let standing = world.add_character(Vec3::new(0.0, 1.2, 1.5));
-        settle_on_floor(&mut world, &[walker, standing]);
-        let reach = Vec3::new(0.3, 0.4, 0.3);
-        attach(
-            &mut world,
-            walker,
-            volume(Vec3::new(0.0, 0.0, 0.8), reach, ARM),
-        );
-        attach(
-            &mut world,
-            standing,
-            volume(Vec3::new(0.0, 0.0, -0.8), reach, ARM),
-        );
-        world.step(DT);
-        let forward = CharacterCommand {
-            forward: 1.0,
-            ..idle()
+        let head_ray = |world: &PhysicsWorld| {
+            cast(world, at + Vec3::new(-3.0, 0.7, 0.0), Vec3::X, None).map(|hit| hit.tag)
         };
+        let torso_ray = |world: &PhysicsWorld| {
+            cast(world, at + Vec3::new(-3.0, 0.1, 0.0), Vec3::X, None).map(|hit| hit.tag)
+        };
+        assert_eq!(head_ray(&world), Some(HEAD));
+        assert_eq!(world.collider_set.len(), colliders + 2);
 
-        trace(&mut world, walker, &forward, &test_settings(), 150);
+        set_volumes(&mut world, h, &[torso]);
+        world.step(DT);
 
-        let gap = state(&world, standing).position.z - state(&world, walker).position.z;
-        assert!(
-            (gap - 0.6).abs() < 0.08,
-            "capsules of radius 0.3 meet with centres 0.6 apart, gap={gap}"
-        );
+        assert_eq!(head_ray(&world), None, "the head is gone");
+        assert_eq!(torso_ray(&world), Some(TORSO), "the torso stays");
+        assert_eq!(world.collider_set.len(), colliders + 1);
     }
 
     #[test]
-    fn removing_a_character_removes_its_volumes() {
-        let mut world = PhysicsWorld::new();
-        let colliders = world.collider_set.len();
-        let h = world.add_character(Vec3::new(0.0, 1.2, 0.0));
-        attach_head_and_torso(&mut world, h);
-        world.step(DT);
-        let head_ray = |world: &PhysicsWorld| cast(world, Vec3::new(-3.0, 1.9, 0.0), Vec3::X, None);
-        assert_eq!(head_ray(&world).map(|hit| hit.tag), Some(HEAD));
+    fn reposing_the_same_number_of_volumes_keeps_their_colliders() {
+        let (mut world, h) = standing_on_floor();
+        let head = volume(Vec3::new(0.0, 0.7, 0.0), Vec3::new(0.2, 0.15, 0.2), HEAD);
+        set_volumes(&mut world, h, &[head]);
+        let before = world.characters[&h].volumes.clone();
 
-        world.remove_character(h).unwrap();
-        world.step(DT);
+        let leaned = volume(Vec3::new(0.35, 0.7, 0.0), Vec3::new(0.2, 0.15, 0.2), HEAD);
+        set_volumes(&mut world, h, &[leaned]);
 
-        assert_eq!(head_ray(&world), None);
-        assert_eq!(world.collider_set.len(), colliders);
+        assert_eq!(world.characters[&h].volumes, before);
     }
 
     #[test]
-    fn adding_a_volume_to_a_removed_character_is_refused() {
+    fn setting_volumes_on_a_removed_character_is_refused() {
         let mut world = PhysicsWorld::new();
         let h = world.add_character(Vec3::new(0.0, 1.2, 0.0));
         world.remove_character(h).unwrap();
         let colliders = world.collider_set.len();
 
-        let added = world.add_hit_volume(h, volume(Vec3::ZERO, Vec3::splat(0.2), HEAD));
+        let set = world.set_hit_volumes(h, &[volume(Vec3::ZERO, Vec3::splat(0.2), HEAD)]);
 
-        assert_eq!(added, Err(UnknownCharacter));
+        assert_eq!(set, Err(UnknownCharacter));
         assert_eq!(world.collider_set.len(), colliders);
     }
 
@@ -2742,10 +2870,14 @@ mod tests {
     fn a_characters_own_volumes_do_not_block_its_movement() {
         let (mut world, h) = standing_on_floor();
         let start = state(&world, h).position;
-        attach(
+        set_volumes(
             &mut world,
             h,
-            volume(Vec3::new(0.0, 0.0, 0.52), Vec3::new(0.2, 0.3, 0.2), ARM),
+            &[volume(
+                Vec3::new(0.0, 0.0, 0.52),
+                Vec3::new(0.2, 0.3, 0.2),
+                ARM,
+            )],
         );
         world.step(DT);
         let forward = CharacterCommand {
@@ -2766,10 +2898,14 @@ mod tests {
     fn a_falling_prop_passes_through_a_hit_volume() {
         let mut world = PhysicsWorld::new();
         let h = world.add_character(Vec3::new(0.0, 5.0, 0.0));
-        attach(
+        set_volumes(
             &mut world,
             h,
-            volume(Vec3::new(2.0, 0.0, 0.0), Vec3::new(1.0, 0.5, 1.0), TORSO),
+            &[volume(
+                Vec3::new(2.0, 0.0, 0.0),
+                Vec3::new(1.0, 0.5, 1.0),
+                TORSO,
+            )],
         );
         // Beside the capsule, so only the volume is under the prop.
         let prop = world.add_dynamic_sphere(Vec3::new(2.0, 8.0, 0.0), 0.2);
@@ -2802,7 +2938,7 @@ mod tests {
     /// An arm at +X before any turn, with the rays that find it on either side.
     fn arm_on_plus_x() -> (PhysicsWorld, CharacterHandle) {
         let (mut world, h) = standing_on_floor();
-        attach(
+        set_one_volume(
             &mut world,
             h,
             volume(Vec3::new(0.4, 0.0, 0.0), Vec3::new(0.1, 0.3, 0.1), ARM),
@@ -2832,7 +2968,7 @@ mod tests {
             yaw: std::f32::consts::PI,
             pitch: 0.0,
         });
-        attach(
+        set_one_volume(
             &mut world,
             h,
             volume(Vec3::new(0.4, 0.0, 0.0), Vec3::new(0.1, 0.3, 0.1), ARM),
@@ -2890,7 +3026,7 @@ mod tests {
     #[test]
     fn set_look_then_a_command_turn_in_the_same_tick_compose() {
         let (mut world, h) = standing_on_floor();
-        attach(
+        set_one_volume(
             &mut world,
             h,
             volume(Vec3::new(0.0, 0.0, 0.4), Vec3::new(0.1, 0.3, 0.1), ARM),
@@ -2927,7 +3063,7 @@ mod tests {
     #[test]
     fn a_quarter_turn_swings_a_forward_volume_toward_plus_x() {
         let (mut world, h) = standing_on_floor();
-        attach(
+        set_one_volume(
             &mut world,
             h,
             volume(Vec3::new(0.0, 0.0, 0.4), Vec3::new(0.1, 0.3, 0.1), ARM),

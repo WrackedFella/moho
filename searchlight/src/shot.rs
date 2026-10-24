@@ -75,11 +75,9 @@ mod tests {
 
     fn add_dummy(world: &mut PhysicsWorld, centre: Vec3) -> CharacterHandle {
         let dummy = world.add_character(centre);
-        for volume in dummy_hit_volumes(0) {
-            world
-                .add_hit_volume(dummy, volume)
-                .expect("the dummy was just added");
-        }
+        world
+            .set_hit_volumes(dummy, &dummy_hit_volumes(0))
+            .expect("the dummy was just added");
         world.step(DT);
         dummy
     }
@@ -117,11 +115,9 @@ mod tests {
 
     fn add_player(world: &mut PhysicsWorld, centre: Vec3) -> CharacterHandle {
         let player = world.add_character(centre);
-        for volume in player_hit_volumes() {
-            world
-                .add_hit_volume(player, volume)
-                .expect("the player was just added");
-        }
+        world
+            .set_hit_volumes(player, &player_hit_volumes())
+            .expect("the player was just added");
         world.step(DT);
         player
     }

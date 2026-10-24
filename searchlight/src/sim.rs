@@ -159,6 +159,7 @@ pub fn dummy_hit_volumes(target: u16) -> [HitVolume; 6] {
 fn body_volumes(tag_of: impl Fn(BodyPart) -> SurfaceTag) -> [HitVolume; 6] {
     let volume = |part, offset: Vec3, half_extents: Vec3| HitVolume {
         offset,
+        rotation: Quat::IDENTITY,
         half_extents,
         tag: tag_of(part).into(),
     };
@@ -295,11 +296,9 @@ fn new_target(
         yaw,
         pitch: 0.0,
     });
-    for volume in dummy_hit_volumes(target) {
-        world
-            .add_hit_volume(handle, volume)
-            .expect("the target was added a moment ago");
-    }
+    world
+        .set_hit_volumes(handle, &dummy_hit_volumes(target))
+        .expect("the target was added a moment ago");
     Target {
         handle: Some(handle),
         body: Body::new(profile),
@@ -338,11 +337,9 @@ impl SearchlightSim {
         world.set_gravity(config.gravity);
         let player = world.add_character(spawns.player + Vec3::Y * STAND_HEIGHT);
         let player_volumes = player_hit_volumes();
-        for volume in player_volumes {
-            world
-                .add_hit_volume(player, volume)
-                .expect("the player was added a moment ago");
-        }
+        world
+            .set_hit_volumes(player, &player_volumes)
+            .expect("the player was added a moment ago");
         let aim_offset = player_volumes
             .iter()
             .find(|volume| volume.tag == SurfaceTag::Player(config.enemy_aim_at).into())
