@@ -17,7 +17,7 @@ pub fn tuning(kit: Kit) -> SimConfig {
             stop_speed: 1.0,
             air_accel: 20.0,
             air_speed_cap: 1.0,
-            gravity: 18.0,
+            gravity: None,
             jump_speed: 6.5,
             max_velocity: 90.0,
             autohop: false,

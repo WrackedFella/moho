@@ -558,6 +558,27 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_settings_gravity_overrides_the_world() {
+        let mut world = PhysicsWorld::new();
+        world.set_gravity(20.32);
+        let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
+        let settings = MoveSettings {
+            gravity: Some(9.0),
+            ..test_settings()
+        };
+
+        world
+            .move_character(h, &idle(), &settings, DT)
+            .expect("character is live");
+
+        let vy = state(&world, h).velocity.y;
+        assert!(
+            (vy + 9.0 * DT).abs() < 1e-5,
+            "one airborne tick at the override's 9 m/s², vy={vy}"
+        );
+    }
+
     /// Settles on a floor at `dt`, jumps once at 6.5 m/s under 18 m/s^2, and returns how high
     /// the centre got above its resting height.
     fn jump_peak(dt: f32) -> f32 {
@@ -1507,7 +1528,7 @@ mod tests {
             .queue_effect(h, CharacterEffect::AddVelocity(Vec3::new(0.0, -12.0, 0.0)))
             .unwrap();
         let no_gravity = MoveSettings {
-            gravity: 0.0,
+            gravity: Some(0.0),
             ..test_settings()
         };
 
@@ -1741,7 +1762,7 @@ mod tests {
             stop_speed: 1.0,
             air_accel: 360.0,
             air_speed_cap: 6.0,
-            gravity: 18.0,
+            gravity: Some(18.0),
             jump_speed: 8.0,
             max_velocity: 90.0,
             autohop: true,
@@ -1800,7 +1821,7 @@ mod tests {
             stop_speed: 1.0,
             air_accel: 20.0,
             air_speed_cap: 1.0,
-            gravity: 18.0,
+            gravity: Some(18.0),
             jump_speed: 6.5,
             max_velocity: 90.0,
             autohop: false,
@@ -2433,7 +2454,7 @@ mod tests {
             .unwrap();
         world.step(DT);
         let no_gravity = MoveSettings {
-            gravity: 0.0,
+            gravity: Some(0.0),
             ..test_settings()
         };
         let forward = CharacterCommand {
@@ -2939,7 +2960,7 @@ mod tests {
         const AIRBORNE_TICKS: usize = 4;
 
         fn gravity() -> f32 {
-            test_settings().gravity
+            test_settings().gravity.expect("test settings set gravity")
         }
 
         fn rise_per_run() -> f32 {

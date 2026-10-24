@@ -24,7 +24,7 @@ const STRATEGY_MOVE_SETTINGS: moho_physics::MoveSettings = moho_physics::MoveSet
     stop_speed: 1.0,
     air_accel: 360.0,
     air_speed_cap: MOVE_SPEED,
-    gravity: 18.0,
+    gravity: None,
     jump_speed: 8.0,
     max_velocity: 90.0,
     autohop: true,
