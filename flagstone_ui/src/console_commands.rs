@@ -283,6 +283,15 @@ mod tests {
     }
 
     #[test]
+    fn god_is_an_unknown_command() {
+        assert_runs(
+            "god",
+            None,
+            &["Unknown command 'god'. Type 'help' for a list of commands."],
+        );
+    }
+
+    #[test]
     fn strategy_commands_parse_with_todays_replies() {
         use StrategyConsoleCommand::{SetSunDirection, SetTimeOfDay, Spawn};
         let spawn = |kind: &str, args: Option<&str>| Spawn {
@@ -290,11 +299,6 @@ mod tests {
             args: args.map(str::to_owned),
         };
         let rows: Vec<(&str, Option<StrategyConsoleCommand>, Vec<&str>)> = vec![
-            (
-                "god",
-                Some(StrategyConsoleCommand::ToggleGodMode),
-                vec!["Toggling god mode..."],
-            ),
             (
                 "noclip",
                 Some(StrategyConsoleCommand::ToggleNoclip),

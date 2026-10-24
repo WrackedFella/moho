@@ -538,6 +538,25 @@ impl EventProcessor {
     }
 }
 
+/// Camera position and forward direction read from a view matrix.
+fn spawn_ray(_view: &glam::Mat4) -> (glam::Vec3, glam::Vec3) {
+    todo!()
+}
+
+/// Where a console spawn lands: just off the hit face, else in front of the camera.
+fn spawn_position(
+    _origin: glam::Vec3,
+    _forward: glam::Vec3,
+    _hit: Option<&flagstone_game::raycast::RaycastResult>,
+) -> glam::Vec3 {
+    todo!()
+}
+
+/// Light colour from console args "r g b"; white unless three parts are given.
+fn parse_light_color(_args: Option<&str>) -> glam::Vec3 {
+    todo!()
+}
+
 /// Compute chunk coordinates from a world-space position.
 pub(crate) fn lod_player_chunk(pos: glam::Vec3) -> glam::IVec3 {
     const CHUNK_SIZE: i32 = 16;
@@ -996,6 +1015,70 @@ mod tests {
 
         let grid = app.light_system.as_ref().expect("light system").grid();
         assert!(grid.is_solid_at(aimed), "the aimed block is not mined");
+    }
+
+    #[test]
+    fn spawn_position_offsets_a_hit_along_its_normal() {
+        let hit = flagstone_game::raycast::RaycastResult {
+            block_pos: flagstone_voxel::BlockPos::new(4, 9, -3),
+            normal: glam::IVec3::new(0, -1, 0),
+            position: glam::Vec3::new(4.25, 9.0, -2.5),
+            distance: 7.0,
+        };
+
+        let pos = spawn_position(
+            glam::Vec3::new(1.0, 2.0, 3.0),
+            glam::Vec3::new(0.0, 0.0, -1.0),
+            Some(&hit),
+        );
+
+        let expected = glam::Vec3::new(4.25, 9.0 - SPAWN_NORMAL_OFFSET, -2.5);
+        assert!(pos.distance(expected) < 1e-5, "{pos:?}");
+    }
+
+    #[test]
+    fn spawn_position_without_a_hit_is_in_front_of_the_camera() {
+        let origin = glam::Vec3::new(1.0, 2.0, 3.0);
+        let forward = glam::Vec3::new(0.0, 0.6, -0.8);
+
+        let pos = spawn_position(origin, forward, None);
+
+        let expected = origin + forward * SPAWN_FALLBACK_DISTANCE;
+        assert!(pos.distance(expected) < 1e-5, "{pos:?}");
+    }
+
+    #[test]
+    fn spawn_ray_reads_origin_and_forward_from_the_view_matrix() {
+        let eye = glam::Vec3::new(3.0, -2.0, 7.0);
+        let dir = glam::Vec3::new(2.0, 1.0, -2.0) / 3.0;
+        let look = glam::Quat::from_rotation_arc(glam::Vec3::NEG_Z, dir);
+        let view = glam::Mat4::from_rotation_translation(look, eye).inverse();
+
+        let (origin, forward) = spawn_ray(&view);
+
+        assert!(origin.distance(eye) < 1e-4, "origin {origin:?}");
+        assert!(forward.distance(dir) < 1e-4, "forward {forward:?}");
+    }
+
+    #[test]
+    fn light_color_reads_three_channels() {
+        let color = parse_light_color(Some("0.2 0.4 0.6"));
+
+        assert_eq!(color, glam::Vec3::new(0.2, 0.4, 0.6));
+    }
+
+    #[test]
+    fn light_color_defaults_to_white() {
+        for args in [None, Some(""), Some("0.2 0.4")] {
+            assert_eq!(parse_light_color(args), glam::Vec3::ONE, "args {args:?}");
+        }
+    }
+
+    #[test]
+    fn light_color_defaults_an_unparseable_channel_to_one() {
+        let color = parse_light_color(Some("0.2 abc 0.6"));
+
+        assert_eq!(color, glam::Vec3::new(0.2, 1.0, 0.6));
     }
 
     #[test]
