@@ -417,8 +417,8 @@ fn a_recorded_run_replays_bit_for_bit_on_every_tick() {
 }
 
 /// Guards the comparison against passing because nothing happened.
-fn assert_run_exercises_the_world(script: &[TickInput], run: &[Snapshot]) {
-    assert_eq!(run.len(), TICKS);
+fn assert_run_exercises_the_world(script: &[TickInput], recorded: &[Snapshot]) {
+    assert_eq!(recorded.len(), TICKS);
     let kinds = |pick: fn(&CharacterEffect) -> bool, kind: &str| {
         assert!(effects_of(script).any(pick), "script has no {kind}");
     };
@@ -457,19 +457,23 @@ fn assert_run_exercises_the_world(script: &[TickInput], run: &[Snapshot]) {
     kinds(|e| matches!(e, CharacterEffect::SetLook { .. }), "SetLook");
 
     for index in 0..2 {
-        let positions: Vec<Vec3> = run.iter().map(|s| s.characters[index].position).collect();
+        let positions: Vec<Vec3> = recorded
+            .iter()
+            .map(|s| s.characters[index].position)
+            .collect();
         let travelled: f32 = positions.windows(2).map(|w| w[0].distance(w[1])).sum();
         assert!(
             travelled > 10.0,
             "character {index} barely moved: {travelled}"
         );
         assert!(
-            run.iter()
+            recorded
+                .iter()
                 .any(|s| !s.characters[index].grounded && s.characters[index].velocity.y > 1.0),
             "character {index} never jumped"
         );
         assert!(
-            run.iter().any(|s| s.characters[index].grounded),
+            recorded.iter().any(|s| s.characters[index].grounded),
             "character {index} never stood on the floor"
         );
     }
@@ -481,8 +485,8 @@ fn assert_run_exercises_the_world(script: &[TickInput], run: &[Snapshot]) {
             commands: [CharacterCommand::default(); 2],
         })
         .collect();
-    let idle_run = self::run(&idle);
-    let pushed_ticks = run
+    let idle_run = run(&idle);
+    let pushed_ticks = recorded
         .iter()
         .zip(&idle_run)
         .skip(APPROACH_TICKS)
@@ -494,7 +498,7 @@ fn assert_run_exercises_the_world(script: &[TickInput], run: &[Snapshot]) {
     );
 
     let corner = Vec3::new(4.0, 0.0, 8.0);
-    let closest = run
+    let closest = recorded
         .iter()
         .map(|s| {
             let p = s.characters[1].position;
@@ -503,7 +507,21 @@ fn assert_run_exercises_the_world(script: &[TickInput], run: &[Snapshot]) {
         .fold(f32::MAX, f32::min);
     assert!(
         closest < 0.7,
-        "no character reached the wall corner: {closest}"
+        "character 1 never reached the wall corner: {closest}"
+    );
+
+    let grounded_heights = |on_slab: bool| {
+        recorded
+            .iter()
+            .flat_map(|s| &s.characters)
+            .filter(move |c| c.grounded && (1.0..=2.0).contains(&c.position.z) == on_slab)
+            .map(|c| c.position.y)
+    };
+    let on_floor = grounded_heights(false).fold(f32::MAX, f32::min);
+    let on_slab = grounded_heights(true).fold(f32::MIN, f32::max);
+    assert!(
+        on_slab - on_floor > 0.25,
+        "no character stood on the step: floor {on_floor}, slab {on_slab}"
     );
 }
 
