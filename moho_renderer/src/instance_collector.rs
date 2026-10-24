@@ -208,10 +208,6 @@ mod tests {
 
         assert_eq!(collector.sphere_instances().len(), 1);
         assert_eq!(collector.cube_instances().len(), 2);
-        assert_eq!(
-            collector.sphere_instances().len() + collector.cube_instances().len(),
-            3
-        );
     }
 
     #[test]
@@ -229,10 +225,6 @@ mod tests {
 
         assert!(collector.sphere_instances().is_empty());
         assert!(collector.cube_instances().is_empty());
-        assert_eq!(
-            collector.sphere_instances().len() + collector.cube_instances().len(),
-            0
-        );
     }
 
     #[test]

@@ -91,18 +91,14 @@ let materials = vec![
     },
 ];
 
-renderer.set_material_table(&materials);
+renderer.set_materials(&materials);
 ```
 
 ### 3.4 Rendering Instances
 
 ```rust
-// Render 100 cubes at different positions
-renderer.render_mesh(
-    mesh_id,
-    &instances, // Vec<[f32; 16]> - 4×4 transform matrices
-    &materials, // Vec<u32> - material indices per instance
-);
+// Queue instances of a registered mesh between begin_frame and submit_frame
+renderer.enqueue_draw(mesh_id, &instances); // &[InstanceGpu]
 ```
 
 ### 3.5 Updating Lighting

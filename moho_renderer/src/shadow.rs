@@ -460,10 +460,7 @@ impl ShadowSystem {
 
         let sun_matrix = light_matrix::light_view_projection(sun_dir, cam_pos);
         let moon_matrix = light_matrix::light_view_projection(moon_dir, cam_pos);
-        self.active_lights = light_matrix::active_shadow_lights(
-            (sun_matrix, sun_intensity),
-            (moon_matrix, moon_intensity),
-        );
+        self.active_lights = light_matrix::active_shadow_lights(sun_intensity, moon_intensity);
 
         if !self.csm_logged_once.get() {
             tracing::info!(

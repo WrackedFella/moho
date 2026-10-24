@@ -61,11 +61,11 @@ pub(super) fn light_view_projection(light_dir: Vec3, center: Vec3) -> Mat4 {
 
 /// The lights that cast a shadow this frame: sun in slot 0, moon in slot 1, each only when its
 /// intensity is above `MIN_SHADOW_LIGHT_INTENSITY`.
-pub(super) fn active_shadow_lights(sun: (Mat4, f32), moon: (Mat4, f32)) -> Vec<ActiveShadowLight> {
+pub(super) fn active_shadow_lights(sun: f32, moon: f32) -> Vec<ActiveShadowLight> {
     [(0, sun), (1, moon)]
         .into_iter()
-        .filter(|(_, (_, intensity))| *intensity > MIN_SHADOW_LIGHT_INTENSITY)
-        .map(|(light_index, (_, intensity))| ActiveShadowLight {
+        .filter(|(_, intensity)| *intensity > MIN_SHADOW_LIGHT_INTENSITY)
+        .map(|(light_index, intensity)| ActiveShadowLight {
             light_index,
             intensity,
         })
@@ -261,7 +261,7 @@ mod tests {
         ];
 
         for (sun, moon, expected) in cases {
-            let lights = active_shadow_lights((marker(1.0), sun), (marker(2.0), moon));
+            let lights = active_shadow_lights(sun, moon);
 
             let slots: Vec<u32> = lights.iter().map(|l| l.light_index).collect();
             assert_eq!(slots, expected, "sun {sun}, moon {moon}");
@@ -270,7 +270,7 @@ mod tests {
 
     #[test]
     fn active_lights_carry_slot_and_intensity() {
-        let lights = active_shadow_lights((marker(1.0), 0.8), (marker(2.0), 0.4));
+        let lights = active_shadow_lights(0.8, 0.4);
 
         assert_eq!(lights[0].light_index, 0);
         assert_eq!(lights[0].intensity, 0.8);
