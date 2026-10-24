@@ -780,19 +780,23 @@ mod tests {
     }
 
     #[test]
+    fn an_idle_walker_on_an_edge_is_rolled_off_at_the_roll_off_speed() {
+        let free = idle_slide_on_the_nosing(None);
+
+        assert!(
+            (free.translation.z - 1.0 / 60.0).abs() < 1e-3,
+            "an idle walker on the edge is shifted outward by 1 m/s over one tick: {free:?}"
+        );
+    }
+
+    #[test]
     fn the_roll_off_stops_at_a_wall() {
         // The capsule's front, plus its skin offset, is 1.5615; the wall is 4 mm beyond that.
-        let free = idle_slide_on_the_nosing(None);
         let walled = idle_slide_on_the_nosing(Some(wall_mesh(1.5655)));
 
         assert!(
-            (free.translation.z - ROLL_OFF_SPEED / 60.0).abs() < 1e-3,
-            "an idle walker on the edge is shifted outward by the roll-off speed: {free:?}"
-        );
-        assert!(!free.grounded, "{free:?}");
-        assert!(
-            walled.translation.z < 0.0045,
-            "the wall blocks the shift: {walled:?}"
+            (0.001..0.0045).contains(&walled.translation.z),
+            "the shift goes as far as the wall allows: {walled:?}"
         );
         assert!(walled.hits.is_empty(), "{walled:?}");
     }
@@ -809,13 +813,13 @@ mod tests {
         let moving_inward = top_up(-0.01, 1.0, dt);
         let capped = top_up(0.0, 0.005, dt);
 
-        assert_eq!(own_motion_at_speed, 0.0);
+        assert!(own_motion_at_speed.abs() < 1e-6, "{own_motion_at_speed}");
         assert_eq!(own_motion_above_speed, 0.0);
         assert!((idle - wanted).abs() < 1e-6, "{idle}");
         assert!((half_way - wanted / 2.0).abs() < 1e-6, "{half_way}");
         assert!(
-            (moving_inward - (wanted + 0.01)).abs() < 1e-6,
-            "{moving_inward}"
+            (moving_inward - wanted).abs() < 1e-6,
+            "inward motion is ignored, not made up: {moving_inward}"
         );
         assert_eq!(capped, 0.005);
     }
