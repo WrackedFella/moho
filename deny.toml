@@ -38,6 +38,16 @@ ignore = true
 multiple-versions = "warn"
 wildcards = "allow"
 
+# Rayon's parallel solver changes the order of floating-point work between runs, which
+# would break ADR-0011's same-binary replay guarantee.
+[[bans.features]]
+crate = "rapier3d"
+deny = ["parallel"]
+
+[[bans.features]]
+crate = "parry3d"
+deny = ["parallel"]
+
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
