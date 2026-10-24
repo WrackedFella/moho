@@ -2840,6 +2840,19 @@ mod tests {
     }
 
     #[test]
+    fn reposing_the_same_number_of_volumes_keeps_their_colliders() {
+        let (mut world, h) = standing_on_floor();
+        let head = volume(Vec3::new(0.0, 0.7, 0.0), Vec3::new(0.2, 0.15, 0.2), HEAD);
+        set_volumes(&mut world, h, &[head]);
+        let before = world.characters[&h].volumes.clone();
+
+        let leaned = volume(Vec3::new(0.35, 0.7, 0.0), Vec3::new(0.2, 0.15, 0.2), HEAD);
+        set_volumes(&mut world, h, &[leaned]);
+
+        assert_eq!(world.characters[&h].volumes, before);
+    }
+
+    #[test]
     fn setting_volumes_on_a_removed_character_is_refused() {
         let mut world = PhysicsWorld::new();
         let h = world.add_character(Vec3::new(0.0, 1.2, 0.0));
