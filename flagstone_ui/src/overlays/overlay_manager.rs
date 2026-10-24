@@ -126,6 +126,12 @@ pub trait Overlay: std::fmt::Debug + Send + Sync {
         self.set_visible(!v);
     }
 
+    /// Whether this overlay is a diagnostic that stays drawn while the game is paused.
+    /// Gameplay HUDs keep the default and step aside.
+    fn shows_while_paused(&self) -> bool {
+        false
+    }
+
     /// Move what the player asked for since the last call into `out`, leaving none behind.
     fn take_intents(&mut self, _out: &mut HudIntents) {}
 }
@@ -174,6 +180,13 @@ impl OverlayManager {
     /// Render every registered overlay (each self-filters on visibility/mode).
     pub fn render_all(&mut self, ui: &mut egui::Ui) {
         for overlay in &mut self.overlays {
+            overlay.render(ui, &self.hud_data);
+        }
+    }
+
+    /// Render only the overlays that stay drawn while paused (each self-filters on visibility).
+    pub fn render_paused(&mut self, ui: &mut egui::Ui) {
+        for overlay in self.overlays.iter_mut().filter(|o| o.shows_while_paused()) {
             overlay.render(ui, &self.hud_data);
         }
     }
@@ -302,6 +315,32 @@ mod tests {
         mgr.toggle("nonexistent");
 
         assert_eq!(visibility(&mgr), [true, false]);
+    }
+
+    #[test]
+    fn render_paused_draws_only_overlays_that_show_while_paused() {
+        use crate::overlays::test_support::{second_frame, texts};
+
+        let ctx = egui::Context::default();
+        let mut mgr = OverlayManager::new();
+        let mut hud = crate::overlays::RtsHud::new();
+        hud.set_visible(true);
+        let mut debug = crate::overlays::DebugHud::new();
+        debug.set_visible(true);
+        mgr.register(Box::new(hud));
+        mgr.register(Box::new(debug));
+        mgr.update_data(HudData {
+            is_fps_mode: false,
+            time_of_day: 7.25,
+            ..Default::default()
+        });
+
+        let all = texts(&second_frame(&ctx, |ui| mgr.render_all(ui)));
+        let paused = texts(&second_frame(&ctx, |ui| mgr.render_paused(ui)));
+
+        assert!(all.contains(&"07:15".to_string()), "{all:?}");
+        assert!(!paused.contains(&"07:15".to_string()), "{paused:?}");
+        assert!(paused.iter().any(|t| t.starts_with("Pos:")), "{paused:?}");
     }
 
     #[test]
