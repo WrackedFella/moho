@@ -167,9 +167,7 @@ impl PhysicsWorld {
                 rounding,
             ),
         };
-        let collider = shape
-            .friction(0.0) // No friction on the character hull itself
-            .build();
+        let collider = shape.friction(0.0).build();
         let collider =
             self.collider_set
                 .insert_with_parent(collider, body_handle, &mut self.rigid_body_set);

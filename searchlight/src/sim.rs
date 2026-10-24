@@ -159,8 +159,8 @@ pub fn player_hit_volumes() -> [HitVolume; 6] {
     body_volumes(&SHIPPED_BODY, SurfaceTag::Player)
 }
 
-/// The six hit volumes of a shipped-body dummy numbered `target`, one per body part, in the body frame
-/// around the capsule centre. Each volume's tag is `SurfaceTag::Part` for that part.
+/// The six hit volumes of a shipped-body dummy numbered `target`, one per body part, in the
+/// body frame around the capsule centre. Each is tagged `SurfaceTag::Part` for its part.
 ///
 /// The body faces +Z at yaw 0, so its left side is +X. The head sits directly on the torso
 /// and the legs under it, reaching the feet of the hull, so a level ray from the player's eye

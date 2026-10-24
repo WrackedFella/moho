@@ -118,7 +118,7 @@ A `FrameError` skips the frame with a `warn`. Pass order inside the renderer:
 ### 4.1 Frame camera
 
 `App::render_camera(alpha)` picks the camera per frame. While `App::is_kcc_walking`
-(Playing, first person, character controller active and not noclip) the eye is blended
+(Playing, first person, character controller active and not noclip) the eye (`CharacterState::eye_position`, so it follows the body's eye offset) is blended
 between the player's last two tick states by `alpha` (0 = previous tick, 1 = current) via
 `moho_physics::first_person_view` (`moho_physics/src/camera.rs`); look comes from the
 current tick turned by the pending look: what frames sampled (`ActionMap::sample_frame`) and no tick has consumed yet, pitch clamped with the same f32 operations as `moho_physics::step`, so the next tick lands on exactly the drawn angles. `PhysicsController` keeps the pre-tick state (`previous`) for this and
