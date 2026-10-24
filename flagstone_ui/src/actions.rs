@@ -25,6 +25,7 @@ const DESCEND: [Binding; 2] = [Binding::key(Key::Ctrl), button(PadButton::LeftTr
 const SPRINT: [Binding; 2] = [Binding::key(Key::Shift), button(PadButton::LeftThumb)];
 
 const SELECT: [Binding; 1] = [Binding::mouse(MouseButton::Left)];
+const POSSESS: [Binding; 1] = [Binding::key(Key::Tab)];
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StrategyAction {
@@ -38,6 +39,8 @@ pub enum StrategyAction {
     Jump,
     /// The strategy view's primary pointer action.
     Select,
+    /// Toggles between the strategy view and first person.
+    Possess,
 }
 
 impl Action for StrategyAction {
@@ -51,6 +54,7 @@ impl Action for StrategyAction {
         StrategyAction::Sprint,
         StrategyAction::Jump,
         StrategyAction::Select,
+        StrategyAction::Possess,
     ];
 
     fn name(self) -> &'static str {
@@ -64,6 +68,7 @@ impl Action for StrategyAction {
             StrategyAction::Sprint => "sprint",
             StrategyAction::Jump => "jump",
             StrategyAction::Select => "select",
+            StrategyAction::Possess => "possess",
         }
     }
 
@@ -78,6 +83,7 @@ impl Action for StrategyAction {
             StrategyAction::Descend => &DESCEND,
             StrategyAction::Sprint => &SPRINT,
             StrategyAction::Select => &SELECT,
+            StrategyAction::Possess => &POSSESS,
         }
     }
 
@@ -165,7 +171,7 @@ mod tests {
 
         let actual: Vec<_> = StrategyAction::ALL
             .iter()
-            .filter(|&&a| a != StrategyAction::Select)
+            .filter(|&&a| a != StrategyAction::Select && a != StrategyAction::Possess)
             .map(|a| (*a, a.name(), a.default_bindings().to_vec()))
             .collect();
 
@@ -218,6 +224,42 @@ mod tests {
             [Binding::mouse(MouseButton::Left)]
         );
         assert!(StrategyAction::ALL.contains(&StrategyAction::Select));
+    }
+
+    #[test]
+    fn possess_defaults_to_tab_and_collides_with_no_other_default() {
+        let possess = StrategyAction::Possess.default_bindings();
+
+        let collisions: Vec<_> = StrategyAction::ALL
+            .iter()
+            .filter(|&&other| other != StrategyAction::Possess)
+            .filter(|other| {
+                other
+                    .default_bindings()
+                    .iter()
+                    .any(|binding| possess.contains(binding))
+            })
+            .map(|other| other.name())
+            .collect();
+
+        assert_eq!(StrategyAction::Possess.name(), "possess");
+        assert_eq!(possess, [Binding::key(Key::Tab)]);
+        assert!(
+            collisions.is_empty(),
+            "Possess collides with {collisions:?}"
+        );
+    }
+
+    #[test]
+    fn saved_bindings_without_possess_load_its_default() {
+        let (prefs, _) = Prefs::parse("[bindings]\nmove_forward = Q\n");
+
+        let bindings = load_bindings(&prefs);
+
+        assert_eq!(
+            bindings.get(StrategyAction::Possess),
+            [Binding::key(Key::Tab)]
+        );
     }
 
     #[test]
