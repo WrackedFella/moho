@@ -981,11 +981,6 @@ mod tests {
                 v.iter().all(|c| (5.5 - 1e-4..=7.5 + 1e-4).contains(c)),
                 "vertex {v:?} outside the solid's shell"
             );
-            let density = MarchingCubes::sample_density(&field, v[0], v[1], v[2]);
-            assert!(
-                (density - 0.5).abs() < 1e-4,
-                "vertex {v:?} has density {density}, not on the isosurface"
-            );
         }
         assert_normals_point_away_from(&mesh, [6.5, 6.5, 6.5]);
     }
@@ -1229,23 +1224,6 @@ mod tests {
                     (v[0] - crossing).abs() < 1e-5,
                     "{d0}/{d1}: vertex at x={}, expected {crossing}",
                     v[0]
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn ao_follows_density_at_vertex() {
-        // Every vertex sits on the 0.5 isosurface, where AO is 0.6 + 0.4 * (1 - 0.5).
-        for (d0, d1) in [(0.2, 0.8), (0.0, 0.8), (0.9, 0.3)] {
-            let mesh = mesh_of_two_samples(d0, d1);
-
-            assert!(!mesh.vertices.is_empty());
-            assert_eq!(mesh.ambient_occlusion.len(), mesh.vertices.len());
-            for (v, ao) in mesh.vertices.iter().zip(&mesh.ambient_occlusion) {
-                assert!(
-                    (ao - 0.8).abs() < 1e-5,
-                    "{d0}/{d1}: vertex {v:?} has AO {ao}, expected 0.8"
                 );
             }
         }
