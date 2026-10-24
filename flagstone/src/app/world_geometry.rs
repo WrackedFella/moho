@@ -492,11 +492,21 @@ pub(crate) mod tests {
         app.scene.world_meshes_mut().flush(&mut backend);
 
         assert_eq!(backend.unregistered, vec![old], "the old chunk was freed");
-        assert_eq!(backend.registered.len(), 2, "the saved chunk was uploaded");
+        let loaded = app
+            .entities
+            .chunks
+            .iter()
+            .filter(|chunk| !chunk.is_empty())
+            .count();
+        assert_eq!(
+            backend.registered.len(),
+            1 + loaded,
+            "every loaded chunk was uploaded, the saved one and the spawn area"
+        );
         assert_eq!(
             drawn_handles(&mut app),
-            vec![backend.registered[1]],
-            "only the saved chunk is drawn"
+            backend.registered[1..].to_vec(),
+            "only the loaded world is drawn"
         );
     }
 

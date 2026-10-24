@@ -70,14 +70,34 @@ impl ChunkStreamer {
         (loaded, evicted)
     }
 
-    /// Compile stub: loads nothing yet.
+    /// Load every column within `radius` of `centre_column` that has no chunk yet,
+    /// ignoring the per-frame budget. Columns already holding chunks are left as they are.
+    ///
+    /// Returns the positions of the chunks that hold blocks.
     pub fn load_columns_now(
         &self,
-        _grid: &mut VoxelGrid,
-        _centre_column: (i32, i32),
-        _radius: i32,
+        grid: &mut VoxelGrid,
+        (centre_x, centre_z): (i32, i32),
+        radius: i32,
     ) -> Vec<IVec3> {
-        Vec::new()
+        let occupied: std::collections::HashSet<(i32, i32)> =
+            grid.chunk_positions().map(|p| (p.x, p.z)).collect();
+
+        let mut loaded = Vec::new();
+        for column_x in centre_x - radius..=centre_x + radius {
+            for column_z in centre_z - radius..=centre_z + radius {
+                if occupied.contains(&(column_x, column_z)) {
+                    continue;
+                }
+                for cy in MIN_CHUNK_Y..=MAX_CHUNK_Y {
+                    let pos = IVec3::new(column_x, cy, column_z);
+                    if self.load_chunk(grid, pos) {
+                        loaded.push(pos);
+                    }
+                }
+            }
+        }
+        loaded
     }
 
     fn evict_distant(

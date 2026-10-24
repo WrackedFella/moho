@@ -4,6 +4,13 @@
 //! including entity reconstruction, light system initialization, chunk streamer setup,
 //! camera restoration, and physics initialization.
 
+/// Voxels per chunk edge.
+const CHUNK_SIZE: i32 = 16;
+
+/// Chunk columns around the saved position that are loaded and meshed before the
+/// pawn spawns (5x5).
+const SPAWN_RADIUS: i32 = 2;
+
 /// Load a saved scene from `path` and fully reconstruct world state.
 ///
 /// On success:
@@ -66,6 +73,35 @@ pub fn load_scene(
             }
         }
 
+        // Restore the camera first: the spawn area is streamed around the saved position.
+        if let Some((position, yaw, pitch)) = camera_data {
+            app.simulation.set_position_yaw_pitch(position, yaw, pitch);
+            // Clear any pending input so the restored camera
+            // orientation isn't immediately overridden by
+            // accumulated mouse deltas or smoothing state.
+            app.input.actions.reset_look();
+            tracing::info!(pos = ?position, yaw, pitch, "Restored camera position");
+        } else {
+            tracing::info!("No camera data found in scene file, keeping current position");
+        }
+
+        // The streamer that serves the loaded world also fills in its spawn area below.
+        let mut terrain_config = flagstone_game::scene_builders::TerrainConfig::default();
+        if let Some(s) = spec.seed {
+            terrain_config.seed = s as u32;
+        }
+        terrain_config.world_size = spec.size_xz;
+        let streaming = flagstone_voxel::StreamingConfig {
+            load_radius_chunks: app.prefs.world_load_radius(),
+            unload_radius_chunks: app.prefs.world_unload_radius(),
+            chunks_per_frame: app.prefs.world_chunks_per_frame(),
+        };
+        let chunk_streamer = crate::app::chunk_streamer::ChunkStreamer::new(
+            terrain_config,
+            streaming,
+            spec.name.clone(),
+        );
+
         // Reconstruct VoxelGrid from persisted block records, then initialize LightSystem.
         let mut grid = flagstone_voxel::VoxelGrid::new(16);
         if block_records.is_empty() {
@@ -86,42 +122,35 @@ pub fn load_scene(
                 "Reconstructed VoxelGrid blocks for LightSystem"
             );
         }
+
+        // Terrain under the pawn must exist before it is placed, however sparse the save.
+        let saved = app.simulation.position();
+        let centre = (
+            (saved.x.floor() as i32).div_euclid(CHUNK_SIZE),
+            (saved.z.floor() as i32).div_euclid(CHUNK_SIZE),
+        );
+        chunk_streamer.load_columns_now(&mut grid, centre, SPAWN_RADIUS);
+
         let mut light_system =
             flagstone_voxel::LightSystem::with_default_budget(grid, app.event_bus.clone());
         // Lit before the first tick; the dirty events re-mesh the scene from the lit grid.
         let loaded: Vec<glam::IVec3> = light_system.grid().chunk_positions().collect();
         light_system.light_arrived_chunks(&loaded);
         light_system.emit_dirty_events();
+
+        // Mesh the spawn area now so its colliders exist when the pawn spawns.
+        let spawn_chunks: Vec<flagstone_voxel::VoxelChunk> = loaded
+            .iter()
+            .filter(|p| {
+                (p.x - centre.0).abs() <= SPAWN_RADIUS && (p.z - centre.1).abs() <= SPAWN_RADIUS
+            })
+            .map(|&pos| flagstone_voxel::VoxelChunk::from_grid_hybrid(light_system.grid(), pos))
+            .collect();
         app.light_system = Some(light_system);
-
-        // Initialize ChunkStreamer so the loaded world can stream additional chunks
-        let mut terrain_config = flagstone_game::scene_builders::TerrainConfig::default();
-        if let Some(s) = spec.seed {
-            terrain_config.seed = s as u32;
+        for chunk in spawn_chunks {
+            crate::app::world_geometry::insert_chunk(app, chunk);
         }
-        terrain_config.world_size = spec.size_xz;
-        let streaming = flagstone_voxel::StreamingConfig {
-            load_radius_chunks: app.prefs.world_load_radius(),
-            unload_radius_chunks: app.prefs.world_unload_radius(),
-            chunks_per_frame: app.prefs.world_chunks_per_frame(),
-        };
-        app.chunk_streamer = Some(crate::app::chunk_streamer::ChunkStreamer::new(
-            terrain_config,
-            streaming,
-            spec.name.clone(),
-        ));
-
-        // Restore camera handled below using camera_data
-        if let Some((position, yaw, pitch)) = camera_data {
-            app.simulation.set_position_yaw_pitch(position, yaw, pitch);
-            // Clear any pending input so the restored camera
-            // orientation isn't immediately overridden by
-            // accumulated mouse deltas or smoothing state.
-            app.input.actions.reset_look();
-            tracing::info!(pos = ?position, yaw, pitch, "Restored camera position");
-        } else {
-            tracing::info!("No camera data found in scene file, keeping current position");
-        }
+        app.chunk_streamer = Some(chunk_streamer);
     }
 
     // Initialize physics for loaded world.

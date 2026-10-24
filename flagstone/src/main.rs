@@ -320,15 +320,25 @@ impl App {
         // Spawn the physics character at the saved player position so the KCC
         // doesn't immediately override the restored camera on the first frame.
         let saved_pos = self.simulation.position();
-        let saved_x = saved_pos.x as i32;
-        let saved_z = saved_pos.z as i32;
-        let terrain_y = self
-            .light_system
-            .as_ref()
-            .and_then(|ls| ls.grid().get_height(saved_x, saved_z))
-            .unwrap_or(10) as f32;
-
-        let spawn_pos = glam::Vec3::new(saved_pos.x, terrain_y + 3.0, saved_pos.z);
+        let saved_x = saved_pos.x.floor() as i32;
+        let saved_z = saved_pos.z.floor() as i32;
+        // Spiral outward from the saved column: a column can sit on a zero-density
+        // boundary with no block, so the nearest surface stands in for it.
+        let surface = self.light_system.as_ref().and_then(|ls| {
+            let grid = ls.grid();
+            (0..=4i32).find_map(|r| {
+                (-r..=r)
+                    .flat_map(|dx| (-r..=r).map(move |dz| (dx, dz)))
+                    .filter(|&(dx, dz)| dx.abs() == r || dz.abs() == r)
+                    .find_map(|(dx, dz)| grid.get_height(saved_x + dx, saved_z + dz))
+            })
+        });
+        let spawn_pos = if let Some(height) = surface {
+            glam::Vec3::new(saved_pos.x, height as f32 + 3.0, saved_pos.z)
+        } else {
+            tracing::warn!(pos = ?saved_pos, "No terrain around the saved position; keeping it");
+            saved_pos
+        };
         let (yaw, pitch) = self.simulation.yaw_pitch();
         self.physics.spawn_player(moho_physics::CharacterSpawn {
             position: spawn_pos,
