@@ -38,9 +38,13 @@ const ROLL_OFF_SPEED: f32 = 1.0;
 const HOLDING_NORMAL_Y: f32 = 1e-3;
 
 /// How far to shift a walker on an edge, in metres, beyond its own `outward` motion this tick:
-/// what [`ROLL_OFF_SPEED`] over `dt` lacks, at most `clearance`. Inward motion is ignored.
+/// what [`ROLL_OFF_SPEED`] over `dt` lacks, at most `clearance`. A walker heading inward gets
+/// none: the shift would fold into its translation and read as a hit on the edge it left.
 fn top_up(outward: f32, clearance: f32, dt: f32) -> f32 {
-    (ROLL_OFF_SPEED * dt - outward.max(0.0)).clamp(0.0, clearance)
+    if outward < 0.0 {
+        return 0.0;
+    }
+    (ROLL_OFF_SPEED * dt - outward).clamp(0.0, clearance)
 }
 
 /// An edge holding a walker outside its flat base: the way off it and how far to go.
@@ -878,10 +882,7 @@ mod tests {
         assert_eq!(own_motion_above_speed, 0.0);
         assert!((idle - wanted).abs() < 1e-6, "{idle}");
         assert!((half_way - wanted / 2.0).abs() < 1e-6, "{half_way}");
-        assert!(
-            (moving_inward - wanted).abs() < 1e-6,
-            "inward motion is ignored, not made up: {moving_inward}"
-        );
+        assert_eq!(moving_inward, 0.0);
         assert_eq!(capped, 0.005);
     }
 

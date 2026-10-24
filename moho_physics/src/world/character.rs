@@ -2898,6 +2898,56 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_walker_walking_back_onto_the_step_from_a_perch_reports_no_impact() {
+        for past in [0.213, 0.223, 0.258] {
+            for speed in [0.25, 1.0, 3.0] {
+                for yaw in [std::f32::consts::PI, 3.0 * std::f32::consts::FRAC_PI_4] {
+                    let (mut world, h, landed, _) = land_on_a_nosing(
+                        CharacterBody::default(),
+                        capsule_on_the_nosing_y(past),
+                        past,
+                        past..past + 0.02,
+                    );
+                    assert!(landed > 0.2121, "perched past the margin: {landed}");
+                    world
+                        .queue_effect(h, CharacterEffect::SetLook { yaw, pitch: 0.0 })
+                        .unwrap();
+                    let settings = MoveSettings {
+                        max_speed: speed,
+                        ..searchlight_settings()
+                    };
+                    let forward = CharacterCommand {
+                        forward: 1.0,
+                        ..idle()
+                    };
+                    let start = state(&world, h).position;
+
+                    for tick in 0..30 {
+                        let impacts = world
+                            .move_character(h, &forward, &settings, DT)
+                            .expect("character is live");
+                        world.step(DT);
+
+                        let impacts: Vec<_> =
+                            impacts.into_iter().filter(|i| i.speed > 1e-3).collect();
+                        assert!(
+                            impacts.is_empty(),
+                            "{past} m past, {speed} m/s, yaw {yaw}, tick {tick}: {impacts:?}"
+                        );
+                    }
+
+                    let end = state(&world, h);
+                    assert!(
+                        end.position.y > 0.3 + 1.0 && end.position.z < start.z,
+                        "{past} m past, {speed} m/s, yaw {yaw}: walked back onto the step top: \
+                         {start:?} to {end:?}"
+                    );
+                }
+            }
+        }
+    }
+
     /// Drops a character of `body` from `y` onto the 0.3 m step of [`walker_on_a_nosing`] with its
     /// centre nominally `past` m beyond the nosing, idling until its first grounded tick. Returns
     /// the world, the character, its distance past the nosing on that tick (checked against
