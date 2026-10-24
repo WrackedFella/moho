@@ -161,9 +161,10 @@ impl PhysicsWorld {
 
     /// Replace all of the character's hit volumes with `volumes`.
     ///
-    /// The volumes take effect when the world steps, follow the body, never block movement
-    /// or props, and are removed with the character. An unchanged count updates the
-    /// colliders in place; any other count rebuilds them.
+    /// The volumes take effect when the world steps: rays cast before the next step may see
+    /// the old poses, or a mix of old poses and new shapes and tags. They follow the body,
+    /// never block movement or props, and are removed with the character. An unchanged count
+    /// updates the colliders in place; any other count rebuilds them.
     ///
     /// # Errors
     /// [`UnknownCharacter`] if `handle` was removed.
