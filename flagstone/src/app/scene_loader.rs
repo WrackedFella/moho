@@ -4,7 +4,6 @@
 //! including entity reconstruction, light system initialization, chunk streamer setup,
 //! camera restoration, and physics initialization.
 
-/// Voxels per chunk edge.
 const CHUNK_SIZE: i32 = 16;
 
 /// Chunk columns around the saved position that are loaded and meshed before the
@@ -85,7 +84,6 @@ pub fn load_scene(
             tracing::info!("No camera data found in scene file, keeping current position");
         }
 
-        // The streamer that serves the loaded world also fills in its spawn area below.
         let mut terrain_config = flagstone_game::scene_builders::TerrainConfig::default();
         if let Some(s) = spec.seed {
             terrain_config.seed = s as u32;
