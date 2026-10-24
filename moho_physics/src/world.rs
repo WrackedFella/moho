@@ -120,7 +120,7 @@ impl PhysicsWorld {
         self.gravity = Vec3::new(0.0, -gravity, 0.0);
     }
 
-    /// The downward acceleration, m/s², positive down; 18.0 until [`Self::set_gravity`].
+    /// The downward acceleration, m/s², positive down.
     pub fn gravity(&self) -> f32 {
         -self.gravity.y
     }
