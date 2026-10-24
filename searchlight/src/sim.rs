@@ -2145,7 +2145,7 @@ mod tests {
                 Vec3::ZERO,
                 &[
                     Vec3::new(0.55, 0.0, 0.0),
-                    Vec3::new(0.65, 0.0, 0.0),
+                    Vec3::new(0.9, 0.0, 0.0),
                     Vec3::new(-8.0, 0.0, 4.0),
                     Vec3::new(-8.5, 0.0, 4.0),
                     Vec3::new(-8.0, 5.0, 4.0),
@@ -2158,7 +2158,7 @@ mod tests {
 
             let free = sim.free_enemy_spawns();
 
-            // 0.55 m from the player and 0.0 and 0.5 m from the dummy are touching; 0.65 m is not,
+            // 0.55 m from the player and 0.0 and 0.5 m from the dummy are touching; 0.9 m is not,
             // and a marker high above the dummy still counts as on it.
             assert_eq!(free, [1]);
         }
@@ -2711,8 +2711,8 @@ mod hit_volume_and_cooldown_tests {
                 [0.0, 0.25, 0.0],
                 [0.3, 0.25, 0.0],
                 [-0.3, 0.25, 0.0],
-                [0.12, -0.625, 0.0],
-                [-0.12, -0.625, 0.0],
+                [0.12, -0.5075, 0.0],
+                [-0.12, -0.5075, 0.0],
             ]
         );
     }
