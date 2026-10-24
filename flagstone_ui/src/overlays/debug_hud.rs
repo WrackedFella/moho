@@ -35,6 +35,10 @@ impl Overlay for DebugHud {
         "debug"
     }
 
+    fn shows_while_paused(&self) -> bool {
+        true
+    }
+
     fn is_visible(&self) -> bool {
         self.visible
     }

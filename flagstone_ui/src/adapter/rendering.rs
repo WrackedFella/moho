@@ -36,7 +36,7 @@ pub fn render_game_state(
             }
         }
         GameState::Paused => {
-            render_overlays(ui, ui_state);
+            ui_state.overlay_manager.render_paused(ui);
             render_menu(ui, ui_state)
         }
         GameState::Playing => {
@@ -232,6 +232,103 @@ mod tests {
         );
 
         assert_eq!(result.actions, vec![MenuAction::Exit]);
+    }
+
+    fn strategy_hud(level: i32) -> crate::overlays::HudData {
+        crate::overlays::HudData {
+            is_fps_mode: false,
+            time_of_day: 7.25,
+            view_height: Some(crate::overlays::ViewHeightHud {
+                floor: 0,
+                top: 20,
+                level,
+            }),
+            ..Default::default()
+        }
+    }
+
+    fn fps_hud() -> crate::overlays::HudData {
+        crate::overlays::HudData {
+            is_fps_mode: true,
+            time_of_day: 7.25,
+            hotbar: vec![(1, 5)],
+            ..Default::default()
+        }
+    }
+
+    /// The text of the frame after the one that sized the areas.
+    fn settled_text(
+        ctx: &egui::Context,
+        ui_state: &mut UiStateManager,
+        game_state: GameState,
+    ) -> String {
+        run_frame(ctx, ui_state, game_state, Vec::new());
+        screen_text(&run_frame(ctx, ui_state, game_state, Vec::new()).0)
+    }
+
+    fn assert_no_gameplay_hud(text: &str) {
+        assert!(!text.contains("07:15"), "clock drawn: {text}");
+        assert!(!text.contains("R1"), "hotbar drawn: {text}");
+        assert!(!text.contains('6'), "view level drawn: {text}");
+    }
+
+    #[test]
+    fn paused_frame_draws_no_gameplay_hud() {
+        for hud in [strategy_hud(6), fps_hud()] {
+            let ctx = egui::Context::default();
+            let mut ui_state = UiStateManager::new(moho_core::prefs::Prefs::default());
+            ui_state.overlay_manager.update_data(hud);
+            assert!(ui_state.show_screen("pause"));
+
+            let playing = settled_text(&ctx, &mut ui_state, GameState::Playing);
+            let paused = settled_text(&ctx, &mut ui_state, GameState::Paused);
+
+            assert!(playing.contains("07:15"), "the HUD draws at all: {playing}");
+            assert_no_gameplay_hud(&paused);
+            assert!(paused.contains("Paused"), "pause window missing: {paused}");
+        }
+    }
+
+    #[test]
+    fn settings_from_pause_draws_no_gameplay_hud() {
+        for hud in [strategy_hud(6), fps_hud()] {
+            let ctx = egui::Context::default();
+            let mut ui_state = UiStateManager::new(moho_core::prefs::Prefs::default());
+            ui_state.overlay_manager.update_data(hud);
+            assert!(ui_state.show_screen("settings"));
+
+            let text = settled_text(&ctx, &mut ui_state, GameState::Paused);
+
+            assert_no_gameplay_hud(&text);
+        }
+    }
+
+    #[test]
+    fn hud_returns_after_pause_with_the_same_view_level() {
+        let ctx = egui::Context::default();
+        let mut ui_state = UiStateManager::new(moho_core::prefs::Prefs::default());
+        ui_state.overlay_manager.update_data(strategy_hud(6));
+        assert!(ui_state.show_screen("pause"));
+
+        let paused = settled_text(&ctx, &mut ui_state, GameState::Paused);
+        let playing = settled_text(&ctx, &mut ui_state, GameState::Playing);
+
+        assert!(!paused.contains('6'), "paused text: {paused}");
+        assert!(playing.contains('6'), "view level lost: {playing}");
+        assert!(playing.contains("07:15"), "clock missing: {playing}");
+    }
+
+    #[test]
+    fn paused_frame_still_draws_the_debug_hud_when_on() {
+        let ctx = egui::Context::default();
+        let mut ui_state = UiStateManager::new(moho_core::prefs::Prefs::default());
+        ui_state.overlay_manager.update_data(strategy_hud(6));
+        ui_state.overlay_manager.set_visible("debug", true);
+        assert!(ui_state.show_screen("pause"));
+
+        let text = settled_text(&ctx, &mut ui_state, GameState::Paused);
+
+        assert!(text.contains("Pos:"), "debug HUD hidden: {text}");
     }
 
     #[test]
