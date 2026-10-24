@@ -380,11 +380,9 @@ mod tests {
             ),
         ]);
         let body = world.add_character(Vec3::new(0.0, 1.15, 0.0));
-        for volume in crate::sim::player_hit_volumes() {
-            world
-                .add_hit_volume(body, volume)
-                .expect("the body was added a moment ago");
-        }
+        world
+            .set_hit_volumes(body, &crate::sim::player_hit_volumes())
+            .expect("the body was added a moment ago");
         world.step(crate::test_support::DT);
         world
     }
@@ -471,11 +469,9 @@ mod tests {
             Vec3::new(30.0, floor_top, 30.0),
         )]);
         let body = world.add_character(Vec3::new(0.0, height, 0.0));
-        for volume in crate::sim::player_hit_volumes() {
-            world
-                .add_hit_volume(body, volume)
-                .expect("the body was added a moment ago");
-        }
+        world
+            .set_hit_volumes(body, &crate::sim::player_hit_volumes())
+            .expect("the body was added a moment ago");
         world.step(crate::test_support::DT);
         world
     }
