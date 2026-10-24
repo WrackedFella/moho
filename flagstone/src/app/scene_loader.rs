@@ -354,8 +354,12 @@ mod tests {
 
         let pos = app.simulation.position();
         assert!(
-            lowest >= surface_y,
-            "the pawn never sank below the surface {surface_y}: lowest {lowest}"
+            lowest >= surface_y + 1.0,
+            "the pawn never sank into the surface block {surface_y}: lowest {lowest}"
+        );
+        assert!(
+            pos.y < surface_y + 4.0,
+            "the pawn came to rest on the surface {surface_y}: {pos:?}"
         );
         assert!(
             (pos.x - 40.5).abs() < 1.0 && (pos.z - 40.5).abs() < 1.0,
