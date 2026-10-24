@@ -32,15 +32,30 @@ const STEP_SNAP: f32 = 0.05;
 const STEP_MIN_PROGRESS: f32 = 1e-3;
 
 /// The least speed, in m/s, at which a walker resting on an edge outside its flat base moves off it.
-#[cfg(test)]
 const ROLL_OFF_SPEED: f32 = 1.0;
 
+/// A surface whose normal faces up more than this (`normal.y`) holds a capsule grounded in rapier.
+const HOLDING_NORMAL_Y: f32 = 1e-3;
+
 /// How far to shift a walker on an edge, in metres, beyond its own `outward` motion this tick:
-/// what [`ROLL_OFF_SPEED`] over `dt` lacks, at most `clearance`.
-#[cfg(test)]
-fn top_up(_outward: f32, _clearance: f32, _dt: f32) -> f32 {
-    // TODO: stub for the roll-off tests; the implementation returns the clamped shortfall.
-    0.0
+/// what [`ROLL_OFF_SPEED`] over `dt` lacks, at most `clearance`. Inward motion is ignored.
+fn top_up(outward: f32, clearance: f32, dt: f32) -> f32 {
+    (ROLL_OFF_SPEED * dt - outward.max(0.0)).clamp(0.0, clearance)
+}
+
+/// An edge holding a walker outside its flat base: the way off it and how far to go.
+#[derive(Clone, Copy, Debug)]
+struct Edge {
+    /// Level unit direction pointing away from the edge's face.
+    outward: Vec3,
+    /// The level move after which the capsule's straight drop no longer meets the edge.
+    clearance: f32,
+}
+
+/// The ground under a character and, when an edge outside its flat base holds it up, that edge.
+struct GroundRead {
+    ground: Ground,
+    edge: Option<Edge>,
 }
 
 /// A shape cast that reports any contact within `distance`, measured from surface to surface.
@@ -148,13 +163,27 @@ impl Slider<'_> {
         if landed_without_ground_hit(plain.grounded, asked, &hits) {
             hits.extend(self.probe_landing(start, plain.translation));
         }
+        // Only a walker reads its ground, and only a character that started grounded walks.
+        let read = was_grounded
+            .then(|| self.read_ground(start.translation + plain.translation))
+            .flatten();
+        if let Some(rolled) = read.as_ref().and_then(|read| read.edge).and_then(|edge| {
+            let lacking = top_up(plain.translation.dot(edge.outward), edge.clearance, self.dt);
+            (lacking > 0.0).then(|| edge.outward * lacking)
+        }) {
+            let ended = Pose::from_parts(start.translation + plain.translation, start.rotation);
+            let translation = plain.translation + self.shift(&ended, rolled).translation;
+            return Slide {
+                translation,
+                grounded: false,
+                ground: self.ground_below(start.translation + translation),
+                hits,
+            };
+        }
         Slide {
             translation: plain.translation,
             grounded: plain.grounded,
-            // Only a walker reads its ground, and only a character that started grounded walks.
-            ground: was_grounded
-                .then(|| self.ground_below(start.translation + plain.translation))
-                .flatten(),
+            ground: read.map(|read| read.ground),
             hits,
         }
     }
@@ -168,6 +197,11 @@ impl Slider<'_> {
     /// itself, cast down to its skin offset, gives the gap: how far it can drop before it
     /// touches anything.
     pub(super) fn ground_below(&self, centre: Vec3) -> Option<Ground> {
+        self.read_ground(centre).map(|read| read.ground)
+    }
+
+    /// [`Self::ground_below`] with the edge that holds the capsule up, if any.
+    fn read_ground(&self, centre: Vec3) -> Option<GroundRead> {
         let footing = self.footing;
         let CharacterLength::Absolute(skin) = self.controller.offset else {
             panic!("the world builds its character controller with an absolute skin offset");
@@ -193,8 +227,23 @@ impl Slider<'_> {
             target_distance: skin,
             ..cast_within(STEP_HEIGHT)
         };
+        let mut edge = None;
         let gap = match self.queries.cast_shape(&at, -Vec3::Y, self.shape, skinned) {
-            Some((_, drop)) => drop.time_of_impact,
+            Some((_, drop)) => {
+                // The face under the flat base lies below where the capsule's drop stops.
+                let held_above = face.time_of_impact + FLAT_BASE_HALF_HEIGHT
+                    - footing.sweep
+                    - drop.time_of_impact;
+                let across = drop.normal1.with_y(0.0);
+                let reach = footing.disc + (footing.sweep + skin) * across.length();
+                if drop.normal1.y > HOLDING_NORMAL_Y && reach > base_radius && held_above > skin {
+                    edge = Some(Edge {
+                        outward: across.normalize(),
+                        clearance: (footing.sweep + skin) * (1.0 - across.length()) + skin,
+                    });
+                }
+                drop.time_of_impact
+            }
             // Near a mesh boundary the skinned cast can miss though the flat base hit.
             None => {
                 match self
@@ -210,11 +259,14 @@ impl Slider<'_> {
                 }
             }
         };
-        Some(Ground {
-            normal,
-            gap,
-            collider,
-            point: face.witness1,
+        Some(GroundRead {
+            ground: Ground {
+                normal,
+                gap,
+                collider,
+                point: face.witness1,
+            },
+            edge,
         })
     }
 
