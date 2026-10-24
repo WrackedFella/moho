@@ -33,7 +33,6 @@ mod tests {
     use proptest::prelude::*;
     use std::collections::HashSet;
 
-    /// The 26 offsets of the neighbours of a voxel, in a fixed order.
     fn ring() -> Vec<IVec3> {
         let mut offsets = Vec::new();
         for x in -1..=1 {

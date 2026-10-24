@@ -1602,7 +1602,6 @@ mod tests {
         }
     }
 
-    /// Position and AO of every smooth vertex at world height `y`.
     fn smooth_vertices_at_height(mesh: &VoxelMesh, y: f32) -> Vec<([f32; 3], f32)> {
         assert_eq!(mesh.ambient_occlusion.len(), mesh.vertices.len());
         mesh.vertices

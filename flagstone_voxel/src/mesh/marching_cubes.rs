@@ -11,7 +11,6 @@ use glam::Vec3;
 pub struct SurfaceSample {
     /// Raw RGB block light, each channel 0..=15.
     pub block_light: [u8; 3],
-    /// Whether the sample is open to the sky.
     pub sky_exposed: bool,
     /// Contact ambient occlusion, 1.0 unoccluded.
     pub ambient_occlusion: f32,
