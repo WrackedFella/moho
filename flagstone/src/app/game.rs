@@ -1088,7 +1088,6 @@ mod tests {
             app.input.actions.key(key, false);
         }
 
-        /// Samples the command and runs one tick with it.
         fn step(app: &mut App) -> StrategyCommand {
             let command = Game::command(app);
             tick_app(app, &command);

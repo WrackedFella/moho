@@ -12,7 +12,7 @@ consumes the event ends the path.
 ```mermaid
 flowchart TD
     ev["WindowEvent"] --> tab{"Tab pressed<br/>and Playing?"}
-    tab -- yes --> cam["toggle FirstPerson / Isometric<br/>stop"]
+    tab -- yes --> cam["record in the action map<br/>stop"]
     tab -- no --> d200["priority 200: keybind capture<br/>only when the active screen is capturing"]
     d200 -- consumed --> stop1(["stop"])
     d200 -- no --> d100["priority 100: egui<br/>only when a menu or console is visible"]
@@ -43,7 +43,7 @@ Global hotkeys in `handle_keyboard_input`, checked before game keys:
 | `Esc` | ConsoleOpen → Playing (taken by `Console::on_key` before this handler, as the console key is); Playing → Paused; Paused → Playing while the pause window is the active screen (inert on Settings). Taken before the dispatcher when it pauses or resumes, so a focused egui button cannot swallow it; key repeats are ignored |
 | `F3` | Toggle debug HUD |
 | `F4` | Toggle chunk-boundary minimap |
-| `Tab` | Toggle camera mode (handled before the dispatcher) |
+| `Tab` (the `possess` binding) | Toggle camera mode. Recorded in the action map before the dispatcher; applied by the next tick, see [§2](#2-pointer-picking) |
 
 Gameplay input is action-keyed. `moho_input` holds the platform-free `Key` and
 `MouseButton` (`Key::from_winit` maps `PhysicalKey`), the `Action` trait (stable id plus
@@ -88,6 +88,8 @@ Bindings persist in the `[bindings]` section of [prefs](../reference/prefs-forma
 ## 2 Pointer picking
 
 In the isometric view, a tick with `Select` pressed turns `press_pointer` into a world `Ray` with `moho_core::pointer::screen_ray` (view and projection of the frame the player saw, window size as viewport) and carries it in the command as `select`. The ray, not the pixel, is the command, so it replays without a window. The apply step casts it with `flagstone_game::raycast::raycast_surface` over `POINTER_RAY_RANGE` and stores the result in `App::pointer_hit`; a miss clears it. First-person never selects.
+
+`StrategyAction::Possess` (`Tab` by default) switches between the strategy view and first person. A tick with `Possess` pressed sets `StrategyCommand::toggle_view`; the apply step then calls `App::toggle_camera_mode` and `apply_cursor`, so the switch happens once per press, on the tick, and never outside `Playing`. The mode switch publishes a placeholder `AudioEvent` (`Confirm` entering first person, `Cancel` returning). The pawn keeps its pose across the switch and does not move while in the strategy view.
 
 ## 3 GameState
 

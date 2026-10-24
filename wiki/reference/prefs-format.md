@@ -152,6 +152,8 @@ Strategy actions (`StrategyAction`, `flagstone_ui/src/actions.rs`) and defaults:
 | `jump` | `Spacebar`, `Pad South` |
 | `descend` | `Ctrl`, `Pad LeftTrigger` |
 | `sprint` | `Shift`, `Pad LeftThumb` |
+| `select` | `Mouse Left` |
+| `possess` | `Tab` |
 
 Action ids are persisted and never renamed.
 

@@ -93,7 +93,6 @@ fn visible_labels(yaw: f32) -> Vec<(&'static str, bool)> {
         .collect()
 }
 
-/// Names the first-person view in the top-left corner.
 fn render_mode_label(ui: &mut egui::Ui) {
     egui::Area::new("gameplay_hud_mode_label".into())
         .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0, 8.0))

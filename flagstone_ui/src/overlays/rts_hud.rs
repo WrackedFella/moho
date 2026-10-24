@@ -94,7 +94,6 @@ fn render_view_height(ui: &mut egui::Ui, view: ViewHeightHud) -> Option<i32> {
         .inner
 }
 
-/// Names the strategy view in the top-left corner.
 fn render_mode_label(ui: &mut egui::Ui) {
     egui::Area::new("rts_mode_label".into())
         .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0, 8.0))
