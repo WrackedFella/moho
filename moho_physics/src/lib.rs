@@ -4,7 +4,8 @@ pub mod world;
 
 pub use camera::{first_person_view, FirstPersonView};
 pub use movement::{
-    step, CharacterCommand, CharacterEffect, Impact, MoveSettings, Slide, PITCH_LIMIT,
+    step, CharacterBody, CharacterCommand, CharacterEffect, Hull, HullShape, Impact, MoveSettings,
+    Slide, Stature, PITCH_LIMIT,
 };
 pub use rapier3d::dynamics::RigidBodyHandle;
 pub use rapier3d::geometry::ColliderHandle;

@@ -7,8 +7,8 @@ use glam::{Quat, Vec3};
 use moho_core::rng::{SimRng, StreamId};
 use moho_level::NavMesh;
 use moho_physics::{
-    CharacterCommand, CharacterHandle, CharacterSpawn, CharacterState, HitVolume, MoveSettings,
-    PhysicsWorld, first_person_view,
+    CharacterBody, CharacterCommand, CharacterHandle, CharacterSpawn, CharacterState, HitVolume,
+    MoveSettings, PhysicsWorld, first_person_view,
 };
 use searchlight_rules::{
     Body, BodyPart, BodyProfile, Grade, HitReport, Lean, LeanReach, LeanSide, LeanTuning, Loadout,
@@ -295,6 +295,7 @@ fn new_target(
         position: centre,
         yaw,
         pitch: 0.0,
+        body: CharacterBody::default(),
     });
     world
         .set_hit_volumes(handle, &dummy_hit_volumes(target))
@@ -686,7 +687,7 @@ impl SearchlightSim {
 
     fn resolve_player_shot(&mut self) {
         let state = self.player();
-        let view = first_person_view(&state, &state, self.eye_height, 1.0, (0.0, 0.0));
+        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
         let origin = self.leaned_eye(&state);
         let strike = resolve_shot(
             &self.world,
@@ -1016,6 +1017,65 @@ mod tests {
 
     fn rifle_with(rounds: u32) -> Rifle {
         rifle_from(mag(30, rounds))
+    }
+
+    fn part_of(volume: &HitVolume) -> BodyPart {
+        match SurfaceTag::try_from(volume.tag).expect("a body volume carries a body tag") {
+            SurfaceTag::Part { part, .. } | SurfaceTag::Player(part) => part,
+            other @ SurfaceTag::World => panic!("not a body part: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn body_volumes_fit_inside_the_hull() {
+        const HALF_LENGTH: f32 = 0.915;
+        const RADIUS: f32 = 0.405;
+        const TOLERANCE: f32 = 1e-4;
+        let sets = [
+            ("player", player_hit_volumes()),
+            ("dummy", dummy_hit_volumes(0)),
+        ];
+
+        for (who, volumes) in sets {
+            let mut lowest = f32::MAX;
+            let mut head_bottom = f32::MAX;
+            let mut torso_top = f32::MIN;
+            for volume in &volumes {
+                assert_eq!(
+                    volume.rotation,
+                    Quat::IDENTITY,
+                    "{who}: boxes are axis aligned"
+                );
+                let (centre, half) = (volume.offset, volume.half_extents);
+                assert!(
+                    centre.x.abs() + half.x <= RADIUS + TOLERANCE
+                        && centre.z.abs() + half.z <= RADIUS + TOLERANCE,
+                    "{who}: {volume:?} sticks out of the {RADIUS} m radius"
+                );
+                assert!(
+                    centre.y + half.y <= HALF_LENGTH + TOLERANCE,
+                    "{who}: {volume:?} rises above the {HALF_LENGTH} m half length"
+                );
+                assert!(
+                    centre.y - half.y >= -HALF_LENGTH - TOLERANCE,
+                    "{who}: {volume:?} sinks below the feet"
+                );
+                lowest = lowest.min(centre.y - half.y);
+                match part_of(volume) {
+                    BodyPart::Head => head_bottom = centre.y - half.y,
+                    BodyPart::Torso => torso_top = centre.y + half.y,
+                    _ => {}
+                }
+            }
+            assert!(
+                (lowest + HALF_LENGTH).abs() <= TOLERANCE,
+                "{who}: the legs end at {lowest}, not at the feet (-{HALF_LENGTH})"
+            );
+            assert!(
+                (head_bottom - torso_top).abs() <= TOLERANCE,
+                "{who}: the head ({head_bottom}) sits directly on the torso ({torso_top})"
+            );
+        }
     }
 
     fn empty_rig(slots: u32) -> Rig {
@@ -2395,7 +2455,9 @@ mod adversarial_tests {
 
             let state = sim.player();
             assert_eq!(state.pitch.abs(), PITCH_LIMIT);
-            let view = first_person_view(&state, &state, sim.eye_height(), 1.0, (0.0, 0.0));
+            let mut view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
+            // TODO: remove this shim once the view reads `state.eye`.
+            view.eye += Vec3::Y * sim.eye_height();
             assert!(view.eye.is_finite() && view.forward.is_finite(), "{view:?}");
             assert!((view.forward.length() - 1.0).abs() < 1e-3);
             let strike = resolve_shot(

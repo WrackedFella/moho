@@ -71,6 +71,60 @@ pub struct MoveSettings {
     pub autohop: bool,
 }
 
+/// The shape of a character's hull.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum HullShape {
+    Capsule,
+    /// A cylinder whose edges are rounded to `rounding`, with `0 < rounding <= radius`.
+    RoundCylinder {
+        rounding: f32,
+    },
+}
+
+/// A character's collision hull, upright.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Hull {
+    pub shape: HullShape,
+    pub radius: f32,
+    /// End to end along the hull's axis, which is the height when upright.
+    pub length: f32,
+}
+
+/// A hull and where the eye sits in it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Stature {
+    pub hull: Hull,
+    /// The eye's height above the feet.
+    pub eye_height: f32,
+}
+
+/// The shape data a game supplies when it adds a character.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CharacterBody {
+    pub standing: Stature,
+}
+
+impl Default for CharacterBody {
+    fn default() -> Self {
+        Self {
+            standing: Stature {
+                hull: Hull {
+                    shape: HullShape::Capsule,
+                    radius: 0.3,
+                    length: 2.3,
+                },
+                eye_height: 1.15,
+            },
+        }
+    }
+}
+
+impl CharacterBody {
+    /// Panics on an impossible hull: non-positive sizes, a capsule no longer than its
+    /// diameter, or `rounding` outside `0 < rounding <= radius`.
+    pub fn validate(&self) {}
+}
+
 /// One surface the character lost speed into this tick.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Impact {
@@ -337,6 +391,7 @@ pub fn step(
     state: &mut CharacterState,
     command: &CharacterCommand,
     effects: &[CharacterEffect],
+    _body: &CharacterBody,
     settings: &MoveSettings,
     gravity: f32,
     dt: f32,
@@ -460,9 +515,16 @@ mod tests {
         slide: impl FnOnce(Vec3) -> Slide,
     ) -> Vec<Impact> {
         let gravity = settings.gravity.expect("test settings set gravity");
-        super::step(state, command, &[], settings, gravity, dt, |_, asked| {
-            slide(asked)
-        })
+        super::step(
+            state,
+            command,
+            &[],
+            &CharacterBody::default(),
+            settings,
+            gravity,
+            dt,
+            |_, asked| slide(asked),
+        )
     }
 
     fn state_at(position: Vec3, velocity: Vec3, grounded: bool) -> CharacterState {
@@ -473,6 +535,7 @@ mod tests {
             pitch: 0.0,
             grounded,
             jump_held: false,
+            eye: Vec3::ZERO,
         }
     }
 
@@ -1751,6 +1814,7 @@ mod tests {
                     &mut state,
                     &jump_command(true),
                     &[effect],
+                    &CharacterBody::default(),
                     &test_settings(),
                     test_settings().gravity.expect("test settings set gravity"),
                     DT,
@@ -2244,8 +2308,25 @@ mod tests {
             },
         ];
 
+        let spawn = crate::world::CharacterSpawn {
+            position: Vec3::new(1.0, 2.0, 3.0),
+            yaw: 0.5,
+            pitch: -0.25,
+            body: CharacterBody {
+                standing: Stature {
+                    hull: Hull {
+                        shape: HullShape::RoundCylinder { rounding: 0.1 },
+                        radius: 0.405,
+                        length: 1.83,
+                    },
+                    eye_height: 1.63,
+                },
+            },
+        };
+
         let command_bytes = postcard::to_allocvec(&commands).expect("commands serialise");
         let effect_bytes = postcard::to_allocvec(&effects).expect("effects serialise");
+        let spawn_bytes = postcard::to_allocvec(&spawn).expect("the spawn serialises");
 
         let back_commands: [CharacterCommand; 2] =
             postcard::from_bytes(&command_bytes).expect("commands deserialise");
@@ -2253,6 +2334,9 @@ mod tests {
             postcard::from_bytes(&effect_bytes).expect("effects deserialise");
         assert_eq!(back_commands, commands);
         assert_eq!(back_effects, effects);
+        let back_spawn: crate::world::CharacterSpawn =
+            postcard::from_bytes(&spawn_bytes).expect("the spawn deserialises");
+        assert_eq!(back_spawn, spawn);
     }
 
     mod clip {
@@ -2594,6 +2678,7 @@ mod tests {
                 &mut state,
                 &CharacterCommand::default(),
                 effects,
+                &CharacterBody::default(),
                 &test_settings(),
                 test_settings().gravity.expect("test settings set gravity"),
                 DT,
@@ -2697,6 +2782,7 @@ mod tests {
                 state,
                 command,
                 effects,
+                &CharacterBody::default(),
                 &test_settings(),
                 test_settings().gravity.expect("test settings set gravity"),
                 DT,
@@ -2722,6 +2808,7 @@ mod tests {
                 state,
                 command,
                 effects,
+                &CharacterBody::default(),
                 &test_settings(),
                 test_settings().gravity.expect("test settings set gravity"),
                 DT,
@@ -2786,6 +2873,7 @@ mod tests {
                 &mut state,
                 &CharacterCommand::default(),
                 &effects,
+                &CharacterBody::default(),
                 &test_settings(),
                 test_settings().gravity.expect("test settings set gravity"),
                 DT,
@@ -2932,6 +3020,7 @@ mod tests {
                 &mut state,
                 &CharacterCommand::default(),
                 &effects,
+                &CharacterBody::default(),
                 &test_settings(),
                 test_settings().gravity.expect("test settings set gravity"),
                 DT,

@@ -141,6 +141,39 @@ pub(crate) fn step_box_mesh(z_front: f32, depth: f32, height: f32) -> WorldMesh 
     )
 }
 
+/// A wall 0.2 m thick across z in [0, 0.2], spanning x in [-10, 10] and y in [0, 10], with a
+/// doorway of `width` m centred on x = 0 and `height` m tall, open at both faces.
+pub(crate) fn doorway_mesh(width: f32, height: f32) -> WorldMesh {
+    const THICKNESS: f32 = 0.2;
+    let half = width / 2.0;
+    let boxes = [
+        ([-10.0, 0.0], [-half, 10.0]),
+        ([half, 0.0], [10.0, 10.0]),
+        ([-half, height], [half, 10.0]),
+    ];
+    let mut verts: Vec<[f32; 3]> = Vec::new();
+    let mut idxs: Vec<u32> = Vec::new();
+    for ([x0, y0], [x1, y1]) in boxes {
+        let base = verts.len() as u32;
+        verts.extend([
+            [x0, y0, 0.0],
+            [x1, y0, 0.0],
+            [x1, y1, 0.0],
+            [x0, y1, 0.0],
+            [x0, y0, THICKNESS],
+            [x1, y0, THICKNESS],
+            [x1, y1, THICKNESS],
+            [x0, y1, THICKNESS],
+        ]);
+        let faces: [u32; 36] = [
+            0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 3, 7, 6, 3, 6, 2, 0, 4, 7, 0, 7, 3, 1, 2, 6, 1, 6,
+            5, 0, 1, 5, 0, 5, 4,
+        ];
+        idxs.extend(faces.iter().map(|f| base + f));
+    }
+    quad_mesh(&verts, &idxs)
+}
+
 /// `steps` solid boxes spanning x in [-10, 10]; step `i` has its riser at
 /// `z_start + i * tread`, top at `(i + 1) * rise`, and runs `landing` m past the last riser.
 pub(crate) fn stairs_mesh(

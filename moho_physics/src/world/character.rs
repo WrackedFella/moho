@@ -1,7 +1,9 @@
 use super::query::{encode_tag, HitTag};
 use super::slide::Slider;
 use super::PhysicsWorld;
-use crate::movement::{self, CharacterCommand, CharacterEffect, Impact, MoveSettings};
+use crate::movement::{
+    self, CharacterBody, CharacterCommand, CharacterEffect, Impact, MoveSettings,
+};
 use glam::{Quat, Vec3};
 use rapier3d::prelude::{
     ColliderBuilder, ColliderHandle, InteractionGroups, Pose, QueryFilter, RigidBodyBuilder,
@@ -32,9 +34,11 @@ pub struct CharacterState {
     /// The last tick's command had jump down; a held jump needs a release before the next
     /// take-off unless the settings allow autohop.
     pub jump_held: bool,
+    /// The eye's offset from `position`, set by the step every tick.
+    pub eye: Vec3,
 }
 
-/// A character's starting state: where it stands and which way it faces.
+/// A character's starting state and shape: where it stands, which way it faces, its hull.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CharacterSpawn {
     /// Capsule centre, world space.
@@ -43,6 +47,8 @@ pub struct CharacterSpawn {
     pub yaw: f32,
     /// Look angle in radians, positive up.
     pub pitch: f32,
+    /// Hull and eye height.
+    pub body: CharacterBody,
 }
 
 impl From<Vec3> for CharacterSpawn {
@@ -51,6 +57,7 @@ impl From<Vec3> for CharacterSpawn {
             position,
             yaw: 0.0,
             pitch: 0.0,
+            body: CharacterBody::default(),
         }
     }
 }
@@ -98,6 +105,7 @@ impl Character {
             pitch: self.pitch,
             grounded: self.grounded,
             jump_held: self.jump_held,
+            eye: Vec3::ZERO,
         }
     }
 
@@ -271,6 +279,7 @@ impl PhysicsWorld {
             &mut state,
             command,
             &effects,
+            &CharacterBody::default(),
             settings,
             settings.gravity.unwrap_or(self.gravity()),
             dt,
@@ -316,11 +325,12 @@ impl PhysicsWorld {
 mod tests {
     use super::super::test_support::TEST_TAG;
     use super::super::test_support::{
-        corner_mesh, floor_mesh, quad_mesh, seam_floor_meshes, stairs_mesh, step_box_mesh,
-        test_settings, wall_mesh,
+        corner_mesh, doorway_mesh, floor_mesh, quad_mesh, seam_floor_meshes, stairs_mesh,
+        step_box_mesh, test_settings, wall_mesh,
     };
     use super::super::{HitTag, RayHit, RayQuery};
     use super::*;
+    use crate::movement::{Hull, HullShape, Stature};
     use moho_render_api::{WorldMesh, WorldMeshId};
 
     const DT: f32 = 1.0 / 60.0;
@@ -853,6 +863,7 @@ mod tests {
                 pitch: 0.0,
                 grounded: false,
                 jump_held: false,
+                eye: Vec3::ZERO,
             })
         );
     }
@@ -1121,6 +1132,7 @@ mod tests {
             position: Vec3::new(0.0, 1.5, 0.0),
             yaw: 0.0,
             pitch: 0.0,
+            body: CharacterBody::default(),
         }
     }
 
@@ -1322,6 +1334,7 @@ mod tests {
             position,
             yaw: 0.7,
             pitch: -0.3,
+            body: CharacterBody::default(),
         });
         let plain = world.add_character(position);
 
@@ -1334,6 +1347,7 @@ mod tests {
                 pitch: -0.3,
                 grounded: false,
                 jump_held: false,
+                eye: Vec3::ZERO,
             })
         );
         assert_eq!(state(&world, plain).yaw, 0.0, "a bare position faces 0");
@@ -1346,6 +1360,7 @@ mod tests {
             position: Vec3::new(0.0, 10.0, 0.0),
             yaw: 0.0,
             pitch,
+            body: CharacterBody::default(),
         };
 
         let up = world.add_character(spawn(3.0));
@@ -1361,6 +1376,7 @@ mod tests {
             position: Vec3::new(1.0, 2.0, 3.0),
             yaw: 0.5,
             pitch: -0.25,
+            body: CharacterBody::default(),
         };
 
         let bytes = postcard::to_allocvec(&spawn).expect("the spawn serialises");
@@ -1864,10 +1880,22 @@ mod tests {
         yaw: f32,
         velocity: Vec3,
     ) -> CharacterHandle {
+        resting_then_moving_as(world, at, yaw, velocity, CharacterBody::default())
+    }
+
+    /// [`resting_then_moving`] for a character of `body`.
+    fn resting_then_moving_as(
+        world: &mut PhysicsWorld,
+        at: Vec3,
+        yaw: f32,
+        velocity: Vec3,
+        body: CharacterBody,
+    ) -> CharacterHandle {
         let h = world.add_character(CharacterSpawn {
             position: at,
             yaw,
             pitch: 0.0,
+            body,
         });
         settle_on_floor(world, &[h]);
         assert!(state(world, h).grounded, "resting before the test starts");
@@ -1904,6 +1932,18 @@ mod tests {
     /// Walks from the landing at `start_z` at `speed` facing -Z down to the bottom floor,
     /// asserting it is grounded after every tick and takes no impact.
     fn assert_descends_stairs_grounded_from(rise: f32, speed: f32, start_z: f32) {
+        assert_body_descends_stairs_grounded_from(CharacterBody::default(), rise, speed, start_z);
+    }
+
+    /// [`assert_descends_stairs_grounded_from`] for a character of `body`, whose centre rests
+    /// half its hull length above the surface it stands on.
+    fn assert_body_descends_stairs_grounded_from(
+        body: CharacterBody,
+        rise: f32,
+        speed: f32,
+        start_z: f32,
+    ) {
+        let half_length = body.standing.hull.length / 2.0;
         let mut world = PhysicsWorld::new();
         world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
         world.set_world_mesh(
@@ -1911,12 +1951,13 @@ mod tests {
             &stairs_mesh(5, rise, 0.3, 2.0, 4.0),
             TEST_TAG,
         );
-        let landing_y = 5.0 * rise + 1.15;
-        let h = resting_then_moving(
+        let landing_y = 5.0 * rise + half_length;
+        let h = resting_then_moving_as(
             &mut world,
             Vec3::new(0.0, landing_y + 0.05, start_z),
             std::f32::consts::PI,
             Vec3::new(0.0, 0.0, -speed),
+            body,
         );
         let forward = CharacterCommand {
             forward: 1.0,
@@ -1942,7 +1983,7 @@ mod tests {
         let end = state(&world, h);
         assert!(reached_the_bottom, "{what}: never got down: {end:?}");
         assert!(
-            (end.position.y - 1.15).abs() < 0.1,
+            (end.position.y - half_length).abs() < 0.1,
             "{what}: standing on the bottom floor: {end:?}"
         );
     }
@@ -1960,6 +2001,290 @@ mod tests {
     #[test]
     fn walking_down_0_45_m_stairs_stays_grounded_without_impacts() {
         assert_descends_stairs_grounded(0.45);
+    }
+
+    fn body_of(shape: HullShape, radius: f32, length: f32, eye_height: f32) -> CharacterBody {
+        CharacterBody {
+            standing: Stature {
+                hull: Hull {
+                    shape,
+                    radius,
+                    length,
+                },
+                eye_height,
+            },
+        }
+    }
+
+    /// Source's player: 0.81 m wide, 1.83 m tall, eye at 1.63 m.
+    fn source_body() -> CharacterBody {
+        body_of(HullShape::Capsule, 0.405, 1.83, 1.63)
+    }
+
+    /// Source's size with a flat base: its edges are rounded by 0.1 m.
+    fn round_cylinder_body() -> CharacterBody {
+        body_of(
+            HullShape::RoundCylinder { rounding: 0.1 },
+            0.405,
+            1.83,
+            1.63,
+        )
+    }
+
+    /// A character of `body` settled on a floor 1.5 m before a 1.2 m wide, 1.9 m high doorway,
+    /// sent through it at 4 m/s with no friction for 60 ticks (4 m).
+    fn walk_at_the_doorway(body: CharacterBody) -> (Vec<Impact>, CharacterState) {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        world.set_world_mesh(WorldMeshId(1), &doorway_mesh(1.2, 1.9), TEST_TAG);
+        let h = world.add_character(CharacterSpawn {
+            position: Vec3::new(0.0, body.standing.hull.length / 2.0 + 0.2, -1.5),
+            body,
+            ..CharacterSpawn::from(Vec3::ZERO)
+        });
+        settle_on_floor(&mut world, &[h]);
+        assert!(state(&world, h).grounded, "standing before the doorway");
+        world
+            .queue_effect(h, CharacterEffect::AddVelocity(Vec3::new(0.0, 0.0, 4.0)))
+            .unwrap();
+
+        let impacts = run(&mut world, h, &frictionless(), 60);
+
+        (impacts, state(&world, h))
+    }
+
+    #[test]
+    fn a_1_83_m_hull_walks_through_a_1_9_m_doorway_without_impact() {
+        let (impacts, end) = walk_at_the_doorway(source_body());
+
+        assert!(impacts.is_empty(), "{impacts:?}");
+        assert!(end.position.z > 1.0, "walked through: {end:?}");
+        assert!(end.grounded, "{end:?}");
+    }
+
+    #[test]
+    fn a_2_3_m_hull_is_blocked_by_a_1_9_m_doorway_with_one_impact() {
+        let tall = body_of(HullShape::Capsule, 0.3, 2.3, 1.15);
+
+        let (impacts, end) = walk_at_the_doorway(tall);
+
+        assert_eq!(impacts.len(), 1, "{impacts:?}");
+        assert!(impacts[0].speed > 3.0, "{:?}", impacts[0]);
+        assert!(end.position.z < 0.0, "stopped before the wall: {end:?}");
+    }
+
+    #[test]
+    fn the_eye_sits_at_the_games_height_above_the_feet() {
+        let cases = [
+            source_body(),
+            round_cylinder_body(),
+            body_of(HullShape::Capsule, 0.3, 2.3, 2.0),
+        ];
+        for body in cases {
+            let Stature { hull, eye_height } = body.standing;
+            let mut world = PhysicsWorld::new();
+            world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+            let h = world.add_character(CharacterSpawn {
+                position: Vec3::new(0.0, hull.length / 2.0 + 0.2, 0.0),
+                body,
+                ..CharacterSpawn::from(Vec3::ZERO)
+            });
+
+            settle_on_floor(&mut world, &[h]);
+
+            let rest = state(&world, h);
+            assert!(rest.grounded, "{body:?}: {rest:?}");
+            assert!(
+                (rest.position.y + rest.eye.y - eye_height).abs() < 0.03,
+                "{body:?}: the eye is {eye_height} m above the floor, got {rest:?}"
+            );
+            assert!(
+                (rest.eye.y - (eye_height - hull.length / 2.0)).abs() < 1e-4
+                    && rest.eye.x == 0.0
+                    && rest.eye.z == 0.0,
+                "{body:?}: eye offset from the centre, {:?}",
+                rest.eye
+            );
+        }
+    }
+
+    #[test]
+    fn the_default_body_is_todays_capsule_and_eye() {
+        let body = CharacterBody::default();
+        let (world, h) = standing_on_floor();
+
+        assert_eq!(
+            body.standing,
+            Stature {
+                hull: Hull {
+                    shape: HullShape::Capsule,
+                    radius: 0.3,
+                    length: 2.3,
+                },
+                eye_height: 1.15,
+            }
+        );
+        assert_eq!(CharacterSpawn::from(Vec3::ONE).body, body);
+        let rest = state(&world, h);
+        assert!(
+            rest.eye.length() < 1e-4,
+            "eye at the centre, {:?}",
+            rest.eye
+        );
+    }
+
+    #[test]
+    fn round_cylinder_hull_walks_down_0_3_m_stairs_grounded() {
+        for speed in [2.0, 4.0, 6.0] {
+            for k in 0..20 {
+                assert_body_descends_stairs_grounded_from(
+                    round_cylinder_body(),
+                    0.3,
+                    speed,
+                    4.0 + k as f32 * 0.0137,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn round_cylinder_hull_stands_on_a_nosing_within_its_flat_base() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(-3.0, 4.0, 0.3), TEST_TAG);
+        let past = 0.25;
+        let h = resting_then_moving_as(
+            &mut world,
+            Vec3::new(0.0, 0.3 + 0.915 + 0.05, 1.0 + past),
+            0.0,
+            Vec3::ZERO,
+            round_cylinder_body(),
+        );
+
+        for _ in 0..120 {
+            searchlight_tick(&mut world, h, &idle());
+        }
+
+        let end = state(&world, h);
+        assert!(end.grounded, "{end:?}");
+        assert!(
+            (end.position.y - (0.3 + 0.915)).abs() < 0.03,
+            "still on the step top, its flat base over the nosing: {end:?}"
+        );
+        assert!(
+            (end.position.z - (1.0 + past)).abs() < 0.01,
+            "did not roll off the nosing: {end:?}"
+        );
+    }
+
+    fn add_with_body(body: CharacterBody) {
+        let mut world = PhysicsWorld::new();
+        world.add_character(CharacterSpawn {
+            body,
+            ..CharacterSpawn::from(Vec3::new(0.0, 5.0, 0.0))
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "hull")]
+    fn an_impossible_hull_is_refused_with_a_zero_radius() {
+        add_with_body(body_of(HullShape::Capsule, 0.0, 1.83, 1.63));
+    }
+
+    #[test]
+    #[should_panic(expected = "hull")]
+    fn an_impossible_hull_is_refused_with_a_negative_radius() {
+        add_with_body(body_of(HullShape::Capsule, -0.3, 1.83, 1.63));
+    }
+
+    #[test]
+    #[should_panic(expected = "hull")]
+    fn an_impossible_hull_is_refused_with_a_zero_length() {
+        add_with_body(body_of(
+            HullShape::RoundCylinder { rounding: 0.1 },
+            0.3,
+            0.0,
+            0.0,
+        ));
+    }
+
+    #[test]
+    #[should_panic(expected = "hull")]
+    fn an_impossible_hull_is_refused_with_a_negative_length() {
+        add_with_body(body_of(
+            HullShape::RoundCylinder { rounding: 0.1 },
+            0.3,
+            -1.83,
+            1.0,
+        ));
+    }
+
+    #[test]
+    #[should_panic(expected = "hull")]
+    fn an_impossible_hull_is_refused_with_a_capsule_as_long_as_its_diameter() {
+        add_with_body(body_of(HullShape::Capsule, 0.4, 0.8, 0.5));
+    }
+
+    #[test]
+    #[should_panic(expected = "hull")]
+    fn an_impossible_hull_is_refused_with_a_capsule_shorter_than_its_diameter() {
+        add_with_body(body_of(HullShape::Capsule, 0.4, 0.5, 0.3));
+    }
+
+    #[test]
+    #[should_panic(expected = "hull")]
+    fn an_impossible_hull_is_refused_with_a_zero_rounding() {
+        add_with_body(body_of(
+            HullShape::RoundCylinder { rounding: 0.0 },
+            0.405,
+            1.83,
+            1.63,
+        ));
+    }
+
+    #[test]
+    #[should_panic(expected = "hull")]
+    fn an_impossible_hull_is_refused_with_a_negative_rounding() {
+        add_with_body(body_of(
+            HullShape::RoundCylinder { rounding: -0.1 },
+            0.405,
+            1.83,
+            1.63,
+        ));
+    }
+
+    #[test]
+    #[should_panic(expected = "hull")]
+    fn an_impossible_hull_is_refused_with_a_rounding_beyond_the_radius() {
+        add_with_body(body_of(
+            HullShape::RoundCylinder { rounding: 0.5 },
+            0.405,
+            1.83,
+            1.63,
+        ));
+    }
+
+    #[test]
+    fn a_hull_at_the_limits_is_accepted() {
+        let at_the_limits = [
+            body_of(HullShape::Capsule, 0.4, 0.81, 0.5),
+            body_of(
+                HullShape::RoundCylinder { rounding: 0.405 },
+                0.405,
+                1.83,
+                1.63,
+            ),
+            body_of(
+                HullShape::RoundCylinder { rounding: 0.001 },
+                0.405,
+                1.83,
+                1.63,
+            ),
+        ];
+
+        for body in at_the_limits {
+            add_with_body(body);
+        }
     }
 
     /// A rectangle spanning x in [-10, 10] and z in [`z_from`, `z_to`] at height `y`, facing up.
@@ -2967,6 +3292,7 @@ mod tests {
             position: Vec3::new(0.0, 1.2, 0.0),
             yaw: std::f32::consts::PI,
             pitch: 0.0,
+            body: CharacterBody::default(),
         });
         set_one_volume(
             &mut world,
@@ -3140,6 +3466,7 @@ mod tests {
                 position: at,
                 yaw,
                 pitch: 0.0,
+                body: CharacterBody::default(),
             });
             for _ in 0..60 {
                 tick(world, h, &idle());

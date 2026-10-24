@@ -236,7 +236,7 @@ mod tests {
 
     const PLAYER: Threat = Threat {
         eye: Vec3::new(0.0, 1.8, 0.0),
-        aim: Vec3::new(0.0, 1.15, 0.0),
+        aim: Vec3::new(0.0, 0.915, 0.0),
     };
     const ENEMY_EYE: f32 = 1.5;
     const MARKER: Vec3 = Vec3::new(0.0, 0.0, 10.0);

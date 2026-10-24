@@ -1175,13 +1175,14 @@ impl Game for SearchlightGame {
         self.stage.sync_enemies(self.mode.sim());
         if let Some(renderer) = ctx.renderer() {
             let sim = self.mode.sim();
-            let view = first_person_view(
+            let mut view = first_person_view(
                 &self.previous,
                 &sim.player(),
-                sim.eye_height(),
                 alpha,
                 look_to_turn(self.input.pending_look()),
             );
+            // TODO: remove this shim once the view reads `state.eye`.
+            view.eye += Vec3::Y * sim.eye_height();
             let tuning = sim.lean_tuning();
             let from = self.previous_lean.amount();
             let amount = from + alpha * (sim.player_lean().amount() - from);
@@ -1975,14 +1976,15 @@ mod tests {
     /// The view a frame must draw: the sim's player turned by the look shown but not yet ticked.
     fn expected_view(game: &SearchlightGame) -> Mat4 {
         let (look_x, look_y) = game.input.pending_look();
-        first_person_view(
+        let mut view = first_person_view(
             &game.previous,
             &game.sim().player(),
-            game.sim().eye_height(),
             ALPHA,
             (-look_x, -look_y),
-        )
-        .view_matrix()
+        );
+        // TODO: remove this shim once the view reads `state.eye`.
+        view.eye += Vec3::Y * game.sim().eye_height();
+        view.view_matrix()
     }
 
     fn forward_of(view: Mat4) -> Vec3 {
