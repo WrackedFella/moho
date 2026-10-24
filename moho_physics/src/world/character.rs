@@ -2344,6 +2344,23 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "hull")]
+    fn an_impossible_hull_is_refused_with_an_infinite_radius() {
+        add_with_body(body_of(
+            HullShape::RoundCylinder { rounding: 0.1 },
+            f32::INFINITY,
+            1.83,
+            1.63,
+        ));
+    }
+
+    #[test]
+    #[should_panic(expected = "hull")]
+    fn an_impossible_hull_is_refused_with_an_infinite_length() {
+        add_with_body(body_of(HullShape::Capsule, 0.405, f32::INFINITY, 1.63));
+    }
+
+    #[test]
+    #[should_panic(expected = "hull")]
     fn an_impossible_hull_is_refused_with_a_capsule_as_long_as_its_diameter() {
         add_with_body(body_of(HullShape::Capsule, 0.4, 0.8, 0.5));
     }

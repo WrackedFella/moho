@@ -45,13 +45,13 @@ fn target_number(index: usize) -> u16 {
     u16::try_from(index).expect("an arena has fewer than 65536 dummies")
 }
 
-/// The target number and capsule centre of the shipped-body dummy at `index` in a spawn list,
+/// The target number and capsule centre of the `body` dummy at `index` in a spawn list,
 /// for a dummy standing on the floor point `spawn`.
 ///
 /// # Panics
 /// If `index` is more than a `u16` target number can name.
-pub(crate) fn dummy_at(index: usize, spawn: Vec3) -> (u16, Vec3) {
-    (target_number(index), standing_centre(&SHIPPED_BODY, spawn))
+pub(crate) fn dummy_at(body: &CharacterBody, index: usize, spawn: Vec3) -> (u16, Vec3) {
+    (target_number(index), standing_centre(body, spawn))
 }
 
 /// The index of the waypoint nearest `spawn` on the ground plane, and the yaw that faces it.
@@ -166,7 +166,12 @@ pub fn player_hit_volumes() -> [HitVolume; 6] {
 /// and the legs under it, reaching the feet of the hull, so a level ray from the player's eye
 /// height meets a part rather than passing through a gap at the neck.
 pub fn dummy_hit_volumes(target: u16) -> [HitVolume; 6] {
-    body_volumes(&SHIPPED_BODY, |part| SurfaceTag::Part { target, part })
+    dummy_hit_volumes_of(&SHIPPED_BODY, target)
+}
+
+/// [`dummy_hit_volumes`] for a dummy built on `body`, whose legs reach the feet of its hull.
+pub(crate) fn dummy_hit_volumes_of(body: &CharacterBody, target: u16) -> [HitVolume; 6] {
+    body_volumes(body, |part| SurfaceTag::Part { target, part })
 }
 
 /// Torso box centre height above the capsule centre, in metres.
@@ -951,11 +956,17 @@ impl SearchlightSim {
             .collect()
     }
 
-    /// Whether no occupant stands within two capsule radii of `marker`, measured on the ground plane.
+    /// Whether no occupant stands within two hull radii of `marker`, measured on the ground plane.
     fn marker_is_free(&self, marker: Vec3, occupants: &[Vec3]) -> bool {
-        occupants.iter().all(|position| {
-            (position.x - marker.x).hypot(position.z - marker.z) >= 2.0 * CAPSULE_RADIUS
-        })
+        let clearance = 2.0 * self.body.standing.hull.radius;
+        occupants
+            .iter()
+            .all(|position| (position.x - marker.x).hypot(position.z - marker.z) >= clearance)
+    }
+
+    /// The hull and eye the player and every target were built with.
+    pub fn character_body(&self) -> &CharacterBody {
+        &self.body
     }
 
     /// Enemies still in the world.
@@ -4269,8 +4280,8 @@ mod enemy_tests {
     }
 
     /// A wall halfway between the player and `SHIELDED`'s row of points, `top` metres high.
-    /// The line from the player's eye (1.15 + `HEAD_HEIGHT` up) to the hide height behind it
-    /// crosses the wall at about 1.38 m; level enemy shots at the player's head pass over it.
+    /// The line from the player's eye (about 1.635 m up) to the hide height behind it
+    /// crosses the wall at about 1.27 m; level enemy shots at the player's head pass over it.
     fn midfield_wall(top: f32) -> (Vec3, Vec3) {
         (Vec3::new(-10.0, 0.0, 5.0), Vec3::new(10.0, top, 5.1))
     }

@@ -2264,6 +2264,39 @@ mod tests {
         assert_ne!(first, start, "the step did change the state it was given");
     }
 
+    #[test]
+    fn step_writes_the_eye_from_the_tuned_body() {
+        let mut state = standing();
+        let tuning = Tuning {
+            body: CharacterBody {
+                standing: Stature {
+                    hull: Hull {
+                        shape: HullShape::Capsule,
+                        radius: 0.405,
+                        length: 1.83,
+                    },
+                    eye_height: 1.63,
+                },
+            },
+            ..test_tuning()
+        };
+
+        super::step(
+            &mut state,
+            &CharacterCommand::default(),
+            &[],
+            &tuning,
+            DT,
+            |_, asked| flat_floor(0.0)(asked),
+        );
+
+        assert!(
+            (state.eye - Vec3::Y * (1.63 - 0.915)).length() < 1e-6,
+            "{}",
+            state.eye
+        );
+    }
+
     proptest! {
         #[test]
         fn ground_speed_from_rest_never_exceeds_max_speed_times_input(
