@@ -392,6 +392,7 @@ mod tests {
             gravity: 18.0,
             jump_speed: 8.0,
             max_velocity: 90.0,
+            autohop: true,
         }
     }
 

@@ -41,7 +41,8 @@ pub struct CharacterCommand {
     pub yaw_delta: f32,
     /// Look change this tick, in radians; positive looks up.
     pub pitch_delta: f32,
-    /// Jump if grounded.
+    /// Jump was down at some point during the tick. A grounded character jumps on a press, and
+    /// on a held jump only with [`MoveSettings::autohop`].
     pub jump: bool,
 }
 
@@ -66,6 +67,8 @@ pub struct MoveSettings {
     pub jump_speed: f32,
     /// Largest speed along any one axis, m/s.
     pub max_velocity: f32,
+    /// Held jump jumps again on landing.
+    pub autohop: bool,
 }
 
 /// One surface the character lost speed into this tick.
@@ -311,7 +314,8 @@ fn apply(state: &mut CharacterState, effect: CharacterEffect) {
 ///    airborne and settle finds the ground; the velocity is then checked as in 4b, so friction
 ///    never meets an infinite speed;
 /// 1. the look turns;
-/// 2. a jump adds `jump_speed` to the vertical velocity;
+/// 2. a jump adds `jump_speed` to the vertical velocity: a grounded character jumps when
+///    jump is down and was up last tick, or held with `autohop`;
 /// 3. half a tick of gravity (`v.y -= g·dt/2`), unless walking;
 /// 4. friction and acceleration (walking) or air acceleration;
 ///    4b. the velocity is checked: a non-finite component becomes 0 and each component is
@@ -321,7 +325,8 @@ fn apply(state: &mut CharacterState, effect: CharacterEffect) {
 /// 7. the other half of gravity, unless walking;
 /// 8. settle: a walker that ends the tick grounded moves along its ground, keeping its
 ///    horizontal velocity; a landing zeroes the vertical velocity;
-/// 9. the velocity is checked again, so stored state is bounded.
+/// 9. the velocity is checked again, so stored state is bounded, and `jump_held` records the
+///    command's `jump`, whether or not the character jumped.
 ///
 /// The two halves around the move give an airborne tick the exact displacement under constant
 /// gravity at any tick rate. A landing's impact speed is therefore the mid-tick downward speed.
@@ -349,7 +354,7 @@ pub fn step(
     let wish = wish_vector.normalize_or_zero();
     let magnitude = wish_vector.length().min(1.0);
 
-    let jumped = state.grounded && command.jump;
+    let jumped = state.grounded && command.jump && (!state.jump_held || settings.autohop);
     if jumped {
         state.velocity.y += settings.jump_speed;
     }
@@ -387,6 +392,7 @@ pub fn step(
 
     settle(state, &slid, walking, asked, dt);
     state.velocity = checked(state.velocity, settings.max_velocity);
+    state.jump_held = command.jump;
     impacts
 }
 
@@ -459,6 +465,7 @@ mod tests {
             yaw: 0.0,
             pitch: 0.0,
             grounded,
+            jump_held: false,
         }
     }
 
@@ -751,6 +758,7 @@ mod tests {
                     gravity: 18.0,
                     jump_speed: 8.0,
                     max_velocity: 90.0,
+                    autohop: false,
                 };
                 let mut state = standing();
 
@@ -785,6 +793,7 @@ mod tests {
                 gravity: 18.0,
                 jump_speed: 6.5,
                 max_velocity: 90.0,
+                autohop: false,
             };
             let diagonal = CharacterCommand {
                 forward: 1.0,
@@ -1653,6 +1662,92 @@ mod tests {
 
             assert!(state.grounded);
             assert_eq!(state.velocity.y, 0.0);
+        }
+
+        fn jump_command(jump: bool) -> CharacterCommand {
+            CharacterCommand {
+                jump,
+                ..CharacterCommand::default()
+            }
+        }
+
+        fn took_off(state: &CharacterState) -> bool {
+            let expected = test_settings().jump_speed - 18.0 * DT;
+            !state.grounded && (state.velocity.y - expected).abs() < 1e-3
+        }
+
+        #[test]
+        fn a_press_made_in_the_air_and_held_does_not_jump_on_landing() {
+            let mut state = state_at(Vec3::new(0.0, 0.1, 0.0), Vec3::new(0.0, -3.0, 0.0), false);
+            let held = jump_command(true);
+            walk(&mut state, &held, &test_settings());
+            assert!(!state.grounded, "still falling after the first tick");
+            walk(&mut state, &held, &test_settings());
+            assert!(state.grounded, "landed on the second tick: {state:?}");
+
+            walk(&mut state, &held, &test_settings());
+
+            assert!(state.grounded, "stayed on the ground: {state:?}");
+            assert!(
+                state.velocity.y.abs() < 1e-4,
+                "no jump from a press made before landing: {:?}",
+                state.velocity
+            );
+            walk(&mut state, &jump_command(false), &test_settings());
+            walk(&mut state, &held, &test_settings());
+            assert!(took_off(&state), "release then press jumps: {state:?}");
+        }
+
+        proptest! {
+            #[test]
+            fn jump_held_follows_the_command_every_tick(
+                started_held in any::<bool>(),
+                autohop in any::<bool>(),
+                presses in prop::collection::vec(any::<bool>(), 1..40),
+            ) {
+                let settings = MoveSettings { autohop, ..test_settings() };
+                let mut state = standing();
+                state.jump_held = started_held;
+
+                for (tick, jump) in presses.into_iter().enumerate() {
+                    walk(&mut state, &jump_command(jump), &settings);
+
+                    prop_assert_eq!(state.jump_held, jump, "tick {}", tick);
+                }
+            }
+        }
+
+        #[test]
+        fn an_effect_does_not_release_jump() {
+            let effects = [
+                CharacterEffect::SetLook {
+                    yaw: 0.0,
+                    pitch: 0.0,
+                },
+                CharacterEffect::AddVelocity(Vec3::ZERO),
+                CharacterEffect::SetVelocity(Vec3::ZERO),
+            ];
+            for effect in effects {
+                let mut state = standing();
+                state.jump_held = true;
+
+                super::step(
+                    &mut state,
+                    &jump_command(true),
+                    &[effect],
+                    &test_settings(),
+                    DT,
+                    |from, asked| flat_floor(from.position.y)(asked),
+                );
+
+                assert!(state.grounded, "{effect:?}: {state:?}");
+                assert!(
+                    state.velocity.y.abs() < 1e-4,
+                    "{effect:?} released the held jump: {:?}",
+                    state.velocity
+                );
+                assert!(state.jump_held, "{effect:?}");
+            }
         }
     }
 

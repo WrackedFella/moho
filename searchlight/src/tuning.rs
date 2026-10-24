@@ -20,6 +20,7 @@ pub fn tuning(kit: Kit) -> SimConfig {
             gravity: 18.0,
             jump_speed: 6.5,
             max_velocity: 90.0,
+            autohop: false,
         },
         eye_height: 0.7,
         range: weapon.range,

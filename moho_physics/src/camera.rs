@@ -51,6 +51,7 @@ mod tests {
             yaw,
             pitch,
             grounded: true,
+            jump_held: false,
         }
     }
 
