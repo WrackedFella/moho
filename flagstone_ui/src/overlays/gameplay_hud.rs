@@ -291,6 +291,38 @@ mod tests {
     use super::*;
     use crate::overlays::test_support::{rect_of, second_frame, texts};
 
+    fn drawn_texts(hud: &mut GameplayHud, data: &HudData) -> Vec<String> {
+        let ctx = egui::Context::default();
+        texts(&second_frame(&ctx, |ui| hud.render(ui, data)))
+    }
+
+    #[test]
+    fn first_person_hud_names_the_mode() {
+        let mut hud = GameplayHud::new();
+        let data = HudData {
+            is_fps_mode: true,
+            ..Default::default()
+        };
+
+        let drawn = drawn_texts(&mut hud, &data);
+
+        assert!(drawn.contains(&"First person".to_string()), "{drawn:?}");
+        assert!(!drawn.contains(&"Strategy".to_string()), "{drawn:?}");
+    }
+
+    #[test]
+    fn first_person_hud_does_not_name_its_mode_in_strategy() {
+        let mut hud = GameplayHud::new();
+        let data = HudData {
+            is_fps_mode: false,
+            ..Default::default()
+        };
+
+        let drawn = drawn_texts(&mut hud, &data);
+
+        assert!(!drawn.contains(&"First person".to_string()), "{drawn:?}");
+    }
+
     #[test]
     fn render_compass_shows_labels_within_view_arc() {
         let ctx = egui::Context::default();

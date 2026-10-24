@@ -304,6 +304,34 @@ mod tests {
     }
 
     #[test]
+    fn strategy_hud_names_the_mode() {
+        let ctx = egui::Context::default();
+        let mut hud = RtsHud::new();
+        let strategy = strategy_data(TOP);
+        frame(&ctx, &mut hud, &strategy, Vec::new());
+
+        let drawn = texts(&frame(&ctx, &mut hud, &strategy, Vec::new()));
+
+        assert!(drawn.contains(&"Strategy".to_string()), "{drawn:?}");
+        assert!(!drawn.contains(&"First person".to_string()), "{drawn:?}");
+    }
+
+    #[test]
+    fn strategy_hud_does_not_name_its_mode_in_first_person() {
+        let ctx = egui::Context::default();
+        let mut hud = RtsHud::new();
+        let first_person = HudData {
+            is_fps_mode: true,
+            ..strategy_data(TOP)
+        };
+        frame(&ctx, &mut hud, &first_person, Vec::new());
+
+        let drawn = texts(&frame(&ctx, &mut hud, &first_person, Vec::new()));
+
+        assert!(!drawn.contains(&"Strategy".to_string()), "{drawn:?}");
+    }
+
+    #[test]
     fn render_time_of_day_shows_clock_in_top_right() {
         let ctx = egui::Context::default();
 

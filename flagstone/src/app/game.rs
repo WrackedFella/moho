@@ -25,6 +25,8 @@ pub const POINTER_RAY_RANGE: f32 = 256.0;
 pub struct StrategyCommand {
     pub input: ControllerInput,
     pub jump: bool,
+    /// Switch between the strategy view and first person.
+    pub toggle_view: bool,
     /// The world ray under the pointer when `Select` was pressed in the strategy view.
     ///
     /// A ray rather than a pixel, so the command replays without a window.
@@ -101,6 +103,7 @@ impl App {
                 zoom_delta: 0.0,
             },
             jump,
+            toggle_view: false,
             select,
             console: Vec::new(),
             engine: Vec::new(),
@@ -1042,12 +1045,223 @@ mod tests {
         fn toggle_switches_between_first_person_and_isometric() {
             let mut app = playing_app();
             app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            let toggle = StrategyCommand {
+                toggle_view: true,
+                ..StrategyCommand::default()
+            };
 
-            app.toggle_camera_mode();
+            tick_app(&mut app, &toggle);
             assert_eq!(app.simulation.camera_mode(), CameraMode::Isometric);
 
-            app.toggle_camera_mode();
+            tick_app(&mut app, &toggle);
             assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+        }
+    }
+
+    mod possess {
+        use super::*;
+        use moho_core::events::AudioEvent;
+        use std::sync::mpsc::Receiver;
+
+        fn tap(app: &mut App) {
+            let key = default_key(app, StrategyAction::Possess);
+            app.input.actions.key(key, true);
+            app.input.actions.key(key, false);
+        }
+
+        fn press(app: &mut App) {
+            let key = default_key(app, StrategyAction::Possess);
+            app.input.actions.key(key, true);
+        }
+
+        fn release(app: &mut App) {
+            let key = default_key(app, StrategyAction::Possess);
+            app.input.actions.key(key, false);
+        }
+
+        /// Samples the command and runs one tick with it.
+        fn step(app: &mut App) -> StrategyCommand {
+            let command = Game::command(app);
+            tick_app(app, &command);
+            command
+        }
+
+        fn mode(app: &App) -> CameraMode {
+            app.simulation.camera_mode()
+        }
+
+        fn pose(app: &App) -> (glam::Vec3, (f32, f32)) {
+            (app.simulation.position(), app.simulation.yaw_pitch())
+        }
+
+        fn app_in(camera_mode: CameraMode) -> App {
+            let mut app = playing_app();
+            app.simulation
+                .set_position_yaw_pitch(glam::Vec3::new(10.0, 20.0, 30.0), 0.7, 0.2);
+            app.simulation.set_camera_mode(camera_mode);
+            app
+        }
+
+        fn record_audio(app: &App) -> Receiver<AudioEvent> {
+            let (tx, rx) = std::sync::mpsc::channel();
+            app.event_bus.subscribe(move |event: &AudioEvent| {
+                let _ = tx.send(event.clone());
+            });
+            rx
+        }
+
+        fn cues(app: &App, audio: &Receiver<AudioEvent>) -> Vec<AudioEvent> {
+            app.event_bus.process_deferred();
+            audio.try_iter().collect()
+        }
+
+        #[test]
+        fn possess_enters_first_person_at_the_pawns_pose() {
+            let mut app = app_in(CameraMode::Isometric);
+            let before = pose(&app);
+            tap(&mut app);
+
+            step(&mut app);
+
+            assert_eq!(mode(&app), CameraMode::FirstPerson);
+            assert_eq!(pose(&app), before);
+        }
+
+        #[test]
+        fn possess_return_possess_restores_the_same_pawn_pose() {
+            let mut app = app_in(CameraMode::FirstPerson);
+            let before = pose(&app);
+
+            tap(&mut app);
+            step(&mut app);
+            let in_strategy = mode(&app);
+            tap(&mut app);
+            step(&mut app);
+
+            assert_eq!(in_strategy, CameraMode::Isometric);
+            assert_eq!(mode(&app), CameraMode::FirstPerson);
+            assert_eq!(pose(&app), before);
+        }
+
+        #[test]
+        fn possess_key_in_first_person_switches_to_strategy() {
+            let mut app = app_in(CameraMode::FirstPerson);
+            tap(&mut app);
+
+            step(&mut app);
+
+            assert_eq!(mode(&app), CameraMode::Isometric);
+        }
+
+        #[test]
+        fn mode_switch_applies_on_the_next_tick_not_on_the_key_event() {
+            let mut app = app_in(CameraMode::FirstPerson);
+
+            press(&mut app);
+            let on_the_key_event = mode(&app);
+            let command = Game::command(&mut app);
+            let before_the_tick = mode(&app);
+            tick_app(&mut app, &command);
+
+            assert_eq!(on_the_key_event, CameraMode::FirstPerson);
+            assert!(command.toggle_view, "the press is in the sampled command");
+            assert_eq!(before_the_tick, CameraMode::FirstPerson);
+            assert_eq!(mode(&app), CameraMode::Isometric);
+        }
+
+        #[test]
+        fn a_tap_shorter_than_a_tick_still_switches_once() {
+            let mut app = app_in(CameraMode::FirstPerson);
+            tap(&mut app);
+
+            let first = step(&mut app);
+            let after_first = mode(&app);
+            let second = step(&mut app);
+
+            assert!(first.toggle_view);
+            assert_eq!(after_first, CameraMode::Isometric);
+            assert!(!second.toggle_view, "the edge is consumed by one tick");
+            assert_eq!(mode(&app), CameraMode::Isometric);
+        }
+
+        #[test]
+        fn held_possess_key_switches_once() {
+            let mut app = app_in(CameraMode::FirstPerson);
+            press(&mut app);
+
+            let first = step(&mut app);
+            press(&mut app);
+            let repeats: Vec<_> = (0..5).map(|_| step(&mut app)).collect();
+
+            assert!(first.toggle_view);
+            assert!(
+                repeats.iter().all(|command| !command.toggle_view),
+                "key repeat toggled again"
+            );
+            assert_eq!(mode(&app), CameraMode::Isometric);
+
+            release(&mut app);
+            step(&mut app);
+            assert_eq!(mode(&app), CameraMode::Isometric);
+        }
+
+        #[test]
+        fn pawn_does_not_move_while_in_strategy_mode() {
+            let mut app = standing_app();
+            let before = (pose(&app), walker_state(&app).position);
+            tap(&mut app);
+            step(&mut app);
+            hold(&mut app, StrategyAction::MoveForward);
+            hold(&mut app, StrategyAction::MoveRight);
+            hold(&mut app, StrategyAction::Jump);
+
+            for _ in 0..30 {
+                step(&mut app);
+            }
+
+            assert_eq!(mode(&app), CameraMode::Isometric);
+            assert_eq!((pose(&app), walker_state(&app).position), before);
+        }
+
+        #[test]
+        fn switch_publishes_the_placeholder_cue() {
+            let mut app = app_in(CameraMode::Isometric);
+            let audio = record_audio(&app);
+
+            tap(&mut app);
+            step(&mut app);
+            let entering = cues(&app, &audio);
+            tap(&mut app);
+            step(&mut app);
+            let returning = cues(&app, &audio);
+
+            assert!(
+                matches!(entering.as_slice(), [AudioEvent::Confirm]),
+                "entering first person: {entering:?}"
+            );
+            assert!(
+                matches!(returning.as_slice(), [AudioEvent::Cancel]),
+                "returning to strategy: {returning:?}"
+            );
+        }
+
+        #[test]
+        fn possess_is_ignored_outside_playing() {
+            let mut app = app_in(CameraMode::FirstPerson);
+            let audio = record_audio(&app);
+            app.game_state = GameState::Menu;
+            tap(&mut app);
+
+            let sampled = step(&mut app);
+            let forced = StrategyCommand {
+                toggle_view: true,
+                ..StrategyCommand::default()
+            };
+            tick_app(&mut app, &forced);
+
+            assert!(!sampled.toggle_view);
+            assert_eq!(mode(&app), CameraMode::FirstPerson);
+            assert!(cues(&app, &audio).is_empty());
         }
     }
 
