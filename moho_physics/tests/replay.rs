@@ -25,7 +25,6 @@ struct TickInput {
     commands: [CharacterCommand; 2],
 }
 
-/// Everything the replay compares after one tick.
 #[derive(Clone, Copy, Debug)]
 struct Snapshot {
     characters: [CharacterState; 2],
@@ -220,8 +219,7 @@ const BOX_HIT: CharacterEffect = CharacterEffect::Teleport {
 /// Ticks of straight walking into the cuboid before the noise starts.
 const APPROACH_TICKS: usize = 200;
 
-/// 600 ticks: both characters first walk forward (one jumping the step, the other along the wall corner), then
-/// steer noisily with jump presses, a held-jump stretch and an effect now and then.
+/// Walk toward the cuboid, then steer noisily with jump presses, a held jump and occasional effects.
 fn make_script() -> Vec<TickInput> {
     let mut rng = Lcg(SEED);
     (0..TICKS)
