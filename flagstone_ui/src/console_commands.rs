@@ -12,7 +12,6 @@ use moho_ui_shell::{CommandSpec, Console, RegisterError};
 /// never touches game state.
 #[derive(Debug, Clone, PartialEq)]
 pub enum StrategyConsoleCommand {
-    ToggleGodMode,
     ToggleNoclip,
     /// Hours, `0.0..=24.0`.
     SetTimeOfDay(f32),
@@ -42,8 +41,7 @@ pub enum StrategyConsoleCommand {
 /// # Errors
 /// A [`RegisterError`] if a name is already taken; that is a bug in the command table.
 pub fn register(console: &mut Console<StrategyConsoleCommand>) -> Result<(), RegisterError> {
-    let table: [(&str, &str, ParseFn<StrategyConsoleCommand>); 8] = [
-        ("god", "Toggle god mode (invincibility)", parse_god),
+    let table: [(&str, &str, ParseFn<StrategyConsoleCommand>); 7] = [
         (
             "noclip",
             "Toggle noclip mode (fly through walls)",
@@ -93,13 +91,6 @@ pub fn register(console: &mut Console<StrategyConsoleCommand>) -> Result<(), Reg
 }
 
 type Parsed = Result<(StrategyConsoleCommand, String), String>;
-
-fn parse_god(_args: &[&str]) -> Parsed {
-    Ok((
-        StrategyConsoleCommand::ToggleGodMode,
-        "Toggling god mode...".to_owned(),
-    ))
-}
 
 fn parse_noclip(_args: &[&str]) -> Parsed {
     Ok((
@@ -283,6 +274,15 @@ mod tests {
     }
 
     #[test]
+    fn god_is_an_unknown_command() {
+        assert_runs(
+            "god",
+            None,
+            &["Unknown command 'god'. Type 'help' for a list of commands."],
+        );
+    }
+
+    #[test]
     fn strategy_commands_parse_with_todays_replies() {
         use StrategyConsoleCommand::{SetSunDirection, SetTimeOfDay, Spawn};
         let spawn = |kind: &str, args: Option<&str>| Spawn {
@@ -290,11 +290,6 @@ mod tests {
             args: args.map(str::to_owned),
         };
         let rows: Vec<(&str, Option<StrategyConsoleCommand>, Vec<&str>)> = vec![
-            (
-                "god",
-                Some(StrategyConsoleCommand::ToggleGodMode),
-                vec!["Toggling god mode..."],
-            ),
             (
                 "noclip",
                 Some(StrategyConsoleCommand::ToggleNoclip),
@@ -560,7 +555,7 @@ mod tests {
         let printed: Vec<String> = console.output().lines().iter().cloned().collect();
         let echo = printed.iter().position(|l| l == "> help");
         let help = &printed[echo.expect("help is echoed") + 1..];
-        assert_eq!(help.len(), 17, "{help:?}");
+        assert_eq!(help.len(), 16, "{help:?}");
         for prefix in [
             "  help - ",
             "  clear - ",
@@ -571,7 +566,6 @@ mod tests {
             "  r_bloom <0-2> - ",
             "  r_tonemap <0|1> - ",
             "  audio_cue <path> <x> <y> <z> [volume] - ",
-            "  god - ",
             "  noclip - ",
             "  spawn <type> [material/args] - ",
             "  time <0-24> - ",

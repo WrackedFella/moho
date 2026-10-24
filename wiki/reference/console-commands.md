@@ -11,7 +11,6 @@ Commands are case-insensitive on the first token; arguments are whitespace-separ
 | `help` | | List commands |
 | `clear` | | Clear console output |
 | `quit` | | Auto-save and exit |
-| `god` | | Toggle god mode (event published; **no effect yet**) |
 | `noclip` | | Toggle noclip |
 | `sun` | `<yaw> <pitch>` | Sun direction in degrees |
 | `time` | `<0-24>` | Time of day in hours: 0 midnight, 6 dawn, 12 noon, 18 dusk |

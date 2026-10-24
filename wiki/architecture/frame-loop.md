@@ -86,7 +86,7 @@ The tick drains one channel per event family, in this order:
 | 2 | `process_graphics_events` | time of day, debug view |
 | 3 | `process_world_events` | every world event → `LightSystem::handle_event`; each `ChunkMeshDirty` chunk → remesh once (draw + collider) |
 | 4 | `process_input_events` | wheel zoom, mine action |
-| 5 | `process_debug_events` | spawn, god mode, noclip; point lights and shadow/SSAO quality are queued as `RenderRequest`s |
+| 5 | `process_debug_events` | spawn, noclip; point lights and shadow/SSAO quality are queued as `RenderRequest`s |
 
 Audio events are drained in `Game::frame` and forwarded to `AudioSystem`, since the runner
 owns it. `AudioEvent::PlaySoundAt` carries a world position: `AudioSystem` attenuates

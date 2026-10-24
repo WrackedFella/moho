@@ -10,10 +10,6 @@ use crate::{App, RenderRequest};
 /// work in the same tick.
 pub fn apply_console_command(app: &mut App, command: &StrategyConsoleCommand) {
     match command {
-        StrategyConsoleCommand::ToggleGodMode => {
-            app.event_bus
-                .publish(DebugEvent::ToggleGodMode { enabled: true });
-        }
         StrategyConsoleCommand::ToggleNoclip => {
             // The handler sets noclip to `!enabled`, so passing the current flag flips it.
             app.event_bus.publish(DebugEvent::ToggleCollision {
@@ -177,26 +173,6 @@ mod tests {
 
         assert!(after_first, "the first noclip turns it on");
         assert!(!after_second, "the second noclip turns it off");
-    }
-
-    #[test]
-    fn god_publishes_toggle_god_mode() {
-        let mut app = App::headless();
-        let debug = record::<DebugEvent>(&app);
-        let graphics = record::<GraphicsEvent>(&app);
-
-        apply_console_command(&mut app, &StrategyConsoleCommand::ToggleGodMode);
-
-        let published: Vec<_> = debug.try_iter().collect();
-        assert!(
-            matches!(
-                published.as_slice(),
-                [DebugEvent::ToggleGodMode { enabled: true }]
-            ),
-            "events: {published:?}"
-        );
-        assert_eq!(graphics.try_iter().count(), 0);
-        assert!(!app.physics.noclip);
     }
 
     #[test]
