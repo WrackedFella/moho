@@ -4,8 +4,8 @@ use glam::camera::rh::{proj::directx::orthographic, view::look_at_mat4};
 use glam::{Mat4, Vec3, Vec4};
 
 use super::{
-    ActiveShadowLight, CASCADE_RADIUS_MULTIPLIER, LightType, MIN_SHADOW_LIGHT_INTENSITY,
-    PcssSettings, SHADOW_DISTANCE, SHADOW_MAP_SIZE,
+    ActiveShadowLight, CASCADE_RADIUS_MULTIPLIER, MIN_SHADOW_LIGHT_INTENSITY, PcssSettings,
+    SHADOW_DISTANCE, SHADOW_MAP_SIZE,
 };
 use crate::gpu_types::MultiLightShadowGpu;
 
@@ -62,17 +62,13 @@ pub(super) fn light_view_projection(light_dir: Vec3, center: Vec3) -> Mat4 {
 /// The lights that cast a shadow this frame: sun in slot 0, moon in slot 1, each only when its
 /// intensity is above `MIN_SHADOW_LIGHT_INTENSITY`.
 pub(super) fn active_shadow_lights(sun: (Mat4, f32), moon: (Mat4, f32)) -> Vec<ActiveShadowLight> {
-    [(LightType::Sun, 0, sun), (LightType::Moon, 1, moon)]
+    [(0, sun), (1, moon)]
         .into_iter()
-        .filter(|(_, _, (_, intensity))| *intensity > MIN_SHADOW_LIGHT_INTENSITY)
-        .map(
-            |(light_type, light_index, (matrix, intensity))| ActiveShadowLight {
-                light_type,
-                light_index,
-                matrix,
-                intensity,
-            },
-        )
+        .filter(|(_, (_, intensity))| *intensity > MIN_SHADOW_LIGHT_INTENSITY)
+        .map(|(light_index, (_, intensity))| ActiveShadowLight {
+            light_index,
+            intensity,
+        })
         .collect()
 }
 
@@ -125,8 +121,8 @@ mod tests {
 
     use super::*;
     use crate::shadow::{
-        CASCADE_RADIUS_MULTIPLIER, LightType, MIN_SHADOW_LIGHT_INTENSITY, PcssQuality,
-        SHADOW_DISTANCE, SHADOW_MAP_SIZE,
+        CASCADE_RADIUS_MULTIPLIER, MIN_SHADOW_LIGHT_INTENSITY, PcssQuality, SHADOW_DISTANCE,
+        SHADOW_MAP_SIZE,
     };
 
     fn above_horizon() -> impl Strategy<Value = Vec3> {
@@ -256,10 +252,10 @@ mod tests {
     #[test]
     fn only_lights_above_the_floor_are_active() {
         let floor = MIN_SHADOW_LIGHT_INTENSITY;
-        let cases: [(f32, f32, &[LightType]); 5] = [
-            (1.0, 0.5, &[LightType::Sun, LightType::Moon]),
-            (1.0, 0.0, &[LightType::Sun]),
-            (0.0, 0.5, &[LightType::Moon]),
+        let cases: [(f32, f32, &[u32]); 5] = [
+            (1.0, 0.5, &[0, 1]),
+            (1.0, 0.0, &[0]),
+            (0.0, 0.5, &[1]),
             (0.0, 0.0, &[]),
             (floor, floor, &[]),
         ];
@@ -267,20 +263,18 @@ mod tests {
         for (sun, moon, expected) in cases {
             let lights = active_shadow_lights((marker(1.0), sun), (marker(2.0), moon));
 
-            let types: Vec<LightType> = lights.iter().map(|l| l.light_type).collect();
-            assert_eq!(types, expected, "sun {sun}, moon {moon}");
+            let slots: Vec<u32> = lights.iter().map(|l| l.light_index).collect();
+            assert_eq!(slots, expected, "sun {sun}, moon {moon}");
         }
     }
 
     #[test]
-    fn active_lights_carry_slot_matrix_and_intensity() {
+    fn active_lights_carry_slot_and_intensity() {
         let lights = active_shadow_lights((marker(1.0), 0.8), (marker(2.0), 0.4));
 
         assert_eq!(lights[0].light_index, 0);
-        assert_eq!(lights[0].matrix, marker(1.0));
         assert_eq!(lights[0].intensity, 0.8);
         assert_eq!(lights[1].light_index, 1);
-        assert_eq!(lights[1].matrix, marker(2.0));
         assert_eq!(lights[1].intensity, 0.4);
     }
 
@@ -291,7 +285,6 @@ mod tests {
         let pcss = PcssSettings {
             quality: PcssQuality::High,
             light_size: 0.07,
-            ..Default::default()
         };
 
         let gpu = multi_light_gpu(sun, moon, (0.9, 0.3), &pcss);

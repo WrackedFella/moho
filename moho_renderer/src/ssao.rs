@@ -86,17 +86,6 @@ impl Default for SsaoSettings {
     }
 }
 
-impl SsaoSettings {
-    /// Create settings from a quality preset
-    pub fn from_quality(quality: SsaoQuality) -> Self {
-        Self {
-            sample_count: quality.sample_count(),
-            radius: quality.radius(),
-            ..Default::default()
-        }
-    }
-}
-
 /// SSAO system managing textures, bind groups, and compute passes
 #[derive(Debug)]
 pub struct SsaoSystem {
@@ -431,12 +420,6 @@ impl SsaoSystem {
     /// Get the blurred AO texture view (for sampling in fragment shader)
     pub fn blurred_ao_view(&self) -> &wgpu::TextureView {
         &self.blurred_ao_texture_view
-    }
-
-    /// Update SSAO settings
-    pub fn update_settings(&mut self, queue: &wgpu::Queue, settings: SsaoSettings) {
-        self.settings = settings;
-        queue.write_buffer(&self.settings_buffer, 0, bytemuck::cast_slice(&[settings]));
     }
 
     /// Set SSAO quality level

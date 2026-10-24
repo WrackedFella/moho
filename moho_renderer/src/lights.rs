@@ -1,25 +1,14 @@
-/// Dynamic light management system for point and spot lights
+/// Dynamic light management system for point lights
 /// Handles light registration, updates, frustum culling, and GPU buffer management
 use glam::{Mat4, Vec3, Vec4};
 
 use crate::gpu_types::{DynamicLightsGpu, MAX_DYNAMIC_LIGHTS, PointLightGpu};
-
-/// Dynamic light shape (point vs directional spot)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LightShape {
-    /// Omnidirectional point light
-    Point,
-    /// Directional spotlight (future — not yet implemented)
-    Spot,
-}
 
 /// CPU-side light representation with full parameters
 #[derive(Debug, Clone)]
 pub struct Light {
     /// Unique identifier for this light
     pub id: u32,
-    /// Light shape (point or spot)
-    pub light_shape: LightShape,
     /// World position
     pub position: Vec3,
     /// Light color (RGB)
@@ -30,14 +19,6 @@ pub struct Light {
     pub range: f32,
     /// Whether this light is currently active
     pub enabled: bool,
-
-    // Spot light parameters (future use)
-    /// Spot light direction (for spotlight)
-    pub direction: Option<Vec3>,
-    /// Inner cone angle in radians (for spotlight)
-    pub inner_angle: Option<f32>,
-    /// Outer cone angle in radians (for spotlight)
-    pub outer_angle: Option<f32>,
 }
 
 impl Light {
@@ -48,15 +29,11 @@ impl Light {
 
         Self {
             id,
-            light_shape: LightShape::Point,
             position,
             color,
             intensity,
             range,
             enabled: true,
-            direction: None,
-            inner_angle: None,
-            outer_angle: None,
         }
     }
 
@@ -141,11 +118,6 @@ impl LightManager {
         self.lights.iter_mut().find(|l| l.id == id)
     }
 
-    /// Get an immutable reference to a light by ID
-    pub fn get_light(&self, id: u32) -> Option<&Light> {
-        self.lights.iter().find(|l| l.id == id)
-    }
-
     /// Update light position
     pub fn set_light_position(&mut self, id: u32, position: Vec3) {
         if let Some(light) = self.get_light_mut(id) {
@@ -209,22 +181,9 @@ impl LightManager {
         &self.gpu_data
     }
 
-    /// Get number of visible lights after culling
-    pub fn visible_light_count(&self) -> usize {
-        self.culled_lights.len().min(MAX_DYNAMIC_LIGHTS)
-    }
-
-    /// Get total number of registered lights
-    pub fn total_light_count(&self) -> usize {
-        self.lights.len()
-    }
     /// Get all registered lights (regardless of culling state).
     pub fn all_lights(&self) -> &[Light] {
         &self.lights
-    }
-    /// Mark as dirty (forces GPU update next frame)
-    pub fn mark_dirty(&mut self) {
-        self.dirty = true;
     }
 }
 

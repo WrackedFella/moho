@@ -17,9 +17,10 @@ Backend-agnostic 3D renderer for the Moho engine. Provides instance-based mesh r
 The renderer is built with a clean separation between scene data and GPU backend:
 
 - **`Scene`** - High-level scene representation (materials, meshes, instances)
-- **`Renderer`** - GPU backend implementation (wgpu)
+- **`RendererBackend`** - The facade games hold (`create_renderer`); the wgpu `Renderer` behind it is crate-private
 - **`MaterialTable`** - Material management with deduplication
-- **`ShadowSystem`** - Cascaded shadow map generation and management
+
+The GPU internals (shadow, SSAO, light and pipeline setup) are `pub(crate)`: wgpu types do not appear in the public API beyond the vertex-attribute tables in `pipeline`.
 
 ### 2.1 Rendering Pipeline
 
