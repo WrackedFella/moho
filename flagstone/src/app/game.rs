@@ -373,6 +373,13 @@ impl App {
         }
     }
 
+    /// Input stops reaching the action map outside play: held actions would stick, and a
+    /// press recorded but not yet ticked would fire on resume.
+    pub(crate) fn drop_pending_input(&mut self) {
+        self.input.actions.release_all();
+        self.input.actions.discard_edges();
+    }
+
     fn toggle_camera_mode(&mut self) {
         // Placeholder cues until the mode switch has its own clips.
         let cue = match self.simulation.camera_mode() {
@@ -1251,6 +1258,21 @@ mod tests {
                 matches!(returning.as_slice(), [AudioEvent::Cancel]),
                 "returning to strategy: {returning:?}"
             );
+        }
+
+        #[test]
+        fn a_possess_press_queued_before_a_pause_does_not_switch_on_resume() {
+            let mut app = app_in(CameraMode::FirstPerson);
+            let audio = record_audio(&app);
+            tap(&mut app);
+
+            app.game_state = GameState::Paused;
+            app.drop_pending_input();
+            app.game_state = GameState::Playing;
+            step(&mut app);
+
+            assert_eq!(mode(&app), CameraMode::FirstPerson);
+            assert!(cues(&app, &audio).is_empty());
         }
 
         #[test]
