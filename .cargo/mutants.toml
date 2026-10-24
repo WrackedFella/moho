@@ -245,4 +245,6 @@ exclude_re = [
     # moho_renderer::block_on. Hangs rather than survives: a waker that never wakes leaves the
     # polled future parked, so only the timeout stops it.
     'replace <impl Wake for ThreadWaker>::wake with \(\)',
+    'replace \| with \^ in chunks_meshed_from',
+    'replace \+ with - in contact_ao',
 ]

@@ -32,14 +32,22 @@ flowchart TD
 Neighbours are re-meshed on load because a neighbour meshed before this chunk existed
 has an exposed edge face; it must re-sample to close the seam.
 
-A mined block dirties every chunk whose geometry reads it, not only its own: the padded
-density field of a chunk reaches `SAMPLE_REACH` (1) block past its far edge, so a block on a
-chunk's negative face, edge or corner also dirties the negative neighbours (1, 2, 4 or 8
-chunks). `chunks_meshed_from` in
+A mined block dirties every chunk whose geometry reads it, not only its own. Smooth
+vertices take contact ambient occlusion from the 26 voxels around the air sample they lie
+on (`contact_ao` in
+[`flagstone_voxel/src/mesh/contact_ao.rs`](../../flagstone_voxel/src/mesh/contact_ao.rs)),
+so a chunk reads one block further than its padded density field, which reaches
+`SAMPLE_REACH` (1) block past its far edge:
+
+- Negative neighbour: read for a block within `SAMPLE_REACH + AO_RING_REACH` (2) of the
+  chunk's negative edge.
+- Positive neighbour: read for a block within `AO_RING_REACH` (1) of the chunk's positive
+  edge.
+
+`chunks_meshed_from` in
 [`flagstone_voxel/src/mesh/hybrid.rs`](../../flagstone_voxel/src/mesh/hybrid.rs) yields that
-set. It covers geometry only: smooth normals of the positive neighbour read a block one
-further in, so shading there can stay stale until that chunk is next meshed. Placing a block
-keeps its previous dirty set.
+set (1, 2, 4 or 8 chunks, on either side of each axis). Placing a block keeps its previous
+dirty set.
 
 ## Scene load
 

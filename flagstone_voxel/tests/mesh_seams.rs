@@ -113,16 +113,21 @@ fn edge_removal_remeshing_the_dependents_leaves_no_open_edge() {
     assert_eq!(open_edges(&meshes, lo, hi), 0);
 }
 
-/// Compares the geometry (vertex positions and indices) only. Normals come from central
-/// differences, so a block at local 15 also shades the positive neighbour; that stale
-/// shading is a known seam that opens no gap and is out of scope here.
+/// Compares the geometry (vertex positions and indices) and the ambient occlusion. Normals
+/// are not compared.
 fn assert_same_mesh(
     chunk: IVec3,
     incremental: &VoxelMesh,
     full: &VoxelMesh,
 ) -> Result<(), TestCaseError> {
     assert_same_stream(chunk, "vertices", &incremental.vertices, &full.vertices)?;
-    assert_same_stream(chunk, "indices", &incremental.indices, &full.indices)
+    assert_same_stream(chunk, "indices", &incremental.indices, &full.indices)?;
+    assert_same_stream(
+        chunk,
+        "ambient occlusion",
+        &incremental.ambient_occlusion,
+        &full.ambient_occlusion,
+    )
 }
 
 /// Fails naming the chunk, the stream and the first differing index, not the whole arrays.
@@ -193,6 +198,66 @@ proptest! {
             assert_same_mesh(*chunk, mesh, &full[chunk])?;
         }
     }
+}
+
+/// Ground of height 8 over the 48 x 48 region with a two-block wall raised at `wall_x`
+/// beside the ground voxel (16, 8, 24), whose contact AO then darkens. The vertex on
+/// that voxel's floor is emitted by the chunk at `vertex_chunk`, one chunk away from the
+/// chunk holding the wall.
+fn assert_wall_shades_the_neighbouring_chunk(wall_x: i32, vertex_chunk: IVec3) {
+    let mut grid = VoxelGrid::new(CHUNK);
+    for x in 0..48 {
+        for z in 0..48 {
+            fill_column(&mut grid, x, z, 8);
+        }
+    }
+    let region = chunk_box([0, -1, 0], [3, 1, 3]);
+    let mut incremental = mesh_all(&grid, region.clone());
+
+    for y in 8..10 {
+        for z in 23..=25 {
+            let block = IVec3::new(wall_x, y, z);
+            grid.mutator().place(block, SOIL, None);
+            remesh(&grid, &mut incremental, chunks_meshed_from(block, CHUNK));
+        }
+    }
+
+    let full = mesh_all(&grid, region);
+    let ao_at = |mesh: &VoxelMesh, vertex: [f32; 3]| -> Vec<f32> {
+        mesh.vertices
+            .iter()
+            .zip(&mesh.ambient_occlusion)
+            .filter(|(v, _)| **v == vertex)
+            .map(|(_, ao)| *ao)
+            .collect()
+    };
+    let shaded = [16.5, 8.0, 24.5];
+    let open = [(vertex_chunk.x * CHUNK) as f32 + 4.5, 8.0, 20.5];
+    let want = ao_at(&full[&vertex_chunk], shaded);
+    let got = ao_at(&incremental[&vertex_chunk], shaded);
+    let open_ao = ao_at(&full[&vertex_chunk], open);
+    assert!(
+        !want.is_empty() && !open_ao.is_empty(),
+        "both vertices are meshed"
+    );
+    assert!(
+        want.iter().all(|w| open_ao.iter().all(|o| w < o)),
+        "the wall darkens the ground: {want:?} vs open {open_ao:?}"
+    );
+    assert_eq!(
+        got, want,
+        "chunk {vertex_chunk} shades the ground as a full remesh does"
+    );
+}
+
+#[test]
+fn ambient_occlusion_follows_a_wall_one_block_into_the_next_chunk() {
+    assert_wall_shades_the_neighbouring_chunk(17, IVec3::new(0, 0, 1));
+}
+
+#[test]
+fn ambient_occlusion_follows_a_wall_on_the_far_edge_of_the_previous_chunk() {
+    assert_wall_shades_the_neighbouring_chunk(15, IVec3::new(1, 0, 1));
 }
 
 #[test]
