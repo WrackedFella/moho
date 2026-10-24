@@ -236,7 +236,6 @@ impl App {
                 let view = moho_physics::first_person_view(
                     &previous,
                     &current,
-                    0.0,
                     alpha,
                     (yaw_delta, pitch_delta),
                 );
@@ -1674,8 +1673,7 @@ mod tests {
             match rig {
                 Rig::Walking => {
                     let (previous, current) = app.physics.player_states().expect("a walker");
-                    first_person_view(&previous, &current, 0.0, ALPHA, (-look_x, -look_y))
-                        .view_matrix()
+                    first_person_view(&previous, &current, ALPHA, (-look_x, -look_y)).view_matrix()
                 }
                 Rig::FreeCam => {
                     controller_to_camera(&app.simulation.player_controller.turned(-look_x, -look_y))

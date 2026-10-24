@@ -71,6 +71,109 @@ pub struct MoveSettings {
     pub autohop: bool,
 }
 
+/// The shape of a character's hull.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum HullShape {
+    Capsule,
+    /// A cylinder whose edges are rounded to `rounding`, with `0 < rounding <= radius`.
+    RoundCylinder {
+        rounding: f32,
+    },
+}
+
+/// A character's collision hull, upright.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Hull {
+    pub shape: HullShape,
+    pub radius: f32,
+    /// End to end along the hull's axis, which is the height when upright.
+    pub length: f32,
+}
+
+/// A hull and where the eye sits in it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Stature {
+    pub hull: Hull,
+    /// The eye's height above the feet.
+    pub eye_height: f32,
+}
+
+/// The shape data a game supplies when it adds a character.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CharacterBody {
+    pub standing: Stature,
+}
+
+impl Stature {
+    /// The eye's offset from the hull's centre when upright.
+    pub fn eye_offset(&self) -> Vec3 {
+        Vec3::Y * (self.eye_height - self.hull.length / 2.0)
+    }
+}
+
+impl Default for CharacterBody {
+    fn default() -> Self {
+        Self {
+            standing: Stature {
+                hull: Hull {
+                    shape: HullShape::Capsule,
+                    radius: 0.3,
+                    length: 2.3,
+                },
+                eye_height: 1.15,
+            },
+        }
+    }
+}
+
+impl CharacterBody {
+    /// Panics on an impossible hull: non-positive sizes, a capsule no longer than its
+    /// diameter, or `rounding` outside `0 < rounding <= radius`. A round cylinder must also
+    /// be longer than twice its rounding.
+    ///
+    /// Panics rather than returning an error because a bad hull is a programmer error in
+    /// the game's data.
+    pub fn validate(&self) {
+        let Hull {
+            shape,
+            radius,
+            length,
+        } = self.standing.hull;
+        assert!(
+            radius.is_finite() && radius > 0.0,
+            "impossible hull: radius {radius} must be positive"
+        );
+        assert!(
+            length.is_finite() && length > 0.0,
+            "impossible hull: length {length} must be positive"
+        );
+        let cap = match shape {
+            HullShape::Capsule => radius,
+            HullShape::RoundCylinder { rounding } => {
+                assert!(
+                    rounding.is_finite() && rounding > 0.0 && rounding <= radius,
+                    "impossible hull: rounding {rounding} must be in (0, radius {radius}]"
+                );
+                rounding
+            }
+        };
+        assert!(
+            length > 2.0 * cap,
+            "impossible hull: length {length} must exceed twice its end radius {cap}"
+        );
+    }
+}
+
+/// The game data one [`step`] reads besides the command: the character's shape, its movement
+/// settings and the gravity already resolved from them and the world's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tuning {
+    pub body: CharacterBody,
+    pub settings: MoveSettings,
+    /// Downward acceleration in m/s²; `settings.gravity` is not read by the step.
+    pub gravity: f32,
+}
+
 /// One surface the character lost speed into this tick.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Impact {
@@ -337,11 +440,15 @@ pub fn step(
     state: &mut CharacterState,
     command: &CharacterCommand,
     effects: &[CharacterEffect],
-    settings: &MoveSettings,
-    gravity: f32,
+    tuning: &Tuning,
     dt: f32,
     slide: impl FnOnce(&CharacterState, Vec3) -> Slide,
 ) -> Vec<Impact> {
+    let Tuning {
+        body,
+        ref settings,
+        gravity,
+    } = *tuning;
     for effect in effects {
         apply(state, *effect);
     }
@@ -397,6 +504,7 @@ pub fn step(
     settle(state, &slid, walking, asked, dt);
     state.velocity = checked(state.velocity, settings.max_velocity);
     state.jump_held = command.jump;
+    state.eye = body.standing.eye_offset();
     impacts
 }
 
@@ -447,6 +555,16 @@ mod tests {
 
     const DT: f32 = 1.0 / 60.0;
 
+    /// The default body under [`test_settings`] and its gravity.
+    fn test_tuning() -> Tuning {
+        let settings = test_settings();
+        Tuning {
+            body: CharacterBody::default(),
+            gravity: settings.gravity.expect("test settings set gravity"),
+            settings,
+        }
+    }
+
     fn collider() -> ColliderHandle {
         ColliderHandle::invalid()
     }
@@ -459,10 +577,12 @@ mod tests {
         dt: f32,
         slide: impl FnOnce(Vec3) -> Slide,
     ) -> Vec<Impact> {
-        let gravity = settings.gravity.expect("test settings set gravity");
-        super::step(state, command, &[], settings, gravity, dt, |_, asked| {
-            slide(asked)
-        })
+        let tuning = Tuning {
+            settings: *settings,
+            gravity: settings.gravity.expect("test settings set gravity"),
+            ..test_tuning()
+        };
+        super::step(state, command, &[], &tuning, dt, |_, asked| slide(asked))
     }
 
     fn state_at(position: Vec3, velocity: Vec3, grounded: bool) -> CharacterState {
@@ -473,6 +593,7 @@ mod tests {
             pitch: 0.0,
             grounded,
             jump_held: false,
+            eye: Vec3::ZERO,
         }
     }
 
@@ -1751,8 +1872,7 @@ mod tests {
                     &mut state,
                     &jump_command(true),
                     &[effect],
-                    &test_settings(),
-                    test_settings().gravity.expect("test settings set gravity"),
+                    &test_tuning(),
                     DT,
                     |from, asked| flat_floor(from.position.y)(asked),
                 );
@@ -2142,6 +2262,39 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(first_impacts, second_impacts);
         assert_ne!(first, start, "the step did change the state it was given");
+    }
+
+    #[test]
+    fn step_writes_the_eye_from_the_tuned_body() {
+        let mut state = standing();
+        let tuning = Tuning {
+            body: CharacterBody {
+                standing: Stature {
+                    hull: Hull {
+                        shape: HullShape::Capsule,
+                        radius: 0.405,
+                        length: 1.83,
+                    },
+                    eye_height: 1.63,
+                },
+            },
+            ..test_tuning()
+        };
+
+        super::step(
+            &mut state,
+            &CharacterCommand::default(),
+            &[],
+            &tuning,
+            DT,
+            |_, asked| flat_floor(0.0)(asked),
+        );
+
+        assert!(
+            (state.eye - Vec3::Y * (1.63 - 0.915)).length() < 1e-6,
+            "{}",
+            state.eye
+        );
     }
 
     proptest! {
@@ -2594,8 +2747,7 @@ mod tests {
                 &mut state,
                 &CharacterCommand::default(),
                 effects,
-                &test_settings(),
-                test_settings().gravity.expect("test settings set gravity"),
+                &test_tuning(),
                 DT,
                 |_, asked| {
                     asked_of = Some(asked);
@@ -2697,8 +2849,7 @@ mod tests {
                 state,
                 command,
                 effects,
-                &test_settings(),
-                test_settings().gravity.expect("test settings set gravity"),
+                &test_tuning(),
                 DT,
                 |from, asked| flat_floor(from.position.y)(asked),
             )
@@ -2722,8 +2873,7 @@ mod tests {
                 state,
                 command,
                 effects,
-                &test_settings(),
-                test_settings().gravity.expect("test settings set gravity"),
+                &test_tuning(),
                 DT,
                 |from, asked| {
                     seen = Some((asked, *from));
@@ -2786,8 +2936,7 @@ mod tests {
                 &mut state,
                 &CharacterCommand::default(),
                 &effects,
-                &test_settings(),
-                test_settings().gravity.expect("test settings set gravity"),
+                &test_tuning(),
                 DT,
                 |from, asked| {
                     started_from = Some(*from);
@@ -2932,8 +3081,7 @@ mod tests {
                 &mut state,
                 &CharacterCommand::default(),
                 &effects,
-                &test_settings(),
-                test_settings().gravity.expect("test settings set gravity"),
+                &test_tuning(),
                 DT,
                 |from, asked| {
                     started_from = Some(*from);

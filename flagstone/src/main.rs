@@ -344,6 +344,7 @@ impl App {
             position: spawn_pos,
             yaw,
             pitch,
+            body: moho_physics::CharacterBody::default(),
         });
 
         // Align the simulation Y to match physics spawn (avoids terrain clipping).

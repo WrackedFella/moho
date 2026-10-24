@@ -314,7 +314,7 @@ mod tests {
             (profile.radius - (CAPSULE_RADIUS + 0.1)).abs() < 1e-6,
             "{profile:?}"
         );
-        assert!((profile.height - 2.3).abs() < 1e-6, "{profile:?}");
+        assert!((profile.height - 1.83).abs() < 1e-6, "{profile:?}");
         assert!((profile.max_climb - 0.5).abs() < 1e-6, "{profile:?}");
         assert!(
             (profile.max_slope - std::f32::consts::FRAC_PI_4).abs() < 1e-6,
@@ -732,9 +732,9 @@ mod shipped_cover_tests {
 
     use super::*;
 
-    /// A standing body's centre, and the eye of a 2.3 m tall character.
-    const BODY_HEIGHT: f32 = 1.15;
-    const EYE_HEIGHT: f32 = 1.85;
+    /// A standing body's centre, and the eye of a 1.83 m tall character.
+    const BODY_HEIGHT: f32 = 0.915;
+    const EYE_HEIGHT: f32 = 1.63;
     /// How far out on the shielded side the test rays start.
     const REACH: f32 = 7.0;
 

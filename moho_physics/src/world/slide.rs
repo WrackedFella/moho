@@ -1,6 +1,6 @@
 //! The rapier collide-and-slide behind [`crate::movement::step`].
 
-use crate::movement::{Ground, Slide, STEP_HEIGHT, WALKABLE_NORMAL_Y};
+use crate::movement::{Ground, Hull, HullShape, Slide, STEP_HEIGHT, WALKABLE_NORMAL_Y};
 use glam::Vec3;
 use rapier3d::control::{
     CharacterLength, EffectiveCharacterMovement, KinematicCharacterController,
@@ -62,11 +62,45 @@ fn step_reach(remaining: Vec3, min_width: f32) -> Option<(Vec3, f32)> {
     (length >= STEP_MIN_PROGRESS).then(|| (remaining / length, length.max(min_width)))
 }
 
+/// A character hull as the ground query sees it: a core disc swept by a sphere.
+///
+/// A capsule is a point swept by its radius; a round cylinder is its flat base disc swept by
+/// its rounding.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Footing {
+    /// Radius of the core disc.
+    disc: f32,
+    /// Radius of the sphere swept over the core.
+    sweep: f32,
+    /// How far below the hull's centre the core's bottom sits.
+    core_bottom: f32,
+}
+
+impl Footing {
+    /// The footing of a character `hull`.
+    pub(super) fn of(hull: Hull) -> Self {
+        let half_length = hull.length / 2.0;
+        match hull.shape {
+            HullShape::Capsule => Self {
+                disc: 0.0,
+                sweep: hull.radius,
+                core_bottom: half_length - hull.radius,
+            },
+            HullShape::RoundCylinder { rounding } => Self {
+                disc: hull.radius - rounding,
+                sweep: rounding,
+                core_bottom: half_length - rounding,
+            },
+        }
+    }
+}
+
 /// The world as one character's collide-and-slide sees it.
 pub(super) struct Slider<'a> {
     pub controller: &'a KinematicCharacterController,
     pub queries: &'a QueryPipeline<'a>,
     pub shape: &'a dyn Shape,
+    pub footing: Footing,
     pub dt: f32,
 }
 
@@ -122,22 +156,20 @@ impl Slider<'_> {
     /// itself, cast down to its skin offset, gives the gap: how far it can drop before it
     /// touches anything.
     pub(super) fn ground_below(&self, centre: Vec3) -> Option<Ground> {
-        let capsule = self
-            .shape
-            .as_capsule()
-            .expect("character colliders are capsules");
+        let footing = self.footing;
         let CharacterLength::Absolute(skin) = self.controller.offset else {
             panic!("the world builds its character controller with an absolute skin offset");
         };
 
-        let base_radius = capsule.radius * (1.0 - WALKABLE_NORMAL_Y * WALKABLE_NORMAL_Y).sqrt();
+        let base_radius =
+            footing.disc + footing.sweep * (1.0 - WALKABLE_NORMAL_Y * WALKABLE_NORMAL_Y).sqrt();
         let base = Cylinder::new(FLAT_BASE_HALF_HEIGHT, base_radius);
-        let base_at = Pose::from_translation(centre - Vec3::Y * capsule.half_height());
+        let base_at = Pose::from_translation(centre - Vec3::Y * footing.core_bottom);
         let (collider, face) = self.queries.cast_shape(
             &base_at,
             -Vec3::Y,
             &base,
-            cast_within(capsule.radius + STEP_HEIGHT),
+            cast_within(footing.sweep + STEP_HEIGHT),
         )?;
         let normal = self.face_normal(collider, &face, centre);
         if normal.y < WALKABLE_NORMAL_Y {
@@ -161,7 +193,7 @@ impl Slider<'_> {
                         let cosine = drop.normal1.y.max(WALKABLE_NORMAL_Y);
                         (drop.time_of_impact - skin / cosine).max(0.0)
                     }
-                    None => (face.time_of_impact + FLAT_BASE_HALF_HEIGHT - capsule.radius - skin)
+                    None => (face.time_of_impact + FLAT_BASE_HALF_HEIGHT - footing.sweep - skin)
                         .max(0.0),
                 }
             }
@@ -281,6 +313,7 @@ mod tests {
     use super::super::test_support::{quad_mesh, seam_floor_meshes, slope_mesh, step_box_mesh};
     use super::super::PhysicsWorld;
     use super::*;
+    use crate::movement::CharacterBody;
     use moho_render_api::{WorldMesh, WorldMeshId};
     use rapier3d::prelude::{QueryFilter, SharedShape};
 
@@ -381,6 +414,7 @@ mod tests {
             controller: &world.character_controller,
             queries: &queries,
             shape: capsule.as_ref(),
+            footing: Footing::of(CharacterBody::default().standing.hull),
             dt: 1.0 / 60.0,
         };
         let touching = Pose::from_translation(Vec3::new(0.0, 1.16, 1.69));
@@ -420,6 +454,7 @@ mod tests {
             controller: &world.character_controller,
             queries: &queries,
             shape: capsule.as_ref(),
+            footing: Footing::of(CharacterBody::default().standing.hull),
             dt: 1.0 / 60.0,
         };
         slider.ground_below(centre).map(|ground| ground.normal)
@@ -503,6 +538,7 @@ mod tests {
             controller: &world.character_controller,
             queries: &queries,
             shape: capsule.as_ref(),
+            footing: Footing::of(CharacterBody::default().standing.hull),
             dt: 1.0 / 60.0,
         };
         check(&slider, &colliders)

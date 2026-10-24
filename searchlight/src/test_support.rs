@@ -19,6 +19,7 @@ use crate::brain::EnemyTuning;
 use crate::input::SearchlightAction;
 use crate::sim::SimConfig;
 use crate::tag::SurfaceTag;
+use crate::tuning::SHIPPED_BODY;
 use crate::wave::WaveTuning;
 
 pub(crate) const DT: f32 = 1.0 / 60.0;
@@ -162,7 +163,7 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
     SimConfig {
         move_settings: test_move_settings(),
         gravity: 18.0,
-        eye_height: 0.7,
+        character_body: SHIPPED_BODY,
         range: 100.0,
         damage: 30,
         cooldown_ticks: 3,
@@ -179,6 +180,12 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
             speed_factor: 0.5,
         },
     }
+}
+
+/// Puts `config`'s eye `height` m above the capsule centre, the frame hit volumes are posed in.
+pub(crate) fn set_eye_above_centre(config: &mut SimConfig, height: f32) {
+    let standing = &mut config.character_body.standing;
+    standing.eye_height = height + standing.hull.length / 2.0;
 }
 
 /// Enemy tuning with a 3-tick reaction (so the first shot is on tick 2), a 4-tick cooldown,

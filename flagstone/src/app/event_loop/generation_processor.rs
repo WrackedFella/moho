@@ -271,6 +271,7 @@ impl GenerationProcessor {
             position: spawn_pos,
             yaw,
             pitch,
+            body: moho_physics::CharacterBody::default(),
         });
 
         // Sync simulation camera to spawn position

@@ -11,7 +11,7 @@ use moho_audio::AudioSystem;
 use moho_input::action_map::{ActionMap, handle_device_event, handle_window_event};
 use moho_input::bindings::Input;
 use moho_input::key::{Key, MouseButton};
-use moho_physics::{CharacterState, first_person_view};
+use moho_physics::{CharacterBody, CharacterState, first_person_view};
 use moho_render_api::{
     InstanceGpu, MaterialGpu, MaterialKey, RenderMaterial, Renderable, UiFrame, UiFrameSource,
     UiImage, UiMesh, UiRect, UiSampler, UiSource, UiTextureId, UiTextureSet, UiVertex, WorldMesh,
@@ -32,8 +32,9 @@ use crate::input::{SearchlightAction, SearchlightCommand, look_to_turn, resolve_
 use crate::lean::{lean_offset, rolled_view_matrix};
 use crate::menu::{Menu, MenuAction};
 use crate::mode::ArenaMode;
-use crate::sim::{Feedback, SearchlightSim, dummy_at, dummy_hit_volumes};
+use crate::sim::{Feedback, SearchlightSim, dummy_at, dummy_hit_volumes_of};
 use crate::tag::SurfaceTag;
+use crate::tuning::SHIPPED_BODY;
 use crate::{TICK_HZ, hud};
 
 /// Ticks a struck dummy segment stays lit.
@@ -193,11 +194,11 @@ struct Segment {
 }
 
 /// The dummies' segments, in the frame the world draws them in.
-fn dummy_segments(spawns: &[Vec3]) -> Vec<Segment> {
+fn dummy_segments(body: &CharacterBody, spawns: &[Vec3]) -> Vec<Segment> {
     let mut segments = Vec::new();
     for (index, &spawn) in spawns.iter().enumerate() {
-        let (target, centre) = dummy_at(index, spawn);
-        for volume in dummy_hit_volumes(target) {
+        let (target, centre) = dummy_at(body, index, spawn);
+        for volume in dummy_hit_volumes_of(body, target) {
             segments.push(Segment {
                 tag: SurfaceTag::try_from(volume.tag).expect("dummy volumes carry part tags"),
                 id: WorldMeshId(DUMMY_MESH_BASE + segments.len() as u64),
@@ -225,7 +226,7 @@ impl EnemyRig {
 
     /// Takes the segments out of the scene and clears the gun flash.
     fn hide(&mut self, meshes: &mut WorldMeshes) {
-        for slot in 0..enemy_segments().len() {
+        for slot in 0..ENEMY_SEGMENT_COUNT {
             meshes.remove(self.mesh_id(slot));
         }
         self.shown = false;
@@ -233,10 +234,13 @@ impl EnemyRig {
     }
 }
 
+/// The six body parts and the gun.
+const ENEMY_SEGMENT_COUNT: usize = 7;
+
 /// The enemy's segments as `(offset, half extents)` in its body frame, gun last.
-fn enemy_segments() -> [(Vec3, Vec3); 7] {
-    let volumes = dummy_hit_volumes(0);
-    let mut segments = [(GUN_OFFSET, GUN_HALF); 7];
+fn enemy_segments(body: &CharacterBody) -> [(Vec3, Vec3); ENEMY_SEGMENT_COUNT] {
+    let volumes = dummy_hit_volumes_of(body, 0);
+    let mut segments = [(GUN_OFFSET, GUN_HALF); ENEMY_SEGMENT_COUNT];
     for (segment, volume) in segments.iter_mut().zip(volumes) {
         *segment = (volume.offset, volume.half_extents);
     }
@@ -391,6 +395,8 @@ struct Stage {
     dummy_material: u32,
     struck_material: u32,
     enemy_material: u32,
+    /// The hull and eye the dummies and enemies are drawn from, the sim's own.
+    body: CharacterBody,
     dummy_count: usize,
     enemies: Vec<EnemyRig>,
     edge_left: [u32; 4],
@@ -420,6 +426,7 @@ impl Stage {
             dummy_material,
             struck_material,
             enemy_material,
+            body: SHIPPED_BODY,
             dummy_count: 0,
             enemies: Vec::new(),
             edge_left: [0; 4],
@@ -501,7 +508,7 @@ impl Stage {
             );
         }
         self.dummy_count = dummy_spawns.len();
-        self.segments = dummy_segments(dummy_spawns);
+        self.segments = dummy_segments(&self.body, dummy_spawns);
         for segment in &self.segments {
             self.scene.world_meshes_mut().upsert(
                 segment.id,
@@ -587,7 +594,9 @@ impl Stage {
             let gun_flash = rig.gun_flash;
             let ids: [WorldMeshId; 7] = std::array::from_fn(|slot| rig.mesh_id(slot));
             let facing = Quat::from_rotation_y(state.yaw);
-            for (slot, (offset, half)) in enemy_segments().into_iter().enumerate() {
+            for (slot, (offset, half)) in
+                enemy_segments(sim.character_body()).into_iter().enumerate()
+            {
                 let material = if slot == 6 && gun_flash > 0 {
                     self.struck_material
                 } else {
@@ -953,6 +962,7 @@ impl SearchlightGame {
     /// Draws `meshes` as the arena and one dummy at each of `dummy_spawns`.
     #[must_use]
     pub fn with_arena(mut self, meshes: Vec<WorldMesh>, dummy_spawns: &[Vec3]) -> Self {
+        self.stage.body = *self.mode.sim().character_body();
         self.stage.add_arena(meshes, dummy_spawns);
         self
     }
@@ -966,6 +976,7 @@ impl SearchlightGame {
         material_names: &[Option<String>],
         dummy_spawns: &[Vec3],
     ) -> Self {
+        self.stage.body = *self.mode.sim().character_body();
         self.stage
             .add_named_arena(meshes, material_names, dummy_spawns);
         self
@@ -1178,7 +1189,6 @@ impl Game for SearchlightGame {
             let view = first_person_view(
                 &self.previous,
                 &sim.player(),
-                sim.eye_height(),
                 alpha,
                 look_to_turn(self.input.pending_look()),
             );
@@ -1207,6 +1217,7 @@ mod tests {
     use moho_app::{GameClock, HeadlessLoop, LoopConfig, WindowMode};
     use moho_core::prefs::Prefs;
     use moho_input::bindings::ActionBindings;
+    use moho_physics::{Hull, HullShape, Stature};
     use winit::event::{DeviceEvent, WindowEvent};
 
     use super::*;
@@ -1238,7 +1249,7 @@ mod tests {
 
     fn arena_config() -> crate::sim::SimConfig {
         let mut config = test_config(rifle_from(mag(30, 30)), vec![]);
-        config.eye_height = 0.72;
+        crate::test_support::set_eye_above_centre(&mut config, 0.72);
         config.enemy.damage = 100;
         config.enemy.reaction_ticks = 30;
         config
@@ -1434,7 +1445,10 @@ mod tests {
 
         let tick = 1.0 / 60.0 / 0.25;
         let blended = tick + ALPHA * (2.0 * tick - tick);
-        let standing = game.sim().player().position + Vec3::Y * game.sim().eye_height();
+        let standing = {
+            let player = game.sim().player();
+            player.eye_position()
+        };
         let eye = view.inverse().w_axis.truncate();
         assert!(
             (eye.x - standing.x - 0.35 * blended).abs() < 1e-3,
@@ -1469,7 +1483,10 @@ mod tests {
         tick_with(&mut game, &mut clock, &restart_command());
 
         assert!(!game.sim().player_body().is_dead());
-        let standing = game.sim().player().position + Vec3::Y * game.sim().eye_height();
+        let standing = {
+            let player = game.sim().player();
+            player.eye_position()
+        };
         for alpha in [0.0, 0.5] {
             let mut renderer = SettingsRenderer::default();
             let ctx_clock = GameClock::default();
@@ -1978,11 +1995,46 @@ mod tests {
         first_person_view(
             &game.previous,
             &game.sim().player(),
-            game.sim().eye_height(),
             ALPHA,
             (-look_x, -look_y),
         )
         .view_matrix()
+    }
+
+    #[test]
+    fn the_drawn_eye_is_the_configured_height_above_the_players_feet() {
+        let mut config = test_config(rifle_from(mag(30, 5)), vec![]);
+        config.character_body = CharacterBody {
+            standing: Stature {
+                hull: Hull {
+                    shape: HullShape::Capsule,
+                    radius: 0.405,
+                    length: 1.83,
+                },
+                eye_height: 1.5,
+            },
+        };
+        let mode = ArenaMode::new(
+            arena_with(&[], Vec3::ZERO, &[], &[]),
+            config,
+            wave_tuning(1),
+        );
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0));
+        for _ in 0..90 {
+            tick_once(&mut game);
+        }
+        let mut renderer = SettingsRenderer::default();
+
+        let view = draw_frame(&mut game, &mut renderer);
+
+        let eye = view.inverse().w_axis.truncate();
+        assert!(game.sim().player().grounded, "{:?}", game.sim().player());
+        assert!(
+            (eye.y - 1.5).abs() < 0.03,
+            "the floor is at y = 0, the drawn eye is at {eye:?}"
+        );
+        assert!(eye.x.abs() < 1e-3 && eye.z.abs() < 1e-3, "{eye:?}");
     }
 
     fn forward_of(view: Mat4) -> Vec3 {
@@ -3334,7 +3386,7 @@ mod mutation_tests {
     use moho_renderer::FrameError;
     use searchlight_rules::{Body, BodyPart, BodyProfile};
 
-    use crate::sim::STAND_HEIGHT;
+    use crate::sim::{STAND_HEIGHT, dummy_hit_volumes};
 
     use super::*;
 
@@ -3491,7 +3543,7 @@ mod mutation_tests {
     fn dummy_segments_sit_at_the_standing_centre_plus_each_volume_offset() {
         let spawns = [Vec3::new(9.0, 0.0, 9.0), Vec3::new(3.0, 0.5, -2.0)];
 
-        let segments = dummy_segments(&spawns);
+        let segments = dummy_segments(&SHIPPED_BODY, &spawns);
 
         assert_eq!(segments.len(), 12);
         let centre = Vec3::new(3.0, 0.5 + STAND_HEIGHT, -2.0);
@@ -3880,7 +3932,7 @@ mod enemy_and_hud_tests {
     use searchlight_rules::Grade;
 
     use super::*;
-    use crate::sim::Start;
+    use crate::sim::{Start, dummy_hit_volumes};
     use crate::test_support::{arena_with, mag, rifle_from, test_config};
 
     /// Keeps the vertices of every mesh uploaded and the draws of the last frame.
@@ -4047,7 +4099,7 @@ mod enemy_and_hud_tests {
 
     #[test]
     fn the_enemy_segment_table_is_the_six_body_volumes_then_the_gun() {
-        let segments = enemy_segments();
+        let segments = enemy_segments(&SHIPPED_BODY);
 
         for (segment, volume) in segments.iter().zip(dummy_hit_volumes(0)) {
             assert_eq!(*segment, (volume.offset, volume.half_extents));
