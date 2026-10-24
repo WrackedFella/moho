@@ -237,7 +237,10 @@ fn assert_wall_shades_the_neighbouring_chunk(wall_x: i32, vertex_chunk: IVec3) {
     let want = ao_at(&full[&vertex_chunk], shaded);
     let got = ao_at(&incremental[&vertex_chunk], shaded);
     let open_ao = ao_at(&full[&vertex_chunk], open);
-    assert!(!want.is_empty() && !open_ao.is_empty(), "both vertices are meshed");
+    assert!(
+        !want.is_empty() && !open_ao.is_empty(),
+        "both vertices are meshed"
+    );
     assert!(
         want.iter().all(|w| open_ao.iter().all(|o| w < o)),
         "the wall darkens the ground: {want:?} vs open {open_ao:?}"

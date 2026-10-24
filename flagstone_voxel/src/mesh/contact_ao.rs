@@ -1,9 +1,29 @@
 //! Contact ambient occlusion for smooth terrain, a pure function of the world's voxels.
 
 use super::super::grid::BlockPos;
+use glam::IVec3;
 
-pub(super) fn contact_ao(_solid_at: impl Fn(BlockPos) -> bool, _air: BlockPos) -> f32 {
-    1.0
+/// Solid neighbours, of the 26 around an air voxel, that still read unoccluded. An air voxel
+/// beside a planar surface (flat or sloped) has at most this many, so open ground and ramps
+/// stay at full brightness.
+const UNOCCLUDED_NEIGHBOURS: usize = 12;
+
+/// Brightness lost per solid neighbour past [`UNOCCLUDED_NEIGHBOURS`].
+const AO_PER_NEIGHBOUR: f32 = 0.075;
+
+/// Darkest contact AO, reached at 20 solid neighbours.
+const AO_FLOOR: f32 = 0.4;
+
+/// Contact ambient occlusion of the air voxel `air`: 1.0 up to [`UNOCCLUDED_NEIGHBOURS`]
+/// solid voxels among its 26 neighbours, then [`AO_PER_NEIGHBOUR`] darker for each one more,
+/// down to [`AO_FLOOR`]. The voxel itself is not counted.
+pub(super) fn contact_ao(solid_at: impl Fn(BlockPos) -> bool, air: BlockPos) -> f32 {
+    let solid = (-1..=1)
+        .flat_map(|x| (-1..=1).flat_map(move |y| (-1..=1).map(move |z| IVec3::new(x, y, z))))
+        .filter(|&offset| offset != IVec3::ZERO && solid_at(air + offset))
+        .count();
+    let excess = solid.saturating_sub(UNOCCLUDED_NEIGHBOURS);
+    (1.0 - AO_PER_NEIGHBOUR * excess as f32).max(AO_FLOOR)
 }
 
 #[cfg(test)]

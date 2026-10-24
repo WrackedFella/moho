@@ -7,7 +7,8 @@ use super::super::face::FaceDirection;
 use super::super::grid::{BlockPos, VoxelGrid};
 use super::VoxelMesh;
 use super::blocky::BlockyMeshGenerator;
-use super::marching_cubes::MarchingCubes;
+use super::contact_ao::contact_ao;
+use super::marching_cubes::{MarchingCubes, SurfaceSample};
 use glam::{IVec3, Vec3};
 
 // Shift from marching-cubes field-index space to world space (excluding the chunk origin).
@@ -93,20 +94,33 @@ pub(crate) fn sample_face_material(grid: &VoxelGrid, chunk_base: IVec3, sample: 
         .expect("marching cubes asks for the material of solid samples only")
 }
 
-/// The chunks whose mesh geometry reads `block` (smooth normals of the positive neighbour
-/// also read a block at local 15, which this set leaves out): its own chunk plus, on each axis where the block
-/// sits within [`SAMPLE_REACH`] of the chunk's negative edge, the negative neighbour
-/// (whose padded density field reaches [`SAMPLE_REACH`] blocks past its far edge).
+/// How many blocks past a sampled air block the contact AO ring reads (it covers the 26
+/// neighbours).
+const AO_RING_REACH: i32 = 1;
+
+/// The chunks whose mesh geometry reads `block`: its own chunk plus a neighbour on each axis
+/// where the block is within reach of that edge.
+///
+/// - Negative neighbour: its padded density field reaches [`SAMPLE_REACH`] blocks past its
+///   far edge, and the contact AO of the air blocks up to there reads a further
+///   [`AO_RING_REACH`]. So a block within `SAMPLE_REACH + AO_RING_REACH` of the negative
+///   edge is read.
+/// - Positive neighbour: its AO ring reaches back [`AO_RING_REACH`] blocks into the chunk's
+///   last blocks (its padded field reaches no further), so a block within that of the
+///   positive edge is read.
+///
 /// Yields 1, 2, 4 or 8 chunks.
 pub fn chunks_meshed_from(block: BlockPos, chunk_size: i32) -> impl Iterator<Item = IVec3> {
     let own = VoxelGrid::get_chunk_pos(block, chunk_size);
-    let on_edge = block
-        .rem_euclid(IVec3::splat(chunk_size))
-        .cmplt(IVec3::splat(SAMPLE_REACH));
-    (0..8i32).filter_map(move |mask| {
-        let step = IVec3::new(mask & 1, (mask >> 1) & 1, mask >> 2);
-        let allowed = step.cmpeq(IVec3::ZERO) | on_edge;
-        allowed.all().then_some(own - step)
+    let local = block.rem_euclid(IVec3::splat(chunk_size));
+    let near_negative = local.cmplt(IVec3::splat(SAMPLE_REACH + AO_RING_REACH));
+    let near_positive = local.cmpge(IVec3::splat(chunk_size - AO_RING_REACH));
+    (0..27i32).filter_map(move |index| {
+        let step = IVec3::new(index % 3 - 1, index / 3 % 3 - 1, index / 9 - 1);
+        let allowed = step.cmpeq(IVec3::ZERO)
+            | (step.cmplt(IVec3::ZERO) & near_negative)
+            | (step.cmpgt(IVec3::ZERO) & near_positive);
+        allowed.all().then_some(own + step)
     })
 }
 
@@ -243,7 +257,11 @@ impl HybridMeshGenerator {
             |s| sample_face_material(grid, base, s),
             |s| {
                 let block = sample_block(base, s);
-                (grid.block_light_rgb_at(block), grid.sky_exposed_at(block))
+                SurfaceSample {
+                    block_light: grid.block_light_rgb_at(block),
+                    sky_exposed: grid.sky_exposed_at(block),
+                    ambient_occlusion: contact_ao(|p| grid.is_solid_at(p), block),
+                }
             },
         );
 
@@ -683,12 +701,32 @@ mod tests {
     fn chunks_meshed_from_covers_the_contact_ao_ring() {
         type Row = (&'static str, [i32; 3], i32, Vec<[i32; 3]>);
         let rows: Vec<Row> = vec![
-            ("local 1 reaches the negative neighbour", [1, 5, 5], 16, vec![[-1, 0, 0], [0, 0, 0]]),
+            (
+                "local 1 reaches the negative neighbour",
+                [1, 5, 5],
+                16,
+                vec![[-1, 0, 0], [0, 0, 0]],
+            ),
             ("local 2 does not", [2, 5, 5], 16, vec![[0, 0, 0]]),
-            ("local 15 reaches the positive neighbour", [15, 5, 5], 16, vec![[0, 0, 0], [1, 0, 0]]),
+            (
+                "local 15 reaches the positive neighbour",
+                [15, 5, 5],
+                16,
+                vec![[0, 0, 0], [1, 0, 0]],
+            ),
             ("local 14 does not", [14, 5, 5], 16, vec![[0, 0, 0]]),
-            ("y axis, local 1", [5, 17, 5], 16, vec![[0, 0, 0], [0, 1, 0]]),
-            ("z axis, local 15", [5, 5, 15], 16, vec![[0, 0, 0], [0, 0, 1]]),
+            (
+                "y axis, local 1",
+                [5, 17, 5],
+                16,
+                vec![[0, 0, 0], [0, 1, 0]],
+            ),
+            (
+                "z axis, local 15",
+                [5, 5, 15],
+                16,
+                vec![[0, 0, 0], [0, 0, 1]],
+            ),
             (
                 "negative on x, positive on y",
                 [1, 15, 5],
@@ -701,8 +739,18 @@ mod tests {
                 16,
                 vec![[-1, -1, -1], [0, -1, -1]],
             ),
-            ("32-block chunks, local 1", [33, 5, 5], 32, vec![[0, 0, 0], [1, 0, 0]]),
-            ("32-block chunks, local 31", [31, 5, 5], 32, vec![[0, 0, 0], [1, 0, 0]]),
+            (
+                "32-block chunks, local 1",
+                [33, 5, 5],
+                32,
+                vec![[0, 0, 0], [1, 0, 0]],
+            ),
+            (
+                "32-block chunks, local 31",
+                [31, 5, 5],
+                32,
+                vec![[0, 0, 0], [1, 0, 0]],
+            ),
         ];
 
         for (name, block, chunk_size, expected) in rows {
@@ -1566,10 +1614,7 @@ mod tests {
             .collect()
     }
 
-    fn ao_where(
-        vertices: &[([f32; 3], f32)],
-        keep: impl Fn([f32; 3]) -> bool,
-    ) -> Vec<f32> {
+    fn ao_where(vertices: &[([f32; 3], f32)], keep: impl Fn([f32; 3]) -> bool) -> Vec<f32> {
         vertices
             .iter()
             .filter(|(v, _)| keep(*v))
@@ -1681,7 +1726,11 @@ mod tests {
     }
 
     fn sorted_ao_bits(mesh: &VoxelMesh) -> Vec<u32> {
-        let mut bits: Vec<u32> = mesh.ambient_occlusion.iter().map(|ao| ao.to_bits()).collect();
+        let mut bits: Vec<u32> = mesh
+            .ambient_occlusion
+            .iter()
+            .map(|ao| ao.to_bits())
+            .collect();
         bits.sort_unstable();
         bits
     }
