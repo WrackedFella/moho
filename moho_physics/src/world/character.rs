@@ -244,6 +244,7 @@ impl PhysicsWorld {
             command,
             &effects,
             settings,
+            settings.gravity.unwrap_or(self.gravity()),
             dt,
             |from, asked| {
                 let start = Pose::from_parts(from.position, pose.rotation);

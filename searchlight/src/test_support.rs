@@ -161,6 +161,7 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
     }
     SimConfig {
         move_settings: test_move_settings(),
+        gravity: 18.0,
         eye_height: 0.7,
         range: 100.0,
         damage: 30,

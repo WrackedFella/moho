@@ -330,11 +330,15 @@ fn apply(state: &mut CharacterState, effect: CharacterEffect) {
 ///
 /// The two halves around the move give an airborne tick the exact displacement under constant
 /// gravity at any tick rate. A landing's impact speed is therefore the mid-tick downward speed.
+///
+/// `gravity` is the downward acceleration in m/s², already resolved by the caller from
+/// [`MoveSettings::gravity`] and the world's; `settings.gravity` is not read here.
 pub fn step(
     state: &mut CharacterState,
     command: &CharacterCommand,
     effects: &[CharacterEffect],
     settings: &MoveSettings,
+    gravity: f32,
     dt: f32,
     slide: impl FnOnce(&CharacterState, Vec3) -> Slide,
 ) -> Vec<Impact> {
@@ -365,7 +369,7 @@ pub fn step(
     let walking = state.grounded
         && !jumped
         && state.velocity.y <= state.velocity.with_y(0.0).length() + REST_SPEED;
-    let half_gravity = settings.gravity.unwrap_or(18.0) * dt / 2.0;
+    let half_gravity = gravity * dt / 2.0;
     if walking {
         ground_move(&mut state.velocity, wish, magnitude, settings, dt);
     } else {
@@ -455,7 +459,10 @@ mod tests {
         dt: f32,
         slide: impl FnOnce(Vec3) -> Slide,
     ) -> Vec<Impact> {
-        super::step(state, command, &[], settings, dt, |_, asked| slide(asked))
+        let gravity = settings.gravity.expect("test settings set gravity");
+        super::step(state, command, &[], settings, gravity, dt, |_, asked| {
+            slide(asked)
+        })
     }
 
     fn state_at(position: Vec3, velocity: Vec3, grounded: bool) -> CharacterState {
@@ -1745,6 +1752,7 @@ mod tests {
                     &jump_command(true),
                     &[effect],
                     &test_settings(),
+                    test_settings().gravity.expect("test settings set gravity"),
                     DT,
                     |from, asked| flat_floor(from.position.y)(asked),
                 );
@@ -2587,6 +2595,7 @@ mod tests {
                 &CharacterCommand::default(),
                 effects,
                 &test_settings(),
+                test_settings().gravity.expect("test settings set gravity"),
                 DT,
                 |_, asked| {
                     asked_of = Some(asked);
@@ -2689,6 +2698,7 @@ mod tests {
                 command,
                 effects,
                 &test_settings(),
+                test_settings().gravity.expect("test settings set gravity"),
                 DT,
                 |from, asked| flat_floor(from.position.y)(asked),
             )
@@ -2713,6 +2723,7 @@ mod tests {
                 command,
                 effects,
                 &test_settings(),
+                test_settings().gravity.expect("test settings set gravity"),
                 DT,
                 |from, asked| {
                     seen = Some((asked, *from));
@@ -2776,6 +2787,7 @@ mod tests {
                 &CharacterCommand::default(),
                 &effects,
                 &test_settings(),
+                test_settings().gravity.expect("test settings set gravity"),
                 DT,
                 |from, asked| {
                     started_from = Some(*from);
@@ -2921,6 +2933,7 @@ mod tests {
                 &CharacterCommand::default(),
                 &effects,
                 &test_settings(),
+                test_settings().gravity.expect("test settings set gravity"),
                 DT,
                 |from, asked| {
                     started_from = Some(*from);

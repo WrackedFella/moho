@@ -22,6 +22,7 @@ pub fn tuning(kit: Kit) -> SimConfig {
             max_velocity: 90.0,
             autohop: false,
         },
+        gravity: 18.0,
         eye_height: 0.7,
         range: weapon.range,
         damage: weapon.damage,

@@ -5,6 +5,15 @@
 
 use flagstone_game::actors::ActorId;
 
+/// Downward acceleration of the strategy world, m/s²; its player's move settings read it.
+const WORLD_GRAVITY: f32 = 18.0;
+
+fn new_world() -> moho_physics::PhysicsWorld {
+    let mut world = moho_physics::PhysicsWorld::new();
+    world.set_gravity(WORLD_GRAVITY);
+    world
+}
+
 pub struct PhysicsController {
     pub world: Option<moho_physics::PhysicsWorld>,
     pub test_bodies: Vec<(moho_physics::RigidBodyHandle, ActorId)>,
@@ -22,7 +31,7 @@ pub struct PhysicsController {
 impl PhysicsController {
     pub fn new() -> Self {
         Self {
-            world: Some(moho_physics::PhysicsWorld::new()),
+            world: Some(new_world()),
             test_bodies: Vec::new(),
             jump_pressed: false,
             player: None,
@@ -34,7 +43,7 @@ impl PhysicsController {
 
     /// Clear and recreate the physics world, removing all colliders and bodies.
     pub fn reset(&mut self) {
-        self.world = Some(moho_physics::PhysicsWorld::new());
+        self.world = Some(new_world());
         self.test_bodies.clear();
         self.player = None;
         self.previous = None;

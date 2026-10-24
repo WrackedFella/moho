@@ -4,8 +4,8 @@ use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterCo
 use rapier3d::prelude::*;
 use std::collections::HashMap;
 
-/// Gravity of the rigid-body world only; characters use [`MoveSettings::gravity`].
-const GRAVITY: f32 = -18.0;
+/// Downward acceleration of a world that never calls [`PhysicsWorld::set_gravity`], m/s².
+const DEFAULT_GRAVITY: f32 = 18.0;
 
 /// Gap, in metres, the character controller keeps between the capsule and what it touches.
 ///
@@ -50,7 +50,7 @@ impl std::fmt::Debug for PhysicsWorld {
 
 impl PhysicsWorld {
     pub fn new() -> Self {
-        let gravity = Vec3::new(0.0, GRAVITY, 0.0);
+        let gravity = Vec3::new(0.0, -DEFAULT_GRAVITY, 0.0);
         let integration_parameters = IntegrationParameters::default();
         let physics_pipeline = PhysicsPipeline::new();
         let island_manager = IslandManager::new();
@@ -117,12 +117,12 @@ impl PhysicsWorld {
     /// Set the downward acceleration, m/s², positive down, that pulls rigid bodies and
     /// characters whose `MoveSettings::gravity` is `None`.
     pub fn set_gravity(&mut self, gravity: f32) {
-        let _ = gravity;
+        self.gravity = Vec3::new(0.0, -gravity, 0.0);
     }
 
     /// The downward acceleration, m/s², positive down; 18.0 until [`Self::set_gravity`].
     pub fn gravity(&self) -> f32 {
-        -GRAVITY
+        -self.gravity.y
     }
 
     /// Register `mesh` as the static collider for `id`, replacing any previous one.
