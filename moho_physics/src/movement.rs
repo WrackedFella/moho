@@ -2308,25 +2308,8 @@ mod tests {
             },
         ];
 
-        let spawn = crate::world::CharacterSpawn {
-            position: Vec3::new(1.0, 2.0, 3.0),
-            yaw: 0.5,
-            pitch: -0.25,
-            body: CharacterBody {
-                standing: Stature {
-                    hull: Hull {
-                        shape: HullShape::RoundCylinder { rounding: 0.1 },
-                        radius: 0.405,
-                        length: 1.83,
-                    },
-                    eye_height: 1.63,
-                },
-            },
-        };
-
         let command_bytes = postcard::to_allocvec(&commands).expect("commands serialise");
         let effect_bytes = postcard::to_allocvec(&effects).expect("effects serialise");
-        let spawn_bytes = postcard::to_allocvec(&spawn).expect("the spawn serialises");
 
         let back_commands: [CharacterCommand; 2] =
             postcard::from_bytes(&command_bytes).expect("commands deserialise");
@@ -2334,9 +2317,6 @@ mod tests {
             postcard::from_bytes(&effect_bytes).expect("effects deserialise");
         assert_eq!(back_commands, commands);
         assert_eq!(back_effects, effects);
-        let back_spawn: crate::world::CharacterSpawn =
-            postcard::from_bytes(&spawn_bytes).expect("the spawn deserialises");
-        assert_eq!(back_spawn, spawn);
     }
 
     mod clip {

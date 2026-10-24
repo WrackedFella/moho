@@ -7,7 +7,7 @@ use moho_input::Action;
 use moho_input::action_map::ActionMap;
 use moho_input::bindings::Input;
 use moho_level::NavMesh;
-use moho_physics::{MoveSettings, PhysicsWorld};
+use moho_physics::{CharacterBody, MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::{
     BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId, LeanTuning, Loadout, Magazine,
@@ -163,6 +163,7 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
         move_settings: test_move_settings(),
         gravity: 18.0,
         eye_height: 0.7,
+        character_body: CharacterBody::default(),
         range: 100.0,
         damage: 30,
         cooldown_ticks: 3,

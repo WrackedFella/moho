@@ -1376,7 +1376,7 @@ mod tests {
             position: Vec3::new(1.0, 2.0, 3.0),
             yaw: 0.5,
             pitch: -0.25,
-            body: CharacterBody::default(),
+            body: round_cylinder_body(),
         };
 
         let bytes = postcard::to_allocvec(&spawn).expect("the spawn serialises");
@@ -2031,12 +2031,16 @@ mod tests {
         )
     }
 
-    /// A character of `body` settled on a floor 1.5 m before a 1.2 m wide, 1.9 m high doorway,
-    /// sent through it at 4 m/s with no friction for 60 ticks (4 m).
-    fn walk_at_the_doorway(body: CharacterBody) -> (Vec<Impact>, CharacterState) {
+    /// A character of `body` settled on a floor 1.5 m before a `width` m wide, `height` m high
+    /// doorway, sent through it at 4 m/s with no friction for 60 ticks (4 m).
+    fn walk_at_a_doorway(
+        body: CharacterBody,
+        width: f32,
+        height: f32,
+    ) -> (Vec<Impact>, CharacterState) {
         let mut world = PhysicsWorld::new();
         world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
-        world.set_world_mesh(WorldMeshId(1), &doorway_mesh(1.2, 1.9), TEST_TAG);
+        world.set_world_mesh(WorldMeshId(1), &doorway_mesh(width, height), TEST_TAG);
         let h = world.add_character(CharacterSpawn {
             position: Vec3::new(0.0, body.standing.hull.length / 2.0 + 0.2, -1.5),
             body,
@@ -2051,6 +2055,35 @@ mod tests {
         let impacts = run(&mut world, h, &frictionless(), 60);
 
         (impacts, state(&world, h))
+    }
+
+    fn walk_at_the_doorway(body: CharacterBody) -> (Vec<Impact>, CharacterState) {
+        walk_at_a_doorway(body, 1.2, 1.9)
+    }
+
+    #[test]
+    fn the_default_body_walks_through_a_0_7_m_doorway_without_impact() {
+        let (impacts, end) = walk_at_a_doorway(CharacterBody::default(), 0.7, 2.5);
+
+        assert!(impacts.is_empty(), "{impacts:?}");
+        assert!(end.position.z > 1.0, "walked through: {end:?}");
+    }
+
+    #[test]
+    fn a_0_81_m_wide_hull_is_blocked_by_a_0_7_m_doorway_with_one_impact() {
+        let (impacts, end) = walk_at_a_doorway(source_body(), 0.7, 2.5);
+
+        assert_eq!(impacts.len(), 1, "{impacts:?}");
+        assert!(impacts[0].speed > 3.0, "{:?}", impacts[0]);
+        assert!(end.position.z < 0.0, "stopped before the wall: {end:?}");
+    }
+
+    #[test]
+    fn a_round_cylinder_hull_walks_through_a_0_9_m_doorway_without_impact() {
+        let (impacts, end) = walk_at_a_doorway(round_cylinder_body(), 0.9, 2.5);
+
+        assert!(impacts.is_empty(), "{impacts:?}");
+        assert!(end.position.z > 1.0, "walked through: {end:?}");
     }
 
     #[test]
@@ -2109,6 +2142,54 @@ mod tests {
     }
 
     #[test]
+    fn a_fresh_character_has_its_eye_before_any_step() {
+        let cases = [
+            (CharacterBody::default(), 0.0),
+            (source_body(), 1.63 - 0.915),
+            (round_cylinder_body(), 1.63 - 0.915),
+            (body_of(HullShape::Capsule, 0.3, 2.3, 2.0), 2.0 - 1.15),
+        ];
+        for (body, offset) in cases {
+            let mut world = PhysicsWorld::new();
+
+            let h = world.add_character(CharacterSpawn {
+                body,
+                ..CharacterSpawn::from(Vec3::new(0.0, 5.0, 0.0))
+            });
+
+            let fresh = state(&world, h);
+            assert!(
+                (fresh.eye.y - offset).abs() < 1e-4 && fresh.eye.x == 0.0 && fresh.eye.z == 0.0,
+                "{body:?}: eye offset {offset} before any step, got {:?}",
+                fresh.eye
+            );
+        }
+    }
+
+    #[test]
+    fn two_characters_of_different_bodies_each_rest_at_their_own_height_and_eye() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        let tall = world.add_character(CharacterSpawn {
+            body: CharacterBody::default(),
+            ..CharacterSpawn::from(Vec3::new(-3.0, 1.35, 0.0))
+        });
+        let short = world.add_character(CharacterSpawn {
+            body: source_body(),
+            ..CharacterSpawn::from(Vec3::new(3.0, 1.1, 0.0))
+        });
+
+        settle_on_floor(&mut world, &[tall, short]);
+
+        let (tall, short) = (state(&world, tall), state(&world, short));
+        assert!(tall.grounded && short.grounded, "{tall:?} {short:?}");
+        assert!((tall.position.y - 1.15).abs() < 0.05, "{tall:?}");
+        assert!((short.position.y - 0.915).abs() < 0.05, "{short:?}");
+        assert!(tall.eye.y.abs() < 1e-4, "{tall:?}");
+        assert!((short.eye.y - 0.715).abs() < 1e-4, "{short:?}");
+    }
+
+    #[test]
     fn the_default_body_is_todays_capsule_and_eye() {
         let body = CharacterBody::default();
         let (world, h) = standing_on_floor();
@@ -2147,12 +2228,12 @@ mod tests {
         }
     }
 
-    #[test]
-    fn round_cylinder_hull_stands_on_a_nosing_within_its_flat_base() {
+    /// A round-cylinder character dropped 0.05 m above a 0.3 m high step whose front edge is at
+    /// z = 1, with its centre `past` m beyond that edge, idling for 120 ticks.
+    fn idle_past_a_nosing(past: f32) -> CharacterState {
         let mut world = PhysicsWorld::new();
         world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
         world.set_world_mesh(WorldMeshId(1), &step_box_mesh(-3.0, 4.0, 0.3), TEST_TAG);
-        let past = 0.25;
         let h = resting_then_moving_as(
             &mut world,
             Vec3::new(0.0, 0.3 + 0.915 + 0.05, 1.0 + past),
@@ -2165,7 +2246,32 @@ mod tests {
             searchlight_tick(&mut world, h, &idle());
         }
 
-        let end = state(&world, h);
+        state(&world, h)
+    }
+
+    #[test]
+    fn round_cylinder_hull_slides_off_a_nosing_beyond_its_flat_base() {
+        let past = 0.39;
+
+        let end = idle_past_a_nosing(past);
+
+        assert!(end.grounded, "{end:?}");
+        assert!(
+            (end.position.y - 0.915).abs() < 0.03,
+            "rolled off the step onto the floor: {end:?}"
+        );
+        assert!(
+            end.position.z > 1.0 + past,
+            "slid away from the nosing: {end:?}"
+        );
+    }
+
+    #[test]
+    fn round_cylinder_hull_stands_on_a_nosing_within_its_flat_base() {
+        let past = 0.25;
+
+        let end = idle_past_a_nosing(past);
+
         assert!(end.grounded, "{end:?}");
         assert!(
             (end.position.y - (0.3 + 0.915)).abs() < 0.03,
@@ -2265,6 +2371,17 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "hull")]
+    fn an_impossible_hull_is_refused_with_a_round_cylinder_as_long_as_its_rounding_diameter() {
+        add_with_body(body_of(
+            HullShape::RoundCylinder { rounding: 0.3 },
+            0.3,
+            0.6,
+            0.5,
+        ));
+    }
+
+    #[test]
     fn a_hull_at_the_limits_is_accepted() {
         let at_the_limits = [
             body_of(HullShape::Capsule, 0.4, 0.81, 0.5),
@@ -2280,6 +2397,7 @@ mod tests {
                 1.83,
                 1.63,
             ),
+            body_of(HullShape::RoundCylinder { rounding: 0.3 }, 0.3, 0.61, 0.5),
         ];
 
         for body in at_the_limits {

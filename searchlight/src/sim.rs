@@ -87,6 +87,8 @@ pub struct SimConfig {
     pub gravity: f32,
     /// Height of the eye above the player's capsule centre, in metres.
     pub eye_height: f32,
+    /// The hull and eye of the player and every target. Named apart from `body`, the pools.
+    pub character_body: CharacterBody,
     /// How far a shot reaches, in metres.
     pub range: f32,
     /// Damage of one hit.
@@ -1037,7 +1039,7 @@ mod tests {
         ];
 
         for (who, volumes) in sets {
-            let mut lowest = f32::MAX;
+            let mut legs = 0;
             let mut head_bottom = f32::MAX;
             let mut torso_top = f32::MIN;
             for volume in &volumes {
@@ -1060,17 +1062,21 @@ mod tests {
                     centre.y - half.y >= -HALF_LENGTH - TOLERANCE,
                     "{who}: {volume:?} sinks below the feet"
                 );
-                lowest = lowest.min(centre.y - half.y);
                 match part_of(volume) {
                     BodyPart::Head => head_bottom = centre.y - half.y,
                     BodyPart::Torso => torso_top = centre.y + half.y,
-                    _ => {}
+                    BodyPart::LeftLeg | BodyPart::RightLeg => {
+                        legs += 1;
+                        let bottom = centre.y - half.y;
+                        assert!(
+                            (bottom + HALF_LENGTH).abs() <= TOLERANCE,
+                            "{who}: a leg ends at {bottom}, not at the feet (-{HALF_LENGTH})"
+                        );
+                    }
+                    BodyPart::LeftArm | BodyPart::RightArm => {}
                 }
             }
-            assert!(
-                (lowest + HALF_LENGTH).abs() <= TOLERANCE,
-                "{who}: the legs end at {lowest}, not at the feet (-{HALF_LENGTH})"
-            );
+            assert_eq!(legs, 2, "{who}: both legs have a volume");
             assert!(
                 (head_bottom - torso_top).abs() <= TOLERANCE,
                 "{who}: the head ({head_bottom}) sits directly on the torso ({torso_top})"
@@ -2785,7 +2791,7 @@ mod hit_volume_and_cooldown_tests {
     #[test]
     fn eye_height_reports_the_configured_height() {
         let mut config = test_config(rifle_from(mag(30, 30)), vec![]);
-        config.eye_height = 1.6;
+        config.character_body.standing.eye_height = 1.6;
 
         let sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
 

@@ -1208,6 +1208,7 @@ mod tests {
     use moho_app::{GameClock, HeadlessLoop, LoopConfig, WindowMode};
     use moho_core::prefs::Prefs;
     use moho_input::bindings::ActionBindings;
+    use moho_physics::{CharacterBody, Hull, HullShape, Stature};
     use winit::event::{DeviceEvent, WindowEvent};
 
     use super::*;
@@ -1976,15 +1977,49 @@ mod tests {
     /// The view a frame must draw: the sim's player turned by the look shown but not yet ticked.
     fn expected_view(game: &SearchlightGame) -> Mat4 {
         let (look_x, look_y) = game.input.pending_look();
-        let mut view = first_person_view(
+        first_person_view(
             &game.previous,
             &game.sim().player(),
             ALPHA,
             (-look_x, -look_y),
+        )
+        .view_matrix()
+    }
+
+    #[test]
+    fn the_drawn_eye_is_the_configured_height_above_the_players_feet() {
+        let mut config = test_config(rifle_from(mag(30, 5)), vec![]);
+        config.character_body = CharacterBody {
+            standing: Stature {
+                hull: Hull {
+                    shape: HullShape::Capsule,
+                    radius: 0.405,
+                    length: 1.83,
+                },
+                eye_height: 1.63,
+            },
+        };
+        let mode = ArenaMode::new(
+            arena_with(&[], Vec3::ZERO, &[], &[]),
+            config,
+            wave_tuning(1),
         );
-        // TODO: remove this shim once the view reads `state.eye`.
-        view.eye += Vec3::Y * game.sim().eye_height();
-        view.view_matrix()
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0));
+        for _ in 0..90 {
+            tick_once(&mut game);
+        }
+        let mut renderer = SettingsRenderer::default();
+
+        let view = draw_frame(&mut game, &mut renderer);
+
+        let eye = view.inverse().w_axis.truncate();
+        assert!(game.sim().player().grounded, "{:?}", game.sim().player());
+        assert!(
+            (eye.y - 1.63).abs() < 0.03,
+            "the floor is at y = 0, the drawn eye is at {eye:?}"
+        );
+        assert!(eye.x.abs() < 1e-3 && eye.z.abs() < 1e-3, "{eye:?}");
     }
 
     fn forward_of(view: Mat4) -> Vec3 {

@@ -1,6 +1,6 @@
 //! The simulation's tuning, with the rifle's numbers taken from its definition.
 
-use moho_physics::MoveSettings;
+use moho_physics::{CharacterBody, MoveSettings};
 use searchlight_rules::{BodyPart, BodyProfile, Kit, LeanTuning};
 
 use crate::brain::EnemyTuning;
@@ -24,6 +24,7 @@ pub fn tuning(kit: Kit) -> SimConfig {
         },
         gravity: 18.0,
         eye_height: 0.7,
+        character_body: CharacterBody::default(),
         range: weapon.range,
         damage: weapon.damage,
         cooldown_ticks: weapon.cooldown_ticks,
@@ -50,7 +51,11 @@ pub fn tuning(kit: Kit) -> SimConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::{mag, rifle_from};
+    use crate::input::SearchlightCommand;
+    use crate::sim::SearchlightSim;
+    use crate::test_support::{DT, arena_with, mag, rifle_from};
+    use glam::Vec3;
+    use moho_physics::{Hull, HullShape, Stature};
     use searchlight_rules::{
         FireBehaviour, ItemId, Kit, Loadout, MagazineWell, RifleDef, Rig, RigSpec,
     };
@@ -82,6 +87,68 @@ mod tests {
         assert_eq!(config.charge_ticks, 13);
         assert!((config.range - 55.5).abs() < f32::EPSILON);
         assert_eq!(config.loadout, loadout);
+    }
+
+    fn shipped_config() -> SimConfig {
+        let mut rig = Rig::new(ItemId::new("test_rig"), &RigSpec { magazine_slots: 1 });
+        rig.stow(mag(17, 17)).unwrap();
+        tuning(Kit {
+            weapon: RifleDef {
+                well: MagazineWell::new("test"),
+                damage: 30,
+                fire: FireBehaviour::SemiAuto,
+                cooldown_ticks: 6,
+                reload_ticks: 120,
+                charge_ticks: 30,
+                range: 100.0,
+            },
+            loadout: Loadout::new(rifle_from(mag(17, 17)), rig),
+        })
+    }
+
+    #[test]
+    fn the_shipped_body_is_sources_0_81_m_wide_1_83_m_tall_capsule_with_its_eye_at_1_63_m() {
+        let config = shipped_config();
+
+        assert_eq!(
+            config.character_body,
+            CharacterBody {
+                standing: Stature {
+                    hull: Hull {
+                        shape: HullShape::Capsule,
+                        radius: 0.405,
+                        length: 1.83,
+                    },
+                    eye_height: 1.63,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn the_player_and_a_target_settle_on_a_flat_floor_at_the_shipped_heights() {
+        let arena = arena_with(
+            &[],
+            Vec3::new(0.0, 0.0, -10.0),
+            &[Vec3::new(0.0, 0.0, 10.0)],
+            &[Vec3::new(0.0, 0.0, 6.0)],
+        );
+        let mut sim = SearchlightSim::start(arena, shipped_config());
+
+        for _ in 0..90 {
+            sim.tick(&SearchlightCommand::default(), DT);
+        }
+
+        let player = sim.player();
+        let target = sim.enemy_state(0).expect("the enemy is alive");
+        assert!(player.grounded, "{player:?}");
+        assert!((player.position.y - 0.915).abs() < 0.03, "{player:?}");
+        assert!(
+            (sim.player_eye().y - 1.63).abs() < 0.03,
+            "the player's eye is 1.63 m above the floor, got {}",
+            sim.player_eye().y
+        );
+        assert!((target.position.y - 0.915).abs() < 0.03, "{target:?}");
     }
 
     #[test]
