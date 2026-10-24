@@ -159,6 +159,7 @@ pub fn dummy_hit_volumes(target: u16) -> [HitVolume; 6] {
 fn body_volumes(tag_of: impl Fn(BodyPart) -> SurfaceTag) -> [HitVolume; 6] {
     let volume = |part, offset: Vec3, half_extents: Vec3| HitVolume {
         offset,
+        rotation: Quat::IDENTITY,
         half_extents,
         tag: tag_of(part).into(),
     };

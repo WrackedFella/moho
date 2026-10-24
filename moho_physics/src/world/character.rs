@@ -61,6 +61,8 @@ impl From<Vec3> for CharacterSpawn {
 pub struct HitVolume {
     /// Box centre relative to the capsule centre, in the body frame.
     pub offset: Vec3,
+    /// Rotation in the body frame, applied before `offset`.
+    pub rotation: Quat,
     /// Box half-sizes along the body frame's axes.
     pub half_extents: Vec3,
     /// Tag reported when a ray hits this volume.
@@ -181,6 +183,18 @@ impl PhysicsWorld {
         .build();
         self.collider_set
             .insert_with_parent(collider, handle.0, &mut self.rigid_body_set);
+        Ok(())
+    }
+
+    /// Replace all of the character's hit volumes with `volumes`.
+    ///
+    /// # Errors
+    /// [`UnknownCharacter`] if `handle` was removed.
+    pub fn set_hit_volumes(
+        &mut self,
+        _handle: CharacterHandle,
+        _volumes: &[HitVolume],
+    ) -> Result<(), UnknownCharacter> {
         Ok(())
     }
 
@@ -2484,6 +2498,7 @@ mod tests {
     fn volume(offset: Vec3, half_extents: Vec3, tag: HitTag) -> HitVolume {
         HitVolume {
             offset,
+            rotation: Quat::IDENTITY,
             half_extents,
             tag,
         }
@@ -2735,6 +2750,151 @@ mod tests {
         let added = world.add_hit_volume(h, volume(Vec3::ZERO, Vec3::splat(0.2), HEAD));
 
         assert_eq!(added, Err(UnknownCharacter));
+        assert_eq!(world.collider_set.len(), colliders);
+    }
+
+    fn set_volumes(world: &mut PhysicsWorld, handle: CharacterHandle, volumes: &[HitVolume]) {
+        world
+            .set_hit_volumes(handle, volumes)
+            .expect("character is live");
+    }
+
+    #[test]
+    fn replaced_volumes_are_hit_where_the_game_put_them() {
+        let (mut world, h) = standing_on_floor();
+        let size = Vec3::new(0.2, 0.15, 0.2);
+        set_volumes(
+            &mut world,
+            h,
+            &[volume(Vec3::new(0.0, 0.7, 0.0), size, HEAD)],
+        );
+        world.step(DT);
+        let at = state(&world, h).position;
+
+        set_volumes(
+            &mut world,
+            h,
+            &[volume(Vec3::new(0.35, 0.7, 0.0), size, HEAD)],
+        );
+        world.step(DT);
+        let new_head = cast(&world, at + Vec3::new(0.35, 0.7, -3.0), Vec3::Z, None);
+        let old_head = cast(&world, at + Vec3::new(0.0, 0.7, -3.0), Vec3::Z, None);
+
+        assert_eq!(new_head.map(|hit| hit.tag), Some(HEAD), "at {at:?}");
+        assert_eq!(old_head, None, "nothing is left where the head was");
+    }
+
+    #[test]
+    fn a_rotated_volume_lies_along_its_rotation() {
+        let (mut world, h) = standing_on_floor();
+        let centre = Vec3::new(0.0, 0.1, 0.0);
+        let mut torso = volume(centre, Vec3::new(0.25, 0.4, 0.15), TORSO);
+        torso.rotation = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+        set_volumes(&mut world, h, &[torso]);
+        world.step(DT);
+        let at = state(&world, h).position;
+        let below = Vec3::new(0.0, -0.8, 0.0);
+
+        let through_centre = cast(&world, at + below, Vec3::Y, None);
+        let along_long_axis = cast(&world, at + below + Vec3::new(0.0, 0.0, 0.3), Vec3::Y, None);
+        let past_long_axis = cast(&world, at + below + Vec3::new(0.0, 0.0, 0.5), Vec3::Y, None);
+
+        let through_centre = through_centre.expect("a ray through the centre hits the torso");
+        assert_eq!(through_centre.tag, TORSO);
+        assert!(
+            (through_centre.point.y - (at.y + centre.y - 0.15)).abs() < 0.02,
+            "the 0.4 half-extent lies along Z, so the box is 0.15 deep in Y: {through_centre:?}"
+        );
+        assert_eq!(
+            along_long_axis.map(|hit| hit.tag),
+            Some(TORSO),
+            "0.3 m along Z is inside the rotated long axis"
+        );
+        assert_eq!(past_long_axis, None, "0.5 m along Z is beyond it");
+    }
+
+    #[test]
+    fn volumes_turn_with_the_body() {
+        let (mut world, h) = standing_on_floor();
+        set_volumes(
+            &mut world,
+            h,
+            &[volume(
+                Vec3::new(0.4, 0.0, 0.0),
+                Vec3::new(0.1, 0.3, 0.1),
+                ARM,
+            )],
+        );
+        world.step(DT);
+        let at = state(&world, h).position;
+        let from_original_side = at + Vec3::new(3.0, 0.0, 0.0);
+        let from_opposite_side = at + Vec3::new(-3.0, 0.0, 0.0);
+        let before = cast(&world, from_original_side, -Vec3::X, None);
+        assert_eq!(before.map(|hit| hit.tag), Some(ARM), "arm starts at +X");
+
+        let turn = CharacterCommand {
+            yaw_delta: std::f32::consts::PI,
+            ..idle()
+        };
+        world
+            .move_character(h, &turn, &test_settings(), DT)
+            .unwrap();
+        world.step(DT);
+
+        // Reaches only to the capsule centre: the capsule never stops a ray, so a longer ray
+        // would go on to the arm on the far side.
+        let after_original = world.cast_ray(&RayQuery {
+            origin: from_original_side,
+            direction: -Vec3::X,
+            max_distance: 3.0,
+            ignore: None,
+        });
+        let after_opposite = cast(&world, from_opposite_side, Vec3::X, None)
+            .expect("the arm is now on the opposite side");
+        assert_eq!(after_opposite.tag, ARM);
+        assert!(
+            (after_opposite.point.x - (at.x - 0.5)).abs() < 0.02,
+            "{after_opposite:?}"
+        );
+        assert_eq!(after_original, None, "the arm left its original side");
+    }
+
+    #[test]
+    fn replacing_with_fewer_volumes_removes_the_rest() {
+        let (mut world, h) = standing_on_floor();
+        let head = volume(Vec3::new(0.0, 0.7, 0.0), Vec3::new(0.2, 0.15, 0.2), HEAD);
+        let torso = volume(Vec3::new(0.0, 0.1, 0.0), Vec3::new(0.25, 0.4, 0.15), TORSO);
+        let colliders = world.collider_set.len();
+        set_volumes(&mut world, h, &[head, torso]);
+        world.step(DT);
+        let at = state(&world, h).position;
+        let head_ray = |world: &PhysicsWorld| {
+            cast(world, at + Vec3::new(-3.0, 0.7, 0.0), Vec3::X, None).map(|hit| hit.tag)
+        };
+        let torso_ray = |world: &PhysicsWorld| {
+            cast(world, at + Vec3::new(-3.0, 0.1, 0.0), Vec3::X, None).map(|hit| hit.tag)
+        };
+        assert_eq!(head_ray(&world), Some(HEAD));
+        assert_eq!(world.collider_set.len(), colliders + 2);
+
+        set_volumes(&mut world, h, &[torso]);
+        world.step(DT);
+
+        assert_eq!(head_ray(&world), None, "the head is gone");
+        assert_eq!(torso_ray(&world), Some(TORSO), "the torso stays");
+        assert_eq!(world.collider_set.len(), colliders + 1);
+    }
+
+    #[test]
+    fn setting_volumes_on_a_removed_character_is_refused() {
+        let mut world = PhysicsWorld::new();
+        let h = world.add_character(Vec3::new(0.0, 1.2, 0.0));
+        world.remove_character(h).unwrap();
+        let colliders = world.collider_set.len();
+
+        let set = world.set_hit_volumes(h, &[volume(Vec3::ZERO, Vec3::splat(0.2), HEAD)]);
+
+        assert_eq!(set, Err(UnknownCharacter));
         assert_eq!(world.collider_set.len(), colliders);
     }
 
