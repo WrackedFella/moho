@@ -87,6 +87,123 @@ fn skybox_and_main_shader_share_sky_gradient() {
 }
 
 #[test]
+fn vertex_normals_go_through_normal_to_world() {
+    let source = moho_renderer::pipeline::main_shader_source();
+
+    let module = validate("main shader", &source, Capabilities::empty());
+
+    let definitions: Vec<_> = module
+        .functions
+        .iter()
+        .filter(|(_, f)| f.name.as_deref() == Some("normal_to_world"))
+        .map(|(handle, _)| handle)
+        .collect();
+    assert_eq!(definitions.len(), 1, "normal_to_world defined once");
+    let math_calls = |fun: naga::MathFunction| {
+        module.functions[definitions[0]]
+            .expressions
+            .iter()
+            .filter(|(_, e)| matches!(e, naga::Expression::Math { fun: f, .. } if *f == fun))
+            .count()
+    };
+    assert_eq!(
+        math_calls(naga::MathFunction::Cross),
+        3,
+        "one cross per cofactor column"
+    );
+    assert_eq!(math_calls(naga::MathFunction::Normalize), 1);
+    assert_eq!(
+        math_calls(naga::MathFunction::Sign),
+        0,
+        "sign(det) is 0 for a flattened placement and would zero the normal"
+    );
+    let normal_fn = &module.functions[definitions[0]];
+    let selects = normal_fn
+        .expressions
+        .iter()
+        .filter(|(_, e)| matches!(e, naga::Expression::Select { .. }))
+        .count();
+    assert_eq!(
+        selects, 1,
+        "the determinant picks +1 or -1, so mirrored normals stay outward"
+    );
+    // Column k of the matrix argument, as `m[k]`.
+    let column = |handle: naga::Handle<naga::Expression>| match normal_fn.expressions[handle] {
+        naga::Expression::AccessIndex { base, index } => matches!(
+            normal_fn.expressions[base],
+            naga::Expression::FunctionArgument(0)
+        )
+        .then_some(index),
+        _ => None,
+    };
+    let crosses: Vec<_> = normal_fn
+        .expressions
+        .iter()
+        .filter_map(|(_, e)| match *e {
+            naga::Expression::Math {
+                fun: naga::MathFunction::Cross,
+                arg,
+                arg1: Some(arg1),
+                ..
+            } => Some((column(arg), column(arg1))),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        crosses,
+        [(Some(1), Some(2)), (Some(2), Some(0)), (Some(0), Some(1))],
+        "cofactor columns c1 x c2, c2 x c0, c0 x c1"
+    );
+    let vs_main = module
+        .entry_points
+        .iter()
+        .find(|e| e.name == "vs_main")
+        .expect("vs_main");
+    let calls_it = vs_main.function.body.iter().any(|statement| {
+        matches!(statement, naga::Statement::Call { function, .. } if *function == definitions[0])
+    });
+    assert!(calls_it, "vs_main calls normal_to_world");
+}
+
+/// The formula `normal_to_world` encodes in `shaders/vertex.wgsl`.
+fn cofactor_normal(cols: [glam::Vec3; 3], n: glam::Vec3) -> glam::Vec3 {
+    let det = cols[0].dot(cols[1].cross(cols[2]));
+    let cofactor = glam::Mat3::from_cols(
+        cols[1].cross(cols[2]),
+        cols[2].cross(cols[0]),
+        cols[0].cross(cols[1]),
+    );
+    (cofactor * n * det.signum()).normalize()
+}
+
+fn any_vec3() -> impl proptest::strategy::Strategy<Value = glam::Vec3> {
+    use proptest::strategy::Strategy;
+    (-3.0f32..3.0, -3.0f32..3.0, -3.0f32..3.0).prop_map(|(x, y, z)| glam::Vec3::new(x, y, z))
+}
+
+proptest::proptest! {
+    /// Proves the derivation `normal_to_world` encodes (cofactor times the determinant's
+    /// sign equals the inverse transpose, mirrored matrices included), not the WGSL itself.
+    #[test]
+    fn cofactor_with_determinant_sign_matches_inverse_transpose(
+        c0 in any_vec3(), c1 in any_vec3(), c2 in any_vec3(), n in any_vec3(),
+    ) {
+        let m = glam::Mat3::from_cols(c0, c1, c2);
+        // Near-singular matrices make the inverse itself ill-conditioned.
+        proptest::prop_assume!(m.determinant().abs() > 0.5);
+        proptest::prop_assume!(n.length() > 0.1);
+
+        let expected = (m.inverse().transpose() * n).normalize();
+        let actual = cofactor_normal([c0, c1, c2], n);
+
+        proptest::prop_assert!(
+            actual.abs_diff_eq(expected, 1e-3),
+            "{actual:?} != {expected:?} for {m:?}"
+        );
+    }
+}
+
+#[test]
 fn shadow_shader_parses_and_validates() {
     validate_file("shadow.wgsl", Capabilities::IMMEDIATES);
 }

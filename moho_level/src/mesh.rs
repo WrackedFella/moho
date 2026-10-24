@@ -5,14 +5,37 @@ use std::borrow::Cow;
 use glam::{Mat3, Mat4, Vec3};
 use moho_render_api::WorldMesh;
 
-use crate::{LevelMesh, error::LevelErrorKind};
+use crate::error::LevelErrorKind;
 
+/// The triangle primitives of `mesh`; any other mode is skipped with a warning.
+pub(crate) fn triangle_primitives<'a>(
+    mesh: &gltf::Mesh<'a>,
+) -> impl Iterator<Item = gltf::Primitive<'a>> {
+    let (name, index) = (mesh.name().unwrap_or_default(), mesh.index());
+    mesh.primitives().filter(move |primitive| {
+        let triangles = primitive.mode() == gltf::mesh::Mode::Triangles;
+        if !triangles {
+            tracing::warn!(
+                mesh = name,
+                index,
+                mode = ?primitive.mode(),
+                "skipping non-triangle primitive"
+            );
+        }
+        triangles
+    })
+}
+
+/// Convert `primitive` with `world` baked into its vertices. `flip_winding` swaps each
+/// triangle's last two indices; callers pass whether the transform they place the mesh
+/// under mirrors it.
 pub(crate) fn convert(
     mesh: &gltf::Mesh<'_>,
     primitive: &gltf::Primitive<'_>,
     world: Mat4,
+    flip_winding: bool,
     buffers: &[Cow<'_, [u8]>],
-) -> Result<LevelMesh, LevelErrorKind> {
+) -> Result<WorldMesh, LevelErrorKind> {
     let bad = |reason: String| LevelErrorKind::BadMesh {
         mesh: mesh.index(),
         reason,
@@ -47,13 +70,13 @@ pub(crate) fn convert(
     } else {
         (0..u32::try_from(count).unwrap_or(u32::MAX)).collect()
     };
-    if world.determinant() < 0.0 {
+    if flip_winding {
         for tri in indices.as_chunks_mut::<3>().0 {
             tri.swap(1, 2);
         }
     }
 
-    let world_mesh = WorldMesh::new(
+    WorldMesh::new(
         positions,
         normals,
         vec![1.0; count],
@@ -62,10 +85,5 @@ pub(crate) fn convert(
         vec![0; count],
         indices,
     )
-    .map_err(|e| bad(e.to_string()))?;
-
-    Ok(LevelMesh {
-        mesh: world_mesh,
-        material: primitive.material().name().map(str::to_owned),
-    })
+    .map_err(|e| bad(e.to_string()))
 }
