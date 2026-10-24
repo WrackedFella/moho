@@ -1,5 +1,5 @@
 use super::query::{encode_tag, HitTag};
-use super::slide::Slider;
+use super::slide::{Footing, Slider};
 use super::PhysicsWorld;
 use crate::movement::{
     self, CharacterBody, CharacterCommand, CharacterEffect, HullShape, Impact, MoveSettings, Tuning,
@@ -51,6 +51,13 @@ pub struct CharacterSpawn {
     pub body: CharacterBody,
 }
 
+impl CharacterState {
+    /// The eye's position in world space.
+    pub fn eye_position(&self) -> Vec3 {
+        self.position + self.eye
+    }
+}
+
 impl From<Vec3> for CharacterSpawn {
     fn from(position: Vec3) -> Self {
         Self {
@@ -85,6 +92,8 @@ pub struct UnknownCharacter;
 pub(super) struct Character {
     collider: ColliderHandle,
     body: CharacterBody,
+    /// The hull as the ground query sees it, derived once from `body`.
+    footing: Footing,
     /// Hit volume colliders, in the order the game last set them.
     volumes: Vec<ColliderHandle>,
     velocity: Vec3,
@@ -171,6 +180,7 @@ impl PhysicsWorld {
             Character {
                 collider,
                 body: spawn.body,
+                footing: Footing::of(hull),
                 volumes: Vec::new(),
                 velocity: Vec3::ZERO,
                 yaw: spawn.yaw,
@@ -179,7 +189,7 @@ impl PhysicsWorld {
                     .clamp(-movement::PITCH_LIMIT, movement::PITCH_LIMIT),
                 grounded: false,
                 jump_held: false,
-                eye: Vec3::Y * (spawn.body.standing.eye_height - half_length),
+                eye: spawn.body.standing.eye_offset(),
                 effects: Vec::new(),
             },
         );
@@ -276,6 +286,7 @@ impl PhysicsWorld {
         let collider_handle = character.collider;
         let effects = std::mem::take(&mut character.effects);
         let body = character.body;
+        let footing = character.footing;
         let pose = *self.rigid_body_set[handle.0].position();
         let mut state = character.state(pose.translation);
 
@@ -294,6 +305,7 @@ impl PhysicsWorld {
             controller: &self.character_controller,
             queries: &queries,
             shape: self.collider_set[collider_handle].shape(),
+            footing,
             dt,
         };
 

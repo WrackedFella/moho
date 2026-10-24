@@ -1,6 +1,6 @@
 //! The rapier collide-and-slide behind [`crate::movement::step`].
 
-use crate::movement::{Ground, Slide, STEP_HEIGHT, WALKABLE_NORMAL_Y};
+use crate::movement::{Ground, Hull, HullShape, Slide, STEP_HEIGHT, WALKABLE_NORMAL_Y};
 use glam::Vec3;
 use rapier3d::control::{
     CharacterLength, EffectiveCharacterMovement, KinematicCharacterController,
@@ -67,7 +67,7 @@ fn step_reach(remaining: Vec3, min_width: f32) -> Option<(Vec3, f32)> {
 /// A capsule is a point swept by its radius; a round cylinder is its flat base disc swept by
 /// its rounding.
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct Footing {
+pub(super) struct Footing {
     /// Radius of the core disc.
     disc: f32,
     /// Radius of the sphere swept over the core.
@@ -77,26 +77,20 @@ struct Footing {
 }
 
 impl Footing {
-    /// The footing of a character collider.
-    ///
-    /// # Panics
-    /// If `shape` is neither a capsule nor a round cylinder; the world builds only those.
-    fn of(shape: &dyn Shape) -> Self {
-        if let Some(capsule) = shape.as_capsule() {
-            Self {
+    /// The footing of a character `hull`.
+    pub(super) fn of(hull: Hull) -> Self {
+        let half_length = hull.length / 2.0;
+        match hull.shape {
+            HullShape::Capsule => Self {
                 disc: 0.0,
-                sweep: capsule.radius,
-                core_bottom: capsule.half_height(),
-            }
-        } else {
-            let round = shape
-                .as_round_cylinder()
-                .expect("character colliders are capsules or round cylinders");
-            Self {
-                disc: round.inner_shape.radius,
-                sweep: round.border_radius,
-                core_bottom: round.inner_shape.half_height,
-            }
+                sweep: hull.radius,
+                core_bottom: half_length - hull.radius,
+            },
+            HullShape::RoundCylinder { rounding } => Self {
+                disc: hull.radius - rounding,
+                sweep: rounding,
+                core_bottom: half_length - rounding,
+            },
         }
     }
 }
@@ -106,6 +100,7 @@ pub(super) struct Slider<'a> {
     pub controller: &'a KinematicCharacterController,
     pub queries: &'a QueryPipeline<'a>,
     pub shape: &'a dyn Shape,
+    pub footing: Footing,
     pub dt: f32,
 }
 
@@ -161,7 +156,7 @@ impl Slider<'_> {
     /// itself, cast down to its skin offset, gives the gap: how far it can drop before it
     /// touches anything.
     pub(super) fn ground_below(&self, centre: Vec3) -> Option<Ground> {
-        let footing = Footing::of(self.shape);
+        let footing = self.footing;
         let CharacterLength::Absolute(skin) = self.controller.offset else {
             panic!("the world builds its character controller with an absolute skin offset");
         };
@@ -318,6 +313,7 @@ mod tests {
     use super::super::test_support::{quad_mesh, seam_floor_meshes, slope_mesh, step_box_mesh};
     use super::super::PhysicsWorld;
     use super::*;
+    use crate::movement::CharacterBody;
     use moho_render_api::{WorldMesh, WorldMeshId};
     use rapier3d::prelude::{QueryFilter, SharedShape};
 
@@ -418,6 +414,7 @@ mod tests {
             controller: &world.character_controller,
             queries: &queries,
             shape: capsule.as_ref(),
+            footing: Footing::of(CharacterBody::default().standing.hull),
             dt: 1.0 / 60.0,
         };
         let touching = Pose::from_translation(Vec3::new(0.0, 1.16, 1.69));
@@ -457,6 +454,7 @@ mod tests {
             controller: &world.character_controller,
             queries: &queries,
             shape: capsule.as_ref(),
+            footing: Footing::of(CharacterBody::default().standing.hull),
             dt: 1.0 / 60.0,
         };
         slider.ground_below(centre).map(|ground| ground.normal)
@@ -540,6 +538,7 @@ mod tests {
             controller: &world.character_controller,
             queries: &queries,
             shape: capsule.as_ref(),
+            footing: Footing::of(CharacterBody::default().standing.hull),
             dt: 1.0 / 60.0,
         };
         check(&slider, &colliders)

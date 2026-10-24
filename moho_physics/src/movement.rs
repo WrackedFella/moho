@@ -104,6 +104,13 @@ pub struct CharacterBody {
     pub standing: Stature,
 }
 
+impl Stature {
+    /// The eye's offset from the hull's centre when upright.
+    pub fn eye_offset(&self) -> Vec3 {
+        Vec3::Y * (self.eye_height - self.hull.length / 2.0)
+    }
+}
+
 impl Default for CharacterBody {
     fn default() -> Self {
         Self {
@@ -497,8 +504,7 @@ pub fn step(
     settle(state, &slid, walking, asked, dt);
     state.velocity = checked(state.velocity, settings.max_velocity);
     state.jump_held = command.jump;
-    let Stature { hull, eye_height } = body.standing;
-    state.eye = Vec3::Y * (eye_height - hull.length / 2.0);
+    state.eye = body.standing.eye_offset();
     impacts
 }
 

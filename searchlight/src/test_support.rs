@@ -149,12 +149,6 @@ pub(crate) fn test_profile() -> BodyProfile {
 
 /// Tuning with a 3-tick cooldown, 10-tick reload, 30 damage and the given rifle, with
 /// `spares` stowed in order on a rig that has one slot per spare.
-/// Puts `config`'s eye `height` m above the capsule centre, the frame hit volumes are posed in.
-pub(crate) fn set_eye_above_centre(config: &mut SimConfig, height: f32) {
-    let standing = &mut config.character_body.standing;
-    standing.eye_height = height + standing.hull.length / 2.0;
-}
-
 pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
     let slots = u32::try_from(spares.len()).expect("a handful of test spares");
     let mut rig = Rig::new(
@@ -186,6 +180,12 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
             speed_factor: 0.5,
         },
     }
+}
+
+/// Puts `config`'s eye `height` m above the capsule centre, the frame hit volumes are posed in.
+pub(crate) fn set_eye_above_centre(config: &mut SimConfig, height: f32) {
+    let standing = &mut config.character_body.standing;
+    standing.eye_height = height + standing.hull.length / 2.0;
 }
 
 /// Enemy tuning with a 3-tick reaction (so the first shot is on tick 2), a 4-tick cooldown,

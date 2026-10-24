@@ -28,17 +28,30 @@ use crate::tuning::SHIPPED_BODY;
 /// off a wall.
 const LEAN_CLEARANCE: f32 = 0.15;
 
-/// Height of a character's capsule centre above its feet, in metres: half the shipped hull.
+/// Height of the shipped body's capsule centre above its feet, in metres: half its hull. For
+/// code with no [`SimConfig`] at hand; the sim itself spawns the configured body.
 pub const STAND_HEIGHT: f32 = SHIPPED_BODY.standing.hull.length / 2.0;
 
-/// The target number and capsule centre of the dummy at `index` in a spawn list, for a dummy
-/// standing on the floor point `spawn`.
+/// The capsule centre of `body` standing on the floor point `floor`.
+fn standing_centre(body: &CharacterBody, floor: Vec3) -> Vec3 {
+    floor + Vec3::Y * (body.standing.hull.length / 2.0)
+}
+
+/// The target number of the dummy at `index` in a spawn list.
+///
+/// # Panics
+/// If `index` is more than a `u16` target number can name.
+fn target_number(index: usize) -> u16 {
+    u16::try_from(index).expect("an arena has fewer than 65536 dummies")
+}
+
+/// The target number and capsule centre of the shipped-body dummy at `index` in a spawn list,
+/// for a dummy standing on the floor point `spawn`.
 ///
 /// # Panics
 /// If `index` is more than a `u16` target number can name.
 pub(crate) fn dummy_at(index: usize, spawn: Vec3) -> (u16, Vec3) {
-    let target = u16::try_from(index).expect("an arena has fewer than 65536 dummies");
-    (target, spawn + Vec3::Y * STAND_HEIGHT)
+    (target_number(index), standing_centre(&SHIPPED_BODY, spawn))
 }
 
 /// The index of the waypoint nearest `spawn` on the ground plane, and the yaw that faces it.
@@ -56,7 +69,7 @@ fn nearest_waypoint(spawn: Vec3, route: &[Vec3]) -> (usize, f32) {
     (index, (waypoint.x - spawn.x).atan2(waypoint.z - spawn.z))
 }
 
-/// Radius of a character's capsule, in metres; two characters touch at twice this.
+/// Radius of the shipped body's capsule, in metres; two shipped bodies touch at twice this.
 pub const CAPSULE_RADIUS: f32 = SHIPPED_BODY.standing.hull.radius;
 
 /// Whether a sim starts with an enemy at each enemy spawn marker.
@@ -140,24 +153,31 @@ pub enum Feedback {
     PlayerDied,
 }
 
-/// The six hit volumes of the player, the same boxes as a dummy's but tagged
+/// The six hit volumes of the shipped-body player, the same boxes as a dummy's but tagged
 /// [`SurfaceTag::Player`].
 pub fn player_hit_volumes() -> [HitVolume; 6] {
-    body_volumes(SurfaceTag::Player)
+    body_volumes(&SHIPPED_BODY, SurfaceTag::Player)
 }
 
-/// The six hit volumes of a dummy numbered `target`, one per body part, in the body frame
+/// The six hit volumes of a shipped-body dummy numbered `target`, one per body part, in the body frame
 /// around the capsule centre. Each volume's tag is `SurfaceTag::Part` for that part.
 ///
 /// The body faces +Z at yaw 0, so its left side is +X. The head sits directly on the torso
 /// and the legs under it, reaching the feet of the hull, so a level ray from the player's eye
 /// height meets a part rather than passing through a gap at the neck.
 pub fn dummy_hit_volumes(target: u16) -> [HitVolume; 6] {
-    body_volumes(|part| SurfaceTag::Part { target, part })
+    body_volumes(&SHIPPED_BODY, |part| SurfaceTag::Part { target, part })
 }
 
-/// The six hit volumes every body shares, each tagged by `tag_of` for its part.
-fn body_volumes(tag_of: impl Fn(BodyPart) -> SurfaceTag) -> [HitVolume; 6] {
+/// Torso box centre height above the capsule centre, in metres.
+const TORSO_CENTRE_Y: f32 = 0.25;
+
+/// Torso box half height, in metres.
+const TORSO_HALF_Y: f32 = 0.35;
+
+/// The six hit volumes every body shares, each tagged by `tag_of` for its part. The legs run
+/// from the torso's bottom to the feet of `body`'s hull.
+fn body_volumes(body: &CharacterBody, tag_of: impl Fn(BodyPart) -> SurfaceTag) -> [HitVolume; 6] {
     let volume = |part, offset: Vec3, half_extents: Vec3| HitVolume {
         offset,
         rotation: Quat::IDENTITY,
@@ -165,7 +185,10 @@ fn body_volumes(tag_of: impl Fn(BodyPart) -> SurfaceTag) -> [HitVolume; 6] {
         tag: tag_of(part).into(),
     };
     let arm = Vec3::new(0.1, 0.3, 0.1);
-    let leg = Vec3::new(0.1, 0.4075, 0.1);
+    let torso_bottom = TORSO_CENTRE_Y - TORSO_HALF_Y;
+    let feet = -body.standing.hull.length / 2.0;
+    let leg_centre_y = (torso_bottom + feet) / 2.0;
+    let leg = Vec3::new(0.1, (torso_bottom - feet) / 2.0, 0.1);
     [
         volume(
             BodyPart::Head,
@@ -174,13 +197,13 @@ fn body_volumes(tag_of: impl Fn(BodyPart) -> SurfaceTag) -> [HitVolume; 6] {
         ),
         volume(
             BodyPart::Torso,
-            Vec3::new(0.0, 0.25, 0.0),
-            Vec3::new(0.2, 0.35, 0.12),
+            Vec3::new(0.0, TORSO_CENTRE_Y, 0.0),
+            Vec3::new(0.2, TORSO_HALF_Y, 0.12),
         ),
         volume(BodyPart::LeftArm, Vec3::new(0.3, 0.25, 0.0), arm),
         volume(BodyPart::RightArm, Vec3::new(-0.3, 0.25, 0.0), arm),
-        volume(BodyPart::LeftLeg, Vec3::new(0.12, -0.5075, 0.0), leg),
-        volume(BodyPart::RightLeg, Vec3::new(-0.12, -0.5075, 0.0), leg),
+        volume(BodyPart::LeftLeg, Vec3::new(0.12, leg_centre_y, 0.0), leg),
+        volume(BodyPart::RightLeg, Vec3::new(-0.12, leg_centre_y, 0.0), leg),
     ]
 }
 
@@ -285,7 +308,8 @@ fn new_target(
     profile: BodyProfile,
     body: CharacterBody,
 ) -> Target {
-    let (target, centre) = dummy_at(index, spawn);
+    let target = target_number(index);
+    let centre = standing_centre(&body, spawn);
     let (enemy, yaw) = match enemy {
         Some((route, grade)) => {
             let (nearest, yaw) = nearest_waypoint(spawn, route);
@@ -301,7 +325,10 @@ fn new_target(
         body,
     });
     world
-        .set_hit_volumes(handle, &dummy_hit_volumes(target))
+        .set_hit_volumes(
+            handle,
+            &body_volumes(&body, |part| SurfaceTag::Part { target, part }),
+        )
         .expect("the target was added a moment ago");
     Target {
         handle: Some(handle),
@@ -315,7 +342,7 @@ fn new_target(
 impl SearchlightSim {
     /// A sim over `world` (static geometry already in), the player standing at
     /// `player_spawn` and one dummy at each of `dummy_spawns`, numbered by position in the
-    /// slice. Spawns are floor points: capsule centres sit [`STAND_HEIGHT`] above them.
+    /// slice. Spawns are floor points: capsule centres sit half the configured hull above them.
     ///
     /// # Panics
     /// If `dummy_spawns` holds more dummies than a `u16` target number can name.
@@ -341,9 +368,9 @@ impl SearchlightSim {
         world.set_gravity(config.gravity);
         let player = world.add_character(CharacterSpawn {
             body: config.character_body,
-            ..CharacterSpawn::from(spawns.player + Vec3::Y * STAND_HEIGHT)
+            ..CharacterSpawn::from(standing_centre(&config.character_body, spawns.player))
         });
-        let player_volumes = player_hit_volumes();
+        let player_volumes = body_volumes(&config.character_body, SurfaceTag::Player);
         world
             .set_hit_volumes(player, &player_volumes)
             .expect("the player was added a moment ago");
@@ -459,7 +486,7 @@ impl SearchlightSim {
     /// upright eye.
     fn lean_reach(&self) -> LeanReach {
         let state = self.player();
-        let eye = state.position + state.eye;
+        let eye = state.eye_position();
         let shift = self.lean_tuning.shift;
         let room = |direction: Vec3| {
             let strike = resolve_shot(
@@ -513,7 +540,7 @@ impl SearchlightSim {
     fn move_enemies(&mut self, dt: f32) -> Vec<usize> {
         let aim = self.player_aim_point();
         let threat = Threat {
-            eye: self.upright_eye(&self.player()),
+            eye: self.player().eye_position(),
             aim,
         };
         let mut claims: Vec<Option<usize>> = self
@@ -528,6 +555,7 @@ impl SearchlightSim {
             .collect();
         let mut firing = Vec::new();
         let nav = &self.nav;
+        let eye_height = self.eye_height();
         for (index, target) in self.targets.iter_mut().enumerate().skip(self.dummy_count) {
             let (Some(handle), Some(enemy)) = (target.handle, target.enemy.as_mut()) else {
                 continue;
@@ -537,7 +565,7 @@ impl SearchlightSim {
                 .world
                 .character(handle)
                 .expect("a living enemy is in the world");
-            let eye = state.position + state.eye;
+            let eye = state.eye_position();
             let sees_player = resolve_shot(
                 &self.world,
                 ShotRay {
@@ -562,7 +590,7 @@ impl SearchlightSim {
                     &taken,
                     state.position,
                     threat,
-                    self.body.standing.eye_height,
+                    eye_height,
                     &tuning,
                 )
             });
@@ -615,7 +643,7 @@ impl SearchlightSim {
                 .world
                 .character(handle)
                 .expect("a living enemy is in the world");
-            let eye = state.position + state.eye;
+            let eye = state.eye_position();
             let direction = self.with_spread(self.player_aim_point() - eye, tuning.aim_error);
             self.outbox.push(Feedback::EnemyFired {
                 target: u16::try_from(index).expect("target numbers fit a u16"),
@@ -819,12 +847,8 @@ impl SearchlightSim {
         self.leaned_eye(&self.player())
     }
 
-    fn upright_eye(&self, state: &CharacterState) -> Vec3 {
-        state.position + state.eye
-    }
-
     fn leaned_eye(&self, state: &CharacterState) -> Vec3 {
-        self.upright_eye(state) + lean_offset(state.yaw, self.lean.shift(&self.lean_tuning))
+        state.eye_position() + lean_offset(state.yaw, self.lean.shift(&self.lean_tuning))
     }
 
     /// How far the player leans after the last tick.
@@ -895,7 +919,7 @@ impl SearchlightSim {
             spawn,
             Some((&self.route, grade)),
             self.origin.1.body,
-            self.origin.1.character_body,
+            self.body,
         );
         self.targets.push(target);
         // Index the new hit volumes so the next tick's rays can strike them.
@@ -1679,7 +1703,7 @@ mod tests {
 
     fn standing_eye(sim: &SearchlightSim) -> Vec3 {
         let player = sim.player();
-        player.position + player.eye
+        player.eye_position()
     }
 
     fn open_sim() -> SearchlightSim {
@@ -3180,7 +3204,11 @@ mod enemy_tests {
 
         // Replay the shooter's spread on a twin sim: the same seed gives the same shots.
         let shooter = probe.targets[0].handle.expect("the shooter spawned");
-        let eye = probe.upright_eye(&probe.world.character(shooter).expect("alive"));
+        let eye = probe
+            .world
+            .character(shooter)
+            .expect("alive")
+            .eye_position();
         let aim = probe.player_aim_point();
         let clipped = (0..count(&ticks, enemy_fired))
             .filter(|_| {
@@ -5232,7 +5260,7 @@ mod grade_tests {
         let strike = resolve_shot(
             &sim.world,
             ShotRay {
-                origin: player.position + player.eye,
+                origin: player.eye_position(),
                 direction: Vec3::new(player.yaw.sin(), 0.0, player.yaw.cos()),
                 range: sim.range,
                 ignore: Some(sim.player),

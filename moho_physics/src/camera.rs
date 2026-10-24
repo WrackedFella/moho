@@ -31,7 +31,7 @@ pub fn first_person_view(
     let (yaw_sin, yaw_cos) = yaw.sin_cos();
     let (pitch_sin, pitch_cos) = pitch.sin_cos();
     FirstPersonView {
-        eye: (previous.position + previous.eye).lerp(current.position + current.eye, alpha),
+        eye: previous.eye_position().lerp(current.eye_position(), alpha),
         forward: Vec3::new(yaw_sin * pitch_cos, pitch_sin, yaw_cos * pitch_cos),
     }
 }

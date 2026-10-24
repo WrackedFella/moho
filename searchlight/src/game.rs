@@ -1436,7 +1436,7 @@ mod tests {
         let blended = tick + ALPHA * (2.0 * tick - tick);
         let standing = {
             let player = game.sim().player();
-            player.position + player.eye
+            player.eye_position()
         };
         let eye = view.inverse().w_axis.truncate();
         assert!(
@@ -1474,7 +1474,7 @@ mod tests {
         assert!(!game.sim().player_body().is_dead());
         let standing = {
             let player = game.sim().player();
-            player.position + player.eye
+            player.eye_position()
         };
         for alpha in [0.0, 0.5] {
             let mut renderer = SettingsRenderer::default();
@@ -2000,7 +2000,7 @@ mod tests {
                     radius: 0.405,
                     length: 1.83,
                 },
-                eye_height: 1.63,
+                eye_height: 1.5,
             },
         };
         let mode = ArenaMode::new(
@@ -2020,7 +2020,7 @@ mod tests {
         let eye = view.inverse().w_axis.truncate();
         assert!(game.sim().player().grounded, "{:?}", game.sim().player());
         assert!(
-            (eye.y - 1.63).abs() < 0.03,
+            (eye.y - 1.5).abs() < 0.03,
             "the floor is at y = 0, the drawn eye is at {eye:?}"
         );
         assert!(eye.x.abs() < 1e-3 && eye.z.abs() < 1e-3, "{eye:?}");
