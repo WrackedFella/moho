@@ -2,7 +2,7 @@
 
 **Source:** `flagstone/src/app/chunk_streamer.rs`, `flagstone/src/app/event_loop/frame_processor.rs`
 (`update_chunk_streaming`, `update_light_system`), `event_processor.rs` (`process_world_events`),
-`flagstone/src/app/world_geometry.rs`, `flagstone_voxel/src/` (`light_system.rs`, `light_storage.rs`, `streaming.rs`, `light_jobs.rs`, `mesh.rs`).
+`flagstone/src/app/world_geometry.rs`, `flagstone/src/app/scene_loader.rs`, `flagstone_voxel/src/` (`light_system.rs`, `light_storage.rs`, `streaming.rs`, `light_jobs.rs`, `mesh.rs`).
 Voxels live in the flagstone-line `flagstone_voxel` per [ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md).
 
 ## Chunk lifecycle
@@ -40,6 +40,25 @@ chunks). `chunks_meshed_from` in
 set. It covers geometry only: smooth normals of the positive neighbour read a block one
 further in, so shading there can stay stale until that chunk is next meshed. Placing a block
 keeps its previous dirty set.
+
+## Scene load
+
+`scene_loader::load_scene` makes the area around the saved position solid before the pawn
+exists, whatever the save holds (block records, saved meshes, or neither):
+
+1. The camera is restored first; the saved position picks the centre column
+   (`floor(x / 16)`, `floor(z / 16)`).
+2. The `ChunkStreamer` is built from the scene's seed and size, and
+   `ChunkStreamer::load_columns_now` generates every column within `SPAWN_RADIUS` (2, a 5x5
+   area) that has no chunk yet, ignoring `chunks_per_frame`. Occupied columns are kept as
+   saved.
+3. The grid is lit (`light_arrived_chunks`), the spawn-area chunks are meshed with
+   `VoxelChunk::from_grid_hybrid` and inserted through `world_geometry::insert_chunk`, so
+   their colliders exist when physics initialises.
+4. `App::setup_physics_for_loaded_world` (`flagstone/src/main.rs`) places the pawn 3 blocks
+   above the surface at the saved column, searching outward up to 4 columns in rings for the
+   nearest column with a block. With no terrain in range it keeps the saved position and
+   logs a warning.
 
 ## Parameters
 

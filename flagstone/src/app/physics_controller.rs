@@ -311,8 +311,12 @@ mod tests {
         }
         assert_eq!(
             terrain_collider_count(&app),
-            positions.len(),
-            "one collider per chunk, character aside"
+            app.entities
+                .chunks
+                .iter()
+                .filter(|chunk| !chunk.is_empty())
+                .count(),
+            "one collider per non-empty chunk, character aside"
         );
     }
 

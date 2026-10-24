@@ -70,6 +70,29 @@ impl ChunkStreamer {
         (loaded, evicted)
     }
 
+    /// Load every column within `radius` of `centre_column` that has no chunk yet,
+    /// ignoring the per-frame budget. Columns already holding chunks are left as they are.
+    pub fn load_columns_now(
+        &self,
+        grid: &mut VoxelGrid,
+        (centre_x, centre_z): (i32, i32),
+        radius: i32,
+    ) {
+        let occupied: std::collections::HashSet<(i32, i32)> =
+            grid.chunk_positions().map(|p| (p.x, p.z)).collect();
+
+        for column_x in centre_x - radius..=centre_x + radius {
+            for column_z in centre_z - radius..=centre_z + radius {
+                if occupied.contains(&(column_x, column_z)) {
+                    continue;
+                }
+                for cy in MIN_CHUNK_Y..=MAX_CHUNK_Y {
+                    self.load_chunk(grid, IVec3::new(column_x, cy, column_z));
+                }
+            }
+        }
+    }
+
     fn evict_distant(
         &self,
         grid: &mut VoxelGrid,
@@ -248,5 +271,75 @@ mod tests {
         let in_grid: Vec<IVec3> = grid.chunk_positions().collect();
         assert_eq!(columns(&in_grid), BTreeSet::from([(0, 0)]));
         assert_eq!(in_grid.len(), 5);
+    }
+
+    /// A streamer over a world wide enough that every column near the origin has terrain.
+    fn wide_world_streamer(budget: u32) -> ChunkStreamer {
+        ChunkStreamer::new(
+            TerrainConfig {
+                world_size: 256,
+                ..TerrainConfig::default()
+            },
+            StreamingConfig {
+                load_radius_chunks: 2,
+                unload_radius_chunks: 3,
+                chunks_per_frame: budget,
+            },
+            WORLD,
+        )
+    }
+
+    fn square(centre: (i32, i32), radius: i32) -> BTreeSet<(i32, i32)> {
+        (centre.0 - radius..=centre.0 + radius)
+            .flat_map(|x| (centre.1 - radius..=centre.1 + radius).map(move |z| (x, z)))
+            .collect()
+    }
+
+    #[test]
+    fn load_columns_now_ignores_the_frame_budget() {
+        let streamer = wide_world_streamer(1);
+        let mut grid = VoxelGrid::new(16);
+
+        streamer.load_columns_now(&mut grid, (3, -2), 2);
+
+        let in_grid: Vec<IVec3> = grid.chunk_positions().collect();
+        assert_eq!(
+            columns(&in_grid),
+            square((3, -2), 2),
+            "every column in range is loaded in one call"
+        );
+        for column in square((3, -2), 2) {
+            let ys: BTreeSet<i32> = in_grid
+                .iter()
+                .filter(|p| (p.x, p.z) == column)
+                .map(|p| p.y)
+                .collect();
+            assert!(
+                ys.contains(&0) && ys.contains(&4),
+                "column {column:?} holds its terrain chunks, got {ys:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn load_columns_now_skips_columns_that_already_have_chunks() {
+        let streamer = wide_world_streamer(1);
+        let mut grid = VoxelGrid::new(16);
+        grid.mutator().place(IVec3::new(1, 1, 1), 4, None);
+
+        streamer.load_columns_now(&mut grid, (0, 0), 1);
+
+        let in_grid: Vec<IVec3> = grid.chunk_positions().collect();
+        assert_eq!(columns(&in_grid), square((0, 0), 1), "the ring is loaded");
+        let origin_column: Vec<IVec3> = in_grid
+            .iter()
+            .copied()
+            .filter(|p| (p.x, p.z) == (0, 0))
+            .collect();
+        assert_eq!(
+            origin_column,
+            vec![IVec3::ZERO],
+            "the occupied column is left as it was"
+        );
     }
 }
