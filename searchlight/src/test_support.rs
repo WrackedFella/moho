@@ -130,7 +130,7 @@ pub(crate) fn test_move_settings() -> MoveSettings {
         stop_speed: 1.0,
         air_accel: 10.0,
         air_speed_cap: 0.8,
-        gravity: 18.0,
+        gravity: None,
         jump_speed: 8.0,
         max_velocity: 90.0,
         autohop: false,
@@ -161,6 +161,7 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
     }
     SimConfig {
         move_settings: test_move_settings(),
+        gravity: 18.0,
         eye_height: 0.7,
         range: 100.0,
         damage: 30,

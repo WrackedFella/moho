@@ -61,8 +61,8 @@ pub struct MoveSettings {
     pub air_accel: f32,
     /// Speed along the wish direction air input can build up to, m/s.
     pub air_speed_cap: f32,
-    /// Downward acceleration while airborne, m/s².
-    pub gravity: f32,
+    /// Downward acceleration while airborne, m/s²; `None` reads the world's gravity.
+    pub gravity: Option<f32>,
     /// Upward speed a jump sets, m/s.
     pub jump_speed: f32,
     /// Largest speed along any one axis, m/s.
@@ -330,11 +330,15 @@ fn apply(state: &mut CharacterState, effect: CharacterEffect) {
 ///
 /// The two halves around the move give an airborne tick the exact displacement under constant
 /// gravity at any tick rate. A landing's impact speed is therefore the mid-tick downward speed.
+///
+/// `gravity` is the downward acceleration in m/s², already resolved by the caller from
+/// [`MoveSettings::gravity`] and the world's; `settings.gravity` is not read here.
 pub fn step(
     state: &mut CharacterState,
     command: &CharacterCommand,
     effects: &[CharacterEffect],
     settings: &MoveSettings,
+    gravity: f32,
     dt: f32,
     slide: impl FnOnce(&CharacterState, Vec3) -> Slide,
 ) -> Vec<Impact> {
@@ -365,7 +369,7 @@ pub fn step(
     let walking = state.grounded
         && !jumped
         && state.velocity.y <= state.velocity.with_y(0.0).length() + REST_SPEED;
-    let half_gravity = settings.gravity * dt / 2.0;
+    let half_gravity = gravity * dt / 2.0;
     if walking {
         ground_move(&mut state.velocity, wish, magnitude, settings, dt);
     } else {
@@ -455,7 +459,10 @@ mod tests {
         dt: f32,
         slide: impl FnOnce(Vec3) -> Slide,
     ) -> Vec<Impact> {
-        super::step(state, command, &[], settings, dt, |_, asked| slide(asked))
+        let gravity = settings.gravity.expect("test settings set gravity");
+        super::step(state, command, &[], settings, gravity, dt, |_, asked| {
+            slide(asked)
+        })
     }
 
     fn state_at(position: Vec3, velocity: Vec3, grounded: bool) -> CharacterState {
@@ -755,7 +762,7 @@ mod tests {
                     stop_speed: 1.0,
                     air_accel: 360.0,
                     air_speed_cap: max_speed,
-                    gravity: 18.0,
+                    gravity: Some(18.0),
                     jump_speed: 8.0,
                     max_velocity: 90.0,
                     autohop: false,
@@ -790,7 +797,7 @@ mod tests {
                 stop_speed: 1.0,
                 air_accel: 20.0,
                 air_speed_cap: 1.0,
-                gravity: 18.0,
+                gravity: Some(18.0),
                 jump_speed: 6.5,
                 max_velocity: 90.0,
                 autohop: false,
@@ -1438,12 +1445,21 @@ mod tests {
             });
 
             assert!(
-                (asked.y - (settings.jump_speed - settings.gravity * DT / 2.0) * DT).abs() < 1e-6,
+                (asked.y
+                    - (settings.jump_speed
+                        - settings.gravity.expect("test settings set gravity") * DT / 2.0)
+                        * DT)
+                    .abs()
+                    < 1e-6,
                 "the jump tick asks (jump - g*dt/2)*dt, asked y = {}",
                 asked.y
             );
             assert!(
-                (state.velocity.y - (settings.jump_speed - settings.gravity * DT)).abs() < 1e-5,
+                (state.velocity.y
+                    - (settings.jump_speed
+                        - settings.gravity.expect("test settings set gravity") * DT))
+                    .abs()
+                    < 1e-5,
                 "{:?}",
                 state.velocity
             );
@@ -1736,6 +1752,7 @@ mod tests {
                     &jump_command(true),
                     &[effect],
                     &test_settings(),
+                    test_settings().gravity.expect("test settings set gravity"),
                     DT,
                     |from, asked| flat_floor(from.position.y)(asked),
                 );
@@ -2049,7 +2066,10 @@ mod tests {
 
             assert_eq!(impacts.len(), 1, "{impacts:?}");
             assert!(
-                (impacts[0].speed - (12.0 + settings.gravity * DT / 2.0)).abs() < 1e-4,
+                (impacts[0].speed
+                    - (12.0 + settings.gravity.expect("test settings set gravity") * DT / 2.0))
+                    .abs()
+                    < 1e-4,
                 "half gravity before the slide, so the impact is 12.15: {:?}",
                 impacts[0]
             );
@@ -2060,7 +2080,7 @@ mod tests {
         #[test]
         fn landing_hit_reports_fall_speed_and_zeroes_vertical_velocity() {
             let settings = MoveSettings {
-                gravity: 0.0,
+                gravity: Some(0.0),
                 ..test_settings()
             };
             let mut state = state_at(Vec3::new(0.0, 0.1, 0.0), Vec3::new(0.0, -12.0, 0.0), false);
@@ -2575,6 +2595,7 @@ mod tests {
                 &CharacterCommand::default(),
                 effects,
                 &test_settings(),
+                test_settings().gravity.expect("test settings set gravity"),
                 DT,
                 |_, asked| {
                     asked_of = Some(asked);
@@ -2677,6 +2698,7 @@ mod tests {
                 command,
                 effects,
                 &test_settings(),
+                test_settings().gravity.expect("test settings set gravity"),
                 DT,
                 |from, asked| flat_floor(from.position.y)(asked),
             )
@@ -2701,6 +2723,7 @@ mod tests {
                 command,
                 effects,
                 &test_settings(),
+                test_settings().gravity.expect("test settings set gravity"),
                 DT,
                 |from, asked| {
                     seen = Some((asked, *from));
@@ -2738,7 +2761,7 @@ mod tests {
                 walker.position
             );
             assert!(
-                (asked.y - (4.0 - settings.gravity * DT / 2.0) * DT).abs() < 1e-6,
+                (asked.y - (4.0 - settings.gravity.expect("test settings set gravity") * DT / 2.0) * DT).abs() < 1e-6,
                 "a grounded character given upward speed runs airborne, so half a tick of gravity acts: asked y = {}",
                 asked.y
             );
@@ -2764,6 +2787,7 @@ mod tests {
                 &CharacterCommand::default(),
                 &effects,
                 &test_settings(),
+                test_settings().gravity.expect("test settings set gravity"),
                 DT,
                 |from, asked| {
                     started_from = Some(*from);
@@ -2909,6 +2933,7 @@ mod tests {
                 &CharacterCommand::default(),
                 &effects,
                 &test_settings(),
+                test_settings().gravity.expect("test settings set gravity"),
                 DT,
                 |from, asked| {
                     started_from = Some(*from);

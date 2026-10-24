@@ -82,6 +82,9 @@ pub enum SpawnError {
 #[derive(Clone, Debug)]
 pub struct SimConfig {
     pub move_settings: MoveSettings,
+    /// Downward acceleration of the world, m/s², positive down: it pulls the player (whose
+    /// `move_settings.gravity` is `None`) and every rigid body.
+    pub gravity: f32,
     /// Height of the eye above the player's capsule centre, in metres.
     pub eye_height: f32,
     /// How far a shot reaches, in metres.
@@ -332,6 +335,7 @@ impl SearchlightSim {
     }
 
     fn assemble(mut world: PhysicsWorld, spawns: Spawns, config: SimConfig) -> Self {
+        world.set_gravity(config.gravity);
         let player = world.add_character(spawns.player + Vec3::Y * STAND_HEIGHT);
         let player_volumes = player_hit_volumes();
         for volume in player_volumes {
@@ -1087,6 +1091,16 @@ mod tests {
             "{at:?}"
         );
         assert!((at.y - (spawn.y + STAND_HEIGHT)).abs() < 1e-3, "{at:?}");
+    }
+
+    #[test]
+    fn the_configured_gravity_reaches_the_world() {
+        let mut config = test_config(rifle_with(5), vec![]);
+        config.gravity = 20.32;
+
+        let sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
+
+        assert_eq!(sim.world.gravity(), 20.32);
     }
 
     #[test]

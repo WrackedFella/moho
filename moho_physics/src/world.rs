@@ -4,8 +4,8 @@ use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterCo
 use rapier3d::prelude::*;
 use std::collections::HashMap;
 
-/// Gravity of the rigid-body world only; characters use [`MoveSettings::gravity`].
-const GRAVITY: f32 = -18.0;
+/// Downward acceleration of a world that never calls [`PhysicsWorld::set_gravity`], m/s².
+const DEFAULT_GRAVITY: f32 = 18.0;
 
 /// Gap, in metres, the character controller keeps between the capsule and what it touches.
 ///
@@ -50,7 +50,7 @@ impl std::fmt::Debug for PhysicsWorld {
 
 impl PhysicsWorld {
     pub fn new() -> Self {
-        let gravity = Vec3::new(0.0, GRAVITY, 0.0);
+        let gravity = Vec3::new(0.0, -DEFAULT_GRAVITY, 0.0);
         let integration_parameters = IntegrationParameters::default();
         let physics_pipeline = PhysicsPipeline::new();
         let island_manager = IslandManager::new();
@@ -112,6 +112,17 @@ impl PhysicsWorld {
             &(),
             &(),
         );
+    }
+
+    /// Set the downward acceleration, m/s², positive down, that pulls rigid bodies and
+    /// characters whose `MoveSettings::gravity` is `None`.
+    pub fn set_gravity(&mut self, gravity: f32) {
+        self.gravity = Vec3::new(0.0, -gravity, 0.0);
+    }
+
+    /// The downward acceleration, m/s², positive down.
+    pub fn gravity(&self) -> f32 {
+        -self.gravity.y
     }
 
     /// Register `mesh` as the static collider for `id`, replacing any previous one.
@@ -221,8 +232,9 @@ impl Default for PhysicsWorld {
 #[cfg(test)]
 mod tests {
     use super::test_support::TEST_TAG;
-    use super::test_support::{floor_mesh, quad_mesh};
+    use super::test_support::{floor_mesh, quad_mesh, test_settings};
     use super::*;
+    use crate::movement::{CharacterCommand, MoveSettings};
     use proptest::prelude::*;
 
     #[test]
@@ -405,6 +417,79 @@ mod tests {
 
         assert_ne!(a, b);
         assert_eq!(world.collider_set.len(), 2);
+    }
+
+    #[test]
+    fn a_new_world_pulls_at_18() {
+        let mut world = PhysicsWorld::new();
+
+        let y = fall_for_one_second(&mut world, 10.0);
+
+        assert_eq!(world.gravity(), 18.0);
+        assert!(
+            (0.7..1.2).contains(&y),
+            "a body falls about 9 m in 1 s at 18, y={y}"
+        );
+    }
+
+    #[test]
+    fn setting_gravity_changes_how_bodies_fall() {
+        let mut world = PhysicsWorld::new();
+        world.set_gravity(9.0);
+
+        let y = fall_for_one_second(&mut world, 10.0);
+
+        assert_eq!(world.gravity(), 9.0);
+        assert!(
+            (5.2..5.7).contains(&y),
+            "a body falls about 4.5 m in 1 s at 9, y={y}"
+        );
+    }
+
+    #[test]
+    fn a_body_and_a_character_dropped_together_land_on_the_same_tick() {
+        const DT: f32 = 1.0 / 60.0;
+        // A bottom this close to the floor counts as landed: the character's skin.
+        const SKIN: f32 = 0.0115;
+        let mut world = PhysicsWorld::new();
+        world.set_gravity(20.32);
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        // Bottoms 5 m above the floor: sphere radius 0.5, capsule half-height plus radius 1.15.
+        let body = world.add_dynamic_sphere(Vec3::new(2.0, 5.5, 0.0), 0.5);
+        let character = world.add_character(Vec3::new(-2.0, 6.15, 0.0));
+        let settings = MoveSettings {
+            gravity: None,
+            ..test_settings()
+        };
+        let mut character_landed = None;
+        let mut body_landed = None;
+
+        for tick in 1..=120 {
+            world
+                .move_character(character, &CharacterCommand::default(), &settings, DT)
+                .expect("character is live");
+            world.step(DT);
+            let character_state = world.character(character).expect("character is live");
+            let body_speed = world.rigid_body_set[body].linvel().y;
+            if character_state.grounded {
+                character_landed.get_or_insert(tick);
+            }
+            if world.body_position(body).expect("body is live").y - 0.5 <= SKIN {
+                body_landed.get_or_insert(tick);
+            }
+            if character_landed.is_some() || body_landed.is_some() {
+                break;
+            }
+            assert!(
+                (character_state.velocity.y - body_speed).abs() < 1e-4,
+                "tick {tick}: character {} vs body {body_speed}",
+                character_state.velocity.y
+            );
+        }
+
+        assert_eq!(character_landed, body_landed);
+        // 5 m at 20.32 m/s² takes 0.70 s, 42 ticks; 18 m/s² would take 45.
+        assert_eq!(character_landed, Some(42));
     }
 
     #[derive(Clone, Debug)]
