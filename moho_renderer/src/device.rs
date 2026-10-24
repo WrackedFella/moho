@@ -6,15 +6,6 @@
 //! - Adapter selection
 //! - Device and queue creation
 //! - Surface configuration
-//!
-//! # Example
-//! ```no_run
-//! use moho_renderer::device::DeviceSetup;
-//!
-//! // Given a winit window:
-//! // let window: &winit::window::Window = ...;
-//! // let setup = DeviceSetup::new(window)?;
-//! ```
 
 use crate::block_on::block_on;
 use std::error::Error;
@@ -105,15 +96,6 @@ impl<'a> DeviceSetup<'a> {
     /// # Returns
     /// * `Ok(DeviceSetup)` - Complete device setup ready for rendering
     /// * `Err(DeviceInitError)` - If any initialization step fails
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use moho_renderer::device::DeviceSetup;
-    /// # let window: &winit::window::Window = todo!();
-    /// let setup = DeviceSetup::new(window)?;
-    /// // Use setup.device, setup.queue, setup.surface, setup.config
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
     pub fn new(window: &'a winit::window::Window) -> Result<Self, DeviceInitError> {
         tracing::info!("Initializing wgpu device");
 
@@ -208,16 +190,6 @@ impl<'a> DeviceSetup<'a> {
             queue,
             config,
         })
-    }
-
-    /// Get the surface format
-    pub fn surface_format(&self) -> wgpu::TextureFormat {
-        self.config.format
-    }
-
-    /// Get the surface size as (width, height)
-    pub fn surface_size(&self) -> (u32, u32) {
-        (self.config.width, self.config.height)
     }
 }
 

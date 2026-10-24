@@ -59,11 +59,6 @@ impl InstanceCollector {
     pub fn cube_instances(&self) -> &[InstanceGpu] {
         &self.cube_instances
     }
-
-    /// Get the total number of collected instances.
-    pub fn total_instances(&self) -> usize {
-        self.sphere_instances.len() + self.cube_instances.len()
-    }
 }
 
 impl Default for InstanceCollector {
@@ -191,7 +186,10 @@ mod tests {
         assert_eq!(materials, vec![0, 1, 0]);
         assert_eq!(material_table.as_slice().len(), 2);
         assert_eq!(collector.cube_instances().len(), 0);
-        assert_eq!(collector.total_instances(), 3);
+        assert_eq!(
+            collector.sphere_instances().len() + collector.cube_instances().len(),
+            3
+        );
     }
 
     #[test]
@@ -210,7 +208,6 @@ mod tests {
 
         assert_eq!(collector.sphere_instances().len(), 1);
         assert_eq!(collector.cube_instances().len(), 2);
-        assert_eq!(collector.total_instances(), 3);
     }
 
     #[test]
@@ -228,7 +225,6 @@ mod tests {
 
         assert!(collector.sphere_instances().is_empty());
         assert!(collector.cube_instances().is_empty());
-        assert_eq!(collector.total_instances(), 0);
     }
 
     #[test]

@@ -7,9 +7,6 @@ mod light_matrix;
 /// Shadow map resolution per cascade/light
 pub const SHADOW_MAP_SIZE: u32 = 4096;
 
-/// Cascade split distances from camera (in world units)
-pub const CASCADE_SPLIT_DISTANCES: [f32; 2] = [400.0, 1500.0];
-
 /// Shadow distance for multi-light system
 pub const SHADOW_DISTANCE: f32 = 1000.0;
 
@@ -20,14 +17,6 @@ const CSM_VERBOSE_LOGGING: bool = false;
 
 // ── PCSS default tuning ────────────────────────────────────────────────
 const DEFAULT_PCSS_LIGHT_SIZE: f32 = 0.03;
-const DEFAULT_PCSS_SEARCH_RADIUS: f32 = 15.0;
-const DEFAULT_PCSS_MAX_PENUMBRA: f32 = 32.0;
-
-// ── Weather-specific PCSS light sizes ──────────────────────────────────
-const PCSS_LIGHT_SIZE_CLEAR: f32 = 0.02;
-const PCSS_LIGHT_SIZE_CLOUDY: f32 = 0.05;
-const PCSS_LIGHT_SIZE_OVERCAST: f32 = 0.08;
-const PCSS_LIGHT_SIZE_STORM: f32 = 0.12;
 
 // ── Shadow geometry ────────────────────────────────────────────────────
 /// Depth bias constant factor applied to shadow map.
@@ -54,30 +43,6 @@ pub enum PcssQuality {
     Ultra = 4,
 }
 
-impl PcssQuality {
-    /// Get blocker search sample count for this quality level
-    pub fn blocker_samples(self) -> u32 {
-        match self {
-            PcssQuality::Off => 0,
-            PcssQuality::Low => 8,
-            PcssQuality::Medium => 12,
-            PcssQuality::High => 16,
-            PcssQuality::Ultra => 24,
-        }
-    }
-
-    /// Get PCF sample count for this quality level
-    pub fn pcf_samples(self) -> u32 {
-        match self {
-            PcssQuality::Off => 9, // 3x3 fixed kernel
-            PcssQuality::Low => 16,
-            PcssQuality::Medium => 24,
-            PcssQuality::High => 32,
-            PcssQuality::Ultra => 48,
-        }
-    }
-}
-
 /// PCSS settings for configuring shadow softness
 #[derive(Debug, Clone, Copy)]
 pub struct PcssSettings {
@@ -86,12 +51,6 @@ pub struct PcssSettings {
     /// Angular size of light source (affects penumbra width)
     /// Typical range: 0.01-0.1 (0.03 is a good default for sun)
     pub light_size: f32,
-    /// Search radius for blocker search (in shadow map texels)
-    pub search_radius: f32,
-    /// Minimum penumbra size (prevents aliasing)
-    pub min_penumbra: f32,
-    /// Maximum penumbra size (performance limit)
-    pub max_penumbra: f32,
 }
 
 impl Default for PcssSettings {
@@ -99,64 +58,14 @@ impl Default for PcssSettings {
         Self {
             quality: PcssQuality::Off,
             light_size: DEFAULT_PCSS_LIGHT_SIZE,
-            search_radius: DEFAULT_PCSS_SEARCH_RADIUS,
-            min_penumbra: 1.0,
-            max_penumbra: DEFAULT_PCSS_MAX_PENUMBRA,
         }
     }
-}
-
-impl PcssSettings {
-    /// Create settings for a specific quality level with default parameters
-    pub fn from_quality(quality: PcssQuality) -> Self {
-        Self {
-            quality,
-            ..Default::default()
-        }
-    }
-
-    /// Create settings for specific weather conditions
-    pub fn for_weather(weather: &str) -> Self {
-        match weather {
-            "clear" => Self {
-                quality: PcssQuality::High,
-                light_size: PCSS_LIGHT_SIZE_CLEAR,
-                ..Default::default()
-            },
-            "cloudy" => Self {
-                quality: PcssQuality::Medium,
-                light_size: PCSS_LIGHT_SIZE_CLOUDY,
-                ..Default::default()
-            },
-            "overcast" => Self {
-                quality: PcssQuality::Medium,
-                light_size: PCSS_LIGHT_SIZE_OVERCAST,
-                ..Default::default()
-            },
-            "rain" | "storm" => Self {
-                quality: PcssQuality::Low,
-                light_size: PCSS_LIGHT_SIZE_STORM,
-                ..Default::default()
-            },
-            _ => Self::default(),
-        }
-    }
-}
-
-/// Light type for shadow system
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum LightType {
-    Sun,
-    Moon,
-    Dynamic,
 }
 
 /// Active shadow-casting light
 #[derive(Debug, Clone)]
 pub struct ActiveShadowLight {
-    pub light_type: LightType,
     pub light_index: u32, // 0-3 for shader array index
-    pub matrix: glam::Mat4,
     pub intensity: f32,
 }
 
@@ -551,10 +460,7 @@ impl ShadowSystem {
 
         let sun_matrix = light_matrix::light_view_projection(sun_dir, cam_pos);
         let moon_matrix = light_matrix::light_view_projection(moon_dir, cam_pos);
-        self.active_lights = light_matrix::active_shadow_lights(
-            (sun_matrix, sun_intensity),
-            (moon_matrix, moon_intensity),
-        );
+        self.active_lights = light_matrix::active_shadow_lights(sun_intensity, moon_intensity);
 
         if !self.csm_logged_once.get() {
             tracing::info!(
@@ -578,21 +484,5 @@ impl ShadowSystem {
         }
 
         gpu_data
-    }
-
-    /// Update PCSS settings for shadow softness control
-    /// Changes take effect on the next frame when shadow matrices are recalculated
-    pub fn set_pcss_settings(&mut self, settings: PcssSettings) {
-        self.pcss_settings = settings;
-        tracing::info!(
-            quality = ?settings.quality,
-            light_size = settings.light_size,
-            "PCSS settings updated"
-        );
-    }
-
-    /// Get current PCSS settings
-    pub fn pcss_settings(&self) -> &PcssSettings {
-        &self.pcss_settings
     }
 }

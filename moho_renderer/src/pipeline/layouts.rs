@@ -39,7 +39,7 @@ pub fn create_camera_bind_group_layout(
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
                     min_binding_size: Some(std::num::NonZeroU64::new(camera_size).ok_or_else(
-                        || PipelineInitError::CameraBufferSize("camera size was zero".to_string()),
+                        || PipelineInitError::CameraBuffer("camera size was zero".to_string()),
                     )?),
                 },
                 count: None,
@@ -61,11 +61,7 @@ pub fn create_camera_bind_group_layout(
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
                     min_binding_size: Some(std::num::NonZeroU64::new(lighting_size).ok_or_else(
-                        || {
-                            PipelineInitError::LightingBufferSize(
-                                "lighting size was zero".to_string(),
-                            )
-                        },
+                        || PipelineInitError::LightingBuffer("lighting size was zero".to_string()),
                     )?),
                 },
                 count: None,
@@ -135,7 +131,7 @@ pub fn create_shadow_bind_group_layout(
                     has_dynamic_offset: false,
                     min_binding_size: Some(
                         std::num::NonZeroU64::new(shadow_matrix_size).ok_or_else(|| {
-                            PipelineInitError::ShadowMatrixSize(
+                            PipelineInitError::ShadowMatrix(
                                 "shadow matrix size was zero".to_string(),
                             )
                         })?,
@@ -187,11 +183,7 @@ pub fn create_shadow_pass_bind_group_layout(
                 ty: wgpu::BufferBindingType::Uniform,
                 has_dynamic_offset: false,
                 min_binding_size: Some(std::num::NonZeroU64::new(shadow_matrix_size).ok_or_else(
-                    || {
-                        PipelineInitError::ShadowMatrixSize(
-                            "shadow matrix size was zero".to_string(),
-                        )
-                    },
+                    || PipelineInitError::ShadowMatrix("shadow matrix size was zero".to_string()),
                 )?),
             },
             count: None,
@@ -227,7 +219,7 @@ pub fn create_csm_pass_bind_group_layout(
                 ty: wgpu::BufferBindingType::Uniform,
                 has_dynamic_offset: false,
                 min_binding_size: Some(std::num::NonZeroU64::new(csm_matrix_size).ok_or_else(
-                    || PipelineInitError::CsmMatrixSize("csm matrix size was zero".to_string()),
+                    || PipelineInitError::CsmMatrix("csm matrix size was zero".to_string()),
                 )?),
             },
             count: None,

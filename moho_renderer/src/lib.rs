@@ -1,19 +1,12 @@
 //! GPU rendering backend for the Moho game engine.
 //!
-//! Built on [`wgpu`], this crate handles:
+//! Built on [`wgpu`], which stays behind [`RendererBackend`]: games reach the renderer
+//! through [`create_renderer`] and hand it data ([`Scene`], [`WorldMeshes`],
+//! [`MaterialTable`], the GPU data types), never GPU objects.
 //!
-//! - **[`Renderer`]** — Central render orchestrator (device, pipelines, frame submit)
 //! - **[`Scene`]** — Per-frame scene state (meshes, lights, camera)
-//! - **[`ShadowSystem`]** — Cascaded shadow maps with optional PCSS soft shadows
-//! - **[`SsaoSystem`]** — Screen-space ambient occlusion (GTAO)
-//! - **[`LightManager`]** — Dynamic point/spot light management
 //! - **[`MaterialTable`]** — GPU-side material storage buffer
-//! - **[`pipeline`]** — Render pipeline construction helpers
-
-pub type TextureFormatRepr = wgpu::TextureFormat;
-
-/// Type alias for backward compatibility.
-pub type Material = MaterialGpu;
+//! - **[`pipeline`]** — Shader sources and vertex layouts, for shader validation
 
 mod materials;
 pub use materials::MaterialTable;
@@ -22,10 +15,7 @@ pub use moho_render_api::LightDesc;
 pub use scene::Scene;
 mod gpu_types;
 mod sky;
-pub use gpu_types::{
-    CameraGpu, CascadedShadowMatrixGpu, LightingGpu, MAX_SHADOW_LIGHTS, MultiLightShadowGpu,
-    ShadowMatrixGpu, ToneMapGpu,
-};
+pub use gpu_types::LightingGpu;
 pub use moho_render_api::{InstanceGpu, MaterialGpu};
 mod block_on;
 mod bloom;
@@ -35,31 +25,23 @@ pub use markers::{MARKER_INFLATE, MarkerDraws, Markers};
 mod world_meshes;
 pub use world_meshes::WorldMeshes;
 mod instance_collector;
-pub use instance_collector::InstanceCollector;
+pub(crate) use instance_collector::InstanceCollector;
 mod mesh_renderer;
-pub use mesh_renderer::MeshRenderer;
+pub(crate) use mesh_renderer::MeshRenderer;
 
-pub mod device;
-mod render_ops;
-mod shadow;
-pub use shadow::{ActiveShadowLight, LightType, PcssQuality, PcssSettings, ShadowSystem};
-mod ssao;
-pub use ssao::{SsaoQuality, SsaoSettings, SsaoSystem};
+mod builder;
+mod device;
 mod lights;
-pub use lights::{Light, LightManager};
-mod types;
-pub use device::{DeviceInitError, DeviceSetup};
 pub mod pipeline;
-pub use pipeline::{PipelineInitError, PipelineSetup};
-pub mod resources;
-pub use resources::ResourcePool;
-pub mod builder;
-pub use builder::RendererBuilder;
+mod render_ops;
+mod resources;
+mod shadow;
+mod ssao;
+mod types;
 
 mod renderer;
-pub use renderer::Renderer;
+pub(crate) use renderer::Renderer;
 mod tone_map;
-pub use tone_map::brightness_exposure;
 
 /// Object-safe renderer backend trait.
 ///
@@ -138,11 +120,6 @@ pub trait RendererBackend {
     /// Set SSAO quality level.
     fn set_ssao_quality(&mut self, quality: u8);
 
-    /// Return the surface texture format used by the renderer (if applicable).
-    /// Useful for UI integrations that need to create GPU pipelines matching the swapchain format.
-    fn surface_format(&self) -> Option<TextureFormatRepr> {
-        None
-    }
     /// Set the provider of UI paint data, pulled in `submit_frame` and drawn
     /// over the scene; `None` clears it. No-op by default.
     fn set_ui_source(&mut self, _source: Option<UiSource>) {}
@@ -229,9 +206,6 @@ impl RendererBackend for Renderer<'_> {
     }
     fn update_lighting(&mut self, lighting: crate::gpu_types::LightingGpu) {
         self.update_lighting(lighting);
-    }
-    fn surface_format(&self) -> Option<TextureFormatRepr> {
-        Some(self.surface_format())
     }
     fn set_ui_source(&mut self, source: Option<UiSource>) {
         self.set_ui_source(source);

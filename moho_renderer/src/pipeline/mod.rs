@@ -21,17 +21,8 @@
 //! - `layouts`: Bind group and pipeline layout creation
 //! - `mod`: Pipeline orchestration and render pipeline creation
 //!
-//! # Example
-//!
-//! ```no_run
-//! # use moho_renderer::pipeline::PipelineSetup;
-//! # use wgpu::{Device, SurfaceConfiguration};
-//! # fn example(device: &Device, config: &SurfaceConfiguration) {
-//! let pipeline_setup = PipelineSetup::new(device, config).unwrap();
-//! let main_pipeline = pipeline_setup.main_pipeline();
-//! let skybox_pipeline = pipeline_setup.skybox_pipeline();
-//! # }
-//! ```
+//! Outside the crate only the shader sources and the two vertex-attribute tables are
+//! public, for shader validation.
 
 mod layouts;
 mod marker;
@@ -68,24 +59,24 @@ pub const MAIN_INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_at
 
 /// Error type for pipeline initialization failures.
 #[derive(Debug)]
-pub enum PipelineInitError {
+pub(crate) enum PipelineInitError {
     /// Camera buffer size calculation failed
-    CameraBufferSize(String),
+    CameraBuffer(String),
     /// Lighting buffer size calculation failed
-    LightingBufferSize(String),
+    LightingBuffer(String),
     /// Shadow matrix buffer size calculation failed
-    ShadowMatrixSize(String),
+    ShadowMatrix(String),
     /// CSM matrix buffer size calculation failed
-    CsmMatrixSize(String),
+    CsmMatrix(String),
 }
 
 impl std::fmt::Display for PipelineInitError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::CameraBufferSize(msg) => write!(f, "Camera buffer size error: {msg}"),
-            Self::LightingBufferSize(msg) => write!(f, "Lighting buffer size error: {msg}"),
-            Self::ShadowMatrixSize(msg) => write!(f, "Shadow matrix size error: {msg}"),
-            Self::CsmMatrixSize(msg) => write!(f, "CSM matrix size error: {msg}"),
+            Self::CameraBuffer(msg) => write!(f, "Camera buffer size error: {msg}"),
+            Self::LightingBuffer(msg) => write!(f, "Lighting buffer size error: {msg}"),
+            Self::ShadowMatrix(msg) => write!(f, "Shadow matrix size error: {msg}"),
+            Self::CsmMatrix(msg) => write!(f, "CSM matrix size error: {msg}"),
         }
     }
 }
@@ -97,7 +88,7 @@ impl std::error::Error for PipelineInitError {}
 /// This struct holds compiled shaders, bind group layouts, pipeline layouts,
 /// and render pipelines. It's created once during initialization and provides
 /// immutable access to these resources throughout the renderer's lifetime.
-pub struct PipelineSetup {
+pub(crate) struct PipelineSetup {
     // Shaders (kept for potential future use - hot reloading, debugging)
     #[allow(dead_code)]
     main_shader: wgpu::ShaderModule,
@@ -147,17 +138,6 @@ impl PipelineSetup {
     /// Returns `PipelineInitError` if:
     /// - Skybox shader file cannot be read
     /// - Buffer size calculations fail (should never happen with valid types)
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use moho_renderer::pipeline::PipelineSetup;
-    /// # use wgpu::{Device, SurfaceConfiguration};
-    /// # fn example(device: &Device, config: &SurfaceConfiguration) {
-    /// let pipeline = PipelineSetup::new(device, config).unwrap();
-    /// // Use pipeline.main_pipeline(), pipeline.camera_bind_group_layout(), etc.
-    /// # }
-    /// ```
     pub fn new(
         device: &wgpu::Device,
         config: &wgpu::SurfaceConfiguration,

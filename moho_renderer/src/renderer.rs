@@ -182,11 +182,6 @@ impl<'a> Renderer<'a> {
             .build()
     }
 
-    /// Return the configured surface format for the renderer.
-    pub fn surface_format(&self) -> wgpu::TextureFormat {
-        self.config.format
-    }
-
     /// Update lighting parameters and write to GPU buffer.
     pub fn update_lighting(&mut self, lighting: crate::gpu_types::LightingGpu) {
         let lighting = lighting_with_sky_palette(lighting);
@@ -230,16 +225,6 @@ impl<'a> Renderer<'a> {
         self.light_manager.set_light_enabled(id, enabled);
     }
 
-    /// Get mutable access to a light for detailed modifications.
-    pub fn get_light_mut(&mut self, id: u32) -> Option<&mut crate::lights::Light> {
-        self.light_manager.get_light_mut(id)
-    }
-
-    /// Get read-only access to a light.
-    pub fn get_light(&self, id: u32) -> Option<&crate::lights::Light> {
-        self.light_manager.get_light(id)
-    }
-
     /// Get all lights as serializable descriptors (for save/load).
     pub fn all_lights_as_descs(&self) -> Vec<moho_render_api::LightDesc> {
         self.light_manager
@@ -253,11 +238,6 @@ impl<'a> Renderer<'a> {
                 enabled: l.enabled,
             })
             .collect()
-    }
-
-    /// Get the number of visible lights after frustum culling.
-    pub fn visible_light_count(&self) -> usize {
-        self.light_manager.visible_light_count()
     }
 
     /// Update the material table on the GPU. This replaces the storage buffer bound at

@@ -141,22 +141,6 @@ impl ResourcePool {
     /// * `depth_format` - The depth texture format
     /// * `surface_width` - Width of the rendering surface
     /// * `surface_height` - Height of the rendering surface
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use moho_renderer::resources::ResourcePool;
-    /// # use wgpu::{Device, BindGroupLayout, TextureFormat};
-    /// # fn example(device: &Device, camera_bgl: &BindGroupLayout) {
-    /// let resources = ResourcePool::new(
-    ///     device,
-    ///     camera_bgl,
-    ///     TextureFormat::Depth24Plus,
-    ///     1920,
-    ///     1080
-    /// );
-    /// # }
-    /// ```
     pub fn new(
         device: &wgpu::Device,
         camera_bgl: &wgpu::BindGroupLayout,

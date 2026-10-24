@@ -21,21 +21,6 @@
 //! Each stage transition is a fallible operation that returns a `Result`,
 //! allowing for clear error propagation throughout the initialization process.
 //!
-//! # Example
-//!
-//! ```no_run
-//! use moho_renderer::RendererBuilder;
-//! # use winit::window::Window;
-//! # fn example(window: &Window) -> Result<(), Box<dyn std::error::Error>> {
-//! let renderer = RendererBuilder::new(window)
-//!     .init_device()?
-//!     .create_pipelines()?
-//!     .allocate_resources()?
-//!     .build()?;
-//! # Ok(())
-//! # }
-//! ```
-//!
 //! # Design Rationale
 //!
 //! The staged builder pattern ensures:
@@ -92,16 +77,6 @@ impl<'a> RendererBuilder<'a> {
     /// # Arguments
     ///
     /// * `window` - The window to render into. Must remain valid for the lifetime of the renderer.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use moho_renderer::RendererBuilder;
-    /// # use winit::window::Window;
-    /// # fn example(window: &Window) {
-    /// let builder = RendererBuilder::new(window);
-    /// # }
-    /// ```
     pub fn new(window: &'a winit::window::Window) -> Self {
         Self { window }
     }
@@ -121,18 +96,6 @@ impl<'a> RendererBuilder<'a> {
     /// - Surface creation fails
     /// - No suitable adapter is found
     /// - Device creation fails
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use moho_renderer::RendererBuilder;
-    /// # use winit::window::Window;
-    /// # fn example(window: &Window) -> Result<(), Box<dyn std::error::Error>> {
-    /// let device_builder = RendererBuilder::new(window)
-    ///     .init_device()?;
-    /// # Ok(())
-    /// # }
-    /// ```
     pub fn init_device(self) -> Result<DeviceBuilder<'a>, Box<dyn std::error::Error>> {
         tracing::info!("(wgpu) Initializing renderer (instanced cubes)");
         let device_setup = DeviceSetup::new(self.window)?;
@@ -158,19 +121,6 @@ impl<'a> DeviceBuilder<'a> {
     /// - Shader files cannot be read
     /// - Shader compilation fails
     /// - Pipeline creation fails
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use moho_renderer::RendererBuilder;
-    /// # use winit::window::Window;
-    /// # fn example(window: &Window) -> Result<(), Box<dyn std::error::Error>> {
-    /// let pipeline_builder = RendererBuilder::new(window)
-    ///     .init_device()?
-    ///     .create_pipelines()?;
-    /// # Ok(())
-    /// # }
-    /// ```
     pub fn create_pipelines(self) -> Result<PipelineBuilder<'a>, Box<dyn std::error::Error>> {
         let pipeline_setup =
             PipelineSetup::new(&self.device_setup.device, &self.device_setup.config)?;
@@ -193,20 +143,6 @@ impl<'a> PipelineBuilder<'a> {
     /// - Creates bind groups
     ///
     /// All resources are initialized with sensible defaults.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use moho_renderer::RendererBuilder;
-    /// # use winit::window::Window;
-    /// # fn example(window: &Window) -> Result<(), Box<dyn std::error::Error>> {
-    /// let resource_builder = RendererBuilder::new(window)
-    ///     .init_device()?
-    ///     .create_pipelines()?
-    ///     .allocate_resources()?;
-    /// # Ok(())
-    /// # }
-    /// ```
     pub fn allocate_resources(self) -> Result<ResourceBuilder<'a>, Box<dyn std::error::Error>> {
         let resources = ResourcePool::new(
             &self.device_setup.device,
@@ -236,21 +172,6 @@ impl<'a> ResourceBuilder<'a> {
     /// # Errors
     ///
     /// Returns an error if shadow system initialization fails.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use moho_renderer::RendererBuilder;
-    /// # use winit::window::Window;
-    /// # fn example(window: &Window) -> Result<(), Box<dyn std::error::Error>> {
-    /// let renderer = RendererBuilder::new(window)
-    ///     .init_device()?
-    ///     .create_pipelines()?
-    ///     .allocate_resources()?
-    ///     .build()?;
-    /// # Ok(())
-    /// # }
-    /// ```
     pub fn build(self) -> Result<Renderer<'a>, Box<dyn std::error::Error>> {
         let camera_bgl = self.pipeline_setup.camera_bind_group_layout();
         let shadow_bind_group_layout = self.pipeline_setup.shadow_bind_group_layout();
