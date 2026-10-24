@@ -467,7 +467,7 @@ The settings screen provides click-to-rebind functionality:
 ## Console Integration
 
 Strategy uses the engine console, `moho_ui_shell::Console<StrategyConsoleCommand>`, held in
-`UiStateManager.console`. `console_commands::register` adds the strategy commands (god, noclip,
+`UiStateManager.console`. `console_commands::register` adds the strategy commands (noclip,
 sun, time, spawn, marker, marker_clear, r_view_height) next to the engine's; the game drains
 them in `Game::command()` and applies them in its tick. See
 [wiki/architecture/console.md](../wiki/architecture/console.md) and
