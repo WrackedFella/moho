@@ -1,10 +1,23 @@
 //! The simulation's tuning, with the rifle's numbers taken from its definition.
 
-use moho_physics::{CharacterBody, MoveSettings};
+use moho_physics::{CharacterBody, Hull, HullShape, MoveSettings, Stature};
 use searchlight_rules::{BodyPart, BodyProfile, Kit, LeanTuning};
 
 use crate::brain::EnemyTuning;
 use crate::sim::SimConfig;
+
+/// The player's and every target's body: Source's 0.81 m wide, 1.83 m tall capsule, eye at
+/// 1.63 m.
+pub const SHIPPED_BODY: CharacterBody = CharacterBody {
+    standing: Stature {
+        hull: Hull {
+            shape: HullShape::Capsule,
+            radius: 0.405,
+            length: 1.83,
+        },
+        eye_height: 1.63,
+    },
+};
 
 /// Builds the simulation tuning around the starting `kit`: its weapon's numbers and its loadout.
 pub fn tuning(kit: Kit) -> SimConfig {
@@ -23,8 +36,7 @@ pub fn tuning(kit: Kit) -> SimConfig {
             autohop: false,
         },
         gravity: 18.0,
-        eye_height: 0.7,
-        character_body: CharacterBody::default(),
+        character_body: SHIPPED_BODY,
         range: weapon.range,
         damage: weapon.damage,
         cooldown_ticks: weapon.cooldown_ticks,

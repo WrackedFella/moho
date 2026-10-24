@@ -62,6 +62,45 @@ fn step_reach(remaining: Vec3, min_width: f32) -> Option<(Vec3, f32)> {
     (length >= STEP_MIN_PROGRESS).then(|| (remaining / length, length.max(min_width)))
 }
 
+/// A character hull as the ground query sees it: a core disc swept by a sphere.
+///
+/// A capsule is a point swept by its radius; a round cylinder is its flat base disc swept by
+/// its rounding.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Footing {
+    /// Radius of the core disc.
+    disc: f32,
+    /// Radius of the sphere swept over the core.
+    sweep: f32,
+    /// How far below the hull's centre the core's bottom sits.
+    core_bottom: f32,
+}
+
+impl Footing {
+    /// The footing of a character collider.
+    ///
+    /// # Panics
+    /// If `shape` is neither a capsule nor a round cylinder; the world builds only those.
+    fn of(shape: &dyn Shape) -> Self {
+        if let Some(capsule) = shape.as_capsule() {
+            Self {
+                disc: 0.0,
+                sweep: capsule.radius,
+                core_bottom: capsule.half_height(),
+            }
+        } else {
+            let round = shape
+                .as_round_cylinder()
+                .expect("character colliders are capsules or round cylinders");
+            Self {
+                disc: round.inner_shape.radius,
+                sweep: round.border_radius,
+                core_bottom: round.inner_shape.half_height,
+            }
+        }
+    }
+}
+
 /// The world as one character's collide-and-slide sees it.
 pub(super) struct Slider<'a> {
     pub controller: &'a KinematicCharacterController,
@@ -122,22 +161,20 @@ impl Slider<'_> {
     /// itself, cast down to its skin offset, gives the gap: how far it can drop before it
     /// touches anything.
     pub(super) fn ground_below(&self, centre: Vec3) -> Option<Ground> {
-        let capsule = self
-            .shape
-            .as_capsule()
-            .expect("character colliders are capsules");
+        let footing = Footing::of(self.shape);
         let CharacterLength::Absolute(skin) = self.controller.offset else {
             panic!("the world builds its character controller with an absolute skin offset");
         };
 
-        let base_radius = capsule.radius * (1.0 - WALKABLE_NORMAL_Y * WALKABLE_NORMAL_Y).sqrt();
+        let base_radius =
+            footing.disc + footing.sweep * (1.0 - WALKABLE_NORMAL_Y * WALKABLE_NORMAL_Y).sqrt();
         let base = Cylinder::new(FLAT_BASE_HALF_HEIGHT, base_radius);
-        let base_at = Pose::from_translation(centre - Vec3::Y * capsule.half_height());
+        let base_at = Pose::from_translation(centre - Vec3::Y * footing.core_bottom);
         let (collider, face) = self.queries.cast_shape(
             &base_at,
             -Vec3::Y,
             &base,
-            cast_within(capsule.radius + STEP_HEIGHT),
+            cast_within(footing.sweep + STEP_HEIGHT),
         )?;
         let normal = self.face_normal(collider, &face, centre);
         if normal.y < WALKABLE_NORMAL_Y {
@@ -161,7 +198,7 @@ impl Slider<'_> {
                         let cosine = drop.normal1.y.max(WALKABLE_NORMAL_Y);
                         (drop.time_of_impact - skin / cosine).max(0.0)
                     }
-                    None => (face.time_of_impact + FLAT_BASE_HALF_HEIGHT - capsule.radius - skin)
+                    None => (face.time_of_impact + FLAT_BASE_HALF_HEIGHT - footing.sweep - skin)
                         .max(0.0),
                 }
             }

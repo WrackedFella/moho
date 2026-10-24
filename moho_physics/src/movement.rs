@@ -121,8 +121,50 @@ impl Default for CharacterBody {
 
 impl CharacterBody {
     /// Panics on an impossible hull: non-positive sizes, a capsule no longer than its
-    /// diameter, or `rounding` outside `0 < rounding <= radius`.
-    pub fn validate(&self) {}
+    /// diameter, or `rounding` outside `0 < rounding <= radius`. A round cylinder must also
+    /// be longer than twice its rounding.
+    ///
+    /// Panics rather than returning an error because a bad hull is a programmer error in
+    /// the game's data.
+    pub fn validate(&self) {
+        let Hull {
+            shape,
+            radius,
+            length,
+        } = self.standing.hull;
+        assert!(
+            radius.is_finite() && radius > 0.0,
+            "impossible hull: radius {radius} must be positive"
+        );
+        assert!(
+            length.is_finite() && length > 0.0,
+            "impossible hull: length {length} must be positive"
+        );
+        let cap = match shape {
+            HullShape::Capsule => radius,
+            HullShape::RoundCylinder { rounding } => {
+                assert!(
+                    rounding.is_finite() && rounding > 0.0 && rounding <= radius,
+                    "impossible hull: rounding {rounding} must be in (0, radius {radius}]"
+                );
+                rounding
+            }
+        };
+        assert!(
+            length > 2.0 * cap,
+            "impossible hull: length {length} must exceed twice its end radius {cap}"
+        );
+    }
+}
+
+/// The game data one [`step`] reads besides the command: the character's shape, its movement
+/// settings and the gravity already resolved from them and the world's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tuning {
+    pub body: CharacterBody,
+    pub settings: MoveSettings,
+    /// Downward acceleration in m/s²; `settings.gravity` is not read by the step.
+    pub gravity: f32,
 }
 
 /// One surface the character lost speed into this tick.
@@ -391,12 +433,15 @@ pub fn step(
     state: &mut CharacterState,
     command: &CharacterCommand,
     effects: &[CharacterEffect],
-    _body: &CharacterBody,
-    settings: &MoveSettings,
-    gravity: f32,
+    tuning: &Tuning,
     dt: f32,
     slide: impl FnOnce(&CharacterState, Vec3) -> Slide,
 ) -> Vec<Impact> {
+    let Tuning {
+        body,
+        ref settings,
+        gravity,
+    } = *tuning;
     for effect in effects {
         apply(state, *effect);
     }
@@ -452,6 +497,8 @@ pub fn step(
     settle(state, &slid, walking, asked, dt);
     state.velocity = checked(state.velocity, settings.max_velocity);
     state.jump_held = command.jump;
+    let Stature { hull, eye_height } = body.standing;
+    state.eye = Vec3::Y * (eye_height - hull.length / 2.0);
     impacts
 }
 
@@ -502,6 +549,16 @@ mod tests {
 
     const DT: f32 = 1.0 / 60.0;
 
+    /// The default body under [`test_settings`] and its gravity.
+    fn test_tuning() -> Tuning {
+        let settings = test_settings();
+        Tuning {
+            body: CharacterBody::default(),
+            gravity: settings.gravity.expect("test settings set gravity"),
+            settings,
+        }
+    }
+
     fn collider() -> ColliderHandle {
         ColliderHandle::invalid()
     }
@@ -514,17 +571,12 @@ mod tests {
         dt: f32,
         slide: impl FnOnce(Vec3) -> Slide,
     ) -> Vec<Impact> {
-        let gravity = settings.gravity.expect("test settings set gravity");
-        super::step(
-            state,
-            command,
-            &[],
-            &CharacterBody::default(),
-            settings,
-            gravity,
-            dt,
-            |_, asked| slide(asked),
-        )
+        let tuning = Tuning {
+            settings: *settings,
+            gravity: settings.gravity.expect("test settings set gravity"),
+            ..test_tuning()
+        };
+        super::step(state, command, &[], &tuning, dt, |_, asked| slide(asked))
     }
 
     fn state_at(position: Vec3, velocity: Vec3, grounded: bool) -> CharacterState {
@@ -1814,9 +1866,7 @@ mod tests {
                     &mut state,
                     &jump_command(true),
                     &[effect],
-                    &CharacterBody::default(),
-                    &test_settings(),
-                    test_settings().gravity.expect("test settings set gravity"),
+                    &test_tuning(),
                     DT,
                     |from, asked| flat_floor(from.position.y)(asked),
                 );
@@ -2658,9 +2708,7 @@ mod tests {
                 &mut state,
                 &CharacterCommand::default(),
                 effects,
-                &CharacterBody::default(),
-                &test_settings(),
-                test_settings().gravity.expect("test settings set gravity"),
+                &test_tuning(),
                 DT,
                 |_, asked| {
                     asked_of = Some(asked);
@@ -2762,9 +2810,7 @@ mod tests {
                 state,
                 command,
                 effects,
-                &CharacterBody::default(),
-                &test_settings(),
-                test_settings().gravity.expect("test settings set gravity"),
+                &test_tuning(),
                 DT,
                 |from, asked| flat_floor(from.position.y)(asked),
             )
@@ -2788,9 +2834,7 @@ mod tests {
                 state,
                 command,
                 effects,
-                &CharacterBody::default(),
-                &test_settings(),
-                test_settings().gravity.expect("test settings set gravity"),
+                &test_tuning(),
                 DT,
                 |from, asked| {
                     seen = Some((asked, *from));
@@ -2853,9 +2897,7 @@ mod tests {
                 &mut state,
                 &CharacterCommand::default(),
                 &effects,
-                &CharacterBody::default(),
-                &test_settings(),
-                test_settings().gravity.expect("test settings set gravity"),
+                &test_tuning(),
                 DT,
                 |from, asked| {
                     started_from = Some(*from);
@@ -3000,9 +3042,7 @@ mod tests {
                 &mut state,
                 &CharacterCommand::default(),
                 &effects,
-                &CharacterBody::default(),
-                &test_settings(),
-                test_settings().gravity.expect("test settings set gravity"),
+                &test_tuning(),
                 DT,
                 |from, asked| {
                     started_from = Some(*from);

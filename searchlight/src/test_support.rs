@@ -7,7 +7,7 @@ use moho_input::Action;
 use moho_input::action_map::ActionMap;
 use moho_input::bindings::Input;
 use moho_level::NavMesh;
-use moho_physics::{CharacterBody, MoveSettings, PhysicsWorld};
+use moho_physics::{MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::{
     BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId, LeanTuning, Loadout, Magazine,
@@ -19,6 +19,7 @@ use crate::brain::EnemyTuning;
 use crate::input::SearchlightAction;
 use crate::sim::SimConfig;
 use crate::tag::SurfaceTag;
+use crate::tuning::SHIPPED_BODY;
 use crate::wave::WaveTuning;
 
 pub(crate) const DT: f32 = 1.0 / 60.0;
@@ -148,6 +149,12 @@ pub(crate) fn test_profile() -> BodyProfile {
 
 /// Tuning with a 3-tick cooldown, 10-tick reload, 30 damage and the given rifle, with
 /// `spares` stowed in order on a rig that has one slot per spare.
+/// Puts `config`'s eye `height` m above the capsule centre, the frame hit volumes are posed in.
+pub(crate) fn set_eye_above_centre(config: &mut SimConfig, height: f32) {
+    let standing = &mut config.character_body.standing;
+    standing.eye_height = height + standing.hull.length / 2.0;
+}
+
 pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
     let slots = u32::try_from(spares.len()).expect("a handful of test spares");
     let mut rig = Rig::new(
@@ -162,8 +169,7 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
     SimConfig {
         move_settings: test_move_settings(),
         gravity: 18.0,
-        eye_height: 0.7,
-        character_body: CharacterBody::default(),
+        character_body: SHIPPED_BODY,
         range: 100.0,
         damage: 30,
         cooldown_ticks: 3,

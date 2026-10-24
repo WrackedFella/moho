@@ -1175,14 +1175,12 @@ impl Game for SearchlightGame {
         self.stage.sync_enemies(self.mode.sim());
         if let Some(renderer) = ctx.renderer() {
             let sim = self.mode.sim();
-            let mut view = first_person_view(
+            let view = first_person_view(
                 &self.previous,
                 &sim.player(),
                 alpha,
                 look_to_turn(self.input.pending_look()),
             );
-            // TODO: remove this shim once the view reads `state.eye`.
-            view.eye += Vec3::Y * sim.eye_height();
             let tuning = sim.lean_tuning();
             let from = self.previous_lean.amount();
             let amount = from + alpha * (sim.player_lean().amount() - from);
@@ -1240,7 +1238,7 @@ mod tests {
 
     fn arena_config() -> crate::sim::SimConfig {
         let mut config = test_config(rifle_from(mag(30, 30)), vec![]);
-        config.eye_height = 0.72;
+        crate::test_support::set_eye_above_centre(&mut config, 0.72);
         config.enemy.damage = 100;
         config.enemy.reaction_ticks = 30;
         config
@@ -1436,7 +1434,10 @@ mod tests {
 
         let tick = 1.0 / 60.0 / 0.25;
         let blended = tick + ALPHA * (2.0 * tick - tick);
-        let standing = game.sim().player().position + Vec3::Y * game.sim().eye_height();
+        let standing = {
+            let player = game.sim().player();
+            player.position + player.eye
+        };
         let eye = view.inverse().w_axis.truncate();
         assert!(
             (eye.x - standing.x - 0.35 * blended).abs() < 1e-3,
@@ -1471,7 +1472,10 @@ mod tests {
         tick_with(&mut game, &mut clock, &restart_command());
 
         assert!(!game.sim().player_body().is_dead());
-        let standing = game.sim().player().position + Vec3::Y * game.sim().eye_height();
+        let standing = {
+            let player = game.sim().player();
+            player.position + player.eye
+        };
         for alpha in [0.0, 0.5] {
             let mut renderer = SettingsRenderer::default();
             let ctx_clock = GameClock::default();

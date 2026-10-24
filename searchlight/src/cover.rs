@@ -119,6 +119,8 @@ mod tests {
 
     use super::*;
     use crate::test_support::{enemy_tuning, world_with};
+    use crate::tuning::SHIPPED_BODY;
+    use moho_physics::CharacterSpawn;
 
     const FLOOR: (Vec3, Vec3) = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
 
@@ -235,7 +237,7 @@ mod tests {
     }
 
     const PLAYER: Threat = Threat {
-        eye: Vec3::new(0.0, 1.8, 0.0),
+        eye: Vec3::new(0.0, 1.63, 0.0),
         aim: Vec3::new(0.0, 0.915, 0.0),
     };
     const ENEMY_EYE: f32 = 1.5;
@@ -257,7 +259,7 @@ mod tests {
             &world,
             &[MARKER],
             taken,
-            Vec3::new(0.0, 1.15, 12.0),
+            Vec3::new(0.0, 0.915, 12.0),
             PLAYER,
             enemy_eye,
             tuning,
@@ -379,7 +381,10 @@ mod tests {
                 Vec3::new(2.0, 4.0, wall_z + thickness),
             ),
         ]);
-        let body = world.add_character(Vec3::new(0.0, 1.15, 0.0));
+        let body = world.add_character(CharacterSpawn {
+            body: SHIPPED_BODY,
+            ..CharacterSpawn::from(Vec3::new(0.0, 0.915, 0.0))
+        });
         world
             .set_hit_volumes(body, &crate::sim::player_hit_volumes())
             .expect("the body was added a moment ago");
@@ -387,13 +392,13 @@ mod tests {
         world
     }
 
-    const PLAYER_HEAD: Vec3 = Vec3::new(0.0, 1.87, 0.0);
+    const PLAYER_HEAD: Vec3 = Vec3::new(0.0, 1.63, 0.0);
 
     #[test]
     fn a_ray_leaving_the_head_it_starts_in_still_sees_a_thin_wall_just_beyond() {
         let world = world_with_player_and_wall(0.5, 0.02);
 
-        let blocked = world_blocks(&world, PLAYER_HEAD, Vec3::new(0.0, 1.87, 3.0));
+        let blocked = world_blocks(&world, PLAYER_HEAD, Vec3::new(0.0, 1.63, 3.0));
 
         assert!(blocked);
     }
@@ -404,8 +409,8 @@ mod tests {
 
         let blocked = world_blocks(
             &world,
-            Vec3::new(0.0, 1.87, -3.0),
-            Vec3::new(0.0, 1.87, 3.0),
+            Vec3::new(0.0, 1.63, -3.0),
+            Vec3::new(0.0, 1.63, 3.0),
         );
 
         assert!(blocked);
@@ -417,8 +422,8 @@ mod tests {
 
         let blocked = world_blocks(
             &world,
-            Vec3::new(0.0, 1.87, -3.0),
-            Vec3::new(0.0, 1.87, 12.0),
+            Vec3::new(0.0, 1.63, -3.0),
+            Vec3::new(0.0, 1.63, 12.0),
         );
 
         assert!(blocked);
@@ -428,11 +433,11 @@ mod tests {
     fn a_ray_through_a_character_with_no_wall_in_the_way_is_not_blocked() {
         let world = world_with_player_and_wall(8.0, 0.5);
 
-        let from_the_head = world_blocks(&world, PLAYER_HEAD, Vec3::new(0.0, 1.87, 6.0));
+        let from_the_head = world_blocks(&world, PLAYER_HEAD, Vec3::new(0.0, 1.63, 6.0));
         let across_it = world_blocks(
             &world,
-            Vec3::new(0.0, 1.87, -3.0),
-            Vec3::new(0.0, 1.87, 6.0),
+            Vec3::new(0.0, 1.63, -3.0),
+            Vec3::new(0.0, 1.63, 6.0),
         );
 
         assert!(!from_the_head);
@@ -468,7 +473,10 @@ mod tests {
             Vec3::new(-30.0, floor_top - 1.0, -30.0),
             Vec3::new(30.0, floor_top, 30.0),
         )]);
-        let body = world.add_character(Vec3::new(0.0, height, 0.0));
+        let body = world.add_character(CharacterSpawn {
+            body: SHIPPED_BODY,
+            ..CharacterSpawn::from(Vec3::new(0.0, height, 0.0))
+        });
         world
             .set_hit_volumes(body, &crate::sim::player_hit_volumes())
             .expect("the body was added a moment ago");
@@ -513,7 +521,7 @@ mod tests {
 
     #[test]
     fn floor_below_gives_up_on_a_floor_beyond_its_range_even_after_passing_a_character() {
-        let world = world_with_character_over(0.0, 1.15);
+        let world = world_with_character_over(0.0, 0.915);
         let too_high = Vec3::new(0.0, FLOOR_PROBE_RANGE + 1.0, 0.0);
 
         let dropped = floor_below(&world, too_high);
@@ -541,7 +549,7 @@ mod tests {
             &world,
             &points,
             &[],
-            Vec3::new(0.0, 1.15, 12.0),
+            Vec3::new(0.0, 0.915, 12.0),
             PLAYER,
             ENEMY_EYE,
             &enemy_tuning(),

@@ -2,7 +2,7 @@ use super::query::{encode_tag, HitTag};
 use super::slide::Slider;
 use super::PhysicsWorld;
 use crate::movement::{
-    self, CharacterBody, CharacterCommand, CharacterEffect, Impact, MoveSettings,
+    self, CharacterBody, CharacterCommand, CharacterEffect, HullShape, Impact, MoveSettings, Tuning,
 };
 use glam::{Quat, Vec3};
 use rapier3d::prelude::{
@@ -84,6 +84,7 @@ pub struct UnknownCharacter;
 /// Per-character state; the capsule's body handle is the map key.
 pub(super) struct Character {
     collider: ColliderHandle,
+    body: CharacterBody,
     /// Hit volume colliders, in the order the game last set them.
     volumes: Vec<ColliderHandle>,
     velocity: Vec3,
@@ -91,6 +92,8 @@ pub(super) struct Character {
     pitch: f32,
     grounded: bool,
     jump_held: bool,
+    /// The eye's offset from the body, as the last step or the spawn set it.
+    eye: Vec3,
     /// Changes from outside the step, applied in order by the next `move_character`.
     effects: Vec<CharacterEffect>,
 }
@@ -105,7 +108,7 @@ impl Character {
             pitch: self.pitch,
             grounded: self.grounded,
             jump_held: self.jump_held,
-            eye: Vec3::ZERO,
+            eye: self.eye,
         }
     }
 
@@ -116,6 +119,7 @@ impl Character {
         self.pitch = state.pitch;
         self.grounded = state.grounded;
         self.jump_held = state.jump_held;
+        self.eye = state.eye;
     }
 }
 
@@ -129,18 +133,33 @@ impl PhysicsWorld {
         body.set_position(pose, false);
     }
 
-    /// Add a kinematic character (capsule) to the world.
+    /// Add a kinematic character to the world, with the hull `spawn.body` describes.
+    ///
+    /// # Panics
+    /// On an impossible hull ([`CharacterBody::validate`]).
     pub fn add_character(&mut self, spawn: impl Into<CharacterSpawn>) -> CharacterHandle {
         let spawn = spawn.into();
+        spawn.body.validate();
         let position = spawn.position;
         let body = RigidBodyBuilder::kinematic_position_based()
             .pose(Pose::from_parts(position, Quat::from_rotation_y(spawn.yaw)))
             .build();
         let body_handle = self.rigid_body_set.insert(body);
 
-        // Capsule: half-height 0.85, radius 0.3 -> total height ~2m
-        let collider = ColliderBuilder::capsule_y(0.85, 0.3)
-            .friction(0.0) // No friction on character capsule itself
+        let hull = spawn.body.standing.hull;
+        let half_length = hull.length / 2.0;
+        let shape = match hull.shape {
+            HullShape::Capsule => {
+                ColliderBuilder::capsule_y(half_length - hull.radius, hull.radius)
+            }
+            HullShape::RoundCylinder { rounding } => ColliderBuilder::round_cylinder(
+                half_length - rounding,
+                hull.radius - rounding,
+                rounding,
+            ),
+        };
+        let collider = shape
+            .friction(0.0) // No friction on the character hull itself
             .build();
         let collider =
             self.collider_set
@@ -151,6 +170,7 @@ impl PhysicsWorld {
             handle,
             Character {
                 collider,
+                body: spawn.body,
                 volumes: Vec::new(),
                 velocity: Vec3::ZERO,
                 yaw: spawn.yaw,
@@ -159,6 +179,7 @@ impl PhysicsWorld {
                     .clamp(-movement::PITCH_LIMIT, movement::PITCH_LIMIT),
                 grounded: false,
                 jump_held: false,
+                eye: Vec3::Y * (spawn.body.standing.eye_height - half_length),
                 effects: Vec::new(),
             },
         );
@@ -254,6 +275,7 @@ impl PhysicsWorld {
         let character = self.characters.get_mut(&handle).ok_or(UnknownCharacter)?;
         let collider_handle = character.collider;
         let effects = std::mem::take(&mut character.effects);
+        let body = character.body;
         let pose = *self.rigid_body_set[handle.0].position();
         let mut state = character.state(pose.translation);
 
@@ -279,9 +301,11 @@ impl PhysicsWorld {
             &mut state,
             command,
             &effects,
-            &CharacterBody::default(),
-            settings,
-            settings.gravity.unwrap_or(self.gravity()),
+            &Tuning {
+                body,
+                settings: *settings,
+                gravity: settings.gravity.unwrap_or(self.gravity()),
+            },
             dt,
             |from, asked| {
                 let start = Pose::from_parts(from.position, pose.rotation);
