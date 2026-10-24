@@ -95,6 +95,11 @@ pub(crate) fn sample_face_material(grid: &VoxelGrid, chunk_base: IVec3, sample: 
         .expect("marching cubes asks for the material of solid samples only")
 }
 
+/// Position of field sample `sample` in a flat array of the 18³ padded field.
+fn sample_slot(sample: [usize; 3]) -> usize {
+    (sample[0] * 18 + sample[1]) * 18 + sample[2]
+}
+
 /// How many blocks past a sampled air block the contact AO ring reads (it covers the 26
 /// neighbours).
 const AO_RING_REACH: i32 = 1;
@@ -260,7 +265,7 @@ impl HybridMeshGenerator {
             |s| sample_face_material(grid, base, s),
             |s| {
                 let block = sample_block(base, s);
-                let cached = &occlusion[(s[0] * 18 + s[1]) * 18 + s[2]];
+                let cached = &occlusion[sample_slot(s)];
                 let ambient_occlusion = cached.get().unwrap_or_else(|| {
                     let ao = contact_ao(|p| grid.is_solid_at(p), block);
                     cached.set(Some(ao));
@@ -576,6 +581,20 @@ impl HybridMeshGenerator {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn every_field_sample_has_its_own_slot() {
+        let mut taken = vec![false; 18 * 18 * 18];
+        for x in 0..18 {
+            for y in 0..18 {
+                for z in 0..18 {
+                    let slot = sample_slot([x, y, z]);
+                    assert!(!taken[slot], "slot {slot} is shared by [{x}, {y}, {z}]");
+                    taken[slot] = true;
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_analyze_empty_chunk() {
