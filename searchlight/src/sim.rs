@@ -1094,6 +1094,16 @@ mod tests {
     }
 
     #[test]
+    fn the_configured_gravity_reaches_the_world() {
+        let mut config = test_config(rifle_with(5), vec![]);
+        config.gravity = 20.32;
+
+        let sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
+
+        assert_eq!(sim.world.gravity(), 20.32);
+    }
+
+    #[test]
     fn player_cannot_walk_out_of_the_arena() {
         for turns in 0..4 {
             let yaw = FRAC_PI_2 * turns as f32;
