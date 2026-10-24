@@ -87,9 +87,9 @@ one character. It reads the world as the last `step` left it. `PhysicsWorld::col
 turns a collider handle, such as the one a movement `Impact` reports, into its tag. The adapter tags chunks with
 `TERRAIN_TAG` in `world_geometry.rs`.
 
-`PhysicsWorld::add_hit_volume` (`moho_physics/src/world/character.rs`) attaches a tagged
-`HitVolume` box, offset and sized in the character's body frame, for per-body-part hits.
-Volumes are sensors parented to the character's body: they follow its position and yaw
+`PhysicsWorld::set_hit_volumes` (`moho_physics/src/world/character.rs`) replaces a
+character's tagged `HitVolume` boxes, each posed (offset and rotation) and sized in the
+character's body frame, for per-body-part hits. Volumes are sensors parented to the character's body: they follow its position and yaw
 (never pitch) on `step`, are removed with the character, never block movement or props,
 and only rays see them. A ray ignoring a character skips its volumes too.
 
