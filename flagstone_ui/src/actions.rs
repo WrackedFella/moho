@@ -25,7 +25,7 @@ const DESCEND: [Binding; 2] = [Binding::key(Key::Ctrl), button(PadButton::LeftTr
 const SPRINT: [Binding; 2] = [Binding::key(Key::Shift), button(PadButton::LeftThumb)];
 
 const SELECT: [Binding; 1] = [Binding::mouse(MouseButton::Left)];
-const POSSESS: [Binding; 1] = [Binding::key(Key::P)];
+const POSSESS: [Binding; 1] = [Binding::key(Key::Tab)];
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StrategyAction {
@@ -244,7 +244,10 @@ mod tests {
 
         assert_eq!(StrategyAction::Possess.name(), "possess");
         assert_eq!(possess, [Binding::key(Key::Tab)]);
-        assert!(collisions.is_empty(), "Possess collides with {collisions:?}");
+        assert!(
+            collisions.is_empty(),
+            "Possess collides with {collisions:?}"
+        );
     }
 
     #[test]

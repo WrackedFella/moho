@@ -103,7 +103,7 @@ impl App {
                 zoom_delta: 0.0,
             },
             jump,
-            toggle_view: false,
+            toggle_view: frame.pressed(StrategyAction::Possess),
             select,
             console: Vec::new(),
             engine: Vec::new(),
@@ -174,6 +174,10 @@ impl App {
     fn apply_command(&mut self, command: &StrategyCommand) {
         *self.simulation.controller_input_mut() = command.input;
         self.physics.jump_pressed = command.jump;
+        if command.toggle_view {
+            self.toggle_camera_mode();
+            self.apply_cursor();
+        }
         if let Some(ray) = command.select
             && let Some(light_system) = &self.light_system
         {
@@ -316,8 +320,7 @@ impl App {
         } = &event
             && self.game_state == GameState::Playing
         {
-            self.toggle_camera_mode();
-            self.apply_cursor();
+            action_map::handle_window_event(&mut self.input.actions, &event);
             return;
         }
 
@@ -371,6 +374,12 @@ impl App {
     }
 
     fn toggle_camera_mode(&mut self) {
+        // Placeholder cues until the mode switch has its own clips.
+        let cue = match self.simulation.camera_mode() {
+            CameraMode::FirstPerson => moho_core::events::AudioEvent::Cancel,
+            CameraMode::Isometric => moho_core::events::AudioEvent::Confirm,
+        };
+        self.event_bus.publish(cue);
         match self.simulation.camera_mode() {
             CameraMode::FirstPerson => {
                 // Switch to RTS first so look_at runs in Isometric mode,

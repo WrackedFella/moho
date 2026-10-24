@@ -31,6 +31,7 @@ impl Overlay for GameplayHud {
             return;
         }
 
+        render_mode_label(ui);
         render_compass(ui, data.camera_yaw);
         render_status_bars(ui, data.player_health, data.player_stamina);
         render_hotbar(
@@ -90,6 +91,19 @@ fn visible_labels(yaw: f32) -> Vec<(&'static str, bool)> {
         .into_iter()
         .map(|(_, label, facing)| (label, facing))
         .collect()
+}
+
+/// Names the first-person view in the top-left corner.
+fn render_mode_label(ui: &mut egui::Ui) {
+    egui::Area::new("gameplay_hud_mode_label".into())
+        .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0, 8.0))
+        .show(ui.ctx(), |ui| {
+            ui.label(
+                egui::RichText::new("First person")
+                    .color(egui::Color32::from_gray(200))
+                    .size(14.0),
+            );
+        });
 }
 
 fn render_compass(ui: &mut egui::Ui, camera_yaw: f32) {

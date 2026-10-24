@@ -48,6 +48,7 @@ impl Overlay for RtsHud {
             return;
         }
 
+        render_mode_label(ui);
         render_time_of_day(ui, data.time_of_day);
         if let Some(view_height) = data.view_height {
             self.chosen = render_view_height(ui, view_height).or(self.chosen);
@@ -91,6 +92,19 @@ fn render_view_height(ui: &mut egui::Ui, view: ViewHeightHud) -> Option<i32> {
                 .inner
         })
         .inner
+}
+
+/// Names the strategy view in the top-left corner.
+fn render_mode_label(ui: &mut egui::Ui) {
+    egui::Area::new("rts_mode_label".into())
+        .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0, 8.0))
+        .show(ui.ctx(), |ui| {
+            ui.label(
+                egui::RichText::new("Strategy")
+                    .font(egui::FontId::proportional(16.0))
+                    .color(egui::Color32::from_rgb(220, 220, 200)),
+            );
+        });
 }
 
 /// Time-of-day badge in the top-right corner.
