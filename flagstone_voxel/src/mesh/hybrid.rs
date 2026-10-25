@@ -7,8 +7,10 @@ use super::super::face::FaceDirection;
 use super::super::grid::{BlockPos, VoxelGrid};
 use super::VoxelMesh;
 use super::blocky::BlockyMeshGenerator;
-use super::marching_cubes::MarchingCubes;
+use super::contact_ao::contact_ao;
+use super::marching_cubes::{MarchingCubes, SurfaceSample};
 use glam::{IVec3, Vec3};
+use std::cell::Cell;
 
 // Shift from marching-cubes field-index space to world space (excluding the chunk origin).
 // Without it smooth terrain sits half a unit off-centre, misaligned with the blocky
@@ -93,20 +95,38 @@ pub(crate) fn sample_face_material(grid: &VoxelGrid, chunk_base: IVec3, sample: 
         .expect("marching cubes asks for the material of solid samples only")
 }
 
-/// The chunks whose mesh geometry reads `block` (smooth normals of the positive neighbour
-/// also read a block at local 15, which this set leaves out): its own chunk plus, on each axis where the block
-/// sits within [`SAMPLE_REACH`] of the chunk's negative edge, the negative neighbour
-/// (whose padded density field reaches [`SAMPLE_REACH`] blocks past its far edge).
-/// Yields 1, 2, 4 or 8 chunks.
+/// Position of field sample `sample` in a flat array of the 18³ padded field.
+fn sample_slot(sample: [usize; 3]) -> usize {
+    (sample[0] * 18 + sample[1]) * 18 + sample[2]
+}
+
+/// How many blocks past a sampled air block the contact AO ring reads (it covers the 26
+/// neighbours).
+const AO_RING_REACH: i32 = 1;
+
+/// The chunks whose mesh geometry reads `block`: its own chunk plus a neighbour on each axis
+/// where the block is within reach of that edge.
+///
+/// - Negative neighbour: its padded density field reaches [`SAMPLE_REACH`] blocks past its
+///   far edge, and the contact AO of the air blocks up to there reads a further
+///   [`AO_RING_REACH`]. So a block within `SAMPLE_REACH + AO_RING_REACH` of the negative
+///   edge is read.
+/// - Positive neighbour: its AO ring reaches back [`AO_RING_REACH`] blocks into the chunk's
+///   last blocks (its padded field reaches no further), so a block within that of the
+///   positive edge is read.
+///
+/// Yields 1, 2, 4 or 8 chunks for a `chunk_size` over `SAMPLE_REACH + 2 * AO_RING_REACH`.
 pub fn chunks_meshed_from(block: BlockPos, chunk_size: i32) -> impl Iterator<Item = IVec3> {
     let own = VoxelGrid::get_chunk_pos(block, chunk_size);
-    let on_edge = block
-        .rem_euclid(IVec3::splat(chunk_size))
-        .cmplt(IVec3::splat(SAMPLE_REACH));
-    (0..8i32).filter_map(move |mask| {
-        let step = IVec3::new(mask & 1, (mask >> 1) & 1, mask >> 2);
-        let allowed = step.cmpeq(IVec3::ZERO) | on_edge;
-        allowed.all().then_some(own - step)
+    let local = block.rem_euclid(IVec3::splat(chunk_size));
+    let near_negative = local.cmplt(IVec3::splat(SAMPLE_REACH + AO_RING_REACH));
+    let near_positive = local.cmpge(IVec3::splat(chunk_size - AO_RING_REACH));
+    (0..27i32).filter_map(move |index| {
+        let step = IVec3::new(index % 3 - 1, index / 3 % 3 - 1, index / 9 - 1);
+        let allowed = step.cmpeq(IVec3::ZERO)
+            | (step.cmplt(IVec3::ZERO) & near_negative)
+            | (step.cmpgt(IVec3::ZERO) & near_positive);
+        allowed.all().then_some(own + step)
     })
 }
 
@@ -237,13 +257,25 @@ impl HybridMeshGenerator {
         let density_field =
             Self::create_selective_density_field(grid, chunk_pos, chunk_size, only_smooth);
         let base = chunk_pos * chunk_size;
+        // Cells sharing an edge ask for the same air sample; occlusion costs 26 lookups.
+        let occlusion: Vec<Cell<Option<f32>>> = vec![Cell::new(None); 18 * 18 * 18];
         let mut mesh = MarchingCubes::generate_mesh(
             &density_field,
             chunk_size as usize,
             |s| sample_face_material(grid, base, s),
             |s| {
                 let block = sample_block(base, s);
-                (grid.block_light_rgb_at(block), grid.sky_exposed_at(block))
+                let cached = &occlusion[sample_slot(s)];
+                let ambient_occlusion = cached.get().unwrap_or_else(|| {
+                    let ao = contact_ao(|p| grid.is_solid_at(p), block);
+                    cached.set(Some(ao));
+                    ao
+                });
+                SurfaceSample {
+                    block_light: grid.block_light_rgb_at(block),
+                    sky_exposed: grid.sky_exposed_at(block),
+                    ambient_occlusion,
+                }
             },
         );
 
@@ -551,6 +583,20 @@ mod tests {
     use proptest::prelude::*;
 
     #[test]
+    fn every_field_sample_has_its_own_slot() {
+        let mut taken = vec![false; 18 * 18 * 18];
+        for x in 0..18 {
+            for y in 0..18 {
+                for z in 0..18 {
+                    let slot = sample_slot([x, y, z]);
+                    assert!(!taken[slot], "slot {slot} is shared by [{x}, {y}, {z}]");
+                    taken[slot] = true;
+                }
+            }
+        }
+    }
+
+    #[test]
     fn test_analyze_empty_chunk() {
         let grid = VoxelGrid::new(16);
         let (content, smooth, blocky) = HybridMeshGenerator::analyze_chunk(&grid, IVec3::ZERO, 16);
@@ -604,7 +650,21 @@ mod tests {
         type Row = (&'static str, [i32; 3], i32, Vec<[i32; 3]>);
         let rows: Vec<Row> = vec![
             ("interior", [5, 5, 5], 16, vec![[0, 0, 0]]),
-            ("far corner of own chunk", [15, 15, 15], 16, vec![[0, 0, 0]]),
+            (
+                "far corner of own chunk",
+                [15, 15, 15],
+                16,
+                vec![
+                    [0, 0, 0],
+                    [0, 0, 1],
+                    [0, 1, 0],
+                    [0, 1, 1],
+                    [1, 0, 0],
+                    [1, 0, 1],
+                    [1, 1, 0],
+                    [1, 1, 1],
+                ],
+            ),
             ("x face", [0, 5, 5], 16, vec![[-1, 0, 0], [0, 0, 0]]),
             ("y face", [5, 0, 5], 16, vec![[0, -1, 0], [0, 0, 0]]),
             ("z face", [5, 5, 0], 16, vec![[0, 0, -1], [0, 0, 0]]),
@@ -655,7 +715,7 @@ mod tests {
     }
 
     #[test]
-    fn chunks_meshed_from_uses_negative_neighbours_only() {
+    fn chunks_meshed_from_reaches_back_from_a_block_on_a_chunk_face() {
         assert_eq!(meshed_from([16, 5, 5]), vec![[0, 0, 0], [1, 0, 0]]);
         assert_eq!(meshed_from([5, 32, 5]), vec![[0, 1, 0], [0, 2, 0]]);
         assert_eq!(meshed_from([5, 5, 16]), vec![[0, 0, 0], [0, 0, 1]]);
@@ -663,15 +723,78 @@ mod tests {
             meshed_from([16, 16, 5]),
             vec![[0, 0, 0], [0, 1, 0], [1, 0, 0], [1, 1, 0]]
         );
-        assert_eq!(meshed_from([15, 15, 15]), vec![[0, 0, 0]]);
+    }
+
+    #[test]
+    fn chunks_meshed_from_covers_the_contact_ao_ring() {
+        type Row = (&'static str, [i32; 3], i32, Vec<[i32; 3]>);
+        let rows: Vec<Row> = vec![
+            (
+                "local 1 reaches the negative neighbour",
+                [1, 5, 5],
+                16,
+                vec![[-1, 0, 0], [0, 0, 0]],
+            ),
+            ("local 2 does not", [2, 5, 5], 16, vec![[0, 0, 0]]),
+            (
+                "local 15 reaches the positive neighbour",
+                [15, 5, 5],
+                16,
+                vec![[0, 0, 0], [1, 0, 0]],
+            ),
+            ("local 14 does not", [14, 5, 5], 16, vec![[0, 0, 0]]),
+            (
+                "y axis, local 1",
+                [5, 17, 5],
+                16,
+                vec![[0, 0, 0], [0, 1, 0]],
+            ),
+            (
+                "z axis, local 15",
+                [5, 5, 15],
+                16,
+                vec![[0, 0, 0], [0, 0, 1]],
+            ),
+            (
+                "negative on x, positive on y",
+                [1, 15, 5],
+                16,
+                vec![[-1, 0, 0], [-1, 1, 0], [0, 0, 0], [0, 1, 0]],
+            ),
+            (
+                "negative coordinates, local 15",
+                [-1, -11, -11],
+                16,
+                vec![[-1, -1, -1], [0, -1, -1]],
+            ),
+            (
+                "32-block chunks, local 1",
+                [33, 5, 5],
+                32,
+                vec![[0, 0, 0], [1, 0, 0]],
+            ),
+            (
+                "32-block chunks, local 31",
+                [31, 5, 5],
+                32,
+                vec![[0, 0, 0], [1, 0, 0]],
+            ),
+        ];
+
+        for (name, block, chunk_size, expected) in rows {
+            assert_eq!(meshed_from_sized(block, chunk_size), expected, "{name}");
+        }
     }
 
     #[test]
     fn chunks_meshed_from_handles_negative_world_coordinates() {
-        assert_eq!(meshed_from([-1, -1, -1]), vec![[-1, -1, -1]]);
-        assert_eq!(meshed_from([-16, -1, -1]), vec![[-2, -1, -1], [-1, -1, -1]]);
+        assert_eq!(meshed_from([-11, -11, -11]), vec![[-1, -1, -1]]);
         assert_eq!(
-            meshed_from([-16, -1, -32]),
+            meshed_from([-16, -11, -11]),
+            vec![[-2, -1, -1], [-1, -1, -1]]
+        );
+        assert_eq!(
+            meshed_from([-16, -11, -32]),
             vec![[-2, -1, -3], [-2, -1, -2], [-1, -1, -3], [-1, -1, -2]]
         );
     }
@@ -1505,5 +1628,187 @@ mod tests {
                 )?;
             }
         }
+    }
+
+    fn smooth_vertices_at_height(mesh: &VoxelMesh, y: f32) -> Vec<([f32; 3], f32)> {
+        assert_eq!(mesh.ambient_occlusion.len(), mesh.vertices.len());
+        mesh.vertices
+            .iter()
+            .zip(&mesh.ambient_occlusion)
+            .zip(&mesh.geometry_type)
+            .filter(|((v, _), geometry)| **geometry == 0 && (v[1] - y).abs() < 1e-3)
+            .map(|((v, ao), _)| (*v, *ao))
+            .collect()
+    }
+
+    fn ao_where(vertices: &[([f32; 3], f32)], keep: impl Fn([f32; 3]) -> bool) -> Vec<f32> {
+        vertices
+            .iter()
+            .filter(|(v, _)| keep(*v))
+            .map(|(_, ao)| *ao)
+            .collect()
+    }
+
+    fn min_of(values: &[f32]) -> f32 {
+        values.iter().copied().fold(f32::INFINITY, f32::min)
+    }
+
+    fn max_of(values: &[f32]) -> f32 {
+        values.iter().copied().fold(f32::NEG_INFINITY, f32::max)
+    }
+
+    #[test]
+    fn smooth_crevice_floor_is_darker_than_open_ground() {
+        let mut blocks = solid_box([0, 0, 0], [15, 5, 15], 1);
+        blocks.extend(solid_box([0, 6, 0], [6, 10, 15], 1));
+        blocks.extend(solid_box([8, 6, 0], [10, 10, 15], 1));
+        let mesh = chunk_mesh(&grid_with(blocks));
+
+        let ground = smooth_vertices_at_height(&mesh, 6.0);
+        let floor = ao_where(&ground, |v| (v[0] - 7.5).abs() < 1e-3);
+        let open = ao_where(&ground, |v| v[0] > 12.0);
+
+        assert!(!floor.is_empty(), "the crevice floor is meshed");
+        assert!(!open.is_empty(), "the open ground is meshed");
+        assert!(
+            max_of(&floor) < min_of(&open),
+            "floor AO up to {}, open ground AO down to {}",
+            max_of(&floor),
+            min_of(&open)
+        );
+    }
+
+    #[test]
+    fn smooth_open_ground_vertices_have_ao_one() {
+        let mesh = chunk_mesh(&grid_with(solid_box([2, 0, 2], [13, 5, 13], 1)));
+
+        let top = smooth_vertices_at_height(&mesh, 6.0);
+
+        assert!(top.len() >= 144, "the slab's top face is meshed");
+        for (v, ao) in top {
+            assert_eq!(ao, 1.0, "top vertex {v:?}");
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(32))]
+
+        #[test]
+        fn prop_convex_boxes_are_unoccluded(
+            lo in (2..6i32, 2..6i32, 2..6i32),
+            size in (1..=8i32, 1..=8i32, 1..=8i32),
+        ) {
+            let hi = [lo.0 + size.0 - 1, lo.1 + size.1 - 1, lo.2 + size.2 - 1];
+
+            let mesh = chunk_mesh(&grid_with(solid_box([lo.0, lo.1, lo.2], hi, 1)));
+
+            prop_assert!(!mesh.vertices.is_empty());
+            prop_assert_eq!(mesh.ambient_occlusion.len(), mesh.vertices.len());
+            for (v, ao) in mesh.vertices.iter().zip(&mesh.ambient_occlusion) {
+                prop_assert_eq!(*ao, 1.0, "vertex {:?} of the box {:?}..{:?}", v, lo, hi);
+            }
+        }
+    }
+
+    #[test]
+    fn crevice_across_a_chunk_border_has_equal_ao_on_both_sides() {
+        let mut blocks = solid_box([0, 0, 0], [31, 5, 15], 1);
+        blocks.extend(solid_box([0, 6, 2], [31, 10, 6], 1));
+        blocks.extend(solid_box([0, 6, 8], [31, 10, 12], 1));
+        let grid = grid_with(blocks);
+
+        let west = HybridMeshGenerator::generate_chunk_mesh(&grid, IVec3::ZERO, 16);
+        let east = HybridMeshGenerator::generate_chunk_mesh(&grid, IVec3::new(1, 0, 0), 16);
+
+        // Both chunks emit the vertices of the voxel column at x = 16.
+        let shared = |mesh: &VoxelMesh, z: f32| {
+            ao_where(&smooth_vertices_at_height(mesh, 6.0), |v| {
+                (v[0] - 16.5).abs() < 1e-3 && (v[2] - z).abs() < 1e-3
+            })
+        };
+        for (side, mesh) in [("west", &west), ("east", &east)] {
+            let floor = shared(mesh, 7.5);
+            let open = shared(mesh, 14.5);
+            assert!(!floor.is_empty(), "{side}: the border floor is meshed");
+            assert!(!open.is_empty(), "{side}: the border open ground is meshed");
+            assert!(
+                max_of(&floor) < min_of(&open),
+                "{side}: floor AO {floor:?} not darker than open ground {open:?}"
+            );
+        }
+        assert_eq!(shared(&west, 7.5), shared(&east, 7.5));
+        assert_eq!(shared(&west, 14.5), shared(&east, 14.5));
+    }
+
+    /// A slab with a one-wide crevice between two walls in the chunk, with `extra` blocks
+    /// on the open ground beside it, all offset by `origin`.
+    fn crevice_terrain(origin: IVec3, extra: &[(i32, i32, i32)]) -> VoxelGrid {
+        let mut blocks = solid_box([1, 0, 1], [14, 5, 14], 1);
+        blocks.extend(solid_box([1, 6, 1], [5, 10, 14], 1));
+        blocks.extend(solid_box([7, 6, 1], [9, 10, 14], 1));
+        blocks.extend(extra.iter().map(|&(x, y, z)| ([x, y, z], 1, None)));
+        grid_with(blocks.into_iter().map(|(pos, material, resource)| {
+            ((IVec3::from(pos) + origin).to_array(), material, resource)
+        }))
+    }
+
+    fn sorted_ao_bits(mesh: &VoxelMesh) -> Vec<u32> {
+        let mut bits: Vec<u32> = mesh
+            .ambient_occlusion
+            .iter()
+            .map(|ao| ao.to_bits())
+            .collect();
+        bits.sort_unstable();
+        bits
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(24))]
+
+        #[test]
+        fn prop_shifting_terrain_by_a_chunk_does_not_change_ao(
+            extra in prop::collection::vec((11..14i32, 0..9i32, 2..14i32), 0..30),
+            shift in (-3..=3i32, -3..=3i32, -3..=3i32),
+        ) {
+            let shift = IVec3::new(shift.0, shift.1, shift.2);
+            prop_assume!(shift != IVec3::ZERO);
+            let home = crevice_terrain(IVec3::ZERO, &extra);
+            let moved = crevice_terrain(shift * 16, &extra);
+
+            let at_home = HybridMeshGenerator::generate_chunk_mesh(&home, IVec3::ZERO, 16);
+            let shifted = HybridMeshGenerator::generate_chunk_mesh(&moved, shift, 16);
+
+            let bits = sorted_ao_bits(&at_home);
+            prop_assert!(!bits.is_empty());
+            prop_assert!(
+                min_of(&at_home.ambient_occlusion) < max_of(&at_home.ambient_occlusion),
+                "the crevice is darker than the open ground"
+            );
+            prop_assert_eq!(bits, sorted_ao_bits(&shifted));
+        }
+    }
+
+    #[test]
+    fn blocky_block_beside_smooth_ground_occludes_it() {
+        let mut blocks = solid_box([2, 0, 2], [13, 5, 13], 1);
+        blocks.extend(solid_box([8, 6, 2], [8, 9, 13], 100));
+        let mesh = chunk_mesh(&grid_with(blocks));
+
+        assert!(mesh.geometry_type.contains(&0) && mesh.geometry_type.contains(&1));
+        let ground = smooth_vertices_at_height(&mesh, 6.0);
+        let beside = ao_where(&ground, |v| {
+            (v[0] - 7.5).abs() < 1e-3 && (4.0..12.0).contains(&v[2])
+        });
+        let far = ao_where(&ground, |v| v[0] < 5.0 && (4.0..12.0).contains(&v[2]));
+
+        assert!(!beside.is_empty(), "the ground beside the wall is meshed");
+        assert!(!far.is_empty(), "the ground away from the wall is meshed");
+        assert!(
+            max_of(&beside) < min_of(&far),
+            "beside the wall AO up to {}, away from it down to {}",
+            max_of(&beside),
+            min_of(&far)
+        );
+        assert!(far.iter().all(|&ao| ao == 1.0), "open ground {far:?}");
     }
 }
