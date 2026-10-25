@@ -46,7 +46,8 @@ pub struct CharacterCommand {
     pub jump: bool,
     /// The stance the game wants; hold or toggle is the game's business.
     pub stance: Stance,
-    /// The lean the game wants, -1 (left) to 1 (right); clamped. Which key wins is the game's call.
+    /// The lean the game wants, -1 (left) to 1 (right); clamped, with infinities reaching the
+    /// ends and NaN meaning 0. Which key wins is the game's call.
     pub lean: f32,
 }
 
@@ -291,6 +292,7 @@ impl CharacterBody {
     /// Panics rather than returning an error because a bad hull is a programmer error in
     /// the game's data.
     pub fn validate(&self) {
+        validate_lean(&self.lean);
         validate_hull(&self.standing.hull);
         if let Some(crouched) = &self.crouched {
             validate_hull(&crouched.hull);
@@ -307,6 +309,30 @@ impl CharacterBody {
             validate_hull(&prone.hull);
         }
     }
+}
+
+fn validate_lean(lean: &Lean) {
+    for reach in [lean.upright, lean.prone] {
+        assert!(
+            reach.distance.is_finite() && reach.distance >= 0.0,
+            "impossible lean: distance {} must not be negative",
+            reach.distance
+        );
+        assert!(
+            reach.roll.is_finite(),
+            "impossible lean: roll {} must be finite",
+            reach.roll
+        );
+    }
+    let head_radius = lean.head_radius;
+    assert!(
+        head_radius.is_finite() && head_radius >= 0.0,
+        "impossible lean: head radius {head_radius} must not be negative"
+    );
+    assert!(
+        head_radius > 0.0 || (lean.upright.distance == 0.0 && lean.prone.distance == 0.0),
+        "impossible lean: a lean with a reach needs a positive head radius"
+    );
 }
 
 fn validate_hull(hull: &Hull) {
@@ -695,11 +721,7 @@ fn leg_done(state: &CharacterState, settings: &MoveSettings) -> f32 {
 
 /// Move `state.lean` toward the wanted lean by one tick's share of the full lean.
 fn advance_lean(state: &mut CharacterState, wanted: f32, settings: &MoveSettings) {
-    let wanted = if wanted.is_finite() {
-        wanted.clamp(-1.0, 1.0)
-    } else {
-        0.0
-    };
+    let wanted = if wanted.is_nan() { 0.0 } else { wanted }.clamp(-1.0, 1.0);
     if settings.lean_ticks == 0 {
         state.lean = wanted;
         return;
@@ -5031,6 +5053,37 @@ mod tests {
                     state.eye
                 );
             }
+        }
+
+        #[test]
+        fn a_non_finite_lean_command_leaves_the_lean_finite() {
+            let mut state = on_the_floor();
+            hold(&mut state, &tuning(), 0.5, 3, &clear());
+            let partial = state.lean;
+
+            for (wanted, settles) in [
+                (f32::NAN, 0.0),
+                (f32::INFINITY, 1.0),
+                (f32::NEG_INFINITY, -1.0),
+            ] {
+                let before = state.lean;
+                tick(&mut state, &tuning(), &leaning(wanted), &clear());
+                let finite =
+                    state.lean.is_finite() && state.eye.is_finite() && state.roll.is_finite();
+                assert!(finite, "{wanted}: {state:?}");
+                assert!(
+                    (state.lean - before).abs() <= 1.0 / f32::from(LEAN_TICKS) + EPS,
+                    "{wanted}: one tick's share"
+                );
+                hold(&mut state, &tuning(), wanted, 12, &clear());
+                assert!(
+                    (state.lean - settles).abs() < EPS,
+                    "{wanted} settles at {settles}: {}",
+                    state.lean
+                );
+                assert!(state.eye.is_finite() && state.roll.is_finite(), "{state:?}");
+            }
+            assert!(partial.abs() > EPS, "setup: part-way {partial}");
         }
 
         #[test]

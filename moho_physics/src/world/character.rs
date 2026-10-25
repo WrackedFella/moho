@@ -2587,6 +2587,142 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "lean")]
+    fn an_impossible_lean_is_refused_with_a_negative_upright_distance() {
+        add_with_body(CharacterBody {
+            lean: {
+                let reach = |distance, roll| crate::movement::LeanReach { distance, roll };
+                crate::movement::Lean {
+                    upright: reach(-0.1, 0.2),
+                    prone: reach(0.1, 0.3),
+                    head_radius: 0.1,
+                }
+            },
+            ..source_body()
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "lean")]
+    fn an_impossible_lean_is_refused_with_a_negative_prone_distance() {
+        add_with_body(CharacterBody {
+            lean: {
+                let reach = |distance, roll| crate::movement::LeanReach { distance, roll };
+                crate::movement::Lean {
+                    upright: reach(0.3, 0.2),
+                    prone: reach(-0.1, 0.3),
+                    head_radius: 0.1,
+                }
+            },
+            ..source_body()
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "lean")]
+    fn an_impossible_lean_is_refused_with_a_non_finite_distance() {
+        add_with_body(CharacterBody {
+            lean: {
+                let reach = |distance, roll| crate::movement::LeanReach { distance, roll };
+                crate::movement::Lean {
+                    upright: reach(f32::INFINITY, 0.2),
+                    prone: reach(0.1, 0.3),
+                    head_radius: 0.1,
+                }
+            },
+            ..source_body()
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "lean")]
+    fn an_impossible_lean_is_refused_with_a_non_finite_upright_roll() {
+        add_with_body(CharacterBody {
+            lean: {
+                let reach = |distance, roll| crate::movement::LeanReach { distance, roll };
+                crate::movement::Lean {
+                    upright: reach(0.3, f32::NAN),
+                    prone: reach(0.1, 0.3),
+                    head_radius: 0.1,
+                }
+            },
+            ..source_body()
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "lean")]
+    fn an_impossible_lean_is_refused_with_a_non_finite_prone_roll() {
+        add_with_body(CharacterBody {
+            lean: {
+                let reach = |distance, roll| crate::movement::LeanReach { distance, roll };
+                crate::movement::Lean {
+                    upright: reach(0.3, 0.2),
+                    prone: reach(0.1, f32::INFINITY),
+                    head_radius: 0.1,
+                }
+            },
+            ..source_body()
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "lean")]
+    fn an_impossible_lean_is_refused_with_a_negative_head_radius() {
+        add_with_body(CharacterBody {
+            lean: {
+                let reach = |distance, roll| crate::movement::LeanReach { distance, roll };
+                crate::movement::Lean {
+                    upright: reach(0.3, 0.2),
+                    prone: reach(0.1, 0.3),
+                    head_radius: -0.1,
+                }
+            },
+            ..source_body()
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "lean")]
+    fn an_impossible_lean_is_refused_with_a_non_finite_head_radius() {
+        add_with_body(CharacterBody {
+            lean: {
+                let reach = |distance, roll| crate::movement::LeanReach { distance, roll };
+                crate::movement::Lean {
+                    upright: reach(0.3, 0.2),
+                    prone: reach(0.1, 0.3),
+                    head_radius: f32::NAN,
+                }
+            },
+            ..source_body()
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "lean")]
+    fn an_impossible_lean_is_refused_with_a_reach_and_no_head_radius() {
+        add_with_body(CharacterBody {
+            lean: {
+                let reach = |distance, roll| crate::movement::LeanReach { distance, roll };
+                crate::movement::Lean {
+                    upright: reach(0.3, 0.2),
+                    prone: reach(0.1, 0.3),
+                    head_radius: 0.0,
+                }
+            },
+            ..source_body()
+        });
+    }
+
+    #[test]
+    fn a_lean_with_no_reach_needs_no_head_radius() {
+        add_with_body(CharacterBody {
+            lean: crate::movement::Lean::default(),
+            ..source_body()
+        });
+    }
+
+    #[test]
     fn a_hull_at_the_limits_is_accepted() {
         let at_the_limits = [
             body_of(HullShape::Capsule, 0.4, 0.81, 0.5),
@@ -5098,6 +5234,26 @@ mod tests {
         }
 
         #[test]
+        fn another_characters_hit_volume_on_the_lean_path_does_not_stop_the_lean() {
+            let (mut world, h) = world_with(&[], leaning_body());
+            let other = world.add_character(Vec3::new(-1.0, 1.0, 0.0));
+            set_one_volume(
+                &mut world,
+                other,
+                volume(Vec3::new(0.7, 0.7, 0.0), Vec3::splat(0.3), HEAD),
+            );
+            let upright = hold(&mut world, h, &command(Stance::Stand, 0.0), 30);
+
+            let leaned = hold(&mut world, h, &command(Stance::Stand, 1.0), 20);
+
+            let shift = leaned.eye_position() - upright.eye_position();
+            assert!(
+                shift.distance(Vec3::new(-UPRIGHT_DISTANCE, 0.0, 0.0)) < EPS,
+                "the eye moved {shift:?}"
+            );
+        }
+
+        #[test]
         fn a_wall_stops_the_lean_short() {
             let (mut world, h) = world_with(&[x_wall_mesh(0.15)], slim_body());
             let upright = hold(&mut world, h, &command(Stance::Stand, 0.0), 30);
@@ -5279,7 +5435,7 @@ mod tests {
             let decoded: Script = postcard::from_bytes(&bytes).expect("the script deserialises");
             let (recorded, states) = run(&script, true);
 
-            let (replayed, _) = run(&decoded, false);
+            let (replayed, _) = run(&decoded, true);
 
             assert_eq!(recorded.len(), 300);
             let diverged = recorded.iter().zip(&replayed).position(|(a, b)| a != b);
