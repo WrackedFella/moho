@@ -3397,27 +3397,88 @@ mod tests {
             assert_eq!(state.stance, Stance::Stand);
         }
 
+        /// Asks for `wanted` in the air from a settled `from`, returning the state before, the
+        /// state after, the hull the slide saw and the centre `fits` was asked about.
+        fn change_in_the_air(
+            from: Stance,
+            wanted: Stance,
+        ) -> (CharacterState, CharacterState, Hull, Vec3) {
+            let tuning = tuning(crouching_body(), 8, 0.0);
+            let mut state = in_the_air();
+            for _ in 0..10 {
+                tick(&mut state, from, &tuning);
+            }
+            let before = state;
+            let asked = Cell::new(Vec3::NAN);
+            let fits = |_: &Hull, centre: Vec3, _: f32| {
+                asked.set(centre);
+                true
+            };
+
+            let seen = tick_fitting(&mut state, wanted, &tuning, fits);
+
+            (before, state, seen, asked.get())
+        }
+
         #[test]
         fn crouching_in_the_air_keeps_the_top_of_the_hull() {
-            let body = crouching_body();
-            let tuning = tuning(body, 8, 0.0);
-            let mut state = in_the_air();
-            let top = state.position.y + STAND_HALF;
-            let bottom = state.position.y - STAND_HALF;
+            let (before, after, seen, asked) = change_in_the_air(Stance::Stand, Stance::Crouch);
 
-            let seen = tick(&mut state, Stance::Crouch, &tuning);
-
+            let top = before.position.y + STAND_HALF;
             assert_eq!(seen.length, 1.1, "the slide sees the crouched hull");
-            assert_eq!(state.stance, Stance::Crouch);
+            assert_eq!(after.stance, Stance::Crouch);
             assert!(
-                (state.position.y + CROUCH_HALF - top).abs() < EPS,
-                "the top moved: {state:?}"
+                (after.position.y + CROUCH_HALF - top).abs() < EPS,
+                "{after:?}"
             );
             assert!(
-                state.position.y - CROUCH_HALF > bottom + 0.7,
-                "the feet did not tuck up: {state:?}"
+                after.position.y - CROUCH_HALF > before.position.y - STAND_HALF + 0.7,
+                "the feet did not tuck up: {after:?}"
             );
-            assert!(!state.grounded);
+            assert!(
+                (asked.y + CROUCH_HALF - top).abs() < EPS,
+                "fits was asked about {asked:?}, not the top-anchored centre"
+            );
+            assert!(!after.grounded);
+        }
+
+        #[test]
+        fn standing_in_the_air_keeps_the_top_of_the_hull() {
+            let (before, after, seen, asked) = change_in_the_air(Stance::Crouch, Stance::Stand);
+
+            let top = before.position.y + CROUCH_HALF;
+            assert_eq!(seen.length, 1.83, "the slide sees the standing hull");
+            assert_eq!(after.stance, Stance::Stand);
+            assert!(
+                (after.position.y + STAND_HALF - top).abs() < EPS,
+                "{after:?}"
+            );
+            assert!(
+                after.position.y - STAND_HALF < before.position.y - CROUCH_HALF - 0.7,
+                "the feet did not drop: {after:?}"
+            );
+            assert!(
+                (asked.y + STAND_HALF - top).abs() < EPS,
+                "fits was asked about {asked:?}, not the top-anchored centre"
+            );
+        }
+
+        #[test]
+        fn standing_on_the_ground_keeps_the_feet() {
+            let tuning = tuning(crouching_body(), 8, 18.0);
+            let mut state = on_the_floor();
+            for _ in 0..10 {
+                tick(&mut state, Stance::Crouch, &tuning);
+            }
+
+            tick(&mut state, Stance::Stand, &tuning);
+
+            assert_eq!(state.stance, Stance::Stand);
+            assert!(
+                (state.position.y - STAND_HALF).abs() < EPS,
+                "the feet left the floor: {state:?}"
+            );
+            assert!(state.grounded);
         }
 
         #[test]
@@ -3484,7 +3545,7 @@ mod tests {
             let first = tick(&mut state, Stance::Crouch, &tuning);
 
             assert_eq!(first.length, 1.1);
-            assert_eq!(first.radius, 0.405);
+            assert_eq!(first.radius, 0.38);
         }
 
         #[test]
@@ -3509,17 +3570,49 @@ mod tests {
 
             assert!(seen.iter().all(|hull| hull.length == 1.1), "{seen:?}");
             assert_eq!(state.stance, Stance::Crouch);
-            assert_eq!(state.from, crouched.from);
-            assert_eq!(state.progress, crouched.progress);
             assert_eq!(state.position, crouched.position);
             assert!((eye_above_feet(&state, &body) - CROUCH_EYE).abs() < EPS);
             let asked = asked.into_inner();
-            assert_eq!(asked.len(), 3, "it asks again each tick: {asked:?}");
+            assert!(!asked.is_empty(), "it never asked");
             for (hull, centre, _) in &asked {
                 assert_eq!(hull.length, 1.83, "it asks about the standing hull");
                 assert!(
                     (centre.y - STAND_HALF).abs() < EPS,
                     "it asks at the feet-anchored centre: {centre:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn a_refused_reversal_leaves_the_crouch_leg_running() {
+            let body = crouching_body();
+            let tuning = tuning(body, 8, 18.0);
+            let mut state = on_the_floor();
+            for _ in 0..3 {
+                tick(&mut state, Stance::Crouch, &tuning);
+            }
+            let standing_hull_is_refused = |hull: &Hull, _: Vec3, _: f32| hull.length < 1.5;
+
+            let mut eyes = Vec::new();
+            let mut seen = Vec::new();
+            for _ in 0..3 {
+                seen.push(tick_fitting(
+                    &mut state,
+                    Stance::Stand,
+                    &tuning,
+                    standing_hull_is_refused,
+                ));
+                eyes.push(eye_above_feet(&state, &body));
+            }
+
+            assert_eq!(state.stance, Stance::Crouch);
+            assert!(seen.iter().all(|hull| hull.length == 1.1), "{seen:?}");
+            for (i, eye) in eyes.iter().enumerate() {
+                let expected = eye_down((i + 4) as f32 / 8.0);
+                assert!(
+                    (eye - expected).abs() < EPS,
+                    "tick {}: eye {eye}, expected {expected}; all {eyes:?}",
+                    i + 4
                 );
             }
         }

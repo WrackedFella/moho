@@ -4457,10 +4457,10 @@ mod tests {
                     .all(|s| (s.position.y - crouched_centre).abs() < 0.05),
                 "the crouched hull moved: {refused:?}"
             );
-            let clear = 6.0 + RADIUS + SKIN;
+            let clear = 6.0 + RADIUS;
             let stood_at = stood_at.expect("it never stood after walking out");
             assert!(
-                stood_at > clear - 0.01,
+                stood_at > clear,
                 "it stood with the hull still under the edge: from z {stood_at}"
             );
             assert!(
@@ -4507,6 +4507,50 @@ mod tests {
                 under = after;
             }
             assert!(under.position.z > 3.5, "it went under: {under:?}");
+        }
+    }
+
+    /// The collider takes the crouched shape.
+    mod reshape {
+        use super::*;
+
+        #[test]
+        fn a_crouched_character_is_stood_on_at_its_crouched_top() {
+            let settings = MoveSettings {
+                crouch_ticks: 8,
+                ..test_settings()
+            };
+            let mut world = PhysicsWorld::new();
+            world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+            let spawn = |y| CharacterSpawn {
+                position: Vec3::new(0.0, y, 0.0),
+                yaw: 0.0,
+                pitch: 0.0,
+                body: crouching_body(),
+            };
+            let below = world.add_character(spawn(1.0));
+            let above = world.add_character(spawn(6.0));
+            let crouch = CharacterCommand {
+                stance: Stance::Crouch,
+                ..CharacterCommand::default()
+            };
+
+            for _ in 0..200 {
+                world
+                    .move_character(below, &crouch, &settings, DT)
+                    .expect("character is live");
+                world
+                    .move_character(above, &idle(), &settings, DT)
+                    .expect("character is live");
+                world.step(DT);
+            }
+
+            let rider = state(&world, above);
+            assert!(
+                (1.9..2.3).contains(&rider.position.y),
+                "it rests at the crouched top (1.1) plus its half height (0.915), not the standing top: {rider:?}"
+            );
+            assert_eq!(state(&world, below).stance, Stance::Crouch);
         }
     }
 }

@@ -17,6 +17,8 @@ const TICKS: usize = 600;
 const DT: f32 = 1.0 / 60.0;
 /// The cuboid's launch velocity; it slides to rest well before the noisy phase.
 const BOX_VELOCITY: Vec3 = Vec3::new(0.5, 0.0, 0.3);
+/// Ticks a stand-or-crouch leg takes.
+const CROUCH_TICKS: u16 = 12;
 const SEED: u64 = 0x5EED_0502;
 
 /// Effects queued before the tick's moves, then each character's command, in creation order.
@@ -74,7 +76,7 @@ fn settings() -> MoveSettings {
         jump_speed: 8.0,
         max_velocity: 90.0,
         autohop: false,
-        crouch_ticks: 12,
+        crouch_ticks: CROUCH_TICKS,
     }
 }
 
@@ -241,7 +243,7 @@ const APPROACH_TICKS: usize = 200;
 /// mid-way; the two characters are out of step. Fixed by tick so the rng draws stay put.
 fn wanted_stance(who: usize, tick: usize) -> Stance {
     let crouching = match who {
-        0 => (40..52).contains(&tick) || (55..110).contains(&tick) || (300..420).contains(&tick),
+        0 => (40..46).contains(&tick) || (63..110).contains(&tick) || (300..420).contains(&tick),
         _ => (tick / 37) % 3 == 1,
     };
     if crouching {
@@ -520,7 +522,7 @@ fn assert_run_exercises_the_world(script: &[TickInput], recorded: &[Snapshot]) {
     for index in 0..2 {
         let states = || recorded.iter().map(|s| s.characters[index]);
         assert!(
-            states().any(|c| c.stance == Stance::Crouch && c.progress >= 12),
+            states().any(|c| c.stance == Stance::Crouch && c.progress >= CROUCH_TICKS),
             "character {index} never finished a crouch"
         );
         assert!(
@@ -528,7 +530,7 @@ fn assert_run_exercises_the_world(script: &[TickInput], recorded: &[Snapshot]) {
             "character {index} never stood up from a crouch"
         );
         assert!(
-            states().any(|c| c.stance != c.from && c.progress > 0 && c.progress < 12),
+            states().any(|c| c.stance != c.from && c.progress > 0 && c.progress < CROUCH_TICKS),
             "character {index} was never part-way through a leg"
         );
         assert!(
@@ -536,6 +538,22 @@ fn assert_run_exercises_the_world(script: &[TickInput], recorded: &[Snapshot]) {
             "character {index} never crouched in the air"
         );
     }
+
+    let pairs = || {
+        recorded
+            .windows(2)
+            .flat_map(|w| (0..2).map(move |i| (w[0].characters[i], w[1].characters[i])))
+    };
+    assert!(
+        pairs().any(|(prev, next)| !prev.grounded && next.stance != prev.stance),
+        "no leg started in the air"
+    );
+    assert!(
+        pairs().any(|(prev, next)| prev.stance != prev.from
+            && (1..CROUCH_TICKS).contains(&prev.progress)
+            && next.stance == prev.from),
+        "no leg reversed mid-way"
+    );
 
     let idle: Vec<TickInput> = script
         .iter()

@@ -243,18 +243,18 @@ pub(crate) fn ceiling_mesh(underside: f32, z_from: f32, z_to: f32) -> WorldMesh 
 }
 
 /// The searchlight capsule (0.81 m wide, 1.83 m tall, eye 1.63 m up) that can also crouch to a
-/// 1.1 m capsule with the eye 0.95 m up.
+/// slimmer 0.76 m wide, 1.1 m tall capsule with the eye 0.95 m up.
 pub(crate) fn crouching_body() -> CharacterBody {
-    let capsule = |length, eye_height| Stature {
+    let capsule = |radius, length, eye_height| Stature {
         hull: Hull {
             shape: HullShape::Capsule,
-            radius: 0.405,
+            radius,
             length,
         },
         eye_height,
     };
     CharacterBody {
-        standing: capsule(1.83, 1.63),
-        crouched: Some(capsule(1.1, 0.95)),
+        standing: capsule(0.405, 1.83, 1.63),
+        crouched: Some(capsule(0.38, 1.1, 0.95)),
     }
 }
