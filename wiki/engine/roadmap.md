@@ -143,7 +143,7 @@ its consumers near, not when the earlier wave fully closes.
 | 2.11.3 | [ENG-F18-09](https://github.com/WrackedFella/moho/issues/407): a game draws text on screen from its own crates (pulled forward) | #315 | FPS Phase 2 HUD | 2 | #403; after #376; rebases on #406 if that lands first (`moho_ui_shell` host) |
 | 2.11.4 | [ENG-F18-10](https://github.com/WrackedFella/moho/issues/428): a game prints a line in its console after it acts on a command | #425 | FPS-F2-06 `tgm` | 2 | #403 |
 | 2.11.5 | [ENG-F18-16](https://github.com/WrackedFella/moho/issues/447): the player sets how often the world autosaves | #435 | SG-F2-03 (#343) | 1–2 gaps | flagstone's read after #343 |
-| 2.11.6 | [ENG-F18](https://github.com/WrackedFella/moho/issues/230) settings screen, modal stack and keybind capture on the shell; specified by [#444](https://github.com/WrackedFella/moho/issues/444) and [FPS-F3](https://github.com/WrackedFella/moho/issues/457) | #444 | FPS-F3 menus | 4 | #444 is its spec; capture after ENG-F26 |
+| 2.11.6 | [ENG-F18](https://github.com/WrackedFella/moho/issues/230) menu screens and their stack (ENG-F18-11), engine settings controls (-12), a game's own settings rows (-17), item lists (-18); specified by [#444](https://github.com/WrackedFella/moho/issues/444) and [FPS-F3](https://github.com/WrackedFella/moho/issues/457) | #444 | FPS-F3-03 [#460](https://github.com/WrackedFella/moho/issues/460); -17 FPS-F4-03 [#609](https://github.com/WrackedFella/moho/issues/609); -18 FPS-M2 inventory | 4, beside 5 | 11 → 12 → 17 (after #609); 18 after 11; keybind cards held for a rebinding consumer |
 | 2.12 | [ENG-F19](https://github.com/WrackedFella/moho/issues/231) layered content | — | FPS Phase 2 | 4 | — |
 | 2.13 | [ENG-F17](https://github.com/WrackedFella/moho/issues/229) navigation over static levels (done; cover, exposure and hidden-route queries move to ENG-F42, ENG-M3 row 3.4c) | — | FPS enemy chase and patrol | 4 | — |
 | 2.14 | [ENG-F26](https://github.com/WrackedFella/moho/issues/359): one key carries tap, hold, modifier and toggle actions (new; `moho_input`, settings display) | Justin | strategy sprint toggle; FPS reload, check mag, unjam | 4 | before ENG-F18's keybind card |
@@ -167,9 +167,10 @@ its consumers near, not when the earlier wave fully closes.
 - **Wave 3, SG-F4 follow-ups:** pause and speed, then the height slice, once SG-F4's walking skeleton exists.
   ENG-F32 (2.19) spans waves 2 and 3 in `moho_physics`, which nothing else in ENG-M2 touches; its API cards
   (#494–#497) go first because every later physics card would otherwise add callers.
-- **Wave 4, before FPS Phase 2:** the rest of ENG-F18 (2.11.2, and 2.11.6 once the FPS menus are specced;
-  2.11.6 includes the inventory list, two panes and tooltips from #444's 2026-10-23 comment), ENG-F19, ENG-F17 and
-  ENG-F26 (before ENG-F18's keybind capture, which builds on it).
+- **Wave 4, before FPS Phase 2:** the rest of ENG-F18 (2.11.2 and 2.11.6), ENG-F19, ENG-F17 and ENG-F26.
+  2.11.6 runs beside wave 5: its prerequisites are done and it touches `moho_ui_shell` and `searchlight`,
+  not the physics or renderer crates wave 5 is in. It includes the inventory list, two panes and tooltips
+  from #444's 2026-10-23 comment; ENG-F18's keybind capture waits for a rebinding consumer.
 - **Wave 5, during FPS Phase 2:** what FPS-M2 needs after its entry (FPS Phase 2 is in ENG-M2's cross-line gate).
   ENG-F38 goes first, since loose objects, models and effects draw through it; then #600 and ENG-F39 in parallel.
   #543 moves here from ENG-M5+, and #544 with ENG-F33's crouch as ENG-F43, as the FPS line asked (2026-10-23).
@@ -224,8 +225,9 @@ Carded when ENG-M2 closes, in this order of dependency; none is a gate item on i
 | 3.4e | [ENG-F41](https://github.com/WrackedFella/moho/issues/637) screen and sound follow game values | R.3 | Before FPS-M4 |
 | 3.4f | Level unload and switch (ENG-F14's Deferred row) | — | FPS-M6 is the named consumer; lands before the split so scene import (seam 8) doesn't change across repos |
 | 3.4g | #444's drag-and-drop grid | 2.11.6 | After the FPS list view is playtested |
+| 3.4h | Strategy's Video, Audio and mouse settings rows on the shell's controls (ENG-F18 Deferred) | 2.11.6 (-12) | One implementation of the engine's own settings before the split; strategy keeps its own screens and HUDs |
 | 3.5 | ADR-0011 two-sim proof | ENG-F32-09, 3.4a | One test that records per-slot commands; before any netcode ADR |
-| 3.6 | [ENG-F5](https://github.com/WrackedFella/moho/issues/232) split | 3.2–3.5 (with 3.4a to 3.4g), ENG-F35; FPS-M5 complete | Gate; the later of this row's items and FPS-M5 completion ([roadmap](../roadmap.md#milestone-gates-that-span-lines)) |
+| 3.6 | [ENG-F5](https://github.com/WrackedFella/moho/issues/232) split | 3.2–3.5 (with 3.4a to 3.4h), ENG-F35; FPS-M5 complete | Gate; the later of this row's items and FPS-M5 completion ([roadmap](../roadmap.md#milestone-gates-that-span-lines)) |
 
 The global graphics preset (Out of ENG-M2) is revisited once 3.2 lands and four or more Video rows exist.
 
@@ -310,7 +312,7 @@ Standing rules that order the work above. Each links its record.
 
 **Content, console and UI**
 - Mods are data-only (layered roots, override by stable id); scripted mods get their own ADR later ([ENG-F19](https://github.com/WrackedFella/moho/issues/231)). Saves record the active root list once a game both saves and loads content.
-- A game inherits the engine's console commands and adds its own; a taken name is refused. Game settings persist in each game's own prefs file ([ENG-F18](https://github.com/WrackedFella/moho/issues/230)). The settings screen, modal stack and keybind capture follow the game's menu spec.
+- A game inherits the engine's console commands and adds its own; a taken name is refused. Game settings persist in each game's own prefs file ([ENG-F18](https://github.com/WrackedFella/moho/issues/230)). A game describes its menu screens; the engine draws and stacks them and supplies its own settings as ready-made controls ([#444](https://github.com/WrackedFella/moho/issues/444)). Keybind capture waits for a rebinding consumer.
 
 **Graphics and physics**
 - Lowest target GPU is a GTX 1080; every renderer perf criterion is measured on it at 1080p. It is a floor, never a filter.
