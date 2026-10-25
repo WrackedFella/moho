@@ -4789,10 +4789,16 @@ mod tests {
                 .map(|_| tick(&mut world, h, &command(1.0, Stance::Prone)).0)
                 .collect();
 
-            let last = path.last().expect("it ticked");
-            assert!(last.position.z > 2.0, "it is stuck at the riser: {last:?}");
+            // The step's top runs from z 1 to 4; read it mid-top, past the riser.
+            let on_top = path
+                .iter()
+                .find(|s| s.position.z > 2.5)
+                .expect("it is stuck at the riser");
             assert!(path.iter().all(|s| s.grounded), "{path:?}");
-            assert!((last.position.y - (RADIUS + 0.3)).abs() < 0.05, "{last:?}");
+            assert!(
+                (on_top.position.y - (RADIUS + 0.3)).abs() < 0.05,
+                "{on_top:?}"
+            );
         }
 
         #[test]
