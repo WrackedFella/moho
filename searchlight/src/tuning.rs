@@ -19,6 +19,17 @@ pub const SHIPPED_BODY: CharacterBody = CharacterBody {
     },
     crouched: None,
     prone: None,
+    lean: moho_physics::Lean {
+        upright: moho_physics::LeanReach {
+            distance: 0.0,
+            roll: 0.0,
+        },
+        prone: moho_physics::LeanReach {
+            distance: 0.0,
+            roll: 0.0,
+        },
+        head_radius: 0.0,
+    },
 };
 
 /// Builds the simulation tuning around the starting `kit`: its weapon's numbers and its loadout.
@@ -38,6 +49,7 @@ pub fn tuning(kit: Kit) -> SimConfig {
             autohop: false,
             crouch_ticks: 0,
             prone_ticks: 0,
+            lean_ticks: 0,
         },
         gravity: 18.0,
         character_body: SHIPPED_BODY,
@@ -139,6 +151,7 @@ mod tests {
                 },
                 crouched: None,
                 prone: None,
+                lean: moho_physics::Lean::default(),
             }
         );
     }

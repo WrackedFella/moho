@@ -46,6 +46,8 @@ pub struct CharacterCommand {
     pub jump: bool,
     /// The stance the game wants; hold or toggle is the game's business.
     pub stance: Stance,
+    /// The lean the game wants, -1 (left) to 1 (right); clamped. Which key wins is the game's call.
+    pub lean: f32,
 }
 
 /// What a character's hull and eye are doing: standing, crouched or prone.
@@ -93,6 +95,8 @@ pub struct MoveSettings {
     pub crouch_ticks: u16,
     /// Ticks one crouch-and-prone leg takes; 0 changes stance within one tick.
     pub prone_ticks: u16,
+    /// Ticks a lean takes from upright to full; 0 leans fully within one tick.
+    pub lean_ticks: u16,
 }
 
 impl MoveSettings {
@@ -142,6 +146,28 @@ pub struct CharacterBody {
     /// The stature of a prone character; `None` never goes prone. Its hull is a capsule whose
     /// `length` lies along the facing, and a body that goes prone must also crouch.
     pub prone: Option<Stature>,
+    /// How far the eye leans; the default is no lean.
+    pub lean: Lean,
+}
+
+/// How far the eye shifts and the view rolls at a full lean.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct LeanReach {
+    /// Sideways shift of the eye, metres.
+    pub distance: f32,
+    /// Roll of the view, radians.
+    pub roll: f32,
+}
+
+/// A character's lean: its reach upright and prone, and the ball swept to keep the eye out of
+/// walls.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Lean {
+    /// Standing and crouched.
+    pub upright: LeanReach,
+    pub prone: LeanReach,
+    /// Radius of the ball swept from the upright eye to the leaning one, metres.
+    pub head_radius: f32,
 }
 
 /// A character's hull as posed: upright, or lying along the facing.
@@ -240,6 +266,7 @@ impl Default for CharacterBody {
             },
             crouched: None,
             prone: None,
+            lean: Lean::default(),
         }
     }
 }
@@ -549,6 +576,10 @@ pub trait CharacterQueries {
 
     /// Whether `pose`, centred at `centre` and facing `yaw`, overlaps nothing solid.
     fn fits(&self, pose: HullPose, centre: Vec3, yaw: f32) -> bool;
+
+    /// The free fraction (0 to 1) of the straight path from `from` to `to` for a ball of
+    /// `radius`, less a skin, ignoring the character's own hull and sensors.
+    fn sweep(&self, from: Vec3, to: Vec3, radius: f32) -> f32;
 }
 
 /// Start, reverse or advance the stance leg toward `wanted`.
@@ -839,10 +870,17 @@ mod tests {
 
     const DT: f32 = 1.0 / 60.0;
 
-    /// [`CharacterQueries`] over closures: `slide` runs once, `fits` is open space unless told.
+    /// A sweep that finds nothing in the way.
+    fn clear_sweep(_: Vec3, _: Vec3, _: f32) -> f32 {
+        1.0
+    }
+
+    /// [`CharacterQueries`] over closures: `slide` runs once, `fits` is open space and `sweep`
+    /// finds nothing unless told.
     struct Fake<S, F = fn(HullPose, Vec3, f32) -> bool> {
         slide: std::cell::RefCell<Option<S>>,
         fits: F,
+        sweep: Box<dyn Fn(Vec3, Vec3, f32) -> f32>,
     }
 
     impl<S: FnOnce(&CharacterState, HullPose, Vec3) -> Slide> Fake<S> {
@@ -850,6 +888,7 @@ mod tests {
             Self {
                 slide: std::cell::RefCell::new(Some(slide)),
                 fits: |_, _, _| true,
+                sweep: Box::new(clear_sweep),
             }
         }
     }
@@ -860,6 +899,15 @@ mod tests {
             Fake {
                 slide: self.slide,
                 fits,
+                sweep: self.sweep,
+            }
+        }
+
+        /// The same fake with `sweep` returning the free fraction of a ball's path.
+        fn sweeping(self, sweep: impl Fn(Vec3, Vec3, f32) -> f32 + 'static) -> Self {
+            Self {
+                sweep: Box::new(sweep),
+                ..self
             }
         }
     }
@@ -880,6 +928,10 @@ mod tests {
 
         fn fits(&self, pose: HullPose, centre: Vec3, yaw: f32) -> bool {
             (self.fits)(pose, centre, yaw)
+        }
+
+        fn sweep(&self, from: Vec3, to: Vec3, radius: f32) -> f32 {
+            (self.sweep)(from, to, radius)
         }
     }
 
@@ -933,6 +985,8 @@ mod tests {
             from: Stance::Stand,
             progress: 0,
             anchor: Anchor::Feet,
+            lean: 0.0,
+            roll: 0.0,
         }
     }
 
@@ -1228,6 +1282,7 @@ mod tests {
                     autohop: false,
                     crouch_ticks: 0,
                     prone_ticks: 0,
+                    lean_ticks: 0,
                 };
                 let mut state = standing();
 
@@ -1265,6 +1320,7 @@ mod tests {
                 autohop: false,
                 crouch_ticks: 0,
                 prone_ticks: 0,
+                lean_ticks: 0,
             };
             let diagonal = CharacterCommand {
                 forward: 1.0,
@@ -2594,6 +2650,7 @@ mod tests {
             pitch_delta: 0.2,
             jump: true,
             stance: Stance::Stand,
+            lean: 0.0,
         };
         let mut first = start;
         let mut second = start;
@@ -2623,6 +2680,7 @@ mod tests {
                 },
                 crouched: None,
                 prone: None,
+                lean: Lean::default(),
             },
             ..test_tuning()
         };
@@ -2725,6 +2783,7 @@ mod tests {
                 pitch_delta: -0.125,
                 jump: true,
                 stance: Stance::Crouch,
+                lean: -0.75,
             },
         ];
         let effects = [
@@ -4614,6 +4673,7 @@ mod tests {
             let body = CharacterBody {
                 crouched: None,
                 prone: None,
+                lean: Lean::default(),
                 ..crouching_body()
             };
             let tuning = Tuning {
@@ -4692,6 +4752,417 @@ mod tests {
                 poses.iter().all(|p| p.is_lying() && p.length() == 1.8),
                 "the slide kept the lying hull through the airborne leg: {poses:?}"
             );
+        }
+    }
+
+    mod lean {
+        use super::*;
+        use crate::world::test_support::prone_body;
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        const UPRIGHT_DISTANCE: f32 = 0.35;
+        const PRONE_DISTANCE: f32 = 0.15;
+        const HEAD_RADIUS: f32 = 0.1;
+        const LEAN_TICKS: u16 = 6;
+        const EPS: f32 = 1e-4;
+        /// The standing eye's offset from the hull centre: 1.63 m up less half of 1.83 m.
+        const STAND_EYE_Y: f32 = 0.715;
+        const STAND_HALF: f32 = 0.915;
+        const CROUCH_HALF: f32 = 0.55;
+
+        type Sweep = Rc<dyn Fn(Vec3, Vec3, f32) -> f32>;
+
+        fn upright_roll() -> f32 {
+            12.0_f32.to_radians()
+        }
+
+        fn prone_roll() -> f32 {
+            20.0_f32.to_radians()
+        }
+
+        fn leaning_body() -> CharacterBody {
+            CharacterBody {
+                lean: Lean {
+                    upright: LeanReach {
+                        distance: UPRIGHT_DISTANCE,
+                        roll: upright_roll(),
+                    },
+                    prone: LeanReach {
+                        distance: PRONE_DISTANCE,
+                        roll: prone_roll(),
+                    },
+                    head_radius: HEAD_RADIUS,
+                },
+                ..prone_body()
+            }
+        }
+
+        fn tuning() -> Tuning {
+            Tuning {
+                body: leaning_body(),
+                settings: MoveSettings {
+                    lean_ticks: LEAN_TICKS,
+                    prone_ticks: 10,
+                    ..test_settings()
+                },
+                gravity: 18.0,
+            }
+        }
+
+        fn on_the_floor() -> CharacterState {
+            state_at(Vec3::new(0.0, STAND_HALF, 0.0), Vec3::ZERO, true)
+        }
+
+        fn leaning(lean: f32) -> CharacterCommand {
+            CharacterCommand {
+                lean,
+                ..CharacterCommand::default()
+            }
+        }
+
+        fn clear() -> Sweep {
+            Rc::new(clear_sweep)
+        }
+
+        /// A wall plane at world `x`; a ball of `radius` is stopped when its surface touches it,
+        /// and a ball moving away from it is never stopped.
+        fn wall_at(x: f32) -> Sweep {
+            Rc::new(move |from: Vec3, to: Vec3, radius: f32| {
+                let dx = to.x - from.x;
+                let toward = x > from.x;
+                if dx == 0.0 || (dx > 0.0) != toward {
+                    return 1.0;
+                }
+                let gap = if toward {
+                    x - radius - from.x
+                } else {
+                    from.x - (x + radius)
+                };
+                (gap / dx.abs()).clamp(0.0, 1.0)
+            })
+        }
+
+        fn grounded_slide(translation: Vec3) -> Slide {
+            Slide {
+                translation,
+                grounded: true,
+                ground: Some(face(Vec3::Y, 0.0)),
+                hits: Vec::new(),
+            }
+        }
+
+        fn tick(
+            state: &mut CharacterState,
+            tuning: &Tuning,
+            command: &CharacterCommand,
+            sweep: &Sweep,
+        ) {
+            let sweep = Rc::clone(sweep);
+            let queries = Fake::new(|_, _, _| grounded_slide(Vec3::ZERO))
+                .sweeping(move |from, to, radius| sweep(from, to, radius));
+
+            super::super::step(state, command, &[], tuning, DT, &queries);
+        }
+
+        fn hold(
+            state: &mut CharacterState,
+            tuning: &Tuning,
+            lean: f32,
+            ticks: usize,
+            sweep: &Sweep,
+        ) {
+            for _ in 0..ticks {
+                tick(state, tuning, &leaning(lean), sweep);
+            }
+        }
+
+        #[test]
+        fn one_tick_leans_a_sixth_of_the_way() {
+            for (wanted, side) in [(-1.0, 1.0), (1.0, -1.0)] {
+                let mut state = on_the_floor();
+
+                tick(&mut state, &tuning(), &leaning(wanted), &clear());
+
+                let sixth = 1.0 / 6.0;
+                assert!(
+                    (state.lean - wanted * sixth).abs() < EPS,
+                    "lean {} for {wanted}",
+                    state.lean
+                );
+                assert!(
+                    (state.eye.x - side * UPRIGHT_DISTANCE * sixth).abs() < EPS,
+                    "the eye moved {} for {wanted}, expected {}",
+                    state.eye.x,
+                    side * UPRIGHT_DISTANCE * sixth
+                );
+                assert!((state.eye.y - STAND_EYE_Y).abs() < EPS, "{:?}", state.eye);
+                assert!(state.eye.z.abs() < EPS, "{:?}", state.eye);
+                assert!(
+                    (state.roll - wanted * upright_roll() * sixth).abs() < EPS,
+                    "roll {} for {wanted}",
+                    state.roll
+                );
+            }
+        }
+
+        #[test]
+        fn leaning_right_moves_the_eye_along_the_move_right_vector_of_a_turned_facing() {
+            let mut state = on_the_floor();
+            state.yaw = std::f32::consts::FRAC_PI_2;
+            let before = Vec3::new(0.0, STAND_EYE_Y, 0.0);
+
+            hold(&mut state, &tuning(), 1.0, 6, &clear());
+
+            let right = Vec3::new(0.0, 0.0, 1.0);
+            let expected = before + right * UPRIGHT_DISTANCE;
+            assert!(
+                state.eye.distance(expected) < EPS,
+                "eye {:?}, expected {expected:?}",
+                state.eye
+            );
+            assert!((state.roll - upright_roll()).abs() < EPS, "{}", state.roll);
+        }
+
+        #[test]
+        fn releasing_returns_upright_over_the_lean_time() {
+            let mut state = on_the_floor();
+            hold(&mut state, &tuning(), 1.0, 6, &clear());
+            assert!((state.lean - 1.0).abs() < EPS, "setup: {}", state.lean);
+
+            let mut leans = Vec::new();
+            let mut eyes = Vec::new();
+            let mut rolls = Vec::new();
+            for _ in 0..8 {
+                tick(&mut state, &tuning(), &leaning(0.0), &clear());
+                leans.push(state.lean);
+                eyes.push(state.eye.x);
+                rolls.push(state.roll);
+            }
+
+            for k in 1..=6 {
+                let left = 1.0 - k as f32 / 6.0;
+                assert!((leans[k - 1] - left).abs() < EPS, "tick {k}: {leans:?}");
+                assert!(
+                    (eyes[k - 1] + UPRIGHT_DISTANCE * left).abs() < EPS,
+                    "tick {k}: {eyes:?}"
+                );
+                assert!(
+                    (rolls[k - 1] - upright_roll() * left).abs() < EPS,
+                    "tick {k}: {rolls:?}"
+                );
+            }
+            assert!(
+                leans[6..].iter().all(|l| l.abs() < EPS) && eyes[6..].iter().all(|x| x.abs() < EPS),
+                "it stays upright: {leans:?} {eyes:?}"
+            );
+        }
+
+        #[test]
+        fn a_lean_command_beyond_full_is_clamped() {
+            for (wanted, side) in [(5.0, -1.0), (-5.0, 1.0)] {
+                let mut state = on_the_floor();
+
+                hold(&mut state, &tuning(), wanted, 12, &clear());
+
+                assert!((state.lean - wanted.signum()).abs() < EPS, "{}", state.lean);
+                assert!(
+                    (state.eye.x - side * UPRIGHT_DISTANCE).abs() < EPS,
+                    "{:?}",
+                    state.eye
+                );
+            }
+        }
+
+        #[test]
+        fn zero_lean_ticks_leans_fully_within_one_tick() {
+            let tuning = Tuning {
+                settings: MoveSettings {
+                    lean_ticks: 0,
+                    ..tuning().settings
+                },
+                ..tuning()
+            };
+            let mut state = on_the_floor();
+
+            tick(&mut state, &tuning, &leaning(1.0), &clear());
+
+            assert!((state.lean - 1.0).abs() < EPS, "lean {}", state.lean);
+            assert!(
+                (state.eye.x + UPRIGHT_DISTANCE).abs() < EPS,
+                "eye {:?}",
+                state.eye
+            );
+            assert!((state.roll - upright_roll()).abs() < EPS, "{}", state.roll);
+        }
+
+        #[test]
+        fn a_partial_lean_command_settles_at_that_lean_without_overshoot() {
+            let mut state = on_the_floor();
+
+            let mut leans = Vec::new();
+            for _ in 0..10 {
+                tick(&mut state, &tuning(), &leaning(0.4), &clear());
+                leans.push(state.lean);
+            }
+
+            for (i, lean) in leans.iter().enumerate() {
+                let expected = ((i + 1) as f32 / 6.0).min(0.4);
+                assert!((lean - expected).abs() < EPS, "tick {}: {leans:?}", i + 1);
+            }
+            assert!(
+                (state.eye.x + 0.4 * UPRIGHT_DISTANCE).abs() < EPS,
+                "the eye settles at 0.4 of the reach: {:?}",
+                state.eye
+            );
+        }
+
+        #[test]
+        fn the_reach_blends_from_upright_to_prone_over_the_prone_leg() {
+            let tuning = tuning();
+            let mut state = state_at(Vec3::new(0.0, CROUCH_HALF, 0.0), Vec3::ZERO, true);
+            state.stance = Stance::Crouch;
+            state.from = Stance::Crouch;
+            hold(&mut state, &tuning, 1.0, 6, &clear());
+            assert!(
+                (state.eye.x + UPRIGHT_DISTANCE).abs() < EPS,
+                "setup: {:?}",
+                state.eye
+            );
+
+            let mut halfway = state;
+            for _ in 0..5 {
+                tick(&mut halfway, &tuning, &prone_leaning(1.0), &clear());
+            }
+            let mut lying = halfway;
+            for _ in 0..5 {
+                tick(&mut lying, &tuning, &prone_leaning(1.0), &clear());
+            }
+
+            assert_eq!(halfway.stance, Stance::Prone);
+            assert_eq!(halfway.progress, 5, "setup: halfway through the leg");
+            let mid_distance = (UPRIGHT_DISTANCE + PRONE_DISTANCE) / 2.0;
+            assert!(
+                (halfway.eye.x + mid_distance).abs() < EPS,
+                "halfway {:?}, expected x {}",
+                halfway.eye,
+                -mid_distance
+            );
+            let mid_roll = (upright_roll() + prone_roll()) / 2.0;
+            assert!((halfway.roll - mid_roll).abs() < EPS, "{}", halfway.roll);
+            assert!(
+                (lying.eye.x + PRONE_DISTANCE).abs() < EPS,
+                "{:?}",
+                lying.eye
+            );
+            assert!((lying.roll - prone_roll()).abs() < EPS, "{}", lying.roll);
+        }
+
+        fn prone_leaning(lean: f32) -> CharacterCommand {
+            CharacterCommand {
+                lean,
+                stance: Stance::Prone,
+                ..CharacterCommand::default()
+            }
+        }
+
+        #[test]
+        fn the_sweep_runs_from_the_upright_eye_after_the_slide_to_the_leaning_one() {
+            let calls: Rc<RefCell<Vec<(Vec3, Vec3, f32)>>> = Rc::default();
+            let mut state = state_at(Vec3::new(1.0, STAND_HALF, 2.0), Vec3::ZERO, true);
+            state.yaw = std::f32::consts::FRAC_PI_2;
+            let recorded = Rc::clone(&calls);
+            for _ in 0..6 {
+                let recorded = Rc::clone(&recorded);
+                let queries = Fake::new(|_, _, _| grounded_slide(Vec3::new(0.3, 0.0, 0.0)))
+                    .sweeping(move |from, to, radius| {
+                        recorded.borrow_mut().push((from, to, radius));
+                        1.0
+                    });
+
+                super::super::step(&mut state, &leaning(1.0), &[], &tuning(), DT, &queries);
+            }
+
+            let calls = calls.borrow();
+            let &(from, to, radius) = calls.last().expect("the step swept");
+            let upright_eye = state.position + Vec3::new(0.0, STAND_EYE_Y, 0.0);
+            assert!(
+                from.distance(upright_eye) < EPS,
+                "from {from:?}, upright eye {upright_eye:?}"
+            );
+            assert!(
+                (to - from).distance(Vec3::new(0.0, 0.0, UPRIGHT_DISTANCE)) < EPS,
+                "swept {from:?} to {to:?}"
+            );
+            assert!((radius - HEAD_RADIUS).abs() < EPS, "{radius}");
+            assert!(
+                (state.position.x - 2.8).abs() < EPS,
+                "setup: the slide moved the character: {:?}",
+                state.position
+            );
+        }
+
+        #[test]
+        fn a_wall_stops_the_eye_a_head_radius_short_and_scales_the_roll() {
+            let mut state = on_the_floor();
+            let wall = wall_at(0.25);
+
+            hold(&mut state, &tuning(), -1.0, 10, &wall);
+
+            let free = (0.25 - HEAD_RADIUS) / UPRIGHT_DISTANCE;
+            assert!((state.eye.x - 0.15).abs() < EPS, "{:?}", state.eye);
+            assert!(
+                (state.roll + upright_roll() * free).abs() < EPS,
+                "roll {}, expected {}",
+                state.roll,
+                -upright_roll() * free
+            );
+        }
+
+        #[test]
+        fn a_lean_held_against_a_wall_extends_when_it_clears() {
+            let mut state = on_the_floor();
+            hold(&mut state, &tuning(), -1.0, 10, &wall_at(0.25));
+            assert!(
+                (state.lean + 1.0).abs() < EPS,
+                "the lean is held at full against the wall: {}",
+                state.lean
+            );
+            assert!(state.eye.x < 0.2, "setup: clamped {:?}", state.eye);
+
+            tick(&mut state, &tuning(), &leaning(-1.0), &clear());
+
+            assert!(
+                (state.eye.x - UPRIGHT_DISTANCE).abs() < EPS,
+                "the eye is out at once: {:?}",
+                state.eye
+            );
+            assert!((state.roll + upright_roll()).abs() < EPS, "{}", state.roll);
+        }
+
+        proptest! {
+            #[test]
+            fn the_eye_never_ends_inside_a_wall(
+                gap in 0.02f32..1.0,
+                wanted in 0.2f32..=1.0,
+                left in any::<bool>(),
+            ) {
+                let side = if left { 1.0 } else { -1.0 };
+                let wall_x = side * (HEAD_RADIUS + gap);
+                let mut state = on_the_floor();
+
+                hold(&mut state, &tuning(), -side * wanted, 12, &wall_at(wall_x));
+
+                let reach = (wanted * UPRIGHT_DISTANCE).min(gap);
+                prop_assert!(
+                    (state.eye.x - side * reach).abs() < 1e-3,
+                    "eye {:?} for gap {gap}, wanted {wanted}", state.eye
+                );
+                prop_assert!(
+                    side * (state.eye.x + side * HEAD_RADIUS) <= side * wall_x + 1e-3,
+                    "the eye's ball reaches into the wall at {wall_x}: {:?}", state.eye
+                );
+            }
         }
     }
 }

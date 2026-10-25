@@ -137,6 +137,7 @@ pub(crate) fn test_move_settings() -> MoveSettings {
         autohop: false,
         crouch_ticks: 0,
         prone_ticks: 0,
+        lean_ticks: 0,
     }
 }
 

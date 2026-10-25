@@ -408,6 +408,7 @@ mod tests {
             autohop: true,
             crouch_ticks: 0,
             prone_ticks: 0,
+            lean_ticks: 0,
         }
     }
 

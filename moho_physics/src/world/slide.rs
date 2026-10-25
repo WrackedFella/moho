@@ -222,6 +222,10 @@ impl CharacterQueries for WorldQueries<'_> {
         let hit = self.queries.intersect_shape(at, shape).next().is_some();
         !hit
     }
+
+    fn sweep(&self, _from: Vec3, _to: Vec3, _radius: f32) -> f32 {
+        1.0
+    }
 }
 
 impl Slider<'_> {

@@ -17,6 +17,7 @@ pub(crate) fn test_settings() -> MoveSettings {
         autohop: false,
         crouch_ticks: 0,
         prone_ticks: 0,
+        lean_ticks: 0,
     }
 }
 
@@ -258,6 +259,7 @@ pub(crate) fn crouching_body() -> CharacterBody {
         standing: capsule(0.405, 1.83, 1.63),
         crouched: Some(capsule(0.38, 1.1, 0.95)),
         prone: None,
+        lean: crate::movement::Lean::default(),
     }
 }
 

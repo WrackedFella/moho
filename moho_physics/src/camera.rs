@@ -9,12 +9,14 @@ use glam::{Mat4, Vec3};
 pub struct FirstPersonView {
     pub eye: Vec3,
     pub forward: Vec3,
+    /// The view's up, rolled about `forward`.
+    pub up: Vec3,
 }
 
 impl FirstPersonView {
     /// Right-handed view matrix, +Y up.
     pub fn view_matrix(&self) -> Mat4 {
-        glam::camera::rh::view::look_at_mat4(self.eye, self.eye + self.forward, Vec3::Y)
+        glam::camera::rh::view::look_at_mat4(self.eye, self.eye + self.forward, self.up)
     }
 }
 
@@ -33,6 +35,7 @@ pub fn first_person_view(
     FirstPersonView {
         eye: previous.eye_position().lerp(current.eye_position(), alpha),
         forward: Vec3::new(yaw_sin * pitch_cos, pitch_sin, yaw_cos * pitch_cos),
+        up: Vec3::Y,
     }
 }
 
@@ -58,6 +61,8 @@ mod tests {
             from: Stance::Stand,
             progress: 0,
             anchor: Anchor::Feet,
+            lean: 0.0,
+            roll: 0.0,
         }
     }
 
@@ -238,5 +243,104 @@ mod tests {
             view.eye.distance(Vec3::new(0.5, 1.6, 0.0)) < EPS,
             "{view:?}"
         );
+    }
+
+    /// The camera's up at a level look rolled by `roll`: the world's up tilted toward the
+    /// character's right, which faces -X at yaw 0.
+    fn rolled_up(roll: f32) -> Vec3 {
+        Vec3::new(-roll.sin(), roll.cos(), 0.0)
+    }
+
+    #[test]
+    fn up_is_rolled_by_the_states_roll() {
+        let roll = 0.2_f32;
+        let leaning = CharacterState {
+            roll,
+            ..state_at(Vec3::ZERO, 0.0, 0.0)
+        };
+        let upright = state_at(Vec3::ZERO, 0.0, 0.0);
+        let left = CharacterState {
+            roll: -roll,
+            ..upright
+        };
+
+        let rolled = first_person_view(&leaning, &leaning, 1.0, (0.0, 0.0));
+        let level = first_person_view(&upright, &upright, 1.0, (0.0, 0.0));
+        let rolled_left = first_person_view(&left, &left, 1.0, (0.0, 0.0));
+
+        assert!(rolled.up.distance(rolled_up(roll)) < EPS, "{rolled:?}");
+        assert!(level.up.distance(Vec3::Y) < EPS, "{level:?}");
+        assert!(
+            rolled_left.up.distance(rolled_up(-roll)) < EPS,
+            "{rolled_left:?}"
+        );
+        let seen = rolled.view_matrix().transform_vector3(Vec3::Y);
+        assert!(
+            (seen.x + roll.sin()).abs() < EPS,
+            "the world's up leans away from the roll in the view: {seen:?}"
+        );
+        assert!(
+            level
+                .view_matrix()
+                .transform_vector3(Vec3::Y)
+                .distance(Vec3::Y)
+                < EPS,
+            "an unrolled view is unchanged"
+        );
+    }
+
+    #[test]
+    fn up_rolls_to_the_characters_right_whichever_way_it_faces() {
+        let facing_x = CharacterState {
+            roll: 0.3,
+            ..state_at(Vec3::ZERO, 90.0_f32.to_radians(), 0.0)
+        };
+
+        let view = first_person_view(&facing_x, &facing_x, 1.0, (0.0, 0.0));
+
+        let expected = Vec3::new(0.0, 0.3_f32.cos(), 0.3_f32.sin());
+        assert!(view.up.distance(expected) < EPS, "{view:?}");
+    }
+
+    #[test]
+    fn up_is_perpendicular_to_forward_and_rolled_about_it_when_pitched() {
+        let roll = 0.4_f32;
+        let pitched = state_at(Vec3::ZERO, 0.7, 0.6);
+        let rolled = CharacterState { roll, ..pitched };
+
+        let view = first_person_view(&rolled, &rolled, 1.0, (0.0, 0.0));
+        let level = first_person_view(&pitched, &pitched, 1.0, (0.0, 0.0));
+
+        assert!(view.up.dot(view.forward).abs() < EPS, "{view:?}");
+        assert!((view.up.length() - 1.0).abs() < EPS, "{view:?}");
+        let right = view.forward.cross(Vec3::Y).normalize();
+        let unrolled = right.cross(view.forward);
+        let angle = unrolled.angle_between(view.up);
+        assert!((angle - roll).abs() < 1e-4, "angle {angle}, roll {roll}");
+        assert!(
+            (view.up.dot(right) - roll.sin()).abs() < 1e-4,
+            "rolled toward the right: {view:?}"
+        );
+        assert!(level.up.distance(unrolled) < 1e-4, "{level:?}");
+    }
+
+    #[test]
+    fn roll_blends_between_ticks_by_alpha() {
+        let previous = CharacterState {
+            roll: 0.1,
+            ..state_at(Vec3::ZERO, 0.0, 0.0)
+        };
+        let current = CharacterState {
+            roll: 0.5,
+            ..state_at(Vec3::ZERO, 0.0, 0.0)
+        };
+
+        let start = first_person_view(&previous, &current, 0.0, (0.0, 0.0));
+        let halfway = first_person_view(&previous, &current, 0.5, (0.0, 0.0));
+        let end = first_person_view(&previous, &current, 1.0, (0.0, 0.0));
+
+        assert!(start.up.distance(rolled_up(0.1)) < EPS, "{start:?}");
+        assert!(halfway.up.distance(rolled_up(0.3)) < EPS, "{halfway:?}");
+        assert!(end.up.distance(rolled_up(0.5)) < EPS, "{end:?}");
     }
 }
