@@ -332,153 +332,7 @@ impl EventProcessor {
                 entity_type,
                 args,
                 position: _,
-            } => {
-                // If position is None (from console), raycast to find it
-                // We need the camera position and forward vector
-                let (view_matrix, _, _) = app.camera;
-                let camera_pos = view_matrix.inverse().col(3).truncate();
-                let forward = -view_matrix.inverse().col(2).truncate().normalize();
-
-                // Raycast
-                let grid_opt = app
-                    .light_system
-                    .as_mut()
-                    .map(flagstone_voxel::LightSystem::grid_mut);
-
-                if let Some(grid) = grid_opt {
-                    // Use raycast utility
-                    // Max distance 100 units
-                    let hit = flagstone_game::raycast::raycast(
-                        grid,
-                        camera_pos,
-                        forward,
-                        SPAWN_RAYCAST_MAX_DISTANCE,
-                    );
-
-                    let spawn_pos = if let Some(hit) = hit {
-                        // Spawn at hit position + normal * offset
-                        hit.position
-                            + glam::Vec3::new(
-                                hit.normal.x as f32,
-                                hit.normal.y as f32,
-                                hit.normal.z as f32,
-                            ) * SPAWN_NORMAL_OFFSET
-                    } else {
-                        // Spawn in front of camera if no hit
-                        camera_pos + forward * SPAWN_FALLBACK_DISTANCE
-                    };
-
-                    tracing::info!(entity_type = %entity_type, pos = ?spawn_pos, "Spawning entity");
-
-                    match entity_type.to_lowercase().as_str() {
-                        "crystal" => {
-                            let block_pos = glam::IVec3::new(
-                                spawn_pos.x.floor() as i32,
-                                spawn_pos.y.floor() as i32,
-                                spawn_pos.z.floor() as i32,
-                            );
-
-                            // The event path lets the light and mesh systems react.
-                            app.event_bus.publish(WorldEvent::BlockPlaced {
-                                position: block_pos,
-                                material_id: CRYSTAL_MATERIAL_ID,
-                                reason: BlockChangeReason::Player,
-                            });
-                        }
-                        "light" => {
-                            // Spawn dynamic light
-                            // The renderer is only reachable from `frame`, so the light is queued.
-                            if app.window.is_some() {
-                                // Parse color from args if present
-                                let color = if let Some(arg_str) = &args {
-                                    // Simple parsing: "r g b"
-                                    let parts: Vec<&str> = arg_str.split_whitespace().collect();
-                                    if parts.len() >= 3 {
-                                        glam::Vec3::new(
-                                            parts[0].parse().unwrap_or(1.0),
-                                            parts[1].parse().unwrap_or(1.0),
-                                            parts[2].parse().unwrap_or(1.0),
-                                        )
-                                    } else {
-                                        glam::Vec3::ONE // White default
-                                    }
-                                } else {
-                                    glam::Vec3::ONE // White default
-                                };
-
-                                app.pending_render.push(RenderRequest::AddPointLight {
-                                    position: spawn_pos,
-                                    color,
-                                    intensity: DEFAULT_POINT_LIGHT_INTENSITY,
-                                    range: DEFAULT_POINT_LIGHT_RANGE,
-                                });
-                                tracing::info!(pos = ?spawn_pos, "Added point light");
-
-                                // Spawn a small gizmo sphere so the light origin is
-                                // visible in world space. Emissive material bypasses
-                                // lighting so the gizmo glows at the light's own colour.
-                                let gizmo = flagstone_game::actors::Sphere::new(
-                                    spawn_pos,
-                                    0.15,
-                                    flagstone_voxel::MaterialType::Emissive {
-                                        color,
-                                        intensity: 1.5,
-                                    },
-                                );
-                                app.entities.actors.spawn_sphere(gizmo);
-                            }
-                        }
-                        "cube" => {
-                            // Spawn cube actor
-                            use flagstone_game::actors::Cube;
-                            use flagstone_voxel::MaterialType;
-
-                            let cube = Cube::new(
-                                spawn_pos,
-                                1.0,
-                                1.0,
-                                1.0,
-                                MaterialType::Lambertian {
-                                    albedo: glam::Vec3::new(0.8, 0.2, 0.2),
-                                },
-                            );
-                            let entity = app.entities.actors.spawn_cube(cube);
-                            if let Some(pw) = app.physics.world.as_mut() {
-                                let handle = pw.add_dynamic_cuboid(spawn_pos, 0.5, 0.5, 0.5);
-                                app.physics.test_bodies.push((handle, entity));
-                            }
-                            tracing::info!(pos = ?spawn_pos, "Spawned cube");
-                        }
-                        "sphere" => {
-                            // Spawn sphere actor
-                            use flagstone_game::actors::Sphere;
-                            use flagstone_voxel::MaterialType;
-
-                            let sphere = Sphere::new(
-                                spawn_pos,
-                                0.5,
-                                MaterialType::Metal {
-                                    albedo: glam::Vec3::new(0.8, 0.8, 0.8),
-                                    fuzz: 0.1,
-                                },
-                            );
-                            let entity = app.entities.actors.spawn_sphere(sphere);
-                            if let Some(pw) = app.physics.world.as_mut() {
-                                let handle = pw.add_dynamic_sphere(spawn_pos, 0.5);
-                                app.physics.test_bodies.push((handle, entity));
-                            }
-                            tracing::info!(pos = ?spawn_pos, "Spawned sphere");
-                        }
-                        _ => {
-                            tracing::warn!(entity_type = %entity_type, "Unknown entity type");
-                        }
-                    }
-                }
-            }
-            DebugEvent::ToggleGodMode { enabled } => {
-                tracing::info!(enabled, "God mode toggled");
-                // TODO: Implement god mode logic
-            }
+            } => spawn_entity(app, &entity_type, args.as_deref()),
             DebugEvent::ToggleCollision { enabled } => {
                 tracing::info!(enabled, "Collision toggled");
                 // enabled=false means noclip ON (collision disabled)
@@ -536,6 +390,146 @@ impl EventProcessor {
             _ => {}
         }
     }
+}
+
+/// Camera position and forward direction read from a view matrix.
+fn spawn_ray(view: &glam::Mat4) -> (glam::Vec3, glam::Vec3) {
+    let camera_to_world = view.inverse();
+    let origin = camera_to_world.col(3).truncate();
+    let forward = -camera_to_world.col(2).truncate().normalize();
+    (origin, forward)
+}
+
+/// Where a console spawn lands: just off the hit face, else in front of the camera.
+fn spawn_position(
+    origin: glam::Vec3,
+    forward: glam::Vec3,
+    hit: Option<&flagstone_game::raycast::RaycastResult>,
+) -> glam::Vec3 {
+    match hit {
+        Some(hit) => {
+            hit.position
+                + glam::Vec3::new(
+                    hit.normal.x as f32,
+                    hit.normal.y as f32,
+                    hit.normal.z as f32,
+                ) * SPAWN_NORMAL_OFFSET
+        }
+        None => origin + forward * SPAWN_FALLBACK_DISTANCE,
+    }
+}
+
+/// Light colour from console args "r g b"; white unless three parts are given.
+fn parse_light_color(args: Option<&str>) -> glam::Vec3 {
+    let Some(args) = args else {
+        return glam::Vec3::ONE;
+    };
+    let parts: Vec<&str> = args.split_whitespace().collect();
+    if parts.len() < 3 {
+        return glam::Vec3::ONE;
+    }
+    glam::Vec3::new(
+        parts[0].parse().unwrap_or(1.0),
+        parts[1].parse().unwrap_or(1.0),
+        parts[2].parse().unwrap_or(1.0),
+    )
+}
+
+/// Spawn `kind` where the camera is aimed. Does nothing without a light system,
+/// which owns the voxel grid the aim raycast needs.
+fn spawn_entity(app: &mut App, kind: &str, args: Option<&str>) {
+    let (origin, forward) = spawn_ray(&app.camera.0);
+    let Some(light_system) = app.light_system.as_mut() else {
+        return;
+    };
+    let hit = flagstone_game::raycast::raycast(
+        light_system.grid_mut(),
+        origin,
+        forward,
+        SPAWN_RAYCAST_MAX_DISTANCE,
+    );
+    let spawn_pos = spawn_position(origin, forward, hit.as_ref());
+
+    tracing::info!(entity_type = %kind, pos = ?spawn_pos, "Spawning entity");
+
+    match kind.to_lowercase().as_str() {
+        "crystal" => spawn_crystal(app, spawn_pos),
+        "light" => spawn_light(app, spawn_pos, args),
+        "cube" => spawn_cube(app, spawn_pos),
+        "sphere" => spawn_sphere(app, spawn_pos),
+        _ => tracing::warn!(entity_type = %kind, "Unknown entity type"),
+    }
+}
+
+fn spawn_crystal(app: &App, pos: glam::Vec3) {
+    // The event path lets the light and mesh systems react.
+    app.event_bus.publish(WorldEvent::BlockPlaced {
+        position: pos.floor().as_ivec3(),
+        material_id: CRYSTAL_MATERIAL_ID,
+        reason: BlockChangeReason::Player,
+    });
+}
+
+fn spawn_light(app: &mut App, pos: glam::Vec3, args: Option<&str>) {
+    // The renderer is only reachable from `frame`, so the light is queued.
+    if app.window.is_none() {
+        return;
+    }
+    let color = parse_light_color(args);
+    app.pending_render.push(RenderRequest::AddPointLight {
+        position: pos,
+        color,
+        intensity: DEFAULT_POINT_LIGHT_INTENSITY,
+        range: DEFAULT_POINT_LIGHT_RANGE,
+    });
+    tracing::info!(pos = ?pos, "Added point light");
+
+    // A small emissive gizmo makes the light origin visible; emissive bypasses
+    // lighting so it glows at the light's own colour.
+    let gizmo = flagstone_game::actors::Sphere::new(
+        pos,
+        0.15,
+        flagstone_voxel::MaterialType::Emissive {
+            color,
+            intensity: 1.5,
+        },
+    );
+    app.entities.actors.spawn_sphere(gizmo);
+}
+
+fn spawn_cube(app: &mut App, pos: glam::Vec3) {
+    let cube = flagstone_game::actors::Cube::new(
+        pos,
+        1.0,
+        1.0,
+        1.0,
+        flagstone_voxel::MaterialType::Lambertian {
+            albedo: glam::Vec3::new(0.8, 0.2, 0.2),
+        },
+    );
+    let entity = app.entities.actors.spawn_cube(cube);
+    if let Some(pw) = app.physics.world.as_mut() {
+        let handle = pw.add_dynamic_cuboid(pos, 0.5, 0.5, 0.5);
+        app.physics.test_bodies.push((handle, entity));
+    }
+    tracing::info!(pos = ?pos, "Spawned cube");
+}
+
+fn spawn_sphere(app: &mut App, pos: glam::Vec3) {
+    let sphere = flagstone_game::actors::Sphere::new(
+        pos,
+        0.5,
+        flagstone_voxel::MaterialType::Metal {
+            albedo: glam::Vec3::new(0.8, 0.8, 0.8),
+            fuzz: 0.1,
+        },
+    );
+    let entity = app.entities.actors.spawn_sphere(sphere);
+    if let Some(pw) = app.physics.world.as_mut() {
+        let handle = pw.add_dynamic_sphere(pos, 0.5);
+        app.physics.test_bodies.push((handle, entity));
+    }
+    tracing::info!(pos = ?pos, "Spawned sphere");
 }
 
 /// Compute chunk coordinates from a world-space position.
@@ -996,6 +990,70 @@ mod tests {
 
         let grid = app.light_system.as_ref().expect("light system").grid();
         assert!(grid.is_solid_at(aimed), "the aimed block is not mined");
+    }
+
+    #[test]
+    fn spawn_position_offsets_a_hit_along_its_normal() {
+        let hit = flagstone_game::raycast::RaycastResult {
+            block_pos: flagstone_voxel::BlockPos::new(4, 9, -3),
+            normal: glam::IVec3::new(0, -1, 0),
+            position: glam::Vec3::new(4.25, 9.0, -2.5),
+            distance: 7.0,
+        };
+
+        let pos = spawn_position(
+            glam::Vec3::new(1.0, 2.0, 3.0),
+            glam::Vec3::new(0.0, 0.0, -1.0),
+            Some(&hit),
+        );
+
+        let expected = glam::Vec3::new(4.25, 9.0 - SPAWN_NORMAL_OFFSET, -2.5);
+        assert!(pos.distance(expected) < 1e-5, "{pos:?}");
+    }
+
+    #[test]
+    fn spawn_position_without_a_hit_is_in_front_of_the_camera() {
+        let origin = glam::Vec3::new(1.0, 2.0, 3.0);
+        let forward = glam::Vec3::new(0.0, 0.6, -0.8);
+
+        let pos = spawn_position(origin, forward, None);
+
+        let expected = origin + forward * SPAWN_FALLBACK_DISTANCE;
+        assert!(pos.distance(expected) < 1e-5, "{pos:?}");
+    }
+
+    #[test]
+    fn spawn_ray_reads_origin_and_forward_from_the_view_matrix() {
+        let eye = glam::Vec3::new(3.0, -2.0, 7.0);
+        let dir = glam::Vec3::new(2.0, 1.0, -2.0) / 3.0;
+        let look = glam::Quat::from_rotation_arc(glam::Vec3::NEG_Z, dir);
+        let view = glam::Mat4::from_rotation_translation(look, eye).inverse();
+
+        let (origin, forward) = spawn_ray(&view);
+
+        assert!(origin.distance(eye) < 1e-4, "origin {origin:?}");
+        assert!(forward.distance(dir) < 1e-4, "forward {forward:?}");
+    }
+
+    #[test]
+    fn light_color_reads_three_channels() {
+        let color = parse_light_color(Some("0.2 0.4 0.6"));
+
+        assert_eq!(color, glam::Vec3::new(0.2, 0.4, 0.6));
+    }
+
+    #[test]
+    fn light_color_defaults_to_white() {
+        for args in [None, Some(""), Some("0.2 0.4")] {
+            assert_eq!(parse_light_color(args), glam::Vec3::ONE, "args {args:?}");
+        }
+    }
+
+    #[test]
+    fn light_color_defaults_an_unparseable_channel_to_one() {
+        let color = parse_light_color(Some("0.2 abc 0.6"));
+
+        assert_eq!(color, glam::Vec3::new(0.2, 1.0, 0.6));
     }
 
     #[test]

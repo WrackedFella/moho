@@ -67,7 +67,6 @@ as for any other publisher.
 | `SsaoQuality(q)` (engine) | `DebugEvent::SetSsaoQuality` | `process_debug_events` |
 | `BloomQuality(q)` (engine) | `DebugEvent::SetBloomQuality` | `process_debug_events` |
 | `PlaySoundAt` (engine) | `AudioEvent::PlaySoundAt` | audio system |
-| `ToggleGodMode` | `DebugEvent::ToggleGodMode { enabled: true }` | `process_debug_events` (logs only; not implemented) |
 | `ToggleNoclip` | `DebugEvent::ToggleCollision { enabled: <current noclip> }` | sets `physics.noclip` to the opposite |
 | `SetSunDirection { yaw_deg, pitch_deg }` | `GraphicsEvent::SunDirectionChanged` (radians) | `process_graphics_events` |
 | `SetTimeOfDay(h)` | `GraphicsEvent::TimeOfDayChanged` | `process_graphics_events` |
@@ -80,7 +79,3 @@ Engine commands strategy does not handle are logged and dropped.
 
 Command syntax: [console commands](../reference/console-commands.md). To add one:
 [guide](../guides/adding-console-commands.md).
-
-## Caveats
-
-- God mode has no implementation behind the event.
