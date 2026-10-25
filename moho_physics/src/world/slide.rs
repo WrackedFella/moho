@@ -1,7 +1,7 @@
 //! The rapier collide-and-slide behind [`crate::movement::step`].
 
 use crate::movement::{
-    CharacterQueries, Ground, Hull, HullShape, Slide, STEP_HEIGHT, WALKABLE_NORMAL_Y,
+    CharacterQueries, Ground, HullPose, HullShape, Slide, STEP_HEIGHT, WALKABLE_NORMAL_Y,
 };
 use crate::world::CharacterState;
 use glam::{Quat, Vec3};
@@ -108,23 +108,38 @@ pub(super) struct Footing {
     sweep: f32,
     /// How far below the hull's centre the core's bottom sits.
     core_bottom: f32,
+    /// The hull lies along the facing, so its ground casts turn with the yaw.
+    lying: bool,
 }
 
 impl Footing {
-    /// The footing of a character `hull`.
-    pub(super) fn of(hull: Hull) -> Self {
-        let half_length = hull.length / 2.0;
-        match hull.shape {
-            HullShape::Capsule => Self {
+    /// The footing of a character `pose`. A lying hull's core is level with its centre, swept
+    /// by its radius with no core disc.
+    pub(super) fn of(pose: HullPose) -> Self {
+        match pose {
+            HullPose::Lying { radius, .. } => Self {
                 disc: 0.0,
-                sweep: hull.radius,
-                core_bottom: half_length - hull.radius,
+                sweep: radius,
+                core_bottom: 0.0,
+                lying: true,
             },
-            HullShape::RoundCylinder { rounding } => Self {
-                disc: hull.radius - rounding,
-                sweep: rounding,
-                core_bottom: half_length - rounding,
-            },
+            HullPose::Upright(hull) => {
+                let half_length = hull.length / 2.0;
+                match hull.shape {
+                    HullShape::Capsule => Self {
+                        disc: 0.0,
+                        sweep: hull.radius,
+                        core_bottom: half_length - hull.radius,
+                        lying: false,
+                    },
+                    HullShape::RoundCylinder { rounding } => Self {
+                        disc: hull.radius - rounding,
+                        sweep: rounding,
+                        core_bottom: half_length - rounding,
+                        lying: false,
+                    },
+                }
+            }
         }
     }
 }
@@ -139,13 +154,22 @@ pub(super) struct Slider<'a> {
     pub dt: f32,
 }
 
-/// The collider shape of a character `hull`.
-pub(super) fn shape_of(hull: &Hull) -> SharedShape {
-    let half_length = hull.length / 2.0;
-    match hull.shape {
-        HullShape::Capsule => SharedShape::capsule_y(half_length - hull.radius, hull.radius),
-        HullShape::RoundCylinder { rounding } => {
-            SharedShape::round_cylinder(half_length - rounding, hull.radius - rounding, rounding)
+/// The collider shape of a character `pose`; a lying hull is a capsule along the body's +Z.
+pub(super) fn shape_of(pose: HullPose) -> SharedShape {
+    match pose {
+        HullPose::Lying { radius, length } => SharedShape::capsule_z(length / 2.0 - radius, radius),
+        HullPose::Upright(hull) => {
+            let half_length = hull.length / 2.0;
+            match hull.shape {
+                HullShape::Capsule => {
+                    SharedShape::capsule_y(half_length - hull.radius, hull.radius)
+                }
+                HullShape::RoundCylinder { rounding } => SharedShape::round_cylinder(
+                    half_length - rounding,
+                    hull.radius - rounding,
+                    rounding,
+                ),
+            }
         }
     }
 }
@@ -156,28 +180,28 @@ pub(super) struct WorldQueries<'a> {
     pub controller: &'a KinematicCharacterController,
     pub queries: &'a QueryPipeline<'a>,
     pub dt: f32,
-    /// The hull `own_shape` was built from.
-    pub own_hull: Hull,
-    /// The character's collider shape, reused while the step asks about `own_hull`.
+    /// The posed hull `own_shape` was built from.
+    pub own_pose: HullPose,
+    /// The character's collider shape, reused while the step asks about `own_pose`.
     pub own_shape: &'a dyn Shape,
 }
 
 impl CharacterQueries for WorldQueries<'_> {
-    /// Slides the `hull` given, which differs from the collider's shape on the tick the stance
+    /// Slides the `pose` given, which differs from the collider's shape on the tick the stance
     /// changed it, before the adapter reshapes the collider.
-    fn slide(&self, from: &CharacterState, hull: &Hull, asked: Vec3) -> Slide {
+    fn slide(&self, from: &CharacterState, pose: HullPose, asked: Vec3) -> Slide {
         let built;
-        let shape = if *hull == self.own_hull {
+        let shape = if pose == self.own_pose {
             self.own_shape
         } else {
-            built = shape_of(hull);
+            built = shape_of(pose);
             built.as_ref()
         };
         let slider = Slider {
             controller: self.controller,
             queries: self.queries,
             shape,
-            footing: Footing::of(*hull),
+            footing: Footing::of(pose),
             dt: self.dt,
         };
         let start = Pose::from_parts(from.position, Quat::from_rotation_y(from.yaw));
@@ -186,12 +210,17 @@ impl CharacterQueries for WorldQueries<'_> {
 
     /// The hull at its true size: a grounded character rests a skin above the floor, so
     /// growing it by the skin would make every crouch in the open touch the floor.
-    fn fits(&self, hull: &Hull, centre: Vec3, yaw: f32) -> bool {
+    fn fits(&self, pose: HullPose, centre: Vec3, yaw: f32) -> bool {
         let at = Pose::from_parts(centre, Quat::from_rotation_y(yaw));
-        self.queries
-            .intersect_shape(at, shape_of(hull).as_ref())
-            .next()
-            .is_none()
+        let built;
+        let shape = if pose == self.own_pose {
+            self.own_shape
+        } else {
+            built = shape_of(pose);
+            built.as_ref()
+        };
+        let hit = self.queries.intersect_shape(at, shape).next().is_some();
+        !hit
     }
 }
 
@@ -218,7 +247,7 @@ impl Slider<'_> {
                 return Slide {
                     translation,
                     grounded: true,
-                    ground: self.ground_below(start.translation + translation),
+                    ground: self.ground_below(start.translation + translation, start.rotation),
                     hits,
                 };
             }
@@ -229,7 +258,7 @@ impl Slider<'_> {
         }
         // Only a walker reads its ground, and only a character that started grounded walks.
         let read = was_grounded
-            .then(|| self.read_ground(start.translation + plain.translation))
+            .then(|| self.read_ground(start.translation + plain.translation, start.rotation))
             .flatten();
         if let Some(rolled) = read.as_ref().and_then(|read| read.edge).and_then(|edge| {
             let lacking = top_up(plain.translation.dot(edge.outward), edge.clearance, self.dt);
@@ -240,7 +269,7 @@ impl Slider<'_> {
             return Slide {
                 translation,
                 grounded: false,
-                ground: self.ground_below(start.translation + translation),
+                ground: self.ground_below(start.translation + translation, start.rotation),
                 hits,
             };
         }
@@ -260,13 +289,21 @@ impl Slider<'_> {
     /// seams, and its radius, tied to the walkable angle, is the perch margin. The capsule
     /// itself, cast down to its skin offset, gives the gap: how far it can drop before it
     /// touches anything.
-    pub(super) fn ground_below(&self, centre: Vec3) -> Option<Ground> {
-        self.read_ground(centre).map(|read| read.ground)
+    ///
+    /// `rotation` turns the cast and matters only for a lying footing, which faces along the
+    /// yaw; an upright hull is round about the vertical and ignores it.
+    fn ground_below(&self, centre: Vec3, rotation: Quat) -> Option<Ground> {
+        self.read_ground(centre, rotation).map(|read| read.ground)
     }
 
     /// [`Self::ground_below`] with the edge that holds the capsule up, if any.
-    fn read_ground(&self, centre: Vec3) -> Option<GroundRead> {
+    fn read_ground(&self, centre: Vec3, rotation: Quat) -> Option<GroundRead> {
         let footing = self.footing;
+        let rotation = if footing.lying {
+            rotation
+        } else {
+            Quat::IDENTITY
+        };
         let CharacterLength::Absolute(skin) = self.controller.offset else {
             panic!("the world builds its character controller with an absolute skin offset");
         };
@@ -286,7 +323,7 @@ impl Slider<'_> {
             return None;
         }
 
-        let at = Pose::from_translation(centre);
+        let at = Pose::from_parts(centre, rotation);
         let skinned = ShapeCastOptions {
             target_distance: skin,
             ..cast_within(STEP_HEIGHT)
@@ -444,6 +481,7 @@ mod tests {
     use super::super::PhysicsWorld;
     use super::*;
     use crate::movement::CharacterBody;
+    use crate::Hull;
     use moho_render_api::{WorldMesh, WorldMeshId};
     use rapier3d::prelude::{QueryFilter, SharedShape};
 
@@ -544,7 +582,7 @@ mod tests {
             controller: &world.character_controller,
             queries: &queries,
             shape: capsule.as_ref(),
-            footing: Footing::of(CharacterBody::default().standing.hull),
+            footing: Footing::of(HullPose::Upright(CharacterBody::default().standing.hull)),
             dt: 1.0 / 60.0,
         };
         let touching = Pose::from_translation(Vec3::new(0.0, 1.16, 1.69));
@@ -584,10 +622,12 @@ mod tests {
             controller: &world.character_controller,
             queries: &queries,
             shape: capsule.as_ref(),
-            footing: Footing::of(CharacterBody::default().standing.hull),
+            footing: Footing::of(HullPose::Upright(CharacterBody::default().standing.hull)),
             dt: 1.0 / 60.0,
         };
-        slider.ground_below(centre).map(|ground| ground.normal)
+        slider
+            .ground_below(centre, Quat::IDENTITY)
+            .map(|ground| ground.normal)
     }
 
     fn slope(degrees: f32) -> WorldMesh {
@@ -677,10 +717,95 @@ mod tests {
             controller: &world.character_controller,
             queries: &queries,
             shape: capsule.as_ref(),
-            footing: Footing::of(CharacterBody::default().standing.hull),
+            footing: Footing::of(HullPose::Upright(CharacterBody::default().standing.hull)),
             dt,
         };
         check(&slider, &colliders)
+    }
+
+    /// The 1.8 m long, 0.3 m radius hull of a prone character.
+    const LYING_HULL: Hull = Hull {
+        shape: HullShape::Capsule,
+        radius: 0.3,
+        length: 1.8,
+    };
+
+    /// The ground a prone character's hull, lying along its facing `yaw`, reads with its centre
+    /// at `centre`.
+    fn ground_below_lying(meshes: &[WorldMesh], centre: Vec3, yaw: f32) -> Option<Ground> {
+        let mut world = PhysicsWorld::new();
+        for (id, mesh) in meshes.iter().enumerate() {
+            world.set_world_mesh(WorldMeshId(id as u64), mesh, TEST_TAG);
+        }
+        world.step(1.0 / 60.0);
+        let queries = world.broad_phase.as_query_pipeline(
+            world.narrow_phase.query_dispatcher(),
+            &world.rigid_body_set,
+            &world.collider_set,
+            QueryFilter::default(),
+        );
+        let capsule = SharedShape::capsule_z(0.6, 0.3);
+        let slider = Slider {
+            controller: &world.character_controller,
+            queries: &queries,
+            shape: capsule.as_ref(),
+            footing: Footing::of(HullPose::Lying {
+                radius: LYING_HULL.radius,
+                length: LYING_HULL.length,
+            }),
+            dt: 1.0 / 60.0,
+        };
+        slider.ground_below(centre, Quat::from_rotation_y(yaw))
+    }
+
+    #[test]
+    fn ground_below_a_lying_hull_reads_the_floor_at_each_hover_height() {
+        for hover in [0.02_f32, 0.2] {
+            let centre = Vec3::new(0.0, 0.3 + hover, 0.0);
+
+            let found = ground_below_lying(&[ground(0.0, -10.0, 10.0)], centre, 0.0)
+                .unwrap_or_else(|| panic!("hover {hover}: no ground"));
+
+            assert!(found.normal.distance(Vec3::Y) < 1e-3, "{hover}: {found:?}");
+            assert!(found.point.y.abs() < 0.02, "{hover}: {found:?}");
+            // The drop stops a 0.0115 skin short of the floor.
+            assert!(
+                (found.gap - (hover - 0.0115)).abs() < 0.005,
+                "{hover}: {found:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ground_below_a_lying_hull_casts_it_along_the_facing() {
+        // A 0.1 m kerb under the head end at z in [0.5, 1.0]: the hull lying along Z overhangs
+        // it, the hull lying along X does not.
+        let meshes = [ground(0.0, -10.0, 10.0), step_box_mesh(0.5, 0.5, 0.1)];
+        let centre = Vec3::new(0.0, 0.3 + 0.15, 0.0);
+
+        let along_z = ground_below_lying(&meshes, centre, 0.0).expect("ground under the centre");
+        let along_x = ground_below_lying(&meshes, centre, std::f32::consts::FRAC_PI_2)
+            .expect("ground under the centre");
+
+        assert!(
+            along_z.gap < 0.07,
+            "the kerb stops the head end: {along_z:?}"
+        );
+        assert!(
+            (along_x.gap - (0.15 - 0.0115)).abs() < 0.01,
+            "turned along X it clears the kerb: {along_x:?}"
+        );
+    }
+
+    #[test]
+    fn ground_below_a_lying_hull_is_none_beyond_the_step_height() {
+        let found = ground_below_lying(
+            &[ground(0.0, -10.0, 10.0)],
+            Vec3::new(0.0, 0.3 + 0.55, 0.0),
+            0.0,
+        );
+
+        assert_eq!(found, None);
     }
 
     /// A character centre's height 2 cm above where a capsule rests on level ground at y = 0.
@@ -694,7 +819,10 @@ mod tests {
             let centre = Vec3::new(0.0, HOVER_Y, 1.0 + past);
 
             let (found, colliders) = with_slider_and_colliders(&ledge, |slider, colliders| {
-                (slider.ground_below(centre), colliders.to_vec())
+                (
+                    slider.ground_below(centre, Quat::IDENTITY),
+                    colliders.to_vec(),
+                )
             });
 
             let found = found.unwrap_or_else(|| panic!("{past} m past the edge: no ground"));
@@ -717,8 +845,9 @@ mod tests {
             for y in [1.17_f32, 1.2] {
                 let centre = Vec3::new(0.0, y, z);
 
-                let found = with_slider(&ledge, |slider| slider.ground_below(centre))
-                    .unwrap_or_else(|| panic!("z {z}, y {y}: no ground over the tread"));
+                let found =
+                    with_slider(&ledge, |slider| slider.ground_below(centre, Quat::IDENTITY))
+                        .unwrap_or_else(|| panic!("z {z}, y {y}: no ground over the tread"));
 
                 assert!(
                     found.normal.distance(Vec3::Y) < 1e-3,
@@ -749,8 +878,10 @@ mod tests {
         // and only the triangle's own (flipped) normal can answer.
         let centre = Vec3::new(0.0, HOVER_Y, 1.2);
 
-        let found = with_slider(&[floor_facing_down], |slider| slider.ground_below(centre))
-            .expect("a floor wound the other way is still ground");
+        let found = with_slider(&[floor_facing_down], |slider| {
+            slider.ground_below(centre, Quat::IDENTITY)
+        })
+        .expect("a floor wound the other way is still ground");
 
         // The cast's own normal here is tilted by about 1e-4; only the triangle's exact normal,
         // flipped upward, is vertical to this tolerance.
@@ -762,7 +893,7 @@ mod tests {
         let ledge = [ground(0.0, -10.0, 1.0)];
         let centre = Vec3::new(0.0, HOVER_Y, 1.25);
 
-        let found = with_slider(&ledge, |slider| slider.ground_below(centre));
+        let found = with_slider(&ledge, |slider| slider.ground_below(centre, Quat::IDENTITY));
 
         assert_eq!(found, None);
     }
@@ -782,7 +913,10 @@ mod tests {
 
         let (found, colliders) =
             with_slider_and_colliders(&nosing_over_a_lower_step(), |slider, colliders| {
-                (slider.ground_below(centre), colliders.to_vec())
+                (
+                    slider.ground_below(centre, Quat::IDENTITY),
+                    colliders.to_vec(),
+                )
             });
 
         let found = found.expect("the lower step is under the flat base");
@@ -796,7 +930,7 @@ mod tests {
         let centre = Vec3::new(0.0, UPPER_STEP_REST_Y, 1.25);
 
         let found = with_slider(&nosing_over_a_lower_step(), |slider| {
-            slider.ground_below(centre)
+            slider.ground_below(centre, Quat::IDENTITY)
         })
         .expect("the lower step is under the flat base");
 
@@ -814,7 +948,10 @@ mod tests {
         let centre = Vec3::new(0.0, UPPER_STEP_REST_Y, 1.1);
 
         let (found, colliders) = with_slider_and_colliders(&upper_step, |slider, colliders| {
-            (slider.ground_below(centre), colliders.to_vec())
+            (
+                slider.ground_below(centre, Quat::IDENTITY),
+                colliders.to_vec(),
+            )
         });
 
         let found = found.expect("the step's top is under the flat base");
@@ -832,7 +969,7 @@ mod tests {
         let seam = seam_floor_meshes(0.025);
         let centre = Vec3::new(0.0, HOVER_Y, 0.0);
 
-        let found = with_slider(&seam, |slider| slider.ground_below(centre))
+        let found = with_slider(&seam, |slider| slider.ground_below(centre, Quat::IDENTITY))
             .expect("the capsule spans the 2.5 cm seam");
 
         assert!(found.normal.distance(Vec3::Y) < 1e-3, "{found:?}");
@@ -849,8 +986,10 @@ mod tests {
             for (lift, expected) in [(0.0, 0.0), (0.05, 0.05 - SKIN / cos)] {
                 let centre = Vec3::new(0.0, resting + lift, 0.0);
 
-                let ground = with_slider(&[slope(degrees)], |slider| slider.ground_below(centre))
-                    .expect("walkable face below");
+                let ground = with_slider(&[slope(degrees)], |slider| {
+                    slider.ground_below(centre, Quat::IDENTITY)
+                })
+                .expect("walkable face below");
 
                 assert!(
                     (ground.gap - expected).abs() < 1e-3,

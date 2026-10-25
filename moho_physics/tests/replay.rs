@@ -19,6 +19,8 @@ const DT: f32 = 1.0 / 60.0;
 const BOX_VELOCITY: Vec3 = Vec3::new(0.5, 0.0, 0.3);
 /// Ticks a stand-or-crouch leg takes.
 const CROUCH_TICKS: u16 = 12;
+/// Ticks a crouch-or-prone leg takes.
+const PRONE_TICKS: u16 = 20;
 const SEED: u64 = 0x5EED_0502;
 
 /// Effects queued before the tick's moves, then each character's command, in creation order.
@@ -77,10 +79,12 @@ fn settings() -> MoveSettings {
         max_velocity: 90.0,
         autohop: false,
         crouch_ticks: CROUCH_TICKS,
+        prone_ticks: PRONE_TICKS,
     }
 }
 
-/// The searchlight-sized capsule that can also crouch to a 1.1 m capsule.
+/// The searchlight-sized capsule that can also crouch to a 1.1 m capsule and lie down as a
+/// 1.8 m capsule.
 fn crouching_body() -> CharacterBody {
     let capsule = |length, eye_height| Stature {
         hull: Hull {
@@ -93,6 +97,7 @@ fn crouching_body() -> CharacterBody {
     CharacterBody {
         standing: capsule(1.83, 1.63),
         crouched: Some(capsule(1.1, 0.95)),
+        prone: Some(capsule(1.8, 0.35)),
     }
 }
 
@@ -239,14 +244,23 @@ const BOX_HIT: CharacterEffect = CharacterEffect::Teleport {
 /// Ticks of straight walking into the cuboid before the noise starts.
 const APPROACH_TICKS: usize = 200;
 
-/// Crouch in bursts that overlap the jumps and the walk, with legs cut short so some reverse
-/// mid-way; the two characters are out of step. Fixed by tick so the rng draws stay put.
+/// Crouch and lie down in bursts that overlap the jumps and the walk, with legs cut short so
+/// some reverse mid-way; the two characters are out of step. Fixed by tick so the rng draws
+/// stay put.
 fn wanted_stance(who: usize, tick: usize) -> Stance {
+    // Character 0 asks for prone for 24 ticks, long enough to start a prone leg before the
+    // crouch burst at 40; character 1 lies down on open ground and stays long enough to settle.
+    let prone = match who {
+        0 => (16..40).contains(&tick),
+        _ => (110..160).contains(&tick),
+    };
     let crouching = match who {
         0 => (40..46).contains(&tick) || (63..110).contains(&tick) || (300..420).contains(&tick),
         _ => (tick / 37) % 3 == 1,
     };
-    if crouching {
+    if prone {
+        Stance::Prone
+    } else if crouching {
         Stance::Crouch
     } else {
         Stance::Stand
@@ -541,6 +555,23 @@ fn assert_run_exercises_the_world(script: &[TickInput], recorded: &[Snapshot]) {
         );
     }
 
+    let all = || recorded.iter().flat_map(|s| s.characters);
+    assert!(
+        all().any(|c| c.stance == Stance::Prone && c.progress >= PRONE_TICKS),
+        "no character finished lying down"
+    );
+    assert!(
+        all().any(|c| c.stance == Stance::Crouch && c.from == Stance::Prone),
+        "no character came back from prone"
+    );
+    assert!(
+        recorded
+            .iter()
+            .any(|s| s.characters[1].stance == Stance::Prone
+                && s.characters[1].from == Stance::Crouch),
+        "character 1 never went prone through crouch"
+    );
+
     let pairs = || {
         recorded
             .windows(2)
@@ -555,6 +586,23 @@ fn assert_run_exercises_the_world(script: &[TickInput], recorded: &[Snapshot]) {
             && (1..CROUCH_TICKS).contains(&prev.progress)
             && next.stance == prev.from),
         "no leg reversed mid-way"
+    );
+    assert!(
+        pairs().all(|(prev, next)| {
+            !matches!(
+                (prev.stance, next.stance),
+                (Stance::Stand, Stance::Prone) | (Stance::Prone, Stance::Stand)
+            )
+        }),
+        "a character skipped crouch between standing and prone"
+    );
+    assert!(
+        pairs().any(|(prev, next)| prev.stance == Stance::Prone
+            && prev.from == Stance::Crouch
+            && (1..PRONE_TICKS).contains(&prev.progress)
+            && next.stance == Stance::Crouch
+            && next.from == Stance::Prone),
+        "no prone leg reversed mid-way"
     );
 
     let idle: Vec<TickInput> = script

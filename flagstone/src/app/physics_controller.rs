@@ -407,6 +407,7 @@ mod tests {
             max_velocity: 90.0,
             autohop: true,
             crouch_ticks: 0,
+            prone_ticks: 0,
         }
     }
 
