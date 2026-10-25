@@ -3631,8 +3631,9 @@ mod tests {
 
             tick(&mut state, Stance::Stand, &tuning(body, 4, 18.0));
 
+            let first_quarter = CROUCH_EYE + (STAND_EYE - CROUCH_EYE) / 4.0;
             assert_eq!(state.stance, Stance::Stand);
-            assert!((eye_above_feet(&state, &body) - STAND_EYE).abs() < EPS);
+            assert!((eye_above_feet(&state, &body) - first_quarter).abs() < EPS);
         }
 
         #[test]
