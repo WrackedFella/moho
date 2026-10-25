@@ -1092,6 +1092,29 @@ mod tests {
     }
 
     #[test]
+    fn a_sweep_stops_a_skin_short_of_a_wall_and_ignores_one_behind_it() {
+        let (toward, away) = with_slider(&[wall_mesh(2.0)], |slider| {
+            let world = WorldQueries {
+                controller: slider.controller,
+                queries: slider.queries,
+                dt: slider.dt,
+                own_pose: HullPose::Upright(CharacterBody::default().standing.hull),
+                own_shape: slider.shape,
+            };
+            let from = Vec3::new(5.0, 1.5, 0.5);
+            let toward = world.sweep(from, from + Vec3::new(0.0, 0.0, 2.0), 0.1);
+            let away = world.sweep(from, from - Vec3::new(0.0, 0.0, 1.0), 0.1);
+            (toward, away)
+        });
+        let skin = with_slider(&[], |slider| skin(slider.controller));
+
+        // The ball's front meets the wall after 1.4 m of the 2 m path.
+        let expected = (1.4 - skin) / 2.0;
+        assert!((toward - expected).abs() < 1e-4, "{toward} vs {expected}");
+        assert_eq!(away, 1.0);
+    }
+
+    #[test]
     fn the_top_up_fills_only_what_the_walker_lacks() {
         let dt = 1.0 / 60.0;
         let wanted = ROLL_OFF_SPEED * dt;
