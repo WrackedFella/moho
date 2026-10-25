@@ -3675,6 +3675,37 @@ mod tests {
         }
 
         #[test]
+        fn reversing_a_feet_anchored_leg_in_the_air_keeps_the_eye_continuous() {
+            let tuning = tuning(crouching_body(), 8, 0.0);
+            let mut state = on_the_floor();
+            for _ in 0..3 {
+                tick(&mut state, Stance::Crouch, &tuning);
+            }
+            let queries = Fake::new(|_: &CharacterState, _: &Hull, asked| grounded_slide(asked));
+            let jump = CharacterCommand {
+                jump: true,
+                stance: Stance::Crouch,
+                ..CharacterCommand::default()
+            };
+            super::super::step(&mut state, &jump, &[], &tuning, DT, &queries);
+            state.velocity = Vec3::ZERO;
+            assert!(!state.grounded, "the jump left the floor");
+
+            let step = (STAND_EYE - CROUCH_EYE) / 8.0;
+            let mut previous = state.eye_y_in_the_world();
+            for _ in 0..8 {
+                tick(&mut state, Stance::Stand, &tuning);
+                let eye = state.eye_y_in_the_world();
+                assert!(
+                    (eye - previous).abs() <= step + 1e-4,
+                    "world eye jumped {previous} -> {eye}"
+                );
+                previous = eye;
+            }
+            assert_eq!(state.stance, Stance::Stand);
+        }
+
+        #[test]
         fn standing_on_the_ground_keeps_the_feet() {
             let tuning = tuning(crouching_body(), 8, 18.0);
             let mut state = on_the_floor();
