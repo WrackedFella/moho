@@ -5151,6 +5151,8 @@ mod tests {
             }
         }
 
+        const SETTLED_TICKS: usize = 10;
+
         #[test]
         fn leaning_never_moves_the_hull() {
             let commands: Vec<CharacterCommand> = (0..90)
@@ -5164,10 +5166,13 @@ mod tests {
                 let mut positions = Vec::new();
                 let mut impacts = Vec::new();
                 let mut last = state(&world, h);
-                for command in &commands {
+                for (index, command) in commands.iter().enumerate() {
                     let (after, hit) = tick(&mut world, h, &CharacterCommand { lean, ..*command });
                     positions.push(after.position);
-                    impacts.extend(hit);
+                    // The spawn drops onto the floor in the first ticks; that landing is not the wall.
+                    if index >= SETTLED_TICKS {
+                        impacts.extend(hit);
+                    }
                     last = after;
                 }
                 (positions, impacts, last)

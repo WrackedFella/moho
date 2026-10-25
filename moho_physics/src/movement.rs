@@ -672,6 +672,66 @@ fn clamp_lying_turn(
     fits
 }
 
+/// How far along the stance leg the character is, 0 to 1; a leg of no ticks is done.
+fn leg_done(state: &CharacterState, settings: &MoveSettings) -> f32 {
+    let duration = settings.leg_ticks(state.from, state.stance);
+    if duration == 0 {
+        1.0
+    } else {
+        f32::from(state.progress) / f32::from(duration)
+    }
+}
+
+/// Move `state.lean` toward the wanted lean by one tick's share of the full lean.
+fn advance_lean(state: &mut CharacterState, wanted: f32, settings: &MoveSettings) {
+    let wanted = if wanted.is_finite() {
+        wanted.clamp(-1.0, 1.0)
+    } else {
+        0.0
+    };
+    if settings.lean_ticks == 0 {
+        state.lean = wanted;
+        return;
+    }
+    let step = 1.0 / f32::from(settings.lean_ticks);
+    state.lean += (wanted - state.lean).clamp(-step, step);
+}
+
+/// Shift the eye sideways by the lean, stopped short of any wall, and roll the view with it.
+///
+/// A zero lean or reach leaves the eye and roll exactly as they were, with no sweep.
+fn lean_eye(
+    state: &mut CharacterState,
+    body: &CharacterBody,
+    settings: &MoveSettings,
+    queries: &impl CharacterQueries,
+) {
+    let reach = |stance: Stance| {
+        if stance == Stance::Prone {
+            body.lean.prone
+        } else {
+            body.lean.upright
+        }
+    };
+    let (from, to) = (reach(state.from), reach(state.stance));
+    let done = leg_done(state, settings);
+    let distance = from.distance + (to.distance - from.distance) * done;
+    let roll = from.roll + (to.roll - from.roll) * done;
+
+    let (sin, cos) = state.yaw.sin_cos();
+    let offset = Vec3::new(-cos, 0.0, sin) * (state.lean * distance);
+    if offset == Vec3::ZERO {
+        state.roll = 0.0;
+        return;
+    }
+    let upright = state.position + state.eye;
+    let free = queries
+        .sweep(upright, upright + offset, body.lean.head_radius)
+        .clamp(0.0, 1.0);
+    state.eye += offset * free;
+    state.roll = roll * state.lean * free;
+}
+
 /// The eye's offset from the centre of the hull in use, part-way through the stance leg.
 ///
 /// The eye moves in the frame of the leg's anchor, so the anchored end of the hull and the
@@ -679,12 +739,7 @@ fn clamp_lying_turn(
 /// top of the hull for a head-anchored one. A prone eye also slides toward the head end of the
 /// lying hull, along the facing.
 fn eye_offset(state: &CharacterState, body: &CharacterBody, settings: &MoveSettings) -> Vec3 {
-    let duration = settings.leg_ticks(state.from, state.stance);
-    let done = if duration == 0 {
-        1.0
-    } else {
-        f32::from(state.progress) / f32::from(duration)
-    };
+    let done = leg_done(state, settings);
     let from = body.stature(state.from);
     let to = body.stature(state.stance);
     let y = match state.anchor {
@@ -820,6 +875,8 @@ pub fn step(
     state.velocity = checked(state.velocity, settings.max_velocity);
     state.jump_held = command.jump;
     state.eye = eye_offset(state, &body, settings);
+    advance_lean(state, command.lean, settings);
+    lean_eye(state, &body, settings, queries);
     impacts
 }
 
@@ -5023,7 +5080,13 @@ mod tests {
             let mut state = state_at(Vec3::new(0.0, CROUCH_HALF, 0.0), Vec3::ZERO, true);
             state.stance = Stance::Crouch;
             state.from = Stance::Crouch;
-            hold(&mut state, &tuning, 1.0, 6, &clear());
+            let crouched_leaning = CharacterCommand {
+                stance: Stance::Crouch,
+                ..leaning(1.0)
+            };
+            for _ in 0..6 {
+                tick(&mut state, &tuning, &crouched_leaning, &clear());
+            }
             assert!(
                 (state.eye.x + UPRIGHT_DISTANCE).abs() < EPS,
                 "setup: {:?}",

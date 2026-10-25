@@ -2,14 +2,14 @@
 
 use crate::movement::turned_look;
 use crate::world::CharacterState;
-use glam::{Mat4, Vec3};
+use glam::{FloatExt, Mat4, Quat, Vec3};
 
 /// Where a first-person camera sits and looks for one frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FirstPersonView {
     pub eye: Vec3,
     pub forward: Vec3,
-    /// The view's up, rolled about `forward`.
+    /// World up rolled about `forward`; not necessarily perpendicular to it, `look_at` projects it.
     pub up: Vec3,
 }
 
@@ -22,7 +22,8 @@ impl FirstPersonView {
 
 /// Eye (`position + eye`) blended between the last two ticks by `alpha` (0 = previous,
 /// 1 = current); look from the current tick turned by `pending` (yaw, pitch deltas), pitch
-/// clamped at [`PITCH_LIMIT`](crate::PITCH_LIMIT).
+/// clamped at [`PITCH_LIMIT`](crate::PITCH_LIMIT). The view's `up` is rolled to the right by the
+/// roll blended the same way.
 pub fn first_person_view(
     previous: &CharacterState,
     current: &CharacterState,
@@ -32,10 +33,12 @@ pub fn first_person_view(
     let (yaw, pitch) = turned_look((current.yaw, current.pitch), pending);
     let (yaw_sin, yaw_cos) = yaw.sin_cos();
     let (pitch_sin, pitch_cos) = pitch.sin_cos();
+    let forward = Vec3::new(yaw_sin * pitch_cos, pitch_sin, yaw_cos * pitch_cos);
+    let roll = previous.roll.lerp(current.roll, alpha);
     FirstPersonView {
         eye: previous.eye_position().lerp(current.eye_position(), alpha),
-        forward: Vec3::new(yaw_sin * pitch_cos, pitch_sin, yaw_cos * pitch_cos),
-        up: Vec3::Y,
+        forward,
+        up: Quat::from_axis_angle(forward, roll) * Vec3::Y,
     }
 }
 
@@ -303,7 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn up_is_perpendicular_to_forward_and_rolled_about_it_when_pitched() {
+    fn the_view_rolls_about_forward_when_pitched() {
         let roll = 0.4_f32;
         let pitched = state_at(Vec3::ZERO, 0.7, 0.6);
         let rolled = CharacterState { roll, ..pitched };
@@ -311,17 +314,18 @@ mod tests {
         let view = first_person_view(&rolled, &rolled, 1.0, (0.0, 0.0));
         let level = first_person_view(&pitched, &pitched, 1.0, (0.0, 0.0));
 
-        assert!(view.up.dot(view.forward).abs() < EPS, "{view:?}");
-        assert!((view.up.length() - 1.0).abs() < EPS, "{view:?}");
+        let camera_up = |view: &FirstPersonView| view.view_matrix().transpose().col(1).truncate();
         let right = view.forward.cross(Vec3::Y).normalize();
         let unrolled = right.cross(view.forward);
-        let angle = unrolled.angle_between(view.up);
-        assert!((angle - roll).abs() < 1e-4, "angle {angle}, roll {roll}");
+        let up = camera_up(&view);
+        assert!(up.dot(view.forward).abs() < EPS, "{view:?}");
+        assert!((up.length() - 1.0).abs() < EPS, "{view:?}");
+        assert!((unrolled.angle_between(up) - roll).abs() < 1e-4, "{up:?}");
         assert!(
-            (view.up.dot(right) - roll.sin()).abs() < 1e-4,
-            "rolled toward the right: {view:?}"
+            (up.dot(right) - roll.sin()).abs() < 1e-4,
+            "rolled toward the right: {up:?}"
         );
-        assert!(level.up.distance(unrolled) < 1e-4, "{level:?}");
+        assert!(camera_up(&level).distance(unrolled) < 1e-4, "{level:?}");
     }
 
     #[test]
