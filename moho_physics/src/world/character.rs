@@ -2496,6 +2496,22 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "hull")]
+    fn an_impossible_crouched_hull_is_refused() {
+        let mut body = crouching_body();
+        body.crouched = Some(Stature {
+            hull: Hull {
+                shape: HullShape::Capsule,
+                radius: 0.38,
+                length: 0.6,
+            },
+            eye_height: 0.5,
+        });
+
+        add_with_body(body);
+    }
+
+    #[test]
     fn a_hull_at_the_limits_is_accepted() {
         let at_the_limits = [
             body_of(HullShape::Capsule, 0.4, 0.81, 0.5),

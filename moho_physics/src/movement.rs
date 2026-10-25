@@ -3529,6 +3529,112 @@ mod tests {
             );
         }
 
+        /// The world eye of a character in the air under no gravity, one tick at a time, from
+        /// the settled `from` stance through a leg toward `wanted`, plus the tick before it.
+        fn world_eyes_through_an_airborne_leg(from: Stance, wanted: Stance) -> Vec<f32> {
+            let tuning = tuning(crouching_body(), 8, 0.0);
+            let mut state = in_the_air();
+            for _ in 0..10 {
+                tick(&mut state, from, &tuning);
+            }
+            let mut eyes = vec![state.eye_y_in_the_world()];
+            for _ in 0..10 {
+                tick(&mut state, wanted, &tuning);
+                eyes.push(state.eye_y_in_the_world());
+            }
+            eyes
+        }
+
+        trait WorldEye {
+            fn eye_y_in_the_world(&self) -> f32;
+        }
+
+        impl WorldEye for CharacterState {
+            fn eye_y_in_the_world(&self) -> f32 {
+                self.position.y + self.eye.y
+            }
+        }
+
+        /// The eye's depth below the top of the hull: 0.2 m standing, 0.15 m crouched.
+        const STAND_DEPTH: f32 = 0.2;
+        const CROUCH_DEPTH: f32 = 0.15;
+
+        #[test]
+        fn crouching_in_the_air_keeps_the_eye_where_it_was() {
+            let eyes = world_eyes_through_an_airborne_leg(Stance::Stand, Stance::Crouch);
+
+            let step = (STAND_DEPTH - CROUCH_DEPTH) / 8.0;
+            assert!(
+                (eyes[1] - eyes[0]).abs() <= step + 1e-5,
+                "the eye popped on the start tick: {eyes:?}"
+            );
+            for pair in eyes.windows(2) {
+                assert!(pair[1] >= pair[0] - 1e-5, "monotonic: {eyes:?}");
+            }
+            let settled = eyes[0] - (CROUCH_DEPTH - STAND_DEPTH);
+            assert!((eyes[10] - settled).abs() < EPS, "{eyes:?}");
+        }
+
+        #[test]
+        fn standing_in_the_air_keeps_the_eye_where_it_was() {
+            let eyes = world_eyes_through_an_airborne_leg(Stance::Crouch, Stance::Stand);
+
+            let step = (STAND_DEPTH - CROUCH_DEPTH) / 8.0;
+            assert!(
+                (eyes[1] - eyes[0]).abs() <= step + 1e-5,
+                "the eye popped on the start tick: {eyes:?}"
+            );
+            for pair in eyes.windows(2) {
+                assert!(pair[1] <= pair[0] + 1e-5, "monotonic: {eyes:?}");
+            }
+            let settled = eyes[0] - (STAND_DEPTH - CROUCH_DEPTH);
+            assert!((eyes[10] - settled).abs() < EPS, "{eyes:?}");
+        }
+
+        #[test]
+        fn a_settled_crouch_stays_settled_when_the_leg_gets_longer() {
+            let body = crouching_body();
+            let mut state = on_the_floor();
+            let eight = tuning(body, 8, 18.0);
+            for _ in 0..10 {
+                tick(&mut state, Stance::Crouch, &eight);
+            }
+            let settled_eye = state.eye;
+            let twelve = tuning(body, 12, 18.0);
+
+            tick(&mut state, Stance::Crouch, &twelve);
+            let after_the_change = state.eye;
+            let mut eyes = Vec::new();
+            for _ in 0..3 {
+                tick(&mut state, Stance::Stand, &twelve);
+                eyes.push(eye_above_feet(&state, &body));
+            }
+
+            assert_eq!(after_the_change, settled_eye);
+            for (i, eye) in eyes.iter().enumerate() {
+                let expected = CROUCH_EYE + (STAND_EYE - CROUCH_EYE) * (i + 1) as f32 / 12.0;
+                assert!(
+                    (eye - expected).abs() < EPS,
+                    "a fresh 12 tick leg, tick {}: {eye}, expected {expected}",
+                    i + 1
+                );
+            }
+        }
+
+        #[test]
+        fn a_leg_cut_short_by_a_shorter_crouch_time_reverses_without_underflow() {
+            let body = crouching_body();
+            let mut state = on_the_floor();
+            for _ in 0..9 {
+                tick(&mut state, Stance::Crouch, &tuning(body, 12, 18.0));
+            }
+
+            tick(&mut state, Stance::Stand, &tuning(body, 4, 18.0));
+
+            assert_eq!(state.stance, Stance::Stand);
+            assert!((eye_above_feet(&state, &body) - STAND_EYE).abs() < EPS);
+        }
+
         #[test]
         fn standing_on_the_ground_keeps_the_feet() {
             let tuning = tuning(crouching_body(), 8, 18.0);
@@ -3706,6 +3812,30 @@ mod tests {
                 (state.position.y - STAND_HALF).abs() < EPS,
                 "the feet stayed on the floor: {state:?}"
             );
+        }
+
+        proptest! {
+            #[test]
+            fn the_world_eye_never_jumps_more_than_one_lerp_step_in_the_air(
+                wants in prop::collection::vec(any::<bool>(), 0..80),
+                crouch_ticks in 1u16..=30,
+            ) {
+                let tuning = tuning(crouching_body(), crouch_ticks, 0.0);
+                let mut state = in_the_air();
+                let step = (STAND_DEPTH - CROUCH_DEPTH) / f32::from(crouch_ticks);
+
+                let mut previous = state.position.y + STAND_HALF - STAND_DEPTH;
+                for crouch in wants {
+                    let wanted = if crouch { Stance::Crouch } else { Stance::Stand };
+                    tick(&mut state, wanted, &tuning);
+                    let eye = state.eye_y_in_the_world();
+                    prop_assert!(
+                        (eye - previous).abs() <= step + 1e-5,
+                        "world eye jumped {previous} -> {eye}, at most {step} a tick"
+                    );
+                    previous = eye;
+                }
+            }
         }
 
         proptest! {
