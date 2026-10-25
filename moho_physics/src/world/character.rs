@@ -1,8 +1,9 @@
 use super::query::{encode_tag, HitTag};
-use super::slide::{shape_of, Footing, Slider};
+use super::slide::{shape_of, WorldQueries};
 use super::PhysicsWorld;
 use crate::movement::{
-    self, CharacterBody, CharacterCommand, CharacterEffect, Impact, MoveSettings, Stance, Tuning,
+    self, Anchor, CharacterBody, CharacterCommand, CharacterEffect, Impact, MoveSettings, Stance,
+    Tuning,
 };
 use glam::{Quat, Vec3};
 use rapier3d::prelude::{
@@ -40,8 +41,10 @@ pub struct CharacterState {
     pub stance: Stance,
     /// The stance the leg in progress started from.
     pub from: Stance,
-    /// Ticks into the leg, saturating.
+    /// Ticks into the leg, clamped at `crouch_ticks`.
     pub progress: u16,
+    /// The end of the hull the leg in progress keeps still.
+    pub anchor: Anchor,
 }
 
 /// A character's starting state and shape: where it stands, which way it faces, its hull.
@@ -110,6 +113,7 @@ pub(super) struct Character {
     stance: Stance,
     from: Stance,
     progress: u16,
+    anchor: Anchor,
     /// Changes from outside the step, applied in order by the next `move_character`.
     effects: Vec<CharacterEffect>,
 }
@@ -128,6 +132,7 @@ impl Character {
             stance: self.stance,
             from: self.from,
             progress: self.progress,
+            anchor: self.anchor,
         }
     }
 
@@ -142,6 +147,7 @@ impl Character {
         self.stance = state.stance;
         self.from = state.from;
         self.progress = state.progress;
+        self.anchor = state.anchor;
     }
 }
 
@@ -193,6 +199,7 @@ impl PhysicsWorld {
                 stance: Stance::Stand,
                 from: Stance::Stand,
                 progress: 0,
+                anchor: Anchor::Feet,
                 effects: Vec::new(),
             },
         );
@@ -304,12 +311,12 @@ impl PhysicsWorld {
             &self.collider_set,
             filter,
         );
-        let slider = Slider {
+        let world = WorldQueries {
             controller: &self.character_controller,
             queries: &queries,
-            shape: self.collider_set[collider_handle].shape(),
-            footing: Footing::of(body.stature(stance).hull),
             dt,
+            own_hull: body.stature(stance).hull,
+            own_shape: self.collider_set[collider_handle].shape(),
         };
 
         let impacts = movement::step(
@@ -322,7 +329,7 @@ impl PhysicsWorld {
                 gravity: settings.gravity.unwrap_or(self.gravity()),
             },
             dt,
-            &slider,
+            &world,
         );
 
         self.characters
@@ -908,6 +915,7 @@ mod tests {
                 stance: Stance::Stand,
                 from: Stance::Stand,
                 progress: 0,
+                anchor: Anchor::Feet,
             })
         );
     }
@@ -1396,6 +1404,7 @@ mod tests {
                 stance: Stance::Stand,
                 from: Stance::Stand,
                 progress: 0,
+                anchor: Anchor::Feet,
             })
         );
         assert_eq!(state(&world, plain).yaw, 0.0, "a bare position faces 0");

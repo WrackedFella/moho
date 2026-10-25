@@ -150,15 +150,35 @@ pub(super) fn shape_of(hull: &Hull) -> SharedShape {
     }
 }
 
-impl CharacterQueries for Slider<'_> {
-    /// Slides the `hull` given, not the stored `shape`: the stance may have changed the hull
-    /// earlier in this tick, before the adapter reshapes the collider.
+/// The world as one character's step sees it: the collider the character holds, built into a
+/// [`Slider`] for whichever hull the step asks about.
+pub(super) struct WorldQueries<'a> {
+    pub controller: &'a KinematicCharacterController,
+    pub queries: &'a QueryPipeline<'a>,
+    pub dt: f32,
+    /// The hull `own_shape` was built from.
+    pub own_hull: Hull,
+    /// The character's collider shape, reused while the step asks about `own_hull`.
+    pub own_shape: &'a dyn Shape,
+}
+
+impl CharacterQueries for WorldQueries<'_> {
+    /// Slides the `hull` given, which differs from the collider's shape on the tick the stance
+    /// changed it, before the adapter reshapes the collider.
     fn slide(&self, from: &CharacterState, hull: &Hull, asked: Vec3) -> Slide {
-        let shape = shape_of(hull);
+        let built;
+        let shape = if *hull == self.own_hull {
+            self.own_shape
+        } else {
+            built = shape_of(hull);
+            built.as_ref()
+        };
         let slider = Slider {
-            shape: shape.as_ref(),
+            controller: self.controller,
+            queries: self.queries,
+            shape,
             footing: Footing::of(*hull),
-            ..*self
+            dt: self.dt,
         };
         let start = Pose::from_parts(from.position, Quat::from_rotation_y(from.yaw));
         slider.slide(&start, asked, from.grounded)

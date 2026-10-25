@@ -56,6 +56,15 @@ pub enum Stance {
     Crouch,
 }
 
+/// Which end of the hull a stance leg keeps still: the feet of a grounded character, the top
+/// of an airborne one (Source's duck-jump).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Anchor {
+    #[default]
+    Feet,
+    Head,
+}
+
 /// Game-supplied movement tuning; may change between ticks. Units: m/s, m/s², 1/s.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MoveSettings {
@@ -152,41 +161,48 @@ impl Default for CharacterBody {
 }
 
 impl CharacterBody {
-    /// Panics on an impossible hull: non-positive sizes, a capsule no longer than its
-    /// diameter, or `rounding` outside `0 < rounding <= radius`. A round cylinder must also
-    /// be longer than twice its rounding.
+    /// Panics on an impossible hull in either stature: non-positive sizes, a capsule no longer
+    /// than its diameter, or `rounding` outside `0 < rounding <= radius`. A round cylinder must
+    /// also be longer than twice its rounding.
     ///
     /// Panics rather than returning an error because a bad hull is a programmer error in
     /// the game's data.
     pub fn validate(&self) {
-        let Hull {
-            shape,
-            radius,
-            length,
-        } = self.standing.hull;
-        assert!(
-            radius.is_finite() && radius > 0.0,
-            "impossible hull: radius {radius} must be positive"
-        );
-        assert!(
-            length.is_finite() && length > 0.0,
-            "impossible hull: length {length} must be positive"
-        );
-        let cap = match shape {
-            HullShape::Capsule => radius,
-            HullShape::RoundCylinder { rounding } => {
-                assert!(
-                    rounding.is_finite() && rounding > 0.0 && rounding <= radius,
-                    "impossible hull: rounding {rounding} must be in (0, radius {radius}]"
-                );
-                rounding
-            }
-        };
-        assert!(
-            length > 2.0 * cap,
-            "impossible hull: length {length} must exceed twice its end radius {cap}"
-        );
+        validate_hull(&self.standing.hull);
+        if let Some(crouched) = &self.crouched {
+            validate_hull(&crouched.hull);
+        }
     }
+}
+
+fn validate_hull(hull: &Hull) {
+    let Hull {
+        shape,
+        radius,
+        length,
+    } = *hull;
+    assert!(
+        radius.is_finite() && radius > 0.0,
+        "impossible hull: radius {radius} must be positive"
+    );
+    assert!(
+        length.is_finite() && length > 0.0,
+        "impossible hull: length {length} must be positive"
+    );
+    let cap = match shape {
+        HullShape::Capsule => radius,
+        HullShape::RoundCylinder { rounding } => {
+            assert!(
+                rounding.is_finite() && rounding > 0.0 && rounding <= radius,
+                "impossible hull: rounding {rounding} must be in (0, radius {radius}]"
+            );
+            rounding
+        }
+    };
+    assert!(
+        length > 2.0 * cap,
+        "impossible hull: length {length} must exceed twice its end radius {cap}"
+    );
 }
 
 /// The game data one [`step`] reads besides the command: the character's shape, its movement
@@ -444,7 +460,8 @@ pub trait CharacterQueries {
 /// A leg starts, or a running one reverses, only where the target hull fits at the anchored
 /// centre: a grounded character keeps the bottom of its hull, an airborne one its top. A
 /// refused leg leaves the running one untouched, so it retries every tick. A body with no
-/// crouched stature always stands. `progress` then advances, clamped at `duration`.
+/// crouched stature always stands. `progress` then advances, clamped at `duration`; a leg that
+/// reaches it is settled, and `from` becomes `stance`.
 fn change_stance(
     state: &mut CharacterState,
     wanted: Stance,
@@ -458,6 +475,7 @@ fn change_stance(
         Stance::Stand
     };
     if wanted != state.stance {
+        // `progress >= duration` also covers a crouch time shortened since the leg began.
         let settled = state.from == state.stance || state.progress >= duration;
         let current = body.stature(state.stance).hull.length / 2.0;
         let target = body.stature(wanted);
@@ -471,24 +489,43 @@ fn change_stance(
                 duration - state.progress
             };
             state.from = state.stance;
+            state.anchor = if state.grounded {
+                Anchor::Feet
+            } else {
+                Anchor::Head
+            };
             state.stance = wanted;
             state.position = centre;
         }
     }
     state.progress = state.progress.saturating_add(1).min(duration);
+    if state.progress >= duration {
+        state.from = state.stance;
+    }
 }
 
 /// The eye's offset from the centre of the hull in use, part-way through the stance leg.
+///
+/// The eye moves in the frame of the leg's anchor, so the anchored end of the hull and the
+/// eye stay together: its height above the feet for a feet-anchored leg, its depth below the
+/// top of the hull for a head-anchored one.
 fn eye_offset(state: &CharacterState, body: &CharacterBody, duration: u16) -> Vec3 {
     let done = if duration == 0 {
         1.0
     } else {
         f32::from(state.progress) / f32::from(duration)
     };
-    let from = body.stature(state.from).eye_height;
-    let to = body.stature(state.stance).eye_height;
-    let height = from + (to - from) * done;
-    Vec3::Y * (height - body.stature(state.stance).hull.length / 2.0)
+    let from = body.stature(state.from);
+    let to = body.stature(state.stance);
+    let half = to.hull.length / 2.0;
+    let y = match state.anchor {
+        Anchor::Feet => from.eye_height + (to.eye_height - from.eye_height) * done - half,
+        Anchor::Head => {
+            let depth = |stature: &Stature| stature.hull.length - stature.eye_height;
+            half - (depth(from) + (depth(to) - depth(from)) * done)
+        }
+    };
+    Vec3::Y * y
 }
 
 /// Advance `state` by one tick of `dt` seconds and report the impacts.
@@ -738,6 +775,7 @@ mod tests {
             stance: Stance::Stand,
             from: Stance::Stand,
             progress: 0,
+            anchor: Anchor::Feet,
         }
     }
 

@@ -39,7 +39,7 @@ pub fn first_person_view(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::movement::Stance;
+    use crate::movement::{Anchor, Stance};
     use crate::PITCH_LIMIT;
 
     const EPS: f32 = 1e-5;
@@ -57,6 +57,7 @@ mod tests {
             stance: Stance::Stand,
             from: Stance::Stand,
             progress: 0,
+            anchor: Anchor::Feet,
         }
     }
 

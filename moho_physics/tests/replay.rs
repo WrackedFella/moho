@@ -332,7 +332,7 @@ fn bits3(v: Vec3) -> [u32; 3] {
 }
 
 /// Every compared field of one character, as raw bits.
-fn character_fields(state: &CharacterState) -> [(&'static str, [u32; 3]); 10] {
+fn character_fields(state: &CharacterState) -> [(&'static str, [u32; 3]); 11] {
     let CharacterState {
         position,
         velocity,
@@ -344,6 +344,7 @@ fn character_fields(state: &CharacterState) -> [(&'static str, [u32; 3]); 10] {
         stance,
         from,
         progress,
+        anchor,
     } = *state;
     [
         ("position", bits3(position)),
@@ -356,6 +357,7 @@ fn character_fields(state: &CharacterState) -> [(&'static str, [u32; 3]); 10] {
         ("stance", [stance as u32, 0, 0]),
         ("from", [from as u32, 0, 0]),
         ("progress", [u32::from(progress), 0, 0]),
+        ("anchor", [anchor as u32, 0, 0]),
     ]
 }
 
