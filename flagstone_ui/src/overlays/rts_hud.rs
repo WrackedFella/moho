@@ -48,6 +48,7 @@ impl Overlay for RtsHud {
             return;
         }
 
+        render_mode_label(ui);
         render_time_of_day(ui, data.time_of_day);
         if let Some(view_height) = data.view_height {
             self.chosen = render_view_height(ui, view_height).or(self.chosen);
@@ -91,6 +92,18 @@ fn render_view_height(ui: &mut egui::Ui, view: ViewHeightHud) -> Option<i32> {
                 .inner
         })
         .inner
+}
+
+fn render_mode_label(ui: &mut egui::Ui) {
+    egui::Area::new("rts_mode_label".into())
+        .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0, 8.0))
+        .show(ui.ctx(), |ui| {
+            ui.label(
+                egui::RichText::new("Strategy")
+                    .font(egui::FontId::proportional(16.0))
+                    .color(egui::Color32::from_rgb(220, 220, 200)),
+            );
+        });
 }
 
 /// Time-of-day badge in the top-right corner.
@@ -301,6 +314,34 @@ mod tests {
         frame(&ctx, &mut hud, &none, Vec::new());
         let output = frame(&ctx, &mut hud, &none, Vec::new());
         assert!(!texts(&output).contains(&"All".to_string()));
+    }
+
+    #[test]
+    fn strategy_hud_names_the_mode() {
+        let ctx = egui::Context::default();
+        let mut hud = RtsHud::new();
+        let strategy = strategy_data(TOP);
+        frame(&ctx, &mut hud, &strategy, Vec::new());
+
+        let drawn = texts(&frame(&ctx, &mut hud, &strategy, Vec::new()));
+
+        assert!(drawn.contains(&"Strategy".to_string()), "{drawn:?}");
+        assert!(!drawn.contains(&"First person".to_string()), "{drawn:?}");
+    }
+
+    #[test]
+    fn strategy_hud_does_not_name_its_mode_in_first_person() {
+        let ctx = egui::Context::default();
+        let mut hud = RtsHud::new();
+        let first_person = HudData {
+            is_fps_mode: true,
+            ..strategy_data(TOP)
+        };
+        frame(&ctx, &mut hud, &first_person, Vec::new());
+
+        let drawn = texts(&frame(&ctx, &mut hud, &first_person, Vec::new()));
+
+        assert!(!drawn.contains(&"Strategy".to_string()), "{drawn:?}");
     }
 
     #[test]

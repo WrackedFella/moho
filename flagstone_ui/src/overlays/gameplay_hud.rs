@@ -31,6 +31,7 @@ impl Overlay for GameplayHud {
             return;
         }
 
+        render_mode_label(ui);
         render_compass(ui, data.camera_yaw);
         render_status_bars(ui, data.player_health, data.player_stamina);
         render_hotbar(
@@ -90,6 +91,18 @@ fn visible_labels(yaw: f32) -> Vec<(&'static str, bool)> {
         .into_iter()
         .map(|(_, label, facing)| (label, facing))
         .collect()
+}
+
+fn render_mode_label(ui: &mut egui::Ui) {
+    egui::Area::new("gameplay_hud_mode_label".into())
+        .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0, 8.0))
+        .show(ui.ctx(), |ui| {
+            ui.label(
+                egui::RichText::new("First person")
+                    .color(egui::Color32::from_gray(200))
+                    .size(14.0),
+            );
+        });
 }
 
 fn render_compass(ui: &mut egui::Ui, camera_yaw: f32) {
@@ -290,6 +303,38 @@ fn render_hotbar(
 mod tests {
     use super::*;
     use crate::overlays::test_support::{rect_of, second_frame, texts};
+
+    fn drawn_texts(hud: &mut GameplayHud, data: &HudData) -> Vec<String> {
+        let ctx = egui::Context::default();
+        texts(&second_frame(&ctx, |ui| hud.render(ui, data)))
+    }
+
+    #[test]
+    fn first_person_hud_names_the_mode() {
+        let mut hud = GameplayHud::new();
+        let data = HudData {
+            is_fps_mode: true,
+            ..Default::default()
+        };
+
+        let drawn = drawn_texts(&mut hud, &data);
+
+        assert!(drawn.contains(&"First person".to_string()), "{drawn:?}");
+        assert!(!drawn.contains(&"Strategy".to_string()), "{drawn:?}");
+    }
+
+    #[test]
+    fn first_person_hud_does_not_name_its_mode_in_strategy() {
+        let mut hud = GameplayHud::new();
+        let data = HudData {
+            is_fps_mode: false,
+            ..Default::default()
+        };
+
+        let drawn = drawn_texts(&mut hud, &data);
+
+        assert!(!drawn.contains(&"First person".to_string()), "{drawn:?}");
+    }
 
     #[test]
     fn render_compass_shows_labels_within_view_arc() {

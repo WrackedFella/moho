@@ -548,8 +548,7 @@ impl App {
         // Update core state
         self.game_state = actions.new_state;
 
-        // Input stops reaching the action map outside play; held actions would stick.
-        self.input.actions.release_all();
+        self.drop_pending_input();
 
         // Update UI visibility and state
         if let Some(ui_adapter) = &self.ui_adapter
