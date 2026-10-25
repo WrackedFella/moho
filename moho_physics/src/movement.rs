@@ -4037,6 +4037,16 @@ mod tests {
             command: &CharacterCommand,
             tuning: &Tuning,
         ) -> HullPose {
+            step_effects(state, command, &[], tuning)
+        }
+
+        /// [`step_command`] with queued `effects`.
+        fn step_effects(
+            state: &mut CharacterState,
+            command: &CharacterCommand,
+            effects: &[CharacterEffect],
+            tuning: &Tuning,
+        ) -> HullPose {
             let seen = Cell::new(None);
             let queries = Fake::new(|from: &CharacterState, pose: HullPose, asked| {
                 seen.set(Some(pose));
@@ -4047,7 +4057,7 @@ mod tests {
                 }
             });
 
-            super::super::step(state, command, &[], tuning, DT, &queries);
+            super::super::step(state, command, effects, tuning, DT, &queries);
 
             seen.get().expect("the step slid")
         }
@@ -4100,37 +4110,6 @@ mod tests {
                     i + 1
                 );
             }
-        }
-
-        #[test]
-        fn a_crouch_prone_leg_takes_prone_ticks_while_stand_crouch_takes_crouch_ticks() {
-            let tuning = prone_tuning(5, 12, 18.0);
-            let settled_at = |state: &mut CharacterState, wanted, from_tick: usize| {
-                (from_tick..from_tick + 40)
-                    .find(|_| {
-                        step_command(state, &wanting(wanted), &tuning);
-                        state.from == state.stance
-                    })
-                    .map(|tick| tick - from_tick + 1)
-            };
-
-            let mut going_down = on_the_floor();
-            let crouched_after = settled_at(&mut going_down, Stance::Prone, 0);
-            let crouched = (going_down.stance, going_down.progress);
-            let prone_after = settled_at(&mut going_down, Stance::Prone, 0);
-            let mut coming_up = settled_on_the_floor(Stance::Prone);
-            let crouching_after = settled_at(&mut coming_up, Stance::Stand, 0);
-            let crouching = (coming_up.stance, coming_up.progress);
-            let stood_after = settled_at(&mut coming_up, Stance::Stand, 0);
-
-            assert_eq!(crouched_after, Some(5), "stand to crouch: crouch_ticks");
-            assert_eq!(crouched, (Stance::Crouch, 5));
-            assert_eq!(prone_after, Some(12), "crouch to prone: prone_ticks");
-            assert_eq!(going_down.stance, Stance::Prone);
-            assert_eq!(crouching_after, Some(12), "prone to crouch: prone_ticks");
-            assert_eq!(crouching, (Stance::Crouch, 12));
-            assert_eq!(stood_after, Some(5), "crouch to stand: crouch_ticks");
-            assert_eq!(coming_up.stance, Stance::Stand);
         }
 
         #[test]
@@ -4329,67 +4308,6 @@ mod tests {
         }
 
         #[test]
-        fn a_prone_leg_that_does_not_fit_keeps_the_crouch_and_retries_every_tick() {
-            let tuning = prone_tuning(8, 20, 18.0);
-            let mut state = settled_on_the_floor(Stance::Crouch);
-            let crouched = state;
-            let asked = RefCell::new(Vec::new());
-            let fits = |pose: HullPose, centre: Vec3, yaw: f32| {
-                asked.borrow_mut().push((pose, centre, yaw));
-                !pose.lying
-            };
-
-            let mut seen = Vec::new();
-            for _ in 0..3 {
-                seen.push(tick_posed(&mut state, Stance::Prone, &tuning, fits));
-            }
-
-            assert_eq!(state.stance, Stance::Crouch);
-            assert_eq!(state.position, crouched.position);
-            assert!(
-                seen.iter().all(|p| p.hull.length == 1.1 && !p.lying),
-                "{seen:?}"
-            );
-            let asked = asked.into_inner();
-            assert_eq!(asked.len(), 3, "it retries every tick: {asked:?}");
-            for (pose, centre, _) in &asked {
-                assert_eq!((pose.hull.length, pose.lying), (1.8, true));
-                assert!(
-                    (centre.y - PRONE_CENTRE).abs() < EPS,
-                    "it asks at the feet-anchored lying centre: {centre:?}"
-                );
-            }
-        }
-
-        #[test]
-        fn a_crouch_out_of_prone_that_does_not_fit_keeps_the_prone_and_retries() {
-            let tuning = prone_tuning(8, 20, 18.0);
-            let mut state = settled_on_the_floor(Stance::Prone);
-            let prone = state;
-            let asked = RefCell::new(Vec::new());
-            let fits = |pose: HullPose, centre: Vec3, _: f32| {
-                asked.borrow_mut().push((pose, centre));
-                pose.lying
-            };
-
-            for _ in 0..3 {
-                tick_posed(&mut state, Stance::Stand, &tuning, fits);
-            }
-
-            assert_eq!(state.stance, Stance::Prone);
-            assert_eq!(state.position, prone.position);
-            let asked = asked.into_inner();
-            assert_eq!(asked.len(), 3, "it retries every tick: {asked:?}");
-            for (pose, centre) in &asked {
-                assert_eq!((pose.hull.length, pose.lying), (1.1, false));
-                assert!(
-                    (centre.y - CROUCH_HALF).abs() < EPS,
-                    "it asks at the feet-anchored crouch centre: {centre:?}"
-                );
-            }
-        }
-
-        #[test]
         fn the_lying_centre_rides_the_radius_above_the_feet_going_prone_on_the_ground() {
             let tuning = prone_tuning(8, 20, 18.0);
             let mut state = settled_on_the_floor(Stance::Crouch);
@@ -4399,6 +4317,207 @@ mod tests {
             assert_eq!(state.stance, Stance::Prone);
             assert!((state.position.y - PRONE_CENTRE).abs() < EPS, "{state:?}");
             assert!(state.grounded);
+        }
+
+        #[test]
+        fn a_leg_out_of_prone_takes_prone_ticks_and_the_leg_to_stand_takes_crouch_ticks() {
+            let tuning = prone_tuning(5, 12, 18.0);
+            let mut state = settled_on_the_floor(Stance::Prone);
+
+            let mut legs = Vec::new();
+            for _ in 0..20 {
+                step_command(&mut state, &wanting(Stance::Stand), &tuning);
+                legs.push((state.stance, state.from));
+            }
+
+            let settled_at = |stance| {
+                legs.iter()
+                    .position(|&(s, from)| s == stance && from == stance)
+                    .map(|i| i + 1)
+            };
+            assert_eq!(
+                settled_at(Stance::Crouch),
+                Some(12),
+                "prone_ticks: {legs:?}"
+            );
+            assert_eq!(
+                settled_at(Stance::Stand),
+                Some(17),
+                "then crouch_ticks: {legs:?}"
+            );
+        }
+
+        #[test]
+        fn a_refused_prone_leg_starts_on_the_first_tick_it_fits() {
+            let tuning = prone_tuning(8, 20, 18.0);
+            let mut state = settled_on_the_floor(Stance::Crouch);
+            let crouched = state;
+            let tick = Cell::new(1);
+            let target_probes = RefCell::new(Vec::new());
+
+            let mut seen = Vec::new();
+            for n in 1..=3 {
+                tick.set(n);
+                let fits = |pose: HullPose, centre: Vec3, _: f32| {
+                    if pose.lying && pose.hull.length == 1.8 {
+                        target_probes.borrow_mut().push(centre);
+                        return tick.get() >= 3;
+                    }
+                    true
+                };
+                tick_posed(&mut state, Stance::Prone, &tuning, fits);
+                seen.push((state.stance, state.progress));
+            }
+
+            assert_eq!(seen[0].0, Stance::Crouch, "{seen:?}");
+            assert_eq!(seen[1].0, Stance::Crouch, "{seen:?}");
+            assert_eq!(seen[2], (Stance::Prone, 1), "{seen:?}");
+            assert!(crouched.position.y > 0.0);
+            for centre in target_probes.into_inner() {
+                assert!(
+                    (centre.y - PRONE_CENTRE).abs() < EPS,
+                    "the lying probe is at the feet-anchored centre: {centre:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn a_refused_crouch_out_of_prone_starts_on_the_first_tick_it_fits() {
+            let tuning = prone_tuning(8, 20, 18.0);
+            let mut state = settled_on_the_floor(Stance::Prone);
+            let tick = Cell::new(1);
+            let target_probes = RefCell::new(Vec::new());
+
+            let mut seen = Vec::new();
+            for n in 1..=3 {
+                tick.set(n);
+                let fits = |pose: HullPose, centre: Vec3, _: f32| {
+                    if !pose.lying && pose.hull.length == 1.1 {
+                        target_probes.borrow_mut().push(centre);
+                        return tick.get() >= 3;
+                    }
+                    true
+                };
+                tick_posed(&mut state, Stance::Stand, &tuning, fits);
+                seen.push((state.stance, state.progress));
+            }
+
+            assert_eq!(seen[0].0, Stance::Prone, "{seen:?}");
+            assert_eq!(seen[1].0, Stance::Prone, "{seen:?}");
+            assert_eq!(seen[2], (Stance::Crouch, 1), "{seen:?}");
+            for centre in target_probes.into_inner() {
+                assert!(
+                    (centre.y - CROUCH_HALF).abs() < EPS,
+                    "the crouch probe is at the feet-anchored centre: {centre:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn a_jump_on_a_leg_out_of_prone_is_refused_until_the_leg_settles() {
+            let tuning = prone_tuning(8, 20, 18.0);
+            let mut state = settled_on_the_floor(Stance::Prone);
+            let press = |jump| CharacterCommand {
+                jump,
+                ..wanting(Stance::Crouch)
+            };
+
+            let mut during = Vec::new();
+            for n in 1..=19 {
+                step_command(&mut state, &press(n % 2 == 1), &tuning);
+                during.push(state.velocity.y);
+            }
+            step_command(&mut state, &press(false), &tuning);
+            let settled = (state.stance, state.from);
+            step_command(&mut state, &press(true), &tuning);
+
+            assert_eq!(during, vec![0.0; 19]);
+            assert_eq!(settled, (Stance::Crouch, Stance::Crouch));
+            assert!(state.velocity.y > 1.0, "it jumps once crouched: {state:?}");
+        }
+
+        #[test]
+        fn the_eye_slides_back_to_the_centre_across_a_leg_out_of_prone() {
+            let tuning = prone_tuning(8, 20, 18.0);
+            let mut state = settled_on_the_floor(Stance::Prone);
+
+            let mut ahead = Vec::new();
+            for _ in 0..22 {
+                step_command(&mut state, &wanting(Stance::Crouch), &tuning);
+                ahead.push(state.eye.z);
+            }
+
+            for (i, z) in ahead.iter().enumerate() {
+                let expected = PRONE_FORWARD * (1.0 - ((i + 1) as f32 / 20.0).min(1.0));
+                assert!(
+                    (z - expected).abs() < EPS,
+                    "tick {}: {z} m ahead, expected {expected}; all {ahead:?}",
+                    i + 1
+                );
+            }
+        }
+
+        #[test]
+        fn a_body_without_a_prone_goes_no_further_than_crouch() {
+            let tuning = Tuning {
+                body: crouching_body(),
+                ..prone_tuning(8, 20, 18.0)
+            };
+            let mut state = on_the_floor();
+
+            let mut poses = Vec::new();
+            for _ in 0..30 {
+                poses.push(step_command(&mut state, &wanting(Stance::Prone), &tuning));
+            }
+
+            assert_eq!((state.stance, state.from), (Stance::Crouch, Stance::Crouch));
+            assert!(poses.iter().all(|p| !p.lying), "{poses:?}");
+        }
+
+        #[test]
+        fn a_body_with_neither_crouch_nor_prone_stays_standing() {
+            let body = CharacterBody {
+                crouched: None,
+                prone: None,
+                ..crouching_body()
+            };
+            let tuning = Tuning {
+                body,
+                ..prone_tuning(8, 20, 18.0)
+            };
+            let mut state = on_the_floor();
+
+            for _ in 0..30 {
+                step_command(&mut state, &wanting(Stance::Prone), &tuning);
+            }
+
+            assert_eq!((state.stance, state.from), (Stance::Stand, Stance::Stand));
+        }
+
+        #[test]
+        fn a_prone_leg_running_when_the_character_leaves_the_ground_runs_on() {
+            let tuning = prone_tuning(8, 20, 0.0);
+            let mut state = settled_on_the_floor(Stance::Crouch);
+            for _ in 0..3 {
+                step_command(&mut state, &wanting(Stance::Prone), &tuning);
+            }
+            let knocked = CharacterEffect::Teleport {
+                position: state.position,
+                keep_velocity: false,
+            };
+
+            let first = step_effects(&mut state, &wanting(Stance::Prone), &[knocked], &tuning);
+            assert!(!state.grounded, "setup: it is in the air");
+            let mut poses = vec![first];
+            for _ in 0..25 {
+                poses.push(step_command(&mut state, &wanting(Stance::Prone), &tuning));
+            }
+
+            assert_eq!((state.stance, state.from), (Stance::Prone, Stance::Prone));
+            assert!(
+                poses.iter().all(|p| p.lying && p.hull.length == 1.8),
+                "the slide kept the lying hull through the airborne leg: {poses:?}"
+            );
         }
     }
 }

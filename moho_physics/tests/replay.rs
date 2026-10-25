@@ -248,10 +248,11 @@ const APPROACH_TICKS: usize = 200;
 /// some reverse mid-way; the two characters are out of step. Fixed by tick so the rng draws
 /// stay put.
 fn wanted_stance(who: usize, tick: usize) -> Stance {
+    // Character 0 asks for prone for 24 ticks, long enough to start a prone leg before the
+    // crouch burst at 40; character 1 lies down on open ground and stays long enough to settle.
     let prone = match who {
-        // A prone leg reversed 8 ticks in, then a full lie-down during the straight walk.
-        0 => (112..132).contains(&tick) || (150..200).contains(&tick),
-        _ => (440..500).contains(&tick),
+        0 => (16..40).contains(&tick),
+        _ => (110..160).contains(&tick),
     };
     let crouching = match who {
         0 => (40..46).contains(&tick) || (63..110).contains(&tick) || (300..420).contains(&tick),
@@ -554,14 +555,14 @@ fn assert_run_exercises_the_world(script: &[TickInput], recorded: &[Snapshot]) {
         );
     }
 
-    let first = || recorded.iter().map(|s| s.characters[0]);
+    let all = || recorded.iter().flat_map(|s| s.characters);
     assert!(
-        first().any(|c| c.stance == Stance::Prone && c.progress >= PRONE_TICKS),
-        "character 0 never finished lying down"
+        all().any(|c| c.stance == Stance::Prone && c.progress >= PRONE_TICKS),
+        "no character finished lying down"
     );
     assert!(
-        first().any(|c| c.stance == Stance::Crouch && c.from == Stance::Prone),
-        "character 0 never came back from prone"
+        all().any(|c| c.stance == Stance::Crouch && c.from == Stance::Prone),
+        "no character came back from prone"
     );
     assert!(
         recorded

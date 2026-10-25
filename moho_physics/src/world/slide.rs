@@ -281,6 +281,14 @@ impl Slider<'_> {
         self.read_ground(centre).map(|read| read.ground)
     }
 
+    /// [`Self::ground_below`] for a hull whose shape is turned to face `yaw`.
+    #[cfg(test)]
+    pub(super) fn ground_below_facing(&self, centre: Vec3, yaw: f32) -> Option<Ground> {
+        // TODO: stub, ignores `yaw` and exists only for tests; make it the real path and cast the drop with the shape rotated about +Y by `yaw`.
+        let _ = yaw;
+        self.ground_below(centre)
+    }
+
     /// [`Self::ground_below`] with the edge that holds the capsule up, if any.
     fn read_ground(&self, centre: Vec3) -> Option<GroundRead> {
         let footing = self.footing;
@@ -700,10 +708,6 @@ mod tests {
         check(&slider, &colliders)
     }
 
-    /// A lying character's centre height 2 cm above where a 0.3 m radius capsule rests on level
-    /// ground at y = 0.
-    const LYING_HOVER_Y: f32 = 0.32;
-
     /// The 1.8 m long, 0.3 m radius hull of a prone character.
     const LYING_HULL: Hull = Hull {
         shape: HullShape::Capsule,
@@ -711,8 +715,9 @@ mod tests {
         length: 1.8,
     };
 
-    /// The ground a prone character's hull, lying along +Z, reads with its centre at `centre`.
-    fn ground_below_lying(meshes: &[WorldMesh], centre: Vec3) -> Option<Ground> {
+    /// The ground a prone character's hull, lying along its facing `yaw`, reads with its centre
+    /// at `centre`.
+    fn ground_below_lying(meshes: &[WorldMesh], centre: Vec3, yaw: f32) -> Option<Ground> {
         let mut world = PhysicsWorld::new();
         for (id, mesh) in meshes.iter().enumerate() {
             world.set_world_mesh(WorldMeshId(id as u64), mesh, TEST_TAG);
@@ -732,38 +737,55 @@ mod tests {
             footing: Footing::lying(LYING_HULL),
             dt: 1.0 / 60.0,
         };
-        slider.ground_below(centre)
+        slider.ground_below_facing(centre, yaw)
     }
 
     #[test]
-    fn ground_below_a_lying_hull_reads_the_floor() {
-        let found = ground_below_lying(
-            &[ground(0.0, -10.0, 10.0)],
-            Vec3::new(0.0, LYING_HOVER_Y, 0.0),
-        )
-        .expect("the floor is under a hull lying 2 cm above it");
+    fn ground_below_a_lying_hull_reads_the_floor_at_each_hover_height() {
+        for hover in [0.02_f32, 0.2] {
+            let centre = Vec3::new(0.0, 0.3 + hover, 0.0);
 
-        assert!(found.normal.distance(Vec3::Y) < 1e-3, "{found:?}");
-        assert!(found.point.y.abs() < 0.02, "{found:?}");
-        // The cast stops a 0.0115 skin short of the floor.
+            let found = ground_below_lying(&[ground(0.0, -10.0, 10.0)], centre, 0.0)
+                .unwrap_or_else(|| panic!("hover {hover}: no ground"));
+
+            assert!(found.normal.distance(Vec3::Y) < 1e-3, "{hover}: {found:?}");
+            assert!(found.point.y.abs() < 0.02, "{hover}: {found:?}");
+            // The drop stops a 0.0115 skin short of the floor.
+            assert!(
+                (found.gap - (hover - 0.0115)).abs() < 0.005,
+                "{hover}: {found:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ground_below_a_lying_hull_casts_it_along_the_facing() {
+        // A 0.1 m kerb under the head end at z in [0.5, 1.0]: the hull lying along Z overhangs
+        // it, the hull lying along X does not.
+        let meshes = [ground(0.0, -10.0, 10.0), step_box_mesh(0.5, 0.5, 0.1)];
+        let centre = Vec3::new(0.0, 0.3 + 0.15, 0.0);
+
+        let along_z = ground_below_lying(&meshes, centre, 0.0).expect("ground under the centre");
+        let along_x = ground_below_lying(&meshes, centre, std::f32::consts::FRAC_PI_2)
+            .expect("ground under the centre");
+
         assert!(
-            (found.gap - (LYING_HOVER_Y - 0.3 - 0.0115)).abs() < 0.005,
-            "{found:?}"
+            along_z.gap < 0.07,
+            "the kerb stops the head end: {along_z:?}"
+        );
+        assert!(
+            (along_x.gap - (0.15 - 0.0115)).abs() < 0.01,
+            "turned along X it clears the kerb: {along_x:?}"
         );
     }
 
     #[test]
-    fn ground_below_a_lying_hull_held_up_reads_the_drop_to_the_floor() {
-        let found = ground_below_lying(&[ground(0.0, -10.0, 10.0)], Vec3::new(0.0, 0.3 + 0.2, 0.0))
-            .expect("the floor is within a step of a hull lying 0.2 m above it");
-
-        assert!((found.gap - (0.2 - 0.0115)).abs() < 0.005, "{found:?}");
-    }
-
-    #[test]
     fn ground_below_a_lying_hull_is_none_beyond_the_step_height() {
-        let found =
-            ground_below_lying(&[ground(0.0, -10.0, 10.0)], Vec3::new(0.0, 0.3 + 0.55, 0.0));
+        let found = ground_below_lying(
+            &[ground(0.0, -10.0, 10.0)],
+            Vec3::new(0.0, 0.3 + 0.55, 0.0),
+            0.0,
+        );
 
         assert_eq!(found, None);
     }
