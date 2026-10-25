@@ -136,6 +136,7 @@ pub(crate) fn test_move_settings() -> MoveSettings {
         max_velocity: 90.0,
         autohop: false,
         crouch_ticks: 0,
+        prone_ticks: 0,
     }
 }
 

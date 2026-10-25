@@ -1,7 +1,7 @@
 //! The rapier collide-and-slide behind [`crate::movement::step`].
 
 use crate::movement::{
-    CharacterQueries, Ground, Hull, HullShape, Slide, STEP_HEIGHT, WALKABLE_NORMAL_Y,
+    CharacterQueries, Ground, Hull, HullPose, HullShape, Slide, STEP_HEIGHT, WALKABLE_NORMAL_Y,
 };
 use crate::world::CharacterState;
 use glam::{Quat, Vec3};
@@ -111,7 +111,7 @@ pub(super) struct Footing {
 }
 
 impl Footing {
-    /// The footing of a character `hull`.
+    /// The footing of an upright character `hull`.
     pub(super) fn of(hull: Hull) -> Self {
         let half_length = hull.length / 2.0;
         match hull.shape {
@@ -126,6 +126,15 @@ impl Footing {
                 core_bottom: half_length - rounding,
             },
         }
+    }
+}
+
+impl Footing {
+    /// The footing of a character `hull` lying along the facing: the core is level with the
+    /// centre, swept by the hull's radius, with no core disc.
+    pub(super) fn lying(hull: Hull) -> Self {
+        // TODO: stub, reads the hull as upright; build the level footing described above.
+        Self::of(hull)
     }
 }
 
@@ -165,7 +174,9 @@ pub(super) struct WorldQueries<'a> {
 impl CharacterQueries for WorldQueries<'_> {
     /// Slides the `hull` given, which differs from the collider's shape on the tick the stance
     /// changed it, before the adapter reshapes the collider.
-    fn slide(&self, from: &CharacterState, hull: &Hull, asked: Vec3) -> Slide {
+    fn slide(&self, from: &CharacterState, pose: HullPose, asked: Vec3) -> Slide {
+        // TODO: stub, treats every hull as upright; cast a lying hull as `capsule_z`.
+        let hull = &pose.hull;
         let built;
         let shape = if *hull == self.own_hull {
             self.own_shape
@@ -177,7 +188,11 @@ impl CharacterQueries for WorldQueries<'_> {
             controller: self.controller,
             queries: self.queries,
             shape,
-            footing: Footing::of(*hull),
+            footing: if pose.lying {
+                Footing::lying(*hull)
+            } else {
+                Footing::of(*hull)
+            },
             dt: self.dt,
         };
         let start = Pose::from_parts(from.position, Quat::from_rotation_y(from.yaw));
@@ -186,7 +201,9 @@ impl CharacterQueries for WorldQueries<'_> {
 
     /// The hull at its true size: a grounded character rests a skin above the floor, so
     /// growing it by the skin would make every crouch in the open touch the floor.
-    fn fits(&self, hull: &Hull, centre: Vec3, yaw: f32) -> bool {
+    fn fits(&self, pose: HullPose, centre: Vec3, yaw: f32) -> bool {
+        // TODO: stub, treats every hull as upright; probe a lying hull as `capsule_z`.
+        let hull = &pose.hull;
         let at = Pose::from_parts(centre, Quat::from_rotation_y(yaw));
         self.queries
             .intersect_shape(at, shape_of(hull).as_ref())
@@ -681,6 +698,74 @@ mod tests {
             dt,
         };
         check(&slider, &colliders)
+    }
+
+    /// A lying character's centre height 2 cm above where a 0.3 m radius capsule rests on level
+    /// ground at y = 0.
+    const LYING_HOVER_Y: f32 = 0.32;
+
+    /// The 1.8 m long, 0.3 m radius hull of a prone character.
+    const LYING_HULL: Hull = Hull {
+        shape: HullShape::Capsule,
+        radius: 0.3,
+        length: 1.8,
+    };
+
+    /// The ground a prone character's hull, lying along +Z, reads with its centre at `centre`.
+    fn ground_below_lying(meshes: &[WorldMesh], centre: Vec3) -> Option<Ground> {
+        let mut world = PhysicsWorld::new();
+        for (id, mesh) in meshes.iter().enumerate() {
+            world.set_world_mesh(WorldMeshId(id as u64), mesh, TEST_TAG);
+        }
+        world.step(1.0 / 60.0);
+        let queries = world.broad_phase.as_query_pipeline(
+            world.narrow_phase.query_dispatcher(),
+            &world.rigid_body_set,
+            &world.collider_set,
+            QueryFilter::default(),
+        );
+        let capsule = SharedShape::capsule_z(0.6, 0.3);
+        let slider = Slider {
+            controller: &world.character_controller,
+            queries: &queries,
+            shape: capsule.as_ref(),
+            footing: Footing::lying(LYING_HULL),
+            dt: 1.0 / 60.0,
+        };
+        slider.ground_below(centre)
+    }
+
+    #[test]
+    fn ground_below_a_lying_hull_reads_the_floor() {
+        let found = ground_below_lying(
+            &[ground(0.0, -10.0, 10.0)],
+            Vec3::new(0.0, LYING_HOVER_Y, 0.0),
+        )
+        .expect("the floor is under a hull lying 2 cm above it");
+
+        assert!(found.normal.distance(Vec3::Y) < 1e-3, "{found:?}");
+        assert!(found.point.y.abs() < 0.02, "{found:?}");
+        // The cast stops a 0.0115 skin short of the floor.
+        assert!(
+            (found.gap - (LYING_HOVER_Y - 0.3 - 0.0115)).abs() < 0.005,
+            "{found:?}"
+        );
+    }
+
+    #[test]
+    fn ground_below_a_lying_hull_held_up_reads_the_drop_to_the_floor() {
+        let found = ground_below_lying(&[ground(0.0, -10.0, 10.0)], Vec3::new(0.0, 0.3 + 0.2, 0.0))
+            .expect("the floor is within a step of a hull lying 0.2 m above it");
+
+        assert!((found.gap - (0.2 - 0.0115)).abs() < 0.005, "{found:?}");
+    }
+
+    #[test]
+    fn ground_below_a_lying_hull_is_none_beyond_the_step_height() {
+        let found =
+            ground_below_lying(&[ground(0.0, -10.0, 10.0)], Vec3::new(0.0, 0.3 + 0.55, 0.0));
+
+        assert_eq!(found, None);
     }
 
     /// A character centre's height 2 cm above where a capsule rests on level ground at y = 0.

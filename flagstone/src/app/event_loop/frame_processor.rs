@@ -29,6 +29,7 @@ const STRATEGY_MOVE_SETTINGS: moho_physics::MoveSettings = moho_physics::MoveSet
     max_velocity: 90.0,
     autohop: true,
     crouch_ticks: 0,
+    prone_ticks: 0,
 };
 
 /// Handles frame timing and game state updates

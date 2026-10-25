@@ -26,6 +26,7 @@ fn character_dropped_on_loaded_floor_stands_on_it() {
         max_velocity: 90.0,
         autohop: false,
         crouch_ticks: 0,
+        prone_ticks: 0,
     };
     let handle = world.add_character(Vec3::new(0.0, 2.0 + capsule_centre_above_base, 0.0));
 

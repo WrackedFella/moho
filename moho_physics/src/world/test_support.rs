@@ -16,6 +16,7 @@ pub(crate) fn test_settings() -> MoveSettings {
         max_velocity: 90.0,
         autohop: false,
         crouch_ticks: 0,
+        prone_ticks: 0,
     }
 }
 
@@ -256,5 +257,22 @@ pub(crate) fn crouching_body() -> CharacterBody {
     CharacterBody {
         standing: capsule(0.405, 1.83, 1.63),
         crouched: Some(capsule(0.38, 1.1, 0.95)),
+        prone: None,
+    }
+}
+
+/// [`crouching_body`] that can also go prone: a 0.3 m radius capsule 1.8 m long lying along the
+/// facing, with the eye 0.35 m above the ground and at the head end of the hull.
+pub(crate) fn prone_body() -> CharacterBody {
+    CharacterBody {
+        prone: Some(Stature {
+            hull: Hull {
+                shape: HullShape::Capsule,
+                radius: 0.3,
+                length: 1.8,
+            },
+            eye_height: 0.35,
+        }),
+        ..crouching_body()
     }
 }

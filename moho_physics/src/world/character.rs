@@ -372,8 +372,9 @@ impl PhysicsWorld {
 mod tests {
     use super::super::test_support::TEST_TAG;
     use super::super::test_support::{
-        ceiling_mesh, corner_mesh, crouching_body, doorway_mesh, floor_mesh, quad_mesh,
+        ceiling_mesh, corner_mesh, crouching_body, doorway_mesh, floor_mesh, prone_body, quad_mesh,
         seam_floor_meshes, slope_mesh, stairs_mesh, step_box_mesh, test_settings, wall_mesh,
+        x_wall_mesh,
     };
     use super::super::{HitTag, RayHit, RayQuery};
     use super::*;
@@ -764,6 +765,7 @@ mod tests {
         let settings = MoveSettings {
             autohop: true,
             crouch_ticks: 0,
+            prone_ticks: 0,
             ..test_settings()
         };
         let (mut world, h) = standing_on_floor();
@@ -1869,6 +1871,7 @@ mod tests {
             max_velocity: 90.0,
             autohop: true,
             crouch_ticks: 0,
+            prone_ticks: 0,
         }
     }
 
@@ -1929,6 +1932,7 @@ mod tests {
             max_velocity: 90.0,
             autohop: false,
             crouch_ticks: 0,
+            prone_ticks: 0,
         }
     }
 
@@ -2087,6 +2091,7 @@ mod tests {
                 eye_height,
             },
             crouched: None,
+            prone: None,
         }
     }
 
@@ -2518,6 +2523,54 @@ mod tests {
         });
 
         add_with_body(body);
+    }
+
+    #[test]
+    #[should_panic(expected = "hull")]
+    fn a_prone_hull_that_is_not_a_capsule_is_refused() {
+        let mut body = prone_body();
+        body.prone = Some(Stature {
+            hull: Hull {
+                shape: HullShape::RoundCylinder { rounding: 0.2 },
+                radius: 0.3,
+                length: 1.8,
+            },
+            eye_height: 0.35,
+        });
+
+        add_with_body(body);
+    }
+
+    #[test]
+    #[should_panic(expected = "hull")]
+    fn an_impossible_prone_hull_is_refused() {
+        let mut body = prone_body();
+        body.prone = Some(Stature {
+            hull: Hull {
+                shape: HullShape::Capsule,
+                radius: 0.3,
+                length: 0.5,
+            },
+            eye_height: 0.35,
+        });
+
+        add_with_body(body);
+    }
+
+    #[test]
+    #[should_panic(expected = "prone")]
+    fn a_body_that_goes_prone_but_cannot_crouch_is_refused() {
+        let body = CharacterBody {
+            crouched: None,
+            ..prone_body()
+        };
+
+        add_with_body(body);
+    }
+
+    #[test]
+    fn a_body_that_goes_prone_through_crouch_is_accepted() {
+        add_with_body(prone_body());
     }
 
     #[test]
@@ -4566,6 +4619,286 @@ mod tests {
                 "it rests at the crouched top (1.1) plus its half height (0.915), not the standing top: {rider:?}"
             );
             assert_eq!(state(&world, below).stance, Stance::Crouch);
+        }
+    }
+
+    /// A crouching body with a 1.8 m prone hull lying along the facing.
+    mod prone {
+        use super::*;
+        use std::f32::consts::FRAC_PI_2;
+
+        /// The prone hull's radius, which is also how high its centre rides above the floor.
+        const RADIUS: f32 = 0.3;
+        /// Half the prone hull's length.
+        const HALF: f32 = 0.9;
+        /// Skin the controller keeps from a surface.
+        const SKIN: f32 = 0.0115;
+
+        fn settings() -> MoveSettings {
+            MoveSettings {
+                crouch_ticks: 8,
+                prone_ticks: 20,
+                ..test_settings()
+            }
+        }
+
+        fn command(forward: f32, stance: Stance) -> CharacterCommand {
+            CharacterCommand {
+                forward,
+                stance,
+                ..CharacterCommand::default()
+            }
+        }
+
+        /// A floor and `meshes`, with a character on the floor at the origin facing `yaw`.
+        fn on_a_floor_with(meshes: &[WorldMesh], yaw: f32) -> (PhysicsWorld, CharacterHandle) {
+            let mut world = PhysicsWorld::new();
+            world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+            for (id, mesh) in meshes.iter().enumerate() {
+                world.set_world_mesh(WorldMeshId(id as u64 + 1), mesh, TEST_TAG);
+            }
+            let h = world.add_character(CharacterSpawn {
+                position: Vec3::new(0.0, 1.0, 0.0),
+                yaw,
+                pitch: 0.0,
+                body: prone_body(),
+            });
+            settle_on_floor(&mut world, &[h]);
+            (world, h)
+        }
+
+        /// One tick; the state after it and the impacts above numeric noise.
+        fn tick(
+            world: &mut PhysicsWorld,
+            h: CharacterHandle,
+            command: &CharacterCommand,
+        ) -> (CharacterState, Vec<Impact>) {
+            let impacts = world
+                .move_character(h, command, &settings(), DT)
+                .expect("character is live")
+                .into_iter()
+                .filter(|i| i.speed > 1e-3)
+                .collect();
+            world.step(DT);
+            (state(world, h), impacts)
+        }
+
+        /// Holds `stance` until the character has settled in it; panics if it never does.
+        fn settle_in(world: &mut PhysicsWorld, h: CharacterHandle, stance: Stance) {
+            for _ in 0..80 {
+                let (after, _) = tick(world, h, &command(0.0, stance));
+                if after.stance == stance && after.from == stance {
+                    return;
+                }
+            }
+            panic!(
+                "the character never settled in {stance:?}: {:?}",
+                state(world, h)
+            );
+        }
+
+        fn lie_down(world: &mut PhysicsWorld, h: CharacterHandle) {
+            settle_in(world, h, Stance::Crouch);
+            settle_in(world, h, Stance::Prone);
+        }
+
+        #[test]
+        fn the_prone_hull_lies_along_the_facing() {
+            let ahead = [wall_mesh(0.8)];
+            let beside = [x_wall_mesh(0.5)];
+            let far_ahead = [wall_mesh(3.0)];
+
+            let (mut blocked, h) = on_a_floor_with(&ahead, 0.0);
+            settle_in(&mut blocked, h, Stance::Crouch);
+            let refused: Vec<_> = (0..30)
+                .map(|_| tick(&mut blocked, h, &command(0.0, Stance::Prone)).0.stance)
+                .collect();
+            let (mut free, h) = on_a_floor_with(&beside, 0.0);
+            lie_down(&mut free, h);
+            let mut impacts = Vec::new();
+            for _ in 0..80 {
+                impacts.extend(tick(&mut free, h, &command(1.0, Stance::Prone)).1);
+            }
+            let crawled = state(&free, h);
+            let (mut stopped, h) = on_a_floor_with(&far_ahead, 0.0);
+            lie_down(&mut stopped, h);
+            for _ in 0..120 {
+                tick(&mut stopped, h, &command(1.0, Stance::Prone));
+            }
+            let at_the_wall = state(&stopped, h);
+
+            assert!(
+                refused.iter().all(|&stance| stance == Stance::Crouch),
+                "the lying hull reaches 0.9 m ahead, into a wall 0.8 m away: {refused:?}"
+            );
+            assert_eq!(
+                impacts,
+                Vec::new(),
+                "the side wall at 0.5 m blocked the crawl"
+            );
+            assert_eq!(crawled.stance, Stance::Prone);
+            assert!(crawled.position.z > 3.0, "{crawled:?}");
+            assert_eq!(at_the_wall.stance, Stance::Prone);
+            assert!(
+                (at_the_wall.position.z - (3.0 - HALF - SKIN)).abs() < 0.02,
+                "the head end stops at the wall, not the centre's radius: {at_the_wall:?}"
+            );
+        }
+
+        #[test]
+        fn a_prone_turn_into_a_wall_is_clamped() {
+            let (mut world, h) = on_a_floor_with(&[x_wall_mesh(0.6)], 0.0);
+            lie_down(&mut world, h);
+            let turn = CharacterCommand {
+                yaw_delta: FRAC_PI_2,
+                ..command(0.0, Stance::Prone)
+            };
+
+            let (turned, _) = tick(&mut world, h, &turn);
+            let mut later = Vec::new();
+            for _ in 0..10 {
+                later.push(tick(&mut world, h, &turn).0.yaw);
+            }
+
+            // The capsule's segment is 0.6 m either side of the centre, so at `yaw` it reaches
+            // 0.6 sin(yaw) + 0.3 toward the wall.
+            let reach = |yaw: f32| 0.6 * yaw.sin() + RADIUS;
+            assert!(turned.yaw < FRAC_PI_2, "{turned:?}");
+            assert!(
+                turned.yaw > 0.45,
+                "it turns as far as four bisections find (28 degrees), not a hair: {turned:?}"
+            );
+            assert!(
+                reach(turned.yaw) < 0.6,
+                "the hull overlaps the wall: {turned:?}"
+            );
+            for yaw in later {
+                assert!(reach(yaw) < 0.6, "it turned into the wall: yaw {yaw}");
+            }
+        }
+
+        #[test]
+        fn going_prone_facing_a_close_wall_is_refused() {
+            let (mut world, h) = on_a_floor_with(&[wall_mesh(0.5)], 0.0);
+            settle_in(&mut world, h, Stance::Crouch);
+            let crouched = state(&world, h);
+
+            let after: Vec<_> = (0..40)
+                .map(|_| tick(&mut world, h, &command(0.0, Stance::Prone)).0)
+                .collect();
+
+            assert!(
+                after.iter().all(|s| s.stance == Stance::Crouch),
+                "{after:?}"
+            );
+            let last = after.last().expect("it ticked");
+            assert!(
+                (last.position - crouched.position).length() < 0.01,
+                "{last:?}"
+            );
+        }
+
+        #[test]
+        fn the_prone_eye_is_at_the_games_height() {
+            let (mut world, h) = on_a_floor_with(&[], 0.0);
+            lie_down(&mut world, h);
+
+            let (prone, _) = tick(&mut world, h, &command(0.0, Stance::Prone));
+
+            let eye = prone.eye_position();
+            assert!(
+                (eye.y - 0.35).abs() < 0.02,
+                "the eye is 0.35 m above the ground: {eye:?}"
+            );
+            assert!(
+                (eye.z - prone.position.z - (HALF - RADIUS)).abs() < 1e-3,
+                "the eye is at the head end of the hull: {prone:?}"
+            );
+            assert!((eye.x - prone.position.x).abs() < 1e-3, "{prone:?}");
+        }
+
+        #[test]
+        fn a_prone_character_crawls_grounded_at_any_yaw() {
+            for yaw in [0.0, 0.5, 1.0, FRAC_PI_2] {
+                let (mut world, h) = on_a_floor_with(&[], yaw);
+                lie_down(&mut world, h);
+                let start = state(&world, h);
+                let facing = Vec3::new(yaw.sin(), 0.0, yaw.cos());
+
+                let path: Vec<_> = (0..60)
+                    .map(|_| tick(&mut world, h, &command(1.0, Stance::Prone)).0)
+                    .collect();
+
+                for s in &path {
+                    assert!(s.grounded, "yaw {yaw}: {s:?}");
+                    assert_eq!(s.stance, Stance::Prone, "yaw {yaw}");
+                    assert!(
+                        (s.position.y - RADIUS).abs() < 0.05,
+                        "yaw {yaw}: the lying centre rides a radius above the floor: {s:?}"
+                    );
+                    assert!((s.yaw - yaw).abs() < 1e-5, "yaw {yaw}: {s:?}");
+                }
+                let moved = path.last().expect("it ticked").position - start.position;
+                assert!(moved.dot(facing) > 2.0, "yaw {yaw}: crawled {moved:?}");
+                assert!(
+                    (moved - facing * moved.dot(facing)).with_y(0.0).length() < 0.1,
+                    "yaw {yaw}: drifted sideways {moved:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn a_prone_character_crawls_off_a_nosing_and_stays_grounded() {
+            let mut world = PhysicsWorld::new();
+            world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+            world.set_world_mesh(WorldMeshId(1), &step_box_mesh(-3.0, 4.0, 0.3), TEST_TAG);
+            let h = world.add_character(CharacterSpawn {
+                position: Vec3::new(0.0, 1.8, 0.0),
+                yaw: 0.0,
+                pitch: 0.0,
+                body: prone_body(),
+            });
+            settle_on_floor(&mut world, &[h]);
+            lie_down(&mut world, h);
+
+            let path: Vec<_> = (0..150)
+                .map(|_| tick(&mut world, h, &command(1.0, Stance::Prone)).0)
+                .collect();
+
+            let last = path.last().expect("it ticked");
+            assert!(last.position.z > 3.0, "it is stuck at the nosing: {last:?}");
+            assert!(last.grounded, "{last:?}");
+            assert!((last.position.y - RADIUS).abs() < 0.05, "{last:?}");
+            assert!(path.iter().all(|s| s.stance == Stance::Prone));
+        }
+
+        #[test]
+        fn standing_from_prone_under_a_low_ceiling_stops_at_crouch() {
+            let (mut world, h) = on_a_floor_with(&[ceiling_mesh(1.2, 2.0, 8.0)], 0.0);
+            lie_down(&mut world, h);
+            let mut under = state(&world, h);
+            for _ in 0..200 {
+                if under.position.z >= 4.5 {
+                    break;
+                }
+                under = tick(&mut world, h, &command(1.0, Stance::Prone)).0;
+            }
+            assert!(
+                under.position.z >= 4.5,
+                "setup: it crawled under: {under:?}"
+            );
+
+            let after: Vec<_> = (0..60)
+                .map(|_| tick(&mut world, h, &command(0.0, Stance::Stand)).0)
+                .collect();
+
+            let last = after.last().expect("it ticked");
+            assert_eq!((last.stance, last.from), (Stance::Crouch, Stance::Crouch));
+            assert!(
+                after.iter().all(|s| s.stance != Stance::Stand),
+                "it stood up under the ceiling: {after:?}"
+            );
+            assert!(last.position.y < 0.7, "the crouched centre: {last:?}");
         }
     }
 }

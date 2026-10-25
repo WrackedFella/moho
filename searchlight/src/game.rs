@@ -2014,6 +2014,7 @@ mod tests {
                 eye_height: 1.5,
             },
             crouched: None,
+            prone: None,
         };
         let mode = ArenaMode::new(
             arena_with(&[], Vec3::ZERO, &[], &[]),
