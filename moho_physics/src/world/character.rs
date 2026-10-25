@@ -45,6 +45,10 @@ pub struct CharacterState {
     pub progress: u16,
     /// The end of the hull the leg in progress keeps still.
     pub anchor: Anchor,
+    /// The lean reached, -1 (left) to 1 (right), before the wall clamp.
+    pub lean: f32,
+    /// The view roll after the wall clamp, radians, positive to the right.
+    pub roll: f32,
 }
 
 /// A character's starting state and shape: where it stands, which way it faces, its hull.
@@ -114,6 +118,8 @@ pub(super) struct Character {
     from: Stance,
     progress: u16,
     anchor: Anchor,
+    lean: f32,
+    roll: f32,
     /// Changes from outside the step, applied in order by the next `move_character`.
     effects: Vec<CharacterEffect>,
 }
@@ -133,6 +139,8 @@ impl Character {
             from: self.from,
             progress: self.progress,
             anchor: self.anchor,
+            lean: self.lean,
+            roll: self.roll,
         }
     }
 
@@ -148,6 +156,8 @@ impl Character {
         self.from = state.from;
         self.progress = state.progress;
         self.anchor = state.anchor;
+        self.lean = state.lean;
+        self.roll = state.roll;
     }
 }
 
@@ -199,6 +209,8 @@ impl PhysicsWorld {
                 from: Stance::Stand,
                 progress: 0,
                 anchor: Anchor::Feet,
+                lean: 0.0,
+                roll: 0.0,
                 effects: Vec::new(),
             },
         );
@@ -764,6 +776,7 @@ mod tests {
             autohop: true,
             crouch_ticks: 0,
             prone_ticks: 0,
+            lean_ticks: 0,
             ..test_settings()
         };
         let (mut world, h) = standing_on_floor();
@@ -916,6 +929,8 @@ mod tests {
                 from: Stance::Stand,
                 progress: 0,
                 anchor: Anchor::Feet,
+                lean: 0.0,
+                roll: 0.0,
             })
         );
     }
@@ -1405,6 +1420,8 @@ mod tests {
                 from: Stance::Stand,
                 progress: 0,
                 anchor: Anchor::Feet,
+                lean: 0.0,
+                roll: 0.0,
             })
         );
         assert_eq!(state(&world, plain).yaw, 0.0, "a bare position faces 0");
@@ -1870,6 +1887,7 @@ mod tests {
             autohop: true,
             crouch_ticks: 0,
             prone_ticks: 0,
+            lean_ticks: 0,
         }
     }
 
@@ -1931,6 +1949,7 @@ mod tests {
             autohop: false,
             crouch_ticks: 0,
             prone_ticks: 0,
+            lean_ticks: 0,
         }
     }
 
@@ -2090,6 +2109,7 @@ mod tests {
             },
             crouched: None,
             prone: None,
+            lean: crate::movement::Lean::default(),
         }
     }
 
@@ -2564,6 +2584,142 @@ mod tests {
         };
 
         add_with_body(body);
+    }
+
+    #[test]
+    #[should_panic(expected = "lean")]
+    fn an_impossible_lean_is_refused_with_a_negative_upright_distance() {
+        add_with_body(CharacterBody {
+            lean: {
+                let reach = |distance, roll| crate::movement::LeanReach { distance, roll };
+                crate::movement::Lean {
+                    upright: reach(-0.1, 0.2),
+                    prone: reach(0.1, 0.3),
+                    head_radius: 0.1,
+                }
+            },
+            ..source_body()
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "lean")]
+    fn an_impossible_lean_is_refused_with_a_negative_prone_distance() {
+        add_with_body(CharacterBody {
+            lean: {
+                let reach = |distance, roll| crate::movement::LeanReach { distance, roll };
+                crate::movement::Lean {
+                    upright: reach(0.3, 0.2),
+                    prone: reach(-0.1, 0.3),
+                    head_radius: 0.1,
+                }
+            },
+            ..source_body()
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "lean")]
+    fn an_impossible_lean_is_refused_with_a_non_finite_distance() {
+        add_with_body(CharacterBody {
+            lean: {
+                let reach = |distance, roll| crate::movement::LeanReach { distance, roll };
+                crate::movement::Lean {
+                    upright: reach(f32::INFINITY, 0.2),
+                    prone: reach(0.1, 0.3),
+                    head_radius: 0.1,
+                }
+            },
+            ..source_body()
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "lean")]
+    fn an_impossible_lean_is_refused_with_a_non_finite_upright_roll() {
+        add_with_body(CharacterBody {
+            lean: {
+                let reach = |distance, roll| crate::movement::LeanReach { distance, roll };
+                crate::movement::Lean {
+                    upright: reach(0.3, f32::NAN),
+                    prone: reach(0.1, 0.3),
+                    head_radius: 0.1,
+                }
+            },
+            ..source_body()
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "lean")]
+    fn an_impossible_lean_is_refused_with_a_non_finite_prone_roll() {
+        add_with_body(CharacterBody {
+            lean: {
+                let reach = |distance, roll| crate::movement::LeanReach { distance, roll };
+                crate::movement::Lean {
+                    upright: reach(0.3, 0.2),
+                    prone: reach(0.1, f32::INFINITY),
+                    head_radius: 0.1,
+                }
+            },
+            ..source_body()
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "lean")]
+    fn an_impossible_lean_is_refused_with_a_negative_head_radius() {
+        add_with_body(CharacterBody {
+            lean: {
+                let reach = |distance, roll| crate::movement::LeanReach { distance, roll };
+                crate::movement::Lean {
+                    upright: reach(0.3, 0.2),
+                    prone: reach(0.1, 0.3),
+                    head_radius: -0.1,
+                }
+            },
+            ..source_body()
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "lean")]
+    fn an_impossible_lean_is_refused_with_a_non_finite_head_radius() {
+        add_with_body(CharacterBody {
+            lean: {
+                let reach = |distance, roll| crate::movement::LeanReach { distance, roll };
+                crate::movement::Lean {
+                    upright: reach(0.3, 0.2),
+                    prone: reach(0.1, 0.3),
+                    head_radius: f32::NAN,
+                }
+            },
+            ..source_body()
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "lean")]
+    fn an_impossible_lean_is_refused_with_a_reach_and_no_head_radius() {
+        add_with_body(CharacterBody {
+            lean: {
+                let reach = |distance, roll| crate::movement::LeanReach { distance, roll };
+                crate::movement::Lean {
+                    upright: reach(0.3, 0.2),
+                    prone: reach(0.1, 0.3),
+                    head_radius: 0.0,
+                }
+            },
+            ..source_body()
+        });
+    }
+
+    #[test]
+    fn a_lean_with_no_reach_needs_no_head_radius() {
+        add_with_body(CharacterBody {
+            lean: crate::movement::Lean::default(),
+            ..source_body()
+        });
     }
 
     #[test]
@@ -4631,6 +4787,7 @@ mod tests {
             MoveSettings {
                 crouch_ticks: 8,
                 prone_ticks: 20,
+                lean_ticks: 0,
                 ..test_settings()
             }
         }
@@ -4909,6 +5066,406 @@ mod tests {
                 "it stood up under the ceiling: {after:?}"
             );
             assert!(last.position.y < 0.7, "the crouched centre: {last:?}");
+        }
+    }
+
+    mod lean {
+        use super::super::super::test_support::x_wall_mesh_reversed;
+        use super::*;
+        use crate::movement::{Lean, LeanReach};
+
+        const UPRIGHT_DISTANCE: f32 = 0.35;
+        const PRONE_DISTANCE: f32 = 0.15;
+        const HEAD_RADIUS: f32 = 0.1;
+        const EPS: f32 = 2e-3;
+
+        fn upright_roll() -> f32 {
+            12.0_f32.to_radians()
+        }
+
+        fn prone_roll() -> f32 {
+            20.0_f32.to_radians()
+        }
+
+        fn reach() -> Lean {
+            Lean {
+                upright: LeanReach {
+                    distance: UPRIGHT_DISTANCE,
+                    roll: upright_roll(),
+                },
+                prone: LeanReach {
+                    distance: PRONE_DISTANCE,
+                    roll: prone_roll(),
+                },
+                head_radius: HEAD_RADIUS,
+            }
+        }
+
+        /// The searchlight-sized body that crouches and goes prone, and leans.
+        fn leaning_body() -> CharacterBody {
+            CharacterBody {
+                lean: reach(),
+                ..prone_body()
+            }
+        }
+
+        /// A 0.1 m radius hull, slim enough to stand with a wall 0.15 m from its eye and the
+        /// hull clear of that wall.
+        fn slim_body() -> CharacterBody {
+            CharacterBody {
+                standing: Stature {
+                    hull: Hull {
+                        shape: HullShape::Capsule,
+                        radius: 0.1,
+                        length: 1.83,
+                    },
+                    eye_height: 1.63,
+                },
+                crouched: None,
+                prone: None,
+                lean: reach(),
+            }
+        }
+
+        fn settings() -> MoveSettings {
+            MoveSettings {
+                crouch_ticks: 8,
+                prone_ticks: 20,
+                lean_ticks: 6,
+                ..test_settings()
+            }
+        }
+
+        fn command(stance: Stance, lean: f32) -> CharacterCommand {
+            CharacterCommand {
+                stance,
+                lean,
+                ..CharacterCommand::default()
+            }
+        }
+
+        fn world_with(
+            meshes: &[WorldMesh],
+            body: CharacterBody,
+        ) -> (PhysicsWorld, CharacterHandle) {
+            let mut world = PhysicsWorld::new();
+            world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+            for (id, mesh) in meshes.iter().enumerate() {
+                world.set_world_mesh(WorldMeshId(id as u64 + 1), mesh, TEST_TAG);
+            }
+            let h = world.add_character(CharacterSpawn {
+                position: Vec3::new(0.0, 1.0, 0.0),
+                yaw: 0.0,
+                pitch: 0.0,
+                body,
+            });
+            (world, h)
+        }
+
+        /// One tick; the state after it and the impacts above numeric noise.
+        fn tick(
+            world: &mut PhysicsWorld,
+            h: CharacterHandle,
+            command: &CharacterCommand,
+        ) -> (CharacterState, Vec<Impact>) {
+            let impacts = world
+                .move_character(h, command, &settings(), DT)
+                .expect("character is live")
+                .into_iter()
+                .filter(|i| i.speed > 1e-3)
+                .collect();
+            world.step(DT);
+            (state(world, h), impacts)
+        }
+
+        fn hold(
+            world: &mut PhysicsWorld,
+            h: CharacterHandle,
+            command: &CharacterCommand,
+            ticks: usize,
+        ) -> CharacterState {
+            let mut last = state(world, h);
+            for _ in 0..ticks {
+                last = tick(world, h, command).0;
+            }
+            last
+        }
+
+        #[test]
+        fn a_full_lean_shifts_and_rolls_the_eye_in_each_stance() {
+            let cases = [
+                (Stance::Stand, UPRIGHT_DISTANCE, upright_roll()),
+                (Stance::Crouch, UPRIGHT_DISTANCE, upright_roll()),
+                (Stance::Prone, PRONE_DISTANCE, prone_roll()),
+            ];
+            for (stance, distance, roll) in cases {
+                let (mut world, h) = world_with(&[], leaning_body());
+                set_one_volume(
+                    &mut world,
+                    h,
+                    volume(Vec3::new(0.0, 0.5, 0.0), Vec3::new(0.45, 0.8, 0.2), HEAD),
+                );
+                let upright = hold(&mut world, h, &command(stance, 0.0), 80);
+                assert_eq!(
+                    (upright.stance, upright.from),
+                    (stance, stance),
+                    "setup: settled"
+                );
+
+                let leaned = hold(&mut world, h, &command(stance, 1.0), 20);
+
+                let shift = leaned.eye_position() - upright.eye_position();
+                let right = Vec3::new(-1.0, 0.0, 0.0);
+                assert!(
+                    shift.distance(right * distance) < EPS,
+                    "{stance:?}: the eye moved {shift:?}, expected {:?}",
+                    right * distance
+                );
+                assert!(
+                    (leaned.roll - roll).abs() < EPS,
+                    "{stance:?}: roll {}, expected {roll}",
+                    leaned.roll
+                );
+                assert!(
+                    leaned.position.distance(upright.position) < EPS,
+                    "{stance:?}: the hull moved"
+                );
+            }
+        }
+
+        #[test]
+        fn another_characters_hit_volume_on_the_lean_path_does_not_stop_the_lean() {
+            let (mut world, h) = world_with(&[], leaning_body());
+            let other = world.add_character(Vec3::new(-1.0, 1.0, 0.0));
+            set_one_volume(
+                &mut world,
+                other,
+                volume(Vec3::new(0.7, 0.7, 0.0), Vec3::splat(0.3), HEAD),
+            );
+            let upright = hold(&mut world, h, &command(Stance::Stand, 0.0), 30);
+
+            let leaned = hold(&mut world, h, &command(Stance::Stand, 1.0), 20);
+
+            let shift = leaned.eye_position() - upright.eye_position();
+            assert!(
+                shift.distance(Vec3::new(-UPRIGHT_DISTANCE, 0.0, 0.0)) < EPS,
+                "the eye moved {shift:?}"
+            );
+        }
+
+        #[test]
+        fn a_wall_stops_the_lean_short() {
+            let (mut world, h) = world_with(&[x_wall_mesh(0.15)], slim_body());
+            let upright = hold(&mut world, h, &command(Stance::Stand, 0.0), 30);
+
+            let leaned = hold(&mut world, h, &command(Stance::Stand, -1.0), 20);
+
+            let eye = leaned.eye_position().x;
+            assert!(
+                eye + HEAD_RADIUS < 0.15 - 1e-3,
+                "the eye's ball is not clear of the wall: eye at x {eye}"
+            );
+            assert!(
+                eye - upright.eye_position().x > 0.02,
+                "it leaned toward the wall until stopped: eye at x {eye}"
+            );
+            assert!(
+                (leaned.roll / -upright_roll() - leaned.eye.x / UPRIGHT_DISTANCE).abs() < EPS,
+                "the roll shrinks with the clamp: roll {}, eye {:?}",
+                leaned.roll,
+                leaned.eye
+            );
+            assert!(
+                (leaned.lean + 1.0).abs() < EPS,
+                "the lean reached stays full: {}",
+                leaned.lean
+            );
+        }
+
+        #[test]
+        fn a_body_with_no_lean_reach_never_moves_its_eye_or_rolls() {
+            let body = CharacterBody {
+                lean: Lean::default(),
+                ..prone_body()
+            };
+            let run = |lean: f32| {
+                let (mut world, h) = world_with(&[], body);
+                hold(&mut world, h, &command(Stance::Stand, lean), 30)
+            };
+
+            let upright = run(0.0);
+
+            for lean in [1.0, -1.0] {
+                let leaned = run(lean);
+                assert_eq!(
+                    leaned.eye.to_array().map(f32::to_bits),
+                    upright.eye.to_array().map(f32::to_bits),
+                    "lean {lean}"
+                );
+                assert_eq!(leaned.roll, 0.0, "lean {lean}");
+            }
+        }
+
+        const SETTLED_TICKS: usize = 10;
+
+        #[test]
+        fn leaning_never_moves_the_hull() {
+            let commands: Vec<CharacterCommand> = (0..90)
+                .map(|tick| CharacterCommand {
+                    forward: if tick < 30 { 0.0 } else { 0.5 },
+                    ..command(Stance::Stand, 0.0)
+                })
+                .collect();
+            let run = |lean: f32| {
+                let (mut world, h) = world_with(&[x_wall_mesh_reversed(-0.15)], slim_body());
+                let mut positions = Vec::new();
+                let mut impacts = Vec::new();
+                let mut last = state(&world, h);
+                for (index, command) in commands.iter().enumerate() {
+                    let (after, hit) = tick(&mut world, h, &CharacterCommand { lean, ..*command });
+                    positions.push(after.position);
+                    // The spawn drops onto the floor in the first ticks; that landing is not the wall.
+                    if index >= SETTLED_TICKS {
+                        impacts.extend(hit);
+                    }
+                    last = after;
+                }
+                (positions, impacts, last)
+            };
+
+            let (upright, upright_impacts, _) = run(0.0);
+            let (leaning, leaning_impacts, last) = run(1.0);
+
+            assert!(
+                last.lean > 0.99 && last.roll > 0.0,
+                "setup: it leaned {last:?}"
+            );
+            assert!(last.position.z > 1.0, "setup: it walked {last:?}");
+            assert!(
+                last.eye.x > -UPRIGHT_DISTANCE + 0.1,
+                "setup: the wall clamped the lean {last:?}"
+            );
+            assert_eq!(leaning.len(), upright.len());
+            let diverged = leaning.iter().zip(&upright).position(|(a, b)| {
+                a.to_array().map(f32::to_bits) != b.to_array().map(f32::to_bits)
+            });
+            assert_eq!(diverged, None, "the leaning hull went a different way");
+            assert!(upright_impacts.is_empty(), "setup: {upright_impacts:?}");
+            assert!(leaning_impacts.is_empty(), "{leaning_impacts:?}");
+        }
+
+        type Script = Vec<CharacterCommand>;
+
+        /// 300 ticks of leans in both directions, reversals, a half lean and stance legs that
+        /// overlap them, walking for a stretch.
+        fn script() -> Script {
+            (0..300)
+                .map(|tick| {
+                    let stance = match tick {
+                        40..90 => Stance::Crouch,
+                        90..180 => Stance::Prone,
+                        180..210 => Stance::Crouch,
+                        _ => Stance::Stand,
+                    };
+                    let lean = match tick {
+                        20..80 => 1.0,
+                        80..140 => -1.0,
+                        160..200 => 1.0,
+                        200..260 => -1.0,
+                        260..300 => 0.5,
+                        _ => 0.0,
+                    };
+                    let forward = if (100..170).contains(&tick) { 0.4 } else { 0.0 };
+                    CharacterCommand {
+                        forward,
+                        ..command(stance, lean)
+                    }
+                })
+                .collect()
+        }
+
+        /// What the game reads from a character each tick, as raw bits.
+        type Reading = ([u32; 3], u32, u32);
+
+        fn reading(s: &CharacterState) -> Reading {
+            (
+                s.eye_position().to_array().map(f32::to_bits),
+                s.roll.to_bits(),
+                s.lean.to_bits(),
+            )
+        }
+
+        /// A wall 0.42 m to the character's left: standing, a full lean runs into it.
+        fn walled_world(
+            extra_character: bool,
+        ) -> (PhysicsWorld, CharacterHandle, Option<CharacterHandle>) {
+            let (mut world, h) = world_with(&[x_wall_mesh(0.42)], leaning_body());
+            let other = extra_character.then(|| world.add_character(Vec3::new(-6.0, 1.2, -6.0)));
+            (world, h, other)
+        }
+
+        fn run(
+            script: &[CharacterCommand],
+            extra_character: bool,
+        ) -> (Vec<Reading>, Vec<CharacterState>) {
+            let (mut world, h, other) = walled_world(extra_character);
+            let mut readings = Vec::new();
+            let mut states = Vec::new();
+            for command in script {
+                if let Some(other) = other {
+                    world
+                        .move_character(other, &idle(), &settings(), DT)
+                        .expect("the other character is live");
+                }
+                world
+                    .move_character(h, command, &settings(), DT)
+                    .expect("character is live");
+                world.step(DT);
+                let after = state(&world, h);
+                readings.push(reading(&after));
+                states.push(after);
+            }
+            (readings, states)
+        }
+
+        #[test]
+        fn replaying_leans_and_stances_reproduces_eye_and_roll_exactly() {
+            let script = script();
+            let bytes = postcard::to_allocvec(&script).expect("the script serialises");
+            let decoded: Script = postcard::from_bytes(&bytes).expect("the script deserialises");
+            let (recorded, states) = run(&script, true);
+
+            let (replayed, _) = run(&decoded, true);
+
+            assert_eq!(recorded.len(), 300);
+            let diverged = recorded.iter().zip(&replayed).position(|(a, b)| a != b);
+            assert_eq!(diverged, None, "the replay diverged from the recording");
+            assert!(
+                states.iter().any(|s| s.lean > 0.99 && s.roll > 0.1),
+                "the script never leaned right"
+            );
+            assert!(
+                states.iter().any(|s| s.lean < -0.99 && s.roll < -0.1),
+                "the script never leaned left"
+            );
+            assert!(
+                states
+                    .iter()
+                    .any(|s| s.stance == Stance::Prone && s.lean.abs() > 0.99),
+                "the script never leaned prone"
+            );
+            assert!(
+                states
+                    .iter()
+                    .any(|s| s.lean.abs() > 0.1 && s.lean.abs() < 0.9),
+                "the script was never part-way through a lean"
+            );
+            assert!(
+                states.iter().any(|s| s.stance == Stance::Stand
+                    && s.lean < -0.99
+                    && (0.2..0.34).contains(&s.eye.x)),
+                "the wall never clamped a full left lean"
+            );
         }
     }
 }

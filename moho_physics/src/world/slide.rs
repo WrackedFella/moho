@@ -10,7 +10,7 @@ use rapier3d::control::{
 };
 use rapier3d::parry::query::ShapeCastHit;
 use rapier3d::parry::query::ShapeCastOptions;
-use rapier3d::parry::shape::Cylinder;
+use rapier3d::parry::shape::{Ball, Cylinder};
 use rapier3d::prelude::{ColliderHandle, Pose, QueryPipeline, Ray, Shape, SharedShape};
 
 /// How far below a grounded landing to look for the surface it landed on, in metres.
@@ -63,6 +63,13 @@ struct Edge {
 struct GroundRead {
     ground: Ground,
     edge: Option<Edge>,
+}
+
+fn skin(controller: &KinematicCharacterController) -> f32 {
+    let CharacterLength::Absolute(skin) = controller.offset else {
+        panic!("the world builds its character controller with an absolute skin offset");
+    };
+    skin
 }
 
 /// A shape cast that reports any contact within `distance`, measured from surface to surface.
@@ -222,6 +229,27 @@ impl CharacterQueries for WorldQueries<'_> {
         let hit = self.queries.intersect_shape(at, shape).next().is_some();
         !hit
     }
+
+    /// The cast ignores the character's own hull and sensors through the pipeline's filter, and
+    /// stops a skin short of what it meets.
+    fn sweep(&self, from: Vec3, to: Vec3, radius: f32) -> f32 {
+        let skin = skin(self.controller);
+        let path = to - from;
+        let length = path.length();
+        if length == 0.0 {
+            return 1.0;
+        }
+        let ball = Ball::new(radius);
+        let hit = self.queries.cast_shape(
+            &Pose::from_translation(from),
+            path / length,
+            &ball,
+            cast_within(length),
+        );
+        hit.map_or(1.0, |(_, hit)| {
+            ((hit.time_of_impact - skin) / length).clamp(0.0, 1.0)
+        })
+    }
 }
 
 impl Slider<'_> {
@@ -304,9 +332,7 @@ impl Slider<'_> {
         } else {
             Quat::IDENTITY
         };
-        let CharacterLength::Absolute(skin) = self.controller.offset else {
-            panic!("the world builds its character controller with an absolute skin offset");
-        };
+        let skin = skin(self.controller);
 
         let base_radius =
             footing.disc + footing.sweep * (1.0 - WALKABLE_NORMAL_Y * WALKABLE_NORMAL_Y).sqrt();
@@ -1063,6 +1089,29 @@ mod tests {
             "the shift goes as far as the wall allows: {walled:?}"
         );
         assert!(walled.hits.is_empty(), "{walled:?}");
+    }
+
+    #[test]
+    fn a_sweep_stops_a_skin_short_of_a_wall_and_ignores_one_behind_it() {
+        let (toward, away) = with_slider(&[wall_mesh(2.0)], |slider| {
+            let world = WorldQueries {
+                controller: slider.controller,
+                queries: slider.queries,
+                dt: slider.dt,
+                own_pose: HullPose::Upright(CharacterBody::default().standing.hull),
+                own_shape: slider.shape,
+            };
+            let from = Vec3::new(5.0, 1.5, 0.5);
+            let toward = world.sweep(from, from + Vec3::new(0.0, 0.0, 2.0), 0.1);
+            let away = world.sweep(from, from - Vec3::new(0.0, 0.0, 1.0), 0.1);
+            (toward, away)
+        });
+        let skin = with_slider(&[], |slider| skin(slider.controller));
+
+        // The ball's front meets the wall after 1.4 m of the 2 m path.
+        let expected = (1.4 - skin) / 2.0;
+        assert!((toward - expected).abs() < 1e-4, "{toward} vs {expected}");
+        assert_eq!(away, 1.0);
     }
 
     #[test]

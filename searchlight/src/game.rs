@@ -2015,6 +2015,7 @@ mod tests {
             },
             crouched: None,
             prone: None,
+            lean: moho_physics::Lean::default(),
         };
         let mode = ArenaMode::new(
             arena_with(&[], Vec3::ZERO, &[], &[]),

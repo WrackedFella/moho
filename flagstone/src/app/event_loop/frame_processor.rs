@@ -30,6 +30,7 @@ const STRATEGY_MOVE_SETTINGS: moho_physics::MoveSettings = moho_physics::MoveSet
     autohop: true,
     crouch_ticks: 0,
     prone_ticks: 0,
+    lean_ticks: 0,
 };
 
 /// Handles frame timing and game state updates

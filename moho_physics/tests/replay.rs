@@ -7,8 +7,8 @@
 use glam::{Quat, Vec3};
 use moho_physics::{
     CharacterBody, CharacterCommand, CharacterEffect, CharacterHandle, CharacterSpawn,
-    CharacterState, HitTag, Hull, HullShape, MoveSettings, PhysicsWorld, RigidBodyHandle, Stance,
-    Stature,
+    CharacterState, HitTag, Hull, HullShape, Lean, LeanReach, MoveSettings, PhysicsWorld,
+    RigidBodyHandle, Stance, Stature,
 };
 use moho_render_api::{WorldMesh, WorldMeshId};
 use serde::{Deserialize, Serialize};
@@ -21,6 +21,11 @@ const BOX_VELOCITY: Vec3 = Vec3::new(0.5, 0.0, 0.3);
 const CROUCH_TICKS: u16 = 12;
 /// Ticks a crouch-or-prone leg takes.
 const PRONE_TICKS: u16 = 20;
+/// Ticks a lean takes from upright to full.
+const LEAN_TICKS: u16 = 6;
+/// A full upright lean's roll and a full prone lean's, in radians.
+const UPRIGHT_ROLL: f32 = 12.0 * std::f32::consts::PI / 180.0;
+const PRONE_ROLL: f32 = 20.0 * std::f32::consts::PI / 180.0;
 const SEED: u64 = 0x5EED_0502;
 
 /// Effects queued before the tick's moves, then each character's command, in creation order.
@@ -80,6 +85,7 @@ fn settings() -> MoveSettings {
         autohop: false,
         crouch_ticks: CROUCH_TICKS,
         prone_ticks: PRONE_TICKS,
+        lean_ticks: LEAN_TICKS,
     }
 }
 
@@ -98,6 +104,17 @@ fn crouching_body() -> CharacterBody {
         standing: capsule(1.83, 1.63),
         crouched: Some(capsule(1.1, 0.95)),
         prone: Some(capsule(1.8, 0.35)),
+        lean: Lean {
+            upright: LeanReach {
+                distance: 0.35,
+                roll: UPRIGHT_ROLL,
+            },
+            prone: LeanReach {
+                distance: 0.15,
+                roll: PRONE_ROLL,
+            },
+            head_radius: 0.1,
+        },
     }
 }
 
@@ -267,6 +284,25 @@ fn wanted_stance(who: usize, tick: usize) -> Stance {
     }
 }
 
+/// Lean both ways in every stance, in bursts that overlap the stance legs, with a half lean
+/// and a mid-lean reversal. Fixed by tick so the rng draws stay put.
+fn wanted_lean(who: usize, tick: usize) -> f32 {
+    match who {
+        0 => match tick {
+            20..70 => -1.0,
+            120..180 => 1.0,
+            310..330 => 0.5,
+            _ => 0.0,
+        },
+        _ => match tick {
+            80..130 => 1.0,
+            130..150 => -1.0,
+            250..300 => 1.0,
+            _ => 0.0,
+        },
+    }
+}
+
 /// Walk toward the cuboid, then steer noisily with jump presses, a held jump and occasional effects.
 fn make_script() -> Vec<TickInput> {
     let mut rng = Lcg(SEED);
@@ -276,6 +312,7 @@ fn make_script() -> Vec<TickInput> {
             let mut effects = Vec::new();
             for (who, command) in commands.iter_mut().enumerate() {
                 command.stance = wanted_stance(who, tick);
+                command.lean = wanted_lean(who, tick);
                 if tick < APPROACH_TICKS {
                     command.forward = 1.0;
                     command.jump = tick == 60;
@@ -346,7 +383,7 @@ fn bits3(v: Vec3) -> [u32; 3] {
 }
 
 /// Every compared field of one character, as raw bits.
-fn character_fields(state: &CharacterState) -> [(&'static str, [u32; 3]); 11] {
+fn character_fields(state: &CharacterState) -> [(&'static str, [u32; 3]); 13] {
     let CharacterState {
         position,
         velocity,
@@ -359,6 +396,8 @@ fn character_fields(state: &CharacterState) -> [(&'static str, [u32; 3]); 11] {
         from,
         progress,
         anchor,
+        lean,
+        roll,
     } = *state;
     [
         ("position", bits3(position)),
@@ -372,6 +411,8 @@ fn character_fields(state: &CharacterState) -> [(&'static str, [u32; 3]); 11] {
         ("from", [from as u32, 0, 0]),
         ("progress", [u32::from(progress), 0, 0]),
         ("anchor", [anchor as u32, 0, 0]),
+        ("lean", [lean.to_bits(), 0, 0]),
+        ("roll", [roll.to_bits(), 0, 0]),
     ]
 }
 
@@ -605,6 +646,27 @@ fn assert_run_exercises_the_world(script: &[TickInput], recorded: &[Snapshot]) {
         "no prone leg reversed mid-way"
     );
 
+    assert!(
+        all().any(|c| c.lean > 0.99 && c.roll > 0.1),
+        "no character leaned fully right"
+    );
+    assert!(
+        all().any(|c| c.lean < -0.99 && c.roll < -0.1),
+        "no character leaned fully left"
+    );
+    assert!(
+        all().any(|c| c.stance == Stance::Prone && c.lean.abs() > 0.99),
+        "no character leaned prone"
+    );
+    assert!(
+        all().any(|c| c.lean.abs() > 0.1 && c.lean.abs() < 0.9),
+        "no tick was part-way through a lean"
+    );
+    assert!(
+        all().all(|c| c.lean.abs() <= 1.0 && c.roll.abs() <= PRONE_ROLL + 1e-6),
+        "a lean or roll went past full"
+    );
+
     let idle: Vec<TickInput> = script
         .iter()
         .map(|_| TickInput {
@@ -688,6 +750,7 @@ fn a_tick_of_commands_and_effects_round_trips_through_postcard() {
                 pitch_delta: -0.02,
                 jump: true,
                 stance: Stance::Crouch,
+                lean: -0.625,
             },
             CharacterCommand::default(),
         ],
