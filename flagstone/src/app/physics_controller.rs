@@ -406,6 +406,7 @@ mod tests {
             jump_speed: 8.0,
             max_velocity: 90.0,
             autohop: true,
+            crouch_ticks: 0,
         }
     }
 

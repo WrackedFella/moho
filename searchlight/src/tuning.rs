@@ -17,6 +17,7 @@ pub const SHIPPED_BODY: CharacterBody = CharacterBody {
         },
         eye_height: 1.63,
     },
+    crouched: None,
 };
 
 /// Builds the simulation tuning around the starting `kit`: its weapon's numbers and its loadout.
@@ -34,6 +35,7 @@ pub fn tuning(kit: Kit) -> SimConfig {
             jump_speed: 6.5,
             max_velocity: 90.0,
             autohop: false,
+            crouch_ticks: 0,
         },
         gravity: 18.0,
         character_body: SHIPPED_BODY,
@@ -133,6 +135,7 @@ mod tests {
                     },
                     eye_height: 1.63,
                 },
+                crouched: None,
             }
         );
     }

@@ -1,7 +1,10 @@
 //! The rapier collide-and-slide behind [`crate::movement::step`].
 
-use crate::movement::{Ground, Hull, HullShape, Slide, STEP_HEIGHT, WALKABLE_NORMAL_Y};
-use glam::Vec3;
+use crate::movement::{
+    CharacterQueries, Ground, Hull, HullShape, Slide, STEP_HEIGHT, WALKABLE_NORMAL_Y,
+};
+use crate::world::CharacterState;
+use glam::{Quat, Vec3};
 use rapier3d::control::{
     CharacterLength, EffectiveCharacterMovement, KinematicCharacterController,
 };
@@ -133,6 +136,18 @@ pub(super) struct Slider<'a> {
     pub shape: &'a dyn Shape,
     pub footing: Footing,
     pub dt: f32,
+}
+
+impl CharacterQueries for Slider<'_> {
+    fn slide(&self, from: &CharacterState, _hull: &Hull, asked: Vec3) -> Slide {
+        let start = Pose::from_parts(from.position, Quat::from_rotation_y(from.yaw));
+        Slider::slide(self, &start, asked, from.grounded)
+    }
+
+    fn fits(&self, _hull: &Hull, _centre: Vec3, _yaw: f32) -> bool {
+        // TODO: intersect the hull, grown by the skin offset, with the world.
+        true
+    }
 }
 
 impl Slider<'_> {

@@ -44,6 +44,16 @@ pub struct CharacterCommand {
     /// Jump was down at some point during the tick. A grounded character jumps on a press, and
     /// on a held jump only with [`MoveSettings::autohop`].
     pub jump: bool,
+    /// The stance the game wants; hold or toggle is the game's business.
+    pub stance: Stance,
+}
+
+/// What a character's hull and eye are doing: standing or crouched.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Stance {
+    #[default]
+    Stand,
+    Crouch,
 }
 
 /// Game-supplied movement tuning; may change between ticks. Units: m/s, m/s², 1/s.
@@ -69,6 +79,8 @@ pub struct MoveSettings {
     pub max_velocity: f32,
     /// Held jump jumps again on landing.
     pub autohop: bool,
+    /// Ticks one stand-or-crouch leg takes; 0 changes stance within one tick.
+    pub crouch_ticks: u16,
 }
 
 /// The shape of a character's hull.
@@ -102,6 +114,8 @@ pub struct Stature {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CharacterBody {
     pub standing: Stature,
+    /// The stature of a crouched character; `None` never crouches.
+    pub crouched: Option<Stature>,
 }
 
 impl Stature {
@@ -122,6 +136,7 @@ impl Default for CharacterBody {
                 },
                 eye_height: 1.15,
             },
+            crouched: None,
         }
     }
 }
@@ -405,9 +420,18 @@ fn apply(state: &mut CharacterState, effect: CharacterEffect) {
     }
 }
 
+/// The world as one character's step sees it.
+pub trait CharacterQueries {
+    /// Collide-and-slide `hull`, centred at `from.position`, by `asked`.
+    fn slide(&self, from: &CharacterState, hull: &Hull, asked: Vec3) -> Slide;
+
+    /// Whether `hull`, centred at `centre` and facing `yaw`, overlaps nothing solid.
+    fn fits(&self, hull: &Hull, centre: Vec3, yaw: f32) -> bool;
+}
+
 /// Advance `state` by one tick of `dt` seconds and report the impacts.
 ///
-/// `slide` receives the displacement the tick asks for and reports what the world
+/// `queries.slide` receives the displacement the tick asks for and reports what the world
 /// allowed, along with the state it starts from, which a teleport may have moved. The queued
 /// `effects` apply first, in order, so a replay of commands and effects reproduces the run.
 /// The look turns next, so a turn and a move in one command face the new way.
@@ -442,7 +466,7 @@ pub fn step(
     effects: &[CharacterEffect],
     tuning: &Tuning,
     dt: f32,
-    slide: impl FnOnce(&CharacterState, Vec3) -> Slide,
+    queries: &impl CharacterQueries,
 ) -> Vec<Impact> {
     let Tuning {
         body,
@@ -493,7 +517,7 @@ pub fn step(
     state.velocity = checked(state.velocity, settings.max_velocity);
 
     let asked = state.velocity * dt;
-    let slid = slide(state, asked);
+    let slid = queries.slide(state, &body.standing.hull, asked);
     state.position += slid.translation;
 
     let impacts = clip(&mut state.velocity, asked, &slid, walking, airborne_before);
@@ -555,6 +579,50 @@ mod tests {
 
     const DT: f32 = 1.0 / 60.0;
 
+    /// [`CharacterQueries`] over closures: `slide` runs once, `fits` is open space unless told.
+    struct Fake<S, F = fn(&Hull, Vec3, f32) -> bool> {
+        slide: std::cell::RefCell<Option<S>>,
+        fits: F,
+    }
+
+    impl<S: FnOnce(&CharacterState, &Hull, Vec3) -> Slide> Fake<S> {
+        fn new(slide: S) -> Self {
+            Self {
+                slide: std::cell::RefCell::new(Some(slide)),
+                fits: |_, _, _| true,
+            }
+        }
+    }
+
+    impl<S, F> Fake<S, F> {
+        /// The same fake with `fits` deciding whether a hull fits.
+        fn fitting<G: Fn(&Hull, Vec3, f32) -> bool>(self, fits: G) -> Fake<S, G> {
+            Fake {
+                slide: self.slide,
+                fits,
+            }
+        }
+    }
+
+    impl<S, F> CharacterQueries for Fake<S, F>
+    where
+        S: FnOnce(&CharacterState, &Hull, Vec3) -> Slide,
+        F: Fn(&Hull, Vec3, f32) -> bool,
+    {
+        fn slide(&self, from: &CharacterState, hull: &Hull, asked: Vec3) -> Slide {
+            let slide = self
+                .slide
+                .borrow_mut()
+                .take()
+                .expect("a step slides at most once");
+            slide(from, hull, asked)
+        }
+
+        fn fits(&self, hull: &Hull, centre: Vec3, yaw: f32) -> bool {
+            (self.fits)(hull, centre, yaw)
+        }
+    }
+
     /// The default body under [`test_settings`] and its gravity.
     fn test_tuning() -> Tuning {
         let settings = test_settings();
@@ -582,7 +650,14 @@ mod tests {
             gravity: settings.gravity.expect("test settings set gravity"),
             ..test_tuning()
         };
-        super::step(state, command, &[], &tuning, dt, |_, asked| slide(asked))
+        super::step(
+            state,
+            command,
+            &[],
+            &tuning,
+            dt,
+            &Fake::new(|_, _, asked| slide(asked)),
+        )
     }
 
     fn state_at(position: Vec3, velocity: Vec3, grounded: bool) -> CharacterState {
@@ -594,6 +669,9 @@ mod tests {
             grounded,
             jump_held: false,
             eye: Vec3::ZERO,
+            stance: Stance::Stand,
+            from: Stance::Stand,
+            progress: 0,
         }
     }
 
@@ -887,6 +965,7 @@ mod tests {
                     jump_speed: 8.0,
                     max_velocity: 90.0,
                     autohop: false,
+                    crouch_ticks: 0,
                 };
                 let mut state = standing();
 
@@ -922,6 +1001,7 @@ mod tests {
                 jump_speed: 6.5,
                 max_velocity: 90.0,
                 autohop: false,
+                crouch_ticks: 0,
             };
             let diagonal = CharacterCommand {
                 forward: 1.0,
@@ -1874,7 +1954,7 @@ mod tests {
                     &[effect],
                     &test_tuning(),
                     DT,
-                    |from, asked| flat_floor(from.position.y)(asked),
+                    &Fake::new(|from, _, asked| flat_floor(from.position.y)(asked)),
                 );
 
                 assert!(state.grounded, "{effect:?}: {state:?}");
@@ -2250,6 +2330,7 @@ mod tests {
             yaw_delta: 0.1,
             pitch_delta: 0.2,
             jump: true,
+            stance: Stance::Stand,
         };
         let mut first = start;
         let mut second = start;
@@ -2277,6 +2358,7 @@ mod tests {
                     },
                     eye_height: 1.63,
                 },
+                crouched: None,
             },
             ..test_tuning()
         };
@@ -2287,7 +2369,7 @@ mod tests {
             &[],
             &tuning,
             DT,
-            |_, asked| flat_floor(0.0)(asked),
+            &Fake::new(|_, _, asked| flat_floor(0.0)(asked)),
         );
 
         assert!(
@@ -2378,6 +2460,7 @@ mod tests {
                 yaw_delta: 0.25,
                 pitch_delta: -0.125,
                 jump: true,
+                stance: Stance::Crouch,
             },
         ];
         let effects = [
@@ -2749,10 +2832,10 @@ mod tests {
                 effects,
                 &test_tuning(),
                 DT,
-                |_, asked| {
+                &Fake::new(|_, _, asked| {
                     asked_of = Some(asked);
                     open_air(asked)
-                },
+                }),
             );
 
             (asked_of.expect("the step slid"), state)
@@ -2851,7 +2934,7 @@ mod tests {
                 effects,
                 &test_tuning(),
                 DT,
-                |from, asked| flat_floor(from.position.y)(asked),
+                &Fake::new(|from, _, asked| flat_floor(from.position.y)(asked)),
             )
         }
 
@@ -2875,10 +2958,10 @@ mod tests {
                 effects,
                 &test_tuning(),
                 DT,
-                |from, asked| {
+                &Fake::new(|from, _, asked| {
                     seen = Some((asked, *from));
                     open_air(asked)
-                },
+                }),
             );
             seen.expect("the step slid")
         }
@@ -2938,10 +3021,10 @@ mod tests {
                 &effects,
                 &test_tuning(),
                 DT,
-                |from, asked| {
+                &Fake::new(|from, _, asked| {
                     started_from = Some(*from);
                     flat_floor(from.position.y)(asked)
-                },
+                }),
             );
 
             let from = started_from.expect("the step slid");
@@ -3083,10 +3166,10 @@ mod tests {
                 &effects,
                 &test_tuning(),
                 DT,
-                |from, asked| {
+                &Fake::new(|from, _, asked| {
                     started_from = Some(*from);
                     flat_floor(from.position.y)(asked)
-                },
+                }),
             );
 
             let from = started_from.expect("the step slid");
@@ -3166,6 +3249,339 @@ mod tests {
                 "{}",
                 down.pitch
             );
+        }
+    }
+
+    mod stance {
+        use super::*;
+        use crate::world::test_support::crouching_body;
+        use std::cell::{Cell, RefCell};
+
+        /// Half the standing hull (1.83 m) and half the crouched one (1.1 m).
+        const STAND_HALF: f32 = 0.915;
+        const CROUCH_HALF: f32 = 0.55;
+        const STAND_EYE: f32 = 1.63;
+        const CROUCH_EYE: f32 = 0.95;
+        const EPS: f32 = 1e-4;
+
+        fn tuning(body: CharacterBody, crouch_ticks: u16, gravity: f32) -> Tuning {
+            Tuning {
+                body,
+                settings: MoveSettings {
+                    crouch_ticks,
+                    ..test_settings()
+                },
+                gravity,
+            }
+        }
+
+        fn on_the_floor() -> CharacterState {
+            state_at(Vec3::new(0.0, STAND_HALF, 0.0), Vec3::ZERO, true)
+        }
+
+        fn in_the_air() -> CharacterState {
+            state_at(Vec3::new(0.0, 10.0, 0.0), Vec3::ZERO, false)
+        }
+
+        fn grounded_slide(asked: Vec3) -> Slide {
+            Slide {
+                translation: asked.with_y(0.0),
+                grounded: true,
+                ground: Some(face(Vec3::Y, 0.0)),
+                hits: Vec::new(),
+            }
+        }
+
+        /// One step wanting `wanted` over open space (floor under a grounded character).
+        /// Returns the hull the slide was given.
+        fn tick_fitting(
+            state: &mut CharacterState,
+            wanted: Stance,
+            tuning: &Tuning,
+            fits: impl Fn(&Hull, Vec3, f32) -> bool,
+        ) -> Hull {
+            let seen = Cell::new(None);
+            let queries = Fake::new(|from: &CharacterState, hull: &Hull, asked| {
+                seen.set(Some(*hull));
+                if from.grounded {
+                    grounded_slide(asked)
+                } else {
+                    open_air(asked)
+                }
+            })
+            .fitting(fits);
+            let command = CharacterCommand {
+                stance: wanted,
+                ..CharacterCommand::default()
+            };
+
+            super::super::step(state, &command, &[], tuning, DT, &queries);
+
+            seen.get().expect("the step slid")
+        }
+
+        fn tick(state: &mut CharacterState, wanted: Stance, tuning: &Tuning) -> Hull {
+            tick_fitting(state, wanted, tuning, |_, _, _| true)
+        }
+
+        /// The eye's height above the feet of the hull in use.
+        fn eye_above_feet(state: &CharacterState, body: &CharacterBody) -> f32 {
+            let hull = match state.stance {
+                Stance::Stand => body.standing.hull,
+                Stance::Crouch => body.crouched.expect("the body crouches").hull,
+            };
+            state.eye.y + hull.length / 2.0
+        }
+
+        /// The eye height `down` of the way from standing to crouched.
+        fn eye_down(down: f32) -> f32 {
+            STAND_EYE + (CROUCH_EYE - STAND_EYE) * down
+        }
+
+        #[test]
+        fn the_eye_lowers_each_tick_over_the_crouch_time() {
+            let body = crouching_body();
+            let tuning = tuning(body, 8, 18.0);
+            let mut state = on_the_floor();
+
+            let mut eyes = Vec::new();
+            for _ in 0..8 {
+                tick(&mut state, Stance::Crouch, &tuning);
+                eyes.push(eye_above_feet(&state, &body));
+            }
+            for _ in 0..4 {
+                tick(&mut state, Stance::Crouch, &tuning);
+                eyes.push(eye_above_feet(&state, &body));
+            }
+
+            for (i, eye) in eyes.iter().take(8).enumerate() {
+                let expected = eye_down((i + 1) as f32 / 8.0);
+                assert!(
+                    (eye - expected).abs() < EPS,
+                    "tick {}: eye {eye}, expected {expected}; all {eyes:?}",
+                    i + 1
+                );
+            }
+            for eye in &eyes[8..] {
+                assert!((eye - CROUCH_EYE).abs() < EPS, "it stays: {eyes:?}");
+            }
+            assert_eq!(state.stance, Stance::Crouch);
+        }
+
+        #[test]
+        fn reversing_mid_leg_continues_from_the_current_eye() {
+            let body = crouching_body();
+            let tuning = tuning(body, 8, 18.0);
+            let mut state = on_the_floor();
+            for _ in 0..3 {
+                tick(&mut state, Stance::Crouch, &tuning);
+            }
+            let midway = eye_above_feet(&state, &body);
+
+            let mut eyes = Vec::new();
+            for _ in 0..4 {
+                tick(&mut state, Stance::Stand, &tuning);
+                eyes.push(eye_above_feet(&state, &body));
+            }
+
+            assert!((midway - eye_down(3.0 / 8.0)).abs() < EPS, "{midway}");
+            for (i, eye) in eyes.iter().take(3).enumerate() {
+                let expected = eye_down((2 - i) as f32 / 8.0);
+                assert!(
+                    (eye - expected).abs() < EPS,
+                    "tick {}: eye {eye}, expected {expected} rising from {midway}; all {eyes:?}",
+                    i + 1
+                );
+            }
+            assert!((eyes[3] - STAND_EYE).abs() < EPS, "it stays: {eyes:?}");
+            assert_eq!(state.stance, Stance::Stand);
+        }
+
+        #[test]
+        fn crouching_in_the_air_keeps_the_top_of_the_hull() {
+            let body = crouching_body();
+            let tuning = tuning(body, 8, 0.0);
+            let mut state = in_the_air();
+            let top = state.position.y + STAND_HALF;
+            let bottom = state.position.y - STAND_HALF;
+
+            let seen = tick(&mut state, Stance::Crouch, &tuning);
+
+            assert_eq!(seen.length, 1.1, "the slide sees the crouched hull");
+            assert_eq!(state.stance, Stance::Crouch);
+            assert!(
+                (state.position.y + CROUCH_HALF - top).abs() < EPS,
+                "the top moved: {state:?}"
+            );
+            assert!(
+                state.position.y - CROUCH_HALF > bottom + 0.7,
+                "the feet did not tuck up: {state:?}"
+            );
+            assert!(!state.grounded);
+        }
+
+        #[test]
+        fn crouching_on_the_ground_keeps_the_feet() {
+            let body = crouching_body();
+            let tuning = tuning(body, 8, 18.0);
+            let mut state = on_the_floor();
+
+            tick(&mut state, Stance::Crouch, &tuning);
+
+            assert_eq!(state.stance, Stance::Crouch);
+            assert!(
+                (state.position.y - CROUCH_HALF).abs() < EPS,
+                "the feet left the floor: {state:?}"
+            );
+            assert!(state.grounded);
+        }
+
+        #[test]
+        fn a_body_without_a_crouch_never_crouches() {
+            let body = CharacterBody {
+                crouched: None,
+                ..crouching_body()
+            };
+            let tuning = tuning(body, 8, 18.0);
+            let mut state = on_the_floor();
+            let start = state;
+
+            let mut seen = Vec::new();
+            for _ in 0..12 {
+                seen.push(tick(&mut state, Stance::Crouch, &tuning));
+            }
+
+            assert!(seen.iter().all(|hull| hull.length == 1.83), "{seen:?}");
+            assert_eq!(state.stance, Stance::Stand);
+            assert_eq!(state.from, Stance::Stand);
+            assert_eq!(state.position, start.position);
+            assert!((state.eye.y + STAND_HALF - STAND_EYE).abs() < EPS);
+        }
+
+        #[test]
+        fn zero_crouch_ticks_changes_in_one_tick() {
+            let body = crouching_body();
+            let tuning = tuning(body, 0, 18.0);
+            let mut state = on_the_floor();
+
+            tick(&mut state, Stance::Crouch, &tuning);
+            let crouched = eye_above_feet(&state, &body);
+            let crouched_stance = state.stance;
+            tick(&mut state, Stance::Stand, &tuning);
+            let stood = eye_above_feet(&state, &body);
+
+            assert_eq!(crouched_stance, Stance::Crouch);
+            assert!((crouched - CROUCH_EYE).abs() < EPS, "{crouched}");
+            assert_eq!(state.stance, Stance::Stand);
+            assert!((stood - STAND_EYE).abs() < EPS, "{stood}");
+        }
+
+        #[test]
+        fn the_slide_sees_the_crouched_hull_on_the_tick_the_crouch_starts() {
+            let tuning = tuning(crouching_body(), 8, 18.0);
+            let mut state = on_the_floor();
+
+            let first = tick(&mut state, Stance::Crouch, &tuning);
+
+            assert_eq!(first.length, 1.1);
+            assert_eq!(first.radius, 0.405);
+        }
+
+        #[test]
+        fn a_stand_that_does_not_fit_keeps_the_crouch_and_retries_every_tick() {
+            let body = crouching_body();
+            let tuning = tuning(body, 8, 18.0);
+            let mut state = on_the_floor();
+            for _ in 0..10 {
+                tick(&mut state, Stance::Crouch, &tuning);
+            }
+            let crouched = state;
+            let asked = RefCell::new(Vec::new());
+            let fits = |hull: &Hull, centre: Vec3, yaw: f32| {
+                asked.borrow_mut().push((*hull, centre, yaw));
+                hull.length < 1.5
+            };
+
+            let mut seen = Vec::new();
+            for _ in 0..3 {
+                seen.push(tick_fitting(&mut state, Stance::Stand, &tuning, fits));
+            }
+
+            assert!(seen.iter().all(|hull| hull.length == 1.1), "{seen:?}");
+            assert_eq!(state.stance, Stance::Crouch);
+            assert_eq!(state.from, crouched.from);
+            assert_eq!(state.progress, crouched.progress);
+            assert_eq!(state.position, crouched.position);
+            assert!((eye_above_feet(&state, &body) - CROUCH_EYE).abs() < EPS);
+            let asked = asked.into_inner();
+            assert_eq!(asked.len(), 3, "it asks again each tick: {asked:?}");
+            for (hull, centre, _) in &asked {
+                assert_eq!(hull.length, 1.83, "it asks about the standing hull");
+                assert!(
+                    (centre.y - STAND_HALF).abs() < EPS,
+                    "it asks at the feet-anchored centre: {centre:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn a_refused_stand_stands_on_the_first_tick_it_fits() {
+            let body = crouching_body();
+            let tuning = tuning(body, 8, 18.0);
+            let mut state = on_the_floor();
+            for _ in 0..10 {
+                tick(&mut state, Stance::Crouch, &tuning);
+            }
+            let room = Cell::new(false);
+            let fits = |_: &Hull, _: Vec3, _: f32| room.get();
+
+            tick_fitting(&mut state, Stance::Stand, &tuning, fits);
+            let while_blocked = state.stance;
+            room.set(true);
+            let seen = tick_fitting(&mut state, Stance::Stand, &tuning, fits);
+
+            assert_eq!(while_blocked, Stance::Crouch);
+            assert_eq!(state.stance, Stance::Stand);
+            assert_eq!(seen.length, 1.83, "the slide sees the standing hull");
+            assert!(
+                (state.position.y - STAND_HALF).abs() < EPS,
+                "the feet stayed on the floor: {state:?}"
+            );
+        }
+
+        proptest! {
+            #[test]
+            fn eye_stays_between_the_two_statures(
+                wants in prop::collection::vec(any::<bool>(), 0..80),
+                crouch_ticks in 1u16..=30,
+            ) {
+                let body = crouching_body();
+                let tuning = tuning(body, crouch_ticks, 18.0);
+                let mut state = on_the_floor();
+                let per_tick = (STAND_EYE - CROUCH_EYE) / f32::from(crouch_ticks);
+
+                let mut previous = STAND_EYE;
+                for crouch in wants {
+                    let wanted = if crouch { Stance::Crouch } else { Stance::Stand };
+                    tick(&mut state, wanted, &tuning);
+                    let eye = eye_above_feet(&state, &body);
+                    prop_assert!(
+                        (CROUCH_EYE - EPS..=STAND_EYE + EPS).contains(&eye),
+                        "eye {eye} outside the statures"
+                    );
+                    prop_assert!(
+                        (eye - previous).abs() <= per_tick + EPS,
+                        "eye jumped {previous} -> {eye}, at most {per_tick} a tick"
+                    );
+                    previous = eye;
+                }
+                for _ in 0..crouch_ticks {
+                    tick(&mut state, Stance::Crouch, &tuning);
+                }
+
+                prop_assert_eq!(state.stance, Stance::Crouch);
+                prop_assert!((eye_above_feet(&state, &body) - CROUCH_EYE).abs() < EPS);
+            }
         }
     }
 }

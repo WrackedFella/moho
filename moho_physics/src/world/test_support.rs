@@ -1,4 +1,4 @@
-use crate::movement::MoveSettings;
+use crate::movement::{CharacterBody, Hull, HullShape, MoveSettings, Stature};
 use glam::Vec3;
 use moho_render_api::WorldMesh;
 
@@ -15,6 +15,7 @@ pub(crate) fn test_settings() -> MoveSettings {
         jump_speed: 8.0,
         max_velocity: 90.0,
         autohop: false,
+        crouch_ticks: 0,
     }
 }
 
@@ -225,4 +226,35 @@ fn x_wall_verts(x: f32) -> [[f32; 3]; 4] {
         [x, 10.0, 10.0],
         [x, -10.0, 10.0],
     ]
+}
+
+/// A 0.5 m thick slab spanning x in [-10, 10] and z in [`z_from`, `z_to`], whose underside is
+/// `underside` m above the floor: a low ceiling with two edges to run at.
+pub(crate) fn ceiling_mesh(underside: f32, z_from: f32, z_to: f32) -> WorldMesh {
+    let mut verts: Vec<[f32; 3]> = Vec::new();
+    let mut idxs: Vec<u32> = Vec::new();
+    push_box(
+        &mut verts,
+        &mut idxs,
+        [-10.0, underside, z_from],
+        [10.0, underside + 0.5, z_to],
+    );
+    quad_mesh(&verts, &idxs)
+}
+
+/// The searchlight capsule (0.81 m wide, 1.83 m tall, eye 1.63 m up) that can also crouch to a
+/// 1.1 m capsule with the eye 0.95 m up.
+pub(crate) fn crouching_body() -> CharacterBody {
+    let capsule = |length, eye_height| Stature {
+        hull: Hull {
+            shape: HullShape::Capsule,
+            radius: 0.405,
+            length,
+        },
+        eye_height,
+    };
+    CharacterBody {
+        standing: capsule(1.83, 1.63),
+        crouched: Some(capsule(1.1, 0.95)),
+    }
 }
