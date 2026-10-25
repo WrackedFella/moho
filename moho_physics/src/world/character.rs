@@ -1,8 +1,9 @@
 use super::query::{encode_tag, HitTag};
-use super::slide::{Footing, Slider};
+use super::slide::{shape_of, WorldQueries};
 use super::PhysicsWorld;
 use crate::movement::{
-    self, CharacterBody, CharacterCommand, CharacterEffect, HullShape, Impact, MoveSettings, Tuning,
+    self, Anchor, CharacterBody, CharacterCommand, CharacterEffect, Impact, MoveSettings, Stance,
+    Tuning,
 };
 use glam::{Quat, Vec3};
 use rapier3d::prelude::{
@@ -36,6 +37,14 @@ pub struct CharacterState {
     pub jump_held: bool,
     /// The eye's offset from `position`, set by the step every tick.
     pub eye: Vec3,
+    /// The stance whose hull is in use; the target of the leg in progress.
+    pub stance: Stance,
+    /// The stance the leg in progress started from.
+    pub from: Stance,
+    /// Ticks into the leg, clamped at `crouch_ticks`.
+    pub progress: u16,
+    /// The end of the hull the leg in progress keeps still.
+    pub anchor: Anchor,
 }
 
 /// A character's starting state and shape: where it stands, which way it faces, its hull.
@@ -92,8 +101,6 @@ pub struct UnknownCharacter;
 pub(super) struct Character {
     collider: ColliderHandle,
     body: CharacterBody,
-    /// The hull as the ground query sees it, derived once from `body`.
-    footing: Footing,
     /// Hit volume colliders, in the order the game last set them.
     volumes: Vec<ColliderHandle>,
     velocity: Vec3,
@@ -103,6 +110,10 @@ pub(super) struct Character {
     jump_held: bool,
     /// The eye's offset from the body, as the last step or the spawn set it.
     eye: Vec3,
+    stance: Stance,
+    from: Stance,
+    progress: u16,
+    anchor: Anchor,
     /// Changes from outside the step, applied in order by the next `move_character`.
     effects: Vec<CharacterEffect>,
 }
@@ -118,6 +129,10 @@ impl Character {
             grounded: self.grounded,
             jump_held: self.jump_held,
             eye: self.eye,
+            stance: self.stance,
+            from: self.from,
+            progress: self.progress,
+            anchor: self.anchor,
         }
     }
 
@@ -129,6 +144,10 @@ impl Character {
         self.grounded = state.grounded;
         self.jump_held = state.jump_held;
         self.eye = state.eye;
+        self.stance = state.stance;
+        self.from = state.from;
+        self.progress = state.progress;
+        self.anchor = state.anchor;
     }
 }
 
@@ -156,17 +175,7 @@ impl PhysicsWorld {
         let body_handle = self.rigid_body_set.insert(body);
 
         let hull = spawn.body.standing.hull;
-        let half_length = hull.length / 2.0;
-        let shape = match hull.shape {
-            HullShape::Capsule => {
-                ColliderBuilder::capsule_y(half_length - hull.radius, hull.radius)
-            }
-            HullShape::RoundCylinder { rounding } => ColliderBuilder::round_cylinder(
-                half_length - rounding,
-                hull.radius - rounding,
-                rounding,
-            ),
-        };
+        let shape = ColliderBuilder::new(shape_of(&hull));
         let collider = shape.friction(0.0).build();
         let collider =
             self.collider_set
@@ -178,7 +187,6 @@ impl PhysicsWorld {
             Character {
                 collider,
                 body: spawn.body,
-                footing: Footing::of(hull),
                 volumes: Vec::new(),
                 velocity: Vec3::ZERO,
                 yaw: spawn.yaw,
@@ -188,6 +196,10 @@ impl PhysicsWorld {
                 grounded: false,
                 jump_held: false,
                 eye: spawn.body.standing.eye_offset(),
+                stance: Stance::Stand,
+                from: Stance::Stand,
+                progress: 0,
+                anchor: Anchor::Feet,
                 effects: Vec::new(),
             },
         );
@@ -284,9 +296,9 @@ impl PhysicsWorld {
         let collider_handle = character.collider;
         let effects = std::mem::take(&mut character.effects);
         let body = character.body;
-        let footing = character.footing;
         let pose = *self.rigid_body_set[handle.0].position();
         let mut state = character.state(pose.translation);
+        let stance = state.stance;
 
         // Transient QueryPipeline view without this character's capsule and hit volumes, nor
         // any other character's hit volumes; capsules still meet capsules.
@@ -299,12 +311,12 @@ impl PhysicsWorld {
             &self.collider_set,
             filter,
         );
-        let slider = Slider {
+        let world = WorldQueries {
             controller: &self.character_controller,
             queries: &queries,
-            shape: self.collider_set[collider_handle].shape(),
-            footing,
             dt,
+            own_hull: body.stature(stance).hull,
+            own_shape: self.collider_set[collider_handle].shape(),
         };
 
         let impacts = movement::step(
@@ -317,16 +329,17 @@ impl PhysicsWorld {
                 gravity: settings.gravity.unwrap_or(self.gravity()),
             },
             dt,
-            |from, asked| {
-                let start = Pose::from_parts(from.position, pose.rotation);
-                slider.slide(&start, asked, from.grounded)
-            },
+            &world,
         );
 
         self.characters
             .get_mut(&handle)
             .expect("the handle was found at the start of this call")
             .store(&state);
+        if state.stance != stance {
+            self.collider_set[collider_handle]
+                .set_shape(shape_of(&body.stature(state.stance).hull));
+        }
         self.place_body(handle, state.position, state.yaw);
         Ok(impacts)
     }
@@ -359,8 +372,8 @@ impl PhysicsWorld {
 mod tests {
     use super::super::test_support::TEST_TAG;
     use super::super::test_support::{
-        corner_mesh, doorway_mesh, floor_mesh, quad_mesh, seam_floor_meshes, slope_mesh,
-        stairs_mesh, step_box_mesh, test_settings, wall_mesh,
+        ceiling_mesh, corner_mesh, crouching_body, doorway_mesh, floor_mesh, quad_mesh,
+        seam_floor_meshes, slope_mesh, stairs_mesh, step_box_mesh, test_settings, wall_mesh,
     };
     use super::super::{HitTag, RayHit, RayQuery};
     use super::*;
@@ -750,6 +763,7 @@ mod tests {
     fn autohop_jumps_again_on_the_landing_tick() {
         let settings = MoveSettings {
             autohop: true,
+            crouch_ticks: 0,
             ..test_settings()
         };
         let (mut world, h) = standing_on_floor();
@@ -898,6 +912,10 @@ mod tests {
                 grounded: false,
                 jump_held: false,
                 eye: Vec3::ZERO,
+                stance: Stance::Stand,
+                from: Stance::Stand,
+                progress: 0,
+                anchor: Anchor::Feet,
             })
         );
     }
@@ -1093,6 +1111,7 @@ mod tests {
                     yaw_delta: if tick % 40 < 10 { 0.03 } else { -0.01 },
                     pitch_delta: 0.0,
                     jump: tick % 70 == 5,
+                    ..CharacterCommand::default()
                 };
                 let effects = match tick {
                     20 => vec![CharacterEffect::AddVelocity(Vec3::new(0.0, 0.0, 2.0))],
@@ -1382,6 +1401,10 @@ mod tests {
                 grounded: false,
                 jump_held: false,
                 eye: Vec3::ZERO,
+                stance: Stance::Stand,
+                from: Stance::Stand,
+                progress: 0,
+                anchor: Anchor::Feet,
             })
         );
         assert_eq!(state(&world, plain).yaw, 0.0, "a bare position faces 0");
@@ -1845,6 +1868,7 @@ mod tests {
             jump_speed: 8.0,
             max_velocity: 90.0,
             autohop: true,
+            crouch_ticks: 0,
         }
     }
 
@@ -1904,6 +1928,7 @@ mod tests {
             jump_speed: 6.5,
             max_velocity: 90.0,
             autohop: false,
+            crouch_ticks: 0,
         }
     }
 
@@ -2061,6 +2086,7 @@ mod tests {
                 },
                 eye_height,
             },
+            crouched: None,
         }
     }
 
@@ -2476,6 +2502,22 @@ mod tests {
             0.6,
             0.5,
         ));
+    }
+
+    #[test]
+    #[should_panic(expected = "hull")]
+    fn an_impossible_crouched_hull_is_refused() {
+        let mut body = crouching_body();
+        body.crouched = Some(Stature {
+            hull: Hull {
+                shape: HullShape::Capsule,
+                radius: 0.38,
+                length: 0.6,
+            },
+            eye_height: 0.5,
+        });
+
+        add_with_body(body);
     }
 
     #[test]
@@ -4293,6 +4335,237 @@ mod tests {
                     end.position
                 );
             }
+        }
+    }
+
+    /// Tests of crouching under a 1.2 m ceiling (searchlight-sized capsule: 1.83 m standing,
+    /// 1.1 m crouched).
+    mod ceiling {
+        use super::*;
+
+        /// The ceiling's underside, above the floor.
+        const LOW: f32 = 1.2;
+        /// Skin the controller keeps from a surface; the hull may sit this close.
+        const SKIN: f32 = 0.0115;
+        const RADIUS: f32 = 0.405;
+
+        fn settings() -> MoveSettings {
+            MoveSettings {
+                crouch_ticks: 8,
+                ..test_settings()
+            }
+        }
+
+        fn command(forward: f32, stance: Stance) -> CharacterCommand {
+            CharacterCommand {
+                forward,
+                stance,
+                ..CharacterCommand::default()
+            }
+        }
+
+        /// A floor, a ceiling slab over z in [`z_from`, `z_to`] and a crouch-capable
+        /// character standing at the origin.
+        fn under_a_ceiling(z_from: f32, z_to: f32) -> (PhysicsWorld, CharacterHandle) {
+            let mut world = PhysicsWorld::new();
+            world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+            world.set_world_mesh(WorldMeshId(1), &ceiling_mesh(LOW, z_from, z_to), TEST_TAG);
+            let h = world.add_character(CharacterSpawn {
+                position: Vec3::new(0.0, 1.0, 0.0),
+                yaw: 0.0,
+                pitch: 0.0,
+                body: crouching_body(),
+            });
+            settle_on_floor(&mut world, &[h]);
+            (world, h)
+        }
+
+        /// One tick; the state after it and the impacts above numeric noise.
+        fn tick(
+            world: &mut PhysicsWorld,
+            h: CharacterHandle,
+            command: &CharacterCommand,
+        ) -> (CharacterState, Vec<Impact>) {
+            let impacts = world
+                .move_character(h, command, &settings(), DT)
+                .expect("character is live")
+                .into_iter()
+                .filter(|i| i.speed > 1e-3)
+                .collect();
+            world.step(DT);
+            (state(world, h), impacts)
+        }
+
+        fn crouch_in_place(world: &mut PhysicsWorld, h: CharacterHandle) {
+            for _ in 0..12 {
+                tick(world, h, &command(0.0, Stance::Crouch));
+            }
+        }
+
+        #[test]
+        fn a_crouched_character_walks_under_a_1_2_m_ceiling() {
+            let (mut world, h) = under_a_ceiling(2.0, 6.0);
+            crouch_in_place(&mut world, h);
+            let crouched = state(&world, h);
+
+            let mut impacts = Vec::new();
+            let mut path = Vec::new();
+            for _ in 0..130 {
+                let (after, hit) = tick(&mut world, h, &command(1.0, Stance::Crouch));
+                impacts.extend(hit);
+                path.push(after);
+            }
+
+            assert_eq!(crouched.stance, Stance::Crouch, "it crouched in the open");
+            assert_eq!(impacts, Vec::new(), "it brushed the ceiling or its edge");
+            assert!(
+                path.iter().any(|s| (3.0..5.0).contains(&s.position.z)),
+                "it was never under the ceiling"
+            );
+            let last = path.last().expect("the walk ran");
+            assert!(
+                last.position.z > 7.0,
+                "it came out past the ceiling: {last:?}"
+            );
+            assert!(path.iter().all(|s| s.stance == Stance::Crouch));
+        }
+
+        #[test]
+        fn standing_under_a_low_ceiling_is_refused_until_clear() {
+            let (mut world, h) = under_a_ceiling(3.0, 6.0);
+            crouch_in_place(&mut world, h);
+            let mut under = state(&world, h);
+            for _ in 0..200 {
+                if under.position.z >= 4.5 {
+                    break;
+                }
+                under = tick(&mut world, h, &command(1.0, Stance::Crouch)).0;
+            }
+            let crouched_centre = under.position.y;
+            assert_eq!(under.stance, Stance::Crouch);
+            assert!(under.position.z >= 4.5, "setup: {under:?}");
+
+            let mut refused = Vec::new();
+            for _ in 0..20 {
+                refused.push(tick(&mut world, h, &command(0.0, Stance::Stand)).0);
+            }
+            let mut previous = *refused.last().expect("the stand was asked");
+            let mut stood_at = None;
+            let mut walked = Vec::new();
+            for _ in 0..200 {
+                let (after, _) = tick(&mut world, h, &command(1.0, Stance::Stand));
+                walked.push((previous.position.z, after));
+                if after.stance == Stance::Stand {
+                    stood_at = Some(previous.position.z);
+                    break;
+                }
+                previous = after;
+            }
+
+            assert!(
+                refused.iter().all(|s| s.stance == Stance::Crouch),
+                "it stood up under the ceiling: {refused:?}"
+            );
+            assert!(
+                refused
+                    .iter()
+                    .all(|s| (s.position.y - crouched_centre).abs() < 0.05),
+                "the crouched hull moved: {refused:?}"
+            );
+            let clear = 6.0 + RADIUS;
+            let stood_at = stood_at.expect("it never stood after walking out");
+            assert!(
+                stood_at > clear,
+                "it stood with the hull still under the edge: from z {stood_at}"
+            );
+            assert!(
+                stood_at < clear + 4.0 * DT + 0.01,
+                "it stayed crouched for a tick past the edge: stood from z {stood_at}"
+            );
+            let stood = walked.last().expect("it walked").1;
+            assert!(
+                stood.position.y > crouched_centre + 0.3,
+                "the standing hull is taller: {stood:?}"
+            );
+        }
+
+        #[test]
+        fn crouching_on_the_tick_of_the_edge_passes_under_it() {
+            let (mut world, h) = under_a_ceiling(3.0, 6.0);
+            let run = command(1.0, Stance::Stand);
+            let mut at_edge = state(&world, h);
+            for _ in 0..200 {
+                if at_edge.position.z + RADIUS + SKIN + 4.0 * DT >= 3.0 {
+                    break;
+                }
+                let (after, impacts) = tick(&mut world, h, &run);
+                assert_eq!(impacts, Vec::new(), "it hit the edge early: {after:?}");
+                at_edge = after;
+            }
+            assert!(
+                at_edge.position.z + RADIUS < 3.0,
+                "setup: the standing hull is not yet at the edge: {at_edge:?}"
+            );
+
+            let (crouching, impacts) = tick(&mut world, h, &command(1.0, Stance::Crouch));
+
+            assert_eq!(impacts, Vec::new(), "the crouch tick hit the edge");
+            assert_eq!(crouching.stance, Stance::Crouch);
+            assert!(
+                crouching.position.z - at_edge.position.z > 0.9 * 4.0 * DT,
+                "the slide was stopped at the edge: {at_edge:?} -> {crouching:?}"
+            );
+            let mut under = crouching;
+            for _ in 0..40 {
+                let (after, impacts) = tick(&mut world, h, &command(1.0, Stance::Crouch));
+                assert_eq!(impacts, Vec::new(), "{after:?}");
+                under = after;
+            }
+            assert!(under.position.z > 3.5, "it went under: {under:?}");
+        }
+    }
+
+    /// The collider takes the crouched shape.
+    mod reshape {
+        use super::*;
+
+        #[test]
+        fn a_crouched_character_is_stood_on_at_its_crouched_top() {
+            let settings = MoveSettings {
+                crouch_ticks: 8,
+                ..test_settings()
+            };
+            let mut world = PhysicsWorld::new();
+            world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+            let spawn = |y| CharacterSpawn {
+                position: Vec3::new(0.0, y, 0.0),
+                yaw: 0.0,
+                pitch: 0.0,
+                body: crouching_body(),
+            };
+            let below = world.add_character(spawn(1.0));
+            let above = world.add_character(spawn(6.0));
+            let crouch = CharacterCommand {
+                stance: Stance::Crouch,
+                ..CharacterCommand::default()
+            };
+
+            for _ in 0..200 {
+                world
+                    .move_character(below, &crouch, &settings, DT)
+                    .expect("character is live");
+                world
+                    .move_character(above, &idle(), &settings, DT)
+                    .expect("character is live");
+                world.step(DT);
+            }
+
+            let rider = state(&world, above);
+            assert!(
+                (1.9..2.3).contains(&rider.position.y),
+                "it rests at the crouched top (1.1) plus its half height (0.915), not the standing top: {rider:?}"
+            );
+            assert_eq!(state(&world, below).stance, Stance::Crouch);
         }
     }
 }

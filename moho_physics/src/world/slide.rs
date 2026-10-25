@@ -1,14 +1,17 @@
 //! The rapier collide-and-slide behind [`crate::movement::step`].
 
-use crate::movement::{Ground, Hull, HullShape, Slide, STEP_HEIGHT, WALKABLE_NORMAL_Y};
-use glam::Vec3;
+use crate::movement::{
+    CharacterQueries, Ground, Hull, HullShape, Slide, STEP_HEIGHT, WALKABLE_NORMAL_Y,
+};
+use crate::world::CharacterState;
+use glam::{Quat, Vec3};
 use rapier3d::control::{
     CharacterLength, EffectiveCharacterMovement, KinematicCharacterController,
 };
 use rapier3d::parry::query::ShapeCastHit;
 use rapier3d::parry::query::ShapeCastOptions;
 use rapier3d::parry::shape::Cylinder;
-use rapier3d::prelude::{ColliderHandle, Pose, QueryPipeline, Ray, Shape};
+use rapier3d::prelude::{ColliderHandle, Pose, QueryPipeline, Ray, Shape, SharedShape};
 
 /// How far below a grounded landing to look for the surface it landed on, in metres.
 const GROUND_PROBE: f32 = 0.1;
@@ -127,12 +130,69 @@ impl Footing {
 }
 
 /// The world as one character's collide-and-slide sees it.
+#[derive(Clone, Copy)]
 pub(super) struct Slider<'a> {
     pub controller: &'a KinematicCharacterController,
     pub queries: &'a QueryPipeline<'a>,
     pub shape: &'a dyn Shape,
     pub footing: Footing,
     pub dt: f32,
+}
+
+/// The collider shape of a character `hull`.
+pub(super) fn shape_of(hull: &Hull) -> SharedShape {
+    let half_length = hull.length / 2.0;
+    match hull.shape {
+        HullShape::Capsule => SharedShape::capsule_y(half_length - hull.radius, hull.radius),
+        HullShape::RoundCylinder { rounding } => {
+            SharedShape::round_cylinder(half_length - rounding, hull.radius - rounding, rounding)
+        }
+    }
+}
+
+/// The world as one character's step sees it: the collider the character holds, built into a
+/// [`Slider`] for whichever hull the step asks about.
+pub(super) struct WorldQueries<'a> {
+    pub controller: &'a KinematicCharacterController,
+    pub queries: &'a QueryPipeline<'a>,
+    pub dt: f32,
+    /// The hull `own_shape` was built from.
+    pub own_hull: Hull,
+    /// The character's collider shape, reused while the step asks about `own_hull`.
+    pub own_shape: &'a dyn Shape,
+}
+
+impl CharacterQueries for WorldQueries<'_> {
+    /// Slides the `hull` given, which differs from the collider's shape on the tick the stance
+    /// changed it, before the adapter reshapes the collider.
+    fn slide(&self, from: &CharacterState, hull: &Hull, asked: Vec3) -> Slide {
+        let built;
+        let shape = if *hull == self.own_hull {
+            self.own_shape
+        } else {
+            built = shape_of(hull);
+            built.as_ref()
+        };
+        let slider = Slider {
+            controller: self.controller,
+            queries: self.queries,
+            shape,
+            footing: Footing::of(*hull),
+            dt: self.dt,
+        };
+        let start = Pose::from_parts(from.position, Quat::from_rotation_y(from.yaw));
+        slider.slide(&start, asked, from.grounded)
+    }
+
+    /// The hull at its true size: a grounded character rests a skin above the floor, so
+    /// growing it by the skin would make every crouch in the open touch the floor.
+    fn fits(&self, hull: &Hull, centre: Vec3, yaw: f32) -> bool {
+        let at = Pose::from_parts(centre, Quat::from_rotation_y(yaw));
+        self.queries
+            .intersect_shape(at, shape_of(hull).as_ref())
+            .next()
+            .is_none()
+    }
 }
 
 impl Slider<'_> {

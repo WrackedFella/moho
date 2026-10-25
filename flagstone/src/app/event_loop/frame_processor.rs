@@ -28,6 +28,7 @@ const STRATEGY_MOVE_SETTINGS: moho_physics::MoveSettings = moho_physics::MoveSet
     jump_speed: 8.0,
     max_velocity: 90.0,
     autohop: true,
+    crouch_ticks: 0,
 };
 
 /// Handles frame timing and game state updates
@@ -95,6 +96,7 @@ impl FrameProcessor {
             yaw_delta: input.yaw_delta,
             pitch_delta: input.pitch_delta,
             jump: app.physics.jump_pressed,
+            ..moho_physics::CharacterCommand::default()
         };
         let speed = if input.sprint {
             SPRINT_SPEED

@@ -174,6 +174,7 @@ impl SearchlightCommand {
                 pitch_delta,
                 // A tap shorter than one tick still jumps.
                 jump: frame.held(SearchlightAction::Jump) || frame.pressed(SearchlightAction::Jump),
+                ..CharacterCommand::default()
             },
             fire: frame.pressed(SearchlightAction::Fire),
             reload: frame.pressed(SearchlightAction::Reload),

@@ -7,7 +7,8 @@
 use glam::{Quat, Vec3};
 use moho_physics::{
     CharacterBody, CharacterCommand, CharacterEffect, CharacterHandle, CharacterSpawn,
-    CharacterState, HitTag, MoveSettings, PhysicsWorld, RigidBodyHandle,
+    CharacterState, HitTag, Hull, HullShape, MoveSettings, PhysicsWorld, RigidBodyHandle, Stance,
+    Stature,
 };
 use moho_render_api::{WorldMesh, WorldMeshId};
 use serde::{Deserialize, Serialize};
@@ -16,6 +17,8 @@ const TICKS: usize = 600;
 const DT: f32 = 1.0 / 60.0;
 /// The cuboid's launch velocity; it slides to rest well before the noisy phase.
 const BOX_VELOCITY: Vec3 = Vec3::new(0.5, 0.0, 0.3);
+/// Ticks a stand-or-crouch leg takes.
+const CROUCH_TICKS: u16 = 12;
 const SEED: u64 = 0x5EED_0502;
 
 /// Effects queued before the tick's moves, then each character's command, in creation order.
@@ -73,6 +76,23 @@ fn settings() -> MoveSettings {
         jump_speed: 8.0,
         max_velocity: 90.0,
         autohop: false,
+        crouch_ticks: CROUCH_TICKS,
+    }
+}
+
+/// The searchlight-sized capsule that can also crouch to a 1.1 m capsule.
+fn crouching_body() -> CharacterBody {
+    let capsule = |length, eye_height| Stature {
+        hull: Hull {
+            shape: HullShape::Capsule,
+            radius: 0.3,
+            length,
+        },
+        eye_height,
+    };
+    CharacterBody {
+        standing: capsule(1.83, 1.63),
+        crouched: Some(capsule(1.1, 0.95)),
     }
 }
 
@@ -167,13 +187,13 @@ fn build_scene(box_velocity: Vec3) -> Scene {
         position: Vec3::new(-0.6, 1.2, -6.0),
         yaw: 0.0,
         pitch: 0.0,
-        body: CharacterBody::default(),
+        body: crouching_body(),
     });
     let second = world.add_character(CharacterSpawn {
         position: Vec3::new(3.6, 1.2, -4.0),
         yaw: 0.0,
         pitch: 0.2,
-        body: CharacterBody::default(),
+        body: crouching_body(),
     });
     let cuboid = world.add_dynamic_cuboid(Vec3::new(0.0, 0.6, 4.0), 0.5, 0.5, 0.5);
     let body = &mut world.rigid_body_set[cuboid];
@@ -219,6 +239,20 @@ const BOX_HIT: CharacterEffect = CharacterEffect::Teleport {
 /// Ticks of straight walking into the cuboid before the noise starts.
 const APPROACH_TICKS: usize = 200;
 
+/// Crouch in bursts that overlap the jumps and the walk, with legs cut short so some reverse
+/// mid-way; the two characters are out of step. Fixed by tick so the rng draws stay put.
+fn wanted_stance(who: usize, tick: usize) -> Stance {
+    let crouching = match who {
+        0 => (40..46).contains(&tick) || (63..110).contains(&tick) || (300..420).contains(&tick),
+        _ => (tick / 37) % 3 == 1,
+    };
+    if crouching {
+        Stance::Crouch
+    } else {
+        Stance::Stand
+    }
+}
+
 /// Walk toward the cuboid, then steer noisily with jump presses, a held jump and occasional effects.
 fn make_script() -> Vec<TickInput> {
     let mut rng = Lcg(SEED);
@@ -226,7 +260,8 @@ fn make_script() -> Vec<TickInput> {
         .map(|tick| {
             let mut commands = [CharacterCommand::default(); 2];
             let mut effects = Vec::new();
-            for command in &mut commands {
+            for (who, command) in commands.iter_mut().enumerate() {
+                command.stance = wanted_stance(who, tick);
                 if tick < APPROACH_TICKS {
                     command.forward = 1.0;
                     command.jump = tick == 60;
@@ -297,7 +332,7 @@ fn bits3(v: Vec3) -> [u32; 3] {
 }
 
 /// Every compared field of one character, as raw bits.
-fn character_fields(state: &CharacterState) -> [(&'static str, [u32; 3]); 7] {
+fn character_fields(state: &CharacterState) -> [(&'static str, [u32; 3]); 11] {
     let CharacterState {
         position,
         velocity,
@@ -306,6 +341,10 @@ fn character_fields(state: &CharacterState) -> [(&'static str, [u32; 3]); 7] {
         grounded,
         jump_held,
         eye,
+        stance,
+        from,
+        progress,
+        anchor,
     } = *state;
     [
         ("position", bits3(position)),
@@ -315,6 +354,10 @@ fn character_fields(state: &CharacterState) -> [(&'static str, [u32; 3]); 7] {
         ("grounded", [u32::from(grounded), 0, 0]),
         ("jump_held", [u32::from(jump_held), 0, 0]),
         ("eye", bits3(eye)),
+        ("stance", [stance as u32, 0, 0]),
+        ("from", [from as u32, 0, 0]),
+        ("progress", [u32::from(progress), 0, 0]),
+        ("anchor", [anchor as u32, 0, 0]),
     ]
 }
 
@@ -478,6 +521,42 @@ fn assert_run_exercises_the_world(script: &[TickInput], recorded: &[Snapshot]) {
         );
     }
 
+    for index in 0..2 {
+        let states = || recorded.iter().map(|s| s.characters[index]);
+        assert!(
+            states().any(|c| c.stance == Stance::Crouch && c.progress >= CROUCH_TICKS),
+            "character {index} never finished a crouch"
+        );
+        assert!(
+            states().any(|c| c.stance == Stance::Stand && c.from == Stance::Crouch),
+            "character {index} never stood up from a crouch"
+        );
+        assert!(
+            states().any(|c| c.stance != c.from && c.progress > 0 && c.progress < CROUCH_TICKS),
+            "character {index} was never part-way through a leg"
+        );
+        assert!(
+            states().any(|c| !c.grounded && c.stance == Stance::Crouch),
+            "character {index} never crouched in the air"
+        );
+    }
+
+    let pairs = || {
+        recorded
+            .windows(2)
+            .flat_map(|w| (0..2).map(move |i| (w[0].characters[i], w[1].characters[i])))
+    };
+    assert!(
+        pairs().any(|(prev, next)| !prev.grounded && next.stance != prev.stance),
+        "no leg started in the air"
+    );
+    assert!(
+        pairs().any(|(prev, next)| prev.stance != prev.from
+            && (1..CROUCH_TICKS).contains(&prev.progress)
+            && next.stance == prev.from),
+        "no leg reversed mid-way"
+    );
+
     let idle: Vec<TickInput> = script
         .iter()
         .map(|_| TickInput {
@@ -560,6 +639,7 @@ fn a_tick_of_commands_and_effects_round_trips_through_postcard() {
                 yaw_delta: 0.01,
                 pitch_delta: -0.02,
                 jump: true,
+                stance: Stance::Crouch,
             },
             CharacterCommand::default(),
         ],
