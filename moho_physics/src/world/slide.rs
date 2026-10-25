@@ -31,6 +31,37 @@ const STEP_SNAP: f32 = 0.05;
 /// Horizontal motion left over below this many metres is not stepped up.
 const STEP_MIN_PROGRESS: f32 = 1e-3;
 
+/// The least speed, in m/s, at which a walker resting on an edge outside its flat base moves off it.
+const ROLL_OFF_SPEED: f32 = 1.0;
+
+/// A surface whose normal faces up more than this (`normal.y`) holds a capsule grounded in rapier.
+const HOLDING_NORMAL_Y: f32 = 1e-3;
+
+/// How far to shift a walker on an edge, in metres, beyond its own `outward` motion this tick:
+/// what [`ROLL_OFF_SPEED`] over `dt` lacks, at most `clearance`. A walker heading inward gets
+/// none: the shift would fold into its translation and read as a hit on the edge it left.
+fn top_up(outward: f32, clearance: f32, dt: f32) -> f32 {
+    if outward < 0.0 {
+        return 0.0;
+    }
+    (ROLL_OFF_SPEED * dt - outward).clamp(0.0, clearance)
+}
+
+/// An edge holding a walker outside its flat base: the way off it and how far to go.
+#[derive(Clone, Copy, Debug)]
+struct Edge {
+    /// Level unit direction pointing away from the edge's face.
+    outward: Vec3,
+    /// The level move after which the capsule's straight drop no longer meets the edge.
+    clearance: f32,
+}
+
+/// The ground under a character and, when an edge outside its flat base holds it up, that edge.
+struct GroundRead {
+    ground: Ground,
+    edge: Option<Edge>,
+}
+
 /// A shape cast that reports any contact within `distance`, measured from surface to surface.
 fn cast_within(distance: f32) -> ShapeCastOptions {
     ShapeCastOptions {
@@ -136,13 +167,27 @@ impl Slider<'_> {
         if landed_without_ground_hit(plain.grounded, asked, &hits) {
             hits.extend(self.probe_landing(start, plain.translation));
         }
+        // Only a walker reads its ground, and only a character that started grounded walks.
+        let read = was_grounded
+            .then(|| self.read_ground(start.translation + plain.translation))
+            .flatten();
+        if let Some(rolled) = read.as_ref().and_then(|read| read.edge).and_then(|edge| {
+            let lacking = top_up(plain.translation.dot(edge.outward), edge.clearance, self.dt);
+            (lacking > 0.0).then(|| edge.outward * lacking)
+        }) {
+            let ended = Pose::from_parts(start.translation + plain.translation, start.rotation);
+            let translation = plain.translation + self.shift(&ended, rolled).translation;
+            return Slide {
+                translation,
+                grounded: false,
+                ground: self.ground_below(start.translation + translation),
+                hits,
+            };
+        }
         Slide {
             translation: plain.translation,
             grounded: plain.grounded,
-            // Only a walker reads its ground, and only a character that started grounded walks.
-            ground: was_grounded
-                .then(|| self.ground_below(start.translation + plain.translation))
-                .flatten(),
+            ground: read.map(|read| read.ground),
             hits,
         }
     }
@@ -156,6 +201,11 @@ impl Slider<'_> {
     /// itself, cast down to its skin offset, gives the gap: how far it can drop before it
     /// touches anything.
     pub(super) fn ground_below(&self, centre: Vec3) -> Option<Ground> {
+        self.read_ground(centre).map(|read| read.ground)
+    }
+
+    /// [`Self::ground_below`] with the edge that holds the capsule up, if any.
+    fn read_ground(&self, centre: Vec3) -> Option<GroundRead> {
         let footing = self.footing;
         let CharacterLength::Absolute(skin) = self.controller.offset else {
             panic!("the world builds its character controller with an absolute skin offset");
@@ -181,8 +231,23 @@ impl Slider<'_> {
             target_distance: skin,
             ..cast_within(STEP_HEIGHT)
         };
+        let mut edge = None;
         let gap = match self.queries.cast_shape(&at, -Vec3::Y, self.shape, skinned) {
-            Some((_, drop)) => drop.time_of_impact,
+            Some((_, drop)) => {
+                // The face under the flat base lies below where the capsule's drop stops.
+                let held_above = face.time_of_impact + FLAT_BASE_HALF_HEIGHT
+                    - footing.sweep
+                    - drop.time_of_impact;
+                let across = drop.normal1.with_y(0.0);
+                let reach = footing.disc + (footing.sweep + skin) * across.length();
+                if drop.normal1.y > HOLDING_NORMAL_Y && reach > base_radius && held_above > skin {
+                    edge = Some(Edge {
+                        outward: across.normalize(),
+                        clearance: (footing.sweep + skin) * (1.0 - across.length()) + skin,
+                    });
+                }
+                drop.time_of_impact
+            }
             // Near a mesh boundary the skinned cast can miss though the flat base hit.
             None => {
                 match self
@@ -198,11 +263,14 @@ impl Slider<'_> {
                 }
             }
         };
-        Some(Ground {
-            normal,
-            gap,
-            collider,
-            point: face.witness1,
+        Some(GroundRead {
+            ground: Ground {
+                normal,
+                gap,
+                collider,
+                point: face.witness1,
+            },
+            edge,
         })
     }
 
@@ -310,7 +378,9 @@ impl Slider<'_> {
 #[cfg(test)]
 mod tests {
     use super::super::test_support::TEST_TAG;
-    use super::super::test_support::{quad_mesh, seam_floor_meshes, slope_mesh, step_box_mesh};
+    use super::super::test_support::{
+        quad_mesh, seam_floor_meshes, slope_mesh, step_box_mesh, wall_mesh,
+    };
     use super::super::PhysicsWorld;
     use super::*;
     use crate::movement::CharacterBody;
@@ -516,6 +586,15 @@ mod tests {
         meshes: &[WorldMesh],
         check: impl FnOnce(&Slider, &[ColliderHandle]) -> T,
     ) -> T {
+        with_slider_ticking(meshes, 1.0 / 60.0, check)
+    }
+
+    /// Like [`with_slider_and_colliders`], for ticks of `dt` seconds.
+    fn with_slider_ticking<T>(
+        meshes: &[WorldMesh],
+        dt: f32,
+        check: impl FnOnce(&Slider, &[ColliderHandle]) -> T,
+    ) -> T {
         let mut world = PhysicsWorld::new();
         let mut colliders = Vec::new();
         for (id, mesh) in meshes.iter().enumerate() {
@@ -539,7 +618,7 @@ mod tests {
             queries: &queries,
             shape: capsule.as_ref(),
             footing: Footing::of(CharacterBody::default().standing.hull),
-            dt: 1.0 / 60.0,
+            dt,
         };
         check(&slider, &colliders)
     }
@@ -747,5 +826,167 @@ mod tests {
         let ground = slid.ground.expect("standing on the step top");
         assert!(ground.normal.distance(Vec3::Y) < 1e-3, "{ground:?}");
         assert!(ground.gap.abs() < 0.05, "{ground:?}");
+    }
+
+    /// A walker idle on the nosing of [`nosing_over_a_lower_step`], its centre 0.25 m past it and
+    /// its rim a skin's width from it, slid for one tick with `extra` meshes in the world.
+    fn idle_slide_on_the_nosing(extra: Option<WorldMesh>) -> Slide {
+        let mut meshes = nosing_over_a_lower_step().to_vec();
+        meshes.extend(extra);
+        let on_the_nosing = Pose::from_translation(Vec3::new(
+            0.0,
+            0.3 + 0.85 + (0.3115_f32 * 0.3115 - 0.25 * 0.25).sqrt(),
+            1.25,
+        ));
+
+        with_slider(&meshes, |slider| {
+            slider.slide(&on_the_nosing, Vec3::ZERO, true)
+        })
+    }
+
+    #[test]
+    fn an_idle_walker_on_an_edge_is_rolled_off_at_the_roll_off_speed() {
+        let free = idle_slide_on_the_nosing(None);
+
+        assert!(
+            (free.translation.z - 1.0 / 60.0).abs() < 1e-3,
+            "an idle walker on the edge is shifted outward by 1 m/s over one tick: {free:?}"
+        );
+    }
+
+    #[test]
+    fn the_roll_off_stops_at_a_wall() {
+        // The capsule's front, plus its skin offset, is 1.5615; the wall is 4 mm beyond that.
+        let walled = idle_slide_on_the_nosing(Some(wall_mesh(1.5655)));
+
+        assert!(
+            (0.001..0.0045).contains(&walled.translation.z),
+            "the shift goes as far as the wall allows: {walled:?}"
+        );
+        assert!(walled.hits.is_empty(), "{walled:?}");
+    }
+
+    #[test]
+    fn the_top_up_fills_only_what_the_walker_lacks() {
+        let dt = 1.0 / 60.0;
+        let wanted = ROLL_OFF_SPEED * dt;
+
+        let own_motion_at_speed = top_up(wanted, 1.0, dt);
+        let own_motion_above_speed = top_up(wanted * 2.0, 1.0, dt);
+        let idle = top_up(0.0, 1.0, dt);
+        let half_way = top_up(wanted / 2.0, 1.0, dt);
+        let moving_inward = top_up(-0.01, 1.0, dt);
+        let capped = top_up(0.0, 0.005, dt);
+
+        assert!(own_motion_at_speed.abs() < 1e-6, "{own_motion_at_speed}");
+        assert_eq!(own_motion_above_speed, 0.0);
+        assert!((idle - wanted).abs() < 1e-6, "{idle}");
+        assert!((half_way - wanted / 2.0).abs() < 1e-6, "{half_way}");
+        assert_eq!(moving_inward, 0.0);
+        assert_eq!(capped, 0.005);
+    }
+
+    /// One slide of a walker at `centre` on the nosing of [`nosing_over_a_lower_step`] asked to
+    /// move `asked`, in ticks of `dt`.
+    fn slide_on_the_nosing(centre: Vec3, asked: Vec3, dt: f32) -> Slide {
+        with_slider_ticking(&nosing_over_a_lower_step(), dt, |slider, _| {
+            slider.slide(&Pose::from_translation(centre), asked, true)
+        })
+    }
+
+    /// Where the capsule centre rests with its rim a skin's width from the nosing, `past` m
+    /// beyond it.
+    fn rim_on_the_nosing(past: f32) -> Vec3 {
+        Vec3::new(
+            0.0,
+            0.3 + 0.85 + (0.3115_f32 * 0.3115 - past * past).sqrt(),
+            1.0 + past,
+        )
+    }
+
+    #[test]
+    fn the_roll_off_is_capped_at_the_clearance() {
+        // 0.25 m past, the rim's contact normal leans 0.25 / 0.3115 toward the walker's side, so
+        // the level move that clears the nosing is 0.3115 * (1 - 0.25 / 0.3115) + 0.0115 = 0.073.
+        let rolled = slide_on_the_nosing(rim_on_the_nosing(0.25), Vec3::ZERO, 0.5);
+
+        assert!(
+            (rolled.translation.z - 0.073).abs() < 1e-3,
+            "a 0.5 s tick would roll 0.5 m, but stops once clear of the nosing: {rolled:?}"
+        );
+    }
+
+    #[test]
+    fn a_walker_moving_off_partly_gets_only_the_rest_of_the_roll_off_speed() {
+        // Starts 0.2085 m past, inside the 0.2121 m flat base, and its own 5 mm carries it
+        // outside; the edge is read where it ends up, and its tick totals 1 m/s.
+        let moved = slide_on_the_nosing(
+            rim_on_the_nosing(0.2085),
+            Vec3::new(0.0, 0.0, 0.005),
+            1.0 / 60.0,
+        );
+
+        assert!((moved.translation.z - 1.0 / 60.0).abs() < 5e-4, "{moved:?}");
+        assert!(!moved.grounded, "{moved:?}");
+        // The shift rides down the rim: from 0.2252 m past the rim sits 0.2152 m above the
+        // nosing, 0.0162 m below where the walker started, and the controller drops it 0.0157.
+        assert!((moved.translation.y + 0.0157).abs() < 0.003, "{moved:?}");
+        let ground = moved.ground.expect("the lower floor is under the walker");
+        assert!(ground.gap < 0.004, "read where it ended: {ground:?}");
+    }
+
+    #[test]
+    fn the_roll_off_starts_from_where_the_walkers_own_motion_ended() {
+        // The walker's own 5 mm ends 0.2135 m past the nosing, its front plus skin at 1.525; a
+        // wall 3 mm beyond leaves 3 mm to roll. Started from before its own motion, the roll would
+        // have 8 mm.
+        let moved = with_slider(
+            &[
+                nosing_over_a_lower_step()[0].clone(),
+                nosing_over_a_lower_step()[1].clone(),
+                wall_mesh(1.528),
+            ],
+            |slider| {
+                slider.slide(
+                    &Pose::from_translation(rim_on_the_nosing(0.2085)),
+                    Vec3::new(0.0, 0.0, 0.005),
+                    true,
+                )
+            },
+        );
+
+        assert!(
+            (moved.translation.z - 0.008).abs() < 1e-3,
+            "its own 5 mm, then the wall's 3 mm: {moved:?}"
+        );
+    }
+
+    /// An idle capsule 0.25 m past the nosing of a `step` m high step over a floor, at centre
+    /// height `y`, slid for one tick.
+    fn idle_slide_past_a_low_step(step: f32, y: f32) -> Slide {
+        let meshes = [ground(0.0, 1.0, 10.0), step_box_mesh(-3.0, 4.0, step)];
+        with_slider(&meshes, |slider| {
+            slider.slide(
+                &Pose::from_translation(Vec3::new(0.0, y, 1.25)),
+                Vec3::ZERO,
+                true,
+            )
+        })
+    }
+
+    #[test]
+    fn a_walker_on_the_floor_beside_a_low_step_is_not_rolled_but_one_held_above_it_is() {
+        // The rim's contact with a nosing 0.25 m to the side is outside the flat base. The walker
+        // stands on the floor when the nosing is lower than 0.126 m; above that the nosing holds
+        // it up, and the floor under its flat base lies more than the 0.0115 m skin below where
+        // its drop stops once the nosing is 4 mm higher.
+        let on_the_floor = idle_slide_past_a_low_step(0.05, 0.85 + 0.3115);
+        let held_above = idle_slide_past_a_low_step(0.1298, 0.85 + 0.1298 + 0.1857);
+
+        assert!(on_the_floor.translation.z.abs() < 1e-4, "{on_the_floor:?}");
+        assert!(
+            (held_above.translation.z - 1.0 / 60.0).abs() < 5e-4,
+            "rolled off the nosing: {held_above:?}"
+        );
     }
 }
