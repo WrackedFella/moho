@@ -144,11 +144,46 @@ pub struct CharacterBody {
     pub prone: Option<Stature>,
 }
 
-/// A hull and whether it lies along the facing instead of standing upright.
+/// A character's hull as posed: upright, or lying along the facing.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct HullPose {
-    pub hull: Hull,
-    pub lying: bool,
+pub enum HullPose {
+    Upright(Hull),
+    /// A capsule `length` long end to end, along the facing.
+    Lying {
+        radius: f32,
+        length: f32,
+    },
+}
+
+impl HullPose {
+    /// End to end along the hull's axis.
+    pub fn length(self) -> f32 {
+        match self {
+            Self::Upright(hull) => hull.length,
+            Self::Lying { length, .. } => length,
+        }
+    }
+
+    /// Whether the hull lies along the facing instead of standing.
+    pub fn is_lying(self) -> bool {
+        matches!(self, Self::Lying { .. })
+    }
+
+    /// How far the hull's centre rides above the feet.
+    fn centre_height(self) -> f32 {
+        match self {
+            Self::Upright(hull) => hull.length / 2.0,
+            Self::Lying { radius, .. } => radius,
+        }
+    }
+
+    /// How far ahead of the centre the eye sits: the head end of a lying hull.
+    fn eye_ahead(self) -> f32 {
+        match self {
+            Self::Upright(_) => 0.0,
+            Self::Lying { radius, length } => length / 2.0 - radius,
+        }
+    }
 }
 
 impl CharacterBody {
@@ -164,29 +199,14 @@ impl CharacterBody {
 
     /// The hull of `stance` and whether it lies along the facing.
     pub(crate) fn pose(&self, stance: Stance) -> HullPose {
-        HullPose {
-            hull: self.stature(stance).hull,
-            lying: stance == Stance::Prone && self.prone.is_some(),
-        }
-    }
-
-    /// How far the centre of the hull of `stance` rides above the feet.
-    fn centre_height(&self, stance: Stance) -> f32 {
-        let pose = self.pose(stance);
-        if pose.lying {
-            pose.hull.radius
+        let hull = self.stature(stance).hull;
+        if stance == Stance::Prone && self.prone.is_some() {
+            HullPose::Lying {
+                radius: hull.radius,
+                length: hull.length,
+            }
         } else {
-            pose.hull.length / 2.0
-        }
-    }
-
-    /// How far ahead of the centre the eye sits in `stance`: the head end of a lying hull.
-    fn eye_ahead(&self, stance: Stance) -> f32 {
-        let pose = self.pose(stance);
-        if pose.lying {
-            pose.hull.length / 2.0 - pose.hull.radius
-        } else {
-            0.0
+            HullPose::Upright(hull)
         }
     }
 
@@ -569,7 +589,7 @@ fn change_stance(
             } else {
                 Anchor::Head
             };
-            let shift = body.centre_height(target) - body.centre_height(state.stance);
+            let shift = body.pose(target).centre_height() - body.pose(state.stance).centre_height();
             let anchored = match anchor {
                 Anchor::Feet => shift,
                 Anchor::Head => -shift,
@@ -639,15 +659,18 @@ fn eye_offset(state: &CharacterState, body: &CharacterBody, settings: &MoveSetti
     let y = match state.anchor {
         Anchor::Feet => {
             from.eye_height + (to.eye_height - from.eye_height) * done
-                - body.centre_height(state.stance)
+                - body.pose(state.stance).centre_height()
         }
         Anchor::Head => {
             let depth = |stature: &Stature| stature.hull.length - stature.eye_height;
             to.hull.length / 2.0 - (depth(from) + (depth(to) - depth(from)) * done)
         }
     };
-    let ahead = body.eye_ahead(state.from)
-        + (body.eye_ahead(state.stance) - body.eye_ahead(state.from)) * done;
+    let (ahead_from, ahead_to) = (
+        body.pose(state.from).eye_ahead(),
+        body.pose(state.stance).eye_ahead(),
+    );
+    let ahead = ahead_from + (ahead_to - ahead_from) * done;
     let (sin, cos) = state.yaw.sin_cos();
     Vec3::new(sin * ahead, y, cos * ahead)
 }
@@ -710,7 +733,7 @@ pub fn step(
         (command.yaw_delta, command.pitch_delta),
     );
     let pose = body.pose(state.stance);
-    if pose.lying {
+    if pose.is_lying() && state.yaw != old_yaw {
         state.yaw = clamp_lying_turn(pose, state.position, old_yaw, state.yaw, queries);
     }
 
@@ -3541,10 +3564,18 @@ mod tests {
             tuning: &Tuning,
             fits: impl Fn(&Hull, Vec3, f32) -> bool,
         ) -> Hull {
-            tick_posed(state, wanted, tuning, move |pose, centre, yaw| {
-                fits(&pose.hull, centre, yaw)
-            })
-            .hull
+            let hull_of = |pose: HullPose| match pose {
+                HullPose::Upright(hull) => hull,
+                HullPose::Lying { radius, length } => Hull {
+                    shape: HullShape::Capsule,
+                    radius,
+                    length,
+                },
+            };
+            let pose = tick_posed(state, wanted, tuning, move |pose, centre, yaw| {
+                fits(&hull_of(pose), centre, yaw)
+            });
+            hull_of(pose)
         }
 
         /// [`tick_fitting`] with `fits` seeing the pose; returns the pose the slide was given.
@@ -4208,7 +4239,7 @@ mod tests {
             for (i, pose) in poses.iter().enumerate() {
                 let (length, lying) = if i < 8 { (1.1, false) } else { (1.8, true) };
                 assert_eq!(
-                    (pose.hull.length, pose.lying),
+                    (pose.length(), pose.is_lying()),
                     (length, lying),
                     "tick {}: the slide sees the hull of the stance in use",
                     i + 1
@@ -4375,7 +4406,7 @@ mod tests {
             assert_eq!(state.stance, Stance::Crouch);
             assert_eq!(state.from, Stance::Crouch);
             assert!(
-                poses.iter().all(|p| p.hull.length == 1.1 && !p.lying),
+                poses.iter().all(|p| p.length() == 1.1 && !p.is_lying()),
                 "the slide kept the crouched hull: {poses:?}"
             );
             assert_eq!(state.position.y, before.position.y);
@@ -4393,7 +4424,7 @@ mod tests {
 
             assert_eq!(state.stance, Stance::Prone);
             assert!(
-                poses.iter().all(|p| p.hull.length == 1.8 && p.lying),
+                poses.iter().all(|p| p.length() == 1.8 && p.is_lying()),
                 "the slide kept the lying hull: {poses:?}"
             );
         }
@@ -4463,7 +4494,7 @@ mod tests {
             for n in 1..=3 {
                 tick.set(n);
                 let fits = |pose: HullPose, centre: Vec3, _: f32| {
-                    if pose.lying && pose.hull.length == 1.8 {
+                    if pose.is_lying() && pose.length() == 1.8 {
                         target_probes.borrow_mut().push(centre);
                         return tick.get() >= 3;
                     }
@@ -4496,7 +4527,7 @@ mod tests {
             for n in 1..=3 {
                 tick.set(n);
                 let fits = |pose: HullPose, centre: Vec3, _: f32| {
-                    if !pose.lying && pose.hull.length == 1.1 {
+                    if !pose.is_lying() && pose.length() == 1.1 {
                         target_probes.borrow_mut().push(centre);
                         return tick.get() >= 3;
                     }
@@ -4575,7 +4606,7 @@ mod tests {
             }
 
             assert_eq!((state.stance, state.from), (Stance::Crouch, Stance::Crouch));
-            assert!(poses.iter().all(|p| !p.lying), "{poses:?}");
+            assert!(poses.iter().all(|p| !p.is_lying()), "{poses:?}");
         }
 
         #[test]
@@ -4599,6 +4630,45 @@ mod tests {
         }
 
         #[test]
+        fn an_upright_character_turns_whether_or_not_the_turn_fits() {
+            let tuning = prone_tuning(8, 20, 18.0);
+            let mut state = settled_on_the_floor(Stance::Stand);
+            let command = CharacterCommand {
+                yaw_delta: 0.25,
+                ..CharacterCommand::default()
+            };
+            let queries = Fake::new(|_: &CharacterState, _: HullPose, asked| grounded_slide(asked))
+                .fitting(|_, _, _| false);
+
+            super::super::step(&mut state, &command, &[], &tuning, DT, &queries);
+
+            assert_eq!(state.yaw, 0.25);
+        }
+
+        #[test]
+        fn a_lying_character_that_does_not_turn_probes_nothing() {
+            let tuning = prone_tuning(8, 20, 18.0);
+            let mut state = settled_on_the_floor(Stance::Prone);
+            let probes = Cell::new(0);
+            let queries = Fake::new(|_: &CharacterState, _: HullPose, asked| grounded_slide(asked))
+                .fitting(|_, _, _| {
+                    probes.set(probes.get() + 1);
+                    true
+                });
+
+            super::super::step(
+                &mut state,
+                &wanting(Stance::Prone),
+                &[],
+                &tuning,
+                DT,
+                &queries,
+            );
+
+            assert_eq!(probes.get(), 0, "a stance that holds still asks nothing");
+        }
+
+        #[test]
         fn a_prone_leg_running_when_the_character_leaves_the_ground_runs_on() {
             let tuning = prone_tuning(8, 20, 0.0);
             let mut state = settled_on_the_floor(Stance::Crouch);
@@ -4619,7 +4689,7 @@ mod tests {
 
             assert_eq!((state.stance, state.from), (Stance::Prone, Stance::Prone));
             assert!(
-                poses.iter().all(|p| p.lying && p.hull.length == 1.8),
+                poses.iter().all(|p| p.is_lying() && p.length() == 1.8),
                 "the slide kept the lying hull through the airborne leg: {poses:?}"
             );
         }
