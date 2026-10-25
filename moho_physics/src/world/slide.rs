@@ -65,6 +65,14 @@ struct GroundRead {
     edge: Option<Edge>,
 }
 
+/// The controller's skin offset, metres.
+fn skin(controller: &KinematicCharacterController) -> f32 {
+    let CharacterLength::Absolute(skin) = controller.offset else {
+        panic!("the world builds its character controller with an absolute skin offset");
+    };
+    skin
+}
+
 /// A shape cast that reports any contact within `distance`, measured from surface to surface.
 fn cast_within(distance: f32) -> ShapeCastOptions {
     ShapeCastOptions {
@@ -226,9 +234,7 @@ impl CharacterQueries for WorldQueries<'_> {
     /// The cast ignores the character's own hull and sensors through the pipeline's filter, and
     /// stops a skin short of what it meets.
     fn sweep(&self, from: Vec3, to: Vec3, radius: f32) -> f32 {
-        let CharacterLength::Absolute(skin) = self.controller.offset else {
-            panic!("the world builds its character controller with an absolute skin offset");
-        };
+        let skin = skin(self.controller);
         let path = to - from;
         let length = path.length();
         if length == 0.0 {
@@ -327,9 +333,7 @@ impl Slider<'_> {
         } else {
             Quat::IDENTITY
         };
-        let CharacterLength::Absolute(skin) = self.controller.offset else {
-            panic!("the world builds its character controller with an absolute skin offset");
-        };
+        let skin = skin(self.controller);
 
         let base_radius =
             footing.disc + footing.sweep * (1.0 - WALKABLE_NORMAL_Y * WALKABLE_NORMAL_Y).sqrt();

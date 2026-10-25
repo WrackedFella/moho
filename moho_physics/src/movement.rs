@@ -170,6 +170,17 @@ pub struct Lean {
     pub head_radius: f32,
 }
 
+impl Lean {
+    /// The reach in `stance`: prone, or upright for standing and crouched.
+    fn reach(&self, stance: Stance) -> LeanReach {
+        if stance == Stance::Prone {
+            self.prone
+        } else {
+            self.upright
+        }
+    }
+}
+
 /// A character's hull as posed: upright, or lying along the facing.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum HullPose {
@@ -706,14 +717,7 @@ fn lean_eye(
     settings: &MoveSettings,
     queries: &impl CharacterQueries,
 ) {
-    let reach = |stance: Stance| {
-        if stance == Stance::Prone {
-            body.lean.prone
-        } else {
-            body.lean.upright
-        }
-    };
-    let (from, to) = (reach(state.from), reach(state.stance));
+    let (from, to) = (body.lean.reach(state.from), body.lean.reach(state.stance));
     let done = leg_done(state, settings);
     let distance = from.distance + (to.distance - from.distance) * done;
     let roll = from.roll + (to.roll - from.roll) * done;
