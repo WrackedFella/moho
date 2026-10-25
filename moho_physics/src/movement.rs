@@ -118,6 +118,16 @@ pub struct CharacterBody {
     pub crouched: Option<Stature>,
 }
 
+impl CharacterBody {
+    /// The stature of `stance`; a body without a crouched stature stands in both.
+    pub(crate) fn stature(&self, stance: Stance) -> &Stature {
+        match (stance, &self.crouched) {
+            (Stance::Crouch, Some(crouched)) => crouched,
+            _ => &self.standing,
+        }
+    }
+}
+
 impl Stature {
     /// The eye's offset from the hull's centre when upright.
     pub fn eye_offset(&self) -> Vec3 {
@@ -429,6 +439,58 @@ pub trait CharacterQueries {
     fn fits(&self, hull: &Hull, centre: Vec3, yaw: f32) -> bool;
 }
 
+/// Start, reverse or advance the stance leg toward `wanted`.
+///
+/// A leg starts, or a running one reverses, only where the target hull fits at the anchored
+/// centre: a grounded character keeps the bottom of its hull, an airborne one its top. A
+/// refused leg leaves the running one untouched, so it retries every tick. A body with no
+/// crouched stature always stands. `progress` then advances, clamped at `duration`.
+fn change_stance(
+    state: &mut CharacterState,
+    wanted: Stance,
+    body: &CharacterBody,
+    duration: u16,
+    queries: &impl CharacterQueries,
+) {
+    let wanted = if body.crouched.is_some() {
+        wanted
+    } else {
+        Stance::Stand
+    };
+    if wanted != state.stance {
+        let settled = state.from == state.stance || state.progress >= duration;
+        let current = body.stature(state.stance).hull.length / 2.0;
+        let target = body.stature(wanted);
+        let shift = target.hull.length / 2.0 - current;
+        let anchored = if state.grounded { shift } else { -shift };
+        let centre = state.position + Vec3::Y * anchored;
+        if queries.fits(&target.hull, centre, state.yaw) {
+            state.progress = if settled {
+                0
+            } else {
+                duration - state.progress
+            };
+            state.from = state.stance;
+            state.stance = wanted;
+            state.position = centre;
+        }
+    }
+    state.progress = state.progress.saturating_add(1).min(duration);
+}
+
+/// The eye's offset from the centre of the hull in use, part-way through the stance leg.
+fn eye_offset(state: &CharacterState, body: &CharacterBody, duration: u16) -> Vec3 {
+    let done = if duration == 0 {
+        1.0
+    } else {
+        f32::from(state.progress) / f32::from(duration)
+    };
+    let from = body.stature(state.from).eye_height;
+    let to = body.stature(state.stance).eye_height;
+    let height = from + (to - from) * done;
+    Vec3::Y * (height - body.stature(state.stance).hull.length / 2.0)
+}
+
 /// Advance `state` by one tick of `dt` seconds and report the impacts.
 ///
 /// `queries.slide` receives the displacement the tick asks for and reports what the world
@@ -441,7 +503,9 @@ pub trait CharacterQueries {
 ///    airborne and settle finds the ground; the velocity is then checked as in 4b, so friction
 ///    never meets an infinite speed;
 /// 1. the look turns;
-/// 2. a jump adds `jump_speed` to the vertical velocity: a grounded character jumps when
+/// 2. the stance leg starts, reverses or advances (see `change_stance`), so the slide of this
+///    tick sees the new hull;
+///    2b. a jump adds `jump_speed` to the vertical velocity: a grounded character jumps when
 ///    jump is down and was up last tick, or held with `autohop`;
 /// 3. half a tick of gravity (`v.y -= g·dt/2`), unless walking;
 /// 4. friction and acceleration (walking) or air acceleration;
@@ -452,8 +516,8 @@ pub trait CharacterQueries {
 /// 7. the other half of gravity, unless walking;
 /// 8. settle: a walker that ends the tick grounded moves along its ground, keeping its
 ///    horizontal velocity; a landing zeroes the vertical velocity;
-/// 9. the velocity is checked again, so stored state is bounded, and `jump_held` records the
-///    command's `jump`, whether or not the character jumped.
+/// 9. the velocity is checked again, so stored state is bounded, `jump_held` records the
+///    command's `jump`, whether or not the character jumped, and the eye follows the stance leg.
 ///
 /// The two halves around the move give an airborne tick the exact displacement under constant
 /// gravity at any tick rate. A landing's impact speed is therefore the mid-tick downward speed.
@@ -482,6 +546,8 @@ pub fn step(
         (state.yaw, state.pitch),
         (command.yaw_delta, command.pitch_delta),
     );
+
+    change_stance(state, command.stance, &body, settings.crouch_ticks, queries);
 
     let (sin, cos) = state.yaw.sin_cos();
     let wish_vector =
@@ -517,7 +583,7 @@ pub fn step(
     state.velocity = checked(state.velocity, settings.max_velocity);
 
     let asked = state.velocity * dt;
-    let slid = queries.slide(state, &body.standing.hull, asked);
+    let slid = queries.slide(state, &body.stature(state.stance).hull, asked);
     state.position += slid.translation;
 
     let impacts = clip(&mut state.velocity, asked, &slid, walking, airborne_before);
@@ -528,7 +594,7 @@ pub fn step(
     settle(state, &slid, walking, asked, dt);
     state.velocity = checked(state.velocity, settings.max_velocity);
     state.jump_held = command.jump;
-    state.eye = body.standing.eye_offset();
+    state.eye = eye_offset(state, &body, settings.crouch_ticks);
     impacts
 }
 

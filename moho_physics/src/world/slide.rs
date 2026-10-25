@@ -11,7 +11,7 @@ use rapier3d::control::{
 use rapier3d::parry::query::ShapeCastHit;
 use rapier3d::parry::query::ShapeCastOptions;
 use rapier3d::parry::shape::Cylinder;
-use rapier3d::prelude::{ColliderHandle, Pose, QueryPipeline, Ray, Shape};
+use rapier3d::prelude::{ColliderHandle, Pose, QueryPipeline, Ray, Shape, SharedShape};
 
 /// How far below a grounded landing to look for the surface it landed on, in metres.
 const GROUND_PROBE: f32 = 0.1;
@@ -130,6 +130,7 @@ impl Footing {
 }
 
 /// The world as one character's collide-and-slide sees it.
+#[derive(Clone, Copy)]
 pub(super) struct Slider<'a> {
     pub controller: &'a KinematicCharacterController,
     pub queries: &'a QueryPipeline<'a>,
@@ -138,15 +139,39 @@ pub(super) struct Slider<'a> {
     pub dt: f32,
 }
 
+/// The collider shape of a character `hull`.
+pub(super) fn shape_of(hull: &Hull) -> SharedShape {
+    let half_length = hull.length / 2.0;
+    match hull.shape {
+        HullShape::Capsule => SharedShape::capsule_y(half_length - hull.radius, hull.radius),
+        HullShape::RoundCylinder { rounding } => {
+            SharedShape::round_cylinder(half_length - rounding, hull.radius - rounding, rounding)
+        }
+    }
+}
+
 impl CharacterQueries for Slider<'_> {
-    fn slide(&self, from: &CharacterState, _hull: &Hull, asked: Vec3) -> Slide {
+    /// Slides the `hull` given, not the stored `shape`: the stance may have changed the hull
+    /// earlier in this tick, before the adapter reshapes the collider.
+    fn slide(&self, from: &CharacterState, hull: &Hull, asked: Vec3) -> Slide {
+        let shape = shape_of(hull);
+        let slider = Slider {
+            shape: shape.as_ref(),
+            footing: Footing::of(*hull),
+            ..*self
+        };
         let start = Pose::from_parts(from.position, Quat::from_rotation_y(from.yaw));
-        Slider::slide(self, &start, asked, from.grounded)
+        slider.slide(&start, asked, from.grounded)
     }
 
-    fn fits(&self, _hull: &Hull, _centre: Vec3, _yaw: f32) -> bool {
-        // TODO: intersect the hull, grown by the skin offset, with the world.
-        true
+    /// The hull at its true size: a grounded character rests a skin above the floor, so
+    /// growing it by the skin would make every crouch in the open touch the floor.
+    fn fits(&self, hull: &Hull, centre: Vec3, yaw: f32) -> bool {
+        let at = Pose::from_parts(centre, Quat::from_rotation_y(yaw));
+        self.queries
+            .intersect_shape(at, shape_of(hull).as_ref())
+            .next()
+            .is_none()
     }
 }
 

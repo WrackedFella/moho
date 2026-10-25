@@ -1,9 +1,8 @@
 use super::query::{encode_tag, HitTag};
-use super::slide::{Footing, Slider};
+use super::slide::{shape_of, Footing, Slider};
 use super::PhysicsWorld;
 use crate::movement::{
-    self, CharacterBody, CharacterCommand, CharacterEffect, HullShape, Impact, MoveSettings,
-    Stance, Tuning,
+    self, CharacterBody, CharacterCommand, CharacterEffect, Impact, MoveSettings, Stance, Tuning,
 };
 use glam::{Quat, Vec3};
 use rapier3d::prelude::{
@@ -99,8 +98,6 @@ pub struct UnknownCharacter;
 pub(super) struct Character {
     collider: ColliderHandle,
     body: CharacterBody,
-    /// The hull as the ground query sees it, derived once from `body`.
-    footing: Footing,
     /// Hit volume colliders, in the order the game last set them.
     volumes: Vec<ColliderHandle>,
     velocity: Vec3,
@@ -172,17 +169,7 @@ impl PhysicsWorld {
         let body_handle = self.rigid_body_set.insert(body);
 
         let hull = spawn.body.standing.hull;
-        let half_length = hull.length / 2.0;
-        let shape = match hull.shape {
-            HullShape::Capsule => {
-                ColliderBuilder::capsule_y(half_length - hull.radius, hull.radius)
-            }
-            HullShape::RoundCylinder { rounding } => ColliderBuilder::round_cylinder(
-                half_length - rounding,
-                hull.radius - rounding,
-                rounding,
-            ),
-        };
+        let shape = ColliderBuilder::new(shape_of(&hull));
         let collider = shape.friction(0.0).build();
         let collider =
             self.collider_set
@@ -194,7 +181,6 @@ impl PhysicsWorld {
             Character {
                 collider,
                 body: spawn.body,
-                footing: Footing::of(hull),
                 volumes: Vec::new(),
                 velocity: Vec3::ZERO,
                 yaw: spawn.yaw,
@@ -303,9 +289,9 @@ impl PhysicsWorld {
         let collider_handle = character.collider;
         let effects = std::mem::take(&mut character.effects);
         let body = character.body;
-        let footing = character.footing;
         let pose = *self.rigid_body_set[handle.0].position();
         let mut state = character.state(pose.translation);
+        let stance = state.stance;
 
         // Transient QueryPipeline view without this character's capsule and hit volumes, nor
         // any other character's hit volumes; capsules still meet capsules.
@@ -322,7 +308,7 @@ impl PhysicsWorld {
             controller: &self.character_controller,
             queries: &queries,
             shape: self.collider_set[collider_handle].shape(),
-            footing,
+            footing: Footing::of(body.stature(stance).hull),
             dt,
         };
 
@@ -343,6 +329,10 @@ impl PhysicsWorld {
             .get_mut(&handle)
             .expect("the handle was found at the start of this call")
             .store(&state);
+        if state.stance != stance {
+            self.collider_set[collider_handle]
+                .set_shape(shape_of(&body.stature(state.stance).hull));
+        }
         self.place_body(handle, state.position, state.yaw);
         Ok(impacts)
     }
