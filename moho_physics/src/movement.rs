@@ -458,9 +458,11 @@ pub trait CharacterQueries {
 /// Start, reverse or advance the stance leg toward `wanted`.
 ///
 /// A leg starts, or a running one reverses, only where the target hull fits at the anchored
-/// centre: a grounded character keeps the bottom of its hull, an airborne one its top. A
-/// refused leg leaves the running one untouched, so it retries every tick. A body with no
-/// crouched stature always stands. `progress` then advances, clamped at `duration`; a leg that
+/// centre. A fresh leg anchors by `grounded`: a grounded character keeps the bottom of its
+/// hull, an airborne one its top. A reversal keeps the running leg's anchor, so the eye stays
+/// continuous. A refused
+/// leg leaves the running one untouched, so it retries every tick. A body with no crouched
+/// stature always stands. `progress` then advances, clamped at `duration`; a leg that
 /// reaches it is settled, and `from` becomes `stance`.
 fn change_stance(
     state: &mut CharacterState,
@@ -477,10 +479,20 @@ fn change_stance(
     if wanted != state.stance {
         // `progress >= duration` also covers a crouch time shortened since the leg began.
         let settled = state.from == state.stance || state.progress >= duration;
+        let anchor = if !settled {
+            state.anchor
+        } else if state.grounded {
+            Anchor::Feet
+        } else {
+            Anchor::Head
+        };
         let current = body.stature(state.stance).hull.length / 2.0;
         let target = body.stature(wanted);
         let shift = target.hull.length / 2.0 - current;
-        let anchored = if state.grounded { shift } else { -shift };
+        let anchored = match anchor {
+            Anchor::Feet => shift,
+            Anchor::Head => -shift,
+        };
         let centre = state.position + Vec3::Y * anchored;
         if queries.fits(&target.hull, centre, state.yaw) {
             state.progress = if settled {
@@ -489,11 +501,7 @@ fn change_stance(
                 duration - state.progress
             };
             state.from = state.stance;
-            state.anchor = if state.grounded {
-                Anchor::Feet
-            } else {
-                Anchor::Head
-            };
+            state.anchor = anchor;
             state.stance = wanted;
             state.position = centre;
         }
