@@ -247,4 +247,6 @@ exclude_re = [
     'replace <impl Wake for ThreadWaker>::wake with \(\)',
     'replace \| with \^ in chunks_meshed_from',
     'replace \+ with - in contact_ao',
+    'replace \| with \^ in chunks_meshed_from',
+    'replace \+ with - in contact_ao',
 ]
