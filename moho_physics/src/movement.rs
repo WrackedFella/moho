@@ -710,7 +710,7 @@ fn advance_lean(state: &mut CharacterState, wanted: f32, settings: &MoveSettings
 
 /// Shift the eye sideways by the lean, stopped short of any wall, and roll the view with it.
 ///
-/// A zero lean or reach leaves the eye and roll exactly as they were, with no sweep.
+/// A zero lean or reach leaves the eye unshifted and the roll at 0, with no sweep.
 fn lean_eye(
     state: &mut CharacterState,
     body: &CharacterBody,
@@ -931,7 +931,6 @@ mod tests {
 
     const DT: f32 = 1.0 / 60.0;
 
-    /// A sweep that finds nothing in the way.
     fn clear_sweep(_: Vec3, _: Vec3, _: f32) -> f32 {
         1.0
     }
@@ -964,7 +963,6 @@ mod tests {
             }
         }
 
-        /// The same fake with `sweep` returning the free fraction of a ball's path.
         fn sweeping(self, sweep: impl Fn(Vec3, Vec3, f32) -> f32 + 'static) -> Self {
             Self {
                 sweep: Box::new(sweep),

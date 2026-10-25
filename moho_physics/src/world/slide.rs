@@ -65,7 +65,6 @@ struct GroundRead {
     edge: Option<Edge>,
 }
 
-/// The controller's skin offset, metres.
 fn skin(controller: &KinematicCharacterController) -> f32 {
     let CharacterLength::Absolute(skin) = controller.offset else {
         panic!("the world builds its character controller with an absolute skin offset");

@@ -5008,7 +5008,6 @@ mod tests {
             }
         }
 
-        /// A floor and `meshes`, with a `body` character on the floor at the origin.
         fn world_with(
             meshes: &[WorldMesh],
             body: CharacterBody,
