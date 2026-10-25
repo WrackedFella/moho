@@ -95,6 +95,17 @@ pub struct MoveSettings {
     pub prone_ticks: u16,
 }
 
+impl MoveSettings {
+    /// Ticks the leg between `a` and `b` takes: a prone leg or a crouch leg.
+    fn leg_ticks(&self, a: Stance, b: Stance) -> u16 {
+        if a == Stance::Prone || b == Stance::Prone {
+            self.prone_ticks
+        } else {
+            self.crouch_ticks
+        }
+    }
+}
+
 /// The shape of a character's hull.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum HullShape {
@@ -141,11 +152,50 @@ pub struct HullPose {
 }
 
 impl CharacterBody {
-    /// The stature of `stance`; a body without a crouched stature stands in both.
+    /// The stature of `stance`; a body without a prone stature crouches in it, and one without
+    /// a crouched stature stands in both.
     pub(crate) fn stature(&self, stance: Stance) -> &Stature {
-        match (stance, &self.crouched) {
-            (Stance::Crouch, Some(crouched)) => crouched,
+        match (stance, &self.prone, &self.crouched) {
+            (Stance::Prone, Some(prone), _) => prone,
+            (Stance::Prone | Stance::Crouch, _, Some(crouched)) => crouched,
             _ => &self.standing,
+        }
+    }
+
+    /// The hull of `stance` and whether it lies along the facing.
+    pub(crate) fn pose(&self, stance: Stance) -> HullPose {
+        HullPose {
+            hull: self.stature(stance).hull,
+            lying: stance == Stance::Prone && self.prone.is_some(),
+        }
+    }
+
+    /// How far the centre of the hull of `stance` rides above the feet.
+    fn centre_height(&self, stance: Stance) -> f32 {
+        let pose = self.pose(stance);
+        if pose.lying {
+            pose.hull.radius
+        } else {
+            pose.hull.length / 2.0
+        }
+    }
+
+    /// How far ahead of the centre the eye sits in `stance`: the head end of a lying hull.
+    fn eye_ahead(&self, stance: Stance) -> f32 {
+        let pose = self.pose(stance);
+        if pose.lying {
+            pose.hull.length / 2.0 - pose.hull.radius
+        } else {
+            0.0
+        }
+    }
+
+    /// The stance this body can take that is nearest to `wanted`.
+    fn reachable(&self, wanted: Stance) -> Stance {
+        match wanted {
+            Stance::Prone if self.prone.is_some() => Stance::Prone,
+            Stance::Prone | Stance::Crouch if self.crouched.is_some() => Stance::Crouch,
+            _ => Stance::Stand,
         }
     }
 }
@@ -175,9 +225,10 @@ impl Default for CharacterBody {
 }
 
 impl CharacterBody {
-    /// Panics on an impossible hull in either stature: non-positive sizes, a capsule no longer
+    /// Panics on an impossible hull in any stature: non-positive sizes, a capsule no longer
     /// than its diameter, or `rounding` outside `0 < rounding <= radius`. A round cylinder must
-    /// also be longer than twice its rounding.
+    /// also be longer than twice its rounding. A prone hull must be a capsule, and a body that
+    /// goes prone must also crouch, because prone legs pass through crouch.
     ///
     /// Panics rather than returning an error because a bad hull is a programmer error in
     /// the game's data.
@@ -185,6 +236,17 @@ impl CharacterBody {
         validate_hull(&self.standing.hull);
         if let Some(crouched) = &self.crouched {
             validate_hull(&crouched.hull);
+        }
+        if let Some(prone) = &self.prone {
+            assert!(
+                self.crouched.is_some(),
+                "impossible body: a prone stature needs a crouched one, as prone legs pass through crouch"
+            );
+            assert!(
+                prone.hull.shape == HullShape::Capsule,
+                "impossible hull: the prone hull must be a capsule"
+            );
+            validate_hull(&prone.hull);
         }
     }
 }
@@ -471,71 +533,102 @@ pub trait CharacterQueries {
 
 /// Start, reverse or advance the stance leg toward `wanted`.
 ///
-/// A leg starts, or a running one reverses, only where the target hull fits at the anchored
-/// centre. A fresh leg anchors by `grounded`: a grounded character keeps the bottom of its
-/// hull, an airborne one its top. A reversal keeps the running leg's anchor, so the eye stays
-/// continuous. A refused
-/// leg leaves the running one untouched, so it retries every tick. A body with no crouched
-/// stature always stands. `progress` then advances, clamped at `duration`; a leg that
-/// reaches it is settled, and `from` becomes `stance`.
+/// Each leg moves one step along stand, crouch, prone, so a wanted stance two steps away takes
+/// the next leg toward it once the one running has settled. A leg starts, or a running one
+/// reverses, only where the target hull fits at the anchored centre. A fresh leg anchors by
+/// `grounded`: a grounded character keeps the bottom of its hull, an airborne one its top. A
+/// reversal keeps the running leg's anchor, so the eye stays continuous. A leg into or out of
+/// prone starts or reverses only on the ground, and keeps the feet; once running it runs on in
+/// the air. A refused leg leaves the running one untouched, so it retries every tick. A body
+/// with no crouched stature always stands. `progress` then advances, clamped at the leg's
+/// duration; a leg that reaches it is settled, and `from` becomes `stance`.
 fn change_stance(
     state: &mut CharacterState,
     wanted: Stance,
     body: &CharacterBody,
-    duration: u16,
+    settings: &MoveSettings,
     queries: &impl CharacterQueries,
 ) {
-    let wanted = if body.crouched.is_some() {
-        wanted
-    } else {
-        Stance::Stand
-    };
+    let wanted = body.reachable(wanted);
     if wanted != state.stance {
-        // `progress >= duration` also covers a crouch time shortened since the leg began.
-        let settled = state.from == state.stance || state.progress >= duration;
-        let anchor = if !settled {
-            state.anchor
-        } else if state.grounded {
-            Anchor::Feet
+        let target = if state.stance == Stance::Crouch {
+            wanted
         } else {
-            Anchor::Head
+            Stance::Crouch
         };
-        let current = body.stature(state.stance).hull.length / 2.0;
-        let target = body.stature(wanted);
-        let shift = target.hull.length / 2.0 - current;
-        let anchored = match anchor {
-            Anchor::Feet => shift,
-            Anchor::Head => -shift,
-        };
-        let centre = state.position + Vec3::Y * anchored;
-        let pose = HullPose {
-            hull: target.hull,
-            lying: false,
-        };
-        if queries.fits(pose, centre, state.yaw) {
-            state.progress = if settled {
-                0
+        let running = settings.leg_ticks(state.from, state.stance);
+        // `progress >= running` also covers a leg time shortened since the leg began.
+        let settled = state.from == state.stance || state.progress >= running;
+        let prone_leg = target == Stance::Prone || state.stance == Stance::Prone;
+        if (settled || target == state.from) && (state.grounded || !prone_leg) {
+            let duration = settings.leg_ticks(state.stance, target);
+            let anchor = if !settled {
+                state.anchor
+            } else if state.grounded {
+                Anchor::Feet
             } else {
-                duration - state.progress
+                Anchor::Head
             };
-            state.from = state.stance;
-            state.anchor = anchor;
-            state.stance = wanted;
-            state.position = centre;
+            let shift = body.centre_height(target) - body.centre_height(state.stance);
+            let anchored = match anchor {
+                Anchor::Feet => shift,
+                Anchor::Head => -shift,
+            };
+            let centre = state.position + Vec3::Y * anchored;
+            if queries.fits(body.pose(target), centre, state.yaw) {
+                state.progress = if settled {
+                    0
+                } else {
+                    duration - state.progress
+                };
+                state.from = state.stance;
+                state.anchor = anchor;
+                state.stance = target;
+                state.position = centre;
+            }
         }
     }
+    let duration = settings.leg_ticks(state.from, state.stance);
     state.progress = state.progress.saturating_add(1).min(duration);
     if state.progress >= duration {
         state.from = state.stance;
     }
 }
 
+/// Turn a lying hull's yaw from `old` toward `wanted` as far as it fits at `centre`.
+///
+/// Four bisections between the two, keeping the furthest yaw that fits, so at most five `fits`
+/// probes and the same answer every time.
+fn clamp_lying_turn(
+    pose: HullPose,
+    centre: Vec3,
+    old: f32,
+    wanted: f32,
+    queries: &impl CharacterQueries,
+) -> f32 {
+    if queries.fits(pose, centre, wanted) {
+        return wanted;
+    }
+    let (mut fits, mut blocked) = (old, wanted);
+    for _ in 0..4 {
+        let middle = (fits + blocked) / 2.0;
+        if queries.fits(pose, centre, middle) {
+            fits = middle;
+        } else {
+            blocked = middle;
+        }
+    }
+    fits
+}
+
 /// The eye's offset from the centre of the hull in use, part-way through the stance leg.
 ///
 /// The eye moves in the frame of the leg's anchor, so the anchored end of the hull and the
 /// eye stay together: its height above the feet for a feet-anchored leg, its depth below the
-/// top of the hull for a head-anchored one.
-fn eye_offset(state: &CharacterState, body: &CharacterBody, duration: u16) -> Vec3 {
+/// top of the hull for a head-anchored one. A prone eye also slides toward the head end of the
+/// lying hull, along the facing.
+fn eye_offset(state: &CharacterState, body: &CharacterBody, settings: &MoveSettings) -> Vec3 {
+    let duration = settings.leg_ticks(state.from, state.stance);
     let done = if duration == 0 {
         1.0
     } else {
@@ -543,15 +636,20 @@ fn eye_offset(state: &CharacterState, body: &CharacterBody, duration: u16) -> Ve
     };
     let from = body.stature(state.from);
     let to = body.stature(state.stance);
-    let half = to.hull.length / 2.0;
     let y = match state.anchor {
-        Anchor::Feet => from.eye_height + (to.eye_height - from.eye_height) * done - half,
+        Anchor::Feet => {
+            from.eye_height + (to.eye_height - from.eye_height) * done
+                - body.centre_height(state.stance)
+        }
         Anchor::Head => {
             let depth = |stature: &Stature| stature.hull.length - stature.eye_height;
-            half - (depth(from) + (depth(to) - depth(from)) * done)
+            to.hull.length / 2.0 - (depth(from) + (depth(to) - depth(from)) * done)
         }
     };
-    Vec3::Y * y
+    let ahead = body.eye_ahead(state.from)
+        + (body.eye_ahead(state.stance) - body.eye_ahead(state.from)) * done;
+    let (sin, cos) = state.yaw.sin_cos();
+    Vec3::new(sin * ahead, y, cos * ahead)
 }
 
 /// Advance `state` by one tick of `dt` seconds and report the impacts.
@@ -565,11 +663,12 @@ fn eye_offset(state: &CharacterState, body: &CharacterBody, duration: u16) -> Ve
 /// 0. the queued effects apply in order; a teleport clears `grounded`, so that tick runs
 ///    airborne and settle finds the ground; the velocity is then checked as in 4b, so friction
 ///    never meets an infinite speed;
-/// 1. the look turns;
+/// 1. the look turns; a lying hull turns only as far as it fits (see `clamp_lying_turn`);
 /// 2. the stance leg starts, reverses or advances (see `change_stance`), so the slide of this
 ///    tick sees the new hull;
 ///    2b. a jump adds `jump_speed` to the vertical velocity: a grounded character jumps when
-///    jump is down and was up last tick, or held with `autohop`;
+///    jump is down and was up last tick, or held with `autohop`, never while prone
+///    or rising out of prone;
 /// 3. half a tick of gravity (`v.y -= g·dt/2`), unless walking;
 /// 4. friction and acceleration (walking) or air acceleration;
 ///    4b. the velocity is checked: a non-finite component becomes 0 and each component is
@@ -605,12 +704,17 @@ pub fn step(
     }
     state.velocity = checked(state.velocity, settings.max_velocity);
 
+    let old_yaw = state.yaw;
     (state.yaw, state.pitch) = turned_look(
         (state.yaw, state.pitch),
         (command.yaw_delta, command.pitch_delta),
     );
+    let pose = body.pose(state.stance);
+    if pose.lying {
+        state.yaw = clamp_lying_turn(pose, state.position, old_yaw, state.yaw, queries);
+    }
 
-    change_stance(state, command.stance, &body, settings.crouch_ticks, queries);
+    change_stance(state, command.stance, &body, settings, queries);
 
     let (sin, cos) = state.yaw.sin_cos();
     let wish_vector =
@@ -618,7 +722,11 @@ pub fn step(
     let wish = wish_vector.normalize_or_zero();
     let magnitude = wish_vector.length().min(1.0);
 
-    let jumped = state.grounded && command.jump && (!state.jump_held || settings.autohop);
+    let prone_or_leaving_prone = state.stance == Stance::Prone || state.from == Stance::Prone;
+    let jumped = state.grounded
+        && command.jump
+        && !prone_or_leaving_prone
+        && (!state.jump_held || settings.autohop);
     if jumped {
         state.velocity.y += settings.jump_speed;
     }
@@ -646,11 +754,7 @@ pub fn step(
     state.velocity = checked(state.velocity, settings.max_velocity);
 
     let asked = state.velocity * dt;
-    let pose = HullPose {
-        hull: body.stature(state.stance).hull,
-        lying: false,
-    };
-    let slid = queries.slide(state, pose, asked);
+    let slid = queries.slide(state, body.pose(state.stance), asked);
     state.position += slid.translation;
 
     let impacts = clip(&mut state.velocity, asked, &slid, walking, airborne_before);
@@ -661,7 +765,7 @@ pub fn step(
     settle(state, &slid, walking, asked, dt);
     state.velocity = checked(state.velocity, settings.max_velocity);
     state.jump_held = command.jump;
-    state.eye = eye_offset(state, &body, settings.crouch_ticks);
+    state.eye = eye_offset(state, &body, settings);
     impacts
 }
 

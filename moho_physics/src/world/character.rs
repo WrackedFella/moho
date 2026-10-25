@@ -174,8 +174,7 @@ impl PhysicsWorld {
             .build();
         let body_handle = self.rigid_body_set.insert(body);
 
-        let hull = spawn.body.standing.hull;
-        let shape = ColliderBuilder::new(shape_of(&hull));
+        let shape = ColliderBuilder::new(shape_of(spawn.body.pose(Stance::Stand)));
         let collider = shape.friction(0.0).build();
         let collider =
             self.collider_set
@@ -315,7 +314,7 @@ impl PhysicsWorld {
             controller: &self.character_controller,
             queries: &queries,
             dt,
-            own_hull: body.stature(stance).hull,
+            own_pose: body.pose(stance),
             own_shape: self.collider_set[collider_handle].shape(),
         };
 
@@ -337,8 +336,7 @@ impl PhysicsWorld {
             .expect("the handle was found at the start of this call")
             .store(&state);
         if state.stance != stance {
-            self.collider_set[collider_handle]
-                .set_shape(shape_of(&body.stature(state.stance).hull));
+            self.collider_set[collider_handle].set_shape(shape_of(body.pose(state.stance)));
         }
         self.place_body(handle, state.position, state.yaw);
         Ok(impacts)

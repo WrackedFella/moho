@@ -108,6 +108,8 @@ pub(super) struct Footing {
     sweep: f32,
     /// How far below the hull's centre the core's bottom sits.
     core_bottom: f32,
+    /// The hull lies along the facing, so its ground casts turn with the yaw.
+    lying: bool,
 }
 
 impl Footing {
@@ -119,22 +121,26 @@ impl Footing {
                 disc: 0.0,
                 sweep: hull.radius,
                 core_bottom: half_length - hull.radius,
+                lying: false,
             },
             HullShape::RoundCylinder { rounding } => Self {
                 disc: hull.radius - rounding,
                 sweep: rounding,
                 core_bottom: half_length - rounding,
+                lying: false,
             },
         }
     }
-}
 
-impl Footing {
     /// The footing of a character `hull` lying along the facing: the core is level with the
     /// centre, swept by the hull's radius, with no core disc.
     pub(super) fn lying(hull: Hull) -> Self {
-        // TODO: stub, reads the hull as upright; build the level footing described above.
-        Self::of(hull)
+        Self {
+            disc: 0.0,
+            sweep: hull.radius,
+            core_bottom: 0.0,
+            lying: true,
+        }
     }
 }
 
@@ -148,10 +154,15 @@ pub(super) struct Slider<'a> {
     pub dt: f32,
 }
 
-/// The collider shape of a character `hull`.
-pub(super) fn shape_of(hull: &Hull) -> SharedShape {
+/// The collider shape of a character `pose`; a lying hull is always a capsule (see
+/// [`crate::movement::CharacterBody::validate`]) along the body's +Z.
+pub(super) fn shape_of(pose: HullPose) -> SharedShape {
+    let hull = pose.hull;
     let half_length = hull.length / 2.0;
     match hull.shape {
+        HullShape::Capsule if pose.lying => {
+            SharedShape::capsule_z(half_length - hull.radius, hull.radius)
+        }
         HullShape::Capsule => SharedShape::capsule_y(half_length - hull.radius, hull.radius),
         HullShape::RoundCylinder { rounding } => {
             SharedShape::round_cylinder(half_length - rounding, hull.radius - rounding, rounding)
@@ -165,23 +176,21 @@ pub(super) struct WorldQueries<'a> {
     pub controller: &'a KinematicCharacterController,
     pub queries: &'a QueryPipeline<'a>,
     pub dt: f32,
-    /// The hull `own_shape` was built from.
-    pub own_hull: Hull,
-    /// The character's collider shape, reused while the step asks about `own_hull`.
+    /// The posed hull `own_shape` was built from.
+    pub own_pose: HullPose,
+    /// The character's collider shape, reused while the step asks about `own_pose`.
     pub own_shape: &'a dyn Shape,
 }
 
 impl CharacterQueries for WorldQueries<'_> {
-    /// Slides the `hull` given, which differs from the collider's shape on the tick the stance
+    /// Slides the `pose` given, which differs from the collider's shape on the tick the stance
     /// changed it, before the adapter reshapes the collider.
     fn slide(&self, from: &CharacterState, pose: HullPose, asked: Vec3) -> Slide {
-        // TODO: stub, treats every hull as upright; cast a lying hull as `capsule_z`.
-        let hull = &pose.hull;
         let built;
-        let shape = if *hull == self.own_hull {
+        let shape = if pose == self.own_pose {
             self.own_shape
         } else {
-            built = shape_of(hull);
+            built = shape_of(pose);
             built.as_ref()
         };
         let slider = Slider {
@@ -189,9 +198,9 @@ impl CharacterQueries for WorldQueries<'_> {
             queries: self.queries,
             shape,
             footing: if pose.lying {
-                Footing::lying(*hull)
+                Footing::lying(pose.hull)
             } else {
-                Footing::of(*hull)
+                Footing::of(pose.hull)
             },
             dt: self.dt,
         };
@@ -202,11 +211,9 @@ impl CharacterQueries for WorldQueries<'_> {
     /// The hull at its true size: a grounded character rests a skin above the floor, so
     /// growing it by the skin would make every crouch in the open touch the floor.
     fn fits(&self, pose: HullPose, centre: Vec3, yaw: f32) -> bool {
-        // TODO: stub, treats every hull as upright; probe a lying hull as `capsule_z`.
-        let hull = &pose.hull;
         let at = Pose::from_parts(centre, Quat::from_rotation_y(yaw));
         self.queries
-            .intersect_shape(at, shape_of(hull).as_ref())
+            .intersect_shape(at, shape_of(pose).as_ref())
             .next()
             .is_none()
     }
@@ -235,7 +242,8 @@ impl Slider<'_> {
                 return Slide {
                     translation,
                     grounded: true,
-                    ground: self.ground_below(start.translation + translation),
+                    ground: self
+                        .ground_below_rotated(start.translation + translation, start.rotation),
                     hits,
                 };
             }
@@ -246,7 +254,7 @@ impl Slider<'_> {
         }
         // Only a walker reads its ground, and only a character that started grounded walks.
         let read = was_grounded
-            .then(|| self.read_ground(start.translation + plain.translation))
+            .then(|| self.read_ground(start.translation + plain.translation, start.rotation))
             .flatten();
         if let Some(rolled) = read.as_ref().and_then(|read| read.edge).and_then(|edge| {
             let lacking = top_up(plain.translation.dot(edge.outward), edge.clearance, self.dt);
@@ -257,7 +265,7 @@ impl Slider<'_> {
             return Slide {
                 translation,
                 grounded: false,
-                ground: self.ground_below(start.translation + translation),
+                ground: self.ground_below_rotated(start.translation + translation, start.rotation),
                 hits,
             };
         }
@@ -277,21 +285,31 @@ impl Slider<'_> {
     /// seams, and its radius, tied to the walkable angle, is the perch margin. The capsule
     /// itself, cast down to its skin offset, gives the gap: how far it can drop before it
     /// touches anything.
+    #[cfg(test)]
     pub(super) fn ground_below(&self, centre: Vec3) -> Option<Ground> {
-        self.read_ground(centre).map(|read| read.ground)
+        self.ground_below_rotated(centre, Quat::IDENTITY)
     }
 
     /// [`Self::ground_below`] for a hull whose shape is turned to face `yaw`.
     #[cfg(test)]
     pub(super) fn ground_below_facing(&self, centre: Vec3, yaw: f32) -> Option<Ground> {
-        // TODO: stub, ignores `yaw` and exists only for tests; make it the real path and cast the drop with the shape rotated about +Y by `yaw`.
-        let _ = yaw;
-        self.ground_below(centre)
+        self.ground_below_rotated(centre, Quat::from_rotation_y(yaw))
+    }
+
+    /// [`Self::ground_below`] with the capsule cast in `rotation`, which only a lying hull
+    /// uses: an upright one is round about the vertical.
+    fn ground_below_rotated(&self, centre: Vec3, rotation: Quat) -> Option<Ground> {
+        self.read_ground(centre, rotation).map(|read| read.ground)
     }
 
     /// [`Self::ground_below`] with the edge that holds the capsule up, if any.
-    fn read_ground(&self, centre: Vec3) -> Option<GroundRead> {
+    fn read_ground(&self, centre: Vec3, rotation: Quat) -> Option<GroundRead> {
         let footing = self.footing;
+        let rotation = if footing.lying {
+            rotation
+        } else {
+            Quat::IDENTITY
+        };
         let CharacterLength::Absolute(skin) = self.controller.offset else {
             panic!("the world builds its character controller with an absolute skin offset");
         };
@@ -311,7 +329,7 @@ impl Slider<'_> {
             return None;
         }
 
-        let at = Pose::from_translation(centre);
+        let at = Pose::from_parts(centre, rotation);
         let skinned = ShapeCastOptions {
             target_distance: skin,
             ..cast_within(STEP_HEIGHT)
