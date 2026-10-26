@@ -132,7 +132,7 @@ impl App {
         match routing {
             Routing::Opened => self.enter_console(),
             Routing::Closed => self.exit_console(),
-            Routing::Console | Routing::Game => {}
+            Routing::Console | Routing::Game | Routing::Menu => {}
         }
         routing
     }
@@ -343,7 +343,7 @@ impl App {
                     self.dispatcher.dispatch(&event);
                     return;
                 }
-                Routing::Game => {}
+                Routing::Game | Routing::Menu => {}
             }
         }
 

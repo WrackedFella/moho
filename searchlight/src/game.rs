@@ -405,7 +405,7 @@ struct Stage {
     window: Option<Arc<Window>>,
     status: String,
     title: String,
-    shell: Arc<Mutex<UiShell<ConsoleCommand>>>,
+    shell: Arc<Mutex<UiShell<ConsoleCommand, MenuAction>>>,
     /// Whether the cursor is captured for mouse look.
     cursor_captured: bool,
     /// Times the cursor was captured, windowed or not, so tests can see it.
@@ -475,7 +475,7 @@ impl Stage {
 
     /// The console shell. Never hold the guard across `draw`: the renderer locks the shell
     /// itself when it pulls the UI frame.
-    fn shell(&self) -> MutexGuard<'_, UiShell<ConsoleCommand>> {
+    fn shell(&self) -> MutexGuard<'_, UiShell<ConsoleCommand, MenuAction>> {
         self.shell.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
@@ -850,7 +850,7 @@ impl SearchlightGame {
     fn choose(&mut self, ctx: &mut EventContext<'_>, action: MenuAction) {
         match action {
             MenuAction::Play | MenuAction::Resume => self.enter_play(),
-            MenuAction::Settings => {}
+            MenuAction::Settings | MenuAction::Back => {}
             MenuAction::Quit => ctx.request_exit(),
         }
     }
@@ -1000,7 +1000,7 @@ impl SearchlightGame {
 
     /// Replaces the default console shell.
     #[must_use]
-    pub fn with_shell(mut self, shell: UiShell<ConsoleCommand>) -> Self {
+    pub fn with_shell(mut self, shell: UiShell<ConsoleCommand, MenuAction>) -> Self {
         self.stage.shell = Arc::new(Mutex::new(shell));
         self
     }
@@ -1037,7 +1037,7 @@ impl SearchlightGame {
             // A key held as the console opened would otherwise stay held: its release goes to
             // the console.
             Routing::Opened => self.input.release_all(),
-            Routing::Console | Routing::Closed => {}
+            Routing::Console | Routing::Closed | Routing::Menu => {}
             Routing::Game if self.in_menu() => {
                 self.menu_input(ctx, input, pressed, repeat);
             }
@@ -1517,7 +1517,7 @@ mod tests {
     }
 
     /// A game whose enemy is walking toward the player, so every sim tick moves it.
-    fn game_with_a_moving_enemy() -> SearchlightGame {
+    pub(super) fn game_with_a_moving_enemy() -> SearchlightGame {
         let mode = ArenaMode::new(arena_arena(), arena_config(), wave_tuning(1));
         let (bindings, _) = ActionBindings::load(&BTreeMap::new());
         SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
@@ -3307,6 +3307,291 @@ mod tests {
         );
         assert!(restart.restart, "F8 restarts once playing again");
         assert!(!ctx.exit_requested());
+    }
+}
+
+/// The menus, observed through the shell's screen stack and the game's outward behavior.
+#[cfg(test)]
+mod menu_tests {
+    use moho_app::GameClock;
+    use moho_input::key::MouseButton;
+    use moho_ui_shell::MenuItem;
+    use winit::dpi::PhysicalPosition;
+    use winit::event::{DeviceEvent, DeviceId, WindowEvent};
+
+    use super::tests::game_with_a_moving_enemy;
+    use super::*;
+
+    const MAIN: [&str; 3] = ["Play", "Settings", "Quit"];
+    const PAUSE: [&str; 3] = ["Resume", "Settings", "Quit"];
+
+    fn menu_game() -> SearchlightGame {
+        game_with_a_moving_enemy().with_main_menu()
+    }
+
+    /// A game in play, its look set up so mouse motion would turn the view.
+    fn playing_game() -> SearchlightGame {
+        let mut game = game_with_a_moving_enemy();
+        game.input_mut()
+            .set_look(moho_input::action_map::LookSettings {
+                look_per_count: 0.002,
+                smoothing: false,
+                invert_y: false,
+                acceleration: 0.0,
+            });
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.event(&mut ctx, Event::Window(WindowEvent::Focused(true)));
+        game.stage.capture_cursor();
+        game
+    }
+
+    fn press_keys(game: &mut SearchlightGame, ctx: &mut EventContext<'_>, keys: &[Key]) {
+        for &key in keys {
+            game.route_input(ctx, Input::Key(key), true, false);
+            game.route_input(ctx, Input::Key(key), false, false);
+        }
+    }
+
+    fn pause(game: &mut SearchlightGame, ctx: &mut EventContext<'_>) {
+        press_keys(game, ctx, &[Key::Escape]);
+        assert_eq!(game.screen, Screen::Paused, "Escape did not pause");
+    }
+
+    /// The labels of the screen the player sees on top.
+    fn labels(game: &SearchlightGame) -> Vec<String> {
+        let mut shell = game.stage.shell();
+        let screen = shell.menu_mut().top().expect("a menu screen is open");
+        screen
+            .items
+            .iter()
+            .map(|MenuItem::Button { label, .. }| label.clone())
+            .collect()
+    }
+
+    fn title(game: &SearchlightGame) -> Option<String> {
+        let mut shell = game.stage.shell();
+        let screen = shell.menu_mut().top().expect("a menu screen is open");
+        screen.title.clone()
+    }
+
+    fn menu_is_open(game: &SearchlightGame) -> bool {
+        game.stage.shell().menu_mut().is_open()
+    }
+
+    /// The centre of row `row` of a `rows`-row screen on the 1280 by 720 test window.
+    fn row_point(rows: usize, row: usize) -> [f64; 2] {
+        [640.0, 360.0 + (row as f64 - (rows - 1) as f64 / 2.0) * 56.0]
+    }
+
+    fn move_cursor(game: &mut SearchlightGame, ctx: &mut EventContext<'_>, at: [f64; 2]) {
+        game.event(
+            ctx,
+            Event::Window(WindowEvent::CursorMoved {
+                device_id: DeviceId::dummy(),
+                position: PhysicalPosition::new(at[0], at[1]),
+            }),
+        );
+    }
+
+    fn click(game: &mut SearchlightGame, ctx: &mut EventContext<'_>) {
+        let left = Input::Mouse(MouseButton::Left);
+        game.route_input(ctx, left, true, false);
+        game.route_input(ctx, left, false, false);
+    }
+
+    fn mouse_motion(game: &mut SearchlightGame, ctx: &mut EventContext<'_>, dx: f64, dy: f64) {
+        game.event(
+            ctx,
+            Event::Device(DeviceEvent::MouseMotion { delta: (dx, dy) }),
+        );
+    }
+
+    #[test]
+    fn down_from_play_focuses_settings_and_up_focuses_quit() {
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let mut down = menu_game();
+        assert_eq!(labels(&down), MAIN);
+        let mut up = menu_game();
+        let up_clock = GameClock::default();
+        let mut up_ctx = EventContext::new(&up_clock, None, None);
+
+        press_keys(&mut down, &mut ctx, &[Key::ArrowDown, Key::Enter]);
+        press_keys(&mut up, &mut up_ctx, &[Key::ArrowUp, Key::Enter]);
+
+        assert_eq!(title(&down).as_deref(), Some("Settings"));
+        assert!(!ctx.exit_requested());
+        assert!(up_ctx.exit_requested());
+    }
+
+    #[test]
+    fn enter_on_quit_requests_exit() {
+        let mut game = menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        assert_eq!(labels(&game), MAIN);
+
+        press_keys(
+            &mut game,
+            &mut ctx,
+            &[Key::ArrowDown, Key::ArrowDown, Key::Enter],
+        );
+
+        assert!(ctx.exit_requested());
+        assert_eq!(game.screen, Screen::MainMenu);
+    }
+
+    #[test]
+    fn clicking_resume_returns_to_play() {
+        let mut game = playing_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        pause(&mut game, &mut ctx);
+        assert_eq!(labels(&game), PAUSE);
+        assert!(!game.stage.cursor_captured, "the cursor is free in a menu");
+        press_keys(&mut game, &mut ctx, &[Key::ArrowDown]);
+
+        move_cursor(&mut game, &mut ctx, row_point(3, 0));
+        click(&mut game, &mut ctx);
+
+        assert_eq!(game.screen, Screen::Playing);
+        assert!(!menu_is_open(&game));
+        assert!(game.stage.cursor_captured);
+        assert!(!ctx.exit_requested());
+    }
+
+    #[test]
+    fn a_click_that_misses_every_row_chooses_nothing() {
+        let mut game = menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        assert_eq!(labels(&game), MAIN);
+
+        move_cursor(&mut game, &mut ctx, [10.0, 10.0]);
+        click(&mut game, &mut ctx);
+
+        assert_eq!(game.screen, Screen::MainMenu);
+        assert_eq!(labels(&game), MAIN);
+        assert!(!ctx.exit_requested());
+    }
+
+    #[test]
+    fn back_from_settings_shows_the_menu_it_came_from() {
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let mut main = menu_game();
+        let mut paused = playing_game();
+        pause(&mut paused, &mut ctx);
+        assert_eq!(labels(&main), MAIN);
+        assert_eq!(labels(&paused), PAUSE);
+
+        for game in [&mut main, &mut paused] {
+            press_keys(game, &mut ctx, &[Key::ArrowDown, Key::Enter]);
+            let settings = (title(game), labels(game));
+            press_keys(game, &mut ctx, &[Key::Enter]);
+            let after_back = (title(game), labels(game));
+            press_keys(game, &mut ctx, &[Key::Enter]);
+            let reopened = title(game);
+
+            assert_eq!(
+                settings,
+                (
+                    Some("Settings".to_owned()),
+                    ["Back"].map(String::from).to_vec()
+                )
+            );
+            assert_eq!(after_back.0, None);
+            assert_eq!(reopened.as_deref(), Some("Settings"), "Back kept the focus");
+        }
+        assert_eq!(main.screen, Screen::MainMenu);
+        assert_eq!(paused.screen, Screen::Paused);
+        assert!(!ctx.exit_requested());
+    }
+
+    #[test]
+    fn escape_in_settings_from_pause_shows_the_pause_menu_still_paused() {
+        let mut game = playing_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        pause(&mut game, &mut ctx);
+        assert_eq!(labels(&game), PAUSE);
+        let world = (game.sim().player(), game.sim().enemy_state(0));
+        press_keys(&mut game, &mut ctx, &[Key::ArrowDown, Key::Enter]);
+        assert_eq!(title(&game).as_deref(), Some("Settings"));
+
+        press_keys(&mut game, &mut ctx, &[Key::Escape]);
+
+        assert_eq!(labels(&game), PAUSE);
+        assert_eq!(game.screen, Screen::Paused);
+        assert!(!game.stage.cursor_captured);
+        assert!(!ctx.exit_requested());
+        assert_eq!((game.sim().player(), game.sim().enemy_state(0)), world);
+    }
+
+    #[test]
+    fn escape_on_the_pause_menu_resumes_and_on_the_main_menu_does_nothing() {
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let mut paused = playing_game();
+        pause(&mut paused, &mut ctx);
+        assert_eq!(labels(&paused), PAUSE);
+        let mut main = menu_game();
+        assert_eq!(labels(&main), MAIN);
+
+        press_keys(&mut paused, &mut ctx, &[Key::Escape]);
+        press_keys(&mut main, &mut ctx, &[Key::Escape]);
+
+        assert_eq!(paused.screen, Screen::Playing);
+        assert!(!menu_is_open(&paused));
+        assert!(paused.stage.cursor_captured);
+        assert_eq!(main.screen, Screen::MainMenu);
+        assert_eq!(labels(&main), MAIN);
+    }
+
+    #[test]
+    fn fire_and_mouse_behind_the_pause_menu_do_nothing() {
+        let mut game = playing_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        pause(&mut game, &mut ctx);
+        assert_eq!(labels(&game), PAUSE);
+
+        move_cursor(&mut game, &mut ctx, [5.0, 5.0]);
+        game.route_input(&mut ctx, Input::Mouse(MouseButton::Left), true, false);
+        game.route_input(&mut ctx, Input::Key(Key::W), true, false);
+        mouse_motion(&mut game, &mut ctx, 40.0, 30.0);
+        let command = game.command();
+
+        assert!(!command.fire);
+        assert_eq!(command.movement.forward, 0.0);
+        assert_eq!(command.movement.yaw_delta, 0.0);
+        assert_eq!(command.movement.pitch_delta, 0.0);
+        assert_eq!(game.input.pending_look(), (0.0, 0.0));
+        assert_eq!(game.screen, Screen::Paused);
+        assert_eq!(labels(&game), PAUSE);
+    }
+
+    #[test]
+    fn forward_held_as_the_pause_menu_opens_does_not_move_after_resume() {
+        let mut game = playing_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.route_input(&mut ctx, Input::Key(Key::W), true, false);
+        assert_eq!(game.command().movement.forward, 1.0);
+
+        pause(&mut game, &mut ctx);
+        assert_eq!(labels(&game), PAUSE);
+        game.route_input(&mut ctx, Input::Key(Key::W), false, false);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        let resumed = game.command();
+        game.route_input(&mut ctx, Input::Key(Key::W), true, false);
+        let pressed_again = game.command();
+
+        assert_eq!(game.screen, Screen::Playing);
+        assert!(!menu_is_open(&game));
+        assert_eq!(resumed.movement.forward, 0.0);
+        assert_eq!(pressed_again.movement.forward, 1.0);
     }
 }
 

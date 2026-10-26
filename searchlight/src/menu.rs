@@ -1,7 +1,7 @@
 //! The main and pause menus as a pure value: which item is selected, what a key or a click on it
 //! chooses, and the text that draws it. It owns no window and no input state.
 
-use moho_ui_shell::{Anchor, ScreenText};
+use moho_ui_shell::{Anchor, MenuScreen, ScreenText};
 
 /// Font size of every row.
 const ROW_SIZE: f32 = 36.0;
@@ -19,6 +19,8 @@ pub enum MenuAction {
     Resume,
     Settings,
     Quit,
+    /// Closes the top screen.
+    Back,
 }
 
 impl MenuAction {
@@ -28,8 +30,24 @@ impl MenuAction {
             MenuAction::Resume => "Resume",
             MenuAction::Settings => "Settings",
             MenuAction::Quit => "Quit",
+            MenuAction::Back => "Back",
         }
     }
+}
+
+/// Play, Settings and Quit, in that order; Escape does nothing.
+pub fn main_screen() -> MenuScreen<MenuAction> {
+    todo!("main menu as a shell screen")
+}
+
+/// Resume, Settings and Quit, in that order; Escape resumes.
+pub fn pause_screen() -> MenuScreen<MenuAction> {
+    todo!("pause menu as a shell screen")
+}
+
+/// Titled Settings, with one Back button; Escape is Back.
+pub fn settings_screen() -> MenuScreen<MenuAction> {
+    todo!("settings screen")
 }
 
 /// A column of items, one of them selected, laid out around the screen centre.

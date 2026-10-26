@@ -9,6 +9,7 @@ pub mod apply;
 pub mod console;
 pub mod host;
 pub mod layers;
+pub mod menu;
 pub mod paint_map;
 pub mod text;
 
@@ -17,4 +18,5 @@ pub use console::registry::{CommandSpec, EngineCommand, Owner, RegisterError};
 pub use console::{CONSOLE_BINDING, Console, Routing};
 pub use host::UiShell;
 pub use layers::UiLayers;
+pub use menu::{MenuEvent, MenuItem, MenuScreen, MenuStack};
 pub use text::{Anchor, ScreenText, ScreenTextError};

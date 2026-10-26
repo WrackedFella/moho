@@ -10,19 +10,22 @@ use winit::event::{KeyEvent, WindowEvent};
 use winit::window::Window;
 
 use crate::console::{Console, Routing};
+use crate::menu::MenuStack;
 use crate::paint_map::to_ui_frame;
 use crate::text::{self, ScreenText, ScreenTextError};
 
-/// Owns the egui context and the console it draws.
-pub struct UiShell<G> {
+/// Owns the egui context, the console it draws and the menu screens a game with actions `A`
+/// pushes.
+pub struct UiShell<G, A> {
     context: egui::Context,
     window: Option<Arc<Window>>,
     state: Option<egui_winit::State>,
     console: Console<G>,
+    menu: MenuStack<A>,
     texts: Vec<ScreenText>,
 }
 
-impl<G> std::fmt::Debug for UiShell<G> {
+impl<G, A> std::fmt::Debug for UiShell<G, A> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("UiShell")
             .field("console_open", &self.console.is_open())
@@ -30,15 +33,27 @@ impl<G> std::fmt::Debug for UiShell<G> {
     }
 }
 
-impl<G> UiShell<G> {
+impl<G, A> UiShell<G, A> {
     pub fn new(console: Console<G>) -> Self {
         Self {
             context: egui::Context::default(),
             window: None,
             state: None,
             console,
+            menu: MenuStack::new(),
             texts: Vec::new(),
         }
+    }
+
+    pub fn menu_mut(&mut self) -> &mut MenuStack<A> {
+        &mut self.menu
+    }
+
+    /// The cursor moved to `physical` pixels from the window's top left, on a window scaled by
+    /// `scale`; hovers the menu in logical points. `on_window_event` delegates here with the
+    /// attached window's scale factor, or 1 when none is attached.
+    pub fn cursor_moved(&mut self, _physical: [f64; 2], _scale: f64) {
+        todo!("cursor hover over the menu")
     }
 
     /// Creates the egui window state; call once from `Game::init`.
@@ -57,7 +72,11 @@ impl<G> UiShell<G> {
     /// Routes one key or button through the console. `on_window_event` delegates here, so this
     /// is the platform-free part of that routing.
     pub fn route(&mut self, input: Input, pressed: bool, repeat: bool) -> Routing {
-        self.console.on_key(input, pressed, repeat)
+        let routing = self.console.on_key(input, pressed, repeat);
+        if routing == Routing::Game && self.menu.is_open() {
+            todo!("menu routing");
+        }
+        routing
     }
 
     /// Routes a window event. Keys and mouse buttons go through the console and reach egui only
@@ -173,7 +192,7 @@ pub fn input_of(event: &WindowEvent) -> Option<(Input, bool, bool)> {
     }
 }
 
-impl<G> UiFrameSource for UiShell<G> {
+impl<G, A> UiFrameSource for UiShell<G, A> {
     fn ui_frame(&mut self, size_in_pixels: [u32; 2]) -> Option<UiFrame> {
         // Taken even while closed, so events fed to egui do not pile up unread.
         let input = self.take_input(size_in_pixels);
@@ -205,13 +224,203 @@ mod tests {
     use std::collections::BTreeMap;
 
     use moho_input::key::Key;
+    use winit::dpi::PhysicalPosition;
+    use winit::event::DeviceId;
 
     use super::*;
     use crate::console::tests::Cmd;
+    use crate::menu::{MenuEvent, MenuItem, MenuScreen};
 
-    fn shell() -> UiShell<Cmd> {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Choice {
+        Play,
+        Settings,
+        Quit,
+    }
+
+    fn shell() -> UiShell<Cmd, Choice> {
         let (console, _) = Console::new(&BTreeMap::new());
         UiShell::new(console)
+    }
+
+    fn main_screen() -> MenuScreen<Choice> {
+        let button = |label: &str, action| MenuItem::Button {
+            label: label.to_owned(),
+            action,
+        };
+        MenuScreen {
+            title: None,
+            items: vec![
+                button("Play", Choice::Play),
+                button("Settings", Choice::Settings),
+                button("Quit", Choice::Quit),
+            ],
+            back: None,
+        }
+    }
+
+    fn menu_shell() -> UiShell<Cmd, Choice> {
+        let mut shell = shell();
+        shell.menu_mut().push(main_screen());
+        shell
+    }
+
+    /// The windowless shell's window is 1280 by 720 points; the main screen's rows centre on x
+    /// 640 and on these y values.
+    const ROW_Y: [f64; 3] = [304.0, 360.0, 416.0];
+
+    fn cursor_at(shell: &mut UiShell<Cmd, Choice>, at: [f64; 2]) {
+        let routing = shell.on_window_event(&WindowEvent::CursorMoved {
+            device_id: DeviceId::dummy(),
+            position: PhysicalPosition::new(at[0], at[1]),
+        });
+        assert_eq!(routing, Routing::Game, "a cursor move is not an input");
+    }
+
+    fn chosen(shell: &mut UiShell<Cmd, Choice>) -> Vec<Choice> {
+        shell
+            .menu_mut()
+            .take_events()
+            .into_iter()
+            .map(|event| match event {
+                MenuEvent::Chosen(choice) => choice,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn hovering_a_row_focuses_it_and_a_click_chooses_it() {
+        let mut shell = menu_shell();
+        let left = Input::Mouse(MouseButton::Left);
+
+        cursor_at(&mut shell, [640.0, ROW_Y[2]]);
+        let enter = shell.route(Input::Key(Key::Enter), true, false);
+        let focused = chosen(&mut shell);
+        let press = shell.route(left, true, false);
+        let release = shell.route(left, false, false);
+        let clicked = chosen(&mut shell);
+        cursor_at(&mut shell, [640.0, ROW_Y[1]]);
+        shell.route(left, true, false);
+        let clicked_settings = chosen(&mut shell);
+        cursor_at(&mut shell, [5.0, 5.0]);
+        shell.route(left, true, false);
+        let missed = chosen(&mut shell);
+
+        assert_eq!(
+            (enter, press, release),
+            (Routing::Menu, Routing::Menu, Routing::Menu)
+        );
+        assert_eq!(focused, [Choice::Quit], "hover moved the focus");
+        assert_eq!(clicked, [Choice::Quit], "only the press chooses");
+        assert_eq!(clicked_settings, [Choice::Settings]);
+        assert_eq!(missed, []);
+    }
+
+    #[test]
+    fn an_open_menu_takes_every_key_and_button_including_releases() {
+        let mut shell = menu_shell();
+        let inputs = [
+            Input::Key(Key::W),
+            Input::Key(Key::Space),
+            Input::Key(Key::Tab),
+            Input::Key(Key::ArrowDown),
+            Input::Mouse(MouseButton::Left),
+            Input::Mouse(MouseButton::Right),
+        ];
+
+        for input in inputs {
+            for (pressed, repeat) in [(true, false), (true, true), (false, false)] {
+                let routing = shell.route(input, pressed, repeat);
+
+                assert_eq!(
+                    routing,
+                    Routing::Menu,
+                    "{input:?} pressed {pressed} repeat {repeat}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn captures_input_is_true_while_a_menu_is_open() {
+        let mut shell = shell();
+        assert!(!shell.captures_input());
+
+        shell.menu_mut().push(main_screen());
+        let open = shell.captures_input();
+        shell.menu_mut().clear();
+
+        assert!(open);
+        assert!(!shell.captures_input());
+    }
+
+    #[test]
+    fn the_console_key_opens_the_console_over_a_menu() {
+        let mut shell = menu_shell();
+        let backtick = Input::Key(Key::Backtick);
+
+        let opening = shell.route(backtick, true, false);
+        let typed = shell.route(Input::Key(Key::Enter), true, false);
+        let closing = shell.route(backtick, true, false);
+        let after = shell.route(Input::Key(Key::Enter), true, false);
+
+        assert_eq!(opening, Routing::Opened);
+        assert_eq!(typed, Routing::Console);
+        assert_eq!(closing, Routing::Closed);
+        assert_eq!(after, Routing::Menu);
+        assert_eq!(
+            chosen(&mut shell),
+            [Choice::Play],
+            "the console kept its Enter"
+        );
+        assert!(shell.menu_mut().is_open());
+    }
+
+    #[test]
+    fn a_cursor_in_physical_pixels_hits_rows_laid_out_in_points() {
+        let mut shell = menu_shell();
+
+        shell.cursor_moved([1280.0, 832.0], 2.0);
+        shell.route(Input::Key(Key::Enter), true, false);
+        let scaled = chosen(&mut shell);
+        shell.cursor_moved([1280.0, 720.0], 2.0);
+        shell.route(Input::Key(Key::Enter), true, false);
+        let other_row = chosen(&mut shell);
+        cursor_at(&mut shell, [640.0, ROW_Y[0]]);
+        shell.route(Input::Key(Key::Enter), true, false);
+        let unscaled = chosen(&mut shell);
+
+        assert_eq!(scaled, [Choice::Quit]);
+        assert_eq!(other_row, [Choice::Settings]);
+        assert_eq!(unscaled, [Choice::Play], "a windowless shell has scale 1");
+    }
+
+    #[test]
+    fn an_open_menu_draws_a_frame_and_an_empty_stack_draws_none() {
+        let mut shell = shell();
+        let empty = shell.ui_frame([1280, 720]);
+
+        shell.menu_mut().push(main_screen());
+        let open = shell.ui_frame([1280, 720]);
+        shell.menu_mut().clear();
+        let closed = shell.ui_frame([1280, 720]);
+
+        assert_eq!(empty, None);
+        let open = open.expect("an open menu draws a frame");
+        assert!(!open.meshes.is_empty());
+        assert!(open.meshes.iter().all(|m| !m.vertices.is_empty()));
+        assert_eq!(closed, None);
+    }
+
+    #[test]
+    fn moving_the_focus_changes_the_frame_that_is_drawn() {
+        let mut shell = menu_shell();
+        let first = shell.ui_frame([1280, 720]).expect("an open menu draws");
+
+        shell.route(Input::Key(Key::ArrowDown), true, false);
+        let second = shell.ui_frame([1280, 720]).expect("an open menu draws");
+
+        assert_ne!(first.meshes, second.meshes, "the highlight did not move");
     }
 
     #[test]
