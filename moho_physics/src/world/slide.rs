@@ -103,6 +103,17 @@ fn step_reach(remaining: Vec3, min_width: f32) -> Option<(Vec3, f32)> {
     (length >= STEP_MIN_PROGRESS).then(|| (remaining / length, length.max(min_width)))
 }
 
+/// `motion` clipped against the `planes` (unit normals, facing the hull) it met, in order.
+///
+/// Quake's `SV_FlyMove`: the part entering the last plane is removed; if the result still
+/// enters an earlier plane, two planes send it along their crease and any more stop it. Motion
+/// leaving a plane is kept.
+#[cfg(test)]
+fn clip_motion(motion: Vec3, planes: &[Vec3]) -> Vec3 {
+    let _ = (motion, planes);
+    todo!("ENG-F32-11")
+}
+
 /// A character hull as the ground query sees it: a core disc swept by a sphere.
 ///
 /// A capsule is a point swept by its radius; a round cylinder is its flat base disc swept by
@@ -1288,5 +1299,151 @@ mod tests {
             (held_above.translation.z - 1.0 / 60.0).abs() < 5e-4,
             "rolled off the nosing: {held_above:?}"
         );
+    }
+
+    const FLOOR: Vec3 = Vec3::Y;
+
+    #[test]
+    fn clip_motion_slides_along_one_plane_and_keeps_motion_leaving_it() {
+        let motion = Vec3::new(1.0, 0.5, 1.0);
+
+        let along_wall = clip_motion(motion, &[Vec3::NEG_Z]);
+        let leaving_wall = clip_motion(motion, &[Vec3::Z]);
+        let past_the_floor = clip_motion(motion, &[FLOOR, Vec3::NEG_Z]);
+
+        assert!(
+            along_wall.distance(Vec3::new(1.0, 0.5, 0.0)) < 1e-6,
+            "{along_wall:?}"
+        );
+        assert!(leaving_wall.distance(motion) < 1e-6, "{leaving_wall:?}");
+        assert!(
+            past_the_floor.distance(Vec3::new(1.0, 0.5, 0.0)) < 1e-6,
+            "rising off the earlier plane is kept: {past_the_floor:?}"
+        );
+    }
+
+    #[test]
+    fn clip_motion_follows_the_crease_of_two_planes() {
+        let motion = Vec3::new(1.0, -1.0, 1.0);
+
+        let floor_then_wall = clip_motion(motion, &[FLOOR, Vec3::NEG_Z]);
+        let wall_then_floor = clip_motion(motion, &[Vec3::NEG_Z, FLOOR]);
+
+        assert!(
+            floor_then_wall.distance(Vec3::X) < 1e-6,
+            "{floor_then_wall:?}"
+        );
+        assert!(
+            wall_then_floor.distance(Vec3::X) < 1e-6,
+            "{wall_then_floor:?}"
+        );
+    }
+
+    #[test]
+    fn clip_motion_stops_against_a_third_plane() {
+        let motion = Vec3::new(1.0, -1.0, 1.0);
+
+        let clipped = clip_motion(motion, &[FLOOR, Vec3::NEG_Z, Vec3::NEG_X]);
+
+        assert_eq!(clipped, Vec3::ZERO);
+    }
+
+    #[test]
+    fn a_level_slide_a_skin_above_the_floor_moves_the_whole_way() {
+        let resting = Pose::from_translation(Vec3::new(0.0, FLOOR_REST_Y, 0.0));
+
+        let slid = with_slider(&[ground(0.0, -10.0, 10.0)], |slider| {
+            slider.slide(&resting, Vec3::new(0.0, 0.0, 0.1), true)
+        });
+
+        assert!((slid.translation.z - 0.1).abs() < 1e-4, "{slid:?}");
+        assert!(slid.translation.y.abs() < 1e-3, "{slid:?}");
+    }
+
+    #[test]
+    fn a_level_slide_into_a_steep_face_does_not_rise() {
+        let touching_the_face = Pose::from_translation(Vec3::new(0.0, FLOOR_REST_Y, 0.82));
+
+        let slid = with_slider(&floor_with_a_steep_face(), |slider| {
+            slider.slide(&touching_the_face, Vec3::new(0.0, 0.0, 0.1), true)
+        });
+
+        assert!(slid.translation.y <= 1e-3, "rode up the face: {slid:?}");
+    }
+
+    #[test]
+    fn a_hit_on_a_triangle_face_reports_its_exact_normal() {
+        // The jump setup of a walker pressed against a 0.7 m riser: rising while moving forward,
+        // the cast's own normal on the riser is off vertical by about 2e-4.
+        let meshes = [ground(0.0, -10.0, 10.0), step_box_mesh(2.0, 6.0, 0.7)];
+        let pressed = Pose::from_translation(Vec3::new(0.0, FLOOR_REST_Y, 2.0 - 0.3 - 0.03));
+        let asked = Vec3::new(0.0, 0.133, 4.0 / 60.0);
+
+        let slid = with_slider(&meshes, |slider| slider.slide(&pressed, asked, true));
+
+        let (_, normal) = slid
+            .hits
+            .iter()
+            .find(|(_, normal)| normal.z < -0.5)
+            .unwrap_or_else(|| panic!("the riser was not hit: {slid:?}"));
+        assert!(
+            normal.distance(Vec3::NEG_Z) < 1e-6,
+            "the cast's noisy normal, not the face's: {normal:?}"
+        );
+    }
+
+    /// A capsule 5 cm into the wall at z = 2, centred in the air so only the wall is touched.
+    fn inside_the_wall() -> Pose {
+        Pose::from_translation(Vec3::new(0.0, 1.5, 2.0 - 0.3 + 0.05))
+    }
+
+    #[test]
+    fn a_hull_asked_to_stay_put_inside_a_wall_is_pushed_out_to_a_skin() {
+        let slid = with_slider(&[wall_mesh(2.0)], |slider| {
+            slider.slide(&inside_the_wall(), Vec3::ZERO, false)
+        });
+
+        let ends_at = inside_the_wall().translation.z + slid.translation.z;
+        assert!(
+            (ends_at - (2.0 - 0.3 - 0.0115)).abs() < 1e-3,
+            "should end a skin from the wall: {slid:?}"
+        );
+    }
+
+    #[test]
+    fn a_moving_hull_is_not_depenetrated() {
+        let along_the_wall = Vec3::new(0.05, 0.0, 0.0);
+
+        let slid = with_slider(&[wall_mesh(2.0)], |slider| {
+            slider.slide(&inside_the_wall(), along_the_wall, false)
+        });
+
+        assert!(slid.translation.z.abs() < 1e-3, "pushed out: {slid:?}");
+        assert!((slid.translation.x - 0.05).abs() < 1e-3, "{slid:?}");
+    }
+
+    #[test]
+    fn a_level_slide_ending_within_contact_is_lowered_onto_the_ground() {
+        let hovering = Pose::from_translation(Vec3::new(0.0, FLOOR_REST_Y + 0.03, 0.0));
+
+        let slid = with_slider(&[ground(0.0, -10.0, 10.0)], |slider| {
+            slider.slide(&hovering, Vec3::new(0.0, 0.0, 0.01), true)
+        });
+
+        assert!((slid.translation.y + 0.03).abs() < 1e-3, "{slid:?}");
+        assert!(slid.grounded, "{slid:?}");
+        let ground = slid.ground.expect("ground under the lowered hull");
+        assert!(ground.gap.abs() < 1e-3, "{ground:?}");
+    }
+
+    #[test]
+    fn a_rising_slide_is_not_lowered() {
+        let hovering = Pose::from_translation(Vec3::new(0.0, FLOOR_REST_Y + 0.03, 0.0));
+
+        let slid = with_slider(&[ground(0.0, -10.0, 10.0)], |slider| {
+            slider.slide(&hovering, Vec3::new(0.0, 0.01, 0.01), true)
+        });
+
+        assert!((slid.translation.y - 0.01).abs() < 1e-3, "{slid:?}");
     }
 }
