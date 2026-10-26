@@ -3466,6 +3466,97 @@ mod tests {
     }
 
     #[test]
+    fn running_off_a_plateau_onto_a_60_degree_slope_goes_airborne_and_keeps_its_speed() {
+        const PLATEAU: f32 = 3.0;
+        let run = PLATEAU / 60.0_f32.to_radians().tan();
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        world.set_world_mesh(
+            WorldMeshId(1),
+            &slope_mesh(-10.0, PLATEAU, 0.0, PLATEAU),
+            TEST_TAG,
+        );
+        world.set_world_mesh(
+            WorldMeshId(2),
+            &slope_mesh(0.0, PLATEAU, run, 0.0),
+            TEST_TAG,
+        );
+        let h = resting_then_moving(
+            &mut world,
+            Vec3::new(-5.0, PLATEAU + rest_height_on_floor(), -3.0),
+            0.0,
+            Vec3::ZERO,
+        );
+        let forward = CharacterCommand {
+            forward: 1.0,
+            ..CharacterCommand::default()
+        };
+        let past_the_crest = 0.3115 + 0.02;
+        let mut first_past = None;
+
+        for tick in 0..120 {
+            let (now, _) = searchlight_tick(&mut world, h, &forward);
+
+            match first_past {
+                None if now.position.z > past_the_crest => {
+                    first_past = Some(tick);
+                    assert!(
+                        !now.grounded,
+                        "tick {tick}: snapped onto the steep face, {now:?}"
+                    );
+                    assert!(
+                        (now.velocity.with_y(0.0).length() - 6.0).abs() < 0.1,
+                        "tick {tick}: lost its speed leaving the crest, {now:?}"
+                    );
+                }
+                Some(first) if tick - first <= 10 => {
+                    assert!(!now.grounded, "tick {tick}: grounded over the face, {now:?}");
+                }
+                _ => {}
+            }
+        }
+
+        assert!(first_past.is_some(), "never passed the crest");
+    }
+
+    #[test]
+    fn a_character_standing_on_another_characters_head_stays_grounded() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        let lower = world.add_character(Vec3::new(0.0, 1.2, 0.0));
+        settle_on_floor(&mut world, &[lower]);
+        let base = state(&world, lower).position;
+        let upper = world.add_character(base + Vec3::Y * (2.3 + 0.0115));
+        let mut at_tick_10 = Vec3::ZERO;
+        let mut trajectory = Vec::new();
+
+        for tick in 0..60 {
+            searchlight_tick(&mut world, lower, &idle());
+            let (now, _) = searchlight_tick(&mut world, upper, &idle());
+
+            trajectory.push(now.position);
+            if tick == 10 {
+                at_tick_10 = now.position;
+            }
+        }
+
+        let end = state(&world, upper);
+        assert!(
+            end.grounded,
+            "not grounded; trajectory every 10 ticks {:?}, {end:?}",
+            trajectory.iter().step_by(10).collect::<Vec<_>>()
+        );
+        assert!(
+            end.position.y > base.y + 2.0,
+            "fell off the head: {end:?}, lower at {base:?}"
+        );
+        assert!(
+            end.position.distance(at_tick_10) < 0.02,
+            "crept from {at_tick_10:?}: {end:?}"
+        );
+    }
+
+    #[test]
     fn walking_into_a_step_at_45_degrees_climbs_it() {
         let (mut world, h) = standing_on_floor();
         world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 6.0, 0.45), TEST_TAG);
