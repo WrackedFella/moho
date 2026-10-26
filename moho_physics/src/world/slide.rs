@@ -1273,10 +1273,25 @@ mod tests {
 
     #[test]
     fn a_step_up_that_lands_on_a_steep_face_is_refused() {
-        let touching_the_face = Pose::from_translation(Vec3::new(0.0, FLOOR_REST_Y, 0.82));
+        // A 0.3 m riser, under the step height, topped by a 50 degree face rising away from
+        // the walker: only a step-up could lift the hull, and it would land on the face.
+        let rise = 50.0_f32.to_radians().tan();
+        let riser_and_face = quad_mesh(
+            &[
+                [-10.0, 0.0, 1.0],
+                [10.0, 0.0, 1.0],
+                [10.0, 0.3, 1.0],
+                [-10.0, 0.3, 1.0],
+                [10.0, 0.3 + rise, 2.0],
+                [-10.0, 0.3 + rise, 2.0],
+            ],
+            &[0, 2, 1, 0, 3, 2, 3, 4, 2, 3, 5, 4],
+        );
+        let touching_the_riser =
+            Pose::from_translation(Vec3::new(0.0, FLOOR_REST_Y, 1.0 - 0.3 - 0.0115));
 
-        let slid = with_slider(&floor_with_a_steep_face(), |slider| {
-            slider.slide(&touching_the_face, Vec3::new(0.0, 0.0, 0.1), true)
+        let slid = with_slider(&[ground(0.0, -10.0, 10.0), riser_and_face], |slider| {
+            slider.slide(&touching_the_riser, Vec3::new(0.0, 0.0, 0.1), true)
         });
 
         assert!(
@@ -1340,6 +1355,30 @@ mod tests {
     }
 
     #[test]
+    fn clip_motion_follows_a_crease_that_is_not_perpendicular_to_the_motion() {
+        let motion = Vec3::new(0.0, 1.0, 1.0);
+
+        let clipped = clip_motion(
+            motion,
+            &[Vec3::new(0.6, 0.0, -0.8), Vec3::new(-0.6, 0.0, -0.8)],
+        );
+
+        assert!(clipped.distance(Vec3::Y) < 1e-5, "{clipped:?}");
+    }
+
+    #[test]
+    fn clip_motion_keeps_a_third_plane_motion_that_leaves_the_others() {
+        let motion = Vec3::new(1.0, 0.5, -1.0);
+
+        let clipped = clip_motion(motion, &[FLOOR, Vec3::NEG_Z, Vec3::NEG_X]);
+
+        assert!(
+            clipped.distance(Vec3::new(0.0, 0.5, -1.0)) < 1e-5,
+            "{clipped:?}"
+        );
+    }
+
+    #[test]
     fn clip_motion_stops_against_a_third_plane() {
         let motion = Vec3::new(1.0, -1.0, 1.0);
 
@@ -1365,10 +1404,21 @@ mod tests {
         let touching_the_face = Pose::from_translation(Vec3::new(0.0, FLOOR_REST_Y, 0.82));
 
         let slid = with_slider(&floor_with_a_steep_face(), |slider| {
-            slider.slide(&touching_the_face, Vec3::new(0.0, 0.0, 0.1), true)
+            slider.slide(&touching_the_face, Vec3::new(0.0, 0.0, 0.1), false)
         });
 
         assert!(slid.translation.y <= 1e-3, "rode up the face: {slid:?}");
+    }
+
+    #[test]
+    fn a_rising_slide_into_a_steep_face_rides_up_it() {
+        let touching_the_face = Pose::from_translation(Vec3::new(0.0, FLOOR_REST_Y, 0.82));
+
+        let slid = with_slider(&floor_with_a_steep_face(), |slider| {
+            slider.slide(&touching_the_face, Vec3::new(0.0, 0.05, 0.1), false)
+        });
+
+        assert!(slid.translation.y > 0.06, "did not ride up: {slid:?}");
     }
 
     #[test]
@@ -1426,14 +1476,31 @@ mod tests {
     fn a_level_slide_ending_within_contact_is_lowered_onto_the_ground() {
         let hovering = Pose::from_translation(Vec3::new(0.0, FLOOR_REST_Y + 0.03, 0.0));
 
+        for was_grounded in [true, false] {
+            let slid = with_slider(&[ground(0.0, -10.0, 10.0)], |slider| {
+                slider.slide(&hovering, Vec3::new(0.0, 0.0, 0.01), was_grounded)
+            });
+
+            assert!(
+                (slid.translation.y + 0.03).abs() < 1e-3,
+                "was_grounded {was_grounded}: {slid:?}"
+            );
+            assert!(slid.grounded, "was_grounded {was_grounded}: {slid:?}");
+            let ground = slid.ground.expect("ground under the lowered hull");
+            assert!(ground.gap.abs() < 1e-3, "{ground:?}");
+        }
+    }
+
+    #[test]
+    fn a_slide_beyond_ground_contact_is_not_lowered() {
+        let hovering = Pose::from_translation(Vec3::new(0.0, FLOOR_REST_Y + 0.08, 0.0));
+
         let slid = with_slider(&[ground(0.0, -10.0, 10.0)], |slider| {
             slider.slide(&hovering, Vec3::new(0.0, 0.0, 0.01), true)
         });
 
-        assert!((slid.translation.y + 0.03).abs() < 1e-3, "{slid:?}");
-        assert!(slid.grounded, "{slid:?}");
-        let ground = slid.ground.expect("ground under the lowered hull");
-        assert!(ground.gap.abs() < 1e-3, "{ground:?}");
+        assert!(slid.translation.y.abs() < 1e-3, "lowered: {slid:?}");
+        assert!(!slid.grounded, "{slid:?}");
     }
 
     #[test]

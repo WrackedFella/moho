@@ -3348,7 +3348,7 @@ mod tests {
 
     #[test]
     fn an_idle_walker_on_a_steep_face_slides_down_it() {
-        for degrees in [50.0_f32, 60.0] {
+        for degrees in [46.0_f32, 50.0, 60.0] {
             let (mut world, h) = walker_on_a_face(degrees);
             let mut ticks_over_the_face = 0;
 
@@ -3379,8 +3379,10 @@ mod tests {
     }
 
     #[test]
-    fn an_idle_walker_stands_on_44_degrees_and_slides_on_46() {
+    fn an_idle_walker_stands_on_a_44_degree_slope() {
         let (mut world, h) = walker_on_a_face(44.0);
+        let mut settled = None;
+
         for tick in 0..120 {
             let (now, _) = searchlight_tick(&mut world, h, &idle());
 
@@ -3388,23 +3390,23 @@ mod tests {
                 tick == 0 || now.grounded,
                 "44 degrees, tick {tick}: airborne, {now:?}"
             );
+            // An early tick pops an idle walker on a 40-44 degree slope, so stillness is
+            // measured from after it.
+            if tick == 30 {
+                settled = Some(now.position);
+            }
         }
+
+        let settled = settled.expect("tick 30 ran");
         let held = state(&world, h);
+        assert!(
+            held.position.distance(settled) < 0.005,
+            "44 degrees: crept from {settled:?}, {held:?}"
+        );
         assert!(
             held.position.z < OVER_THE_FACE_Z,
             "44 degrees: slid off, {held:?}"
         );
-
-        let (mut world, h) = walker_on_a_face(46.0);
-        let mut airborne_over_the_face = false;
-        for tick in 0..120 {
-            let (now, _) = searchlight_tick(&mut world, h, &idle());
-
-            airborne_over_the_face |= tick > 0 && now.position.z < OVER_THE_FACE_Z && !now.grounded;
-        }
-        let slid = state(&world, h);
-        assert!(airborne_over_the_face, "46 degrees: never left the face");
-        assert!(slid.position.z > 0.0, "46 degrees: {slid:?}");
     }
 
     #[test]
@@ -3440,6 +3442,8 @@ mod tests {
             highest <= rest + crate::movement::STEP_HEIGHT,
             "climbed to {highest} from {rest}"
         );
+        let end = state(&world, h);
+        assert!(end.position.z > 0.75, "never reached the face: {end:?}");
     }
 
     #[test]
