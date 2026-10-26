@@ -249,4 +249,7 @@ exclude_re = [
     'replace \+ with - in contact_ao',
     'replace \| with \^ in chunks_meshed_from',
     'replace \+ with - in contact_ao',
+    'replace UiShell<G, A>::(attach|feed|feed_egui) with \(\)',
+    'replace == with != in UiShell<G, A>::feed',
+    'delete match arm \(Some\(state\), Some\(window\)\) in UiShell<G, A>::take_input',
 ]

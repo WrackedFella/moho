@@ -48,7 +48,8 @@ egui or the action map, only in `Playing` and `ConsoleOpen`. The result is a `Ro
 |---|---|
 | `Opened` / `Closed` | The console key (or `Esc` when open) toggled it; `enter_console` / `exit_console` run the state transition; the event ends there |
 | `Console` | The open console takes the input; only egui sees it |
-| `Game` | Not the console's; normal routing continues |
+| `Menu` | The console did not take the input and a menu screen is open (`UiShell::route`): the menu takes every key and button, releases included, and the game neither sees it nor routes it further |
+| `Game` | Not the console's and no menu is open; normal routing continues |
 
 The console key is the reserved `console` entry of `[bindings]` (default backtick,
 [prefs format](../reference/prefs-format.md)); `flagstone_ui::actions::load_bindings` drops it

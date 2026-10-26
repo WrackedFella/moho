@@ -48,6 +48,9 @@ pub enum Routing {
     Opened,
     /// The input closed the console.
     Closed,
+    /// The console did not take the input and a menu screen is open: the menu takes it, every
+    /// key and button, releases included.
+    Menu,
 }
 
 /// The console for a game whose own commands are `G`.
