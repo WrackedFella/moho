@@ -477,6 +477,110 @@ mod tests {
         assert_eq!(single, [200.0]);
     }
 
+    const FOCUS: [u8; 4] = [255, 220, 80, 255];
+    const MAIN_LABELS: [&str; 3] = ["Play", "Settings", "Quit"];
+
+    /// Where a centre-anchored text is centred on a window `size` points across.
+    fn text_centre(text: &ScreenText, size: [f32; 2]) -> [f32; 2] {
+        assert_eq!(text.anchor, Anchor::Center);
+        [
+            size[0] / 2.0 + text.offset[0],
+            size[1] / 2.0 + text.offset[1],
+        ]
+    }
+
+    fn rect_centre(rect: &Rect) -> [f32; 2] {
+        [
+            (rect.min[0] + rect.max[0]) / 2.0,
+            (rect.min[1] + rect.max[1]) / 2.0,
+        ]
+    }
+
+    fn focused_labels(texts: &[ScreenText]) -> Vec<&str> {
+        texts
+            .iter()
+            .filter(|t| t.color == FOCUS)
+            .map(|t| t.text.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn each_row_text_is_centred_on_its_layout_rect_at_any_window_size() {
+        for size in [SIZE, [1000.0, 400.0]] {
+            let stack = stack_of(main_screen());
+
+            let texts = stack.texts(size);
+
+            let rects = layout(&main_screen(), size);
+            assert_eq!(texts.len(), 3);
+            for ((text, rect), label) in texts.iter().zip(&rects).zip(MAIN_LABELS) {
+                assert_eq!(text.text, label);
+                assert_eq!(text_centre(text, size), rect_centre(rect));
+            }
+        }
+    }
+
+    #[test]
+    fn the_focus_colour_is_on_exactly_the_focused_row_and_moves_with_down() {
+        let mut stack = stack_of(main_screen());
+
+        let first = stack.texts(SIZE);
+        press(&mut stack, Key::ArrowDown);
+        let second = stack.texts(SIZE);
+        press(&mut stack, Key::ArrowDown);
+        let third = stack.texts(SIZE);
+
+        assert_eq!(focused_labels(&first), ["Play"]);
+        assert_eq!(focused_labels(&second), ["Settings"]);
+        assert_eq!(focused_labels(&third), ["Quit"]);
+        assert!(
+            second
+                .iter()
+                .filter(|t| t.color != FOCUS)
+                .all(|t| t.color == COLOR)
+        );
+        assert_eq!(second.iter().filter(|t| t.color != FOCUS).count(), 2);
+    }
+
+    #[test]
+    fn a_title_is_painted_first_one_pitch_above_the_first_row() {
+        let screen = MenuScreen {
+            title: Some("Pick".to_owned()),
+            items: vec![button("A", Act::Play), button("B", Act::Quit)],
+            back: None,
+        };
+        let stack = stack_of(screen.clone());
+
+        let texts = stack.texts(SIZE);
+
+        let first_row = rect_centre(&layout(&screen, SIZE)[0]);
+        assert_eq!(texts.len(), 3);
+        assert_eq!(texts[0].text, "Pick");
+        assert_eq!(texts[0].color, COLOR);
+        assert_eq!(texts[1].text, "A");
+        assert_eq!(
+            text_centre(&texts[0], SIZE),
+            [first_row[0], first_row[1] - 56.0]
+        );
+    }
+
+    #[test]
+    fn a_screen_without_a_title_paints_only_its_rows() {
+        let stack = stack_of(main_screen());
+
+        let texts = stack.texts(SIZE);
+
+        assert_eq!(texts.len(), 3);
+        assert_eq!(texts[0].text, "Play");
+    }
+
+    #[test]
+    fn an_empty_stack_paints_no_text() {
+        let stack: MenuStack<Act> = MenuStack::new();
+
+        assert_eq!(stack.texts(SIZE), []);
+    }
+
     #[test]
     fn layout_of_a_screen_with_no_items_has_no_rows() {
         let empty: MenuScreen<Act> = MenuScreen {

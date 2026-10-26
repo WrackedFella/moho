@@ -164,7 +164,8 @@ impl<G, A: Clone> UiShell<G, A> {
 
     /// Routes a window event. Keys and mouse buttons go through the console and reach egui only
     /// when routed `Console` (so the toggle key is never typed); every other event is fed to
-    /// egui and returns `Game`, so the game still sees resizes and focus changes.
+    /// egui and returns `Game`, so the game still sees resizes and focus changes. A cursor move
+    /// also hovers the menu (see `cursor_moved`).
     pub fn on_window_event(&mut self, event: &WindowEvent) -> Routing {
         if let Some((input, pressed, repeat)) = input_of(event) {
             let routing = self.route(input, pressed, repeat);

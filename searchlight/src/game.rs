@@ -934,10 +934,14 @@ impl SearchlightGame {
         &mut self.input
     }
 
-    /// Replaces the default console shell.
+    /// Replaces the default console shell; a game built to open on the main menu shows it on
+    /// the new shell.
     #[must_use]
     pub fn with_shell(mut self, shell: UiShell<ConsoleCommand, MenuAction>) -> Self {
         self.stage.shell = Arc::new(Mutex::new(shell));
+        if self.screen == Screen::MainMenu {
+            self.stage.shell().menu_mut().push(main_screen());
+        }
         self
     }
 
@@ -3351,6 +3355,23 @@ mod menu_tests {
             ctx,
             Event::Device(DeviceEvent::MouseMotion { delta: (dx, dy) }),
         );
+    }
+
+    #[test]
+    fn the_main_menu_survives_replacing_the_shell() {
+        let shell = UiShell::new(console_commands::console(&BTreeMap::new()).0);
+        let mut game = game_with_a_moving_enemy()
+            .with_main_menu()
+            .with_shell(shell);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        assert_eq!(game.screen, Screen::MainMenu);
+        assert!(menu_is_open(&game), "the new shell has no menu open");
+        assert_eq!(labels(&game), MAIN);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+
+        assert_eq!(game.screen, Screen::Playing);
     }
 
     #[test]
