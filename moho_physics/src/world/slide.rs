@@ -304,7 +304,13 @@ impl Slider<'_> {
     /// that lands without having met that ground records it as a hit.
     pub(super) fn slide(&self, start: &Pose, asked: Vec3, was_grounded: bool) -> Slide {
         let mut hits = Vec::new();
-        let plain = self.collide_and_slide(start, asked, Some(&mut hits));
+        // Only a hull asked to stay put is pushed out: a moving one's casts stop it at what it
+        // meets, and parry's overlap test misreports some capsule and trimesh contacts.
+        let plain = if asked.length() < MIN_MOVE {
+            self.depenetrate(start)
+        } else {
+            self.collide_and_slide(start, asked, Some(&mut hits))
+        };
 
         if was_grounded && hits.iter().any(|&(_, normal)| is_riser(normal)) {
             if let Some(translation) = self.step_up(start, asked, plain) {
@@ -388,13 +394,7 @@ impl Slider<'_> {
         by: Vec3,
         mut hits: Option<&mut Vec<(ColliderHandle, Vec3)>>,
     ) -> Vec3 {
-        // Only a hull asked to stay put is pushed out: a moving one's casts stop it at what it
-        // meets, and parry's overlap test misreports some capsule and trimesh contacts.
-        let mut moved = if by.length() < MIN_MOVE {
-            self.depenetrate(from)
-        } else {
-            Vec3::ZERO
-        };
+        let mut moved = Vec3::ZERO;
         let mut remaining = by;
         let mut planes = [Vec3::ZERO; MAX_SLIDE_PLANES];
         for met in 0..MAX_SLIDE_PLANES {
@@ -418,9 +418,9 @@ impl Slider<'_> {
                 hits.push((handle, normal));
             }
             let along = remaining - normal * remaining.dot(normal).min(0.0);
-            // A riser's normal always has a level part, so it normalizes.
-            let plane = if by.y <= 0.0 && along.y > 0.0 && is_riser(normal) {
-                normal.with_y(0.0).normalize()
+            let level = normal.with_y(0.0).normalize_or_zero();
+            let plane = if by.y <= 0.0 && along.y > 0.0 && is_riser(normal) && level != Vec3::ZERO {
+                level
             } else {
                 normal
             };
@@ -460,24 +460,25 @@ impl Slider<'_> {
         let mut pushed = Vec3::ZERO;
         for _ in 0..DEPENETRATION_PASSES {
             let at = Pose::from_parts(from.translation + pushed, from.rotation);
-            let overlap = self
-                .queries
-                .intersect_shape(at, self.shape)
-                .find_map(|(_, collider)| {
-                    let pos12 = at.inv_mul(collider.position());
-                    self.queries
-                        .dispatcher
-                        .contact(&pos12, self.shape, collider.shape(), 0.0)
-                        .inspect_err(|unsupported| {
-                            tracing::warn!(
-                                ?unsupported,
-                                "no contact query for an overlapped shape"
-                            );
-                        })
-                        .ok()
-                        .flatten()
-                        .filter(|contact| contact.dist < 0.0)
-                });
+            let overlap =
+                self.queries
+                    .intersect_shape(at, self.shape)
+                    .find_map(|(handle, collider)| {
+                        let pos12 = at.inv_mul(collider.position());
+                        self.queries
+                            .dispatcher
+                            .contact(&pos12, self.shape, collider.shape(), 0.0)
+                            .inspect_err(|unsupported| {
+                                tracing::warn!(
+                                    ?handle,
+                                    ?unsupported,
+                                    "no contact query for an overlapped shape"
+                                );
+                            })
+                            .ok()
+                            .flatten()
+                            .filter(|contact| contact.dist < 0.0)
+                    });
             let Some(contact) = overlap else {
                 break;
             };
