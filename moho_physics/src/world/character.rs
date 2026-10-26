@@ -3325,6 +3325,143 @@ mod tests {
         }
     }
 
+    /// A floor and a face of `degrees` rising toward -Z from it at z = 0, and a walker spawned
+    /// a hair above the face at x = -5 (clear of the quad's diagonal), z = -2.
+    fn walker_on_a_face(degrees: f32) -> (PhysicsWorld, CharacterHandle) {
+        let angle = degrees.to_radians();
+        let rise = angle.tan();
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        world.set_world_mesh(
+            WorldMeshId(1),
+            &slope_mesh(-4.0, 4.0 * rise, 0.0, 0.0),
+            TEST_TAG,
+        );
+        let surface = 2.0 * rise;
+        let y = surface + 0.3115 / angle.cos() + 0.55 + 0.002;
+        let h = world.add_character(Vec3::new(-5.0, y, -2.0));
+        (world, h)
+    }
+
+    /// Z below which a walker is still over the face, not yet on the floor.
+    const OVER_THE_FACE_Z: f32 = -0.35;
+
+    #[test]
+    fn an_idle_walker_on_a_steep_face_slides_down_it() {
+        for degrees in [50.0_f32, 60.0] {
+            let (mut world, h) = walker_on_a_face(degrees);
+            let mut ticks_over_the_face = 0;
+
+            for tick in 0..120 {
+                let (now, _) = searchlight_tick(&mut world, h, &idle());
+
+                if now.position.z < OVER_THE_FACE_Z {
+                    ticks_over_the_face += 1;
+                    assert!(
+                        !now.grounded,
+                        "{degrees} degrees, tick {tick}: grounded on the face, {now:?}"
+                    );
+                }
+            }
+
+            let end = state(&world, h);
+            assert!(
+                ticks_over_the_face > 0,
+                "{degrees} degrees: never on the face"
+            );
+            assert!(end.grounded, "{degrees} degrees: {end:?}");
+            assert!(end.position.z > 0.0, "{degrees} degrees: {end:?}");
+            assert!(
+                (end.position.y - rest_height_on_floor()).abs() < 0.02,
+                "{degrees} degrees: ends on the floor, {end:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_idle_walker_stands_on_44_degrees_and_slides_on_46() {
+        let (mut world, h) = walker_on_a_face(44.0);
+        for tick in 0..120 {
+            let (now, _) = searchlight_tick(&mut world, h, &idle());
+
+            assert!(
+                tick == 0 || now.grounded,
+                "44 degrees, tick {tick}: airborne, {now:?}"
+            );
+        }
+        let held = state(&world, h);
+        assert!(
+            held.position.z < OVER_THE_FACE_Z,
+            "44 degrees: slid off, {held:?}"
+        );
+
+        let (mut world, h) = walker_on_a_face(46.0);
+        let mut airborne_over_the_face = false;
+        for tick in 0..120 {
+            let (now, _) = searchlight_tick(&mut world, h, &idle());
+
+            airborne_over_the_face |= tick > 0 && now.position.z < OVER_THE_FACE_Z && !now.grounded;
+        }
+        let slid = state(&world, h);
+        assert!(airborne_over_the_face, "46 degrees: never left the face");
+        assert!(slid.position.z > 0.0, "46 degrees: {slid:?}");
+    }
+
+    #[test]
+    fn a_walker_cannot_walk_up_a_60_degree_face() {
+        let rise = 60.0_f32.to_radians().tan();
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        world.set_world_mesh(
+            WorldMeshId(1),
+            &slope_mesh(1.0, 0.0, 3.0, 2.0 * rise),
+            TEST_TAG,
+        );
+        let rest = rest_height_on_floor();
+        let h = resting_then_moving(&mut world, Vec3::new(0.0, rest, 0.0), 0.0, Vec3::ZERO);
+        let forward = CharacterCommand {
+            forward: 1.0,
+            ..CharacterCommand::default()
+        };
+        let mut highest = rest;
+
+        for tick in 0..60 {
+            let (now, _) = searchlight_tick(&mut world, h, &forward);
+
+            highest = highest.max(now.position.y);
+            assert!(now.grounded, "tick {tick}: airborne, {now:?}");
+            assert!(
+                (now.position.y - rest).abs() < 0.01,
+                "tick {tick}: off the floor height, {now:?}"
+            );
+        }
+
+        assert!(
+            highest <= rest + crate::movement::STEP_HEIGHT,
+            "climbed to {highest} from {rest}"
+        );
+    }
+
+    #[test]
+    fn an_idle_walker_past_its_flat_base_on_a_cliff_edge_falls() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(-3.0, 3.0, 2.0), TEST_TAG);
+        let y = 2.0 + 0.85 + (0.3115_f32 * 0.3115 - 0.25 * 0.25).sqrt() + 0.003;
+        let h = world.add_character(Vec3::new(0.0, y, 0.25));
+
+        for _ in 0..120 {
+            searchlight_tick(&mut world, h, &idle());
+        }
+
+        let end = state(&world, h);
+        assert!(end.grounded, "{end:?}");
+        assert!(
+            (end.position.y - rest_height_on_floor()).abs() < 0.02,
+            "stands on the floor below, not the edge: {end:?}"
+        );
+    }
+
     #[test]
     fn walking_into_a_step_at_45_degrees_climbs_it() {
         let (mut world, h) = standing_on_floor();

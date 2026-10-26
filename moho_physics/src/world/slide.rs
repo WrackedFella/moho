@@ -1222,6 +1222,58 @@ mod tests {
         })
     }
 
+    /// Level ground and a 60 degree face rising from it at z = 1.
+    fn floor_with_a_steep_face() -> [WorldMesh; 2] {
+        let rise = 60.0_f32.to_radians().tan();
+        [
+            ground(0.0, -10.0, 10.0),
+            slope_mesh(1.0, 0.0, 3.0, 2.0 * rise),
+        ]
+    }
+
+    /// Where a capsule centre rests on level ground at y = 0, a skin above it.
+    const FLOOR_REST_Y: f32 = 0.3 + 0.85 + 0.0115;
+
+    #[test]
+    fn ground_below_at_the_foot_of_a_steep_face_reads_the_floor_under_the_axis() {
+        // The flat base's first contact here is the face, 0.18 m ahead; the axis is over the floor.
+        let centre = Vec3::new(0.0, FLOOR_REST_Y, 0.82);
+
+        let found = ground_below_centre(&floor_with_a_steep_face(), centre);
+
+        let normal = found.expect("the floor under the axis is ground");
+        assert!(normal.distance(Vec3::Y) < 1e-3, "{normal:?}");
+    }
+
+    #[test]
+    fn a_slide_that_lands_from_the_air_reports_the_ground() {
+        let above_the_floor = Pose::from_translation(Vec3::new(0.0, 1.2, 0.0));
+
+        let slid = with_slider(&[ground(0.0, -10.0, 10.0)], |slider| {
+            slider.slide(&above_the_floor, Vec3::new(0.0, -0.1, 0.0), false)
+        });
+
+        assert!(slid.grounded, "{slid:?}");
+        let ground = slid
+            .ground
+            .expect("a landing reads the ground it stands on");
+        assert!(ground.normal.distance(Vec3::Y) < 1e-3, "{ground:?}");
+    }
+
+    #[test]
+    fn a_step_up_that_lands_on_a_steep_face_is_refused() {
+        let touching_the_face = Pose::from_translation(Vec3::new(0.0, FLOOR_REST_Y, 0.82));
+
+        let slid = with_slider(&floor_with_a_steep_face(), |slider| {
+            slider.slide(&touching_the_face, Vec3::new(0.0, 0.0, 0.1), true)
+        });
+
+        assert!(
+            slid.translation.y.abs() < 0.02,
+            "lifted onto the face: {slid:?}"
+        );
+    }
+
     #[test]
     fn a_walker_on_the_floor_beside_a_low_step_is_not_rolled_but_one_held_above_it_is() {
         // The rim's contact with a nosing 0.25 m to the side is outside the flat base. The walker

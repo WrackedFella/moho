@@ -1620,7 +1620,7 @@ mod tests {
         }
 
         #[test]
-        fn walker_without_a_ground_normal_keeps_its_vertical_speed() {
+        fn a_grounded_slide_without_walkable_ground_leaves_a_walker_airborne() {
             let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, -1.87, 4.0), true);
 
             step_without_effects(&mut state, &forward(), &frictionless(), DT, on_ground(None));
@@ -1635,7 +1635,7 @@ mod tests {
                 "{:?}",
                 state.velocity
             );
-            assert!(state.grounded);
+            assert!(!state.grounded, "{state:?}");
         }
 
         #[test]
@@ -2272,13 +2272,43 @@ mod tests {
                 |asked| Slide {
                     translation: asked,
                     grounded: true,
-                    ground: None,
+                    ground: Some(face(Vec3::Y, 0.0)),
                     hits: Vec::new(),
                 },
             );
 
             assert!(state.grounded);
             assert_eq!(state.velocity.y, 0.0);
+        }
+
+        #[test]
+        fn a_landing_without_walkable_ground_keeps_its_clipped_downhill_speed() {
+            let steep = 60.0_f32.to_radians();
+            let normal = Vec3::new(0.0, steep.cos(), steep.sin());
+            let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, -3.0, 0.0), false);
+
+            step_without_effects(
+                &mut state,
+                &CharacterCommand::default(),
+                &test_settings(),
+                DT,
+                |asked| Slide {
+                    translation: asked - normal * asked.dot(normal),
+                    grounded: true,
+                    ground: None,
+                    hits: vec![(collider(), normal)],
+                },
+            );
+
+            assert!(!state.grounded, "{state:?}");
+            let half_gravity = 18.0 * DT / 2.0;
+            assert!(
+                (state.velocity.dot(normal) + half_gravity * normal.y).abs() < 1e-3,
+                "clipped along the face, then half a tick of gravity: {:?}",
+                state.velocity
+            );
+            assert!(state.velocity.y < -1.0, "{:?}", state.velocity);
+            assert!(state.velocity.z > 1.0, "{:?}", state.velocity);
         }
 
         fn jump_command(jump: bool) -> CharacterCommand {
