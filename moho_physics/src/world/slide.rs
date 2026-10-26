@@ -676,7 +676,8 @@ impl Slider<'_> {
 mod tests {
     use super::super::test_support::TEST_TAG;
     use super::super::test_support::{
-        quad_mesh, seam_floor_meshes, slope_mesh, step_box_mesh, wall_mesh,
+        ceiling_mesh, quad_mesh, seam_floor_meshes, slope_mesh, step_box_mesh, wall_mesh,
+        x_wall_mesh, x_wall_mesh_reversed,
     };
     use super::super::PhysicsWorld;
     use super::*;
@@ -1668,5 +1669,117 @@ mod tests {
         });
 
         assert!((slid.translation.y - 0.01).abs() < 1e-3, "{slid:?}");
+    }
+
+    #[test]
+    fn a_hull_asked_for_exactly_the_minimum_move_is_slid_not_pushed_out() {
+        let at_rest = Pose::from_translation(Vec3::new(0.0, 1.5, 0.0));
+
+        let slid = with_slider(&[], |slider| {
+            slider.slide(&at_rest, Vec3::X * MIN_MOVE, false)
+        });
+
+        assert!((slid.translation.x - MIN_MOVE).abs() < 1e-7, "{slid:?}");
+    }
+
+    #[test]
+    fn a_motion_shorter_than_the_minimum_is_not_cast_but_one_of_it_is() {
+        let at_rest = Pose::from_translation(Vec3::new(0.0, 1.5, 0.0));
+
+        let (shorter, exact) = with_slider(&[], |slider| {
+            (
+                slider.shift(&at_rest, Vec3::X * (MIN_MOVE * 0.5)),
+                slider.shift(&at_rest, Vec3::X * MIN_MOVE),
+            )
+        });
+
+        assert_eq!(shorter, Vec3::ZERO);
+        assert!((exact.x - MIN_MOVE).abs() < 1e-7, "{exact:?}");
+    }
+
+    #[test]
+    fn clip_motion_keeps_motion_that_runs_exactly_along_an_earlier_plane() {
+        let along_the_earlier_plane = Vec3::Z;
+
+        let clipped = clip_motion(along_the_earlier_plane, &[Vec3::X, Vec3::Z]);
+
+        assert_eq!(clipped, Vec3::Z);
+    }
+
+    #[test]
+    fn a_slide_into_a_corner_continues_each_cast_from_where_the_last_stopped() {
+        // Walls at z = 2 and x = 1 stop the capsule's centre a radius plus a skin short of each.
+        let corner = [wall_mesh(2.0), x_wall_mesh(1.0)];
+        let start = Pose::from_translation(Vec3::new(0.0, 1.5, 0.0));
+
+        let slid = with_slider(&corner, |slider| {
+            slider.slide(&start, Vec3::new(2.0, 0.0, 4.0), false)
+        });
+
+        assert!(
+            (slid.translation.x - (1.0 - 0.3 - SKIN)).abs() < 5e-3,
+            "{slid:?}"
+        );
+        assert!(
+            (slid.translation.z - (2.0 - 0.3 - SKIN)).abs() < 5e-3,
+            "{slid:?}"
+        );
+    }
+
+    #[test]
+    fn a_hit_on_a_wall_reports_its_exact_normal_whichever_way_it_is_wound() {
+        for wall in [x_wall_mesh(2.0), x_wall_mesh_reversed(2.0)] {
+            let normal = with_slider(&[wall], |slider| {
+                let at = Pose::from_translation(Vec3::new(1.0, 1.5, 0.0));
+                let (handle, mut hit) = slider
+                    .queries
+                    .cast_shape(&at, Vec3::X, slider.shape, cast_skinned(2.0))
+                    .expect("the wall is ahead");
+                hit.normal1 = Vec3::new(-1.0, 2e-4, 0.0).normalize();
+                slider.exact_normal(handle, &hit)
+            });
+
+            assert!(normal.distance(Vec3::NEG_X) < 1e-6, "{normal:?}");
+        }
+    }
+
+    #[test]
+    fn a_step_up_carries_only_the_motion_the_slide_left_over() {
+        let resting = Pose::from_translation(Vec3::new(0.0, FLOOR_REST_Y, 0.0));
+        let asked = Vec3::new(0.0, 0.0, 1.0);
+        let blocked = Vec3::new(0.0, 0.0, 0.6);
+
+        let stepped = with_slider(&[ground(0.0, -10.0, 10.0)], |slider| {
+            slider.step_up(&resting, asked, blocked)
+        })
+        .expect("open floor ahead");
+
+        assert!((stepped.z - 1.0).abs() < 5e-3, "{stepped:?}");
+        assert!(stepped.y.abs() < 0.02, "{stepped:?}");
+    }
+
+    #[test]
+    fn ground_with_a_steep_face_under_the_flat_base_is_read_down_to_the_step_height() {
+        // The axis is 0.8 m above the floor, the farthest the ray down it reads.
+        let centre = Vec3::new(0.0, 0.85 + 0.8, 0.82);
+
+        let found = ground_below_centre(&floor_with_a_steep_face(), centre);
+
+        assert!(found.is_some(), "the floor is at the edge of reach");
+    }
+
+    #[test]
+    fn the_gap_on_a_floor_edge_is_the_drop_below_the_hull_not_a_lift_into_a_ceiling() {
+        // The centre is 15 mm short of the floor's edge, 0.02 m over it, with a ceiling 0.2 m
+        // over the capsule's top.
+        let centre = Vec3::new(0.0, HOVER_Y, 0.985);
+        let meshes = [ground(0.0, -10.0, 1.0), ceiling_mesh(2.52, -10.0, 10.0)];
+
+        let found = with_slider(&meshes, |slider| {
+            slider.ground_below(centre, Quat::IDENTITY)
+        })
+        .expect("the floor is under the flat base");
+
+        assert!((found.gap - (0.02 - SKIN)).abs() < 2e-3, "{found:?}");
     }
 }
