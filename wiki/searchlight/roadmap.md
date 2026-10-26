@@ -11,9 +11,9 @@ Milestone names follow ISO 2145: FPS-M*n* delivers GDD Phase *n*; FPS-M1.1 and F
 | Milestone | GDD phase | Question it answers | Engine gate |
 |---|---|---|---|
 | FPS-M1 Arena baseline | 1 | Does the gunplay feel weighty? | none hard; stopgaps in use |
-| FPS-M1.1 Menus (FPS-F3) | 1 to 2 bridge | Can a player start, pause and tune the game without the console? | engine request #444 (ENG-F18) |
+| FPS-M1.1 Menus (FPS-F3) | 1 to 2 bridge | Can a player start, pause and tune the game without the console? | engine request #444, answered by ENG-F18-11 #695, -12 #696, -17 #697 |
 | FPS-M1.2 Stance and body (FPS-F4) | 1.2 | Does posture change where I stand and when I peek? | #544 with ENG-F33 #492; #543 for the rig; all by FPS-M2 |
-| FPS-M2 Items and loadout | 2 | Does one item model carry everything? | ENG-F18-09 #407, ENG-F19 #231, ENG-F26 #359; #600 loose objects (FPS-F9); #543 for reload animation (FPS-F8) |
+| FPS-M2 Items and loadout | 2 | Does one item model carry everything? | ENG-F18-09 #407, ENG-F18-18 #698 item lists (base for the inventory and search screens), ENG-F19 #231, ENG-F26 #359; #600 loose objects (FPS-F9); #543 for reload animation (FPS-F8) |
 | FPS-M3 Wear, repair, ledger | 3 | Does wear drive scavenging? | none new |
 | FPS-M3.1 Attachments | 3.1 | Can a weapon be rebuilt in the field without special cases? | sockets, zoom and reticle, beam and dot (engine requests) |
 | FPS-M4 Wounds and healing | 4 | Does limb damage create good downtime? | none new |
@@ -45,7 +45,9 @@ Order is the GDD's: systems arrive in the order they create costs, so the ledger
 
 - **Outcome:** main menu at launch, pause menu on Escape, settings screen (mouse, volume, graphics, window). Cards #458 main menu, #459 pause, #460 settings with Apply; build in that order.
 - **Entry gate:** feature approved; engine request #444 answered. Specs can run in parallel with FPS-M1; building waits for it (shared game loop).
-- **Defaults:** pause stops the sim; no return to main menu; no save or continue; key rebinding waits for ENG-F26 #359. Settings are staged, Apply persists, Back discards.
+- **Engine answer (ENG-F18):** #695 -11 menu screens and their stack replace the game-side `Menu` rows; #696 -12 settings controls cover every row of #460 except head bob, so #460 is expected to close when -12 merges; #697 -17 adds the head-bob row after #609 builds the setting. Build order -11, -12, -17.
+- **Defaults:** pause stops the sim; no return to main menu; no save or continue. Settings are staged, Apply persists, Back discards.
+- **Key rebinding:** no FPS card yet. The engine's keybind capture waits for one, and ENG-F26 #359 supplies key actions.
 - **Cut lines:** key rebinding, return to main menu (FPS-M6), save and continue (FPS-M5), reset and apply-all buttons, backdrop, gamepad.
 
 ## 5 FPS-M1.2 Stance and body (FPS-F4)
