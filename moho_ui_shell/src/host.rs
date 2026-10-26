@@ -22,6 +22,8 @@ pub struct UiShell<G, A> {
     state: Option<egui_winit::State>,
     console: Console<G>,
     menu: MenuStack<A>,
+    /// The cursor's last position, in logical points from the window's top left.
+    cursor: [f32; 2],
     texts: Vec<ScreenText>,
 }
 
@@ -33,7 +35,7 @@ impl<G, A> std::fmt::Debug for UiShell<G, A> {
     }
 }
 
-impl<G, A> UiShell<G, A> {
+impl<G, A: Clone> UiShell<G, A> {
     pub fn new(console: Console<G>) -> Self {
         Self {
             context: egui::Context::default(),
@@ -41,6 +43,7 @@ impl<G, A> UiShell<G, A> {
             state: None,
             console,
             menu: MenuStack::new(),
+            cursor: [0.0, 0.0],
             texts: Vec::new(),
         }
     }
@@ -50,10 +53,26 @@ impl<G, A> UiShell<G, A> {
     }
 
     /// The cursor moved to `physical` pixels from the window's top left, on a window scaled by
-    /// `scale`; hovers the menu in logical points. `on_window_event` delegates here with the
-    /// attached window's scale factor, or 1 when none is attached.
-    pub fn cursor_moved(&mut self, _physical: [f64; 2], _scale: f64) {
-        todo!("cursor hover over the menu")
+    /// `scale`; hovers the menu in logical points unless the console is open over it.
+    /// `on_window_event` delegates here with the attached window's scale factor, or 1 when none
+    /// is attached.
+    pub fn cursor_moved(&mut self, physical: [f64; 2], scale: f64) {
+        self.cursor = [(physical[0] / scale) as f32, (physical[1] / scale) as f32];
+        if !self.console.is_open() {
+            let size = self.window_points();
+            self.menu.hover(self.cursor, size);
+        }
+    }
+
+    /// The window's size in logical points; 1280 by 720 when no window is attached.
+    fn window_points(&self) -> [f32; 2] {
+        match &self.window {
+            Some(window) => {
+                let size = window.inner_size().to_logical::<f32>(window.scale_factor());
+                [size.width, size.height]
+            }
+            None => [1280.0, 720.0],
+        }
     }
 
     /// Creates the egui window state; call once from `Game::init`.
@@ -69,14 +88,21 @@ impl<G, A> UiShell<G, A> {
         self.window = Some(window);
     }
 
-    /// Routes one key or button through the console. `on_window_event` delegates here, so this
-    /// is the platform-free part of that routing.
+    /// Routes one key or button through the console, then through the open menu screen, which
+    /// takes every input, releases included. `on_window_event` delegates here, so this is the
+    /// platform-free part of that routing.
     pub fn route(&mut self, input: Input, pressed: bool, repeat: bool) -> Routing {
         let routing = self.console.on_key(input, pressed, repeat);
-        if routing == Routing::Game && self.menu.is_open() {
-            todo!("menu routing");
+        if routing != Routing::Game || !self.menu.is_open() {
+            return routing;
         }
-        routing
+        if input == Input::Mouse(MouseButton::Left) && pressed && !repeat {
+            let size = self.window_points();
+            self.menu.click(self.cursor, size);
+        } else {
+            self.menu.on_key(input, pressed, repeat);
+        }
+        Routing::Menu
     }
 
     /// Routes a window event. Keys and mouse buttons go through the console and reach egui only
@@ -99,6 +125,10 @@ impl<G, A> UiShell<G, A> {
             self.feed(event, routing);
             return routing;
         }
+        if let WindowEvent::CursorMoved { position, .. } = event {
+            let scale = self.window.as_ref().map_or(1.0, |w| w.scale_factor());
+            self.cursor_moved([position.x, position.y], scale);
+        }
         self.feed_egui(event);
         Routing::Game
     }
@@ -111,9 +141,9 @@ impl<G, A> UiShell<G, A> {
         }
     }
 
-    /// Whether the console takes input, so the game drops device events.
+    /// Whether the console or a menu screen takes input, so the game drops device events.
     pub fn captures_input(&self) -> bool {
-        self.console.is_open()
+        self.console.is_open() || self.menu.is_open()
     }
 
     pub fn console_mut(&mut self) -> &mut Console<G> {
@@ -192,17 +222,19 @@ pub fn input_of(event: &WindowEvent) -> Option<(Input, bool, bool)> {
     }
 }
 
-impl<G, A> UiFrameSource for UiShell<G, A> {
+impl<G, A: Clone> UiFrameSource for UiShell<G, A> {
     fn ui_frame(&mut self, size_in_pixels: [u32; 2]) -> Option<UiFrame> {
         // Taken even while closed, so events fed to egui do not pile up unread.
         let input = self.take_input(size_in_pixels);
-        if !self.console.is_open() && self.texts.is_empty() {
+        if !self.console.is_open() && self.texts.is_empty() && !self.menu.is_open() {
             return None;
         }
         let context = self.context.clone();
         let output = context.run_ui(input, |ui| {
-            // Game text first, so the console paints over it.
+            // Game text first, then the menu, so the console paints over both.
             text::paint(ui.ctx(), &self.texts);
+            let screen = ui.ctx().content_rect().size();
+            text::paint(ui.ctx(), &self.menu.texts([screen.x, screen.y]));
             if self.console.is_open() {
                 self.console.show(ui.ctx());
             }
@@ -374,6 +406,18 @@ mod tests {
             "the console kept its Enter"
         );
         assert!(shell.menu_mut().is_open());
+    }
+
+    #[test]
+    fn a_cursor_moving_under_an_open_console_keeps_the_menus_focus() {
+        let mut shell = menu_shell();
+        shell.route(Input::Key(Key::Backtick), true, false);
+
+        cursor_at(&mut shell, [640.0, ROW_Y[2]]);
+        shell.route(Input::Key(Key::Backtick), true, false);
+        shell.route(Input::Key(Key::Enter), true, false);
+
+        assert_eq!(chosen(&mut shell), [Choice::Play]);
     }
 
     #[test]

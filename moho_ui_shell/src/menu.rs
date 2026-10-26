@@ -3,6 +3,9 @@
 //! a choice becomes a [`MenuEvent`] the game answers by pushing or popping.
 
 use moho_input::bindings::Input;
+use moho_input::key::Key;
+
+use crate::text::{Anchor, ScreenText};
 
 /// One screen: an optional title, a column of items and the action Escape chooses.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,10 +37,26 @@ pub struct Rect {
     pub max: [f32; 2],
 }
 
+/// Font size of every row and title.
+const ROW_SIZE: f32 = 36.0;
+/// Distance between row centres, in logical points; the bands are this tall and touch.
+const ROW_PITCH: f32 = 56.0;
+/// Width of a row's clickable band, centred on the window.
+const ROW_WIDTH: f32 = 240.0;
+const FOCUS_COLOR: [u8; 4] = [255, 220, 80, 255];
+const COLOR: [u8; 4] = [220, 220, 220, 255];
+
+/// A screen and the row that has the focus on it.
+#[derive(Debug)]
+struct Open<A> {
+    screen: MenuScreen<A>,
+    focus: usize,
+}
+
 /// The open screens, bottom to top, and the events not yet taken.
 #[derive(Debug)]
 pub struct MenuStack<A> {
-    screens: Vec<MenuScreen<A>>,
+    screens: Vec<Open<A>>,
     events: Vec<MenuEvent<A>>,
 }
 
@@ -57,7 +76,7 @@ impl<A> MenuStack<A> {
 
     /// Opens `screen` over the current one, focusing its first item.
     pub fn push(&mut self, screen: MenuScreen<A>) {
-        self.screens.push(screen);
+        self.screens.push(Open { screen, focus: 0 });
     }
 
     /// Closes the top screen; the one below keeps the focus it had.
@@ -75,7 +94,7 @@ impl<A> MenuStack<A> {
     }
 
     pub fn top(&self) -> Option<&MenuScreen<A>> {
-        self.screens.last()
+        self.screens.last().map(|open| &open.screen)
     }
 
     /// The events since the last call, oldest first.
@@ -83,31 +102,122 @@ impl<A> MenuStack<A> {
         std::mem::take(&mut self.events)
     }
 
+    /// Focuses the row under `point`, in logical points on a window `size` points across;
+    /// a point over no row keeps the focus.
+    pub fn hover(&mut self, point: [f32; 2], size: [f32; 2]) {
+        if let Some(open) = self.screens.last_mut()
+            && let Some(row) = row_at(&open.screen, point, size)
+        {
+            open.focus = row;
+        }
+    }
+
+    /// The text of the top screen on a window `size` points across: its title above the rows,
+    /// then one centre-anchored text per row with the focused one in its own colour.
+    pub(crate) fn texts(&self, size: [f32; 2]) -> Vec<ScreenText> {
+        let Some(open) = self.screens.last() else {
+            return Vec::new();
+        };
+        let rows = layout(&open.screen, size);
+        let text = |text: &str, centre_y: f32, color: [u8; 4]| ScreenText {
+            text: text.to_owned(),
+            anchor: Anchor::Center,
+            offset: [0.0, centre_y - size[1] / 2.0],
+            size: ROW_SIZE,
+            color,
+        };
+        let mut texts = Vec::new();
+        if let Some(title) = &open.screen.title {
+            let first_centre = rows.first().map_or(size[1] / 2.0, |r| centre_y(*r));
+            texts.push(text(title, first_centre - ROW_PITCH, COLOR));
+        }
+        for (row, (item, rect)) in open.screen.items.iter().zip(rows).enumerate() {
+            let MenuItem::Button { label, .. } = item;
+            let color = if row == open.focus {
+                FOCUS_COLOR
+            } else {
+                COLOR
+            };
+            texts.push(text(label, centre_y(rect), color));
+        }
+        texts
+    }
+}
+
+impl<A: Clone> MenuStack<A> {
     /// Up and Down move the focus and wrap; a non-repeat Enter press chooses the focused item;
     /// a non-repeat Escape press chooses the top screen's back action, if any. Releases and
     /// other inputs do nothing.
-    pub fn on_key(&mut self, _input: Input, _pressed: bool, _repeat: bool) {
-        todo!("menu keyboard input")
-    }
-
-    /// Focuses the row under `point`, in logical points on a window `size` points across;
-    /// a point over no row keeps the focus.
-    pub fn hover(&mut self, _point: [f32; 2], _size: [f32; 2]) {
-        todo!("menu hover")
+    pub fn on_key(&mut self, input: Input, pressed: bool, repeat: bool) {
+        let Some(open) = self.screens.last_mut() else {
+            return;
+        };
+        if !pressed {
+            return;
+        }
+        let count = open.screen.items.len();
+        match input {
+            Input::Key(Key::ArrowDown) if count > 0 => open.focus = (open.focus + 1) % count,
+            Input::Key(Key::ArrowUp) if count > 0 => {
+                open.focus = (open.focus + count - 1) % count;
+            }
+            Input::Key(Key::Enter) if !repeat => {
+                if let Some(action) = open.screen.items.get(open.focus).map(action_of) {
+                    self.events.push(MenuEvent::Chosen(action));
+                }
+            }
+            Input::Key(Key::Escape) if !repeat => {
+                if let Some(back) = open.screen.back.clone() {
+                    self.events.push(MenuEvent::Chosen(back));
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Chooses the row under `point` (see [`MenuStack::hover`]); a point over no row chooses
     /// nothing.
-    pub fn click(&mut self, _point: [f32; 2], _size: [f32; 2]) {
-        todo!("menu click")
+    pub fn click(&mut self, point: [f32; 2], size: [f32; 2]) {
+        if let Some(open) = self.screens.last()
+            && let Some(row) = row_at(&open.screen, point, size)
+        {
+            let action = action_of(&open.screen.items[row]);
+            self.events.push(MenuEvent::Chosen(action));
+        }
     }
+}
+
+fn action_of<A: Clone>(item: &MenuItem<A>) -> A {
+    match item {
+        MenuItem::Button { action, .. } => action.clone(),
+    }
+}
+
+fn centre_y(rect: Rect) -> f32 {
+    (rect.min[1] + rect.max[1]) / 2.0
+}
+
+/// The row of `screen` strictly inside which `point` lies.
+fn row_at<A>(screen: &MenuScreen<A>, point: [f32; 2], size: [f32; 2]) -> Option<usize> {
+    layout(screen, size).iter().position(|r| {
+        point[0] > r.min[0] && point[0] < r.max[0] && point[1] > r.min[1] && point[1] < r.max[1]
+    })
 }
 
 /// The row rectangles of `screen` on a window `size` points across, top to bottom: bands 240
 /// points wide, centred on the window, one 56-point pitch apart, the column centred vertically.
 /// Painting and hit tests both read this.
-pub fn layout<A>(_screen: &MenuScreen<A>, _size: [f32; 2]) -> Vec<Rect> {
-    todo!("menu layout")
+pub fn layout<A>(screen: &MenuScreen<A>, size: [f32; 2]) -> Vec<Rect> {
+    let top = size[1] / 2.0 - screen.items.len() as f32 * ROW_PITCH / 2.0;
+    (0..screen.items.len())
+        .map(|row| {
+            let y = top + row as f32 * ROW_PITCH;
+            Rect {
+                min: [size[0] / 2.0 - ROW_WIDTH / 2.0, y],
+                max: [size[0] / 2.0 + ROW_WIDTH / 2.0, y + ROW_PITCH],
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
