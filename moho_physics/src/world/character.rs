@@ -323,7 +323,6 @@ impl PhysicsWorld {
             filter,
         );
         let world = WorldQueries {
-            controller: &self.character_controller,
             queries: &queries,
             dt,
             own_pose: body.pose(stance),
@@ -2770,7 +2769,7 @@ mod tests {
         let resting = state(&world, h);
         assert!(resting.grounded);
         // One tick that carries the centre 0.2 m past the lip's edge: the rim there hangs
-        // 0.14 m above the lip, more than the controller's own 0.1 m snap, so only the ground
+        // 0.14 m above the lip, more than the 0.1 m `GROUND_SNAP`, so only the ground
         // query keeps the walker standing.
         let past_the_edge = 1.2;
         let speed = (past_the_edge - resting.position.z) / DT;
@@ -2922,7 +2921,7 @@ mod tests {
     }
 
     /// Forward for `ticks`, asserting after every tick: grounded, within 1.5 cm of the floor rest
-    /// height (the controller's own contact noise on plain floor is about 3 mm), vertical speed
+    /// height (contact noise on plain floor is about 3 mm), vertical speed
     /// under 1 cm/s and no impact.
     fn assert_walk_stays_grounded_and_level(
         world: &mut PhysicsWorld,
@@ -3323,6 +3322,241 @@ mod tests {
                 "tick {tick}: pushed off the settled {settled:?}: {now:?}"
             );
         }
+    }
+
+    /// A floor and a face of `degrees` rising toward -Z from it at z = 0, and a walker spawned
+    /// a hair above the face at x = -5 (clear of the quad's diagonal), z = -2.
+    fn walker_on_a_face(degrees: f32) -> (PhysicsWorld, CharacterHandle) {
+        let angle = degrees.to_radians();
+        let rise = angle.tan();
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        world.set_world_mesh(
+            WorldMeshId(1),
+            &slope_mesh(-4.0, 4.0 * rise, 0.0, 0.0),
+            TEST_TAG,
+        );
+        let surface = 2.0 * rise;
+        let y = surface + 0.3115 / angle.cos() + 0.55 + 0.002;
+        let h = world.add_character(Vec3::new(-5.0, y, -2.0));
+        (world, h)
+    }
+
+    /// Z below which a walker is still over the face, not yet on the floor.
+    const OVER_THE_FACE_Z: f32 = -0.35;
+
+    #[test]
+    fn an_idle_walker_on_a_steep_face_slides_down_it() {
+        for degrees in [46.0_f32, 50.0, 60.0] {
+            let (mut world, h) = walker_on_a_face(degrees);
+            let mut ticks_over_the_face = 0;
+
+            for tick in 0..120 {
+                let (now, _) = searchlight_tick(&mut world, h, &idle());
+
+                if now.position.z < OVER_THE_FACE_Z {
+                    ticks_over_the_face += 1;
+                    assert!(
+                        !now.grounded,
+                        "{degrees} degrees, tick {tick}: grounded on the face, {now:?}"
+                    );
+                }
+            }
+
+            let end = state(&world, h);
+            assert!(
+                ticks_over_the_face > 0,
+                "{degrees} degrees: never on the face"
+            );
+            assert!(end.grounded, "{degrees} degrees: {end:?}");
+            assert!(end.position.z > 0.0, "{degrees} degrees: {end:?}");
+            assert!(
+                (end.position.y - rest_height_on_floor()).abs() < 0.02,
+                "{degrees} degrees: ends on the floor, {end:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_idle_walker_stands_on_a_44_degree_slope() {
+        let (mut world, h) = walker_on_a_face(44.0);
+        let mut settled = None;
+
+        for tick in 0..120 {
+            let (now, _) = searchlight_tick(&mut world, h, &idle());
+
+            assert!(
+                tick == 0 || now.grounded,
+                "44 degrees, tick {tick}: airborne, {now:?}"
+            );
+            // An early tick pops an idle walker on a 40-44 degree slope, so stillness is
+            // measured from after it.
+            if tick == 30 {
+                settled = Some(now.position);
+            }
+        }
+
+        let settled = settled.expect("tick 30 ran");
+        let held = state(&world, h);
+        assert!(
+            held.position.distance(settled) < 0.005,
+            "44 degrees: crept from {settled:?}, {held:?}"
+        );
+        assert!(
+            held.position.z < OVER_THE_FACE_Z,
+            "44 degrees: slid off, {held:?}"
+        );
+    }
+
+    #[test]
+    fn a_walker_cannot_walk_up_a_60_degree_face() {
+        let rise = 60.0_f32.to_radians().tan();
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        world.set_world_mesh(
+            WorldMeshId(1),
+            &slope_mesh(1.0, 0.0, 3.0, 2.0 * rise),
+            TEST_TAG,
+        );
+        let rest = rest_height_on_floor();
+        let h = resting_then_moving(&mut world, Vec3::new(0.0, rest, 0.0), 0.0, Vec3::ZERO);
+        let forward = CharacterCommand {
+            forward: 1.0,
+            ..CharacterCommand::default()
+        };
+        let mut highest = rest;
+
+        for tick in 0..60 {
+            let (now, _) = searchlight_tick(&mut world, h, &forward);
+
+            highest = highest.max(now.position.y);
+            assert!(now.grounded, "tick {tick}: airborne, {now:?}");
+            assert!(
+                (now.position.y - rest).abs() < 0.01,
+                "tick {tick}: off the floor height, {now:?}"
+            );
+        }
+
+        assert!(
+            highest <= rest + crate::movement::STEP_HEIGHT,
+            "climbed to {highest} from {rest}"
+        );
+        let end = state(&world, h);
+        assert!(end.position.z > 0.75, "never reached the face: {end:?}");
+    }
+
+    #[test]
+    fn an_idle_walker_past_its_flat_base_on_a_cliff_edge_falls() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        world.set_world_mesh(WorldMeshId(1), &step_box_mesh(-3.0, 3.0, 2.0), TEST_TAG);
+        let y = 2.0 + 0.85 + (0.3115_f32 * 0.3115 - 0.25 * 0.25).sqrt() + 0.003;
+        let h = world.add_character(Vec3::new(0.0, y, 0.25));
+
+        for _ in 0..120 {
+            searchlight_tick(&mut world, h, &idle());
+        }
+
+        let end = state(&world, h);
+        assert!(end.grounded, "{end:?}");
+        assert!(
+            (end.position.y - rest_height_on_floor()).abs() < 0.02,
+            "stands on the floor below, not the edge: {end:?}"
+        );
+    }
+
+    #[test]
+    fn running_off_a_plateau_onto_a_60_degree_slope_goes_airborne_and_keeps_its_speed() {
+        const PLATEAU: f32 = 3.0;
+        let run = PLATEAU / 60.0_f32.to_radians().tan();
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        world.set_world_mesh(
+            WorldMeshId(1),
+            &slope_mesh(-10.0, PLATEAU, 0.0, PLATEAU),
+            TEST_TAG,
+        );
+        world.set_world_mesh(
+            WorldMeshId(2),
+            &slope_mesh(0.0, PLATEAU, run, 0.0),
+            TEST_TAG,
+        );
+        let h = resting_then_moving(
+            &mut world,
+            Vec3::new(-5.0, PLATEAU + rest_height_on_floor(), -3.0),
+            0.0,
+            Vec3::ZERO,
+        );
+        let forward = CharacterCommand {
+            forward: 1.0,
+            ..CharacterCommand::default()
+        };
+        let past_the_crest = 0.3115 + 0.02;
+        let mut first_past = None;
+
+        for tick in 0..120 {
+            let (now, _) = searchlight_tick(&mut world, h, &forward);
+
+            match first_past {
+                None if now.position.z > past_the_crest => {
+                    first_past = Some(tick);
+                    assert!(
+                        !now.grounded,
+                        "tick {tick}: snapped onto the steep face, {now:?}"
+                    );
+                    assert!(
+                        (now.velocity.with_y(0.0).length() - 6.0).abs() < 0.1,
+                        "tick {tick}: lost its speed leaving the crest, {now:?}"
+                    );
+                }
+                Some(first) if tick - first <= 10 => {
+                    assert!(
+                        !now.grounded,
+                        "tick {tick}: grounded over the face, {now:?}"
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        assert!(first_past.is_some(), "never passed the crest");
+    }
+
+    #[test]
+    fn a_character_standing_on_another_characters_head_stays_grounded() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        let lower = world.add_character(Vec3::new(0.0, 1.2, 0.0));
+        settle_on_floor(&mut world, &[lower]);
+        let base = state(&world, lower).position;
+        let upper = world.add_character(base + Vec3::Y * (2.3 + 0.0115));
+        let mut at_tick_10 = Vec3::ZERO;
+        let mut trajectory = Vec::new();
+
+        for tick in 0..60 {
+            searchlight_tick(&mut world, lower, &idle());
+            let (now, _) = searchlight_tick(&mut world, upper, &idle());
+
+            trajectory.push(now.position);
+            if tick == 10 {
+                at_tick_10 = now.position;
+            }
+        }
+
+        let end = state(&world, upper);
+        assert!(
+            end.grounded,
+            "not grounded; trajectory every 10 ticks {:?}, {end:?}",
+            trajectory.iter().step_by(10).collect::<Vec<_>>()
+        );
+        assert!(
+            end.position.y > base.y + 2.0,
+            "fell off the head: {end:?}, lower at {base:?}"
+        );
+        assert!(
+            end.position.distance(at_tick_10) < 0.02,
+            "crept from {at_tick_10:?}: {end:?}"
+        );
     }
 
     #[test]
@@ -4547,7 +4781,7 @@ mod tests {
 
         /// The ceiling's underside, above the floor.
         const LOW: f32 = 1.2;
-        /// Skin the controller keeps from a surface; the hull may sit this close.
+        /// Skin the slide keeps from a surface; the hull may sit this close.
         const SKIN: f32 = 0.0115;
         const RADIUS: f32 = 0.405;
 
@@ -4780,7 +5014,7 @@ mod tests {
         const RADIUS: f32 = 0.3;
         /// Half the prone hull's length.
         const HALF: f32 = 0.9;
-        /// Skin the controller keeps from a surface.
+        /// Skin the slide keeps from a surface.
         const SKIN: f32 = 0.0115;
 
         fn settings() -> MoveSettings {

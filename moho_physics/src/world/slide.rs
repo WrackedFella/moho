@@ -1,20 +1,44 @@
-//! The rapier collide-and-slide behind [`crate::movement::step`].
+//! The collide-and-slide behind [`crate::movement::step`], on parry shape casts.
 
 use crate::movement::{
     CharacterQueries, Ground, HullPose, HullShape, Slide, STEP_HEIGHT, WALKABLE_NORMAL_Y,
 };
 use crate::world::CharacterState;
 use glam::{Quat, Vec3};
-use rapier3d::control::{
-    CharacterLength, EffectiveCharacterMovement, KinematicCharacterController,
-};
 use rapier3d::parry::query::ShapeCastHit;
 use rapier3d::parry::query::ShapeCastOptions;
 use rapier3d::parry::shape::{Ball, Cylinder};
 use rapier3d::prelude::{ColliderHandle, Pose, QueryPipeline, Ray, Shape, SharedShape};
 
-/// How far below a grounded landing to look for the surface it landed on, in metres.
-const GROUND_PROBE: f32 = 0.1;
+/// Gap, in metres, the slide keeps between a character's hull and what it touches.
+///
+/// Fixed rather than relative to the hull so a different hull keeps the same skin.
+pub(super) const SKIN: f32 = 0.0115;
+
+const STEP_MIN_WIDTH: f32 = 0.2;
+
+const MAX_SLIDE_PLANES: usize = 5;
+
+const MIN_MOVE: f32 = 1e-5;
+
+/// A ground gap at or below this, in metres, is touching the ground; a slide that is not
+/// rising closes it.
+const GROUND_CONTACT: f32 = 0.05;
+
+/// A ground gap below this, in metres, is left open.
+const SNAP_MIN: f32 = 1e-4;
+
+/// A cast normal this close to its triangle's normal (dot product) is that face.
+const SAME_FACE_DOT: f32 = 0.9999;
+
+/// How far, in metres, each surface met pushes the rest of the motion off it, so the next
+/// cast starts outside the skin (rapier's `normal_nudge_factor`).
+const NUDGE: f32 = 1e-4;
+
+/// How far motion may enter an earlier plane, as a dot product, and still count as leaving it.
+const CLIP_TOLERANCE: f32 = 1e-6;
+
+const DEPENETRATION_PASSES: usize = 4;
 
 /// Half the height of the thin cylinder whose flat base reads the ground, in metres.
 const FLAT_BASE_HALF_HEIGHT: f32 = 0.005;
@@ -37,7 +61,7 @@ const STEP_MIN_PROGRESS: f32 = 1e-3;
 /// The least speed, in m/s, at which a walker resting on an edge outside its flat base moves off it.
 const ROLL_OFF_SPEED: f32 = 1.0;
 
-/// A surface whose normal faces up more than this (`normal.y`) holds a capsule grounded in rapier.
+/// A surface whose normal faces up more than this (`normal.y`) holds a capsule up on an edge.
 const HOLDING_NORMAL_Y: f32 = 1e-3;
 
 /// How far to shift a walker on an edge, in metres, beyond its own `outward` motion this tick:
@@ -65,13 +89,6 @@ struct GroundRead {
     edge: Option<Edge>,
 }
 
-fn skin(controller: &KinematicCharacterController) -> f32 {
-    let CharacterLength::Absolute(skin) = controller.offset else {
-        panic!("the world builds its character controller with an absolute skin offset");
-    };
-    skin
-}
-
 /// A shape cast that reports any contact within `distance`, measured from surface to surface.
 fn cast_within(distance: f32) -> ShapeCastOptions {
     ShapeCastOptions {
@@ -82,12 +99,18 @@ fn cast_within(distance: f32) -> ShapeCastOptions {
     }
 }
 
+fn cast_skinned(distance: f32) -> ShapeCastOptions {
+    ShapeCastOptions {
+        target_distance: SKIN,
+        ..cast_within(distance)
+    }
+}
+
 /// A surface a grounded character may step up onto: too steep to walk on, not a ceiling.
 fn is_riser(normal: Vec3) -> bool {
     normal.y < WALKABLE_NORMAL_Y && normal.y > -CEILING_NORMAL_Y
 }
 
-/// Whether the controller grounded a falling slide without reporting the walkable ground.
 fn landed_without_ground_hit(grounded: bool, asked: Vec3, hits: &[(ColliderHandle, Vec3)]) -> bool {
     grounded
         && asked.y < 0.0
@@ -101,6 +124,31 @@ fn landed_without_ground_hit(grounded: bool, asked: Vec3, hits: &[(ColliderHandl
 fn step_reach(remaining: Vec3, min_width: f32) -> Option<(Vec3, f32)> {
     let length = remaining.length();
     (length >= STEP_MIN_PROGRESS).then(|| (remaining / length, length.max(min_width)))
+}
+
+/// `motion` clipped against the `planes` (unit normals, facing the hull) it met, in order.
+///
+/// Quake's `SV_FlyMove`: the part entering the last plane is removed; if the result still
+/// enters an earlier plane, two planes send it along their crease and any more stop it. Motion
+/// leaving a plane is kept.
+fn clip_motion(motion: Vec3, planes: &[Vec3]) -> Vec3 {
+    let Some((&last, earlier)) = planes.split_last() else {
+        return motion;
+    };
+    let along = motion - last * motion.dot(last).min(0.0);
+    if earlier
+        .iter()
+        .all(|&plane| along.dot(plane) >= -CLIP_TOLERANCE)
+    {
+        return along;
+    }
+    match planes {
+        &[previous, last] => {
+            let crease = previous.cross(last).normalize_or_zero();
+            crease * motion.dot(crease)
+        }
+        _ => Vec3::ZERO,
+    }
 }
 
 /// A character hull as the ground query sees it: a core disc swept by a sphere.
@@ -154,7 +202,6 @@ impl Footing {
 /// The world as one character's collide-and-slide sees it.
 #[derive(Clone, Copy)]
 pub(super) struct Slider<'a> {
-    pub controller: &'a KinematicCharacterController,
     pub queries: &'a QueryPipeline<'a>,
     pub shape: &'a dyn Shape,
     pub footing: Footing,
@@ -184,7 +231,6 @@ pub(super) fn shape_of(pose: HullPose) -> SharedShape {
 /// The world as one character's step sees it: the collider the character holds, built into a
 /// [`Slider`] for whichever hull the step asks about.
 pub(super) struct WorldQueries<'a> {
-    pub controller: &'a KinematicCharacterController,
     pub queries: &'a QueryPipeline<'a>,
     pub dt: f32,
     /// The posed hull `own_shape` was built from.
@@ -205,7 +251,6 @@ impl CharacterQueries for WorldQueries<'_> {
             built.as_ref()
         };
         let slider = Slider {
-            controller: self.controller,
             queries: self.queries,
             shape,
             footing: Footing::of(pose),
@@ -233,7 +278,6 @@ impl CharacterQueries for WorldQueries<'_> {
     /// The cast ignores the character's own hull and sensors through the pipeline's filter, and
     /// stops a skin short of what it meets.
     fn sweep(&self, from: Vec3, to: Vec3, radius: f32) -> f32 {
-        let skin = skin(self.controller);
         let path = to - from;
         let length = path.length();
         if length == 0.0 {
@@ -247,7 +291,7 @@ impl CharacterQueries for WorldQueries<'_> {
             cast_within(length),
         );
         hit.map_or(1.0, |(_, hit)| {
-            ((hit.time_of_impact - skin) / length).clamp(0.0, 1.0)
+            ((hit.time_of_impact - SKIN) / length).clamp(0.0, 1.0)
         })
     }
 }
@@ -255,23 +299,21 @@ impl CharacterQueries for WorldQueries<'_> {
 impl Slider<'_> {
     /// Move the capsule from `start` by `asked` and report what it touched.
     ///
-    /// A grounded character blocked by a riser retries from on top of it, and a landing the
-    /// controller detected without a hit gets the surface it landed on.
+    /// A grounded character blocked by a riser retries from on top of it. The slide is grounded
+    /// when walkable ground lies within [`GROUND_CONTACT`] where it ends, and a falling slide
+    /// that lands without having met that ground records it as a hit.
     pub(super) fn slide(&self, start: &Pose, asked: Vec3, was_grounded: bool) -> Slide {
         let mut hits = Vec::new();
-        let plain = self.controller.move_shape(
-            self.dt,
-            self.queries,
-            self.shape,
-            start,
-            asked,
-            |collision| {
-                hits.push((collision.handle, collision.hit.normal1));
-            },
-        );
+        // Only a hull asked to stay put is pushed out: a moving one's casts stop it at what it
+        // meets, and parry's overlap test misreports some capsule and trimesh contacts.
+        let plain = if asked.length() < MIN_MOVE {
+            self.depenetrate(start)
+        } else {
+            self.collide_and_slide(start, asked, Some(&mut hits))
+        };
 
         if was_grounded && hits.iter().any(|&(_, normal)| is_riser(normal)) {
-            if let Some(translation) = self.step_up(start, asked, plain.translation) {
+            if let Some(translation) = self.step_up(start, asked, plain) {
                 return Slide {
                     translation,
                     grounded: true,
@@ -281,32 +323,168 @@ impl Slider<'_> {
             }
         }
 
-        if landed_without_ground_hit(plain.grounded, asked, &hits) {
-            hits.extend(self.probe_landing(start, plain.translation));
+        let (plain, read) = self.close_gap(start, plain, asked);
+        let grounded = read
+            .as_ref()
+            .is_some_and(|read| read.ground.gap <= GROUND_CONTACT);
+        if landed_without_ground_hit(grounded, asked, &hits) {
+            if let Some(read) = &read {
+                hits.push((read.ground.collider, read.ground.normal));
+            }
         }
-        // Only a walker reads its ground, and only a character that started grounded walks.
-        let read = was_grounded
-            .then(|| self.read_ground(start.translation + plain.translation, start.rotation))
-            .flatten();
-        if let Some(rolled) = read.as_ref().and_then(|read| read.edge).and_then(|edge| {
-            let lacking = top_up(plain.translation.dot(edge.outward), edge.clearance, self.dt);
-            (lacking > 0.0).then(|| edge.outward * lacking)
-        }) {
-            let ended = Pose::from_parts(start.translation + plain.translation, start.rotation);
-            let translation = plain.translation + self.shift(&ended, rolled).translation;
+        // Only a walker rolls off an edge, and only a character that started grounded walks.
+        if let Some(rolled) = read
+            .as_ref()
+            .filter(|_| was_grounded)
+            .and_then(|read| read.edge)
+            .and_then(|edge| {
+                let lacking = top_up(plain.dot(edge.outward), edge.clearance, self.dt);
+                (lacking > 0.0).then(|| edge.outward * lacking)
+            })
+        {
+            let ended = Pose::from_parts(start.translation + plain, start.rotation);
+            let (translation, read) =
+                self.close_gap(start, plain + self.shift(&ended, rolled), asked);
             return Slide {
                 translation,
                 grounded: false,
-                ground: self.ground_below(start.translation + translation, start.rotation),
+                ground: read.map(|read| read.ground),
                 hits,
             };
         }
         Slide {
-            translation: plain.translation,
-            grounded: plain.grounded,
+            translation: plain,
+            grounded,
             ground: read.map(|read| read.ground),
             hits,
         }
+    }
+
+    /// The ground read where a slide from `start` by `translation` ends, after lowering a slide
+    /// that was not `asked` to rise onto walkable ground within [`GROUND_CONTACT`].
+    /// Returns the translation and the read.
+    fn close_gap(
+        &self,
+        start: &Pose,
+        translation: Vec3,
+        asked: Vec3,
+    ) -> (Vec3, Option<GroundRead>) {
+        let read = self.read_ground(start.translation + translation, start.rotation);
+        match read.as_ref().map(|read| read.ground.gap) {
+            Some(gap) if asked.y <= 0.0 && gap > SNAP_MIN && gap <= GROUND_CONTACT => {
+                let lowered = translation - Vec3::Y * gap;
+                (
+                    lowered,
+                    self.read_ground(start.translation + lowered, start.rotation),
+                )
+            }
+            _ => (translation, read),
+        }
+    }
+
+    /// Slides the hull from `from` by `by`, recording each surface met in `hits`; returns the
+    /// translation.
+    ///
+    /// A surface too steep to walk on does not lift a motion that was not rising: the motion
+    /// slides along it level, so walking into a steep face never climbs it (rapier's
+    /// `handle_slopes`).
+    fn collide_and_slide(
+        &self,
+        from: &Pose,
+        by: Vec3,
+        mut hits: Option<&mut Vec<(ColliderHandle, Vec3)>>,
+    ) -> Vec3 {
+        let mut moved = Vec3::ZERO;
+        let mut remaining = by;
+        let mut planes = [Vec3::ZERO; MAX_SLIDE_PLANES];
+        for met in 0..MAX_SLIDE_PLANES {
+            let length = remaining.length();
+            if length < MIN_MOVE {
+                break;
+            }
+            let dir = remaining / length;
+            let at = Pose::from_parts(from.translation + moved, from.rotation);
+            let Some((handle, hit)) =
+                self.queries
+                    .cast_shape(&at, dir, self.shape, cast_skinned(length))
+            else {
+                moved += remaining;
+                break;
+            };
+            moved += dir * hit.time_of_impact;
+            remaining -= dir * hit.time_of_impact;
+            let normal = self.exact_normal(handle, &hit);
+            if let Some(hits) = hits.as_deref_mut() {
+                hits.push((handle, normal));
+            }
+            let along = remaining - normal * remaining.dot(normal).min(0.0);
+            let level = normal.with_y(0.0).normalize_or_zero();
+            let plane = if by.y <= 0.0 && along.y > 0.0 && is_riser(normal) && level != Vec3::ZERO {
+                level
+            } else {
+                normal
+            };
+            planes[met] = plane;
+            remaining = clip_motion(remaining, &planes[..=met]) + normal * NUDGE;
+        }
+        moved
+    }
+
+    /// The hit's normal, snapped to its triangle's face normal when the cast's own normal is
+    /// that face's up to search noise.
+    fn exact_normal(&self, collider: ColliderHandle, hit: &ShapeCastHit) -> Vec3 {
+        self.triangle_normal(collider, hit)
+            .map(|world| {
+                if world.dot(hit.normal1) < 0.0 {
+                    -world
+                } else {
+                    world
+                }
+            })
+            .filter(|facing| facing.dot(hit.normal1) > SAME_FACE_DOT)
+            .unwrap_or(hit.normal1)
+    }
+
+    /// Either-way-up normal of the touched trimesh triangle; `None` for other colliders.
+    fn triangle_normal(&self, collider: ColliderHandle, hit: &ShapeCastHit) -> Option<Vec3> {
+        let found = self.queries.colliders.get(collider)?;
+        let normal = found
+            .shape()
+            .as_trimesh()?
+            .triangle(hit.subshape1)
+            .normal()?;
+        Some(found.position().rotation * normal)
+    }
+
+    fn depenetrate(&self, from: &Pose) -> Vec3 {
+        let mut pushed = Vec3::ZERO;
+        for _ in 0..DEPENETRATION_PASSES {
+            let at = Pose::from_parts(from.translation + pushed, from.rotation);
+            let overlap =
+                self.queries
+                    .intersect_shape(at, self.shape)
+                    .find_map(|(handle, collider)| {
+                        let pos12 = at.inv_mul(collider.position());
+                        self.queries
+                            .dispatcher
+                            .contact(&pos12, self.shape, collider.shape(), 0.0)
+                            .inspect_err(|unsupported| {
+                                tracing::warn!(
+                                    ?handle,
+                                    ?unsupported,
+                                    "no contact query for an overlapped shape"
+                                );
+                            })
+                            .ok()
+                            .flatten()
+                            .filter(|contact| contact.dist < 0.0)
+                    });
+            let Some(contact) = overlap else {
+                break;
+            };
+            pushed -= (at.rotation * contact.normal1) * (SKIN - contact.dist);
+        }
+        pushed
     }
 
     /// The walkable surface the capsule centred at `centre` stands on, within [`STEP_HEIGHT`]
@@ -316,7 +494,8 @@ impl Slider<'_> {
     /// unlike the capsule's rounded base it reports a face normal on step edges and across
     /// seams, and its radius, tied to the walkable angle, is the perch margin. The capsule
     /// itself, cast down to its skin offset, gives the gap: how far it can drop before it
-    /// touches anything.
+    /// touches anything. When the flat base meets a face too steep to walk on, a ray down the
+    /// capsule's axis reads the surface under it instead.
     ///
     /// `rotation` turns the cast and matters only for a lying footing, which faces along the
     /// yaw; an upright hull is round about the vertical and ignores it.
@@ -332,7 +511,6 @@ impl Slider<'_> {
         } else {
             Quat::IDENTITY
         };
-        let skin = skin(self.controller);
 
         let base_radius =
             footing.disc + footing.sweep * (1.0 - WALKABLE_NORMAL_Y * WALKABLE_NORMAL_Y).sqrt();
@@ -345,53 +523,72 @@ impl Slider<'_> {
             cast_within(footing.sweep + STEP_HEIGHT),
         )?;
         let normal = self.face_normal(collider, &face, centre);
-        if normal.y < WALKABLE_NORMAL_Y {
-            return None;
-        }
+        let (collider, normal, face_toi, point) = if normal.y >= WALKABLE_NORMAL_Y {
+            (collider, normal, face.time_of_impact, face.witness1)
+        } else {
+            // A steep face under the flat base does not hide the floor under the axis (Source's
+            // `TryTouchGroundInQuadrants`).
+            let ray = Ray::new(base_at.translation, -Vec3::Y);
+            let (handle, hit) = self.queries.cast_ray_and_get_normal(
+                &ray,
+                footing.sweep + STEP_HEIGHT + FLAT_BASE_HALF_HEIGHT,
+                true,
+            )?;
+            if hit.normal.y < WALKABLE_NORMAL_Y {
+                return None;
+            }
+            (
+                handle,
+                hit.normal,
+                hit.time_of_impact - FLAT_BASE_HALF_HEIGHT,
+                ray.point_at(hit.time_of_impact),
+            )
+        };
 
         let at = Pose::from_parts(centre, rotation);
-        let skinned = ShapeCastOptions {
-            target_distance: skin,
-            ..cast_within(STEP_HEIGHT)
-        };
         let mut edge = None;
-        let gap = match self.queries.cast_shape(&at, -Vec3::Y, self.shape, skinned) {
-            Some((_, drop)) => {
-                // The face under the flat base lies below where the capsule's drop stops.
-                let held_above = face.time_of_impact + FLAT_BASE_HALF_HEIGHT
-                    - footing.sweep
-                    - drop.time_of_impact;
-                let across = drop.normal1.with_y(0.0);
-                let reach = footing.disc + (footing.sweep + skin) * across.length();
-                if drop.normal1.y > HOLDING_NORMAL_Y && reach > base_radius && held_above > skin {
-                    edge = Some(Edge {
-                        outward: across.normalize(),
-                        clearance: (footing.sweep + skin) * (1.0 - across.length()) + skin,
-                    });
-                }
-                drop.time_of_impact
-            }
-            // Near a mesh boundary the skinned cast can miss though the flat base hit.
-            None => {
-                match self
-                    .queries
-                    .cast_shape(&at, -Vec3::Y, self.shape, cast_within(STEP_HEIGHT))
-                {
-                    Some((_, drop)) => {
-                        let cosine = drop.normal1.y.max(WALKABLE_NORMAL_Y);
-                        (drop.time_of_impact - skin / cosine).max(0.0)
+        let gap =
+            match self
+                .queries
+                .cast_shape(&at, -Vec3::Y, self.shape, cast_skinned(STEP_HEIGHT))
+            {
+                Some((_, drop)) => {
+                    // The face under the flat base lies below where the capsule's drop stops.
+                    let held_above =
+                        face_toi + FLAT_BASE_HALF_HEIGHT - footing.sweep - drop.time_of_impact;
+                    let across = drop.normal1.with_y(0.0);
+                    let reach = footing.disc + (footing.sweep + SKIN) * across.length();
+                    if drop.normal1.y > HOLDING_NORMAL_Y && reach > base_radius && held_above > SKIN
+                    {
+                        edge = Some(Edge {
+                            outward: across.normalize(),
+                            clearance: (footing.sweep + SKIN) * (1.0 - across.length()) + SKIN,
+                        });
                     }
-                    None => (face.time_of_impact + FLAT_BASE_HALF_HEIGHT - footing.sweep - skin)
-                        .max(0.0),
+                    drop.time_of_impact
                 }
-            }
-        };
+                // Near a mesh boundary the skinned cast can miss though the flat base hit.
+                None => {
+                    match self.queries.cast_shape(
+                        &at,
+                        -Vec3::Y,
+                        self.shape,
+                        cast_within(STEP_HEIGHT),
+                    ) {
+                        Some((_, drop)) => {
+                            let cosine = drop.normal1.y.max(WALKABLE_NORMAL_Y);
+                            (drop.time_of_impact - SKIN / cosine).max(0.0)
+                        }
+                        None => (face_toi + FLAT_BASE_HALF_HEIGHT - footing.sweep - SKIN).max(0.0),
+                    }
+                }
+            };
         Some(GroundRead {
             ground: Ground {
                 normal,
                 gap,
                 collider,
-                point: face.witness1,
+                point,
             },
             edge,
         })
@@ -408,14 +605,8 @@ impl Slider<'_> {
     /// the contact, nudged toward the cast's axis `centre` so an exact edge contact lands on the
     /// tread, reads the tread instead.
     fn face_normal(&self, collider: ColliderHandle, hit: &ShapeCastHit, centre: Vec3) -> Vec3 {
-        let Some(found) = self.queries.colliders.get(collider) else {
-            return hit.normal1;
-        };
-        let triangle = found
-            .shape()
-            .as_trimesh()
-            .and_then(|mesh| mesh.triangle(hit.subshape1).normal())
-            .map(|normal| found.position().rotation * normal)
+        let triangle = self
+            .triangle_normal(collider, hit)
             .map(|world| if world.y < 0.0 { -world } else { world })
             .filter(|normal| normal.y >= WALKABLE_NORMAL_Y);
         triangle
@@ -434,46 +625,25 @@ impl Slider<'_> {
             .unwrap_or(hit.normal1)
     }
 
-    /// The surface under a character the controller grounded without reporting a hit.
-    ///
-    /// The controller detects ground a few centimetres early, so a landing there would carry
-    /// no impact.
-    fn probe_landing(&self, start: &Pose, translation: Vec3) -> Option<(ColliderHandle, Vec3)> {
-        let landed_at = Pose::from_parts(start.translation + translation, start.rotation);
-        let (handle, hit) =
-            self.queries
-                .cast_shape(&landed_at, -Vec3::Y, self.shape, cast_within(GROUND_PROBE))?;
-        Some((handle, hit.normal1))
-    }
-
     /// Retry a blocked slide from on top of the obstacle (Source's `StepMove`).
     ///
-    /// The controller's own autostep fails on float noise when the capsule stops exactly its
-    /// skin offset from a riser, so this lifts the capsule, carries the remaining horizontal
-    /// motion across (at least the autostep's minimum width, so the capsule's rounded base ends
-    /// over the step top), and settles it down. Returns the whole tick's translation, or `None`
-    /// when that does not end grounded.
+    /// The reach is at least [`STEP_MIN_WIDTH`] so the capsule's rounded base ends over the
+    /// step top. Returns the whole tick's translation, or `None` when that top is not walkable.
     fn step_up(&self, start: &Pose, asked: Vec3, blocked: Vec3) -> Option<Vec3> {
-        let autostep = self.controller.autostep?;
-        let (CharacterLength::Absolute(max_height), CharacterLength::Absolute(min_width)) =
-            (autostep.max_height, autostep.min_width)
-        else {
-            return None;
-        };
-        let (dir, len) = step_reach((asked - blocked).with_y(0.0), min_width)?;
+        let (dir, len) = step_reach((asked - blocked).with_y(0.0), STEP_MIN_WIDTH)?;
 
         let stopped = Pose::from_parts(start.translation + blocked, start.rotation);
         let lift = self
             .queries
-            .cast_shape(&stopped, Vec3::Y, self.shape, cast_within(max_height))
-            .map_or(max_height, |(_, hit)| hit.time_of_impact);
+            .cast_shape(&stopped, Vec3::Y, self.shape, cast_within(STEP_HEIGHT))
+            .map_or(STEP_HEIGHT, |(_, hit)| hit.time_of_impact);
         if lift <= 0.0 {
             return None;
         }
 
         let lifted = Pose::from_parts(stopped.translation + Vec3::Y * lift, stopped.rotation);
-        // Like rapier's own stair check: the lifted capsule must clear the whole reach, so a
-        // riser taller than the lift is not climbed by riding up its rounded edge.
+        // The lifted capsule must clear the whole reach, so a riser taller than the lift is not
+        // climbed by riding up its rounded edge.
         if self
             .queries
             .cast_shape(&lifted, dir, self.shape, cast_within(len))
@@ -482,19 +652,23 @@ impl Slider<'_> {
             return None;
         }
         let across = self.shift(&lifted, dir * len);
-        let over = Pose::from_parts(lifted.translation + across.translation, lifted.rotation);
-        let down = self.shift(&over, -Vec3::Y * (lift + STEP_SNAP));
-        if !down.grounded {
+        let over = Pose::from_parts(lifted.translation + across, lifted.rotation);
+        // A cast, not a slide: sliding down onto a riser's rounded top edge slides the hull
+        // back off the step. The step top must be walkable where the hull lands.
+        let (handle, hit) =
+            self.queries
+                .cast_shape(&over, -Vec3::Y, self.shape, cast_skinned(lift + STEP_SNAP))?;
+        if self.exact_normal(handle, &hit).y < WALKABLE_NORMAL_Y {
             return None;
         }
+        let down = -Vec3::Y * hit.time_of_impact;
 
-        Some(blocked + Vec3::Y * lift + across.translation + down.translation)
+        Some(blocked + Vec3::Y * lift + across + down)
     }
 
     /// Collide-and-slide from `from` without recording hits.
-    fn shift(&self, from: &Pose, by: Vec3) -> EffectiveCharacterMovement {
-        self.controller
-            .move_shape(self.dt, self.queries, self.shape, from, by, |_| {})
+    fn shift(&self, from: &Pose, by: Vec3) -> Vec3 {
+        self.collide_and_slide(from, by, None)
     }
 }
 
@@ -502,7 +676,8 @@ impl Slider<'_> {
 mod tests {
     use super::super::test_support::TEST_TAG;
     use super::super::test_support::{
-        quad_mesh, seam_floor_meshes, slope_mesh, step_box_mesh, wall_mesh,
+        ceiling_mesh, quad_mesh, seam_floor_meshes, slope_mesh, step_box_mesh, wall_mesh,
+        x_wall_mesh, x_wall_mesh_reversed,
     };
     use super::super::PhysicsWorld;
     use super::*;
@@ -605,7 +780,6 @@ mod tests {
         );
         let capsule = SharedShape::capsule_y(0.85, 0.3);
         let slider = Slider {
-            controller: &world.character_controller,
             queries: &queries,
             shape: capsule.as_ref(),
             footing: Footing::of(HullPose::Upright(CharacterBody::default().standing.hull)),
@@ -645,7 +819,6 @@ mod tests {
         );
         let capsule = SharedShape::capsule_y(0.85, 0.3);
         let slider = Slider {
-            controller: &world.character_controller,
             queries: &queries,
             shape: capsule.as_ref(),
             footing: Footing::of(HullPose::Upright(CharacterBody::default().standing.hull)),
@@ -740,7 +913,6 @@ mod tests {
         );
         let capsule = SharedShape::capsule_y(0.85, 0.3);
         let slider = Slider {
-            controller: &world.character_controller,
             queries: &queries,
             shape: capsule.as_ref(),
             footing: Footing::of(HullPose::Upright(CharacterBody::default().standing.hull)),
@@ -772,7 +944,6 @@ mod tests {
         );
         let capsule = SharedShape::capsule_z(0.6, 0.3);
         let slider = Slider {
-            controller: &world.character_controller,
             queries: &queries,
             shape: capsule.as_ref(),
             footing: Footing::of(HullPose::Lying {
@@ -1095,7 +1266,6 @@ mod tests {
     fn a_sweep_stops_a_skin_short_of_a_wall_and_ignores_one_behind_it() {
         let (toward, away) = with_slider(&[wall_mesh(2.0)], |slider| {
             let world = WorldQueries {
-                controller: slider.controller,
                 queries: slider.queries,
                 dt: slider.dt,
                 own_pose: HullPose::Upright(CharacterBody::default().standing.hull),
@@ -1106,10 +1276,8 @@ mod tests {
             let away = world.sweep(from, from - Vec3::new(0.0, 0.0, 1.0), 0.1);
             (toward, away)
         });
-        let skin = with_slider(&[], |slider| skin(slider.controller));
-
         // The ball's front meets the wall after 1.4 m of the 2 m path.
-        let expected = (1.4 - skin) / 2.0;
+        let expected = (1.4 - SKIN) / 2.0;
         assert!((toward - expected).abs() < 1e-4, "{toward} vs {expected}");
         assert_eq!(away, 1.0);
     }
@@ -1177,7 +1345,7 @@ mod tests {
         assert!((moved.translation.z - 1.0 / 60.0).abs() < 5e-4, "{moved:?}");
         assert!(!moved.grounded, "{moved:?}");
         // The shift rides down the rim: from 0.2252 m past the rim sits 0.2152 m above the
-        // nosing, 0.0162 m below where the walker started, and the controller drops it 0.0157.
+        // nosing, 0.0162 m below where the walker started, and the snap drops it 0.0157.
         assert!((moved.translation.y + 0.0157).abs() < 0.003, "{moved:?}");
         let ground = moved.ground.expect("the lower floor is under the walker");
         assert!(ground.gap < 0.004, "read where it ended: {ground:?}");
@@ -1222,6 +1390,73 @@ mod tests {
         })
     }
 
+    /// Level ground and a 60 degree face rising from it at z = 1.
+    fn floor_with_a_steep_face() -> [WorldMesh; 2] {
+        let rise = 60.0_f32.to_radians().tan();
+        [
+            ground(0.0, -10.0, 10.0),
+            slope_mesh(1.0, 0.0, 3.0, 2.0 * rise),
+        ]
+    }
+
+    /// Where a capsule centre rests on level ground at y = 0, a skin above it.
+    const FLOOR_REST_Y: f32 = 0.3 + 0.85 + 0.0115;
+
+    #[test]
+    fn ground_below_at_the_foot_of_a_steep_face_reads_the_floor_under_the_axis() {
+        // The flat base's first contact here is the face, 0.18 m ahead; the axis is over the floor.
+        let centre = Vec3::new(0.0, FLOOR_REST_Y, 0.82);
+
+        let found = ground_below_centre(&floor_with_a_steep_face(), centre);
+
+        let normal = found.expect("the floor under the axis is ground");
+        assert!(normal.distance(Vec3::Y) < 1e-3, "{normal:?}");
+    }
+
+    #[test]
+    fn a_slide_that_lands_from_the_air_reports_the_ground() {
+        let above_the_floor = Pose::from_translation(Vec3::new(0.0, 1.2, 0.0));
+
+        let slid = with_slider(&[ground(0.0, -10.0, 10.0)], |slider| {
+            slider.slide(&above_the_floor, Vec3::new(0.0, -0.1, 0.0), false)
+        });
+
+        assert!(slid.grounded, "{slid:?}");
+        let ground = slid
+            .ground
+            .expect("a landing reads the ground it stands on");
+        assert!(ground.normal.distance(Vec3::Y) < 1e-3, "{ground:?}");
+    }
+
+    #[test]
+    fn a_step_up_that_lands_on_a_steep_face_is_refused() {
+        // A 0.3 m riser, under the step height, topped by a 50 degree face rising away from
+        // the walker: only a step-up could lift the hull, and it would land on the face.
+        let rise = 50.0_f32.to_radians().tan();
+        let riser_and_face = quad_mesh(
+            &[
+                [-10.0, 0.0, 1.0],
+                [10.0, 0.0, 1.0],
+                [10.0, 0.3, 1.0],
+                [-10.0, 0.3, 1.0],
+                [10.0, 0.3 + rise, 2.0],
+                [-10.0, 0.3 + rise, 2.0],
+            ],
+            &[0, 2, 1, 0, 3, 2, 3, 4, 2, 3, 5, 4],
+        );
+        let touching_the_riser =
+            Pose::from_translation(Vec3::new(0.0, FLOOR_REST_Y, 1.0 - 0.3 - 0.0115));
+
+        let slid = with_slider(&[ground(0.0, -10.0, 10.0), riser_and_face], |slider| {
+            slider.slide(&touching_the_riser, Vec3::new(0.0, 0.0, 0.1), true)
+        });
+
+        assert!(
+            slid.translation.y.abs() < 0.02,
+            "lifted onto the face: {slid:?}"
+        );
+    }
+
     #[test]
     fn a_walker_on_the_floor_beside_a_low_step_is_not_rolled_but_one_held_above_it_is() {
         // The rim's contact with a nosing 0.25 m to the side is outside the flat base. The walker
@@ -1236,5 +1471,315 @@ mod tests {
             (held_above.translation.z - 1.0 / 60.0).abs() < 5e-4,
             "rolled off the nosing: {held_above:?}"
         );
+    }
+
+    const FLOOR: Vec3 = Vec3::Y;
+
+    #[test]
+    fn clip_motion_slides_along_one_plane_and_keeps_motion_leaving_it() {
+        let motion = Vec3::new(1.0, 0.5, 1.0);
+
+        let along_wall = clip_motion(motion, &[Vec3::NEG_Z]);
+        let leaving_wall = clip_motion(motion, &[Vec3::Z]);
+        let past_the_floor = clip_motion(motion, &[FLOOR, Vec3::NEG_Z]);
+
+        assert!(
+            along_wall.distance(Vec3::new(1.0, 0.5, 0.0)) < 1e-6,
+            "{along_wall:?}"
+        );
+        assert!(leaving_wall.distance(motion) < 1e-6, "{leaving_wall:?}");
+        assert!(
+            past_the_floor.distance(Vec3::new(1.0, 0.5, 0.0)) < 1e-6,
+            "rising off the earlier plane is kept: {past_the_floor:?}"
+        );
+    }
+
+    #[test]
+    fn clip_motion_follows_the_crease_of_two_planes() {
+        let motion = Vec3::new(1.0, -1.0, 1.0);
+
+        let floor_then_wall = clip_motion(motion, &[FLOOR, Vec3::NEG_Z]);
+        let wall_then_floor = clip_motion(motion, &[Vec3::NEG_Z, FLOOR]);
+
+        assert!(
+            floor_then_wall.distance(Vec3::X) < 1e-6,
+            "{floor_then_wall:?}"
+        );
+        assert!(
+            wall_then_floor.distance(Vec3::X) < 1e-6,
+            "{wall_then_floor:?}"
+        );
+    }
+
+    #[test]
+    fn clip_motion_follows_a_crease_that_is_not_perpendicular_to_the_motion() {
+        let motion = Vec3::new(0.0, 1.0, 1.0);
+
+        let clipped = clip_motion(
+            motion,
+            &[Vec3::new(0.6, 0.0, -0.8), Vec3::new(-0.6, 0.0, -0.8)],
+        );
+
+        assert!(clipped.distance(Vec3::Y) < 1e-5, "{clipped:?}");
+    }
+
+    #[test]
+    fn clip_motion_keeps_a_third_plane_motion_that_leaves_the_others() {
+        let motion = Vec3::new(1.0, 0.5, -1.0);
+
+        let clipped = clip_motion(motion, &[FLOOR, Vec3::NEG_Z, Vec3::NEG_X]);
+
+        assert!(
+            clipped.distance(Vec3::new(0.0, 0.5, -1.0)) < 1e-5,
+            "{clipped:?}"
+        );
+    }
+
+    #[test]
+    fn clip_motion_stops_against_a_third_plane() {
+        let motion = Vec3::new(1.0, -1.0, 1.0);
+
+        let clipped = clip_motion(motion, &[FLOOR, Vec3::NEG_Z, Vec3::NEG_X]);
+
+        assert_eq!(clipped, Vec3::ZERO);
+    }
+
+    #[test]
+    fn a_level_slide_a_skin_above_the_floor_moves_the_whole_way() {
+        let resting = Pose::from_translation(Vec3::new(0.0, FLOOR_REST_Y, 0.0));
+
+        let slid = with_slider(&[ground(0.0, -10.0, 10.0)], |slider| {
+            slider.slide(&resting, Vec3::new(0.0, 0.0, 0.1), true)
+        });
+
+        assert!((slid.translation.z - 0.1).abs() < 1e-4, "{slid:?}");
+        assert!(slid.translation.y.abs() < 1e-3, "{slid:?}");
+    }
+
+    #[test]
+    fn a_level_slide_into_a_steep_face_does_not_rise() {
+        let touching_the_face = Pose::from_translation(Vec3::new(0.0, FLOOR_REST_Y, 0.82));
+
+        let slid = with_slider(&floor_with_a_steep_face(), |slider| {
+            slider.slide(&touching_the_face, Vec3::new(0.0, 0.0, 0.1), false)
+        });
+
+        assert!(slid.translation.y <= 1e-3, "rode up the face: {slid:?}");
+    }
+
+    #[test]
+    fn a_rising_slide_into_a_steep_face_rides_up_it() {
+        let touching_the_face = Pose::from_translation(Vec3::new(0.0, FLOOR_REST_Y, 0.82));
+
+        let slid = with_slider(&floor_with_a_steep_face(), |slider| {
+            slider.slide(&touching_the_face, Vec3::new(0.0, 0.05, 0.1), false)
+        });
+
+        assert!(slid.translation.y > 0.06, "did not ride up: {slid:?}");
+    }
+
+    #[test]
+    fn a_hit_on_a_triangle_face_reports_its_exact_normal() {
+        // The jump setup of a walker pressed against a 0.7 m riser: rising while moving forward,
+        // the cast's own normal on the riser is off vertical by about 2e-4.
+        let meshes = [ground(0.0, -10.0, 10.0), step_box_mesh(2.0, 6.0, 0.7)];
+        let pressed = Pose::from_translation(Vec3::new(0.0, FLOOR_REST_Y, 2.0 - 0.3 - 0.03));
+        let asked = Vec3::new(0.0, 0.133, 4.0 / 60.0);
+
+        let slid = with_slider(&meshes, |slider| slider.slide(&pressed, asked, true));
+
+        let (_, normal) = slid
+            .hits
+            .iter()
+            .find(|(_, normal)| normal.z < -0.5)
+            .unwrap_or_else(|| panic!("the riser was not hit: {slid:?}"));
+        assert!(
+            normal.distance(Vec3::NEG_Z) < 1e-6,
+            "the cast's noisy normal, not the face's: {normal:?}"
+        );
+    }
+
+    /// A capsule 5 cm into the wall at z = 2, centred in the air so only the wall is touched.
+    fn inside_the_wall() -> Pose {
+        Pose::from_translation(Vec3::new(0.0, 1.5, 2.0 - 0.3 + 0.05))
+    }
+
+    #[test]
+    fn a_hull_asked_to_stay_put_inside_a_wall_is_pushed_out_to_a_skin() {
+        let slid = with_slider(&[wall_mesh(2.0)], |slider| {
+            slider.slide(&inside_the_wall(), Vec3::ZERO, false)
+        });
+
+        let ends_at = inside_the_wall().translation.z + slid.translation.z;
+        assert!(
+            (ends_at - (2.0 - 0.3 - 0.0115)).abs() < 1e-3,
+            "should end a skin from the wall: {slid:?}"
+        );
+    }
+
+    #[test]
+    fn a_moving_hull_is_not_depenetrated() {
+        let along_the_wall = Vec3::new(0.05, 0.0, 0.0);
+
+        let slid = with_slider(&[wall_mesh(2.0)], |slider| {
+            slider.slide(&inside_the_wall(), along_the_wall, false)
+        });
+
+        assert!(slid.translation.z.abs() < 1e-3, "pushed out: {slid:?}");
+        assert!((slid.translation.x - 0.05).abs() < 1e-3, "{slid:?}");
+    }
+
+    #[test]
+    fn a_level_slide_ending_within_contact_is_lowered_onto_the_ground() {
+        let hovering = Pose::from_translation(Vec3::new(0.0, FLOOR_REST_Y + 0.03, 0.0));
+
+        for was_grounded in [true, false] {
+            let slid = with_slider(&[ground(0.0, -10.0, 10.0)], |slider| {
+                slider.slide(&hovering, Vec3::new(0.0, 0.0, 0.01), was_grounded)
+            });
+
+            assert!(
+                (slid.translation.y + 0.03).abs() < 1e-3,
+                "was_grounded {was_grounded}: {slid:?}"
+            );
+            assert!(slid.grounded, "was_grounded {was_grounded}: {slid:?}");
+            let ground = slid.ground.expect("ground under the lowered hull");
+            assert!(ground.gap.abs() < 1e-3, "{ground:?}");
+        }
+    }
+
+    #[test]
+    fn a_slide_beyond_ground_contact_is_not_lowered() {
+        let hovering = Pose::from_translation(Vec3::new(0.0, FLOOR_REST_Y + 0.08, 0.0));
+
+        let slid = with_slider(&[ground(0.0, -10.0, 10.0)], |slider| {
+            slider.slide(&hovering, Vec3::new(0.0, 0.0, 0.01), true)
+        });
+
+        assert!(slid.translation.y.abs() < 1e-3, "lowered: {slid:?}");
+        assert!(!slid.grounded, "{slid:?}");
+    }
+
+    #[test]
+    fn a_rising_slide_is_not_lowered() {
+        let hovering = Pose::from_translation(Vec3::new(0.0, FLOOR_REST_Y + 0.03, 0.0));
+
+        let slid = with_slider(&[ground(0.0, -10.0, 10.0)], |slider| {
+            slider.slide(&hovering, Vec3::new(0.0, 0.01, 0.01), true)
+        });
+
+        assert!((slid.translation.y - 0.01).abs() < 1e-3, "{slid:?}");
+    }
+
+    #[test]
+    fn a_hull_asked_for_exactly_the_minimum_move_is_slid_not_pushed_out() {
+        let at_rest = Pose::from_translation(Vec3::new(0.0, 1.5, 0.0));
+
+        let slid = with_slider(&[], |slider| {
+            slider.slide(&at_rest, Vec3::X * MIN_MOVE, false)
+        });
+
+        assert!((slid.translation.x - MIN_MOVE).abs() < 1e-7, "{slid:?}");
+    }
+
+    #[test]
+    fn a_motion_shorter_than_the_minimum_is_not_cast_but_one_of_it_is() {
+        let at_rest = Pose::from_translation(Vec3::new(0.0, 1.5, 0.0));
+
+        let (shorter, exact) = with_slider(&[], |slider| {
+            (
+                slider.shift(&at_rest, Vec3::X * (MIN_MOVE * 0.5)),
+                slider.shift(&at_rest, Vec3::X * MIN_MOVE),
+            )
+        });
+
+        assert_eq!(shorter, Vec3::ZERO);
+        assert!((exact.x - MIN_MOVE).abs() < 1e-7, "{exact:?}");
+    }
+
+    #[test]
+    fn clip_motion_keeps_motion_that_runs_exactly_along_an_earlier_plane() {
+        let along_the_earlier_plane = Vec3::Z;
+
+        let clipped = clip_motion(along_the_earlier_plane, &[Vec3::X, Vec3::Z]);
+
+        assert_eq!(clipped, Vec3::Z);
+    }
+
+    #[test]
+    fn a_slide_into_a_corner_continues_each_cast_from_where_the_last_stopped() {
+        // Walls at z = 2 and x = 1 stop the capsule's centre a radius plus a skin short of each.
+        let corner = [wall_mesh(2.0), x_wall_mesh(1.0)];
+        let start = Pose::from_translation(Vec3::new(0.0, 1.5, 0.0));
+
+        let slid = with_slider(&corner, |slider| {
+            slider.slide(&start, Vec3::new(2.0, 0.0, 4.0), false)
+        });
+
+        assert!(
+            (slid.translation.x - (1.0 - 0.3 - SKIN)).abs() < 5e-3,
+            "{slid:?}"
+        );
+        assert!(
+            (slid.translation.z - (2.0 - 0.3 - SKIN)).abs() < 5e-3,
+            "{slid:?}"
+        );
+    }
+
+    #[test]
+    fn a_hit_on_a_wall_reports_its_exact_normal_whichever_way_it_is_wound() {
+        for wall in [x_wall_mesh(2.0), x_wall_mesh_reversed(2.0)] {
+            let normal = with_slider(&[wall], |slider| {
+                let at = Pose::from_translation(Vec3::new(1.0, 1.5, 0.0));
+                let (handle, mut hit) = slider
+                    .queries
+                    .cast_shape(&at, Vec3::X, slider.shape, cast_skinned(2.0))
+                    .expect("the wall is ahead");
+                hit.normal1 = Vec3::new(-1.0, 2e-4, 0.0).normalize();
+                slider.exact_normal(handle, &hit)
+            });
+
+            assert!(normal.distance(Vec3::NEG_X) < 1e-6, "{normal:?}");
+        }
+    }
+
+    #[test]
+    fn a_step_up_carries_only_the_motion_the_slide_left_over() {
+        let resting = Pose::from_translation(Vec3::new(0.0, FLOOR_REST_Y, 0.0));
+        let asked = Vec3::new(0.0, 0.0, 1.0);
+        let blocked = Vec3::new(0.0, 0.0, 0.6);
+
+        let stepped = with_slider(&[ground(0.0, -10.0, 10.0)], |slider| {
+            slider.step_up(&resting, asked, blocked)
+        })
+        .expect("open floor ahead");
+
+        assert!((stepped.z - 1.0).abs() < 5e-3, "{stepped:?}");
+        assert!(stepped.y.abs() < 0.02, "{stepped:?}");
+    }
+
+    #[test]
+    fn ground_with_a_steep_face_under_the_flat_base_is_read_down_to_the_step_height() {
+        // The axis is 0.8 m above the floor, the farthest the ray down it reads.
+        let centre = Vec3::new(0.0, 0.85 + 0.8, 0.82);
+
+        let found = ground_below_centre(&floor_with_a_steep_face(), centre);
+
+        assert!(found.is_some(), "the floor is at the edge of reach");
+    }
+
+    #[test]
+    fn the_gap_on_a_floor_edge_is_the_drop_below_the_hull_not_a_lift_into_a_ceiling() {
+        // The centre is 15 mm short of the floor's edge, 0.02 m over it, with a ceiling 0.2 m
+        // over the capsule's top.
+        let centre = Vec3::new(0.0, HOVER_Y, 0.985);
+        let meshes = [ground(0.0, -10.0, 1.0), ceiling_mesh(2.52, -10.0, 10.0)];
+
+        let found = with_slider(&meshes, |slider| {
+            slider.ground_below(centre, Quat::IDENTITY)
+        })
+        .expect("the floor is under the flat base");
+
+        assert!((found.gap - (0.02 - SKIN)).abs() < 2e-3, "{found:?}");
     }
 }

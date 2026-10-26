@@ -390,9 +390,11 @@ pub struct Impact {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Slide {
     pub translation: Vec3,
+    /// Walkable ground lies within contact of where the slide ends. A walker stands only when
+    /// [`Self::ground`] is also `Some`.
     pub grounded: bool,
     /// The walkable surface under the capsule after the slide, within [`STEP_HEIGHT`]; `None`
-    /// when there is none or the character started the slide airborne.
+    /// when there is none.
     pub ground: Option<Ground>,
     /// Each surface touched, with its normal.
     pub hits: Vec<(ColliderHandle, Vec3)>,
@@ -416,20 +418,21 @@ pub struct Ground {
 
 /// Tolerance, in metres, on "the slide moved less into a surface than asked".
 ///
-/// Absorbs float noise in the controller's translation so a grazed surface is not blocking.
+/// Absorbs float noise in the slide's translation so a grazed surface is not blocking.
 const BLOCKED_EPSILON: f32 = 1e-4;
 
 /// Smallest `normal.y` of a surface a character can walk on (cos 45 degrees).
 ///
-/// The controller's `max_slope_climb_angle` is built from it, so both agree.
+/// A face steeper than this is not ground: the collide-and-slide neither climbs it nor
+/// grounds a character on it.
 pub(crate) const WALKABLE_NORMAL_Y: f32 = std::f32::consts::FRAC_1_SQRT_2;
 
 /// Furthest, in metres, a walker is pulled down onto ground, and the largest [`Ground::gap`]
 /// at which a slide ending ungrounded still counts as standing.
 ///
-/// The controller's `snap_to_ground` is built from it, so both agree. Otherwise a walker
-/// carrying a ramp's upward speed over a crest asks an upward move, which the controller
-/// does not snap, and hops.
+/// A slide that rises is not lowered onto ground by the collide-and-slide, so a walker
+/// carrying a ramp's upward speed over a crest is lowered by [`settle`] within this reach
+/// instead of hopping.
 pub(crate) const GROUND_SNAP: f32 = 0.1;
 
 /// Tallest step, in metres, a walker climbs and the furthest a level or downhill walker is
@@ -933,8 +936,8 @@ fn settle(state: &mut CharacterState, slid: &Slide, walking: bool, asked: Vec3, 
     if let Some(ground) = hanging {
         state.position.y -= ground.gap.max(0.0);
     }
-    state.grounded =
-        (slid.grounded || hanging.is_some()) && (walking || state.velocity.y <= REST_SPEED);
+    let standing = slid.grounded && slid.ground.is_some();
+    state.grounded = (standing || hanging.is_some()) && (walking || state.velocity.y <= REST_SPEED);
     if !state.grounded {
         return;
     }
@@ -1620,7 +1623,7 @@ mod tests {
         }
 
         #[test]
-        fn walker_without_a_ground_normal_keeps_its_vertical_speed() {
+        fn a_grounded_slide_without_walkable_ground_leaves_a_walker_airborne() {
             let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, -1.87, 4.0), true);
 
             step_without_effects(&mut state, &forward(), &frictionless(), DT, on_ground(None));
@@ -1635,7 +1638,7 @@ mod tests {
                 "{:?}",
                 state.velocity
             );
-            assert!(state.grounded);
+            assert!(!state.grounded, "{state:?}");
         }
 
         #[test]
@@ -1657,7 +1660,7 @@ mod tests {
             );
         }
 
-        /// A slide that moves as asked and ends over `ground` with the controller's `grounded`.
+        /// A slide that moves as asked and ends over `ground` with the given `grounded`.
         fn over(grounded: bool, normal: Vec3, gap: f32) -> impl FnOnce(Vec3) -> Slide {
             move |asked| Slide {
                 translation: asked,
@@ -2272,13 +2275,43 @@ mod tests {
                 |asked| Slide {
                     translation: asked,
                     grounded: true,
-                    ground: None,
+                    ground: Some(face(Vec3::Y, 0.0)),
                     hits: Vec::new(),
                 },
             );
 
             assert!(state.grounded);
             assert_eq!(state.velocity.y, 0.0);
+        }
+
+        #[test]
+        fn a_landing_without_walkable_ground_keeps_its_clipped_downhill_speed() {
+            let steep = 60.0_f32.to_radians();
+            let normal = Vec3::new(0.0, steep.cos(), steep.sin());
+            let mut state = state_at(Vec3::ZERO, Vec3::new(0.0, -3.0, 0.0), false);
+
+            step_without_effects(
+                &mut state,
+                &CharacterCommand::default(),
+                &test_settings(),
+                DT,
+                |asked| Slide {
+                    translation: asked - normal * asked.dot(normal),
+                    grounded: true,
+                    ground: None,
+                    hits: vec![(collider(), normal)],
+                },
+            );
+
+            assert!(!state.grounded, "{state:?}");
+            let half_gravity = 18.0 * DT / 2.0;
+            assert!(
+                (state.velocity.dot(normal) + half_gravity * normal.y).abs() < 1e-3,
+                "clipped along the face, then half a tick of gravity: {:?}",
+                state.velocity
+            );
+            assert!(state.velocity.y < -1.0, "{:?}", state.velocity);
+            assert!(state.velocity.z > 1.0, "{:?}", state.velocity);
         }
 
         fn jump_command(jump: bool) -> CharacterCommand {

@@ -1,16 +1,10 @@
 use glam::Vec3;
 use moho_render_api::{WorldMesh, WorldMeshId};
-use rapier3d::control::{CharacterAutostep, CharacterLength, KinematicCharacterController};
 use rapier3d::prelude::*;
 use std::collections::HashMap;
 
 /// Downward acceleration of a world that never calls [`PhysicsWorld::set_gravity`], m/s².
 const DEFAULT_GRAVITY: f32 = 18.0;
-
-/// Gap, in metres, the character controller keeps between the capsule and what it touches.
-///
-/// Fixed rather than relative to the hull so a different hull keeps the same skin.
-const SKIN_OFFSET: f32 = 0.0115;
 
 mod character;
 mod query;
@@ -36,7 +30,6 @@ pub struct PhysicsWorld {
     soft_body_set: SoftBodySet,
     ccd_solver: CCDSolver,
     world_mesh_colliders: HashMap<WorldMeshId, ColliderHandle>,
-    character_controller: KinematicCharacterController,
     characters: HashMap<CharacterHandle, Character>,
 }
 
@@ -63,18 +56,6 @@ impl PhysicsWorld {
         let soft_body_set = SoftBodySet::new();
         let ccd_solver = CCDSolver::new();
 
-        let character_controller = KinematicCharacterController {
-            autostep: Some(CharacterAutostep {
-                max_height: CharacterLength::Absolute(crate::movement::STEP_HEIGHT),
-                min_width: CharacterLength::Absolute(0.2),
-                include_dynamic_bodies: false,
-            }),
-            snap_to_ground: Some(CharacterLength::Absolute(crate::movement::GROUND_SNAP)),
-            offset: CharacterLength::Absolute(SKIN_OFFSET),
-            max_slope_climb_angle: crate::movement::WALKABLE_NORMAL_Y.acos(),
-            ..Default::default()
-        };
-
         Self {
             gravity,
             integration_parameters,
@@ -89,7 +70,6 @@ impl PhysicsWorld {
             soft_body_set,
             ccd_solver,
             world_mesh_colliders: HashMap::new(),
-            character_controller,
             characters: HashMap::new(),
         }
     }
