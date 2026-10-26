@@ -332,8 +332,8 @@ Settled entries keep their numbers so references stay stable.
 
 ## 10 Engine fit and engine requests
 
-Available from the engine: wgpu rendering (cascaded shadows, SSAO, skybox), a rapier3d
-character controller and triangle-mesh colliders, audio, input mapping, the event bus,
+Available from the engine: wgpu rendering (cascaded shadows, SSAO, skybox), a rapier3d-based
+collide-and-slide character mover and triangle-mesh colliders, audio, input mapping, the event bus,
 and a fixed 60 Hz tick ([ADR-0009](../../_todo/adr/0009-simulation-time-is-one-fixed-tick.md)).
 The engine takes world geometry as meshes keyed by a handle
 ([ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md)); a map format,
