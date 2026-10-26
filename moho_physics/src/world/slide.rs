@@ -38,6 +38,9 @@ const SAME_FACE_DOT: f32 = 0.9999;
 /// cast starts outside the skin (rapier's `normal_nudge_factor`).
 const NUDGE: f32 = 1e-4;
 
+/// How far motion may enter an earlier plane, as a dot product, and still count as leaving it.
+const CLIP_TOLERANCE: f32 = 1e-6;
+
 /// Passes the depenetration makes before giving up.
 const DEPENETRATION_PASSES: usize = 4;
 
@@ -100,6 +103,14 @@ fn cast_within(distance: f32) -> ShapeCastOptions {
     }
 }
 
+/// A shape cast within `distance` that stops a [`SKIN`] short of what it meets.
+fn cast_skinned(distance: f32) -> ShapeCastOptions {
+    ShapeCastOptions {
+        target_distance: SKIN,
+        ..cast_within(distance)
+    }
+}
+
 /// A surface a grounded character may step up onto: too steep to walk on, not a ceiling.
 fn is_riser(normal: Vec3) -> bool {
     normal.y < WALKABLE_NORMAL_Y && normal.y > -CEILING_NORMAL_Y
@@ -131,11 +142,14 @@ fn clip_motion(motion: Vec3, planes: &[Vec3]) -> Vec3 {
         return motion;
     };
     let along = motion - last * motion.dot(last).min(0.0);
-    if earlier.iter().all(|&plane| along.dot(plane) >= -1e-6) {
+    if earlier
+        .iter()
+        .all(|&plane| along.dot(plane) >= -CLIP_TOLERANCE)
+    {
         return along;
     }
-    match earlier.last() {
-        Some(&previous) if planes.len() == 2 => {
+    match planes {
+        &[previous, last] => {
             let crease = previous.cross(last).normalize_or_zero();
             crease * motion.dot(crease)
         }
@@ -389,19 +403,18 @@ impl Slider<'_> {
             Vec3::ZERO
         };
         let mut remaining = by;
-        let mut planes = Vec::with_capacity(MAX_SLIDE_PLANES);
-        while planes.len() < MAX_SLIDE_PLANES {
+        let mut planes = [Vec3::ZERO; MAX_SLIDE_PLANES];
+        for met in 0..MAX_SLIDE_PLANES {
             let length = remaining.length();
             if length < MIN_MOVE {
                 break;
             }
             let dir = remaining / length;
             let at = Pose::from_parts(from.translation + moved, from.rotation);
-            let options = ShapeCastOptions {
-                target_distance: SKIN,
-                ..cast_within(length)
-            };
-            let Some((handle, hit)) = self.queries.cast_shape(&at, dir, self.shape, options) else {
+            let Some((handle, hit)) =
+                self.queries
+                    .cast_shape(&at, dir, self.shape, cast_skinned(length))
+            else {
                 moved += remaining;
                 break;
             };
@@ -412,14 +425,14 @@ impl Slider<'_> {
                 hits.push((handle, normal));
             }
             let along = remaining - normal * remaining.dot(normal).min(0.0);
-            let level = normal.with_y(0.0).normalize_or_zero();
-            let plane = if by.y <= 0.0 && along.y > 0.0 && is_riser(normal) && level != Vec3::ZERO {
-                level
+            // A riser's normal always has a level part, so it normalizes.
+            let plane = if by.y <= 0.0 && along.y > 0.0 && is_riser(normal) {
+                normal.with_y(0.0).normalize()
             } else {
                 normal
             };
-            planes.push(plane);
-            remaining = clip_motion(remaining, &planes) + normal * NUDGE;
+            planes[met] = plane;
+            remaining = clip_motion(remaining, &planes[..=met]) + normal * NUDGE;
         }
         moved
     }
@@ -427,24 +440,28 @@ impl Slider<'_> {
     /// The hit's normal, snapped to its triangle's face normal when the cast's own normal is
     /// that face's up to search noise.
     fn exact_normal(&self, collider: ColliderHandle, hit: &ShapeCastHit) -> Vec3 {
-        self.queries
-            .colliders
-            .get(collider)
-            .and_then(|found| {
-                let normal = found
-                    .shape()
-                    .as_trimesh()?
-                    .triangle(hit.subshape1)
-                    .normal()?;
-                let world = found.position().rotation * normal;
-                let facing = if world.dot(hit.normal1) < 0.0 {
+        self.triangle_normal(collider, hit)
+            .map(|world| {
+                if world.dot(hit.normal1) < 0.0 {
                     -world
                 } else {
                     world
-                };
-                (facing.dot(hit.normal1) > SAME_FACE_DOT).then_some(facing)
+                }
             })
+            .filter(|facing| facing.dot(hit.normal1) > SAME_FACE_DOT)
             .unwrap_or(hit.normal1)
+    }
+
+    /// The world-space normal of the trimesh triangle `hit` touched on `collider`, either way
+    /// up, or `None` when the collider is not a trimesh.
+    fn triangle_normal(&self, collider: ColliderHandle, hit: &ShapeCastHit) -> Option<Vec3> {
+        let found = self.queries.colliders.get(collider)?;
+        let normal = found
+            .shape()
+            .as_trimesh()?
+            .triangle(hit.subshape1)
+            .normal()?;
+        Some(found.position().rotation * normal)
     }
 
     /// The translation that pushes a hull at `from` out of anything it overlaps, back to a
@@ -453,24 +470,28 @@ impl Slider<'_> {
         let mut pushed = Vec3::ZERO;
         for _ in 0..DEPENETRATION_PASSES {
             let at = Pose::from_parts(from.translation + pushed, from.rotation);
-            let mut corrected = false;
-            for (_, collider) in self.queries.intersect_shape(at, self.shape) {
-                let pos12 = at.inv_mul(collider.position());
-                if let Ok(Some(contact)) =
+            let overlap = self
+                .queries
+                .intersect_shape(at, self.shape)
+                .find_map(|(_, collider)| {
+                    let pos12 = at.inv_mul(collider.position());
                     self.queries
                         .dispatcher
                         .contact(&pos12, self.shape, collider.shape(), 0.0)
-                {
-                    if contact.dist < 0.0 {
-                        pushed -= (at.rotation * contact.normal1) * (SKIN - contact.dist);
-                        corrected = true;
-                        break;
-                    }
-                }
-            }
-            if !corrected {
+                        .inspect_err(|unsupported| {
+                            tracing::warn!(
+                                ?unsupported,
+                                "no contact query for an overlapped shape"
+                            );
+                        })
+                        .ok()
+                        .flatten()
+                        .filter(|contact| contact.dist < 0.0)
+                });
+            let Some(contact) = overlap else {
                 break;
-            }
+            };
+            pushed -= (at.rotation * contact.normal1) * (SKIN - contact.dist);
         }
         pushed
     }
@@ -534,40 +555,43 @@ impl Slider<'_> {
         };
 
         let at = Pose::from_parts(centre, rotation);
-        let skinned = ShapeCastOptions {
-            target_distance: SKIN,
-            ..cast_within(STEP_HEIGHT)
-        };
         let mut edge = None;
-        let gap = match self.queries.cast_shape(&at, -Vec3::Y, self.shape, skinned) {
-            Some((_, drop)) => {
-                // The face under the flat base lies below where the capsule's drop stops.
-                let held_above =
-                    face_toi + FLAT_BASE_HALF_HEIGHT - footing.sweep - drop.time_of_impact;
-                let across = drop.normal1.with_y(0.0);
-                let reach = footing.disc + (footing.sweep + SKIN) * across.length();
-                if drop.normal1.y > HOLDING_NORMAL_Y && reach > base_radius && held_above > SKIN {
-                    edge = Some(Edge {
-                        outward: across.normalize(),
-                        clearance: (footing.sweep + SKIN) * (1.0 - across.length()) + SKIN,
-                    });
-                }
-                drop.time_of_impact
-            }
-            // Near a mesh boundary the skinned cast can miss though the flat base hit.
-            None => {
-                match self
-                    .queries
-                    .cast_shape(&at, -Vec3::Y, self.shape, cast_within(STEP_HEIGHT))
-                {
-                    Some((_, drop)) => {
-                        let cosine = drop.normal1.y.max(WALKABLE_NORMAL_Y);
-                        (drop.time_of_impact - SKIN / cosine).max(0.0)
+        let gap =
+            match self
+                .queries
+                .cast_shape(&at, -Vec3::Y, self.shape, cast_skinned(STEP_HEIGHT))
+            {
+                Some((_, drop)) => {
+                    // The face under the flat base lies below where the capsule's drop stops.
+                    let held_above =
+                        face_toi + FLAT_BASE_HALF_HEIGHT - footing.sweep - drop.time_of_impact;
+                    let across = drop.normal1.with_y(0.0);
+                    let reach = footing.disc + (footing.sweep + SKIN) * across.length();
+                    if drop.normal1.y > HOLDING_NORMAL_Y && reach > base_radius && held_above > SKIN
+                    {
+                        edge = Some(Edge {
+                            outward: across.normalize(),
+                            clearance: (footing.sweep + SKIN) * (1.0 - across.length()) + SKIN,
+                        });
                     }
-                    None => (face_toi + FLAT_BASE_HALF_HEIGHT - footing.sweep - SKIN).max(0.0),
+                    drop.time_of_impact
                 }
-            }
-        };
+                // Near a mesh boundary the skinned cast can miss though the flat base hit.
+                None => {
+                    match self.queries.cast_shape(
+                        &at,
+                        -Vec3::Y,
+                        self.shape,
+                        cast_within(STEP_HEIGHT),
+                    ) {
+                        Some((_, drop)) => {
+                            let cosine = drop.normal1.y.max(WALKABLE_NORMAL_Y);
+                            (drop.time_of_impact - SKIN / cosine).max(0.0)
+                        }
+                        None => (face_toi + FLAT_BASE_HALF_HEIGHT - footing.sweep - SKIN).max(0.0),
+                    }
+                }
+            };
         Some(GroundRead {
             ground: Ground {
                 normal,
@@ -590,14 +614,8 @@ impl Slider<'_> {
     /// the contact, nudged toward the cast's axis `centre` so an exact edge contact lands on the
     /// tread, reads the tread instead.
     fn face_normal(&self, collider: ColliderHandle, hit: &ShapeCastHit, centre: Vec3) -> Vec3 {
-        let Some(found) = self.queries.colliders.get(collider) else {
-            return hit.normal1;
-        };
-        let triangle = found
-            .shape()
-            .as_trimesh()
-            .and_then(|mesh| mesh.triangle(hit.subshape1).normal())
-            .map(|normal| found.position().rotation * normal)
+        let triangle = self
+            .triangle_normal(collider, hit)
             .map(|world| if world.y < 0.0 { -world } else { world })
             .filter(|normal| normal.y >= WALKABLE_NORMAL_Y);
         triangle
@@ -623,14 +641,13 @@ impl Slider<'_> {
     /// casts it straight down. Returns the whole tick's translation, or `None` when the step
     /// top under it is not walkable.
     fn step_up(&self, start: &Pose, asked: Vec3, blocked: Vec3) -> Option<Vec3> {
-        let max_height = STEP_HEIGHT;
         let (dir, len) = step_reach((asked - blocked).with_y(0.0), STEP_MIN_WIDTH)?;
 
         let stopped = Pose::from_parts(start.translation + blocked, start.rotation);
         let lift = self
             .queries
-            .cast_shape(&stopped, Vec3::Y, self.shape, cast_within(max_height))
-            .map_or(max_height, |(_, hit)| hit.time_of_impact);
+            .cast_shape(&stopped, Vec3::Y, self.shape, cast_within(STEP_HEIGHT))
+            .map_or(STEP_HEIGHT, |(_, hit)| hit.time_of_impact);
         if lift <= 0.0 {
             return None;
         }
@@ -649,13 +666,9 @@ impl Slider<'_> {
         let over = Pose::from_parts(lifted.translation + across, lifted.rotation);
         // A cast, not a slide: sliding down onto a riser's rounded top edge slides the hull
         // back off the step. The step top must be walkable where the hull lands.
-        let options = ShapeCastOptions {
-            target_distance: SKIN,
-            ..cast_within(lift + STEP_SNAP)
-        };
-        let (handle, hit) = self
-            .queries
-            .cast_shape(&over, -Vec3::Y, self.shape, options)?;
+        let (handle, hit) =
+            self.queries
+                .cast_shape(&over, -Vec3::Y, self.shape, cast_skinned(lift + STEP_SNAP))?;
         if self.exact_normal(handle, &hit).y < WALKABLE_NORMAL_Y {
             return None;
         }

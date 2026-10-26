@@ -3510,7 +3510,10 @@ mod tests {
                     );
                 }
                 Some(first) if tick - first <= 10 => {
-                    assert!(!now.grounded, "tick {tick}: grounded over the face, {now:?}");
+                    assert!(
+                        !now.grounded,
+                        "tick {tick}: grounded over the face, {now:?}"
+                    );
                 }
                 _ => {}
             }
