@@ -2769,7 +2769,7 @@ mod tests {
         let resting = state(&world, h);
         assert!(resting.grounded);
         // One tick that carries the centre 0.2 m past the lip's edge: the rim there hangs
-        // 0.14 m above the lip, more than the controller's own 0.1 m snap, so only the ground
+        // 0.14 m above the lip, more than the 0.1 m `GROUND_SNAP`, so only the ground
         // query keeps the walker standing.
         let past_the_edge = 1.2;
         let speed = (past_the_edge - resting.position.z) / DT;
@@ -2921,7 +2921,7 @@ mod tests {
     }
 
     /// Forward for `ticks`, asserting after every tick: grounded, within 1.5 cm of the floor rest
-    /// height (the controller's own contact noise on plain floor is about 3 mm), vertical speed
+    /// height (contact noise on plain floor is about 3 mm), vertical speed
     /// under 1 cm/s and no impact.
     fn assert_walk_stays_grounded_and_level(
         world: &mut PhysicsWorld,
@@ -4781,7 +4781,7 @@ mod tests {
 
         /// The ceiling's underside, above the floor.
         const LOW: f32 = 1.2;
-        /// Skin the controller keeps from a surface; the hull may sit this close.
+        /// Skin the slide keeps from a surface; the hull may sit this close.
         const SKIN: f32 = 0.0115;
         const RADIUS: f32 = 0.405;
 
@@ -5014,7 +5014,7 @@ mod tests {
         const RADIUS: f32 = 0.3;
         /// Half the prone hull's length.
         const HALF: f32 = 0.9;
-        /// Skin the controller keeps from a surface.
+        /// Skin the slide keeps from a surface.
         const SKIN: f32 = 0.0115;
 
         fn settings() -> MoveSettings {

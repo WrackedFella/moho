@@ -1660,7 +1660,7 @@ mod tests {
             );
         }
 
-        /// A slide that moves as asked and ends over `ground` with the controller's `grounded`.
+        /// A slide that moves as asked and ends over `ground` with the given `grounded`.
         fn over(grounded: bool, normal: Vec3, gap: f32) -> impl FnOnce(Vec3) -> Slide {
             move |asked| Slide {
                 translation: asked,

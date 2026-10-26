@@ -15,20 +15,17 @@ use rapier3d::prelude::{ColliderHandle, Pose, QueryPipeline, Ray, Shape, SharedS
 /// Fixed rather than relative to the hull so a different hull keeps the same skin.
 pub(super) const SKIN: f32 = 0.0115;
 
-/// Least horizontal reach of a step-up, in metres.
 const STEP_MIN_WIDTH: f32 = 0.2;
 
-/// Most surfaces one collide-and-slide meets before it stops.
 const MAX_SLIDE_PLANES: usize = 5;
 
-/// Motion shorter than this, in metres, is not cast.
 const MIN_MOVE: f32 = 1e-5;
 
 /// A ground gap at or below this, in metres, is touching the ground; a slide that is not
 /// rising closes it.
 const GROUND_CONTACT: f32 = 0.05;
 
-/// A ground gap below this, in metres, is not closed.
+/// A ground gap below this, in metres, is left open.
 const SNAP_MIN: f32 = 1e-4;
 
 /// A cast normal this close to its triangle's normal (dot product) is that face.
@@ -41,7 +38,6 @@ const NUDGE: f32 = 1e-4;
 /// How far motion may enter an earlier plane, as a dot product, and still count as leaving it.
 const CLIP_TOLERANCE: f32 = 1e-6;
 
-/// Passes the depenetration makes before giving up.
 const DEPENETRATION_PASSES: usize = 4;
 
 /// Half the height of the thin cylinder whose flat base reads the ground, in metres.
@@ -103,7 +99,6 @@ fn cast_within(distance: f32) -> ShapeCastOptions {
     }
 }
 
-/// A shape cast within `distance` that stops a [`SKIN`] short of what it meets.
 fn cast_skinned(distance: f32) -> ShapeCastOptions {
     ShapeCastOptions {
         target_distance: SKIN,
@@ -116,7 +111,6 @@ fn is_riser(normal: Vec3) -> bool {
     normal.y < WALKABLE_NORMAL_Y && normal.y > -CEILING_NORMAL_Y
 }
 
-/// Whether a falling slide that ended grounded met no walkable ground on its way.
 fn landed_without_ground_hit(grounded: bool, asked: Vec3, hits: &[(ColliderHandle, Vec3)]) -> bool {
     grounded
         && asked.y < 0.0
@@ -382,9 +376,8 @@ impl Slider<'_> {
         }
     }
 
-    /// Move the hull from `from` by `by`, sliding along what it meets: cast, stop a skin short,
-    /// clip the rest of the motion against the surface, up to [`MAX_SLIDE_PLANES`] surfaces.
-    /// Records each surface met in `hits`. Returns the translation.
+    /// Slides the hull from `from` by `by`, recording each surface met in `hits`; returns the
+    /// translation.
     ///
     /// A surface too steep to walk on does not lift a motion that was not rising: the motion
     /// slides along it level, so walking into a steep face never climbs it (rapier's
@@ -452,8 +445,7 @@ impl Slider<'_> {
             .unwrap_or(hit.normal1)
     }
 
-    /// The world-space normal of the trimesh triangle `hit` touched on `collider`, either way
-    /// up, or `None` when the collider is not a trimesh.
+    /// Either-way-up normal of the touched trimesh triangle; `None` for other colliders.
     fn triangle_normal(&self, collider: ColliderHandle, hit: &ShapeCastHit) -> Option<Vec3> {
         let found = self.queries.colliders.get(collider)?;
         let normal = found
@@ -464,8 +456,6 @@ impl Slider<'_> {
         Some(found.position().rotation * normal)
     }
 
-    /// The translation that pushes a hull at `from` out of anything it overlaps, back to a
-    /// skin's gap, in up to [`DEPENETRATION_PASSES`] passes.
     fn depenetrate(&self, from: &Pose) -> Vec3 {
         let mut pushed = Vec3::ZERO;
         for _ in 0..DEPENETRATION_PASSES {
@@ -636,10 +626,8 @@ impl Slider<'_> {
 
     /// Retry a blocked slide from on top of the obstacle (Source's `StepMove`).
     ///
-    /// Lifts the capsule up to [`STEP_HEIGHT`], carries the remaining horizontal motion across
-    /// (at least [`STEP_MIN_WIDTH`], so the capsule's rounded base ends over the step top), and
-    /// casts it straight down. Returns the whole tick's translation, or `None` when the step
-    /// top under it is not walkable.
+    /// The reach is at least [`STEP_MIN_WIDTH`] so the capsule's rounded base ends over the
+    /// step top. Returns the whole tick's translation, or `None` when that top is not walkable.
     fn step_up(&self, start: &Pose, asked: Vec3, blocked: Vec3) -> Option<Vec3> {
         let (dir, len) = step_reach((asked - blocked).with_y(0.0), STEP_MIN_WIDTH)?;
 
@@ -1355,7 +1343,7 @@ mod tests {
         assert!((moved.translation.z - 1.0 / 60.0).abs() < 5e-4, "{moved:?}");
         assert!(!moved.grounded, "{moved:?}");
         // The shift rides down the rim: from 0.2252 m past the rim sits 0.2152 m above the
-        // nosing, 0.0162 m below where the walker started, and the controller drops it 0.0157.
+        // nosing, 0.0162 m below where the walker started, and the snap drops it 0.0157.
         assert!((moved.translation.y + 0.0157).abs() < 0.003, "{moved:?}");
         let ground = moved.ground.expect("the lower floor is under the walker");
         assert!(ground.gap < 0.004, "read where it ended: {ground:?}");
