@@ -35,7 +35,7 @@ impl<G, A> std::fmt::Debug for UiShell<G, A> {
     }
 }
 
-impl<G, A: Clone> UiShell<G, A> {
+impl<G, A> UiShell<G, A> {
     pub fn new(console: Console<G>) -> Self {
         Self {
             context: egui::Context::default(),
@@ -86,51 +86,6 @@ impl<G, A: Clone> UiShell<G, A> {
             None,
         ));
         self.window = Some(window);
-    }
-
-    /// Routes one key or button through the console, then through the open menu screen, which
-    /// takes every input, releases included. `on_window_event` delegates here, so this is the
-    /// platform-free part of that routing.
-    pub fn route(&mut self, input: Input, pressed: bool, repeat: bool) -> Routing {
-        let routing = self.console.on_key(input, pressed, repeat);
-        if routing != Routing::Game || !self.menu.is_open() {
-            return routing;
-        }
-        if input == Input::Mouse(MouseButton::Left) && pressed && !repeat {
-            let size = self.window_points();
-            self.menu.click(self.cursor, size);
-        } else {
-            self.menu.on_key(input, pressed, repeat);
-        }
-        Routing::Menu
-    }
-
-    /// Routes a window event. Keys and mouse buttons go through the console and reach egui only
-    /// when routed `Console` (so the toggle key is never typed); every other event is fed to
-    /// egui and returns `Game`, so the game still sees resizes and focus changes.
-    pub fn on_window_event(&mut self, event: &WindowEvent) -> Routing {
-        if let Some((input, pressed, repeat)) = input_of(event) {
-            let routing = self.route(input, pressed, repeat);
-            self.feed(event, routing);
-            return routing;
-        }
-        if is_input_event(event) {
-            // An input the engine does not name (a dead key, say) can still be typed into the
-            // console.
-            let routing = if self.console.is_open() {
-                Routing::Console
-            } else {
-                Routing::Game
-            };
-            self.feed(event, routing);
-            return routing;
-        }
-        if let WindowEvent::CursorMoved { position, .. } = event {
-            let scale = self.window.as_ref().map_or(1.0, |w| w.scale_factor());
-            self.cursor_moved([position.x, position.y], scale);
-        }
-        self.feed_egui(event);
-        Routing::Game
     }
 
     /// Feeds an input event to egui when `routing`, from a prior `route` of that event, is
@@ -188,6 +143,54 @@ impl<G, A: Clone> UiShell<G, A> {
     }
 }
 
+/// Routing chooses actions, so it clones them out of the screen.
+impl<G, A: Clone> UiShell<G, A> {
+    /// Routes one key or button through the console, then through the open menu screen, which
+    /// takes every input, releases included. `on_window_event` delegates here, so this is the
+    /// platform-free part of that routing.
+    pub fn route(&mut self, input: Input, pressed: bool, repeat: bool) -> Routing {
+        let routing = self.console.on_key(input, pressed, repeat);
+        if routing != Routing::Game || !self.menu.is_open() {
+            return routing;
+        }
+        if input == Input::Mouse(MouseButton::Left) && pressed && !repeat {
+            let size = self.window_points();
+            self.menu.click(self.cursor, size);
+        } else {
+            self.menu.on_key(input, pressed, repeat);
+        }
+        Routing::Menu
+    }
+
+    /// Routes a window event. Keys and mouse buttons go through the console and reach egui only
+    /// when routed `Console` (so the toggle key is never typed); every other event is fed to
+    /// egui and returns `Game`, so the game still sees resizes and focus changes.
+    pub fn on_window_event(&mut self, event: &WindowEvent) -> Routing {
+        if let Some((input, pressed, repeat)) = input_of(event) {
+            let routing = self.route(input, pressed, repeat);
+            self.feed(event, routing);
+            return routing;
+        }
+        if is_input_event(event) {
+            // An input the engine does not name (a dead key, say) can still be typed into the
+            // console.
+            let routing = if self.console.is_open() {
+                Routing::Console
+            } else {
+                Routing::Game
+            };
+            self.feed(event, routing);
+            return routing;
+        }
+        if let WindowEvent::CursorMoved { position, .. } = event {
+            let scale = self.window.as_ref().map_or(1.0, |w| w.scale_factor());
+            self.cursor_moved([position.x, position.y], scale);
+        }
+        self.feed_egui(event);
+        Routing::Game
+    }
+}
+
 fn is_input_event(event: &WindowEvent) -> bool {
     matches!(
         event,
@@ -222,7 +225,7 @@ pub fn input_of(event: &WindowEvent) -> Option<(Input, bool, bool)> {
     }
 }
 
-impl<G, A: Clone> UiFrameSource for UiShell<G, A> {
+impl<G, A> UiFrameSource for UiShell<G, A> {
     fn ui_frame(&mut self, size_in_pixels: [u32; 2]) -> Option<UiFrame> {
         // Taken even while closed, so events fed to egui do not pile up unread.
         let input = self.take_input(size_in_pixels);
