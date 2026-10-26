@@ -42,10 +42,10 @@ Engine item numbers are those of the [engine roadmap](engine/roadmap.md).
 | SG-F2-03 autosave interval | Player-set autosave | 2.11.5 ENG-F18-16 |
 | Strategy console | Shared console | 2.11.2 ENG-F18-08 |
 | FPS-M1 | Seeded RNG; positional audio (stopgaps in use) | 2.5 ENG-F6-01; 2.4 ENG-F16 |
-| FPS-M1.1 menus | Settings screen, modal stack | 2.11.6 ENG-F18 (spec: #444) |
+| FPS-M1.1 menus | Menu screens and their stack; engine settings controls | 2.11.6 ENG-F18-11 #695, -12 #696 (spec: #444) |
 | FPS-M1.2 slice 2 | Crouch and clearance; lean and stance transitions | ENG-F43 #642, crouch, prone and lean, answering #544 (2.25, ENG-M2 wave 5) |
 | FPS-M1.2 slice 3 | Skinned animated characters | #543 through ENG-F39 slices 1 to 3 (2.22, ENG-M2 wave 5) |
-| FPS-M2 | On-screen text; layered content; tap and hold keys | 2.11.3 ENG-F18-09 #407; 2.12 ENG-F19 #231; 2.14 ENG-F26 #359 |
+| FPS-M2 | On-screen text; layered content; tap and hold keys; item lists | 2.11.3 ENG-F18-09 #407; 2.12 ENG-F19 #231; 2.14 ENG-F26 #359; 2.11.6 ENG-F18-18 #698 |
 | FPS-M2 | Moving meshes; loose objects; models, sockets and rig; flash, tracer and impact marks; marker size | 2.20 ENG-F38; 2.21 #600; 2.22 ENG-F39; 2.23 ENG-F40; 2.24 ENG-F14-03 |
 | FPS enemy AI slice 2 | Positional audio; hidden routes and cover | 2.4 ENG-F16; 3.4c ENG-F42 |
 | FPS-M3.1 | Beam and dot; first-person view | 3.4d ENG-F40; 3.4b ENG-F39 |
