@@ -390,9 +390,11 @@ pub struct Impact {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Slide {
     pub translation: Vec3,
+    /// Walkable ground lies within contact of where the slide ends. A walker stands only when
+    /// [`Self::ground`] is also `Some`.
     pub grounded: bool,
     /// The walkable surface under the capsule after the slide, within [`STEP_HEIGHT`]; `None`
-    /// when there is none or the character started the slide airborne.
+    /// when there is none.
     pub ground: Option<Ground>,
     /// Each surface touched, with its normal.
     pub hits: Vec<(ColliderHandle, Vec3)>,
@@ -416,20 +418,21 @@ pub struct Ground {
 
 /// Tolerance, in metres, on "the slide moved less into a surface than asked".
 ///
-/// Absorbs float noise in the controller's translation so a grazed surface is not blocking.
+/// Absorbs float noise in the slide's translation so a grazed surface is not blocking.
 const BLOCKED_EPSILON: f32 = 1e-4;
 
 /// Smallest `normal.y` of a surface a character can walk on (cos 45 degrees).
 ///
-/// The controller's `max_slope_climb_angle` is built from it, so both agree.
+/// A face steeper than this is not ground: the collide-and-slide neither climbs it nor
+/// grounds a character on it.
 pub(crate) const WALKABLE_NORMAL_Y: f32 = std::f32::consts::FRAC_1_SQRT_2;
 
 /// Furthest, in metres, a walker is pulled down onto ground, and the largest [`Ground::gap`]
 /// at which a slide ending ungrounded still counts as standing.
 ///
-/// The controller's `snap_to_ground` is built from it, so both agree. Otherwise a walker
-/// carrying a ramp's upward speed over a crest asks an upward move, which the controller
-/// does not snap, and hops.
+/// A slide that rises is not lowered onto ground by the collide-and-slide, so a walker
+/// carrying a ramp's upward speed over a crest is lowered by [`settle`] within this reach
+/// instead of hopping.
 pub(crate) const GROUND_SNAP: f32 = 0.1;
 
 /// Tallest step, in metres, a walker climbs and the furthest a level or downhill walker is
@@ -933,8 +936,8 @@ fn settle(state: &mut CharacterState, slid: &Slide, walking: bool, asked: Vec3, 
     if let Some(ground) = hanging {
         state.position.y -= ground.gap.max(0.0);
     }
-    state.grounded =
-        (slid.grounded || hanging.is_some()) && (walking || state.velocity.y <= REST_SPEED);
+    let standing = slid.grounded && slid.ground.is_some();
+    state.grounded = (standing || hanging.is_some()) && (walking || state.velocity.y <= REST_SPEED);
     if !state.grounded {
         return;
     }

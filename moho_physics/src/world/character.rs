@@ -323,7 +323,6 @@ impl PhysicsWorld {
             filter,
         );
         let world = WorldQueries {
-            controller: &self.character_controller,
             queries: &queries,
             dt,
             own_pose: body.pose(stance),
