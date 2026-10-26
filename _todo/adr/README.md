@@ -30,7 +30,7 @@ ADRs written before ENG-F27 (2026-10-15) keep the crate names of their day. Read
 | [0014](0014-characters-move-by-velocity.md) | Characters move by velocity; a movement step owns the rules and reports impacts, physics only resolves contact | Superseded by 0022 |
 | [0015](0015-fps-rules-are-a-platform-free-crate.md) | FPS rules are a platform-free crate; every shot resolves through one path | Accepted |
 | [0016](0016-game-lines-own-their-save-kinds.md) | Game lines own their save kinds and versions; the envelope stays content-blind | Accepted |
-| [0017](0017-ui-shell-and-debug-values-are-engine-seams.md) | The UI shell and debug values are engine seams | Accepted |
+| [0017](0017-ui-shell-and-debug-values-are-engine-seams.md) | The UI shell and debug values are engine seams | Accepted; amended by 0026 |
 | [0018](0018-paused-commands-apply-at-the-tick-boundary.md) | While paused, a command applies at the next tick boundary without a tick; pause and speed are loop state | Accepted |
 | [0019](0019-navigation-is-an-engine-seam.md) | Navigation over static levels is engine seam 11: a navmesh from world meshes, path queries answered by engine code | Accepted |
 | [0021](0021-game-ai-lives-in-the-lines.md) | Game AI lives in the lines; the engine answers queries, and AI acts through player commands, sim-only perception and seeded randomness | Accepted |
@@ -38,3 +38,4 @@ ADRs written before ENG-F27 (2026-10-15) keep the crate names of their day. Read
 | [0023](0023-pawn-kinds-share-components.md) | Pawn kinds are component sets driven by one controller; flagstone moves pawns into `hecs` with the second pawn kind | Proposed |
 | [0024](0024-models-are-gltf-data-placed-by-node.md) | Models are glTF data the game places node by node: import in `moho_level`, immutable `Model`, game-owned mesh ids, cofactor normals | Accepted on merge of #651 |
 | [0025](0025-world-meshes-are-placed-per-frame.md) | World meshes are placed per frame: upload once, place at game-set transforms; placements last one frame | Accepted on merge of #648 |
+| [0026](0026-menus-and-settings-controls-are-ui-shell-seams.md) | Menu screens and the engine's settings rows are part of UI shell seam 9; a game's player settings join seam 10 as a `[game]` prefs section | Accepted on merge of #695 |
