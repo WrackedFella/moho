@@ -729,6 +729,25 @@ mod tests {
     }
 
     #[test]
+    fn a_looping_player_stepped_back_by_a_hair_stays_below_its_duration() {
+        let model = model_with(vec![ramp()]);
+        let duration = model.clips()[0].duration();
+
+        for hair in [1e-8_f32, 1e-7] {
+            let mut player = ClipPlayer::new(&model, "ramp", Playback::Loop).expect("clip exists");
+            player.set_speed(-1.0);
+
+            player.advance(&model, hair);
+
+            assert!(
+                (0.0..duration).contains(&player.time()),
+                "stepping back {hair} gave {} outside [0, {duration})",
+                player.time()
+            );
+        }
+    }
+
+    #[test]
     fn a_non_finite_step_or_zero_length_clip_leaves_time_unchanged() {
         let still = clip("still", Vec::new());
         let model = model_with(vec![ramp(), still]);
