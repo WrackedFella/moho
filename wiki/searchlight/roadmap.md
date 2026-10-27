@@ -48,8 +48,8 @@ Order is the GDD's: systems arrive in the order they create costs, so the ledger
 - **Entry gate:** feature approved; engine request #444 answered. Specs can run in parallel with FPS-M1; building waits for it (shared game loop).
 - **Engine answer (ENG-F18):** #695 -11 menu screens and their stack replace the game-side `Menu` rows; #696 -12 settings controls cover every row of #460 except head bob, so #460 is expected to close when -12 merges; #697 -17 adds the head-bob row after #609 builds the setting. Build order -11, -12, -17.
 - **Defaults:** pause stops the sim; no return to main menu; no save or continue. Settings are staged, Apply persists, Back discards.
-- **Key rebinding:** no FPS card yet. The engine's keybind capture waits for one, and ENG-F26 #359 supplies key actions.
-- **Cut lines:** key rebinding, return to main menu (FPS-M6), save and continue (FPS-M5), reset and apply-all buttons, backdrop, gamepad.
+- **Key rebinding ([FPS-F14](https://github.com/WrackedFella/moho/issues/718)):** a Controls page in Settings, after #696. Primary and secondary input per action, a confirm dialog on conflict, clear and reset; a per-action expander sets hold, double press or a Ctrl/Shift/Alt modifier per slot; held actions get a hold/toggle checkbox. Cards #719 to #722 first; #723 hold and chord, #724 double press and #725 hold/toggle are the cut line. It is the consumer the engine's keybind capture waits for; ENG-F26 #359 supplies key actions, and double press is a new engine request.
+- **Cut lines:** return to main menu (FPS-M6), save and continue (FPS-M5), settings-wide reset and apply-all buttons (Controls has its own reset), backdrop, gamepad (also out of FPS-F14), key hints in prompts.
 
 ## 5 FPS-M1.2 Stance and body (FPS-F4)
 
@@ -65,7 +65,7 @@ Runs in slices parallel to FPS-M2; needs no items or UI beyond one slider in the
 - **Placeholder body before the rig:** slice 1 adds a segmented player body (one box per body part, as the enemies have) that follows lean and stance and casts a shadow, plus a console toggle that draws the hit volumes ([FPS-F4-04](https://github.com/WrackedFella/moho/issues/611)). It needs no engine work and gives visual feedback until #543 lands; slice 3 replaces it.
 - **Exit:** in the arena a player crouched behind the 1.4 m crates is hit only when leaning, on head or arm; a prone player behind the same crate is not seen at all. The shadow follows the lean (slice 1); looking down shows the legs (slice 3).
 - **Cut lines:** weapon collision against the ground, prone dive, enemies going prone, variable crouch height, side-step, blind fire, mantle, slide, vault. If #543 can't give the sim deterministic bone poses, hit volumes follow a per-stance pose table instead of the bones and the rig only shows things; cover behaves the same.
-- **Held actions:** hold or toggle per keybinding lands with ENG-F26; until then lean is hold and crouch is toggle.
+- **Held actions:** hold or toggle per keybinding lands with ENG-F26 and its checkbox with FPS-F14-07 (#725); until then lean is hold and crouch is toggle.
 
 ## 6 FPS-M2 Items and loadout (GDD Phase 2)
 
