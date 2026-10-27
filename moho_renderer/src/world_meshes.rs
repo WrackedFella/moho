@@ -212,6 +212,8 @@ mod tests {
         /// Each `register_texture` call as `(handle, image)`; handles start at 100.
         textures: Vec<(u32, Rgba8Image)>,
         unregistered_textures: Vec<u32>,
+        /// Each `register_skin` call as `(mesh handle, joints, weights)`.
+        skins: Vec<(u32, Vec<[u16; 4]>, Vec<[f32; 4]>)>,
     }
 
     /// The channel slices of one `register_indexed_mesh` call, named as the
@@ -357,6 +359,9 @@ mod tests {
         }
         fn unregister_texture(&mut self, texture: u32) {
             self.unregistered_textures.push(texture);
+        }
+        fn register_skin(&mut self, mesh: u32, joints: &[[u16; 4]], weights: &[[f32; 4]]) {
+            self.skins.push((mesh, joints.to_vec(), weights.to_vec()));
         }
         fn begin_frame(
             &mut self,
@@ -1027,6 +1032,189 @@ mod tests {
         meshes.place_textured(A, at(2.0), 0, FUR);
         let handles: Vec<u32> = textured(&meshes).iter().map(|(_, t, _)| *t).collect();
         assert_eq!(handles, vec![0, fur], "the removed texture draws white");
+    }
+
+    /// A three-vertex mesh whose second vertex is bound to `highest_joint`.
+    fn skinned_mesh(highest_joint: u16) -> WorldMesh {
+        mesh(1)
+            .with_skin(
+                vec![[0, 0, 0, 0], [highest_joint, 0, 0, 0], [0, 0, 0, 0]],
+                vec![[1.0, 0.0, 0.0, 0.0]; 3],
+            )
+            .expect("one joint set and weight set per vertex")
+    }
+
+    /// `count` joints, joint `j` translated by `(j, lift, 0)`.
+    fn palette(count: u16, lift: f32) -> Vec<glam::Affine3A> {
+        (0..count)
+            .map(|j| glam::Affine3A::from_translation(glam::Vec3::new(f32::from(j), lift, 0.0)))
+            .collect()
+    }
+
+    type SkinnedDraw = (u32, u32, InstanceGpu, Vec<glam::Affine3A>);
+
+    fn skinned(meshes: &WorldMeshes) -> Vec<SkinnedDraw> {
+        meshes
+            .skinned_draws()
+            .map(|(mesh, texture, instance, palette)| (mesh, texture, instance, palette.to_vec()))
+            .collect()
+    }
+
+    /// Runs `run` and returns its result with what `tracing` wrote meanwhile.
+    fn logged<T>(run: impl FnOnce() -> T) -> (T, String) {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+
+        struct Sink(Arc<Mutex<Vec<u8>>>);
+        impl Write for Sink {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().expect("log sink").extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let writer = Arc::clone(&buffer);
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || Sink(Arc::clone(&writer)))
+            .with_ansi(false)
+            .finish();
+        let result = tracing::subscriber::with_default(subscriber, run);
+        let bytes = buffer.lock().expect("log sink").clone();
+        (
+            result,
+            String::from_utf8(bytes).expect("log output is utf-8"),
+        )
+    }
+
+    #[test]
+    fn a_skinned_placement_yields_its_palette_in_order() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, skinned_mesh(2));
+        meshes.upsert_texture(SKIN, texture(10));
+        meshes.flush(&mut backend);
+        let turned = vec![
+            at(1.0),
+            glam::Affine3A::from_rotation_z(std::f32::consts::FRAC_PI_2),
+            at(-3.0),
+        ];
+
+        meshes.place_skinned(A, at(4.0), 6, Some(SKIN), &turned);
+
+        let drawn = skinned(&meshes);
+        assert_eq!(drawn.len(), 1);
+        let (handle, texture_handle, instance, yielded) = &drawn[0];
+        assert_eq!(*handle, backend.handle_with_index_count(3));
+        assert_eq!(*texture_handle, backend.texture_handle(&texture(10)));
+        assert_eq!(
+            instance.model,
+            model_of(at(4.0)),
+            "the root is the instance model"
+        );
+        assert_eq!(instance.material, 6);
+        assert_eq!(*yielded, turned, "joint order is the palette order");
+        assert!(
+            draws(&meshes).is_empty(),
+            "a skinned placement is not a plain draw"
+        );
+        assert!(textured(&meshes).is_empty());
+    }
+
+    #[test]
+    fn a_skinned_placement_without_a_texture_draws_white() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, skinned_mesh(1));
+        meshes.flush(&mut backend);
+
+        meshes.place_skinned(A, at(1.0), 0, None, &palette(2, 0.0));
+
+        let drawn = skinned(&meshes);
+        assert_eq!(drawn.len(), 1);
+        assert_eq!(drawn[0].1, 0, "the white default texture");
+    }
+
+    #[test]
+    fn two_skinned_placements_of_one_mesh_register_it_and_its_skin_once() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, skinned_mesh(2));
+        let (near, far) = (palette(3, 0.0), palette(3, 7.0));
+
+        for frame in 0..2 {
+            meshes.place_skinned(A, at(1.0), 0, None, &near);
+            meshes.place_skinned(A, at(2.0), 0, None, &far);
+            meshes.flush(&mut backend);
+
+            let drawn = skinned(&meshes);
+            let handle = backend.handle_with_index_count(3);
+            assert_eq!(drawn.len(), 2, "frame {frame}");
+            assert_eq!((drawn[0].0, drawn[1].0), (handle, handle), "frame {frame}");
+            assert_eq!(drawn[0].2.model, model_of(at(1.0)));
+            assert_eq!(drawn[1].2.model, model_of(at(2.0)));
+            assert_eq!((&drawn[0].3, &drawn[1].3), (&near, &far), "frame {frame}");
+            meshes.clear_placements();
+        }
+
+        assert_eq!(backend.registered.len(), 1, "the mesh uploads once");
+        assert_eq!(
+            backend.skins,
+            vec![(
+                backend.handle_with_index_count(3),
+                vec![[0, 0, 0, 0], [2, 0, 0, 0], [0, 0, 0, 0]],
+                vec![[1.0, 0.0, 0.0, 0.0]; 3],
+            )],
+            "the skin is registered once, against the mesh handle"
+        );
+    }
+
+    #[test]
+    fn a_mesh_without_a_skin_registers_no_skin() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.upsert(B, mesh(2), 0);
+
+        meshes.flush(&mut backend);
+
+        assert!(backend.skins.is_empty());
+    }
+
+    #[test]
+    fn a_palette_shorter_than_the_meshs_joints_is_not_drawn() {
+        let hero = WorldMeshId(4242);
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(hero, skinned_mesh(3));
+        meshes.upsert_movable(B, skinned_mesh(1));
+        meshes.flush(&mut backend);
+        let full = palette(4, 0.0);
+        let other = palette(2, 0.0);
+
+        meshes.place_skinned(hero, at(1.0), 0, None, &palette(3, 0.0));
+        meshes.place_skinned(hero, at(2.0), 0, None, &full);
+        meshes.place_skinned(hero, at(3.0), 0, None, &palette(0, 0.0));
+        meshes.place_skinned(B, at(4.0), 0, None, &other);
+        meshes.place(B, at(5.0), 0);
+        let ((), log) = logged(|| meshes.flush(&mut backend));
+
+        let xs: Vec<f32> = skinned(&meshes).iter().map(|d| d.2.model[3][0]).collect();
+        assert_eq!(
+            xs,
+            vec![2.0, 4.0],
+            "only the placements with enough joints draw"
+        );
+        assert_eq!(draws(&meshes).len(), 1, "plain placements are unaffected");
+        assert_eq!(
+            log.matches("WARN").count(),
+            1,
+            "one warning per mesh id, however many placements are short: {log}"
+        );
+        assert!(log.contains("4242"), "the warning names the mesh id: {log}");
     }
 
     #[derive(Clone, Copy, Debug, PartialEq)]

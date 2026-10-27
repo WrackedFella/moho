@@ -355,6 +355,49 @@ mod tests {
     }
 
     #[test]
+    fn with_skin_refuses_mismatched_channels() {
+        let mesh = || build(3, 3, vec![0, 1, 2]).expect("well-formed triangle");
+        let joints = vec![[0, 1, 0, 0]; 3];
+        let weights = vec![[0.5, 0.5, 0.0, 0.0]; 3];
+        assert!(mesh().skin().is_none(), "no skin until set");
+
+        let short_joints = mesh()
+            .with_skin(vec![[0; 4]; 2], weights.clone())
+            .expect_err("two joint sets for three vertices");
+        let short_weights = mesh()
+            .with_skin(joints.clone(), vec![[1.0, 0.0, 0.0, 0.0]; 4])
+            .expect_err("four weight sets for three vertices");
+        let skinned = mesh()
+            .with_skin(joints.clone(), weights.clone())
+            .expect("one per vertex");
+
+        assert!(
+            matches!(
+                short_joints,
+                WorldMeshError::ChannelLengthMismatch {
+                    channel: "joints",
+                    expected: 3,
+                    actual: 2
+                }
+            ),
+            "got {short_joints:?}"
+        );
+        assert!(
+            matches!(
+                short_weights,
+                WorldMeshError::ChannelLengthMismatch {
+                    channel: "weights",
+                    expected: 3,
+                    actual: 4
+                }
+            ),
+            "got {short_weights:?}"
+        );
+        assert_eq!(skinned.skin(), Some((&joints[..], &weights[..])));
+        assert_eq!(skinned.indices(), [0, 1, 2]);
+    }
+
+    #[test]
     fn uvs_are_none_until_set_and_returned_as_given() {
         let mesh = build(3, 3, vec![0, 1, 2]).expect("well-formed triangle");
         assert!(mesh.uvs().is_none());

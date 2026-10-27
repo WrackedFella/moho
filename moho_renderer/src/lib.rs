@@ -37,6 +37,7 @@ pub mod pipeline;
 mod render_ops;
 mod resources;
 mod shadow;
+mod skinning;
 mod ssao;
 mod textures;
 mod types;

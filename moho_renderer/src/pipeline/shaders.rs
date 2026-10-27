@@ -15,6 +15,11 @@ pub fn main_shader_source() -> String {
     .join("\n\n")
 }
 
+/// The skinning compute shader's WGSL: the shared normal helper and the skin source concatenated.
+pub fn skin_shader_source() -> String {
+    todo!("concatenate shaders/normal.wgsl and shaders/skin.wgsl")
+}
+
 /// The skybox shader's WGSL: the shared sky gradient and the skybox sources concatenated.
 pub fn skybox_shader_source() -> String {
     [

@@ -165,7 +165,184 @@ fn vertex_normals_go_through_normal_to_world() {
     assert!(calls_it, "vs_main calls normal_to_world");
 }
 
-/// The formula `normal_to_world` encodes in `shaders/vertex.wgsl`.
+fn read_shader(name: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../shaders")
+        .join(name);
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("failed to read shader {}: {e}", path.display()))
+}
+
+/// The global variable `handle` reaches through accesses, if it does.
+fn root_global(
+    function: &naga::Function,
+    handle: naga::Handle<naga::Expression>,
+) -> Option<naga::Handle<naga::GlobalVariable>> {
+    match function.expressions[handle] {
+        naga::Expression::GlobalVariable(global) => Some(global),
+        naga::Expression::Access { base, .. } | naga::Expression::AccessIndex { base, .. } => {
+            root_global(function, base)
+        }
+        _ => None,
+    }
+}
+
+/// Stores into `target` found in `block`, as `(stores outside any loop, stores inside a loop)`.
+fn stores_into(
+    function: &naga::Function,
+    block: &naga::Block,
+    target: naga::Handle<naga::GlobalVariable>,
+    in_loop: bool,
+    counts: &mut (usize, usize),
+) {
+    for statement in block {
+        match statement {
+            naga::Statement::Store { pointer, .. }
+                if root_global(function, *pointer) == Some(target) =>
+            {
+                if in_loop {
+                    counts.1 += 1;
+                } else {
+                    counts.0 += 1;
+                }
+            }
+            naga::Statement::Block(inner) => stores_into(function, inner, target, in_loop, counts),
+            naga::Statement::If { accept, reject, .. } => {
+                stores_into(function, accept, target, in_loop, counts);
+                stores_into(function, reject, target, in_loop, counts);
+            }
+            naga::Statement::Switch { cases, .. } => {
+                for case in cases {
+                    stores_into(function, &case.body, target, in_loop, counts);
+                }
+            }
+            naga::Statement::Loop {
+                body, continuing, ..
+            } => {
+                stores_into(function, body, target, true, counts);
+                stores_into(function, continuing, target, true, counts);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn contains_statement(block: &naga::Block, wanted: &dyn Fn(&naga::Statement) -> bool) -> bool {
+    block.iter().any(|statement| {
+        wanted(statement)
+            || match statement {
+                naga::Statement::Block(inner) => contains_statement(inner, wanted),
+                naga::Statement::If { accept, reject, .. } => {
+                    contains_statement(accept, wanted) || contains_statement(reject, wanted)
+                }
+                naga::Statement::Switch { cases, .. } => cases
+                    .iter()
+                    .any(|case| contains_statement(&case.body, wanted)),
+                naga::Statement::Loop {
+                    body, continuing, ..
+                } => contains_statement(body, wanted) || contains_statement(continuing, wanted),
+                _ => false,
+            }
+    })
+}
+
+#[test]
+fn skin_shader_validates_and_rewrites_only_position_and_normal() {
+    let source = moho_renderer::pipeline::skin_shader_source();
+
+    let module = validate("skin shader", &source, Capabilities::empty());
+
+    assert_eq!(module.entry_points.len(), 1, "one compute entry point");
+    let entry = &module.entry_points[0];
+    assert_eq!(entry.stage, naga::ShaderStage::Compute);
+    assert_eq!(entry.workgroup_size, [64, 1, 1], "64 threads per group");
+    let (words, declared) = module
+        .overrides
+        .iter()
+        .find(|(_, o)| o.name.as_deref() == Some("VERTEX_WORDS"))
+        .expect("skin.wgsl declares `override VERTEX_WORDS`");
+    assert_eq!(
+        module.types[declared.ty].inner,
+        naga::TypeInner::Scalar(naga::Scalar::U32),
+        "VERTEX_WORDS is a u32"
+    );
+    assert!(
+        declared.init.is_none(),
+        "the pipeline sets it from size_of::<Vertex>() / 4"
+    );
+    let function = &entry.function;
+    assert!(
+        function
+            .expressions
+            .iter()
+            .any(|(_, e)| matches!(e, naga::Expression::Override(h) if *h == words)),
+        "the word copy is sized by VERTEX_WORDS"
+    );
+    let normal_to_world = module
+        .functions
+        .iter()
+        .find(|(_, f)| f.name.as_deref() == Some("normal_to_world"))
+        .map(|(handle, _)| handle)
+        .expect("the skin shader holds the shared normal_to_world");
+    assert!(
+        contains_statement(
+            &function.body,
+            &|s| matches!(s, naga::Statement::Call { function, .. } if *function == normal_to_world)
+        ),
+        "the entry point blends normals through normal_to_world"
+    );
+    let writable: Vec<_> = module
+        .global_variables
+        .iter()
+        .filter(|(_, g)| {
+            g.space
+                == naga::AddressSpace::Storage {
+                    access: naga::StorageAccess::LOAD | naga::StorageAccess::STORE,
+                }
+        })
+        .map(|(handle, _)| handle)
+        .collect();
+    assert_eq!(writable.len(), 1, "the arena is the only writable buffer");
+    let mut counts = (0, 0);
+    stores_into(function, &function.body, writable[0], false, &mut counts);
+    assert_eq!(
+        counts,
+        (6, 1),
+        "six stores for position and normal words 0-5, and one word copy in a loop for the rest"
+    );
+}
+
+#[test]
+fn main_and_skin_shaders_share_normal_to_world() {
+    let normal = read_shader("normal.wgsl");
+    let vertex = read_shader("vertex.wgsl");
+    let main = moho_renderer::pipeline::main_shader_source();
+    let skin = moho_renderer::pipeline::skin_shader_source();
+
+    assert!(
+        normal.contains("fn normal_to_world"),
+        "normal.wgsl holds it"
+    );
+    assert!(
+        !vertex.contains("normal_to_world(m:"),
+        "vertex.wgsl calls it but no longer defines it"
+    );
+    for (label, source) in [("main", &main), ("skin", &skin)] {
+        assert!(
+            source.contains(normal.trim()),
+            "{label} shader source embeds normal.wgsl unchanged"
+        );
+        let module = validate(label, source, Capabilities::empty());
+        let definitions = module
+            .functions
+            .iter()
+            .filter(|(_, f)| f.name.as_deref() == Some("normal_to_world"))
+            .count();
+        assert_eq!(definitions, 1, "{label}: normal_to_world defined once");
+    }
+}
+
+/// The formula `normal_to_world` encodes in `shaders/normal.wgsl`.
 fn cofactor_normal(cols: [glam::Vec3; 3], n: glam::Vec3) -> glam::Vec3 {
     let det = cols[0].dot(cols[1].cross(cols[2]));
     let cofactor = glam::Mat3::from_cols(
