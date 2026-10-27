@@ -175,7 +175,7 @@ The engine lane designs the answers.
 | Ray entry and exit through a surface, for penetration (GDD §10 item 14); optional, a reverse ray works | not filed | FPS-M3 |
 | Screen and sound follow game values (vignette, blur, handles, low-pass) | ENG-F41 [#637](https://github.com/WrackedFella/moho/issues/637) | FPS-M4 |
 | Markers carry their size, for volumes | ENG-F14-03 [#639](https://github.com/WrackedFella/moho/issues/639) | FPS-F10 test levels, FPS-M5 safe rooms |
-| Levels load whole and switch with a loading screen and a load budget; a level carries a readable boundary (GDD §5, §10 item 10) | 3.4f level unload and switch; the boundary and budget not yet raised | FPS-M3 first large map (one load); FPS-M6 switching |
+| Levels load whole and switch with a loading screen and a load budget; a level carries a readable boundary (GDD §5, §10 item 10) | 2.27 ENG-F14-04 #750, -05 #752 (unload and switch); 3.4i ENG-F46 #746 (budget, loading screen); ENG-F14-06 #751 (boundary) | FPS-M2 first level switch; FPS-M3 first large map (one load); FPS-M6 carries state across a switch |
 | List widgets with icons and counts, two panes, tooltips | comment on #444; drag grid is a later card | FPS-M2 list screens |
 | #544 lean and stance transitions, prone hull | #544 with ENG-F33 #492 (crouch and clearance) | FPS-M2: FPS-M1.2 slice 2 |
 | #600 loose objects fall, settle and are picked up | #600 (ENG-F34 #493 is related) | FPS-M2: FPS-F9-04 |
