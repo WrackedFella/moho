@@ -40,7 +40,7 @@ pub(crate) fn convert(
         mesh: mesh.index(),
         reason,
     };
-    let reader = primitive.reader(|b| buffers.get(b.index()).map(|data| &**data));
+    let reader = primitive.reader(crate::buffers::reader_data(buffers));
     let raw_positions = reader
         .read_positions()
         .ok_or_else(|| bad("positions missing or out of buffer range".into()))?;
