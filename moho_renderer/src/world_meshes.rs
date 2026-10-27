@@ -3,7 +3,7 @@
 use crate::RendererBackend;
 use crate::textures::WHITE_TEXTURE;
 use moho_render_api::{InstanceGpu, Rgba8Image, TextureId, WorldMesh, WorldMeshId};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// How a mesh draws: once at identity, or only where placed.
 #[derive(Debug, Clone, Copy)]
@@ -20,6 +20,8 @@ type Pending = Option<(WorldMesh, Kind)>;
 struct Live {
     handle: u32,
     kind: Kind,
+    /// For a skinned mesh, the shortest palette that covers its joints.
+    palette_len: Option<usize>,
 }
 
 /// One placement: where, in which material, and with which texture (`None` is white).
@@ -30,6 +32,25 @@ struct Placement {
     texture: Option<TextureId>,
 }
 
+/// A placement with a joint palette in model space.
+#[derive(Debug)]
+struct SkinnedPlacement {
+    id: WorldMeshId,
+    placement: Placement,
+    palette: Vec<glam::Affine3A>,
+}
+
+/// An instance of a mesh at `model`; object type 0 is terrain, so the fragment shader
+/// colours by normal.
+fn instance(model: glam::Mat4, material: u32) -> InstanceGpu {
+    InstanceGpu {
+        model: model.to_cols_array_2d(),
+        material,
+        object_type: 0,
+        padding: [0, 0],
+    }
+}
+
 /// Queues world-mesh and texture changes and applies them to a backend on `flush`.
 ///
 /// Live meshes are kept in id order so the draw order is deterministic.
@@ -38,6 +59,8 @@ pub struct WorldMeshes {
     live: BTreeMap<WorldMeshId, Live>,
     pending: BTreeMap<WorldMeshId, Pending>,
     placements: BTreeMap<WorldMeshId, Vec<Placement>>,
+    /// Skinned placements in call order.
+    skinned: Vec<SkinnedPlacement>,
     /// Backend handle of each uploaded texture.
     live_textures: BTreeMap<TextureId, u32>,
     /// A texture waiting for the next `flush`; `None` is a queued remove.
@@ -81,6 +104,30 @@ impl WorldMeshes {
         });
     }
 
+    /// Append a placement of the skinned mesh under `id` for this frame, posed by `palette`
+    /// (one model-space matrix per joint, as `Model::joint_palette` gives it; copied).
+    ///
+    /// Drawn through [`skinned_draws`](Self::skinned_draws). On `flush`, a palette shorter
+    /// than the mesh's highest joint plus one drops the placement with a warning.
+    pub fn place_skinned(
+        &mut self,
+        id: WorldMeshId,
+        transform: glam::Affine3A,
+        material: u32,
+        texture: Option<TextureId>,
+        palette: &[glam::Affine3A],
+    ) {
+        self.skinned.push(SkinnedPlacement {
+            id,
+            placement: Placement {
+                transform,
+                material,
+                texture,
+            },
+            palette: palette.to_vec(),
+        });
+    }
+
     /// Queue adding or replacing the texture under `id`; replacing unregisters the old
     /// handle on `flush`.
     pub fn upsert_texture(&mut self, id: TextureId, image: Rgba8Image) {
@@ -111,6 +158,7 @@ impl WorldMeshes {
     /// Drop every placement; the renderer calls this each frame.
     pub fn clear_placements(&mut self) {
         self.placements.clear();
+        self.skinned.clear();
     }
 
     /// Queue removing the mesh under `id`.
@@ -118,8 +166,9 @@ impl WorldMeshes {
         self.pending.insert(id, None);
     }
 
-    /// Apply queued changes: register new meshes and textures, unregister replaced or
-    /// removed ones.
+    /// Apply queued changes: register new meshes, skins and textures, unregister replaced or
+    /// removed ones, then drop skinned placements whose palette is too short for their mesh
+    /// (one warning per mesh id).
     pub fn flush(&mut self, backend: &mut dyn RendererBackend) {
         for (id, change) in std::mem::take(&mut self.pending_textures) {
             if let Some(old) = self.live_textures.remove(&id) {
@@ -146,8 +195,40 @@ impl WorldMeshes {
                 (None, Kind::Movable) => Vec::new(),
             };
             let handle = backend.register_world_mesh(&mesh, &material);
-            self.live.insert(id, Live { handle, kind });
+            let palette_len = mesh.skin().map(|(joints, weights)| {
+                backend.register_skin(handle, joints, weights);
+                joints
+                    .iter()
+                    .flatten()
+                    .map(|&j| usize::from(j) + 1)
+                    .max()
+                    .unwrap_or(0)
+            });
+            self.live.insert(
+                id,
+                Live {
+                    handle,
+                    kind,
+                    palette_len,
+                },
+            );
         }
+        let mut warned = BTreeSet::new();
+        self.skinned.retain(|skinned| {
+            let needed = self.live.get(&skinned.id).and_then(|live| live.palette_len);
+            let Some(needed) = needed.filter(|&needed| skinned.palette.len() < needed) else {
+                return true;
+            };
+            if warned.insert(skinned.id) {
+                tracing::warn!(
+                    mesh_id = skinned.id.0,
+                    joints = skinned.palette.len(),
+                    needed,
+                    "palette shorter than the mesh's joints; placement not drawn"
+                );
+            }
+            false
+        });
     }
 
     /// Instances as `(backend handle, instance)`: each static mesh at identity, then
@@ -161,13 +242,6 @@ impl WorldMeshes {
     /// instance)`. The texture handle is 0, the white default, for statics, for
     /// [`place`](Self::place) and for a texture id that is not live.
     pub fn textured_draws(&self) -> impl Iterator<Item = (u32, u32, InstanceGpu)> + '_ {
-        // object_type 0: terrain, the fragment shader colours by normal
-        let instance = |model: glam::Mat4, material: u32| InstanceGpu {
-            model: model.to_cols_array_2d(),
-            material,
-            object_type: 0,
-            padding: [0, 0],
-        };
         let statics = self.live.values().filter_map(move |live| match live.kind {
             Kind::Static { material_idx } => Some((
                 live.handle,
@@ -180,16 +254,40 @@ impl WorldMeshes {
             let handle = self.live.get(id).map(|live| live.handle);
             handle.into_iter().flat_map(move |handle| {
                 placements.iter().map(move |placement| {
-                    let texture = placement
-                        .texture
-                        .and_then(|t| self.live_textures.get(&t).copied())
-                        .unwrap_or(WHITE_TEXTURE);
+                    let texture = self.texture_handle(placement.texture);
                     let model = glam::Mat4::from(placement.transform);
                     (handle, texture, instance(model, placement.material))
                 })
             })
         });
         statics.chain(placed)
+    }
+
+    /// Skinned placements of live skinned meshes in call order, as `(mesh handle, texture
+    /// handle, instance, palette)`. The instance's model is the placement's root; the
+    /// texture handle is 0, the white default, for [`None`] and for a texture id that is
+    /// not live.
+    pub fn skinned_draws(
+        &self,
+    ) -> impl Iterator<Item = (u32, u32, InstanceGpu, &[glam::Affine3A])> + '_ {
+        self.skinned.iter().filter_map(move |skinned| {
+            let live = self.live.get(&skinned.id)?;
+            live.palette_len?;
+            let placement = &skinned.placement;
+            let model = glam::Mat4::from(placement.transform);
+            Some((
+                live.handle,
+                self.texture_handle(placement.texture),
+                instance(model, placement.material),
+                skinned.palette.as_slice(),
+            ))
+        })
+    }
+
+    fn texture_handle(&self, texture: Option<TextureId>) -> u32 {
+        texture
+            .and_then(|t| self.live_textures.get(&t).copied())
+            .unwrap_or(WHITE_TEXTURE)
     }
 }
 
@@ -198,6 +296,9 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
     use std::collections::{BTreeMap, BTreeSet};
+
+    /// One `register_skin` call: mesh handle, joints, weights.
+    type SkinCall = (u32, Vec<[u16; 4]>, Vec<[f32; 4]>);
 
     /// Records register/unregister calls. Handles start at 1 and are never reused,
     /// so a stale handle can't be mistaken for a live one.
@@ -213,7 +314,7 @@ mod tests {
         textures: Vec<(u32, Rgba8Image)>,
         unregistered_textures: Vec<u32>,
         /// Each `register_skin` call as `(mesh handle, joints, weights)`.
-        skins: Vec<(u32, Vec<[u16; 4]>, Vec<[f32; 4]>)>,
+        skins: Vec<SkinCall>,
     }
 
     /// The channel slices of one `register_indexed_mesh` call, named as the

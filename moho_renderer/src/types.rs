@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 /// Vertex data for rendering.
 ///
 /// Field order here is load-bearing: `pipeline::create_main_render_pipeline`'s
@@ -36,11 +38,48 @@ pub struct GpuInstance {
     pub padding: [u32; 2],
 }
 
-/// What a queued draw binds: its mesh and the base-colour texture of the main pass.
+/// Where a draw reads its vertices from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum VertexSource {
+    /// The mesh's own vertex buffer.
+    Mesh,
+    /// The frame vertex arena, from vertex `first_vertex`: the mesh skinned in a placement's pose.
+    Arena { first_vertex: u32 },
+}
+
+impl VertexSource {
+    /// The bytes of the frame arena holding `vertex_count` vertices of this source; `None`
+    /// for a draw that reads the mesh buffer.
+    pub(crate) fn arena_bytes(&self, vertex_count: u32) -> Option<Range<u64>> {
+        match *self {
+            Self::Mesh => None,
+            Self::Arena { first_vertex } => {
+                let stride = size_of::<Vertex>() as u64;
+                let start = u64::from(first_vertex) * stride;
+                Some(start..start + u64::from(vertex_count) * stride)
+            }
+        }
+    }
+}
+
+/// What a queued draw binds: its mesh (always the index buffer), the vertex source and the
+/// base-colour texture of the main pass.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DrawKey {
-    pub mesh: u32,
-    pub texture: u32,
+    pub(crate) mesh: u32,
+    pub(crate) texture: u32,
+    pub(crate) source: VertexSource,
+}
+
+impl DrawKey {
+    /// A draw of `mesh` reading the arena from vertex `first_vertex`.
+    pub(crate) fn skinned(mesh: u32, texture: u32, first_vertex: u32) -> Self {
+        Self {
+            mesh,
+            texture,
+            source: VertexSource::Arena { first_vertex },
+        }
+    }
 }
 
 /// Per-mesh GPU data with optional index buffer

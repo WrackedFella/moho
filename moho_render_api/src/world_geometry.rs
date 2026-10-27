@@ -62,7 +62,18 @@ pub struct WorldMesh {
     indices: Vec<u32>,
     materials: Option<Vec<u32>>,
     uvs: Option<Vec<[f32; 2]>>,
+    skin: Option<Skin>,
 }
+
+/// Per-vertex joint indices and their weights.
+#[derive(Clone, Debug)]
+struct Skin {
+    joints: Vec<[u16; 4]>,
+    weights: Vec<[f32; 4]>,
+}
+
+/// The joint and weight channels of a skinned mesh.
+type SkinChannels<'a> = (&'a [[u16; 4]], &'a [[f32; 4]]);
 
 impl WorldMesh {
     /// Build a mesh, refusing mismatched channel lengths, indices past the last
@@ -114,6 +125,7 @@ impl WorldMesh {
             indices,
             materials: None,
             uvs: None,
+            skin: None,
         })
     }
 
@@ -154,6 +166,39 @@ impl WorldMesh {
     /// The per-vertex texture coordinates; `None` when the game never set them.
     pub fn uvs(&self) -> Option<&[[f32; 2]]> {
         self.uvs.as_deref()
+    }
+
+    /// Attach the skin: four joint indices and their weights per vertex. Joint indices
+    /// address the palette a placement supplies; weights should sum to one.
+    pub fn with_skin(
+        mut self,
+        joints: Vec<[u16; 4]>,
+        weights: Vec<[f32; 4]>,
+    ) -> Result<Self, WorldMeshError> {
+        let expected = self.positions.len();
+        if joints.len() != expected {
+            return Err(WorldMeshError::ChannelLengthMismatch {
+                channel: "joints",
+                expected,
+                actual: joints.len(),
+            });
+        }
+        if weights.len() != expected {
+            return Err(WorldMeshError::ChannelLengthMismatch {
+                channel: "weights",
+                expected,
+                actual: weights.len(),
+            });
+        }
+        self.skin = Some(Skin { joints, weights });
+        Ok(self)
+    }
+
+    /// The per-vertex joints and weights; `None` when the game never set a skin.
+    pub fn skin(&self) -> Option<SkinChannels<'_>> {
+        self.skin
+            .as_ref()
+            .map(|skin| (skin.joints.as_slice(), skin.weights.as_slice()))
     }
 
     pub fn positions(&self) -> &[[f32; 3]] {

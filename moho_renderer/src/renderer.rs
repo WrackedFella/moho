@@ -1,6 +1,6 @@
 use crate::MeshRenderer;
 use crate::shadow::ShadowSystem;
-use crate::types::{DrawKey, GpuInstance, MeshEntry, NO_VERTEX_MATERIAL, Vertex};
+use crate::types::{DrawKey, GpuInstance, MeshEntry, NO_VERTEX_MATERIAL, Vertex, VertexSource};
 use moho_render_api::WorldMesh;
 use wgpu::util::DeviceExt;
 
@@ -53,6 +53,7 @@ pub struct Renderer<'a> {
     tone_map: crate::tone_map::ToneMapPass,
     exposure: f32,
     tone_map_enabled: bool,
+    skinning: crate::skinning::Skinning,
 }
 
 impl<'a> Renderer<'a> {
@@ -121,6 +122,7 @@ impl<'a> Renderer<'a> {
             bloom.output(),
         );
         tone_map.set_params(&device_setup.queue, 1.0, true, bloom.intensity());
+        let skinning = crate::skinning::Skinning::new(&device_setup.device);
         let textures = crate::textures::TextureTable::new(
             &device_setup.device,
             &device_setup.queue,
@@ -172,6 +174,7 @@ impl<'a> Renderer<'a> {
             tone_map,
             exposure: 1.0,
             tone_map_enabled: true,
+            skinning,
         };
 
         // Recreate camera bind group with SSAO textures if available
@@ -353,7 +356,7 @@ impl<'a> Renderer<'a> {
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("mesh-vertex-buffer"),
                 contents: vertex_bytes,
-                usage: wgpu::BufferUsages::VERTEX,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
             });
         let vertex_count = vertices.len() as u32;
         let entry = MeshEntry {
@@ -450,7 +453,7 @@ impl<'a> Renderer<'a> {
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("mesh-vertex-buffer"),
                 contents: vertex_bytes,
-                usage: wgpu::BufferUsages::VERTEX,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
             });
         let index_bytes = bytemuck::cast_slice(indices);
         let ib = self
@@ -471,8 +474,20 @@ impl<'a> Renderer<'a> {
         handle
     }
 
+    /// Upload the skin of the mesh under `mesh`, so it can be drawn with
+    /// [`enqueue_skinned_draw`](Self::enqueue_skinned_draw).
+    pub fn register_skin(&mut self, mesh: u32, joints: &[[u16; 4]], weights: &[[f32; 4]]) {
+        let Some(Some(entry)) = self.mesh_table.get(mesh as usize) else {
+            tracing::error!(mesh, "skin for a mesh that is not registered");
+            return;
+        };
+        self.skinning
+            .register(&self.device, mesh, entry, joints, weights);
+    }
+
     /// Unregister a mesh handle and free its GPU buffers.
     pub fn unregister_mesh(&mut self, mesh: u32) {
+        self.skinning.unregister(mesh);
         let idx = mesh as usize;
         if idx < self.mesh_table.len() {
             self.mesh_table[idx] = None;
@@ -576,7 +591,34 @@ impl<'a> Renderer<'a> {
         if !MeshRenderer::validate_mesh(mesh, &self.mesh_table) {
             return;
         }
+        let key = DrawKey {
+            mesh,
+            texture,
+            source: VertexSource::Mesh,
+        };
+        self.queue_draw(key, instances);
+    }
 
+    /// Queue a registered skinned mesh for drawing this frame in the pose `palette` gives
+    /// (3 rows per joint, `[m_r0, m_r1, m_r2, t_r]`), placed by `instance`. The mesh is
+    /// skinned into the frame arena in `submit_frame`, before any pass.
+    pub fn enqueue_skinned_draw(
+        &mut self,
+        mesh: u32,
+        texture: u32,
+        palette: &[[[f32; 4]; 3]],
+        instance: moho_render_api::InstanceGpu,
+    ) {
+        if !MeshRenderer::validate_mesh(mesh, &self.mesh_table) {
+            return;
+        }
+        let Some(first_vertex) = self.skinning.queue(mesh, palette) else {
+            return;
+        };
+        self.queue_draw(DrawKey::skinned(mesh, texture, first_vertex), &[instance]);
+    }
+
+    fn queue_draw(&mut self, key: DrawKey, instances: &[moho_render_api::InstanceGpu]) {
         let instances_gpu = MeshRenderer::prepare_instances(instances);
 
         if self.prepare_instance_buffer(&instances_gpu).is_none() {
@@ -584,8 +626,7 @@ impl<'a> Renderer<'a> {
             return;
         }
 
-        self.pending_draws
-            .push((DrawKey { mesh, texture }, instances_gpu));
+        self.pending_draws.push((key, instances_gpu));
     }
 
     pub fn set_shadow_quality(&mut self, quality: u8) {
@@ -736,6 +777,10 @@ impl<'a> Renderer<'a> {
         let ibuf = self.instance_buffer.as_ref().unwrap();
         let frame_view = self.pending_frame_view.as_ref().unwrap();
 
+        self.skinning
+            .dispatch(&self.device, &self.queue, &mut encoder);
+        let arena = self.skinning.arena();
+
         crate::render_ops::shadow_ops::render_shadow_passes(
             &mut encoder,
             &self.shadow,
@@ -743,6 +788,7 @@ impl<'a> Renderer<'a> {
             &self.pending_draws,
             &self.mesh_table,
             &offsets,
+            arena,
         );
 
         crate::render_ops::main_pass_ops::render_main_pass(
@@ -760,6 +806,7 @@ impl<'a> Renderer<'a> {
             &self.textures,
             &self.mesh_table,
             &offsets,
+            arena,
         );
 
         self.bloom.render(&mut encoder);
@@ -803,6 +850,7 @@ impl<'a> Renderer<'a> {
 
         self.pending_frame_view = None;
         self.pending_draws.clear();
+        self.skinning.end_frame();
         self.pending_markers.clear();
         self.pending_fill_count = 0;
     }

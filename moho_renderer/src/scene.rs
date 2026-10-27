@@ -84,6 +84,14 @@ impl Scene {
                 _ => world_draws.push((key, vec![instance])),
             }
         }
+        let skinned_draws: Vec<_> = self
+            .world_meshes
+            .skinned_draws()
+            .map(|(mesh, texture, instance, palette)| {
+                let rows: Vec<[[f32; 4]; 3]> = palette.iter().map(joint_rows).collect();
+                (mesh, texture, instance, rows)
+            })
+            .collect();
         // Cleared before begin_frame so a skipped frame consumes its placements too.
         self.world_meshes.clear_placements();
 
@@ -95,6 +103,10 @@ impl Scene {
 
         for ((mesh, texture), instances) in &world_draws {
             renderer.enqueue_textured_draw(*mesh, *texture, instances);
+        }
+
+        for (mesh, texture, instance, palette) in skinned_draws {
+            renderer.enqueue_skinned_draw(mesh, texture, &palette, instance);
         }
 
         // Render transparent instances (back-to-front sorted)
@@ -144,6 +156,21 @@ impl Scene {
             renderer.enqueue_draw(*mesh_h, insts);
         }
     }
+}
+
+/// A joint matrix as the GPU palette holds it: three rows of `[m_r0, m_r1, m_r2, t_r]`.
+fn joint_rows(joint: &glam::Affine3A) -> [[f32; 4]; 3] {
+    let (x, y, z, t) = (
+        joint.matrix3.x_axis,
+        joint.matrix3.y_axis,
+        joint.matrix3.z_axis,
+        joint.translation,
+    );
+    [
+        [x.x, y.x, z.x, t.x],
+        [x.y, y.y, z.y, t.y],
+        [x.z, y.z, z.z, t.z],
+    ]
 }
 
 impl Default for Scene {

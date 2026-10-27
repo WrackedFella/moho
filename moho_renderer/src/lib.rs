@@ -116,6 +116,24 @@ pub trait RendererBackend {
         let _ = texture;
         self.enqueue_draw(mesh, instances);
     }
+    /// Upload the skin (four joints and weights per vertex) of the mesh under `mesh`,
+    /// registered by [`register_world_mesh`](Self::register_world_mesh). No-op by default.
+    fn register_skin(&mut self, mesh: u32, joints: &[[u16; 4]], weights: &[[f32; 4]]) {
+        let _ = (mesh, joints, weights);
+    }
+    /// Queue a skinned mesh for drawing this frame in the pose `palette` gives: one joint
+    /// matrix per entry as three rows of `[m_r0, m_r1, m_r2, t_r]`, in model space. The
+    /// default draws the bind pose, ignoring `palette`, through `enqueue_textured_draw`.
+    fn enqueue_skinned_draw(
+        &mut self,
+        mesh: u32,
+        texture: u32,
+        palette: &[[[f32; 4]; 3]],
+        instance: InstanceGpu,
+    ) {
+        let _ = palette;
+        self.enqueue_textured_draw(mesh, texture, &[instance]);
+    }
     /// Unregister a previously-registered mesh handle and free GPU resources.
     fn unregister_mesh(&mut self, mesh: u32);
     /// Begin a new frame: uploads the camera, culls/updates dynamic lights,
@@ -245,6 +263,18 @@ impl RendererBackend for Renderer<'_> {
     }
     fn enqueue_textured_draw(&mut self, mesh: u32, texture: u32, instances: &[InstanceGpu]) {
         self.enqueue_textured_draw(mesh, texture, instances);
+    }
+    fn register_skin(&mut self, mesh: u32, joints: &[[u16; 4]], weights: &[[f32; 4]]) {
+        self.register_skin(mesh, joints, weights);
+    }
+    fn enqueue_skinned_draw(
+        &mut self,
+        mesh: u32,
+        texture: u32,
+        palette: &[[[f32; 4]; 3]],
+        instance: InstanceGpu,
+    ) {
+        self.enqueue_skinned_draw(mesh, texture, palette, instance);
     }
     fn unregister_mesh(&mut self, mesh: u32) {
         self.unregister_mesh(mesh);
