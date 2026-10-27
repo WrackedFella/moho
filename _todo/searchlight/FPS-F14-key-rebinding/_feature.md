@@ -133,7 +133,7 @@ Scenario: Menu keys cannot be taken
 | Bindings per action | Two editable slots: primary and secondary | Player's call. Existing defaults with two inputs (Check magazine: C and Hold R) fit without special cases |
 | How does a slot become a hold, double press or chord? | Explicit per-slot pickers (kind: press, hold, double press; modifier: none, Ctrl, Shift, Alt); capture records only the key or button | Justin, 2026-10-27. Clearer than timing a gesture during capture; costs two controls per slot, hidden in the basic view |
 | Double press | A press kind beside press and hold | Justin, 2026-10-27. New to the engine: ENG-F26 #359 covers tap, hold and chords only, so this is an engine request. Cost: a key with a double-press binding must wait to tell one press from two, so its plain press fires late |
-| Basic and advanced | Basic shows plain presses; advanced shows the pickers and per-action reset (layout pending Justin: per-action expander or global toggle) | Most players rebind presses only; the pickers stay out of the way |
+| Basic and advanced | Basic shows plain presses; advanced shows the pickers and per-action reset behind a per-action expander (a chevron on the row opens its details below it); no global toggle | Most players rebind presses only; the pickers stay out of the way |
 | Hold/toggle | A checkbox beside each held action's row; the choice persists | GDD §3.3; applies to actions the game marks toggleable (today lean) |
 | Reset scope | One for the page (required); one per action in the advanced view | Justin, 2026-10-27. Per-action reset is the page reset applied to one row, so it is small; it is the first thing cut if the slice grows |
 
@@ -156,7 +156,7 @@ Not decomposed until the feature is approved. Proposed slices, each demoable; or
 | 2 Conflict dialog | Taking a used input asks, Replace or Cancel; shows Unbound | none beyond 1 |
 | 3 Secondary slot | Each action takes a second input | none beyond 1 |
 | 4 Clear and reset | Clear a slot; reset the page | none beyond 1 |
-| 5 Advanced view: hold and chord | Expander or toggle shows the pickers; Hold Y and Ctrl+Y bind and work; per-action reset | ENG-F26 #359; picker row kind (engine request) |
+| 5 Advanced view: hold and chord | A row's expander shows its pickers; Hold Y and Ctrl+Y bind and work; per-action reset | ENG-F26 #359; picker row kind (engine request) |
 | 6 Double press | Double Y binds and works | double-press input kind (engine request) |
 | 7 Hold/toggle checkbox | Lean toggles by checkbox | ENG-F26 #359 toggle mode |
 
