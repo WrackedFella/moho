@@ -1,7 +1,7 @@
 //! The main, pause and settings menus as data for the engine's menu screens: which items they
 //! list and what choosing each one asks of the game. The shell draws and drives them.
 
-use moho_ui_shell::{MenuItem, MenuScreen};
+use moho_ui_shell::{EngineSetting, EngineSettings, MenuItem, MenuScreen};
 
 /// What choosing a menu item asks the game to do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,12 +61,19 @@ pub fn pause_screen() -> MenuScreen<MenuAction> {
     }
 }
 
-/// Titled Settings, with one Back button; Escape is Back.
-pub fn settings_screen() -> MenuScreen<MenuAction> {
+/// Titled Settings, with the engine's ten rows starting from `settings`, then Apply and a Back
+/// button; Escape is Back.
+pub fn settings_screen(settings: EngineSettings) -> MenuScreen<MenuAction> {
+    let mut items: Vec<MenuItem<MenuAction>> = EngineSetting::ALL
+        .into_iter()
+        .map(MenuItem::Setting)
+        .collect();
+    items.push(MenuItem::Apply);
+    items.push(MenuAction::Back.button());
     MenuScreen {
         title: Some("Settings".to_owned()),
-        items: vec![MenuAction::Back.button()],
+        items,
         back: Some(MenuAction::Back),
-        settings: None,
+        settings: Some(settings),
     }
 }

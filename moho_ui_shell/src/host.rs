@@ -53,14 +53,19 @@ impl<G, A> UiShell<G, A> {
     }
 
     /// The cursor moved to `physical` pixels from the window's top left, on a window scaled by
-    /// `scale`; hovers the menu in logical points unless the console is open over it.
+    /// `scale`; hovers the menu, or drags its slider, in logical points unless the console is
+    /// open over it.
     /// `on_window_event` delegates here with the attached window's scale factor, or 1 when none
     /// is attached.
     pub fn cursor_moved(&mut self, physical: [f64; 2], scale: f64) {
         self.cursor = [(physical[0] / scale) as f32, (physical[1] / scale) as f32];
         if !self.console.is_open() {
             let size = self.window_points();
-            self.menu.hover(self.cursor, size);
+            if self.menu.is_dragging() {
+                self.menu.drag(self.cursor, size);
+            } else {
+                self.menu.hover(self.cursor, size);
+            }
         }
     }
 

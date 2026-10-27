@@ -1,7 +1,8 @@
 //! The default way a game applies the engine's commands.
 
-use moho_app::FrameContext;
+use moho_app::{FrameContext, WindowMode};
 use moho_audio::{AudioSettings, AudioSource};
+use moho_core::prefs::WindowMode as SavedMode;
 use moho_renderer::RendererBackend;
 
 use crate::console::registry::EngineCommand;
@@ -48,14 +49,37 @@ pub fn apply_engine_command(command: &EngineCommand, ctx: &mut FrameContext<'_>)
 /// Applies the engine's player settings: shadow and ambient-occlusion quality to the renderer,
 /// the volumes to the audio system, and the window mode and size as runner requests. The look
 /// rows are the game's, so they are left alone.
-pub fn apply_engine_settings(_settings: &EngineSettings, _ctx: &mut FrameContext<'_>) {
-    todo!("apply the engine settings")
+pub fn apply_engine_settings(settings: &EngineSettings, ctx: &mut FrameContext<'_>) {
+    if let Some(renderer) = ctx.renderer() {
+        renderer.set_shadow_quality(quality_level(settings.shadow_quality));
+        renderer.set_ssao_quality(quality_level(settings.ssao_quality));
+    }
+    if let Some(audio) = ctx.audio() {
+        let applied = audio_settings_for(settings, audio.settings());
+        audio.set_settings(applied);
+    }
+    ctx.set_window_mode(match settings.window_mode {
+        SavedMode::Windowed => WindowMode::Windowed,
+        SavedMode::Fullscreen | SavedMode::Borderless => WindowMode::Borderless,
+    });
+    ctx.set_window_size(settings.resolution.0, settings.resolution.1);
 }
 
 /// `current` with the sound-effect, music and UI volumes of `settings`; the master and voice
 /// levels and the mute stay as they were.
-pub fn audio_settings_for(_settings: &EngineSettings, _current: &AudioSettings) -> AudioSettings {
-    todo!("audio settings for the engine settings")
+pub fn audio_settings_for(settings: &EngineSettings, current: &AudioSettings) -> AudioSettings {
+    current
+        .clone()
+        .with_sound_effects_volume(settings.sound_effect_volume / VOLUME_SCALE)
+        .with_music_volume(settings.music_volume / VOLUME_SCALE)
+        .with_ui_volume(settings.ui_volume / VOLUME_SCALE)
+}
+
+/// The top of the prefs volume scale, which the audio system takes as 1.
+const VOLUME_SCALE: f32 = 10.0;
+
+fn quality_level(quality: u32) -> u8 {
+    u8::try_from(quality).unwrap_or(u8::MAX)
 }
 
 fn with_renderer(
@@ -347,7 +371,11 @@ mod tests {
 
                 apply_engine_settings(&settings, &mut ctx);
 
-                assert_eq!(ctx.requested_window_mode(), Some(expected_mode), "{saved:?}");
+                assert_eq!(
+                    ctx.requested_window_mode(),
+                    Some(expected_mode),
+                    "{saved:?}"
+                );
                 assert_eq!(ctx.requested_window_size(), Some(size), "{saved:?}");
             }
         }

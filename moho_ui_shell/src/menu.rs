@@ -3,9 +3,9 @@
 //! a choice becomes a [`MenuEvent`] the game answers by pushing or popping.
 
 use moho_input::bindings::Input;
-use moho_input::key::Key;
+use moho_input::key::{Key, MouseButton};
 
-use crate::settings::{EngineSetting, EngineSettings};
+use crate::settings::{Control, EngineSetting, EngineSettings};
 use crate::text::{Anchor, ScreenText};
 
 /// One screen: an optional title, a column of items and the action Escape chooses.
@@ -55,11 +55,89 @@ const ROW_WIDTH: f32 = 240.0;
 const FOCUS_COLOR: [u8; 4] = [255, 220, 80, 255];
 const COLOR: [u8; 4] = [220, 220, 220, 255];
 
-/// A screen and the row that has the focus on it.
+/// Font size of a settings row's label and value, which share a 240-point band.
+const SETTING_SIZE: f32 = 18.0;
+
+/// A screen, the row that has the focus on it and the settings values staged on it.
 #[derive(Debug)]
 struct Open<A> {
     screen: MenuScreen<A>,
     focus: usize,
+    /// A copy of the screen's `settings` that the rows edit until Apply.
+    staged: Option<EngineSettings>,
+}
+
+impl<A: Clone> Open<A> {
+    /// What choosing `row` does: a button chooses its action, a settings row flips or cycles
+    /// its staged value, Apply hands over the staged values and makes them the baseline.
+    fn choose(&mut self, row: usize) -> Option<MenuEvent<A>> {
+        match self.screen.items.get(row)? {
+            MenuItem::Button { action, .. } => Some(MenuEvent::Chosen(action.clone())),
+            MenuItem::Setting(setting) => {
+                if let Some(staged) = &mut self.staged {
+                    cycle(staged, *setting);
+                }
+                None
+            }
+            MenuItem::Apply => {
+                let staged = self.staged?;
+                self.screen.settings = Some(staged);
+                Some(MenuEvent::SettingsApplied(staged))
+            }
+        }
+    }
+}
+
+impl<A> Open<A> {
+    /// Moves the staged value of the settings row `row` one step towards `direction`.
+    fn nudge(&mut self, row: usize, direction: i8) {
+        if let (Some(staged), Some(MenuItem::Setting(setting))) =
+            (&mut self.staged, self.screen.items.get(row))
+        {
+            match setting.control() {
+                Control::Slider { step, .. } => {
+                    let value = staged.slider_value(*setting) + f32::from(direction) * step;
+                    staged.set_slider(*setting, value);
+                }
+                Control::Toggle => staged.flip(*setting),
+                Control::Choice => {
+                    let last = staged.choices(*setting).len().saturating_sub(1);
+                    let at = staged.choice_index(*setting);
+                    let moved = if direction < 0 {
+                        at.saturating_sub(1)
+                    } else {
+                        (at + 1).min(last)
+                    };
+                    staged.set_choice_index(*setting, moved);
+                }
+            }
+        }
+    }
+
+    /// Sets the staged slider on `row` from where `x` lies along the row's band.
+    fn set_slider_from(&mut self, row: usize, x: f32, size: [f32; 2]) {
+        if let (Some(staged), Some(MenuItem::Setting(setting)), Some(rect)) = (
+            &mut self.staged,
+            self.screen.items.get(row),
+            layout(&self.screen, size).get(row),
+        ) && let Control::Slider { min, max, .. } = setting.control()
+        {
+            let fraction = ((x - rect.min[0]) / (rect.max[0] - rect.min[0])).clamp(0.0, 1.0);
+            staged.set_slider(*setting, min + fraction * (max - min));
+        }
+    }
+}
+
+/// Flips a toggle and advances a choice, wrapping; a slider does nothing.
+fn cycle(staged: &mut EngineSettings, setting: EngineSetting) {
+    match setting.control() {
+        Control::Slider { .. } => {}
+        Control::Toggle => staged.flip(setting),
+        Control::Choice => {
+            let count = staged.choices(setting).len();
+            staged.set_choice_index(setting, (staged.choice_index(setting) + 1) % count);
+        }
+    }
 }
 
 /// The open screens, bottom to top, and the events not yet taken.
@@ -67,6 +145,8 @@ struct Open<A> {
 pub struct MenuStack<A> {
     screens: Vec<Open<A>>,
     events: Vec<MenuEvent<A>>,
+    /// The slider row of the top screen a held mouse button is dragging.
+    dragging: Option<usize>,
 }
 
 impl<A> Default for MenuStack<A> {
@@ -80,22 +160,45 @@ impl<A> MenuStack<A> {
         Self {
             screens: Vec::new(),
             events: Vec::new(),
+            dragging: None,
         }
     }
 
-    /// Opens `screen` over the current one, focusing its first item.
+    /// Opens `screen` over the current one, focusing its first item and staging a copy of its
+    /// settings values.
     pub fn push(&mut self, screen: MenuScreen<A>) {
-        self.screens.push(Open { screen, focus: 0 });
+        self.dragging = None;
+        let staged = screen.settings;
+        self.screens.push(Open {
+            screen,
+            focus: 0,
+            staged,
+        });
     }
 
-    /// Closes the top screen; the one below keeps the focus it had.
+    /// Closes the top screen, discarding the values staged on it; the one below keeps the focus
+    /// it had.
     pub fn pop(&mut self) {
+        self.dragging = None;
         self.screens.pop();
     }
 
     /// Closes every screen.
     pub fn clear(&mut self) {
+        self.dragging = None;
         self.screens.clear();
+    }
+
+    /// Whether a held mouse button is dragging a slider.
+    pub fn is_dragging(&self) -> bool {
+        self.dragging.is_some()
+    }
+
+    /// Moves the dragged slider to `point`, in logical points on a window `size` points across.
+    pub fn drag(&mut self, point: [f32; 2], size: [f32; 2]) {
+        if let (Some(open), Some(row)) = (self.screens.last_mut(), self.dragging) {
+            open.set_slider_from(row, point[0], size);
+        }
     }
 
     pub fn is_open(&self) -> bool {
@@ -128,44 +231,71 @@ impl<A> MenuStack<A> {
             return Vec::new();
         };
         let rows = layout(&open.screen, size);
-        let text = |text: &str, centre_y: f32, color: [u8; 4]| ScreenText {
-            text: text.to_owned(),
-            anchor: Anchor::Center,
-            offset: [0.0, centre_y - size[1] / 2.0],
-            size: ROW_SIZE,
-            color,
+        let text =
+            |text: &str, anchor, x: f32, centre_y: f32, text_size, color: [u8; 4]| ScreenText {
+                text: text.to_owned(),
+                anchor,
+                offset: [x, centre_y - size[1] / 2.0],
+                size: text_size,
+                color,
+            };
+        let centred = |label: &str, centre_y: f32, color| {
+            text(label, Anchor::Center, 0.0, centre_y, ROW_SIZE, color)
         };
         let mut texts = Vec::new();
         if let Some(title) = &open.screen.title {
             let first_centre = rows.first().map_or(size[1] / 2.0, |r| centre_y(*r));
-            texts.push(text(title, first_centre - ROW_PITCH, COLOR));
+            texts.push(centred(title, first_centre - ROW_PITCH, COLOR));
         }
         for (row, (item, rect)) in open.screen.items.iter().zip(rows).enumerate() {
-            let label = match item {
-                MenuItem::Button { label, .. } => label,
-                MenuItem::Setting(setting) => setting.label(),
-                MenuItem::Apply => "Apply",
-            };
             let color = if row == open.focus {
                 FOCUS_COLOR
             } else {
                 COLOR
             };
-            texts.push(text(label, centre_y(rect), color));
+            match item {
+                MenuItem::Button { label, .. } => texts.push(centred(label, centre_y(rect), color)),
+                MenuItem::Apply => texts.push(centred("Apply", centre_y(rect), color)),
+                MenuItem::Setting(setting) => {
+                    let y = centre_y(rect);
+                    texts.push(text(
+                        setting.label(),
+                        Anchor::Left,
+                        rect.min[0],
+                        y,
+                        SETTING_SIZE,
+                        color,
+                    ));
+                    if let Some(staged) = &open.staged {
+                        texts.push(text(
+                            &staged.value_text(*setting),
+                            Anchor::Right,
+                            rect.max[0] - size[0],
+                            y,
+                            SETTING_SIZE,
+                            color,
+                        ));
+                    }
+                }
+            }
         }
         texts
     }
 }
 
 impl<A: Clone> MenuStack<A> {
-    /// Up and Down move the focus and wrap; a non-repeat Enter press chooses the focused item;
-    /// a non-repeat Escape press chooses the top screen's back action, if any. Releases and
-    /// other inputs do nothing.
+    /// Up and Down move the focus and wrap; Left and Right step the focused settings row; a
+    /// non-repeat Enter press chooses the focused item (flipping or cycling a settings row);
+    /// a non-repeat Escape press chooses the top screen's back action, if any. Releasing the
+    /// left mouse button ends a slider drag; other releases and inputs do nothing.
     pub fn on_key(&mut self, input: Input, pressed: bool, repeat: bool) {
         let Some(open) = self.screens.last_mut() else {
             return;
         };
         if !pressed {
+            if input == Input::Mouse(MouseButton::Left) {
+                self.dragging = None;
+            }
             return;
         }
         let count = open.screen.items.len();
@@ -174,10 +304,10 @@ impl<A: Clone> MenuStack<A> {
             Input::Key(Key::ArrowUp) if count > 0 => {
                 open.focus = (open.focus + count - 1) % count;
             }
+            Input::Key(Key::ArrowLeft) => open.nudge(open.focus, -1),
+            Input::Key(Key::ArrowRight) => open.nudge(open.focus, 1),
             Input::Key(Key::Enter) if !repeat => {
-                if let Some(action) = open.screen.items.get(open.focus).and_then(action_of) {
-                    self.events.push(MenuEvent::Chosen(action));
-                }
+                self.events.extend(open.choose(open.focus));
             }
             Input::Key(Key::Escape) if !repeat => {
                 if let Some(back) = open.screen.back.clone() {
@@ -189,22 +319,23 @@ impl<A: Clone> MenuStack<A> {
     }
 
     /// Chooses the row under `point` (see [`MenuStack::hover`]); a point over no row chooses
-    /// nothing.
+    /// nothing. A press on a slider row sets it from `point` and starts a drag that
+    /// [`MenuStack::drag`] follows until the left button is released.
     pub fn click(&mut self, point: [f32; 2], size: [f32; 2]) {
-        if let Some(open) = self.screens.last()
+        if let Some(open) = self.screens.last_mut()
             && let Some(row) = row_at(&open.screen, point, size)
         {
-            if let Some(action) = action_of(&open.screen.items[row]) {
-                self.events.push(MenuEvent::Chosen(action));
+            let on_slider = matches!(
+                open.screen.items[row],
+                MenuItem::Setting(setting) if matches!(setting.control(), Control::Slider { .. })
+            );
+            if on_slider {
+                self.dragging = Some(row);
+                open.set_slider_from(row, point[0], size);
+            } else {
+                self.events.extend(open.choose(row));
             }
         }
-    }
-}
-
-fn action_of<A: Clone>(item: &MenuItem<A>) -> Option<A> {
-    match item {
-        MenuItem::Button { action, .. } => Some(action.clone()),
-        MenuItem::Setting(_) | MenuItem::Apply => None,
     }
 }
 
@@ -697,7 +828,7 @@ mod tests {
             assert_eq!(events.len(), 1, "Apply emits exactly one event: {events:?}");
             match events.remove(0) {
                 MenuEvent::SettingsApplied(applied) => applied,
-                other => panic!("Apply emitted {other:?}"),
+                other @ MenuEvent::Chosen(_) => panic!("Apply emitted {other:?}"),
             }
         }
 
@@ -809,8 +940,16 @@ mod tests {
             let mut at_low = stack_of(screen_of(low));
             let mut at_high = stack_of(screen_of(high));
 
-            step(&mut at_low, EngineSetting::MouseSensitivity, &[Key::ArrowLeft]);
-            step(&mut at_high, EngineSetting::MouseSensitivity, &[Key::ArrowRight]);
+            step(
+                &mut at_low,
+                EngineSetting::MouseSensitivity,
+                &[Key::ArrowLeft],
+            );
+            step(
+                &mut at_high,
+                EngineSetting::MouseSensitivity,
+                &[Key::ArrowRight],
+            );
 
             assert!(close(apply(&mut at_low).mouse_sensitivity, 0.1));
             assert!(close(apply(&mut at_high).mouse_sensitivity, 10.0));
@@ -834,11 +973,7 @@ mod tests {
                 EngineSetting::SsaoQuality,
                 &[Key::ArrowLeft, Key::ArrowRight, Key::ArrowRight],
             );
-            step(
-                &mut stack,
-                EngineSetting::Resolution,
-                &[Key::ArrowRight],
-            );
+            step(&mut stack, EngineSetting::Resolution, &[Key::ArrowRight]);
 
             let applied = apply(&mut stack);
 
@@ -850,7 +985,11 @@ mod tests {
         #[test]
         fn left_and_right_flip_a_toggle() {
             let mut stack = stack_of(screen_of(base()));
-            step(&mut stack, EngineSetting::MouseSmoothing, &[Key::ArrowRight]);
+            step(
+                &mut stack,
+                EngineSetting::MouseSmoothing,
+                &[Key::ArrowRight],
+            );
             step(
                 &mut stack,
                 EngineSetting::InvertMouseY,
@@ -985,7 +1124,7 @@ mod tests {
                 );
                 let value = base().value_text(setting);
                 assert!(
-                    texts.iter().any(|text| *text == value),
+                    texts.contains(&value),
                     "no value {value:?} for {setting:?} in {texts:?}"
                 );
             }

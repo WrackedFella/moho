@@ -46,8 +46,9 @@ impl DebugSettings {
     ///
     /// # Errors
     /// The I/O error if the file cannot be written.
-    pub fn set_engine_settings(&mut self, _settings: EngineSettings) -> io::Result<()> {
-        todo!("store and save the engine settings")
+    pub fn set_engine_settings(&mut self, settings: EngineSettings) -> io::Result<()> {
+        settings.write_to(&mut self.prefs);
+        self.prefs.save_to(&self.path)
     }
 
     /// The window mode the prefs hold.

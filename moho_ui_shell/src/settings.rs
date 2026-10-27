@@ -1,7 +1,7 @@
 //! The engine's own player settings as ready-made menu rows: the ten values a game places on a
 //! Settings screen, read from and written to the prefs they come from.
 
-use moho_core::prefs::{Prefs, WindowMode};
+use moho_core::prefs::{Prefs, RESOLUTION_PRESETS, WindowMode};
 
 /// The ten rows' values. Volumes are on the prefs scale, 0 to 10; qualities are 0 (Off) to 4
 /// (Ultra).
@@ -59,35 +59,208 @@ impl EngineSetting {
 
     /// The text drawn at the row's left.
     pub fn label(self) -> &'static str {
-        todo!("row labels")
+        match self {
+            EngineSetting::MouseSensitivity => "Mouse sensitivity",
+            EngineSetting::MouseSmoothing => "Mouse smoothing",
+            EngineSetting::InvertMouseY => "Invert mouse Y",
+            EngineSetting::SoundEffectVolume => "Sound-effect volume",
+            EngineSetting::MusicVolume => "Music volume",
+            EngineSetting::UiVolume => "UI volume",
+            EngineSetting::ShadowQuality => "Shadow quality",
+            EngineSetting::SsaoQuality => "Ambient-occlusion quality",
+            EngineSetting::WindowMode => "Window mode",
+            EngineSetting::Resolution => "Resolution",
+        }
     }
 
     pub fn control(self) -> Control {
-        todo!("row controls")
+        const VOLUME: Control = Control::Slider {
+            min: 0.0,
+            max: 10.0,
+            step: 0.5,
+        };
+        match self {
+            EngineSetting::MouseSensitivity => Control::Slider {
+                min: 0.1,
+                max: 10.0,
+                step: 0.1,
+            },
+            EngineSetting::MouseSmoothing | EngineSetting::InvertMouseY => Control::Toggle,
+            EngineSetting::SoundEffectVolume
+            | EngineSetting::MusicVolume
+            | EngineSetting::UiVolume => VOLUME,
+            EngineSetting::ShadowQuality
+            | EngineSetting::SsaoQuality
+            | EngineSetting::WindowMode
+            | EngineSetting::Resolution => Control::Choice,
+        }
     }
 }
 
+const QUALITIES: [&str; 5] = ["Off", "Low", "Medium", "High", "Ultra"];
+const WINDOW_MODES: [&str; 2] = ["Windowed", "Fullscreen"];
+
 impl EngineSettings {
     /// The rows' values as `prefs` holds them.
-    pub fn from_prefs(_prefs: &Prefs) -> Self {
-        todo!("read the ten rows from prefs")
+    pub fn from_prefs(prefs: &Prefs) -> Self {
+        Self {
+            mouse_sensitivity: prefs.mouse_sensitivity(),
+            mouse_smoothing: prefs.mouse_smoothing(),
+            invert_mouse_y: prefs.invert_mouse_y(),
+            sound_effect_volume: prefs.sound_effect_volume(),
+            music_volume: prefs.music_volume(),
+            ui_volume: prefs.ui_volume(),
+            shadow_quality: prefs.shadow_quality(),
+            ssao_quality: prefs.ssao_quality(),
+            window_mode: prefs.window_mode(),
+            resolution: prefs.window_resolution(),
+        }
     }
 
     /// Writes the ten rows into `prefs` and nothing else.
-    pub fn write_to(&self, _prefs: &mut Prefs) {
-        todo!("write the ten rows to prefs")
+    pub fn write_to(&self, prefs: &mut Prefs) {
+        *prefs.mouse_sensitivity_mut() = self.mouse_sensitivity;
+        *prefs.mouse_smoothing_mut() = self.mouse_smoothing;
+        *prefs.invert_mouse_y_mut() = self.invert_mouse_y;
+        *prefs.sound_effect_volume_mut() = self.sound_effect_volume;
+        *prefs.music_volume_mut() = self.music_volume;
+        *prefs.ui_volume_mut() = self.ui_volume;
+        prefs.set_shadow_quality(self.shadow_quality);
+        prefs.set_ssao_quality(self.ssao_quality);
+        prefs.set_window_mode(self.window_mode);
+        prefs.set_window_resolution(self.resolution.0, self.resolution.1);
     }
 
     /// The labels of `setting`'s choices, in the order Enter cycles them; empty for a slider or
     /// a toggle.
-    pub fn choices(&self, _setting: EngineSetting) -> Vec<String> {
-        todo!("choice labels")
+    pub fn choices(&self, setting: EngineSetting) -> Vec<String> {
+        let labels = |labels: &[&str]| labels.iter().map(|l| (*l).to_owned()).collect();
+        match setting {
+            EngineSetting::ShadowQuality | EngineSetting::SsaoQuality => labels(&QUALITIES),
+            EngineSetting::WindowMode => labels(&WINDOW_MODES),
+            EngineSetting::Resolution => {
+                let unlisted =
+                    (!self.resolution_is_listed()).then(|| resolution_label(self.resolution));
+                unlisted
+                    .into_iter()
+                    .chain(
+                        RESOLUTION_PRESETS
+                            .iter()
+                            .map(|(label, _)| (*label).to_owned()),
+                    )
+                    .collect()
+            }
+            _ => Vec::new(),
+        }
     }
 
     /// The text drawn at the row's right for the value held here.
-    pub fn value_text(&self, _setting: EngineSetting) -> String {
-        todo!("value text")
+    pub fn value_text(&self, setting: EngineSetting) -> String {
+        match setting {
+            EngineSetting::MouseSensitivity => format!("{:.1}", self.mouse_sensitivity),
+            EngineSetting::SoundEffectVolume => format!("{:.1}", self.sound_effect_volume),
+            EngineSetting::MusicVolume => format!("{:.1}", self.music_volume),
+            EngineSetting::UiVolume => format!("{:.1}", self.ui_volume),
+            EngineSetting::MouseSmoothing => on_off(self.mouse_smoothing),
+            EngineSetting::InvertMouseY => on_off(self.invert_mouse_y),
+            EngineSetting::ShadowQuality
+            | EngineSetting::SsaoQuality
+            | EngineSetting::WindowMode
+            | EngineSetting::Resolution => {
+                self.choices(setting)[self.choice_index(setting)].clone()
+            }
+        }
     }
+
+    fn resolution_is_listed(&self) -> bool {
+        RESOLUTION_PRESETS
+            .iter()
+            .any(|(_, size)| *size == self.resolution)
+    }
+
+    /// A slider row's value; 0 for any other row.
+    pub(crate) fn slider_value(&self, setting: EngineSetting) -> f32 {
+        match setting {
+            EngineSetting::MouseSensitivity => self.mouse_sensitivity,
+            EngineSetting::SoundEffectVolume => self.sound_effect_volume,
+            EngineSetting::MusicVolume => self.music_volume,
+            EngineSetting::UiVolume => self.ui_volume,
+            _ => 0.0,
+        }
+    }
+
+    /// Sets a slider row to `value` clamped to its range and snapped to its step; other rows
+    /// are left alone.
+    pub(crate) fn set_slider(&mut self, setting: EngineSetting, value: f32) {
+        let Control::Slider { min, max, step } = setting.control() else {
+            return;
+        };
+        let snapped = (min + ((value - min) / step).round() * step).clamp(min, max);
+        match setting {
+            EngineSetting::MouseSensitivity => self.mouse_sensitivity = snapped,
+            EngineSetting::SoundEffectVolume => self.sound_effect_volume = snapped,
+            EngineSetting::MusicVolume => self.music_volume = snapped,
+            EngineSetting::UiVolume => self.ui_volume = snapped,
+            _ => {}
+        }
+    }
+
+    /// Flips a toggle row; other rows are left alone.
+    pub(crate) fn flip(&mut self, setting: EngineSetting) {
+        match setting {
+            EngineSetting::MouseSmoothing => self.mouse_smoothing = !self.mouse_smoothing,
+            EngineSetting::InvertMouseY => self.invert_mouse_y = !self.invert_mouse_y,
+            _ => {}
+        }
+    }
+
+    /// The position of the held value among a choice row's [`choices`](Self::choices).
+    pub(crate) fn choice_index(&self, setting: EngineSetting) -> usize {
+        match setting {
+            EngineSetting::ShadowQuality => (self.shadow_quality as usize).min(QUALITIES.len() - 1),
+            EngineSetting::SsaoQuality => (self.ssao_quality as usize).min(QUALITIES.len() - 1),
+            EngineSetting::WindowMode => usize::from(self.window_mode != WindowMode::Windowed),
+            EngineSetting::Resolution => RESOLUTION_PRESETS
+                .iter()
+                .position(|(_, size)| *size == self.resolution)
+                .unwrap_or(0),
+            _ => 0,
+        }
+    }
+
+    /// Selects choice `index` of a choice row. Fullscreen stands in for the borderless mode and
+    /// for a saved fullscreen, which stays as it is when Fullscreen is selected again.
+    pub(crate) fn set_choice_index(&mut self, setting: EngineSetting, index: usize) {
+        match setting {
+            EngineSetting::ShadowQuality => self.shadow_quality = index as u32,
+            EngineSetting::SsaoQuality => self.ssao_quality = index as u32,
+            EngineSetting::WindowMode => {
+                self.window_mode = match (index, self.window_mode) {
+                    (0, _) => WindowMode::Windowed,
+                    (_, WindowMode::Windowed) => WindowMode::Borderless,
+                    (_, mode) => mode,
+                };
+            }
+            EngineSetting::Resolution => {
+                let offset = usize::from(!self.resolution_is_listed());
+                if let Some((_, size)) = index
+                    .checked_sub(offset)
+                    .and_then(|at| RESOLUTION_PRESETS.get(at))
+                {
+                    self.resolution = *size;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn on_off(on: bool) -> String {
+    if on { "On" } else { "Off" }.to_owned()
+}
+
+fn resolution_label(size: (u32, u32)) -> String {
+    format!("{}×{}", size.0, size.1)
 }
 
 #[cfg(test)]
@@ -249,11 +422,7 @@ mod tests {
             settings.choices(EngineSetting::SsaoQuality),
             ["Off", "Low", "Medium", "High", "Ultra"]
         );
-        assert!(
-            settings
-                .choices(EngineSetting::MouseSensitivity)
-                .is_empty()
-        );
+        assert!(settings.choices(EngineSetting::MouseSensitivity).is_empty());
     }
 
     #[test]
@@ -330,8 +499,8 @@ mod tests {
             any_mode(),
             (1u32..=8192, 1u32..=8192),
         )
-            .prop_map(|(sens, smooth, invert, sfx, music, ui, shadow, ssao, mode, size)| {
-                EngineSettings {
+            .prop_map(
+                |(sens, smooth, invert, sfx, music, ui, shadow, ssao, mode, size)| EngineSettings {
                     mouse_sensitivity: sens,
                     mouse_smoothing: smooth,
                     invert_mouse_y: invert,
@@ -342,8 +511,8 @@ mod tests {
                     ssao_quality: ssao,
                     window_mode: mode,
                     resolution: size,
-                }
-            })
+                },
+            )
     }
 
     proptest! {

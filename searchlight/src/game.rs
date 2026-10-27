@@ -22,13 +22,19 @@ use searchlight_rules::{Grade, Lean, LeanSide};
 use winit::event::WindowEvent;
 use winit::window::{CursorGrabMode, Window};
 
+use moho_core::prefs::Prefs;
 use moho_ui_shell::host::input_of;
-use moho_ui_shell::{MenuEvent, Routing, UiLayers, UiShell, apply_engine_command};
+use moho_ui_shell::{
+    EngineSettings, MenuEvent, Routing, UiLayers, UiShell, apply_engine_command,
+    apply_engine_settings,
+};
 
 use crate::console_commands::{self, ConsoleCommand, GodModeArg};
 use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
-use crate::input::{SearchlightAction, SearchlightCommand, look_to_turn, resolve_lean};
+use crate::input::{
+    SearchlightAction, SearchlightCommand, look_settings, look_to_turn, resolve_lean,
+};
 use crate::lean::{lean_offset, rolled_view_matrix};
 use crate::menu::{MenuAction, main_screen, pause_screen, settings_screen};
 use crate::mode::ArenaMode;
@@ -748,6 +754,9 @@ pub struct SearchlightGame {
     /// A `fullscreen` command waiting for a frame, the first place a window mode can be
     /// requested.
     flip_window_pending: bool,
+    /// Engine settings waiting for a frame, the first place the renderer, audio and window can
+    /// be reached.
+    pending_settings: Option<EngineSettings>,
 }
 
 impl SearchlightGame {
@@ -767,6 +776,7 @@ impl SearchlightGame {
             forced_grade: None,
             debug_settings: None,
             flip_window_pending: false,
+            pending_settings: None,
         }
     }
 
@@ -815,19 +825,42 @@ impl SearchlightGame {
             match event {
                 MenuEvent::Chosen(MenuAction::Play | MenuAction::Resume) => self.enter_play(),
                 MenuEvent::Chosen(MenuAction::Settings) => {
-                    self.stage.shell().menu_mut().push(settings_screen());
+                    let settings = self
+                        .debug_settings
+                        .as_ref()
+                        .map_or_else(Prefs::default, |saved| saved.prefs().clone());
+                    self.stage
+                        .shell()
+                        .menu_mut()
+                        .push(settings_screen(EngineSettings::from_prefs(&settings)));
                 }
                 MenuEvent::Chosen(MenuAction::Back) => self.stage.shell().menu_mut().pop(),
                 MenuEvent::Chosen(MenuAction::Quit) => ctx.request_exit(),
-                MenuEvent::SettingsApplied(_) => {}
+                MenuEvent::SettingsApplied(settings) => self.settings_applied(settings),
             }
         }
     }
 
-    /// Starts in the god mode `settings` holds and saves every change to it.
+    /// Saves the applied `settings`, sets the look from them and queues them for the next frame,
+    /// which hands the renderer, audio and window theirs.
+    fn settings_applied(&mut self, settings: EngineSettings) {
+        if let Some(saved) = &mut self.debug_settings
+            && let Err(error) = saved.set_engine_settings(settings)
+        {
+            tracing::warn!(%error, "settings not saved");
+        }
+        let mut applied = Prefs::default();
+        settings.write_to(&mut applied);
+        self.input.set_look(look_settings(&applied));
+        self.pending_settings = Some(settings);
+    }
+
+    /// Starts in the god mode `settings` holds and saves every change to it. The engine settings
+    /// it holds apply on the first frame.
     #[must_use]
     pub fn with_debug_settings(mut self, settings: DebugSettings) -> Self {
         self.god_mode = settings.god_mode();
+        self.pending_settings = Some(EngineSettings::from_prefs(settings.prefs()));
         self.debug_settings = Some(settings);
         self
     }
@@ -1079,6 +1112,13 @@ impl Game for SearchlightGame {
         let engine_commands = self.stage.shell().console_mut().take_engine_commands();
         for command in &engine_commands {
             apply_engine_command(command, ctx);
+        }
+        if let Some(settings) = self.pending_settings.take() {
+            apply_engine_settings(&settings, ctx);
+            let mode = start_window_mode(settings.window_mode);
+            if mode != ctx.window_mode() {
+                self.window_mode_applied(mode);
+            }
         }
         if std::mem::take(&mut self.flip_window_pending) {
             let mode = ctx.window_mode().toggled();
@@ -2905,7 +2945,8 @@ mod tests {
 
         press_keys(&mut game, &mut ctx, &[Key::ArrowDown, Key::Enter]);
         let settings_title = title(&game);
-        let back = row_point(&game, 0);
+        // Back is the last of Settings' twelve rows.
+        let back = [640.0, 668.0];
         click_at(&mut game, &mut ctx, back);
         game.event(&mut ctx, motion());
 
@@ -3467,7 +3508,7 @@ mod menu_tests {
         for game in [&mut main, &mut paused] {
             press_keys(game, &mut ctx, &[Key::ArrowDown, Key::Enter]);
             let settings = (title(game), labels(game));
-            press_keys(game, &mut ctx, &[Key::Enter]);
+            press_keys(game, &mut ctx, &[Key::Escape]);
             let after_back = (title(game), labels(game));
             press_keys(game, &mut ctx, &[Key::Enter]);
             let reopened = title(game);
@@ -3834,9 +3875,24 @@ mod settings_tests {
             EngineSetting::MusicVolume,
             &[Key::ArrowRight, Key::ArrowRight],
         );
-        change(&mut game, &mut ctx, EngineSetting::ShadowQuality, &[Key::ArrowLeft]);
-        change(&mut game, &mut ctx, EngineSetting::WindowMode, &[Key::ArrowRight]);
-        change(&mut game, &mut ctx, EngineSetting::InvertMouseY, &[Key::Enter]);
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::ShadowQuality,
+            &[Key::ArrowLeft],
+        );
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::WindowMode,
+            &[Key::ArrowRight],
+        );
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::InvertMouseY,
+            &[Key::Enter],
+        );
         let requests = run_frame(&mut game, &mut renderer);
 
         let prefs = game_prefs(&game);
@@ -3869,7 +3925,12 @@ mod settings_tests {
             EngineSetting::MouseSensitivity,
             &[Key::ArrowRight; 80],
         );
-        change(&mut game, &mut ctx, EngineSetting::InvertMouseY, &[Key::Enter]);
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::InvertMouseY,
+            &[Key::Enter],
+        );
         click_apply(&mut game, &mut ctx);
 
         let look = look_of(&mut game.input);
@@ -3899,7 +3960,10 @@ mod settings_tests {
         assert_eq!((renderer.shadow, renderer.ssao), after_first);
         assert_eq!(second.window_size, None, "the launch settings apply once");
         assert_eq!(second.window_mode, None);
-        assert!(bare_renderer.shadow.is_empty(), "no saved settings, no apply");
+        assert!(
+            bare_renderer.shadow.is_empty(),
+            "no saved settings, no apply"
+        );
     }
 
     #[test]
@@ -3913,10 +3977,30 @@ mod settings_tests {
         let mut ctx = EventContext::new(&clock, None, None);
         open_settings_from_main_menu(&mut game, &mut ctx);
 
-        change(&mut game, &mut ctx, EngineSetting::ShadowQuality, &[Key::ArrowRight]);
-        change(&mut game, &mut ctx, EngineSetting::SsaoQuality, &[Key::ArrowLeft]);
-        change(&mut game, &mut ctx, EngineSetting::WindowMode, &[Key::ArrowRight]);
-        change(&mut game, &mut ctx, EngineSetting::Resolution, &[Key::ArrowRight]);
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::ShadowQuality,
+            &[Key::ArrowRight],
+        );
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::SsaoQuality,
+            &[Key::ArrowLeft],
+        );
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::WindowMode,
+            &[Key::ArrowRight],
+        );
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::Resolution,
+            &[Key::ArrowRight],
+        );
         let before_apply = renderer.shadow.len();
         click_apply(&mut game, &mut ctx);
         let applied = run_frame(&mut game, &mut renderer);
@@ -3943,8 +4027,18 @@ mod settings_tests {
         let clock = GameClock::default();
         let mut ctx = EventContext::new(&clock, None, None);
         open_settings_from_main_menu(&mut game, &mut ctx);
-        change(&mut game, &mut ctx, EngineSetting::WindowMode, &[Key::ArrowRight]);
-        change(&mut game, &mut ctx, EngineSetting::ShadowQuality, &[Key::ArrowLeft]);
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::WindowMode,
+            &[Key::ArrowRight],
+        );
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::ShadowQuality,
+            &[Key::ArrowLeft],
+        );
 
         click_back(&mut game, &mut ctx);
         let after_back = (title(&game), game_prefs(&game).window_mode());
@@ -3979,7 +4073,12 @@ mod settings_tests {
         assert_eq!(title(&game).as_deref(), Some("Settings"));
         let world = (game.sim().player(), game.sim().enemy_state(0));
 
-        change(&mut game, &mut ctx, EngineSetting::SoundEffectVolume, &[Key::ArrowLeft]);
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::SoundEffectVolume,
+            &[Key::ArrowLeft],
+        );
         click_apply(&mut game, &mut ctx);
         let after_apply = (game.screen, title(&game));
         game.event(

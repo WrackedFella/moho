@@ -100,13 +100,13 @@ impl<'a> FrameContext<'a> {
 
     /// Asks the runner to resize the window to `width` by `height` physical pixels once this
     /// frame is handled; the runner honours it only when the window ends up windowed.
-    pub fn set_window_size(&mut self, _width: u32, _height: u32) {
-        todo!("record the requested window size")
+    pub fn set_window_size(&mut self, width: u32, height: u32) {
+        self.requests.window_size = Some((width, height));
     }
 
     /// The last window size the game asked for, as `(width, height)`, if it asked.
     pub fn requested_window_size(&self) -> Option<(u32, u32)> {
-        None
+        self.requests.window_size
     }
 
     pub(crate) fn headless(tick_length: Duration, clock: &'a GameClock) -> Self {
