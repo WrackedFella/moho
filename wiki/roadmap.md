@@ -8,7 +8,7 @@ lives on the [project board](https://github.com/users/WrackedFella/projects/1) a
 |---|---|---|---|
 | Engine | [engine/roadmap.md](engine/roadmap.md) | ENG-M0 to ENG-M5+ | Engine milestones and gates, waves, out-of-scope, backlog, engine rules |
 | Flagstone (strategy) | [flagstone/roadmap.md](flagstone/roadmap.md) | STRAT-M1 to STRAT-M4 | Strategy features in order, gates, out-of-scope |
-| Searchlight (FPS) | [searchlight/roadmap.md](searchlight/roadmap.md) | FPS-M1 to FPS-M7 (FPS-M1.1 and FPS-M1.2 are bridges) | FPS milestones, entry gates, exit goals, engine requests |
+| Searchlight (FPS) | [searchlight/roadmap.md](searchlight/roadmap.md) | FPS-M1 to FPS-M7 (FPS-M1.1, FPS-M1.2 and FPS-M1.3 are bridges) | FPS milestones, entry gates, exit goals, engine requests |
 
 Update this page when a gate that spans lines changes, or when one line starts or stops depending on another. Update
 a line's roadmap when a gate closes, an item moves, or a decision is made inside that line.
