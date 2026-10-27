@@ -1,7 +1,7 @@
 # Rendering
 
-**Source:** `moho_render_api/src/` (`world_geometry.rs`), `moho_renderer/src/` (`scene.rs`, `sky.rs`,
-`world_meshes.rs`, `markers.rs`, `renderer.rs`, `render_ops/`, `shadow.rs`, `ssao.rs`, `tone_map.rs`, `ui_pass/`), `moho_render_api/src/ui_paint.rs`, `moho_render_api/src/marker.rs`, `flagstone/src/app/world_geometry.rs`, `flagstone/src/app/cut_caps.rs`, `flagstone/src/app/view_level.rs`, `flagstone_voxel/src/mesh/cap.rs`,
+**Source:** `moho_render_api/src/` (`world_geometry.rs`, `texture.rs`), `moho_renderer/src/` (`scene.rs`, `sky.rs`,
+`world_meshes.rs`, `textures.rs`, `markers.rs`, `renderer.rs`, `render_ops/`, `shadow.rs`, `ssao.rs`, `tone_map.rs`, `ui_pass/`), `moho_render_api/src/ui_paint.rs`, `moho_render_api/src/marker.rs`, `flagstone/src/app/world_geometry.rs`, `flagstone/src/app/cut_caps.rs`, `flagstone/src/app/view_level.rs`, `flagstone_voxel/src/mesh/cap.rs`,
 `shaders/`, `moho_level/src/`.
 **Decisions:** [ADR-0001](../../_todo/adr/0001-render-api-boundary.md),
 [ADR-0013](../../_todo/adr/0013-ui-reaches-the-renderer-as-paint-data.md).
@@ -48,7 +48,8 @@ not as voxel types. `moho_render_api::WorldMesh` is an owned indexed mesh with o
 triangles (`WorldMeshError`). A `WorldMeshId` is the game-chosen stable key. An optional
 per-vertex `materials` channel (`with_materials`, one material-table index per vertex,
 one material per triangle) lets a single mesh draw in several materials; without it
-every vertex takes the `upsert` material. The renderer uploads the channel as `Vertex::material`,
+every vertex takes the `upsert` material. An optional `uvs` channel (`with_uvs`, one `[u, v]` per
+vertex) carries base-colour texture coordinates (2.3). The renderer uploads the channel as `Vertex::material`,
 and `shaders/vertex.wgsl` uses it unless it is `u32::MAX`, which defers to the instance's
 material ([GPU ABI](../reference/gpu-abi.md)).
 
@@ -126,7 +127,8 @@ It shares the buffer rules and `LevelError` of 2.1, but keeps node structure ins
 
 - `Model` is immutable data: `ModelNode`s in walk order (name, parent index always lower than
   the node's own, `local` and `rest` transforms), `ModelMesh`es (a `WorldMesh` in node space, node
-  index, optional material index) and `ModelMaterial`s (name, linear base colour). No GPU handles,
+  index, optional material index), `ModelMaterial`s (name, linear base colour, optional image index; 2.3)
+  and `ModelImage`s. No GPU handles,
   no per-instance state;
 - the game uploads each mesh once as movable and, each frame, places it at the transform
   `Model::placements(root)` yields (`root * rest`); posing feeds placement and never mutates the
@@ -154,6 +156,59 @@ let mats: Vec<u32> = model
 // Each frame: no mesh data moves, only transforms.
 for (i, t) in model.placements(root) {
     world_meshes.place(ids[i], t, mats[i]);
+}
+```
+
+### 2.3 Base-colour textures
+
+A placed mesh can draw with a base-colour image (`moho_render_api/src/texture.rs`,
+`moho_renderer/src/textures.rs`):
+
+- `Rgba8Image` is straight-alpha sRGB RGBA8, row-major from the top-left; `Rgba8Image::new`
+  refuses a zero dimension or a pixel count that is not `width * height` (`ImageSizeError`).
+  `TextureId` is the game-chosen key.
+- `WorldMeshes::upsert_texture(id, image)` / `remove_texture(id)` queue changes that `flush`
+  applies through `RendererBackend::register_texture` (returns a handle; full mip chain) and
+  `unregister_texture`. `place_textured(id, transform, material, texture)` is `place` with a
+  texture; a texture id that is not live draws white. Placed meshes draw opaque: the texel's alpha
+  is ignored.
+- The backend's `register_world_mesh` uploads a mesh's `uvs` (`[0, 0]` when absent), and
+  `enqueue_textured_draw` binds the texture for a draw. Handle 0 is a 1x1 white texture,
+  the default for every other draw and for backends that do not texture.
+- The main pass binds the texture at group 2 ([GPU ABI](../reference/gpu-abi.md)). The fragment
+  shader multiplies the lit albedo (terrain voxel albedo included) by the texel's rgb.
+- `moho_level::load_image(path)` decodes a PNG or JPEG (by content) to `Rgba8Image`;
+  `load_model` also decodes each base-colour image a material uses into `Model::images()`
+  (`ModelImage`: name, canonical source path or `None` when embedded, pixels), referenced by
+  `ModelMaterial::base_colour_image`. Images come from a buffer view or a relative file beside
+  the model; a missing file is `LevelErrorKind::MissingImage`, an unsupported or undecodable one
+  `BadImage`. A textured primitive without `TEXCOORD_0` is a `BadMesh` error; other texcoord
+  sets are read as set 0 with a warning.
+
+The game glue extends 2.2's: each image is uploaded once, keyed by its source file so models
+sharing a file share the texture (an embedded image is keyed by model and index), and a mesh whose
+material has an image is placed with it:
+
+```rust
+// Load time: one TextureId per image; `texture_key` maps a source path (or model and index) to it.
+let textures: Vec<TextureId> = model
+    .images()
+    .iter()
+    .enumerate()
+    .map(|(i, img)| {
+        let id = texture_key(img.source.as_deref(), model_id, i);
+        world_meshes.upsert_texture(id, img.image.clone());
+        id
+    })
+    .collect();
+
+// Each frame: textured meshes name their texture, the rest place as before.
+for (i, t) in model.placements(root) {
+    let mesh = &model.meshes()[i];
+    match model.material_of(mesh).base_colour_image {
+        Some(img) => world_meshes.place_textured(ids[i], t, mats[i], textures[img]),
+        None => world_meshes.place(ids[i], t, mats[i]),
+    }
 }
 ```
 

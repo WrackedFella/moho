@@ -14,7 +14,7 @@ All structs are `#[repr(C)]`, `bytemuck::{Pod, Zeroable}`, and built from `vec4`
 fields so std140/std430 padding never differs between the two sides. Size matches
 `size_of::<T>()`. `UiVertex` and `Vertex` are the exceptions: they are only read as
 vertex buffers, so they are packed with no padding (`UiVertex`: `Float32x2`, `Float32x2`,
-`Uint32`, 20 B; `Vertex`: see the layout below, 56 B).
+`Uint32`, 20 B; `Vertex`: see the layout below, 64 B).
 
 ## Sizes
 
@@ -30,12 +30,14 @@ vertex buffers, so they are packed with no padding (`UiVertex`: `Float32x2`, `Fl
 | `ToneMapGpu` | 16 B (f32 exposure, u32 enabled, f32 bloom_intensity, u32 pad) | uniform, tone-map pass group 0 binding 1 (`ToneMap` in `shaders/tonemap.wgsl`); binding 0 is the HDR texture, 2 the bloom texture (mip 0, or 1×1 black when Off), 3 its linear clamp sampler |
 | `InstanceGpu` | 80 B (mat4 + 4 × u32) | per-instance vertex buffer |
 | `MarkerGpu` | 48 B (3 × vec4) | per-instance vertex buffer, marker pass |
-| `Vertex` (`moho_renderer/src/types.rs`) | 56 B (packed, 14 × 4 B) | per-vertex buffer, main pass |
+| `Vertex` (`moho_renderer/src/types.rs`) | 64 B (packed, 16 × 4 B) | per-vertex buffer, main pass |
 | `UiVertex` | 20 B (f32×2 pos, f32×2 uv, u8×4 colour) | UI pass vertex buffer |
 
 Group 0 also binds the SSAO texture and sampler (bindings 3, 4). Group 1 binds the
 shadow map array (`texture_depth_2d_array`, binding 1), a comparison sampler (2), and a
-nearest sampler for the PCSS blocker search (3).
+nearest sampler for the PCSS blocker search (3). Group 2 (main pass only) binds the draw's
+base-colour texture (`texture_2d<f32>`, `Rgba8UnormSrgb`, binding 0) and a filtering sampler (1);
+untextured draws bind a 1×1 white texture (handle 0).
 
 ## Field layouts
 
@@ -65,6 +67,7 @@ nearest sampler for the PCSS blocker search (3).
 | | `ao`, `geometry_type` | `Float32`, `Uint32` at locations 2, 3 |
 | | `light_level`, `block_light_rgb`, `sky_exposed` | `Float32`, `Float32x3`, `Float32` at locations 10, 11, 12 |
 | | `material` | `Uint32` at location 13: material-table index; `u32::MAX` means draw in the instance's material |
+| | `uv` | `Float32x2` at location 14, offset 56: base-colour coordinates; `[0, 0]` when the mesh has none |
 | `InstanceGpu` | `model` | column-major mat4 |
 | | `material`, `object_type` | `u32` material index, object kind |
 | | `padding` | `[u32; 2]` |
