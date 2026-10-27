@@ -11,7 +11,15 @@ use crate::Model;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Assembly<K> {
     model: K,
-    parts: Vec<(usize, Affine3A, Assembly<K>)>,
+    parts: Vec<Part<K>>,
+}
+
+/// A part held at one node of its parent's model.
+#[derive(Clone, Debug, PartialEq)]
+struct Part<K> {
+    node: usize,
+    offset: Affine3A,
+    assembly: Assembly<K>,
 }
 
 /// Why a socket operation was refused; the assembly is unchanged.
@@ -53,12 +61,16 @@ impl<K: Copy> Assembly<K> {
         offset: Affine3A,
     ) -> Result<Option<Assembly<K>>, SocketError> {
         let node = self.node_of(models, socket)?;
-        let Some(slot) = self.parts.iter_mut().find(|p| p.0 == node) else {
-            self.parts.push((node, offset, part));
-            return Ok(None);
+        let new = Part {
+            node,
+            offset,
+            assembly: part,
         };
-        let (_, _, replaced) = std::mem::replace(slot, (node, offset, part));
-        Ok(Some(replaced))
+        if let Some(i) = self.slot(node) {
+            return Ok(Some(std::mem::replace(&mut self.parts[i], new).assembly));
+        }
+        self.parts.push(new);
+        Ok(None)
     }
 
     /// Remove and return the part at `socket`; `Ok(None)` when the node holds nothing.
@@ -71,11 +83,7 @@ impl<K: Copy> Assembly<K> {
         socket: &str,
     ) -> Result<Option<Assembly<K>>, SocketError> {
         let node = self.node_of(models, socket)?;
-        Ok(self
-            .parts
-            .iter()
-            .position(|p| p.0 == node)
-            .map(|i| self.parts.remove(i).2))
+        Ok(self.slot(node).map(|i| self.parts.remove(i).assembly))
     }
 
     /// The part at `socket`, to attach to it in turn.
@@ -88,11 +96,12 @@ impl<K: Copy> Assembly<K> {
         socket: &str,
     ) -> Result<Option<&mut Assembly<K>>, SocketError> {
         let node = self.node_of(models, socket)?;
-        Ok(self
-            .parts
-            .iter_mut()
-            .find(|p| p.0 == node)
-            .map(|p| &mut p.2))
+        Ok(self.slot(node).map(|i| &mut self.parts[i].assembly))
+    }
+
+    /// Position in `parts` of the part held at `node`.
+    fn slot(&self, node: usize) -> Option<usize> {
+        self.parts.iter().position(|p| p.node == node)
     }
 
     /// Every mesh to draw as `(model key, mesh index, transform)`: this model's meshes,
@@ -120,8 +129,10 @@ impl<K: Copy> Assembly<K> {
                 .placements(root)
                 .map(|(mesh, transform)| (self.model, mesh, transform)),
         );
-        for (node, offset, part) in &self.parts {
-            part.collect(models, root * model.nodes()[*node].rest * *offset, out);
+        for part in &self.parts {
+            let socket = model.nodes()[part.node].rest;
+            part.assembly
+                .collect(models, root * socket * part.offset, out);
         }
     }
 
