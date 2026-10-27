@@ -2,6 +2,7 @@
 //! plus named markers (empty nodes) for game code to interpret. The [`nav`] module builds a
 //! navigation mesh from those meshes and finds paths across it.
 
+pub mod anim;
 mod buffers;
 mod error;
 mod marker;
@@ -16,7 +17,10 @@ use glam::Mat4;
 
 pub use error::{LevelError, LevelErrorKind};
 pub use marker::LevelMarker;
-pub use model::{MODEL_MATERIAL_VARIANT, Model, ModelMaterial, ModelMesh, ModelNode, load_model};
+pub use model::{
+    MODEL_MATERIAL_VARIANT, MeshSkin, Model, ModelMaterial, ModelMesh, ModelNode, ModelSkin,
+    load_model,
+};
 use moho_render_api::WorldMesh;
 pub use nav::{AgentProfile, NavBuildError, NavMesh};
 

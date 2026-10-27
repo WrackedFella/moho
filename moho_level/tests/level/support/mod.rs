@@ -1,5 +1,7 @@
 //! Writes small glTF/GLB levels from an in-code scene description.
 
+pub mod rig;
+
 use std::fs;
 use std::path::PathBuf;
 

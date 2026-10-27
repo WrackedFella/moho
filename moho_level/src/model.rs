@@ -6,6 +6,7 @@ use std::path::Path;
 use glam::{Affine3A, Mat4};
 use moho_render_api::{MaterialGpu, MaterialKey, RenderMaterial, WorldMesh};
 
+use crate::anim::{Clip, Pose};
 use crate::{LevelError, LevelErrorKind, mesh};
 
 /// `MaterialKey::variant` of every [`ModelMaterial`]; outside the variants searchlight
@@ -18,6 +19,28 @@ pub struct Model {
     nodes: Vec<ModelNode>,
     meshes: Vec<ModelMesh>,
     materials: Vec<ModelMaterial>,
+    skins: Vec<ModelSkin>,
+    clips: Vec<Clip>,
+}
+
+/// A glTF skin: the nodes that deform a mesh and their inverse bind matrices.
+#[derive(Clone, Debug)]
+pub struct ModelSkin {
+    /// Indices into [`Model::nodes`].
+    pub joints: Vec<usize>,
+    /// One per joint; identity when the file has no inverse-bind matrices.
+    pub inverse_binds: Vec<Affine3A>,
+}
+
+/// Per-vertex joint influences of a skinned mesh: four per vertex.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MeshSkin {
+    /// Index into [`Model::skins`].
+    pub skin: usize,
+    /// Per vertex, indices into the skin's joints.
+    pub joints: Vec<[u16; 4]>,
+    /// Per vertex, renormalised to sum to 1.
+    pub weights: Vec<[f32; 4]>,
 }
 
 /// One glTF node, in walk order.
@@ -39,6 +62,8 @@ pub struct ModelMesh {
     pub node: usize,
     /// Index into [`Model::materials`]; `None` draws as [`ModelMaterial::GLTF_DEFAULT`].
     pub material: Option<usize>,
+    /// Joint influences when the primitive is skinned.
+    pub skin: Option<MeshSkin>,
 }
 
 /// A glTF material's base colour.
@@ -102,6 +127,8 @@ fn build(document: &gltf::Document, buffers: &[Cow<'_, [u8]>]) -> Result<Model, 
             nodes: Vec::new(),
             meshes: Vec::new(),
             materials,
+            skins: Vec::new(),
+            clips: Vec::new(),
         },
     };
     for node in crate::scene_roots(document) {
@@ -143,6 +170,7 @@ impl Walk<'_> {
                     mesh: converted,
                     node: index,
                     material: primitive.material().index(),
+                    skin: None,
                 });
             }
         }
@@ -185,6 +213,63 @@ impl Model {
             .enumerate()
             .map(move |(i, m)| (i, root * self.nodes[m.node].rest))
     }
+
+    pub fn skins(&self) -> &[ModelSkin] {
+        &self.skins
+    }
+
+    pub fn clips(&self) -> &[Clip] {
+        &self.clips
+    }
+
+    /// The index in [`Model::clips`] of the first clip called `name`.
+    pub fn clip(&self, name: &str) -> Option<usize> {
+        let _ = name;
+        todo!("first clip with this name")
+    }
+
+    /// Every node at its `rest` transform.
+    pub fn rest_pose(&self) -> Pose {
+        todo!("rest transforms as a pose")
+    }
+
+    /// The pose of clip `clip` at `time`: nodes no channel targets keep `local` exactly,
+    /// targeted nodes replace the animated properties of their decomposed `local`, and
+    /// globals compose parent-first in walk order.
+    pub fn pose(&self, clip: usize, time: f32) -> Pose {
+        let _ = (clip, time);
+        todo!("sample the clip and compose globals")
+    }
+
+    /// Per joint of `skin`, `pose[joint] * inverse_bind`, in model space.
+    pub fn joint_palette(&self, skin: usize, pose: &Pose) -> Vec<Affine3A> {
+        let _ = (skin, pose);
+        todo!("pose times inverse bind per joint")
+    }
+
+    /// [`Model::placements`] with the node transforms of `pose`.
+    pub fn posed_placements<'a>(
+        &'a self,
+        root: Affine3A,
+        pose: &'a Pose,
+    ) -> impl Iterator<Item = (usize, Affine3A)> + 'a {
+        let _ = (root, pose);
+        std::iter::from_fn(move || -> Option<(usize, Affine3A)> {
+            todo!("placements under posed node transforms")
+        })
+    }
+
+    /// A model of `nodes` and `clips` alone, for unit tests.
+    #[cfg(test)]
+    pub(crate) fn for_tests(nodes: Vec<ModelNode>, clips: Vec<Clip>) -> Self {
+        Self {
+            nodes,
+            meshes: Vec::new(),
+            materials: Vec::new(),
+            skins: Vec::new(),
+            clips,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -221,6 +306,7 @@ mod tests {
             mesh: triangle(),
             node,
             material: None,
+            skin: None,
         }
     }
 
@@ -262,6 +348,8 @@ mod tests {
             ],
             meshes: vec![mesh_on(2), mesh_on(2), mesh_on(1)],
             materials: Vec::new(),
+            skins: Vec::new(),
+            clips: Vec::new(),
         };
         let shifted = Affine3A::from_translation(Vec3::new(10.0, 0.0, 0.0));
         let doubled = Affine3A::from_scale(Vec3::splat(2.0));
@@ -319,6 +407,8 @@ mod tests {
             ],
             meshes: Vec::new(),
             materials: Vec::new(),
+            skins: Vec::new(),
+            clips: Vec::new(),
         };
 
         let found = model.node("twin").expect("twin exists");
