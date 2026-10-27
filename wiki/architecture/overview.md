@@ -14,7 +14,7 @@
 ## 1 Crate graph
 
 Arrows run from dependent to dependency; colour is the line from `scripts/layering.txt`.
-The `flagstone` binary depends on all of them and is omitted from the edges.
+The `flagstone` binary depends on every flagstone-line crate and the engine crates it wires, and is omitted from the edges.
 
 ```mermaid
 flowchart TD
@@ -34,17 +34,17 @@ flowchart TD
     fps["searchlight_rules<br/>items, rifle, rig, body damage,<br/>enemy grades"]:::fps
     fpsgame["searchlight<br/>arena, shots, sim, binary"]:::fps
 
-    ui --> renderer & input & core & game & shell
+    ui --> rapi & input & core & game & shell
     game --> core & rapi & voxel
     voxel --> core & rapi
     renderer --> rapi
-    app --> renderer & audio
+    app --> renderer & audio & input
     audio --> core
     core --> rapi
     physics --> rapi
     level --> rapi
-    shell --> rapi & input & app
-    fpsgame --> fps & app & physics & level & input & audio & renderer & rapi & shell
+    shell --> rapi & input & app & audio & core & renderer
+    fpsgame --> fps & app & core & physics & level & input & audio & renderer & rapi & shell
 
     classDef engine fill:#dbeafe,stroke:#2563eb,color:#111
     classDef strategy fill:#dcfce7,stroke:#16a34a,color:#111
@@ -76,12 +76,12 @@ Each crate belongs to exactly one line ([ADR-0005](../../_todo/adr/0005-crate-li
 Voxels live in the flagstone-line `flagstone_voxel` ([ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md));
 the engine sees world geometry only as meshes.
 
-## 3 Target crate graph (ENG-M2)
+## 3 Engine crate map (ENG-M2)
 
 Where the ENG-M1–ENG-M2 engine work lands, from [ADR-0012](../../_todo/adr/0012-engine-crate-map-for-m2.md)
-(Proposed). Capabilities land as modules of an existing crate first; a new crate needs a
-deployable, reuse or compile-time boundary. Dashed boxes are crates that don't exist yet, or (`moho_app`) exist with only part of the listed scope: today the window and event loop, accumulator, `GameClock` and `Game` trait.
-Edges are the intended direction, not a list each crate must have.
+(Accepted). Capabilities land as modules of an existing crate first; a new crate needs a
+deployable, reuse or compile-time boundary. Every crate in the graph exists.
+Edges are the intended direction, not a list each crate must have; section 1 has the actual ones.
 
 ```mermaid
 flowchart TD
@@ -90,8 +90,8 @@ flowchart TD
     game["flagstone_game<br/>pawn, tools, scenes"]:::strategy
     voxel["flagstone_voxel<br/>voxel terrain"]:::strategy
 
-    app["moho_app<br/>window, loop, accumulator,<br/>GameClock, Game interface"]:::engineNew
-    shell["moho_ui_shell<br/>egui, console, settings,<br/>modal stack"]:::engineNew
+    app["moho_app<br/>window, loop, accumulator,<br/>GameClock, Game interface"]:::engine
+    shell["moho_ui_shell<br/>egui, console, settings,<br/>modal stack"]:::engine
     input["moho_input<br/>action map, gamepad,<br/>bindings, mouse smoothing"]:::engine
     renderer["moho_renderer<br/>wgpu backend"]:::engine
     physics["moho_physics<br/>rapier3d"]:::engine
@@ -102,11 +102,10 @@ flowchart TD
 
     sbin --> app & ui & game & voxel
     ui --> shell & game
-    game --> core & rapi
+    game --> core & rapi & voxel
     voxel --> core & rapi
-    app --> renderer & physics & audio & input & core
-    shell --> renderer & input & core
-    input --> core
+    app --> renderer & audio & input
+    shell --> app & renderer & audio & input & core
     renderer --> rapi
     physics --> rapi
     audio --> core
@@ -114,9 +113,7 @@ flowchart TD
     level --> rapi
 
     classDef engine fill:#dbeafe,stroke:#2563eb,color:#111
-    classDef engineNew fill:#dbeafe,stroke:#2563eb,stroke-dasharray:5 5,color:#111
     classDef strategy fill:#dcfce7,stroke:#16a34a,color:#111
-    classDef strategyNew fill:#dcfce7,stroke:#16a34a,stroke-dasharray:5 5,color:#111
 ```
 
 Changes from today:
@@ -135,8 +132,9 @@ The searchlight line sits beside the flagstone line and depends only on engine c
 
 The public APIs the [ENG-F5](https://github.com/WrackedFella/moho/issues/232)
 gate holds fixed: game plug-in interface, world-geometry contract, action map, physics
-queries, spatial audio, content roots, save envelope, scene import, navigation
-([ADR-0019](../../_todo/adr/0019-navigation-is-an-engine-seam.md)). Adding or changing
+queries, spatial audio, content roots, save envelope, scene import ([ADR-0012](../../_todo/adr/0012-engine-crate-map-for-m2.md), seams 1 to 8),
+the UI shell and debug values ([ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md), seams 9 and 10; menus and settings controls join them in [ADR-0026](../../_todo/adr/0026-menus-and-settings-controls-are-ui-shell-seams.md)), and navigation
+([ADR-0019](../../_todo/adr/0019-navigation-is-an-engine-seam.md), seam 11). Adding or changing
 one is an ADR-level change.
 
 ## 4 Fixed-step loop (`moho_app`)
