@@ -1,9 +1,11 @@
 //! Animation clips and the player that poses a [`Model`] from them. A pose is a value
 //! computed from a model, a clip and a time; it never changes the model.
 
+use std::ops::{Add, Mul};
+
 use glam::{Affine3A, Quat, Vec3};
 
-use crate::Model;
+use crate::{Model, ModelNode};
 
 /// How a channel blends between neighbouring keys.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -24,13 +26,97 @@ pub(crate) enum Track {
     Scale { times: Vec<f32>, values: Vec<Vec3> },
 }
 
+impl Track {
+    fn times(&self) -> &[f32] {
+        match self {
+            Track::Translation { times, .. }
+            | Track::Rotation { times, .. }
+            | Track::Scale { times, .. } => times,
+        }
+    }
+}
+
 /// One node property animated by keys.
+///
+/// Invariant (upheld by the importer): key times are non-empty and strictly increasing,
+/// with one value per key, or three (in-tangent, value, out-tangent) for `CubicSpline`.
 #[derive(Clone, Debug)]
 pub(crate) struct Channel {
     /// Index into [`Model::nodes`].
     pub node: usize,
     pub interpolation: Interpolation,
     pub track: Track,
+}
+
+impl Channel {
+    /// Replace this channel's property of a decomposed `(scale, rotation, translation)`
+    /// with its value at `time`.
+    fn apply(&self, time: f32, (scale, rotation, translation): &mut (Vec3, Quat, Vec3)) {
+        let interpolation = self.interpolation;
+        match &self.track {
+            Track::Translation { times, values } => {
+                *translation = sample(interpolation, times, values, time, Vec3::lerp);
+            }
+            Track::Scale { times, values } => {
+                *scale = sample(interpolation, times, values, time, Vec3::lerp);
+            }
+            Track::Rotation { times, values } => {
+                let sampled = sample(interpolation, times, values, time, Quat::slerp);
+                // glTF rotations are unit quaternions; a Hermite blend of them is not.
+                *rotation = if interpolation == Interpolation::CubicSpline {
+                    sampled.normalize()
+                } else {
+                    sampled
+                };
+            }
+        }
+    }
+}
+
+/// The value of a track at `time`, holding the first value before the first key (and on
+/// a NaN time) and the last after the last. `linear` blends two values for `Linear`.
+fn sample<T>(
+    interpolation: Interpolation,
+    times: &[f32],
+    values: &[T],
+    time: f32,
+    linear: impl Fn(T, T, f32) -> T,
+) -> T
+where
+    T: Copy + Add<Output = T> + Mul<f32, Output = T>,
+{
+    let cubic = interpolation == Interpolation::CubicSpline;
+    let value = |key: usize| {
+        if cubic {
+            values[key * 3 + 1]
+        } else {
+            values[key]
+        }
+    };
+    let last = times.len() - 1;
+    if time.is_nan() || time <= times[0] {
+        return value(0);
+    }
+    if time >= times[last] {
+        return value(last);
+    }
+    let key = times.partition_point(|&t| t <= time) - 1;
+    let span = times[key + 1] - times[key];
+    let u = (time - times[key]) / span;
+    match interpolation {
+        Interpolation::Step => value(key),
+        Interpolation::Linear => linear(value(key), value(key + 1), u),
+        Interpolation::CubicSpline => {
+            // glTF tangents are per unit of key time, so they scale by the key interval.
+            let out_tangent = values[key * 3 + 2] * span;
+            let in_tangent = values[(key + 1) * 3] * span;
+            let (u2, u3) = (u * u, u * u * u);
+            value(key) * (2.0 * u3 - 3.0 * u2 + 1.0)
+                + out_tangent * (u3 - 2.0 * u2 + u)
+                + value(key + 1) * (3.0 * u2 - 2.0 * u3)
+                + in_tangent * (u3 - u2)
+        }
+    }
 }
 
 /// A named set of channels.
@@ -45,13 +131,33 @@ impl Clip {
         Self { name, channels }
     }
 
+    /// The animation's name in the file, if it has one.
     pub fn name(&self) -> Option<&str> {
         self.name.as_deref()
     }
 
     /// The latest key time over its channels; 0 with none.
     pub fn duration(&self) -> f32 {
-        todo!("latest key time over the channels")
+        self.channels
+            .iter()
+            .filter_map(|c| c.track.times().last().copied())
+            .fold(0.0, f32::max)
+    }
+
+    /// Per node of `nodes`, its local transform at `time`: the node's decomposed `local`
+    /// with each channel's property replaced, in channel order, or `None` where no
+    /// channel targets the node.
+    pub(crate) fn locals_at(&self, nodes: &[ModelNode], time: f32) -> Vec<Option<Affine3A>> {
+        let mut parts: Vec<Option<(Vec3, Quat, Vec3)>> = vec![None; nodes.len()];
+        for channel in &self.channels {
+            let srt = parts[channel.node]
+                .get_or_insert_with(|| nodes[channel.node].local.to_scale_rotation_translation());
+            channel.apply(time, srt);
+        }
+        parts
+            .into_iter()
+            .map(|p| p.map(|(s, r, t)| Affine3A::from_scale_rotation_translation(s, r, t)))
+            .collect()
     }
 }
 
@@ -63,6 +169,11 @@ pub struct Pose {
 }
 
 impl Pose {
+    pub(crate) fn new(nodes: Vec<Affine3A>) -> Self {
+        Self { nodes }
+    }
+
+    /// One model-space transform per [`Model::nodes`] entry, in the same order.
     pub fn nodes(&self) -> &[Affine3A] {
         &self.nodes
     }
@@ -98,8 +209,12 @@ impl ClipPlayer {
     /// # Errors
     /// [`ClipError::UnknownClip`] when the model has no such clip.
     pub fn new(model: &Model, clip: &str, playback: Playback) -> Result<Self, ClipError> {
-        let _ = (model, clip, playback);
-        todo!("find the clip and start at time 0")
+        Ok(Self {
+            clip: find(model, clip)?,
+            time: 0.0,
+            speed: 1.0,
+            playback,
+        })
     }
 
     /// Switch to `clip` and restart at time 0; speed is kept.
@@ -107,10 +222,13 @@ impl ClipPlayer {
     /// # Errors
     /// [`ClipError::UnknownClip`] when the model has no such clip; nothing changes.
     pub fn play(&mut self, model: &Model, clip: &str, playback: Playback) -> Result<(), ClipError> {
-        let _ = (model, clip, playback);
-        todo!("switch clip, restart, leave state alone on an unknown name")
+        self.clip = find(model, clip)?;
+        self.time = 0.0;
+        self.playback = playback;
+        Ok(())
     }
 
+    /// Multiplier on every later [`ClipPlayer::advance`] step; negative plays backwards.
     pub fn set_speed(&mut self, speed: f32) {
         self.speed = speed;
     }
@@ -123,10 +241,22 @@ impl ClipPlayer {
         self.playback
     }
 
-    /// Add `dt * speed` to the time; `Loop` wraps, `Once` clamps to the clip.
+    /// Add `dt * speed` to the time; `Loop` wraps into `[0, duration)`, `Once` clamps to
+    /// `[0, duration]`. A non-finite step or a zero-length clip leaves the time unchanged.
+    ///
+    /// # Panics
+    /// When `model` has fewer clips than the one this player was made on.
     pub fn advance(&mut self, model: &Model, dt: f32) {
-        let _ = (model, dt);
-        todo!("advance, wrap or clamp")
+        let step = dt * self.speed;
+        let duration = model.clips()[self.clip].duration();
+        if !step.is_finite() || duration <= 0.0 {
+            return;
+        }
+        let time = self.time + step;
+        self.time = match self.playback {
+            Playback::Loop => time.rem_euclid(duration),
+            Playback::Once => time.clamp(0.0, duration),
+        };
     }
 
     /// Index into [`Model::clips`].
@@ -134,14 +264,25 @@ impl ClipPlayer {
         self.clip
     }
 
+    /// Seconds into the clip.
     pub fn time(&self) -> f32 {
         self.time
     }
 
+    /// The model posed by this player's clip at its time; see [`Model::pose`].
+    ///
+    /// # Panics
+    /// When `model` has fewer clips than the one this player was made on.
     pub fn pose(&self, model: &Model) -> Pose {
-        let _ = model;
-        todo!("pose the model at the player's clip and time")
+        model.pose(self.clip, self.time)
     }
+}
+
+/// The index of `model`'s first clip called `name`.
+fn find(model: &Model, name: &str) -> Result<usize, ClipError> {
+    model.clip(name).ok_or_else(|| ClipError::UnknownClip {
+        name: name.to_owned(),
+    })
 }
 
 #[cfg(test)]

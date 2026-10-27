@@ -9,6 +9,7 @@ mod marker;
 mod mesh;
 mod model;
 pub mod nav;
+mod rig;
 
 use std::borrow::Cow;
 use std::path::Path;

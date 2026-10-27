@@ -7,7 +7,7 @@ use glam::{Affine3A, Mat4};
 use moho_render_api::{MaterialGpu, MaterialKey, RenderMaterial, WorldMesh};
 
 use crate::anim::{Clip, Pose};
-use crate::{LevelError, LevelErrorKind, mesh};
+use crate::{LevelError, LevelErrorKind, mesh, rig};
 
 /// `MaterialKey::variant` of every [`ModelMaterial`]; outside the variants searchlight
 /// (0..4) and flagstone (0, 1) use, so a game that also uses `0x80` would merge keys.
@@ -107,7 +107,8 @@ impl RenderMaterial for ModelMaterial {
 ///
 /// # Errors
 /// Returns a [`LevelError`] naming `path` when the file cannot be read, is not glTF,
-/// references an unreadable buffer, reaches a node twice, or holds a malformed mesh.
+/// references an unreadable buffer, reaches a node twice, or holds a malformed mesh
+/// (including bad joint influences), skin or animation.
 pub fn load_model(path: &Path) -> Result<Model, LevelError> {
     crate::with_buffers(path, build)
 }
@@ -123,6 +124,7 @@ fn build(document: &gltf::Document, buffers: &[Cow<'_, [u8]>]) -> Result<Model, 
     let mut walk = Walk {
         buffers,
         seen: vec![false; document.nodes().len()],
+        index_of: vec![None; document.nodes().len()],
         model: Model {
             nodes: Vec::new(),
             meshes: Vec::new(),
@@ -134,12 +136,16 @@ fn build(document: &gltf::Document, buffers: &[Cow<'_, [u8]>]) -> Result<Model, 
     for node in crate::scene_roots(document) {
         walk.node(&node, None)?;
     }
+    walk.model.skins = rig::skins(document, buffers, &walk.index_of)?;
+    walk.model.clips = rig::clips(document, buffers, &walk.index_of)?;
     Ok(walk.model)
 }
 
 struct Walk<'a> {
     buffers: &'a [Cow<'a, [u8]>],
     seen: Vec<bool>,
+    /// Per glTF node index, its index in [`Model::nodes`]; `None` outside the scene.
+    index_of: Vec<Option<usize>>,
     model: Model,
 }
 
@@ -149,6 +155,7 @@ impl Walk<'_> {
         let local = Affine3A::from_mat4(Mat4::from_cols_array_2d(&node.transform().matrix()));
         let rest = parent.map_or(local, |p| self.model.nodes[p].rest * local);
         let index = self.model.nodes.len();
+        self.index_of[node.index()] = Some(index);
         self.model.nodes.push(ModelNode {
             name: node.name().map(str::to_owned),
             parent,
@@ -166,11 +173,15 @@ impl Walk<'_> {
                     flip_winding,
                     self.buffers,
                 )?;
+                let skin = node
+                    .skin()
+                    .map(|skin| rig::mesh_skin(&mesh, &primitive, &skin, self.buffers))
+                    .transpose()?;
                 self.model.meshes.push(ModelMesh {
                     mesh: converted,
                     node: index,
                     material: primitive.material().index(),
-                    skin: None,
+                    skin,
                 });
             }
         }
@@ -224,39 +235,60 @@ impl Model {
 
     /// The index in [`Model::clips`] of the first clip called `name`.
     pub fn clip(&self, name: &str) -> Option<usize> {
-        let _ = name;
-        todo!("first clip with this name")
+        self.clips.iter().position(|c| c.name() == Some(name))
     }
 
     /// Every node at its `rest` transform.
     pub fn rest_pose(&self) -> Pose {
-        todo!("rest transforms as a pose")
+        Pose::new(self.nodes.iter().map(|n| n.rest).collect())
     }
 
     /// The pose of clip `clip` at `time`: nodes no channel targets keep `local` exactly,
     /// targeted nodes replace the animated properties of their decomposed `local`, and
     /// globals compose parent-first in walk order.
+    ///
+    /// # Panics
+    /// When `clip` is not an index into [`Model::clips`].
     pub fn pose(&self, clip: usize, time: f32) -> Pose {
-        let _ = (clip, time);
-        todo!("sample the clip and compose globals")
+        let animated = self.clips[clip].locals_at(&self.nodes, time);
+        let mut globals: Vec<Affine3A> = Vec::with_capacity(self.nodes.len());
+        for (node, animated) in self.nodes.iter().zip(animated) {
+            let local = animated.unwrap_or(node.local);
+            // The same product the loader forms for `rest`, so an unanimated chain
+            // reproduces it bit for bit.
+            let global = node.parent.map_or(local, |p| globals[p] * local);
+            globals.push(global);
+        }
+        Pose::new(globals)
     }
 
     /// Per joint of `skin`, `pose[joint] * inverse_bind`, in model space.
+    ///
+    /// # Panics
+    /// When `skin` is not an index into [`Model::skins`] or `pose` is not of this model.
     pub fn joint_palette(&self, skin: usize, pose: &Pose) -> Vec<Affine3A> {
-        let _ = (skin, pose);
-        todo!("pose times inverse bind per joint")
+        let skin = &self.skins[skin];
+        skin.joints
+            .iter()
+            .zip(&skin.inverse_binds)
+            .map(|(&joint, &inverse_bind)| pose.nodes()[joint] * inverse_bind)
+            .collect()
     }
 
-    /// [`Model::placements`] with the node transforms of `pose`.
+    /// [`Model::placements`] with the node transforms of `pose`: for each mesh in order,
+    /// its index and `root * pose[mesh.node]`.
+    ///
+    /// # Panics
+    /// When `pose` is not of this model.
     pub fn posed_placements<'a>(
         &'a self,
         root: Affine3A,
         pose: &'a Pose,
     ) -> impl Iterator<Item = (usize, Affine3A)> + 'a {
-        let _ = (root, pose);
-        std::iter::from_fn(move || -> Option<(usize, Affine3A)> {
-            todo!("placements under posed node transforms")
-        })
+        self.meshes
+            .iter()
+            .enumerate()
+            .map(move |(i, m)| (i, root * pose.nodes()[m.node]))
     }
 
     /// A model of `nodes` and `clips` alone, for unit tests.
