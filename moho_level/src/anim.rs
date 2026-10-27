@@ -7,17 +7,18 @@ use crate::Model;
 
 /// How a channel blends between neighbouring keys.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Interpolation {
+pub(crate) enum Interpolation {
     Step,
     /// Rotation blends by slerp.
     Linear,
-    /// Hermite spline; the track holds in-tangent, value and out-tangent per key.
+    /// Hermite spline; the track holds in-tangent, value and out-tangent per key. A
+    /// rotation is renormalised after the Hermite step.
     CubicSpline,
 }
 
 /// Key times with the values of one node property.
 #[derive(Clone, Debug)]
-pub enum Track {
+pub(crate) enum Track {
     Translation { times: Vec<f32>, values: Vec<Vec3> },
     Rotation { times: Vec<f32>, values: Vec<Quat> },
     Scale { times: Vec<f32>, values: Vec<Vec3> },
@@ -25,7 +26,7 @@ pub enum Track {
 
 /// One node property animated by keys.
 #[derive(Clone, Debug)]
-pub struct Channel {
+pub(crate) struct Channel {
     /// Index into [`Model::nodes`].
     pub node: usize,
     pub interpolation: Interpolation,
@@ -40,16 +41,12 @@ pub struct Clip {
 }
 
 impl Clip {
-    pub fn new(name: Option<String>, channels: Vec<Channel>) -> Self {
+    pub(crate) fn new(name: Option<String>, channels: Vec<Channel>) -> Self {
         Self { name, channels }
     }
 
     pub fn name(&self) -> Option<&str> {
         self.name.as_deref()
-    }
-
-    pub fn channels(&self) -> &[Channel] {
-        &self.channels
     }
 
     /// The latest key time over its channels; 0 with none.
@@ -214,19 +211,19 @@ mod tests {
         let two = clip(
             "two",
             vec![
-                channel(Interpolation::Linear, track_x(&[0.0, 1.5], &[0.0, 1.0])),
                 channel(
                     Interpolation::Step,
                     Track::Scale {
-                        times: vec![0.0, 2.0, 3.0],
+                        times: vec![0.0, 2.0, 3.5],
                         values: vec![Vec3::ONE; 3],
                     },
                 ),
+                channel(Interpolation::Linear, track_x(&[0.0, 1.5], &[0.0, 1.0])),
             ],
         );
         let empty = clip("empty", Vec::new());
 
-        assert_eq!(two.duration(), 3.0);
+        assert_eq!(two.duration(), 3.5);
         assert_eq!(empty.duration(), 0.0);
         assert_eq!(two.name(), Some("two"));
     }
@@ -274,7 +271,97 @@ mod tests {
         assert_eq!(player.clip(), 1);
         assert_eq!(player.time(), 0.0);
         assert_eq!(player.playback(), Playback::Once);
+        assert_eq!(player.speed(), 2.0);
         assert_near(x_at(&player, &model), 7.0);
+    }
+
+    #[test]
+    fn a_looping_player_advanced_by_exactly_one_duration_is_at_time_zero() {
+        let model = model_with(vec![ramp()]);
+        let mut player = ClipPlayer::new(&model, "ramp", Playback::Loop).expect("clip exists");
+
+        player.advance(&model, 4.0);
+
+        assert_eq!(player.time(), 0.0);
+        assert_near(x_at(&player, &model), 0.0);
+    }
+
+    #[test]
+    fn the_first_of_two_clips_sharing_a_name_is_found() {
+        let first = clip("same", Vec::new());
+        let second = clip("same", Vec::new());
+        let model = model_with(vec![ramp(), first, second]);
+
+        assert_eq!(model.clip("same"), Some(1));
+        assert_eq!(model.clip("ramp"), Some(0));
+        assert_eq!(model.clip("missing"), None);
+    }
+
+    #[test]
+    fn translation_and_rotation_channels_on_one_node_both_apply() {
+        let quarter_turn = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        let translation = || {
+            channel(
+                Interpolation::Step,
+                Track::Translation {
+                    times: vec![0.0],
+                    values: vec![Vec3::new(3.0, 0.0, 0.0)],
+                },
+            )
+        };
+        let rotation = || {
+            channel(
+                Interpolation::Step,
+                Track::Rotation {
+                    times: vec![0.0],
+                    values: vec![quarter_turn],
+                },
+            )
+        };
+        let moves_then_turns = clip("a", vec![translation(), rotation()]);
+        let turns_then_moves = clip("b", vec![rotation(), translation()]);
+        let model = model_with(vec![moves_then_turns, turns_then_moves]);
+
+        let expected = Affine3A::from_rotation_translation(quarter_turn, Vec3::new(3.0, 0.0, 0.0));
+        for name in ["a", "b"] {
+            let player = ClipPlayer::new(&model, name, Playback::Once).expect("clip exists");
+            let posed = player.pose(&model).nodes()[0];
+            assert!(posed.abs_diff_eq(expected, 1e-5), "{name}: {posed:?}");
+        }
+    }
+
+    #[test]
+    fn a_cubic_rotation_is_renormalised_after_the_hermite_step() {
+        let quarter_turn = Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        let zero = Quat::from_xyzw(0.0, 0.0, 0.0, 0.0);
+        // Zero tangents: the midpoint is the raw average of the two keys, which is
+        // shorter than unit length.
+        let spline = clip(
+            "ramp",
+            vec![channel(
+                Interpolation::CubicSpline,
+                Track::Rotation {
+                    times: vec![0.0, 2.0],
+                    values: vec![zero, Quat::IDENTITY, zero, zero, quarter_turn, zero],
+                },
+            )],
+        );
+        let model = model_with(vec![spline]);
+        let raw = (Quat::IDENTITY * 0.5) + (quarter_turn * 0.5);
+        assert!(raw.length() < 0.95, "the raw Hermite result is not unit");
+
+        let mut player = ClipPlayer::new(&model, "ramp", Playback::Once).expect("clip exists");
+        player.advance(&model, 1.0);
+
+        let posed = player.pose(&model).nodes()[0];
+        let expected = Affine3A::from_quat(raw.normalize());
+        assert!(
+            posed.abs_diff_eq(expected, 1e-5),
+            "{posed:?} != {expected:?}"
+        );
+        for axis in [posed.x_axis, posed.y_axis, posed.z_axis] {
+            assert_near(axis.length(), 1.0);
+        }
     }
 
     #[test]
@@ -368,8 +455,9 @@ mod tests {
 
     #[test]
     fn cubic_spline_passes_through_keys_and_follows_tangents() {
-        // Per key: in-tangent, value, out-tangent. Keys at 0 and 2, so a tangent
-        // contributes `0.125 * 2 * tangent` at the midpoint.
+        // Per key: in-tangent, value, out-tangent. Keys at 0, 2 and 4, so a tangent
+        // contributes `0.125 * 2 * tangent` at a segment's midpoint. Second segment
+        // midpoint: 0.5 * 1 + 0.25 * 2 + 0.5 * 3 - 0.25 * 4 = 1.5.
         let spline = |out_of_first: f32, into_second: f32| {
             let v = |x: f32| Vec3::new(x, 0.0, 0.0);
             clip(
@@ -377,13 +465,16 @@ mod tests {
                 vec![channel(
                     Interpolation::CubicSpline,
                     Track::Translation {
-                        times: vec![0.0, 2.0],
+                        times: vec![0.0, 2.0, 4.0],
                         values: vec![
                             v(9.0),
                             v(0.0),
                             v(out_of_first),
                             v(into_second),
                             v(1.0),
+                            v(2.0),
+                            v(4.0),
+                            v(3.0),
                             v(9.0),
                         ],
                     },
@@ -397,11 +488,15 @@ mod tests {
         let end = x_after(&out_tangent, Playback::Once, 2.0);
         let mid_out = x_after(&out_tangent, Playback::Once, 1.0);
         let mid_in = x_after(&in_tangent, Playback::Once, 1.0);
+        let second_mid = x_after(&out_tangent, Playback::Once, 3.0);
+        let last = x_after(&out_tangent, Playback::Once, 4.0);
 
         assert_near(start, 0.0);
         assert_near(end, 1.0);
         assert_near(mid_out, 0.75);
         assert_near(mid_in, 0.25);
+        assert_near(second_mid, 1.5);
+        assert_near(last, 3.0);
     }
 
     #[test]

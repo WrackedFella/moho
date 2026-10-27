@@ -427,16 +427,41 @@ fn mismatched_key_and_value_counts_fail_naming_the_animation() {
 
 #[test]
 fn decreasing_key_times_fail_naming_the_animation() {
+    let not_increasing = [vec![3.0, 0.0], vec![0.0, 3.0, 3.0], vec![1.0, 1.0]];
+
+    for times in not_increasing {
+        let mut spec = RigSpec::new();
+        let turn = &mut spec.anims[DEATH].channels[0];
+        turn.values = Quat::IDENTITY.to_array().repeat(times.len());
+        turn.times = times.clone();
+
+        let (_dir, path, err) = load_err(&spec);
+
+        assert!(
+            matches!(
+                err.kind(),
+                LevelErrorKind::BadAnimation { animation, reason }
+                    if *animation == DEATH && reason.contains("not increasing")
+            ),
+            "{times:?}: {err}"
+        );
+        assert_eq!(err.path(), path, "{times:?}");
+    }
+}
+
+#[test]
+fn further_joint_sets_are_ignored_leaving_the_first_sets_data() {
+    let (_clean_dir, clean) = rig();
     let mut spec = RigSpec::new();
-    spec.anims[DEATH].channels[0].times = vec![3.0, 0.0];
+    spec.further_influences = Some((vec![[1, 1, 1, 1]; 3], vec![[0.5, 0.25, 0.125, 0.125]; 3]));
 
-    let (_dir, path, err) = load_err(&spec);
+    let (_dir, model) = load(&spec);
 
-    assert!(
-        matches!(err.kind(), LevelErrorKind::BadAnimation { animation, .. } if *animation == DEATH),
-        "{err}"
-    );
-    assert_eq!(err.path(), path);
+    let got = model.meshes()[0].skin.as_ref().expect("skinned");
+    let want = clean.meshes()[0].skin.as_ref().expect("skinned");
+    assert_eq!(got.joints, want.joints);
+    assert_eq!(got.weights, want.weights);
+    assert_eq!(got.skin, want.skin);
 }
 
 #[test]

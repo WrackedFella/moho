@@ -68,12 +68,17 @@ pub struct Anim {
     pub channels: Vec<Chan>,
 }
 
+/// Per-vertex joints and weights of a second influence set.
+pub type FurtherInfluences = (Vec<[u16; 4]>, Vec<[f32; 4]>);
+
 /// The rig as a description tests may edit before writing it.
 #[derive(Clone)]
 pub struct RigSpec {
     /// Per vertex of the skinned triangle.
     pub vertex_joints: Vec<[u16; 4]>,
     pub vertex_weights: Vec<[f32; 4]>,
+    /// A `JOINTS_1`/`WEIGHTS_1` pair per vertex; `None` writes only the first set.
+    pub further_influences: Option<FurtherInfluences>,
     /// glTF node indices.
     pub skin_joints: Vec<usize>,
     /// `None` writes a skin without `inverseBindMatrices`.
@@ -90,6 +95,7 @@ impl RigSpec {
                 [0.25, 0.75, 0.0, 0.0],
                 [1.0, 0.0, 0.0, 0.0],
             ],
+            further_influences: None,
             skin_joints: vec![G_BONE_A, G_BONE_B],
             inverse_binds: Some(vec![
                 Mat4::from_translation(Vec3::new(-1.0, -1.0, 0.0)),
@@ -260,6 +266,17 @@ fn build(spec: &RigSpec) -> (Value, Vec<u8>) {
     let joints = blob.accessor(&joints, 5123, spec.vertex_joints.len(), "VEC4", None);
     let weights: Vec<f32> = spec.vertex_weights.iter().flatten().copied().collect();
     let weights = blob.floats(&weights, spec.vertex_weights.len(), "VEC4");
+    let further = spec.further_influences.as_ref().map(|(joints, weights)| {
+        let joints_bytes: Vec<u8> = joints
+            .iter()
+            .flatten()
+            .flat_map(|j| j.to_le_bytes())
+            .collect();
+        let joints_1 = blob.accessor(&joints_bytes, 5123, joints.len(), "VEC4", None);
+        let weights_flat: Vec<f32> = weights.iter().flatten().copied().collect();
+        let weights_1 = blob.floats(&weights_flat, weights.len(), "VEC4");
+        (joints_1, weights_1)
+    });
     let rigid_positions = blob.accessor(
         &flat3(&TRIANGLE)
             .iter()
@@ -316,6 +333,15 @@ fn build(spec: &RigSpec) -> (Value, Vec<u8>) {
         }));
     }
 
+    let mut skinned_attributes = json!({
+        "POSITION": positions, "NORMAL": normals,
+        "JOINTS_0": joints, "WEIGHTS_0": weights,
+    });
+    if let Some((joints_1, weights_1)) = further {
+        skinned_attributes["JOINTS_1"] = json!(joints_1);
+        skinned_attributes["WEIGHTS_1"] = json!(weights_1);
+    }
+
     let s = FRAC_1_SQRT_2;
     let doc = json!({
         "asset": { "version": "2.0" },
@@ -337,10 +363,7 @@ fn build(spec: &RigSpec) -> (Value, Vec<u8>) {
             { "name": "orphan" },
         ],
         "meshes": [
-            { "primitives": [{ "attributes": {
-                "POSITION": positions, "NORMAL": normals,
-                "JOINTS_0": joints, "WEIGHTS_0": weights,
-            }}]},
+            { "primitives": [{ "attributes": skinned_attributes }]},
             { "primitives": [{ "attributes": {
                 "POSITION": rigid_positions, "NORMAL": rigid_normals,
             }}]},
