@@ -32,9 +32,7 @@ use moho_ui_shell::{
 use crate::console_commands::{self, ConsoleCommand, GodModeArg};
 use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
-use crate::input::{
-    SearchlightAction, SearchlightCommand, look_settings, look_to_turn, resolve_lean,
-};
+use crate::input::{SearchlightAction, SearchlightCommand, look_from, look_to_turn, resolve_lean};
 use crate::lean::{lean_offset, rolled_view_matrix};
 use crate::menu::{MenuAction, main_screen, pause_screen, settings_screen};
 use crate::mode::ArenaMode;
@@ -722,12 +720,7 @@ enum Screen {
 
 /// The mode the window opens in for a saved `mode`: both fullscreen kinds open borderless.
 pub fn start_window_mode(mode: moho_core::prefs::WindowMode) -> WindowMode {
-    match mode {
-        moho_core::prefs::WindowMode::Windowed => WindowMode::Windowed,
-        moho_core::prefs::WindowMode::Fullscreen | moho_core::prefs::WindowMode::Borderless => {
-            WindowMode::Borderless
-        }
-    }
+    moho_ui_shell::runtime_window_mode(mode)
 }
 
 /// The FPS prototype's game: one arena mode and the input that drives it.
@@ -825,14 +818,14 @@ impl SearchlightGame {
             match event {
                 MenuEvent::Chosen(MenuAction::Play | MenuAction::Resume) => self.enter_play(),
                 MenuEvent::Chosen(MenuAction::Settings) => {
-                    let settings = self
-                        .debug_settings
-                        .as_ref()
-                        .map_or_else(Prefs::default, |saved| saved.prefs().clone());
+                    let settings = self.debug_settings.as_ref().map_or_else(
+                        || EngineSettings::from_prefs(&Prefs::default()),
+                        |saved| EngineSettings::from_prefs(saved.prefs()),
+                    );
                     self.stage
                         .shell()
                         .menu_mut()
-                        .push(settings_screen(EngineSettings::from_prefs(&settings)));
+                        .push(settings_screen(settings));
                 }
                 MenuEvent::Chosen(MenuAction::Back) => self.stage.shell().menu_mut().pop(),
                 MenuEvent::Chosen(MenuAction::Quit) => ctx.request_exit(),
@@ -849,9 +842,11 @@ impl SearchlightGame {
         {
             tracing::warn!(%error, "settings not saved");
         }
-        let mut applied = Prefs::default();
-        settings.write_to(&mut applied);
-        self.input.set_look(look_settings(&applied));
+        self.input.set_look(look_from(
+            settings.mouse_sensitivity,
+            settings.mouse_smoothing,
+            settings.invert_mouse_y,
+        ));
         self.pending_settings = Some(settings);
     }
 

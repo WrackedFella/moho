@@ -58,11 +58,16 @@ pub fn apply_engine_settings(settings: &EngineSettings, ctx: &mut FrameContext<'
         let applied = audio_settings_for(settings, audio.settings());
         audio.set_settings(applied);
     }
-    ctx.set_window_mode(match settings.window_mode {
+    ctx.set_window_mode(runtime_window_mode(settings.window_mode));
+    ctx.set_window_size(settings.resolution.0, settings.resolution.1);
+}
+
+/// The mode the window runs in for a saved `mode`: both fullscreen kinds run borderless.
+pub fn runtime_window_mode(mode: SavedMode) -> WindowMode {
+    match mode {
         SavedMode::Windowed => WindowMode::Windowed,
         SavedMode::Fullscreen | SavedMode::Borderless => WindowMode::Borderless,
-    });
-    ctx.set_window_size(settings.resolution.0, settings.resolution.1);
+    }
 }
 
 /// `current` with the sound-effect, music and UI volumes of `settings`; the master and voice

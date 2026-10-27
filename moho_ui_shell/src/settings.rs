@@ -1,6 +1,8 @@
 //! The engine's own player settings as ready-made menu rows: the ten values a game places on a
 //! Settings screen, read from and written to the prefs they come from.
 
+use std::borrow::Cow;
+
 use moho_core::prefs::{Prefs, RESOLUTION_PRESETS, WindowMode};
 
 /// The ten rows' values. Volumes are on the prefs scale, 0 to 10; qualities are 0 (Off) to 4
@@ -97,7 +99,8 @@ impl EngineSetting {
     }
 }
 
-const QUALITIES: [&str; 5] = ["Off", "Low", "Medium", "High", "Ultra"];
+/// The names of quality levels 0 to 4.
+pub(crate) const QUALITY_NAMES: [&str; 5] = ["Off", "Low", "Medium", "High", "Ultra"];
 const WINDOW_MODES: [&str; 2] = ["Windowed", "Fullscreen"];
 
 impl EngineSettings {
@@ -134,23 +137,45 @@ impl EngineSettings {
     /// The labels of `setting`'s choices, in the order Enter cycles them; empty for a slider or
     /// a toggle.
     pub fn choices(&self, setting: EngineSetting) -> Vec<String> {
-        let labels = |labels: &[&str]| labels.iter().map(|l| (*l).to_owned()).collect();
+        (0..self.choice_count(setting))
+            .filter_map(|index| self.choice_label(setting, index))
+            .map(Cow::into_owned)
+            .collect()
+    }
+
+    /// How many choices `setting` has; 0 for a slider or a toggle.
+    pub(crate) fn choice_count(&self, setting: EngineSetting) -> usize {
         match setting {
-            EngineSetting::ShadowQuality | EngineSetting::SsaoQuality => labels(&QUALITIES),
-            EngineSetting::WindowMode => labels(&WINDOW_MODES),
+            EngineSetting::ShadowQuality | EngineSetting::SsaoQuality => QUALITY_NAMES.len(),
+            EngineSetting::WindowMode => WINDOW_MODES.len(),
             EngineSetting::Resolution => {
-                let unlisted =
-                    (!self.resolution_is_listed()).then(|| resolution_label(self.resolution));
-                unlisted
-                    .into_iter()
-                    .chain(
-                        RESOLUTION_PRESETS
-                            .iter()
-                            .map(|(label, _)| (*label).to_owned()),
-                    )
-                    .collect()
+                RESOLUTION_PRESETS.len() + usize::from(!self.resolution_is_listed())
             }
-            _ => Vec::new(),
+            _ => 0,
+        }
+    }
+
+    /// The label of choice `index` of `setting`, if it has one.
+    fn choice_label(&self, setting: EngineSetting, index: usize) -> Option<Cow<'static, str>> {
+        match setting {
+            EngineSetting::ShadowQuality | EngineSetting::SsaoQuality => {
+                QUALITY_NAMES.get(index).map(|label| Cow::Borrowed(*label))
+            }
+            EngineSetting::WindowMode => WINDOW_MODES.get(index).map(|label| Cow::Borrowed(*label)),
+            EngineSetting::Resolution => {
+                if self.resolution_is_listed() {
+                    RESOLUTION_PRESETS
+                        .get(index)
+                        .map(|(label, _)| Cow::Borrowed(*label))
+                } else if index == 0 {
+                    Some(Cow::Owned(resolution_label(self.resolution)))
+                } else {
+                    RESOLUTION_PRESETS
+                        .get(index - 1)
+                        .map(|(label, _)| Cow::Borrowed(*label))
+                }
+            }
+            _ => None,
         }
     }
 
@@ -161,14 +186,15 @@ impl EngineSettings {
             EngineSetting::SoundEffectVolume => format!("{:.1}", self.sound_effect_volume),
             EngineSetting::MusicVolume => format!("{:.1}", self.music_volume),
             EngineSetting::UiVolume => format!("{:.1}", self.ui_volume),
-            EngineSetting::MouseSmoothing => on_off(self.mouse_smoothing),
-            EngineSetting::InvertMouseY => on_off(self.invert_mouse_y),
+            EngineSetting::MouseSmoothing => on_off(self.mouse_smoothing).to_owned(),
+            EngineSetting::InvertMouseY => on_off(self.invert_mouse_y).to_owned(),
             EngineSetting::ShadowQuality
             | EngineSetting::SsaoQuality
             | EngineSetting::WindowMode
-            | EngineSetting::Resolution => {
-                self.choices(setting)[self.choice_index(setting)].clone()
-            }
+            | EngineSetting::Resolution => self
+                .choice_label(setting, self.choice_index(setting))
+                .expect("choice_index is always within the row's choices")
+                .into_owned(),
         }
     }
 
@@ -217,8 +243,10 @@ impl EngineSettings {
     /// The position of the held value among a choice row's [`choices`](Self::choices).
     pub(crate) fn choice_index(&self, setting: EngineSetting) -> usize {
         match setting {
-            EngineSetting::ShadowQuality => (self.shadow_quality as usize).min(QUALITIES.len() - 1),
-            EngineSetting::SsaoQuality => (self.ssao_quality as usize).min(QUALITIES.len() - 1),
+            EngineSetting::ShadowQuality => {
+                (self.shadow_quality as usize).min(QUALITY_NAMES.len() - 1)
+            }
+            EngineSetting::SsaoQuality => (self.ssao_quality as usize).min(QUALITY_NAMES.len() - 1),
             EngineSetting::WindowMode => usize::from(self.window_mode != WindowMode::Windowed),
             EngineSetting::Resolution => RESOLUTION_PRESETS
                 .iter()
@@ -255,8 +283,8 @@ impl EngineSettings {
     }
 }
 
-fn on_off(on: bool) -> String {
-    if on { "On" } else { "Off" }.to_owned()
+fn on_off(on: bool) -> &'static str {
+    if on { "On" } else { "Off" }
 }
 
 fn resolution_label(size: (u32, u32)) -> String {

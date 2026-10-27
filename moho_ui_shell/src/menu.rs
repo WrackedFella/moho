@@ -101,7 +101,7 @@ impl<A> Open<A> {
                 }
                 Control::Toggle => staged.flip(*setting),
                 Control::Choice => {
-                    let last = staged.choices(*setting).len().saturating_sub(1);
+                    let last = staged.choice_count(*setting).saturating_sub(1);
                     let at = staged.choice_index(*setting);
                     let moved = if direction < 0 {
                         at.saturating_sub(1)
@@ -116,12 +116,11 @@ impl<A> Open<A> {
 
     /// Sets the staged slider on `row` from where `x` lies along the row's band.
     fn set_slider_from(&mut self, row: usize, x: f32, size: [f32; 2]) {
-        if let (Some(staged), Some(MenuItem::Setting(setting)), Some(rect)) = (
-            &mut self.staged,
-            self.screen.items.get(row),
-            layout(&self.screen, size).get(row),
-        ) && let Control::Slider { min, max, .. } = setting.control()
+        if let (Some(staged), Some(MenuItem::Setting(setting))) =
+            (&mut self.staged, self.screen.items.get(row))
+            && let Control::Slider { min, max, .. } = setting.control()
         {
+            let rect = row_rect(self.screen.items.len(), row, size);
             let fraction = ((x - rect.min[0]) / (rect.max[0] - rect.min[0])).clamp(0.0, 1.0);
             staged.set_slider(*setting, min + fraction * (max - min));
         }
@@ -134,7 +133,7 @@ fn cycle(staged: &mut EngineSettings, setting: EngineSetting) {
         Control::Slider { .. } => {}
         Control::Toggle => staged.flip(setting),
         Control::Choice => {
-            let count = staged.choices(setting).len();
+            let count = staged.choice_count(setting);
             staged.set_choice_index(setting, (staged.choice_index(setting) + 1) % count);
         }
     }
@@ -354,16 +353,19 @@ fn row_at<A>(screen: &MenuScreen<A>, point: [f32; 2], size: [f32; 2]) -> Option<
 /// points wide, centred on the window, one 56-point pitch apart, the column centred vertically.
 /// Painting and hit tests both read this.
 pub fn layout<A>(screen: &MenuScreen<A>, size: [f32; 2]) -> Vec<Rect> {
-    let top = size[1] / 2.0 - screen.items.len() as f32 * ROW_PITCH / 2.0;
     (0..screen.items.len())
-        .map(|row| {
-            let y = top + row as f32 * ROW_PITCH;
-            Rect {
-                min: [size[0] / 2.0 - ROW_WIDTH / 2.0, y],
-                max: [size[0] / 2.0 + ROW_WIDTH / 2.0, y + ROW_PITCH],
-            }
-        })
+        .map(|row| row_rect(screen.items.len(), row, size))
         .collect()
+}
+
+/// Row `row`'s rectangle on a screen of `count` rows; [`layout`] is this for every row.
+fn row_rect(count: usize, row: usize, size: [f32; 2]) -> Rect {
+    let top = size[1] / 2.0 - count as f32 * ROW_PITCH / 2.0;
+    let y = top + row as f32 * ROW_PITCH;
+    Rect {
+        min: [size[0] / 2.0 - ROW_WIDTH / 2.0, y],
+        max: [size[0] / 2.0 + ROW_WIDTH / 2.0, y + ROW_PITCH],
+    }
 }
 
 #[cfg(test)]

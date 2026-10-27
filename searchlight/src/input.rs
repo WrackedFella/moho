@@ -77,7 +77,16 @@ impl Action for SearchlightAction {
 /// Look settings from `prefs`. A sensitivity not above zero would freeze or reverse the
 /// view, so it falls back to the preferences default; smoothing and invert Y are unaffected.
 pub fn look_settings(prefs: &Prefs) -> LookSettings {
-    let saved = prefs.mouse_sensitivity();
+    look_from(
+        prefs.mouse_sensitivity(),
+        prefs.mouse_smoothing(),
+        prefs.invert_mouse_y(),
+    )
+}
+
+/// Look settings from the three values `look_settings` reads, with the same fallback for a
+/// sensitivity not above zero.
+pub fn look_from(saved: f32, smoothing: bool, invert_y: bool) -> LookSettings {
     let sensitivity = if saved > 0.0 {
         saved
     } else {
@@ -89,8 +98,8 @@ pub fn look_settings(prefs: &Prefs) -> LookSettings {
     };
     LookSettings {
         look_per_count: source_look_per_count(sensitivity),
-        smoothing: prefs.mouse_smoothing(),
-        invert_y: prefs.invert_mouse_y(),
+        smoothing,
+        invert_y,
         acceleration: 0.0,
     }
 }
