@@ -70,7 +70,7 @@ jobs:
             --max-turns 100
             --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never end your turn with a status message: after a skill or subagent returns, continue with the next step. Stop only after the final report, or after pausing with a comment and the agent-paused label."
             --add-dir /home/runner/.claude/plugins/cache
-            --allowedTools "Bash(gh issue:*),Bash(gh api:*),Bash(git log:*),Bash(git show:*),Edit,Write,Task,Skill"
+            --allowedTools "Bash(gh issue:*),Bash(gh api:*),Bash(git log:*),Bash(git show:*),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/card *),Edit,Write,Task,Skill"
       # The action hides the run's output, so a denial shows only as a count. List what was
       # denied, so the allow-list can be tuned from evidence.
       - name: List denied commands
