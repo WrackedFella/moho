@@ -7,7 +7,9 @@ use crate::Model;
 /// One drawn copy of a model with the parts attached at its named nodes, nested.
 ///
 /// `K` is the game's key for a loaded model; every method takes a lookup from key to
-/// [`Model`]. At most one part sits at a node.
+/// [`Model`], and must return the same model for a key for the assembly's whole life,
+/// since sockets resolve to node indices when a part is attached. At most one part sits
+/// at a node.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Assembly<K> {
     model: K,
