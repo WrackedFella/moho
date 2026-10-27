@@ -183,7 +183,8 @@ model, a clip and a time; it never changes the model.
   (negative plays backwards), `advance(dt)`, `pose`. `Loop` wraps into `[0, duration)`, `Once`
   clamps to `[0, duration]`.
 - `posed_placements(root, &pose)` is `placements` with posed nodes, so a rigid mesh on an
-  animated node (a magazine) draws through 2.2's path. `joint_palette(skin, &pose)` is
+  animated node (a magazine) draws through 2.2's path; it lists skinned meshes too, which the
+  game skips until a skinned draw exists. `joint_palette(skin, &pose)` is
   `pose[joint] * inverse_bind` per joint in model space, the data a skinned draw uploads; the
   renderer has no skinned draw yet.
 
@@ -192,8 +193,11 @@ The game glue, one player per character, each tick or frame:
 ```rust
 player.advance(&model, dt);
 let pose = player.pose(&model);
+// Rigid meshes only: a skinned mesh placed here would draw unbent at its node.
 for (i, t) in model.posed_placements(root, &pose) {
-    world_meshes.place(ids[i], t, mats[i]);
+    if model.meshes()[i].skin.is_none() {
+        world_meshes.place(ids[i], t, mats[i]);
+    }
 }
 let palette = model.joint_palette(skin, &pose); // for the skinned draw
 ```
