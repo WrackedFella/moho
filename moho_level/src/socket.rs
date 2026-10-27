@@ -14,7 +14,6 @@ pub struct Assembly<K> {
     parts: Vec<Part<K>>,
 }
 
-/// A part held at one node of its parent's model.
 #[derive(Clone, Debug, PartialEq)]
 struct Part<K> {
     node: usize,
@@ -99,7 +98,6 @@ impl<K: Copy> Assembly<K> {
         Ok(self.slot(node).map(|i| &mut self.parts[i].assembly))
     }
 
-    /// Position in `parts` of the part held at `node`.
     fn slot(&self, node: usize) -> Option<usize> {
         self.parts.iter().position(|p| p.node == node)
     }
