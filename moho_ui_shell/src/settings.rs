@@ -21,7 +21,6 @@ pub struct EngineSettings {
     pub resolution: (u32, u32),
 }
 
-/// One row of the engine's settings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EngineSetting {
     MouseSensitivity,
@@ -36,7 +35,6 @@ pub enum EngineSetting {
     Resolution,
 }
 
-/// How a row is drawn and driven.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Control {
     Slider { min: f32, max: f32, step: f32 },
@@ -59,7 +57,6 @@ impl EngineSetting {
         EngineSetting::Resolution,
     ];
 
-    /// The text drawn at the row's left.
     pub fn label(self) -> &'static str {
         match self {
             EngineSetting::MouseSensitivity => "Mouse sensitivity",
@@ -99,7 +96,6 @@ impl EngineSetting {
     }
 }
 
-/// The names of quality levels 0 to 4.
 pub(crate) const QUALITY_NAMES: [&str; 5] = ["Off", "Low", "Medium", "High", "Ultra"];
 const WINDOW_MODES: [&str; 2] = ["Windowed", "Fullscreen"];
 
@@ -179,7 +175,6 @@ impl EngineSettings {
         }
     }
 
-    /// The text drawn at the row's right for the value held here.
     pub fn value_text(&self, setting: EngineSetting) -> String {
         match setting {
             EngineSetting::MouseSensitivity => format!("{:.1}", self.mouse_sensitivity),

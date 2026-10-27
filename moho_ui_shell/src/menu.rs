@@ -188,7 +188,6 @@ impl<A> MenuStack<A> {
         self.screens.clear();
     }
 
-    /// Whether a held mouse button is dragging a slider.
     pub fn is_dragging(&self) -> bool {
         self.dragging.is_some()
     }

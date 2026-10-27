@@ -3681,7 +3681,6 @@ mod settings_tests {
         }
     }
 
-    /// What one frame asked of the loop and the window.
     #[derive(Debug, PartialEq)]
     struct Requests {
         paused: Option<bool>,
@@ -3745,7 +3744,6 @@ mod settings_tests {
         }
     }
 
-    /// Moves the menu focus onto `item` of the top screen, the way a hover would.
     fn focus_item(game: &SearchlightGame, item: &MenuItem<MenuAction>) {
         let mut shell = game.stage.shell();
         let menu = shell.menu_mut();
