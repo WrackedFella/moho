@@ -48,7 +48,7 @@ Scenario Outline: A round falls over distance
     | scale | where                    |
     | 0     | the head at the aim point |
     | 1     | below the aim point       |
-    | 30    | the torso                 |
+    | 30    | well below the head       |
 
 Scenario: The gravity scale moves rounds only
   Given the gravity scale is 30
