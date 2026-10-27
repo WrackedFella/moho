@@ -95,8 +95,19 @@ struct Draw {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Call {
     Draw,
+    SkinnedDraw,
     Markers,
     Submit,
+}
+
+/// One `enqueue_skinned_draw` call.
+#[derive(Debug, PartialEq)]
+struct SkinnedCall {
+    mesh: u32,
+    texture: u32,
+    palette: Vec<[[f32; 4]; 3]>,
+    x: f32,
+    material: u32,
 }
 
 #[derive(Default)]
@@ -111,6 +122,10 @@ struct RecordingRenderer {
     textured_draws: Vec<TexturedDraw>,
     /// Each `register_texture` call as `(handle, image)`.
     textures: Vec<(u32, Rgba8Image)>,
+    skinned: Vec<SkinnedCall>,
+    /// Each `register_skin` call as `(mesh handle, joint sets, weight sets)`.
+    skins: Vec<(u32, usize, usize)>,
+    mesh_uploads: usize,
 }
 
 #[derive(Debug, PartialEq)]
@@ -157,7 +172,27 @@ impl RendererBackend for RecordingRenderer {
         _material: &[u32],
         _indices: &[u32],
     ) -> u32 {
+        self.mesh_uploads += 1;
         WORLD_MESH
+    }
+    fn register_skin(&mut self, mesh: u32, joints: &[[u16; 4]], weights: &[[f32; 4]]) {
+        self.skins.push((mesh, joints.len(), weights.len()));
+    }
+    fn enqueue_skinned_draw(
+        &mut self,
+        mesh: u32,
+        texture: u32,
+        palette: &[[[f32; 4]; 3]],
+        instance: InstanceGpu,
+    ) {
+        self.skinned.push(SkinnedCall {
+            mesh,
+            texture,
+            palette: palette.to_vec(),
+            x: instance.model[3][0],
+            material: instance.material,
+        });
+        self.calls.push(Call::SkinnedDraw);
     }
     fn unregister_mesh(&mut self, _mesh: u32) {}
     fn register_texture(&mut self, image: &Rgba8Image) -> u32 {
@@ -422,6 +457,88 @@ fn placements_of_one_mesh_split_into_one_draw_per_texture() {
     );
     assert_eq!(renderer.textures.len(), 2);
     assert_eq!(renderer.non_empty_draws().len(), 4);
+}
+
+/// Palette rows as the GPU buffer holds them for a translation: `[m_r0, m_r1, m_r2, t_r]`.
+fn translation_rows(t: Vec3) -> [[f32; 4]; 3] {
+    [
+        [1.0, 0.0, 0.0, t.x],
+        [0.0, 1.0, 0.0, t.y],
+        [0.0, 0.0, 1.0, t.z],
+    ]
+}
+
+#[test]
+fn each_skinned_placement_is_its_own_draw_with_its_palette() {
+    let skin = TextureId(1);
+    let image = Rgba8Image::new([1, 1], vec![[10, 0, 0, 255]]).expect("one pixel");
+    let mut scene = Scene::new();
+    let mut renderer = RecordingRenderer::default();
+    let skinned_triangle = triangle()
+        .with_skin(vec![[0, 1, 0, 0]; 3], vec![[0.5, 0.5, 0.0, 0.0]; 3])
+        .expect("one joint set and weight set per vertex");
+    let rest = [
+        glam::Affine3A::IDENTITY,
+        glam::Affine3A::from_translation(Vec3::new(0.0, 1.0, 0.0)),
+    ];
+    let raised = [
+        glam::Affine3A::from_translation(Vec3::new(0.0, 0.0, 2.0)),
+        glam::Affine3A::from_translation(Vec3::new(3.0, 1.0, 0.0)),
+    ];
+    let world = scene.world_meshes_mut();
+    world.upsert_movable(WorldMeshId(1), skinned_triangle);
+    world.upsert_texture(skin, image.clone());
+    world.place_skinned(WorldMeshId(1), at(1.0), 2, Some(skin), &rest);
+    world.place_skinned(WorldMeshId(1), at(5.0), 3, None, &raised);
+
+    render_frame(&mut scene, &mut renderer, &[prop(9.0, OPAQUE)], &[]);
+
+    assert_eq!(
+        renderer.skinned,
+        vec![
+            SkinnedCall {
+                mesh: WORLD_MESH,
+                texture: renderer.texture_handle(&image),
+                palette: vec![
+                    translation_rows(Vec3::ZERO),
+                    translation_rows(Vec3::new(0.0, 1.0, 0.0)),
+                ],
+                x: 1.0,
+                material: 2,
+            },
+            SkinnedCall {
+                mesh: WORLD_MESH,
+                texture: 0,
+                palette: vec![
+                    translation_rows(Vec3::new(0.0, 0.0, 2.0)),
+                    translation_rows(Vec3::new(3.0, 1.0, 0.0)),
+                ],
+                x: 5.0,
+                material: 3,
+            },
+        ],
+        "one draw per placement, each with its own palette"
+    );
+    assert_eq!(renderer.mesh_uploads, 1, "the mesh uploads once");
+    assert_eq!(
+        renderer.skins,
+        vec![(WORLD_MESH, 3, 3)],
+        "the skin registers once, one joint set and weight set per vertex"
+    );
+    assert_eq!(
+        renderer.non_empty_draws(),
+        vec![&draw(SPHERE_MESH, &[9.0])],
+        "skinned placements are not plain draws"
+    );
+    let last_draw = renderer.calls.iter().rposition(|c| *c == Call::Draw);
+    let first_skinned = renderer.calls.iter().position(|c| *c == Call::SkinnedDraw);
+    let last_skinned = renderer.calls.iter().rposition(|c| *c == Call::SkinnedDraw);
+    let submit = renderer.calls.iter().position(|c| *c == Call::Submit);
+    assert!(
+        last_draw < first_skinned && last_skinned < submit,
+        "skinned draws follow the world draws and precede submit: {:?}",
+        renderer.calls
+    );
 }
 
 #[test]

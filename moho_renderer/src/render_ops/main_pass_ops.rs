@@ -30,6 +30,7 @@ use wgpu::{BindGroup, Buffer, CommandEncoder, RenderPipeline, TextureView};
 /// * `textures` - Table the texture handles index
 /// * `mesh_table` - Table of registered meshes
 /// * `offsets` - Instance offsets into instance buffer for each draw
+/// * `arena` - Frame vertex arena that skinned draws read their vertices from
 #[allow(clippy::too_many_arguments)] // Render operations naturally have many parameters
 pub fn render_main_pass(
     encoder: &mut CommandEncoder,
@@ -46,6 +47,7 @@ pub fn render_main_pass(
     textures: &TextureTable,
     mesh_table: &[Option<MeshEntry>],
     offsets: &[usize],
+    arena: Option<&Buffer>,
 ) {
     let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some("batched-rpass"),
@@ -90,11 +92,14 @@ pub fn render_main_pass(
             continue;
         }
         if let Some(me) = &mesh_table[idx] {
+            let Some(vertices) = key.vertex_slice(me, arena) else {
+                continue;
+            };
             if bound_texture != Some(key.texture) {
                 rpass.set_bind_group(2, textures.bind_group(key.texture), &[]);
                 bound_texture = Some(key.texture);
             }
-            rpass.set_vertex_buffer(0, me.buffer.slice(..));
+            rpass.set_vertex_buffer(0, vertices);
 
             let offset_instances = offsets[i];
             let actual_instance_count = insts.len();

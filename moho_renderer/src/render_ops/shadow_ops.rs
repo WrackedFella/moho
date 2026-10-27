@@ -84,6 +84,7 @@ fn with_view_height(mut gpu: MultiLightShadowGpu, cut: f32) -> MultiLightShadowG
 /// * `pending_draws` - List of (draw key, instances) to render; the texture is unused here
 /// * `mesh_table` - Table of registered meshes
 /// * `offsets` - Byte offsets into instance buffer for each draw
+/// * `arena` - Frame vertex arena that skinned draws read their vertices from
 pub fn render_shadow_passes(
     encoder: &mut CommandEncoder,
     shadow_system: &ShadowSystem,
@@ -91,6 +92,7 @@ pub fn render_shadow_passes(
     pending_draws: &[(DrawKey, Vec<GpuInstance>)],
     mesh_table: &[Option<MeshEntry>],
     offsets: &[usize],
+    arena: Option<&Buffer>,
 ) {
     // Render shadow map for each active light
     for active_light in &shadow_system.active_lights {
@@ -131,7 +133,10 @@ pub fn render_shadow_passes(
                 continue;
             }
             if let Some(me) = &mesh_table[idx] {
-                shadow_pass.set_vertex_buffer(0, me.buffer.slice(..));
+                let Some(vertices) = key.vertex_slice(me, arena) else {
+                    continue;
+                };
+                shadow_pass.set_vertex_buffer(0, vertices);
 
                 let offset_instances = offsets[i];
                 let actual_instance_count = insts.len();

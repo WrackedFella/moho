@@ -4,13 +4,23 @@
 //! - Main shader: 4 WGSL files concatenated (common, sky, vertex, fragment)
 //! - Skybox shader: 2 WGSL files concatenated (sky, skybox)
 
-/// The main shader's WGSL: common, sky, vertex and fragment sources concatenated.
+/// The main shader's WGSL: common, sky, normal, vertex and fragment sources concatenated.
 pub fn main_shader_source() -> String {
     [
         include_str!("../../../shaders/common.wgsl"),
         include_str!("../../../shaders/sky.wgsl"),
+        include_str!("../../../shaders/normal.wgsl"),
         include_str!("../../../shaders/vertex.wgsl"),
         include_str!("../../../shaders/fragment.wgsl"),
+    ]
+    .join("\n\n")
+}
+
+/// The skinning compute shader's WGSL: the shared normal helper and the skin source concatenated.
+pub fn skin_shader_source() -> String {
+    [
+        include_str!("../../../shaders/normal.wgsl"),
+        include_str!("../../../shaders/skin.wgsl"),
     ]
     .join("\n\n")
 }

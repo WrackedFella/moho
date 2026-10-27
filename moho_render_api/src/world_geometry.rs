@@ -62,7 +62,16 @@ pub struct WorldMesh {
     indices: Vec<u32>,
     materials: Option<Vec<u32>>,
     uvs: Option<Vec<[f32; 2]>>,
+    skin: Option<Skin>,
 }
+
+#[derive(Clone, Debug)]
+struct Skin {
+    joints: Vec<[u16; 4]>,
+    weights: Vec<[f32; 4]>,
+}
+
+type SkinChannels<'a> = (&'a [[u16; 4]], &'a [[f32; 4]]);
 
 impl WorldMesh {
     /// Build a mesh, refusing mismatched channel lengths, indices past the last
@@ -114,6 +123,7 @@ impl WorldMesh {
             indices,
             materials: None,
             uvs: None,
+            skin: None,
         })
     }
 
@@ -154,6 +164,39 @@ impl WorldMesh {
     /// The per-vertex texture coordinates; `None` when the game never set them.
     pub fn uvs(&self) -> Option<&[[f32; 2]]> {
         self.uvs.as_deref()
+    }
+
+    /// Attach the skin: four joint indices and their weights per vertex. Joint indices
+    /// address the palette a placement supplies; weights should sum to one.
+    pub fn with_skin(
+        mut self,
+        joints: Vec<[u16; 4]>,
+        weights: Vec<[f32; 4]>,
+    ) -> Result<Self, WorldMeshError> {
+        let expected = self.positions.len();
+        if joints.len() != expected {
+            return Err(WorldMeshError::ChannelLengthMismatch {
+                channel: "joints",
+                expected,
+                actual: joints.len(),
+            });
+        }
+        if weights.len() != expected {
+            return Err(WorldMeshError::ChannelLengthMismatch {
+                channel: "weights",
+                expected,
+                actual: weights.len(),
+            });
+        }
+        self.skin = Some(Skin { joints, weights });
+        Ok(self)
+    }
+
+    /// The per-vertex joints and weights; `None` when the game never set a skin.
+    pub fn skin(&self) -> Option<SkinChannels<'_>> {
+        self.skin
+            .as_ref()
+            .map(|skin| (skin.joints.as_slice(), skin.weights.as_slice()))
     }
 
     pub fn positions(&self) -> &[[f32; 3]] {
@@ -352,6 +395,49 @@ mod tests {
             ),
             "got {err:?}"
         );
+    }
+
+    #[test]
+    fn with_skin_refuses_mismatched_channels() {
+        let mesh = || build(3, 3, vec![0, 1, 2]).expect("well-formed triangle");
+        let joints = vec![[0, 1, 0, 0]; 3];
+        let weights = vec![[0.5, 0.5, 0.0, 0.0]; 3];
+        assert!(mesh().skin().is_none(), "no skin until set");
+
+        let short_joints = mesh()
+            .with_skin(vec![[0; 4]; 2], weights.clone())
+            .expect_err("two joint sets for three vertices");
+        let short_weights = mesh()
+            .with_skin(joints.clone(), vec![[1.0, 0.0, 0.0, 0.0]; 4])
+            .expect_err("four weight sets for three vertices");
+        let skinned = mesh()
+            .with_skin(joints.clone(), weights.clone())
+            .expect("one per vertex");
+
+        assert!(
+            matches!(
+                short_joints,
+                WorldMeshError::ChannelLengthMismatch {
+                    channel: "joints",
+                    expected: 3,
+                    actual: 2
+                }
+            ),
+            "got {short_joints:?}"
+        );
+        assert!(
+            matches!(
+                short_weights,
+                WorldMeshError::ChannelLengthMismatch {
+                    channel: "weights",
+                    expected: 3,
+                    actual: 4
+                }
+            ),
+            "got {short_weights:?}"
+        );
+        assert_eq!(skinned.skin(), Some((&joints[..], &weights[..])));
+        assert_eq!(skinned.indices(), [0, 1, 2]);
     }
 
     #[test]

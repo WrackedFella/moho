@@ -1,10 +1,11 @@
 # Rendering
 
 **Source:** `moho_render_api/src/` (`world_geometry.rs`, `texture.rs`), `moho_renderer/src/` (`scene.rs`, `sky.rs`,
-`world_meshes.rs`, `textures.rs`, `markers.rs`, `renderer.rs`, `render_ops/`, `shadow.rs`, `ssao.rs`, `tone_map.rs`, `ui_pass/`), `moho_render_api/src/ui_paint.rs`, `moho_render_api/src/marker.rs`, `flagstone/src/app/world_geometry.rs`, `flagstone/src/app/cut_caps.rs`, `flagstone/src/app/view_level.rs`, `flagstone_voxel/src/mesh/cap.rs`,
+`world_meshes.rs`, `skinning.rs`, `textures.rs`, `markers.rs`, `renderer.rs`, `render_ops/`, `shadow.rs`, `ssao.rs`, `tone_map.rs`, `ui_pass/`), `moho_render_api/src/ui_paint.rs`, `moho_render_api/src/marker.rs`, `flagstone/src/app/world_geometry.rs`, `flagstone/src/app/cut_caps.rs`, `flagstone/src/app/view_level.rs`, `flagstone_voxel/src/mesh/cap.rs`,
 `shaders/`, `moho_level/src/`.
 **Decisions:** [ADR-0001](../../_todo/adr/0001-render-api-boundary.md),
-[ADR-0013](../../_todo/adr/0013-ui-reaches-the-renderer-as-paint-data.md).
+[ADR-0013](../../_todo/adr/0013-ui-reaches-the-renderer-as-paint-data.md),
+[ADR-0030](../../_todo/adr/0030-skinned-meshes-are-skinned-once-per-frame.md).
 
 ## 1 Boundary
 
@@ -68,6 +69,15 @@ placements of a mesh into one instanced draw and clears them before `begin_frame
 frame skipped for a lost surface consumes them too. Placed meshes cast and receive shadows
 and take part in SSAO like static ones, and never touch physics. Normals use the cofactor
 of the placement's upper 3x3 (`normal_to_world`, 2.2), so non-uniform scale lights correctly.
+
+A rigged mesh carries a skin: `WorldMesh::with_skin` adds four joint indices and weights per
+vertex (`skin()` reads them back). `WorldMeshes::place_skinned(id, transform, material,
+texture, palette)` adds a placement for the frame posed by a model-space palette, one
+`Affine3A` per joint (`Model::joint_palette`). On `flush` a palette shorter than the mesh's
+highest joint plus one drops the placement with a warning. `Scene::render` hands each one to
+`RendererBackend::enqueue_skinned_draw` as three-row joint matrices (`joint_rows`); the default
+implementation draws the bind pose. See 5.2 for how the renderer skins
+([ADR-0030](../../_todo/adr/0030-skinned-meshes-are-skinned-once-per-frame.md)).
 
 The binary adapts voxel chunks in `flagstone/src/app/world_geometry.rs`: `chunk_mesh_id` packs
 the chunk position at 21 bits per signed axis, `chunk_world_mesh` converts a
@@ -213,22 +223,35 @@ model, a clip and a time; it never changes the model.
   clamps to `[0, duration]`.
 - `posed_placements(root, &pose)` is `placements` with posed nodes, so a rigid mesh on an
   animated node (a magazine) draws through 2.2's path; it lists skinned meshes too, which the
-  game skips until a skinned draw exists. `joint_palette(skin, &pose)` is
-  `pose[joint] * inverse_bind` per joint in model space, the data a skinned draw uploads; the
-  renderer has no skinned draw yet.
+  game places with `place_skinned` instead (section 2, 5.2). `joint_palette(skin, &pose)` is
+  `pose[joint] * inverse_bind` per joint in model space, the palette a skinned placement takes.
 
 The game glue, one player per character, each tick or frame:
 
 ```rust
+// Load time: a skinned mesh uploads once with its skin.
+for (mesh, &id) in model.meshes().iter().zip(&ids) {
+    let upload = match &mesh.skin {
+        Some(s) => mesh.mesh.clone().with_skin(s.joints.clone(), s.weights.clone())?,
+        None => mesh.mesh.clone(),
+    };
+    world_meshes.upsert_movable(id, upload);
+}
+
+// Each frame:
 player.advance(&model, dt);
 let pose = player.pose(&model);
-// Rigid meshes only: a skinned mesh placed here would draw unbent at its node.
+// Rigid meshes on their posed nodes; skinned meshes at the root with their palette.
 for (i, t) in model.posed_placements(root, &pose) {
-    if model.meshes()[i].skin.is_none() {
-        world_meshes.place(ids[i], t, mats[i]);
+    let mesh = &model.meshes()[i];
+    match &mesh.skin {
+        None => world_meshes.place(ids[i], t, mats[i]),
+        Some(s) => {
+            let palette = model.joint_palette(s.skin, &pose);
+            world_meshes.place_skinned(ids[i], root, mats[i], texture_of(mesh), &palette);
+        }
     }
 }
-let palette = model.joint_palette(skin, &pose); // for the skinned draw
 ```
 
 ### 2.5 Base-colour textures
@@ -342,7 +365,8 @@ command encoder:
 
 ```mermaid
 flowchart LR
-    A["flatten instances<br/>upload to instance buffer"] --> B["shadow passes<br/>shadow_ops"]
+    A["flatten instances<br/>upload to instance buffer"] --> S["skinning compute<br/>skipped when none (5.2)"]
+    S --> B["shadow passes<br/>shadow_ops"]
     B --> C["main pass into HDR target<br/>skybox, then geometry<br/>main_pass_ops"]
     C --> L["bloom chain<br/>prefilter, downsample, upsample<br/>skipped when Off"]
     L --> T["tone-map pass<br/>HDR target + bloom to swapchain"]
@@ -354,7 +378,7 @@ flowchart LR
 
 The egui UI is drawn by the UI pass from paint data (below); `finish_frame` only submits
 and presents. Shader sources are `shaders/*.wgsl` (`common`, `sky`, `vertex`,
-`fragment`, `shadow`, `skybox`, `gtao`, `ssao_blur`, `pcss`, `instance`, `ui`, `marker`, `bloom`, `tonemap`).
+`normal`, `skin`, `fragment`, `shadow`, `skybox`, `gtao`, `ssao_blur`, `pcss`, `instance`, `ui`, `marker`, `bloom`, `tonemap`).
 
 The skybox and main pipelines render into an `Rgba16Float` HDR target (`tone_map::HdrTarget`,
 recreated on resize), not the swapchain. `bloom::BloomChain` (`shaders/bloom.wgsl`, after
@@ -409,6 +433,21 @@ Block light adds on top, so torches and emissive blocks light caves and night su
 leaves dark. A surface with no block light (entity meshes, level files) draws as sky
 exposure alone. Block light next to a strong emitter can push a channel past 1;
 `BLOCK_LIGHT_GAIN` (1.0) is the tuning knob.
+
+### 5.2 Skinning
+
+`moho_renderer/src/skinning.rs` skins each skinned placement once per frame, so no pipeline
+has a skinned variant. `register_skin` uploads a mesh's joints and weights beside its vertex
+buffer. `enqueue_skinned_draw` queues the placement's palette and reserves a slice of the
+frame vertex arena. `submit_frame` records the compute pass (`shaders/skin.wgsl`, one
+dispatch per placement) before the shadow passes; the arena grows to fit and is reset by
+`end_frame`. Draws then read their vertices through `DrawKey::source`
+(`VertexSource::Mesh` or `VertexSource::Arena`), with the mesh's own index buffer and the
+placement's root transform as the instance model, in the shadow and main passes alike.
+
+The shader rewrites position and normal (`normal_to_world` from `shaders/normal.wgsl`, shared
+with `vertex.wgsl`) and copies every other vertex word, so a `Vertex` layout change needs no
+skinning edit. Four influences per vertex.
 
 ## 6 Markers
 

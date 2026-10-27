@@ -3,7 +3,7 @@
 use crate::RendererBackend;
 use crate::textures::WHITE_TEXTURE;
 use moho_render_api::{InstanceGpu, Rgba8Image, TextureId, WorldMesh, WorldMeshId};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// How a mesh draws: once at identity, or only where placed.
 #[derive(Debug, Clone, Copy)]
@@ -20,6 +20,8 @@ type Pending = Option<(WorldMesh, Kind)>;
 struct Live {
     handle: u32,
     kind: Kind,
+    /// For a skinned mesh, the shortest palette that covers its joints.
+    palette_len: Option<usize>,
 }
 
 /// One placement: where, in which material, and with which texture (`None` is white).
@@ -30,6 +32,24 @@ struct Placement {
     texture: Option<TextureId>,
 }
 
+#[derive(Debug)]
+struct SkinnedPlacement {
+    id: WorldMeshId,
+    placement: Placement,
+    palette: Vec<glam::Affine3A>,
+}
+
+/// An instance of a mesh at `model`; object type 0 is terrain, so the fragment shader
+/// colours by normal.
+fn instance(model: glam::Mat4, material: u32) -> InstanceGpu {
+    InstanceGpu {
+        model: model.to_cols_array_2d(),
+        material,
+        object_type: 0,
+        padding: [0, 0],
+    }
+}
+
 /// Queues world-mesh and texture changes and applies them to a backend on `flush`.
 ///
 /// Live meshes are kept in id order so the draw order is deterministic.
@@ -38,6 +58,11 @@ pub struct WorldMeshes {
     live: BTreeMap<WorldMeshId, Live>,
     pending: BTreeMap<WorldMeshId, Pending>,
     placements: BTreeMap<WorldMeshId, Vec<Placement>>,
+    /// Skinned placements in call order.
+    skinned: Vec<SkinnedPlacement>,
+    /// Mesh ids already warned about, so a bad skinned placement warns once, not per frame;
+    /// an upsert or remove of the id forgets it.
+    warned: BTreeSet<WorldMeshId>,
     /// Backend handle of each uploaded texture.
     live_textures: BTreeMap<TextureId, u32>,
     /// A texture waiting for the next `flush`; `None` is a queued remove.
@@ -81,6 +106,30 @@ impl WorldMeshes {
         });
     }
 
+    /// Append a placement of the skinned mesh under `id` for this frame, posed by `palette`
+    /// (one model-space matrix per joint, as `Model::joint_palette` gives it; copied).
+    ///
+    /// Drawn through [`skinned_draws`](Self::skinned_draws). On `flush`, a palette shorter
+    /// than the mesh's highest joint plus one drops the placement with a warning.
+    pub fn place_skinned(
+        &mut self,
+        id: WorldMeshId,
+        transform: glam::Affine3A,
+        material: u32,
+        texture: Option<TextureId>,
+        palette: &[glam::Affine3A],
+    ) {
+        self.skinned.push(SkinnedPlacement {
+            id,
+            placement: Placement {
+                transform,
+                material,
+                texture,
+            },
+            palette: palette.to_vec(),
+        });
+    }
+
     /// Queue adding or replacing the texture under `id`; replacing unregisters the old
     /// handle on `flush`.
     pub fn upsert_texture(&mut self, id: TextureId, image: Rgba8Image) {
@@ -111,6 +160,7 @@ impl WorldMeshes {
     /// Drop every placement; the renderer calls this each frame.
     pub fn clear_placements(&mut self) {
         self.placements.clear();
+        self.skinned.clear();
     }
 
     /// Queue removing the mesh under `id`.
@@ -118,8 +168,9 @@ impl WorldMeshes {
         self.pending.insert(id, None);
     }
 
-    /// Apply queued changes: register new meshes and textures, unregister replaced or
-    /// removed ones.
+    /// Apply queued changes: register new meshes, skins and textures, unregister replaced or
+    /// removed ones, then drop skinned placements whose palette is too short for their mesh
+    /// (one warning per mesh id).
     pub fn flush(&mut self, backend: &mut dyn RendererBackend) {
         for (id, change) in std::mem::take(&mut self.pending_textures) {
             if let Some(old) = self.live_textures.remove(&id) {
@@ -131,6 +182,7 @@ impl WorldMeshes {
             }
         }
         for (id, change) in std::mem::take(&mut self.pending) {
+            self.warned.remove(&id);
             if let Some(old) = self.live.remove(&id) {
                 backend.unregister_mesh(old.handle);
             }
@@ -146,8 +198,45 @@ impl WorldMeshes {
                 (None, Kind::Movable) => Vec::new(),
             };
             let handle = backend.register_world_mesh(&mesh, &material);
-            self.live.insert(id, Live { handle, kind });
+            let palette_len = mesh.skin().map(|(joints, weights)| {
+                backend.register_skin(handle, joints, weights);
+                crate::skinning::palette_len(joints)
+            });
+            self.live.insert(
+                id,
+                Live {
+                    handle,
+                    kind,
+                    palette_len,
+                },
+            );
         }
+        self.skinned.retain(|skinned| {
+            let Some(live) = self.live.get(&skinned.id) else {
+                return true;
+            };
+            let Some(needed) = live.palette_len else {
+                if self.warned.insert(skinned.id) {
+                    tracing::warn!(
+                        mesh_id = skinned.id.0,
+                        "skinned placement of a mesh with no skin; placement not drawn"
+                    );
+                }
+                return false;
+            };
+            if skinned.palette.len() >= needed {
+                return true;
+            }
+            if self.warned.insert(skinned.id) {
+                tracing::warn!(
+                    mesh_id = skinned.id.0,
+                    joints = skinned.palette.len(),
+                    needed,
+                    "palette shorter than the mesh's joints; placement not drawn"
+                );
+            }
+            false
+        });
     }
 
     /// Instances as `(backend handle, instance)`: each static mesh at identity, then
@@ -161,13 +250,6 @@ impl WorldMeshes {
     /// instance)`. The texture handle is 0, the white default, for statics, for
     /// [`place`](Self::place) and for a texture id that is not live.
     pub fn textured_draws(&self) -> impl Iterator<Item = (u32, u32, InstanceGpu)> + '_ {
-        // object_type 0: terrain, the fragment shader colours by normal
-        let instance = |model: glam::Mat4, material: u32| InstanceGpu {
-            model: model.to_cols_array_2d(),
-            material,
-            object_type: 0,
-            padding: [0, 0],
-        };
         let statics = self.live.values().filter_map(move |live| match live.kind {
             Kind::Static { material_idx } => Some((
                 live.handle,
@@ -180,16 +262,40 @@ impl WorldMeshes {
             let handle = self.live.get(id).map(|live| live.handle);
             handle.into_iter().flat_map(move |handle| {
                 placements.iter().map(move |placement| {
-                    let texture = placement
-                        .texture
-                        .and_then(|t| self.live_textures.get(&t).copied())
-                        .unwrap_or(WHITE_TEXTURE);
+                    let texture = self.texture_handle(placement.texture);
                     let model = glam::Mat4::from(placement.transform);
                     (handle, texture, instance(model, placement.material))
                 })
             })
         });
         statics.chain(placed)
+    }
+
+    /// Skinned placements of live skinned meshes in call order, as `(mesh handle, texture
+    /// handle, instance, palette)`. The instance's model is the placement's root; the
+    /// texture handle is 0, the white default, for [`None`] and for a texture id that is
+    /// not live.
+    pub fn skinned_draws(
+        &self,
+    ) -> impl Iterator<Item = (u32, u32, InstanceGpu, &[glam::Affine3A])> + '_ {
+        self.skinned.iter().filter_map(move |skinned| {
+            let live = self.live.get(&skinned.id)?;
+            live.palette_len?;
+            let placement = &skinned.placement;
+            let model = glam::Mat4::from(placement.transform);
+            Some((
+                live.handle,
+                self.texture_handle(placement.texture),
+                instance(model, placement.material),
+                skinned.palette.as_slice(),
+            ))
+        })
+    }
+
+    fn texture_handle(&self, texture: Option<TextureId>) -> u32 {
+        texture
+            .and_then(|t| self.live_textures.get(&t).copied())
+            .unwrap_or(WHITE_TEXTURE)
     }
 }
 
@@ -198,6 +304,9 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
     use std::collections::{BTreeMap, BTreeSet};
+
+    /// One `register_skin` call: mesh handle, joints, weights.
+    type SkinCall = (u32, Vec<[u16; 4]>, Vec<[f32; 4]>);
 
     /// Records register/unregister calls. Handles start at 1 and are never reused,
     /// so a stale handle can't be mistaken for a live one.
@@ -212,6 +321,8 @@ mod tests {
         /// Each `register_texture` call as `(handle, image)`; handles start at 100.
         textures: Vec<(u32, Rgba8Image)>,
         unregistered_textures: Vec<u32>,
+        /// Each `register_skin` call as `(mesh handle, joints, weights)`.
+        skins: Vec<SkinCall>,
     }
 
     /// The channel slices of one `register_indexed_mesh` call, named as the
@@ -357,6 +468,9 @@ mod tests {
         }
         fn unregister_texture(&mut self, texture: u32) {
             self.unregistered_textures.push(texture);
+        }
+        fn register_skin(&mut self, mesh: u32, joints: &[[u16; 4]], weights: &[[f32; 4]]) {
+            self.skins.push((mesh, joints.to_vec(), weights.to_vec()));
         }
         fn begin_frame(
             &mut self,
@@ -1027,6 +1141,332 @@ mod tests {
         meshes.place_textured(A, at(2.0), 0, FUR);
         let handles: Vec<u32> = textured(&meshes).iter().map(|(_, t, _)| *t).collect();
         assert_eq!(handles, vec![0, fur], "the removed texture draws white");
+    }
+
+    /// A three-vertex mesh whose second vertex is bound to `highest_joint`.
+    fn skinned_mesh(highest_joint: u16) -> WorldMesh {
+        mesh(1)
+            .with_skin(
+                vec![[0, 0, 0, 0], [highest_joint, 0, 0, 0], [0, 0, 0, 0]],
+                vec![[1.0, 0.0, 0.0, 0.0]; 3],
+            )
+            .expect("one joint set and weight set per vertex")
+    }
+
+    /// `count` joints, joint `j` translated by `(j, lift, 0)`.
+    fn palette(count: u16, lift: f32) -> Vec<glam::Affine3A> {
+        (0..count)
+            .map(|j| glam::Affine3A::from_translation(glam::Vec3::new(f32::from(j), lift, 0.0)))
+            .collect()
+    }
+
+    type SkinnedDraw = (u32, u32, InstanceGpu, Vec<glam::Affine3A>);
+
+    fn skinned(meshes: &WorldMeshes) -> Vec<SkinnedDraw> {
+        meshes
+            .skinned_draws()
+            .map(|(mesh, texture, instance, palette)| (mesh, texture, instance, palette.to_vec()))
+            .collect()
+    }
+
+    /// Runs `run` and returns its result with what `tracing` wrote meanwhile.
+    fn logged<T>(run: impl FnOnce() -> T) -> (T, String) {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+
+        struct Sink(Arc<Mutex<Vec<u8>>>);
+        impl Write for Sink {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().expect("log sink").extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let writer = Arc::clone(&buffer);
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || Sink(Arc::clone(&writer)))
+            .with_ansi(false)
+            .finish();
+        let result = tracing::subscriber::with_default(subscriber, run);
+        let bytes = buffer.lock().expect("log sink").clone();
+        (
+            result,
+            String::from_utf8(bytes).expect("log output is utf-8"),
+        )
+    }
+
+    #[test]
+    fn a_skinned_placement_yields_its_palette_in_order() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, skinned_mesh(2));
+        meshes.upsert_texture(SKIN, texture(10));
+        meshes.flush(&mut backend);
+        let turned = vec![
+            at(1.0),
+            glam::Affine3A::from_rotation_z(std::f32::consts::FRAC_PI_2),
+            at(-3.0),
+        ];
+
+        meshes.place_skinned(A, at(4.0), 6, Some(SKIN), &turned);
+
+        let drawn = skinned(&meshes);
+        assert_eq!(drawn.len(), 1);
+        let (handle, texture_handle, instance, yielded) = &drawn[0];
+        assert_eq!(*handle, backend.handle_with_index_count(3));
+        assert_eq!(*texture_handle, backend.texture_handle(&texture(10)));
+        assert_eq!(
+            instance.model,
+            model_of(at(4.0)),
+            "the root is the instance model"
+        );
+        assert_eq!(instance.material, 6);
+        assert_eq!(*yielded, turned, "joint order is the palette order");
+        assert!(
+            draws(&meshes).is_empty(),
+            "a skinned placement is not a plain draw"
+        );
+        assert!(textured(&meshes).is_empty());
+    }
+
+    #[test]
+    fn a_skinned_placement_without_a_texture_draws_white() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, skinned_mesh(1));
+        meshes.flush(&mut backend);
+
+        meshes.place_skinned(A, at(1.0), 0, None, &palette(2, 0.0));
+
+        let drawn = skinned(&meshes);
+        assert_eq!(drawn.len(), 1);
+        assert_eq!(drawn[0].1, 0, "the white default texture");
+    }
+
+    #[test]
+    fn two_skinned_placements_of_one_mesh_register_it_and_its_skin_once() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, skinned_mesh(2));
+        let (near, far) = (palette(3, 0.0), palette(3, 7.0));
+
+        for frame in 0..2 {
+            meshes.place_skinned(A, at(1.0), 0, None, &near);
+            meshes.place_skinned(A, at(2.0), 0, None, &far);
+            meshes.flush(&mut backend);
+
+            let drawn = skinned(&meshes);
+            let handle = backend.handle_with_index_count(3);
+            assert_eq!(drawn.len(), 2, "frame {frame}");
+            assert_eq!((drawn[0].0, drawn[1].0), (handle, handle), "frame {frame}");
+            assert_eq!(drawn[0].2.model, model_of(at(1.0)));
+            assert_eq!(drawn[1].2.model, model_of(at(2.0)));
+            assert_eq!((&drawn[0].3, &drawn[1].3), (&near, &far), "frame {frame}");
+            meshes.clear_placements();
+        }
+
+        assert_eq!(backend.registered.len(), 1, "the mesh uploads once");
+        assert_eq!(
+            backend.skins,
+            vec![(
+                backend.handle_with_index_count(3),
+                vec![[0, 0, 0, 0], [2, 0, 0, 0], [0, 0, 0, 0]],
+                vec![[1.0, 0.0, 0.0, 0.0]; 3],
+            )],
+            "the skin is registered once, against the mesh handle"
+        );
+    }
+
+    #[test]
+    fn a_mesh_without_a_skin_registers_no_skin() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.upsert(B, mesh(2), 0);
+
+        meshes.flush(&mut backend);
+
+        assert!(backend.skins.is_empty());
+    }
+
+    #[test]
+    fn a_palette_shorter_than_the_meshs_joints_is_not_drawn() {
+        let hero = WorldMeshId(4242);
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(hero, skinned_mesh(3));
+        meshes.upsert_movable(B, skinned_mesh(1));
+        meshes.flush(&mut backend);
+        let full = palette(4, 0.0);
+        let other = palette(2, 0.0);
+
+        meshes.place_skinned(hero, at(1.0), 0, None, &palette(3, 0.0));
+        meshes.place_skinned(hero, at(2.0), 0, None, &full);
+        meshes.place_skinned(hero, at(3.0), 0, None, &palette(0, 0.0));
+        meshes.place_skinned(B, at(4.0), 0, None, &other);
+        meshes.place(B, at(5.0), 0);
+        let ((), log) = logged(|| meshes.flush(&mut backend));
+
+        let xs: Vec<f32> = skinned(&meshes).iter().map(|d| d.2.model[3][0]).collect();
+        assert_eq!(
+            xs,
+            vec![2.0, 4.0],
+            "only the placements with enough joints draw"
+        );
+        assert_eq!(draws(&meshes).len(), 1, "plain placements are unaffected");
+        assert_eq!(
+            log.matches("WARN").count(),
+            1,
+            "one warning per mesh id, however many placements are short: {log}"
+        );
+        assert!(log.contains("4242"), "the warning names the mesh id: {log}");
+    }
+
+    #[test]
+    fn replacing_a_skinned_mesh_with_an_unskinned_one_stops_its_skinned_draws() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, skinned_mesh(1));
+        meshes.flush(&mut backend);
+        meshes.place_skinned(A, at(1.0), 0, None, &palette(2, 0.0));
+        assert_eq!(skinned(&meshes).len(), 1);
+        let old = backend.handle_with_index_count(3);
+        meshes.clear_placements();
+
+        meshes.upsert_movable(A, mesh(2));
+        meshes.flush(&mut backend);
+        meshes.place_skinned(A, at(1.0), 0, None, &palette(2, 0.0));
+        meshes.flush(&mut backend);
+
+        assert!(skinned(&meshes).is_empty());
+        assert_eq!(backend.unregistered, vec![old]);
+    }
+
+    #[test]
+    fn a_removed_skinned_mesh_draws_nothing() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, skinned_mesh(1));
+        meshes.flush(&mut backend);
+
+        meshes.remove(A);
+        meshes.flush(&mut backend);
+        meshes.place_skinned(A, at(1.0), 0, None, &palette(2, 0.0));
+        meshes.flush(&mut backend);
+
+        assert!(skinned(&meshes).is_empty());
+    }
+
+    #[test]
+    fn a_short_palette_placed_in_the_upload_frame_is_dropped_at_that_flush() {
+        let hero = WorldMeshId(4242);
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+
+        meshes.upsert_movable(hero, skinned_mesh(3));
+        meshes.place_skinned(hero, at(1.0), 0, None, &palette(3, 0.0));
+        let ((), log) = logged(|| meshes.flush(&mut backend));
+
+        assert!(skinned(&meshes).is_empty());
+        assert_eq!(log.matches("WARN").count(), 1, "{log}");
+        assert!(log.contains("4242"), "the warning names the mesh id: {log}");
+    }
+
+    #[test]
+    fn a_short_palette_warns_once_per_mesh_not_every_frame() {
+        let hero = WorldMeshId(4242);
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(hero, skinned_mesh(3));
+        let short = palette(3, 0.0);
+
+        let (frames, log) = logged(|| {
+            let mut frames = Vec::new();
+            for _ in 0..3 {
+                meshes.place_skinned(hero, at(1.0), 0, None, &short);
+                meshes.flush(&mut backend);
+                frames.push(skinned(&meshes).len());
+                meshes.clear_placements();
+            }
+            frames
+        });
+
+        assert_eq!(frames, vec![0, 0, 0], "a short palette never draws");
+        assert_eq!(
+            log.matches("WARN").count(),
+            1,
+            "one warning per mesh, not per frame: {log}"
+        );
+        assert!(log.contains("4242"), "the warning names the mesh id: {log}");
+
+        meshes.upsert_movable(hero, skinned_mesh(3));
+        let ((), again) = logged(|| {
+            meshes.flush(&mut backend);
+            meshes.place_skinned(hero, at(1.0), 0, None, &short);
+            meshes.flush(&mut backend);
+        });
+
+        assert!(skinned(&meshes).is_empty());
+        assert_eq!(
+            again.matches("WARN").count(),
+            1,
+            "a replaced mesh warns afresh: {again}"
+        );
+        assert!(again.contains("4242"), "{again}");
+    }
+
+    #[test]
+    fn a_skinned_placement_of_an_unskinned_mesh_warns_once() {
+        let odd = WorldMeshId(7373);
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(odd, mesh(1));
+        meshes.flush(&mut backend);
+
+        let (frames, log) = logged(|| {
+            let mut frames = Vec::new();
+            for _ in 0..2 {
+                meshes.place_skinned(odd, at(1.0), 0, None, &palette(2, 0.0));
+                meshes.flush(&mut backend);
+                frames.push(skinned(&meshes).len());
+                meshes.clear_placements();
+            }
+            frames
+        });
+
+        assert_eq!(frames, vec![0, 0], "an unskinned mesh has no skinned draw");
+        assert_eq!(
+            log.matches("WARN").count(),
+            1,
+            "one warning in total: {log}"
+        );
+        assert!(log.contains("7373"), "the warning names the mesh id: {log}");
+    }
+
+    #[test]
+    fn replacing_a_skinned_mesh_registers_the_new_skin() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, skinned_mesh(1));
+        meshes.flush(&mut backend);
+        meshes.upsert_movable(A, skinned_mesh(3));
+        meshes.flush(&mut backend);
+
+        meshes.place_skinned(A, at(1.0), 0, None, &palette(2, 0.0));
+        let ((), log) = logged(|| meshes.flush(&mut backend));
+
+        let handles: Vec<u32> = backend.registered.iter().map(|(h, _)| *h).collect();
+        assert_eq!(backend.skins.len(), 2);
+        assert_eq!(backend.skins[0].0, handles[0]);
+        assert_eq!(backend.skins[0].1[1], [1, 0, 0, 0]);
+        assert_eq!(backend.skins[1].0, handles[1]);
+        assert_eq!(backend.skins[1].1[1], [3, 0, 0, 0]);
+        assert!(skinned(&meshes).is_empty(), "2 joints < 4 needed");
+        assert_eq!(log.matches("WARN").count(), 1, "{log}");
     }
 
     #[derive(Clone, Copy, Debug, PartialEq)]

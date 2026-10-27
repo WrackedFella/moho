@@ -29,8 +29,8 @@ mod marker;
 mod shaders;
 
 pub use shaders::{
-    bloom_shader_source, main_shader_source, skybox_shader_source, tonemap_shader_source,
-    ui_shader_source,
+    bloom_shader_source, main_shader_source, skin_shader_source, skybox_shader_source,
+    tonemap_shader_source, ui_shader_source,
 };
 
 use crate::types::{GpuInstance, Vertex};
