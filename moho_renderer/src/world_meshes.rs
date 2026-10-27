@@ -32,7 +32,6 @@ struct Placement {
     texture: Option<TextureId>,
 }
 
-/// A placement with a joint palette in model space.
 #[derive(Debug)]
 struct SkinnedPlacement {
     id: WorldMeshId,

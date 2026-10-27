@@ -125,7 +125,6 @@ struct RecordingRenderer {
     skinned: Vec<SkinnedCall>,
     /// Each `register_skin` call as `(mesh handle, joint sets, weight sets)`.
     skins: Vec<(u32, usize, usize)>,
-    /// How many times a mesh was uploaded.
     mesh_uploads: usize,
 }
 

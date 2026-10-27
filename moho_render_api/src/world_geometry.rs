@@ -65,14 +65,12 @@ pub struct WorldMesh {
     skin: Option<Skin>,
 }
 
-/// Per-vertex joint indices and their weights.
 #[derive(Clone, Debug)]
 struct Skin {
     joints: Vec<[u16; 4]>,
     weights: Vec<[f32; 4]>,
 }
 
-/// The joint and weight channels of a skinned mesh.
 type SkinChannels<'a> = (&'a [[u16; 4]], &'a [[f32; 4]]);
 
 impl WorldMesh {

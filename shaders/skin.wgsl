@@ -6,7 +6,6 @@
 override VERTEX_WORDS: u32;
 
 struct SkinParams {
-    // Vertices of the mesh.
     vertex_count: u32,
     // Arena index of this placement's first vertex.
     first_vertex: u32,

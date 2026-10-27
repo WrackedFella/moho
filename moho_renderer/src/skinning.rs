@@ -32,7 +32,6 @@ struct SkinParamsGpu {
     pad: u32,
 }
 
-/// A mesh's skin on the GPU.
 struct MeshSkin {
     bind_group: wgpu::BindGroup,
     vertex_count: u32,
@@ -229,7 +228,6 @@ impl Skinning {
         );
     }
 
-    /// Forget the skin of `mesh`.
     pub(crate) fn unregister(&mut self, mesh: u32) {
         self.skins.remove(&mesh);
     }
