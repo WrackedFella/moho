@@ -9,6 +9,7 @@ pub(crate) struct LoopRequests {
     pub(crate) paused: Option<bool>,
     pub(crate) speed: Option<SimSpeed>,
     pub(crate) window_mode: Option<WindowMode>,
+    pub(crate) window_size: Option<(u32, u32)>,
 }
 
 impl LoopRequests {

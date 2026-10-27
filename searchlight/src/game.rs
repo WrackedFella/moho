@@ -22,13 +22,17 @@ use searchlight_rules::{Grade, Lean, LeanSide};
 use winit::event::WindowEvent;
 use winit::window::{CursorGrabMode, Window};
 
+use moho_core::prefs::Prefs;
 use moho_ui_shell::host::input_of;
-use moho_ui_shell::{MenuEvent, Routing, UiLayers, UiShell, apply_engine_command};
+use moho_ui_shell::{
+    EngineSettings, MenuEvent, Routing, UiLayers, UiShell, apply_engine_command,
+    apply_engine_settings,
+};
 
 use crate::console_commands::{self, ConsoleCommand, GodModeArg};
 use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
-use crate::input::{SearchlightAction, SearchlightCommand, look_to_turn, resolve_lean};
+use crate::input::{SearchlightAction, SearchlightCommand, look_from, look_to_turn, resolve_lean};
 use crate::lean::{lean_offset, rolled_view_matrix};
 use crate::menu::{MenuAction, main_screen, pause_screen, settings_screen};
 use crate::mode::ArenaMode;
@@ -716,12 +720,7 @@ enum Screen {
 
 /// The mode the window opens in for a saved `mode`: both fullscreen kinds open borderless.
 pub fn start_window_mode(mode: moho_core::prefs::WindowMode) -> WindowMode {
-    match mode {
-        moho_core::prefs::WindowMode::Windowed => WindowMode::Windowed,
-        moho_core::prefs::WindowMode::Fullscreen | moho_core::prefs::WindowMode::Borderless => {
-            WindowMode::Borderless
-        }
-    }
+    moho_ui_shell::runtime_window_mode(mode)
 }
 
 /// The FPS prototype's game: one arena mode and the input that drives it.
@@ -748,6 +747,9 @@ pub struct SearchlightGame {
     /// A `fullscreen` command waiting for a frame, the first place a window mode can be
     /// requested.
     flip_window_pending: bool,
+    /// Engine settings waiting for a frame, the first place the renderer, audio and window can
+    /// be reached.
+    pending_settings: Option<EngineSettings>,
 }
 
 impl SearchlightGame {
@@ -767,6 +769,7 @@ impl SearchlightGame {
             forced_grade: None,
             debug_settings: None,
             flip_window_pending: false,
+            pending_settings: None,
         }
     }
 
@@ -811,20 +814,48 @@ impl SearchlightGame {
     /// Answers what the player chose on the menu screens since the last call.
     fn answer_menu(&mut self, ctx: &mut EventContext<'_>) {
         let events = self.stage.shell().menu_mut().take_events();
-        for MenuEvent::Chosen(action) in events {
-            match action {
-                MenuAction::Play | MenuAction::Resume => self.enter_play(),
-                MenuAction::Settings => self.stage.shell().menu_mut().push(settings_screen()),
-                MenuAction::Back => self.stage.shell().menu_mut().pop(),
-                MenuAction::Quit => ctx.request_exit(),
+        for event in events {
+            match event {
+                MenuEvent::Chosen(MenuAction::Play | MenuAction::Resume) => self.enter_play(),
+                MenuEvent::Chosen(MenuAction::Settings) => {
+                    let settings = self.debug_settings.as_ref().map_or_else(
+                        || EngineSettings::from_prefs(&Prefs::default()),
+                        |saved| EngineSettings::from_prefs(saved.prefs()),
+                    );
+                    self.stage
+                        .shell()
+                        .menu_mut()
+                        .push(settings_screen(settings));
+                }
+                MenuEvent::Chosen(MenuAction::Back) => self.stage.shell().menu_mut().pop(),
+                MenuEvent::Chosen(MenuAction::Quit) => ctx.request_exit(),
+                MenuEvent::SettingsApplied(settings) => self.settings_applied(settings),
             }
         }
     }
 
-    /// Starts in the god mode `settings` holds and saves every change to it.
+    /// Saves the applied `settings`, sets the look from them and queues them for the next frame,
+    /// which hands the renderer, audio and window theirs.
+    fn settings_applied(&mut self, settings: EngineSettings) {
+        if let Some(saved) = &mut self.debug_settings
+            && let Err(error) = saved.set_engine_settings(settings)
+        {
+            tracing::warn!(%error, "settings not saved");
+        }
+        self.input.set_look(look_from(
+            settings.mouse_sensitivity,
+            settings.mouse_smoothing,
+            settings.invert_mouse_y,
+        ));
+        self.pending_settings = Some(settings);
+    }
+
+    /// Starts in the god mode `settings` holds and saves every change to it. The engine settings
+    /// it holds apply on the first frame.
     #[must_use]
     pub fn with_debug_settings(mut self, settings: DebugSettings) -> Self {
         self.god_mode = settings.god_mode();
+        self.pending_settings = Some(EngineSettings::from_prefs(settings.prefs()));
         self.debug_settings = Some(settings);
         self
     }
@@ -1076,6 +1107,13 @@ impl Game for SearchlightGame {
         let engine_commands = self.stage.shell().console_mut().take_engine_commands();
         for command in &engine_commands {
             apply_engine_command(command, ctx);
+        }
+        if let Some(settings) = self.pending_settings.take() {
+            apply_engine_settings(&settings, ctx);
+            let mode = start_window_mode(settings.window_mode);
+            if mode != ctx.window_mode() {
+                self.window_mode_applied(mode);
+            }
         }
         if std::mem::take(&mut self.flip_window_pending) {
             let mode = ctx.window_mode().toggled();
@@ -2559,8 +2597,10 @@ mod tests {
             .menu_mut()
             .take_events()
             .into_iter()
-            .map(|MenuEvent::Chosen(action)| action)
-            .next()
+            .find_map(|event| match event {
+                MenuEvent::Chosen(action) => Some(action),
+                MenuEvent::SettingsApplied(_) => None,
+            })
     }
 
     /// The labels of the top menu screen's rows.
@@ -2570,7 +2610,10 @@ mod tests {
         screen
             .items
             .iter()
-            .map(|MenuItem::Button { label, .. }| label.clone())
+            .filter_map(|item| match item {
+                MenuItem::Button { label, .. } => Some(label.clone()),
+                MenuItem::Setting(_) | MenuItem::Apply => None,
+            })
             .collect()
     }
 
@@ -2897,7 +2940,8 @@ mod tests {
 
         press_keys(&mut game, &mut ctx, &[Key::ArrowDown, Key::Enter]);
         let settings_title = title(&game);
-        let back = row_point(&game, 0);
+        // Back is the last of Settings' twelve rows.
+        let back = [640.0, 668.0];
         click_at(&mut game, &mut ctx, back);
         game.event(&mut ctx, motion());
 
@@ -3315,7 +3359,10 @@ mod menu_tests {
         screen
             .items
             .iter()
-            .map(|MenuItem::Button { label, .. }| label.clone())
+            .filter_map(|item| match item {
+                MenuItem::Button { label, .. } => Some(label.clone()),
+                MenuItem::Setting(_) | MenuItem::Apply => None,
+            })
             .collect()
     }
 
@@ -3456,7 +3503,7 @@ mod menu_tests {
         for game in [&mut main, &mut paused] {
             press_keys(game, &mut ctx, &[Key::ArrowDown, Key::Enter]);
             let settings = (title(game), labels(game));
-            press_keys(game, &mut ctx, &[Key::Enter]);
+            press_keys(game, &mut ctx, &[Key::Escape]);
             let after_back = (title(game), labels(game));
             press_keys(game, &mut ctx, &[Key::Enter]);
             let reopened = title(game);
@@ -3559,6 +3606,522 @@ mod menu_tests {
         assert!(!menu_is_open(&game));
         assert_eq!(resumed.movement.forward, 0.0);
         assert_eq!(pressed_again.movement.forward, 1.0);
+    }
+}
+
+/// The Settings screen as the player drives it: through keys and the game's frames, with the
+/// prefs file and the renderer as the places a change shows.
+#[cfg(test)]
+mod settings_tests {
+    use std::time::Duration;
+
+    use moho_app::GameClock;
+    use moho_core::prefs::{Prefs, WindowMode as Saved};
+    use moho_input::bindings::ActionBindings;
+    use moho_ui_shell::{EngineSetting, MenuItem};
+    use winit::event::DeviceEvent;
+
+    use super::tests::game_with_a_moving_enemy;
+    use super::*;
+    use crate::input::build_action_map;
+
+    const SIZE: [f32; 2] = [1280.0, 720.0];
+    const PAUSE: [&str; 3] = ["Resume", "Settings", "Quit"];
+
+    /// Records the engine's quality calls; the draw calls do nothing.
+    #[derive(Default)]
+    struct QualityRenderer {
+        shadow: Vec<u8>,
+        ssao: Vec<u8>,
+    }
+
+    impl RendererBackend for QualityRenderer {
+        fn resize(&mut self, _width: u32, _height: u32) {}
+        fn register_mesh(&mut self, _vertices: &[[f32; 3]]) -> u32 {
+            0
+        }
+        fn register_indexed_mesh(
+            &mut self,
+            _vertices: &[[f32; 3]],
+            _normals: &[[f32; 3]],
+            _ao: &[f32],
+            _geometry_type: &[u32],
+            _light_level: &[f32],
+            _block_light_rgb: &[[f32; 3]],
+            _sky_exposed: &[f32],
+            _material: &[u32],
+            _indices: &[u32],
+        ) -> u32 {
+            0
+        }
+        fn unregister_mesh(&mut self, _mesh: u32) {}
+        fn begin_frame(
+            &mut self,
+            _camera: (Mat4, Mat4, Vec3),
+        ) -> Result<(), moho_renderer::FrameError> {
+            Ok(())
+        }
+        fn enqueue_draw(&mut self, _mesh: u32, _instances: &[InstanceGpu]) {}
+        fn submit_frame(&mut self) {}
+        fn set_materials(&mut self, _materials: &[MaterialGpu]) {}
+        fn update_lighting(&mut self, _lighting: LightingGpu) {}
+        fn add_point_light(&mut self, _p: Vec3, _c: Vec3, _intensity: f32, _range: f32) -> u32 {
+            0
+        }
+        fn remove_light(&mut self, _id: u32) -> bool {
+            true
+        }
+        fn set_light_position(&mut self, _id: u32, _position: Vec3) {}
+        fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
+        fn set_shadow_quality(&mut self, quality: u8) {
+            self.shadow.push(quality);
+        }
+        fn set_ssao_quality(&mut self, quality: u8) {
+            self.ssao.push(quality);
+        }
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct Requests {
+        paused: Option<bool>,
+        window_mode: Option<WindowMode>,
+        window_size: Option<(u32, u32)>,
+    }
+
+    fn run_frame(game: &mut SearchlightGame, renderer: &mut QualityRenderer) -> Requests {
+        let clock = GameClock::default();
+        let backend: &mut dyn RendererBackend = renderer;
+        let mut ctx = FrameContext::new(Duration::from_millis(16), &clock, Some(backend), None);
+        game.frame(&mut ctx, 0.5);
+        Requests {
+            paused: ctx.requested_paused(),
+            window_mode: ctx.requested_window_mode(),
+            window_size: ctx.requested_window_size(),
+        }
+    }
+
+    fn settings_file(dir: &tempfile::TempDir) -> PathBuf {
+        dir.path().join("searchlight.ini")
+    }
+
+    fn with_prefs(game: SearchlightGame, prefs: Prefs, path: &Path) -> SearchlightGame {
+        game.with_debug_settings(DebugSettings::new(prefs, path.to_path_buf()))
+    }
+
+    fn main_menu_game(prefs: Prefs, path: &Path) -> SearchlightGame {
+        with_prefs(game_with_a_moving_enemy().with_main_menu(), prefs, path)
+    }
+
+    fn playing_game(prefs: Prefs, path: &Path) -> SearchlightGame {
+        with_prefs(game_with_a_moving_enemy(), prefs, path)
+    }
+
+    fn game_prefs(game: &SearchlightGame) -> &Prefs {
+        game.debug_settings
+            .as_ref()
+            .expect("the game holds debug settings")
+            .prefs()
+    }
+
+    fn saved(path: &Path) -> Prefs {
+        assert!(path.exists(), "nothing was saved to {}", path.display());
+        let (prefs, warnings) = Prefs::load_from(path);
+        assert_eq!(warnings, vec![]);
+        prefs
+    }
+
+    fn press_keys(game: &mut SearchlightGame, ctx: &mut EventContext<'_>, keys: &[Key]) {
+        for &key in keys {
+            game.route_input(ctx, Input::Key(key), true, false);
+            game.route_input(ctx, Input::Key(key), false, false);
+        }
+    }
+
+    fn back_button() -> MenuItem<MenuAction> {
+        MenuItem::Button {
+            label: "Back".to_owned(),
+            action: MenuAction::Back,
+        }
+    }
+
+    fn focus_item(game: &SearchlightGame, item: &MenuItem<MenuAction>) {
+        let mut shell = game.stage.shell();
+        let menu = shell.menu_mut();
+        let screen = menu.top().expect("a menu screen is open");
+        let row = screen
+            .items
+            .iter()
+            .position(|candidate| candidate == item)
+            .expect("the screen lists the item");
+        let rect = moho_ui_shell::menu::layout(screen, SIZE)[row];
+        let centre = [
+            (rect.min[0] + rect.max[0]) / 2.0,
+            (rect.min[1] + rect.max[1]) / 2.0,
+        ];
+        menu.hover(centre, SIZE);
+    }
+
+    fn change(
+        game: &mut SearchlightGame,
+        ctx: &mut EventContext<'_>,
+        setting: EngineSetting,
+        keys: &[Key],
+    ) {
+        focus_item(game, &MenuItem::Setting(setting));
+        press_keys(game, ctx, keys);
+    }
+
+    fn click_apply(game: &mut SearchlightGame, ctx: &mut EventContext<'_>) {
+        focus_item(game, &MenuItem::Apply);
+        press_keys(game, ctx, &[Key::Enter]);
+    }
+
+    fn click_back(game: &mut SearchlightGame, ctx: &mut EventContext<'_>) {
+        focus_item(game, &back_button());
+        press_keys(game, ctx, &[Key::Enter]);
+    }
+
+    /// Opens Settings from the main menu, whose Settings row is its second.
+    fn open_settings_from_main_menu(game: &mut SearchlightGame, ctx: &mut EventContext<'_>) {
+        press_keys(game, ctx, &[Key::ArrowDown, Key::Enter]);
+        assert_eq!(title(game).as_deref(), Some("Settings"));
+    }
+
+    fn title(game: &SearchlightGame) -> Option<String> {
+        let mut shell = game.stage.shell();
+        let screen = shell.menu_mut().top().expect("a menu screen is open");
+        screen.title.clone()
+    }
+
+    fn labels(game: &SearchlightGame) -> Vec<String> {
+        let mut shell = game.stage.shell();
+        let screen = shell.menu_mut().top().expect("a menu screen is open");
+        screen
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                MenuItem::Button { label, .. } => Some(label.clone()),
+                MenuItem::Setting(_) | MenuItem::Apply => None,
+            })
+            .collect()
+    }
+
+    /// The look one mouse movement turns the game's input map into, leaving the map as it was.
+    fn look_of(map: &mut ActionMap<SearchlightAction>) -> (f32, f32) {
+        map.reset_look();
+        map.mouse_motion(40.0, 25.0);
+        map.sample_frame(Duration::from_millis(16));
+        let look = map.pending_look();
+        map.reset_look();
+        look
+    }
+
+    fn reference_map(prefs: &Prefs) -> ActionMap<SearchlightAction> {
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        build_action_map(bindings, prefs)
+    }
+
+    #[test]
+    fn settings_shows_the_saved_sensitivity() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut game = main_menu_game(
+            Prefs::default().with_mouse_sensitivity(2.5),
+            &settings_file(&dir),
+        );
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        open_settings_from_main_menu(&mut game, &mut ctx);
+
+        let mut shell = game.stage.shell();
+        let screen = shell.menu_mut().top().expect("Settings is open");
+        let mut expected: Vec<MenuItem<MenuAction>> = EngineSetting::ALL
+            .into_iter()
+            .map(MenuItem::Setting)
+            .collect();
+        expected.push(MenuItem::Apply);
+        expected.push(back_button());
+        assert_eq!(screen.items, expected, "the ten rows, Apply and Back");
+        assert_eq!(screen.back, Some(MenuAction::Back));
+        assert_eq!(
+            screen.settings.map(|settings| settings.mouse_sensitivity),
+            Some(2.5)
+        );
+    }
+
+    #[test]
+    fn a_change_before_apply_leaves_prefs_and_audio_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = settings_file(&dir);
+        let mut game = main_menu_game(Prefs::default(), &path);
+        let mut renderer = QualityRenderer::default();
+        run_frame(&mut game, &mut renderer);
+        let launch = (renderer.shadow.clone(), renderer.ssao.clone());
+        let look_before = look_of(&mut game.input);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_settings_from_main_menu(&mut game, &mut ctx);
+
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::MusicVolume,
+            &[Key::ArrowRight, Key::ArrowRight],
+        );
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::ShadowQuality,
+            &[Key::ArrowLeft],
+        );
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::WindowMode,
+            &[Key::ArrowRight],
+        );
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::InvertMouseY,
+            &[Key::Enter],
+        );
+        let requests = run_frame(&mut game, &mut renderer);
+
+        let prefs = game_prefs(&game);
+        assert_eq!(prefs.music_volume(), 6.0);
+        assert_eq!(prefs.shadow_quality(), 3);
+        assert_eq!(prefs.window_mode(), Saved::Windowed);
+        assert!(!prefs.invert_mouse_y());
+        assert!(!path.exists(), "an unapplied change was saved");
+        assert_eq!((renderer.shadow, renderer.ssao), launch);
+        assert_eq!(requests.window_mode, None);
+        assert_eq!(requests.window_size, None);
+        assert_eq!(look_of(&mut game.input), look_before);
+    }
+
+    #[test]
+    fn apply_sets_the_look_from_the_applied_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut game = main_menu_game(Prefs::default(), &settings_file(&dir));
+        let look_before = look_of(&mut game.input);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_settings_from_main_menu(&mut game, &mut ctx);
+        let mut applied = Prefs::default();
+        *applied.mouse_sensitivity_mut() = 10.0;
+        *applied.invert_mouse_y_mut() = true;
+
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::MouseSensitivity,
+            &[Key::ArrowRight; 80],
+        );
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::InvertMouseY,
+            &[Key::Enter],
+        );
+        click_apply(&mut game, &mut ctx);
+
+        let look = look_of(&mut game.input);
+        assert_ne!(look, look_before, "the look did not change");
+        assert_eq!(look, look_of(&mut reference_map(&applied)));
+    }
+
+    #[test]
+    fn saved_settings_apply_on_the_first_frame() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut prefs = Prefs::default();
+        prefs.set_shadow_quality(1);
+        prefs.set_ssao_quality(2);
+        prefs.set_window_resolution(1280, 720);
+        let mut game = main_menu_game(prefs, &settings_file(&dir));
+        let mut unconfigured = game_with_a_moving_enemy().with_main_menu();
+        let mut renderer = QualityRenderer::default();
+        let mut bare_renderer = QualityRenderer::default();
+
+        let first = run_frame(&mut game, &mut renderer);
+        let after_first = (renderer.shadow.clone(), renderer.ssao.clone());
+        let second = run_frame(&mut game, &mut renderer);
+        run_frame(&mut unconfigured, &mut bare_renderer);
+
+        assert_eq!(after_first, (vec![1], vec![2]));
+        assert_eq!(first.window_size, Some((1280, 720)));
+        assert_eq!((renderer.shadow, renderer.ssao), after_first);
+        assert_eq!(second.window_size, None, "the launch settings apply once");
+        assert_eq!(second.window_mode, None);
+        assert!(
+            bare_renderer.shadow.is_empty(),
+            "no saved settings, no apply"
+        );
+    }
+
+    #[test]
+    fn an_applied_change_reaches_the_renderer_and_window_on_the_next_frame() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = settings_file(&dir);
+        let mut game = main_menu_game(Prefs::default(), &path);
+        let mut renderer = QualityRenderer::default();
+        run_frame(&mut game, &mut renderer);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_settings_from_main_menu(&mut game, &mut ctx);
+
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::ShadowQuality,
+            &[Key::ArrowRight],
+        );
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::SsaoQuality,
+            &[Key::ArrowLeft],
+        );
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::WindowMode,
+            &[Key::ArrowRight],
+        );
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::Resolution,
+            &[Key::ArrowRight],
+        );
+        let before_apply = renderer.shadow.len();
+        click_apply(&mut game, &mut ctx);
+        let applied = run_frame(&mut game, &mut renderer);
+        let after = run_frame(&mut game, &mut renderer);
+
+        assert_eq!(before_apply, 1, "only the launch settings so far");
+        assert_eq!(renderer.shadow, vec![3, 4]);
+        assert_eq!(renderer.ssao, vec![3, 2]);
+        assert_eq!(applied.window_mode, Some(WindowMode::Borderless));
+        assert_eq!(applied.window_size, Some((2560, 1440)));
+        assert_eq!(after.window_size, None, "an applied value is taken once");
+        let reloaded = saved(&path);
+        assert_eq!(reloaded.shadow_quality(), 4);
+        assert_eq!(reloaded.ssao_quality(), 2);
+        assert_eq!(reloaded.window_mode(), Saved::Borderless);
+        assert_eq!(reloaded.window_resolution(), (2560, 1440));
+    }
+
+    #[test]
+    fn back_after_changing_window_mode_keeps_prefs_and_reopens_with_the_old_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = settings_file(&dir);
+        let mut game = main_menu_game(Prefs::default(), &path);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_settings_from_main_menu(&mut game, &mut ctx);
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::WindowMode,
+            &[Key::ArrowRight],
+        );
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::ShadowQuality,
+            &[Key::ArrowLeft],
+        );
+
+        click_back(&mut game, &mut ctx);
+        let after_back = (title(&game), game_prefs(&game).window_mode());
+        let saved_by_back = path.exists();
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        let reopened = {
+            let mut shell = game.stage.shell();
+            shell.menu_mut().top().and_then(|screen| screen.settings)
+        };
+        click_apply(&mut game, &mut ctx);
+
+        assert_eq!(after_back, (None, Saved::Windowed));
+        assert!(!saved_by_back, "Back saved the discarded change");
+        let reopened = reopened.expect("Settings reopened with its values");
+        assert_eq!(reopened.window_mode, Saved::Windowed);
+        assert_eq!(reopened.shadow_quality, 3);
+        let applied = saved(&path);
+        assert_eq!(applied.window_mode(), Saved::Windowed, "Apply after Back");
+        assert_eq!(applied.shadow_quality(), 3);
+    }
+
+    #[test]
+    fn apply_and_back_from_pause_settings_leave_the_game_paused() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut game = playing_game(Prefs::default(), &settings_file(&dir));
+        let mut renderer = QualityRenderer::default();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        press_keys(&mut game, &mut ctx, &[Key::Escape]);
+        assert_eq!(game.screen, Screen::Paused);
+        press_keys(&mut game, &mut ctx, &[Key::ArrowDown, Key::Enter]);
+        assert_eq!(title(&game).as_deref(), Some("Settings"));
+        let world = (game.sim().player(), game.sim().enemy_state(0));
+
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::SoundEffectVolume,
+            &[Key::ArrowLeft],
+        );
+        click_apply(&mut game, &mut ctx);
+        let after_apply = (game.screen, title(&game));
+        game.event(
+            &mut ctx,
+            Event::Device(DeviceEvent::MouseMotion { delta: (1.0, 1.0) }),
+        );
+        let paused_by_event = ctx.requested_paused();
+        let applied_frame = run_frame(&mut game, &mut renderer);
+        click_back(&mut game, &mut ctx);
+        let after_back = (game.screen, labels(&game));
+        let back_frame = run_frame(&mut game, &mut renderer);
+
+        assert_eq!(after_apply, (Screen::Paused, Some("Settings".to_owned())));
+        assert_eq!(paused_by_event, Some(true));
+        assert_eq!(applied_frame.paused, Some(true));
+        assert_eq!(
+            after_back,
+            (Screen::Paused, PAUSE.map(String::from).to_vec())
+        );
+        assert_eq!(back_frame.paused, Some(true));
+        assert_eq!((game.sim().player(), game.sim().enemy_state(0)), world);
+    }
+
+    #[test]
+    fn a_console_debug_value_survives_a_settings_apply() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = settings_file(&dir);
+        let mut game = main_menu_game(Prefs::default(), &path);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.stage.shell().console_mut().submit("tgm 1");
+        game.command();
+        open_settings_from_main_menu(&mut game, &mut ctx);
+
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::SoundEffectVolume,
+            &[Key::ArrowRight, Key::ArrowRight],
+        );
+        click_apply(&mut game, &mut ctx);
+        let after_apply = saved(&path);
+        game.stage.shell().console_mut().submit("tgm");
+        game.command();
+        let after_console = saved(&path);
+
+        assert_eq!(after_apply.sound_effect_volume(), 9.0);
+        assert_eq!(after_apply.debug_value("god_mode"), Some("1"));
+        assert_eq!(after_console.sound_effect_volume(), 9.0);
+        assert_eq!(after_console.debug_value("god_mode"), Some("0"));
     }
 }
 
