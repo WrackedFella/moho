@@ -46,9 +46,9 @@ flowchart LR
 | `wave` | `WaveTuning` (first wave size, growth per wave, points per kill, grade mix; zero size or growth is refused) and `WaveState` (running wave, enemies still to spawn, the wave's grades, score) as plain numbers, no physics |
 | `mode` | `ArenaMode`: the arena as a game mode. Owns a `SearchlightSim` started empty, scores its kills and spawns each wave's enemies, graded by the wave's mix, at free enemy markers |
 | `hud` | Text for rifle state, hits, health, death and the wave and score line; the hit-edge direction; the death overlay |
-| `menu` | The main (Play, Settings, Quit), pause (Resume, Settings, Quit) and settings (Back) screens as `moho_ui_shell::MenuScreen` values (`main_screen`, `pause_screen`, `settings_screen`); `MenuAction` is what choosing an item asks the game to do. Focus, hit-testing and drawing belong to the shell's `MenuStack` |
+| `menu` | The main (Play, Settings, Quit), pause (Resume, Settings, Quit) and settings (the engine's ten setting rows, Apply, Back) screens as `moho_ui_shell::MenuScreen` values (`main_screen`, `pause_screen`, `settings_screen(EngineSettings)`); `MenuAction` is what choosing an item asks the game to do. Focus, hit-testing and drawing belong to the shell's `MenuStack` |
 | `console_commands` | Builds the FPS `Console` from the game's `[bindings]`; the game's own commands register here (`tgm`, `fullscreen` and `grade`, parsed into `ConsoleCommand`) |
-| `debug_settings` | `DebugSettings`: the loaded `Prefs` and its path; reads and saves the game's `[debug]` values (`god_mode`) |
+| `debug_settings` | `DebugSettings`: the loaded `Prefs` and its path; reads and saves the game's `[debug]` values (`god_mode`); `set_engine_settings` writes the applied `EngineSettings` rows into the prefs and saves, keeping every other value |
 | `game` | `SearchlightGame`, the `moho_app::Game` implementation: samples look every frame while focused, playing and the console is closed (the camera draws the sim turned by the pending look, and `input::look_to_turn` is the one look mapping for command and camera), samples input, ticks the `ArenaMode`, turns `Feedback` into sound, title status line, hit flash, damage-direction edge, death tint and crosshair; asks the loop to pause while the shell captures input (console open) or a menu shows (main, pause or settings), so the sim freezes instead of ticking with an ignored command; while it does, `command()` still applies console commands but does not end the action-map tick, so the look already shown stays pending and is not lost |
 
 `SearchlightSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
@@ -86,7 +86,7 @@ like an open console, the action map is fed nothing and the cursor stays free; t
 cursor captured only when it starts in play. The menu screens live in the shell's `MenuStack` (`UiShell::menu_mut`), which
 takes every key and button while one is open (`Routing::Menu`) and tracks the cursor itself. Up and Down move the focus, Enter or a left click on a
 row chooses it, and hovering focuses. A choice becomes a `MenuEvent::Chosen` that the game drains in `answer_menu`: `Play` and `Resume` switch to `Playing` (clearing the stack), drop any held input, pending edges and
-look, and capture the cursor; `Quit` exits; `Settings` pushes the settings screen and `Back` pops it. Each main-menu frame hides the HUD and
+look, and capture the cursor; `Quit` exits; `Settings` pushes the settings screen, seeded from the saved prefs, and `Back` pops it, discarding unapplied changes. Apply arrives as `MenuEvent::SettingsApplied`: `settings_applied` saves the prefs (a failed save is logged; the values stay for the session), sets the mouse look from them and queues them in `pending_settings`; the next `frame()` runs `apply_engine_settings` (renderer qualities, audio volumes) and switches the window mode through `window_mode_applied` if it differs. The saved settings are queued the same way at construction, so they apply on the first frame. Each main-menu frame hides the HUD and
 title status and draws the stage backdrop instead of the
 arena scene, so the dormant sim is untouched.
 

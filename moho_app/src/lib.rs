@@ -98,6 +98,17 @@ impl<'a> FrameContext<'a> {
         self.requests.window_mode
     }
 
+    /// Asks the runner to resize the window to `width` by `height` physical pixels once this
+    /// frame is handled; the runner honours it only when the window ends up windowed.
+    pub fn set_window_size(&mut self, width: u32, height: u32) {
+        self.requests.window_size = Some((width, height));
+    }
+
+    /// The last window size the game asked for, as `(width, height)`, if it asked.
+    pub fn requested_window_size(&self) -> Option<(u32, u32)> {
+        self.requests.window_size
+    }
+
     pub(crate) fn headless(tick_length: Duration, clock: &'a GameClock) -> Self {
         Self::new(tick_length, clock, None, None)
     }
@@ -522,6 +533,23 @@ mod tests {
         assert_eq!(untouched, None);
         assert_eq!(capped, Some(NonZeroU32::new(144)));
         assert_eq!(uncapped, Some(None));
+    }
+
+    #[test]
+    fn frame_context_records_the_window_size_request() {
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(TICK, &clock, None, None);
+        let untouched = ctx.requested_window_size();
+
+        ctx.set_window_size(1280, 720);
+        let first = ctx.requested_window_size();
+        ctx.set_window_size(2560, 1440);
+        let second = ctx.requested_window_size();
+
+        assert_eq!(untouched, None);
+        assert_eq!(first, Some((1280, 720)));
+        assert_eq!(second, Some((2560, 1440)), "the last request wins");
+        assert_eq!(ctx.requested_window_mode(), None, "a size is not a mode");
     }
 
     #[test]

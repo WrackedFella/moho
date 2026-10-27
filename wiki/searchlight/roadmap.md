@@ -19,8 +19,9 @@ Milestone names follow ISO 2145: FPS-M*n* delivers GDD Phase *n*; FPS-M1.1 and F
 | FPS-M4 Wounds and healing | 4 | Does limb damage create good downtime? | none new |
 | FPS-M4.1 Grenades (mocked) | 4.1 | Does a throwable fit the item model? | none beyond runtime spawn and positional audio |
 | FPS-M5 Time, survival, rest | 5 | Do survival stats add pressure, not chores? | game clock scaling; save and load |
-| FPS-M6 Hub and jobs | 6 | Does profit-as-score change behavior? | level switching; save and load |
+| FPS-M6 Hub and missions | 6 | Does profit-as-score change behavior? | level switching; save and load |
 | FPS-M7 Director | 7 | Does the world feel alive on little machinery? | headless sim; navigation |
+| Later: generated maps | Later | Does assembly add variety the hand-made pool lacks? | assemble a level from pieces (GDD §10 item 13) |
 
 Order is the GDD's: systems arrive in the order they create costs, so the ledger has something to measure. Enemy AI lands in slices alongside the phases (GDD §7).
 
@@ -120,11 +121,12 @@ Runs in slices parallel to FPS-M2; needs no items or UI beyond one slider in the
 - **Decisions due:** GDD §9 Q8 (difficulty as complexity toggles) and Q2 (co-op timing).
 - **Cut lines:** temperature, disease, spoilage.
 
-## 10 FPS-M6 Hub and jobs (Phase 6)
+## 10 FPS-M6 Hub and missions (Phase 6)
 
-- **Outcome:** trader hub, job board, currency, full per-job ledger; the arena becomes the job site and waves and score retire from the default experience.
-- **Entry gate:** level switching carrying player state (§10 item 10), save and load. Needs a hub and one or two zone maps.
-- **Decisions due:** GDD §9 Q1 (setting), Q3 (pivot point), Q15 (starting backgrounds).
+- **Outcome:** trader hub, job board offering missions with their conditions shown, currency, full per-job ledger; the arena becomes the job site and waves and score retire from the default experience. Missions play on hand-made maps built on the modular kit, with random starts, exits, spawns and building slots, and loot by the GDD §4.13 rule (the place decides the pool, difficulty decides amount and ceiling).
+- **Entry gate:** level switching carrying player state (§10 item 10), save and load. Needs a hub and two mission maps, blocked out by hand on the kit; the kit's metrics are fixed with the first map (GDD §9 Q31).
+- **Decisions due:** GDD §9 Q1 (setting), Q3 (pivot point), Q15 (starting backgrounds), Q28 (mission persistence), Q29 (failed mission cost), Q30 (hub upgrades).
+- **Cut lines:** generated geometry (the later phase below), free parameter sliders, hub upgrades that raise stats, bespoke art.
 - **Earliest playable game:** the first milestone that is a game rather than a prototype; the cross-line v1 gate in the [roadmap](../roadmap.md#milestone-gates-that-span-lines) uses it.
 
 ## 11 FPS-M7 Director (Phase 7)
@@ -132,6 +134,13 @@ Runs in slices parallel to FPS-M2; needs no items or UI beyond one slider in the
 - **Outcome:** zone graph, factions, offline dice sim, daily planning, live handover; groups as the Director's unit.
 - **Entry gate:** headless sim (§10 item 11, ENG-F6 #233 related), navigation for live actors.
 - **Cut lines:** dialogue and diplomacy, emergent quests, more than about five zones. Highest pivot risk, so last.
+
+## 11.1 Later: generated maps
+
+- **Outcome:** mission maps assembled at load from kit modules cut from the hand-made maps (GDD §4.13, §5).
+- **Entry gate:** FPS-M6 played with the hand-made pool. Before cards, a spike assembles a few hundred metres of modules, builds navigation, times the load and lists seam failures.
+- **Engine:** assemble a level from pieces (GDD §10 item 13), filed as an engine request when this is drafted.
+- **Cut lines:** generated terrain, free-form layout outside the kit's connection points.
 
 ## 12 Engine requests from this line
 
@@ -143,10 +152,15 @@ The engine lane designs the answers.
 | #315 on-screen text | ENG-F18-09 #407 | FPS-M2 entry |
 | #316 seeded replayable RNG | ENG-F6-01 #335 | before FPS-M2 if it matters |
 | ENG-F16 #228 positional audio | ENG-F16 | enemy AI slice 2 (gunshots alert groups) |
-| ENG-F17 #229 navigation and cover queries | ENG-F17-01 and -02 (navigation); cover and exposure queries | enemy AI slice 2 |
+| ENG-F17 #229 navigation and cover queries | ENG-F17 navigation done; #229 is closed. Hidden routes and cover candidates are ENG-F42 [#638](https://github.com/WrackedFella/moho/issues/638) | enemy AI slice 2: FPS-F11-03 |
 | ENG-F19 #231 layered content | ENG-F19 | FPS-M2 entry |
 | ENG-F26 #359 key actions | ENG-F26 | FPS-M2; held-action toggles |
-| #543 skinned animated characters, bone attachments, sim-timed and layered clips | #543 | FPS-M2: FPS-M1.2 slice 3, FPS-F8 |
+| #543 skinned animated characters, bone attachments, sim-timed and layered clips | ENG-F39 [#635](https://github.com/WrackedFella/moho/issues/635): slices 1 to 3 (models with named nodes and textured materials, sockets, rig and clips) for FPS-M2; slices 4 to 6 (blends, sim-timed and interruptible clips, bone-to-bone and detach, first-person view) for FPS-M3.1 and FPS-M4 | FPS-M2: FPS-M1.2 slice 3, FPS-F8, FPS-F12 |
+| Meshes that move without re-upload (runtime spawn) | ENG-F38 [#634](https://github.com/WrackedFella/moho/issues/634), first in the ENG-M2 wave | FPS-M2: enemies, loose objects, models |
+| Muzzle flash, tracer and impact marks; later beam and dot, particles | ENG-F40 [#636](https://github.com/WrackedFella/moho/issues/636) | FPS-M2 gunplay feel; FPS-M3.1 laser |
+| Screen and sound follow game values (vignette, blur, handles, low-pass) | ENG-F41 [#637](https://github.com/WrackedFella/moho/issues/637) | FPS-M4 |
+| Markers carry their size, for volumes | ENG-F14-03 [#639](https://github.com/WrackedFella/moho/issues/639) | FPS-F10 test levels, FPS-M5 safe rooms |
+| List widgets with icons and counts, two panes, tooltips | comment on #444; drag grid is a later card | FPS-M2 list screens |
 | #544 lean and stance transitions, prone hull | #544 with ENG-F33 #492 (crouch and clearance) | FPS-M2: FPS-M1.2 slice 2 |
 | #600 loose objects fall, settle and are picked up | #600 (ENG-F34 #493 is related) | FPS-M2: FPS-F9-04 |
 | #615 ragdoll bodies | #615 | after FPS-M2: FPS-F9-05 (deferred) |
@@ -156,6 +170,7 @@ New requests come from FPS-M3 onward (workbench interaction, save kinds, level s
 ## 13 Prototype gate
 
 - **Scope:** FPS-M1 to FPS-M5, plus FPS-M1.2, FPS-M3.1 and FPS-M4.1; enemy grades and group tactics; placeholder art and animation (weapons, magazines, gear, player and enemy models; stand, crouch, prone, walk, run, crawl, lean, a ground clip for the injured) from free or generated assets; test levels with scripted states (FPS-F9, FPS-F10, plus a debug action per milestone: set a limb, set a survival meter, advance the clock).
-- **At the gate:** playtest, promote `dev` to `main`, and take the split to the Engine project. The plan is to split at FPS-M5 completion; the cross-line gate in the [roadmap](../roadmap.md#milestone-gates-that-span-lines) still names FPS-M6 and changes only when the Engine project agrees.
+- **At the gate:** playtest, promote `dev` to `main`, and take the split to the Engine project. The plan is to split at FPS-M5 completion; the Engine project agreed (2026-10-23): the last two FPS features before the split are FPS-M4.1 and FPS-M5, and the split is the later of FPS-M5 completion and the engine's own ENG-M3 gate ([roadmap](../roadmap.md#milestone-gates-that-span-lines)). Every engine item the prototype uses lands by FPS-M4, and level unload for FPS-M6 lands before the split.
 - **Cut order if time presses:** grenades (FPS-M4.1), then attachments (FPS-M3.1), then the fifth archetype.
-- **Critical path:** the engine requests #543, #544, #492 and #600 for FPS-M2.
+- **Critical path:** the engine wave for FPS-M2: ENG-F38 first, then #600 and ENG-F39 slices 1 to 3 in parallel, plus #544 and #492's crouch and clearance slices, pulled into ENG-M2.
+- **Settled in the lane triage:** marker values, the look-at ray, console commands (a slot-0 command under ENG-F37), scope zoom and reticle, and tagged volumes need no engine request; they are line work or already exist.

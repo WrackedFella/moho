@@ -49,7 +49,7 @@ triangles (`WorldMeshError`). A `WorldMeshId` is the game-chosen stable key. An 
 per-vertex `materials` channel (`with_materials`, one material-table index per vertex,
 one material per triangle) lets a single mesh draw in several materials; without it
 every vertex takes the `upsert` material. An optional `uvs` channel (`with_uvs`, one `[u, v]` per
-vertex) carries base-colour texture coordinates (2.3). The renderer uploads the channel as `Vertex::material`,
+vertex) carries base-colour texture coordinates (2.4). The renderer uploads the channel as `Vertex::material`,
 and `shaders/vertex.wgsl` uses it unless it is `u32::MAX`, which defers to the instance's
 material ([GPU ABI](../reference/gpu-abi.md)).
 
@@ -127,7 +127,7 @@ It shares the buffer rules and `LevelError` of 2.1, but keeps node structure ins
 
 - `Model` is immutable data: `ModelNode`s in walk order (name, parent index always lower than
   the node's own, `local` and `rest` transforms), `ModelMesh`es (a `WorldMesh` in node space, node
-  index, optional material index), `ModelMaterial`s (name, linear base colour, optional image index; 2.3)
+  index, optional material index), `ModelMaterial`s (name, linear base colour, optional image index; 2.4)
   and `ModelImage`s. No GPU handles,
   no per-instance state;
 - the game uploads each mesh once as movable and, each frame, places it at the transform
@@ -159,7 +159,32 @@ for (i, t) in model.placements(root) {
 }
 ```
 
-### 2.3 Base-colour textures
+### 2.3 Sockets
+
+`Assembly<K>` (`moho_level/src/socket.rs`) is one drawn copy of a model, keyed by the game's
+model key `K`, with other assemblies attached at its named nodes, nested. Each copy holds its own
+parts, so two rifles from one model can carry different scopes; the shared `Model` never changes.
+
+- Every method takes a `K -> &Model` lookup, so the assembly holds no models. The lookup must
+  return the same model for a key for the assembly's whole life: sockets resolve to node indices
+  at attach time.
+- `attach` puts a part at the first node of that name in walk order, with an offset in the node's
+  space. A node holds one part: attaching again replaces it in place (same position in attach
+  order) and returns the old part. `detach` removes and returns it; `part_mut` reaches it to
+  attach to it in turn. An unknown name is `SocketError::UnknownSocket` and leaves the assembly
+  unchanged.
+- `placements(models, root)` yields `(model key, mesh index, transform)`: this copy's meshes
+  first, then each part in attach order, depth-first, the part's root being
+  `root * socket_node.rest * offset`. Sockets use rest transforms, not posed ones.
+
+The game glue keeps one `Assembly` per drawn copy and the per-model ids and materials of 2.2,
+indexed by key. A swap shows on the next frame drawn:
+
+```rust
+for (k, i, t) in copy.placements(&|k| &models[k], root) {
+    world_meshes.place(ids[k][i], t, mats[k][i]);
+
+### 2.4 Base-colour textures
 
 A placed mesh can draw with a base-colour image (`moho_render_api/src/texture.rs`,
 `moho_renderer/src/textures.rs`):
