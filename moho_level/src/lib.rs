@@ -8,6 +8,7 @@ mod marker;
 mod mesh;
 mod model;
 pub mod nav;
+mod socket;
 
 use std::borrow::Cow;
 use std::path::Path;
@@ -19,6 +20,7 @@ pub use marker::LevelMarker;
 pub use model::{MODEL_MATERIAL_VARIANT, Model, ModelMaterial, ModelMesh, ModelNode, load_model};
 use moho_render_api::WorldMesh;
 pub use nav::{AgentProfile, NavBuildError, NavMesh};
+pub use socket::{Assembly, SocketError};
 
 /// A loaded level: one mesh per triangle primitive and one marker per named,
 /// mesh-less node reached from the default scene.
