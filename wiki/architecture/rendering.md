@@ -137,14 +137,6 @@ It shares the buffer rules and `LevelError` of 2.1, but keeps node structure ins
 - the vertex shader transforms normals by the cofactor of the instance's upper 3x3 (`normal_to_world`
   in `shaders/vertex.wgsl`), so non-uniform scale lights correctly. A mirrored root draws
   inside-out under back-face culling, so games place with positive-determinant roots.
-- sockets: `Assembly<K>` (`moho_level/src/socket.rs`) is one drawn copy of a model, keyed by the
-  game's model key `K`, with other assemblies attached at its named nodes, nested. Every method
-  takes a `K -> &Model` lookup, so the assembly holds no models. `attach` puts a part at the first
-  node of that name with an offset in the node's space (one part per node; a second replaces and
-  returns the first), `detach` and `part_mut` address a part by node name, and an unknown name is
-  `SocketError::UnknownSocket` with the assembly unchanged. `Assembly::placements(models, root)`
-  yields `(model key, mesh index, transform)` for the whole tree, the part's root being
-  `root * socket_node.rest * offset`; the game uploads and draws them as above.
 
 The game glue, once per model and once per frame:
 
@@ -162,6 +154,33 @@ let mats: Vec<u32> = model
 // Each frame: no mesh data moves, only transforms.
 for (i, t) in model.placements(root) {
     world_meshes.place(ids[i], t, mats[i]);
+}
+```
+
+### 2.3 Sockets
+
+`Assembly<K>` (`moho_level/src/socket.rs`) is one drawn copy of a model, keyed by the game's
+model key `K`, with other assemblies attached at its named nodes, nested. Each copy holds its own
+parts, so two rifles from one model can carry different scopes; the shared `Model` never changes.
+
+- Every method takes a `K -> &Model` lookup, so the assembly holds no models. The lookup must
+  return the same model for a key for the assembly's whole life: sockets resolve to node indices
+  at attach time.
+- `attach` puts a part at the first node of that name in walk order, with an offset in the node's
+  space. A node holds one part: attaching again replaces it in place (same position in attach
+  order) and returns the old part. `detach` removes and returns it; `part_mut` reaches it to
+  attach to it in turn. An unknown name is `SocketError::UnknownSocket` and leaves the assembly
+  unchanged.
+- `placements(models, root)` yields `(model key, mesh index, transform)`: this copy's meshes
+  first, then each part in attach order, depth-first, the part's root being
+  `root * socket_node.rest * offset`. Sockets use rest transforms, not posed ones.
+
+The game glue keeps one `Assembly` per drawn copy and the per-model ids and materials of 2.2,
+indexed by key. A swap shows on the next frame drawn:
+
+```rust
+for (k, i, t) in copy.placements(&|k| &models[k], root) {
+    world_meshes.place(ids[k][i], t, mats[k][i]);
 }
 ```
 
