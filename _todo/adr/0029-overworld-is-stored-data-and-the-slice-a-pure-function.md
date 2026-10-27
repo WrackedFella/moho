@@ -1,6 +1,6 @@
 # 0029 — The overworld is stored data; a slice is a pure function of it
 
-**Status:** Proposed (2026-10-27)
+**Status:** Accepted (2026-10-27)
 
 ## Context
 
