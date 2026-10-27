@@ -184,6 +184,51 @@ for (k, i, t) in copy.placements(&|k| &models[k], root) {
 }
 ```
 
+### 2.4 Rigs and clips
+
+Skins and clips are more immutable data on the `Model` (`moho_level/src/rig.rs` imports them,
+`moho_level/src/anim.rs` samples them, with no glTF type). A pose is a value computed from the
+model, a clip and a time; it never changes the model.
+
+- `Model::skins()`: per skin, its joints (indices into `nodes()`) and inverse binds (identity
+  when the file has none). A skinned `ModelMesh` carries a `MeshSkin`: four joints and four
+  weights per vertex from `JOINTS_0`/`WEIGHTS_0`, weights renormalised to sum to 1; further sets
+  are ignored with a warning.
+- `Model::clips()` and `clip(name)` (first match): each clip has a name and a duration (its
+  latest key). Channels target a node's translation, rotation or scale with step, linear (slerp
+  for rotation) or cubic-spline keys (tangents scaled by the key interval; a cubic rotation is
+  renormalised); before the first key a channel holds the first value, after the last the last.
+  Morph-target weight channels are skipped with a warning.
+- Bad rigs fail the load: `BadSkin` (a joint outside the default scene, inverse-bind count),
+  `BadAnimation` (key and value counts, key times not strictly increasing, a target outside the
+  default scene), `BadMesh` (a vertex joint past its skin, all-zero weights).
+- `Model::pose(clip, time)` and `rest_pose()` give a `Pose`: every node's model-space transform
+  in walk order. Untargeted nodes keep their `local` exactly; globals compose parent-first. The
+  same model, clip and times give bit-identical poses on the same build.
+- `ClipPlayer` is the game's per-character clock: `new` or `play` a clip by name (`Loop` or
+  `Once`; an unknown name is `ClipError::UnknownClip` and changes nothing), `set_speed`
+  (negative plays backwards), `advance(dt)`, `pose`. `Loop` wraps into `[0, duration)`, `Once`
+  clamps to `[0, duration]`.
+- `posed_placements(root, &pose)` is `placements` with posed nodes, so a rigid mesh on an
+  animated node (a magazine) draws through 2.2's path; it lists skinned meshes too, which the
+  game skips until a skinned draw exists. `joint_palette(skin, &pose)` is
+  `pose[joint] * inverse_bind` per joint in model space, the data a skinned draw uploads; the
+  renderer has no skinned draw yet.
+
+The game glue, one player per character, each tick or frame:
+
+```rust
+player.advance(&model, dt);
+let pose = player.pose(&model);
+// Rigid meshes only: a skinned mesh placed here would draw unbent at its node.
+for (i, t) in model.posed_placements(root, &pose) {
+    if model.meshes()[i].skin.is_none() {
+        world_meshes.place(ids[i], t, mats[i]);
+    }
+}
+let palette = model.joint_palette(skin, &pose); // for the skinned draw
+```
+
 ## 3 Cut-face caps
 
 The strategy HUD's view-height slider (`RtsHud`, `ViewHeightHud`) chooses the cut as a block

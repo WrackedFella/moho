@@ -41,6 +41,13 @@ pub(crate) fn resolve<'b>(
         .collect()
 }
 
+/// The data source a `gltf` reader asks for: the resolved bytes of each buffer.
+pub(crate) fn reader_data<'a>(
+    buffers: &'a [Cow<'_, [u8]>],
+) -> impl Fn(gltf::Buffer<'_>) -> Option<&'a [u8]> + Clone {
+    |b| buffers.get(b.index()).map(|data| &**data)
+}
+
 /// Checked after decoding, so an escaped `/` or scheme cannot slip past.
 fn is_relative_file(file: &str) -> bool {
     let has_scheme = file

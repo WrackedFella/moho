@@ -59,4 +59,8 @@ pub enum LevelErrorKind {
     UnsupportedBufferUri { uri: String },
     #[error("mesh {mesh}: {reason}")]
     BadMesh { mesh: usize, reason: String },
+    #[error("skin {skin}: {reason}")]
+    BadSkin { skin: usize, reason: String },
+    #[error("animation {animation}: {reason}")]
+    BadAnimation { animation: usize, reason: String },
 }
