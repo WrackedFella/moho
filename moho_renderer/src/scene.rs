@@ -76,11 +76,12 @@ impl Scene {
             cube_mesh_handle,
         );
 
-        let mut world_draws: Vec<(u32, Vec<InstanceGpu>)> = Vec::new();
-        for (handle, instance) in self.world_meshes.draws() {
+        let mut world_draws: Vec<((u32, u32), Vec<InstanceGpu>)> = Vec::new();
+        for (mesh, texture, instance) in self.world_meshes.textured_draws() {
+            let key = (mesh, texture);
             match world_draws.last_mut() {
-                Some((last, instances)) if *last == handle => instances.push(instance),
-                _ => world_draws.push((handle, vec![instance])),
+                Some((last, instances)) if *last == key => instances.push(instance),
+                _ => world_draws.push((key, vec![instance])),
             }
         }
         // Cleared before begin_frame so a skipped frame consumes its placements too.
@@ -92,8 +93,8 @@ impl Scene {
         renderer.enqueue_draw(cube_mesh_handle, &prepared.cube_opaque);
         renderer.enqueue_draw(mesh_handle, &prepared.sphere_opaque);
 
-        for (handle, instances) in &world_draws {
-            renderer.enqueue_draw(*handle, instances);
+        for ((mesh, texture), instances) in &world_draws {
+            renderer.enqueue_textured_draw(*mesh, *texture, instances);
         }
 
         // Render transparent instances (back-to-front sorted)

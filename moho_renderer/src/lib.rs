@@ -17,6 +17,7 @@ mod gpu_types;
 mod sky;
 pub use gpu_types::LightingGpu;
 pub use moho_render_api::{InstanceGpu, MaterialGpu};
+use moho_render_api::{Rgba8Image, WorldMesh};
 mod block_on;
 mod bloom;
 mod markers;
@@ -37,6 +38,7 @@ mod render_ops;
 mod resources;
 mod shadow;
 mod ssao;
+mod textures;
 mod types;
 
 mod renderer;
@@ -68,6 +70,51 @@ pub trait RendererBackend {
         material: &[u32],
         indices: &[u32],
     ) -> u32;
+    /// Register a contract mesh, with `material` as the per-vertex material channel
+    /// (empty defers every vertex to the instance material). The default uploads
+    /// through `register_indexed_mesh`; a backend that draws textures overrides it to
+    /// upload the mesh's UVs too.
+    fn register_world_mesh(&mut self, mesh: &WorldMesh, material: &[u32]) -> u32 {
+        let light_level = renderer::world_mesh_light_level(mesh);
+        let renderer::VertexChannels {
+            positions,
+            normals,
+            ao,
+            geometry_type,
+            light_level,
+            block_light_rgb,
+            sky_exposed,
+            material,
+            uv: _,
+        } = renderer::world_mesh_channels(mesh, &light_level, material);
+        self.register_indexed_mesh(
+            positions,
+            normals,
+            ao,
+            geometry_type,
+            light_level,
+            block_light_rgb,
+            sky_exposed,
+            material,
+            mesh.indices(),
+        )
+    }
+    /// Upload `image` and return its handle; handle 0 is the white default texture, which
+    /// is all the default returns.
+    fn register_texture(&mut self, image: &Rgba8Image) -> u32 {
+        let _ = image;
+        0
+    }
+    /// Free a texture handle from `register_texture`. No-op by default.
+    fn unregister_texture(&mut self, texture: u32) {
+        let _ = texture;
+    }
+    /// Queue a previously-registered mesh for drawing with `texture` bound. The default
+    /// ignores the texture and calls `enqueue_draw`.
+    fn enqueue_textured_draw(&mut self, mesh: u32, texture: u32, instances: &[InstanceGpu]) {
+        let _ = texture;
+        self.enqueue_draw(mesh, instances);
+    }
     /// Unregister a previously-registered mesh handle and free GPU resources.
     fn unregister_mesh(&mut self, mesh: u32);
     /// Begin a new frame: uploads the camera, culls/updates dynamic lights,
@@ -185,6 +232,18 @@ impl RendererBackend for Renderer<'_> {
             material,
             indices,
         )
+    }
+    fn register_world_mesh(&mut self, mesh: &WorldMesh, material: &[u32]) -> u32 {
+        self.register_world_mesh(mesh, material)
+    }
+    fn register_texture(&mut self, image: &Rgba8Image) -> u32 {
+        self.register_texture(image)
+    }
+    fn unregister_texture(&mut self, texture: u32) {
+        self.unregister_texture(texture);
+    }
+    fn enqueue_textured_draw(&mut self, mesh: u32, texture: u32, instances: &[InstanceGpu]) {
+        self.enqueue_textured_draw(mesh, texture, instances);
     }
     fn unregister_mesh(&mut self, mesh: u32) {
         self.unregister_mesh(mesh);

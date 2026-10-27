@@ -75,6 +75,11 @@ replaces the anchored lines the next `ui_frame` paints under the console, and th
 game sets its full text every `Game::frame`. A frame the renderer skips leaves no stale text. Use a few
 fixed sizes; each new size grows the font atlas.
 
+Images work the same way (`moho_ui_shell/src/image.rs`): `UiShell::add_image(ScreenImageId, &Rgba8Image)`
+uploads once (replacing any image under that id), `remove_image` frees it, and
+`set_images(Vec<ScreenImage>)` replaces the anchored, sized images the next `ui_frame` paints. A
+`ScreenImage` naming an unknown id or a non-finite or non-positive size is a `ScreenImageError`.
+
 The binary starts on the main menu (`SearchlightGame::with_main_menu`); a game built without it starts
 in play. `SearchlightGame` holds a `Screen` (`MainMenu`, `Playing` or `Paused`). On either menu screen the loop is paused
 like an open console, the action map is fed nothing and the cursor stays free; the window opens with the

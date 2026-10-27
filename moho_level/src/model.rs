@@ -1,12 +1,13 @@
 //! Model import: a glTF file becomes plain data a game places node by node.
 
 use std::borrow::Cow;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use glam::{Affine3A, Mat4};
-use moho_render_api::{MaterialGpu, MaterialKey, RenderMaterial, WorldMesh};
+use moho_render_api::{MaterialGpu, MaterialKey, RenderMaterial, Rgba8Image, WorldMesh};
 
 use crate::anim::{Clip, Pose};
+use crate::image::ImageSources;
 use crate::{LevelError, LevelErrorKind, mesh, rig};
 
 /// `MaterialKey::variant` of every [`ModelMaterial`]; outside the variants searchlight
@@ -19,6 +20,7 @@ pub struct Model {
     nodes: Vec<ModelNode>,
     meshes: Vec<ModelMesh>,
     materials: Vec<ModelMaterial>,
+    images: Vec<ModelImage>,
     skins: Vec<ModelSkin>,
     clips: Vec<Clip>,
 }
@@ -72,6 +74,17 @@ pub struct ModelMaterial {
     pub name: Option<String>,
     /// Linear RGBA from `pbrMetallicRoughness.baseColorFactor`.
     pub base_colour: [f32; 4],
+    /// Index into [`Model::images`] of the base-colour texture, if the material has one.
+    pub base_colour_image: Option<usize>,
+}
+
+/// One decoded base-colour image of a model.
+#[derive(Clone, Debug)]
+pub struct ModelImage {
+    pub name: Option<String>,
+    /// Canonical path of a file image; `None` for one embedded in a buffer view.
+    pub source: Option<PathBuf>,
+    pub image: Rgba8Image,
 }
 
 impl ModelMaterial {
@@ -79,6 +92,7 @@ impl ModelMaterial {
     pub const GLTF_DEFAULT: Self = Self {
         name: None,
         base_colour: [1.0; 4],
+        base_colour_image: None,
     };
 }
 
@@ -108,19 +122,54 @@ impl RenderMaterial for ModelMaterial {
 /// # Errors
 /// Returns a [`LevelError`] naming `path` when the file cannot be read, is not glTF,
 /// references an unreadable buffer, reaches a node twice, or holds a malformed mesh
-/// (including bad joint influences), skin or animation.
+/// (including a textured primitive without `TEXCOORD_0`, or bad joint influences), skin or
+/// animation; a base-colour image that is missing is `MissingImage`, one that is not a
+/// relative file or a decodable PNG or JPEG is `BadImage`. Images no material uses as its
+/// base colour are never read.
 pub fn load_model(path: &Path) -> Result<Model, LevelError> {
     crate::with_buffers(path, build)
 }
 
-fn build(document: &gltf::Document, buffers: &[Cow<'_, [u8]>]) -> Result<Model, LevelErrorKind> {
+/// Maps glTF images to [`Model::images`], decoding each base-colour image once.
+struct Images<'a> {
+    sources: ImageSources<'a>,
+    /// For each glTF image, its index in `decoded` once decoded.
+    by_gltf_index: Vec<Option<usize>>,
+    decoded: Vec<ModelImage>,
+}
+
+impl Images<'_> {
+    /// The index in [`Model::images`] of `image`, decoding it on first use.
+    fn index_of(&mut self, image: &gltf::Image<'_>) -> Result<usize, LevelErrorKind> {
+        if let Some(index) = self.by_gltf_index[image.index()] {
+            return Ok(index);
+        }
+        let (source, decoded) = self.sources.load(image)?;
+        let index = self.decoded.len();
+        self.decoded.push(ModelImage {
+            name: image.name().map(str::to_owned),
+            source,
+            image: decoded,
+        });
+        self.by_gltf_index[image.index()] = Some(index);
+        Ok(index)
+    }
+}
+
+fn build(
+    document: &gltf::Document,
+    buffers: &[Cow<'_, [u8]>],
+    dir: &Path,
+) -> Result<Model, LevelErrorKind> {
+    let mut images = Images {
+        sources: ImageSources { buffers, dir },
+        by_gltf_index: vec![None; document.images().len()],
+        decoded: Vec::new(),
+    };
     let materials = document
         .materials()
-        .map(|m| ModelMaterial {
-            name: m.name().map(str::to_owned),
-            base_colour: m.pbr_metallic_roughness().base_color_factor(),
-        })
-        .collect();
+        .map(|m| model_material(&m, &mut images))
+        .collect::<Result<_, LevelErrorKind>>()?;
     let mut walk = Walk {
         buffers,
         index_of: vec![None; document.nodes().len()],
@@ -128,6 +177,7 @@ fn build(document: &gltf::Document, buffers: &[Cow<'_, [u8]>]) -> Result<Model, 
             nodes: Vec::new(),
             meshes: Vec::new(),
             materials,
+            images: images.decoded,
             skins: Vec::new(),
             clips: Vec::new(),
         },
@@ -138,6 +188,32 @@ fn build(document: &gltf::Document, buffers: &[Cow<'_, [u8]>]) -> Result<Model, 
     walk.model.skins = rig::skins(document, buffers, &walk.index_of)?;
     walk.model.clips = rig::clips(document, buffers, &walk.index_of)?;
     Ok(walk.model)
+}
+
+/// `material`'s base colour, with its base-colour image decoded into `images`.
+fn model_material(
+    material: &gltf::Material<'_>,
+    images: &mut Images<'_>,
+) -> Result<ModelMaterial, LevelErrorKind> {
+    let pbr = material.pbr_metallic_roughness();
+    let base_colour_image = pbr
+        .base_color_texture()
+        .map(|info| {
+            if info.tex_coord() != 0 {
+                tracing::warn!(
+                    material = material.name().unwrap_or_default(),
+                    tex_coord = info.tex_coord(),
+                    "base-colour texture uses another texcoord set; reading set 0"
+                );
+            }
+            images.index_of(&info.texture().source())
+        })
+        .transpose()?;
+    Ok(ModelMaterial {
+        name: material.name().map(str::to_owned),
+        base_colour: pbr.base_color_factor(),
+        base_colour_image,
+    })
 }
 
 struct Walk<'a> {
@@ -179,6 +255,14 @@ impl Walk<'_> {
                     flip_winding,
                     self.buffers,
                 )?;
+                if self.is_textured(primitive.material().index()) && converted.uvs().is_none() {
+                    return Err(LevelErrorKind::BadMesh {
+                        mesh: mesh.index(),
+                        reason: "material has a base-colour texture but the primitive has no \
+                                 TEXCOORD_0"
+                            .into(),
+                    });
+                }
                 let skin = node
                     .skin()
                     .map(|skin| rig::mesh_skin(&mesh, &primitive, &skin, self.buffers))
@@ -196,6 +280,12 @@ impl Walk<'_> {
         }
         Ok(())
     }
+
+    /// Whether the material at `material` has a base-colour image; `None` (the glTF
+    /// default) has none.
+    fn is_textured(&self, material: Option<usize>) -> bool {
+        material.is_some_and(|i| self.model.materials[i].base_colour_image.is_some())
+    }
 }
 
 impl Model {
@@ -209,6 +299,11 @@ impl Model {
 
     pub fn materials(&self) -> &[ModelMaterial] {
         &self.materials
+    }
+
+    /// The decoded base-colour images, each once however many materials use it.
+    pub fn images(&self) -> &[ModelImage] {
+        &self.images
     }
 
     /// The first node called `name` in walk order.
@@ -312,6 +407,7 @@ impl Model {
             nodes,
             meshes: Vec::new(),
             materials: Vec::new(),
+            images: Vec::new(),
             skins: Vec::new(),
             clips,
         }
@@ -360,6 +456,7 @@ mod tests {
         ModelMaterial {
             name: None,
             base_colour: rgba,
+            base_colour_image: None,
         }
     }
 
@@ -394,6 +491,7 @@ mod tests {
             ],
             meshes: vec![mesh_on(2), mesh_on(2), mesh_on(1)],
             materials: Vec::new(),
+            images: Vec::new(),
             skins: Vec::new(),
             clips: Vec::new(),
         };
@@ -453,6 +551,7 @@ mod tests {
             ],
             meshes: Vec::new(),
             materials: Vec::new(),
+            images: Vec::new(),
             skins: Vec::new(),
             clips: Vec::new(),
         };

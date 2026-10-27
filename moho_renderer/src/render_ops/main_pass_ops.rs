@@ -3,7 +3,8 @@
 //! This module handles rendering the main color pass with skybox and scene geometry.
 
 use crate::shadow::ShadowSystem;
-use crate::types::{GpuInstance, MeshEntry};
+use crate::textures::TextureTable;
+use crate::types::{DrawKey, GpuInstance, MeshEntry};
 use wgpu::{BindGroup, Buffer, CommandEncoder, RenderPipeline, TextureView};
 
 /// Render the main color pass with skybox and all pending draws.
@@ -24,7 +25,9 @@ use wgpu::{BindGroup, Buffer, CommandEncoder, RenderPipeline, TextureView};
 /// * `camera_bind_group` - Bind group 0 (camera uniforms)
 /// * `shadow_system` - Shadow system for bind group 1 (shadows)
 /// * `instance_buffer` - Instance buffer containing all instance data
-/// * `pending_draws` - List of (mesh_handle, instances) to render
+/// * `pending_draws` - List of (draw key, instances) to render; the key's texture is
+///   bound as group 2, set again only when it differs from the previous draw's
+/// * `textures` - Table the texture handles index
 /// * `mesh_table` - Table of registered meshes
 /// * `offsets` - Instance offsets into instance buffer for each draw
 #[allow(clippy::too_many_arguments)] // Render operations naturally have many parameters
@@ -39,7 +42,8 @@ pub fn render_main_pass(
     camera_bind_group: &BindGroup,
     shadow_system: &ShadowSystem,
     instance_buffer: &Buffer,
-    pending_draws: &[(u32, Vec<GpuInstance>)],
+    pending_draws: &[(DrawKey, Vec<GpuInstance>)],
+    textures: &TextureTable,
     mesh_table: &[Option<MeshEntry>],
     offsets: &[usize],
 ) {
@@ -79,12 +83,17 @@ pub fn render_main_pass(
     rpass.set_bind_group(1, &shadow_system.csm_shadow_bind_group, &[]);
 
     // Iterate draws and issue draw calls
-    for (i, (mesh_handle, insts)) in pending_draws.iter().enumerate() {
-        let idx = *mesh_handle as usize;
+    let mut bound_texture = None;
+    for (i, (key, insts)) in pending_draws.iter().enumerate() {
+        let idx = key.mesh as usize;
         if idx >= mesh_table.len() {
             continue;
         }
         if let Some(me) = &mesh_table[idx] {
+            if bound_texture != Some(key.texture) {
+                rpass.set_bind_group(2, textures.bind_group(key.texture), &[]);
+                bound_texture = Some(key.texture);
+            }
             rpass.set_vertex_buffer(0, me.buffer.slice(..));
 
             let offset_instances = offsets[i];

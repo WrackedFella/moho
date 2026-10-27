@@ -1,7 +1,8 @@
 //! Renderer-side store of contract meshes keyed by [`WorldMeshId`].
 
 use crate::RendererBackend;
-use moho_render_api::{InstanceGpu, WorldMesh, WorldMeshId};
+use crate::textures::WHITE_TEXTURE;
+use moho_render_api::{InstanceGpu, Rgba8Image, TextureId, WorldMesh, WorldMeshId};
 use std::collections::BTreeMap;
 
 /// How a mesh draws: once at identity, or only where placed.
@@ -21,14 +22,26 @@ struct Live {
     kind: Kind,
 }
 
-/// Queues world-mesh changes and applies them to a backend on `flush`.
+/// One placement: where, in which material, and with which texture (`None` is white).
+#[derive(Debug, Clone, Copy)]
+struct Placement {
+    transform: glam::Affine3A,
+    material: u32,
+    texture: Option<TextureId>,
+}
+
+/// Queues world-mesh and texture changes and applies them to a backend on `flush`.
 ///
 /// Live meshes are kept in id order so the draw order is deterministic.
 #[derive(Debug, Default)]
 pub struct WorldMeshes {
     live: BTreeMap<WorldMeshId, Live>,
     pending: BTreeMap<WorldMeshId, Pending>,
-    placements: BTreeMap<WorldMeshId, Vec<(glam::Affine3A, u32)>>,
+    placements: BTreeMap<WorldMeshId, Vec<Placement>>,
+    /// Backend handle of each uploaded texture.
+    live_textures: BTreeMap<TextureId, u32>,
+    /// A texture waiting for the next `flush`; `None` is a queued remove.
+    pending_textures: BTreeMap<TextureId, Option<Rgba8Image>>,
 }
 
 impl WorldMeshes {
@@ -61,10 +74,38 @@ impl WorldMeshes {
     /// Not checked against live ids here: an upsert queued the same frame is
     /// flushed before draws, and a placement on an id that is not live is skipped.
     pub fn place(&mut self, id: WorldMeshId, transform: glam::Affine3A, material: u32) {
-        self.placements
-            .entry(id)
-            .or_default()
-            .push((transform, material));
+        self.placements.entry(id).or_default().push(Placement {
+            transform,
+            material,
+            texture: None,
+        });
+    }
+
+    /// Queue adding or replacing the texture under `id`; replacing unregisters the old
+    /// handle on `flush`.
+    pub fn upsert_texture(&mut self, id: TextureId, image: Rgba8Image) {
+        self.pending_textures.insert(id, Some(image));
+    }
+
+    /// Queue removing the texture under `id`; placements naming it then draw white.
+    pub fn remove_texture(&mut self, id: TextureId) {
+        self.pending_textures.insert(id, None);
+    }
+
+    /// Like [`place`](Self::place), drawn with the texture under `texture`. A texture id
+    /// that is not live when drawn draws white.
+    pub fn place_textured(
+        &mut self,
+        id: WorldMeshId,
+        transform: glam::Affine3A,
+        material: u32,
+        texture: TextureId,
+    ) {
+        self.placements.entry(id).or_default().push(Placement {
+            transform,
+            material,
+            texture: Some(texture),
+        });
     }
 
     /// Drop every placement; the renderer calls this each frame.
@@ -77,8 +118,18 @@ impl WorldMeshes {
         self.pending.insert(id, None);
     }
 
-    /// Apply queued changes: register new meshes, unregister replaced or removed ones.
+    /// Apply queued changes: register new meshes and textures, unregister replaced or
+    /// removed ones.
     pub fn flush(&mut self, backend: &mut dyn RendererBackend) {
+        for (id, change) in std::mem::take(&mut self.pending_textures) {
+            if let Some(old) = self.live_textures.remove(&id) {
+                backend.unregister_texture(old);
+            }
+            if let Some(image) = change {
+                let handle = backend.register_texture(&image);
+                self.live_textures.insert(id, handle);
+            }
+        }
         for (id, change) in std::mem::take(&mut self.pending) {
             if let Some(old) = self.live.remove(&id) {
                 backend.unregister_mesh(old.handle);
@@ -86,11 +137,6 @@ impl WorldMeshes {
             let Some((mesh, kind)) = change else {
                 continue;
             };
-            let light_level: Vec<f32> = mesh
-                .light_rgb()
-                .iter()
-                .map(|rgb| rgb[0].max(rgb[1]).max(rgb[2]))
-                .collect();
             // An empty slice makes the backend defer every vertex to the instance material.
             let material: Vec<u32> = match (mesh.materials(), kind) {
                 (Some(materials), _) => materials.to_vec(),
@@ -99,17 +145,7 @@ impl WorldMeshes {
                 }
                 (None, Kind::Movable) => Vec::new(),
             };
-            let handle = backend.register_indexed_mesh(
-                mesh.positions(),
-                mesh.normals(),
-                mesh.ao(),
-                mesh.surface(),
-                &light_level,
-                mesh.light_rgb(),
-                mesh.sky_exposure(),
-                &material,
-                mesh.indices(),
-            );
+            let handle = backend.register_world_mesh(&mesh, &material);
             self.live.insert(id, Live { handle, kind });
         }
     }
@@ -117,6 +153,14 @@ impl WorldMeshes {
     /// Instances as `(backend handle, instance)`: each static mesh at identity, then
     /// every placement of a live id in id order and call order.
     pub fn draws(&self) -> impl Iterator<Item = (u32, InstanceGpu)> + '_ {
+        self.textured_draws()
+            .map(|(mesh, _texture, instance)| (mesh, instance))
+    }
+
+    /// The same instances as [`draws`](Self::draws), as `(mesh handle, texture handle,
+    /// instance)`. The texture handle is 0, the white default, for statics, for
+    /// [`place`](Self::place) and for a texture id that is not live.
+    pub fn textured_draws(&self) -> impl Iterator<Item = (u32, u32, InstanceGpu)> + '_ {
         // object_type 0: terrain, the fragment shader colours by normal
         let instance = |model: glam::Mat4, material: u32| InstanceGpu {
             model: model.to_cols_array_2d(),
@@ -125,15 +169,24 @@ impl WorldMeshes {
             padding: [0, 0],
         };
         let statics = self.live.values().filter_map(move |live| match live.kind {
-            Kind::Static { material_idx } => {
-                Some((live.handle, instance(glam::Mat4::IDENTITY, material_idx)))
-            }
+            Kind::Static { material_idx } => Some((
+                live.handle,
+                WHITE_TEXTURE,
+                instance(glam::Mat4::IDENTITY, material_idx),
+            )),
             Kind::Movable => None,
         });
         let placed = self.placements.iter().flat_map(move |(id, placements)| {
             let handle = self.live.get(id).map(|live| live.handle);
-            placements.iter().filter_map(move |(transform, material)| {
-                handle.map(|h| (h, instance(glam::Mat4::from(*transform), *material)))
+            handle.into_iter().flat_map(move |handle| {
+                placements.iter().map(move |placement| {
+                    let texture = placement
+                        .texture
+                        .and_then(|t| self.live_textures.get(&t).copied())
+                        .unwrap_or(WHITE_TEXTURE);
+                    let model = glam::Mat4::from(placement.transform);
+                    (handle, texture, instance(model, placement.material))
+                })
             })
         });
         statics.chain(placed)
@@ -156,6 +209,9 @@ mod tests {
         uploads: Vec<Upload>,
         /// The `material` argument of each `register_indexed_mesh` call.
         materials: Vec<Vec<u32>>,
+        /// Each `register_texture` call as `(handle, image)`; handles start at 100.
+        textures: Vec<(u32, Rgba8Image)>,
+        unregistered_textures: Vec<u32>,
     }
 
     /// The channel slices of one `register_indexed_mesh` call, named as the
@@ -188,6 +244,75 @@ mod tests {
             };
             *handle
         }
+
+        /// The handle `image` was registered under, whatever the upload order.
+        fn texture_handle(&self, image: &Rgba8Image) -> u32 {
+            let Some((handle, _)) = self.textures.iter().find(|(_, i)| i == image) else {
+                panic!("no texture registered with image {image:?}");
+            };
+            *handle
+        }
+    }
+
+    /// A backend that takes world meshes through `register_world_mesh` and records the
+    /// UVs each one carried; any other upload route fails the test.
+    #[derive(Default)]
+    struct UvBackend {
+        uvs: Vec<Option<Vec<[f32; 2]>>>,
+        materials: Vec<Vec<u32>>,
+    }
+
+    impl RendererBackend for UvBackend {
+        fn resize(&mut self, _width: u32, _height: u32) {}
+        fn register_mesh(&mut self, _vertices: &[[f32; 3]]) -> u32 {
+            unreachable!("world meshes upload through register_world_mesh")
+        }
+        fn register_indexed_mesh(
+            &mut self,
+            _vertices: &[[f32; 3]],
+            _normals: &[[f32; 3]],
+            _ao: &[f32],
+            _geometry_type: &[u32],
+            _light_level: &[f32],
+            _block_light_rgb: &[[f32; 3]],
+            _sky_exposed: &[f32],
+            _material: &[u32],
+            _indices: &[u32],
+        ) -> u32 {
+            unreachable!("flush must hand the whole mesh to register_world_mesh to carry its UVs")
+        }
+        fn register_world_mesh(&mut self, mesh: &WorldMesh, material: &[u32]) -> u32 {
+            self.uvs.push(mesh.uvs().map(<[_]>::to_vec));
+            self.materials.push(material.to_vec());
+            11
+        }
+        fn unregister_mesh(&mut self, _mesh: u32) {}
+        fn begin_frame(
+            &mut self,
+            _camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+        ) -> Result<(), crate::FrameError> {
+            Ok(())
+        }
+        fn enqueue_draw(&mut self, _mesh: u32, _instances: &[InstanceGpu]) {}
+        fn submit_frame(&mut self) {}
+        fn set_materials(&mut self, _materials: &[crate::MaterialGpu]) {}
+        fn update_lighting(&mut self, _lighting: crate::LightingGpu) {}
+        fn add_point_light(
+            &mut self,
+            _position: glam::Vec3,
+            _color: glam::Vec3,
+            _intensity: f32,
+            _range: f32,
+        ) -> u32 {
+            0
+        }
+        fn remove_light(&mut self, _id: u32) -> bool {
+            true
+        }
+        fn set_light_position(&mut self, _id: u32, _position: glam::Vec3) {}
+        fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
+        fn set_shadow_quality(&mut self, _quality: u8) {}
+        fn set_ssao_quality(&mut self, _quality: u8) {}
     }
 
     impl RendererBackend for RecordingBackend {
@@ -224,6 +349,14 @@ mod tests {
         }
         fn unregister_mesh(&mut self, mesh: u32) {
             self.unregistered.push(mesh);
+        }
+        fn register_texture(&mut self, image: &Rgba8Image) -> u32 {
+            let handle = 100 + u32::try_from(self.textures.len()).expect("few textures");
+            self.textures.push((handle, image.clone()));
+            handle
+        }
+        fn unregister_texture(&mut self, texture: u32) {
+            self.unregistered_textures.push(texture);
         }
         fn begin_frame(
             &mut self,
@@ -682,6 +815,218 @@ mod tests {
         assert_eq!(drawn.len(), 1, "static again, with no placements");
         assert_eq!(drawn[0].1.model, IDENTITY);
         assert_eq!(backend.live_handles().len(), 1, "one live upload");
+    }
+
+    const SKIN: TextureId = TextureId(1);
+    const FUR: TextureId = TextureId(2);
+
+    /// A 1x1 image whose red channel tells textures apart.
+    fn texture(red: u8) -> Rgba8Image {
+        Rgba8Image::new([1, 1], vec![[red, 0, 0, 255]]).expect("one pixel")
+    }
+
+    fn textured(meshes: &WorldMeshes) -> Vec<(u32, u32, InstanceGpu)> {
+        meshes.textured_draws().collect()
+    }
+
+    #[test]
+    fn a_textured_placement_draws_with_its_texture_handle() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.upsert_texture(SKIN, texture(10));
+        assert!(
+            backend.textures.is_empty(),
+            "nothing is uploaded before flush"
+        );
+        meshes.flush(&mut backend);
+
+        meshes.place_textured(A, at(2.0), 3, SKIN);
+
+        let drawn = textured(&meshes);
+        assert_eq!(backend.textures.len(), 1);
+        let (handle, uploaded) = &backend.textures[0];
+        assert_eq!(
+            *uploaded,
+            texture(10),
+            "the image reaches the backend as given"
+        );
+        assert_eq!(drawn.len(), 1);
+        assert_eq!(drawn[0].0, backend.handle_with_index_count(3));
+        assert_eq!(drawn[0].1, *handle);
+        assert_eq!(drawn[0].2.material, 3);
+        assert_eq!(drawn[0].2.model, model_of(at(2.0)));
+        let plain: Vec<(u32, [[f32; 4]; 4])> =
+            draws(&meshes).iter().map(|(h, i)| (*h, i.model)).collect();
+        assert_eq!(
+            plain,
+            vec![(drawn[0].0, drawn[0].2.model)],
+            "draws() keeps its (handle, instance) items"
+        );
+    }
+
+    #[test]
+    fn placements_pick_their_own_texture() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.upsert_texture(SKIN, texture(10));
+        meshes.upsert_texture(FUR, texture(20));
+        meshes.flush(&mut backend);
+        let handle_of = |red: u8| backend.texture_handle(&texture(red));
+
+        meshes.place_textured(A, at(1.0), 0, FUR);
+        meshes.place_textured(A, at(2.0), 0, SKIN);
+        meshes.place_textured(A, at(3.0), 0, FUR);
+
+        let order: Vec<(u32, [[f32; 4]; 4])> = textured(&meshes)
+            .iter()
+            .map(|(_, t, i)| (*t, i.model))
+            .collect();
+        assert_eq!(
+            order,
+            vec![
+                (handle_of(20), model_of(at(1.0))),
+                (handle_of(10), model_of(at(2.0))),
+                (handle_of(20), model_of(at(3.0))),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_texture_is_registered_once_however_many_placements_use_it() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.upsert_movable(B, mesh(2));
+        meshes.upsert_texture(SKIN, texture(10));
+        meshes.flush(&mut backend);
+
+        for frame in 0..3 {
+            meshes.place_textured(A, at(1.0), 0, SKIN);
+            meshes.place_textured(A, at(2.0), 0, SKIN);
+            meshes.place_textured(B, at(3.0), 0, SKIN);
+            meshes.flush(&mut backend);
+
+            let handles: Vec<u32> = textured(&meshes).iter().map(|(_, t, _)| *t).collect();
+            assert_eq!(
+                handles,
+                vec![backend.texture_handle(&texture(10)); 3],
+                "frame {frame}"
+            );
+            meshes.clear_placements();
+        }
+
+        assert_eq!(backend.textures.len(), 1);
+        assert!(backend.unregistered_textures.is_empty());
+    }
+
+    #[test]
+    fn flush_registers_a_mesh_with_uvs_through_register_world_mesh() {
+        let uvs = vec![[0.25, 0.75], [1.0, 0.5], [0.0, 1.0]];
+        let textured_mesh = mesh(1).with_uvs(uvs.clone()).expect("one uv per vertex");
+        let mut meshes = WorldMeshes::new();
+        let mut backend = UvBackend::default();
+        meshes.upsert(A, textured_mesh, 7);
+        meshes.upsert_movable(B, mesh(2));
+
+        meshes.flush(&mut backend);
+
+        assert_eq!(
+            backend.uvs,
+            vec![Some(uvs), None],
+            "the mesh's UVs reach the backend; a mesh without UVs passes none"
+        );
+        assert_eq!(
+            backend.materials,
+            vec![vec![7, 7, 7], Vec::<u32>::new()],
+            "the per-vertex material channel is resolved before the hand-off"
+        );
+    }
+
+    #[test]
+    fn place_and_a_not_live_texture_draw_with_the_white_handle() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.upsert_texture(SKIN, texture(10));
+        meshes.flush(&mut backend);
+
+        meshes.place(A, at(1.0), 0);
+        meshes.place_textured(A, at(2.0), 0, TextureId(99));
+        meshes.place_textured(A, at(3.0), 0, SKIN);
+
+        let drawn = textured(&meshes);
+        let mesh_handle = backend.handle_with_index_count(3);
+        let textures: Vec<(u32, u32)> = drawn.iter().map(|(m, t, _)| (*m, *t)).collect();
+        assert_eq!(
+            textures,
+            vec![
+                (mesh_handle, 0),
+                (mesh_handle, 0),
+                (mesh_handle, backend.texture_handle(&texture(10))),
+            ],
+            "the mesh still draws for a texture that is not live"
+        );
+    }
+
+    #[test]
+    fn a_static_mesh_draws_with_the_white_handle() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert(A, mesh(1), 7);
+        meshes.flush(&mut backend);
+
+        let drawn = textured(&meshes);
+
+        assert_eq!(drawn.len(), 1);
+        assert_eq!((drawn[0].1, drawn[0].2.material), (0, 7));
+    }
+
+    #[test]
+    fn replacing_a_texture_unregisters_the_old_handle() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.upsert_texture(SKIN, texture(10));
+        meshes.flush(&mut backend);
+        let old = backend.texture_handle(&texture(10));
+
+        meshes.upsert_texture(SKIN, texture(20));
+        meshes.flush(&mut backend);
+
+        assert_eq!(backend.textures.len(), 2);
+        let new = backend.texture_handle(&texture(20));
+        assert_ne!(new, old);
+        assert_eq!(backend.unregistered_textures, vec![old]);
+        meshes.place_textured(A, at(1.0), 0, SKIN);
+        let handles: Vec<u32> = textured(&meshes).iter().map(|(_, t, _)| *t).collect();
+        assert_eq!(handles, vec![new]);
+    }
+
+    #[test]
+    fn removing_a_texture_unregisters_it() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.upsert_texture(SKIN, texture(10));
+        meshes.upsert_texture(FUR, texture(20));
+        meshes.flush(&mut backend);
+        let skin = backend.texture_handle(&texture(10));
+        let fur = backend.texture_handle(&texture(20));
+
+        meshes.remove_texture(SKIN);
+        assert!(
+            backend.unregistered_textures.is_empty(),
+            "freed on flush, not before"
+        );
+        meshes.flush(&mut backend);
+
+        assert_eq!(backend.unregistered_textures, vec![skin]);
+        meshes.place_textured(A, at(1.0), 0, SKIN);
+        meshes.place_textured(A, at(2.0), 0, FUR);
+        let handles: Vec<u32> = textured(&meshes).iter().map(|(_, t, _)| *t).collect();
+        assert_eq!(handles, vec![0, fur], "the removed texture draws white");
     }
 
     #[derive(Clone, Copy, Debug, PartialEq)]

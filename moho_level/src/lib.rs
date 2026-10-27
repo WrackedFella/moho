@@ -5,6 +5,7 @@
 pub mod anim;
 mod buffers;
 mod error;
+mod image;
 mod marker;
 mod mesh;
 mod model;
@@ -18,10 +19,11 @@ use std::path::Path;
 use glam::Mat4;
 
 pub use error::{LevelError, LevelErrorKind};
+pub use image::load_image;
 pub use marker::LevelMarker;
 pub use model::{
-    MODEL_MATERIAL_VARIANT, MeshSkin, Model, ModelMaterial, ModelMesh, ModelNode, ModelSkin,
-    load_model,
+    MODEL_MATERIAL_VARIANT, MeshSkin, Model, ModelImage, ModelMaterial, ModelMesh, ModelNode,
+    ModelSkin, load_model,
 };
 use moho_render_api::WorldMesh;
 pub use nav::{AgentProfile, NavBuildError, NavMesh};
@@ -50,15 +52,16 @@ pub struct LevelMesh {
 /// Returns a [`LevelError`] naming `path` when the file cannot be read, is not
 /// glTF, references an unreadable buffer, or holds a malformed mesh.
 pub fn load(path: &Path) -> Result<Level, LevelError> {
-    let (meshes, markers) = with_buffers(path, build)?;
+    let (meshes, markers) = with_buffers(path, |document, buffers, _| build(document, buffers))?;
     Ok(Level { meshes, markers })
 }
 
-/// Read and parse the glTF at `path`, resolve its buffers and run `f` on them; every
-/// failure, including `f`'s, is a [`LevelError`] naming `path`.
+/// Read and parse the glTF at `path`, resolve its buffers and run `f` on them and the
+/// directory relative URIs resolve against; every failure, including `f`'s, is a
+/// [`LevelError`] naming `path`.
 fn with_buffers<T>(
     path: &Path,
-    f: impl FnOnce(&gltf::Document, &[Cow<'_, [u8]>]) -> Result<T, LevelErrorKind>,
+    f: impl FnOnce(&gltf::Document, &[Cow<'_, [u8]>], &Path) -> Result<T, LevelErrorKind>,
 ) -> Result<T, LevelError> {
     let fail = |kind| LevelError::new(path, kind);
     let gltf = {
@@ -67,7 +70,7 @@ fn with_buffers<T>(
     };
     let dir = path.parent().unwrap_or_else(|| Path::new(""));
     let buffers = buffers::resolve(&gltf.document, gltf.blob.as_deref(), dir).map_err(fail)?;
-    f(&gltf.document, &buffers).map_err(fail)
+    f(&gltf.document, &buffers, dir).map_err(fail)
 }
 
 fn build(

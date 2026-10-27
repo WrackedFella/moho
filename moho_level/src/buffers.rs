@@ -1,4 +1,5 @@
-//! Buffer resolution: GLB blob or relative file URIs.
+//! Buffer resolution: GLB blob or relative file URIs. The URI helpers are crate-visible
+//! because image URIs (`image.rs`) go through the same decoding and path check.
 
 use std::borrow::Cow;
 use std::path::{Component, Path};
@@ -49,7 +50,7 @@ pub(crate) fn reader_data<'a>(
 }
 
 /// Checked after decoding, so an escaped `/` or scheme cannot slip past.
-fn is_relative_file(file: &str) -> bool {
+pub(crate) fn is_relative_file(file: &str) -> bool {
     let has_scheme = file
         .split('/')
         .next()
@@ -60,7 +61,7 @@ fn is_relative_file(file: &str) -> bool {
     !has_scheme && !rooted
 }
 
-fn percent_decode(uri: &str) -> String {
+pub(crate) fn percent_decode(uri: &str) -> String {
     let mut out = Vec::with_capacity(uri.len());
     let mut rest = uri.as_bytes();
     while let Some((&byte, tail)) = rest.split_first() {

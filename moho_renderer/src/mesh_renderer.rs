@@ -115,7 +115,7 @@ impl MeshRenderer {
     /// each draw call.
     ///
     /// # Arguments
-    /// * `pending_draws` - List of (mesh_handle, instances) for each draw call
+    /// * `pending_draws` - List of (draw key, instances) for each draw call
     ///
     /// # Returns
     /// Tuple of (all_instances, offsets) where:
@@ -131,13 +131,13 @@ impl MeshRenderer {
     /// assert_eq!(offsets, vec![0, 3, 5]);
     /// assert_eq!(instances.len(), 6);
     /// ```
-    pub fn flatten_instances(
-        pending_draws: &[(u32, Vec<GpuInstance>)],
+    pub fn flatten_instances<K>(
+        pending_draws: &[(K, Vec<GpuInstance>)],
     ) -> (Vec<GpuInstance>, Vec<usize>) {
         let mut all_instances: Vec<GpuInstance> = Vec::new();
         let mut offsets: Vec<usize> = Vec::with_capacity(pending_draws.len());
 
-        for (_mesh, insts) in pending_draws {
+        for (_key, insts) in pending_draws {
             offsets.push(all_instances.len());
             all_instances.extend_from_slice(insts);
         }

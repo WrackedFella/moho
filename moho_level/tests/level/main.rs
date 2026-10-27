@@ -7,3 +7,4 @@ mod model;
 mod rig;
 mod socket;
 mod support;
+mod texture;

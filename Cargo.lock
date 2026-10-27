@@ -1528,6 +1528,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -1927,8 +1929,10 @@ dependencies = [
 name = "moho_level"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "glam 0.33.12",
  "gltf",
+ "image",
  "moho_physics",
  "moho_render_api",
  "proptest",
@@ -1937,6 +1941,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

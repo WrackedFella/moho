@@ -5,7 +5,7 @@
 
 use crate::gpu_types::{MultiLightShadowGpu, ShadowMatrixGpu};
 use crate::shadow::ShadowSystem;
-use crate::types::{GpuInstance, MeshEntry};
+use crate::types::{DrawKey, GpuInstance, MeshEntry};
 use glam::Vec3;
 use wgpu::{Buffer, CommandEncoder, Queue};
 
@@ -81,14 +81,14 @@ fn with_view_height(mut gpu: MultiLightShadowGpu, cut: f32) -> MultiLightShadowG
 /// * `encoder` - Command encoder for recording render passes
 /// * `shadow_system` - Shadow system containing pipelines and views
 /// * `instance_buffer` - Instance buffer containing all instance data
-/// * `pending_draws` - List of (mesh_handle, instances) to render
+/// * `pending_draws` - List of (draw key, instances) to render; the texture is unused here
 /// * `mesh_table` - Table of registered meshes
 /// * `offsets` - Byte offsets into instance buffer for each draw
 pub fn render_shadow_passes(
     encoder: &mut CommandEncoder,
     shadow_system: &ShadowSystem,
     instance_buffer: &Buffer,
-    pending_draws: &[(u32, Vec<GpuInstance>)],
+    pending_draws: &[(DrawKey, Vec<GpuInstance>)],
     mesh_table: &[Option<MeshEntry>],
     offsets: &[usize],
 ) {
@@ -125,8 +125,8 @@ pub fn render_shadow_passes(
         shadow_pass.set_immediates(0, bytemuck::bytes_of(&light_idx));
 
         // Draw all pending meshes from light's perspective
-        for (i, (mesh_handle, insts)) in pending_draws.iter().enumerate() {
-            let idx = *mesh_handle as usize;
+        for (i, (key, insts)) in pending_draws.iter().enumerate() {
+            let idx = key.mesh as usize;
             if idx >= mesh_table.len() {
                 continue;
             }

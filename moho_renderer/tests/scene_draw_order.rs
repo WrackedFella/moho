@@ -4,7 +4,7 @@
 use glam::Vec3;
 use moho_render_api::{
     InstanceGpu, Marker, MarkerGpu, MarkerId, MarkerStyle, MaterialGpu, MaterialKey,
-    RenderMaterial, Renderable, WorldMesh, WorldMeshId,
+    RenderMaterial, Renderable, Rgba8Image, TextureId, WorldMesh, WorldMeshId,
 };
 use moho_renderer::{FrameError, LightingGpu, RendererBackend, Scene};
 
@@ -107,12 +107,35 @@ struct RecordingRenderer {
     outline_batches: Vec<Vec<MarkerGpu>>,
     calls: Vec<Call>,
     fail_begin_frame: bool,
+    /// `enqueue_textured_draw` calls, which also count as draws like the default does.
+    textured_draws: Vec<TexturedDraw>,
+    /// Each `register_texture` call as `(handle, image)`.
+    textures: Vec<(u32, Rgba8Image)>,
 }
+
+#[derive(Debug, PartialEq)]
+struct TexturedDraw {
+    mesh: u32,
+    texture: u32,
+    xs: Vec<f32>,
+}
+
+/// The handle the recording renderer hands out for the first uploaded texture; later
+/// ones count up from it.
+const FIRST_TEXTURE: u32 = 50;
 
 impl RecordingRenderer {
     /// Draw calls that carried at least one instance, in submission order.
     fn non_empty_draws(&self) -> Vec<&Draw> {
         self.draws.iter().filter(|d| !d.xs.is_empty()).collect()
+    }
+
+    /// The handle `image` was registered under, whatever the upload order.
+    fn texture_handle(&self, image: &Rgba8Image) -> u32 {
+        let Some((handle, _)) = self.textures.iter().find(|(_, i)| i == image) else {
+            panic!("no texture registered with image {image:?}");
+        };
+        *handle
     }
 }
 
@@ -137,6 +160,19 @@ impl RendererBackend for RecordingRenderer {
         WORLD_MESH
     }
     fn unregister_mesh(&mut self, _mesh: u32) {}
+    fn register_texture(&mut self, image: &Rgba8Image) -> u32 {
+        let handle = FIRST_TEXTURE + u32::try_from(self.textures.len()).expect("few textures");
+        self.textures.push((handle, image.clone()));
+        handle
+    }
+    fn enqueue_textured_draw(&mut self, mesh: u32, texture: u32, instances: &[InstanceGpu]) {
+        self.textured_draws.push(TexturedDraw {
+            mesh,
+            texture,
+            xs: instances.iter().map(|i| i.model[3][0]).collect(),
+        });
+        self.enqueue_draw(mesh, instances);
+    }
     fn add_point_light(
         &mut self,
         _position: Vec3,
@@ -346,6 +382,46 @@ fn placements_of_one_mesh_are_one_draw_in_placement_order() {
         renderer.non_empty_draws(),
         vec![&draw(WORLD_MESH, &[3.0, 1.0, 2.0])]
     );
+}
+
+#[test]
+fn placements_of_one_mesh_split_into_one_draw_per_texture() {
+    let (skin, fur) = (TextureId(1), TextureId(2));
+    let image = |red: u8| Rgba8Image::new([1, 1], vec![[red, 0, 0, 255]]).expect("one pixel");
+    let mut scene = Scene::new();
+    let mut renderer = RecordingRenderer::default();
+    let world = scene.world_meshes_mut();
+    world.upsert_movable(WorldMeshId(1), triangle());
+    world.upsert_texture(skin, image(10));
+    world.upsert_texture(fur, image(20));
+    world.place_textured(WorldMeshId(1), at(1.0), 0, skin);
+    world.place_textured(WorldMeshId(1), at(2.0), 0, skin);
+    world.place_textured(WorldMeshId(1), at(3.0), 0, fur);
+    world.place_textured(WorldMeshId(1), at(4.0), 0, skin);
+    world.place(WorldMeshId(1), at(5.0), 0);
+
+    render_frame(&mut scene, &mut renderer, &[], &[]);
+
+    let skin_handle = renderer.texture_handle(&image(10));
+    let fur_handle = renderer.texture_handle(&image(20));
+    assert_ne!(skin_handle, fur_handle);
+    let textured = |texture: u32, xs: &[f32]| TexturedDraw {
+        mesh: WORLD_MESH,
+        texture,
+        xs: xs.to_vec(),
+    };
+    assert_eq!(
+        renderer.textured_draws,
+        vec![
+            textured(skin_handle, &[1.0, 2.0]),
+            textured(fur_handle, &[3.0]),
+            textured(skin_handle, &[4.0]),
+            textured(0, &[5.0]),
+        ],
+        "consecutive placements with one texture share a draw; the white handle is 0"
+    );
+    assert_eq!(renderer.textures.len(), 2);
+    assert_eq!(renderer.non_empty_draws().len(), 4);
 }
 
 #[test]

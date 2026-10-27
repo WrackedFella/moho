@@ -32,7 +32,7 @@ pub struct ScreenText {
 
 /// The alignment that names both the anchor's point on the screen and the matching point of the
 /// text placed there, so the text grows away from the screen edge.
-fn align(anchor: Anchor) -> egui::Align2 {
+pub(crate) fn align(anchor: Anchor) -> egui::Align2 {
     match anchor {
         Anchor::TopLeft => egui::Align2::LEFT_TOP,
         Anchor::Top => egui::Align2::CENTER_TOP,
@@ -68,12 +68,18 @@ pub(crate) fn validate(texts: &[ScreenText]) -> Result<(), ScreenTextError> {
     }
 }
 
+/// The background layer game text and images paint on, under the console; within it, shapes
+/// draw in paint order.
+pub(crate) fn screen_layer() -> egui::LayerId {
+    egui::LayerId::new(
+        egui::Order::Background,
+        egui::Id::new("moho_ui_shell_screen"),
+    )
+}
+
 /// Paints `texts`, which passed `validate`, on the background layer, under the console.
 pub(crate) fn paint(ctx: &egui::Context, texts: &[ScreenText]) {
-    let painter = ctx.layer_painter(egui::LayerId::new(
-        egui::Order::Background,
-        egui::Id::new("moho_ui_shell_screen_text"),
-    ));
+    let painter = ctx.layer_painter(screen_layer());
     let screen = ctx.content_rect();
     for t in texts {
         let [r, g, b, a] = t.color;

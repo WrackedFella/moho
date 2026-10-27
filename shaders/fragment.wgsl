@@ -614,6 +614,10 @@ fn sky_reflection(
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    // Sampled ahead of every branch: an implicit-derivative sample must stay in uniform
+    // control flow. Alpha is ignored; placed meshes draw opaque.
+    let base_texel = textureSample(base_colour_texture, base_colour_sampler, in.uv);
+
     if (in.world_pos.y > camera.cam_pos.w) {
         discard;
     }
@@ -698,7 +702,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         mat.albedo.xyz,  // top colour for terrain
         is_top_face
     );
-    let final_albedo = select(albedo, voxel_albedo, is_terrain);
+    let final_albedo = select(albedo, voxel_albedo, is_terrain) * base_texel.rgb;
 
     // If ref_idx > 0 we treat the material as a dielectric (glass-like).
     // We don't implement true refraction here (no background sampling), but

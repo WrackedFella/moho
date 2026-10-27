@@ -19,6 +19,8 @@ pub struct Vertex {
     pub sky_exposed: f32,
     /// Material-table index; `NO_VERTEX_MATERIAL` defers to the instance's material.
     pub material: u32,
+    /// Base-colour texture coordinates; `[0, 0]` samples white on the default texture.
+    pub uv: [f32; 2],
 }
 
 /// Vertex `material` value meaning "draw in the instance's material".
@@ -32,6 +34,13 @@ pub struct GpuInstance {
     pub material: u32,
     pub object_type: u32,
     pub padding: [u32; 2],
+}
+
+/// What a queued draw binds: its mesh and the base-colour texture of the main pass.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DrawKey {
+    pub mesh: u32,
+    pub texture: u32,
 }
 
 /// Per-mesh GPU data with optional index buffer
@@ -80,6 +89,7 @@ mod tests {
                 wgpu::VertexFormat::Float32,
             ),
             (13, offset_of!(Vertex, material), wgpu::VertexFormat::Uint32),
+            (14, offset_of!(Vertex, uv), wgpu::VertexFormat::Float32x2),
         ];
 
         let attributes: Vec<_> = MAIN_VERTEX_ATTRIBUTES
@@ -89,9 +99,10 @@ mod tests {
 
         assert_eq!(
             size_of::<Vertex>(),
-            56,
+            64,
             "documented in the GPU ABI reference"
         );
+        assert_eq!(offset_of!(Vertex, uv), 56, "the uv closes the vertex");
         assert_eq!(attributes, fields);
     }
 }

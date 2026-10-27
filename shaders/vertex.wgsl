@@ -60,6 +60,7 @@ fn vs_main(v: VertexIn, i: InstanceIn) -> VsOut {
     out.block_light_rgb = v.block_light_rgb;
     out.sky_exposed = v.sky_exposed;
     out.object_type = i.object_type;
-    
+    out.uv = v.uv;
+
     return out;
 }

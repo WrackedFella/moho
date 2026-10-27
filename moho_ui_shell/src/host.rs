@@ -1,15 +1,16 @@
 //! The engine's own egui host: one egui pass per frame, drawing the console and
-//! the screen text a game queues.
+//! the screen text and images a game queues.
 
 use std::sync::Arc;
 
 use moho_input::bindings::Input;
 use moho_input::key::{Key, MouseButton};
-use moho_render_api::{UiFrame, UiFrameSource};
+use moho_render_api::{Rgba8Image, UiFrame, UiFrameSource};
 use winit::event::{KeyEvent, WindowEvent};
 use winit::window::Window;
 
 use crate::console::{Console, Routing};
+use crate::image::{ScreenImage, ScreenImageError, ScreenImageId, ScreenImages};
 use crate::menu::MenuStack;
 use crate::paint_map::to_ui_frame;
 use crate::text::{self, ScreenText, ScreenTextError};
@@ -25,6 +26,7 @@ pub struct UiShell<G, A> {
     /// The cursor's last position, in logical points from the window's top left.
     cursor: [f32; 2],
     texts: Vec<ScreenText>,
+    images: ScreenImages,
 }
 
 impl<G, A> std::fmt::Debug for UiShell<G, A> {
@@ -45,6 +47,7 @@ impl<G, A> UiShell<G, A> {
             menu: MenuStack::new(),
             cursor: [0.0, 0.0],
             texts: Vec::new(),
+            images: ScreenImages::default(),
         }
     }
 
@@ -122,6 +125,30 @@ impl<G, A> UiShell<G, A> {
         text::validate(&texts)?;
         self.texts = texts;
         Ok(())
+    }
+
+    /// Uploads `image` to the UI once under `id`, replacing and freeing any image already
+    /// there.
+    pub fn add_image(&mut self, id: ScreenImageId, image: &Rgba8Image) {
+        self.images.add(&self.context, id, image);
+    }
+
+    /// Frees the texture of the image under `id`, which the next frame no longer paints; an
+    /// unknown id is ignored.
+    pub fn remove_image(&mut self, id: ScreenImageId) {
+        self.images.remove(id);
+    }
+
+    /// Replaces the images the next `ui_frame` paints; that frame clears them. Call once per
+    /// `Game::frame` with everything to show, like [`set_texts`](Self::set_texts).
+    ///
+    /// # Errors
+    ///
+    /// [`ScreenImageError::UnknownImage`] when an image was never added or was removed, and
+    /// [`ScreenImageError::BadSize`] when a side of its size is not finite and positive; the shell
+    /// then holds no images.
+    pub fn set_images(&mut self, images: Vec<ScreenImage>) -> Result<(), ScreenImageError> {
+        self.images.set(images)
     }
 
     fn feed_egui(&mut self, event: &WindowEvent) {
@@ -235,12 +262,17 @@ impl<G, A> UiFrameSource for UiShell<G, A> {
     fn ui_frame(&mut self, size_in_pixels: [u32; 2]) -> Option<UiFrame> {
         // Taken even while closed, so events fed to egui do not pile up unread.
         let input = self.take_input(size_in_pixels);
-        if !self.console.is_open() && self.texts.is_empty() && !self.menu.is_open() {
+        if !self.console.is_open()
+            && self.texts.is_empty()
+            && !self.images.has_work()
+            && !self.menu.is_open()
+        {
             return None;
         }
         let context = self.context.clone();
         let output = context.run_ui(input, |ui| {
-            // Game text first, then the menu, so the console paints over both.
+            // Game images, then game text, then the menu, so the console paints over all.
+            self.images.paint(ui.ctx());
             text::paint(ui.ctx(), &self.texts);
             let screen = ui.ctx().content_rect().size();
             text::paint(ui.ctx(), &self.menu.texts([screen.x, screen.y]));
@@ -249,6 +281,7 @@ impl<G, A> UiFrameSource for UiShell<G, A> {
             }
         });
         self.texts.clear();
+        self.images.end_frame();
         // Platform output is dropped: handing it to egui-winit would show the cursor the game
         // grabbed. Copy, IME and cursor icons in the console go with it.
         let primitives = context.tessellate(output.shapes, output.pixels_per_point);

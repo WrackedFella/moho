@@ -1,6 +1,7 @@
 use crate::MeshRenderer;
 use crate::shadow::ShadowSystem;
-use crate::types::{GpuInstance, MeshEntry, NO_VERTEX_MATERIAL, Vertex};
+use crate::types::{DrawKey, GpuInstance, MeshEntry, NO_VERTEX_MATERIAL, Vertex};
+use moho_render_api::WorldMesh;
 use wgpu::util::DeviceExt;
 
 pub struct Renderer<'a> {
@@ -24,7 +25,8 @@ pub struct Renderer<'a> {
     instance_capacity: usize,
     mesh_table: Vec<Option<MeshEntry>>,
     pending_frame: Option<wgpu::SurfaceTexture>,
-    pending_draws: Vec<(u32, Vec<GpuInstance>)>,
+    pending_draws: Vec<(DrawKey, Vec<GpuInstance>)>,
+    textures: crate::textures::TextureTable,
     pending_frame_view: Option<wgpu::TextureView>,
     skybox_pipeline: wgpu::RenderPipeline,
     skybox_vertex_buffer: wgpu::Buffer,
@@ -119,6 +121,11 @@ impl<'a> Renderer<'a> {
             bloom.output(),
         );
         tone_map.set_params(&device_setup.queue, 1.0, true, bloom.intensity());
+        let textures = crate::textures::TextureTable::new(
+            &device_setup.device,
+            &device_setup.queue,
+            pipeline_setup.texture_bind_group_layout().clone(),
+        );
 
         let mut renderer = Self {
             window,
@@ -141,6 +148,7 @@ impl<'a> Renderer<'a> {
             mesh_table: Vec::new(),
             pending_frame: None,
             pending_draws: Vec::new(),
+            textures,
             pending_frame_view: None,
             skybox_pipeline: pipeline_setup.skybox_pipeline().clone(),
             skybox_vertex_buffer: resources.skybox_vertex_buffer,
@@ -372,16 +380,44 @@ impl<'a> Renderer<'a> {
         material: &[u32],
         indices: &[u32],
     ) -> u32 {
-        let iv = interleave_vertices(&VertexChannels {
-            positions: vertices,
-            normals,
-            ao,
-            geometry_type,
-            light_level,
-            block_light_rgb,
-            sky_exposed,
-            material,
-        });
+        self.register_channels(
+            &VertexChannels {
+                positions: vertices,
+                normals,
+                ao,
+                geometry_type,
+                light_level,
+                block_light_rgb,
+                sky_exposed,
+                material,
+                uv: &[],
+            },
+            indices,
+        )
+    }
+
+    /// Register a contract mesh with its UVs; `material` is the resolved per-vertex
+    /// material channel (empty defers to the instance material).
+    pub fn register_world_mesh(&mut self, mesh: &WorldMesh, material: &[u32]) -> u32 {
+        let light_level = world_mesh_light_level(mesh);
+        self.register_channels(
+            &world_mesh_channels(mesh, &light_level, material),
+            mesh.indices(),
+        )
+    }
+
+    /// Upload `image` with its mip chain; returns its texture handle.
+    pub fn register_texture(&mut self, image: &moho_render_api::Rgba8Image) -> u32 {
+        self.textures.register(&self.device, &self.queue, image)
+    }
+
+    /// Free a texture handle; the white default (handle 0) is never freed.
+    pub fn unregister_texture(&mut self, texture: u32) {
+        self.textures.unregister(texture);
+    }
+
+    fn register_channels(&mut self, channels: &VertexChannels, indices: &[u32]) -> u32 {
+        let iv = interleave_vertices(channels);
         for (i, v) in iv.iter().enumerate().take(6) {
             tracing::trace!(
                 index = i,
@@ -426,7 +462,7 @@ impl<'a> Renderer<'a> {
             });
         let entry = MeshEntry {
             buffer: vb,
-            vertex_count: vertices.len() as u32,
+            vertex_count: iv.len() as u32,
             index_buffer: Some(ib),
             index_count: indices.len() as u32,
         };
@@ -524,8 +560,19 @@ impl<'a> Renderer<'a> {
         Ok(())
     }
 
-    /// Queue a previously-registered mesh for drawing this frame.
+    /// Queue a previously-registered mesh for drawing this frame, untextured.
     pub fn enqueue_draw(&mut self, mesh: u32, instances: &[moho_render_api::InstanceGpu]) {
+        self.enqueue_textured_draw(mesh, crate::textures::WHITE_TEXTURE, instances);
+    }
+
+    /// Queue a previously-registered mesh for drawing this frame with `texture` bound in
+    /// the main pass.
+    pub fn enqueue_textured_draw(
+        &mut self,
+        mesh: u32,
+        texture: u32,
+        instances: &[moho_render_api::InstanceGpu],
+    ) {
         if !MeshRenderer::validate_mesh(mesh, &self.mesh_table) {
             return;
         }
@@ -537,7 +584,8 @@ impl<'a> Renderer<'a> {
             return;
         }
 
-        self.pending_draws.push((mesh, instances_gpu));
+        self.pending_draws
+            .push((DrawKey { mesh, texture }, instances_gpu));
     }
 
     pub fn set_shadow_quality(&mut self, quality: u8) {
@@ -709,6 +757,7 @@ impl<'a> Renderer<'a> {
             &self.shadow,
             ibuf,
             &self.pending_draws,
+            &self.textures,
             &self.mesh_table,
             &offsets,
         );
@@ -799,11 +848,12 @@ pub(crate) struct VertexChannels<'a> {
     pub block_light_rgb: &'a [[f32; 3]],
     pub sky_exposed: &'a [f32],
     pub material: &'a [u32],
+    pub uv: &'a [[f32; 2]],
 }
 
 /// Interleave the per-channel slices into GPU vertices. A channel shorter than
 /// `positions` fills the rest with its neutral value; `material` falls back to
-/// `NO_VERTEX_MATERIAL`, so the instance's material draws.
+/// `NO_VERTEX_MATERIAL`, so the instance's material draws, and `uv` to `[0, 0]`.
 pub(crate) fn interleave_vertices(channels: &VertexChannels) -> Vec<Vertex> {
     let VertexChannels {
         positions,
@@ -814,6 +864,7 @@ pub(crate) fn interleave_vertices(channels: &VertexChannels) -> Vec<Vertex> {
         block_light_rgb,
         sky_exposed,
         material,
+        uv,
     } = *channels;
     (0..positions.len())
         .map(|i| Vertex {
@@ -825,8 +876,38 @@ pub(crate) fn interleave_vertices(channels: &VertexChannels) -> Vec<Vertex> {
             block_light_rgb: block_light_rgb.get(i).copied().unwrap_or([0.0; 3]),
             sky_exposed: sky_exposed.get(i).copied().unwrap_or(1.0),
             material: material.get(i).copied().unwrap_or(NO_VERTEX_MATERIAL),
+            uv: uv.get(i).copied().unwrap_or([0.0; 2]),
         })
         .collect()
+}
+
+/// A contract mesh's per-vertex light level: the brightest channel of its block light.
+pub(crate) fn world_mesh_light_level(mesh: &WorldMesh) -> Vec<f32> {
+    mesh.light_rgb()
+        .iter()
+        .map(|rgb| rgb[0].max(rgb[1]).max(rgb[2]))
+        .collect()
+}
+
+/// The channels of a contract mesh as `register_world_mesh` uploads them: the mesh's
+/// own positions, normals, AO, surface, block light, sky exposure and UVs (empty when it
+/// has none), with the caller's derived `light_level` and resolved `material`.
+pub(crate) fn world_mesh_channels<'a>(
+    mesh: &'a WorldMesh,
+    light_level: &'a [f32],
+    material: &'a [u32],
+) -> VertexChannels<'a> {
+    VertexChannels {
+        positions: mesh.positions(),
+        normals: mesh.normals(),
+        ao: mesh.ao(),
+        geometry_type: mesh.surface(),
+        light_level,
+        block_light_rgb: mesh.light_rgb(),
+        sky_exposed: mesh.sky_exposure(),
+        material,
+        uv: mesh.uvs().unwrap_or_default(),
+    }
 }
 
 #[cfg(test)]
@@ -938,6 +1019,86 @@ mod tests {
 
         let materials: Vec<u32> = interleaved.iter().map(|v| v.material).collect();
         assert_eq!(materials, vec![NO_VERTEX_MATERIAL; 3]);
+    }
+
+    #[test]
+    fn interleave_carries_uvs_and_defaults_missing_ones_to_zero() {
+        let vertices = [[0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
+        let normals = [[0.0, 1.0, 0.0]; 3];
+        let uvs = [[0.25, 0.75], [1.0, 0.5]];
+
+        let with_uvs = interleave_vertices(&VertexChannels {
+            positions: &vertices,
+            normals: &normals,
+            uv: &uvs,
+            ..Default::default()
+        });
+        let without_uvs = interleave_vertices(&VertexChannels {
+            positions: &vertices,
+            normals: &normals,
+            ..Default::default()
+        });
+
+        let carried: Vec<[f32; 2]> = with_uvs.iter().map(|v| v.uv).collect();
+        assert_eq!(
+            carried,
+            vec![[0.25, 0.75], [1.0, 0.5], [0.0, 0.0]],
+            "a short channel is padded with zero"
+        );
+        assert!(without_uvs.iter().all(|v| v.uv == [0.0, 0.0]));
+    }
+
+    #[test]
+    fn world_mesh_channels_carry_every_channel_including_uvs() {
+        let uvs = vec![[0.25, 0.75], [1.0, 0.5], [0.0, 1.0]];
+        let mesh = WorldMesh::new(
+            vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            vec![[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            vec![0.25, 0.5, 0.75],
+            vec![[0.2, 0.9, 0.5], [0.9, 0.1, 0.1], [0.3, 0.4, 0.6]],
+            vec![0.1, 0.2, 0.3],
+            vec![3, 4, 5],
+            vec![0, 1, 2],
+        )
+        .expect("well-formed test mesh")
+        .with_uvs(uvs.clone())
+        .expect("one uv per vertex");
+        let light_level = [0.9, 0.9, 0.6];
+        let material = [2, 5, 9];
+
+        let channels = world_mesh_channels(&mesh, &light_level, &material);
+
+        assert_eq!(channels.positions, mesh.positions());
+        assert_eq!(channels.normals, mesh.normals());
+        assert_eq!(channels.ao, [0.25, 0.5, 0.75]);
+        assert_eq!(channels.geometry_type, [3, 4, 5]);
+        assert_eq!(channels.light_level, light_level);
+        assert_eq!(channels.block_light_rgb, mesh.light_rgb());
+        assert_eq!(channels.sky_exposed, [0.1, 0.2, 0.3]);
+        assert_eq!(channels.material, material);
+        assert_eq!(channels.uv, uvs);
+        let vertices = interleave_vertices(&channels);
+        let carried: Vec<[f32; 2]> = vertices.iter().map(|v| v.uv).collect();
+        assert_eq!(carried, uvs, "the UVs reach the GPU vertices");
+    }
+
+    #[test]
+    fn world_mesh_channels_of_a_mesh_without_uvs_have_none() {
+        let mesh = WorldMesh::new(
+            vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            vec![[0.0, 1.0, 0.0]; 3],
+            vec![1.0; 3],
+            vec![[1.0; 3]; 3],
+            vec![1.0; 3],
+            vec![0; 3],
+            vec![0, 1, 2],
+        )
+        .expect("well-formed test mesh");
+
+        let channels = world_mesh_channels(&mesh, &[1.0; 3], &[]);
+
+        assert!(channels.uv.is_empty());
+        assert!(channels.material.is_empty());
     }
 
     #[test]
