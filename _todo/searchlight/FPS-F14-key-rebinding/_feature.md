@@ -5,11 +5,11 @@
 
 ## End state
 
-A player can make Searchlight's controls their own: every action has a primary and a secondary input they chose, as a plain key or button, a hold, or a chord, kept across launches. Held actions are hold or toggle by a checkbox beside the binding (GDD §3.3). See the [GDD](../../../wiki/searchlight/game-design-document.md) §3.3 and the [roadmap](../../../wiki/searchlight/roadmap.md) FPS-M1.1.
+A player can make Searchlight's controls their own: every action has a primary and a secondary input they chose, as a press, a hold, a double press or a chord, kept across launches. Held actions are hold or toggle by a checkbox beside the binding (GDD §3.3). See the [GDD](../../../wiki/searchlight/game-design-document.md) §3.3 and the [roadmap](../../../wiki/searchlight/roadmap.md) FPS-M1.1.
 
 ## Summary
 
-Settings gets a Controls page listing every player action with its primary and secondary input. The player picks a slot, performs the input (press a key or button, hold it, or press it with Ctrl, Shift or Alt), and Apply makes it live and saves it. An input already used by another action asks before taking it. A slot can be cleared. Held actions get a hold/toggle checkbox. Reset restores defaults for the page or for one action. This is the FPS card the engine's keybind capture (ENG-F18) has waited on, and it is cheapest now: the action list is small and every later action (rig hotkeys, stance, interact) joins a list that already rebinds.
+Settings gets a Controls page listing every player action with its primary and secondary input. The basic view shows plain presses only; expanding an action shows, per slot, a picker for press, hold or double press and for a Ctrl, Shift or Alt modifier. The player picks a slot, presses the key or button, and Apply makes it live and saves it. An input already used by another action asks before taking it. A slot can be cleared. Held actions get a hold/toggle checkbox. Reset restores defaults for the page or for one action. This is the FPS card the engine's keybind capture (ENG-F18) has waited on, and it is cheapest now: the action list is small and every later action (rig hotkeys, stance, interact) joins a list that already rebinds.
 
 **Moves toward the end state by:** giving FPS-F4 slice 2 (crouch, prone) and FPS-M2 (rig hotkeys) a binding list to join.
 
@@ -62,16 +62,32 @@ Scenario: An unbound action is visible
   When the player views Controls
   Then Move forward shows as Unbound, marked so it is not missed
 
-Scenario Outline: Capture records what the player did
-  Given the player is capturing a slot
-  When the player <input>
+Scenario Outline: A slot's pickers set what the input means
+  Given the player expanded Check magazine and set a slot's pickers to <kind> and <modifier>
+  When the player captures Y into that slot and chooses Apply
   Then the slot shows <binding>
+  And <gesture> in play checks the magazine
   Examples:
-    | input                           | binding  |
-    | presses Y                       | Y        |
-    | presses the right mouse button  | Mouse 2  |
-    | holds Y past the hold threshold | Hold Y   |
-    | holds Ctrl and presses Y        | Ctrl+Y   |
+    | kind         | modifier | binding        | gesture                          |
+    | press        | none     | Y              | pressing Y                       |
+    | hold         | none     | Hold Y         | holding Y past the hold time     |
+    | double press | none     | Double Y       | pressing Y twice quickly         |
+    | press        | Ctrl     | Ctrl+Y         | holding Ctrl and pressing Y      |
+
+Scenario: Capture records the key, not the gesture
+  Given a slot's picker is set to hold
+  When the player taps Y during capture
+  Then the slot shows Hold Y
+
+Scenario: The basic view shows plain presses
+  Given Controls is in the basic view
+  Then each action shows its press bindings only
+  And an action with a hold, double press or chord binding is marked as having more
+
+Scenario: Expanding shows the details
+  Given Controls is in the basic view
+  When the player expands Check magazine
+  Then both slots show their kind and modifier pickers and the action's reset
 
 Scenario: A held action toggles
   Given Lean left is marked toggle in Controls and applied
@@ -103,7 +119,7 @@ Scenario: Menu keys cannot be taken
 
 ## Scope
 
-- In: one Controls page in the FPS-F3 settings screen; every current player action listed with primary and secondary slots; capture of a key, mouse button, hold or Ctrl/Shift/Alt chord; staged until Apply (as FPS-F3-03); confirm dialog on conflict; clear a slot; hold/toggle checkbox for held actions; reset per action and for the page; save and reload; Escape cancels capture; the console key and Escape stay unbindable.
+- In: one Controls page in the FPS-F3 settings screen; every current player action listed with primary and secondary slots; basic and advanced views; capture of a key or mouse button; per-slot pickers for press, hold or double press and for a Ctrl/Shift/Alt modifier; staged until Apply (as FPS-F3-03); confirm dialog on conflict; clear a slot; hold/toggle checkbox for held actions; reset per action and for the page; save and reload; Escape cancels capture; the console key and Escape stay unbindable.
 - Out: see Deferred.
 
 ## Direction-setting decisions
@@ -115,9 +131,11 @@ Scenario: Menu keys cannot be taken
 | What does a conflict do? | Dialog; Replace takes the input and the other action's slot becomes Unbound; Cancel changes nothing | Player's call (Justin, 2026-10-27). Cost: a player can strand an action, so Unbound must show plainly and Reset must fix it |
 | Can a slot be cleared? | Yes, either slot | Player's call. An action may end up with no input; shown as Unbound |
 | Bindings per action | Two editable slots: primary and secondary | Player's call. Existing defaults with two inputs (Check magazine: C and Hold R) fit without special cases |
-| How does capture record a hold or chord? | By performing it: hold past the threshold records Hold, modifier held with a key records the chord | Proposed; TL and the Engine project settle the capture method. Alternatives: a press-kind picker per slot (more UI, no timing in capture) |
+| How does a slot become a hold, double press or chord? | Explicit per-slot pickers (kind: press, hold, double press; modifier: none, Ctrl, Shift, Alt); capture records only the key or button | Justin, 2026-10-27. Clearer than timing a gesture during capture; costs two controls per slot, hidden in the basic view |
+| Double press | A press kind beside press and hold | Justin, 2026-10-27. New to the engine: ENG-F26 #359 covers tap, hold and chords only, so this is an engine request. Cost: a key with a double-press binding must wait to tell one press from two, so its plain press fires late |
+| Basic and advanced | Basic shows plain presses; advanced shows the pickers and per-action reset (layout pending Justin: per-action expander or global toggle) | Most players rebind presses only; the pickers stay out of the way |
 | Hold/toggle | A checkbox beside each held action's row; the choice persists | GDD §3.3; applies to actions the game marks toggleable (today lean) |
-| Reset scope | A button per action and one for the page | Player's call |
+| Reset scope | One for the page (required); one per action in the advanced view | Justin, 2026-10-27. Per-action reset is the page reset applied to one row, so it is small; it is the first thing cut if the slice grows |
 
 ## Deferred
 
@@ -137,17 +155,19 @@ Not decomposed until the feature is approved. Proposed slices, each demoable; or
 | 1 Rebind one action and keep it | Controls page lists actions; capture a key or button into the primary slot, Apply, works in play, survives relaunch (the skeleton) | engine keybind capture row (engine request) |
 | 2 Conflict dialog | Taking a used input asks, Replace or Cancel; shows Unbound | none beyond 1 |
 | 3 Secondary slot | Each action takes a second input | none beyond 1 |
-| 4 Clear and Reset | Clear a slot; reset per action and for the page | none beyond 1 |
-| 5 Hold and chord capture | Hold Y, Ctrl+Y recorded and working | ENG-F26 #359 and capture of holds and chords |
-| 6 Hold/toggle checkbox | Lean toggles by checkbox | ENG-F26 #359 toggle mode |
+| 4 Clear and reset | Clear a slot; reset the page | none beyond 1 |
+| 5 Advanced view: hold and chord | Expander or toggle shows the pickers; Hold Y and Ctrl+Y bind and work; per-action reset | ENG-F26 #359; picker row kind (engine request) |
+| 6 Double press | Double Y binds and works | double-press input kind (engine request) |
+| 7 Hold/toggle checkbox | Lean toggles by checkbox | ENG-F26 #359 toggle mode |
 
-Slices 2, 3 and 4 are independent after 1. Slices 5 and 6 are the largest and the most engine-dependent; they go last, and are the cut line if the feature must shrink.
+Slices 2, 3 and 4 are independent after 1; 6 follows 5; 7 is independent after 1. Slices 5 to 7 are the largest and the most engine-dependent; they go last and are the cut line if the feature must shrink (6 first).
 
 ## Notes
 
 TL: open questions:
 - How the page meets ENG-F26 #359: is its hold/toggle and hold-timing already landed, and what remains for slices 5 and 6? A tap on a key that also has a hold binding fires on release; how does the list show that?
-- Capture of holds and chords, the confirm dialog and the hold/toggle checkbox need engine row kinds (ADR-0026 keeps widget kinds closed). File engine requests stating what the player must be able to do; the Engine project designs them.
+- Double press is a new input kind: its window, and how a key with both a press and a double-press binding behaves (the press waits out the window), are for the Engine project.
+- The pickers, the basic/advanced layout, the confirm dialog and the hold/toggle checkbox need engine row kinds (ADR-0026 keeps widget kinds closed). File engine requests stating what the player must be able to do; the Engine project designs them.
 - Keys the page must refuse (Escape, the console key, tester F-keys): who owns the list?
 - Does Restart (F8, a host/tester action) appear on the page?
 - Keyboard layouts: show the key by position or by label?
