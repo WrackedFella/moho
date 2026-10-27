@@ -218,7 +218,12 @@ fn channel(
             Track::Translation { times, values }
         }
         ReadOutputs::Rotations(values) => {
-            let values: Vec<Quat> = values.into_f32().map(Quat::from_array).collect();
+            // Normalised-integer keys decode slightly off unit length; a non-unit key would
+            // scale its node.
+            let values: Vec<Quat> = values
+                .into_f32()
+                .map(|q| Quat::from_array(q).normalize())
+                .collect();
             counted(values.len())?;
             Track::Rotation { times, values }
         }
