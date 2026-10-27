@@ -92,12 +92,8 @@ pub fn render_main_pass(
             continue;
         }
         if let Some(me) = &mesh_table[idx] {
-            let vertices = match key.source.arena_bytes(me.vertex_count) {
-                None => me.buffer.slice(..),
-                Some(bytes) => match arena {
-                    Some(arena) => arena.slice(bytes),
-                    None => continue,
-                },
+            let Some(vertices) = key.vertex_slice(me, arena) else {
+                continue;
             };
             if bound_texture != Some(key.texture) {
                 rpass.set_bind_group(2, textures.bind_group(key.texture), &[]);

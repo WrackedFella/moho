@@ -80,6 +80,19 @@ impl DrawKey {
             source: VertexSource::Arena { first_vertex },
         }
     }
+
+    /// The vertices this draw reads: the mesh's buffer, or its slice of `arena`. `None` when
+    /// the draw reads the arena and there is none.
+    pub(crate) fn vertex_slice<'a>(
+        &self,
+        mesh: &'a MeshEntry,
+        arena: Option<&'a wgpu::Buffer>,
+    ) -> Option<wgpu::BufferSlice<'a>> {
+        match self.source.arena_bytes(mesh.vertex_count) {
+            None => Some(mesh.buffer.slice(..)),
+            Some(bytes) => arena.map(|arena| arena.slice(bytes)),
+        }
+    }
 }
 
 /// Per-mesh GPU data with optional index buffer

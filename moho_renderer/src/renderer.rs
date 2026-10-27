@@ -612,21 +612,35 @@ impl<'a> Renderer<'a> {
         if !MeshRenderer::validate_mesh(mesh, &self.mesh_table) {
             return;
         }
+        let Some(instances_gpu) = self.prepare_instances_for_upload(&[instance]) else {
+            return;
+        };
         let Some(first_vertex) = self.skinning.queue(mesh, palette) else {
             return;
         };
-        self.queue_draw(DrawKey::skinned(mesh, texture, first_vertex), &[instance]);
+        self.pending_draws
+            .push((DrawKey::skinned(mesh, texture, first_vertex), instances_gpu));
     }
 
     fn queue_draw(&mut self, key: DrawKey, instances: &[moho_render_api::InstanceGpu]) {
-        let instances_gpu = MeshRenderer::prepare_instances(instances);
+        let Some(instances_gpu) = self.prepare_instances_for_upload(instances) else {
+            return;
+        };
+        self.pending_draws.push((key, instances_gpu));
+    }
 
+    /// The GPU form of `instances`, once the instance buffer can hold them; `None` (logged)
+    /// when there is no instance buffer.
+    fn prepare_instances_for_upload(
+        &mut self,
+        instances: &[moho_render_api::InstanceGpu],
+    ) -> Option<Vec<GpuInstance>> {
+        let instances_gpu = MeshRenderer::prepare_instances(instances);
         if self.prepare_instance_buffer(&instances_gpu).is_none() {
             tracing::error!("instance buffer missing when uploading instances");
-            return;
+            return None;
         }
-
-        self.pending_draws.push((key, instances_gpu));
+        Some(instances_gpu)
     }
 
     pub fn set_shadow_quality(&mut self, quality: u8) {

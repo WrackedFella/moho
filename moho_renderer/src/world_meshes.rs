@@ -197,12 +197,7 @@ impl WorldMeshes {
             let handle = backend.register_world_mesh(&mesh, &material);
             let palette_len = mesh.skin().map(|(joints, weights)| {
                 backend.register_skin(handle, joints, weights);
-                joints
-                    .iter()
-                    .flatten()
-                    .map(|&j| usize::from(j) + 1)
-                    .max()
-                    .unwrap_or(0)
+                crate::skinning::palette_len(joints)
             });
             self.live.insert(
                 id,

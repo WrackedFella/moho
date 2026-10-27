@@ -133,12 +133,8 @@ pub fn render_shadow_passes(
                 continue;
             }
             if let Some(me) = &mesh_table[idx] {
-                let vertices = match key.source.arena_bytes(me.vertex_count) {
-                    None => me.buffer.slice(..),
-                    Some(bytes) => match arena {
-                        Some(arena) => arena.slice(bytes),
-                        None => continue,
-                    },
+                let Some(vertices) = key.vertex_slice(me, arena) else {
+                    continue;
                 };
                 shadow_pass.set_vertex_buffer(0, vertices);
 

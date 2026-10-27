@@ -40,10 +40,15 @@ struct MeshSkin {
     joint_count: usize,
 }
 
-/// A buffer that only grows.
-struct GrowBuffer {
-    buffer: wgpu::Buffer,
-    size: u64,
+/// The shortest palette a skin with these per-vertex `joints` can use: the highest joint
+/// index plus one, 0 for no joints.
+pub(crate) fn palette_len(joints: &[[u16; 4]]) -> usize {
+    joints
+        .iter()
+        .flatten()
+        .map(|&j| usize::from(j) + 1)
+        .max()
+        .unwrap_or(0)
 }
 
 pub(crate) struct Skinning {
@@ -59,9 +64,11 @@ pub(crate) struct Skinning {
     dispatches: Vec<(u32, SkinParamsGpu)>,
     /// Vertices queued so far this frame: the next placement's `first_vertex`.
     arena_vertices: u32,
-    palette_buffer: Option<GrowBuffer>,
-    params_buffer: Option<GrowBuffer>,
-    arena: Option<GrowBuffer>,
+    /// Scratch for the strided dispatch parameters, reused every frame.
+    params_data: Vec<u8>,
+    palette_buffer: Option<wgpu::Buffer>,
+    params_buffer: Option<wgpu::Buffer>,
+    arena: Option<wgpu::Buffer>,
     frame_bind_group: Option<wgpu::BindGroup>,
 }
 
@@ -79,26 +86,27 @@ fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
 }
 
 /// Make `slot` hold at least `bytes`, replacing the buffer when it is too small.
-/// Returns whether the buffer was replaced.
-fn grow(
+/// Returns the buffer and whether it was replaced.
+fn grow<'a>(
     device: &wgpu::Device,
-    slot: &mut Option<GrowBuffer>,
+    slot: &'a mut Option<wgpu::Buffer>,
     label: &str,
     usage: wgpu::BufferUsages,
     bytes: u64,
-) -> bool {
-    if slot.as_ref().is_some_and(|b| b.size >= bytes) {
-        return false;
+) -> (&'a wgpu::Buffer, bool) {
+    let replaced = slot.as_ref().is_none_or(|b| b.size() < bytes);
+    if replaced {
+        *slot = None;
     }
-    let size = bytes.next_power_of_two();
-    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some(label),
-        size,
-        usage,
-        mapped_at_creation: false,
+    let buffer = slot.get_or_insert_with(|| {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size: bytes.next_power_of_two(),
+            usage,
+            mapped_at_creation: false,
+        })
     });
-    *slot = Some(GrowBuffer { buffer, size });
-    true
+    (buffer, replaced)
 }
 
 impl Skinning {
@@ -155,6 +163,7 @@ impl Skinning {
             palettes: Vec::new(),
             dispatches: Vec::new(),
             arena_vertices: 0,
+            params_data: Vec::new(),
             palette_buffer: None,
             params_buffer: None,
             arena: None,
@@ -210,18 +219,12 @@ impl Skinning {
                 },
             ],
         });
-        let joint_count = joints
-            .iter()
-            .flatten()
-            .map(|&j| usize::from(j) + 1)
-            .max()
-            .unwrap_or(1);
         self.skins.insert(
             mesh,
             MeshSkin {
                 bind_group,
                 vertex_count: entry.vertex_count,
-                joint_count,
+                joint_count: palette_len(joints),
             },
         );
     }
@@ -266,7 +269,7 @@ impl Skinning {
     /// The frame arena the queued placements are skinned into; `None` before the first
     /// `dispatch` of a frame with skinned draws.
     pub(crate) fn arena(&self) -> Option<&wgpu::Buffer> {
-        self.arena.as_ref().map(|a| &a.buffer)
+        self.arena.as_ref()
     }
 
     /// Upload this frame's palettes and parameters, grow the arena to fit and record one
@@ -283,80 +286,80 @@ impl Skinning {
         let palette_bytes: &[u8] = bytemuck::cast_slice(&self.palettes);
         let arena_bytes = u64::from(self.arena_vertices) * size_of::<Vertex>() as u64;
         let params_bytes = self.dispatches.len() as u64 * self.params_stride;
-        let mut recreated = self.frame_bind_group.is_none();
-        recreated |= grow(
+        let (palette, palette_replaced) = grow(
             device,
             &mut self.palette_buffer,
             "skin-palette-buffer",
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             palette_bytes.len() as u64,
         );
-        recreated |= grow(
+        let (params, params_replaced) = grow(
             device,
             &mut self.params_buffer,
             "skin-params-buffer",
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             params_bytes,
         );
-        recreated |= grow(
+        let (arena, arena_replaced) = grow(
             device,
             &mut self.arena,
             "skin-arena",
             wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
             arena_bytes,
         );
-        let (Some(palette), Some(params), Some(arena)) =
-            (&self.palette_buffer, &self.params_buffer, &self.arena)
-        else {
-            unreachable!("grow fills every slot it is given");
-        };
 
-        queue.write_buffer(&palette.buffer, 0, palette_bytes);
+        queue.write_buffer(palette, 0, palette_bytes);
         let stride = self.params_stride as usize;
-        let mut params_data = vec![0u8; params_bytes as usize];
-        for (slot, (_, p)) in params_data.chunks_mut(stride).zip(&self.dispatches) {
+        self.params_data.clear();
+        self.params_data.resize(params_bytes as usize, 0);
+        for (slot, (_, p)) in self.params_data.chunks_mut(stride).zip(&self.dispatches) {
             slot[..size_of::<SkinParamsGpu>()].copy_from_slice(bytemuck::bytes_of(p));
         }
-        queue.write_buffer(&params.buffer, 0, &params_data);
+        queue.write_buffer(params, 0, &self.params_data);
 
-        if recreated {
-            self.frame_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+        if palette_replaced || params_replaced || arena_replaced {
+            self.frame_bind_group = None;
+        }
+        let frame = self.frame_bind_group.get_or_insert_with(|| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("skin-frame-bind-group"),
                 layout: &self.frame_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: palette.buffer.as_entire_binding(),
+                        resource: palette.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: arena.buffer.as_entire_binding(),
+                        resource: arena.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
                         resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &params.buffer,
+                            buffer: params,
                             offset: 0,
                             size: wgpu::BufferSize::new(size_of::<SkinParamsGpu>() as u64),
                         }),
                     },
                 ],
-            }));
-        }
-        let Some(frame) = &self.frame_bind_group else {
-            unreachable!("the frame bind group is built above when missing");
-        };
+            })
+        });
 
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("skin-pass"),
             timestamp_writes: None,
         });
         pass.set_pipeline(&self.pipeline);
+        let frame = &*frame;
+        let mut bound_mesh = None;
         for (i, (mesh, p)) in self.dispatches.iter().enumerate() {
             let Some(skin) = self.skins.get(mesh) else {
                 continue;
             };
-            pass.set_bind_group(0, &skin.bind_group, &[]);
+            if bound_mesh != Some(*mesh) {
+                pass.set_bind_group(0, &skin.bind_group, &[]);
+                bound_mesh = Some(*mesh);
+            }
             pass.set_bind_group(1, frame, &[(i * stride) as u32]);
             pass.dispatch_workgroups(p.vertex_count.div_ceil(WORKGROUP_SIZE), 1, 1);
         }
