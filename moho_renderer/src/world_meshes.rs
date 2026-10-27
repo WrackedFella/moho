@@ -178,13 +178,15 @@ impl WorldMeshes {
         });
         let placed = self.placements.iter().flat_map(move |(id, placements)| {
             let handle = self.live.get(id).map(|live| live.handle);
-            placements.iter().filter_map(move |placement| {
-                let texture = placement
-                    .texture
-                    .and_then(|t| self.live_textures.get(&t).copied())
-                    .unwrap_or(WHITE_TEXTURE);
-                let model = glam::Mat4::from(placement.transform);
-                handle.map(|h| (h, texture, instance(model, placement.material)))
+            handle.into_iter().flat_map(move |handle| {
+                placements.iter().map(move |placement| {
+                    let texture = placement
+                        .texture
+                        .and_then(|t| self.live_textures.get(&t).copied())
+                        .unwrap_or(WHITE_TEXTURE);
+                    let model = glam::Mat4::from(placement.transform);
+                    (handle, texture, instance(model, placement.material))
+                })
             })
         });
         statics.chain(placed)

@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 moho_render_api = { path = "../moho_render_api" }
+bytemuck = { workspace = true, features = ["extern_crate_alloc"] }
 glam = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

@@ -1,6 +1,6 @@
 use crate::MeshRenderer;
 use crate::shadow::ShadowSystem;
-use crate::types::{GpuInstance, MeshEntry, NO_VERTEX_MATERIAL, Vertex};
+use crate::types::{DrawKey, GpuInstance, MeshEntry, NO_VERTEX_MATERIAL, Vertex};
 use moho_render_api::WorldMesh;
 use wgpu::util::DeviceExt;
 
@@ -25,9 +25,7 @@ pub struct Renderer<'a> {
     instance_capacity: usize,
     mesh_table: Vec<Option<MeshEntry>>,
     pending_frame: Option<wgpu::SurfaceTexture>,
-    pending_draws: Vec<(u32, Vec<GpuInstance>)>,
-    /// The texture handle of each entry of `pending_draws`, at the same index.
-    pending_textures: Vec<u32>,
+    pending_draws: Vec<(DrawKey, Vec<GpuInstance>)>,
     textures: crate::textures::TextureTable,
     pending_frame_view: Option<wgpu::TextureView>,
     skybox_pipeline: wgpu::RenderPipeline,
@@ -150,7 +148,6 @@ impl<'a> Renderer<'a> {
             mesh_table: Vec::new(),
             pending_frame: None,
             pending_draws: Vec::new(),
-            pending_textures: Vec::new(),
             textures,
             pending_frame_view: None,
             skybox_pipeline: pipeline_setup.skybox_pipeline().clone(),
@@ -587,8 +584,8 @@ impl<'a> Renderer<'a> {
             return;
         }
 
-        self.pending_draws.push((mesh, instances_gpu));
-        self.pending_textures.push(texture);
+        self.pending_draws
+            .push((DrawKey { mesh, texture }, instances_gpu));
     }
 
     pub fn set_shadow_quality(&mut self, quality: u8) {
@@ -760,7 +757,6 @@ impl<'a> Renderer<'a> {
             &self.shadow,
             ibuf,
             &self.pending_draws,
-            &self.pending_textures,
             &self.textures,
             &self.mesh_table,
             &offsets,
@@ -807,7 +803,6 @@ impl<'a> Renderer<'a> {
 
         self.pending_frame_view = None;
         self.pending_draws.clear();
-        self.pending_textures.clear();
         self.pending_markers.clear();
         self.pending_fill_count = 0;
     }

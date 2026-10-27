@@ -36,6 +36,13 @@ pub struct GpuInstance {
     pub padding: [u32; 2],
 }
 
+/// What a queued draw binds: its mesh and the base-colour texture of the main pass.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DrawKey {
+    pub mesh: u32,
+    pub texture: u32,
+}
+
 /// Per-mesh GPU data with optional index buffer
 #[derive(Debug)]
 pub struct MeshEntry {

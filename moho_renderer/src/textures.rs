@@ -166,13 +166,20 @@ fn average(texels: [[u8; 4]; 4]) -> [u8; 4] {
     out
 }
 
+/// The linear value of an sRGB-encoded byte, from a table built on first use: every mip
+/// texel reads four per channel, and `powf` dominates the chain's cost.
 fn srgb_to_linear(encoded: u8) -> f32 {
-    let c = f32::from(encoded) / 255.0;
-    if c <= 0.040_45 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
-    }
+    static TABLE: std::sync::LazyLock<[f32; 256]> = std::sync::LazyLock::new(|| {
+        std::array::from_fn(|i| {
+            let c = i as f32 / 255.0;
+            if c <= 0.040_45 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        })
+    });
+    TABLE[usize::from(encoded)]
 }
 
 fn linear_to_srgb(linear: f32) -> u8 {

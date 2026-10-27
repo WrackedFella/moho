@@ -76,16 +76,15 @@ pub(crate) fn convert(
         }
     }
 
-    let uvs = match primitive.get(&gltf::Semantic::TexCoords(0)) {
-        Some(_) => Some(
+    let uvs = primitive
+        .get(&gltf::Semantic::TexCoords(0))
+        .map(|_| {
             reader
                 .read_tex_coords(0)
-                .ok_or_else(|| bad("TEXCOORD_0 out of buffer range".into()))?
-                .into_f32()
-                .collect::<Vec<_>>(),
-        ),
-        None => None,
-    };
+                .ok_or_else(|| bad("TEXCOORD_0 out of buffer range".into()))
+                .map(|uvs| uvs.into_f32().collect::<Vec<_>>())
+        })
+        .transpose()?;
 
     let mesh = WorldMesh::new(
         positions,
@@ -97,8 +96,8 @@ pub(crate) fn convert(
         indices,
     )
     .map_err(|e| bad(e.to_string()))?;
-    match uvs {
-        Some(uvs) => mesh.with_uvs(uvs).map_err(|e| bad(e.to_string())),
-        None => Ok(mesh),
+    if let Some(uvs) = uvs {
+        return mesh.with_uvs(uvs).map_err(|e| bad(e.to_string()));
     }
+    Ok(mesh)
 }

@@ -1,5 +1,5 @@
-//! Buffer resolution: GLB blob or relative file URIs. The URI helpers serve image
-//! files too.
+//! Buffer resolution: GLB blob or relative file URIs. The URI helpers are crate-visible
+//! because image URIs (`image.rs`) go through the same decoding and path check.
 
 use std::borrow::Cow;
 use std::path::{Component, Path};

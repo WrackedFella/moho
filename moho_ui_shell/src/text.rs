@@ -73,7 +73,7 @@ pub(crate) fn validate(texts: &[ScreenText]) -> Result<(), ScreenTextError> {
 pub(crate) fn screen_layer() -> egui::LayerId {
     egui::LayerId::new(
         egui::Order::Background,
-        egui::Id::new("moho_ui_shell_screen_text"),
+        egui::Id::new("moho_ui_shell_screen"),
     )
 }
 

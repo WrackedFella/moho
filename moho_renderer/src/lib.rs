@@ -76,14 +76,25 @@ pub trait RendererBackend {
     /// upload the mesh's UVs too.
     fn register_world_mesh(&mut self, mesh: &WorldMesh, material: &[u32]) -> u32 {
         let light_level = renderer::world_mesh_light_level(mesh);
+        let renderer::VertexChannels {
+            positions,
+            normals,
+            ao,
+            geometry_type,
+            light_level,
+            block_light_rgb,
+            sky_exposed,
+            material,
+            uv: _,
+        } = renderer::world_mesh_channels(mesh, &light_level, material);
         self.register_indexed_mesh(
-            mesh.positions(),
-            mesh.normals(),
-            mesh.ao(),
-            mesh.surface(),
-            &light_level,
-            mesh.light_rgb(),
-            mesh.sky_exposure(),
+            positions,
+            normals,
+            ao,
+            geometry_type,
+            light_level,
+            block_light_rgb,
+            sky_exposed,
             material,
             mesh.indices(),
         )

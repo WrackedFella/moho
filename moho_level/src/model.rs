@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use glam::{Affine3A, Mat4};
 use moho_render_api::{MaterialGpu, MaterialKey, RenderMaterial, Rgba8Image, WorldMesh};
 
-use crate::{LevelError, LevelErrorKind, buffers, mesh};
+use crate::image::ImageSources;
+use crate::{LevelError, LevelErrorKind, mesh};
 
 /// `MaterialKey::variant` of every [`ModelMaterial`]; outside the variants searchlight
 /// (0..4) and flagstone (0, 1) use, so a game that also uses `0x80` would merge keys.
@@ -103,10 +104,9 @@ pub fn load_model(path: &Path) -> Result<Model, LevelError> {
     crate::with_buffers(path, build)
 }
 
-/// Decodes each glTF image a base-colour texture reaches, once.
+/// Maps glTF images to [`Model::images`], decoding each base-colour image once.
 struct Images<'a> {
-    buffers: &'a [Cow<'a, [u8]>],
-    dir: &'a Path,
+    sources: ImageSources<'a>,
     /// For each glTF image, its index in `decoded` once decoded.
     by_gltf_index: Vec<Option<usize>>,
     decoded: Vec<ModelImage>,
@@ -118,15 +118,7 @@ impl Images<'_> {
         if let Some(index) = self.by_gltf_index[image.index()] {
             return Ok(index);
         }
-        let ImageBytes {
-            source,
-            bytes,
-            label,
-        } = self.read(image)?;
-        let decoded = crate::image::decode(&bytes).map_err(|reason| LevelErrorKind::BadImage {
-            image: label,
-            reason,
-        })?;
+        let (source, decoded) = self.sources.load(image)?;
         let index = self.decoded.len();
         self.decoded.push(ModelImage {
             name: image.name().map(str::to_owned),
@@ -136,59 +128,6 @@ impl Images<'_> {
         self.by_gltf_index[image.index()] = Some(index);
         Ok(index)
     }
-
-    /// The encoded bytes of `image`, from its buffer view or its file.
-    fn read<'b>(&'b self, image: &gltf::Image<'_>) -> Result<ImageBytes<'b>, LevelErrorKind> {
-        match image.source() {
-            gltf::image::Source::View { view, .. } => {
-                let label = format!("#{}", image.index());
-                let range = view.offset()..view.offset() + view.length();
-                let bytes = self
-                    .buffers
-                    .get(view.buffer().index())
-                    .and_then(|buffer| buffer.get(range))
-                    .ok_or_else(|| LevelErrorKind::BadImage {
-                        image: label.clone(),
-                        reason: "buffer view runs past the end of its buffer".into(),
-                    })?;
-                Ok(ImageBytes {
-                    source: None,
-                    bytes: Cow::Borrowed(bytes),
-                    label,
-                })
-            }
-            gltf::image::Source::Uri { uri, .. } => {
-                let file = buffers::percent_decode(uri);
-                if !buffers::is_relative_file(&file) {
-                    return Err(LevelErrorKind::BadImage {
-                        image: uri.to_owned(),
-                        reason: "uri is not a relative file path".into(),
-                    });
-                }
-                let missing = |source| LevelErrorKind::MissingImage {
-                    uri: uri.to_owned(),
-                    source,
-                };
-                let path = self.dir.join(file);
-                let bytes = std::fs::read(&path).map_err(missing)?;
-                let canonical = path.canonicalize().map_err(missing)?;
-                Ok(ImageBytes {
-                    source: Some(canonical),
-                    bytes: Cow::Owned(bytes),
-                    label: uri.to_owned(),
-                })
-            }
-        }
-    }
-}
-
-/// One image's encoded bytes, before decoding.
-struct ImageBytes<'b> {
-    /// Canonical path of a file image; `None` when embedded.
-    source: Option<PathBuf>,
-    bytes: Cow<'b, [u8]>,
-    /// What errors name the image by: its URI, or `#<index>` when embedded.
-    label: String,
 }
 
 fn build(
@@ -197,34 +136,13 @@ fn build(
     dir: &Path,
 ) -> Result<Model, LevelErrorKind> {
     let mut images = Images {
-        buffers,
-        dir,
+        sources: ImageSources { buffers, dir },
         by_gltf_index: vec![None; document.images().len()],
         decoded: Vec::new(),
     };
     let materials = document
         .materials()
-        .map(|m| {
-            let base_colour_image = m
-                .pbr_metallic_roughness()
-                .base_color_texture()
-                .map(|info| {
-                    if info.tex_coord() != 0 {
-                        tracing::warn!(
-                            material = m.name().unwrap_or_default(),
-                            tex_coord = info.tex_coord(),
-                            "base-colour texture uses another texcoord set; reading set 0"
-                        );
-                    }
-                    images.index_of(&info.texture().source())
-                })
-                .transpose()?;
-            Ok(ModelMaterial {
-                name: m.name().map(str::to_owned),
-                base_colour: m.pbr_metallic_roughness().base_color_factor(),
-                base_colour_image,
-            })
-        })
+        .map(|m| model_material(&m, &mut images))
         .collect::<Result<_, LevelErrorKind>>()?;
     let mut walk = Walk {
         buffers,
@@ -240,6 +158,32 @@ fn build(
         walk.node(&node, None)?;
     }
     Ok(walk.model)
+}
+
+/// `material`'s base colour, with its base-colour image decoded into `images`.
+fn model_material(
+    material: &gltf::Material<'_>,
+    images: &mut Images<'_>,
+) -> Result<ModelMaterial, LevelErrorKind> {
+    let pbr = material.pbr_metallic_roughness();
+    let base_colour_image = pbr
+        .base_color_texture()
+        .map(|info| {
+            if info.tex_coord() != 0 {
+                tracing::warn!(
+                    material = material.name().unwrap_or_default(),
+                    tex_coord = info.tex_coord(),
+                    "base-colour texture uses another texcoord set; reading set 0"
+                );
+            }
+            images.index_of(&info.texture().source())
+        })
+        .transpose()?;
+    Ok(ModelMaterial {
+        name: material.name().map(str::to_owned),
+        base_colour: pbr.base_color_factor(),
+        base_colour_image,
+    })
 }
 
 struct Walk<'a> {
@@ -271,12 +215,7 @@ impl Walk<'_> {
                     flip_winding,
                     self.buffers,
                 )?;
-                let textured = primitive
-                    .material()
-                    .index()
-                    .and_then(|i| self.model.materials[i].base_colour_image)
-                    .is_some();
-                if textured && converted.uvs().is_none() {
+                if self.is_textured(primitive.material().index()) && converted.uvs().is_none() {
                     return Err(LevelErrorKind::BadMesh {
                         mesh: mesh.index(),
                         reason: "material has a base-colour texture but the primitive has no \
@@ -295,6 +234,12 @@ impl Walk<'_> {
             self.node(&child, Some(index))?;
         }
         Ok(())
+    }
+
+    /// Whether the material at `material` has a base-colour image; `None` (the glTF
+    /// default) has none.
+    fn is_textured(&self, material: Option<usize>) -> bool {
+        material.is_some_and(|i| self.model.materials[i].base_colour_image.is_some())
     }
 }
 
