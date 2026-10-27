@@ -1,4 +1,5 @@
 use std::f32::consts::FRAC_PI_2;
+use std::sync::LazyLock;
 
 use glam::{Affine3A, Quat, Vec3};
 use moho_level::{Assembly, Model, SocketError, load_model};
@@ -181,11 +182,40 @@ fn attaching_at_an_occupied_socket_replaces_the_part_and_returns_the_old_one() {
     let models = models();
     let lookup = |k: usize| &models[k];
     let mut rifle = Assembly::new(RIFLE);
+    let old_offset = Affine3A::from_translation(Vec3::new(0.0, 0.1, 0.0));
+    let new_offset = offset();
+    let root = moved_and_turned();
     let first = rifle
-        .attach(&lookup, "rail", Assembly::new(SCOPE), Affine3A::IDENTITY)
+        .attach(&lookup, "rail", Assembly::new(SCOPE), old_offset)
         .expect("rail exists");
 
     let replaced = rifle
+        .attach(&lookup, "rail", Assembly::new(OTHER_SCOPE), new_offset)
+        .expect("rail exists");
+
+    assert!(first.is_none());
+    assert_eq!(replaced, Some(Assembly::new(SCOPE)));
+    let placed = rifle.placements(&lookup, root);
+    let keys: Vec<usize> = placed.iter().map(|p| p.0).collect();
+    assert_eq!(keys, vec![RIFLE, RIFLE, OTHER_SCOPE]);
+    let expected =
+        root * rest(&models, RIFLE, "rail") * new_offset * rest(&models, OTHER_SCOPE, "tube");
+    near(placed[2].2, expected);
+}
+
+#[test]
+fn replacing_a_part_keeps_its_place_in_attach_order() {
+    let models = models();
+    let lookup = |k: usize| &models[k];
+    let mut rifle = Assembly::new(RIFLE);
+    rifle
+        .attach(&lookup, "rail", Assembly::new(SCOPE), Affine3A::IDENTITY)
+        .expect("rail exists");
+    rifle
+        .attach(&lookup, "grip", Assembly::new(LASER), Affine3A::IDENTITY)
+        .expect("grip exists");
+
+    rifle
         .attach(
             &lookup,
             "rail",
@@ -194,11 +224,12 @@ fn attaching_at_an_occupied_socket_replaces_the_part_and_returns_the_old_one() {
         )
         .expect("rail exists");
 
-    assert!(first.is_none());
-    assert_eq!(replaced, Some(Assembly::new(SCOPE)));
-    let placed = rifle.placements(&lookup, Affine3A::IDENTITY);
-    let keys: Vec<usize> = placed.iter().map(|p| p.0).collect();
-    assert_eq!(keys, vec![RIFLE, RIFLE, OTHER_SCOPE]);
+    let keys: Vec<usize> = rifle
+        .placements(&lookup, Affine3A::IDENTITY)
+        .iter()
+        .map(|p| p.0)
+        .collect();
+    assert_eq!(keys, vec![RIFLE, RIFLE, OTHER_SCOPE, LASER]);
 }
 
 #[test]
@@ -272,22 +303,22 @@ fn placements_list_the_model_first_then_parts_depth_first_in_attach_order() {
     let lookup = |k: usize| &models[k];
     let mut rifle = Assembly::new(RIFLE);
     rifle
-        .attach(
-            &lookup,
-            "grip",
-            Assembly::new(OTHER_SCOPE),
-            Affine3A::IDENTITY,
-        )
+        .attach(&lookup, "grip", Assembly::new(SCOPE), Affine3A::IDENTITY)
         .expect("grip exists");
     rifle
-        .attach(&lookup, "rail", Assembly::new(SCOPE), Affine3A::IDENTITY)
-        .expect("rail exists");
-    rifle
-        .part_mut(&lookup, "rail")
-        .expect("rail exists")
+        .part_mut(&lookup, "grip")
+        .expect("grip exists")
         .expect("scope is attached")
         .attach(&lookup, "mount", Assembly::new(LASER), Affine3A::IDENTITY)
         .expect("mount exists");
+    rifle
+        .attach(
+            &lookup,
+            "rail",
+            Assembly::new(OTHER_SCOPE),
+            Affine3A::IDENTITY,
+        )
+        .expect("rail exists");
 
     let placed = rifle.placements(&lookup, Affine3A::IDENTITY);
 
@@ -297,9 +328,9 @@ fn placements_list_the_model_first_then_parts_depth_first_in_attach_order() {
         vec![
             (RIFLE, 0),
             (RIFLE, 1),
-            (OTHER_SCOPE, 0),
             (SCOPE, 0),
-            (LASER, 0)
+            (LASER, 0),
+            (OTHER_SCOPE, 0)
         ]
     );
 }
@@ -375,6 +406,9 @@ fn arbitrary_affine() -> impl Strategy<Value = Affine3A> {
         })
 }
 
+/// Built once: writing and loading glTF files per proptest case is the slow part.
+static SHARED_MODELS: LazyLock<Vec<Model>> = LazyLock::new(models);
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(32))]
 
@@ -383,8 +417,7 @@ proptest! {
         root in arbitrary_affine(),
         t in arbitrary_affine(),
     ) {
-        let models = models();
-        let lookup = |k: usize| &models[k];
+        let lookup = |k: usize| &SHARED_MODELS[k];
         let mut rifle = Assembly::new(RIFLE);
         rifle.attach(&lookup, "rail", Assembly::new(SCOPE), offset()).expect("rail exists");
         rifle
