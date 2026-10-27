@@ -4,12 +4,8 @@
 
 ## Card changes
 
-- `Move forward | Up arrow` cannot pass: the engine refuses a lone arrow key or Enter as a
-  binding (`Binding::is_protected`; menus read them), and the prefs loader drops one on load.
-  Replace the example with `Move forward | I | the player moves ahead`, and the feature's
-  verification line likewise (Justin decides; see the report).
-- Reserved keys outline: add a row `| Up arrow | capture refuses it with a note |`, since the
-  game refuses protected bindings.
+Applied to the issue (Justin, 2026-10-27): the `Move forward | Up arrow` example is dropped;
+arrow keys and Enter stay unbindable on their own, as the engine rules.
 
 ## Tech spec
 
@@ -29,7 +25,7 @@
   builds the page.
 - `game`: Controls opens a draft from the live bindings; each capture event goes through
   `capture`, and the page shows the new label or the refusal note (`"Q is used by Lean
-  left"`, `"Up arrow is kept for menus"`). Apply saves and goes live; Back drops the draft.
+  left"`). Apply saves and goes live; Back drops the draft.
 - Going live: `ActionMap` fixes its hold split and toggle mask at construction, so Apply
   replaces the game's map with `input::build_action_map(draft.bindings(), prefs)`, which also
   re-reads the look settings from the same prefs. The map is fed nothing while a menu is
@@ -63,11 +59,11 @@
 | Scenario | Test |
 |---|---|
 | Controls lists every action | `menu::tests::controls_lists_every_action_with_its_primary_label` |
-| A rebound input does the action (3 rows) | `game::tests::an_applied_rebinding_does_the_action_and_the_old_input_does_not` (table over Reload/T, Fire/Mouse Right, Move forward/I) |
+| A rebound input does the action (3 rows) | `game::tests::an_applied_rebinding_does_the_action_and_the_old_input_does_not` (table over Reload/T, Fire/Mouse Right, the two rows) |
 | A rebinding survives a relaunch | `debug_settings::tests::applied_bindings_load_back_as_main_loads_them` (save, `Prefs::load_from`, split console and fullscreen, `ActionBindings::load`) |
 | Back discards a captured input | `game::tests::back_from_controls_keeps_the_old_binding_live_and_shown` |
 | Reserved keys: Escape, console key | `game::tests::escape_and_the_console_key_never_reach_capture` |
-| Reserved keys: Up arrow | `controls::tests::a_protected_input_is_refused_as_reserved` |
+| edge: a protected input (Up arrow) | `controls::tests::a_protected_input_is_refused_as_reserved` |
 | An input in use is refused | `controls::tests::an_input_another_action_holds_is_refused_naming_it` |
 | edge | `controls::tests::capture_keeps_check_magazines_second_binding` |
 | edge | `controls::tests::recapturing_the_same_input_changes_nothing` |
