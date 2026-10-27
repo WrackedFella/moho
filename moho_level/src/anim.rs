@@ -254,7 +254,11 @@ impl ClipPlayer {
         }
         let time = self.time + step;
         self.time = match self.playback {
-            Playback::Loop => time.rem_euclid(duration),
+            // A tiny negative time rounds up to exactly `duration`, which is the next loop's 0.
+            Playback::Loop => match time.rem_euclid(duration) {
+                wrapped if wrapped < duration => wrapped,
+                _ => 0.0,
+            },
             Playback::Once => time.clamp(0.0, duration),
         };
     }
