@@ -14,6 +14,7 @@ fn checker_model() -> Textured {
     Textured {
         uvs: Some(QUAD_UVS.to_vec()),
         images: vec![ImageData::file("tex.png", png_rgba([2, 2], &CHECKER))],
+        texture_sources: Vec::new(),
         materials: vec![textured_material(0, FACTOR)],
     }
 }
@@ -77,19 +78,28 @@ fn embedded_glb_texture_equals_the_gltf_file_texture() {
 #[test]
 fn two_models_using_one_texture_file_report_one_source() {
     let dir = tempfile::tempdir().expect("temp dir");
+    let sub = dir.path().join("sub");
+    fs::create_dir(&sub).expect("sub dir");
+    let reaching = |uri: &str| Textured {
+        images: vec![ImageData::dangling(uri)],
+        ..checker_model()
+    };
     let a_path = write_gltf_into(dir.path(), "a.gltf", &checker_model());
-    let b_path = write_gltf_into(dir.path(), "b.gltf", &checker_model());
+    let b_path = write_gltf_into(&sub, "b.gltf", &reaching("../tex.png"));
+    let c_path = write_gltf_into(dir.path(), "c.gltf", &reaching("./tex.png"));
 
     let a = load_model(&a_path).expect("a loads");
-    let b = load_model(&b_path).expect("b loads");
+    let b = load_model(&b_path).expect("b loads through ../");
+    let c = load_model(&c_path).expect("c loads through ./");
 
     let a_source = a.images()[0].source.as_ref().expect("file image");
-    assert_eq!(Some(a_source), b.images()[0].source.as_ref());
     assert!(a_source.is_absolute(), "{}", a_source.display());
     assert_eq!(
         a_source,
         &dir.path().join("tex.png").canonicalize().expect("exists")
     );
+    assert_eq!(Some(a_source), b.images()[0].source.as_ref(), "via ../");
+    assert_eq!(Some(a_source), c.images()[0].source.as_ref(), "via ./");
 }
 
 #[test]
@@ -154,35 +164,132 @@ fn missing_texture_file_fails_naming_the_model_and_the_uri() {
 
 #[test]
 fn undecodable_image_fails_naming_its_uri() {
-    let model = Textured {
-        images: vec![ImageData::file(
-            "junk.png",
-            b"this is not an image".to_vec(),
-        )],
-        ..checker_model()
-    };
-    let (_dir, path) = write_gltf(&model);
+    let cases: [(&str, &[u8]); 2] = [
+        ("junk.png", b"this is not an image"),
+        ("anim.gif", b"GIF89a\x01\x00\x01\x00"),
+    ];
+    for (uri, bytes) in cases {
+        let model = Textured {
+            images: vec![ImageData::file(uri, bytes.to_vec())],
+            ..checker_model()
+        };
+        let (_dir, path) = write_gltf(&model);
 
-    let err = load_model(&path).expect_err("junk bytes do not decode");
+        let err = load_model(&path).expect_err("these bytes do not decode as PNG or JPEG");
 
-    assert_eq!(err.path(), path);
-    assert_eq!(bad_image_name(&err), "junk.png");
+        assert_eq!(err.path(), path, "{uri}");
+        assert_eq!(bad_image_name(&err), uri);
+    }
 }
 
 #[test]
-fn unsupported_image_format_fails_naming_its_uri() {
+fn image_format_is_chosen_by_content_not_by_file_name() {
     let model = Textured {
-        images: vec![ImageData::file(
-            "anim.gif",
-            b"GIF89a\x01\x00\x01\x00".to_vec(),
-        )],
+        images: vec![ImageData::file("tex.jpg", png_rgba([2, 2], &CHECKER))],
         ..checker_model()
     };
     let (_dir, path) = write_gltf(&model);
 
-    let err = load_model(&path).expect_err("gif is not supported");
+    let loaded = load_model(&path).expect("PNG bytes decode under a .jpg name");
 
-    assert_eq!(bad_image_name(&err), "anim.gif");
+    assert_eq!(loaded.images()[0].image.pixels(), CHECKER);
+}
+
+#[test]
+fn embedded_image_format_is_chosen_by_content_not_by_mime_type() {
+    let model = Textured {
+        images: vec![ImageData::EmbeddedAs {
+            bytes: png_rgba([2, 2], &CHECKER),
+            mime: "image/jpeg".into(),
+        }],
+        ..checker_model()
+    };
+    let (_dir, path) = write_glb(&model);
+
+    let loaded = load_model(&path).expect("PNG bytes decode under a jpeg mime type");
+
+    assert_eq!(loaded.images()[0].image.pixels(), CHECKER);
+}
+
+#[test]
+fn embedded_image_slice_outside_its_buffer_fails_naming_its_index() {
+    let model = Textured {
+        images: vec![ImageData::EmbeddedOutOfRange],
+        ..checker_model()
+    };
+    let (_dir, path) = write_glb(&model);
+
+    let err = load_model(&path).expect_err("the view runs past the buffer");
+
+    assert_eq!(err.path(), path);
+    assert_eq!(bad_image_name(&err), "#0");
+}
+
+#[test]
+fn two_textures_sharing_one_image_decode_it_once() {
+    let model = Textured {
+        texture_sources: vec![0, 0],
+        materials: vec![
+            textured_material(0, [1.0; 4]),
+            textured_material(1, [0.5, 0.5, 0.5, 1.0]),
+        ],
+        ..checker_model()
+    };
+    let (_dir, path) = write_gltf(&model);
+
+    let loaded = load_model(&path).expect("model loads");
+
+    assert_eq!(loaded.images().len(), 1, "one image, however many textures");
+    assert_eq!(loaded.materials().len(), 2);
+    assert_eq!(loaded.materials()[0].base_colour_image, Some(0));
+    assert_eq!(loaded.materials()[1].base_colour_image, Some(0));
+}
+
+#[test]
+fn base_colour_texture_on_texcoord_set_1_loads_using_texcoord_0() {
+    let mut material = textured_material(0, FACTOR);
+    material["pbrMetallicRoughness"]["baseColorTexture"]["texCoord"] = serde_json::json!(1);
+    let model = Textured {
+        materials: vec![material],
+        ..checker_model()
+    };
+    let (_dir, path) = write_gltf(&model);
+
+    let loaded = load_model(&path).expect("another texcoord set still loads");
+
+    assert_eq!(loaded.materials()[0].base_colour_image, Some(0));
+    assert_eq!(loaded.meshes()[0].mesh.uvs(), Some(&QUAD_UVS[..]));
+}
+
+#[test]
+fn absolute_path_image_uri_fails_as_bad_image() {
+    let elsewhere = tempfile::tempdir().expect("temp dir");
+    let outside = elsewhere.path().join("outside.png");
+    fs::write(&outside, png_rgba([2, 2], &CHECKER)).expect("write png");
+    let uri = outside.to_str().expect("utf-8 temp path");
+    let model = Textured {
+        images: vec![ImageData::dangling(uri)],
+        ..checker_model()
+    };
+    let (_dir, path) = write_gltf(&model);
+
+    let err = load_model(&path).expect_err("a model may not name a file by absolute path");
+
+    assert_eq!(bad_image_name(&err), uri);
+}
+
+#[test]
+fn http_image_uri_fails_as_bad_image() {
+    let uri = "http://example.com/tex.png";
+    let model = Textured {
+        images: vec![ImageData::dangling(uri)],
+        ..checker_model()
+    };
+    let (_dir, path) = write_gltf(&model);
+
+    let err = load_model(&path).expect_err("remote images are unsupported");
+
+    assert_eq!(bad_image_name(&err), uri);
 }
 
 #[test]
@@ -284,6 +391,7 @@ fn untextured_primitive_without_texcoord_0_loads_without_uvs() {
     let model = Textured {
         uvs: None,
         images: Vec::new(),
+        texture_sources: Vec::new(),
         materials: vec![serde_json::json!({ "name": "plain" })],
     };
     let (_dir, path) = write_gltf(&model);

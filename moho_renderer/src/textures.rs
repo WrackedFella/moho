@@ -9,6 +9,18 @@ pub(crate) fn mip_chain(image: &Rgba8Image) -> Vec<Rgba8Image> {
     panic!("mip_chain is not implemented")
 }
 
+/// Descriptor of the GPU texture holding `image` with its full mip chain: 2D,
+/// `Rgba8UnormSrgb` so sampling returns linear colour, uploadable and samplable.
+pub(crate) fn texture_descriptor(image: &Rgba8Image) -> wgpu::TextureDescriptor<'static> {
+    let _ = image;
+    panic!("texture_descriptor is not implemented")
+}
+
+/// The one sampler every texture is read through: trilinear, repeating in u and v.
+pub(crate) fn sampler_descriptor() -> wgpu::SamplerDescriptor<'static> {
+    panic!("sampler_descriptor is not implemented")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -31,7 +43,6 @@ mod tests {
 
     #[test]
     fn mip_chain_halves_to_one_pixel_averaging_in_linear_space() {
-        // Left 2x2 block is a black and white checker, right block is white.
         let base = image(
             [4, 2],
             vec![
@@ -45,11 +56,10 @@ mod tests {
         let sizes: Vec<[u32; 2]> = chain.iter().map(Rgba8Image::size).collect();
         assert_eq!(sizes, vec![[4, 2], [2, 1], [1, 1]]);
         assert_eq!(chain[0], base, "level 0 is the source image");
-        // Half black, half white is 0.5 linear, which is 188 encoded as sRGB (a plain
-        // average of the encoded values would give 127 or 128).
+        // 0.5 linear is 188 as sRGB; averaging the encoded values would give 127 or 128.
         assert_near(chain[1].pixels()[0], [188, 188, 188, 255], 1);
         assert_near(chain[1].pixels()[1], WHITE, 0);
-        // (0.5 + 1.0) / 2 = 0.75 linear, 225 encoded.
+        // 0.75 linear is 225 as sRGB.
         assert_near(chain[2].pixels()[0], [225, 225, 225, 255], 2);
     }
 
@@ -79,6 +89,40 @@ mod tests {
     }
 
     #[test]
+    fn mip_chain_of_an_odd_width_uses_floor_sizes_and_ignores_the_last_column() {
+        let red = [255, 0, 0, 255];
+        let base = image(
+            [3, 2],
+            vec![
+                BLACK, WHITE, red, //
+                WHITE, WHITE, red,
+            ],
+        );
+
+        let chain = mip_chain(&base);
+
+        let sizes: Vec<[u32; 2]> = chain.iter().map(Rgba8Image::size).collect();
+        assert_eq!(sizes, vec![[3, 2], [1, 1]]);
+        assert_eq!(chain[0], base);
+        // One black and three white texels: 0.75 linear is 225 as sRGB. Any weight on the
+        // red column would pull green and blue below it.
+        assert_near(chain[1].pixels()[0], [225, 225, 225, 255], 1);
+    }
+
+    #[test]
+    fn mip_chain_box_filter_reuses_the_last_row_when_the_source_is_one_wide() {
+        let base = image([1, 2], vec![BLACK, WHITE]);
+
+        let chain = mip_chain(&base);
+
+        let sizes: Vec<[u32; 2]> = chain.iter().map(Rgba8Image::size).collect();
+        assert_eq!(sizes, vec![[1, 2], [1, 1]]);
+        // The missing second column repeats the first: black and white at 0.5 linear is
+        // 188 as sRGB.
+        assert_near(chain[1].pixels()[0], [188, 188, 188, 255], 1);
+    }
+
+    #[test]
     fn mip_chain_averages_alpha_as_stored_not_as_colour() {
         let base = image([2, 1], vec![[255, 255, 255, 0], [255, 255, 255, 255]]);
 
@@ -87,5 +131,55 @@ mod tests {
         let top = chain.last().expect("a chain has a last level");
         assert_eq!(top.size(), [1, 1]);
         assert_near(top.pixels()[0], [255, 255, 255, 128], 1);
+    }
+
+    #[test]
+    fn texture_descriptor_is_srgb_with_the_full_mip_chain() {
+        let wide = image([5, 3], vec![WHITE; 15]);
+        let one = image([1, 1], vec![WHITE]);
+
+        let descriptor = texture_descriptor(&wide);
+        let single = texture_descriptor(&one);
+
+        assert_eq!(descriptor.format, wgpu::TextureFormat::Rgba8UnormSrgb);
+        assert_eq!(descriptor.dimension, wgpu::TextureDimension::D2);
+        assert_eq!(
+            (
+                descriptor.size.width,
+                descriptor.size.height,
+                descriptor.size.depth_or_array_layers
+            ),
+            (5, 3, 1)
+        );
+        assert_eq!(descriptor.sample_count, 1);
+        assert_eq!(
+            descriptor.mip_level_count,
+            u32::try_from(mip_chain(&wide).len()).expect("few levels"),
+            "5x3 halves to 2x1 then 1x1: three levels"
+        );
+        assert_eq!(descriptor.mip_level_count, 3);
+        assert_eq!(single.mip_level_count, 1);
+        assert!(
+            descriptor
+                .usage
+                .contains(wgpu::TextureUsages::TEXTURE_BINDING)
+        );
+        assert!(descriptor.usage.contains(wgpu::TextureUsages::COPY_DST));
+    }
+
+    #[test]
+    fn sampler_descriptor_is_trilinear_repeat_with_sixteen_times_anisotropy() {
+        let sampler = sampler_descriptor();
+
+        assert_eq!(sampler.min_filter, wgpu::FilterMode::Linear);
+        assert_eq!(sampler.mag_filter, wgpu::FilterMode::Linear);
+        assert_eq!(sampler.mipmap_filter, wgpu::MipmapFilterMode::Linear);
+        assert_eq!(sampler.address_mode_u, wgpu::AddressMode::Repeat);
+        assert_eq!(sampler.address_mode_v, wgpu::AddressMode::Repeat);
+        assert_eq!(sampler.anisotropy_clamp, 16);
+        assert!(
+            sampler.compare.is_none(),
+            "a colour sampler, not a comparison one"
+        );
     }
 }

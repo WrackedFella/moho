@@ -124,11 +124,26 @@ mod tests {
         (min, max)
     }
 
-    fn assert_near(actual: [f32; 2], expected: [f32; 2]) {
+    fn assert_near(actual: [f32; 2], expected: [f32; 2], context: impl std::fmt::Debug) {
         assert!(
             (actual[0] - expected[0]).abs() <= 0.5 && (actual[1] - expected[1]).abs() <= 0.5,
-            "{actual:?} is not near {expected:?}"
+            "{context:?}: {actual:?} is not near {expected:?}"
         );
+    }
+
+    /// The texture coordinate of the vertex on `texture` nearest to `point`, which must be
+    /// within half a point of it.
+    fn uv_at(frame: &UiFrame, texture: UiTextureId, point: [f32; 2]) -> [f32; 2] {
+        let distance = |pos: [f32; 2]| (pos[0] - point[0]).hypot(pos[1] - point[1]);
+        let nearest = frame
+            .meshes
+            .iter()
+            .filter(|m| m.texture == texture)
+            .flat_map(|m| m.vertices.iter())
+            .min_by(|a, b| distance(a.pos).total_cmp(&distance(b.pos)))
+            .expect("a vertex on the texture");
+        assert_near(nearest.pos, point, "nearest vertex");
+        nearest.uv
     }
 
     fn point_of(min: [f32; 2], max: [f32; 2], anchor: Anchor) -> [f32; 2] {
@@ -163,39 +178,26 @@ mod tests {
             .expect("an image alone draws a frame");
 
         let (texture, pixels) = uploaded(&frame, [2, 2]).expect("the image is uploaded");
-        let flat: Vec<u8> = PIXELS.iter().flatten().copied().collect();
-        let premultiplied: Vec<[u8; 4]> = egui::ColorImage::from_rgba_unmultiplied([2, 2], &flat)
-            .pixels
-            .iter()
-            .map(egui::Color32::to_array)
-            .collect();
+        // Straight [200, 100, 50] at alpha 128 premultiplied in gamma space with rounding:
+        // 200 * 128 / 255 = 100.4, 100 * 128 / 255 = 50.2, 50 * 128 / 255 = 25.1.
         assert_eq!(
-            pixels, premultiplied,
+            pixels,
+            vec![
+                [255, 0, 0, 255],
+                [0, 255, 0, 255],
+                [0, 0, 255, 255],
+                [100, 50, 25, 128],
+            ],
             "the pass expects premultiplied pixels"
         );
-        assert_ne!(
-            pixels[3], PIXELS[3],
-            "the translucent pixel was premultiplied"
-        );
-        assert_eq!(pixels[3][3], 128, "alpha is kept");
-        assert_eq!(pixels[..3], PIXELS[..3], "opaque pixels are unchanged");
         let (min, max) = covered(&frame, texture);
-        assert_near(min, [726.0, 556.0]);
-        assert_near(max, [790.0, 588.0]);
-        let uvs: Vec<[f32; 2]> = frame
-            .meshes
-            .iter()
-            .filter(|m| m.texture == texture)
-            .flat_map(|m| m.vertices.iter().map(|v| v.uv))
-            .collect();
-        assert!(
-            uvs.contains(&[0.0, 0.0]) && uvs.contains(&[1.0, 1.0]),
-            "{uvs:?}"
-        );
-        assert!(
-            uvs.iter()
-                .all(|uv| (0.0..=1.0).contains(&uv[0]) && (0.0..=1.0).contains(&uv[1]))
-        );
+        assert_near(min, [726.0, 556.0], "rect min");
+        assert_near(max, [790.0, 588.0], "rect max");
+        let corner = |point| uv_at(&frame, texture, point);
+        assert_eq!(corner([min[0], min[1]]), [0.0, 0.0], "top left");
+        assert_eq!(corner([max[0], min[1]]), [1.0, 0.0], "top right");
+        assert_eq!(corner([min[0], max[1]]), [0.0, 1.0], "bottom left");
+        assert_eq!(corner([max[0], max[1]]), [1.0, 1.0], "bottom right");
     }
 
     #[test]
@@ -216,8 +218,13 @@ mod tests {
             assert_near(
                 point_of(min, max, anchor),
                 [anchor_point[0] + 5.0, anchor_point[1] - 7.0],
+                (anchor, "matching point"),
             );
-            assert_near([max[0] - min[0], max[1] - min[1]], [40.0, 20.0]);
+            assert_near(
+                [max[0] - min[0], max[1] - min[1]],
+                [40.0, 20.0],
+                (anchor, "size"),
+            );
         }
     }
 
@@ -234,7 +241,11 @@ mod tests {
         let second = shell.ui_frame(SCREEN).expect("draws");
 
         assert!(uploaded(&second, [2, 2]).is_none(), "not sent again");
-        assert_near(covered(&second, texture).1, covered(&first, texture).1);
+        assert_near(
+            covered(&second, texture).1,
+            covered(&first, texture).1,
+            "second frame",
+        );
     }
 
     #[test]
@@ -378,6 +389,29 @@ mod tests {
             ),
             "{refused:?}"
         );
+    }
+
+    #[test]
+    fn removing_an_image_delivers_the_free_next_frame_even_with_nothing_else_on_screen() {
+        let mut shell = shell();
+        shell.add_image(ICON, &icon());
+        shell
+            .set_images(vec![screen_image(Anchor::Center, [0.0, 0.0], [32.0, 32.0])])
+            .expect("valid image");
+        let first = shell.ui_frame(SCREEN).expect("draws");
+        let (texture, _) = uploaded(&first, [2, 2]).expect("uploaded");
+
+        shell.remove_image(ICON);
+        let next = shell
+            .ui_frame(SCREEN)
+            .expect("a pending free still produces a frame");
+
+        assert!(
+            next.textures_free.contains(&texture),
+            "{:?}",
+            next.textures_free
+        );
+        assert_eq!(shell.ui_frame(SCREEN), None, "the free is delivered once");
     }
 
     #[test]

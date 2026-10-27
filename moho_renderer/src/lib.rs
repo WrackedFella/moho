@@ -78,8 +78,8 @@ pub trait RendererBackend {
         let _ = (mesh, material);
         panic!("RendererBackend::register_world_mesh is not implemented")
     }
-    /// Upload `image` and return its handle; handle 0 is the white default texture.
-    /// The default returns 0.
+    /// Upload `image` and return its handle; handle 0 is the white default texture, which
+    /// is all the default returns.
     fn register_texture(&mut self, image: &Rgba8Image) -> u32 {
         let _ = image;
         0

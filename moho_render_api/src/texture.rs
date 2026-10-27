@@ -86,11 +86,30 @@ mod tests {
             zero_height,
             Err(ImageSizeError::ZeroDimension { .. })
         ));
-        assert!(too_few.is_err(), "three pixels for 2x2");
-        assert!(too_many.is_err(), "five pixels for 2x2");
-        assert!(transposed.is_err(), "three pixels for 4x1");
+        assert!(
+            matches!(too_few, Err(ImageSizeError::PixelCountMismatch { .. })),
+            "three pixels for 2x2"
+        );
+        assert!(
+            matches!(too_many, Err(ImageSizeError::PixelCountMismatch { .. })),
+            "five pixels for 2x2"
+        );
+        assert!(
+            matches!(transposed, Err(ImageSizeError::PixelCountMismatch { .. })),
+            "three pixels for 4x1"
+        );
         assert_eq!(good.size(), [2, 2]);
         assert_eq!(good.pixels(), pixels);
         assert_eq!(wide.size(), [4, 1]);
+    }
+
+    #[test]
+    fn rgba8_image_refuses_a_size_whose_pixel_count_overflows_u32() {
+        let huge = Rgba8Image::new([65536, 65536], Vec::new());
+
+        assert!(
+            matches!(huge, Err(ImageSizeError::PixelCountMismatch { .. })),
+            "2^32 pixels expected, none given; got {huge:?}"
+        );
     }
 }

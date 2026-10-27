@@ -223,6 +223,75 @@ mod tests {
             };
             *handle
         }
+
+        /// The handle `image` was registered under, whatever the upload order.
+        fn texture_handle(&self, image: &Rgba8Image) -> u32 {
+            let Some((handle, _)) = self.textures.iter().find(|(_, i)| i == image) else {
+                panic!("no texture registered with image {image:?}");
+            };
+            *handle
+        }
+    }
+
+    /// A backend that takes world meshes through `register_world_mesh` and records the
+    /// UVs each one carried; any other upload route fails the test.
+    #[derive(Default)]
+    struct UvBackend {
+        uvs: Vec<Option<Vec<[f32; 2]>>>,
+        materials: Vec<Vec<u32>>,
+    }
+
+    impl RendererBackend for UvBackend {
+        fn resize(&mut self, _width: u32, _height: u32) {}
+        fn register_mesh(&mut self, _vertices: &[[f32; 3]]) -> u32 {
+            unreachable!("world meshes upload through register_world_mesh")
+        }
+        fn register_indexed_mesh(
+            &mut self,
+            _vertices: &[[f32; 3]],
+            _normals: &[[f32; 3]],
+            _ao: &[f32],
+            _geometry_type: &[u32],
+            _light_level: &[f32],
+            _block_light_rgb: &[[f32; 3]],
+            _sky_exposed: &[f32],
+            _material: &[u32],
+            _indices: &[u32],
+        ) -> u32 {
+            unreachable!("flush must hand the whole mesh to register_world_mesh to carry its UVs")
+        }
+        fn register_world_mesh(&mut self, mesh: &WorldMesh, material: &[u32]) -> u32 {
+            self.uvs.push(mesh.uvs().map(<[_]>::to_vec));
+            self.materials.push(material.to_vec());
+            11
+        }
+        fn unregister_mesh(&mut self, _mesh: u32) {}
+        fn begin_frame(
+            &mut self,
+            _camera: (glam::Mat4, glam::Mat4, glam::Vec3),
+        ) -> Result<(), crate::FrameError> {
+            Ok(())
+        }
+        fn enqueue_draw(&mut self, _mesh: u32, _instances: &[InstanceGpu]) {}
+        fn submit_frame(&mut self) {}
+        fn set_materials(&mut self, _materials: &[crate::MaterialGpu]) {}
+        fn update_lighting(&mut self, _lighting: crate::LightingGpu) {}
+        fn add_point_light(
+            &mut self,
+            _position: glam::Vec3,
+            _color: glam::Vec3,
+            _intensity: f32,
+            _range: f32,
+        ) -> u32 {
+            0
+        }
+        fn remove_light(&mut self, _id: u32) -> bool {
+            true
+        }
+        fn set_light_position(&mut self, _id: u32, _position: glam::Vec3) {}
+        fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
+        fn set_shadow_quality(&mut self, _quality: u8) {}
+        fn set_ssao_quality(&mut self, _quality: u8) {}
     }
 
     impl RendererBackend for RecordingBackend {
@@ -783,14 +852,7 @@ mod tests {
         meshes.upsert_texture(SKIN, texture(10));
         meshes.upsert_texture(FUR, texture(20));
         meshes.flush(&mut backend);
-        let handle_of = |red: u8| {
-            backend
-                .textures
-                .iter()
-                .find(|(_, image)| *image == texture(red))
-                .map(|(h, _)| *h)
-                .expect("uploaded")
-        };
+        let handle_of = |red: u8| backend.texture_handle(&texture(red));
 
         meshes.place_textured(A, at(1.0), 0, FUR);
         meshes.place_textured(A, at(2.0), 0, SKIN);
@@ -826,12 +888,39 @@ mod tests {
             meshes.flush(&mut backend);
 
             let handles: Vec<u32> = textured(&meshes).iter().map(|(_, t, _)| *t).collect();
-            assert_eq!(handles, vec![backend.textures[0].0; 3], "frame {frame}");
+            assert_eq!(
+                handles,
+                vec![backend.texture_handle(&texture(10)); 3],
+                "frame {frame}"
+            );
             meshes.clear_placements();
         }
 
         assert_eq!(backend.textures.len(), 1);
         assert!(backend.unregistered_textures.is_empty());
+    }
+
+    #[test]
+    fn flush_registers_a_mesh_with_uvs_through_register_world_mesh() {
+        let uvs = vec![[0.25, 0.75], [1.0, 0.5], [0.0, 1.0]];
+        let textured_mesh = mesh(1).with_uvs(uvs.clone()).expect("one uv per vertex");
+        let mut meshes = WorldMeshes::new();
+        let mut backend = UvBackend::default();
+        meshes.upsert(A, textured_mesh, 7);
+        meshes.upsert_movable(B, mesh(2));
+
+        meshes.flush(&mut backend);
+
+        assert_eq!(
+            backend.uvs,
+            vec![Some(uvs), None],
+            "the mesh's UVs reach the backend; a mesh without UVs passes none"
+        );
+        assert_eq!(
+            backend.materials,
+            vec![vec![7, 7, 7], Vec::<u32>::new()],
+            "the per-vertex material channel is resolved before the hand-off"
+        );
     }
 
     #[test]
@@ -854,7 +943,7 @@ mod tests {
             vec![
                 (mesh_handle, 0),
                 (mesh_handle, 0),
-                (mesh_handle, backend.textures[0].0),
+                (mesh_handle, backend.texture_handle(&texture(10))),
             ],
             "the mesh still draws for a texture that is not live"
         );
@@ -880,14 +969,13 @@ mod tests {
         meshes.upsert_movable(A, mesh(1));
         meshes.upsert_texture(SKIN, texture(10));
         meshes.flush(&mut backend);
-        let old = backend.textures[0].0;
+        let old = backend.texture_handle(&texture(10));
 
         meshes.upsert_texture(SKIN, texture(20));
         meshes.flush(&mut backend);
 
         assert_eq!(backend.textures.len(), 2);
-        assert_eq!(backend.textures[1].1, texture(20));
-        let new = backend.textures[1].0;
+        let new = backend.texture_handle(&texture(20));
         assert_ne!(new, old);
         assert_eq!(backend.unregistered_textures, vec![old]);
         meshes.place_textured(A, at(1.0), 0, SKIN);
@@ -903,8 +991,8 @@ mod tests {
         meshes.upsert_texture(SKIN, texture(10));
         meshes.upsert_texture(FUR, texture(20));
         meshes.flush(&mut backend);
-        let skin = backend.textures[0].0;
-        let fur = backend.textures[1].0;
+        let skin = backend.texture_handle(&texture(10));
+        let fur = backend.texture_handle(&texture(20));
 
         meshes.remove_texture(SKIN);
         assert!(

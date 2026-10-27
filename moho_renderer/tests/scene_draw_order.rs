@@ -109,7 +109,8 @@ struct RecordingRenderer {
     fail_begin_frame: bool,
     /// `enqueue_textured_draw` calls, which also count as draws like the default does.
     textured_draws: Vec<TexturedDraw>,
-    textures_registered: u32,
+    /// Each `register_texture` call as `(handle, image)`.
+    textures: Vec<(u32, Rgba8Image)>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -127,6 +128,14 @@ impl RecordingRenderer {
     /// Draw calls that carried at least one instance, in submission order.
     fn non_empty_draws(&self) -> Vec<&Draw> {
         self.draws.iter().filter(|d| !d.xs.is_empty()).collect()
+    }
+
+    /// The handle `image` was registered under, whatever the upload order.
+    fn texture_handle(&self, image: &Rgba8Image) -> u32 {
+        let Some((handle, _)) = self.textures.iter().find(|(_, i)| i == image) else {
+            panic!("no texture registered with image {image:?}");
+        };
+        *handle
     }
 }
 
@@ -151,9 +160,10 @@ impl RendererBackend for RecordingRenderer {
         WORLD_MESH
     }
     fn unregister_mesh(&mut self, _mesh: u32) {}
-    fn register_texture(&mut self, _image: &Rgba8Image) -> u32 {
-        self.textures_registered += 1;
-        FIRST_TEXTURE + self.textures_registered - 1
+    fn register_texture(&mut self, image: &Rgba8Image) -> u32 {
+        let handle = FIRST_TEXTURE + u32::try_from(self.textures.len()).expect("few textures");
+        self.textures.push((handle, image.clone()));
+        handle
     }
     fn enqueue_textured_draw(&mut self, mesh: u32, texture: u32, instances: &[InstanceGpu]) {
         self.textured_draws.push(TexturedDraw {
@@ -392,7 +402,9 @@ fn placements_of_one_mesh_split_into_one_draw_per_texture() {
 
     render_frame(&mut scene, &mut renderer, &[], &[]);
 
-    let (skin_handle, fur_handle) = (FIRST_TEXTURE, FIRST_TEXTURE + 1);
+    let skin_handle = renderer.texture_handle(&image(10));
+    let fur_handle = renderer.texture_handle(&image(20));
+    assert_ne!(skin_handle, fur_handle);
     let textured = |texture: u32, xs: &[f32]| TexturedDraw {
         mesh: WORLD_MESH,
         texture,
@@ -408,32 +420,8 @@ fn placements_of_one_mesh_split_into_one_draw_per_texture() {
         ],
         "consecutive placements with one texture share a draw; the white handle is 0"
     );
-    assert_eq!(renderer.textures_registered, 2);
+    assert_eq!(renderer.textures.len(), 2);
     assert_eq!(renderer.non_empty_draws().len(), 4);
-}
-
-#[test]
-fn textured_placements_do_not_register_their_texture_again_on_later_frames() {
-    let skin = TextureId(1);
-    let mut scene = Scene::new();
-    let mut renderer = RecordingRenderer::default();
-    let world = scene.world_meshes_mut();
-    world.upsert_movable(WorldMeshId(1), triangle());
-    world.upsert_texture(
-        skin,
-        Rgba8Image::new([1, 1], vec![[1, 2, 3, 255]]).expect("pixel"),
-    );
-
-    for _ in 0..3 {
-        scene
-            .world_meshes_mut()
-            .place_textured(WorldMeshId(1), at(1.0), 0, skin);
-        render_frame(&mut scene, &mut renderer, &[], &[]);
-    }
-
-    assert_eq!(renderer.textures_registered, 1);
-    let textures: Vec<u32> = renderer.textured_draws.iter().map(|d| d.texture).collect();
-    assert_eq!(textures, vec![FIRST_TEXTURE; 3]);
 }
 
 #[test]

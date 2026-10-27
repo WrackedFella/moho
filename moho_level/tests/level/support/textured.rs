@@ -57,8 +57,13 @@ pub enum ImageData {
         uri: String,
         written: Option<(String, Vec<u8>)>,
     },
-    /// A `bufferView` entry; the bytes live in the model's buffer.
+    /// A `bufferView` entry; the bytes live in the model's buffer and `mimeType` follows
+    /// them (JPEG magic or PNG).
     Embedded(Vec<u8>),
+    /// A `bufferView` entry declaring `mime` whatever the bytes are.
+    EmbeddedAs { bytes: Vec<u8>, mime: String },
+    /// A `bufferView` entry whose slice runs far past the end of its buffer.
+    EmbeddedOutOfRange,
 }
 
 impl ImageData {
@@ -80,12 +85,15 @@ impl ImageData {
 }
 
 /// One quad (four vertices, two triangles) and the materials and images it refers to.
-/// Image `i` is named `image{i}` and is texture `i`.
+/// Image `i` is named `image{i}`; texture `i` shows image `i` unless `texture_sources` says
+/// otherwise.
 #[derive(Default)]
 pub struct Textured {
     /// `TEXCOORD_0`, one per vertex; `None` writes no texture coordinates.
     pub uvs: Option<Vec<[f32; 2]>>,
     pub images: Vec<ImageData>,
+    /// The image index each texture shows; empty means texture `i` shows image `i`.
+    pub texture_sources: Vec<usize>,
     /// glTF material objects; the quad uses material 0 when there is one.
     pub materials: Vec<Value>,
 }
@@ -177,16 +185,27 @@ fn build(model: &Textured) -> (Value, Vec<u8>) {
         .images
         .iter()
         .enumerate()
-        .map(|(i, image)| match image {
-            ImageData::File { uri, .. } => json!({ "name": format!("image{i}"), "uri": uri }),
-            ImageData::Embedded(bytes) => {
-                let view = add_view(&mut blob, &mut views, bytes);
-                let mime = if bytes.starts_with(&[0xFF, 0xD8]) {
-                    "image/jpeg"
-                } else {
-                    "image/png"
-                };
-                json!({ "name": format!("image{i}"), "bufferView": view, "mimeType": mime })
+        .map(|(i, image)| {
+            let name = format!("image{i}");
+            match image {
+                ImageData::File { uri, .. } => json!({ "name": name, "uri": uri }),
+                ImageData::Embedded(bytes) => {
+                    let view = add_view(&mut blob, &mut views, bytes);
+                    let mime = if bytes.starts_with(&[0xFF, 0xD8]) {
+                        "image/jpeg"
+                    } else {
+                        "image/png"
+                    };
+                    json!({ "name": name, "bufferView": view, "mimeType": mime })
+                }
+                ImageData::EmbeddedAs { bytes, mime } => {
+                    let view = add_view(&mut blob, &mut views, bytes);
+                    json!({ "name": name, "bufferView": view, "mimeType": mime })
+                }
+                ImageData::EmbeddedOutOfRange => {
+                    views.push(json!({ "buffer": 0, "byteOffset": 0, "byteLength": 1_000_000 }));
+                    json!({ "name": name, "bufferView": views.len() - 1, "mimeType": "image/png" })
+                }
             }
         })
         .collect();
@@ -206,7 +225,12 @@ fn build(model: &Textured) -> (Value, Vec<u8>) {
         doc["materials"] = json!(model.materials);
     }
     if !images.is_empty() {
-        let textures: Vec<Value> = (0..images.len()).map(|i| json!({ "source": i })).collect();
+        let sources: Vec<usize> = if model.texture_sources.is_empty() {
+            (0..images.len()).collect()
+        } else {
+            model.texture_sources.clone()
+        };
+        let textures: Vec<Value> = sources.iter().map(|s| json!({ "source": s })).collect();
         doc["images"] = json!(images);
         doc["textures"] = json!(textures);
     }

@@ -1,6 +1,7 @@
 use crate::MeshRenderer;
 use crate::shadow::ShadowSystem;
 use crate::types::{GpuInstance, MeshEntry, NO_VERTEX_MATERIAL, Vertex};
+use moho_render_api::WorldMesh;
 use wgpu::util::DeviceExt;
 
 pub struct Renderer<'a> {
@@ -834,6 +835,18 @@ pub(crate) fn interleave_vertices(channels: &VertexChannels) -> Vec<Vertex> {
         .collect()
 }
 
+/// The channels of a contract mesh as `register_world_mesh` uploads them: the mesh's
+/// own positions, normals, AO, surface, block light, sky exposure and UVs (empty when it
+/// has none), with the caller's derived `light_level` and resolved `material`.
+pub(crate) fn world_mesh_channels<'a>(
+    mesh: &'a WorldMesh,
+    light_level: &'a [f32],
+    material: &'a [u32],
+) -> VertexChannels<'a> {
+    let _ = (mesh, light_level, material);
+    panic!("world_mesh_channels is not implemented")
+}
+
 #[cfg(test)]
 mod tests {
     use crate::gpu_types::LightingGpu;
@@ -970,6 +983,59 @@ mod tests {
             "a short channel is padded with zero"
         );
         assert!(without_uvs.iter().all(|v| v.uv == [0.0, 0.0]));
+    }
+
+    #[test]
+    fn world_mesh_channels_carry_every_channel_including_uvs() {
+        let uvs = vec![[0.25, 0.75], [1.0, 0.5], [0.0, 1.0]];
+        let mesh = WorldMesh::new(
+            vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            vec![[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            vec![0.25, 0.5, 0.75],
+            vec![[0.2, 0.9, 0.5], [0.9, 0.1, 0.1], [0.3, 0.4, 0.6]],
+            vec![0.1, 0.2, 0.3],
+            vec![3, 4, 5],
+            vec![0, 1, 2],
+        )
+        .expect("well-formed test mesh")
+        .with_uvs(uvs.clone())
+        .expect("one uv per vertex");
+        let light_level = [0.9, 0.9, 0.6];
+        let material = [2, 5, 9];
+
+        let channels = world_mesh_channels(&mesh, &light_level, &material);
+
+        assert_eq!(channels.positions, mesh.positions());
+        assert_eq!(channels.normals, mesh.normals());
+        assert_eq!(channels.ao, [0.25, 0.5, 0.75]);
+        assert_eq!(channels.geometry_type, [3, 4, 5]);
+        assert_eq!(channels.light_level, light_level);
+        assert_eq!(channels.block_light_rgb, mesh.light_rgb());
+        assert_eq!(channels.sky_exposed, [0.1, 0.2, 0.3]);
+        assert_eq!(channels.material, material);
+        assert_eq!(channels.uv, uvs);
+        let vertices = interleave_vertices(&channels);
+        let carried: Vec<[f32; 2]> = vertices.iter().map(|v| v.uv).collect();
+        assert_eq!(carried, uvs, "the UVs reach the GPU vertices");
+    }
+
+    #[test]
+    fn world_mesh_channels_of_a_mesh_without_uvs_have_none() {
+        let mesh = WorldMesh::new(
+            vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            vec![[0.0, 1.0, 0.0]; 3],
+            vec![1.0; 3],
+            vec![[1.0; 3]; 3],
+            vec![1.0; 3],
+            vec![0; 3],
+            vec![0, 1, 2],
+        )
+        .expect("well-formed test mesh");
+
+        let channels = world_mesh_channels(&mesh, &[1.0; 3], &[]);
+
+        assert!(channels.uv.is_empty());
+        assert!(channels.material.is_empty());
     }
 
     #[test]
