@@ -26,6 +26,38 @@ fn bad_image_name(err: &LevelError) -> &str {
     }
 }
 
+/// Runs `run` and returns its result with what `tracing` wrote meanwhile.
+fn logged<T>(run: impl FnOnce() -> T) -> (T, String) {
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+
+    struct Sink(Arc<Mutex<Vec<u8>>>);
+    impl Write for Sink {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("log sink").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let writer = Arc::clone(&buffer);
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || Sink(Arc::clone(&writer)))
+        .with_ansi(false)
+        .finish();
+    let result = tracing::subscriber::with_default(subscriber, run);
+    let bytes = buffer.lock().expect("log sink").clone();
+    (
+        result,
+        String::from_utf8(bytes).expect("log output is utf-8"),
+    )
+}
+
+const TEXCOORD_WARNING: &str = "base-colour texture uses another texcoord set";
+
 #[test]
 fn base_colour_texture_loads_with_uvs_and_its_material_names_it() {
     let (dir, path) = write_gltf(&checker_model());
@@ -259,6 +291,35 @@ fn base_colour_texture_on_texcoord_set_1_loads_using_texcoord_0() {
 
     assert_eq!(loaded.materials()[0].base_colour_image, Some(0));
     assert_eq!(loaded.meshes()[0].mesh.uvs(), Some(&QUAD_UVS[..]));
+}
+
+#[test]
+fn base_colour_texture_on_texcoord_set_1_warns_and_reads_set_0() {
+    let mut material = textured_material(0, FACTOR);
+    material["pbrMetallicRoughness"]["baseColorTexture"]["texCoord"] = serde_json::json!(1);
+    let model = Textured {
+        materials: vec![material],
+        ..checker_model()
+    };
+    let (_dir, path) = write_gltf(&model);
+
+    let (loaded, log) = logged(|| load_model(&path));
+
+    let loaded = loaded.expect("another texcoord set still loads");
+    assert_eq!(loaded.materials()[0].base_colour_image, Some(0));
+    assert_eq!(loaded.meshes()[0].mesh.uvs(), Some(&QUAD_UVS[..]));
+    assert!(log.contains(TEXCOORD_WARNING), "log was: {log:?}");
+}
+
+#[test]
+fn base_colour_texture_on_texcoord_set_0_loads_without_a_texcoord_warning() {
+    let (_dir, path) = write_gltf(&checker_model());
+
+    let (loaded, log) = logged(|| load_model(&path));
+
+    let loaded = loaded.expect("model loads");
+    assert_eq!(loaded.materials()[0].base_colour_image, Some(0));
+    assert!(!log.contains(TEXCOORD_WARNING), "log was: {log:?}");
 }
 
 #[test]
