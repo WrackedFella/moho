@@ -407,6 +407,7 @@ impl Model {
             nodes,
             meshes: Vec::new(),
             materials: Vec::new(),
+            images: Vec::new(),
             skins: Vec::new(),
             clips,
         }
