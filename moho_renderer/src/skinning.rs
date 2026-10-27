@@ -187,7 +187,7 @@ impl Skinning {
                 vertices = vertex_count,
                 joints = joints.len(),
                 weights = weights.len(),
-                "skin does not match the mesh's vertices; mesh draws unskinned"
+                "skin does not match the mesh's vertices; skin refused, so skinned placements of this mesh draw nothing"
             );
             return;
         }

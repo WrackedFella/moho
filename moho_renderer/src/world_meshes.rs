@@ -60,6 +60,9 @@ pub struct WorldMeshes {
     placements: BTreeMap<WorldMeshId, Vec<Placement>>,
     /// Skinned placements in call order.
     skinned: Vec<SkinnedPlacement>,
+    /// Mesh ids already warned about, so a bad skinned placement warns once, not per frame;
+    /// an upsert or remove of the id forgets it.
+    warned: BTreeSet<WorldMeshId>,
     /// Backend handle of each uploaded texture.
     live_textures: BTreeMap<TextureId, u32>,
     /// A texture waiting for the next `flush`; `None` is a queued remove.
@@ -179,6 +182,7 @@ impl WorldMeshes {
             }
         }
         for (id, change) in std::mem::take(&mut self.pending) {
+            self.warned.remove(&id);
             if let Some(old) = self.live.remove(&id) {
                 backend.unregister_mesh(old.handle);
             }
@@ -207,13 +211,23 @@ impl WorldMeshes {
                 },
             );
         }
-        let mut warned = BTreeSet::new();
         self.skinned.retain(|skinned| {
-            let needed = self.live.get(&skinned.id).and_then(|live| live.palette_len);
-            let Some(needed) = needed.filter(|&needed| skinned.palette.len() < needed) else {
+            let Some(live) = self.live.get(&skinned.id) else {
                 return true;
             };
-            if warned.insert(skinned.id) {
+            let Some(needed) = live.palette_len else {
+                if self.warned.insert(skinned.id) {
+                    tracing::warn!(
+                        mesh_id = skinned.id.0,
+                        "skinned placement of a mesh with no skin; placement not drawn"
+                    );
+                }
+                return false;
+            };
+            if skinned.palette.len() >= needed {
+                return true;
+            }
+            if self.warned.insert(skinned.id) {
                 tracing::warn!(
                     mesh_id = skinned.id.0,
                     joints = skinned.palette.len(),
@@ -1387,10 +1401,7 @@ mod tests {
             1,
             "one warning per mesh, not per frame: {log}"
         );
-        assert!(
-            log.contains(&"4242"),
-            "the warning names the mesh id: {log}"
-        );
+        assert!(log.contains("4242"), "the warning names the mesh id: {log}");
 
         meshes.upsert_movable(hero, skinned_mesh(3));
         let ((), again) = logged(|| {
@@ -1405,7 +1416,7 @@ mod tests {
             1,
             "a replaced mesh warns afresh: {again}"
         );
-        assert!(again.contains(&"4242"), "{again}");
+        assert!(again.contains("4242"), "{again}");
     }
 
     #[test]
@@ -1433,10 +1444,7 @@ mod tests {
             1,
             "one warning in total: {log}"
         );
-        assert!(
-            log.contains(&"7373"),
-            "the warning names the mesh id: {log}"
-        );
+        assert!(log.contains("7373"), "the warning names the mesh id: {log}");
     }
 
     #[test]
