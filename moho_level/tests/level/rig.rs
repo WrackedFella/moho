@@ -382,6 +382,50 @@ fn a_vertex_joint_past_the_skin_fails_as_bad_mesh() {
 }
 
 #[test]
+fn joints_or_weights_count_differing_from_the_vertices_fails_as_bad_mesh() {
+    let mut short_joints = RigSpec::new();
+    short_joints.vertex_joints.pop();
+    let mut short_weights = RigSpec::new();
+    short_weights.vertex_weights.pop();
+
+    for (which, spec) in [("JOINTS_0", short_joints), ("WEIGHTS_0", short_weights)] {
+        let (_dir, path, err) = load_err(&spec);
+
+        assert!(
+            matches!(err.kind(), LevelErrorKind::BadMesh { mesh: 0, .. }),
+            "{which}: {err}"
+        );
+        assert_eq!(err.path(), path, "{which}");
+    }
+}
+
+#[test]
+fn quantised_rotation_keys_are_renormalised_on_import() {
+    let mut spec = RigSpec::new();
+    spec.quantise_rotations = true;
+    let turn = &mut spec.anims[DEATH].channels[0];
+    let quantised_quarter_turn = [0.0, 0.0, 90.0 / 127.0, 90.0 / 127.0];
+    let identity = Quat::IDENTITY.to_array();
+    turn.values = [quantised_quarter_turn, identity].concat();
+
+    let (_dir, model) = load(&spec);
+    let pose = model.pose(DEATH, 0.0);
+
+    let basis = pose.nodes()[BONE_A].matrix3;
+    for (name, axis) in [
+        ("x", basis.x_axis),
+        ("y", basis.y_axis),
+        ("z", basis.z_axis),
+    ] {
+        assert!(
+            (axis.length() - 1.0).abs() < 1e-5,
+            "{name} axis length {}",
+            axis.length()
+        );
+    }
+}
+
+#[test]
 fn a_joint_outside_the_scene_fails_naming_the_path_and_skin() {
     let mut spec = RigSpec::new();
     spec.skin_joints = vec![crate::support::rig::G_BONE_A, G_ORPHAN];

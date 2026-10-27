@@ -84,6 +84,8 @@ pub struct RigSpec {
     /// `None` writes a skin without `inverseBindMatrices`.
     pub inverse_binds: Option<Vec<Mat4>>,
     pub anims: Vec<Anim>,
+    /// Write every rotation channel's output as normalized `i8` (`round(v * 127)`).
+    pub quantise_rotations: bool,
 }
 
 impl RigSpec {
@@ -102,6 +104,7 @@ impl RigSpec {
                 Mat4::from_translation(Vec3::new(-1.0, -3.0, 0.0)),
             ]),
             anims: vec![idle(), walk(), death()],
+            quantise_rotations: false,
         }
     }
 }
@@ -319,7 +322,18 @@ fn build(spec: &RigSpec) -> (Value, Vec<u8>) {
                     vec![chan.times.iter().copied().fold(f32::MIN, f32::max)],
                 )),
             );
-            let output = blob.floats(&chan.values, chan.values.len() / components, kind);
+            let output = if spec.quantise_rotations && chan.path == "rotation" {
+                let bytes: Vec<u8> = chan
+                    .values
+                    .iter()
+                    .flat_map(|f| ((f * 127.0).round() as i8).to_le_bytes())
+                    .collect();
+                let output = blob.accessor(&bytes, 5120, chan.values.len() / 4, "VEC4", None);
+                blob.accessors[output]["normalized"] = json!(true);
+                output
+            } else {
+                blob.floats(&chan.values, chan.values.len() / components, kind)
+            };
             samplers.push(json!({
                 "input": input, "output": output, "interpolation": chan.interpolation,
             }));
