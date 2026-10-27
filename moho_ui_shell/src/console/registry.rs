@@ -1,5 +1,7 @@
 //! Command registration: data and lookup, no traits.
 
+use crate::settings::QUALITY_NAMES;
+
 /// Turns the arguments after a command name into the game's command and a reply, or an error reply.
 /// An empty reply prints nothing; the game then prints its own line with `Console::print`.
 pub type ParseFn<G> = fn(&[&str]) -> Result<(G, String), String>;
@@ -89,7 +91,6 @@ const DEBUG_VIEW_NAMES: [&str; 8] = [
     "Sky Ambient",
     "Sky Reflection",
 ];
-const QUALITY_NAMES: [&str; 5] = ["Off", "Low", "Medium", "High", "Ultra"];
 
 fn parse_debug_view(args: &[&str]) -> Result<(EngineCommand, String), String> {
     let Some(arg) = args.first() else {

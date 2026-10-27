@@ -32,10 +32,12 @@ A base-builder and mining game played from above:
   filter on the one shared job list. What the creatures are belongs to the setting.
 - **Terrain is editable voxels.** The terrain engine belongs to this line, not the
   shared engine ([ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md)).
-- **Mining will become sub-grid deformation.** Today a block breaks whole. Later, a
-  full voxel becomes a grid of sub-blocks that wear away gradually. Only the
-  block-destruction step inside `Pawn::mine` may assume whole blocks. Its signature and
-  the deposit contract (`ResourceYield { resource_id, amount }`) must not.
+- **Mining will become gradual.** Today a block breaks whole. Later a block wears away by
+  losing density under repeated work, with whole-block removal as the degenerate case
+  (decided 2026-10-27, replacing sub-grid deformation; see the
+  [world generation research](worldgen-research.md)). Only the block-destruction step
+  inside `Pawn::mine` may know the granularity. Its signature and the deposit contract
+  (`ResourceYield { resource_id, amount }`) must not.
 - **Build for a named consumer.** Systems arrive with the feature that needs them.
   An example is the entity-component system: SG-F4, pawns that dig what the player marks,
   stays on typed stores, and pawns move to an ECS when a second pawn kind arrives
@@ -51,7 +53,7 @@ Features and their order live in the [roadmap](roadmap.md); the issues are the r
 3. Pawns dig what the player marks ([SG-F4](https://github.com/WrackedFella/moho/issues/310)).
 4. Buildings placed from a build menu and constructed by pawns ([SG-F3](https://github.com/WrackedFella/moho/issues/312)).
 5. Possession polish: pickup feedback ([SG-F1](https://github.com/WrackedFella/moho/issues/311)).
-6. World generation polish ([SG-F6](../../_todo/flagstone/SG-F6-world-generation/_feature.md), draft).
+6. A believable world map to pick a slice from, with caves and ore seams ([SG-F6](https://github.com/WrackedFella/moho/issues/707)).
 7. Pawn roles and pawn kinds: colonists take roles, then creatures join the colony's
    world (proposed, not yet planned).
 8. Automation and progression (not yet planned).

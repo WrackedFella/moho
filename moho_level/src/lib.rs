@@ -2,12 +2,15 @@
 //! plus named markers (empty nodes) for game code to interpret. The [`nav`] module builds a
 //! navigation mesh from those meshes and finds paths across it.
 
+pub mod anim;
 mod buffers;
 mod error;
 mod marker;
 mod mesh;
 mod model;
 pub mod nav;
+mod rig;
+mod socket;
 
 use std::borrow::Cow;
 use std::path::Path;
@@ -16,9 +19,13 @@ use glam::Mat4;
 
 pub use error::{LevelError, LevelErrorKind};
 pub use marker::LevelMarker;
-pub use model::{MODEL_MATERIAL_VARIANT, Model, ModelMaterial, ModelMesh, ModelNode, load_model};
+pub use model::{
+    MODEL_MATERIAL_VARIANT, MeshSkin, Model, ModelMaterial, ModelMesh, ModelNode, ModelSkin,
+    load_model,
+};
 use moho_render_api::WorldMesh;
 pub use nav::{AgentProfile, NavBuildError, NavMesh};
+pub use socket::{Assembly, SocketError};
 
 /// A loaded level: one mesh per triangle primitive and one marker per named,
 /// mesh-less node reached from the default scene.
@@ -92,11 +99,13 @@ fn scene_roots(document: &gltf::Document) -> impl Iterator<Item = gltf::Node<'_>
 /// a cycle would otherwise recurse forever.
 fn mark_seen(seen: &mut [bool], node: &gltf::Node<'_>) -> Result<(), LevelErrorKind> {
     if std::mem::replace(&mut seen[node.index()], true) {
-        return Err(LevelErrorKind::NotGltf(
-            format!("node {} has more than one parent", node.index()).into(),
-        ));
+        return Err(multiple_parents(node));
     }
     Ok(())
+}
+
+fn multiple_parents(node: &gltf::Node<'_>) -> LevelErrorKind {
+    LevelErrorKind::NotGltf(format!("node {} has more than one parent", node.index()).into())
 }
 
 /// Depth-first scene walk; `seen` refuses a node reached twice, since glTF node
