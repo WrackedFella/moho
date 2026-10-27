@@ -97,11 +97,13 @@ fn scene_roots(document: &gltf::Document) -> impl Iterator<Item = gltf::Node<'_>
 /// a cycle would otherwise recurse forever.
 fn mark_seen(seen: &mut [bool], node: &gltf::Node<'_>) -> Result<(), LevelErrorKind> {
     if std::mem::replace(&mut seen[node.index()], true) {
-        return Err(LevelErrorKind::NotGltf(
-            format!("node {} has more than one parent", node.index()).into(),
-        ));
+        return Err(multiple_parents(node));
     }
     Ok(())
+}
+
+fn multiple_parents(node: &gltf::Node<'_>) -> LevelErrorKind {
+    LevelErrorKind::NotGltf(format!("node {} has more than one parent", node.index()).into())
 }
 
 /// Depth-first scene walk; `seen` refuses a node reached twice, since glTF node

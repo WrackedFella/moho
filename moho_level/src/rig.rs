@@ -4,13 +4,15 @@
 
 use std::borrow::Cow;
 
-use glam::{Affine3A, Mat4, Quat, Vec3};
+use glam::{Affine3A, Quat, Vec3};
 use gltf::animation::util::ReadOutputs;
 use gltf::animation::{Interpolation as GltfInterpolation, Property};
 use gltf::mesh::Semantic;
 
 use crate::anim::{Channel, Clip, Interpolation, Track};
+use crate::buffers::reader_data;
 use crate::error::LevelErrorKind;
+use crate::model::affine_from_columns;
 use crate::{MeshSkin, ModelSkin};
 
 /// Every skin in the file, in file order.
@@ -38,10 +40,10 @@ pub(crate) fn skins(
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let inverse_binds = if skin.inverse_bind_matrices().is_some() {
-                skin.reader(|b| buffers.get(b.index()).map(|data| &**data))
+                skin.reader(reader_data(buffers))
                     .read_inverse_bind_matrices()
                     .ok_or_else(|| bad("inverse-bind matrices out of buffer range".into()))?
-                    .map(|m| Affine3A::from_mat4(Mat4::from_cols_array_2d(&m)))
+                    .map(|m| affine_from_columns(&m))
                     .collect()
             } else {
                 vec![Affine3A::IDENTITY; joints.len()]
@@ -79,7 +81,7 @@ pub(crate) fn mesh_skin(
             "ignoring joint sets past the first: four influences per vertex"
         );
     }
-    let reader = primitive.reader(|b| buffers.get(b.index()).map(|data| &**data));
+    let reader = primitive.reader(reader_data(buffers));
     let joints: Vec<[u16; 4]> = reader
         .read_joints(0)
         .ok_or_else(|| bad("skinned primitive has no readable JOINTS_0".into()))?
@@ -139,18 +141,7 @@ pub(crate) fn clips(
         .map(|animation| {
             let channels = animation
                 .channels()
-                .filter(|channel| {
-                    let morph = channel.target().property() == Property::MorphTargetWeights;
-                    if morph {
-                        tracing::warn!(
-                            animation = animation.index(),
-                            channel = channel.index(),
-                            "skipping morph-target weight channel"
-                        );
-                    }
-                    !morph
-                })
-                .map(|channel| self::channel(&channel, buffers, walk_index))
+                .filter_map(|channel| self::channel(&channel, buffers, walk_index).transpose())
                 .collect::<Result<_, _>>()?;
             Ok(Clip::new(animation.name().map(str::to_owned), channels))
         })
@@ -161,7 +152,15 @@ fn channel(
     channel: &gltf::animation::Channel<'_>,
     buffers: &[Cow<'_, [u8]>],
     walk_index: &[Option<usize>],
-) -> Result<Channel, LevelErrorKind> {
+) -> Result<Option<Channel>, LevelErrorKind> {
+    if channel.target().property() == Property::MorphTargetWeights {
+        tracing::warn!(
+            animation = channel.animation().index(),
+            channel = channel.index(),
+            "skipping morph-target weight channel"
+        );
+        return Ok(None);
+    }
     let bad = |reason: String| LevelErrorKind::BadAnimation {
         animation: channel.animation().index(),
         reason,
@@ -178,7 +177,7 @@ fn channel(
         GltfInterpolation::Linear => Interpolation::Linear,
         GltfInterpolation::CubicSpline => Interpolation::CubicSpline,
     };
-    let reader = channel.reader(|b| buffers.get(b.index()).map(|data| &**data));
+    let reader = channel.reader(reader_data(buffers));
     let out_of_range = || {
         bad(format!(
             "channel {} keys out of buffer range",
@@ -228,13 +227,11 @@ fn channel(
             counted(values.len())?;
             Track::Scale { times, values }
         }
-        ReadOutputs::MorphTargetWeights(_) => {
-            unreachable!("morph-target weight channels are filtered out before reading")
-        }
+        ReadOutputs::MorphTargetWeights(_) => return Ok(None),
     };
-    Ok(Channel {
+    Ok(Some(Channel {
         node,
         interpolation,
         track,
-    })
+    }))
 }

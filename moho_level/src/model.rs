@@ -123,7 +123,6 @@ fn build(document: &gltf::Document, buffers: &[Cow<'_, [u8]>]) -> Result<Model, 
         .collect();
     let mut walk = Walk {
         buffers,
-        seen: vec![false; document.nodes().len()],
         index_of: vec![None; document.nodes().len()],
         model: Model {
             nodes: Vec::new(),
@@ -143,16 +142,23 @@ fn build(document: &gltf::Document, buffers: &[Cow<'_, [u8]>]) -> Result<Model, 
 
 struct Walk<'a> {
     buffers: &'a [Cow<'a, [u8]>],
-    seen: Vec<bool>,
-    /// Per glTF node index, its index in [`Model::nodes`]; `None` outside the scene.
+    /// Per glTF node index, its index in [`Model::nodes`]; `None` until the walk reaches
+    /// it, which also refuses a node reached twice.
     index_of: Vec<Option<usize>>,
     model: Model,
 }
 
+/// A glTF column-major matrix as an affine transform.
+pub(crate) fn affine_from_columns(columns: &[[f32; 4]; 4]) -> Affine3A {
+    Affine3A::from_mat4(Mat4::from_cols_array_2d(columns))
+}
+
 impl Walk<'_> {
     fn node(&mut self, node: &gltf::Node<'_>, parent: Option<usize>) -> Result<(), LevelErrorKind> {
-        crate::mark_seen(&mut self.seen, node)?;
-        let local = Affine3A::from_mat4(Mat4::from_cols_array_2d(&node.transform().matrix()));
+        if self.index_of[node.index()].is_some() {
+            return Err(crate::multiple_parents(node));
+        }
+        let local = affine_from_columns(&node.transform().matrix());
         let rest = parent.map_or(local, |p| self.model.nodes[p].rest * local);
         let index = self.model.nodes.len();
         self.index_of[node.index()] = Some(index);
@@ -219,10 +225,19 @@ impl Model {
 
     /// For each mesh in order, its index and `root * nodes[mesh.node].rest`.
     pub fn placements(&self, root: Affine3A) -> impl Iterator<Item = (usize, Affine3A)> + '_ {
+        self.placed(root, |node| self.nodes[node].rest)
+    }
+
+    /// For each mesh in order, its index and `root * transform(mesh.node)`.
+    fn placed<'a>(
+        &'a self,
+        root: Affine3A,
+        transform: impl Fn(usize) -> Affine3A + 'a,
+    ) -> impl Iterator<Item = (usize, Affine3A)> + 'a {
         self.meshes
             .iter()
             .enumerate()
-            .map(move |(i, m)| (i, root * self.nodes[m.node].rest))
+            .map(move |(i, m)| (i, root * transform(m.node)))
     }
 
     pub fn skins(&self) -> &[ModelSkin] {
@@ -253,7 +268,9 @@ impl Model {
         let animated = self.clips[clip].locals_at(&self.nodes, time);
         let mut globals: Vec<Affine3A> = Vec::with_capacity(self.nodes.len());
         for (node, animated) in self.nodes.iter().zip(animated) {
-            let local = animated.unwrap_or(node.local);
+            let local = animated.map_or(node.local, |(scale, rotation, translation)| {
+                Affine3A::from_scale_rotation_translation(scale, rotation, translation)
+            });
             // The same product the loader forms for `rest`, so an unanimated chain
             // reproduces it bit for bit.
             let global = node.parent.map_or(local, |p| globals[p] * local);
@@ -285,10 +302,7 @@ impl Model {
         root: Affine3A,
         pose: &'a Pose,
     ) -> impl Iterator<Item = (usize, Affine3A)> + 'a {
-        self.meshes
-            .iter()
-            .enumerate()
-            .map(move |(i, m)| (i, root * pose.nodes()[m.node]))
+        self.placed(root, |node| pose.nodes()[node])
     }
 
     /// A model of `nodes` and `clips` alone, for unit tests.

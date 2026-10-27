@@ -124,11 +124,20 @@ where
 pub struct Clip {
     name: Option<String>,
     channels: Vec<Channel>,
+    duration: f32,
 }
 
 impl Clip {
     pub(crate) fn new(name: Option<String>, channels: Vec<Channel>) -> Self {
-        Self { name, channels }
+        let duration = channels
+            .iter()
+            .filter_map(|c| c.track.times().last().copied())
+            .fold(0.0, f32::max);
+        Self {
+            name,
+            channels,
+            duration,
+        }
     }
 
     /// The animation's name in the file, if it has one.
@@ -138,16 +147,17 @@ impl Clip {
 
     /// The latest key time over its channels; 0 with none.
     pub fn duration(&self) -> f32 {
-        self.channels
-            .iter()
-            .filter_map(|c| c.track.times().last().copied())
-            .fold(0.0, f32::max)
+        self.duration
     }
 
-    /// Per node of `nodes`, its local transform at `time`: the node's decomposed `local`
-    /// with each channel's property replaced, in channel order, or `None` where no
-    /// channel targets the node.
-    pub(crate) fn locals_at(&self, nodes: &[ModelNode], time: f32) -> Vec<Option<Affine3A>> {
+    /// Per node of `nodes`, its decomposed `(scale, rotation, translation)` at `time`:
+    /// the node's decomposed `local` with each channel's property replaced, in channel
+    /// order, or `None` where no channel targets the node.
+    pub(crate) fn locals_at(
+        &self,
+        nodes: &[ModelNode],
+        time: f32,
+    ) -> Vec<Option<(Vec3, Quat, Vec3)>> {
         let mut parts: Vec<Option<(Vec3, Quat, Vec3)>> = vec![None; nodes.len()];
         for channel in &self.channels {
             let srt = parts[channel.node]
@@ -155,9 +165,6 @@ impl Clip {
             channel.apply(time, srt);
         }
         parts
-            .into_iter()
-            .map(|p| p.map(|(s, r, t)| Affine3A::from_scale_rotation_translation(s, r, t)))
-            .collect()
     }
 }
 
@@ -255,10 +262,10 @@ impl ClipPlayer {
         let time = self.time + step;
         self.time = match self.playback {
             // A tiny negative time rounds up to exactly `duration`, which is the next loop's 0.
-            Playback::Loop => match time.rem_euclid(duration) {
-                wrapped if wrapped < duration => wrapped,
-                _ => 0.0,
-            },
+            Playback::Loop => {
+                let wrapped = time.rem_euclid(duration);
+                if wrapped < duration { wrapped } else { 0.0 }
+            }
             Playback::Once => time.clamp(0.0, duration),
         };
     }
