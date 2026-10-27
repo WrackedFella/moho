@@ -1363,6 +1363,83 @@ mod tests {
     }
 
     #[test]
+    fn a_short_palette_warns_once_per_mesh_not_every_frame() {
+        let hero = WorldMeshId(4242);
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(hero, skinned_mesh(3));
+        let short = palette(3, 0.0);
+
+        let (frames, log) = logged(|| {
+            let mut frames = Vec::new();
+            for _ in 0..3 {
+                meshes.place_skinned(hero, at(1.0), 0, None, &short);
+                meshes.flush(&mut backend);
+                frames.push(skinned(&meshes).len());
+                meshes.clear_placements();
+            }
+            frames
+        });
+
+        assert_eq!(frames, vec![0, 0, 0], "a short palette never draws");
+        assert_eq!(
+            log.matches("WARN").count(),
+            1,
+            "one warning per mesh, not per frame: {log}"
+        );
+        assert!(
+            log.contains(&"4242"),
+            "the warning names the mesh id: {log}"
+        );
+
+        meshes.upsert_movable(hero, skinned_mesh(3));
+        let ((), again) = logged(|| {
+            meshes.flush(&mut backend);
+            meshes.place_skinned(hero, at(1.0), 0, None, &short);
+            meshes.flush(&mut backend);
+        });
+
+        assert!(skinned(&meshes).is_empty());
+        assert_eq!(
+            again.matches("WARN").count(),
+            1,
+            "a replaced mesh warns afresh: {again}"
+        );
+        assert!(again.contains(&"4242"), "{again}");
+    }
+
+    #[test]
+    fn a_skinned_placement_of_an_unskinned_mesh_warns_once() {
+        let odd = WorldMeshId(7373);
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(odd, mesh(1));
+        meshes.flush(&mut backend);
+
+        let (frames, log) = logged(|| {
+            let mut frames = Vec::new();
+            for _ in 0..2 {
+                meshes.place_skinned(odd, at(1.0), 0, None, &palette(2, 0.0));
+                meshes.flush(&mut backend);
+                frames.push(skinned(&meshes).len());
+                meshes.clear_placements();
+            }
+            frames
+        });
+
+        assert_eq!(frames, vec![0, 0], "an unskinned mesh has no skinned draw");
+        assert_eq!(
+            log.matches("WARN").count(),
+            1,
+            "one warning in total: {log}"
+        );
+        assert!(
+            log.contains(&"7373"),
+            "the warning names the mesh id: {log}"
+        );
+    }
+
+    #[test]
     fn replacing_a_skinned_mesh_registers_the_new_skin() {
         let mut meshes = WorldMeshes::new();
         let mut backend = RecordingBackend::default();

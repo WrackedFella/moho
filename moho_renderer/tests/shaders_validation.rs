@@ -246,6 +246,81 @@ fn contains_statement(block: &naga::Block, wanted: &dyn Fn(&naga::Statement) -> 
     })
 }
 
+/// Stores into `target` outside any loop, in program order, as `(pointer, value)`.
+fn straight_line_stores(
+    function: &naga::Function,
+    block: &naga::Block,
+    target: naga::Handle<naga::GlobalVariable>,
+    found: &mut Vec<(
+        naga::Handle<naga::Expression>,
+        naga::Handle<naga::Expression>,
+    )>,
+) {
+    for statement in block {
+        match statement {
+            naga::Statement::Store { pointer, value }
+                if root_global(function, *pointer) == Some(target) =>
+            {
+                found.push((*pointer, *value));
+            }
+            naga::Statement::Block(inner) => straight_line_stores(function, inner, target, found),
+            naga::Statement::If { accept, reject, .. } => {
+                straight_line_stores(function, accept, target, found);
+                straight_line_stores(function, reject, target, found);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// A `u32` literal expression's value.
+fn u32_literal(function: &naga::Function, handle: naga::Handle<naga::Expression>) -> Option<u32> {
+    match function.expressions[handle] {
+        naga::Expression::Literal(naga::Literal::U32(n)) => Some(n),
+        _ => None,
+    }
+}
+
+/// For `arena[dst + n]` (or `arena[dst]` for n = 0): the shared `dst` expression and `n`.
+fn arena_word_offset(
+    function: &naga::Function,
+    pointer: naga::Handle<naga::Expression>,
+) -> (naga::Handle<naga::Expression>, u32) {
+    let naga::Expression::Access { index, .. } = function.expressions[pointer] else {
+        panic!("a store into the arena indexes it dynamically");
+    };
+    match function.expressions[index] {
+        naga::Expression::Binary {
+            op: naga::BinaryOperator::Add,
+            left,
+            right,
+        } => (
+            left,
+            u32_literal(function, right).expect("the word offset is a constant"),
+        ),
+        _ => (index, 0),
+    }
+}
+
+/// For `bitcast<u32>(base.component)`: the vector expression and the component.
+fn bitcast_component(
+    function: &naga::Function,
+    value: naga::Handle<naga::Expression>,
+) -> (naga::Handle<naga::Expression>, u32) {
+    let naga::Expression::As {
+        expr,
+        kind: naga::ScalarKind::Uint,
+        convert: None,
+    } = function.expressions[value]
+    else {
+        panic!("a stored word is a bitcast to u32");
+    };
+    let naga::Expression::AccessIndex { base, index } = function.expressions[expr] else {
+        panic!("a stored word is one vector component");
+    };
+    (base, index)
+}
+
 #[test]
 fn skin_shader_validates_and_rewrites_only_position_and_normal() {
     let source = moho_renderer::pipeline::skin_shader_source();
@@ -309,6 +384,63 @@ fn skin_shader_validates_and_rewrites_only_position_and_normal() {
         counts,
         (6, 1),
         "six stores for position and normal words 0-5, and one word copy in a loop for the rest"
+    );
+
+    let mut straight = Vec::new();
+    straight_line_stores(function, &function.body, writable[0], &mut straight);
+    let offsets: Vec<(naga::Handle<naga::Expression>, u32)> = straight
+        .iter()
+        .map(|(pointer, _)| arena_word_offset(function, pointer.to_owned()))
+        .collect();
+    let words: Vec<u32> = offsets.iter().map(|(_, n)| *n).collect();
+    assert_eq!(
+        words,
+        [0, 1, 2, 3, 4, 5],
+        "the six stores land on destination words 0-5, once each, in order"
+    );
+    assert!(
+        offsets.iter().all(|(dst, _)| *dst == offsets[0].0),
+        "every store is relative to the same destination base"
+    );
+    let components: Vec<_> = straight
+        .iter()
+        .map(|(_, value)| bitcast_component(function, *value))
+        .collect();
+    assert_eq!(
+        components.iter().map(|(_, c)| *c).collect::<Vec<_>>(),
+        [0, 1, 2, 0, 1, 2],
+        "position x y z then normal x y z"
+    );
+    assert!(
+        components[..3].iter().all(|(b, _)| *b == components[0].0),
+        "words 0-2 come from one vector, the skinned position"
+    );
+    assert!(
+        components[3..].iter().all(|(b, _)| *b == components[3].0),
+        "words 3-5 come from one vector, the skinned normal"
+    );
+    assert_ne!(
+        components[0].0, components[3].0,
+        "position and normal are different vectors"
+    );
+    assert!(
+        matches!(
+            function.expressions[components[3].0],
+            naga::Expression::CallResult(f) if f == normal_to_world
+        ),
+        "words 3-5 are the normal_to_world result"
+    );
+    let mut counters: Vec<u32> = function
+        .local_variables
+        .iter()
+        .filter_map(|(_, local)| local.init)
+        .filter_map(|init| u32_literal(function, init))
+        .collect();
+    counters.sort_unstable();
+    assert_eq!(
+        counters,
+        [0, 6],
+        "the blend loop counts from 0 and the word copy loop starts after word 5"
     );
 }
 
