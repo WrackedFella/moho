@@ -43,15 +43,18 @@ Engine item numbers are those of the [engine roadmap](engine/roadmap.md).
 | Strategy console | Shared console | 2.11.2 ENG-F18-08 |
 | FPS-M1 | Seeded RNG; positional audio (stopgaps in use) | 2.5 ENG-F6-01; 2.4 ENG-F16 |
 | FPS-M1.1 menus | Menu screens and their stack; engine settings controls | 2.11.6 ENG-F18-11 #695, -12 #696 (spec: #444) |
+| FPS-M1.1 controls | Controls page with rebinding; double-press bindings | 2.11.6 ENG-F18-13 #747, -14 #749 (cut line); 2.14 ENG-F26-04 #748 |
 | FPS-M1.2 slice 2 | Crouch and clearance; lean and stance transitions | ENG-F43 #642, crouch, prone and lean, answering #544 (2.25, ENG-M2 wave 5) |
 | FPS-M1.2 slice 3 | Skinned animated characters | #543 through ENG-F39 slices 1 to 3 (2.22, ENG-M2 wave 5) |
 | FPS-M2 | On-screen text; layered content; tap and hold keys; item lists | 2.11.3 ENG-F18-09 #407; 2.12 ENG-F19 #231; 2.14 ENG-F26 #359; 2.11.6 ENG-F18-18 #698 |
 | FPS-M2 | Moving meshes; loose objects; models, sockets and rig; flash, tracer and impact marks; marker size | 2.20 ENG-F38; 2.21 #600; 2.22 ENG-F39; 2.23 ENG-F40; 2.24 ENG-F14-03 |
+| FPS-M2 | Unload a level and load another by name | 2.27 ENG-F14-04 #750, -05 #752 |
+| FPS-M3 | Large level load budget, loading screen, authored boundary | 3.4i ENG-F46 #746; ENG-F14-06 #751 |
 | FPS enemy AI slice 2 | Positional audio; hidden routes and cover | 2.4 ENG-F16; 3.4c ENG-F42 |
 | FPS-M3.1 | Beam and dot; first-person view | 3.4d ENG-F40; 3.4b ENG-F39 |
 | FPS-M4 | Screen and sound follow game values; blended, sim-timed clips | 3.4e ENG-F41; 3.4b ENG-F39 |
 | FPS-M5 | Game clock scaling; save and load | ENG-F11-04 and the game clock; 2.5.1 ENG-F25 |
-| FPS-M6 | Level switching carrying player state | 3.4f level unload and switch (before the split) |
+| FPS-M6 | Level switching carrying player state | 2.27 (the switch itself, ENG-M2); carrying player state is the game's |
 | FPS-M7 | Headless simulation; navigation for live actors | ENG-F6 #233 related; ENG-F17 |
 
 ## Dependencies: engine items serve lines
