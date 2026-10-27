@@ -1,6 +1,6 @@
-# FPS-F1 — Game Design Document (v0.4)
+# FPS-F1 — Game Design Document (v0.5)
 
-**Status:** draft v0.4, approved for Phase 1 (v0.3 added pillar 2, the item lifecycle rule, §4.12 player and weapon stats, the planning rule in §7 and the §4.7 wound penalties; v0.4 adds the prototype gate in §7, gear that adds containers, the attachment system and a mocked grenade in the prototype, and a shotgun with a tube-fed reload). Writing this page is
+**Status:** draft v0.5, approved for Phase 1 (v0.3 added pillar 2, the item lifecycle rule, §4.12 player and weapon stats, the planning rule in §7 and the §4.7 wound penalties; v0.4 adds the prototype gate in §7, gear that adds containers, the attachment system and a mocked grenade in the prototype, and a shotgun with a tube-fed reload; v0.5 sets the world structure: a hub and missions into hand-made maps built on a modular kit, with generated maps from that kit as a later phase, §4.13). Writing this page is
 [FPS-F1](../../_todo/searchlight/FPS-F1-game-design-document/_feature.md)'s deliverable. Open questions are in §9.
 **Working pitch:** a survival-focused looter shooter with realistic gunplay, where your gear is your character, your rig is the game, and every fight is a line on a ledger.
 **Working target:** single-player first, co-op later, mod support a priority. Pivots (Destiny-like, Arma-like) are open questions, not commitments (§9).
@@ -39,6 +39,8 @@ Each pillar is a filter: a feature that serves none of them is cut.
 7. **Ledger:** did income beat expenditure? Profit is the score.
 
 The wheel turns on scarcity: you grind resources to improve your rig so you can grind better resources, until death ends the run (permadeath at the hardcore end of §9 Q6). Every system below either creates a shortage or lets the player answer one.
+
+The wheel runs as **hub and missions** (§4.13): the player lives in a hub between missions, takes a job from the board, and travels out to a hand-made map to do it. Steps 1, 2, 6 and 7 happen in the hub; 3 to 5 on the mission.
 
 Secondary loops (run away, wait it out) exist but are smaller and obvious.
 
@@ -172,13 +174,13 @@ Each system states the question its prototype must answer, the design, and its c
 - **Question:** does a visible profit ledger make players weigh every fight?
 - Currency plus barter value on every item. Traders buy below and sell above value; faction standing shifts prices.
 - **Ledger:** after every job, a breakdown: payout and loot value against rounds fired, component wear (valued at repair cost), armor wear, meds and food used. Net profit is the headline number.
-- **Jobs:** templated (fetch, hunt, recover, deliver, escort), generated from the Director's world state, not hand-written quests.
+- **Jobs:** templated (fetch, hunt, recover, deliver, escort), generated from the Director's world state, not hand-written quests. A job is a mission (§4.13): the board offers a few, each showing its conditions before the player commits.
 - **Cut lines:** player-owned stash economy, investments, "fund things" (TBD) until the core ledger proves out.
 
 ### 4.10 Living world: the Director (A-Life equivalent, name TBD)
 
 - **Question:** can a daily planner plus a cheap offline sim produce a world that feels alive?
-- **World shape:** several discrete zones (maps) linked by **boundary points**. NPCs spawn at boundaries and travel between zones through them.
+- **World shape:** several discrete zones (maps) linked by **boundary points**. NPCs spawn at boundaries and travel between zones through them. Each zone is a hand-made mission map (§4.13); the player enters a zone on a mission from the hub, while the Director's state persists between missions.
 - **Actors:** belong to a faction (Freedom-like, Duty-like, Ecologist-like, Bandits, Mutants, Independents). Faction relations form a matrix (hostile / neutral / friendly), including toward the player.
 - **Goals:** each actor's goal list = faction goals ∪ individual goals, merged into one weighted list.
 - **Daily planning (at sleep or day roll-over):** the Director enumerates actors, picks objectives from their goal lists, assigns routes and targets for the day, and handles population (spawns, culling, faction balance).
@@ -220,23 +222,40 @@ Each system states the question its prototype must answer, the design, and its c
 - **Order (start simple):** Phase 1 nothing; the arena's recoil and sprint constants move behind the layer in Phase 2. Phase 2 births the layer with only the three stats load touches (carry capacity, movement speed, stamina), the three verbs, equipment and load as sources, and a weight readout. Steadiness, recoil control and handling arrive with their first real source (furniture wear in Phase 3, wounds in Phase 4, stance when scheduled).
 - **Cut lines:** more than six stats; any stat or attribute that grows with use; a visible level; per-character random attributes (until the backgrounds fork is decided).
 
+### 4.13 Hub and missions
+
+- **Question:** does choosing a mission by what it pays, and what it may cost, make every trip out a decision?
+- **Hub:** one persistent place between missions: traders, the job board, the workbench, storage. The hub improves through gear and services (workbench tier, trader stock, storage size), never through character stats (pillar 1, §9 Q30).
+- **Mission:** a job (§4.9) taken from the board and played on one hand-made map (§5). The board offers a few missions and shows each one's **conditions** before the player commits: map type, difficulty, and modifiers (weather, a faction present, power off). The Director chooses what is on offer; the player chooses between offers, never sets free sliders.
+- **Inside a hand-made map, per mission:** which map of a type, the start and exit points, loot and enemy spawns by category, and which building fills each **building slot** (an authored footprint holding one of several pre-built variants). Geometry is never generated in this version.
+- **Loot rule:** the **place decides the pool**: a map's type and a site's kind decide which items can appear (science equipment from tech sites, meds from clinics). **Difficulty decides the amount and the ceiling:** more loot, a higher rarity cap, or one guaranteed reward at a tier. Difficulty changes the grade mix and density of enemies (§4.11), never their toughness.
+- **Later phase, generated maps:** missions on maps assembled from the kit's modules (§5), cut from the hand-made maps. Not before the hand-made version is played.
+- **Cut lines:** free parameter sliders, hub upgrades that raise stats, a seamless world, generated geometry before the later phase.
+
 ## 5 Modes and levels: how maps are made
 
 | Mode / level | Map source | Notes |
 |---|---|---|
 | Phase 1 arena | **Pre-made, baked file** | One compact arena with cover, sightlines and verticality; authored outside the engine |
 | Testing ranges (weapons, wounds) | **Pre-made, baked file** | Flat range with targets at known distances |
-| Zones (Phase 6+) | **Pre-made, baked files** | Hand-authored terrain and structures. Spawn points, loot points, boundaries and safe spots are named markers inside the map file |
-| Loot and spawns | **Generated at load / daily** | Procedural placement onto authored markers, driven by the Director |
-| Underground / interiors | **Pre-made** (maybe modular later) | Modular generated interiors are a cut candidate |
+| Hub (Phase 6+) | **Pre-made, baked file** | One persistent map between missions (§4.13) |
+| Mission maps, zones (Phase 6+) | **Pre-made, baked files on the modular kit** | Hand-made terrain and structures. Spawn points, loot points, start and exit points, boundaries, building slots, safe spots and kit connection points are named markers inside the map file |
+| Loot, spawns, starts and exits | **Generated at load / daily** | Procedural placement onto authored markers, driven by the Director and the mission's conditions |
+| Buildings in slots | **Generated at load** | One pre-built variant per authored slot that fits its footprint |
+| Underground / interiors | **Pre-made on the kit** | Modular generated interiors come with the later phase |
+| Generated mission maps (later phase) | **Generated at load from kit modules** | Areas of the hand-made maps fitted together at kit connection points. Seam checks and a seeded retry are part of the work |
 
-No procedural geometry in scope. Generation is limited to *what* is placed *where* on authored maps.
+Until the later phase, no procedural geometry: generation is limited to *what* is placed *where* on authored maps.
+
+**Modular kit:** every hand-made map is built from day one on one kit with fixed metrics (grid size, wall, floor and door heights) and marked connection points, so the later phase can cut modules from existing maps instead of rebuilding them. The kit's numbers are fixed with the first map (§9 Q31).
+
+**Art:** test maps are blocked out by hand on the kit in a level editor; no generator is written for them. Placeholder assets are free and licence-compatible (CC0 preferred, ADR-0007). Bespoke assets are commissioned later, to the kit's metrics.
 
 ## 6 Scope boundaries: what this game is NOT
 
 - Not multiplayer in the prototype (co-op is a later decision; see §9 Q2).
 - Not a voxel or destructible-terrain game.
-- Not a seamless open world: discrete zones with transitions.
+- Not a seamless open world: a hub and missions into discrete maps (§4.13).
 - Not a score-chasing game: score, waves and match timers exist only in the arena mode layer.
 - Not story-driven: no authored campaign, no dialogue trees in scope.
 - Not an RPG with levels: no XP levels, no stat points, no attribute that grows with use (§4.12). Skills that grow are deferred and, if they come, buff on top of gear (§9 Q14). (Enemy grades, §4.11, are not player levels.)
@@ -263,8 +282,9 @@ Milestones follow the phases: FPS-M*n* delivers Phase *n*, and FPS-M1.1 (menus) 
 | 4 | **Wounds and healing** | A minimal game clock, damage-scaled penalties, leg compounding, recovery timers, bleeding, first/secondary aid, splint, meds as perishable data; enemy wounds to taste | Does limb damage create good downtime? | Arena + range |
 | 4.1 | **Grenades (mocked)** | A grenade item and throw: an object spawns on the ground at the sight point, a sound cue plays, the object despawns (§4.11). Cuttable | Does a throwable fit the item model? | Arena + range |
 | 5 | **Time, survival, rest** | Day cycle, time scaling and skipping, hunger/thirst/fatigue, sleep at a safe spot, healing timers advance on sleep | Do survival stats add pressure, not chores? | Arena + safe room |
-| 6 | **Hub and jobs** | Trader hub, job board, currency, full ledger per job; arena becomes "the job site" | Does profit-as-score change player behavior? | Hub + 1–2 pre-made zones |
+| 6 | **Hub and missions** | Trader hub, job board offering missions with their conditions, currency, full ledger per job; random starts, exits, spawns and building slots on hand-made maps; the place-decides-pool loot rule; arena becomes "the job site" | Does profit-as-score change player behavior? | Hub + 2 hand-made mission maps on the kit |
 | 7 | **Director** | Zone graph, factions, offline dice sim, daily planning, live handover | Does the world feel alive with this little machinery? | 3–5 pre-made zones |
+| Later | Generated maps | Mission maps assembled from kit modules cut from the hand-made maps (§4.13, §5) | Does assembly add variety the hand-made pool lacks? | Kit modules |
 | Later | Depth | Richer attachments and extensions, ammo crafting, armor depth, real grenades with area damage, damage types, anomalies/artifacts | — | — |
 
 Stance and body (1.2) runs in slices parallel to Phase 2, like enemy AI: lean and head bob first (nothing new from the engine), crouch and prone when the engine's per-mode hulls land, the visible body when skinned characters do. Plan: the FPS-M1.2 section of the [Searchlight roadmap](roadmap.md#5-fps-m12-stance-and-body-fps-f4).
@@ -289,7 +309,7 @@ Why this order:
 
 | Content | Phase 1 | By Phase 6 | Full target (single-player) |
 |---|---|---|---|
-| Maps | 1 arena | 1 hub + 2 zones + range | 1 hub + 4–5 zones |
+| Maps | 1 arena | 1 hub + 2 mission maps + range | 1 hub + 4–5 zones, several mission maps each |
 | Weapons | 1 rifle | 5 (pistol, SMG, 2 rifles, shotgun) in 3 calibers | 12–15 across 5–6 calibers |
 | Enemy types | 1 human | 2 humans + 1 mutant | 4 human factions + 4–5 mutant types |
 | Enemy grades (§4.11) | 5 as data on a type, once approved | 5 | 5 (+ legend for named NPCs) |
@@ -329,6 +349,10 @@ Settled entries keep their numbers so references stay stable.
 26. **Reload time stacking:** do the fast and retention variants (§4.2) add to the tactical or empty reload time, or replace it? Default: add, the simplest rule that keeps both choices meaningful. Decide when the variants are carded; only one reload exists today.
 
 27. **Armor and rig slots:** base armor and clothing add rig slots (§4.1). Settle when armor is carded (FPS-F7-02 and the Phase 3 armor feature): how many slots a piece gives, whether they stack with a rig's or the larger wins, whether clothing is its own layer or an armor piece with no protection, whether armor slots count as fast (rig) or backpack, and how slots trade against weight and speed.
+28. **Mission persistence:** does a map keep its state between missions (looted containers, dead enemies, cleared sites), or is each mission a fresh instance? The Director's faction state persists either way (§4.10). Decide when Phase 6 is carded.
+29. **Failed mission cost:** what does dying or failing a mission cost: nothing beyond the death penalty, the loadout carried, or an entry deposit? Extends Q6. Decide with Q6.
+30. **Hub upgrades:** the hub improves through gear and services only (§4.13). Which ones (workbench tier, trader stock, storage size), and how does that sit with §6 (no base building) and the §4.9 stash cut line? Decide when Phase 6 is carded.
+31. **Kit metrics:** grid size, wall, floor and door heights, and the connection-point convention of the modular kit (§5). Fix them with the first hand-made map, with the Tech Lead.
 
 ## 10 Engine fit and engine requests
 
@@ -351,6 +375,7 @@ What the game must be able to do (needs, not solutions). Generic needs belong in
 7. **Data-driven definitions from files:** load item, weapon, med and faction definitions from data, so mods can add or override them. *(Phase 2)*
 8. **Game time separate from the sim tick:** a game clock that can scale and skip (sleep fast-forward) on top of the fixed 60 Hz tick (ADR-0009). A minimal clock that only counts game time arrives in Phase 4 for recovery timers; scaling and skipping arrive in Phase 5. *(Phase 4 / 5)*
 9. **Save and load world state:** player, inventory, zone and actor state (ADR-0006 contract). *(Phase 5–6)*
-10. **Switch between levels:** unload one zone and load another, carrying player state across. *(Phase 6)*
+10. **Switch between levels:** unload one zone and load another, carrying player state across; the hub to a mission map and back. *(Phase 6)*
 11. **Headless simulation:** run the offline world sim without rendering (ENG-F6 is related). *(Phase 7)*
 12. **Posture:** crouch and prone hulls with clearance, lean with clearance in every stance, stance changes that take ticks. Crouch is [ENG-F33](https://github.com/WrackedFella/moho/issues/492); lean and prone are filed as [#544](https://github.com/WrackedFella/moho/issues/544). *(Phase 1.2)*
+13. **Assemble a level from pieces:** build one level at load from several authored pieces fitted at connection points, with colliders, markers and navigation that work across the joins, the same result from the same seed and content version (co-op), inside a load-time budget. *(later phase: generated maps)*
