@@ -13,6 +13,8 @@ pub enum ImageSizeError {
     ZeroDimension { size: [u32; 2] },
     /// The pixel count is not `width * height`.
     PixelCountMismatch { size: [u32; 2], pixels: usize },
+    /// A side exceeds [`Rgba8Image::MAX_SIDE`].
+    TooLarge { size: [u32; 2] },
 }
 
 impl fmt::Display for ImageSizeError {
@@ -25,6 +27,13 @@ impl fmt::Display for ImageSizeError {
                 f,
                 "image size {}x{} does not match {pixels} pixels",
                 size[0], size[1]
+            ),
+            Self::TooLarge { size } => write!(
+                f,
+                "image size {}x{} exceeds the {} pixel side limit",
+                size[0],
+                size[1],
+                Rgba8Image::MAX_SIDE
             ),
         }
     }
@@ -40,8 +49,12 @@ pub struct Rgba8Image {
 }
 
 impl Rgba8Image {
-    /// Build an image, refusing a zero dimension or a pixel count that is not
-    /// `width * height`.
+    /// The largest width or height every backend accepts: wgpu's default
+    /// `max_texture_dimension_2d`, which `moho_renderer`'s device setup requests.
+    pub const MAX_SIDE: u32 = 8192;
+
+    /// Build an image, refusing a zero dimension, a pixel count that is not
+    /// `width * height`, or a side over [`Self::MAX_SIDE`].
     pub fn new(size: [u32; 2], pixels: Vec<[u8; 4]>) -> Result<Self, ImageSizeError> {
         if size[0] == 0 || size[1] == 0 {
             return Err(ImageSizeError::ZeroDimension { size });
@@ -52,6 +65,9 @@ impl Rgba8Image {
                 size,
                 pixels: pixels.len(),
             });
+        }
+        if size[0] > Self::MAX_SIDE || size[1] > Self::MAX_SIDE {
+            return Err(ImageSizeError::TooLarge { size });
         }
         Ok(Self { size, pixels })
     }

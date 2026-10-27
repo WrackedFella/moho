@@ -51,11 +51,14 @@ impl ImageSources<'_> {
         match image.source() {
             gltf::image::Source::View { view, .. } => {
                 let label = format!("#{}", image.index());
-                let range = view.offset()..view.offset() + view.length();
-                let bytes = self
-                    .buffers
-                    .get(view.buffer().index())
-                    .and_then(|buffer| buffer.get(range))
+                let bytes = view
+                    .offset()
+                    .checked_add(view.length())
+                    .and_then(|end| {
+                        self.buffers
+                            .get(view.buffer().index())
+                            .and_then(|buffer| buffer.get(view.offset()..end))
+                    })
                     .ok_or_else(|| LevelErrorKind::BadImage {
                         image: label.clone(),
                         reason: "buffer view runs past the end of its buffer".into(),

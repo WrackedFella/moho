@@ -192,7 +192,8 @@ A placed mesh can draw with a base-colour image (`moho_render_api/src/texture.rs
 `moho_renderer/src/textures.rs`):
 
 - `Rgba8Image` is straight-alpha sRGB RGBA8, row-major from the top-left; `Rgba8Image::new`
-  refuses a zero dimension or a pixel count that is not `width * height` (`ImageSizeError`).
+  refuses a zero dimension, a pixel count that is not `width * height`, or a side over
+  `Rgba8Image::MAX_SIDE` (8192, wgpu's default texture limit) (`ImageSizeError`).
   `TextureId` is the game-chosen key.
 - `WorldMeshes::upsert_texture(id, image)` / `remove_texture(id)` queue changes that `flush`
   applies through `RendererBackend::register_texture` (returns a handle; full mip chain) and
