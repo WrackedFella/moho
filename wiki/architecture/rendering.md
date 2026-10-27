@@ -137,6 +137,14 @@ It shares the buffer rules and `LevelError` of 2.1, but keeps node structure ins
 - the vertex shader transforms normals by the cofactor of the instance's upper 3x3 (`normal_to_world`
   in `shaders/vertex.wgsl`), so non-uniform scale lights correctly. A mirrored root draws
   inside-out under back-face culling, so games place with positive-determinant roots.
+- sockets: `Assembly<K>` (`moho_level/src/socket.rs`) is one drawn copy of a model, keyed by the
+  game's model key `K`, with other assemblies attached at its named nodes, nested. Every method
+  takes a `K -> &Model` lookup, so the assembly holds no models. `attach` puts a part at the first
+  node of that name with an offset in the node's space (one part per node; a second replaces and
+  returns the first), `detach` and `part_mut` address a part by node name, and an unknown name is
+  `SocketError::UnknownSocket` with the assembly unchanged. `Assembly::placements(models, root)`
+  yields `(model key, mesh index, transform)` for the whole tree, the part's root being
+  `root * socket_node.rest * offset`; the game uploads and draws them as above.
 
 The game glue, once per model and once per frame:
 
