@@ -171,7 +171,7 @@ erratic music, machines get electronic), with voiced tutorials and tooltips as a
 For Justin; the defaults above hold if left unanswered.
 
 - **Q1.** Answered 2026-10-26: facets and terraces, no caves, no large-scale shape or water, scattered ore. See the
-  [world generation research](worldgen-research.md) and the SG-F6 draft.
+  [world generation research](worldgen-research.md) and [SG-F6](https://github.com/WrackedFella/moho/issues/707).
 - **Q2.** Playtest bugs beyond spawn, mesh gaps and persistence? They shape the polish round.
 - **Q3.** Hauling and stockpile zones: the cards settled on colony totals. Do you still want real hauling after the
   prototype, or is the instant bank the design?

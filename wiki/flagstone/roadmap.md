@@ -48,7 +48,7 @@ Feature order, with the engine items each needs. SG-F1, SG-F2, SG-F4 and SG-F5 a
 | S.4 | [SG-F4](https://github.com/WrackedFella/moho/issues/310) pawns dig what I mark | 2.8 (2.5.1, 2.7 done; 2.9, 2.10 delivered, adopt after the skeleton) | first new persisted type; #303 voxel routing is its card. Before SG-F3 |
 | S.4.1 | [SG-F7](https://github.com/WrackedFella/moho/issues/470) light follows what I dig and build: [SG-F7-01](https://github.com/WrackedFella/moho/issues/471) → [SG-F7-02](https://github.com/WrackedFella/moho/issues/472); [SG-F7-03](https://github.com/WrackedFella/moho/issues/473) after #467; [SG-F7-04](https://github.com/WrackedFella/moho/issues/474) (first emissive block) after #473 and [ENG-F24-05](https://github.com/WrackedFella/moho/issues/469); SG-F7-05 with ENG-F29-01; [SG-F7-06](https://github.com/WrackedFella/moho/issues/482) (smooth AO) after SG-F7-05 | ENG-F24-05 (#469) for SG-F7-04; 2.17 ENG-F29-01 for SG-F7-05 | ENG-M2; dug shafts and caves need correct sky light for S.4 |
 | S.5 | [SG-F3](https://github.com/WrackedFella/moho/issues/312) buildings and construction (not a gate item) | 2.7 (placement preview) | after SG-F4 |
-| S.6 | SG-F6 I pick my colony's ground on a believable world map ([draft](../../_todo/flagstone/SG-F6-world-generation/_feature.md), not filed; not a gate item) | none | direction set 2026-10-26 ([research](worldgen-research.md)); scope awaits Justin's approval |
+| S.6 | [SG-F6](https://github.com/WrackedFella/moho/issues/707) I pick my colony's ground on a believable world map (not a gate item) | none | scope approved 2026-10-27 ([research](worldgen-research.md)); carded when STRAT-M4 opens |
 | S.7 (proposed) | Pawn roles: colonists take a role that steers which job they pick (not filed) | none | after SG-F3, the second job type; stays on typed stores |
 | S.8 (proposed) | Pawn kinds: a first creature kind, wildlife by default (not filed) | none | after S.7; its first card moves pawns into an ECS ([ADR-0023](../../_todo/adr/0023-pawn-kinds-share-components.md), proposed). Hostile creatures wait for combat |
 
@@ -61,23 +61,23 @@ Feature order, with the engine items each needs. SG-F1, SG-F2, SG-F4 and SG-F5 a
 - **Pawn kinds and roles** (Justin, 2026-10-23): animals, monsters and colonist roles are coming. STRAT-M5 is a
   proposal; it changes no order inside STRAT-M1 to STRAT-M4. Which creature comes first, whether creatures can be possessed and how
   roles rank jobs are [GDD Q6 and Q7](gdd.md#open-questions).
-- **World generation.** Justin set the direction on 2026-10-26 (smooth believable terrain, caves, ore seams, an
-  overworld to pick a slice from); the [research page](worldgen-research.md) compares approaches and the SG-F6 draft
-  proposes scope and exit criteria, awaiting approval.
+- **World generation.** Justin set the direction on 2026-10-26 and approved [SG-F6](https://github.com/WrackedFella/moho/issues/707)'s scope on 2026-10-27; the
+  [research page](worldgen-research.md) holds the comparison. Wanted later and deferred there: interactable water,
+  load and cave-ins, tweakable generation parameters.
 - **Possession feel** (rest of SG-F1) is required for ENG-M2. It gets cards after the STRAT-M2 playtest, not before, and the playtest covers mining while possessed as well as mining by command.
 
 ## Out of scope for now
 
 | Idea | Why it waits | Revisit when |
 |---|---|---|
-| Strategy water | Needs voxel water in strategy terrain first | Justin schedules it |
+| Interactable water (flow, swimming, sailing, drowning) | SG-F6 ships still water as a block; the fluid system waits | After SG-F4, when Justin schedules it |
 | Shared pathfinding between strategy routes and the engine's static-level navigation | Neither exists yet | Both exist |
 | Automation, progression, needs, combat, other worlds | No named consumer | Their features are proposed ([GDD, deferred ideas](gdd.md#8-deferred-ideas)) |
 
 ## Order rules
 
 - Strategy mode is the primary game; first person is possession of one pawn.
-- Order is SG-F2, SG-F5, SG-F4, SG-F3 (pawns before buildings). SG-F1 can run any time; SG-F6 once its scope is approved.
+- Order is SG-F2, SG-F5, SG-F4, SG-F3 (pawns before buildings). SG-F1 can run any time; SG-F6 is carded when STRAT-M4 opens.
 - Gameplay UI and sound ride inside each feature.
 - [SG-F2-03](https://github.com/WrackedFella/moho/issues/343) is reproduce-first and does not wait on the save-format migration.
 - [SG-F7](https://github.com/WrackedFella/moho/issues/470) (light follows edits) is part of ENG-M2; the first emissive block (glowing crystal, solid-colour emission) lands with it.

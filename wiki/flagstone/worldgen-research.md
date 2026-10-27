@@ -1,9 +1,9 @@
 # World generation research: believable terrain, caves, ore seams, an overworld
 
-**Status:** research, 2026-10-26, for [SG-F6](../../_todo/flagstone/SG-F6-world-generation/_feature.md) (draft).
+**Status:** research, 2026-10-26, for [SG-F6](https://github.com/WrackedFella/moho/issues/707) (scope approved 2026-10-27).
 Direction set by Justin on 2026-10-26: smooth, believable terrain with caves; a large overworld the
 player picks a slice from; history and factions as a hook only. This page compares approaches and
-recommends the easiest path. The feature draft holds the scope; this page holds the why.
+recommends the easiest path. The feature issue holds the scope; this page holds the why.
 
 Vocabulary used below: a **block** is one voxel of the editable grid (chunks are 16³ blocks). A
 **slice** is the playable area the player picks. The **overworld** is the large low-fidelity map the
@@ -235,9 +235,13 @@ any of them and still have shipped something.
 
 ## 9 Consequences for other documents
 
-- **Vision:** "Mining will become sub-grid deformation" becomes "Mining will become gradual: a block
+- **Vision:** "Mining will become sub-grid deformation" became "Mining will become gradual: a block
   wears away by losing density; whole-block removal is the degenerate case." Same promise, cheaper
-  mechanism. Needs Justin's OK (a plain vision edit).
+  mechanism (Justin, 2026-10-27).
+- **Wanted later** (Justin, 2026-10-27), deferred on the issue and kept open by the decisions above:
+  interactable water (water is a block, so a fluid rule has its data), load and cave-ins (one material
+  and one density per block, nothing baked only into the mesh), tweakable generation parameters (one
+  world-level parameter set).
 - **GDD open question Q1** (what looks wrong) is answered by Justin's direction: facets and terraces,
   no caves, no large-scale structure or water, scattered ore.
 - **ADR candidates** for the Tech Lead: terrain is density plus material (supersedes the binary
