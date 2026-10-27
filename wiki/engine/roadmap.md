@@ -158,6 +158,7 @@ its consumers near, not when the earlier wave fully closes.
 | 2.23 | [ENG-F40](https://github.com/WrackedFella/moho/issues/636) slice 1: muzzle flash, tracer and impact marks expire on their own | list 2.9 | FPS-M2 gunplay feel | 5 | 2.20 |
 | 2.24 | [ENG-F14-03](https://github.com/WrackedFella/moho/issues/639): markers carry their size | list 2.2 | FPS-F10 test levels, FPS-M5 safe rooms | 5 | — |
 | 2.25 | [ENG-F43](https://github.com/WrackedFella/moho/issues/642): characters crouch, go prone and lean, with clearance (hit volumes the game poses, crouch with a clearance query, prone through crouch, lean; answers [#544](https://github.com/WrackedFella/moho/issues/544) and takes crouch from [ENG-F33](https://github.com/WrackedFella/moho/issues/492)) | #544 | FPS-M1.2 slice 2 | 5 | ENG-F32 through [#501](https://github.com/WrackedFella/moho/issues/501) and [#502](https://github.com/WrackedFella/moho/issues/502); one chain with ENG-F32's last cards: #497 → #498 → #499 → #500 → #643 → #501 → #502 → #644 → #645 → #646 |
+| 2.26 | [ENG-F45](https://github.com/WrackedFella/moho/issues/714): the replay is measured across operating systems, and engine sim math stops depending on the OS (R.2 quick wins: three-OS replay-hash report, rapier `enhanced-determinism`, `libm` in movement with a lint; not a gate item, picks neither lockstep nor snapshot) | — | Netcode ADR (ENG-M5+); two-sim proof (3.5) reuses the state hash | 5 | — (`moho_physics`, CI and Cargo features only, so it runs beside wave 5) |
 
 - **Wave 1:** the bugs, ENG-F16, ENG-F6 and ENG-F25. They need no other ENG-M2 work.
 - **Wave 2, before SG-F5 and SG-F4:** ENG-F23 and ENG-F24 unblock SG-F5; ENG-F9 comes before SG-F4.
@@ -264,7 +265,7 @@ recorded as an optional high-end tier instead of being dropped.
 | # | Topic | Question | Lands in |
 |---|---|---|---|
 | R.1 | Netcode for host-authoritative co-op | Which model fits ADR-0011: host runs AI, actors replicate behaviour to clients | Netcode ADR, ENG-M5+ |
-| R.2 | Determinism | What bit-equality costs across platforms (rapier `enhanced-determinism`, float order) beyond the ENG-M3 two-sim proof | Feeds R.1 |
+| R.2 | Determinism | What bit-equality costs across platforms (rapier `enhanced-determinism`, float order) beyond the ENG-M3 two-sim proof | Feeds R.1; researched, quick wins in [ENG-F45](https://github.com/WrackedFella/moho/issues/714) (2.26) |
 | R.3 | Audio | Whether rodio carries occlusion, reverb, spatial mixing, per-sound handles and a filtered mix bus, or a mixer sits above it | Before ENG-F41 |
 | R.8a | Particles and decals | CPU or GPU particles, decal method, cost on a GTX 1080 | Before ENG-F40 slice 3 |
 | R.4 | Mod scripting | WASM, Lua or data-only extension; sandbox and API surface | Scripted-mods ADR, ENG-M5+ |
