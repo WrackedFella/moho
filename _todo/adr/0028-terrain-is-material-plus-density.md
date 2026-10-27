@@ -1,6 +1,6 @@
 # 0028 — Terrain is one material and one density per block; water is a per-block fluid layer
 
-**Status:** Proposed (2026-10-27)
+**Status:** Accepted (2026-10-27)
 
 ## Context
 
