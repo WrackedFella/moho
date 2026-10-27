@@ -5,11 +5,12 @@ use std::sync::Arc;
 
 use moho_input::bindings::Input;
 use moho_input::key::{Key, MouseButton};
-use moho_render_api::{UiFrame, UiFrameSource};
+use moho_render_api::{Rgba8Image, UiFrame, UiFrameSource};
 use winit::event::{KeyEvent, WindowEvent};
 use winit::window::Window;
 
 use crate::console::{Console, Routing};
+use crate::image::{ScreenImage, ScreenImageError, ScreenImageId};
 use crate::menu::MenuStack;
 use crate::paint_map::to_ui_frame;
 use crate::text::{self, ScreenText, ScreenTextError};
@@ -117,6 +118,32 @@ impl<G, A> UiShell<G, A> {
         text::validate(&texts)?;
         self.texts = texts;
         Ok(())
+    }
+
+    /// Uploads `image` to the UI once under `id`, replacing and freeing any image already
+    /// there.
+    pub fn add_image(&mut self, id: ScreenImageId, image: &Rgba8Image) {
+        let _ = (id, image);
+        panic!("UiShell::add_image is not implemented")
+    }
+
+    /// Frees the texture of the image under `id`; an unknown id is ignored.
+    pub fn remove_image(&mut self, id: ScreenImageId) {
+        let _ = id;
+        panic!("UiShell::remove_image is not implemented")
+    }
+
+    /// Replaces the images the next `ui_frame` paints; that frame clears them. Call once per
+    /// `Game::frame` with everything to show, like [`set_texts`](Self::set_texts).
+    ///
+    /// # Errors
+    ///
+    /// [`ScreenImageError::UnknownImage`] when an image was never added or was removed, and
+    /// [`ScreenImageError::BadSize`] when a side of its size is not finite and positive; the shell
+    /// then holds no images.
+    pub fn set_images(&mut self, images: Vec<ScreenImage>) -> Result<(), ScreenImageError> {
+        let _ = images;
+        panic!("UiShell::set_images is not implemented")
     }
 
     fn feed_egui(&mut self, event: &WindowEvent) {

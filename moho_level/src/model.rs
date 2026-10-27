@@ -1,10 +1,10 @@
 //! Model import: a glTF file becomes plain data a game places node by node.
 
 use std::borrow::Cow;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use glam::{Affine3A, Mat4};
-use moho_render_api::{MaterialGpu, MaterialKey, RenderMaterial, WorldMesh};
+use moho_render_api::{MaterialGpu, MaterialKey, RenderMaterial, Rgba8Image, WorldMesh};
 
 use crate::{LevelError, LevelErrorKind, mesh};
 
@@ -47,6 +47,17 @@ pub struct ModelMaterial {
     pub name: Option<String>,
     /// Linear RGBA from `pbrMetallicRoughness.baseColorFactor`.
     pub base_colour: [f32; 4],
+    /// Index into [`Model::images`] of the base-colour texture, if the material has one.
+    pub base_colour_image: Option<usize>,
+}
+
+/// One decoded base-colour image of a model.
+#[derive(Clone, Debug)]
+pub struct ModelImage {
+    pub name: Option<String>,
+    /// Canonical path of a file image; `None` for one embedded in a buffer view.
+    pub source: Option<PathBuf>,
+    pub image: Rgba8Image,
 }
 
 impl ModelMaterial {
@@ -54,6 +65,7 @@ impl ModelMaterial {
     pub const GLTF_DEFAULT: Self = Self {
         name: None,
         base_colour: [1.0; 4],
+        base_colour_image: None,
     };
 }
 
@@ -93,6 +105,7 @@ fn build(document: &gltf::Document, buffers: &[Cow<'_, [u8]>]) -> Result<Model, 
         .map(|m| ModelMaterial {
             name: m.name().map(str::to_owned),
             base_colour: m.pbr_metallic_roughness().base_color_factor(),
+            base_colour_image: None,
         })
         .collect();
     let mut walk = Walk {
@@ -166,6 +179,11 @@ impl Model {
         &self.materials
     }
 
+    /// The decoded base-colour images, each once however many materials use it.
+    pub fn images(&self) -> &[ModelImage] {
+        panic!("Model::images is not implemented")
+    }
+
     /// The first node called `name` in walk order.
     pub fn node(&self, name: &str) -> Option<&ModelNode> {
         self.nodes.iter().find(|n| n.name.as_deref() == Some(name))
@@ -228,6 +246,7 @@ mod tests {
         ModelMaterial {
             name: None,
             base_colour: rgba,
+            base_colour_image: None,
         }
     }
 

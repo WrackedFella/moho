@@ -1528,6 +1528,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -1929,6 +1931,7 @@ version = "0.1.0"
 dependencies = [
  "glam 0.33.12",
  "gltf",
+ "image",
  "moho_physics",
  "moho_render_api",
  "proptest",

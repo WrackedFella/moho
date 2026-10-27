@@ -57,6 +57,16 @@ pub enum LevelErrorKind {
     },
     #[error("buffer uri `{uri}` is not a relative file path")]
     UnsupportedBufferUri { uri: String },
+    #[error("image file `{uri}` cannot be read")]
+    MissingImage {
+        uri: String,
+        #[source]
+        source: std::io::Error,
+    },
+    /// `image` is the URI, `#<index>` for an embedded image, or the file name for
+    /// [`crate::load_image`].
+    #[error("image `{image}`: {reason}")]
+    BadImage { image: String, reason: String },
     #[error("mesh {mesh}: {reason}")]
     BadMesh { mesh: usize, reason: String },
 }

@@ -136,6 +136,17 @@ impl WorldMesh {
         self.materials.as_deref()
     }
 
+    /// Attach per-vertex texture coordinates, one `[u, v]` per vertex.
+    pub fn with_uvs(self, uvs: Vec<[f32; 2]>) -> Result<Self, WorldMeshError> {
+        let _ = uvs;
+        panic!("WorldMesh::with_uvs is not implemented")
+    }
+
+    /// The per-vertex texture coordinates; `None` when the game never set them.
+    pub fn uvs(&self) -> Option<&[[f32; 2]]> {
+        panic!("WorldMesh::uvs is not implemented")
+    }
+
     pub fn positions(&self) -> &[[f32; 3]] {
         &self.positions
     }
@@ -311,6 +322,40 @@ mod tests {
             ),
             "got {err:?}"
         );
+    }
+
+    #[test]
+    fn with_uvs_refuses_a_mismatched_channel() {
+        let mesh = build(3, 3, vec![0, 1, 2]).expect("well-formed triangle");
+
+        let err = mesh
+            .with_uvs(vec![[0.0, 0.0], [1.0, 0.0]])
+            .expect_err("two uvs for three vertices");
+
+        assert!(
+            matches!(
+                err,
+                WorldMeshError::ChannelLengthMismatch {
+                    channel: "uvs",
+                    expected: 3,
+                    actual: 2
+                }
+            ),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn uvs_are_none_until_set_and_returned_as_given() {
+        let mesh = build(3, 3, vec![0, 1, 2]).expect("well-formed triangle");
+        assert!(mesh.uvs().is_none());
+
+        let mesh = mesh
+            .with_uvs(vec![[0.0, 0.0], [1.0, 0.0], [0.5, 1.0]])
+            .expect("one per vertex");
+
+        assert_eq!(mesh.uvs(), Some(&[[0.0, 0.0], [1.0, 0.0], [0.5, 1.0]][..]));
+        assert_eq!(mesh.indices(), [0, 1, 2]);
     }
 
     #[test]

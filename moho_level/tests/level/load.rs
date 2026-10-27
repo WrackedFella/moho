@@ -669,3 +669,22 @@ fn error_keeps_the_underlying_cause_as_source() {
         "{source}"
     );
 }
+
+#[test]
+fn level_meshes_carry_texcoord_0() {
+    use crate::support::textured::{QUAD_UVS, Textured, write_glb, write_gltf};
+    let model = Textured {
+        uvs: Some(QUAD_UVS.to_vec()),
+        ..Textured::default()
+    };
+    let (_gltf_dir, gltf_path) = write_gltf(&model);
+    let (_glb_dir, glb_path) = write_glb(&model);
+
+    let from_gltf = load(&gltf_path).expect("gltf loads");
+    let from_glb = load(&glb_path).expect("glb loads");
+
+    for level in [from_gltf, from_glb] {
+        assert_eq!(level.meshes.len(), 1);
+        assert_eq!(level.meshes[0].mesh.uvs(), Some(&QUAD_UVS[..]));
+    }
+}

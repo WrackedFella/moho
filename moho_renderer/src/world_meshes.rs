@@ -1,7 +1,7 @@
 //! Renderer-side store of contract meshes keyed by [`WorldMeshId`].
 
 use crate::RendererBackend;
-use moho_render_api::{InstanceGpu, WorldMesh, WorldMeshId};
+use moho_render_api::{InstanceGpu, Rgba8Image, TextureId, WorldMesh, WorldMeshId};
 use std::collections::BTreeMap;
 
 /// How a mesh draws: once at identity, or only where placed.
@@ -65,6 +65,31 @@ impl WorldMeshes {
             .entry(id)
             .or_default()
             .push((transform, material));
+    }
+
+    /// Queue adding or replacing the texture under `id`; replacing unregisters the old
+    /// handle on `flush`.
+    pub fn upsert_texture(&mut self, id: TextureId, image: Rgba8Image) {
+        let _ = (id, image);
+        panic!("WorldMeshes::upsert_texture is not implemented")
+    }
+
+    /// Queue removing the texture under `id`; placements naming it then draw white.
+    pub fn remove_texture(&mut self, id: TextureId) {
+        let _ = id;
+        panic!("WorldMeshes::remove_texture is not implemented")
+    }
+
+    /// Like [`place`](Self::place), drawn with the texture under `texture`.
+    pub fn place_textured(
+        &mut self,
+        id: WorldMeshId,
+        transform: glam::Affine3A,
+        material: u32,
+        texture: TextureId,
+    ) {
+        let _ = (id, transform, material, texture);
+        panic!("WorldMeshes::place_textured is not implemented")
     }
 
     /// Drop every placement; the renderer calls this each frame.
@@ -138,6 +163,13 @@ impl WorldMeshes {
         });
         statics.chain(placed)
     }
+
+    /// The same instances as [`draws`](Self::draws), as `(mesh handle, texture handle,
+    /// instance)`. The texture handle is 0, the white default, for statics, for
+    /// [`place`](Self::place) and for a texture id that is not live.
+    pub fn textured_draws(&self) -> impl Iterator<Item = (u32, u32, InstanceGpu)> + '_ {
+        std::iter::empty()
+    }
 }
 
 #[cfg(test)]
@@ -156,6 +188,9 @@ mod tests {
         uploads: Vec<Upload>,
         /// The `material` argument of each `register_indexed_mesh` call.
         materials: Vec<Vec<u32>>,
+        /// Each `register_texture` call as `(handle, image)`; handles start at 100.
+        textures: Vec<(u32, Rgba8Image)>,
+        unregistered_textures: Vec<u32>,
     }
 
     /// The channel slices of one `register_indexed_mesh` call, named as the
@@ -224,6 +259,14 @@ mod tests {
         }
         fn unregister_mesh(&mut self, mesh: u32) {
             self.unregistered.push(mesh);
+        }
+        fn register_texture(&mut self, image: &Rgba8Image) -> u32 {
+            let handle = 100 + u32::try_from(self.textures.len()).expect("few textures");
+            self.textures.push((handle, image.clone()));
+            handle
+        }
+        fn unregister_texture(&mut self, texture: u32) {
+            self.unregistered_textures.push(texture);
         }
         fn begin_frame(
             &mut self,
@@ -682,6 +725,199 @@ mod tests {
         assert_eq!(drawn.len(), 1, "static again, with no placements");
         assert_eq!(drawn[0].1.model, IDENTITY);
         assert_eq!(backend.live_handles().len(), 1, "one live upload");
+    }
+
+    const SKIN: TextureId = TextureId(1);
+    const FUR: TextureId = TextureId(2);
+
+    /// A 1x1 image whose red channel tells textures apart.
+    fn texture(red: u8) -> Rgba8Image {
+        Rgba8Image::new([1, 1], vec![[red, 0, 0, 255]]).expect("one pixel")
+    }
+
+    fn textured(meshes: &WorldMeshes) -> Vec<(u32, u32, InstanceGpu)> {
+        meshes.textured_draws().collect()
+    }
+
+    #[test]
+    fn a_textured_placement_draws_with_its_texture_handle() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.upsert_texture(SKIN, texture(10));
+        assert!(
+            backend.textures.is_empty(),
+            "nothing is uploaded before flush"
+        );
+        meshes.flush(&mut backend);
+
+        meshes.place_textured(A, at(2.0), 3, SKIN);
+
+        let drawn = textured(&meshes);
+        assert_eq!(backend.textures.len(), 1);
+        let (handle, uploaded) = &backend.textures[0];
+        assert_eq!(
+            *uploaded,
+            texture(10),
+            "the image reaches the backend as given"
+        );
+        assert_eq!(drawn.len(), 1);
+        assert_eq!(drawn[0].0, backend.handle_with_index_count(3));
+        assert_eq!(drawn[0].1, *handle);
+        assert_eq!(drawn[0].2.material, 3);
+        assert_eq!(drawn[0].2.model, model_of(at(2.0)));
+        let plain: Vec<(u32, [[f32; 4]; 4])> =
+            draws(&meshes).iter().map(|(h, i)| (*h, i.model)).collect();
+        assert_eq!(
+            plain,
+            vec![(drawn[0].0, drawn[0].2.model)],
+            "draws() keeps its (handle, instance) items"
+        );
+    }
+
+    #[test]
+    fn placements_pick_their_own_texture() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.upsert_texture(SKIN, texture(10));
+        meshes.upsert_texture(FUR, texture(20));
+        meshes.flush(&mut backend);
+        let handle_of = |red: u8| {
+            backend
+                .textures
+                .iter()
+                .find(|(_, image)| *image == texture(red))
+                .map(|(h, _)| *h)
+                .expect("uploaded")
+        };
+
+        meshes.place_textured(A, at(1.0), 0, FUR);
+        meshes.place_textured(A, at(2.0), 0, SKIN);
+        meshes.place_textured(A, at(3.0), 0, FUR);
+
+        let order: Vec<(u32, [[f32; 4]; 4])> = textured(&meshes)
+            .iter()
+            .map(|(_, t, i)| (*t, i.model))
+            .collect();
+        assert_eq!(
+            order,
+            vec![
+                (handle_of(20), model_of(at(1.0))),
+                (handle_of(10), model_of(at(2.0))),
+                (handle_of(20), model_of(at(3.0))),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_texture_is_registered_once_however_many_placements_use_it() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.upsert_movable(B, mesh(2));
+        meshes.upsert_texture(SKIN, texture(10));
+        meshes.flush(&mut backend);
+
+        for frame in 0..3 {
+            meshes.place_textured(A, at(1.0), 0, SKIN);
+            meshes.place_textured(A, at(2.0), 0, SKIN);
+            meshes.place_textured(B, at(3.0), 0, SKIN);
+            meshes.flush(&mut backend);
+
+            let handles: Vec<u32> = textured(&meshes).iter().map(|(_, t, _)| *t).collect();
+            assert_eq!(handles, vec![backend.textures[0].0; 3], "frame {frame}");
+            meshes.clear_placements();
+        }
+
+        assert_eq!(backend.textures.len(), 1);
+        assert!(backend.unregistered_textures.is_empty());
+    }
+
+    #[test]
+    fn place_and_a_not_live_texture_draw_with_the_white_handle() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.upsert_texture(SKIN, texture(10));
+        meshes.flush(&mut backend);
+
+        meshes.place(A, at(1.0), 0);
+        meshes.place_textured(A, at(2.0), 0, TextureId(99));
+        meshes.place_textured(A, at(3.0), 0, SKIN);
+
+        let drawn = textured(&meshes);
+        let mesh_handle = backend.handle_with_index_count(3);
+        let textures: Vec<(u32, u32)> = drawn.iter().map(|(m, t, _)| (*m, *t)).collect();
+        assert_eq!(
+            textures,
+            vec![
+                (mesh_handle, 0),
+                (mesh_handle, 0),
+                (mesh_handle, backend.textures[0].0),
+            ],
+            "the mesh still draws for a texture that is not live"
+        );
+    }
+
+    #[test]
+    fn a_static_mesh_draws_with_the_white_handle() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert(A, mesh(1), 7);
+        meshes.flush(&mut backend);
+
+        let drawn = textured(&meshes);
+
+        assert_eq!(drawn.len(), 1);
+        assert_eq!((drawn[0].1, drawn[0].2.material), (0, 7));
+    }
+
+    #[test]
+    fn replacing_a_texture_unregisters_the_old_handle() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.upsert_texture(SKIN, texture(10));
+        meshes.flush(&mut backend);
+        let old = backend.textures[0].0;
+
+        meshes.upsert_texture(SKIN, texture(20));
+        meshes.flush(&mut backend);
+
+        assert_eq!(backend.textures.len(), 2);
+        assert_eq!(backend.textures[1].1, texture(20));
+        let new = backend.textures[1].0;
+        assert_ne!(new, old);
+        assert_eq!(backend.unregistered_textures, vec![old]);
+        meshes.place_textured(A, at(1.0), 0, SKIN);
+        let handles: Vec<u32> = textured(&meshes).iter().map(|(_, t, _)| *t).collect();
+        assert_eq!(handles, vec![new]);
+    }
+
+    #[test]
+    fn removing_a_texture_unregisters_it() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.upsert_texture(SKIN, texture(10));
+        meshes.upsert_texture(FUR, texture(20));
+        meshes.flush(&mut backend);
+        let skin = backend.textures[0].0;
+        let fur = backend.textures[1].0;
+
+        meshes.remove_texture(SKIN);
+        assert!(
+            backend.unregistered_textures.is_empty(),
+            "freed on flush, not before"
+        );
+        meshes.flush(&mut backend);
+
+        assert_eq!(backend.unregistered_textures, vec![skin]);
+        meshes.place_textured(A, at(1.0), 0, SKIN);
+        meshes.place_textured(A, at(2.0), 0, FUR);
+        let handles: Vec<u32> = textured(&meshes).iter().map(|(_, t, _)| *t).collect();
+        assert_eq!(handles, vec![0, fur], "the removed texture draws white");
     }
 
     #[derive(Clone, Copy, Debug, PartialEq)]

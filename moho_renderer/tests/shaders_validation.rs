@@ -384,6 +384,10 @@ fn wgsl_type_of(format: wgpu::VertexFormat) -> naga::TypeInner {
     match format {
         wgpu::VertexFormat::Float32 => TypeInner::Scalar(Scalar::F32),
         wgpu::VertexFormat::Uint32 => TypeInner::Scalar(Scalar::U32),
+        wgpu::VertexFormat::Float32x2 => TypeInner::Vector {
+            size: VectorSize::Bi,
+            scalar: Scalar::F32,
+        },
         wgpu::VertexFormat::Float32x3 => TypeInner::Vector {
             size: VectorSize::Tri,
             scalar: Scalar::F32,
@@ -442,6 +446,107 @@ fn vertex_input_locations_match_the_main_pipeline_layout() {
         shader_inputs.contains(&(13, naga::TypeInner::Scalar(naga::Scalar::U32))),
         "the per-vertex material is a u32 at location 13"
     );
+}
+
+/// True when `handle` is `target` or a swizzle, component access, splat or composition
+/// of something that is.
+fn derives_from(
+    expressions: &naga::Arena<naga::Expression>,
+    handle: naga::Handle<naga::Expression>,
+    target: naga::Handle<naga::Expression>,
+) -> bool {
+    if handle == target {
+        return true;
+    }
+    match &expressions[handle] {
+        naga::Expression::Swizzle { vector, .. } => derives_from(expressions, *vector, target),
+        naga::Expression::AccessIndex { base, .. } => derives_from(expressions, *base, target),
+        naga::Expression::Splat { value, .. } => derives_from(expressions, *value, target),
+        naga::Expression::Compose { components, .. } => components
+            .iter()
+            .any(|c| derives_from(expressions, *c, target)),
+        _ => false,
+    }
+}
+
+#[test]
+fn fragment_multiplies_the_material_colour_by_the_base_colour_texel() {
+    let source = moho_renderer::pipeline::main_shader_source();
+    let module = validate("main shader", &source, Capabilities::empty());
+
+    let mut group_2: Vec<(u32, &naga::TypeInner)> = module
+        .global_variables
+        .iter()
+        .filter_map(|(_, global)| {
+            let binding = global.binding.as_ref().filter(|b| b.group == 2)?;
+            Some((binding.binding, &module.types[global.ty].inner))
+        })
+        .collect();
+    group_2.sort_by_key(|(binding, _)| *binding);
+    let fs_main = &module
+        .entry_points
+        .iter()
+        .find(|e| e.name == "fs_main")
+        .expect("fs_main")
+        .function;
+    let samples: Vec<_> = fs_main
+        .expressions
+        .iter()
+        .filter(|(_, e)| matches!(e, naga::Expression::ImageSample { .. }))
+        .map(|(handle, _)| handle)
+        .collect();
+
+    assert_eq!(group_2.len(), 2, "group 2 is the texture and its sampler");
+    assert_eq!(group_2[0].0, 0);
+    assert!(
+        matches!(
+            group_2[0].1,
+            naga::TypeInner::Image {
+                dim: naga::ImageDimension::D2,
+                arrayed: false,
+                class: naga::ImageClass::Sampled {
+                    kind: naga::ScalarKind::Float,
+                    multi: false
+                },
+            }
+        ),
+        "binding 0 is a 2D float texture, got {:?}",
+        group_2[0].1
+    );
+    assert_eq!(group_2[1].0, 1);
+    assert!(
+        matches!(group_2[1].1, naga::TypeInner::Sampler { comparison: false }),
+        "binding 1 is a filtering sampler, got {:?}",
+        group_2[1].1
+    );
+    assert_eq!(samples.len(), 1, "fs_main samples the texture once");
+    let sample = samples[0];
+    let sampled_at = fs_main
+        .body
+        .iter()
+        .position(|s| matches!(s, naga::Statement::Emit(r) if r.clone().any(|h| h == sample)))
+        .expect("the sample is emitted in fs_main's body");
+    let first_branch = fs_main.body.iter().position(|s| {
+        matches!(
+            s,
+            naga::Statement::If { .. }
+                | naga::Statement::Loop { .. }
+                | naga::Statement::Switch { .. }
+        )
+    });
+    assert!(
+        first_branch.is_none_or(|branch| sampled_at < branch),
+        "the sample stays in uniform control flow, ahead of every branch"
+    );
+    let multiplied_by_texel = fs_main.expressions.iter().any(|(_, e)| {
+        matches!(
+            e,
+            naga::Expression::Binary { op: naga::BinaryOperator::Multiply, left, right }
+                if derives_from(&fs_main.expressions, *left, sample)
+                    || derives_from(&fs_main.expressions, *right, sample)
+        )
+    });
+    assert!(multiplied_by_texel, "a product takes the texel's colour");
 }
 
 /// Offsets and total size of `Lighting` as naga lays it out in `source`.

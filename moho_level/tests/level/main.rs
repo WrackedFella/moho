@@ -5,3 +5,4 @@ mod load;
 mod marker;
 mod model;
 mod support;
+mod texture;

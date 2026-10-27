@@ -381,6 +381,7 @@ impl<'a> Renderer<'a> {
             block_light_rgb,
             sky_exposed,
             material,
+            uv: &[],
         });
         for (i, v) in iv.iter().enumerate().take(6) {
             tracing::trace!(
@@ -799,6 +800,7 @@ pub(crate) struct VertexChannels<'a> {
     pub block_light_rgb: &'a [[f32; 3]],
     pub sky_exposed: &'a [f32],
     pub material: &'a [u32],
+    pub uv: &'a [[f32; 2]],
 }
 
 /// Interleave the per-channel slices into GPU vertices. A channel shorter than
@@ -814,7 +816,9 @@ pub(crate) fn interleave_vertices(channels: &VertexChannels) -> Vec<Vertex> {
         block_light_rgb,
         sky_exposed,
         material,
+        uv,
     } = *channels;
+    let _ = uv;
     (0..positions.len())
         .map(|i| Vertex {
             position: positions[i],
@@ -825,6 +829,7 @@ pub(crate) fn interleave_vertices(channels: &VertexChannels) -> Vec<Vertex> {
             block_light_rgb: block_light_rgb.get(i).copied().unwrap_or([0.0; 3]),
             sky_exposed: sky_exposed.get(i).copied().unwrap_or(1.0),
             material: material.get(i).copied().unwrap_or(NO_VERTEX_MATERIAL),
+            uv: [0.0; 2],
         })
         .collect()
 }
@@ -938,6 +943,33 @@ mod tests {
 
         let materials: Vec<u32> = interleaved.iter().map(|v| v.material).collect();
         assert_eq!(materials, vec![NO_VERTEX_MATERIAL; 3]);
+    }
+
+    #[test]
+    fn interleave_carries_uvs_and_defaults_missing_ones_to_zero() {
+        let vertices = [[0.0; 3], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
+        let normals = [[0.0, 1.0, 0.0]; 3];
+        let uvs = [[0.25, 0.75], [1.0, 0.5]];
+
+        let with_uvs = interleave_vertices(&VertexChannels {
+            positions: &vertices,
+            normals: &normals,
+            uv: &uvs,
+            ..Default::default()
+        });
+        let without_uvs = interleave_vertices(&VertexChannels {
+            positions: &vertices,
+            normals: &normals,
+            ..Default::default()
+        });
+
+        let carried: Vec<[f32; 2]> = with_uvs.iter().map(|v| v.uv).collect();
+        assert_eq!(
+            carried,
+            vec![[0.25, 0.75], [1.0, 0.5], [0.0, 0.0]],
+            "a short channel is padded with zero"
+        );
+        assert!(without_uvs.iter().all(|v| v.uv == [0.0, 0.0]));
     }
 
     #[test]

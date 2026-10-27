@@ -7,6 +7,7 @@ mod instance;
 mod marker;
 mod material;
 mod persistence;
+mod texture;
 mod ui_paint;
 mod world_geometry;
 
@@ -14,6 +15,7 @@ pub use instance::{InstanceGpu, Renderable};
 pub use marker::{Marker, MarkerGpu, MarkerId, MarkerStyle};
 pub use material::{MaterialGpu, MaterialKey, RenderMaterial};
 pub use persistence::{CameraDesc, LightDesc};
+pub use texture::{ImageSizeError, Rgba8Image, TextureId};
 pub use ui_paint::{
     UiFilter, UiFrame, UiFrameSource, UiImage, UiMesh, UiRect, UiSampler, UiSource, UiTextureId,
     UiTextureSet, UiVertex, UiWrap,

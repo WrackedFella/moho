@@ -4,6 +4,7 @@
 
 mod buffers;
 mod error;
+mod image;
 mod marker;
 mod mesh;
 mod model;
@@ -15,8 +16,11 @@ use std::path::Path;
 use glam::Mat4;
 
 pub use error::{LevelError, LevelErrorKind};
+pub use image::load_image;
 pub use marker::LevelMarker;
-pub use model::{MODEL_MATERIAL_VARIANT, Model, ModelMaterial, ModelMesh, ModelNode, load_model};
+pub use model::{
+    MODEL_MATERIAL_VARIANT, Model, ModelImage, ModelMaterial, ModelMesh, ModelNode, load_model,
+};
 use moho_render_api::WorldMesh;
 pub use nav::{AgentProfile, NavBuildError, NavMesh};
 

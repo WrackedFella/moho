@@ -8,6 +8,7 @@
 pub mod apply;
 pub mod console;
 pub mod host;
+pub mod image;
 pub mod layers;
 pub mod menu;
 pub mod paint_map;
@@ -17,6 +18,7 @@ pub use apply::apply_engine_command;
 pub use console::registry::{CommandSpec, EngineCommand, Owner, RegisterError};
 pub use console::{CONSOLE_BINDING, Console, Routing};
 pub use host::UiShell;
+pub use image::{ScreenImage, ScreenImageError, ScreenImageId};
 pub use layers::UiLayers;
 pub use menu::{MenuEvent, MenuItem, MenuScreen, MenuStack};
 pub use text::{Anchor, ScreenText, ScreenTextError};
