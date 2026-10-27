@@ -2,6 +2,7 @@ use std::fs;
 
 use image::ExtendedColorType;
 use moho_level::{LevelError, LevelErrorKind, load_image, load_model};
+use moho_render_api::Rgba8Image;
 
 use crate::support::textured::{
     CHECKER, ImageData, QUAD_UVS, Textured, jpeg_solid, png, png_rgba, textured_material,
@@ -258,6 +259,20 @@ fn embedded_image_slice_outside_its_buffer_fails_naming_its_index() {
 }
 
 #[test]
+fn embedded_image_slice_whose_end_overflows_fails_naming_its_index() {
+    let model = Textured {
+        images: vec![ImageData::EmbeddedOffsetOverflow],
+        ..checker_model()
+    };
+    let (_dir, path) = write_glb(&model);
+
+    let err = load_model(&path).expect_err("the view end overflows u64");
+
+    assert_eq!(err.path(), path);
+    assert_eq!(bad_image_name(&err), "#0");
+}
+
+#[test]
 fn two_textures_sharing_one_image_decode_it_once() {
     let model = Textured {
         texture_sources: vec![0, 0],
@@ -497,6 +512,23 @@ fn load_image_converts_other_colour_types_and_depths_to_rgba8() {
     assert_eq!(grey.pixels(), [[0, 0, 0, 255], [90, 90, 90, 255]]);
     assert_eq!(rgb.pixels(), [[10, 20, 30, 255]]);
     assert_eq!(deep.pixels(), [[0, 255, 255, 0]]);
+}
+
+#[test]
+fn load_image_wider_than_the_texture_limit_fails_as_bad_image() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("wide.png");
+    let side = Rgba8Image::MAX_SIDE + 1;
+    fs::write(
+        &path,
+        png([side, 1], ExtendedColorType::L8, &vec![0; side as usize]),
+    )
+    .expect("write png");
+
+    let err = load_image(&path).expect_err("wider than the largest texture");
+
+    assert_eq!(err.path(), path);
+    assert_eq!(bad_image_name(&err), "wide.png");
 }
 
 #[test]

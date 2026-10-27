@@ -64,6 +64,8 @@ pub enum ImageData {
     EmbeddedAs { bytes: Vec<u8>, mime: String },
     /// A `bufferView` entry whose slice runs far past the end of its buffer.
     EmbeddedOutOfRange,
+    /// A `bufferView` entry whose `byteOffset + byteLength` overflows `u64`.
+    EmbeddedOffsetOverflow,
 }
 
 impl ImageData {
@@ -201,6 +203,14 @@ fn build(model: &Textured) -> (Value, Vec<u8>) {
                 ImageData::EmbeddedAs { bytes, mime } => {
                     let view = add_view(&mut blob, &mut views, bytes);
                     json!({ "name": name, "bufferView": view, "mimeType": mime })
+                }
+                ImageData::EmbeddedOffsetOverflow => {
+                    views.push(json!({
+                        "buffer": 0,
+                        "byteOffset": u64::MAX - 1,
+                        "byteLength": 4,
+                    }));
+                    json!({ "name": name, "bufferView": views.len() - 1, "mimeType": "image/png" })
                 }
                 ImageData::EmbeddedOutOfRange => {
                     views.push(json!({ "buffer": 0, "byteOffset": 0, "byteLength": 1_000_000 }));

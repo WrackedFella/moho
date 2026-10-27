@@ -114,6 +114,27 @@ mod tests {
     }
 
     #[test]
+    fn rgba8_image_refuses_a_side_over_the_texture_limit() {
+        let over = Rgba8Image::MAX_SIDE + 1;
+        let wide = Rgba8Image::new([over, 1], vec![[0; 4]; over as usize]);
+        let tall = Rgba8Image::new([1, over], vec![[0; 4]; over as usize]);
+
+        assert_eq!(wide, Err(ImageSizeError::TooLarge { size: [8193, 1] }));
+        assert_eq!(tall, Err(ImageSizeError::TooLarge { size: [1, 8193] }));
+    }
+
+    #[test]
+    fn rgba8_image_accepts_a_side_exactly_at_the_texture_limit() {
+        let side = Rgba8Image::MAX_SIDE;
+
+        let wide = Rgba8Image::new([side, 1], vec![[0; 4]; side as usize]);
+        let tall = Rgba8Image::new([1, side], vec![[0; 4]; side as usize]);
+
+        assert_eq!(wide.expect("8192x1").size(), [8192, 1]);
+        assert_eq!(tall.expect("1x8192").size(), [1, 8192]);
+    }
+
+    #[test]
     fn rgba8_image_refuses_a_size_whose_pixel_count_overflows_u32() {
         let huge = Rgba8Image::new([65536, 65536], Vec::new());
 
