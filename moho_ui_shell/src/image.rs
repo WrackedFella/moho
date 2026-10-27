@@ -1,7 +1,11 @@
 //! Game-drawn screen images: pictures a game uploads once and positions each frame, the image
 //! counterpart of [`ScreenText`](crate::text::ScreenText).
 
-use crate::text::Anchor;
+use std::collections::BTreeMap;
+
+use moho_render_api::Rgba8Image;
+
+use crate::text::{self, Anchor};
 
 /// Game-chosen key for one uploaded image.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -27,6 +31,93 @@ pub enum ScreenImageError {
     UnknownImage { index: usize, id: ScreenImageId },
     #[error("screen image {index} has size {size:?}; each side must be finite and positive")]
     BadSize { index: usize, size: [f32; 2] },
+}
+
+/// The images a game uploaded, by id, and the ones placed for the next frame.
+#[derive(Default)]
+pub(crate) struct ScreenImages {
+    /// Dropping a handle frees its texture in the next egui pass.
+    textures: BTreeMap<ScreenImageId, egui::TextureHandle>,
+    placed: Vec<ScreenImage>,
+    /// A texture was freed since the last frame, so that frame must run to deliver the free.
+    freed: bool,
+}
+
+impl ScreenImages {
+    /// Uploads `image` to `ctx` under `id`, freeing any texture already there.
+    pub(crate) fn add(&mut self, ctx: &egui::Context, id: ScreenImageId, image: &Rgba8Image) {
+        let [width, height] = image.size();
+        // Premultiplies the straight-alpha pixels, as the UI pass expects.
+        let colour = egui::ColorImage::from_rgba_unmultiplied(
+            [width as usize, height as usize],
+            image.pixels().as_flattened(),
+        );
+        let handle = ctx.load_texture(
+            format!("moho_ui_shell_image_{}", id.0),
+            colour,
+            egui::TextureOptions::LINEAR,
+        );
+        self.freed |= self.textures.insert(id, handle).is_some();
+    }
+
+    /// Frees the texture under `id` and unplaces it for the next frame; an unknown id is
+    /// ignored.
+    pub(crate) fn remove(&mut self, id: ScreenImageId) {
+        self.freed |= self.textures.remove(&id).is_some();
+        self.placed.retain(|placed| placed.image != id);
+    }
+
+    /// Replaces the placed images, refusing an unknown id or a size that is not finite and
+    /// positive; a refused list leaves none placed.
+    pub(crate) fn set(&mut self, images: Vec<ScreenImage>) -> Result<(), ScreenImageError> {
+        self.placed.clear();
+        for (index, placed) in images.iter().enumerate() {
+            if !self.textures.contains_key(&placed.image) {
+                return Err(ScreenImageError::UnknownImage {
+                    index,
+                    id: placed.image,
+                });
+            }
+            if !placed.size.iter().all(|s| s.is_finite() && *s > 0.0) {
+                return Err(ScreenImageError::BadSize {
+                    index,
+                    size: placed.size,
+                });
+            }
+        }
+        self.placed = images;
+        Ok(())
+    }
+
+    /// Whether the next frame has images to paint or a free to deliver.
+    pub(crate) fn has_work(&self) -> bool {
+        !self.placed.is_empty() || self.freed
+    }
+
+    /// Paints the placed images on the screen layer, each stretched over its rect.
+    pub(crate) fn paint(&self, ctx: &egui::Context) {
+        let painter = ctx.layer_painter(text::screen_layer());
+        let screen = ctx.content_rect();
+        let full = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+        for placed in &self.placed {
+            let texture = self
+                .textures
+                .get(&placed.image)
+                .expect("set admits only uploaded ids and remove unplaces the id it frees");
+            let align = text::align(placed.anchor);
+            let rect = align.anchor_size(
+                align.pos_in_rect(&screen) + egui::Vec2::from(placed.offset),
+                egui::Vec2::from(placed.size),
+            );
+            painter.image(texture.id(), rect, full, egui::Color32::WHITE);
+        }
+    }
+
+    /// Clears the placed images and the pending free once a frame has painted them.
+    pub(crate) fn end_frame(&mut self) {
+        self.placed.clear();
+        self.freed = false;
+    }
 }
 
 #[cfg(test)]

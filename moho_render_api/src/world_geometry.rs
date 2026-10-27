@@ -61,6 +61,7 @@ pub struct WorldMesh {
     surface: Vec<u32>,
     indices: Vec<u32>,
     materials: Option<Vec<u32>>,
+    uvs: Option<Vec<[f32; 2]>>,
 }
 
 impl WorldMesh {
@@ -112,6 +113,7 @@ impl WorldMesh {
             surface,
             indices,
             materials: None,
+            uvs: None,
         })
     }
 
@@ -137,14 +139,21 @@ impl WorldMesh {
     }
 
     /// Attach per-vertex texture coordinates, one `[u, v]` per vertex.
-    pub fn with_uvs(self, uvs: Vec<[f32; 2]>) -> Result<Self, WorldMeshError> {
-        let _ = uvs;
-        panic!("WorldMesh::with_uvs is not implemented")
+    pub fn with_uvs(mut self, uvs: Vec<[f32; 2]>) -> Result<Self, WorldMeshError> {
+        if uvs.len() != self.positions.len() {
+            return Err(WorldMeshError::ChannelLengthMismatch {
+                channel: "uvs",
+                expected: self.positions.len(),
+                actual: uvs.len(),
+            });
+        }
+        self.uvs = Some(uvs);
+        Ok(self)
     }
 
     /// The per-vertex texture coordinates; `None` when the game never set them.
     pub fn uvs(&self) -> Option<&[[f32; 2]]> {
-        panic!("WorldMesh::uvs is not implemented")
+        self.uvs.as_deref()
     }
 
     pub fn positions(&self) -> &[[f32; 3]] {

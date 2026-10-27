@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use glam::{Affine3A, Mat4};
 use moho_render_api::{MaterialGpu, MaterialKey, RenderMaterial, Rgba8Image, WorldMesh};
 
-use crate::{LevelError, LevelErrorKind, mesh};
+use crate::{LevelError, LevelErrorKind, buffers, mesh};
 
 /// `MaterialKey::variant` of every [`ModelMaterial`]; outside the variants searchlight
 /// (0..4) and flagstone (0, 1) use, so a game that also uses `0x80` would merge keys.
@@ -18,6 +18,7 @@ pub struct Model {
     nodes: Vec<ModelNode>,
     meshes: Vec<ModelMesh>,
     materials: Vec<ModelMaterial>,
+    images: Vec<ModelImage>,
 }
 
 /// One glTF node, in walk order.
@@ -94,20 +95,137 @@ impl RenderMaterial for ModelMaterial {
 ///
 /// # Errors
 /// Returns a [`LevelError`] naming `path` when the file cannot be read, is not glTF,
-/// references an unreadable buffer, reaches a node twice, or holds a malformed mesh.
+/// references an unreadable buffer, reaches a node twice, or holds a malformed mesh
+/// (including a textured primitive without `TEXCOORD_0`); a base-colour image that is
+/// missing is `MissingImage`, one that is not a relative file or a decodable PNG or
+/// JPEG is `BadImage`. Images no material uses as its base colour are never read.
 pub fn load_model(path: &Path) -> Result<Model, LevelError> {
     crate::with_buffers(path, build)
 }
 
-fn build(document: &gltf::Document, buffers: &[Cow<'_, [u8]>]) -> Result<Model, LevelErrorKind> {
+/// Decodes each glTF image a base-colour texture reaches, once.
+struct Images<'a> {
+    buffers: &'a [Cow<'a, [u8]>],
+    dir: &'a Path,
+    /// For each glTF image, its index in `decoded` once decoded.
+    by_gltf_index: Vec<Option<usize>>,
+    decoded: Vec<ModelImage>,
+}
+
+impl Images<'_> {
+    /// The index in [`Model::images`] of `image`, decoding it on first use.
+    fn index_of(&mut self, image: &gltf::Image<'_>) -> Result<usize, LevelErrorKind> {
+        if let Some(index) = self.by_gltf_index[image.index()] {
+            return Ok(index);
+        }
+        let ImageBytes {
+            source,
+            bytes,
+            label,
+        } = self.read(image)?;
+        let decoded = crate::image::decode(&bytes).map_err(|reason| LevelErrorKind::BadImage {
+            image: label,
+            reason,
+        })?;
+        let index = self.decoded.len();
+        self.decoded.push(ModelImage {
+            name: image.name().map(str::to_owned),
+            source,
+            image: decoded,
+        });
+        self.by_gltf_index[image.index()] = Some(index);
+        Ok(index)
+    }
+
+    /// The encoded bytes of `image`, from its buffer view or its file.
+    fn read<'b>(&'b self, image: &gltf::Image<'_>) -> Result<ImageBytes<'b>, LevelErrorKind> {
+        match image.source() {
+            gltf::image::Source::View { view, .. } => {
+                let label = format!("#{}", image.index());
+                let range = view.offset()..view.offset() + view.length();
+                let bytes = self
+                    .buffers
+                    .get(view.buffer().index())
+                    .and_then(|buffer| buffer.get(range))
+                    .ok_or_else(|| LevelErrorKind::BadImage {
+                        image: label.clone(),
+                        reason: "buffer view runs past the end of its buffer".into(),
+                    })?;
+                Ok(ImageBytes {
+                    source: None,
+                    bytes: Cow::Borrowed(bytes),
+                    label,
+                })
+            }
+            gltf::image::Source::Uri { uri, .. } => {
+                let file = buffers::percent_decode(uri);
+                if !buffers::is_relative_file(&file) {
+                    return Err(LevelErrorKind::BadImage {
+                        image: uri.to_owned(),
+                        reason: "uri is not a relative file path".into(),
+                    });
+                }
+                let missing = |source| LevelErrorKind::MissingImage {
+                    uri: uri.to_owned(),
+                    source,
+                };
+                let path = self.dir.join(file);
+                let bytes = std::fs::read(&path).map_err(missing)?;
+                let canonical = path.canonicalize().map_err(missing)?;
+                Ok(ImageBytes {
+                    source: Some(canonical),
+                    bytes: Cow::Owned(bytes),
+                    label: uri.to_owned(),
+                })
+            }
+        }
+    }
+}
+
+/// One image's encoded bytes, before decoding.
+struct ImageBytes<'b> {
+    /// Canonical path of a file image; `None` when embedded.
+    source: Option<PathBuf>,
+    bytes: Cow<'b, [u8]>,
+    /// What errors name the image by: its URI, or `#<index>` when embedded.
+    label: String,
+}
+
+fn build(
+    document: &gltf::Document,
+    buffers: &[Cow<'_, [u8]>],
+    dir: &Path,
+) -> Result<Model, LevelErrorKind> {
+    let mut images = Images {
+        buffers,
+        dir,
+        by_gltf_index: vec![None; document.images().len()],
+        decoded: Vec::new(),
+    };
     let materials = document
         .materials()
-        .map(|m| ModelMaterial {
-            name: m.name().map(str::to_owned),
-            base_colour: m.pbr_metallic_roughness().base_color_factor(),
-            base_colour_image: None,
+        .map(|m| {
+            let base_colour_image = m
+                .pbr_metallic_roughness()
+                .base_color_texture()
+                .map(|info| {
+                    if info.tex_coord() != 0 {
+                        tracing::warn!(
+                            material = m.name().unwrap_or_default(),
+                            tex_coord = info.tex_coord(),
+                            "base-colour texture uses another texcoord set; reading set 0"
+                        );
+                    }
+                    images.index_of(&info.texture().source())
+                })
+                .transpose()?;
+            Ok(ModelMaterial {
+                name: m.name().map(str::to_owned),
+                base_colour: m.pbr_metallic_roughness().base_color_factor(),
+                base_colour_image,
+            })
         })
-        .collect();
+        .collect::<Result<_, LevelErrorKind>>()?;
     let mut walk = Walk {
         buffers,
         seen: vec![false; document.nodes().len()],
@@ -115,6 +233,7 @@ fn build(document: &gltf::Document, buffers: &[Cow<'_, [u8]>]) -> Result<Model, 
             nodes: Vec::new(),
             meshes: Vec::new(),
             materials,
+            images: images.decoded,
         },
     };
     for node in crate::scene_roots(document) {
@@ -152,6 +271,19 @@ impl Walk<'_> {
                     flip_winding,
                     self.buffers,
                 )?;
+                let textured = primitive
+                    .material()
+                    .index()
+                    .and_then(|i| self.model.materials[i].base_colour_image)
+                    .is_some();
+                if textured && converted.uvs().is_none() {
+                    return Err(LevelErrorKind::BadMesh {
+                        mesh: mesh.index(),
+                        reason: "material has a base-colour texture but the primitive has no \
+                                 TEXCOORD_0"
+                            .into(),
+                    });
+                }
                 self.model.meshes.push(ModelMesh {
                     mesh: converted,
                     node: index,
@@ -181,7 +313,7 @@ impl Model {
 
     /// The decoded base-colour images, each once however many materials use it.
     pub fn images(&self) -> &[ModelImage] {
-        panic!("Model::images is not implemented")
+        &self.images
     }
 
     /// The first node called `name` in walk order.
@@ -281,6 +413,7 @@ mod tests {
             ],
             meshes: vec![mesh_on(2), mesh_on(2), mesh_on(1)],
             materials: Vec::new(),
+            images: Vec::new(),
         };
         let shifted = Affine3A::from_translation(Vec3::new(10.0, 0.0, 0.0));
         let doubled = Affine3A::from_scale(Vec3::splat(2.0));
@@ -338,6 +471,7 @@ mod tests {
             ],
             meshes: Vec::new(),
             materials: Vec::new(),
+            images: Vec::new(),
         };
 
         let found = model.node("twin").expect("twin exists");

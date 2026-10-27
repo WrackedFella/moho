@@ -3,6 +3,7 @@
 //! This module handles rendering the main color pass with skybox and scene geometry.
 
 use crate::shadow::ShadowSystem;
+use crate::textures::TextureTable;
 use crate::types::{GpuInstance, MeshEntry};
 use wgpu::{BindGroup, Buffer, CommandEncoder, RenderPipeline, TextureView};
 
@@ -25,6 +26,8 @@ use wgpu::{BindGroup, Buffer, CommandEncoder, RenderPipeline, TextureView};
 /// * `shadow_system` - Shadow system for bind group 1 (shadows)
 /// * `instance_buffer` - Instance buffer containing all instance data
 /// * `pending_draws` - List of (mesh_handle, instances) to render
+/// * `draw_textures` - Texture handle of each pending draw, bound as group 2
+/// * `textures` - Table the texture handles index
 /// * `mesh_table` - Table of registered meshes
 /// * `offsets` - Instance offsets into instance buffer for each draw
 #[allow(clippy::too_many_arguments)] // Render operations naturally have many parameters
@@ -40,6 +43,8 @@ pub fn render_main_pass(
     shadow_system: &ShadowSystem,
     instance_buffer: &Buffer,
     pending_draws: &[(u32, Vec<GpuInstance>)],
+    draw_textures: &[u32],
+    textures: &TextureTable,
     mesh_table: &[Option<MeshEntry>],
     offsets: &[usize],
 ) {
@@ -79,12 +84,14 @@ pub fn render_main_pass(
     rpass.set_bind_group(1, &shadow_system.csm_shadow_bind_group, &[]);
 
     // Iterate draws and issue draw calls
-    for (i, (mesh_handle, insts)) in pending_draws.iter().enumerate() {
+    for (i, ((mesh_handle, insts), texture)) in pending_draws.iter().zip(draw_textures).enumerate()
+    {
         let idx = *mesh_handle as usize;
         if idx >= mesh_table.len() {
             continue;
         }
         if let Some(me) = &mesh_table[idx] {
+            rpass.set_bind_group(2, textures.bind_group(*texture), &[]);
             rpass.set_vertex_buffer(0, me.buffer.slice(..));
 
             let offset_instances = offsets[i];

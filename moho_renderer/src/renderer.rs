@@ -26,6 +26,9 @@ pub struct Renderer<'a> {
     mesh_table: Vec<Option<MeshEntry>>,
     pending_frame: Option<wgpu::SurfaceTexture>,
     pending_draws: Vec<(u32, Vec<GpuInstance>)>,
+    /// The texture handle of each entry of `pending_draws`, at the same index.
+    pending_textures: Vec<u32>,
+    textures: crate::textures::TextureTable,
     pending_frame_view: Option<wgpu::TextureView>,
     skybox_pipeline: wgpu::RenderPipeline,
     skybox_vertex_buffer: wgpu::Buffer,
@@ -120,6 +123,11 @@ impl<'a> Renderer<'a> {
             bloom.output(),
         );
         tone_map.set_params(&device_setup.queue, 1.0, true, bloom.intensity());
+        let textures = crate::textures::TextureTable::new(
+            &device_setup.device,
+            &device_setup.queue,
+            pipeline_setup.texture_bind_group_layout().clone(),
+        );
 
         let mut renderer = Self {
             window,
@@ -142,6 +150,8 @@ impl<'a> Renderer<'a> {
             mesh_table: Vec::new(),
             pending_frame: None,
             pending_draws: Vec::new(),
+            pending_textures: Vec::new(),
+            textures,
             pending_frame_view: None,
             skybox_pipeline: pipeline_setup.skybox_pipeline().clone(),
             skybox_vertex_buffer: resources.skybox_vertex_buffer,
@@ -373,17 +383,44 @@ impl<'a> Renderer<'a> {
         material: &[u32],
         indices: &[u32],
     ) -> u32 {
-        let iv = interleave_vertices(&VertexChannels {
-            positions: vertices,
-            normals,
-            ao,
-            geometry_type,
-            light_level,
-            block_light_rgb,
-            sky_exposed,
-            material,
-            uv: &[],
-        });
+        self.register_channels(
+            &VertexChannels {
+                positions: vertices,
+                normals,
+                ao,
+                geometry_type,
+                light_level,
+                block_light_rgb,
+                sky_exposed,
+                material,
+                uv: &[],
+            },
+            indices,
+        )
+    }
+
+    /// Register a contract mesh with its UVs; `material` is the resolved per-vertex
+    /// material channel (empty defers to the instance material).
+    pub fn register_world_mesh(&mut self, mesh: &WorldMesh, material: &[u32]) -> u32 {
+        let light_level = world_mesh_light_level(mesh);
+        self.register_channels(
+            &world_mesh_channels(mesh, &light_level, material),
+            mesh.indices(),
+        )
+    }
+
+    /// Upload `image` with its mip chain; returns its texture handle.
+    pub fn register_texture(&mut self, image: &moho_render_api::Rgba8Image) -> u32 {
+        self.textures.register(&self.device, &self.queue, image)
+    }
+
+    /// Free a texture handle; the white default (handle 0) is never freed.
+    pub fn unregister_texture(&mut self, texture: u32) {
+        self.textures.unregister(texture);
+    }
+
+    fn register_channels(&mut self, channels: &VertexChannels, indices: &[u32]) -> u32 {
+        let iv = interleave_vertices(channels);
         for (i, v) in iv.iter().enumerate().take(6) {
             tracing::trace!(
                 index = i,
@@ -428,7 +465,7 @@ impl<'a> Renderer<'a> {
             });
         let entry = MeshEntry {
             buffer: vb,
-            vertex_count: vertices.len() as u32,
+            vertex_count: iv.len() as u32,
             index_buffer: Some(ib),
             index_count: indices.len() as u32,
         };
@@ -526,8 +563,19 @@ impl<'a> Renderer<'a> {
         Ok(())
     }
 
-    /// Queue a previously-registered mesh for drawing this frame.
+    /// Queue a previously-registered mesh for drawing this frame, untextured.
     pub fn enqueue_draw(&mut self, mesh: u32, instances: &[moho_render_api::InstanceGpu]) {
+        self.enqueue_textured_draw(mesh, crate::textures::WHITE_TEXTURE, instances);
+    }
+
+    /// Queue a previously-registered mesh for drawing this frame with `texture` bound in
+    /// the main pass.
+    pub fn enqueue_textured_draw(
+        &mut self,
+        mesh: u32,
+        texture: u32,
+        instances: &[moho_render_api::InstanceGpu],
+    ) {
         if !MeshRenderer::validate_mesh(mesh, &self.mesh_table) {
             return;
         }
@@ -540,6 +588,7 @@ impl<'a> Renderer<'a> {
         }
 
         self.pending_draws.push((mesh, instances_gpu));
+        self.pending_textures.push(texture);
     }
 
     pub fn set_shadow_quality(&mut self, quality: u8) {
@@ -711,6 +760,8 @@ impl<'a> Renderer<'a> {
             &self.shadow,
             ibuf,
             &self.pending_draws,
+            &self.pending_textures,
+            &self.textures,
             &self.mesh_table,
             &offsets,
         );
@@ -756,6 +807,7 @@ impl<'a> Renderer<'a> {
 
         self.pending_frame_view = None;
         self.pending_draws.clear();
+        self.pending_textures.clear();
         self.pending_markers.clear();
         self.pending_fill_count = 0;
     }
@@ -806,7 +858,7 @@ pub(crate) struct VertexChannels<'a> {
 
 /// Interleave the per-channel slices into GPU vertices. A channel shorter than
 /// `positions` fills the rest with its neutral value; `material` falls back to
-/// `NO_VERTEX_MATERIAL`, so the instance's material draws.
+/// `NO_VERTEX_MATERIAL`, so the instance's material draws, and `uv` to `[0, 0]`.
 pub(crate) fn interleave_vertices(channels: &VertexChannels) -> Vec<Vertex> {
     let VertexChannels {
         positions,
@@ -819,7 +871,6 @@ pub(crate) fn interleave_vertices(channels: &VertexChannels) -> Vec<Vertex> {
         material,
         uv,
     } = *channels;
-    let _ = uv;
     (0..positions.len())
         .map(|i| Vertex {
             position: positions[i],
@@ -830,8 +881,16 @@ pub(crate) fn interleave_vertices(channels: &VertexChannels) -> Vec<Vertex> {
             block_light_rgb: block_light_rgb.get(i).copied().unwrap_or([0.0; 3]),
             sky_exposed: sky_exposed.get(i).copied().unwrap_or(1.0),
             material: material.get(i).copied().unwrap_or(NO_VERTEX_MATERIAL),
-            uv: [0.0; 2],
+            uv: uv.get(i).copied().unwrap_or([0.0; 2]),
         })
+        .collect()
+}
+
+/// A contract mesh's per-vertex light level: the brightest channel of its block light.
+pub(crate) fn world_mesh_light_level(mesh: &WorldMesh) -> Vec<f32> {
+    mesh.light_rgb()
+        .iter()
+        .map(|rgb| rgb[0].max(rgb[1]).max(rgb[2]))
         .collect()
 }
 
@@ -843,8 +902,17 @@ pub(crate) fn world_mesh_channels<'a>(
     light_level: &'a [f32],
     material: &'a [u32],
 ) -> VertexChannels<'a> {
-    let _ = (mesh, light_level, material);
-    panic!("world_mesh_channels is not implemented")
+    VertexChannels {
+        positions: mesh.positions(),
+        normals: mesh.normals(),
+        ao: mesh.ao(),
+        geometry_type: mesh.surface(),
+        light_level,
+        block_light_rgb: mesh.light_rgb(),
+        sky_exposed: mesh.sky_exposure(),
+        material,
+        uv: mesh.uvs().unwrap_or_default(),
+    }
 }
 
 #[cfg(test)]

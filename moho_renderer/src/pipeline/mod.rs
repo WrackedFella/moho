@@ -36,7 +36,7 @@ pub use shaders::{
 use crate::types::{GpuInstance, Vertex};
 
 /// Per-vertex attributes of the main pipeline; order must match `types::Vertex`.
-pub const MAIN_VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![
+pub const MAIN_VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![
     0 => Float32x3,
     1 => Float32x3,
     2 => Float32,
@@ -45,6 +45,7 @@ pub const MAIN_VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr
     11 => Float32x3,
     12 => Float32,
     13 => Uint32,
+    14 => Float32x2,
 ];
 
 /// Per-instance attributes of the main pipeline; order must match `types::GpuInstance`.
@@ -98,6 +99,7 @@ pub(crate) struct PipelineSetup {
     // Bind group layouts
     camera_bgl: wgpu::BindGroupLayout,
     shadow_bgl: wgpu::BindGroupLayout,
+    texture_bgl: wgpu::BindGroupLayout,
     #[allow(dead_code)]
     _shadow_pass_bgl: wgpu::BindGroupLayout, // Legacy, kept for compatibility
     #[allow(dead_code)]
@@ -124,8 +126,9 @@ impl PipelineSetup {
     ///
     /// This performs the complete pipeline initialization:
     /// 1. Load and compile shaders (main: 3 files concatenated, skybox: from disk)
-    /// 2. Create bind group layouts (camera with 3 bindings, shadow with 3 bindings)
-    /// 3. Create pipeline layouts (main: 2 bind groups, skybox: 1 bind group)
+    /// 2. Create bind group layouts (camera with 3 bindings, shadow with 3 bindings,
+    ///    base-colour texture with 2 bindings)
+    /// 3. Create pipeline layouts (main: 3 bind groups, skybox: 1 bind group)
     /// 4. Create render pipelines (main: with depth and blend, skybox: no depth write)
     ///
     /// # Arguments
@@ -150,10 +153,11 @@ impl PipelineSetup {
         let shadow_bgl = layouts::create_shadow_bind_group_layout(device)?;
         let shadow_pass_bgl = layouts::create_shadow_pass_bind_group_layout(device)?;
         let csm_pass_bgl = layouts::create_csm_pass_bind_group_layout(device)?;
+        let texture_bgl = layouts::create_texture_bind_group_layout(device);
 
         // 3. Create pipeline layouts
         let main_pipeline_layout =
-            layouts::create_main_pipeline_layout(device, &camera_bgl, &shadow_bgl);
+            layouts::create_main_pipeline_layout(device, &camera_bgl, &shadow_bgl, &texture_bgl);
         let skybox_pipeline_layout = layouts::create_skybox_pipeline_layout(device, &camera_bgl);
 
         // 4. Create render pipelines
@@ -192,6 +196,7 @@ impl PipelineSetup {
             skybox_shader,
             camera_bgl,
             shadow_bgl,
+            texture_bgl,
             _shadow_pass_bgl: shadow_pass_bgl,
             _csm_pass_bgl: csm_pass_bgl,
             main_pipeline_layout,
@@ -374,6 +379,11 @@ impl PipelineSetup {
     /// Get the shadow bind group layout.
     pub fn shadow_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
         &self.shadow_bgl
+    }
+
+    /// Get the base-colour texture bind group layout (group 2 of the main pipeline).
+    pub fn texture_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.texture_bgl
     }
 
     /// Get the depth texture format.

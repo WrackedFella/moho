@@ -75,8 +75,18 @@ pub trait RendererBackend {
     /// through `register_indexed_mesh`; a backend that draws textures overrides it to
     /// upload the mesh's UVs too.
     fn register_world_mesh(&mut self, mesh: &WorldMesh, material: &[u32]) -> u32 {
-        let _ = (mesh, material);
-        panic!("RendererBackend::register_world_mesh is not implemented")
+        let light_level = renderer::world_mesh_light_level(mesh);
+        self.register_indexed_mesh(
+            mesh.positions(),
+            mesh.normals(),
+            mesh.ao(),
+            mesh.surface(),
+            &light_level,
+            mesh.light_rgb(),
+            mesh.sky_exposure(),
+            material,
+            mesh.indices(),
+        )
     }
     /// Upload `image` and return its handle; handle 0 is the white default texture, which
     /// is all the default returns.
@@ -212,9 +222,17 @@ impl RendererBackend for Renderer<'_> {
             indices,
         )
     }
+    fn register_world_mesh(&mut self, mesh: &WorldMesh, material: &[u32]) -> u32 {
+        self.register_world_mesh(mesh, material)
+    }
     fn register_texture(&mut self, image: &Rgba8Image) -> u32 {
-        let _levels = textures::mip_chain(image);
-        panic!("Renderer::register_texture is not implemented")
+        self.register_texture(image)
+    }
+    fn unregister_texture(&mut self, texture: u32) {
+        self.unregister_texture(texture);
+    }
+    fn enqueue_textured_draw(&mut self, mesh: u32, texture: u32, instances: &[InstanceGpu]) {
+        self.enqueue_textured_draw(mesh, texture, instances);
     }
     fn unregister_mesh(&mut self, mesh: u32) {
         self.unregister_mesh(mesh);

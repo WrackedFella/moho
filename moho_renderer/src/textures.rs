@@ -2,23 +2,220 @@
 
 use moho_render_api::Rgba8Image;
 
+/// The handle of the 1x1 white texture every untextured draw samples; never freed.
+pub(crate) const WHITE_TEXTURE: u32 = 0;
+
+/// Base-colour textures by handle, each with the group-2 bind group the main pass sets
+/// for its draws. Slot [`WHITE_TEXTURE`] holds the white default from creation on.
+pub(crate) struct TextureTable {
+    layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
+    slots: Vec<Option<TextureSlot>>,
+}
+
+struct TextureSlot {
+    /// Held so the texture's lifetime is the slot's, whatever the bind group keeps.
+    _texture: wgpu::Texture,
+    bind_group: wgpu::BindGroup,
+}
+
+impl TextureTable {
+    /// A table holding only the white default, bound through `layout` (group 2 of the main
+    /// pipeline).
+    pub(crate) fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: wgpu::BindGroupLayout,
+    ) -> Self {
+        let mut table = Self {
+            layout,
+            sampler: device.create_sampler(&sampler_descriptor()),
+            slots: Vec::new(),
+        };
+        let white = Rgba8Image::new([1, 1], vec![[255; 4]]).expect("1x1 with one pixel");
+        let handle = table.register(device, queue, &white);
+        debug_assert_eq!(
+            handle, WHITE_TEXTURE,
+            "the first texture is the white default"
+        );
+        table
+    }
+
+    /// Upload `image` with its full mip chain and return its handle.
+    pub(crate) fn register(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        image: &Rgba8Image,
+    ) -> u32 {
+        let texture = device.create_texture(&texture_descriptor(image));
+        for (level, mip) in (0u32..).zip(mip_chain(image)) {
+            let [width, height] = mip.size();
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: level,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                mip.pixels().as_flattened(),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4 * width),
+                    rows_per_image: Some(height),
+                },
+                wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("base-colour-bind-group"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+        let handle = self.slots.len() as u32;
+        self.slots.push(Some(TextureSlot {
+            _texture: texture,
+            bind_group,
+        }));
+        handle
+    }
+
+    /// Free `handle`'s texture; the white default and unknown handles are left alone.
+    pub(crate) fn unregister(&mut self, handle: u32) {
+        if handle == WHITE_TEXTURE {
+            return;
+        }
+        if let Some(slot) = self.slots.get_mut(handle as usize) {
+            *slot = None;
+        }
+    }
+
+    /// The bind group of `handle`, or the white default's when `handle` was never
+    /// registered or has been freed, so the draw still shows untextured.
+    pub(crate) fn bind_group(&self, handle: u32) -> &wgpu::BindGroup {
+        let white = || {
+            self.slots[WHITE_TEXTURE as usize]
+                .as_ref()
+                .expect("the white default is never freed")
+        };
+        let slot = self
+            .slots
+            .get(handle as usize)
+            .and_then(Option::as_ref)
+            .unwrap_or_else(white);
+        &slot.bind_group
+    }
+}
+
 /// `image` followed by each successive half-size level down to 1x1, every texel the
 /// average of its 2x2 source block taken in linear colour (alpha averaged as stored).
+///
+/// Level sizes are `max(1, n >> 1)` per axis, as wgpu requires, so an odd trailing row
+/// or column is not read by the next level; a side already 1 wide reuses its one texel.
 pub(crate) fn mip_chain(image: &Rgba8Image) -> Vec<Rgba8Image> {
-    let _ = image;
-    panic!("mip_chain is not implemented")
+    let mut chain = vec![image.clone()];
+    loop {
+        let source = chain.last().expect("the chain starts with the image");
+        let [width, height] = source.size();
+        if width == 1 && height == 1 {
+            return chain;
+        }
+        let next = [(width >> 1).max(1), (height >> 1).max(1)];
+        let texel = |x: u32, y: u32| source.pixels()[(y * width + x) as usize];
+        let mut pixels = Vec::with_capacity((next[0] * next[1]) as usize);
+        for y in 0..next[1] {
+            for x in 0..next[0] {
+                let (x0, y0) = (2 * x, 2 * y);
+                let (x1, y1) = ((x0 + 1).min(width - 1), (y0 + 1).min(height - 1));
+                pixels.push(average([
+                    texel(x0, y0),
+                    texel(x1, y0),
+                    texel(x0, y1),
+                    texel(x1, y1),
+                ]));
+            }
+        }
+        let level = Rgba8Image::new(next, pixels).expect("one pixel per texel of the level");
+        chain.push(level);
+    }
+}
+
+/// The mean of four sRGB texels, colour averaged in linear space and alpha as stored.
+fn average(texels: [[u8; 4]; 4]) -> [u8; 4] {
+    let mut out = [0; 4];
+    for (channel, value) in out.iter_mut().enumerate().take(3) {
+        let linear: f32 = texels.iter().map(|t| srgb_to_linear(t[channel])).sum();
+        *value = linear_to_srgb(linear / 4.0);
+    }
+    let alpha: u32 = texels.iter().map(|t| u32::from(t[3])).sum();
+    out[3] = ((alpha + 2) / 4) as u8;
+    out
+}
+
+fn srgb_to_linear(encoded: u8) -> f32 {
+    let c = f32::from(encoded) / 255.0;
+    if c <= 0.040_45 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn linear_to_srgb(linear: f32) -> u8 {
+    let c = if linear <= 0.003_130_8 {
+        linear * 12.92
+    } else {
+        1.055 * linear.powf(1.0 / 2.4) - 0.055
+    };
+    (c.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
 /// Descriptor of the GPU texture holding `image` with its full mip chain: 2D,
 /// `Rgba8UnormSrgb` so sampling returns linear colour, uploadable and samplable.
 pub(crate) fn texture_descriptor(image: &Rgba8Image) -> wgpu::TextureDescriptor<'static> {
-    let _ = image;
-    panic!("texture_descriptor is not implemented")
+    let [width, height] = image.size();
+    wgpu::TextureDescriptor {
+        label: Some("base-colour-texture"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: u32::BITS - width.max(height).leading_zeros(),
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    }
 }
 
 /// The one sampler every texture is read through: trilinear, repeating in u and v.
 pub(crate) fn sampler_descriptor() -> wgpu::SamplerDescriptor<'static> {
-    panic!("sampler_descriptor is not implemented")
+    wgpu::SamplerDescriptor {
+        label: Some("base-colour-sampler"),
+        address_mode_u: wgpu::AddressMode::Repeat,
+        address_mode_v: wgpu::AddressMode::Repeat,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Linear,
+        anisotropy_clamp: 16,
+        ..Default::default()
+    }
 }
 
 #[cfg(test)]

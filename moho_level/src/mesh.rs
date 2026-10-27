@@ -28,7 +28,7 @@ pub(crate) fn triangle_primitives<'a>(
 
 /// Convert `primitive` with `world` baked into its vertices. `flip_winding` swaps each
 /// triangle's last two indices; callers pass whether the transform they place the mesh
-/// under mirrors it.
+/// under mirrors it. `TEXCOORD_0`, when present, becomes the mesh's UVs.
 pub(crate) fn convert(
     mesh: &gltf::Mesh<'_>,
     primitive: &gltf::Primitive<'_>,
@@ -76,7 +76,18 @@ pub(crate) fn convert(
         }
     }
 
-    WorldMesh::new(
+    let uvs = match primitive.get(&gltf::Semantic::TexCoords(0)) {
+        Some(_) => Some(
+            reader
+                .read_tex_coords(0)
+                .ok_or_else(|| bad("TEXCOORD_0 out of buffer range".into()))?
+                .into_f32()
+                .collect::<Vec<_>>(),
+        ),
+        None => None,
+    };
+
+    let mesh = WorldMesh::new(
         positions,
         normals,
         vec![1.0; count],
@@ -85,5 +96,9 @@ pub(crate) fn convert(
         vec![0; count],
         indices,
     )
-    .map_err(|e| bad(e.to_string()))
+    .map_err(|e| bad(e.to_string()))?;
+    match uvs {
+        Some(uvs) => mesh.with_uvs(uvs).map_err(|e| bad(e.to_string())),
+        None => Ok(mesh),
+    }
 }

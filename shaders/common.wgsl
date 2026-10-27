@@ -90,6 +90,13 @@ var shadow_sampler: sampler_comparison;
 @group(1) @binding(3)
 var shadow_sampler_nearest: sampler; // For PCSS blocker search (depth reads)
 
+// Base-colour texture of the draw (group 2); untextured draws bind a 1x1 white texture.
+@group(2) @binding(0)
+var base_colour_texture: texture_2d<f32>;
+
+@group(2) @binding(1)
+var base_colour_sampler: sampler;
+
 struct VertexIn {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
@@ -99,6 +106,7 @@ struct VertexIn {
     @location(11) block_light_rgb: vec3<f32>,
     @location(12) sky_exposed: f32,
     @location(13) material: u32,
+    @location(14) uv: vec2<f32>,
 }
 
 struct InstanceIn {
@@ -129,4 +137,5 @@ struct VsOut {
     @location(7) @interpolate(flat) object_type: u32,
     @location(8) block_light_rgb: vec3<f32>,
     @location(9) sky_exposed: f32,
+    @location(10) uv: vec2<f32>,
 }

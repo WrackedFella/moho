@@ -43,8 +43,17 @@ impl Rgba8Image {
     /// Build an image, refusing a zero dimension or a pixel count that is not
     /// `width * height`.
     pub fn new(size: [u32; 2], pixels: Vec<[u8; 4]>) -> Result<Self, ImageSizeError> {
-        let _ = (size, pixels);
-        panic!("Rgba8Image::new is not implemented")
+        if size[0] == 0 || size[1] == 0 {
+            return Err(ImageSizeError::ZeroDimension { size });
+        }
+        let expected = u64::from(size[0]) * u64::from(size[1]);
+        if u64::try_from(pixels.len()).ok() != Some(expected) {
+            return Err(ImageSizeError::PixelCountMismatch {
+                size,
+                pixels: pixels.len(),
+            });
+        }
+        Ok(Self { size, pixels })
     }
 
     /// Width and height in pixels.
@@ -52,6 +61,7 @@ impl Rgba8Image {
         self.size
     }
 
+    /// The pixels, `width * height` of them, row-major from the top-left.
     pub fn pixels(&self) -> &[[u8; 4]] {
         &self.pixels
     }

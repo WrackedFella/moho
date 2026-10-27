@@ -229,19 +229,50 @@ pub fn create_csm_pass_bind_group_layout(
     Ok(layout)
 }
 
+/// Create the base-colour texture bind group layout (group 2 of the main pipeline).
+///
+/// This layout has 2 bindings, both fragment-only:
+/// - Binding 0: Base-colour texture (2D, filterable float; `Rgba8UnormSrgb`)
+/// - Binding 1: Its filtering sampler
+pub fn create_texture_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("base-colour-bgl"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    })
+}
+
 /// Create the main render pipeline layout.
 ///
-/// This layout uses 2 bind groups:
+/// This layout uses 3 bind groups:
 /// - Group 0: Camera (view/proj matrices, materials, lighting)
 /// - Group 1: Shadow (shadow matrices, shadow map texture, shadow sampler)
+/// - Group 2: Base-colour texture and sampler, set per draw
 pub fn create_main_pipeline_layout(
     device: &wgpu::Device,
     camera_bgl: &wgpu::BindGroupLayout,
     shadow_bgl: &wgpu::BindGroupLayout,
+    texture_bgl: &wgpu::BindGroupLayout,
 ) -> wgpu::PipelineLayout {
     device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("pipeline-layout"),
-        bind_group_layouts: &[Some(camera_bgl), Some(shadow_bgl)],
+        bind_group_layouts: &[Some(camera_bgl), Some(shadow_bgl), Some(texture_bgl)],
         immediate_size: 0,
     })
 }

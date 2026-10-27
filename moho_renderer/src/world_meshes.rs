@@ -1,6 +1,7 @@
 //! Renderer-side store of contract meshes keyed by [`WorldMeshId`].
 
 use crate::RendererBackend;
+use crate::textures::WHITE_TEXTURE;
 use moho_render_api::{InstanceGpu, Rgba8Image, TextureId, WorldMesh, WorldMeshId};
 use std::collections::BTreeMap;
 
@@ -21,14 +22,26 @@ struct Live {
     kind: Kind,
 }
 
-/// Queues world-mesh changes and applies them to a backend on `flush`.
+/// One placement: where, in which material, and with which texture (`None` is white).
+#[derive(Debug, Clone, Copy)]
+struct Placement {
+    transform: glam::Affine3A,
+    material: u32,
+    texture: Option<TextureId>,
+}
+
+/// Queues world-mesh and texture changes and applies them to a backend on `flush`.
 ///
 /// Live meshes are kept in id order so the draw order is deterministic.
 #[derive(Debug, Default)]
 pub struct WorldMeshes {
     live: BTreeMap<WorldMeshId, Live>,
     pending: BTreeMap<WorldMeshId, Pending>,
-    placements: BTreeMap<WorldMeshId, Vec<(glam::Affine3A, u32)>>,
+    placements: BTreeMap<WorldMeshId, Vec<Placement>>,
+    /// Backend handle of each uploaded texture.
+    live_textures: BTreeMap<TextureId, u32>,
+    /// A texture waiting for the next `flush`; `None` is a queued remove.
+    pending_textures: BTreeMap<TextureId, Option<Rgba8Image>>,
 }
 
 impl WorldMeshes {
@@ -61,26 +74,26 @@ impl WorldMeshes {
     /// Not checked against live ids here: an upsert queued the same frame is
     /// flushed before draws, and a placement on an id that is not live is skipped.
     pub fn place(&mut self, id: WorldMeshId, transform: glam::Affine3A, material: u32) {
-        self.placements
-            .entry(id)
-            .or_default()
-            .push((transform, material));
+        self.placements.entry(id).or_default().push(Placement {
+            transform,
+            material,
+            texture: None,
+        });
     }
 
     /// Queue adding or replacing the texture under `id`; replacing unregisters the old
     /// handle on `flush`.
     pub fn upsert_texture(&mut self, id: TextureId, image: Rgba8Image) {
-        let _ = (id, image);
-        panic!("WorldMeshes::upsert_texture is not implemented")
+        self.pending_textures.insert(id, Some(image));
     }
 
     /// Queue removing the texture under `id`; placements naming it then draw white.
     pub fn remove_texture(&mut self, id: TextureId) {
-        let _ = id;
-        panic!("WorldMeshes::remove_texture is not implemented")
+        self.pending_textures.insert(id, None);
     }
 
-    /// Like [`place`](Self::place), drawn with the texture under `texture`.
+    /// Like [`place`](Self::place), drawn with the texture under `texture`. A texture id
+    /// that is not live when drawn draws white.
     pub fn place_textured(
         &mut self,
         id: WorldMeshId,
@@ -88,8 +101,11 @@ impl WorldMeshes {
         material: u32,
         texture: TextureId,
     ) {
-        let _ = (id, transform, material, texture);
-        panic!("WorldMeshes::place_textured is not implemented")
+        self.placements.entry(id).or_default().push(Placement {
+            transform,
+            material,
+            texture: Some(texture),
+        });
     }
 
     /// Drop every placement; the renderer calls this each frame.
@@ -102,8 +118,18 @@ impl WorldMeshes {
         self.pending.insert(id, None);
     }
 
-    /// Apply queued changes: register new meshes, unregister replaced or removed ones.
+    /// Apply queued changes: register new meshes and textures, unregister replaced or
+    /// removed ones.
     pub fn flush(&mut self, backend: &mut dyn RendererBackend) {
+        for (id, change) in std::mem::take(&mut self.pending_textures) {
+            if let Some(old) = self.live_textures.remove(&id) {
+                backend.unregister_texture(old);
+            }
+            if let Some(image) = change {
+                let handle = backend.register_texture(&image);
+                self.live_textures.insert(id, handle);
+            }
+        }
         for (id, change) in std::mem::take(&mut self.pending) {
             if let Some(old) = self.live.remove(&id) {
                 backend.unregister_mesh(old.handle);
@@ -111,11 +137,6 @@ impl WorldMeshes {
             let Some((mesh, kind)) = change else {
                 continue;
             };
-            let light_level: Vec<f32> = mesh
-                .light_rgb()
-                .iter()
-                .map(|rgb| rgb[0].max(rgb[1]).max(rgb[2]))
-                .collect();
             // An empty slice makes the backend defer every vertex to the instance material.
             let material: Vec<u32> = match (mesh.materials(), kind) {
                 (Some(materials), _) => materials.to_vec(),
@@ -124,17 +145,7 @@ impl WorldMeshes {
                 }
                 (None, Kind::Movable) => Vec::new(),
             };
-            let handle = backend.register_indexed_mesh(
-                mesh.positions(),
-                mesh.normals(),
-                mesh.ao(),
-                mesh.surface(),
-                &light_level,
-                mesh.light_rgb(),
-                mesh.sky_exposure(),
-                &material,
-                mesh.indices(),
-            );
+            let handle = backend.register_world_mesh(&mesh, &material);
             self.live.insert(id, Live { handle, kind });
         }
     }
@@ -142,6 +153,14 @@ impl WorldMeshes {
     /// Instances as `(backend handle, instance)`: each static mesh at identity, then
     /// every placement of a live id in id order and call order.
     pub fn draws(&self) -> impl Iterator<Item = (u32, InstanceGpu)> + '_ {
+        self.textured_draws()
+            .map(|(mesh, _texture, instance)| (mesh, instance))
+    }
+
+    /// The same instances as [`draws`](Self::draws), as `(mesh handle, texture handle,
+    /// instance)`. The texture handle is 0, the white default, for statics, for
+    /// [`place`](Self::place) and for a texture id that is not live.
+    pub fn textured_draws(&self) -> impl Iterator<Item = (u32, u32, InstanceGpu)> + '_ {
         // object_type 0: terrain, the fragment shader colours by normal
         let instance = |model: glam::Mat4, material: u32| InstanceGpu {
             model: model.to_cols_array_2d(),
@@ -150,25 +169,25 @@ impl WorldMeshes {
             padding: [0, 0],
         };
         let statics = self.live.values().filter_map(move |live| match live.kind {
-            Kind::Static { material_idx } => {
-                Some((live.handle, instance(glam::Mat4::IDENTITY, material_idx)))
-            }
+            Kind::Static { material_idx } => Some((
+                live.handle,
+                WHITE_TEXTURE,
+                instance(glam::Mat4::IDENTITY, material_idx),
+            )),
             Kind::Movable => None,
         });
         let placed = self.placements.iter().flat_map(move |(id, placements)| {
             let handle = self.live.get(id).map(|live| live.handle);
-            placements.iter().filter_map(move |(transform, material)| {
-                handle.map(|h| (h, instance(glam::Mat4::from(*transform), *material)))
+            placements.iter().filter_map(move |placement| {
+                let texture = placement
+                    .texture
+                    .and_then(|t| self.live_textures.get(&t).copied())
+                    .unwrap_or(WHITE_TEXTURE);
+                let model = glam::Mat4::from(placement.transform);
+                handle.map(|h| (h, texture, instance(model, placement.material)))
             })
         });
         statics.chain(placed)
-    }
-
-    /// The same instances as [`draws`](Self::draws), as `(mesh handle, texture handle,
-    /// instance)`. The texture handle is 0, the white default, for statics, for
-    /// [`place`](Self::place) and for a texture id that is not live.
-    pub fn textured_draws(&self) -> impl Iterator<Item = (u32, u32, InstanceGpu)> + '_ {
-        std::iter::empty()
     }
 }
 
