@@ -9,6 +9,7 @@
 | `moho_render_api/src/instance.rs` (`InstanceGpu`) | `InstanceIn` vertex inputs |
 | `moho_render_api/src/ui_paint.rs` (`UiVertex`) | vertex inputs in `shaders/ui.wgsl` |
 | `moho_render_api/src/marker.rs` (`MarkerGpu`) | vertex inputs in `shaders/marker.wgsl` |
+| `moho_renderer/src/skinning.rs` (`SkinVertexGpu`, `SkinParamsGpu`) | `SkinVertex`, `SkinParams` in `shaders/skin.wgsl` |
 
 All structs are `#[repr(C)]`, `bytemuck::{Pod, Zeroable}`, and built from `vec4`-sized
 fields so std140/std430 padding never differs between the two sides. Size matches
@@ -32,6 +33,8 @@ vertex buffers, so they are packed with no padding (`UiVertex`: `Float32x2`, `Fl
 | `MarkerGpu` | 48 B (3 × vec4) | per-instance vertex buffer, marker pass |
 | `Vertex` (`moho_renderer/src/types.rs`) | 64 B (packed, 16 × 4 B) | per-vertex buffer, main pass |
 | `UiVertex` | 20 B (f32×2 pos, f32×2 uv, u8×4 colour) | UI pass vertex buffer |
+| `SkinVertexGpu` | 32 B (4 × u32 joints, 4 × f32 weights) | storage, skinning compute group 0 binding 1 |
+| `SkinParamsGpu` | 16 B (4 × u32) | uniform, skinning compute group 1 binding 2 |
 
 Group 0 also binds the SSAO texture and sampler (bindings 3, 4). Group 1 binds the
 shadow map array (`texture_depth_2d_array`, binding 1), a comparison sampler (2), and a
@@ -68,12 +71,18 @@ untextured draws bind a 1×1 white texture (handle 0).
 | | `light_level`, `block_light_rgb`, `sky_exposed` | `Float32`, `Float32x3`, `Float32` at locations 10, 11, 12 |
 | | `material` | `Uint32` at location 13: material-table index; `u32::MAX` means draw in the instance's material |
 | | `uv` | `Float32x2` at location 14, offset 56: base-colour coordinates; `[0, 0]` when the mesh has none |
+| `SkinVertexGpu` | `joints`, `weights` | four joint indices into the placement's palette, and their weights |
+| `SkinParamsGpu` | `vertex_count`, `first_vertex`, `first_joint`, `pad` | vertices to skin; arena index of the placement's first vertex; palette index of its joint 0 |
 | `InstanceGpu` | `model` | column-major mat4 |
 | | `material`, `object_type` | `u32` material index, object kind |
 | | `padding` | `[u32; 2]` |
 
 Notes:
 
+- The skinning palette is a storage array of `vec4` (group 1 binding 0), three rows per
+  joint `[m_r0, m_r1, m_r2, t_r]`; the arena (binding 1) and the mesh's vertex buffer (group 0
+  binding 0) are read as `u32` words, `Vertex` size / 4 words per vertex. Position is words
+  0-2 and normal words 3-5; reordering them in `Vertex` needs a `skin.wgsl` edit.
 - `MaterialGpu.params[2] > 0` marks a material transparent (`is_transparent()`). Terrain
   materials reuse `params.xyz` for the side-face colour; `params.w > 0` bypasses lighting.
 - `LightingGpu.params.y` is the debug view mode set by `r_debug_view`
