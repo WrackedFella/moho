@@ -1,6 +1,6 @@
-# FPS-F1 — Game Design Document (v0.6)
+# FPS-F1 — Game Design Document (v0.7)
 
-**Status:** draft v0.6, approved for Phase 1 (v0.3 added pillar 2, the item lifecycle rule, §4.12 player and weapon stats, the planning rule in §7 and the §4.7 wound penalties; v0.4 adds the prototype gate in §7, gear that adds containers, the attachment system and a mocked grenade in the prototype, and a shotgun with a tube-fed reload; v0.5 sets the world structure: a hub and missions into hand-made maps built on a modular kit, with generated maps from that kit as a later phase, §4.13; v0.6 makes simulated ballistics a core system in four realism tiers, §4.14, and takes magazine wear out). Writing this page is
+**Status:** draft v0.7, approved for Phase 1 (v0.3 added pillar 2, the item lifecycle rule, §4.12 player and weapon stats, the planning rule in §7 and the §4.7 wound penalties; v0.4 adds the prototype gate in §7, gear that adds containers, the attachment system and a mocked grenade in the prototype, and a shotgun with a tube-fed reload; v0.5 sets the world structure: a hub and missions into hand-made maps built on a modular kit, with generated maps from that kit as a later phase, §4.13; v0.6 makes simulated ballistics a core system in four realism tiers, §4.14, and takes magazine wear out; v0.7 fixes how maps are loaded: discrete levels loaded whole and linked by transitions, larger than the arena from Phase 3, with a streamed world deferred, §5). Writing this page is
 [FPS-F1](../../_todo/searchlight/FPS-F1-game-design-document/_feature.md)'s deliverable. Open questions are in §9.
 **Working pitch:** a survival-focused looter shooter with realistic gunplay, where your gear is your character, your rig is the game, and every fight is a line on a ledger.
 **Working target:** single-player first, co-op later, mod support a priority. Pivots (Destiny-like, Arma-like) are open questions, not commitments (§9).
@@ -253,8 +253,8 @@ Each system states the question its prototype must answer, the design, and its c
 
 | Mode / level | Map source | Notes |
 |---|---|---|
-| Phase 1 arena | **Pre-made, baked file** | One compact arena with cover, sightlines and verticality; authored outside the engine |
-| Testing ranges (weapons, wounds) | **Pre-made, baked file** | Flat range with targets at known distances |
+| Phase 1 arena | **Pre-made, baked file** | One compact arena with cover, sightlines and verticality; authored outside the engine. The home map until Phase 3; a test level after that |
+| First large map, with the range (Phase 3+) | **Pre-made, baked file on the modular kit** | The first level larger than the arena: 300 m plus sightlines for ballistics tiers 2 and 3 (§4.14), a range with targets at known distances, and the map that fixes the kit's metrics (§9 Q31). Replaces the arena as the home map |
 | Hub (Phase 6+) | **Pre-made, baked file** | One persistent map between missions (§4.13) |
 | Mission maps, zones (Phase 6+) | **Pre-made, baked files on the modular kit** | Hand-made terrain and structures. Spawn points, loot points, start and exit points, boundaries, building slots, safe spots and kit connection points are named markers inside the map file |
 | Loot, spawns, starts and exits | **Generated at load / daily** | Procedural placement onto authored markers, driven by the Director and the mission's conditions |
@@ -264,6 +264,14 @@ Each system states the question its prototype must answer, the design, and its c
 
 Until the later phase, no procedural geometry: generation is limited to *what* is placed *where* on authored maps.
 
+**Levels and transitions:** the world is a set of discrete levels. A level loads whole, with its own colliders, navigation and markers, and the player moves between levels through a transition at an exit marker, with a load in between (the STALKER model). Nothing streams. This decides three things:
+
+- **Size:** a level is as large as one load and one physics world allow, and no larger than a few kilometres across, so positions keep sub-millimetre precision in single-precision floats. The arena is small; the first large map (Phase 3) and the mission maps (Phase 6) are large enough that rounds drop and wind matters (§4.14) without a gravity scale.
+- **Bounds:** a level has an authored boundary; a round or actor that leaves it is removed. A round never crosses a transition.
+- **Co-op:** every player is on the same level; a transition moves the party together (§9 Q2).
+
+A streamed or cell-based world, where the engine loads and unloads parts of one map around each player, is a separate decision with engine cost of its own (streamed colliders and navigation, per-cell origins, saves per cell). It is not taken now and is revisited only if level transitions hurt the loop (§9 Q33).
+
 **Modular kit:** every hand-made map is built from day one on one kit with fixed metrics (grid size, wall, floor and door heights) and marked connection points, so the later phase can cut modules from existing maps instead of rebuilding them. The kit's numbers are fixed with the first map (§9 Q31).
 
 **Art:** test maps are blocked out by hand on the kit in a level editor; no generator is written for them. Placeholder assets are free and licence-compatible (CC0 preferred, ADR-0007). Bespoke assets are commissioned later, to the kit's metrics.
@@ -272,7 +280,7 @@ Until the later phase, no procedural geometry: generation is limited to *what* i
 
 - Not multiplayer in the prototype (co-op is a later decision; see §9 Q2).
 - Not a voxel or destructible-terrain game.
-- Not a seamless open world: a hub and missions into discrete maps (§4.13).
+- Not a seamless open world: a hub and missions into discrete levels loaded whole and linked by transitions (§4.13, §5); a streamed world is a later decision (§9 Q33).
 - Not a score-chasing game: score, waves and match timers exist only in the arena mode layer.
 - Not story-driven: no authored campaign, no dialogue trees in scope.
 - Not an RPG with levels: no XP levels, no stat points, no attribute that grows with use (§4.12). Skills that grow are deferred and, if they come, buff on top of gear (§9 Q14). (Enemy grades, §4.11, are not player levels.)
@@ -293,9 +301,9 @@ Milestones follow the phases: FPS-M*n* delivers Phase *n*, and FPS-M1.1 (menus) 
 |---|---|---|---|---|
 | 1 | **Arena baseline** | Movement, one rifle, **mags + chamber from day one**, **per-body-part hit volumes from day one**, basic AI (patrol, take cover, shoot, chase), waves, death/restart | Does the gunplay feel weighty? | Pre-made arena |
 | 1.2 | **Stance and body** | Crouch, prone, lean in every stance, head bob, hit volumes follow posture; a visible first-person body once the engine has skinned characters | Does posture change where I stand and when I peek? | Arena |
-| 1.3 | **Bullets fly** | Simulated rounds (§4.14 tier 1): travel time, drop, drag, damage by arrival speed, one ricochet; enemies lead; hitscan kept as the Simple toggle | Does a round in flight make distance a decision? | Arena (drop read with the gravity scale until a range exists) |
+| 1.3 | **Bullets fly** | Simulated rounds (§4.14 tier 1): travel time, drop, drag, damage by arrival speed, one ricochet; enemies lead; hitscan kept as the Simple toggle | Does a round in flight make distance a decision? | Arena (drop read with the gravity scale until the Phase 3 large map exists) |
 | 2 | **Items and loadout** | Data-driven items with the % or # uses lifecycle rule, rig and backpack as items, a tool class, carry weight through the stat layer (§4.12), loot drops from enemies, 3 weapons in 2 calibers | Does one item model carry everything? | Arena |
-| 3 | **Weapon wear and repair** | Wear on weapons and armor only (magazines never wear): 4 components, jams, repair parts and workbench, dismantling, armor items and their wear, the toolkit, limited-use cleaning kits crafted from components that also work alone; a tube-fed shotgun (§4.2); surface materials and round penetration through cover and armor (§4.14 tier 2); **end-of-round ledger** (rounds + wear valued) | Does wear drive scavenging? | Arena + range |
+| 3 | **Weapon wear and repair** | Wear on weapons and armor only (magazines never wear): 4 components, jams, repair parts and workbench, dismantling, armor items and their wear, the toolkit, limited-use cleaning kits crafted from components that also work alone; a tube-fed shotgun (§4.2); surface materials and round penetration through cover and armor (§4.14 tier 2); **end-of-round ledger** (rounds + wear valued) | Does wear drive scavenging? | First large map (range) + arena as a test level |
 | 3.1 | **Attachments** | The attachment system (§4.4): mount types, slots, fit rules, swap a scope and/or a laser; items mocked; weapon components swap by the same rules; wind and scope zeroing (§4.14 tier 3) | Can a weapon be rebuilt in the field without special cases? | Arena + range |
 | 4 | **Wounds and healing** | A minimal game clock, damage-scaled penalties, leg compounding, recovery timers, bleeding, first/secondary aid, splint, meds as perishable data; enemy wounds to taste | Does limb damage create good downtime? | Arena + range |
 | 4.1 | **Grenades (mocked)** | A grenade item and throw: an object spawns on the ground at the sight point, a sound cue plays, the object despawns (§4.11). Cuttable | Does a throwable fit the item model? | Arena + range |
@@ -375,6 +383,7 @@ Settled entries keep their numbers so references stay stable.
 30. **Hub upgrades:** the hub improves through gear and services only (§4.13). Which ones (workbench tier, trader stock, storage size), and how does that sit with §6 (no base building) and the §4.9 stash cut line? Decide when Phase 6 is carded.
 31. **Kit metrics:** grid size, wall, floor and door heights, and the connection-point convention of the modular kit (§5). Fix them with the first hand-made map, with the Tech Lead.
 32. **Breath and heart rate:** are hold-breath and heart rate stats through the §4.12 modifier layer, and does holding breath cost fatigue? Decide when Phase 5 is carded (§4.14 tier 4).
+33. **Streamed world:** levels load whole and link by transitions (§5). Does a later phase want one streamed map (cells loaded around each player) instead, and what would it buy that larger levels do not? Not before Phase 6 has been played; if it comes, it is an engine feature with its own request (streamed colliders and navigation, per-cell origins, saves per cell).
 
 ## 10 Engine fit and engine requests
 
@@ -397,7 +406,7 @@ What the game must be able to do (needs, not solutions). Generic needs belong in
 7. **Data-driven definitions from files:** load item, weapon, med and faction definitions from data, so mods can add or override them. *(Phase 2)*
 8. **Game time separate from the sim tick:** a game clock that can scale and skip (sleep fast-forward) on top of the fixed 60 Hz tick (ADR-0009). A minimal clock that only counts game time arrives in Phase 4 for recovery timers; scaling and skipping arrive in Phase 5. *(Phase 4 / 5)*
 9. **Save and load world state:** player, inventory, zone and actor state (ADR-0006 contract). *(Phase 5–6)*
-10. **Switch between levels:** unload one zone and load another, carrying player state across; the hub to a mission map and back. *(Phase 6)*
+10. **Switch between levels:** unload one level whole and load another whole, carrying player state across, with a loading screen and inside a load budget; the hub to a mission map and back, and the party together in co-op. A level is a few kilometres across at most and carries an authored boundary that the game can read, so the game removes what leaves it (§5). *(first large map Phase 3 as a start-up load; switching Phase 6)*
 11. **Headless simulation:** run the offline world sim without rendering (ENG-F6 is related). *(Phase 7)*
 12. **Posture:** crouch and prone hulls with clearance, lean with clearance in every stance, stance changes that take ticks. Crouch is [ENG-F33](https://github.com/WrackedFella/moho/issues/492); lean and prone are filed as [#544](https://github.com/WrackedFella/moho/issues/544). *(Phase 1.2)*
 13. **Assemble a level from pieces:** build one level at load from several authored pieces fitted at connection points, with colliders, markers and navigation that work across the joins, the same result from the same seed and content version (co-op), inside a load-time budget. *(later phase: generated maps)*

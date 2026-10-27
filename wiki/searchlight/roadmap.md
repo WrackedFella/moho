@@ -98,7 +98,7 @@ Ballistics is a core feature (Justin, 2026-10-26; GDD §4.14, §9 Q7). This mile
 ## 7 FPS-M3 Wear, repair, ledger (Phase 3)
 
 - **Outcome:** wear on weapons and armor only (magazines never wear): four components per weapon with condition, jams, repair parts, a workbench, dismantling, limited-use cleaning kits, armor items with wear, the toolkit, and an end-of-round ledger valuing rounds and wear.
-- **Entry gate:** FPS-M2 approved. Needs a second baked map for a range (authoring, not engine).
+- **Entry gate:** FPS-M2 approved. Needs the first large map: a second baked level on the modular kit, larger than the arena, with 300 m plus sightlines and a range with targets at known distances (GDD §5). Authoring, not engine; it fixes the kit's metrics (GDD §9 Q31) and replaces the arena as the home map, the arena staying as a test level.
 - **Exit goal:** after a fight the ledger shows a cost, and a player chooses to scavenge for parts because of it.
 - **Added to scope (2026-10-23):** armor items give base rig slots and heavier armor slows the player further (GDD §4.1, §4.6, open question Q27: settle it when armor is carded, together with FPS-F7-02 [#604](https://github.com/WrackedFella/moho/issues/604)); a tube-fed shotgun, so the line shows several reload styles (GDD §4.2); surface materials and round penetration through cover and armor by penetration against resistance and condition (ballistics tier 2, GDD §4.14); weapon components are items that swap by fit rules.
 - **Cut lines:** more than four components, per-weapon unique parts, ammo crafting (GDD "Later"). Attachments move to FPS-M3.1.
@@ -175,6 +175,7 @@ The engine lane designs the answers.
 | Ray entry and exit through a surface, for penetration (GDD §10 item 14); optional, a reverse ray works | not filed | FPS-M3 |
 | Screen and sound follow game values (vignette, blur, handles, low-pass) | ENG-F41 [#637](https://github.com/WrackedFella/moho/issues/637) | FPS-M4 |
 | Markers carry their size, for volumes | ENG-F14-03 [#639](https://github.com/WrackedFella/moho/issues/639) | FPS-F10 test levels, FPS-M5 safe rooms |
+| Levels load whole and switch with a loading screen and a load budget; a level carries a readable boundary (GDD §5, §10 item 10) | 2.27 ENG-F14-04 #750, -05 #752 (unload and switch); 3.4i ENG-F46 #746 (budget, loading screen); ENG-F14-06 #751 (boundary) | FPS-M2 first level switch; FPS-M3 first large map (one load); FPS-M6 carries state across a switch |
 | List widgets with icons and counts, two panes, tooltips | comment on #444; drag grid is a later card | FPS-M2 list screens |
 | #544 lean and stance transitions, prone hull | #544 with ENG-F33 #492 (crouch and clearance) | FPS-M2: FPS-M1.2 slice 2 |
 | #600 loose objects fall, settle and are picked up | #600 (ENG-F34 #493 is related) | FPS-M2: FPS-F9-04 |

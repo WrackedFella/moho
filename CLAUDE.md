@@ -55,6 +55,8 @@ cargo run -p searchlight           # the FPS prototype
   - `moho_level/**`
   - `searchlight_rules/**`
   - `moho_physics/src/movement.rs`
+  - `moho_input/src/action_map.rs`
+  - `moho_input/src/bindings.rs`
   Adapters, UI wiring and config are glue: the weekly full run mutates them, PRs don't.
 - **Human review points:** `Card review: required`, `Domain-test review: agent` (values: `required`,
   `agent`, `not required`; `agent` = no pause, `devflow:test-critic` attacks the failing
@@ -83,6 +85,8 @@ moho_audio        rodio playback, event-driven
 moho_physics      rapier3d character controller and colliders
 moho_input        key → binding-code mapping
 moho_app          fixed-tick loop shared by the games: Game trait, headless loop, GameClock
+moho_ui_shell     egui host shared by the games: console, screen text, menu screens, engine settings rows
+moho_level        glTF level loader and navmesh (headless, no wgpu or winit)
 searchlight_rules FPS line: rifle, magazine and body-part damage rules, platform-free (ADR-0015)
 searchlight       FPS line: arena, shot resolution, sim and binary on the engine and searchlight_rules
 ```
