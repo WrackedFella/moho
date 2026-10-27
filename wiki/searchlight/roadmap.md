@@ -152,10 +152,15 @@ The engine lane designs the answers.
 | #315 on-screen text | ENG-F18-09 #407 | FPS-M2 entry |
 | #316 seeded replayable RNG | ENG-F6-01 #335 | before FPS-M2 if it matters |
 | ENG-F16 #228 positional audio | ENG-F16 | enemy AI slice 2 (gunshots alert groups) |
-| ENG-F17 #229 navigation and cover queries | ENG-F17-01 and -02 (navigation); cover and exposure queries | enemy AI slice 2 |
+| ENG-F17 #229 navigation and cover queries | ENG-F17 navigation done; #229 is closed. Hidden routes and cover candidates are ENG-F42 [#638](https://github.com/WrackedFella/moho/issues/638) | enemy AI slice 2: FPS-F11-03 |
 | ENG-F19 #231 layered content | ENG-F19 | FPS-M2 entry |
 | ENG-F26 #359 key actions | ENG-F26 | FPS-M2; held-action toggles |
-| #543 skinned animated characters, bone attachments, sim-timed and layered clips | #543 | FPS-M2: FPS-M1.2 slice 3, FPS-F8 |
+| #543 skinned animated characters, bone attachments, sim-timed and layered clips | ENG-F39 [#635](https://github.com/WrackedFella/moho/issues/635): slices 1 to 3 (models with named nodes and textured materials, sockets, rig and clips) for FPS-M2; slices 4 to 6 (blends, sim-timed and interruptible clips, bone-to-bone and detach, first-person view) for FPS-M3.1 and FPS-M4 | FPS-M2: FPS-M1.2 slice 3, FPS-F8, FPS-F12 |
+| Meshes that move without re-upload (runtime spawn) | ENG-F38 [#634](https://github.com/WrackedFella/moho/issues/634), first in the ENG-M2 wave | FPS-M2: enemies, loose objects, models |
+| Muzzle flash, tracer and impact marks; later beam and dot, particles | ENG-F40 [#636](https://github.com/WrackedFella/moho/issues/636) | FPS-M2 gunplay feel; FPS-M3.1 laser |
+| Screen and sound follow game values (vignette, blur, handles, low-pass) | ENG-F41 [#637](https://github.com/WrackedFella/moho/issues/637) | FPS-M4 |
+| Markers carry their size, for volumes | ENG-F14-03 [#639](https://github.com/WrackedFella/moho/issues/639) | FPS-F10 test levels, FPS-M5 safe rooms |
+| List widgets with icons and counts, two panes, tooltips | comment on #444; drag grid is a later card | FPS-M2 list screens |
 | #544 lean and stance transitions, prone hull | #544 with ENG-F33 #492 (crouch and clearance) | FPS-M2: FPS-M1.2 slice 2 |
 | #600 loose objects fall, settle and are picked up | #600 (ENG-F34 #493 is related) | FPS-M2: FPS-F9-04 |
 | #615 ragdoll bodies | #615 | after FPS-M2: FPS-F9-05 (deferred) |
@@ -165,6 +170,7 @@ New requests come from FPS-M3 onward (workbench interaction, save kinds, level s
 ## 13 Prototype gate
 
 - **Scope:** FPS-M1 to FPS-M5, plus FPS-M1.2, FPS-M3.1 and FPS-M4.1; enemy grades and group tactics; placeholder art and animation (weapons, magazines, gear, player and enemy models; stand, crouch, prone, walk, run, crawl, lean, a ground clip for the injured) from free or generated assets; test levels with scripted states (FPS-F9, FPS-F10, plus a debug action per milestone: set a limb, set a survival meter, advance the clock).
-- **At the gate:** playtest, promote `dev` to `main`, and take the split to the Engine project. The plan is to split at FPS-M5 completion; the cross-line gate in the [roadmap](../roadmap.md#milestone-gates-that-span-lines) still names FPS-M6 and changes only when the Engine project agrees.
+- **At the gate:** playtest, promote `dev` to `main`, and take the split to the Engine project. The plan is to split at FPS-M5 completion; the Engine project agreed (2026-10-23): the last two FPS features before the split are FPS-M4.1 and FPS-M5, and the split is the later of FPS-M5 completion and the engine's own ENG-M3 gate ([roadmap](../roadmap.md#milestone-gates-that-span-lines)). Every engine item the prototype uses lands by FPS-M4, and level unload for FPS-M6 lands before the split.
 - **Cut order if time presses:** grenades (FPS-M4.1), then attachments (FPS-M3.1), then the fifth archetype.
-- **Critical path:** the engine requests #543, #544, #492 and #600 for FPS-M2.
+- **Critical path:** the engine wave for FPS-M2: ENG-F38 first, then #600 and ENG-F39 slices 1 to 3 in parallel, plus #544 and #492's crouch and clearance slices, pulled into ENG-M2.
+- **Settled in the lane triage:** marker values, the look-at ray, console commands (a slot-0 command under ENG-F37), scope zoom and reticle, and tagged volumes need no engine request; they are line work or already exist.
