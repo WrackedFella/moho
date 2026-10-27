@@ -75,6 +75,12 @@ fn mode_change(requests: LoopRequests, current: WindowMode) -> Option<WindowMode
     (wanted != current).then_some(wanted)
 }
 
+/// The inner size, as `(width, height)`, to give the window when a game asked for one: only
+/// when the window ends up windowed once the mode request in `requests` is applied to `current`.
+fn size_change(_requests: LoopRequests, _current: WindowMode) -> Option<(u32, u32)> {
+    todo!("decide whether the window is resized")
+}
+
 /// Runs `game` in a window until it asks to exit or the window closes.
 ///
 /// # Errors
@@ -484,5 +490,36 @@ mod tests {
             Some(WindowMode::Borderless)
         );
         assert_eq!(mode_change(requests, WindowMode::Borderless), None);
+    }
+
+    #[test]
+    fn a_size_request_resizes_only_a_windowed_window() {
+        let size = Some((1280, 720));
+        let asking = |window_mode| LoopRequests {
+            window_mode,
+            window_size: size,
+            ..LoopRequests::default()
+        };
+
+        let stays_windowed = size_change(asking(None), WindowMode::Windowed);
+        let goes_windowed = size_change(asking(Some(WindowMode::Windowed)), WindowMode::Borderless);
+        let goes_borderless =
+            size_change(asking(Some(WindowMode::Borderless)), WindowMode::Windowed);
+        let stays_borderless = size_change(asking(None), WindowMode::Borderless);
+        let asks_nothing = size_change(LoopRequests::default(), WindowMode::Windowed);
+        let asks_nothing_and_flips = size_change(
+            LoopRequests {
+                window_mode: Some(WindowMode::Windowed),
+                ..LoopRequests::default()
+            },
+            WindowMode::Borderless,
+        );
+
+        assert_eq!(stays_windowed, size);
+        assert_eq!(goes_windowed, size, "the size follows a switch to windowed");
+        assert_eq!(goes_borderless, None, "borderless ignores the size");
+        assert_eq!(stays_borderless, None);
+        assert_eq!(asks_nothing, None);
+        assert_eq!(asks_nothing_and_flips, None);
     }
 }

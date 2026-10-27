@@ -11,12 +11,14 @@ pub mod host;
 pub mod layers;
 pub mod menu;
 pub mod paint_map;
+pub mod settings;
 pub mod text;
 
-pub use apply::apply_engine_command;
+pub use apply::{apply_engine_command, apply_engine_settings, audio_settings_for};
 pub use console::registry::{CommandSpec, EngineCommand, Owner, RegisterError};
 pub use console::{CONSOLE_BINDING, Console, Routing};
 pub use host::UiShell;
 pub use layers::UiLayers;
 pub use menu::{MenuEvent, MenuItem, MenuScreen, MenuStack};
+pub use settings::{Control, EngineSetting, EngineSettings};
 pub use text::{Anchor, ScreenText, ScreenTextError};

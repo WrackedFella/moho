@@ -266,6 +266,7 @@ mod tests {
     use super::*;
     use crate::console::tests::Cmd;
     use crate::menu::{MenuEvent, MenuItem, MenuScreen};
+    use crate::settings::{EngineSetting, EngineSettings};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum Choice {
@@ -292,6 +293,7 @@ mod tests {
                 button("Quit", Choice::Quit),
             ],
             back: None,
+            settings: None,
         }
     }
 
@@ -318,8 +320,9 @@ mod tests {
             .menu_mut()
             .take_events()
             .into_iter()
-            .map(|event| match event {
-                MenuEvent::Chosen(choice) => choice,
+            .filter_map(|event| match event {
+                MenuEvent::Chosen(choice) => Some(choice),
+                MenuEvent::SettingsApplied(_) => None,
             })
             .collect()
     }
@@ -703,6 +706,89 @@ mod tests {
 
         let frame = frame.expect("a set text still runs the frame");
         assert!(frame.meshes.is_empty());
+    }
+
+    fn drag_settings() -> EngineSettings {
+        EngineSettings {
+            mouse_sensitivity: 2.5,
+            mouse_smoothing: false,
+            invert_mouse_y: false,
+            sound_effect_volume: 8.0,
+            music_volume: 6.0,
+            ui_volume: 7.0,
+            shadow_quality: 3,
+            ssao_quality: 3,
+            window_mode: moho_core::prefs::WindowMode::Windowed,
+            resolution: (1920, 1080),
+        }
+    }
+
+    fn drag_screen() -> MenuScreen<Choice> {
+        let mut items: Vec<MenuItem<Choice>> = EngineSetting::ALL
+            .into_iter()
+            .map(MenuItem::Setting)
+            .collect();
+        items.push(MenuItem::Apply);
+        MenuScreen {
+            title: None,
+            items,
+            back: None,
+            settings: Some(drag_settings()),
+        }
+    }
+
+    /// Presses the left button with the cursor at `press_x` on the sound-effect slider, moves
+    /// the cursor along `held_xs` with the button down, releases it, moves along `free_xs`, then
+    /// applies and returns the sound-effect volume. The slider's track is taken as its row's
+    /// whole band, 520 to 760 points across.
+    fn volume_after(press_x: f64, held_xs: &[f64], free_xs: &[f64]) -> f32 {
+        let screen = drag_screen();
+        let rows = crate::menu::layout(&screen, [1280.0, 720.0]);
+        let centre_y = |setting_row: usize| {
+            f64::from((rows[setting_row].min[1] + rows[setting_row].max[1]) / 2.0)
+        };
+        let slider_y = centre_y(3);
+        let apply_y = centre_y(EngineSetting::ALL.len());
+        let left = Input::Mouse(MouseButton::Left);
+        let mut shell = shell();
+        shell.menu_mut().push(screen);
+
+        cursor_at(&mut shell, [press_x, slider_y]);
+        shell.route(left, true, false);
+        for &x in held_xs {
+            cursor_at(&mut shell, [x, slider_y]);
+        }
+        shell.route(left, false, false);
+        for &x in free_xs {
+            cursor_at(&mut shell, [x, slider_y]);
+        }
+        cursor_at(&mut shell, [640.0, apply_y]);
+        shell.route(Input::Key(Key::Enter), true, false);
+
+        let events = shell.menu_mut().take_events();
+        match events.as_slice() {
+            [MenuEvent::SettingsApplied(applied)] => applied.sound_effect_volume,
+            other => panic!("expected one SettingsApplied, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dragging_a_slider_follows_the_cursor_snapped_to_its_step() {
+        let pressed = volume_after(592.0, &[], &[]);
+        let dragged_right = volume_after(592.0, &[712.0], &[]);
+        let dragged_back = volume_after(592.0, &[712.0, 652.0], &[]);
+        let snapped = volume_after(592.0, &[669.52], &[]);
+        let past_left = volume_after(592.0, &[10.0, 0.0], &[]);
+        let past_right = volume_after(592.0, &[1279.0], &[]);
+        let after_release = volume_after(592.0, &[], &[712.0, 760.0]);
+
+        assert_eq!(pressed, 3.0, "the press itself sets the value");
+        assert_eq!(dragged_right, 8.0);
+        assert_eq!(dragged_back, 5.5);
+        assert_eq!(snapped, 6.0, "6.23 snaps to the nearest 0.5");
+        assert_eq!(past_left, 0.0);
+        assert_eq!(past_right, 10.0);
+        assert_eq!(after_release, 3.0, "a released button no longer drags");
     }
 
     #[test]

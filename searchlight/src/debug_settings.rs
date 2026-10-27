@@ -4,6 +4,7 @@ use std::io;
 use std::path::PathBuf;
 
 use moho_core::prefs::{Prefs, WindowMode};
+use moho_ui_shell::EngineSettings;
 
 const GOD_MODE: &str = "god_mode";
 
@@ -38,6 +39,15 @@ impl DebugSettings {
             .set_debug_value(GOD_MODE, if on { "1" } else { "0" })
             .expect("\"god_mode\" with \"1\" or \"0\" is a name and value prefs always accepts");
         self.prefs.save_to(&self.path)
+    }
+
+    /// Stores the engine's ten settings rows and saves the prefs file; every other value in the
+    /// file is kept, and the rows are kept for the session if the save fails.
+    ///
+    /// # Errors
+    /// The I/O error if the file cannot be written.
+    pub fn set_engine_settings(&mut self, _settings: EngineSettings) -> io::Result<()> {
+        todo!("store and save the engine settings")
     }
 
     /// The window mode the prefs hold.
@@ -174,6 +184,73 @@ mod tests {
         assert_eq!(windowed.prefs.debug_value("other_value"), Some("kept"));
         assert!(windowed.god_mode());
         assert_eq!(windowed.prefs.mouse_sensitivity(), 2.5);
+    }
+
+    #[test]
+    fn applied_engine_settings_survive_save_and_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config/searchlight.ini");
+        let mut prefs = Prefs::default().with_mouse_sensitivity(2.5);
+        prefs.set_bindings(std::collections::BTreeMap::from([(
+            "jump".to_owned(),
+            "F".to_owned(),
+        )]));
+        prefs.set_debug_value("other_value", "kept").unwrap();
+        prefs.set_brightness(1.5);
+        *prefs.voice_volume_mut() = 3.0;
+        let mut settings = DebugSettings::new(prefs, path.clone());
+        settings.set_god_mode(true).unwrap();
+        let applied = EngineSettings {
+            mouse_sensitivity: 6.5,
+            mouse_smoothing: true,
+            invert_mouse_y: true,
+            sound_effect_volume: 1.5,
+            music_volume: 0.0,
+            ui_volume: 9.5,
+            shadow_quality: 1,
+            ssao_quality: 4,
+            window_mode: WindowMode::Borderless,
+            resolution: (2560, 1440),
+        };
+
+        settings.set_engine_settings(applied).unwrap();
+        let reloaded = settings_at(&path);
+
+        assert_eq!(EngineSettings::from_prefs(reloaded.prefs()), applied);
+        assert_eq!(EngineSettings::from_prefs(settings.prefs()), applied);
+        assert_eq!(
+            reloaded.prefs.bindings().get("jump").map(String::as_str),
+            Some("F")
+        );
+        assert_eq!(reloaded.prefs.debug_value("other_value"), Some("kept"));
+        assert!(reloaded.god_mode());
+        assert_eq!(reloaded.prefs.brightness(), 1.5);
+        assert_eq!(reloaded.prefs.voice_volume(), 3.0);
+    }
+
+    #[test]
+    fn a_failed_engine_settings_save_keeps_the_values_for_the_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, "a file, not a directory").unwrap();
+        let mut settings = DebugSettings::new(Prefs::default(), blocker.join("searchlight.ini"));
+        let applied = EngineSettings {
+            mouse_sensitivity: 3.0,
+            mouse_smoothing: false,
+            invert_mouse_y: false,
+            sound_effect_volume: 8.0,
+            music_volume: 6.0,
+            ui_volume: 1.0,
+            shadow_quality: 3,
+            ssao_quality: 3,
+            window_mode: WindowMode::Windowed,
+            resolution: (1920, 1080),
+        };
+
+        let saved = settings.set_engine_settings(applied);
+
+        assert!(saved.is_err());
+        assert_eq!(settings.prefs().ui_volume(), 1.0);
     }
 
     #[test]

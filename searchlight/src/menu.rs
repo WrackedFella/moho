@@ -43,6 +43,7 @@ pub fn main_screen() -> MenuScreen<MenuAction> {
             MenuAction::Quit.button(),
         ],
         back: None,
+        settings: None,
     }
 }
 
@@ -56,6 +57,7 @@ pub fn pause_screen() -> MenuScreen<MenuAction> {
             MenuAction::Quit.button(),
         ],
         back: Some(MenuAction::Resume),
+        settings: None,
     }
 }
 
@@ -65,5 +67,6 @@ pub fn settings_screen() -> MenuScreen<MenuAction> {
         title: Some("Settings".to_owned()),
         items: vec![MenuAction::Back.button()],
         back: Some(MenuAction::Back),
+        settings: None,
     }
 }

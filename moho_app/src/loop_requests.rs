@@ -9,6 +9,8 @@ pub(crate) struct LoopRequests {
     pub(crate) paused: Option<bool>,
     pub(crate) speed: Option<SimSpeed>,
     pub(crate) window_mode: Option<WindowMode>,
+    /// The inner size, in physical pixels, a game asked for.
+    pub(crate) window_size: Option<(u32, u32)>,
 }
 
 impl LoopRequests {

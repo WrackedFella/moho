@@ -5,15 +5,18 @@
 use moho_input::bindings::Input;
 use moho_input::key::Key;
 
+use crate::settings::{EngineSetting, EngineSettings};
 use crate::text::{Anchor, ScreenText};
 
 /// One screen: an optional title, a column of items and the action Escape chooses.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MenuScreen<A> {
     pub title: Option<String>,
     pub items: Vec<MenuItem<A>>,
     /// What Escape chooses on this screen; `None` makes Escape do nothing.
     pub back: Option<A>,
+    /// The values the screen's settings rows start from; `None` on a screen without them.
+    pub settings: Option<EngineSettings>,
 }
 
 /// One row of a screen.
@@ -21,13 +24,19 @@ pub struct MenuScreen<A> {
 pub enum MenuItem<A> {
     /// A labelled button that chooses `action`.
     Button { label: String, action: A },
+    /// One of the engine's settings rows, changing the values staged on its screen.
+    Setting(EngineSetting),
+    /// Hands the game the staged settings values.
+    Apply,
 }
 
 /// What the player did to the open screens, for the game to answer.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum MenuEvent<A> {
     /// The player chose an item, or pressed Escape on a screen with a back action.
     Chosen(A),
+    /// The player applied the settings staged on the top screen.
+    SettingsApplied(EngineSettings),
 }
 
 /// An axis-aligned rectangle in logical points from the window's top left.
@@ -132,7 +141,11 @@ impl<A> MenuStack<A> {
             texts.push(text(title, first_centre - ROW_PITCH, COLOR));
         }
         for (row, (item, rect)) in open.screen.items.iter().zip(rows).enumerate() {
-            let MenuItem::Button { label, .. } = item;
+            let label = match item {
+                MenuItem::Button { label, .. } => label,
+                MenuItem::Setting(setting) => setting.label(),
+                MenuItem::Apply => "Apply",
+            };
             let color = if row == open.focus {
                 FOCUS_COLOR
             } else {
@@ -162,7 +175,7 @@ impl<A: Clone> MenuStack<A> {
                 open.focus = (open.focus + count - 1) % count;
             }
             Input::Key(Key::Enter) if !repeat => {
-                if let Some(action) = open.screen.items.get(open.focus).map(action_of) {
+                if let Some(action) = open.screen.items.get(open.focus).and_then(action_of) {
                     self.events.push(MenuEvent::Chosen(action));
                 }
             }
@@ -181,15 +194,17 @@ impl<A: Clone> MenuStack<A> {
         if let Some(open) = self.screens.last()
             && let Some(row) = row_at(&open.screen, point, size)
         {
-            let action = action_of(&open.screen.items[row]);
-            self.events.push(MenuEvent::Chosen(action));
+            if let Some(action) = action_of(&open.screen.items[row]) {
+                self.events.push(MenuEvent::Chosen(action));
+            }
         }
     }
 }
 
-fn action_of<A: Clone>(item: &MenuItem<A>) -> A {
+fn action_of<A: Clone>(item: &MenuItem<A>) -> Option<A> {
     match item {
-        MenuItem::Button { action, .. } => action.clone(),
+        MenuItem::Button { action, .. } => Some(action.clone()),
+        MenuItem::Setting(_) | MenuItem::Apply => None,
     }
 }
 
@@ -252,6 +267,7 @@ mod tests {
                 button("Quit", Act::Quit),
             ],
             back: None,
+            settings: None,
         }
     }
 
@@ -260,6 +276,7 @@ mod tests {
             title: Some("Settings".to_owned()),
             items: vec![button("Back", Act::Back)],
             back: Some(Act::Back),
+            settings: None,
         }
     }
 
@@ -277,8 +294,9 @@ mod tests {
         stack
             .take_events()
             .into_iter()
-            .map(|event| match event {
-                MenuEvent::Chosen(action) => action,
+            .filter_map(|event| match event {
+                MenuEvent::Chosen(action) => Some(action),
+                MenuEvent::SettingsApplied(_) => None,
             })
             .collect()
     }
@@ -462,6 +480,7 @@ mod tests {
             title: None,
             items: vec![button("A", Act::Play), button("B", Act::Quit)],
             back: None,
+            settings: None,
         };
 
         let pair: Vec<f32> = layout(&two, SIZE)
@@ -548,6 +567,7 @@ mod tests {
             title: Some("Pick".to_owned()),
             items: vec![button("A", Act::Play), button("B", Act::Quit)],
             back: None,
+            settings: None,
         };
         let stack = stack_of(screen.clone());
 
@@ -587,8 +607,390 @@ mod tests {
             title: None,
             items: Vec::new(),
             back: None,
+            settings: None,
         };
 
         assert_eq!(layout(&empty, SIZE), []);
+    }
+
+    mod settings_rows {
+        use moho_core::prefs::WindowMode;
+
+        use super::*;
+
+        fn base() -> EngineSettings {
+            EngineSettings {
+                mouse_sensitivity: 2.5,
+                mouse_smoothing: false,
+                invert_mouse_y: false,
+                sound_effect_volume: 8.0,
+                music_volume: 6.0,
+                ui_volume: 7.0,
+                shadow_quality: 3,
+                ssao_quality: 3,
+                window_mode: WindowMode::Windowed,
+                resolution: (1920, 1080),
+            }
+        }
+
+        /// The ten rows, Apply, then Back: twelve rows, so the whole column fits on `SIZE`.
+        fn screen_of(settings: EngineSettings) -> MenuScreen<Act> {
+            let mut items: Vec<MenuItem<Act>> = EngineSetting::ALL
+                .into_iter()
+                .map(MenuItem::Setting)
+                .collect();
+            items.push(MenuItem::Apply);
+            items.push(button("Back", Act::Back));
+            MenuScreen {
+                title: Some("Settings".to_owned()),
+                items,
+                back: Some(Act::Back),
+                settings: Some(settings),
+            }
+        }
+
+        fn row_of(stack: &MenuStack<Act>, item: MenuItem<Act>) -> usize {
+            let screen = stack.top().expect("a screen is open");
+            screen
+                .items
+                .iter()
+                .position(|candidate| *candidate == item)
+                .expect("the screen lists the item")
+        }
+
+        fn row_centre(stack: &MenuStack<Act>, row: usize) -> [f32; 2] {
+            let rect = layout(stack.top().expect("a screen is open"), SIZE)[row];
+            [
+                (rect.min[0] + rect.max[0]) / 2.0,
+                (rect.min[1] + rect.max[1]) / 2.0,
+            ]
+        }
+
+        /// Moves the focus to `setting`'s row the way a mouse would.
+        fn focus(stack: &mut MenuStack<Act>, setting: EngineSetting) -> usize {
+            let row = row_of(stack, MenuItem::Setting(setting));
+            let centre = row_centre(stack, row);
+            stack.hover(centre, SIZE);
+            row
+        }
+
+        fn step(stack: &mut MenuStack<Act>, setting: EngineSetting, keys: &[Key]) {
+            focus(stack, setting);
+            for &key in keys {
+                press(stack, key);
+            }
+        }
+
+        fn click_row(stack: &mut MenuStack<Act>, setting: EngineSetting) {
+            let row = row_of(stack, MenuItem::Setting(setting));
+            let centre = row_centre(stack, row);
+            stack.click(centre, SIZE);
+        }
+
+        /// Presses Apply and returns the one event it emits.
+        fn apply(stack: &mut MenuStack<Act>) -> EngineSettings {
+            let row = row_of(stack, MenuItem::Apply);
+            let centre = row_centre(stack, row);
+            stack.hover(centre, SIZE);
+            press(stack, Key::Enter);
+            let mut events = stack.take_events();
+            assert_eq!(events.len(), 1, "Apply emits exactly one event: {events:?}");
+            match events.remove(0) {
+                MenuEvent::SettingsApplied(applied) => applied,
+                other => panic!("Apply emitted {other:?}"),
+            }
+        }
+
+        fn close(a: f32, b: f32) -> bool {
+            (a - b).abs() < 1e-4
+        }
+
+        #[test]
+        fn a_staged_change_emits_nothing_until_apply() {
+            let mut stack = stack_of(screen_of(base()));
+
+            step(
+                &mut stack,
+                EngineSetting::MusicVolume,
+                &[Key::ArrowRight, Key::ArrowRight],
+            );
+            let before_apply = stack.take_events();
+            let baseline = stack.top().and_then(|screen| screen.settings);
+            let applied = apply(&mut stack);
+
+            assert_eq!(before_apply, []);
+            assert_eq!(baseline, Some(base()), "staging edits a copy");
+            assert_eq!(
+                applied,
+                EngineSettings {
+                    music_volume: 7.0,
+                    ..base()
+                }
+            );
+            assert_eq!(
+                stack.top().and_then(|screen| screen.settings),
+                Some(applied),
+                "Apply makes the staged values the screen's baseline"
+            );
+        }
+
+        #[test]
+        fn popping_a_settings_screen_discards_its_staged_values() {
+            let mut stack = stack_of(main_screen());
+            stack.push(screen_of(base()));
+            step(&mut stack, EngineSetting::WindowMode, &[Key::ArrowRight]);
+            step(&mut stack, EngineSetting::InvertMouseY, &[Key::Enter]);
+            step(&mut stack, EngineSetting::ShadowQuality, &[Key::ArrowLeft]);
+
+            stack.pop();
+            stack.push(screen_of(base()));
+            let applied = apply(&mut stack);
+
+            assert_eq!(applied, base());
+            assert_eq!(stack.take_events(), []);
+        }
+
+        #[test]
+        fn pressing_apply_on_an_unchanged_screen_still_emits_its_values() {
+            let mut stack = stack_of(screen_of(base()));
+
+            let applied = apply(&mut stack);
+
+            assert_eq!(applied, base());
+        }
+
+        #[test]
+        fn left_and_right_step_a_slider_and_clamp_at_its_ends() {
+            let ends = EngineSettings {
+                sound_effect_volume: 9.5,
+                ui_volume: 0.5,
+                ..base()
+            };
+            let mut stack = stack_of(screen_of(ends));
+            step(
+                &mut stack,
+                EngineSetting::SoundEffectVolume,
+                &[Key::ArrowRight, Key::ArrowRight],
+            );
+            step(
+                &mut stack,
+                EngineSetting::UiVolume,
+                &[Key::ArrowLeft, Key::ArrowLeft],
+            );
+            step(
+                &mut stack,
+                EngineSetting::MusicVolume,
+                &[Key::ArrowRight, Key::ArrowRight, Key::ArrowLeft],
+            );
+            step(
+                &mut stack,
+                EngineSetting::MouseSensitivity,
+                &[Key::ArrowRight],
+            );
+
+            let applied = apply(&mut stack);
+
+            assert_eq!(applied.sound_effect_volume, 10.0);
+            assert_eq!(applied.ui_volume, 0.0);
+            assert_eq!(applied.music_volume, 6.5);
+            assert!(close(applied.mouse_sensitivity, 2.6), "{applied:?}");
+        }
+
+        #[test]
+        fn a_slider_at_its_range_ends_stays_there() {
+            let low = EngineSettings {
+                mouse_sensitivity: 0.1,
+                ..base()
+            };
+            let high = EngineSettings {
+                mouse_sensitivity: 10.0,
+                ..base()
+            };
+            let mut at_low = stack_of(screen_of(low));
+            let mut at_high = stack_of(screen_of(high));
+
+            step(&mut at_low, EngineSetting::MouseSensitivity, &[Key::ArrowLeft]);
+            step(&mut at_high, EngineSetting::MouseSensitivity, &[Key::ArrowRight]);
+
+            assert!(close(apply(&mut at_low).mouse_sensitivity, 0.1));
+            assert!(close(apply(&mut at_high).mouse_sensitivity, 10.0));
+        }
+
+        #[test]
+        fn left_and_right_step_a_choice_and_clamp_at_its_ends() {
+            let ends = EngineSettings {
+                shadow_quality: 3,
+                ssao_quality: 0,
+                ..base()
+            };
+            let mut stack = stack_of(screen_of(ends));
+            step(
+                &mut stack,
+                EngineSetting::ShadowQuality,
+                &[Key::ArrowRight, Key::ArrowRight],
+            );
+            step(
+                &mut stack,
+                EngineSetting::SsaoQuality,
+                &[Key::ArrowLeft, Key::ArrowRight, Key::ArrowRight],
+            );
+            step(
+                &mut stack,
+                EngineSetting::Resolution,
+                &[Key::ArrowRight],
+            );
+
+            let applied = apply(&mut stack);
+
+            assert_eq!(applied.shadow_quality, 4);
+            assert_eq!(applied.ssao_quality, 2);
+            assert_eq!(applied.resolution, (2560, 1440));
+        }
+
+        #[test]
+        fn left_and_right_flip_a_toggle() {
+            let mut stack = stack_of(screen_of(base()));
+            step(&mut stack, EngineSetting::MouseSmoothing, &[Key::ArrowRight]);
+            step(
+                &mut stack,
+                EngineSetting::InvertMouseY,
+                &[Key::ArrowLeft, Key::ArrowLeft, Key::ArrowLeft],
+            );
+
+            let applied = apply(&mut stack);
+
+            assert!(applied.mouse_smoothing);
+            assert!(applied.invert_mouse_y);
+        }
+
+        #[test]
+        fn enter_flips_a_toggle_and_cycles_a_choice() {
+            let ends = EngineSettings {
+                shadow_quality: 4,
+                ssao_quality: 1,
+                resolution: (3840, 2160),
+                ..base()
+            };
+            let mut stack = stack_of(screen_of(ends));
+            step(&mut stack, EngineSetting::MouseSmoothing, &[Key::Enter]);
+            step(
+                &mut stack,
+                EngineSetting::InvertMouseY,
+                &[Key::Enter, Key::Enter],
+            );
+            step(&mut stack, EngineSetting::ShadowQuality, &[Key::Enter]);
+            step(&mut stack, EngineSetting::SsaoQuality, &[Key::Enter]);
+            step(&mut stack, EngineSetting::WindowMode, &[Key::Enter]);
+            step(&mut stack, EngineSetting::Resolution, &[Key::Enter]);
+            let after_one_press = stack.take_events();
+
+            let first = apply(&mut stack);
+            step(&mut stack, EngineSetting::WindowMode, &[Key::Enter]);
+            step(&mut stack, EngineSetting::Resolution, &[Key::Enter]);
+            let second = apply(&mut stack);
+
+            assert_eq!(after_one_press, [], "Enter on a row chooses nothing");
+            assert!(first.mouse_smoothing);
+            assert!(!first.invert_mouse_y);
+            assert_eq!(first.shadow_quality, 0, "Ultra wraps to Off");
+            assert_eq!(first.ssao_quality, 2);
+            assert_eq!(first.window_mode, WindowMode::Borderless);
+            assert_eq!(first.resolution, (1280, 720), "the last preset wraps");
+            assert_eq!(second.window_mode, WindowMode::Windowed);
+            assert_eq!(second.resolution, (1920, 1080));
+        }
+
+        #[test]
+        fn a_saved_fullscreen_cycles_back_to_windowed() {
+            let saved = EngineSettings {
+                window_mode: WindowMode::Fullscreen,
+                ..base()
+            };
+            let mut stack = stack_of(screen_of(saved));
+
+            step(&mut stack, EngineSetting::WindowMode, &[Key::Enter]);
+
+            assert_eq!(apply(&mut stack).window_mode, WindowMode::Windowed);
+        }
+
+        #[test]
+        fn moving_the_focus_off_a_row_does_not_change_its_value() {
+            let mut stack = stack_of(screen_of(base()));
+
+            press(&mut stack, Key::ArrowDown);
+            press(&mut stack, Key::ArrowUp);
+            press(&mut stack, Key::ArrowDown);
+            press(&mut stack, Key::ArrowDown);
+
+            assert_eq!(apply(&mut stack), base());
+        }
+
+        #[test]
+        fn a_click_flips_a_toggle_and_advances_a_choice() {
+            let mut stack = stack_of(screen_of(base()));
+
+            click_row(&mut stack, EngineSetting::MouseSmoothing);
+            click_row(&mut stack, EngineSetting::ShadowQuality);
+            click_row(&mut stack, EngineSetting::WindowMode);
+            let clicked = stack.take_events();
+            let applied = apply(&mut stack);
+
+            assert_eq!(clicked, []);
+            assert!(applied.mouse_smoothing);
+            assert_eq!(applied.shadow_quality, 4);
+            assert_eq!(applied.window_mode, WindowMode::Borderless);
+        }
+
+        /// The x a press must land on to sit `fraction` of the way along a row's track, taking
+        /// the track as the row's whole 240-point band.
+        fn track_x(stack: &MenuStack<Act>, setting: EngineSetting, fraction: f32) -> f32 {
+            let row = row_of(stack, MenuItem::Setting(setting));
+            let rect = layout(stack.top().expect("a screen is open"), SIZE)[row];
+            rect.min[0] + fraction * (rect.max[0] - rect.min[0])
+        }
+
+        fn press_track(stack: &mut MenuStack<Act>, setting: EngineSetting, fraction: f32) {
+            let row = row_of(stack, MenuItem::Setting(setting));
+            let y = row_centre(stack, row)[1];
+            let x = track_x(stack, setting, fraction);
+            stack.click([x, y], SIZE);
+        }
+
+        #[test]
+        fn a_press_on_a_slider_track_sets_the_value_from_x_snapped_to_the_step() {
+            let mut stack = stack_of(screen_of(base()));
+
+            press_track(&mut stack, EngineSetting::SoundEffectVolume, 0.3);
+            press_track(&mut stack, EngineSetting::MusicVolume, 0.33);
+            press_track(&mut stack, EngineSetting::UiVolume, 0.99);
+            let events = stack.take_events();
+            let applied = apply(&mut stack);
+
+            assert_eq!(events, [], "a press on a slider chooses nothing");
+            assert_eq!(applied.sound_effect_volume, 3.0);
+            assert_eq!(applied.music_volume, 3.5, "3.3 snaps to the nearest 0.5");
+            assert_eq!(applied.ui_volume, 10.0);
+        }
+
+        #[test]
+        fn a_settings_screen_draws_each_rows_label_and_value_and_the_apply_row() {
+            let stack = stack_of(screen_of(base()));
+
+            let texts: Vec<String> = stack.texts(SIZE).into_iter().map(|t| t.text).collect();
+
+            for setting in EngineSetting::ALL {
+                assert!(
+                    texts.iter().any(|text| text == setting.label()),
+                    "no label for {setting:?} in {texts:?}"
+                );
+                let value = base().value_text(setting);
+                assert!(
+                    texts.iter().any(|text| *text == value),
+                    "no value {value:?} for {setting:?} in {texts:?}"
+                );
+            }
+            assert!(texts.iter().any(|text| text == "Apply"), "{texts:?}");
+            assert!(texts.iter().any(|text| text == "Back"), "{texts:?}");
+        }
     }
 }
