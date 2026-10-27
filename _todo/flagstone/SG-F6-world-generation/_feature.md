@@ -111,7 +111,8 @@ corridor; ore shows on cave walls and cliff faces.
   ore in seams; at most one new ore beyond iron and crystal; still water; voxel trees; a found,
   unflattened start area; mining unchanged in contract.
 - Out: history and factions (the map keeps room for them, nothing is written); scanning a slice
-  before picking it; expanding into or buying neighbouring slices; flowing water, swimming, boats;
+  before picking it; expanding into or buying neighbouring slices; interactable water (flow,
+  swimming, sailing, drowning); load, cave-ins and sapping; tweakable generation parameters;
   gradual mining (density wear); structures, ruins, roads; weather and seasons; hydraulic erosion of
   the map; showing neighbouring terrain beyond the slice edge; new biomes beyond what the climate
   table yields.
@@ -126,9 +127,11 @@ corridor; ore shows on cave walls and cliff faces.
 | What is a slice? | A rectangle of map tiles; the tile is the unit of picking and of later expansion | Same mechanism as RimWorld's map-size choice; no stitching later. Fixed world squares would need a second generator for expansion |
 | How are caves carved? | Noise terms in the terrain's density function, chunk-local | Agent or cellular carvers need a whole-slice pass that conflicts with streaming |
 | Whole-block ore or seams? | Whole-block yield stays; placement becomes seams scaled by the tile's richness | The two were conflated; only placement was the problem. Spread seams of partial blocks would change the yield contract for no visible gain |
-| Is water in scope? | Still and impassable | Flow and swimming are a system of their own; a dry river bed is not believable |
+| Is water in scope? | Still and impassable, as a block material, not a drawn plane | Flow, swimming, sailing and drowning are wanted later (Justin, 2026-10-27); water that is already a block in the grid becomes a fluid without a second representation. A dry river bed is not believable |
 | Trees? | Voxel structures that mine like blocks | Models need a new entity kind, harvesting and collision |
 | Is the start area flattened? | Found, not flattened; caves suppressed under it | A flattened plateau is the one thing that looks generated |
+| Must the terrain data leave room for load and cave-ins? | Yes: one material and one density per block, nothing stored per block that a support rule could not read | Cave-ins and sapping are wanted later (Justin, 2026-10-27); a support rule reads what is above and beside a block, so it needs no new data now, only that nothing is baked into the mesh alone |
+| Fixed generation parameters or tweakable ones? | Fixed defaults now, with every parameter the map and slice generators read held in one world-level set | Tweakable sliders are wanted later (Justin, 2026-10-27); one parameter set saved with the world is what a new-world screen will expose |
 
 ## Deferred
 
@@ -138,7 +141,9 @@ corridor; ore shows on cave walls and cliff faces.
 | Scanning a slice before picking it (richness, hostility) | Reads tile data this feature produces; UI only | When the colony loop makes the choice matter |
 | Expanding into or buying neighbouring slices | Guaranteed possible by the edge rule; needs ownership and streaming across slices | After SG-F3 and SG-F4 |
 | Gradual mining by density wear | The destruction step is the only place it touches | With automation, when mining speed is a progression lever |
-| Flowing water, swimming, boats | A system of its own | When water is a strategy roadmap item |
+| Interactable water: flow, swimming, sailing, drowning (wanted, Justin 2026-10-27) | A fluid system plus pawn states; this feature keeps water as a block so the data is already there | When water is a strategy roadmap item, after SG-F4 |
+| Load, support columns and cave-ins; sapping a fortification (wanted, Justin 2026-10-27) | A support rule over the grid plus pawn harm; nothing here precludes it | With combat or when mining depth makes collapse a real risk |
+| Tweakable world-generation parameters on the new-world screen (cliff extremity, water coverage, dry vs wet) | UI over the one parameter set this feature introduces | After the first playtest of generated worlds |
 | Hydraulic erosion on the map; plate tectonics | Prettier mountains for seconds of generation time | If maps read as bland |
 | Worm-carved cave systems | Noise caves first; worms if they read as random | After playtest |
 | Neighbouring terrain shown past the slice edge | Cosmetic | With expansion |
