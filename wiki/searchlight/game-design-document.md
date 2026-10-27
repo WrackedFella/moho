@@ -1,6 +1,6 @@
-# FPS-F1 — Game Design Document (v0.5)
+# FPS-F1 — Game Design Document (v0.6)
 
-**Status:** draft v0.5, approved for Phase 1 (v0.3 added pillar 2, the item lifecycle rule, §4.12 player and weapon stats, the planning rule in §7 and the §4.7 wound penalties; v0.4 adds the prototype gate in §7, gear that adds containers, the attachment system and a mocked grenade in the prototype, and a shotgun with a tube-fed reload; v0.5 sets the world structure: a hub and missions into hand-made maps built on a modular kit, with generated maps from that kit as a later phase, §4.13). Writing this page is
+**Status:** draft v0.6, approved for Phase 1 (v0.3 added pillar 2, the item lifecycle rule, §4.12 player and weapon stats, the planning rule in §7 and the §4.7 wound penalties; v0.4 adds the prototype gate in §7, gear that adds containers, the attachment system and a mocked grenade in the prototype, and a shotgun with a tube-fed reload; v0.5 sets the world structure: a hub and missions into hand-made maps built on a modular kit, with generated maps from that kit as a later phase, §4.13; v0.6 makes simulated ballistics a core system in four realism tiers, §4.14, and takes magazine wear out). Writing this page is
 [FPS-F1](../../_todo/searchlight/FPS-F1-game-design-document/_feature.md)'s deliverable. Open questions are in §9.
 **Working pitch:** a survival-focused looter shooter with realistic gunplay, where your gear is your character, your rig is the game, and every fight is a line on a ledger.
 **Working target:** single-player first, co-op later, mod support a priority. Pivots (Destiny-like, Arma-like) are open questions, not commitments (§9).
@@ -65,7 +65,7 @@ Each system states the question its prototype must answer, the design, and its c
 
 - **Question:** can one data-driven item model carry weapons, mags, rounds, meds, food, repair kits and tools without special cases?
 - Items are defined in data files (moddable), not code. Four classes: **weapons** (held, fire or strike), **consumables** (used up: rounds, meds, food, parts, kits), **tools** (held or applied: toolkit, crowbar, detector) and **gear** (worn or fitted, neither used up nor held: rigs, magazines, later backpacks and armor). The tool class exists from Phase 2; the first tool item, the toolkit, arrives in Phase 3 (§4.3), and the rest wait until the world has something for them to act on. Items differ by make, condition, contents and attachments, never by rarity tier or random affix.
-- **Lifecycle rule:** an item with a **condition (%)** can be repaired; an item with a **number of uses (#)** cannot, and leaves the game when spent. Never both on one item; an item with neither (attachments, magazines for now) does not change. Balancing the spawn rate, job rewards and burn rate of the #-items is the game loop's main tuning knob (pillar 2).
+- **Lifecycle rule:** an item with a **condition (%)** can be repaired; an item with a **number of uses (#)** cannot, and leaves the game when spent. Never both on one item; an item with neither (attachments, magazines) does not change. Magazines never wear; wear belongs to weapons and armor (§4.3, §4.6). Balancing the spawn rate, job rewards and burn rate of the #-items is the game loop's main tuning knob (pillar 2).
 - **Three layers of access:** *hands* (what you hold), the *rig* (belt and vest: fast slots reached by hotkeys, no screen) and the *backpack* (everything else, reached through the inventory screen while time keeps passing). Anything used in a fight must already be on the rig; reload never looks in the backpack.
 - **Gear defines your containers:** the rig and the backpack are items. A rig sets how many fast slots you have and of which kind; a backpack sets how much you can carry. Changing what you wear changes the shape of your inventory. Worn gear weighs what it weighs. Any gear item may declare containers, so base armor and clothing add some rig slots (a tracksuit has pockets): lighter armor weighs less and gives fewer slots, heavier armor gives more weight to carry and slows the player more (§4.6). How armor slots combine with a rig's is open (§9 Q27).
 - **Equipment slots:** primary 1, primary 2, sidearm, rig, backpack, body armor, helmet. A suit slot arrives with anomalies.
@@ -87,6 +87,7 @@ Each system states the question its prototype must answer, the design, and its c
 - **Load mags:** filling mags from loose rounds takes time and happens out of combat (or very riskily in it).
 - **Check mag:** an action that gives an approximate count (full / about half / nearly empty), exact when out of combat.
 - **Mixed rounds:** round types are data (FMJ, AP, HP and so on), and the ordered stack holds any mix. Loading from different loose stacks in sequence is how a player mixes a mag; the rules fire them in order. This is a standing test case for the magazine model.
+- **Round data:** a round definition carries muzzle velocity, drag, penetration and damage (§4.14), so a mixed magazine fires rounds that fly differently, in order.
 - **Reload styles:** the prototype shows more than one. Detachable magazines (rifle, SMG, pistol) and a **tube-fed shotgun** loaded one round at a time, interruptible by firing; a double-barrel break-action is optional. The tube is an integral magazine, so the ordered round stack and chamber rules carry it unchanged. The shotgun arrives in Phase 3, where the action component (§4.3) lives.
 - **Cut lines:** other per-weapon-class reload mechanics (open bolt, bolt hold-open, pump action beyond the tube); a separate chamber-check action; a dedicated mixing UI beyond choosing which stack to load from; clips/stripper clips; dual-feed weapons.
 
@@ -232,6 +233,22 @@ Each system states the question its prototype must answer, the design, and its c
 - **Later phase, generated maps:** missions on maps assembled from the kit's modules (§5), cut from the hand-made maps. Not before the hand-made version is played.
 - **Cut lines:** free parameter sliders, hub upgrades that raise stats, a seamless world, generated geometry before the later phase.
 
+### 4.14 Ballistics
+
+- **Question:** does a simulated round make distance, cover and ammunition choice readable decisions without a ballistics course?
+- **Every round fired is a simulated object** stepped by the fixed tick: it takes its muzzle velocity, drag and penetration from its round definition (§4.2), falls under gravity, loses speed in flight, and does less damage the slower it arrives. Pellets are rounds. Enemies fire the same rounds and lead a moving target by grade (§4.11). The host owns every round in flight, so hits stay host-resolved (§9 Q2).
+- **Realism stacks in four tiers,** each a difficulty complexity toggle (§9 Q8). Hitscan stays as the *Simple* setting for A/B playtests.
+
+| Tier | Name | Adds | Lands with |
+|---|---|---|---|
+| 1 (floor) | **Flight** | Travel time, drop, drag, damage by arrival speed, one ricochet off a hard surface at a shallow angle (angle plus dice), enemies lead | Phase 1.3 |
+| 2 | **Materials** | Surfaces have a material; a round pierces thin cover, bodies and armor by its penetration against resistance and condition, with blunt damage when stopped | Phase 3 |
+| 3 | **Atmosphere** | Wind, per-round drag curves, scope zeroing | Phase 3.1 |
+| 4 (ceiling) | **Marksman** | Heart rate and breath sway the aim, steadied by holding breath and by posture (Sniper Elite's realistic preset without its assists) | Phase 5 |
+
+- **Where it is felt:** in the arena a rifle round drops about 6 cm at 100 m, so tier 1 shows as leading a runner (about 0.7 m at 100 m), ricochets and weak pistols at range. Drop becomes a decision past 200 m, on the range and on the larger hand-made mission maps (§4.13), where long sightlines make tiers 2 and 3 matter. A **gravity scale** is a tuning knob so drop can be read on short maps.
+- **Cut lines:** spin drift, Coriolis, temperature and altitude; fragmentation and deformation; more than one ricochet; ricochet off bodies; visible bullet meshes (a tracer is drawn instead); bullets that move loose objects or hit other bullets; rewinding time for shots in co-op.
+
 ## 5 Modes and levels: how maps are made
 
 | Mode / level | Map source | Notes |
@@ -268,7 +285,7 @@ Principle: build the cheapest playable baseline first, then add systems in the o
 
 Planning rule for complex systems: start with the simplest feature set we know we need, playtest, then add or remove to taste. If the inventory wants more management, move toward Tarkov; if less, toward unmodified STALKER. Data shapes that are expensive to retrofit (item size, container cells, ordered rounds) go in first; the UI that exploits them comes when playtest asks for it.
 
-**Prototype gate:** the prototype is done when Phases 1 through 5 and the inserts 1.2, 3.1 and 4.1 are playable, with enemy grades and group tactics (§4.11) and placeholder art and animation (free or generated assets, not production quality) in place. Test levels with scripted states (spawn enemies and items, set a limb, set a survival meter, advance the clock) are part of the gate. The systems are the deliverable: a mocked attachment or grenade counts when the system around it is real. At the gate `dev` is promoted to `main`, and the repository split is considered with the Engine project. Cut order if time presses: grenades, then attachments, then the fifth archetype.
+**Prototype gate:** the prototype is done when Phases 1 through 5 and the inserts 1.2, 1.3, 3.1 and 4.1 are playable, with enemy grades and group tactics (§4.11) and placeholder art and animation (free or generated assets, not production quality) in place. Test levels with scripted states (spawn enemies and items, set a limb, set a survival meter, advance the clock) are part of the gate. The systems are the deliverable: a mocked attachment or grenade counts when the system around it is real. At the gate `dev` is promoted to `main`, and the repository split is considered with the Engine project. Cut order if time presses: grenades, then attachments, then the fifth archetype.
 
 Milestones follow the phases: FPS-M*n* delivers Phase *n*, and FPS-M1.1 (menus) sits between Phases 1 and 2. The plan is the [Searchlight roadmap](roadmap.md).
 
@@ -276,18 +293,21 @@ Milestones follow the phases: FPS-M*n* delivers Phase *n*, and FPS-M1.1 (menus) 
 |---|---|---|---|---|
 | 1 | **Arena baseline** | Movement, one rifle, **mags + chamber from day one**, **per-body-part hit volumes from day one**, basic AI (patrol, take cover, shoot, chase), waves, death/restart | Does the gunplay feel weighty? | Pre-made arena |
 | 1.2 | **Stance and body** | Crouch, prone, lean in every stance, head bob, hit volumes follow posture; a visible first-person body once the engine has skinned characters | Does posture change where I stand and when I peek? | Arena |
+| 1.3 | **Bullets fly** | Simulated rounds (§4.14 tier 1): travel time, drop, drag, damage by arrival speed, one ricochet; enemies lead; hitscan kept as the Simple toggle | Does a round in flight make distance a decision? | Arena (drop read with the gravity scale until a range exists) |
 | 2 | **Items and loadout** | Data-driven items with the % or # uses lifecycle rule, rig and backpack as items, a tool class, carry weight through the stat layer (§4.12), loot drops from enemies, 3 weapons in 2 calibers | Does one item model carry everything? | Arena |
-| 3 | **Weapon wear and repair** | 4 components, jams, repair parts and workbench, dismantling, armor items and their wear, the toolkit, limited-use cleaning kits crafted from components that also work alone; a tube-fed shotgun (§4.2); **end-of-round ledger** (rounds + wear valued) | Does wear drive scavenging? | Arena + range |
-| 3.1 | **Attachments** | The attachment system (§4.4): mount types, slots, fit rules, swap a scope and/or a laser; items mocked; weapon components swap by the same rules | Can a weapon be rebuilt in the field without special cases? | Arena + range |
+| 3 | **Weapon wear and repair** | Wear on weapons and armor only (magazines never wear): 4 components, jams, repair parts and workbench, dismantling, armor items and their wear, the toolkit, limited-use cleaning kits crafted from components that also work alone; a tube-fed shotgun (§4.2); surface materials and round penetration through cover and armor (§4.14 tier 2); **end-of-round ledger** (rounds + wear valued) | Does wear drive scavenging? | Arena + range |
+| 3.1 | **Attachments** | The attachment system (§4.4): mount types, slots, fit rules, swap a scope and/or a laser; items mocked; weapon components swap by the same rules; wind and scope zeroing (§4.14 tier 3) | Can a weapon be rebuilt in the field without special cases? | Arena + range |
 | 4 | **Wounds and healing** | A minimal game clock, damage-scaled penalties, leg compounding, recovery timers, bleeding, first/secondary aid, splint, meds as perishable data; enemy wounds to taste | Does limb damage create good downtime? | Arena + range |
 | 4.1 | **Grenades (mocked)** | A grenade item and throw: an object spawns on the ground at the sight point, a sound cue plays, the object despawns (§4.11). Cuttable | Does a throwable fit the item model? | Arena + range |
-| 5 | **Time, survival, rest** | Day cycle, time scaling and skipping, hunger/thirst/fatigue, sleep at a safe spot, healing timers advance on sleep | Do survival stats add pressure, not chores? | Arena + safe room |
+| 5 | **Time, survival, rest** | Day cycle, time scaling and skipping, hunger/thirst/fatigue, sleep at a safe spot, healing timers advance on sleep; heart rate and breath sway (§4.14 tier 4) | Do survival stats add pressure, not chores? | Arena + safe room |
 | 6 | **Hub and missions** | Trader hub, job board offering missions with their conditions, currency, full ledger per job; random starts, exits, spawns and building slots on hand-made maps; the place-decides-pool loot rule; arena becomes "the job site" | Does profit-as-score change player behavior? | Hub + 2 hand-made mission maps on the kit |
 | 7 | **Director** | Zone graph, factions, offline dice sim, daily planning, live handover | Does the world feel alive with this little machinery? | 3–5 pre-made zones |
 | Later | Generated maps | Mission maps assembled from kit modules cut from the hand-made maps (§4.13, §5) | Does assembly add variety the hand-made pool lacks? | Kit modules |
 | Later | Depth | Richer attachments and extensions, ammo crafting, armor depth, real grenades with area damage, damage types, anomalies/artifacts | — | — |
 
 Stance and body (1.2) runs in slices parallel to Phase 2, like enemy AI: lean and head bob first (nothing new from the engine), crouch and prone when the engine's per-mode hulls land, the visible body when skinned characters do. Plan: the FPS-M1.2 section of the [Searchlight roadmap](roadmap.md#5-fps-m12-stance-and-body-fps-f4).
+
+Bullets fly (1.3) runs beside Phase 2 and lands before Phase 2 fixes its item data files, since a round's ballistic fields belong to the round item. It needs no items, UI or engine work itself.
 
 Enemy AI (§4.11) is not a phase of its own; it lands in slices alongside the phases:
 - **After Phase 1 approval, parallel to Phase 2:** enemy grades (five grades as data; accuracy, reaction time, pauses, cover use; waves shift up the ladder). Needs no items, UI or navigation.
@@ -298,6 +318,7 @@ Enemy AI (§4.11) is not a phase of its own; it lands in slices alongside the ph
 
 Why this order:
 - **Mags and hit volumes in Phase 1:** both are expensive to retrofit (they shape weapon code and character setup) and cheap to include at the start.
+- **Bullets before items:** round ballistics are fields on the round item, so they exist before Phase 2 fixes the data shape.
 - **Items before wear:** repair parts, mags and meds are all items; building them without the item model means rebuilding them.
 - **Wear before wounds:** wear is testable on a range with no AI changes; wounds need the AI to hit you meaningfully, which Phase 1–2 AI already does.
 - **Survival after wounds:** survival stats only matter once time passes and downtime exists, which healing timers create.
@@ -327,8 +348,8 @@ Settled entries keep their numbers so references stay stable.
 4. **Bleeding:** must-have, Phase 4.
 5. **Head HP at 0:** instant death.
 6. **Death penalty:** a difficulty option, either reload on death or permadeath. Phase 1 uses restart.
-7. **Ballistics:** hitscan in Phase 1; physics-based projectiles are a long-term goal.
-8. **Difficulty:** difficulty that toggles complexity rather than damage fits pillar 4; sliders per system make modding easier too. Confirm before Phase 5.
+7. **Ballistics:** core, decided 2026-10-26. Rounds are simulated from Phase 1.3 (§4.14 tier 1: travel time, drop, drag, one ricochet); materials and penetration land with Phase 3, wind and zeroing with Phase 3.1, breath and heart rate with Phase 5. Hitscan stays as the Simple toggle.
+8. **Difficulty:** difficulty that toggles complexity rather than damage fits pillar 4; sliders per system make modding easier too. The ballistics tiers (§4.14) are the first such toggles. Confirm before Phase 5.
 9. **Director name:** placeholder "the Director".
 10. **Enemy grades:** five (rookie, novice, experienced, veteran, professional), fixed for life until Phase 7; legend for named NPCs deferred; grades change behavior, never HP or damage.
 11. **Suppression:** AI behavior only at first. Does it get a player-side effect once wounds exist (Phase 4)? The head-wound vision effects (§4.7) are the natural reuse.
@@ -353,6 +374,7 @@ Settled entries keep their numbers so references stay stable.
 29. **Failed mission cost:** what does dying or failing a mission cost: nothing beyond the death penalty, the loadout carried, or an entry deposit? Extends Q6. Decide with Q6.
 30. **Hub upgrades:** the hub improves through gear and services only (§4.13). Which ones (workbench tier, trader stock, storage size), and how does that sit with §6 (no base building) and the §4.9 stash cut line? Decide when Phase 6 is carded.
 31. **Kit metrics:** grid size, wall, floor and door heights, and the connection-point convention of the modular kit (§5). Fix them with the first hand-made map, with the Tech Lead.
+32. **Breath and heart rate:** are hold-breath and heart rate stats through the §4.12 modifier layer, and does holding breath cost fatigue? Decide when Phase 5 is carded (§4.14 tier 4).
 
 ## 10 Engine fit and engine requests
 
@@ -379,3 +401,4 @@ What the game must be able to do (needs, not solutions). Generic needs belong in
 11. **Headless simulation:** run the offline world sim without rendering (ENG-F6 is related). *(Phase 7)*
 12. **Posture:** crouch and prone hulls with clearance, lean with clearance in every stance, stance changes that take ticks. Crouch is [ENG-F33](https://github.com/WrackedFella/moho/issues/492); lean and prone are filed as [#544](https://github.com/WrackedFella/moho/issues/544). *(Phase 1.2)*
 13. **Assemble a level from pieces:** build one level at load from several authored pieces fitted at connection points, with colliders, markers and navigation that work across the joins, the same result from the same seed and content version (co-op), inside a load-time budget. *(later phase: generated maps)*
+14. **Draw a round in flight:** a tracer that follows a position the game owns and updates each tick, rather than a fixed-lifetime effect; later, a query that reports where a ray enters and leaves a surface, for penetration (a reverse ray works until then). Belongs with [ENG-F40 #636](https://github.com/WrackedFella/moho/issues/636) (muzzle flash, tracer, impact marks); not yet raised there. *(Phase 1.3; entry and exit Phase 3, optional)*
