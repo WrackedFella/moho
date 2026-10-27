@@ -18,7 +18,7 @@ The player's and the enemies' rounds stop arriving on the tick they are fired. A
 - An enemy with no aim error hits a player running across its view at a steady speed; lower grades miss a moving player more often.
 - *Simple* restores hitscan for every shooter: same-tick hits, no drop, no falloff, no bounce, no lead.
 - A replay with the same seed and commands reproduces every impact, its tick and its point.
-- Justin playtests Flight against Simple in the arena (gravity scale as needed, the proving ground if FPS-F10 has landed) and answers the milestone question: does a round in flight make distance a decision?
+- Justin playtests Flight against Simple, with rounds drawn by the engine tracer, in the arena (gravity scale as needed, the proving ground if FPS-F10 has landed) and answers the milestone question: does a round in flight make distance a decision?
 
 ## Scope
 - In: flying rounds for the player and enemies; muzzle velocity, drag and damage on the round's definition; damage by arrival speed; one ricochet off world surfaces; enemy lead with a grade dial; near misses counted where the round actually passes; the Simple setting and the gravity scale as tester controls; a replay test.
@@ -34,6 +34,7 @@ The player's and the enemies' rounds stop arriving on the tick they are fired. A
 | What can a bounced round hit? | Anything a fresh round can, the shooter included, with the speed it kept | Cheapest consistent rule; a self-hit from a bounce is a fair hardcore outcome. Bounces off bodies are cut (GDD §4.14) |
 | Where does Simple apply? | The whole sim, as a host setting read from slot 0 like god mode; tester control now, menu row later | One sim, one rule set per session; per-player realism would break host-resolved hits in co-op |
 | What does the gravity scale touch? | Rounds only, never characters or loose objects; tester control, default 1 | A world gravity change would change movement and FPS-F9 objects |
+| How are rounds drawn? | By the engine tracer that follows a round (request 2.18 on ENG-F40 #636); no game-side stopgap (Justin, 2026-10-27) | No throwaway work. Cost: the exit playtest waits on the engine; cards 01 to 04 can still build and pass their tests |
 | Determinism | Ricochet dice draw from their own seeded stream | Adding dice must not change enemy spread in existing replays |
 
 ## Deferred
@@ -56,13 +57,12 @@ The player's and the enemies' rounds stop arriving on the tick they are fired. A
 | FPS-F15-02 | A round hits for less the slower it arrives; damage moves to the round | 01 |
 | FPS-F15-03 | Enemies fire flying rounds and lead the player by grade | 01 |
 | FPS-F15-04 | A round bounces once off a glancing world surface | 01 |
-| FPS-F15-05 (pending decision) | Rounds in flight are drawn with a stopgap until the engine's tracer exists | 01 |
 
 02, 03 and 04 are independent of each other.
 
 ## Notes
 - Must land before FPS-M2 fixes its round data files (roadmap §5.1). Runs beside FPS-M2.
-- Engine need, not designed here: a tracer the game moves each frame from a position it owns (ENG-F40 #636 slice 1 spawns fixed-lifetime effects). Added to the engine-requests running list.
+- Engine need, not designed here: a tracer the game moves each frame from a position it owns (ENG-F40 #636 slice 1 spawns fixed-lifetime effects). Added to the engine-requests running list as 2.18. The exit playtest waits on it.
 - TL: where the flight maths lives (platform-free rules crate, mutation-gated, with the ray cast injected, or beside the store).
 - TL: whether the ricochet cone can be built without trig in the tick loop, so replays match across platforms.
 - TL: hit volumes must be current when rounds step after movement; check the order holds for every shooter.
