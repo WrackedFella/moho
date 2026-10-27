@@ -1318,6 +1318,78 @@ mod tests {
         assert!(log.contains("4242"), "the warning names the mesh id: {log}");
     }
 
+    #[test]
+    fn replacing_a_skinned_mesh_with_an_unskinned_one_stops_its_skinned_draws() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, skinned_mesh(1));
+        meshes.flush(&mut backend);
+        meshes.place_skinned(A, at(1.0), 0, None, &palette(2, 0.0));
+        assert_eq!(skinned(&meshes).len(), 1);
+        let old = backend.handle_with_index_count(3);
+        meshes.clear_placements();
+
+        meshes.upsert_movable(A, mesh(2));
+        meshes.flush(&mut backend);
+        meshes.place_skinned(A, at(1.0), 0, None, &palette(2, 0.0));
+        meshes.flush(&mut backend);
+
+        assert!(skinned(&meshes).is_empty());
+        assert_eq!(backend.unregistered, vec![old]);
+    }
+
+    #[test]
+    fn a_removed_skinned_mesh_draws_nothing() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, skinned_mesh(1));
+        meshes.flush(&mut backend);
+
+        meshes.remove(A);
+        meshes.flush(&mut backend);
+        meshes.place_skinned(A, at(1.0), 0, None, &palette(2, 0.0));
+        meshes.flush(&mut backend);
+
+        assert!(skinned(&meshes).is_empty());
+    }
+
+    #[test]
+    fn a_short_palette_placed_in_the_upload_frame_is_dropped_at_that_flush() {
+        let hero = WorldMeshId(4242);
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+
+        meshes.upsert_movable(hero, skinned_mesh(3));
+        meshes.place_skinned(hero, at(1.0), 0, None, &palette(3, 0.0));
+        let ((), log) = logged(|| meshes.flush(&mut backend));
+
+        assert!(skinned(&meshes).is_empty());
+        assert_eq!(log.matches("WARN").count(), 1, "{log}");
+        assert!(log.contains("4242"), "the warning names the mesh id: {log}");
+    }
+
+    #[test]
+    fn replacing_a_skinned_mesh_registers_the_new_skin() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, skinned_mesh(1));
+        meshes.flush(&mut backend);
+        meshes.upsert_movable(A, skinned_mesh(3));
+        meshes.flush(&mut backend);
+
+        meshes.place_skinned(A, at(1.0), 0, None, &palette(2, 0.0));
+        let ((), log) = logged(|| meshes.flush(&mut backend));
+
+        let handles: Vec<u32> = backend.registered.iter().map(|(h, _)| *h).collect();
+        assert_eq!(backend.skins.len(), 2);
+        assert_eq!(backend.skins[0].0, handles[0]);
+        assert_eq!(backend.skins[0].1[1], [1, 0, 0, 0]);
+        assert_eq!(backend.skins[1].0, handles[1]);
+        assert_eq!(backend.skins[1].1[1], [3, 0, 0, 0]);
+        assert!(skinned(&meshes).is_empty(), "2 joints < 4 needed");
+        assert_eq!(log.matches("WARN").count(), 1, "{log}");
+    }
+
     #[derive(Clone, Copy, Debug, PartialEq)]
     enum Kind {
         Static,
