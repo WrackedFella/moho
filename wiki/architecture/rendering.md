@@ -183,6 +183,8 @@ indexed by key. A swap shows on the next frame drawn:
 ```rust
 for (k, i, t) in copy.placements(&|k| &models[k], root) {
     world_meshes.place(ids[k][i], t, mats[k][i]);
+}
+```
 
 ### 2.4 Base-colour textures
 
