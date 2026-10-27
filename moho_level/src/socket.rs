@@ -18,11 +18,16 @@ pub struct Assembly<K> {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum SocketError {
+    /// The model has no node called `socket`.
     #[error("model has no node named `{socket}`")]
-    UnknownSocket { socket: String },
+    UnknownSocket {
+        /// The requested node name.
+        socket: String,
+    },
 }
 
 impl<K: Copy> Assembly<K> {
+    /// A copy of `model` with nothing attached.
     pub fn new(model: K) -> Self {
         Self {
             model,
@@ -30,6 +35,7 @@ impl<K: Copy> Assembly<K> {
         }
     }
 
+    /// The key of the model this copy draws.
     pub fn model(&self) -> K {
         self.model
     }
@@ -46,8 +52,13 @@ impl<K: Copy> Assembly<K> {
         part: Assembly<K>,
         offset: Affine3A,
     ) -> Result<Option<Assembly<K>>, SocketError> {
-        let _ = (models, socket, part, offset);
-        todo!()
+        let node = self.node_of(models, socket)?;
+        let Some(slot) = self.parts.iter_mut().find(|p| p.0 == node) else {
+            self.parts.push((node, offset, part));
+            return Ok(None);
+        };
+        let (_, _, replaced) = std::mem::replace(slot, (node, offset, part));
+        Ok(Some(replaced))
     }
 
     /// Remove and return the part at `socket`; `Ok(None)` when the node holds nothing.
@@ -59,8 +70,12 @@ impl<K: Copy> Assembly<K> {
         models: &impl Fn(K) -> &'m Model,
         socket: &str,
     ) -> Result<Option<Assembly<K>>, SocketError> {
-        let _ = (models, socket);
-        todo!()
+        let node = self.node_of(models, socket)?;
+        Ok(self
+            .parts
+            .iter()
+            .position(|p| p.0 == node)
+            .map(|i| self.parts.remove(i).2))
     }
 
     /// The part at `socket`, to attach to it in turn.
@@ -72,8 +87,12 @@ impl<K: Copy> Assembly<K> {
         models: &impl Fn(K) -> &'m Model,
         socket: &str,
     ) -> Result<Option<&mut Assembly<K>>, SocketError> {
-        let _ = (models, socket);
-        todo!()
+        let node = self.node_of(models, socket)?;
+        Ok(self
+            .parts
+            .iter_mut()
+            .find(|p| p.0 == node)
+            .map(|p| &mut p.2))
     }
 
     /// Every mesh to draw as `(model key, mesh index, transform)`: this model's meshes,
@@ -84,7 +103,40 @@ impl<K: Copy> Assembly<K> {
         models: &impl Fn(K) -> &'m Model,
         root: Affine3A,
     ) -> Vec<(K, usize, Affine3A)> {
-        let _ = (models, root);
-        todo!()
+        let mut out = Vec::new();
+        self.collect(models, root, &mut out);
+        out
+    }
+
+    fn collect<'m>(
+        &self,
+        models: &impl Fn(K) -> &'m Model,
+        root: Affine3A,
+        out: &mut Vec<(K, usize, Affine3A)>,
+    ) {
+        let model = models(self.model);
+        out.extend(
+            model
+                .placements(root)
+                .map(|(mesh, transform)| (self.model, mesh, transform)),
+        );
+        for (node, offset, part) in &self.parts {
+            part.collect(models, root * model.nodes()[*node].rest * *offset, out);
+        }
+    }
+
+    /// Index of the first node called `socket` in this copy's model.
+    fn node_of<'m>(
+        &self,
+        models: &impl Fn(K) -> &'m Model,
+        socket: &str,
+    ) -> Result<usize, SocketError> {
+        models(self.model)
+            .nodes()
+            .iter()
+            .position(|n| n.name.as_deref() == Some(socket))
+            .ok_or_else(|| SocketError::UnknownSocket {
+                socket: socket.to_owned(),
+            })
     }
 }
