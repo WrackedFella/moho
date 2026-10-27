@@ -70,7 +70,7 @@ the audit at the v1 gate ([ENG-F5](https://github.com/WrackedFella/moho/issues/2
 | [SG-F3 I place a building and pawns construct it](https://github.com/WrackedFella/moho/issues/312) |
 | [SG-F4 Pawns dig what I mark](https://github.com/WrackedFella/moho/issues/310) |
 | [SG-F5 I run the colony from above and step into a pawn](https://github.com/WrackedFella/moho/issues/309) |
-| [SG-F6 New worlds look intentional and ore is findable](flagstone/SG-F6-world-generation/_feature.md) |
+| [SG-F6 I pick my colony's ground on a believable world map](https://github.com/WrackedFella/moho/issues/707) |
 | [SG-F7 Light follows what I dig and build](https://github.com/WrackedFella/moho/issues/470) |
 
 ## searchlight/
