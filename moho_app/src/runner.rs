@@ -8,6 +8,7 @@ use crate::pacing::FramePacer;
 use moho_audio::AudioSystem;
 use moho_renderer::RendererBackend;
 use winit::application::ApplicationHandler;
+use winit::dpi::PhysicalSize;
 use winit::event::{DeviceEvent, DeviceId, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::PhysicalKey;
@@ -73,6 +74,14 @@ fn mode_of(fullscreen: Option<Fullscreen>) -> WindowMode {
 fn mode_change(requests: LoopRequests, current: WindowMode) -> Option<WindowMode> {
     let wanted = requests.window_mode_after(current);
     (wanted != current).then_some(wanted)
+}
+
+/// The inner size, as `(width, height)`, to give the window when a game asked for one: only
+/// when the window ends up windowed once the mode request in `requests` is applied to `current`.
+fn size_change(requests: LoopRequests, current: WindowMode) -> Option<(u32, u32)> {
+    requests
+        .window_size
+        .filter(|_| requests.window_mode_after(current) == WindowMode::Windowed)
 }
 
 /// Runs `game` in a window until it asks to exit or the window closes.
@@ -149,14 +158,23 @@ impl<G: Game> Runner<G> {
     }
 
     /// Switches the window to the mode a game asked for during a callback, if it differs.
+    /// Then resizes it, if a size was asked for and the window ends up windowed.
     fn apply_requested_mode(&mut self, requests: LoopRequests) {
-        let Some(wanted) = mode_change(requests, self.current_mode()) else {
-            return;
-        };
-        if let Some(window) = &self.window {
-            window.set_fullscreen(fullscreen_for(wanted));
+        let current = self.current_mode();
+        if let Some(wanted) = mode_change(requests, current) {
+            if let Some(window) = &self.window {
+                window.set_fullscreen(fullscreen_for(wanted));
+            }
+            self.mode = wanted;
         }
-        self.mode = wanted;
+        if let Some((width, height)) = size_change(requests, current)
+            && let Some(window) = &self.window
+            && let Some(applied) = window.request_inner_size(PhysicalSize::new(width, height))
+            && let Some(renderer) = &mut self.renderer
+        {
+            // A size applied at once may raise no `Resized` event.
+            renderer.resize(applied.width, applied.height);
+        }
     }
 
     fn flip_window_mode(&mut self, event_loop: &ActiveEventLoop) {
@@ -484,5 +502,36 @@ mod tests {
             Some(WindowMode::Borderless)
         );
         assert_eq!(mode_change(requests, WindowMode::Borderless), None);
+    }
+
+    #[test]
+    fn a_size_request_resizes_only_a_windowed_window() {
+        let size = Some((1280, 720));
+        let asking = |window_mode| LoopRequests {
+            window_mode,
+            window_size: size,
+            ..LoopRequests::default()
+        };
+
+        let stays_windowed = size_change(asking(None), WindowMode::Windowed);
+        let goes_windowed = size_change(asking(Some(WindowMode::Windowed)), WindowMode::Borderless);
+        let goes_borderless =
+            size_change(asking(Some(WindowMode::Borderless)), WindowMode::Windowed);
+        let stays_borderless = size_change(asking(None), WindowMode::Borderless);
+        let asks_nothing = size_change(LoopRequests::default(), WindowMode::Windowed);
+        let asks_nothing_and_flips = size_change(
+            LoopRequests {
+                window_mode: Some(WindowMode::Windowed),
+                ..LoopRequests::default()
+            },
+            WindowMode::Borderless,
+        );
+
+        assert_eq!(stays_windowed, size);
+        assert_eq!(goes_windowed, size, "the size follows a switch to windowed");
+        assert_eq!(goes_borderless, None, "borderless ignores the size");
+        assert_eq!(stays_borderless, None);
+        assert_eq!(asks_nothing, None);
+        assert_eq!(asks_nothing_and_flips, None);
     }
 }

@@ -157,7 +157,34 @@ for (i, t) in model.placements(root) {
 }
 ```
 
-### 2.3 Rigs and clips
+### 2.3 Sockets
+
+`Assembly<K>` (`moho_level/src/socket.rs`) is one drawn copy of a model, keyed by the game's
+model key `K`, with other assemblies attached at its named nodes, nested. Each copy holds its own
+parts, so two rifles from one model can carry different scopes; the shared `Model` never changes.
+
+- Every method takes a `K -> &Model` lookup, so the assembly holds no models. The lookup must
+  return the same model for a key for the assembly's whole life: sockets resolve to node indices
+  at attach time.
+- `attach` puts a part at the first node of that name in walk order, with an offset in the node's
+  space. A node holds one part: attaching again replaces it in place (same position in attach
+  order) and returns the old part. `detach` removes and returns it; `part_mut` reaches it to
+  attach to it in turn. An unknown name is `SocketError::UnknownSocket` and leaves the assembly
+  unchanged.
+- `placements(models, root)` yields `(model key, mesh index, transform)`: this copy's meshes
+  first, then each part in attach order, depth-first, the part's root being
+  `root * socket_node.rest * offset`. Sockets use rest transforms, not posed ones.
+
+The game glue keeps one `Assembly` per drawn copy and the per-model ids and materials of 2.2,
+indexed by key. A swap shows on the next frame drawn:
+
+```rust
+for (k, i, t) in copy.placements(&|k| &models[k], root) {
+    world_meshes.place(ids[k][i], t, mats[k][i]);
+}
+```
+
+### 2.4 Rigs and clips
 
 Skins and clips are more immutable data on the `Model` (`moho_level/src/rig.rs` imports them,
 `moho_level/src/anim.rs` samples them, with no glTF type). A pose is a value computed from the

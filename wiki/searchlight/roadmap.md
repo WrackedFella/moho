@@ -19,8 +19,9 @@ Milestone names follow ISO 2145: FPS-M*n* delivers GDD Phase *n*; FPS-M1.1 and F
 | FPS-M4 Wounds and healing | 4 | Does limb damage create good downtime? | none new |
 | FPS-M4.1 Grenades (mocked) | 4.1 | Does a throwable fit the item model? | none beyond runtime spawn and positional audio |
 | FPS-M5 Time, survival, rest | 5 | Do survival stats add pressure, not chores? | game clock scaling; save and load |
-| FPS-M6 Hub and jobs | 6 | Does profit-as-score change behavior? | level switching; save and load |
+| FPS-M6 Hub and missions | 6 | Does profit-as-score change behavior? | level switching; save and load |
 | FPS-M7 Director | 7 | Does the world feel alive on little machinery? | headless sim; navigation |
+| Later: generated maps | Later | Does assembly add variety the hand-made pool lacks? | assemble a level from pieces (GDD §10 item 13) |
 
 Order is the GDD's: systems arrive in the order they create costs, so the ledger has something to measure. Enemy AI lands in slices alongside the phases (GDD §7).
 
@@ -120,11 +121,12 @@ Runs in slices parallel to FPS-M2; needs no items or UI beyond one slider in the
 - **Decisions due:** GDD §9 Q8 (difficulty as complexity toggles) and Q2 (co-op timing).
 - **Cut lines:** temperature, disease, spoilage.
 
-## 10 FPS-M6 Hub and jobs (Phase 6)
+## 10 FPS-M6 Hub and missions (Phase 6)
 
-- **Outcome:** trader hub, job board, currency, full per-job ledger; the arena becomes the job site and waves and score retire from the default experience.
-- **Entry gate:** level switching carrying player state (§10 item 10), save and load. Needs a hub and one or two zone maps.
-- **Decisions due:** GDD §9 Q1 (setting), Q3 (pivot point), Q15 (starting backgrounds).
+- **Outcome:** trader hub, job board offering missions with their conditions shown, currency, full per-job ledger; the arena becomes the job site and waves and score retire from the default experience. Missions play on hand-made maps built on the modular kit, with random starts, exits, spawns and building slots, and loot by the GDD §4.13 rule (the place decides the pool, difficulty decides amount and ceiling).
+- **Entry gate:** level switching carrying player state (§10 item 10), save and load. Needs a hub and two mission maps, blocked out by hand on the kit; the kit's metrics are fixed with the first map (GDD §9 Q31).
+- **Decisions due:** GDD §9 Q1 (setting), Q3 (pivot point), Q15 (starting backgrounds), Q28 (mission persistence), Q29 (failed mission cost), Q30 (hub upgrades).
+- **Cut lines:** generated geometry (the later phase below), free parameter sliders, hub upgrades that raise stats, bespoke art.
 - **Earliest playable game:** the first milestone that is a game rather than a prototype; the cross-line v1 gate in the [roadmap](../roadmap.md#milestone-gates-that-span-lines) uses it.
 
 ## 11 FPS-M7 Director (Phase 7)
@@ -132,6 +134,13 @@ Runs in slices parallel to FPS-M2; needs no items or UI beyond one slider in the
 - **Outcome:** zone graph, factions, offline dice sim, daily planning, live handover; groups as the Director's unit.
 - **Entry gate:** headless sim (§10 item 11, ENG-F6 #233 related), navigation for live actors.
 - **Cut lines:** dialogue and diplomacy, emergent quests, more than about five zones. Highest pivot risk, so last.
+
+## 11.1 Later: generated maps
+
+- **Outcome:** mission maps assembled at load from kit modules cut from the hand-made maps (GDD §4.13, §5).
+- **Entry gate:** FPS-M6 played with the hand-made pool. Before cards, a spike assembles a few hundred metres of modules, builds navigation, times the load and lists seam failures.
+- **Engine:** assemble a level from pieces (GDD §10 item 13), filed as an engine request when this is drafted.
+- **Cut lines:** generated terrain, free-form layout outside the kit's connection points.
 
 ## 12 Engine requests from this line
 

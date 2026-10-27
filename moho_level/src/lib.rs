@@ -10,6 +10,7 @@ mod mesh;
 mod model;
 pub mod nav;
 mod rig;
+mod socket;
 
 use std::borrow::Cow;
 use std::path::Path;
@@ -24,6 +25,7 @@ pub use model::{
 };
 use moho_render_api::WorldMesh;
 pub use nav::{AgentProfile, NavBuildError, NavMesh};
+pub use socket::{Assembly, SocketError};
 
 /// A loaded level: one mesh per triangle primitive and one marker per named,
 /// mesh-less node reached from the default scene.

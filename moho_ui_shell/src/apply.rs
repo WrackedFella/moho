@@ -1,10 +1,12 @@
 //! The default way a game applies the engine's commands.
 
-use moho_app::FrameContext;
-use moho_audio::AudioSource;
+use moho_app::{FrameContext, WindowMode};
+use moho_audio::{AudioSettings, AudioSource};
+use moho_core::prefs::WindowMode as SavedMode;
 use moho_renderer::RendererBackend;
 
 use crate::console::registry::EngineCommand;
+use crate::settings::EngineSettings;
 
 /// Applies `command`: `Quit` asks the runner to exit, as closing the window does.
 pub fn apply_engine_command(command: &EngineCommand, ctx: &mut FrameContext<'_>) {
@@ -42,6 +44,47 @@ pub fn apply_engine_command(command: &EngineCommand, ctx: &mut FrameContext<'_>)
             }
         }
     }
+}
+
+/// Applies the engine's player settings: shadow and ambient-occlusion quality to the renderer,
+/// the volumes to the audio system, and the window mode and size as runner requests. The look
+/// rows are the game's, so they are left alone.
+pub fn apply_engine_settings(settings: &EngineSettings, ctx: &mut FrameContext<'_>) {
+    if let Some(renderer) = ctx.renderer() {
+        renderer.set_shadow_quality(quality_level(settings.shadow_quality));
+        renderer.set_ssao_quality(quality_level(settings.ssao_quality));
+    }
+    if let Some(audio) = ctx.audio() {
+        let applied = audio_settings_for(settings, audio.settings());
+        audio.set_settings(applied);
+    }
+    ctx.set_window_mode(runtime_window_mode(settings.window_mode));
+    ctx.set_window_size(settings.resolution.0, settings.resolution.1);
+}
+
+/// The mode the window runs in for a saved `mode`: both fullscreen kinds run borderless.
+pub fn runtime_window_mode(mode: SavedMode) -> WindowMode {
+    match mode {
+        SavedMode::Windowed => WindowMode::Windowed,
+        SavedMode::Fullscreen | SavedMode::Borderless => WindowMode::Borderless,
+    }
+}
+
+/// `current` with the sound-effect, music and UI volumes of `settings`; the master and voice
+/// levels and the mute stay as they were.
+pub fn audio_settings_for(settings: &EngineSettings, current: &AudioSettings) -> AudioSettings {
+    current
+        .clone()
+        .with_sound_effects_volume(settings.sound_effect_volume / VOLUME_SCALE)
+        .with_music_volume(settings.music_volume / VOLUME_SCALE)
+        .with_ui_volume(settings.ui_volume / VOLUME_SCALE)
+}
+
+/// The top of the prefs volume scale, which the audio system takes as 1.
+const VOLUME_SCALE: f32 = 10.0;
+
+fn quality_level(quality: u32) -> u8 {
+    u8::try_from(quality).unwrap_or(u8::MAX)
 }
 
 fn with_renderer(
@@ -232,5 +275,126 @@ mod tests {
         apply_engine_command(&EngineCommand::Quit, &mut ctx);
 
         assert!(ctx.exit_requested());
+    }
+
+    mod engine_settings {
+        use moho_app::WindowMode;
+        use moho_audio::AudioCategory;
+        use moho_core::prefs::WindowMode as Saved;
+
+        use super::*;
+
+        fn settings() -> EngineSettings {
+            EngineSettings {
+                mouse_sensitivity: 2.5,
+                mouse_smoothing: true,
+                invert_mouse_y: true,
+                sound_effect_volume: 4.0,
+                music_volume: 10.0,
+                ui_volume: 2.5,
+                shadow_quality: 2,
+                ssao_quality: 4,
+                window_mode: Saved::Windowed,
+                resolution: (1280, 720),
+            }
+        }
+
+        fn volume(audio: &AudioSettings, category: AudioCategory) -> f32 {
+            audio.effective_volume(&category)
+        }
+
+        fn close(a: f32, b: f32) -> bool {
+            (a - b).abs() < 1e-6
+        }
+
+        #[test]
+        fn audio_settings_for_sets_the_three_volumes_and_keeps_the_rest() {
+            let current = AudioSettings::new()
+                .with_master_volume(0.5)
+                .with_voice_volume(0.2)
+                .with_sound_effects_volume(1.0)
+                .with_music_volume(1.0)
+                .with_ui_volume(1.0);
+            let muted = current.clone().set_muted(true);
+
+            let audio = audio_settings_for(&settings(), &current);
+            let silenced = audio_settings_for(&settings(), &muted);
+
+            let sfx = volume(&audio, AudioCategory::SoundEffect);
+            let music = volume(&audio, AudioCategory::Music);
+            let ui = volume(&audio, AudioCategory::UserInterface);
+            let voice = volume(&audio, AudioCategory::Voice);
+            assert!(close(sfx, 0.5 * 0.4), "sound effects {sfx}");
+            assert!(close(music, 0.5 * 1.0), "music {music}");
+            assert!(close(ui, 0.5 * 0.25), "ui {ui}");
+            assert!(close(voice, 0.5 * 0.2), "voice {voice}");
+            for category in [
+                AudioCategory::SoundEffect,
+                AudioCategory::Music,
+                AudioCategory::UserInterface,
+                AudioCategory::Voice,
+            ] {
+                assert_eq!(volume(&silenced, category), 0.0, "the mute is kept");
+            }
+        }
+
+        #[test]
+        fn apply_engine_settings_sets_shadow_and_ssao_quality() {
+            let clock = GameClock::default();
+            let mut renderer = FakeRenderer::default();
+            {
+                let backend: &mut dyn RendererBackend = &mut renderer;
+                let mut ctx =
+                    FrameContext::new(Duration::from_millis(16), &clock, Some(backend), None);
+
+                apply_engine_settings(&settings(), &mut ctx);
+            }
+
+            assert_eq!(renderer.shadow, vec![2]);
+            assert_eq!(renderer.ssao, vec![4]);
+            assert!(renderer.bloom.is_empty(), "bloom is not a settings row");
+            assert!(renderer.tone_map.is_empty());
+            assert!(renderer.debug_view.is_empty());
+        }
+
+        #[test]
+        fn apply_engine_settings_requests_window_mode_and_size() {
+            let clock = GameClock::default();
+            let cases = [
+                (Saved::Windowed, WindowMode::Windowed, (1280, 720)),
+                (Saved::Fullscreen, WindowMode::Borderless, (1920, 1080)),
+                (Saved::Borderless, WindowMode::Borderless, (2560, 1440)),
+            ];
+
+            for (saved, expected_mode, size) in cases {
+                let mut ctx = FrameContext::new(Duration::from_millis(16), &clock, None, None);
+                let settings = EngineSettings {
+                    window_mode: saved,
+                    resolution: size,
+                    ..settings()
+                };
+
+                apply_engine_settings(&settings, &mut ctx);
+
+                assert_eq!(
+                    ctx.requested_window_mode(),
+                    Some(expected_mode),
+                    "{saved:?}"
+                );
+                assert_eq!(ctx.requested_window_size(), Some(size), "{saved:?}");
+            }
+        }
+
+        #[test]
+        fn apply_engine_settings_without_a_renderer_or_audio_still_requests_the_window() {
+            let clock = GameClock::default();
+            let mut ctx = FrameContext::new(Duration::from_millis(16), &clock, None, None);
+
+            apply_engine_settings(&settings(), &mut ctx);
+
+            assert_eq!(ctx.requested_window_mode(), Some(WindowMode::Windowed));
+            assert_eq!(ctx.requested_window_size(), Some((1280, 720)));
+            assert!(!ctx.exit_requested());
+        }
     }
 }
