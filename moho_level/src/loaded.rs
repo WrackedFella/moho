@@ -67,7 +67,6 @@ mod tests {
     use super::*;
     use crate::LevelMesh;
     use moho_render_api::WorldMesh;
-    use std::sync::Arc;
 
     fn floor(y: f32) -> WorldMesh {
         WorldMesh::new(
