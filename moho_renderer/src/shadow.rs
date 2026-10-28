@@ -167,7 +167,6 @@ impl ShadowSystem {
             );
         }
 
-        // One D2 view per layer so each cascade can be rendered into its own slice
         let csm_cascade_views: Vec<wgpu::TextureView> = (0..CASCADE_LAYERS as u32)
             .map(|i| {
                 csm_texture.create_view(&wgpu::TextureViewDescriptor {

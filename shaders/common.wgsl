@@ -70,7 +70,7 @@ var<storage, read> dynamic_lights: DynamicLights;
 var<uniform> shadow_data: Shadow;
 
 @group(1) @binding(1)
-var shadow_map: texture_depth_2d_array; // One layer per cascade
+var shadow_map: texture_depth_2d_array;
 
 @group(1) @binding(2)
 var shadow_sampler: sampler_comparison;

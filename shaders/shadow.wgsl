@@ -20,7 +20,7 @@ struct Shadow {
 @group(0) @binding(0)
 var<uniform> shadow_data: Shadow;
 
-// Immediate data for the layer being rendered (wgpu 29 renamed push constants to "immediates")
+// Immediate data: the layer being rendered
 struct PushConstants {
     layer: u32,
 }
@@ -59,7 +59,6 @@ fn vs_main(vertex: VertexInput, instance: InstanceInput) -> VertexOutput {
     let row3 = vec4<f32>(instance.model_col0.w, instance.model_col1.w, instance.model_col2.w, instance.model_col3.w);
     let world_pos = vec4<f32>(dot(row0, p), dot(row1, p), dot(row2, p), dot(row3, p));
     
-    // Transform to the layer's light space
     out.clip_position = shadow_data.matrices[pc.layer] * world_pos;
 
     out.height_over_cut = world_pos.y - shadow_data.metadata.w;

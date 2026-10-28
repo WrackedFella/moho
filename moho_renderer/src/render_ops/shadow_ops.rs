@@ -98,11 +98,8 @@ pub fn render_shadow_passes(
         shadow_pass.set_pipeline(&shadow_system.shadow_pipeline);
         shadow_pass.set_bind_group(0, &shadow_system.csm_pass_bind_group, &[]);
 
-        // The shadow shader indexes its matrices by the layer in the immediate data
-        // (wgpu 29 renamed push constants to "immediates")
         shadow_pass.set_immediates(0, bytemuck::bytes_of(&layer));
 
-        // Draw all pending meshes from the cascade's perspective
         for (i, (key, insts)) in pending_draws.iter().enumerate() {
             let idx = key.mesh as usize;
             if idx >= mesh_table.len() {

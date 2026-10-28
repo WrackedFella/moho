@@ -10,7 +10,6 @@ const MOON_CASCADES: u32 = 2u;
 // Scales block light's additive term; can push colour past 1 next to strong emitters.
 const BLOCK_LIGHT_GAIN: f32 = 1.0;
 
-// Check if a light is active based on its intensity (0 = sun, 1 = moon)
 fn is_light_active(light_idx: u32) -> bool {
     return shadow_data.light_intensities[light_idx] > 0.01;
 }
@@ -277,7 +276,6 @@ fn compute_pcss_with_samples(
 }
 
 fn sample_light_shadow(layer: u32, world_pos: vec3<f32>, bias: f32, screen_pos: vec2<f32>, view_depth: f32) -> f32 {
-    // Transform world position to this cascade's light space
     let light_space_pos = shadow_data.matrices[layer] * vec4<f32>(world_pos, 1.0);
 
     // Perspective divide
@@ -435,7 +433,6 @@ fn calculate_light_shadow(light_idx: u32, world_pos: vec3<f32>, normal: vec3<f32
         return 1.0; // No shadow from inactive lights
     }
 
-    // Effective shadow distance (from metadata.x in uniform)
     let shadow_distance = shadow_data.metadata.x;
     if (shadow_distance <= 0.0) {
         return 1.0; // Shadow disabled
