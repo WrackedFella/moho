@@ -435,7 +435,7 @@ impl<A> MenuStack<A> {
     }
 
     /// Whether the top screen is waiting for a key or button to bind.
-    pub fn is_capturing(&self) -> bool {
+    pub(crate) fn is_capturing(&self) -> bool {
         self.screens.last().is_some_and(|open| open.capturing)
     }
 
@@ -488,7 +488,15 @@ impl<A> MenuStack<A> {
             let first_centre = rows
                 .get(visible.start)
                 .map_or(size[1] / 2.0, |r| centre_y(*r));
-            texts.push(centred(title, first_centre - ROW_PITCH, COLOR));
+            let mut title_centre = first_centre - ROW_PITCH;
+            if matches!(
+                open.screen.items.get(visible.start),
+                Some(MenuItem::Control { .. })
+            ) {
+                // Control rows are short, so the title band above them is too thin to hold it.
+                title_centre = title_centre.max(ROW_SIZE / 2.0);
+            }
+            texts.push(centred(title, title_centre, COLOR));
         }
         for row in visible {
             let (item, rect) = (&open.screen.items[row], rows[row]);
@@ -617,6 +625,22 @@ impl<A: Clone> MenuStack<A> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// A right press at `point`: while capturing it is the binding; otherwise it clears the
+    /// focused slot only when `point` is over that slot's cell.
+    pub fn right_click(&mut self, point: [f32; 2], size: [f32; 2]) {
+        let Some(open) = self.screens.last_mut() else {
+            return;
+        };
+        if open.capturing {
+            self.on_key(Input::Mouse(MouseButton::Right), true, false);
+        } else if let Some((row, rect)) = open.row_at(point, size)
+            && row == open.focus
+            && open.slot_at(row, rect, point[0]) == Some(open.slot)
+        {
+            self.events.extend(open.clear());
         }
     }
 

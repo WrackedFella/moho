@@ -196,6 +196,9 @@ impl<G, A: Clone> UiShell<G, A> {
         if input == Input::Mouse(MouseButton::Left) && pressed && !repeat {
             let size = self.window_points();
             self.menu.click(self.cursor, size);
+        } else if input == Input::Mouse(MouseButton::Right) && pressed && !repeat {
+            let size = self.window_points();
+            self.menu.right_click(self.cursor, size);
         } else {
             self.menu.on_key(input, pressed, repeat);
         }
