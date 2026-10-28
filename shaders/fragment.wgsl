@@ -276,7 +276,7 @@ fn compute_pcss_with_samples(
     );
 }
 
-fn sample_light_shadow(layer: u32, is_moon: bool, world_pos: vec3<f32>, bias: f32, screen_pos: vec2<f32>, view_depth: f32) -> f32 {
+fn sample_light_shadow(layer: u32, world_pos: vec3<f32>, bias: f32, screen_pos: vec2<f32>, view_depth: f32) -> f32 {
     // Transform world position to this cascade's light space
     let light_space_pos = shadow_data.matrices[layer] * vec4<f32>(world_pos, 1.0);
 
@@ -317,7 +317,7 @@ fn sample_light_shadow(layer: u32, is_moon: bool, world_pos: vec3<f32>, bias: f3
         }
         
         // Per-light quality adjustment: Moon gets reduced quality (less noticeable)
-        if (is_moon) {
+        if (layer >= SUN_CASCADES) {
             blocker_samples = max(blocker_samples / 2u, 4u);
             pcf_samples = max(pcf_samples / 2u, 8u);
         }
@@ -424,7 +424,7 @@ fn sample_cascade_shadow(light_idx: u32, cascade: u32, world_pos: vec3<f32>, nor
     // Hardware depth bias and the normal offset carry acne prevention; this is float epsilon.
     let bias = 0.000005;
 
-    return sample_light_shadow(first_layer(light_idx) + cascade, light_idx == 1u, offset_pos, bias, screen_pos, view_depth);
+    return sample_light_shadow(first_layer(light_idx) + cascade, offset_pos, bias, screen_pos, view_depth);
 }
 
 // Calculate shadow factor for a specific light with distance fade

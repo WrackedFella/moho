@@ -112,7 +112,7 @@ impl ShadowSystem {
         let (csm_cascade_views, csm_array_view) = Self::create_shadow_textures(device);
         let csm_matrix_buffer = Self::create_uniform_buffer(device);
         let shadow_sampler = Self::create_depth_sampler(device);
-        let csm_pass_bgl = Self::create_bind_group_layout(device);
+        let csm_pass_bgl = crate::pipeline::layouts::create_csm_pass_bind_group_layout(device)?;
         let (csm_pass_bind_group, csm_shadow_bind_group) = Self::create_bind_groups(
             device,
             &csm_pass_bgl,
@@ -236,25 +236,7 @@ impl ShadowSystem {
         })
     }
 
-    /// Stage 4: Define the bind group layout for the shadow render pass: a single
-    /// vertex-visible uniform buffer at binding 0.
-    fn create_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("csm-pass-bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        })
-    }
-
-    /// Stage 5: Instantiate the pass and sampling bind groups using the layouts and resources
+    /// Stage 4: Instantiate the pass and sampling bind groups using the layouts and resources
     /// from the previous stages.
     fn create_bind_groups(
         device: &wgpu::Device,
@@ -414,23 +396,24 @@ impl ShadowSystem {
         };
 
         let camera_world = view.inverse();
-        let sun = cascades::light_cascades::<SUN_CASCADES>(
+        let sun_splits = cascades::practical_splits::<SUN_CASCADES>(frustum.near, frustum.far);
+        let moon_splits = cascades::practical_splits::<MOON_CASCADES>(frustum.near, frustum.far);
+        let sun = cascades::fit_cascades(
             sun_dir,
             frustum,
             camera_world,
+            &sun_splits,
             CASCADE_MAP_SIZE,
         );
-        let moon = cascades::light_cascades::<MOON_CASCADES>(
+        let moon = cascades::fit_cascades(
             moon_dir,
             frustum,
             camera_world,
+            &moon_splits,
             CASCADE_MAP_SIZE,
         );
-        let splits = (
-            cascades::practical_splits(frustum.near, frustum.far),
-            cascades::practical_splits(frustum.near, frustum.far),
-        );
-        let camera_forward = -camera_world.z_axis.truncate().normalize();
+        let splits = (sun_splits, moon_splits);
+        let camera_forward = cascades::camera_forward(camera_world);
         // An inactive light reads as zero, so the shader never samples cascades that were not drawn.
         let active_intensity = |slot: u32| {
             self.active_lights
@@ -475,5 +458,16 @@ mod tests {
         let declaration = format!("const NORMAL_OFFSET_TEXELS: f32 = {NORMAL_OFFSET_TEXELS:?};");
 
         assert!(source.contains(&declaration), "missing `{declaration}`");
+    }
+
+    #[test]
+    fn main_shader_cascade_counts_match_the_rust_constants() {
+        let source = crate::pipeline::main_shader_source();
+
+        let sun = format!("const SUN_CASCADES: u32 = {}u;", super::SUN_CASCADES);
+        let moon = format!("const MOON_CASCADES: u32 = {}u;", super::MOON_CASCADES);
+
+        assert!(source.contains(&sun), "missing `{sun}`");
+        assert!(source.contains(&moon), "missing `{moon}`");
     }
 }

@@ -105,7 +105,13 @@ pub(super) fn fit_cascade(light_dir: Vec3, centre: Vec3, radius: f32, map_size: 
     }
 }
 
+/// The direction the camera looks along; `camera_world` is the inverse view matrix.
+pub(super) fn camera_forward(camera_world: Mat4) -> Vec3 {
+    -camera_world.z_axis.truncate().normalize()
+}
+
 /// `N` cascade fits for the light, near to far. `camera_world` is the inverse view matrix.
+#[cfg(test)]
 pub(super) fn light_cascades<const N: usize>(
     light_dir: Vec3,
     frustum: CameraFrustum,
@@ -113,8 +119,19 @@ pub(super) fn light_cascades<const N: usize>(
     map_size: u32,
 ) -> [CascadeFit; N] {
     let splits = practical_splits::<N>(frustum.near, frustum.far);
+    fit_cascades(light_dir, frustum, camera_world, &splits, map_size)
+}
+
+/// `N` cascade fits for the light, near to far, ending at the given `splits`.
+pub(super) fn fit_cascades<const N: usize>(
+    light_dir: Vec3,
+    frustum: CameraFrustum,
+    camera_world: Mat4,
+    splits: &[f32; N],
+    map_size: u32,
+) -> [CascadeFit; N] {
     let position = camera_world.w_axis.truncate();
-    let forward = -camera_world.z_axis.truncate().normalize();
+    let forward = camera_forward(camera_world);
     let size = map_size as f32;
     let padding = size / (size - 2.0 * FILTER_MARGIN_TEXELS);
 
