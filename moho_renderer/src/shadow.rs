@@ -2,7 +2,27 @@ use wgpu::util::DeviceExt;
 
 use crate::gpu_types::MAX_SHADOW_LIGHTS;
 
+mod cascades;
 mod light_matrix;
+
+/// Shadow-map layers: the sun's cascades first, then the moon's.
+pub(crate) const CASCADE_LAYERS: usize = 6;
+/// Sun cascades (layers `0..SUN_CASCADES`).
+pub(crate) const SUN_CASCADES: usize = 4;
+/// Moon cascades (layers `SUN_CASCADES..CASCADE_LAYERS`).
+pub(crate) const MOON_CASCADES: usize = 2;
+/// Resolution of every cascade.
+pub(crate) const CASCADE_MAP_SIZE: u32 = 4096;
+/// Nearest distance the split scheme treats as the start of the view, in metres.
+pub(crate) const SPLIT_NEAR: f32 = 1.0;
+/// Blend between logarithmic (1) and uniform (0) splits.
+pub(crate) const SPLIT_LAMBDA: f32 = 0.8;
+/// Texels of padding so filter taps stay inside a cascade's map.
+pub(crate) const FILTER_MARGIN_TEXELS: f32 = 16.0;
+/// Fraction of the previous slice's length that a slice starts early, to blend cascades.
+pub(crate) const CASCADE_BLEND: f32 = 0.1;
+/// How far toward the light, in metres, casters outside a cascade's sphere still land in its map.
+pub(crate) const CASTER_REACH: f32 = 500.0;
 
 /// Shadow map resolution per cascade/light
 pub const SHADOW_MAP_SIZE: u32 = 4096;

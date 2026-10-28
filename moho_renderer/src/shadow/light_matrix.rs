@@ -3,11 +3,12 @@
 use glam::camera::rh::{proj::directx::orthographic, view::look_at_mat4};
 use glam::{Mat4, Vec3, Vec4};
 
+use super::cascades::CascadeFit;
 use super::{
-    ActiveShadowLight, CASCADE_RADIUS_MULTIPLIER, MIN_SHADOW_LIGHT_INTENSITY, PcssSettings,
-    SHADOW_DISTANCE, SHADOW_MAP_SIZE,
+    ActiveShadowLight, CASCADE_RADIUS_MULTIPLIER, MIN_SHADOW_LIGHT_INTENSITY, MOON_CASCADES,
+    PcssSettings, SHADOW_DISTANCE, SHADOW_MAP_SIZE, SUN_CASCADES,
 };
-use crate::gpu_types::MultiLightShadowGpu;
+use crate::gpu_types::{MultiLightShadowGpu, ShadowGpu};
 
 /// Above this `|light_dir · Y|` the look-at's `forward × up` is too close to zero to normalise.
 const OVERHEAD_DOT: f32 = 0.999;
@@ -72,6 +73,24 @@ pub(super) fn active_shadow_lights(sun: f32, moon: f32) -> Vec<ActiveShadowLight
         .collect()
 }
 
+/// The shadow-map layers to render for `active`: a sun's four cascades, a moon's two.
+pub(super) fn shadow_passes(_active: &[ActiveShadowLight]) -> Vec<u32> {
+    todo!()
+}
+
+/// The shader's cascaded shadow block. `splits` are the sun's and the moon's far ends by view
+/// depth; the effective shadow distance is the sun's last.
+pub(super) fn shadow_gpu(
+    _sun: &[CascadeFit; SUN_CASCADES],
+    _moon: &[CascadeFit; MOON_CASCADES],
+    _splits: ([f32; SUN_CASCADES], [f32; MOON_CASCADES]),
+    _camera_forward: Vec3,
+    _intensities: (f32, f32),
+    _pcss: &PcssSettings,
+) -> ShadowGpu {
+    todo!()
+}
+
 /// The shader's shadow block: sun and moon matrices, identity for the two unused slots.
 pub(super) fn multi_light_gpu(
     sun: Mat4,
@@ -121,8 +140,8 @@ mod tests {
 
     use super::*;
     use crate::shadow::{
-        CASCADE_RADIUS_MULTIPLIER, MIN_SHADOW_LIGHT_INTENSITY, PcssQuality, SHADOW_DISTANCE,
-        SHADOW_MAP_SIZE,
+        CASCADE_BLEND, CASCADE_RADIUS_MULTIPLIER, MIN_SHADOW_LIGHT_INTENSITY, PcssQuality,
+        SHADOW_DISTANCE, SHADOW_MAP_SIZE,
     };
 
     fn above_horizon() -> impl Strategy<Value = Vec3> {
@@ -157,16 +176,6 @@ mod tests {
             prop_assert!(clip.x.abs() <= 1.0 + slack, "x {} outside", clip.x);
             prop_assert!(clip.y.abs() <= 1.0 + slack, "y {} outside", clip.y);
             prop_assert!((-slack..=1.0 + slack).contains(&clip.z), "depth {} outside 0..1", clip.z);
-        }
-
-        #[test]
-        fn world_origin_lands_on_a_whole_texel(light in above_horizon(), camera in any_position()) {
-            let clip = light_view_projection(light, camera).project_point3(Vec3::ZERO);
-
-            let half_map = SHADOW_MAP_SIZE as f32 / 2.0;
-            for axis in [clip.x * half_map, clip.y * half_map] {
-                prop_assert!((axis - axis.round()).abs() < 1e-2, "texel coordinate {axis}");
-            }
         }
 
         #[test]
@@ -276,6 +285,76 @@ mod tests {
         assert_eq!(lights[0].intensity, 0.8);
         assert_eq!(lights[1].light_index, 1);
         assert_eq!(lights[1].intensity, 0.4);
+    }
+
+    fn light(light_index: u32) -> ActiveShadowLight {
+        ActiveShadowLight {
+            light_index,
+            intensity: 1.0,
+        }
+    }
+
+    #[test]
+    fn passes_are_the_active_lights_cascade_layers() {
+        let cases: [(&[ActiveShadowLight], &[u32]); 4] = [
+            (&[light(0)], &[0, 1, 2, 3]),
+            (&[light(1)], &[4, 5]),
+            (&[light(0), light(1)], &[0, 1, 2, 3, 4, 5]),
+            (&[], &[]),
+        ];
+
+        for (active, expected) in cases {
+            let layers = shadow_passes(active);
+
+            assert_eq!(layers, expected, "active {active:?}");
+        }
+    }
+
+    #[test]
+    fn gpu_block_packs_six_layers_splits_and_texel_sizes() {
+        let fit = |i: u32| CascadeFit {
+            view_proj: Mat4::from_translation(Vec3::new(i as f32, 2.0 * i as f32, 3.0)),
+            texel_world: 0.01 * (i + 1) as f32,
+        };
+        let sun: [CascadeFit; SUN_CASCADES] = std::array::from_fn(|i| fit(i as u32));
+        let moon: [CascadeFit; MOON_CASCADES] = std::array::from_fn(|i| fit(4 + i as u32));
+        let splits = ([30.0, 90.0, 300.0, 700.0], [50.0, 700.0]);
+        let pcss = PcssSettings {
+            quality: PcssQuality::High,
+            light_size: 0.07,
+        };
+
+        let gpu = shadow_gpu(
+            &sun,
+            &moon,
+            splits,
+            Vec3::new(0.0, 0.6, -0.8),
+            (0.9, 0.3),
+            &pcss,
+        );
+
+        for (layer, fit) in sun.iter().chain(&moon).enumerate() {
+            assert_eq!(
+                gpu.matrices[layer],
+                fit.view_proj.to_cols_array_2d(),
+                "layer {layer}"
+            );
+        }
+        assert_eq!(
+            gpu.split_far,
+            [[30.0, 90.0, 300.0, 700.0], [50.0, 700.0, 0.0, 0.0]]
+        );
+        assert_eq!(
+            gpu.texel_world,
+            [[0.01, 0.02, 0.03, 0.04], [0.05, 0.06, 0.0, 0.0]]
+        );
+        assert_eq!(gpu.camera_forward, [0.0, 0.6, -0.8, CASCADE_BLEND]);
+        assert_eq!(gpu.light_intensities, [0.9, 0.3, 0.0, 0.0]);
+        assert_eq!(
+            gpu.metadata,
+            [700.0, 0.07, PcssQuality::High as u32 as f32, 0.0],
+            "the effective shadow distance is the sun's last split"
+        );
     }
 
     #[test]

@@ -532,16 +532,17 @@ mod tests {
     }
 
     #[test]
-    fn help_shows_the_debug_view_range_as_zero_to_seven() {
+    fn help_shows_the_debug_view_range_as_zero_to_eight_with_cascades() {
         let mut console = console();
 
         console.submit("help");
 
         let printed: Vec<String> = console.output().lines().iter().cloned().collect();
+        let line = printed
+            .iter()
+            .find(|l| l.starts_with("  r_debug_view <0-8> - "));
         assert!(
-            printed
-                .iter()
-                .any(|l| l.starts_with("  r_debug_view <0-7> - ")),
+            line.is_some_and(|l| l.contains("8=Cascades")),
             "{printed:?}"
         );
     }
@@ -560,7 +561,7 @@ mod tests {
             "  help - ",
             "  clear - ",
             "  quit - ",
-            "  r_debug_view <0-7> - ",
+            "  r_debug_view <0-8> - ",
             "  r_shadow_quality <0-4> - ",
             "  r_ssao_quality <0-4> - ",
             "  r_bloom <0-2> - ",

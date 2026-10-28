@@ -305,7 +305,7 @@ mod tests {
 
     use super::*;
 
-    const DEBUG_VIEW_USAGE: &str = "Usage: r_debug_view <mode> (0=None, 1=Normals, 2=Bias, 3=Shadows, 4=LightLevel, 5=PointLights, 6=SkyAmbient, 7=SkyReflection)";
+    const DEBUG_VIEW_USAGE: &str = "Usage: r_debug_view <mode> (0=None, 1=Normals, 2=Bias, 3=Shadows, 4=LightLevel, 5=PointLights, 6=SkyAmbient, 7=SkyReflection, 8=Cascades)";
     const SHADOW_USAGE: &str =
         "Usage: r_shadow_quality <0-4> (0=Off, 1=Low, 2=Med, 3=High, 4=Ultra)";
     const SSAO_USAGE: &str = "Usage: r_ssao_quality <0-4> (0=Off, 1=Low, 2=Med, 3=High, 4=Ultra)";
@@ -400,8 +400,8 @@ mod tests {
     }
 
     #[test]
-    fn debug_view_accepts_zero_through_seven_and_refuses_eight() {
-        for mode in 0..=7u32 {
+    fn debug_view_accepts_zero_through_eight_and_refuses_nine() {
+        for mode in 0..=8u32 {
             let (engine, game, printed) = run_line(&format!("r_debug_view {mode}"));
 
             assert_eq!(engine, [EngineCommand::DebugView(mode)], "mode {mode}");
@@ -409,19 +409,19 @@ mod tests {
             assert_eq!(printed.len(), 1, "mode {mode}: {printed:?}");
         }
 
-        let (engine, game, printed) = run_line("r_debug_view 8");
+        let (engine, game, printed) = run_line("r_debug_view 9");
 
         assert!(engine.is_empty(), "{engine:?}");
         assert!(game.is_empty());
         assert_eq!(printed.len(), 1, "{printed:?}");
         assert!(
-            printed[0].contains('7'),
+            printed[0].contains('8'),
             "the refusal names the range: {printed:?}"
         );
     }
 
     #[test]
-    fn help_shows_the_debug_view_range_as_zero_to_seven() {
+    fn help_shows_the_debug_view_range_as_zero_to_eight() {
         let (mut console, _) = Console::<Cmd>::new(&std::collections::BTreeMap::new());
         console.submit("help");
 
@@ -429,9 +429,20 @@ mod tests {
 
         assert!(
             help.iter()
-                .any(|l| l.starts_with("  r_debug_view <0-7> - ")),
+                .any(|l| l.starts_with("  r_debug_view <0-8> - ")),
             "{help:?}"
         );
+    }
+
+    #[test]
+    fn debug_view_help_names_the_cascades_mode() {
+        let (mut console, _) = Console::<Cmd>::new(&std::collections::BTreeMap::new());
+        console.submit("help");
+
+        let help = help_lines(&console);
+
+        let line = help.iter().find(|l| l.starts_with("  r_debug_view "));
+        assert!(line.is_some_and(|l| l.contains("8=Cascades")), "{help:?}");
     }
 
     #[test]
@@ -471,7 +482,7 @@ mod tests {
         let help = help_lines(&console);
         assert_eq!(help.len(), 10, "{help:?}");
         for prefix in [
-            "  r_debug_view <0-7> - ",
+            "  r_debug_view <0-8> - ",
             "  r_shadow_quality <0-4> - ",
             "  r_ssao_quality <0-4> - ",
             "  r_bloom <0-2> - ",
@@ -567,6 +578,7 @@ mod tests {
             (5, "Point Lights"),
             (6, "Sky Ambient"),
             (7, "Sky Reflection"),
+            (8, "Cascades"),
         ] {
             rows.push((
                 format!("r_debug_view {mode}"),
@@ -575,7 +587,7 @@ mod tests {
             ));
         }
         for (arg, reply) in [
-            ("8", "Debug view must be between 0 and 7"),
+            ("9", "Debug view must be between 0 and 8"),
             ("x", "Invalid mode. Must be a number."),
         ] {
             rows.push((format!("r_debug_view {arg}"), None, vec![reply.to_owned()]));

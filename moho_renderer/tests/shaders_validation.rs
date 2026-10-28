@@ -1048,3 +1048,61 @@ fn lighting_struct_matches_lighting_gpu_in_every_shader() {
         }
     }
 }
+
+/// Offsets and total size of `Shadow` as naga lays it out in `source`.
+fn shadow_layout(
+    label: &str,
+    source: &str,
+    capabilities: Capabilities,
+) -> (Vec<(String, u32)>, u32) {
+    let module = validate(label, source, capabilities);
+    let (_, ty) = module
+        .types
+        .iter()
+        .find(|(_, t)| t.name.as_deref() == Some("Shadow"))
+        .unwrap_or_else(|| panic!("{label} declares struct Shadow"));
+    let naga::TypeInner::Struct { members, span } = &ty.inner else {
+        panic!("{label}: Shadow is not a struct");
+    };
+    let members = members
+        .iter()
+        .map(|m| (m.name.clone().unwrap_or_default(), m.offset))
+        .collect();
+    (members, *span)
+}
+
+#[test]
+fn shadow_struct_matches_shadow_gpu_in_both_shaders() {
+    use moho_renderer::ShadowGpu;
+    use std::mem::{offset_of, size_of};
+
+    let main = moho_renderer::pipeline::main_shader_source();
+    let shadow_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../shaders/shadow.wgsl");
+    let shadow = std::fs::read_to_string(&shadow_path)
+        .unwrap_or_else(|e| panic!("failed to read shader {}: {e}", shadow_path.display()));
+    let expected = [
+        ("matrices", offset_of!(ShadowGpu, matrices)),
+        ("split_far", offset_of!(ShadowGpu, split_far)),
+        ("texel_world", offset_of!(ShadowGpu, texel_world)),
+        ("camera_forward", offset_of!(ShadowGpu, camera_forward)),
+        (
+            "light_intensities",
+            offset_of!(ShadowGpu, light_intensities),
+        ),
+        ("metadata", offset_of!(ShadowGpu, metadata)),
+    ];
+
+    for (label, source, capabilities) in [
+        ("main shader", main.as_str(), Capabilities::empty()),
+        ("shadow shader", shadow.as_str(), Capabilities::IMMEDIATES),
+    ] {
+        let (members, span) = shadow_layout(label, source, capabilities);
+
+        assert_eq!(span as usize, size_of::<ShadowGpu>(), "{label}: span");
+        let found: Vec<(&str, usize)> = members
+            .iter()
+            .map(|(name, offset)| (name.as_str(), *offset as usize))
+            .collect();
+        assert_eq!(found, expected, "{label}: members and offsets");
+    }
+}

@@ -112,6 +112,24 @@ pub struct MultiLightShadowGpu {
     pub metadata: [f32; 4],
 }
 
+/// GPU-visible cascaded shadow block: sun layers 0-3, moon layers 4-5. Total size: 496 bytes.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct ShadowGpu {
+    /// Light view-projection per layer
+    pub matrices: [[[f32; 4]; 4]; 6],
+    /// Far end of each cascade by view depth: sun in `[0]`, moon in `[1].xy`
+    pub split_far: [[f32; 4]; 2],
+    /// World size of one texel per cascade, packed like `split_far`
+    pub texel_world: [[f32; 4]; 2],
+    /// Camera forward (xyz) and the cascade blend fraction (w)
+    pub camera_forward: [f32; 4],
+    /// Light intensities (x=Sun, y=Moon)
+    pub light_intensities: [f32; 4],
+    /// Metadata: x=shadow distance, y=light_size (for PCSS), z=pcss_quality, w=view-height cut
+    pub metadata: [f32; 4],
+}
+
 /// Uniform value for the view-height cut: `None` and non-finite heights map to
 /// `f32::MAX`, which `y > cut` never exceeds. Not infinity, because WGSL lets
 /// implementations assume no infinities.
@@ -237,6 +255,13 @@ mod tests {
         assert_eq!(std::mem::size_of::<LightingGpu>(), 144); // 9 vec4s
         assert_eq!(std::mem::size_of::<ShadowMatrixGpu>(), 64);
         assert_eq!(std::mem::size_of::<ToneMapGpu>(), 16);
+        // ShadowGpu: 6 matrices (384 bytes) + 2 split vec4s + 2 texel vec4s + 3 vec4s = 496 bytes
+        assert_eq!(std::mem::size_of::<ShadowGpu>(), 496);
+        assert_eq!(
+            std::mem::size_of::<ShadowGpu>(),
+            crate::shadow::CASCADE_LAYERS * 64 + 7 * 16,
+            "one matrix per cascade layer, plus seven vec4s"
+        );
         // MultiLightShadowGpu: 4 matrices (4x64 bytes = 256 bytes) + 2 vec4s (32 bytes) = 288 bytes
         assert_eq!(std::mem::size_of::<MultiLightShadowGpu>(), 288);
         assert_eq!(
