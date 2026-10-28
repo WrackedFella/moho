@@ -874,6 +874,7 @@ mod tests {
             step(&mut stack, EngineSetting::WindowMode, &[Key::ArrowRight]);
             step(&mut stack, EngineSetting::InvertMouseY, &[Key::Enter]);
             step(&mut stack, EngineSetting::ShadowQuality, &[Key::ArrowLeft]);
+            step(&mut stack, EngineSetting::EffectsQuality, &[Key::ArrowLeft]);
 
             stack.pop();
             stack.push(screen_of(base()));

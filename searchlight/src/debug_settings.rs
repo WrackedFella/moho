@@ -41,7 +41,7 @@ impl DebugSettings {
         self.prefs.save_to(&self.path)
     }
 
-    /// Stores the engine's ten settings rows and saves the prefs file; every other value in the
+    /// Stores the engine's settings rows and saves the prefs file; every other value in the
     /// file is kept, and the rows are kept for the session if the save fails.
     ///
     /// # Errors
