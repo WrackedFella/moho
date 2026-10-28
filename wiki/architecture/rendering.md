@@ -126,8 +126,17 @@ default scene, plus a `LevelMarker` per named node without a mesh
 - every failure is a `LevelError` naming the file, with a `LevelErrorKind`; no `gltf`
   type appears in the API.
 
-The loader does not register meshes: the caller assigns `WorldMeshId`s and sends each
+`load` does not register meshes: the caller assigns `WorldMeshId`s and sends each
 mesh to `WorldMeshes` and `PhysicsWorld` as above.
+
+`LoadedLevel` (`moho_level/src/loaded.rs`) is the handle for that registration. It wraps a
+`Level` with a `WorldMeshRange` (`moho_render_api/src/world_geometry.rs`): mesh `i` gets id
+`first + i`, and `LoadedLevel::new` refuses a range that would pass `u64::MAX`. It also
+keeps the `NavMesh` once `build_nav` has run. `LoadedLevel::unload` drops the level,
+markers and nav reference and returns the range. The caller removes that range from every
+store it registered in: `WorldMeshes::remove_range` (freed on the next `flush`) and
+`PhysicsWorld::remove_world_meshes`. `WorldMeshes::live_len` counts meshes registered as
+of the last `flush`.
 
 ### 2.2 Model files
 
