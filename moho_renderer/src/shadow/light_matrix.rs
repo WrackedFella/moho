@@ -188,7 +188,15 @@ mod tests {
         );
         assert_eq!(
             gpu.texel_world,
-            [[0.01, 0.02, 0.03, 0.04], [0.05, 0.06, 0.0, 0.0]]
+            [
+                [
+                    sun[0].texel_world,
+                    sun[1].texel_world,
+                    sun[2].texel_world,
+                    sun[3].texel_world
+                ],
+                [moon[0].texel_world, moon[1].texel_world, 0.0, 0.0]
+            ]
         );
         assert_eq!(gpu.camera_forward, [0.0, 0.6, -0.8, CASCADE_BLEND]);
         assert_eq!(gpu.light_intensities, [0.9, 0.3, 0.0, 0.0]);

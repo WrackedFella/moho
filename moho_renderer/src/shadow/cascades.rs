@@ -216,12 +216,11 @@ mod tests {
 
             for (i, fit) in fits.iter().enumerate() {
                 let slice_far = splits[i];
-                let slice_near = match i {
-                    0 => frustum.near,
-                    _ => {
-                        let before = if i == 1 { frustum.near } else { splits[i - 2] };
-                        splits[i - 1] - CASCADE_BLEND * (splits[i - 1] - before)
-                    }
+                let slice_near = if i == 0 {
+                    frustum.near
+                } else {
+                    let before = if i == 1 { frustum.near } else { splits[i - 2] };
+                    splits[i - 1] - CASCADE_BLEND * (splits[i - 1] - before)
                 };
                 for depth in [slice_near, slice_far] {
                     for (sx, sy) in [(-1.0, -1.0), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)] {
