@@ -64,6 +64,7 @@ pub struct Prefs {
     // Graphics settings
     graphics_shadow_quality: u32, // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
     graphics_ssao_quality: u32,   // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
+    graphics_effects_quality: u32, // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
     graphics_bloom: u32,          // 0=Off, 1=Low, 2=High
     graphics_brightness: f32,
     // Video settings
@@ -268,11 +269,11 @@ impl Prefs {
     }
 
     pub fn effects_quality(&self) -> u32 {
-        todo!()
+        self.graphics_effects_quality
     }
 
-    pub fn set_effects_quality(&mut self, _quality: u32) {
-        todo!()
+    pub fn set_effects_quality(&mut self, quality: u32) {
+        self.graphics_effects_quality = quality.min(MAX_GRAPHICS_QUALITY);
     }
 
     pub fn set_ssao_quality(&mut self, quality: u32) {
@@ -357,6 +358,7 @@ impl Default for Prefs {
             // Default graphics settings (High)
             graphics_shadow_quality: 3,
             graphics_ssao_quality: 3,
+            graphics_effects_quality: 3,
             graphics_bloom: MAX_BLOOM_QUALITY,
             graphics_brightness: DEFAULT_BRIGHTNESS,
             // Default video settings
@@ -406,6 +408,7 @@ impl Prefs {
              \n[graphics]\n\
              shadow_quality={shadow}\n\
              ssao_quality={ssao}\n\
+             effects_quality={effects}\n\
              bloom={bloom}\n\
              brightness={brightness:.2}\n\
              \n[video]\n\
@@ -429,6 +432,7 @@ impl Prefs {
             voice = self.audio_voice_volume,
             shadow = self.graphics_shadow_quality,
             ssao = self.graphics_ssao_quality,
+            effects = self.graphics_effects_quality,
             bloom = self.graphics_bloom,
             brightness = self.graphics_brightness,
             window_mode = self.window_mode.as_str(),

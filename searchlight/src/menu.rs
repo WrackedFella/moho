@@ -61,7 +61,7 @@ pub fn pause_screen() -> MenuScreen<MenuAction> {
     }
 }
 
-/// Titled Settings, with the engine's ten rows starting from `settings`, then Apply and a Back
+/// Titled Settings, with the engine's eleven rows starting from `settings`, then Apply and a Back
 /// button; Escape is Back.
 pub fn settings_screen(settings: EngineSettings) -> MenuScreen<MenuAction> {
     let mut items: Vec<MenuItem<MenuAction>> = EngineSetting::ALL
