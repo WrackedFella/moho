@@ -311,6 +311,8 @@ mod tests {
     fn range_refuses_ids_past_u64_max() {
         assert!(WorldMeshRange::new(WorldMeshId(u64::MAX), 2).is_none());
         assert!(WorldMeshRange::new(WorldMeshId(u64::MAX - 1), 5).is_none());
+        assert!(WorldMeshRange::new(WorldMeshId(u64::MAX - 5), 5).is_some());
+        assert!(WorldMeshRange::new(WorldMeshId(u64::MAX - 4), 5).is_none());
 
         let top = WorldMeshRange::new(WorldMeshId(u64::MAX - 10), 5).expect("ids stay below max");
 

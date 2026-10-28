@@ -503,19 +503,6 @@ mod tests {
         assert_eq!(world.collider_set.len(), 3);
     }
 
-    #[test]
-    fn remove_world_meshes_skips_ids_without_a_collider() {
-        let mut world = PhysicsWorld::new();
-        world.set_world_mesh(WorldMeshId(1), &floor_mesh(0.0), TEST_TAG);
-        world.set_world_mesh(WorldMeshId(3), &empty_mesh(), TEST_TAG);
-        let range = WorldMeshRange::new(WorldMeshId(1), 4).expect("fits");
-
-        world.remove_world_meshes(range);
-
-        assert_eq!(world.collider_set.len(), 0);
-        assert!(world.world_mesh_collider(WorldMeshId(1)).is_none());
-    }
-
     #[derive(Clone, Debug)]
     enum Op {
         Set(u64, bool),

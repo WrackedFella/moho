@@ -182,26 +182,6 @@ const BASELINE: Counts = Counts {
 };
 
 #[test]
-fn load_unload_load_unload_returns_every_count_to_baseline() {
-    let mut stores = Stores::new();
-    assert_eq!(stores.counts(), BASELINE);
-
-    let a = stores.load(level(5), 1000);
-    stores.unload(a);
-    assert_eq!(stores.counts(), BASELINE, "after unloading A");
-    let b = stores.load(level(2), 1000);
-    stores.unload(b);
-
-    assert_eq!(stores.counts(), BASELINE, "after unloading B");
-    assert_eq!(
-        stores.backend.registered.len(),
-        7,
-        "both levels were uploaded, so the baseline is not vacuous"
-    );
-    assert_eq!(stores.backend.unregistered.len(), 7);
-}
-
-#[test]
 fn a_b_a_repeats_and_leaves_no_stale_tail() {
     let (a_len, b_len) = (5, 2);
     let mut stores = Stores::new();
@@ -228,6 +208,12 @@ fn a_b_a_repeats_and_leaves_no_stale_tail() {
     }
     stores.unload(b);
     assert_eq!(stores.counts(), BASELINE, "after B");
+    assert_eq!(
+        stores.backend.registered.len(),
+        a_len + b_len,
+        "both levels were uploaded, so the baseline is not vacuous"
+    );
+    assert_eq!(stores.backend.unregistered.len(), a_len + b_len);
     let a_again = stores.load(level(a_len), 1000);
     stores.unload(a_again);
 
@@ -316,13 +302,25 @@ proptest! {
         steps in prop::collection::vec((0usize..3, 0usize..3, any::<bool>()), 0..12)
     ) {
         let mut stores = Stores::new();
+        let mut current: Option<LoadedLevel> = None;
+        let last = steps.len().saturating_sub(1);
 
-        for (which, first, flush_between) in steps {
-            let loaded = stores.install(level(SIZES[which]), FIRSTS[first]);
-            if flush_between {
-                stores.flush();
+        for (step, (which, first, flush_between)) in steps.into_iter().enumerate() {
+            if let Some(previous) = current.take() {
+                stores.uninstall(previous);
             }
-            stores.unload(loaded);
+            current = Some(stores.install(level(SIZES[which]), FIRSTS[first]));
+            if flush_between || step == last {
+                stores.flush();
+                let size = SIZES[which];
+                prop_assert_eq!(
+                    stores.counts(),
+                    Counts { colliders: size, live_meshes: size, backend_meshes: size }
+                );
+            }
+        }
+        if let Some(previous) = current.take() {
+            stores.unload(previous);
         }
 
         prop_assert_eq!(stores.counts(), BASELINE);
