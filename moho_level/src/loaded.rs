@@ -18,8 +18,13 @@ pub struct LoadedLevel {
 impl LoadedLevel {
     /// Mesh `i` of `level` gets id `first + i`; `None` when those ids would pass `u64::MAX`.
     pub fn new(level: Level, first: WorldMeshId) -> Option<Self> {
-        let _ = (level, first);
-        todo!("LoadedLevel::new")
+        let len = u32::try_from(level.meshes.len()).ok()?;
+        let ids = WorldMeshRange::new(first, len)?;
+        Some(Self {
+            level,
+            ids,
+            nav: None,
+        })
     }
 
     pub fn level(&self) -> &Level {
@@ -28,14 +33,12 @@ impl LoadedLevel {
 
     /// The ids of every mesh of the level.
     pub fn ids(&self) -> WorldMeshRange {
-        let _ = &self.ids;
-        todo!("LoadedLevel::ids")
+        self.ids
     }
 
     /// The id of mesh `index`; `None` past the last mesh.
     pub fn mesh_id(&self, index: usize) -> Option<WorldMeshId> {
-        let _ = index;
-        todo!("LoadedLevel::mesh_id")
+        self.ids.iter().nth(index)
     }
 
     /// Build and keep the navigation mesh of the level for `profile`.
@@ -43,15 +46,19 @@ impl LoadedLevel {
     /// # Errors
     /// [`NavBuildError`] when generation fails or the profile is not a walkable agent.
     pub fn build_nav(&mut self, profile: AgentProfile) -> Result<Arc<NavMesh>, NavBuildError> {
-        let _ = (&mut self.nav, profile);
-        todo!("LoadedLevel::build_nav")
+        let nav = Arc::new(NavMesh::build(
+            self.level.meshes.iter().map(|m| &m.mesh),
+            profile,
+        )?);
+        self.nav = Some(Arc::clone(&nav));
+        Ok(nav)
     }
 
     /// Drop the level, its markers and its navigation reference, and return the ids the
     /// caller must remove from every store it registered them in.
     #[must_use]
     pub fn unload(self) -> WorldMeshRange {
-        todo!("LoadedLevel::unload")
+        self.ids
     }
 }
 
@@ -139,7 +146,12 @@ mod tests {
         let ids: Vec<WorldMeshId> = returned.iter().collect();
         assert_eq!(
             ids,
-            [WorldMeshId(7), WorldMeshId(8), WorldMeshId(9), WorldMeshId(10)]
+            [
+                WorldMeshId(7),
+                WorldMeshId(8),
+                WorldMeshId(9),
+                WorldMeshId(10)
+            ]
         );
     }
 

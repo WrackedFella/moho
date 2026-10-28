@@ -56,17 +56,20 @@ impl RendererBackend for RecordingBackend {
     fn unregister_mesh(&mut self, mesh: u32) {
         self.unregistered.push(mesh);
     }
-    fn begin_frame(
-        &mut self,
-        _camera: (glam::Mat4, glam::Mat4, Vec3),
-    ) -> Result<(), FrameError> {
+    fn begin_frame(&mut self, _camera: (glam::Mat4, glam::Mat4, Vec3)) -> Result<(), FrameError> {
         Ok(())
     }
     fn enqueue_draw(&mut self, _mesh: u32, _instances: &[InstanceGpu]) {}
     fn submit_frame(&mut self) {}
     fn set_materials(&mut self, _materials: &[moho_renderer::MaterialGpu]) {}
     fn update_lighting(&mut self, _lighting: moho_renderer::LightingGpu) {}
-    fn add_point_light(&mut self, _position: Vec3, _color: Vec3, _intensity: f32, _range: f32) -> u32 {
+    fn add_point_light(
+        &mut self,
+        _position: Vec3,
+        _color: Vec3,
+        _intensity: f32,
+        _range: f32,
+    ) -> u32 {
         0
     }
     fn remove_light(&mut self, _id: u32) -> bool {
@@ -286,7 +289,10 @@ fn unload_and_install_in_one_frame_leaves_only_the_new_level() {
     let now = stores.backend.live_handles();
     assert!(now.is_disjoint(&a_handles), "none of A's uploads survive");
     let freed: BTreeSet<u32> = stores.backend.unregistered.iter().copied().collect();
-    assert!(a_handles.is_subset(&freed), "A's backend meshes are unregistered");
+    assert!(
+        a_handles.is_subset(&freed),
+        "A's backend meshes are unregistered"
+    );
     for id in b.ids().iter() {
         assert!(stores.physics.world_mesh_collider(id).is_some(), "{id:?}");
     }

@@ -16,32 +16,31 @@ pub struct WorldMeshRange {
 impl WorldMeshRange {
     /// The `len` ids starting at `first`; `None` when they would pass `u64::MAX`.
     pub fn new(first: WorldMeshId, len: u32) -> Option<Self> {
-        let _ = (first, len);
-        todo!("WorldMeshRange::new")
+        first.0.checked_add(u64::from(len))?;
+        Some(Self { first, len })
     }
 
     /// The ids in ascending order.
     pub fn iter(&self) -> impl Iterator<Item = WorldMeshId> + use<> {
-        let _ = self;
-        todo!("WorldMeshRange::iter");
-        #[allow(unreachable_code)]
-        std::iter::empty()
+        let first = self.first.0;
+        // `new` checked that `first + len` fits, so the sum cannot overflow.
+        (0..u64::from(self.len)).map(move |offset| WorldMeshId(first + offset))
     }
 
     /// Whether `id` is one of the range's ids.
     pub fn contains(&self, id: WorldMeshId) -> bool {
-        let _ = (self, id);
-        todo!("WorldMeshRange::contains")
+        id.0.checked_sub(self.first.0)
+            .is_some_and(|offset| offset < u64::from(self.len))
     }
 
     /// How many ids the range holds.
     pub fn len(&self) -> u32 {
-        todo!("WorldMeshRange::len")
+        self.len
     }
 
     /// True when the range holds no ids.
     pub fn is_empty(&self) -> bool {
-        todo!("WorldMeshRange::is_empty")
+        self.len == 0
     }
 }
 

@@ -2,9 +2,7 @@
 
 use crate::RendererBackend;
 use crate::textures::WHITE_TEXTURE;
-use moho_render_api::{
-    InstanceGpu, Rgba8Image, TextureId, WorldMesh, WorldMeshId, WorldMeshRange,
-};
+use moho_render_api::{InstanceGpu, Rgba8Image, TextureId, WorldMesh, WorldMeshId, WorldMeshRange};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// How a mesh draws: once at identity, or only where placed.
@@ -172,13 +170,14 @@ impl WorldMeshes {
 
     /// Queue removing the mesh under every id in `range`.
     pub fn remove_range(&mut self, range: WorldMeshRange) {
-        let _ = range;
-        todo!("WorldMeshes::remove_range")
+        for id in range.iter() {
+            self.remove(id);
+        }
     }
 
     /// How many meshes are registered with the backend, as of the last `flush`.
     pub fn live_len(&self) -> usize {
-        todo!("WorldMeshes::live_len")
+        self.live.len()
     }
 
     /// Apply queued changes: register new meshes, skins and textures, unregister replaced or

@@ -146,8 +146,9 @@ impl PhysicsWorld {
 
     /// Remove the collider of every id in `range`; ids without one are skipped.
     pub fn remove_world_meshes(&mut self, range: WorldMeshRange) {
-        let _ = range;
-        todo!("PhysicsWorld::remove_world_meshes")
+        for id in range.iter() {
+            self.remove_world_mesh(id);
+        }
     }
 
     /// The collider registered for `id`; `None` for an unknown, empty or rejected mesh.
