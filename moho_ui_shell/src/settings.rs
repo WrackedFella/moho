@@ -1,11 +1,11 @@
-//! The engine's own player settings as ready-made menu rows: the eleven values a game places on a
+//! The engine's own player settings as ready-made menu rows: the values a game places on a
 //! Settings screen, read from and written to the prefs they come from.
 
 use std::borrow::Cow;
 
 use moho_core::prefs::{Prefs, RESOLUTION_PRESETS, WindowMode};
 
-/// The eleven rows' values. Volumes are on the prefs scale, 0 to 10; qualities are 0 (Off) to 4
+/// The rows' values. Volumes are on the prefs scale, 0 to 10; qualities are 0 (Off) to 4
 /// (Ultra).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EngineSettings {
@@ -122,7 +122,7 @@ impl EngineSettings {
         }
     }
 
-    /// Writes the eleven rows into `prefs` and nothing else.
+    /// Writes the rows into `prefs` and nothing else.
     pub fn write_to(&self, prefs: &mut Prefs) {
         *prefs.mouse_sensitivity_mut() = self.mouse_sensitivity;
         *prefs.mouse_smoothing_mut() = self.mouse_smoothing;
