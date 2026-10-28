@@ -294,6 +294,7 @@ mod tests {
                 ui_volume: 2.5,
                 shadow_quality: 2,
                 ssao_quality: 4,
+                effects_quality: 3,
                 window_mode: Saved::Windowed,
                 resolution: (1280, 720),
             }

@@ -17,6 +17,7 @@ pub struct EngineSettings {
     pub ui_volume: f32,
     pub shadow_quality: u32,
     pub ssao_quality: u32,
+    pub effects_quality: u32,
     pub window_mode: WindowMode,
     pub resolution: (u32, u32),
 }
@@ -33,6 +34,7 @@ pub enum EngineSetting {
     SsaoQuality,
     WindowMode,
     Resolution,
+    EffectsQuality,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -44,7 +46,7 @@ pub enum Control {
 
 impl EngineSetting {
     /// Every row, in the order a Settings screen lists them.
-    pub const ALL: [EngineSetting; 10] = [
+    pub const ALL: [EngineSetting; 11] = [
         EngineSetting::MouseSensitivity,
         EngineSetting::MouseSmoothing,
         EngineSetting::InvertMouseY,
@@ -55,6 +57,7 @@ impl EngineSetting {
         EngineSetting::SsaoQuality,
         EngineSetting::WindowMode,
         EngineSetting::Resolution,
+        EngineSetting::EffectsQuality,
     ];
 
     pub fn label(self) -> &'static str {
@@ -69,6 +72,7 @@ impl EngineSetting {
             EngineSetting::SsaoQuality => "Ambient-occlusion quality",
             EngineSetting::WindowMode => "Window mode",
             EngineSetting::Resolution => "Resolution",
+            EngineSetting::EffectsQuality => todo!(),
         }
     }
 
@@ -90,6 +94,7 @@ impl EngineSetting {
             | EngineSetting::UiVolume => VOLUME,
             EngineSetting::ShadowQuality
             | EngineSetting::SsaoQuality
+            | EngineSetting::EffectsQuality
             | EngineSetting::WindowMode
             | EngineSetting::Resolution => Control::Choice,
         }
@@ -111,6 +116,7 @@ impl EngineSettings {
             ui_volume: prefs.ui_volume(),
             shadow_quality: prefs.shadow_quality(),
             ssao_quality: prefs.ssao_quality(),
+            effects_quality: 0,
             window_mode: prefs.window_mode(),
             resolution: prefs.window_resolution(),
         }
@@ -185,6 +191,7 @@ impl EngineSettings {
             EngineSetting::InvertMouseY => on_off(self.invert_mouse_y).to_owned(),
             EngineSetting::ShadowQuality
             | EngineSetting::SsaoQuality
+            | EngineSetting::EffectsQuality
             | EngineSetting::WindowMode
             | EngineSetting::Resolution => self
                 .choice_label(setting, self.choice_index(setting))
@@ -303,6 +310,7 @@ mod tests {
         *prefs.ui_volume_mut() = 3.5;
         prefs.set_shadow_quality(1);
         prefs.set_ssao_quality(2);
+        prefs.set_effects_quality(1);
         prefs.set_window_mode(WindowMode::Borderless);
         prefs.set_window_resolution(2560, 1440);
         prefs
@@ -318,6 +326,7 @@ mod tests {
             ui_volume: 10.0,
             shadow_quality: 4,
             ssao_quality: 0,
+            effects_quality: 2,
             window_mode: WindowMode::Windowed,
             resolution: (1280, 720),
         }
@@ -342,6 +351,7 @@ mod tests {
                 ui_volume: 3.5,
                 shadow_quality: 1,
                 ssao_quality: 2,
+                effects_quality: 1,
                 window_mode: WindowMode::Borderless,
                 resolution: (2560, 1440),
             }
@@ -371,6 +381,7 @@ mod tests {
         *expected.ui_volume_mut() = 10.0;
         expected.set_shadow_quality(4);
         expected.set_ssao_quality(0);
+        expected.set_effects_quality(2);
         expected.set_window_mode(WindowMode::Windowed);
         expected.set_window_resolution(1280, 720);
 
@@ -465,8 +476,43 @@ mod tests {
                 "Ambient-occlusion quality",
                 "Window mode",
                 "Resolution",
+                "Effects quality",
             ]
         );
+    }
+
+    #[test]
+    fn effects_quality_is_listed_with_the_quality_names() {
+        let settings = settings();
+
+        let choices = settings.choices(EngineSetting::EffectsQuality);
+
+        assert_eq!(EngineSetting::EffectsQuality.label(), "Effects quality");
+        assert_eq!(EngineSetting::EffectsQuality.control(), Control::Choice);
+        assert_eq!(EngineSetting::ALL.last(), Some(&EngineSetting::EffectsQuality));
+        assert_eq!(choices, ["Off", "Low", "Medium", "High", "Ultra"]);
+        assert_eq!(settings.value_text(EngineSetting::EffectsQuality), "Medium");
+    }
+
+    #[test]
+    fn effects_quality_is_staged_until_apply_and_dropped_by_back() {
+        let mut prefs = Prefs::default();
+        prefs.set_effects_quality(3);
+        let mut staged = EngineSettings::from_prefs(&prefs);
+
+        staged.set_choice_index(EngineSetting::EffectsQuality, 1);
+        let before_apply = prefs.effects_quality();
+        let mut discarded = prefs.clone();
+        let back = EngineSettings::from_prefs(&discarded);
+        back.write_to(&mut discarded);
+        staged.write_to(&mut prefs);
+
+        assert_eq!(staged.effects_quality, 1);
+        assert_eq!(staged.choice_index(EngineSetting::EffectsQuality), 1);
+        assert_eq!(before_apply, 3);
+        assert_eq!(discarded.effects_quality(), 3);
+        assert_eq!(prefs.effects_quality(), 1);
+        assert_eq!(EngineSettings::from_prefs(&prefs).effects_quality, 1);
     }
 
     #[test]
@@ -496,6 +542,7 @@ mod tests {
                 Control::Choice,
                 Control::Choice,
                 Control::Choice,
+                Control::Choice,
             ]
         );
     }
@@ -519,11 +566,12 @@ mod tests {
             (0u32..=20).prop_map(|n| n as f32 / 2.0),
             0u32..=4,
             0u32..=4,
+            0u32..=4,
             any_mode(),
             (1u32..=8192, 1u32..=8192),
         )
             .prop_map(
-                |(sens, smooth, invert, sfx, music, ui, shadow, ssao, mode, size)| EngineSettings {
+                |(sens, smooth, invert, sfx, music, ui, shadow, ssao, effects, mode, size)| EngineSettings {
                     mouse_sensitivity: sens,
                     mouse_smoothing: smooth,
                     invert_mouse_y: invert,
@@ -532,6 +580,7 @@ mod tests {
                     ui_volume: ui,
                     shadow_quality: shadow,
                     ssao_quality: ssao,
+                    effects_quality: effects,
                     window_mode: mode,
                     resolution: size,
                 },
