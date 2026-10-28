@@ -2,6 +2,8 @@
 //! mouse and keyboard. Screens stack, each keeping its own focus. The stack never changes itself:
 //! a choice becomes a [`MenuEvent`] the game answers by pushing or popping.
 
+use std::cell::Cell;
+
 use moho_input::bindings::{Binding, Input};
 use moho_input::key::{Key, MouseButton};
 
@@ -76,6 +78,19 @@ const COLOR: [u8; 4] = [220, 220, 220, 255];
 /// Font size of a settings row's label and value, which share a 240-point band.
 const SETTING_SIZE: f32 = 18.0;
 
+/// Height of a [`MenuItem::Control`] row.
+const CONTROL_HEIGHT: f32 = 32.0;
+/// Width of a [`MenuItem::Control`] row: a label column, then two equal slot cells.
+const CONTROL_WIDTH: f32 = 640.0;
+const LABEL_WIDTH: f32 = 240.0;
+const CELL_WIDTH: f32 = (CONTROL_WIDTH - LABEL_WIDTH) / 2.0;
+/// Free space kept above and below the rows of a column that scrolls; the title sits in the top.
+const BAND: f32 = ROW_PITCH;
+const WARNING_COLOR: [u8; 4] = [255, 120, 80, 255];
+const PROTECTED_NOTE: &str = "That input can't be bound";
+/// Window size assumed until a screen has been laid out once.
+const DEFAULT_SIZE: [f32; 2] = [1280.0, 720.0];
+
 /// A screen, the row that has the focus on it and the settings values staged on it.
 #[derive(Debug)]
 struct Open<A> {
@@ -83,6 +98,179 @@ struct Open<A> {
     focus: usize,
     /// A copy of the screen's `settings` that the rows edit until Apply.
     staged: Option<EngineSettings>,
+    /// The slot of a `Control` row the focus is on.
+    slot: Slot,
+    /// Whether the next press is a binding for the focused slot.
+    capturing: bool,
+    /// The shell's refusal of a captured input, shown on the focused row.
+    shell_note: Option<String>,
+    /// Whether moving the focus or starting a capture has hidden the game's notes.
+    notes_hidden: bool,
+    /// The first visible row. Cells so that laying out, which sees the window size, can settle it.
+    scroll: Cell<usize>,
+    /// Set by a focus change; the next layout scrolls the focused row into view.
+    reveal: Cell<bool>,
+    /// The window size of the last layout, for the wheel, which knows none.
+    size: Cell<[f32; 2]>,
+    /// The fraction of a row the wheel has scrolled and not yet shown.
+    remainder: f32,
+}
+
+impl<A> Open<A> {
+    fn new(screen: MenuScreen<A>) -> Self {
+        let staged = screen.settings;
+        Self {
+            screen,
+            focus: 0,
+            staged,
+            slot: Slot::Primary,
+            capturing: false,
+            shell_note: None,
+            notes_hidden: false,
+            scroll: Cell::new(0),
+            reveal: Cell::new(false),
+            size: Cell::new(DEFAULT_SIZE),
+            remainder: 0.0,
+        }
+    }
+
+    /// Moves the focus, hiding the notes when it moved.
+    fn set_focus(&mut self, row: usize, slot: Slot) {
+        if (row, slot) != (self.focus, self.slot) {
+            self.focus = row;
+            self.slot = slot;
+            self.shell_note = None;
+            self.notes_hidden = true;
+            self.reveal.set(true);
+        }
+    }
+
+    fn focused_is_control(&self) -> bool {
+        matches!(
+            self.screen.items.get(self.focus),
+            Some(MenuItem::Control { .. })
+        )
+    }
+
+    /// Starts capturing the focused slot when the focus is on a `Control` row.
+    fn start_capture(&mut self) {
+        if self.focused_is_control() {
+            self.capturing = true;
+            self.shell_note = None;
+            self.notes_hidden = true;
+        }
+    }
+
+    /// Settles the scroll for a window `size` points across: clamps it so no row is wasted past
+    /// the end, then brings the focused row into view if the focus moved.
+    fn settle(&self, size: [f32; 2]) {
+        self.size.set(size);
+        let items = &self.screen.items;
+        let viewport = viewport(size);
+        let mut scroll = self.scroll.get().min(max_scroll(items, viewport));
+        if self.reveal.take() {
+            if self.focus < scroll {
+                scroll = self.focus;
+            } else {
+                while scroll < self.focus
+                    && scroll + fitting_from(items, scroll, viewport) <= self.focus
+                {
+                    scroll += 1;
+                }
+            }
+        }
+        self.scroll.set(scroll);
+    }
+
+    /// The row rectangles at the settled scroll, rows above the view included.
+    fn rects(&self, size: [f32; 2]) -> Vec<Rect> {
+        self.settle(size);
+        rects(&self.screen.items, self.scroll.get(), size)
+    }
+
+    /// The rows fully in view, as a range of row indices.
+    fn visible(&self, size: [f32; 2]) -> std::ops::Range<usize> {
+        let scroll = self.scroll.get();
+        scroll..scroll + fitting_from(&self.screen.items, scroll, viewport(size))
+    }
+
+    /// The visible row strictly under `point`, with its rectangle.
+    fn row_at(&self, point: [f32; 2], size: [f32; 2]) -> Option<(usize, Rect)> {
+        let rects = self.rects(size);
+        self.visible(size)
+            .map(|row| (row, rects[row]))
+            .find(|(_, r)| {
+                point[0] > r.min[0]
+                    && point[0] < r.max[0]
+                    && point[1] > r.min[1]
+                    && point[1] < r.max[1]
+            })
+    }
+
+    /// The slot of a `Control` row `rect` whose cell holds `x`; `None` over its label or on
+    /// another kind of row.
+    fn slot_at(&self, row: usize, rect: Rect, x: f32) -> Option<Slot> {
+        if !matches!(self.screen.items.get(row), Some(MenuItem::Control { .. })) {
+            return None;
+        }
+        let across = x - rect.min[0];
+        if across < LABEL_WIDTH {
+            None
+        } else if across < LABEL_WIDTH + CELL_WIDTH {
+            Some(Slot::Primary)
+        } else {
+            Some(Slot::Secondary)
+        }
+    }
+
+    /// Left and Right: pick a `Control` row's slot, or step a settings row.
+    fn step(&mut self, direction: i8) {
+        if self.focused_is_control() {
+            let slot = if direction < 0 {
+                Slot::Primary
+            } else {
+                Slot::Secondary
+            };
+            self.set_focus(self.focus, slot);
+        } else {
+            self.nudge(self.focus, direction);
+        }
+    }
+}
+
+impl<A: Clone> Open<A> {
+    /// What a press does while capturing: Escape cancels, a protected input is refused with a
+    /// note and capture goes on, anything else is the binding and ends capture.
+    fn capture(&mut self, input: Input) -> Option<MenuEvent<A>> {
+        if input == Input::Key(Key::Escape) {
+            self.capturing = false;
+            return None;
+        }
+        if Binding::from(input).is_protected() {
+            self.shell_note = Some(PROTECTED_NOTE.to_owned());
+            return None;
+        }
+        self.capturing = false;
+        match self.screen.items.get(self.focus)? {
+            MenuItem::Control { action, .. } => Some(MenuEvent::Captured {
+                action: action.clone(),
+                slot: self.slot,
+                input,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Clears the focused slot, if the focus is on a `Control` row.
+    fn clear(&self) -> Option<MenuEvent<A>> {
+        match self.screen.items.get(self.focus)? {
+            MenuItem::Control { action, .. } => Some(MenuEvent::Cleared {
+                action: action.clone(),
+                slot: self.slot,
+            }),
+            _ => None,
+        }
+    }
 }
 
 impl<A: Clone> Open<A> {
@@ -135,11 +323,13 @@ impl<A> Open<A> {
 
     /// Sets the staged slider on `row` from where `x` lies along the row's band.
     fn set_slider_from(&mut self, row: usize, x: f32, size: [f32; 2]) {
+        let Some(rect) = self.rects(size).get(row).copied() else {
+            return;
+        };
         if let (Some(staged), Some(MenuItem::Setting(setting))) =
             (&mut self.staged, self.screen.items.get(row))
             && let Control::Slider { min, max, .. } = setting.control()
         {
-            let rect = row_rect(self.screen.items.len(), row, size);
             let fraction = ((x - rect.min[0]) / (rect.max[0] - rect.min[0])).clamp(0.0, 1.0);
             staged.set_slider(*setting, min + fraction * (max - min));
         }
@@ -186,12 +376,7 @@ impl<A> MenuStack<A> {
     /// settings values.
     pub fn push(&mut self, screen: MenuScreen<A>) {
         self.dragging = None;
-        let staged = screen.settings;
-        self.screens.push(Open {
-            screen,
-            focus: 0,
-            staged,
-        });
+        self.screens.push(Open::new(screen));
     }
 
     /// Closes the top screen, discarding the values staged on it; the one below keeps the focus
@@ -208,13 +393,35 @@ impl<A> MenuStack<A> {
     }
 
     /// Replaces the top screen's items, keeping its focus, slot, capture and scroll.
-    pub fn set_items(&mut self, _items: Vec<MenuItem<A>>) {}
+    pub fn set_items(&mut self, items: Vec<MenuItem<A>>) {
+        if let Some(open) = self.screens.last_mut() {
+            open.focus = open.focus.min(items.len().saturating_sub(1));
+            open.screen.items = items;
+            open.shell_note = None;
+            open.notes_hidden = false;
+        }
+    }
 
     /// Ends a capture in progress without an event.
-    pub fn cancel_capture(&mut self) {}
+    pub fn cancel_capture(&mut self) {
+        if let Some(open) = self.screens.last_mut() {
+            open.capturing = false;
+            open.shell_note = None;
+        }
+    }
 
-    /// Scrolls the top screen by `_rows` rows, keeping a fractional remainder.
-    pub fn scroll(&mut self, _rows: f32) {}
+    /// Scrolls the top screen by `rows` rows, keeping a fractional remainder.
+    pub fn scroll(&mut self, rows: f32) {
+        if let Some(open) = self.screens.last_mut() {
+            let size = open.size.get();
+            open.settle(size);
+            let last = max_scroll(&open.screen.items, viewport(size)) as f32;
+            let target = (open.scroll.get() as f32 + open.remainder + rows).clamp(0.0, last);
+            let whole = target.floor();
+            open.scroll.set(whole as usize);
+            open.remainder = target - whole;
+        }
+    }
 
     pub fn is_dragging(&self) -> bool {
         self.dragging.is_some()
@@ -225,6 +432,11 @@ impl<A> MenuStack<A> {
         if let (Some(open), Some(row)) = (self.screens.last_mut(), self.dragging) {
             open.set_slider_from(row, point[0], size);
         }
+    }
+
+    /// Whether the top screen is waiting for a key or button to bind.
+    pub fn is_capturing(&self) -> bool {
+        self.screens.last().is_some_and(|open| open.capturing)
     }
 
     pub fn is_open(&self) -> bool {
@@ -244,9 +456,11 @@ impl<A> MenuStack<A> {
     /// a point over no row keeps the focus.
     pub fn hover(&mut self, point: [f32; 2], size: [f32; 2]) {
         if let Some(open) = self.screens.last_mut()
-            && let Some(row) = row_at(&open.screen, point, size)
+            && !open.capturing
+            && let Some((row, rect)) = open.row_at(point, size)
         {
-            open.focus = row;
+            let slot = open.slot_at(row, rect, point[0]).unwrap_or(open.slot);
+            open.set_focus(row, slot);
         }
     }
 
@@ -256,7 +470,8 @@ impl<A> MenuStack<A> {
         let Some(open) = self.screens.last() else {
             return Vec::new();
         };
-        let rows = layout(&open.screen, size);
+        let rows = open.rects(size);
+        let visible = open.visible(size);
         let text =
             |text: &str, anchor, x: f32, centre_y: f32, text_size, color: [u8; 4]| ScreenText {
                 text: text.to_owned(),
@@ -270,10 +485,13 @@ impl<A> MenuStack<A> {
         };
         let mut texts = Vec::new();
         if let Some(title) = &open.screen.title {
-            let first_centre = rows.first().map_or(size[1] / 2.0, |r| centre_y(*r));
+            let first_centre = rows
+                .get(visible.start)
+                .map_or(size[1] / 2.0, |r| centre_y(*r));
             texts.push(centred(title, first_centre - ROW_PITCH, COLOR));
         }
-        for (row, (item, rect)) in open.screen.items.iter().zip(rows).enumerate() {
+        for row in visible {
+            let (item, rect) = (&open.screen.items[row], rows[row]);
             let color = if row == open.focus {
                 FOCUS_COLOR
             } else {
@@ -282,7 +500,49 @@ impl<A> MenuStack<A> {
             match item {
                 MenuItem::Button { label, .. } => texts.push(centred(label, centre_y(rect), color)),
                 MenuItem::Apply => texts.push(centred("Apply", centre_y(rect), color)),
-                MenuItem::Control { .. } => {}
+                MenuItem::Control {
+                    label, slots, note, ..
+                } => {
+                    let y = centre_y(rect);
+                    let shown_note = if row == open.focus {
+                        open.shell_note.as_deref()
+                    } else {
+                        None
+                    }
+                    .or_else(|| note.as_deref().filter(|_| !open.notes_hidden));
+                    let (label_text, label_color) = match shown_note {
+                        Some(note) => (note.to_owned(), WARNING_COLOR),
+                        None if slots.iter().all(Option::is_none) => (format!("! {label}"), color),
+                        None => (label.clone(), color),
+                    };
+                    texts.push(text(
+                        &label_text,
+                        Anchor::Left,
+                        rect.min[0],
+                        y,
+                        SETTING_SIZE,
+                        label_color,
+                    ));
+                    for (slot, cell_x, binding) in [
+                        (Slot::Primary, LABEL_WIDTH, slots[0]),
+                        (Slot::Secondary, LABEL_WIDTH + CELL_WIDTH, slots[1]),
+                    ] {
+                        let cell_color = if row == open.focus && slot == open.slot {
+                            FOCUS_COLOR
+                        } else {
+                            COLOR
+                        };
+                        let label = binding.map_or_else(|| "Unbound".to_owned(), Binding::label);
+                        texts.push(text(
+                            &label,
+                            Anchor::Left,
+                            rect.min[0] + cell_x,
+                            y,
+                            SETTING_SIZE,
+                            cell_color,
+                        ));
+                    }
+                }
                 MenuItem::Setting(setting) => {
                     let y = centre_y(rect);
                     texts.push(text(
@@ -325,16 +585,31 @@ impl<A: Clone> MenuStack<A> {
             }
             return;
         }
+        if open.capturing {
+            if !repeat {
+                self.events.extend(open.capture(input));
+            }
+            return;
+        }
         let count = open.screen.items.len();
         match input {
-            Input::Key(Key::ArrowDown) if count > 0 => open.focus = (open.focus + 1) % count,
-            Input::Key(Key::ArrowUp) if count > 0 => {
-                open.focus = (open.focus + count - 1) % count;
+            Input::Key(Key::ArrowDown) if count > 0 => {
+                open.set_focus((open.focus + 1) % count, open.slot);
             }
-            Input::Key(Key::ArrowLeft) => open.nudge(open.focus, -1),
-            Input::Key(Key::ArrowRight) => open.nudge(open.focus, 1),
+            Input::Key(Key::ArrowUp) if count > 0 => {
+                open.set_focus((open.focus + count - 1) % count, open.slot);
+            }
+            Input::Key(Key::ArrowLeft) => open.step(-1),
+            Input::Key(Key::ArrowRight) => open.step(1),
             Input::Key(Key::Enter) if !repeat => {
-                self.events.extend(open.choose(open.focus));
+                if open.focused_is_control() {
+                    open.start_capture();
+                } else {
+                    self.events.extend(open.choose(open.focus));
+                }
+            }
+            Input::Key(Key::Backspace) | Input::Mouse(MouseButton::Right) if !repeat => {
+                self.events.extend(open.clear());
             }
             Input::Key(Key::Escape) if !repeat => {
                 if let Some(back) = open.screen.back.clone() {
@@ -349,14 +624,22 @@ impl<A: Clone> MenuStack<A> {
     /// nothing. A press on a slider row sets it from `point` and starts a drag that
     /// [`MenuStack::drag`] follows until the left button is released.
     pub fn click(&mut self, point: [f32; 2], size: [f32; 2]) {
-        if let Some(open) = self.screens.last_mut()
-            && let Some(row) = row_at(&open.screen, point, size)
-        {
+        let Some(open) = self.screens.last_mut() else {
+            return;
+        };
+        if open.capturing {
+            self.dragging = None;
+            self.events
+                .extend(open.capture(Input::Mouse(MouseButton::Left)));
+        } else if let Some((row, rect)) = open.row_at(point, size) {
             let on_slider = matches!(
                 open.screen.items[row],
                 MenuItem::Setting(setting) if matches!(setting.control(), Control::Slider { .. })
             );
-            if on_slider {
+            if let Some(slot) = open.slot_at(row, rect, point[0]) {
+                open.set_focus(row, slot);
+                open.start_capture();
+            } else if on_slider {
                 self.dragging = Some(row);
                 open.set_slider_from(row, point[0], size);
             } else {
@@ -370,30 +653,81 @@ fn centre_y(rect: Rect) -> f32 {
     (rect.min[1] + rect.max[1]) / 2.0
 }
 
-/// The row of `screen` strictly inside which `point` lies.
-fn row_at<A>(screen: &MenuScreen<A>, point: [f32; 2], size: [f32; 2]) -> Option<usize> {
-    layout(screen, size).iter().position(|r| {
-        point[0] > r.min[0] && point[0] < r.max[0] && point[1] > r.min[1] && point[1] < r.max[1]
-    })
+/// Rows 32 or 56 points tall fill the window less a title band above and below.
+fn viewport(size: [f32; 2]) -> f32 {
+    size[1] - 2.0 * BAND
 }
 
-/// The row rectangles of `screen` on a window `size` points across, top to bottom: bands 240
-/// points wide, centred on the window, one 56-point pitch apart, the column centred vertically.
-/// Painting and hit tests both read this.
-pub fn layout<A>(screen: &MenuScreen<A>, size: [f32; 2]) -> Vec<Rect> {
-    (0..screen.items.len())
-        .map(|row| row_rect(screen.items.len(), row, size))
+fn item_height<A>(item: &MenuItem<A>) -> f32 {
+    match item {
+        MenuItem::Control { .. } => CONTROL_HEIGHT,
+        _ => ROW_PITCH,
+    }
+}
+
+fn item_width<A>(item: &MenuItem<A>) -> f32 {
+    match item {
+        MenuItem::Control { .. } => CONTROL_WIDTH,
+        _ => ROW_WIDTH,
+    }
+}
+
+/// How many whole rows from `from` on fit in `viewport` points.
+fn fitting_from<A>(items: &[MenuItem<A>], from: usize, viewport: f32) -> usize {
+    let mut used = 0.0;
+    items
+        .iter()
+        .skip(from)
+        .take_while(|item| {
+            used += item_height(item);
+            used <= viewport
+        })
+        .count()
+}
+
+/// The last first-visible row that leaves no gap after the final row; 0 when everything fits.
+fn max_scroll<A>(items: &[MenuItem<A>], viewport: f32) -> usize {
+    let mut used = 0.0;
+    let fitting = items
+        .iter()
+        .rev()
+        .take_while(|item| {
+            used += item_height(item);
+            used <= viewport
+        })
+        .count();
+    items.len().saturating_sub(fitting.max(1))
+}
+
+/// The rectangles of `items` with row `scroll` first in view; rows above it lie above the title
+/// band. A column that fits is centred vertically, any other starts at the band.
+fn rects<A>(items: &[MenuItem<A>], scroll: usize, size: [f32; 2]) -> Vec<Rect> {
+    let total: f32 = items.iter().map(item_height).sum();
+    let top = if total <= viewport(size) {
+        size[1] / 2.0 - total / 2.0
+    } else {
+        BAND - items.iter().take(scroll).map(item_height).sum::<f32>()
+    };
+    let mut y = top;
+    items
+        .iter()
+        .map(|item| {
+            let (height, width) = (item_height(item), item_width(item));
+            let rect = Rect {
+                min: [size[0] / 2.0 - width / 2.0, y],
+                max: [size[0] / 2.0 + width / 2.0, y + height],
+            };
+            y += height;
+            rect
+        })
         .collect()
 }
 
-/// Row `row`'s rectangle on a screen of `count` rows; [`layout`] is this for every row.
-fn row_rect(count: usize, row: usize, size: [f32; 2]) -> Rect {
-    let top = size[1] / 2.0 - count as f32 * ROW_PITCH / 2.0;
-    let y = top + row as f32 * ROW_PITCH;
-    Rect {
-        min: [size[0] / 2.0 - ROW_WIDTH / 2.0, y],
-        max: [size[0] / 2.0 + ROW_WIDTH / 2.0, y + ROW_PITCH],
-    }
+/// The row rectangles of `screen` on a window `size` points across at scroll 0, top to bottom:
+/// buttons and settings 240 by 56 points, control rows 640 by 32, centred on the window, the
+/// column centred vertically when it fits and starting at the title band when it does not.
+pub fn layout<A>(screen: &MenuScreen<A>, size: [f32; 2]) -> Vec<Rect> {
+    rects(&screen.items, 0, size)
 }
 
 #[cfg(test)]
@@ -911,7 +1245,10 @@ mod tests {
         assert!(hold.iter().any(|t| t == "Hold R"), "{hold:?}");
         assert_eq!(hold.iter().filter(|t| *t == "Unbound").count(), 1);
         assert_eq!(neither.iter().filter(|t| *t == "Unbound").count(), 2);
-        assert!(neither.iter().any(|t| t.contains("Action 02")), "{neither:?}");
+        assert!(
+            neither.iter().any(|t| t.contains("Action 02")),
+            "{neither:?}"
+        );
         assert_eq!(neither.iter().filter(|t| t.contains('!')).count(), 1);
         assert!(!both.iter().any(|t| t.contains('!')), "{both:?}");
         assert!(!hold.iter().any(|t| t.contains('!')), "{hold:?}");
@@ -939,7 +1276,11 @@ mod tests {
         by_click_primary.click(primary, SIZE);
         key_c(&mut by_click_primary, Key::W);
 
-        assert_eq!(idle.take_events(), [], "a key is no capture before one starts");
+        assert_eq!(
+            idle.take_events(),
+            [],
+            "a key is no capture before one starts"
+        );
         assert_eq!(
             by_enter.take_events(),
             [captured(Bind::Row(0), Slot::Primary, Input::Key(Key::Q))]
@@ -990,10 +1331,8 @@ mod tests {
     #[test]
     fn a_left_click_while_capturing_is_captured_not_a_click() {
         let mut over_control = controls_stack(vec![control(0, [R, R]), control(1, [R, R])]);
-        let mut over_button = controls_stack(vec![
-            control(0, [R, R]),
-            bind_button("Reset", Bind::Reset),
-        ]);
+        let mut over_button =
+            controls_stack(vec![control(0, [R, R]), bind_button("Reset", Bind::Reset)]);
 
         key_c(&mut over_control, Key::Enter);
         let point = cell_point(&over_control, 1, SECONDARY_X);
@@ -1193,7 +1532,11 @@ mod tests {
             capturing_button.take_events(),
             [captured(Bind::Row(0), Slot::Primary, right)]
         );
-        assert_eq!(on_button_row.take_events(), [], "a button has no slot to clear");
+        assert_eq!(
+            on_button_row.take_events(),
+            [],
+            "a button has no slot to clear"
+        );
     }
 
     #[test]
@@ -1336,15 +1679,28 @@ mod tests {
             assert_eq!(rect.max[1] - rect.min[1], 56.0);
         }
         let button_centres: Vec<[f32; 2]> = buttons.iter().map(rect_centre).collect();
-        assert_eq!(button_centres, [[640.0, 304.0], [640.0, 360.0], [640.0, 416.0]]);
+        assert_eq!(
+            button_centres,
+            [[640.0, 304.0], [640.0, 360.0], [640.0, 416.0]]
+        );
         for rect in &rows {
-            assert_eq!(rect.max[0] - rect.min[0], 640.0, "a control row is 640 wide");
+            assert_eq!(
+                rect.max[0] - rect.min[0],
+                640.0,
+                "a control row is 640 wide"
+            );
             assert_eq!(rect.max[1] - rect.min[1], 32.0, "and 32 tall");
         }
         let row_centres: Vec<[f32; 2]> = rows.iter().map(rect_centre).collect();
-        assert_eq!(row_centres, [[640.0, 328.0], [640.0, 360.0], [640.0, 392.0]]);
+        assert_eq!(
+            row_centres,
+            [[640.0, 328.0], [640.0, 360.0], [640.0, 392.0]]
+        );
         let stack = controls_stack(controls_of(3));
-        assert!(!row_texts(&stack, 0).is_empty(), "the rows are drawn on their rects");
+        assert!(
+            !row_texts(&stack, 0).is_empty(),
+            "the rows are drawn on their rects"
+        );
     }
 
     #[test]
@@ -1399,14 +1755,17 @@ mod tests {
             back: Some(Act::Back),
             settings: None,
         });
-        let drawn = |stack: &MenuStack<Act>, text: &str| {
-            stack.texts(SIZE).iter().any(|t| t.text == text)
-        };
+        let drawn =
+            |stack: &MenuStack<Act>, text: &str| stack.texts(SIZE).iter().any(|t| t.text == text);
         let first = EngineSetting::ALL[0].label();
         let second = EngineSetting::ALL[1].label();
         let third = EngineSetting::ALL[2].label();
 
-        let top = (drawn(&stack, first), drawn(&stack, "Apply"), drawn(&stack, "Back"));
+        let top = (
+            drawn(&stack, first),
+            drawn(&stack, "Apply"),
+            drawn(&stack, "Back"),
+        );
         press(&mut stack, Key::ArrowUp);
         let end = (
             drawn(&stack, first),
@@ -1416,13 +1775,20 @@ mod tests {
         );
 
         assert_eq!(top, (true, false, false), "ten of the twelve rows fit");
-        assert_eq!(end, (false, false, true, true), "the end of the list is reachable");
+        assert_eq!(
+            end,
+            (false, false, true, true),
+            "the end of the list is reachable"
+        );
     }
 
     mod settings_rows {
         use moho_core::prefs::WindowMode;
 
         use super::*;
+
+        /// Tall enough that the twelve 56-point rows of `screen_of` need no scrolling.
+        const SIZE: [f32; 2] = [1280.0, 1000.0];
 
         fn base() -> EngineSettings {
             EngineSettings {
@@ -1439,7 +1805,8 @@ mod tests {
             }
         }
 
-        /// The ten rows, Apply, then Back: twelve rows, so the whole column fits on `SIZE`.
+        /// The ten rows, Apply, then Back: twelve rows, so the whole column fits on this module's
+        /// `SIZE`.
         fn screen_of(settings: EngineSettings) -> MenuScreen<Act> {
             let mut items: Vec<MenuItem<Act>> = EngineSetting::ALL
                 .into_iter()

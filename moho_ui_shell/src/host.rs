@@ -6,7 +6,7 @@ use std::sync::Arc;
 use moho_input::bindings::Input;
 use moho_input::key::{Key, MouseButton};
 use moho_render_api::{Rgba8Image, UiFrame, UiFrameSource};
-use winit::event::{KeyEvent, WindowEvent};
+use winit::event::{KeyEvent, MouseScrollDelta, WindowEvent};
 use winit::window::Window;
 
 use crate::console::{Console, Routing};
@@ -14,6 +14,11 @@ use crate::image::{ScreenImage, ScreenImageError, ScreenImageId, ScreenImages};
 use crate::menu::MenuStack;
 use crate::paint_map::to_ui_frame;
 use crate::text::{self, ScreenText, ScreenTextError};
+
+/// Rows one notch of a line-delta wheel scrolls.
+const WHEEL_LINE_ROWS: f32 = 3.0;
+/// Pixel-delta wheel distance that scrolls one row, in logical points.
+const WHEEL_ROW_POINTS: f32 = 32.0;
 
 /// Owns the egui context, the console it draws and the menu screens a game with actions `A`
 /// pushes.
@@ -182,6 +187,9 @@ impl<G, A: Clone> UiShell<G, A> {
     /// platform-free part of that routing.
     pub fn route(&mut self, input: Input, pressed: bool, repeat: bool) -> Routing {
         let routing = self.console.on_key(input, pressed, repeat);
+        if routing == Routing::Opened {
+            self.menu.cancel_capture();
+        }
         if routing != Routing::Game || !self.menu.is_open() {
             return routing;
         }
@@ -214,6 +222,19 @@ impl<G, A: Clone> UiShell<G, A> {
             };
             self.feed(event, routing);
             return routing;
+        }
+        if let WindowEvent::MouseWheel { delta, .. } = event
+            && self.menu.is_open()
+            && !self.console.is_open()
+            && !self.menu.is_capturing()
+        {
+            self.menu.scroll(match delta {
+                MouseScrollDelta::LineDelta(_, y) => -y * WHEEL_LINE_ROWS,
+                MouseScrollDelta::PixelDelta(position) => -(position.y as f32) / WHEEL_ROW_POINTS,
+            });
+            let size = self.window_points();
+            self.menu.hover(self.cursor, size);
+            return Routing::Menu;
         }
         if let WindowEvent::CursorMoved { position, .. } = event {
             let scale = self.window.as_ref().map_or(1.0, |w| w.scale_factor());
@@ -789,7 +810,6 @@ mod tests {
             f64::from((rows[setting_row].min[1] + rows[setting_row].max[1]) / 2.0)
         };
         let slider_y = centre_y(3);
-        let apply_y = centre_y(EngineSetting::ALL.len());
         let left = Input::Mouse(MouseButton::Left);
         let mut shell = shell();
         shell.menu_mut().push(screen);
@@ -803,7 +823,9 @@ mod tests {
         for &x in free_xs {
             cursor_at(&mut shell, [x, slider_y]);
         }
-        cursor_at(&mut shell, [640.0, apply_y]);
+        for _ in 3..EngineSetting::ALL.len() {
+            shell.route(Input::Key(Key::ArrowDown), true, false);
+        }
         shell.route(Input::Key(Key::Enter), true, false);
 
         let events = shell.menu_mut().take_events();
@@ -870,7 +892,10 @@ mod tests {
         })
     }
 
-    fn captured_after_enter_and(shell: &mut UiShell<Cmd, Choice>, key: Key) -> Vec<MenuEvent<Choice>> {
+    fn captured_after_enter_and(
+        shell: &mut UiShell<Cmd, Choice>,
+        key: Key,
+    ) -> Vec<MenuEvent<Choice>> {
         shell.route(Input::Key(Key::Enter), true, false);
         shell.route(Input::Key(key), true, false);
         shell.menu_mut().take_events()
@@ -942,7 +967,11 @@ mod tests {
         let closed_routing = wheel(&mut closed, down(1.0));
 
         assert_eq!(line_routing, Routing::Menu);
-        assert_eq!(after_line, (false, false, true, true), "one notch is three rows");
+        assert_eq!(
+            after_line,
+            (false, false, true, true),
+            "one notch is three rows"
+        );
         assert_eq!(
             kept_focus,
             [MenuEvent::Captured {
