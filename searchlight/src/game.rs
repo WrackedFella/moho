@@ -830,6 +830,7 @@ impl SearchlightGame {
                 MenuEvent::Chosen(MenuAction::Back) => self.stage.shell().menu_mut().pop(),
                 MenuEvent::Chosen(MenuAction::Quit) => ctx.request_exit(),
                 MenuEvent::SettingsApplied(settings) => self.settings_applied(settings),
+                MenuEvent::Captured { .. } | MenuEvent::Cleared { .. } => {}
             }
         }
     }
@@ -2599,7 +2600,9 @@ mod tests {
             .into_iter()
             .find_map(|event| match event {
                 MenuEvent::Chosen(action) => Some(action),
-                MenuEvent::SettingsApplied(_) => None,
+                MenuEvent::SettingsApplied(_)
+                | MenuEvent::Captured { .. }
+                | MenuEvent::Cleared { .. } => None,
             })
     }
 
@@ -2612,7 +2615,7 @@ mod tests {
             .iter()
             .filter_map(|item| match item {
                 MenuItem::Button { label, .. } => Some(label.clone()),
-                MenuItem::Setting(_) | MenuItem::Apply => None,
+                MenuItem::Setting(_) | MenuItem::Apply | MenuItem::Control { .. } => None,
             })
             .collect()
     }
@@ -3361,7 +3364,7 @@ mod menu_tests {
             .iter()
             .filter_map(|item| match item {
                 MenuItem::Button { label, .. } => Some(label.clone()),
-                MenuItem::Setting(_) | MenuItem::Apply => None,
+                MenuItem::Setting(_) | MenuItem::Apply | MenuItem::Control { .. } => None,
             })
             .collect()
     }
@@ -3801,7 +3804,7 @@ mod settings_tests {
             .iter()
             .filter_map(|item| match item {
                 MenuItem::Button { label, .. } => Some(label.clone()),
-                MenuItem::Setting(_) | MenuItem::Apply => None,
+                MenuItem::Setting(_) | MenuItem::Apply | MenuItem::Control { .. } => None,
             })
             .collect()
     }

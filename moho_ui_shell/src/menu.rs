@@ -2,7 +2,7 @@
 //! mouse and keyboard. Screens stack, each keeping its own focus. The stack never changes itself:
 //! a choice becomes a [`MenuEvent`] the game answers by pushing or popping.
 
-use moho_input::bindings::Input;
+use moho_input::bindings::{Binding, Input};
 use moho_input::key::{Key, MouseButton};
 
 use crate::settings::{Control, EngineSetting, EngineSettings};
@@ -28,6 +28,20 @@ pub enum MenuItem<A> {
     Setting(EngineSetting),
     /// Hands the game the staged settings values.
     Apply,
+    /// A rebindable action: its label, two binding slots and the game's refusal note, if any.
+    Control {
+        label: String,
+        action: A,
+        slots: [Option<Binding>; 2],
+        note: Option<String>,
+    },
+}
+
+/// A column of a [`MenuItem::Control`] row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Slot {
+    Primary,
+    Secondary,
 }
 
 /// What the player did to the open screens, for the game to answer.
@@ -37,6 +51,10 @@ pub enum MenuEvent<A> {
     Chosen(A),
     /// The player applied the settings staged on the top screen.
     SettingsApplied(EngineSettings),
+    /// The player pressed `input` while capturing `slot` of `action`.
+    Captured { action: A, slot: Slot, input: Input },
+    /// The player cleared `slot` of `action`.
+    Cleared { action: A, slot: Slot },
 }
 
 /// An axis-aligned rectangle in logical points from the window's top left.
@@ -84,6 +102,7 @@ impl<A: Clone> Open<A> {
                 self.screen.settings = Some(staged);
                 Some(MenuEvent::SettingsApplied(staged))
             }
+            MenuItem::Control { .. } => None,
         }
     }
 }
@@ -188,6 +207,15 @@ impl<A> MenuStack<A> {
         self.screens.clear();
     }
 
+    /// Replaces the top screen's items, keeping its focus, slot, capture and scroll.
+    pub fn set_items(&mut self, _items: Vec<MenuItem<A>>) {}
+
+    /// Ends a capture in progress without an event.
+    pub fn cancel_capture(&mut self) {}
+
+    /// Scrolls the top screen by `_rows` rows, keeping a fractional remainder.
+    pub fn scroll(&mut self, _rows: f32) {}
+
     pub fn is_dragging(&self) -> bool {
         self.dragging.is_some()
     }
@@ -254,6 +282,7 @@ impl<A> MenuStack<A> {
             match item {
                 MenuItem::Button { label, .. } => texts.push(centred(label, centre_y(rect), color)),
                 MenuItem::Apply => texts.push(centred("Apply", centre_y(rect), color)),
+                MenuItem::Control { .. } => {}
                 MenuItem::Setting(setting) => {
                     let y = centre_y(rect);
                     texts.push(text(
@@ -369,7 +398,9 @@ fn row_rect(count: usize, row: usize, size: [f32; 2]) -> Rect {
 
 #[cfg(test)]
 mod tests {
+    use moho_input::bindings::Modifiers;
     use moho_input::key::{Key, MouseButton};
+    use proptest::prelude::{any, prop, prop_assert, proptest};
 
     use super::*;
 
@@ -428,7 +459,9 @@ mod tests {
             .into_iter()
             .filter_map(|event| match event {
                 MenuEvent::Chosen(action) => Some(action),
-                MenuEvent::SettingsApplied(_) => None,
+                MenuEvent::SettingsApplied(_)
+                | MenuEvent::Captured { .. }
+                | MenuEvent::Cleared { .. } => None,
             })
             .collect()
     }
@@ -745,6 +778,647 @@ mod tests {
         assert_eq!(layout(&empty, SIZE), []);
     }
 
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Bind {
+        Row(usize),
+        Reset,
+        Apply,
+        Back,
+    }
+
+    const R: Option<Binding> = Some(Binding::key(Key::R));
+    const NOTE: &str = "Q is used by Lean left";
+    /// Where a press lands in a 640-wide control row: over the primary cell and over the
+    /// secondary cell, whatever the width of the label column between a quarter and a half of
+    /// the row.
+    const PRIMARY_X: f32 = 360.0;
+    const SECONDARY_X: f32 = 560.0;
+    /// Rows 32 points tall fill the window less a 56-point band above and below; 19 fit.
+    const VIEW_BAND: f32 = 56.0;
+
+    fn control(index: usize, slots: [Option<Binding>; 2]) -> MenuItem<Bind> {
+        MenuItem::Control {
+            label: format!("Action {index:02}"),
+            action: Bind::Row(index),
+            slots,
+            note: None,
+        }
+    }
+
+    fn noted(index: usize, note: &str) -> MenuItem<Bind> {
+        MenuItem::Control {
+            label: format!("Action {index:02}"),
+            action: Bind::Row(index),
+            slots: [R, None],
+            note: Some(note.to_owned()),
+        }
+    }
+
+    fn controls_of(count: usize) -> Vec<MenuItem<Bind>> {
+        (0..count).map(|index| control(index, [R, None])).collect()
+    }
+
+    fn bind_button(label: &str, action: Bind) -> MenuItem<Bind> {
+        MenuItem::Button {
+            label: label.to_owned(),
+            action,
+        }
+    }
+
+    fn controls_screen(items: Vec<MenuItem<Bind>>) -> MenuScreen<Bind> {
+        MenuScreen {
+            title: None,
+            items,
+            back: Some(Bind::Back),
+            settings: None,
+        }
+    }
+
+    fn controls_stack(items: Vec<MenuItem<Bind>>) -> MenuStack<Bind> {
+        let mut stack = MenuStack::new();
+        stack.push(controls_screen(items));
+        stack
+    }
+
+    fn key_c(stack: &mut MenuStack<Bind>, key: Key) {
+        stack.on_key(Input::Key(key), true, false);
+    }
+
+    fn captured(action: Bind, slot: Slot, input: Input) -> MenuEvent<Bind> {
+        MenuEvent::Captured {
+            action,
+            slot,
+            input,
+        }
+    }
+
+    fn shows(stack: &MenuStack<Bind>, size: [f32; 2], needle: &str) -> bool {
+        stack.texts(size).iter().any(|t| t.text.contains(needle))
+    }
+
+    fn row_shown(stack: &MenuStack<Bind>, index: usize) -> bool {
+        shows(stack, SIZE, &format!("Action {index:02}"))
+    }
+
+    fn shown_labels(stack: &MenuStack<Bind>) -> Vec<String> {
+        stack
+            .texts(SIZE)
+            .into_iter()
+            .map(|t| t.text)
+            .filter(|text| text.contains("Action "))
+            .collect()
+    }
+
+    /// The texts of the top screen's row `row`, found by sharing the row's centre line.
+    fn row_texts(stack: &MenuStack<Bind>, row: usize) -> Vec<ScreenText> {
+        let rect = layout(stack.top().expect("a screen is open"), SIZE)[row];
+        let line = rect_centre(&rect)[1];
+        stack
+            .texts(SIZE)
+            .into_iter()
+            .filter(|t| (SIZE[1] / 2.0 + t.offset[1] - line).abs() < 0.01)
+            .collect()
+    }
+
+    fn row_strings(stack: &MenuStack<Bind>, row: usize) -> Vec<String> {
+        row_texts(stack, row).into_iter().map(|t| t.text).collect()
+    }
+
+    fn is_warning(text: &ScreenText) -> bool {
+        text.color != COLOR && text.color != FOCUS
+    }
+
+    fn cell_point(stack: &MenuStack<Bind>, row: usize, x_offset: f32) -> [f32; 2] {
+        let rect = layout(stack.top().expect("a screen is open"), SIZE)[row];
+        [rect.min[0] + x_offset, rect_centre(&rect)[1]]
+    }
+
+    #[test]
+    fn a_control_row_shows_each_slots_label_unbound_and_a_mark_when_both_are_empty() {
+        let stack = controls_stack(vec![
+            control(0, [R, Some(Binding::mouse(MouseButton::Right))]),
+            control(1, [Some(Binding::key(Key::R).held()), None]),
+            control(2, [None, None]),
+        ]);
+
+        let both = row_strings(&stack, 0);
+        let hold = row_strings(&stack, 1);
+        let neither = row_strings(&stack, 2);
+
+        assert!(both.iter().any(|t| t == "R"), "{both:?}");
+        assert!(both.iter().any(|t| t == "Mouse Right"), "{both:?}");
+        assert!(both.iter().any(|t| t.contains("Action 00")), "{both:?}");
+        assert!(hold.iter().any(|t| t == "Hold R"), "{hold:?}");
+        assert_eq!(hold.iter().filter(|t| *t == "Unbound").count(), 1);
+        assert_eq!(neither.iter().filter(|t| *t == "Unbound").count(), 2);
+        assert!(neither.iter().any(|t| t.contains("Action 02")), "{neither:?}");
+        assert_eq!(neither.iter().filter(|t| t.contains('!')).count(), 1);
+        assert!(!both.iter().any(|t| t.contains('!')), "{both:?}");
+        assert!(!hold.iter().any(|t| t.contains('!')), "{hold:?}");
+    }
+
+    #[test]
+    fn enter_or_a_click_on_a_slot_starts_capture_of_that_slot() {
+        let rows = || vec![control(0, [R, R]), control(1, [R, R]), control(2, [R, R])];
+        let mut idle = controls_stack(rows());
+        let mut by_enter = controls_stack(rows());
+        let mut by_enter_secondary = controls_stack(rows());
+        let mut by_click_secondary = controls_stack(rows());
+        let mut by_click_primary = controls_stack(rows());
+
+        key_c(&mut idle, Key::Q);
+        key_c(&mut by_enter, Key::Enter);
+        key_c(&mut by_enter, Key::Q);
+        key_c(&mut by_enter_secondary, Key::ArrowRight);
+        key_c(&mut by_enter_secondary, Key::Enter);
+        key_c(&mut by_enter_secondary, Key::Q);
+        let secondary = cell_point(&by_click_secondary, 1, SECONDARY_X);
+        by_click_secondary.click(secondary, SIZE);
+        key_c(&mut by_click_secondary, Key::W);
+        let primary = cell_point(&by_click_primary, 2, PRIMARY_X);
+        by_click_primary.click(primary, SIZE);
+        key_c(&mut by_click_primary, Key::W);
+
+        assert_eq!(idle.take_events(), [], "a key is no capture before one starts");
+        assert_eq!(
+            by_enter.take_events(),
+            [captured(Bind::Row(0), Slot::Primary, Input::Key(Key::Q))]
+        );
+        assert_eq!(
+            by_enter_secondary.take_events(),
+            [captured(Bind::Row(0), Slot::Secondary, Input::Key(Key::Q))]
+        );
+        assert_eq!(
+            by_click_secondary.take_events(),
+            [captured(Bind::Row(1), Slot::Secondary, Input::Key(Key::W))]
+        );
+        assert_eq!(
+            by_click_primary.take_events(),
+            [captured(Bind::Row(2), Slot::Primary, Input::Key(Key::W))]
+        );
+    }
+
+    #[test]
+    fn a_captured_key_or_button_becomes_an_event_for_the_captured_slot_and_ends_capture() {
+        let mut stack = controls_stack(vec![control(0, [R, R]), control(1, [R, R])]);
+
+        key_c(&mut stack, Key::Enter);
+        key_c(&mut stack, Key::Q);
+        key_c(&mut stack, Key::W);
+        let after_key = stack.take_events();
+        key_c(&mut stack, Key::ArrowRight);
+        key_c(&mut stack, Key::Enter);
+        stack.on_key(Input::Mouse(MouseButton::Right), true, false);
+        key_c(&mut stack, Key::Space);
+        let after_button = stack.take_events();
+
+        assert_eq!(
+            after_key,
+            [captured(Bind::Row(0), Slot::Primary, Input::Key(Key::Q))],
+            "the next press is the capture and the one after is not"
+        );
+        assert_eq!(
+            after_button,
+            [captured(
+                Bind::Row(0),
+                Slot::Secondary,
+                Input::Mouse(MouseButton::Right)
+            )]
+        );
+    }
+
+    #[test]
+    fn a_left_click_while_capturing_is_captured_not_a_click() {
+        let mut over_control = controls_stack(vec![control(0, [R, R]), control(1, [R, R])]);
+        let mut over_button = controls_stack(vec![
+            control(0, [R, R]),
+            bind_button("Reset", Bind::Reset),
+        ]);
+
+        key_c(&mut over_control, Key::Enter);
+        let point = cell_point(&over_control, 1, SECONDARY_X);
+        over_control.click(point, SIZE);
+        key_c(&mut over_control, Key::Q);
+        key_c(&mut over_button, Key::Enter);
+        let point = cell_point(&over_button, 1, 120.0);
+        over_button.click(point, SIZE);
+
+        assert_eq!(
+            over_control.take_events(),
+            [captured(
+                Bind::Row(0),
+                Slot::Primary,
+                Input::Mouse(MouseButton::Left)
+            )],
+            "the click ended capture and did not start one on row 1"
+        );
+        assert_eq!(
+            over_button.take_events(),
+            [captured(
+                Bind::Row(0),
+                Slot::Primary,
+                Input::Mouse(MouseButton::Left)
+            )],
+            "the click did not choose the button under it"
+        );
+    }
+
+    #[test]
+    fn set_items_shows_the_answer_and_keeps_focus_slot_and_scroll() {
+        let mut stack = controls_stack(controls_of(30));
+        for _ in 0..22 {
+            key_c(&mut stack, Key::ArrowDown);
+        }
+        key_c(&mut stack, Key::ArrowRight);
+        let before = shown_labels(&stack);
+        let mut answer = controls_of(30);
+        answer[22] = control(22, [R, Some(Binding::key(Key::R).with(Modifiers::CTRL))]);
+
+        stack.set_items(answer);
+        let after = shown_labels(&stack);
+        let shows_answer = shows(&stack, SIZE, "Ctrl+R");
+        key_c(&mut stack, Key::Enter);
+        key_c(&mut stack, Key::Q);
+
+        assert!(before.iter().any(|t| t.contains("Action 22")), "{before:?}");
+        assert_eq!(after, before, "the same rows stay in view");
+        assert!(shows_answer, "the new label is drawn at once");
+        assert_eq!(
+            stack.take_events(),
+            [captured(Bind::Row(22), Slot::Secondary, Input::Key(Key::Q))],
+            "focus and slot survived the update"
+        );
+    }
+
+    #[test]
+    fn a_game_note_shows_in_place_of_the_label_until_the_next_answer() {
+        let plain = || vec![control(0, [R, None]), control(1, [R, None])];
+        let mut stack = controls_stack(plain());
+
+        stack.set_items(vec![noted(0, NOTE), control(1, [R, None])]);
+        let texts = row_texts(&stack, 0);
+        let note_shown = texts.iter().find(|t| t.text == NOTE);
+        let label_hidden = !shows(&stack, SIZE, "Action 00");
+        stack.set_items(plain());
+        let answered = (shows(&stack, SIZE, "Action 00"), shows(&stack, SIZE, NOTE));
+        stack.set_items(vec![noted(0, NOTE), control(1, [R, None])]);
+        key_c(&mut stack, Key::ArrowDown);
+        let moved_off = (shows(&stack, SIZE, "Action 00"), shows(&stack, SIZE, NOTE));
+        key_c(&mut stack, Key::ArrowUp);
+        let moved_back = (shows(&stack, SIZE, "Action 00"), shows(&stack, SIZE, NOTE));
+
+        assert!(
+            note_shown.is_some_and(is_warning),
+            "the note is in a warning colour: {texts:?}"
+        );
+        assert!(label_hidden, "the note takes the label's place");
+        assert_eq!(answered, (true, false));
+        assert_eq!(moved_off, (true, false), "moving the focus clears the note");
+        assert_eq!(moved_back, (true, false));
+    }
+
+    #[test]
+    fn escape_while_capturing_cancels_with_no_event() {
+        let original = controls_screen(vec![control(0, [R, R])]);
+        let mut stack = MenuStack::new();
+        stack.push(original.clone());
+
+        key_c(&mut stack, Key::Enter);
+        key_c(&mut stack, Key::Escape);
+        key_c(&mut stack, Key::Q);
+
+        assert_eq!(stack.take_events(), [], "no event, and capture is over");
+        assert_eq!(stack.top(), Some(&original));
+    }
+
+    #[test]
+    fn escape_outside_capture_still_chooses_back() {
+        let mut idle = controls_stack(controls_of(2));
+        let mut after_cancel = controls_stack(controls_of(2));
+
+        key_c(&mut idle, Key::Escape);
+        key_c(&mut after_cancel, Key::Enter);
+        key_c(&mut after_cancel, Key::Escape);
+        key_c(&mut after_cancel, Key::Escape);
+
+        assert_eq!(idle.take_events(), [MenuEvent::Chosen(Bind::Back)]);
+        assert_eq!(
+            after_cancel.take_events(),
+            [MenuEvent::Chosen(Bind::Back)],
+            "the first Escape cancelled, the second chose Back"
+        );
+    }
+
+    #[test]
+    fn enter_and_unmodified_arrows_are_refused_at_capture_with_a_note() {
+        for refused in [
+            Key::Enter,
+            Key::ArrowUp,
+            Key::ArrowDown,
+            Key::ArrowLeft,
+            Key::ArrowRight,
+        ] {
+            let mut stack = controls_stack(controls_of(2));
+
+            key_c(&mut stack, Key::Enter);
+            key_c(&mut stack, refused);
+            let refusal = stack.take_events();
+            let note = row_texts(&stack, 0).into_iter().find(is_warning);
+            let label_hidden = !shows(&stack, SIZE, "Action 00");
+            key_c(&mut stack, Key::Q);
+
+            assert_eq!(refusal, [], "{refused:?} is refused, not captured");
+            assert!(note.is_some_and(|n| !n.text.is_empty()), "{refused:?}");
+            assert!(label_hidden, "{refused:?}: the note replaces the label");
+            assert_eq!(
+                stack.take_events(),
+                [captured(Bind::Row(0), Slot::Primary, Input::Key(Key::Q))],
+                "{refused:?}: capture continued on the same slot"
+            );
+        }
+    }
+
+    #[test]
+    fn backspace_or_a_right_click_clears_the_focused_slot() {
+        let rows = || {
+            vec![
+                control(0, [R, R]),
+                control(1, [R, R]),
+                bind_button("Back", Bind::Back),
+            ]
+        };
+        let right = Input::Mouse(MouseButton::Right);
+        let mut by_key = controls_stack(rows());
+        let mut by_button = controls_stack(rows());
+        let mut capturing_key = controls_stack(rows());
+        let mut capturing_button = controls_stack(rows());
+        let mut on_button_row = controls_stack(rows());
+
+        key_c(&mut by_key, Key::ArrowRight);
+        key_c(&mut by_key, Key::Backspace);
+        key_c(&mut by_button, Key::ArrowDown);
+        by_button.on_key(right, true, false);
+        key_c(&mut capturing_key, Key::Enter);
+        key_c(&mut capturing_key, Key::Backspace);
+        key_c(&mut capturing_button, Key::Enter);
+        capturing_button.on_key(right, true, false);
+        key_c(&mut on_button_row, Key::ArrowUp);
+        key_c(&mut on_button_row, Key::Backspace);
+        on_button_row.on_key(right, true, false);
+
+        assert_eq!(
+            by_key.take_events(),
+            [MenuEvent::Cleared {
+                action: Bind::Row(0),
+                slot: Slot::Secondary
+            }]
+        );
+        assert_eq!(
+            by_button.take_events(),
+            [MenuEvent::Cleared {
+                action: Bind::Row(1),
+                slot: Slot::Primary
+            }]
+        );
+        assert_eq!(
+            capturing_key.take_events(),
+            [captured(
+                Bind::Row(0),
+                Slot::Primary,
+                Input::Key(Key::Backspace)
+            )],
+            "while capturing, Backspace is bindable"
+        );
+        assert_eq!(
+            capturing_button.take_events(),
+            [captured(Bind::Row(0), Slot::Primary, right)]
+        );
+        assert_eq!(on_button_row.take_events(), [], "a button has no slot to clear");
+    }
+
+    #[test]
+    fn a_back_and_an_apply_are_plain_events_and_the_stack_stages_no_bindings() {
+        let original = controls_screen(vec![
+            control(0, [R, None]),
+            bind_button("Reset", Bind::Reset),
+            bind_button("Apply", Bind::Apply),
+            bind_button("Back", Bind::Back),
+        ]);
+        let mut stack = MenuStack::new();
+        stack.push(original.clone());
+
+        key_c(&mut stack, Key::Enter);
+        key_c(&mut stack, Key::Q);
+        let unchanged_by_capture = stack.top() == Some(&original);
+        for _ in 0..3 {
+            key_c(&mut stack, Key::ArrowDown);
+            key_c(&mut stack, Key::Enter);
+        }
+
+        assert!(unchanged_by_capture, "the game owns the staged bindings");
+        assert_eq!(
+            stack.take_events(),
+            [
+                captured(Bind::Row(0), Slot::Primary, Input::Key(Key::Q)),
+                MenuEvent::Chosen(Bind::Reset),
+                MenuEvent::Chosen(Bind::Apply),
+                MenuEvent::Chosen(Bind::Back),
+            ]
+        );
+        assert_eq!(stack.top(), Some(&original), "no hidden pop or staging");
+    }
+
+    #[test]
+    fn moving_the_focus_scrolls_the_row_into_view() {
+        let mut stack = controls_stack(controls_of(30));
+        let at_top = shown_labels(&stack);
+
+        for _ in 0..19 {
+            key_c(&mut stack, Key::ArrowDown);
+        }
+        let down = (row_shown(&stack, 19), row_shown(&stack, 0));
+        let down_count = shown_labels(&stack).len();
+        for _ in 0..19 {
+            key_c(&mut stack, Key::ArrowUp);
+        }
+
+        assert_eq!(at_top.len(), 19, "608 points hold 19 rows of 32");
+        assert!(at_top.iter().any(|t| t.contains("Action 18")));
+        assert!(!at_top.iter().any(|t| t.contains("Action 19")));
+        assert_eq!(down, (true, false));
+        assert_eq!(down_count, 19, "only whole rows are drawn");
+        assert!(row_shown(&stack, 0));
+        assert!(!row_shown(&stack, 19));
+    }
+
+    #[test]
+    fn up_from_the_first_row_wraps_to_the_last_and_scrolls_to_the_end() {
+        let mut items = controls_of(27);
+        items.push(bind_button("Reset", Bind::Reset));
+        items.push(bind_button("Apply", Bind::Apply));
+        items.push(bind_button("Back", Bind::Back));
+        let mut stack = controls_stack(items);
+
+        key_c(&mut stack, Key::ArrowUp);
+        let shown = (
+            shows(&stack, SIZE, "Back"),
+            shows(&stack, SIZE, "Apply"),
+            shows(&stack, SIZE, "Reset"),
+            row_shown(&stack, 26),
+            row_shown(&stack, 0),
+        );
+        key_c(&mut stack, Key::Enter);
+
+        assert_eq!(shown, (true, true, true, true, false));
+        assert_eq!(stack.take_events(), [MenuEvent::Chosen(Bind::Back)]);
+    }
+
+    proptest! {
+        #[test]
+        fn the_focused_row_is_always_inside_the_viewport(
+            count in 1_usize..60,
+            height in 300.0_f32..1400.0,
+            moves in prop::collection::vec(any::<bool>(), 0..80),
+        ) {
+            let size = [1280.0, height];
+            let mut stack = controls_stack(controls_of(count));
+
+            for down in moves {
+                key_c(&mut stack, if down { Key::ArrowDown } else { Key::ArrowUp });
+
+                let focused: Vec<f32> = stack
+                    .texts(size)
+                    .iter()
+                    .filter(|t| t.color == FOCUS)
+                    .map(|t| size[1] / 2.0 + t.offset[1])
+                    .collect();
+                prop_assert!(!focused.is_empty(), "no focused row is drawn");
+                for y in focused {
+                    prop_assert!(
+                        y >= VIEW_BAND - 0.01 && y <= height - VIEW_BAND + 0.01,
+                        "focused row at {} outside {}..{}", y, VIEW_BAND, height - VIEW_BAND
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn set_items_to_fewer_rows_clamps_focus_and_scroll() {
+        let mut stack = controls_stack(controls_of(30));
+        for _ in 0..25 {
+            key_c(&mut stack, Key::ArrowDown);
+        }
+
+        stack.set_items(controls_of(5));
+        let drawn = shown_labels(&stack).len();
+        let focused = row_texts(&stack, 4).iter().any(|t| t.color == FOCUS);
+        key_c(&mut stack, Key::Enter);
+        key_c(&mut stack, Key::Q);
+
+        assert_eq!(drawn, 5, "the scroll fell back to show every row");
+        assert!(focused, "the focus clamped to the last row");
+        assert_eq!(
+            stack.take_events(),
+            [captured(Bind::Row(4), Slot::Primary, Input::Key(Key::Q))]
+        );
+    }
+
+    #[test]
+    fn a_screen_that_fits_keeps_todays_layout() {
+        let controls = controls_screen(controls_of(3));
+
+        let buttons = layout(&main_screen(), SIZE);
+        let rows = layout(&controls, SIZE);
+
+        for rect in &buttons {
+            assert_eq!(rect.max[0] - rect.min[0], 240.0);
+            assert_eq!(rect.max[1] - rect.min[1], 56.0);
+        }
+        let button_centres: Vec<[f32; 2]> = buttons.iter().map(rect_centre).collect();
+        assert_eq!(button_centres, [[640.0, 304.0], [640.0, 360.0], [640.0, 416.0]]);
+        for rect in &rows {
+            assert_eq!(rect.max[0] - rect.min[0], 640.0, "a control row is 640 wide");
+            assert_eq!(rect.max[1] - rect.min[1], 32.0, "and 32 tall");
+        }
+        let row_centres: Vec<[f32; 2]> = rows.iter().map(rect_centre).collect();
+        assert_eq!(row_centres, [[640.0, 328.0], [640.0, 360.0], [640.0, 392.0]]);
+        let stack = controls_stack(controls_of(3));
+        assert!(!row_texts(&stack, 0).is_empty(), "the rows are drawn on their rects");
+    }
+
+    #[test]
+    fn hover_repeats_and_releases_do_not_disturb_capture() {
+        let mut stack = controls_stack(controls_of(3));
+
+        key_c(&mut stack, Key::Enter);
+        let over_last = cell_point(&stack, 2, SECONDARY_X);
+        stack.hover(over_last, SIZE);
+        stack.on_key(Input::Key(Key::Q), true, true);
+        stack.on_key(Input::Key(Key::Q), false, false);
+        stack.on_key(Input::Key(Key::ArrowDown), true, true);
+        stack.on_key(Input::Mouse(MouseButton::Left), false, false);
+        let quiet = stack.take_events();
+        key_c(&mut stack, Key::W);
+
+        assert_eq!(quiet, []);
+        assert_eq!(
+            stack.take_events(),
+            [captured(Bind::Row(0), Slot::Primary, Input::Key(Key::W))],
+            "focus and slot stayed where capture began"
+        );
+    }
+
+    #[test]
+    fn a_modifier_key_alone_is_captured() {
+        for modifier in [Key::Ctrl, Key::Shift, Key::Alt] {
+            let mut stack = controls_stack(controls_of(2));
+
+            key_c(&mut stack, Key::Enter);
+            key_c(&mut stack, modifier);
+
+            assert_eq!(
+                stack.take_events(),
+                [captured(Bind::Row(0), Slot::Primary, Input::Key(modifier))],
+                "{modifier:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_twelve_row_settings_screen_scrolls_at_720_points() {
+        let mut items: Vec<MenuItem<Act>> = EngineSetting::ALL
+            .into_iter()
+            .map(MenuItem::Setting)
+            .collect();
+        items.push(MenuItem::Apply);
+        items.push(button("Back", Act::Back));
+        let mut stack = stack_of(MenuScreen {
+            title: None,
+            items,
+            back: Some(Act::Back),
+            settings: None,
+        });
+        let drawn = |stack: &MenuStack<Act>, text: &str| {
+            stack.texts(SIZE).iter().any(|t| t.text == text)
+        };
+        let first = EngineSetting::ALL[0].label();
+        let second = EngineSetting::ALL[1].label();
+        let third = EngineSetting::ALL[2].label();
+
+        let top = (drawn(&stack, first), drawn(&stack, "Apply"), drawn(&stack, "Back"));
+        press(&mut stack, Key::ArrowUp);
+        let end = (
+            drawn(&stack, first),
+            drawn(&stack, second),
+            drawn(&stack, third),
+            drawn(&stack, "Back"),
+        );
+
+        assert_eq!(top, (true, false, false), "ten of the twelve rows fit");
+        assert_eq!(end, (false, false, true, true), "the end of the list is reachable");
+    }
+
     mod settings_rows {
         use moho_core::prefs::WindowMode;
 
@@ -829,7 +1503,7 @@ mod tests {
             assert_eq!(events.len(), 1, "Apply emits exactly one event: {events:?}");
             match events.remove(0) {
                 MenuEvent::SettingsApplied(applied) => applied,
-                other @ MenuEvent::Chosen(_) => panic!("Apply emitted {other:?}"),
+                other => panic!("Apply emitted {other:?}"),
             }
         }
 

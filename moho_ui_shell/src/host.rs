@@ -297,13 +297,14 @@ impl<G, A> UiFrameSource for UiShell<G, A> {
 mod tests {
     use std::collections::BTreeMap;
 
+    use moho_input::bindings::Binding;
     use moho_input::key::Key;
     use winit::dpi::PhysicalPosition;
-    use winit::event::DeviceId;
+    use winit::event::{DeviceId, MouseScrollDelta, TouchPhase};
 
     use super::*;
     use crate::console::tests::Cmd;
-    use crate::menu::{MenuEvent, MenuItem, MenuScreen};
+    use crate::menu::{MenuEvent, MenuItem, MenuScreen, Slot};
     use crate::settings::{EngineSetting, EngineSettings};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -360,7 +361,9 @@ mod tests {
             .into_iter()
             .filter_map(|event| match event {
                 MenuEvent::Chosen(choice) => Some(choice),
-                MenuEvent::SettingsApplied(_) => None,
+                MenuEvent::SettingsApplied(_)
+                | MenuEvent::Captured { .. }
+                | MenuEvent::Cleared { .. } => None,
             })
             .collect()
     }
@@ -827,6 +830,156 @@ mod tests {
         assert_eq!(past_left, 0.0);
         assert_eq!(past_right, 10.0);
         assert_eq!(after_release, 3.0, "a released button no longer drags");
+    }
+
+    /// Thirty control rows, `Action 00` to `Action 29`, with the actions cycling Play, Settings,
+    /// Quit so a captured event names the row it came from.
+    fn controls_shell() -> UiShell<Cmd, Choice> {
+        let actions = [Choice::Play, Choice::Settings, Choice::Quit];
+        let items = (0..30)
+            .map(|index| MenuItem::Control {
+                label: format!("Action {index:02}"),
+                action: actions[index % 3],
+                slots: [Some(Binding::key(Key::R)), None],
+                note: None,
+            })
+            .collect();
+        let mut shell = shell();
+        shell.menu_mut().push(MenuScreen {
+            title: None,
+            items,
+            back: None,
+            settings: None,
+        });
+        shell
+    }
+
+    fn drawn(shell: &mut UiShell<Cmd, Choice>, needle: &str) -> bool {
+        shell
+            .menu_mut()
+            .texts([1280.0, 720.0])
+            .iter()
+            .any(|t| t.text.contains(needle))
+    }
+
+    fn wheel(shell: &mut UiShell<Cmd, Choice>, delta: MouseScrollDelta) -> Routing {
+        shell.on_window_event(&WindowEvent::MouseWheel {
+            device_id: DeviceId::dummy(),
+            delta,
+            phase: TouchPhase::Moved,
+        })
+    }
+
+    fn captured_after_enter_and(shell: &mut UiShell<Cmd, Choice>, key: Key) -> Vec<MenuEvent<Choice>> {
+        shell.route(Input::Key(Key::Enter), true, false);
+        shell.route(Input::Key(key), true, false);
+        shell.menu_mut().take_events()
+    }
+
+    #[test]
+    fn the_console_key_is_never_captured_and_opening_the_console_cancels_capture() {
+        let mut shell = controls_shell();
+        let backtick = Input::Key(Key::Backtick);
+
+        let start = shell.route(Input::Key(Key::Enter), true, false);
+        let opening = shell.route(backtick, true, false);
+        let closing = shell.route(backtick, true, false);
+        let after = shell.route(Input::Key(Key::Q), true, false);
+        let quiet = shell.menu_mut().take_events();
+        let again = captured_after_enter_and(&mut shell, Key::W);
+
+        assert_eq!(start, Routing::Menu);
+        assert_eq!(opening, Routing::Opened, "the console key is not a capture");
+        assert_eq!(closing, Routing::Closed);
+        assert_eq!(after, Routing::Menu);
+        assert_eq!(quiet, [], "opening the console ended the capture");
+        assert_eq!(
+            again,
+            [MenuEvent::Captured {
+                action: Choice::Play,
+                slot: Slot::Primary,
+                input: Input::Key(Key::W)
+            }],
+            "a new capture still works"
+        );
+    }
+
+    #[test]
+    fn the_wheel_scrolls_a_menu_by_rows_without_moving_focus() {
+        let mut by_lines = controls_shell();
+        let mut by_pixels = controls_shell();
+        let mut at_cursor = controls_shell();
+        let mut closed = shell();
+        let down = |lines: f32| MouseScrollDelta::LineDelta(0.0, -lines);
+        let pixels = |y: f64| MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, -y));
+
+        by_lines.route(Input::Key(Key::ArrowDown), true, false);
+        let line_routing = wheel(&mut by_lines, down(1.0));
+        let after_line = (
+            drawn(&mut by_lines, "Action 00"),
+            drawn(&mut by_lines, "Action 02"),
+            drawn(&mut by_lines, "Action 03"),
+            drawn(&mut by_lines, "Action 21"),
+        );
+        let kept_focus = captured_after_enter_and(&mut by_lines, Key::Q);
+        wheel(&mut by_lines, down(100.0));
+        let at_end = (
+            drawn(&mut by_lines, "Action 29"),
+            drawn(&mut by_lines, "Action 10"),
+        );
+        wheel(&mut by_lines, down(-100.0));
+        let back_at_top = drawn(&mut by_lines, "Action 00");
+        wheel(&mut by_pixels, pixels(16.0));
+        let half_row = drawn(&mut by_pixels, "Action 00");
+        wheel(&mut by_pixels, pixels(16.0));
+        let whole_row = (
+            drawn(&mut by_pixels, "Action 00"),
+            drawn(&mut by_pixels, "Action 01"),
+        );
+        cursor_at(&mut at_cursor, [640.0, 72.0]);
+        wheel(&mut at_cursor, pixels(32.0));
+        let rehovered = captured_after_enter_and(&mut at_cursor, Key::Q);
+        let closed_routing = wheel(&mut closed, down(1.0));
+
+        assert_eq!(line_routing, Routing::Menu);
+        assert_eq!(after_line, (false, false, true, true), "one notch is three rows");
+        assert_eq!(
+            kept_focus,
+            [MenuEvent::Captured {
+                action: Choice::Settings,
+                slot: Slot::Primary,
+                input: Input::Key(Key::Q)
+            }],
+            "the wheel left the focus on row 1, out of view"
+        );
+        assert_eq!(at_end, (true, false), "the list stops at its last row");
+        assert!(back_at_top);
+        assert!(half_row, "half a row is remembered, not drawn");
+        assert_eq!(whole_row, (false, true), "two halves make a row");
+        assert_eq!(
+            rehovered,
+            [MenuEvent::Captured {
+                action: Choice::Settings,
+                slot: Slot::Primary,
+                input: Input::Key(Key::Q)
+            }],
+            "the row now under the cursor took the focus"
+        );
+        assert_eq!(closed_routing, Routing::Game, "no menu, no wheel capture");
+    }
+
+    #[test]
+    fn a_scrolled_controls_page_draws_a_frame() {
+        let mut shell = controls_shell();
+        let top = shell.ui_frame([1280, 720]).expect("an open menu draws");
+
+        wheel(&mut shell, MouseScrollDelta::LineDelta(0.0, -1.0));
+        let scrolled = shell.ui_frame([1280, 720]).expect("an open menu draws");
+
+        assert!(!top.meshes.is_empty());
+        assert!(!scrolled.meshes.is_empty());
+        assert!(scrolled.meshes.iter().all(|m| !m.vertices.is_empty()));
+        assert_ne!(top.meshes, scrolled.meshes, "the rows moved");
     }
 
     #[test]
