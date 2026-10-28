@@ -1,6 +1,13 @@
 //! Cascaded shadow-map fits as plain functions over glam types, so they run without a GPU.
 
+use glam::camera::rh::proj::directx::orthographic;
+use glam::camera::rh::view::look_at_mat4;
 use glam::{Mat4, Vec3};
+
+use super::light_matrix::light_up;
+use super::{
+    CASCADE_BLEND, CASTER_REACH, FILTER_MARGIN_TEXELS, SHADOW_DISTANCE, SPLIT_LAMBDA, SPLIT_NEAR,
+};
 
 /// Perspective camera shape the cascades are cut from.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -14,19 +21,51 @@ pub(super) struct CameraFrustum {
 
 impl CameraFrustum {
     /// The frustum of a perspective `proj`, or `None` when `proj` is not a perspective projection.
-    pub(super) fn from_projection(_proj: Mat4) -> Option<Self> {
-        todo!()
+    pub(super) fn from_projection(proj: Mat4) -> Option<Self> {
+        if proj.w_axis.w != 0.0 {
+            return None;
+        }
+        let inverse = proj.inverse();
+        let corners = [(-1.0, -1.0), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)]
+            .map(|(x, y)| inverse.project_point3(Vec3::new(x, y, 0.0)));
+        let far = -inverse.project_point3(Vec3::new(0.0, 0.0, 1.0)).z;
+
+        Some(Self {
+            near: -corners[0].z,
+            // An infinite perspective unprojects its far plane to infinity or NaN.
+            far: if far.is_finite() && far > 0.0 {
+                far
+            } else {
+                f32::INFINITY
+            },
+            corner_slope: corners
+                .iter()
+                .map(|corner| corner.truncate().length() / -corner.z)
+                .fold(0.0, f32::max),
+        })
     }
 }
 
 /// Far end of each of `N` slices over `near..min(far, SHADOW_DISTANCE)`.
-pub(super) fn practical_splits<const N: usize>(_near: f32, _far: f32) -> [f32; N] {
-    todo!()
+pub(super) fn practical_splits<const N: usize>(near: f32, far: f32) -> [f32; N] {
+    let start = near.max(SPLIT_NEAR);
+    let end = far.min(SHADOW_DISTANCE);
+
+    std::array::from_fn(|i| {
+        let fraction = (i + 1) as f32 / N as f32;
+        let logarithmic = start * (end / start).powf(fraction);
+        let uniform = start + (end - start) * fraction;
+        SPLIT_LAMBDA * logarithmic + (1.0 - SPLIT_LAMBDA) * uniform
+    })
 }
 
 /// `(centre_distance, radius)` of the smallest sphere centred on the view axis holding the slice.
-pub(super) fn slice_sphere(_near: f32, _far: f32, _corner_slope: f32) -> (f32, f32) {
-    todo!()
+pub(super) fn slice_sphere(near: f32, far: f32, corner_slope: f32) -> (f32, f32) {
+    let centre = ((1.0 + corner_slope * corner_slope) * (near + far) / 2.0).min(far);
+    let radius = (far - centre)
+        .hypot(corner_slope * far)
+        .max((centre - near).hypot(corner_slope * near));
+    (centre, radius)
 }
 
 /// One cascade: the light's view-projection and the world size of one shadow-map texel.
@@ -38,23 +77,62 @@ pub(super) struct CascadeFit {
 
 /// Fit an orthographic light view around the sphere (`centre`, `radius`); `light_dir` points
 /// toward the light.
-pub(super) fn fit_cascade(
-    _light_dir: Vec3,
-    _centre: Vec3,
-    _radius: f32,
-    _map_size: u32,
-) -> CascadeFit {
-    todo!()
+pub(super) fn fit_cascade(light_dir: Vec3, centre: Vec3, radius: f32, map_size: u32) -> CascadeFit {
+    let light_dir = light_dir.normalize();
+    let light_pos = centre + light_dir * (radius + CASTER_REACH);
+    let light_view = look_at_mat4(light_pos, centre, light_up(light_dir));
+    let light_proj = orthographic(
+        -radius,
+        radius,
+        -radius,
+        radius,
+        0.0,
+        2.0 * radius + CASTER_REACH,
+    );
+    let texel_world = 2.0 * radius / map_size as f32;
+
+    // Snap the world origin to the texel grid so the map doesn't shimmer as the camera moves.
+    let origin = light_view.transform_point3(Vec3::ZERO);
+    let snap = Mat4::from_translation(Vec3::new(
+        (origin.x / texel_world).floor() * texel_world - origin.x,
+        (origin.y / texel_world).floor() * texel_world - origin.y,
+        0.0,
+    ));
+
+    CascadeFit {
+        view_proj: light_proj * snap * light_view,
+        texel_world,
+    }
 }
 
 /// `N` cascade fits for the light, near to far. `camera_world` is the inverse view matrix.
 pub(super) fn light_cascades<const N: usize>(
-    _light_dir: Vec3,
-    _frustum: CameraFrustum,
-    _camera_world: Mat4,
-    _map_size: u32,
+    light_dir: Vec3,
+    frustum: CameraFrustum,
+    camera_world: Mat4,
+    map_size: u32,
 ) -> [CascadeFit; N] {
-    todo!()
+    let splits = practical_splits::<N>(frustum.near, frustum.far);
+    let position = camera_world.w_axis.truncate();
+    let forward = -camera_world.z_axis.truncate().normalize();
+    let size = map_size as f32;
+    let padding = size / (size - 2.0 * FILTER_MARGIN_TEXELS);
+
+    std::array::from_fn(|i| {
+        let slice_near = if i == 0 {
+            frustum.near
+        } else {
+            let before = if i == 1 { frustum.near } else { splits[i - 2] };
+            splits[i - 1] - CASCADE_BLEND * (splits[i - 1] - before)
+        };
+        let (distance, radius) = slice_sphere(slice_near, splits[i], frustum.corner_slope);
+        fit_cascade(
+            light_dir,
+            position + forward * distance,
+            radius * padding,
+            map_size,
+        )
+    })
 }
 
 #[cfg(test)]

@@ -1,57 +1,74 @@
 // Keeps a surface with no sky exposure and no block light from going black.
 const MIN_SKY_AMBIENT: f32 = 0.1;
+// Normal offset of the shadow lookup, in texels of the cascade looked up. 2.0 covers the
+// 1-texel filter radius plus the bilinear compare footprint. Mirrored by `NORMAL_OFFSET_TEXELS`
+// in moho_renderer's shadow.rs.
+const NORMAL_OFFSET_TEXELS: f32 = 2.0;
+// Cascades per light; the sun's layers come first, then the moon's.
+const SUN_CASCADES: u32 = 4u;
+const MOON_CASCADES: u32 = 2u;
 // Scales block light's additive term; can push colour past 1 next to strong emitters.
 const BLOCK_LIGHT_GAIN: f32 = 1.0;
 
-// Debug: Returns color-coded visualization of shadow coordinates
-fn debug_shadow_coords(light_space_pos: vec4<f32>) -> vec3<f32> {
-    var proj_coords = light_space_pos.xyz / light_space_pos.w;
-    proj_coords = proj_coords * 0.5 + 0.5;
-    proj_coords.y = 1.0 - proj_coords.y;
-    
-    // Color code: Red = outside X, Green = outside Y, Blue = outside Z, White = inside bounds
-    var debug_color = vec3<f32>(1.0, 1.0, 1.0); // Start with white (inside)
-    
-    if (proj_coords.x < 0.0 || proj_coords.x > 1.0) {
-        debug_color = vec3<f32>(1.0, 0.0, 0.0); // Red = outside X bounds
-    } else if (proj_coords.y < 0.0 || proj_coords.y > 1.0) {
-        debug_color = vec3<f32>(0.0, 1.0, 0.0); // Green = outside Y bounds
-    } else if (proj_coords.z < 0.0 || proj_coords.z > 1.0) {
-        debug_color = vec3<f32>(0.0, 0.0, 1.0); // Blue = outside Z bounds (depth)
-    } else {
-        // Inside bounds - show UV coordinates as color
-        debug_color = vec3<f32>(proj_coords.x, proj_coords.y, 0.5);
-    }
-    
-    return debug_color;
-}
-
-// Check if a light is active based on its intensity
+// Check if a light is active based on its intensity (0 = sun, 1 = moon)
 fn is_light_active(light_idx: u32) -> bool {
-    let intensities = shadow_matrices.light_intensities;
-    if (light_idx == 0u) {
-        return intensities.x > 0.01;
-    } else if (light_idx == 1u) {
-        return intensities.y > 0.01;
-    } else if (light_idx == 2u) {
-        return intensities.z > 0.01;
-    } else {
-        return intensities.w > 0.01;
-    }
+    return shadow_data.light_intensities[light_idx] > 0.01;
 }
 
-// Get light intensity by index
-fn get_light_intensity(light_idx: u32) -> f32 {
-    let intensities = shadow_matrices.light_intensities;
-    if (light_idx == 0u) {
-        return intensities.x;
-    } else if (light_idx == 1u) {
-        return intensities.y;
-    } else if (light_idx == 2u) {
-        return intensities.z;
-    } else {
-        return intensities.w;
+// Cascades of a light (0 = sun, 1 = moon).
+fn cascade_count(light_idx: u32) -> u32 {
+    return select(MOON_CASCADES, SUN_CASCADES, light_idx == 0u);
+}
+
+// Shadow-map layer of a light's first cascade.
+fn first_layer(light_idx: u32) -> u32 {
+    return select(SUN_CASCADES, 0u, light_idx == 0u);
+}
+
+// The cascade covering a view depth, and how much of the next one to mix in.
+struct CascadePick {
+    // Index within the light's cascades; the light's cascade count when the depth is past the last.
+    cascade: u32,
+    // Weight of cascade + 1 across the blend band at the end of the slice; 0 outside it.
+    blend: f32,
+}
+
+fn pick_cascade(light_idx: u32, z: f32) -> CascadePick {
+    let count = cascade_count(light_idx);
+    let splits = shadow_data.split_far[light_idx];
+
+    // Splits rise, so the first cascade with z < split is the number of splits already passed.
+    var cascade = 0u;
+    for (var i = 0u; i < count; i++) {
+        cascade += select(0u, 1u, z >= splits[i]);
     }
+    if (cascade >= count) {
+        return CascadePick(count, 0.0);
+    }
+
+    var blend = 0.0;
+    if (cascade + 1u < count) {
+        let end = splits[cascade];
+        let start = select(0.0, splits[max(cascade, 1u) - 1u], cascade > 0u);
+        let band_start = end - shadow_data.camera_forward.w * (end - start);
+        blend = clamp((z - band_start) / max(end - band_start, 0.0001), 0.0, 1.0);
+    }
+    return CascadePick(cascade, blend);
+}
+
+// Debug view 8: red, green, blue, yellow for the sun's cascades, mixed across the blend band.
+fn cascade_debug_colour(pick: CascadePick) -> vec3<f32> {
+    var colours = array<vec3<f32>, 4>(
+        vec3<f32>(1.0, 0.0, 0.0),
+        vec3<f32>(0.0, 1.0, 0.0),
+        vec3<f32>(0.0, 0.0, 1.0),
+        vec3<f32>(1.0, 1.0, 0.0),
+    );
+    if (pick.cascade >= SUN_CASCADES) {
+        return vec3<f32>(0.1);
+    }
+    let next = min(pick.cascade + 1u, SUN_CASCADES - 1u);
+    return mix(colours[pick.cascade], colours[next], pick.blend);
 }
 
 // Sample SSAO texture at screen-space position
@@ -68,80 +85,6 @@ fn sample_ssao(clip_pos: vec4<f32>) -> f32 {
     
     // Sample SSAO texture (R8Unorm stores AO directly in red channel)
     return textureSample(ssao_texture, ssao_sampler, screen_uv).r;
-}
-
-// Transform world position to light space using the specified light's matrix
-// Light indices: 0 = Sun, 1 = Moon, 2 = Dynamic1, 3 = Dynamic2
-fn world_to_light_space(world_pos: vec3<f32>, light_idx: u32) -> vec4<f32> {
-    let world_pos_h = vec4<f32>(world_pos, 1.0);
-    
-    // Each light has its own shadow matrix stored in columns
-    // We reconstruct rows for proper multiplication
-    if (light_idx == 0u) {
-        // Sun shadow matrix (light 0)
-        let sm0 = shadow_matrices.light0_m0;
-        let sm1 = shadow_matrices.light0_m1;
-        let sm2 = shadow_matrices.light0_m2;
-        let sm3 = shadow_matrices.light0_m3;
-        let sm_r0 = vec4<f32>(sm0.x, sm1.x, sm2.x, sm3.x);
-        let sm_r1 = vec4<f32>(sm0.y, sm1.y, sm2.y, sm3.y);
-        let sm_r2 = vec4<f32>(sm0.z, sm1.z, sm2.z, sm3.z);
-        let sm_r3 = vec4<f32>(sm0.w, sm1.w, sm2.w, sm3.w);
-        return vec4<f32>(
-            dot(sm_r0, world_pos_h),
-            dot(sm_r1, world_pos_h),
-            dot(sm_r2, world_pos_h),
-            dot(sm_r3, world_pos_h)
-        );
-    } else if (light_idx == 1u) {
-        // Moon shadow matrix (light 1)
-        let sm0 = shadow_matrices.light1_m0;
-        let sm1 = shadow_matrices.light1_m1;
-        let sm2 = shadow_matrices.light1_m2;
-        let sm3 = shadow_matrices.light1_m3;
-        let sm_r0 = vec4<f32>(sm0.x, sm1.x, sm2.x, sm3.x);
-        let sm_r1 = vec4<f32>(sm0.y, sm1.y, sm2.y, sm3.y);
-        let sm_r2 = vec4<f32>(sm0.z, sm1.z, sm2.z, sm3.z);
-        let sm_r3 = vec4<f32>(sm0.w, sm1.w, sm2.w, sm3.w);
-        return vec4<f32>(
-            dot(sm_r0, world_pos_h),
-            dot(sm_r1, world_pos_h),
-            dot(sm_r2, world_pos_h),
-            dot(sm_r3, world_pos_h)
-        );
-    } else if (light_idx == 2u) {
-        // Dynamic light 1 shadow matrix
-        let sm0 = shadow_matrices.light2_m0;
-        let sm1 = shadow_matrices.light2_m1;
-        let sm2 = shadow_matrices.light2_m2;
-        let sm3 = shadow_matrices.light2_m3;
-        let sm_r0 = vec4<f32>(sm0.x, sm1.x, sm2.x, sm3.x);
-        let sm_r1 = vec4<f32>(sm0.y, sm1.y, sm2.y, sm3.y);
-        let sm_r2 = vec4<f32>(sm0.z, sm1.z, sm2.z, sm3.z);
-        let sm_r3 = vec4<f32>(sm0.w, sm1.w, sm2.w, sm3.w);
-        return vec4<f32>(
-            dot(sm_r0, world_pos_h),
-            dot(sm_r1, world_pos_h),
-            dot(sm_r2, world_pos_h),
-            dot(sm_r3, world_pos_h)
-        );
-    } else {
-        // Dynamic light 2 shadow matrix (light 3)
-        let sm0 = shadow_matrices.light3_m0;
-        let sm1 = shadow_matrices.light3_m1;
-        let sm2 = shadow_matrices.light3_m2;
-        let sm3 = shadow_matrices.light3_m3;
-        let sm_r0 = vec4<f32>(sm0.x, sm1.x, sm2.x, sm3.x);
-        let sm_r1 = vec4<f32>(sm0.y, sm1.y, sm2.y, sm3.y);
-        let sm_r2 = vec4<f32>(sm0.z, sm1.z, sm2.z, sm3.z);
-        let sm_r3 = vec4<f32>(sm0.w, sm1.w, sm2.w, sm3.w);
-        return vec4<f32>(
-            dot(sm_r0, world_pos_h),
-            dot(sm_r1, world_pos_h),
-            dot(sm_r2, world_pos_h),
-            dot(sm_r3, world_pos_h)
-        );
-    }
 }
 
 // ===== PCSS (Percentage Closer Soft Shadows) Implementation =====
@@ -183,13 +126,14 @@ fn rotate2d(v: vec2<f32>, angle: f32) -> vec2<f32> {
 // PCSS Step 1: Search for average blocker depth
 fn pcss_blocker_search(
     shadow_coords: vec3<f32>,
-    light_idx: u32,
+    layer: u32,
     search_radius: f32,
     num_samples: u32,
     rotation: f32,
     bias: f32
 ) -> f32 {
-    let texel_size = 1.0 / 4096.0;
+    let map_size = vec2<f32>(textureDimensions(shadow_map));
+    let texel_size = 1.0 / map_size.x;
     var blocker_sum = 0.0;
     var blocker_count = 0.0;
     
@@ -206,13 +150,13 @@ fn pcss_blocker_search(
         }
         
         // Convert normalized coords to texel coords for textureLoad
-        let texel_coords = vec2<i32>(sample_coords * 4096.0);
+        let texel_coords = vec2<i32>(sample_coords * map_size);
         
         // Load depth value directly (textureLoad returns f32 for depth textures)
         let shadow_depth = textureLoad(
             shadow_map,
             texel_coords,
-            i32(light_idx),
+            i32(layer),
             0
         );
         
@@ -245,13 +189,13 @@ fn pcss_penumbra_size(
 // PCSS Step 3: Variable-radius PCF
 fn pcss_filter(
     shadow_coords: vec3<f32>,
-    light_idx: u32,
+    layer: u32,
     filter_radius: f32,
     num_samples: u32,
     rotation: f32,
     bias: f32
 ) -> f32 {
-    let texel_size = 1.0 / 4096.0;
+    let texel_size = 1.0 / f32(textureDimensions(shadow_map).x);
     var shadow_sum = 0.0;
     var valid_samples = 0u;
     
@@ -269,7 +213,7 @@ fn pcss_filter(
             shadow_map,
             shadow_sampler,
             sample_coords,
-            i32(light_idx),
+            i32(layer),
             shadow_coords.z - bias
         );
         valid_samples += 1u;
@@ -285,7 +229,7 @@ fn pcss_filter(
 // Helper to compute PCSS shadow with specific sample counts
 fn compute_pcss_with_samples(
     proj_coords: vec3<f32>,
-    light_idx: u32,
+    layer: u32,
     bias: f32,
     screen_pos: vec2<f32>,
     blocker_samples: u32,
@@ -300,7 +244,7 @@ fn compute_pcss_with_samples(
     // Step 1: Blocker search
     let avg_blocker_depth = pcss_blocker_search(
         proj_coords,
-        light_idx,
+        layer,
         search_radius,
         blocker_samples,
         rotation,
@@ -324,7 +268,7 @@ fn compute_pcss_with_samples(
     // Step 3: Variable-radius PCF
     return pcss_filter(
         proj_coords,
-        light_idx,
+        layer,
         penumbra,
         pcf_samples,
         rotation,
@@ -332,23 +276,20 @@ fn compute_pcss_with_samples(
     );
 }
 
-fn sample_light_shadow(light_idx: u32, world_pos: vec3<f32>, bias: f32, screen_pos: vec2<f32>, view_depth: f32) -> f32 {
-    // Transform world position to this light's space
-    let light_space_pos = world_to_light_space(world_pos, light_idx);
-    
+fn sample_light_shadow(layer: u32, is_moon: bool, world_pos: vec3<f32>, bias: f32, screen_pos: vec2<f32>, view_depth: f32) -> f32 {
+    // Transform world position to this cascade's light space
+    let light_space_pos = shadow_data.matrices[layer] * vec4<f32>(world_pos, 1.0);
+
     // Perspective divide
     var proj_coords = light_space_pos.xyz / light_space_pos.w;
-    
-    // Transform from [-1, 1] to [0, 1] for texture coordinates
-    // XY are in Clip Space (-1..1), so we map to 0..1
-    // Z is ALREADY in 0..1 (because we fixed the projection matrix to be Zero-to-One)
+
+    // XY are in clip space (-1..1); Z is already 0..1 (the cascade projections are zero-to-one).
     proj_coords.x = proj_coords.x * 0.5 + 0.5;
     proj_coords.y = proj_coords.y * 0.5 + 0.5;
-    // proj_coords.z is kept as-is
-    
+
     // Flip Y coordinate (texture coordinates are top-left origin)
     proj_coords.y = 1.0 - proj_coords.y;
-    
+
     // Outside shadow map bounds? Return no shadow (fully lit)
     if (proj_coords.x < 0.0 || proj_coords.x > 1.0 ||
         proj_coords.y < 0.0 || proj_coords.y > 1.0 ||
@@ -357,9 +298,9 @@ fn sample_light_shadow(light_idx: u32, world_pos: vec3<f32>, bias: f32, screen_p
     }
     
     // Get PCSS settings from metadata
-    let pcss_quality = u32(shadow_matrices.metadata.z);
-    let light_size = shadow_matrices.metadata.y;
-    let shadow_distance = shadow_matrices.metadata.x;
+    let pcss_quality = u32(shadow_data.metadata.z);
+    let light_size = shadow_data.metadata.y;
+    let shadow_distance = shadow_data.metadata.x;
     
     // Use PCSS if quality > 0, otherwise use fixed PCF
     if (pcss_quality > 0u) {
@@ -376,7 +317,7 @@ fn sample_light_shadow(light_idx: u32, world_pos: vec3<f32>, bias: f32, screen_p
         }
         
         // Per-light quality adjustment: Moon gets reduced quality (less noticeable)
-        if (light_idx == 1u) { // Moon
+        if (is_moon) {
             blocker_samples = max(blocker_samples / 2u, 4u);
             pcf_samples = max(pcf_samples / 2u, 8u);
         }
@@ -405,11 +346,11 @@ fn sample_light_shadow(light_idx: u32, world_pos: vec3<f32>, bias: f32, screen_p
                     
                     // Sample at both quality levels
                     let shadow_high = compute_pcss_with_samples(
-                        proj_coords, light_idx, bias, screen_pos,
+                        proj_coords, layer, bias, screen_pos,
                         reduced_blocker, reduced_pcf, light_size
                     );
                     let shadow_low = compute_pcss_with_samples(
-                        proj_coords, light_idx, bias, screen_pos,
+                        proj_coords, layer, bias, screen_pos,
                         minimal_blocker, minimal_pcf, light_size
                     );
                     
@@ -430,11 +371,11 @@ fn sample_light_shadow(light_idx: u32, world_pos: vec3<f32>, bias: f32, screen_p
                 
                 // Sample at both quality levels
                 let shadow_high = compute_pcss_with_samples(
-                    proj_coords, light_idx, bias, screen_pos,
+                    proj_coords, layer, bias, screen_pos,
                     full_blocker, full_pcf, light_size
                 );
                 let shadow_low = compute_pcss_with_samples(
-                    proj_coords, light_idx, bias, screen_pos,
+                    proj_coords, layer, bias, screen_pos,
                     reduced_blocker, reduced_pcf, light_size
                 );
                 
@@ -448,12 +389,12 @@ fn sample_light_shadow(light_idx: u32, world_pos: vec3<f32>, bias: f32, screen_p
         
         // Near distance or post-blend: Use computed sample counts
         return compute_pcss_with_samples(
-            proj_coords, light_idx, bias, screen_pos,
+            proj_coords, layer, bias, screen_pos,
             blocker_samples, pcf_samples, light_size
         );
     } else {
         // Fixed 3x3 PCF for compatibility (PCSS disabled)
-        let texel_size = 1.0 / 4096.0;
+        let texel_size = 1.0 / f32(textureDimensions(shadow_map).x);
         var shadow_sum = 0.0;
         
         for (var x = -1.0; x <= 1.0; x += 1.0) {
@@ -464,7 +405,7 @@ fn sample_light_shadow(light_idx: u32, world_pos: vec3<f32>, bias: f32, screen_p
                     shadow_map, 
                     shadow_sampler, 
                     sample_coords, 
-                    i32(light_idx),
+                    i32(layer),
                     proj_coords.z - bias
                 );
             }
@@ -473,42 +414,45 @@ fn sample_light_shadow(light_idx: u32, world_pos: vec3<f32>, bias: f32, screen_p
     }
 }
 
+// Shadow factor of one cascade, looked up at the position pushed along the geometric normal by
+// a few of that cascade's texels so a grazing surface does not shadow itself.
+fn sample_cascade_shadow(light_idx: u32, cascade: u32, world_pos: vec3<f32>, normal: vec3<f32>, light_dir: vec3<f32>, screen_pos: vec2<f32>, view_depth: f32) -> f32 {
+    let texel = shadow_data.texel_world[light_idx][cascade];
+    let ndotl = clamp(dot(normal, light_dir), -1.0, 1.0);
+    let offset_pos = world_pos + normal * (texel * NORMAL_OFFSET_TEXELS * sqrt(1.0 - ndotl * ndotl));
+
+    // Hardware depth bias and the normal offset carry acne prevention; this is float epsilon.
+    let bias = 0.000005;
+
+    return sample_light_shadow(first_layer(light_idx) + cascade, light_idx == 1u, offset_pos, bias, screen_pos, view_depth);
+}
+
 // Calculate shadow factor for a specific light with distance fade
-// Light indices: 0 = Sun, 1 = Moon, 2 = Dynamic1, 3 = Dynamic2
+// Light indices: 0 = Sun, 1 = Moon. `view_depth` is the distance along the camera's forward axis.
 fn calculate_light_shadow(light_idx: u32, world_pos: vec3<f32>, normal: vec3<f32>, light_dir: vec3<f32>, view_depth: f32, screen_pos: vec2<f32>) -> f32 {
     // Check if this light is active
     if (!is_light_active(light_idx)) {
         return 1.0; // No shadow from inactive lights
     }
-    
-    // Shadow distance (from metadata.x in uniform)
-    let shadow_distance = shadow_matrices.metadata.x;
+
+    // Effective shadow distance (from metadata.x in uniform)
+    let shadow_distance = shadow_data.metadata.x;
     if (shadow_distance <= 0.0) {
         return 1.0; // Shadow disabled
     }
-    
-    // Objects beyond shadow distance - fade to no shadow
-    if (view_depth > shadow_distance) {
-        // Fade from slight shadow at shadow_distance to no shadow at 2x distance
-        let beyond_distance = view_depth - shadow_distance;
-        let fade_factor = clamp(beyond_distance / shadow_distance, 0.0, 1.0);
-        return mix(0.7, 1.0, fade_factor);
+
+    // Past the last cascade nothing is shadowed.
+    let pick = pick_cascade(light_idx, view_depth);
+    if (pick.cascade >= cascade_count(light_idx)) {
+        return 1.0;
     }
-    
-    // Normal offset bias: Move sample point along normal to reduce acne on curved surfaces
-    // DISABLED (Exp 17): Using Hardware Depth Bias instead.
-    let ndotl = max(dot(normal, light_dir), 0.0);
-    let normal_offset = 0.0; 
-    let offset_pos = world_pos;
-    
-    // Slope-scale depth bias for shadow acne prevention
-    // DISABLED (Exp 17): Using Hardware Depth Bias instead.
-    // We keep a tiny epsilon just for float precision.
-    let bias = 0.000005; 
-    
-    // Sample shadow for this light (with PCSS if enabled)
-    let shadow = sample_light_shadow(light_idx, offset_pos, bias, screen_pos, view_depth);
-    
+
+    var shadow = sample_cascade_shadow(light_idx, pick.cascade, world_pos, normal, light_dir, screen_pos, view_depth);
+    if (pick.blend > 0.0) {
+        let next = sample_cascade_shadow(light_idx, pick.cascade + 1u, world_pos, normal, light_dir, screen_pos, view_depth);
+        shadow = mix(shadow, next, pick.blend);
+    }
+
     // Fade shadow at distance to avoid hard cut
     // Fade from 80% to 100% of shadow_distance
     let fade_start = shadow_distance * 0.8;
@@ -516,9 +460,11 @@ fn calculate_light_shadow(light_idx: u32, world_pos: vec3<f32>, normal: vec3<f32
         let fade_factor = clamp((view_depth - fade_start) / (shadow_distance - fade_start), 0.0, 1.0);
         return mix(shadow, 1.0, fade_factor);
     }
-    
+
     return shadow;
-}// Calculate contribution from a single point light
+}
+
+// Calculate contribution from a single point light
 // Returns (diffuse_contrib, specular_contrib) as separate vec3s for flexibility
 fn calculate_point_light(
     light_pos: vec3<f32>,
@@ -638,9 +584,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let L_moon = moon_dir;
     let diff_moon = max(dot(N, L_moon), 0.0);
     
-    // Calculate view-space depth for shadow distance calculations
+    // View depth along the camera's forward axis: what the cascade splits are measured in
     let cam_pos_vec = vec3<f32>(camera.cam_pos.x, camera.cam_pos.y, camera.cam_pos.z);
-    let view_depth = length(in.world_pos - cam_pos_vec);
+    let view_depth = dot(in.world_pos - cam_pos_vec, shadow_data.camera_forward.xyz);
     
     // Screen-space position for PCSS per-pixel rotation
     let screen_pos = in.clip.xy;
@@ -842,12 +788,6 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         }
     }
     
-    // DEBUG: Visualize shadow coordinates (comment out for normal rendering)
-    // Uncomment the line below to see shadow map coverage:
-    // Red = outside X bounds, Green = outside Y bounds, Blue = outside Z bounds (depth)
-    // Color gradient = inside bounds (shows UV coords)
-    // return vec4<f32>(debug_shadow_coords(in.light_space_pos), 1.0);
-    
     // Sky exposure gates only sun and moon. Sky ambient scales by exposure itself, point
     // lights are not sky light, and block light adds on top so it can light surfaces the
     // sky leaves dark.
@@ -896,6 +836,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         return vec4<f32>(sky_ambient, 1.0);
     } else if (debug_mode == 7u) {
         return vec4<f32>(sky_reflected, 1.0);
+    } else if (debug_mode == 8u) {
+        // Mode 8: Sun cascades (red, green, blue, yellow), mixed across the blend band
+        return vec4<f32>(cascade_debug_colour(pick_cascade(0u, view_depth)), 1.0);
     }
 
     return vec4<f32>(color, out_alpha);

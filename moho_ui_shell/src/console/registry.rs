@@ -81,7 +81,7 @@ fn parse_quit(_args: &[&str]) -> Result<(EngineCommand, String), String> {
     Ok((EngineCommand::Quit, "Quitting".to_owned()))
 }
 
-const DEBUG_VIEW_NAMES: [&str; 8] = [
+const DEBUG_VIEW_NAMES: [&str; 9] = [
     "None",
     "Normals",
     "Bias",
@@ -90,11 +90,12 @@ const DEBUG_VIEW_NAMES: [&str; 8] = [
     "Point Lights",
     "Sky Ambient",
     "Sky Reflection",
+    "Cascades",
 ];
 
 fn parse_debug_view(args: &[&str]) -> Result<(EngineCommand, String), String> {
     let Some(arg) = args.first() else {
-        return Err("Usage: r_debug_view <mode> (0=None, 1=Normals, 2=Bias, 3=Shadows, 4=LightLevel, 5=PointLights, 6=SkyAmbient, 7=SkyReflection)".to_owned());
+        return Err("Usage: r_debug_view <mode> (0=None, 1=Normals, 2=Bias, 3=Shadows, 4=LightLevel, 5=PointLights, 6=SkyAmbient, 7=SkyReflection, 8=Cascades)".to_owned());
     };
     let mode = arg
         .parse::<u32>()
@@ -102,7 +103,7 @@ fn parse_debug_view(args: &[&str]) -> Result<(EngineCommand, String), String> {
     let name = usize::try_from(mode)
         .ok()
         .and_then(|i| DEBUG_VIEW_NAMES.get(i))
-        .ok_or_else(|| "Debug view must be between 0 and 7".to_owned())?;
+        .ok_or_else(|| "Debug view must be between 0 and 8".to_owned())?;
     Ok((
         EngineCommand::DebugView(mode),
         format!("Debug view set to: {name} ({mode})"),
@@ -224,8 +225,8 @@ impl<G> Registry<G> {
                 engine("quit", "quit", "exit the game", Handler::Engine(parse_quit)),
                 engine(
                     "r_debug_view",
-                    "r_debug_view <0-7>",
-                    "set the debug view (0=None, 3=Shadows)",
+                    "r_debug_view <0-8>",
+                    "set the debug view (0=None, 3=Shadows, 8=Cascades)",
                     Handler::Engine(parse_debug_view),
                 ),
                 engine(

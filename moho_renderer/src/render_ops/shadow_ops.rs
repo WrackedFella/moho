@@ -1,28 +1,27 @@
 //! Shadow rendering operations.
 //!
-//! This module handles shadow matrix calculation and shadow pass rendering
-//! for multi-light shadow mapping (Sun, Moon, Dynamic lights).
+//! This module handles cascade fitting and shadow pass rendering for the sun's and the
+//! moon's cascaded shadow maps.
 
-use crate::gpu_types::{MultiLightShadowGpu, ShadowMatrixGpu};
+use crate::gpu_types::ShadowGpu;
 use crate::shadow::ShadowSystem;
 use crate::types::{DrawKey, GpuInstance, MeshEntry};
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 use wgpu::{Buffer, CommandEncoder, Queue};
 
-/// Update shadow matrices for multi-light shadow mapping.
-///
-/// Calculates shadow matrices for sun, moon, and dynamic lights,
-/// uploading to GPU buffers for shadow rendering and sampling.
+/// Fit the cascades to the camera and upload the shadow block.
 ///
 /// # Arguments
 /// * `shadow_system` - Shadow system containing buffers and state
 /// * `queue` - WGPU queue for buffer writes
-/// * `cam_pos` - Camera position in world space
+/// * `view_mat` - World-to-view matrix of the camera
+/// * `proj_mat` - Projection matrix of the camera
 /// * `cut` - View-height cut, from `view_height_uniform`
 pub fn update_shadow_matrices(
     shadow_system: &mut ShadowSystem,
     queue: &Queue,
-    cam_pos: Vec3,
+    view_mat: Mat4,
+    proj_mat: Mat4,
     cut: f32,
 ) {
     let lighting = &shadow_system.current_lighting;
@@ -39,43 +38,28 @@ pub fn update_shadow_matrices(
         lighting.moon_direction[2],
     );
 
-    // Calculate multi-light shadow matrices
-    let multi_light_gpu = with_view_height(
-        shadow_system.calculate_multi_light_matrices(sun_dir, moon_dir, cam_pos),
+    let shadow_gpu = with_view_height(
+        shadow_system.update_cascades(sun_dir, moon_dir, view_mat, proj_mat),
         cut,
     );
 
-    // Upload multi-light shadow data to csm buffer (which is now used for multi-light)
     queue.write_buffer(
         &shadow_system.csm_matrix_buffer,
         0,
-        bytemuck::bytes_of(&multi_light_gpu),
-    );
-
-    // For backward compatibility, also write sun (light 0) matrix to legacy buffer
-    let shadow_matrix_gpu = ShadowMatrixGpu {
-        sm0: multi_light_gpu.light0_m0,
-        sm1: multi_light_gpu.light0_m1,
-        sm2: multi_light_gpu.light0_m2,
-        sm3: multi_light_gpu.light0_m3,
-    };
-    queue.write_buffer(
-        &shadow_system.shadow_matrix_buffer,
-        0,
-        bytemuck::bytes_of(&shadow_matrix_gpu),
+        bytemuck::bytes_of(&shadow_gpu),
     );
 }
 
 /// Set the view-height cut in `metadata.w`, which the shadow shader reads.
-fn with_view_height(mut gpu: MultiLightShadowGpu, cut: f32) -> MultiLightShadowGpu {
+fn with_view_height(mut gpu: ShadowGpu, cut: f32) -> ShadowGpu {
     gpu.metadata[3] = cut;
     gpu
 }
 
 /// Render all meshes into shadow maps for active lights.
 ///
-/// Creates one render pass per active light to render the scene from the light's
-/// perspective into the shadow depth maps.
+/// Creates one render pass per cascade layer of each active light to render the scene from the
+/// cascade's perspective into its shadow depth map.
 ///
 /// # Arguments
 /// * `encoder` - Command encoder for recording render passes
@@ -94,20 +78,12 @@ pub fn render_shadow_passes(
     offsets: &[usize],
     arena: Option<&Buffer>,
 ) {
-    // Render shadow map for each active light
-    for active_light in &shadow_system.active_lights {
-        let light_idx = active_light.light_index;
-
-        // Skip inactive lights
-        if active_light.intensity < 0.01 {
-            continue;
-        }
-
+    for layer in shadow_system.layers_to_render() {
         let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some(&format!("shadow-light-{light_idx}-pass")),
+            label: Some(&format!("shadow-layer-{layer}-pass")),
             color_attachments: &[],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &shadow_system.csm_cascade_views[light_idx as usize],
+                view: &shadow_system.csm_cascade_views[layer as usize],
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0),
                     store: wgpu::StoreOp::Store,
@@ -122,11 +98,11 @@ pub fn render_shadow_passes(
         shadow_pass.set_pipeline(&shadow_system.shadow_pipeline);
         shadow_pass.set_bind_group(0, &shadow_system.csm_pass_bind_group, &[]);
 
-        // Set light index via immediate data (same as cascade_idx was used before,
-        // formerly a push constant — wgpu 29 renamed push constants to "immediates")
-        shadow_pass.set_immediates(0, bytemuck::bytes_of(&light_idx));
+        // The shadow shader indexes its matrices by the layer in the immediate data
+        // (wgpu 29 renamed push constants to "immediates")
+        shadow_pass.set_immediates(0, bytemuck::bytes_of(&layer));
 
-        // Draw all pending meshes from light's perspective
+        // Draw all pending meshes from the cascade's perspective
         for (i, (key, insts)) in pending_draws.iter().enumerate() {
             let idx = key.mesh as usize;
             if idx >= mesh_table.len() {
@@ -169,7 +145,7 @@ mod tests {
 
     #[test]
     fn shadow_uniform_carries_the_cut_in_metadata_w() {
-        let gpu = MultiLightShadowGpu {
+        let gpu = ShadowGpu {
             metadata: [1.0, 2.0, 3.0, 0.0],
             ..Default::default()
         };
