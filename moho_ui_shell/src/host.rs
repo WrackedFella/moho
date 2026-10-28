@@ -1012,6 +1012,36 @@ mod tests {
     }
 
     #[test]
+    fn a_right_click_clears_only_when_the_cursor_is_on_the_focused_slot() {
+        let right = Input::Mouse(MouseButton::Right);
+        let cleared = |at: [f64; 2]| {
+            let mut shell = controls_shell();
+            cursor_at(&mut shell, at);
+            shell.route(right, true, false);
+            shell.menu_mut().take_events()
+        };
+        // Row 0 is focused on its primary slot; rows are 32 tall from y 56, 640 wide from x 320,
+        // and a row's label column is its first 240 points.
+        let on_focused_slot = [320.0 + 360.0, 72.0];
+        let over_other_label = [320.0 + 100.0, 104.0];
+        let at_window_edge = [1279.0, 719.0];
+
+        let on_slot = cleared(on_focused_slot);
+        let on_label = cleared(over_other_label);
+        let in_space = cleared(at_window_edge);
+
+        assert_eq!(
+            on_slot,
+            [MenuEvent::Cleared {
+                action: Choice::Play,
+                slot: Slot::Primary
+            }]
+        );
+        assert_eq!(on_label, [], "a label is not the focused slot");
+        assert_eq!(in_space, [], "empty space is not the focused slot");
+    }
+
+    #[test]
     fn the_console_shell_debug_names_the_shell_and_whether_the_console_is_open() {
         let mut shell = shell();
         let closed = format!("{shell:?}");

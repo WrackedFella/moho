@@ -653,7 +653,7 @@ fn centre_y(rect: Rect) -> f32 {
     (rect.min[1] + rect.max[1]) / 2.0
 }
 
-/// Rows 32 or 56 points tall fill the window less a title band above and below.
+/// Height available to rows: the window less a title band above and below.
 fn viewport(size: [f32; 2]) -> f32 {
     size[1] - 2.0 * BAND
 }
@@ -1780,6 +1780,187 @@ mod tests {
             (false, false, true, true),
             "the end of the list is reachable"
         );
+    }
+
+    /// The y of the centre of the first text reading `text` on `SIZE`.
+    fn text_y<A: Clone>(stack: &MenuStack<A>, text: &str) -> f32 {
+        let found = stack.texts(SIZE).into_iter().find(|t| t.text == text);
+        let found = found.unwrap_or_else(|| panic!("{text:?} is not drawn"));
+        SIZE[1] / 2.0 + found.offset[1]
+    }
+
+    fn scrolled_base() -> EngineSettings {
+        EngineSettings {
+            mouse_sensitivity: 2.5,
+            mouse_smoothing: false,
+            invert_mouse_y: false,
+            sound_effect_volume: 5.0,
+            music_volume: 6.0,
+            ui_volume: 7.0,
+            shadow_quality: 3,
+            ssao_quality: 3,
+            window_mode: moho_core::prefs::WindowMode::Windowed,
+            resolution: (1920, 1080),
+        }
+    }
+
+    /// Twelve settings-screen rows at 720 points, scrolled to the end: rows 2 to 11 are in view.
+    fn scrolled_settings_stack() -> MenuStack<Act> {
+        let mut items: Vec<MenuItem<Act>> = EngineSetting::ALL
+            .into_iter()
+            .map(MenuItem::Setting)
+            .collect();
+        items.push(MenuItem::Apply);
+        items.push(button("Back", Act::Back));
+        let mut stack = stack_of(MenuScreen {
+            title: None,
+            items,
+            back: Some(Act::Back),
+            settings: Some(scrolled_base()),
+        });
+        press(&mut stack, Key::ArrowUp);
+        assert!(
+            !stack
+                .texts(SIZE)
+                .iter()
+                .any(|t| t.text == EngineSetting::ALL[0].label()),
+            "the first row must be scrolled out of view"
+        );
+        stack
+    }
+
+    #[test]
+    fn a_slider_press_and_drag_on_a_scrolled_settings_screen_hit_the_scrolled_row() {
+        let volume = EngineSetting::SoundEffectVolume;
+        let mut pressed = scrolled_settings_stack();
+        let mut dragged = scrolled_settings_stack();
+        let slider_y = text_y(&pressed, volume.label());
+        let apply_at = [640.0, text_y(&pressed, "Apply")];
+
+        pressed.click([592.0, slider_y], SIZE);
+        pressed.click(apply_at, SIZE);
+        dragged.click([592.0, slider_y], SIZE);
+        let dragging = dragged.is_dragging();
+        dragged.drag([712.0, slider_y], SIZE);
+        dragged.on_key(Input::Mouse(MouseButton::Left), false, false);
+        dragged.click(apply_at, SIZE);
+
+        let applied = |sound_effect_volume| {
+            vec![MenuEvent::SettingsApplied(EngineSettings {
+                sound_effect_volume,
+                ..scrolled_base()
+            })]
+        };
+        assert!(dragging, "the press started a drag");
+        assert_eq!(pressed.take_events(), applied(3.0));
+        assert_eq!(dragged.take_events(), applied(8.0));
+    }
+
+    #[test]
+    fn starting_capture_hides_the_games_note_and_shows_the_label() {
+        let mut stack = controls_stack(vec![noted(0, NOTE), control(1, [R, None])]);
+        let before = (shows(&stack, SIZE, NOTE), shows(&stack, SIZE, "Action 00"));
+
+        key_c(&mut stack, Key::Enter);
+
+        assert_eq!(before, (true, false), "the note shows until capture starts");
+        assert!(!shows(&stack, SIZE, NOTE), "capture hides the note");
+        assert!(shows(&stack, SIZE, "Action 00"), "the label is back");
+    }
+
+    #[test]
+    fn the_shell_note_beats_the_games_note_when_both_are_present() {
+        let mut stack = controls_stack(vec![control(0, [R, None]), control(1, [R, None])]);
+        key_c(&mut stack, Key::Enter);
+        stack.set_items(vec![noted(0, NOTE), control(1, [R, None])]);
+        let game_note_alone = shows(&stack, SIZE, NOTE);
+
+        key_c(&mut stack, Key::Enter);
+
+        assert!(game_note_alone, "the answer's note shows during capture");
+        assert!(shows(&stack, SIZE, PROTECTED_NOTE));
+        assert!(!shows(&stack, SIZE, NOTE), "the shell's note wins");
+        assert_eq!(stack.take_events(), []);
+    }
+
+    #[test]
+    fn a_click_on_a_control_rows_label_chooses_nothing_and_starts_no_capture() {
+        for offset in [1.0, 120.0, 239.5] {
+            let mut stack = controls_stack(vec![control(0, [R, R]), control(1, [R, R])]);
+            let point = cell_point(&stack, 1, offset);
+
+            stack.click(point, SIZE);
+            let capturing = stack.is_capturing();
+            key_c(&mut stack, Key::Q);
+
+            assert!(!capturing, "offset {offset}");
+            assert_eq!(stack.take_events(), [], "offset {offset}");
+        }
+    }
+
+    #[test]
+    fn a_click_picks_the_cell_it_lands_on_whichever_slot_had_the_focus() {
+        let mut primary_after_secondary = controls_stack(vec![control(0, [R, R])]);
+        let mut secondary_after_primary = controls_stack(vec![control(0, [R, R])]);
+        let mut at_cell_edge = controls_stack(vec![control(0, [R, R])]);
+        let mut below_cell_edge = controls_stack(vec![control(0, [R, R])]);
+
+        key_c(&mut primary_after_secondary, Key::ArrowRight);
+        let point = cell_point(&primary_after_secondary, 0, PRIMARY_X);
+        primary_after_secondary.click(point, SIZE);
+        key_c(&mut primary_after_secondary, Key::Q);
+        let point = cell_point(&secondary_after_primary, 0, SECONDARY_X);
+        secondary_after_primary.click(point, SIZE);
+        key_c(&mut secondary_after_primary, Key::Q);
+        let point = cell_point(&at_cell_edge, 0, 440.0);
+        at_cell_edge.click(point, SIZE);
+        key_c(&mut at_cell_edge, Key::Q);
+        let point = cell_point(&below_cell_edge, 0, 439.5);
+        below_cell_edge.click(point, SIZE);
+        key_c(&mut below_cell_edge, Key::Q);
+
+        let q = Input::Key(Key::Q);
+        assert_eq!(
+            primary_after_secondary.take_events(),
+            [captured(Bind::Row(0), Slot::Primary, q)]
+        );
+        assert_eq!(
+            secondary_after_primary.take_events(),
+            [captured(Bind::Row(0), Slot::Secondary, q)]
+        );
+        assert_eq!(
+            at_cell_edge.take_events(),
+            [captured(Bind::Row(0), Slot::Secondary, q)]
+        );
+        assert_eq!(
+            below_cell_edge.take_events(),
+            [captured(Bind::Row(0), Slot::Primary, q)]
+        );
+    }
+
+    #[test]
+    fn the_title_stays_on_screen_above_a_scrolled_control_page() {
+        let screen = MenuScreen {
+            title: Some("Controls".to_owned()),
+            ..controls_screen(controls_of(30))
+        };
+        let mut stack = MenuStack::new();
+        stack.push(screen);
+
+        for scrolled in [false, true] {
+            if scrolled {
+                stack.scroll(3.0);
+                assert!(!row_shown(&stack, 0), "the page must be scrolled");
+            }
+            let texts = stack.texts(SIZE);
+
+            let title = texts
+                .iter()
+                .find(|t| t.text == "Controls")
+                .expect("the title is drawn");
+            let top = SIZE[1] / 2.0 + title.offset[1] - title.size / 2.0;
+            assert!(top >= 0.0, "scrolled {scrolled}: title top at {top}");
+        }
     }
 
     mod settings_rows {
