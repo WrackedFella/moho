@@ -79,7 +79,7 @@ impl Default for PcssSettings {
 /// Active shadow-casting light
 #[derive(Debug, Clone)]
 pub struct ActiveShadowLight {
-    pub light_index: u32, // 0-3 for shader array index
+    pub light_index: u32, // 0 = sun, 1 = moon
     pub intensity: f32,
 }
 

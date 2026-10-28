@@ -1,8 +1,8 @@
 // Keeps a surface with no sky exposure and no block light from going black.
 const MIN_SKY_AMBIENT: f32 = 0.1;
 // Normal offset of the shadow lookup, in texels of the cascade looked up. 2.0 covers the
-// 1-texel filter radius plus the bilinear compare footprint. Mirrored by `NORMAL_OFFSET_TEXELS`
-// in moho_renderer's shadow.rs.
+// 1-texel filter radius plus the bilinear compare footprint. A test in
+// moho_renderer's shadow.rs pins the value.
 const NORMAL_OFFSET_TEXELS: f32 = 2.0;
 // Cascades per light; the sun's layers come first, then the moon's.
 const SUN_CASCADES: u32 = 4u;

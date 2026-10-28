@@ -520,5 +520,9 @@ around each slice's bounding sphere (`fit_cascade`) and uploads one `ShadowGpu` 
 Casters up to `CASTER_REACH` metres toward the light land in a cascade's map. The fragment
 shader picks a cascade by view depth along `camera_forward` and blends into the next over
 the last `CASCADE_BLEND` fraction of a slice. `r_debug_view 8` tints fragments by cascade.
+Acne is prevented by a normal offset, not a large depth bias: the lookup position moves
+along the geometric normal by `NORMAL_OFFSET_TEXELS` (2) texels of the cascade looked up,
+scaled by sin θ to the light, and the hardware bias stays at slope 1.0 with no clamp (one
+clamp per pipeline could not suit cascades whose texels differ 18-fold).
 A light below `MIN_SHADOW_LIGHT_INTENSITY` skips its cascades. The fits are plain
 functions over `glam` types and run without a GPU.

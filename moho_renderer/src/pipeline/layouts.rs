@@ -161,16 +161,10 @@ pub fn create_shadow_bind_group_layout(
     Ok(layout)
 }
 
-/// Create the CSM pass bind group layout (Phase 3).
-///
-/// This layout is used for cascaded shadow mapping and has 1 binding:
-/// - Binding 0: CSM matrix uniform buffer (vertex shader only)
+/// Create the cascaded shadow pass bind group layout: binding 0 is the [`ShadowGpu`] uniform
+/// (vertex shader only), whose `matrices` the shadow pass indexes by layer.
 ///
 /// # Errors
-///
-/// Create bind group layout for multi-light shadow pass.
-///
-/// This layout provides the shadow matrices for all active lights (sun, moon, dynamic lights).
 ///
 /// Returns `PipelineInitError` if shadow matrix size calculation fails.
 pub fn create_csm_pass_bind_group_layout(
