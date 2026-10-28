@@ -1972,6 +1972,8 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "glam 0.33.12",
+ "moho_level",
+ "moho_physics",
  "moho_render_api",
  "naga",
  "proptest",

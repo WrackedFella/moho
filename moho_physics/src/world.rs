@@ -1,5 +1,5 @@
 use glam::Vec3;
-use moho_render_api::{WorldMesh, WorldMeshId};
+use moho_render_api::{WorldMesh, WorldMeshId, WorldMeshRange};
 use rapier3d::prelude::*;
 use std::collections::HashMap;
 
@@ -142,6 +142,12 @@ impl PhysicsWorld {
         if let Some(handle) = self.world_mesh_colliders.remove(&id) {
             self.remove_collider(handle);
         }
+    }
+
+    /// Remove the collider of every id in `range`; ids without one are skipped.
+    pub fn remove_world_meshes(&mut self, range: WorldMeshRange) {
+        let _ = range;
+        todo!("PhysicsWorld::remove_world_meshes")
     }
 
     /// The collider registered for `id`; `None` for an unknown, empty or rejected mesh.
@@ -472,16 +478,56 @@ mod tests {
         assert_eq!(character_landed, Some(42));
     }
 
+    #[test]
+    fn remove_world_meshes_removes_exactly_the_range() {
+        let mut world = PhysicsWorld::new();
+        for id in 0..6 {
+            world.set_world_mesh(WorldMeshId(id), &floor_mesh(id as f32), TEST_TAG);
+        }
+        let range = WorldMeshRange::new(WorldMeshId(2), 3).expect("fits");
+
+        world.remove_world_meshes(range);
+
+        for id in [0, 1, 5] {
+            assert!(
+                world.world_mesh_collider(WorldMeshId(id)).is_some(),
+                "id {id} is outside the range and keeps its collider"
+            );
+        }
+        for id in [2, 3, 4] {
+            assert!(
+                world.world_mesh_collider(WorldMeshId(id)).is_none(),
+                "id {id} is inside the range"
+            );
+        }
+        assert_eq!(world.collider_set.len(), 3);
+    }
+
+    #[test]
+    fn remove_world_meshes_skips_ids_without_a_collider() {
+        let mut world = PhysicsWorld::new();
+        world.set_world_mesh(WorldMeshId(1), &floor_mesh(0.0), TEST_TAG);
+        world.set_world_mesh(WorldMeshId(3), &empty_mesh(), TEST_TAG);
+        let range = WorldMeshRange::new(WorldMeshId(1), 4).expect("fits");
+
+        world.remove_world_meshes(range);
+
+        assert_eq!(world.collider_set.len(), 0);
+        assert!(world.world_mesh_collider(WorldMeshId(1)).is_none());
+    }
+
     #[derive(Clone, Debug)]
     enum Op {
         Set(u64, bool),
         Remove(u64),
+        RemoveRange(u64, u32),
     }
 
     fn op_strategy() -> impl Strategy<Value = Op> {
         prop_oneof![
             (0u64..4, any::<bool>()).prop_map(|(id, empty)| Op::Set(id, empty)),
             (0u64..4).prop_map(Op::Remove),
+            (0u64..5, 0u32..5).prop_map(|(first, len)| Op::RemoveRange(first, len)),
         ]
     }
 
@@ -506,6 +552,11 @@ mod tests {
                     Op::Remove(id) => {
                         world.remove_world_mesh(WorldMeshId(id));
                         live.remove(&id);
+                    }
+                    Op::RemoveRange(first, len) => {
+                        let range = WorldMeshRange::new(WorldMeshId(first), len).expect("fits");
+                        world.remove_world_meshes(range);
+                        live.retain(|id| !(first..first + u64::from(len)).contains(id));
                     }
                 }
             }
