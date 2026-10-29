@@ -77,8 +77,8 @@ impl LooseSpawn {
         for (name, value) in [
             ("friction", self.friction),
             ("restitution", self.restitution),
-            ("damping", self.linear_damping),
-            ("damping", self.angular_damping),
+            ("linear damping", self.linear_damping),
+            ("angular damping", self.angular_damping),
         ] {
             assert!(
                 value.is_finite() && value >= 0.0,
@@ -126,7 +126,8 @@ impl PhysicsWorld {
     /// # Panics
     /// If the spawn would poison the simulation: a mass or half extent that is not positive and
     /// finite, a friction, restitution or damping that is negative or not finite, a position or
-    /// velocity that is not finite, or a rotation that is not a finite unit quaternion.
+    /// velocity that is not finite, or a rotation that is not finite or whose squared length is
+    /// more than 2e-4 from 1 (glam's `Quat::is_normalized`).
     pub fn spawn_loose(&mut self, spawn: &LooseSpawn) -> LooseId {
         spawn.assert_valid();
         let LooseShape::Box { half_extents } = spawn.shape;
