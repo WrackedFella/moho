@@ -830,7 +830,9 @@ impl SearchlightGame {
                 MenuEvent::Chosen(MenuAction::Back) => self.stage.shell().menu_mut().pop(),
                 MenuEvent::Chosen(MenuAction::Quit) => ctx.request_exit(),
                 MenuEvent::SettingsApplied(settings) => self.settings_applied(settings),
-                MenuEvent::Captured { .. } | MenuEvent::Cleared { .. } => {}
+                MenuEvent::GameSettingsApplied(_)
+                | MenuEvent::Captured { .. }
+                | MenuEvent::Cleared { .. } => {}
             }
         }
     }
@@ -2601,6 +2603,7 @@ mod tests {
             .find_map(|event| match event {
                 MenuEvent::Chosen(action) => Some(action),
                 MenuEvent::SettingsApplied(_)
+                | MenuEvent::GameSettingsApplied(_)
                 | MenuEvent::Captured { .. }
                 | MenuEvent::Cleared { .. } => None,
             })
@@ -2615,7 +2618,10 @@ mod tests {
             .iter()
             .filter_map(|item| match item {
                 MenuItem::Button { label, .. } => Some(label.clone()),
-                MenuItem::Setting(_) | MenuItem::Apply | MenuItem::Control { .. } => None,
+                MenuItem::Setting(_)
+                | MenuItem::Apply
+                | MenuItem::Control { .. }
+                | MenuItem::GameSlider(_) => None,
             })
             .collect()
     }
@@ -3366,7 +3372,10 @@ mod menu_tests {
             .iter()
             .filter_map(|item| match item {
                 MenuItem::Button { label, .. } => Some(label.clone()),
-                MenuItem::Setting(_) | MenuItem::Apply | MenuItem::Control { .. } => None,
+                MenuItem::Setting(_)
+                | MenuItem::Apply
+                | MenuItem::Control { .. }
+                | MenuItem::GameSlider(_) => None,
             })
             .collect()
     }
@@ -3812,7 +3821,10 @@ mod settings_tests {
             .iter()
             .filter_map(|item| match item {
                 MenuItem::Button { label, .. } => Some(label.clone()),
-                MenuItem::Setting(_) | MenuItem::Apply | MenuItem::Control { .. } => None,
+                MenuItem::Setting(_)
+                | MenuItem::Apply
+                | MenuItem::Control { .. }
+                | MenuItem::GameSlider(_) => None,
             })
             .collect()
     }

@@ -44,6 +44,20 @@ pub enum Control {
     Choice,
 }
 
+/// A game's own slider row; `key` names its value among the screen's game values.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GameSlider {
+    pub key: String,
+    pub label: String,
+    pub min: i32,
+    pub max: i32,
+    pub step: i32,
+    /// Shown after the value, after a space, when non-empty ("%").
+    pub unit: String,
+    /// The value the row starts from.
+    pub value: i32,
+}
+
 impl EngineSetting {
     /// Every row, in the order a Settings screen lists them.
     pub const ALL: [EngineSetting; 11] = [

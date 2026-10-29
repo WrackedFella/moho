@@ -386,6 +386,7 @@ mod tests {
             .filter_map(|event| match event {
                 MenuEvent::Chosen(choice) => Some(choice),
                 MenuEvent::SettingsApplied(_)
+                | MenuEvent::GameSettingsApplied(_)
                 | MenuEvent::Captured { .. }
                 | MenuEvent::Cleared { .. } => None,
             })

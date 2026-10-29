@@ -1125,6 +1125,28 @@ mod tests {
         assert_eq!(snapshot(&prefs), snapshot(&base_prefs()));
     }
 
+    #[test]
+    fn game_section_is_read_raw_and_not_unknown() {
+        let content = format!(
+            "{}[game]\nhead_bob=25\nany_name_at_all=free text\nnever_seen_by_the_engine=7\n",
+            base_ini_with(None)
+        );
+
+        let (prefs, issues) = Prefs::parse(&content);
+        let (resaved, resaved_issues) = Prefs::parse(&prefs.to_ini_string());
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(prefs.game_value("head_bob"), Some("25"));
+        assert_eq!(prefs.game_value("any_name_at_all"), Some("free text"));
+        assert_eq!(prefs.game_value("never_seen_by_the_engine"), Some("7"));
+        assert_eq!(snapshot(&prefs), snapshot(&base_prefs()));
+        assert_eq!(resaved_issues, vec![]);
+        assert_eq!(resaved.game_value("head_bob"), Some("25"));
+        assert_eq!(resaved.game_value("any_name_at_all"), Some("free text"));
+        assert_eq!(resaved.game_value("never_seen_by_the_engine"), Some("7"));
+        assert_eq!(resaved, prefs);
+    }
+
     fn volume_strategy() -> impl Strategy<Value = f32> {
         (0u32..=100).prop_map(|n| n as f32 / 10.0)
     }

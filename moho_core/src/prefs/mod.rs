@@ -89,17 +89,30 @@ const MIN_BRIGHTNESS: f32 = 0.5;
 const MAX_BRIGHTNESS: f32 = 2.0;
 const DEFAULT_BRIGHTNESS: f32 = 1.0;
 
-/// Why a debug name or value was refused.
+/// Why a name or value for a game-owned section was refused.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
-pub enum DebugValueError {
-    #[error("debug name {0:?} must be non-empty lowercase letters, digits or underscores")]
+pub enum PrefsValueError {
+    #[error("name {0:?} must be non-empty lowercase letters, digits or underscores")]
     InvalidName(String),
-    #[error("debug value {0:?} must be non-empty, unpadded and free of ';', '#' and line breaks")]
+    #[error("value {0:?} must be non-empty, unpadded and free of ';', '#' and line breaks")]
     InvalidValue(String),
 }
 
 impl Prefs {
+    /// The value a game stored under `name` in `[game]`, if any.
+    pub fn game_value(&self, _name: &str) -> Option<&str> {
+        None
+    }
+
+    /// Stores a game's own value.
+    ///
+    /// # Errors
+    /// Refuses a name or value that would not read back exactly; prefs stay unchanged.
+    pub fn set_game_value(&mut self, _name: &str, _value: &str) -> Result<(), PrefsValueError> {
+        Ok(())
+    }
+
     /// The value a game stored under `name` in `[debug]`, if any.
     pub fn debug_value(&self, name: &str) -> Option<&str> {
         self.debug.get(name).map(String::as_str)
@@ -109,19 +122,19 @@ impl Prefs {
     ///
     /// # Errors
     /// Refuses a name or value that would not read back exactly; prefs stay unchanged.
-    pub fn set_debug_value(&mut self, name: &str, value: &str) -> Result<(), DebugValueError> {
+    pub fn set_debug_value(&mut self, name: &str, value: &str) -> Result<(), PrefsValueError> {
         let name_ok = !name.is_empty()
             && name
                 .bytes()
                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
         if !name_ok {
-            return Err(DebugValueError::InvalidName(name.to_owned()));
+            return Err(PrefsValueError::InvalidName(name.to_owned()));
         }
         // The INI reader trims values and treats `;` and `#` as comments.
         let value_ok =
             !value.is_empty() && value.trim() == value && !value.contains([';', '#', '\r', '\n']);
         if !value_ok {
-            return Err(DebugValueError::InvalidValue(value.to_owned()));
+            return Err(PrefsValueError::InvalidValue(value.to_owned()));
         }
         self.debug.insert(name.to_owned(), value.to_owned());
         Ok(())
@@ -929,30 +942,31 @@ mod tests {
         assert_eq!(loaded.debug_value("tgm"), Some("on"));
     }
 
+    const BAD_NAMES: [&str; 8] = ["God", "a b", "", "a-b", "a=b", "a;b", "é", "a\n"];
+    const BAD_VALUES: [&str; 10] = [
+        "", "a;b", "a#b", "a\nb", "a\rb", " 1", "1 ", "\t1", "1\n", "  ",
+    ];
+
     #[test]
     fn invalid_debug_value_is_refused() {
         let mut prefs = Prefs::default();
         prefs.set_debug_value("kept", "yes").unwrap();
         let before = prefs.clone();
-        let bad_names = ["God", "a b", "", "a-b", "a=b", "a;b", "é", "a\n"];
-        let bad_values = [
-            "", "a;b", "a#b", "a\nb", "a\rb", " 1", "1 ", "\t1", "1\n", "  ",
-        ];
 
-        for name in bad_names {
+        for name in BAD_NAMES {
             let result = prefs.set_debug_value(name, "1");
 
             assert!(
-                matches!(result, Err(DebugValueError::InvalidName(_))),
+                matches!(result, Err(PrefsValueError::InvalidName(_))),
                 "name {name:?}: {result:?}"
             );
             assert_eq!(prefs, before, "name {name:?} changed prefs");
         }
-        for value in bad_values {
+        for value in BAD_VALUES {
             let result = prefs.set_debug_value("kept", value);
 
             assert!(
-                matches!(result, Err(DebugValueError::InvalidValue(_))),
+                matches!(result, Err(PrefsValueError::InvalidValue(_))),
                 "value {value:?}: {result:?}"
             );
             assert_eq!(prefs, before, "value {value:?} changed prefs");
@@ -960,10 +974,89 @@ mod tests {
     }
 
     #[test]
+    fn invalid_game_value_is_refused() {
+        let mut prefs = Prefs::default();
+        prefs.set_game_value("kept", "yes").unwrap();
+        let before = prefs.clone();
+
+        for name in BAD_NAMES {
+            let result = prefs.set_game_value(name, "1");
+
+            assert!(
+                matches!(result, Err(PrefsValueError::InvalidName(_))),
+                "name {name:?}: {result:?}"
+            );
+            assert_eq!(prefs, before, "name {name:?} changed prefs");
+        }
+        for value in BAD_VALUES {
+            let result = prefs.set_game_value("kept", value);
+
+            assert!(
+                matches!(result, Err(PrefsValueError::InvalidValue(_))),
+                "value {value:?}: {result:?}"
+            );
+            assert_eq!(prefs, before, "value {value:?} changed prefs");
+        }
+        assert_eq!(prefs.game_value("kept"), Some("yes"));
+    }
+
+    #[test]
     fn no_game_section_is_written_when_empty() {
         let text = Prefs::default().to_ini_string();
 
         assert!(!text.contains("[debug]"), "{text}");
+    }
+
+    #[test]
+    fn a_game_value_survives_save_and_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config").join("game.ini");
+        let mut prefs = Prefs::default();
+        prefs.set_game_value("head_bob", "25").unwrap();
+
+        prefs.save_to(&path).unwrap();
+        let (loaded, warnings) = Prefs::load_from(&path);
+        let text = fs::read_to_string(&path).unwrap();
+
+        assert_eq!(warnings, vec![]);
+        assert_eq!(loaded.game_value("head_bob"), Some("25"));
+        assert_eq!(loaded, prefs);
+        assert!(text.contains("\n[game]\nhead_bob=25\n"), "{text}");
+    }
+
+    #[test]
+    fn game_and_debug_values_are_separate() {
+        let mut prefs = Prefs::default();
+        prefs.set_game_value("head_bob", "25").unwrap();
+        prefs.set_debug_value("head_bob", "1").unwrap();
+
+        let (loaded, issues) = Prefs::parse(&prefs.to_ini_string());
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(prefs.game_value("head_bob"), Some("25"));
+        assert_eq!(prefs.debug_value("head_bob"), Some("1"));
+        assert_eq!(loaded.game_value("head_bob"), Some("25"));
+        assert_eq!(loaded.debug_value("head_bob"), Some("1"));
+    }
+
+    #[test]
+    fn no_game_values_writes_no_game_section() {
+        let mut prefs = Prefs::default();
+        prefs.set_debug_value("god", "1").unwrap();
+
+        let without = prefs.to_ini_string();
+        prefs.set_game_value("head_bob", "25").unwrap();
+        let with = prefs.to_ini_string();
+
+        assert!(without.contains("[debug]"), "{without}");
+        assert!(!without.contains("[game]"), "{without}");
+        assert!(
+            !Prefs::default().to_ini_string().contains("[game]"),
+            "defaults wrote a [game] section"
+        );
+        let debug_at = with.find("[debug]").expect("a [debug] section");
+        let game_at = with.find("[game]").expect("a [game] section");
+        assert!(game_at > debug_at, "[game] follows [debug]: {with}");
     }
 
     #[test]
@@ -1005,6 +1098,21 @@ mod tests {
 
             proptest::prop_assert_eq!(issues, vec![]);
             proptest::prop_assert_eq!(parsed.debug_value(&name), Some(value.as_str()));
+            proptest::prop_assert_eq!(parsed, prefs);
+        }
+
+        #[test]
+        fn accepted_game_values_round_trip(
+            name in "[a-z0-9_]{1,16}",
+            value in "[A-Za-z0-9_.,:/=+-]([A-Za-z0-9_.,:/=+ -]{0,12}[A-Za-z0-9_.,:/=+-])?",
+        ) {
+            let mut prefs = Prefs::default();
+            prefs.set_game_value(&name, &value).unwrap();
+
+            let (parsed, issues) = Prefs::parse(&prefs.to_ini_string());
+
+            proptest::prop_assert_eq!(issues, vec![]);
+            proptest::prop_assert_eq!(parsed.game_value(&name), Some(value.as_str()));
             proptest::prop_assert_eq!(parsed, prefs);
         }
     }
