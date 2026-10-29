@@ -55,6 +55,47 @@ impl LooseSpawn {
             angular_velocity: Vec3::ZERO,
         }
     }
+
+    /// Panics on any field that would poison the simulation; see [`PhysicsWorld::spawn_loose`].
+    fn assert_valid(&self) {
+        let LooseShape::Box { half_extents } = self.shape;
+        assert!(
+            self.mass.is_finite() && self.mass > 0.0,
+            "mass must be positive and finite, got {}",
+            self.mass
+        );
+        assert!(
+            half_extents.is_finite() && half_extents.min_element() > 0.0,
+            "half extents must be positive and finite, got {half_extents}"
+        );
+        assert!(
+            self.linear_velocity.is_finite() && self.angular_velocity.is_finite(),
+            "velocity must be finite, got linear {} and angular {}",
+            self.linear_velocity,
+            self.angular_velocity
+        );
+        for (name, value) in [
+            ("friction", self.friction),
+            ("restitution", self.restitution),
+            ("damping", self.linear_damping),
+            ("damping", self.angular_damping),
+        ] {
+            assert!(
+                value.is_finite() && value >= 0.0,
+                "{name} must be non-negative and finite, got {value}"
+            );
+        }
+        assert!(
+            self.position.is_finite(),
+            "position must be finite, got {}",
+            self.position
+        );
+        assert!(
+            self.rotation.is_finite() && self.rotation.is_normalized(),
+            "rotation must be finite and normalized, got {}",
+            self.rotation
+        );
+    }
 }
 
 /// A loose object as the game reads it back: plain data, no engine handle.
@@ -88,43 +129,8 @@ impl PhysicsWorld {
     /// finite, a friction, restitution or damping that is negative or not finite, a position or
     /// velocity that is not finite, or a rotation that is not a finite unit quaternion.
     pub fn spawn_loose(&mut self, spawn: &LooseSpawn) -> LooseId {
+        spawn.assert_valid();
         let LooseShape::Box { half_extents } = spawn.shape;
-        assert!(
-            spawn.mass.is_finite() && spawn.mass > 0.0,
-            "mass must be positive and finite, got {}",
-            spawn.mass
-        );
-        assert!(
-            half_extents.is_finite() && half_extents.min_element() > 0.0,
-            "half extents must be positive and finite, got {half_extents}"
-        );
-        assert!(
-            spawn.linear_velocity.is_finite() && spawn.angular_velocity.is_finite(),
-            "velocity must be finite, got linear {} and angular {}",
-            spawn.linear_velocity,
-            spawn.angular_velocity
-        );
-        for (name, value) in [
-            ("friction", spawn.friction),
-            ("restitution", spawn.restitution),
-            ("damping", spawn.linear_damping),
-            ("damping", spawn.angular_damping),
-        ] {
-            assert!(
-                value.is_finite() && value >= 0.0,
-                "{name} must be non-negative and finite, got {value}"
-            );
-        }
-        assert!(
-            spawn.position.is_finite(),
-            "position must be finite, got {}",
-            spawn.position
-        );
-        assert!(
-            spawn.rotation.is_finite() && spawn.rotation.is_normalized(),
-            "rotation must be finite and normalized, got {}",
-            spawn.rotation
-        );
 
         let body = RigidBodyBuilder::dynamic()
             .pose(Pose::from_parts(spawn.position, spawn.rotation))
