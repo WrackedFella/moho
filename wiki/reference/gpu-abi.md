@@ -36,8 +36,7 @@ vertex buffers, so they are packed with no padding (`UiVertex`: `Float32x2`, `Fl
 | `SkinParamsGpu` | 16 B (4 × u32) | uniform, skinning compute group 1 binding 2 |
 
 Group 0 also binds the SSAO texture and sampler (bindings 3, 4). Group 1 binds the
-shadow map array (`texture_depth_2d_array`, binding 1), a comparison sampler (2), and a
-nearest sampler for the PCSS blocker search (3). Group 2 (main pass only) binds the draw's
+shadow map array (`texture_depth_2d_array`, binding 1), and a comparison sampler (2). Group 2 (main pass only) binds the draw's
 base-colour texture (`texture_2d<f32>`, `Rgba8UnormSrgb`, binding 0) and a filtering sampler (1);
 untextured draws bind a 1×1 white texture (handle 0).
 
@@ -61,7 +60,7 @@ untextured draws bind a 1×1 white texture (handle 0).
 | | `texel_world` | world size of one texel per cascade, packed like `split_far` |
 | | `camera_forward` | xyz camera forward, w cascade blend fraction |
 | | `light_intensities` | x sun, y moon |
-| | `metadata` | x effective shadow distance, y light size (PCSS), z PCSS quality 0–3, w view-height cut |
+| | `metadata` | x effective shadow distance (0 = shadows off), y unused (0), z filter radius in texels 0–3, w view-height cut |
 | `PointLightGpu` | `position_range` | xyz position, w range |
 | | `color_intensity` | xyz colour, w intensity |
 | `DynamicLightsGpu` | `light_count` | x active count |
@@ -96,9 +95,9 @@ Notes:
   heights to `f32::MAX` (no cut, not infinity: WGSL may assume none). The main and
   marker fragment shaders discard world y above `CameraGpu.cam_pos.w` (the marker shader adds the `marker_inflate` override constant, `MARKER_INFLATE`, so a box grown onto the cut keeps its top); the shadow pass
   has a fragment stage that discards on `metadata.w`, so shadows follow drawn geometry.
-- Shadow constants (`shadow.rs`): `CASCADE_MAP_SIZE` 4096 per layer, `SHADOW_DISTANCE` 1000,
+- Shadow constants (`shadow.rs`): cascade map side per quality tier from `ShadowTier::map_size` (1024–8192; the shader reads it with `textureDimensions`), `SHADOW_DISTANCE` 1000,
   `SUN_CASCADES` 4, `MOON_CASCADES` 2, `CASCADE_LAYERS` 6. `SUN_CASCADES` and
-  `MOON_CASCADES` are also declared in the shaders; a test keeps them equal.
+  `MOON_CASCADES` are also declared in the shaders; a test keeps them equal. The shader's `SHADOW_MAX_FILTER_RADIUS` equals the Ultra tier's radius; a test keeps them equal.
   `MAX_DYNAMIC_LIGHTS` = 64. Point lights do not cast shadows.
 
 ## Changing a struct

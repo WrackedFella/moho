@@ -130,7 +130,7 @@ renderer.present_frame()?;
 
 ## 4 Cascaded Shadow Maps
 
-The sun casts 4 cascades and the moon 2, in one 4096x4096 `Depth32Float` array (6 layers).
+The sun casts 4 cascades and the moon 2, in one square `Depth32Float` array (6 layers) sized by the shadow quality tier (1024 to 8192).
 Splits cover the camera near plane to the smaller of the camera far plane and `SHADOW_DISTANCE` (1000 m) with a log/uniform blend, and
 the fragment shader blends between neighbouring cascades. See
 [rendering](../wiki/architecture/rendering.md#9-cascaded-shadows).
