@@ -596,6 +596,26 @@ impl<'a> Renderer<'a> {
             mesh,
             texture,
             source: VertexSource::Mesh,
+            casts_shadow: true,
+        };
+        self.queue_draw(key, instances);
+    }
+
+    /// Queue a previously-registered mesh for drawing this frame in the main pass only: it
+    /// casts no shadow.
+    pub fn enqueue_unshadowed_draw(
+        &mut self,
+        mesh: u32,
+        instances: &[moho_render_api::InstanceGpu],
+    ) {
+        if !MeshRenderer::validate_mesh(mesh, &self.mesh_table) {
+            return;
+        }
+        let key = DrawKey {
+            mesh,
+            texture: crate::textures::WHITE_TEXTURE,
+            source: VertexSource::Mesh,
+            casts_shadow: false,
         };
         self.queue_draw(key, instances);
     }

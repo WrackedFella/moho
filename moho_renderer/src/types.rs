@@ -69,6 +69,7 @@ pub struct DrawKey {
     pub(crate) mesh: u32,
     pub(crate) texture: u32,
     pub(crate) source: VertexSource,
+    pub(crate) casts_shadow: bool,
 }
 
 impl DrawKey {
@@ -78,6 +79,7 @@ impl DrawKey {
             mesh,
             texture,
             source: VertexSource::Arena { first_vertex },
+            casts_shadow: true,
         }
     }
 

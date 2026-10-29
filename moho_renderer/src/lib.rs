@@ -23,6 +23,8 @@ mod bloom;
 mod markers;
 mod ui_pass;
 pub use markers::{MARKER_INFLATE, MarkerDraws, Markers};
+mod effects;
+pub use effects::{EFFECT_MESH_IDS_FROM, EffectHandle, Effects, StreakStyle};
 mod world_meshes;
 pub use world_meshes::WorldMeshes;
 mod instance_collector;
@@ -114,6 +116,11 @@ pub trait RendererBackend {
     /// ignores the texture and calls `enqueue_draw`.
     fn enqueue_textured_draw(&mut self, mesh: u32, texture: u32, instances: &[InstanceGpu]) {
         let _ = texture;
+        self.enqueue_draw(mesh, instances);
+    }
+    /// Queue a previously-registered mesh for drawing this frame without casting a shadow.
+    /// The default calls `enqueue_draw`.
+    fn enqueue_unshadowed_draw(&mut self, mesh: u32, instances: &[InstanceGpu]) {
         self.enqueue_draw(mesh, instances);
     }
     /// Upload the skin (four joints and weights per vertex) of the mesh under `mesh`,
@@ -263,6 +270,9 @@ impl RendererBackend for Renderer<'_> {
     }
     fn enqueue_textured_draw(&mut self, mesh: u32, texture: u32, instances: &[InstanceGpu]) {
         self.enqueue_textured_draw(mesh, texture, instances);
+    }
+    fn enqueue_unshadowed_draw(&mut self, mesh: u32, instances: &[InstanceGpu]) {
+        self.enqueue_unshadowed_draw(mesh, instances);
     }
     fn register_skin(&mut self, mesh: u32, joints: &[[u16; 4]], weights: &[[f32; 4]]) {
         self.register_skin(mesh, joints, weights);

@@ -49,7 +49,7 @@ flowchart LR
 - [Events](architecture/events.md): bus modes, the channel hand-off, event families.
 - [Input and state](architecture/input-and-state.md): dispatcher priorities, `GameState`.
 - [World streaming](architecture/world-streaming.md): chunk lifecycle.
-- [Rendering](architecture/rendering.md): render API boundary, pass order.
+- [Rendering](architecture/rendering.md): render API boundary, pass order, markers, effects.
 - [Console](architecture/console.md): debug console data flow.
 
 **Reference**

@@ -74,7 +74,7 @@ opened there still saves to the default path).
 | `[bindings]` | one key per action id | binding list | per action, below |
 | `[audio]` | `sound_effect_volume` `music_volume` `ui_volume` `voice_volume` | finite float on a 0 to 10 scale (the UI offers 0.0 to 10.0), written with 1 decimal | `8.0` `6.0` `7.0` `9.0` |
 | `[graphics]` | `shadow_quality` `ssao_quality` | unsigned integer; the UI offers 0 (off) to 4 (ultra) | `3` `3` |
-| | `effects_quality` | unsigned integer, clamped to 0 (off) to 4 (ultra); the Settings screen stores it, nothing reads it yet | `3` |
+| | `effects_quality` | unsigned integer, clamped to 0 (off) to 4 (ultra); the Settings screen stores it; each game hands it to `Effects::set_quality` on its `Scene` (Searchlight and Flagstone at start, Searchlight when Apply is pressed, Flagstone when the Settings screen saves) | `3` |
 | | `bloom` | unsigned integer, clamped to 0 (Off) to 2 (High); 1 is Low | `2` |
 | | `brightness` | finite float, clamped to 0.5 to 2.0, written with 2 decimals; NaN, infinity or text is malformed and gives the default | `1.00` |
 | `[video]` | `window_mode` | `Windowed` \| `Fullscreen` \| `Borderless`, exact case | `Windowed` |
