@@ -6,14 +6,20 @@ use std::sync::Arc;
 use searchlight_rules::Grade;
 
 use crate::arena::Arena;
+use crate::control::ControlAction;
 use crate::input::SearchlightCommand;
 use crate::sim::{Feedback, SearchlightSim, SimConfig, Start};
 use crate::wave::{WaveState, WaveTuning};
+
+/// The player slot of the only player until slots exist; it is the host.
+const HOST_SLOT: u8 = 0;
 
 /// A sim that starts empty and is fed waves of enemies as the player clears them.
 #[derive(Debug)]
 pub struct ArenaMode {
     sim: SearchlightSim,
+    /// Read for what each placed control does.
+    arena: Arc<Arena>,
     waves: WaveState,
     tuning: WaveTuning,
     /// Kills of the sim already scored.
@@ -25,7 +31,8 @@ impl ArenaMode {
     /// allow, before the first tick.
     pub fn new(arena: Arc<Arena>, config: SimConfig, waves: WaveTuning) -> Self {
         let mut mode = Self {
-            sim: SearchlightSim::with_start(arena, config, Start::Empty),
+            sim: SearchlightSim::with_start(Arc::clone(&arena), config, Start::Empty),
+            arena,
             waves: WaveState::begin(&waves),
             tuning: waves,
             seen_kills: 0,
@@ -78,7 +85,36 @@ impl ArenaMode {
             self.waves = WaveState::begin(&self.tuning);
             self.seen_kills = 0;
         }
+        if command.use_pressed {
+            self.use_control();
+        }
         self.step_waves(command.forced_grade);
+    }
+
+    /// Applies the action of the control in reach, if the host slot may trigger it.
+    fn use_control(&mut self) {
+        let Some(index) = self.sim.control_in_reach() else {
+            return;
+        };
+        let Some(action) = self.control_action(index) else {
+            return;
+        };
+        if !action.honored_from(HOST_SLOT) {
+            return;
+        }
+        match action {
+            ControlAction::NextWave => {
+                self.waves.call_next(&self.tuning, self.sim.enemies_alive());
+            }
+        }
+    }
+
+    /// What control `index` of the arena does, or `None` if there is no such control.
+    pub fn control_action(&self, index: u16) -> Option<ControlAction> {
+        self.arena
+            .controls
+            .get(usize::from(index))
+            .map(|control| control.action)
     }
 
     pub fn sim(&self) -> &SearchlightSim {

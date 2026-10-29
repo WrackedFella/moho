@@ -2,7 +2,7 @@
 
 | File | What it is |
 |---|---|
-| `arena.glb` | Greybox arena: floor, perimeter walls, hip-high crates, two full-height screen walls that break line of sight (no cover marker), and the named marker nodes the game reads (`player_spawn`, `dummy_NN`, `enemy_spawn_NN`, `waypoint_NN`, `cover_NN`). |
+| `arena.glb` | Greybox arena: floor, perimeter walls, hip-high crates, two full-height screen walls that break line of sight (no cover marker), and the named marker nodes the game reads (`player_spawn`, `dummy_NN`, `enemy_spawn_NN`, `waypoint_NN`, `cover_NN`, `control_NN`). |
 | `rifle_shot.wav` | A short synthesized gunshot (22.05 kHz, mono, 16-bit). |
 
 ## Origin
@@ -18,7 +18,9 @@ python3 -I searchlight/assets/tools/make_arena.py
 The output is deterministic, so a rerun with an unchanged script leaves the files unchanged.
 `arena.glb` may be replaced by a Blender export as long as the marker names stay; each
 `cover_NN` also carries a `shielded_from` extra (`+x`, `-x`, `+z` or `-z`: the direction from
-the cover point to the geometry that hides it).
+the cover point to the geometry that hides it). Each `control_NN` carries an `action` extra
+(`next_wave`); the game stands a usable post on its floor point, and a level naming any other
+action, or none, fails to load.
 
 ## Licence
 

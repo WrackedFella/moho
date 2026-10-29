@@ -18,6 +18,8 @@ Markers are empty, named glTF nodes that the game reads by name (see searchlight
     waypoint_NN       a patrol point, a floor point
     cover_NN          a floor point an enemy can hide at; its extras say which way the
                       hiding geometry lies
+    control_NN        a floor point a usable post stands on; its extras name the `action`
+                      (`next_wave`)
 
 A cover point sits COVER_DEPTH behind the rear face of a COVER_HEIGHT block. A ray at body
 height (BODY_HEIGHT above the floor) coming from the block's side is stopped by the block; a
@@ -48,6 +50,11 @@ PLAYER_SPAWN = (0.0, 0.0, -17.0)
 DUMMIES = [(-9.0, 6.0), (-3.0, 12.0), (5.0, 9.0), (11.0, 14.0)]
 ENEMY_SPAWNS = [(-14.0, 15.0), (14.0, 16.0), (0.0, 19.0)]
 WAYPOINTS = [(-12.0, -10.0), (12.0, -10.0), (10.0, 4.0), (0.0, 8.0), (-10.0, 2.0)]
+
+# Usable posts: (x, z, action). The game stands a 0.4 x 1.2 x 0.4 m post on each floor point.
+# This one is a metre and a half beside the player spawn: close enough to use at once, clear of
+# the spawn's capsule.
+CONTROLS = [(1.5, -17.0, "next_wave")]
 
 # Cover blocks: (centre x, centre z, size x, size z, direction from the cover point to the
 # block). The cover point is COVER_DEPTH behind the face opposite that direction.
@@ -159,6 +166,8 @@ def markers():
         x, z = cover_point(block)
         out.append((f"cover_{index:02d}", (x, 0.0, z),
                     {"shielded_from": direction_name(block[4])}))
+    for index, (x, z, action) in enumerate(CONTROLS, start=1):
+        out.append((f"control_{index:02d}", (x, 0.0, z), {"action": action}))
     return out
 
 

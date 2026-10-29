@@ -108,8 +108,11 @@ pub fn death_text(dead: bool) -> Option<&'static str> {
 
 /// The prompt for a control in reach: the `key` that uses it and what it does, such as
 /// `[F] Next wave`. A `key` of `unbound` says the action has no key.
-pub fn use_prompt(_key: &str, _action: ControlAction) -> String {
-    String::new()
+pub fn use_prompt(key: &str, action: ControlAction) -> String {
+    let what = match action {
+        ControlAction::NextWave => "Next wave",
+    };
+    format!("[{key}] {what}")
 }
 
 /// A translucent rectangle in screen pixels, colour as straight RGBA.

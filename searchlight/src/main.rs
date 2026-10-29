@@ -76,6 +76,7 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
             &arena.material_names,
             &arena.dummy_spawns,
         )
+        .with_controls(arena.controls.iter().map(|control| control.mesh.clone()))
         .with_shot_sound(&assets().join("rifle_shot.wav"))
         .with_main_menu();
 
