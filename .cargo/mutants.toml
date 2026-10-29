@@ -252,4 +252,6 @@ exclude_re = [
     'replace UiShell<G, A>::(attach|feed|feed_egui) with \(\)',
     'replace == with != in UiShell<G, A>::feed',
     'delete match arm \(Some\(state\), Some\(window\)\) in UiShell<G, A>::take_input',
+    # The look-down-the-axis threshold: at exactly 1e-4 both branches give a valid unit vector perpendicular to the streak, so the boundary is unobservable.
+    'replace < with <= in streak_transform',
 ]
