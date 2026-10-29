@@ -74,7 +74,7 @@ pub(super) fn shadow_gpu(
         *slot = fit.texel_world;
     }
 
-    ShadowGpu {
+    let block = ShadowGpu {
         matrices,
         split_far,
         texel_world,
@@ -85,17 +85,19 @@ pub(super) fn shadow_gpu(
             CASCADE_BLEND,
         ],
         light_intensities: [sun_intensity, moon_intensity, 0.0, 0.0],
-        metadata: [
-            if tier.casts_shadows() {
-                splits.0[SUN_CASCADES - 1]
-            } else {
-                0.0
-            },
-            0.0,
-            tier.pcf_radius() as f32,
-            0.0,
-        ],
+        metadata: [splits.0[SUN_CASCADES - 1], 0.0, 0.0, 0.0],
+    };
+    retier(block, tier)
+}
+
+/// `block` with `tier`'s filter radius, and its shadow distance zeroed when the tier is Off, so a
+/// block kept across frames follows a tier change.
+pub(super) fn retier(mut block: ShadowGpu, tier: ShadowTier) -> ShadowGpu {
+    if !tier.casts_shadows() {
+        block.metadata[0] = 0.0;
     }
+    block.metadata[2] = tier.pcf_radius() as f32;
+    block
 }
 
 #[cfg(test)]
@@ -185,6 +187,36 @@ mod tests {
 
         assert!(layers.is_empty(), "layers {layers:?}");
         assert_eq!(gpu.metadata[0], 0.0);
+    }
+
+    #[test]
+    fn a_kept_block_takes_the_new_tiers_radius_and_off_switch() {
+        let (sun, moon) = fits();
+        let splits = ([30.0, 90.0, 300.0, 700.0], [50.0, 700.0]);
+        let mut kept = shadow_gpu(
+            &sun,
+            &moon,
+            splits,
+            Vec3::NEG_Z,
+            (0.9, 0.3),
+            ShadowTier::High,
+        );
+        kept.metadata[3] = 42.0;
+
+        let off = retier(kept, ShadowTier::Off);
+        let low = retier(kept, ShadowTier::Low);
+
+        assert_eq!(
+            off.metadata,
+            [0.0, 0.0, 0.0, 42.0],
+            "Off disables the kept block"
+        );
+        assert_eq!(
+            low.metadata,
+            [700.0, 0.0, 1.0, 42.0],
+            "Low keeps the distance"
+        );
+        assert_eq!(off.matrices, kept.matrices);
     }
 
     #[test]

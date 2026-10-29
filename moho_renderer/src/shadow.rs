@@ -274,6 +274,7 @@ impl ShadowSystem {
     /// must not be in a recorded pass.
     pub fn set_tier(&mut self, device: &wgpu::Device, tier: ShadowTier) {
         self.tier = tier;
+        self.last_block = light_matrix::retier(self.last_block, tier);
         let map_size = tier.map_size(self.device_limit);
         if !tier::needs_resize(self.map_size, map_size) {
             return;
