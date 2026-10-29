@@ -9,6 +9,7 @@ moho_render_api = { path = "../moho_render_api" }
 bytemuck = { workspace = true, features = ["extern_crate_alloc"] }
 glam = { workspace = true }
 thiserror = { workspace = true }
+sha2 = { workspace = true }
 tracing = { workspace = true }
 gltf = { workspace = true }
 rerecast = { workspace = true }

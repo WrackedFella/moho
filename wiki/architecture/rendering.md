@@ -5,7 +5,8 @@
 `shaders/`, `moho_level/src/`.
 **Decisions:** [ADR-0001](../../_todo/adr/0001-render-api-boundary.md),
 [ADR-0013](../../_todo/adr/0013-ui-reaches-the-renderer-as-paint-data.md),
-[ADR-0030](../../_todo/adr/0030-skinned-meshes-are-skinned-once-per-frame.md).
+[ADR-0030](../../_todo/adr/0030-skinned-meshes-are-skinned-once-per-frame.md),
+[ADR-0032](../../_todo/adr/0032-level-switch-is-a-pinned-command.md).
 
 ## 1 Boundary
 
@@ -132,11 +133,21 @@ mesh to `WorldMeshes` and `PhysicsWorld` as above.
 `LoadedLevel` (`moho_level/src/loaded.rs`) is the handle for that registration. It wraps a
 `Level` with a `WorldMeshRange` (`moho_render_api/src/world_geometry.rs`): mesh `i` gets id
 `first + i`, and `LoadedLevel::new` refuses a range that would pass `u64::MAX`. It also
-keeps the `NavMesh` once `build_nav` has run. `LoadedLevel::unload` drops the level,
+keeps the `NavMesh` once `build_nav` has run. `LoadedLevel::open(path, pin, first)` loads and
+registers in one step and records the file's path and `LevelHash` (`path()`, `hash()`; both
+`None` for a handle made with `new`). `LoadedLevel::unload` drops the level,
 markers and nav reference and returns the range. The caller removes that range from every
 store it registered in: `WorldMeshes::remove_range` (freed on the next `flush`) and
 `PhysicsWorld::remove_world_meshes`. `WorldMeshes::live_len` counts meshes registered as
 of the last `flush`.
+
+`LevelHash` (`moho_level/src/hash.rs`) is the content identity of a level file, which a
+replayed level switch is pinned to ([ADR-0032](../../_todo/adr/0032-level-switch-is-a-pinned-command.md)):
+SHA-256 over the main file, then each URI buffer in index order, each preceded by its length
+as 8 bytes little-endian. The path is excluded; a GLB's embedded blob is part of the file;
+images are not hashed. The layout is a stored contract. `level_hash(path)` hashes without
+building meshes; `load_pinned(path, &hash)` and `LoadedLevel::open` with a pin fail with
+`LevelErrorKind::HashMismatch` (expected and found) before any mesh is built.
 
 ### 2.2 Model files
 
