@@ -834,6 +834,7 @@ impl SearchlightGame {
                 MenuEvent::Chosen(MenuAction::Back) => self.stage.shell().menu_mut().pop(),
                 MenuEvent::Chosen(MenuAction::Quit) => ctx.request_exit(),
                 MenuEvent::SettingsApplied(settings) => self.settings_applied(settings),
+                MenuEvent::Captured { .. } | MenuEvent::Cleared { .. } => {}
             }
         }
     }
@@ -2604,7 +2605,9 @@ mod tests {
             .into_iter()
             .find_map(|event| match event {
                 MenuEvent::Chosen(action) => Some(action),
-                MenuEvent::SettingsApplied(_) => None,
+                MenuEvent::SettingsApplied(_)
+                | MenuEvent::Captured { .. }
+                | MenuEvent::Cleared { .. } => None,
             })
     }
 
@@ -2617,7 +2620,7 @@ mod tests {
             .iter()
             .filter_map(|item| match item {
                 MenuItem::Button { label, .. } => Some(label.clone()),
-                MenuItem::Setting(_) | MenuItem::Apply => None,
+                MenuItem::Setting(_) | MenuItem::Apply | MenuItem::Control { .. } => None,
             })
             .collect()
     }
@@ -2945,8 +2948,10 @@ mod tests {
 
         press_keys(&mut game, &mut ctx, &[Key::ArrowDown, Key::Enter]);
         let settings_title = title(&game);
-        // Back is the last of Settings' thirteen rows.
-        let back = [640.0, 696.0];
+        // Back is the last of Settings' thirteen rows; Up wraps to it and scrolls it into the
+        // last of the ten rows that fit at 720 points.
+        press_keys(&mut game, &mut ctx, &[Key::ArrowUp]);
+        let back = [640.0, 588.0];
         click_at(&mut game, &mut ctx, back);
         game.event(&mut ctx, motion());
 
@@ -3366,7 +3371,7 @@ mod menu_tests {
             .iter()
             .filter_map(|item| match item {
                 MenuItem::Button { label, .. } => Some(label.clone()),
-                MenuItem::Setting(_) | MenuItem::Apply => None,
+                MenuItem::Setting(_) | MenuItem::Apply | MenuItem::Control { .. } => None,
             })
             .collect()
     }
@@ -3758,12 +3763,18 @@ mod settings_tests {
             .iter()
             .position(|candidate| candidate == item)
             .expect("the screen lists the item");
-        let rect = moho_ui_shell::menu::layout(screen, SIZE)[row];
+        let first = moho_ui_shell::menu::layout(screen, SIZE)[0];
         let centre = [
-            (rect.min[0] + rect.max[0]) / 2.0,
-            (rect.min[1] + rect.max[1]) / 2.0,
+            (first.min[0] + first.max[0]) / 2.0,
+            (first.min[1] + first.max[1]) / 2.0,
         ];
+        // The thirteen-row Settings screen scrolls at this window size, so a row below the fold
+        // has no point to hover: go to the first row, then step down to `row`.
+        menu.scroll(-1000.0);
         menu.hover(centre, SIZE);
+        for _ in 0..row {
+            menu.on_key(Input::Key(Key::ArrowDown), true, false);
+        }
     }
 
     fn change(
@@ -3806,7 +3817,7 @@ mod settings_tests {
             .iter()
             .filter_map(|item| match item {
                 MenuItem::Button { label, .. } => Some(label.clone()),
-                MenuItem::Setting(_) | MenuItem::Apply => None,
+                MenuItem::Setting(_) | MenuItem::Apply | MenuItem::Control { .. } => None,
             })
             .collect()
     }

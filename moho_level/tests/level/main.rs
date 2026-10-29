@@ -1,6 +1,7 @@
 //! Integration tests for loading glTF levels.
 
 mod collide;
+mod hash;
 mod load;
 mod marker;
 mod model;
