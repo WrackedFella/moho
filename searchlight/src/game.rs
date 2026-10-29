@@ -1194,7 +1194,9 @@ mod tests {
 
     use super::*;
     use crate::sim::Feedback;
-    use crate::test_support::{arena_with, mag, press, rifle_from, test_config, wave_tuning};
+    use crate::test_support::{
+        arena_with, arena_with_controls, mag, press, rifle_from, test_config, wave_tuning,
+    };
     use searchlight_rules::{Grade, LeanSide};
 
     fn game() -> SearchlightGame {
@@ -1958,6 +1960,130 @@ mod tests {
         let mut ctx = FrameContext::new(TICK, &clock, Some(renderer), None);
         game.frame(&mut ctx, ALPHA);
         *renderer.views.last().expect("a frame began")
+    }
+
+    /// The next-wave post, a metre in front of the player at the origin.
+    const POST: (Vec3, Vec3) = (Vec3::new(-0.3, 0.0, 1.0), Vec3::new(0.3, 2.0, 1.4));
+
+    /// A game whose player stands at the origin facing +Z, with a post at each of `controls`.
+    fn game_with_controls(controls: &[(Vec3, Vec3)]) -> SearchlightGame {
+        let mode = ArenaMode::new(
+            arena_with_controls(&[], Vec3::ZERO, &[], &[], controls),
+            test_config(rifle_from(mag(30, 5)), vec![]),
+            wave_tuning(1),
+        );
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
+    }
+
+    /// What the shell paints after one more frame of `game`, `None` when it paints nothing.
+    fn painted(game: &mut SearchlightGame) -> Option<Vec<UiMesh>> {
+        let mut renderer = SettingsRenderer::default();
+        draw_frame(game, &mut renderer);
+        let frame = game.stage.shell().ui_frame([800, 600]);
+        frame.map(|frame| frame.meshes)
+    }
+
+    /// Whether one more frame of `game` paints a prompt.
+    fn prompt_shows(game: &mut SearchlightGame) -> bool {
+        painted(game).is_some_and(|meshes| !meshes.is_empty())
+    }
+
+    fn turn_around() -> SearchlightCommand {
+        SearchlightCommand {
+            movement: moho_physics::CharacterCommand {
+                yaw_delta: std::f32::consts::PI,
+                ..moho_physics::CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        }
+    }
+
+    #[test]
+    fn the_prompt_shows_while_the_button_is_in_reach() {
+        let mut in_reach = game_with_controls(&[POST]);
+        let mut none_placed = game_with_controls(&[]);
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        tick_with(&mut in_reach, &mut clock, &SearchlightCommand::default());
+
+        let with_button = prompt_shows(&mut in_reach);
+        let without = prompt_shows(&mut none_placed);
+
+        assert!(with_button, "no prompt painted with the button in reach");
+        assert!(!without, "a prompt painted with no button placed");
+    }
+
+    #[test]
+    fn no_prompt_when_looking_away() {
+        let mut game = game_with_controls(&[POST]);
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        let facing_it = prompt_shows(&mut game);
+
+        tick_with(&mut game, &mut clock, &turn_around());
+        let facing_away = prompt_shows(&mut game);
+
+        assert!(facing_it, "no prompt to take away");
+        assert!(!facing_away);
+    }
+
+    #[test]
+    fn no_prompt_while_dead_or_paused() {
+        let mut dead = game_with_controls(&[POST]);
+        let mut paused = game_with_controls(&[POST]);
+        let mut no_button_paused = game_with_controls(&[]);
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        for game in [&mut dead, &mut paused] {
+            tick_with(game, &mut clock, &SearchlightCommand::default());
+        }
+        let showing = (prompt_shows(&mut dead), prompt_shows(&mut paused));
+
+        dead.mode.sim_mut().kill_player();
+        tick_with(&mut dead, &mut clock, &SearchlightCommand::default());
+        paused.pause();
+        no_button_paused.pause();
+        let pause_menu = painted(&mut no_button_paused);
+
+        assert_eq!(showing, (true, true), "no prompt to take away");
+        assert!(!prompt_shows(&mut dead), "a dead player sees the prompt");
+        assert!(pause_menu.is_some_and(|meshes| !meshes.is_empty()));
+        assert_eq!(
+            painted(&mut paused),
+            painted(&mut no_button_paused),
+            "the pause screen paints a prompt over the menu"
+        );
+    }
+
+    #[test]
+    fn control_mesh_ids_share_no_id_with_arena_dummy_or_enemy_meshes() {
+        use crate::arena::{arena_mesh_id, control_mesh_id};
+
+        let controls: Vec<u64> = (0..16).map(|i| control_mesh_id(i).0).collect();
+        let arena: Vec<u64> = (0..4096).map(|i| arena_mesh_id(i).0).collect();
+        let dummies: Vec<u64> = dummy_segments(&SHIPPED_BODY, &[Vec3::ZERO; 8])
+            .iter()
+            .map(|segment| segment.id.0)
+            .collect();
+        let enemies: Vec<u64> = (0..64u16)
+            .flat_map(|target| {
+                let rig = EnemyRig {
+                    target,
+                    shown: false,
+                    gun_flash: 0,
+                };
+                (0..ENEMY_MESH_SLOTS as usize).map(move |slot| rig.mesh_id(slot).0)
+            })
+            .collect();
+
+        for (name, others) in [("arena", &arena), ("dummy", &dummies), ("enemy", &enemies)] {
+            let shared: Vec<&u64> = controls.iter().filter(|id| others.contains(id)).collect();
+            assert!(shared.is_empty(), "control ids {shared:?} are {name} ids");
+        }
+        let mut distinct = controls.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), controls.len());
+        assert!(controls.iter().all(|&id| id >= 3 << 32), "{controls:?}");
     }
 
     /// The view a frame must draw: the sim's player turned by the look shown but not yet ticked.
