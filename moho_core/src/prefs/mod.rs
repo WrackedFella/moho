@@ -471,37 +471,18 @@ impl Prefs {
             text.push_str(&self.content_mods.join(","));
             text.push('\n');
         }
-        if !self.bindings.is_empty() {
-            text.push_str("\n[bindings]\n");
-            text.extend(
-                self.bindings
-                    .iter()
-                    .map(|(action, value)| format!("{action}={value}\n")),
-            );
-        }
-        if !self.action_modes.is_empty() {
-            text.push_str("\n[action_modes]\n");
-            text.extend(
-                self.action_modes
-                    .iter()
-                    .map(|(action, value)| format!("{action}={value}\n")),
-            );
-        }
-        if !self.debug.is_empty() {
-            text.push_str("\n[debug]\n");
-            text.extend(
-                self.debug
-                    .iter()
-                    .map(|(name, value)| format!("{name}={value}\n")),
-            );
-        }
-        if !self.game.is_empty() {
-            text.push_str("\n[game]\n");
-            text.extend(
-                self.game
-                    .iter()
-                    .map(|(name, value)| format!("{name}={value}\n")),
-            );
+        for (section, map) in [
+            ("bindings", &self.bindings),
+            ("action_modes", &self.action_modes),
+            ("debug", &self.debug),
+            ("game", &self.game),
+        ] {
+            if !map.is_empty() {
+                text.push_str("\n[");
+                text.push_str(section);
+                text.push_str("]\n");
+                text.extend(map.iter().map(|(key, value)| format!("{key}={value}\n")));
+            }
         }
         text
     }

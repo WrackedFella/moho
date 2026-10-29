@@ -251,20 +251,15 @@ impl Prefs {
         let mut sections: Vec<_> = map.iter().collect();
         sections.sort_by_key(|(name, _)| name.as_str());
         for (name, keys) in sections {
-            if name == "bindings" {
-                issues.extend(read_raw_section(name, keys, &mut prefs.bindings));
-                continue;
-            }
-            if name == "action_modes" {
-                issues.extend(read_raw_section(name, keys, &mut prefs.action_modes));
-                continue;
-            }
-            if name == "debug" {
-                issues.extend(read_raw_section(name, keys, &mut prefs.debug));
-                continue;
-            }
-            if name == "game" {
-                issues.extend(read_raw_section(name, keys, &mut prefs.game));
+            let raw = match name.as_str() {
+                "bindings" => Some(&mut prefs.bindings),
+                "action_modes" => Some(&mut prefs.action_modes),
+                "debug" => Some(&mut prefs.debug),
+                "game" => Some(&mut prefs.game),
+                _ => None,
+            };
+            if let Some(target) = raw {
+                issues.extend(read_raw_section(name, keys, target));
                 continue;
             }
             let table = match name.as_str() {

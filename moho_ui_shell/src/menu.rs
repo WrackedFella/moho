@@ -3,11 +3,10 @@
 //! a choice becomes a [`MenuEvent`] the game answers by pushing or popping.
 
 use std::cell::Cell;
+use std::collections::BTreeMap;
 
 use moho_input::bindings::{Binding, Input};
 use moho_input::key::{Key, MouseButton};
-
-use std::collections::BTreeMap;
 
 use crate::settings::{Control, EngineSetting, EngineSettings, GameSlider};
 use crate::text::{Anchor, ScreenText};
@@ -341,10 +340,8 @@ impl<A> Open<A> {
     /// Moves the staged value of the settings row `row` one step towards `direction`.
     fn nudge(&mut self, row: usize, direction: i8) {
         if let Some(MenuItem::GameSlider(slider)) = self.screen.items.get(row) {
-            let moved = f64::from(self.game_value(slider))
-                + f64::from(direction) * f64::from(slider.step.max(1));
-            self.game_staged
-                .insert(slider.key.clone(), slider.snap(moved));
+            let moved = slider.stepped(self.game_value(slider), direction);
+            self.game_staged.insert(slider.key.clone(), moved);
         } else if let (Some(staged), Some(MenuItem::Setting(setting))) =
             (&mut self.staged, self.screen.items.get(row))
         {
@@ -375,10 +372,8 @@ impl<A> Open<A> {
         };
         let fraction = ((x - rect.min[0]) / (rect.max[0] - rect.min[0])).clamp(0.0, 1.0);
         if let Some(MenuItem::GameSlider(slider)) = self.screen.items.get(row) {
-            let (min, max) = (f64::from(slider.min), f64::from(slider.max.max(slider.min)));
-            let value = min + f64::from(fraction) * (max - min);
             self.game_staged
-                .insert(slider.key.clone(), slider.snap(value));
+                .insert(slider.key.clone(), slider.at_fraction(fraction));
         } else if let (Some(staged), Some(MenuItem::Setting(setting))) =
             (&mut self.staged, self.screen.items.get(row))
             && let Control::Slider { min, max, .. } = setting.control()
@@ -535,6 +530,21 @@ impl<A> MenuStack<A> {
         let centred = |label: &str, centre_y: f32, color| {
             text(label, Anchor::Center, 0.0, centre_y, ROW_SIZE, color)
         };
+        let setting_row = |label: &str, value: Option<&str>, rect: Rect, color| {
+            let y = centre_y(rect);
+            let label = text(label, Anchor::Left, rect.min[0], y, SETTING_SIZE, color);
+            let value = value.map(|value| {
+                text(
+                    value,
+                    Anchor::Right,
+                    rect.max[0] - size[0],
+                    y,
+                    SETTING_SIZE,
+                    color,
+                )
+            });
+            std::iter::once(label).chain(value)
+        };
         let mut texts = Vec::new();
         if let Some(title) = &open.screen.title {
             let first_centre = rows
@@ -604,44 +614,15 @@ impl<A> MenuStack<A> {
                     }
                 }
                 MenuItem::GameSlider(slider) => {
-                    let y = centre_y(rect);
-                    texts.push(text(
-                        &slider.label,
-                        Anchor::Left,
-                        rect.min[0],
-                        y,
-                        SETTING_SIZE,
-                        color,
-                    ));
-                    texts.push(text(
-                        &slider.value_text(open.game_value(slider)),
-                        Anchor::Right,
-                        rect.max[0] - size[0],
-                        y,
-                        SETTING_SIZE,
-                        color,
-                    ));
+                    let value = slider.value_text(open.game_value(slider));
+                    texts.extend(setting_row(&slider.label, Some(&value), rect, color));
                 }
                 MenuItem::Setting(setting) => {
-                    let y = centre_y(rect);
-                    texts.push(text(
-                        setting.label(),
-                        Anchor::Left,
-                        rect.min[0],
-                        y,
-                        SETTING_SIZE,
-                        color,
-                    ));
-                    if let Some(staged) = &open.staged {
-                        texts.push(text(
-                            &staged.value_text(*setting),
-                            Anchor::Right,
-                            rect.max[0] - size[0],
-                            y,
-                            SETTING_SIZE,
-                            color,
-                        ));
-                    }
+                    let value = open
+                        .staged
+                        .as_ref()
+                        .map(|staged| staged.value_text(*setting));
+                    texts.extend(setting_row(setting.label(), value.as_deref(), rect, color));
                 }
             }
         }
@@ -727,10 +708,11 @@ impl<A: Clone> MenuStack<A> {
             self.events
                 .extend(open.capture(Input::Mouse(MouseButton::Left)));
         } else if let Some((row, rect)) = open.row_at(point, size) {
-            let on_slider = matches!(
-                open.screen.items[row],
-                MenuItem::Setting(setting) if matches!(setting.control(), Control::Slider { .. })
-            ) || matches!(open.screen.items[row], MenuItem::GameSlider(_));
+            let on_slider = match open.screen.items[row] {
+                MenuItem::Setting(setting) => matches!(setting.control(), Control::Slider { .. }),
+                MenuItem::GameSlider(_) => true,
+                _ => false,
+            };
             if let Some(slot) = open.slot_at(row, rect, point[0]) {
                 open.set_focus(row, slot);
                 open.start_capture();

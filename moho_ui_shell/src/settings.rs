@@ -59,13 +59,33 @@ pub struct GameSlider {
 }
 
 impl GameSlider {
-    /// `value` on the row's step grid from `min`, clamped to the range. Bad row data (`max`
-    /// below `min`, a step under 1) is read as the nearest sane range rather than panicking.
-    pub(crate) fn snap(&self, value: f64) -> i32 {
-        let step = f64::from(self.step.max(1));
-        let min = f64::from(self.min);
+    /// `value` moved one step towards `direction`, then snapped.
+    pub(crate) fn stepped(&self, value: i32, direction: i8) -> i32 {
+        let (_, _, step) = self.range();
+        self.snap(f64::from(value) + f64::from(direction) * step)
+    }
+
+    /// The value `fraction` (0 to 1) of the way along the range, snapped.
+    pub(crate) fn at_fraction(&self, fraction: f32) -> i32 {
+        let (min, max, _) = self.range();
+        self.snap(min + f64::from(fraction) * (max - min))
+    }
+
+    /// `value` on the row's step grid from `min`, clamped to the range.
+    fn snap(&self, value: f64) -> i32 {
+        let (min, max, step) = self.range();
         let snapped = min + ((value - min) / step).round() * step;
-        snapped.clamp(min, f64::from(self.max.max(self.min))) as i32
+        snapped.clamp(min, max) as i32
+    }
+
+    /// `(min, max, step)` as used. Bad row data (`max` below `min`, a step under 1) is read as
+    /// the nearest sane range rather than panicking.
+    fn range(&self) -> (f64, f64, f64) {
+        (
+            f64::from(self.min),
+            f64::from(self.max.max(self.min)),
+            f64::from(self.step.max(1)),
+        )
     }
 
     /// The value shown after the label: the number, then the unit when there is one.
