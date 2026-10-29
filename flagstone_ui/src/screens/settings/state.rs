@@ -179,7 +179,7 @@ impl SettingsState {
         self.mark_dirty(SettingsField::Bloom);
     }
 
-    /// Stage a shadow quality level (0=Off .. 4=Ultra) and mark it dirty.
+    /// Levels 0 (Off) to 4 (Ultra).
     pub fn set_shadow_quality(&mut self, quality: u32) {
         self.staged.set_shadow_quality(quality);
         self.mark_dirty(SettingsField::ShadowQuality);

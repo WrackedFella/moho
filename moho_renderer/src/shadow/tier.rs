@@ -44,13 +44,11 @@ impl ShadowTier {
         }
     }
 
-    /// Whether this tier renders shadows at all.
     pub(crate) fn casts_shadows(self) -> bool {
         self != Self::Off
     }
 }
 
-/// Whether the shadow array must be recreated when the clamped map size moves from `old` to `new`.
 pub(crate) fn needs_resize(old: u32, new: u32) -> bool {
     old != new
 }

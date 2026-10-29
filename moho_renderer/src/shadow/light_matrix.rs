@@ -85,8 +85,6 @@ pub(super) fn shadow_gpu(
             CASCADE_BLEND,
         ],
         light_intensities: [sun_intensity, moon_intensity, 0.0, 0.0],
-        // [shadow distance (0 = off), unused, filter radius in texels, view-height cut (set per
-        // frame by shadow_ops)]
         metadata: [
             if tier.casts_shadows() {
                 splits.0[SUN_CASCADES - 1]

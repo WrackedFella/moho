@@ -60,9 +60,8 @@ pub struct ShadowSystem {
     /// Active shadow-casting lights for current frame
     pub active_lights: Vec<ActiveShadowLight>,
     tier: ShadowTier,
-    /// Texels per side of the cascade array as allocated: the tier's size within the device limit.
+    /// Allocated texels per side: the tier's size within `device_limit`.
     map_size: u32,
-    /// Largest 2D texture the device allows.
     device_limit: u32,
     /// Kept to rebuild `csm_shadow_bind_group` when the array is recreated.
     shadow_bind_group_layout: wgpu::BindGroupLayout,
@@ -243,7 +242,6 @@ impl ShadowSystem {
         (csm_pass_bind_group, csm_shadow_bind_group)
     }
 
-    /// The bind group the main fragment shader reads shadow maps through.
     fn create_sampling_bind_group(
         device: &wgpu::Device,
         shadow_bind_group_layout: &wgpu::BindGroupLayout,

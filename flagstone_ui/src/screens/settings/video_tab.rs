@@ -171,7 +171,6 @@ fn bloom_row(menu: &mut SettingsMenu, ui: &mut egui::Ui, label_width: f32) {
     }
 }
 
-/// A labelled combo over named levels `0..names.len()`, with the dirty decor.
 struct LevelCombo {
     label: &'static str,
     id: &'static str,
