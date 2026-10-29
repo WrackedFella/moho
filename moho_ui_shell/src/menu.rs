@@ -2783,6 +2783,57 @@ mod tests {
         }
 
         #[test]
+        fn extreme_ranges_stay_in_bounds() {
+            let widest = GameSlider {
+                min: i32::MIN,
+                max: i32::MAX,
+                step: 1,
+                ..head_bob(i32::MAX)
+            };
+            let mut stack = stack_of(screen_of(vec![widest], None));
+
+            step_game(&mut stack, "head_bob", &[Key::ArrowRight]);
+            let right_at_max = shown_value(&stack, "Head bob");
+            step_game(&mut stack, "head_bob", &[Key::ArrowLeft]);
+            let left_once = shown_value(&stack, "Head bob");
+            press_band(&mut stack, "head_bob", 0.5);
+            drag_band(&mut stack, "head_bob", 1.0);
+            let right_end = shown_value(&stack, "Head bob");
+            drag_band(&mut stack, "head_bob", 0.0);
+            let left_end = shown_value(&stack, "Head bob");
+            release(&mut stack);
+            let applied = applied_game(&mut stack);
+
+            assert_eq!(right_at_max.as_deref(), Some("2147483647 %"));
+            assert_eq!(left_once.as_deref(), Some("2147483646 %"));
+            assert_eq!(right_end.as_deref(), Some("2147483647 %"));
+            assert_eq!(left_end.as_deref(), Some("-2147483648 %"));
+            assert_eq!(applied, game_values(&[("head_bob", i32::MIN)]));
+        }
+
+        #[test]
+        fn a_negative_range_snaps_from_its_min() {
+            let negative = |value| GameSlider {
+                min: -10,
+                max: 10,
+                ..head_bob(value)
+            };
+            let mut stack = stack_of(screen_of(vec![negative(-3)], None));
+            let mut fresh = stack_of(screen_of(vec![negative(-3)], None));
+
+            step_game(&mut stack, "head_bob", &[Key::ArrowRight]);
+            let first_right = shown_value(&stack, "Head bob");
+            step_game(&mut stack, "head_bob", &[Key::ArrowRight]);
+            let second_right = shown_value(&stack, "Head bob");
+            step_game(&mut fresh, "head_bob", &[Key::ArrowLeft]);
+            let left = shown_value(&fresh, "Head bob");
+
+            assert_eq!(first_right.as_deref(), Some("0 %"));
+            assert_eq!(second_right.as_deref(), Some("5 %"));
+            assert_eq!(left.as_deref(), Some("-10 %"));
+        }
+
+        #[test]
         fn inverted_range_and_zero_step_do_not_panic() {
             let inverted = GameSlider {
                 min: 10,
