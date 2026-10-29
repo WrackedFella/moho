@@ -14,27 +14,30 @@ step from the last position to the next.
 ## Decision
 
 1. **A round in flight is plain sim data:** position, velocity, the round's ballistics, its
-   shooter and the enemies it has already near-missed. The sim owns the list; rounds step in the
-   order they were fired.
+   shooter, where the shooter stood when firing, and the enemies it has already near-missed.
+   The sim owns the list; rounds step in the order they were fired.
 2. **Flight maths is a rule; the cast is the adapter's.** `searchlight_rules` integrates one
-   step (semi-implicit Euler, linear drag, gravity) with `+ - * /` and `max` only, no `exp`,
-   trigonometry or platform maths, so a replay is bit-identical on every platform. `searchlight`
-   casts the step's segment through the ADR-0015 path (ray, surface tag, part, rule call); the
-   first strike ends the step.
+   step (semi-implicit Euler, linear drag, gravity) with correctly rounded IEEE-754 operations
+   only (`+ - * /`, `sqrt`, `max`): no `exp`, trigonometry or other platform maths, so the step
+   adds nothing that differs between platforms. Flight state is plain, serialisable data.
+   `searchlight` casts the step's segment through the ADR-0015 path (ray, surface tag, part,
+   rule call), ignoring the round's shooter; the first strike ends the step.
 3. **A round first steps on the tick after it is fired.** Nothing is hit on the firing tick,
    at any range.
 4. **Rounds step after every character has moved and the world has stepped, before any shot of
    this tick is fired.** A step reads this tick's hit volumes.
 5. **Round gravity is its own:** standard gravity (9.81 m/s²) times a host-level gravity scale.
    World gravity stays the game's movement tuning and never changes with the scale.
-6. **A flight ends** on a strike, below a minimum speed, or outside the level's flight bounds.
+6. **A flight ends** on a strike, at or below a minimum speed, or outside the level's flight
+   bounds. A round whose muzzle velocity is not above the minimum speed is refused at load.
    Until levels author a boundary (GDD §5), the bounds are the level geometry's box grown by a
    fixed margin.
 7. **Simple is a host level** read from slot 0, like god mode. Under it a shot is today's one
    ray, cast to the edge of the flight bounds; nothing is put in flight.
 
 ADR-0015 §3 now reads: one shot path, stepped. Each step of a round resolves as segment,
-surface tag, part, rule call, for every shooter.
+surface tag, part, rule call, for every shooter. Until FPS-F15-03 (#756) enemy shots stay one
+ray on the firing tick; from then on Simple is the only hitscan, for every shooter.
 
 ## Consequences
 
@@ -45,4 +48,7 @@ surface tag, part, rule call, for every shooter.
 - Penetration (tier 2) continues a step past a strike instead of ending it.
 - Point-blank shots land one tick (16.7 ms) later than hitscan did.
 - Rounds in flight are not saved; a save (Phase 6) taken mid-flight drops them.
-- Cost: each round costs one ray a tick while it flies; at arena range that is 2 to 4 ticks.
+- Replays stay exact on one platform. Across platforms they also depend on the aim's `sin`
+  and `cos` and on rapier's casts, as hitscan shots already do; this ADR adds no new source.
+- Cost: each round costs one ray a tick while it flies: 2 to 4 ticks to a target in the arena,
+  7 to 10 for a miss flying out to the bounds.
