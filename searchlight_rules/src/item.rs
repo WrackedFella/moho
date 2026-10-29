@@ -1,5 +1,6 @@
 //! Items defined in data: one model for weapons, magazines, rounds, rigs and tools.
 
+use crate::ballistics::MIN_SPEED;
 use crate::weapon::RifleDef;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -122,9 +123,7 @@ pub enum RoundSpecError {
 #[serde(deny_unknown_fields)]
 struct RawRoundSpec {
     caliber: Caliber,
-    #[serde(default)]
     muzzle_velocity: f32,
-    #[serde(default)]
     drag: f32,
 }
 
@@ -132,6 +131,12 @@ impl TryFrom<RawRoundSpec> for RoundSpec {
     type Error = RoundSpecError;
 
     fn try_from(raw: RawRoundSpec) -> Result<Self, Self::Error> {
+        if !(raw.muzzle_velocity.is_finite() && raw.muzzle_velocity > MIN_SPEED) {
+            return Err(RoundSpecError::MuzzleVelocity(raw.muzzle_velocity));
+        }
+        if !(raw.drag.is_finite() && raw.drag >= 0.0) {
+            return Err(RoundSpecError::Drag(raw.drag));
+        }
         Ok(Self {
             caliber: raw.caliber,
             muzzle_velocity: raw.muzzle_velocity,
@@ -565,11 +570,7 @@ mod tests {
                 "magazine",
                 json!({"well": "w", "caliber": "c", "capacity": 1}),
             ),
-            (
-                "gear",
-                "round",
-                round_section(json!(940.0), json!(1.0)),
-            ),
+            ("gear", "round", round_section(json!(940.0), json!(1.0))),
             ("consumable", "rig", json!({"magazine_slots": 1})),
             ("tool", "rig", json!({"magazine_slots": 1})),
         ];

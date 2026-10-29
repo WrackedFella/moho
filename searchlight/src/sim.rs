@@ -9,19 +9,19 @@ use moho_core::rng::{SimRng, StreamId};
 use moho_level::NavMesh;
 use moho_physics::{
     CharacterBody, CharacterCommand, CharacterHandle, CharacterSpawn, CharacterState, HitVolume,
-    MoveSettings, PhysicsWorld,
+    MoveSettings, PhysicsWorld, first_person_view,
 };
 use searchlight_rules::{
-    Ballistics, Body, BodyPart, BodyProfile, FlightBounds, Grade, HitReport, ItemId, Lean,
+    Ballistics, Body, BodyPart, BodyProfile, Flight, FlightBounds, Grade, HitReport, ItemId, Lean,
     LeanReach, LeanSide, LeanTuning, Loadout, MagazineLevel, Rifle, Rig, Shot,
 };
 
-use crate::arena::{Arena, SETTLE_DT};
+use crate::arena::{Arena, FLIGHT_MARGIN, SETTLE_DT};
 use crate::brain::{Brain, EnemyTuning, Percept};
 use crate::cover::{self, Threat};
 use crate::input::SearchlightCommand;
 use crate::lean::lean_offset;
-use crate::round::RoundInFlight;
+use crate::round::{RoundInFlight, step_round};
 use crate::shot::{ShotRay, Strike, passes_within, resolve_shot};
 use crate::tag::SurfaceTag;
 use crate::tuning::SHIPPED_BODY;
@@ -375,10 +375,10 @@ impl SearchlightSim {
             route: Vec::new(),
             covers: Vec::new(),
             nav: Arc::default(),
-            bounds: FlightBounds {
-                min: Vec3::ZERO,
-                max: Vec3::ZERO,
-            },
+            bounds: FlightBounds::around(
+                std::iter::once(player_spawn).chain(dummy_spawns.iter().copied()),
+                FLIGHT_MARGIN,
+            ),
         };
         Self::assemble(world, spawns, config)
     }
@@ -448,9 +448,12 @@ impl SearchlightSim {
     /// Runs one tick of `dt` seconds.
     ///
     /// While the player is dead only `command.restart` is read, and it puts every character
-    /// back at its spawn, as a fresh sim over the same world would have them. Otherwise the enemies perceive and move, the player moves (slower while a lean is held), the
-    /// world steps, the player's lean blends within the room beside it, the player's weapon actions apply, then the enemies that decided to fire
-    /// do, and enemies that died leave the world.
+    /// back at its spawn, as a fresh sim over the same world would have them. Otherwise the
+    /// enemies perceive and move, the player moves (slower while a lean is held), the world
+    /// steps, the player's lean blends within the room beside it, the player's rounds in flight
+    /// step, the player's weapon actions apply (a pull sends a round that first steps next tick,
+    /// or under `command.simple` hits at once), then the enemies that decided to fire do, and
+    /// enemies that died leave the world.
     pub fn tick(&mut self, command: &SearchlightCommand, dt: f32) {
         if self.player_body.is_dead() {
             if command.restart {
@@ -473,10 +476,11 @@ impl SearchlightSim {
             .expect("the sim never removes the player");
         self.world.step(dt);
         self.step_lean(command.lean, dt);
+        self.step_rounds(command.round_gravity.gravity(), dt);
 
         self.advance_weapon();
         if command.fire {
-            self.pull_trigger();
+            self.pull_trigger(command.simple);
         }
         if command.reload {
             self.begin_reload();
@@ -731,7 +735,7 @@ impl SearchlightSim {
         };
     }
 
-    fn pull_trigger(&mut self) {
+    fn pull_trigger(&mut self, simple: bool) {
         if self.weapon != Weapon::Ready {
             return;
         }
@@ -742,26 +746,110 @@ impl SearchlightSim {
                 if self.cooldown_ticks > 0 {
                     self.weapon = Weapon::Cooling(self.cooldown_ticks);
                 }
-                self.release_round(&round);
+                self.release_round(&round, simple);
             }
         }
     }
 
     /// Sends the player's `round` on its way: a hitscan ray under Simple, else a round in flight.
-    fn release_round(&mut self, _round: &ItemId) {
-        // Stub: nothing flies and nothing is hit until rounds are implemented.
+    fn release_round(&mut self, round: &ItemId, simple: bool) {
+        let state = self.player();
+        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
+        let origin = self.leaned_eye(&state);
+        if simple {
+            self.hitscan(origin, view.forward, state.position);
+            return;
+        }
+        let Some(&ballistics) = self.ballistics.get(round) else {
+            tracing::warn!(%round, "the round has no ballistics, nothing flies");
+            return;
+        };
+        self.rounds.push(RoundInFlight {
+            flight: Flight::fired(origin, view.forward, &ballistics),
+            ballistics,
+            shooter: Some(self.player),
+            from: state.position,
+            near_missed: Vec::new(),
+        });
     }
 
-    /// Counts a near miss for every living enemy but `struck` that the shot from `origin` to
-    /// `end` passed within the near-miss radius of, and puts those whose count reached their
-    /// grade's under fire from `from`.
-    fn record_near_misses(&mut self, origin: Vec3, end: Vec3, struck: Option<usize>, from: Vec3) {
+    /// One ray from `origin` along `direction` to the edge of the flight bounds, resolved on
+    /// the spot as a player's shot fired from `from`.
+    fn hitscan(&mut self, origin: Vec3, direction: Vec3, from: Vec3) {
+        let strike = resolve_shot(
+            &self.world,
+            ShotRay {
+                origin,
+                direction,
+                range: self.bounds.reach(),
+                ignore: Some(self.player),
+            },
+        );
+        let end = strike.map_or(origin + direction * self.bounds.reach(), |strike| {
+            strike.point
+        });
+        self.land_player_shot(origin, end, strike, from, &mut Vec::new());
+    }
+
+    /// Steps every round in flight once, in the order they were fired, and drops those that
+    /// ended.
+    fn step_rounds(&mut self, gravity: f32, dt: f32) {
+        for mut round in std::mem::take(&mut self.rounds) {
+            let origin = round.flight.position;
+            let step = step_round(&self.world, &round, gravity, dt);
+            let mut near_missed = std::mem::take(&mut round.near_missed);
+            self.land_player_shot(origin, step.end, step.strike, round.from, &mut near_missed);
+            round.near_missed = near_missed;
+            let ended = step.strike.is_some()
+                || step.flight.is_spent()
+                || !self.bounds.contains(step.flight.position);
+            if !ended {
+                round.flight = step.flight;
+                self.rounds.push(round);
+            }
+        }
+    }
+
+    /// Resolves the player's shot along `origin` to `end`, which stopped at `strike`: counts
+    /// near misses on the enemies it passed, once each per `near_missed`, and lands a hit on
+    /// a part it struck.
+    fn land_player_shot(
+        &mut self,
+        origin: Vec3,
+        end: Vec3,
+        strike: Option<Strike>,
+        from: Vec3,
+        near_missed: &mut Vec<u16>,
+    ) {
+        let hit = strike.and_then(|strike| match strike.tag {
+            SurfaceTag::Part { target, part } => Some((target, part)),
+            _ => None,
+        });
+        let struck = hit.map(|(target, _)| usize::from(target));
+        self.record_near_misses(origin, end, struck, from, near_missed);
+        if let Some((target, part)) = hit {
+            self.apply_player_hit(target, part, self.damage, from, end);
+        }
+    }
+
+    /// Counts a near miss for every living enemy but `struck` that the segment from `origin` to
+    /// `end` passed within the near-miss radius of and that is not in `near_missed`, adds them
+    /// to it, and puts those whose count reached their grade's under fire from `from`.
+    fn record_near_misses(
+        &mut self,
+        origin: Vec3,
+        end: Vec3,
+        struck: Option<usize>,
+        from: Vec3,
+        near_missed: &mut Vec<u16>,
+    ) {
         let radius = self.enemy.near_miss_radius;
         for (index, target) in self.targets.iter_mut().enumerate().skip(self.dummy_count) {
             let (Some(handle), Some(enemy)) = (target.handle, target.enemy) else {
                 continue;
             };
-            if struck == Some(index) {
+            let number = target_number(index);
+            if struck == Some(index) || near_missed.contains(&number) {
                 continue;
             }
             let Some(needed) = enemy.grade.near_misses_to_cover() else {
@@ -775,6 +863,7 @@ impl SearchlightSim {
             if !passes_within(origin, end, centre, radius) {
                 continue;
             }
+            near_missed.push(number);
             target.near_misses += 1;
             if target.near_misses >= needed {
                 target.near_misses = 0;
@@ -1921,10 +2010,7 @@ mod tests {
             "the corner should cover the upright eye"
         );
         assert_eq!(upright.dummy_body(0).expect("a dummy").health(), 100);
-        assert!(
-            hit(&leaned_feedback),
-            "the leaned eye sees past the corner"
-        );
+        assert!(hit(&leaned_feedback), "the leaned eye sees past the corner");
         assert!(leaned.dummy_body(0).expect("a dummy").health() < 100);
     }
 
@@ -2138,7 +2224,10 @@ mod tests {
             }),
         );
 
-        assert!(fast < slow, "940 m/s took {fast} ticks, 400 m/s took {slow}");
+        assert!(
+            fast < slow,
+            "940 m/s took {fast} ticks, 400 m/s took {slow}"
+        );
     }
 
     #[test]
@@ -2251,8 +2340,7 @@ mod tests {
             muzzle_velocity: 150.0,
             drag: 30.0,
         };
-        for (label, ballistics) in [("leaves the level", BALL), ("slows too far", spent_at_once)]
-        {
+        for (label, ballistics) in [("leaves the level", BALL), ("slows too far", spent_at_once)] {
             let mut sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], with_ball(ballistics));
             sim.tick(&look_up, DT);
             sim.tick(&pull(), DT);
@@ -2286,15 +2374,10 @@ mod tests {
     #[test]
     fn a_round_passing_a_veteran_60_m_away_puts_it_under_fire_on_the_passing_tick() {
         let enemy = Vec3::new(0.0, 0.0, 30.0);
-        let arena = arena_on(
-            100.0,
-            &[],
-            Vec3::new(0.0, 0.0, -30.0),
-            &[enemy],
-            &[enemy],
-        );
+        let arena = arena_on(100.0, &[], Vec3::new(0.0, 0.0, -30.0), &[enemy], &[enemy]);
         let mut sim = SearchlightSim::with_start(arena, standing_config(), Start::Empty);
-        sim.spawn_enemy(0, Grade::Veteran).expect("the marker is free");
+        sim.spawn_enemy(0, Grade::Veteran)
+            .expect("the marker is free");
         let one_metre_wide = SearchlightCommand {
             movement: CharacterCommand {
                 yaw_delta: -(1.0_f32 / 60.0).asin(),
@@ -2305,12 +2388,15 @@ mod tests {
         };
 
         let mut under_fire = Vec::new();
+        let mut from = Vec3::ZERO;
         for tick in 0..8 {
             sim.tick(&if tick == 0 { one_metre_wide } else { idle() }, DT);
+            if tick == 0 {
+                from = sim.player().position;
+            }
             under_fire.push(sim.targets[sim.dummy_count].under_fire);
         }
 
-        let from = sim.player().position;
         assert!(
             under_fire[..4].iter().all(Option::is_none),
             "put under fire before the round got there: {under_fire:?}"
@@ -2373,10 +2459,7 @@ mod tests {
         let ticks = fire_and_wait(&mut sim, simple, 1);
 
         let hits = hits_in(&ticks);
-        assert!(
-            matches!(hits[..], [(0, BodyPart::Torso, _)]),
-            "{ticks:?}"
-        );
+        assert!(matches!(hits[..], [(0, BodyPart::Torso, _)]), "{ticks:?}");
     }
 
     /// The same fight, built afresh: enemies with aim error and a player firing off line.
@@ -2404,7 +2487,11 @@ mod tests {
         let script = (0..150)
             .map(|tick| SearchlightCommand {
                 movement: CharacterCommand {
-                    yaw_delta: if tick % 4 == 0 { yaw[(tick / 4) % 4] } else { 0.0 },
+                    yaw_delta: if tick % 4 == 0 {
+                        yaw[(tick / 4) % 4]
+                    } else {
+                        0.0
+                    },
                     ..CharacterCommand::default()
                 },
                 fire: tick % 4 == 0,
@@ -2455,7 +2542,8 @@ mod tests {
         let enemy = Vec3::new(-1.0, 0.0, 30.55);
         let arena = arena_on(100.0, &[], Vec3::ZERO, &[enemy], &[enemy]);
         let mut sim = SearchlightSim::with_start(arena, standing_config(), Start::Empty);
-        sim.spawn_enemy(0, Grade::Novice).expect("the marker is free");
+        sim.spawn_enemy(0, Grade::Novice)
+            .expect("the marker is free");
 
         run_until_settled(&mut sim, &pull());
 
@@ -2471,7 +2559,8 @@ mod tests {
         let mut config = standing_config();
         config.enemy.near_miss_radius = 1.0;
         let mut sim = SearchlightSim::with_start(arena, config, Start::Empty);
-        sim.spawn_enemy(0, Grade::Novice).expect("the marker is free");
+        sim.spawn_enemy(0, Grade::Novice)
+            .expect("the marker is free");
         let look_down = SearchlightCommand {
             movement: CharacterCommand {
                 pitch_delta: -10.0,
@@ -2506,7 +2595,11 @@ mod tests {
         let reached = run_until_settled(&mut inside, &pull());
         let missed = run_until_settled(&mut beyond, &pull());
 
-        assert_eq!(hits_in(&[reached]).len(), 1, "the control dummy inside the bounds");
+        assert_eq!(
+            hits_in(&[reached]).len(),
+            1,
+            "the control dummy inside the bounds"
+        );
         assert_eq!(hits_in(&[missed]), []);
         assert_eq!(beyond.dummy_body(0).expect("dummy 0 exists").health(), 100);
     }
@@ -2521,7 +2614,11 @@ mod tests {
         bare.tick(&pull(), DT);
         control.tick(&pull(), DT);
 
-        assert_eq!(control.rounds_in_flight().len(), 1, "the control flew nothing");
+        assert_eq!(
+            control.rounds_in_flight().len(),
+            1,
+            "the control flew nothing"
+        );
         assert!(bare.rounds_in_flight().is_empty());
         assert_eq!(bare.drain_feedback(), [Feedback::Fired]);
     }

@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use moho_input::bindings::BindingWarning;
 use moho_ui_shell::Console;
 use moho_ui_shell::console::registry::CommandSpec;
-use searchlight_rules::{Grade, GravityScale};
+use searchlight_rules::{Grade, GravityScale, MAX_GRAVITY_SCALE};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ConsoleCommand {
@@ -32,13 +32,36 @@ pub enum SimpleArg {
 }
 
 /// Parses `simple [0|1]`; no argument toggles.
-pub fn parse_simple(_args: &[&str]) -> Result<(ConsoleCommand, String), String> {
-    todo!("parse_simple")
+pub fn parse_simple(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    match args {
+        [] => Ok((ConsoleCommand::Simple(SimpleArg::Toggle), String::new())),
+        ["1"] => Ok((
+            ConsoleCommand::Simple(SimpleArg::Set(true)),
+            "Simple: on".to_owned(),
+        )),
+        ["0"] => Ok((
+            ConsoleCommand::Simple(SimpleArg::Set(false)),
+            "Simple: off".to_owned(),
+        )),
+        _ => Err("Usage: simple [0|1]".to_owned()),
+    }
 }
 
 /// Parses `round_gravity <scale>`.
-pub fn parse_round_gravity(_args: &[&str]) -> Result<(ConsoleCommand, String), String> {
-    todo!("parse_round_gravity")
+pub fn parse_round_gravity(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    let usage = || format!("Usage: round_gravity <scale> (0 to {MAX_GRAVITY_SCALE})");
+    let [text] = args else {
+        return Err(usage());
+    };
+    let scale = text
+        .parse::<f32>()
+        .ok()
+        .and_then(|scale| GravityScale::new(scale).ok())
+        .ok_or_else(usage)?;
+    Ok((
+        ConsoleCommand::RoundGravity(scale),
+        format!("Round gravity: {text}"),
+    ))
 }
 
 /// Parses `tgm [0|1]`; no argument toggles.

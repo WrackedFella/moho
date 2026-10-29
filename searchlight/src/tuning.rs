@@ -37,7 +37,7 @@ pub fn tuning(kit: Kit) -> SimConfig {
     let Kit {
         weapon,
         loadout,
-        rounds: _,
+        rounds,
     } = kit;
     SimConfig {
         move_settings: MoveSettings {
@@ -57,7 +57,7 @@ pub fn tuning(kit: Kit) -> SimConfig {
         },
         gravity: 18.0,
         character_body: SHIPPED_BODY,
-        rounds: std::collections::BTreeMap::new(),
+        rounds,
         damage: weapon.damage,
         cooldown_ticks: weapon.cooldown_ticks,
         reload_ticks: weapon.reload_ticks,

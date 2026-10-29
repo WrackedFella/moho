@@ -179,7 +179,11 @@ condition = 100
     #[test]
     fn a_bad_round_fails_the_load_naming_the_round_and_the_field() {
         let cases = [
-            ("muzzle_velocity = 940.0", "muzzle_velocity = 0.0", "muzzle_velocity"),
+            (
+                "muzzle_velocity = 940.0",
+                "muzzle_velocity = 0.0",
+                "muzzle_velocity",
+            ),
             ("drag = 1.0", "drag = -1.0", "drag"),
         ];
         for (good, bad, field) in cases {
@@ -202,8 +206,16 @@ condition = 100
     #[test]
     fn a_non_finite_round_value_fails_the_load_naming_the_round_and_the_field() {
         let cases = [
-            ("muzzle_velocity = 940.0", "muzzle_velocity = nan", "muzzle_velocity"),
-            ("muzzle_velocity = 940.0", "muzzle_velocity = inf", "muzzle_velocity"),
+            (
+                "muzzle_velocity = 940.0",
+                "muzzle_velocity = nan",
+                "muzzle_velocity",
+            ),
+            (
+                "muzzle_velocity = 940.0",
+                "muzzle_velocity = inf",
+                "muzzle_velocity",
+            ),
             ("drag = 1.0", "drag = nan", "drag"),
             ("drag = 1.0", "drag = inf", "drag"),
         ];
