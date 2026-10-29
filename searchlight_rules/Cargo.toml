@@ -5,6 +5,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
+glam = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }
 

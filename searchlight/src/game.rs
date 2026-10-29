@@ -18,7 +18,7 @@ use moho_render_api::{
     WorldMeshId,
 };
 use moho_renderer::{LightingGpu, RendererBackend, Scene, WorldMeshes};
-use searchlight_rules::{Grade, Lean, LeanSide};
+use searchlight_rules::{Grade, GravityScale, Lean, LeanSide};
 use winit::event::WindowEvent;
 use winit::window::{CursorGrabMode, Window};
 
@@ -743,6 +743,12 @@ pub struct SearchlightGame {
     /// session's lever. A host action like `god_mode`: once commands are per player slot, only
     /// slot 0's is read.
     forced_grade: Option<Grade>,
+    /// Simple is on: shots are hitscan. Saved with the debug settings. A host action like
+    /// `god_mode`.
+    simple: bool,
+    /// How hard gravity pulls on rounds; session state, standard at every launch. A host action
+    /// like `god_mode`.
+    round_gravity: GravityScale,
     debug_settings: Option<DebugSettings>,
     /// A `fullscreen` command waiting for a frame, the first place a window mode can be
     /// requested.
@@ -767,6 +773,8 @@ impl SearchlightGame {
             stage: Stage::new(),
             god_mode: false,
             forced_grade: None,
+            simple: false,
+            round_gravity: GravityScale::default(),
             debug_settings: None,
             flip_window_pending: false,
             pending_settings: None,
@@ -895,6 +903,9 @@ impl SearchlightGame {
                 ConsoleCommand::GodMode(GodModeArg::Set(on)) => self.god_mode = on,
                 ConsoleCommand::Fullscreen => self.flip_window_pending = true,
                 ConsoleCommand::ForceGrade(grade) => self.forced_grade = grade,
+                ConsoleCommand::Simple(_) | ConsoleCommand::RoundGravity(_) => {
+                    todo!("apply the simple and round_gravity console commands")
+                }
             }
         }
         if self.god_mode != before
@@ -1038,6 +1049,8 @@ impl Game for SearchlightGame {
         SearchlightCommand {
             god_mode: self.god_mode,
             forced_grade: self.forced_grade,
+            simple: self.simple,
+            round_gravity: self.round_gravity,
             lean: self.lean_side,
             ..SearchlightCommand::from_frame(&frame)
         }
@@ -2513,6 +2526,73 @@ mod tests {
         assert!(command.god_mode);
         assert!(game.god_mode);
         assert_eq!(saved_god_mode(&path).as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn a_saved_simple_starts_the_game_in_simple() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut settings, _path) = settings_in(&dir);
+        settings.set_simple(true).unwrap();
+        let mut game = game().with_debug_settings(settings);
+
+        let command = game.command();
+
+        assert!(command.simple);
+        assert!(game.simple);
+    }
+
+    #[test]
+    fn the_simple_command_saves_the_setting_and_bare_simple_prints_the_new_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = game().with_debug_settings(settings);
+        let saved = |path: &std::path::Path| {
+            let (saved, _) = Prefs::load_from(path);
+            saved.debug_value("simple").map(str::to_owned)
+        };
+
+        type_into_console(&game, "simple");
+        let toggled_on = game.command().simple;
+        let on = saved(&path);
+        type_into_console(&game, "simple 0");
+        let set_off = game.command().simple;
+        let off = saved(&path);
+
+        assert!(toggled_on);
+        assert_eq!(on.as_deref(), Some("1"));
+        assert!(!set_off);
+        assert_eq!(off.as_deref(), Some("0"));
+        let lines = console_lines(&game);
+        assert!(lines.contains(&"Simple: on".to_owned()), "{lines:?}");
+    }
+
+    #[test]
+    fn the_gravity_scale_starts_at_1_and_both_levels_survive_a_restart() {
+        let mode = ArenaMode::new(arena_arena(), arena_config(), wave_tuning(1));
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0));
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let at_launch = game.command();
+        type_into_console(&game, "round_gravity 30");
+        type_into_console(&game, "simple 1");
+        let set = game.command();
+        game.mode.sim_mut().kill_player();
+        assert!(game.sim().player_body().is_dead());
+
+        let restart = SearchlightCommand {
+            restart: true,
+            ..game.command()
+        };
+        tick_with(&mut game, &mut clock, &restart);
+        let after = game.command();
+
+        assert!(!at_launch.simple);
+        assert_eq!(at_launch.round_gravity, GravityScale::new(1.0).unwrap());
+        assert!(set.simple);
+        assert_eq!(set.round_gravity, GravityScale::new(30.0).unwrap());
+        assert!(!game.sim().player_body().is_dead());
+        assert!(after.simple);
+        assert_eq!(after.round_gravity, GravityScale::new(30.0).unwrap());
     }
 
     #[test]
@@ -4185,6 +4265,7 @@ mod presentation_tests {
                 leg_status: 10,
             })
             .hit(BodyPart::Head, 1),
+            point: Vec3::ZERO,
         };
 
         stage.react(&hit, None);
@@ -4289,6 +4370,7 @@ mod mutation_tests {
             target: 0,
             part: BodyPart::Head,
             report,
+            point: Vec3::ZERO,
         }
     }
 

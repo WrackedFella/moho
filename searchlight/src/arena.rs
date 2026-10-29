@@ -8,12 +8,16 @@ use glam::Vec3;
 use moho_level::{AgentProfile, Level, LevelError, LevelMarker, NavBuildError, NavMesh};
 use moho_physics::PhysicsWorld;
 use moho_render_api::{WorldMesh, WorldMeshId};
+use searchlight_rules::FlightBounds;
 
 use crate::sim::{CAPSULE_RADIUS, STAND_HEIGHT};
 use crate::tag::SurfaceTag;
 
 /// One nominal tick, enough for a step to index freshly added colliders.
 pub(crate) const SETTLE_DT: f32 = 1.0 / 60.0;
+
+/// Metres of room around the level geometry that rounds may still fly in.
+pub const FLIGHT_MARGIN: f32 = 100.0;
 
 const PLAYER_SPAWN: &str = "player_spawn";
 const DUMMY_PREFIX: &str = "dummy_";
@@ -223,6 +227,14 @@ impl Arena {
             route,
             covers: positions(&markers.covers),
         })
+    }
+
+    /// The box a round may fly in: every mesh vertex, grown by [`FLIGHT_MARGIN`].
+    pub fn flight_bounds(&self) -> FlightBounds {
+        FlightBounds {
+            min: Vec3::ZERO,
+            max: Vec3::ZERO,
+        }
     }
 
     /// A physics world whose static colliders are this arena's meshes, tagged
@@ -696,6 +708,27 @@ mod tests {
         tracing::subscriber::with_default(subscriber, run);
         let bytes = buffer.lock().expect("log sink").clone();
         String::from_utf8(bytes).expect("log output is utf-8")
+    }
+
+    #[test]
+    fn flight_bounds_enclose_every_mesh_with_the_margin() {
+        let arena = crate::test_support::arena_with(
+            &[(Vec3::new(10.0, 0.0, 20.0), Vec3::new(12.0, 30.0, 40.0))],
+            Vec3::ZERO,
+            &[],
+            &[],
+        );
+
+        let bounds = arena.flight_bounds();
+
+        assert_eq!(FLIGHT_MARGIN, 100.0);
+        assert_eq!(bounds.min, Vec3::new(-130.0, -101.0, -130.0));
+        assert_eq!(bounds.max, Vec3::new(130.0, 130.0, 140.0));
+        for mesh in &arena.meshes {
+            for &[x, y, z] in mesh.positions() {
+                assert!(bounds.contains(Vec3::new(x, y, z)), "{x} {y} {z}");
+            }
+        }
     }
 
     #[test]

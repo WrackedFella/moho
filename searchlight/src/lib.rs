@@ -13,6 +13,7 @@ pub mod kit;
 pub mod lean;
 pub mod menu;
 pub mod mode;
+pub mod round;
 pub mod shot;
 pub mod sim;
 pub mod tag;

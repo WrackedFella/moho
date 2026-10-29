@@ -62,7 +62,6 @@ fire = "semi_auto"
 cooldown_ticks = 6
 reload_ticks = 120
 charge_ticks = 30
-range = 100.0
 "#;
 
     const OTHER_ITEMS: &str = r#"
@@ -74,7 +73,7 @@ magazine = { well = "rifle", caliber = "5.56x45", capacity = 30 }
 [round_ball]
 class = "consumable"
 size = [1, 1]
-round = { caliber = "5.56x45" }
+round = { caliber = "5.56x45", muzzle_velocity = 940.0, drag = 1.0 }
 
 [rig_chest]
 class = "gear"
@@ -159,8 +158,45 @@ condition = 100
         assert_eq!(kit.weapon.cooldown_ticks, 6);
         assert_eq!(kit.weapon.reload_ticks, 120);
         assert_eq!(kit.weapon.charge_ticks, 30);
-        assert!((kit.weapon.range - 100.0).abs() < f32::EPSILON);
         assert_eq!(kit.weapon.well, MagazineWell::new("rifle"));
+    }
+
+    #[test]
+    fn the_shipped_start_kit_carries_the_5_56_ball_round_ballistics() {
+        let roots = ContentRoots::base(&content_root()).expect("the shipped content folder");
+
+        let kit = load(&roots, START_KIT_ID).expect("the shipped start kit loads");
+
+        let ball = kit
+            .rounds
+            .get(&ItemId::new("round_rifle_ball"))
+            .expect("the start kit names the ball round");
+        assert_eq!(ball.muzzle_velocity, 940.0);
+        assert_eq!(ball.drag, 1.0);
+        assert_eq!(kit.rounds.len(), 1);
+    }
+
+    #[test]
+    fn a_bad_round_fails_the_load_naming_the_round_and_the_field() {
+        let cases = [
+            ("muzzle_velocity = 940.0", "muzzle_velocity = 0.0", "muzzle_velocity"),
+            ("drag = 1.0", "drag = -1.0", "drag"),
+        ];
+        for (good, bad, field) in cases {
+            let items = items_toml().replace(good, bad);
+            let (dir, roots) = base_with(&items, &start_kit(2));
+
+            let Err(error) = load(&roots, START_KIT_ID) else {
+                panic!("a round with {bad} loaded");
+            };
+
+            let KitLoadError::Content(ContentError::Invalid { file, id, reason }) = &error else {
+                panic!("{bad}: expected Invalid content, got {error:?}");
+            };
+            assert_eq!(file, &dir.path().join("items.toml"));
+            assert_eq!(id, "round_ball");
+            assert!(reason.contains(field), "{bad}: {reason}");
+        }
     }
 
     #[test]
@@ -287,7 +323,12 @@ magazine = { well = "rifle", caliber = "5.56x45", capacity = 20 }
 
         let shots: Vec<Shot> = (0..21).map(|_| kit.loadout.fire()).collect();
         let (fired, dry) = shots.split_at(20);
-        assert!(fired.iter().all(|shot| *shot == Shot::Fired), "{shots:?}");
+        assert!(
+            fired
+                .iter()
+                .all(|shot| *shot == Shot::Fired(ItemId::new("round_ball"))),
+            "{shots:?}"
+        );
         assert_eq!(dry, [Shot::Dry]);
     }
 }
