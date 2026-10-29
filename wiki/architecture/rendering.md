@@ -1,11 +1,12 @@
 # Rendering
 
 **Source:** `moho_render_api/src/` (`world_geometry.rs`, `texture.rs`), `moho_renderer/src/` (`scene.rs`, `sky.rs`,
-`world_meshes.rs`, `skinning.rs`, `textures.rs`, `markers.rs`, `renderer.rs`, `render_ops/`, `shadow.rs`, `shadow/`, `ssao.rs`, `tone_map.rs`, `ui_pass/`), `moho_render_api/src/ui_paint.rs`, `moho_render_api/src/marker.rs`, `flagstone/src/app/world_geometry.rs`, `flagstone/src/app/cut_caps.rs`, `flagstone/src/app/view_level.rs`, `flagstone_voxel/src/mesh/cap.rs`,
+`world_meshes.rs`, `effects.rs`, `skinning.rs`, `textures.rs`, `markers.rs`, `renderer.rs`, `render_ops/`, `shadow.rs`, `shadow/`, `ssao.rs`, `tone_map.rs`, `ui_pass/`), `moho_render_api/src/ui_paint.rs`, `moho_render_api/src/marker.rs`, `flagstone/src/app/world_geometry.rs`, `flagstone/src/app/cut_caps.rs`, `flagstone/src/app/view_level.rs`, `flagstone_voxel/src/mesh/cap.rs`,
 `shaders/`, `moho_level/src/`.
 **Decisions:** [ADR-0001](../../_todo/adr/0001-render-api-boundary.md),
 [ADR-0013](../../_todo/adr/0013-ui-reaches-the-renderer-as-paint-data.md),
-[ADR-0030](../../_todo/adr/0030-skinned-meshes-are-skinned-once-per-frame.md).
+[ADR-0030](../../_todo/adr/0030-skinned-meshes-are-skinned-once-per-frame.md),
+[ADR-0031](../../_todo/adr/0031-effects-are-engine-presentation-state-placed-by-handle.md).
 
 ## 1 Boundary
 
@@ -356,9 +357,10 @@ sequenceDiagram
     participant S as Scene::render
     participant B as RendererBackend
     S->>S: prepare: collect instances, dedup materials,<br/>split opaque / transparent
-    S->>S: flush world meshes, group placements per mesh,<br/>clear placements
+    S->>S: place effects, flush world meshes, group placements<br/>per mesh (shadowed and unshadowed), clear placements
     S->>B: begin_frame(camera)<br/>upload camera, cull lights, update shadow matrices,<br/>acquire surface
     S->>B: enqueue_draw(cubes, spheres, each world mesh<br/>with all its instances)
+    S->>B: enqueue_unshadowed_draw(effects)
     S->>B: enqueue_draw(transparent, sorted back-to-front)
     S->>B: enqueue_markers(fills, outlines, each sorted far to near)
     S->>B: submit_frame()
@@ -535,3 +537,29 @@ scaled by sin θ to the light, and the hardware bias stays at slope 1.0 with no 
 clamp per pipeline could not suit cascades whose texels differ 18-fold).
 A light below `MIN_SHADOW_LIGHT_INTENSITY` skips its cascades. The fits are plain
 functions over `glam` types and run without a GPU.
+
+## 10 Effects
+
+Effects are engine-owned presentation state a game starts, places and ends by handle
+([ADR-0031](../../_todo/adr/0031-effects-are-engine-presentation-state-placed-by-handle.md)).
+`moho_renderer::Effects` (`moho_renderer/src/effects.rs`, reached via `Scene::effects_mut`)
+issues an `EffectHandle`, monotonic and never reused; a stale, unknown or inert handle is ignored.
+The one kind is the streak (a tracer):
+
+- `begin_streak(StreakStyle)` starts it; `place_streak(handle, head, heading)` sets its head
+  every frame, already interpolated by the game; `end(handle)` starts the fade.
+- A streak not placed in a frame and not ended is skipped that frame. One past
+  `StreakStyle::max_age` fades as if ended, so a forgotten `end` does not leak.
+- Fade tapers the width linearly over `StreakStyle::fade`; draws are opaque.
+- `advance(dt)` ages effects by frame time, not sim time, so pause and time scale do not slow them.
+- `set_quality(0..=4)` sets the live cap (0/32/64/128/256); at the cap `begin_streak` returns an
+  inert handle, lowering keeps live effects, 0 clears them. A game hands the saved
+  `effects_quality` pref to it on start and on apply.
+
+`Scene::render` calls `Effects::draw` first: each streak becomes one placement of a shared kite
+mesh, uploaded on first use under `EFFECT_MESH_IDS_FROM` (`u64::MAX - 63`, reserved; games keep
+their ids below it), turned to face the camera eye. Placements go through
+`WorldMeshes::place_unshadowed` and reach the backend via `RendererBackend::enqueue_unshadowed_draw`
+(default: `enqueue_draw`). In the renderer the draw key has `casts_shadow = false`, so
+`render_shadow_passes` skips it and the main pass draws it. A second camera sees a streak
+turned toward the first eye.

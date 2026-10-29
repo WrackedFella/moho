@@ -407,7 +407,6 @@ struct Stage {
 }
 
 impl Stage {
-    /// Cap the scene's live effects for the saved effects quality.
     fn set_effects_quality(&mut self, quality: u32) {
         self.scene.effects_mut().set_quality(quality);
     }

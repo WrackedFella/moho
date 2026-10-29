@@ -59,9 +59,7 @@ type Enqueue = (bool, u32, Vec<InstanceGpu>);
 struct MockRenderer {
     pub renders: std::cell::RefCell<Vec<String>>,
     pub drawn_handles: std::cell::RefCell<Vec<u32>>,
-    /// Each enqueue as `(unshadowed, mesh handle, instances)`, in call order.
     pub enqueues: Vec<Enqueue>,
-    /// How many indexed meshes were registered.
     pub uploads: u32,
     next_handle: u32,
 }

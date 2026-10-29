@@ -14,7 +14,6 @@ pub const EFFECT_MESH_IDS_FROM: u64 = u64::MAX - 63;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EffectHandle(u64);
 
-/// How a streak looks and how long it lives.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StreakStyle {
     pub length: f32,
@@ -39,10 +38,12 @@ impl StreakStyle {
 /// Live-effect cap per effects quality, indexed like `QUALITY_NAMES`.
 const CAPS: [usize; 5] = [0, 32, 64, 128, 256];
 
+/// The highest quality level, ultra; higher values clamp to it.
+const MAX_QUALITY: u32 = 4;
+
 /// Quality used until a game sets one; matches the default `effects_quality` pref.
 const DEFAULT_QUALITY: usize = 3;
 
-/// One streak: its style, last placement and age.
 #[derive(Debug)]
 struct Streak {
     style: StreakStyle,
@@ -51,7 +52,6 @@ struct Streak {
     heading: Option<Vec3>,
     placed_this_frame: bool,
     age: Duration,
-    /// Age at which the fade began.
     ended_at: Option<Duration>,
 }
 
@@ -74,7 +74,6 @@ impl Streak {
     }
 }
 
-/// The live effects of one scene.
 #[derive(Debug)]
 pub struct Effects {
     streaks: BTreeMap<EffectHandle, Streak>,
@@ -149,8 +148,7 @@ impl Effects {
     /// Cap new effects for `quality` (0 off to 4 ultra; higher clamps). Lowering keeps
     /// what is live; 0 clears it.
     pub fn set_quality(&mut self, quality: u32) {
-        let index = usize::try_from(quality).map_or(CAPS.len() - 1, |q| q.min(CAPS.len() - 1));
-        self.cap = CAPS[index];
+        self.cap = CAPS[usize::try_from(quality.min(MAX_QUALITY)).unwrap_or_default()];
         if self.cap == 0 {
             self.streaks.clear();
         }
@@ -220,7 +218,8 @@ pub(crate) fn streak_transform(
         return None;
     }
     let tail = head - dir * length;
-    let across = (eye - (head - dir * (length * 0.5))).cross(dir);
+    // Any point on the streak's axis gives the same cross product with `dir`.
+    let across = (eye - head).cross(dir);
     let y = if across.length() < 1e-4 {
         dir.any_orthonormal_vector()
     } else {
@@ -628,6 +627,12 @@ mod tests {
                 "ending inert handles does nothing"
             );
         }
+    }
+
+    #[test]
+    fn the_reserved_mesh_ids_are_the_top_sixty_four() {
+        assert_eq!(EFFECT_MESH_IDS_FROM, 0xFFFF_FFFF_FFFF_FFC0);
+        assert_eq!(u64::MAX - EFFECT_MESH_IDS_FROM + 1, 64);
     }
 
     #[test]

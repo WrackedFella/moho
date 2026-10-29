@@ -69,7 +69,6 @@ pub struct DrawKey {
     pub(crate) mesh: u32,
     pub(crate) texture: u32,
     pub(crate) source: VertexSource,
-    /// Whether the shadow pass draws it.
     pub(crate) casts_shadow: bool,
 }
 
