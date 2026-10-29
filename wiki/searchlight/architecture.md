@@ -43,7 +43,7 @@ flowchart LR
 | `tag` | `SurfaceTag` (`World`, `Part { target, part }`, `Player(part)` or `Control(index)`) and its lossless round trip through the engine's opaque `moho_physics::HitTag` |
 | `shot` | `resolve_shot`: first tagged surface along a `ShotRay` in the `PhysicsWorld`; `passes_within`: whether a shot segment comes within a radius of a point |
 | `brain` | `Brain`: the enemy state machine (`Patrol`, `Engage`, `Cover`, `Chase`), pure over `glam` types; `Percept` and a `steer` function in, `Intent` out; `EnemyTuning` holds its numbers; `EnemyTuning::graded` scales reaction, cooldown and aim error by a `Grade` ([enemies](#5-enemies)) |
-| `cover` | `pick` and `offer`: choose the nearest free cover point an enemy under fire should run to, using world-only rays against the player (`Threat`) |
+| `cover` | `pick` and `offer`: choose the nearest free cover point an enemy under fire should run to, using world-only rays (level geometry and placed controls count as world) against the player (`Threat`) |
 | `sim` | `SearchlightSim`: player character and body, `Loadout` (rifle and `Rig` of spare magazines), dummies and enemies; emits `Feedback`; counts player kills |
 | `wave` | `WaveTuning` (first wave size, growth per wave, points per kill, grade mix; zero size or growth is refused) and `WaveState` (running wave, enemies still to spawn, the wave's grades, score) as plain numbers, no physics; `step` scores and spawns, `call_next` begins the next wave |
 | `mode` | `ArenaMode`: the arena as a game mode. Owns a `SearchlightSim` started empty, scores its kills, applies the use of a control, and spawns each wave's enemies, graded by the wave's mix, at free enemy markers |

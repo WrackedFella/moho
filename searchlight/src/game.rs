@@ -2070,6 +2070,58 @@ mod tests {
         );
     }
 
+    /// A game with a post in reach whose `Use` action has exactly `bindings`.
+    fn game_with_use_bound_to(bindings: Vec<moho_input::bindings::Binding>) -> SearchlightGame {
+        let mode = ArenaMode::new(
+            arena_with_controls(&[], Vec3::ZERO, &[], &[], &[POST]),
+            test_config(rifle_from(mag(30, 5)), vec![]),
+            wave_tuning(1),
+        );
+        let (mut loaded, _) = ActionBindings::load(&BTreeMap::new());
+        loaded.set(SearchlightAction::Use, bindings);
+        SearchlightGame::new(mode, ActionMap::new(loaded, 1.0))
+    }
+
+    /// What a fresh shell paints for the use prompt reading `text`, drawn on a twin game's
+    /// shell so the glyph atlas history matches a game that painted nothing before.
+    fn painted_prompt_reading(text: &str) -> Option<Vec<UiMesh>> {
+        let twin = game_with_controls(&[]);
+        twin.stage
+            .shell()
+            .set_texts(vec![ScreenText {
+                text: text.to_owned(),
+                anchor: Anchor::Center,
+                offset: [0.0, PROMPT_OFFSET_Y],
+                size: PROMPT_SIZE,
+                color: PROMPT_COLOR,
+            }])
+            .expect("a valid prompt");
+        let frame = twin.stage.shell().ui_frame([800, 600]);
+        frame.map(|frame| frame.meshes)
+    }
+
+    #[test]
+    fn the_prompt_names_the_first_use_binding_or_unbound() {
+        use moho_input::bindings::Binding;
+        use moho_input::key::Key;
+        let mut rebound = game_with_use_bound_to(vec![Binding::key(Key::G), Binding::key(Key::H)]);
+        let mut unbound = game_with_use_bound_to(vec![]);
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        for game in [&mut rebound, &mut unbound] {
+            tick_with(game, &mut clock, &SearchlightCommand::default());
+        }
+
+        let rebound_paint = painted(&mut rebound);
+        let unbound_paint = painted(&mut unbound);
+
+        let expected_rebound = painted_prompt_reading("[G] Next wave");
+        let expected_unbound = painted_prompt_reading("[unbound] Next wave");
+        assert!(expected_rebound.is_some_and(|meshes| !meshes.is_empty()));
+        assert_eq!(rebound_paint, painted_prompt_reading("[G] Next wave"));
+        assert_eq!(unbound_paint, expected_unbound);
+        assert_ne!(rebound_paint, unbound_paint);
+    }
+
     #[test]
     fn control_mesh_ids_share_no_id_with_arena_dummy_or_enemy_meshes() {
         use crate::arena::{arena_mesh_id, control_mesh_id};

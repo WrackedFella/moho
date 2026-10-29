@@ -114,7 +114,7 @@ mod tests {
     fn a_bindings_section_with_console_and_jump_loads_both_without_warnings() {
         let section = BTreeMap::from([
             ("console".to_owned(), "Backslash".to_owned()),
-            ("jump".to_owned(), "X".to_owned()),
+            ("jump".to_owned(), "F".to_owned()),
         ]);
 
         let (console_section, game_section) = split_console_binding(&section);
@@ -129,7 +129,7 @@ mod tests {
         );
         assert_eq!(
             bindings.get(SearchlightAction::Jump),
-            [Binding::key(Key::X)]
+            [Binding::key(Key::F)]
         );
     }
 }
