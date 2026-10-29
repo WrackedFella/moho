@@ -3959,6 +3959,55 @@ mod settings_tests {
         );
     }
 
+    /// How many streaks the game's scene lets live, found by asking for more than any cap.
+    fn effects_cap(game: &mut SearchlightGame) -> usize {
+        let effects = game.stage.scene.effects_mut();
+        for _ in 0..300 {
+            effects.begin_streak(moho_renderer::StreakStyle::new(1.0, 0.1, 0));
+        }
+        effects.live()
+    }
+
+    #[test]
+    fn the_saved_effects_quality_applies_on_the_first_frame() {
+        for (quality, cap) in [(0, 0), (1, 32)] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut prefs = Prefs::default();
+            prefs.set_effects_quality(quality);
+            let mut game = main_menu_game(prefs, &settings_file(&dir));
+            let mut renderer = QualityRenderer::default();
+
+            run_frame(&mut game, &mut renderer);
+
+            assert_eq!(effects_cap(&mut game), cap, "saved quality {quality}");
+        }
+    }
+
+    #[test]
+    fn applying_settings_caps_the_scenes_effects() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut game = main_menu_game(Prefs::default(), &settings_file(&dir));
+        let mut renderer = QualityRenderer::default();
+        run_frame(&mut game, &mut renderer);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_settings_from_main_menu(&mut game, &mut ctx);
+        change(
+            &mut game,
+            &mut ctx,
+            EngineSetting::EffectsQuality,
+            &[Key::ArrowLeft, Key::ArrowLeft],
+        );
+        click_apply(&mut game, &mut ctx);
+        let before_the_frame = game.stage.scene.effects_mut().live();
+
+        run_frame(&mut game, &mut renderer);
+
+        assert_eq!(before_the_frame, 0);
+        assert_eq!(game_prefs(&game).effects_quality(), 1);
+        assert_eq!(effects_cap(&mut game), 32);
+    }
+
     #[test]
     fn an_applied_change_reaches_the_renderer_and_window_on_the_next_frame() {
         let dir = tempfile::tempdir().unwrap();

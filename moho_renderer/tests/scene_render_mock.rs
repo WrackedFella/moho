@@ -56,6 +56,10 @@ impl Renderable for Prop {
 struct MockRenderer {
     pub renders: std::cell::RefCell<Vec<String>>,
     pub drawn_handles: std::cell::RefCell<Vec<u32>>,
+    /// Each enqueue as `(unshadowed, mesh handle, instances)`, in call order.
+    pub enqueues: Vec<(bool, u32, Vec<InstanceGpu>)>,
+    /// How many indexed meshes were registered.
+    pub uploads: u32,
     next_handle: u32,
 }
 
@@ -64,6 +68,8 @@ impl MockRenderer {
         Self {
             renders: std::cell::RefCell::new(Vec::new()),
             drawn_handles: std::cell::RefCell::new(Vec::new()),
+            enqueues: Vec::new(),
+            uploads: 0,
             next_handle: 100,
         }
     }
@@ -87,6 +93,7 @@ impl RendererBackend for MockRenderer {
         _material: &[u32],
         _indices: &[u32],
     ) -> u32 {
+        self.uploads += 1;
         self.next_handle += 1;
         self.next_handle
     }
@@ -113,11 +120,15 @@ impl RendererBackend for MockRenderer {
     ) -> Result<(), moho_renderer::FrameError> {
         Ok(())
     }
-    fn enqueue_draw(&mut self, mesh: u32, _instances: &[moho_renderer::InstanceGpu]) {
+    fn enqueue_draw(&mut self, mesh: u32, instances: &[moho_renderer::InstanceGpu]) {
+        self.enqueues.push((false, mesh, instances.to_vec()));
         self.drawn_handles.borrow_mut().push(mesh);
         self.renders
             .borrow_mut()
             .push("render_mesh_called".to_string());
+    }
+    fn enqueue_unshadowed_draw(&mut self, mesh: u32, instances: &[moho_renderer::InstanceGpu]) {
+        self.enqueues.push((true, mesh, instances.to_vec()));
     }
     fn submit_frame(&mut self) {}
     fn set_materials(&mut self, _materials: &[MaterialGpu]) {}
@@ -210,5 +221,66 @@ fn non_voxel_mesh_is_in_draw_list() {
     assert!(
         world_handles[0] > 100,
         "the drawn handle is the one the backend returned for the triangle"
+    );
+}
+
+#[test]
+fn a_streak_is_enqueued_unshadowed_after_the_world_draws() {
+    let triangle = WorldMesh::new(
+        vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+        vec![[0.0, 1.0, 0.0]; 3],
+        vec![1.0; 3],
+        vec![[1.0; 3]; 3],
+        vec![1.0; 3],
+        vec![0; 3],
+        vec![0, 1, 2],
+    )
+    .expect("well-formed triangle");
+    let mut scene = moho_renderer::Scene::new();
+    let mut mock = MockRenderer::new();
+    let sphere_handle = mock.register_mesh(&[[0.0f32; 3]]);
+    let cube_handle = mock.register_mesh(&[[0.0f32; 3]]);
+    scene
+        .world_meshes_mut()
+        .upsert(WorldMeshId(42), triangle, 0);
+    let effects = scene.effects_mut();
+    effects.set_quality(4);
+    let streak = effects.begin_streak(moho_renderer::StreakStyle::new(2.0, 0.1, 0));
+
+    for x in [10.0, 11.0, 12.0] {
+        scene
+            .effects_mut()
+            .place_streak(streak, Vec3::new(x, 1.0, 0.0), Vec3::X);
+        scene
+            .render::<Prop, Prop>(&mut mock, &[], &[], sphere_handle, cube_handle, camera())
+            .expect("mock renderer's begin_frame always succeeds");
+        scene
+            .effects_mut()
+            .advance(std::time::Duration::from_millis(16));
+    }
+
+    assert_eq!(
+        mock.uploads, 2,
+        "the triangle and the streak mesh are registered once over three frames"
+    );
+    let frames: Vec<&(bool, u32, Vec<InstanceGpu>)> = mock
+        .enqueues
+        .iter()
+        .filter(|(_, mesh, _)| *mesh != sphere_handle && *mesh != cube_handle)
+        .collect();
+    assert_eq!(frames.len(), 6, "a world draw and a streak draw per frame");
+    for (frame, x) in [10.0f32, 11.0, 12.0].into_iter().enumerate() {
+        let (world, streak) = (frames[frame * 2], frames[frame * 2 + 1]);
+        assert!(!world.0, "the triangle is an ordinary draw");
+        assert!(streak.0, "the streak is an unshadowed draw");
+        assert_ne!(streak.1, world.1);
+        assert_eq!(streak.2.len(), 1);
+        assert_eq!(streak.2[0].model[3][..3], [x - 2.0, 1.0, 0.0], "the tail");
+    }
+    assert!(
+        mock.enqueues.iter().all(|(unshadowed, mesh, _)| {
+            *unshadowed == frames.iter().any(|f| f.0 && f.1 == *mesh)
+        }),
+        "the streak mesh is never queued as an ordinary draw"
     );
 }

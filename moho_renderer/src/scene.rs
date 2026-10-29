@@ -1,4 +1,4 @@
-use crate::{InstanceCollector, Markers, MaterialTable, RendererBackend, WorldMeshes};
+use crate::{Effects, InstanceCollector, Markers, MaterialTable, RendererBackend, WorldMeshes};
 use moho_render_api::{InstanceGpu, Renderable};
 
 mod preparation;
@@ -18,6 +18,7 @@ pub struct Scene {
     instance_collector: InstanceCollector,
     world_meshes: WorldMeshes,
     markers: Markers,
+    effects: Effects,
 }
 
 impl Scene {
@@ -27,12 +28,18 @@ impl Scene {
             instance_collector: InstanceCollector::new(),
             world_meshes: WorldMeshes::new(),
             markers: Markers::new(),
+            effects: Effects::default(),
         }
     }
 
     /// Add, move and remove box markers; they draw on the next `render`.
     pub fn markers_mut(&mut self) -> &mut Markers {
         &mut self.markers
+    }
+
+    /// Begin, place and end engine-drawn effects; they draw on the next `render`.
+    pub fn effects_mut(&mut self) -> &mut Effects {
+        &mut self.effects
     }
 
     /// Queue world-geometry changes; they reach the backend on the next `render`.
