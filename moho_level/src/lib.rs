@@ -113,7 +113,7 @@ impl Sources {
     }
 
     fn buffers(&self) -> Result<Vec<Cow<'_, [u8]>>, LevelErrorKind> {
-        buffers::resolve(&self.gltf.document, self.gltf.blob.as_deref(), &self.dir)
+        resolve_buffers(&self.gltf, &self.dir)
     }
 
     /// The main file, then each URI buffer in index order; the GLB blob is part of the
@@ -124,8 +124,7 @@ impl Sources {
             .document
             .buffers()
             .filter(|buffer| matches!(buffer.source(), gltf::buffer::Source::Uri(_)))
-            .filter_map(|buffer| buffers.get(buffer.index()))
-            .map(|data| &**data);
+            .map(|buffer| &*buffers[buffer.index()]);
         LevelHash::of_sources(std::iter::once(self.main.as_slice()).chain(uri_buffers))
     }
 }
@@ -149,9 +148,19 @@ fn with_buffers<T>(
     path: &Path,
     f: impl FnOnce(&gltf::Document, &[Cow<'_, [u8]>], &Path) -> Result<T, LevelErrorKind>,
 ) -> Result<T, LevelError> {
-    with_sources(path, |sources, buffers| {
-        f(&sources.gltf.document, buffers, &sources.dir)
-    })
+    let fail = |kind| LevelError::new(path, kind);
+    // Only hashing needs the main file's bytes; drop them before the parse result is built on.
+    let Sources { main, gltf, dir } = Sources::read(path)?;
+    drop(main);
+    let buffers = resolve_buffers(&gltf, &dir).map_err(fail)?;
+    f(&gltf.document, &buffers, &dir).map_err(fail)
+}
+
+fn resolve_buffers<'g>(
+    gltf: &'g gltf::Gltf,
+    dir: &Path,
+) -> Result<Vec<Cow<'g, [u8]>>, LevelErrorKind> {
+    buffers::resolve(&gltf.document, gltf.blob.as_deref(), dir)
 }
 
 fn build(
