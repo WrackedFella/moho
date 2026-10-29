@@ -267,7 +267,7 @@ mod tests {
                 [0.8, 0.5, 0.0]
             ]
         );
-        assert_eq!(indices.len() % 3, 0);
+        assert_eq!(indices.len(), 6, "a kite is two triangles");
         for triangle in indices.chunks(3) {
             let [a, b, c] = [0, 1, 2].map(|i| Vec3::from(positions[triangle[i] as usize]));
             assert!(
@@ -301,12 +301,25 @@ mod tests {
         rig.effects.place_streak(handle, head, Vec3::Z);
         rig.frame(EYE);
 
-        rig.effects.place_streak(handle, head, Vec3::ZERO);
+        let moved = head + Vec3::X;
+        rig.effects.place_streak(handle, moved, Vec3::ZERO);
         let drawn = rig.frame(EYE);
 
         assert_eq!(drawn.len(), 1);
-        assert_near(translation(&drawn[0]), head - Vec3::Z * 2.0);
-        assert_near(head_of(&drawn[0]), head);
+        assert_near(translation(&drawn[0]), moved - Vec3::Z * 2.0);
+        assert_near(head_of(&drawn[0]), moved);
+    }
+
+    #[test]
+    fn a_zero_heading_on_the_first_placement_draws_nothing() {
+        let mut rig = Rig::new();
+        let handle = rig.effects.begin_streak(style(2.0, 0.1));
+
+        rig.effects
+            .place_streak(handle, Vec3::new(4.0, 1.0, 4.0), Vec3::ZERO);
+
+        assert!(rig.frame(EYE).is_empty());
+        assert_eq!(rig.effects.live(), 1, "still live");
     }
 
     #[test]
@@ -333,6 +346,7 @@ mod tests {
         let head = Vec3::new(10.0, 1.0, 0.0);
         rig.effects.place_streak(handle, head, Vec3::X);
         let full = rig.frame(EYE);
+        rig.effects.advance(ms(100));
         rig.effects.end(handle);
 
         rig.effects.advance(ms(30));
@@ -445,11 +459,19 @@ mod tests {
                 rig.effects.place_streak(*handle, Vec3::X, Vec3::X);
             }
             assert_eq!(rig.frame(EYE).len(), live, "inert handles draw nothing");
-            for handle in &handles {
+            let (kept, inert) = handles.split_at(live);
+            let distinct: std::collections::BTreeSet<_> = handles.iter().collect();
+            assert_eq!(distinct.len(), handles.len(), "every handle is distinct");
+            assert_eq!(kept.len(), live);
+            for handle in inert {
                 rig.effects.end(*handle);
             }
-            rig.effects.advance(Duration::from_secs(1));
-            assert_eq!(rig.effects.live(), 0, "ending inert handles does nothing");
+            rig.effects.advance(ms(1));
+            assert_eq!(
+                rig.effects.live(),
+                live,
+                "ending inert handles does nothing"
+            );
         }
     }
 
@@ -457,6 +479,7 @@ mod tests {
     fn quality_above_four_clamps_to_ultra() {
         for quality in [5, 9, u32::MAX] {
             let mut rig = Rig::new();
+            rig.effects.set_quality(1);
             rig.effects.set_quality(quality);
 
             for _ in 0..300 {
@@ -542,6 +565,14 @@ mod tests {
             prop_assert!((y.length() - width).abs() < 1e-3);
             prop_assert!(y.dot(dir).abs() < 1e-3, "the width is across the heading");
             assert_faces_eye(transform, eye);
+            let z = Vec3::from(transform.matrix3.z_axis);
+            prop_assert!((z.length() - 1.0).abs() < 1e-3, "Z is a unit vector");
+            let normal = x.cross(y).normalize();
+            prop_assert!((z - normal).length() < 1e-3, "Z is along X x Y");
+            prop_assert!(
+                (z - dir.cross(y.normalize())).length() < 1e-3,
+                "Z is dir x unit Y"
+            );
         }
     }
 
@@ -608,6 +639,7 @@ mod tests {
             let mut effects = Effects::default();
             effects.set_quality(4);
             let mut issued: Vec<EffectHandle> = Vec::new();
+            let mut live_handles: Vec<EffectHandle> = Vec::new();
 
             for op in ops {
                 match op {
@@ -618,13 +650,14 @@ mod tests {
                             max_age: ms(300),
                             ..style(2.0, 0.1)
                         });
+                        prop_assert!(!issued.contains(&handle), "{handle:?} issued twice");
                         if effects.live() > before {
-                            prop_assert!(!issued.contains(&handle), "{handle:?} issued twice");
-                            issued.push(handle);
+                            live_handles.push(handle);
                         }
+                        issued.push(handle);
                     }
                     Op::End(index) => {
-                        if let Some(handle) = issued.get(index % issued.len().max(1)) {
+                        if let Some(handle) = live_handles.get(index % live_handles.len().max(1)) {
                             effects.end(*handle);
                         }
                     }

@@ -6,19 +6,19 @@ use moho_renderer::RendererBackend;
 
 /// Flat-colour material stand-in; the renderer must not name game material types.
 #[derive(Copy, Clone, Debug)]
-struct FlatMaterial([f32; 3]);
+struct FlatMaterial([f32; 3], bool);
 
 impl RenderMaterial for FlatMaterial {
     fn to_gpu(&self) -> MaterialGpu {
         MaterialGpu {
             albedo: [self.0[0], self.0[1], self.0[2], 1.0],
-            params: [0.0; 4],
+            params: [0.0, 0.0, if self.1 { 0.5 } else { 0.0 }, 0.0],
         }
     }
 
     fn dedup_key(&self) -> MaterialKey {
         MaterialKey {
-            variant: 0,
+            variant: u8::from(self.1),
             albedo_bits: self.0.map(f32::to_bits),
             fuzz_bits: 0,
             ref_idx_bits: 0,
@@ -146,12 +146,12 @@ fn camera() -> (glam::Mat4, glam::Mat4, Vec3) {
 fn scene_render_invokes_renderer_backend_calls() {
     let s = Prop {
         center: Vec3::ZERO,
-        material: FlatMaterial([0.2, 0.3, 0.4]),
+        material: FlatMaterial([0.2, 0.3, 0.4], false),
         object_type: 2,
     };
     let c = Prop {
         center: Vec3::new(1.0, 0.0, 0.0),
-        material: FlatMaterial([0.6, 0.6, 0.6]),
+        material: FlatMaterial([0.6, 0.6, 0.6], false),
         object_type: 1,
     };
     let spheres = [s];
@@ -246,13 +246,18 @@ fn a_streak_is_enqueued_unshadowed_after_the_world_draws() {
     let effects = scene.effects_mut();
     effects.set_quality(4);
     let streak = effects.begin_streak(moho_renderer::StreakStyle::new(2.0, 0.1, 0));
+    let glass = [Prop {
+        center: Vec3::new(0.0, 0.0, 1.0),
+        material: FlatMaterial([0.5, 0.5, 0.5], true),
+        object_type: 2,
+    }];
 
     for x in [10.0, 11.0, 12.0] {
         scene
             .effects_mut()
             .place_streak(streak, Vec3::new(x, 1.0, 0.0), Vec3::X);
         scene
-            .render::<Prop, Prop>(&mut mock, &[], &[], sphere_handle, cube_handle, camera())
+            .render::<Prop, Prop>(&mut mock, &glass, &[], sphere_handle, cube_handle, camera())
             .expect("mock renderer's begin_frame always succeeds");
         scene
             .effects_mut()
@@ -276,6 +281,22 @@ fn a_streak_is_enqueued_unshadowed_after_the_world_draws() {
         assert_ne!(streak.1, world.1);
         assert_eq!(streak.2.len(), 1);
         assert_eq!(streak.2[0].model[3][..3], [x - 2.0, 1.0, 0.0], "the tail");
+    }
+    let positions = |matches: &dyn Fn(&(bool, u32, Vec<InstanceGpu>)) -> bool| -> Vec<usize> {
+        (0..mock.enqueues.len())
+            .filter(|i| matches(&mock.enqueues[*i]))
+            .collect()
+    };
+    let streaks = positions(&|e| e.0);
+    let transparent = positions(&|e| !e.0 && e.1 == sphere_handle && !e.2.is_empty());
+    let worlds = positions(&|e| !e.0 && e.1 != sphere_handle && e.1 != cube_handle);
+    assert_eq!(transparent.len(), 3, "one transparent entry per frame");
+    for frame in 0..3 {
+        assert!(
+            worlds[frame] < streaks[frame] && streaks[frame] < transparent[frame],
+            "frame {frame}: world, then streak, then transparent; got {:?}",
+            mock.enqueues.iter().map(|e| (e.0, e.1)).collect::<Vec<_>>()
+        );
     }
     assert!(
         mock.enqueues.iter().all(|(unshadowed, mesh, _)| {

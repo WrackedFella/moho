@@ -3999,11 +3999,14 @@ mod settings_tests {
             &[Key::ArrowLeft, Key::ArrowLeft],
         );
         click_apply(&mut game, &mut ctx);
-        let before_the_frame = game.stage.scene.effects_mut().live();
+        let untouched_dir = tempfile::tempdir().unwrap();
+        let mut untouched = main_menu_game(Prefs::default(), &settings_file(&untouched_dir));
+        run_frame(&mut untouched, &mut QualityRenderer::default());
+        let default_cap = effects_cap(&mut untouched);
 
         run_frame(&mut game, &mut renderer);
 
-        assert_eq!(before_the_frame, 0);
+        assert_ne!(default_cap, 32, "the default cap is not the applied one");
         assert_eq!(game_prefs(&game).effects_quality(), 1);
         assert_eq!(effects_cap(&mut game), 32);
     }

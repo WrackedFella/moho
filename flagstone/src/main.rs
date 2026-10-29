@@ -701,8 +701,8 @@ mod tests {
 
     #[test]
     fn adopting_settings_sets_the_scenes_effects_quality() {
-        let mut app = App::headless();
         for (quality, cap) in [(1, 32), (4, 256), (0, 0)] {
+            let mut app = App::headless();
             let mut adopted = Prefs::default();
             adopted.set_effects_quality(quality);
 
@@ -713,7 +713,6 @@ mod tests {
                 effects.begin_streak(moho_renderer::StreakStyle::new(1.0, 0.1, 0));
             }
             assert_eq!(effects.live(), cap, "adopted quality {quality}");
-            app.scene.effects_mut().set_quality(0);
         }
     }
 
