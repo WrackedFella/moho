@@ -1,4 +1,4 @@
-//! Content identity of a level file: what a replay pins a level switch to (ADR-0031).
+//! Content identity of a level file: what a replay pins a level switch to (ADR-0032).
 
 use std::fmt;
 

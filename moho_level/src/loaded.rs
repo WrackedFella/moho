@@ -5,9 +5,7 @@ use std::sync::Arc;
 
 use moho_render_api::{WorldMeshId, WorldMeshRange};
 
-use crate::{
-    AgentProfile, Level, LevelError, LevelErrorKind, LevelHash, NavBuildError, NavMesh,
-};
+use crate::{AgentProfile, Level, LevelError, LevelErrorKind, LevelHash, NavBuildError, NavMesh};
 
 /// A [`Level`] with the [`WorldMeshRange`] its meshes are registered under and, once built,
 /// its navigation mesh.

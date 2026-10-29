@@ -1,8 +1,12 @@
 use std::fs;
 use std::path::Path;
 
-use crate::support::{Node, Scene, Xform, cube_prim, floor_prim, write_glb, write_gltf, write_gltf_edited};
-use moho_level::{LevelError, LevelErrorKind, LevelHash, LoadedLevel, level_hash, load, load_pinned};
+use crate::support::{
+    Node, Scene, Xform, cube_prim, floor_prim, write_glb, write_gltf, write_gltf_edited,
+};
+use moho_level::{
+    LevelError, LevelErrorKind, LevelHash, LoadedLevel, level_hash, load, load_pinned,
+};
 use moho_render_api::{WorldMeshId, WorldMeshRange};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -38,7 +42,11 @@ fn copied_file_hashes_the_same() {
     let (dir, path) = write_gltf(&floor_scene());
     let elsewhere = tempfile::tempdir().expect("temp dir");
     fs::copy(&path, elsewhere.path().join("level.gltf")).expect("copy gltf");
-    fs::copy(dir.path().join("level.bin"), elsewhere.path().join("level.bin")).expect("copy bin");
+    fs::copy(
+        dir.path().join("level.bin"),
+        elsewhere.path().join("level.bin"),
+    )
+    .expect("copy bin");
 
     let original = level_hash(&path).expect("hashes");
     let copy = level_hash(&elsewhere.path().join("level.gltf")).expect("hashes");
@@ -86,7 +94,10 @@ fn hash_covers_main_file_then_buffers_in_index_order() {
 
     let expected = expected_digest(&[&main, &first, &[9, 8, 7, 6]]);
     assert_eq!(hash.as_bytes(), &expected);
-    assert_ne!(hash.as_bytes(), &expected_digest(&[&main, &[9, 8, 7, 6], &first]));
+    assert_ne!(
+        hash.as_bytes(),
+        &expected_digest(&[&main, &[9, 8, 7, 6], &first])
+    );
 }
 
 #[test]
@@ -123,7 +134,10 @@ fn level_hash_equals_the_hash_open_records() {
 
     assert_eq!(opened.hash(), Some(&hashed));
     assert_eq!(opened.level().meshes.len(), 2);
-    assert_eq!(opened.ids(), WorldMeshRange::new(WorldMeshId(3), 2).expect("fits"));
+    assert_eq!(
+        opened.ids(),
+        WorldMeshRange::new(WorldMeshId(3), 2).expect("fits")
+    );
 }
 
 #[test]

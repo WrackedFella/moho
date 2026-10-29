@@ -78,5 +78,8 @@ pub enum LevelErrorKind {
     #[error("the level's mesh ids would pass the last world mesh id")]
     IdRangeOverflow,
     #[error("content hash is {found}, the recorded step expects {expected}")]
-    HashMismatch { expected: LevelHash, found: LevelHash },
+    HashMismatch {
+        expected: LevelHash,
+        found: LevelHash,
+    },
 }
