@@ -465,6 +465,16 @@ mod tests {
     }
 
     #[test]
+    fn main_shader_filter_clamp_is_the_widest_tier_radius() {
+        let source = crate::pipeline::main_shader_source();
+        let widest = super::ShadowTier::Ultra.pcf_radius() as f32;
+
+        let declaration = format!("const SHADOW_MAX_FILTER_RADIUS: f32 = {widest:?};");
+
+        assert!(source.contains(&declaration), "missing `{declaration}`");
+    }
+
+    #[test]
     fn main_shader_cascade_counts_match_the_rust_constants() {
         let source = crate::pipeline::main_shader_source();
 
