@@ -665,16 +665,8 @@ impl<'a> Renderer<'a> {
     }
 
     pub fn set_shadow_quality(&mut self, quality: u8) {
-        let quality_enum = match quality {
-            0 => crate::shadow::PcssQuality::Off,
-            1 => crate::shadow::PcssQuality::Low,
-            2 => crate::shadow::PcssQuality::Medium,
-            3 => crate::shadow::PcssQuality::High,
-            4 => crate::shadow::PcssQuality::Ultra,
-            _ => crate::shadow::PcssQuality::Medium,
-        };
-        self.shadow.pcss_settings.quality = quality_enum;
-        self.shadow.tier = crate::shadow::ShadowTier::from_level(quality);
+        let tier = crate::shadow::ShadowTier::from_level(quality);
+        self.shadow.set_tier(&self.device, tier);
     }
 
     /// Sets whether presented frames wait for the display refresh. Stays on when the GPU

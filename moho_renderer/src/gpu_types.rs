@@ -75,7 +75,8 @@ pub struct ShadowGpu {
     pub camera_forward: [f32; 4],
     /// Light intensities (x=Sun, y=Moon)
     pub light_intensities: [f32; 4],
-    /// Metadata: x=shadow distance, y=light_size (for PCSS), z=pcss_quality, w=view-height cut
+    /// Metadata: x=shadow distance (0 = shadows off), y=unused (0), z=filter radius in texels,
+    /// w=view-height cut
     pub metadata: [f32; 4],
 }
 

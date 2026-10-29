@@ -12,29 +12,47 @@ pub(crate) enum ShadowTier {
 
 impl ShadowTier {
     /// The tier for a 0-4 level; anything above 4 is Medium.
-    pub(crate) fn from_level(_level: u8) -> Self {
-        todo!()
+    pub(crate) fn from_level(level: u8) -> Self {
+        match level {
+            0 => Self::Off,
+            1 => Self::Low,
+            3 => Self::High,
+            4 => Self::Ultra,
+            _ => Self::Medium,
+        }
     }
 
     /// Texels per side of every cascade map, clamped to `device_limit` and at least 1.
-    pub(crate) fn map_size(self, _device_limit: u32) -> u32 {
-        todo!()
+    pub(crate) fn map_size(self, device_limit: u32) -> u32 {
+        let wanted = match self {
+            Self::Off => 1,
+            Self::Low => 1024,
+            Self::Medium => 2048,
+            Self::High => 4096,
+            Self::Ultra => 8192,
+        };
+        wanted.min(device_limit).max(1)
     }
 
     /// Filter radius in texels of the cascade being read.
     pub(crate) fn pcf_radius(self) -> u32 {
-        todo!()
+        match self {
+            Self::Off => 0,
+            Self::Low | Self::Medium => 1,
+            Self::High => 2,
+            Self::Ultra => 3,
+        }
     }
 
     /// Whether this tier renders shadows at all.
     pub(crate) fn casts_shadows(self) -> bool {
-        todo!()
+        self != Self::Off
     }
 }
 
 /// Whether the shadow array must be recreated when the clamped map size moves from `old` to `new`.
-pub(crate) fn needs_resize(_old: u32, _new: u32) -> bool {
-    todo!()
+pub(crate) fn needs_resize(old: u32, new: u32) -> bool {
+    old != new
 }
 
 #[cfg(test)]
@@ -90,10 +108,7 @@ mod tests {
             size(ShadowTier::Medium, u32::MAX)
         ));
         assert!(
-            !needs_resize(
-                size(ShadowTier::High, 4096),
-                size(ShadowTier::Ultra, 4096)
-            ),
+            !needs_resize(size(ShadowTier::High, 4096), size(ShadowTier::Ultra, 4096)),
             "High and Ultra share a 4096 map on a 4096 device"
         );
         assert!(needs_resize(
@@ -105,7 +120,11 @@ mod tests {
     #[test]
     fn out_of_range_level_falls_back_to_medium() {
         for level in [5, 6, 100, u8::MAX] {
-            assert_eq!(ShadowTier::from_level(level), ShadowTier::Medium, "level {level}");
+            assert_eq!(
+                ShadowTier::from_level(level),
+                ShadowTier::Medium,
+                "level {level}"
+            );
         }
     }
 }

@@ -14,8 +14,6 @@ pub(crate) const CASCADE_LAYERS: usize = 6;
 pub(crate) const SUN_CASCADES: usize = 4;
 /// Moon cascades (layers `SUN_CASCADES..CASCADE_LAYERS`).
 pub(crate) const MOON_CASCADES: usize = 2;
-/// Resolution of every cascade.
-pub(crate) const CASCADE_MAP_SIZE: u32 = 4096;
 /// Nearest distance the split scheme treats as the start of the view, in metres.
 pub(crate) const SPLIT_NEAR: f32 = 1.0;
 /// Blend between logarithmic (1) and uniform (0) splits.
@@ -32,9 +30,6 @@ pub const SHADOW_DISTANCE: f32 = 1000.0;
 
 const CSM_VERBOSE_LOGGING: bool = false;
 
-// ── PCSS default tuning ────────────────────────────────────────────────
-const DEFAULT_PCSS_LIGHT_SIZE: f32 = 0.03;
-
 // ── Shadow geometry ────────────────────────────────────────────────────
 /// Depth bias constant factor applied to shadow map.
 const SHADOW_DEPTH_BIAS_CONSTANT: i32 = 4;
@@ -44,40 +39,6 @@ const SHADOW_DEPTH_BIAS_CONSTANT: i32 = 4;
 const SHADOW_DEPTH_BIAS_SLOPE: f32 = 1.0;
 /// Minimum light intensity required to cast shadows.
 const MIN_SHADOW_LIGHT_INTENSITY: f32 = 0.01;
-
-/// PCSS (Percentage Closer Soft Shadows) quality levels
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PcssQuality {
-    /// Disabled: Use fixed 3x3 PCF (best performance)
-    Off = 0,
-    /// Low: 8 blocker samples + 16 PCF samples
-    Low = 1,
-    /// Medium: 12 blocker samples + 24 PCF samples
-    Medium = 2,
-    /// High: 16 blocker samples + 32 PCF samples
-    High = 3,
-    /// Ultra: 24 blocker samples + 48 PCF samples
-    Ultra = 4,
-}
-
-/// PCSS settings for configuring shadow softness
-#[derive(Debug, Clone, Copy)]
-pub struct PcssSettings {
-    /// Quality level
-    pub quality: PcssQuality,
-    /// Angular size of light source (affects penumbra width)
-    /// Typical range: 0.01-0.1 (0.03 is a good default for sun)
-    pub light_size: f32,
-}
-
-impl Default for PcssSettings {
-    fn default() -> Self {
-        Self {
-            quality: PcssQuality::Off,
-            light_size: DEFAULT_PCSS_LIGHT_SIZE,
-        }
-    }
-}
 
 /// Active shadow-casting light
 #[derive(Debug, Clone)]
@@ -98,10 +59,14 @@ pub struct ShadowSystem {
     pub current_lighting: crate::gpu_types::LightingGpu,
     /// Active shadow-casting lights for current frame
     pub active_lights: Vec<ActiveShadowLight>,
-    /// PCSS (Percentage Closer Soft Shadows) settings
-    pub pcss_settings: PcssSettings,
-    /// Current shadow quality tier.
-    pub(crate) tier: ShadowTier,
+    tier: ShadowTier,
+    /// Texels per side of the cascade array as allocated: the tier's size within the device limit.
+    map_size: u32,
+    /// Largest 2D texture the device allows.
+    device_limit: u32,
+    /// Kept to rebuild `csm_shadow_bind_group` when the array is recreated.
+    shadow_bind_group_layout: wgpu::BindGroupLayout,
+    shadow_sampler: wgpu::Sampler,
     csm_logged_once: bool,
     /// The block uploaded last frame, kept when a frame's projection has no cascades.
     last_block: ShadowGpu,
@@ -114,7 +79,10 @@ impl ShadowSystem {
         _camera_bind_group_layout: &wgpu::BindGroupLayout,
         shadow_bind_group_layout: &wgpu::BindGroupLayout,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let (csm_cascade_views, csm_array_view) = Self::create_shadow_textures(device);
+        let tier = ShadowTier::High;
+        let device_limit = device.limits().max_texture_dimension_2d;
+        let map_size = tier.map_size(device_limit);
+        let (csm_cascade_views, csm_array_view) = Self::create_shadow_textures(device, map_size);
         let csm_matrix_buffer = Self::create_uniform_buffer(device);
         let shadow_sampler = Self::create_depth_sampler(device);
         let csm_pass_bgl = crate::pipeline::layouts::create_csm_pass_bind_group_layout(device)?;
@@ -136,8 +104,11 @@ impl ShadowSystem {
             csm_shadow_bind_group,
             current_lighting: crate::gpu_types::LightingGpu::default(),
             active_lights: Vec::new(),
-            pcss_settings: PcssSettings::default(),
-            tier: ShadowTier::High,
+            tier,
+            map_size,
+            device_limit,
+            shadow_bind_group_layout: shadow_bind_group_layout.clone(),
+            shadow_sampler,
             csm_logged_once: false,
             last_block: ShadowGpu::default(),
             projection_warned: false,
@@ -149,12 +120,13 @@ impl ShadowSystem {
     /// sampling all layers in the fragment shader).
     fn create_shadow_textures(
         device: &wgpu::Device,
+        map_size: u32,
     ) -> (Vec<wgpu::TextureView>, wgpu::TextureView) {
         let csm_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("cascade-shadow-array"),
             size: wgpu::Extent3d {
-                width: CASCADE_MAP_SIZE,
-                height: CASCADE_MAP_SIZE,
+                width: map_size,
+                height: map_size,
                 depth_or_array_layers: CASCADE_LAYERS as u32,
             },
             mip_level_count: 1,
@@ -167,7 +139,7 @@ impl ShadowSystem {
 
         if CSM_VERBOSE_LOGGING {
             tracing::info!(
-                size = CASCADE_MAP_SIZE,
+                size = map_size,
                 layers = CASCADE_LAYERS,
                 "Created cascade shadow array"
             );
@@ -260,8 +232,26 @@ impl ShadowSystem {
             }],
         });
 
-        // Sampling bind group used by the main fragment shader to read shadow maps
-        let csm_shadow_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let csm_shadow_bind_group = Self::create_sampling_bind_group(
+            device,
+            shadow_bind_group_layout,
+            csm_matrix_buffer,
+            csm_array_view,
+            shadow_sampler,
+        );
+
+        (csm_pass_bind_group, csm_shadow_bind_group)
+    }
+
+    /// The bind group the main fragment shader reads shadow maps through.
+    fn create_sampling_bind_group(
+        device: &wgpu::Device,
+        shadow_bind_group_layout: &wgpu::BindGroupLayout,
+        csm_matrix_buffer: &wgpu::Buffer,
+        csm_array_view: &wgpu::TextureView,
+        shadow_sampler: &wgpu::Sampler,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("csm-shadow-bind-group"),
             layout: shadow_bind_group_layout,
             entries: &[
@@ -278,9 +268,28 @@ impl ShadowSystem {
                     resource: wgpu::BindingResource::Sampler(shadow_sampler),
                 },
             ],
-        });
+        })
+    }
 
-        (csm_pass_bind_group, csm_shadow_bind_group)
+    /// Switch to `tier`. The cascade array, its views and the sampling bind group are recreated
+    /// only when the map size within the device limit changes. Call between frames: the old array
+    /// must not be in a recorded pass.
+    pub fn set_tier(&mut self, device: &wgpu::Device, tier: ShadowTier) {
+        self.tier = tier;
+        let map_size = tier.map_size(self.device_limit);
+        if !tier::needs_resize(self.map_size, map_size) {
+            return;
+        }
+        let (views, array_view) = Self::create_shadow_textures(device, map_size);
+        self.csm_shadow_bind_group = Self::create_sampling_bind_group(
+            device,
+            &self.shadow_bind_group_layout,
+            &self.csm_matrix_buffer,
+            &array_view,
+            &self.shadow_sampler,
+        );
+        self.csm_cascade_views = views;
+        self.map_size = map_size;
     }
 
     /// Stage 6: Compile the shadow shader and assemble the depth-only render pipeline; its
@@ -403,20 +412,10 @@ impl ShadowSystem {
         let camera_world = view.inverse();
         let sun_splits = cascades::practical_splits::<SUN_CASCADES>(frustum.near, frustum.far);
         let moon_splits = cascades::practical_splits::<MOON_CASCADES>(frustum.near, frustum.far);
-        let sun = cascades::fit_cascades(
-            sun_dir,
-            frustum,
-            camera_world,
-            &sun_splits,
-            CASCADE_MAP_SIZE,
-        );
-        let moon = cascades::fit_cascades(
-            moon_dir,
-            frustum,
-            camera_world,
-            &moon_splits,
-            CASCADE_MAP_SIZE,
-        );
+        let sun =
+            cascades::fit_cascades(sun_dir, frustum, camera_world, &sun_splits, self.map_size);
+        let moon =
+            cascades::fit_cascades(moon_dir, frustum, camera_world, &moon_splits, self.map_size);
         let splits = (sun_splits, moon_splits);
         let camera_forward = cascades::camera_forward(camera_world);
         // An inactive light reads as zero, so the shader never samples cascades that were not drawn.
