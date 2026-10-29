@@ -288,8 +288,13 @@ impl EventProcessor {
             if let Some(light_system) = app.light_system.as_mut() {
                 light_system.handle_event(&event);
             }
-            if let WorldEvent::ChunkMeshDirty { chunk_pos, .. } = event {
-                dirty_chunks.insert(chunk_pos);
+            match event {
+                WorldEvent::ChunkMeshDirty { chunk_pos, .. } => {
+                    dirty_chunks.insert(chunk_pos);
+                }
+                WorldEvent::BlockPlaced { .. }
+                | WorldEvent::BlockRemoved { .. }
+                | WorldEvent::BlocksBatchModified { .. } => app.autosave.mark_edited(),
             }
         }
 
@@ -877,6 +882,69 @@ mod tests {
         assert!(
             light_system.emit_dirty_events() > 0,
             "the cleared light dirties its chunk"
+        );
+    }
+
+    #[test]
+    fn block_edit_events_mark_the_world_edited() {
+        let position = flagstone_voxel::BlockPos::new(3, 70, 3);
+        let edits = [
+            (
+                "placed",
+                WorldEvent::BlockPlaced {
+                    position,
+                    material_id: 1,
+                    reason: BlockChangeReason::Player,
+                },
+            ),
+            (
+                "removed",
+                WorldEvent::BlockRemoved {
+                    position,
+                    old_material_id: 1,
+                    reason: BlockChangeReason::Player,
+                },
+            ),
+            (
+                "batch modified",
+                WorldEvent::BlocksBatchModified {
+                    chunk_pos: glam::IVec3::new(0, 4, 0),
+                    positions: vec![position],
+                    reason: BlockChangeReason::Explosion,
+                },
+            ),
+        ];
+
+        for (name, edit) in edits {
+            let mut app = App::headless();
+            app.autosave = crate::app::autosave::AutosaveSchedule::new(1);
+            app.autosave.tick();
+            let _ = app.world_event_rx.try_iter().count();
+            app.event_bus.publish(edit);
+
+            EventProcessor::new().process_world_events(&mut app);
+
+            assert!(app.autosave.due(), "{name} did not mark the world edited");
+        }
+    }
+
+    #[test]
+    fn chunk_streaming_events_do_not_mark_the_world_edited() {
+        let mut app = App::headless();
+        app.autosave = crate::app::autosave::AutosaveSchedule::new(1);
+        app.autosave.tick();
+        let _ = app.world_event_rx.try_iter().count();
+        app.event_bus.publish(WorldEvent::ChunkMeshDirty {
+            chunk_pos: glam::IVec3::new(0, 4, 0),
+            terrain_dirty: true,
+            structure_dirty: true,
+        });
+
+        EventProcessor::new().process_world_events(&mut app);
+
+        assert!(
+            !app.autosave.due(),
+            "loading terrain is not an edit: an idle world would be rewritten"
         );
     }
 

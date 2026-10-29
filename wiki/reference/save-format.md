@@ -1,6 +1,7 @@
 # Save file format
 
 **Source:** `moho_core/src/persist.rs` (envelope), `flagstone/src/save.rs` (world and chunk files, `WORLD_FILE`),
+`flagstone/src/app/autosave.rs` (autosave file and schedule),
 `flagstone_game/src/scene_persistence.rs` (scene payload, `SCENE_FILE`),
 `flagstone_voxel/src/grid/paletted.rs` (chunk payload, `CHUNK_FILE`). Rationale:
 [ADR-0006](../../_todo/adr/0006-save-format-contract.md),
@@ -37,9 +38,9 @@ for that kind.
 
 | Kind | Path | Payload |
 |---|---|---|
-| World | caller-chosen path passed to `write_scene_with_metadata` | `WorldFile`: `WorldSpec`, the Scene file as embedded bytes, block records |
+| World | caller-chosen path passed to `write_scene_with_metadata`; autosave writes `<saves_dir>/scene.bin` | `WorldFile`: `WorldSpec`, the Scene file as embedded bytes, block records |
 | Scene | embedded in the World payload, or standalone via `scene_persistence::save_to_file` | `SceneDesc`: spheres, cubes, voxel chunk meshes, camera, lights |
-| Chunk | `saves/<world>/chunks/<cx>_<cy>_<cz>.bin` | `ChunkSnapshot`: palette, 4096 indices, resources |
+| Chunk | `<saves_dir>/<world>/chunks/<cx>_<cy>_<cz>.bin` | `ChunkSnapshot`: palette, 4096 indices, resources |
 
 Each payload's encoding is pinned by a test (`PINNED_WORLD`, `PINNED_SCENE`,
 `PINNED_CHUNK`). Changing a payload struct fails it; bump the kind's `version` and update
@@ -53,3 +54,25 @@ Invariants:
   grid or entities unchanged.
 - World and chunk files are written to a temporary file, synced, then renamed over the target.
 - A missing chunk file is not an error: the chunk is regenerated from terrain.
+- `saves_dir` is `App::saves_dir` (default `saves`); the chunk functions in `save.rs` take it as an
+  argument, and `ChunkStreamer` holds the one it was built with, so world and chunk files share a root.
+
+## Autosave
+
+`app::autosave::auto_save_on_shutdown` writes the World file (scene, `WorldSpec` with the current
+time of day, block records) to `<saves_dir>/scene.bin`. It runs on exit, on Exit to main
+menu and periodically. With no world loaded (`App::generation.last_spec` is `None`) it writes nothing.
+
+`AutosaveSchedule` decides the periodic runs, counted in simulation ticks:
+
+- It advances once per tick, only in `GameState::Playing`; a paused game, a menu or the
+  console does not count toward the interval.
+- A world is due when it has been edited since the last save and `DEFAULT_AUTOSAVE_INTERVAL`
+  (120 s of play, `App::autosave_interval`) has passed. An idle world is never due.
+- `process_world_events` marks it edited on `BlockPlaced`, `BlockRemoved` and
+  `BlocksBatchModified`. Chunk streaming events (`ChunkMeshDirty`) do not.
+- A successful save resets the interval and clears the edited flag; a failed save resets the
+  interval only, so the world stays due and is retried one interval later.
+- Generating or loading a world restarts the schedule (`App::restart_autosave`).
+
+`App::frame` runs the save when due ([frame loop](../architecture/frame-loop.md#4-frame)).
