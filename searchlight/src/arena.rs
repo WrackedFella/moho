@@ -23,7 +23,7 @@ const WAYPOINT_PREFIX: &str = "waypoint_";
 const COVER_PREFIX: &str = "cover_";
 const CONTROL_PREFIX: &str = "control_";
 const CONTROL_ACTION_KEY: &str = "action";
-/// Control mesh ids start here, clear of the arena's, the dummies' and the enemies' ids.
+/// First control mesh id; see [`control_mesh_id`].
 const CONTROL_MESH_BASE: u64 = 3 << 32;
 /// Width, height and depth of a control's post, in metres.
 const CONTROL_POST_SIZE: Vec3 = Vec3::new(0.4, 1.2, 0.4);

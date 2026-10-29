@@ -51,9 +51,8 @@ DUMMIES = [(-9.0, 6.0), (-3.0, 12.0), (5.0, 9.0), (11.0, 14.0)]
 ENEMY_SPAWNS = [(-14.0, 15.0), (14.0, 16.0), (0.0, 19.0)]
 WAYPOINTS = [(-12.0, -10.0), (12.0, -10.0), (10.0, 4.0), (0.0, 8.0), (-10.0, 2.0)]
 
-# Usable posts: (x, z, action). The game stands a 0.4 x 1.2 x 0.4 m post on each floor point.
-# This one is a metre and a half beside the player spawn: close enough to use at once, clear of
-# the spawn's capsule.
+# Usable posts: (x, z, action). This one is 1.5 m beside the player spawn: in reach at once, clear
+# of the spawn's capsule.
 CONTROLS = [(1.5, -17.0, "next_wave")]
 
 # Cover blocks: (centre x, centre z, size x, size z, direction from the cover point to the
