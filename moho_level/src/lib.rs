@@ -78,8 +78,8 @@ pub fn load_pinned(path: &Path, expected: &LevelHash) -> Result<Level, LevelErro
     load_hashed(path, Some(expected)).map(|(level, _)| level)
 }
 
-/// Load the level at `path` and the hash of the bytes loaded, refusing a `pin` the hash
-/// does not match before any mesh is built.
+/// Load the level at `path` with the hash of the bytes loaded; a `pin` that differs is
+/// refused before any mesh is built.
 pub(crate) fn load_hashed(
     path: &Path,
     pin: Option<&LevelHash>,
