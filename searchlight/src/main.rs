@@ -1,4 +1,4 @@
-//! The FPS prototype binary: loads the arena and runs the fixed-tick loop.
+//! The FPS prototype binary: loads a level by name or path and runs the fixed-tick loop.
 
 use std::error::Error;
 use std::process::ExitCode;

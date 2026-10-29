@@ -63,7 +63,7 @@ pub struct ArenaMarkers {
     pub mode: LevelMode,
     /// Where the player starts; exactly one in an arena, at most one in a sandbox.
     pub player_spawn: Option<LevelMarker>,
-    /// `dummy_NN`: training dummy positions; at least one.
+    /// `dummy_NN`: training dummy positions; at least one in an arena.
     pub dummies: Vec<LevelMarker>,
     /// `enemy_spawn_NN`.
     pub enemy_spawns: Vec<LevelMarker>,
@@ -133,7 +133,6 @@ impl ArenaMarkers {
     }
 }
 
-/// The mode `level`'s `searchlight_level` marker names; a sandbox when it has none.
 /// The marker rules only an arena enforces: a dummy, waypoints for any enemy spawn, and
 /// numeric, distinct waypoint suffixes.
 fn validate_arena_rules(
@@ -161,6 +160,7 @@ fn validate_arena_rules(
     Ok(())
 }
 
+/// The mode `level`'s `searchlight_level` marker names; a sandbox when it has none.
 fn level_mode(level: &Level) -> Result<LevelMode, ArenaError> {
     let mut found = level.markers.iter().filter(|m| m.name == LEVEL_MARKER);
     let Some(marker) = found.next() else {
@@ -724,6 +724,36 @@ mod tests {
 
         assert_eq!(markers.mode, LevelMode::Sandbox);
         assert_eq!(markers.waypoints.len(), 2);
+    }
+
+    #[test]
+    fn a_sandbox_enemy_spawn_without_waypoints_loads_with_an_empty_route() {
+        let mut level = level_in_mode("sandbox", &["player_spawn", "enemy_spawn_01"]);
+        level.meshes.push(LevelMesh {
+            mesh: box_mesh(Vec3::new(-10.0, -1.0, -10.0), Vec3::new(10.0, 0.0, 10.0)),
+            material: None,
+        });
+
+        let markers = ArenaMarkers::from_level(&level).expect("a sandbox needs no waypoint");
+        let arena = Arena::from_level(&level, &markers).expect("the sandbox builds");
+
+        assert_eq!(markers.enemy_spawns.len(), 1);
+        assert!(markers.waypoints.is_empty());
+        assert!(arena.route.is_empty(), "{:?}", arena.route);
+    }
+
+    #[test]
+    fn a_sandbox_whose_waypoints_no_spawn_reaches_builds_with_an_empty_route() {
+        let mut level = island_level(&[("waypoint_01", ON_ISLAND)]);
+        level.markers[0] = mode_marker("sandbox");
+
+        let arena = build(&level).expect("a sandbox does not need a reachable waypoint");
+
+        assert!(
+            arena.nav.path(arena.enemy_spawns[0], ON_ISLAND).is_none(),
+            "the island must be unreachable for this test to mean anything"
+        );
+        assert!(arena.route.is_empty(), "{:?}", arena.route);
     }
 
     #[test]
