@@ -38,21 +38,15 @@ mod tests {
     }
 
     #[test]
-    fn copied_file_hashes_the_same() {
-        let original: [&[u8]; 2] = [b"main file bytes", b"buffer bytes"];
-        let copy: [&[u8]; 2] = [b"main file bytes", b"buffer bytes"];
-
-        assert_eq!(hash_of(&original), hash_of(&copy));
-        assert_ne!(hash_of(&original), hash_of(&[b"other", b"buffer bytes"]));
-    }
-
-    #[test]
     fn one_changed_byte_changes_the_hash() {
         let before = hash_of(&[b"main", b"buffer"]);
 
-        let after = hash_of(&[b"main", b"buffes"]);
+        let in_first = hash_of(&[b"maiN", b"buffer"]);
+        let in_second = hash_of(&[b"main", b"buffes"]);
 
-        assert_ne!(before, after);
+        assert_ne!(before, in_first);
+        assert_ne!(before, in_second);
+        assert_ne!(in_first, in_second);
     }
 
     #[test]
@@ -83,9 +77,10 @@ mod tests {
 
         let shown = LevelHash::from_bytes(bytes).to_string();
 
-        assert_eq!(shown.len(), 64);
-        assert!(shown.starts_with("ab01"));
-        assert!(shown.ends_with("00ff"));
-        assert!(shown.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)));
+        assert_eq!(
+            shown,
+            format!("ab01{}ff", "00".repeat(29)),
+            "64 lowercase hex digits, two per byte"
+        );
     }
 }

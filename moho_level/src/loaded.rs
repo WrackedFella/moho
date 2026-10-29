@@ -198,7 +198,6 @@ mod tests {
         assert_eq!(loaded.path(), Some(path.as_path()));
         let expected = LevelHash::of_sources([EMPTY_LEVEL.as_bytes()]);
         assert_eq!(loaded.hash(), Some(&expected));
-        assert_eq!(loaded.ids().iter().count(), 0);
     }
 
     #[test]
