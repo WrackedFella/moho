@@ -2940,8 +2940,8 @@ mod tests {
 
         press_keys(&mut game, &mut ctx, &[Key::ArrowDown, Key::Enter]);
         let settings_title = title(&game);
-        // Back is the last of Settings' twelve rows.
-        let back = [640.0, 668.0];
+        // Back is the last of Settings' thirteen rows.
+        let back = [640.0, 696.0];
         click_at(&mut game, &mut ctx, back);
         game.event(&mut ctx, motion());
 
@@ -3841,7 +3841,7 @@ mod settings_tests {
             .collect();
         expected.push(MenuItem::Apply);
         expected.push(back_button());
-        assert_eq!(screen.items, expected, "the ten rows, Apply and Back");
+        assert_eq!(screen.items, expected, "the eleven rows, Apply and Back");
         assert_eq!(screen.back, Some(MenuAction::Back));
         assert_eq!(
             screen.settings.map(|settings| settings.mouse_sensitivity),

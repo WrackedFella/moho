@@ -760,12 +760,13 @@ mod tests {
                 ui_volume: 7.0,
                 shadow_quality: 3,
                 ssao_quality: 3,
+                effects_quality: 3,
                 window_mode: WindowMode::Windowed,
                 resolution: (1920, 1080),
             }
         }
 
-        /// The ten rows, Apply, then Back: twelve rows, so the whole column fits on `SIZE`.
+        /// The eleven rows, Apply, then Back: thirteen rows, so the whole column fits on `SIZE`.
         fn screen_of(settings: EngineSettings) -> MenuScreen<Act> {
             let mut items: Vec<MenuItem<Act>> = EngineSetting::ALL
                 .into_iter()
@@ -873,6 +874,7 @@ mod tests {
             step(&mut stack, EngineSetting::WindowMode, &[Key::ArrowRight]);
             step(&mut stack, EngineSetting::InvertMouseY, &[Key::Enter]);
             step(&mut stack, EngineSetting::ShadowQuality, &[Key::ArrowLeft]);
+            step(&mut stack, EngineSetting::EffectsQuality, &[Key::ArrowLeft]);
 
             stack.pop();
             stack.push(screen_of(base()));
@@ -981,6 +983,25 @@ mod tests {
             assert_eq!(applied.shadow_quality, 4);
             assert_eq!(applied.ssao_quality, 2);
             assert_eq!(applied.resolution, (2560, 1440));
+        }
+
+        #[test]
+        fn the_effects_quality_row_steps_and_clamps_like_a_quality_choice() {
+            let low = EngineSettings {
+                effects_quality: 0,
+                ..base()
+            };
+            let mut stack = stack_of(screen_of(low));
+
+            step(
+                &mut stack,
+                EngineSetting::EffectsQuality,
+                &[Key::ArrowLeft, Key::ArrowRight],
+            );
+            let applied = apply(&mut stack);
+
+            assert_eq!(applied.effects_quality, 1);
+            assert_eq!(applied.ssao_quality, base().ssao_quality);
         }
 
         #[test]

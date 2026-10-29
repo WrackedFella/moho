@@ -41,7 +41,7 @@ impl DebugSettings {
         self.prefs.save_to(&self.path)
     }
 
-    /// Stores the engine's ten settings rows and saves the prefs file; every other value in the
+    /// Stores the engine's settings rows and saves the prefs file; every other value in the
     /// file is kept, and the rows are kept for the session if the save fails.
     ///
     /// # Errors
@@ -210,6 +210,7 @@ mod tests {
             ui_volume: 9.5,
             shadow_quality: 1,
             ssao_quality: 4,
+            effects_quality: 3,
             window_mode: WindowMode::Borderless,
             resolution: (2560, 1440),
         };
@@ -244,6 +245,7 @@ mod tests {
             ui_volume: 1.0,
             shadow_quality: 3,
             ssao_quality: 3,
+            effects_quality: 3,
             window_mode: WindowMode::Windowed,
             resolution: (1920, 1080),
         };
