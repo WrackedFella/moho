@@ -2577,7 +2577,6 @@ mod tests {
             stack.on_key(Input::Mouse(MouseButton::Left), false, false);
         }
 
-        /// Presses Apply and returns every event it emits.
         fn apply_events(stack: &mut MenuStack<Act>) -> Vec<MenuEvent<Act>> {
             let row = row_of(stack, MenuItem::Apply);
             focus(stack, row);
@@ -2585,7 +2584,6 @@ mod tests {
             stack.take_events()
         }
 
-        /// Presses Apply and returns the game values it sends.
         fn applied_game(stack: &mut MenuStack<Act>) -> BTreeMap<String, i32> {
             let mut games: Vec<_> = apply_events(stack)
                 .into_iter()

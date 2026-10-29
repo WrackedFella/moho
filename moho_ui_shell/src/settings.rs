@@ -88,7 +88,6 @@ impl GameSlider {
         )
     }
 
-    /// The value shown after the label: the number, then the unit when there is one.
     pub(crate) fn value_text(&self, value: i32) -> String {
         if self.unit.is_empty() {
             value.to_string()
