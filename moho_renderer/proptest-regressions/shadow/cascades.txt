@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc ac564924837d3fed92754529c331077b99bea25ce3fa10f1ea0bd76c8fc93821 # shrinks to light = Vec3(0.0, 1.0, 0.0), position = Vec3(0.0, 0.0, 0.0), yaw = 0.0, pitch = 0.0, fov = 30.0, aspect = 1.0, near = 0.05, far = 50.0
+cc dae2baf58b1507044d62bb6baaa35c0c4b98936c3f08f241384057b720dc8884 # shrinks to light = Vec3(0.0, 1.0, 0.0), position = Vec3(0.0, 0.0, 0.0), (yaw_a, pitch_a) = (0.0, 0.0), (yaw_b, pitch_b) = (0.0, 0.0)
+cc 5c672ff116b03f884fd0c1afb4282d1f617e3feb3c922840cb706ff615895983 # shrinks to light = Vec3(0.0, 1.0, 0.0), position = Vec3(0.0, 0.0, 0.0), yaw = 0.0, pitch = 0.0

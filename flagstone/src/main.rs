@@ -704,6 +704,39 @@ mod tests {
         assert_eq!(app.prefs.bloom(), 1);
     }
 
+    fn queued_shadow_quality(app: &App) -> Vec<u8> {
+        app.pending_render
+            .iter()
+            .filter_map(|request| match request {
+                RenderRequest::ShadowQuality(value) => Some(*value),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn adopting_settings_queues_the_shadow_quality() {
+        let mut app = App::headless();
+        let mut sharper = Prefs::default();
+        sharper.set_shadow_quality(4);
+
+        app.adopt_settings(sharper);
+
+        assert_eq!(queued_shadow_quality(&app), vec![4]);
+        assert_eq!(app.prefs.shadow_quality(), 4);
+    }
+
+    #[test]
+    fn adopting_settings_leaves_unchanged_shadow_quality_unqueued() {
+        let mut app = App::headless();
+        let mut other_change = Prefs::default();
+        other_change.set_bloom(1);
+
+        app.adopt_settings(other_change);
+
+        assert_eq!(queued_shadow_quality(&app), Vec::<u8>::new());
+    }
+
     #[test]
     fn adopting_settings_sets_the_scenes_effects_quality() {
         for (quality, cap) in [(1, 32), (4, 256), (0, 0)] {

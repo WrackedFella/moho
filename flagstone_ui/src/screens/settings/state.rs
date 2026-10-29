@@ -179,6 +179,11 @@ impl SettingsState {
         self.mark_dirty(SettingsField::Bloom);
     }
 
+    /// Stage a shadow quality level (0=Off .. 4=Ultra) and mark it dirty.
+    pub fn set_shadow_quality(&mut self, _quality: u32) {
+        todo!()
+    }
+
     /// Whether the staged bindings or mode of `action` differ from the saved ones.
     pub fn is_binding_modified(&self, action: StrategyAction) -> bool {
         self.staged_bindings.get_binding(action) != self.saved_bindings.get_binding(action)
@@ -317,6 +322,33 @@ mod tests {
 
         assert!(!state.is_dirty());
         assert_eq!(state.prefs().bloom(), 1);
+    }
+
+    #[test]
+    fn staging_shadow_quality_marks_the_tab_dirty() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state =
+            SettingsState::from_prefs_at(Prefs::default(), dir.path().join("prefs.ini"));
+        assert!(!state.is_dirty());
+
+        state.set_shadow_quality(0);
+
+        assert!(state.is_dirty());
+        assert!(state.is_field_dirty(SettingsField::ShadowQuality));
+        assert!(!state.is_field_dirty(SettingsField::Bloom));
+        assert_eq!(state.staged().shadow_quality(), 0);
+        assert_eq!(state.prefs().shadow_quality(), 3);
+
+        state.revert_changes();
+
+        assert!(!state.is_dirty());
+        assert_eq!(state.staged().shadow_quality(), 3);
+
+        state.set_shadow_quality(1);
+        state.apply_changes().unwrap();
+
+        assert!(!state.is_dirty());
+        assert_eq!(state.prefs().shadow_quality(), 1);
     }
 
     #[test]

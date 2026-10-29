@@ -159,8 +159,15 @@ mod tests {
 
     use super::*;
     use crate::shadow::{
-        CASCADE_BLEND, CASCADE_MAP_SIZE, FILTER_MARGIN_TEXELS, SHADOW_DISTANCE, SUN_CASCADES,
+        CASCADE_BLEND, FILTER_MARGIN_TEXELS, SHADOW_DISTANCE, SUN_CASCADES,
     };
+
+    use crate::shadow::tier::ShadowTier;
+
+    /// The default (High) tier's map size, on a device with no limit.
+    fn map_size() -> u32 {
+        ShadowTier::High.map_size(u32::MAX)
+    }
 
     const SEARCHLIGHT: (f32, f32, f32) = (75.0, 0.05, 500.0);
     const FLAGSTONE: (f32, f32, f32) = (45.0, 0.1, 1500.0);
@@ -223,12 +230,12 @@ mod tests {
         ) {
             let frustum = frustum(fov, aspect, near, far);
             let world = camera_world(position, yaw, pitch);
-            let fits = light_cascades::<4>(light, frustum, world, CASCADE_MAP_SIZE);
+            let fits = light_cascades::<4>(light, frustum, world, map_size());
             let splits = practical_splits::<4>(frustum.near, frustum.far);
             let tan_y = (fov.to_radians() / 2.0).tan();
             let tan_x = tan_y * aspect;
             // One of the filter margin's texels is spent on the origin snap.
-            let margin = 2.0 * (FILTER_MARGIN_TEXELS - 1.0) / CASCADE_MAP_SIZE as f32;
+            let margin = 2.0 * (FILTER_MARGIN_TEXELS - 1.0) / map_size() as f32;
             let slack = 1e-4;
 
             for (i, fit) in fits.iter().enumerate() {
@@ -265,8 +272,8 @@ mod tests {
         ) {
             let frustum = frustum(60.0, SIXTEEN_NINE, 0.1, 800.0);
 
-            let a = light_cascades::<4>(light, frustum, camera_world(position, yaw_a, pitch_a), CASCADE_MAP_SIZE);
-            let b = light_cascades::<4>(light, frustum, camera_world(position, yaw_b, pitch_b), CASCADE_MAP_SIZE);
+            let a = light_cascades::<4>(light, frustum, camera_world(position, yaw_a, pitch_a), map_size());
+            let b = light_cascades::<4>(light, frustum, camera_world(position, yaw_b, pitch_b), map_size());
 
             for (i, (a, b)) in a.iter().zip(&b).enumerate() {
                 prop_assert!(a.texel_world > 0.0, "cascade {i} texel {}", a.texel_world);
@@ -288,9 +295,9 @@ mod tests {
         ) {
             let frustum = frustum(60.0, SIXTEEN_NINE, 0.1, 800.0);
 
-            let fits = light_cascades::<4>(light, frustum, camera_world(position, yaw, pitch), CASCADE_MAP_SIZE);
+            let fits = light_cascades::<4>(light, frustum, camera_world(position, yaw, pitch), map_size());
 
-            let half_map = CASCADE_MAP_SIZE as f32 / 2.0;
+            let half_map = map_size() as f32 / 2.0;
             for (i, fit) in fits.iter().enumerate() {
                 let clip = fit.view_proj.project_point3(Vec3::ZERO);
                 for axis in [clip.x * half_map, clip.y * half_map] {
@@ -312,7 +319,7 @@ mod tests {
                     light,
                     frustum,
                     Mat4::IDENTITY,
-                    CASCADE_MAP_SIZE,
+                    map_size(),
                 );
 
                 let splits = practical_splits::<{ SUN_CASCADES }>(frustum.near, frustum.far);
@@ -397,13 +404,13 @@ mod tests {
             light,
             frustum(60.0, SIXTEEN_NINE, near, 60.0),
             Mat4::IDENTITY,
-            CASCADE_MAP_SIZE,
+            map_size(),
         );
         let far_fit = light_cascades::<4>(
             light,
             frustum(60.0, SIXTEEN_NINE, near, 5000.0),
             Mat4::IDENTITY,
-            CASCADE_MAP_SIZE,
+            map_size(),
         );
         assert!(
             near_fit[3].texel_world < far_fit[3].texel_world / 2.0,
@@ -423,7 +430,7 @@ mod tests {
                 light,
                 frustum,
                 Mat4::from_translation(position),
-                CASCADE_MAP_SIZE,
+                map_size(),
             );
 
             for (i, fit) in fits.iter().enumerate() {

@@ -674,6 +674,7 @@ impl<'a> Renderer<'a> {
             _ => crate::shadow::PcssQuality::Medium,
         };
         self.shadow.pcss_settings.quality = quality_enum;
+        self.shadow.tier = crate::shadow::ShadowTier::from_level(quality);
     }
 
     /// Sets whether presented frames wait for the display refresh. Stays on when the GPU

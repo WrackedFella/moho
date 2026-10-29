@@ -4,6 +4,9 @@ use crate::gpu_types::ShadowGpu;
 
 mod cascades;
 mod light_matrix;
+mod tier;
+
+pub(crate) use tier::ShadowTier;
 
 /// Shadow-map layers: the sun's cascades first, then the moon's.
 pub(crate) const CASCADE_LAYERS: usize = 6;
@@ -97,6 +100,8 @@ pub struct ShadowSystem {
     pub active_lights: Vec<ActiveShadowLight>,
     /// PCSS (Percentage Closer Soft Shadows) settings
     pub pcss_settings: PcssSettings,
+    /// Current shadow quality tier.
+    pub(crate) tier: ShadowTier,
     csm_logged_once: bool,
     /// The block uploaded last frame, kept when a frame's projection has no cascades.
     last_block: ShadowGpu,
@@ -132,6 +137,7 @@ impl ShadowSystem {
             current_lighting: crate::gpu_types::LightingGpu::default(),
             active_lights: Vec::new(),
             pcss_settings: PcssSettings::default(),
+            tier: ShadowTier::High,
             csm_logged_once: false,
             last_block: ShadowGpu::default(),
             projection_warned: false,
@@ -365,7 +371,7 @@ impl ShadowSystem {
 
     /// The shadow-map layers to render this frame, from `active_lights`.
     pub fn layers_to_render(&self) -> Vec<u32> {
-        light_matrix::shadow_passes(&self.active_lights)
+        light_matrix::shadow_passes(&self.active_lights, self.tier)
     }
 
     /// Fit the sun's and moon's cascades to the camera and return the block to upload.
@@ -427,7 +433,7 @@ impl ShadowSystem {
             splits,
             camera_forward,
             (active_intensity(0), active_intensity(1)),
-            &self.pcss_settings,
+            self.tier,
         );
 
         if !self.csm_logged_once {
