@@ -140,7 +140,6 @@ pub enum Feedback {
         target: u16,
         part: BodyPart,
         report: HitReport,
-        /// Where the shot struck.
         point: Vec3,
     },
     /// The player checked the magazine.

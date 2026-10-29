@@ -106,9 +106,7 @@ impl GravityScale {
 /// The box rounds may fly in; one that leaves it is gone.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FlightBounds {
-    /// Smallest corner.
     pub min: Vec3,
-    /// Largest corner.
     pub max: Vec3,
 }
 
