@@ -248,9 +248,8 @@ impl App {
             frame_cap_changed: false,
             saves_dir: std::path::PathBuf::from("saves"),
             autosave_interval: app::autosave::DEFAULT_AUTOSAVE_INTERVAL,
-            autosave: app::autosave::AutosaveSchedule::new(
-                app::autosave::DEFAULT_AUTOSAVE_INTERVAL.as_secs()
-                    * u64::from(flagstone_game::TICK_HZ),
+            autosave: app::autosave::AutosaveSchedule::for_interval(
+                app::autosave::DEFAULT_AUTOSAVE_INTERVAL,
             ),
             exit_requested: false,
             main_menu_requested: false,
@@ -298,9 +297,7 @@ impl App {
 
     /// Starts the autosave schedule afresh at the configured interval, as a world starts.
     fn restart_autosave(&mut self) {
-        self.autosave = app::autosave::AutosaveSchedule::new(
-            self.autosave_interval.as_secs() * u64::from(flagstone_game::TICK_HZ),
-        );
+        self.autosave = app::autosave::AutosaveSchedule::for_interval(self.autosave_interval);
     }
 
     fn generate_new_world(

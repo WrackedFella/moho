@@ -21,6 +21,11 @@ impl AutosaveSchedule {
         }
     }
 
+    /// A schedule due `interval` of play after the last save, at the simulation tick rate.
+    pub fn for_interval(interval: std::time::Duration) -> Self {
+        Self::new(interval.as_secs() * u64::from(flagstone_game::TICK_HZ))
+    }
+
     /// Counts one simulation tick of play.
     pub fn tick(&mut self) {
         self.ticks_since_save = self.ticks_since_save.saturating_add(1);

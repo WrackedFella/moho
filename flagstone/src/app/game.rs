@@ -291,22 +291,22 @@ impl App {
         ctx.window.request_redraw();
     }
 
-    /// Autosaves with the renderer's lights, queued ones included, logging a failure.
-    /// Returns whether the save succeeded.
+    /// Autosaves with the renderer's lights, queued ones included, logging a failure, and
+    /// tells the schedule how it went.
     fn autosave(
         &mut self,
         clock: &moho_app::GameClock,
         renderer: Option<&mut (dyn moho_renderer::RendererBackend + 'static)>,
-    ) -> bool {
+    ) {
         let lights = renderer.map_or_else(Vec::new, |r| {
             self.apply_pending_render(r);
             r.all_lights_as_descs()
         });
         match self.auto_save_on_shutdown(clock, &lights) {
-            Ok(()) => true,
+            Ok(()) => self.autosave.saved(),
             Err(e) => {
                 tracing::warn!(error = %e, "Failed to auto-save");
-                false
+                self.autosave.save_failed();
             }
         }
     }
@@ -525,11 +525,7 @@ impl moho_app::Game for App {
         }
 
         if self.autosave.due() {
-            if self.autosave(ctx.clock(), ctx.renderer()) {
-                self.autosave.saved();
-            } else {
-                self.autosave.save_failed();
-            }
+            self.autosave(ctx.clock(), ctx.renderer());
         }
 
         let clock = ctx.clock();
