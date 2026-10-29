@@ -134,6 +134,42 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
         ui.add_space(8.0);
 
         bloom_row(menu, ui, label_width);
+
+        ui.add_space(8.0);
+
+        shadow_quality_row(menu, ui, label_width);
+    });
+}
+
+const SHADOW_QUALITY_LEVELS: [&str; 5] = ["Off", "Low", "Medium", "High", "Ultra"];
+
+fn shadow_quality_row(menu: &mut SettingsMenu, ui: &mut egui::Ui, label_width: f32) {
+    let staged = menu.state.staged().shadow_quality();
+    let is_dirty = staged != menu.state.prefs().shadow_quality();
+
+    ui.horizontal(|ui| {
+        ui.allocate_ui_with_layout(
+            egui::vec2(label_width, 28.0),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.label("Shadows:");
+            },
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let mut current = staged;
+            let combo = egui::ComboBox::from_id_salt("shadow_quality_combo")
+                .selected_text(SHADOW_QUALITY_LEVELS[staged as usize])
+                .width(120.0)
+                .show_ui(ui, |ui| {
+                    for (level, label) in (0u32..).zip(SHADOW_QUALITY_LEVELS) {
+                        ui.selectable_value(&mut current, level, label);
+                    }
+                });
+            if current != staged {
+                menu.state.set_shadow_quality(current);
+            }
+            SettingsMenu::paint_dirty_decor(ui, &combo.response, is_dirty);
+        });
     });
 }
 
