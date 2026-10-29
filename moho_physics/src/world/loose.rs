@@ -85,8 +85,8 @@ impl PhysicsWorld {
     ///
     /// # Panics
     /// If the spawn would poison the simulation: a mass or half extent that is not positive and
-    /// finite, a friction, restitution or damping that is negative or not finite, or a position,
-    /// rotation or velocity that is not finite.
+    /// finite, a friction, restitution or damping that is negative or not finite, a position or
+    /// velocity that is not finite, or a rotation that is not a finite unit quaternion.
     pub fn spawn_loose(&mut self, spawn: &LooseSpawn) -> LooseId {
         let LooseShape::Box { half_extents } = spawn.shape;
         assert!(
@@ -121,8 +121,8 @@ impl PhysicsWorld {
             spawn.position
         );
         assert!(
-            spawn.rotation.is_finite(),
-            "rotation must be finite, got {}",
+            spawn.rotation.is_finite() && spawn.rotation.is_normalized(),
+            "rotation must be finite and normalized, got {}",
             spawn.rotation
         );
 
@@ -849,6 +849,80 @@ mod tests {
 
         assert_rows_rejected(&position_rows, "position must be finite");
         assert_rows_rejected(&rotation_rows, "rotation must be finite");
+    }
+
+    #[test]
+    fn spawn_rejects_a_non_unit_rotation() {
+        let rows: Vec<_> = [
+            ("zero quaternion", Quat::from_xyzw(0.0, 0.0, 0.0, 0.0)),
+            ("length-2 quaternion", Quat::from_xyzw(0.0, 0.0, 0.0, 2.0)),
+        ]
+        .into_iter()
+        .map(|(name, rotation)| {
+            (
+                name.to_owned(),
+                LooseSpawn {
+                    rotation,
+                    ..valid_spawn()
+                },
+            )
+        })
+        .collect();
+
+        assert_rows_rejected(&rows, "rotation must be finite and normalized");
+    }
+
+    #[test]
+    fn spawn_accepts_a_normalised_non_identity_rotation() {
+        let mut world = PhysicsWorld::new();
+        let rotation = Quat::from_rotation_y(0.7);
+        let spawn = LooseSpawn {
+            rotation,
+            ..valid_spawn()
+        };
+
+        let message = spawn_panic_message(&spawn);
+        let id = world.spawn_loose(&spawn);
+
+        assert_eq!(message, None, "a unit rotation is valid");
+        let state = read(&world, id);
+        assert!(
+            state.rotation.abs_diff_eq(rotation, 1e-6),
+            "{:?}",
+            state.rotation
+        );
+    }
+
+    #[test]
+    fn removing_a_box_wakes_the_box_resting_on_it() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let bottom = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.2, 0.0),
+            ..LooseSpawn::new(cube(0.2), 1.0)
+        });
+        let top = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.5, 0.0),
+            ..LooseSpawn::new(cube(0.1), 1.0)
+        });
+        let mut ticks = 0;
+        while ticks < 300 && !(read(&world, bottom).asleep && read(&world, top).asleep) {
+            world.step(DT);
+            ticks += 1;
+        }
+        assert!(
+            read(&world, bottom).asleep && read(&world, top).asleep,
+            "both boxes sleep within 300 ticks"
+        );
+
+        world.remove_loose(bottom).expect("the bottom box is alive");
+        run(&mut world, 60);
+
+        let state = read(&world, top);
+        assert!(
+            (state.position.y - 0.1).abs() <= 0.005,
+            "the top box falls to the floor, y={}",
+            state.position.y
+        );
     }
 
     #[test]
