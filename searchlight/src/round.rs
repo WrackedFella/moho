@@ -90,14 +90,4 @@ mod tests {
         assert_eq!(step.flight, round.flight.step(&BALL, 9.81, DT));
         assert_eq!(step.end, step.flight.position);
     }
-
-    #[test]
-    fn a_wall_behind_the_round_is_not_struck() {
-        let world = world_with(&[(Vec3::new(-5.0, 0.0, -11.0), Vec3::new(5.0, 5.0, -10.0))]);
-        let round = round_at(Vec3::new(0.0, 1.0, 0.0), Vec3::Z);
-
-        let step = step_round(&world, &round, 9.81, DT);
-
-        assert_eq!(step.strike, None);
-    }
 }

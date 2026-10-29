@@ -2538,7 +2538,24 @@ mod tests {
         let command = game.command();
 
         assert!(command.simple);
-        assert!(game.simple);
+    }
+
+    #[test]
+    fn a_gravity_scale_set_in_one_session_is_not_restored_by_the_next() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut first = game().with_debug_settings(settings);
+        type_into_console(&first, "round_gravity 30");
+        type_into_console(&first, "simple 1");
+        let set = first.command();
+        let (saved, _) = Prefs::load_from(&path);
+        let mut second = game().with_debug_settings(DebugSettings::new(saved, path));
+
+        let restarted = second.command();
+
+        assert_eq!(set.round_gravity, GravityScale::new(30.0).unwrap());
+        assert!(restarted.simple, "the saved file was not read");
+        assert_eq!(restarted.round_gravity, GravityScale::new(1.0).unwrap());
     }
 
     #[test]

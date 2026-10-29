@@ -2150,48 +2150,54 @@ mod tests {
         assert_eq!(dragged, 5, "at 5/s the round has slowed to 61 m by tick 5");
     }
 
-    #[test]
-    fn a_level_round_at_a_head_60_m_away_strikes_by_gravity_scale() {
-        let strike = |scale: f32| {
-            let mut sim = dummy_ahead(60.0, BodyPart::Head, with_ball(BALL));
-            let aim = sim.player_eye();
-            let command = SearchlightCommand {
-                fire: true,
-                round_gravity: GravityScale::new(scale).expect("a valid scale"),
-                ..idle()
-            };
-            let ticks = fire_and_wait(&mut sim, command, 60);
-            (aim, hits_in(&ticks))
+    /// Fires level at a head 60 m away under `scale`; returns the aim point and the first strike.
+    fn level_strike_on_a_head(scale: f32) -> (Vec3, (BodyPart, Vec3)) {
+        let mut sim = dummy_ahead(60.0, BodyPart::Head, with_ball(BALL));
+        let aim = sim.player_eye();
+        let command = SearchlightCommand {
+            fire: true,
+            round_gravity: GravityScale::new(scale).expect("a valid scale"),
+            ..idle()
         };
+        let ticks = fire_and_wait(&mut sim, command, 60);
+        let Some(&(_, part, point)) = hits_in(&ticks).first() else {
+            panic!("scale {scale} hit nothing");
+        };
+        (aim, (part, point))
+    }
+
+    #[test]
+    fn a_level_round_at_scale_0_strikes_the_head_at_the_aim_point() {
         let head_front = 60.0 - dummy_volume(BodyPart::Head).half_extents.z;
 
-        let (aim, level) = strike(0.0);
-        let (_, standard) = strike(1.0);
-        let (_, heavy) = strike(30.0);
+        let (aim, (part, point)) = level_strike_on_a_head(0.0);
 
-        let Some(&(_, part, point)) = level.first() else {
-            panic!("scale 0 hit nothing");
-        };
         assert_eq!(part, BodyPart::Head);
         let expected = Vec3::new(aim.x, aim.y, head_front);
         assert!(
             point.distance(expected) < 0.01,
             "scale 0 struck {point}, not the aim point {expected}"
         );
-        let Some(&(_, part, point)) = standard.first() else {
-            panic!("scale 1 hit nothing");
-        };
+    }
+
+    #[test]
+    fn a_level_round_at_scale_1_strikes_the_head_a_little_below_the_aim_point() {
+        let (aim, (part, point)) = level_strike_on_a_head(1.0);
+
         assert_eq!(part, BodyPart::Head);
+        let drop = aim.y - point.y;
         assert!(
-            point.y < aim.y - 0.01 && point.y > aim.y - 0.12,
-            "scale 1 struck at {} against the aim at {}",
-            point.y,
+            (0.02..0.035).contains(&drop),
+            "scale 1 dropped {drop} m below the aim at {}",
             aim.y
         );
+    }
+
+    #[test]
+    fn a_level_round_at_scale_30_strikes_below_the_head() {
+        let (aim, (part, point)) = level_strike_on_a_head(30.0);
+
         let head_bottom = aim.y - dummy_volume(BodyPart::Head).half_extents.y;
-        let Some(&(_, part, point)) = heavy.first() else {
-            panic!("scale 30 hit nothing");
-        };
         assert_ne!(part, BodyPart::Head);
         assert!(
             point.y < head_bottom,
@@ -2252,10 +2258,17 @@ mod tests {
             sim.tick(&pull(), DT);
             let in_the_air = sim.rounds_in_flight().len();
 
-            let after = run_until_settled(&mut sim, &idle());
+            let mut after = Vec::new();
+            for _ in 0..10 {
+                sim.tick(&idle(), DT);
+                after.extend(sim.drain_feedback());
+            }
 
             assert_eq!(in_the_air, 1, "{label}: the shot put no round in the air");
-            assert!(sim.rounds_in_flight().is_empty(), "{label}");
+            assert!(
+                sim.rounds_in_flight().is_empty(),
+                "{label}: still in flight after 10 ticks"
+            );
             assert!(hits_in(&[after]).is_empty(), "{label}");
         }
     }

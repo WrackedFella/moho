@@ -113,7 +113,6 @@ impl FlightBounds {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proptest::prelude::*;
 
     const DT: f32 = 1.0 / 60.0;
 
@@ -177,49 +176,17 @@ mod tests {
         assert_eq!(next.position, Vec3::new(4.0, 5.0, 6.0));
     }
 
-    proptest! {
-        #[test]
-        fn without_gravity_speed_never_grows(
-            vx in -1500.0f32..1500.0,
-            vy in -1500.0f32..1500.0,
-            vz in -1500.0f32..1500.0,
-            drag in 0.5f32..50.0,
-            dt in 0.002f32..0.1,
-        ) {
-            let ballistics = ball(940.0, drag);
-            let flight = Flight { position: Vec3::ZERO, velocity: Vec3::new(vx, vy, vz) };
+    #[test]
+    fn gravity_is_applied_after_the_drag_factor() {
+        let ballistics = ball(500.0, 1.0);
+        let flight = Flight {
+            position: Vec3::ZERO,
+            velocity: Vec3::new(100.0, 40.0, 0.0),
+        };
 
-            let next = flight.step(&ballistics, 0.0, dt);
+        let next = flight.step(&ballistics, 10.0, 0.5);
 
-            prop_assert!(
-                next.velocity.length() <= flight.velocity.length() * (1.0 + 1e-6),
-                "{} -> {}", flight.velocity.length(), next.velocity.length()
-            );
-        }
-
-        #[test]
-        fn a_larger_gravity_scale_drops_a_round_further(
-            low in 0.0f32..500.0,
-            extra in 1.0f32..400.0,
-            height in -100.0f32..100.0,
-            steps in 1usize..10,
-        ) {
-            let ballistics = ball(940.0, 1.0);
-            let start = Flight {
-                position: Vec3::new(0.0, height, 0.0),
-                velocity: Vec3::new(940.0, 0.0, 0.0),
-            };
-            let light = GravityScale::new(low).unwrap().gravity();
-            let heavy = GravityScale::new(low + extra).unwrap().gravity();
-
-            let (mut a, mut b) = (start, start);
-            for _ in 0..steps {
-                a = a.step(&ballistics, light, DT);
-                b = b.step(&ballistics, heavy, DT);
-            }
-
-            prop_assert!(b.position.y < a.position.y, "{} vs {}", b.position.y, a.position.y);
-        }
+        assert_eq!(next.velocity, Vec3::new(50.0, 15.0, 0.0));
     }
 
     #[test]

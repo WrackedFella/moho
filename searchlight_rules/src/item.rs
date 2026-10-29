@@ -544,26 +544,6 @@ mod tests {
     }
 
     #[test]
-    fn a_round_with_non_finite_values_are_refused() {
-        let raw = |muzzle_velocity: f32, drag: f32| RawRoundSpec {
-            caliber: Caliber::new("5.56x45"),
-            muzzle_velocity,
-            drag,
-        };
-        let cases = [
-            ("nan velocity", raw(f32::NAN, 1.0), "muzzle_velocity"),
-            ("infinite velocity", raw(f32::INFINITY, 1.0), "muzzle_velocity"),
-            ("nan drag", raw(940.0, f32::NAN), "drag"),
-            ("infinite drag", raw(940.0, f32::INFINITY), "drag"),
-        ];
-        for (label, spec, field) in cases {
-            let error = RoundSpec::try_from(spec).expect_err(label);
-
-            assert!(error.to_string().contains(field), "{label}: {error}");
-        }
-    }
-
-    #[test]
     fn a_rig_section_loads_its_magazine_slots() {
         let item = parse(json!({
             "class": "gear", "size": [3, 2], "rig": {"magazine_slots": 3}

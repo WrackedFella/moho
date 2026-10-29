@@ -200,6 +200,31 @@ condition = 100
     }
 
     #[test]
+    fn a_non_finite_round_value_fails_the_load_naming_the_round_and_the_field() {
+        let cases = [
+            ("muzzle_velocity = 940.0", "muzzle_velocity = nan", "muzzle_velocity"),
+            ("muzzle_velocity = 940.0", "muzzle_velocity = inf", "muzzle_velocity"),
+            ("drag = 1.0", "drag = nan", "drag"),
+            ("drag = 1.0", "drag = inf", "drag"),
+        ];
+        for (good, bad, field) in cases {
+            let items = items_toml().replace(good, bad);
+            let (dir, roots) = base_with(&items, &start_kit(2));
+
+            let Err(error) = load(&roots, START_KIT_ID) else {
+                panic!("a round with {bad} loaded");
+            };
+
+            let KitLoadError::Content(ContentError::Invalid { file, id, reason }) = &error else {
+                panic!("{bad}: expected Invalid content, got {error:?}");
+            };
+            assert_eq!(file, &dir.path().join("items.toml"));
+            assert_eq!(id, "round_ball");
+            assert!(reason.contains(field), "{bad}: {reason}");
+        }
+    }
+
+    #[test]
     fn the_shipped_tool_resolves_by_id() {
         let roots = ContentRoots::base(&content_root()).expect("the shipped content folder");
 
