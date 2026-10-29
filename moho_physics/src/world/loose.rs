@@ -1,5 +1,6 @@
 use super::PhysicsWorld;
 use glam::{Quat, Vec3};
+use rapier3d::prelude::{ColliderBuilder, Pose, RigidBodyBuilder};
 
 /// Stable, engine-issued name of a loose object.
 ///
@@ -73,21 +74,108 @@ pub struct UnknownLoose;
 
 impl PhysicsWorld {
     /// Drop a loose object into the world and return its id.
-    pub fn spawn_loose(&mut self, _spawn: &LooseSpawn) -> LooseId {
-        LooseId(self.next_loose)
+    ///
+    /// The object advances inside [`PhysicsWorld::step`] under the world's gravity. Ids are
+    /// issued in increasing order and never reused.
+    ///
+    /// Characters do not yet ignore loose objects: a loose box blocks a character or is stepped
+    /// onto like geometry, and any overlap shoves the box because the solver treats the
+    /// character as infinitely heavy. Rays skip loose boxes because their colliders carry no
+    /// tag.
+    ///
+    /// # Panics
+    /// If the spawn would poison the simulation: a mass or half extent that is not positive and
+    /// finite, a friction, restitution or damping that is negative or not finite, or a position,
+    /// rotation or velocity that is not finite.
+    pub fn spawn_loose(&mut self, spawn: &LooseSpawn) -> LooseId {
+        let LooseShape::Box { half_extents } = spawn.shape;
+        assert!(
+            spawn.mass.is_finite() && spawn.mass > 0.0,
+            "mass must be positive and finite, got {}",
+            spawn.mass
+        );
+        assert!(
+            half_extents.is_finite() && half_extents.min_element() > 0.0,
+            "half extents must be positive and finite, got {half_extents}"
+        );
+        assert!(
+            spawn.linear_velocity.is_finite() && spawn.angular_velocity.is_finite(),
+            "velocity must be finite, got linear {} and angular {}",
+            spawn.linear_velocity,
+            spawn.angular_velocity
+        );
+        for (name, value) in [
+            ("friction", spawn.friction),
+            ("restitution", spawn.restitution),
+            ("damping", spawn.linear_damping),
+            ("damping", spawn.angular_damping),
+        ] {
+            assert!(
+                value.is_finite() && value >= 0.0,
+                "{name} must be non-negative and finite, got {value}"
+            );
+        }
+        assert!(
+            spawn.position.is_finite(),
+            "position must be finite, got {}",
+            spawn.position
+        );
+        assert!(
+            spawn.rotation.is_finite(),
+            "rotation must be finite, got {}",
+            spawn.rotation
+        );
+
+        let body = RigidBodyBuilder::dynamic()
+            .pose(Pose::from_parts(spawn.position, spawn.rotation))
+            .linvel(spawn.linear_velocity)
+            .angvel(spawn.angular_velocity)
+            .linear_damping(spawn.linear_damping)
+            .angular_damping(spawn.angular_damping)
+            .build();
+        let handle = self.rigid_body_set.insert(body);
+        let collider = ColliderBuilder::cuboid(half_extents.x, half_extents.y, half_extents.z)
+            .mass(spawn.mass)
+            .friction(spawn.friction)
+            .restitution(spawn.restitution)
+            .build();
+        self.collider_set
+            .insert_with_parent(collider, handle, &mut self.rigid_body_set);
+
+        let id = LooseId(self.next_loose);
+        self.next_loose += 1;
+        self.loose.insert(id, handle);
+        id
     }
 
     /// The object's current state; `None` for an id never spawned or removed.
-    pub fn loose(&self, _id: LooseId) -> Option<LooseState> {
-        None
+    pub fn loose(&self, id: LooseId) -> Option<LooseState> {
+        let body = self.rigid_body_set.get(*self.loose.get(&id)?)?;
+        Some(LooseState {
+            position: body.translation(),
+            rotation: *body.rotation(),
+            linear_velocity: body.linvel(),
+            angular_velocity: body.angvel(),
+            asleep: body.is_sleeping(),
+        })
     }
 
     /// Remove the object's body and collider.
     ///
     /// # Errors
     /// [`UnknownLoose`] if `id` was never spawned or was already removed.
-    pub fn remove_loose(&mut self, _id: LooseId) -> Result<(), UnknownLoose> {
-        Err(UnknownLoose)
+    pub fn remove_loose(&mut self, id: LooseId) -> Result<(), UnknownLoose> {
+        let handle = self.loose.remove(&id).ok_or(UnknownLoose)?;
+        self.rigid_body_set.remove(
+            handle,
+            &mut self.island_manager,
+            &mut self.collider_set,
+            &mut self.impulse_joint_set,
+            &mut self.multibody_joint_set,
+            &mut self.soft_body_set,
+            true,
+        );
+        Ok(())
     }
 
     /// How many loose objects are alive.
