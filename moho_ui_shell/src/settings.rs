@@ -44,6 +44,59 @@ pub enum Control {
     Choice,
 }
 
+/// A game's own slider row; `key` names its value among the screen's game values.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GameSlider {
+    pub key: String,
+    pub label: String,
+    pub min: i32,
+    pub max: i32,
+    pub step: i32,
+    /// Shown after the value, after a space, when non-empty ("%").
+    pub unit: String,
+    /// The value the row starts from.
+    pub value: i32,
+}
+
+impl GameSlider {
+    /// `value` moved one step towards `direction`, then snapped.
+    pub(crate) fn stepped(&self, value: i32, direction: i8) -> i32 {
+        let (_, _, step) = self.range();
+        self.snap(f64::from(value) + f64::from(direction) * step)
+    }
+
+    /// The value `fraction` (0 to 1) of the way along the range, snapped.
+    pub(crate) fn at_fraction(&self, fraction: f32) -> i32 {
+        let (min, max, _) = self.range();
+        self.snap(min + f64::from(fraction) * (max - min))
+    }
+
+    /// `value` on the row's step grid from `min`, clamped to the range.
+    fn snap(&self, value: f64) -> i32 {
+        let (min, max, step) = self.range();
+        let snapped = min + ((value - min) / step).round() * step;
+        snapped.clamp(min, max) as i32
+    }
+
+    /// `(min, max, step)` as used. Bad row data (`max` below `min`, a step under 1) is read as
+    /// the nearest sane range rather than panicking.
+    fn range(&self) -> (f64, f64, f64) {
+        (
+            f64::from(self.min),
+            f64::from(self.max.max(self.min)),
+            f64::from(self.step.max(1)),
+        )
+    }
+
+    pub(crate) fn value_text(&self, value: i32) -> String {
+        if self.unit.is_empty() {
+            value.to_string()
+        } else {
+            format!("{value} {}", self.unit)
+        }
+    }
+}
+
 impl EngineSetting {
     /// Every row, in the order a Settings screen lists them.
     pub const ALL: [EngineSetting; 11] = [
