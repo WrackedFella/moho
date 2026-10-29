@@ -13,6 +13,13 @@ pub struct PickupEntry {
     pub ticks_left: u32,
 }
 
+impl PickupEntry {
+    /// Remaining life as a fraction, from 1.0 when pushed down towards 0.0.
+    pub fn life(&self) -> f32 {
+        self.ticks_left as f32 / PICKUP_POPUP_TICKS as f32
+    }
+}
+
 /// Most pickups listed at once; a further one drops the oldest.
 const MAX_PICKUPS: usize = 8;
 

@@ -4,7 +4,6 @@
 
 use crate::App;
 use crate::app::event_loop::event_processor::{lod_for_chunk, lod_player_chunk};
-use flagstone_game::pickups::PICKUP_POPUP_TICKS;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -419,13 +418,7 @@ impl FrameProcessor {
                 .pickups
                 .entries()
                 .iter()
-                .map(|e| {
-                    (
-                        e.resource_id,
-                        e.amount,
-                        e.ticks_left as f32 / PICKUP_POPUP_TICKS as f32,
-                    )
-                })
+                .map(|e| (e.resource_id, e.amount, e.life()))
                 .collect(),
         };
 
