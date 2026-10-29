@@ -2582,13 +2582,19 @@ mod tests {
                 Some(engine_base()),
             ));
             step_game(&mut stack, "head_bob", &[Key::ArrowLeft; 10]);
+            let music = row_of(&stack, MenuItem::Setting(EngineSetting::MusicVolume));
+            focus(&mut stack, music);
+            press(&mut stack, Key::ArrowLeft);
 
             let events = apply_events(&mut stack);
 
             assert_eq!(
                 events,
                 [
-                    MenuEvent::SettingsApplied(engine_base()),
+                    MenuEvent::SettingsApplied(EngineSettings {
+                        music_volume: 5.5,
+                        ..engine_base()
+                    }),
                     MenuEvent::GameSettingsApplied(game_values(&[("head_bob", 0), ("sway", 20)])),
                 ]
             );
@@ -2647,7 +2653,11 @@ mod tests {
             release(&mut stack);
             step_game(&mut stack, "head_bob", &[Key::ArrowLeft]);
             let stepped_down = shown_value(&stack, "Head bob");
+            let mut low = stack_of(screen_of(vec![head_bob(5)], None));
+            step_game(&mut low, "head_bob", &[Key::ArrowLeft, Key::ArrowLeft]);
+            let at_bottom = shown_value(&low, "Head bob");
 
+            assert_eq!(at_bottom.as_deref(), Some("0 %"));
             assert_eq!(at_top.as_deref(), Some("100 %"));
             assert_eq!(after_enter.as_deref(), Some("100 %"));
             assert_eq!(clicked.as_deref(), Some("25 %"));
@@ -2668,6 +2678,12 @@ mod tests {
             let beyond = band.max[0] + 500.0;
             stack.drag([beyond, (band.min[1] + band.max[1]) / 2.0], SIZE);
             let past_the_end = shown_value(&stack, "Head bob");
+            stack.drag(
+                [band.min[0] - 500.0, (band.min[1] + band.max[1]) / 2.0],
+                SIZE,
+            );
+            let before_the_start = shown_value(&stack, "Head bob");
+            drag_band(&mut stack, "head_bob", 1.0);
             release(&mut stack);
             let still_dragging = stack.is_dragging();
             drag_band(&mut stack, "head_bob", 0.1);
@@ -2677,6 +2693,7 @@ mod tests {
             assert!(dragging, "the press started a drag");
             assert_eq!(dragged.as_deref(), Some("70 %"));
             assert_eq!(past_the_end.as_deref(), Some("100 %"));
+            assert_eq!(before_the_start.as_deref(), Some("0 %"));
             assert!(!still_dragging, "releasing the button ended the drag");
             assert_eq!(after_release.as_deref(), Some("100 %"));
             assert_eq!(applied_game(&mut stack), game_values(&[("head_bob", 100)]));
@@ -2715,6 +2732,7 @@ mod tests {
             let mut stack = stack_of(screen_of(vec![inverted, no_step], None));
 
             step_game(&mut stack, "inverted", &[Key::ArrowLeft, Key::ArrowRight]);
+            let after_arrows = shown_value(&stack, "Inverted");
             press_band(&mut stack, "inverted", 0.5);
             drag_band(&mut stack, "inverted", 0.2);
             release(&mut stack);
@@ -2724,8 +2742,25 @@ mod tests {
             release(&mut stack);
             let clicked = applied_game(&mut stack);
 
+            assert_eq!(after_arrows.as_deref(), Some("10 %"));
             assert_eq!(stepped, game_values(&[("inverted", 10), ("no_step", 41)]));
             assert_eq!(clicked, game_values(&[("inverted", 10), ("no_step", 50)]));
+        }
+
+        #[test]
+        fn rows_sharing_a_key_show_and_edit_one_value() {
+            let first = head_bob(50);
+            let second = slider("head_bob", "Head bob again", 50);
+            let mut stack = stack_of(screen_of(vec![first, second], None));
+
+            step_game(&mut stack, "head_bob", &[Key::ArrowRight]);
+            let first_shown = shown_value(&stack, "Head bob");
+            let second_shown = shown_value(&stack, "Head bob again");
+            let applied = applied_game(&mut stack);
+
+            assert_eq!(first_shown.as_deref(), Some("55 %"));
+            assert_eq!(second_shown.as_deref(), Some("55 %"));
+            assert_eq!(applied, game_values(&[("head_bob", 55)]));
         }
 
         #[test]

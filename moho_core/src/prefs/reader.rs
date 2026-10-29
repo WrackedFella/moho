@@ -926,6 +926,14 @@ mod tests {
     }
 
     #[test]
+    fn game_line_without_value_is_malformed() {
+        let (prefs, issues) = Prefs::parse("[game]\nhead_bob\n");
+
+        assert_eq!(issues, vec![malformed("game", "head_bob", None)]);
+        assert_eq!(prefs.game_value("head_bob"), None);
+    }
+
+    #[test]
     fn unknown_section_is_reported_and_its_keys_default() {
         let content = base_ini_with(None).replace("[video]", "[vidoe]");
 
