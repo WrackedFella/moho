@@ -116,10 +116,9 @@ pub struct UnknownLoose;
 impl PhysicsWorld {
     /// Drop a loose object into the world and return its id.
     ///
-    /// The object advances inside [`PhysicsWorld::step`] under the world's gravity. Ids are
-    /// issued in increasing order and never reused.
+    /// The object advances inside [`PhysicsWorld::step`] under the world's gravity.
     ///
-    /// Characters do not yet ignore loose objects: a loose box blocks a character or is stepped
+    /// Characters do not ignore loose objects: a loose box blocks a character or is stepped
     /// onto like geometry, and any overlap shoves the box because the solver treats the
     /// character as infinitely heavy. Rays skip loose boxes because their colliders carry no
     /// tag.
