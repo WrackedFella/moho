@@ -3,6 +3,8 @@
 
 use crate::WorldMeshes;
 use glam::{Affine3A, Vec3};
+use moho_render_api::{WorldMesh, WorldMeshId};
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 /// First mesh id reserved for engine effects; games keep their own ids below it.
@@ -34,49 +36,202 @@ impl StreakStyle {
     }
 }
 
+/// Live-effect cap per effects quality, indexed like `QUALITY_NAMES`.
+const CAPS: [usize; 5] = [0, 32, 64, 128, 256];
+
+/// Quality used until a game sets one; matches the default `effects_quality` pref.
+const DEFAULT_QUALITY: usize = 3;
+
+/// One streak: its style, last placement and age.
+#[derive(Debug)]
+struct Streak {
+    style: StreakStyle,
+    head: Vec3,
+    /// Unit heading; `None` until a non-zero one is placed.
+    heading: Option<Vec3>,
+    placed_this_frame: bool,
+    age: Duration,
+    /// Age at which the fade began.
+    ended_at: Option<Duration>,
+}
+
+impl Streak {
+    /// The width factor of the fade: 1 until ended, then falling linearly to 0.
+    fn width_scale(&self) -> f32 {
+        let Some(ended_at) = self.ended_at else {
+            return 1.0;
+        };
+        if self.style.fade.is_zero() {
+            return 0.0;
+        }
+        let since_end = self.age.saturating_sub(ended_at);
+        (1.0 - since_end.as_secs_f32() / self.style.fade.as_secs_f32()).clamp(0.0, 1.0)
+    }
+
+    fn finished_fading(&self) -> bool {
+        self.ended_at
+            .is_some_and(|ended_at| self.age.saturating_sub(ended_at) >= self.style.fade)
+    }
+}
+
 /// The live effects of one scene.
-#[derive(Debug, Default)]
-pub struct Effects {}
+#[derive(Debug)]
+pub struct Effects {
+    streaks: BTreeMap<EffectHandle, Streak>,
+    next_handle: u64,
+    cap: usize,
+    mesh_uploaded: bool,
+}
+
+impl Default for Effects {
+    fn default() -> Self {
+        Self {
+            streaks: BTreeMap::new(),
+            next_handle: 0,
+            cap: CAPS[DEFAULT_QUALITY],
+            mesh_uploaded: false,
+        }
+    }
+}
 
 impl Effects {
-    pub fn begin_streak(&mut self, _style: StreakStyle) -> EffectHandle {
-        todo!("begin_streak")
+    /// Start a streak. At the quality's cap the handle is inert: never stored, so placing
+    /// or ending it does nothing.
+    pub fn begin_streak(&mut self, style: StreakStyle) -> EffectHandle {
+        let handle = EffectHandle(self.next_handle);
+        self.next_handle += 1;
+        if self.streaks.len() < self.cap {
+            self.streaks.insert(
+                handle,
+                Streak {
+                    style,
+                    head: Vec3::ZERO,
+                    heading: None,
+                    placed_this_frame: false,
+                    age: Duration::ZERO,
+                    ended_at: None,
+                },
+            );
+        }
+        handle
     }
 
-    pub fn place_streak(&mut self, _handle: EffectHandle, _head: Vec3, _heading: Vec3) {
-        todo!("place_streak")
+    /// Place the streak's head for this frame. A zero-length heading keeps the last one;
+    /// a stale or unknown handle is ignored.
+    pub fn place_streak(&mut self, handle: EffectHandle, head: Vec3, heading: Vec3) {
+        let Some(streak) = self.streaks.get_mut(&handle) else {
+            return;
+        };
+        streak.head = head;
+        streak.heading = heading.try_normalize().or(streak.heading);
+        streak.placed_this_frame = true;
     }
 
-    pub fn end(&mut self, _handle: EffectHandle) {
-        todo!("end")
+    /// Start the fade; the streak then draws at its last placement until it is gone.
+    pub fn end(&mut self, handle: EffectHandle) {
+        if let Some(streak) = self.streaks.get_mut(&handle) {
+            streak.ended_at.get_or_insert(streak.age);
+        }
     }
 
-    pub fn advance(&mut self, _dt: Duration) {
-        todo!("advance")
+    /// Age every effect by the frame time, start the fade of any past its `max_age` and
+    /// drop the finished ones.
+    pub fn advance(&mut self, dt: Duration) {
+        for streak in self.streaks.values_mut() {
+            streak.age += dt;
+            if streak.age >= streak.style.max_age {
+                streak.ended_at.get_or_insert(streak.style.max_age);
+            }
+        }
+        self.streaks.retain(|_, streak| !streak.finished_fading());
     }
 
-    pub fn set_quality(&mut self, _quality: u32) {
-        todo!("set_quality")
+    /// Cap new effects for `quality` (0 off to 4 ultra; higher clamps). Lowering keeps
+    /// what is live; 0 clears it.
+    pub fn set_quality(&mut self, quality: u32) {
+        let index = usize::try_from(quality).map_or(CAPS.len() - 1, |q| q.min(CAPS.len() - 1));
+        self.cap = CAPS[index];
+        if self.cap == 0 {
+            self.streaks.clear();
+        }
     }
 
+    /// How many effects are live, fading ones included.
     pub fn live(&self) -> usize {
-        todo!("live")
+        self.streaks.len()
     }
 
-    pub(crate) fn draw(&mut self, _meshes: &mut WorldMeshes, _eye: Vec3) {
-        todo!("draw")
+    /// Place every streak placed this frame or fading, unshadowed, facing `eye`.
+    pub(crate) fn draw(&mut self, meshes: &mut WorldMeshes, eye: Vec3) {
+        for streak in self.streaks.values_mut() {
+            let placed = std::mem::take(&mut streak.placed_this_frame);
+            if !placed && streak.ended_at.is_none() {
+                continue;
+            }
+            let Some(heading) = streak.heading else {
+                continue;
+            };
+            let width = streak.style.width * streak.width_scale();
+            if let Some(transform) =
+                streak_transform(streak.head, heading, streak.style.length, width, eye)
+            {
+                if !std::mem::replace(&mut self.mesh_uploaded, true) {
+                    meshes.upsert_movable(WorldMeshId(EFFECT_MESH_IDS_FROM), streak_mesh());
+                }
+                meshes.place_unshadowed(
+                    WorldMeshId(EFFECT_MESH_IDS_FROM),
+                    transform,
+                    streak.style.material,
+                );
+            }
+        }
     }
+}
+
+/// A kite from the tail at the origin to the head at x = 1, counter-clockwise seen from +Z.
+fn streak_mesh() -> WorldMesh {
+    WorldMesh::new(
+        vec![
+            [0.0, 0.0, 0.0],
+            [0.8, -0.5, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.8, 0.5, 0.0],
+        ],
+        vec![[0.0, 0.0, 1.0]; 4],
+        vec![1.0; 4],
+        vec![[1.0; 3]; 4],
+        vec![1.0; 4],
+        vec![0; 4],
+        vec![0, 1, 2, 0, 2, 3],
+    )
+    .expect("the kite's channels are all four vertices long and its indices are in range")
 }
 
 /// Where a streak from `head - dir * length` to `head` is drawn so that it faces `eye`.
 pub(crate) fn streak_transform(
-    _head: Vec3,
-    _dir: Vec3,
-    _length: f32,
-    _width: f32,
-    _eye: Vec3,
+    head: Vec3,
+    dir: Vec3,
+    length: f32,
+    width: f32,
+    eye: Vec3,
 ) -> Option<Affine3A> {
-    todo!("streak_transform")
+    let finite = head.is_finite() && dir.is_finite() && eye.is_finite() && length.is_finite();
+    if !finite || !width.is_finite() || width <= 0.0 {
+        return None;
+    }
+    let tail = head - dir * length;
+    let across = (eye - (head - dir * (length * 0.5))).cross(dir);
+    let y = if across.length() < 1e-4 {
+        dir.any_orthonormal_vector()
+    } else {
+        across.normalize()
+    };
+    Some(Affine3A::from_cols(
+        (dir * length).into(),
+        (y * width).into(),
+        dir.cross(y).into(),
+        tail.into(),
+    ))
 }
 
 #[cfg(test)]

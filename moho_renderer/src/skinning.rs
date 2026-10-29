@@ -616,6 +616,7 @@ mod tests {
             mesh: 3,
             texture: 9,
             source: VertexSource::Mesh,
+            casts_shadow: true,
         };
 
         assert_eq!(posed.source, VertexSource::Arena { first_vertex: 10 });

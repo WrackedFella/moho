@@ -52,12 +52,15 @@ impl Renderable for Prop {
     }
 }
 
+/// One recorded enqueue: `(unshadowed, mesh handle, instances)`.
+type Enqueue = (bool, u32, Vec<InstanceGpu>);
+
 // A tiny mock RendererBackend that records calls for assertions.
 struct MockRenderer {
     pub renders: std::cell::RefCell<Vec<String>>,
     pub drawn_handles: std::cell::RefCell<Vec<u32>>,
     /// Each enqueue as `(unshadowed, mesh handle, instances)`, in call order.
-    pub enqueues: Vec<(bool, u32, Vec<InstanceGpu>)>,
+    pub enqueues: Vec<Enqueue>,
     /// How many indexed meshes were registered.
     pub uploads: u32,
     next_handle: u32,
@@ -268,7 +271,7 @@ fn a_streak_is_enqueued_unshadowed_after_the_world_draws() {
         mock.uploads, 2,
         "the triangle and the streak mesh are registered once over three frames"
     );
-    let frames: Vec<&(bool, u32, Vec<InstanceGpu>)> = mock
+    let frames: Vec<&Enqueue> = mock
         .enqueues
         .iter()
         .filter(|(_, mesh, _)| *mesh != sphere_handle && *mesh != cube_handle)
@@ -282,7 +285,7 @@ fn a_streak_is_enqueued_unshadowed_after_the_world_draws() {
         assert_eq!(streak.2.len(), 1);
         assert_eq!(streak.2[0].model[3][..3], [x - 2.0, 1.0, 0.0], "the tail");
     }
-    let positions = |matches: &dyn Fn(&(bool, u32, Vec<InstanceGpu>)) -> bool| -> Vec<usize> {
+    let positions = |matches: &dyn Fn(&Enqueue) -> bool| -> Vec<usize> {
         (0..mock.enqueues.len())
             .filter(|i| matches(&mock.enqueues[*i]))
             .collect()

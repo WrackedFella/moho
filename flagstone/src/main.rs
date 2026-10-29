@@ -194,6 +194,11 @@ impl App {
             self.pending_render
                 .push(RenderRequest::BloomQuality(config.prefs.bloom() as u8));
         }
+        if config.prefs.effects_quality() != self.prefs.effects_quality() {
+            self.scene
+                .effects_mut()
+                .set_quality(config.prefs.effects_quality());
+        }
         self.set_pending_frame_cap(config.prefs.frame_cap());
         self.prefs = config.prefs;
     }

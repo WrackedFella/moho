@@ -146,6 +146,9 @@ impl AppInitializer {
         // Create basic world and scene (minimal setup)
         let entities = SceneEntities::default();
         let mut scene = moho_renderer::Scene::new();
+        scene
+            .effects_mut()
+            .set_quality(self.config.prefs.effects_quality());
         let terrain_material_idx =
             crate::app::world_geometry::register_terrain_material(&mut scene);
         let cut_face_material_idx =

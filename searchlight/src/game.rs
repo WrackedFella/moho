@@ -407,6 +407,11 @@ struct Stage {
 }
 
 impl Stage {
+    /// Cap the scene's live effects for the saved effects quality.
+    fn set_effects_quality(&mut self, quality: u32) {
+        self.scene.effects_mut().set_quality(quality);
+    }
+
     fn new() -> Self {
         let mut scene = Scene::new();
         let dummy_material = scene.material_table.find_or_push(&Paint::Dummy);
@@ -1110,6 +1115,7 @@ impl Game for SearchlightGame {
         }
         if let Some(settings) = self.pending_settings.take() {
             apply_engine_settings(&settings, ctx);
+            self.stage.set_effects_quality(settings.effects_quality);
             let mode = start_window_mode(settings.window_mode);
             if mode != ctx.window_mode() {
                 self.window_mode_applied(mode);

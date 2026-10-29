@@ -58,6 +58,8 @@ pub struct WorldMeshes {
     live: BTreeMap<WorldMeshId, Live>,
     pending: BTreeMap<WorldMeshId, Pending>,
     placements: BTreeMap<WorldMeshId, Vec<Placement>>,
+    /// Placements that cast no shadow, kept apart so the ordinary draw lists are unchanged.
+    unshadowed: BTreeMap<WorldMeshId, Vec<Placement>>,
     /// Skinned placements in call order.
     skinned: Vec<SkinnedPlacement>,
     /// Mesh ids already warned about, so a bad skinned placement warns once, not per frame;
@@ -159,24 +161,32 @@ impl WorldMeshes {
 
     /// Append a placement of the mesh under `id` for this frame that draws without casting a
     /// shadow, listed by [`unshadowed_draws`](Self::unshadowed_draws) and by no other draw list.
-    pub fn place_unshadowed(
-        &mut self,
-        _id: WorldMeshId,
-        _transform: glam::Affine3A,
-        _material: u32,
-    ) {
-        todo!("unshadowed placements")
+    pub fn place_unshadowed(&mut self, id: WorldMeshId, transform: glam::Affine3A, material: u32) {
+        self.unshadowed.entry(id).or_default().push(Placement {
+            transform,
+            material,
+            texture: None,
+        });
     }
 
     /// Unshadowed placements of live ids as `(backend handle, instance)`, in id order and
     /// call order.
     pub fn unshadowed_draws(&self) -> impl Iterator<Item = (u32, InstanceGpu)> + '_ {
-        std::iter::empty()
+        self.unshadowed.iter().flat_map(move |(id, placements)| {
+            let handle = self.live.get(id).map(|live| live.handle);
+            handle.into_iter().flat_map(move |handle| {
+                placements.iter().map(move |placement| {
+                    let model = glam::Mat4::from(placement.transform);
+                    (handle, instance(model, placement.material))
+                })
+            })
+        })
     }
 
     /// Drop every placement; the renderer calls this each frame.
     pub fn clear_placements(&mut self) {
         self.placements.clear();
+        self.unshadowed.clear();
         self.skinned.clear();
     }
 
