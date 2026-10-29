@@ -783,6 +783,7 @@ mod tests {
             ui_volume: 7.0,
             shadow_quality: 3,
             ssao_quality: 3,
+            effects_quality: 3,
             window_mode: moho_core::prefs::WindowMode::Windowed,
             resolution: (1920, 1080),
         }

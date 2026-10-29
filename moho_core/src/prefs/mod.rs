@@ -64,6 +64,7 @@ pub struct Prefs {
     // Graphics settings
     graphics_shadow_quality: u32, // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
     graphics_ssao_quality: u32,   // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
+    graphics_effects_quality: u32, // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
     graphics_bloom: u32,          // 0=Off, 1=Low, 2=High
     graphics_brightness: f32,
     // Video settings
@@ -267,6 +268,14 @@ impl Prefs {
         self.graphics_shadow_quality = quality.min(MAX_GRAPHICS_QUALITY);
     }
 
+    pub fn effects_quality(&self) -> u32 {
+        self.graphics_effects_quality
+    }
+
+    pub fn set_effects_quality(&mut self, quality: u32) {
+        self.graphics_effects_quality = quality.min(MAX_GRAPHICS_QUALITY);
+    }
+
     pub fn set_ssao_quality(&mut self, quality: u32) {
         self.graphics_ssao_quality = quality.min(MAX_GRAPHICS_QUALITY);
     }
@@ -349,6 +358,7 @@ impl Default for Prefs {
             // Default graphics settings (High)
             graphics_shadow_quality: 3,
             graphics_ssao_quality: 3,
+            graphics_effects_quality: 3,
             graphics_bloom: MAX_BLOOM_QUALITY,
             graphics_brightness: DEFAULT_BRIGHTNESS,
             // Default video settings
@@ -398,6 +408,7 @@ impl Prefs {
              \n[graphics]\n\
              shadow_quality={shadow}\n\
              ssao_quality={ssao}\n\
+             effects_quality={effects}\n\
              bloom={bloom}\n\
              brightness={brightness:.2}\n\
              \n[video]\n\
@@ -421,6 +432,7 @@ impl Prefs {
             voice = self.audio_voice_volume,
             shadow = self.graphics_shadow_quality,
             ssao = self.graphics_ssao_quality,
+            effects = self.graphics_effects_quality,
             bloom = self.graphics_bloom,
             brightness = self.graphics_brightness,
             window_mode = self.window_mode.as_str(),
@@ -591,6 +603,50 @@ mod tests {
 
         assert_eq!(above, 2);
         assert_eq!(max, 2);
+    }
+
+    #[test]
+    fn effects_quality_round_trips_through_the_file() {
+        for quality in 0..=4 {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config").join("prefs.ini");
+            let mut prefs = Prefs::default();
+            prefs.set_effects_quality(quality);
+
+            prefs.save_to(&path).unwrap();
+            let (loaded, warnings) = Prefs::load_from(&path);
+
+            assert_eq!(warnings, vec![], "effects_quality {quality}");
+            assert_eq!(loaded.effects_quality(), quality);
+            assert!(
+                prefs
+                    .to_ini_string()
+                    .contains(&format!("effects_quality={quality}\n"))
+            );
+        }
+    }
+
+    #[test]
+    fn effects_quality_defaults_to_high_and_clamps_to_ultra() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.ini");
+        let absent = dir.path().join("absent.ini");
+        let over = dir.path().join("over.ini");
+        fs::write(&absent, "[graphics]\nssao_quality=1\n").unwrap();
+        fs::write(&over, "[graphics]\neffects_quality=9\n").unwrap();
+
+        let default = Prefs::default().effects_quality();
+        let from_missing_file = Prefs::load_from(&missing).0.effects_quality();
+        let from_absent_key = Prefs::load_from(&absent).0.effects_quality();
+        let from_over_range = Prefs::load_from(&over).0.effects_quality();
+        let mut prefs = Prefs::default();
+        prefs.set_effects_quality(u32::MAX);
+
+        assert_eq!(default, 3);
+        assert_eq!(from_missing_file, 3);
+        assert_eq!(from_absent_key, 3);
+        assert_eq!(from_over_range, 4);
+        assert_eq!(prefs.effects_quality(), 4);
     }
 
     #[test]

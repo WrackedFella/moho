@@ -15,7 +15,7 @@ pub use moho_render_api::LightDesc;
 pub use scene::Scene;
 mod gpu_types;
 mod sky;
-pub use gpu_types::LightingGpu;
+pub use gpu_types::{LightingGpu, ShadowGpu};
 pub use moho_render_api::{InstanceGpu, MaterialGpu};
 use moho_render_api::{Rgba8Image, WorldMesh};
 mod block_on;

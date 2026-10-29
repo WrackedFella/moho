@@ -2,7 +2,7 @@
 
 use crate::RendererBackend;
 use crate::textures::WHITE_TEXTURE;
-use moho_render_api::{InstanceGpu, Rgba8Image, TextureId, WorldMesh, WorldMeshId};
+use moho_render_api::{InstanceGpu, Rgba8Image, TextureId, WorldMesh, WorldMeshId, WorldMeshRange};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// How a mesh draws: once at identity, or only where placed.
@@ -166,6 +166,18 @@ impl WorldMeshes {
     /// Queue removing the mesh under `id`.
     pub fn remove(&mut self, id: WorldMeshId) {
         self.pending.insert(id, None);
+    }
+
+    /// Queue removing the mesh under every id in `range`.
+    pub fn remove_range(&mut self, range: WorldMeshRange) {
+        for id in range.iter() {
+            self.remove(id);
+        }
+    }
+
+    /// How many meshes are registered with the backend, as of the last `flush`.
+    pub fn live_len(&self) -> usize {
+        self.live.len()
     }
 
     /// Apply queued changes: register new meshes, skins and textures, unregister replaced or
@@ -711,6 +723,53 @@ mod tests {
 
         let handles: Vec<u32> = draws(&meshes).iter().map(|(h, _)| *h).collect();
         assert_eq!(handles, vec![backend.handle_with_index_count(9)]);
+    }
+
+    #[test]
+    fn remove_range_unregisters_exactly_the_range() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        for id in 1..=5 {
+            meshes.upsert(WorldMeshId(id), mesh(id as usize), 0);
+        }
+        meshes.flush(&mut backend);
+        let handle = |id: usize| backend.handle_with_index_count(3 * id);
+        let (outside, inside) = (
+            BTreeSet::from([handle(1), handle(5)]),
+            BTreeSet::from([handle(2), handle(3), handle(4)]),
+        );
+
+        meshes.remove_range(WorldMeshRange::new(WorldMeshId(2), 3).expect("fits"));
+        assert!(
+            backend.unregistered.is_empty(),
+            "freed on flush, not before"
+        );
+        meshes.flush(&mut backend);
+
+        let freed: BTreeSet<u32> = backend.unregistered.iter().copied().collect();
+        assert_eq!(freed, inside);
+        assert_eq!(backend.unregistered.len(), 3, "each handle freed once");
+        assert_eq!(backend.live_handles(), outside);
+        let drawn: BTreeSet<u32> = draws(&meshes).iter().map(|(h, _)| *h).collect();
+        assert_eq!(drawn, outside, "only ids outside the range still draw");
+    }
+
+    #[test]
+    fn live_len_counts_flushed_meshes_only() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        assert_eq!(meshes.live_len(), 0);
+
+        meshes.upsert(A, mesh(1), 0);
+        meshes.upsert_movable(B, mesh(2));
+        assert_eq!(meshes.live_len(), 0, "queued, not yet registered");
+        meshes.flush(&mut backend);
+        assert_eq!(meshes.live_len(), 2, "static and movable both count");
+
+        meshes.remove(A);
+        assert_eq!(meshes.live_len(), 2, "a queued remove is not applied yet");
+        meshes.flush(&mut backend);
+        assert_eq!(meshes.live_len(), 1);
     }
 
     fn at(x: f32) -> glam::Affine3A {
@@ -1482,6 +1541,7 @@ mod tests {
         Place(u64),
         ClearPlacements,
         Remove(u64),
+        RemoveRange(u64, u32),
         Flush,
     }
 
@@ -1492,6 +1552,7 @@ mod tests {
             (0u64..5).prop_map(Op::Place),
             Just(Op::ClearPlacements),
             (0u64..4).prop_map(Op::Remove),
+            (0u64..5, 0u32..5).prop_map(|(first, len)| Op::RemoveRange(first, len)),
             Just(Op::Flush),
         ];
         prop::collection::vec(op, 0..40)
@@ -1535,6 +1596,11 @@ mod tests {
                         meshes.remove(WorldMeshId(id));
                         model.remove(&id);
                     }
+                    Op::RemoveRange(first, len) => {
+                        let range = WorldMeshRange::new(WorldMeshId(first), len).expect("fits");
+                        meshes.remove_range(range);
+                        model.retain(|id, _| !(first..first + u64::from(len)).contains(id));
+                    }
                     Op::Flush => meshes.flush(&mut backend),
                 }
             }
@@ -1547,6 +1613,7 @@ mod tests {
             prop_assert_eq!(drawn.len(), statics + placements, "one instance per static id and per live placement");
             prop_assert!(drawn_set.is_subset(&backend.live_handles()), "only live handles are drawn");
             prop_assert_eq!(backend.live_handles().len(), model.len(), "one upload per live id, none leaked");
+            prop_assert_eq!(meshes.live_len(), model.len(), "the store counts what the backend holds");
             let freed: BTreeSet<u32> = backend.unregistered.iter().copied().collect();
             prop_assert_eq!(freed.len(), backend.unregistered.len(), "no handle freed twice");
             prop_assert!(freed.iter().all(|h| backend.registered.iter().any(|(r, _)| r == h)));

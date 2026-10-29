@@ -564,7 +564,8 @@ impl<'a> Renderer<'a> {
         crate::render_ops::shadow_ops::update_shadow_matrices(
             &mut self.shadow,
             &self.queue,
-            cam_pos,
+            view_mat,
+            proj_mat,
             cut,
         );
 

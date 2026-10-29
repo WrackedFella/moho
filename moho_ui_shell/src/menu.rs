@@ -1798,10 +1798,10 @@ mod tests {
             drawn(&stack, "Back"),
         );
 
-        assert_eq!(top, (true, false, false), "ten of the twelve rows fit");
+        assert_eq!(top, (true, false, false), "ten of the thirteen rows fit");
         assert_eq!(
             end,
-            (false, false, true, true),
+            (false, false, false, true),
             "the end of the list is reachable"
         );
     }
@@ -1823,12 +1823,13 @@ mod tests {
             ui_volume: 7.0,
             shadow_quality: 3,
             ssao_quality: 3,
+            effects_quality: 3,
             window_mode: moho_core::prefs::WindowMode::Windowed,
             resolution: (1920, 1080),
         }
     }
 
-    /// Twelve settings-screen rows at 720 points, scrolled to the end: rows 2 to 11 are in view.
+    /// Thirteen settings-screen rows at 720 points, scrolled to the end: rows 3 to 12 are in view.
     fn scrolled_settings_stack() -> MenuStack<Act> {
         let mut items: Vec<MenuItem<Act>> = EngineSetting::ALL
             .into_iter()
@@ -1992,7 +1993,7 @@ mod tests {
 
         use super::*;
 
-        /// Tall enough that the twelve 56-point rows of `screen_of` need no scrolling.
+        /// Tall enough that the thirteen 56-point rows of `screen_of` need no scrolling.
         const SIZE: [f32; 2] = [1280.0, 1000.0];
 
         fn base() -> EngineSettings {
@@ -2005,13 +2006,14 @@ mod tests {
                 ui_volume: 7.0,
                 shadow_quality: 3,
                 ssao_quality: 3,
+                effects_quality: 3,
                 window_mode: WindowMode::Windowed,
                 resolution: (1920, 1080),
             }
         }
 
-        /// The ten rows, Apply, then Back: twelve rows, so the whole column fits on this module's
-        /// `SIZE`.
+        /// The eleven rows, Apply, then Back: thirteen rows, so the whole column fits on this
+        /// module's `SIZE`.
         fn screen_of(settings: EngineSettings) -> MenuScreen<Act> {
             let mut items: Vec<MenuItem<Act>> = EngineSetting::ALL
                 .into_iter()
@@ -2119,6 +2121,7 @@ mod tests {
             step(&mut stack, EngineSetting::WindowMode, &[Key::ArrowRight]);
             step(&mut stack, EngineSetting::InvertMouseY, &[Key::Enter]);
             step(&mut stack, EngineSetting::ShadowQuality, &[Key::ArrowLeft]);
+            step(&mut stack, EngineSetting::EffectsQuality, &[Key::ArrowLeft]);
 
             stack.pop();
             stack.push(screen_of(base()));
@@ -2227,6 +2230,25 @@ mod tests {
             assert_eq!(applied.shadow_quality, 4);
             assert_eq!(applied.ssao_quality, 2);
             assert_eq!(applied.resolution, (2560, 1440));
+        }
+
+        #[test]
+        fn the_effects_quality_row_steps_and_clamps_like_a_quality_choice() {
+            let low = EngineSettings {
+                effects_quality: 0,
+                ..base()
+            };
+            let mut stack = stack_of(screen_of(low));
+
+            step(
+                &mut stack,
+                EngineSetting::EffectsQuality,
+                &[Key::ArrowLeft, Key::ArrowRight],
+            );
+            let applied = apply(&mut stack);
+
+            assert_eq!(applied.effects_quality, 1);
+            assert_eq!(applied.ssao_quality, base().ssao_quality);
         }
 
         #[test]

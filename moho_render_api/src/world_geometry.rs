@@ -6,6 +6,44 @@ use std::fmt;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct WorldMeshId(pub u64);
 
+/// A run of consecutive [`WorldMeshId`]s: `first`, `first + 1`, ... for `len` ids.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct WorldMeshRange {
+    first: WorldMeshId,
+    len: u32,
+}
+
+impl WorldMeshRange {
+    /// The `len` ids starting at `first`; `None` when they would pass `u64::MAX`.
+    pub fn new(first: WorldMeshId, len: u32) -> Option<Self> {
+        first.0.checked_add(u64::from(len))?;
+        Some(Self { first, len })
+    }
+
+    /// The ids in ascending order.
+    pub fn iter(&self) -> impl Iterator<Item = WorldMeshId> + use<> {
+        let first = self.first.0;
+        // `new` checked that `first + len` fits, so the sum cannot overflow.
+        (0..u64::from(self.len)).map(move |offset| WorldMeshId(first + offset))
+    }
+
+    /// Whether `id` is one of the range's ids.
+    pub fn contains(&self, id: WorldMeshId) -> bool {
+        id.0.checked_sub(self.first.0)
+            .is_some_and(|offset| offset < u64::from(self.len))
+    }
+
+    /// How many ids the range holds.
+    pub fn len(&self) -> u32 {
+        self.len
+    }
+
+    /// True when the range holds no ids.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
 /// Why a [`WorldMesh`] was refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WorldMeshError {
@@ -251,6 +289,43 @@ mod tests {
             vec![0; vertices],
             indices,
         )
+    }
+
+    #[test]
+    fn range_yields_consecutive_ids_from_first() {
+        let range = WorldMeshRange::new(WorldMeshId(40), 3).expect("fits in u64");
+
+        let ids: Vec<WorldMeshId> = range.iter().collect();
+
+        assert_eq!(ids, [WorldMeshId(40), WorldMeshId(41), WorldMeshId(42)]);
+        assert_eq!(range.len(), 3);
+        assert!(!range.is_empty());
+        assert!(range.contains(WorldMeshId(40)));
+        assert!(range.contains(WorldMeshId(42)));
+        assert!(!range.contains(WorldMeshId(39)), "one before first");
+        assert!(!range.contains(WorldMeshId(43)), "one past the last");
+    }
+
+    #[test]
+    fn range_refuses_ids_past_u64_max() {
+        assert!(WorldMeshRange::new(WorldMeshId(u64::MAX), 2).is_none());
+        assert!(WorldMeshRange::new(WorldMeshId(u64::MAX - 1), 5).is_none());
+        assert!(WorldMeshRange::new(WorldMeshId(u64::MAX - 5), 5).is_some());
+        assert!(WorldMeshRange::new(WorldMeshId(u64::MAX - 4), 5).is_none());
+
+        let top = WorldMeshRange::new(WorldMeshId(u64::MAX - 10), 5).expect("ids stay below max");
+
+        assert_eq!(top.iter().last(), Some(WorldMeshId(u64::MAX - 6)));
+    }
+
+    #[test]
+    fn empty_range_yields_nothing() {
+        let range = WorldMeshRange::new(WorldMeshId(7), 0).expect("an empty range always fits");
+
+        assert!(range.is_empty());
+        assert_eq!(range.len(), 0);
+        assert_eq!(range.iter().count(), 0);
+        assert!(!range.contains(WorldMeshId(7)));
     }
 
     #[test]

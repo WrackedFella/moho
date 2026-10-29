@@ -14,7 +14,7 @@ Commands are case-insensitive on the first token; arguments are whitespace-separ
 | `noclip` | | Toggle noclip |
 | `sun` | `<yaw> <pitch>` | Sun direction in degrees |
 | `time` | `<0-24>` | Time of day in hours: 0 midnight, 6 dawn, 12 noon, 18 dusk |
-| `r_debug_view` | `<mode>` | 0 None, 1 Normals, 2 Bias, 3 Shadows, 4 LightLevel, 5 PointLights, 6 SkyAmbient, 7 SkyReflection; other values are rejected with a message |
+| `r_debug_view` | `<mode>` | 0 None, 1 Normals, 2 Bias, 3 Shadows, 4 LightLevel, 5 PointLights, 6 SkyAmbient, 7 SkyReflection, 8 Cascades; other values are rejected with a message |
 | `r_shadow_quality` | `<0-4>` | Off, Low, Med, High, Ultra |
 | `r_ssao_quality` | `<0-4>` | Off, Low, Med, High, Ultra |
 | `r_bloom` | `<0-2>` | Off, Low, High; saved to `[graphics] bloom` in flagstone, session-only in searchlight; other values are rejected |
