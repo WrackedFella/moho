@@ -4,11 +4,11 @@
 use glam::Vec3;
 
 use super::cascades::CascadeFit;
+use super::tier::ShadowTier;
 use super::{
     ActiveShadowLight, CASCADE_BLEND, CASCADE_LAYERS, MIN_SHADOW_LIGHT_INTENSITY, MOON_CASCADES,
     SUN_CASCADES,
 };
-use super::tier::ShadowTier;
 use crate::gpu_types::ShadowGpu;
 
 /// Above this `|light_dir · Y|` the look-at's `forward × up` is too close to zero to normalise.
@@ -38,8 +38,9 @@ pub(super) fn active_shadow_lights(sun: f32, moon: f32) -> Vec<ActiveShadowLight
 }
 
 /// The shadow-map layers to render for `active`: a sun's four cascades, a moon's two.
-pub(super) fn shadow_passes(active: &[ActiveShadowLight], _tier: ShadowTier) -> Vec<u32> {
-    active
+pub(super) fn shadow_passes(active: &[ActiveShadowLight], tier: ShadowTier) -> Vec<u32> {
+    let lights = if tier.casts_shadows() { active } else { &[] };
+    lights
         .iter()
         .flat_map(|light| match light.light_index {
             0 => 0..SUN_CASCADES as u32,
@@ -56,7 +57,7 @@ pub(super) fn shadow_gpu(
     splits: ([f32; SUN_CASCADES], [f32; MOON_CASCADES]),
     camera_forward: Vec3,
     (sun_intensity, moon_intensity): (f32, f32),
-    _tier: ShadowTier,
+    tier: ShadowTier,
 ) -> ShadowGpu {
     let mut matrices = [[[0.0; 4]; 4]; CASCADE_LAYERS];
     for (matrix, fit) in matrices.iter_mut().zip(sun.iter().chain(moon)) {
@@ -84,11 +85,16 @@ pub(super) fn shadow_gpu(
             CASCADE_BLEND,
         ],
         light_intensities: [sun_intensity, moon_intensity, 0.0, 0.0],
-        // [shadow_distance, light_size, pcss_quality, view-height cut (set per frame by shadow_ops)]
+        // [shadow distance (0 = off), unused, filter radius in texels, view-height cut (set per
+        // frame by shadow_ops)]
         metadata: [
-            splits.0[SUN_CASCADES - 1],
+            if tier.casts_shadows() {
+                splits.0[SUN_CASCADES - 1]
+            } else {
+                0.0
+            },
             0.0,
-            0.0,
+            tier.pcf_radius() as f32,
             0.0,
         ],
     }

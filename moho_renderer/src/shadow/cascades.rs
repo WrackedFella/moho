@@ -158,9 +158,7 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::shadow::{
-        CASCADE_BLEND, FILTER_MARGIN_TEXELS, SHADOW_DISTANCE, SUN_CASCADES,
-    };
+    use crate::shadow::{CASCADE_BLEND, FILTER_MARGIN_TEXELS, SHADOW_DISTANCE, SUN_CASCADES};
 
     use crate::shadow::tier::ShadowTier;
 
@@ -315,12 +313,8 @@ mod tests {
             for aspect in [SIXTEEN_NINE, TWENTY_ONE_NINE] {
                 let frustum = frustum(fov, aspect, near, far);
 
-                let fits = light_cascades::<{ SUN_CASCADES }>(
-                    light,
-                    frustum,
-                    Mat4::IDENTITY,
-                    map_size(),
-                );
+                let fits =
+                    light_cascades::<{ SUN_CASCADES }>(light, frustum, Mat4::IDENTITY, map_size());
 
                 let splits = practical_splits::<{ SUN_CASCADES }>(frustum.near, frustum.far);
                 assert!(
@@ -426,12 +420,8 @@ mod tests {
         let frustum = frustum(60.0, SIXTEEN_NINE, 0.1, 800.0);
 
         for light in [Vec3::Y, Vec3::NEG_Y] {
-            let fits = light_cascades::<4>(
-                light,
-                frustum,
-                Mat4::from_translation(position),
-                map_size(),
-            );
+            let fits =
+                light_cascades::<4>(light, frustum, Mat4::from_translation(position), map_size());
 
             for (i, fit) in fits.iter().enumerate() {
                 assert!(
