@@ -208,6 +208,19 @@ pub(crate) fn stairs_mesh(
     quad_mesh(&verts, &idxs)
 }
 
+/// A closed box floor spanning x and z in [-10, 10] and y in [`top` - `thickness`, `top`].
+pub(crate) fn slab_mesh(top: f32, thickness: f32) -> WorldMesh {
+    let mut verts: Vec<[f32; 3]> = Vec::new();
+    let mut idxs: Vec<u32> = Vec::new();
+    push_box(
+        &mut verts,
+        &mut idxs,
+        [-10.0, top - thickness, -10.0],
+        [10.0, top, 10.0],
+    );
+    quad_mesh(&verts, &idxs)
+}
+
 /// The tag tests give a mesh whose tag they do not inspect.
 pub(crate) const TEST_TAG: super::HitTag = super::HitTag(1);
 
