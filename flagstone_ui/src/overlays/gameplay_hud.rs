@@ -212,7 +212,7 @@ fn render_pickups(ui: &mut egui::Ui, pickups: &[(u32, u32, f32)]) {
     egui::Area::new("gameplay_hud_pickups".into())
         .anchor(
             egui::Align2::CENTER_BOTTOM,
-            egui::vec2(0.0, -(12.0 + SLOT_SIZE + POPUP_GAP)),
+            egui::vec2(0.0, -(HOTBAR_BOTTOM_MARGIN + SLOT_SIZE + POPUP_GAP)),
         )
         .show(ui.ctx(), |ui| {
             ui.vertical_centered(|ui| {
@@ -236,6 +236,8 @@ const HOTBAR_SLOTS: usize = 8;
 /// just agree in value).
 const TOOL_SLOT: usize = 0;
 const SLOT_SIZE: f32 = 48.0;
+/// Distance from the screen's bottom edge to the hotbar; the pickup popups anchor above it.
+const HOTBAR_BOTTOM_MARGIN: f32 = 12.0;
 const SLOT_GAP: f32 = 4.0;
 const SLOT_ROUNDING: f32 = 6.0;
 
@@ -248,7 +250,10 @@ fn render_hotbar(
     let total_width = HOTBAR_SLOTS as f32 * SLOT_SIZE + (HOTBAR_SLOTS - 1) as f32 * SLOT_GAP;
 
     egui::Area::new("gameplay_hud_hotbar".into())
-        .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -12.0))
+        .anchor(
+            egui::Align2::CENTER_BOTTOM,
+            egui::vec2(0.0, -HOTBAR_BOTTOM_MARGIN),
+        )
         .show(ui.ctx(), |ui| {
             let (rect, _) =
                 ui.allocate_exact_size(egui::vec2(total_width, SLOT_SIZE), egui::Sense::hover());
