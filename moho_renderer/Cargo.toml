@@ -14,6 +14,8 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+moho_level = { path = "../moho_level" }
+moho_physics = { workspace = true }
 proptest = { workspace = true }
 naga = { workspace = true, features = ["wgsl-in"] }
 tracing-subscriber = { workspace = true }

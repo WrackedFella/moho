@@ -6,6 +6,7 @@ pub mod anim;
 mod buffers;
 mod error;
 mod image;
+mod loaded;
 mod marker;
 mod mesh;
 mod model;
@@ -20,6 +21,7 @@ use glam::Mat4;
 
 pub use error::{LevelError, LevelErrorKind};
 pub use image::load_image;
+pub use loaded::LoadedLevel;
 pub use marker::LevelMarker;
 pub use model::{
     MODEL_MATERIAL_VARIANT, MeshSkin, Model, ModelImage, ModelMaterial, ModelMesh, ModelNode,
