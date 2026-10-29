@@ -33,7 +33,8 @@ flowchart LR
 
 | Module | Role |
 |---|---|
-| `arena` | Loads `assets/arena.glb` through `moho_level`; `ArenaMarkers` sorts named markers by kind and orders waypoints into the patrol route; `Arena` is the loaded level the sim starts from (meshes and their glTF material names, spawns, route, cover points, `nav`) and builds the world colliders; `Arena::from_level` also builds the `NavMesh` for `nav_profile` (the player-sized capsule plus clearance) and fails with `ArenaError::Nav` when that fails; it also drops waypoints no enemy spawn has a navmesh path to (logged as a warning) and fails with `ArenaError::NoReachableWaypoint` when none is left |
+| `levels` | `LEVELS`, the shipped levels by launch name (`arena`, the default, and `proving_ground`); `choose` maps the launch argument to a `LevelChoice` (a name, or a `.glb`/`.gltf` path) and fails with `UnknownLevel` listing the names; `load_notices` gives the console lines a loaded level earns (no `player_spawn`, no walkable area) |
+| `arena` | Loads a level file (`assets/arena.glb` by default) through `moho_level`; `ArenaMarkers` carries the `LevelMode` read from the `searchlight_level` marker; `ArenaMarkers` sorts named markers by kind and orders waypoints into the patrol route; `Arena` is the loaded level the sim starts from (meshes and their glTF material names, spawns, route, cover points, `nav`) and builds the world colliders; `Arena::from_level` also builds the `NavMesh` for `nav_profile` (the player-sized capsule plus clearance) and fails with `ArenaError::Nav` when that fails; it also drops waypoints no enemy spawn has a navmesh path to (logged as a warning) and fails with `ArenaError::NoReachableWaypoint` when none is left. A sandbox skips both failures: a navmesh error leaves an empty `NavMesh` and sets `nav_fallback`, and the route check does not run |
 | `kit` | `kit::load(roots, START_KIT_ID)`: loads `items` and `kits` through the content roots and resolves the `start` kit into a `searchlight_rules::Kit` (weapon numbers plus a ready `Loadout`); `KitLoadError` separates content errors from an invalid kit |
 | `tuning` | `tuning(Kit)`: builds the `SimConfig`, taking the rifle's numbers from the kit's weapon and the player's `Loadout` from the kit |
 | `input` | `SearchlightAction` set and default bindings; `build_action_map` builds the `ActionMap` at startup, with mouse look (`look_settings`: sensitivity, smoothing, invert Y) taken from `Prefs`, and a sensitivity not above zero falling back to the default 3.0; `SearchlightCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on F8); `resolve_lean` turns the held `LeanLeft` and `LeanRight` actions (Q, E) into one `LeanSide` |
@@ -44,10 +45,10 @@ flowchart LR
 | `cover` | `pick` and `offer`: choose the nearest free cover point an enemy under fire should run to, using world-only rays against the player (`Threat`) |
 | `sim` | `SearchlightSim`: player character and body, `Loadout` (rifle and `Rig` of spare magazines), dummies and enemies; emits `Feedback`; counts player kills |
 | `wave` | `WaveTuning` (first wave size, growth per wave, points per kill, grade mix; zero size or growth is refused) and `WaveState` (running wave, enemies still to spawn, the wave's grades, score) as plain numbers, no physics |
-| `mode` | `ArenaMode`: the arena as a game mode. Owns a `SearchlightSim` started empty, scores its kills and spawns each wave's enemies, graded by the wave's mix, at free enemy markers |
-| `hud` | Text for rifle state, hits, health, death and the wave and score line; the hit-edge direction; the death overlay |
+| `mode` | `ArenaMode`: a level as a game mode. Owns a `SearchlightSim` started empty; in an arena it scores kills and spawns each wave's enemies, graded by the wave's mix, at free enemy markers; in a sandbox (`ArenaMode::sandbox`) it has no waves and `tally()` is `None`. `ArenaMode::for_level` picks by `LevelMode` |
+| `hud` | Text for rifle state, hits, health, death and the wave and score line (omitted without a `Tally`); the hit-edge direction; the death overlay |
 | `menu` | The main (Play, Settings, Quit), pause (Resume, Settings, Quit) and settings (the engine's setting rows, Apply, Back) screens as `moho_ui_shell::MenuScreen` values (`main_screen`, `pause_screen`, `settings_screen(EngineSettings)`); `MenuAction` is what choosing an item asks the game to do. Focus, hit-testing and drawing belong to the shell's `MenuStack` |
-| `console_commands` | Builds the FPS `Console` from the game's `[bindings]`; the game's own commands register here (`tgm`, `fullscreen` and `grade`, parsed into `ConsoleCommand`) |
+| `console_commands` | Builds the FPS `Console` from the game's `[bindings]`; the game's own commands register here (`tgm`, `fullscreen` and `grade`, parsed into `ConsoleCommand`); `console_for` takes the level's mode, and in a sandbox `grade` replies "No waves in a sandbox" |
 | `debug_settings` | `DebugSettings`: the loaded `Prefs` and its path; reads and saves the game's `[debug]` values (`god_mode`); `set_engine_settings` writes the applied `EngineSettings` rows into the prefs and saves, keeping every other value |
 | `game` | `SearchlightGame`, the `moho_app::Game` implementation: samples look every frame while focused, playing and the console is closed (the camera draws the sim turned by the pending look, and `input::look_to_turn` is the one look mapping for command and camera), samples input, ticks the `ArenaMode`, turns `Feedback` into sound, title status line, hit flash, damage-direction edge, death tint and crosshair; asks the loop to pause while the shell captures input (console open) or a menu shows (main, pause or settings), so the sim freezes instead of ticking with an ignored command; while it does, `command()` still applies console commands but does not end the action-map tick, so the look already shown stays pending and is not lost |
 
@@ -132,7 +133,9 @@ spawns that many enemies through `SearchlightSim::spawn_enemy`. An enemy's grade
 later wave `growth` more; the next wave begins when the current one has nothing left to spawn and
 none alive. Spawned enemies take the next target number after the dummies; the dead keep theirs.
 Nothing spawns while the player is dead; the restart rebuilds the sim empty and begins wave 1
-with no score. `SearchlightGame` reads `wave()` and `score()` for the HUD.
+with no score. `SearchlightGame` reads `ArenaMode::tally()` (`Tally { wave, score }`) for the HUD.
+
+A sandbox level has no `WaveState`: `ArenaMode::sandbox` spawns no enemy, scores nothing and `tally()` is `None`, so the title line shows health only. A dead player still restarts the sim.
 
 The wave's grades come from `searchlight_rules::GradeMix` (`WaveTuning::mix`, default `GradeMix::default`): one row of five weights per wave in `Grade::LADDER` order, the last row holding past the end. `GradeMix::grades(wave, size, previous)` gives the wave's `WaveGrades` (a count per grade): the experienced-and-above count is the row's share of `size`, rounded half up and raised to carry the previous wave's share over, then each half is split among its grades by weight (largest remainder). `GradeMix::new` refuses an empty mix, an all-zero row and a row whose experienced-and-above share falls below the row before. `WaveState` draws its `WaveGrades` when a wave begins and `spawned()` gives the place of the next enemy in it.
 
@@ -188,16 +191,16 @@ hull, and the game draws dummies and enemies from the sim's own `character_body(
 
 ## 7 Arena contract
 
-Markers are node names in the glTF file. `player_spawn` is required and unique; at least one
+Markers are node names in the glTF file. A `searchlight_level` marker with the extra `mode` (`arena` or `sandbox`) sets the `LevelMode`; a missing marker means sandbox, a duplicate is `ArenaError::DuplicateMarker` and any other value is `ArenaError::BadMode`. The rules below are the arena's. A sandbox requires no `player_spawn` (at most one; without it the player starts at the origin), no `dummy_NN`, and skips the waypoint checks; if its navmesh cannot be built, `Arena::nav_fallback` is set and `nav` is empty instead of failing. In an arena `player_spawn` is required and unique; at least one
 `dummy_NN` is required; `enemy_spawn_NN` and `cover_NN` are optional (cover points feed `Arena::covers`; without them enemies under fire stand and fight; full-height `screen_NN` walls are plain geometry with no marker). `waypoint_NN` is optional
 unless an `enemy_spawn_NN` exists, then at least one is required (`ArenaError::MissingMarker`);
 the patrol route follows the waypoint numbers, not file order. A waypoint that no enemy spawn can walk to is dropped from the route with a warning; if enemy spawns exist and no waypoint is reachable, loading fails with `ArenaError::NoReachableWaypoint`. Waypoints are not checked when there are no enemy spawns. Each
-`cover_NN` carries a `shielded_from` extra (`+x`, `-x`, `+z`, `-z`). A mesh whose glTF material is named `floor` draws glossy (`SearchlightGame::with_named_arena`); every other mesh draws matte. Spawns are floor points;
+`cover_NN` carries a `shielded_from` extra (`+x`, `-x`, `+z`, `-z`). A mesh whose glTF material is named `floor` draws glossy (`SearchlightGame::with_named_arena`); a mesh whose material is named `mark` draws in a distinct marking paint (`Paint::ArenaMark`); every other mesh draws matte. Spawns are floor points;
 `SearchlightSim::new` lifts capsule centres by half the configured hull length (`STAND_HEIGHT` is the same figure for the shipped body). Errors surface as `ArenaError`.
 
-`assets/arena.glb` and `assets/rifle_shot.wav` are generated by
+`assets/arena.glb`, `assets/proving_ground.glb` (a sandbox range) and `assets/rifle_shot.wav` are generated by
 `assets/tools/make_arena.py`; see [`assets/README.md`](../../searchlight/assets/README.md) for
-regeneration and licence. A replacement arena must keep the marker names.
+regeneration and licence. A replacement arena must keep the marker names. The binary takes an optional level name or path (`cargo run -p searchlight -- proving_ground`); borrowed maps go in the git-ignored `assets/local/`.
 
 ## 8 Posture
 

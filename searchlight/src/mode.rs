@@ -5,19 +5,33 @@ use std::sync::Arc;
 
 use searchlight_rules::Grade;
 
-use crate::arena::Arena;
+use crate::arena::{Arena, LevelMode};
 use crate::input::SearchlightCommand;
 use crate::sim::{Feedback, SearchlightSim, SimConfig, Start};
 use crate::wave::{WaveState, WaveTuning};
 
-/// A sim that starts empty and is fed waves of enemies as the player clears them.
+/// The running wave, counting from 1, and the points scored since the last restart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Tally {
+    pub wave: u32,
+    pub score: u32,
+}
+
+/// The waves of a level that has them.
 #[derive(Debug)]
-pub struct ArenaMode {
-    sim: SearchlightSim,
-    waves: WaveState,
+struct Waves {
+    state: WaveState,
     tuning: WaveTuning,
     /// Kills of the sim already scored.
     seen_kills: u32,
+}
+
+/// A sim that starts empty and, in an arena, is fed waves of enemies as the player clears them.
+#[derive(Debug)]
+pub struct ArenaMode {
+    sim: SearchlightSim,
+    /// `None` in a sandbox: nothing spawns and nothing is scored.
+    waves: Option<Waves>,
 }
 
 impl ArenaMode {
@@ -26,9 +40,11 @@ impl ArenaMode {
     pub fn new(arena: Arc<Arena>, config: SimConfig, waves: WaveTuning) -> Self {
         let mut mode = Self {
             sim: SearchlightSim::with_start(arena, config, Start::Empty),
-            waves: WaveState::begin(&waves),
-            tuning: waves,
-            seen_kills: 0,
+            waves: Some(Waves {
+                state: WaveState::begin(&waves),
+                tuning: waves,
+                seen_kills: 0,
+            }),
         };
         mode.step_waves(None);
         mode
@@ -36,25 +52,28 @@ impl ArenaMode {
 
     /// Scores the sim's new kills and spawns the wave's enemies at the first free markers, each
     /// of `forced` or else the grade the wave's mix gives its place in the wave; none while the
-    /// player is dead.
+    /// player is dead. Does nothing in a sandbox.
     fn step_waves(&mut self, forced: Option<Grade>) {
+        let Some(waves) = self.waves.as_mut() else {
+            return;
+        };
         let kills = self.sim.kills();
         let scan = !self.sim.player_body().is_dead()
-            && (self.waves.to_spawn() != 0 || self.sim.enemies_alive() == 0);
+            && (waves.state.to_spawn() != 0 || self.sim.enemies_alive() == 0);
         let free = if scan {
             self.sim.free_enemy_spawns()
         } else {
             Vec::new()
         };
-        let spawn = self.waves.step(
-            &self.tuning,
-            kills - self.seen_kills,
+        let spawn = waves.state.step(
+            &waves.tuning,
+            kills - waves.seen_kills,
             self.sim.enemies_alive(),
             free.len(),
         );
-        self.seen_kills = kills;
-        let grades = self.waves.grades();
-        let first = self.waves.spawned() - spawn;
+        waves.seen_kills = kills;
+        let grades = waves.state.grades();
+        let first = waves.state.spawned() - spawn;
         let mut spawned = 0;
         for (&marker, index) in free.iter().zip(first..first + spawn) {
             let grade = forced
@@ -66,7 +85,7 @@ impl ArenaMode {
             }
             spawned += 1;
         }
-        self.waves.unspawned(spawn - spawned);
+        waves.state.unspawned(spawn - spawned);
     }
 
     /// Runs one tick of `dt` seconds: the sim, then the score of its kills and the wave's
@@ -74,9 +93,9 @@ impl ArenaMode {
     pub fn tick(&mut self, command: &SearchlightCommand, dt: f32) {
         let restarting = command.restart && self.sim.player_body().is_dead();
         self.sim.tick(command, dt);
-        if restarting {
-            self.waves = WaveState::begin(&self.tuning);
-            self.seen_kills = 0;
+        if restarting && let Some(waves) = self.waves.as_mut() {
+            waves.state = WaveState::begin(&waves.tuning);
+            waves.seen_kills = 0;
         }
         self.step_waves(command.forced_grade);
     }
@@ -90,14 +109,34 @@ impl ArenaMode {
         self.sim.drain_feedback()
     }
 
-    /// The running wave, counting from 1.
-    pub fn wave(&self) -> u32 {
-        self.waves.wave()
+    /// The wave and score, or `None` in a sandbox, which has neither.
+    pub fn tally(&self) -> Option<Tally> {
+        self.waves.as_ref().map(|waves| Tally {
+            wave: waves.state.wave(),
+            score: waves.state.score(),
+        })
     }
 
-    /// Points scored since the last restart.
-    pub fn score(&self) -> u32 {
-        self.waves.score()
+    /// A mode over `arena` with no waves: nothing spawns and nothing is scored.
+    pub fn sandbox(arena: Arc<Arena>, config: SimConfig) -> Self {
+        Self {
+            sim: SearchlightSim::with_start(arena, config, Start::Empty),
+            waves: None,
+        }
+    }
+
+    /// The mode a level of `mode` plays as: [`ArenaMode::new`] for an arena,
+    /// [`ArenaMode::sandbox`] for a sandbox.
+    pub fn for_level(
+        arena: Arc<Arena>,
+        mode: LevelMode,
+        config: SimConfig,
+        waves: WaveTuning,
+    ) -> Self {
+        match mode {
+            LevelMode::Arena => Self::new(arena, config, waves),
+            LevelMode::Sandbox => Self::sandbox(arena, config),
+        }
     }
 
     #[cfg(test)]
@@ -113,7 +152,7 @@ mod tests {
 
     use super::*;
     use crate::sim::STAND_HEIGHT;
-    use crate::test_support::{DT, arena_with, mag, rifle_from, test_config};
+    use crate::test_support::{DT, WaveScore, arena_with, mag, rifle_from, test_config};
 
     fn idle() -> SearchlightCommand {
         SearchlightCommand::default()
@@ -642,5 +681,82 @@ mod tests {
             "{feedback:?}"
         );
         assert!(mode.drain_feedback().is_empty());
+    }
+
+    /// An arena whose enemy markers would fill a first wave of three.
+    fn arena_with_enemy_markers() -> Arc<Arena> {
+        arena_with(&[], Vec3::ZERO, &markers(3), &[Vec3::new(0.0, 0.0, 25.0)])
+    }
+
+    #[test]
+    fn a_sandbox_spawns_no_enemy_in_sixty_seconds() {
+        let arena = arena_with_enemy_markers();
+        let waves_mode = ArenaMode::new(arena.clone(), calm_config(), tuning(3, 1, 100));
+        let mut mode = ArenaMode::sandbox(arena, calm_config());
+
+        for _ in 0..3600 {
+            mode.tick(&idle(), DT);
+        }
+
+        assert_eq!(
+            waves_mode.sim().enemy_count(),
+            3,
+            "the fixture must be one where waves would spawn"
+        );
+        assert_eq!(mode.sim().enemy_count(), 0);
+        assert_eq!(mode.sim().enemies_alive(), 0);
+    }
+
+    #[test]
+    fn a_sandbox_has_no_tally() {
+        let mut mode = ArenaMode::sandbox(arena_with_enemy_markers(), calm_config());
+        let at_start = mode.tally();
+
+        mode.tick(&idle(), DT);
+
+        assert_eq!(at_start, None);
+        assert_eq!(mode.tally(), None);
+    }
+
+    #[test]
+    fn a_sandbox_level_builds_a_mode_with_no_tally() {
+        let mode = ArenaMode::for_level(
+            arena_with_enemy_markers(),
+            LevelMode::Sandbox,
+            calm_config(),
+            tuning(3, 1, 100),
+        );
+
+        assert_eq!(mode.tally(), None);
+        assert_eq!(mode.sim().enemy_count(), 0);
+    }
+
+    #[test]
+    fn an_arena_level_builds_a_mode_on_wave_one() {
+        let mode = ArenaMode::for_level(
+            arena_with_enemy_markers(),
+            LevelMode::Arena,
+            calm_config(),
+            tuning(3, 1, 100),
+        );
+
+        assert_eq!(mode.tally(), Some(Tally { wave: 1, score: 0 }));
+        assert_eq!(mode.sim().enemy_count(), 3);
+    }
+
+    #[test]
+    fn a_dead_player_restarts_in_the_sandbox() {
+        let mut mode = ArenaMode::sandbox(arena_with_enemy_markers(), calm_config());
+        mode.sim_mut().kill_player();
+        mode.tick(&idle(), DT);
+        let dead = mode.sim().player_body().is_dead();
+
+        mode.tick(&restart(), DT);
+        mode.tick(&idle(), DT);
+
+        assert!(dead);
+        assert!(!mode.sim().player_body().is_dead());
+        assert_eq!(mode.tally(), None);
+        assert_eq!(mode.sim().enemy_count(), 0);
     }
 }

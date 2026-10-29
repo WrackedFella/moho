@@ -83,6 +83,7 @@ fn window_title(status: &str) -> String {
 
 /// The glTF material name of the arena meshes that draw glossy.
 const FLOOR_MATERIAL: &str = "floor";
+const MARK_MATERIAL: &str = "mark";
 
 const ARENA_FLOOR_GLOSS: f32 = 0.6;
 
@@ -94,6 +95,7 @@ enum Paint {
     Dummy,
     Enemy,
     Struck,
+    ArenaMark,
 }
 
 impl RenderMaterial for Paint {
@@ -112,6 +114,7 @@ impl RenderMaterial for Paint {
             Paint::Dummy => ([0.85, 0.6, 0.2], [0.7, 0.48, 0.16], 0.0, 0.0),
             Paint::Enemy => ([0.3, 0.4, 0.62], [0.22, 0.3, 0.5], 0.0, 0.0),
             Paint::Struck => ([1.0, 0.15, 0.1], [1.0, 0.15, 0.1], 1.0, 0.0),
+            Paint::ArenaMark => ([0.95, 0.9, 0.2], [0.8, 0.75, 0.15], 0.0, 0.0),
         };
         MaterialGpu {
             albedo: [top[0], top[1], top[2], gloss],
@@ -473,8 +476,9 @@ impl Stage {
         self.add_named_arena(meshes, &[], dummy_spawns);
     }
 
-    /// Draws `meshes` as the arena, the one named `floor` in the glossy [`Paint::ArenaFloor`]
-    /// and the rest, or any past the end of `material_names`, in [`Paint::Arena`].
+    /// Draws `meshes` as the arena, the one named `floor` in the glossy [`Paint::ArenaFloor`],
+    /// those named `mark` in [`Paint::ArenaMark`] and the rest, or any past the end of
+    /// `material_names`, in [`Paint::Arena`].
     fn add_named_arena(
         &mut self,
         meshes: Vec<WorldMesh>,
@@ -483,18 +487,17 @@ impl Stage {
     ) {
         let arena_material = self.scene.material_table.find_or_push(&Paint::Arena);
         let floor_material = self.scene.material_table.find_or_push(&Paint::ArenaFloor);
+        let mark_material = self.scene.material_table.find_or_push(&Paint::ArenaMark);
         for (index, mesh) in meshes.into_iter().enumerate() {
-            let is_floor = material_names
-                .get(index)
-                .is_some_and(|name| name.as_deref() == Some(FLOOR_MATERIAL));
+            let material = match material_names.get(index).and_then(Option::as_deref) {
+                Some(FLOOR_MATERIAL) => floor_material,
+                Some(MARK_MATERIAL) => mark_material,
+                _ => arena_material,
+            };
             self.scene.world_meshes_mut().upsert(
                 crate::arena::arena_mesh_id(index),
                 mesh,
-                if is_floor {
-                    floor_material
-                } else {
-                    arena_material
-                },
+                material,
             );
         }
         self.dummy_count = dummy_spawns.len();
@@ -1023,6 +1026,18 @@ impl SearchlightGame {
         }
         routing
     }
+
+    /// The window title's vitals line: health or death, the wave and score when the mode
+    /// has them, and god mode.
+    fn vitals_line(&self) -> String {
+        let sim = self.mode.sim();
+        let vitals = hud::death_text(sim.player_body().is_dead()).map_or_else(
+            || hud::health_text(sim.player_body().health(), sim.player_max_health()),
+            str::to_owned,
+        );
+        let vitals = hud::vitals_text(&vitals, self.mode.tally());
+        hud::god_mode_text(&vitals, self.god_mode)
+    }
 }
 
 impl Game for SearchlightGame {
@@ -1142,14 +1157,8 @@ impl Game for SearchlightGame {
             self.menu_frame(ctx);
             return;
         }
-        let sim = self.mode.sim();
-        let dead = sim.player_body().is_dead();
-        let vitals = hud::death_text(dead).map_or_else(
-            || hud::health_text(sim.player_body().health(), sim.player_max_health()),
-            str::to_owned,
-        );
-        let vitals = hud::vitals_text(&vitals, self.mode.wave(), self.mode.score());
-        let vitals = hud::god_mode_text(&vitals, self.god_mode);
+        let dead = self.mode.sim().player_body().is_dead();
+        let vitals = self.vitals_line();
         self.stage.refresh_title(&vitals);
         self.stage.refresh_hud(dead);
         if self.screen == Screen::Paused {
@@ -1194,8 +1203,30 @@ mod tests {
 
     use super::*;
     use crate::sim::Feedback;
-    use crate::test_support::{arena_with, mag, press, rifle_from, test_config, wave_tuning};
+    use crate::test_support::{
+        WaveScore, arena_with, mag, press, rifle_from, test_config, wave_tuning,
+    };
     use searchlight_rules::{Grade, LeanSide};
+
+    #[test]
+    fn a_sandbox_title_line_has_no_wave() {
+        let arena = arena_with(&[], Vec3::ZERO, &[], &[]);
+        let config = || test_config(rifle_from(mag(30, 30)), vec![]);
+        let actions = || {
+            let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+            ActionMap::new(bindings, 1.0)
+        };
+        let waves = SearchlightGame::new(
+            ArenaMode::new(arena.clone(), config(), wave_tuning(1)),
+            actions(),
+        );
+        let sandbox = SearchlightGame::new(ArenaMode::sandbox(arena, config()), actions());
+
+        let sandbox_line = sandbox.vitals_line();
+
+        assert_eq!(waves.vitals_line(), "HP 100/100 | Wave 1  Score 0");
+        assert_eq!(sandbox_line, "HP 100/100");
+    }
 
     fn game() -> SearchlightGame {
         let mode = ArenaMode::new(
@@ -4558,6 +4589,33 @@ mod mutation_tests {
                 .iter()
                 .all(|m| m.params == Paint::Dummy.to_gpu().params)
         );
+    }
+
+    #[test]
+    fn a_mark_mesh_gets_the_mark_paint() {
+        let mut stage = Stage::new();
+        let meshes = vec![
+            box_mesh(Vec3::ZERO, Vec3::ONE),
+            box_mesh(Vec3::new(5.0, 0.0, 0.0), Vec3::ONE),
+            box_mesh(Vec3::new(10.0, 0.0, 0.0), Vec3::ONE),
+        ];
+        let names = [
+            Some("floor".to_owned()),
+            Some("mark".to_owned()),
+            Some("wall".to_owned()),
+        ];
+        stage.add_named_arena(meshes, &names, &[]);
+        let mut renderer = FakeRenderer::default();
+
+        draw_once(&mut stage, &mut renderer);
+
+        let drawn = renderer.drawn_materials();
+        assert_eq!(drawn.len(), 3);
+        assert_material(drawn[0], Paint::ArenaFloor);
+        assert_material(drawn[1], Paint::ArenaMark);
+        assert_material(drawn[2], Paint::Arena);
+        let (mark, plain) = (Paint::ArenaMark.to_gpu(), Paint::Arena.to_gpu());
+        assert_ne!((mark.albedo, mark.params), (plain.albedo, plain.params));
     }
 
     #[test]

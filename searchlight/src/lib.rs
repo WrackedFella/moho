@@ -11,6 +11,7 @@ pub mod hud;
 pub mod input;
 pub mod kit;
 pub mod lean;
+pub mod levels;
 pub mod menu;
 pub mod mode;
 pub mod shot;
@@ -30,6 +31,11 @@ pub const TICK_HZ: u32 = 60;
 /// The base content folder, beside the crate like `assets`.
 pub fn content_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("content")
+}
+
+/// The baked levels and sounds, beside the crate like `content`.
+pub fn assets_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets")
 }
 
 /// Where the FPS keeps its preferences.

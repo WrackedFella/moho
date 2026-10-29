@@ -27,6 +27,7 @@ target
 /temp
 *.ini
 /assets/
+/searchlight/assets/local/
 /_rca/
 /todo/
 /_todo/.obsidian/workspace*.json
