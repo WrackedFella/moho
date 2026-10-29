@@ -1618,4 +1618,77 @@ mod tests {
 
         assert!(marker_draws(&mut app).is_empty());
     }
+
+    /// Sets up a first-person aim at a wall of blocks whose centre block carries `resource`.
+    fn app_aimed_at_block_with(resource: Option<u32>) -> App {
+        let mut app = App::headless();
+        app.game_state = crate::game_state::GameState::Playing;
+        app.simulation
+            .set_camera_mode(flagstone_game::controller::CameraMode::FirstPerson);
+        app.pawn.select_slot(flagstone_game::pawn::TOOL_SLOT);
+        app.camera.0 = glam::Mat4::from_translation(glam::Vec3::new(4.5, 70.5, 6.5)).inverse();
+        let grid = app
+            .light_system
+            .as_mut()
+            .expect("App starts with a light system")
+            .grid_mut();
+        for x in 2..=6 {
+            for y in 68..=72 {
+                for z in 1..=3 {
+                    grid.mutator()
+                        .place(flagstone_voxel::BlockPos::new(x, y, z), 1, resource);
+                }
+            }
+        }
+        app
+    }
+
+    fn sounds_after_mining(app: &mut App) -> Vec<(String, f32)> {
+        let _ = app.audio_event_rx.try_iter().count();
+        EventProcessor::new().handle_input_event(app, InputEvent::MineRequested);
+        app.event_bus.process_deferred();
+        app.audio_event_rx
+            .try_iter()
+            .filter_map(|event| match event {
+                moho_core::events::AudioEvent::PlaySound { path, volume } => Some((path, volume)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn pickup_asset_path() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/pickup.wav")
+    }
+
+    #[test]
+    fn mining_ore_publishes_the_pickup_cue() {
+        let mut app = app_aimed_at_block_with(Some(7));
+
+        let sounds = sounds_after_mining(&mut app);
+
+        assert_eq!(sounds.len(), 1, "one cue for one pickup: {sounds:?}");
+        assert_eq!(
+            std::path::Path::new(&sounds[0].0),
+            pickup_asset_path().as_path()
+        );
+        assert!(sounds[0].1 > 0.0, "audible: {sounds:?}");
+    }
+
+    #[test]
+    fn mining_plain_block_publishes_no_cue() {
+        let mut app = app_aimed_at_block_with(None);
+
+        let sounds = sounds_after_mining(&mut app);
+
+        assert!(sounds.is_empty(), "{sounds:?}");
+    }
+
+    #[test]
+    fn pickup_asset_exists() {
+        let path = pickup_asset_path();
+
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+
+        assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
+    }
 }

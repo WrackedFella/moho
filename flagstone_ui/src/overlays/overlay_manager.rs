@@ -78,6 +78,10 @@ pub struct HudData {
 
     /// The view-height slider's range and level; `None` when no world is loaded.
     pub view_height: Option<ViewHeightHud>,
+
+    /// Recent pickups as `(resource_id, amount, remaining_life)`, life from `0.0` to `1.0`.
+    /// Primitive for the same reason as `hotbar`.
+    pub pickups: Vec<(u32, u32, f32)>,
 }
 
 impl Default for HudData {
@@ -98,6 +102,7 @@ impl Default for HudData {
             equipped_tool_label: Some("Pickaxe".to_string()),
             selected_slot: 0,
             view_height: None,
+            pickups: Vec::new(),
         }
     }
 }

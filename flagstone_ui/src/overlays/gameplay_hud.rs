@@ -435,4 +435,95 @@ mod tests {
 
         assert_eq!(texts(&output), expected);
     }
+
+    fn pickup_data(pickups: Vec<(u32, u32, f32)>) -> HudData {
+        HudData {
+            is_fps_mode: true,
+            pickups,
+            ..Default::default()
+        }
+    }
+
+    /// Opacity a text is drawn with, 0 (invisible) to 255, folding in any shape-level fade.
+    fn drawn_alpha(output: &egui::FullOutput, text: &str) -> f32 {
+        fn find(shape: &egui::epaint::Shape, text: &str) -> Option<f32> {
+            match shape {
+                egui::epaint::Shape::Text(t) if t.galley.text() == text => {
+                    let color = t
+                        .override_text_color
+                        .unwrap_or_else(|| t.galley.job.sections[0].format.color);
+                    Some(f32::from(color.a()) * t.opacity_factor)
+                }
+                egui::epaint::Shape::Vec(shapes) => shapes.iter().find_map(|s| find(s, text)),
+                _ => None,
+            }
+        }
+        output
+            .shapes
+            .iter()
+            .find_map(|clipped| find(&clipped.shape, text))
+            .unwrap_or_else(|| panic!("text {text:?} not drawn"))
+    }
+
+    fn popup_frame(pickups: Vec<(u32, u32, f32)>) -> egui::FullOutput {
+        let mut hud = GameplayHud::new();
+        let data = pickup_data(pickups);
+        let ctx = egui::Context::default();
+        second_frame(&ctx, |ui| hud.render(ui, &data))
+    }
+
+    #[test]
+    fn pickup_popup_shows_amount_and_resource() {
+        let output = popup_frame(vec![(7, 3, 1.0)]);
+
+        let drawn = texts(&output);
+
+        assert!(drawn.contains(&"+3 R7".to_string()), "{drawn:?}");
+    }
+
+    #[test]
+    fn pickup_popup_fades_with_remaining_life() {
+        let output = popup_frame(vec![(7, 1, 1.0), (8, 1, 0.25)]);
+
+        let fresh = drawn_alpha(&output, "+1 R7");
+        let fading = drawn_alpha(&output, "+1 R8");
+
+        assert!(fading > 0.0, "a popup with life left is still visible");
+        assert!(
+            fading < fresh,
+            "fading {fading} should be fainter than fresh {fresh}"
+        );
+    }
+
+    #[test]
+    fn two_pickups_are_drawn_at_once() {
+        let output = popup_frame(vec![(7, 1, 0.9), (8, 2, 1.0)]);
+
+        let first = rect_of(&output, "+1 R7");
+        let second = rect_of(&output, "+2 R8");
+        let hotbar_top = 600.0 - 12.0 - SLOT_SIZE;
+
+        assert!(
+            (first.min.y - second.min.y).abs() >= first.height(),
+            "stacked, not overlapping: {first:?} {second:?}"
+        );
+        assert!(
+            first.max.y <= hotbar_top + 0.5 && second.max.y <= hotbar_top + 0.5,
+            "above the hotbar: {first:?} {second:?}"
+        );
+    }
+
+    #[test]
+    fn pickups_are_not_drawn_in_strategy_mode() {
+        let mut hud = GameplayHud::new();
+        let data = HudData {
+            is_fps_mode: false,
+            pickups: vec![(7, 3, 1.0)],
+            ..Default::default()
+        };
+
+        let drawn = drawn_texts(&mut hud, &data);
+
+        assert!(!drawn.iter().any(|t| t.starts_with('+')), "{drawn:?}");
+    }
 }

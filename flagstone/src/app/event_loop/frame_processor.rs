@@ -413,6 +413,7 @@ impl FrameProcessor {
             selected_slot: app.pawn.selected_slot,
             view_height: crate::app::view_level::layer_extent(app)
                 .map(|extent| app.view_level.hud(extent)),
+            pickups: Vec::new(),
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {
@@ -989,5 +990,56 @@ mod tests {
 
         assert!(hud_matches_data_flagged(CameraMode::Isometric, false));
         assert!(!hud_matches_data_flagged(CameraMode::Isometric, true));
+    }
+
+    #[test]
+    fn hud_data_carries_the_player_pawns_pickups() {
+        use moho_render_api::UiFrameSource;
+        let mut app = App::headless();
+        app.simulation
+            .set_camera_mode(flagstone_game::controller::CameraMode::FirstPerson);
+        app.pawn
+            .pickups
+            .push(flagstone_game::inventory::ResourceYield {
+                resource_id: 7,
+                amount: 2,
+            });
+        let clock = moho_app::GameClock::default();
+        let adapter = std::sync::Arc::new(std::sync::Mutex::new(hud_adapter()));
+        app.ui_adapter = Some(std::sync::Arc::clone(&adapter));
+
+        FrameProcessor::new().update_hud_data(&app, &clock, Duration::from_secs_f32(DT));
+        let produced = adapter
+            .lock()
+            .unwrap()
+            .ui_frame([800, 600])
+            .expect("playing paints");
+
+        let pos = app.simulation.position();
+        let cp = lod_player_chunk(pos);
+        let painted_with = |pickups: Vec<(u32, u32, f32)>| {
+            let mut reference = hud_adapter();
+            reference.update_hud_data(flagstone_ui::overlays::HudData {
+                player_position: [pos.x, pos.y, pos.z],
+                chunk_position: [cp.x, cp.y, cp.z],
+                camera_mode: "FirstPerson".to_string(),
+                is_fps_mode: true,
+                frame_time_secs: DT,
+                time_of_day: clock.time_of_day(),
+                camera_yaw: app.simulation.yaw_pitch().0,
+                equipped_tool_label: Some("Pickaxe".to_string()),
+                pickups,
+                ..Default::default()
+            });
+            reference.ui_frame([800, 600]).expect("playing paints")
+        };
+        assert!(
+            produced != painted_with(Vec::new()),
+            "the pawn's pickup is not on the HUD"
+        );
+        assert!(
+            produced == painted_with(vec![(7, 2, 1.0)]),
+            "a fresh pickup of 2 of R7 is drawn at full life"
+        );
     }
 }
