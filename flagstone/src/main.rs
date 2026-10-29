@@ -194,6 +194,11 @@ impl App {
             self.pending_render
                 .push(RenderRequest::BloomQuality(config.prefs.bloom() as u8));
         }
+        if config.prefs.effects_quality() != self.prefs.effects_quality() {
+            self.scene
+                .effects_mut()
+                .set_quality(config.prefs.effects_quality());
+        }
         self.set_pending_frame_cap(config.prefs.frame_cap());
         self.prefs = config.prefs;
     }
@@ -697,6 +702,23 @@ mod tests {
             .collect();
         assert_eq!(queued, vec![1]);
         assert_eq!(app.prefs.bloom(), 1);
+    }
+
+    #[test]
+    fn adopting_settings_sets_the_scenes_effects_quality() {
+        for (quality, cap) in [(1, 32), (4, 256), (0, 0)] {
+            let mut app = App::headless();
+            let mut adopted = Prefs::default();
+            adopted.set_effects_quality(quality);
+
+            app.adopt_settings(adopted);
+
+            let effects = app.scene.effects_mut();
+            for _ in 0..300 {
+                effects.begin_streak(moho_renderer::StreakStyle::new(1.0, 0.1, 0));
+            }
+            assert_eq!(effects.live(), cap, "adopted quality {quality}");
+        }
     }
 
     #[test]

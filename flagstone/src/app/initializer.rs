@@ -146,6 +146,9 @@ impl AppInitializer {
         // Create basic world and scene (minimal setup)
         let entities = SceneEntities::default();
         let mut scene = moho_renderer::Scene::new();
+        scene
+            .effects_mut()
+            .set_quality(self.config.prefs.effects_quality());
         let terrain_material_idx =
             crate::app::world_geometry::register_terrain_material(&mut scene);
         let cut_face_material_idx =
@@ -289,5 +292,22 @@ mod tests {
         let initialized = result.unwrap();
 
         assert_eq!(initialized.prefs.mouse_sensitivity(), 2.5);
+    }
+    #[test]
+    fn the_scene_starts_at_the_saved_effects_quality() {
+        for (quality, cap) in [(0, 0), (1, 32)] {
+            let mut prefs = Prefs::default();
+            prefs.set_effects_quality(quality);
+            let mut initialized = AppInitializer::new(AppConfig::from_prefs_struct(prefs))
+                .build()
+                .expect("default config builds");
+
+            let effects = initialized.scene.effects_mut();
+            for _ in 0..300 {
+                effects.begin_streak(moho_renderer::StreakStyle::new(1.0, 0.1, 0));
+            }
+
+            assert_eq!(effects.live(), cap, "saved quality {quality}");
+        }
     }
 }
