@@ -1,6 +1,6 @@
 # 0032 — A level switch is a command pinned to a content hash
 
-**Status:** Proposed; narrows [0011](0011-simulation-stays-network-ready.md)
+**Status:** Accepted; narrows [0011](0011-simulation-stays-network-ready.md)
 
 ## Context
 
