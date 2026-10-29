@@ -180,8 +180,9 @@ impl SettingsState {
     }
 
     /// Stage a shadow quality level (0=Off .. 4=Ultra) and mark it dirty.
-    pub fn set_shadow_quality(&mut self, _quality: u32) {
-        todo!()
+    pub fn set_shadow_quality(&mut self, quality: u32) {
+        self.staged.set_shadow_quality(quality);
+        self.mark_dirty(SettingsField::ShadowQuality);
     }
 
     /// Whether the staged bindings or mode of `action` differ from the saved ones.

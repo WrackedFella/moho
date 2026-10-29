@@ -194,6 +194,11 @@ impl App {
             self.pending_render
                 .push(RenderRequest::BloomQuality(config.prefs.bloom() as u8));
         }
+        if config.prefs.shadow_quality() != self.prefs.shadow_quality() {
+            self.pending_render.push(RenderRequest::ShadowQuality(
+                config.prefs.shadow_quality() as u8
+            ));
+        }
         if config.prefs.effects_quality() != self.prefs.effects_quality() {
             self.scene
                 .effects_mut()
