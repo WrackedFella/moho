@@ -8,6 +8,8 @@ use moho_ui_shell::Console;
 use moho_ui_shell::console::registry::CommandSpec;
 use searchlight_rules::Grade;
 
+use crate::arena::LevelMode;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConsoleCommand {
     GodMode(GodModeArg),
@@ -103,6 +105,15 @@ pub fn console(
         })
         .expect("\"grade\" is not an engine command and is registered once");
     (console, warnings)
+}
+
+/// [`console`] for a level of `mode`: in a sandbox `grade` replies that there are no waves.
+pub fn console_for(
+    bindings: &BTreeMap<String, String>,
+    mode: LevelMode,
+) -> (Console<ConsoleCommand>, Vec<BindingWarning>) {
+    let _ = mode;
+    console(bindings)
 }
 
 #[cfg(test)]
@@ -219,6 +230,35 @@ mod tests {
                 format!("Grade forced: {}", grade.name())
             );
         }
+    }
+
+    #[test]
+    fn grade_in_a_sandbox_says_there_are_no_waves() {
+        let (mut console, _) = console_for(&BTreeMap::new(), LevelMode::Sandbox);
+
+        console.submit("grade rookie");
+
+        assert_eq!(last_line(&console), "No waves in a sandbox");
+        assert!(
+            !printed(&console)
+                .iter()
+                .any(|line| line.starts_with("Grade forced")),
+            "{:?}",
+            printed(&console)
+        );
+    }
+
+    #[test]
+    fn grade_in_an_arena_level_still_forces_the_grade() {
+        let (mut console, _) = console_for(&BTreeMap::new(), LevelMode::Arena);
+
+        console.submit("grade rookie");
+
+        assert_eq!(last_line(&console), "Grade forced: rookie");
+        assert_eq!(
+            console.take_commands(),
+            vec![ConsoleCommand::ForceGrade(Some(Grade::Rookie))]
+        );
     }
 
     #[test]

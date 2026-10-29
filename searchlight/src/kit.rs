@@ -159,7 +159,7 @@ condition = 100
         assert_eq!(kit.weapon.cooldown_ticks, 6);
         assert_eq!(kit.weapon.reload_ticks, 120);
         assert_eq!(kit.weapon.charge_ticks, 30);
-        assert!((kit.weapon.range - 100.0).abs() < f32::EPSILON);
+        assert!((kit.weapon.range - 200.0).abs() < f32::EPSILON);
         assert_eq!(kit.weapon.well, MagazineWell::new("rifle"));
     }
 
