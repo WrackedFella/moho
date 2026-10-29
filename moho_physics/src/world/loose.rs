@@ -100,6 +100,7 @@ impl PhysicsWorld {
 mod tests {
     use super::*;
     use crate::world::test_support::{floor_mesh, slab_mesh, TEST_TAG};
+    use crate::world::RayQuery;
     use moho_render_api::{WorldMesh, WorldMeshId};
     use proptest::prelude::*;
 
@@ -209,7 +210,11 @@ mod tests {
     }
 
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(16))]
+        #![proptest_config(ProptestConfig {
+            cases: 16,
+            rng_seed: proptest::test_runner::RngSeed::Fixed(0x776),
+            ..ProptestConfig::default()
+        })]
 
         #[test]
         fn a_tumbling_box_rests_on_a_face(
@@ -237,33 +242,77 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_fast_small_box_stays_above_a_thin_floor() {
+    /// Drops a 5 cm cube on `floor` in each row and checks it ends resting on top, asleep.
+    fn assert_fast_small_box_rests_on(floor: &WorldMesh) {
         const HALF: f32 = 0.025;
-        let floors = [
-            ("5 cm slab", slab_mesh(0.0, 0.05)),
-            ("one-sided quad", floor_mesh(0.0)),
-        ];
         let rows = [(20.0, 0.0), (2.0, 30.0), (2.0, 100.0)];
 
-        for (floor_name, floor) in &floors {
-            for (height, speed) in rows {
-                let mut world = world_with_floor(floor);
-                let id = world.spawn_loose(&LooseSpawn {
-                    position: Vec3::new(0.0, height, 0.0),
-                    linear_velocity: Vec3::new(0.0, -speed, 0.0),
-                    ..LooseSpawn::new(cube(HALF), 0.1)
-                });
+        for (height, speed) in rows {
+            let mut world = world_with_floor(floor);
+            let id = world.spawn_loose(&LooseSpawn {
+                position: Vec3::new(0.0, height, 0.0),
+                linear_velocity: Vec3::new(0.0, -speed, 0.0),
+                ..LooseSpawn::new(cube(HALF), 0.1)
+            });
 
-                run(&mut world, 300);
+            run(&mut world, 300);
 
-                let y = read(&world, id).position.y;
-                assert!(
-                    y >= HALF - 0.001,
-                    "{floor_name}, {height} m at {speed} m/s: box ended at y={y}"
-                );
-            }
+            let state = read(&world, id);
+            let y = state.position.y;
+            assert!(
+                y >= HALF - 0.001,
+                "{height} m at {speed} m/s: box ended below the floor, y={y}"
+            );
+            assert!(
+                y <= HALF + 0.001,
+                "{height} m at {speed} m/s: box never came down to the floor, y={y}"
+            );
+            assert!(
+                state.asleep,
+                "{height} m at {speed} m/s: box is not asleep, state {state:?}"
+            );
         }
+    }
+
+    #[test]
+    fn a_fast_small_box_stays_above_a_thin_slab() {
+        assert_fast_small_box_rests_on(&slab_mesh(0.0, 0.05));
+    }
+
+    #[test]
+    fn a_fast_small_box_stays_above_a_one_sided_quad() {
+        assert_fast_small_box_rests_on(&floor_mesh(0.0));
+    }
+
+    #[test]
+    fn rays_pass_through_a_loose_box() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.2, 0.0),
+            ..LooseSpawn::new(cube(0.2), 1.0)
+        });
+        run(&mut world, 60);
+        let y = read(&world, id).position.y;
+        assert!(
+            (y - 0.2).abs() <= 0.001,
+            "the box rests on the floor, y={y}"
+        );
+
+        let hit = world
+            .cast_ray(&RayQuery {
+                origin: Vec3::new(0.0, 3.0, 0.0),
+                direction: Vec3::NEG_Y,
+                max_distance: 10.0,
+                ignore: None,
+            })
+            .expect("the floor is in range");
+
+        assert_eq!(hit.tag, TEST_TAG);
+        assert!(
+            hit.point.y.abs() <= 0.001,
+            "hit the floor, not the box: {hit:?}"
+        );
+        assert!((hit.distance - 3.0).abs() <= 0.001, "{hit:?}");
     }
 
     #[test]
@@ -529,30 +578,211 @@ mod tests {
         assert!(damped < free - 2.5, "free {free}, damped {damped}");
     }
 
-    #[test]
-    #[should_panic(expected = "mass must be positive and finite")]
-    fn spawn_panics_on_a_zero_mass() {
-        let mut world = PhysicsWorld::new();
+    fn valid_spawn() -> LooseSpawn {
+        LooseSpawn::new(cube(0.1), 1.0)
+    }
 
-        world.spawn_loose(&LooseSpawn::new(cube(0.1), 0.0));
+    /// The panic message of spawning `spawn` into a fresh world; `None` if it did not panic.
+    fn spawn_panic_message(spawn: &LooseSpawn) -> Option<String> {
+        let mut world = PhysicsWorld::new();
+        let payload =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| world.spawn_loose(spawn)))
+                .err()?;
+        let message = payload
+            .downcast_ref::<&str>()
+            .map(|text| (*text).to_owned())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        Some(message)
+    }
+
+    /// Every row must panic with a message containing `expected`.
+    fn assert_rows_rejected(rows: &[(String, LooseSpawn)], expected: &str) {
+        for (name, spawn) in rows {
+            match spawn_panic_message(spawn) {
+                None => panic!("{name}: the spawn was accepted"),
+                Some(message) => assert!(
+                    message.contains(expected),
+                    "{name}: panic message {message:?} lacks {expected:?}"
+                ),
+            }
+        }
+    }
+
+    const BAD_POSITIVE: [(&str, f32); 4] = [
+        ("zero", 0.0),
+        ("negative", -0.1),
+        ("NaN", f32::NAN),
+        ("infinite", f32::INFINITY),
+    ];
+
+    const BAD_NON_NEGATIVE: [(&str, f32); 3] = [
+        ("negative", -0.1),
+        ("NaN", f32::NAN),
+        ("infinite", f32::INFINITY),
+    ];
+
+    const NON_FINITE: [(&str, f32); 3] = [
+        ("NaN", f32::NAN),
+        ("+inf", f32::INFINITY),
+        ("-inf", f32::NEG_INFINITY),
+    ];
+
+    const AXES: [(&str, usize); 3] = [("x", 0), ("y", 1), ("z", 2)];
+
+    fn with_component(base: Vec3, axis: usize, value: f32) -> Vec3 {
+        let mut parts = base.to_array();
+        parts[axis] = value;
+        Vec3::from_array(parts)
     }
 
     #[test]
-    #[should_panic(expected = "half extents must be positive and finite")]
-    fn spawn_panics_on_a_non_positive_half_extent() {
-        let mut world = PhysicsWorld::new();
+    fn spawn_rejects_a_bad_mass() {
+        let rows: Vec<_> = BAD_POSITIVE
+            .iter()
+            .map(|&(name, mass)| (format!("{name} mass"), LooseSpawn::new(cube(0.1), mass)))
+            .collect();
 
-        world.spawn_loose(&LooseSpawn::new(cuboid(Vec3::new(0.1, 0.0, 0.1)), 1.0));
+        assert_rows_rejected(&rows, "mass must be positive and finite");
     }
 
     #[test]
-    #[should_panic(expected = "velocity must be finite")]
-    fn spawn_panics_on_a_non_finite_velocity() {
-        let mut world = PhysicsWorld::new();
+    fn spawn_rejects_a_bad_half_extent() {
+        let mut rows = Vec::new();
+        for (axis_name, axis) in AXES {
+            for (name, value) in BAD_POSITIVE {
+                let half = with_component(Vec3::splat(0.1), axis, value);
+                rows.push((
+                    format!("{name} half extent on {axis_name}"),
+                    LooseSpawn::new(cuboid(half), 1.0),
+                ));
+            }
+        }
 
-        world.spawn_loose(&LooseSpawn {
-            linear_velocity: Vec3::new(f32::NAN, 0.0, 0.0),
-            ..LooseSpawn::new(cube(0.1), 1.0)
-        });
+        assert_rows_rejected(&rows, "half extents must be positive and finite");
+    }
+
+    #[test]
+    fn spawn_rejects_a_non_finite_velocity() {
+        let mut rows = Vec::new();
+        for (axis_name, axis) in AXES {
+            for (name, value) in NON_FINITE {
+                let bad = with_component(Vec3::ZERO, axis, value);
+                rows.push((
+                    format!("{name} linear velocity on {axis_name}"),
+                    LooseSpawn {
+                        linear_velocity: bad,
+                        ..valid_spawn()
+                    },
+                ));
+                rows.push((
+                    format!("{name} angular velocity on {axis_name}"),
+                    LooseSpawn {
+                        angular_velocity: bad,
+                        ..valid_spawn()
+                    },
+                ));
+            }
+        }
+
+        assert_rows_rejected(&rows, "velocity must be finite");
+    }
+
+    #[test]
+    fn spawn_rejects_a_bad_material_or_damping() {
+        type Setter = fn(&mut LooseSpawn, f32);
+        let fields: [(&str, &str, Setter); 4] = [
+            (
+                "friction",
+                "friction must be non-negative and finite",
+                |s, v| {
+                    s.friction = v;
+                },
+            ),
+            (
+                "restitution",
+                "restitution must be non-negative and finite",
+                |s, v| s.restitution = v,
+            ),
+            (
+                "linear damping",
+                "damping must be non-negative and finite",
+                |s, v| s.linear_damping = v,
+            ),
+            (
+                "angular damping",
+                "damping must be non-negative and finite",
+                |s, v| s.angular_damping = v,
+            ),
+        ];
+
+        for (field, expected, set) in fields {
+            let rows: Vec<_> = BAD_NON_NEGATIVE
+                .iter()
+                .map(|&(name, value)| {
+                    let mut spawn = valid_spawn();
+                    set(&mut spawn, value);
+                    (format!("{name} {field}"), spawn)
+                })
+                .collect();
+
+            assert_rows_rejected(&rows, expected);
+        }
+    }
+
+    #[test]
+    fn spawn_rejects_a_non_finite_pose() {
+        let mut position_rows = Vec::new();
+        let mut rotation_rows = Vec::new();
+        for (axis_name, axis) in AXES {
+            for (name, value) in NON_FINITE {
+                position_rows.push((
+                    format!("{name} position on {axis_name}"),
+                    LooseSpawn {
+                        position: with_component(Vec3::ZERO, axis, value),
+                        ..valid_spawn()
+                    },
+                ));
+            }
+        }
+        for component in 0..4 {
+            for (name, value) in NON_FINITE {
+                let mut parts = Quat::IDENTITY.to_array();
+                parts[component] = value;
+                rotation_rows.push((
+                    format!("{name} rotation component {component}"),
+                    LooseSpawn {
+                        rotation: Quat::from_array(parts),
+                        ..valid_spawn()
+                    },
+                ));
+            }
+        }
+
+        assert_rows_rejected(&position_rows, "position must be finite");
+        assert_rows_rejected(&rotation_rows, "rotation must be finite");
+    }
+
+    #[test]
+    fn spawn_accepts_zero_friction_restitution_and_damping() {
+        let mut world = PhysicsWorld::new();
+        let spawn = LooseSpawn {
+            friction: 0.0,
+            restitution: 0.0,
+            linear_damping: 0.0,
+            angular_damping: 0.0,
+            position: Vec3::new(1.0, 2.0, 3.0),
+            ..valid_spawn()
+        };
+
+        let message = spawn_panic_message(&spawn);
+        let id = world.spawn_loose(&spawn);
+
+        assert_eq!(message, None, "zero material values are valid");
+        let state = read(&world, id);
+        assert!(
+            state.position.abs_diff_eq(spawn.position, 1e-6),
+            "{state:?}"
+        );
     }
 }
