@@ -23,7 +23,8 @@ impl AutosaveSchedule {
 
     /// A schedule due `interval` of play after the last save, at the simulation tick rate.
     pub fn for_interval(interval: std::time::Duration) -> Self {
-        Self::new(interval.as_secs() * u64::from(flagstone_game::TICK_HZ))
+        let ticks = interval.as_millis() * u128::from(flagstone_game::TICK_HZ) / 1000;
+        Self::new(u64::try_from(ticks).unwrap_or(u64::MAX))
     }
 
     pub fn tick(&mut self) {
@@ -635,7 +636,11 @@ mod tests {
 
         #[test]
         fn fractional_interval_schedule_is_due_at_exactly_the_interval() {
-            assert_eq!(TICK_HZ % 2, 0, "1.5 seconds must be a whole number of ticks");
+            assert_eq!(
+                TICK_HZ % 2,
+                0,
+                "1.5 seconds must be a whole number of ticks"
+            );
             let due_at = u64::from(TICK_HZ) * 3 / 2;
             let mut schedule = AutosaveSchedule::for_interval(Duration::from_millis(1500));
             schedule.mark_edited();
