@@ -85,6 +85,7 @@ opened there still saves to the default path).
 | | `chunks_per_frame` | unsigned integer, 1 or more | `4` |
 | `[content]` | `mods` | comma-separated mod names, order kept, blanks dropped; see [content format](content-format.md#mods) | none |
 | `[debug]` | one key per game debug value | free text, see below | none |
+| `[game]` | one key per game setting | free text, see below | none |
 
 `mouse_sensitivity` is on Source's scale: one count turns `0.022` degrees times the
 value (`source_look_per_count`, `moho_input/src/action_map.rs`), so `3` is the default feel.
@@ -127,12 +128,15 @@ A chord prefixes a key or mouse button with `Ctrl+`, `Shift+` and `Alt+` (`Ctrl+
 
 `[action_modes]` is stored raw like `[bindings]` (`Prefs::action_modes`, `Prefs::set_action_modes`) and written only when non-empty. Each key is the stable `name()` of a toggleable action, each value `hold` or `toggle` (any case, surrounding whitespace ignored). `ActionBindings::load_modes` reads it; `modes_to_section` writes every toggleable action, `Hold` included. An unknown action, a non-toggleable action or an unknown value yields a `BindingWarning` and the action stays `Hold`.
 
-`[debug]` is a game-owned section of named values (a game's debug toggles), stored raw like
-`[bindings]` and written only when non-empty. `Prefs::debug_value` reads one;
-`Prefs::set_debug_value` stores one and returns `DebugValueError` for a name or value
-that would not read back exactly. Names are non-empty lowercase letters, digits and
-underscores. Values are non-empty, have no leading or trailing whitespace, and contain no
-`;`, `#` or line break. The Settings screen's save keeps them.
+`[debug]` and `[game]` are game-owned sections of named values (`[debug]` a game's debug
+toggles, `[game]` its own player settings, such as a slider on the Settings screen), stored
+raw like `[bindings]` and each written only when non-empty. `Prefs::debug_value` and
+`Prefs::game_value` read one; `Prefs::set_debug_value` and `Prefs::set_game_value` store one and return
+`PrefsValueError` for a name or value that would not read back exactly. The two sections
+are independent: the same name may hold different values in each. Names are non-empty
+lowercase letters, digits and underscores. Values are non-empty, have no leading or
+trailing whitespace, and contain no `;`, `#` or line break. The Settings screen's save
+keeps them.
 
 A `Hold ` prefix (any case) makes a binding fire only after the input has been held for the game's hold threshold, e.g. `Hold R`, `Hold Pad West`; without it the binding fires on press, or on a quick release when the same input also has a `Hold` binding ([input](../architecture/input-and-state.md)). `Binding::name` writes the prefix back.
 
