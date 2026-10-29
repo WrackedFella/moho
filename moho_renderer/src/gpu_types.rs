@@ -27,7 +27,7 @@ pub struct LightingGpu {
     pub ambient: [f32; 4],
     /// Shader parameters:
     /// x = Time of day (0-24 hours)
-    /// y = Debug Mode (0=None, 1=Normals, 2=Bias, 3=Shadows, 4=Light level, 5=Point lights, 6=Sky ambient)
+    /// y = Debug Mode (0=None, 1=Normals, 2=Bias, 3=Shadows, 4=Light level, 5=Point lights, 6=Sky ambient, 7=Sky reflection, 8=Cascades)
     /// zw = Unused
     pub params: [f32; 4],
     /// Sky zenith colour (rgb) and unused (w). The renderer fills it from the time of
@@ -37,17 +37,6 @@ pub struct LightingGpu {
     pub sky_horizon: [f32; 4],
     /// Sky ground colour (rgb) and unused (w). Filled by the renderer.
     pub sky_ground: [f32; 4],
-}
-
-/// GPU-visible shadow matrix for light-space transformation (single shadow map - legacy)
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct ShadowMatrixGpu {
-    /// Light view-projection matrix (4x4 stored as 4 vec4s)
-    pub sm0: [f32; 4],
-    pub sm1: [f32; 4],
-    pub sm2: [f32; 4],
-    pub sm3: [f32; 4],
 }
 
 /// Uniform for the tone-map pass.
@@ -72,43 +61,21 @@ impl ToneMapGpu {
     }
 }
 
-/// Maximum number of shadow-casting lights supported
-pub const MAX_SHADOW_LIGHTS: usize = 4;
-
-/// GPU-visible multi-light shadow matrices
-/// Contains up to 4 shadow matrices (Sun=0, Moon=1, Dynamic1=2, Dynamic2=3)
-/// Total size: 288 bytes (4 lights × 64 bytes + 32 bytes metadata)
+/// GPU-visible cascaded shadow block: sun layers 0-3, moon layers 4-5. Total size: 496 bytes.
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct MultiLightShadowGpu {
-    /// Light 0 matrix (Sun) - 4x4 stored as 4 vec4s
-    pub light0_m0: [f32; 4],
-    pub light0_m1: [f32; 4],
-    pub light0_m2: [f32; 4],
-    pub light0_m3: [f32; 4],
-
-    /// Light 1 matrix (Moon) - 4x4 stored as 4 vec4s
-    pub light1_m0: [f32; 4],
-    pub light1_m1: [f32; 4],
-    pub light1_m2: [f32; 4],
-    pub light1_m3: [f32; 4],
-
-    /// Light 2 matrix (Dynamic 1) - 4x4 stored as 4 vec4s
-    pub light2_m0: [f32; 4],
-    pub light2_m1: [f32; 4],
-    pub light2_m2: [f32; 4],
-    pub light2_m3: [f32; 4],
-
-    /// Light 3 matrix (Dynamic 2) - 4x4 stored as 4 vec4s
-    pub light3_m0: [f32; 4],
-    pub light3_m1: [f32; 4],
-    pub light3_m2: [f32; 4],
-    pub light3_m3: [f32; 4],
-
-    /// Light intensities for blending (x=Sun, y=Moon, z=Dynamic1, w=Dynamic2)
+#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
+pub struct ShadowGpu {
+    /// Light view-projection per layer
+    pub matrices: [[[f32; 4]; 4]; 6],
+    /// Far end of each cascade by view depth: sun in `[0]`, moon in `[1].xy`
+    pub split_far: [[f32; 4]; 2],
+    /// World size of one texel per cascade, packed like `split_far`
+    pub texel_world: [[f32; 4]; 2],
+    /// Camera forward (xyz) and the cascade blend fraction (w)
+    pub camera_forward: [f32; 4],
+    /// Light intensities (x=Sun, y=Moon)
     pub light_intensities: [f32; 4],
-
-    /// Metadata: x=shadow_distance, y=light_size (for PCSS), z=pcss_quality (0=off, 1=low, 2=med, 3=high), w=view-height cut
+    /// Metadata: x=shadow distance, y=light_size (for PCSS), z=pcss_quality, w=view-height cut
     pub metadata: [f32; 4],
 }
 
@@ -163,48 +130,6 @@ impl Default for PointLightGpu {
     }
 }
 
-impl Default for MultiLightShadowGpu {
-    fn default() -> Self {
-        Self {
-            // Identity matrices for all lights
-            light0_m0: [1.0, 0.0, 0.0, 0.0],
-            light0_m1: [0.0, 1.0, 0.0, 0.0],
-            light0_m2: [0.0, 0.0, 1.0, 0.0],
-            light0_m3: [0.0, 0.0, 0.0, 1.0],
-
-            light1_m0: [1.0, 0.0, 0.0, 0.0],
-            light1_m1: [0.0, 1.0, 0.0, 0.0],
-            light1_m2: [0.0, 0.0, 1.0, 0.0],
-            light1_m3: [0.0, 0.0, 0.0, 1.0],
-
-            light2_m0: [1.0, 0.0, 0.0, 0.0],
-            light2_m1: [0.0, 1.0, 0.0, 0.0],
-            light2_m2: [0.0, 0.0, 1.0, 0.0],
-            light2_m3: [0.0, 0.0, 0.0, 1.0],
-
-            light3_m0: [1.0, 0.0, 0.0, 0.0],
-            light3_m1: [0.0, 1.0, 0.0, 0.0],
-            light3_m2: [0.0, 0.0, 1.0, 0.0],
-            light3_m3: [0.0, 0.0, 0.0, 1.0],
-
-            light_intensities: [0.0, 0.0, 0.0, 0.0],
-            metadata: [0.0, 0.0, 0.0, 0.0],
-        }
-    }
-}
-
-impl Default for ShadowMatrixGpu {
-    fn default() -> Self {
-        // Identity matrix by default
-        Self {
-            sm0: [1.0, 0.0, 0.0, 0.0],
-            sm1: [0.0, 1.0, 0.0, 0.0],
-            sm2: [0.0, 0.0, 1.0, 0.0],
-            sm3: [0.0, 0.0, 0.0, 1.0],
-        }
-    }
-}
-
 impl Default for LightingGpu {
     fn default() -> Self {
         let [sky_zenith, sky_horizon, sky_ground] = crate::sky::sky_palette(6.0).to_gpu();
@@ -235,14 +160,13 @@ mod tests {
     fn sizes_are_expected() {
         assert_eq!(std::mem::size_of::<CameraGpu>(), 80);
         assert_eq!(std::mem::size_of::<LightingGpu>(), 144); // 9 vec4s
-        assert_eq!(std::mem::size_of::<ShadowMatrixGpu>(), 64);
         assert_eq!(std::mem::size_of::<ToneMapGpu>(), 16);
-        // MultiLightShadowGpu: 4 matrices (4x64 bytes = 256 bytes) + 2 vec4s (32 bytes) = 288 bytes
-        assert_eq!(std::mem::size_of::<MultiLightShadowGpu>(), 288);
+        // ShadowGpu: 6 matrices (384 bytes) + 2 split vec4s + 2 texel vec4s + 3 vec4s = 496 bytes
+        assert_eq!(std::mem::size_of::<ShadowGpu>(), 496);
         assert_eq!(
-            std::mem::size_of::<MultiLightShadowGpu>(),
-            MAX_SHADOW_LIGHTS * std::mem::size_of::<ShadowMatrixGpu>() + 32,
-            "one matrix slot per shadow light, plus two vec4s"
+            std::mem::size_of::<ShadowGpu>(),
+            crate::shadow::CASCADE_LAYERS * 64 + 7 * 16,
+            "one matrix per cascade layer, plus seven vec4s"
         );
     }
 

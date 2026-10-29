@@ -1,7 +1,7 @@
 # Rendering
 
 **Source:** `moho_render_api/src/` (`world_geometry.rs`, `texture.rs`), `moho_renderer/src/` (`scene.rs`, `sky.rs`,
-`world_meshes.rs`, `skinning.rs`, `textures.rs`, `markers.rs`, `renderer.rs`, `render_ops/`, `shadow.rs`, `ssao.rs`, `tone_map.rs`, `ui_pass/`), `moho_render_api/src/ui_paint.rs`, `moho_render_api/src/marker.rs`, `flagstone/src/app/world_geometry.rs`, `flagstone/src/app/cut_caps.rs`, `flagstone/src/app/view_level.rs`, `flagstone_voxel/src/mesh/cap.rs`,
+`world_meshes.rs`, `skinning.rs`, `textures.rs`, `markers.rs`, `renderer.rs`, `render_ops/`, `shadow.rs`, `shadow/`, `ssao.rs`, `tone_map.rs`, `ui_pass/`), `moho_render_api/src/ui_paint.rs`, `moho_render_api/src/marker.rs`, `flagstone/src/app/world_geometry.rs`, `flagstone/src/app/cut_caps.rs`, `flagstone/src/app/view_level.rs`, `flagstone_voxel/src/mesh/cap.rs`,
 `shaders/`, `moho_level/src/`.
 **Decisions:** [ADR-0001](../../_todo/adr/0001-render-api-boundary.md),
 [ADR-0013](../../_todo/adr/0013-ui-reaches-the-renderer-as-paint-data.md),
@@ -513,7 +513,25 @@ blending, sRGB vertex colours, no custom paint callbacks.
 | Tone map 0/1 | `r_tonemap <0\|1>` | `RendererBackend::set_tone_map`; session-only, on at start, not saved |
 | Debug view | `r_debug_view <mode>` | `Lighting.params.y` |
 | View-height cut | `r_view_height <metres\|off>` | `Renderer::set_view_height`; sticky; cuts world, markers and shadows; the binary caps the cut ([below](#3-cut-face-caps)) |
-| Shadow map size | `SHADOW_MAP_SIZE` = 4096 | `shadow.rs` |
+| Cascade map size | `CASCADE_MAP_SIZE` = 4096 | `shadow.rs`; per layer, 6 layers |
 | Shadow distance | `SHADOW_DISTANCE` = 1000 | `shadow.rs` |
 
 CPU↔GPU struct layouts: [GPU ABI](../reference/gpu-abi.md).
+
+## 9 Cascaded shadows
+
+The sun casts four cascades and the moon two, one layer each of a 4096² depth array
+(`CASCADE_LAYERS` = 6, sun layers first). `update_shadow_matrices` (`render_ops/shadow_ops.rs`)
+runs each frame in `begin_frame`: it reads the perspective camera shape
+(`CameraFrustum`, `shadow/cascades.rs`), splits `near..min(far, SHADOW_DISTANCE)` with a
+log/uniform blend (`practical_splits`, `SPLIT_LAMBDA`), fits an orthographic light view
+around each slice's bounding sphere (`fit_cascade`) and uploads one `ShadowGpu` block.
+Casters up to `CASTER_REACH` metres toward the light land in a cascade's map. The fragment
+shader picks a cascade by view depth along `camera_forward` and blends into the next over
+the last `CASCADE_BLEND` fraction of a slice. `r_debug_view 8` tints fragments by cascade.
+Acne is prevented by a normal offset, not a large depth bias: the lookup position moves
+along the geometric normal by `NORMAL_OFFSET_TEXELS` (2) texels of the cascade looked up,
+scaled by sin θ to the light, and the hardware bias stays at slope 1.0 with no clamp (one
+clamp per pipeline could not suit cascades whose texels differ 18-fold).
+A light below `MIN_SHADOW_LIGHT_INTENSITY` skips its cascades. The fits are plain
+functions over `glam` types and run without a GPU.
