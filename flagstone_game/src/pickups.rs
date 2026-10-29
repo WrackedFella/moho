@@ -14,7 +14,7 @@ pub struct PickupEntry {
 }
 
 impl PickupEntry {
-    /// Remaining life as a fraction, from 1.0 when pushed down towards 0.0.
+    /// Remaining life: 1.0 when pushed, falling to 0.0.
     pub fn life(&self) -> f32 {
         self.ticks_left as f32 / PICKUP_POPUP_TICKS as f32
     }
@@ -30,7 +30,7 @@ pub struct PickupFeed {
 }
 
 impl PickupFeed {
-    /// Lists `yield_` as its own entry with a full life; same-resource pickups are not merged.
+    /// Lists `yield_` as its own entry; same-resource pickups are not merged.
     pub fn push(&mut self, yield_: ResourceYield) {
         if self.entries.len() == MAX_PICKUPS {
             self.entries.remove(0);
@@ -42,7 +42,7 @@ impl PickupFeed {
         });
     }
 
-    /// Ages every entry by one tick and drops those whose life is spent.
+    /// Ages entries one tick and drops the spent ones.
     pub fn tick(&mut self) {
         for entry in &mut self.entries {
             entry.ticks_left -= 1;
