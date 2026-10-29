@@ -58,6 +58,26 @@ pub struct GameSlider {
     pub value: i32,
 }
 
+impl GameSlider {
+    /// `value` on the row's step grid from `min`, clamped to the range. Bad row data (`max`
+    /// below `min`, a step under 1) is read as the nearest sane range rather than panicking.
+    pub(crate) fn snap(&self, value: f64) -> i32 {
+        let step = f64::from(self.step.max(1));
+        let min = f64::from(self.min);
+        let snapped = min + ((value - min) / step).round() * step;
+        snapped.clamp(min, f64::from(self.max.max(self.min))) as i32
+    }
+
+    /// The value shown after the label: the number, then the unit when there is one.
+    pub(crate) fn value_text(&self, value: i32) -> String {
+        if self.unit.is_empty() {
+            value.to_string()
+        } else {
+            format!("{value} {}", self.unit)
+        }
+    }
+}
+
 impl EngineSetting {
     /// Every row, in the order a Settings screen lists them.
     pub const ALL: [EngineSetting; 11] = [
