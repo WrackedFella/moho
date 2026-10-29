@@ -54,7 +54,7 @@ sequenceDiagram
     participant Bus as EventBus
     participant Sim as Simulation + Physics
     participant LS as LightSystem
-    T->>T: clock time scale = 1 if Playing, else 0
+    T->>T: clock time scale = 1 if Playing, else 0<br/>autosave schedule ticks (Playing only)
     T->>Bus: SystemEvent::FrameStart
     T->>Sim: apply command, update_game_state (Playing only)
     Note over Sim: KCC: command → physics character (look + move) → camera;<br/>free-fly: controller input → camera;<br/>step rigid bodies
@@ -84,7 +84,7 @@ The tick drains one channel per event family, in this order:
 |---|---|---|
 | 1 | `process_ui_events` | load/new world, exit and main-menu requests (their auto-save runs in `frame`), resume, menus |
 | 2 | `process_graphics_events` | time of day, debug view |
-| 3 | `process_world_events` | every world event → `LightSystem::handle_event`; each `ChunkMeshDirty` chunk → remesh once (draw + collider) |
+| 3 | `process_world_events` | every world event → `LightSystem::handle_event`; each `ChunkMeshDirty` chunk → remesh once (draw + collider); `BlockPlaced`, `BlockRemoved` and `BlocksBatchModified` mark the autosave schedule edited |
 | 4 | `process_input_events` | wheel zoom, mine action |
 | 5 | `process_debug_events` | spawn, noclip; point lights and shadow/SSAO quality are queued as `RenderRequest`s |
 
@@ -109,7 +109,8 @@ The renderer is reachable only through the contexts, so ticks queue renderer cha
    camera (`Listener::from_view`); then drain audio events;
 3. if the UI asked to quit: auto-save, `request_exit`, stop;
 4. if the UI asked for the main menu (Exit to main menu): auto-save, then `show_menu`, and go on;
-5. `update_hud_data`, `update_cut_caps` (rebuild [cut-face caps](rendering.md#3-cut-face-caps)), then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
+5. if the autosave schedule is due: auto-save ([periodic autosave](../reference/save-format.md#autosave));
+6. `update_hud_data`, `update_cut_caps` (rebuild [cut-face caps](rendering.md#3-cut-face-caps)), then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
    with actors, the sphere and cube mesh handles and the frame camera (below).
 
 A `FrameError` skips the frame with a `warn`. Pass order inside the renderer:
