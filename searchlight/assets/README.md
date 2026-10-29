@@ -15,8 +15,9 @@ origin and the console says so) and no `dummy_NN`.
 
 Launch a level by name (`arena`, the default, or `proving_ground`) or by the path of a `.glb`
 or `.gltf` file: `cargo run -p searchlight -- proving_ground`. Put borrowed maps in
-`searchlight/assets/local/`, which git ignores; never commit them (see the licence notes on
-the level card: Counter-Strike and other game maps are for private testing only).
+`searchlight/assets/local/`, which git ignores; never commit them. CC0 maps
+are fine to keep locally; game maps (for example Counter-Strike) are all rights reserved,
+so use them for private testing only and never share them.
 
 ## Origin
 
