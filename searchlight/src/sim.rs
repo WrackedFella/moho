@@ -2410,6 +2410,100 @@ mod tests {
     }
 
     #[test]
+    fn a_player_who_strafes_while_the_round_flies_is_still_seen_from_where_he_fired() {
+        let enemy = Vec3::new(0.0, 0.0, 30.0);
+        let arena = arena_on(100.0, &[], Vec3::new(0.0, 0.0, -30.0), &[enemy], &[enemy]);
+        let mut sim = SearchlightSim::with_start(arena, standing_config(), Start::Empty);
+        sim.spawn_enemy(0, Grade::Veteran)
+            .expect("the marker is free");
+        let one_metre_wide = SearchlightCommand {
+            movement: CharacterCommand {
+                yaw_delta: -(1.0_f32 / 60.0).asin(),
+                ..CharacterCommand::default()
+            },
+            fire: true,
+            ..idle()
+        };
+        let strafe = SearchlightCommand {
+            movement: CharacterCommand {
+                right: 1.0,
+                ..CharacterCommand::default()
+            },
+            ..idle()
+        };
+
+        let mut under_fire = Vec::new();
+        let mut positions = Vec::new();
+        for tick in 0..8 {
+            sim.tick(&if tick == 0 { one_metre_wide } else { strafe }, DT);
+            positions.push(sim.player().position);
+            under_fire.push(sim.targets[sim.dummy_count].under_fire);
+        }
+
+        let fired_from = positions[0];
+        let at_arrival = positions[4];
+        assert!(
+            fired_from.distance(at_arrival) > 0.05,
+            "the player barely moved: {fired_from} to {at_arrival}"
+        );
+        assert_eq!(under_fire[4], Some(fired_from), "{under_fire:?}");
+    }
+
+    #[test]
+    fn a_round_meets_the_enemy_where_it_stands_after_this_ticks_movement() {
+        // The enemy walks across the line of fire at a steady pace. It stands within 0.12 m of
+        // the line (the torso box's half width, the enemy facing along x) after the arrival
+        // tick's move and outside that after the tick before, so only this tick's position hits.
+        const HALF_WIDTH: f32 = 0.12;
+        const WARM_UP: usize = 30;
+        const ARRIVAL: usize = WARM_UP + 2;
+        let build = |start_x: f32| {
+            let start = Vec3::new(start_x, 0.0, 20.0);
+            let arena = arena_on(
+                100.0,
+                &[],
+                Vec3::ZERO,
+                &[start],
+                &[Vec3::new(-40.0, 0.0, 20.0)],
+            );
+            let mut config = standing_config();
+            config.enemy.patrol_speed = 4.0;
+            crate::test_support::set_eye_above_centre(
+                &mut config,
+                dummy_volume(BodyPart::Torso).offset.y,
+            );
+            let mut sim = SearchlightSim::with_start(arena, config, Start::Empty);
+            sim.spawn_enemy(0, Grade::Veteran)
+                .expect("the marker is free");
+            sim
+        };
+        let mut control = build(0.0);
+        let walked: Vec<f32> = (0..=ARRIVAL)
+            .map(|_| {
+                control.tick(&idle(), DT);
+                control.enemy_state(0).expect("the enemy lives").position.x
+            })
+            .collect();
+        let (before, now) = (walked[ARRIVAL - 1], walked[ARRIVAL]);
+        assert!(before - now > 0.03, "the enemy barely walked: {walked:?}");
+        let start_x = HALF_WIDTH - (before + now) / 2.0;
+        let mut sim = build(start_x);
+        let script: Vec<SearchlightCommand> = (0..=ARRIVAL)
+            .map(|tick| if tick == WARM_UP { pull() } else { idle() })
+            .collect();
+
+        let ticks = run(&mut sim, &script);
+
+        let hits = hits_in(&ticks);
+        assert!(
+            matches!(hits[..], [(ARRIVAL, _, _)]),
+            "start {start_x}, last tick {} and this tick {} either side of {HALF_WIDTH}: {hits:?}",
+            start_x + before,
+            start_x + now,
+        );
+    }
+
+    #[test]
     fn rounds_in_flight_when_the_player_dies_hit_nothing_after_the_restart() {
         let mut sim = dummy_ahead(60.0, BodyPart::Torso, with_ball(BALL));
         let fired = run(&mut sim, &[pull()]);

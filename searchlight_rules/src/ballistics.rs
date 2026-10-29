@@ -111,7 +111,8 @@ pub struct FlightBounds {
 }
 
 impl FlightBounds {
-    /// The box around `points`, grown by `margin` on every side.
+    /// The box around `points`, grown by `margin` on every side. `points` must not be empty:
+    /// the box is then inverted and contains nothing.
     #[must_use]
     pub fn around(points: impl IntoIterator<Item = Vec3>, margin: f32) -> Self {
         let (min, max) = points.into_iter().fold(
