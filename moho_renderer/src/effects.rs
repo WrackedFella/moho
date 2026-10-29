@@ -148,7 +148,8 @@ impl Effects {
     /// Cap new effects for `quality` (0 off to 4 ultra; higher clamps). Lowering keeps
     /// what is live; 0 clears it.
     pub fn set_quality(&mut self, quality: u32) {
-        self.cap = CAPS[usize::try_from(quality.min(MAX_QUALITY)).unwrap_or_default()];
+        self.cap = CAPS
+            [usize::try_from(quality.min(MAX_QUALITY)).expect("a quality of at most 4 fits usize")];
         if self.cap == 0 {
             self.streaks.clear();
         }
@@ -214,7 +215,7 @@ pub(crate) fn streak_transform(
     eye: Vec3,
 ) -> Option<Affine3A> {
     let finite = head.is_finite() && dir.is_finite() && eye.is_finite() && length.is_finite();
-    if !finite || !width.is_finite() || width <= 0.0 {
+    if !finite || !width.is_finite() || width <= 0.0 || length <= 0.0 {
         return None;
     }
     let tail = head - dir * length;
@@ -626,6 +627,14 @@ mod tests {
                 live,
                 "ending inert handles does nothing"
             );
+        }
+    }
+
+    #[test]
+    fn streak_transform_rejects_a_zero_or_negative_length() {
+        for length in [0.0, -2.0] {
+            let drawn = streak_transform(Vec3::X, Vec3::X, length, 0.1, Vec3::new(0.0, 0.0, 5.0));
+            assert!(drawn.is_none(), "length {length}");
         }
     }
 
