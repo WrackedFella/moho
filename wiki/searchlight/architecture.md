@@ -84,8 +84,8 @@ The binary starts on the main menu (`SearchlightGame::with_main_menu`); a game b
 in play. `SearchlightGame` holds a `Screen` (`MainMenu`, `Playing` or `Paused`). On either menu screen the loop is paused
 like an open console, the action map is fed nothing and the cursor stays free; the window opens with the
 cursor captured only when it starts in play. The menu screens live in the shell's `MenuStack` (`UiShell::menu_mut`), which
-takes every key and button while one is open (`Routing::Menu`) and tracks the cursor itself. Up and Down move the focus, Enter or a left click on a
-row chooses it, and hovering focuses. A choice becomes a `MenuEvent::Chosen` that the game drains in `answer_menu`: `Play` and `Resume` switch to `Playing` (clearing the stack), drop any held input, pending edges and
+takes every key and button while one is open (`Routing::Menu`) and tracks the cursor itself. Up and Down move the focus (wrapping, scrolling the screen when its rows do not fit the window), Enter or a left click on a
+row chooses it, hovering focuses, and the wheel scrolls. A choice becomes a `MenuEvent::Chosen` that the game drains in `answer_menu`: `Play` and `Resume` switch to `Playing` (clearing the stack), drop any held input, pending edges and
 look, and capture the cursor; `Quit` exits; `Settings` pushes the settings screen, seeded from the saved prefs, and `Back` pops it, discarding unapplied changes. Apply arrives as `MenuEvent::SettingsApplied`: `settings_applied` saves the prefs (a failed save is logged; the values stay for the session), sets the mouse look from them and queues them in `pending_settings`; the next `frame()` runs `apply_engine_settings` (renderer qualities, audio volumes) and switches the window mode through `window_mode_applied` if it differs. The saved settings are queued the same way at construction, so they apply on the first frame. Each main-menu frame hides the HUD and
 title status and draws the stage backdrop instead of the
 arena scene, so the dormant sim is untouched.
