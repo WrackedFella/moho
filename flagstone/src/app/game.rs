@@ -1553,7 +1553,7 @@ mod tests {
             for state in [GameState::Paused, GameState::Menu, GameState::ConsoleOpen] {
                 let mut app = playing_app();
                 app.autosave_interval = Duration::from_secs(1);
-                app.autosave = crate::app::autosave::AutosaveSchedule::new(u64::from(TICK_HZ));
+                app.restart_autosave();
                 app.autosave.mark_edited();
                 app.game_state = state;
                 let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));

@@ -142,23 +142,6 @@ mod tests {
         LoopConfig::new(TICK_HZ).tick_length()
     }
 
-    /// Removes the chunk files a world's evictions leave under the working directory's
-    /// `saves/` while chunk files do not follow the configured saves directory.
-    struct WorkingDirChunks(&'static str);
-
-    impl Drop for WorkingDirChunks {
-        fn drop(&mut self) {
-            let world_dir = Path::new("saves").join(self.0);
-            if let Err(error) = std::fs::remove_dir_all(&world_dir)
-                && error.kind() != std::io::ErrorKind::NotFound
-            {
-                eprintln!("could not remove {}: {error}", world_dir.display());
-            }
-            // Fails while another test's world is still under `saves/`, which is fine.
-            std::fs::remove_dir("saves").ok();
-        }
-    }
-
     fn streamer(world: &str, saves: &Path) -> ChunkStreamer {
         ChunkStreamer::new(
             TerrainConfig {
@@ -307,7 +290,7 @@ mod tests {
 
     fn set_interval(app: &mut App, interval: Duration) {
         app.autosave_interval = interval;
-        app.autosave = AutosaveSchedule::new(interval.as_secs() * u64::from(TICK_HZ));
+        app.restart_autosave();
     }
 
     /// Runs `ticks` ticks, drawing a frame after each.
@@ -426,10 +409,8 @@ mod tests {
 
         #[test]
         fn mined_block_is_absent_after_walking_back_then_closing() {
-            const WORLD: &str = "autosave_test_walk_back";
-            let _chunks = WorkingDirChunks(WORLD);
             let temp = tempfile::tempdir().expect("temp dir");
-            let mut app = loaded_session(WORLD, &temp);
+            let mut app = loaded_session("autosave_test_walk_back", &temp);
             let mined = mine_surface_block(&mut app, 40, 40);
             walk_to(&mut app, 168.5, 40.5);
             assert_eq!(
@@ -453,10 +434,8 @@ mod tests {
 
         #[test]
         fn mined_block_is_absent_after_staying_away_then_closing() {
-            const WORLD: &str = "autosave_test_stay_away";
-            let _chunks = WorkingDirChunks(WORLD);
             let temp = tempfile::tempdir().expect("temp dir");
-            let mut app = loaded_session(WORLD, &temp);
+            let mut app = loaded_session("autosave_test_stay_away", &temp);
             let mined = mine_surface_block(&mut app, 40, 40);
 
             walk_to(&mut app, 168.5, 40.5);
@@ -638,6 +617,37 @@ mod tests {
 
     mod schedule {
         use super::*;
+
+        #[test]
+        fn default_interval_schedule_is_due_after_120_seconds_of_ticks() {
+            let due_at = 120 * u64::from(TICK_HZ);
+            let mut schedule = AutosaveSchedule::for_interval(DEFAULT_AUTOSAVE_INTERVAL);
+            schedule.mark_edited();
+
+            for _ in 0..due_at - 1 {
+                schedule.tick();
+            }
+            assert!(!schedule.due(), "due one tick before 120 seconds");
+            schedule.tick();
+
+            assert!(schedule.due(), "not due after 120 seconds of ticks");
+        }
+
+        #[test]
+        fn fractional_interval_schedule_is_due_at_exactly_the_interval() {
+            assert_eq!(TICK_HZ % 2, 0, "1.5 seconds must be a whole number of ticks");
+            let due_at = u64::from(TICK_HZ) * 3 / 2;
+            let mut schedule = AutosaveSchedule::for_interval(Duration::from_millis(1500));
+            schedule.mark_edited();
+
+            for _ in 0..due_at - 1 {
+                schedule.tick();
+            }
+            assert!(!schedule.due(), "due one tick before 1.5 seconds");
+            schedule.tick();
+
+            assert!(schedule.due(), "not due after 1.5 seconds of ticks");
+        }
 
         #[test]
         fn schedule_is_due_only_after_the_interval_and_an_edit() {

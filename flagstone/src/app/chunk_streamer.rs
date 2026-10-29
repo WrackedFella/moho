@@ -329,8 +329,9 @@ mod tests {
         }
     }
 
-    /// Removes the chunk files a world leaves under the working directory's `saves/`
-    /// while chunk files do not follow the streamer's saves directory.
+    /// Regression cleanup: removes the chunk files a world leaves under the working
+    /// directory's `saves/` if chunk files ever go there instead of the streamer's saves
+    /// directory, so a failing run does not litter the source tree.
     struct WorkingDirChunks(&'static str);
 
     impl Drop for WorkingDirChunks {
