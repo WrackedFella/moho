@@ -263,6 +263,10 @@ impl Prefs {
                 issues.extend(read_raw_section(name, keys, &mut prefs.debug));
                 continue;
             }
+            if name == "game" {
+                issues.extend(read_raw_section(name, keys, &mut prefs.game));
+                continue;
+            }
             let table = match name.as_str() {
                 "default" if map.contains_key("prefs") => {
                     issues.extend(sorted_entries(keys).into_iter().map(|(key, _)| {
