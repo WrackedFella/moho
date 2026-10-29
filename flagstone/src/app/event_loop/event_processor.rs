@@ -881,6 +881,69 @@ mod tests {
     }
 
     #[test]
+    fn block_edit_events_mark_the_world_edited() {
+        let position = flagstone_voxel::BlockPos::new(3, 70, 3);
+        let edits = [
+            (
+                "placed",
+                WorldEvent::BlockPlaced {
+                    position,
+                    material_id: 1,
+                    reason: BlockChangeReason::Player,
+                },
+            ),
+            (
+                "removed",
+                WorldEvent::BlockRemoved {
+                    position,
+                    old_material_id: 1,
+                    reason: BlockChangeReason::Player,
+                },
+            ),
+            (
+                "batch modified",
+                WorldEvent::BlocksBatchModified {
+                    chunk_pos: glam::IVec3::new(0, 4, 0),
+                    positions: vec![position],
+                    reason: BlockChangeReason::Explosion,
+                },
+            ),
+        ];
+
+        for (name, edit) in edits {
+            let mut app = App::headless();
+            app.autosave = crate::app::autosave::AutosaveSchedule::new(1);
+            app.autosave.tick();
+            let _ = app.world_event_rx.try_iter().count();
+            app.event_bus.publish(edit);
+
+            EventProcessor::new().process_world_events(&mut app);
+
+            assert!(app.autosave.due(), "{name} did not mark the world edited");
+        }
+    }
+
+    #[test]
+    fn chunk_streaming_events_do_not_mark_the_world_edited() {
+        let mut app = App::headless();
+        app.autosave = crate::app::autosave::AutosaveSchedule::new(1);
+        app.autosave.tick();
+        let _ = app.world_event_rx.try_iter().count();
+        app.event_bus.publish(WorldEvent::ChunkMeshDirty {
+            chunk_pos: glam::IVec3::new(0, 4, 0),
+            terrain_dirty: true,
+            structure_dirty: true,
+        });
+
+        EventProcessor::new().process_world_events(&mut app);
+
+        assert!(
+            !app.autosave.due(),
+            "loading terrain is not an edit: an idle world would be rewritten"
+        );
+    }
+
+    #[test]
     fn placed_and_batch_modified_events_reach_the_light_system() {
         let mut app = App::headless();
         let placed_at = flagstone_voxel::BlockPos::new(3, 70, 3);

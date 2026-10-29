@@ -29,6 +29,7 @@ pub struct ChunkStreamer {
     terrain_config: TerrainConfig,
     streaming_config: StreamingConfig,
     world_name: String,
+    saves_dir: std::path::PathBuf,
     last_player_chunk_xz: (i32, i32),
 }
 
@@ -37,11 +38,13 @@ impl ChunkStreamer {
         terrain_config: TerrainConfig,
         streaming_config: StreamingConfig,
         world_name: impl Into<String>,
+        saves_dir: impl Into<std::path::PathBuf>,
     ) -> Self {
         Self {
             terrain_config,
             streaming_config,
             world_name: world_name.into(),
+            saves_dir: saves_dir.into(),
             last_player_chunk_xz: (i32::MAX, i32::MAX),
         }
     }
@@ -225,6 +228,7 @@ mod tests {
                 chunks_per_frame: budget,
             },
             WORLD,
+            "saves",
         )
     }
 
@@ -286,6 +290,7 @@ mod tests {
                 chunks_per_frame: budget,
             },
             WORLD,
+            "saves",
         )
     }
 
@@ -319,6 +324,71 @@ mod tests {
                 "column {column:?} holds its terrain chunks, got {ys:?}"
             );
         }
+    }
+
+    /// Removes the chunk files a world leaves under the working directory's `saves/`
+    /// while chunk files do not follow the streamer's saves directory.
+    struct WorkingDirChunks(&'static str);
+
+    impl Drop for WorkingDirChunks {
+        fn drop(&mut self) {
+            let world_dir = std::path::Path::new("saves").join(self.0);
+            if let Err(error) = std::fs::remove_dir_all(&world_dir)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                eprintln!("could not remove {}: {error}", world_dir.display());
+            }
+            // Fails while another test's world is still under `saves/`, which is fine.
+            std::fs::remove_dir("saves").ok();
+        }
+    }
+
+    #[test]
+    fn evicted_chunk_is_written_under_the_streamers_saves_dir() {
+        const OWN_WORLD: &str = "chunk_streamer_unit_test_saves_dir_world";
+        let _cleanup = WorkingDirChunks(OWN_WORLD);
+        let saves = tempfile::tempdir().expect("temp dir");
+        let mut streamer = ChunkStreamer::new(
+            TerrainConfig::default(),
+            StreamingConfig {
+                load_radius_chunks: 0,
+                unload_radius_chunks: 0,
+                chunks_per_frame: 1,
+            },
+            OWN_WORLD,
+            saves.path(),
+        );
+        let mut grid = VoxelGrid::new(16);
+        let edited_block = IVec3::new(5 * 16 + 1, 4 * 16 + 1, 5 * 16 + 1);
+        grid.mutator().place(edited_block, 1, None);
+
+        let (_, evicted) = streamer.update(&mut grid, Vec3::new(8.0, 64.0, 8.0));
+
+        assert!(
+            evicted.contains(&IVec3::new(5, 4, 5)),
+            "the edited chunk is out of range: {evicted:?}"
+        );
+        let chunk_file = saves
+            .path()
+            .join(OWN_WORLD)
+            .join("chunks")
+            .join("5_4_5.bin");
+        assert!(chunk_file.is_file(), "no chunk file at {chunk_file:?}");
+        assert!(
+            !std::path::Path::new("saves").join(OWN_WORLD).exists(),
+            "the chunk file went under the working directory"
+        );
+
+        streamer.update(
+            &mut grid,
+            Vec3::new(5.0 * 16.0 + 8.0, 64.0, 5.0 * 16.0 + 8.0),
+        );
+
+        assert_eq!(
+            grid.material_at(edited_block),
+            Some(1),
+            "the chunk comes back from the saves directory, not from the seed"
+        );
     }
 
     #[test]

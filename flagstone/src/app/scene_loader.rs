@@ -98,6 +98,7 @@ pub fn load_scene(
             terrain_config,
             streaming,
             spec.name.clone(),
+            app.saves_dir.clone(),
         );
 
         // Reconstruct VoxelGrid from persisted block records, then initialize LightSystem.
@@ -406,6 +407,7 @@ mod tests {
     fn loading_a_world_lights_it_before_the_first_tick() {
         let temp = tempfile::tempdir().expect("temp dir");
         let mut saved = crate::App::headless();
+        saved.generation.last_spec = Some(WorldSpec::default());
         let grid = saved
             .light_system
             .as_mut()

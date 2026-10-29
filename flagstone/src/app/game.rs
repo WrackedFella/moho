@@ -841,10 +841,12 @@ mod tests {
         LoopConfig::new(TICK_HZ).tick_length()
     }
 
-    /// An app whose autosaves land in a fresh temp dir, which must outlive it.
+    /// An app with a loaded world whose autosaves land in a fresh temp dir, which must
+    /// outlive it.
     fn app_with_saves_dir() -> (App, tempfile::TempDir) {
         let temp = tempfile::tempdir().expect("temp dir");
         let mut app = playing_app();
+        app.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
         app.saves_dir = temp.path().join("saves");
         (app, temp)
     }
@@ -1532,6 +1534,36 @@ mod tests {
             run_frame(&mut app, &mut fake);
 
             assert!(!app.saves_dir.exists());
+        }
+
+        #[test]
+        fn paused_game_does_not_advance_the_autosave_schedule() {
+            for state in [GameState::Paused, GameState::Menu, GameState::ConsoleOpen] {
+                let mut app = playing_app();
+                app.autosave_interval = Duration::from_secs(1);
+                app.autosave = crate::app::autosave::AutosaveSchedule::new(u64::from(TICK_HZ));
+                app.autosave.mark_edited();
+                app.game_state = state;
+                let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+
+                sim.step(&mut app, 2 * TICK_HZ);
+                assert!(
+                    !app.autosave.due(),
+                    "{state:?}: two intervals of standing still came due"
+                );
+                app.game_state = GameState::Playing;
+                sim.step(&mut app, TICK_HZ / 2);
+                assert!(
+                    !app.autosave.due(),
+                    "{state:?}: half an interval of play came due, so the paused ticks counted"
+                );
+                sim.step(&mut app, TICK_HZ);
+
+                assert!(
+                    app.autosave.due(),
+                    "{state:?}: a full interval of play never came due"
+                );
+            }
         }
 
         #[test]

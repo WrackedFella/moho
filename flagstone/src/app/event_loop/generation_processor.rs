@@ -117,6 +117,7 @@ impl GenerationProcessor {
             terrain_config,
             streaming,
             spec.name.clone(),
+            app.saves_dir.clone(),
         ));
 
         // Complete progress UI

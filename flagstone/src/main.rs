@@ -108,6 +108,10 @@ struct App {
 
     saves_dir: std::path::PathBuf,
 
+    /// Time of play between autosaves of an edited world.
+    autosave_interval: std::time::Duration,
+    autosave: app::autosave::AutosaveSchedule,
+
     // Set when the UI asks to quit; `frame` autosaves and leaves the loop
     exit_requested: bool,
 
@@ -243,6 +247,11 @@ impl App {
             pending_frame_cap: None,
             frame_cap_changed: false,
             saves_dir: std::path::PathBuf::from("saves"),
+            autosave_interval: app::autosave::DEFAULT_AUTOSAVE_INTERVAL,
+            autosave: app::autosave::AutosaveSchedule::new(
+                app::autosave::DEFAULT_AUTOSAVE_INTERVAL.as_secs()
+                    * u64::from(flagstone_game::TICK_HZ),
+            ),
             exit_requested: false,
             main_menu_requested: false,
             event_bus: initialized.event_bus,
