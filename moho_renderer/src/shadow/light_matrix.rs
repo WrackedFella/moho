@@ -4,9 +4,10 @@
 use glam::Vec3;
 
 use super::cascades::CascadeFit;
+use super::tier::ShadowTier;
 use super::{
     ActiveShadowLight, CASCADE_BLEND, CASCADE_LAYERS, MIN_SHADOW_LIGHT_INTENSITY, MOON_CASCADES,
-    PcssSettings, SUN_CASCADES,
+    SUN_CASCADES,
 };
 use crate::gpu_types::ShadowGpu;
 
@@ -37,8 +38,9 @@ pub(super) fn active_shadow_lights(sun: f32, moon: f32) -> Vec<ActiveShadowLight
 }
 
 /// The shadow-map layers to render for `active`: a sun's four cascades, a moon's two.
-pub(super) fn shadow_passes(active: &[ActiveShadowLight]) -> Vec<u32> {
-    active
+pub(super) fn shadow_passes(active: &[ActiveShadowLight], tier: ShadowTier) -> Vec<u32> {
+    let lights = if tier.casts_shadows() { active } else { &[] };
+    lights
         .iter()
         .flat_map(|light| match light.light_index {
             0 => 0..SUN_CASCADES as u32,
@@ -55,7 +57,7 @@ pub(super) fn shadow_gpu(
     splits: ([f32; SUN_CASCADES], [f32; MOON_CASCADES]),
     camera_forward: Vec3,
     (sun_intensity, moon_intensity): (f32, f32),
-    pcss: &PcssSettings,
+    tier: ShadowTier,
 ) -> ShadowGpu {
     let mut matrices = [[[0.0; 4]; 4]; CASCADE_LAYERS];
     for (matrix, fit) in matrices.iter_mut().zip(sun.iter().chain(moon)) {
@@ -72,7 +74,7 @@ pub(super) fn shadow_gpu(
         *slot = fit.texel_world;
     }
 
-    ShadowGpu {
+    let block = ShadowGpu {
         matrices,
         split_far,
         texel_world,
@@ -83,14 +85,19 @@ pub(super) fn shadow_gpu(
             CASCADE_BLEND,
         ],
         light_intensities: [sun_intensity, moon_intensity, 0.0, 0.0],
-        // [shadow_distance, light_size, pcss_quality, view-height cut (set per frame by shadow_ops)]
-        metadata: [
-            splits.0[SUN_CASCADES - 1],
-            pcss.light_size,
-            pcss.quality as u32 as f32,
-            0.0,
-        ],
+        metadata: [splits.0[SUN_CASCADES - 1], 0.0, 0.0, 0.0],
+    };
+    retier(block, tier)
+}
+
+/// `block` with `tier`'s filter radius, and its shadow distance zeroed when the tier is Off, so a
+/// block kept across frames follows a tier change.
+pub(super) fn retier(mut block: ShadowGpu, tier: ShadowTier) -> ShadowGpu {
+    if !tier.casts_shadows() {
+        block.metadata[0] = 0.0;
     }
+    block.metadata[2] = tier.pcf_radius() as f32;
+    block
 }
 
 #[cfg(test)]
@@ -98,7 +105,7 @@ mod tests {
     use glam::Mat4;
 
     use super::*;
-    use crate::shadow::{CASCADE_BLEND, MIN_SHADOW_LIGHT_INTENSITY, PcssQuality};
+    use crate::shadow::{CASCADE_BLEND, MIN_SHADOW_LIGHT_INTENSITY};
 
     #[test]
     fn only_lights_above_the_floor_are_active() {
@@ -146,9 +153,88 @@ mod tests {
         ];
 
         for (active, expected) in cases {
-            let layers = shadow_passes(active);
+            let layers = shadow_passes(active, ShadowTier::High);
 
             assert_eq!(layers, expected, "active {active:?}");
+        }
+    }
+
+    fn fits() -> ([CascadeFit; SUN_CASCADES], [CascadeFit; MOON_CASCADES]) {
+        let fit = |i: u32| CascadeFit {
+            view_proj: Mat4::from_translation(Vec3::new(i as f32, 2.0 * i as f32, 3.0)),
+            texel_world: 0.01 * (i + 1) as f32,
+        };
+        (
+            std::array::from_fn(|i| fit(i as u32)),
+            std::array::from_fn(|i| fit(4 + i as u32)),
+        )
+    }
+
+    #[test]
+    fn off_lists_no_passes_and_zero_distance() {
+        let (sun, moon) = fits();
+        let splits = ([30.0, 90.0, 300.0, 700.0], [50.0, 700.0]);
+
+        let layers = shadow_passes(&[light(0), light(1)], ShadowTier::Off);
+        let gpu = shadow_gpu(
+            &sun,
+            &moon,
+            splits,
+            Vec3::new(0.0, 0.6, -0.8),
+            (0.9, 0.3),
+            ShadowTier::Off,
+        );
+
+        assert!(layers.is_empty(), "layers {layers:?}");
+        assert_eq!(gpu.metadata[0], 0.0);
+    }
+
+    #[test]
+    fn a_kept_block_takes_the_new_tiers_radius_and_off_switch() {
+        let (sun, moon) = fits();
+        let splits = ([30.0, 90.0, 300.0, 700.0], [50.0, 700.0]);
+        let mut kept = shadow_gpu(
+            &sun,
+            &moon,
+            splits,
+            Vec3::NEG_Z,
+            (0.9, 0.3),
+            ShadowTier::High,
+        );
+        kept.metadata[3] = 42.0;
+
+        let off = retier(kept, ShadowTier::Off);
+        let low = retier(kept, ShadowTier::Low);
+
+        assert_eq!(
+            off.metadata,
+            [0.0, 0.0, 0.0, 42.0],
+            "Off disables the kept block"
+        );
+        assert_eq!(
+            low.metadata,
+            [700.0, 0.0, 1.0, 42.0],
+            "Low keeps the distance"
+        );
+        assert_eq!(off.matrices, kept.matrices);
+    }
+
+    #[test]
+    fn gpu_block_carries_the_filter_radius_in_metadata_z() {
+        let (sun, moon) = fits();
+        let splits = ([30.0, 90.0, 300.0, 700.0], [50.0, 700.0]);
+
+        for (tier, radius) in [
+            (ShadowTier::Low, 1.0),
+            (ShadowTier::Medium, 1.0),
+            (ShadowTier::High, 2.0),
+            (ShadowTier::Ultra, 3.0),
+        ] {
+            let gpu = shadow_gpu(&sun, &moon, splits, Vec3::NEG_Z, (0.9, 0.3), tier);
+
+            assert_eq!(gpu.metadata[2], radius, "{tier:?}");
+            assert_eq!(gpu.metadata[1], 0.0, "{tier:?}: y is unused");
+            assert_eq!(gpu.metadata[0], 700.0, "{tier:?}: distance stays on");
         }
     }
 
@@ -161,10 +247,6 @@ mod tests {
         let sun: [CascadeFit; SUN_CASCADES] = std::array::from_fn(|i| fit(i as u32));
         let moon: [CascadeFit; MOON_CASCADES] = std::array::from_fn(|i| fit(4 + i as u32));
         let splits = ([30.0, 90.0, 300.0, 700.0], [50.0, 700.0]);
-        let pcss = PcssSettings {
-            quality: PcssQuality::High,
-            light_size: 0.07,
-        };
 
         let gpu = shadow_gpu(
             &sun,
@@ -172,7 +254,7 @@ mod tests {
             splits,
             Vec3::new(0.0, 0.6, -0.8),
             (0.9, 0.3),
-            &pcss,
+            ShadowTier::High,
         );
 
         for (layer, fit) in sun.iter().chain(&moon).enumerate() {
@@ -202,7 +284,7 @@ mod tests {
         assert_eq!(gpu.light_intensities, [0.9, 0.3, 0.0, 0.0]);
         assert_eq!(
             gpu.metadata,
-            [700.0, 0.07, PcssQuality::High as u32 as f32, 0.0],
+            [700.0, 0.0, 2.0, 0.0],
             "the effective shadow distance is the sun's last split"
         );
     }

@@ -50,6 +50,7 @@ pub fn load_scene(
         // Remember the WorldSpec from the loaded file so autosaves and
         // subsequent writes preserve the original metadata.
         app.generation.last_spec = Some(spec.clone());
+        app.restart_autosave();
         tracing::info!(spec = ?spec, "Loaded WorldSpec from save");
         // Restore time of day from the persisted WorldSpec.
         clock.reset_to(spec.initial_time_of_day);
@@ -98,6 +99,7 @@ pub fn load_scene(
             terrain_config,
             streaming,
             spec.name.clone(),
+            app.saves_dir.clone(),
         );
 
         // Reconstruct VoxelGrid from persisted block records, then initialize LightSystem.
@@ -406,6 +408,7 @@ mod tests {
     fn loading_a_world_lights_it_before_the_first_tick() {
         let temp = tempfile::tempdir().expect("temp dir");
         let mut saved = crate::App::headless();
+        saved.generation.last_spec = Some(WorldSpec::default());
         let grid = saved
             .light_system
             .as_mut()

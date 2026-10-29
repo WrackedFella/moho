@@ -13,7 +13,7 @@ struct Shadow {
     camera_forward: vec4<f32>,
     // x = sun, y = moon
     light_intensities: vec4<f32>,
-    // x = effective shadow distance, y = PCSS light size, z = PCSS quality, w = view-height cut (world y above it is discarded)
+    // x = effective shadow distance (0 = off), y = unused, z = filter radius in texels, w = view-height cut (world y above it is discarded)
     metadata: vec4<f32>,
 }
 

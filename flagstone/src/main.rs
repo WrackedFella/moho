@@ -108,6 +108,10 @@ struct App {
 
     saves_dir: std::path::PathBuf,
 
+    /// Time of play between autosaves of an edited world.
+    autosave_interval: std::time::Duration,
+    autosave: app::autosave::AutosaveSchedule,
+
     // Set when the UI asks to quit; `frame` autosaves and leaves the loop
     exit_requested: bool,
 
@@ -194,6 +198,11 @@ impl App {
             self.pending_render
                 .push(RenderRequest::BloomQuality(config.prefs.bloom() as u8));
         }
+        if config.prefs.shadow_quality() != self.prefs.shadow_quality() {
+            self.pending_render.push(RenderRequest::ShadowQuality(
+                config.prefs.shadow_quality() as u8
+            ));
+        }
         if config.prefs.effects_quality() != self.prefs.effects_quality() {
             self.scene
                 .effects_mut()
@@ -248,6 +257,10 @@ impl App {
             pending_frame_cap: None,
             frame_cap_changed: false,
             saves_dir: std::path::PathBuf::from("saves"),
+            autosave_interval: app::autosave::DEFAULT_AUTOSAVE_INTERVAL,
+            autosave: app::autosave::AutosaveSchedule::for_interval(
+                app::autosave::DEFAULT_AUTOSAVE_INTERVAL,
+            ),
             exit_requested: false,
             main_menu_requested: false,
             event_bus: initialized.event_bus,
@@ -290,6 +303,11 @@ impl App {
         let mut app = Self::from_config(crate::app::config::AppConfig::builder().build());
         app.prefs_path = None;
         app
+    }
+
+    /// Called as a world starts, so edits made before it do not count against the new one.
+    fn restart_autosave(&mut self) {
+        self.autosave = app::autosave::AutosaveSchedule::for_interval(self.autosave_interval);
     }
 
     fn generate_new_world(
@@ -702,6 +720,39 @@ mod tests {
             .collect();
         assert_eq!(queued, vec![1]);
         assert_eq!(app.prefs.bloom(), 1);
+    }
+
+    fn queued_shadow_quality(app: &App) -> Vec<u8> {
+        app.pending_render
+            .iter()
+            .filter_map(|request| match request {
+                RenderRequest::ShadowQuality(value) => Some(*value),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn adopting_settings_queues_the_shadow_quality() {
+        let mut app = App::headless();
+        let mut sharper = Prefs::default();
+        sharper.set_shadow_quality(4);
+
+        app.adopt_settings(sharper);
+
+        assert_eq!(queued_shadow_quality(&app), vec![4]);
+        assert_eq!(app.prefs.shadow_quality(), 4);
+    }
+
+    #[test]
+    fn adopting_settings_leaves_unchanged_shadow_quality_unqueued() {
+        let mut app = App::headless();
+        let mut other_change = Prefs::default();
+        other_change.set_bloom(1);
+
+        app.adopt_settings(other_change);
+
+        assert_eq!(queued_shadow_quality(&app), Vec::<u8>::new());
     }
 
     #[test]

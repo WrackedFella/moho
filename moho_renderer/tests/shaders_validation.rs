@@ -513,6 +513,39 @@ proptest::proptest! {
 }
 
 #[test]
+fn shadow_filter_has_no_per_pixel_inputs() {
+    let source = moho_renderer::pipeline::main_shader_source();
+    assert!(
+        source.contains("fn shadow_pcf("),
+        "the main shader holds the fixed-grid filter"
+    );
+
+    let module = validate("main shader", &source, Capabilities::empty());
+
+    let noisy: Vec<&str> = module
+        .functions
+        .iter()
+        .filter_map(|(_, f)| f.name.as_deref())
+        .filter(|name| name.contains("hash") || name.starts_with("rotate"))
+        .collect();
+    let with_screen_pos: Vec<&str> = module
+        .functions
+        .iter()
+        .filter(|(_, f)| {
+            f.arguments
+                .iter()
+                .any(|a| a.name.as_deref() == Some("screen_pos"))
+        })
+        .filter_map(|(_, f)| f.name.as_deref())
+        .collect();
+    assert!(noisy.is_empty(), "hash or rotation functions: {noisy:?}");
+    assert!(
+        with_screen_pos.is_empty(),
+        "functions taking a screen position: {with_screen_pos:?}"
+    );
+}
+
+#[test]
 fn shadow_shader_parses_and_validates() {
     validate_file("shadow.wgsl", Capabilities::IMMEDIATES);
 }

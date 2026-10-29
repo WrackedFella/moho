@@ -25,7 +25,7 @@ fire = "semi_auto"
 cooldown_ticks = 6
 reload_ticks = 120
 charge_ticks = 30
-range = 100.0
+range = 200.0
 
 [mag_rifle]
 class = "gear"

@@ -1,12 +1,13 @@
 use glam::Vec3;
 use moho_render_api::{WorldMesh, WorldMeshId, WorldMeshRange};
 use rapier3d::prelude::*;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Downward acceleration of a world that never calls [`PhysicsWorld::set_gravity`], m/s².
 const DEFAULT_GRAVITY: f32 = 18.0;
 
 mod character;
+mod loose;
 mod query;
 mod slide;
 #[cfg(test)]
@@ -14,6 +15,7 @@ pub(crate) mod test_support;
 
 use character::Character;
 pub use character::{CharacterHandle, CharacterSpawn, CharacterState, HitVolume, UnknownCharacter};
+pub use loose::{LooseId, LooseShape, LooseSpawn, LooseState, UnknownLoose};
 pub use query::{HitTag, RayHit, RayQuery};
 
 pub struct PhysicsWorld {
@@ -31,6 +33,8 @@ pub struct PhysicsWorld {
     ccd_solver: CCDSolver,
     world_mesh_colliders: HashMap<WorldMeshId, ColliderHandle>,
     characters: HashMap<CharacterHandle, Character>,
+    loose: BTreeMap<LooseId, RigidBodyHandle>,
+    next_loose: u64,
 }
 
 impl std::fmt::Debug for PhysicsWorld {
@@ -71,6 +75,8 @@ impl PhysicsWorld {
             ccd_solver,
             world_mesh_colliders: HashMap::new(),
             characters: HashMap::new(),
+            loose: BTreeMap::new(),
+            next_loose: 0,
         }
     }
 

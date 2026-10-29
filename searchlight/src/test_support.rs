@@ -2,11 +2,13 @@
 
 use std::sync::Arc;
 
-use glam::Vec3;
+use std::collections::BTreeMap;
+
+use glam::{Quat, Vec3};
 use moho_input::Action;
 use moho_input::action_map::ActionMap;
 use moho_input::bindings::Input;
-use moho_level::NavMesh;
+use moho_level::{LevelMarker, NavMesh};
 use moho_physics::{MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::{
@@ -18,6 +20,7 @@ use crate::arena::{Arena, ArenaControl, nav_profile};
 use crate::brain::EnemyTuning;
 use crate::control::ControlAction;
 use crate::input::SearchlightAction;
+use crate::mode::ArenaMode;
 use crate::sim::SimConfig;
 use crate::tag::SurfaceTag;
 use crate::tuning::SHIPPED_BODY;
@@ -258,6 +261,7 @@ pub(crate) fn arena_with_controls(
         material_names: vec![None; meshes.len()],
         meshes,
         nav,
+        nav_fallback: false,
         player_spawn: player,
         dummy_spawns: Vec::new(),
         enemy_spawns: enemies.to_vec(),
@@ -272,6 +276,41 @@ pub(crate) fn wave_tuning(first_size: u32) -> WaveTuning {
     WaveTuning::new(first_size, 1, 100)
         .expect("a positive first wave and growth are valid")
         .with_mix(GradeMix::only(Grade::Experienced))
+}
+
+/// A level marker named `name` at `position`, with no properties.
+pub(crate) fn level_marker(name: &str, position: Vec3) -> LevelMarker {
+    LevelMarker {
+        name: name.to_owned(),
+        position,
+        rotation: Quat::IDENTITY,
+        properties: BTreeMap::new(),
+    }
+}
+
+/// The `searchlight_level` marker whose `mode` is `value`.
+pub(crate) fn mode_marker(value: &str) -> LevelMarker {
+    let mut marker = level_marker("searchlight_level", Vec3::ZERO);
+    marker
+        .properties
+        .insert("mode".to_owned(), value.to_owned());
+    marker
+}
+
+/// The wave and score of a mode that runs waves.
+pub(crate) trait WaveScore {
+    fn wave(&self) -> u32;
+    fn score(&self) -> u32;
+}
+
+impl WaveScore for ArenaMode {
+    fn wave(&self) -> u32 {
+        self.tally().expect("this mode runs waves").wave
+    }
+
+    fn score(&self) -> u32 {
+        self.tally().expect("this mode runs waves").score
+    }
 }
 
 /// Presses the first default binding of `action` on `map`.

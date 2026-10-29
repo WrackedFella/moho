@@ -400,7 +400,7 @@ flowchart LR
 
 The egui UI is drawn by the UI pass from paint data (below); `finish_frame` only submits
 and presents. Shader sources are `shaders/*.wgsl` (`common`, `sky`, `vertex`,
-`normal`, `skin`, `fragment`, `shadow`, `skybox`, `gtao`, `ssao_blur`, `pcss`, `instance`, `ui`, `marker`, `bloom`, `tonemap`).
+`normal`, `skin`, `fragment`, `shadow`, `skybox`, `gtao`, `shadow_filter`, `ssao_blur`, `instance`, `ui`, `marker`, `bloom`, `tonemap`).
 
 The skybox and main pipelines render into an `Rgba16Float` HDR target (`tone_map::HdrTarget`,
 recreated on resize), not the swapchain. `bloom::BloomChain` (`shaders/bloom.wgsl`, after
@@ -519,22 +519,22 @@ blending, sRGB vertex colours, no custom paint callbacks.
 
 | Setting | Where | Notes |
 |---|---|---|
-| Shadow quality 0–4 | `graphics.shadow_quality`, `r_shadow_quality` | Off/Low/Med/High/Ultra |
+| Shadow quality 0–4 | `graphics.shadow_quality`, `r_shadow_quality`, Video tab combo | Off/Low/Med/High/Ultra; picks a `ShadowTier` ([§9](#9-cascaded-shadows)); applied at start and on settings save via `RenderRequest::ShadowQuality` |
 | SSAO quality 0–4 | `graphics.ssao_quality`, `r_ssao_quality` | Samples 0/4/8/16/32 |
 | Brightness 0.5–2.0 | `graphics.brightness`, Video tab slider | Linear exposure multiplier into the tone-map pass (`RendererBackend::set_brightness`, `brightness_exposure`); clamped, NaN gives 1.0; applied at start by `apply_saved_render_settings` |
 | Bloom 0–2 | `graphics.bloom`, `r_bloom <0-2>`, Video tab combo | Off/Low/High; applied at start by `apply_saved_render_settings` |
 | Tone map 0/1 | `r_tonemap <0\|1>` | `RendererBackend::set_tone_map`; session-only, on at start, not saved |
 | Debug view | `r_debug_view <mode>` | `Lighting.params.y` |
 | View-height cut | `r_view_height <metres\|off>` | `Renderer::set_view_height`; sticky; cuts world, markers and shadows; the binary caps the cut ([below](#3-cut-face-caps)) |
-| Cascade map size | `CASCADE_MAP_SIZE` = 4096 | `shadow.rs`; per layer, 6 layers |
+| Cascade map size | 1024 / 2048 / 4096 / 8192 by tier | `ShadowTier::map_size` (`shadow/tier.rs`), clamped to the device's `max_texture_dimension_2d`; per layer, 6 layers |
 | Shadow distance | `SHADOW_DISTANCE` = 1000 | `shadow.rs` |
 
 CPU↔GPU struct layouts: [GPU ABI](../reference/gpu-abi.md).
 
 ## 9 Cascaded shadows
 
-The sun casts four cascades and the moon two, one layer each of a 4096² depth array
-(`CASCADE_LAYERS` = 6, sun layers first). `update_shadow_matrices` (`render_ops/shadow_ops.rs`)
+The sun casts four cascades and the moon two, one layer each of a square depth array
+(`CASCADE_LAYERS` = 6, sun layers first) whose side comes from the quality tier. `update_shadow_matrices` (`render_ops/shadow_ops.rs`)
 runs each frame in `begin_frame`: it reads the perspective camera shape
 (`CameraFrustum`, `shadow/cascades.rs`), splits `near..min(far, SHADOW_DISTANCE)` with a
 log/uniform blend (`practical_splits`, `SPLIT_LAMBDA`), fits an orthographic light view
@@ -546,6 +546,18 @@ Acne is prevented by a normal offset, not a large depth bias: the lookup positio
 along the geometric normal by `NORMAL_OFFSET_TEXELS` (2) texels of the cascade looked up,
 scaled by sin θ to the light, and the hardware bias stays at slope 1.0 with no clamp (one
 clamp per pipeline could not suit cascades whose texels differ 18-fold).
+Quality is a `ShadowTier` (`shadow/tier.rs`, no GPU types): level 0 Off, 1 Low, 2 Medium,
+3 High, 4 Ultra; an out-of-range level is Medium; the renderer starts on High. The tier sets
+the map side (Low 1024, Medium 2048, High 4096, Ultra 8192, clamped to the device limit,
+Off 1) and the filter radius in texels (0, 1, 1, 2, 3). `ShadowSystem::set_tier`
+recreates the array, its views and the sampling bind group only when the clamped side
+changes, so it runs between frames. Off renders no shadow layers and writes shadow
+distance 0 to `ShadowGpu.metadata.x`. The cascade fits use the allocated side for texel
+snapping.
+`shaders/shadow_filter.wgsl` does the lookup: a tent-weighted (2r+1)² grid of hardware
+2×2 comparisons at whole-texel offsets, the same pattern for every pixel so edges do not
+crawl, with each tap's reference depth moved along the receiver plane's depth gradient to
+avoid acne. There is no penumbra search.
 A light below `MIN_SHADOW_LIGHT_INTENSITY` skips its cascades. The fits are plain
 functions over `glam` types and run without a GPU.
 

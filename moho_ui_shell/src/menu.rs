@@ -3,11 +3,12 @@
 //! a choice becomes a [`MenuEvent`] the game answers by pushing or popping.
 
 use std::cell::Cell;
+use std::collections::BTreeMap;
 
 use moho_input::bindings::{Binding, Input};
 use moho_input::key::{Key, MouseButton};
 
-use crate::settings::{Control, EngineSetting, EngineSettings};
+use crate::settings::{Control, EngineSetting, EngineSettings, GameSlider};
 use crate::text::{Anchor, ScreenText};
 
 /// One screen: an optional title, a column of items and the action Escape chooses.
@@ -37,6 +38,8 @@ pub enum MenuItem<A> {
         slots: [Option<Binding>; 2],
         note: Option<String>,
     },
+    /// A game's own slider row, staged and applied beside the engine's rows.
+    GameSlider(GameSlider),
 }
 
 /// A column of a [`MenuItem::Control`] row.
@@ -53,6 +56,8 @@ pub enum MenuEvent<A> {
     Chosen(A),
     /// The player applied the settings staged on the top screen.
     SettingsApplied(EngineSettings),
+    /// The player applied the game's own slider rows: every row's value by its key.
+    GameSettingsApplied(BTreeMap<String, i32>),
     /// The player pressed `input` while capturing `slot` of `action`.
     Captured { action: A, slot: Slot, input: Input },
     /// The player cleared `slot` of `action`.
@@ -98,6 +103,8 @@ struct Open<A> {
     focus: usize,
     /// A copy of the screen's `settings` that the rows edit until Apply.
     staged: Option<EngineSettings>,
+    /// The game rows the player changed, by key; a row without an entry shows its own `value`.
+    game_staged: BTreeMap<String, i32>,
     /// The slot of a `Control` row the focus is on.
     slot: Slot,
     /// Whether the next press is a binding for the focused slot.
@@ -123,6 +130,7 @@ impl<A> Open<A> {
             screen,
             focus: 0,
             staged,
+            game_staged: BTreeMap::new(),
             slot: Slot::Primary,
             capturing: false,
             shell_note: None,
@@ -276,29 +284,65 @@ impl<A: Clone> Open<A> {
 impl<A: Clone> Open<A> {
     /// What choosing `row` does: a button chooses its action, a settings row flips or cycles
     /// its staged value, Apply hands over the staged values and makes them the baseline.
-    fn choose(&mut self, row: usize) -> Option<MenuEvent<A>> {
-        match self.screen.items.get(row)? {
-            MenuItem::Button { action, .. } => Some(MenuEvent::Chosen(action.clone())),
-            MenuItem::Setting(setting) => {
+    fn choose(&mut self, row: usize) -> Vec<MenuEvent<A>> {
+        match self.screen.items.get(row) {
+            Some(MenuItem::Button { action, .. }) => vec![MenuEvent::Chosen(action.clone())],
+            Some(MenuItem::Setting(setting)) => {
                 if let Some(staged) = &mut self.staged {
                     cycle(staged, *setting);
                 }
-                None
+                Vec::new()
             }
-            MenuItem::Apply => {
-                let staged = self.staged?;
-                self.screen.settings = Some(staged);
-                Some(MenuEvent::SettingsApplied(staged))
-            }
-            MenuItem::Control { .. } => None,
+            Some(MenuItem::Apply) => self.apply(),
+            Some(MenuItem::Control { .. } | MenuItem::GameSlider(_)) | None => Vec::new(),
         }
+    }
+
+    /// Applies the staged engine values and every game row's value, making them the baseline.
+    /// The engine values come first; the game values are the whole set, one entry per key, the
+    /// first row in item order winning a key shared by rows that start apart.
+    fn apply(&mut self) -> Vec<MenuEvent<A>> {
+        let mut events = Vec::new();
+        if let Some(staged) = self.staged {
+            self.screen.settings = Some(staged);
+            events.push(MenuEvent::SettingsApplied(staged));
+        }
+        let mut games = BTreeMap::new();
+        for item in &self.screen.items {
+            if let MenuItem::GameSlider(slider) = item {
+                games
+                    .entry(slider.key.clone())
+                    .or_insert_with(|| self.game_value(slider));
+            }
+        }
+        for item in &mut self.screen.items {
+            if let MenuItem::GameSlider(slider) = item {
+                slider.value = games[&slider.key];
+            }
+        }
+        self.game_staged.clear();
+        if !games.is_empty() {
+            events.push(MenuEvent::GameSettingsApplied(games));
+        }
+        events
     }
 }
 
 impl<A> Open<A> {
+    /// What `slider` shows: the value staged under its key, else its own.
+    fn game_value(&self, slider: &GameSlider) -> i32 {
+        self.game_staged
+            .get(&slider.key)
+            .copied()
+            .unwrap_or(slider.value)
+    }
+
     /// Moves the staged value of the settings row `row` one step towards `direction`.
     fn nudge(&mut self, row: usize, direction: i8) {
-        if let (Some(staged), Some(MenuItem::Setting(setting))) =
+        if let Some(MenuItem::GameSlider(slider)) = self.screen.items.get(row) {
+            let moved = slider.stepped(self.game_value(slider), direction);
+            self.game_staged.insert(slider.key.clone(), moved);
+        } else if let (Some(staged), Some(MenuItem::Setting(setting))) =
             (&mut self.staged, self.screen.items.get(row))
         {
             match setting.control() {
@@ -326,11 +370,14 @@ impl<A> Open<A> {
         let Some(rect) = self.rects(size).get(row).copied() else {
             return;
         };
-        if let (Some(staged), Some(MenuItem::Setting(setting))) =
+        let fraction = ((x - rect.min[0]) / (rect.max[0] - rect.min[0])).clamp(0.0, 1.0);
+        if let Some(MenuItem::GameSlider(slider)) = self.screen.items.get(row) {
+            self.game_staged
+                .insert(slider.key.clone(), slider.at_fraction(fraction));
+        } else if let (Some(staged), Some(MenuItem::Setting(setting))) =
             (&mut self.staged, self.screen.items.get(row))
             && let Control::Slider { min, max, .. } = setting.control()
         {
-            let fraction = ((x - rect.min[0]) / (rect.max[0] - rect.min[0])).clamp(0.0, 1.0);
             staged.set_slider(*setting, min + fraction * (max - min));
         }
     }
@@ -483,6 +530,21 @@ impl<A> MenuStack<A> {
         let centred = |label: &str, centre_y: f32, color| {
             text(label, Anchor::Center, 0.0, centre_y, ROW_SIZE, color)
         };
+        let setting_row = |label: &str, value: Option<&str>, rect: Rect, color| {
+            let y = centre_y(rect);
+            let label = text(label, Anchor::Left, rect.min[0], y, SETTING_SIZE, color);
+            let value = value.map(|value| {
+                text(
+                    value,
+                    Anchor::Right,
+                    rect.max[0] - size[0],
+                    y,
+                    SETTING_SIZE,
+                    color,
+                )
+            });
+            std::iter::once(label).chain(value)
+        };
         let mut texts = Vec::new();
         if let Some(title) = &open.screen.title {
             let first_centre = rows
@@ -551,26 +613,16 @@ impl<A> MenuStack<A> {
                         ));
                     }
                 }
+                MenuItem::GameSlider(slider) => {
+                    let value = slider.value_text(open.game_value(slider));
+                    texts.extend(setting_row(&slider.label, Some(&value), rect, color));
+                }
                 MenuItem::Setting(setting) => {
-                    let y = centre_y(rect);
-                    texts.push(text(
-                        setting.label(),
-                        Anchor::Left,
-                        rect.min[0],
-                        y,
-                        SETTING_SIZE,
-                        color,
-                    ));
-                    if let Some(staged) = &open.staged {
-                        texts.push(text(
-                            &staged.value_text(*setting),
-                            Anchor::Right,
-                            rect.max[0] - size[0],
-                            y,
-                            SETTING_SIZE,
-                            color,
-                        ));
-                    }
+                    let value = open
+                        .staged
+                        .as_ref()
+                        .map(|staged| staged.value_text(*setting));
+                    texts.extend(setting_row(setting.label(), value.as_deref(), rect, color));
                 }
             }
         }
@@ -656,10 +708,11 @@ impl<A: Clone> MenuStack<A> {
             self.events
                 .extend(open.capture(Input::Mouse(MouseButton::Left)));
         } else if let Some((row, rect)) = open.row_at(point, size) {
-            let on_slider = matches!(
-                open.screen.items[row],
-                MenuItem::Setting(setting) if matches!(setting.control(), Control::Slider { .. })
-            );
+            let on_slider = match open.screen.items[row] {
+                MenuItem::Setting(setting) => matches!(setting.control(), Control::Slider { .. }),
+                MenuItem::GameSlider(_) => true,
+                _ => false,
+            };
             if let Some(slot) = open.slot_at(row, rect, point[0]) {
                 open.set_focus(row, slot);
                 open.start_capture();
@@ -818,6 +871,7 @@ mod tests {
             .filter_map(|event| match event {
                 MenuEvent::Chosen(action) => Some(action),
                 MenuEvent::SettingsApplied(_)
+                | MenuEvent::GameSettingsApplied(_)
                 | MenuEvent::Captured { .. }
                 | MenuEvent::Cleared { .. } => None,
             })
@@ -2399,6 +2453,460 @@ mod tests {
             }
             assert!(texts.iter().any(|text| text == "Apply"), "{texts:?}");
             assert!(texts.iter().any(|text| text == "Back"), "{texts:?}");
+        }
+    }
+
+    mod game_rows {
+        use std::collections::BTreeMap;
+
+        use moho_core::prefs::WindowMode;
+
+        use super::*;
+
+        fn engine_base() -> EngineSettings {
+            EngineSettings {
+                mouse_sensitivity: 2.5,
+                mouse_smoothing: false,
+                invert_mouse_y: false,
+                sound_effect_volume: 8.0,
+                music_volume: 6.0,
+                ui_volume: 7.0,
+                shadow_quality: 3,
+                ssao_quality: 3,
+                effects_quality: 3,
+                window_mode: WindowMode::Windowed,
+                resolution: (1920, 1080),
+            }
+        }
+
+        fn slider(key: &str, label: &str, value: i32) -> GameSlider {
+            GameSlider {
+                key: key.to_owned(),
+                label: label.to_owned(),
+                min: 0,
+                max: 100,
+                step: 5,
+                unit: "%".to_owned(),
+                value,
+            }
+        }
+
+        fn head_bob(value: i32) -> GameSlider {
+            slider("head_bob", "Head bob", value)
+        }
+
+        /// The sliders, then Apply and Back; an engine volume row leads when `engine` is given.
+        fn screen_of(sliders: Vec<GameSlider>, engine: Option<EngineSettings>) -> MenuScreen<Act> {
+            let mut items: Vec<MenuItem<Act>> = Vec::new();
+            if engine.is_some() {
+                items.push(MenuItem::Setting(EngineSetting::MusicVolume));
+            }
+            items.extend(sliders.into_iter().map(MenuItem::GameSlider));
+            items.push(MenuItem::Apply);
+            items.push(button("Back", Act::Back));
+            MenuScreen {
+                title: Some("Settings".to_owned()),
+                items,
+                back: Some(Act::Back),
+                settings: engine,
+            }
+        }
+
+        fn game_values(pairs: &[(&str, i32)]) -> BTreeMap<String, i32> {
+            pairs
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), *value))
+                .collect()
+        }
+
+        fn row_of(stack: &MenuStack<Act>, item: MenuItem<Act>) -> usize {
+            let screen = stack.top().expect("a screen is open");
+            screen
+                .items
+                .iter()
+                .position(|candidate| *candidate == item)
+                .expect("the screen lists the item")
+        }
+
+        fn game_row(stack: &MenuStack<Act>, key: &str) -> usize {
+            let screen = stack.top().expect("a screen is open");
+            screen
+                .items
+                .iter()
+                .position(|item| matches!(item, MenuItem::GameSlider(s) if s.key == key))
+                .expect("the screen lists the game slider")
+        }
+
+        fn rect_of(stack: &MenuStack<Act>, row: usize) -> Rect {
+            layout(stack.top().expect("a screen is open"), SIZE)[row]
+        }
+
+        fn focus(stack: &mut MenuStack<Act>, row: usize) {
+            let rect = rect_of(stack, row);
+            stack.hover(
+                [
+                    (rect.min[0] + rect.max[0]) / 2.0,
+                    (rect.min[1] + rect.max[1]) / 2.0,
+                ],
+                SIZE,
+            );
+        }
+
+        fn step_game(stack: &mut MenuStack<Act>, key: &str, keys: &[Key]) {
+            let row = game_row(stack, key);
+            focus(stack, row);
+            for &pressed in keys {
+                press(stack, pressed);
+            }
+        }
+
+        /// Presses the mouse `fraction` of the way along the band of the `key` slider.
+        fn press_band(stack: &mut MenuStack<Act>, key: &str, fraction: f32) {
+            let rect = rect_of(stack, game_row(stack, key));
+            let x = rect.min[0] + fraction * (rect.max[0] - rect.min[0]);
+            stack.click([x, (rect.min[1] + rect.max[1]) / 2.0], SIZE);
+        }
+
+        fn drag_band(stack: &mut MenuStack<Act>, key: &str, fraction: f32) {
+            let rect = rect_of(stack, game_row(stack, key));
+            let x = rect.min[0] + fraction * (rect.max[0] - rect.min[0]);
+            stack.drag([x, (rect.min[1] + rect.max[1]) / 2.0], SIZE);
+        }
+
+        fn release(stack: &mut MenuStack<Act>) {
+            stack.on_key(Input::Mouse(MouseButton::Left), false, false);
+        }
+
+        fn apply_events(stack: &mut MenuStack<Act>) -> Vec<MenuEvent<Act>> {
+            let row = row_of(stack, MenuItem::Apply);
+            focus(stack, row);
+            press(stack, Key::Enter);
+            stack.take_events()
+        }
+
+        fn applied_game(stack: &mut MenuStack<Act>) -> BTreeMap<String, i32> {
+            let mut games: Vec<_> = apply_events(stack)
+                .into_iter()
+                .filter_map(|event| match event {
+                    MenuEvent::GameSettingsApplied(values) => Some(values),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                games.len(),
+                1,
+                "Apply sends the game values once: {games:?}"
+            );
+            games.remove(0)
+        }
+
+        /// The texts on the `label` row: the label itself, then the value shown beside it.
+        fn row_texts_of(stack: &MenuStack<Act>, label: &str) -> (ScreenText, Option<ScreenText>) {
+            let texts = stack.texts(SIZE);
+            let name = texts
+                .iter()
+                .find(|t| t.text == label)
+                .unwrap_or_else(|| panic!("{label:?} is not drawn in {texts:?}"))
+                .clone();
+            let value = texts
+                .iter()
+                .find(|t| t.offset[1] == name.offset[1] && t.anchor == Anchor::Right)
+                .cloned();
+            (name, value)
+        }
+
+        fn shown_value(stack: &MenuStack<Act>, label: &str) -> Option<String> {
+            row_texts_of(stack, label).1.map(|value| value.text)
+        }
+
+        #[test]
+        fn apply_sends_game_values_beside_engine_values() {
+            let mut stack = stack_of(screen_of(
+                vec![head_bob(50), slider("sway", "Sway", 20)],
+                Some(engine_base()),
+            ));
+            step_game(&mut stack, "head_bob", &[Key::ArrowLeft; 10]);
+            let music = row_of(&stack, MenuItem::Setting(EngineSetting::MusicVolume));
+            focus(&mut stack, music);
+            press(&mut stack, Key::ArrowLeft);
+
+            let events = apply_events(&mut stack);
+
+            assert_eq!(
+                events,
+                [
+                    MenuEvent::SettingsApplied(EngineSettings {
+                        music_volume: 5.5,
+                        ..engine_base()
+                    }),
+                    MenuEvent::GameSettingsApplied(game_values(&[("head_bob", 0), ("sway", 20)])),
+                ]
+            );
+        }
+
+        #[test]
+        fn apply_on_a_screen_without_engine_rows_sends_only_game_values() {
+            let mut stack = stack_of(screen_of(vec![head_bob(50)], None));
+            step_game(&mut stack, "head_bob", &[Key::ArrowLeft; 10]);
+
+            let events = apply_events(&mut stack);
+
+            assert_eq!(
+                events,
+                [MenuEvent::GameSettingsApplied(game_values(&[(
+                    "head_bob", 0
+                )]))]
+            );
+        }
+
+        #[test]
+        fn pop_discards_staged_game_values() {
+            let mut stack = stack_of(main_screen());
+            stack.push(screen_of(vec![head_bob(50)], Some(engine_base())));
+            step_game(&mut stack, "head_bob", &[Key::ArrowLeft; 10]);
+            let staged = shown_value(&stack, "Head bob");
+
+            stack.pop();
+            let after_pop = stack.take_events();
+            stack.push(screen_of(vec![head_bob(50)], Some(engine_base())));
+            let reshown = shown_value(&stack, "Head bob");
+            let events = apply_events(&mut stack);
+
+            assert_eq!(staged.as_deref(), Some("0 %"));
+            assert_eq!(after_pop, []);
+            assert_eq!(reshown.as_deref(), Some("50 %"));
+            assert_eq!(
+                events,
+                [
+                    MenuEvent::SettingsApplied(engine_base()),
+                    MenuEvent::GameSettingsApplied(game_values(&[("head_bob", 50)])),
+                ]
+            );
+        }
+
+        #[test]
+        fn arrows_step_and_clamp_a_game_slider() {
+            let mut stack = stack_of(screen_of(vec![head_bob(95)], None));
+
+            step_game(&mut stack, "head_bob", &[Key::ArrowRight, Key::ArrowRight]);
+            let at_top = shown_value(&stack, "Head bob");
+            press(&mut stack, Key::Enter);
+            let after_enter = shown_value(&stack, "Head bob");
+            press_band(&mut stack, "head_bob", 0.25);
+            let clicked = shown_value(&stack, "Head bob");
+            release(&mut stack);
+            step_game(&mut stack, "head_bob", &[Key::ArrowLeft]);
+            let stepped_down = shown_value(&stack, "Head bob");
+            let mut low = stack_of(screen_of(vec![head_bob(5)], None));
+            step_game(&mut low, "head_bob", &[Key::ArrowLeft, Key::ArrowLeft]);
+            let at_bottom = shown_value(&low, "Head bob");
+
+            assert_eq!(at_bottom.as_deref(), Some("0 %"));
+            assert_eq!(at_top.as_deref(), Some("100 %"));
+            assert_eq!(after_enter.as_deref(), Some("100 %"));
+            assert_eq!(clicked.as_deref(), Some("25 %"));
+            assert_eq!(stepped_down.as_deref(), Some("20 %"));
+            assert_eq!(stack.take_events(), [], "a slider chooses nothing");
+        }
+
+        #[test]
+        fn click_and_drag_set_a_game_slider() {
+            let mut stack = stack_of(screen_of(vec![head_bob(10)], None));
+            let band = rect_of(&stack, game_row(&stack, "head_bob"));
+
+            press_band(&mut stack, "head_bob", 0.3);
+            let pressed = shown_value(&stack, "Head bob");
+            let dragging = stack.is_dragging();
+            drag_band(&mut stack, "head_bob", 0.7);
+            let dragged = shown_value(&stack, "Head bob");
+            let beyond = band.max[0] + 500.0;
+            stack.drag([beyond, (band.min[1] + band.max[1]) / 2.0], SIZE);
+            let past_the_end = shown_value(&stack, "Head bob");
+            stack.drag(
+                [band.min[0] - 500.0, (band.min[1] + band.max[1]) / 2.0],
+                SIZE,
+            );
+            let before_the_start = shown_value(&stack, "Head bob");
+            drag_band(&mut stack, "head_bob", 1.0);
+            release(&mut stack);
+            let still_dragging = stack.is_dragging();
+            drag_band(&mut stack, "head_bob", 0.1);
+            let after_release = shown_value(&stack, "Head bob");
+
+            assert_eq!(pressed.as_deref(), Some("30 %"));
+            assert!(dragging, "the press started a drag");
+            assert_eq!(dragged.as_deref(), Some("70 %"));
+            assert_eq!(past_the_end.as_deref(), Some("100 %"));
+            assert_eq!(before_the_start.as_deref(), Some("0 %"));
+            assert!(!still_dragging, "releasing the button ended the drag");
+            assert_eq!(after_release.as_deref(), Some("100 %"));
+            assert_eq!(applied_game(&mut stack), game_values(&[("head_bob", 100)]));
+        }
+
+        #[test]
+        fn an_off_step_value_snaps_on_the_next_step() {
+            let stepped = |value, min, key| {
+                let row = GameSlider {
+                    min,
+                    max: 100,
+                    ..head_bob(value)
+                };
+                let mut stack = stack_of(screen_of(vec![row], None));
+                step_game(&mut stack, "head_bob", &[key]);
+                applied_game(&mut stack)["head_bob"]
+            };
+
+            assert_eq!(stepped(52, 0, Key::ArrowRight), 55);
+            assert_eq!(stepped(52, 0, Key::ArrowLeft), 45);
+            assert_eq!(stepped(53, 0, Key::ArrowRight), 60);
+            assert_eq!(stepped(4, 3, Key::ArrowRight), 8, "steps count from min");
+        }
+
+        #[test]
+        fn extreme_ranges_stay_in_bounds() {
+            let widest = GameSlider {
+                min: i32::MIN,
+                max: i32::MAX,
+                step: 1,
+                ..head_bob(i32::MAX)
+            };
+            let mut stack = stack_of(screen_of(vec![widest], None));
+
+            step_game(&mut stack, "head_bob", &[Key::ArrowRight]);
+            let right_at_max = shown_value(&stack, "Head bob");
+            step_game(&mut stack, "head_bob", &[Key::ArrowLeft]);
+            let left_once = shown_value(&stack, "Head bob");
+            press_band(&mut stack, "head_bob", 0.5);
+            drag_band(&mut stack, "head_bob", 1.0);
+            let right_end = shown_value(&stack, "Head bob");
+            drag_band(&mut stack, "head_bob", 0.0);
+            let left_end = shown_value(&stack, "Head bob");
+            release(&mut stack);
+            let applied = applied_game(&mut stack);
+
+            assert_eq!(right_at_max.as_deref(), Some("2147483647 %"));
+            assert_eq!(left_once.as_deref(), Some("2147483646 %"));
+            assert_eq!(right_end.as_deref(), Some("2147483647 %"));
+            assert_eq!(left_end.as_deref(), Some("-2147483648 %"));
+            assert_eq!(applied, game_values(&[("head_bob", i32::MIN)]));
+        }
+
+        #[test]
+        fn a_negative_range_snaps_from_its_min() {
+            let negative = |value| GameSlider {
+                min: -10,
+                max: 10,
+                ..head_bob(value)
+            };
+            let mut stack = stack_of(screen_of(vec![negative(-3)], None));
+            let mut fresh = stack_of(screen_of(vec![negative(-3)], None));
+
+            step_game(&mut stack, "head_bob", &[Key::ArrowRight]);
+            let first_right = shown_value(&stack, "Head bob");
+            step_game(&mut stack, "head_bob", &[Key::ArrowRight]);
+            let second_right = shown_value(&stack, "Head bob");
+            step_game(&mut fresh, "head_bob", &[Key::ArrowLeft]);
+            let left = shown_value(&fresh, "Head bob");
+
+            assert_eq!(first_right.as_deref(), Some("0 %"));
+            assert_eq!(second_right.as_deref(), Some("5 %"));
+            assert_eq!(left.as_deref(), Some("-10 %"));
+        }
+
+        #[test]
+        fn inverted_range_and_zero_step_do_not_panic() {
+            let inverted = GameSlider {
+                min: 10,
+                max: 0,
+                ..slider("inverted", "Inverted", 5)
+            };
+            let no_step = GameSlider {
+                step: 0,
+                ..slider("no_step", "No step", 40)
+            };
+            let mut stack = stack_of(screen_of(vec![inverted, no_step], None));
+
+            step_game(&mut stack, "inverted", &[Key::ArrowLeft, Key::ArrowRight]);
+            let after_arrows = shown_value(&stack, "Inverted");
+            press_band(&mut stack, "inverted", 0.5);
+            drag_band(&mut stack, "inverted", 0.2);
+            release(&mut stack);
+            step_game(&mut stack, "no_step", &[Key::ArrowRight]);
+            let stepped = applied_game(&mut stack);
+            press_band(&mut stack, "no_step", 0.5);
+            release(&mut stack);
+            let clicked = applied_game(&mut stack);
+
+            assert_eq!(after_arrows.as_deref(), Some("10 %"));
+            assert_eq!(stepped, game_values(&[("inverted", 10), ("no_step", 41)]));
+            assert_eq!(clicked, game_values(&[("inverted", 10), ("no_step", 50)]));
+        }
+
+        #[test]
+        fn rows_sharing_a_key_show_and_edit_one_value() {
+            let first = head_bob(50);
+            let second = slider("head_bob", "Head bob again", 50);
+            let mut stack = stack_of(screen_of(vec![first, second], None));
+
+            step_game(&mut stack, "head_bob", &[Key::ArrowRight]);
+            let first_shown = shown_value(&stack, "Head bob");
+            let second_shown = shown_value(&stack, "Head bob again");
+            let applied = applied_game(&mut stack);
+
+            assert_eq!(first_shown.as_deref(), Some("55 %"));
+            assert_eq!(second_shown.as_deref(), Some("55 %"));
+            assert_eq!(applied, game_values(&[("head_bob", 55)]));
+        }
+
+        #[test]
+        fn a_game_slider_shows_label_and_value_with_unit() {
+            let bare = GameSlider {
+                unit: String::new(),
+                ..slider("sway", "Sway", 7)
+            };
+            let stack = stack_of(screen_of(vec![head_bob(50), bare], None));
+
+            let (label, value) = row_texts_of(&stack, "Head bob");
+            let (bare_label, bare_value) = row_texts_of(&stack, "Sway");
+
+            let rect = rect_of(&stack, game_row(&stack, "head_bob"));
+            let value = value.expect("the row shows a value");
+            assert_eq!(value.text, "50 %");
+            assert_eq!(label.anchor, Anchor::Left);
+            assert_eq!(label.offset[0], rect.min[0]);
+            assert_eq!(value.anchor, Anchor::Right);
+            assert_eq!(value.offset[0], rect.max[0] - SIZE[0]);
+            assert_eq!(value.offset[1], label.offset[1]);
+            assert_eq!(
+                bare_value.map(|value| value.text).as_deref(),
+                Some("7"),
+                "no unit, no trailing space"
+            );
+            assert_eq!(bare_label.anchor, Anchor::Left);
+        }
+
+        #[test]
+        fn a_second_apply_sends_the_applied_values() {
+            let mut stack = stack_of(screen_of(vec![head_bob(50)], None));
+            step_game(&mut stack, "head_bob", &[Key::ArrowLeft; 10]);
+
+            let first = applied_game(&mut stack);
+            let baseline = stack.top().map(|screen| screen.items.clone());
+            let second = applied_game(&mut stack);
+            step_game(&mut stack, "head_bob", &[Key::ArrowRight]);
+            let third = applied_game(&mut stack);
+
+            assert_eq!(first, game_values(&[("head_bob", 0)]));
+            assert_eq!(
+                baseline.and_then(|items| items.into_iter().find_map(|item| match item {
+                    MenuItem::GameSlider(slider) => Some(slider.value),
+                    _ => None,
+                })),
+                Some(0),
+                "Apply makes the staged value the row's baseline"
+            );
+            assert_eq!(second, game_values(&[("head_bob", 0)]));
+            assert_eq!(third, game_values(&[("head_bob", 5)]));
         }
     }
 }

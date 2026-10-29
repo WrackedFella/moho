@@ -134,39 +134,80 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
         ui.add_space(8.0);
 
         bloom_row(menu, ui, label_width);
+
+        ui.add_space(8.0);
+
+        shadow_quality_row(menu, ui, label_width);
     });
+}
+
+const SHADOW_QUALITY_LEVELS: [&str; 5] = ["Off", "Low", "Medium", "High", "Ultra"];
+
+fn shadow_quality_row(menu: &mut SettingsMenu, ui: &mut egui::Ui, label_width: f32) {
+    let staged = menu.state.staged().shadow_quality();
+    let saved = menu.state.prefs().shadow_quality();
+    let combo = LevelCombo {
+        label: "Shadow quality:",
+        id: "shadow_quality_combo",
+        names: &SHADOW_QUALITY_LEVELS,
+    };
+    if let Some(level) = combo.show(ui, label_width, staged, saved) {
+        menu.state.set_shadow_quality(level);
+    }
 }
 
 const BLOOM_LEVELS: [&str; 3] = ["Off", "Low", "High"];
 
 fn bloom_row(menu: &mut SettingsMenu, ui: &mut egui::Ui, label_width: f32) {
     let staged = menu.state.staged().bloom();
-    let is_dirty = staged != menu.state.prefs().bloom();
+    let saved = menu.state.prefs().bloom();
+    let combo = LevelCombo {
+        label: "Bloom:",
+        id: "bloom_combo",
+        names: &BLOOM_LEVELS,
+    };
+    if let Some(level) = combo.show(ui, label_width, staged, saved) {
+        menu.state.set_bloom(level);
+    }
+}
 
-    ui.horizontal(|ui| {
-        ui.allocate_ui_with_layout(
-            egui::vec2(label_width, 28.0),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                ui.label("Bloom:");
-            },
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let mut current = staged;
-            let combo = egui::ComboBox::from_id_salt("bloom_combo")
-                .selected_text(BLOOM_LEVELS[staged as usize])
-                .width(120.0)
-                .show_ui(ui, |ui| {
-                    for (level, label) in (0u32..).zip(BLOOM_LEVELS) {
-                        ui.selectable_value(&mut current, level, label);
-                    }
-                });
-            if current != staged {
-                menu.state.set_bloom(current);
-            }
-            SettingsMenu::paint_dirty_decor(ui, &combo.response, is_dirty);
+struct LevelCombo {
+    label: &'static str,
+    id: &'static str,
+    names: &'static [&'static str],
+}
+
+impl LevelCombo {
+    /// Draws the row; returns the level picked this frame, if it differs from `staged`.
+    fn show(&self, ui: &mut egui::Ui, label_width: f32, staged: u32, saved: u32) -> Option<u32> {
+        let mut picked = None;
+        ui.horizontal(|ui| {
+            ui.allocate_ui_with_layout(
+                egui::vec2(label_width, 28.0),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.label(self.label);
+                },
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let mut current = staged;
+                let shown = (staged as usize).min(self.names.len() - 1);
+                let combo = egui::ComboBox::from_id_salt(self.id)
+                    .selected_text(self.names[shown])
+                    .width(120.0)
+                    .show_ui(ui, |ui| {
+                        for (level, name) in (0u32..).zip(self.names) {
+                            ui.selectable_value(&mut current, level, *name);
+                        }
+                    });
+                if current != staged {
+                    picked = Some(current);
+                }
+                SettingsMenu::paint_dirty_decor(ui, &combo.response, staged != saved);
+            });
         });
-    });
+        picked
+    }
 }
 
 /// The Brightness slider, shown as a percentage of the default exposure.
