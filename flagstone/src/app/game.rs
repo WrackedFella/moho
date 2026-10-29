@@ -432,6 +432,7 @@ impl moho_app::Game for App {
             .set_time_scale(f32::from(self.game_state == GameState::Playing));
         if self.game_state == GameState::Playing {
             self.autosave.tick();
+            self.pawn.pickups.tick();
         }
         let frame_processor = FrameProcessor::new();
         let event_processor = EventProcessor::new();

@@ -64,6 +64,7 @@ pub struct MineOutcome {
 impl Pawn {
     pub fn deposit(&mut self, yield_: ResourceYield) {
         self.inventory.add(yield_.resource_id, yield_.amount);
+        self.pickups.push(yield_);
     }
 
     /// Select a hotbar slot (`0..HOTBAR_SLOT_COUNT`). Selecting `TOOL_SLOT`

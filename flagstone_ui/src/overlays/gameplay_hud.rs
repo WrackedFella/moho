@@ -40,6 +40,7 @@ impl Overlay for GameplayHud {
             &data.hotbar,
             data.selected_slot,
         );
+        render_pickups(ui, &data.pickups);
     }
 
     fn is_visible(&self) -> bool {
@@ -196,6 +197,35 @@ fn paint_bar(ui: &mut egui::Ui, label: &str, fraction: f32, fill_color: egui::Co
             egui::StrokeKind::Outside,
         );
     });
+}
+
+// ── Pickup popups ─────────────────────────────────────────────────────────────
+
+/// Gap between the hotbar's top edge and the lowest popup.
+const POPUP_GAP: f32 = 8.0;
+
+/// Fading "+N R<id>" lines stacked upward above the hotbar, oldest topmost.
+fn render_pickups(ui: &mut egui::Ui, pickups: &[(u32, u32, f32)]) {
+    if pickups.is_empty() {
+        return;
+    }
+    egui::Area::new("gameplay_hud_pickups".into())
+        .anchor(
+            egui::Align2::CENTER_BOTTOM,
+            egui::vec2(0.0, -(12.0 + SLOT_SIZE + POPUP_GAP)),
+        )
+        .show(ui.ctx(), |ui| {
+            ui.vertical_centered(|ui| {
+                for &(resource_id, amount, life) in pickups {
+                    let alpha = (life.clamp(0.0, 1.0) * 255.0).round() as u8;
+                    ui.label(
+                        egui::RichText::new(format!("+{amount} R{resource_id}"))
+                            .size(16.0)
+                            .color(egui::Color32::from_white_alpha(alpha)),
+                    );
+                }
+            });
+        });
 }
 
 // ── Hotbar ────────────────────────────────────────────────────────────────────

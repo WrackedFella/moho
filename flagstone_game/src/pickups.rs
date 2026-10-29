@@ -13,17 +13,38 @@ pub struct PickupEntry {
     pub ticks_left: u32,
 }
 
+/// Most pickups listed at once; a further one drops the oldest.
+const MAX_PICKUPS: usize = 8;
+
 /// The pickups still worth showing, oldest first.
 #[derive(Debug, Default)]
-pub struct PickupFeed {}
+pub struct PickupFeed {
+    entries: Vec<PickupEntry>,
+}
 
 impl PickupFeed {
-    pub fn push(&mut self, _yield_: ResourceYield) {}
+    /// Lists `yield_` as its own entry with a full life; same-resource pickups are not merged.
+    pub fn push(&mut self, yield_: ResourceYield) {
+        if self.entries.len() == MAX_PICKUPS {
+            self.entries.remove(0);
+        }
+        self.entries.push(PickupEntry {
+            resource_id: yield_.resource_id,
+            amount: yield_.amount,
+            ticks_left: PICKUP_POPUP_TICKS,
+        });
+    }
 
-    pub fn tick(&mut self) {}
+    /// Ages every entry by one tick and drops those whose life is spent.
+    pub fn tick(&mut self) {
+        for entry in &mut self.entries {
+            entry.ticks_left -= 1;
+        }
+        self.entries.retain(|entry| entry.ticks_left > 0);
+    }
 
     pub fn entries(&self) -> &[PickupEntry] {
-        &[]
+        &self.entries
     }
 }
 

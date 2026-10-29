@@ -9,9 +9,13 @@
 use crate::input_event::InputEvent;
 use crate::{App, RenderRequest};
 use flagstone_voxel::{BlockChangeReason, CRYSTAL_MATERIAL_ID, VoxelChunk, WorldEvent};
-use moho_core::events::{GraphicsEvent, UiEvent};
+use moho_core::events::{AudioEvent, GraphicsEvent, UiEvent};
 use moho_render_api::{Marker, MarkerId};
 use std::collections::HashSet;
+
+/// Cue played when a mined block yields a resource.
+const PICKUP_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/pickup.wav");
+const PICKUP_VOLUME: f32 = 0.6;
 
 // ── Spawn / interaction constants ──────────────────────────────────────
 const MOUSE_WHEEL_ZOOM_FACTOR: f32 = 0.5;
@@ -254,6 +258,10 @@ impl EventProcessor {
         }
 
         if let Some(y) = outcome.yield_ {
+            app.event_bus.publish(AudioEvent::PlaySound {
+                path: PICKUP_SOUND.to_string(),
+                volume: PICKUP_VOLUME,
+            });
             tracing::debug!(
                 pos = ?outcome.block_pos,
                 distance = outcome.distance,
