@@ -109,7 +109,9 @@ impl ChunkStreamer {
 
         for &pos in &to_evict {
             if let Some(data) = grid.serialize_chunk(pos) {
-                if let Err(e) = save::write_chunk_file(&self.world_name, pos, &data) {
+                if let Err(e) =
+                    save::write_chunk_file_in(&self.saves_dir, &self.world_name, pos, &data)
+                {
                     tracing::warn!(chunk = ?pos, error = %e, "Failed to save evicted chunk");
                 } else {
                     tracing::debug!(chunk = ?pos, "Saved evicted chunk");
@@ -169,11 +171,12 @@ impl ChunkStreamer {
     /// Returns `true` if the chunk has any blocks (not all-air).
     fn load_chunk(&self, grid: &mut VoxelGrid, pos: IVec3) -> bool {
         // Try disk first (player-modified chunk saved on a previous eviction).
-        let loaded = save::read_chunk_file(&self.world_name, pos).and_then(|data| {
-            data.map_or(Ok(false), |data| {
-                grid.deserialize_chunk_into(pos, &data).map(|()| true)
-            })
-        });
+        let loaded =
+            save::read_chunk_file_in(&self.saves_dir, &self.world_name, pos).and_then(|data| {
+                data.map_or(Ok(false), |data| {
+                    grid.deserialize_chunk_into(pos, &data).map(|()| true)
+                })
+            });
         match loaded {
             Ok(true) => {
                 tracing::trace!(chunk = ?pos, "Loaded chunk from disk");

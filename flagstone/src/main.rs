@@ -296,6 +296,13 @@ impl App {
         app
     }
 
+    /// Starts the autosave schedule afresh at the configured interval, as a world starts.
+    fn restart_autosave(&mut self) {
+        self.autosave = app::autosave::AutosaveSchedule::new(
+            self.autosave_interval.as_secs() * u64::from(flagstone_game::TICK_HZ),
+        );
+    }
+
     fn generate_new_world(
         &mut self,
         spec: flagstone_game::scene_builders::WorldSpec,
