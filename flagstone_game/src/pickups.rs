@@ -94,6 +94,32 @@ mod tests {
     }
 
     #[test]
+    fn a_pickup_popup_lasts_two_seconds() {
+        let seconds = PICKUP_POPUP_TICKS as f32 / crate::TICK_HZ as f32;
+
+        assert_eq!(seconds, 2.0);
+    }
+
+    #[test]
+    fn a_pickups_life_runs_from_full_to_a_fraction_of_its_ticks() {
+        let mut feed = PickupFeed::default();
+        feed.push(yield_of(7, 1));
+        let fresh = feed.entries()[0].life();
+        let quarter = PickupEntry {
+            ticks_left: PICKUP_POPUP_TICKS / 4,
+            ..feed.entries()[0]
+        };
+        let three_quarters = PickupEntry {
+            ticks_left: PICKUP_POPUP_TICKS / 4 * 3,
+            ..quarter
+        };
+
+        assert_eq!(fresh, 1.0);
+        assert_eq!(three_quarters.life(), 0.75);
+        assert_eq!(quarter.life(), 0.25);
+    }
+
+    #[test]
     fn two_pickups_are_listed_together() {
         let mut feed = PickupFeed::default();
 
