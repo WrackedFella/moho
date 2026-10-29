@@ -120,23 +120,7 @@ impl ArenaMarkers {
             if player_spawn.is_none() {
                 return Err(ArenaError::MissingMarker { marker });
             }
-            if dummies.is_empty() {
-                return Err(ArenaError::MissingMarker {
-                    marker: format!("{DUMMY_PREFIX}NN"),
-                });
-            }
-            if !enemy_spawns.is_empty() && waypoints.is_empty() {
-                return Err(ArenaError::MissingMarker {
-                    marker: format!("{WAYPOINT_PREFIX}NN"),
-                });
-            }
-            let mut numbers = Vec::new();
-            for marker in &waypoints {
-                let number = waypoint_number(marker).filter(|n| !numbers.contains(n));
-                numbers.push(number.ok_or_else(|| ArenaError::BadWaypoint {
-                    marker: marker.name.clone(),
-                })?);
-            }
+            validate_arena_rules(&dummies, &enemy_spawns, &waypoints)?;
         }
         Ok(Self {
             mode,
@@ -150,6 +134,33 @@ impl ArenaMarkers {
 }
 
 /// The mode `level`'s `searchlight_level` marker names; a sandbox when it has none.
+/// The marker rules only an arena enforces: a dummy, waypoints for any enemy spawn, and
+/// numeric, distinct waypoint suffixes.
+fn validate_arena_rules(
+    dummies: &[LevelMarker],
+    enemy_spawns: &[LevelMarker],
+    waypoints: &[LevelMarker],
+) -> Result<(), ArenaError> {
+    if dummies.is_empty() {
+        return Err(ArenaError::MissingMarker {
+            marker: format!("{DUMMY_PREFIX}NN"),
+        });
+    }
+    if !enemy_spawns.is_empty() && waypoints.is_empty() {
+        return Err(ArenaError::MissingMarker {
+            marker: format!("{WAYPOINT_PREFIX}NN"),
+        });
+    }
+    let mut numbers = Vec::new();
+    for marker in waypoints {
+        let number = waypoint_number(marker).filter(|n| !numbers.contains(n));
+        numbers.push(number.ok_or_else(|| ArenaError::BadWaypoint {
+            marker: marker.name.clone(),
+        })?);
+    }
+    Ok(())
+}
+
 fn level_mode(level: &Level) -> Result<LevelMode, ArenaError> {
     let mut found = level.markers.iter().filter(|m| m.name == LEVEL_MARKER);
     let Some(marker) = found.next() else {
