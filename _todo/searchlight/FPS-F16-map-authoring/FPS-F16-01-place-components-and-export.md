@@ -59,8 +59,7 @@ Scenario: The current arena still loads
 
 ## Verification
 - Install the add-on into the supported Blender LTS from the wiki steps alone.
-- Block out a small map, export it, launch the game on it, and play a wave: spawns, patrols, cover and dummy match the Blender layout.
+- Block out a small map, export it, launch the game on it, and play it: spawns, patrols, cover and dummy match the Blender layout.
 
 ## Notes
 - Built only after the ADR-0007 amendment (GPL tools outside the shipped build) is accepted.
-- Level mode joins the panel through FPS-F10-01 #627, whichever lands second.

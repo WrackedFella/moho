@@ -29,7 +29,7 @@ The designer installs the add-on into one Blender LTS, places today's components
 | Where the component list lives | One definition in the repo, read by both the add-on and the game | Two lists drift; a drifted list exports maps the game rejects |
 | Where the map rules live | In the game; Check runs the game's own check | Rules written twice (Python and Rust) disagree, and the disagreement shows only at launch |
 | Component shape | Point, oriented point or volume, with a kind chosen from game data and typed overrides on its defaults (GDD §5). Today's components use only points and oriented points | Volumes and data-driven kinds (anomalies) are built when a feature needs them, but the definition must not rule them out |
-| Play's mode | The map's own mode (see the open question to Justin) | A forced sandbox needs a launch override in the game |
+| Map modes | None. Play opens the map the way the game opens every map; no mode component (Justin, 2026-10-29: arena mode is dropped, all maps are one mode) | A mode would only earn a place as an editing aid, such as a preview, and none is needed yet |
 | Blender versions | One LTS | Each extra version is a test matrix row; the team picks the version |
 
 ## Deferred
@@ -55,7 +55,6 @@ The designer installs the add-on into one Blender LTS, places today's components
 
 ## Notes
 - Milestone FPS-M2; independent of the other FPS-M2 features; done before FPS-M3's first large map starts.
-- Level mode (arena or sandbox) becomes a component through FPS-F10-01 #627. Whichever of #627 and FPS-F16-01 lands second adds it to the add-on; the filing thread notes this on #627.
 - TL: ADR-0007 bans copyleft, and an add-on using Blender's Python API is GPL. The add-on ships nothing into the game; amend the ADR to exempt tools outside the shipped build before FPS-F16-01 is built.
 - TL: format and home of the shared component definition; how the game reads it.
 - TL: how the add-on is tested and whether it joins the gate (Blender headless in CI, or tests on the parts that don't need Blender).

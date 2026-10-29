@@ -42,6 +42,3 @@ Scenario: Play without a game location asks for one
 
 ## Verification
 - Move a cover block and its cover point, press Play without saving, and see enemies use the new position.
-
-## Notes
-- The game plays the map in its own mode (arena or sandbox). See the feature's direction-setting decisions.
