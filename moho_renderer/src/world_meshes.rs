@@ -58,6 +58,8 @@ pub struct WorldMeshes {
     live: BTreeMap<WorldMeshId, Live>,
     pending: BTreeMap<WorldMeshId, Pending>,
     placements: BTreeMap<WorldMeshId, Vec<Placement>>,
+    /// Placements that cast no shadow, kept apart so the ordinary draw lists are unchanged.
+    unshadowed: BTreeMap<WorldMeshId, Vec<Placement>>,
     /// Skinned placements in call order.
     skinned: Vec<SkinnedPlacement>,
     /// Mesh ids already warned about, so a bad skinned placement warns once, not per frame;
@@ -157,9 +159,34 @@ impl WorldMeshes {
         });
     }
 
+    /// Append a placement of the mesh under `id` for this frame that draws without casting a
+    /// shadow, listed by [`unshadowed_draws`](Self::unshadowed_draws) and by no other draw list.
+    pub fn place_unshadowed(&mut self, id: WorldMeshId, transform: glam::Affine3A, material: u32) {
+        self.unshadowed.entry(id).or_default().push(Placement {
+            transform,
+            material,
+            texture: None,
+        });
+    }
+
+    /// Unshadowed placements of live ids as `(backend handle, instance)`, in id order and
+    /// call order.
+    pub fn unshadowed_draws(&self) -> impl Iterator<Item = (u32, InstanceGpu)> + '_ {
+        self.unshadowed.iter().flat_map(move |(id, placements)| {
+            let handle = self.live.get(id).map(|live| live.handle);
+            handle.into_iter().flat_map(move |handle| {
+                placements.iter().map(move |placement| {
+                    let model = glam::Mat4::from(placement.transform);
+                    (handle, instance(model, placement.material))
+                })
+            })
+        })
+    }
+
     /// Drop every placement; the renderer calls this each frame.
     pub fn clear_placements(&mut self) {
         self.placements.clear();
+        self.unshadowed.clear();
         self.skinned.clear();
     }
 
@@ -807,6 +834,88 @@ mod tests {
 
         assert_eq!(backend.registered.len(), 1, "moving never re-uploads");
         assert!(backend.unregistered.is_empty());
+    }
+
+    #[test]
+    fn unshadowed_placements_are_listed_apart_from_ordinary_draws() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.flush(&mut backend);
+
+        meshes.place(A, at(1.0), 3);
+        meshes.place_unshadowed(A, at(2.0), 5);
+
+        let handle = backend.handle_with_index_count(3);
+        let ordinary = draws(&meshes);
+        assert_eq!(
+            ordinary.len(),
+            1,
+            "the unshadowed placement is not in draws"
+        );
+        assert_eq!(ordinary[0].1.model, model_of(at(1.0)));
+        assert_eq!(meshes.textured_draws().count(), 1);
+        let unshadowed: Vec<(u32, InstanceGpu)> = meshes.unshadowed_draws().collect();
+        assert_eq!(unshadowed.len(), 1);
+        assert_eq!(unshadowed[0].0, handle);
+        assert_eq!(unshadowed[0].1.model, model_of(at(2.0)));
+        assert_eq!(unshadowed[0].1.material, 5);
+    }
+
+    #[test]
+    fn unshadowed_placements_keep_id_order_then_call_order() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.upsert_movable(B, mesh(2));
+        meshes.flush(&mut backend);
+
+        meshes.place_unshadowed(B, at(1.0), 0);
+        meshes.place_unshadowed(A, at(2.0), 0);
+        meshes.place_unshadowed(A, at(3.0), 0);
+
+        let drawn: Vec<(u32, [[f32; 4]; 4])> = meshes
+            .unshadowed_draws()
+            .map(|(handle, instance)| (handle, instance.model))
+            .collect();
+        let (a, b) = (
+            backend.handle_with_index_count(3),
+            backend.handle_with_index_count(6),
+        );
+        assert_eq!(
+            drawn,
+            vec![
+                (a, model_of(at(2.0))),
+                (a, model_of(at(3.0))),
+                (b, model_of(at(1.0)))
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unshadowed_placement_on_a_missing_id_is_skipped() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.flush(&mut backend);
+
+        meshes.place_unshadowed(B, at(1.0), 0);
+
+        assert_eq!(meshes.unshadowed_draws().count(), 0);
+    }
+
+    #[test]
+    fn clear_placements_clears_unshadowed_placements() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.flush(&mut backend);
+        meshes.place_unshadowed(A, at(1.0), 0);
+        assert_eq!(meshes.unshadowed_draws().count(), 1);
+
+        meshes.clear_placements();
+
+        assert_eq!(meshes.unshadowed_draws().count(), 0);
     }
 
     #[test]
