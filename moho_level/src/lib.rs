@@ -5,6 +5,7 @@
 pub mod anim;
 mod buffers;
 mod error;
+mod hash;
 mod image;
 mod loaded;
 mod marker;
@@ -20,6 +21,7 @@ use std::path::Path;
 use glam::Mat4;
 
 pub use error::{LevelError, LevelErrorKind};
+pub use hash::LevelHash;
 pub use image::load_image;
 pub use loaded::LoadedLevel;
 pub use marker::LevelMarker;
@@ -56,6 +58,26 @@ pub struct LevelMesh {
 pub fn load(path: &Path) -> Result<Level, LevelError> {
     let (meshes, markers) = with_buffers(path, |document, buffers, _| build(document, buffers))?;
     Ok(Level { meshes, markers })
+}
+
+/// The hash a replayed switch to the level at `path` is pinned to, without building any mesh.
+///
+/// # Errors
+/// Returns a [`LevelError`] naming `path` when the file or one of its buffers cannot be read
+/// or the file is not glTF.
+pub fn level_hash(path: &Path) -> Result<LevelHash, LevelError> {
+    let _ = path;
+    unimplemented!()
+}
+
+/// Load the level at `path` only if its content hashes to `expected`.
+///
+/// # Errors
+/// [`LevelErrorKind::HashMismatch`] when it does not, before any mesh is built; otherwise
+/// as [`load`].
+pub fn load_pinned(path: &Path, expected: &LevelHash) -> Result<Level, LevelError> {
+    let _ = (path, expected);
+    unimplemented!()
 }
 
 /// Read and parse the glTF at `path`, resolve its buffers and run `f` on them and the

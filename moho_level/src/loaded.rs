@@ -1,10 +1,11 @@
 //! A loaded level that owns the ids its meshes were registered under.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use moho_render_api::{WorldMeshId, WorldMeshRange};
 
-use crate::{AgentProfile, Level, NavBuildError, NavMesh};
+use crate::{AgentProfile, Level, LevelError, LevelHash, NavBuildError, NavMesh};
 
 /// A [`Level`] with the [`WorldMeshRange`] its meshes are registered under and, once built,
 /// its navigation mesh.
@@ -29,6 +30,31 @@ impl LoadedLevel {
 
     pub fn level(&self) -> &Level {
         &self.level
+    }
+
+    /// Load the level at `path`, pinned to `pin` when given, and register its meshes from `first`.
+    ///
+    /// # Errors
+    /// As [`crate::load_pinned`] when `pin` is given, otherwise as [`crate::load`];
+    /// [`LevelErrorKind::IdRangeOverflow`](crate::LevelErrorKind::IdRangeOverflow) when the ids
+    /// would pass `u64::MAX`.
+    pub fn open(
+        path: &Path,
+        pin: Option<&LevelHash>,
+        first: WorldMeshId,
+    ) -> Result<Self, LevelError> {
+        let _ = (path, pin, first);
+        unimplemented!()
+    }
+
+    /// The file this level was opened from; `None` for a handle made with [`Self::new`].
+    pub fn path(&self) -> Option<&Path> {
+        unimplemented!()
+    }
+
+    /// The content hash of the file this level was opened from; `None` for [`Self::new`].
+    pub fn hash(&self) -> Option<&LevelHash> {
+        unimplemented!()
     }
 
     /// The ids of every mesh of the level.
@@ -152,6 +178,53 @@ mod tests {
                 WorldMeshId(10)
             ]
         );
+    }
+
+    fn write_empty_level(dir: &tempfile::TempDir, json: &str) -> std::path::PathBuf {
+        let path = dir.path().join("empty.gltf");
+        std::fs::write(&path, json).expect("write level");
+        path
+    }
+
+    const EMPTY_LEVEL: &str = r#"{"asset":{"version":"2.0"}}"#;
+
+    #[test]
+    fn open_records_its_path_and_hash() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = write_empty_level(&dir, EMPTY_LEVEL);
+
+        let loaded = LoadedLevel::open(&path, None, WorldMeshId(5)).expect("opens");
+
+        assert_eq!(loaded.path(), Some(path.as_path()));
+        let expected = LevelHash::of_sources([EMPTY_LEVEL.as_bytes()]);
+        assert_eq!(loaded.hash(), Some(&expected));
+        assert_eq!(loaded.ids().iter().count(), 0);
+    }
+
+    #[test]
+    fn new_records_no_path_or_hash() {
+        let loaded = LoadedLevel::new(level(1), WorldMeshId(0)).expect("ids fit");
+
+        assert!(loaded.path().is_none());
+        assert!(loaded.hash().is_none());
+    }
+
+    #[test]
+    fn open_with_a_pin_of_a_different_hash_is_a_mismatch() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = write_empty_level(&dir, EMPTY_LEVEL);
+        let other = LevelHash::of_sources([b"something else".as_slice()]);
+
+        let err = LoadedLevel::open(&path, Some(&other), WorldMeshId(0)).expect_err("refused");
+
+        assert_eq!(err.path(), path.as_path());
+        match err.kind() {
+            crate::LevelErrorKind::HashMismatch { expected, found } => {
+                assert_eq!(*expected, other);
+                assert_eq!(*found, LevelHash::of_sources([EMPTY_LEVEL.as_bytes()]));
+            }
+            kind => panic!("expected a hash mismatch, got {kind:?}"),
+        }
     }
 
     #[test]
