@@ -92,7 +92,7 @@ pub fn arena_text(wave: u32, score: u32) -> String {
 pub fn vitals_text(vitals: &str, tally: Option<Tally>) -> String {
     match tally {
         Some(tally) => format!("{vitals} | {}", arena_text(tally.wave, tally.score)),
-        None => todo!("a sandbox title shows no wave or score"),
+        None => vitals.to_owned(),
     }
 }
 
@@ -162,8 +162,20 @@ mod feedback_tests {
         let alive = health_text(70, 100);
         let dead = death_text(true).expect("a dead player has a title");
 
-        let alive_title = vitals_text(&alive, Some(Tally { wave: 3, score: 200 }));
-        let dead_title = vitals_text(dead, Some(Tally { wave: 3, score: 200 }));
+        let alive_title = vitals_text(
+            &alive,
+            Some(Tally {
+                wave: 3,
+                score: 200,
+            }),
+        );
+        let dead_title = vitals_text(
+            dead,
+            Some(Tally {
+                wave: 3,
+                score: 200,
+            }),
+        );
 
         assert_eq!(alive_title, "HP 70/100 | Wave 3  Score 200");
         assert_eq!(dead_title, "Dead - press F8 to restart | Wave 3  Score 200");
@@ -183,7 +195,10 @@ mod feedback_tests {
 
     #[test]
     fn the_title_shows_god_mode_only_when_on() {
-        let tally = Some(Tally { wave: 3, score: 200 });
+        let tally = Some(Tally {
+            wave: 3,
+            score: 200,
+        });
         let alive = vitals_text(&health_text(70, 100), tally);
         let dead = vitals_text(death_text(true).expect("dead"), tally);
 

@@ -17,14 +17,21 @@ pub struct Tally {
     pub score: u32,
 }
 
-/// A sim that starts empty and is fed waves of enemies as the player clears them.
+/// The waves of a level that has them.
 #[derive(Debug)]
-pub struct ArenaMode {
-    sim: SearchlightSim,
-    waves: WaveState,
+struct Waves {
+    state: WaveState,
     tuning: WaveTuning,
     /// Kills of the sim already scored.
     seen_kills: u32,
+}
+
+/// A sim that starts empty and, in an arena, is fed waves of enemies as the player clears them.
+#[derive(Debug)]
+pub struct ArenaMode {
+    sim: SearchlightSim,
+    /// `None` in a sandbox: nothing spawns and nothing is scored.
+    waves: Option<Waves>,
 }
 
 impl ArenaMode {
@@ -33,9 +40,11 @@ impl ArenaMode {
     pub fn new(arena: Arc<Arena>, config: SimConfig, waves: WaveTuning) -> Self {
         let mut mode = Self {
             sim: SearchlightSim::with_start(arena, config, Start::Empty),
-            waves: WaveState::begin(&waves),
-            tuning: waves,
-            seen_kills: 0,
+            waves: Some(Waves {
+                state: WaveState::begin(&waves),
+                tuning: waves,
+                seen_kills: 0,
+            }),
         };
         mode.step_waves(None);
         mode
@@ -43,25 +52,28 @@ impl ArenaMode {
 
     /// Scores the sim's new kills and spawns the wave's enemies at the first free markers, each
     /// of `forced` or else the grade the wave's mix gives its place in the wave; none while the
-    /// player is dead.
+    /// player is dead. Does nothing in a sandbox.
     fn step_waves(&mut self, forced: Option<Grade>) {
+        let Some(waves) = self.waves.as_mut() else {
+            return;
+        };
         let kills = self.sim.kills();
         let scan = !self.sim.player_body().is_dead()
-            && (self.waves.to_spawn() != 0 || self.sim.enemies_alive() == 0);
+            && (waves.state.to_spawn() != 0 || self.sim.enemies_alive() == 0);
         let free = if scan {
             self.sim.free_enemy_spawns()
         } else {
             Vec::new()
         };
-        let spawn = self.waves.step(
-            &self.tuning,
-            kills - self.seen_kills,
+        let spawn = waves.state.step(
+            &waves.tuning,
+            kills - waves.seen_kills,
             self.sim.enemies_alive(),
             free.len(),
         );
-        self.seen_kills = kills;
-        let grades = self.waves.grades();
-        let first = self.waves.spawned() - spawn;
+        waves.seen_kills = kills;
+        let grades = waves.state.grades();
+        let first = waves.state.spawned() - spawn;
         let mut spawned = 0;
         for (&marker, index) in free.iter().zip(first..first + spawn) {
             let grade = forced
@@ -73,7 +85,7 @@ impl ArenaMode {
             }
             spawned += 1;
         }
-        self.waves.unspawned(spawn - spawned);
+        waves.state.unspawned(spawn - spawned);
     }
 
     /// Runs one tick of `dt` seconds: the sim, then the score of its kills and the wave's
@@ -81,9 +93,9 @@ impl ArenaMode {
     pub fn tick(&mut self, command: &SearchlightCommand, dt: f32) {
         let restarting = command.restart && self.sim.player_body().is_dead();
         self.sim.tick(command, dt);
-        if restarting {
-            self.waves = WaveState::begin(&self.tuning);
-            self.seen_kills = 0;
+        if restarting && let Some(waves) = self.waves.as_mut() {
+            waves.state = WaveState::begin(&waves.tuning);
+            waves.seen_kills = 0;
         }
         self.step_waves(command.forced_grade);
     }
@@ -99,16 +111,18 @@ impl ArenaMode {
 
     /// The wave and score, or `None` in a sandbox, which has neither.
     pub fn tally(&self) -> Option<Tally> {
-        Some(Tally {
-            wave: self.waves.wave(),
-            score: self.waves.score(),
+        self.waves.as_ref().map(|waves| Tally {
+            wave: waves.state.wave(),
+            score: waves.state.score(),
         })
     }
 
     /// A mode over `arena` with no waves: nothing spawns and nothing is scored.
     pub fn sandbox(arena: Arc<Arena>, config: SimConfig) -> Self {
-        let _ = (arena, config);
-        todo!("a sandbox mode has no waves")
+        Self {
+            sim: SearchlightSim::with_start(arena, config, Start::Empty),
+            waves: None,
+        }
     }
 
     /// The mode a level of `mode` plays as: [`ArenaMode::new`] for an arena,
@@ -119,8 +133,10 @@ impl ArenaMode {
         config: SimConfig,
         waves: WaveTuning,
     ) -> Self {
-        let _ = (arena, mode, config, waves);
-        todo!("pick the mode from the level's mode")
+        match mode {
+            LevelMode::Arena => Self::new(arena, config, waves),
+            LevelMode::Sandbox => Self::sandbox(arena, config),
+        }
     }
 
     #[cfg(test)]
@@ -669,12 +685,7 @@ mod tests {
 
     /// An arena whose enemy markers would fill a first wave of three.
     fn arena_with_enemy_markers() -> Arc<Arena> {
-        arena_with(
-            &[],
-            Vec3::ZERO,
-            &markers(3),
-            &[Vec3::new(0.0, 0.0, 25.0)],
-        )
+        arena_with(&[], Vec3::ZERO, &markers(3), &[Vec3::new(0.0, 0.0, 25.0)])
     }
 
     #[test]

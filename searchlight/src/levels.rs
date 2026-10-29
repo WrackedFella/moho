@@ -34,14 +34,16 @@ pub enum LevelChoice {
 impl LevelChoice {
     /// The file to load: a named level under `assets`, a path as given.
     pub fn path(&self, assets: &Path) -> PathBuf {
-        let _ = assets;
-        todo!("a named level is under the assets folder; a path is as given")
+        match self {
+            Self::Named(level) => assets.join(level.file),
+            Self::Path(path) => path.clone(),
+        }
     }
 }
 
 /// A launch argument that is neither a level name nor a glTF path.
 #[derive(Debug, thiserror::Error)]
-#[error("no level named `{name}`")]
+#[error("no level named `{name}`; levels: {}", level_names())]
 pub struct UnknownLevel {
     pub name: String,
 }
@@ -52,14 +54,42 @@ pub struct UnknownLevel {
 /// # Errors
 /// [`UnknownLevel`] when `arg` is neither, listing the level names in its message.
 pub fn choose(arg: Option<&OsStr>) -> Result<LevelChoice, UnknownLevel> {
-    let _ = arg;
-    todo!("choose the level from the launch argument")
+    let Some(arg) = arg else {
+        return Ok(LevelChoice::Named(&LEVELS[0]));
+    };
+    let path = Path::new(arg);
+    let is_gltf = path
+        .extension()
+        .and_then(OsStr::to_str)
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("glb") || ext.eq_ignore_ascii_case("gltf"));
+    if is_gltf {
+        return Ok(LevelChoice::Path(path.to_owned()));
+    }
+    let name = arg.to_string_lossy();
+    LEVELS
+        .iter()
+        .find(|level| level.name == name)
+        .map(LevelChoice::Named)
+        .ok_or_else(|| UnknownLevel {
+            name: name.into_owned(),
+        })
+}
+
+fn level_names() -> String {
+    let names: Vec<&str> = LEVELS.iter().map(|level| level.name).collect();
+    names.join(", ")
 }
 
 /// The lines to show the tester about a loaded level, in the order they apply.
 pub fn load_notices(markers: &ArenaMarkers, arena: &Arena) -> Vec<&'static str> {
-    let _ = (markers, arena);
-    todo!("notice a missing spawn marker and a missing navmesh")
+    let mut notices = Vec::new();
+    if markers.player_spawn.is_none() {
+        notices.push("No player_spawn marker; starting at the origin");
+    }
+    if arena.nav_fallback {
+        notices.push("No walkable area; enemies cannot path here");
+    }
+    notices
 }
 
 #[cfg(test)]
@@ -96,7 +126,10 @@ mod tests {
     fn the_name_arena_chooses_the_arena_file() {
         let choice = chosen("arena").expect("`arena` is a level");
 
-        assert_eq!(choice.path(Path::new("assets")), Path::new("assets/arena.glb"));
+        assert_eq!(
+            choice.path(Path::new("assets")),
+            Path::new("assets/arena.glb")
+        );
         assert_eq!(named(choice).name, "arena");
     }
 

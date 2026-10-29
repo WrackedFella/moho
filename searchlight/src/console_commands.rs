@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use moho_input::bindings::BindingWarning;
 use moho_ui_shell::Console;
-use moho_ui_shell::console::registry::CommandSpec;
+use moho_ui_shell::console::registry::{CommandSpec, ParseFn};
 use searchlight_rules::Grade;
 
 use crate::arena::LevelMode;
@@ -79,6 +79,13 @@ pub fn parse_grade(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
 pub fn console(
     bindings: &BTreeMap<String, String>,
 ) -> (Console<ConsoleCommand>, Vec<BindingWarning>) {
+    console_with_grade(bindings, parse_grade)
+}
+
+fn console_with_grade(
+    bindings: &BTreeMap<String, String>,
+    parse_grade: ParseFn<ConsoleCommand>,
+) -> (Console<ConsoleCommand>, Vec<BindingWarning>) {
     let (mut console, warnings) = Console::new(bindings);
     console
         .register(CommandSpec {
@@ -112,8 +119,16 @@ pub fn console_for(
     bindings: &BTreeMap<String, String>,
     mode: LevelMode,
 ) -> (Console<ConsoleCommand>, Vec<BindingWarning>) {
-    let _ = mode;
-    console(bindings)
+    let grade = match mode {
+        LevelMode::Arena => parse_grade,
+        LevelMode::Sandbox => parse_grade_in_sandbox,
+    };
+    console_with_grade(bindings, grade)
+}
+
+/// `grade` in a sandbox: the force acts through the wave step, which a sandbox does not have.
+fn parse_grade_in_sandbox(_args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    Err("No waves in a sandbox".to_owned())
 }
 
 #[cfg(test)]

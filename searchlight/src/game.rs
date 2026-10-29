@@ -83,6 +83,7 @@ fn window_title(status: &str) -> String {
 
 /// The glTF material name of the arena meshes that draw glossy.
 const FLOOR_MATERIAL: &str = "floor";
+const MARK_MATERIAL: &str = "mark";
 
 const ARENA_FLOOR_GLOSS: f32 = 0.6;
 
@@ -475,8 +476,9 @@ impl Stage {
         self.add_named_arena(meshes, &[], dummy_spawns);
     }
 
-    /// Draws `meshes` as the arena, the one named `floor` in the glossy [`Paint::ArenaFloor`]
-    /// and the rest, or any past the end of `material_names`, in [`Paint::Arena`].
+    /// Draws `meshes` as the arena, the one named `floor` in the glossy [`Paint::ArenaFloor`],
+    /// those named `mark` in [`Paint::ArenaMark`] and the rest, or any past the end of
+    /// `material_names`, in [`Paint::Arena`].
     fn add_named_arena(
         &mut self,
         meshes: Vec<WorldMesh>,
@@ -485,18 +487,17 @@ impl Stage {
     ) {
         let arena_material = self.scene.material_table.find_or_push(&Paint::Arena);
         let floor_material = self.scene.material_table.find_or_push(&Paint::ArenaFloor);
+        let mark_material = self.scene.material_table.find_or_push(&Paint::ArenaMark);
         for (index, mesh) in meshes.into_iter().enumerate() {
-            let is_floor = material_names
-                .get(index)
-                .is_some_and(|name| name.as_deref() == Some(FLOOR_MATERIAL));
+            let material = match material_names.get(index).and_then(Option::as_deref) {
+                Some(FLOOR_MATERIAL) => floor_material,
+                Some(MARK_MATERIAL) => mark_material,
+                _ => arena_material,
+            };
             self.scene.world_meshes_mut().upsert(
                 crate::arena::arena_mesh_id(index),
                 mesh,
-                if is_floor {
-                    floor_material
-                } else {
-                    arena_material
-                },
+                material,
             );
         }
         self.dummy_count = dummy_spawns.len();
