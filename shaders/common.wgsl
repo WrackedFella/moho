@@ -31,7 +31,7 @@ struct Shadow {
     camera_forward: vec4<f32>,
     // x = sun, y = moon
     light_intensities: vec4<f32>,
-    // x = effective shadow distance, y = PCSS light size, z = PCSS quality (0=off, 1=low, 2=med, 3=high), w = view-height cut
+    // x = effective shadow distance (0 = shadows off), y = unused (0), z = filter radius in texels (0..3), w = view-height cut
     metadata: vec4<f32>,
 }
 
@@ -74,9 +74,6 @@ var shadow_map: texture_depth_2d_array;
 
 @group(1) @binding(2)
 var shadow_sampler: sampler_comparison;
-
-@group(1) @binding(3)
-var shadow_sampler_nearest: sampler; // For PCSS blocker search (depth reads)
 
 // Base-colour texture of the draw (group 2); untextured draws bind a 1x1 white texture.
 @group(2) @binding(0)

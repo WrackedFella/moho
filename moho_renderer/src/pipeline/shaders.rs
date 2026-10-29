@@ -1,16 +1,17 @@
 //! Shader loading and compilation for the pipeline.
 //!
 //! This module handles loading and compiling shader modules:
-//! - Main shader: 4 WGSL files concatenated (common, sky, vertex, fragment)
+//! - Main shader: 6 WGSL files concatenated (common, sky, normal, vertex, shadow filter, fragment)
 //! - Skybox shader: 2 WGSL files concatenated (sky, skybox)
 
-/// The main shader's WGSL: common, sky, normal, vertex and fragment sources concatenated.
+/// The main shader's WGSL: common, sky, normal, vertex, shadow filter and fragment sources concatenated.
 pub fn main_shader_source() -> String {
     [
         include_str!("../../../shaders/common.wgsl"),
         include_str!("../../../shaders/sky.wgsl"),
         include_str!("../../../shaders/normal.wgsl"),
         include_str!("../../../shaders/vertex.wgsl"),
+        include_str!("../../../shaders/shadow_filter.wgsl"),
         include_str!("../../../shaders/fragment.wgsl"),
     ]
     .join("\n\n")
