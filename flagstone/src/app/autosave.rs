@@ -26,17 +26,14 @@ impl AutosaveSchedule {
         Self::new(interval.as_secs() * u64::from(flagstone_game::TICK_HZ))
     }
 
-    /// Counts one simulation tick of play.
     pub fn tick(&mut self) {
         self.ticks_since_save = self.ticks_since_save.saturating_add(1);
     }
 
-    /// Records that the world changed since the last save.
     pub fn mark_edited(&mut self) {
         self.edited = true;
     }
 
-    /// Whether the world has been edited and a full interval has passed since the last save.
     pub fn due(&self) -> bool {
         self.edited && self.ticks_since_save >= self.interval_ticks
     }

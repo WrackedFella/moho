@@ -295,7 +295,7 @@ impl App {
         app
     }
 
-    /// Starts the autosave schedule afresh at the configured interval, as a world starts.
+    /// Called as a world starts, so edits made before it do not count against the new one.
     fn restart_autosave(&mut self) {
         self.autosave = app::autosave::AutosaveSchedule::for_interval(self.autosave_interval);
     }
