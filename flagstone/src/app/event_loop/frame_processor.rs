@@ -1004,6 +1004,9 @@ mod tests {
                 resource_id: 7,
                 amount: 2,
             });
+        for _ in 0..90 {
+            app.pawn.pickups.tick();
+        }
         let clock = moho_app::GameClock::default();
         let adapter = std::sync::Arc::new(std::sync::Mutex::new(hud_adapter()));
         app.ui_adapter = Some(std::sync::Arc::clone(&adapter));
@@ -1038,8 +1041,8 @@ mod tests {
             "the pawn's pickup is not on the HUD"
         );
         assert!(
-            produced == painted_with(vec![(7, 2, 1.0)]),
-            "a fresh pickup of 2 of R7 is drawn at full life"
+            produced == painted_with(vec![(7, 2, 0.25)]),
+            "a pickup with 30 of 120 ticks left is drawn at a quarter life"
         );
     }
 }

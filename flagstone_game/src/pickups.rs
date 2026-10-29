@@ -86,6 +86,27 @@ mod tests {
     }
 
     #[test]
+    fn a_tick_expires_only_the_entries_whose_life_ran_out() {
+        let mut feed = PickupFeed::default();
+
+        feed.push(yield_of(7, 1));
+        feed.tick();
+        feed.push(yield_of(8, 2));
+        for _ in 0..PICKUP_POPUP_TICKS - 1 {
+            feed.tick();
+        }
+
+        assert_eq!(
+            feed.entries(),
+            [PickupEntry {
+                resource_id: 8,
+                amount: 2,
+                ticks_left: 1
+            }]
+        );
+    }
+
+    #[test]
     fn the_oldest_pickup_is_dropped_past_the_cap() {
         let mut feed = PickupFeed::default();
 

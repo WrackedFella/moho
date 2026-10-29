@@ -1578,6 +1578,51 @@ mod tests {
             }
         }
 
+        fn push_pickup(app: &mut App) {
+            app.pawn
+                .pickups
+                .push(flagstone_game::inventory::ResourceYield {
+                    resource_id: 7,
+                    amount: 1,
+                });
+        }
+
+        #[test]
+        fn playing_ages_the_player_pawns_pickups() {
+            use flagstone_game::pickups::PICKUP_POPUP_TICKS;
+            let mut app = playing_app();
+            push_pickup(&mut app);
+            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+
+            sim.step(&mut app, PICKUP_POPUP_TICKS - 1);
+            assert_eq!(app.pawn.pickups.entries().len(), 1, "expired a tick early");
+            sim.step(&mut app, 1);
+
+            assert!(app.pawn.pickups.entries().is_empty());
+        }
+
+        #[test]
+        fn paused_game_does_not_age_the_player_pawns_pickups() {
+            use flagstone_game::pickups::PICKUP_POPUP_TICKS;
+            for state in [GameState::Paused, GameState::Menu, GameState::ConsoleOpen] {
+                let mut app = playing_app();
+                push_pickup(&mut app);
+                app.game_state = state;
+                let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+
+                sim.step(&mut app, PICKUP_POPUP_TICKS);
+
+                let ticks_left: Vec<u32> = app
+                    .pawn
+                    .pickups
+                    .entries()
+                    .iter()
+                    .map(|e| e.ticks_left)
+                    .collect();
+                assert_eq!(ticks_left, [PICKUP_POPUP_TICKS], "{state:?}");
+            }
+        }
+
         #[test]
         fn playing_frame_uploads_full_sun_intensity_by_day() {
             let mut app = playing_app();

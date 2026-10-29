@@ -449,9 +449,13 @@ mod tests {
         fn find(shape: &egui::epaint::Shape, text: &str) -> Option<f32> {
             match shape {
                 egui::epaint::Shape::Text(t) if t.galley.text() == text => {
-                    let color = t
-                        .override_text_color
-                        .unwrap_or_else(|| t.galley.job.sections[0].format.color);
+                    let row = &t.galley.rows[0].visuals;
+                    let vertex_color = row.mesh.vertices[row.glyph_vertex_range.start].color;
+                    let color = match t.override_text_color {
+                        Some(over) => over,
+                        None if vertex_color == egui::Color32::PLACEHOLDER => t.fallback_color,
+                        None => vertex_color,
+                    };
                     Some(f32::from(color.a()) * t.opacity_factor)
                 }
                 egui::epaint::Shape::Vec(shapes) => shapes.iter().find_map(|s| find(s, text)),
