@@ -2,30 +2,37 @@
 
 use std::fmt;
 
+use sha2::{Digest, Sha256};
+
 /// SHA-256 over every source a level load reads, so a copy of the file elsewhere hashes the same.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct LevelHash([u8; 32]);
 
 impl LevelHash {
+    #[must_use]
     pub const fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
 
+    #[must_use]
     pub const fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
 
     /// Hash `sources` in order, each preceded by its length as 8 bytes little-endian.
     pub(crate) fn of_sources<'a>(sources: impl IntoIterator<Item = &'a [u8]>) -> Self {
-        let _ = sources;
-        unimplemented!()
+        let mut digest = Sha256::new();
+        for source in sources {
+            digest.update((source.len() as u64).to_le_bytes());
+            digest.update(source);
+        }
+        Self(digest.finalize().into())
     }
 }
 
 impl fmt::Display for LevelHash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let _ = f;
-        unimplemented!()
+        self.0.iter().try_for_each(|byte| write!(f, "{byte:02x}"))
     }
 }
 

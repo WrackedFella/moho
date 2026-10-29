@@ -1,11 +1,13 @@
 //! A loaded level that owns the ids its meshes were registered under.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use moho_render_api::{WorldMeshId, WorldMeshRange};
 
-use crate::{AgentProfile, Level, LevelError, LevelHash, NavBuildError, NavMesh};
+use crate::{
+    AgentProfile, Level, LevelError, LevelErrorKind, LevelHash, NavBuildError, NavMesh,
+};
 
 /// A [`Level`] with the [`WorldMeshRange`] its meshes are registered under and, once built,
 /// its navigation mesh.
@@ -14,6 +16,7 @@ pub struct LoadedLevel {
     level: Level,
     ids: WorldMeshRange,
     nav: Option<Arc<NavMesh>>,
+    source: Option<(PathBuf, LevelHash)>,
 }
 
 impl LoadedLevel {
@@ -25,6 +28,7 @@ impl LoadedLevel {
             level,
             ids,
             nav: None,
+            source: None,
         })
     }
 
@@ -43,18 +47,23 @@ impl LoadedLevel {
         pin: Option<&LevelHash>,
         first: WorldMeshId,
     ) -> Result<Self, LevelError> {
-        let _ = (path, pin, first);
-        unimplemented!()
+        let (level, hash) = crate::load_hashed(path, pin)?;
+        let mut loaded = Self::new(level, first)
+            .ok_or_else(|| LevelError::new(path, LevelErrorKind::IdRangeOverflow))?;
+        loaded.source = Some((path.to_path_buf(), hash));
+        Ok(loaded)
     }
 
     /// The file this level was opened from; `None` for a handle made with [`Self::new`].
+    #[must_use]
     pub fn path(&self) -> Option<&Path> {
-        unimplemented!()
+        self.source.as_ref().map(|(path, _)| path.as_path())
     }
 
     /// The content hash of the file this level was opened from; `None` for [`Self::new`].
+    #[must_use]
     pub fn hash(&self) -> Option<&LevelHash> {
-        unimplemented!()
+        self.source.as_ref().map(|(_, hash)| hash)
     }
 
     /// The ids of every mesh of the level.
