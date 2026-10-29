@@ -111,7 +111,7 @@ pub struct RoundSpec {
 #[non_exhaustive]
 pub enum RoundSpecError {
     /// The muzzle velocity is not a finite speed above the minimum.
-    #[error("muzzle_velocity must be above 100 m/s, got {0}")]
+    #[error("muzzle_velocity must be above {MIN_SPEED} m/s, got {0}")]
     MuzzleVelocity(f32),
     /// The drag is negative or not finite.
     #[error("drag must be 0 or more, got {0}")]

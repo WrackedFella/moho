@@ -794,20 +794,26 @@ impl SearchlightSim {
     /// Steps every round in flight once, in the order they were fired, and drops those that
     /// ended.
     fn step_rounds(&mut self, gravity: f32, dt: f32) {
-        for mut round in std::mem::take(&mut self.rounds) {
+        let mut rounds = std::mem::take(&mut self.rounds);
+        rounds.retain_mut(|round| {
             let origin = round.flight.position;
-            let step = step_round(&self.world, &round, gravity, dt);
-            let mut near_missed = std::mem::take(&mut round.near_missed);
-            self.land_player_shot(origin, step.end, step.strike, round.from, &mut near_missed);
-            round.near_missed = near_missed;
+            let step = step_round(&self.world, round, gravity, dt);
+            self.land_player_shot(
+                origin,
+                step.end,
+                step.strike,
+                round.from,
+                &mut round.near_missed,
+            );
             let ended = step.strike.is_some()
                 || step.flight.is_spent()
                 || !self.bounds.contains(step.flight.position);
             if !ended {
                 round.flight = step.flight;
-                self.rounds.push(round);
             }
-        }
+            !ended
+        });
+        self.rounds = rounds;
     }
 
     /// Resolves the player's shot along `origin` to `end`, which stopped at `strike`: counts
