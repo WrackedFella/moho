@@ -79,6 +79,7 @@ pub struct Prefs {
     bindings: BTreeMap<String, String>,
     action_modes: BTreeMap<String, String>,
     debug: BTreeMap<String, String>,
+    game: BTreeMap<String, String>,
     content_mods: Vec<String>,
 }
 
@@ -99,17 +100,36 @@ pub enum PrefsValueError {
     InvalidValue(String),
 }
 
+fn check_name_and_value(name: &str, value: &str) -> Result<(), PrefsValueError> {
+    let name_ok = !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+    if !name_ok {
+        return Err(PrefsValueError::InvalidName(name.to_owned()));
+    }
+    // The INI reader trims values and treats `;` and `#` as comments.
+    let value_ok =
+        !value.is_empty() && value.trim() == value && !value.contains([';', '#', '\r', '\n']);
+    if !value_ok {
+        return Err(PrefsValueError::InvalidValue(value.to_owned()));
+    }
+    Ok(())
+}
+
 impl Prefs {
     /// The value a game stored under `name` in `[game]`, if any.
-    pub fn game_value(&self, _name: &str) -> Option<&str> {
-        None
+    pub fn game_value(&self, name: &str) -> Option<&str> {
+        self.game.get(name).map(String::as_str)
     }
 
     /// Stores a game's own value.
     ///
     /// # Errors
     /// Refuses a name or value that would not read back exactly; prefs stay unchanged.
-    pub fn set_game_value(&mut self, _name: &str, _value: &str) -> Result<(), PrefsValueError> {
+    pub fn set_game_value(&mut self, name: &str, value: &str) -> Result<(), PrefsValueError> {
+        check_name_and_value(name, value)?;
+        self.game.insert(name.to_owned(), value.to_owned());
         Ok(())
     }
 
@@ -123,19 +143,7 @@ impl Prefs {
     /// # Errors
     /// Refuses a name or value that would not read back exactly; prefs stay unchanged.
     pub fn set_debug_value(&mut self, name: &str, value: &str) -> Result<(), PrefsValueError> {
-        let name_ok = !name.is_empty()
-            && name
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
-        if !name_ok {
-            return Err(PrefsValueError::InvalidName(name.to_owned()));
-        }
-        // The INI reader trims values and treats `;` and `#` as comments.
-        let value_ok =
-            !value.is_empty() && value.trim() == value && !value.contains([';', '#', '\r', '\n']);
-        if !value_ok {
-            return Err(PrefsValueError::InvalidValue(value.to_owned()));
-        }
+        check_name_and_value(name, value)?;
         self.debug.insert(name.to_owned(), value.to_owned());
         Ok(())
     }
@@ -386,6 +394,7 @@ impl Default for Prefs {
             bindings: BTreeMap::new(),
             action_modes: BTreeMap::new(),
             debug: BTreeMap::new(),
+            game: BTreeMap::new(),
             content_mods: Vec::new(),
         }
     }
@@ -482,6 +491,14 @@ impl Prefs {
             text.push_str("\n[debug]\n");
             text.extend(
                 self.debug
+                    .iter()
+                    .map(|(name, value)| format!("{name}={value}\n")),
+            );
+        }
+        if !self.game.is_empty() {
+            text.push_str("\n[game]\n");
+            text.extend(
+                self.game
                     .iter()
                     .map(|(name, value)| format!("{name}={value}\n")),
             );
