@@ -187,8 +187,9 @@ pub trait RendererBackend {
         Vec::new()
     }
 
-    /// Set shadow quality level.
-    fn set_shadow_quality(&mut self, quality: u8);
+    /// Set the shadow quality level (0-4) and return the level in use: lower than asked when
+    /// the GPU could not allocate the asked level's shadow maps.
+    fn set_shadow_quality(&mut self, quality: u8) -> u8;
 
     /// Set SSAO quality level.
     fn set_ssao_quality(&mut self, quality: u8);
@@ -356,8 +357,8 @@ impl RendererBackend for Renderer<'_> {
     fn all_lights_as_descs(&self) -> Vec<moho_render_api::LightDesc> {
         self.all_lights_as_descs()
     }
-    fn set_shadow_quality(&mut self, quality: u8) {
-        self.set_shadow_quality(quality);
+    fn set_shadow_quality(&mut self, quality: u8) -> u8 {
+        self.set_shadow_quality(quality)
     }
     fn set_ssao_quality(&mut self, quality: u8) {
         self.set_ssao_quality(quality);
