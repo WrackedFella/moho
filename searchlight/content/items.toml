@@ -10,7 +10,6 @@ fire = "semi_auto"
 cooldown_ticks = 6
 reload_ticks = 120
 charge_ticks = 30
-range = 200.0
 
 [mag_rifle]
 class = "gear"
@@ -20,7 +19,7 @@ magazine = { well = "rifle", caliber = "5.56x45", capacity = 30 }
 [round_rifle_ball]
 class = "consumable"
 size = [1, 1]
-round = { caliber = "5.56x45" }
+round = { caliber = "5.56x45", muzzle_velocity = 940.0, drag = 1.0 }
 
 [rig_chest]
 class = "gear"

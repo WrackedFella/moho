@@ -15,6 +15,7 @@ pub mod lean;
 pub mod levels;
 pub mod menu;
 pub mod mode;
+pub mod round;
 pub mod shot;
 pub mod sim;
 pub mod tag;

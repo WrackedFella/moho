@@ -6,10 +6,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Outcome of pulling the trigger.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Shot {
-    /// A round was spent.
-    Fired,
+    /// This round was spent.
+    Fired(ItemId),
     /// Nothing was chambered; no round was spent.
     Dry,
 }
@@ -92,11 +92,11 @@ impl Rifle {
 
     /// Spends the chambered round, then chambers the next from the magazine.
     pub fn fire(&mut self) -> Shot {
-        if self.chamber.take().is_none() {
+        let Some(round) = self.chamber.take() else {
             return Shot::Dry;
-        }
+        };
         self.feed();
-        Shot::Fired
+        Shot::Fired(round)
     }
 
     /// Swaps in `spare` and returns the ejected magazine.
@@ -135,13 +135,16 @@ mod tests {
 
         let first = rifle.fire();
 
-        assert_eq!(first, Shot::Fired);
+        assert_eq!(first, Shot::Fired(id("ball")));
         assert!(rifle.is_chambered());
         assert_eq!(rifle.magazine().rounds(), 1);
 
         let rest: Vec<Shot> = (0..3).map(|_| rifle.fire()).collect();
 
-        assert_eq!(rest, [Shot::Fired, Shot::Fired, Shot::Dry]);
+        assert_eq!(
+            rest,
+            [Shot::Fired(id("ball")), Shot::Fired(id("ball")), Shot::Dry]
+        );
         assert!(!rifle.is_chambered());
         assert_eq!(rifle.magazine().rounds(), 0);
     }
@@ -156,12 +159,33 @@ mod tests {
         let mut rifle = loaded(magazine);
 
         assert_eq!(rifle.chamber(), Some(&id("c")));
-        assert_eq!(rifle.fire(), Shot::Fired);
+        assert!(matches!(rifle.fire(), Shot::Fired(_)));
         assert_eq!(rifle.chamber(), Some(&id("b")));
-        assert_eq!(rifle.fire(), Shot::Fired);
+        assert!(matches!(rifle.fire(), Shot::Fired(_)));
         assert_eq!(rifle.chamber(), Some(&id("a")));
-        assert_eq!(rifle.fire(), Shot::Fired);
+        assert!(matches!(rifle.fire(), Shot::Fired(_)));
         assert_eq!(rifle.chamber(), None);
+    }
+
+    #[test]
+    fn firing_reports_the_round_that_was_chambered() {
+        let mut magazine = Magazine::empty(id("mag"), &spec("rifle", 5));
+        magazine.load(id("a")).unwrap();
+        magazine.load(id("b")).unwrap();
+        magazine.load(id("c")).unwrap();
+        let mut rifle = loaded(magazine);
+
+        let shots: Vec<Shot> = (0..4).map(|_| rifle.fire()).collect();
+
+        assert_eq!(
+            shots,
+            [
+                Shot::Fired(id("c")),
+                Shot::Fired(id("b")),
+                Shot::Fired(id("a")),
+                Shot::Dry
+            ]
+        );
     }
 
     #[test]
@@ -265,7 +289,7 @@ mod tests {
 
             let bound = capacity + 2;
             for _ in 0..before_reload {
-                if rifle.fire() == Shot::Fired { fired += 1; }
+                if matches!(rifle.fire(), Shot::Fired(_)) { fired += 1; }
             }
             if let Some(spare) = spare {
                 let spare = spare.min(capacity);
@@ -276,7 +300,7 @@ mod tests {
             }
             let mut drained = false;
             for _ in 0..bound {
-                if rifle.fire() == Shot::Fired {
+                if matches!(rifle.fire(), Shot::Fired(_)) {
                     fired += 1;
                 } else {
                     drained = true;

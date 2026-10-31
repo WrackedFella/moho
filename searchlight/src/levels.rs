@@ -100,7 +100,7 @@ mod tests {
     use moho_core::content::ContentRoots;
     use moho_level::{Level, LevelMesh};
     use moho_physics::RayQuery;
-    use searchlight_rules::BodyPart;
+    use searchlight_rules::{BodyPart, MIN_SPEED};
 
     use super::*;
     use crate::arena::{self, LevelMode};
@@ -282,12 +282,16 @@ mod tests {
     }
 
     #[test]
-    fn the_200_m_dummy_is_in_rifle_range_from_the_firing_line() {
+    fn the_200_m_dummy_is_within_the_start_kits_round_reach_from_the_firing_line() {
         let roots = ContentRoots::base(&content_root()).expect("the shipped content folder");
-        let range = kit::load(&roots, START_KIT_ID)
+        let ballistics = kit::load(&roots, START_KIT_ID)
             .expect("the shipped start kit loads")
-            .weapon
-            .range;
+            .rounds
+            .into_values()
+            .next()
+            .expect("the start kit names a round");
+        // Linear drag sheds speed at `drag` m/s per metre, so a round is spent after this far.
+        let range = (ballistics.muzzle_velocity - MIN_SPEED) / ballistics.drag;
         let (_, markers) = shipped("proving_ground.glb");
         let spawn = markers.player_spawn.as_ref().expect("a firing line spawn");
         let far = markers
@@ -315,7 +319,7 @@ mod tests {
 
         assert!(
             distance <= range,
-            "the torso's near face is {distance} m from the eye; the rifle reaches {range} m"
+            "the torso's near face is {distance} m from the eye; the round reaches {range} m"
         );
     }
 

@@ -28,7 +28,7 @@ ADRs written before ENG-F27 (2026-10-15) keep the crate names of their day. Read
 | [0012](0012-engine-crate-map-for-m2.md) | Engine capabilities land as modules first; crate map and seam list for M1–M2 | Accepted |
 | [0013](0013-ui-reaches-the-renderer-as-paint-data.md) | UI reaches the renderer as plain paint data; the renderer owns UI drawing | Accepted |
 | [0014](0014-characters-move-by-velocity.md) | Characters move by velocity; a movement step owns the rules and reports impacts, physics only resolves contact | Superseded by 0022 |
-| [0015](0015-fps-rules-are-a-platform-free-crate.md) | FPS rules are a platform-free crate; every shot resolves through one path | Accepted |
+| [0015](0015-fps-rules-are-a-platform-free-crate.md) | FPS rules are a platform-free crate; every shot resolves through one path | Accepted; amended by 0033 |
 | [0016](0016-game-lines-own-their-save-kinds.md) | Game lines own their save kinds and versions; the envelope stays content-blind | Accepted |
 | [0017](0017-ui-shell-and-debug-values-are-engine-seams.md) | The UI shell and debug values are engine seams | Accepted; amended by 0026 |
 | [0018](0018-paused-commands-apply-at-the-tick-boundary.md) | While paused, a command applies at the next tick boundary without a tick; pause and speed are loop state | Accepted |
@@ -45,3 +45,4 @@ ADRs written before ENG-F27 (2026-10-15) keep the crate names of their day. Read
 | [0030](0030-skinned-meshes-are-skinned-once-per-frame.md) | Skinned meshes are skinned once per frame by a compute pass into a vertex arena; every geometry pass draws the arena like an ordinary mesh | Accepted on merge of #701 |
 | [0031](0031-effects-are-engine-presentation-state-placed-by-handle.md) | Effects are engine presentation state placed by handle: retained, frame-time, drawn unshadowed; the seam list gains `Effects` | Proposed; amends 0012 |
 | [0032](0032-level-switch-is-a-pinned-command.md) | A level switch is a command carrying the level name and a SHA-256 content hash; a replay or peer whose file hashes differently refuses | Accepted |
+| [0033](0033-rounds-fly-as-stepped-segments.md) | A fired round is sim data stepped once a tick as a cast segment: flight maths in the rules without platform maths, first step on the next tick, after movement; round gravity and Simple are host levels | Accepted |

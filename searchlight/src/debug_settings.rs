@@ -7,6 +7,7 @@ use moho_core::prefs::{Prefs, WindowMode};
 use moho_ui_shell::EngineSettings;
 
 const GOD_MODE: &str = "god_mode";
+const SIMPLE: &str = "simple";
 
 /// The whole loaded prefs and where to save them, so a save keeps every other value.
 #[derive(Clone, Debug)]
@@ -38,6 +39,22 @@ impl DebugSettings {
         self.prefs
             .set_debug_value(GOD_MODE, if on { "1" } else { "0" })
             .expect("\"god_mode\" with \"1\" or \"0\" is a name and value prefs always accepts");
+        self.prefs.save_to(&self.path)
+    }
+
+    /// Whether Simple is stored as on; an absent or unrecognised value reads as off.
+    pub fn simple(&self) -> bool {
+        self.prefs.debug_value(SIMPLE) == Some("1")
+    }
+
+    /// Stores Simple and saves the prefs file.
+    ///
+    /// # Errors
+    /// The I/O error if the file cannot be written.
+    pub fn set_simple(&mut self, on: bool) -> io::Result<()> {
+        self.prefs
+            .set_debug_value(SIMPLE, if on { "1" } else { "0" })
+            .expect("\"simple\" with \"1\" or \"0\" is a name and value prefs always accepts");
         self.prefs.save_to(&self.path)
     }
 
@@ -123,6 +140,39 @@ mod tests {
         assert!(after_on);
         assert!(!after_off);
         assert!(!settings.god_mode());
+    }
+
+    #[test]
+    fn simple_survives_save_and_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config/searchlight.ini");
+        let mut settings = settings_at(&path);
+        assert!(!settings.simple(), "a fresh file has Simple off");
+
+        settings.set_simple(true).unwrap();
+        let after_on = settings_at(&path).simple();
+        settings.set_simple(false).unwrap();
+        let after_off = settings_at(&path).simple();
+
+        assert!(after_on);
+        assert!(!after_off);
+        assert!(!settings.simple());
+    }
+
+    #[test]
+    fn simple_and_god_mode_are_stored_apart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("searchlight.ini");
+        let mut settings = settings_at(&path);
+
+        settings.set_simple(true).unwrap();
+        let only_simple = settings_at(&path);
+        settings.set_god_mode(true).unwrap();
+        settings.set_simple(false).unwrap();
+        let only_god = settings_at(&path);
+
+        assert!(only_simple.simple() && !only_simple.god_mode());
+        assert!(only_god.god_mode() && !only_god.simple());
     }
 
     #[test]

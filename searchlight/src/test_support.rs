@@ -1,8 +1,7 @@
 //! Shared builders for the crate's tests: small hand-made worlds and tuning values.
 
-use std::sync::Arc;
-
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use glam::{Quat, Vec3};
 use moho_input::Action;
@@ -12,21 +11,31 @@ use moho_level::{LevelMarker, NavMesh};
 use moho_physics::{MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::{
-    BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId, LeanTuning, Loadout, Magazine,
-    MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
+    Ballistics, BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId, LeanTuning, Loadout,
+    Magazine, MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
 };
 
 use crate::arena::{Arena, ArenaControl, nav_profile};
 use crate::brain::EnemyTuning;
 use crate::control::ControlAction;
-use crate::input::SearchlightAction;
+use crate::input::{SearchlightAction, SearchlightCommand};
 use crate::mode::ArenaMode;
-use crate::sim::SimConfig;
+use crate::sim::{Feedback, SearchlightSim, SimConfig};
 use crate::tag::SurfaceTag;
 use crate::tuning::SHIPPED_BODY;
 use crate::wave::WaveTuning;
 
 pub(crate) const DT: f32 = 1.0 / 60.0;
+
+/// What `test_round` flies with: the shipped 5.56 mm ball.
+pub(crate) const TEST_BALLISTICS: Ballistics = Ballistics {
+    muzzle_velocity: 940.0,
+    drag: 1.0,
+};
+
+/// Ticks a helper waits for a round to land or end before giving up; a round in the shipped
+/// arena lives well under a second.
+const FLIGHT_TICK_CAP: usize = 600;
 
 /// A closed axis-aligned box with outward-facing triangles.
 pub(crate) fn box_mesh(min: Vec3, max: Vec3) -> WorldMesh {
@@ -171,7 +180,7 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
         move_settings: test_move_settings(),
         gravity: 18.0,
         character_body: SHIPPED_BODY,
-        range: 100.0,
+        rounds: BTreeMap::from([(ItemId::new("test_round"), TEST_BALLISTICS)]),
         damage: 30,
         cooldown_ticks: 3,
         reload_ticks: 10,
@@ -218,6 +227,12 @@ pub(crate) fn enemy_tuning() -> EnemyTuning {
     }
 }
 
+/// A floor 60 m wide and from 30 m behind the origin to 400 m ahead of it, top at y = 0: room
+/// for a dummy hundreds of metres down the range.
+pub(crate) fn long_floor() -> PhysicsWorld {
+    world_with(&[(Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 400.0))])
+}
+
 /// An arena of a 60 m square floor (top at y = 0) plus one `World` box per `(min, max)` pair,
 /// with the given spawns and patrol route and no dummies.
 pub(crate) fn arena_with(
@@ -226,7 +241,18 @@ pub(crate) fn arena_with(
     enemies: &[Vec3],
     route: &[Vec3],
 ) -> Arc<Arena> {
-    arena_with_controls(boxes, player, enemies, route, &[])
+    arena_on(60.0, boxes, player, enemies, route)
+}
+
+/// [`arena_with`] on a square floor `floor_size` metres across, centred on the origin.
+pub(crate) fn arena_on(
+    floor_size: f32,
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+) -> Arc<Arena> {
+    build_arena(floor_size, boxes, player, enemies, route, &[])
 }
 
 /// Like [`arena_with`], plus one next-wave control per `(min, max)` box in `controls`, in
@@ -238,7 +264,19 @@ pub(crate) fn arena_with_controls(
     route: &[Vec3],
     controls: &[(Vec3, Vec3)],
 ) -> Arc<Arena> {
-    let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
+    build_arena(60.0, boxes, player, enemies, route, controls)
+}
+
+fn build_arena(
+    floor_size: f32,
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+    controls: &[(Vec3, Vec3)],
+) -> Arc<Arena> {
+    let half = floor_size / 2.0;
+    let floor = (Vec3::new(-half, -1.0, -half), Vec3::new(half, 0.0, half));
     let meshes: Vec<WorldMesh> = std::iter::once(&floor)
         .chain(boxes)
         .map(|&(min, max)| box_mesh(min, max))
@@ -276,6 +314,59 @@ pub(crate) fn wave_tuning(first_size: u32) -> WaveTuning {
     WaveTuning::new(first_size, 1, 100)
         .expect("a positive first wave and growth are valid")
         .with_mix(GradeMix::only(Grade::Experienced))
+}
+
+/// The command for every tick after `first`: nothing pressed, `first`'s host levels kept.
+fn follow_up(first: &SearchlightCommand) -> SearchlightCommand {
+    SearchlightCommand {
+        god_mode: first.god_mode,
+        forced_grade: first.forced_grade,
+        simple: first.simple,
+        round_gravity: first.round_gravity,
+        ..SearchlightCommand::default()
+    }
+}
+
+/// Ticks `sim` once with `first`, then on with nothing pressed until a tick reports a
+/// [`Feedback::Hit`] or the cap runs out. Returns all feedback in order, drained.
+pub(crate) fn run_until_hit(sim: &mut SearchlightSim, first: &SearchlightCommand) -> Vec<Feedback> {
+    let rest = follow_up(first);
+    let mut all = Vec::new();
+    let mut command = first;
+    for _ in 0..FLIGHT_TICK_CAP {
+        sim.tick(command, DT);
+        let tick = sim.drain_feedback();
+        let hit = tick.iter().any(|fb| matches!(fb, Feedback::Hit { .. }));
+        all.extend(tick);
+        if hit {
+            break;
+        }
+        command = &rest;
+    }
+    all
+}
+
+/// Ticks `sim` once with `first`, then on with nothing pressed until no round is in flight, so
+/// a later hit or miss cannot pass unseen. Returns all feedback in order, drained.
+///
+/// # Panics
+/// If a round is still in flight when the cap runs out.
+pub(crate) fn run_until_settled(
+    sim: &mut SearchlightSim,
+    first: &SearchlightCommand,
+) -> Vec<Feedback> {
+    let rest = follow_up(first);
+    let mut all = Vec::new();
+    let mut command = first;
+    for _ in 0..FLIGHT_TICK_CAP {
+        sim.tick(command, DT);
+        all.extend(sim.drain_feedback());
+        if sim.rounds_in_flight().is_empty() {
+            return all;
+        }
+        command = &rest;
+    }
+    panic!("a round was still in flight after {FLIGHT_TICK_CAP} ticks");
 }
 
 /// A level marker named `name` at `position`, with no properties.

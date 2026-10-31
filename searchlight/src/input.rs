@@ -6,7 +6,7 @@ use moho_input::bindings::{ActionBindings, Binding};
 use moho_input::key::{Key, MouseButton};
 use moho_input::{Action, LookSettings};
 use moho_physics::CharacterCommand;
-use searchlight_rules::{Grade, LeanSide};
+use searchlight_rules::{Grade, GravityScale, LeanSide};
 
 /// Everything the player can ask of the prototype.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -137,6 +137,11 @@ pub struct SearchlightCommand {
     /// carried on every tick. A host action like `god_mode`: once commands are per player
     /// slot, only slot 0's is read.
     pub forced_grade: Option<Grade>,
+    /// Simple is on: shots are hitscan, not rounds in flight. A host level like `god_mode`.
+    pub simple: bool,
+    /// How hard gravity pulls on rounds, as a multiple of standard gravity. A host level like
+    /// `god_mode`.
+    pub round_gravity: GravityScale,
     /// The side the player holds a lean toward, after key resolution.
     pub lean: Option<LeanSide>,
     /// The use input went down this tick.
@@ -197,6 +202,8 @@ impl SearchlightCommand {
             restart: frame.pressed(SearchlightAction::Restart),
             god_mode: false,
             forced_grade: None,
+            simple: false,
+            round_gravity: GravityScale::default(),
             lean: None,
             use_pressed: frame.pressed(SearchlightAction::Use),
         }
@@ -468,6 +475,20 @@ mod tests {
 
         assert!(!sampled.god_mode);
         assert!(!SearchlightCommand::default().god_mode);
+    }
+
+    #[test]
+    fn a_command_starts_with_simple_off_and_round_gravity_1() {
+        let mut map = fresh_map();
+        press(&mut map, SearchlightAction::Fire);
+
+        let sampled = SearchlightCommand::from_frame(&map.end_tick());
+
+        let one = GravityScale::new(1.0).unwrap();
+        assert!(!sampled.simple);
+        assert_eq!(sampled.round_gravity, one);
+        assert!(!SearchlightCommand::default().simple);
+        assert_eq!(SearchlightCommand::default().round_gravity, one);
     }
 
     #[test]
