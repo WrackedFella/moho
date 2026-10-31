@@ -238,6 +238,22 @@ pub(crate) fn arena_with_controls(
     route: &[Vec3],
     controls: &[(Vec3, Vec3)],
 ) -> Arc<Arena> {
+    let controls: Vec<(ControlAction, Vec3, Vec3)> = controls
+        .iter()
+        .map(|&(min, max)| (ControlAction::NextWave, min, max))
+        .collect();
+    arena_with_actions(boxes, player, enemies, route, &controls)
+}
+
+/// Like [`arena_with_controls`], but control `i` does the action of the `i`th entry of
+/// `controls`.
+pub(crate) fn arena_with_actions(
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+    controls: &[(ControlAction, Vec3, Vec3)],
+) -> Arc<Arena> {
     let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
     let meshes: Vec<WorldMesh> = std::iter::once(&floor)
         .chain(boxes)
@@ -245,8 +261,8 @@ pub(crate) fn arena_with_controls(
         .collect();
     let controls: Vec<ArenaControl> = controls
         .iter()
-        .map(|&(min, max)| ArenaControl {
-            action: ControlAction::NextWave,
+        .map(|&(action, min, max)| ArenaControl {
+            action,
             mesh: box_mesh(min, max),
         })
         .collect();

@@ -1238,6 +1238,21 @@ mod tests {
     }
 
     #[test]
+    fn the_shipped_arena_has_a_god_mode_switch() {
+        let (level, markers) = load(&shipped_arena()).expect("the shipped arena loads");
+
+        let arena = Arena::from_level(&level, &markers).expect("the shipped arena builds");
+
+        let actions: Vec<ControlAction> = arena.controls.iter().map(|c| c.action).collect();
+        assert!(
+            actions.contains(&ControlAction::ToggleGodMode),
+            "{actions:?}"
+        );
+        assert!(actions.contains(&ControlAction::NextWave), "{actions:?}");
+        assert_eq!(actions.len(), 2);
+    }
+
+    #[test]
     fn control_mesh_ids_are_distinct_per_control() {
         let ids: Vec<WorldMeshId> = (0..4).map(control_mesh_id).collect();
 

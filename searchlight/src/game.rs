@@ -1215,8 +1215,8 @@ mod tests {
     use super::*;
     use crate::sim::Feedback;
     use crate::test_support::{
-        WaveScore, arena_with, arena_with_controls, mag, press, rifle_from, test_config,
-        wave_tuning,
+        WaveScore, arena_with, arena_with_actions, arena_with_controls, mag, press, rifle_from,
+        test_config, wave_tuning,
     };
     use searchlight_rules::{Grade, LeanSide};
 
@@ -2152,6 +2152,126 @@ mod tests {
         assert_eq!(rebound_paint, painted_prompt_reading("[G] Next wave"));
         assert_eq!(unbound_paint, expected_unbound);
         assert_ne!(rebound_paint, unbound_paint);
+    }
+
+    /// A game with a god-mode switch at `POST` whose `Use` action has exactly `bindings`.
+    fn game_with_a_switch_using(bindings: Vec<moho_input::bindings::Binding>) -> SearchlightGame {
+        use crate::control::ControlAction;
+        let mode = ArenaMode::new(
+            arena_with_actions(
+                &[],
+                Vec3::ZERO,
+                &[],
+                &[],
+                &[(ControlAction::ToggleGodMode, POST.0, POST.1)],
+            ),
+            test_config(rifle_from(mag(30, 5)), vec![]),
+            wave_tuning(1),
+        );
+        let (mut loaded, _) = ActionBindings::load(&BTreeMap::new());
+        loaded.set(SearchlightAction::Use, bindings);
+        SearchlightGame::new(mode, ActionMap::new(loaded, 1.0))
+    }
+
+    fn game_with_a_switch() -> SearchlightGame {
+        use moho_input::bindings::Binding;
+        use moho_input::key::Key;
+        game_with_a_switch_using(vec![Binding::key(Key::F)])
+    }
+
+    fn using_the_control() -> SearchlightCommand {
+        SearchlightCommand {
+            use_pressed: true,
+            ..SearchlightCommand::default()
+        }
+    }
+
+    /// Ticks `game` once, with the use key pressed, and returns the god mode the next command
+    /// carries.
+    fn use_the_switch(game: &mut SearchlightGame, clock: &mut GameClock) -> bool {
+        tick_with(game, clock, &using_the_control());
+        game.command().god_mode
+    }
+
+    #[test]
+    fn a_god_mode_request_turns_god_mode_on_then_off() {
+        let mut game = game_with_a_switch();
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        let start = game.command().god_mode;
+
+        let on = use_the_switch(&mut game, &mut clock);
+        let on_in_game = game.god_mode;
+        let off = use_the_switch(&mut game, &mut clock);
+
+        assert!(!start);
+        assert!(on, "the command after the use carries god mode");
+        assert!(on_in_game);
+        assert!(!off);
+        assert!(!game.god_mode);
+        let lines = console_lines(&game);
+        let tail = &lines[lines.len() - 2..];
+        assert_eq!(tail, ["God mode: on", "God mode: off"]);
+    }
+
+    #[test]
+    fn a_god_mode_request_is_applied_once() {
+        let mut game = game_with_a_switch();
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+
+        let on = use_the_switch(&mut game, &mut clock);
+        let later: Vec<bool> = (0..3).map(|_| game.command().god_mode).collect();
+
+        assert!(on);
+        assert_eq!(later, [true; 3]);
+    }
+
+    #[test]
+    fn the_prompt_names_god_mode_at_the_switch() {
+        use moho_input::bindings::Binding;
+        use moho_input::key::Key;
+        let mut rebound = game_with_a_switch_using(vec![Binding::key(Key::G)]);
+        let mut unbound = game_with_a_switch_using(vec![]);
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        for game in [&mut rebound, &mut unbound] {
+            tick_with(game, &mut clock, &SearchlightCommand::default());
+        }
+
+        let rebound_paint = painted(&mut rebound);
+        let unbound_paint = painted(&mut unbound);
+
+        let expected_rebound = painted_prompt_reading("[G] God mode");
+        let expected_unbound = painted_prompt_reading("[unbound] God mode");
+        assert!(expected_rebound.is_some_and(|meshes| !meshes.is_empty()));
+        assert_eq!(rebound_paint, painted_prompt_reading("[G] God mode"));
+        assert_eq!(unbound_paint, expected_unbound);
+        assert_ne!(rebound_paint, painted_prompt_reading("[G] Next wave"));
+    }
+
+    #[test]
+    fn the_switch_and_tgm_save_the_same_setting() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = game_with_a_switch().with_debug_settings(settings);
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+
+        use_the_switch(&mut game, &mut clock);
+        let switched_on = saved_god_mode(&path);
+        tgm_tick(&mut game, "tgm");
+        let tgm_off = saved_god_mode(&path);
+        use_the_switch(&mut game, &mut clock);
+        let switched_on_again = saved_god_mode(&path);
+        let on = game.command().god_mode;
+        tgm_tick(&mut game, "tgm 1");
+        let unchanged = saved_god_mode(&path);
+
+        assert_eq!(switched_on.as_deref(), Some("1"));
+        assert_eq!(tgm_off.as_deref(), Some("0"));
+        assert_eq!(switched_on_again.as_deref(), Some("1"));
+        assert!(on);
+        assert_eq!(unchanged.as_deref(), Some("1"));
     }
 
     #[test]

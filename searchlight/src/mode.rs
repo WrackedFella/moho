@@ -21,6 +21,13 @@ pub struct Tally {
     pub score: u32,
 }
 
+/// What the mode asks the game, which owns the state the request changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionRequest {
+    /// Flip god mode, as a bare `tgm` does.
+    ToggleGodMode,
+}
+
 /// The waves of a level that has them.
 #[derive(Debug)]
 struct Waves {
@@ -130,7 +137,13 @@ impl ArenaMode {
                     .state
                     .call_next(&waves.tuning, self.sim.enemies_alive());
             }
+            ControlAction::ToggleGodMode => {}
         }
+    }
+
+    /// Takes the requests the mode made of the session since the last call, oldest first.
+    pub fn take_requests(&mut self) -> Vec<SessionRequest> {
+        Vec::new()
     }
 
     /// What control `index` of the arena does, or `None` if there is no such control.
@@ -195,7 +208,8 @@ mod tests {
     use super::*;
     use crate::sim::STAND_HEIGHT;
     use crate::test_support::{
-        DT, WaveScore, arena_with, arena_with_controls, mag, rifle_from, test_config,
+        DT, WaveScore, arena_with, arena_with_actions, arena_with_controls, mag, rifle_from,
+        test_config,
     };
 
     fn idle() -> SearchlightCommand {
@@ -323,6 +337,78 @@ mod tests {
         assert_enemy_at(&mode, 1, markers[0]);
         assert_enemy_at(&mode, 2, markers[1]);
         assert_enemy_at(&mode, 3, markers[2]);
+    }
+
+    /// A mode like `calm_mode` whose one control, in front of the player, is a god-mode switch.
+    fn switch_mode() -> ArenaMode {
+        let arena = arena_with_actions(
+            &[],
+            Vec3::ZERO,
+            &markers(4),
+            &[Vec3::new(0.0, 0.0, 25.0)],
+            &[(ControlAction::ToggleGodMode, button().0, button().1)],
+        );
+        ArenaMode::new(arena, calm_config(), tuning(1, 2, 100))
+    }
+
+    #[test]
+    fn using_the_god_mode_switch_requests_a_toggle() {
+        let mut mode = switch_mode();
+        mode.sim_mut().kill_enemy(0);
+        mode.tick(&idle(), DT);
+        let before_use = mode.take_requests();
+
+        mode.tick(&using(), DT);
+        let first = mode.take_requests();
+        let drained = mode.take_requests();
+        mode.tick(&using(), DT);
+        mode.tick(&using(), DT);
+        let two_more = mode.take_requests();
+
+        assert_eq!(before_use, []);
+        assert_eq!(first, [SessionRequest::ToggleGodMode]);
+        assert_eq!(drained, [], "a request is taken once");
+        assert_eq!(
+            two_more,
+            [SessionRequest::ToggleGodMode; 2],
+            "each use asks again"
+        );
+        assert_eq!(mode.wave(), 1, "the switch calls no wave");
+        assert_eq!(mode.sim().enemy_count(), 1);
+    }
+
+    #[test]
+    fn a_god_mode_switch_out_of_reach_requests_nothing() {
+        let wall = (Vec3::new(-2.0, 0.0, 0.5), Vec3::new(2.0, 4.0, 0.6));
+        let arena = arena_with_actions(
+            &[wall],
+            Vec3::ZERO,
+            &markers(4),
+            &[Vec3::new(0.0, 0.0, 25.0)],
+            &[(ControlAction::ToggleGodMode, button().0, button().1)],
+        );
+        let mut walled = ArenaMode::new(arena, calm_config(), tuning(1, 2, 100));
+        let mut open = switch_mode();
+        walled.tick(&idle(), DT);
+        open.tick(&idle(), DT);
+
+        walled.tick(&using(), DT);
+        open.tick(&using(), DT);
+
+        assert_eq!(open.take_requests(), [SessionRequest::ToggleGodMode]);
+        assert_eq!(walled.take_requests(), []);
+    }
+
+    #[test]
+    fn using_the_next_wave_button_requests_nothing_of_the_session() {
+        let mut mode = calm_mode(4, tuning(1, 2, 100));
+        mode.sim_mut().kill_enemy(0);
+        mode.tick(&idle(), DT);
+
+        mode.tick(&using(), DT);
+
+        assert_eq!(mode.wave(), 2, "the use reached the button");
+        assert_eq!(mode.take_requests(), []);
     }
 
     #[test]

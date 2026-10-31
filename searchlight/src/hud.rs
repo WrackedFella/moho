@@ -116,6 +116,7 @@ pub fn death_text(dead: bool) -> Option<&'static str> {
 pub fn use_prompt(key: &str, action: ControlAction) -> String {
     let what = match action {
         ControlAction::NextWave => "Next wave",
+        ControlAction::ToggleGodMode => "",
     };
     format!("[{key}] {what}")
 }
@@ -292,6 +293,17 @@ mod feedback_tests {
         assert_eq!(bound, "[F] Next wave");
         assert_eq!(rebound, "[Mouse Right] Next wave");
         assert_eq!(unbound, "[unbound] Next wave");
+    }
+
+    #[test]
+    fn the_use_prompt_names_god_mode() {
+        let bound = use_prompt("F", ControlAction::ToggleGodMode);
+        let rebound = use_prompt("Mouse Right", ControlAction::ToggleGodMode);
+        let unbound = use_prompt("unbound", ControlAction::ToggleGodMode);
+
+        assert_eq!(bound, "[F] God mode");
+        assert_eq!(rebound, "[Mouse Right] God mode");
+        assert_eq!(unbound, "[unbound] God mode");
     }
 
     #[test]
