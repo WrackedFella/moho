@@ -1,9 +1,11 @@
 use super::PhysicsWorld;
 use glam::{Quat, Vec3};
-use rapier3d::prelude::{ColliderBuilder, Pose, RigidBodyBuilder, RigidBodyHandle};
+use rapier3d::prelude::{
+    ColliderBuilder, ColliderHandle, NarrowPhase, Pose, RigidBodyBuilder, RigidBodyHandle,
+};
 
 /// Steepest ground, radians from level, that a new world brakes loose objects on: 5°.
-pub(super) const DEFAULT_REST_SLOPE: f32 = 5.0 * std::f32::consts::PI / 180.0;
+pub(super) const DEFAULT_REST_SLOPE: f32 = 5.0_f32.to_radians();
 
 /// Contact depth, metres, past which an overlap is left to the solver to push apart rather
 /// than braked: braking would zero the velocity that separates the bodies and freeze the
@@ -185,9 +187,9 @@ impl PhysicsWorld {
     ///
     /// # Panics
     /// If the spawn would poison the simulation: a mass, half extent, half height or radius that
-    /// is not positive and finite, a friction, restitution or damping that is negative or not finite, a position or
-    /// velocity that is not finite, or a rotation that is not finite or whose squared length is
-    /// more than 2e-4 from 1 (glam's `Quat::is_normalized`).
+    /// is not positive and finite, a friction, restitution or damping that is negative or not
+    /// finite, a position or velocity that is not finite, or a rotation that is not finite or
+    /// whose squared length is more than 2e-4 from 1 (glam's `Quat::is_normalized`).
     pub fn spawn_loose(&mut self, spawn: &LooseSpawn) -> LooseId {
         spawn.assert_valid();
         let body = RigidBodyBuilder::dynamic()
@@ -289,55 +291,55 @@ impl PhysicsWorld {
         let cut = self.gravity.length() * self.rest_slope.tan() * dt;
 
         for loose in self.loose.values() {
-            let body = &self.rigid_body_set[loose.body];
-            if body.is_sleeping() {
-                continue;
-            }
-            let collider = body.colliders()[0];
-            let mut on_flat = false;
-            let mut deep = false;
-            for pair in self.narrow_phase.contact_pairs_with(collider) {
-                if !pair.has_any_active_contact() {
-                    continue;
-                }
-                for manifold in pair.manifolds() {
-                    if manifold.points.is_empty() {
-                        continue;
-                    }
-                    let normal = if pair.collider2 == collider {
-                        manifold.data.normal
-                    } else {
-                        -manifold.data.normal
-                    };
-                    on_flat |= normal.dot(up) >= cos_slope;
-                    deep |= manifold.points.iter().any(|p| p.dist < -DEEP_CONTACT);
-                }
-            }
-            if !on_flat || deep {
-                continue;
-            }
-
-            let velocity = body.linvel();
-            let across = velocity - up * velocity.dot(up);
-            let across_speed = across.length();
-            let slowed = if across_speed > cut {
-                across * (1.0 - cut / across_speed)
-            } else {
-                Vec3::ZERO
-            };
-            let spin = body.angvel();
-            let spin_speed = spin.length();
-            let spin_cut = cut / loose.roll_radius;
-            let spin = if spin_speed > spin_cut {
-                spin * (1.0 - spin_cut / spin_speed)
-            } else {
-                Vec3::ZERO
-            };
-
             let body = &mut self.rigid_body_set[loose.body];
-            body.set_linvel(velocity - across + slowed, false);
-            body.set_angvel(spin, false);
+            if body.is_sleeping()
+                || !rests_on_flat_ground(&self.narrow_phase, body.colliders()[0], up, cos_slope)
+            {
+                continue;
+            }
+            let velocity = body.linvel();
+            let along = up * velocity.dot(up);
+            body.set_linvel(along + shrink(velocity - along, cut), false);
+            body.set_angvel(shrink(body.angvel(), cut / loose.roll_radius), false);
         }
+    }
+}
+
+/// Whether `collider` touches a surface within the rest slope of `up` and no contact of it is
+/// deeper than [`DEEP_CONTACT`].
+fn rests_on_flat_ground(
+    narrow_phase: &NarrowPhase,
+    collider: ColliderHandle,
+    up: Vec3,
+    cos_slope: f32,
+) -> bool {
+    let mut on_flat = false;
+    for pair in narrow_phase.contact_pairs_with(collider) {
+        if !pair.has_any_active_contact() {
+            continue;
+        }
+        for manifold in pair.manifolds().iter().filter(|m| !m.points.is_empty()) {
+            if manifold.points.iter().any(|p| p.dist < -DEEP_CONTACT) {
+                return false;
+            }
+            let into_body = if pair.collider2 == collider {
+                manifold.data.normal
+            } else {
+                -manifold.data.normal
+            };
+            on_flat |= into_body.dot(up) >= cos_slope;
+        }
+    }
+    on_flat
+}
+
+/// `v` shortened by `cut`, or zero if it is no longer than `cut`.
+fn shrink(v: Vec3, cut: f32) -> Vec3 {
+    let length = v.length();
+    if length > cut {
+        v * (1.0 - cut / length)
+    } else {
+        Vec3::ZERO
     }
 }
 
