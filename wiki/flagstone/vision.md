@@ -42,7 +42,7 @@ A base-builder and mining game played from above:
   An example is the entity-component system: SG-F4, pawns that dig what the player marks,
   stays on typed stores, and pawns move to an ECS when a second pawn kind arrives
   ([ADR-0004](../../_todo/adr/0004-entity-storage-without-a-general-ecs.md),
-  [ADR-0023](../../_todo/adr/0023-pawn-kinds-share-components.md), proposed).
+  [ADR-0023](../../_todo/adr/0023-pawn-kinds-share-components.md)).
 
 ## Feature arc
 
