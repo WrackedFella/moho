@@ -229,7 +229,7 @@ impl Mark {
         let style = &self.style;
         let fade = style.fade.min(style.lifetime);
         let left = style.lifetime.saturating_sub(self.age);
-        if fade.is_zero() || left >= fade {
+        if left >= fade {
             return 1.0;
         }
         left.as_secs_f32() / fade.as_secs_f32()
@@ -421,6 +421,7 @@ impl MeshKind {
 
     fn mesh(self) -> WorldMesh {
         match self {
+            // From the tail at the origin to the head at x = 1, as `streak_transform` expects.
             Self::Kite => flat_mesh(
                 vec![
                     [0.0, 0.0, 0.0],
