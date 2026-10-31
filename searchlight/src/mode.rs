@@ -414,6 +414,41 @@ mod tests {
         assert_eq!(mode.take_requests(), []);
     }
 
+    /// A sandbox over an arena whose one control, in front of the player, does `action`.
+    fn sandbox_with_control(action: ControlAction) -> ArenaMode {
+        let arena = arena_with_actions(
+            &[],
+            Vec3::ZERO,
+            &markers(4),
+            &[Vec3::new(0.0, 0.0, 25.0)],
+            &[(action, button().0, button().1)],
+        );
+        ArenaMode::sandbox(arena, calm_config())
+    }
+
+    #[test]
+    fn using_the_god_mode_switch_in_a_sandbox_requests_a_toggle() {
+        let mut mode = sandbox_with_control(ControlAction::ToggleGodMode);
+        mode.tick(&idle(), DT);
+
+        mode.tick(&using(), DT);
+
+        assert_eq!(mode.take_requests(), [SessionRequest::ToggleGodMode]);
+        assert_eq!(mode.tally(), None);
+    }
+
+    #[test]
+    fn using_the_next_wave_button_in_a_sandbox_does_nothing() {
+        let mut mode = sandbox_with_control(ControlAction::NextWave);
+        mode.tick(&idle(), DT);
+
+        mode.tick(&using(), DT);
+
+        assert_eq!(mode.take_requests(), []);
+        assert_eq!(mode.tally(), None);
+        assert_eq!(mode.sim().enemy_count(), 0);
+    }
+
     #[test]
     fn a_cleared_wave_waits_thirty_seconds_without_a_use() {
         let mut mode = calm_mode(4, tuning(1, 2, 100));

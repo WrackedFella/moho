@@ -847,8 +847,7 @@ impl SearchlightGame {
         }
     }
 
-    /// Flips god mode and reports the new value on the console; a bare `tgm` and the god-mode
-    /// switch both land here.
+    /// Flips god mode and prints the new value; shared by `tgm` and the god-mode switch.
     fn toggle_god_mode(&mut self) {
         self.god_mode = !self.god_mode;
         let text = if self.god_mode {
@@ -861,7 +860,7 @@ impl SearchlightGame {
 
     /// Applies the console's queued commands, then the mode's session requests, in order, saves
     /// god mode once if they changed it, and reports the value after each toggle.
-    fn apply_console_commands(&mut self) {
+    fn apply_queued_commands(&mut self) {
         let queued = self.stage.shell().console_mut().take_commands();
         let requests = self.mode.take_requests();
         if queued.is_empty() && requests.is_empty() {
@@ -1064,7 +1063,7 @@ impl Game for SearchlightGame {
     type Command = SearchlightCommand;
 
     fn command(&mut self) -> SearchlightCommand {
-        self.apply_console_commands();
+        self.apply_queued_commands();
         // The paused loop asks every frame and drops the command; ending the tick would
         // consume the look the frames showed and snap the view back. Edges are dropped
         // instead, so a press made as the console opened does not act when it closes.
