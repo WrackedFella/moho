@@ -29,8 +29,9 @@ impl LooseId {
 /// What the world keeps per loose object besides its body.
 pub(super) struct Loose {
     body: RigidBodyHandle,
-    /// Radius of the round cross-section that rolls, in metres.
-    roll_radius: f32,
+    /// Radius, metres, of the round cross-section that rolls about the body's local Y; `None`
+    /// for a shape that does not roll.
+    roll_radius: Option<f32>,
 }
 
 /// The collision shape of a loose object.
@@ -45,11 +46,11 @@ pub enum LooseShape {
 }
 
 impl LooseShape {
-    /// Radius of the round cross-section that rolls on the ground.
-    fn roll_radius(self) -> f32 {
+    /// Radius of the round cross-section that rolls about local Y; a box does not roll.
+    fn roll_radius(self) -> Option<f32> {
         match self {
-            Self::Box { half_extents } => half_extents.min_element(),
-            Self::Capsule { radius, .. } | Self::Cylinder { radius, .. } => radius,
+            Self::Box { .. } => None,
+            Self::Capsule { radius, .. } | Self::Cylinder { radius, .. } => Some(radius),
         }
     }
 
@@ -291,22 +292,38 @@ impl PhysicsWorld {
         let cut = self.gravity.length() * self.rest_slope.tan() * dt;
 
         for loose in self.loose.values() {
+            let Some(radius) = loose.roll_radius else {
+                continue;
+            };
             let body = &mut self.rigid_body_set[loose.body];
             if body.is_sleeping()
                 || !rests_on_flat_ground(&self.narrow_phase, body.colliders()[0], up, cos_slope)
             {
                 continue;
             }
+            // Only the rolling motion is braked: spin about the shape's axis and travel across
+            // it. Tipping happens in the plane of the axis and up, so it is left alone and a
+            // shape tipping over an edge cannot be frozen part-way.
+            let axis = *body.rotation() * Vec3::Y;
+            let spin = body.angvel();
+            let rolling_spin = axis * spin.dot(axis);
+            body.set_angvel(
+                spin - rolling_spin + shrink(rolling_spin, cut / radius),
+                false,
+            );
+            let across_axis = axis.cross(up).normalize_or_zero();
             let velocity = body.linvel();
-            let along = up * velocity.dot(up);
-            body.set_linvel(along + shrink(velocity - along, cut), false);
-            body.set_angvel(shrink(body.angvel(), cut / loose.roll_radius), false);
+            let rolling_velocity = across_axis * velocity.dot(across_axis);
+            body.set_linvel(
+                velocity - rolling_velocity + shrink(rolling_velocity, cut),
+                false,
+            );
         }
     }
 }
 
 /// Whether `collider` touches a surface within the rest slope of `up` and no contact of it is
-/// deeper than [`DEEP_CONTACT`].
+/// deeper than [`DEEP_CONTACT`]. A predicted contact, not yet touching, is not ground.
 fn rests_on_flat_ground(
     narrow_phase: &NarrowPhase,
     collider: ColliderHandle,
@@ -327,7 +344,8 @@ fn rests_on_flat_ground(
             } else {
                 -manifold.data.normal
             };
-            on_flat |= into_body.dot(up) >= cos_slope;
+            on_flat |=
+                into_body.dot(up) >= cos_slope && manifold.points.iter().any(|p| p.dist <= 0.0);
         }
     }
     on_flat
@@ -1551,6 +1569,63 @@ mod tests {
             "half the gravity doubles the roll to about 2.54 m, z={}",
             state.position.z
         );
+    }
+
+    #[test]
+    fn a_shape_just_above_the_floor_is_not_braked() {
+        let spawn = LooseSpawn {
+            position: Vec3::new(0.0, cross_section(CAPSULE) + 0.019, 0.0),
+            ..rolling_capsule(2.0)
+        };
+        let after_two_ticks = |rest_slope: f32| {
+            let mut world = world_with_floor(&floor_mesh(0.0));
+            world.set_rest_slope(rest_slope);
+            let id = world.spawn_loose(&spawn);
+            for _ in 0..2 {
+                world.step(DT);
+            }
+            world.loose(id).expect("capsule is alive")
+        };
+        let braked = after_two_ticks(DEFAULT_REST_SLOPE);
+        assert!(
+            braked.position.y > cross_section(CAPSULE),
+            "capsule reached the floor, so the test no longer probes the gap: {braked:?}"
+        );
+        assert_eq!(braked, after_two_ticks(0.0));
+    }
+
+    #[test]
+    fn a_tilted_cylinder_tips_over_instead_of_freezing_on_its_rim() {
+        for tilt_degrees in [10.0_f32, 20.0, 30.0, 45.0] {
+            let tilt = tilt_degrees.to_radians();
+            let LooseShape::Cylinder {
+                half_height,
+                radius,
+            } = CYLINDER
+            else {
+                unreachable!("CYLINDER is a cylinder");
+            };
+            // Rim on the floor: the lowest point of a cylinder tilted about X sits at
+            // half_height·cos + radius·sin below its centre.
+            let height = half_height * tilt.cos() + radius * tilt.sin() + 0.001;
+            let mut world = world_with_floor(&floor_mesh(0.0));
+            let id = world.spawn_loose(&LooseSpawn {
+                position: Vec3::new(0.0, height, 0.0),
+                rotation: Quat::from_rotation_x(tilt),
+                ..LooseSpawn::new(CYLINDER, 0.2)
+            });
+            for _ in 0..300 {
+                world.step(DT);
+            }
+            let state = world.loose(id).expect("cylinder is alive");
+            let axis_from_vertical = angle_from_vertical_degrees(state.rotation * Vec3::Y);
+            let lying = (axis_from_vertical - 90.0).abs() < 1.0;
+            let standing = axis_from_vertical < 1.0 || axis_from_vertical > 179.0;
+            assert!(
+                state.asleep && (lying || standing),
+                "tilt {tilt_degrees}: cylinder froze at {axis_from_vertical} degrees, {state:?}"
+            );
+        }
     }
 
     #[test]
