@@ -33,7 +33,7 @@ pub struct PhysicsWorld {
     ccd_solver: CCDSolver,
     world_mesh_colliders: HashMap<WorldMeshId, ColliderHandle>,
     characters: HashMap<CharacterHandle, Character>,
-    loose: BTreeMap<LooseId, RigidBodyHandle>,
+    loose: BTreeMap<LooseId, loose::Loose>,
     next_loose: u64,
 }
 
