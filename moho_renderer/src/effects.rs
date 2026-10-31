@@ -135,7 +135,6 @@ enum MeshKind {
     Quad = 2,
 }
 
-/// One instance an effect asks for this frame.
 struct Draw {
     kind: MeshKind,
     transform: Affine3A,
@@ -515,7 +514,6 @@ mod tests {
     struct MeshLog {
         /// Each `register_world_mesh` call as `(positions, indices)`.
         registered: Vec<(Vec<[f32; 3]>, Vec<u32>)>,
-        /// Each `unregister_mesh` call's backend handle.
         unregistered: Vec<u32>,
     }
 
