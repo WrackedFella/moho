@@ -4,11 +4,12 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use glam::Vec3;
+use glam::{Quat, Vec3};
 use moho_level::{AgentProfile, Level, LevelError, LevelMarker, NavBuildError, NavMesh};
 use moho_physics::PhysicsWorld;
 use moho_render_api::{WorldMesh, WorldMeshId};
 
+use crate::control::ControlAction;
 use crate::sim::{CAPSULE_RADIUS, STAND_HEIGHT};
 use crate::tag::SurfaceTag;
 
@@ -21,6 +22,12 @@ const DUMMY_PREFIX: &str = "dummy_";
 const ENEMY_SPAWN_PREFIX: &str = "enemy_spawn_";
 const WAYPOINT_PREFIX: &str = "waypoint_";
 const COVER_PREFIX: &str = "cover_";
+const CONTROL_PREFIX: &str = "control_";
+const CONTROL_ACTION_KEY: &str = "action";
+/// First control mesh id; see [`control_mesh_id`].
+const CONTROL_MESH_BASE: u64 = 3 << 32;
+/// Width, height and depth of a control's post, in metres.
+const CONTROL_POST_SIZE: Vec3 = Vec3::new(0.4, 1.2, 0.4);
 
 /// Why an arena level cannot be used.
 #[derive(Debug, thiserror::Error)]
@@ -44,6 +51,9 @@ pub enum ArenaError {
     /// The arena has enemy spawns, but no enemy spawn has a path to any waypoint.
     #[error("no path from any enemy spawn reaches a waypoint")]
     NoReachableWaypoint,
+    /// A `control_NN` marker names no action, or one not on the list.
+    #[error("arena control `{marker}` needs an `action` on the list")]
+    BadControl { marker: String },
     /// The `searchlight_level` marker's `mode` is missing or is neither `arena` nor `sandbox`.
     #[error("level mode `{value}` is not `arena` or `sandbox`")]
     BadMode { value: String },
@@ -71,6 +81,8 @@ pub struct ArenaMarkers {
     pub waypoints: Vec<LevelMarker>,
     /// `cover_NN`.
     pub covers: Vec<LevelMarker>,
+    /// `control_NN`: placed posts the player can use.
+    pub controls: Vec<LevelMarker>,
 }
 
 impl ArenaMarkers {
@@ -93,6 +105,7 @@ impl ArenaMarkers {
         let mut enemy_spawns = Vec::new();
         let mut waypoints = Vec::new();
         let mut covers = Vec::new();
+        let mut controls = Vec::new();
         for marker in &level.markers {
             let name = marker.name.as_str();
             let kind = if name == PLAYER_SPAWN {
@@ -105,6 +118,8 @@ impl ArenaMarkers {
                 &mut waypoints
             } else if name.starts_with(COVER_PREFIX) {
                 &mut covers
+            } else if name.starts_with(CONTROL_PREFIX) {
+                &mut controls
             } else {
                 continue;
             };
@@ -129,6 +144,7 @@ impl ArenaMarkers {
             enemy_spawns,
             waypoints,
             covers,
+            controls,
         })
     }
 }
@@ -201,6 +217,13 @@ impl ArenaMarkers {
     }
 }
 
+/// A post the player can use, standing on a `control_NN` marker.
+#[derive(Debug, Clone)]
+pub struct ArenaControl {
+    pub action: ControlAction,
+    pub mesh: WorldMesh,
+}
+
 /// Everything a sim needs to start, and to start again: static geometry plus spawn points.
 /// The sim holds it behind an `Arc`, so a restart rebuilds from the same data.
 #[derive(Debug, Clone)]
@@ -217,6 +240,8 @@ pub struct Arena {
     /// The loop every enemy patrols, in order.
     pub route: Vec<Vec3>,
     pub covers: Vec<Vec3>,
+    /// The usable posts, in file order; an index is the control's id.
+    pub controls: Vec<ArenaControl>,
     /// Where an enemy of [`nav_profile`] size can walk.
     pub nav: Arc<NavMesh>,
     /// Whether the navmesh could not be built and `nav` is empty (sandbox levels only).
@@ -243,6 +268,7 @@ impl Arena {
     /// ([`Arena::nav_fallback`]), and an unreachable route is not an error.
     ///
     /// # Errors
+    /// [`ArenaError::BadControl`] naming a control marker with no `action` on the list;
     /// [`ArenaError::Nav`] when the walkable area cannot be built (arena only);
     /// [`ArenaError::NoReachableWaypoint`] when there are enemy spawns but no waypoint is
     /// reachable from any of them (arena only). A waypoint no enemy spawn reaches is dropped
@@ -251,7 +277,29 @@ impl Arena {
         let positions = |list: &[LevelMarker]| list.iter().map(|marker| marker.position).collect();
         let meshes: Vec<WorldMesh> = level.meshes.iter().map(|m| m.mesh.clone()).collect();
         let material_names = level.meshes.iter().map(|m| m.material.clone()).collect();
-        let (nav, nav_fallback) = match NavMesh::build(&meshes, nav_profile()) {
+        let controls = markers
+            .controls
+            .iter()
+            .map(|marker| {
+                let action = marker
+                    .properties
+                    .get(CONTROL_ACTION_KEY)
+                    .and_then(|name| ControlAction::parse(name))
+                    .ok_or_else(|| ArenaError::BadControl {
+                        marker: marker.name.clone(),
+                    })?;
+                Ok(ArenaControl {
+                    action,
+                    mesh: control_post(marker.position),
+                })
+            })
+            .collect::<Result<Vec<_>, ArenaError>>()?;
+        let solids: Vec<WorldMesh> = meshes
+            .iter()
+            .cloned()
+            .chain(controls.iter().map(|control| control.mesh.clone()))
+            .collect();
+        let (nav, nav_fallback) = match NavMesh::build(&solids, nav_profile()) {
             Ok(nav) => (nav, false),
             Err(error) if markers.mode == LevelMode::Sandbox => {
                 tracing::warn!(%error, "no walkable area; the sandbox runs without a navmesh");
@@ -292,15 +340,23 @@ impl Arena {
             enemy_spawns,
             route,
             covers: positions(&markers.covers),
+            controls,
         })
     }
 
     /// A physics world whose static colliders are this arena's meshes, tagged
-    /// [`SurfaceTag::World`], stepped once so they are queryable.
+    /// [`SurfaceTag::World`], and its control posts, tagged [`SurfaceTag::Control`] with their
+    /// index, stepped once so they are queryable.
     pub fn physics_world(&self) -> PhysicsWorld {
         let mut world = PhysicsWorld::new();
         for (index, mesh) in self.meshes.iter().enumerate() {
             world.set_world_mesh(arena_mesh_id(index), mesh, SurfaceTag::World.into());
+        }
+        for (index, control) in self.controls.iter().enumerate() {
+            let tag = SurfaceTag::Control(
+                u16::try_from(index).expect("an arena has fewer than 65536 controls"),
+            );
+            world.set_world_mesh(control_mesh_id(index), &control.mesh, tag.into());
         }
         world.step(SETTLE_DT);
         world
@@ -337,6 +393,61 @@ pub fn physics_world(level: &Level) -> PhysicsWorld {
 /// The id under which the physics world and the renderer both know `level.meshes[index]`.
 pub fn arena_mesh_id(index: usize) -> WorldMeshId {
     WorldMeshId(index as u64)
+}
+
+/// The id under which the physics world and the renderer both know control `index`, clear of
+/// the arena's, the dummies' and the enemies' ids.
+pub fn control_mesh_id(index: usize) -> WorldMeshId {
+    WorldMeshId(CONTROL_MESH_BASE + index as u64)
+}
+
+/// A closed box with outward-facing triangles and a normal per face.
+pub(crate) fn box_mesh(centre: Vec3, half: Vec3) -> WorldMesh {
+    oriented_box_mesh(centre, half, Quat::IDENTITY)
+}
+
+/// [`box_mesh`] with its axes turned by `rotation` about its centre.
+pub(crate) fn oriented_box_mesh(centre: Vec3, half: Vec3, rotation: Quat) -> WorldMesh {
+    // (normal, u, v) with u x v = normal, so (-u-v, +u-v, +u+v, -u+v) winds counter-clockwise
+    // seen from outside.
+    const FACES: [(Vec3, Vec3, Vec3); 6] = [
+        (Vec3::X, Vec3::Y, Vec3::Z),
+        (Vec3::NEG_X, Vec3::Z, Vec3::Y),
+        (Vec3::Y, Vec3::Z, Vec3::X),
+        (Vec3::NEG_Y, Vec3::X, Vec3::Z),
+        (Vec3::Z, Vec3::X, Vec3::Y),
+        (Vec3::NEG_Z, Vec3::Y, Vec3::X),
+    ];
+    let mut positions = Vec::with_capacity(24);
+    let mut normals = Vec::with_capacity(24);
+    let mut indices = Vec::with_capacity(36);
+    for (normal, u, v) in FACES {
+        let first = positions.len() as u32;
+        let (du, dv) = (u * half, v * half);
+        let face_centre = centre + rotation * (normal * half);
+        for corner in [-du - dv, du - dv, du + dv, -du + dv] {
+            positions.push((face_centre + rotation * corner).to_array());
+            normals.push((rotation * normal).to_array());
+        }
+        indices.extend([first, first + 1, first + 2, first, first + 2, first + 3]);
+    }
+    let count = positions.len();
+    WorldMesh::new(
+        positions,
+        normals,
+        vec![1.0; count],
+        vec![[0.0; 3]; count],
+        vec![1.0; count],
+        vec![0; count],
+        indices,
+    )
+    .expect("a box has matching channels and whole triangles")
+}
+
+/// The post standing on a control's marker.
+fn control_post(floor_point: Vec3) -> WorldMesh {
+    let half = CONTROL_POST_SIZE / 2.0;
+    box_mesh(floor_point + Vec3::Y * half.y, half)
 }
 
 #[cfg(test)]
@@ -1003,6 +1114,139 @@ mod tests {
         tracing::subscriber::with_default(subscriber, run);
         let bytes = buffer.lock().expect("log sink").clone();
         String::from_utf8(bytes).expect("log output is utf-8")
+    }
+
+    /// A 20 m floor, a player spawn, a dummy and one `control_NN` marker per entry of
+    /// `controls`: its name, its `action` property (if any) and where it stands.
+    fn control_level(controls: &[(&str, Option<&str>, Vec3)]) -> Level {
+        let mut markers = vec![
+            marker("player_spawn", Vec3::new(-5.0, 0.0, -5.0)),
+            marker("dummy_01", Vec3::new(-5.0, 0.0, 5.0)),
+        ];
+        for &(name, action, at) in controls {
+            let mut control = marker(name, at);
+            if let Some(action) = action {
+                control
+                    .properties
+                    .insert("action".to_owned(), action.to_owned());
+            }
+            markers.push(control);
+        }
+        Level {
+            meshes: vec![LevelMesh {
+                mesh: box_mesh(Vec3::new(-10.0, -1.0, -10.0), Vec3::new(10.0, 0.0, 10.0)),
+                material: None,
+            }],
+            markers,
+        }
+    }
+
+    /// The error loading `level` ends in, from either stage.
+    fn refusal(level: &Level) -> ArenaError {
+        match ArenaMarkers::from_level(level) {
+            Err(error) => error,
+            Ok(markers) => match Arena::from_level(level, &markers) {
+                Err(error) => error,
+                Ok(_) => panic!("the level loaded, but it should have been refused"),
+            },
+        }
+    }
+
+    #[test]
+    fn a_control_naming_an_unknown_action_is_refused() {
+        let level = control_level(&[
+            ("control_01", Some("next_wave"), Vec3::new(3.0, 0.0, 3.0)),
+            ("control_02", Some("open_door"), Vec3::new(-3.0, 0.0, 3.0)),
+        ]);
+
+        let error = refusal(&level);
+
+        assert!(
+            matches!(&error, ArenaError::BadControl { marker } if marker == "control_02"),
+            "{error:?}"
+        );
+        assert!(error.to_string().contains("control_02"), "{error}");
+    }
+
+    #[test]
+    fn a_control_with_no_action_is_refused() {
+        let level = control_level(&[
+            ("control_01", Some("next_wave"), Vec3::new(3.0, 0.0, 3.0)),
+            ("control_02", None, Vec3::new(-3.0, 0.0, 3.0)),
+        ]);
+
+        let error = refusal(&level);
+
+        assert!(
+            matches!(&error, ArenaError::BadControl { marker } if marker == "control_02"),
+            "{error:?}"
+        );
+        assert!(error.to_string().contains("control_02"), "{error}");
+    }
+
+    #[test]
+    fn a_control_marker_gives_a_collider_tagged_with_its_index() {
+        let level = control_level(&[
+            ("control_01", Some("next_wave"), Vec3::new(3.0, 0.0, 3.0)),
+            ("control_02", Some("next_wave"), Vec3::new(-3.0, 0.0, 3.0)),
+        ]);
+        let markers = ArenaMarkers::from_level(&level).expect("a valid marker set");
+        let arena = Arena::from_level(&level, &markers).expect("the controls are valid");
+
+        let world = arena.physics_world();
+        let strike = |x: f32| {
+            world.cast_ray(&RayQuery {
+                origin: Vec3::new(x, 0.6, 0.0),
+                direction: Vec3::Z,
+                max_distance: 20.0,
+                ignore: None,
+            })
+        };
+        let (first, second) = (strike(3.0), strike(-3.0));
+
+        assert_eq!(arena.controls.len(), 2);
+        assert!(
+            arena
+                .controls
+                .iter()
+                .all(|control| control.action == ControlAction::NextWave)
+        );
+        let first = first.expect("the first post stops the ray");
+        let second = second.expect("the second post stops the ray");
+        assert_eq!(SurfaceTag::try_from(first.tag), Ok(SurfaceTag::Control(0)));
+        assert_eq!(SurfaceTag::try_from(second.tag), Ok(SurfaceTag::Control(1)));
+        assert!(
+            (first.distance - 2.8).abs() < 1e-2,
+            "a 0.4 m post stands on the marker: {first:?}"
+        );
+    }
+
+    #[test]
+    fn the_shipped_arena_has_a_next_wave_control() {
+        let (level, markers) = load(&shipped_arena()).expect("the shipped arena loads");
+
+        let arena = Arena::from_level(&level, &markers).expect("the shipped arena builds");
+
+        assert!(
+            arena
+                .controls
+                .iter()
+                .any(|control| control.action == ControlAction::NextWave),
+            "{} controls",
+            arena.controls.len()
+        );
+    }
+
+    #[test]
+    fn control_mesh_ids_are_distinct_per_control() {
+        let ids: Vec<WorldMeshId> = (0..4).map(control_mesh_id).collect();
+
+        for (i, a) in ids.iter().enumerate() {
+            for b in &ids[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
+        assert_ne!(control_mesh_id(0), arena_mesh_id(0));
     }
 
     #[test]

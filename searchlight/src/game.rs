@@ -25,10 +25,11 @@ use winit::window::{CursorGrabMode, Window};
 use moho_core::prefs::Prefs;
 use moho_ui_shell::host::input_of;
 use moho_ui_shell::{
-    EngineSettings, MenuEvent, Routing, UiLayers, UiShell, apply_engine_command,
-    apply_engine_settings,
+    Anchor, EngineSettings, MenuEvent, Routing, ScreenText, UiLayers, UiShell,
+    apply_engine_command, apply_engine_settings,
 };
 
+use crate::arena::{box_mesh, control_mesh_id, oriented_box_mesh};
 use crate::console_commands::{self, ConsoleCommand, GodModeArg};
 use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
@@ -67,6 +68,10 @@ const FOV_DEGREES: f32 = 75.0;
 const NEAR: f32 = 0.05;
 const FAR: f32 = 500.0;
 const SHOT_VOLUME: f32 = 0.8;
+/// The use prompt's distance below the crosshair, in logical points, and its size and colour.
+const PROMPT_OFFSET_Y: f32 = 48.0;
+const PROMPT_SIZE: f32 = 20.0;
+const PROMPT_COLOR: [u8; 4] = [255, 255, 255, 230];
 
 /// Width over height, treating a zero height as one so a minimised window cannot divide by zero.
 fn aspect_ratio(width: u32, height: u32) -> f32 {
@@ -95,6 +100,7 @@ enum Paint {
     Dummy,
     Enemy,
     Struck,
+    Control,
     ArenaMark,
 }
 
@@ -114,6 +120,7 @@ impl RenderMaterial for Paint {
             Paint::Dummy => ([0.85, 0.6, 0.2], [0.7, 0.48, 0.16], 0.0, 0.0),
             Paint::Enemy => ([0.3, 0.4, 0.62], [0.22, 0.3, 0.5], 0.0, 0.0),
             Paint::Struck => ([1.0, 0.15, 0.1], [1.0, 0.15, 0.1], 1.0, 0.0),
+            Paint::Control => ([0.25, 0.75, 0.35], [0.18, 0.55, 0.26], 0.0, 0.0),
             Paint::ArenaMark => ([0.95, 0.9, 0.2], [0.8, 0.75, 0.15], 0.0, 0.0),
         };
         MaterialGpu {
@@ -146,49 +153,6 @@ impl Renderable for NoActor {
     fn to_instance_with_material(&self, _material_index: u32) -> InstanceGpu {
         match *self {}
     }
-}
-
-/// A closed box with outward-facing triangles and a normal per face.
-fn box_mesh(centre: Vec3, half: Vec3) -> WorldMesh {
-    oriented_box_mesh(centre, half, Quat::IDENTITY)
-}
-
-/// [`box_mesh`] with its axes turned by `rotation` about its centre.
-fn oriented_box_mesh(centre: Vec3, half: Vec3, rotation: Quat) -> WorldMesh {
-    // (normal, u, v) with u x v = normal, so (-u-v, +u-v, +u+v, -u+v) winds counter-clockwise
-    // seen from outside.
-    const FACES: [(Vec3, Vec3, Vec3); 6] = [
-        (Vec3::X, Vec3::Y, Vec3::Z),
-        (Vec3::NEG_X, Vec3::Z, Vec3::Y),
-        (Vec3::Y, Vec3::Z, Vec3::X),
-        (Vec3::NEG_Y, Vec3::X, Vec3::Z),
-        (Vec3::Z, Vec3::X, Vec3::Y),
-        (Vec3::NEG_Z, Vec3::Y, Vec3::X),
-    ];
-    let mut positions = Vec::with_capacity(24);
-    let mut normals = Vec::with_capacity(24);
-    let mut indices = Vec::with_capacity(36);
-    for (normal, u, v) in FACES {
-        let first = positions.len() as u32;
-        let (du, dv) = (u * half, v * half);
-        let face_centre = centre + rotation * (normal * half);
-        for corner in [-du - dv, du - dv, du + dv, -du + dv] {
-            positions.push((face_centre + rotation * corner).to_array());
-            normals.push((rotation * normal).to_array());
-        }
-        indices.extend([first, first + 1, first + 2, first, first + 2, first + 3]);
-    }
-    let count = positions.len();
-    WorldMesh::new(
-        positions,
-        normals,
-        vec![1.0; count],
-        vec![[0.0; 3]; count],
-        vec![1.0; count],
-        vec![0; count],
-        indices,
-    )
-    .expect("a box has matching channels and whole triangles")
 }
 
 /// One drawn body part of a dummy, lit while it flashes.
@@ -959,6 +923,50 @@ impl SearchlightGame {
         self
     }
 
+    /// Draws `meshes` as the arena's control posts, the `i`th being control `i`.
+    #[must_use]
+    pub fn with_controls(mut self, meshes: impl IntoIterator<Item = WorldMesh>) -> Self {
+        let material = self
+            .stage
+            .scene
+            .material_table
+            .find_or_push(&Paint::Control);
+        for (index, mesh) in meshes.into_iter().enumerate() {
+            self.stage
+                .scene
+                .world_meshes_mut()
+                .upsert(control_mesh_id(index), mesh, material);
+        }
+        self
+    }
+
+    /// Shows the prompt of the control in reach below the crosshair, only while playing and
+    /// alive; otherwise shows no game text.
+    fn refresh_use_prompt(&mut self, dead: bool) {
+        let action = (self.screen == Screen::Playing && !dead)
+            .then(|| self.mode.sim().control_in_reach())
+            .flatten()
+            .and_then(|index| self.mode.control_action(index));
+        let texts = action.map_or_else(Vec::new, |action| {
+            let key = self
+                .input
+                .bindings()
+                .get(SearchlightAction::Use)
+                .first()
+                .map_or_else(|| "unbound".to_owned(), |binding| binding.label());
+            vec![ScreenText {
+                text: hud::use_prompt(&key, action),
+                anchor: Anchor::Center,
+                offset: [0.0, PROMPT_OFFSET_Y],
+                size: PROMPT_SIZE,
+                color: PROMPT_COLOR,
+            }]
+        });
+        if let Err(error) = self.stage.shell().set_texts(texts) {
+            tracing::warn!(%error, "use prompt not shown");
+        }
+    }
+
     /// Plays the sound file at `path` for every shot fired.
     #[must_use]
     pub fn with_shot_sound(mut self, path: &Path) -> Self {
@@ -1166,6 +1174,7 @@ impl Game for SearchlightGame {
         if self.screen == Screen::Paused {
             self.stage.hide_hud();
         }
+        self.refresh_use_prompt(dead);
         self.stage.sync_enemies(self.mode.sim());
         if let Some(renderer) = ctx.renderer() {
             let sim = self.mode.sim();
@@ -1206,7 +1215,8 @@ mod tests {
     use super::*;
     use crate::sim::Feedback;
     use crate::test_support::{
-        WaveScore, arena_with, mag, press, rifle_from, test_config, wave_tuning,
+        WaveScore, arena_with, arena_with_controls, mag, press, rifle_from, test_config,
+        wave_tuning,
     };
     use searchlight_rules::{Grade, LeanSide};
 
@@ -1991,6 +2001,189 @@ mod tests {
         let mut ctx = FrameContext::new(TICK, &clock, Some(renderer), None);
         game.frame(&mut ctx, ALPHA);
         *renderer.views.last().expect("a frame began")
+    }
+
+    /// The next-wave post, a metre in front of the player at the origin.
+    const POST: (Vec3, Vec3) = (Vec3::new(-0.3, 0.0, 1.0), Vec3::new(0.3, 2.0, 1.4));
+
+    /// A game whose player stands at the origin facing +Z, with a post at each of `controls`.
+    fn game_with_controls(controls: &[(Vec3, Vec3)]) -> SearchlightGame {
+        let mode = ArenaMode::new(
+            arena_with_controls(&[], Vec3::ZERO, &[], &[], controls),
+            test_config(rifle_from(mag(30, 5)), vec![]),
+            wave_tuning(1),
+        );
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
+    }
+
+    /// What the shell paints after one more frame of `game`, `None` when it paints nothing.
+    fn painted(game: &mut SearchlightGame) -> Option<Vec<UiMesh>> {
+        let mut renderer = SettingsRenderer::default();
+        draw_frame(game, &mut renderer);
+        let frame = game.stage.shell().ui_frame([800, 600]);
+        frame.map(|frame| frame.meshes)
+    }
+
+    /// Whether one more frame of `game` paints a prompt.
+    fn prompt_shows(game: &mut SearchlightGame) -> bool {
+        painted(game).is_some_and(|meshes| !meshes.is_empty())
+    }
+
+    fn turn_around() -> SearchlightCommand {
+        SearchlightCommand {
+            movement: moho_physics::CharacterCommand {
+                yaw_delta: std::f32::consts::PI,
+                ..moho_physics::CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        }
+    }
+
+    #[test]
+    fn the_prompt_shows_while_the_button_is_in_reach() {
+        let mut in_reach = game_with_controls(&[POST]);
+        let mut none_placed = game_with_controls(&[]);
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        tick_with(&mut in_reach, &mut clock, &SearchlightCommand::default());
+
+        let with_button = prompt_shows(&mut in_reach);
+        let without = prompt_shows(&mut none_placed);
+
+        assert!(with_button, "no prompt painted with the button in reach");
+        assert!(!without, "a prompt painted with no button placed");
+    }
+
+    #[test]
+    fn no_prompt_when_looking_away() {
+        let mut game = game_with_controls(&[POST]);
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        let facing_it = prompt_shows(&mut game);
+
+        tick_with(&mut game, &mut clock, &turn_around());
+        let facing_away = prompt_shows(&mut game);
+
+        assert!(facing_it, "no prompt to take away");
+        assert!(!facing_away);
+    }
+
+    #[test]
+    fn no_prompt_while_dead_or_paused() {
+        let mut dead = game_with_controls(&[POST]);
+        let mut paused = game_with_controls(&[POST]);
+        let mut turned_away_paused = game_with_controls(&[POST]);
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        for game in [&mut dead, &mut paused, &mut turned_away_paused] {
+            tick_with(game, &mut clock, &SearchlightCommand::default());
+        }
+        let showing = (
+            prompt_shows(&mut dead),
+            prompt_shows(&mut paused),
+            prompt_shows(&mut turned_away_paused),
+        );
+
+        dead.mode.sim_mut().kill_player();
+        tick_with(&mut dead, &mut clock, &SearchlightCommand::default());
+        tick_with(&mut turned_away_paused, &mut clock, &turn_around());
+        let away_shows = prompt_shows(&mut turned_away_paused);
+        paused.pause();
+        turned_away_paused.pause();
+        let pause_menu = painted(&mut turned_away_paused);
+
+        assert_eq!(showing, (true, true, true), "no prompt to take away");
+        assert!(!away_shows, "the twin still sees the prompt");
+        assert!(!prompt_shows(&mut dead), "a dead player sees the prompt");
+        assert!(pause_menu.as_ref().is_some_and(|meshes| !meshes.is_empty()));
+        assert_eq!(
+            painted(&mut paused),
+            pause_menu,
+            "the pause screen paints a prompt over the menu"
+        );
+    }
+
+    /// A game with a post in reach whose `Use` action has exactly `bindings`.
+    fn game_with_use_bound_to(bindings: Vec<moho_input::bindings::Binding>) -> SearchlightGame {
+        let mode = ArenaMode::new(
+            arena_with_controls(&[], Vec3::ZERO, &[], &[], &[POST]),
+            test_config(rifle_from(mag(30, 5)), vec![]),
+            wave_tuning(1),
+        );
+        let (mut loaded, _) = ActionBindings::load(&BTreeMap::new());
+        loaded.set(SearchlightAction::Use, bindings);
+        SearchlightGame::new(mode, ActionMap::new(loaded, 1.0))
+    }
+
+    /// What a fresh shell paints for the use prompt reading `text`, drawn on a twin game's
+    /// shell so the glyph atlas history matches a game that painted nothing before.
+    fn painted_prompt_reading(text: &str) -> Option<Vec<UiMesh>> {
+        let twin = game_with_controls(&[]);
+        twin.stage
+            .shell()
+            .set_texts(vec![ScreenText {
+                text: text.to_owned(),
+                anchor: Anchor::Center,
+                offset: [0.0, PROMPT_OFFSET_Y],
+                size: PROMPT_SIZE,
+                color: PROMPT_COLOR,
+            }])
+            .expect("a valid prompt");
+        let frame = twin.stage.shell().ui_frame([800, 600]);
+        frame.map(|frame| frame.meshes)
+    }
+
+    #[test]
+    fn the_prompt_names_the_first_use_binding_or_unbound() {
+        use moho_input::bindings::Binding;
+        use moho_input::key::Key;
+        let mut rebound = game_with_use_bound_to(vec![Binding::key(Key::G), Binding::key(Key::H)]);
+        let mut unbound = game_with_use_bound_to(vec![]);
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        for game in [&mut rebound, &mut unbound] {
+            tick_with(game, &mut clock, &SearchlightCommand::default());
+        }
+
+        let rebound_paint = painted(&mut rebound);
+        let unbound_paint = painted(&mut unbound);
+
+        let expected_rebound = painted_prompt_reading("[G] Next wave");
+        let expected_unbound = painted_prompt_reading("[unbound] Next wave");
+        assert!(expected_rebound.is_some_and(|meshes| !meshes.is_empty()));
+        assert_eq!(rebound_paint, painted_prompt_reading("[G] Next wave"));
+        assert_eq!(unbound_paint, expected_unbound);
+        assert_ne!(rebound_paint, unbound_paint);
+    }
+
+    #[test]
+    fn control_mesh_ids_share_no_id_with_arena_dummy_or_enemy_meshes() {
+        use crate::arena::{arena_mesh_id, control_mesh_id};
+
+        let controls: Vec<u64> = (0..16).map(|i| control_mesh_id(i).0).collect();
+        let arena: Vec<u64> = (0..4096).map(|i| arena_mesh_id(i).0).collect();
+        let dummies: Vec<u64> = dummy_segments(&SHIPPED_BODY, &[Vec3::ZERO; 8])
+            .iter()
+            .map(|segment| segment.id.0)
+            .collect();
+        let enemies: Vec<u64> = (0..64u16)
+            .flat_map(|target| {
+                let rig = EnemyRig {
+                    target,
+                    shown: false,
+                    gun_flash: 0,
+                };
+                (0..ENEMY_MESH_SLOTS as usize).map(move |slot| rig.mesh_id(slot).0)
+            })
+            .collect();
+
+        for (name, others) in [("arena", &arena), ("dummy", &dummies), ("enemy", &enemies)] {
+            let shared: Vec<&u64> = controls.iter().filter(|id| others.contains(id)).collect();
+            assert!(shared.is_empty(), "control ids {shared:?} are {name} ids");
+        }
+        let mut distinct = controls.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), controls.len());
+        assert!(controls.iter().all(|&id| id >= 3 << 32), "{controls:?}");
     }
 
     /// The view a frame must draw: the sim's player turned by the look shown but not yet ticked.

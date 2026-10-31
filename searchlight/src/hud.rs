@@ -3,6 +3,7 @@
 use glam::Vec3;
 use searchlight_rules::{BodyPart, MagazineLevel};
 
+use crate::control::ControlAction;
 use crate::mode::Tally;
 use crate::sim::Feedback;
 
@@ -108,6 +109,15 @@ pub fn god_mode_text(vitals: &str, god_mode: bool) -> String {
 /// What the dead player reads in the title, or `None` while alive.
 pub fn death_text(dead: bool) -> Option<&'static str> {
     dead.then_some("Dead - press F8 to restart")
+}
+
+/// The prompt for a control in reach: the `key` that uses it and what it does, such as
+/// `[F] Next wave`. A `key` of `unbound` says the action has no key.
+pub fn use_prompt(key: &str, action: ControlAction) -> String {
+    let what = match action {
+        ControlAction::NextWave => "Next wave",
+    };
+    format!("[{key}] {what}")
 }
 
 /// A translucent rectangle in screen pixels, colour as straight RGBA.
@@ -271,6 +281,17 @@ mod feedback_tests {
         let left = hit_edge(player, FRAC_PI_2, behind_in_world_z);
 
         assert_eq!([right, left], [Edge::Right, Edge::Left]);
+    }
+
+    #[test]
+    fn the_use_prompt_names_the_key_and_next_wave() {
+        let bound = use_prompt("F", ControlAction::NextWave);
+        let rebound = use_prompt("Mouse Right", ControlAction::NextWave);
+        let unbound = use_prompt("unbound", ControlAction::NextWave);
+
+        assert_eq!(bound, "[F] Next wave");
+        assert_eq!(rebound, "[Mouse Right] Next wave");
+        assert_eq!(unbound, "[unbound] Next wave");
     }
 
     #[test]
