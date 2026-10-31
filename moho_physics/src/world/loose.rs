@@ -284,12 +284,12 @@ impl PhysicsWorld {
     }
 
     pub(super) fn brake_rolling(&mut self, dt: f32) {
-        let up = -self.gravity.normalize_or_zero();
-        if up == Vec3::ZERO || self.rest_slope == 0.0 {
+        let cut = self.gravity.length() * self.rest_slope.tan() * dt;
+        if cut == 0.0 {
             return;
         }
+        let up = -self.gravity.normalize_or_zero();
         let cos_slope = self.rest_slope.cos();
-        let cut = self.gravity.length() * self.rest_slope.tan() * dt;
 
         for loose in self.loose.values() {
             let Some(radius) = loose.roll_radius else {
@@ -353,12 +353,7 @@ fn rests_on_flat_ground(
 
 /// `v` shortened by `cut`, or zero if it is no longer than `cut`.
 fn shrink(v: Vec3, cut: f32) -> Vec3 {
-    let length = v.length();
-    if length > cut {
-        v * (1.0 - cut / length)
-    } else {
-        Vec3::ZERO
-    }
+    v.clamp_length_max((v.length() - cut).max(0.0))
 }
 
 #[cfg(test)]
@@ -1434,6 +1429,21 @@ mod tests {
             state.position.z
         );
         assert!(state.asleep, "the capsule is at rest, state {state:?}");
+    }
+
+    #[test]
+    fn a_capsule_spawned_before_its_floor_still_stops() {
+        // The floor's collider is created second, so the contact pair lists the capsule first
+        // and its normal points out of the capsule.
+        let mut world = PhysicsWorld::new();
+        let id = world.spawn_loose(&rolling_capsule(2.0));
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        run(&mut world, 300);
+        let state = read(&world, id);
+        assert!(
+            state.asleep && state.position.z <= 1.5,
+            "the capsule stops within 1.5 m, state {state:?}"
+        );
     }
 
     #[test]
