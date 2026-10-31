@@ -403,7 +403,9 @@ mod tests {
         }
         fn set_light_position(&mut self, _id: u32, _position: glam::Vec3) {}
         fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
-        fn set_shadow_quality(&mut self, _quality: u8) {}
+        fn set_shadow_quality(&mut self, quality: u8) -> u8 {
+            quality
+        }
         fn set_ssao_quality(&mut self, _quality: u8) {}
     }
 

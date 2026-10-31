@@ -664,9 +664,11 @@ impl<'a> Renderer<'a> {
         Some(instances_gpu)
     }
 
-    pub fn set_shadow_quality(&mut self, quality: u8) {
-        let tier = crate::shadow::ShadowTier::from_level(quality);
-        self.shadow.set_tier(&self.device, tier);
+    /// Sets the shadow quality level (0-4) and returns the level in use, lower than `quality`
+    /// when the GPU could not allocate its shadow maps.
+    pub fn set_shadow_quality(&mut self, quality: u8) -> u8 {
+        let wanted = crate::shadow::ShadowTier::from_level(quality);
+        self.shadow.set_tier(&self.device, wanted).level()
     }
 
     /// Sets whether presented frames wait for the display refresh. Stays on when the GPU

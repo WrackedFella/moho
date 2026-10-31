@@ -192,7 +192,7 @@ impl App {
     }
 
     fn apply_pending_render(&mut self, renderer: &mut dyn moho_renderer::RendererBackend) {
-        for request in self.pending_render.drain(..) {
+        for request in std::mem::take(&mut self.pending_render) {
             match request {
                 RenderRequest::AddPointLight {
                     position,
@@ -202,7 +202,10 @@ impl App {
                 } => {
                     renderer.add_point_light(position, color, intensity, range);
                 }
-                RenderRequest::ShadowQuality(quality) => renderer.set_shadow_quality(quality),
+                RenderRequest::ShadowQuality(quality) => {
+                    let applied = renderer.set_shadow_quality(quality);
+                    self.shadow_quality_applied(applied);
+                }
                 RenderRequest::SsaoQuality(quality) => renderer.set_ssao_quality(quality),
                 RenderRequest::BloomQuality(quality) => renderer.set_bloom_quality(quality),
                 RenderRequest::ViewHeight(height) => renderer.set_view_height(height),
@@ -771,6 +774,8 @@ mod tests {
     struct FakeRenderer {
         lights: Vec<(glam::Vec3, glam::Vec3, f32, f32)>,
         shadow_qualities: Vec<u8>,
+        /// Highest shadow level the fake GPU can allocate; `None` allows every level.
+        shadow_cap: Option<u8>,
         ssao_qualities: Vec<u8>,
         view_heights: Vec<Option<f32>>,
         vsyncs: Vec<bool>,
@@ -830,8 +835,9 @@ mod tests {
         }
         fn set_light_position(&mut self, _id: u32, _position: glam::Vec3) {}
         fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
-        fn set_shadow_quality(&mut self, quality: u8) {
+        fn set_shadow_quality(&mut self, quality: u8) -> u8 {
             self.shadow_qualities.push(quality);
+            self.shadow_cap.map_or(quality, |cap| quality.min(cap))
         }
         fn set_ssao_quality(&mut self, quality: u8) {
             self.ssao_qualities.push(quality);
@@ -1349,6 +1355,42 @@ mod tests {
 
             assert_eq!(fake.shadow_qualities, vec![2]);
             assert_eq!(fake.ssao_qualities, vec![3]);
+        }
+
+        #[test]
+        fn a_shadow_quality_the_gpu_cannot_allocate_is_saved_at_the_level_it_fell_back_to() {
+            let temp = tempfile::tempdir().expect("temp dir");
+            let path = temp.path().join("prefs.ini");
+            let mut app = playing_app();
+            app.prefs.set_shadow_quality(4);
+            app.prefs_path = Some(path.clone());
+            let mut fake = FakeRenderer {
+                shadow_cap: Some(2),
+                ..FakeRenderer::default()
+            };
+            app.pending_render.push(RenderRequest::ShadowQuality(4));
+
+            run_frame(&mut app, &mut fake);
+
+            assert_eq!(fake.shadow_qualities, vec![4]);
+            assert_eq!(app.prefs.shadow_quality(), 2);
+            let (on_disk, _) = moho_core::prefs::Prefs::load_from(&path);
+            assert_eq!(on_disk.shadow_quality(), 2, "the next start asks for 2");
+        }
+
+        #[test]
+        fn a_shadow_quality_the_gpu_allocates_is_not_saved_again() {
+            let temp = tempfile::tempdir().expect("temp dir");
+            let path = temp.path().join("prefs.ini");
+            let mut app = playing_app();
+            app.prefs.set_shadow_quality(4);
+            app.prefs_path = Some(path.clone());
+            app.pending_render.push(RenderRequest::ShadowQuality(4));
+
+            run_frame(&mut app, &mut FakeRenderer::default());
+
+            assert_eq!(app.prefs.shadow_quality(), 4);
+            assert!(!path.exists(), "nothing changed, so nothing was written");
         }
 
         #[test]

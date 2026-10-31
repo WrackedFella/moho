@@ -47,6 +47,32 @@ impl ShadowTier {
     pub(crate) fn casts_shadows(self) -> bool {
         self != Self::Off
     }
+
+    /// The 0-4 level `from_level` maps to this tier.
+    pub(crate) fn level(self) -> u8 {
+        self as u8
+    }
+
+    /// The tier one level down; Off has none.
+    pub(crate) fn lower(self) -> Option<Self> {
+        self.level().checked_sub(1).map(Self::from_level)
+    }
+}
+
+/// The first of `wanted` and the tiers below it for which `allocate` returns a map, with that
+/// map; `None` when even Off's fails.
+pub(crate) fn first_allocated<T>(
+    wanted: ShadowTier,
+    mut allocate: impl FnMut(ShadowTier) -> Option<T>,
+) -> Option<(ShadowTier, T)> {
+    let mut tier = Some(wanted);
+    while let Some(current) = tier {
+        if let Some(map) = allocate(current) {
+            return Some((current, map));
+        }
+        tier = current.lower();
+    }
+    None
 }
 
 pub(crate) fn needs_resize(old: u32, new: u32) -> bool {
@@ -113,6 +139,58 @@ mod tests {
             size(ShadowTier::Off, u32::MAX),
             size(ShadowTier::Low, u32::MAX)
         ));
+    }
+
+    #[test]
+    fn each_tier_steps_down_one_level_and_off_is_the_floor() {
+        for (level, tier, _, _) in LEVELS {
+            assert_eq!(tier.level(), level);
+            assert_eq!(
+                tier.lower(),
+                level.checked_sub(1).map(ShadowTier::from_level),
+                "{tier:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_failed_allocation_steps_down_until_one_fits() {
+        let mut tried = Vec::new();
+
+        let fitted = first_allocated(ShadowTier::Ultra, |tier| {
+            tried.push(tier);
+            (tier.map_size(u32::MAX) <= 2048).then_some(tier.map_size(u32::MAX))
+        });
+
+        assert_eq!(fitted, Some((ShadowTier::Medium, 2048)));
+        assert_eq!(
+            tried,
+            [ShadowTier::Ultra, ShadowTier::High, ShadowTier::Medium],
+            "stops at the first tier that fits"
+        );
+    }
+
+    #[test]
+    fn the_wanted_tier_is_kept_when_it_fits() {
+        let fitted = first_allocated(ShadowTier::Low, |tier| Some(tier.level()));
+
+        assert_eq!(fitted, Some((ShadowTier::Low, 1)));
+    }
+
+    #[test]
+    fn nothing_fits_when_even_off_fails() {
+        let mut tried = Vec::new();
+
+        let fitted = first_allocated(ShadowTier::Medium, |tier| {
+            tried.push(tier);
+            None::<()>
+        });
+
+        assert_eq!(fitted, None);
+        assert_eq!(
+            tried,
+            [ShadowTier::Medium, ShadowTier::Low, ShadowTier::Off]
+        );
     }
 
     #[test]

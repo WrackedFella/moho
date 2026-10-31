@@ -824,6 +824,16 @@ impl SearchlightGame {
         self.pending_settings = Some(settings);
     }
 
+    /// Saves `applied`, whose shadow quality the renderer lowered because the GPU could not
+    /// allocate the asked level, so the next start does not ask for it again.
+    fn save_fallen_back_settings(&mut self, applied: EngineSettings) {
+        if let Some(saved) = &mut self.debug_settings
+            && let Err(error) = saved.set_engine_settings(applied)
+        {
+            tracing::warn!(%error, "lowered shadow quality not saved");
+        }
+    }
+
     /// Starts in the god mode `settings` holds and saves every change to it. The engine settings
     /// it holds apply on the first frame.
     #[must_use]
@@ -1139,7 +1149,10 @@ impl Game for SearchlightGame {
             apply_engine_command(command, ctx);
         }
         if let Some(settings) = self.pending_settings.take() {
-            apply_engine_settings(&settings, ctx);
+            let applied = apply_engine_settings(&settings, ctx);
+            if applied.shadow_quality != settings.shadow_quality {
+                self.save_fallen_back_settings(applied);
+            }
             self.stage.set_effects_quality(settings.effects_quality);
             let mode = start_window_mode(settings.window_mode);
             if mode != ctx.window_mode() {
@@ -1682,8 +1695,9 @@ mod tests {
         }
         fn set_light_position(&mut self, _id: u32, _position: Vec3) {}
         fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
-        fn set_shadow_quality(&mut self, quality: u8) {
+        fn set_shadow_quality(&mut self, quality: u8) -> u8 {
             self.shadow.push(quality);
+            quality
         }
         fn set_ssao_quality(&mut self, quality: u8) {
             self.ssao.push(quality);
@@ -3875,6 +3889,8 @@ mod settings_tests {
     #[derive(Default)]
     struct QualityRenderer {
         shadow: Vec<u8>,
+        /// Highest shadow level the fake GPU can allocate; `None` allows every level.
+        shadow_cap: Option<u8>,
         ssao: Vec<u8>,
     }
 
@@ -3916,8 +3932,9 @@ mod settings_tests {
         }
         fn set_light_position(&mut self, _id: u32, _position: Vec3) {}
         fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
-        fn set_shadow_quality(&mut self, quality: u8) {
+        fn set_shadow_quality(&mut self, quality: u8) -> u8 {
             self.shadow.push(quality);
+            self.shadow_cap.map_or(quality, |cap| quality.min(cap))
         }
         fn set_ssao_quality(&mut self, quality: u8) {
             self.ssao.push(quality);
@@ -4099,6 +4116,42 @@ mod settings_tests {
             screen.settings.map(|settings| settings.mouse_sensitivity),
             Some(2.5)
         );
+    }
+
+    #[test]
+    fn a_shadow_quality_the_gpu_cannot_allocate_is_saved_at_the_level_it_fell_back_to() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = settings_file(&dir);
+        let mut prefs = Prefs::default();
+        prefs.set_shadow_quality(4);
+        let mut game = main_menu_game(prefs, &path);
+        let mut renderer = QualityRenderer {
+            shadow_cap: Some(2),
+            ..QualityRenderer::default()
+        };
+
+        run_frame(&mut game, &mut renderer);
+
+        assert_eq!(renderer.shadow, vec![4]);
+        assert_eq!(game_prefs(&game).shadow_quality(), 2);
+        assert_eq!(
+            saved(&path).shadow_quality(),
+            2,
+            "the next start asks for 2"
+        );
+    }
+
+    #[test]
+    fn a_shadow_quality_the_gpu_allocates_is_not_saved_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = settings_file(&dir);
+        let mut prefs = Prefs::default();
+        prefs.set_shadow_quality(4);
+        let mut game = main_menu_game(prefs, &path);
+
+        run_frame(&mut game, &mut QualityRenderer::default());
+
+        assert!(!path.exists(), "nothing changed, so nothing was written");
     }
 
     #[test]
@@ -4577,7 +4630,9 @@ mod mutation_tests {
         }
         fn set_light_position(&mut self, _id: u32, _position: Vec3) {}
         fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
-        fn set_shadow_quality(&mut self, _quality: u8) {}
+        fn set_shadow_quality(&mut self, quality: u8) -> u8 {
+            quality
+        }
         fn set_ssao_quality(&mut self, _quality: u8) {}
     }
 
@@ -5158,7 +5213,9 @@ mod enemy_and_hud_tests {
         }
         fn set_light_position(&mut self, _id: u32, _position: Vec3) {}
         fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
-        fn set_shadow_quality(&mut self, _quality: u8) {}
+        fn set_shadow_quality(&mut self, quality: u8) -> u8 {
+            quality
+        }
         fn set_ssao_quality(&mut self, _quality: u8) {}
     }
 

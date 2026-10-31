@@ -59,6 +59,7 @@ pub struct ShadowSystem {
     pub current_lighting: crate::gpu_types::LightingGpu,
     /// Active shadow-casting lights for current frame
     pub active_lights: Vec<ActiveShadowLight>,
+    csm_texture: wgpu::Texture,
     tier: ShadowTier,
     /// Allocated texels per side: the tier's size within `device_limit`.
     map_size: u32,
@@ -78,10 +79,10 @@ impl ShadowSystem {
         _camera_bind_group_layout: &wgpu::BindGroupLayout,
         shadow_bind_group_layout: &wgpu::BindGroupLayout,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let tier = ShadowTier::High;
         let device_limit = device.limits().max_texture_dimension_2d;
-        let map_size = tier.map_size(device_limit);
-        let (csm_cascade_views, csm_array_view) = Self::create_shadow_textures(device, map_size);
+        let (tier, map_size, csm_texture) =
+            Self::allocate_array(device, ShadowTier::High, device_limit);
+        let (csm_cascade_views, csm_array_view) = Self::create_shadow_views(&csm_texture);
         let csm_matrix_buffer = Self::create_uniform_buffer(device);
         let shadow_sampler = Self::create_depth_sampler(device);
         let csm_pass_bgl = crate::pipeline::layouts::create_csm_pass_bind_group_layout(device)?;
@@ -103,6 +104,7 @@ impl ShadowSystem {
             csm_shadow_bind_group,
             current_lighting: crate::gpu_types::LightingGpu::default(),
             active_lights: Vec::new(),
+            csm_texture,
             tier,
             map_size,
             device_limit,
@@ -114,14 +116,34 @@ impl ShadowSystem {
         })
     }
 
-    /// Stage 1: Allocate the cascade array, one layer per cascade.
-    /// Returns the per-layer views (for rendering into each layer) and the array view (for
-    /// sampling all layers in the fragment shader).
-    fn create_shadow_textures(
+    /// Stage 1: Allocate the cascade array for `wanted`, or for the highest tier below it that the
+    /// device has memory for. Returns the tier allocated, its map size and the array.
+    fn allocate_array(
         device: &wgpu::Device,
-        map_size: u32,
-    ) -> (Vec<wgpu::TextureView>, wgpu::TextureView) {
-        let csm_texture = device.create_texture(&wgpu::TextureDescriptor {
+        wanted: ShadowTier,
+        device_limit: u32,
+    ) -> (ShadowTier, u32, wgpu::Texture) {
+        let (tier, (map_size, texture)) = tier::first_allocated(wanted, |tier| {
+            let map_size = tier.map_size(device_limit);
+            Self::try_create_array(device, map_size).map(|texture| (map_size, texture))
+        })
+        .expect("the device cannot allocate even a 1x1 shadow array");
+        if tier != wanted {
+            tracing::warn!(
+                wanted = wanted.level(),
+                applied = tier.level(),
+                "shadow quality lowered: the GPU could not allocate the shadow maps"
+            );
+        }
+        (tier, map_size, texture)
+    }
+
+    /// The cascade array, one layer per cascade, or `None` when the device reports it is out of
+    /// memory. Without the error scope that report goes to wgpu's uncaptured-error handler,
+    /// which panics.
+    fn try_create_array(device: &wgpu::Device, map_size: u32) -> Option<wgpu::Texture> {
+        let scope = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("cascade-shadow-array"),
             size: wgpu::Extent3d {
                 width: map_size,
@@ -135,6 +157,10 @@ impl ShadowSystem {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
+        if let Some(error) = crate::block_on::block_on(scope.pop()) {
+            tracing::warn!(map_size, %error, "shadow array allocation failed");
+            return None;
+        }
 
         if CSM_VERBOSE_LOGGING {
             tracing::info!(
@@ -143,7 +169,14 @@ impl ShadowSystem {
                 "Created cascade shadow array"
             );
         }
+        Some(texture)
+    }
 
+    /// The per-layer views (for rendering into each layer) and the array view (for sampling all
+    /// layers in the fragment shader) of `csm_texture`.
+    fn create_shadow_views(
+        csm_texture: &wgpu::Texture,
+    ) -> (Vec<wgpu::TextureView>, wgpu::TextureView) {
         let csm_cascade_views: Vec<wgpu::TextureView> = (0..CASCADE_LAYERS as u32)
             .map(|i| {
                 csm_texture.create_view(&wgpu::TextureViewDescriptor {
@@ -269,26 +302,32 @@ impl ShadowSystem {
         })
     }
 
-    /// Switch to `tier`. The cascade array, its views and the sampling bind group are recreated
-    /// only when the map size within the device limit changes. Call between frames: the old array
-    /// must not be in a recorded pass.
-    pub fn set_tier(&mut self, device: &wgpu::Device, tier: ShadowTier) {
-        self.tier = tier;
-        self.last_block = light_matrix::retier(self.last_block, tier);
-        let map_size = tier.map_size(self.device_limit);
-        if !tier::needs_resize(self.map_size, map_size) {
-            return;
+    /// Switch to `wanted`, or to the highest tier below it whose cascade array the device can
+    /// allocate, and return the tier in use. The cascade array, its views and the sampling bind
+    /// group are recreated only when the map size within the device limit changes. Call between
+    /// frames: the old array must not be in a recorded pass.
+    pub fn set_tier(&mut self, device: &wgpu::Device, wanted: ShadowTier) -> ShadowTier {
+        let map_size = wanted.map_size(self.device_limit);
+        self.tier = wanted;
+        if tier::needs_resize(self.map_size, map_size) {
+            // Freed first, so the old and the new array never need memory at once.
+            self.csm_texture.destroy();
+            let (tier, map_size, texture) = Self::allocate_array(device, wanted, self.device_limit);
+            let (views, array_view) = Self::create_shadow_views(&texture);
+            self.csm_shadow_bind_group = Self::create_sampling_bind_group(
+                device,
+                &self.shadow_bind_group_layout,
+                &self.csm_matrix_buffer,
+                &array_view,
+                &self.shadow_sampler,
+            );
+            self.csm_cascade_views = views;
+            self.csm_texture = texture;
+            self.map_size = map_size;
+            self.tier = tier;
         }
-        let (views, array_view) = Self::create_shadow_textures(device, map_size);
-        self.csm_shadow_bind_group = Self::create_sampling_bind_group(
-            device,
-            &self.shadow_bind_group_layout,
-            &self.csm_matrix_buffer,
-            &array_view,
-            &self.shadow_sampler,
-        );
-        self.csm_cascade_views = views;
-        self.map_size = map_size;
+        self.last_block = light_matrix::retier(self.last_block, self.tier);
+        self.tier
     }
 
     /// Stage 6: Compile the shadow shader and assemble the depth-only render pipeline; its

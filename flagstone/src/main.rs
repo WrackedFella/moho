@@ -179,6 +179,16 @@ impl App {
         }
     }
 
+    /// Saves `applied` as the shadow quality when it differs from the saved one: the renderer
+    /// lowers a level whose shadow maps the GPU could not allocate, and the next start must
+    /// not ask for it again.
+    fn shadow_quality_applied(&mut self, applied: u8) {
+        if u32::from(applied) != self.prefs.shadow_quality() {
+            self.prefs.set_shadow_quality(u32::from(applied));
+            self.save_prefs();
+        }
+    }
+
     /// Makes `prefs` (just saved by the Settings screen) the running prefs and
     /// rebinds input from them and queues their audio levels for the next frame.
     /// Does not save: the screen already wrote the file.

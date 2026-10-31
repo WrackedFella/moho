@@ -16,7 +16,9 @@ pub fn apply_engine_command(command: &EngineCommand, ctx: &mut FrameContext<'_>)
             with_renderer(command, ctx, |r| r.set_debug_view(Some(*mode)));
         }
         EngineCommand::ShadowQuality(quality) => {
-            with_renderer(command, ctx, |r| r.set_shadow_quality(*quality));
+            with_renderer(command, ctx, |r| {
+                r.set_shadow_quality(*quality);
+            });
         }
         EngineCommand::SsaoQuality(quality) => {
             with_renderer(command, ctx, |r| r.set_ssao_quality(*quality));
@@ -48,10 +50,17 @@ pub fn apply_engine_command(command: &EngineCommand, ctx: &mut FrameContext<'_>)
 
 /// Applies the engine's player settings: shadow and ambient-occlusion quality to the renderer,
 /// the volumes to the audio system, and the window mode and size as runner requests. The look
-/// rows are the game's, so they are left alone.
-pub fn apply_engine_settings(settings: &EngineSettings, ctx: &mut FrameContext<'_>) {
+/// rows are the game's, so they are left alone. Returns `settings` as applied: the shadow
+/// quality is lower than asked when the GPU could not allocate its shadow maps, and a game
+/// saves that so the next start does not ask again.
+pub fn apply_engine_settings(
+    settings: &EngineSettings,
+    ctx: &mut FrameContext<'_>,
+) -> EngineSettings {
+    let mut applied = *settings;
     if let Some(renderer) = ctx.renderer() {
-        renderer.set_shadow_quality(quality_level(settings.shadow_quality));
+        let shadow = renderer.set_shadow_quality(quality_level(settings.shadow_quality));
+        applied.shadow_quality = u32::from(shadow);
         renderer.set_ssao_quality(quality_level(settings.ssao_quality));
     }
     if let Some(audio) = ctx.audio() {
@@ -60,6 +69,7 @@ pub fn apply_engine_settings(settings: &EngineSettings, ctx: &mut FrameContext<'
     }
     ctx.set_window_mode(runtime_window_mode(settings.window_mode));
     ctx.set_window_size(settings.resolution.0, settings.resolution.1);
+    applied
 }
 
 /// The mode the window runs in for a saved `mode`: both fullscreen kinds run borderless.
@@ -114,6 +124,8 @@ mod tests {
     #[derive(Default)]
     struct FakeRenderer {
         shadow: Vec<u8>,
+        /// Highest shadow level the fake GPU can allocate; `None` allows every level.
+        shadow_cap: Option<u8>,
         ssao: Vec<u8>,
         debug_view: Vec<Option<u32>>,
         tone_map: Vec<bool>,
@@ -155,8 +167,9 @@ mod tests {
         }
         fn set_light_position(&mut self, _id: u32, _position: Vec3) {}
         fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
-        fn set_shadow_quality(&mut self, quality: u8) {
+        fn set_shadow_quality(&mut self, quality: u8) -> u8 {
             self.shadow.push(quality);
+            self.shadow_cap.map_or(quality, |cap| quality.min(cap))
         }
         fn set_ssao_quality(&mut self, quality: u8) {
             self.ssao.push(quality);
@@ -356,6 +369,41 @@ mod tests {
             assert!(renderer.bloom.is_empty(), "bloom is not a settings row");
             assert!(renderer.tone_map.is_empty());
             assert!(renderer.debug_view.is_empty());
+        }
+
+        #[test]
+        fn apply_engine_settings_returns_the_shadow_quality_the_renderer_could_apply() {
+            let clock = GameClock::default();
+            let mut renderer = FakeRenderer {
+                shadow_cap: Some(1),
+                ..FakeRenderer::default()
+            };
+            let asked = settings();
+
+            let applied = {
+                let backend: &mut dyn RendererBackend = &mut renderer;
+                let mut ctx =
+                    FrameContext::new(Duration::from_millis(16), &clock, Some(backend), None);
+                apply_engine_settings(&asked, &mut ctx)
+            };
+
+            assert_eq!(
+                applied,
+                EngineSettings {
+                    shadow_quality: 1,
+                    ..asked
+                }
+            );
+        }
+
+        #[test]
+        fn apply_engine_settings_without_a_renderer_returns_the_settings_unchanged() {
+            let clock = GameClock::default();
+            let mut ctx = FrameContext::new(Duration::from_millis(16), &clock, None, None);
+
+            let applied = apply_engine_settings(&settings(), &mut ctx);
+
+            assert_eq!(applied, settings());
         }
 
         #[test]
