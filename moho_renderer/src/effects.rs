@@ -1604,6 +1604,44 @@ mod tests {
     }
 
     #[test]
+    fn a_spawn_that_cannot_fit_evicts_nothing() {
+        let mut rig = Rig::new();
+        let handles: Vec<EffectHandle> = (0..40)
+            .map(|_| rig.effects.begin_streak(style(2.0, 0.1)))
+            .collect();
+        for x in [100.0, 101.0, 102.0] {
+            rig.effects.mark(
+                Vec3::new(x, 0.0, 0.0),
+                Vec3::Z,
+                0.0,
+                mark_style(0.2, Duration::from_secs(60), Duration::from_secs(1)),
+            );
+        }
+        rig.effects.set_quality(1);
+        assert_eq!(rig.effects.live(), 43, "lowering keeps what is live");
+
+        rig.effects.mark(
+            Vec3::new(200.0, 0.0, 0.0),
+            Vec3::Z,
+            0.0,
+            mark_style(0.2, Duration::from_secs(60), Duration::from_secs(1)),
+        );
+
+        assert_eq!(rig.effects.live(), 43, "refused, and nothing was dropped");
+        for handle in &handles {
+            rig.effects
+                .place_streak(*handle, Vec3::new(-20.0, 0.0, 0.0), Vec3::X);
+        }
+        let xs = drawn_xs(&mut rig);
+        assert_eq!(xs.len(), 43);
+        assert_eq!(xs.iter().filter(|x| **x == -22.0).count(), 40, "streaks");
+        for kept in [100.0, 101.0, 102.0] {
+            assert!(xs.contains(&kept), "the mark at x = {kept} stays");
+        }
+        assert!(!xs.contains(&200.0), "the new mark was refused");
+    }
+
+    #[test]
     fn a_full_cap_of_streaks_refuses_a_mark_and_keeps_every_streak() {
         let mut rig = Rig::new();
         rig.effects.set_quality(1);
