@@ -33,8 +33,9 @@ The output is deterministic, so a rerun with an unchanged script leaves the file
 `arena.glb` may be replaced by a Blender export as long as the marker names stay; each
 `cover_NN` also carries a `shielded_from` extra (`+x`, `-x`, `+z` or `-z`: the direction from
 the cover point to the geometry that hides it). Each `control_NN` carries an `action` extra
-(`next_wave`); the game stands a usable post on its floor point, and a level naming any other
-action, or none, fails to load.
+(`next_wave` or `god_mode`); the game stands a usable post on its floor point, and a level
+naming any other action, or none, fails to load. The shipped arena has `control_01`
+(`next_wave`) and `control_02` (`god_mode`) either side of the player spawn.
 
 ## Licence
 

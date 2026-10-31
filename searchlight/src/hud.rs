@@ -116,7 +116,7 @@ pub fn death_text(dead: bool) -> Option<&'static str> {
 pub fn use_prompt(key: &str, action: ControlAction) -> String {
     let what = match action {
         ControlAction::NextWave => "Next wave",
-        ControlAction::ToggleGodMode => "",
+        ControlAction::ToggleGodMode => "God mode",
     };
     format!("[{key}] {what}")
 }

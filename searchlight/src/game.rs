@@ -36,7 +36,7 @@ use crate::hud::Edge;
 use crate::input::{SearchlightAction, SearchlightCommand, look_from, look_to_turn, resolve_lean};
 use crate::lean::{lean_offset, rolled_view_matrix};
 use crate::menu::{MenuAction, main_screen, pause_screen, settings_screen};
-use crate::mode::ArenaMode;
+use crate::mode::{ArenaMode, SessionRequest};
 use crate::sim::{Feedback, SearchlightSim, dummy_at, dummy_hit_volumes_of};
 use crate::tag::SurfaceTag;
 use crate::tuning::SHIPPED_BODY;
@@ -847,28 +847,38 @@ impl SearchlightGame {
         }
     }
 
-    /// Applies the console's queued commands in order, saves god mode once if they changed it,
-    /// and reports the value after each bare `tgm`.
+    /// Flips god mode and reports the new value on the console; a bare `tgm` and the god-mode
+    /// switch both land here.
+    fn toggle_god_mode(&mut self) {
+        self.god_mode = !self.god_mode;
+        let text = if self.god_mode {
+            "God mode: on"
+        } else {
+            "God mode: off"
+        };
+        self.stage.shell().console_mut().print(text);
+    }
+
+    /// Applies the console's queued commands, then the mode's session requests, in order, saves
+    /// god mode once if they changed it, and reports the value after each toggle.
     fn apply_console_commands(&mut self) {
         let queued = self.stage.shell().console_mut().take_commands();
-        if queued.is_empty() {
+        let requests = self.mode.take_requests();
+        if queued.is_empty() && requests.is_empty() {
             return;
         }
         let before = self.god_mode;
         for command in queued {
             match command {
-                ConsoleCommand::GodMode(GodModeArg::Toggle) => {
-                    self.god_mode = !self.god_mode;
-                    let text = if self.god_mode {
-                        "God mode: on"
-                    } else {
-                        "God mode: off"
-                    };
-                    self.stage.shell().console_mut().print(text);
-                }
+                ConsoleCommand::GodMode(GodModeArg::Toggle) => self.toggle_god_mode(),
                 ConsoleCommand::GodMode(GodModeArg::Set(on)) => self.god_mode = on,
                 ConsoleCommand::Fullscreen => self.flip_window_pending = true,
                 ConsoleCommand::ForceGrade(grade) => self.forced_grade = grade,
+            }
+        }
+        for request in requests {
+            match request {
+                SessionRequest::ToggleGodMode => self.toggle_god_mode(),
             }
         }
         if self.god_mode != before

@@ -45,6 +45,8 @@ pub struct ArenaMode {
     arena: Arc<Arena>,
     /// `None` in a sandbox: nothing spawns and nothing is scored.
     waves: Option<Waves>,
+    /// Asks of the session not yet taken.
+    requests: Vec<SessionRequest>,
 }
 
 impl ArenaMode {
@@ -59,6 +61,7 @@ impl ArenaMode {
                 tuning: waves,
                 seen_kills: 0,
             }),
+            requests: Vec::new(),
         };
         mode.step_waves(None);
         mode
@@ -128,22 +131,21 @@ impl ArenaMode {
         if !action.honored_from(HOST_SLOT) {
             return;
         }
-        let Some(waves) = self.waves.as_mut() else {
-            return;
-        };
         match action {
             ControlAction::NextWave => {
-                waves
-                    .state
-                    .call_next(&waves.tuning, self.sim.enemies_alive());
+                if let Some(waves) = self.waves.as_mut() {
+                    waves
+                        .state
+                        .call_next(&waves.tuning, self.sim.enemies_alive());
+                }
             }
-            ControlAction::ToggleGodMode => {}
+            ControlAction::ToggleGodMode => self.requests.push(SessionRequest::ToggleGodMode),
         }
     }
 
     /// Takes the requests the mode made of the session since the last call, oldest first.
     pub fn take_requests(&mut self) -> Vec<SessionRequest> {
-        Vec::new()
+        std::mem::take(&mut self.requests)
     }
 
     /// What control `index` of the arena does, or `None` if there is no such control.
@@ -177,6 +179,7 @@ impl ArenaMode {
             sim: SearchlightSim::with_start(Arc::clone(&arena), config, Start::Empty),
             arena,
             waves: None,
+            requests: Vec::new(),
         }
     }
 

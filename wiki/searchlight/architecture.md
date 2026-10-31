@@ -229,10 +229,10 @@ resets the previous lean so the first frame is upright.
 
 ## 9 Controls
 
-A control is a post the player uses. The arena marks one with `control_NN`, a floor point whose `action` extra names a `ControlAction` (`next_wave`). `Arena::from_level` builds a post mesh per control; the physics world carries it tagged `SurfaceTag::Control(index)`, where the index is the control's place in `Arena::controls`, and `SearchlightGame::with_controls` draws the same meshes.
+A control is a post the player uses. The arena marks one with `control_NN`, a floor point whose `action` extra names a `ControlAction` (`next_wave` or `god_mode`). `Arena::from_level` builds a post mesh per control; the physics world carries it tagged `SurfaceTag::Control(index)`, where the index is the control's place in `Arena::controls`, and `SearchlightGame::with_controls` draws the same meshes.
 
 Flow:
 
 1. `SearchlightSim::control_in_reach` casts a ray along the player's view, `USE_REACH` long, and returns the index only when the first surface is a control; a wall or body in front, or a dead player, gives `None`.
 2. `SearchlightGame` shows `hud::use_prompt` (key plus action, such as `[F] Next wave`) below the crosshair while playing and alive with a control in reach.
-3. `ArenaMode::tick`, on `use_pressed`, resolves the control in reach to its action and applies it if `honored_from(HOST_SLOT)` allows; until slots exist the one player is the host (slot 0).
+3. `ArenaMode::tick`, on `use_pressed`, resolves the control in reach to its action and applies it if `honored_from(HOST_SLOT)` allows; until slots exist the one player is the host (slot 0). Both actions are host actions. `next_wave` is applied inside the mode; `god_mode` queues `SessionRequest::ToggleGodMode`, which `SearchlightGame::command` drains beside the console's queue and applies through the same toggle as a bare `tgm` (flip, print, save once), so the next tick's command carries the new value.

@@ -21,7 +21,7 @@ Markers are empty, named glTF nodes that the game reads by name (see searchlight
     cover_NN          a floor point an enemy can hide at; its extras say which way the
                       hiding geometry lies
     control_NN        a floor point a usable post stands on; its extras name the `action`
-                      (`next_wave`)
+                      (`next_wave` or `god_mode`)
 
 A cover point sits COVER_DEPTH behind the rear face of a COVER_HEIGHT block. A ray at body
 height (BODY_HEIGHT above the floor) coming from the block's side is stopped by the block; a
@@ -54,8 +54,8 @@ ENEMY_SPAWNS = [(-14.0, 15.0), (14.0, 16.0), (0.0, 19.0)]
 WAYPOINTS = [(-12.0, -10.0), (12.0, -10.0), (10.0, 4.0), (0.0, 8.0), (-10.0, 2.0)]
 
 # Usable posts: (x, z, action). This one is 1.5 m beside the player spawn: in reach at once, clear
-# of the spawn's capsule.
-CONTROLS = [(1.5, -17.0, "next_wave")]
+# of the spawn's capsule. The god-mode switch stands the same distance on the other side.
+CONTROLS = [(1.5, -17.0, "next_wave"), (-1.5, -17.0, "god_mode")]
 
 # Cover blocks: (centre x, centre z, size x, size z, direction from the cover point to the
 # block). The cover point is COVER_DEPTH behind the face opposite that direction.

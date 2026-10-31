@@ -14,6 +14,7 @@ impl ControlAction {
     pub fn parse(name: &str) -> Option<Self> {
         match name {
             "next_wave" => Some(Self::NextWave),
+            "god_mode" => Some(Self::ToggleGodMode),
             _ => None,
         }
     }
@@ -21,8 +22,7 @@ impl ControlAction {
     /// Whether only the host may trigger this action.
     pub fn is_host_action(self) -> bool {
         match self {
-            Self::NextWave => true,
-            Self::ToggleGodMode => false,
+            Self::NextWave | Self::ToggleGodMode => true,
         }
     }
 
