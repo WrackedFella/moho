@@ -366,17 +366,26 @@ impl Effects {
     }
 
     /// Store a fixed-lifetime effect, dropping the oldest such effects to get under the
-    /// cap; refused when only streaks are left to drop.
+    /// cap; refused, dropping nothing, when the streaks alone fill it.
     fn spawn(&mut self, effect: Effect) {
-        while self.store.len() >= self.cap {
-            let oldest = self
-                .store
-                .iter()
-                .find_map(|(handle, e)| e.is_fixed_lifetime().then_some(*handle));
-            let Some(oldest) = oldest else {
-                return;
-            };
-            self.store.remove(&oldest);
+        let streaks = self
+            .store
+            .values()
+            .filter(|e| !e.is_fixed_lifetime())
+            .count();
+        if streaks >= self.cap {
+            return;
+        }
+        let excess = (self.store.len() + 1).saturating_sub(self.cap);
+        let oldest: Vec<EffectHandle> = self
+            .store
+            .iter()
+            .filter(|(_, e)| e.is_fixed_lifetime())
+            .map(|(handle, _)| *handle)
+            .take(excess)
+            .collect();
+        for handle in oldest {
+            self.store.remove(&handle);
         }
         let handle = self.issue_handle();
         self.store.insert(handle, effect);
