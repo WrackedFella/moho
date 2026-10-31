@@ -55,6 +55,8 @@ cargo run -p searchlight           # the FPS prototype
   - `moho_level/**`
   - `searchlight_rules/**`
   - `moho_physics/src/movement.rs`
+  - `moho_physics/src/world/loose.rs`
+  - `moho_renderer/src/effects.rs`
   - `moho_input/src/action_map.rs`
   - `moho_input/src/bindings.rs`
   Adapters, UI wiring and config are glue: the weekly full run mutates them, PRs don't.

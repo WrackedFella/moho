@@ -12,6 +12,8 @@ pub enum SurfaceTag {
     Part { target: u16, part: BodyPart },
     /// One body part of the player.
     Player(BodyPart),
+    /// The placed control at this index of the arena's controls: stops a ray, damages nothing.
+    Control(u16),
 }
 
 /// The engine tag does not encode any [`SurfaceTag`].
@@ -28,6 +30,9 @@ const PART_BITS: u32 = 3;
 
 /// Engine tag of the player's first part, above every target part tag.
 const PLAYER_BASE: u32 = PART_BASE + (1 << (16 + PART_BITS));
+
+/// Engine tag of the first control, above every player tag.
+const CONTROL_BASE: u32 = PLAYER_BASE + PARTS.len() as u32;
 
 /// Every part, at the index its tag stores.
 const PARTS: [BodyPart; 6] = [
@@ -51,6 +56,7 @@ impl From<SurfaceTag> for HitTag {
     fn from(tag: SurfaceTag) -> Self {
         match tag {
             SurfaceTag::World => HitTag(WORLD),
+            SurfaceTag::Control(index) => HitTag(CONTROL_BASE + u32::from(index)),
             SurfaceTag::Player(part) => HitTag(PLAYER_BASE + part_index(part)),
             SurfaceTag::Part { target, part } => {
                 HitTag(PART_BASE + ((u32::from(target) << PART_BITS) | part_index(part)))
@@ -65,6 +71,11 @@ impl TryFrom<HitTag> for SurfaceTag {
     fn try_from(tag: HitTag) -> Result<Self, Self::Error> {
         if tag.0 == WORLD {
             return Ok(SurfaceTag::World);
+        }
+        if let Some(index) = tag.0.checked_sub(CONTROL_BASE) {
+            return u16::try_from(index)
+                .map(SurfaceTag::Control)
+                .map_err(|_| UnknownTag(tag.0));
         }
         if let Some(index) = tag.0.checked_sub(PLAYER_BASE) {
             return PARTS
@@ -101,6 +112,7 @@ mod tests {
             Just(SurfaceTag::World),
             (any::<u16>(), proptest::sample::select(PARTS.to_vec()))
                 .prop_map(|(target, part)| SurfaceTag::Part { target, part }),
+            any::<u16>().prop_map(SurfaceTag::Control),
         ]
     }
 
@@ -195,5 +207,18 @@ mod player_encoding_tests {
         assert_eq!(head, HitTag(524_289));
         assert_eq!(right_leg, HitTag(524_294));
         assert!(last_target_part.0 < head.0);
+    }
+
+    #[test]
+    fn control_tags_sit_above_every_player_tag_and_stay_in_order() {
+        let last_player_part = HitTag::from(SurfaceTag::Player(BodyPart::RightLeg));
+
+        let first = HitTag::from(SurfaceTag::Control(0));
+        let second = HitTag::from(SurfaceTag::Control(1));
+        let last = HitTag::from(SurfaceTag::Control(u16::MAX));
+
+        assert!(first.0 > last_player_part.0, "{first:?}");
+        assert!(second.0 > first.0, "{second:?}");
+        assert!(last.0 > second.0, "{last:?}");
     }
 }

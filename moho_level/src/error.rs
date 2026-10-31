@@ -4,6 +4,8 @@ use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use crate::LevelHash;
+
 /// A level failed to load; always names the level file.
 #[derive(Debug)]
 pub struct LevelError {
@@ -73,4 +75,11 @@ pub enum LevelErrorKind {
     BadSkin { skin: usize, reason: String },
     #[error("animation {animation}: {reason}")]
     BadAnimation { animation: usize, reason: String },
+    #[error("the level's mesh ids would pass the last world mesh id")]
+    IdRangeOverflow,
+    #[error("content hash is {found}, the recorded step expects {expected}")]
+    HashMismatch {
+        expected: LevelHash,
+        found: LevelHash,
+    },
 }

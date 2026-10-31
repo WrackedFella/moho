@@ -25,9 +25,8 @@ vertex buffers, so they are packed with no padding (`UiVertex`: `Float32x2`, `Fl
 | `MaterialGpu` | 32 B (2 × vec4) | storage array, group 0 binding 1 |
 | `LightingGpu` | 144 B (9 × vec4) | uniform, group 0 binding 2 |
 | `DynamicLightsGpu` | 2064 B (16 + 64 × 32) | storage, group 0 binding 5 |
-| `MultiLightShadowGpu` | 288 B (4 × mat4 + 2 × vec4) | uniform, group 1 binding 0 |
+| `ShadowGpu` | 496 B (6 × mat4 + 7 × vec4) | uniform, group 1 binding 0 (`Shadow` in `common.wgsl`) |
 | `PointLightGpu` | 32 B (2 × vec4) | element of `DynamicLightsGpu` |
-| `ShadowMatrixGpu` | 64 B | legacy single shadow map |
 | `ToneMapGpu` | 16 B (f32 exposure, u32 enabled, f32 bloom_intensity, u32 pad) | uniform, tone-map pass group 0 binding 1 (`ToneMap` in `shaders/tonemap.wgsl`); binding 0 is the HDR texture, 2 the bloom texture (mip 0, or 1×1 black when Off), 3 its linear clamp sampler |
 | `InstanceGpu` | 80 B (mat4 + 4 × u32) | per-instance vertex buffer |
 | `MarkerGpu` | 48 B (3 × vec4) | per-instance vertex buffer, marker pass |
@@ -37,8 +36,7 @@ vertex buffers, so they are packed with no padding (`UiVertex`: `Float32x2`, `Fl
 | `SkinParamsGpu` | 16 B (4 × u32) | uniform, skinning compute group 1 binding 2 |
 
 Group 0 also binds the SSAO texture and sampler (bindings 3, 4). Group 1 binds the
-shadow map array (`texture_depth_2d_array`, binding 1), a comparison sampler (2), and a
-nearest sampler for the PCSS blocker search (3). Group 2 (main pass only) binds the draw's
+shadow map array (`texture_depth_2d_array`, binding 1), and a comparison sampler (2). Group 2 (main pass only) binds the draw's
 base-colour texture (`texture_2d<f32>`, `Rgba8UnormSrgb`, binding 0) and a filtering sampler (1);
 untextured draws bind a 1×1 white texture (handle 0).
 
@@ -57,9 +55,12 @@ untextured draws bind a 1×1 white texture (handle 0).
 | | `sky_zenith`, `sky_horizon`, `sky_ground` | xyz sky palette colour; filled by the renderer from `params.x` |
 | `MaterialGpu` | `albedo` | xyz albedo (terrain: top-face colour); w gloss 0..1 for world meshes (`object_type` 0), 0 = matte, unused otherwise |
 | | `params` | xyz `[fuzz, ref_idx, transparent]` (terrain: side-face colour), w emissive |
-| `MultiLightShadowGpu` | `light0`–`light3` | one mat4 each: Sun, Moon, Dynamic 1, Dynamic 2 |
-| | `light_intensities` | x sun, y moon, z dyn 1, w dyn 2 |
-| | `metadata` | x shadow distance, y light size (PCSS), z PCSS quality 0–3, w view-height cut |
+| `ShadowGpu` | `matrices` | six light view-projections, one per map layer: sun cascades 0–3, moon cascades 4–5 |
+| | `split_far` | far end of each cascade by view depth: sun in `[0]`, moon in `[1].xy` |
+| | `texel_world` | world size of one texel per cascade, packed like `split_far` |
+| | `camera_forward` | xyz camera forward, w cascade blend fraction |
+| | `light_intensities` | x sun, y moon |
+| | `metadata` | x effective shadow distance (0 = shadows off), y unused (0), z filter radius in texels 0–3, w view-height cut |
 | `PointLightGpu` | `position_range` | xyz position, w range |
 | | `color_intensity` | xyz colour, w intensity |
 | `DynamicLightsGpu` | `light_count` | x active count |
@@ -85,7 +86,7 @@ Notes:
   0-2 and normal words 3-5; reordering them in `Vertex` needs a `skin.wgsl` edit.
 - `MaterialGpu.params[2] > 0` marks a material transparent (`is_transparent()`). Terrain
   materials reuse `params.xyz` for the side-face colour; `params.w > 0` bypasses lighting.
-- `LightingGpu.params.y` is the debug view mode set by `r_debug_view`
+- `LightingGpu.params.y` is the debug view mode (0–8, 8 = cascade tint) set by `r_debug_view`
   ([console commands](console-commands.md)).
 - `Renderer::update_lighting` overwrites the three sky palette fields from `params.x`
   (`moho_renderer/src/sky.rs`); a game's values there are ignored. The skybox and the
@@ -94,8 +95,10 @@ Notes:
   heights to `f32::MAX` (no cut, not infinity: WGSL may assume none). The main and
   marker fragment shaders discard world y above `CameraGpu.cam_pos.w` (the marker shader adds the `marker_inflate` override constant, `MARKER_INFLATE`, so a box grown onto the cut keeps its top); the shadow pass
   has a fragment stage that discards on `metadata.w`, so shadows follow drawn geometry.
-- Shadow constants (`shadow.rs`): map size 4096, shadow distance 1000.
-  `MAX_SHADOW_LIGHTS` = 4, `MAX_DYNAMIC_LIGHTS` = 64.
+- Shadow constants (`shadow.rs`): cascade map side per quality tier from `ShadowTier::map_size` (1024–8192; the shader reads it with `textureDimensions`), `SHADOW_DISTANCE` 1000,
+  `SUN_CASCADES` 4, `MOON_CASCADES` 2, `CASCADE_LAYERS` 6. `SUN_CASCADES` and
+  `MOON_CASCADES` are also declared in the shaders; a test keeps them equal. The shader's `SHADOW_MAX_FILTER_RADIUS` equals the Ultra tier's radius; a test keeps them equal.
+  `MAX_DYNAMIC_LIGHTS` = 64. Point lights do not cast shadows.
 
 ## Changing a struct
 

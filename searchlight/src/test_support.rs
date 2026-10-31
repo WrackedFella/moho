@@ -3,11 +3,11 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use glam::Vec3;
+use glam::{Quat, Vec3};
 use moho_input::Action;
 use moho_input::action_map::ActionMap;
 use moho_input::bindings::Input;
-use moho_level::NavMesh;
+use moho_level::{LevelMarker, NavMesh};
 use moho_physics::{MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::{
@@ -15,9 +15,11 @@ use searchlight_rules::{
     Magazine, MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
 };
 
-use crate::arena::{Arena, nav_profile};
+use crate::arena::{Arena, ArenaControl, nav_profile};
 use crate::brain::EnemyTuning;
+use crate::control::ControlAction;
 use crate::input::{SearchlightAction, SearchlightCommand};
+use crate::mode::ArenaMode;
 use crate::sim::{Feedback, SearchlightSim, SimConfig};
 use crate::tag::SurfaceTag;
 use crate::tuning::SHIPPED_BODY;
@@ -250,17 +252,54 @@ pub(crate) fn arena_on(
     enemies: &[Vec3],
     route: &[Vec3],
 ) -> Arc<Arena> {
+    build_arena(floor_size, boxes, player, enemies, route, &[])
+}
+
+/// Like [`arena_with`], plus one next-wave control per `(min, max)` box in `controls`, in
+/// order, so control `i` is the `i`th box.
+pub(crate) fn arena_with_controls(
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+    controls: &[(Vec3, Vec3)],
+) -> Arc<Arena> {
+    build_arena(60.0, boxes, player, enemies, route, controls)
+}
+
+fn build_arena(
+    floor_size: f32,
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+    controls: &[(Vec3, Vec3)],
+) -> Arc<Arena> {
     let half = floor_size / 2.0;
     let floor = (Vec3::new(-half, -1.0, -half), Vec3::new(half, 0.0, half));
     let meshes: Vec<WorldMesh> = std::iter::once(&floor)
         .chain(boxes)
         .map(|&(min, max)| box_mesh(min, max))
         .collect();
-    let nav = Arc::new(NavMesh::build(&meshes, nav_profile()).expect("box worlds build a navmesh"));
+    let controls: Vec<ArenaControl> = controls
+        .iter()
+        .map(|&(min, max)| ArenaControl {
+            action: ControlAction::NextWave,
+            mesh: box_mesh(min, max),
+        })
+        .collect();
+    let solids: Vec<WorldMesh> = meshes
+        .iter()
+        .cloned()
+        .chain(controls.iter().map(|control| control.mesh.clone()))
+        .collect();
+    let nav = Arc::new(NavMesh::build(&solids, nav_profile()).expect("box worlds build a navmesh"));
     Arc::new(Arena {
+        controls,
         material_names: vec![None; meshes.len()],
         meshes,
         nav,
+        nav_fallback: false,
         player_spawn: player,
         dummy_spawns: Vec::new(),
         enemy_spawns: enemies.to_vec(),
@@ -328,6 +367,41 @@ pub(crate) fn run_until_settled(
         command = &rest;
     }
     panic!("a round was still in flight after {FLIGHT_TICK_CAP} ticks");
+}
+
+/// A level marker named `name` at `position`, with no properties.
+pub(crate) fn level_marker(name: &str, position: Vec3) -> LevelMarker {
+    LevelMarker {
+        name: name.to_owned(),
+        position,
+        rotation: Quat::IDENTITY,
+        properties: BTreeMap::new(),
+    }
+}
+
+/// The `searchlight_level` marker whose `mode` is `value`.
+pub(crate) fn mode_marker(value: &str) -> LevelMarker {
+    let mut marker = level_marker("searchlight_level", Vec3::ZERO);
+    marker
+        .properties
+        .insert("mode".to_owned(), value.to_owned());
+    marker
+}
+
+/// The wave and score of a mode that runs waves.
+pub(crate) trait WaveScore {
+    fn wave(&self) -> u32;
+    fn score(&self) -> u32;
+}
+
+impl WaveScore for ArenaMode {
+    fn wave(&self) -> u32 {
+        self.tally().expect("this mode runs waves").wave
+    }
+
+    fn score(&self) -> u32 {
+        self.tally().expect("this mode runs waves").score
+    }
 }
 
 /// Presses the first default binding of `action` on `map`.

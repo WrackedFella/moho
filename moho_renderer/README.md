@@ -6,7 +6,7 @@ Backend-agnostic 3D renderer for the Moho engine. Provides instance-based mesh r
 
 - **Instance Rendering** - Efficient batched rendering of multiple instances per mesh
 - **Custom Mesh Support** - Register arbitrary vertex/index buffers
-- **Cascaded Shadow Maps (CSM)** - 4 cascades covering 0-800 world units
+- **Cascaded Shadow Maps (CSM)** - sun (4) and moon (2) cascades out to 1000 world units
 - **Dynamic Lighting** - Sun and moon directional lights with time-based ambient
 - **Skybox Rendering** - Atmospheric rendering with dynamic sky colors
 - **Material System** - PBR-style materials with transparency support
@@ -130,22 +130,10 @@ renderer.present_frame()?;
 
 ## 4 Cascaded Shadow Maps
 
-The renderer implements 4-cascade CSM for high-quality shadows across large view distances.
-
-**Configuration:**
-- **Cascades**: 4 (covering near to far terrain)
-- **Resolution**: 4096×4096 per cascade
-- **Split Distances**: [50, 150, 400, 800] world units
-- **Format**: Depth32Float
-- **PCF Filtering**: 2×2 sample pattern for soft shadows
-
-**Shadow Coverage:**
-- Cascade 0: 0-50 units (high detail near camera)
-- Cascade 1: 50-150 units (medium detail)
-- Cascade 2: 150-400 units (distant terrain)
-- Cascade 3: 400-800 units (far horizon)
-
-Only the sun casts shadows. Moon does not cast shadows for performance reasons.
+The sun casts 4 cascades and the moon 2, in one square `Depth32Float` array (6 layers) sized by the shadow quality tier (1024 to 8192).
+Splits cover the camera near plane to the smaller of the camera far plane and `SHADOW_DISTANCE` (1000 m) with a log/uniform blend, and
+the fragment shader blends between neighbouring cascades. See
+[rendering](../wiki/architecture/rendering.md#9-cascaded-shadows).
 
 ## 5 GPU Data Structures
 

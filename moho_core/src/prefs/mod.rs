@@ -64,6 +64,7 @@ pub struct Prefs {
     // Graphics settings
     graphics_shadow_quality: u32, // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
     graphics_ssao_quality: u32,   // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
+    graphics_effects_quality: u32, // 0=Off, 1=Low, 2=Medium, 3=High, 4=Ultra
     graphics_bloom: u32,          // 0=Off, 1=Low, 2=High
     graphics_brightness: f32,
     // Video settings
@@ -78,6 +79,7 @@ pub struct Prefs {
     bindings: BTreeMap<String, String>,
     action_modes: BTreeMap<String, String>,
     debug: BTreeMap<String, String>,
+    game: BTreeMap<String, String>,
     content_mods: Vec<String>,
 }
 
@@ -88,17 +90,49 @@ const MIN_BRIGHTNESS: f32 = 0.5;
 const MAX_BRIGHTNESS: f32 = 2.0;
 const DEFAULT_BRIGHTNESS: f32 = 1.0;
 
-/// Why a debug name or value was refused.
+/// Why a name or value for a game-owned section was refused.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
-pub enum DebugValueError {
-    #[error("debug name {0:?} must be non-empty lowercase letters, digits or underscores")]
+pub enum PrefsValueError {
+    #[error("name {0:?} must be non-empty lowercase letters, digits or underscores")]
     InvalidName(String),
-    #[error("debug value {0:?} must be non-empty, unpadded and free of ';', '#' and line breaks")]
+    #[error("value {0:?} must be non-empty, unpadded and free of ';', '#' and line breaks")]
     InvalidValue(String),
 }
 
+fn check_name_and_value(name: &str, value: &str) -> Result<(), PrefsValueError> {
+    let name_ok = !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+    if !name_ok {
+        return Err(PrefsValueError::InvalidName(name.to_owned()));
+    }
+    // The INI reader trims values and treats `;` and `#` as comments.
+    let value_ok =
+        !value.is_empty() && value.trim() == value && !value.contains([';', '#', '\r', '\n']);
+    if !value_ok {
+        return Err(PrefsValueError::InvalidValue(value.to_owned()));
+    }
+    Ok(())
+}
+
 impl Prefs {
+    /// The value a game stored under `name` in `[game]`, if any.
+    pub fn game_value(&self, name: &str) -> Option<&str> {
+        self.game.get(name).map(String::as_str)
+    }
+
+    /// Stores a game's own value.
+    ///
+    /// # Errors
+    /// Refuses a name or value that would not read back exactly; prefs stay unchanged.
+    pub fn set_game_value(&mut self, name: &str, value: &str) -> Result<(), PrefsValueError> {
+        check_name_and_value(name, value)?;
+        self.game.insert(name.to_owned(), value.to_owned());
+        Ok(())
+    }
+
     /// The value a game stored under `name` in `[debug]`, if any.
     pub fn debug_value(&self, name: &str) -> Option<&str> {
         self.debug.get(name).map(String::as_str)
@@ -108,20 +142,8 @@ impl Prefs {
     ///
     /// # Errors
     /// Refuses a name or value that would not read back exactly; prefs stay unchanged.
-    pub fn set_debug_value(&mut self, name: &str, value: &str) -> Result<(), DebugValueError> {
-        let name_ok = !name.is_empty()
-            && name
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
-        if !name_ok {
-            return Err(DebugValueError::InvalidName(name.to_owned()));
-        }
-        // The INI reader trims values and treats `;` and `#` as comments.
-        let value_ok =
-            !value.is_empty() && value.trim() == value && !value.contains([';', '#', '\r', '\n']);
-        if !value_ok {
-            return Err(DebugValueError::InvalidValue(value.to_owned()));
-        }
+    pub fn set_debug_value(&mut self, name: &str, value: &str) -> Result<(), PrefsValueError> {
+        check_name_and_value(name, value)?;
         self.debug.insert(name.to_owned(), value.to_owned());
         Ok(())
     }
@@ -267,6 +289,14 @@ impl Prefs {
         self.graphics_shadow_quality = quality.min(MAX_GRAPHICS_QUALITY);
     }
 
+    pub fn effects_quality(&self) -> u32 {
+        self.graphics_effects_quality
+    }
+
+    pub fn set_effects_quality(&mut self, quality: u32) {
+        self.graphics_effects_quality = quality.min(MAX_GRAPHICS_QUALITY);
+    }
+
     pub fn set_ssao_quality(&mut self, quality: u32) {
         self.graphics_ssao_quality = quality.min(MAX_GRAPHICS_QUALITY);
     }
@@ -349,6 +379,7 @@ impl Default for Prefs {
             // Default graphics settings (High)
             graphics_shadow_quality: 3,
             graphics_ssao_quality: 3,
+            graphics_effects_quality: 3,
             graphics_bloom: MAX_BLOOM_QUALITY,
             graphics_brightness: DEFAULT_BRIGHTNESS,
             // Default video settings
@@ -363,6 +394,7 @@ impl Default for Prefs {
             bindings: BTreeMap::new(),
             action_modes: BTreeMap::new(),
             debug: BTreeMap::new(),
+            game: BTreeMap::new(),
             content_mods: Vec::new(),
         }
     }
@@ -398,6 +430,7 @@ impl Prefs {
              \n[graphics]\n\
              shadow_quality={shadow}\n\
              ssao_quality={ssao}\n\
+             effects_quality={effects}\n\
              bloom={bloom}\n\
              brightness={brightness:.2}\n\
              \n[video]\n\
@@ -421,6 +454,7 @@ impl Prefs {
             voice = self.audio_voice_volume,
             shadow = self.graphics_shadow_quality,
             ssao = self.graphics_ssao_quality,
+            effects = self.graphics_effects_quality,
             bloom = self.graphics_bloom,
             brightness = self.graphics_brightness,
             window_mode = self.window_mode.as_str(),
@@ -437,29 +471,18 @@ impl Prefs {
             text.push_str(&self.content_mods.join(","));
             text.push('\n');
         }
-        if !self.bindings.is_empty() {
-            text.push_str("\n[bindings]\n");
-            text.extend(
-                self.bindings
-                    .iter()
-                    .map(|(action, value)| format!("{action}={value}\n")),
-            );
-        }
-        if !self.action_modes.is_empty() {
-            text.push_str("\n[action_modes]\n");
-            text.extend(
-                self.action_modes
-                    .iter()
-                    .map(|(action, value)| format!("{action}={value}\n")),
-            );
-        }
-        if !self.debug.is_empty() {
-            text.push_str("\n[debug]\n");
-            text.extend(
-                self.debug
-                    .iter()
-                    .map(|(name, value)| format!("{name}={value}\n")),
-            );
+        for (section, map) in [
+            ("bindings", &self.bindings),
+            ("action_modes", &self.action_modes),
+            ("debug", &self.debug),
+            ("game", &self.game),
+        ] {
+            if !map.is_empty() {
+                text.push_str("\n[");
+                text.push_str(section);
+                text.push_str("]\n");
+                text.extend(map.iter().map(|(key, value)| format!("{key}={value}\n")));
+            }
         }
         text
     }
@@ -591,6 +614,50 @@ mod tests {
 
         assert_eq!(above, 2);
         assert_eq!(max, 2);
+    }
+
+    #[test]
+    fn effects_quality_round_trips_through_the_file() {
+        for quality in 0..=4 {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("config").join("prefs.ini");
+            let mut prefs = Prefs::default();
+            prefs.set_effects_quality(quality);
+
+            prefs.save_to(&path).unwrap();
+            let (loaded, warnings) = Prefs::load_from(&path);
+
+            assert_eq!(warnings, vec![], "effects_quality {quality}");
+            assert_eq!(loaded.effects_quality(), quality);
+            assert!(
+                prefs
+                    .to_ini_string()
+                    .contains(&format!("effects_quality={quality}\n"))
+            );
+        }
+    }
+
+    #[test]
+    fn effects_quality_defaults_to_high_and_clamps_to_ultra() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.ini");
+        let absent = dir.path().join("absent.ini");
+        let over = dir.path().join("over.ini");
+        fs::write(&absent, "[graphics]\nssao_quality=1\n").unwrap();
+        fs::write(&over, "[graphics]\neffects_quality=9\n").unwrap();
+
+        let default = Prefs::default().effects_quality();
+        let from_missing_file = Prefs::load_from(&missing).0.effects_quality();
+        let from_absent_key = Prefs::load_from(&absent).0.effects_quality();
+        let from_over_range = Prefs::load_from(&over).0.effects_quality();
+        let mut prefs = Prefs::default();
+        prefs.set_effects_quality(u32::MAX);
+
+        assert_eq!(default, 3);
+        assert_eq!(from_missing_file, 3);
+        assert_eq!(from_absent_key, 3);
+        assert_eq!(from_over_range, 4);
+        assert_eq!(prefs.effects_quality(), 4);
     }
 
     #[test]
@@ -873,30 +940,31 @@ mod tests {
         assert_eq!(loaded.debug_value("tgm"), Some("on"));
     }
 
+    const BAD_NAMES: [&str; 8] = ["God", "a b", "", "a-b", "a=b", "a;b", "é", "a\n"];
+    const BAD_VALUES: [&str; 10] = [
+        "", "a;b", "a#b", "a\nb", "a\rb", " 1", "1 ", "\t1", "1\n", "  ",
+    ];
+
     #[test]
     fn invalid_debug_value_is_refused() {
         let mut prefs = Prefs::default();
         prefs.set_debug_value("kept", "yes").unwrap();
         let before = prefs.clone();
-        let bad_names = ["God", "a b", "", "a-b", "a=b", "a;b", "é", "a\n"];
-        let bad_values = [
-            "", "a;b", "a#b", "a\nb", "a\rb", " 1", "1 ", "\t1", "1\n", "  ",
-        ];
 
-        for name in bad_names {
+        for name in BAD_NAMES {
             let result = prefs.set_debug_value(name, "1");
 
             assert!(
-                matches!(result, Err(DebugValueError::InvalidName(_))),
+                matches!(result, Err(PrefsValueError::InvalidName(_))),
                 "name {name:?}: {result:?}"
             );
             assert_eq!(prefs, before, "name {name:?} changed prefs");
         }
-        for value in bad_values {
+        for value in BAD_VALUES {
             let result = prefs.set_debug_value("kept", value);
 
             assert!(
-                matches!(result, Err(DebugValueError::InvalidValue(_))),
+                matches!(result, Err(PrefsValueError::InvalidValue(_))),
                 "value {value:?}: {result:?}"
             );
             assert_eq!(prefs, before, "value {value:?} changed prefs");
@@ -904,10 +972,89 @@ mod tests {
     }
 
     #[test]
+    fn invalid_game_value_is_refused() {
+        let mut prefs = Prefs::default();
+        prefs.set_game_value("kept", "yes").unwrap();
+        let before = prefs.clone();
+
+        for name in BAD_NAMES {
+            let result = prefs.set_game_value(name, "1");
+
+            assert!(
+                matches!(result, Err(PrefsValueError::InvalidName(_))),
+                "name {name:?}: {result:?}"
+            );
+            assert_eq!(prefs, before, "name {name:?} changed prefs");
+        }
+        for value in BAD_VALUES {
+            let result = prefs.set_game_value("kept", value);
+
+            assert!(
+                matches!(result, Err(PrefsValueError::InvalidValue(_))),
+                "value {value:?}: {result:?}"
+            );
+            assert_eq!(prefs, before, "value {value:?} changed prefs");
+        }
+        assert_eq!(prefs.game_value("kept"), Some("yes"));
+    }
+
+    #[test]
     fn no_game_section_is_written_when_empty() {
         let text = Prefs::default().to_ini_string();
 
         assert!(!text.contains("[debug]"), "{text}");
+    }
+
+    #[test]
+    fn a_game_value_survives_save_and_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config").join("game.ini");
+        let mut prefs = Prefs::default();
+        prefs.set_game_value("head_bob", "25").unwrap();
+
+        prefs.save_to(&path).unwrap();
+        let (loaded, warnings) = Prefs::load_from(&path);
+        let text = fs::read_to_string(&path).unwrap();
+
+        assert_eq!(warnings, vec![]);
+        assert_eq!(loaded.game_value("head_bob"), Some("25"));
+        assert_eq!(loaded, prefs);
+        assert!(text.contains("\n[game]\nhead_bob=25\n"), "{text}");
+    }
+
+    #[test]
+    fn game_and_debug_values_are_separate() {
+        let mut prefs = Prefs::default();
+        prefs.set_game_value("head_bob", "25").unwrap();
+        prefs.set_debug_value("head_bob", "1").unwrap();
+
+        let (loaded, issues) = Prefs::parse(&prefs.to_ini_string());
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(prefs.game_value("head_bob"), Some("25"));
+        assert_eq!(prefs.debug_value("head_bob"), Some("1"));
+        assert_eq!(loaded.game_value("head_bob"), Some("25"));
+        assert_eq!(loaded.debug_value("head_bob"), Some("1"));
+    }
+
+    #[test]
+    fn no_game_values_writes_no_game_section() {
+        let mut prefs = Prefs::default();
+        prefs.set_debug_value("god", "1").unwrap();
+
+        let without = prefs.to_ini_string();
+        prefs.set_game_value("head_bob", "25").unwrap();
+        let with = prefs.to_ini_string();
+
+        assert!(without.contains("[debug]"), "{without}");
+        assert!(!without.contains("[game]"), "{without}");
+        assert!(
+            !Prefs::default().to_ini_string().contains("[game]"),
+            "defaults wrote a [game] section"
+        );
+        let debug_at = with.find("[debug]").expect("a [debug] section");
+        let game_at = with.find("[game]").expect("a [game] section");
+        assert!(game_at > debug_at, "[game] follows [debug]: {with}");
     }
 
     #[test]
@@ -949,6 +1096,21 @@ mod tests {
 
             proptest::prop_assert_eq!(issues, vec![]);
             proptest::prop_assert_eq!(parsed.debug_value(&name), Some(value.as_str()));
+            proptest::prop_assert_eq!(parsed, prefs);
+        }
+
+        #[test]
+        fn accepted_game_values_round_trip(
+            name in "[a-z0-9_]{1,16}",
+            value in "[A-Za-z0-9_.,:/=+-]([A-Za-z0-9_.,:/=+ -]{0,12}[A-Za-z0-9_.,:/=+-])?",
+        ) {
+            let mut prefs = Prefs::default();
+            prefs.set_game_value(&name, &value).unwrap();
+
+            let (parsed, issues) = Prefs::parse(&prefs.to_ini_string());
+
+            proptest::prop_assert_eq!(issues, vec![]);
+            proptest::prop_assert_eq!(parsed.game_value(&name), Some(value.as_str()));
             proptest::prop_assert_eq!(parsed, prefs);
         }
     }

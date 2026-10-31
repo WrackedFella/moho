@@ -24,7 +24,7 @@
 //! Outside the crate only the shader sources and the two vertex-attribute tables are
 //! public, for shader validation.
 
-mod layouts;
+pub(crate) mod layouts;
 mod marker;
 mod shaders;
 
@@ -100,10 +100,6 @@ pub(crate) struct PipelineSetup {
     camera_bgl: wgpu::BindGroupLayout,
     shadow_bgl: wgpu::BindGroupLayout,
     texture_bgl: wgpu::BindGroupLayout,
-    #[allow(dead_code)]
-    _shadow_pass_bgl: wgpu::BindGroupLayout, // Legacy, kept for compatibility
-    #[allow(dead_code)]
-    _csm_pass_bgl: wgpu::BindGroupLayout, // Phase 3: CSM support
 
     // Pipeline layouts (kept for potential future use - additional pipelines)
     #[allow(dead_code)]
@@ -151,8 +147,6 @@ impl PipelineSetup {
         // 2. Create bind group layouts
         let camera_bgl = layouts::create_camera_bind_group_layout(device)?;
         let shadow_bgl = layouts::create_shadow_bind_group_layout(device)?;
-        let shadow_pass_bgl = layouts::create_shadow_pass_bind_group_layout(device)?;
-        let csm_pass_bgl = layouts::create_csm_pass_bind_group_layout(device)?;
         let texture_bgl = layouts::create_texture_bind_group_layout(device);
 
         // 3. Create pipeline layouts
@@ -197,8 +191,6 @@ impl PipelineSetup {
             camera_bgl,
             shadow_bgl,
             texture_bgl,
-            _shadow_pass_bgl: shadow_pass_bgl,
-            _csm_pass_bgl: csm_pass_bgl,
             main_pipeline_layout,
             skybox_pipeline_layout,
             main_pipeline,

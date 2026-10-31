@@ -9,9 +9,13 @@
 use crate::input_event::InputEvent;
 use crate::{App, RenderRequest};
 use flagstone_voxel::{BlockChangeReason, CRYSTAL_MATERIAL_ID, VoxelChunk, WorldEvent};
-use moho_core::events::{GraphicsEvent, UiEvent};
+use moho_core::events::{AudioEvent, GraphicsEvent, UiEvent};
 use moho_render_api::{Marker, MarkerId};
 use std::collections::HashSet;
+
+/// Cue played when a mined block yields a resource.
+const PICKUP_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/pickup.wav");
+const PICKUP_VOLUME: f32 = 0.6;
 
 // ── Spawn / interaction constants ──────────────────────────────────────
 const MOUSE_WHEEL_ZOOM_FACTOR: f32 = 0.5;
@@ -254,6 +258,10 @@ impl EventProcessor {
         }
 
         if let Some(y) = outcome.yield_ {
+            app.event_bus.publish(AudioEvent::PlaySound {
+                path: PICKUP_SOUND.to_string(),
+                volume: PICKUP_VOLUME,
+            });
             tracing::debug!(
                 pos = ?outcome.block_pos,
                 distance = outcome.distance,
@@ -288,8 +296,13 @@ impl EventProcessor {
             if let Some(light_system) = app.light_system.as_mut() {
                 light_system.handle_event(&event);
             }
-            if let WorldEvent::ChunkMeshDirty { chunk_pos, .. } = event {
-                dirty_chunks.insert(chunk_pos);
+            match event {
+                WorldEvent::ChunkMeshDirty { chunk_pos, .. } => {
+                    dirty_chunks.insert(chunk_pos);
+                }
+                WorldEvent::BlockPlaced { .. }
+                | WorldEvent::BlockRemoved { .. }
+                | WorldEvent::BlocksBatchModified { .. } => app.autosave.mark_edited(),
             }
         }
 
@@ -877,6 +890,69 @@ mod tests {
         assert!(
             light_system.emit_dirty_events() > 0,
             "the cleared light dirties its chunk"
+        );
+    }
+
+    #[test]
+    fn block_edit_events_mark_the_world_edited() {
+        let position = flagstone_voxel::BlockPos::new(3, 70, 3);
+        let edits = [
+            (
+                "placed",
+                WorldEvent::BlockPlaced {
+                    position,
+                    material_id: 1,
+                    reason: BlockChangeReason::Player,
+                },
+            ),
+            (
+                "removed",
+                WorldEvent::BlockRemoved {
+                    position,
+                    old_material_id: 1,
+                    reason: BlockChangeReason::Player,
+                },
+            ),
+            (
+                "batch modified",
+                WorldEvent::BlocksBatchModified {
+                    chunk_pos: glam::IVec3::new(0, 4, 0),
+                    positions: vec![position],
+                    reason: BlockChangeReason::Explosion,
+                },
+            ),
+        ];
+
+        for (name, edit) in edits {
+            let mut app = App::headless();
+            app.autosave = crate::app::autosave::AutosaveSchedule::new(1);
+            app.autosave.tick();
+            let _ = app.world_event_rx.try_iter().count();
+            app.event_bus.publish(edit);
+
+            EventProcessor::new().process_world_events(&mut app);
+
+            assert!(app.autosave.due(), "{name} did not mark the world edited");
+        }
+    }
+
+    #[test]
+    fn chunk_streaming_events_do_not_mark_the_world_edited() {
+        let mut app = App::headless();
+        app.autosave = crate::app::autosave::AutosaveSchedule::new(1);
+        app.autosave.tick();
+        let _ = app.world_event_rx.try_iter().count();
+        app.event_bus.publish(WorldEvent::ChunkMeshDirty {
+            chunk_pos: glam::IVec3::new(0, 4, 0),
+            terrain_dirty: true,
+            structure_dirty: true,
+        });
+
+        EventProcessor::new().process_world_events(&mut app);
+
+        assert!(
+            !app.autosave.due(),
+            "loading terrain is not an edit: an idle world would be rewritten"
         );
     }
 
@@ -1549,5 +1625,78 @@ mod tests {
         EventProcessor::new().process_debug_events(&mut app);
 
         assert!(marker_draws(&mut app).is_empty());
+    }
+
+    /// Sets up a first-person aim at a wall of blocks whose centre block carries `resource`.
+    fn app_aimed_at_block_with(resource: Option<u32>) -> App {
+        let mut app = App::headless();
+        app.game_state = crate::game_state::GameState::Playing;
+        app.simulation
+            .set_camera_mode(flagstone_game::controller::CameraMode::FirstPerson);
+        app.pawn.select_slot(flagstone_game::pawn::TOOL_SLOT);
+        app.camera.0 = glam::Mat4::from_translation(glam::Vec3::new(4.5, 70.5, 6.5)).inverse();
+        let grid = app
+            .light_system
+            .as_mut()
+            .expect("App starts with a light system")
+            .grid_mut();
+        for x in 2..=6 {
+            for y in 68..=72 {
+                for z in 1..=3 {
+                    grid.mutator()
+                        .place(flagstone_voxel::BlockPos::new(x, y, z), 1, resource);
+                }
+            }
+        }
+        app
+    }
+
+    fn sounds_after_mining(app: &mut App) -> Vec<(String, f32)> {
+        let _ = app.audio_event_rx.try_iter().count();
+        EventProcessor::new().handle_input_event(app, InputEvent::MineRequested);
+        app.event_bus.process_deferred();
+        app.audio_event_rx
+            .try_iter()
+            .filter_map(|event| match event {
+                moho_core::events::AudioEvent::PlaySound { path, volume } => Some((path, volume)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn pickup_asset_path() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/pickup.wav")
+    }
+
+    #[test]
+    fn mining_ore_publishes_the_pickup_cue() {
+        let mut app = app_aimed_at_block_with(Some(7));
+
+        let sounds = sounds_after_mining(&mut app);
+
+        assert_eq!(sounds.len(), 1, "one cue for one pickup: {sounds:?}");
+        assert_eq!(
+            std::path::Path::new(&sounds[0].0),
+            pickup_asset_path().as_path()
+        );
+        assert!(sounds[0].1 > 0.0, "audible: {sounds:?}");
+    }
+
+    #[test]
+    fn mining_plain_block_publishes_no_cue() {
+        let mut app = app_aimed_at_block_with(None);
+
+        let sounds = sounds_after_mining(&mut app);
+
+        assert!(sounds.is_empty(), "{sounds:?}");
+    }
+
+    #[test]
+    fn pickup_asset_exists() {
+        let path = pickup_asset_path();
+
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+
+        assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
     }
 }

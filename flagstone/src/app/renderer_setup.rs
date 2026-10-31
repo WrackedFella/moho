@@ -26,7 +26,8 @@ pub fn init_renderer_and_ui(
     window: &Arc<Window>,
     renderer: &mut dyn moho_renderer::RendererBackend,
 ) {
-    apply_saved_render_settings(&app.prefs, renderer);
+    let shadow_quality = apply_saved_render_settings(&app.prefs, renderer);
+    app.shadow_quality_applied(shadow_quality);
 
     let (vertices, normals, indices) = flagstone_game::actors::Sphere::unit_sphere_indexed(16, 16);
     let mesh_handle = register_entity_mesh(renderer, &vertices, &normals, &indices);
@@ -210,15 +211,17 @@ fn register_entity_mesh(
     )
 }
 
-/// Applies the saved render settings (quality, Bloom and Brightness) to `renderer` at start.
+/// Applies the saved render settings (quality, Bloom and Brightness) to `renderer` at start and
+/// returns the shadow quality in use, lower than saved when the GPU could not allocate it.
 pub fn apply_saved_render_settings(
     prefs: &moho_core::prefs::Prefs,
     renderer: &mut dyn moho_renderer::RendererBackend,
-) {
-    renderer.set_shadow_quality(prefs.shadow_quality() as u8);
+) -> u8 {
+    let shadow_quality = renderer.set_shadow_quality(prefs.shadow_quality() as u8);
     renderer.set_ssao_quality(prefs.ssao_quality() as u8);
     renderer.set_bloom_quality(prefs.bloom() as u8);
     renderer.set_brightness(prefs.brightness());
+    shadow_quality
 }
 
 pub fn apply_video_settings(prefs: &moho_core::prefs::Prefs, window: &Window) {
@@ -249,6 +252,8 @@ mod tests {
         meshes: Vec<RecordedMesh>,
         brightnesses: Vec<f32>,
         shadow_qualities: Vec<u8>,
+        /// Highest shadow level the fake GPU can allocate; `None` allows every level.
+        shadow_cap: Option<u8>,
         bloom_qualities: Vec<u8>,
     }
 
@@ -309,8 +314,9 @@ mod tests {
         }
         fn set_light_position(&mut self, _id: u32, _position: glam::Vec3) {}
         fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
-        fn set_shadow_quality(&mut self, quality: u8) {
+        fn set_shadow_quality(&mut self, quality: u8) -> u8 {
             self.shadow_qualities.push(quality);
+            self.shadow_cap.map_or(quality, |cap| quality.min(cap))
         }
         fn set_ssao_quality(&mut self, _quality: u8) {}
         fn set_bloom_quality(&mut self, quality: u8) {
@@ -330,6 +336,21 @@ mod tests {
         apply_saved_render_settings(&prefs, &mut renderer);
 
         assert_eq!(renderer.bloom_qualities, vec![1]);
+    }
+
+    #[test]
+    fn startup_returns_the_shadow_quality_the_gpu_could_allocate() {
+        let mut prefs = Prefs::default();
+        prefs.set_shadow_quality(4);
+        let mut renderer = ChannelRecorder {
+            shadow_cap: Some(3),
+            ..ChannelRecorder::default()
+        };
+
+        let applied = apply_saved_render_settings(&prefs, &mut renderer);
+
+        assert_eq!(renderer.shadow_qualities, vec![4]);
+        assert_eq!(applied, 3);
     }
 
     #[test]

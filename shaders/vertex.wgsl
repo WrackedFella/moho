@@ -24,22 +24,6 @@ fn vs_main(v: VertexIn, i: InstanceIn) -> VsOut {
     out.normal = normal_to_world(model3, v.normal);
     out.world_pos = vec3<f32>(world_pos.x, world_pos.y, world_pos.z);
     
-    // Transform to light space for shadow mapping (using light 0 = sun matrix)
-    let sm0 = shadow_matrices.light0_m0;
-    let sm1 = shadow_matrices.light0_m1;
-    let sm2 = shadow_matrices.light0_m2;
-    let sm3 = shadow_matrices.light0_m3;
-    let sm_r0 = vec4<f32>(sm0.x, sm1.x, sm2.x, sm3.x);
-    let sm_r1 = vec4<f32>(sm0.y, sm1.y, sm2.y, sm3.y);
-    let sm_r2 = vec4<f32>(sm0.z, sm1.z, sm2.z, sm3.z);
-    let sm_r3 = vec4<f32>(sm0.w, sm1.w, sm2.w, sm3.w);
-    out.light_space_pos = vec4<f32>(
-        dot(sm_r0, world_pos),
-        dot(sm_r1, world_pos),
-        dot(sm_r2, world_pos),
-        dot(sm_r3, world_pos)
-    );
-    
     // Pass through AO and geometry type
     out.ao = v.ao;
     out.geometry_type = v.geometry_type;

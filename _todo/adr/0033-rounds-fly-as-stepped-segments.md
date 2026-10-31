@@ -1,6 +1,6 @@
-# 0031 — A fired round is sim data stepped once a tick as a cast segment
+# 0033 — A fired round is sim data stepped once a tick as a cast segment
 
-**Status:** Proposed (accepted on merge of the FPS-F15-01 PR, #754)
+**Status:** Accepted (Justin, 2026-10-31); lands with the FPS-F15-01 PR, #754
 
 ## Context
 

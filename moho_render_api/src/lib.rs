@@ -20,7 +20,7 @@ pub use ui_paint::{
     UiFilter, UiFrame, UiFrameSource, UiImage, UiMesh, UiRect, UiSampler, UiSource, UiTextureId,
     UiTextureSet, UiVertex, UiWrap,
 };
-pub use world_geometry::{WorldMesh, WorldMeshError, WorldMeshId};
+pub use world_geometry::{WorldMesh, WorldMeshError, WorldMeshId, WorldMeshRange};
 
 #[cfg(test)]
 mod tests {

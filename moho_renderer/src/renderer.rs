@@ -564,7 +564,8 @@ impl<'a> Renderer<'a> {
         crate::render_ops::shadow_ops::update_shadow_matrices(
             &mut self.shadow,
             &self.queue,
-            cam_pos,
+            view_mat,
+            proj_mat,
             cut,
         );
 
@@ -595,6 +596,26 @@ impl<'a> Renderer<'a> {
             mesh,
             texture,
             source: VertexSource::Mesh,
+            casts_shadow: true,
+        };
+        self.queue_draw(key, instances);
+    }
+
+    /// Queue a previously-registered mesh for drawing this frame in the main pass only: it
+    /// casts no shadow.
+    pub fn enqueue_unshadowed_draw(
+        &mut self,
+        mesh: u32,
+        instances: &[moho_render_api::InstanceGpu],
+    ) {
+        if !MeshRenderer::validate_mesh(mesh, &self.mesh_table) {
+            return;
+        }
+        let key = DrawKey {
+            mesh,
+            texture: crate::textures::WHITE_TEXTURE,
+            source: VertexSource::Mesh,
+            casts_shadow: false,
         };
         self.queue_draw(key, instances);
     }
@@ -643,16 +664,11 @@ impl<'a> Renderer<'a> {
         Some(instances_gpu)
     }
 
-    pub fn set_shadow_quality(&mut self, quality: u8) {
-        let quality_enum = match quality {
-            0 => crate::shadow::PcssQuality::Off,
-            1 => crate::shadow::PcssQuality::Low,
-            2 => crate::shadow::PcssQuality::Medium,
-            3 => crate::shadow::PcssQuality::High,
-            4 => crate::shadow::PcssQuality::Ultra,
-            _ => crate::shadow::PcssQuality::Medium,
-        };
-        self.shadow.pcss_settings.quality = quality_enum;
+    /// Sets the shadow quality level (0-4) and returns the level in use, lower than `quality`
+    /// when the GPU could not allocate its shadow maps.
+    pub fn set_shadow_quality(&mut self, quality: u8) -> u8 {
+        let wanted = crate::shadow::ShadowTier::from_level(quality);
+        self.shadow.set_tier(&self.device, wanted).level()
     }
 
     /// Sets whether presented frames wait for the display refresh. Stays on when the GPU

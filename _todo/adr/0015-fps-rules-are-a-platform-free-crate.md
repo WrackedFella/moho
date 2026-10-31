@@ -1,6 +1,6 @@
 # 0015 — FPS rules are a platform-free crate; every shot resolves through one path
 
-**Status:** Accepted; amended by [0031](0031-rounds-fly-as-stepped-segments.md)
+**Status:** Accepted; amended by [0033](0033-rounds-fly-as-stepped-segments.md)
 
 ## Context
 

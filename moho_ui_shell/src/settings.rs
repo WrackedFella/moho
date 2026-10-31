@@ -1,11 +1,11 @@
-//! The engine's own player settings as ready-made menu rows: the ten values a game places on a
+//! The engine's own player settings as ready-made menu rows: the values a game places on a
 //! Settings screen, read from and written to the prefs they come from.
 
 use std::borrow::Cow;
 
 use moho_core::prefs::{Prefs, RESOLUTION_PRESETS, WindowMode};
 
-/// The ten rows' values. Volumes are on the prefs scale, 0 to 10; qualities are 0 (Off) to 4
+/// The rows' values. Volumes are on the prefs scale, 0 to 10; qualities are 0 (Off) to 4
 /// (Ultra).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EngineSettings {
@@ -17,6 +17,7 @@ pub struct EngineSettings {
     pub ui_volume: f32,
     pub shadow_quality: u32,
     pub ssao_quality: u32,
+    pub effects_quality: u32,
     pub window_mode: WindowMode,
     pub resolution: (u32, u32),
 }
@@ -33,6 +34,7 @@ pub enum EngineSetting {
     SsaoQuality,
     WindowMode,
     Resolution,
+    EffectsQuality,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -42,9 +44,62 @@ pub enum Control {
     Choice,
 }
 
+/// A game's own slider row; `key` names its value among the screen's game values.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GameSlider {
+    pub key: String,
+    pub label: String,
+    pub min: i32,
+    pub max: i32,
+    pub step: i32,
+    /// Shown after the value, after a space, when non-empty ("%").
+    pub unit: String,
+    /// The value the row starts from.
+    pub value: i32,
+}
+
+impl GameSlider {
+    /// `value` moved one step towards `direction`, then snapped.
+    pub(crate) fn stepped(&self, value: i32, direction: i8) -> i32 {
+        let (_, _, step) = self.range();
+        self.snap(f64::from(value) + f64::from(direction) * step)
+    }
+
+    /// The value `fraction` (0 to 1) of the way along the range, snapped.
+    pub(crate) fn at_fraction(&self, fraction: f32) -> i32 {
+        let (min, max, _) = self.range();
+        self.snap(min + f64::from(fraction) * (max - min))
+    }
+
+    /// `value` on the row's step grid from `min`, clamped to the range.
+    fn snap(&self, value: f64) -> i32 {
+        let (min, max, step) = self.range();
+        let snapped = min + ((value - min) / step).round() * step;
+        snapped.clamp(min, max) as i32
+    }
+
+    /// `(min, max, step)` as used. Bad row data (`max` below `min`, a step under 1) is read as
+    /// the nearest sane range rather than panicking.
+    fn range(&self) -> (f64, f64, f64) {
+        (
+            f64::from(self.min),
+            f64::from(self.max.max(self.min)),
+            f64::from(self.step.max(1)),
+        )
+    }
+
+    pub(crate) fn value_text(&self, value: i32) -> String {
+        if self.unit.is_empty() {
+            value.to_string()
+        } else {
+            format!("{value} {}", self.unit)
+        }
+    }
+}
+
 impl EngineSetting {
     /// Every row, in the order a Settings screen lists them.
-    pub const ALL: [EngineSetting; 10] = [
+    pub const ALL: [EngineSetting; 11] = [
         EngineSetting::MouseSensitivity,
         EngineSetting::MouseSmoothing,
         EngineSetting::InvertMouseY,
@@ -55,6 +110,7 @@ impl EngineSetting {
         EngineSetting::SsaoQuality,
         EngineSetting::WindowMode,
         EngineSetting::Resolution,
+        EngineSetting::EffectsQuality,
     ];
 
     pub fn label(self) -> &'static str {
@@ -69,6 +125,7 @@ impl EngineSetting {
             EngineSetting::SsaoQuality => "Ambient-occlusion quality",
             EngineSetting::WindowMode => "Window mode",
             EngineSetting::Resolution => "Resolution",
+            EngineSetting::EffectsQuality => "Effects quality",
         }
     }
 
@@ -90,6 +147,7 @@ impl EngineSetting {
             | EngineSetting::UiVolume => VOLUME,
             EngineSetting::ShadowQuality
             | EngineSetting::SsaoQuality
+            | EngineSetting::EffectsQuality
             | EngineSetting::WindowMode
             | EngineSetting::Resolution => Control::Choice,
         }
@@ -111,12 +169,13 @@ impl EngineSettings {
             ui_volume: prefs.ui_volume(),
             shadow_quality: prefs.shadow_quality(),
             ssao_quality: prefs.ssao_quality(),
+            effects_quality: prefs.effects_quality(),
             window_mode: prefs.window_mode(),
             resolution: prefs.window_resolution(),
         }
     }
 
-    /// Writes the ten rows into `prefs` and nothing else.
+    /// Writes the rows into `prefs` and nothing else.
     pub fn write_to(&self, prefs: &mut Prefs) {
         *prefs.mouse_sensitivity_mut() = self.mouse_sensitivity;
         *prefs.mouse_smoothing_mut() = self.mouse_smoothing;
@@ -126,6 +185,7 @@ impl EngineSettings {
         *prefs.ui_volume_mut() = self.ui_volume;
         prefs.set_shadow_quality(self.shadow_quality);
         prefs.set_ssao_quality(self.ssao_quality);
+        prefs.set_effects_quality(self.effects_quality);
         prefs.set_window_mode(self.window_mode);
         prefs.set_window_resolution(self.resolution.0, self.resolution.1);
     }
@@ -142,7 +202,9 @@ impl EngineSettings {
     /// How many choices `setting` has; 0 for a slider or a toggle.
     pub(crate) fn choice_count(&self, setting: EngineSetting) -> usize {
         match setting {
-            EngineSetting::ShadowQuality | EngineSetting::SsaoQuality => QUALITY_NAMES.len(),
+            EngineSetting::ShadowQuality
+            | EngineSetting::SsaoQuality
+            | EngineSetting::EffectsQuality => QUALITY_NAMES.len(),
             EngineSetting::WindowMode => WINDOW_MODES.len(),
             EngineSetting::Resolution => {
                 RESOLUTION_PRESETS.len() + usize::from(!self.resolution_is_listed())
@@ -154,7 +216,9 @@ impl EngineSettings {
     /// The label of choice `index` of `setting`, if it has one.
     fn choice_label(&self, setting: EngineSetting, index: usize) -> Option<Cow<'static, str>> {
         match setting {
-            EngineSetting::ShadowQuality | EngineSetting::SsaoQuality => {
+            EngineSetting::ShadowQuality
+            | EngineSetting::SsaoQuality
+            | EngineSetting::EffectsQuality => {
                 QUALITY_NAMES.get(index).map(|label| Cow::Borrowed(*label))
             }
             EngineSetting::WindowMode => WINDOW_MODES.get(index).map(|label| Cow::Borrowed(*label)),
@@ -185,6 +249,7 @@ impl EngineSettings {
             EngineSetting::InvertMouseY => on_off(self.invert_mouse_y).to_owned(),
             EngineSetting::ShadowQuality
             | EngineSetting::SsaoQuality
+            | EngineSetting::EffectsQuality
             | EngineSetting::WindowMode
             | EngineSetting::Resolution => self
                 .choice_label(setting, self.choice_index(setting))
@@ -242,6 +307,9 @@ impl EngineSettings {
                 (self.shadow_quality as usize).min(QUALITY_NAMES.len() - 1)
             }
             EngineSetting::SsaoQuality => (self.ssao_quality as usize).min(QUALITY_NAMES.len() - 1),
+            EngineSetting::EffectsQuality => {
+                (self.effects_quality as usize).min(QUALITY_NAMES.len() - 1)
+            }
             EngineSetting::WindowMode => usize::from(self.window_mode != WindowMode::Windowed),
             EngineSetting::Resolution => RESOLUTION_PRESETS
                 .iter()
@@ -257,6 +325,7 @@ impl EngineSettings {
         match setting {
             EngineSetting::ShadowQuality => self.shadow_quality = index as u32,
             EngineSetting::SsaoQuality => self.ssao_quality = index as u32,
+            EngineSetting::EffectsQuality => self.effects_quality = index as u32,
             EngineSetting::WindowMode => {
                 self.window_mode = match (index, self.window_mode) {
                     (0, _) => WindowMode::Windowed,
@@ -303,6 +372,7 @@ mod tests {
         *prefs.ui_volume_mut() = 3.5;
         prefs.set_shadow_quality(1);
         prefs.set_ssao_quality(2);
+        prefs.set_effects_quality(1);
         prefs.set_window_mode(WindowMode::Borderless);
         prefs.set_window_resolution(2560, 1440);
         prefs
@@ -318,6 +388,7 @@ mod tests {
             ui_volume: 10.0,
             shadow_quality: 4,
             ssao_quality: 0,
+            effects_quality: 2,
             window_mode: WindowMode::Windowed,
             resolution: (1280, 720),
         }
@@ -342,6 +413,7 @@ mod tests {
                 ui_volume: 3.5,
                 shadow_quality: 1,
                 ssao_quality: 2,
+                effects_quality: 1,
                 window_mode: WindowMode::Borderless,
                 resolution: (2560, 1440),
             }
@@ -371,6 +443,7 @@ mod tests {
         *expected.ui_volume_mut() = 10.0;
         expected.set_shadow_quality(4);
         expected.set_ssao_quality(0);
+        expected.set_effects_quality(2);
         expected.set_window_mode(WindowMode::Windowed);
         expected.set_window_resolution(1280, 720);
 
@@ -465,8 +538,46 @@ mod tests {
                 "Ambient-occlusion quality",
                 "Window mode",
                 "Resolution",
+                "Effects quality",
             ]
         );
+    }
+
+    #[test]
+    fn effects_quality_is_listed_with_the_quality_names() {
+        let settings = settings();
+
+        let choices = settings.choices(EngineSetting::EffectsQuality);
+
+        assert_eq!(EngineSetting::EffectsQuality.label(), "Effects quality");
+        assert_eq!(EngineSetting::EffectsQuality.control(), Control::Choice);
+        assert_eq!(
+            EngineSetting::ALL.last(),
+            Some(&EngineSetting::EffectsQuality)
+        );
+        assert_eq!(choices, ["Off", "Low", "Medium", "High", "Ultra"]);
+        assert_eq!(settings.value_text(EngineSetting::EffectsQuality), "Medium");
+    }
+
+    #[test]
+    fn effects_quality_is_staged_until_apply_and_dropped_by_back() {
+        let mut prefs = Prefs::default();
+        prefs.set_effects_quality(3);
+        let mut staged = EngineSettings::from_prefs(&prefs);
+
+        staged.set_choice_index(EngineSetting::EffectsQuality, 1);
+        let before_apply = prefs.effects_quality();
+        let mut discarded = prefs.clone();
+        let back = EngineSettings::from_prefs(&discarded);
+        back.write_to(&mut discarded);
+        staged.write_to(&mut prefs);
+
+        assert_eq!(staged.effects_quality, 1);
+        assert_eq!(staged.choice_index(EngineSetting::EffectsQuality), 1);
+        assert_eq!(before_apply, 3);
+        assert_eq!(discarded.effects_quality(), 3);
+        assert_eq!(prefs.effects_quality(), 1);
+        assert_eq!(EngineSettings::from_prefs(&prefs).effects_quality, 1);
     }
 
     #[test]
@@ -496,6 +607,7 @@ mod tests {
                 Control::Choice,
                 Control::Choice,
                 Control::Choice,
+                Control::Choice,
             ]
         );
     }
@@ -519,21 +631,25 @@ mod tests {
             (0u32..=20).prop_map(|n| n as f32 / 2.0),
             0u32..=4,
             0u32..=4,
+            0u32..=4,
             any_mode(),
             (1u32..=8192, 1u32..=8192),
         )
             .prop_map(
-                |(sens, smooth, invert, sfx, music, ui, shadow, ssao, mode, size)| EngineSettings {
-                    mouse_sensitivity: sens,
-                    mouse_smoothing: smooth,
-                    invert_mouse_y: invert,
-                    sound_effect_volume: sfx,
-                    music_volume: music,
-                    ui_volume: ui,
-                    shadow_quality: shadow,
-                    ssao_quality: ssao,
-                    window_mode: mode,
-                    resolution: size,
+                |(sens, smooth, invert, sfx, music, ui, shadow, ssao, effects, mode, size)| {
+                    EngineSettings {
+                        mouse_sensitivity: sens,
+                        mouse_smoothing: smooth,
+                        invert_mouse_y: invert,
+                        sound_effect_volume: sfx,
+                        music_volume: music,
+                        ui_volume: ui,
+                        shadow_quality: shadow,
+                        ssao_quality: ssao,
+                        effects_quality: effects,
+                        window_mode: mode,
+                        resolution: size,
+                    }
                 },
             )
     }

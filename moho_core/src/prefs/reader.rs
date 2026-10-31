@@ -130,6 +130,10 @@ const KNOWN_KEYS: &[(&str, &str, Setter)] = &[
     ("graphics", "ssao_quality", |p, s| {
         set(&mut p.graphics_ssao_quality, parse_u32(s))
     }),
+    ("graphics", "effects_quality", |p, s| {
+        p.set_effects_quality(parse_u32(s)?);
+        Some(())
+    }),
     ("graphics", "bloom", |p, s| {
         p.set_bloom(parse_u32(s)?);
         Some(())
@@ -247,16 +251,15 @@ impl Prefs {
         let mut sections: Vec<_> = map.iter().collect();
         sections.sort_by_key(|(name, _)| name.as_str());
         for (name, keys) in sections {
-            if name == "bindings" {
-                issues.extend(read_raw_section(name, keys, &mut prefs.bindings));
-                continue;
-            }
-            if name == "action_modes" {
-                issues.extend(read_raw_section(name, keys, &mut prefs.action_modes));
-                continue;
-            }
-            if name == "debug" {
-                issues.extend(read_raw_section(name, keys, &mut prefs.debug));
+            let raw = match name.as_str() {
+                "bindings" => Some(&mut prefs.bindings),
+                "action_modes" => Some(&mut prefs.action_modes),
+                "debug" => Some(&mut prefs.debug),
+                "game" => Some(&mut prefs.game),
+                _ => None,
+            };
+            if let Some(target) = raw {
+                issues.extend(read_raw_section(name, keys, target));
                 continue;
             }
             let table = match name.as_str() {
@@ -922,6 +925,14 @@ mod tests {
     }
 
     #[test]
+    fn game_line_without_value_is_malformed() {
+        let (prefs, issues) = Prefs::parse("[game]\nhead_bob\n");
+
+        assert_eq!(issues, vec![malformed("game", "head_bob", None)]);
+        assert_eq!(prefs.game_value("head_bob"), None);
+    }
+
+    #[test]
     fn unknown_section_is_reported_and_its_keys_default() {
         let content = base_ini_with(None).replace("[video]", "[vidoe]");
 
@@ -1073,6 +1084,7 @@ mod tests {
              \n[graphics]\n\
              shadow_quality=3\n\
              ssao_quality=3\n\
+             effects_quality=3\n\
              bloom=2\n\
              brightness=1.00\n\
              \n[video]\n\
@@ -1118,6 +1130,28 @@ mod tests {
         assert_eq!(prefs.debug_value("any_name_at_all"), Some("free text"));
         assert!(prefs.bindings().is_empty());
         assert_eq!(snapshot(&prefs), snapshot(&base_prefs()));
+    }
+
+    #[test]
+    fn game_section_is_read_raw_and_not_unknown() {
+        let content = format!(
+            "{}[game]\nhead_bob=25\nany_name_at_all=free text\nnever_seen_by_the_engine=7\n",
+            base_ini_with(None)
+        );
+
+        let (prefs, issues) = Prefs::parse(&content);
+        let (resaved, resaved_issues) = Prefs::parse(&prefs.to_ini_string());
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(prefs.game_value("head_bob"), Some("25"));
+        assert_eq!(prefs.game_value("any_name_at_all"), Some("free text"));
+        assert_eq!(prefs.game_value("never_seen_by_the_engine"), Some("7"));
+        assert_eq!(snapshot(&prefs), snapshot(&base_prefs()));
+        assert_eq!(resaved_issues, vec![]);
+        assert_eq!(resaved.game_value("head_bob"), Some("25"));
+        assert_eq!(resaved.game_value("any_name_at_all"), Some("free text"));
+        assert_eq!(resaved.game_value("never_seen_by_the_engine"), Some("7"));
+        assert_eq!(resaved, prefs);
     }
 
     fn volume_strategy() -> impl Strategy<Value = f32> {

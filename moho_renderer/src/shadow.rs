@@ -1,71 +1,49 @@
 use wgpu::util::DeviceExt;
 
-use crate::gpu_types::MAX_SHADOW_LIGHTS;
+use crate::gpu_types::ShadowGpu;
 
+mod cascades;
 mod light_matrix;
+mod tier;
 
-/// Shadow map resolution per cascade/light
-pub const SHADOW_MAP_SIZE: u32 = 4096;
+pub(crate) use tier::ShadowTier;
 
-/// Shadow distance for multi-light system
+/// Shadow-map layers: the sun's cascades first, then the moon's.
+pub(crate) const CASCADE_LAYERS: usize = 6;
+/// Sun cascades (layers `0..SUN_CASCADES`).
+pub(crate) const SUN_CASCADES: usize = 4;
+/// Moon cascades (layers `SUN_CASCADES..CASCADE_LAYERS`).
+pub(crate) const MOON_CASCADES: usize = 2;
+/// Nearest distance the split scheme treats as the start of the view, in metres.
+pub(crate) const SPLIT_NEAR: f32 = 1.0;
+/// Blend between logarithmic (1) and uniform (0) splits.
+pub(crate) const SPLIT_LAMBDA: f32 = 0.8;
+/// Texels of padding so filter taps stay inside a cascade's map.
+pub(crate) const FILTER_MARGIN_TEXELS: f32 = 16.0;
+/// Fraction of the previous slice's length that a slice starts early, to blend cascades.
+pub(crate) const CASCADE_BLEND: f32 = 0.1;
+/// How far toward the light, in metres, casters outside a cascade's sphere still land in its map.
+pub(crate) const CASTER_REACH: f32 = 500.0;
+
+/// Furthest view depth, in metres, that casts or receives a cascaded shadow.
 pub const SHADOW_DISTANCE: f32 = 1000.0;
 
-#[allow(dead_code)]
-const CSM_DEBUG_MODE: bool = false;
-
 const CSM_VERBOSE_LOGGING: bool = false;
-
-// ── PCSS default tuning ────────────────────────────────────────────────
-const DEFAULT_PCSS_LIGHT_SIZE: f32 = 0.03;
 
 // ── Shadow geometry ────────────────────────────────────────────────────
 /// Depth bias constant factor applied to shadow map.
 const SHADOW_DEPTH_BIAS_CONSTANT: i32 = 4;
-/// Depth bias slope scale applied to shadow map.
-const SHADOW_DEPTH_BIAS_SLOPE: f32 = 3.0;
-/// Multiplier on cascade distance to get a generous frustum radius.
-const CASCADE_RADIUS_MULTIPLIER: f32 = 1.5;
+/// Depth bias slope scale applied to shadow map. The normal offset in the main pass carries the
+/// rest of acne prevention; no clamp, since one clamp cannot suit cascades whose texels differ
+/// 18-fold.
+const SHADOW_DEPTH_BIAS_SLOPE: f32 = 1.0;
 /// Minimum light intensity required to cast shadows.
 const MIN_SHADOW_LIGHT_INTENSITY: f32 = 0.01;
-
-/// PCSS (Percentage Closer Soft Shadows) quality levels
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PcssQuality {
-    /// Disabled: Use fixed 3x3 PCF (best performance)
-    Off = 0,
-    /// Low: 8 blocker samples + 16 PCF samples
-    Low = 1,
-    /// Medium: 12 blocker samples + 24 PCF samples
-    Medium = 2,
-    /// High: 16 blocker samples + 32 PCF samples
-    High = 3,
-    /// Ultra: 24 blocker samples + 48 PCF samples
-    Ultra = 4,
-}
-
-/// PCSS settings for configuring shadow softness
-#[derive(Debug, Clone, Copy)]
-pub struct PcssSettings {
-    /// Quality level
-    pub quality: PcssQuality,
-    /// Angular size of light source (affects penumbra width)
-    /// Typical range: 0.01-0.1 (0.03 is a good default for sun)
-    pub light_size: f32,
-}
-
-impl Default for PcssSettings {
-    fn default() -> Self {
-        Self {
-            quality: PcssQuality::Off,
-            light_size: DEFAULT_PCSS_LIGHT_SIZE,
-        }
-    }
-}
 
 /// Active shadow-casting light
 #[derive(Debug, Clone)]
 pub struct ActiveShadowLight {
-    pub light_index: u32, // 0-3 for shader array index
+    pub light_index: u32, // 0 = sun, 1 = moon
     pub intensity: f32,
 }
 
@@ -73,21 +51,26 @@ pub struct ActiveShadowLight {
 #[derive(Debug)]
 pub struct ShadowSystem {
     pub shadow_pipeline: wgpu::RenderPipeline,
-    pub shadow_matrix_buffer: wgpu::Buffer,
-    #[allow(dead_code)]
-    pub shadow_map_view: wgpu::TextureView,
-    #[allow(dead_code)]
-    pub shadow_pass_bind_group: wgpu::BindGroup,
     pub csm_matrix_buffer: wgpu::Buffer,
+    /// One view per shadow-map layer, to render into it.
     pub csm_cascade_views: Vec<wgpu::TextureView>,
     pub csm_pass_bind_group: wgpu::BindGroup,
     pub csm_shadow_bind_group: wgpu::BindGroup,
     pub current_lighting: crate::gpu_types::LightingGpu,
     /// Active shadow-casting lights for current frame
     pub active_lights: Vec<ActiveShadowLight>,
-    /// PCSS (Percentage Closer Soft Shadows) settings
-    pub pcss_settings: PcssSettings,
-    csm_logged_once: std::cell::Cell<bool>,
+    csm_texture: wgpu::Texture,
+    tier: ShadowTier,
+    /// Allocated texels per side: the tier's size within `device_limit`.
+    map_size: u32,
+    device_limit: u32,
+    /// Kept to rebuild `csm_shadow_bind_group` when the array is recreated.
+    shadow_bind_group_layout: wgpu::BindGroupLayout,
+    shadow_sampler: wgpu::Sampler,
+    csm_logged_once: bool,
+    /// The block uploaded last frame, kept when a frame's projection has no cascades.
+    last_block: ShadowGpu,
+    projection_warned: bool,
 }
 
 impl ShadowSystem {
@@ -96,71 +79,76 @@ impl ShadowSystem {
         _camera_bind_group_layout: &wgpu::BindGroupLayout,
         shadow_bind_group_layout: &wgpu::BindGroupLayout,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let (shadow_map_view, csm_cascade_views, csm_array_view) =
-            Self::create_shadow_textures(device);
-        let (shadow_matrix_buffer, csm_matrix_buffer) = Self::create_uniform_buffers(device);
+        let device_limit = device.limits().max_texture_dimension_2d;
+        let (tier, map_size, csm_texture) =
+            Self::allocate_array(device, ShadowTier::High, device_limit);
+        let (csm_cascade_views, csm_array_view) = Self::create_shadow_views(&csm_texture);
+        let csm_matrix_buffer = Self::create_uniform_buffer(device);
         let shadow_sampler = Self::create_depth_sampler(device);
-        let (shadow_pass_bgl, csm_pass_bgl) = Self::create_bind_group_layouts(device);
-        let (shadow_pass_bind_group, csm_pass_bind_group, csm_shadow_bind_group) =
-            Self::create_bind_groups(
-                device,
-                &shadow_pass_bgl,
-                &csm_pass_bgl,
-                shadow_bind_group_layout,
-                &shadow_matrix_buffer,
-                &csm_matrix_buffer,
-                &csm_array_view,
-                &shadow_sampler,
-            );
+        let csm_pass_bgl = crate::pipeline::layouts::create_csm_pass_bind_group_layout(device)?;
+        let (csm_pass_bind_group, csm_shadow_bind_group) = Self::create_bind_groups(
+            device,
+            &csm_pass_bgl,
+            shadow_bind_group_layout,
+            &csm_matrix_buffer,
+            &csm_array_view,
+            &shadow_sampler,
+        );
         let shadow_pipeline = Self::create_render_pipeline(device, &csm_pass_bgl)?;
 
         Ok(Self {
             shadow_pipeline,
-            shadow_matrix_buffer,
-            shadow_map_view,
-            shadow_pass_bind_group,
             csm_matrix_buffer,
             csm_cascade_views,
             csm_pass_bind_group,
             csm_shadow_bind_group,
             current_lighting: crate::gpu_types::LightingGpu::default(),
             active_lights: Vec::new(),
-            pcss_settings: PcssSettings::default(),
-            csm_logged_once: std::cell::Cell::new(false),
+            csm_texture,
+            tier,
+            map_size,
+            device_limit,
+            shadow_bind_group_layout: shadow_bind_group_layout.clone(),
+            shadow_sampler,
+            csm_logged_once: false,
+            last_block: ShadowGpu::default(),
+            projection_warned: false,
         })
     }
 
-    /// Stage 1: Allocate the legacy single-cascade texture and the multi-light shadow array.
-    /// Returns the legacy view, per-light views (for rendering into each layer), and the
-    /// array view (for sampling all layers in the fragment shader).
-    fn create_shadow_textures(
+    /// Stage 1: Allocate the cascade array for `wanted`, or for the highest tier below it that the
+    /// device has memory for. Returns the tier allocated, its map size and the array.
+    fn allocate_array(
         device: &wgpu::Device,
-    ) -> (wgpu::TextureView, Vec<wgpu::TextureView>, wgpu::TextureView) {
-        // Legacy single shadow map — kept for API compatibility
-        let shadow_map_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("shadow-map-texture"),
-            size: wgpu::Extent3d {
-                width: SHADOW_MAP_SIZE,
-                height: SHADOW_MAP_SIZE,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let shadow_map_view =
-            shadow_map_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        wanted: ShadowTier,
+        device_limit: u32,
+    ) -> (ShadowTier, u32, wgpu::Texture) {
+        let (tier, (map_size, texture)) = tier::first_allocated(wanted, |tier| {
+            let map_size = tier.map_size(device_limit);
+            Self::try_create_array(device, map_size).map(|texture| (map_size, texture))
+        })
+        .expect("the device cannot allocate even a 1x1 shadow array");
+        if tier != wanted {
+            tracing::warn!(
+                wanted = wanted.level(),
+                applied = tier.level(),
+                "shadow quality lowered: the GPU could not allocate the shadow maps"
+            );
+        }
+        (tier, map_size, texture)
+    }
 
-        // Multi-light shadow map array (one layer per light)
-        let csm_texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("multi-light-shadow-array"),
+    /// The cascade array, one layer per cascade, or `None` when the device reports it is out of
+    /// memory. Without the error scope that report goes to wgpu's uncaptured-error handler,
+    /// which panics.
+    fn try_create_array(device: &wgpu::Device, map_size: u32) -> Option<wgpu::Texture> {
+        let scope = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("cascade-shadow-array"),
             size: wgpu::Extent3d {
-                width: SHADOW_MAP_SIZE,
-                height: SHADOW_MAP_SIZE,
-                depth_or_array_layers: MAX_SHADOW_LIGHTS as u32,
+                width: map_size,
+                height: map_size,
+                depth_or_array_layers: CASCADE_LAYERS as u32,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -169,20 +157,30 @@ impl ShadowSystem {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
+        if let Some(error) = crate::block_on::block_on(scope.pop()) {
+            tracing::warn!(map_size, %error, "shadow array allocation failed");
+            return None;
+        }
 
         if CSM_VERBOSE_LOGGING {
             tracing::info!(
-                size = SHADOW_MAP_SIZE,
-                lights = MAX_SHADOW_LIGHTS,
-                "Created multi-light shadow array"
+                size = map_size,
+                layers = CASCADE_LAYERS,
+                "Created cascade shadow array"
             );
         }
+        Some(texture)
+    }
 
-        // One D2 view per layer so each light can be rendered into its own slice
-        let csm_cascade_views: Vec<wgpu::TextureView> = (0..MAX_SHADOW_LIGHTS as u32)
+    /// The per-layer views (for rendering into each layer) and the array view (for sampling all
+    /// layers in the fragment shader) of `csm_texture`.
+    fn create_shadow_views(
+        csm_texture: &wgpu::Texture,
+    ) -> (Vec<wgpu::TextureView>, wgpu::TextureView) {
+        let csm_cascade_views: Vec<wgpu::TextureView> = (0..CASCADE_LAYERS as u32)
             .map(|i| {
                 csm_texture.create_view(&wgpu::TextureViewDescriptor {
-                    label: Some(&format!("shadow-light-{i}-view")),
+                    label: Some(&format!("shadow-layer-{i}-view")),
                     format: Some(wgpu::TextureFormat::Depth32Float),
                     dimension: Some(wgpu::TextureViewDimension::D2),
                     aspect: wgpu::TextureAspect::DepthOnly,
@@ -198,60 +196,38 @@ impl ShadowSystem {
             })
             .collect();
 
-        if CSM_VERBOSE_LOGGING {
-            tracing::info!(
-                count = csm_cascade_views.len(),
-                "Created light views for shadow rendering"
-            );
-        }
-
         // Full-array view consumed by the fragment shader sampler
         let csm_array_view = csm_texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("multi-light-shadow-array-view"),
+            label: Some("cascade-shadow-array-view"),
             format: Some(wgpu::TextureFormat::Depth32Float),
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             aspect: wgpu::TextureAspect::All,
             base_mip_level: 0,
             mip_level_count: None,
             base_array_layer: 0,
-            array_layer_count: Some(MAX_SHADOW_LIGHTS as u32),
+            array_layer_count: Some(CASCADE_LAYERS as u32),
             usage: Some(wgpu::TextureUsages::TEXTURE_BINDING),
         });
 
-        if CSM_VERBOSE_LOGGING {
-            tracing::info!(
-                count = MAX_SHADOW_LIGHTS,
-                "Created multi-light shadow array view"
-            );
-        }
-
-        (shadow_map_view, csm_cascade_views, csm_array_view)
+        (csm_cascade_views, csm_array_view)
     }
 
-    /// Stage 2: Allocate and zero-initialize the shadow matrix uniform buffers.
-    fn create_uniform_buffers(device: &wgpu::Device) -> (wgpu::Buffer, wgpu::Buffer) {
-        use crate::gpu_types::{MultiLightShadowGpu, ShadowMatrixGpu};
-
-        let shadow_matrix_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("shadow-matrix-buffer"),
-            contents: bytemuck::bytes_of(&ShadowMatrixGpu::default()),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let csm_matrix_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("multi-light-shadow-buffer"),
-            contents: bytemuck::bytes_of(&MultiLightShadowGpu::default()),
+    /// Stage 2: Allocate the cascade uniform buffer, zero-initialized.
+    fn create_uniform_buffer(device: &wgpu::Device) -> wgpu::Buffer {
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("cascade-shadow-buffer"),
+            contents: bytemuck::bytes_of(&ShadowGpu::default()),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
         if CSM_VERBOSE_LOGGING {
             tracing::info!(
-                bytes = std::mem::size_of::<MultiLightShadowGpu>(),
-                "Created multi-light shadow buffer"
+                bytes = std::mem::size_of::<ShadowGpu>(),
+                "Created cascade shadow buffer"
             );
         }
 
-        (shadow_matrix_buffer, csm_matrix_buffer)
+        buffer
     }
 
     /// Stage 3: Create the comparison sampler used for PCF shadow lookups.
@@ -269,54 +245,16 @@ impl ShadowSystem {
         })
     }
 
-    /// Stage 4: Define the bind group layouts for the shadow render pass and CSM pass.
-    /// Both layouts expose a single vertex-visible uniform buffer at binding 0.
-    fn create_bind_group_layouts(
-        device: &wgpu::Device,
-    ) -> (wgpu::BindGroupLayout, wgpu::BindGroupLayout) {
-        let single_uniform_entry = |label| {
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some(label),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            })
-        };
-
-        let shadow_pass_bgl = single_uniform_entry("shadow-pass-bgl");
-        let csm_pass_bgl = single_uniform_entry("csm-pass-bgl");
-        (shadow_pass_bgl, csm_pass_bgl)
-    }
-
-    /// Stage 5: Instantiate all three bind groups using the layouts and resources from
-    /// the previous stages.
-    #[allow(clippy::too_many_arguments)]
+    /// Stage 4: Instantiate the pass and sampling bind groups using the layouts and resources
+    /// from the previous stages.
     fn create_bind_groups(
         device: &wgpu::Device,
-        shadow_pass_bgl: &wgpu::BindGroupLayout,
         csm_pass_bgl: &wgpu::BindGroupLayout,
         shadow_bind_group_layout: &wgpu::BindGroupLayout,
-        shadow_matrix_buffer: &wgpu::Buffer,
         csm_matrix_buffer: &wgpu::Buffer,
         csm_array_view: &wgpu::TextureView,
         shadow_sampler: &wgpu::Sampler,
-    ) -> (wgpu::BindGroup, wgpu::BindGroup, wgpu::BindGroup) {
-        let shadow_pass_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("shadow-pass-bind-group"),
-            layout: shadow_pass_bgl,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: shadow_matrix_buffer.as_entire_binding(),
-            }],
-        });
-
+    ) -> (wgpu::BindGroup, wgpu::BindGroup) {
         let csm_pass_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("csm-pass-bind-group"),
             layout: csm_pass_bgl,
@@ -326,8 +264,25 @@ impl ShadowSystem {
             }],
         });
 
-        // Sampling bind group used by the main fragment shader to read shadow maps
-        let csm_shadow_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let csm_shadow_bind_group = Self::create_sampling_bind_group(
+            device,
+            shadow_bind_group_layout,
+            csm_matrix_buffer,
+            csm_array_view,
+            shadow_sampler,
+        );
+
+        (csm_pass_bind_group, csm_shadow_bind_group)
+    }
+
+    fn create_sampling_bind_group(
+        device: &wgpu::Device,
+        shadow_bind_group_layout: &wgpu::BindGroupLayout,
+        csm_matrix_buffer: &wgpu::Buffer,
+        csm_array_view: &wgpu::TextureView,
+        shadow_sampler: &wgpu::Sampler,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("csm-shadow-bind-group"),
             layout: shadow_bind_group_layout,
             entries: &[
@@ -344,19 +299,35 @@ impl ShadowSystem {
                     resource: wgpu::BindingResource::Sampler(shadow_sampler),
                 },
             ],
-        });
+        })
+    }
 
-        if CSM_VERBOSE_LOGGING {
-            tracing::info!(
-                "Created CSM bind groups: pass (rendering) + shadow (sampling cascade 0)"
+    /// Switch to `wanted`, or to the highest tier below it whose cascade array the device can
+    /// allocate, and return the tier in use. The cascade array, its views and the sampling bind
+    /// group are recreated only when the map size within the device limit changes. Call between
+    /// frames: the old array must not be in a recorded pass.
+    pub fn set_tier(&mut self, device: &wgpu::Device, wanted: ShadowTier) -> ShadowTier {
+        let map_size = wanted.map_size(self.device_limit);
+        self.tier = wanted;
+        if tier::needs_resize(self.map_size, map_size) {
+            // Freed first, so the old and the new array never need memory at once.
+            self.csm_texture.destroy();
+            let (tier, map_size, texture) = Self::allocate_array(device, wanted, self.device_limit);
+            let (views, array_view) = Self::create_shadow_views(&texture);
+            self.csm_shadow_bind_group = Self::create_sampling_bind_group(
+                device,
+                &self.shadow_bind_group_layout,
+                &self.csm_matrix_buffer,
+                &array_view,
+                &self.shadow_sampler,
             );
+            self.csm_cascade_views = views;
+            self.csm_texture = texture;
+            self.map_size = map_size;
+            self.tier = tier;
         }
-
-        (
-            shadow_pass_bind_group,
-            csm_pass_bind_group,
-            csm_shadow_bind_group,
-        )
+        self.last_block = light_matrix::retier(self.last_block, self.tier);
+        self.tier
     }
 
     /// Stage 6: Compile the shadow shader and assemble the depth-only render pipeline; its
@@ -445,44 +416,110 @@ impl ShadowSystem {
         Ok(pipeline)
     }
 
-    /// Calculate multi-light shadow matrices for sun and moon
-    /// Returns updated active_lights list and GPU data for shader
-    pub fn calculate_multi_light_matrices(
+    /// The shadow-map layers to render this frame, from `active_lights`.
+    pub fn layers_to_render(&self) -> Vec<u32> {
+        light_matrix::shadow_passes(&self.active_lights, self.tier)
+    }
+
+    /// Fit the sun's and moon's cascades to the camera and return the block to upload.
+    /// Also refreshes `active_lights`. A projection with no cascades (not a perspective one)
+    /// keeps last frame's block.
+    pub fn update_cascades(
         &mut self,
         sun_dir: glam::Vec3,
         moon_dir: glam::Vec3,
-        cam_pos: glam::Vec3,
-    ) -> crate::gpu_types::MultiLightShadowGpu {
-        // Use intensity values from current_lighting (set by update_lighting)
-        // These are calculated by the frame processor based on time of day
+        view: glam::Mat4,
+        proj: glam::Mat4,
+    ) -> ShadowGpu {
+        // Intensities come from current_lighting (set by update_lighting), which the frame
+        // processor derives from the time of day.
         let sun_intensity = self.current_lighting.sun_direction[3];
         let moon_intensity = self.current_lighting.moon_direction[3];
-
-        let sun_matrix = light_matrix::light_view_projection(sun_dir, cam_pos);
-        let moon_matrix = light_matrix::light_view_projection(moon_dir, cam_pos);
         self.active_lights = light_matrix::active_shadow_lights(sun_intensity, moon_intensity);
 
-        if !self.csm_logged_once.get() {
+        let Some(frustum) = cascades::CameraFrustum::from_projection(proj) else {
+            if !self.projection_warned {
+                tracing::warn!(
+                    "camera projection is not a perspective one; shadows keep last frame's cascades"
+                );
+                self.projection_warned = true;
+            }
+            return self.last_block;
+        };
+
+        let camera_world = view.inverse();
+        let sun_splits = cascades::practical_splits::<SUN_CASCADES>(frustum.near, frustum.far);
+        let moon_splits = cascades::practical_splits::<MOON_CASCADES>(frustum.near, frustum.far);
+        let sun =
+            cascades::fit_cascades(sun_dir, frustum, camera_world, &sun_splits, self.map_size);
+        let moon =
+            cascades::fit_cascades(moon_dir, frustum, camera_world, &moon_splits, self.map_size);
+        let splits = (sun_splits, moon_splits);
+        let camera_forward = cascades::camera_forward(camera_world);
+        // An inactive light reads as zero, so the shader never samples cascades that were not drawn.
+        let active_intensity = |slot: u32| {
+            self.active_lights
+                .iter()
+                .find(|light| light.light_index == slot)
+                .map_or(0.0, |light| light.intensity)
+        };
+
+        let block = light_matrix::shadow_gpu(
+            &sun,
+            &moon,
+            splits,
+            camera_forward,
+            (active_intensity(0), active_intensity(1)),
+            self.tier,
+        );
+
+        if !self.csm_logged_once {
             tracing::info!(
                 sun_intensity,
                 moon_intensity,
                 active_lights = self.active_lights.len(),
-                "Multi-light shadows"
+                "Cascaded shadows"
             );
+            self.csm_logged_once = true;
         }
 
-        let gpu_data = light_matrix::multi_light_gpu(
-            sun_matrix,
-            moon_matrix,
-            (sun_intensity, moon_intensity),
-            &self.pcss_settings,
-        );
+        self.last_block = block;
+        block
+    }
+}
 
-        if !self.csm_logged_once.get() {
-            tracing::info!("Multi-light shadow matrices calculated successfully");
-            self.csm_logged_once.set(true);
-        }
+#[cfg(test)]
+mod tests {
+    /// The value `fragment.wgsl` declares for `NORMAL_OFFSET_TEXELS`.
+    const NORMAL_OFFSET_TEXELS: f32 = 2.0;
 
-        gpu_data
+    #[test]
+    fn main_shader_declares_the_normal_offset_the_card_chose() {
+        let source = crate::pipeline::main_shader_source();
+
+        let declaration = format!("const NORMAL_OFFSET_TEXELS: f32 = {NORMAL_OFFSET_TEXELS:?};");
+
+        assert!(source.contains(&declaration), "missing `{declaration}`");
+    }
+
+    #[test]
+    fn main_shader_filter_clamp_is_the_widest_tier_radius() {
+        let source = crate::pipeline::main_shader_source();
+        let widest = super::ShadowTier::Ultra.pcf_radius() as f32;
+
+        let declaration = format!("const SHADOW_MAX_FILTER_RADIUS: f32 = {widest:?};");
+
+        assert!(source.contains(&declaration), "missing `{declaration}`");
+    }
+
+    #[test]
+    fn main_shader_cascade_counts_match_the_rust_constants() {
+        let source = crate::pipeline::main_shader_source();
+
+        let sun = format!("const SUN_CASCADES: u32 = {}u;", super::SUN_CASCADES);
+        let moon = format!("const MOON_CASCADES: u32 = {}u;", super::MOON_CASCADES);
+
+        assert!(source.contains(&sun), "missing `{sun}`");
+        assert!(source.contains(&moon), "missing `{moon}`");
     }
 }

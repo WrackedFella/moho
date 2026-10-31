@@ -1,6 +1,6 @@
 # Frame loop
 
-**Source:** `moho_app/src/` (`runner.rs`, `lib.rs`, `window_keys.rs`, `loop_requests.rs`, `headless.rs`, `fixed_step.rs`, `clock.rs`), `flagstone/src/app/game.rs`
+**Source:** `flagstone_game/src/pickups.rs`, `moho_app/src/` (`runner.rs`, `lib.rs`, `window_keys.rs`, `loop_requests.rs`, `headless.rs`, `fixed_step.rs`, `clock.rs`), `flagstone/src/app/game.rs`
 (`impl moho_app::Game for App`), `flagstone/src/app/event_loop/`.
 **Related:** [ADR-0009](../../_todo/adr/0009-simulation-time-is-one-fixed-tick.md) (fixed tick).
 
@@ -54,7 +54,7 @@ sequenceDiagram
     participant Bus as EventBus
     participant Sim as Simulation + Physics
     participant LS as LightSystem
-    T->>T: clock time scale = 1 if Playing, else 0
+    T->>T: clock time scale = 1 if Playing, else 0<br/>autosave schedule and pawn pickup feed tick (Playing only)
     T->>Bus: SystemEvent::FrameStart
     T->>Sim: apply command, update_game_state (Playing only)
     Note over Sim: KCC: command → physics character (look + move) → camera;<br/>free-fly: controller input → camera;<br/>step rigid bodies
@@ -84,8 +84,8 @@ The tick drains one channel per event family, in this order:
 |---|---|---|
 | 1 | `process_ui_events` | load/new world, exit and main-menu requests (their auto-save runs in `frame`), resume, menus |
 | 2 | `process_graphics_events` | time of day, debug view |
-| 3 | `process_world_events` | every world event → `LightSystem::handle_event`; each `ChunkMeshDirty` chunk → remesh once (draw + collider) |
-| 4 | `process_input_events` | wheel zoom, mine action |
+| 3 | `process_world_events` | every world event → `LightSystem::handle_event`; each `ChunkMeshDirty` chunk → remesh once (draw + collider); `BlockPlaced`, `BlockRemoved` and `BlocksBatchModified` mark the autosave schedule edited |
+| 4 | `process_input_events` | wheel zoom, mine action (a mined resource is deposited in the pawn, which lists it in its `PickupFeed`; the handler then publishes `AudioEvent::PlaySound` for `flagstone/assets/pickup.wav`) |
 | 5 | `process_debug_events` | spawn, noclip; point lights and shadow/SSAO quality are queued as `RenderRequest`s |
 
 Audio events are drained in `Game::frame` and forwarded to `AudioSystem`, since the runner
@@ -109,7 +109,8 @@ The renderer is reachable only through the contexts, so ticks queue renderer cha
    camera (`Listener::from_view`); then drain audio events;
 3. if the UI asked to quit: auto-save, `request_exit`, stop;
 4. if the UI asked for the main menu (Exit to main menu): auto-save, then `show_menu`, and go on;
-5. `update_hud_data`, `update_cut_caps` (rebuild [cut-face caps](rendering.md#3-cut-face-caps)), then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
+5. if the autosave schedule is due: auto-save ([periodic autosave](../reference/save-format.md#autosave));
+6. `update_hud_data` (includes the pawn's pickups as `(resource_id, amount, life)`, which the first-person HUD draws as fading popups; `PickupFeed` in `flagstone_game/src/pickups.rs` keeps up to 8 for 2 s of ticks each), `update_cut_caps` (rebuild [cut-face caps](rendering.md#3-cut-face-caps)), then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
    with actors, the sphere and cube mesh handles and the frame camera (below).
 
 A `FrameError` skips the frame with a `warn`. Pass order inside the renderer:

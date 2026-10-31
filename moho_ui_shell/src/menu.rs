@@ -2,10 +2,13 @@
 //! mouse and keyboard. Screens stack, each keeping its own focus. The stack never changes itself:
 //! a choice becomes a [`MenuEvent`] the game answers by pushing or popping.
 
-use moho_input::bindings::Input;
+use std::cell::Cell;
+use std::collections::BTreeMap;
+
+use moho_input::bindings::{Binding, Input};
 use moho_input::key::{Key, MouseButton};
 
-use crate::settings::{Control, EngineSetting, EngineSettings};
+use crate::settings::{Control, EngineSetting, EngineSettings, GameSlider};
 use crate::text::{Anchor, ScreenText};
 
 /// One screen: an optional title, a column of items and the action Escape chooses.
@@ -28,6 +31,22 @@ pub enum MenuItem<A> {
     Setting(EngineSetting),
     /// Hands the game the staged settings values.
     Apply,
+    /// A rebindable action: its label, two binding slots and the game's refusal note, if any.
+    Control {
+        label: String,
+        action: A,
+        slots: [Option<Binding>; 2],
+        note: Option<String>,
+    },
+    /// A game's own slider row, staged and applied beside the engine's rows.
+    GameSlider(GameSlider),
+}
+
+/// A column of a [`MenuItem::Control`] row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Slot {
+    Primary,
+    Secondary,
 }
 
 /// What the player did to the open screens, for the game to answer.
@@ -37,6 +56,12 @@ pub enum MenuEvent<A> {
     Chosen(A),
     /// The player applied the settings staged on the top screen.
     SettingsApplied(EngineSettings),
+    /// The player applied the game's own slider rows: every row's value by its key.
+    GameSettingsApplied(BTreeMap<String, i32>),
+    /// The player pressed `input` while capturing `slot` of `action`.
+    Captured { action: A, slot: Slot, input: Input },
+    /// The player cleared `slot` of `action`.
+    Cleared { action: A, slot: Slot },
 }
 
 /// An axis-aligned rectangle in logical points from the window's top left.
@@ -58,6 +83,19 @@ const COLOR: [u8; 4] = [220, 220, 220, 255];
 /// Font size of a settings row's label and value, which share a 240-point band.
 const SETTING_SIZE: f32 = 18.0;
 
+/// Height of a [`MenuItem::Control`] row.
+const CONTROL_HEIGHT: f32 = 32.0;
+/// Width of a [`MenuItem::Control`] row: a label column, then two equal slot cells.
+const CONTROL_WIDTH: f32 = 640.0;
+const LABEL_WIDTH: f32 = 240.0;
+const CELL_WIDTH: f32 = (CONTROL_WIDTH - LABEL_WIDTH) / 2.0;
+/// Free space kept above and below the rows of a column that scrolls; the title sits in the top.
+const BAND: f32 = ROW_PITCH;
+const WARNING_COLOR: [u8; 4] = [255, 120, 80, 255];
+const PROTECTED_NOTE: &str = "That input can't be bound";
+/// Window size assumed until a screen has been laid out once.
+const DEFAULT_SIZE: [f32; 2] = [1280.0, 720.0];
+
 /// A screen, the row that has the focus on it and the settings values staged on it.
 #[derive(Debug)]
 struct Open<A> {
@@ -65,33 +103,246 @@ struct Open<A> {
     focus: usize,
     /// A copy of the screen's `settings` that the rows edit until Apply.
     staged: Option<EngineSettings>,
+    /// The game rows the player changed, by key; a row without an entry shows its own `value`.
+    game_staged: BTreeMap<String, i32>,
+    /// The slot of a `Control` row the focus is on.
+    slot: Slot,
+    /// Whether the next press is a binding for the focused slot.
+    capturing: bool,
+    /// The shell's refusal of a captured input, shown on the focused row.
+    shell_note: Option<String>,
+    /// Whether moving the focus or starting a capture has hidden the game's notes.
+    notes_hidden: bool,
+    /// The first visible row. Cells so that laying out, which sees the window size, can settle it.
+    scroll: Cell<usize>,
+    /// Set by a focus change; the next layout scrolls the focused row into view.
+    reveal: Cell<bool>,
+    /// The window size of the last layout, for the wheel, which knows none.
+    size: Cell<[f32; 2]>,
+    /// The fraction of a row the wheel has scrolled and not yet shown.
+    remainder: f32,
+}
+
+impl<A> Open<A> {
+    fn new(screen: MenuScreen<A>) -> Self {
+        let staged = screen.settings;
+        Self {
+            screen,
+            focus: 0,
+            staged,
+            game_staged: BTreeMap::new(),
+            slot: Slot::Primary,
+            capturing: false,
+            shell_note: None,
+            notes_hidden: false,
+            scroll: Cell::new(0),
+            reveal: Cell::new(false),
+            size: Cell::new(DEFAULT_SIZE),
+            remainder: 0.0,
+        }
+    }
+
+    /// Moves the focus, hiding the notes when it moved.
+    fn set_focus(&mut self, row: usize, slot: Slot) {
+        if (row, slot) != (self.focus, self.slot) {
+            self.focus = row;
+            self.slot = slot;
+            self.shell_note = None;
+            self.notes_hidden = true;
+            self.reveal.set(true);
+        }
+    }
+
+    fn focused_is_control(&self) -> bool {
+        matches!(
+            self.screen.items.get(self.focus),
+            Some(MenuItem::Control { .. })
+        )
+    }
+
+    /// Starts capturing the focused slot when the focus is on a `Control` row.
+    fn start_capture(&mut self) {
+        if self.focused_is_control() {
+            self.capturing = true;
+            self.shell_note = None;
+            self.notes_hidden = true;
+        }
+    }
+
+    /// Settles the scroll for a window `size` points across: clamps it so no row is wasted past
+    /// the end, then brings the focused row into view if the focus moved.
+    fn settle(&self, size: [f32; 2]) {
+        self.size.set(size);
+        let items = &self.screen.items;
+        let viewport = viewport(size);
+        let mut scroll = self.scroll.get().min(max_scroll(items, viewport));
+        if self.reveal.take() {
+            if self.focus < scroll {
+                scroll = self.focus;
+            } else {
+                while scroll < self.focus
+                    && scroll + fitting_from(items, scroll, viewport) <= self.focus
+                {
+                    scroll += 1;
+                }
+            }
+        }
+        self.scroll.set(scroll);
+    }
+
+    /// The row rectangles at the settled scroll, rows above the view included.
+    fn rects(&self, size: [f32; 2]) -> Vec<Rect> {
+        self.settle(size);
+        rects(&self.screen.items, self.scroll.get(), size)
+    }
+
+    /// The rows fully in view, as a range of row indices.
+    fn visible(&self, size: [f32; 2]) -> std::ops::Range<usize> {
+        let scroll = self.scroll.get();
+        scroll..scroll + fitting_from(&self.screen.items, scroll, viewport(size))
+    }
+
+    /// The visible row strictly under `point`, with its rectangle.
+    fn row_at(&self, point: [f32; 2], size: [f32; 2]) -> Option<(usize, Rect)> {
+        let rects = self.rects(size);
+        self.visible(size)
+            .map(|row| (row, rects[row]))
+            .find(|(_, r)| {
+                point[0] > r.min[0]
+                    && point[0] < r.max[0]
+                    && point[1] > r.min[1]
+                    && point[1] < r.max[1]
+            })
+    }
+
+    /// The slot of a `Control` row `rect` whose cell holds `x`; `None` over its label or on
+    /// another kind of row.
+    fn slot_at(&self, row: usize, rect: Rect, x: f32) -> Option<Slot> {
+        if !matches!(self.screen.items.get(row), Some(MenuItem::Control { .. })) {
+            return None;
+        }
+        let across = x - rect.min[0];
+        if across < LABEL_WIDTH {
+            None
+        } else if across < LABEL_WIDTH + CELL_WIDTH {
+            Some(Slot::Primary)
+        } else {
+            Some(Slot::Secondary)
+        }
+    }
+
+    /// Left and Right: pick a `Control` row's slot, or step a settings row.
+    fn step(&mut self, direction: i8) {
+        if self.focused_is_control() {
+            let slot = if direction < 0 {
+                Slot::Primary
+            } else {
+                Slot::Secondary
+            };
+            self.set_focus(self.focus, slot);
+        } else {
+            self.nudge(self.focus, direction);
+        }
+    }
+}
+
+impl<A: Clone> Open<A> {
+    /// What a press does while capturing: Escape cancels, a protected input is refused with a
+    /// note and capture goes on, anything else is the binding and ends capture.
+    fn capture(&mut self, input: Input) -> Option<MenuEvent<A>> {
+        if input == Input::Key(Key::Escape) {
+            self.capturing = false;
+            return None;
+        }
+        if Binding::from(input).is_protected() {
+            self.shell_note = Some(PROTECTED_NOTE.to_owned());
+            return None;
+        }
+        self.capturing = false;
+        match self.screen.items.get(self.focus)? {
+            MenuItem::Control { action, .. } => Some(MenuEvent::Captured {
+                action: action.clone(),
+                slot: self.slot,
+                input,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Clears the focused slot, if the focus is on a `Control` row.
+    fn clear(&self) -> Option<MenuEvent<A>> {
+        match self.screen.items.get(self.focus)? {
+            MenuItem::Control { action, .. } => Some(MenuEvent::Cleared {
+                action: action.clone(),
+                slot: self.slot,
+            }),
+            _ => None,
+        }
+    }
 }
 
 impl<A: Clone> Open<A> {
     /// What choosing `row` does: a button chooses its action, a settings row flips or cycles
     /// its staged value, Apply hands over the staged values and makes them the baseline.
-    fn choose(&mut self, row: usize) -> Option<MenuEvent<A>> {
-        match self.screen.items.get(row)? {
-            MenuItem::Button { action, .. } => Some(MenuEvent::Chosen(action.clone())),
-            MenuItem::Setting(setting) => {
+    fn choose(&mut self, row: usize) -> Vec<MenuEvent<A>> {
+        match self.screen.items.get(row) {
+            Some(MenuItem::Button { action, .. }) => vec![MenuEvent::Chosen(action.clone())],
+            Some(MenuItem::Setting(setting)) => {
                 if let Some(staged) = &mut self.staged {
                     cycle(staged, *setting);
                 }
-                None
+                Vec::new()
             }
-            MenuItem::Apply => {
-                let staged = self.staged?;
-                self.screen.settings = Some(staged);
-                Some(MenuEvent::SettingsApplied(staged))
+            Some(MenuItem::Apply) => self.apply(),
+            Some(MenuItem::Control { .. } | MenuItem::GameSlider(_)) | None => Vec::new(),
+        }
+    }
+
+    /// Applies the staged engine values and every game row's value, making them the baseline.
+    /// The engine values come first; the game values are the whole set, one entry per key, the
+    /// first row in item order winning a key shared by rows that start apart.
+    fn apply(&mut self) -> Vec<MenuEvent<A>> {
+        let mut events = Vec::new();
+        if let Some(staged) = self.staged {
+            self.screen.settings = Some(staged);
+            events.push(MenuEvent::SettingsApplied(staged));
+        }
+        let mut games = BTreeMap::new();
+        for item in &self.screen.items {
+            if let MenuItem::GameSlider(slider) = item {
+                games
+                    .entry(slider.key.clone())
+                    .or_insert_with(|| self.game_value(slider));
             }
         }
+        for item in &mut self.screen.items {
+            if let MenuItem::GameSlider(slider) = item {
+                slider.value = games[&slider.key];
+            }
+        }
+        self.game_staged.clear();
+        if !games.is_empty() {
+            events.push(MenuEvent::GameSettingsApplied(games));
+        }
+        events
     }
 }
 
 impl<A> Open<A> {
+    /// What `slider` shows: the value staged under its key, else its own.
+    fn game_value(&self, slider: &GameSlider) -> i32 {
+        self.game_staged
+            .get(&slider.key)
+            .copied()
+            .unwrap_or(slider.value)
+    }
+
     /// Moves the staged value of the settings row `row` one step towards `direction`.
     fn nudge(&mut self, row: usize, direction: i8) {
-        if let (Some(staged), Some(MenuItem::Setting(setting))) =
+        if let Some(MenuItem::GameSlider(slider)) = self.screen.items.get(row) {
+            let moved = slider.stepped(self.game_value(slider), direction);
+            self.game_staged.insert(slider.key.clone(), moved);
+        } else if let (Some(staged), Some(MenuItem::Setting(setting))) =
             (&mut self.staged, self.screen.items.get(row))
         {
             match setting.control() {
@@ -116,12 +367,17 @@ impl<A> Open<A> {
 
     /// Sets the staged slider on `row` from where `x` lies along the row's band.
     fn set_slider_from(&mut self, row: usize, x: f32, size: [f32; 2]) {
-        if let (Some(staged), Some(MenuItem::Setting(setting))) =
+        let Some(rect) = self.rects(size).get(row).copied() else {
+            return;
+        };
+        let fraction = ((x - rect.min[0]) / (rect.max[0] - rect.min[0])).clamp(0.0, 1.0);
+        if let Some(MenuItem::GameSlider(slider)) = self.screen.items.get(row) {
+            self.game_staged
+                .insert(slider.key.clone(), slider.at_fraction(fraction));
+        } else if let (Some(staged), Some(MenuItem::Setting(setting))) =
             (&mut self.staged, self.screen.items.get(row))
             && let Control::Slider { min, max, .. } = setting.control()
         {
-            let rect = row_rect(self.screen.items.len(), row, size);
-            let fraction = ((x - rect.min[0]) / (rect.max[0] - rect.min[0])).clamp(0.0, 1.0);
             staged.set_slider(*setting, min + fraction * (max - min));
         }
     }
@@ -167,12 +423,7 @@ impl<A> MenuStack<A> {
     /// settings values.
     pub fn push(&mut self, screen: MenuScreen<A>) {
         self.dragging = None;
-        let staged = screen.settings;
-        self.screens.push(Open {
-            screen,
-            focus: 0,
-            staged,
-        });
+        self.screens.push(Open::new(screen));
     }
 
     /// Closes the top screen, discarding the values staged on it; the one below keeps the focus
@@ -188,6 +439,37 @@ impl<A> MenuStack<A> {
         self.screens.clear();
     }
 
+    /// Replaces the top screen's items, keeping its focus, slot, capture and scroll.
+    pub fn set_items(&mut self, items: Vec<MenuItem<A>>) {
+        if let Some(open) = self.screens.last_mut() {
+            open.focus = open.focus.min(items.len().saturating_sub(1));
+            open.screen.items = items;
+            open.shell_note = None;
+            open.notes_hidden = false;
+        }
+    }
+
+    /// Ends a capture in progress without an event.
+    pub fn cancel_capture(&mut self) {
+        if let Some(open) = self.screens.last_mut() {
+            open.capturing = false;
+            open.shell_note = None;
+        }
+    }
+
+    /// Scrolls the top screen by `rows` rows, keeping a fractional remainder.
+    pub fn scroll(&mut self, rows: f32) {
+        if let Some(open) = self.screens.last_mut() {
+            let size = open.size.get();
+            open.settle(size);
+            let last = max_scroll(&open.screen.items, viewport(size)) as f32;
+            let target = (open.scroll.get() as f32 + open.remainder + rows).clamp(0.0, last);
+            let whole = target.floor();
+            open.scroll.set(whole as usize);
+            open.remainder = target - whole;
+        }
+    }
+
     pub fn is_dragging(&self) -> bool {
         self.dragging.is_some()
     }
@@ -197,6 +479,11 @@ impl<A> MenuStack<A> {
         if let (Some(open), Some(row)) = (self.screens.last_mut(), self.dragging) {
             open.set_slider_from(row, point[0], size);
         }
+    }
+
+    /// Whether the top screen is waiting for a key or button to bind.
+    pub(crate) fn is_capturing(&self) -> bool {
+        self.screens.last().is_some_and(|open| open.capturing)
     }
 
     pub fn is_open(&self) -> bool {
@@ -216,9 +503,11 @@ impl<A> MenuStack<A> {
     /// a point over no row keeps the focus.
     pub fn hover(&mut self, point: [f32; 2], size: [f32; 2]) {
         if let Some(open) = self.screens.last_mut()
-            && let Some(row) = row_at(&open.screen, point, size)
+            && !open.capturing
+            && let Some((row, rect)) = open.row_at(point, size)
         {
-            open.focus = row;
+            let slot = open.slot_at(row, rect, point[0]).unwrap_or(open.slot);
+            open.set_focus(row, slot);
         }
     }
 
@@ -228,7 +517,8 @@ impl<A> MenuStack<A> {
         let Some(open) = self.screens.last() else {
             return Vec::new();
         };
-        let rows = layout(&open.screen, size);
+        let rows = open.rects(size);
+        let visible = open.visible(size);
         let text =
             |text: &str, anchor, x: f32, centre_y: f32, text_size, color: [u8; 4]| ScreenText {
                 text: text.to_owned(),
@@ -240,12 +530,38 @@ impl<A> MenuStack<A> {
         let centred = |label: &str, centre_y: f32, color| {
             text(label, Anchor::Center, 0.0, centre_y, ROW_SIZE, color)
         };
+        let setting_row = |label: &str, value: Option<&str>, rect: Rect, color| {
+            let y = centre_y(rect);
+            let label = text(label, Anchor::Left, rect.min[0], y, SETTING_SIZE, color);
+            let value = value.map(|value| {
+                text(
+                    value,
+                    Anchor::Right,
+                    rect.max[0] - size[0],
+                    y,
+                    SETTING_SIZE,
+                    color,
+                )
+            });
+            std::iter::once(label).chain(value)
+        };
         let mut texts = Vec::new();
         if let Some(title) = &open.screen.title {
-            let first_centre = rows.first().map_or(size[1] / 2.0, |r| centre_y(*r));
-            texts.push(centred(title, first_centre - ROW_PITCH, COLOR));
+            let first_centre = rows
+                .get(visible.start)
+                .map_or(size[1] / 2.0, |r| centre_y(*r));
+            let mut title_centre = first_centre - ROW_PITCH;
+            if matches!(
+                open.screen.items.get(visible.start),
+                Some(MenuItem::Control { .. })
+            ) {
+                // Control rows are short, so the title band above them is too thin to hold it.
+                title_centre = title_centre.max(ROW_SIZE / 2.0);
+            }
+            texts.push(centred(title, title_centre, COLOR));
         }
-        for (row, (item, rect)) in open.screen.items.iter().zip(rows).enumerate() {
+        for row in visible {
+            let (item, rect) = (&open.screen.items[row], rows[row]);
             let color = if row == open.focus {
                 FOCUS_COLOR
             } else {
@@ -254,26 +570,59 @@ impl<A> MenuStack<A> {
             match item {
                 MenuItem::Button { label, .. } => texts.push(centred(label, centre_y(rect), color)),
                 MenuItem::Apply => texts.push(centred("Apply", centre_y(rect), color)),
-                MenuItem::Setting(setting) => {
+                MenuItem::Control {
+                    label, slots, note, ..
+                } => {
                     let y = centre_y(rect);
+                    let shown_note = if row == open.focus {
+                        open.shell_note.as_deref()
+                    } else {
+                        None
+                    }
+                    .or_else(|| note.as_deref().filter(|_| !open.notes_hidden));
+                    let (label_text, label_color) = match shown_note {
+                        Some(note) => (note.to_owned(), WARNING_COLOR),
+                        None if slots.iter().all(Option::is_none) => (format!("! {label}"), color),
+                        None => (label.clone(), color),
+                    };
                     texts.push(text(
-                        setting.label(),
+                        &label_text,
                         Anchor::Left,
                         rect.min[0],
                         y,
                         SETTING_SIZE,
-                        color,
+                        label_color,
                     ));
-                    if let Some(staged) = &open.staged {
+                    for (slot, cell_x, binding) in [
+                        (Slot::Primary, LABEL_WIDTH, slots[0]),
+                        (Slot::Secondary, LABEL_WIDTH + CELL_WIDTH, slots[1]),
+                    ] {
+                        let cell_color = if row == open.focus && slot == open.slot {
+                            FOCUS_COLOR
+                        } else {
+                            COLOR
+                        };
+                        let label = binding.map_or_else(|| "Unbound".to_owned(), Binding::label);
                         texts.push(text(
-                            &staged.value_text(*setting),
-                            Anchor::Right,
-                            rect.max[0] - size[0],
+                            &label,
+                            Anchor::Left,
+                            rect.min[0] + cell_x,
                             y,
                             SETTING_SIZE,
-                            color,
+                            cell_color,
                         ));
                     }
+                }
+                MenuItem::GameSlider(slider) => {
+                    let value = slider.value_text(open.game_value(slider));
+                    texts.extend(setting_row(&slider.label, Some(&value), rect, color));
+                }
+                MenuItem::Setting(setting) => {
+                    let value = open
+                        .staged
+                        .as_ref()
+                        .map(|staged| staged.value_text(*setting));
+                    texts.extend(setting_row(setting.label(), value.as_deref(), rect, color));
                 }
             }
         }
@@ -296,16 +645,31 @@ impl<A: Clone> MenuStack<A> {
             }
             return;
         }
+        if open.capturing {
+            if !repeat {
+                self.events.extend(open.capture(input));
+            }
+            return;
+        }
         let count = open.screen.items.len();
         match input {
-            Input::Key(Key::ArrowDown) if count > 0 => open.focus = (open.focus + 1) % count,
-            Input::Key(Key::ArrowUp) if count > 0 => {
-                open.focus = (open.focus + count - 1) % count;
+            Input::Key(Key::ArrowDown) if count > 0 => {
+                open.set_focus((open.focus + 1) % count, open.slot);
             }
-            Input::Key(Key::ArrowLeft) => open.nudge(open.focus, -1),
-            Input::Key(Key::ArrowRight) => open.nudge(open.focus, 1),
+            Input::Key(Key::ArrowUp) if count > 0 => {
+                open.set_focus((open.focus + count - 1) % count, open.slot);
+            }
+            Input::Key(Key::ArrowLeft) => open.step(-1),
+            Input::Key(Key::ArrowRight) => open.step(1),
             Input::Key(Key::Enter) if !repeat => {
-                self.events.extend(open.choose(open.focus));
+                if open.focused_is_control() {
+                    open.start_capture();
+                } else {
+                    self.events.extend(open.choose(open.focus));
+                }
+            }
+            Input::Key(Key::Backspace) | Input::Mouse(MouseButton::Right) if !repeat => {
+                self.events.extend(open.clear());
             }
             Input::Key(Key::Escape) if !repeat => {
                 if let Some(back) = open.screen.back.clone() {
@@ -316,18 +680,43 @@ impl<A: Clone> MenuStack<A> {
         }
     }
 
+    /// A right press at `point`: while capturing it is the binding; otherwise it clears the
+    /// focused slot only when `point` is over that slot's cell.
+    pub fn right_click(&mut self, point: [f32; 2], size: [f32; 2]) {
+        let Some(open) = self.screens.last_mut() else {
+            return;
+        };
+        if open.capturing {
+            self.on_key(Input::Mouse(MouseButton::Right), true, false);
+        } else if let Some((row, rect)) = open.row_at(point, size)
+            && row == open.focus
+            && open.slot_at(row, rect, point[0]) == Some(open.slot)
+        {
+            self.events.extend(open.clear());
+        }
+    }
+
     /// Chooses the row under `point` (see [`MenuStack::hover`]); a point over no row chooses
     /// nothing. A press on a slider row sets it from `point` and starts a drag that
     /// [`MenuStack::drag`] follows until the left button is released.
     pub fn click(&mut self, point: [f32; 2], size: [f32; 2]) {
-        if let Some(open) = self.screens.last_mut()
-            && let Some(row) = row_at(&open.screen, point, size)
-        {
-            let on_slider = matches!(
-                open.screen.items[row],
-                MenuItem::Setting(setting) if matches!(setting.control(), Control::Slider { .. })
-            );
-            if on_slider {
+        let Some(open) = self.screens.last_mut() else {
+            return;
+        };
+        if open.capturing {
+            self.dragging = None;
+            self.events
+                .extend(open.capture(Input::Mouse(MouseButton::Left)));
+        } else if let Some((row, rect)) = open.row_at(point, size) {
+            let on_slider = match open.screen.items[row] {
+                MenuItem::Setting(setting) => matches!(setting.control(), Control::Slider { .. }),
+                MenuItem::GameSlider(_) => true,
+                _ => false,
+            };
+            if let Some(slot) = open.slot_at(row, rect, point[0]) {
+                open.set_focus(row, slot);
+                open.start_capture();
+            } else if on_slider {
                 self.dragging = Some(row);
                 open.set_slider_from(row, point[0], size);
             } else {
@@ -341,35 +730,88 @@ fn centre_y(rect: Rect) -> f32 {
     (rect.min[1] + rect.max[1]) / 2.0
 }
 
-/// The row of `screen` strictly inside which `point` lies.
-fn row_at<A>(screen: &MenuScreen<A>, point: [f32; 2], size: [f32; 2]) -> Option<usize> {
-    layout(screen, size).iter().position(|r| {
-        point[0] > r.min[0] && point[0] < r.max[0] && point[1] > r.min[1] && point[1] < r.max[1]
-    })
+/// Height available to rows: the window less a title band above and below.
+fn viewport(size: [f32; 2]) -> f32 {
+    size[1] - 2.0 * BAND
 }
 
-/// The row rectangles of `screen` on a window `size` points across, top to bottom: bands 240
-/// points wide, centred on the window, one 56-point pitch apart, the column centred vertically.
-/// Painting and hit tests both read this.
-pub fn layout<A>(screen: &MenuScreen<A>, size: [f32; 2]) -> Vec<Rect> {
-    (0..screen.items.len())
-        .map(|row| row_rect(screen.items.len(), row, size))
+fn item_height<A>(item: &MenuItem<A>) -> f32 {
+    match item {
+        MenuItem::Control { .. } => CONTROL_HEIGHT,
+        _ => ROW_PITCH,
+    }
+}
+
+fn item_width<A>(item: &MenuItem<A>) -> f32 {
+    match item {
+        MenuItem::Control { .. } => CONTROL_WIDTH,
+        _ => ROW_WIDTH,
+    }
+}
+
+/// How many whole rows from `from` on fit in `viewport` points.
+fn fitting_from<A>(items: &[MenuItem<A>], from: usize, viewport: f32) -> usize {
+    let mut used = 0.0;
+    items
+        .iter()
+        .skip(from)
+        .take_while(|item| {
+            used += item_height(item);
+            used <= viewport
+        })
+        .count()
+}
+
+/// The last first-visible row that leaves no gap after the final row; 0 when everything fits.
+fn max_scroll<A>(items: &[MenuItem<A>], viewport: f32) -> usize {
+    let mut used = 0.0;
+    let fitting = items
+        .iter()
+        .rev()
+        .take_while(|item| {
+            used += item_height(item);
+            used <= viewport
+        })
+        .count();
+    items.len().saturating_sub(fitting.max(1))
+}
+
+/// The rectangles of `items` with row `scroll` first in view; rows above it lie above the title
+/// band. A column that fits is centred vertically, any other starts at the band.
+fn rects<A>(items: &[MenuItem<A>], scroll: usize, size: [f32; 2]) -> Vec<Rect> {
+    let total: f32 = items.iter().map(item_height).sum();
+    let top = if total <= viewport(size) {
+        size[1] / 2.0 - total / 2.0
+    } else {
+        BAND - items.iter().take(scroll).map(item_height).sum::<f32>()
+    };
+    let mut y = top;
+    items
+        .iter()
+        .map(|item| {
+            let (height, width) = (item_height(item), item_width(item));
+            let rect = Rect {
+                min: [size[0] / 2.0 - width / 2.0, y],
+                max: [size[0] / 2.0 + width / 2.0, y + height],
+            };
+            y += height;
+            rect
+        })
         .collect()
 }
 
-/// Row `row`'s rectangle on a screen of `count` rows; [`layout`] is this for every row.
-fn row_rect(count: usize, row: usize, size: [f32; 2]) -> Rect {
-    let top = size[1] / 2.0 - count as f32 * ROW_PITCH / 2.0;
-    let y = top + row as f32 * ROW_PITCH;
-    Rect {
-        min: [size[0] / 2.0 - ROW_WIDTH / 2.0, y],
-        max: [size[0] / 2.0 + ROW_WIDTH / 2.0, y + ROW_PITCH],
-    }
+/// The row rectangles of `screen` on a window `size` points across at scroll 0, top to bottom:
+/// buttons and settings 240 by 56 points, control rows 640 by 32, centred on the window, the
+/// column centred vertically when it fits and starting at the title band when it does not.
+pub fn layout<A>(screen: &MenuScreen<A>, size: [f32; 2]) -> Vec<Rect> {
+    rects(&screen.items, 0, size)
 }
 
 #[cfg(test)]
 mod tests {
+    use moho_input::bindings::Modifiers;
     use moho_input::key::{Key, MouseButton};
+    use proptest::prelude::{any, prop, prop_assert, proptest};
 
     use super::*;
 
@@ -428,7 +870,10 @@ mod tests {
             .into_iter()
             .filter_map(|event| match event {
                 MenuEvent::Chosen(action) => Some(action),
-                MenuEvent::SettingsApplied(_) => None,
+                MenuEvent::SettingsApplied(_)
+                | MenuEvent::GameSettingsApplied(_)
+                | MenuEvent::Captured { .. }
+                | MenuEvent::Cleared { .. } => None,
             })
             .collect()
     }
@@ -745,10 +1190,865 @@ mod tests {
         assert_eq!(layout(&empty, SIZE), []);
     }
 
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Bind {
+        Row(usize),
+        Reset,
+        Apply,
+        Back,
+    }
+
+    const R: Option<Binding> = Some(Binding::key(Key::R));
+    const NOTE: &str = "Q is used by Lean left";
+    /// Where a press lands in a 640-wide control row: over the primary cell and over the
+    /// secondary cell, whatever the width of the label column between a quarter and a half of
+    /// the row.
+    const PRIMARY_X: f32 = 360.0;
+    const SECONDARY_X: f32 = 560.0;
+    /// Rows 32 points tall fill the window less a 56-point band above and below; 19 fit.
+    const VIEW_BAND: f32 = 56.0;
+
+    fn control(index: usize, slots: [Option<Binding>; 2]) -> MenuItem<Bind> {
+        MenuItem::Control {
+            label: format!("Action {index:02}"),
+            action: Bind::Row(index),
+            slots,
+            note: None,
+        }
+    }
+
+    fn noted(index: usize, note: &str) -> MenuItem<Bind> {
+        MenuItem::Control {
+            label: format!("Action {index:02}"),
+            action: Bind::Row(index),
+            slots: [R, None],
+            note: Some(note.to_owned()),
+        }
+    }
+
+    fn controls_of(count: usize) -> Vec<MenuItem<Bind>> {
+        (0..count).map(|index| control(index, [R, None])).collect()
+    }
+
+    fn bind_button(label: &str, action: Bind) -> MenuItem<Bind> {
+        MenuItem::Button {
+            label: label.to_owned(),
+            action,
+        }
+    }
+
+    fn controls_screen(items: Vec<MenuItem<Bind>>) -> MenuScreen<Bind> {
+        MenuScreen {
+            title: None,
+            items,
+            back: Some(Bind::Back),
+            settings: None,
+        }
+    }
+
+    fn controls_stack(items: Vec<MenuItem<Bind>>) -> MenuStack<Bind> {
+        let mut stack = MenuStack::new();
+        stack.push(controls_screen(items));
+        stack
+    }
+
+    fn key_c(stack: &mut MenuStack<Bind>, key: Key) {
+        stack.on_key(Input::Key(key), true, false);
+    }
+
+    fn captured(action: Bind, slot: Slot, input: Input) -> MenuEvent<Bind> {
+        MenuEvent::Captured {
+            action,
+            slot,
+            input,
+        }
+    }
+
+    fn shows(stack: &MenuStack<Bind>, size: [f32; 2], needle: &str) -> bool {
+        stack.texts(size).iter().any(|t| t.text.contains(needle))
+    }
+
+    fn row_shown(stack: &MenuStack<Bind>, index: usize) -> bool {
+        shows(stack, SIZE, &format!("Action {index:02}"))
+    }
+
+    fn shown_labels(stack: &MenuStack<Bind>) -> Vec<String> {
+        stack
+            .texts(SIZE)
+            .into_iter()
+            .map(|t| t.text)
+            .filter(|text| text.contains("Action "))
+            .collect()
+    }
+
+    /// The texts of the top screen's row `row`, found by sharing the row's centre line.
+    fn row_texts(stack: &MenuStack<Bind>, row: usize) -> Vec<ScreenText> {
+        let rect = layout(stack.top().expect("a screen is open"), SIZE)[row];
+        let line = rect_centre(&rect)[1];
+        stack
+            .texts(SIZE)
+            .into_iter()
+            .filter(|t| (SIZE[1] / 2.0 + t.offset[1] - line).abs() < 0.01)
+            .collect()
+    }
+
+    fn row_strings(stack: &MenuStack<Bind>, row: usize) -> Vec<String> {
+        row_texts(stack, row).into_iter().map(|t| t.text).collect()
+    }
+
+    fn is_warning(text: &ScreenText) -> bool {
+        text.color != COLOR && text.color != FOCUS
+    }
+
+    fn cell_point(stack: &MenuStack<Bind>, row: usize, x_offset: f32) -> [f32; 2] {
+        let rect = layout(stack.top().expect("a screen is open"), SIZE)[row];
+        [rect.min[0] + x_offset, rect_centre(&rect)[1]]
+    }
+
+    #[test]
+    fn a_control_row_shows_each_slots_label_unbound_and_a_mark_when_both_are_empty() {
+        let stack = controls_stack(vec![
+            control(0, [R, Some(Binding::mouse(MouseButton::Right))]),
+            control(1, [Some(Binding::key(Key::R).held()), None]),
+            control(2, [None, None]),
+        ]);
+
+        let both = row_strings(&stack, 0);
+        let hold = row_strings(&stack, 1);
+        let neither = row_strings(&stack, 2);
+
+        assert!(both.iter().any(|t| t == "R"), "{both:?}");
+        assert!(both.iter().any(|t| t == "Mouse Right"), "{both:?}");
+        assert!(both.iter().any(|t| t.contains("Action 00")), "{both:?}");
+        assert!(hold.iter().any(|t| t == "Hold R"), "{hold:?}");
+        assert_eq!(hold.iter().filter(|t| *t == "Unbound").count(), 1);
+        assert_eq!(neither.iter().filter(|t| *t == "Unbound").count(), 2);
+        assert!(
+            neither.iter().any(|t| t.contains("Action 02")),
+            "{neither:?}"
+        );
+        assert_eq!(neither.iter().filter(|t| t.contains('!')).count(), 1);
+        assert!(!both.iter().any(|t| t.contains('!')), "{both:?}");
+        assert!(!hold.iter().any(|t| t.contains('!')), "{hold:?}");
+    }
+
+    #[test]
+    fn enter_or_a_click_on_a_slot_starts_capture_of_that_slot() {
+        let rows = || vec![control(0, [R, R]), control(1, [R, R]), control(2, [R, R])];
+        let mut idle = controls_stack(rows());
+        let mut by_enter = controls_stack(rows());
+        let mut by_enter_secondary = controls_stack(rows());
+        let mut by_click_secondary = controls_stack(rows());
+        let mut by_click_primary = controls_stack(rows());
+
+        key_c(&mut idle, Key::Q);
+        key_c(&mut by_enter, Key::Enter);
+        key_c(&mut by_enter, Key::Q);
+        key_c(&mut by_enter_secondary, Key::ArrowRight);
+        key_c(&mut by_enter_secondary, Key::Enter);
+        key_c(&mut by_enter_secondary, Key::Q);
+        let secondary = cell_point(&by_click_secondary, 1, SECONDARY_X);
+        by_click_secondary.click(secondary, SIZE);
+        key_c(&mut by_click_secondary, Key::W);
+        let primary = cell_point(&by_click_primary, 2, PRIMARY_X);
+        by_click_primary.click(primary, SIZE);
+        key_c(&mut by_click_primary, Key::W);
+
+        assert_eq!(
+            idle.take_events(),
+            [],
+            "a key is no capture before one starts"
+        );
+        assert_eq!(
+            by_enter.take_events(),
+            [captured(Bind::Row(0), Slot::Primary, Input::Key(Key::Q))]
+        );
+        assert_eq!(
+            by_enter_secondary.take_events(),
+            [captured(Bind::Row(0), Slot::Secondary, Input::Key(Key::Q))]
+        );
+        assert_eq!(
+            by_click_secondary.take_events(),
+            [captured(Bind::Row(1), Slot::Secondary, Input::Key(Key::W))]
+        );
+        assert_eq!(
+            by_click_primary.take_events(),
+            [captured(Bind::Row(2), Slot::Primary, Input::Key(Key::W))]
+        );
+    }
+
+    #[test]
+    fn a_captured_key_or_button_becomes_an_event_for_the_captured_slot_and_ends_capture() {
+        let mut stack = controls_stack(vec![control(0, [R, R]), control(1, [R, R])]);
+
+        key_c(&mut stack, Key::Enter);
+        key_c(&mut stack, Key::Q);
+        key_c(&mut stack, Key::W);
+        let after_key = stack.take_events();
+        key_c(&mut stack, Key::ArrowRight);
+        key_c(&mut stack, Key::Enter);
+        stack.on_key(Input::Mouse(MouseButton::Right), true, false);
+        key_c(&mut stack, Key::Space);
+        let after_button = stack.take_events();
+
+        assert_eq!(
+            after_key,
+            [captured(Bind::Row(0), Slot::Primary, Input::Key(Key::Q))],
+            "the next press is the capture and the one after is not"
+        );
+        assert_eq!(
+            after_button,
+            [captured(
+                Bind::Row(0),
+                Slot::Secondary,
+                Input::Mouse(MouseButton::Right)
+            )]
+        );
+    }
+
+    #[test]
+    fn a_left_click_while_capturing_is_captured_not_a_click() {
+        let mut over_control = controls_stack(vec![control(0, [R, R]), control(1, [R, R])]);
+        let mut over_button =
+            controls_stack(vec![control(0, [R, R]), bind_button("Reset", Bind::Reset)]);
+
+        key_c(&mut over_control, Key::Enter);
+        let point = cell_point(&over_control, 1, SECONDARY_X);
+        over_control.click(point, SIZE);
+        key_c(&mut over_control, Key::Q);
+        key_c(&mut over_button, Key::Enter);
+        let point = cell_point(&over_button, 1, 120.0);
+        over_button.click(point, SIZE);
+
+        assert_eq!(
+            over_control.take_events(),
+            [captured(
+                Bind::Row(0),
+                Slot::Primary,
+                Input::Mouse(MouseButton::Left)
+            )],
+            "the click ended capture and did not start one on row 1"
+        );
+        assert_eq!(
+            over_button.take_events(),
+            [captured(
+                Bind::Row(0),
+                Slot::Primary,
+                Input::Mouse(MouseButton::Left)
+            )],
+            "the click did not choose the button under it"
+        );
+    }
+
+    #[test]
+    fn set_items_shows_the_answer_and_keeps_focus_slot_and_scroll() {
+        let mut stack = controls_stack(controls_of(30));
+        for _ in 0..22 {
+            key_c(&mut stack, Key::ArrowDown);
+        }
+        key_c(&mut stack, Key::ArrowRight);
+        let before = shown_labels(&stack);
+        let mut answer = controls_of(30);
+        answer[22] = control(22, [R, Some(Binding::key(Key::R).with(Modifiers::CTRL))]);
+
+        stack.set_items(answer);
+        let after = shown_labels(&stack);
+        let shows_answer = shows(&stack, SIZE, "Ctrl+R");
+        key_c(&mut stack, Key::Enter);
+        key_c(&mut stack, Key::Q);
+
+        assert!(before.iter().any(|t| t.contains("Action 22")), "{before:?}");
+        assert_eq!(after, before, "the same rows stay in view");
+        assert!(shows_answer, "the new label is drawn at once");
+        assert_eq!(
+            stack.take_events(),
+            [captured(Bind::Row(22), Slot::Secondary, Input::Key(Key::Q))],
+            "focus and slot survived the update"
+        );
+    }
+
+    #[test]
+    fn a_game_note_shows_in_place_of_the_label_until_the_next_answer() {
+        let plain = || vec![control(0, [R, None]), control(1, [R, None])];
+        let mut stack = controls_stack(plain());
+
+        stack.set_items(vec![noted(0, NOTE), control(1, [R, None])]);
+        let texts = row_texts(&stack, 0);
+        let note_shown = texts.iter().find(|t| t.text == NOTE);
+        let label_hidden = !shows(&stack, SIZE, "Action 00");
+        stack.set_items(plain());
+        let answered = (shows(&stack, SIZE, "Action 00"), shows(&stack, SIZE, NOTE));
+        stack.set_items(vec![noted(0, NOTE), control(1, [R, None])]);
+        key_c(&mut stack, Key::ArrowDown);
+        let moved_off = (shows(&stack, SIZE, "Action 00"), shows(&stack, SIZE, NOTE));
+        key_c(&mut stack, Key::ArrowUp);
+        let moved_back = (shows(&stack, SIZE, "Action 00"), shows(&stack, SIZE, NOTE));
+
+        assert!(
+            note_shown.is_some_and(is_warning),
+            "the note is in a warning colour: {texts:?}"
+        );
+        assert!(label_hidden, "the note takes the label's place");
+        assert_eq!(answered, (true, false));
+        assert_eq!(moved_off, (true, false), "moving the focus clears the note");
+        assert_eq!(moved_back, (true, false));
+    }
+
+    #[test]
+    fn escape_while_capturing_cancels_with_no_event() {
+        let original = controls_screen(vec![control(0, [R, R])]);
+        let mut stack = MenuStack::new();
+        stack.push(original.clone());
+
+        key_c(&mut stack, Key::Enter);
+        key_c(&mut stack, Key::Escape);
+        key_c(&mut stack, Key::Q);
+
+        assert_eq!(stack.take_events(), [], "no event, and capture is over");
+        assert_eq!(stack.top(), Some(&original));
+    }
+
+    #[test]
+    fn escape_outside_capture_still_chooses_back() {
+        let mut idle = controls_stack(controls_of(2));
+        let mut after_cancel = controls_stack(controls_of(2));
+
+        key_c(&mut idle, Key::Escape);
+        key_c(&mut after_cancel, Key::Enter);
+        key_c(&mut after_cancel, Key::Escape);
+        key_c(&mut after_cancel, Key::Escape);
+
+        assert_eq!(idle.take_events(), [MenuEvent::Chosen(Bind::Back)]);
+        assert_eq!(
+            after_cancel.take_events(),
+            [MenuEvent::Chosen(Bind::Back)],
+            "the first Escape cancelled, the second chose Back"
+        );
+    }
+
+    #[test]
+    fn enter_and_unmodified_arrows_are_refused_at_capture_with_a_note() {
+        for refused in [
+            Key::Enter,
+            Key::ArrowUp,
+            Key::ArrowDown,
+            Key::ArrowLeft,
+            Key::ArrowRight,
+        ] {
+            let mut stack = controls_stack(controls_of(2));
+
+            key_c(&mut stack, Key::Enter);
+            key_c(&mut stack, refused);
+            let refusal = stack.take_events();
+            let note = row_texts(&stack, 0).into_iter().find(is_warning);
+            let label_hidden = !shows(&stack, SIZE, "Action 00");
+            key_c(&mut stack, Key::Q);
+
+            assert_eq!(refusal, [], "{refused:?} is refused, not captured");
+            assert!(note.is_some_and(|n| !n.text.is_empty()), "{refused:?}");
+            assert!(label_hidden, "{refused:?}: the note replaces the label");
+            assert_eq!(
+                stack.take_events(),
+                [captured(Bind::Row(0), Slot::Primary, Input::Key(Key::Q))],
+                "{refused:?}: capture continued on the same slot"
+            );
+        }
+    }
+
+    #[test]
+    fn backspace_or_a_right_click_clears_the_focused_slot() {
+        let rows = || {
+            vec![
+                control(0, [R, R]),
+                control(1, [R, R]),
+                bind_button("Back", Bind::Back),
+            ]
+        };
+        let right = Input::Mouse(MouseButton::Right);
+        let mut by_key = controls_stack(rows());
+        let mut by_button = controls_stack(rows());
+        let mut capturing_key = controls_stack(rows());
+        let mut capturing_button = controls_stack(rows());
+        let mut on_button_row = controls_stack(rows());
+
+        key_c(&mut by_key, Key::ArrowRight);
+        key_c(&mut by_key, Key::Backspace);
+        key_c(&mut by_button, Key::ArrowDown);
+        by_button.on_key(right, true, false);
+        key_c(&mut capturing_key, Key::Enter);
+        key_c(&mut capturing_key, Key::Backspace);
+        key_c(&mut capturing_button, Key::Enter);
+        capturing_button.on_key(right, true, false);
+        key_c(&mut on_button_row, Key::ArrowUp);
+        key_c(&mut on_button_row, Key::Backspace);
+        on_button_row.on_key(right, true, false);
+
+        assert_eq!(
+            by_key.take_events(),
+            [MenuEvent::Cleared {
+                action: Bind::Row(0),
+                slot: Slot::Secondary
+            }]
+        );
+        assert_eq!(
+            by_button.take_events(),
+            [MenuEvent::Cleared {
+                action: Bind::Row(1),
+                slot: Slot::Primary
+            }]
+        );
+        assert_eq!(
+            capturing_key.take_events(),
+            [captured(
+                Bind::Row(0),
+                Slot::Primary,
+                Input::Key(Key::Backspace)
+            )],
+            "while capturing, Backspace is bindable"
+        );
+        assert_eq!(
+            capturing_button.take_events(),
+            [captured(Bind::Row(0), Slot::Primary, right)]
+        );
+        assert_eq!(
+            on_button_row.take_events(),
+            [],
+            "a button has no slot to clear"
+        );
+    }
+
+    #[test]
+    fn a_back_and_an_apply_are_plain_events_and_the_stack_stages_no_bindings() {
+        let original = controls_screen(vec![
+            control(0, [R, None]),
+            bind_button("Reset", Bind::Reset),
+            bind_button("Apply", Bind::Apply),
+            bind_button("Back", Bind::Back),
+        ]);
+        let mut stack = MenuStack::new();
+        stack.push(original.clone());
+
+        key_c(&mut stack, Key::Enter);
+        key_c(&mut stack, Key::Q);
+        let unchanged_by_capture = stack.top() == Some(&original);
+        for _ in 0..3 {
+            key_c(&mut stack, Key::ArrowDown);
+            key_c(&mut stack, Key::Enter);
+        }
+
+        assert!(unchanged_by_capture, "the game owns the staged bindings");
+        assert_eq!(
+            stack.take_events(),
+            [
+                captured(Bind::Row(0), Slot::Primary, Input::Key(Key::Q)),
+                MenuEvent::Chosen(Bind::Reset),
+                MenuEvent::Chosen(Bind::Apply),
+                MenuEvent::Chosen(Bind::Back),
+            ]
+        );
+        assert_eq!(stack.top(), Some(&original), "no hidden pop or staging");
+    }
+
+    #[test]
+    fn moving_the_focus_scrolls_the_row_into_view() {
+        let mut stack = controls_stack(controls_of(30));
+        let at_top = shown_labels(&stack);
+
+        for _ in 0..19 {
+            key_c(&mut stack, Key::ArrowDown);
+        }
+        let down = (row_shown(&stack, 19), row_shown(&stack, 0));
+        let down_count = shown_labels(&stack).len();
+        for _ in 0..19 {
+            key_c(&mut stack, Key::ArrowUp);
+        }
+
+        assert_eq!(at_top.len(), 19, "608 points hold 19 rows of 32");
+        assert!(at_top.iter().any(|t| t.contains("Action 18")));
+        assert!(!at_top.iter().any(|t| t.contains("Action 19")));
+        assert_eq!(down, (true, false));
+        assert_eq!(down_count, 19, "only whole rows are drawn");
+        assert!(row_shown(&stack, 0));
+        assert!(!row_shown(&stack, 19));
+    }
+
+    #[test]
+    fn up_from_the_first_row_wraps_to_the_last_and_scrolls_to_the_end() {
+        let mut items = controls_of(27);
+        items.push(bind_button("Reset", Bind::Reset));
+        items.push(bind_button("Apply", Bind::Apply));
+        items.push(bind_button("Back", Bind::Back));
+        let mut stack = controls_stack(items);
+
+        key_c(&mut stack, Key::ArrowUp);
+        let shown = (
+            shows(&stack, SIZE, "Back"),
+            shows(&stack, SIZE, "Apply"),
+            shows(&stack, SIZE, "Reset"),
+            row_shown(&stack, 26),
+            row_shown(&stack, 0),
+        );
+        key_c(&mut stack, Key::Enter);
+
+        assert_eq!(shown, (true, true, true, true, false));
+        assert_eq!(stack.take_events(), [MenuEvent::Chosen(Bind::Back)]);
+    }
+
+    proptest! {
+        #[test]
+        fn the_focused_row_is_always_inside_the_viewport(
+            count in 1_usize..60,
+            height in 300.0_f32..1400.0,
+            moves in prop::collection::vec(any::<bool>(), 0..80),
+        ) {
+            let size = [1280.0, height];
+            let mut stack = controls_stack(controls_of(count));
+
+            for down in moves {
+                key_c(&mut stack, if down { Key::ArrowDown } else { Key::ArrowUp });
+
+                let focused: Vec<f32> = stack
+                    .texts(size)
+                    .iter()
+                    .filter(|t| t.color == FOCUS)
+                    .map(|t| size[1] / 2.0 + t.offset[1])
+                    .collect();
+                prop_assert!(!focused.is_empty(), "no focused row is drawn");
+                for y in focused {
+                    prop_assert!(
+                        y >= VIEW_BAND - 0.01 && y <= height - VIEW_BAND + 0.01,
+                        "focused row at {} outside {}..{}", y, VIEW_BAND, height - VIEW_BAND
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn set_items_to_fewer_rows_clamps_focus_and_scroll() {
+        let mut stack = controls_stack(controls_of(30));
+        for _ in 0..25 {
+            key_c(&mut stack, Key::ArrowDown);
+        }
+
+        stack.set_items(controls_of(5));
+        let drawn = shown_labels(&stack).len();
+        let focused = row_texts(&stack, 4).iter().any(|t| t.color == FOCUS);
+        key_c(&mut stack, Key::Enter);
+        key_c(&mut stack, Key::Q);
+
+        assert_eq!(drawn, 5, "the scroll fell back to show every row");
+        assert!(focused, "the focus clamped to the last row");
+        assert_eq!(
+            stack.take_events(),
+            [captured(Bind::Row(4), Slot::Primary, Input::Key(Key::Q))]
+        );
+    }
+
+    #[test]
+    fn a_screen_that_fits_keeps_todays_layout() {
+        let controls = controls_screen(controls_of(3));
+
+        let buttons = layout(&main_screen(), SIZE);
+        let rows = layout(&controls, SIZE);
+
+        for rect in &buttons {
+            assert_eq!(rect.max[0] - rect.min[0], 240.0);
+            assert_eq!(rect.max[1] - rect.min[1], 56.0);
+        }
+        let button_centres: Vec<[f32; 2]> = buttons.iter().map(rect_centre).collect();
+        assert_eq!(
+            button_centres,
+            [[640.0, 304.0], [640.0, 360.0], [640.0, 416.0]]
+        );
+        for rect in &rows {
+            assert_eq!(
+                rect.max[0] - rect.min[0],
+                640.0,
+                "a control row is 640 wide"
+            );
+            assert_eq!(rect.max[1] - rect.min[1], 32.0, "and 32 tall");
+        }
+        let row_centres: Vec<[f32; 2]> = rows.iter().map(rect_centre).collect();
+        assert_eq!(
+            row_centres,
+            [[640.0, 328.0], [640.0, 360.0], [640.0, 392.0]]
+        );
+        let stack = controls_stack(controls_of(3));
+        assert!(
+            !row_texts(&stack, 0).is_empty(),
+            "the rows are drawn on their rects"
+        );
+    }
+
+    #[test]
+    fn hover_repeats_and_releases_do_not_disturb_capture() {
+        let mut stack = controls_stack(controls_of(3));
+
+        key_c(&mut stack, Key::Enter);
+        let over_last = cell_point(&stack, 2, SECONDARY_X);
+        stack.hover(over_last, SIZE);
+        stack.on_key(Input::Key(Key::Q), true, true);
+        stack.on_key(Input::Key(Key::Q), false, false);
+        stack.on_key(Input::Key(Key::ArrowDown), true, true);
+        stack.on_key(Input::Mouse(MouseButton::Left), false, false);
+        let quiet = stack.take_events();
+        key_c(&mut stack, Key::W);
+
+        assert_eq!(quiet, []);
+        assert_eq!(
+            stack.take_events(),
+            [captured(Bind::Row(0), Slot::Primary, Input::Key(Key::W))],
+            "focus and slot stayed where capture began"
+        );
+    }
+
+    #[test]
+    fn a_modifier_key_alone_is_captured() {
+        for modifier in [Key::Ctrl, Key::Shift, Key::Alt] {
+            let mut stack = controls_stack(controls_of(2));
+
+            key_c(&mut stack, Key::Enter);
+            key_c(&mut stack, modifier);
+
+            assert_eq!(
+                stack.take_events(),
+                [captured(Bind::Row(0), Slot::Primary, Input::Key(modifier))],
+                "{modifier:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_twelve_row_settings_screen_scrolls_at_720_points() {
+        let mut items: Vec<MenuItem<Act>> = EngineSetting::ALL
+            .into_iter()
+            .map(MenuItem::Setting)
+            .collect();
+        items.push(MenuItem::Apply);
+        items.push(button("Back", Act::Back));
+        let mut stack = stack_of(MenuScreen {
+            title: None,
+            items,
+            back: Some(Act::Back),
+            settings: None,
+        });
+        let drawn =
+            |stack: &MenuStack<Act>, text: &str| stack.texts(SIZE).iter().any(|t| t.text == text);
+        let first = EngineSetting::ALL[0].label();
+        let second = EngineSetting::ALL[1].label();
+        let third = EngineSetting::ALL[2].label();
+
+        let top = (
+            drawn(&stack, first),
+            drawn(&stack, "Apply"),
+            drawn(&stack, "Back"),
+        );
+        press(&mut stack, Key::ArrowUp);
+        let end = (
+            drawn(&stack, first),
+            drawn(&stack, second),
+            drawn(&stack, third),
+            drawn(&stack, "Back"),
+        );
+
+        assert_eq!(top, (true, false, false), "ten of the thirteen rows fit");
+        assert_eq!(
+            end,
+            (false, false, false, true),
+            "the end of the list is reachable"
+        );
+    }
+
+    /// The y of the centre of the first text reading `text` on `SIZE`.
+    fn text_y<A: Clone>(stack: &MenuStack<A>, text: &str) -> f32 {
+        let found = stack.texts(SIZE).into_iter().find(|t| t.text == text);
+        let found = found.unwrap_or_else(|| panic!("{text:?} is not drawn"));
+        SIZE[1] / 2.0 + found.offset[1]
+    }
+
+    fn scrolled_base() -> EngineSettings {
+        EngineSettings {
+            mouse_sensitivity: 2.5,
+            mouse_smoothing: false,
+            invert_mouse_y: false,
+            sound_effect_volume: 5.0,
+            music_volume: 6.0,
+            ui_volume: 7.0,
+            shadow_quality: 3,
+            ssao_quality: 3,
+            effects_quality: 3,
+            window_mode: moho_core::prefs::WindowMode::Windowed,
+            resolution: (1920, 1080),
+        }
+    }
+
+    /// Thirteen settings-screen rows at 720 points, scrolled to the end: rows 3 to 12 are in view.
+    fn scrolled_settings_stack() -> MenuStack<Act> {
+        let mut items: Vec<MenuItem<Act>> = EngineSetting::ALL
+            .into_iter()
+            .map(MenuItem::Setting)
+            .collect();
+        items.push(MenuItem::Apply);
+        items.push(button("Back", Act::Back));
+        let mut stack = stack_of(MenuScreen {
+            title: None,
+            items,
+            back: Some(Act::Back),
+            settings: Some(scrolled_base()),
+        });
+        press(&mut stack, Key::ArrowUp);
+        assert!(
+            !stack
+                .texts(SIZE)
+                .iter()
+                .any(|t| t.text == EngineSetting::ALL[0].label()),
+            "the first row must be scrolled out of view"
+        );
+        stack
+    }
+
+    #[test]
+    fn a_slider_press_and_drag_on_a_scrolled_settings_screen_hit_the_scrolled_row() {
+        let volume = EngineSetting::SoundEffectVolume;
+        let mut pressed = scrolled_settings_stack();
+        let mut dragged = scrolled_settings_stack();
+        let slider_y = text_y(&pressed, volume.label());
+        let apply_at = [640.0, text_y(&pressed, "Apply")];
+
+        pressed.click([592.0, slider_y], SIZE);
+        pressed.click(apply_at, SIZE);
+        dragged.click([592.0, slider_y], SIZE);
+        let dragging = dragged.is_dragging();
+        dragged.drag([712.0, slider_y], SIZE);
+        dragged.on_key(Input::Mouse(MouseButton::Left), false, false);
+        dragged.click(apply_at, SIZE);
+
+        let applied = |sound_effect_volume| {
+            vec![MenuEvent::SettingsApplied(EngineSettings {
+                sound_effect_volume,
+                ..scrolled_base()
+            })]
+        };
+        assert!(dragging, "the press started a drag");
+        assert_eq!(pressed.take_events(), applied(3.0));
+        assert_eq!(dragged.take_events(), applied(8.0));
+    }
+
+    #[test]
+    fn starting_capture_hides_the_games_note_and_shows_the_label() {
+        let mut stack = controls_stack(vec![noted(0, NOTE), control(1, [R, None])]);
+        let before = (shows(&stack, SIZE, NOTE), shows(&stack, SIZE, "Action 00"));
+
+        key_c(&mut stack, Key::Enter);
+
+        assert_eq!(before, (true, false), "the note shows until capture starts");
+        assert!(!shows(&stack, SIZE, NOTE), "capture hides the note");
+        assert!(shows(&stack, SIZE, "Action 00"), "the label is back");
+    }
+
+    #[test]
+    fn the_shell_note_beats_the_games_note_when_both_are_present() {
+        let mut stack = controls_stack(vec![control(0, [R, None]), control(1, [R, None])]);
+        key_c(&mut stack, Key::Enter);
+        stack.set_items(vec![noted(0, NOTE), control(1, [R, None])]);
+        let game_note_alone = shows(&stack, SIZE, NOTE);
+
+        key_c(&mut stack, Key::Enter);
+
+        assert!(game_note_alone, "the answer's note shows during capture");
+        assert!(shows(&stack, SIZE, PROTECTED_NOTE));
+        assert!(!shows(&stack, SIZE, NOTE), "the shell's note wins");
+        assert_eq!(stack.take_events(), []);
+    }
+
+    #[test]
+    fn a_click_on_a_control_rows_label_chooses_nothing_and_starts_no_capture() {
+        for offset in [1.0, 120.0, 239.5] {
+            let mut stack = controls_stack(vec![control(0, [R, R]), control(1, [R, R])]);
+            let point = cell_point(&stack, 1, offset);
+
+            stack.click(point, SIZE);
+            let capturing = stack.is_capturing();
+            key_c(&mut stack, Key::Q);
+
+            assert!(!capturing, "offset {offset}");
+            assert_eq!(stack.take_events(), [], "offset {offset}");
+        }
+    }
+
+    #[test]
+    fn a_click_picks_the_cell_it_lands_on_whichever_slot_had_the_focus() {
+        let mut primary_after_secondary = controls_stack(vec![control(0, [R, R])]);
+        let mut secondary_after_primary = controls_stack(vec![control(0, [R, R])]);
+        let mut at_cell_edge = controls_stack(vec![control(0, [R, R])]);
+        let mut below_cell_edge = controls_stack(vec![control(0, [R, R])]);
+
+        key_c(&mut primary_after_secondary, Key::ArrowRight);
+        let point = cell_point(&primary_after_secondary, 0, PRIMARY_X);
+        primary_after_secondary.click(point, SIZE);
+        key_c(&mut primary_after_secondary, Key::Q);
+        let point = cell_point(&secondary_after_primary, 0, SECONDARY_X);
+        secondary_after_primary.click(point, SIZE);
+        key_c(&mut secondary_after_primary, Key::Q);
+        let point = cell_point(&at_cell_edge, 0, 440.0);
+        at_cell_edge.click(point, SIZE);
+        key_c(&mut at_cell_edge, Key::Q);
+        let point = cell_point(&below_cell_edge, 0, 439.5);
+        below_cell_edge.click(point, SIZE);
+        key_c(&mut below_cell_edge, Key::Q);
+
+        let q = Input::Key(Key::Q);
+        assert_eq!(
+            primary_after_secondary.take_events(),
+            [captured(Bind::Row(0), Slot::Primary, q)]
+        );
+        assert_eq!(
+            secondary_after_primary.take_events(),
+            [captured(Bind::Row(0), Slot::Secondary, q)]
+        );
+        assert_eq!(
+            at_cell_edge.take_events(),
+            [captured(Bind::Row(0), Slot::Secondary, q)]
+        );
+        assert_eq!(
+            below_cell_edge.take_events(),
+            [captured(Bind::Row(0), Slot::Primary, q)]
+        );
+    }
+
+    #[test]
+    fn the_title_stays_on_screen_above_a_scrolled_control_page() {
+        let screen = MenuScreen {
+            title: Some("Controls".to_owned()),
+            ..controls_screen(controls_of(30))
+        };
+        let mut stack = MenuStack::new();
+        stack.push(screen);
+
+        for scrolled in [false, true] {
+            if scrolled {
+                stack.scroll(3.0);
+                assert!(!row_shown(&stack, 0), "the page must be scrolled");
+            }
+            let texts = stack.texts(SIZE);
+
+            let title = texts
+                .iter()
+                .find(|t| t.text == "Controls")
+                .expect("the title is drawn");
+            let top = SIZE[1] / 2.0 + title.offset[1] - title.size / 2.0;
+            assert!(top >= 0.0, "scrolled {scrolled}: title top at {top}");
+        }
+    }
+
     mod settings_rows {
         use moho_core::prefs::WindowMode;
 
         use super::*;
+
+        /// Tall enough that the thirteen 56-point rows of `screen_of` need no scrolling.
+        const SIZE: [f32; 2] = [1280.0, 1000.0];
 
         fn base() -> EngineSettings {
             EngineSettings {
@@ -760,12 +2060,14 @@ mod tests {
                 ui_volume: 7.0,
                 shadow_quality: 3,
                 ssao_quality: 3,
+                effects_quality: 3,
                 window_mode: WindowMode::Windowed,
                 resolution: (1920, 1080),
             }
         }
 
-        /// The ten rows, Apply, then Back: twelve rows, so the whole column fits on `SIZE`.
+        /// The eleven rows, Apply, then Back: thirteen rows, so the whole column fits on this
+        /// module's `SIZE`.
         fn screen_of(settings: EngineSettings) -> MenuScreen<Act> {
             let mut items: Vec<MenuItem<Act>> = EngineSetting::ALL
                 .into_iter()
@@ -829,7 +2131,7 @@ mod tests {
             assert_eq!(events.len(), 1, "Apply emits exactly one event: {events:?}");
             match events.remove(0) {
                 MenuEvent::SettingsApplied(applied) => applied,
-                other @ MenuEvent::Chosen(_) => panic!("Apply emitted {other:?}"),
+                other => panic!("Apply emitted {other:?}"),
             }
         }
 
@@ -873,6 +2175,7 @@ mod tests {
             step(&mut stack, EngineSetting::WindowMode, &[Key::ArrowRight]);
             step(&mut stack, EngineSetting::InvertMouseY, &[Key::Enter]);
             step(&mut stack, EngineSetting::ShadowQuality, &[Key::ArrowLeft]);
+            step(&mut stack, EngineSetting::EffectsQuality, &[Key::ArrowLeft]);
 
             stack.pop();
             stack.push(screen_of(base()));
@@ -981,6 +2284,25 @@ mod tests {
             assert_eq!(applied.shadow_quality, 4);
             assert_eq!(applied.ssao_quality, 2);
             assert_eq!(applied.resolution, (2560, 1440));
+        }
+
+        #[test]
+        fn the_effects_quality_row_steps_and_clamps_like_a_quality_choice() {
+            let low = EngineSettings {
+                effects_quality: 0,
+                ..base()
+            };
+            let mut stack = stack_of(screen_of(low));
+
+            step(
+                &mut stack,
+                EngineSetting::EffectsQuality,
+                &[Key::ArrowLeft, Key::ArrowRight],
+            );
+            let applied = apply(&mut stack);
+
+            assert_eq!(applied.effects_quality, 1);
+            assert_eq!(applied.ssao_quality, base().ssao_quality);
         }
 
         #[test]
@@ -1131,6 +2453,460 @@ mod tests {
             }
             assert!(texts.iter().any(|text| text == "Apply"), "{texts:?}");
             assert!(texts.iter().any(|text| text == "Back"), "{texts:?}");
+        }
+    }
+
+    mod game_rows {
+        use std::collections::BTreeMap;
+
+        use moho_core::prefs::WindowMode;
+
+        use super::*;
+
+        fn engine_base() -> EngineSettings {
+            EngineSettings {
+                mouse_sensitivity: 2.5,
+                mouse_smoothing: false,
+                invert_mouse_y: false,
+                sound_effect_volume: 8.0,
+                music_volume: 6.0,
+                ui_volume: 7.0,
+                shadow_quality: 3,
+                ssao_quality: 3,
+                effects_quality: 3,
+                window_mode: WindowMode::Windowed,
+                resolution: (1920, 1080),
+            }
+        }
+
+        fn slider(key: &str, label: &str, value: i32) -> GameSlider {
+            GameSlider {
+                key: key.to_owned(),
+                label: label.to_owned(),
+                min: 0,
+                max: 100,
+                step: 5,
+                unit: "%".to_owned(),
+                value,
+            }
+        }
+
+        fn head_bob(value: i32) -> GameSlider {
+            slider("head_bob", "Head bob", value)
+        }
+
+        /// The sliders, then Apply and Back; an engine volume row leads when `engine` is given.
+        fn screen_of(sliders: Vec<GameSlider>, engine: Option<EngineSettings>) -> MenuScreen<Act> {
+            let mut items: Vec<MenuItem<Act>> = Vec::new();
+            if engine.is_some() {
+                items.push(MenuItem::Setting(EngineSetting::MusicVolume));
+            }
+            items.extend(sliders.into_iter().map(MenuItem::GameSlider));
+            items.push(MenuItem::Apply);
+            items.push(button("Back", Act::Back));
+            MenuScreen {
+                title: Some("Settings".to_owned()),
+                items,
+                back: Some(Act::Back),
+                settings: engine,
+            }
+        }
+
+        fn game_values(pairs: &[(&str, i32)]) -> BTreeMap<String, i32> {
+            pairs
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), *value))
+                .collect()
+        }
+
+        fn row_of(stack: &MenuStack<Act>, item: MenuItem<Act>) -> usize {
+            let screen = stack.top().expect("a screen is open");
+            screen
+                .items
+                .iter()
+                .position(|candidate| *candidate == item)
+                .expect("the screen lists the item")
+        }
+
+        fn game_row(stack: &MenuStack<Act>, key: &str) -> usize {
+            let screen = stack.top().expect("a screen is open");
+            screen
+                .items
+                .iter()
+                .position(|item| matches!(item, MenuItem::GameSlider(s) if s.key == key))
+                .expect("the screen lists the game slider")
+        }
+
+        fn rect_of(stack: &MenuStack<Act>, row: usize) -> Rect {
+            layout(stack.top().expect("a screen is open"), SIZE)[row]
+        }
+
+        fn focus(stack: &mut MenuStack<Act>, row: usize) {
+            let rect = rect_of(stack, row);
+            stack.hover(
+                [
+                    (rect.min[0] + rect.max[0]) / 2.0,
+                    (rect.min[1] + rect.max[1]) / 2.0,
+                ],
+                SIZE,
+            );
+        }
+
+        fn step_game(stack: &mut MenuStack<Act>, key: &str, keys: &[Key]) {
+            let row = game_row(stack, key);
+            focus(stack, row);
+            for &pressed in keys {
+                press(stack, pressed);
+            }
+        }
+
+        /// Presses the mouse `fraction` of the way along the band of the `key` slider.
+        fn press_band(stack: &mut MenuStack<Act>, key: &str, fraction: f32) {
+            let rect = rect_of(stack, game_row(stack, key));
+            let x = rect.min[0] + fraction * (rect.max[0] - rect.min[0]);
+            stack.click([x, (rect.min[1] + rect.max[1]) / 2.0], SIZE);
+        }
+
+        fn drag_band(stack: &mut MenuStack<Act>, key: &str, fraction: f32) {
+            let rect = rect_of(stack, game_row(stack, key));
+            let x = rect.min[0] + fraction * (rect.max[0] - rect.min[0]);
+            stack.drag([x, (rect.min[1] + rect.max[1]) / 2.0], SIZE);
+        }
+
+        fn release(stack: &mut MenuStack<Act>) {
+            stack.on_key(Input::Mouse(MouseButton::Left), false, false);
+        }
+
+        fn apply_events(stack: &mut MenuStack<Act>) -> Vec<MenuEvent<Act>> {
+            let row = row_of(stack, MenuItem::Apply);
+            focus(stack, row);
+            press(stack, Key::Enter);
+            stack.take_events()
+        }
+
+        fn applied_game(stack: &mut MenuStack<Act>) -> BTreeMap<String, i32> {
+            let mut games: Vec<_> = apply_events(stack)
+                .into_iter()
+                .filter_map(|event| match event {
+                    MenuEvent::GameSettingsApplied(values) => Some(values),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                games.len(),
+                1,
+                "Apply sends the game values once: {games:?}"
+            );
+            games.remove(0)
+        }
+
+        /// The texts on the `label` row: the label itself, then the value shown beside it.
+        fn row_texts_of(stack: &MenuStack<Act>, label: &str) -> (ScreenText, Option<ScreenText>) {
+            let texts = stack.texts(SIZE);
+            let name = texts
+                .iter()
+                .find(|t| t.text == label)
+                .unwrap_or_else(|| panic!("{label:?} is not drawn in {texts:?}"))
+                .clone();
+            let value = texts
+                .iter()
+                .find(|t| t.offset[1] == name.offset[1] && t.anchor == Anchor::Right)
+                .cloned();
+            (name, value)
+        }
+
+        fn shown_value(stack: &MenuStack<Act>, label: &str) -> Option<String> {
+            row_texts_of(stack, label).1.map(|value| value.text)
+        }
+
+        #[test]
+        fn apply_sends_game_values_beside_engine_values() {
+            let mut stack = stack_of(screen_of(
+                vec![head_bob(50), slider("sway", "Sway", 20)],
+                Some(engine_base()),
+            ));
+            step_game(&mut stack, "head_bob", &[Key::ArrowLeft; 10]);
+            let music = row_of(&stack, MenuItem::Setting(EngineSetting::MusicVolume));
+            focus(&mut stack, music);
+            press(&mut stack, Key::ArrowLeft);
+
+            let events = apply_events(&mut stack);
+
+            assert_eq!(
+                events,
+                [
+                    MenuEvent::SettingsApplied(EngineSettings {
+                        music_volume: 5.5,
+                        ..engine_base()
+                    }),
+                    MenuEvent::GameSettingsApplied(game_values(&[("head_bob", 0), ("sway", 20)])),
+                ]
+            );
+        }
+
+        #[test]
+        fn apply_on_a_screen_without_engine_rows_sends_only_game_values() {
+            let mut stack = stack_of(screen_of(vec![head_bob(50)], None));
+            step_game(&mut stack, "head_bob", &[Key::ArrowLeft; 10]);
+
+            let events = apply_events(&mut stack);
+
+            assert_eq!(
+                events,
+                [MenuEvent::GameSettingsApplied(game_values(&[(
+                    "head_bob", 0
+                )]))]
+            );
+        }
+
+        #[test]
+        fn pop_discards_staged_game_values() {
+            let mut stack = stack_of(main_screen());
+            stack.push(screen_of(vec![head_bob(50)], Some(engine_base())));
+            step_game(&mut stack, "head_bob", &[Key::ArrowLeft; 10]);
+            let staged = shown_value(&stack, "Head bob");
+
+            stack.pop();
+            let after_pop = stack.take_events();
+            stack.push(screen_of(vec![head_bob(50)], Some(engine_base())));
+            let reshown = shown_value(&stack, "Head bob");
+            let events = apply_events(&mut stack);
+
+            assert_eq!(staged.as_deref(), Some("0 %"));
+            assert_eq!(after_pop, []);
+            assert_eq!(reshown.as_deref(), Some("50 %"));
+            assert_eq!(
+                events,
+                [
+                    MenuEvent::SettingsApplied(engine_base()),
+                    MenuEvent::GameSettingsApplied(game_values(&[("head_bob", 50)])),
+                ]
+            );
+        }
+
+        #[test]
+        fn arrows_step_and_clamp_a_game_slider() {
+            let mut stack = stack_of(screen_of(vec![head_bob(95)], None));
+
+            step_game(&mut stack, "head_bob", &[Key::ArrowRight, Key::ArrowRight]);
+            let at_top = shown_value(&stack, "Head bob");
+            press(&mut stack, Key::Enter);
+            let after_enter = shown_value(&stack, "Head bob");
+            press_band(&mut stack, "head_bob", 0.25);
+            let clicked = shown_value(&stack, "Head bob");
+            release(&mut stack);
+            step_game(&mut stack, "head_bob", &[Key::ArrowLeft]);
+            let stepped_down = shown_value(&stack, "Head bob");
+            let mut low = stack_of(screen_of(vec![head_bob(5)], None));
+            step_game(&mut low, "head_bob", &[Key::ArrowLeft, Key::ArrowLeft]);
+            let at_bottom = shown_value(&low, "Head bob");
+
+            assert_eq!(at_bottom.as_deref(), Some("0 %"));
+            assert_eq!(at_top.as_deref(), Some("100 %"));
+            assert_eq!(after_enter.as_deref(), Some("100 %"));
+            assert_eq!(clicked.as_deref(), Some("25 %"));
+            assert_eq!(stepped_down.as_deref(), Some("20 %"));
+            assert_eq!(stack.take_events(), [], "a slider chooses nothing");
+        }
+
+        #[test]
+        fn click_and_drag_set_a_game_slider() {
+            let mut stack = stack_of(screen_of(vec![head_bob(10)], None));
+            let band = rect_of(&stack, game_row(&stack, "head_bob"));
+
+            press_band(&mut stack, "head_bob", 0.3);
+            let pressed = shown_value(&stack, "Head bob");
+            let dragging = stack.is_dragging();
+            drag_band(&mut stack, "head_bob", 0.7);
+            let dragged = shown_value(&stack, "Head bob");
+            let beyond = band.max[0] + 500.0;
+            stack.drag([beyond, (band.min[1] + band.max[1]) / 2.0], SIZE);
+            let past_the_end = shown_value(&stack, "Head bob");
+            stack.drag(
+                [band.min[0] - 500.0, (band.min[1] + band.max[1]) / 2.0],
+                SIZE,
+            );
+            let before_the_start = shown_value(&stack, "Head bob");
+            drag_band(&mut stack, "head_bob", 1.0);
+            release(&mut stack);
+            let still_dragging = stack.is_dragging();
+            drag_band(&mut stack, "head_bob", 0.1);
+            let after_release = shown_value(&stack, "Head bob");
+
+            assert_eq!(pressed.as_deref(), Some("30 %"));
+            assert!(dragging, "the press started a drag");
+            assert_eq!(dragged.as_deref(), Some("70 %"));
+            assert_eq!(past_the_end.as_deref(), Some("100 %"));
+            assert_eq!(before_the_start.as_deref(), Some("0 %"));
+            assert!(!still_dragging, "releasing the button ended the drag");
+            assert_eq!(after_release.as_deref(), Some("100 %"));
+            assert_eq!(applied_game(&mut stack), game_values(&[("head_bob", 100)]));
+        }
+
+        #[test]
+        fn an_off_step_value_snaps_on_the_next_step() {
+            let stepped = |value, min, key| {
+                let row = GameSlider {
+                    min,
+                    max: 100,
+                    ..head_bob(value)
+                };
+                let mut stack = stack_of(screen_of(vec![row], None));
+                step_game(&mut stack, "head_bob", &[key]);
+                applied_game(&mut stack)["head_bob"]
+            };
+
+            assert_eq!(stepped(52, 0, Key::ArrowRight), 55);
+            assert_eq!(stepped(52, 0, Key::ArrowLeft), 45);
+            assert_eq!(stepped(53, 0, Key::ArrowRight), 60);
+            assert_eq!(stepped(4, 3, Key::ArrowRight), 8, "steps count from min");
+        }
+
+        #[test]
+        fn extreme_ranges_stay_in_bounds() {
+            let widest = GameSlider {
+                min: i32::MIN,
+                max: i32::MAX,
+                step: 1,
+                ..head_bob(i32::MAX)
+            };
+            let mut stack = stack_of(screen_of(vec![widest], None));
+
+            step_game(&mut stack, "head_bob", &[Key::ArrowRight]);
+            let right_at_max = shown_value(&stack, "Head bob");
+            step_game(&mut stack, "head_bob", &[Key::ArrowLeft]);
+            let left_once = shown_value(&stack, "Head bob");
+            press_band(&mut stack, "head_bob", 0.5);
+            drag_band(&mut stack, "head_bob", 1.0);
+            let right_end = shown_value(&stack, "Head bob");
+            drag_band(&mut stack, "head_bob", 0.0);
+            let left_end = shown_value(&stack, "Head bob");
+            release(&mut stack);
+            let applied = applied_game(&mut stack);
+
+            assert_eq!(right_at_max.as_deref(), Some("2147483647 %"));
+            assert_eq!(left_once.as_deref(), Some("2147483646 %"));
+            assert_eq!(right_end.as_deref(), Some("2147483647 %"));
+            assert_eq!(left_end.as_deref(), Some("-2147483648 %"));
+            assert_eq!(applied, game_values(&[("head_bob", i32::MIN)]));
+        }
+
+        #[test]
+        fn a_negative_range_snaps_from_its_min() {
+            let negative = |value| GameSlider {
+                min: -10,
+                max: 10,
+                ..head_bob(value)
+            };
+            let mut stack = stack_of(screen_of(vec![negative(-3)], None));
+            let mut fresh = stack_of(screen_of(vec![negative(-3)], None));
+
+            step_game(&mut stack, "head_bob", &[Key::ArrowRight]);
+            let first_right = shown_value(&stack, "Head bob");
+            step_game(&mut stack, "head_bob", &[Key::ArrowRight]);
+            let second_right = shown_value(&stack, "Head bob");
+            step_game(&mut fresh, "head_bob", &[Key::ArrowLeft]);
+            let left = shown_value(&fresh, "Head bob");
+
+            assert_eq!(first_right.as_deref(), Some("0 %"));
+            assert_eq!(second_right.as_deref(), Some("5 %"));
+            assert_eq!(left.as_deref(), Some("-10 %"));
+        }
+
+        #[test]
+        fn inverted_range_and_zero_step_do_not_panic() {
+            let inverted = GameSlider {
+                min: 10,
+                max: 0,
+                ..slider("inverted", "Inverted", 5)
+            };
+            let no_step = GameSlider {
+                step: 0,
+                ..slider("no_step", "No step", 40)
+            };
+            let mut stack = stack_of(screen_of(vec![inverted, no_step], None));
+
+            step_game(&mut stack, "inverted", &[Key::ArrowLeft, Key::ArrowRight]);
+            let after_arrows = shown_value(&stack, "Inverted");
+            press_band(&mut stack, "inverted", 0.5);
+            drag_band(&mut stack, "inverted", 0.2);
+            release(&mut stack);
+            step_game(&mut stack, "no_step", &[Key::ArrowRight]);
+            let stepped = applied_game(&mut stack);
+            press_band(&mut stack, "no_step", 0.5);
+            release(&mut stack);
+            let clicked = applied_game(&mut stack);
+
+            assert_eq!(after_arrows.as_deref(), Some("10 %"));
+            assert_eq!(stepped, game_values(&[("inverted", 10), ("no_step", 41)]));
+            assert_eq!(clicked, game_values(&[("inverted", 10), ("no_step", 50)]));
+        }
+
+        #[test]
+        fn rows_sharing_a_key_show_and_edit_one_value() {
+            let first = head_bob(50);
+            let second = slider("head_bob", "Head bob again", 50);
+            let mut stack = stack_of(screen_of(vec![first, second], None));
+
+            step_game(&mut stack, "head_bob", &[Key::ArrowRight]);
+            let first_shown = shown_value(&stack, "Head bob");
+            let second_shown = shown_value(&stack, "Head bob again");
+            let applied = applied_game(&mut stack);
+
+            assert_eq!(first_shown.as_deref(), Some("55 %"));
+            assert_eq!(second_shown.as_deref(), Some("55 %"));
+            assert_eq!(applied, game_values(&[("head_bob", 55)]));
+        }
+
+        #[test]
+        fn a_game_slider_shows_label_and_value_with_unit() {
+            let bare = GameSlider {
+                unit: String::new(),
+                ..slider("sway", "Sway", 7)
+            };
+            let stack = stack_of(screen_of(vec![head_bob(50), bare], None));
+
+            let (label, value) = row_texts_of(&stack, "Head bob");
+            let (bare_label, bare_value) = row_texts_of(&stack, "Sway");
+
+            let rect = rect_of(&stack, game_row(&stack, "head_bob"));
+            let value = value.expect("the row shows a value");
+            assert_eq!(value.text, "50 %");
+            assert_eq!(label.anchor, Anchor::Left);
+            assert_eq!(label.offset[0], rect.min[0]);
+            assert_eq!(value.anchor, Anchor::Right);
+            assert_eq!(value.offset[0], rect.max[0] - SIZE[0]);
+            assert_eq!(value.offset[1], label.offset[1]);
+            assert_eq!(
+                bare_value.map(|value| value.text).as_deref(),
+                Some("7"),
+                "no unit, no trailing space"
+            );
+            assert_eq!(bare_label.anchor, Anchor::Left);
+        }
+
+        #[test]
+        fn a_second_apply_sends_the_applied_values() {
+            let mut stack = stack_of(screen_of(vec![head_bob(50)], None));
+            step_game(&mut stack, "head_bob", &[Key::ArrowLeft; 10]);
+
+            let first = applied_game(&mut stack);
+            let baseline = stack.top().map(|screen| screen.items.clone());
+            let second = applied_game(&mut stack);
+            step_game(&mut stack, "head_bob", &[Key::ArrowRight]);
+            let third = applied_game(&mut stack);
+
+            assert_eq!(first, game_values(&[("head_bob", 0)]));
+            assert_eq!(
+                baseline.and_then(|items| items.into_iter().find_map(|item| match item {
+                    MenuItem::GameSlider(slider) => Some(slider.value),
+                    _ => None,
+                })),
+                Some(0),
+                "Apply makes the staged value the row's baseline"
+            );
+            assert_eq!(second, game_values(&[("head_bob", 0)]));
+            assert_eq!(third, game_values(&[("head_bob", 5)]));
         }
     }
 }

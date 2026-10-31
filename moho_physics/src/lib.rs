@@ -11,6 +11,6 @@ pub use movement::{
 pub use rapier3d::dynamics::RigidBodyHandle;
 pub use rapier3d::geometry::ColliderHandle;
 pub use world::{
-    CharacterHandle, CharacterSpawn, CharacterState, HitTag, HitVolume, PhysicsWorld, RayHit,
-    RayQuery, UnknownCharacter,
+    CharacterHandle, CharacterSpawn, CharacterState, HitTag, HitVolume, LooseId, LooseShape,
+    LooseSpawn, LooseState, PhysicsWorld, RayHit, RayQuery, UnknownCharacter, UnknownLoose,
 };

@@ -192,7 +192,7 @@ impl App {
     }
 
     fn apply_pending_render(&mut self, renderer: &mut dyn moho_renderer::RendererBackend) {
-        for request in self.pending_render.drain(..) {
+        for request in std::mem::take(&mut self.pending_render) {
             match request {
                 RenderRequest::AddPointLight {
                     position,
@@ -202,7 +202,10 @@ impl App {
                 } => {
                     renderer.add_point_light(position, color, intensity, range);
                 }
-                RenderRequest::ShadowQuality(quality) => renderer.set_shadow_quality(quality),
+                RenderRequest::ShadowQuality(quality) => {
+                    let applied = renderer.set_shadow_quality(quality);
+                    self.shadow_quality_applied(applied);
+                }
                 RenderRequest::SsaoQuality(quality) => renderer.set_ssao_quality(quality),
                 RenderRequest::BloomQuality(quality) => renderer.set_bloom_quality(quality),
                 RenderRequest::ViewHeight(height) => renderer.set_view_height(height),
@@ -291,7 +294,8 @@ impl App {
         ctx.window.request_redraw();
     }
 
-    /// Autosaves with the renderer's lights, queued ones included, logging a failure.
+    /// Autosaves with the renderer's lights, queued ones included, logging a failure, and
+    /// tells the schedule how it went.
     fn autosave(
         &mut self,
         clock: &moho_app::GameClock,
@@ -301,8 +305,12 @@ impl App {
             self.apply_pending_render(r);
             r.all_lights_as_descs()
         });
-        if let Err(e) = self.auto_save_on_shutdown(clock, &lights) {
-            tracing::warn!(error = %e, "Failed to auto-save on exit");
+        match self.auto_save_on_shutdown(clock, &lights) {
+            Ok(()) => self.autosave.saved(),
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to auto-save");
+                self.autosave.save_failed();
+            }
         }
     }
 
@@ -425,6 +433,10 @@ impl moho_app::Game for App {
         // The world's time runs only while playing.
         ctx.clock
             .set_time_scale(f32::from(self.game_state == GameState::Playing));
+        if self.game_state == GameState::Playing {
+            self.autosave.tick();
+            self.pawn.pickups.tick();
+        }
         let frame_processor = FrameProcessor::new();
         let event_processor = EventProcessor::new();
 
@@ -514,6 +526,10 @@ impl moho_app::Game for App {
             self.main_menu_requested = false;
             self.autosave(ctx.clock(), ctx.renderer());
             self.show_menu();
+        }
+
+        if self.autosave.due() {
+            self.autosave(ctx.clock(), ctx.renderer());
         }
 
         let clock = ctx.clock();
@@ -758,6 +774,8 @@ mod tests {
     struct FakeRenderer {
         lights: Vec<(glam::Vec3, glam::Vec3, f32, f32)>,
         shadow_qualities: Vec<u8>,
+        /// Highest shadow level the fake GPU can allocate; `None` allows every level.
+        shadow_cap: Option<u8>,
         ssao_qualities: Vec<u8>,
         view_heights: Vec<Option<f32>>,
         vsyncs: Vec<bool>,
@@ -817,8 +835,9 @@ mod tests {
         }
         fn set_light_position(&mut self, _id: u32, _position: glam::Vec3) {}
         fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
-        fn set_shadow_quality(&mut self, quality: u8) {
+        fn set_shadow_quality(&mut self, quality: u8) -> u8 {
             self.shadow_qualities.push(quality);
+            self.shadow_cap.map_or(quality, |cap| quality.min(cap))
         }
         fn set_ssao_quality(&mut self, quality: u8) {
             self.ssao_qualities.push(quality);
@@ -841,10 +860,12 @@ mod tests {
         LoopConfig::new(TICK_HZ).tick_length()
     }
 
-    /// An app whose autosaves land in a fresh temp dir, which must outlive it.
+    /// An app with a loaded world whose autosaves land in a fresh temp dir, which must
+    /// outlive it.
     fn app_with_saves_dir() -> (App, tempfile::TempDir) {
         let temp = tempfile::tempdir().expect("temp dir");
         let mut app = playing_app();
+        app.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
         app.saves_dir = temp.path().join("saves");
         (app, temp)
     }
@@ -1337,6 +1358,42 @@ mod tests {
         }
 
         #[test]
+        fn a_shadow_quality_the_gpu_cannot_allocate_is_saved_at_the_level_it_fell_back_to() {
+            let temp = tempfile::tempdir().expect("temp dir");
+            let path = temp.path().join("prefs.ini");
+            let mut app = playing_app();
+            app.prefs.set_shadow_quality(4);
+            app.prefs_path = Some(path.clone());
+            let mut fake = FakeRenderer {
+                shadow_cap: Some(2),
+                ..FakeRenderer::default()
+            };
+            app.pending_render.push(RenderRequest::ShadowQuality(4));
+
+            run_frame(&mut app, &mut fake);
+
+            assert_eq!(fake.shadow_qualities, vec![4]);
+            assert_eq!(app.prefs.shadow_quality(), 2);
+            let (on_disk, _) = moho_core::prefs::Prefs::load_from(&path);
+            assert_eq!(on_disk.shadow_quality(), 2, "the next start asks for 2");
+        }
+
+        #[test]
+        fn a_shadow_quality_the_gpu_allocates_is_not_saved_again() {
+            let temp = tempfile::tempdir().expect("temp dir");
+            let path = temp.path().join("prefs.ini");
+            let mut app = playing_app();
+            app.prefs.set_shadow_quality(4);
+            app.prefs_path = Some(path.clone());
+            app.pending_render.push(RenderRequest::ShadowQuality(4));
+
+            run_frame(&mut app, &mut FakeRenderer::default());
+
+            assert_eq!(app.prefs.shadow_quality(), 4);
+            assert!(!path.exists(), "nothing changed, so nothing was written");
+        }
+
+        #[test]
         fn view_height_request_reaches_the_renderer() {
             let mut app = playing_app();
             let mut fake = FakeRenderer::default();
@@ -1532,6 +1589,81 @@ mod tests {
             run_frame(&mut app, &mut fake);
 
             assert!(!app.saves_dir.exists());
+        }
+
+        #[test]
+        fn paused_game_does_not_advance_the_autosave_schedule() {
+            for state in [GameState::Paused, GameState::Menu, GameState::ConsoleOpen] {
+                let mut app = playing_app();
+                app.autosave_interval = Duration::from_secs(1);
+                app.restart_autosave();
+                app.autosave.mark_edited();
+                app.game_state = state;
+                let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+
+                sim.step(&mut app, 2 * TICK_HZ);
+                assert!(
+                    !app.autosave.due(),
+                    "{state:?}: two intervals of standing still came due"
+                );
+                app.game_state = GameState::Playing;
+                sim.step(&mut app, TICK_HZ / 2);
+                assert!(
+                    !app.autosave.due(),
+                    "{state:?}: half an interval of play came due, so the paused ticks counted"
+                );
+                sim.step(&mut app, TICK_HZ);
+
+                assert!(
+                    app.autosave.due(),
+                    "{state:?}: a full interval of play never came due"
+                );
+            }
+        }
+
+        fn push_pickup(app: &mut App) {
+            app.pawn
+                .pickups
+                .push(flagstone_game::inventory::ResourceYield {
+                    resource_id: 7,
+                    amount: 1,
+                });
+        }
+
+        #[test]
+        fn playing_ages_the_player_pawns_pickups() {
+            use flagstone_game::pickups::PICKUP_POPUP_TICKS;
+            let mut app = playing_app();
+            push_pickup(&mut app);
+            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+
+            sim.step(&mut app, PICKUP_POPUP_TICKS - 1);
+            assert_eq!(app.pawn.pickups.entries().len(), 1, "expired a tick early");
+            sim.step(&mut app, 1);
+
+            assert!(app.pawn.pickups.entries().is_empty());
+        }
+
+        #[test]
+        fn paused_game_does_not_age_the_player_pawns_pickups() {
+            use flagstone_game::pickups::PICKUP_POPUP_TICKS;
+            for state in [GameState::Paused, GameState::Menu, GameState::ConsoleOpen] {
+                let mut app = playing_app();
+                push_pickup(&mut app);
+                app.game_state = state;
+                let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+
+                sim.step(&mut app, PICKUP_POPUP_TICKS);
+
+                let ticks_left: Vec<u32> = app
+                    .pawn
+                    .pickups
+                    .entries()
+                    .iter()
+                    .map(|e| e.ticks_left)
+                    .collect();
+                assert_eq!(ticks_left, [PICKUP_POPUP_TICKS], "{state:?}");
+            }
         }
 
         #[test]

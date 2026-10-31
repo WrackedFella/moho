@@ -29,6 +29,8 @@ use crate::tuning::SHIPPED_BODY;
 /// How far past a full lean the reach rays go, in metres, so the eye and the near plane stay
 /// off a wall.
 const LEAN_CLEARANCE: f32 = 0.15;
+/// How far from the eye a control can be used, in metres.
+pub const USE_REACH: f32 = 2.0;
 
 /// Height of the shipped body's capsule centre above its feet, in metres: half its hull. For
 /// code with no [`SimConfig`] at hand; the sim itself spawns the configured body.
@@ -954,6 +956,29 @@ impl SearchlightSim {
         state.eye_position() + lean_offset(state.yaw, self.lean.shift(&self.lean_tuning))
     }
 
+    /// The control the player is looking at within [`USE_REACH`], or `None` when none is, a wall
+    /// or body is in front of it, or the player is dead.
+    pub fn control_in_reach(&self) -> Option<u16> {
+        if self.player_body.is_dead() {
+            return None;
+        }
+        let state = self.player();
+        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
+        let strike = resolve_shot(
+            &self.world,
+            ShotRay {
+                origin: self.leaned_eye(&state),
+                direction: view.forward,
+                range: USE_REACH,
+                ignore: Some(self.player),
+            },
+        )?;
+        match strike.tag {
+            SurfaceTag::Control(index) => Some(index),
+            _ => None,
+        }
+    }
+
     /// How far the player leans after the last tick.
     pub fn player_lean(&self) -> Lean {
         self.lean
@@ -1168,8 +1193,8 @@ mod tests {
     use super::*;
     use crate::tag::SurfaceTag;
     use crate::test_support::{
-        DT, arena_on, arena_with, flat_floor, foreign_mag, long_floor, mag, rifle_from, room,
-        run_until_hit, run_until_settled, test_config,
+        DT, arena_on, arena_with, arena_with_controls, flat_floor, foreign_mag, long_floor, mag,
+        rifle_from, room, run_until_hit, run_until_settled, test_config,
     };
 
     fn rifle_with(rounds: u32) -> Rifle {
@@ -1179,7 +1204,9 @@ mod tests {
     fn part_of(volume: &HitVolume) -> BodyPart {
         match SurfaceTag::try_from(volume.tag).expect("a body volume carries a body tag") {
             SurfaceTag::Part { part, .. } | SurfaceTag::Player(part) => part,
-            other @ SurfaceTag::World => panic!("not a body part: {other:?}"),
+            other @ (SurfaceTag::World | SurfaceTag::Control(_)) => {
+                panic!("not a body part: {other:?}")
+            }
         }
     }
 
@@ -1352,6 +1379,149 @@ mod tests {
                 "turn {turns}: never reached the wall, at {at:?}"
             );
         }
+    }
+
+    /// A sim over a flat floor with `boxes` as walls and `controls` as next-wave posts, the
+    /// player at the origin facing +Z and no enemies.
+    fn control_sim(boxes: &[(Vec3, Vec3)], controls: &[(Vec3, Vec3)]) -> SearchlightSim {
+        let arena = arena_with_controls(boxes, Vec3::ZERO, &[], &[], controls);
+        SearchlightSim::with_start(arena, test_config(rifle_with(30), vec![]), Start::Empty)
+    }
+
+    /// Like [`control_sim`] with a dummy standing on `dummy`.
+    fn control_sim_with_dummy(controls: &[(Vec3, Vec3)], dummy: Vec3) -> SearchlightSim {
+        let arena = arena_with_controls(&[], Vec3::ZERO, &[], &[], controls);
+        let arena = Arc::new(Arena {
+            dummy_spawns: vec![dummy],
+            ..(*arena).clone()
+        });
+        SearchlightSim::with_start(arena, test_config(rifle_with(30), vec![]), Start::Empty)
+    }
+
+    /// A post 0.6 m wide and 2 m tall whose near face is `distance` m in front of the origin.
+    fn post_at(distance: f32) -> (Vec3, Vec3) {
+        (
+            Vec3::new(-0.3, 0.0, distance),
+            Vec3::new(0.3, 2.0, distance + 0.4),
+        )
+    }
+
+    /// A post just behind the player at the origin.
+    fn post_behind() -> (Vec3, Vec3) {
+        (Vec3::new(-0.3, 0.0, -1.4), Vec3::new(0.3, 2.0, -1.0))
+    }
+
+    fn turning(yaw_delta: f32, pitch_delta: f32) -> SearchlightCommand {
+        SearchlightCommand {
+            movement: CharacterCommand {
+                yaw_delta,
+                pitch_delta,
+                ..CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        }
+    }
+
+    #[test]
+    fn a_control_in_view_and_reach_is_found() {
+        let mut sim = control_sim(&[], &[post_behind(), post_at(1.0)]);
+
+        sim.tick(&idle(), DT);
+
+        assert_eq!(sim.control_in_reach(), Some(1));
+    }
+
+    #[test]
+    fn a_control_out_of_view_is_not_found() {
+        let mut sim = control_sim(&[], &[post_at(1.0)]);
+        let mut looking_up = control_sim(&[], &[post_at(1.0)]);
+        sim.tick(&idle(), DT);
+        let in_view = sim.control_in_reach();
+
+        sim.tick(&turning(std::f32::consts::PI, 0.0), DT);
+        looking_up.tick(&turning(0.0, 1.0), DT);
+
+        assert_eq!(in_view, Some(0));
+        assert_eq!(sim.control_in_reach(), None, "facing away");
+        assert_eq!(looking_up.control_in_reach(), None, "looking over it");
+    }
+
+    #[test]
+    fn a_control_beyond_reach_is_not_found() {
+        let mut near = control_sim(&[], &[post_at(1.9)]);
+        let mut far = control_sim(&[], &[post_at(2.1)]);
+
+        near.tick(&idle(), DT);
+        far.tick(&idle(), DT);
+
+        assert_eq!(near.control_in_reach(), Some(0));
+        assert_eq!(far.control_in_reach(), None);
+    }
+
+    #[test]
+    fn a_control_behind_a_wall_is_not_found() {
+        let wall = (Vec3::new(-2.0, 0.0, 0.8), Vec3::new(2.0, 4.0, 0.9));
+        let mut open = control_sim(&[], &[post_at(1.2)]);
+        let mut walled = control_sim(&[wall], &[post_at(1.2)]);
+
+        open.tick(&idle(), DT);
+        walled.tick(&idle(), DT);
+
+        assert_eq!(open.control_in_reach(), Some(0));
+        assert_eq!(walled.control_in_reach(), None);
+    }
+
+    #[test]
+    fn a_body_in_front_of_a_control_blocks_it() {
+        let mut open = control_sim(&[], &[post_at(1.6)]);
+        let mut blocked = control_sim_with_dummy(&[post_at(1.6)], Vec3::new(0.0, 0.0, 1.0));
+        open.tick(&idle(), DT);
+        blocked.tick(&idle(), DT);
+
+        assert_eq!(open.control_in_reach(), Some(0));
+        assert_eq!(blocked.control_in_reach(), None);
+    }
+
+    #[test]
+    fn a_dead_player_finds_no_control() {
+        let mut sim = control_sim(&[], &[post_at(1.0)]);
+        sim.tick(&idle(), DT);
+        let alive = sim.control_in_reach();
+
+        sim.kill_player();
+        sim.tick(&idle(), DT);
+
+        assert_eq!(alive, Some(0));
+        assert_eq!(sim.control_in_reach(), None);
+    }
+
+    #[test]
+    fn a_shot_at_a_control_damages_nothing() {
+        let behind_the_post = Vec3::new(0.0, 0.0, 4.0);
+        let mut open = control_sim_with_dummy(&[], behind_the_post);
+        let mut shielded = control_sim_with_dummy(&[post_at(1.0)], behind_the_post);
+        let health = shielded.dummy_body(0).expect("a dummy stands").health();
+        let player_health = shielded.player_body().health();
+
+        let open_feedback = run_until_hit(&mut open, &pull());
+        let shielded_feedback = run_until_settled(&mut shielded, &pull());
+
+        let is_hit = |feedback: &Feedback| matches!(feedback, Feedback::Hit { .. });
+        assert!(
+            open_feedback.iter().any(is_hit),
+            "the dummy is shootable without the post: {open_feedback:?}"
+        );
+        assert!(shielded_feedback.contains(&Feedback::Fired));
+        assert!(
+            !shielded_feedback.iter().any(is_hit),
+            "{shielded_feedback:?}"
+        );
+        assert_eq!(
+            shielded.dummy_body(0).expect("a dummy stands").health(),
+            health
+        );
+        assert_eq!(shielded.player_body().health(), player_health);
+        assert_eq!(shielded.kills(), 0);
     }
 
     #[test]

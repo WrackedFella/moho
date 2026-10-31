@@ -40,6 +40,7 @@ impl Overlay for GameplayHud {
             &data.hotbar,
             data.selected_slot,
         );
+        render_pickups(ui, &data.pickups);
     }
 
     fn is_visible(&self) -> bool {
@@ -198,6 +199,35 @@ fn paint_bar(ui: &mut egui::Ui, label: &str, fraction: f32, fill_color: egui::Co
     });
 }
 
+// ── Pickup popups ─────────────────────────────────────────────────────────────
+
+/// Gap between the hotbar's top edge and the lowest popup.
+const POPUP_GAP: f32 = 8.0;
+
+/// Fading "+N R<id>" lines stacked upward above the hotbar, oldest topmost.
+fn render_pickups(ui: &mut egui::Ui, pickups: &[(u32, u32, f32)]) {
+    if pickups.is_empty() {
+        return;
+    }
+    egui::Area::new("gameplay_hud_pickups".into())
+        .anchor(
+            egui::Align2::CENTER_BOTTOM,
+            egui::vec2(0.0, -(HOTBAR_BOTTOM_MARGIN + SLOT_SIZE + POPUP_GAP)),
+        )
+        .show(ui.ctx(), |ui| {
+            ui.vertical_centered(|ui| {
+                for &(resource_id, amount, life) in pickups {
+                    let alpha = (life.clamp(0.0, 1.0) * 255.0).round() as u8;
+                    ui.label(
+                        egui::RichText::new(format!("+{amount} R{resource_id}"))
+                            .size(16.0)
+                            .color(egui::Color32::from_white_alpha(alpha)),
+                    );
+                }
+            });
+        });
+}
+
 // ── Hotbar ────────────────────────────────────────────────────────────────────
 
 const HOTBAR_SLOTS: usize = 8;
@@ -206,6 +236,8 @@ const HOTBAR_SLOTS: usize = 8;
 /// just agree in value).
 const TOOL_SLOT: usize = 0;
 const SLOT_SIZE: f32 = 48.0;
+/// Distance from the screen's bottom edge to the hotbar; the pickup popups anchor above it.
+const HOTBAR_BOTTOM_MARGIN: f32 = 12.0;
 const SLOT_GAP: f32 = 4.0;
 const SLOT_ROUNDING: f32 = 6.0;
 
@@ -218,7 +250,10 @@ fn render_hotbar(
     let total_width = HOTBAR_SLOTS as f32 * SLOT_SIZE + (HOTBAR_SLOTS - 1) as f32 * SLOT_GAP;
 
     egui::Area::new("gameplay_hud_hotbar".into())
-        .anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(0.0, -12.0))
+        .anchor(
+            egui::Align2::CENTER_BOTTOM,
+            egui::vec2(0.0, -HOTBAR_BOTTOM_MARGIN),
+        )
         .show(ui.ctx(), |ui| {
             let (rect, _) =
                 ui.allocate_exact_size(egui::vec2(total_width, SLOT_SIZE), egui::Sense::hover());
@@ -434,5 +469,100 @@ mod tests {
         let expected = ["1", "Pickaxe", "2", "R7", "3", "3", "4", "5", "6", "7", "8"];
 
         assert_eq!(texts(&output), expected);
+    }
+
+    fn pickup_data(pickups: Vec<(u32, u32, f32)>) -> HudData {
+        HudData {
+            is_fps_mode: true,
+            pickups,
+            ..Default::default()
+        }
+    }
+
+    /// Opacity a text is drawn with, 0 (invisible) to 255, folding in any shape-level fade.
+    fn drawn_alpha(output: &egui::FullOutput, text: &str) -> f32 {
+        fn find(shape: &egui::epaint::Shape, text: &str) -> Option<f32> {
+            match shape {
+                egui::epaint::Shape::Text(t) if t.galley.text() == text => {
+                    let row = &t.galley.rows[0].visuals;
+                    let vertex_color = row.mesh.vertices[row.glyph_vertex_range.start].color;
+                    let color = match t.override_text_color {
+                        Some(over) => over,
+                        None if vertex_color == egui::Color32::PLACEHOLDER => t.fallback_color,
+                        None => vertex_color,
+                    };
+                    Some(f32::from(color.a()) * t.opacity_factor)
+                }
+                egui::epaint::Shape::Vec(shapes) => shapes.iter().find_map(|s| find(s, text)),
+                _ => None,
+            }
+        }
+        output
+            .shapes
+            .iter()
+            .find_map(|clipped| find(&clipped.shape, text))
+            .unwrap_or_else(|| panic!("text {text:?} not drawn"))
+    }
+
+    fn popup_frame(pickups: Vec<(u32, u32, f32)>) -> egui::FullOutput {
+        let mut hud = GameplayHud::new();
+        let data = pickup_data(pickups);
+        let ctx = egui::Context::default();
+        second_frame(&ctx, |ui| hud.render(ui, &data))
+    }
+
+    #[test]
+    fn pickup_popup_shows_amount_and_resource() {
+        let output = popup_frame(vec![(7, 3, 1.0)]);
+
+        let drawn = texts(&output);
+
+        assert!(drawn.contains(&"+3 R7".to_string()), "{drawn:?}");
+    }
+
+    #[test]
+    fn pickup_popup_fades_with_remaining_life() {
+        let output = popup_frame(vec![(7, 1, 1.0), (8, 1, 0.25)]);
+
+        let fresh = drawn_alpha(&output, "+1 R7");
+        let fading = drawn_alpha(&output, "+1 R8");
+
+        assert!(fading > 0.0, "a popup with life left is still visible");
+        assert!(
+            fading < fresh,
+            "fading {fading} should be fainter than fresh {fresh}"
+        );
+    }
+
+    #[test]
+    fn two_pickups_are_drawn_at_once() {
+        let output = popup_frame(vec![(7, 1, 0.9), (8, 2, 1.0)]);
+
+        let first = rect_of(&output, "+1 R7");
+        let second = rect_of(&output, "+2 R8");
+        let hotbar_top = 600.0 - 12.0 - SLOT_SIZE;
+
+        assert!(
+            (first.min.y - second.min.y).abs() >= first.height(),
+            "stacked, not overlapping: {first:?} {second:?}"
+        );
+        assert!(
+            first.max.y <= hotbar_top + 0.5 && second.max.y <= hotbar_top + 0.5,
+            "above the hotbar: {first:?} {second:?}"
+        );
+    }
+
+    #[test]
+    fn pickups_are_not_drawn_in_strategy_mode() {
+        let mut hud = GameplayHud::new();
+        let data = HudData {
+            is_fps_mode: false,
+            pickups: vec![(7, 3, 1.0)],
+            ..Default::default()
+        };
+
+        let drawn = drawn_texts(&mut hud, &data);
+
+        assert!(!drawn.iter().any(|t| t.starts_with('+')), "{drawn:?}");
     }
 }

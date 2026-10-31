@@ -1,6 +1,6 @@
 # FPS-F1 — Game Design Document (v0.7)
 
-**Status:** draft v0.7, approved for Phase 1 (v0.3 added pillar 2, the item lifecycle rule, §4.12 player and weapon stats, the planning rule in §7 and the §4.7 wound penalties; v0.4 adds the prototype gate in §7, gear that adds containers, the attachment system and a mocked grenade in the prototype, and a shotgun with a tube-fed reload; v0.5 sets the world structure: a hub and missions into hand-made maps built on a modular kit, with generated maps from that kit as a later phase, §4.13; v0.6 makes simulated ballistics a core system in four realism tiers, §4.14, and takes magazine wear out; v0.7 fixes how maps are loaded: discrete levels loaded whole and linked by transitions, larger than the arena from Phase 3, with a streamed world deferred, §5). Writing this page is
+**Status:** draft v0.8, approved for Phase 1 (v0.3 added pillar 2, the item lifecycle rule, §4.12 player and weapon stats, the planning rule in §7 and the §4.7 wound penalties; v0.4 adds the prototype gate in §7, gear that adds containers, the attachment system and a mocked grenade in the prototype, and a shotgun with a tube-fed reload; v0.5 sets the world structure: a hub and missions into hand-made maps built on a modular kit, with generated maps from that kit as a later phase, §4.13; v0.6 makes simulated ballistics a core system in four realism tiers, §4.14, and takes magazine wear out; v0.7 fixes how maps are loaded: discrete levels loaded whole and linked by transitions, larger than the arena from Phase 3, with a streamed world deferred, §5; v0.8 names the map editor: Blender with a Searchlight add-on that places the game's map components, §5). Writing this page is
 [FPS-F1](../../_todo/searchlight/FPS-F1-game-design-document/_feature.md)'s deliverable. Open questions are in §9.
 **Working pitch:** a survival-focused looter shooter with realistic gunplay, where your gear is your character, your rig is the game, and every fight is a line on a ledger.
 **Working target:** single-player first, co-op later, mod support a priority. Pivots (Destiny-like, Arma-like) are open questions, not commitments (§9).
@@ -274,7 +274,9 @@ A streamed or cell-based world, where the engine loads and unloads parts of one 
 
 **Modular kit:** every hand-made map is built from day one on one kit with fixed metrics (grid size, wall, floor and door heights) and marked connection points, so the later phase can cut modules from existing maps instead of rebuilding them. The kit's numbers are fixed with the first map (§9 Q31).
 
-**Art:** test maps are blocked out by hand on the kit in a level editor; no generator is written for them. Placeholder assets are free and licence-compatible (CC0 preferred, ADR-0007). Bespoke assets are commissioned later, to the kit's metrics.
+**Authoring:** maps are built in **Blender** with a **Searchlight add-on**. The add-on places the game's **map components** as typed objects: player and enemy spawns, waypoints, cover and its direction, dummies and the level's mode now; loot points, building slots, boundaries, safe spots, kit connection points and anomalies as the features that use them arrive. A component is a point, an oriented point or a volume, with a kind chosen from the game's data (an anomaly's kind, a loot point's site kind) and typed overrides on its defaults. The add-on exports the glTF the game loads, and can launch the game on the open map and list the problems the game would find in it. The components are defined once, and the add-on and the game both read that definition, so a feature that adds a component adds it to both. Users: the team; opening it to modders is §9 Q34. The add-on never ships inside the game.
+
+**Art:** test maps are blocked out by hand on the kit in Blender (Authoring above); no generator is written for them. Placeholder assets are free and licence-compatible (CC0 preferred, ADR-0007). Bespoke assets are commissioned later, to the kit's metrics.
 
 ## 6 Scope boundaries: what this game is NOT
 
@@ -384,6 +386,7 @@ Settled entries keep their numbers so references stay stable.
 31. **Kit metrics:** grid size, wall, floor and door heights, and the connection-point convention of the modular kit (§5). Fix them with the first hand-made map, with the Tech Lead.
 32. **Breath and heart rate:** are hold-breath and heart rate stats through the §4.12 modifier layer, and does holding breath cost fatigue? Decide when Phase 5 is carded (§4.14 tier 4).
 33. **Streamed world:** levels load whole and link by transitions (§5). Does a later phase want one streamed map (cells loaded around each player) instead, and what would it buy that larger levels do not? Not before Phase 6 has been played; if it comes, it is an engine feature with its own request (streamed colliders and navigation, per-cell origins, saves per cell).
+34. **Player-made maps:** the map editor (§5) is for the team. Does mod support (header) cover maps, and would that mean shipping the add-on to modders or building an editor inside the game (an engine feature)? Not before Phase 6.
 
 ## 10 Engine fit and engine requests
 

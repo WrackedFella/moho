@@ -23,6 +23,6 @@ pub use console::{CONSOLE_BINDING, Console, Routing};
 pub use host::UiShell;
 pub use image::{ScreenImage, ScreenImageError, ScreenImageId};
 pub use layers::UiLayers;
-pub use menu::{MenuEvent, MenuItem, MenuScreen, MenuStack};
-pub use settings::{Control, EngineSetting, EngineSettings};
+pub use menu::{MenuEvent, MenuItem, MenuScreen, MenuStack, Slot};
+pub use settings::{Control, EngineSetting, EngineSettings, GameSlider};
 pub use text::{Anchor, ScreenText, ScreenTextError};

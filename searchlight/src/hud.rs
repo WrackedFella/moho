@@ -3,6 +3,8 @@
 use glam::Vec3;
 use searchlight_rules::{BodyPart, MagazineLevel};
 
+use crate::control::ControlAction;
+use crate::mode::Tally;
 use crate::sim::Feedback;
 
 /// The words that tell the player how full a magazine is, without a count.
@@ -87,8 +89,12 @@ pub fn arena_text(wave: u32, score: u32) -> String {
 }
 
 /// The title line: `vitals` followed by the wave and score, such as `HP 70/100 | Wave 3  Score 200`.
-pub fn vitals_text(vitals: &str, wave: u32, score: u32) -> String {
-    format!("{vitals} | {}", arena_text(wave, score))
+/// With no `tally` (a sandbox) it is `vitals` unchanged.
+pub fn vitals_text(vitals: &str, tally: Option<Tally>) -> String {
+    match tally {
+        Some(tally) => format!("{vitals} | {}", arena_text(tally.wave, tally.score)),
+        None => vitals.to_owned(),
+    }
 }
 
 /// `vitals` with `GOD MODE` appended while god mode is on, unchanged while off.
@@ -103,6 +109,15 @@ pub fn god_mode_text(vitals: &str, god_mode: bool) -> String {
 /// What the dead player reads in the title, or `None` while alive.
 pub fn death_text(dead: bool) -> Option<&'static str> {
     dead.then_some("Dead - press F8 to restart")
+}
+
+/// The prompt for a control in reach: the `key` that uses it and what it does, such as
+/// `[F] Next wave`. A `key` of `unbound` says the action has no key.
+pub fn use_prompt(key: &str, action: ControlAction) -> String {
+    let what = match action {
+        ControlAction::NextWave => "Next wave",
+    };
+    format!("[{key}] {what}")
 }
 
 /// A translucent rectangle in screen pixels, colour as straight RGBA.
@@ -157,17 +172,45 @@ mod feedback_tests {
         let alive = health_text(70, 100);
         let dead = death_text(true).expect("a dead player has a title");
 
-        let alive_title = vitals_text(&alive, 3, 200);
-        let dead_title = vitals_text(dead, 3, 200);
+        let alive_title = vitals_text(
+            &alive,
+            Some(Tally {
+                wave: 3,
+                score: 200,
+            }),
+        );
+        let dead_title = vitals_text(
+            dead,
+            Some(Tally {
+                wave: 3,
+                score: 200,
+            }),
+        );
 
         assert_eq!(alive_title, "HP 70/100 | Wave 3  Score 200");
         assert_eq!(dead_title, "Dead - press F8 to restart | Wave 3  Score 200");
     }
 
     #[test]
+    fn vitals_without_a_tally_show_no_wave_or_score() {
+        let alive = health_text(70, 100);
+        let dead = death_text(true).expect("a dead player has a title");
+
+        let alive_title = vitals_text(&alive, None);
+        let dead_title = vitals_text(dead, None);
+
+        assert_eq!(alive_title, "HP 70/100");
+        assert_eq!(dead_title, "Dead - press F8 to restart");
+    }
+
+    #[test]
     fn the_title_shows_god_mode_only_when_on() {
-        let alive = vitals_text(&health_text(70, 100), 3, 200);
-        let dead = vitals_text(death_text(true).expect("dead"), 3, 200);
+        let tally = Some(Tally {
+            wave: 3,
+            score: 200,
+        });
+        let alive = vitals_text(&health_text(70, 100), tally);
+        let dead = vitals_text(death_text(true).expect("dead"), tally);
 
         let off = god_mode_text(&alive, false);
         let on = god_mode_text(&alive, true);
@@ -238,6 +281,17 @@ mod feedback_tests {
         let left = hit_edge(player, FRAC_PI_2, behind_in_world_z);
 
         assert_eq!([right, left], [Edge::Right, Edge::Left]);
+    }
+
+    #[test]
+    fn the_use_prompt_names_the_key_and_next_wave() {
+        let bound = use_prompt("F", ControlAction::NextWave);
+        let rebound = use_prompt("Mouse Right", ControlAction::NextWave);
+        let unbound = use_prompt("unbound", ControlAction::NextWave);
+
+        assert_eq!(bound, "[F] Next wave");
+        assert_eq!(rebound, "[Mouse Right] Next wave");
+        assert_eq!(unbound, "[unbound] Next wave");
     }
 
     #[test]

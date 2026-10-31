@@ -108,6 +108,10 @@ struct App {
 
     saves_dir: std::path::PathBuf,
 
+    /// Time of play between autosaves of an edited world.
+    autosave_interval: std::time::Duration,
+    autosave: app::autosave::AutosaveSchedule,
+
     // Set when the UI asks to quit; `frame` autosaves and leaves the loop
     exit_requested: bool,
 
@@ -175,6 +179,16 @@ impl App {
         }
     }
 
+    /// Saves `applied` as the shadow quality when it differs from the saved one: the renderer
+    /// lowers a level whose shadow maps the GPU could not allocate, and the next start must
+    /// not ask for it again.
+    fn shadow_quality_applied(&mut self, applied: u8) {
+        if u32::from(applied) != self.prefs.shadow_quality() {
+            self.prefs.set_shadow_quality(u32::from(applied));
+            self.save_prefs();
+        }
+    }
+
     /// Makes `prefs` (just saved by the Settings screen) the running prefs and
     /// rebinds input from them and queues their audio levels for the next frame.
     /// Does not save: the screen already wrote the file.
@@ -193,6 +207,16 @@ impl App {
         if config.prefs.bloom() != self.prefs.bloom() {
             self.pending_render
                 .push(RenderRequest::BloomQuality(config.prefs.bloom() as u8));
+        }
+        if config.prefs.shadow_quality() != self.prefs.shadow_quality() {
+            self.pending_render.push(RenderRequest::ShadowQuality(
+                config.prefs.shadow_quality() as u8
+            ));
+        }
+        if config.prefs.effects_quality() != self.prefs.effects_quality() {
+            self.scene
+                .effects_mut()
+                .set_quality(config.prefs.effects_quality());
         }
         self.set_pending_frame_cap(config.prefs.frame_cap());
         self.prefs = config.prefs;
@@ -243,6 +267,10 @@ impl App {
             pending_frame_cap: None,
             frame_cap_changed: false,
             saves_dir: std::path::PathBuf::from("saves"),
+            autosave_interval: app::autosave::DEFAULT_AUTOSAVE_INTERVAL,
+            autosave: app::autosave::AutosaveSchedule::for_interval(
+                app::autosave::DEFAULT_AUTOSAVE_INTERVAL,
+            ),
             exit_requested: false,
             main_menu_requested: false,
             event_bus: initialized.event_bus,
@@ -285,6 +313,11 @@ impl App {
         let mut app = Self::from_config(crate::app::config::AppConfig::builder().build());
         app.prefs_path = None;
         app
+    }
+
+    /// Called as a world starts, so edits made before it do not count against the new one.
+    fn restart_autosave(&mut self) {
+        self.autosave = app::autosave::AutosaveSchedule::for_interval(self.autosave_interval);
     }
 
     fn generate_new_world(
@@ -697,6 +730,56 @@ mod tests {
             .collect();
         assert_eq!(queued, vec![1]);
         assert_eq!(app.prefs.bloom(), 1);
+    }
+
+    fn queued_shadow_quality(app: &App) -> Vec<u8> {
+        app.pending_render
+            .iter()
+            .filter_map(|request| match request {
+                RenderRequest::ShadowQuality(value) => Some(*value),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn adopting_settings_queues_the_shadow_quality() {
+        let mut app = App::headless();
+        let mut sharper = Prefs::default();
+        sharper.set_shadow_quality(4);
+
+        app.adopt_settings(sharper);
+
+        assert_eq!(queued_shadow_quality(&app), vec![4]);
+        assert_eq!(app.prefs.shadow_quality(), 4);
+    }
+
+    #[test]
+    fn adopting_settings_leaves_unchanged_shadow_quality_unqueued() {
+        let mut app = App::headless();
+        let mut other_change = Prefs::default();
+        other_change.set_bloom(1);
+
+        app.adopt_settings(other_change);
+
+        assert_eq!(queued_shadow_quality(&app), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn adopting_settings_sets_the_scenes_effects_quality() {
+        for (quality, cap) in [(1, 32), (4, 256), (0, 0)] {
+            let mut app = App::headless();
+            let mut adopted = Prefs::default();
+            adopted.set_effects_quality(quality);
+
+            app.adopt_settings(adopted);
+
+            let effects = app.scene.effects_mut();
+            for _ in 0..300 {
+                effects.begin_streak(moho_renderer::StreakStyle::new(1.0, 0.1, 0));
+            }
+            assert_eq!(effects.live(), cap, "adopted quality {quality}");
+        }
     }
 
     #[test]

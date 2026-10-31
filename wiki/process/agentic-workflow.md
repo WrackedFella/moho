@@ -47,14 +47,68 @@ The generic rules (one thread per card, shared files belong to planning, cross-l
 requests, broad moves) are in the devflow [coordination](https://github.com/WrackedFella/claude-skills/blob/main/wiki/coordination.md) page.
 Moho's instances:
 
-- **Lanes:** engine, strategy, FPS, one Claude Code project each.
-- **Engine requests:** a game lane files the *Engine request* issue template; the
-  engine lane designs the answer. The layering check enforces the dependency half. A request
-  closes when the engine work that answers it merges; the game line's card tracks adoption.
+- **Lanes:** engine, strategy, FPS, one Claude Code project each (labels `line:engine`,
+  `line:strategy`, `line:fps`). Projects can't see each other's threads or memory, so
+  everything one lane needs from another is written down here, in issues, and carried
+  between projects by the user as a relay note (below).
+- **Engine requests:** a game lane files the *Engine request* issue template (label
+  `engine-request` plus its line label); the engine lane designs the answer. The layering
+  check enforces the dependency half. A request closes when the engine work that answers
+  it merges; the game line's card tracks adoption.
+- **Engine notices:** the engine lane's way back. Any engine decision that changes what a
+  game line can use, must change, or should expect is written as a comment on the issue
+  the game lane already tracks, then relayed. See [Hand-offs between lanes](#hand-offs-between-lanes).
 - **Shared files:** `wiki/roadmap.md`, `_todo/README.md`, `CLAUDE.md`, the root
   `Cargo.toml` and `scripts/layering.txt` are edited only by planning sessions.
 - **Broad moves:** for example ENG-F10's voxel extraction.
 - **Lane context:** a line's own crates carry a short `CLAUDE.md` pointing at its design doc.
+
+### Hand-offs between lanes
+
+A hand-off is complete only when both halves exist: the issue in the repo (the record)
+and the relay note the user pastes into the receiving project (the trigger). The thread
+that makes the hand-off ends its reply with the relay note, in a fenced block, one per
+receiving lane:
+
+```text
+Relay to: <Engine | Strategy | FPS>
+From: <lane>, <date>
+Item: #<issue>, <ID>, <short description>
+What changed or is asked: <1–3 lines>
+Action for the receiving lane: <FYI only | update <card or feature> | re-plan <ID> | reply on #<issue>>
+```
+
+**Game lane → Engine (request).**
+
+1. File the *Engine request* issue (`engine-request` + line label). State what the game
+   must be able to do, not a solution. Name the consumer (feature or card ID), when it is
+   needed (milestone), and the fallback if it doesn't come (cut line or stopgap).
+2. Mark the dependent card as blocked by the request. Don't work around a missing engine
+   feature inside engine crates, and don't copy engine code into game crates.
+3. End the reply with a relay note to the Engine project.
+
+**Engine → game lanes (decision).** Decisions that need a notice: accepting, rejecting,
+deferring or reshaping a request; adding or changing a seam or public API; accepting or
+superseding an ADR; a roadmap reorder that moves a request; a breaking change; a
+dependency upgrade at milestone close. No label or new issue: the record goes where the
+game lane already looks. For each, the deciding thread does both before reporting the
+decision as done:
+
+1. Comment on the issue the game lane tracks: the `engine-request` when there is one,
+   otherwise the affected game feature issue (found by its `line:` label). The comment
+   states the decision, why, what the game lane should do now, and links the ADR, PR or
+   roadmap change.
+2. End the reply with a relay note per affected game project.
+
+**Game lane receiving a notice.** On the relay note, start a thread to read the comment,
+update the affected cards and feature issues (or propose the re-plan when a change needs
+the user's approval), and reply on the same issue with what changed. Before planning a
+new feature or milestone, check the lane's open `engine-request` issues for engine
+comments it hasn't acted on.
+
+**Triage.** The engine lane triages each new `engine-request` in its first thread on it:
+accept into the roadmap with a milestone, reshape with a reason, or decline with the
+fallback the game lane should take. Each outcome is a decision above and is relayed.
 
 ## Cloud runtime
 

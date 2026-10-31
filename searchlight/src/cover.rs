@@ -66,6 +66,11 @@ pub fn offer(
     })
 }
 
+/// Whether a struck surface is level geometry or a placed control, as opposed to a character.
+const fn is_static_geometry(tag: SurfaceTag) -> bool {
+    matches!(tag, SurfaceTag::World | SurfaceTag::Control(_))
+}
+
 /// Whether level geometry lies between `from` and `to`. Characters do not count, and a
 /// ray starting inside one (the player's eye is inside the head volume) passes through it.
 fn world_blocks(world: &PhysicsWorld, from: Vec3, to: Vec3) -> bool {
@@ -82,7 +87,7 @@ fn world_blocks(world: &PhysicsWorld, from: Vec3, to: Vec3) -> bool {
         let Some(strike) = resolve_shot(world, ray) else {
             return false;
         };
-        if strike.tag == SurfaceTag::World {
+        if is_static_geometry(strike.tag) {
             return true;
         }
         origin = strike.point + direction * STEP_PAST_CHARACTER;
@@ -104,7 +109,7 @@ pub(crate) fn floor_below(world: &PhysicsWorld, from: Vec3) -> Vec3 {
         let Some(strike) = resolve_shot(world, ray) else {
             return from;
         };
-        if strike.tag == SurfaceTag::World {
+        if is_static_geometry(strike.tag) {
             return strike.point;
         }
         let next = strike.point + Vec3::NEG_Y * STEP_PAST_CHARACTER;
@@ -537,6 +542,58 @@ mod tests {
 
         assert_eq!(floor_below(&world, off_the_floor), off_the_floor);
         assert_eq!(floor_below(&world, beyond_range), beyond_range);
+    }
+
+    /// `FLOOR` plus one box tagged `Control(0)`.
+    fn world_with_control(min: Vec3, max: Vec3) -> PhysicsWorld {
+        let mut world = world_with(&[FLOOR]);
+        world.set_world_mesh(
+            moho_render_api::WorldMeshId(1),
+            &crate::test_support::box_mesh(min, max),
+            SurfaceTag::Control(0).into(),
+        );
+        world.step(crate::test_support::DT);
+        world
+    }
+
+    #[test]
+    fn a_control_post_between_the_enemy_and_the_player_hides_a_cover_point() {
+        let (min, max) = wall_of_height(1.2);
+        let world = world_with_control(min, max);
+
+        let picked = offer(
+            &world,
+            &[MARKER],
+            &[],
+            Vec3::new(0.0, 0.915, 12.0),
+            PLAYER,
+            ENEMY_EYE,
+            &enemy_tuning(),
+        );
+
+        assert_eq!(picked, offered(0, MARKER));
+    }
+
+    #[test]
+    fn a_control_post_blocks_the_line_of_fire_like_a_wall() {
+        let (min, max) = wall_of_height(4.0);
+        let world = world_with_control(min, max);
+
+        let blocked = world_blocks(&world, PLAYER.eye, Vec3::new(0.0, 1.63, 12.0));
+
+        assert!(blocked);
+    }
+
+    #[test]
+    fn floor_below_stops_on_the_top_of_a_control_post() {
+        let world = world_with_control(Vec3::new(-0.2, 0.0, -0.2), Vec3::new(0.2, 1.2, 0.2));
+
+        let dropped = floor_below(&world, Vec3::new(0.0, 3.0, 0.0));
+
+        assert!(
+            dropped.distance(Vec3::new(0.0, 1.2, 0.0)) < 1e-3,
+            "landed at {dropped:?}"
+        );
     }
 
     #[test]

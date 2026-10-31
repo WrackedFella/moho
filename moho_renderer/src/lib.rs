@@ -15,7 +15,7 @@ pub use moho_render_api::LightDesc;
 pub use scene::Scene;
 mod gpu_types;
 mod sky;
-pub use gpu_types::LightingGpu;
+pub use gpu_types::{LightingGpu, ShadowGpu};
 pub use moho_render_api::{InstanceGpu, MaterialGpu};
 use moho_render_api::{Rgba8Image, WorldMesh};
 mod block_on;
@@ -23,6 +23,8 @@ mod bloom;
 mod markers;
 mod ui_pass;
 pub use markers::{MARKER_INFLATE, MarkerDraws, Markers};
+mod effects;
+pub use effects::{EFFECT_MESH_IDS_FROM, EffectHandle, Effects, StreakStyle};
 mod world_meshes;
 pub use world_meshes::WorldMeshes;
 mod instance_collector;
@@ -116,6 +118,11 @@ pub trait RendererBackend {
         let _ = texture;
         self.enqueue_draw(mesh, instances);
     }
+    /// Queue a previously-registered mesh for drawing this frame without casting a shadow.
+    /// The default calls `enqueue_draw`.
+    fn enqueue_unshadowed_draw(&mut self, mesh: u32, instances: &[InstanceGpu]) {
+        self.enqueue_draw(mesh, instances);
+    }
     /// Upload the skin (four joints and weights per vertex) of the mesh under `mesh`,
     /// registered by [`register_world_mesh`](Self::register_world_mesh). No-op by default.
     fn register_skin(&mut self, mesh: u32, joints: &[[u16; 4]], weights: &[[f32; 4]]) {
@@ -180,8 +187,9 @@ pub trait RendererBackend {
         Vec::new()
     }
 
-    /// Set shadow quality level.
-    fn set_shadow_quality(&mut self, quality: u8);
+    /// Set the shadow quality level (0-4) and return the level in use: lower than asked when
+    /// the GPU could not allocate the asked level's shadow maps.
+    fn set_shadow_quality(&mut self, quality: u8) -> u8;
 
     /// Set SSAO quality level.
     fn set_ssao_quality(&mut self, quality: u8);
@@ -263,6 +271,9 @@ impl RendererBackend for Renderer<'_> {
     }
     fn enqueue_textured_draw(&mut self, mesh: u32, texture: u32, instances: &[InstanceGpu]) {
         self.enqueue_textured_draw(mesh, texture, instances);
+    }
+    fn enqueue_unshadowed_draw(&mut self, mesh: u32, instances: &[InstanceGpu]) {
+        self.enqueue_unshadowed_draw(mesh, instances);
     }
     fn register_skin(&mut self, mesh: u32, joints: &[[u16; 4]], weights: &[[f32; 4]]) {
         self.register_skin(mesh, joints, weights);
@@ -346,8 +357,8 @@ impl RendererBackend for Renderer<'_> {
     fn all_lights_as_descs(&self) -> Vec<moho_render_api::LightDesc> {
         self.all_lights_as_descs()
     }
-    fn set_shadow_quality(&mut self, quality: u8) {
-        self.set_shadow_quality(quality);
+    fn set_shadow_quality(&mut self, quality: u8) -> u8 {
+        self.set_shadow_quality(quality)
     }
     fn set_ssao_quality(&mut self, quality: u8) {
         self.set_ssao_quality(quality);

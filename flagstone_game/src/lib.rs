@@ -8,6 +8,7 @@ pub mod events;
 pub mod inventory;
 pub mod pawn;
 mod perlin;
+pub mod pickups;
 pub mod raycast;
 pub mod scene;
 pub mod scene_builders;

@@ -5,7 +5,9 @@
 pub mod anim;
 mod buffers;
 mod error;
+mod hash;
 mod image;
+mod loaded;
 mod marker;
 mod mesh;
 mod model;
@@ -14,12 +16,14 @@ mod rig;
 mod socket;
 
 use std::borrow::Cow;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use glam::Mat4;
 
 pub use error::{LevelError, LevelErrorKind};
+pub use hash::LevelHash;
 pub use image::load_image;
+pub use loaded::LoadedLevel;
 pub use marker::LevelMarker;
 pub use model::{
     MODEL_MATERIAL_VARIANT, MeshSkin, Model, ModelImage, ModelMaterial, ModelMesh, ModelNode,
@@ -56,6 +60,87 @@ pub fn load(path: &Path) -> Result<Level, LevelError> {
     Ok(Level { meshes, markers })
 }
 
+/// The hash a replayed switch to the level at `path` is pinned to, without building any mesh.
+///
+/// # Errors
+/// Returns a [`LevelError`] naming `path` when the file or one of its buffers cannot be read
+/// or the file is not glTF.
+pub fn level_hash(path: &Path) -> Result<LevelHash, LevelError> {
+    with_sources(path, |sources, buffers| Ok(sources.hash(buffers)))
+}
+
+/// Load the level at `path` only if its content hashes to `expected`.
+///
+/// # Errors
+/// [`LevelErrorKind::HashMismatch`] when it does not, before any mesh is built; otherwise
+/// as [`load`].
+pub fn load_pinned(path: &Path, expected: &LevelHash) -> Result<Level, LevelError> {
+    load_hashed(path, Some(expected)).map(|(level, _)| level)
+}
+
+/// Load the level at `path` with the hash of the bytes loaded; a `pin` that differs is
+/// refused before any mesh is built.
+pub(crate) fn load_hashed(
+    path: &Path,
+    pin: Option<&LevelHash>,
+) -> Result<(Level, LevelHash), LevelError> {
+    with_sources(path, |sources, buffers| {
+        let found = sources.hash(buffers);
+        if let Some(&expected) = pin.filter(|&&expected| expected != found) {
+            return Err(LevelErrorKind::HashMismatch { expected, found });
+        }
+        let (meshes, markers) = build(&sources.gltf.document, buffers)?;
+        Ok((Level { meshes, markers }, found))
+    })
+}
+
+/// The bytes a level load reads: the main file, parsed, and the directory its relative
+/// URIs resolve against.
+struct Sources {
+    main: Vec<u8>,
+    gltf: gltf::Gltf,
+    dir: PathBuf,
+}
+
+impl Sources {
+    fn read(path: &Path) -> Result<Self, LevelError> {
+        let fail = |kind| LevelError::new(path, kind);
+        let main = std::fs::read(path).map_err(|e| fail(LevelErrorKind::Read(e)))?;
+        let gltf = gltf::Gltf::from_slice(&main)
+            .map_err(|e| fail(LevelErrorKind::NotGltf(Box::new(e))))?;
+        let dir = path.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
+        Ok(Self { main, gltf, dir })
+    }
+
+    fn buffers(&self) -> Result<Vec<Cow<'_, [u8]>>, LevelErrorKind> {
+        resolve_buffers(&self.gltf, &self.dir)
+    }
+
+    /// The main file, then each URI buffer in index order; the GLB blob is part of the
+    /// main file.
+    fn hash(&self, buffers: &[Cow<'_, [u8]>]) -> LevelHash {
+        let uri_buffers = self
+            .gltf
+            .document
+            .buffers()
+            .filter(|buffer| matches!(buffer.source(), gltf::buffer::Source::Uri(_)))
+            .map(|buffer| &*buffers[buffer.index()]);
+        LevelHash::of_sources(std::iter::once(self.main.as_slice()).chain(uri_buffers))
+    }
+}
+
+/// Read the sources at `path`, resolve their buffers and run `f`; every failure,
+/// including `f`'s, is a [`LevelError`] naming `path`.
+fn with_sources<T>(
+    path: &Path,
+    f: impl FnOnce(&Sources, &[Cow<'_, [u8]>]) -> Result<T, LevelErrorKind>,
+) -> Result<T, LevelError> {
+    let sources = Sources::read(path)?;
+    let fail = |kind| LevelError::new(path, kind);
+    let buffers = sources.buffers().map_err(fail)?;
+    f(&sources, &buffers).map_err(fail)
+}
+
 /// Read and parse the glTF at `path`, resolve its buffers and run `f` on them and the
 /// directory relative URIs resolve against; every failure, including `f`'s, is a
 /// [`LevelError`] naming `path`.
@@ -64,13 +149,18 @@ fn with_buffers<T>(
     f: impl FnOnce(&gltf::Document, &[Cow<'_, [u8]>], &Path) -> Result<T, LevelErrorKind>,
 ) -> Result<T, LevelError> {
     let fail = |kind| LevelError::new(path, kind);
-    let gltf = {
-        let bytes = std::fs::read(path).map_err(|e| fail(LevelErrorKind::Read(e)))?;
-        gltf::Gltf::from_slice(&bytes).map_err(|e| fail(LevelErrorKind::NotGltf(Box::new(e))))?
-    };
-    let dir = path.parent().unwrap_or_else(|| Path::new(""));
-    let buffers = buffers::resolve(&gltf.document, gltf.blob.as_deref(), dir).map_err(fail)?;
-    f(&gltf.document, &buffers, dir).map_err(fail)
+    // Only hashing needs the main file's bytes; drop them before the parse result is built on.
+    let Sources { main, gltf, dir } = Sources::read(path)?;
+    drop(main);
+    let buffers = resolve_buffers(&gltf, &dir).map_err(fail)?;
+    f(&gltf.document, &buffers, &dir).map_err(fail)
+}
+
+fn resolve_buffers<'g>(
+    gltf: &'g gltf::Gltf,
+    dir: &Path,
+) -> Result<Vec<Cow<'g, [u8]>>, LevelErrorKind> {
+    buffers::resolve(&gltf.document, gltf.blob.as_deref(), dir)
 }
 
 fn build(

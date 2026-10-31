@@ -2,7 +2,7 @@
 
 use crate::RendererBackend;
 use crate::textures::WHITE_TEXTURE;
-use moho_render_api::{InstanceGpu, Rgba8Image, TextureId, WorldMesh, WorldMeshId};
+use moho_render_api::{InstanceGpu, Rgba8Image, TextureId, WorldMesh, WorldMeshId, WorldMeshRange};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// How a mesh draws: once at identity, or only where placed.
@@ -58,6 +58,8 @@ pub struct WorldMeshes {
     live: BTreeMap<WorldMeshId, Live>,
     pending: BTreeMap<WorldMeshId, Pending>,
     placements: BTreeMap<WorldMeshId, Vec<Placement>>,
+    /// Placements that cast no shadow, kept apart so the ordinary draw lists are unchanged.
+    unshadowed: BTreeMap<WorldMeshId, Vec<Placement>>,
     /// Skinned placements in call order.
     skinned: Vec<SkinnedPlacement>,
     /// Mesh ids already warned about, so a bad skinned placement warns once, not per frame;
@@ -157,15 +159,52 @@ impl WorldMeshes {
         });
     }
 
+    /// Append a placement of the mesh under `id` for this frame that draws without casting a
+    /// shadow, listed by [`unshadowed_draws`](Self::unshadowed_draws) and by no other draw list.
+    pub fn place_unshadowed(&mut self, id: WorldMeshId, transform: glam::Affine3A, material: u32) {
+        self.unshadowed.entry(id).or_default().push(Placement {
+            transform,
+            material,
+            texture: None,
+        });
+    }
+
+    /// Unshadowed placements of live ids as `(backend handle, instance)`, in id order and
+    /// call order.
+    pub fn unshadowed_draws(&self) -> impl Iterator<Item = (u32, InstanceGpu)> + '_ {
+        self.unshadowed.iter().flat_map(move |(id, placements)| {
+            let handle = self.live.get(id).map(|live| live.handle);
+            handle.into_iter().flat_map(move |handle| {
+                placements.iter().map(move |placement| {
+                    let model = glam::Mat4::from(placement.transform);
+                    (handle, instance(model, placement.material))
+                })
+            })
+        })
+    }
+
     /// Drop every placement; the renderer calls this each frame.
     pub fn clear_placements(&mut self) {
         self.placements.clear();
+        self.unshadowed.clear();
         self.skinned.clear();
     }
 
     /// Queue removing the mesh under `id`.
     pub fn remove(&mut self, id: WorldMeshId) {
         self.pending.insert(id, None);
+    }
+
+    /// Queue removing the mesh under every id in `range`.
+    pub fn remove_range(&mut self, range: WorldMeshRange) {
+        for id in range.iter() {
+            self.remove(id);
+        }
+    }
+
+    /// How many meshes are registered with the backend, as of the last `flush`.
+    pub fn live_len(&self) -> usize {
+        self.live.len()
     }
 
     /// Apply queued changes: register new meshes, skins and textures, unregister replaced or
@@ -422,7 +461,9 @@ mod tests {
         }
         fn set_light_position(&mut self, _id: u32, _position: glam::Vec3) {}
         fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
-        fn set_shadow_quality(&mut self, _quality: u8) {}
+        fn set_shadow_quality(&mut self, quality: u8) -> u8 {
+            quality
+        }
         fn set_ssao_quality(&mut self, _quality: u8) {}
     }
 
@@ -496,7 +537,9 @@ mod tests {
         }
         fn set_light_position(&mut self, _id: u32, _position: glam::Vec3) {}
         fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
-        fn set_shadow_quality(&mut self, _quality: u8) {}
+        fn set_shadow_quality(&mut self, quality: u8) -> u8 {
+            quality
+        }
         fn set_ssao_quality(&mut self, _quality: u8) {}
     }
 
@@ -713,6 +756,53 @@ mod tests {
         assert_eq!(handles, vec![backend.handle_with_index_count(9)]);
     }
 
+    #[test]
+    fn remove_range_unregisters_exactly_the_range() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        for id in 1..=5 {
+            meshes.upsert(WorldMeshId(id), mesh(id as usize), 0);
+        }
+        meshes.flush(&mut backend);
+        let handle = |id: usize| backend.handle_with_index_count(3 * id);
+        let (outside, inside) = (
+            BTreeSet::from([handle(1), handle(5)]),
+            BTreeSet::from([handle(2), handle(3), handle(4)]),
+        );
+
+        meshes.remove_range(WorldMeshRange::new(WorldMeshId(2), 3).expect("fits"));
+        assert!(
+            backend.unregistered.is_empty(),
+            "freed on flush, not before"
+        );
+        meshes.flush(&mut backend);
+
+        let freed: BTreeSet<u32> = backend.unregistered.iter().copied().collect();
+        assert_eq!(freed, inside);
+        assert_eq!(backend.unregistered.len(), 3, "each handle freed once");
+        assert_eq!(backend.live_handles(), outside);
+        let drawn: BTreeSet<u32> = draws(&meshes).iter().map(|(h, _)| *h).collect();
+        assert_eq!(drawn, outside, "only ids outside the range still draw");
+    }
+
+    #[test]
+    fn live_len_counts_flushed_meshes_only() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        assert_eq!(meshes.live_len(), 0);
+
+        meshes.upsert(A, mesh(1), 0);
+        meshes.upsert_movable(B, mesh(2));
+        assert_eq!(meshes.live_len(), 0, "queued, not yet registered");
+        meshes.flush(&mut backend);
+        assert_eq!(meshes.live_len(), 2, "static and movable both count");
+
+        meshes.remove(A);
+        assert_eq!(meshes.live_len(), 2, "a queued remove is not applied yet");
+        meshes.flush(&mut backend);
+        assert_eq!(meshes.live_len(), 1);
+    }
+
     fn at(x: f32) -> glam::Affine3A {
         glam::Affine3A::from_translation(glam::Vec3::new(x, 0.0, 0.0))
     }
@@ -748,6 +838,88 @@ mod tests {
 
         assert_eq!(backend.registered.len(), 1, "moving never re-uploads");
         assert!(backend.unregistered.is_empty());
+    }
+
+    #[test]
+    fn unshadowed_placements_are_listed_apart_from_ordinary_draws() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.flush(&mut backend);
+
+        meshes.place(A, at(1.0), 3);
+        meshes.place_unshadowed(A, at(2.0), 5);
+
+        let handle = backend.handle_with_index_count(3);
+        let ordinary = draws(&meshes);
+        assert_eq!(
+            ordinary.len(),
+            1,
+            "the unshadowed placement is not in draws"
+        );
+        assert_eq!(ordinary[0].1.model, model_of(at(1.0)));
+        assert_eq!(meshes.textured_draws().count(), 1);
+        let unshadowed: Vec<(u32, InstanceGpu)> = meshes.unshadowed_draws().collect();
+        assert_eq!(unshadowed.len(), 1);
+        assert_eq!(unshadowed[0].0, handle);
+        assert_eq!(unshadowed[0].1.model, model_of(at(2.0)));
+        assert_eq!(unshadowed[0].1.material, 5);
+    }
+
+    #[test]
+    fn unshadowed_placements_keep_id_order_then_call_order() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.upsert_movable(B, mesh(2));
+        meshes.flush(&mut backend);
+
+        meshes.place_unshadowed(B, at(1.0), 0);
+        meshes.place_unshadowed(A, at(2.0), 0);
+        meshes.place_unshadowed(A, at(3.0), 0);
+
+        let drawn: Vec<(u32, [[f32; 4]; 4])> = meshes
+            .unshadowed_draws()
+            .map(|(handle, instance)| (handle, instance.model))
+            .collect();
+        let (a, b) = (
+            backend.handle_with_index_count(3),
+            backend.handle_with_index_count(6),
+        );
+        assert_eq!(
+            drawn,
+            vec![
+                (a, model_of(at(2.0))),
+                (a, model_of(at(3.0))),
+                (b, model_of(at(1.0)))
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unshadowed_placement_on_a_missing_id_is_skipped() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.flush(&mut backend);
+
+        meshes.place_unshadowed(B, at(1.0), 0);
+
+        assert_eq!(meshes.unshadowed_draws().count(), 0);
+    }
+
+    #[test]
+    fn clear_placements_clears_unshadowed_placements() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.flush(&mut backend);
+        meshes.place_unshadowed(A, at(1.0), 0);
+        assert_eq!(meshes.unshadowed_draws().count(), 1);
+
+        meshes.clear_placements();
+
+        assert_eq!(meshes.unshadowed_draws().count(), 0);
     }
 
     #[test]
@@ -1482,6 +1654,7 @@ mod tests {
         Place(u64),
         ClearPlacements,
         Remove(u64),
+        RemoveRange(u64, u32),
         Flush,
     }
 
@@ -1492,6 +1665,7 @@ mod tests {
             (0u64..5).prop_map(Op::Place),
             Just(Op::ClearPlacements),
             (0u64..4).prop_map(Op::Remove),
+            (0u64..5, 0u32..5).prop_map(|(first, len)| Op::RemoveRange(first, len)),
             Just(Op::Flush),
         ];
         prop::collection::vec(op, 0..40)
@@ -1535,6 +1709,11 @@ mod tests {
                         meshes.remove(WorldMeshId(id));
                         model.remove(&id);
                     }
+                    Op::RemoveRange(first, len) => {
+                        let range = WorldMeshRange::new(WorldMeshId(first), len).expect("fits");
+                        meshes.remove_range(range);
+                        model.retain(|id, _| !(first..first + u64::from(len)).contains(id));
+                    }
                     Op::Flush => meshes.flush(&mut backend),
                 }
             }
@@ -1547,6 +1726,7 @@ mod tests {
             prop_assert_eq!(drawn.len(), statics + placements, "one instance per static id and per live placement");
             prop_assert!(drawn_set.is_subset(&backend.live_handles()), "only live handles are drawn");
             prop_assert_eq!(backend.live_handles().len(), model.len(), "one upload per live id, none leaked");
+            prop_assert_eq!(meshes.live_len(), model.len(), "the store counts what the backend holds");
             let freed: BTreeSet<u32> = backend.unregistered.iter().copied().collect();
             prop_assert_eq!(freed.len(), backend.unregistered.len(), "no handle freed twice");
             prop_assert!(freed.iter().all(|h| backend.registered.iter().any(|(r, _)| r == h)));

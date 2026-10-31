@@ -319,7 +319,9 @@ pub(crate) mod tests {
         }
         fn set_light_position(&mut self, _id: u32, _position: glam::Vec3) {}
         fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
-        fn set_shadow_quality(&mut self, _quality: u8) {}
+        fn set_shadow_quality(&mut self, quality: u8) -> u8 {
+            quality
+        }
         fn set_ssao_quality(&mut self, _quality: u8) {}
     }
 
@@ -468,6 +470,7 @@ pub(crate) mod tests {
     fn loading_a_scene_stops_drawing_the_previous_worlds_chunks() {
         let temp = tempfile::tempdir().expect("temp dir");
         let mut saved = App::headless();
+        saved.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
         saved.entities.chunks.insert(chunk_at(IVec3::new(7, 0, 7)));
         crate::app::autosave::auto_save_on_shutdown(
             &mut saved,
@@ -577,6 +580,7 @@ pub(crate) mod tests {
                 chunks_per_frame: 1,
             },
             "headless-test-evicted-chunk-not-drawn",
+            "saves",
         ));
         let far = IVec3::new(10, 4, 10);
         let grid = app
@@ -827,6 +831,7 @@ pub(crate) mod tests {
                 chunks_per_frame: 1,
             },
             "headless-test-eviction-frees-draw-and-collider",
+            "saves",
         ));
         let far = IVec3::new(10, 4, 10);
         remesh_with_block(&mut app, flagstone_voxel::BlockPos::new(165, 70, 165), far);
@@ -974,6 +979,7 @@ pub(crate) mod tests {
     fn chunk_from_scene_file_draws_without_materials() {
         let temp = tempfile::tempdir().expect("temp dir");
         let mut saved = App::headless();
+        saved.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
         saved.entities.chunks.insert(chunk_at(IVec3::new(7, 0, 7)));
         crate::app::autosave::auto_save_on_shutdown(
             &mut saved,

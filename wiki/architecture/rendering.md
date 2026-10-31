@@ -1,11 +1,13 @@
 # Rendering
 
 **Source:** `moho_render_api/src/` (`world_geometry.rs`, `texture.rs`), `moho_renderer/src/` (`scene.rs`, `sky.rs`,
-`world_meshes.rs`, `skinning.rs`, `textures.rs`, `markers.rs`, `renderer.rs`, `render_ops/`, `shadow.rs`, `ssao.rs`, `tone_map.rs`, `ui_pass/`), `moho_render_api/src/ui_paint.rs`, `moho_render_api/src/marker.rs`, `flagstone/src/app/world_geometry.rs`, `flagstone/src/app/cut_caps.rs`, `flagstone/src/app/view_level.rs`, `flagstone_voxel/src/mesh/cap.rs`,
+`world_meshes.rs`, `effects.rs`, `skinning.rs`, `textures.rs`, `markers.rs`, `renderer.rs`, `render_ops/`, `shadow.rs`, `shadow/`, `ssao.rs`, `tone_map.rs`, `ui_pass/`), `moho_render_api/src/ui_paint.rs`, `moho_render_api/src/marker.rs`, `flagstone/src/app/world_geometry.rs`, `flagstone/src/app/cut_caps.rs`, `flagstone/src/app/view_level.rs`, `flagstone_voxel/src/mesh/cap.rs`,
 `shaders/`, `moho_level/src/`.
 **Decisions:** [ADR-0001](../../_todo/adr/0001-render-api-boundary.md),
 [ADR-0013](../../_todo/adr/0013-ui-reaches-the-renderer-as-paint-data.md),
-[ADR-0030](../../_todo/adr/0030-skinned-meshes-are-skinned-once-per-frame.md).
+[ADR-0030](../../_todo/adr/0030-skinned-meshes-are-skinned-once-per-frame.md),
+[ADR-0031](../../_todo/adr/0031-effects-are-engine-presentation-state-placed-by-handle.md),
+[ADR-0032](../../_todo/adr/0032-level-switch-is-a-pinned-command.md).
 
 ## 1 Boundary
 
@@ -126,8 +128,27 @@ default scene, plus a `LevelMarker` per named node without a mesh
 - every failure is a `LevelError` naming the file, with a `LevelErrorKind`; no `gltf`
   type appears in the API.
 
-The loader does not register meshes: the caller assigns `WorldMeshId`s and sends each
+`load` does not register meshes: the caller assigns `WorldMeshId`s and sends each
 mesh to `WorldMeshes` and `PhysicsWorld` as above.
+
+`LoadedLevel` (`moho_level/src/loaded.rs`) is the handle for that registration. It wraps a
+`Level` with a `WorldMeshRange` (`moho_render_api/src/world_geometry.rs`): mesh `i` gets id
+`first + i`, and `LoadedLevel::new` refuses a range that would pass `u64::MAX`. It also
+keeps the `NavMesh` once `build_nav` has run. `LoadedLevel::open(path, pin, first)` loads and
+registers in one step and records the file's path and `LevelHash` (`path()`, `hash()`; both
+`None` for a handle made with `new`). `LoadedLevel::unload` drops the level,
+markers and nav reference and returns the range. The caller removes that range from every
+store it registered in: `WorldMeshes::remove_range` (freed on the next `flush`) and
+`PhysicsWorld::remove_world_meshes`. `WorldMeshes::live_len` counts meshes registered as
+of the last `flush`.
+
+`LevelHash` (`moho_level/src/hash.rs`) is the content identity of a level file, which a
+replayed level switch is pinned to ([ADR-0032](../../_todo/adr/0032-level-switch-is-a-pinned-command.md)):
+SHA-256 over the main file, then each URI buffer in index order, each preceded by its length
+as 8 bytes little-endian. The path is excluded; a GLB's embedded blob is part of the file;
+images are not hashed. The layout is a stored contract. `level_hash(path)` hashes without
+building meshes; `load_pinned(path, &hash)` and `LoadedLevel::open` with a pin fail with
+`LevelErrorKind::HashMismatch` (expected and found) before any mesh is built.
 
 ### 2.2 Model files
 
@@ -347,9 +368,10 @@ sequenceDiagram
     participant S as Scene::render
     participant B as RendererBackend
     S->>S: prepare: collect instances, dedup materials,<br/>split opaque / transparent
-    S->>S: flush world meshes, group placements per mesh,<br/>clear placements
+    S->>S: place effects, flush world meshes, group placements<br/>per mesh (shadowed and unshadowed), clear placements
     S->>B: begin_frame(camera)<br/>upload camera, cull lights, update shadow matrices,<br/>acquire surface
     S->>B: enqueue_draw(cubes, spheres, each world mesh<br/>with all its instances)
+    S->>B: enqueue_unshadowed_draw(effects)
     S->>B: enqueue_draw(transparent, sorted back-to-front)
     S->>B: enqueue_markers(fills, outlines, each sorted far to near)
     S->>B: submit_frame()
@@ -378,7 +400,7 @@ flowchart LR
 
 The egui UI is drawn by the UI pass from paint data (below); `finish_frame` only submits
 and presents. Shader sources are `shaders/*.wgsl` (`common`, `sky`, `vertex`,
-`normal`, `skin`, `fragment`, `shadow`, `skybox`, `gtao`, `ssao_blur`, `pcss`, `instance`, `ui`, `marker`, `bloom`, `tonemap`).
+`normal`, `skin`, `fragment`, `shadow`, `skybox`, `gtao`, `shadow_filter`, `ssao_blur`, `instance`, `ui`, `marker`, `bloom`, `tonemap`).
 
 The skybox and main pipelines render into an `Rgba16Float` HDR target (`tone_map::HdrTarget`,
 recreated on resize), not the swapchain. `bloom::BloomChain` (`shaders/bloom.wgsl`, after
@@ -497,14 +519,70 @@ blending, sRGB vertex colours, no custom paint callbacks.
 
 | Setting | Where | Notes |
 |---|---|---|
-| Shadow quality 0–4 | `graphics.shadow_quality`, `r_shadow_quality` | Off/Low/Med/High/Ultra |
+| Shadow quality 0–4 | `graphics.shadow_quality`, `r_shadow_quality`, Video tab combo | Off/Low/Med/High/Ultra; picks a `ShadowTier` ([§9](#9-cascaded-shadows)); applied at start and on settings save via `RenderRequest::ShadowQuality` |
 | SSAO quality 0–4 | `graphics.ssao_quality`, `r_ssao_quality` | Samples 0/4/8/16/32 |
 | Brightness 0.5–2.0 | `graphics.brightness`, Video tab slider | Linear exposure multiplier into the tone-map pass (`RendererBackend::set_brightness`, `brightness_exposure`); clamped, NaN gives 1.0; applied at start by `apply_saved_render_settings` |
 | Bloom 0–2 | `graphics.bloom`, `r_bloom <0-2>`, Video tab combo | Off/Low/High; applied at start by `apply_saved_render_settings` |
 | Tone map 0/1 | `r_tonemap <0\|1>` | `RendererBackend::set_tone_map`; session-only, on at start, not saved |
 | Debug view | `r_debug_view <mode>` | `Lighting.params.y` |
 | View-height cut | `r_view_height <metres\|off>` | `Renderer::set_view_height`; sticky; cuts world, markers and shadows; the binary caps the cut ([below](#3-cut-face-caps)) |
-| Shadow map size | `SHADOW_MAP_SIZE` = 4096 | `shadow.rs` |
+| Cascade map size | 1024 / 2048 / 4096 / 8192 by tier | `ShadowTier::map_size` (`shadow/tier.rs`), clamped to the device's `max_texture_dimension_2d`; per layer, 6 layers |
 | Shadow distance | `SHADOW_DISTANCE` = 1000 | `shadow.rs` |
 
 CPU↔GPU struct layouts: [GPU ABI](../reference/gpu-abi.md).
+
+## 9 Cascaded shadows
+
+The sun casts four cascades and the moon two, one layer each of a square depth array
+(`CASCADE_LAYERS` = 6, sun layers first) whose side comes from the quality tier. `update_shadow_matrices` (`render_ops/shadow_ops.rs`)
+runs each frame in `begin_frame`: it reads the perspective camera shape
+(`CameraFrustum`, `shadow/cascades.rs`), splits `near..min(far, SHADOW_DISTANCE)` with a
+log/uniform blend (`practical_splits`, `SPLIT_LAMBDA`), fits an orthographic light view
+around each slice's bounding sphere (`fit_cascade`) and uploads one `ShadowGpu` block.
+Casters up to `CASTER_REACH` metres toward the light land in a cascade's map. The fragment
+shader picks a cascade by view depth along `camera_forward` and blends into the next over
+the last `CASCADE_BLEND` fraction of a slice. `r_debug_view 8` tints fragments by cascade.
+Acne is prevented by a normal offset, not a large depth bias: the lookup position moves
+along the geometric normal by `NORMAL_OFFSET_TEXELS` (2) texels of the cascade looked up,
+scaled by sin θ to the light, and the hardware bias stays at slope 1.0 with no clamp (one
+clamp per pipeline could not suit cascades whose texels differ 18-fold).
+Quality is a `ShadowTier` (`shadow/tier.rs`, no GPU types): level 0 Off, 1 Low, 2 Medium,
+3 High, 4 Ultra; an out-of-range level is Medium; the renderer starts on High. The tier sets
+the map side (Low 1024, Medium 2048, High 4096, Ultra 8192, clamped to the device limit,
+Off 1) and the filter radius in texels (0, 1, 1, 2, 3). `ShadowSystem::set_tier`
+recreates the array, its views and the sampling bind group only when the clamped side
+changes, so it runs between frames. Off renders no shadow layers and writes shadow
+distance 0 to `ShadowGpu.metadata.x`. The cascade fits use the allocated side for texel
+snapping.
+`shaders/shadow_filter.wgsl` does the lookup: a tent-weighted (2r+1)² grid of hardware
+2×2 comparisons at whole-texel offsets, the same pattern for every pixel so edges do not
+crawl, with each tap's reference depth moved along the receiver plane's depth gradient to
+avoid acne. There is no penumbra search.
+A light below `MIN_SHADOW_LIGHT_INTENSITY` skips its cascades. The fits are plain
+functions over `glam` types and run without a GPU.
+
+## 10 Effects
+
+Effects are engine-owned presentation state a game starts, places and ends by handle
+([ADR-0031](../../_todo/adr/0031-effects-are-engine-presentation-state-placed-by-handle.md)).
+`moho_renderer::Effects` (`moho_renderer/src/effects.rs`, reached via `Scene::effects_mut`)
+issues an `EffectHandle`, monotonic and never reused; a stale, unknown or inert handle is ignored.
+The one kind is the streak (a tracer):
+
+- `begin_streak(StreakStyle)` starts it; `place_streak(handle, head, heading)` sets its head
+  every frame, already interpolated by the game; `end(handle)` starts the fade.
+- A streak not placed in a frame and not ended is skipped that frame. One past
+  `StreakStyle::max_age` fades as if ended, so a forgotten `end` does not leak.
+- Fade tapers the width linearly over `StreakStyle::fade`; draws are opaque.
+- `advance(dt)` ages effects by frame time, not sim time, so pause and time scale do not slow them.
+- `set_quality(0..=4)` sets the live cap (0/32/64/128/256); at the cap `begin_streak` returns an
+  inert handle, lowering keeps live effects, 0 clears them. A game hands the saved
+  `effects_quality` pref to it on start and on apply.
+
+`Scene::render` calls `Effects::draw` first: each streak becomes one placement of a shared kite
+mesh, uploaded on first use under `EFFECT_MESH_IDS_FROM` (`u64::MAX - 63`, reserved; games keep
+their ids below it), turned to face the camera eye. Placements go through
+`WorldMeshes::place_unshadowed` and reach the backend via `RendererBackend::enqueue_unshadowed_draw`
+(default: `enqueue_draw`). In the renderer the draw key has `casts_shadow = false`, so
+`render_shadow_passes` skips it and the main pass draws it. A second camera sees a streak
+turned toward the first eye.

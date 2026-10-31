@@ -288,6 +288,23 @@ fn percent_escaped_buffer_uri_resolves() {
 }
 
 #[test]
+fn a_level_loads_from_a_directory_with_a_space_and_an_external_buffer() {
+    let scene = Scene::with_meshes(vec![vec![floor_prim(0.0)], vec![cube_prim()]]);
+    let (source, _) = write_gltf(&scene);
+    let outside = tempfile::tempdir().expect("temp dir");
+    let dir = outside.path().join("my levels");
+    fs::create_dir(&dir).expect("create dir with a space");
+    fs::copy(source.path().join("level.gltf"), dir.join("arena one.gltf")).expect("copy gltf");
+    fs::copy(source.path().join("level.bin"), dir.join("level.bin")).expect("copy bin");
+
+    let level = load(&dir.join("arena one.gltf")).expect("level loads");
+
+    assert_eq!(level.meshes.len(), 2);
+    assert_eq!(level.meshes[0].mesh.positions().len(), 4);
+    assert_eq!(level.meshes[1].mesh.positions().len(), 24);
+}
+
+#[test]
 fn data_uri_buffer_is_refused() {
     let mut scene = Scene::with_meshes(vec![vec![floor_prim(0.0)]]);
     scene.bin_uri = "data:application/octet-stream;base64,AAAA".into();

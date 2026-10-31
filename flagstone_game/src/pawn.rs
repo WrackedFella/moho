@@ -2,6 +2,7 @@ use flagstone_voxel::{BlockPos, VoxelGrid};
 use glam::Vec3;
 
 use crate::inventory::{Inventory, ResourceYield};
+use crate::pickups::PickupFeed;
 use crate::raycast;
 use crate::tools::{STARTING_TOOL, ToolId};
 
@@ -30,6 +31,8 @@ pub struct Pawn {
     pub equipped_tool: Option<ToolId>,
     /// Which hotbar slot is currently selected (`0..HOTBAR_SLOT_COUNT`).
     pub selected_slot: usize,
+    /// Recent pickups, for the HUD's popups.
+    pub pickups: PickupFeed,
 }
 
 impl Default for Pawn {
@@ -38,6 +41,7 @@ impl Default for Pawn {
             inventory: Inventory::default(),
             equipped_tool: Some(STARTING_TOOL),
             selected_slot: TOOL_SLOT,
+            pickups: PickupFeed::default(),
         }
     }
 }
@@ -60,6 +64,7 @@ pub struct MineOutcome {
 impl Pawn {
     pub fn deposit(&mut self, yield_: ResourceYield) {
         self.inventory.add(yield_.resource_id, yield_.amount);
+        self.pickups.push(yield_);
     }
 
     /// Select a hotbar slot (`0..HOTBAR_SLOT_COUNT`). Selecting `TOOL_SLOT`
@@ -257,5 +262,35 @@ mod tests {
         assert!(outcome.is_none());
         assert!(grid.material_at(pos).is_some());
         assert!(pawn.inventory.is_empty());
+    }
+
+    #[test]
+    fn mining_ore_adds_one_pickup() {
+        let mut grid = VoxelGrid::new(16);
+        grid.mutator().place(BlockPos::new(0, 0, 0), 1, Some(7));
+        let mut pawn = Pawn::default();
+
+        pawn.mine(&mut grid, Vec3::new(0.5, 0.5, -5.0), Vec3::Z, 10.0)
+            .expect("ray should hit the placed block");
+
+        let listed: Vec<(u32, u32)> = pawn
+            .pickups
+            .entries()
+            .iter()
+            .map(|e| (e.resource_id, e.amount))
+            .collect();
+        assert_eq!(listed, [(7, 1)]);
+    }
+
+    #[test]
+    fn mining_a_block_with_no_resource_adds_no_pickup() {
+        let mut grid = VoxelGrid::new(16);
+        grid.mutator().place(BlockPos::new(0, 0, 0), 1, None);
+        let mut pawn = Pawn::default();
+
+        pawn.mine(&mut grid, Vec3::new(0.5, 0.5, -5.0), Vec3::Z, 10.0)
+            .expect("ray should hit the placed block");
+
+        assert!(pawn.pickups.entries().is_empty());
     }
 }
