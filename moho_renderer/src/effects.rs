@@ -94,18 +94,18 @@ impl Streak {
 /// How far a mark floats off its surface, so it does not z-fight with it.
 const MARK_OFFSET: f32 = 0.01;
 
-/// A flash or mark's age against its fixed lifetime.
-#[derive(Debug)]
-struct Timed<S> {
-    style: S,
-    age: Duration,
+/// Whether a flash or mark spawn makes sense: a finite point and roll, a finite positive
+/// size and a non-zero lifetime.
+fn sensible(at: Vec3, roll: f32, size: f32, lifetime: Duration) -> bool {
+    at.is_finite() && roll.is_finite() && size.is_finite() && size > 0.0 && !lifetime.is_zero()
 }
 
 #[derive(Debug)]
 struct Flash {
     at: Vec3,
     roll: f32,
-    timed: Timed<FlashStyle>,
+    style: FlashStyle,
+    age: Duration,
 }
 
 #[derive(Debug)]
@@ -115,7 +115,8 @@ struct Mark {
     /// Unit surface normal.
     normal: Vec3,
     roll: f32,
-    timed: Timed<MarkStyle>,
+    style: MarkStyle,
+    age: Duration,
 }
 
 #[derive(Debug)]
@@ -127,10 +128,11 @@ enum Effect {
 
 /// The built-in meshes; each uploads once, at its reserved id.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[repr(u64)]
 enum MeshKind {
-    Kite,
-    Star,
-    Quad,
+    Kite = 0,
+    Star = 1,
+    Quad = 2,
 }
 
 /// One instance an effect asks for this frame.
@@ -157,16 +159,15 @@ impl Effect {
                     streak.ended_at.get_or_insert(streak.style.max_age);
                 }
             }
-            Self::Flash(flash) => flash.timed.age += dt,
-            Self::Mark(mark) => mark.timed.age += dt,
+            Self::Flash(Flash { age, .. }) | Self::Mark(Mark { age, .. }) => *age += dt,
         }
     }
 
     fn finished(&self) -> bool {
         match self {
             Self::Streak(streak) => streak.finished_fading(),
-            Self::Flash(flash) => flash.timed.age >= flash.timed.style.lifetime,
-            Self::Mark(mark) => mark.timed.age >= mark.timed.style.lifetime,
+            Self::Flash(flash) => flash.age >= flash.style.lifetime,
+            Self::Mark(mark) => mark.age >= mark.style.lifetime,
         }
     }
 
@@ -199,8 +200,8 @@ impl Flash {
     /// Draws nothing while the eye is at the flash, which has no direction to face.
     fn draw(&self, eye: Vec3) -> Option<Draw> {
         let facing = (eye - self.at).try_normalize()?;
-        let style = &self.timed.style;
-        let size = style.size * remaining(self.timed.age, style.lifetime);
+        let style = &self.style;
+        let size = style.size * remaining(self.age, style.lifetime);
         Some(Draw {
             kind: MeshKind::Star,
             transform: facing_transform(self.at, facing, self.roll, size),
@@ -211,7 +212,7 @@ impl Flash {
 
 impl Mark {
     fn draw(&self) -> Draw {
-        let style = &self.timed.style;
+        let style = &self.style;
         Draw {
             kind: MeshKind::Quad,
             transform: facing_transform(
@@ -226,9 +227,9 @@ impl Mark {
 
     /// 1 until the last `fade` of its lifetime, then falling linearly to 0.
     fn fade_scale(&self) -> f32 {
-        let style = &self.timed.style;
+        let style = &self.style;
         let fade = style.fade.min(style.lifetime);
-        let left = style.lifetime.saturating_sub(self.timed.age);
+        let left = style.lifetime.saturating_sub(self.age);
         if fade.is_zero() || left >= fade {
             return 1.0;
         }
@@ -324,19 +325,12 @@ impl Effects {
     /// to nothing. A malformed spawn (non-finite or non-positive size, non-finite point
     /// or roll, zero lifetime) is refused.
     pub fn flash(&mut self, at: Vec3, roll: f32, style: FlashStyle) {
-        let sensible = at.is_finite()
-            && roll.is_finite()
-            && style.size.is_finite()
-            && style.size > 0.0
-            && !style.lifetime.is_zero();
-        if sensible {
+        if sensible(at, roll, style.size, style.lifetime) {
             self.spawn(Effect::Flash(Flash {
                 at,
                 roll,
-                timed: Timed {
-                    style,
-                    age: Duration::ZERO,
-                },
+                style,
+                age: Duration::ZERO,
             }));
         }
     }
@@ -347,20 +341,13 @@ impl Effects {
         let Some(normal) = normal.try_normalize() else {
             return;
         };
-        let sensible = at.is_finite()
-            && roll.is_finite()
-            && style.size.is_finite()
-            && style.size > 0.0
-            && !style.lifetime.is_zero();
-        if sensible {
+        if sensible(at, roll, style.size, style.lifetime) {
             self.spawn(Effect::Mark(Mark {
                 centre: at + normal * MARK_OFFSET,
                 normal,
                 roll,
-                timed: Timed {
-                    style,
-                    age: Duration::ZERO,
-                },
+                style,
+                age: Duration::ZERO,
             }));
         }
     }
@@ -376,16 +363,13 @@ impl Effects {
         if streaks >= self.cap {
             return;
         }
-        let excess = (self.store.len() + 1).saturating_sub(self.cap);
-        let oldest: Vec<EffectHandle> = self
-            .store
-            .iter()
-            .filter(|(_, e)| e.is_fixed_lifetime())
-            .map(|(handle, _)| *handle)
-            .take(excess)
-            .collect();
-        for handle in oldest {
-            self.store.remove(&handle);
+        while self.store.len() >= self.cap {
+            let oldest = self
+                .store
+                .iter()
+                .find_map(|(handle, e)| e.is_fixed_lifetime().then_some(*handle))
+                .expect("streaks alone are under the cap, so a fixed-lifetime effect is left");
+            self.store.remove(&oldest);
         }
         let handle = self.issue_handle();
         self.store.insert(handle, effect);
@@ -433,12 +417,7 @@ impl Effects {
 
 impl MeshKind {
     fn id(self) -> WorldMeshId {
-        let offset = match self {
-            Self::Kite => 0,
-            Self::Star => 1,
-            Self::Quad => 2,
-        };
-        WorldMeshId(EFFECT_MESH_IDS_FROM + offset)
+        WorldMeshId(EFFECT_MESH_IDS_FROM + self as u64)
     }
 
     fn mesh(self) -> WorldMesh {
