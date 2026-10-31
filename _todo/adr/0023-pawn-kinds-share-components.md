@@ -1,6 +1,6 @@
 # 0023 — Pawn kinds share components; flagstone adopts hecs at the second kind
 
-**Status:** Proposed (2026-10-23); extends [0004](0004-entity-storage-without-a-general-ecs.md) for the flagstone line
+**Status:** Accepted (2026-10-31); extends [0004](0004-entity-storage-without-a-general-ecs.md) for the flagstone line
 
 ## Context
 

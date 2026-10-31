@@ -1,6 +1,6 @@
 # 0031 — Effects are engine presentation state placed by handle
 
-**Status:** Proposed; amends [0012](0012-engine-crate-map-for-m2.md): the seam list gains `Effects` beside seam 2
+**Status:** Accepted; amends [0012](0012-engine-crate-map-for-m2.md): the seam list gains `Effects` beside seam 2
 
 ## Context
 

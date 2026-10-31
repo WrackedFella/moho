@@ -50,14 +50,14 @@ Feature order, with the engine items each needs. SG-F1, SG-F2, SG-F4 and SG-F5 a
 | S.5 | [SG-F3](https://github.com/WrackedFella/moho/issues/312) buildings and construction (not a gate item) | 2.7 (placement preview) | after SG-F4 |
 | S.6 | [SG-F6](https://github.com/WrackedFella/moho/issues/707) I pick my colony's ground on a believable world map (not a gate item) | none | scope approved 2026-10-27 ([research](worldgen-research.md)); carded when STRAT-M4 opens |
 | S.7 (proposed) | Pawn roles: colonists take a role that steers which job they pick (not filed) | none | after SG-F3, the second job type; stays on typed stores |
-| S.8 (proposed) | Pawn kinds: a first creature kind, wildlife by default (not filed) | none | after S.7; its first card moves pawns into an ECS ([ADR-0023](../../_todo/adr/0023-pawn-kinds-share-components.md), proposed). Hostile creatures wait for combat |
+| S.8 (proposed) | Pawn kinds: a first creature kind, wildlife by default (not filed) | none | after S.7; its first card moves pawns into an ECS ([ADR-0023](../../_todo/adr/0023-pawn-kinds-share-components.md)). Hostile creatures wait for combat |
 
 ## Open dependencies
 
 - **Navigation over changing terrain** ([#303](https://github.com/WrackedFella/moho/issues/303)) is strategy-line
   work inside SG-F4 and its biggest unknown. SG-F4 stays on typed stores (#436, #437 specs); the entity-component
   system arrives with the second pawn kind ([ADR-0004](../../_todo/adr/0004-entity-storage-without-a-general-ecs.md),
-  [ADR-0023](../../_todo/adr/0023-pawn-kinds-share-components.md), proposed).
+  [ADR-0023](../../_todo/adr/0023-pawn-kinds-share-components.md)).
 - **Pawn kinds and roles** (Justin, 2026-10-23): animals, monsters and colonist roles are coming. STRAT-M5 is a
   proposal; it changes no order inside STRAT-M1 to STRAT-M4. Which creature comes first, whether creatures can be possessed and how
   roles rank jobs are [GDD Q6 and Q7](gdd.md#open-questions).
