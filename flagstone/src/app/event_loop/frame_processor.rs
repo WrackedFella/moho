@@ -396,6 +396,18 @@ impl FrameProcessor {
         // label is a fixed string until a real tool-name lookup exists.
         let equipped_tool_label = app.pawn.equipped_tool.map(|_| "Pickaxe".to_string());
 
+        let selection = app
+            .selection
+            .selected()
+            .map(|_| flagstone_ui::overlays::SelectionHud {
+                title: "Pawn".to_string(),
+                tool: equipped_tool_label.clone(),
+                carried: hotbar
+                    .iter()
+                    .map(|&(id, count)| (flagstone_game::inventory::resource_name(id), count))
+                    .collect(),
+            });
+
         let data = flagstone_ui::overlays::HudData {
             player_position: [pos.x, pos.y, pos.z],
             chunk_position: chunk_pos,
@@ -420,7 +432,7 @@ impl FrameProcessor {
                 .iter()
                 .map(|e| (e.resource_id, e.amount, e.life()))
                 .collect(),
-            selection: None,
+            selection,
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {

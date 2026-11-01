@@ -3,19 +3,35 @@
 use crate::app::event_loop::{EventProcessor, FrameProcessor, GenerationProcessor};
 use crate::game_state::GameState;
 use crate::{App, RenderRequest};
+use flagstone_game::actors::Cube;
 use flagstone_game::controller::{
     CameraMode, ControllerInput, EDGE_PAN_MARGIN_PX, controller_to_camera, edge_pan_axes,
 };
 use flagstone_game::raycast::raycast_surface;
+use flagstone_game::selection::{PAWN_HALF_EXTENTS, PLAYER_PAWN, pawn_aabb, pick_pawn};
 use flagstone_ui::actions::StrategyAction;
 use flagstone_ui::console_commands::StrategyConsoleCommand;
 use moho_core::pointer::{Ray, screen_ray};
 use moho_input::action_map;
 use moho_input::bindings::Input;
+use moho_render_api::{Marker, MarkerId, MarkerStyle};
 use moho_ui_shell::host::input_of;
 use moho_ui_shell::{EngineCommand, Routing};
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
+
+/// The marker id reserved for the selection outline; per-frame sync means it wins over a
+/// console marker with the same id.
+const SELECTION_MARKER_ID: MarkerId = MarkerId(u64::MAX);
+
+/// Outline colour of the selection mark.
+const SELECTION_MARK_COLOUR: [f32; 4] = [1.0, 0.9, 0.2, 1.0];
+
+/// The placeholder body drawn for the pawn in the strategy view.
+const PAWN_BODY_MATERIAL: flagstone_voxel::MaterialType =
+    flagstone_voxel::MaterialType::Lambertian {
+        albedo: glam::Vec3::new(0.2, 0.5, 0.9),
+    };
 
 /// How far a pointer ray reaches into the world, in metres.
 pub const POINTER_RAY_RANGE: f32 = 256.0;
@@ -188,6 +204,33 @@ impl App {
                 POINTER_RAY_RANGE,
             );
             tracing::debug!(hit = ?self.pointer_hit, "Pointer ray cast");
+            let pawn = (PLAYER_PAWN, pawn_aabb(self.simulation.position()));
+            let picked = pick_pawn(ray, [pawn], self.pointer_hit.map(|hit| hit.distance));
+            self.selection.click(picked);
+            if picked.is_some() {
+                self.event_bus
+                    .publish(moho_core::events::AudioEvent::ButtonClick);
+            }
+        }
+    }
+
+    /// Outlines the selected pawn in the strategy view; removes the mark otherwise. Run every
+    /// frame so the mark follows the pawn and survives a console marker clear.
+    fn sync_selection_mark(&mut self) {
+        let strategy = self.simulation.camera_mode() == CameraMode::Isometric;
+        if strategy && self.selection.selected().is_some() {
+            let aabb = pawn_aabb(self.simulation.position());
+            self.scene.markers_mut().upsert(
+                SELECTION_MARKER_ID,
+                Marker::new(
+                    aabb.min.to_array(),
+                    aabb.max.to_array(),
+                    SELECTION_MARK_COLOUR,
+                )
+                .with_style(MarkerStyle::Outline),
+            );
+        } else {
+            self.scene.markers_mut().remove(SELECTION_MARKER_ID);
         }
     }
 
@@ -276,10 +319,23 @@ impl App {
         renderer: &mut dyn moho_renderer::RendererBackend,
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     ) {
+        self.sync_selection_mark();
+        let mut cubes = self.entities.actors.cubes().to_vec();
+        if self.simulation.camera_mode() == CameraMode::Isometric {
+            let body = pawn_aabb(self.simulation.position());
+            let size = PAWN_HALF_EXTENTS * 2.0;
+            cubes.push(Cube::new(
+                (body.min + body.max) * 0.5,
+                size.x,
+                size.z,
+                size.y,
+                PAWN_BODY_MATERIAL,
+            ));
+        }
         if let Err(e) = self.scene.render(
             renderer,
             self.entities.actors.spheres(),
-            self.entities.actors.cubes(),
+            &cubes,
             self.mesh_handle,
             self.cube_mesh_handle,
             camera,

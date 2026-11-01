@@ -21,24 +21,52 @@ pub struct Aabb {
 }
 
 /// The pawn's box when the capsule centre is at `center`.
-pub fn pawn_aabb(_center: Vec3) -> Aabb {
-    todo!()
+pub fn pawn_aabb(center: Vec3) -> Aabb {
+    Aabb {
+        min: center - PAWN_HALF_EXTENTS,
+        max: center + PAWN_HALF_EXTENTS,
+    }
 }
 
 /// The distance along `ray` at which it first enters `aabb`, `None` when it never does or the
 /// box lies wholly behind the origin. A ray starting inside the box enters it at `0.0`.
-pub fn ray_box_entry(_ray: Ray, _aabb: Aabb) -> Option<f32> {
-    todo!()
+pub fn ray_box_entry(ray: Ray, aabb: Aabb) -> Option<f32> {
+    let mut near = 0.0_f32;
+    let mut far = f32::INFINITY;
+    for axis in 0..3 {
+        let (origin, direction) = (ray.origin[axis], ray.direction[axis]);
+        let (min, max) = (aabb.min[axis], aabb.max[axis]);
+        if direction == 0.0 {
+            // Parallel to this slab: inside it for the whole ray, or never.
+            if origin < min || origin > max {
+                return None;
+            }
+            continue;
+        }
+        let (a, b) = ((min - origin) / direction, (max - origin) / direction);
+        near = near.max(a.min(b));
+        far = far.min(a.max(b));
+        if near > far {
+            return None;
+        }
+    }
+    Some(near)
 }
 
 /// The nearest pawn whose box `ray` enters at `t >= 0` and `t < terrain_distance`.
 /// `None` for `terrain_distance` means the ray hit no terrain.
 pub fn pick_pawn(
-    _ray: Ray,
-    _pawns: impl IntoIterator<Item = (PawnId, Aabb)>,
-    _terrain_distance: Option<f32>,
+    ray: Ray,
+    pawns: impl IntoIterator<Item = (PawnId, Aabb)>,
+    terrain_distance: Option<f32>,
 ) -> Option<PawnId> {
-    todo!()
+    let limit = terrain_distance.unwrap_or(f32::INFINITY);
+    pawns
+        .into_iter()
+        .filter_map(|(id, aabb)| ray_box_entry(ray, aabb).map(|t| (id, t)))
+        .filter(|&(_, t)| t < limit)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(id, _)| id)
 }
 
 /// Which pawn the player has selected, if any.
@@ -53,8 +81,8 @@ impl Selection {
     }
 
     /// Replaces the selection with what a click hit: a pawn selects it, nothing clears it.
-    pub fn click(&mut self, _hit: Option<PawnId>) {
-        todo!()
+    pub fn click(&mut self, hit: Option<PawnId>) {
+        self.selected = hit;
     }
 }
 

@@ -12,8 +12,11 @@ pub struct ResourceYield {
 }
 
 /// The player-facing name of a resource.
-pub fn resource_name(_resource_id: u32) -> String {
-    todo!()
+pub fn resource_name(resource_id: u32) -> String {
+    match resource_id {
+        1 => "Iron ore".to_owned(),
+        other => format!("Resource {other}"),
+    }
 }
 
 /// Per-resource integer counters. Keyed on raw `resource_id`, matching the
