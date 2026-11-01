@@ -177,10 +177,9 @@ mod tests {
     #[test]
     fn terrain_exactly_at_the_pawns_entry_hides_it() {
         let aim = ray_at_the_origin_pawn(Vec3::ZERO);
-        let entry = ray_box_entry(aim, pawn_aabb(Vec3::ZERO)).expect("the ray runs through");
 
-        let at_entry = pick_pawn(aim, pawn_at(Vec3::ZERO), Some(entry));
-        let just_beyond = pick_pawn(aim, pawn_at(Vec3::ZERO), Some(entry + 0.01));
+        let at_entry = pick_pawn(aim, pawn_at(Vec3::ZERO), Some(9.7));
+        let just_beyond = pick_pawn(aim, pawn_at(Vec3::ZERO), Some(9.71));
 
         assert_eq!(at_entry, None);
         assert_eq!(just_beyond, Some(PLAYER_PAWN));
@@ -257,13 +256,18 @@ mod tests {
     }
 
     #[test]
-    fn a_click_on_another_pawn_replaces_the_selection() {
-        let mut selection = Selection::default();
-        selection.click(Some(PLAYER_PAWN));
+    fn a_click_on_a_pawn_when_one_is_selected_reselects_or_replaces() {
+        let (a, b) = (PLAYER_PAWN, PawnId(5));
+        let table = [("re-select", a, a), ("replace", a, b)];
 
-        selection.click(Some(PawnId(5)));
+        for (case, selected, clicked) in table {
+            let mut selection = Selection::default();
+            selection.click(Some(selected));
 
-        assert_eq!(selection.selected(), Some(PawnId(5)));
+            selection.click(Some(clicked));
+
+            assert_eq!(selection.selected(), Some(clicked), "{case}");
+        }
     }
 
     proptest! {

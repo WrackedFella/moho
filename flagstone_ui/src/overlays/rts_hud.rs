@@ -440,8 +440,21 @@ mod tests {
         let data = selected_data(false);
         let ctx = egui::Context::default();
         let mut hud = RtsHud::new();
-        let panel = rect_of(&settled_frame(&ctx, &mut hud, &data), "Pawn").center();
-        let open_ground = egui::pos2(100.0, 300.0);
+        let title = rect_of(&settled_frame(&ctx, &mut hud, &data), "Pawn");
+        let panel = title.center();
+        let screen = input(Vec::new()).screen_rect.expect("tests set a screen");
+        let open_ground = egui::pos2(
+            if title.max.x + 250.0 < screen.right() {
+                title.max.x + 250.0
+            } else {
+                title.min.x - 250.0
+            },
+            if title.max.y + 250.0 < screen.bottom() {
+                title.max.y + 250.0
+            } else {
+                title.min.y - 250.0
+            },
+        );
 
         frame(
             &ctx,

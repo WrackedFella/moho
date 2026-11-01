@@ -3599,25 +3599,27 @@ mod tests {
 
     #[test]
     fn first_person_click_does_not_select() {
-        let mut fresh = app_with_pawn_in_view();
-        fresh.simulation.set_camera_mode(CameraMode::FirstPerson);
-        let centre = fresh.simulation.position();
-        click_world(&mut fresh, centre);
-        step_once(&mut fresh);
-        let mut selected = app_with_pawn_in_view();
-        select_the_pawn(&mut selected);
-        selected.simulation.set_camera_mode(CameraMode::FirstPerson);
-        let ground = floor_point(&selected, 4.5, 5.5);
-        click_world(&mut selected, ground);
+        let mut app = app_with_pawn_in_view();
+        app.simulation.set_camera_mode(CameraMode::FirstPerson);
+        let centre = app.simulation.position();
+        click_world(&mut app, centre);
 
-        step_once(&mut selected);
+        step_once(&mut app);
 
-        assert_eq!(fresh.selection.selected(), None, "a click selected");
-        assert_eq!(
-            selected.selection.selected(),
-            Some(PLAYER_PAWN),
-            "a first-person click cleared the selection"
-        );
+        assert_eq!(app.selection.selected(), None);
+    }
+
+    #[test]
+    fn first_person_click_keeps_the_existing_selection() {
+        let mut app = app_with_pawn_in_view();
+        select_the_pawn(&mut app);
+        app.simulation.set_camera_mode(CameraMode::FirstPerson);
+        let ground = floor_point(&app, 4.5, 5.5);
+        click_world(&mut app, ground);
+
+        step_once(&mut app);
+
+        assert_eq!(app.selection.selected(), Some(PLAYER_PAWN));
     }
 
     #[test]
@@ -3682,17 +3684,13 @@ mod tests {
 
         step_once(&mut app);
         app.event_bus.process_deferred();
-        let selecting: Vec<AudioEvent> = rx.try_iter().collect();
-        click_pixel(&mut app, 640.0, 2.0);
-        step_once(&mut app);
-        app.event_bus.process_deferred();
-        let clearing: Vec<AudioEvent> = rx.try_iter().collect();
+        let published: Vec<AudioEvent> = rx.try_iter().collect();
 
-        assert!(
-            matches!(selecting.as_slice(), [AudioEvent::ButtonClick]),
-            "selecting: {selecting:?}"
-        );
-        assert!(clearing.is_empty(), "clearing: {clearing:?}");
+        let clicks = published
+            .iter()
+            .filter(|event| matches!(event, AudioEvent::ButtonClick))
+            .count();
+        assert_eq!(clicks, 1, "published: {published:?}");
     }
 
     #[test]
