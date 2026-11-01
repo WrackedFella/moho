@@ -3752,6 +3752,32 @@ mod tests {
     }
 
     #[test]
+    fn clicking_empty_ground_with_a_selection_publishes_no_button_click() {
+        let mut app = app_with_pawn_in_view();
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.event_bus.subscribe(move |event: &AudioEvent| {
+            let _ = tx.send(event.clone());
+        });
+        select_the_pawn(&mut app);
+        app.event_bus.process_deferred();
+        rx.try_iter().for_each(drop);
+        let ground = floor_point(&app, 4.5, 5.5);
+        click_world(&mut app, ground);
+
+        step_once(&mut app);
+        app.event_bus.process_deferred();
+        let published: Vec<AudioEvent> = rx.try_iter().collect();
+
+        assert_eq!(app.selection.selected(), None, "setup: the click deselects");
+        assert!(
+            !published
+                .iter()
+                .any(|event| matches!(event, AudioEvent::ButtonClick)),
+            "published: {published:?}"
+        );
+    }
+
+    #[test]
     fn selection_mark_outlines_the_pawn_in_strategy_view() {
         let mut app = app_with_pawn_in_view();
         frame_of(&mut app);

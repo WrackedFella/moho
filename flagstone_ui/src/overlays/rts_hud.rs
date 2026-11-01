@@ -1,7 +1,7 @@
 //! RTS HUD overlay — visible during isometric/RTS camera mode.
 //!
-//! Draws the time of day and the view-height slider, and reports the player's pick
-//! through `take_intents`.
+//! Draws the time of day, the view-height slider and the selection panel, and reports the
+//! player's pick through `take_intents`.
 
 use super::overlay_manager::{HudData, HudIntents, Overlay, SelectionHud, ViewHeightHud};
 
