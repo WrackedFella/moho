@@ -478,7 +478,10 @@ marks). `moho_render_api::Marker` holds `min`, `max` (world metres), a linear RG
 with straight alpha and a `MarkerStyle`: `Fill` (translucent solid, the default) or
 `Outline` (the twelve edges only). `Marker::new` orders the corners per axis and makes a
 fill; `with_style` changes the style. A
-`MarkerId` is the game-chosen stable key.
+`MarkerId` is the game-chosen stable key. Flagstone reserves `MarkerId(u64::MAX)` for the
+pawn's selection outline and resyncs it every frame, so it wins over a console marker with
+that id. In the strategy view `render_scene` also draws the pawn as one transient cube
+appended to the actor cubes (not an actor, never saved).
 
 `moho_renderer::Markers` (reached via `Scene::markers_mut`) holds the live set in id
 order: `upsert`, `remove`, `clear`. Markers persist until removed. `Scene::render` turns

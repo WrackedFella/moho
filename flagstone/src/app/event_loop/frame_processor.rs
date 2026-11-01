@@ -396,6 +396,19 @@ impl FrameProcessor {
         // label is a fixed string until a real tool-name lookup exists.
         let equipped_tool_label = app.pawn.equipped_tool.map(|_| "Pickaxe".to_string());
 
+        let selection =
+            app.selection
+                .selected()
+                .is_some()
+                .then(|| flagstone_ui::overlays::SelectionHud {
+                    title: "Pawn".to_string(),
+                    tool: equipped_tool_label.clone(),
+                    carried: hotbar
+                        .iter()
+                        .map(|&(id, count)| (flagstone_game::inventory::resource_name(id), count))
+                        .collect(),
+                });
+
         let data = flagstone_ui::overlays::HudData {
             player_position: [pos.x, pos.y, pos.z],
             chunk_position: chunk_pos,
@@ -420,6 +433,7 @@ impl FrameProcessor {
                 .iter()
                 .map(|e| (e.resource_id, e.amount, e.life()))
                 .collect(),
+            selection,
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {
@@ -996,6 +1010,129 @@ mod tests {
 
         assert!(hud_matches_data_flagged(CameraMode::Isometric, false));
         assert!(!hud_matches_data_flagged(CameraMode::Isometric, true));
+    }
+
+    /// The strategy-view overlay frame `update_hud_data` produces for `app`, once egui has
+    /// sized its areas.
+    fn produced_strategy_hud(app: &mut App) -> moho_render_api::UiFrame {
+        use moho_render_api::UiFrameSource;
+        app.simulation
+            .set_camera_mode(flagstone_game::controller::CameraMode::Isometric);
+        let clock = moho_app::GameClock::default();
+        let adapter = std::sync::Arc::new(std::sync::Mutex::new(hud_adapter()));
+        app.ui_adapter = Some(std::sync::Arc::clone(&adapter));
+        FrameProcessor::new().update_hud_data(app, &clock, Duration::from_secs_f32(DT));
+        let mut adapter = adapter.lock().unwrap();
+        let _sizing = adapter.ui_frame([800, 600]);
+        adapter.ui_frame([800, 600]).expect("playing paints")
+    }
+
+    /// The HUD data of `app`'s world as the strategy view reports it, before the pawn's
+    /// own fields.
+    fn strategy_hud_data(app: &App) -> flagstone_ui::overlays::HudData {
+        let pos = app.simulation.position();
+        let cp = lod_player_chunk(pos);
+        flagstone_ui::overlays::HudData {
+            player_position: [pos.x, pos.y, pos.z],
+            chunk_position: [cp.x, cp.y, cp.z],
+            camera_mode: "Isometric".to_string(),
+            is_fps_mode: false,
+            frame_time_secs: DT,
+            time_of_day: moho_app::GameClock::default().time_of_day(),
+            camera_yaw: app.simulation.yaw_pitch().0,
+            ..Default::default()
+        }
+    }
+
+    fn painted_strategy_hud(data: flagstone_ui::overlays::HudData) -> moho_render_api::UiFrame {
+        use moho_render_api::UiFrameSource;
+        let mut reference = hud_adapter();
+        reference.update_hud_data(data);
+        let _sizing = reference.ui_frame([800, 600]);
+        reference.ui_frame([800, 600]).expect("playing paints")
+    }
+
+    fn app_carrying_iron_ore(selected: bool) -> App {
+        let mut app = App::headless();
+        app.pawn.deposit(flagstone_game::inventory::ResourceYield {
+            resource_id: 1,
+            amount: 12,
+        });
+        if selected {
+            app.selection
+                .click(Some(flagstone_game::selection::PLAYER_PAWN));
+        }
+        app
+    }
+
+    #[test]
+    fn selection_panel_lists_the_tool_and_carried_resources() {
+        use flagstone_ui::overlays::SelectionHud;
+        let mut app = app_carrying_iron_ore(true);
+        let mut unselected = app_carrying_iron_ore(false);
+
+        let produced = produced_strategy_hud(&mut app);
+
+        let panel = SelectionHud {
+            title: "Pawn".to_string(),
+            tool: Some("Pickaxe".to_string()),
+            carried: vec![("Iron ore".to_string(), 12)],
+        };
+        let expected = painted_strategy_hud(flagstone_ui::overlays::HudData {
+            hotbar: vec![(1, 12)],
+            equipped_tool_label: Some("Pickaxe".to_string()),
+            selection: Some(panel),
+            ..strategy_hud_data(&app)
+        });
+        assert!(produced == expected, "not the panel the spec lists");
+        assert!(
+            produced != produced_strategy_hud(&mut unselected),
+            "the panel is not drawn"
+        );
+    }
+
+    #[test]
+    fn selection_panel_omits_the_tool_when_unequipped() {
+        use flagstone_ui::overlays::SelectionHud;
+        let mut app = app_carrying_iron_ore(true);
+        app.pawn.select_slot(3);
+
+        let produced = produced_strategy_hud(&mut app);
+
+        let panel = SelectionHud {
+            title: "Pawn".to_string(),
+            tool: None,
+            carried: vec![("Iron ore".to_string(), 12)],
+        };
+        let expected = painted_strategy_hud(flagstone_ui::overlays::HudData {
+            hotbar: vec![(1, 12)],
+            equipped_tool_label: None,
+            selected_slot: 3,
+            selection: Some(panel),
+            ..strategy_hud_data(&app)
+        });
+        assert!(produced == expected, "the panel lists a tool nobody holds");
+    }
+
+    #[test]
+    fn no_selection_means_no_panel() {
+        let mut selected = app_carrying_iron_ore(true);
+        let mut unselected = app_carrying_iron_ore(false);
+
+        let with_panel = produced_strategy_hud(&mut selected);
+        let produced = produced_strategy_hud(&mut unselected);
+
+        let expected = painted_strategy_hud(flagstone_ui::overlays::HudData {
+            hotbar: vec![(1, 12)],
+            equipped_tool_label: Some("Pickaxe".to_string()),
+            selection: None,
+            ..strategy_hud_data(&unselected)
+        });
+        assert!(produced == expected, "something is drawn for no pawn");
+        assert!(
+            produced != with_panel,
+            "selecting the pawn draws no panel to compare against"
+        );
     }
 
     #[test]

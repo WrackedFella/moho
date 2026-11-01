@@ -1,9 +1,9 @@
 //! RTS HUD overlay — visible during isometric/RTS camera mode.
 //!
-//! Draws the time of day and the view-height slider, and reports the player's pick
-//! through `take_intents`.
+//! Draws the time of day, the view-height slider and the selection panel, and reports the
+//! player's pick through `take_intents`.
 
-use super::overlay_manager::{HudData, HudIntents, Overlay, ViewHeightHud};
+use super::overlay_manager::{HudData, HudIntents, Overlay, SelectionHud, ViewHeightHud};
 
 const SLIDER_LENGTH: f32 = 200.0;
 
@@ -53,11 +53,40 @@ impl Overlay for RtsHud {
         if let Some(view_height) = data.view_height {
             self.chosen = render_view_height(ui, view_height).or(self.chosen);
         }
+        if let Some(selection) = &data.selection {
+            render_selection(ui, selection);
+        }
     }
 
     fn take_intents(&mut self, out: &mut HudIntents) {
         out.view_level = self.chosen.take().or(out.view_level);
     }
+}
+
+/// The selected pawn's panel under the mode label. An egui area, so a press on it is
+/// consumed before it can clear the selection.
+fn render_selection(ui: &mut egui::Ui, selection: &SelectionHud) {
+    let colour = egui::Color32::from_rgb(220, 220, 200);
+    egui::Area::new("rts_selection".into())
+        .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0, 36.0))
+        .show(ui.ctx(), |ui| {
+            egui::Frame::new()
+                .fill(egui::Color32::from_rgba_premultiplied(0, 0, 0, 120))
+                .inner_margin(egui::Margin::same(6))
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(&selection.title)
+                            .font(egui::FontId::proportional(16.0))
+                            .color(colour),
+                    );
+                    if let Some(tool) = &selection.tool {
+                        ui.label(egui::RichText::new(format!("Tool: {tool}")).color(colour));
+                    }
+                    for (name, count) in &selection.carried {
+                        ui.label(egui::RichText::new(format!("{name}: {count}")).color(colour));
+                    }
+                });
+        });
 }
 
 /// Vertical view-height slider on the right edge, below the minimap and the clock.
@@ -131,7 +160,7 @@ fn render_time_of_day(ui: &mut egui::Ui, time: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::overlays::overlay_manager::{HudIntents, ViewHeightHud};
+    use crate::overlays::overlay_manager::{HudIntents, SelectionHud, ViewHeightHud};
     use crate::overlays::test_support::{
         input, rect_of, run_ui, second_frame, small_rect_centers, texts,
     };
@@ -342,6 +371,140 @@ mod tests {
         let drawn = texts(&frame(&ctx, &mut hud, &first_person, Vec::new()));
 
         assert!(!drawn.contains(&"Strategy".to_string()), "{drawn:?}");
+    }
+
+    fn pawn_panel(tool: Option<&str>, carried: &[(&str, u32)]) -> Option<SelectionHud> {
+        Some(SelectionHud {
+            title: "Pawn".to_owned(),
+            tool: tool.map(str::to_owned),
+            carried: carried
+                .iter()
+                .map(|&(name, count)| (name.to_owned(), count))
+                .collect(),
+        })
+    }
+
+    fn selected_data(is_fps_mode: bool) -> HudData {
+        HudData {
+            is_fps_mode,
+            selection: pawn_panel(Some("Pickaxe"), &[("Iron ore", 12)]),
+            ..strategy_data(TOP)
+        }
+    }
+
+    fn settled_frame(ctx: &egui::Context, hud: &mut RtsHud, data: &HudData) -> egui::FullOutput {
+        frame(ctx, hud, data, Vec::new());
+        frame(ctx, hud, data, Vec::new())
+    }
+
+    fn drawn_texts(data: &HudData) -> Vec<String> {
+        let ctx = egui::Context::default();
+        let mut hud = RtsHud::new();
+        texts(&settled_frame(&ctx, &mut hud, data))
+    }
+
+    #[test]
+    fn selection_panel_lists_the_tool_and_carried_resources() {
+        let drawn = drawn_texts(&selected_data(false));
+
+        assert!(drawn.iter().any(|t| t.contains("Pawn")), "{drawn:?}");
+        assert!(drawn.iter().any(|t| t.contains("Pickaxe")), "{drawn:?}");
+        assert!(
+            drawn
+                .iter()
+                .any(|t| t.contains("Iron ore") && t.contains("12")),
+            "the count and the name are not on one line: {drawn:?}"
+        );
+    }
+
+    #[test]
+    fn selection_panel_omits_the_tool_line_when_nothing_is_equipped() {
+        let data = HudData {
+            selection: pawn_panel(None, &[("Iron ore", 12)]),
+            ..selected_data(false)
+        };
+
+        let drawn = drawn_texts(&data);
+
+        assert!(drawn.iter().any(|t| t.contains("Pawn")), "{drawn:?}");
+        assert!(!drawn.iter().any(|t| t.contains("Pickaxe")), "{drawn:?}");
+    }
+
+    #[test]
+    fn selection_panel_is_absent_without_a_selection() {
+        let selected = drawn_texts(&selected_data(false));
+        let none = HudData {
+            selection: None,
+            ..selected_data(false)
+        };
+
+        let drawn = drawn_texts(&none);
+
+        assert!(
+            selected.iter().any(|t| t.contains("Pawn")),
+            "the panel shows when a pawn is selected"
+        );
+        assert!(!drawn.iter().any(|t| t.contains("Pawn")), "{drawn:?}");
+        assert!(!drawn.iter().any(|t| t.contains("Iron ore")), "{drawn:?}");
+    }
+
+    #[test]
+    fn selection_panel_is_hidden_in_first_person() {
+        let strategy = drawn_texts(&selected_data(false));
+
+        let first_person = drawn_texts(&selected_data(true));
+
+        assert!(
+            strategy.iter().any(|t| t.contains("Pawn")),
+            "the panel shows in strategy"
+        );
+        assert!(
+            !first_person.iter().any(|t| t.contains("Pawn")),
+            "{first_person:?}"
+        );
+    }
+
+    #[test]
+    fn the_pointer_over_the_selection_panel_is_over_egui() {
+        let data = selected_data(false);
+        let ctx = egui::Context::default();
+        let mut hud = RtsHud::new();
+        let title = rect_of(&settled_frame(&ctx, &mut hud, &data), "Pawn");
+        let panel = title.center();
+        let screen = input(Vec::new()).screen_rect.expect("tests set a screen");
+        let open_ground = egui::pos2(
+            if title.max.x + 250.0 < screen.right() {
+                title.max.x + 250.0
+            } else {
+                title.min.x - 250.0
+            },
+            if title.max.y + 250.0 < screen.bottom() {
+                title.max.y + 250.0
+            } else {
+                title.min.y - 250.0
+            },
+        );
+
+        frame(
+            &ctx,
+            &mut hud,
+            &data,
+            vec![egui::Event::PointerMoved(panel)],
+        );
+        let over_panel = ctx.is_pointer_over_egui();
+        frame(
+            &ctx,
+            &mut hud,
+            &data,
+            vec![egui::Event::PointerMoved(open_ground)],
+        );
+        let over_ground = ctx.is_pointer_over_egui();
+
+        assert!(over_panel, "a press on the panel would reach the world");
+        assert!(
+            !over_ground,
+            "the pointer over open ground is not over the panel"
+        );
     }
 
     #[test]
