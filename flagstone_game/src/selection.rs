@@ -251,6 +251,45 @@ mod tests {
     }
 
     #[test]
+    fn a_ray_parallel_to_a_slab_and_on_its_face_still_hits() {
+        let unit = Aabb {
+            min: Vec3::ZERO,
+            max: Vec3::ONE,
+        };
+        // (face, origin, direction); the face coordinate is the parallel axis' origin.
+        let cases = [
+            ("x min", Vec3::new(0.0, 0.5, -2.0), Vec3::Z),
+            ("x max", Vec3::new(1.0, 0.5, -2.0), Vec3::Z),
+            ("y min", Vec3::new(0.5, 0.0, -2.0), Vec3::Z),
+            ("y max", Vec3::new(0.5, 1.0, -2.0), Vec3::Z),
+            ("z min", Vec3::new(-2.0, 0.5, 0.0), Vec3::X),
+            ("z max", Vec3::new(-2.0, 0.5, 1.0), Vec3::X),
+        ];
+
+        for (face, origin, direction) in cases {
+            let entry = ray_box_entry(Ray { origin, direction }, unit);
+
+            assert_eq!(entry, Some(2.0), "{face}");
+        }
+    }
+
+    #[test]
+    fn a_ray_that_only_grazes_a_corner_hits_at_the_corner() {
+        let unit = Aabb {
+            min: Vec3::ZERO,
+            max: Vec3::ONE,
+        };
+        let grazing = Ray {
+            origin: Vec3::new(0.0, 2.0, 0.5),
+            direction: Vec3::new(1.0, -1.0, 0.0),
+        };
+
+        let entry = ray_box_entry(grazing, unit);
+
+        assert_eq!(entry, Some(1.0));
+    }
+
+    #[test]
     fn the_nearer_of_two_pawns_wins() {
         let (near, far) = (PawnId(7), PawnId(9));
         let near_box = pawn_aabb(Vec3::new(0.0, 0.0, -4.0));
