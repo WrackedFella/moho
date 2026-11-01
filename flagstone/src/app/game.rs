@@ -227,16 +227,17 @@ impl App {
             return;
         };
         let pos = hit.block_pos.to_array();
-        let (clip, change) = match self.colony.marks.toggle(pos) {
-            MarkChange::Marked => (MARK_SOUND, "marked"),
-            MarkChange::Cancelled => (UNMARK_SOUND, "cancelled"),
+        let change = self.colony.marks.toggle(pos);
+        let clip = match change {
+            MarkChange::Marked => MARK_SOUND,
+            MarkChange::Cancelled => UNMARK_SOUND,
         };
         self.event_bus
             .publish(moho_core::events::AudioEvent::PlaySound {
                 path: clip.to_string(),
                 volume: MARK_VOLUME,
             });
-        tracing::debug!(?pos, change, "Mining mark toggled");
+        tracing::debug!(?pos, ?change, "Mining mark toggled");
     }
 
     /// Applies what the player asked for through the HUD this frame.
@@ -556,8 +557,8 @@ impl moho_app::Game for App {
             .ui_adapter
             .as_ref()
             .and_then(|adapter| adapter.lock().ok())
-            .map(|mut adapter| adapter.take_hud_intents());
-        let intents = intents.unwrap_or_default();
+            .map(|mut adapter| adapter.take_hud_intents())
+            .unwrap_or_default();
         crate::app::view_level::update(self, intents.view_level);
         self.apply_hud_intents(intents);
         if let Some(renderer) = ctx.renderer() {
