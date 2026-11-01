@@ -166,6 +166,8 @@ struct App {
     viewport: glam::UVec2,
     /// The surface under the last strategy-view click, `None` when it hit nothing.
     pointer_hit: Option<flagstone_game::raycast::SurfaceHit>,
+    /// The pawn the player has selected; ephemeral, not saved.
+    selection: flagstone_game::selection::Selection,
 }
 
 impl App {
@@ -303,6 +305,7 @@ impl App {
 
             viewport: glam::UVec2::ZERO,
             pointer_hit: None,
+            selection: flagstone_game::selection::Selection::default(),
         }
     }
 

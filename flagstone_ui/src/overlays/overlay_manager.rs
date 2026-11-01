@@ -18,6 +18,19 @@ pub struct ViewHeightHud {
     pub level: i32,
 }
 
+/// What the selection panel describes: the selected pawn, in primitive types so
+/// `flagstone_ui` stays decoupled from `flagstone_game`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionHud {
+    pub title: String,
+
+    /// The equipped tool's label, `None` when nothing is equipped.
+    pub tool: Option<String>,
+
+    /// Carried resources as `(name, count)` pairs.
+    pub carried: Vec<(String, u32)>,
+}
+
 /// What the player asked for through the HUD this frame, for the game to apply.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct HudIntents {
@@ -82,6 +95,9 @@ pub struct HudData {
     /// Recent pickups as `(resource_id, amount, remaining_life)`, life from `0.0` to `1.0`.
     /// Primitive for the same reason as `hotbar`.
     pub pickups: Vec<(u32, u32, f32)>,
+
+    /// The selected pawn's panel; `None` when nothing is selected.
+    pub selection: Option<SelectionHud>,
 }
 
 impl Default for HudData {
@@ -103,6 +119,7 @@ impl Default for HudData {
             selected_slot: 0,
             view_height: None,
             pickups: Vec::new(),
+            selection: None,
         }
     }
 }
