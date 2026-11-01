@@ -4,6 +4,7 @@
 
 use crate::App;
 use crate::app::event_loop::event_processor::{lod_for_chunk, lod_player_chunk};
+use crate::app::input_state::Designation;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -420,6 +421,7 @@ impl FrameProcessor {
                 .iter()
                 .map(|e| (e.resource_id, e.amount, e.life()))
                 .collect(),
+            mine_designation_active: app.input.designation == Designation::Mine,
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {
@@ -980,6 +982,58 @@ mod tests {
                 "level {level}: the HUD data carries no slider"
             );
         }
+    }
+
+    #[test]
+    fn hud_data_carries_the_designation_state() {
+        use crate::app::input_state::Designation;
+        use moho_render_api::UiFrameSource;
+        let produced_for = |designation: Designation| {
+            let mut app = App::headless();
+            app.simulation
+                .set_camera_mode(flagstone_game::controller::CameraMode::Isometric);
+            app.input.designation = designation;
+            let clock = moho_app::GameClock::default();
+            let adapter = std::sync::Arc::new(std::sync::Mutex::new(hud_adapter()));
+            app.ui_adapter = Some(std::sync::Arc::clone(&adapter));
+            FrameProcessor::new().update_hud_data(&app, &clock, Duration::from_secs_f32(DT));
+            let produced = adapter
+                .lock()
+                .unwrap()
+                .ui_frame([800, 600])
+                .expect("playing paints");
+            (app, clock, produced)
+        };
+        let (app, clock, inactive) = produced_for(Designation::None);
+        let (_, _, active) = produced_for(Designation::Mine);
+
+        let pos = app.simulation.position();
+        let cp = lod_player_chunk(pos);
+        let painted_with = |mine_designation_active: bool| {
+            let mut reference = hud_adapter();
+            reference.update_hud_data(flagstone_ui::overlays::HudData {
+                player_position: [pos.x, pos.y, pos.z],
+                chunk_position: [cp.x, cp.y, cp.z],
+                camera_mode: "Isometric".to_string(),
+                is_fps_mode: false,
+                frame_time_secs: DT,
+                time_of_day: clock.time_of_day(),
+                camera_yaw: app.simulation.yaw_pitch().0,
+                equipped_tool_label: Some("Pickaxe".to_string()),
+                mine_designation_active,
+                ..Default::default()
+            });
+            reference.ui_frame([800, 600]).expect("playing paints")
+        };
+        assert!(
+            inactive == painted_with(false),
+            "no designation is not the inactive control"
+        );
+        assert!(
+            active == painted_with(true),
+            "the designation is not on the HUD data"
+        );
+        assert!(active != inactive, "the control looks the same either way");
     }
 
     #[test]

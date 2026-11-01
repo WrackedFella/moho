@@ -22,6 +22,9 @@ pub struct ViewHeightHud {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct HudIntents {
     pub view_level: Option<i32>,
+
+    /// The player pressed the mining-designation control.
+    pub toggle_mine_designation: bool,
 }
 
 /// Per-frame data pushed from the game loop into all overlays.
@@ -82,6 +85,9 @@ pub struct HudData {
     /// Recent pickups as `(resource_id, amount, remaining_life)`, life from `0.0` to `1.0`.
     /// Primitive for the same reason as `hotbar`.
     pub pickups: Vec<(u32, u32, f32)>,
+
+    /// Whether the mining designation is active, for the HUD control's state.
+    pub mine_designation_active: bool,
 }
 
 impl Default for HudData {
@@ -103,6 +109,7 @@ impl Default for HudData {
             selected_slot: 0,
             view_height: None,
             pickups: Vec::new(),
+            mine_designation_active: false,
         }
     }
 }
@@ -288,7 +295,8 @@ mod tests {
         assert_eq!(
             first,
             HudIntents {
-                view_level: Some(7)
+                view_level: Some(7),
+                ..HudIntents::default()
             }
         );
         assert_eq!(second, HudIntents::default(), "a take empties the overlays");

@@ -13,6 +13,8 @@ pub struct RtsHud {
     visible: bool,
     /// The step the player picked, until `take_intents` hands it over.
     chosen: Option<i32>,
+    /// Whether the mine control was clicked, until `take_intents` hands it over.
+    mine_toggled: bool,
 }
 
 impl RtsHud {
@@ -20,6 +22,7 @@ impl RtsHud {
         Self {
             visible: true,
             chosen: None,
+            mine_toggled: false,
         }
     }
 }
@@ -49,6 +52,7 @@ impl Overlay for RtsHud {
         }
 
         render_mode_label(ui);
+        self.mine_toggled |= render_mine_control(ui, data.mine_designation_active);
         render_time_of_day(ui, data.time_of_day);
         if let Some(view_height) = data.view_height {
             self.chosen = render_view_height(ui, view_height).or(self.chosen);
@@ -57,7 +61,26 @@ impl Overlay for RtsHud {
 
     fn take_intents(&mut self, out: &mut HudIntents) {
         out.view_level = self.chosen.take().or(out.view_level);
+        out.toggle_mine_designation |= std::mem::take(&mut self.mine_toggled);
     }
+}
+
+/// The mining-designation toggle under the mode label; true on the frame it is clicked.
+fn render_mine_control(ui: &mut egui::Ui, active: bool) -> bool {
+    egui::Area::new("rts_mine_control".into())
+        .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0, 36.0))
+        .show(ui.ctx(), |ui| {
+            let button = ui.add(egui::Button::new("Mine").selected(active));
+            if active {
+                ui.label(
+                    egui::RichText::new("Click a block to mark or unmark it")
+                        .color(egui::Color32::from_rgb(220, 220, 200)),
+                );
+            }
+            button
+        })
+        .inner
+        .clicked()
 }
 
 /// Vertical view-height slider on the right edge, below the minimap and the clock.
@@ -314,6 +337,79 @@ mod tests {
         frame(&ctx, &mut hud, &none, Vec::new());
         let output = frame(&ctx, &mut hud, &none, Vec::new());
         assert!(!texts(&output).contains(&"All".to_string()));
+    }
+
+    const MINE_LABEL: &str = "Mine";
+
+    fn mine_data(active: bool) -> HudData {
+        HudData {
+            mine_designation_active: active,
+            ..strategy_data(TOP)
+        }
+    }
+
+    /// A settled HUD frame for `data`, and the context and HUD that drew it.
+    fn settled(data: &HudData) -> (egui::Context, RtsHud, egui::FullOutput) {
+        let ctx = egui::Context::default();
+        let mut hud = RtsHud::new();
+        frame(&ctx, &mut hud, data, Vec::new());
+        let output = frame(&ctx, &mut hud, data, Vec::new());
+        (ctx, hud, output)
+    }
+
+    #[test]
+    fn the_mine_control_reports_a_toggle_once() {
+        let data = mine_data(false);
+        let (ctx, mut hud, output) = settled(&data);
+        let mut before = HudIntents::default();
+        hud.take_intents(&mut before);
+        let at = rect_of(&output, MINE_LABEL).center();
+
+        frame(&ctx, &mut hud, &data, vec![egui::Event::PointerMoved(at)]);
+        frame(&ctx, &mut hud, &data, vec![button(at, true)]);
+        frame(&ctx, &mut hud, &data, vec![button(at, false)]);
+        let mut clicked = HudIntents::default();
+        hud.take_intents(&mut clicked);
+        frame(&ctx, &mut hud, &data, Vec::new());
+        let mut again = HudIntents::default();
+        hud.take_intents(&mut again);
+
+        assert_eq!(before, HudIntents::default(), "no click, no toggle");
+        assert!(clicked.toggle_mine_designation, "the click is reported");
+        assert_eq!(clicked.view_level, None, "and nothing else");
+        assert_eq!(
+            again,
+            HudIntents::default(),
+            "the toggle is handed over once"
+        );
+    }
+
+    #[test]
+    fn the_mine_control_shows_whether_it_is_active() {
+        let (_ctx, _hud, inactive) = settled(&mine_data(false));
+        let (_ctx, _hud, active) = settled(&mine_data(true));
+
+        assert!(texts(&inactive).contains(&MINE_LABEL.to_string()));
+        assert!(texts(&active).contains(&MINE_LABEL.to_string()));
+        assert!(
+            inactive.shapes != active.shapes,
+            "the control draws the same whether or not the designation is active"
+        );
+    }
+
+    #[test]
+    fn no_mine_control_in_first_person() {
+        let strategy = mine_data(false);
+        let first_person = HudData {
+            is_fps_mode: true,
+            ..mine_data(false)
+        };
+
+        let (_ctx, _hud, in_strategy) = settled(&strategy);
+        let (_ctx, _hud, in_first_person) = settled(&first_person);
+
+        assert!(texts(&in_strategy).contains(&MINE_LABEL.to_string()));
+        assert!(!texts(&in_first_person).contains(&MINE_LABEL.to_string()));
     }
 
     #[test]

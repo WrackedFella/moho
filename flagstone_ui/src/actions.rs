@@ -26,6 +26,7 @@ const SPRINT: [Binding; 2] = [Binding::key(Key::Shift), button(PadButton::LeftTh
 
 const SELECT: [Binding; 1] = [Binding::mouse(MouseButton::Left)];
 const POSSESS: [Binding; 1] = [Binding::key(Key::Tab)];
+const MINE_DESIGNATION: [Binding; 1] = [Binding::key(Key::M)];
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StrategyAction {
@@ -41,6 +42,8 @@ pub enum StrategyAction {
     Select,
     /// Toggles between the strategy view and first person.
     Possess,
+    /// Turns the mining designation on and off.
+    MineDesignation,
 }
 
 impl Action for StrategyAction {
@@ -55,6 +58,7 @@ impl Action for StrategyAction {
         StrategyAction::Jump,
         StrategyAction::Select,
         StrategyAction::Possess,
+        StrategyAction::MineDesignation,
     ];
 
     fn name(self) -> &'static str {
@@ -69,6 +73,7 @@ impl Action for StrategyAction {
             StrategyAction::Jump => "jump",
             StrategyAction::Select => "select",
             StrategyAction::Possess => "possess",
+            StrategyAction::MineDesignation => "mine_designation",
         }
     }
 
@@ -84,6 +89,7 @@ impl Action for StrategyAction {
             StrategyAction::Sprint => &SPRINT,
             StrategyAction::Select => &SELECT,
             StrategyAction::Possess => &POSSESS,
+            StrategyAction::MineDesignation => &MINE_DESIGNATION,
         }
     }
 
@@ -171,7 +177,14 @@ mod tests {
 
         let actual: Vec<_> = StrategyAction::ALL
             .iter()
-            .filter(|&&a| a != StrategyAction::Select && a != StrategyAction::Possess)
+            .filter(|&&a| {
+                !matches!(
+                    a,
+                    StrategyAction::Select
+                        | StrategyAction::Possess
+                        | StrategyAction::MineDesignation
+                )
+            })
             .map(|a| (*a, a.name(), a.default_bindings().to_vec()))
             .collect();
 
@@ -247,6 +260,30 @@ mod tests {
         assert!(
             collisions.is_empty(),
             "Possess collides with {collisions:?}"
+        );
+    }
+
+    #[test]
+    fn mine_designation_defaults_to_m_and_collides_with_no_other_default() {
+        let mine = StrategyAction::MineDesignation.default_bindings();
+
+        let collisions: Vec<_> = StrategyAction::ALL
+            .iter()
+            .filter(|&&other| other != StrategyAction::MineDesignation)
+            .filter(|other| {
+                other
+                    .default_bindings()
+                    .iter()
+                    .any(|binding| mine.contains(binding))
+            })
+            .map(|other| other.name())
+            .collect();
+
+        assert_eq!(StrategyAction::MineDesignation.name(), "mine_designation");
+        assert_eq!(mine, [Binding::key(Key::M)]);
+        assert!(
+            collisions.is_empty(),
+            "MineDesignation collides with {collisions:?}"
         );
     }
 
