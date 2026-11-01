@@ -7,7 +7,6 @@ use moho_core::pointer::Ray;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PawnId(pub u32);
 
-/// The player's pawn, the only one that exists.
 pub const PLAYER_PAWN: PawnId = PawnId(0);
 
 /// Half extents of the pawn's box: the character capsule's footprint and height.

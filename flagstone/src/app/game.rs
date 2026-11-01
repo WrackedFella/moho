@@ -24,7 +24,6 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 /// console marker with the same id.
 const SELECTION_MARKER_ID: MarkerId = MarkerId(u64::MAX);
 
-/// Outline colour of the selection mark.
 const SELECTION_MARK_COLOUR: [f32; 4] = [1.0, 0.9, 0.2, 1.0];
 
 /// The placeholder body drawn for the pawn in the strategy view.
