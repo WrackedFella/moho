@@ -320,22 +320,25 @@ impl App {
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     ) {
         self.sync_selection_mark();
-        let mut cubes = self.entities.actors.cubes().to_vec();
-        if self.simulation.camera_mode() == CameraMode::Isometric {
-            let body = pawn_aabb(self.simulation.position());
+        let with_body;
+        let cubes = if self.simulation.camera_mode() == CameraMode::Isometric {
             let size = PAWN_HALF_EXTENTS * 2.0;
-            cubes.push(Cube::new(
-                (body.min + body.max) * 0.5,
+            let body = Cube::new(
+                self.simulation.position(),
                 size.x,
                 size.z,
                 size.y,
                 PAWN_BODY_MATERIAL,
-            ));
-        }
+            );
+            with_body = [self.entities.actors.cubes(), &[body]].concat();
+            with_body.as_slice()
+        } else {
+            self.entities.actors.cubes()
+        };
         if let Err(e) = self.scene.render(
             renderer,
             self.entities.actors.spheres(),
-            &cubes,
+            cubes,
             self.mesh_handle,
             self.cube_mesh_handle,
             camera,
