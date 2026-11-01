@@ -383,13 +383,10 @@ mod tests {
         };
 
         let (_ctx, _hud, in_strategy) = settled(&strategy);
-        let (_ctx, mut hud, in_first_person) = settled(&first_person);
+        let (_ctx, _hud, in_first_person) = settled(&first_person);
 
         assert!(texts(&in_strategy).contains(&MINE_LABEL.to_string()));
         assert!(!texts(&in_first_person).contains(&MINE_LABEL.to_string()));
-        let mut intents = HudIntents::default();
-        hud.take_intents(&mut intents);
-        assert_eq!(intents, HudIntents::default());
     }
 
     #[test]

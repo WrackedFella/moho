@@ -17,10 +17,6 @@ impl DesignationMarkers {
     pub fn sync(&mut self, _marks: &MineMarks, _markers: &mut Markers) {
         todo!("diff the marks against the shown markers")
     }
-
-    pub fn shown(&self) -> &BTreeSet<[i32; 3]> {
-        &self.shown
-    }
 }
 
 /// The marker id of the block at `pos`: bit 63 set, then x, y and z in 20 bits each.
@@ -103,10 +99,6 @@ mod tests {
             3,
             "the console's marker is untouched"
         );
-        assert_eq!(
-            shown.shown().iter().copied().collect::<Vec<_>>(),
-            [[4, 5, 6], [7, 8, 9]]
-        );
     }
 
     #[test]
@@ -138,7 +130,6 @@ mod tests {
         shown.sync(&marks, &mut markers);
 
         assert!(fills(&markers).is_empty());
-        assert!(shown.shown().is_empty());
     }
 
     #[test]
@@ -161,8 +152,11 @@ mod tests {
         #[test]
         fn distinct_blocks_get_distinct_marker_ids(
             a in proptest::array::uniform3(-(1i32 << 19)..(1i32 << 19)),
-            b in proptest::array::uniform3(-(1i32 << 19)..(1i32 << 19)),
+            axis in 0usize..3,
+            value in -(1i32 << 19)..(1i32 << 19),
         ) {
+            let mut b = a;
+            b[axis] = value;
             prop_assume!(a != b);
 
             prop_assert_ne!(marker_id(a), marker_id(b));

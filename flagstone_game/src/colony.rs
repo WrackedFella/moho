@@ -122,8 +122,15 @@ mod tests {
         #[test]
         fn toggling_twice_leaves_the_marks_unchanged(
             existing in proptest::collection::btree_set(any::<[i32; 3]>(), 0..8),
-            pos in any::<[i32; 3]>(),
+            fresh in any::<[i32; 3]>(),
+            pick in any::<proptest::sample::Index>(),
+            from_existing in any::<bool>(),
         ) {
+            let pos = if from_existing && !existing.is_empty() {
+                *existing.iter().nth(pick.index(existing.len())).expect("index is in range")
+            } else {
+                fresh
+            };
             let mut marks = MineMarks::default();
             for &p in &existing {
                 marks.toggle(p);

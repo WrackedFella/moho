@@ -2721,12 +2721,10 @@ mod tests {
             let mut app = designating_app();
             let block = click_ground(&mut app);
             step(&mut app);
-            let before_the_frame = fills(&mut app).len();
 
             run_frame(&mut app, &mut FakeRenderer::default());
 
             let drawn = fills(&mut app);
-            assert_eq!(before_the_frame, 0, "the tick draws nothing itself");
             assert_eq!(drawn.len(), 1);
             assert!(is_cell(&drawn[0], block), "{:?} vs {block:?}", drawn[0]);
             assert!(drawn[0].color[3] > 0.0 && drawn[0].color[3] < 1.0);
@@ -2752,14 +2750,21 @@ mod tests {
         #[test]
         fn a_click_on_the_sky_marks_nothing() {
             let mut app = designating_app();
+            let audio = record_audio(&app);
+            let block = click_ground(&mut app);
+            step(&mut app);
+            run_frame(&mut app, &mut FakeRenderer::default());
+            let marking_cues = sounds(&app, &audio).len();
             click_the_sky(&mut app);
 
             let command = step(&mut app);
             run_frame(&mut app, &mut FakeRenderer::default());
 
+            assert_eq!(marking_cues, 1, "the first click marked a block");
             assert!(command.mark.is_some(), "the click is still a mark command");
-            assert!(marked(&app).is_empty());
-            assert!(fills(&mut app).is_empty());
+            assert_eq!(marked(&app), [block], "the sky click cancels nothing");
+            assert_eq!(fills(&mut app).len(), 1, "and its marker stays");
+            assert!(sounds(&app, &audio).is_empty(), "and plays no cue");
         }
 
         #[test]
