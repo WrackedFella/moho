@@ -16,7 +16,6 @@ pub enum Designation {
 }
 
 impl Designation {
-    /// Turns the mining designation on when it is off and off when it is on.
     pub fn toggle(&mut self) {
         *self = match self {
             Designation::None => Designation::Mine,
@@ -26,7 +25,6 @@ impl Designation {
 }
 
 pub struct InputState {
-    /// What a strategy click orders.
     pub designation: Designation,
 
     /// Bindings, held actions and mouse look, read once per update.
