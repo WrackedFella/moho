@@ -4,6 +4,7 @@
 
 use crate::App;
 use crate::app::event_loop::event_processor::{lod_for_chunk, lod_player_chunk};
+use crate::app::input_state::Designation;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -420,7 +421,7 @@ impl FrameProcessor {
                 .iter()
                 .map(|e| (e.resource_id, e.amount, e.life()))
                 .collect(),
-            mine_designation_active: false,
+            mine_designation_active: app.input.designation == Designation::Mine,
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {

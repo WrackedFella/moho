@@ -13,6 +13,8 @@ pub struct RtsHud {
     visible: bool,
     /// The step the player picked, until `take_intents` hands it over.
     chosen: Option<i32>,
+    /// Whether the mine control was clicked, until `take_intents` hands it over.
+    mine_toggled: bool,
 }
 
 impl RtsHud {
@@ -20,6 +22,7 @@ impl RtsHud {
         Self {
             visible: true,
             chosen: None,
+            mine_toggled: false,
         }
     }
 }
@@ -49,6 +52,7 @@ impl Overlay for RtsHud {
         }
 
         render_mode_label(ui);
+        self.mine_toggled |= render_mine_control(ui, data.mine_designation_active);
         render_time_of_day(ui, data.time_of_day);
         if let Some(view_height) = data.view_height {
             self.chosen = render_view_height(ui, view_height).or(self.chosen);
@@ -57,7 +61,26 @@ impl Overlay for RtsHud {
 
     fn take_intents(&mut self, out: &mut HudIntents) {
         out.view_level = self.chosen.take().or(out.view_level);
+        out.toggle_mine_designation |= std::mem::take(&mut self.mine_toggled);
     }
+}
+
+/// The mining-designation toggle under the mode label; true on the frame it is clicked.
+fn render_mine_control(ui: &mut egui::Ui, active: bool) -> bool {
+    egui::Area::new("rts_mine_control".into())
+        .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0, 36.0))
+        .show(ui.ctx(), |ui| {
+            let button = ui.add(egui::Button::new("Mine").selected(active));
+            if active {
+                ui.label(
+                    egui::RichText::new("Click a block to mark or unmark it")
+                        .color(egui::Color32::from_rgb(220, 220, 200)),
+                );
+            }
+            button
+        })
+        .inner
+        .clicked()
 }
 
 /// Vertical view-height slider on the right edge, below the minimap and the clock.

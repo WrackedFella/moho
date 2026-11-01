@@ -1,9 +1,13 @@
 //! The markers that show which blocks are marked for mining.
 
 use flagstone_game::colony::MineMarks;
-use moho_render_api::MarkerId;
+use moho_render_api::{Marker, MarkerId};
 use moho_renderer::Markers;
 use std::collections::BTreeSet;
+
+/// Translucent red-orange, apart from the console's amber.
+const MARK_COLOR: [f32; 4] = [0.9, 0.2, 0.15, 0.45];
+const COORD_MASK: u64 = (1 << 20) - 1;
 
 /// The blocks whose marker is on the scene, so a frame draws only what changed.
 #[derive(Debug, Default)]
@@ -14,14 +18,28 @@ pub struct DesignationMarkers {
 impl DesignationMarkers {
     /// Adds a marker for each new mark and removes the marker of each cancelled one.
     /// Markers it did not place are left alone.
-    pub fn sync(&mut self, _marks: &MineMarks, _markers: &mut Markers) {
-        todo!("diff the marks against the shown markers")
+    pub fn sync(&mut self, marks: &MineMarks, markers: &mut Markers) {
+        for (pos, _) in marks.iter() {
+            if self.shown.insert(pos) {
+                let min = pos.map(|c| c as f32);
+                let max = pos.map(|c| c as f32 + 1.0);
+                markers.upsert(marker_id(pos), Marker::new(min, max, MARK_COLOR));
+            }
+        }
+        self.shown.retain(|&pos| {
+            let keep = marks.contains(pos);
+            if !keep {
+                markers.remove(marker_id(pos));
+            }
+            keep
+        });
     }
 }
 
 /// The marker id of the block at `pos`: bit 63 set, then x, y and z in 20 bits each.
-pub fn marker_id(_pos: [i32; 3]) -> MarkerId {
-    MarkerId(0)
+pub fn marker_id(pos: [i32; 3]) -> MarkerId {
+    let [x, y, z] = pos.map(|c| u64::from(c as u32) & COORD_MASK);
+    MarkerId(1 << 63 | x << 40 | y << 20 | z)
 }
 
 #[cfg(test)]

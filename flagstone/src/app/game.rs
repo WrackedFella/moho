@@ -1,8 +1,10 @@
 //! The strategy game as a [`moho_app::Game`].
 
 use crate::app::event_loop::{EventProcessor, FrameProcessor, GenerationProcessor};
+use crate::app::input_state::Designation;
 use crate::game_state::GameState;
 use crate::{App, RenderRequest};
+use flagstone_game::colony::MarkChange;
 use flagstone_game::controller::{
     CameraMode, ControllerInput, EDGE_PAN_MARGIN_PX, controller_to_camera, edge_pan_axes,
 };
@@ -19,6 +21,10 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 
 /// How far a pointer ray reaches into the world, in metres.
 pub const POINTER_RAY_RANGE: f32 = 256.0;
+
+const MARK_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/mark.wav");
+const UNMARK_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/unmark.wav");
+const MARK_VOLUME: f32 = 0.6;
 
 /// One tick's worth of player input.
 #[derive(Clone, Debug, Default)]
@@ -80,8 +86,12 @@ impl App {
 
         let (yaw_delta, pitch_delta) = look_to_turn(frame.look());
 
+        if frame.pressed(StrategyAction::MineDesignation) {
+            self.input.designation.toggle();
+        }
+
         // The camera the player saw: the one drawn, not the one this tick will move.
-        let select = (self.simulation.camera_mode() == CameraMode::Isometric
+        let click_ray = (self.simulation.camera_mode() == CameraMode::Isometric
             && frame.pressed(StrategyAction::Select))
         .then(|| frame.press_pointer())
         .flatten()
@@ -93,6 +103,10 @@ impl App {
                 glam::Vec2::new(x, y),
             )
         });
+        let (select, mark) = match self.input.designation {
+            Designation::None => (click_ray, None),
+            Designation::Mine => (None, click_ray),
+        };
 
         StrategyCommand {
             input: ControllerInput {
@@ -108,7 +122,7 @@ impl App {
             jump,
             toggle_view: frame.pressed(StrategyAction::Possess),
             select,
-            mark: None,
+            mark,
             console: Vec::new(),
             engine: Vec::new(),
         }
@@ -193,10 +207,44 @@ impl App {
             );
             tracing::debug!(hit = ?self.pointer_hit, "Pointer ray cast");
         }
+        if let Some(ray) = command.mark {
+            self.apply_mark(ray);
+        }
+    }
+
+    /// Toggles the mining mark on the block the ray hits and plays the cue for it; a ray that
+    /// hits nothing changes nothing. Uses no `dt`, so it can run while the simulation is paused.
+    fn apply_mark(&mut self, ray: Ray) {
+        let Some(light_system) = &self.light_system else {
+            return;
+        };
+        let Some(hit) = raycast_surface(
+            light_system.grid(),
+            ray.origin,
+            ray.direction,
+            POINTER_RAY_RANGE,
+        ) else {
+            return;
+        };
+        let pos = hit.block_pos.to_array();
+        let (clip, change) = match self.colony.marks.toggle(pos) {
+            MarkChange::Marked => (MARK_SOUND, "marked"),
+            MarkChange::Cancelled => (UNMARK_SOUND, "cancelled"),
+        };
+        self.event_bus
+            .publish(moho_core::events::AudioEvent::PlaySound {
+                path: clip.to_string(),
+                volume: MARK_VOLUME,
+            });
+        tracing::debug!(?pos, change, "Mining mark toggled");
     }
 
     /// Applies what the player asked for through the HUD this frame.
-    fn apply_hud_intents(&mut self, _intents: flagstone_ui::overlays::HudIntents) {}
+    fn apply_hud_intents(&mut self, intents: flagstone_ui::overlays::HudIntents) {
+        if intents.toggle_mine_designation {
+            self.input.designation.toggle();
+        }
+    }
 
     fn apply_pending_render(&mut self, renderer: &mut dyn moho_renderer::RendererBackend) {
         for request in std::mem::take(&mut self.pending_render) {
@@ -504,12 +552,14 @@ impl moho_app::Game for App {
         {
             self.input.actions.sample_frame(ctx.frame_dt);
         }
-        let chosen = self
+        let intents = self
             .ui_adapter
             .as_ref()
             .and_then(|adapter| adapter.lock().ok())
-            .and_then(|mut adapter| adapter.take_hud_intents().view_level);
-        crate::app::view_level::update(self, chosen);
+            .map(|mut adapter| adapter.take_hud_intents());
+        let intents = intents.unwrap_or_default();
+        crate::app::view_level::update(self, intents.view_level);
+        self.apply_hud_intents(intents);
         if let Some(renderer) = ctx.renderer() {
             self.apply_pending_render(renderer);
         }
@@ -542,6 +592,8 @@ impl moho_app::Game for App {
         let clock = ctx.clock();
         frame_processor.update_hud_data(self, clock, ctx.tick_length);
         frame_processor.update_cut_caps(self);
+        self.designation_markers
+            .sync(&self.colony.marks, self.scene.markers_mut());
         if let Some(renderer) = ctx.renderer() {
             frame_processor.update_lighting(self, clock, &mut *renderer);
             self.render_scene(renderer, camera);

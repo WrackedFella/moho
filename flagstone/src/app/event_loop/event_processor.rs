@@ -300,9 +300,13 @@ impl EventProcessor {
                 WorldEvent::ChunkMeshDirty { chunk_pos, .. } => {
                     dirty_chunks.insert(chunk_pos);
                 }
-                WorldEvent::BlockPlaced { .. }
-                | WorldEvent::BlockRemoved { .. }
-                | WorldEvent::BlocksBatchModified { .. } => app.autosave.mark_edited(),
+                WorldEvent::BlockRemoved { position, .. } => {
+                    app.colony.marks.block_removed(position.to_array());
+                    app.autosave.mark_edited();
+                }
+                WorldEvent::BlockPlaced { .. } | WorldEvent::BlocksBatchModified { .. } => {
+                    app.autosave.mark_edited();
+                }
             }
         }
 

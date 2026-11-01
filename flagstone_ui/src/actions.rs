@@ -26,6 +26,7 @@ const SPRINT: [Binding; 2] = [Binding::key(Key::Shift), button(PadButton::LeftTh
 
 const SELECT: [Binding; 1] = [Binding::mouse(MouseButton::Left)];
 const POSSESS: [Binding; 1] = [Binding::key(Key::Tab)];
+const MINE_DESIGNATION: [Binding; 1] = [Binding::key(Key::M)];
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum StrategyAction {
@@ -88,7 +89,7 @@ impl Action for StrategyAction {
             StrategyAction::Sprint => &SPRINT,
             StrategyAction::Select => &SELECT,
             StrategyAction::Possess => &POSSESS,
-            StrategyAction::MineDesignation => &[],
+            StrategyAction::MineDesignation => &MINE_DESIGNATION,
         }
     }
 

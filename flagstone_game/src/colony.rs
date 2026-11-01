@@ -1,6 +1,6 @@
 //! Colony state: the orders the player has given the world, independent of any pawn.
 
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 
 /// The orders a colony holds.
 #[derive(Debug, Default)]
@@ -20,29 +20,37 @@ pub enum MarkChange {
 pub struct MineMark;
 
 /// The blocks marked for mining, keyed by block position.
+///
+/// A set while a mark carries no data (`clippy::zero_sized_map_values`); it becomes a map
+/// from position to [`MineMark`] when a mark gains a claim.
 #[derive(Debug, Default)]
 pub struct MineMarks {
-    marks: BTreeMap<[i32; 3], MineMark>,
+    marks: BTreeSet<[i32; 3]>,
 }
 
 impl MineMarks {
     /// Marks an unmarked block and cancels a marked one.
-    pub fn toggle(&mut self, _pos: [i32; 3]) -> MarkChange {
-        todo!("toggle a mine mark")
+    pub fn toggle(&mut self, pos: [i32; 3]) -> MarkChange {
+        if self.marks.remove(&pos) {
+            MarkChange::Cancelled
+        } else {
+            self.marks.insert(pos);
+            MarkChange::Marked
+        }
     }
 
-    pub fn contains(&self, _pos: [i32; 3]) -> bool {
-        todo!("whether a block is marked")
+    pub fn contains(&self, pos: [i32; 3]) -> bool {
+        self.marks.contains(&pos)
     }
 
     /// The marked blocks in key order.
     pub fn iter(&self) -> impl Iterator<Item = ([i32; 3], &MineMark)> {
-        self.marks.iter().map(|(pos, mark)| (*pos, mark))
+        self.marks.iter().map(|pos| (*pos, &MineMark))
     }
 
     /// Drops the mark on a block that no longer exists; does nothing for an unmarked one.
-    pub fn block_removed(&mut self, _pos: [i32; 3]) {
-        todo!("drop the mark of a removed block")
+    pub fn block_removed(&mut self, pos: [i32; 3]) {
+        self.marks.remove(&pos);
     }
 }
 
