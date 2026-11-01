@@ -5,7 +5,20 @@ use flagstone_ui::actions::StrategyAction;
 use moho_input::action_map::ActionMap;
 use moho_input::gamepad::Gamepads;
 
+/// What a strategy click orders. Input state the local player holds, like the hotbar slot.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Designation {
+    /// A click selects.
+    #[default]
+    None,
+    /// A click marks or unmarks a block for mining.
+    Mine,
+}
+
 pub struct InputState {
+    /// What a strategy click orders.
+    pub designation: Designation,
+
     /// Bindings, held actions and mouse look, read once per update.
     pub actions: ActionMap<StrategyAction>,
 
@@ -26,6 +39,7 @@ pub struct InputState {
 impl InputState {
     pub fn new(actions: ActionMap<StrategyAction>) -> Self {
         Self {
+            designation: Designation::None,
             actions,
             gamepads: None,
             focused: true,

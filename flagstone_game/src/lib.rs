@@ -3,6 +3,7 @@ pub const TICK_HZ: u32 = 60;
 
 pub mod actors;
 pub mod biome;
+pub mod colony;
 pub mod controller;
 pub mod events;
 pub mod inventory;

@@ -937,6 +937,24 @@ mod tests {
     }
 
     #[test]
+    fn a_block_removed_event_drops_its_mark() {
+        let mut app = App::headless();
+        for pos in [[3, 70, 3], [4, 70, 3], [3, 71, 3]] {
+            app.colony.marks.toggle(pos);
+        }
+        app.event_bus.publish(WorldEvent::BlockRemoved {
+            position: flagstone_voxel::BlockPos::new(3, 70, 3),
+            old_material_id: 1,
+            reason: BlockChangeReason::Explosion,
+        });
+
+        EventProcessor::new().process_world_events(&mut app);
+
+        let marked: Vec<_> = app.colony.marks.iter().map(|(pos, _)| pos).collect();
+        assert_eq!(marked, [[3, 71, 3], [4, 70, 3]]);
+    }
+
+    #[test]
     fn chunk_streaming_events_do_not_mark_the_world_edited() {
         let mut app = App::headless();
         app.autosave = crate::app::autosave::AutosaveSchedule::new(1);

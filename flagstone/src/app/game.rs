@@ -31,6 +31,9 @@ pub struct StrategyCommand {
     ///
     /// A ray rather than a pixel, so the command replays without a window.
     pub select: Option<Ray>,
+    /// The world ray under the pointer when the same press ordered a mining mark, in place of
+    /// `select`, because the mining designation was active.
+    pub mark: Option<Ray>,
     /// Strategy console commands typed since the last tick.
     pub console: Vec<StrategyConsoleCommand>,
     /// Engine console commands typed since the last tick.
@@ -105,6 +108,7 @@ impl App {
             jump,
             toggle_view: frame.pressed(StrategyAction::Possess),
             select,
+            mark: None,
             console: Vec::new(),
             engine: Vec::new(),
         }
@@ -190,6 +194,9 @@ impl App {
             tracing::debug!(hit = ?self.pointer_hit, "Pointer ray cast");
         }
     }
+
+    /// Applies what the player asked for through the HUD this frame.
+    fn apply_hud_intents(&mut self, _intents: flagstone_ui::overlays::HudIntents) {}
 
     fn apply_pending_render(&mut self, renderer: &mut dyn moho_renderer::RendererBackend) {
         for request in std::mem::take(&mut self.pending_render) {
@@ -2469,10 +2476,10 @@ mod tests {
         use glam::{UVec2, Vec3};
         use moho_input::key::MouseButton;
 
-        const VIEWPORT: UVec2 = UVec2::new(1280, 720);
+        pub(super) const VIEWPORT: UVec2 = UVec2::new(1280, 720);
 
         /// A flat floor of smooth blocks seen from above and behind, in `mode`.
-        fn app_over_flat_ground(mode: CameraMode) -> App {
+        pub(super) fn app_over_flat_ground(mode: CameraMode) -> App {
             let mut app = playing_app();
             app.simulation.set_camera_mode(mode);
             let grid = app
@@ -2502,7 +2509,7 @@ mod tests {
         }
 
         /// The ground surface point under world `(x, z)`, found by a straight-down cast.
-        fn ground_at(app: &App, x: f32, z: f32) -> Vec3 {
+        pub(super) fn ground_at(app: &App, x: f32, z: f32) -> Vec3 {
             let grid = app.light_system.as_ref().expect("light system").grid();
             flagstone_game::raycast::raycast_surface(
                 grid,
@@ -2514,7 +2521,7 @@ mod tests {
             .position
         }
 
-        fn click_on(app: &mut App, world: Vec3) {
+        pub(super) fn click_on(app: &mut App, world: Vec3) {
             let (view, proj, _) = app.camera;
             let ndc = (proj * view).project_point3(world);
             let (x, y) = (
@@ -2601,6 +2608,358 @@ mod tests {
 
             assert!(idle.select.is_none());
             assert!(app.pointer_hit.is_some());
+        }
+    }
+
+    mod mine_designation {
+        use super::pointer_select::{app_over_flat_ground, click_on, ground_at};
+        use super::*;
+        use crate::app::input_state::Designation;
+        use flagstone_ui::overlays::HudIntents;
+        use glam::Vec3;
+        use moho_core::events::AudioEvent;
+        use moho_input::key::MouseButton;
+        use moho_renderer::MARKER_INFLATE;
+        use std::sync::mpsc::Receiver;
+
+        fn designating_app() -> App {
+            let mut app = app_over_flat_ground(CameraMode::Isometric);
+            app.input.designation = Designation::Mine;
+            app
+        }
+
+        /// The block the straight-down surface cast names under world `(x, z)`.
+        fn block_under(app: &App, x: f32, z: f32) -> [i32; 3] {
+            let grid = app.light_system.as_ref().expect("light system").grid();
+            raycast_surface(grid, Vec3::new(x, 30.0, z), Vec3::NEG_Y, 100.0)
+                .expect("the floor is under the point")
+                .block_pos
+                .to_array()
+        }
+
+        fn step(app: &mut App) -> StrategyCommand {
+            let command = Game::command(app);
+            tick_app(app, &command);
+            command
+        }
+
+        fn marked(app: &App) -> Vec<[i32; 3]> {
+            app.colony.marks.iter().map(|(pos, _)| pos).collect()
+        }
+
+        fn fills(app: &mut App) -> Vec<moho_render_api::MarkerGpu> {
+            app.scene.markers_mut().draws(Vec3::ZERO).fills
+        }
+
+        /// Whether `fill` is the box of the unit cell at `pos`, within the renderer's inflation.
+        fn is_cell(fill: &moho_render_api::MarkerGpu, pos: [i32; 3]) -> bool {
+            (0..3).all(|axis| {
+                let lo = pos[axis] as f32;
+                (fill.min[axis] - (lo - MARKER_INFLATE)).abs() < 1e-4
+                    && (fill.max[axis] - (lo + 1.0 + MARKER_INFLATE)).abs() < 1e-4
+            })
+        }
+
+        fn click_the_sky(app: &mut App) {
+            app.input.actions.pointer_moved(640.0, 2.0);
+            app.input.actions.mouse_button(MouseButton::Left, true);
+            app.input.actions.mouse_button(MouseButton::Left, false);
+        }
+
+        fn click_ground(app: &mut App) -> [i32; 3] {
+            let ground = ground_at(app, 6.3, 9.1);
+            click_on(app, ground);
+            block_under(app, 6.3, 9.1)
+        }
+
+        fn tap(app: &mut App) {
+            let key = default_key(app, StrategyAction::MineDesignation);
+            app.input.actions.key(key, true);
+            app.input.actions.key(key, false);
+        }
+
+        fn record_audio(app: &App) -> Receiver<AudioEvent> {
+            let (tx, rx) = std::sync::mpsc::channel();
+            app.event_bus.subscribe(move |event: &AudioEvent| {
+                let _ = tx.send(event.clone());
+            });
+            rx
+        }
+
+        fn sounds(app: &App, audio: &Receiver<AudioEvent>) -> Vec<(String, f32)> {
+            app.event_bus.process_deferred();
+            audio
+                .try_iter()
+                .filter_map(|event| match event {
+                    AudioEvent::PlaySound { path, volume } => Some((path, volume)),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        fn asset(name: &str) -> std::path::PathBuf {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("assets")
+                .join(name)
+        }
+
+        #[test]
+        fn a_click_with_the_designation_active_marks_the_hit_block() {
+            let mut app = designating_app();
+            let block = click_ground(&mut app);
+
+            let command = step(&mut app);
+
+            assert!(command.mark.is_some(), "the press forms the mark command");
+            assert!(command.select.is_none(), "and not a selection");
+            assert_eq!(marked(&app), [block]);
+            assert!(app.pointer_hit.is_none(), "a mark click never selects");
+        }
+
+        #[test]
+        fn a_mark_shows_a_marker_on_the_next_frame() {
+            let mut app = designating_app();
+            let block = click_ground(&mut app);
+            step(&mut app);
+            let before_the_frame = fills(&mut app).len();
+
+            run_frame(&mut app, &mut FakeRenderer::default());
+
+            let drawn = fills(&mut app);
+            assert_eq!(before_the_frame, 0, "the tick draws nothing itself");
+            assert_eq!(drawn.len(), 1);
+            assert!(is_cell(&drawn[0], block), "{:?} vs {block:?}", drawn[0]);
+            assert!(drawn[0].color[3] > 0.0 && drawn[0].color[3] < 1.0);
+        }
+
+        #[test]
+        fn a_second_click_on_a_marked_block_cancels_it_and_its_marker() {
+            let mut app = designating_app();
+            click_ground(&mut app);
+            step(&mut app);
+            run_frame(&mut app, &mut FakeRenderer::default());
+            let marked_once = (marked(&app).len(), fills(&mut app).len());
+
+            click_ground(&mut app);
+            step(&mut app);
+            run_frame(&mut app, &mut FakeRenderer::default());
+
+            assert_eq!(marked_once, (1, 1));
+            assert!(marked(&app).is_empty(), "the second click cancels");
+            assert!(fills(&mut app).is_empty(), "and its marker goes");
+        }
+
+        #[test]
+        fn a_click_on_the_sky_marks_nothing() {
+            let mut app = designating_app();
+            click_the_sky(&mut app);
+
+            let command = step(&mut app);
+            run_frame(&mut app, &mut FakeRenderer::default());
+
+            assert!(command.mark.is_some(), "the click is still a mark command");
+            assert!(marked(&app).is_empty());
+            assert!(fills(&mut app).is_empty());
+        }
+
+        #[test]
+        fn a_click_without_the_designation_selects_and_marks_nothing() {
+            let mut app = app_over_flat_ground(CameraMode::Isometric);
+            click_ground(&mut app);
+
+            let command = step(&mut app);
+            run_frame(&mut app, &mut FakeRenderer::default());
+
+            assert!(command.select.is_some());
+            assert!(command.mark.is_none());
+            assert!(app.pointer_hit.is_some(), "the click selected");
+            assert!(marked(&app).is_empty());
+            assert!(fills(&mut app).is_empty());
+        }
+
+        #[test]
+        fn the_mark_command_is_not_formed_in_first_person() {
+            let mut app = app_over_flat_ground(CameraMode::FirstPerson);
+            app.input.designation = Designation::Mine;
+            click_ground(&mut app);
+
+            let command = step(&mut app);
+
+            assert!(command.mark.is_none());
+            assert!(marked(&app).is_empty());
+        }
+
+        #[test]
+        fn the_designation_key_toggles_the_control_once_per_press() {
+            let mut app = app_over_flat_ground(CameraMode::Isometric);
+            let initially = app.input.designation;
+
+            tap(&mut app);
+            step(&mut app);
+            let after_first_press = app.input.designation;
+            step(&mut app);
+            let with_no_press = app.input.designation;
+            tap(&mut app);
+            step(&mut app);
+            let after_second_press = app.input.designation;
+            let key = default_key(&app, StrategyAction::MineDesignation);
+            app.input.actions.key(key, true);
+            step(&mut app);
+            app.input.actions.key(key, true);
+            let repeats: Vec<_> = (0..4)
+                .map(|_| {
+                    step(&mut app);
+                    app.input.designation
+                })
+                .collect();
+
+            assert_eq!(initially, Designation::None);
+            assert_eq!(after_first_press, Designation::Mine);
+            assert_eq!(with_no_press, Designation::Mine, "the edge is consumed");
+            assert_eq!(after_second_press, Designation::None);
+            assert!(
+                repeats.iter().all(|&d| d == Designation::Mine),
+                "a held key toggled again: {repeats:?}"
+            );
+        }
+
+        #[test]
+        fn the_hud_toggle_flips_the_designation() {
+            let mut app = app_over_flat_ground(CameraMode::Isometric);
+            let toggle = HudIntents {
+                toggle_mine_designation: true,
+                ..HudIntents::default()
+            };
+
+            app.apply_hud_intents(toggle);
+            let on = app.input.designation;
+            app.apply_hud_intents(HudIntents::default());
+            let unchanged = app.input.designation;
+            app.apply_hud_intents(toggle);
+
+            assert_eq!(on, Designation::Mine);
+            assert_eq!(unchanged, Designation::Mine, "no intent, no change");
+            assert_eq!(app.input.designation, Designation::None);
+        }
+
+        #[test]
+        fn the_mark_applies_on_the_next_tick_not_on_the_event() {
+            let mut app = designating_app();
+
+            click_ground(&mut app);
+            let on_the_event = marked(&app);
+            let command = Game::command(&mut app);
+            let before_the_tick = marked(&app);
+            tick_app(&mut app, &command);
+
+            assert!(on_the_event.is_empty());
+            assert!(
+                command.mark.is_some(),
+                "the press is in the sampled command"
+            );
+            assert!(before_the_tick.is_empty(), "sampling marks nothing");
+            assert_eq!(marked(&app).len(), 1);
+        }
+
+        #[test]
+        fn marking_and_cancelling_publish_their_cues() {
+            let mut app = designating_app();
+            let audio = record_audio(&app);
+
+            click_ground(&mut app);
+            step(&mut app);
+            let marking = sounds(&app, &audio);
+            click_ground(&mut app);
+            step(&mut app);
+            let cancelling = sounds(&app, &audio);
+            click_the_sky(&mut app);
+            step(&mut app);
+            let missing = sounds(&app, &audio);
+
+            assert_eq!(marking.len(), 1, "{marking:?}");
+            assert_eq!(
+                std::path::Path::new(&marking[0].0),
+                asset("mark.wav").as_path()
+            );
+            assert!(marking[0].1 > 0.0, "audible: {marking:?}");
+            assert_eq!(cancelling.len(), 1, "{cancelling:?}");
+            assert_eq!(
+                std::path::Path::new(&cancelling[0].0),
+                asset("unmark.wav").as_path()
+            );
+            assert!(cancelling[0].1 > 0.0, "audible: {cancelling:?}");
+            assert!(missing.is_empty(), "a miss is silent: {missing:?}");
+        }
+
+        #[test]
+        fn mark_assets_exist() {
+            for name in ["mark.wav", "unmark.wav"] {
+                let path = asset(name);
+
+                let bytes =
+                    std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+
+                assert!(bytes.starts_with(b"RIFF"), "{name} is not a WAV file");
+            }
+        }
+
+        /// A first-person player facing a wall of blocks, tool in hand, with an input channel.
+        fn app_facing_a_wall() -> (App, std::sync::mpsc::Sender<crate::input_event::InputEvent>) {
+            let mut app = playing_app();
+            app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            app.simulation.set_position_yaw_pitch(
+                Vec3::new(4.5, 70.5, 6.5),
+                std::f32::consts::PI,
+                0.0,
+            );
+            app.pawn.select_slot(flagstone_game::pawn::TOOL_SLOT);
+            let grid = app
+                .light_system
+                .as_mut()
+                .expect("App starts with a light system")
+                .grid_mut();
+            for x in 2..=6 {
+                for y in 68..=72 {
+                    for z in 1..=3 {
+                        grid.mutator()
+                            .place(flagstone_voxel::BlockPos::new(x, y, z), 1, None);
+                    }
+                }
+            }
+            let (tx, rx) = std::sync::mpsc::channel();
+            app.input.unconsumed_rx = Some(rx);
+            (app, tx)
+        }
+
+        #[test]
+        fn mining_a_marked_block_by_hand_removes_its_marker() {
+            let (mut app, input) = app_facing_a_wall();
+            for x in 2..=6 {
+                for y in 68..=72 {
+                    for z in 1..=3 {
+                        app.colony.marks.toggle([x, y, z]);
+                    }
+                }
+            }
+            run_frame(&mut app, &mut FakeRenderer::default());
+            let before = fills(&mut app).len();
+            input
+                .send(crate::input_event::InputEvent::MineRequested)
+                .expect("the receiver is alive");
+
+            step(&mut app);
+            step(&mut app);
+            run_frame(&mut app, &mut FakeRenderer::default());
+
+            let grid = app.light_system.as_ref().expect("light system").grid();
+            let solid_left = marked(&app)
+                .into_iter()
+                .filter(|&[x, y, z]| grid.is_solid_at(flagstone_voxel::BlockPos::new(x, y, z)))
+                .count();
+            assert_eq!(before, 75, "every marked block shows a marker");
+            assert_eq!(marked(&app).len(), 74, "the mined block's mark is gone");
+            assert_eq!(solid_left, 74, "every remaining mark is still a block");
+            assert_eq!(fills(&mut app).len(), 74, "and so is its marker");
         }
     }
 

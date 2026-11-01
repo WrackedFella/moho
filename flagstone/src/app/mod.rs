@@ -9,6 +9,7 @@ pub mod chunk_streamer;
 pub mod config;
 pub mod console;
 pub mod cut_caps;
+pub mod designation_markers;
 pub mod event_loop;
 pub mod event_setup;
 pub mod game;
