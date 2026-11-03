@@ -33,8 +33,9 @@ pub struct PhysicsWorld {
     ccd_solver: CCDSolver,
     world_mesh_colliders: HashMap<WorldMeshId, ColliderHandle>,
     characters: HashMap<CharacterHandle, Character>,
-    loose: BTreeMap<LooseId, RigidBodyHandle>,
+    loose: BTreeMap<LooseId, loose::Loose>,
     next_loose: u64,
+    rest_slope: f32,
 }
 
 impl std::fmt::Debug for PhysicsWorld {
@@ -77,6 +78,7 @@ impl PhysicsWorld {
             characters: HashMap::new(),
             loose: BTreeMap::new(),
             next_loose: 0,
+            rest_slope: loose::DEFAULT_REST_SLOPE,
         }
     }
 
@@ -98,6 +100,7 @@ impl PhysicsWorld {
             &(),
             &(),
         );
+        self.brake_rolling(dt);
     }
 
     /// Set the downward acceleration, m/s², positive down, that pulls rigid bodies and
