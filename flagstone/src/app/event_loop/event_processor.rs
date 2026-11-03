@@ -300,9 +300,13 @@ impl EventProcessor {
                 WorldEvent::ChunkMeshDirty { chunk_pos, .. } => {
                     dirty_chunks.insert(chunk_pos);
                 }
-                WorldEvent::BlockPlaced { .. }
-                | WorldEvent::BlockRemoved { .. }
-                | WorldEvent::BlocksBatchModified { .. } => app.autosave.mark_edited(),
+                WorldEvent::BlockRemoved { position, .. } => {
+                    app.colony.marks.block_removed(position.to_array());
+                    app.autosave.mark_edited();
+                }
+                WorldEvent::BlockPlaced { .. } | WorldEvent::BlocksBatchModified { .. } => {
+                    app.autosave.mark_edited();
+                }
             }
         }
 
@@ -934,6 +938,24 @@ mod tests {
 
             assert!(app.autosave.due(), "{name} did not mark the world edited");
         }
+    }
+
+    #[test]
+    fn a_block_removed_event_drops_its_mark() {
+        let mut app = App::headless();
+        for pos in [[3, 70, 3], [4, 70, 3], [3, 71, 3]] {
+            app.colony.marks.toggle(pos);
+        }
+        app.event_bus.publish(WorldEvent::BlockRemoved {
+            position: flagstone_voxel::BlockPos::new(3, 70, 3),
+            old_material_id: 1,
+            reason: BlockChangeReason::Explosion,
+        });
+
+        EventProcessor::new().process_world_events(&mut app);
+
+        let marked: Vec<_> = app.colony.marks.iter().map(|(pos, _)| pos).collect();
+        assert_eq!(marked, [[3, 71, 3], [4, 70, 3]]);
     }
 
     #[test]

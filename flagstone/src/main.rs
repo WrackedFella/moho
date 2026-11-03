@@ -168,6 +168,11 @@ struct App {
     pointer_hit: Option<flagstone_game::raycast::SurfaceHit>,
     /// The pawn the player has selected; ephemeral, not saved.
     selection: flagstone_game::selection::Selection,
+
+    /// The orders the player has given the world.
+    colony: flagstone_game::colony::Colony,
+    /// The markers drawn for the colony's mining marks.
+    designation_markers: app::designation_markers::DesignationMarkers,
 }
 
 impl App {
@@ -306,6 +311,9 @@ impl App {
             viewport: glam::UVec2::ZERO,
             pointer_hit: None,
             selection: flagstone_game::selection::Selection::default(),
+
+            colony: flagstone_game::colony::Colony::default(),
+            designation_markers: app::designation_markers::DesignationMarkers::default(),
         }
     }
 

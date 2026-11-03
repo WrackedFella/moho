@@ -35,6 +35,9 @@ pub struct SelectionHud {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct HudIntents {
     pub view_level: Option<i32>,
+
+    /// The player pressed the mining-designation control.
+    pub toggle_mine_designation: bool,
 }
 
 /// Per-frame data pushed from the game loop into all overlays.
@@ -98,6 +101,8 @@ pub struct HudData {
 
     /// The selected pawn's panel; `None` when nothing is selected.
     pub selection: Option<SelectionHud>,
+    /// Whether the mining designation is active, for the HUD control's state.
+    pub mine_designation_active: bool,
 }
 
 impl Default for HudData {
@@ -120,6 +125,7 @@ impl Default for HudData {
             view_height: None,
             pickups: Vec::new(),
             selection: None,
+            mine_designation_active: false,
         }
     }
 }
@@ -305,7 +311,8 @@ mod tests {
         assert_eq!(
             first,
             HudIntents {
-                view_level: Some(7)
+                view_level: Some(7),
+                ..HudIntents::default()
             }
         );
         assert_eq!(second, HudIntents::default(), "a take empties the overlays");

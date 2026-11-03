@@ -481,7 +481,10 @@ fill; `with_style` changes the style. A
 `MarkerId` is the game-chosen stable key. Flagstone reserves `MarkerId(u64::MAX)` for the
 pawn's selection outline and resyncs it every frame, so it wins over a console marker with
 that id. In the strategy view `render_scene` also draws the pawn as one transient cube
-appended to the actor cubes (not an actor, never saved).
+appended to the actor cubes (not an actor, never saved). The strategy binary keys the
+mining mark on block `[x, y, z]` as bit 63 set, then x, y and z in 20 bits each
+(`marker_id` in `flagstone/src/app/designation_markers.rs`), so it never meets the
+console's small ids or the selection outline (bits 60 to 62 stay clear).
 
 `moho_renderer::Markers` (reached via `Scene::markers_mut`) holds the live set in id
 order: `upsert`, `remove`, `clear`. Markers persist until removed. `Scene::render` turns
