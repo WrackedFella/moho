@@ -255,5 +255,5 @@ exclude_re = [
     # The look-down-the-axis threshold: at exactly 1e-4 both branches give a valid unit vector perpendicular to the streak, so the boundary is unobservable.
     'replace < with <= in streak_transform',
     # An exactly 5 mm deep contact is a float boundary with no behaviour of its own.
-    'rests_on_flat_ground.*replace < with <=',
+    'replace < with <= in rests_on_flat_ground',
 ]
