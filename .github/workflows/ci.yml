@@ -80,10 +80,11 @@ jobs:
           fetch-depth: 0
 
       - name: Install system deps (Linux)
+        timeout-minutes: 5
         if: runner.os == 'Linux' && needs.plan.outputs.code == 'true'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
             pkg-config libudev-dev libasound2-dev libssl-dev
 
       - name: Install pinned Rust toolchain
@@ -132,10 +133,11 @@ jobs:
           fetch-depth: 0
 
       - name: Install system deps
+        timeout-minutes: 5
         if: needs.plan.outputs.code == 'true'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
             pkg-config libudev-dev libasound2-dev libssl-dev
 
       - name: Install pinned Rust toolchain
@@ -180,9 +182,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install system deps
+        timeout-minutes: 5
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
             pkg-config libudev-dev libasound2-dev libssl-dev
 
       - name: Install pinned Rust toolchain
@@ -212,9 +215,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install system deps
+        timeout-minutes: 5
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
             pkg-config libudev-dev libasound2-dev
 
       - name: Install pinned Rust toolchain
