@@ -23,7 +23,9 @@ pub use chunk_debug::ChunkDebugOverlay;
 pub use debug_hud::DebugHud;
 pub use fps_hud::FpsHud;
 pub use gameplay_hud::GameplayHud;
-pub use overlay_manager::{HudData, HudIntents, Overlay, OverlayManager, ViewHeightHud};
+pub use overlay_manager::{
+    HudData, HudIntents, Overlay, OverlayManager, SelectionHud, ViewHeightHud,
+};
 pub use rts_hud::RtsHud;
 
 #[cfg(test)]

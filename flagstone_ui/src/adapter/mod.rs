@@ -646,6 +646,42 @@ mod tests {
     }
 
     #[test]
+    fn a_press_on_the_selection_panel_is_consumed_in_strategy_view() {
+        use crate::overlays::test_support::{input, rect_of, run_ui, second_frame};
+        use crate::overlays::{HudData, Overlay, RtsHud, SelectionHud};
+        let data = HudData {
+            is_fps_mode: false,
+            selection: Some(SelectionHud {
+                title: "Pawn".to_owned(),
+                tool: Some("Pickaxe".to_owned()),
+                carried: vec![("Iron ore".to_owned(), 12)],
+            }),
+            ..Default::default()
+        };
+        let mut hud = RtsHud::new();
+        let panel = rect_of(
+            &second_frame(&egui::Context::default(), |ui| hud.render(ui, &data)),
+            "Pawn",
+        )
+        .center();
+        let mut adapter = adapter();
+        adapter.set_game_state(GameState::Playing);
+        adapter.update_hud_data(data);
+
+        for events in [Vec::new(), vec![egui::Event::PointerMoved(panel)]] {
+            let _ = run_ui(&adapter.context, input(events), |ui| {
+                rendering::render_game_state(ui, &mut adapter.ui_state, GameState::Playing);
+            });
+        }
+
+        assert!(adapter.pointer_over_ui());
+        assert!(press_consumed(
+            adapter.pointer_over_ui(),
+            adapter.cursor_free()
+        ));
+    }
+
+    #[test]
     fn pointer_input_reaches_egui_with_a_free_cursor_and_a_release_always_does() {
         let rows = [
             (GameplayInput::Press, true, true),
