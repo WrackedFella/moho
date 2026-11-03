@@ -166,6 +166,11 @@ struct App {
     viewport: glam::UVec2,
     /// The surface under the last strategy-view click, `None` when it hit nothing.
     pointer_hit: Option<flagstone_game::raycast::SurfaceHit>,
+
+    /// The orders the player has given the world.
+    colony: flagstone_game::colony::Colony,
+    /// The markers drawn for the colony's mining marks.
+    designation_markers: app::designation_markers::DesignationMarkers,
 }
 
 impl App {
@@ -303,6 +308,9 @@ impl App {
 
             viewport: glam::UVec2::ZERO,
             pointer_hit: None,
+
+            colony: flagstone_game::colony::Colony::default(),
+            designation_markers: app::designation_markers::DesignationMarkers::default(),
         }
     }
 

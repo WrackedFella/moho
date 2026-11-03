@@ -75,5 +75,6 @@ pub fn display_name(action: StrategyAction) -> &'static str {
         StrategyAction::Jump => "Jump",
         StrategyAction::Select => "Select",
         StrategyAction::Possess => "Possess",
+        StrategyAction::MineDesignation => "Mine Designation",
     }
 }
