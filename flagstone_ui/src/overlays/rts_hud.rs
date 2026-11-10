@@ -618,4 +618,44 @@ mod tests {
         );
         assert!(bounds.min.y < 100.0, "not at top: {bounds:?}");
     }
+
+    fn stocked_data(is_fps_mode: bool) -> HudData {
+        HudData {
+            is_fps_mode,
+            colony_stock: vec![(2, 5), (7, 3)],
+            ..strategy_data(TOP)
+        }
+    }
+
+    #[test]
+    fn strategy_hud_lists_the_colony_totals() {
+        let drawn = drawn_texts(&stocked_data(false));
+        let none = drawn_texts(&strategy_data(TOP));
+
+        let position = |label: &str| drawn.iter().position(|t| t == label);
+        let (first, second) = (position("R2 \u{d7}5"), position("R7 \u{d7}3"));
+        assert!(first.is_some(), "no line for resource 2: {drawn:?}");
+        assert!(second.is_some(), "no line for resource 7: {drawn:?}");
+        assert!(first < second, "not in the order given: {drawn:?}");
+        assert!(
+            !none.iter().any(|t| t.starts_with('R')),
+            "a colony with nothing lists nothing: {none:?}"
+        );
+    }
+
+    #[test]
+    fn no_totals_in_first_person() {
+        let strategy = drawn_texts(&stocked_data(false));
+
+        let first_person = drawn_texts(&stocked_data(true));
+
+        assert!(
+            strategy.iter().any(|t| t.starts_with('R')),
+            "the totals show in strategy: {strategy:?}"
+        );
+        assert!(
+            !first_person.iter().any(|t| t.starts_with('R')),
+            "{first_person:?}"
+        );
+    }
 }

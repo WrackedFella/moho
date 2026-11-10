@@ -1721,4 +1721,73 @@ mod tests {
 
         assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
     }
+
+    fn dig_asset_path() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/dig.wav")
+    }
+
+    #[test]
+    fn dig_asset_exists() {
+        let path = dig_asset_path();
+
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+
+        assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
+    }
+
+    #[test]
+    fn a_pawn_dig_publishes_the_removal_and_the_cue() {
+        use crate::app::dig_site::{block_exists, dig_site, run_until};
+        let target = [16, 8, 12];
+        for resource in [Some(7), None] {
+            let mut app = dig_site(&[(target, resource)]);
+            app.colony.marks.toggle(target);
+            let removed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let dirty = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let (removed_sink, dirty_sink) = (
+                std::sync::Arc::clone(&removed),
+                std::sync::Arc::clone(&dirty),
+            );
+            app.event_bus.subscribe(move |e: &WorldEvent| match e {
+                WorldEvent::BlockRemoved { position, .. } => {
+                    removed_sink.lock().unwrap().push(position.to_array());
+                }
+                WorldEvent::ChunkMeshDirty { chunk_pos, .. } => {
+                    dirty_sink.lock().unwrap().push(*chunk_pos);
+                }
+                _ => {}
+            });
+            let _ = app.audio_event_rx.try_iter().count();
+
+            let done = run_until(&mut app, 900, |app| !block_exists(app, target));
+            app.event_bus.process_deferred();
+
+            assert!(done, "{resource:?}: the pawn never dug");
+            assert_eq!(*removed.lock().unwrap(), [target], "{resource:?}");
+            assert!(
+                dirty.lock().unwrap().contains(&glam::IVec3::new(1, 0, 0)),
+                "{resource:?}: the chunk holding the block is not re-meshed"
+            );
+            let cues: Vec<(String, f32, glam::Vec3)> = app
+                .audio_event_rx
+                .try_iter()
+                .filter_map(|event| match event {
+                    AudioEvent::PlaySoundAt {
+                        path,
+                        volume,
+                        position,
+                    } => Some((path, volume, position)),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(cues.len(), 1, "{resource:?}: one cue per dig: {cues:?}");
+            let (path, volume, position) = &cues[0];
+            assert_eq!(std::path::Path::new(path), dig_asset_path().as_path());
+            assert!(*volume > 0.0, "audible");
+            assert!(
+                position.distance(glam::Vec3::new(16.5, 8.5, 12.5)) < 1e-3,
+                "the cue is not at the block's centre: {position:?}"
+            );
+        }
+    }
 }
