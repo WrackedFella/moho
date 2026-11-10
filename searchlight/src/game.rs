@@ -728,7 +728,6 @@ pub struct SearchlightGame {
     /// Engine settings waiting for a frame, the first place the renderer, audio and window can
     /// be reached.
     pending_settings: Option<EngineSettings>,
-    /// The views the main menu shows the level through.
     menu_feed: MenuFeed,
 }
 
@@ -5104,7 +5103,6 @@ mod mutation_tests {
         ]
     }
 
-    /// The view matrix and eye the renderer was last given.
     fn camera_seen(renderer: &FakeRenderer) -> Option<(Mat4, Vec3)> {
         renderer.camera.map(|(view, _, eye)| (view, eye))
     }
