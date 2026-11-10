@@ -152,12 +152,10 @@ impl ArenaMarkers {
             }
             validate_arena_rules(&dummies, &enemy_spawns, &waypoints)?;
         }
-        let mut numbers = Vec::new();
-        for marker in &menu_cameras {
-            let number = menu_camera_number(marker).filter(|n| !numbers.contains(n));
-            numbers.push(number.ok_or_else(|| ArenaError::BadMenuCamera {
+        if let Some(marker) = first_bad_suffix(&menu_cameras, MENU_CAMERA_PREFIX) {
+            return Err(ArenaError::BadMenuCamera {
                 marker: marker.name.clone(),
-            })?);
+            });
         }
         Ok(Self {
             mode,
@@ -189,14 +187,12 @@ fn validate_arena_rules(
             marker: format!("{WAYPOINT_PREFIX}NN"),
         });
     }
-    let mut numbers = Vec::new();
-    for marker in waypoints {
-        let number = waypoint_number(marker).filter(|n| !numbers.contains(n));
-        numbers.push(number.ok_or_else(|| ArenaError::BadWaypoint {
+    match first_bad_suffix(waypoints, WAYPOINT_PREFIX) {
+        Some(marker) => Err(ArenaError::BadWaypoint {
             marker: marker.name.clone(),
-        })?);
+        }),
+        None => Ok(()),
     }
-    Ok(())
 }
 
 /// The mode `level`'s `searchlight_level` marker names; a sandbox when it has none.
@@ -219,14 +215,25 @@ fn level_mode(level: &Level) -> Result<LevelMode, ArenaError> {
     }
 }
 
-/// The `NN` of a `waypoint_NN` marker, `None` when it is not a number.
-fn waypoint_number(marker: &LevelMarker) -> Option<u32> {
-    marker.name[WAYPOINT_PREFIX.len()..].parse().ok()
+/// The `NN` of a `<prefix>NN` marker, `None` when it is not a number.
+/// `marker`'s name must start with `prefix`.
+fn suffix_number(marker: &LevelMarker, prefix: &str) -> Option<u32> {
+    marker.name[prefix.len()..].parse().ok()
 }
 
-/// The `NN` of a `menu_camera_NN` marker, `None` when it is not a number.
-fn menu_camera_number(marker: &LevelMarker) -> Option<u32> {
-    marker.name[MENU_CAMERA_PREFIX.len()..].parse().ok()
+/// The first of `markers` whose suffix after `prefix` is not a number or repeats an earlier
+/// marker's number.
+fn first_bad_suffix<'a>(markers: &'a [LevelMarker], prefix: &str) -> Option<&'a LevelMarker> {
+    let mut numbers = Vec::new();
+    markers.iter().find(|marker| {
+        match suffix_number(marker, prefix).filter(|n| !numbers.contains(n)) {
+            Some(number) => {
+                numbers.push(number);
+                false
+            }
+            None => true,
+        }
+    })
 }
 
 impl ArenaMarkers {
@@ -240,7 +247,7 @@ impl ArenaMarkers {
 
     fn ordered_waypoints(&self) -> Vec<&LevelMarker> {
         let mut waypoints: Vec<&LevelMarker> = self.waypoints.iter().collect();
-        waypoints.sort_by_key(|marker| waypoint_number(marker));
+        waypoints.sort_by_key(|marker| suffix_number(marker, WAYPOINT_PREFIX));
         waypoints
     }
 }
@@ -365,7 +372,7 @@ impl Arena {
             return Err(ArenaError::NoReachableWaypoint);
         }
         let mut cameras: Vec<&LevelMarker> = markers.menu_cameras.iter().collect();
-        cameras.sort_by_key(|marker| menu_camera_number(marker));
+        cameras.sort_by_key(|marker| suffix_number(marker, MENU_CAMERA_PREFIX));
         let menu_cameras = cameras
             .into_iter()
             .map(|marker| MenuCamera {
