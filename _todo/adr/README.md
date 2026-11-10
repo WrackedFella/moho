@@ -20,7 +20,7 @@ ADRs written before ENG-F27 (2026-10-15) keep the crate names of their day. Read
 | [0004](0004-entity-storage-without-a-general-ecs.md) | Entities live in typed, domain-owned stores; no ECS until a consumer needs one | Accepted |
 | [0005](0005-crate-lines-and-dependency-direction.md) | Every crate belongs to one line; dependencies point game → engine, checked in `just check` | Accepted |
 | [0006](0006-save-format-contract.md) | Saves use one versioned envelope around a `postcard`/`serde` payload | Accepted; extended by 0016 |
-| [0007](0007-third-party-licence-policy.md) | Third-party licences stay compatible with closed-source commercial sale | Accepted |
+| [0007](0007-third-party-licence-policy.md) | Third-party licences stay compatible with closed-source commercial sale | Accepted; amended by 0034 |
 | [0008](0008-keep-winit-for-windowing-and-input.md) | Keep winit; gamepads via `gilrs` when needed | Accepted |
 | [0009](0009-simulation-time-is-one-fixed-tick.md) | Simulation time comes from one fixed tick; no separate clock | Accepted |
 | [0010](0010-world-geometry-is-a-mesh-contract.md) | The engine sees world geometry as meshes; voxels belong to the strategy line | Accepted; amended by 0025 |
@@ -46,3 +46,5 @@ ADRs written before ENG-F27 (2026-10-15) keep the crate names of their day. Read
 | [0031](0031-effects-are-engine-presentation-state-placed-by-handle.md) | Effects are engine presentation state placed by handle: retained, frame-time, drawn unshadowed; the seam list gains `Effects` | Accepted; amends 0012 |
 | [0032](0032-level-switch-is-a-pinned-command.md) | A level switch is a command carrying the level name and a SHA-256 content hash; a replay or peer whose file hashes differently refuses | Accepted |
 | [0033](0033-rounds-fly-as-stepped-segments.md) | A fired round is sim data stepped once a tick as a cast segment: flight maths in the rules without platform maths, first step on the next tick, after movement; round gravity and Simple are host levels | Accepted |
+| [0034](0034-authoring-tools-outside-the-build-may-be-copyleft.md) | Copyleft authoring tools (the Blender add-on) are allowed outside the shipped build; they share data with the game, never code | Proposed |
+| [0035](0035-map-components-are-defined-once-as-content.md) | Map components are defined once as content, read by the add-on and the game; exported as named marker nodes with extras; facing is glTF +Z (Blender -Y) | Proposed |
