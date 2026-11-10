@@ -2,7 +2,7 @@
 
 **Source:** `flagstone/src/input_dispatcher.rs`, `moho_input/src/`, `flagstone_ui/src/actions.rs`, `flagstone/src/app/renderer_setup.rs` (registrations),
 `moho_core/src/pointer.rs`, `flagstone/src/app/game.rs` (`Game::event`, `poll_gamepads`), `flagstone/src/main.rs` (`handle_keyboard_input`), `flagstone_ui/src/app_state/game_state.rs`,
-`flagstone_ui/src/app_state/state_coordinator.rs`, `flagstone_ui/src/screens/pause.rs`, `moho_ui_shell/src/console/` (console key routing).
+`flagstone_game/src/jobs.rs`, `flagstone_game/src/routing.rs`, `flagstone/src/app/event_loop/world_edit.rs`, `flagstone_ui/src/app_state/state_coordinator.rs`, `flagstone_ui/src/screens/pause.rs`, `moho_ui_shell/src/console/` (console key routing).
 
 ## 1 Input routing
 
@@ -92,6 +92,16 @@ In the isometric view, a tick with `Select` pressed turns `press_pointer` into a
 The same ray also picks the pawn: `flagstone_game::selection::pick_pawn` tests it against the pawn's box (`pawn_aabb`, `PAWN_HALF_EXTENTS`) and returns the pawn only when it is nearer than the terrain hit. `App::selection` records the result; a click that picks nothing clears it, and a click on the pawn publishes `AudioEvent::ButtonClick`. While a pawn is selected in the strategy view, each frame `App::sync_selection_mark` upserts an `Outline` [marker](rendering.md#6-markers) with the reserved id `SELECTION_MARKER_ID`, and `update_hud_data` fills `HudData::selection` (`SelectionHud`: title, equipped tool, carried resources), which `rts_hud` draws as a panel. The strategy view also draws the pawn as a placeholder cube body.
 
 `StrategyAction::MineDesignation` (`M` by default, or the HUD toggle) flips `Designation` in `flagstone/src/app/input_state.rs` between `None` and `Mine`. While `Mine` is active, the click's ray goes into `StrategyCommand::mark` instead of `select`. The apply step casts it as above and toggles the hit block in `flagstone_game::colony::Colony::marks` (`MineMarks`), then plays the `mark` or `unmark` cue through `AudioEvent::PlaySound`; a miss changes nothing. `process_world_events` drops a block's mark on every `WorldEvent::BlockRemoved`, the one path every removal takes. Each frame `DesignationMarkers::sync` (`flagstone/src/app/designation_markers.rs`) mirrors the marks into scene markers ([rendering](rendering.md#6-markers)).
+
+An unpossessed pawn works the marks by itself. Each tick in the strategy view, `FrameProcessor::run_pawn_job` (`flagstone/src/app/event_loop/frame_processor.rs`) takes the pawn's `Job`, reads the pawn's pose from its physics character and calls the pure `flagstone_game::jobs::step`, which answers with a `JobAction`:
+
+| Action | Applied as |
+|---|---|
+| `Wait` | nothing; an idle pawn is not moved |
+| `Walk { to }` | `jobs::steer` gives a `WalkStep`; the character moves through `PhysicsController::move_character` (the first-person path) at `JOB_WALK_SPEED`, and the result is written back to the simulation's position and look |
+| `Dig { aim, .. }` | `Pawn::dig` along the aim within `MINE_REACH` (shared with hand-mining), then `apply_pawn_dig` |
+
+A `Job` is `Idle` or `Mine`. An idle pawn claims the nearest unclaimed mark (`MineMarks::claim`, `unclaimed`) that `flagstone_game::routing::route` can reach within `ROUTE_NODE_BUDGET` cells, trying at most `ROUTE_ATTEMPTS_PER_TICK` candidates per tick and resuming past the tried ones. `routing` searches over standable cells (ground below, three cells of air; steps of one block up, level or one down). A pawn mines from a stand cell within reach, not from the mark's cell. The job releases its claim, keeping the mark, when the block is gone, the mark is cancelled, a waypoint is no longer standable, or `STALL_TICKS` pass without progress toward a waypoint. `apply_pawn_dig` (`flagstone/src/app/event_loop/world_edit.rs`) adds the yield to `Colony::stock`, not to the pawn's inventory, then publishes the removal and `AudioEvent::PlaySoundAt` for `flagstone/assets/dig.wav` at the block's centre. Hand-mining shares `publish_removal` but deposits into the pawn and reports the player as the reason; a pawn dig reports `BlockChangeReason::Mechanic`. A possessed pawn (first person) runs no job. `update_hud_data` passes the stock as `HudData::colony_stock`, which `rts_hud` draws.
 
 `StrategyAction::Possess` (`Tab` by default) switches between the strategy view and first person. A tick with `Possess` pressed sets `StrategyCommand::toggle_view`; the apply step then calls `App::toggle_camera_mode` and `apply_cursor`, so the switch happens once per press, on the tick, and never outside `Playing`. The mode switch publishes a placeholder `AudioEvent` (`Confirm` entering first person, `Cancel` returning). The pawn keeps its pose across the switch and does not move while in the strategy view.
 

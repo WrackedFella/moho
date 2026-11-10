@@ -72,6 +72,8 @@ gets that tick's advance on top.
 
 All gameplay steps early-return unless `GameState::Playing`. `dt` is the fixed tick length.
 
+In the strategy view the unpossessed pawn's job runs in the tick right after the camera input is applied ([input](input-and-state.md#2-pointer-picking)); its dig publishes the same block events, from the tick rather than the input drain.
+
 Mining publishes its block event while `process_input_events` drains, after
 `process_world_events`, so the light system queues the edit on the next tick and lights it in
 the tick after (two ticks, about 33 ms at 60 Hz).
