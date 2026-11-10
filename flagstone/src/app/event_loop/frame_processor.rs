@@ -1335,7 +1335,8 @@ mod tests {
     mod colony_work {
         use super::*;
         use crate::app::dig_site::{
-            Block, block_exists, dig_site, pawn_start, pawn_state, rise, run_until,
+            Block, GROUND_TOP, PAWN_CELL, block_exists, dig_site, pawn_start, pawn_state, rise,
+            run_until,
         };
         use flagstone_game::controller::CameraMode;
         use flagstone_game::pawn::MINE_REACH;
@@ -1431,6 +1432,31 @@ mod tests {
                 "left the ground on ticks {airborne_on:?}"
             );
             assert_eq!(ore_total(&app), 1);
+        }
+
+        #[test]
+        fn the_pawn_does_not_dig_the_block_under_its_feet() {
+            let under_feet = [PAWN_CELL[0], GROUND_TOP, PAWN_CELL[2]];
+            let mut app = site_with_mark(&[], under_feet);
+            let mut sim = crate::app::dig_site::headless_loop();
+
+            let removed = run_until(&mut app, GIVE_UP, |app| !block_exists(app, under_feet));
+            sim.step(&mut app, 120);
+
+            let pawn = pawn_state(&app);
+            let standing_centre = (GROUND_TOP + 1) as f32 + 1.15;
+            assert!(removed, "the block is still standing after {GIVE_UP} ticks");
+            assert!(pawn.grounded, "the pawn is hanging in the air");
+            assert!(
+                (pawn.position.y - standing_centre).abs() < 0.1,
+                "the pawn is at {} instead of on the ground at {standing_centre}",
+                pawn.position.y
+            );
+            assert!(
+                pawn.position.x.floor() as i32 != under_feet[0]
+                    || pawn.position.z.floor() as i32 != under_feet[2],
+                "the pawn is still over the hole"
+            );
         }
 
         #[test]

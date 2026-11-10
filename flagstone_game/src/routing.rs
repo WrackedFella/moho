@@ -372,6 +372,68 @@ mod tests {
         (start, walk)
     }
 
+    mod search_order {
+        use super::*;
+
+        /// The fewest expansions with which `route` finds `goal` from `start`.
+        fn cheapest_budget(grid: &VoxelGrid, start: BlockPos, goal: BlockPos) -> Option<usize> {
+            (0..200).find(|&budget| route(grid, start, |c| c == goal, goal, budget).is_some())
+        }
+
+        #[test]
+        fn a_search_toward_a_diagonal_goal_expands_the_cells_the_estimate_favours() {
+            let grid = flat_ground(20);
+
+            let reached = cheapest_budget(&grid, cell(0, 1, 0), cell(6, 1, 5));
+            let mirrored = cheapest_budget(&grid, cell(0, 1, 0), cell(-6, 1, 5));
+
+            assert_eq!(reached, Some(41), "the guided search is not a flood fill");
+            assert_eq!(mirrored, Some(41));
+        }
+
+        #[test]
+        fn a_straight_goal_costs_one_expansion_per_cell_walked() {
+            let grid = flat_ground(20);
+
+            let along_x = cheapest_budget(&grid, cell(0, 1, 0), cell(18, 1, 0));
+            let along_z = cheapest_budget(&grid, cell(0, 1, 0), cell(0, 1, 18));
+
+            assert_eq!(along_x, Some(18));
+            assert_eq!(along_z, Some(18));
+        }
+
+        #[test]
+        fn of_the_equally_short_routes_the_one_through_the_x_cells_first_is_taken() {
+            let grid = flat_ground(8);
+            let goal = cell(3, 1, 3);
+
+            let walk = route(&grid, cell(0, 1, 0), |c| c == goal, goal, ROUTE_NODE_BUDGET);
+
+            let expected = vec![
+                cell(0, 1, 0),
+                cell(1, 1, 0),
+                cell(2, 1, 0),
+                cell(3, 1, 0),
+                cell(3, 1, 1),
+                cell(3, 1, 2),
+                cell(3, 1, 3),
+            ];
+            assert_eq!(walk, Some(expected));
+        }
+
+        #[test]
+        fn equally_near_goals_resolve_to_the_positive_side_first() {
+            let grid = flat_ground(8);
+            let start = cell(0, 1, 0);
+
+            let along_x = route(&grid, start, |c| c.x.abs() == 3, start, ROUTE_NODE_BUDGET);
+            let along_z = route(&grid, start, |c| c.z.abs() == 3, start, ROUTE_NODE_BUDGET);
+
+            assert_eq!(along_x.and_then(|w| w.last().copied()), Some(cell(3, 1, 0)));
+            assert_eq!(along_z.and_then(|w| w.last().copied()), Some(cell(0, 1, 3)));
+        }
+    }
+
     proptest! {
         #[test]
         fn every_route_cell_is_standable_and_adjacent_to_the_previous(

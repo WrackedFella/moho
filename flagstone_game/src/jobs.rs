@@ -528,6 +528,39 @@ mod tests {
         }
     }
 
+    mod claiming_order {
+        use super::*;
+
+        #[test]
+        fn the_nearest_mark_is_measured_from_where_the_pawn_stands() {
+            let mut site = Site::flat();
+            site.pose.feet = centre(cell(10, 1, 0));
+            site.mark_block(cell(7, 1, 0));
+            site.mark_block(cell(-3, 1, 0));
+
+            site.tick();
+
+            assert_eq!(site.claimed_by([7, 1, 0]), Some(ME));
+            assert_eq!(site.claimed_by([-3, 1, 0]), None);
+        }
+
+        #[test]
+        fn marks_that_all_failed_to_route_are_tried_again_from_the_nearest_next_tick() {
+            let mut site = Site::flat();
+            // Two floating blocks no ground lets the pawn stand beside.
+            site.mark_block(cell(1, 5, 0));
+            site.mark_block(cell(2, 5, 0));
+
+            let first = site.tick();
+            site.mark_block(cell(4, 1, 0));
+            let second = site.tick();
+
+            assert_eq!(first, JobAction::Wait);
+            assert_ne!(second, JobAction::Wait);
+            assert_eq!(site.claimed_by([4, 1, 0]), Some(ME));
+        }
+    }
+
     mod working {
         use super::*;
 
@@ -584,10 +617,11 @@ mod tests {
             let mut beside = Site::flat();
             beside.mark_block(cell(4, 1, 0));
             beside.pose.feet = centre(cell(3, 1, 0));
-            // On top of it: the top is nearest.
+            // Beside it on a step a block higher: the top is nearest.
             let mut on_top = Site::flat();
+            place(&mut on_top.grid, cell(3, 1, 0));
             on_top.mark_block(cell(4, 1, 0));
-            on_top.pose.feet = centre(cell(4, 2, 0));
+            on_top.pose.feet = centre(cell(3, 2, 0));
             // The nearest faces, west and top, are covered; the north face is the nearest bare one.
             let mut covered = Site::flat();
             place(&mut covered.grid, cell(3, 1, 0));
@@ -639,6 +673,44 @@ mod tests {
         }
     }
 
+    mod digging_position {
+        use super::*;
+
+        #[test]
+        fn the_dig_aims_from_the_eye_above_the_feet() {
+            // Feet half a block up: the eye is closer to the top face than the west face only
+            // at the full eye height.
+            let mut site = Site::flat();
+            site.mark_block(cell(4, 1, 0));
+            site.pose.feet = centre(cell(3, 1, 0)) + Vec3::Y * 0.5;
+
+            let run = site.run_to_the_dig(10);
+
+            let (_, aim, _) = run.dig.expect("the pawn digs from where it stands");
+            assert_near(aim, Vec3::new(4.5, 2.0, 0.5));
+        }
+
+        #[test]
+        fn a_pawn_standing_on_its_marked_block_steps_aside_before_digging() {
+            let mut site = Site::flat();
+            site.mark_block(cell(0, 0, 0));
+            let start = feet_cell(site.pose.feet);
+
+            let run = site.run_to_the_dig(30);
+
+            let (block, _, feet) = run.dig.expect("the pawn digs once it has stepped off");
+            assert_eq!(start, cell(0, 1, 0), "the pawn begins on the marked block");
+            assert_eq!(block, cell(0, 0, 0));
+            assert!(!run.targets.is_empty(), "it walked first");
+            assert_ne!(
+                feet_cell(feet) - BlockPos::Y,
+                block,
+                "dug the block under its own feet"
+            );
+            assert!(is_stand_cell(block, feet_cell(feet)));
+        }
+    }
+
     mod letting_go {
         use super::*;
 
@@ -655,6 +727,64 @@ mod tests {
             assert_eq!(action, JobAction::Wait);
             assert!(matches!(site.job, Job::Idle { .. }));
             assert!(!site.is_marked([9, 1, 0]));
+        }
+
+        #[test]
+        fn a_mark_buried_after_the_claim_releases_the_pawn() {
+            let mut site = Site::flat();
+            site.mark_block(cell(9, 1, 0));
+            site.tick();
+            assert!(matches!(site.job, Job::Mine { .. }), "the walk began");
+
+            for d in NEIGHBOURS {
+                place(&mut site.grid, cell(9, 1, 0) + d);
+            }
+            let action = site.tick();
+
+            assert_eq!(action, JobAction::Wait);
+            assert!(matches!(site.job, Job::Idle { .. }));
+            assert!(site.is_marked([9, 1, 0]), "the mark stays");
+            assert_eq!(site.claimed_by([9, 1, 0]), None);
+            assert!(site.grid.is_solid_at(cell(9, 1, 0)), "nothing was dug");
+        }
+
+        #[test]
+        fn moving_closer_counts_as_progress_and_resets_the_stall_count() {
+            let mut site = Site::flat();
+            site.mark_block(cell(8, 1, 0));
+            site.tick();
+
+            site.pose.feet.x = 1.0;
+            site.tick();
+            site.pose.feet.x = 1.1;
+            site.tick();
+
+            let Job::Mine { stall, .. } = &site.job else {
+                panic!("still walking: {:?}", site.job);
+            };
+            assert!(
+                stall.closest.is_some_and(|closest| (closest - 0.4).abs() < EPS),
+                "{stall:?}"
+            );
+            assert_eq!(stall.ticks_without_progress, 0);
+        }
+
+        #[test]
+        fn a_step_closer_by_exactly_the_progress_epsilon_is_not_progress() {
+            let mut site = Site::flat();
+            site.mark_block(cell(8, 1, 0));
+            site.tick();
+            // The first waypoint is the centre of cell 1, one metre from the feet.
+            let closer = 1.0 - PROGRESS_EPSILON;
+            site.pose.feet.x = 1.5 - closer;
+
+            site.tick();
+
+            let Job::Mine { stall, .. } = &site.job else {
+                panic!("still walking: {:?}", site.job);
+            };
+            assert_eq!(stall.ticks_without_progress, 1);
+            assert_eq!(stall.closest, Some(1.0));
         }
 
         #[test]
@@ -787,6 +917,17 @@ mod tests {
                     "({dx}, {dy}, {dz}) is not"
                 );
             }
+        }
+
+        #[test]
+        fn the_cell_on_top_of_the_block_is_not_a_stand_cell() {
+            let block = cell(10, 20, -5);
+
+            let on_top = is_stand_cell(block, block + BlockPos::Y);
+            let beside_on_top = is_stand_cell(block, block + cell(1, 1, 0));
+
+            assert!(!on_top, "the ground there is the block itself");
+            assert!(beside_on_top, "the block is not the ground there");
         }
 
         proptest! {
