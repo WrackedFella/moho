@@ -224,16 +224,22 @@ fn suffix_number(marker: &LevelMarker, prefix: &str) -> Option<u32> {
 /// The first of `markers` whose suffix after `prefix` is not a number or repeats an earlier
 /// marker's number.
 fn first_bad_suffix<'a>(markers: &'a [LevelMarker], prefix: &str) -> Option<&'a LevelMarker> {
-    let mut numbers = Vec::new();
-    markers.iter().find(|marker| {
-        match suffix_number(marker, prefix).filter(|n| !numbers.contains(n)) {
-            Some(number) => {
-                numbers.push(number);
-                false
-            }
-            None => true,
+    let mut seen = Vec::new();
+    for marker in markers {
+        match suffix_number(marker, prefix) {
+            Some(number) if !seen.contains(&number) => seen.push(number),
+            _ => return Some(marker),
         }
-    })
+    }
+    None
+}
+
+/// `markers` in numeric order of their suffix after `prefix`. Call it after
+/// [`first_bad_suffix`] found nothing, so every suffix is a number.
+fn in_suffix_order<'a>(markers: &'a [LevelMarker], prefix: &str) -> Vec<&'a LevelMarker> {
+    let mut ordered: Vec<&LevelMarker> = markers.iter().collect();
+    ordered.sort_by_key(|marker| suffix_number(marker, prefix));
+    ordered
 }
 
 impl ArenaMarkers {
@@ -246,9 +252,7 @@ impl ArenaMarkers {
     }
 
     fn ordered_waypoints(&self) -> Vec<&LevelMarker> {
-        let mut waypoints: Vec<&LevelMarker> = self.waypoints.iter().collect();
-        waypoints.sort_by_key(|marker| suffix_number(marker, WAYPOINT_PREFIX));
-        waypoints
+        in_suffix_order(&self.waypoints, WAYPOINT_PREFIX)
     }
 }
 
@@ -266,8 +270,9 @@ pub struct MenuCamera {
     pub forward: Vec3,
 }
 
-/// Everything a sim needs to start, and to start again: static geometry plus spawn points.
-/// The sim holds it behind an `Arc`, so a restart rebuilds from the same data.
+/// Everything a sim needs to start, and to start again: static geometry plus spawn points. It
+/// also carries what the game shows of the level that the sim never reads, such as the
+/// menu cameras. The sim holds it behind an `Arc`, so a restart rebuilds from the same data.
 #[derive(Debug, Clone)]
 pub struct Arena {
     pub meshes: Vec<WorldMesh>,
@@ -371,9 +376,7 @@ impl Arena {
         if markers.mode == LevelMode::Arena && !enemy_spawns.is_empty() && route.is_empty() {
             return Err(ArenaError::NoReachableWaypoint);
         }
-        let mut cameras: Vec<&LevelMarker> = markers.menu_cameras.iter().collect();
-        cameras.sort_by_key(|marker| suffix_number(marker, MENU_CAMERA_PREFIX));
-        let menu_cameras = cameras
+        let menu_cameras = in_suffix_order(&markers.menu_cameras, MENU_CAMERA_PREFIX)
             .into_iter()
             .map(|marker| MenuCamera {
                 eye: marker.position,
