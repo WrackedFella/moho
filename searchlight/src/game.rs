@@ -29,13 +29,14 @@ use moho_ui_shell::{
     apply_engine_command, apply_engine_settings,
 };
 
-use crate::arena::{box_mesh, control_mesh_id, oriented_box_mesh};
+use crate::arena::{MenuCamera, box_mesh, control_mesh_id, oriented_box_mesh};
 use crate::console_commands::{self, ConsoleCommand, GodModeArg, SimpleArg};
 use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
 use crate::input::{SearchlightAction, SearchlightCommand, look_from, look_to_turn, resolve_lean};
 use crate::lean::{lean_offset, rolled_view_matrix};
 use crate::menu::{MenuAction, main_screen, pause_screen, settings_screen};
+use crate::menu_feed::MenuFeed;
 use crate::mode::ArenaMode;
 use crate::sim::{Feedback, SearchlightSim, dummy_at, dummy_hit_volumes_of};
 use crate::tag::SurfaceTag;
@@ -727,6 +728,8 @@ pub struct SearchlightGame {
     /// Engine settings waiting for a frame, the first place the renderer, audio and window can
     /// be reached.
     pending_settings: Option<EngineSettings>,
+    /// The views the main menu shows the level through.
+    menu_feed: MenuFeed,
 }
 
 impl SearchlightGame {
@@ -749,7 +752,15 @@ impl SearchlightGame {
             debug_settings: None,
             flip_window_pending: false,
             pending_settings: None,
+            menu_feed: MenuFeed::new(Vec::new()),
         }
+    }
+
+    /// Shows the level behind the main menu from `cameras`, one after another.
+    #[must_use]
+    pub fn with_menu_cameras(mut self, cameras: Vec<MenuCamera>) -> Self {
+        self.menu_feed = MenuFeed::new(cameras);
+        self
     }
 
     #[must_use]
@@ -5056,15 +5067,47 @@ mod mutation_tests {
     }
 
     fn frame_with(game: &mut SearchlightGame, renderer: &mut FakeRenderer) {
+        frame_lasting(game, renderer, std::time::Duration::from_millis(16));
+    }
+
+    fn frame_lasting(
+        game: &mut SearchlightGame,
+        renderer: &mut FakeRenderer,
+        frame_dt: std::time::Duration,
+    ) {
         let clock = moho_app::GameClock::default();
         let backend: &mut dyn RendererBackend = renderer;
-        let mut ctx = FrameContext::new(
-            std::time::Duration::from_millis(16),
-            &clock,
-            Some(backend),
-            None,
-        );
+        let mut ctx = FrameContext::new(frame_dt, &clock, Some(backend), None);
         game.frame(&mut ctx, 0.5);
+    }
+
+    fn menu_cameras() -> Vec<MenuCamera> {
+        vec![
+            MenuCamera {
+                eye: Vec3::new(20.0, 1.7, -15.0),
+                forward: Vec3::Z,
+            },
+            MenuCamera {
+                eye: Vec3::new(-20.0, 1.7, -15.0),
+                forward: Vec3::X,
+            },
+            MenuCamera {
+                eye: Vec3::new(0.0, 1.7, -25.0),
+                forward: Vec3::Z,
+            },
+        ]
+    }
+
+    /// The view matrix and eye the renderer was last given.
+    fn camera_seen(renderer: &FakeRenderer) -> Option<(Mat4, Vec3)> {
+        renderer.camera.map(|(view, _, eye)| (view, eye))
+    }
+
+    fn looking_from(camera: &MenuCamera) -> Option<(Mat4, Vec3)> {
+        Some((
+            rolled_view_matrix(camera.eye, camera.forward, 0.0),
+            camera.eye,
+        ))
     }
 
     fn crosshair_vertices(game: &SearchlightGame) -> usize {
@@ -5091,6 +5134,86 @@ mod mutation_tests {
         assert_eq!(menu_draws, 0, "world meshes drawn behind the menu");
         assert_eq!(menu_crosshair, 0, "crosshair drawn on the menu");
         assert_eq!(menu_enemies, 0, "enemies synced behind the menu");
+    }
+
+    #[test]
+    fn the_main_menu_draws_the_level_from_the_first_menu_camera() {
+        use std::time::Duration;
+        let cameras = menu_cameras();
+        let mut game = game_with_an_arena_on_the_main_menu().with_menu_cameras(cameras.clone());
+        let mut renderer = FakeRenderer::default();
+
+        frame_lasting(&mut game, &mut renderer, Duration::from_millis(16));
+        let first_frame = camera_seen(&renderer);
+        let level_draws = renderer.draws.len();
+        let menu_enemies = game.stage.enemies.iter().filter(|rig| rig.shown).count();
+        let menu_crosshair = crosshair_vertices(&game);
+        frame_lasting(&mut game, &mut renderer, Duration::from_millis(4983));
+        let just_before_the_cut = camera_seen(&renderer);
+        frame_lasting(&mut game, &mut renderer, Duration::from_millis(1));
+        frame_lasting(&mut game, &mut renderer, Duration::from_millis(16));
+        let after_the_cut = camera_seen(&renderer);
+
+        assert_eq!(first_frame, looking_from(&cameras[0]));
+        assert_eq!(level_draws, 1 + 6, "the arena and the dummy, no enemy");
+        assert_eq!(menu_enemies, 0, "enemies synced behind the menu");
+        assert_eq!(menu_crosshair, 0, "crosshair drawn on the menu");
+        assert_eq!(just_before_the_cut, looking_from(&cameras[0]));
+        assert_eq!(after_the_cut, looking_from(&cameras[1]));
+        assert_eq!(renderer.draws.len(), 1 + 6);
+    }
+
+    #[test]
+    fn without_menu_cameras_the_menu_draws_the_empty_backdrop() {
+        let mut game = game_with_an_arena_on_the_main_menu();
+        let backdrop_material = game
+            .stage
+            .backdrop
+            .material_table
+            .find_or_push(&Paint::Arena);
+        game.stage.backdrop.world_meshes_mut().upsert(
+            WorldMeshId(1),
+            box_mesh(Vec3::new(-7.0, 0.0, 0.0), Vec3::ONE),
+            backdrop_material,
+        );
+        let mut renderer = FakeRenderer::default();
+
+        frame_lasting(&mut game, &mut renderer, std::time::Duration::from_secs(20));
+        let seen = camera_seen(&renderer);
+
+        assert_eq!(renderer.draws.len(), 1, "only the backdrop's own mesh");
+        assert_eq!(seen, Some((Mat4::IDENTITY, Vec3::ZERO)));
+    }
+
+    #[test]
+    fn play_from_a_camera_view_starts_at_the_player_spawn() {
+        use std::time::Duration;
+        let cameras = menu_cameras();
+        let mut game = game_with_an_arena_on_the_main_menu().with_menu_cameras(cameras.clone());
+        let spawn = game.sim().player();
+        let mut renderer = FakeRenderer::default();
+        let clock = moho_app::GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        frame_lasting(&mut game, &mut renderer, Duration::from_secs(6));
+        let on_the_menu = camera_seen(&renderer);
+
+        game.route_input(&mut ctx, Input::Key(Key::Enter), true, false);
+        frame_lasting(&mut game, &mut renderer, Duration::from_millis(16));
+        let in_play = camera_seen(&renderer);
+
+        assert_eq!(on_the_menu, looking_from(&cameras[1]));
+        let (_, eye) = in_play.expect("play draws a frame");
+        assert_eq!(game.screen, Screen::Playing);
+        assert_eq!(game.sim().player(), spawn, "play moved the player");
+        assert!(
+            eye.abs_diff_eq(game.sim().player_eye(), 1e-4),
+            "play looks from {eye}, not from the spawn eye {}",
+            game.sim().player_eye()
+        );
+        assert!(
+            cameras.iter().all(|camera| camera.eye != eye),
+            "play looks from a menu camera"
+        );
     }
 
     #[test]

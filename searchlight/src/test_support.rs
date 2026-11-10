@@ -305,6 +305,7 @@ fn build_arena(
         enemy_spawns: enemies.to_vec(),
         route: route.to_vec(),
         covers: Vec::new(),
+        menu_cameras: Vec::new(),
     })
 }
 

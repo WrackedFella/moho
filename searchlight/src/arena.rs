@@ -55,6 +55,9 @@ pub enum ArenaError {
     /// The arena has enemy spawns, but no enemy spawn has a path to any waypoint.
     #[error("no path from any enemy spawn reaches a waypoint")]
     NoReachableWaypoint,
+    /// A menu camera's suffix is not a number, or repeats an earlier menu camera's number.
+    #[error("arena menu camera `{marker}` needs a unique numeric suffix")]
+    BadMenuCamera { marker: String },
     /// A `control_NN` marker names no action, or one not on the list.
     #[error("arena control `{marker}` needs an `action` on the list")]
     BadControl { marker: String },
@@ -87,6 +90,8 @@ pub struct ArenaMarkers {
     pub covers: Vec<LevelMarker>,
     /// `control_NN`: placed posts the player can use.
     pub controls: Vec<LevelMarker>,
+    /// `menu_camera_NN`: the views the main menu cycles through.
+    pub menu_cameras: Vec<LevelMarker>,
 }
 
 impl ArenaMarkers {
@@ -149,6 +154,7 @@ impl ArenaMarkers {
             waypoints,
             covers,
             controls,
+            menu_cameras: Vec::new(),
         })
     }
 }
@@ -228,6 +234,13 @@ pub struct ArenaControl {
     pub mesh: WorldMesh,
 }
 
+/// A view the main menu shows the level from.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MenuCamera {
+    pub eye: Vec3,
+    pub forward: Vec3,
+}
+
 /// Everything a sim needs to start, and to start again: static geometry plus spawn points.
 /// The sim holds it behind an `Arc`, so a restart rebuilds from the same data.
 #[derive(Debug, Clone)]
@@ -246,6 +259,8 @@ pub struct Arena {
     pub covers: Vec<Vec3>,
     /// The usable posts, in file order; an index is the control's id.
     pub controls: Vec<ArenaControl>,
+    /// The main menu's views, in suffix-number order.
+    pub menu_cameras: Vec<MenuCamera>,
     /// Where an enemy of [`nav_profile`] size can walk.
     pub nav: Arc<NavMesh>,
     /// Whether the navmesh could not be built and `nav` is empty (sandbox levels only).
@@ -345,6 +360,7 @@ impl Arena {
             route,
             covers: positions(&markers.covers),
             controls,
+            menu_cameras: Vec::new(),
         })
     }
 
@@ -699,6 +715,126 @@ mod tests {
         let error = ArenaMarkers::from_level(&level).unwrap_err();
 
         assert!(error.to_string().contains("waypoint_01"), "{error}");
+    }
+
+    fn camera_marker(name: &str, x: f32, rotation: Quat) -> LevelMarker {
+        LevelMarker {
+            rotation,
+            ..marker(name, Vec3::new(x, 1.7, 0.0))
+        }
+    }
+
+    /// A level that builds in `mode` with `cameras` named, in this order, after its other markers.
+    fn level_with_menu_cameras(mode: &str, cameras: Vec<LevelMarker>) -> Level {
+        let mut level = island_level(&[("waypoint_01", ON_FLOOR)]);
+        level.markers[0] = mode_marker(mode);
+        level.markers.extend(cameras);
+        level
+    }
+
+    #[test]
+    fn menu_cameras_are_read_in_suffix_order_with_their_facing() {
+        use std::f32::consts::{FRAC_PI_2, PI};
+
+        let cameras = || {
+            vec![
+                camera_marker("menu_camera_02", 2.0, Quat::from_rotation_y(FRAC_PI_2)),
+                camera_marker("menu_camera_10", 10.0, Quat::IDENTITY),
+                camera_marker(
+                    "menu_camera_01",
+                    1.0,
+                    Quat::from_rotation_y(PI) * Quat::from_rotation_z(0.7),
+                ),
+            ]
+        };
+
+        for mode in ["arena", "sandbox"] {
+            let arena = build(&level_with_menu_cameras(mode, cameras())).expect("the level builds");
+
+            let eyes: Vec<Vec3> = arena.menu_cameras.iter().map(|c| c.eye).collect();
+            let facings: Vec<Vec3> = arena.menu_cameras.iter().map(|c| c.forward).collect();
+            assert_eq!(
+                eyes,
+                [
+                    Vec3::new(1.0, 1.7, 0.0),
+                    Vec3::new(2.0, 1.7, 0.0),
+                    Vec3::new(10.0, 1.7, 0.0)
+                ],
+                "{mode}: eyes in suffix order"
+            );
+            for (facing, expected) in facings.iter().zip([Vec3::NEG_Z, Vec3::X, Vec3::Z]) {
+                assert!(
+                    facing.abs_diff_eq(expected, 1e-5),
+                    "{mode}: facing {facing} is not {expected}, roll must be ignored: {facings:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_repeated_menu_camera_suffix_is_refused() {
+        let repeated = ["menu_camera_1", "menu_camera_01"];
+        let not_a_number = ["menu_camera_01", "menu_camera_a"];
+
+        for (names, offender) in [
+            (repeated, "menu_camera_01"),
+            (not_a_number, "menu_camera_a"),
+        ] {
+            for mode in ["arena", "sandbox"] {
+                let cameras = names
+                    .iter()
+                    .map(|name| camera_marker(name, 0.0, Quat::IDENTITY))
+                    .collect();
+                let level = level_with_menu_cameras(mode, cameras);
+
+                let error = ArenaMarkers::from_level(&level).err();
+
+                assert!(
+                    matches!(&error, Some(ArenaError::BadMenuCamera { marker }) if marker == offender),
+                    "{mode} {names:?}: {error:?}"
+                );
+                assert_eq!(
+                    error.map(|e| e.to_string()),
+                    Some(format!(
+                        "arena menu camera `{offender}` needs a unique numeric suffix"
+                    ))
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_shipped_arena_has_three_menu_cameras() {
+        let (level, markers) = load(&shipped_arena()).expect("the shipped arena loads");
+        let proving_ground =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/proving_ground.glb");
+        let (_, sandbox_markers) = load(&proving_ground).expect("the shipped proving ground loads");
+
+        let arena = Arena::from_level(&level, &markers).expect("the shipped arena builds");
+
+        let mut names: Vec<&str> = markers
+            .menu_cameras
+            .iter()
+            .map(|m| m.name.as_str())
+            .collect();
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            ["menu_camera_01", "menu_camera_02", "menu_camera_03"]
+        );
+        assert_eq!(arena.menu_cameras.len(), 3);
+        assert!(
+            arena
+                .menu_cameras
+                .iter()
+                .all(|c| (c.forward.length() - 1.0).abs() < 1e-4),
+            "{:?}",
+            arena.menu_cameras
+        );
+        assert!(
+            sandbox_markers.menu_cameras.is_empty(),
+            "the proving ground has no menu cameras"
+        );
     }
 
     #[test]
