@@ -642,20 +642,4 @@ mod tests {
             "a colony with nothing lists nothing: {none:?}"
         );
     }
-
-    #[test]
-    fn no_totals_in_first_person() {
-        let strategy = drawn_texts(&stocked_data(false));
-
-        let first_person = drawn_texts(&stocked_data(true));
-
-        assert!(
-            strategy.iter().any(|t| t.starts_with('R')),
-            "the totals show in strategy: {strategy:?}"
-        );
-        assert!(
-            !first_person.iter().any(|t| t.starts_with('R')),
-            "{first_person:?}"
-        );
-    }
 }

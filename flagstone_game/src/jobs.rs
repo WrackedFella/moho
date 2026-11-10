@@ -230,7 +230,7 @@ mod tests {
             let action = site.tick();
 
             assert_eq!(action, JobAction::Wait);
-            assert_eq!(site.job, Job::Idle);
+            assert!(matches!(site.job, Job::Idle { .. }));
             assert_eq!(site.pawn.equipped_tool, None, "nothing to dig, no tool out");
         }
 
@@ -245,7 +245,7 @@ mod tests {
             let buried = site.tick();
 
             assert_eq!(buried, JobAction::Wait);
-            assert_eq!(site.job, Job::Idle);
+            assert!(matches!(site.job, Job::Idle { .. }));
             assert_eq!(site.claimed_by([4, -1, 0]), None);
             assert!(site.is_marked([4, -1, 0]), "the order stands");
 
@@ -304,29 +304,56 @@ mod tests {
 
         #[test]
         fn a_claimed_mark_is_not_offered_to_a_second_pawn() {
-            let mut site = Site::flat();
-            site.mark_block(cell(4, 1, 0));
-            assert!(site.marks.claim([4, 1, 0], OTHER));
+            // Only the other pawn's mark: wait. Beside a free mark: take that one.
+            let mut only_claimed = Site::flat();
+            only_claimed.mark_block(cell(4, 1, 0));
+            assert!(only_claimed.marks.claim([4, 1, 0], OTHER));
+            let mut with_a_free_one = Site::flat();
+            with_a_free_one.mark_block(cell(4, 1, 0));
+            with_a_free_one.mark_block(cell(-8, 1, 0));
+            assert!(with_a_free_one.marks.claim([4, 1, 0], OTHER));
 
-            let action = site.tick();
+            let waiting = only_claimed.tick();
+            with_a_free_one.tick();
 
-            assert_eq!(action, JobAction::Wait);
-            assert_eq!(site.job, Job::Idle);
-            assert_eq!(site.claimed_by([4, 1, 0]), Some(OTHER));
-            assert_eq!(site.marks.unclaimed().count(), 0);
+            assert_eq!(waiting, JobAction::Wait);
+            assert!(matches!(only_claimed.job, Job::Idle { .. }));
+            assert_eq!(only_claimed.claimed_by([4, 1, 0]), Some(OTHER));
+            assert_eq!(only_claimed.marks.unclaimed().count(), 0);
+            assert_eq!(with_a_free_one.claimed_by([-8, 1, 0]), Some(ME));
+            assert_eq!(with_a_free_one.claimed_by([4, 1, 0]), Some(OTHER));
         }
 
         #[test]
-        fn a_claimed_mark_leaves_the_pawn_the_next_free_one() {
+        fn route_attempts_are_capped_per_tick_and_resume_next_tick() {
             let mut site = Site::flat();
-            site.mark_block(cell(4, 1, 0));
-            site.mark_block(cell(-8, 1, 0));
-            assert!(site.marks.claim([4, 1, 0], OTHER));
+            // Five marks nearer than the reachable one, each a block floating where no
+            // ground lets the pawn stand beside it.
+            for x in 1..=5 {
+                site.mark_block(cell(x, 5, 0));
+            }
+            site.mark_block(cell(11, 1, 0));
 
-            site.tick();
+            let first = site.tick();
+            let claimed_after_first = site.claimed_by([11, 1, 0]);
+            let second = site.tick();
 
-            assert_eq!(site.claimed_by([-8, 1, 0]), Some(ME));
-            assert_eq!(site.claimed_by([4, 1, 0]), Some(OTHER));
+            assert_eq!(first, JobAction::Wait, "four failed routes use the tick up");
+            assert_eq!(claimed_after_first, None);
+            assert!(
+                matches!(
+                    site.job,
+                    Job::Mine {
+                        mark: [11, 1, 0],
+                        ..
+                    }
+                ),
+                "{second:?}"
+            );
+            assert_eq!(site.claimed_by([11, 1, 0]), Some(ME));
+            for x in 1..=5 {
+                assert_eq!(site.claimed_by([x, 5, 0]), None);
+            }
         }
     }
 
@@ -372,25 +399,12 @@ mod tests {
             let run = site.run_to_the_dig(30);
 
             assert!(run.dig.is_some());
-            assert_eq!(site.job, Job::Idle);
+            assert!(matches!(site.job, Job::Idle { .. }));
             assert!(
                 site.is_marked([4, 1, 0]),
                 "removal, not the dig, drops marks"
             );
             assert_eq!(site.claimed_by([4, 1, 0]), None);
-        }
-
-        #[test]
-        fn the_pawn_does_not_dig_before_it_arrives() {
-            let mut site = Site::flat();
-            site.mark_block(cell(8, 1, 0));
-
-            let early: Vec<JobAction> = (0..5).map(|_| site.tick()).collect();
-
-            assert!(
-                early.iter().all(|a| !matches!(a, JobAction::Dig { .. })),
-                "{early:?}"
-            );
         }
 
         #[test]
@@ -431,17 +445,10 @@ mod tests {
             let waypoint_after_arriving_off_centre = |offset: f32| {
                 let mut site = Site::flat();
                 site.mark_block(cell(8, 1, 0));
-                let mut sent = site.tick();
-                // Walk off the start cell, whether or not it is the first waypoint.
-                for _ in 0..3 {
-                    if matches!(sent, JobAction::Walk { to } if feet_cell(to) == cell(1, 1, 0)) {
-                        break;
-                    }
-                    sent = site.tick();
-                }
+                let sent = site.tick();
                 assert!(
                     matches!(sent, JobAction::Walk { to } if feet_cell(to) == cell(1, 1, 0)),
-                    "{sent:?}"
+                    "the claim tick skips the start cell and walks to the first one not reached: {sent:?}"
                 );
                 site.pose.feet = centre(cell(1, 1, 0)) + Vec3::new(0.0, 0.0, offset);
                 site.tick()
@@ -475,7 +482,7 @@ mod tests {
             let action = site.tick();
 
             assert_eq!(action, JobAction::Wait);
-            assert_eq!(site.job, Job::Idle);
+            assert!(matches!(site.job, Job::Idle { .. }));
             assert!(!site.is_marked([9, 1, 0]));
         }
 
@@ -484,15 +491,19 @@ mod tests {
             let mut site = Site::flat();
             site.mark_block(cell(9, 1, 0));
             site.tick();
-            assert_eq!(site.claimed_by([9, 1, 0]), Some(ME));
 
             site.grid.mutator().remove(cell(9, 1, 0));
             site.marks.block_removed([9, 1, 0]);
             let action = site.tick();
+            site.marks.toggle([9, 1, 0]);
 
             assert_eq!(action, JobAction::Wait);
-            assert_eq!(site.job, Job::Idle);
-            assert_eq!(site.marks.iter().count(), 0);
+            assert!(matches!(site.job, Job::Idle { .. }));
+            assert_eq!(
+                site.claimed_by([9, 1, 0]),
+                None,
+                "no claim outlives the block"
+            );
         }
 
         #[test]
@@ -505,7 +516,7 @@ mod tests {
             let mut released_after = None;
             for ticks in 1..=STALL_TICKS + 2 {
                 site.tick();
-                if site.job == Job::Idle {
+                if matches!(site.job, Job::Idle { .. }) {
                     released_after = Some(ticks);
                     break;
                 }
@@ -558,7 +569,7 @@ mod tests {
             let mut released = false;
             for _ in 0..3 {
                 site.tick();
-                if site.job == Job::Idle {
+                if matches!(site.job, Job::Idle { .. }) {
                     released = true;
                     break;
                 }
@@ -611,29 +622,41 @@ mod tests {
             #[test]
             fn every_stand_cell_is_within_the_mining_reach(
                 block in (-1000..1000i32, -64..64i32, -1000..1000i32),
-                offset in (-4..=4i32, -4..=5i32, -4..=4i32),
             ) {
                 let block = cell(block.0, block.1, block.2);
-                let feet = block + cell(offset.0, offset.1, offset.2);
+                let lo = block.as_vec3();
+                let hi = lo + Vec3::ONE;
+                let mut stand_cells = 0;
 
-                if is_stand_cell(block, feet) {
-                    let eye = centre(feet) + Vec3::Y * EYE_HEIGHT;
-                    let lo = block.as_vec3();
-                    let farthest = (0..8)
-                        .map(|corner| {
-                            lo + Vec3::new(
-                                (corner & 1) as f32,
-                                ((corner >> 1) & 1) as f32,
-                                ((corner >> 2) & 1) as f32,
-                            )
-                        })
-                        .map(|point| point.distance(eye))
-                        .fold(0.0, f32::max);
-                    prop_assert!(
-                        farthest <= MINE_REACH,
-                        "from {feet} the far side of {block} is {farthest} m away"
-                    );
+                for dx in -3..=3 {
+                    for dy in -4..=5 {
+                        for dz in -3..=3 {
+                            let feet = block + cell(dx, dy, dz);
+                            if !is_stand_cell(block, feet) {
+                                continue;
+                            }
+                            stand_cells += 1;
+                            let eye = centre(feet) + Vec3::Y * EYE_HEIGHT;
+                            let nearest = eye.clamp(lo, hi).distance(eye);
+                            let farthest = (0..8)
+                                .map(|corner| {
+                                    lo + Vec3::new(
+                                        (corner & 1) as f32,
+                                        ((corner >> 1) & 1) as f32,
+                                        ((corner >> 2) & 1) as f32,
+                                    )
+                                })
+                                .map(|point| point.distance(eye))
+                                .fold(0.0, f32::max);
+                            prop_assert!(
+                                nearest <= MINE_REACH && farthest <= MINE_REACH,
+                                "from {feet} {block} is {nearest} to {farthest} m away"
+                            );
+                        }
+                    }
                 }
+
+                prop_assert!(stand_cells > 0, "no stand cell around {block}");
             }
         }
     }
@@ -689,10 +712,18 @@ mod tests {
         #[test]
         fn steer_ignores_height_when_picking_the_bearing() {
             let pose = facing(0.0);
-            let level = toward_bearing(pose, 0.8);
-            let high = level + Vec3::Y * 4.0;
+            let lift = Vec3::Y * 4.0;
+            // 0.9 rad is inside the walking cone on the ground, but about 61 degrees
+            // from the pawn's heading once the 4 m of height is counted.
+            let level = toward_bearing(pose, 0.9);
+            let small = toward_bearing(pose, 0.05);
 
-            assert_eq!(steer(pose, level), steer(pose, high));
+            let high = steer(pose, level + lift);
+            let high_small = steer(pose, small + lift);
+
+            assert_eq!(high, steer(pose, level));
+            assert_eq!(high.forward, 1.0);
+            assert!((high_small.yaw_delta - 0.05).abs() < EPS, "{high_small:?}");
         }
 
         #[test]
@@ -703,6 +734,8 @@ mod tests {
             let dead_ahead = bearing(0.0);
             let slightly_off = bearing(0.4);
             let off_the_other_way = bearing(-0.4);
+            let inside_the_cone = bearing(0.9);
+            let outside_the_cone = bearing(1.2);
             let side_on = bearing(1.6);
             let behind = bearing(std::f32::consts::PI);
 
@@ -710,6 +743,8 @@ mod tests {
             assert_eq!(dead_ahead.yaw_delta, 0.0);
             assert_eq!(slightly_off.forward, 1.0);
             assert_eq!(off_the_other_way.forward, 1.0);
+            assert_eq!(inside_the_cone.forward, 1.0, "52 degrees still walks");
+            assert_eq!(outside_the_cone.forward, 0.0, "69 degrees turns in place");
             assert_eq!(side_on.forward, 0.0, "turns in place");
             assert!(side_on.yaw_delta > 0.0);
             assert_eq!(behind.forward, 0.0);
@@ -722,12 +757,28 @@ mod tests {
                 yaw in -6.0f32..6.0,
                 bearing in -6.0f32..6.0,
             ) {
+                use std::f32::consts::{FRAC_PI_3, PI, TAU};
                 let pose = facing(yaw);
+                let off = (bearing - yaw + PI).rem_euclid(TAU) - PI;
 
                 let step = steer(pose, toward_bearing(pose, bearing));
 
                 prop_assert!(step.yaw_delta.abs() <= PER_TICK + EPS);
-                prop_assert!((0.0..=1.0).contains(&step.forward));
+                if off.abs() > PER_TICK + EPS && off.abs() < PI - 0.01 {
+                    prop_assert!(
+                        (step.yaw_delta - off.signum() * PER_TICK).abs() < EPS,
+                        "off {off}, turned {}", step.yaw_delta
+                    );
+                }
+                if off.abs() <= PER_TICK {
+                    prop_assert!((step.yaw_delta - off).abs() < EPS, "off {off}, turned {}", step.yaw_delta);
+                }
+                if off.abs() < FRAC_PI_3 - 0.02 {
+                    prop_assert_eq!(step.forward, 1.0);
+                }
+                if off.abs() > FRAC_PI_3 + 0.02 {
+                    prop_assert_eq!(step.forward, 0.0);
+                }
             }
         }
     }

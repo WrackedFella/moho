@@ -1790,4 +1790,17 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn hand_mining_fills_the_pawn_not_the_colony() {
+        let mut app = app_aimed_at_block_with(Some(7));
+
+        EventProcessor::new().handle_input_event(&mut app, InputEvent::MineRequested);
+
+        assert_eq!(app.pawn.inventory.count(7), 1);
+        assert!(
+            app.colony.stock.is_empty(),
+            "only pawn jobs feed the colony"
+        );
+    }
 }

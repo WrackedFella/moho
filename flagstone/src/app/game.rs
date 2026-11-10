@@ -1386,10 +1386,21 @@ mod tests {
             let target = [24, 8, 12];
             let mut app = dig_site(&[(target, Some(7))]);
             app.colony.marks.toggle(target);
+            let focus = app.simulation.player_controller.rts_look_target;
             for _ in 0..40 {
                 step(&mut app);
             }
             let walked_to = pawn_state(&app).position;
+            assert!(
+                app.simulation.position().distance(walked_to) < 1e-3,
+                "the simulation pose {:?} lags the pawn at {walked_to:?}",
+                app.simulation.position()
+            );
+            let focus_after = app.simulation.player_controller.rts_look_target;
+            assert!(
+                (focus_after.x - focus.x).abs() < 1e-6 && (focus_after.z - focus.z).abs() < 1e-6,
+                "the walk moved the strategy camera's focus: {focus:?} to {focus_after:?}"
+            );
             assert!(
                 walked_to.distance(pawn_start()) > 1.5,
                 "the pawn did not walk: {walked_to:?}"

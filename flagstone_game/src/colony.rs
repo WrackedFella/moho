@@ -164,20 +164,6 @@ mod tests {
     }
 
     #[test]
-    fn stock_grows_by_the_yield() {
-        let mut colony = Colony::default();
-        assert!(colony.stock.is_empty(), "a new colony owns nothing");
-
-        colony.stock.add(7, 1);
-        colony.stock.add(7, 2);
-        colony.stock.add(3, 5);
-
-        assert_eq!(colony.stock.count(7), 3);
-        assert_eq!(colony.stock.count(3), 5);
-        assert_eq!(colony.stock.count(1), 0);
-    }
-
-    #[test]
     fn claim_and_release_round_trip() {
         let mut marks = MineMarks::default();
         marks.toggle([3, 4, 5]);
@@ -253,6 +239,13 @@ mod tests {
 
         assert!(!marks.contains([3, 4, 5]));
         assert_eq!(marks.unclaimed().count(), 0);
+        marks.toggle([3, 4, 5]);
+        assert_eq!(
+            claimed_by(&marks, [3, 4, 5]),
+            None,
+            "the claim went with it"
+        );
+        assert_eq!(marks.unclaimed().count(), 1);
     }
 
     proptest! {

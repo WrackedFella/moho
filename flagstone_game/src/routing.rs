@@ -219,42 +219,32 @@ mod tests {
 
         #[test]
         fn an_enclosed_goal_has_no_route() {
-            let mut grid = flat_ground(6);
-            for (x, z) in [(4, 0), (6, 0), (5, -1), (5, 1)] {
-                fill(&mut grid, (x, 1, z), (x, 2, z));
-            }
+            let walls = [(4, 0), (6, 0), (5, -1), (5, 1)];
             let into_the_ring = |c: BlockPos| c.x == 5 && c.z == 0;
+            let routed = |walls: &[(i32, i32)]| {
+                let mut grid = flat_ground(6);
+                for &(x, z) in walls {
+                    fill(&mut grid, (x, 1, z), (x, 2, z));
+                }
+                let walk = route(
+                    &grid,
+                    cell(0, 1, 0),
+                    into_the_ring,
+                    cell(5, 1, 0),
+                    ROUTE_NODE_BUDGET,
+                );
+                (standable(&grid, cell(5, 1, 0)), walk)
+            };
 
-            let walk = route(
-                &grid,
-                cell(0, 1, 0),
-                into_the_ring,
-                cell(5, 1, 0),
-                ROUTE_NODE_BUDGET,
+            let (open_goal, with_a_gap) = routed(&walls[..3]);
+            let (still_open, closed) = routed(&walls);
+
+            assert!(open_goal && still_open, "the goal itself is open");
+            assert_eq!(
+                with_a_gap.and_then(|w| w.last().copied()),
+                Some(cell(5, 1, 0))
             );
-
-            assert!(standable(&grid, cell(5, 1, 0)), "the goal itself is open");
-            assert_eq!(walk, None);
-        }
-
-        #[test]
-        fn a_gap_in_the_ring_lets_the_route_in() {
-            let mut grid = flat_ground(6);
-            for (x, z) in [(4, 0), (6, 0), (5, -1)] {
-                fill(&mut grid, (x, 1, z), (x, 2, z));
-            }
-            let into_the_ring = |c: BlockPos| c.x == 5 && c.z == 0;
-
-            let walk = route(
-                &grid,
-                cell(0, 1, 0),
-                into_the_ring,
-                cell(5, 1, 0),
-                ROUTE_NODE_BUDGET,
-            )
-            .expect("the open side admits the route");
-
-            assert_eq!(walk.last(), Some(&cell(5, 1, 0)));
+            assert_eq!(closed, None);
         }
 
         #[test]

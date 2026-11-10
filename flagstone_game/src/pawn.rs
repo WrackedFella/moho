@@ -328,36 +328,28 @@ mod tests {
 
     #[test]
     fn dig_removes_the_block_without_depositing() {
-        let (mut grid, pos) = ore_in_front(Some(7));
-        let mut pawn = Pawn::default();
+        for resource in [Some(7), None] {
+            let (mut grid, pos) = ore_in_front(resource);
+            let mut pawn = Pawn::default();
 
-        let outcome = pawn
-            .dig(&mut grid, AIM_FROM, Vec3::Z, MINE_REACH)
-            .expect("ray should hit the placed block");
+            let outcome = pawn
+                .dig(&mut grid, AIM_FROM, Vec3::Z, MINE_REACH)
+                .expect("ray should hit the placed block");
 
-        assert_eq!(outcome.block_pos, pos);
-        assert_eq!(outcome.old_material_id, 1);
-        let yielded = outcome.yield_.expect("an ore block yields");
-        assert_eq!((yielded.resource_id, yielded.amount), (7, 1));
-        assert!(grid.material_at(pos).is_none(), "the block is gone");
-        assert!(
-            pawn.inventory.is_empty(),
-            "the caller decides where it goes"
-        );
-        assert!(pawn.pickups.entries().is_empty());
-    }
-
-    #[test]
-    fn dig_of_a_plain_block_yields_nothing() {
-        let (mut grid, pos) = ore_in_front(None);
-        let mut pawn = Pawn::default();
-
-        let outcome = pawn
-            .dig(&mut grid, AIM_FROM, Vec3::Z, MINE_REACH)
-            .expect("ray should hit the placed block");
-
-        assert!(outcome.yield_.is_none());
-        assert!(grid.material_at(pos).is_none());
+            assert_eq!(outcome.block_pos, pos);
+            assert_eq!(outcome.old_material_id, 1);
+            assert_eq!(
+                outcome.yield_.map(|y| (y.resource_id, y.amount)),
+                resource.map(|r| (r, 1)),
+                "{resource:?}"
+            );
+            assert!(grid.material_at(pos).is_none(), "the block is gone");
+            assert!(
+                pawn.inventory.is_empty(),
+                "the caller decides where it goes"
+            );
+            assert!(pawn.pickups.entries().is_empty());
+        }
     }
 
     #[test]
@@ -417,9 +409,13 @@ mod tests {
         let mut pawn = Pawn::default();
 
         let missed = pawn.dig(&mut grid, Vec3::new(0.5, 0.5, 0.0), Vec3::Z, MINE_REACH);
+        let short = pawn.dig(&mut grid, Vec3::new(0.5, 0.5, 6.0), Vec3::Z, 5.0);
+        let standing = grid.material_at(pos).is_some();
         let reached = pawn.dig(&mut grid, Vec3::new(0.5, 0.5, 6.0), Vec3::Z, MINE_REACH);
 
         assert!(missed.is_none(), "12 m is beyond the reach");
+        assert!(short.is_none(), "6 m is beyond a reach of 5 m");
+        assert!(standing, "the block stands after both misses");
         assert_eq!(reached.map(|o| o.block_pos), Some(pos));
     }
 }
