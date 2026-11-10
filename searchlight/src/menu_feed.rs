@@ -5,6 +5,7 @@ use std::time::Duration;
 use glam::{Mat4, Vec3};
 
 use crate::arena::MenuCamera;
+use crate::lean::rolled_view_matrix;
 
 /// How long each menu camera stays on screen before the feed cuts to the next.
 pub const CUT_INTERVAL: Duration = Duration::from_secs(5);
@@ -29,12 +30,23 @@ impl MenuFeed {
     /// Lets `dt` of frame time pass, cutting to the next camera for every [`CUT_INTERVAL`]
     /// elapsed and wrapping from the last camera to the first.
     pub fn advance(&mut self, dt: Duration) {
-        let _ = (&self.cameras, self.shown, self.elapsed, dt);
+        if self.cameras.is_empty() {
+            return;
+        }
+        let total = (self.elapsed + dt).as_nanos();
+        let interval = CUT_INTERVAL.as_nanos();
+        let cuts = (total / interval) % self.cameras.len() as u128;
+        self.shown = (self.shown + cuts as usize) % self.cameras.len();
+        self.elapsed = Duration::from_nanos((total % interval) as u64);
     }
 
     /// The view matrix and eye of the camera on screen; `None` when there are no cameras.
     pub fn view(&self) -> Option<(Mat4, Vec3)> {
-        None
+        let camera = self.cameras.get(self.shown)?;
+        Some((
+            rolled_view_matrix(camera.eye, camera.forward, 0.0),
+            camera.eye,
+        ))
     }
 }
 

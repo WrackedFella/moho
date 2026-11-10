@@ -1042,13 +1042,19 @@ impl SearchlightGame {
         self
     }
 
-    /// A frame of the main menu: the title bare, the HUD hidden and an empty world; the shell
-    /// paints the menu.
+    /// A frame of the main menu: the title bare, the HUD hidden and the level seen from the
+    /// menu feed's current camera, or an empty world when the level has no menu cameras; the
+    /// shell paints the menu.
     fn menu_frame(&mut self, ctx: &mut FrameContext<'_>) {
         self.stage.refresh_title("");
         self.stage.hide_hud();
+        self.menu_feed.advance(ctx.frame_dt);
+        let view = self.menu_feed.view();
         if let Some(renderer) = ctx.renderer() {
-            self.stage.draw_backdrop(renderer);
+            match view {
+                Some(view) => self.stage.draw(renderer, view),
+                None => self.stage.draw_backdrop(renderer),
+            }
         }
     }
 

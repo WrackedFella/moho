@@ -22,6 +22,9 @@ Markers are empty, named glTF nodes that the game reads by name (see searchlight
                       hiding geometry lies
     control_NN        a floor point a usable post stands on; its extras name the `action`
                       (`next_wave`)
+    menu_camera_NN    optional; a view the main menu shows the level from, in NN order. The
+                      node's translation is the eye and its `rotation` turns +Z (the spawn
+                      facing) to the view direction; roll is ignored
 
 A cover point sits COVER_DEPTH behind the rear face of a COVER_HEIGHT block. A ray at body
 height (BODY_HEIGHT above the floor) coming from the block's side is stopped by the block; a
@@ -73,6 +76,14 @@ COVER = [
 SCREENS = [
     (3.5, 12.0, 6.0, 0.5),
     (-8.0, 15.0, 0.5, 6.0),
+]
+
+# Main menu views: (eye x, eye z, x to look at, z to look at). Each eye is at standing height
+# near a corner or edge and looks across the cover lanes at the blocks and dummies.
+MENU_CAMERAS = [
+    (-18.0, -18.0, 0.0, 8.0),
+    (18.0, -18.0, -3.0, 10.0),
+    (-18.0, 0.0, 11.0, 14.0),
 ]
 
 # (normal, u, v) with u x v = normal: corners (-u-v, +u-v, +u+v, -u+v) wind counter-clockwise
@@ -196,7 +207,8 @@ def direction_name(direction):
 
 
 def markers():
-    """Every marker as (name, translation, extras or None)."""
+    """Every marker as (name, translation, extras or None), plus a rotation quaternion
+    (x, y, z, w) for those that face somewhere."""
     out = [("player_spawn", PLAYER_SPAWN, None)]
     for kind, points in (("dummy", DUMMIES), ("enemy_spawn", ENEMY_SPAWNS),
                          ("waypoint", WAYPOINTS)):
@@ -208,6 +220,10 @@ def markers():
                     {"shielded_from": direction_name(block[4])}))
     for index, (x, z, action) in enumerate(CONTROLS, start=1):
         out.append((f"control_{index:02d}", (x, 0.0, z), {"action": action}))
+    for index, (x, z, look_x, look_z) in enumerate(MENU_CAMERAS, start=1):
+        half_yaw = math.atan2(look_x - x, look_z - z) / 2
+        out.append((f"menu_camera_{index:02d}", (x, EYE_HEIGHT, z), None,
+                    (0.0, math.sin(half_yaw), 0.0, math.cos(half_yaw))))
     out.append(("searchlight_level", (0.0, 0.0, 0.0), {"mode": "arena"}))
     return out
 
@@ -382,8 +398,10 @@ def build_glb(solid_list, marker_list, materials):
         })
         document["nodes"].append({"name": f"{name}_node", "mesh": len(document["meshes"]) - 1})
 
-    for name, translation, extras in marker_list:
+    for name, translation, extras, *rotation in marker_list:
         node = {"name": name, "translation": list(translation)}
+        if rotation:
+            node["rotation"] = list(rotation[0])
         if extras:
             node["extras"] = extras
         document["nodes"].append(node)

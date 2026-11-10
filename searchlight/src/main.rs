@@ -91,6 +91,7 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
         )
         .with_controls(arena.controls.iter().map(|control| control.mesh.clone()))
         .with_shot_sound(&assets_root().join("rifle_shot.wav"))
+        .with_menu_cameras(arena.menu_cameras.clone())
         .with_main_menu();
 
     moho_app::run(
