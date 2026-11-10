@@ -93,7 +93,13 @@ impl Pawn {
         };
     }
 
-    /// Like [`Pawn::mine`] but deposits nothing: the caller decides where the yield goes.
+    /// Raycast from `origin` along `dir`, break the first solid voxel within `reach`, and
+    /// return what it yields without depositing it: the caller decides where it goes.
+    /// Returns `None` if nothing was in range, or if no tool is currently equipped (a no-op
+    /// — the world is left unchanged).
+    ///
+    /// Takes plain `glam` types rather than any player-input or camera type, so
+    /// AI-controlled pawns can call this identically with their own aim.
     pub fn dig(
         &mut self,
         grid: &mut VoxelGrid,
@@ -101,18 +107,29 @@ impl Pawn {
         dir: Vec3,
         reach: f32,
     ) -> Option<MineOutcome> {
-        let _ = (grid, origin, dir, reach);
-        todo!("Pawn::dig")
+        self.equipped_tool?;
+
+        // Aims at the rendered isosurface, not the raw voxel cubes — see
+        // `raycast_surface`'s docs for why the cube-stepping raycast misses
+        // most of what the player can actually see.
+        let hit = raycast::raycast_surface(grid, origin, dir, reach)?;
+        // material_at is guaranteed Some here — raycast only stops on solid voxels.
+        let old_material_id = grid.material_at(hit.block_pos)?;
+        let resource_id = grid.resource_at(hit.block_pos);
+        grid.mutator().remove(hit.block_pos);
+
+        Some(MineOutcome {
+            block_pos: hit.block_pos,
+            old_material_id,
+            distance: hit.distance,
+            yield_: resource_id.map(|resource_id| ResourceYield {
+                resource_id,
+                amount: 1,
+            }),
+        })
     }
 
-    /// Raycast from `origin` along `dir`, break the first solid voxel within
-    /// `max_distance`, and deposit its resource (if any) into this pawn's
-    /// inventory. Returns `None` if nothing was in range, or if no tool is
-    /// currently equipped (a no-op — the world is left unchanged).
-    ///
-    /// Takes plain `glam` types rather than any player-input or camera type,
-    /// so AI-controlled pawns can call this identically with their own aim
-    /// (per the cross-cutting Controller/Pawn design goal).
+    /// [`Pawn::dig`], then deposit the yield (if any) into this pawn's inventory.
     pub fn mine(
         &mut self,
         grid: &mut VoxelGrid,
@@ -120,32 +137,11 @@ impl Pawn {
         dir: Vec3,
         max_distance: f32,
     ) -> Option<MineOutcome> {
-        self.equipped_tool?;
-
-        // Aims at the rendered isosurface, not the raw voxel cubes — see
-        // `raycast_surface`'s docs for why the cube-stepping raycast misses
-        // most of what the player can actually see.
-        let hit = raycast::raycast_surface(grid, origin, dir, max_distance)?;
-        // material_at is guaranteed Some here — raycast only stops on solid voxels.
-        let old_material_id = grid.material_at(hit.block_pos)?;
-        let resource_id = grid.resource_at(hit.block_pos);
-        grid.mutator().remove(hit.block_pos);
-
-        let yield_ = resource_id.map(|resource_id| {
-            let yield_ = ResourceYield {
-                resource_id,
-                amount: 1,
-            };
+        let outcome = self.dig(grid, origin, dir, max_distance)?;
+        if let Some(yield_) = outcome.yield_ {
             self.deposit(yield_);
-            yield_
-        });
-
-        Some(MineOutcome {
-            block_pos: hit.block_pos,
-            old_material_id,
-            distance: hit.distance,
-            yield_,
-        })
+        }
+        Some(outcome)
     }
 }
 

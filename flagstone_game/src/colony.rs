@@ -1,6 +1,6 @@
 //! Colony state: the orders the player has given the world, independent of any pawn.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use crate::inventory::Inventory;
 use crate::pawn::PawnId;
@@ -28,54 +28,55 @@ pub struct MineMark {
 }
 
 /// The blocks marked for mining, keyed by block position.
-///
-/// A set while a mark carries no data (`clippy::zero_sized_map_values`); it becomes a map
-/// from position to [`MineMark`] when a mark gains a claim.
 #[derive(Debug, Default)]
 pub struct MineMarks {
-    marks: BTreeSet<[i32; 3]>,
+    marks: BTreeMap<[i32; 3], MineMark>,
 }
 
 impl MineMarks {
-    /// Marks an unmarked block and cancels a marked one.
+    /// Marks an unmarked block and cancels a marked one; a cancelled mark takes its claim along.
     pub fn toggle(&mut self, pos: [i32; 3]) -> MarkChange {
-        if self.marks.remove(&pos) {
+        if self.marks.remove(&pos).is_some() {
             MarkChange::Cancelled
         } else {
-            self.marks.insert(pos);
+            self.marks.insert(pos, MineMark::default());
             MarkChange::Marked
         }
     }
 
     pub fn contains(&self, pos: [i32; 3]) -> bool {
-        self.marks.contains(&pos)
+        self.marks.contains_key(&pos)
     }
 
     /// The marked blocks in key order.
     pub fn iter(&self) -> impl Iterator<Item = ([i32; 3], &MineMark)> {
-        self.marks
-            .iter()
-            .map(|pos| (*pos, &MineMark { claimed_by: None }))
+        self.marks.iter().map(|(pos, mark)| (*pos, mark))
     }
 
     /// Gives the mark on `pos` to `pawn`. Returns whether it did: `false` for an unmarked
     /// block or one another pawn already holds.
     pub fn claim(&mut self, pos: [i32; 3], pawn: PawnId) -> bool {
-        let _ = (pos, pawn);
-        todo!("MineMarks::claim")
+        match self.marks.get_mut(&pos) {
+            Some(mark) if mark.claimed_by.is_none_or(|holder| holder == pawn) => {
+                mark.claimed_by = Some(pawn);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Frees the claim on `pos`; the mark stays. Does nothing for an unmarked block.
     pub fn release(&mut self, pos: [i32; 3]) {
-        let _ = pos;
-        todo!("MineMarks::release")
+        if let Some(mark) = self.marks.get_mut(&pos) {
+            mark.claimed_by = None;
+        }
     }
 
     /// The marks nobody holds, in key order.
     pub fn unclaimed(&self) -> impl Iterator<Item = [i32; 3]> + '_ {
-        self.marks
-            .iter()
-            .map(|_| -> [i32; 3] { todo!("MineMarks::unclaimed") })
+        self.iter()
+            .filter(|(_, mark)| mark.claimed_by.is_none())
+            .map(|(pos, _)| pos)
     }
 
     /// Drops the mark on a block that no longer exists; does nothing for an unmarked one.

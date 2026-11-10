@@ -1,28 +1,59 @@
 //! Pathing for pawns over the voxel ground: which cells a pawn can stand in and the way
 //! between two of them.
 
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
+
 use flagstone_voxel::{BlockPos, VoxelGrid};
 use glam::Vec3;
 
 /// Cells a search expands before it gives up.
 pub const ROUTE_NODE_BUDGET: usize = 4096;
 
+/// Cells a body needs free from the feet up, and so the air a standing pawn needs.
+const BODY_CELLS: i32 = 3;
+
 /// Whether a pawn can stand with its feet in `cell`: ground below and the capsule's height
 /// of air from the feet up.
 pub fn standable(grid: &VoxelGrid, cell: BlockPos) -> bool {
-    let _ = (grid, cell);
-    todo!("routing::standable")
+    grid.is_solid_at(cell - BlockPos::Y)
+        && (0..BODY_CELLS).all(|up| !grid.is_solid_at(cell + BlockPos::Y * up))
 }
 
 /// The cell holding `feet`.
 pub fn feet_cell(feet: Vec3) -> BlockPos {
-    let _ = feet;
-    todo!("routing::feet_cell")
+    feet.floor().as_ivec3()
+}
+
+/// The standable cells a pawn in `from` can step to: one block up (with a fourth cell of air
+/// above the current feet), level, or one block down, in each of the four horizontal
+/// directions.
+fn steps(grid: &VoxelGrid, from: BlockPos) -> impl Iterator<Item = BlockPos> + '_ {
+    const HORIZONTAL: [BlockPos; 4] = [BlockPos::X, BlockPos::NEG_X, BlockPos::Z, BlockPos::NEG_Z];
+    let headroom = !grid.is_solid_at(from + BlockPos::Y * BODY_CELLS);
+    HORIZONTAL.into_iter().filter_map(move |d| {
+        let level = from + d;
+        [
+            (headroom, level + BlockPos::Y),
+            (true, level),
+            (true, level - BlockPos::Y),
+        ]
+        .into_iter()
+        .find(|&(allowed, cell)| allowed && standable(grid, cell))
+        .map(|(_, cell)| cell)
+    })
+}
+
+fn horizontal_distance(a: BlockPos, b: BlockPos) -> i32 {
+    (a.x - b.x).abs() + (a.z - b.z).abs()
 }
 
 /// The cheapest walk from `start` to a cell `is_goal` accepts, as the chain of cells from
 /// `start` to the goal inclusive, or `None` when there is none within `budget` expansions.
 /// `toward` steers the search; it does not have to be a goal.
+///
+/// A `start` that is not standable falls back to the cell above, then the one below, for a
+/// pawn whose feet sit slightly in or off a slope.
 pub fn route(
     grid: &VoxelGrid,
     start: BlockPos,
@@ -30,8 +61,59 @@ pub fn route(
     toward: BlockPos,
     budget: usize,
 ) -> Option<Vec<BlockPos>> {
-    let _ = (grid, start, is_goal, toward, budget);
-    todo!("routing::route")
+    let start = [start, start + BlockPos::Y, start - BlockPos::Y]
+        .into_iter()
+        .find(|&cell| standable(grid, cell))?;
+
+    // Ordered by (f, g, insertion order) for a deterministic tie-break.
+    let mut open = BinaryHeap::new();
+    let mut cost = HashMap::from([(start, 0_i32)]);
+    let mut came_from: HashMap<BlockPos, BlockPos> = HashMap::new();
+    let mut inserted = 0_usize;
+    open.push(Reverse((
+        horizontal_distance(start, toward),
+        0,
+        inserted,
+        start.to_array(),
+    )));
+
+    let mut expansions = 0;
+    while let Some(Reverse((_, g, _, cell))) = open.pop() {
+        let cell = BlockPos::from_array(cell);
+        if cost.get(&cell).is_some_and(|&best| best < g) {
+            continue;
+        }
+        if is_goal(cell) {
+            let mut walk = vec![cell];
+            let mut at = cell;
+            while let Some(&previous) = came_from.get(&at) {
+                walk.push(previous);
+                at = previous;
+            }
+            walk.reverse();
+            return Some(walk);
+        }
+        if expansions >= budget {
+            return None;
+        }
+        expansions += 1;
+        for next in steps(grid, cell) {
+            let next_g = g + 1;
+            if cost.get(&next).is_some_and(|&best| best <= next_g) {
+                continue;
+            }
+            cost.insert(next, next_g);
+            came_from.insert(next, cell);
+            inserted += 1;
+            open.push(Reverse((
+                next_g + horizontal_distance(next, toward),
+                next_g,
+                inserted,
+                next.to_array(),
+            )));
+        }
+    }
+    None
 }
 
 #[cfg(test)]

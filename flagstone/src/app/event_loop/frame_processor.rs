@@ -16,6 +16,11 @@ const MOVE_SPEED: f32 = 4.0;
 /// Sprinting speed in m/s.
 const SPRINT_SPEED: f32 = 6.0;
 
+/// A working pawn's walking speed in m/s. Faster than about 3 m/s, a pawn climbing the 45
+/// degree face of a one-block rise carries its upward speed over the crest and leaves the
+/// ground.
+const JOB_WALK_SPEED: f32 = 3.0;
+
 /// Strategy-line walking feel: acceleration and friction high enough to reach speed, or
 /// stop, within a tick. `max_speed` and `air_speed_cap` are set per tick from sprint.
 const STRATEGY_MOVE_SETTINGS: moho_physics::MoveSettings = moho_physics::MoveSettings {
@@ -79,6 +84,10 @@ impl FrameProcessor {
             app.camera = (view, proj, eye);
         }
 
+        if app.simulation.camera_mode() == flagstone_game::controller::CameraMode::Isometric {
+            self.run_pawn_job(app, dt);
+        }
+
         // Step rigid bodies in both KCC and non-KCC paths (test spheres, etc.)
         if !use_kcc {
             self.step_physics_bodies(app, dt);
@@ -86,6 +95,84 @@ impl FrameProcessor {
 
         // Clear zoom delta after use
         app.simulation.controller_input.zoom_delta = 0.0;
+    }
+
+    /// Runs the unpossessed pawn's job for one tick: the walk goes through the same character
+    /// step as the first-person path, the dig through the same mining action. An idle pawn is
+    /// not moved at all.
+    fn run_pawn_job(&self, app: &mut App, dt: f32) {
+        use flagstone_game::jobs::{self, EYE_HEIGHT, JobAction, Pose};
+        use flagstone_game::pawn::{MINE_REACH, PawnId};
+
+        let Some(state) = app
+            .physics
+            .world
+            .as_ref()
+            .zip(app.physics.player)
+            .and_then(|(world, handle)| world.character(handle))
+        else {
+            return;
+        };
+        let Some(light_system) = app.light_system.as_ref() else {
+            return;
+        };
+        let pose = Pose {
+            feet: state.position - glam::Vec3::Y * EYE_HEIGHT,
+            yaw: state.yaw,
+        };
+        let mut job = std::mem::take(&mut app.pawn.job);
+        let action = jobs::step(
+            &mut job,
+            &mut app.pawn,
+            PawnId(0),
+            pose,
+            &mut app.colony.marks,
+            light_system.grid(),
+        );
+        app.pawn.job = job;
+
+        match action {
+            JobAction::Wait => {}
+            JobAction::Walk { to } => {
+                let walk = jobs::steer(pose, to);
+                let command = moho_physics::CharacterCommand {
+                    forward: walk.forward,
+                    yaw_delta: walk.yaw_delta,
+                    ..moho_physics::CharacterCommand::default()
+                };
+                let settings = moho_physics::MoveSettings {
+                    max_speed: JOB_WALK_SPEED,
+                    air_speed_cap: JOB_WALK_SPEED,
+                    ..STRATEGY_MOVE_SETTINGS
+                };
+                let Some(moved) = app.physics.move_character(&command, &settings, dt) else {
+                    tracing::warn!("Pawn job walked but the character did not move");
+                    return;
+                };
+                app.simulation
+                    .set_position_yaw_pitch(moved.position, moved.yaw, moved.pitch);
+            }
+            JobAction::Dig { aim, .. } => {
+                let Some(light_system) = app.light_system.as_mut() else {
+                    return;
+                };
+                let grid = light_system.grid_mut();
+                let eye = state.eye_position();
+                let Some(outcome) = app.pawn.dig(grid, eye, (aim - eye).normalize(), MINE_REACH)
+                else {
+                    tracing::debug!(?aim, "Pawn dig found nothing solid within reach");
+                    return;
+                };
+                if let Some(yield_) = outcome.yield_ {
+                    app.colony.stock.add(yield_.resource_id, yield_.amount);
+                }
+                crate::app::event_loop::event_processor::publish_pawn_dig(
+                    &app.event_bus,
+                    grid,
+                    &outcome,
+                );
+            }
+        }
     }
 
     fn update_game_state_fps_kcc(&self, app: &mut App, dt: f32) {
@@ -410,6 +497,9 @@ impl FrameProcessor {
                         .collect(),
                 });
 
+        let mut colony_stock: Vec<(u32, u32)> = app.colony.stock.iter().collect();
+        colony_stock.sort_by_key(|(resource_id, _)| *resource_id);
+
         let data = flagstone_ui::overlays::HudData {
             player_position: [pos.x, pos.y, pos.z],
             chunk_position: chunk_pos,
@@ -436,7 +526,7 @@ impl FrameProcessor {
                 .collect(),
             selection,
             mine_designation_active: app.input.designation == Designation::Mine,
-            colony_stock: Vec::new(),
+            colony_stock,
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {
