@@ -94,10 +94,14 @@ pub struct WalkStep {
 }
 
 /// Whether feet in `cell` put `block` inside the mining reach: within one column of it in x
-/// and z, between one below and two above it.
+/// and z, between one below and two above it, and not standing on it, so the dig never takes
+/// the pawn's own ground.
 pub fn is_stand_cell(block: BlockPos, cell: BlockPos) -> bool {
     let offset = cell - block;
-    offset.x.abs() <= 1 && offset.z.abs() <= 1 && (-1..=2).contains(&offset.y)
+    offset.x.abs() <= 1
+        && offset.z.abs() <= 1
+        && (-1..=2).contains(&offset.y)
+        && offset != BlockPos::Y
 }
 
 const NEIGHBOURS: [BlockPos; 6] = [
@@ -219,7 +223,7 @@ pub fn step(
     let held = *mark;
     let block = BlockPos::from_array(held);
 
-    if !marks.contains(held) || !grid.is_solid_at(block) {
+    if !marks.contains(held) || !grid.is_solid_at(block) || !has_exposed_face(grid, block) {
         release(job, marks, held);
         return JobAction::Wait;
     }
@@ -763,7 +767,9 @@ mod tests {
                 panic!("still walking: {:?}", site.job);
             };
             assert!(
-                stall.closest.is_some_and(|closest| (closest - 0.4).abs() < EPS),
+                stall
+                    .closest
+                    .is_some_and(|closest| (closest - 0.4).abs() < EPS),
                 "{stall:?}"
             );
             assert_eq!(stall.ticks_without_progress, 0);
