@@ -9,7 +9,6 @@ use crate::pawn::PawnId;
 #[derive(Debug, Default)]
 pub struct Colony {
     pub marks: MineMarks,
-    /// The colony's total of each resource.
     pub stock: Inventory,
 }
 
@@ -23,7 +22,6 @@ pub enum MarkChange {
 /// An order to dig one block.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MineMark {
-    /// The pawn working on the order, if any.
     pub claimed_by: Option<PawnId>,
 }
 

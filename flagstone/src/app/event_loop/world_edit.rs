@@ -7,7 +7,6 @@ use flagstone_voxel::{BlockChangeReason, VoxelGrid, WorldEvent};
 use moho_core::EventBus;
 use moho_core::events::AudioEvent;
 
-/// Cue played where a pawn digs a block.
 const DIG_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/dig.wav");
 const DIG_VOLUME: f32 = 0.6;
 

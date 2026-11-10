@@ -31,7 +31,6 @@ const PROGRESS_EPSILON: f32 = 1e-3;
 /// The eye's height above the feet, metres.
 pub const EYE_HEIGHT: f32 = 1.15;
 
-/// Routes an idle pawn tries in one tick.
 pub const ROUTE_ATTEMPTS_PER_TICK: usize = 4;
 
 /// Where a pawn stands and which way it faces.
@@ -42,7 +41,6 @@ pub struct Pose {
     pub yaw: f32,
 }
 
-/// Watches a walk for lack of progress.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StallGuard {
     pub ticks_without_progress: u32,
@@ -50,7 +48,6 @@ pub struct StallGuard {
     pub closest: Option<f32>,
 }
 
-/// A pawn's current job.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Job {
     Idle {
@@ -59,11 +56,9 @@ pub enum Job {
         tried: usize,
     },
     Mine {
-        /// The marked block this pawn holds.
         mark: [i32; 3],
         /// Cells to walk, from the pawn's cell to the stand cell.
         route: Vec<BlockPos>,
-        /// Index into `route` of the waypoint being walked to.
         next: usize,
         stall: StallGuard,
     },
@@ -75,7 +70,6 @@ impl Default for Job {
     }
 }
 
-/// What the pawn should do this tick.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum JobAction {
     Wait,
@@ -127,7 +121,6 @@ fn horizontal_distance(a: Vec3, b: Vec3) -> f32 {
     (a.x - b.x).hypot(a.z - b.z)
 }
 
-/// Lets go of `mark`, returning the job to idle.
 fn release(job: &mut Job, marks: &mut MineMarks, mark: [i32; 3]) {
     marks.release(mark);
     *job = Job::default();
@@ -266,7 +259,6 @@ pub fn step(
     JobAction::Walk { to }
 }
 
-/// The feet position that stands centred in `cell`.
 fn waypoint_centre(cell: BlockPos) -> Vec3 {
     Vec3::new(cell.x as f32 + 0.5, cell.y as f32, cell.z as f32 + 0.5)
 }
@@ -301,7 +293,6 @@ mod tests {
         BlockPos::new(x, y, z)
     }
 
-    /// The feet position that stands centred in `c`.
     fn centre(c: BlockPos) -> Vec3 {
         Vec3::new(c.x as f32 + 0.5, c.y as f32, c.z as f32 + 0.5)
     }

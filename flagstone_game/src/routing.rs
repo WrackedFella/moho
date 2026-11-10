@@ -20,7 +20,6 @@ pub fn standable(grid: &VoxelGrid, cell: BlockPos) -> bool {
         && (0..BODY_CELLS).all(|up| !grid.is_solid_at(cell + BlockPos::Y * up))
 }
 
-/// The cell holding `feet`.
 pub fn feet_cell(feet: Vec3) -> BlockPos {
     feet.floor().as_ivec3()
 }

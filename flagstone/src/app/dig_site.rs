@@ -13,7 +13,6 @@ use moho_app::{HeadlessLoop, LoopConfig};
 pub(crate) const GROUND_TOP: i32 = 7;
 /// Material of the field and of every block placed on it.
 const STONE: u32 = 0;
-/// The cell the pawn starts in.
 pub(crate) const PAWN_CELL: [i32; 3] = [12, GROUND_TOP + 1, 12];
 /// The capsule centre is this far above the feet.
 const CENTRE_HEIGHT: f32 = 1.15;
@@ -59,7 +58,6 @@ pub(crate) fn dig_site(blocks: &[Block]) -> App {
     app
 }
 
-/// Where the pawn's capsule centre starts.
 pub(crate) fn pawn_start() -> Vec3 {
     Vec3::new(
         PAWN_CELL[0] as f32 + 0.5,
@@ -68,7 +66,6 @@ pub(crate) fn pawn_start() -> Vec3 {
     )
 }
 
-/// The pawn's character as the physics world has it.
 pub(crate) fn pawn_state(app: &App) -> moho_physics::CharacterState {
     app.physics
         .world
