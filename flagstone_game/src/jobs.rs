@@ -127,6 +127,12 @@ fn horizontal_distance(a: Vec3, b: Vec3) -> f32 {
     (a.x - b.x).hypot(a.z - b.z)
 }
 
+/// Lets go of `mark`, returning the job to idle.
+fn release(job: &mut Job, marks: &mut MineMarks, mark: [i32; 3]) {
+    marks.release(mark);
+    *job = Job::default();
+}
+
 /// The centre of the exposed face of `block` nearest `eye`.
 fn nearest_exposed_face(grid: &VoxelGrid, block: BlockPos, eye: Vec3) -> Vec3 {
     let centre = block.as_vec3() + Vec3::splat(0.5);
@@ -217,34 +223,29 @@ pub fn step(
     else {
         return JobAction::Wait;
     };
-    let block = BlockPos::from_array(*mark);
+    let held = *mark;
+    let block = BlockPos::from_array(held);
 
-    if !marks.contains(*mark) || !grid.is_solid_at(block) {
-        marks.release(*mark);
-        *job = Job::default();
+    if !marks.contains(held) || !grid.is_solid_at(block) {
+        release(job, marks, held);
         return JobAction::Wait;
     }
 
     let arrived =
         |cell: BlockPos| horizontal_distance(pose.feet, waypoint_centre(cell)) <= ARRIVE_RADIUS;
-    let before = *next;
     while route.get(*next).is_some_and(|&cell| arrived(cell)) {
         *next += 1;
-    }
-    if *next != before {
         *stall = StallGuard::default();
     }
 
     let Some(&waypoint) = route.get(*next) else {
-        marks.release(*mark);
         let aim = nearest_exposed_face(grid, block, eye(pose.feet));
-        *job = Job::default();
+        release(job, marks, held);
         return JobAction::Dig { block, aim };
     };
     let to = waypoint_centre(waypoint);
     if !standable(grid, waypoint) {
-        marks.release(*mark);
-        *job = Job::default();
+        release(job, marks, held);
         return JobAction::Wait;
     }
 
@@ -259,8 +260,7 @@ pub fn step(
         stall.ticks_without_progress += 1;
     }
     if stall.ticks_without_progress >= STALL_TICKS {
-        marks.release(*mark);
-        *job = Job::default();
+        release(job, marks, held);
         return JobAction::Wait;
     }
     JobAction::Walk { to }

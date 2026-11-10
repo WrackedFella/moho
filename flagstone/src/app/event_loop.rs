@@ -12,6 +12,7 @@
 pub mod event_processor;
 pub mod frame_processor;
 pub mod generation_processor;
+pub mod world_edit;
 
 pub use event_processor::EventProcessor;
 pub use frame_processor::FrameProcessor;

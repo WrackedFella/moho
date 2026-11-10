@@ -44,7 +44,7 @@ fn steps(grid: &VoxelGrid, from: BlockPos) -> impl Iterator<Item = BlockPos> + '
     })
 }
 
-fn horizontal_distance(a: BlockPos, b: BlockPos) -> i32 {
+fn manhattan_xz(a: BlockPos, b: BlockPos) -> i32 {
     (a.x - b.x).abs() + (a.z - b.z).abs()
 }
 
@@ -67,11 +67,12 @@ pub fn route(
 
     // Ordered by (f, g, insertion order) for a deterministic tie-break.
     let mut open = BinaryHeap::new();
-    let mut cost = HashMap::from([(start, 0_i32)]);
-    let mut came_from: HashMap<BlockPos, BlockPos> = HashMap::new();
+    // Best known cost to each reached cell, and the cell it was reached from.
+    let mut reached: HashMap<BlockPos, (i32, Option<BlockPos>)> = HashMap::with_capacity(budget);
+    reached.insert(start, (0, None));
     let mut inserted = 0_usize;
     open.push(Reverse((
-        horizontal_distance(start, toward),
+        manhattan_xz(start, toward),
         0,
         inserted,
         start.to_array(),
@@ -80,13 +81,13 @@ pub fn route(
     let mut expansions = 0;
     while let Some(Reverse((_, g, _, cell))) = open.pop() {
         let cell = BlockPos::from_array(cell);
-        if cost.get(&cell).is_some_and(|&best| best < g) {
+        if reached.get(&cell).is_some_and(|&(best, _)| best < g) {
             continue;
         }
         if is_goal(cell) {
             let mut walk = vec![cell];
             let mut at = cell;
-            while let Some(&previous) = came_from.get(&at) {
+            while let Some(&(_, Some(previous))) = reached.get(&at) {
                 walk.push(previous);
                 at = previous;
             }
@@ -99,14 +100,13 @@ pub fn route(
         expansions += 1;
         for next in steps(grid, cell) {
             let next_g = g + 1;
-            if cost.get(&next).is_some_and(|&best| best <= next_g) {
+            if reached.get(&next).is_some_and(|&(best, _)| best <= next_g) {
                 continue;
             }
-            cost.insert(next, next_g);
-            came_from.insert(next, cell);
+            reached.insert(next, (next_g, Some(cell)));
             inserted += 1;
             open.push(Reverse((
-                next_g + horizontal_distance(next, toward),
+                next_g + manhattan_xz(next, toward),
                 next_g,
                 inserted,
                 next.to_array(),

@@ -6,6 +6,7 @@
 //! - Graphics events (time of day, lighting)
 //! - Input events (mouse wheel, keyboard)
 
+use super::world_edit::publish_removal;
 use crate::input_event::InputEvent;
 use crate::{App, RenderRequest};
 use flagstone_game::pawn::MINE_REACH;
@@ -17,9 +18,6 @@ use std::collections::HashSet;
 /// Cue played when a mined block yields a resource.
 const PICKUP_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/pickup.wav");
 const PICKUP_VOLUME: f32 = 0.6;
-/// Cue played where a pawn digs a block.
-const DIG_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/dig.wav");
-const DIG_VOLUME: f32 = 0.6;
 
 // ── Spawn / interaction constants ──────────────────────────────────────
 const MOUSE_WHEEL_ZOOM_FACTOR: f32 = 0.5;
@@ -30,45 +28,6 @@ const DEFAULT_POINT_LIGHT_INTENSITY: f32 = 5.0;
 const DEFAULT_POINT_LIGHT_RANGE: f32 = 20.0;
 /// Console markers' colour: translucent amber, linear RGBA with straight alpha.
 const MARKER_COLOR: [f32; 4] = [1.0, 0.55, 0.0, 0.35];
-
-/// Publishes the removal of the block `outcome` dug: `BlockRemoved`, then a remesh of every
-/// chunk whose surface the block shapes.
-fn publish_removal(
-    event_bus: &moho_core::EventBus,
-    grid: &flagstone_voxel::VoxelGrid,
-    outcome: &flagstone_game::pawn::MineOutcome,
-    reason: BlockChangeReason,
-) {
-    let dirty_chunks: Vec<_> =
-        flagstone_voxel::chunks_meshed_from(outcome.block_pos, grid.chunk_size()).collect();
-
-    event_bus.publish(WorldEvent::BlockRemoved {
-        position: outcome.block_pos,
-        old_material_id: outcome.old_material_id,
-        reason,
-    });
-    for chunk_pos in dirty_chunks {
-        event_bus.publish(WorldEvent::ChunkMeshDirty {
-            chunk_pos,
-            terrain_dirty: true,
-            structure_dirty: true,
-        });
-    }
-}
-
-/// Publishes a pawn's dig: the removal, and the dig cue at the block's centre.
-pub(crate) fn publish_pawn_dig(
-    event_bus: &moho_core::EventBus,
-    grid: &flagstone_voxel::VoxelGrid,
-    outcome: &flagstone_game::pawn::MineOutcome,
-) {
-    publish_removal(event_bus, grid, outcome, BlockChangeReason::Mechanic);
-    event_bus.publish(AudioEvent::PlaySoundAt {
-        path: DIG_SOUND.to_string(),
-        volume: DIG_VOLUME,
-        position: outcome.block_pos.as_vec3() + glam::Vec3::splat(0.5),
-    });
-}
 
 /// Handles processing of all event types
 pub struct EventProcessor;

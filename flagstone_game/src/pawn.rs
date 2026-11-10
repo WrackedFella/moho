@@ -135,9 +135,9 @@ impl Pawn {
         grid: &mut VoxelGrid,
         origin: Vec3,
         dir: Vec3,
-        max_distance: f32,
+        reach: f32,
     ) -> Option<MineOutcome> {
-        let outcome = self.dig(grid, origin, dir, max_distance)?;
+        let outcome = self.dig(grid, origin, dir, reach)?;
         if let Some(yield_) = outcome.yield_ {
             self.deposit(yield_);
         }

@@ -4,6 +4,7 @@
 
 use crate::App;
 use crate::app::event_loop::event_processor::{lod_for_chunk, lod_player_chunk};
+use crate::app::event_loop::world_edit::apply_pawn_dig;
 use crate::app::input_state::Designation;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -38,6 +39,23 @@ const STRATEGY_MOVE_SETTINGS: moho_physics::MoveSettings = moho_physics::MoveSet
     prone_ticks: 0,
     lean_ticks: 0,
 };
+
+/// The character command and move settings that carry out one tick of a pawn's walk.
+fn job_walk_command(
+    walk: flagstone_game::jobs::WalkStep,
+) -> (moho_physics::CharacterCommand, moho_physics::MoveSettings) {
+    let command = moho_physics::CharacterCommand {
+        forward: walk.forward,
+        yaw_delta: walk.yaw_delta,
+        ..moho_physics::CharacterCommand::default()
+    };
+    let settings = moho_physics::MoveSettings {
+        max_speed: JOB_WALK_SPEED,
+        air_speed_cap: JOB_WALK_SPEED,
+        ..STRATEGY_MOVE_SETTINGS
+    };
+    (command, settings)
+}
 
 /// Handles frame timing and game state updates
 pub struct FrameProcessor;
@@ -113,11 +131,12 @@ impl FrameProcessor {
         else {
             return;
         };
-        let Some(light_system) = app.light_system.as_ref() else {
+        let Some(light_system) = app.light_system.as_mut() else {
             return;
         };
+        let eye = state.eye_position();
         let pose = Pose {
-            feet: state.position - glam::Vec3::Y * EYE_HEIGHT,
+            feet: eye - glam::Vec3::Y * EYE_HEIGHT,
             yaw: state.yaw,
         };
         let mut job = std::mem::take(&mut app.pawn.job);
@@ -134,17 +153,7 @@ impl FrameProcessor {
         match action {
             JobAction::Wait => {}
             JobAction::Walk { to } => {
-                let walk = jobs::steer(pose, to);
-                let command = moho_physics::CharacterCommand {
-                    forward: walk.forward,
-                    yaw_delta: walk.yaw_delta,
-                    ..moho_physics::CharacterCommand::default()
-                };
-                let settings = moho_physics::MoveSettings {
-                    max_speed: JOB_WALK_SPEED,
-                    air_speed_cap: JOB_WALK_SPEED,
-                    ..STRATEGY_MOVE_SETTINGS
-                };
+                let (command, settings) = job_walk_command(jobs::steer(pose, to));
                 let Some(moved) = app.physics.move_character(&command, &settings, dt) else {
                     tracing::warn!("Pawn job walked but the character did not move");
                     return;
@@ -153,24 +162,13 @@ impl FrameProcessor {
                     .set_position_yaw_pitch(moved.position, moved.yaw, moved.pitch);
             }
             JobAction::Dig { aim, .. } => {
-                let Some(light_system) = app.light_system.as_mut() else {
-                    return;
-                };
                 let grid = light_system.grid_mut();
-                let eye = state.eye_position();
                 let Some(outcome) = app.pawn.dig(grid, eye, (aim - eye).normalize(), MINE_REACH)
                 else {
                     tracing::debug!(?aim, "Pawn dig found nothing solid within reach");
                     return;
                 };
-                if let Some(yield_) = outcome.yield_ {
-                    app.colony.stock.add(yield_.resource_id, yield_.amount);
-                }
-                crate::app::event_loop::event_processor::publish_pawn_dig(
-                    &app.event_bus,
-                    grid,
-                    &outcome,
-                );
+                apply_pawn_dig(&app.event_bus, &mut app.colony.stock, grid, &outcome);
             }
         }
     }
