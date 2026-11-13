@@ -1717,7 +1717,7 @@ mod tests {
         fn paused_game_does_not_advance_the_autosave_schedule() {
             for state in [GameState::Paused, GameState::Menu, GameState::ConsoleOpen] {
                 let mut app = playing_app();
-                app.autosave_interval = Duration::from_secs(1);
+                app.autosave_interval = Some(Duration::from_secs(1));
                 app.restart_autosave();
                 app.autosave.mark_edited();
                 app.game_state = state;
