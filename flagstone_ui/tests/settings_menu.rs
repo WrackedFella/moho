@@ -586,6 +586,119 @@ fn egui_lone_modifier_while_listening_binds_the_row() {
     assert!(!menu.is_listening());
 }
 
+fn modifier_frame(menu: &mut SettingsMenu, modifiers: egui::Modifiers) {
+    render_frame(menu, vec![egui::Event::ModifiersChanged(modifiers)]);
+}
+
+/// Opens the conflict prompt on Move Forward with Shift, then sends Shift up and Alt down.
+fn open_prompt_then_stray_alt(menu: &mut SettingsMenu) {
+    menu.start_listening(0);
+    modifier_frame(menu, egui::Modifiers::SHIFT);
+    modifier_frame(menu, egui::Modifiers::NONE);
+    modifier_frame(menu, egui::Modifiers::ALT);
+}
+
+fn staged_vectors(menu: &SettingsMenu) -> Vec<Vec<Binding>> {
+    (0..ROW_ACTIONS.len())
+        .map(|i| menu.get_staged_binding(i).to_vec())
+        .collect()
+}
+
+fn sprint_pad() -> Binding {
+    Binding::pad(PadInput::Button(PadButton::LeftThumb))
+}
+
+/// The prompt names the contested key and the action holding it.
+#[test]
+fn conflicting_key_names_key_and_holder() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(0);
+    modifier_frame(&mut menu, egui::Modifiers::SHIFT);
+    let shift_prompt = (
+        menu.conflict_modal().conflict_key_name().to_string(),
+        menu.conflict_modal().conflict_binding_desc().to_string(),
+    );
+    let shift_listening = menu.is_listening();
+    Screen::on_modal_cancel(&mut menu);
+
+    menu.start_listening(0);
+    render_frame(&mut menu, vec![key_event(egui::Key::S, true)]);
+    let s_prompt = (
+        menu.conflict_modal().conflict_key_name().to_string(),
+        menu.conflict_modal().conflict_binding_desc().to_string(),
+    );
+    let s_listening = menu.is_listening();
+
+    assert_eq!(shift_prompt, ("Sprint".to_string(), "Shift".to_string()));
+    assert!(!shift_listening, "Shift conflict must end listening");
+    assert_eq!(s_prompt, ("Move Back".to_string(), "S".to_string()));
+    assert!(!s_listening, "S conflict must end listening");
+}
+
+/// A key pressed after a modifier conflict binds nothing, whatever the key order.
+#[test]
+fn keys_pressed_while_prompt_open_bind_nothing() {
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let before = staged_vectors(&menu);
+
+    open_prompt_then_stray_alt(&mut menu);
+
+    assert_eq!(staged_vectors(&menu), before);
+    assert!(!menu.is_listening());
+    assert!(
+        !staged_vectors(&menu)
+            .iter()
+            .flatten()
+            .any(|b| *b == Binding::key(Key::Alt)),
+        "Alt must not be bound"
+    );
+}
+
+/// Confirming applies Shift only, even after a stray Alt press.
+#[test]
+fn confirm_after_stray_key_applies_only_prompted_key() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let before = staged_vectors(&menu);
+    open_prompt_then_stray_alt(&mut menu);
+
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+    Screen::on_modal_confirm(&mut menu);
+
+    let mut expected = before;
+    expected[0] = vec![Binding::key(Key::Shift), pad_stick(StickDir::Up)];
+    expected[6] = vec![sprint_pad()];
+    assert_eq!(staged_vectors(&menu), expected);
+    assert!(!menu.is_listening());
+}
+
+/// Cancelling after a stray Alt press leaves every binding as it was.
+#[test]
+fn cancel_after_stray_key_changes_nothing() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let before = staged_vectors(&menu);
+    open_prompt_then_stray_alt(&mut menu);
+
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+    Screen::on_modal_cancel(&mut menu);
+
+    assert_eq!(staged_vectors(&menu), before);
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::W), pad_stick(StickDir::Up)]
+    );
+    assert_eq!(
+        menu.get_staged_binding(6),
+        [Binding::key(Key::Shift), sprint_pad()]
+    );
+    assert!(!menu.is_listening());
+}
+
 /// Rebinding a row replaces its plain key and keeps its hold bindings, in the settings text too.
 #[test]
 fn rebinding_sprint_keeps_its_hold_bindings() {
