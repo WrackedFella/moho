@@ -6,8 +6,10 @@
 //! - Graphics events (time of day, lighting)
 //! - Input events (mouse wheel, keyboard)
 
+use super::world_edit::publish_removal;
 use crate::input_event::InputEvent;
 use crate::{App, RenderRequest};
+use flagstone_game::pawn::MINE_REACH;
 use flagstone_voxel::{BlockChangeReason, CRYSTAL_MATERIAL_ID, VoxelChunk, WorldEvent};
 use moho_core::events::{AudioEvent, GraphicsEvent, UiEvent};
 use moho_render_api::{Marker, MarkerId};
@@ -22,10 +24,6 @@ const MOUSE_WHEEL_ZOOM_FACTOR: f32 = 0.5;
 const SPAWN_RAYCAST_MAX_DISTANCE: f32 = 100.0;
 const SPAWN_NORMAL_OFFSET: f32 = 0.5;
 const SPAWN_FALLBACK_DISTANCE: f32 = 5.0;
-/// Maximum reach for the player's direct mining action — shorter than
-/// `SPAWN_RAYCAST_MAX_DISTANCE`, which is a debug-console placement aid, not
-/// a gameplay reach limit.
-const MINE_MAX_DISTANCE: f32 = 8.0;
 const DEFAULT_POINT_LIGHT_INTENSITY: f32 = 5.0;
 const DEFAULT_POINT_LIGHT_RANGE: f32 = 20.0;
 /// Console markers' colour: translucent amber, linear RGBA with straight alpha.
@@ -233,29 +231,15 @@ impl EventProcessor {
         };
         let grid = light_system.grid_mut();
 
-        let Some(outcome) = app.pawn.mine(grid, camera_pos, forward, MINE_MAX_DISTANCE) else {
+        let Some(outcome) = app.pawn.mine(grid, camera_pos, forward, MINE_REACH) else {
             tracing::debug!(
-                distance = MINE_MAX_DISTANCE,
+                distance = MINE_REACH,
                 "Mine attempt found nothing solid within range"
             );
             return;
         };
 
-        let dirty_chunks: Vec<_> =
-            flagstone_voxel::chunks_meshed_from(outcome.block_pos, grid.chunk_size()).collect();
-
-        app.event_bus.publish(WorldEvent::BlockRemoved {
-            position: outcome.block_pos,
-            old_material_id: outcome.old_material_id,
-            reason: BlockChangeReason::Player,
-        });
-        for chunk_pos in dirty_chunks {
-            app.event_bus.publish(WorldEvent::ChunkMeshDirty {
-                chunk_pos,
-                terrain_dirty: true,
-                structure_dirty: true,
-            });
-        }
+        publish_removal(&app.event_bus, grid, &outcome, BlockChangeReason::Player);
 
         if let Some(y) = outcome.yield_ {
             app.event_bus.publish(AudioEvent::PlaySound {
@@ -1720,5 +1704,87 @@ mod tests {
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
 
         assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
+    }
+
+    fn dig_asset_path() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/dig.wav")
+    }
+
+    #[test]
+    fn dig_asset_exists() {
+        let path = dig_asset_path();
+
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+
+        assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
+    }
+
+    #[test]
+    fn a_pawn_dig_publishes_the_removal_and_the_cue() {
+        use crate::app::dig_site::{block_exists, dig_site, run_until};
+        let target = [16, 8, 12];
+        for resource in [Some(7), None] {
+            let mut app = dig_site(&[(target, resource)]);
+            app.colony.marks.toggle(target);
+            let removed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let dirty = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let (removed_sink, dirty_sink) = (
+                std::sync::Arc::clone(&removed),
+                std::sync::Arc::clone(&dirty),
+            );
+            app.event_bus.subscribe(move |e: &WorldEvent| match e {
+                WorldEvent::BlockRemoved { position, .. } => {
+                    removed_sink.lock().unwrap().push(position.to_array());
+                }
+                WorldEvent::ChunkMeshDirty { chunk_pos, .. } => {
+                    dirty_sink.lock().unwrap().push(*chunk_pos);
+                }
+                _ => {}
+            });
+            let _ = app.audio_event_rx.try_iter().count();
+
+            let done = run_until(&mut app, 900, |app| !block_exists(app, target));
+            app.event_bus.process_deferred();
+
+            assert!(done, "{resource:?}: the pawn never dug");
+            assert_eq!(*removed.lock().unwrap(), [target], "{resource:?}");
+            assert!(
+                dirty.lock().unwrap().contains(&glam::IVec3::new(1, 0, 0)),
+                "{resource:?}: the chunk holding the block is not re-meshed"
+            );
+            let cues: Vec<(String, f32, glam::Vec3)> = app
+                .audio_event_rx
+                .try_iter()
+                .filter_map(|event| match event {
+                    AudioEvent::PlaySoundAt {
+                        path,
+                        volume,
+                        position,
+                    } => Some((path, volume, position)),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(cues.len(), 1, "{resource:?}: one cue per dig: {cues:?}");
+            let (path, volume, position) = &cues[0];
+            assert_eq!(std::path::Path::new(path), dig_asset_path().as_path());
+            assert!(*volume > 0.0, "audible");
+            assert!(
+                position.distance(glam::Vec3::new(16.5, 8.5, 12.5)) < 1e-3,
+                "the cue is not at the block's centre: {position:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn hand_mining_fills_the_pawn_not_the_colony() {
+        let mut app = app_aimed_at_block_with(Some(7));
+
+        EventProcessor::new().handle_input_event(&mut app, InputEvent::MineRequested);
+
+        assert_eq!(app.pawn.inventory.count(7), 1);
+        assert!(
+            app.colony.stock.is_empty(),
+            "only pawn jobs feed the colony"
+        );
     }
 }

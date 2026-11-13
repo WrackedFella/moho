@@ -60,6 +60,9 @@ impl Overlay for RtsHud {
         if let Some(selection) = &data.selection {
             render_selection(ui, selection);
         }
+        if !data.colony_stock.is_empty() {
+            render_colony_stock(ui, &data.colony_stock);
+        }
     }
 
     fn take_intents(&mut self, out: &mut HudIntents) {
@@ -91,6 +94,20 @@ fn render_selection(ui: &mut egui::Ui, selection: &SelectionHud) {
                         ui.label(egui::RichText::new(format!("{name}: {count}")).color(colour));
                     }
                 });
+        });
+}
+
+/// The colony's total of each resource, one `R<id> ×<n>` line apiece, bottom left.
+fn render_colony_stock(ui: &mut egui::Ui, stock: &[(u32, u32)]) {
+    let colour = egui::Color32::from_rgb(220, 220, 200);
+    egui::Area::new("rts_colony_stock".into())
+        .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(12.0, -12.0))
+        .show(ui.ctx(), |ui| {
+            for (resource_id, count) in stock {
+                ui.label(
+                    egui::RichText::new(format!("R{resource_id} \u{d7}{count}")).color(colour),
+                );
+            }
         });
 }
 
@@ -617,5 +634,29 @@ mod tests {
             "past margin: {bounds:?}"
         );
         assert!(bounds.min.y < 100.0, "not at top: {bounds:?}");
+    }
+
+    fn stocked_data(is_fps_mode: bool) -> HudData {
+        HudData {
+            is_fps_mode,
+            colony_stock: vec![(2, 5), (7, 3)],
+            ..strategy_data(TOP)
+        }
+    }
+
+    #[test]
+    fn strategy_hud_lists_the_colony_totals() {
+        let drawn = drawn_texts(&stocked_data(false));
+        let none = drawn_texts(&strategy_data(TOP));
+
+        let position = |label: &str| drawn.iter().position(|t| t == label);
+        let (first, second) = (position("R2 \u{d7}5"), position("R7 \u{d7}3"));
+        assert!(first.is_some(), "no line for resource 2: {drawn:?}");
+        assert!(second.is_some(), "no line for resource 7: {drawn:?}");
+        assert!(first < second, "not in the order given: {drawn:?}");
+        assert!(
+            !none.iter().any(|t| t.starts_with('R')),
+            "a colony with nothing lists nothing: {none:?}"
+        );
     }
 }

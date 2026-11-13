@@ -1381,6 +1381,48 @@ mod tests {
         }
 
         #[test]
+        fn returning_to_first_person_starts_where_the_pawn_walked_to() {
+            use crate::app::dig_site::{dig_site, pawn_start, pawn_state};
+            let target = [24, 8, 12];
+            let mut app = dig_site(&[(target, Some(7))]);
+            app.colony.marks.toggle(target);
+            let focus = app.simulation.player_controller.rts_look_target;
+            for _ in 0..40 {
+                step(&mut app);
+            }
+            let walked_to = pawn_state(&app).position;
+            assert!(
+                app.simulation.position().distance(walked_to) < 1e-3,
+                "the simulation pose {:?} lags the pawn at {walked_to:?}",
+                app.simulation.position()
+            );
+            let focus_after = app.simulation.player_controller.rts_look_target;
+            assert!(
+                (focus_after.x - focus.x).abs() < 1e-6 && (focus_after.z - focus.z).abs() < 1e-6,
+                "the walk moved the strategy camera's focus: {focus:?} to {focus_after:?}"
+            );
+            assert!(
+                walked_to.distance(pawn_start()) > 1.5,
+                "the pawn did not walk: {walked_to:?}"
+            );
+
+            tap(&mut app);
+            step(&mut app);
+
+            assert_eq!(mode(&app), CameraMode::FirstPerson);
+            let (position, _) = pose(&app);
+            assert!(
+                position.distance(pawn_state(&app).position) < 1e-3,
+                "possession starts at {position:?}, the pawn stands at {:?}",
+                pawn_state(&app).position
+            );
+            assert!(
+                position.distance(pawn_start()) > 1.5,
+                "possession starts back at the spawn: {position:?}"
+            );
+        }
+
+        #[test]
         fn switch_publishes_the_placeholder_cue() {
             let mut app = app_in(CameraMode::Isometric);
             let audio = record_audio(&app);

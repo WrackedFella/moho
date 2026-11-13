@@ -5,6 +5,7 @@
 | `pickup.wav` | A placeholder pickup cue: a 0.1 s rising blip (22.05 kHz, mono, 16-bit). |
 | `mark.wav` | A placeholder cue for marking a block for mining: a 0.1 s rising blip (520 to 780 Hz, same format). |
 | `unmark.wav` | A placeholder cue for cancelling a mark: the same blip falling (780 to 520 Hz). |
+| `dig.wav` | A placeholder cue for a pawn digging a block: a 0.15 s falling thud with a little noise (22.05 kHz, mono, 16-bit). |
 
 ## Origin
 
@@ -19,6 +20,9 @@ from. Regenerate it with:
 ```bash
 python3 -I flagstone/assets/tools/make_pickup.py
 ```
+
+`dig.wav` is generated the same way by `tools/make_dig.py`
+(`python3 -I flagstone/assets/tools/make_dig.py`); its noise comes from a fixed-seed generator.
 
 The output is deterministic, so a rerun with an unchanged script leaves the file unchanged.
 
