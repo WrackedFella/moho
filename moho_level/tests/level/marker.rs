@@ -125,6 +125,73 @@ fn scaled_parent_scales_position_not_rotation() {
 }
 
 #[test]
+fn marker_scale_is_read_with_position_and_facing() {
+    let node = empty(
+        "zone_safe",
+        Xform::Trs {
+            t: [3.0, 1.0, -2.0],
+            r: Quat::IDENTITY.to_array(),
+            s: [4.0, 2.0, 6.0],
+        },
+    );
+
+    let level = load_nodes(vec![node], vec![0]);
+
+    assert_eq!(names(&level), ["zone_safe"]);
+    assert_at(level.markers[0].scale, Vec3::new(4.0, 2.0, 6.0));
+    assert_at(level.markers[0].position, Vec3::new(3.0, 1.0, -2.0));
+    assert_facing(level.markers[0].rotation, Quat::IDENTITY);
+}
+
+#[test]
+fn parent_scale_multiplies_into_marker_scale() {
+    let parent = Node {
+        xform: Xform::scale([2.0, 2.0, 2.0]),
+        children: vec![1],
+        ..Node::default()
+    };
+    let child = empty("zone_safe", Xform::scale([2.0, 3.0, 4.0]));
+
+    let level = load_nodes(vec![parent, child], vec![0]);
+
+    assert_eq!(names(&level), ["zone_safe"]);
+    assert_at(level.markers[0].scale, Vec3::new(4.0, 6.0, 8.0));
+}
+
+#[test]
+fn rotation_does_not_change_marker_scale() {
+    let node = empty(
+        "zone_safe",
+        Xform::Trs {
+            t: [0.0; 3],
+            r: turn_y(),
+            s: [4.0, 2.0, 6.0],
+        },
+    );
+
+    let level = load_nodes(vec![node], vec![0]);
+
+    assert_at(level.markers[0].scale, Vec3::new(4.0, 2.0, 6.0));
+    assert_facing(level.markers[0].rotation, Quat::from_rotation_y(FRAC_PI_2));
+}
+
+#[test]
+fn mirrored_node_reports_positive_scale() {
+    let node = empty("zone_safe", Xform::scale([-4.0, 2.0, 6.0]));
+
+    let level = load_nodes(vec![node], vec![0]);
+
+    assert_at(level.markers[0].scale, Vec3::new(4.0, 2.0, 6.0));
+}
+
+#[test]
+fn unscaled_marker_has_unit_scale() {
+    let level = load_nodes(vec![empty("zone_safe", Xform::default())], vec![0]);
+
+    assert_at(level.markers[0].scale, Vec3::ONE);
+}
+
+#[test]
 fn string_property_comes_with_marker() {
     let level = marker_with_extras(json!({ "wave": "2" }));
 

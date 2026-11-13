@@ -5,13 +5,15 @@ use gltf::json::{Value, deserialize};
 
 /// A named, mesh-less glTF node: a point in the level that game code gives meaning to.
 ///
-/// Scale is dropped. A zero-scale world matrix decomposes to a NaN rotation (not
-/// guarded); a sheared one gives the closest-fit rotation.
+/// `scale` is the world scale with its sign dropped: a mirrored node still reports a
+/// size, and rotation does not change it. A zero-scale world matrix decomposes to a
+/// NaN rotation (not guarded); a sheared one gives the closest-fit rotation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LevelMarker {
     pub name: String,
     pub position: Vec3,
     pub rotation: Quat,
+    pub scale: Vec3,
     /// The node's `extras` object, one entry per key. Strings are kept as is; any
     /// other JSON value is its compact JSON text.
     pub properties: BTreeMap<String, String>,
@@ -23,11 +25,12 @@ pub(crate) fn from_node(node: &gltf::Node<'_>, world: Mat4) -> Option<LevelMarke
         return None;
     }
     let name = node.name()?;
-    let (_, rotation, position) = world.to_scale_rotation_translation();
+    let (scale, rotation, position) = world.to_scale_rotation_translation();
     Some(LevelMarker {
         name: name.to_owned(),
         position,
         rotation,
+        scale: scale.abs(),
         properties: properties(node, name),
     })
 }
