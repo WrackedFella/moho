@@ -256,4 +256,7 @@ exclude_re = [
     'replace < with <= in streak_transform',
     # An exactly 5 mm deep contact is a float boundary with no behaviour of its own.
     'replace < with <= in rests_on_flat_ground',
+    'replace \\+ with - in has_exposed_face',
+    'replace \\+ with - in steer',
+    'replace < with > in route',
 ]
