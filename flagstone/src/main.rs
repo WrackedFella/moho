@@ -109,7 +109,7 @@ struct App {
     saves_dir: std::path::PathBuf,
 
     /// Time of play between autosaves of an edited world.
-    autosave_interval: std::time::Duration,
+    autosave_interval: Option<std::time::Duration>,
     autosave: app::autosave::AutosaveSchedule,
 
     // Set when the UI asks to quit; `frame` autosaves and leaves the loop
@@ -254,6 +254,8 @@ impl App {
         );
         tracing::info!("Created LightSystem for frame loop integration");
 
+        let autosave_interval = initialized.prefs.autosave_interval();
+
         Self {
             entities: initialized.entities,
             scene,
@@ -274,9 +276,10 @@ impl App {
             pending_frame_cap: None,
             frame_cap_changed: false,
             saves_dir: std::path::PathBuf::from("saves"),
-            autosave_interval: app::autosave::DEFAULT_AUTOSAVE_INTERVAL,
-            autosave: app::autosave::AutosaveSchedule::for_interval(
-                app::autosave::DEFAULT_AUTOSAVE_INTERVAL,
+            autosave_interval,
+            autosave: autosave_interval.map_or_else(
+                app::autosave::AutosaveSchedule::off,
+                app::autosave::AutosaveSchedule::for_interval,
             ),
             exit_requested: false,
             main_menu_requested: false,
@@ -328,7 +331,10 @@ impl App {
 
     /// Called as a world starts, so edits made before it do not count against the new one.
     fn restart_autosave(&mut self) {
-        self.autosave = app::autosave::AutosaveSchedule::for_interval(self.autosave_interval);
+        self.autosave = self.autosave_interval.map_or_else(
+            app::autosave::AutosaveSchedule::off,
+            app::autosave::AutosaveSchedule::for_interval,
+        );
     }
 
     fn generate_new_world(
