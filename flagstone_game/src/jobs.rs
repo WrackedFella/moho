@@ -230,8 +230,12 @@ pub fn step(
 
     let arrived =
         |cell: BlockPos| horizontal_distance(pose.feet, waypoint_centre(cell)) <= ARRIVE_RADIUS;
-    while route.get(*next).is_some_and(|&cell| arrived(cell)) {
-        *next += 1;
+    let reached = route[*next..]
+        .iter()
+        .take_while(|&&cell| arrived(cell))
+        .count();
+    if reached > 0 {
+        *next += reached;
         *stall = StallGuard::default();
     }
 

@@ -84,12 +84,11 @@ pub fn route(
             continue;
         }
         if is_goal(cell) {
-            let mut walk = vec![cell];
-            let mut at = cell;
-            while let Some(&(_, Some(previous))) = reached.get(&at) {
-                walk.push(previous);
-                at = previous;
-            }
+            // A route visits each reached cell at most once, which also bounds the walk back.
+            let mut walk: Vec<BlockPos> =
+                std::iter::successors(Some(cell), |at| reached.get(at).and_then(|&(_, from)| from))
+                    .take(reached.len())
+                    .collect();
             walk.reverse();
             return Some(walk);
         }
