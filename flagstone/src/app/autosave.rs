@@ -34,6 +34,11 @@ impl AutosaveSchedule {
         Self::new(u64::try_from(ticks).unwrap_or(u64::MAX))
     }
 
+    /// `for_interval` for `Some`, `off` for `None`.
+    pub fn from_interval(interval: Option<std::time::Duration>) -> Self {
+        interval.map_or_else(Self::off, Self::for_interval)
+    }
+
     pub fn tick(&mut self) {
         self.ticks_since_save = self.ticks_since_save.saturating_add(1);
     }
