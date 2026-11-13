@@ -197,6 +197,7 @@ jobs:
         with:
           shared-key: gate-ubuntu-latest
           save-if: false
+      # The coordinator applies the verdict rules, so it runs on Opus like the finders.
       # Finders write scratch tests in a review worktree under /tmp, so the review needs Edit,
       # Write and /tmp as a working directory (outside it every command, `just` and `cargo`
       # included, is denied); the head check after it proves nothing was pushed.
@@ -222,6 +223,7 @@ jobs:
           display_report: true
           prompt: /devflow:pr-review ${{ env.PR }}
           claude_args: |
+            --model claude-opus-5-5
             --max-turns 150
             --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never push or merge."
             --add-dir /home/runner/.claude/plugins/cache /tmp
@@ -415,6 +417,7 @@ jobs:
           display_report: true
           prompt: /devflow:pr-review --dry-run ${{ env.RANGE }} ${{ env.ISSUE }} ${{ runner.temp }}/pr-review-dry-run.md
           claude_args: |
+            --model claude-opus-5-5
             --max-turns 150
             --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never push, comment, label or file an issue. ${{ env.CRITIC_NOTE }}"
             --add-dir /home/runner/.claude/plugins/cache /tmp
