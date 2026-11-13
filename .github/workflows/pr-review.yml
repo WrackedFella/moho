@@ -390,7 +390,10 @@ jobs:
           if [ "$CRITIC" = "default" ]; then
             echo "CRITIC_NOTE=" >> "$GITHUB_ENV"
           else
-            echo "CRITIC_NOTE=This is a back-test: run devflow:design-critic with model $CRITIC on either tier." >> "$GITHUB_ENV"
+            # The override names every agent: a note that names only the design critic let a
+            # run move the skill's Fable slot onto the defect finder.
+            if [ "$CRITIC" = "fable" ]; then other="model fable"; else other="its default model (Opus)"; fi
+            echo "CRITIC_NOTE=This is a model back-test. Call devflow:design-critic with $other on either tier. Call devflow:defect-finder and devflow:refuter with their default model (Opus) and never pass model fable to them." >> "$GITHUB_ENV"
           fi
       - name: Install toolchain
         run: |
