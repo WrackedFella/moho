@@ -1,24 +1,47 @@
 name: PR review
 
-# Reviews an open PR with devflow:pr-review and hardens it before a human looks: when
-# the verdict is `changes`, devflow:respond fixes the findings and the workflow
-# re-dispatches itself for another review. At most two fix rounds, then a third review
-# with no fixes. The review is posted as a comment (`PR approval` is unset); a human
-# approves and merges. A PR opened ready, or turned ready, starts round 1. Each review waits
-# for CI on the PR head to finish, and a head that already has a review is skipped. Pushes
-# and PRs made with the default token start no workflow, so the orchestrate job in
-# claude.yml dispatches round 1 itself and this workflow dispatches each later round.
+# Reviews an open PR with devflow:pr-review and, for PRs an agent opened, runs the fix loop
+# with no person involved. The review's first lines carry `Verdict: approve|reject`,
+# `Route: fix|human|none` and `Sign-off: agent|human`. A reject routed `fix` on an agent PR
+# starts devflow:respond, which pushes a fix, and this workflow dispatches the next review
+# on the new head. The skill routes to a person when the loop stalls or passes the cap
+# (repository variable PR_REVIEW_MAX_ROUNDS, default 3); this workflow enforces the cap too.
+# A human merges.
+#
+# Starts: a PR opened ready or marked ready; a dispatch with a PR number (orchestrate in
+# claude.yml dispatches round 1, since its PRs start no workflow, and this workflow
+# dispatches each later round); and a green CI run on a PR head that ci-fix.yml fixed since
+# the last review. Red CI is ci-fix.yml's job: the review skips a head whose CI failed, so
+# the fix step never runs for the same failure twice.
+#
+# A dispatch with a dry-run range reviews two commits against an issue, posts nothing and
+# runs whether or not the review is enabled; the stage 1 back-test uses it.
+#
+# Usage: after each review and fix step, scripts/review-usage.sh records tokens per model
+# (input, output, cache read, cache write, never summed) and the API-rate cost to the Step
+# Summary and one usage comment on the PR. `scripts/review-usage.sh total` totals them.
 on:
   pull_request:
     types: [opened, ready_for_review]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
   workflow_dispatch:
     inputs:
       pr:
-        description: Pull request number
-        required: true
-      round:
-        description: Review round (1 to 3)
-        default: "1"
+        description: Pull request number (empty for a dry run)
+        required: false
+      dry_run_range:
+        description: "Dry run: <base-sha>..<head-sha> to review; posts nothing"
+        required: false
+      dry_run_issue:
+        description: "Dry run: issue number of the work item"
+        required: false
+      dry_run_critic_model:
+        description: "Dry run: design critic model (default: the skill's choice by tier)"
+        type: choice
+        options: [default, opus, fable]
+        default: default
 
 permissions:
   contents: write
@@ -28,7 +51,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pr-review-${{ github.event.pull_request.number || inputs.pr }}
+  group: pr-review-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || inputs.pr || github.run_id }}
   cancel-in-progress: false
 
 jobs:
@@ -37,75 +60,132 @@ jobs:
     # Off unless the repository variable PR_REVIEW_ENABLED is `true`.
     if: >-
       vars.PR_REVIEW_ENABLED == 'true'
-      && (github.event_name == 'workflow_dispatch'
-          || (github.event.pull_request.head.repo.full_name == github.repository
-              && !github.event.pull_request.draft))
+      && ((github.event_name == 'workflow_dispatch' && inputs.pr != '')
+          || (github.event_name == 'pull_request'
+              && github.event.pull_request.head.repo.full_name == github.repository
+              && !github.event.pull_request.draft)
+          || (github.event_name == 'workflow_run'
+              && github.event.workflow_run.event == 'pull_request'
+              && github.event.workflow_run.conclusion == 'success'
+              && github.event.workflow_run.head_repository.full_name == github.repository
+              && github.event.workflow_run.pull_requests[0].number))
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 150
     env:
       GH_TOKEN: ${{ github.token }}
-      PR: ${{ github.event.pull_request.number || inputs.pr }}
-      ROUND: ${{ inputs.round || '1' }}
+      GH_REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || inputs.pr }}
+      MAX_ROUNDS: ${{ vars.PR_REVIEW_MAX_ROUNDS || '3' }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
-      - uses: actions/checkout@v4
+      # With the reviewer App installed (variable REVIEWER_APP_ID, secret REVIEWER_APP_KEY) the
+      # review is posted by that App, a second identity that GitHub lets approve or request
+      # changes on a PR an agent opened. A bad key must not stop reviews: the output stays
+      # empty and the review posts with the default token.
+      - name: Reviewer App token
+        id: app
+        if: vars.REVIEWER_APP_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@v2
         with:
-          fetch-depth: 0
-      # A PR that is closed, merged or has lost its head branch has nothing to review.
+          app-id: ${{ vars.REVIEWER_APP_ID }}
+          private-key: ${{ secrets.REVIEWER_APP_KEY }}
+      # Skips a PR that is closed, has lost its head branch, or whose head already has a
+      # review. A green CI run resumes the loop only when ci-fix.yml commented since the last
+      # review. Reviews count only from the identities this workflow posts with: the repo is
+      # public, and anyone can post a review that starts with `Verdict:`.
       - name: Resolve the PR
         id: pr
+        env:
+          REVIEWERS: '["github-actions[bot]", "${{ steps.app.outputs.app-slug }}[bot]"]'
+          EVENT: ${{ github.event_name }}
+          RUN_HEAD: ${{ github.event.workflow_run.head_sha }}
         run: |
-          read -r state repo ref head_sha < <(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" \
-            --jq '[.state, (.head.repo.full_name // ""), .head.ref, .head.sha] | @tsv')
-          reviewed=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" --paginate \
-            --jq "[.[] | select(.commit_id == \"$head_sha\" and (.body | startswith(\"Verdict:\")))] | length" | awk '{ n += $1 } END { print n + 0 }')
+          read -r state repo ref head_sha author < <(gh api "repos/$GH_REPO/pulls/$PR" \
+            --jq '[.state, (.head.repo.full_name // "-"), .head.ref, .head.sha, .user.login] | @tsv')
+          reviews=$(gh api "repos/$GH_REPO/pulls/$PR/reviews" --paginate \
+            --jq ".[] | select(.user.login as \$u | $REVIEWERS | index(\$u)) | select(.body | startswith(\"Verdict:\"))" | jq -sc .)
+          reviewed=$(jq --arg sha "$head_sha" '[.[] | select(.commit_id == $sha)] | length' <<<"$reviews")
           reason=""
           if [ "$state" != "open" ]; then
             reason="PR #$PR is $state."
-          elif [ -z "$repo" ] || ! gh api "repos/$repo/branches/$ref" --silent 2>/dev/null; then
+          elif [ "$repo" = "-" ] || ! gh api "repos/$repo/branches/$ref" --silent 2>/dev/null; then
             reason="The head branch \`$ref\` of PR #$PR no longer exists."
           elif [ "$reviewed" -gt 0 ]; then
             reason="PR #$PR head $head_sha already has a review."
+          elif [ "$EVENT" = "workflow_run" ]; then
+            last_review=$(jq -r 'map(.submitted_at) | max // ""' <<<"$reviews")
+            last_fix=$(gh api "repos/$GH_REPO/issues/$PR/comments" --paginate \
+              --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("CI fix round"))) | .created_at' | sort | tail -n1)
+            if [ "$RUN_HEAD" != "$head_sha" ]; then
+              reason="CI finished on $RUN_HEAD, but PR #$PR has moved to $head_sha."
+            elif [ -z "$last_fix" ] || [[ "$last_fix" < "$last_review" ]]; then
+              reason="No CI fix on PR #$PR since its last review; nothing to resume."
+            fi
           fi
           if [ -n "$reason" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "Skipped: $reason" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
-      - name: Check out the PR head
+          case "$author" in
+            "claude[bot]"|"github-actions[bot]") echo "agent=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "agent=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+          echo "reviewers=$REVIEWERS" >> "$GITHUB_OUTPUT"
+          echo "HEAD_SHA=$head_sha" >> "$GITHUB_ENV"
+      # The review reads CI as evidence, and a pending check ends it without a verdict, so
+      # wait until every check on the head has finished (this job's own excepted). A head
+      # with no CI run (a push by the default token starts none) is reviewed after five
+      # minutes. Polling costs no tokens.
+      - name: Wait for checks
+        id: ci
         if: steps.pr.outputs.skip != 'true'
-        run: |
-          gh pr checkout "$PR"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          echo "HEAD_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-      # The review reads CI as evidence, and a pending CI ends it without a verdict, so wait
-      # for the CI run on this head before starting Claude. A head with no CI run (a push by
-      # the default token starts none) is reviewed after five minutes. Polling costs no tokens.
-      - name: Wait for CI
-        if: steps.pr.outputs.skip != 'true'
+        env:
+          AGENT: ${{ steps.pr.outputs.agent }}
         run: |
           deadline=$((SECONDS + 2700))
           while [ "$SECONDS" -lt "$deadline" ]; do
-            status=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$HEAD_SHA" \
-              --limit 1 --json status --jq '.[0].status // "none"')
-            if [ "$status" = "completed" ]; then
-              echo "CI finished on $HEAD_SHA." >> "$GITHUB_STEP_SUMMARY"
-              exit 0
-            fi
-            if [ "$status" = "none" ] && [ "$SECONDS" -gt 300 ]; then
-              echo "No CI run for $HEAD_SHA; reviewing without one." >> "$GITHUB_STEP_SUMMARY"
+            read -r status conclusion < <(gh run list --workflow ci.yml --commit "$HEAD_SHA" \
+              --limit 1 --json status,conclusion --jq '.[0] // {} | [(.status // "none"), (.conclusion // "-")] | @tsv')
+            pending=$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/check-runs?per_page=100" --paginate \
+              --jq '[.check_runs[] | select(.status != "completed" and .name != "Review and fix")] | length' |
+              awk '{ n += $1 } END { print n + 0 }')
+            if [ "$pending" -eq 0 ] && { [ "$status" = "completed" ] || { [ "$status" = "none" ] && [ "$SECONDS" -gt 300 ]; }; }; then
+              if [ "$status" = "completed" ] && [ "$conclusion" != "success" ]; then
+                echo "skip=true" >> "$GITHUB_OUTPUT"
+                if [ "$AGENT" = "true" ]; then
+                  echo "Skipped: CI is $conclusion on $HEAD_SHA. CI fix fixes it, and its green run restarts this review." >> "$GITHUB_STEP_SUMMARY"
+                else
+                  echo "Skipped: CI is $conclusion on $HEAD_SHA. Fix it and dispatch this workflow with the PR number." >> "$GITHUB_STEP_SUMMARY"
+                fi
+                exit 0
+              fi
+              echo "Checks finished on $HEAD_SHA (CI: $status)." >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
             sleep 30
           done
-          echo "::error::CI on $HEAD_SHA did not finish in 45 minutes."
+          echo "::error::Checks on $HEAD_SHA did not finish in 45 minutes."
           exit 1
+      - name: Check out the PR head
+        if: steps.pr.outputs.skip != 'true' && steps.ci.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Switch to the PR branch
+        if: steps.pr.outputs.skip != 'true' && steps.ci.outputs.skip != 'true'
+        run: |
+          gh pr checkout "$PR"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
       # Installs the pinned Rust toolchain and the gate's tools (just, nextest, ...).
       - name: Install toolchain
-        if: steps.pr.outputs.skip != 'true'
+        if: steps.pr.outputs.skip != 'true' && steps.ci.outputs.skip != 'true'
         run: |
           bash scripts/cloud-tools.sh --force
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-      - if: steps.pr.outputs.skip != 'true'
+      - if: steps.pr.outputs.skip != 'true' && steps.ci.outputs.skip != 'true'
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         env:
           CARGO_TERM_COLOR: always
@@ -114,45 +194,36 @@ jobs:
         with:
           shared-key: gate-ubuntu-latest
           save-if: false
-      # With the reviewer App installed (variable REVIEWER_APP_ID, secret REVIEWER_APP_KEY) the
-      # review is posted by that App, a second identity that GitHub lets approve a PR the
-      # default token or claude[bot] opened. Without it the review posts as before.
-      - name: Reviewer App token
-        id: app
-        if: steps.pr.outputs.skip != 'true' && vars.REVIEWER_APP_ID != ''
-        # A bad key must not stop reviews: the output stays empty and the review posts with
-        # the default token.
-        continue-on-error: true
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ vars.REVIEWER_APP_ID }}
-          private-key: ${{ secrets.REVIEWER_APP_KEY }}
+      # Finders write scratch tests in a separate worktree, so the review needs Edit and
+      # Write; the head check after it proves nothing was pushed.
       - name: Review
         id: review
-        if: steps.pr.outputs.skip != 'true'
+        if: steps.pr.outputs.skip != 'true' && steps.ci.outputs.skip != 'true'
         uses: anthropics/claude-code-action@v1
         env:
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
           GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
+          PR_REVIEW_MAX_ROUNDS: ${{ env.MAX_ROUNDS }}
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: https://github.com/WrackedFella/claude-skills.git
           plugins: devflow@claude-skills
-          # Re-dispatched runs are started by the default token, so the actor is
-          # github-actions[bot]. Allow only that bot; the repo is public.
-          allowed_bots: github-actions
+          # Re-dispatched runs are started by the default token (actor github-actions[bot]);
+          # a green CI run after a ci-fix push by the Claude app has actor claude[bot]. The
+          # repo is public, so no wildcard.
+          allowed_bots: claude,github-actions
           display_report: true
           prompt: /devflow:pr-review ${{ env.PR }}
           claude_args: |
-            --max-turns 100
-            --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never push, merge or resolve a thread."
+            --max-turns 150
+            --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never push or merge."
             --add-dir /home/runner/.claude/plugins/cache
-            --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue:*),Bash(gh pr:*),Bash(gh api:*),Task,Skill"
+            --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue:*),Bash(gh pr:*),Bash(gh api:*),Bash(gh run list:*),Bash(gh run view:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(rg:*),Bash(grep:*),Bash(jq:*),Bash(mkdir:*),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/pr-facts *),Edit,Write,Task,Skill"
       # The action hides the run's output; a denied tool call otherwise ends the review
       # silently, so list the denials here.
       - name: Show permission denials
-        if: always() && steps.review.outcome != 'skipped' && steps.review.outputs.execution_file != ''
+        if: always() && steps.review.outputs.execution_file != ''
         env:
           EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
         run: |
@@ -162,23 +233,70 @@ jobs:
               else "### Review run: \(length) permission denial(s)\n" +
                    (map("- `\(.tool_name)`: `\(.tool_input | tostring | .[0:300])`") | join("\n"))
               end' "$EXECUTION_FILE" >> "$GITHUB_STEP_SUMMARY"
-      # The verdict is the first line of the review the skill posted for this head SHA.
-      # No review for this head means the run never reached a verdict, so the job fails.
+      - name: Check the head did not move
+        if: steps.review.outcome == 'success'
+        run: |
+          now=$(gh api "repos/$GH_REPO/pulls/$PR" --jq .head.sha)
+          if [ "$now" != "$HEAD_SHA" ]; then
+            echo "::error::PR #$PR head moved from $HEAD_SHA to $now during the review."
+            exit 1
+          fi
+      # The verdict lines open the review the skill posted for this head. No review means the
+      # skill stopped before a verdict: a skip or a wait is reported, anything else fails.
       - name: Read verdict
         id: verdict
-        if: steps.pr.outputs.skip != 'true'
+        if: steps.review.outcome == 'success'
+        env:
+          REVIEWERS: ${{ steps.pr.outputs.reviewers }}
+          EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
         run: |
-          verdict=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/reviews" --paginate \
-            --jq "[.[] | select(.commit_id == \"$HEAD_SHA\" and (.body | startswith(\"Verdict:\")))] | last | .body // \"\"" \
-            | head -n1 | sed -E 's/^Verdict: *([a-z]+).*/\1/')
+          body=$(gh api "repos/$GH_REPO/pulls/$PR/reviews" --paginate \
+            --jq ".[] | select(.user.login as \$u | $REVIEWERS | index(\$u)) | select(.commit_id == \"$HEAD_SHA\" and (.body | startswith(\"Verdict:\"))) | {submitted_at, body}" |
+            jq -sr 'sort_by(.submitted_at) | last | .body // ""')
+          # The four verdict lines open the body; nothing below them is parsed.
+          field() { printf '%s\n' "$body" | head -n4 | sed -nE "s/.*\\b$1: *([a-z0-9]+).*/\\1/p" | head -n1; }
+          verdict=$(field Verdict)
           if [ -z "$verdict" ]; then
+            said=$(jq -r '[(if type == "array" then .[] else . end) | select(.type == "result") | .result // ""] | last // ""' "$EXECUTION_FILE")
+            if printf '%s' "$said" | grep -qiE '\b(skip|wait)'; then
+              printf 'No review posted. The skill reported:\n\n%s\n' "$said" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
             echo "::error::No review with a verdict was posted for $HEAD_SHA. See the permission denials in the Step Summary."
             exit 1
           fi
-          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
-      - name: Fix findings
+          {
+            echo "verdict=$verdict"
+            echo "route=$(field Route)"
+            echo "signoff=$(field Sign-off)"
+            echo "tier=$(field Tier)"
+            echo "round=$(field Round)"
+          } >> "$GITHUB_OUTPUT"
+          printf '### Verdict\n\n```\n%s\n```\n' "$(printf '%s\n' "$body" | head -n4)" >> "$GITHUB_STEP_SUMMARY"
+      # Usage is measurement: a failure to record it never stops the loop.
+      - name: Record review usage
+        if: always() && steps.review.outputs.execution_file != ''
+        continue-on-error: true
+        env:
+          EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
+          TIER: ${{ steps.verdict.outputs.tier }}
+          ROUND: ${{ steps.verdict.outputs.round }}
+          VERDICT: ${{ steps.verdict.outputs.verdict }}
+          ROUTE: ${{ steps.verdict.outputs.route }}
+          STEP: review
+        run: |
+          rec=$(scripts/review-usage.sh record "$EXECUTION_FILE")
+          { echo "### Review usage"; echo; scripts/review-usage.sh table <<<"$rec"; } >> "$GITHUB_STEP_SUMMARY"
+          scripts/review-usage.sh post "$PR" <<<"$rec"
+      # Only agent PRs get the fix loop; nothing pushes to a person's branch. The cap is
+      # checked here as well as in the skill, so a miscounted round cannot loop.
+      - name: Fix blockers
         id: respond
-        if: steps.verdict.outputs.verdict == 'changes' && env.ROUND != '3'
+        if: >-
+          steps.verdict.outputs.verdict == 'reject'
+          && steps.verdict.outputs.route == 'fix'
+          && steps.pr.outputs.agent == 'true'
+          && fromJSON(steps.verdict.outputs.round || '0') <= fromJSON(env.MAX_ROUNDS)
         uses: anthropics/claude-code-action@v1
         env:
           CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
@@ -187,26 +305,140 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: https://github.com/WrackedFella/claude-skills.git
           plugins: devflow@claude-skills
-          # Re-dispatched runs are started by the default token, so the actor is
-          # github-actions[bot]. Allow only that bot; the repo is public.
-          allowed_bots: github-actions
+          allowed_bots: claude,github-actions
           display_report: true
           prompt: /devflow:respond ${{ env.PR }}
           claude_args: |
             --max-turns 200
-            --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Merge the base branch into the PR branch; never rebase or force-push. Address the findings in the latest review whose first line starts with 'Verdict:'."
+            --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Merge the base branch into the PR branch; never rebase or force-push. Act only on the blockers of the latest review whose first line starts with 'Verdict:'."
             --add-dir /home/runner/.claude/plugins/cache
             --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue:*),Bash(gh pr:*),Bash(gh api:*),Edit,Write,Task,Skill"
-      - name: Review again
-        if: steps.respond.outcome == 'success'
+      - name: Record fix usage
+        if: always() && steps.respond.outputs.execution_file != ''
+        continue-on-error: true
+        env:
+          EXECUTION_FILE: ${{ steps.respond.outputs.execution_file }}
+          TIER: ${{ steps.verdict.outputs.tier }}
+          ROUND: ${{ steps.verdict.outputs.round }}
+          VERDICT: ${{ steps.verdict.outputs.verdict }}
+          ROUTE: ${{ steps.verdict.outputs.route }}
+          STEP: fix
         run: |
-          next=$((ROUND + 1))
-          gh workflow run pr-review.yml --repo "$GITHUB_REPOSITORY" \
-            --ref "${{ github.event.repository.default_branch }}" -f pr="$PR" -f round="$next"
-      - name: Hand over to a human
-        if: steps.verdict.outputs.verdict == 'changes' && env.ROUND == '3'
+          rec=$(scripts/review-usage.sh record "$EXECUTION_FILE")
+          { echo "### Fix usage"; echo; scripts/review-usage.sh table <<<"$rec"; } >> "$GITHUB_STEP_SUMMARY"
+          scripts/review-usage.sh post "$PR" <<<"$rec"
+      # A fix that pushed a commit gets a fresh review on the new head. One that pushed
+      # nothing (every blocker declined) or a round past the cap goes to a person.
+      - name: Review again or hand over
+        if: >-
+          always()
+          && steps.verdict.outputs.verdict == 'reject'
+          && steps.verdict.outputs.route == 'fix'
+          && steps.pr.outputs.agent == 'true'
+        env:
+          FIXED: ${{ steps.respond.outcome }}
+          ROUND: ${{ steps.verdict.outputs.round }}
         run: |
-          gh pr comment "$PR" --body "Review round 3 still has findings. The fix loop stops here; a human decides.
+          now=$(gh api "repos/$GH_REPO/pulls/$PR" --jq .head.sha)
+          if [ "$FIXED" = "success" ] && [ "$now" != "$HEAD_SHA" ]; then
+            gh workflow run pr-review.yml --ref "${{ github.event.repository.default_branch }}" -f pr="$PR"
+            echo "Fix pushed $now; review dispatched." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ "$FIXED" = "skipped" ]; then
+            why="Review round $ROUND is past the cap of $MAX_ROUNDS fix rounds."
+          elif [ "$FIXED" = "success" ]; then
+            why="The fix round for review round $ROUND pushed no commit."
+          else
+            why="The fix round for review round $ROUND did not finish ($FIXED)."
+          fi
+          gh pr edit "$PR" --add-label needs-human
+          gh pr comment "$PR" --body "$why The fix loop stops here; a human decides. Run: $RUN_URL
 
           ---
           _Generated by [Claude Code](https://claude.ai/code)_"
+
+  dry-run:
+    name: Review dry run
+    if: github.event_name == 'workflow_dispatch' && inputs.dry_run_range != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RANGE: ${{ inputs.dry_run_range }}
+      ISSUE: ${{ inputs.dry_run_issue }}
+      CRITIC: ${{ inputs.dry_run_critic_model }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check inputs
+        run: |
+          if ! [[ $RANGE =~ ^[0-9a-f]{7,40}\.\.[0-9a-f]{7,40}$ && $ISSUE =~ ^[0-9]+$ ]]; then
+            echo "::error::dry_run_range must be <base-sha>..<head-sha> and dry_run_issue an issue number."
+            exit 1
+          fi
+          if [ "$CRITIC" = "default" ]; then
+            echo "CRITIC_NOTE=" >> "$GITHUB_ENV"
+          else
+            echo "CRITIC_NOTE=This is a back-test: run devflow:design-critic with model $CRITIC on either tier." >> "$GITHUB_ENV"
+          fi
+      - name: Install toolchain
+        run: |
+          bash scripts/cloud-tools.sh --force
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        env:
+          CARGO_TERM_COLOR: always
+          CARGO_INCREMENTAL: 0
+          RUST_BACKTRACE: 1
+        with:
+          shared-key: gate-ubuntu-latest
+          save-if: false
+      - name: Review
+        id: review
+        uses: anthropics/claude-code-action@v1
+        env:
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          plugin_marketplaces: https://github.com/WrackedFella/claude-skills.git
+          plugins: devflow@claude-skills
+          display_report: true
+          prompt: /devflow:pr-review --dry-run ${{ env.RANGE }} ${{ env.ISSUE }} ${{ runner.temp }}/pr-review-dry-run.md
+          claude_args: |
+            --max-turns 150
+            --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never push, comment, label or file an issue. ${{ env.CRITIC_NOTE }}"
+            --add-dir /home/runner/.claude/plugins/cache
+            --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue view:*),Bash(gh api:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(rg:*),Bash(grep:*),Bash(jq:*),Bash(mkdir:*),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/pr-facts *),Edit,Write,Task,Skill"
+      - name: Report
+        if: always() && steps.review.outputs.execution_file != ''
+        continue-on-error: true
+        env:
+          EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
+          OUT: ${{ runner.temp }}/pr-review-dry-run.md
+          STEP: review
+        run: |
+          field() { head -n4 "$OUT" 2>/dev/null | sed -nE "s/.*\\b$1: *([a-z0-9]+).*/\\1/p" | head -n1; }
+          HEAD_SHA=${RANGE#*..} TIER=$(field Tier) ROUND=$(field Round) VERDICT=$(field Verdict) ROUTE=$(field Route) \
+            scripts/review-usage.sh record "$EXECUTION_FILE" > "$RUNNER_TEMP/usage.jsonl"
+          {
+            echo "### Dry run $RANGE against #$ISSUE (design critic: $CRITIC)"
+            echo
+            if [ -f "$OUT" ]; then cat "$OUT"; else echo "No review was written."; fi
+            echo
+            echo "### Usage"
+            echo
+            scripts/review-usage.sh table < "$RUNNER_TEMP/usage.jsonl"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep the review and usage record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-review-dry-run-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/pr-review-dry-run.md
+            ${{ runner.temp }}/usage.jsonl
+          if-no-files-found: ignore

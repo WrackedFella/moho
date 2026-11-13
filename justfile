@@ -85,6 +85,21 @@ mutants-merge-test:
     diff <(printf '%s\n' 'a.rs:1:1: replace a' 'b.rs:2:2: replace b') "$out/6/missed.txt"
     echo "mutants-merge: OK"
 
+# Self-test of the review usage records against fixtures: per-model token counts, the
+# unsplit fallback, the PR comment table and the totals.
+review-usage-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    f=scripts/fixtures/review-usage
+    diff "$f/records.jsonl" <(
+        PR=12 HEAD_SHA=abc TIER=full ROUND=1 STEP=review VERDICT=reject ROUTE=fix RUN_URL= \
+            scripts/review-usage.sh record "$f/execution.json" | jq -c 'del(.at)'
+        PR=12 HEAD_SHA=def TIER=full ROUND=1 STEP=fix VERDICT= ROUTE= RUN_URL= \
+            scripts/review-usage.sh record "$f/execution-unsplit.json" | jq -c 'del(.at)')
+    diff "$f/table.md" <(scripts/review-usage.sh table < "$f/records.jsonl")
+    diff "$f/total.md" <(scripts/review-usage.sh total - < "$f/records.jsonl")
+    echo "review-usage: OK"
+
 # Layering check on the real crate graph, plus self-tests that each rule rejects its fixture.
 layering:
     #!/usr/bin/env bash

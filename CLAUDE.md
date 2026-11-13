@@ -63,6 +63,9 @@ cargo run -p searchlight           # the FPS prototype
 - **Human review points:** `Card review: required`, `Domain-test review: agent` (values: `required`,
   `agent`, `not required`; `agent` = no pause, `devflow:test-critic` attacks the failing
   tests before implementation and the PR carries its findings). Switches and runtimes: `_todo/WORKFLOW.md`.
+- **PR review:** `PR approval: off`, `PR follow-ups: issue` (devflow `pr-review`: `off` posts
+  an approve as a comment; follow-ups are filed as issues labelled `follow-up`, never
+  `agent-ready`).
 - **Local planning files are drafts.** A card or feature in `_todo/` exists only until
   it is approved; the approving thread files the issue and deletes the file
   (`_todo/_STANDARDS.md`, Drafts).
