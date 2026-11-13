@@ -390,7 +390,10 @@ jobs:
           if [ "$CRITIC" = "default" ]; then
             echo "CRITIC_NOTE=" >> "$GITHUB_ENV"
           else
-            echo "CRITIC_NOTE=This is a back-test: run devflow:design-critic with model $CRITIC on either tier." >> "$GITHUB_ENV"
+            # The override names every agent: a note that names only the design critic let a
+            # run move the skill's Fable slot onto the defect finder.
+            if [ "$CRITIC" = "fable" ]; then other="model fable"; else other="its default model (Opus)"; fi
+            echo "CRITIC_NOTE=This is a model back-test. Call devflow:design-critic with $other on either tier. Call devflow:defect-finder and devflow:refuter with their default model (Opus) and never pass model fable to them." >> "$GITHUB_ENV"
           fi
       - name: Install toolchain
         run: |
@@ -422,6 +425,8 @@ jobs:
             --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never push, comment, label or file an issue. ${{ env.CRITIC_NOTE }}"
             --add-dir /home/runner/.claude/plugins/cache /tmp
             --allowedTools "Bash(cd:*),Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue view:*),Bash(gh api:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(rg:*),Bash(grep:*),Bash(jq:*),Bash(mkdir:*),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/pr-facts *),Edit,Write,Task,Skill"
+      # Also printed to the job log: the log is readable through the REST API, where the
+      # Step Summary and artifacts are not reachable from every client.
       - name: Report
         if: always() && steps.review.outputs.execution_file != ''
         continue-on-error: true
@@ -441,7 +446,11 @@ jobs:
             echo "### Usage"
             echo
             scripts/review-usage.sh table < "$RUNNER_TEMP/usage.jsonl"
-          } >> "$GITHUB_STEP_SUMMARY"
+            echo
+            echo '```jsonl'
+            cat "$RUNNER_TEMP/usage.jsonl"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Keep the review and usage record
         if: always()
         uses: actions/upload-artifact@v4
