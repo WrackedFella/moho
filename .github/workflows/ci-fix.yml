@@ -4,7 +4,8 @@ name: CI fix
 # devflow:respond with the failing jobs as the task. At most two fix rounds per PR, counted
 # by the comments this workflow posts; after that a human decides. Human PRs are ignored.
 # Pushes by the default token start no CI run, so a fix pushed by the action's app token is
-# what re-runs CI and continues the loop.
+# what re-runs CI and continues the loop. Its green run restarts pr-review.yml, which skips
+# a head whose CI failed; the "CI fix round" comment is how that workflow tells.
 on:
   workflow_run:
     workflows: [CI]

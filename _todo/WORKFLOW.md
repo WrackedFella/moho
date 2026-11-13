@@ -28,7 +28,7 @@ Where it runs:
 |---|---|---|
 | GitHub Actions (`claude.yml`) | Label `agent-ready`, or manual dispatch with an issue number; a reply on a paused issue resumes it | Unattended. A run that needs an answer comments its questions, labels the issue `agent-paused` and stops; a reply from an owner, member or collaborator restarts the same skill, which continues from the pushed branch or published cards. Default Claude App token only, no board access. One run per issue at a time; refine 30 min / 100 turns, orchestrate 60 min / 200 turns. devflow follows the marketplace's default branch, not the repo pin. Edits to workflow files need a human merge |
 | `@claude` comment (`claude-comment.yml`) | A comment by an owner, member or collaborator on an issue or PR | For small jobs such as resolving a PR's merge conflict |
-| PR review (`pr-review.yml`) | Off unless repository variable `PR_REVIEW_ENABLED` is `true` (Settings → Secrets and variables → Actions → Variables); orchestrate runs and the opened/ready triggers then skip it. When on: dispatched after an orchestrate run opens a PR, or a PR marked ready for review | `/devflow:pr-review` posts a verdict as a comment (`PR approval` unset, so no approval). On `changes`, `/devflow:respond` fixes the findings and the review runs again: two fix rounds, then a human. Comment `@claude /devflow:pr-review` to run it by hand |
+| PR review (`pr-review.yml`) | Off unless repository variable `PR_REVIEW_ENABLED` is `true` (Settings → Secrets and variables → Actions → Variables). When on: dispatched after an orchestrate run opens a PR, a PR opened or marked ready for review, or green CI after a CI fix. A dispatch with `dry_run_range` and `dry_run_issue` reviews two commits, posts nothing, and runs even when off | `/devflow:pr-review` posts `Verdict: approve\|reject`, `Route: fix\|human`, `Sign-off: agent\|human` as the reviewer App. Reject requests changes; approve is a comment (`PR approval: off`). On an agent PR, reject with `Route: fix` runs `/devflow:respond` and a fresh review on the new head, up to `PR_REVIEW_MAX_ROUNDS` (variable, default 3) fix rounds; a stall, a declined blocker or the cap labels the PR `needs-human`. Red CI is left to `ci-fix.yml`. Usage per step goes to the Step Summary and a PR comment; `scripts/review-usage.sh total` totals it per PR, tier and model, tokens first |
 | Project thread | `/devflow:orchestrate <issue>` or a planning skill | Cloud session on its own branch. Run `bash scripts/cloud-tools.sh` first when it must build. Cannot reach the board. Files an approved card as an issue with `gh` and deletes its draft; the Board sync workflow moves Status |
 | Local terminal | Same slash commands | The repo pin in `.claude/settings.json` applies; the Stop hook runs the gate |
 
@@ -46,7 +46,17 @@ issue implies. Agent-eligible is set by a human, through the card's board header
 
 ## Todo
 
-- **PR agent:** `pr-review.yml` reviews and hardens each PR before a human sees it (comment-only; a human approves and merges). Open: an approving identity separate from the PR author, so `PR approval: agent` can submit approvals; check how often the loop converges within two fix rounds before widening it.
+- **PR agent**, toward auto-merge in four stages, each started by a human:
+  1. Back-test (now): dry runs on sample PRs a human picks and on about 12 seeded
+     changes, design critic on Opus and on Fable. Exit: at least 80% of seeded blockers
+     caught, at most 1 wrong reject on the samples, no injection changes a verdict.
+  2. Live, human merges: `PR_REVIEW_ENABLED=true`. Exit: 10 PRs, no approve a human
+     disagrees with, every loop ends in approve or `Route: human`.
+  3. Agent approvals: `PR approval: agent`, ruleset dismisses stale approvals. Exit: 10
+     approvals, none a human would have rejected.
+  4. Auto-merge, glue tier first; a human audits 1 merged PR in 5.
+  Open: whether the moho-reviewer App has Issues write to file follow-ups; the usage
+  record's field names are unconfirmed until the first real run.
 - Confirm in Actions and threads that the Skill-tool calls inside `orchestrate`
   (`/simplify`, `/devflow:comment-audit`, `/devflow:wiki`) succeed.
 - Verify refine on a real feature: questions land as a comment, a re-run adds no

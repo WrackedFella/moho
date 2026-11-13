@@ -13,6 +13,10 @@ labels() {
     gh label create line:engine --force --color 1D76DB --description "Engine crates"
     gh label create line:strategy --force --color D93F0B --description "Strategy/base-builder game"
     gh label create line:fps --force --color FBCA04 --description "FPS prototype"
+    gh label create agent-paused --force --color FBCA04 --description "Run waiting for a human answer; reply on the issue to resume"
+    gh label create follow-up --force --color C5DEF5 --description "Filed by PR review: a real issue that did not block the PR; never agent-ready"
+    gh label create needs-human --force --color B60205 --description "PR review routed this PR to a person: plan deviation, redesign, stall or fix cap"
+    gh label create review:full --force --color 5319E7 --description "Forces the full PR review tier on a glue PR"
 }
 
 # Solo-owner settings: PR required but no approval count (can't self-approve);
