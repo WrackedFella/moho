@@ -1,6 +1,6 @@
 # 0007 — Third-party licences are compatible with closed-source commercial sale
 
-**Status:** Accepted
+**Status:** Accepted; amended by [0034](0034-authoring-tools-outside-the-build-may-be-copyleft.md)
 
 ## Context
 
