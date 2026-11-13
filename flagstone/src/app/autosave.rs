@@ -116,6 +116,7 @@ mod tests {
     use glam::Vec3;
     use moho_app::{EventContext, FrameContext, Game, GameClock, HeadlessLoop, LoopConfig};
     use moho_core::events::UiEvent;
+    use moho_core::prefs::Prefs;
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -163,13 +164,23 @@ mod tests {
     /// (40, 40) of chunk column (2, 2). The streamer keeps only that 5x5 block of chunk
     /// columns. Autosaves go to `temp`'s saves directory, which holds no save yet.
     fn loaded_session(world: &str, temp: &tempfile::TempDir) -> App {
+        loaded_session_with_prefs(world, temp, Prefs::default())
+    }
+
+    /// `loaded_session` for an app started with `prefs`.
+    fn loaded_session_with_prefs(world: &str, temp: &tempfile::TempDir, prefs: Prefs) -> App {
         let seed_dir = temp.path().join("seed");
         let mut seed = App::headless();
         seed.generation.last_spec = Some(world_spec(world));
         seed.simulation
             .set_position_yaw_pitch(Vec3::new(40.5, 200.0, 40.5), 0.0, 0.0);
         auto_save_on_shutdown(&mut seed, &GameClock::default(), &seed_dir, &[]).expect("seed save");
-        let mut app = App::headless();
+        let mut app = App::from_config(
+            crate::app::config::AppConfig::builder()
+                .prefs(prefs)
+                .build(),
+        );
+        app.prefs_path = None;
         app.saves_dir = saves_dir(temp);
         crate::app::scene_loader::load_scene(
             &mut app,
@@ -289,7 +300,7 @@ mod tests {
             .is_some()
     }
 
-    fn set_interval(app: &mut App, interval: Duration) {
+    fn set_interval(app: &mut App, interval: Option<Duration>) {
         app.autosave_interval = interval;
         app.restart_autosave();
     }
@@ -374,6 +385,81 @@ mod tests {
         let grid = loaded.light_system.as_ref().expect("light system").grid();
         assert_eq!(grid.get_height(3, 3), Some(70));
         assert!(loaded.chunk_streamer.is_some());
+    }
+
+    fn prefs_with_autosave_seconds(seconds: u32) -> Prefs {
+        let (prefs, issues) = Prefs::parse(&format!("[world]\nautosave_seconds={seconds}\n"));
+        assert_eq!(issues, vec![], "test setup: the prefs text is valid");
+        prefs
+    }
+
+    #[test]
+    fn autosave_off_writes_nothing_after_ten_minutes() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let saves = saves_dir(&temp);
+        let mut app =
+            loaded_session_with_prefs("autosave_test_off", &temp, prefs_with_autosave_seconds(0));
+        let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+        mine_surface_block(&mut app, 40, 40);
+
+        sim.step(&mut app, 600 * TICK_HZ);
+        draw_frame(&mut app, &mut sim);
+
+        assert!(
+            !scene_file(&saves).exists(),
+            "an edited world was autosaved with autosave off"
+        );
+    }
+
+    #[test]
+    fn autosave_off_still_saves_on_quit() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let saves = saves_dir(&temp);
+        let mut app = loaded_session_with_prefs(
+            "autosave_test_off_quit",
+            &temp,
+            prefs_with_autosave_seconds(0),
+        );
+        let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+        let mined = mine_surface_block(&mut app, 40, 40);
+        sim.step(&mut app, 600 * TICK_HZ);
+        draw_frame(&mut app, &mut sim);
+        assert!(
+            !scene_file(&saves).exists(),
+            "test setup: nothing saved yet"
+        );
+
+        let exit = close_window(&mut app);
+
+        assert!(exit);
+        assert!(scene_file(&saves).is_file(), "quitting wrote no save");
+        let mut reloaded = load_save(&saves);
+        assert!(is_mined_out(&mut reloaded, mined));
+    }
+
+    #[test]
+    fn interval_comes_from_prefs() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let saves = saves_dir(&temp);
+        let mut app = loaded_session_with_prefs(
+            "autosave_test_prefs_interval",
+            &temp,
+            prefs_with_autosave_seconds(30),
+        );
+        let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+        mine_surface_block(&mut app, 40, 40);
+
+        sim.step(&mut app, 30 * TICK_HZ - 6);
+        draw_frame(&mut app, &mut sim);
+        let saved_at_29_9_seconds = scene_file(&saves).exists();
+        sim.step(&mut app, 6);
+        draw_frame(&mut app, &mut sim);
+
+        assert!(!saved_at_29_9_seconds, "saved before the prefs interval");
+        assert!(
+            scene_file(&saves).is_file(),
+            "no save after the prefs interval of 30 seconds"
+        );
     }
 
     mod ending_a_session {
@@ -512,7 +598,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("temp dir");
             let saves = saves_dir(&temp);
             let mut app = loaded_session("autosave_test_killed", &temp);
-            set_interval(&mut app, Duration::from_secs(2));
+            set_interval(&mut app, Some(Duration::from_secs(2)));
             let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
             let mut mined = Vec::new();
 
@@ -548,7 +634,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("temp dir");
             let saves = saves_dir(&temp);
             let mut app = loaded_session("autosave_test_30_seconds", &temp);
-            set_interval(&mut app, Duration::from_secs(30));
+            set_interval(&mut app, Some(Duration::from_secs(30)));
             let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
             let mined = mine_surface_block(&mut app, 40, 40);
 
@@ -573,7 +659,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("temp dir");
             let saves = saves_dir(&temp);
             let mut app = loaded_session("autosave_test_idle", &temp);
-            set_interval(&mut app, Duration::from_secs(1));
+            set_interval(&mut app, Some(Duration::from_secs(1)));
             let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
 
             sim.step(&mut app, 3 * TICK_HZ);
@@ -587,7 +673,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("temp dir");
             let working_saves = saves_dir(&temp);
             let mut app = loaded_session("autosave_test_failed", &temp);
-            set_interval(&mut app, Duration::from_secs(1));
+            set_interval(&mut app, Some(Duration::from_secs(1)));
             let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
             let mined = mine_surface_block(&mut app, 40, 40);
             let blocker = temp.path().join("blocker");
@@ -622,7 +708,7 @@ mod tests {
         #[test]
         fn default_interval_schedule_is_due_after_120_seconds_of_ticks() {
             let due_at = 120 * u64::from(TICK_HZ);
-            let mut schedule = AutosaveSchedule::for_interval(DEFAULT_AUTOSAVE_INTERVAL);
+            let mut schedule = AutosaveSchedule::for_interval(Duration::from_secs(120));
             schedule.mark_edited();
 
             for _ in 0..due_at - 1 {
@@ -675,6 +761,18 @@ mod tests {
             assert!(!edited.due(), "one tick short of the interval");
             edited.tick();
             assert!(edited.due(), "due exactly at the interval");
+        }
+
+        #[test]
+        fn off_schedule_is_never_due() {
+            let mut schedule = AutosaveSchedule::off();
+            schedule.mark_edited();
+
+            for _ in 0..600 * u64::from(TICK_HZ) {
+                schedule.tick();
+            }
+
+            assert!(!schedule.due(), "an off schedule came due");
         }
 
         #[test]
