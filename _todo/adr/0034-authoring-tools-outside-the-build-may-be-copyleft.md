@@ -1,6 +1,6 @@
 # 0034 — Authoring tools outside the shipped build may be copyleft
 
-**Status:** Proposed; amends [0007](0007-third-party-licence-policy.md)
+**Status:** Accepted on merge of #824; amends [0007](0007-third-party-licence-policy.md)
 
 ## Context
 

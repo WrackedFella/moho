@@ -1,6 +1,6 @@
 # 0035 — Map components are defined once, as content, and exported as named marker nodes
 
-**Status:** Proposed
+**Status:** Accepted on merge of #824
 
 ## Context
 
