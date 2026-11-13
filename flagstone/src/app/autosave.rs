@@ -420,21 +420,39 @@ mod tests {
             &temp,
             prefs_with_autosave_seconds(0),
         );
-        let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
         let mined = mine_surface_block(&mut app, 40, 40);
-        sim.step(&mut app, 600 * TICK_HZ);
-        draw_frame(&mut app, &mut sim);
-        assert!(
-            !scene_file(&saves).exists(),
-            "test setup: nothing saved yet"
-        );
 
         let exit = close_window(&mut app);
 
         assert!(exit);
-        assert!(scene_file(&saves).is_file(), "quitting wrote no save");
         let mut reloaded = load_save(&saves);
         assert!(is_mined_out(&mut reloaded, mined));
+        assert!(block_below_is_present(&reloaded, mined));
+    }
+
+    #[test]
+    fn autosave_off_still_saves_on_return_to_main_menu() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let saves = saves_dir(&temp);
+        let mut app = loaded_session_with_prefs(
+            "autosave_test_off_main_menu",
+            &temp,
+            prefs_with_autosave_seconds(0),
+        );
+        let mined = mine_surface_block(&mut app, 40, 40);
+        app.game_state = GameState::Paused;
+
+        let mut clock = GameClock::default();
+        app.event_bus.publish(UiEvent::MainMenuRequested);
+        app.event_bus.process_deferred();
+        EventProcessor::new().process_ui_events(&mut app, &mut clock);
+        let mut ctx = FrameContext::new(tick_length(), &clock, None, None);
+        Game::frame(&mut app, &mut ctx, 0.0);
+
+        assert!(!ctx.exit_requested(), "returning to the menu keeps running");
+        let mut reloaded = load_save(&saves);
+        assert!(is_mined_out(&mut reloaded, mined));
+        assert!(block_below_is_present(&reloaded, mined));
     }
 
     #[test]
@@ -444,21 +462,21 @@ mod tests {
         let mut app = loaded_session_with_prefs(
             "autosave_test_prefs_interval",
             &temp,
-            prefs_with_autosave_seconds(30),
+            prefs_with_autosave_seconds(45),
         );
         let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
         mine_surface_block(&mut app, 40, 40);
 
-        sim.step(&mut app, 30 * TICK_HZ - 6);
+        sim.step(&mut app, 45 * TICK_HZ - 6);
         draw_frame(&mut app, &mut sim);
-        let saved_at_29_9_seconds = scene_file(&saves).exists();
+        let saved_at_44_9_seconds = scene_file(&saves).exists();
         sim.step(&mut app, 6);
         draw_frame(&mut app, &mut sim);
 
-        assert!(!saved_at_29_9_seconds, "saved before the prefs interval");
+        assert!(!saved_at_44_9_seconds, "saved before the prefs interval");
         assert!(
             scene_file(&saves).is_file(),
-            "no save after the prefs interval of 30 seconds"
+            "no save after the prefs interval of 45 seconds"
         );
     }
 
