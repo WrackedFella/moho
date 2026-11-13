@@ -256,7 +256,11 @@ exclude_re = [
     'replace < with <= in streak_transform',
     # An exactly 5 mm deep contact is a float boundary with no behaviour of its own.
     'replace < with <= in rests_on_flat_ground',
-    'replace \\+ with - in has_exposed_face',
-    'replace \\+ with - in steer',
-    'replace < with > in route',
+    # Equivalent: NEIGHBOURS is symmetric, so block - d visits the same six cells.
+    'flagstone_game/src/jobs\.rs:.*: replace \+ with - in has_exposed_face$',
+    # Equivalent: x + PI and x - PI differ by exactly TAU before rem_euclid(TAU).
+    'flagstone_game/src/jobs\.rs:.*: replace \+ with - in steer$',
+    # Equivalent: unit step costs and a consistent heuristic mean no cell is re-pushed
+    # cheaper, so the stale-entry guard in route never fires.
+    'flagstone_game/src/routing\.rs:.*: replace < with > in route$',
 ]
