@@ -158,6 +158,10 @@ impl<G, A> UiShell<G, A> {
 
     /// Paints the queued images, screen text, menu and console into `ctx`, which the caller owns
     /// because a test or probe harness has its own egui context.
+    ///
+    /// Queued images are uploaded to the shell's own context, so only a call with that context
+    /// draws them. A call with any other context must leave the image queue empty. The queued
+    /// text and images stay queued: only `ui_frame` clears them.
     pub fn paint(&mut self, ctx: &egui::Context) {
         // Game images, then game text, then the menu, so the console paints over all.
         self.images.paint(ctx);
