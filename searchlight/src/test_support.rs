@@ -375,6 +375,7 @@ pub(crate) fn level_marker(name: &str, position: Vec3) -> LevelMarker {
         name: name.to_owned(),
         position,
         rotation: Quat::IDENTITY,
+        scale: Vec3::ONE,
         properties: BTreeMap::new(),
     }
 }

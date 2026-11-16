@@ -482,6 +482,7 @@ mod tests {
             name: name.to_owned(),
             position,
             rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
             properties: BTreeMap::new(),
         }
     }
