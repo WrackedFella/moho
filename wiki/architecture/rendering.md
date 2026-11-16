@@ -120,8 +120,9 @@ default scene, plus a `LevelMarker` per named node without a mesh
 - buffers come from the GLB blob or a relative file URI beside the level; absolute
   paths and URL schemes are refused;
 - non-triangle primitives are skipped with a warning; a node reached twice is an error;
-- markers (spawns, loot points and the like) carry name, world position, world rotation
-  (scale dropped) and `properties`, the node's `extras` object flattened to strings
+- markers (spawns, loot points and the like) carry name, world position, world rotation,
+  world scale (absolute value, so a mirrored node still reports a size; the game decides
+  what a unit means) and `properties`, the node's `extras` object flattened to strings
   (non-string values become compact JSON; non-object or invalid extras are ignored with
   a warning). They arrive in scene-walk order; the loader gives them no meaning, game
   code interprets them;
