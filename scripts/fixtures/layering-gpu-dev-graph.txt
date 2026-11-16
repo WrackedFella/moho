@@ -1,0 +1,7 @@
+# Table for the gpu-dev graph fixtures: flagstone_ui may reach the GPU stack in dev-dependencies only.
+engine: moho_renderer
+flagstone: flagstone_ui
+searchlight:
+domain:
+gpu: moho_renderer
+gpu-dev: flagstone_ui

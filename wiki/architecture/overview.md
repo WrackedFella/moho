@@ -71,7 +71,7 @@ Each crate belongs to exactly one line ([ADR-0005](../../_todo/adr/0005-crate-li
 | Engine crates never depend on a game-line crate (dev-dependencies allowed) | The engine ships to both games and, after the split, from its own repo |
 | A game line never depends on another game line | Flagstone and Searchlight must separate cleanly |
 | Domain crates (`moho_core`, `flagstone_voxel`, `flagstone_game`, `moho_level`, `searchlight_rules`) never reach `winit`, `wgpu` or `egui` | Domain logic runs headless |
-| Only `moho_renderer` and `moho_ui_shell` (the `gpu` row of `scripts/layering.txt`) reach `wgpu`, `egui-wgpu` or `naga` without going through another workspace member, dev-dependencies included; `moho_ui_shell` does so only in its tests and examples | GPU code stays behind the renderer boundary; the shell's offscreen test harness needs a wgpu adapter |
+| Only `moho_renderer` (the `gpu` row of `scripts/layering.txt`) reaches `wgpu`, `egui-wgpu` or `naga` without going through another workspace member, dev-dependencies included. Crates in the `gpu-dev` row (`moho_ui_shell`) may reach them through dev-dependencies only, never over normal or build edges ([ADR-0036](../../_todo/adr/0036-crates-may-test-against-the-gpu-stack.md)) | GPU code stays behind the renderer boundary; the shell's offscreen test harness needs a wgpu adapter |
 
 Voxels live in the flagstone-line `flagstone_voxel` ([ADR-0010](../../_todo/adr/0010-world-geometry-is-a-mesh-contract.md));
 the engine sees world geometry only as meshes.

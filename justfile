@@ -129,8 +129,13 @@ layering:
     rejects-graph layering-gpu-graph layering-gpu-graph-direct 'gpu-outside-renderer: flagstone_ui → wgpu'
     rejects-graph layering-gpu-graph layering-gpu-graph-egui-wgpu 'gpu-outside-renderer: flagstone_ui → egui-wgpu'
     accepts-graph layering-gpu-graph layering-gpu-graph-renderer-only
-    collects dirty 'gpu-outside-renderer: flagstone_ui → wgpu'
-    collects clean 'layering: OK'
+    accepts-graph layering-gpu-dev-graph layering-gpu-graph-dev-only
+    rejects-graph layering-gpu-dev-graph layering-gpu-graph-dev-runtime 'gpu-at-runtime: flagstone_ui → wgpu'
+    rejects-graph layering-gpu-graph layering-gpu-graph-dev-only 'gpu-outside-renderer: flagstone_ui → egui-wgpu'
+    collects dirty layering-collect 'gpu-outside-renderer: flagstone_ui → wgpu'
+    collects clean layering-collect 'layering: OK'
+    collects devonly layering-collect 'gpu-outside-renderer: flagstone_ui → egui-wgpu'
+    collects devonly layering-collect-dev 'layering: OK'
 
 # Fails unless the layering check exits non-zero on the fixture and prints the expected line.
 [private]
@@ -183,19 +188,21 @@ _layering-accepts-graph fixture graph:
 # Runs the real graph collection against scripts/fixtures/stub-cargo/cargo, so the
 # own-reach pruning in check-layering.sh is exercised. ui=dirty makes flagstone_ui's wrapper
 # crate pull in wgpu (must be rejected); ui=clean leaves only flagstone's path through
-# moho_renderer (must pass). Expects 'layering: OK' with exit 0, else non-zero and the line.
+# moho_renderer (must pass); ui=devonly gives flagstone_ui egui-wgpu as a dev-dependency only
+# (rejected by layering-collect, passed by layering-collect-dev's gpu-dev row). Expects
+# 'layering: OK' with exit 0, else non-zero and the line.
 [private]
-_layering-collects ui expected:
+_layering-collects ui table expected:
     #!/usr/bin/env bash
     set -uo pipefail
-    out=$(MOHO_LAYERING_CARGO=scripts/fixtures/stub-cargo/cargo STUB_CARGO_UI={{ui}} MOHO_LAYERING_GRAPH= scripts/check-layering.sh scripts/fixtures/layering-collect.txt 2>&1)
+    out=$(MOHO_LAYERING_CARGO=scripts/fixtures/stub-cargo/cargo STUB_CARGO_UI={{ui}} MOHO_LAYERING_GRAPH= scripts/check-layering.sh scripts/fixtures/{{table}}.txt 2>&1)
     status=$?
     if [ '{{expected}}' = 'layering: OK' ]; then
         [ "$status" -eq 0 ] && grep -qF -- '{{expected}}' <<<"$out" && exit 0
     else
         [ "$status" -ne 0 ] && grep -qF -- '{{expected}}' <<<"$out" && exit 0
     fi
-    echo "layering self-test failed: collect_graph with stub cargo, flagstone_ui {{ui}}" >&2
+    echo "layering self-test failed: collect_graph with stub cargo, flagstone_ui {{ui}}, {{table}}" >&2
     echo "  expected: {{expected}}" >&2
     echo "  got: exit $status, output:" >&2
     sed 's/^/    /' <<<"$out" >&2
