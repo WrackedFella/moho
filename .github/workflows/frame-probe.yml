@@ -1,7 +1,6 @@
 name: Frame probe
 
-# Informational, not a required check: renders a fixed UI shell frame on the runner's software
-# Vulkan adapter (lavapipe) in two independent jobs and reports whether the pixels agree.
+# Informational, not a required check.
 on:
   workflow_dispatch: {}
   pull_request:

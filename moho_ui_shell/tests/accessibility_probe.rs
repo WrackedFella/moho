@@ -133,8 +133,7 @@ fn a_row_overlay_found_by_role_and_label_chooses_its_action() {
 }
 
 /// The production menu paints its rows as plain text, which egui does not expose as widgets, so a
-/// harness cannot find them by label. A follow-up gives the rows an overlay of real widgets and
-/// turns this around.
+/// harness cannot find them by label.
 #[test]
 fn menu_rows_expose_no_accessible_node_today() {
     let mut harness = Harness::builder()

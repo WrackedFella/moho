@@ -156,8 +156,8 @@ impl<G, A> UiShell<G, A> {
         self.images.set(images)
     }
 
-    /// Paints the queued images, the screen text, the menu and the console into `ctx`. Takes the
-    /// context as an argument because a test or probe harness owns its own egui context.
+    /// Paints the queued images, screen text, menu and console into `ctx`, which the caller owns
+    /// because a test or probe harness has its own egui context.
     pub fn paint(&mut self, ctx: &egui::Context) {
         // Game images, then game text, then the menu, so the console paints over all.
         self.images.paint(ctx);

@@ -39,13 +39,11 @@ enum Choice {
     Quit,
 }
 
-/// How far a frame is from a reference frame of the same size.
 struct Delta {
     max_channel: u8,
     differing_pixels: usize,
 }
 
-/// One rendered frame and what it cost.
 struct Run {
     adapter: wgpu::AdapterInfo,
     setup_ms: f64,
@@ -108,7 +106,7 @@ fn render(out: &Path, iterations: usize) -> Result<()> {
     Ok(())
 }
 
-/// Builds a fresh adapter, device and harness, then paints the fixed content once.
+/// Builds a fresh adapter, device and harness on every call, so runs share no GPU state.
 fn render_frame() -> Result<Run> {
     let started = Instant::now();
     let (setup, chosen) = recording_setup()?;
@@ -147,8 +145,7 @@ fn render_frame() -> Result<Run> {
     })
 }
 
-/// The harness's default setup, with its adapter choice written to the returned slot when the
-/// harness builds its renderer.
+/// The harness's default setup, plus a slot that receives the adapter it picks.
 fn recording_setup() -> Result<(WgpuSetup, Arc<Mutex<Option<wgpu::AdapterInfo>>>)> {
     let WgpuSetup::CreateNew(mut create) = default_wgpu_setup() else {
         return Err("the default wgpu setup no longer creates a new instance".into());
@@ -167,7 +164,6 @@ fn recording_setup() -> Result<(WgpuSetup, Arc<Mutex<Option<wgpu::AdapterInfo>>>
     Ok((WgpuSetup::CreateNew(create), chosen))
 }
 
-/// The main menu with its first row focused, and a text in two opposite corners.
 fn fixed_shell() -> Result<UiShell<(), Choice>> {
     let (console, _) = Console::<()>::new(&BTreeMap::new());
     let mut shell = UiShell::new(console);
@@ -239,8 +235,6 @@ fn diff(reference: &RgbaImage, frame: &RgbaImage) -> Result<Delta> {
     Ok(delta)
 }
 
-/// `probe.json`: the adapter of the first run, then each run's timings, hash and drift from the
-/// first run's frame.
 fn probe_json(runs: &[Run]) -> Result<String> {
     let first = runs.first().ok_or("no runs")?;
     let info = &first.adapter;
@@ -284,7 +278,6 @@ fn json_string(value: &str) -> String {
     format!("\"{}\"", escaped.concat())
 }
 
-/// SHA-256 of `data` as lower-case hex, so a reader can check two frames with `sha256sum` alike.
 fn sha256_hex(data: &[u8]) -> String {
     let bytes: Vec<String> = Sha256::digest(data)
         .iter()
