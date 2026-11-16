@@ -8,4 +8,4 @@ engine: moho_app moho_core moho_render_api moho_renderer moho_audio moho_physics
 flagstone: flagstone_voxel flagstone_game flagstone_ui flagstone
 searchlight: searchlight_rules searchlight
 domain: moho_core flagstone_voxel flagstone_game moho_level searchlight_rules
-gpu: moho_renderer
+gpu: moho_renderer moho_ui_shell

@@ -15,13 +15,16 @@ use std::error::Error;
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use egui::{Color32, vec2};
 use egui_kittest::Harness;
-use egui_kittest::wgpu::{WgpuTestRenderer, create_render_state, default_wgpu_setup};
+use egui_kittest::wgpu::default_wgpu_setup;
+use egui_wgpu::WgpuSetup;
 use image::RgbaImage;
 use moho_ui_shell::{Anchor, Console, MenuItem, MenuScreen, ScreenText, UiShell};
+use sha2::{Digest, Sha256};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -108,18 +111,11 @@ fn render(out: &Path, iterations: usize) -> Result<()> {
 /// Builds a fresh adapter, device and harness, then paints the fixed content once.
 fn render_frame() -> Result<Run> {
     let started = Instant::now();
-    let state = create_render_state(
-        default_wgpu_setup(),
-        renderer_options(create_render_state, |options| {
-            options.dithering = false;
-            options.predictable_texture_filtering = true;
-        }),
-    );
-    let adapter = state.adapter.get_info();
+    let (setup, chosen) = recording_setup()?;
     let mut harness = Harness::builder()
         .with_size(vec2(SIZE[0], SIZE[1]))
         .with_pixels_per_point(1.0)
-        .renderer(WgpuTestRenderer::from_render_state(state))
+        .wgpu_setup(setup)
         .build_ui_state(
             |ui, shell: &mut UiShell<(), Choice>| {
                 // The shell paints on a transparent background.
@@ -134,6 +130,11 @@ fn render_frame() -> Result<Run> {
         );
     harness.run();
     let setup_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let adapter = chosen
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take()
+        .ok_or("no adapter was selected")?;
 
     let started = Instant::now();
     let image = harness.render()?;
@@ -146,15 +147,24 @@ fn render_frame() -> Result<Run> {
     })
 }
 
-/// The renderer options `create` takes, from their default with `adjust` applied. egui-wgpu is
-/// not a dependency here, so its `RendererOptions` cannot be named; `create` supplies the type.
-fn renderer_options<Setup, Options: Default, State>(
-    _create: fn(Setup, Options) -> State,
-    adjust: impl FnOnce(&mut Options),
-) -> Options {
-    let mut options = Options::default();
-    adjust(&mut options);
-    options
+/// The harness's default setup, with its adapter choice written to the returned slot when the
+/// harness builds its renderer.
+fn recording_setup() -> Result<(WgpuSetup, Arc<Mutex<Option<wgpu::AdapterInfo>>>)> {
+    let WgpuSetup::CreateNew(mut create) = default_wgpu_setup() else {
+        return Err("the default wgpu setup no longer creates a new instance".into());
+    };
+    let select = create
+        .native_adapter_selector
+        .take()
+        .ok_or("the default wgpu setup has no adapter selector")?;
+    let chosen = Arc::new(Mutex::new(None));
+    let record = Arc::clone(&chosen);
+    create.native_adapter_selector = Some(Arc::new(move |adapters, surface| {
+        let adapter = select(adapters, surface)?;
+        *record.lock().unwrap_or_else(PoisonError::into_inner) = Some(adapter.get_info());
+        Ok(adapter)
+    }));
+    Ok((WgpuSetup::CreateNew(create), chosen))
 }
 
 /// The main menu with its first row focused, and a text in two opposite corners.
@@ -274,71 +284,11 @@ fn json_string(value: &str) -> String {
     format!("\"{}\"", escaped.concat())
 }
 
-/// The first `N` fractional parts of `root` of the primes, scaled to 32 bits: how SHA-256 defines
-/// its initial state (square roots) and round constants (cube roots).
-fn fractional_roots<const N: usize>(root: fn(f64) -> f64) -> [u32; N] {
-    let is_prime = |n: &u32| {
-        (2..*n)
-            .take_while(|d| d * d <= *n)
-            .all(|d| !n.is_multiple_of(d))
-    };
-    let mut constants = [0; N];
-    for (constant, prime) in constants.iter_mut().zip((2..).filter(is_prime)) {
-        *constant = (root(f64::from(prime)).fract() * 4_294_967_296.0) as u32;
-    }
-    constants
-}
-
 /// SHA-256 of `data` as lower-case hex, so a reader can check two frames with `sha256sum` alike.
 fn sha256_hex(data: &[u8]) -> String {
-    let rounds: [u32; 64] = fractional_roots(f64::cbrt);
-    let mut state: [u32; 8] = fractional_roots(f64::sqrt);
-    let mut padded = data.to_vec();
-    padded.push(0x80);
-    while padded.len() % 64 != 56 {
-        padded.push(0);
-    }
-    padded.extend_from_slice(&(data.len() as u64 * 8).to_be_bytes());
-    for block in padded.as_chunks::<64>().0 {
-        let mut schedule = [0u32; 64];
-        for (word, bytes) in schedule.iter_mut().zip(block.as_chunks::<4>().0) {
-            *word = u32::from_be_bytes(*bytes);
-        }
-        for i in 16..64 {
-            let (w15, w2) = (schedule[i - 15], schedule[i - 2]);
-            let small0 = w15.rotate_right(7) ^ w15.rotate_right(18) ^ (w15 >> 3);
-            let small1 = w2.rotate_right(17) ^ w2.rotate_right(19) ^ (w2 >> 10);
-            schedule[i] = schedule[i - 16]
-                .wrapping_add(small0)
-                .wrapping_add(schedule[i - 7])
-                .wrapping_add(small1);
-        }
-        let mut v = state;
-        for (round, word) in rounds.iter().zip(schedule) {
-            let big1 = v[4].rotate_right(6) ^ v[4].rotate_right(11) ^ v[4].rotate_right(25);
-            let choose = (v[4] & v[5]) ^ (!v[4] & v[6]);
-            let temp1 = v[7]
-                .wrapping_add(big1)
-                .wrapping_add(choose)
-                .wrapping_add(*round)
-                .wrapping_add(word);
-            let big0 = v[0].rotate_right(2) ^ v[0].rotate_right(13) ^ v[0].rotate_right(22);
-            let majority = (v[0] & v[1]) ^ (v[0] & v[2]) ^ (v[1] & v[2]);
-            let temp2 = big0.wrapping_add(majority);
-            v = [
-                temp1.wrapping_add(temp2),
-                v[0],
-                v[1],
-                v[2],
-                v[3].wrapping_add(temp1),
-                v[4],
-                v[5],
-                v[6],
-            ];
-        }
-        for (slot, value) in state.iter_mut().zip(v) {
-            *slot = slot.wrapping_add(value);
-        }
-    }
-    state.map(|word| format!("{word:08x}")).concat()
+    let bytes: Vec<String> = Sha256::digest(data)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    bytes.concat()
 }

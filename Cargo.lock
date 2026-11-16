@@ -2124,6 +2124,7 @@ name = "moho_ui_shell"
 version = "0.1.0"
 dependencies = [
  "egui",
+ "egui-wgpu",
  "egui-winit",
  "egui_kittest",
  "glam 0.33.12",
@@ -2135,6 +2136,7 @@ dependencies = [
  "moho_render_api",
  "moho_renderer",
  "proptest",
+ "sha2",
  "thiserror 2.0.20",
  "tracing",
  "wgpu",
