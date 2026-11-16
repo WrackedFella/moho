@@ -1,0 +1,115 @@
+name: Frame probe
+
+# Informational, not a required check: renders a fixed UI shell frame on the runner's software
+# Vulkan adapter (lavapipe) in two independent jobs and reports whether the pixels agree.
+on:
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - moho_ui_shell/examples/frame_probe.rs
+      - .github/workflows/frame-probe.yml
+
+concurrency:
+  group: frame-probe-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  probe:
+    name: Probe (${{ matrix.run }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        run: [a, b]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install system deps and the software Vulkan driver
+        timeout-minutes: 5
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
+            pkg-config libudev-dev libasound2-dev mesa-vulkan-drivers libvulkan1
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: frame-probe
+          cache-on-failure: true
+
+      - name: Record driver package versions
+        run: |
+          mkdir -p probe-out
+          dpkg-query -W mesa-vulkan-drivers libvulkan1 > probe-out/dpkg.txt
+
+      - name: Render the frame
+        run: cargo run --release -p moho_ui_shell --example frame_probe -- render --out probe-out --iterations 5
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: probe-${{ matrix.run }}
+          path: probe-out
+          if-no-files-found: error
+
+  compare:
+    name: Compare
+    needs: probe
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install system deps
+        timeout-minutes: 5
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
+            pkg-config libudev-dev libasound2-dev
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: frame-probe
+          cache-on-failure: true
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: probe-*
+          path: artifacts
+
+      - name: Compare the first frames and summarize
+        run: |
+          {
+            echo "## Frame probe: run a against run b"
+            echo
+            cargo run --release -p moho_ui_shell --example frame_probe -- compare artifacts/probe-a artifacts/probe-b
+            for run in a b; do
+              echo
+              echo "### probe-$run"
+              echo
+              echo '```text'
+              cat "artifacts/probe-$run/dpkg.txt"
+              echo '```'
+              echo
+              echo '```json'
+              cat "artifacts/probe-$run/probe.json"
+              echo '```'
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

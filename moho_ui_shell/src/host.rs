@@ -156,6 +156,19 @@ impl<G, A> UiShell<G, A> {
         self.images.set(images)
     }
 
+    /// Paints the queued images, the screen text, the menu and the console into `ctx`. Takes the
+    /// context as an argument because a test or probe harness owns its own egui context.
+    pub fn paint(&mut self, ctx: &egui::Context) {
+        // Game images, then game text, then the menu, so the console paints over all.
+        self.images.paint(ctx);
+        text::paint(ctx, &self.texts);
+        let screen = ctx.content_rect().size();
+        text::paint(ctx, &self.menu.texts([screen.x, screen.y]));
+        if self.console.is_open() {
+            self.console.show(ctx);
+        }
+    }
+
     fn feed_egui(&mut self, event: &WindowEvent) {
         if let (Some(state), Some(window)) = (&mut self.state, &self.window) {
             // Whether egui consumed the event is moot: the console already decided its routing.
@@ -294,16 +307,7 @@ impl<G, A> UiFrameSource for UiShell<G, A> {
             return None;
         }
         let context = self.context.clone();
-        let output = context.run_ui(input, |ui| {
-            // Game images, then game text, then the menu, so the console paints over all.
-            self.images.paint(ui.ctx());
-            text::paint(ui.ctx(), &self.texts);
-            let screen = ui.ctx().content_rect().size();
-            text::paint(ui.ctx(), &self.menu.texts([screen.x, screen.y]));
-            if self.console.is_open() {
-                self.console.show(ui.ctx());
-            }
-        });
+        let output = context.run_ui(input, |ui| self.paint(ui.ctx()));
         self.texts.clear();
         self.images.end_frame();
         // Platform output is dropped: handing it to egui-winit would show the cursor the game
