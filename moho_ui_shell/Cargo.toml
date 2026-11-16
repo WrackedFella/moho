@@ -20,6 +20,9 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+egui_kittest = { version = "0.36.2", features = ["wgpu"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+wgpu = { workspace = true }
 
 [lints]
 workspace = true
