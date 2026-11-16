@@ -22,7 +22,7 @@ tracing = { workspace = true }
 proptest = { workspace = true }
 egui-wgpu = "0.36.2"
 egui_kittest = { version = "0.36.2", features = ["wgpu"] }
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { workspace = true, features = ["png"] }
 sha2 = { workspace = true }
 wgpu = { workspace = true }
 

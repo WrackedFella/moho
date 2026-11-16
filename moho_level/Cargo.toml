@@ -13,10 +13,10 @@ sha2 = { workspace = true }
 tracing = { workspace = true }
 gltf = { workspace = true }
 rerecast = { workspace = true }
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+image = { workspace = true, features = ["png", "jpeg"] }
 
 [dev-dependencies]
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+image = { workspace = true, features = ["png", "jpeg"] }
 proptest = { workspace = true }
 moho_physics = { workspace = true }
 serde_json = { workspace = true }
