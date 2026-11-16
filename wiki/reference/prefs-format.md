@@ -83,6 +83,7 @@ opened there still saves to the default path).
 | | `fps_max` | unsigned integer frames per second applied while `vsync` is off; `0` is uncapped; the Video tab's cap control clamps a value above 1000 to 1000 when shown | `300` |
 | `[world]` | `load_radius` `unload_radius` | integer chunks | `8` `12` |
 | | `chunks_per_frame` | unsigned integer, 1 or more | `4` |
+| | `autosave_seconds` | unsigned integer seconds of play between autosaves of an edited world; `0` is off, any other value is clamped to 30 to 3600 without a warning; text or a negative number is malformed and gives the default; read at startup only (`Prefs::autosave_interval`); the game still saves on quit and on return to the main menu | `120` |
 | `[content]` | `mods` | comma-separated mod names, order kept, blanks dropped; see [content format](content-format.md#mods) | none |
 | `[debug]` | one key per game debug value | free text, see below | none |
 | `[game]` | one key per game setting | free text, see below | none |
@@ -201,4 +202,5 @@ fps_max=300
 load_radius=8
 unload_radius=12
 chunks_per_frame=4
+autosave_seconds=120
 ```
