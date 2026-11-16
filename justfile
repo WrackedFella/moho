@@ -35,7 +35,19 @@ comment-refs base=base:
 
 # Licenses, advisories, banned and duplicate crates, crate sources.
 deny:
+    #!/usr/bin/env bash
+    set -euo pipefail
     cargo deny check
+    scripts/check-physics-features.sh
+    # Self-tests: the check accepts a fixture with the feature and rejects one without.
+    MOHO_PHYSICS_METADATA=scripts/fixtures/physics-metadata-ok.json scripts/check-physics-features.sh
+    if out=$(MOHO_PHYSICS_METADATA=scripts/fixtures/physics-metadata-missing.json scripts/check-physics-features.sh 2>&1); then
+        echo "check-physics-features accepted a fixture without enhanced-determinism" >&2
+        exit 1
+    fi
+    for crate in rapier3d parry3d; do
+        grep -q "$crate" <<<"$out" || { echo "check-physics-features did not name $crate: $out" >&2; exit 1; }
+    done
 
 # LCOV coverage report at lcov.info.
 cov:
