@@ -862,7 +862,24 @@ impl SearchlightSim {
     /// The control the player looks at within [`USE_REACH`], or `None` while dead, when the
     /// first surface the view meets is not a control, or when it is out of reach.
     pub fn control_in_reach(&self) -> Option<u16> {
-        todo!("cast one ray from the leaned eye along the view")
+        if self.player_body.is_dead() {
+            return None;
+        }
+        let state = self.player();
+        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
+        let strike = resolve_shot(
+            &self.world,
+            ShotRay {
+                origin: self.leaned_eye(&state),
+                direction: view.forward,
+                range: USE_REACH,
+                ignore: Some(self.player),
+            },
+        )?;
+        match strike.tag {
+            SurfaceTag::Control(index) => Some(index),
+            _ => None,
+        }
     }
 
     /// How far the player leans after the last tick.

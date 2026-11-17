@@ -131,26 +131,19 @@ impl WaveState {
         self.to_spawn
     }
 
-    /// Scores `kills`, starts the next wave if this one is cleared (nothing left to spawn and
-    /// none alive), and returns how many enemies to spawn now: as many as `free_spawns`
-    /// allows of those still to come.
+    /// Scores `kills` and returns how many enemies to spawn now: as many as `free_spawns`
+    /// allows of those still to come. A cleared wave waits for [`call_next`](Self::call_next);
+    /// the alive count is the caller's, and only `call_next` reads it.
     pub fn step(
         &mut self,
         tuning: &WaveTuning,
         kills: u32,
-        alive: usize,
+        _alive: usize,
         free_spawns: usize,
     ) -> u32 {
         self.score = self
             .score
             .saturating_add(kills.saturating_mul(tuning.score_per_kill));
-        if self.to_spawn == 0 && alive == 0 {
-            self.wave = self.wave.saturating_add(1);
-            self.to_spawn = tuning.size(self.wave);
-            self.grades = tuning
-                .mix()
-                .grades(self.wave, self.to_spawn, Some(self.grades));
-        }
         let spawn = u32::try_from(free_spawns)
             .unwrap_or(u32::MAX)
             .min(self.to_spawn);
@@ -161,8 +154,15 @@ impl WaveState {
     /// Starts the next wave when the running one is cleared (none to spawn, none alive) and
     /// says whether it did; otherwise changes nothing.
     pub fn call_next(&mut self, tuning: &WaveTuning, alive: usize) -> bool {
-        let _ = (tuning, alive);
-        todo!("start the next wave when the running one is cleared")
+        if self.to_spawn != 0 || alive != 0 {
+            return false;
+        }
+        self.wave = self.wave.saturating_add(1);
+        self.to_spawn = tuning.size(self.wave);
+        self.grades = tuning
+            .mix()
+            .grades(self.wave, self.to_spawn, Some(self.grades));
+        true
     }
 
     /// Gives back `count` enemies that [`step`](Self::step) asked for but that could not be

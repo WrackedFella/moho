@@ -11,19 +11,22 @@ pub enum ControlAction {
 impl ControlAction {
     /// The action the marker value `name` names, or `None` if it is not on the list.
     pub fn parse(name: &str) -> Option<Self> {
-        let _ = name;
-        todo!("parse an action name")
+        match name {
+            "next_wave" => Some(Self::NextWave),
+            _ => None,
+        }
     }
 
     /// Whether the action changes the whole session, so only the host may call it.
     pub fn is_host_action(self) -> bool {
-        todo!("name the host actions")
+        match self {
+            Self::NextWave => true,
+        }
     }
 
     /// Whether a use from player `slot` may run the action.
     pub fn honored_from(self, slot: u8) -> bool {
-        let _ = slot;
-        todo!("honor host actions from slot 0 only")
+        !self.is_host_action() || slot == 0
     }
 }
 
