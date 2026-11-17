@@ -34,7 +34,7 @@ Each pillar is a filter: a feature that serves none of them is cut.
 | On leaving | n/a | Control returns to strategy mode; the pawn resumes its work. Re-entering without a selection possesses the last possessed pawn |
 | HUD | Colony: resources, selection, build menu, time controls | Pawn: hotbar, held tool, pickup feedback |
 
-Today the only pawn is the player pawn, which sits inactive while the player is in strategy mode. Later every pawn
+Today the only pawn is the player pawn, which digs marked blocks on its own while the player is in strategy mode. Later every pawn
 acts on its own when not possessed. A possessed pawn follows the same rules as any other: there is no player-only
 game rule.
 

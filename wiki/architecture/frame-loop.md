@@ -1,7 +1,7 @@
 # Frame loop
 
-**Source:** `flagstone_game/src/pickups.rs`, `moho_app/src/` (`runner.rs`, `lib.rs`, `window_keys.rs`, `loop_requests.rs`, `headless.rs`, `fixed_step.rs`, `clock.rs`), `flagstone/src/app/game.rs`, `flagstone/src/app/event_loop/frame_processor.rs` (`run_pawn_job`)
-(`impl moho_app::Game for App`), `flagstone/src/app/event_loop/`.
+**Source:** `flagstone_game/src/pickups.rs`, `moho_app/src/` (`runner.rs`, `lib.rs`, `window_keys.rs`, `loop_requests.rs`, `headless.rs`, `fixed_step.rs`, `clock.rs`), `flagstone/src/app/game.rs`
+(`impl moho_app::Game for App`), `flagstone/src/app/event_loop/` (`frame_processor.rs`'s `run_pawn_job` is the pawn job loop).
 **Related:** [ADR-0009](../../_todo/adr/0009-simulation-time-is-one-fixed-tick.md) (fixed tick).
 
 `moho_app::run` owns the window, the winit `ApplicationHandler` (`runner.rs`) and the
