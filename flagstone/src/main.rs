@@ -640,7 +640,7 @@ impl Drop for App {
     }
 }
 
-/// Installs the global subscriber, which also forwards `log` records from dependencies.
+/// The schedule for a prefs interval; `None` is autosave off.
 fn autosave_schedule(interval: Option<std::time::Duration>) -> app::autosave::AutosaveSchedule {
     interval.map_or_else(
         app::autosave::AutosaveSchedule::off,
@@ -648,6 +648,7 @@ fn autosave_schedule(interval: Option<std::time::Duration>) -> app::autosave::Au
     )
 }
 
+/// Installs the global subscriber, which also forwards `log` records from dependencies.
 fn init_logging() {
     tracing_subscriber::fmt()
         .with_env_filter(
