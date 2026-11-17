@@ -20,8 +20,8 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
-egui-wgpu = "0.36.2"
-egui_kittest = { version = "0.36.2", features = ["wgpu"] }
+egui-wgpu = { workspace = true }
+egui_kittest = { workspace = true, features = ["wgpu"] }
 image = { workspace = true, features = ["png"] }
 sha2 = { workspace = true }
 wgpu = { workspace = true }
