@@ -600,27 +600,50 @@ mod tests {
             );
         }
 
-        #[test]
-        fn autosave_off_still_saves_on_quit() {
+        /// With autosave off, plays `ticks` ticks after an edit, quits through `quit`
+        /// (which must ask the game to exit), and checks the quit wrote the edit.
+        fn assert_off_still_saves_on_quit(
+            world: &str,
+            ticks: u32,
+            quit: impl FnOnce(&mut App) -> bool,
+        ) {
             let temp = tempfile::tempdir().expect("temp dir");
             let saves = saves_dir(&temp);
-            let mut app = loaded_session_with_prefs("autosave_test_off_quit", &temp, AUTOSAVE_OFF);
+            let mut app = loaded_session_with_prefs(world, &temp, AUTOSAVE_OFF);
             let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
             let mined = mine_surface_block(&mut app, 40, 40);
-            sim.step(&mut app, TEN_MINUTES_OF_TICKS);
+            sim.step(&mut app, ticks);
             draw_frame(&mut app, &mut sim);
             let saved_before_quitting = scene_file(&saves).exists();
 
-            app.auto_save_on_shutdown(&GameClock::default(), &[])
-                .expect("the quit save");
+            let exit = quit(&mut app);
 
             assert!(
                 !saved_before_quitting,
                 "an edited world was autosaved with autosave off"
             );
+            assert!(exit, "quitting did not ask the game to exit");
             assert!(scene_file(&saves).is_file(), "quitting wrote no save");
             let mut reloaded = load_save(&saves);
             assert!(is_mined_out(&mut reloaded, mined));
+            assert!(block_below_is_present(&reloaded, mined));
+        }
+
+        #[test]
+        fn autosave_off_still_saves_on_quit() {
+            assert_off_still_saves_on_quit(
+                "autosave_test_off_quit",
+                TEN_MINUTES_OF_TICKS,
+                close_window,
+            );
+        }
+
+        #[test]
+        fn autosave_off_still_saves_on_menu_exit() {
+            assert_off_still_saves_on_quit("autosave_test_off_menu_exit", 5 * TICK_HZ, |app| {
+                app.game_state = GameState::Paused;
+                exit_from_menu(app)
+            });
         }
 
         #[test]
@@ -721,7 +744,7 @@ mod tests {
             let mut schedule = AutosaveSchedule::off();
             schedule.mark_edited();
 
-            for _ in 0..10 * u64::from(TICK_HZ) {
+            for _ in 0..3601 * u64::from(TICK_HZ) {
                 schedule.tick();
             }
 
