@@ -109,7 +109,7 @@ struct App {
     saves_dir: std::path::PathBuf,
 
     /// Time of play between autosaves of an edited world.
-    autosave_interval: std::time::Duration,
+    autosave_interval: Option<std::time::Duration>,
     autosave: app::autosave::AutosaveSchedule,
 
     // Set when the UI asks to quit; `frame` autosaves and leaves the loop
@@ -274,7 +274,7 @@ impl App {
             pending_frame_cap: None,
             frame_cap_changed: false,
             saves_dir: std::path::PathBuf::from("saves"),
-            autosave_interval: app::autosave::DEFAULT_AUTOSAVE_INTERVAL,
+            autosave_interval: Some(app::autosave::DEFAULT_AUTOSAVE_INTERVAL),
             autosave: app::autosave::AutosaveSchedule::for_interval(
                 app::autosave::DEFAULT_AUTOSAVE_INTERVAL,
             ),
@@ -328,7 +328,10 @@ impl App {
 
     /// Called as a world starts, so edits made before it do not count against the new one.
     fn restart_autosave(&mut self) {
-        self.autosave = app::autosave::AutosaveSchedule::for_interval(self.autosave_interval);
+        self.autosave = app::autosave::AutosaveSchedule::for_interval(
+            self.autosave_interval
+                .unwrap_or(app::autosave::DEFAULT_AUTOSAVE_INTERVAL),
+        );
     }
 
     fn generate_new_world(
