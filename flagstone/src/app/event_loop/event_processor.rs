@@ -410,6 +410,16 @@ impl EventProcessor {
 }
 
 /// Camera position and forward direction read from a view matrix.
+/// Publishes what a pawn's dig changed: the removal and the chunks it dirties, shared with the
+/// player's mine handler, plus the dig cue at the block's centre.
+#[cfg(test)]
+pub(crate) fn publish_pawn_dig(
+    _event_bus: &moho_core::EventBus,
+    _grid: &flagstone_voxel::VoxelGrid,
+    _outcome: &flagstone_game::pawn::MineOutcome,
+) {
+}
+
 fn spawn_ray(view: &glam::Mat4) -> (glam::Vec3, glam::Vec3) {
     let camera_to_world = view.inverse();
     let origin = camera_to_world.col(3).truncate();
@@ -1716,6 +1726,82 @@ mod tests {
     #[test]
     fn pickup_asset_exists() {
         let path = pickup_asset_path();
+
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+
+        assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
+    }
+
+    fn dig_asset_path() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/dig.wav")
+    }
+
+    #[test]
+    fn a_pawn_dig_publishes_the_removal_and_the_cue() {
+        let mut app = app_aimed_at_block_with(Some(7));
+        let dug = flagstone_voxel::BlockPos::new(4, 70, 3);
+        let grid = app.light_system.as_mut().expect("light system").grid_mut();
+        let outcome = app
+            .pawn
+            .dig(
+                grid,
+                glam::Vec3::new(4.5, 70.5, 6.5),
+                glam::Vec3::NEG_Z,
+                flagstone_game::pawn::MINE_REACH,
+            )
+            .expect("the wall is within reach");
+        assert_eq!(outcome.block_pos, dug, "the dig took the aimed block");
+        let _ = app.audio_event_rx.try_iter().count();
+        let _ = app.world_event_rx.try_iter().count();
+
+        let grid = app.light_system.as_ref().expect("light system").grid();
+        publish_pawn_dig(&app.event_bus, grid, &outcome);
+        app.event_bus.process_deferred();
+
+        let world: Vec<WorldEvent> = app.world_event_rx.try_iter().collect();
+        let removed: Vec<_> = world
+            .iter()
+            .filter_map(|event| match event {
+                WorldEvent::BlockRemoved { position, .. } => Some(*position),
+                _ => None,
+            })
+            .collect();
+        let dirty: HashSet<glam::IVec3> = world
+            .iter()
+            .filter_map(|event| match event {
+                WorldEvent::ChunkMeshDirty { chunk_pos, .. } => Some(*chunk_pos),
+                _ => None,
+            })
+            .collect();
+        let expected_dirty: HashSet<glam::IVec3> =
+            flagstone_voxel::chunks_meshed_from(dug, grid.chunk_size()).collect();
+        let cues: Vec<_> = app
+            .audio_event_rx
+            .try_iter()
+            .filter_map(|event| match event {
+                AudioEvent::PlaySoundAt {
+                    path,
+                    volume,
+                    position,
+                } => Some((path, volume, position)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(removed, vec![dug], "one removal, of the dug block");
+        assert_eq!(dirty, expected_dirty, "the chunks the removal remeshes");
+        assert_eq!(cues.len(), 1, "one cue for one dig: {cues:?}");
+        assert_eq!(std::path::Path::new(&cues[0].0), dig_asset_path().as_path());
+        assert!(cues[0].1 > 0.0, "audible: {cues:?}");
+        assert_eq!(
+            cues[0].2,
+            glam::Vec3::new(4.5, 70.5, 3.5),
+            "the cue is at the block's centre"
+        );
+    }
+
+    #[test]
+    fn dig_asset_exists() {
+        let path = dig_asset_path();
 
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
 

@@ -1301,6 +1301,41 @@ mod tests {
         }
 
         #[test]
+        fn returning_to_first_person_starts_where_the_pawn_walked_to() {
+            use crate::app::event_loop::frame_processor::tests::{mark_block, strategy_world};
+            let mut app = strategy_world(false);
+            let start = walker_state(&app).position;
+            let block = flagstone_voxel::BlockPos::new(12, 3, 8);
+            mark_block(&mut app, block, Some(1));
+            for _ in 0..600 {
+                step(&mut app);
+                let grid = app.light_system.as_ref().expect("light system").grid();
+                if !grid.is_solid_at(block) {
+                    break;
+                }
+            }
+            let walked_to = walker_state(&app).position;
+            assert!(
+                walked_to.distance(start) > 2.0,
+                "the pawn never walked to the mark: {start:?} to {walked_to:?}"
+            );
+
+            tap(&mut app);
+            step(&mut app);
+
+            assert_eq!(mode(&app), CameraMode::FirstPerson);
+            assert!(
+                app.simulation.position().distance(walked_to) < 0.1,
+                "possession starts at {:?}, the pawn stands at {walked_to:?}",
+                app.simulation.position()
+            );
+            assert!(
+                walker_state(&app).position.distance(walked_to) < 0.1,
+                "the body was moved by the switch"
+            );
+        }
+
+        #[test]
         fn possess_key_in_first_person_switches_to_strategy() {
             let mut app = app_in(CameraMode::FirstPerson);
             tap(&mut app);
