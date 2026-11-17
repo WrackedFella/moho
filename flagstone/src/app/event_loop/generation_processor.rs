@@ -74,6 +74,7 @@ impl GenerationProcessor {
         tracing::info!(spec = ?spec.name, "Generation completed");
 
         app.generation.last_spec = Some(spec.clone());
+        app.autosave.saved();
 
         // Initialize LightSystem with the generated grid
         tracing::info!("Initializing LightSystem with generated grid");

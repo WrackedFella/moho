@@ -109,8 +109,11 @@ The renderer is reachable only through the contexts, so ticks queue renderer cha
    camera (`Listener::from_view`); then drain audio events;
 3. if the UI asked to quit: auto-save, `request_exit`, stop;
 4. if the UI asked for the main menu (Exit to main menu): auto-save, then `show_menu`, and go on;
-5. `update_hud_data`, `update_cut_caps` (rebuild [cut-face caps](rendering.md#3-cut-face-caps)), then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
+5. if `App::autosave` is due: auto-save (below);
+6. `update_hud_data`, `update_cut_caps` (rebuild [cut-face caps](rendering.md#3-cut-face-caps)), then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
    with actors, the sphere and cube mesh handles and the frame camera (below).
+
+Autosave: `AutosaveSchedule` (`flagstone/src/app/autosave.rs`) counts simulation ticks, only while `Playing`, and `process_world_events` marks it edited on `BlockPlaced`, `BlockRemoved` and `BlocksBatchModified` (a remesh alone is not an edit). It is due once an edited world has waited the interval (120 s of ticks). A successful save, including the quit and main-menu saves, restarts the interval and clears the edit flag; a failed one restarts the interval and keeps the edits pending. A save with no world loaded writes nothing, so a fresh app cannot overwrite the previous save.
 
 A `FrameError` skips the frame with a `warn`. Pass order inside the renderer:
 [rendering](rendering.md#5-pass-order).

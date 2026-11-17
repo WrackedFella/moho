@@ -16,12 +16,10 @@ impl AutosaveSchedule {
         }
     }
 
-    /// One simulation tick has passed.
     pub fn tick(&mut self) {
         self.ticks_since_save = self.ticks_since_save.saturating_add(1);
     }
 
-    /// A block was placed, removed or modified.
     pub fn mark_edited(&mut self) {
         self.edited = true;
     }
@@ -315,7 +313,6 @@ mod tests {
         }
     }
 
-    /// Runs `ticks` ticks, each followed by a frame.
     fn play(session: &mut Session, ticks: u32) {
         let frame = Duration::from_nanos(1_000_000_000u64.div_ceil(u64::from(TICK_HZ)));
         let mut done = 0;
@@ -366,7 +363,6 @@ mod tests {
         LoopConfig::new(TICK_HZ).tick_length()
     }
 
-    /// Chooses Exit in the menu and lets the loop handle it.
     fn exit_from_the_menu(app: &mut App) {
         app.event_bus.publish(UiEvent::ExitRequested);
         app.event_bus.process_deferred();

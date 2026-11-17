@@ -305,7 +305,7 @@ impl App {
         });
         match self.auto_save_on_shutdown(clock, &lights) {
             Ok(()) => {
-                tracing::debug!(elapsed_ms = started.elapsed().as_millis(), "Autosave done");
+                tracing::info!(elapsed_ms = started.elapsed().as_millis(), "Autosave done");
                 true
             }
             Err(e) => {
@@ -525,7 +525,9 @@ impl moho_app::Game for App {
 
         if self.main_menu_requested {
             self.main_menu_requested = false;
-            self.autosave(ctx.clock(), ctx.renderer());
+            if self.autosave(ctx.clock(), ctx.renderer()) {
+                self.autosave.saved();
+            }
             self.show_menu();
         }
 
@@ -657,6 +659,52 @@ mod tests {
         assert!(!due_after_pause, "paused ticks were counted");
         assert!(!due_one_tick_short, "paused ticks were counted");
         assert!(app.autosave.due(), "playing ticks were not counted");
+    }
+
+    #[test]
+    fn idle_interval_after_an_autosave_does_not_rewrite_the_save() {
+        let (mut app, _temp) = app_with_saves_dir();
+        app.autosave = crate::app::autosave::AutosaveSchedule::new(5);
+        app.autosave.mark_edited();
+        let mut fake = FakeRenderer::default();
+        for _ in 0..5 {
+            tick_app(&mut app, &StrategyCommand::default());
+        }
+        run_frame(&mut app, &mut fake);
+        let save = app.saves_dir.join("scene.bin");
+        assert!(save.exists(), "the edited world autosaves when due");
+        std::fs::remove_file(&save).expect("remove the autosave");
+
+        for _ in 0..5 {
+            tick_app(&mut app, &StrategyCommand::default());
+        }
+        run_frame(&mut app, &mut fake);
+
+        assert!(!save.exists(), "an unedited world was rewritten");
+    }
+
+    #[test]
+    fn idle_interval_after_a_main_menu_save_does_not_rewrite_the_save() {
+        let (mut app, _temp) = app_with_saves_dir();
+        app.autosave = crate::app::autosave::AutosaveSchedule::new(5);
+        app.autosave.mark_edited();
+        app.main_menu_requested = true;
+        let mut fake = FakeRenderer::default();
+        run_frame(&mut app, &mut fake);
+        let save = app.saves_dir.join("scene.bin");
+        assert!(save.exists(), "leaving for the menu saves the world");
+        std::fs::remove_file(&save).expect("remove the menu save");
+        app.game_state = GameState::Playing;
+
+        for _ in 0..5 {
+            tick_app(&mut app, &StrategyCommand::default());
+        }
+        run_frame(&mut app, &mut fake);
+
+        assert!(
+            !save.exists(),
+            "the edit was already saved on leaving, yet the schedule rewrote it"
+        );
     }
 
     #[test]
