@@ -82,7 +82,7 @@ fn world_blocks(world: &PhysicsWorld, from: Vec3, to: Vec3) -> bool {
         let Some(strike) = resolve_shot(world, ray) else {
             return false;
         };
-        if strike.tag == SurfaceTag::World {
+        if matches!(strike.tag, SurfaceTag::World | SurfaceTag::Control(_)) {
             return true;
         }
         origin = strike.point + direction * STEP_PAST_CHARACTER;
@@ -104,7 +104,7 @@ pub(crate) fn floor_below(world: &PhysicsWorld, from: Vec3) -> Vec3 {
         let Some(strike) = resolve_shot(world, ray) else {
             return from;
         };
-        if strike.tag == SurfaceTag::World {
+        if matches!(strike.tag, SurfaceTag::World | SurfaceTag::Control(_)) {
             return strike.point;
         }
         let next = strike.point + Vec3::NEG_Y * STEP_PAST_CHARACTER;

@@ -198,7 +198,7 @@ impl SearchlightCommand {
             god_mode: false,
             forced_grade: None,
             lean: None,
-            use_pressed: false,
+            use_pressed: frame.pressed(SearchlightAction::Use),
         }
     }
 }
