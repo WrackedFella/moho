@@ -436,6 +436,7 @@ impl FrameProcessor {
                 .collect(),
             selection,
             mine_designation_active: app.input.designation == Designation::Mine,
+            colony_stock: Vec::new(),
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {
@@ -1241,5 +1242,228 @@ mod tests {
             produced == painted_with(vec![(7, 2, 0.25)]),
             "a pickup with 30 of 120 ticks left is drawn at a quarter life"
         );
+    }
+
+    #[test]
+    fn hud_data_carries_the_colony_stock() {
+        let mut app = App::headless();
+        app.colony.stock.add(7, 2);
+        app.colony.stock.add(3, 5);
+
+        let produced = produced_strategy_hud(&mut app);
+
+        let with_stock = painted_strategy_hud(flagstone_ui::overlays::HudData {
+            equipped_tool_label: Some("Pickaxe".to_string()),
+            colony_stock: vec![(3, 5), (7, 2)],
+            ..strategy_hud_data(&app)
+        });
+        let without_stock = painted_strategy_hud(flagstone_ui::overlays::HudData {
+            equipped_tool_label: Some("Pickaxe".to_string()),
+            ..strategy_hud_data(&app)
+        });
+        assert!(
+            with_stock != without_stock,
+            "the strategy HUD draws no totals to compare against"
+        );
+        assert!(
+            produced == with_stock,
+            "the HUD data does not carry the colony's totals, sorted by resource id"
+        );
+    }
+
+    mod digging {
+        use super::*;
+        use crate::app::dig_world::{centre_of, dig_world, is_solid, pawn_state, run, stand_pawn};
+        use flagstone_game::pawn::MINE_REACH;
+        use flagstone_voxel::BlockPos;
+
+        const ORE: u32 = 7;
+        /// Four metres east of the pawn's start, on the floor.
+        const NEAR_BLOCK: BlockPos = BlockPos::new(14, 2, 10);
+
+        /// A flat world with `block` (carrying `resource`) marked and the pawn at
+        /// `(10.5, 10.5)`.
+        fn marked_world(block: BlockPos, resource: Option<u32>) -> App {
+            let mut app = dig_world(false, &[(block, resource)]);
+            stand_pawn(&mut app, 10.5, 10.5);
+            app.colony.marks.toggle(block.to_array());
+            app
+        }
+
+        fn horizontal_distance(a: glam::Vec3, b: glam::Vec3) -> f32 {
+            glam::Vec2::new(a.x - b.x, a.z - b.z).length()
+        }
+
+        #[test]
+        fn an_idle_pawn_digs_a_marked_ore_block_and_the_stock_grows_by_one() {
+            let mut app = marked_world(NEAR_BLOCK, Some(ORE));
+            let start = pawn_state(&app).position;
+            let stock_before = app.colony.stock.count(ORE);
+
+            run(&mut app, 600);
+
+            assert!(
+                horizontal_distance(pawn_state(&app).position, start) > 1.0,
+                "the pawn walked to the block"
+            );
+            assert!(!is_solid(&app, NEAR_BLOCK), "the block is removed");
+            assert!(
+                !app.colony.marks.contains(NEAR_BLOCK.to_array()),
+                "the mining marker is gone"
+            );
+            assert_eq!(app.colony.stock.count(ORE), stock_before + 1);
+            assert!(
+                app.pawn.inventory.is_empty(),
+                "a job feeds the colony, not the pawn's own inventory"
+            );
+        }
+
+        #[test]
+        fn a_plain_block_is_dug_and_the_stock_is_unchanged() {
+            let mut app = marked_world(NEAR_BLOCK, None);
+            let start = pawn_state(&app).position;
+
+            run(&mut app, 600);
+
+            assert!(
+                horizontal_distance(pawn_state(&app).position, start) > 1.0,
+                "the pawn walked to the block"
+            );
+            assert!(!is_solid(&app, NEAR_BLOCK), "the block is removed");
+            assert!(
+                !app.colony.marks.contains(NEAR_BLOCK.to_array()),
+                "the mining marker is gone"
+            );
+            assert!(app.colony.stock.is_empty(), "a plain block yields nothing");
+            assert!(app.pawn.inventory.is_empty());
+        }
+
+        #[test]
+        fn the_pawn_crosses_a_one_block_rise_without_leaving_the_ground() {
+            let block = BlockPos::new(18, 2, 10);
+            let mut app = dig_world(true, &[(block, Some(ORE))]);
+            stand_pawn(&mut app, 8.5, 10.5);
+            app.colony.marks.toggle(block.to_array());
+            let start_height = pawn_state(&app).position.y;
+            let mut highest = start_height;
+            let mut airborne_on = Vec::new();
+
+            for tick in 0..900 {
+                run(&mut app, 1);
+                let state = pawn_state(&app);
+                highest = highest.max(state.position.y);
+                if tick > 0 && !state.grounded && is_solid(&app, block) {
+                    airborne_on.push(tick);
+                }
+                if !is_solid(&app, block) {
+                    break;
+                }
+            }
+
+            assert!(!is_solid(&app, block), "the block is removed");
+            assert!(
+                highest - start_height > 0.9,
+                "the pawn climbed the rise: {start_height} to {highest}"
+            );
+            assert!(
+                airborne_on.is_empty(),
+                "left the ground on ticks {airborne_on:?}"
+            );
+        }
+
+        #[test]
+        fn the_pawn_digs_within_the_mining_reach() {
+            let block = BlockPos::new(22, 2, 10);
+            let mut app = marked_world(block, Some(ORE));
+            let start = pawn_state(&app).position;
+            let mut at_removal = None;
+
+            for _ in 0..900 {
+                run(&mut app, 1);
+                if !is_solid(&app, block) {
+                    at_removal = Some(pawn_state(&app).position);
+                    break;
+                }
+            }
+
+            let eye = at_removal.expect("the pawn dug the block");
+            assert!(
+                start.distance(centre_of(block)) > MINE_REACH,
+                "setup: the block starts out of reach"
+            );
+            let distance = eye.distance(centre_of(block));
+            assert!(
+                distance <= MINE_REACH,
+                "dug from {distance} m, reach is {MINE_REACH}"
+            );
+        }
+
+        #[test]
+        fn nothing_marked_leaves_the_pawn_where_it_was() {
+            let mut app = dig_world(false, &[(NEAR_BLOCK, Some(ORE))]);
+            stand_pawn(&mut app, 10.5, 10.5);
+            let before = pawn_state(&app);
+            let simulated = app.simulation.position();
+
+            run(&mut app, 120);
+
+            assert_eq!(pawn_state(&app), before);
+            assert_eq!(app.simulation.position(), simulated);
+            assert!(is_solid(&app, NEAR_BLOCK), "nothing was dug");
+            assert!(app.colony.stock.is_empty());
+        }
+
+        #[test]
+        fn cancelling_the_mark_stops_the_pawn_and_keeps_the_block() {
+            let mut app = marked_world(NEAR_BLOCK, Some(ORE));
+            let start = pawn_state(&app).position;
+            let mut walking = false;
+            for _ in 0..120 {
+                run(&mut app, 1);
+                if horizontal_distance(pawn_state(&app).position, start) > 1.0 {
+                    walking = true;
+                    break;
+                }
+            }
+            assert!(walking, "setup: the pawn set off toward the block");
+
+            app.colony.marks.toggle(NEAR_BLOCK.to_array());
+            run(&mut app, 2);
+            let stopped = pawn_state(&app).position;
+            run(&mut app, 120);
+
+            assert!(
+                horizontal_distance(pawn_state(&app).position, stopped) < 1e-3,
+                "the pawn kept walking: {stopped} to {}",
+                pawn_state(&app).position
+            );
+            assert!(is_solid(&app, NEAR_BLOCK), "the block is not removed");
+            assert!(app.colony.stock.is_empty());
+        }
+
+        #[test]
+        fn a_possessed_pawn_runs_no_job() {
+            let mut app = marked_world(NEAR_BLOCK, Some(ORE));
+            app.simulation
+                .set_camera_mode(flagstone_game::controller::CameraMode::FirstPerson);
+            let start = pawn_state(&app).position;
+
+            run(&mut app, 180);
+
+            assert!(
+                horizontal_distance(pawn_state(&app).position, start) < 1e-3,
+                "the possessed pawn walked off"
+            );
+            assert!(is_solid(&app, NEAR_BLOCK), "nothing was dug");
+            assert!(app.colony.stock.is_empty());
+            let claim = app
+                .colony
+                .marks
+                .iter()
+                .map(|(_, mark)| mark.claimed_by)
+                .next()
+                .expect("the mark is still there");
+            assert_eq!(claim, None, "no job claimed the mark");
+        }
     }
 }

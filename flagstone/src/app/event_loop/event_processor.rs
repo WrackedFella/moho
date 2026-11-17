@@ -1721,4 +1721,90 @@ mod tests {
 
         assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
     }
+
+    #[test]
+    fn dig_asset_exists() {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/dig.wav");
+
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+
+        assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
+    }
+
+    #[test]
+    fn a_pawn_dig_publishes_the_removal_and_the_cue() {
+        use crate::app::dig_world::{centre_of, dig_world, is_solid, run, stand_pawn};
+        use std::sync::{Arc, Mutex};
+
+        for resource in [Some(7), None] {
+            let block = flagstone_voxel::BlockPos::new(14, 2, 10);
+            let mut app = dig_world(false, &[(block, resource)]);
+            stand_pawn(&mut app, 13.5, 10.5);
+            app.colony.marks.toggle(block.to_array());
+            let removed = Arc::new(Mutex::new(Vec::new()));
+            let remeshed = Arc::new(Mutex::new(Vec::new()));
+            let cues = Arc::new(Mutex::new(Vec::new()));
+            let (removed_sink, remeshed_sink) = (Arc::clone(&removed), Arc::clone(&remeshed));
+            app.event_bus
+                .subscribe(move |event: &WorldEvent| match event {
+                    WorldEvent::BlockRemoved { position, .. } => {
+                        removed_sink.lock().unwrap().push(*position);
+                    }
+                    WorldEvent::ChunkMeshDirty { chunk_pos, .. } => {
+                        remeshed_sink.lock().unwrap().push(*chunk_pos);
+                    }
+                    WorldEvent::BlockPlaced { .. } | WorldEvent::BlocksBatchModified { .. } => {}
+                });
+            let cue_sink = Arc::clone(&cues);
+            app.event_bus.subscribe(move |event: &AudioEvent| {
+                if let AudioEvent::PlaySoundAt {
+                    path,
+                    volume,
+                    position,
+                } = event
+                {
+                    cue_sink
+                        .lock()
+                        .unwrap()
+                        .push((path.clone(), *volume, *position));
+                }
+            });
+
+            run(&mut app, 60);
+            app.event_bus.process_deferred();
+
+            assert!(
+                !is_solid(&app, block),
+                "{resource:?}: the pawn dug the block"
+            );
+            assert_eq!(
+                *removed.lock().unwrap(),
+                [block],
+                "{resource:?}: one removal, of the marked block"
+            );
+            let grid = app.light_system.as_ref().expect("light system").grid();
+            let remeshed = remeshed.lock().unwrap();
+            for chunk in flagstone_voxel::chunks_meshed_from(block, grid.chunk_size()) {
+                assert!(
+                    remeshed.contains(&chunk),
+                    "{resource:?}: chunk {chunk} is not remeshed, only {remeshed:?}"
+                );
+            }
+            let cues = cues.lock().unwrap();
+            assert_eq!(cues.len(), 1, "{resource:?}: one cue for one dig: {cues:?}");
+            let (path, volume, position) = &cues[0];
+            assert_eq!(
+                std::path::Path::new(path),
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("assets/dig.wav")
+                    .as_path()
+            );
+            assert!(*volume > 0.0, "{resource:?}: audible");
+            assert!(
+                position.distance(centre_of(block)) < 1e-4,
+                "{resource:?}: the cue plays at {position}, the block's centre is {}",
+                centre_of(block)
+            );
+        }
+    }
 }

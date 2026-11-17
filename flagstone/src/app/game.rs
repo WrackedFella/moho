@@ -4269,4 +4269,44 @@ mod tests {
 
         assert!(outlined_markers(&mut app).is_empty());
     }
+
+    #[test]
+    fn returning_to_first_person_starts_where_the_pawn_walked_to() {
+        use crate::app::dig_world::{dig_world, is_solid, pawn_state, stand_pawn};
+        let block = flagstone_voxel::BlockPos::new(14, 2, 10);
+        let mut app = dig_world(false, &[(block, Some(7))]);
+        stand_pawn(&mut app, 10.5, 10.5);
+        app.colony.marks.toggle(block.to_array());
+        let start = app.simulation.position();
+        for _ in 0..600 {
+            step_once(&mut app);
+            if !is_solid(&app, block) {
+                break;
+            }
+        }
+        assert!(!is_solid(&app, block), "setup: the pawn dug the block");
+        let walked_to = app.simulation.position();
+        assert!(
+            walked_to.distance(start) > 1.0,
+            "setup: the pawn walked from {start} to {walked_to}"
+        );
+        assert!(
+            walked_to.distance(pawn_state(&app).position) < 1e-3,
+            "the simulation follows the walking pawn"
+        );
+
+        tap_possess(&mut app);
+        step_once(&mut app);
+
+        assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+        assert!(
+            app.simulation.position().distance(walked_to) < 0.05,
+            "first person starts at {}, the pawn stood at {walked_to}",
+            app.simulation.position()
+        );
+        assert!(
+            pawn_state(&app).position.distance(walked_to) < 0.05,
+            "the character is where the pawn stood"
+        );
+    }
 }
