@@ -1,6 +1,9 @@
 //! Strategy-line routing over the voxel grid: which cells a pawn can stand on and the
 //! shortest walk between them.
 
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
+
 use flagstone_voxel::{BlockPos, VoxelGrid};
 use glam::Vec3;
 
@@ -9,26 +12,98 @@ pub const ROUTE_NODE_BUDGET: usize = 4096;
 
 /// Whether a pawn can stand with its feet in `cell`: ground below and three cells of air
 /// from the feet up.
-pub fn standable(_grid: &VoxelGrid, _cell: BlockPos) -> bool {
-    todo!()
+pub fn standable(grid: &VoxelGrid, cell: BlockPos) -> bool {
+    grid.is_solid_at(cell - BlockPos::Y)
+        && (0..3).all(|up| !grid.is_solid_at(cell + BlockPos::Y * up))
 }
 
 /// The cell a pawn with its feet at `feet` stands in.
-pub fn feet_cell(_feet: Vec3) -> BlockPos {
-    todo!()
+pub fn feet_cell(feet: Vec3) -> BlockPos {
+    feet.floor().as_ivec3()
+}
+
+/// The four horizontal neighbours, in the fixed order that makes ties deterministic.
+const SIDEWAYS: [BlockPos; 4] = [BlockPos::X, BlockPos::NEG_X, BlockPos::Z, BlockPos::NEG_Z];
+
+/// The standable cell a pawn whose feet are in `start` walks from: `start`, else the cell
+/// above, else the one below (a pawn on a slope).
+fn walkable_start(grid: &VoxelGrid, start: BlockPos) -> Option<BlockPos> {
+    [start, start + BlockPos::Y, start - BlockPos::Y]
+        .into_iter()
+        .find(|cell| standable(grid, *cell))
+}
+
+/// The cells one step from `cell`: sideways on the level, up one block (with a fourth cell
+/// of air above the current feet) or down one block.
+fn steps(grid: &VoxelGrid, cell: BlockPos) -> impl Iterator<Item = BlockPos> + '_ {
+    let can_climb = !grid.is_solid_at(cell + BlockPos::Y * 3);
+    SIDEWAYS.into_iter().filter_map(move |side| {
+        let next = cell + side;
+        [next, next + BlockPos::Y, next - BlockPos::Y]
+            .into_iter()
+            .enumerate()
+            .find(|(i, c)| (*i != 1 || can_climb) && standable(grid, *c))
+            .map(|(_, c)| c)
+    })
+}
+
+/// Horizontal Manhattan distance, less the two a goal window can sit from `toward`, so the
+/// estimate never exceeds the true route length.
+fn estimate(cell: BlockPos, toward: BlockPos) -> u32 {
+    ((cell.x - toward.x).unsigned_abs() + (cell.z - toward.z).unsigned_abs()).saturating_sub(2)
 }
 
 /// The cells to walk from `start` to the nearest cell satisfying `is_goal`, `start`
 /// excluded and the goal cell last; `None` when no goal is reachable within `budget`
 /// expansions. `toward` steers the search.
 pub fn route(
-    _grid: &VoxelGrid,
-    _start: BlockPos,
-    _is_goal: impl Fn(BlockPos) -> bool,
-    _toward: BlockPos,
-    _budget: usize,
+    grid: &VoxelGrid,
+    start: BlockPos,
+    is_goal: impl Fn(BlockPos) -> bool,
+    toward: BlockPos,
+    budget: usize,
 ) -> Option<Vec<BlockPos>> {
-    todo!()
+    let start = walkable_start(grid, start)?;
+    // Nodes in insertion order: the cell and the index of the node it was reached from.
+    let mut nodes = vec![(start, usize::MAX)];
+    let mut best_cost: HashMap<BlockPos, u32> = HashMap::from([(start, 0)]);
+    let mut open = BinaryHeap::from([Reverse((estimate(start, toward), 0u32, 0usize))]);
+    let mut expanded = 0;
+
+    while let Some(Reverse((_, cost, index))) = open.pop() {
+        let cell = nodes[index].0;
+        if best_cost.get(&cell).is_some_and(|best| *best < cost) {
+            continue;
+        }
+        if is_goal(cell) {
+            let mut path = Vec::new();
+            let mut at = index;
+            while nodes[at].1 != usize::MAX {
+                path.push(nodes[at].0);
+                at = nodes[at].1;
+            }
+            path.reverse();
+            return Some(path);
+        }
+        if expanded == budget {
+            return None;
+        }
+        expanded += 1;
+        for next in steps(grid, cell) {
+            let next_cost = cost + 1;
+            if best_cost.get(&next).is_some_and(|best| *best <= next_cost) {
+                continue;
+            }
+            best_cost.insert(next, next_cost);
+            nodes.push((next, index));
+            open.push(Reverse((
+                next_cost + estimate(next, toward),
+                next_cost,
+                nodes.len() - 1,
+            )));
+        }
+    }
+    None
 }
 
 #[cfg(test)]
