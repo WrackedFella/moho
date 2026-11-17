@@ -83,10 +83,28 @@ jobs:
           ref: ${{ matrix.card.base }}
           fetch-depth: 0
       # The skill branches from "the base branch"; a branch at the replay's start commit
-      # gives it one, and MOHO_BASE points the gate and mutation diff at it.
+      # gives it one, and MOHO_BASE points the gate and mutation diff at it. The job token
+      # may not push a commit that edits a workflow, so such a start commit is replaced by
+      # one with the same code and its parent's workflows, built with fixed dates so both
+      # replays of a card build the same commit. Later steps use that commit as BASE_SHA.
       - name: Base branch
         run: |
-          git push origin "$BASE_SHA:refs/heads/eval-base/$ID" || git ls-remote --exit-code origin "refs/heads/eval-base/$ID"
+          base=$BASE_SHA
+          if git diff --quiet "$BASE_SHA^" "$BASE_SHA" -- .github/workflows; then :; else
+            export GIT_INDEX_FILE="$RUNNER_TEMP/eval-base.index"
+            git read-tree "$BASE_SHA"
+            git rm -r --cached -f -q .github/workflows
+            git read-tree --prefix=.github/workflows/ "$BASE_SHA^:.github/workflows"
+            tree=$(git write-tree)
+            unset GIT_INDEX_FILE
+            date=$(git show -s --format=%cI "$BASE_SHA")
+            base=$(GIT_AUTHOR_NAME=eval GIT_AUTHOR_EMAIL=eval@localhost GIT_AUTHOR_DATE="$date" \
+              GIT_COMMITTER_NAME=eval GIT_COMMITTER_EMAIL=eval@localhost GIT_COMMITTER_DATE="$date" \
+              git commit-tree "$tree" -p "$BASE_SHA^" -m "eval base for $ID: $BASE_SHA without its workflow edits")
+            git checkout --force --detach "$base"
+            echo "BASE_SHA=$base" >> "$GITHUB_ENV"
+          fi
+          git push origin "$base:refs/heads/eval-base/$ID" || git ls-remote --exit-code origin "refs/heads/eval-base/$ID"
           git fetch origin "eval-base/$ID:refs/remotes/origin/eval-base/$ID"
           echo "MODEL_ARG=$([ '${{ inputs.model }}' = default ] || echo '--model ${{ inputs.model }}')" >> "$GITHUB_ENV"
       - name: Install toolchain
