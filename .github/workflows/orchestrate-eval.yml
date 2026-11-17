@@ -3,7 +3,7 @@ name: Orchestrate eval
 # Replays closed work items through /devflow:orchestrate from the commit their merged PR
 # started at, to measure the workflow before and after a change to it. Each replay pushes
 # only to eval/<label>/<ID>-r<n> and never touches the issue, the board or a PR: the
-# allow-list leaves out every tracker write. The set is .github/eval/orchestrate-set.json;
+# allow-list leaves out every tracker write, and the job token can only read them. The set is .github/eval/orchestrate-set.json;
 # each entry's reference commit is the merged result, kept for comparison.
 #
 # Per replay the job log carries one `EVAL-RECORD {json}` line: outcome, gate, held-out
@@ -35,6 +35,8 @@ on:
 permissions:
   contents: write
   actions: write
+  issues: read
+  pull-requests: read
 
 jobs:
   plan:
@@ -106,6 +108,9 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The job's own token, not the Claude App's: it can push branches but has read-only
+          # issues and pull requests, so no tracker write is possible whatever the agent runs.
+          github_token: ${{ github.token }}
           plugin_marketplaces: https://github.com/WrackedFella/claude-skills.git
           plugins: devflow@claude-skills
           display_report: true
