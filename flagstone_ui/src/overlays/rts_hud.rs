@@ -3,7 +3,7 @@
 //! Draws the time of day and the view-height slider, and reports the player's pick
 //! through `take_intents`.
 
-use super::overlay_manager::{HudData, HudIntents, Overlay, ViewHeightHud};
+use super::overlay_manager::{HudData, HudIntents, Overlay, SelectionHud, ViewHeightHud};
 
 const SLIDER_LENGTH: f32 = 200.0;
 
@@ -57,6 +57,9 @@ impl Overlay for RtsHud {
         if let Some(view_height) = data.view_height {
             self.chosen = render_view_height(ui, view_height).or(self.chosen);
         }
+        if let Some(selection) = &data.selection {
+            render_selection_panel(ui, selection);
+        }
     }
 
     fn take_intents(&mut self, out: &mut HudIntents) {
@@ -81,6 +84,32 @@ fn render_mine_control(ui: &mut egui::Ui, active: bool) -> bool {
         })
         .inner
         .clicked()
+}
+
+/// The selected pawn's panel on the left edge; an egui area, so a click on it never
+/// reaches the world.
+fn render_selection_panel(ui: &mut egui::Ui, selection: &SelectionHud) {
+    let colour = egui::Color32::from_rgb(220, 220, 200);
+    egui::Area::new("rts_selection_panel".into())
+        .anchor(egui::Align2::LEFT_TOP, egui::vec2(12.0, 100.0))
+        .show(ui.ctx(), |ui| {
+            egui::Frame::new()
+                .fill(egui::Color32::from_rgba_premultiplied(0, 0, 0, 120))
+                .inner_margin(egui::Margin::same(6))
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(&selection.title)
+                            .font(egui::FontId::proportional(16.0))
+                            .color(colour),
+                    );
+                    if let Some(tool) = &selection.tool {
+                        ui.label(egui::RichText::new(tool).color(colour));
+                    }
+                    for (name, count) in &selection.carried {
+                        ui.label(egui::RichText::new(format!("{name} {count}")).color(colour));
+                    }
+                });
+        });
 }
 
 /// Vertical view-height slider on the right edge, below the minimap and the clock.

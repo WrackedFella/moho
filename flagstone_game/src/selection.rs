@@ -11,7 +11,7 @@ pub struct PawnId(pub u32);
 pub const PLAYER_PAWN: PawnId = PawnId(0);
 
 /// Half extents of the pawn box; spans the character capsule.
-pub const PAWN_HALF_EXTENTS: Vec3 = Vec3::new(0.0, 0.0, 0.0);
+pub const PAWN_HALF_EXTENTS: Vec3 = Vec3::new(0.3, 1.15, 0.3);
 
 /// An axis-aligned box in world space.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -21,25 +21,52 @@ pub struct Aabb {
 }
 
 /// The pawn's box around its capsule centre.
-pub fn pawn_aabb(_center: Vec3) -> Aabb {
+pub fn pawn_aabb(center: Vec3) -> Aabb {
     Aabb {
-        min: Vec3::ZERO,
-        max: Vec3::ZERO,
+        min: center - PAWN_HALF_EXTENTS,
+        max: center + PAWN_HALF_EXTENTS,
     }
 }
 
 /// The ray parameter at which `ray` enters `aabb` (0 when it starts inside), or `None`.
-pub fn ray_box_entry(_ray: &Ray, _aabb: &Aabb) -> Option<f32> {
-    None
+/// Slab method; a box wholly behind the origin is a miss.
+pub fn ray_box_entry(ray: &Ray, aabb: &Aabb) -> Option<f32> {
+    let mut t_near = f32::NEG_INFINITY;
+    let mut t_far = f32::INFINITY;
+    for axis in 0..3 {
+        let origin = ray.origin[axis];
+        let direction = ray.direction[axis];
+        let (lo, hi) = (aabb.min[axis], aabb.max[axis]);
+        if direction == 0.0 {
+            if origin < lo || origin > hi {
+                return None;
+            }
+            continue;
+        }
+        let a = (lo - origin) / direction;
+        let b = (hi - origin) / direction;
+        t_near = t_near.max(a.min(b));
+        t_far = t_far.min(a.max(b));
+    }
+    if t_near > t_far || t_far < 0.0 {
+        return None;
+    }
+    Some(t_near.max(0.0))
 }
 
 /// The nearest pawn whose box the ray enters nearer than the terrain.
 pub fn pick_pawn(
-    _ray: &Ray,
-    _pawns: impl IntoIterator<Item = (PawnId, Aabb)>,
-    _terrain_distance: Option<f32>,
+    ray: &Ray,
+    pawns: impl IntoIterator<Item = (PawnId, Aabb)>,
+    terrain_distance: Option<f32>,
 ) -> Option<PawnId> {
-    None
+    let limit = terrain_distance.unwrap_or(f32::INFINITY);
+    pawns
+        .into_iter()
+        .filter_map(|(id, aabb)| ray_box_entry(ray, &aabb).map(|t| (id, t)))
+        .filter(|&(_, t)| t < limit)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(id, _)| id)
 }
 
 /// The selected pawn, if any.
@@ -50,7 +77,9 @@ pub struct Selection {
 
 impl Selection {
     /// Replaces the selection with what the click hit.
-    pub fn click(&mut self, _hit: Option<PawnId>) {}
+    pub fn click(&mut self, hit: Option<PawnId>) {
+        self.selected = hit;
+    }
 
     pub fn selected(&self) -> Option<PawnId> {
         self.selected
