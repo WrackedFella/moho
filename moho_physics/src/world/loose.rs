@@ -278,6 +278,10 @@ mod tests {
         world.loose(id).expect("the object is alive")
     }
 
+    fn body_of(world: &PhysicsWorld, id: LooseId) -> rapier3d::prelude::RigidBodyHandle {
+        *world.loose.get(&id).expect("the object is alive")
+    }
+
     fn cuboid(half_extents: Vec3) -> LooseShape {
         LooseShape::Box { half_extents }
     }
@@ -627,7 +631,7 @@ mod tests {
             "{state:?}"
         );
         assert!(!state.asleep, "a fresh object is awake");
-        let mass = world.rigid_body_set[world.loose[&id]].mass();
+        let mass = world.rigid_body_set[body_of(&world, id)].mass();
         assert!(
             (mass - 3.5).abs() <= 1e-4,
             "the body weighs the stated mass, mass={mass}"
@@ -1153,6 +1157,8 @@ mod tests {
             let velocity = read(&world, id).linear_velocity;
             let speed = velocity.with_y(0.0).length();
             assert!(
+                // The solver alone jitters the speed by about 1 mm/s per tick; the brake
+                // removes about 26 mm/s per tick, so 5 mm/s still catches a real rise.
                 speed <= previous + 5e-3,
                 "tick {tick}: speed rose from {previous} to {speed}"
             );
@@ -1161,49 +1167,64 @@ mod tests {
 
         let state = read(&world, id);
         assert!(
-            state.position.z <= 1.5,
-            "it rests within 1.5 m, z={}",
+            (1.0..=1.5).contains(&state.position.z),
+            "it rests within 1.5 m, and not before the 1.27 m theory allows, z={}",
             state.position.z
         );
         assert!(state.asleep, "it comes to rest, {state:?}");
     }
 
+    /// Lies `shape` across a slope of `degrees` in a default world and returns where it ends
+    /// after 5 s, with where it started.
+    fn lie_on_slope_for_five_seconds(
+        shape: LooseShape,
+        radius: f32,
+        degrees: f32,
+    ) -> (LooseState, Vec3) {
+        let mut world = slope_world(degrees);
+        let spawn = lying_on_slope(shape, radius, degrees);
+        let id = world.spawn_loose(&spawn);
+
+        run(&mut world, 300);
+
+        (read(&world, id), spawn.position)
+    }
+
     #[test]
-    fn the_rest_slope_decides() {
+    fn a_shape_lying_across_ground_within_the_rest_slope_stays_put_asleep() {
         let rows = [
-            ("capsule", 2.0, false),
-            ("capsule", 4.9, false),
-            ("cylinder", 4.9, false),
-            ("capsule", 5.5, true),
-            ("cylinder", 10.0, true),
+            ("capsule", TEST_CAPSULE, 0.04, 2.0),
+            ("capsule", TEST_CAPSULE, 0.04, 4.9),
+            ("cylinder", TEST_CYLINDER, 0.05, 4.9),
         ];
 
-        for (name, degrees, rolls) in rows {
-            let (shape, radius) = if name == "capsule" {
-                (TEST_CAPSULE, 0.04)
-            } else {
-                (TEST_CYLINDER, 0.05)
-            };
-            let mut world = slope_world(degrees);
-            let spawn = lying_on_slope(shape, radius, degrees);
-            let id = world.spawn_loose(&spawn);
+        for (name, shape, radius, degrees) in rows {
+            let (state, start) = lie_on_slope_for_five_seconds(shape, radius, degrees);
 
-            run(&mut world, 300);
+            let moved = state.position.distance(start);
+            assert!(moved < 0.02, "{name} on {degrees} degrees moved {moved} m");
+            assert!(
+                state.asleep,
+                "{name} on {degrees} degrees is awake, {state:?}"
+            );
+        }
+    }
 
-            let state = read(&world, id);
-            let moved = state.position.distance(spawn.position);
-            if rolls {
-                assert!(
-                    moved > 1.0,
-                    "{name} on {degrees} degrees rolled only {moved} m"
-                );
-            } else {
-                assert!(moved < 0.02, "{name} on {degrees} degrees moved {moved} m");
-                assert!(
-                    state.asleep,
-                    "{name} on {degrees} degrees is awake, {state:?}"
-                );
-            }
+    #[test]
+    fn a_shape_lying_across_ground_past_the_rest_slope_rolls_down() {
+        let rows = [
+            ("capsule", TEST_CAPSULE, 0.04, 5.5),
+            ("cylinder", TEST_CYLINDER, 0.05, 10.0),
+        ];
+
+        for (name, shape, radius, degrees) in rows {
+            let (state, start) = lie_on_slope_for_five_seconds(shape, radius, degrees);
+
+            let rolled = state.position.distance(start);
+            assert!(
+                rolled > 1.0,
+                "{name} on {degrees} degrees rolled only {rolled} m"
+            );
         }
     }
 
@@ -1233,7 +1254,17 @@ mod tests {
     }
 
     #[test]
-    fn set_rest_slope_rejects_out_of_range() {
+    fn set_rest_slope_accepts_zero_up_to_a_right_angle_and_rejects_the_rest() {
+        let mut world = PhysicsWorld::new();
+        let default = world.rest_slope();
+        world.set_rest_slope(0.0);
+        let off = world.rest_slope();
+        world.set_rest_slope(1.5);
+        let steep = world.rest_slope();
+        assert!((default - 5.0_f32.to_radians()).abs() < 1e-6, "{default}");
+        assert_eq!(off, 0.0);
+        assert_eq!(steep, 1.5);
+
         let rows = [
             ("NaN", f32::NAN),
             ("+inf", f32::INFINITY),
@@ -1257,49 +1288,123 @@ mod tests {
     }
 
     #[test]
-    fn the_rest_slope_defaults_to_five_degrees_and_reads_back_what_was_set() {
-        let mut world = PhysicsWorld::new();
-        let default = world.rest_slope();
-
-        world.set_rest_slope(0.0);
-        let off = world.rest_slope();
-        world.set_rest_slope(1.5);
-        let steep = world.rest_slope();
-
-        assert!((default - 5.0_f32.to_radians()).abs() < 1e-6, "{default}");
-        assert_eq!(off, 0.0);
-        assert_eq!(steep, 1.5);
-    }
-
-    #[test]
     fn the_brake_never_touches_vertical_velocity() {
         let mut braked = world_with_floor(&floor_mesh(0.0));
         let mut free = world_with_floor(&floor_mesh(0.0));
         free.set_rest_slope(0.0);
         let spawn = LooseSpawn {
-            position: Vec3::new(0.0, 0.5, 0.0),
+            linear_velocity: Vec3::new(0.0, -1.0, 2.0),
+            ..rolling_capsule(2.0)
+        };
+        let braked_id = braked.spawn_loose(&spawn);
+        let free_id = free.spawn_loose(&spawn);
+
+        braked.step(DT);
+        free.step(DT);
+
+        let (a, b) = (read(&braked, braked_id), read(&free, free_id));
+        assert_eq!(
+            a.linear_velocity.y.to_bits(),
+            b.linear_velocity.y.to_bits(),
+            "vertical velocity differs: braked {a:?}, free {b:?}"
+        );
+        assert_ne!(
+            a.linear_velocity.z.to_bits(),
+            b.linear_velocity.z.to_bits(),
+            "the brake ran on the capsule in contact: braked {a:?}, free {b:?}"
+        );
+    }
+
+    #[test]
+    fn a_rolling_capsule_stops_sooner_under_weaker_gravity_by_the_same_rule() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        world.set_gravity(9.0);
+        let id = world.spawn_loose(&rolling_capsule(2.0));
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        assert!(
+            (2.0..=3.0).contains(&state.position.z),
+            "a = g tan(5 degrees) stops it near 2.54 m at gravity 9, z={}",
+            state.position.z
+        );
+        assert!(state.asleep, "it comes to rest, {state:?}");
+    }
+
+    #[test]
+    fn a_capsule_rolling_slowly_on_top_of_a_box_sleeps_on_it() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let slab = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.2, 0.0),
+            ..LooseSpawn::new(cuboid(Vec3::new(0.5, 0.2, 0.5)), 5.0)
+        });
+        let capsule = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.44, 0.0),
+            rotation: axis_along_x(),
+            linear_velocity: Vec3::new(0.0, 0.0, 0.3),
+            angular_velocity: Vec3::new(0.3 / 0.04, 0.0, 0.0),
+            ..LooseSpawn::new(TEST_CAPSULE, 0.2)
+        });
+
+        run(&mut world, 300);
+
+        let state = read(&world, capsule);
+        assert!(state.asleep, "the capsule sleeps on the box top, {state:?}");
+        assert!(
+            state.position.z.abs() < 0.2 && (state.position.y - 0.44).abs() < 0.005,
+            "it stays on the box top, {state:?}"
+        );
+        assert!(read(&world, slab).asleep, "the box sleeps too");
+    }
+
+    #[test]
+    fn a_box_sliding_on_flat_ground_is_not_braked() {
+        let mut braked = world_with_floor(&floor_mesh(0.0));
+        let mut free = world_with_floor(&floor_mesh(0.0));
+        free.set_rest_slope(0.0);
+        let spawn = LooseSpawn {
+            friction: 0.0,
+            position: Vec3::new(-5.0, 0.05, 0.0),
+            linear_velocity: Vec3::new(10.0, 0.0, 0.0),
             ..LooseSpawn::new(cube(0.05), 0.2)
         };
         let braked_id = braked.spawn_loose(&spawn);
         let free_id = free.spawn_loose(&spawn);
 
-        let mut compared = 0;
+        for tick in 1..=30 {
+            braked.step(DT);
+            free.step(DT);
+            let (a, b) = (read(&braked, braked_id), read(&free, free_id));
+            assert_eq!(bits(&a), bits(&b), "tick {tick}: the box was braked");
+        }
+
+        let speed = read(&braked, braked_id).linear_velocity.x;
+        assert!(speed > 5.0, "the box is still sliding, speed {speed}");
+    }
+
+    #[test]
+    fn without_gravity_there_is_no_brake() {
+        let mut braked = PhysicsWorld::new();
+        let mut free = PhysicsWorld::new();
+        for world in [&mut braked, &mut free] {
+            world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+            world.set_gravity(0.0);
+        }
+        free.set_rest_slope(0.0);
+        let braked_id = braked.spawn_loose(&rolling_capsule(2.0));
+        let free_id = free.spawn_loose(&rolling_capsule(2.0));
+
         for tick in 1..=60 {
             braked.step(DT);
             free.step(DT);
             let (a, b) = (read(&braked, braked_id), read(&free, free_id));
-            if lowest_point(cube(0.05), &a) <= 0.0 {
-                break;
-            }
-            assert_eq!(
-                a.linear_velocity.y.to_bits(),
-                b.linear_velocity.y.to_bits(),
-                "tick {tick}: vertical velocity differs"
+            assert!(
+                a.position.is_finite() && a.linear_velocity.is_finite(),
+                "tick {tick}: not finite, {a:?}"
             );
-            compared += 1;
+            assert_eq!(bits(&a), bits(&b), "tick {tick}: the brake ran");
         }
-
-        assert!(compared >= 8, "the box fell for {compared} ticks");
     }
 
     #[test]
