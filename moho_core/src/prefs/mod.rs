@@ -90,6 +90,10 @@ const MAX_BLOOM_QUALITY: u32 = 2;
 const MIN_BRIGHTNESS: f32 = 0.5;
 const MAX_BRIGHTNESS: f32 = 2.0;
 const DEFAULT_BRIGHTNESS: f32 = 1.0;
+/// Seconds of play between autosaves; 0 turns autosave off.
+const DEFAULT_AUTOSAVE_SECONDS: u32 = 120;
+const MIN_AUTOSAVE_SECONDS: u32 = 30;
+const MAX_AUTOSAVE_SECONDS: u32 = 3600;
 
 /// Why a name or value for a game-owned section was refused.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -232,8 +236,10 @@ impl Prefs {
     }
     /// Time of play between autosaves of an edited world; `None` is off.
     pub fn autosave_interval(&self) -> Option<std::time::Duration> {
-        // Test stub: ignores the stored value.
-        Some(std::time::Duration::from_secs(120))
+        match self.world_autosave_seconds {
+            0 => None,
+            secs => Some(std::time::Duration::from_secs(u64::from(secs))),
+        }
     }
     pub fn window_mode(&self) -> WindowMode {
         self.window_mode
@@ -397,7 +403,7 @@ impl Default for Prefs {
             world_load_radius: 8,
             world_unload_radius: 12,
             world_chunks_per_frame: 4,
-            world_autosave_seconds: 120,
+            world_autosave_seconds: DEFAULT_AUTOSAVE_SECONDS,
             bindings: BTreeMap::new(),
             action_modes: BTreeMap::new(),
             debug: BTreeMap::new(),
@@ -449,7 +455,8 @@ impl Prefs {
              \n[world]\n\
              load_radius={load}\n\
              unload_radius={unload}\n\
-             chunks_per_frame={chunks}\n",
+             chunks_per_frame={chunks}\n\
+             autosave_seconds={autosave}\n",
             mouse_sensitivity = self.mouse_sensitivity,
             mouse_smoothing = self.mouse_smoothing,
             invert_mouse_y = self.invert_mouse_y,
@@ -472,6 +479,7 @@ impl Prefs {
             load = self.world_load_radius,
             unload = self.world_unload_radius,
             chunks = self.world_chunks_per_frame,
+            autosave = self.world_autosave_seconds,
         );
         if !self.content_mods.is_empty() {
             text.push_str("\n[content]\nmods=");
@@ -546,8 +554,10 @@ mod tests {
     fn autosave_seconds_round_trips_through_the_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config").join("prefs.ini");
-        let mut prefs = Prefs::default();
-        prefs.world_autosave_seconds = 300;
+        let prefs = Prefs {
+            world_autosave_seconds: 300,
+            ..Prefs::default()
+        };
 
         prefs.save_to(&path).unwrap();
         let (loaded, warnings) = Prefs::load_from(&path);

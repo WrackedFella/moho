@@ -18,9 +18,13 @@ impl AutosaveSchedule {
         }
     }
 
-    /// A schedule that is never due. Test stub.
+    /// A schedule that is never due.
     pub fn off() -> Self {
-        todo!("AutosaveSchedule::off")
+        Self {
+            interval_ticks: None,
+            ticks_since_save: 0,
+            edited: false,
+        }
     }
 
     /// A schedule due `interval` of play after the last save, at the simulation tick rate.

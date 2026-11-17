@@ -276,7 +276,7 @@ impl App {
             frame_cap_changed: false,
             saves_dir: std::path::PathBuf::from("saves"),
             autosave_interval,
-            autosave: app::autosave::AutosaveSchedule::new(u64::MAX),
+            autosave: app::autosave::AutosaveSchedule::off(),
             exit_requested: false,
             main_menu_requested: false,
             event_bus: initialized.event_bus,
