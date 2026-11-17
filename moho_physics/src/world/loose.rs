@@ -1,7 +1,18 @@
 use super::PhysicsWorld;
 use glam::{Quat, Vec3};
-use rapier3d::prelude::{ColliderBuilder, Pose, RigidBodyBuilder};
+use rapier3d::prelude::{
+    ColliderBuilder, ColliderHandle, ContactPair, Pose, RigidBody, RigidBodyBuilder,
+    RigidBodyHandle,
+};
+use std::f32::consts::FRAC_PI_2;
 
+/// The rest slope of a world that never calls [`PhysicsWorld::set_rest_slope`]: 5 degrees.
+pub(super) const DEFAULT_REST_SLOPE: f32 = 5.0 * std::f32::consts::PI / 180.0;
+
+/// A contact point deeper than this, m, means two bodies are still being pushed apart, so the
+/// brake leaves both of them, and any body touching either, alone: braking would stop the
+/// solver's separating velocity and freeze the overlap.
+const DEEP_CONTACT: f32 = 0.005;
 /// Stable, engine-issued name of a loose object.
 ///
 /// Issued in increasing order from zero and never reused, so the same call sequence issues the
@@ -27,7 +38,21 @@ pub enum LooseShape {
     Cylinder { half_height: f32, radius: f32 },
 }
 
+/// A loose object's engine side: its body and, for a shape that rolls, the radius it rolls on.
+pub(super) struct Loose {
+    pub(super) body: RigidBodyHandle,
+    /// `None` for a box, which does not roll.
+    roll_radius: Option<f32>,
+}
+
 impl LooseShape {
+    fn roll_radius(self) -> Option<f32> {
+        match self {
+            Self::Box { .. } => None,
+            Self::Capsule { radius, .. } | Self::Cylinder { radius, .. } => Some(radius),
+        }
+    }
+
     fn collider(self) -> ColliderBuilder {
         match self {
             Self::Box { half_extents } => {
@@ -85,11 +110,22 @@ impl LooseSpawn {
             "mass must be positive and finite, got {}",
             self.mass
         );
-        if let LooseShape::Box { half_extents } = self.shape {
-            assert!(
+        match self.shape {
+            LooseShape::Box { half_extents } => assert!(
                 half_extents.is_finite() && half_extents.min_element() > 0.0,
                 "half extents must be positive and finite, got {half_extents}"
-            );
+            ),
+            LooseShape::Capsule {
+                half_height,
+                radius,
+            }
+            | LooseShape::Cylinder {
+                half_height,
+                radius,
+            } => assert!(
+                half_height.is_finite() && half_height > 0.0 && radius.is_finite() && radius > 0.0,
+                "half height and radius must be positive and finite, got {half_height} and {radius}"
+            ),
         }
         assert!(
             self.linear_velocity.is_finite() && self.angular_velocity.is_finite(),
@@ -141,14 +177,17 @@ impl PhysicsWorld {
     ///
     /// The object advances inside [`PhysicsWorld::step`] under the world's gravity.
     ///
+    /// Capsules and cylinders touching ground within the rest slope of level are braked to rest;
+    /// see [`PhysicsWorld::set_rest_slope`]. Boxes are not braked.
+    ///
     /// Characters do not ignore loose objects: a loose box blocks a character or is stepped
     /// onto like geometry, and any overlap shoves the box because the solver treats the
     /// character as infinitely heavy. Rays skip loose boxes because their colliders carry no
     /// tag.
     ///
     /// # Panics
-    /// If the spawn would poison the simulation: a mass or half extent that is not positive and
-    /// finite, a friction, restitution or damping that is negative or not finite, a position or
+    /// If the spawn would poison the simulation: a mass, half extent, half height or radius that
+    /// is not positive and finite, a friction, restitution or damping that is negative or not finite, a position or
     /// velocity that is not finite, or a rotation that is not finite or whose squared length is
     /// more than 2e-4 from 1 (glam's `Quat::is_normalized`).
     pub fn spawn_loose(&mut self, spawn: &LooseSpawn) -> LooseId {
@@ -174,13 +213,19 @@ impl PhysicsWorld {
 
         let id = LooseId(self.next_loose);
         self.next_loose += 1;
-        self.loose.insert(id, handle);
+        self.loose.insert(
+            id,
+            Loose {
+                body: handle,
+                roll_radius: spawn.shape.roll_radius(),
+            },
+        );
         id
     }
 
     /// The object's current state; `None` for an id never spawned or removed.
     pub fn loose(&self, id: LooseId) -> Option<LooseState> {
-        let body = self.rigid_body_set.get(*self.loose.get(&id)?)?;
+        let body = self.rigid_body_set.get(self.loose.get(&id)?.body)?;
         Some(LooseState {
             position: body.translation(),
             rotation: *body.rotation(),
@@ -195,9 +240,9 @@ impl PhysicsWorld {
     /// # Errors
     /// [`UnknownLoose`] if `id` was never spawned or was already removed.
     pub fn remove_loose(&mut self, id: LooseId) -> Result<(), UnknownLoose> {
-        let handle = self.loose.remove(&id).ok_or(UnknownLoose)?;
+        let loose = self.loose.remove(&id).ok_or(UnknownLoose)?;
         self.rigid_body_set.remove(
-            handle,
+            loose.body,
             &mut self.island_manager,
             &mut self.collider_set,
             &mut self.impulse_joint_set,
@@ -218,19 +263,135 @@ impl PhysicsWorld {
     ///
     /// # Panics
     /// If `slope` is not finite or not in `[0, π/2)`.
-    pub fn set_rest_slope(&mut self, _slope: f32) {}
+    pub fn set_rest_slope(&mut self, slope: f32) {
+        assert!(
+            slope.is_finite() && (0.0..FRAC_PI_2).contains(&slope),
+            "rest slope must be finite and in [0, pi/2), got {slope}"
+        );
+        self.rest_slope = slope;
+    }
 
     /// The rest slope in radians; see [`PhysicsWorld::set_rest_slope`].
     pub fn rest_slope(&self) -> f32 {
-        0.0
+        self.rest_slope
+    }
+
+    /// Slow rolling shapes that touch near-flat ground, so they come to rest instead of
+    /// rolling for ever. Runs after the step and changes velocities only.
+    ///
+    /// With `a = g * tan(rest_slope)`, the spin about the shape's axis loses `a * dt / r` and
+    /// the linear velocity across the axis and up loses `a * dt`, each stopping at zero. The
+    /// velocity along up and tipping in the plane of the axis and up are untouched.
+    pub(super) fn brake_rolling(&mut self, dt: f32) {
+        let Some(up) = (-self.gravity).try_normalize() else {
+            return;
+        };
+        let cos_rest = self.rest_slope.cos();
+        let decel = self.gravity.length() * self.rest_slope.tan() * dt;
+        if decel <= 0.0 {
+            return;
+        }
+
+        for loose in self.loose.values() {
+            let Some(radius) = loose.roll_radius else {
+                continue;
+            };
+            let Some(body) = self.rigid_body_set.get(loose.body) else {
+                continue;
+            };
+            if body.is_sleeping() || !self.on_near_flat_ground(body, up, cos_rest) {
+                continue;
+            }
+
+            let axis = *body.rotation() * Vec3::Y;
+            let mut linvel = body.linvel();
+            let mut angvel = body.angvel();
+
+            let spin = angvel.dot(axis);
+            let braked_spin = spin.signum() * (spin.abs() - decel / radius).max(0.0);
+            angvel += axis * (braked_spin - spin);
+
+            if let Some(across) = axis.cross(up).try_normalize() {
+                let speed = linvel.dot(across);
+                let braked = speed.signum() * (speed.abs() - decel).max(0.0);
+                linvel += across * (braked - speed);
+            }
+
+            if let Some(body) = self.rigid_body_set.get_mut(loose.body) {
+                body.set_linvel(linvel, false);
+                body.set_angvel(angvel, false);
+            }
+        }
+    }
+
+    /// Whether `body` has a contact point at or inside a surface whose normal is within the
+    /// rest slope of `up`, and neither it nor any awake body it touches has a contact point
+    /// deeper than [`DEEP_CONTACT`].
+    ///
+    /// The neighbour clause matters because a braked body is a wall that cannot give way: a
+    /// body pinned between two braked neighbours cannot be pushed out of an overlap, and
+    /// sleeps in it.
+    fn on_near_flat_ground(&self, body: &RigidBody, up: Vec3, cos_rest: f32) -> bool {
+        let mut grounded = false;
+        for &collider in body.colliders() {
+            if self.is_pushed_apart(collider) {
+                return false;
+            }
+            for pair in self.narrow_phase.contact_pairs_with(collider) {
+                let into_body = if pair.collider2 == collider {
+                    1.0
+                } else {
+                    -1.0
+                };
+                let other = if pair.collider1 == collider {
+                    pair.collider2
+                } else {
+                    pair.collider1
+                };
+                let mut touching = false;
+                for manifold in pair.manifolds() {
+                    for point in &manifold.points {
+                        if point.dist <= 0.0 {
+                            touching = true;
+                            if (manifold.data.normal * into_body).dot(up) >= cos_rest {
+                                grounded = true;
+                            }
+                        }
+                    }
+                }
+                if touching && self.is_awake_and_pushed_apart(other) {
+                    return false;
+                }
+            }
+        }
+        grounded
+    }
+
+    /// Whether `collider` belongs to an awake body that [`Self::is_pushed_apart`]; a sleeping
+    /// body's manifolds are stale, and a world mesh has no body.
+    fn is_awake_and_pushed_apart(&self, collider: ColliderHandle) -> bool {
+        self.collider_set[collider]
+            .parent()
+            .and_then(|handle| self.rigid_body_set.get(handle))
+            .is_some_and(|body| !body.is_sleeping())
+            && self.is_pushed_apart(collider)
+    }
+
+    /// Whether `collider` has a contact point deeper than [`DEEP_CONTACT`].
+    fn is_pushed_apart(&self, collider: ColliderHandle) -> bool {
+        self.narrow_phase
+            .contact_pairs_with(collider)
+            .flat_map(ContactPair::manifolds)
+            .flat_map(|manifold| &manifold.points)
+            .any(|point| point.dist < -DEEP_CONTACT)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::test_support::{floor_mesh, slab_mesh, slope_mesh, TEST_TAG};
     use crate::world::RayQuery;
-    use crate::world::test_support::{TEST_TAG, floor_mesh, slab_mesh, slope_mesh};
     use moho_render_api::{WorldMesh, WorldMeshId};
     use proptest::prelude::*;
 
@@ -1172,25 +1333,34 @@ mod tests {
                         0.15 + 0.12 * i as f32,
                         random.signed(0.5),
                     ),
-                    rotation: Quat::from_axis_angle(axis, random.next() * 6.28),
+                    rotation: Quat::from_axis_angle(axis, random.next() * std::f32::consts::TAU),
                     ..LooseSpawn::new(shape, 0.2)
                 }
             })
             .collect()
     }
 
+    /// Penetration depth recomputed from the colliders' current shapes and poses, so it
+    /// cannot go stale the way a sleeping pair's cached manifold can.
     fn deepest_object_overlap(world: &PhysicsWorld) -> f32 {
+        let loose: Vec<_> = world
+            .collider_set
+            .iter()
+            .filter(|(_, collider)| collider.parent().is_some())
+            .map(|(_, collider)| collider)
+            .collect();
         let mut deepest = 0.0f32;
-        for pair in world.narrow_phase.contact_pairs() {
-            let both_loose = [pair.collider1, pair.collider2]
-                .iter()
-                .all(|handle| world.collider_set[*handle].parent().is_some());
-            if !both_loose {
-                continue;
-            }
-            for manifold in pair.manifolds() {
-                for point in &manifold.points {
-                    deepest = deepest.max(-point.dist);
+        for (i, a) in loose.iter().enumerate() {
+            for b in &loose[i + 1..] {
+                let contact = rapier3d::parry::query::contact(
+                    a.position(),
+                    a.shape(),
+                    b.position(),
+                    b.shape(),
+                    0.0,
+                );
+                if let Ok(Some(contact)) = contact {
+                    deepest = deepest.max(-contact.dist);
                 }
             }
         }

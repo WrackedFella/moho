@@ -15,6 +15,7 @@ pub(crate) mod test_support;
 
 use character::Character;
 pub use character::{CharacterHandle, CharacterSpawn, CharacterState, HitVolume, UnknownCharacter};
+use loose::{Loose, DEFAULT_REST_SLOPE};
 pub use loose::{LooseId, LooseShape, LooseSpawn, LooseState, UnknownLoose};
 pub use query::{HitTag, RayHit, RayQuery};
 
@@ -33,8 +34,9 @@ pub struct PhysicsWorld {
     ccd_solver: CCDSolver,
     world_mesh_colliders: HashMap<WorldMeshId, ColliderHandle>,
     characters: HashMap<CharacterHandle, Character>,
-    loose: BTreeMap<LooseId, RigidBodyHandle>,
+    loose: BTreeMap<LooseId, Loose>,
     next_loose: u64,
+    rest_slope: f32,
 }
 
 impl std::fmt::Debug for PhysicsWorld {
@@ -77,6 +79,7 @@ impl PhysicsWorld {
             characters: HashMap::new(),
             loose: BTreeMap::new(),
             next_loose: 0,
+            rest_slope: DEFAULT_REST_SLOPE,
         }
     }
 
@@ -98,6 +101,7 @@ impl PhysicsWorld {
             &(),
             &(),
         );
+        self.brake_rolling(dt);
     }
 
     /// Set the downward acceleration, m/s², positive down, that pulls rigid bodies and
