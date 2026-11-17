@@ -838,4 +838,379 @@ mod tests {
             }
         }
     }
+
+    fn z_axis(instance: &InstanceGpu) -> Vec3 {
+        let [x, y, z, _] = instance.model[2];
+        Vec3::new(x, y, z)
+    }
+
+    fn flash_style(size: f32, material: u32, lifetime_ms: u64) -> FlashStyle {
+        FlashStyle {
+            size,
+            material,
+            lifetime: ms(lifetime_ms),
+        }
+    }
+
+    fn mark_style(size: f32, material: u32) -> MarkStyle {
+        MarkStyle {
+            size,
+            material,
+            lifetime: Duration::from_secs(10),
+            fade: Duration::from_secs(1),
+        }
+    }
+
+    /// The instance drawn at `position`, if any.
+    fn found_at(drawn: &[InstanceGpu], position: Vec3) -> Option<&InstanceGpu> {
+        drawn
+            .iter()
+            .find(|i| (translation(i) - position).length() < EPS)
+    }
+
+    #[test]
+    fn a_flash_shrinks_linearly_and_expires() {
+        let mut rig = Rig::new();
+        let at = Vec3::new(1.0, 2.0, 3.0);
+        rig.effects.flash(at, 0.0, flash_style(0.4, 0, 50));
+
+        let full = rig.frame(EYE);
+        rig.effects.advance(ms(25));
+        let half = rig.frame(EYE);
+        rig.effects.advance(ms(25));
+        let gone = rig.frame(EYE);
+
+        assert_eq!(full.len(), 1, "drawn without being placed");
+        assert!((x_axis(&full[0]).length() - 0.4).abs() < EPS);
+        assert!((y_axis(&full[0]).length() - 0.4).abs() < EPS);
+        assert_eq!(half.len(), 1);
+        assert!((x_axis(&half[0]).length() - 0.2).abs() < EPS);
+        assert!((y_axis(&half[0]).length() - 0.2).abs() < EPS);
+        assert!(gone.is_empty());
+        assert_eq!(rig.effects.live(), 0);
+    }
+
+    #[test]
+    fn a_flash_faces_the_eye() {
+        let at = Vec3::new(1.0, 2.0, 3.0);
+        let eyes = [
+            at + Vec3::new(5.0, 0.0, 0.0),
+            at + Vec3::new(-5.0, 1.0, 0.0),
+            at + Vec3::new(0.0, 7.0, 0.5),
+            at + Vec3::new(0.0, -7.0, 0.5),
+            at + Vec3::new(0.0, 1.0, 9.0),
+            at + Vec3::new(0.0, 1.0, -9.0),
+            EYE,
+        ];
+        for eye in eyes {
+            let mut rig = Rig::new();
+            rig.effects.flash(at, 0.0, flash_style(1.0, 0, 50));
+
+            let drawn = rig.frame(eye);
+
+            assert_eq!(drawn.len(), 1);
+            assert_near(translation(&drawn[0]), at);
+            let facing = x_axis(&drawn[0]).cross(y_axis(&drawn[0]));
+            assert!(
+                facing.dot(eye - at) > 0.0,
+                "X x Y points away from eye {eye}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_flash_roll_turns_it_in_its_plane_while_it_still_faces_the_eye() {
+        let at = Vec3::new(1.0, 2.0, 3.0);
+        let mut unrolled = Rig::new();
+        unrolled.effects.flash(at, 0.0, flash_style(1.0, 0, 50));
+        let mut rolled = Rig::new();
+        rolled
+            .effects
+            .flash(at, std::f32::consts::FRAC_PI_2, flash_style(1.0, 0, 50));
+
+        let before = unrolled.frame(EYE);
+        let after = rolled.frame(EYE);
+
+        assert_eq!(before.len(), 1);
+        assert_eq!(after.len(), 1);
+        assert!(
+            x_axis(&before[0]).dot(x_axis(&after[0])).abs() < EPS,
+            "a quarter turn puts X where it was perpendicular"
+        );
+        assert!(
+            x_axis(&after[0]).cross(y_axis(&after[0])).dot(EYE - at) > 0.0,
+            "still faces the eye"
+        );
+        assert_near(translation(&after[0]), at);
+    }
+
+    #[test]
+    fn a_mark_lies_along_its_normal_offset_by_the_mark_offset() {
+        let mut rig = Rig::new();
+        let at = Vec3::new(4.0, 0.0, -2.0);
+        rig.effects.mark(at, Vec3::Y, 0.0, mark_style(0.2, 0));
+
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(drawn.len(), 1);
+        let (x, y, z) = (x_axis(&drawn[0]), y_axis(&drawn[0]), z_axis(&drawn[0]));
+        assert_near(z, Vec3::Y);
+        assert!((x.length() - 0.2).abs() < EPS);
+        assert!((y.length() - 0.2).abs() < EPS);
+        assert!(x.dot(Vec3::Y).abs() < EPS);
+        assert!(y.dot(Vec3::Y).abs() < EPS);
+        assert!(x.dot(y).abs() < EPS);
+        assert_near(translation(&drawn[0]), at + Vec3::Y * MARK_OFFSET);
+    }
+
+    #[test]
+    fn a_mark_holds_full_size_then_shrinks_out_in_its_fade() {
+        let mut rig = Rig::new();
+        rig.effects
+            .mark(Vec3::ZERO, Vec3::Y, 0.0, mark_style(0.2, 0));
+
+        rig.effects.advance(Duration::from_secs(9));
+        let full = rig.frame(EYE);
+        rig.effects.advance(ms(500));
+        let half = rig.frame(EYE);
+        rig.effects.advance(ms(500));
+        let gone = rig.frame(EYE);
+
+        assert_eq!(full.len(), 1);
+        assert!((x_axis(&full[0]).length() - 0.2).abs() < EPS);
+        assert_eq!(half.len(), 1);
+        assert!((x_axis(&half[0]).length() - 0.1).abs() < EPS);
+        assert!((y_axis(&half[0]).length() - 0.1).abs() < EPS);
+        assert!(gone.is_empty());
+        assert_eq!(rig.effects.live(), 0);
+    }
+
+    #[test]
+    fn a_mark_is_still_full_size_just_before_its_fade_starts() {
+        let mut rig = Rig::new();
+        rig.effects
+            .mark(Vec3::ZERO, Vec3::Y, 0.0, mark_style(0.2, 0));
+
+        rig.effects.advance(ms(8999));
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(drawn.len(), 1);
+        assert!((x_axis(&drawn[0]).length() - 0.2).abs() < EPS);
+    }
+
+    #[test]
+    fn a_full_cap_drops_the_oldest_fixed_lifetime_effect() {
+        let mut rig = Rig::new();
+        rig.effects.set_quality(1);
+        let position = |i: u32| Vec3::new(i as f32 * 10.0, 0.0, 0.0);
+        for i in 0..32 {
+            rig.effects
+                .mark(position(i), Vec3::Y, 0.0, mark_style(0.2, 0));
+        }
+        assert_eq!(rig.effects.live(), 32);
+
+        rig.effects
+            .mark(position(32), Vec3::Y, 0.0, mark_style(0.2, 0));
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(rig.effects.live(), 32);
+        assert_eq!(drawn.len(), 32);
+        assert!(found_at(&drawn, position(0) + Vec3::Y * MARK_OFFSET).is_none());
+        assert!(found_at(&drawn, position(1) + Vec3::Y * MARK_OFFSET).is_some());
+        assert!(found_at(&drawn, position(32) + Vec3::Y * MARK_OFFSET).is_some());
+    }
+
+    #[test]
+    fn a_full_cap_evicts_a_flash_for_a_mark_oldest_first() {
+        let mut rig = Rig::new();
+        rig.effects.set_quality(1);
+        let position = |i: u32| Vec3::new(i as f32 * 10.0, 0.0, 0.0);
+        rig.effects
+            .flash(position(0), 0.0, flash_style(0.4, 0, 5000));
+        for i in 1..32 {
+            rig.effects
+                .mark(position(i), Vec3::Y, 0.0, mark_style(0.2, 0));
+        }
+
+        rig.effects
+            .mark(position(32), Vec3::Y, 0.0, mark_style(0.2, 0));
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(rig.effects.live(), 32);
+        assert!(found_at(&drawn, position(0)).is_none(), "the flash went");
+        assert!(found_at(&drawn, position(1) + Vec3::Y * MARK_OFFSET).is_some());
+    }
+
+    #[test]
+    fn a_full_cap_of_streaks_refuses_a_mark_and_keeps_every_streak() {
+        let mut rig = Rig::new();
+        rig.effects.set_quality(1);
+        let head = |i: u32| Vec3::new(i as f32 * 10.0, 1.0, 0.0);
+        let handles: Vec<EffectHandle> = (0..32)
+            .map(|_| rig.effects.begin_streak(style(2.0, 0.1)))
+            .collect();
+        for (i, handle) in (0..).zip(&handles) {
+            rig.effects.place_streak(*handle, head(i), Vec3::X);
+        }
+
+        rig.effects
+            .mark(Vec3::new(500.0, 0.0, 0.0), Vec3::Y, 0.0, mark_style(0.2, 0));
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(rig.effects.live(), 32);
+        assert_eq!(drawn.len(), 32, "every streak and no mark");
+        for i in 0..32 {
+            assert!(
+                found_at(&drawn, head(i) - Vec3::X * 2.0).is_some(),
+                "streak {i} still draws"
+            );
+        }
+    }
+
+    #[test]
+    fn a_full_cap_of_streaks_refuses_a_flash() {
+        let mut rig = Rig::new();
+        rig.effects.set_quality(1);
+        for _ in 0..32 {
+            rig.effects.begin_streak(style(2.0, 0.1));
+        }
+
+        rig.effects.flash(Vec3::X, 0.0, flash_style(0.4, 0, 50));
+
+        assert_eq!(rig.effects.live(), 32);
+        assert!(rig.frame(EYE).is_empty(), "no streak was placed, no flash");
+    }
+
+    #[test]
+    fn quality_zero_refuses_flash_and_mark() {
+        let mut rig = Rig::new();
+        rig.effects.set_quality(0);
+
+        rig.effects.flash(Vec3::X, 0.0, flash_style(0.4, 0, 50));
+        rig.effects.mark(Vec3::Y, Vec3::Y, 0.0, mark_style(0.2, 0));
+
+        assert_eq!(rig.effects.live(), 0);
+        assert!(rig.frame(EYE).is_empty());
+    }
+
+    #[test]
+    fn quality_zero_clears_live_flashes_and_marks() {
+        let mut rig = Rig::new();
+        rig.effects.flash(Vec3::X, 0.0, flash_style(0.4, 0, 50));
+        rig.effects.mark(Vec3::Y, Vec3::Y, 0.0, mark_style(0.2, 0));
+        assert_eq!(rig.effects.live(), 2);
+
+        rig.effects.set_quality(0);
+
+        assert_eq!(rig.effects.live(), 0);
+        assert!(rig.frame(EYE).is_empty());
+    }
+
+    fn scripted_frames() -> Vec<Vec<([[f32; 4]; 4], u32)>> {
+        let mut rig = Rig::new();
+        rig.effects
+            .flash(Vec3::new(1.0, 2.0, 3.0), 0.7, flash_style(0.4, 3, 50));
+        rig.effects
+            .mark(Vec3::new(4.0, 0.0, 1.0), Vec3::X, 1.2, mark_style(0.3, 5));
+        let mut frames = Vec::new();
+        for _ in 0..3 {
+            let drawn = rig.frame(EYE);
+            frames.push(drawn.iter().map(|i| (i.model, i.material)).collect());
+            rig.effects.advance(ms(20));
+        }
+        frames
+    }
+
+    #[test]
+    fn the_same_spawns_draw_the_same_instances() {
+        let first = scripted_frames();
+        let second = scripted_frames();
+
+        assert_eq!(first, second);
+        assert_eq!(first[0].len(), 2, "both effects drew");
+    }
+
+    #[test]
+    fn the_flash_and_mark_meshes_are_registered_once() {
+        let mut rig = Rig::new();
+
+        for i in 0..5 {
+            let at = Vec3::new(i as f32, 0.0, 0.0);
+            rig.effects.flash(at, 0.0, flash_style(0.4, 0, 5000));
+            rig.effects.mark(at, Vec3::Y, 0.0, mark_style(0.2, 0));
+            rig.frame(EYE);
+        }
+
+        let mut vertex_counts: Vec<usize> = rig
+            .backend
+            .registered
+            .iter()
+            .map(|(positions, _)| positions.len())
+            .collect();
+        vertex_counts.sort_unstable();
+        assert_eq!(
+            vertex_counts,
+            vec![4, 8],
+            "one quad and one star, once each"
+        );
+    }
+
+    #[test]
+    fn a_streak_flash_and_mark_all_draw_in_one_frame_with_their_materials() {
+        let mut rig = Rig::new();
+        let handle = rig.effects.begin_streak(StreakStyle::new(2.0, 0.1, 11));
+        rig.effects
+            .place_streak(handle, Vec3::new(0.0, 5.0, 0.0), Vec3::X);
+        rig.effects
+            .flash(Vec3::new(10.0, 0.0, 0.0), 0.0, flash_style(0.4, 22, 50));
+        rig.effects
+            .mark(Vec3::new(20.0, 0.0, 0.0), Vec3::Y, 0.0, mark_style(0.2, 33));
+
+        let drawn = rig.frame(EYE);
+
+        let mut materials: Vec<u32> = drawn.iter().map(|i| i.material).collect();
+        materials.sort_unstable();
+        assert_eq!(materials, vec![11, 22, 33]);
+        assert_eq!(rig.effects.live(), 3);
+        assert_eq!(rig.backend.registered.len(), 3, "three distinct meshes");
+    }
+
+    fn normals() -> impl Strategy<Value = Vec3> {
+        prop_oneof![
+            Just(Vec3::X),
+            Just(Vec3::NEG_X),
+            Just(Vec3::Y),
+            Just(Vec3::NEG_Y),
+            Just(Vec3::Z),
+            Just(Vec3::NEG_Z),
+            (-1.0f32..1.0, -1.0f32..1.0, -1.0f32..1.0)
+                .prop_filter_map("a non-zero normal", |(x, y, z)| {
+                    Vec3::new(x, y, z).try_normalize()
+                }),
+        ]
+    }
+
+    proptest! {
+        #[test]
+        fn a_mark_basis_is_finite_for_any_normal(
+            normal in normals(),
+            roll in 0.0f32..std::f32::consts::TAU,
+            size in 0.01f32..2.0,
+        ) {
+            let mut rig = Rig::new();
+            rig.effects.mark(Vec3::new(1.0, 2.0, 3.0), normal, roll, mark_style(size, 0));
+
+            let drawn = rig.frame(EYE);
+
+            prop_assert_eq!(drawn.len(), 1);
+            prop_assert!(drawn[0].model.iter().flatten().all(|v| v.is_finite()));
+            let (x, y, z) = (x_axis(&drawn[0]), y_axis(&drawn[0]), z_axis(&drawn[0]));
+            prop_assert!((x.length() - size).abs() < 1e-3);
+            prop_assert!((y.length() - size).abs() < 1e-3);
+            prop_assert!(x.dot(y).abs() < 1e-3, "X and Y are orthogonal");
+            prop_assert!(x.dot(normal).abs() < 1e-3, "X lies in the surface");
+            prop_assert!(y.dot(normal).abs() < 1e-3, "Y lies in the surface");
+            prop_assert!((z - normal).length() < 1e-3, "Z is the normal");
+        }
+    }
 }
