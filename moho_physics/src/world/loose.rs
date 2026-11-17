@@ -80,7 +80,6 @@ pub(super) const DEFAULT_REST_SLOPE: f32 = 5.0 * std::f32::consts::PI / 180.0;
 /// braking then would freeze the overlap.
 const DEEP_CONTACT: f32 = 0.005;
 
-/// A loose object's body and, for a shape that rolls, the radius it rolls on.
 pub(super) struct Loose {
     body: RigidBodyHandle,
     roll_radius: Option<f32>,
@@ -265,7 +264,7 @@ impl PhysicsWorld {
         self.rest_slope = slope;
     }
 
-    /// The steepest ground, radians from level, on which loose objects are braked to rest.
+    /// The current rest slope; see [`PhysicsWorld::set_rest_slope`].
     pub fn rest_slope(&self) -> f32 {
         self.rest_slope
     }
