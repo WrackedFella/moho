@@ -1425,6 +1425,41 @@ mod tests {
     }
 
     #[test]
+    fn a_capsule_spawned_before_its_floor_is_braked_all_the_same() {
+        let mut on_world_mesh = PhysicsWorld::new();
+        let capsule = on_world_mesh.spawn_loose(&rolling_capsule(2.0));
+        on_world_mesh.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+
+        let mut on_box = PhysicsWorld::new();
+        let rolling = on_box.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.44, 0.0),
+            linear_velocity: Vec3::new(0.0, 0.0, 0.3),
+            angular_velocity: Vec3::new(0.3 / 0.04, 0.0, 0.0),
+            rotation: axis_along_x(),
+            ..LooseSpawn::new(TEST_CAPSULE, 0.2)
+        });
+        on_box.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        on_box.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.2, 0.0),
+            ..LooseSpawn::new(cuboid(Vec3::new(0.5, 0.2, 0.5)), 5.0)
+        });
+
+        run(&mut on_world_mesh, 300);
+        run(&mut on_box, 300);
+
+        let state = read(&on_world_mesh, capsule);
+        assert!(
+            (1.0..=1.5).contains(&state.position.z) && state.asleep,
+            "on the floor mesh it rests within 1.5 m, {state:?}"
+        );
+        let state = read(&on_box, rolling);
+        assert!(
+            state.asleep && state.position.z.abs() < 0.2,
+            "on the box top it sleeps in place, {state:?}"
+        );
+    }
+
+    #[test]
     fn a_capsule_rolling_slowly_on_top_of_a_box_sleeps_on_it() {
         let mut world = world_with_floor(&floor_mesh(0.0));
         let slab = world.spawn_loose(&LooseSpawn {
