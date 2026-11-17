@@ -495,7 +495,7 @@ scaled to its box in `shaders/marker.wgsl`. Fills draw first as a triangle list,
 outlines through a second pipeline over the same shader as a line list on the cube's edge
 indices. Layout: [GPU ABI](../reference/gpu-abi.md).
 The console drives them with `marker` and `marker_clear`
-([console](console.md)).
+([console](console.md)). The strategy binary also keeps one outline marker (id `u64::MAX`) around the selected pawn ([input and state](input-and-state.md#2-pointer-picking)).
 
 ## 7 UI paint data
 

@@ -1,7 +1,7 @@
 # Input and state
 
 **Source:** `flagstone/src/input_dispatcher.rs`, `moho_input/src/`, `flagstone_ui/src/actions.rs`, `flagstone/src/app/renderer_setup.rs` (registrations),
-`moho_core/src/pointer.rs`, `flagstone/src/app/game.rs` (`Game::event`, `poll_gamepads`), `flagstone/src/main.rs` (`handle_keyboard_input`), `flagstone_ui/src/app_state/game_state.rs`,
+`moho_core/src/pointer.rs`, `flagstone_game/src/selection.rs`, `flagstone/src/app/game.rs` (`Game::event`, `poll_gamepads`), `flagstone/src/main.rs` (`handle_keyboard_input`), `flagstone_ui/src/app_state/game_state.rs`,
 `flagstone_ui/src/app_state/state_coordinator.rs`, `flagstone_ui/src/screens/pause.rs`, `moho_ui_shell/src/console/` (console key routing).
 
 ## 1 Input routing
@@ -88,6 +88,8 @@ Bindings persist in the `[bindings]` section of [prefs](../reference/prefs-forma
 ## 2 Pointer picking
 
 In the isometric view, a tick with `Select` pressed turns `press_pointer` into a world `Ray` with `moho_core::pointer::screen_ray` (view and projection of the frame the player saw, window size as viewport) and carries it in the command as `select`. The ray, not the pixel, is the command, so it replays without a window. The apply step casts it with `flagstone_game::raycast::raycast_surface` over `POINTER_RAY_RANGE` and stores the result in `App::pointer_hit`; a miss clears it. First-person never selects.
+
+The same ray also picks the pawn: `flagstone_game::selection::pick_pawn` tests it against each pawn's box (`pawn_aabb`, slab test `ray_box_entry`) and accepts the nearest one entered nearer than the terrain hit. `Selection::click` stores the result in `App::selection`; a click on nothing clears it. A pawn pick publishes `AudioEvent::ButtonClick`. While a pawn is selected in the isometric view, `Game` draws an `Outline` marker around it ([rendering](rendering.md#6-markers)), and the strategy HUD shows a panel with its tool and carried resources (`SelectionHud` in `flagstone_ui/src/overlays/rts_hud.rs`). A press on that panel is consumed by the UI and never reaches the world. In the isometric view the pawn is drawn as a box from `PAWN_HALF_EXTENTS`.
 
 `StrategyAction::MineDesignation` (`M` by default, or the HUD toggle) flips `Designation` in `flagstone/src/app/input_state.rs` between `None` and `Mine`. While `Mine` is active, the click's ray goes into `StrategyCommand::mark` instead of `select`. The apply step casts it as above and toggles the hit block in `flagstone_game::colony::Colony::marks` (`MineMarks`), then plays the `mark` or `unmark` cue through `AudioEvent::PlaySound`; a miss changes nothing. `process_world_events` drops a block's mark on every `WorldEvent::BlockRemoved`, the one path every removal takes. Each frame `DesignationMarkers::sync` (`flagstone/src/app/designation_markers.rs`) mirrors the marks into scene markers ([rendering](rendering.md#6-markers)).
 
