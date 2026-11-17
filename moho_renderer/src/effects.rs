@@ -264,6 +264,14 @@ impl Effects {
         if !fixed.is_drawable() || self.cap == 0 {
             return;
         }
+        let streaks = self
+            .store
+            .values()
+            .filter(|e| matches!(e, Effect::Streak(_)))
+            .count();
+        if streaks >= self.cap {
+            return;
+        }
         while self.store.len() >= self.cap {
             let oldest = self
                 .store
@@ -1303,6 +1311,30 @@ mod tests {
         rig.effects.mark(Vec3::ZERO, Vec3::Y, 0.0, mark_style(0.2));
         assert_eq!(rig.effects.live(), 1, "room again, so a mark is admitted");
         assert_eq!(frame_meshes(&mut rig, EYE).len(), 1);
+    }
+
+    #[test]
+    fn a_refused_spawn_evicts_nothing() {
+        let mut rig = Rig::new();
+        for _ in 0..40 {
+            rig.effects.begin_streak(style(2.0, 0.1));
+        }
+        for i in 0..3u8 {
+            let at = Vec3::new(f32::from(i), 0.0, 5.0);
+            rig.effects.mark(at, Vec3::Y, 0.0, mark_style(0.2));
+        }
+        assert_eq!(rig.effects.live(), 43);
+        rig.effects.set_quality(1);
+
+        rig.effects
+            .mark(Vec3::new(100.0, 0.0, 5.0), Vec3::Y, 0.0, mark_style(0.2));
+
+        assert_eq!(rig.effects.live(), 43, "refused, and nothing was evicted");
+        let drawn = frame_meshes(&mut rig, EYE);
+        let mut xs: Vec<f32> = drawn.iter().map(|(_, i)| translation(i).x).collect();
+        xs.sort_by(f32::total_cmp);
+        assert_eq!(xs.len(), 3, "the three marks still draw");
+        assert!(xs[0] < 0.5 && xs[2] < 3.0, "the original marks, got {xs:?}");
     }
 
     #[test]
