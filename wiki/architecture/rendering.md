@@ -495,7 +495,10 @@ scaled to its box in `shaders/marker.wgsl`. Fills draw first as a triangle list,
 outlines through a second pipeline over the same shader as a line list on the cube's edge
 indices. Layout: [GPU ABI](../reference/gpu-abi.md).
 The console drives them with `marker` and `marker_clear`
-([console](console.md)).
+([console](console.md)). The strategy binary's pawn selection mark is an `Outline` under the
+reserved id `u64::MAX`, resynced every frame; the pawn it outlines is drawn as one transient
+cube appended to the actor cubes in `App::render_scene` in the strategy view only (not an
+actor, so never saved).
 
 ## 7 UI paint data
 
