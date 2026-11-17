@@ -249,7 +249,6 @@ mod tests {
         ArenaMode::new(arena, calm_config(), waves)
     }
 
-    /// Presses use for one tick.
     fn call_wave(mode: &mut ArenaMode) {
         mode.tick(&use_button(), DT);
     }
