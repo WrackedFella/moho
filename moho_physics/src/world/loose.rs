@@ -1319,6 +1319,55 @@ mod tests {
         assert!(a.asleep && b.asleep, "both sleep, {a:?} {b:?}");
     }
 
+    #[test]
+    fn a_capsule_spawned_before_the_floor_is_braked_like_one_spawned_after() {
+        let mut after = world_with_floor(&floor_mesh(0.0));
+        let after_id = after.spawn_loose(&rolling_capsule(2.0));
+        let mut before = PhysicsWorld::new();
+        let before_id = before.spawn_loose(&rolling_capsule(2.0));
+        before.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        let mut free = PhysicsWorld::new();
+        free.set_rest_slope(0.0);
+        let free_id = free.spawn_loose(&rolling_capsule(2.0));
+        free.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+
+        run(&mut after, 2);
+        run(&mut before, 2);
+        run(&mut free, 2);
+
+        let braked = read(&before, before_id).linear_velocity.z;
+        assert!(
+            braked < read(&free, free_id).linear_velocity.z - 0.01,
+            "braked {braked}"
+        );
+        let other_order = read(&after, after_id).linear_velocity.z;
+        assert!(
+            (braked - other_order).abs() < 2e-3,
+            "spawn order does not change the brake: {braked} vs {other_order}"
+        );
+    }
+
+    #[test]
+    fn a_body_sunk_in_the_floor_elsewhere_does_not_stop_the_brake() {
+        let mut alone = world_with_floor(&floor_mesh(0.0));
+        let alone_id = alone.spawn_loose(&rolling_capsule(2.0));
+        let mut crowded = world_with_floor(&floor_mesh(0.0));
+        let crowded_id = crowded.spawn_loose(&rolling_capsule(2.0));
+        crowded.spawn_loose(&LooseSpawn {
+            position: Vec3::new(5.0, 0.04, 0.0),
+            ..LooseSpawn::new(cube(0.05), 0.2)
+        });
+
+        run(&mut alone, 1);
+        run(&mut crowded, 1);
+
+        assert_eq!(
+            read(&crowded, crowded_id).linear_velocity.z.to_bits(),
+            read(&alone, alone_id).linear_velocity.z.to_bits(),
+            "a cube 1 cm into the same floor is not a neighbour of the capsule"
+        );
+    }
+
     fn pile_spawns(seed: u64) -> Vec<LooseSpawn> {
         let mut random = Seeded(seed);
         let shapes = all_shapes();
