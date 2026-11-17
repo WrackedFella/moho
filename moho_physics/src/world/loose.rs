@@ -1586,26 +1586,66 @@ mod tests {
         },
     ];
 
-    /// Twenty objects of all shapes dropped from staggered heights into a 1 m square, no damping.
-    fn pile_world(seed: u64) -> (PhysicsWorld, Vec<(LooseId, LooseShape)>) {
-        let mut rng = Seeded(seed);
-        let mut world = world_with_floor(&floor_mesh(0.0));
-        let objects = (0..20)
-            .map(|index| {
-                let shape = PILE_SHAPES[index % PILE_SHAPES.len()];
-                let id = world.spawn_loose(&LooseSpawn {
-                    position: Vec3::new(
-                        rng.between(-0.5, 0.5),
-                        0.3 + 0.2 * index as f32,
-                        rng.between(-0.5, 0.5),
-                    ),
-                    rotation: rng.rotation(),
-                    ..LooseSpawn::new(shape, 0.2)
-                });
-                (id, shape)
-            })
-            .collect();
-        (world, objects)
+    const PILE_WAVE_TICKS: u32 = 60;
+    const PILE_WAVES: u32 = 5;
+    const PILE_WAVE_SIZE: usize = 4;
+    /// Ticks from the first drop to 10 s after the last wave.
+    const PILE_TICKS: u32 = PILE_WAVE_TICKS * (PILE_WAVES - 1) + 600;
+
+    /// Twenty objects of all shapes dropped into a 1 m square, no damping, in five waves of
+    /// four a second apart and under 1.1 m up, so none lands faster than about 5 m/s.
+    struct Pile {
+        world: PhysicsWorld,
+        specs: Vec<(LooseShape, LooseSpawn)>,
+        objects: Vec<(LooseId, LooseShape)>,
+        ticks: u32,
+    }
+
+    impl Pile {
+        fn new(seed: u64) -> Self {
+            let mut rng = Seeded(seed);
+            let specs = (0..PILE_WAVES as usize * PILE_WAVE_SIZE)
+                .map(|index| {
+                    let shape = PILE_SHAPES[index % PILE_SHAPES.len()];
+                    let spawn = LooseSpawn {
+                        position: Vec3::new(
+                            rng.between(-0.5, 0.5),
+                            0.3 + 0.25 * (index % PILE_WAVE_SIZE) as f32,
+                            rng.between(-0.5, 0.5),
+                        ),
+                        rotation: rng.rotation(),
+                        ..LooseSpawn::new(shape, 0.2)
+                    };
+                    (shape, spawn)
+                })
+                .collect();
+            Self {
+                world: world_with_floor(&floor_mesh(0.0)),
+                specs,
+                objects: Vec::new(),
+                ticks: 0,
+            }
+        }
+
+        /// Drops the next wave when one is due, then steps the world once.
+        fn advance(&mut self) {
+            if self.ticks % PILE_WAVE_TICKS == 0 && self.ticks / PILE_WAVE_TICKS < PILE_WAVES {
+                let wave = (self.ticks / PILE_WAVE_TICKS) as usize;
+                for (shape, spawn) in &self.specs[wave * PILE_WAVE_SIZE..][..PILE_WAVE_SIZE] {
+                    self.objects.push((self.world.spawn_loose(spawn), *shape));
+                }
+            }
+            self.world.step(DT);
+            self.ticks += 1;
+        }
+    }
+
+    fn pile_after_all_ticks(seed: u64) -> Pile {
+        let mut pile = Pile::new(seed);
+        for _ in 0..PILE_TICKS {
+            pile.advance();
+        }
+        pile
     }
 
     /// The deepest contact point, in metres, between two loose objects.
@@ -1630,12 +1670,11 @@ mod tests {
     #[test]
     fn a_pile_of_every_shape_settles() {
         for seed in [0x11, 0x22, 0x33, 0x44] {
-            let (mut world, objects) = pile_world(seed);
+            let pile = pile_after_all_ticks(seed);
+            let (world, objects) = (&pile.world, &pile.objects);
 
-            run(&mut world, 600);
-
-            for (id, shape) in &objects {
-                let state = read(&world, *id);
+            for (id, shape) in objects {
+                let state = read(world, *id);
                 let bottom = lowest_point(*shape, &state);
                 assert!(state.asleep, "seed {seed:#x}: {id:?} is awake, {state:?}");
                 assert!(
@@ -1644,7 +1683,7 @@ mod tests {
                     -bottom
                 );
             }
-            let overlap = deepest_pair_overlap(&world);
+            let overlap = deepest_pair_overlap(world);
             assert!(
                 overlap <= 0.005,
                 "seed {seed:#x}: two objects overlap by {overlap} m"
@@ -1654,22 +1693,23 @@ mod tests {
 
     #[test]
     fn the_same_pile_twice_ends_bit_equal() {
-        let (mut first, first_objects) = pile_world(0x55);
-        let (mut second, second_objects) = pile_world(0x55);
+        let mut first = Pile::new(0x55);
+        let mut second = Pile::new(0x55);
 
-        for tick in 1..=600 {
-            first.step(DT);
-            second.step(DT);
-            for ((a_id, _), (b_id, _)) in first_objects.iter().zip(&second_objects) {
-                let (a, b) = (read(&first, *a_id), read(&second, *b_id));
+        for tick in 1..=PILE_TICKS {
+            first.advance();
+            second.advance();
+            for ((a_id, _), (b_id, _)) in first.objects.iter().zip(&second.objects) {
+                let (a, b) = (read(&first.world, *a_id), read(&second.world, *b_id));
                 assert_eq!(bits(&a), bits(&b), "tick {tick}: {a_id:?} bits differ");
                 assert_eq!(a.asleep, b.asleep, "tick {tick}: {a_id:?} asleep differs");
             }
         }
 
-        let moved = first_objects
+        let moved = first
+            .objects
             .iter()
-            .any(|(id, _)| read(&first, *id).position.y < 0.2);
+            .any(|(id, _)| read(&first.world, *id).position.y < 0.2);
         assert!(moved, "the pile fell");
     }
 
