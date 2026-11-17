@@ -424,6 +424,7 @@ mod tests {
         let mut app = headless_saving_to(&prefs_path);
         app.saves_dir = dir.path().join("saves");
         app.game_state = GameState::Playing;
+        app.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
         apply_console_command(&mut app, &StrategyConsoleCommand::ToggleNoclip);
         let clock = tick(&mut app);
         assert!(app.physics.noclip, "noclip is on before the relaunch");

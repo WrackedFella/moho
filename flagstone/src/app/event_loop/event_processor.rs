@@ -924,6 +924,51 @@ mod tests {
         }
     }
 
+    /// Whether publishing `event` leaves the world due for an autosave.
+    fn event_marks_the_world_edited(event: WorldEvent) -> bool {
+        let mut app = App::headless();
+        app.autosave = crate::app::autosave::AutosaveSchedule::new(1);
+        app.autosave.tick();
+        let _ = app.world_event_rx.try_iter().count();
+        assert!(!app.autosave.due(), "an unedited world is not due");
+        app.event_bus.publish(event);
+
+        EventProcessor::new().process_world_events(&mut app);
+
+        app.autosave.due()
+    }
+
+    #[test]
+    fn block_edit_events_mark_the_world_edited() {
+        let position = flagstone_voxel::BlockPos::new(3, 70, 3);
+
+        let placed = event_marks_the_world_edited(WorldEvent::BlockPlaced {
+            position,
+            material_id: 1,
+            reason: BlockChangeReason::Player,
+        });
+        let removed = event_marks_the_world_edited(WorldEvent::BlockRemoved {
+            position,
+            old_material_id: 1,
+            reason: BlockChangeReason::Player,
+        });
+        let batch = event_marks_the_world_edited(WorldEvent::BlocksBatchModified {
+            chunk_pos: glam::IVec3::new(0, 4, 0),
+            positions: vec![position],
+            reason: BlockChangeReason::Explosion,
+        });
+        let remeshed = event_marks_the_world_edited(WorldEvent::ChunkMeshDirty {
+            chunk_pos: glam::IVec3::new(0, 4, 0),
+            terrain_dirty: true,
+            structure_dirty: true,
+        });
+
+        assert!(placed, "a placed block is an edit");
+        assert!(removed, "a removed block is an edit");
+        assert!(batch, "a batch of modified blocks is an edit");
+        assert!(!remeshed, "re-meshing alone is not an edit");
+    }
+
     #[test]
     fn duplicate_mesh_dirty_events_mesh_a_chunk_once() {
         let chunk_pos = glam::IVec3::new(0, 4, 0);

@@ -29,6 +29,7 @@ pub struct ChunkStreamer {
     terrain_config: TerrainConfig,
     streaming_config: StreamingConfig,
     world_name: String,
+    saves_dir: std::path::PathBuf,
     last_player_chunk_xz: (i32, i32),
 }
 
@@ -37,11 +38,13 @@ impl ChunkStreamer {
         terrain_config: TerrainConfig,
         streaming_config: StreamingConfig,
         world_name: impl Into<String>,
+        saves_dir: impl Into<std::path::PathBuf>,
     ) -> Self {
         Self {
             terrain_config,
             streaming_config,
             world_name: world_name.into(),
+            saves_dir: saves_dir.into(),
             last_player_chunk_xz: (i32::MAX, i32::MAX),
         }
     }
@@ -225,6 +228,7 @@ mod tests {
                 chunks_per_frame: budget,
             },
             WORLD,
+            "saves",
         )
     }
 
@@ -286,7 +290,41 @@ mod tests {
                 chunks_per_frame: budget,
             },
             WORLD,
+            "saves",
         )
+    }
+
+    #[test]
+    fn evicted_chunk_is_written_under_the_streamers_saves_dir() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let world = "chunk_streamer_unit_test_eviction_world";
+        let mut streamer = ChunkStreamer::new(
+            TerrainConfig::default(),
+            StreamingConfig {
+                load_radius_chunks: 0,
+                unload_radius_chunks: 0,
+                chunks_per_frame: 1,
+            },
+            world,
+            temp.path(),
+        );
+        let mut grid = VoxelGrid::new(16);
+        streamer.update(&mut grid, Vec3::new(8.0, 64.0, 8.0));
+        let edited = grid
+            .chunk_positions()
+            .next()
+            .expect("the column around the player is loaded");
+        grid.mutator().place(edited * 16 + IVec3::ONE, 1, None);
+
+        let (_, evicted) = streamer.update(&mut grid, Vec3::new(8.0 + 16.0 * 10.0, 64.0, 8.0));
+
+        assert!(evicted.contains(&edited), "the edited chunk was evicted");
+        let file = temp
+            .path()
+            .join(world)
+            .join("chunks")
+            .join(format!("{}_{}_{}.bin", edited.x, edited.y, edited.z));
+        assert!(file.is_file(), "chunk file at {}", file.display());
     }
 
     fn square(centre: (i32, i32), radius: i32) -> BTreeSet<(i32, i32)> {

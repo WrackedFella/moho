@@ -108,6 +108,9 @@ struct App {
 
     saves_dir: std::path::PathBuf,
 
+    /// When the loaded world next needs an autosave.
+    autosave: app::autosave::AutosaveSchedule,
+
     // Set when the UI asks to quit; `frame` autosaves and leaves the loop
     exit_requested: bool,
 
@@ -253,6 +256,7 @@ impl App {
             pending_frame_cap: None,
             frame_cap_changed: false,
             saves_dir: std::path::PathBuf::from("saves"),
+            autosave: app::autosave::AutosaveSchedule::new(120 * flagstone_game::TICK_HZ),
             exit_requested: false,
             main_menu_requested: false,
             event_bus: initialized.event_bus,
