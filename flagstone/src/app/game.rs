@@ -832,6 +832,8 @@ mod tests {
     /// Records the renderer calls the game makes; everything else is a no-op.
     #[derive(Default)]
     struct FakeRenderer {
+        /// Each `enqueue_draw` call: the mesh handle and the instances.
+        draws: Vec<(u32, Vec<InstanceGpu>)>,
         lights: Vec<(glam::Vec3, glam::Vec3, f32, f32)>,
         shadow_qualities: Vec<u8>,
         /// Highest shadow level the fake GPU can allocate; `None` allows every level.
@@ -874,7 +876,9 @@ mod tests {
             self.cameras.push(camera);
             Ok(())
         }
-        fn enqueue_draw(&mut self, _mesh: u32, _instances: &[InstanceGpu]) {}
+        fn enqueue_draw(&mut self, mesh: u32, instances: &[InstanceGpu]) {
+            self.draws.push((mesh, instances.to_vec()));
+        }
         fn submit_frame(&mut self) {}
         fn set_materials(&mut self, _materials: &[MaterialGpu]) {}
         fn update_lighting(&mut self, lighting: LightingGpu) {
@@ -2661,6 +2665,378 @@ mod tests {
 
             assert!(idle.select.is_none());
             assert!(app.pointer_hit.is_some());
+        }
+    }
+
+    mod pawn_selection {
+        use super::pointer_select::{app_over_flat_ground, click_on, ground_at};
+        use super::*;
+        use flagstone_game::selection::{PAWN_HALF_EXTENTS, PLAYER_PAWN, pawn_aabb};
+        use glam::Vec3;
+        use moho_core::events::{AudioEvent, DebugEvent};
+        use moho_input::key::MouseButton;
+        use moho_render_api::MarkerGpu;
+        use moho_renderer::MARKER_INFLATE;
+        use std::sync::mpsc::Receiver;
+
+        /// Where the pawn stands: on the flat ground, in view of the test camera.
+        fn pawn_centre() -> Vec3 {
+            Vec3::new(8.0, 4.0 + PAWN_HALF_EXTENTS.y, 8.0)
+        }
+
+        fn app_with_pawn(mode: CameraMode) -> App {
+            let mut app = app_over_flat_ground(mode);
+            app.simulation
+                .set_position_yaw_pitch(pawn_centre(), 0.0, 0.0);
+            app
+        }
+
+        fn step(app: &mut App) -> StrategyCommand {
+            let command = Game::command(app);
+            tick_app(app, &command);
+            command
+        }
+
+        fn click_pawn_and_step(app: &mut App) {
+            let pawn = app.simulation.position();
+            click_on(app, pawn);
+            step(app);
+        }
+
+        fn selected_app() -> App {
+            let mut app = app_with_pawn(CameraMode::Isometric);
+            click_pawn_and_step(&mut app);
+            assert_eq!(
+                app.selection.selected(),
+                Some(PLAYER_PAWN),
+                "setup: the click on the pawn selects it"
+            );
+            app
+        }
+
+        fn tap_possess(app: &mut App) {
+            let key = default_key(app, StrategyAction::Possess);
+            app.input.actions.key(key, true);
+            app.input.actions.key(key, false);
+        }
+
+        fn click_the_sky(app: &mut App) {
+            app.input.actions.pointer_moved(640.0, 2.0);
+            app.input.actions.mouse_button(MouseButton::Left, true);
+            app.input.actions.mouse_button(MouseButton::Left, false);
+        }
+
+        fn record_audio(app: &App) -> Receiver<AudioEvent> {
+            let (tx, rx) = std::sync::mpsc::channel();
+            app.event_bus.subscribe(move |event: &AudioEvent| {
+                let _ = tx.send(event.clone());
+            });
+            rx
+        }
+
+        /// Cube instances drawn this frame as `(translation, scale)`.
+        fn cube_draws(fake: &FakeRenderer, cube_mesh: u32) -> Vec<(Vec3, Vec3)> {
+            fake.draws
+                .iter()
+                .filter(|(mesh, _)| *mesh == cube_mesh)
+                .flat_map(|(_, instances)| instances.iter())
+                .map(|instance| {
+                    let m = instance.model;
+                    (
+                        Vec3::new(m[3][0], m[3][1], m[3][2]),
+                        Vec3::new(m[0][0], m[1][1], m[2][2]),
+                    )
+                })
+                .collect()
+        }
+
+        fn pawn_body_draws(app: &mut App) -> Vec<(Vec3, Vec3)> {
+            const CUBE_MESH: u32 = 7;
+            app.cube_mesh_handle = CUBE_MESH;
+            app.mesh_handle = 3;
+            let mut fake = FakeRenderer::default();
+
+            run_frame(app, &mut fake);
+
+            cube_draws(&fake, CUBE_MESH)
+                .into_iter()
+                .filter(|(_, scale)| scale.distance(PAWN_HALF_EXTENTS * 2.0) < 1e-4)
+                .collect()
+        }
+
+        /// The outline markers on the scene after one frame.
+        fn outlines_after_a_frame(app: &mut App) -> Vec<MarkerGpu> {
+            frame_without_renderer(app);
+            app.scene.markers_mut().draws(Vec3::ZERO).outlines
+        }
+
+        fn is_box_around(marker: &MarkerGpu, centre: Vec3) -> bool {
+            let aabb = pawn_aabb(centre);
+            (0..3).all(|axis| {
+                (marker.min[axis] - (aabb.min[axis] - MARKER_INFLATE)).abs() < 1e-4
+                    && (marker.max[axis] - (aabb.max[axis] + MARKER_INFLATE)).abs() < 1e-4
+            })
+        }
+
+        #[test]
+        fn strategy_view_draws_the_pawn_body_at_the_pawn() {
+            let mut app = app_with_pawn(CameraMode::Isometric);
+
+            let bodies = pawn_body_draws(&mut app);
+
+            assert_eq!(bodies.len(), 1, "one pawn body: {bodies:?}");
+            assert!(
+                bodies[0].0.distance(pawn_centre()) < 1e-4,
+                "drawn at {:?}, the pawn is at {:?}",
+                bodies[0].0,
+                pawn_centre()
+            );
+        }
+
+        #[test]
+        fn first_person_view_draws_no_pawn_body() {
+            let mut app = app_with_pawn(CameraMode::Isometric);
+            let in_strategy = pawn_body_draws(&mut app);
+            app.simulation.set_camera_mode(CameraMode::FirstPerson);
+
+            let in_first_person = pawn_body_draws(&mut app);
+
+            assert_eq!(in_strategy.len(), 1, "the body shows in strategy");
+            assert!(in_first_person.is_empty(), "{in_first_person:?}");
+        }
+
+        #[test]
+        fn strategy_click_on_the_pawn_selects_it() {
+            let mut app = app_with_pawn(CameraMode::Isometric);
+
+            click_pawn_and_step(&mut app);
+
+            assert_eq!(app.selection.selected(), Some(PLAYER_PAWN));
+        }
+
+        #[test]
+        fn strategy_click_on_empty_ground_clears_the_selection() {
+            let mut app = selected_app();
+            let ground = ground_at(&app, 12.0, 12.0);
+
+            click_on(&mut app, ground);
+            step(&mut app);
+
+            assert_eq!(app.selection.selected(), None);
+        }
+
+        #[test]
+        fn strategy_click_on_the_sky_clears_the_selection() {
+            let mut app = selected_app();
+
+            click_the_sky(&mut app);
+            step(&mut app);
+
+            assert_eq!(app.selection.selected(), None);
+        }
+
+        #[test]
+        fn strategy_click_on_a_pawn_hidden_by_a_hill_does_not_select_it() {
+            let mut open = app_with_pawn(CameraMode::Isometric);
+            click_pawn_and_step(&mut open);
+            let mut app = app_with_pawn(CameraMode::Isometric);
+            let grid = app
+                .light_system
+                .as_mut()
+                .expect("App starts with a light system")
+                .grid_mut();
+            for x in 5..=11 {
+                for y in 4..=12 {
+                    grid.mutator()
+                        .place(flagstone_voxel::BlockPos::new(x, y, 13), 1, None);
+                }
+            }
+
+            click_pawn_and_step(&mut app);
+
+            let hit = app.pointer_hit.expect("the click hit the wall");
+            assert!(
+                hit.distance < app.camera.2.distance(pawn_centre()),
+                "the wall is nearer than the pawn"
+            );
+            assert_eq!(
+                open.selection.selected(),
+                Some(PLAYER_PAWN),
+                "without the wall the same click selects the pawn"
+            );
+            assert_eq!(app.selection.selected(), None);
+        }
+
+        #[test]
+        fn first_person_click_does_not_select() {
+            let mut app = app_with_pawn(CameraMode::FirstPerson);
+            let pawn = app.simulation.position();
+            click_on(&mut app, pawn);
+
+            let command = step(&mut app);
+
+            assert!(command.select.is_none());
+            assert_eq!(app.selection.selected(), None);
+        }
+
+        #[test]
+        fn first_person_click_leaves_an_existing_selection_untouched() {
+            let mut app = app_with_pawn(CameraMode::FirstPerson);
+            app.selection.click(Some(PLAYER_PAWN));
+            let ground = ground_at(&app, 12.0, 12.0);
+            click_on(&mut app, ground);
+
+            step(&mut app);
+
+            assert_eq!(app.selection.selected(), Some(PLAYER_PAWN));
+        }
+
+        #[test]
+        fn possessing_with_a_selection_keeps_it_and_enters_first_person() {
+            let mut app = selected_app();
+            let before = (app.simulation.position(), app.simulation.yaw_pitch());
+            tap_possess(&mut app);
+
+            step(&mut app);
+
+            assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+            assert_eq!(
+                (app.simulation.position(), app.simulation.yaw_pitch()),
+                before,
+                "first person starts at the pawn's pose"
+            );
+            assert_eq!(app.selection.selected(), Some(PLAYER_PAWN));
+        }
+
+        #[test]
+        fn returning_from_possession_keeps_the_pawn_selected() {
+            let mut app = selected_app();
+            tap_possess(&mut app);
+            step(&mut app);
+            assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+
+            tap_possess(&mut app);
+            step(&mut app);
+
+            assert_eq!(app.simulation.camera_mode(), CameraMode::Isometric);
+            assert_eq!(app.selection.selected(), Some(PLAYER_PAWN));
+        }
+
+        #[test]
+        fn the_click_selects_on_the_next_tick_not_on_the_event() {
+            let mut app = app_with_pawn(CameraMode::Isometric);
+            let pawn = app.simulation.position();
+
+            click_on(&mut app, pawn);
+            let on_the_event = app.selection.selected();
+            let command = Game::command(&mut app);
+            let before_the_tick = app.selection.selected();
+            tick_app(&mut app, &command);
+
+            assert!(command.select.is_some(), "the click is in the command");
+            assert_eq!(on_the_event, None);
+            assert_eq!(before_the_tick, None);
+            assert_eq!(app.selection.selected(), Some(PLAYER_PAWN));
+        }
+
+        #[test]
+        fn selecting_publishes_the_placeholder_cue() {
+            let mut app = app_with_pawn(CameraMode::Isometric);
+            let audio = record_audio(&app);
+
+            click_pawn_and_step(&mut app);
+            app.event_bus.process_deferred();
+            let cues: Vec<AudioEvent> = audio.try_iter().collect();
+
+            assert!(
+                matches!(cues.as_slice(), [AudioEvent::ButtonClick]),
+                "selecting: {cues:?}"
+            );
+        }
+
+        #[test]
+        fn selection_mark_outlines_the_pawn_in_strategy_view() {
+            let mut app = selected_app();
+
+            let outlines = outlines_after_a_frame(&mut app);
+
+            assert_eq!(outlines.len(), 1, "{outlines:?}");
+            assert!(
+                is_box_around(&outlines[0], pawn_centre()),
+                "{:?} does not outline the pawn box",
+                outlines[0]
+            );
+        }
+
+        #[test]
+        fn no_selection_draws_no_mark() {
+            let mut app = app_with_pawn(CameraMode::Isometric);
+            let unselected = outlines_after_a_frame(&mut app);
+            app.selection.click(Some(PLAYER_PAWN));
+
+            let selected = outlines_after_a_frame(&mut app);
+
+            assert!(unselected.is_empty(), "{unselected:?}");
+            assert_eq!(selected.len(), 1, "selecting draws the mark");
+        }
+
+        #[test]
+        fn selection_mark_follows_the_pawn_when_it_moves() {
+            let mut app = selected_app();
+            let first = outlines_after_a_frame(&mut app);
+            let moved = pawn_centre() + Vec3::new(1.5, 0.0, -2.0);
+
+            app.simulation.set_position_yaw_pitch(moved, 0.0, 0.0);
+            let second = outlines_after_a_frame(&mut app);
+
+            assert_eq!(first.len(), 1, "{first:?}");
+            assert!(is_box_around(&first[0], pawn_centre()));
+            assert_eq!(second.len(), 1, "the old mark is gone: {second:?}");
+            assert!(is_box_around(&second[0], moved), "{:?}", second[0]);
+        }
+
+        #[test]
+        fn selection_mark_is_hidden_in_first_person_and_returns_on_return() {
+            let mut app = selected_app();
+            let in_strategy = outlines_after_a_frame(&mut app);
+            tap_possess(&mut app);
+            step(&mut app);
+
+            let in_first_person = outlines_after_a_frame(&mut app);
+            tap_possess(&mut app);
+            step(&mut app);
+            let back_in_strategy = outlines_after_a_frame(&mut app);
+
+            assert_eq!(in_strategy.len(), 1, "the mark shows in strategy");
+            assert!(in_first_person.is_empty(), "{in_first_person:?}");
+            assert_eq!(back_in_strategy.len(), 1, "the mark returns on return");
+        }
+
+        #[test]
+        fn selection_mark_is_restored_after_a_console_marker_clear() {
+            let mut app = selected_app();
+            let before = outlines_after_a_frame(&mut app);
+            app.event_bus.publish(DebugEvent::ClearMarkers { id: None });
+            step(&mut app);
+
+            let after = outlines_after_a_frame(&mut app);
+
+            assert_eq!(before.len(), 1, "the mark shows before the clear");
+            assert_eq!(after.len(), 1, "the next frame restores it: {after:?}");
+            assert!(is_box_around(&after[0], pawn_centre()));
+        }
+
+        #[test]
+        fn clearing_the_selection_removes_the_mark() {
+            let mut app = selected_app();
+            let selected = outlines_after_a_frame(&mut app);
+            click_the_sky(&mut app);
+            step(&mut app);
+
+            let cleared = outlines_after_a_frame(&mut app);
+
+            assert_eq!(selected.len(), 1, "the mark shows while selected");
+            assert!(cleared.is_empty(), "{cleared:?}");
         }
     }
 
