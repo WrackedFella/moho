@@ -254,7 +254,6 @@ mod tests {
     use proptest::prelude::*;
 
     const PAWN: PawnId = PawnId(0);
-    /// The pawn's eye: the capsule centre, half the capsule's height above the feet.
     const EYE_HEIGHT: f32 = 1.15;
 
     fn cell(x: i32, y: i32, z: i32) -> BlockPos {

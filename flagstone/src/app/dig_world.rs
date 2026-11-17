@@ -63,7 +63,6 @@ pub(crate) fn dig_world(ridge: bool, blocks: &[(BlockPos, Option<u32>)]) -> App 
     app
 }
 
-/// The height of the drawn surface over world `(x, z)`.
 pub(crate) fn surface_height(app: &App, x: f32, z: f32) -> f32 {
     let grid = app.light_system.as_ref().expect("light system").grid();
     raycast_surface(grid, Vec3::new(x, 30.0, z), Vec3::NEG_Y, 100.0)
@@ -98,7 +97,6 @@ pub(crate) fn pawn_state(app: &App) -> moho_physics::CharacterState {
         .expect("the pawn exists")
 }
 
-/// Runs `ticks` simulation ticks of the game.
 pub(crate) fn run(app: &mut App, ticks: u32) {
     moho_app::HeadlessLoop::<App>::new(moho_app::LoopConfig::new(TICK_HZ)).step(app, ticks);
 }
@@ -111,7 +109,6 @@ pub(crate) fn is_solid(app: &App, pos: BlockPos) -> bool {
         .is_solid_at(pos)
 }
 
-/// The centre of the block at `pos`.
 pub(crate) fn centre_of(pos: BlockPos) -> Vec3 {
     pos.as_vec3() + Vec3::splat(0.5)
 }
