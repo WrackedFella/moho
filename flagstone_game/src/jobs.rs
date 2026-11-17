@@ -792,6 +792,150 @@ mod tests {
     }
 
     #[test]
+    fn steer_measures_the_bearing_from_the_feet_not_the_origin() {
+        let feet_positions = [
+            Vec3::new(7.0, 0.0, -3.0),
+            Vec3::new(-6.0, 0.0, 4.0),
+            Vec3::new(-5.0, 0.0, -8.0),
+            Vec3::new(9.0, 0.0, 11.0),
+        ];
+        let cases = [
+            (0.7_f32, 0.65_f32),
+            (-0.7, -0.75),
+            (2.4, 2.35),
+            (-2.4, -2.3),
+            (3.1, -3.1),
+            (-3.1, 3.1),
+            (0.0, 0.05),
+            (1.5, 1.2),
+        ];
+
+        for feet in feet_positions {
+            for (bearing, yaw) in cases {
+                let to = feet + on_bearing(bearing);
+
+                let step = steer(Pose { feet, yaw }, to);
+
+                let expected = wrapped(bearing - yaw).clamp(-max_turn(), max_turn());
+                assert!(
+                    (step.yaw_delta - expected).abs() < 1e-4,
+                    "feet {feet}, bearing {bearing}, yaw {yaw}: turned {}, wanted {expected}",
+                    step.yaw_delta
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn steer_turns_the_short_way_from_a_nonzero_yaw_across_the_wrap() {
+        let feet = Vec3::new(2.0, 0.0, 3.0);
+
+        let counter_clockwise = steer(Pose { feet, yaw: 3.1 }, feet + on_bearing(-3.1));
+        let clockwise = steer(Pose { feet, yaw: -3.1 }, feet + on_bearing(3.1));
+        let small_gap = steer(Pose { feet, yaw: 3.0 }, feet + on_bearing(-3.1));
+
+        let across = TAU - 6.2;
+        assert!(
+            (counter_clockwise.yaw_delta - across).abs() < 1e-4,
+            "{counter_clockwise:?}"
+        );
+        assert!((clockwise.yaw_delta + across).abs() < 1e-4, "{clockwise:?}");
+        assert!(
+            (small_gap.yaw_delta - max_turn()).abs() < 1e-5,
+            "a 0.18 rad gap across the wrap is clamped to a full turn: {small_gap:?}"
+        );
+    }
+
+    #[test]
+    fn a_waypoint_exactly_the_arrival_radius_away_is_not_yet_reached() {
+        let mut rig = Rig::on(flat_ground(14, 3), cell(0, 1, 0));
+        rig.mark(cell(6, 1, 0));
+        let JobAction::Walk { to: first } = rig.step() else {
+            panic!("the pawn should be walking");
+        };
+        let from_first = |gap: f32| Vec3::new(first.x, first.y, first.z - gap);
+        assert_eq!(first, centre(cell(1, 1, 0)), "setup: the first waypoint");
+        let exactly = from_first(ARRIVE_RADIUS);
+        assert_eq!(
+            horizontal_gap(exactly, first),
+            ARRIVE_RADIUS,
+            "setup: the gap is exactly the radius"
+        );
+
+        rig.pose.feet = exactly;
+        let at_the_radius = rig.step();
+        rig.pose.feet = from_first(ARRIVE_RADIUS - 0.01);
+        let inside = rig.step();
+
+        assert_eq!(at_the_radius, JobAction::Walk { to: first });
+        assert_eq!(
+            inside,
+            JobAction::Walk {
+                to: centre(cell(2, 1, 0))
+            }
+        );
+    }
+
+    #[test]
+    fn the_stall_guard_gives_up_on_exactly_the_stall_tick_limit() {
+        let mut guard = StallGuard::default();
+        assert!(!guard.stalled(5.0), "the first distance is progress");
+
+        let verdicts: Vec<bool> = (0..STALL_TICKS).map(|_| guard.stalled(5.0)).collect();
+
+        assert!(
+            verdicts[..verdicts.len() - 1]
+                .iter()
+                .all(|stalled| !stalled)
+        );
+        assert!(
+            verdicts[verdicts.len() - 1],
+            "{STALL_TICKS} ticks without progress"
+        );
+    }
+
+    #[test]
+    fn closing_the_distance_by_exactly_the_progress_epsilon_is_not_progress() {
+        let mut guard = StallGuard::default();
+        let start = 5.0_f32;
+        let barely = start - PROGRESS_EPSILON;
+        assert!(!guard.stalled(start));
+
+        let verdicts: Vec<bool> = (0..STALL_TICKS).map(|_| guard.stalled(barely)).collect();
+
+        assert!(
+            verdicts[..verdicts.len() - 1]
+                .iter()
+                .all(|stalled| !stalled)
+        );
+        assert!(
+            verdicts[verdicts.len() - 1],
+            "no tick of it counted as progress"
+        );
+    }
+
+    #[test]
+    fn the_dig_aims_from_the_eye_height_above_the_feet() {
+        let block = cell(6, 1, 1);
+        let standing = cell(7, 1, 1);
+        let mut rig = Rig::on(flat_ground(12, 5), standing);
+        rig.mark(block);
+        rig.pose.feet.y += 0.4;
+
+        let (walked, dig) = rig.walk_and_dig();
+
+        let JobAction::Dig { aim, .. } = dig else {
+            unreachable!("walk_and_dig returns a dig");
+        };
+        let top = Vec3::new(6.5, 2.0, 1.5);
+        assert!(walked.is_empty(), "already on a stand cell");
+        assert!(
+            aim.abs_diff_eq(top, 1e-4),
+            "an eye {EYE_HEIGHT} m up from feet at 1.4 is nearer the top face; aimed at {aim}"
+        );
+    }
+
+    #[test]
     fn steer_walks_only_when_facing_the_target() {
         let cases = [
             (0.0_f32, 1.0_f32),

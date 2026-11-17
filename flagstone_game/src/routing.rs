@@ -302,6 +302,107 @@ mod tests {
         assert_eq!(funded.expect("the default budget suffices").len(), 38);
     }
 
+    /// The fewest expansions a search to `goal` needs, found by raising the budget until it succeeds.
+    fn expansions_to_reach(grid: &VoxelGrid, start: BlockPos, goal: BlockPos) -> usize {
+        (0..ROUTE_NODE_BUDGET)
+            .find(|budget| route(grid, start, |c| c == goal, goal, *budget).is_some())
+            .expect("the goal is reachable within the default budget")
+    }
+
+    #[test]
+    fn equally_near_goals_are_taken_in_sideways_order() {
+        let grid = flat_ground(7, 7);
+        let start = cell(3, 1, 3);
+
+        let east_or_west = route(&grid, start, |c| c != start, start, ROUTE_NODE_BUDGET);
+        let west_only = route(&grid, start, |c| c.x < start.x, start, ROUTE_NODE_BUDGET);
+        let south_or_north = route(
+            &grid,
+            start,
+            |c| c.x == start.x && c != start,
+            start,
+            ROUTE_NODE_BUDGET,
+        );
+        let north_only = route(
+            &grid,
+            start,
+            |c| c.x == start.x && c.z < start.z,
+            start,
+            ROUTE_NODE_BUDGET,
+        );
+
+        assert_eq!(east_or_west, Some(vec![cell(4, 1, 3)]), "+x comes first");
+        assert_eq!(west_only, Some(vec![cell(2, 1, 3)]));
+        assert_eq!(south_or_north, Some(vec![cell(3, 1, 4)]), "+z before -z");
+        assert_eq!(north_only, Some(vec![cell(3, 1, 2)]));
+    }
+
+    #[test]
+    fn a_route_goes_through_the_gap_in_a_wall_by_the_shortest_way() {
+        let mut grid = flat_ground(12, 12);
+        for z in 0..9 {
+            place(&mut grid, 5, 1, z);
+            place(&mut grid, 5, 2, z);
+        }
+        let (start, goal) = (cell(1, 1, 1), cell(9, 1, 1));
+
+        let path = reach(&grid, start, goal).expect("the gap is open");
+
+        assert_eq!(path.len(), 8 + 2 * 8, "eight across and eight out and back");
+        assert_eq!(path.last(), Some(&goal));
+    }
+
+    #[test]
+    fn the_nearest_stand_cell_by_route_length_wins_over_the_nearest_by_distance() {
+        let mut grid = flat_ground(12, 12);
+        for z in 0..9 {
+            place(&mut grid, 5, 1, z);
+            place(&mut grid, 5, 2, z);
+        }
+        let start = cell(1, 1, 1);
+        let block = cell(6, 1, 1);
+
+        let path = route(
+            &grid,
+            start,
+            |c| c.x == 6 || c.x == 4 && c.z == 1 || c == cell(4, 1, 9),
+            block,
+            ROUTE_NODE_BUDGET,
+        )
+        .expect("reachable");
+
+        assert_eq!(path.len(), 3, "the near side of the wall");
+        assert_eq!(path.last(), Some(&cell(4, 1, 1)));
+    }
+
+    #[test]
+    fn a_search_expands_only_as_many_cells_as_the_estimate_leaves_in_play() {
+        let flat = flat_ground(24, 24);
+        let mut walled = flat_ground(12, 12);
+        for z in 0..9 {
+            place(&mut walled, 5, 1, z);
+            place(&mut walled, 5, 2, z);
+        }
+        let cases = [
+            (&flat, cell(2, 1, 12), cell(18, 1, 12)),
+            (&flat, cell(12, 1, 20), cell(12, 1, 3)),
+            (&flat, cell(2, 1, 3), cell(14, 1, 17)),
+            (&flat, cell(20, 1, 3), cell(4, 1, 15)),
+            (&walled, cell(1, 1, 1), cell(9, 1, 1)),
+        ];
+
+        let expansions: Vec<usize> = cases
+            .iter()
+            .map(|(grid, start, goal)| expansions_to_reach(grid, *start, *goal))
+            .collect();
+
+        assert_eq!(
+            expansions,
+            vec![47, 52, 247, 277, 105],
+            "straight east, straight north, diagonal, anti-diagonal, around a wall"
+        );
+    }
+
     /// A grid whose column `(x, z)` is solid from `y = 0` up to `heights[x][z]` exclusive.
     fn terrain(heights: &[Vec<i32>], reversed: bool) -> VoxelGrid {
         let mut columns: Vec<(i32, i32, i32)> = Vec::new();

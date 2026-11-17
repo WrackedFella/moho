@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc bc3fb43f46b70ab65cf1778f571815853fbed4542fc15cb0e26ba708a1f5ed78 # shrinks to yaw = -3.9104276, bearing = 0.0
+cc f99620526a2ac85b1ecbbf85a6749ab7fd23985c3047be37ffa8011b29e4cc38 # shrinks to yaw = 0.0, bearing = 0.26459163
+cc 96bcb3d4ce73f6552335d940d9f12b9b57980f38fffff1366d451578cb24e24f # shrinks to yaw = 0.0, bearing = 0.0
