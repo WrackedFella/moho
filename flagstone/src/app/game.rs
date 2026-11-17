@@ -301,8 +301,19 @@ impl App {
             self.apply_pending_render(r);
             r.all_lights_as_descs()
         });
-        if let Err(e) = self.auto_save_on_shutdown(clock, &lights) {
-            tracing::warn!(error = %e, "Failed to auto-save on exit");
+        let started = std::time::Instant::now();
+        match self.auto_save_on_shutdown(clock, &lights) {
+            Ok(()) => {
+                self.autosave.saved();
+                tracing::debug!(
+                    duration_ms = started.elapsed().as_millis() as u64,
+                    "Autosave finished"
+                );
+            }
+            Err(e) => {
+                self.autosave.save_failed();
+                tracing::warn!(error = %e, "Failed to auto-save");
+            }
         }
     }
 
@@ -453,6 +464,10 @@ impl moho_app::Game for App {
         event_processor.check_generation_cancel(self);
 
         GenerationProcessor::new().poll_generation(self);
+
+        if self.game_state == GameState::Playing {
+            self.autosave.tick();
+        }
     }
 
     fn init(&mut self, ctx: &mut moho_app::InitContext<'_>) {
@@ -514,6 +529,8 @@ impl moho_app::Game for App {
             self.main_menu_requested = false;
             self.autosave(ctx.clock(), ctx.renderer());
             self.show_menu();
+        } else if self.autosave.due() {
+            self.autosave(ctx.clock(), ctx.renderer());
         }
 
         let clock = ctx.clock();
