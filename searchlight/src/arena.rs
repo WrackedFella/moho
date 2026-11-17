@@ -268,7 +268,12 @@ pub fn nav_profile() -> AgentProfile {
 impl Arena {
     /// The box rounds may fly in: every mesh's box grown by [`FLIGHT_MARGIN`].
     pub fn flight_bounds(&self) -> FlightBounds {
-        todo!("flight bounds are not implemented")
+        FlightBounds::around(
+            self.meshes
+                .iter()
+                .flat_map(|mesh| mesh.positions().iter().copied().map(Vec3::from)),
+            FLIGHT_MARGIN,
+        )
     }
 
     /// The arena `level` and its `markers` describe.

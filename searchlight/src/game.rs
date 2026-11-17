@@ -30,7 +30,7 @@ use moho_ui_shell::{
 };
 
 use crate::arena::{box_mesh, control_mesh_id, oriented_box_mesh};
-use crate::console_commands::{self, ConsoleCommand, GodModeArg};
+use crate::console_commands::{self, ConsoleCommand, GodModeArg, SimpleArg};
 use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
 use crate::input::{SearchlightAction, SearchlightCommand, look_from, look_to_turn, resolve_lean};
@@ -845,6 +845,7 @@ impl SearchlightGame {
     #[must_use]
     pub fn with_debug_settings(mut self, settings: DebugSettings) -> Self {
         self.god_mode = settings.god_mode();
+        self.simple = settings.simple();
         self.pending_settings = Some(EngineSettings::from_prefs(settings.prefs()));
         self.debug_settings = Some(settings);
         self
@@ -871,6 +872,7 @@ impl SearchlightGame {
             return;
         }
         let before = self.god_mode;
+        let simple_before = self.simple;
         for command in queued {
             match command {
                 ConsoleCommand::GodMode(GodModeArg::Toggle) => {
@@ -883,9 +885,17 @@ impl SearchlightGame {
                     self.stage.shell().console_mut().print(text);
                 }
                 ConsoleCommand::GodMode(GodModeArg::Set(on)) => self.god_mode = on,
-                ConsoleCommand::Simple(_) | ConsoleCommand::RoundGravity(_) => {
-                    todo!("Simple and the round gravity scale are not implemented")
+                ConsoleCommand::Simple(SimpleArg::Toggle) => {
+                    self.simple = !self.simple;
+                    let text = if self.simple {
+                        "Simple: on"
+                    } else {
+                        "Simple: off"
+                    };
+                    self.stage.shell().console_mut().print(text);
                 }
+                ConsoleCommand::Simple(SimpleArg::Set(on)) => self.simple = on,
+                ConsoleCommand::RoundGravity(scale) => self.round_gravity = scale,
                 ConsoleCommand::Fullscreen => self.flip_window_pending = true,
                 ConsoleCommand::ForceGrade(grade) => self.forced_grade = grade,
             }
@@ -895,6 +905,12 @@ impl SearchlightGame {
             && let Err(error) = settings.set_god_mode(self.god_mode)
         {
             tracing::warn!(%error, god_mode = self.god_mode, "god mode not saved");
+        }
+        if self.simple != simple_before
+            && let Some(settings) = &mut self.debug_settings
+            && let Err(error) = settings.set_simple(self.simple)
+        {
+            tracing::warn!(%error, simple = self.simple, "Simple not saved");
         }
     }
 

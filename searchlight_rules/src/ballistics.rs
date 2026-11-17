@@ -34,20 +34,28 @@ pub struct Flight {
 impl Flight {
     /// A round leaving `origin` along `direction` (any non-zero length) at the muzzle velocity.
     #[must_use]
-    pub fn fired(_origin: Vec3, _direction: Vec3, _ballistics: &Ballistics) -> Self {
-        todo!("ballistics are not implemented")
+    pub fn fired(origin: Vec3, direction: Vec3, ballistics: &Ballistics) -> Self {
+        Self {
+            position: origin,
+            velocity: direction.normalize() * ballistics.muzzle_velocity,
+        }
     }
 
     /// The flight `dt` seconds later under `gravity` (m/s², positive down).
     #[must_use]
-    pub fn step(&self, _ballistics: &Ballistics, _gravity: f32, _dt: f32) -> Self {
-        todo!("ballistics are not implemented")
+    pub fn step(&self, ballistics: &Ballistics, gravity: f32, dt: f32) -> Self {
+        let keep = (1.0 - ballistics.drag * dt).max(0.0);
+        let velocity = self.velocity * keep - Vec3::Y * (gravity * dt);
+        Self {
+            position: self.position + velocity * dt,
+            velocity,
+        }
     }
 
     /// Whether the round has slowed to [`MIN_SPEED`] or below.
     #[must_use]
     pub fn is_spent(&self) -> bool {
-        todo!("ballistics are not implemented")
+        self.velocity.length_squared() <= MIN_SPEED * MIN_SPEED
     }
 }
 
@@ -71,14 +79,18 @@ impl GravityScale {
     ///
     /// [`GravityScaleError`] when `scale` is negative, not finite or above
     /// [`MAX_GRAVITY_SCALE`].
-    pub fn new(_scale: f32) -> Result<Self, GravityScaleError> {
-        todo!("ballistics are not implemented")
+    pub fn new(scale: f32) -> Result<Self, GravityScaleError> {
+        if scale.is_finite() && (0.0..=MAX_GRAVITY_SCALE).contains(&scale) {
+            Ok(Self(scale))
+        } else {
+            Err(GravityScaleError { scale })
+        }
     }
 
     /// Gravity for a round, in m/s²: [`STANDARD_GRAVITY`] times the scale.
     #[must_use]
     pub fn gravity(self) -> f32 {
-        todo!("ballistics are not implemented")
+        STANDARD_GRAVITY * self.0
     }
 }
 
@@ -100,20 +112,27 @@ pub struct FlightBounds {
 impl FlightBounds {
     /// The box around `points`, grown by `margin` on every side.
     #[must_use]
-    pub fn around(_points: impl IntoIterator<Item = Vec3>, _margin: f32) -> Self {
-        todo!("ballistics are not implemented")
+    pub fn around(points: impl IntoIterator<Item = Vec3>, margin: f32) -> Self {
+        let (min, max) = points.into_iter().fold(
+            (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+            |(min, max), point| (min.min(point), max.max(point)),
+        );
+        Self {
+            min: min - Vec3::splat(margin),
+            max: max + Vec3::splat(margin),
+        }
     }
 
     /// Whether `point` is inside the box or on a face of it.
     #[must_use]
-    pub fn contains(&self, _point: Vec3) -> bool {
-        todo!("ballistics are not implemented")
+    pub fn contains(&self, point: Vec3) -> bool {
+        point.cmpge(self.min).all() && point.cmple(self.max).all()
     }
 
     /// The length of the box's diagonal, in metres.
     #[must_use]
     pub fn reach(&self) -> f32 {
-        todo!("ballistics are not implemented")
+        (self.max - self.min).length()
     }
 }
 

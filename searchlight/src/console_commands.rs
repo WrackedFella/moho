@@ -35,13 +35,33 @@ pub enum SimpleArg {
 }
 
 /// Parses `simple [0|1]`; no argument toggles.
-pub fn parse_simple(_args: &[&str]) -> Result<(ConsoleCommand, String), String> {
-    todo!("Simple is not implemented")
+pub fn parse_simple(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    match args {
+        [] => Ok((ConsoleCommand::Simple(SimpleArg::Toggle), String::new())),
+        ["1"] => Ok((
+            ConsoleCommand::Simple(SimpleArg::Set(true)),
+            "Simple: on".to_owned(),
+        )),
+        ["0"] => Ok((
+            ConsoleCommand::Simple(SimpleArg::Set(false)),
+            "Simple: off".to_owned(),
+        )),
+        _ => Err("Usage: simple [0|1]".to_owned()),
+    }
 }
 
 /// Parses `round_gravity <scale>`.
-pub fn parse_round_gravity(_args: &[&str]) -> Result<(ConsoleCommand, String), String> {
-    todo!("the round gravity scale is not implemented")
+pub fn parse_round_gravity(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    const USAGE: &str = "Usage: round_gravity <scale>";
+    let [text] = args else {
+        return Err(USAGE.to_owned());
+    };
+    let value: f32 = text.parse().map_err(|_| USAGE.to_owned())?;
+    let scale = GravityScale::new(value).map_err(|error| format!("{USAGE} ({error})"))?;
+    Ok((
+        ConsoleCommand::RoundGravity(scale),
+        format!("Round gravity scale: {value}"),
+    ))
 }
 
 /// Parses `tgm [0|1]`; no argument toggles.

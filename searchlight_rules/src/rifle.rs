@@ -295,12 +295,11 @@ mod tests {
             }
             let mut drained = false;
             for _ in 0..bound {
-                if rifle.fire() != Shot::Dry {
-                    fired += 1;
-                } else {
+                if rifle.fire() == Shot::Dry {
                     drained = true;
                     break;
                 }
+                fired += 1;
             }
 
             prop_assert!(drained, "rifle still firing after {} extra shots", bound);
