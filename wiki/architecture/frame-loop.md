@@ -1,6 +1,6 @@
 # Frame loop
 
-**Source:** `flagstone_game/src/pickups.rs`, `moho_app/src/` (`runner.rs`, `lib.rs`, `window_keys.rs`, `loop_requests.rs`, `headless.rs`, `fixed_step.rs`, `clock.rs`), `flagstone/src/app/game.rs`
+**Source:** `flagstone_game/src/pickups.rs`, `moho_app/src/` (`runner.rs`, `lib.rs`, `window_keys.rs`, `loop_requests.rs`, `headless.rs`, `fixed_step.rs`, `clock.rs`), `flagstone/src/app/game.rs`, `flagstone/src/app/event_loop/frame_processor.rs` (`run_pawn_job`)
 (`impl moho_app::Game for App`), `flagstone/src/app/event_loop/`.
 **Related:** [ADR-0009](../../_todo/adr/0009-simulation-time-is-one-fixed-tick.md) (fixed tick).
 
@@ -71,6 +71,8 @@ drain. The loop advances the clock after `tick` returns, so a reset made in a Pl
 gets that tick's advance on top.
 
 All gameplay steps early-return unless `GameState::Playing`. `dt` is the fixed tick length.
+
+In the isometric view the non-KCC branch ends with `run_pawn_job`, which advances the unpossessed pawn's mining job one step ([job loop](input-and-state.md#2-pointer-picking)); its dig publishes block events like the player's mine, so the light and mesh follow as above.
 
 Mining publishes its block event while `process_input_events` drains, after
 `process_world_events`, so the light system queues the edit on the next tick and lights it in
