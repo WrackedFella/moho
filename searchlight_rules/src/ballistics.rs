@@ -57,7 +57,7 @@ impl Flight {
     /// Whether the round has slowed to [`MIN_SPEED`] or below.
     #[must_use]
     pub fn is_spent(&self) -> bool {
-        self.velocity.length() <= MIN_SPEED
+        self.velocity.length_squared() <= MIN_SPEED * MIN_SPEED
     }
 }
 

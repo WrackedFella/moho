@@ -795,20 +795,26 @@ impl SearchlightSim {
     /// Advances every round in flight one step under `gravity`, and drops those that struck
     /// something, are spent or left the flight box.
     fn step_rounds(&mut self, gravity: f32, dt: f32) {
-        for mut round in std::mem::take(&mut self.rounds) {
-            let step = step_round(&self.world, &round, gravity, dt);
+        let mut rounds = std::mem::take(&mut self.rounds);
+        rounds.retain_mut(|round| {
+            let step = step_round(&self.world, round, gravity, dt);
             let before = round.flight.position;
-            let mut near_missed = std::mem::take(&mut round.near_missed);
-            self.settle_player_strike(before, step.end, step.strike, round.from, &mut near_missed);
-            round.near_missed = near_missed;
-            if step.strike.is_none()
+            self.settle_player_strike(
+                before,
+                step.end,
+                step.strike,
+                round.from,
+                &mut round.near_missed,
+            );
+            let flying = step.strike.is_none()
                 && !step.flight.is_spent()
-                && self.bounds.contains(step.flight.position)
-            {
+                && self.bounds.contains(step.flight.position);
+            if flying {
                 round.flight = step.flight;
-                self.rounds.push(round);
             }
-        }
+            flying
+        });
+        self.rounds = rounds;
     }
 
     /// Applies what a player's shot or round segment from `origin` to `end` did: near misses on
