@@ -267,6 +267,41 @@ mod tests {
         assert_eq!(selection.selected(), Some(PawnId(7)), "re-select replaces");
     }
 
+    #[test]
+    fn a_ray_parallel_to_and_on_a_face_plane_still_enters_the_box() {
+        let unit = Aabb {
+            min: Vec3::new(0.0, 0.0, 2.0),
+            max: Vec3::new(1.0, 1.0, 3.0),
+        };
+
+        for x in [0.0, 1.0] {
+            let along_face = Ray {
+                origin: Vec3::new(x, 0.5, 0.0),
+                direction: Vec3::Z,
+            };
+
+            assert_eq!(ray_box_entry(along_face, unit), Some(2.0), "x = {x}");
+        }
+    }
+
+    #[test]
+    fn terrain_exactly_at_the_pawn_entry_distance_does_not_pick_it() {
+        let aabb = Aabb {
+            min: Vec3::new(-1.0, -1.0, 2.0),
+            max: Vec3::new(1.0, 1.0, 3.0),
+        };
+        let toward = Ray {
+            origin: Vec3::ZERO,
+            direction: Vec3::Z,
+        };
+
+        let at_entry = pick_pawn(toward, [(PLAYER_PAWN, aabb)], Some(2.0));
+        let beyond = pick_pawn(toward, [(PLAYER_PAWN, aabb)], Some(2.5));
+
+        assert_eq!(at_entry, None);
+        assert_eq!(beyond, Some(PLAYER_PAWN));
+    }
+
     proptest! {
         #[test]
         fn ray_box_entry_agrees_with_a_point_inside_the_box(
