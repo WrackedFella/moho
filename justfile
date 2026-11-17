@@ -33,9 +33,20 @@ test-doc:
 comment-refs base=base:
     scripts/check-comment-refs.sh {{base}}
 
-# Licenses, advisories, banned and duplicate crates, crate sources.
+# Licenses, advisories, banned and duplicate crates, crate sources, and rapier's required
+# enhanced-determinism feature, with a self-test that a fixture lacking it is rejected.
 deny:
-    cargo deny check
+    #!/usr/bin/env bash
+    set -uo pipefail
+    cargo deny check || exit 1
+    scripts/check-physics-features.sh || exit 1
+    out=$(MOHO_PHYSICS_METADATA=scripts/fixtures/physics-metadata-missing.json scripts/check-physics-features.sh 2>&1)
+    status=$?
+    if [ "$status" -ne 0 ] && grep -qF -- 'rapier3d does not enable enhanced-determinism' <<<"$out"; then
+        exit 0
+    fi
+    echo "check-physics-features did not reject the fixture (exit $status): $out" >&2
+    exit 1
 
 # LCOV coverage report at lcov.info.
 cov:
