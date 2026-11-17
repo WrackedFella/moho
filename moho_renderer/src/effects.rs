@@ -93,7 +93,6 @@ impl Streak {
     }
 }
 
-/// A muzzle flash: a camera-facing star that shrinks to nothing over its lifetime.
 #[derive(Debug)]
 struct Flash {
     style: FlashStyle,
@@ -112,7 +111,6 @@ impl Flash {
     }
 }
 
-/// An impact mark: a quad on a surface that holds its size, then shrinks out over its fade.
 #[derive(Debug)]
 struct Mark {
     style: MarkStyle,
