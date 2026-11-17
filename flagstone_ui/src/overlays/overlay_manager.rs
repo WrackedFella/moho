@@ -18,6 +18,20 @@ pub struct ViewHeightHud {
     pub level: i32,
 }
 
+/// The selected pawn as the selection panel shows it. Primitive types only, so the UI
+/// stays decoupled from the game crate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionHud {
+    /// The pawn's name.
+    pub title: String,
+
+    /// The equipped tool's label, if any.
+    pub tool: Option<String>,
+
+    /// Carried resources as `(display name, count)`.
+    pub carried: Vec<(String, u32)>,
+}
+
 /// What the player asked for through the HUD this frame, for the game to apply.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct HudIntents {
@@ -88,6 +102,9 @@ pub struct HudData {
 
     /// Whether the mining designation is active, for the HUD control's state.
     pub mine_designation_active: bool,
+
+    /// The selected pawn, for the selection panel; `None` closes the panel.
+    pub selection: Option<SelectionHud>,
 }
 
 impl Default for HudData {
@@ -110,6 +127,7 @@ impl Default for HudData {
             view_height: None,
             pickups: Vec::new(),
             mine_designation_active: false,
+            selection: None,
         }
     }
 }

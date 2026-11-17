@@ -844,6 +844,8 @@ mod tests {
         lightings: Vec<LightingGpu>,
         frames_begun: u32,
         cameras: Vec<(glam::Mat4, glam::Mat4, glam::Vec3)>,
+        /// Every instance handed to `enqueue_draw`, across frames.
+        instances: Vec<InstanceGpu>,
     }
 
     impl RendererBackend for FakeRenderer {
@@ -874,7 +876,9 @@ mod tests {
             self.cameras.push(camera);
             Ok(())
         }
-        fn enqueue_draw(&mut self, _mesh: u32, _instances: &[InstanceGpu]) {}
+        fn enqueue_draw(&mut self, _mesh: u32, instances: &[InstanceGpu]) {
+            self.instances.extend_from_slice(instances);
+        }
         fn submit_frame(&mut self) {}
         fn set_materials(&mut self, _materials: &[MaterialGpu]) {}
         fn update_lighting(&mut self, lighting: LightingGpu) {
@@ -2661,6 +2665,394 @@ mod tests {
 
             assert!(idle.select.is_none());
             assert!(app.pointer_hit.is_some());
+        }
+    }
+
+    mod pawn_selection {
+        use super::pointer_select::{app_over_flat_ground, click_on, ground_at};
+        use super::*;
+        use flagstone_game::selection::PLAYER_PAWN;
+        use glam::Vec3;
+        use moho_core::events::AudioEvent;
+        use moho_input::key::MouseButton;
+        use moho_renderer::MARKER_INFLATE;
+        use std::sync::mpsc::Receiver;
+
+        /// The pawn box's half extents: the character capsule, 0.3 m radius and 2.3 m tall.
+        const HALF: Vec3 = Vec3::new(0.3, 1.15, 0.3);
+
+        /// The strategy view over flat ground with the pawn standing in the middle of it.
+        fn pawn_app() -> App {
+            let mut app = app_over_flat_ground(CameraMode::Isometric);
+            app.simulation
+                .set_position_yaw_pitch(Vec3::new(8.0, 5.15, 8.0), 0.0, 0.0);
+            app
+        }
+
+        fn centre(app: &App) -> Vec3 {
+            app.simulation.position()
+        }
+
+        fn step(app: &mut App) -> StrategyCommand {
+            let command = Game::command(app);
+            tick_app(app, &command);
+            command
+        }
+
+        fn click_pawn(app: &mut App) {
+            let at = centre(app);
+            click_on(app, at);
+        }
+
+        fn click_the_sky(app: &mut App) {
+            app.input.actions.pointer_moved(640.0, 2.0);
+            app.input.actions.mouse_button(MouseButton::Left, true);
+            app.input.actions.mouse_button(MouseButton::Left, false);
+        }
+
+        fn select_the_pawn(app: &mut App) {
+            click_pawn(app);
+            step(app);
+        }
+
+        fn tap_possess(app: &mut App) {
+            let key = default_key(app, StrategyAction::Possess);
+            app.input.actions.key(key, true);
+            app.input.actions.key(key, false);
+        }
+
+        fn outlines(app: &mut App) -> Vec<moho_render_api::MarkerGpu> {
+            app.scene.markers_mut().draws(Vec3::ZERO).outlines
+        }
+
+        fn fills(app: &mut App) -> Vec<moho_render_api::MarkerGpu> {
+            app.scene.markers_mut().draws(Vec3::ZERO).fills
+        }
+
+        fn frame(app: &mut App) -> FakeRenderer {
+            let mut fake = FakeRenderer::default();
+            run_frame(app, &mut fake);
+            fake
+        }
+
+        /// The instances drawn as a cube spanning the pawn box around `centre`.
+        fn bodies_at(fake: &FakeRenderer, centre: Vec3) -> usize {
+            fake.instances
+                .iter()
+                .filter(|instance| {
+                    let m = instance.model;
+                    let at = Vec3::new(m[3][0], m[3][1], m[3][2]);
+                    let size = Vec3::new(m[0][0], m[1][1], m[2][2]);
+                    instance.object_type == 1
+                        && at.distance(centre) < 1e-3
+                        && size.distance(HALF * 2.0) < 1e-3
+                })
+                .count()
+        }
+
+        /// Whether `mark` is the pawn box around `centre`, within the renderer's inflation.
+        fn is_pawn_box(mark: &moho_render_api::MarkerGpu, centre: Vec3) -> bool {
+            let grow = Vec3::splat(MARKER_INFLATE);
+            Vec3::new(mark.min[0], mark.min[1], mark.min[2]).distance(centre - HALF - grow) < 1e-3
+                && Vec3::new(mark.max[0], mark.max[1], mark.max[2]).distance(centre + HALF + grow)
+                    < 1e-3
+        }
+
+        fn record_audio(app: &App) -> Receiver<AudioEvent> {
+            let (tx, rx) = std::sync::mpsc::channel();
+            app.event_bus.subscribe(move |event: &AudioEvent| {
+                let _ = tx.send(event.clone());
+            });
+            rx
+        }
+
+        fn cues(app: &App, audio: &Receiver<AudioEvent>) -> Vec<AudioEvent> {
+            app.event_bus.process_deferred();
+            audio.try_iter().collect()
+        }
+
+        #[test]
+        fn strategy_view_draws_the_pawn_body_at_the_pawn() {
+            let mut app = pawn_app();
+            let pawn = centre(&app);
+
+            let fake = frame(&mut app);
+
+            assert_eq!(
+                bodies_at(&fake, pawn),
+                1,
+                "one 0.6 x 2.3 x 0.6 cube at the pawn"
+            );
+        }
+
+        #[test]
+        fn first_person_view_draws_no_pawn_body() {
+            let mut strategy = pawn_app();
+            let mut first_person = pawn_app();
+            first_person
+                .simulation
+                .set_camera_mode(CameraMode::FirstPerson);
+            let pawn = centre(&strategy);
+
+            let in_strategy = frame(&mut strategy);
+            let in_first_person = frame(&mut first_person);
+
+            assert_eq!(
+                bodies_at(&in_strategy, pawn),
+                1,
+                "the strategy view draws it"
+            );
+            assert_eq!(bodies_at(&in_first_person, pawn), 0);
+        }
+
+        #[test]
+        fn strategy_click_on_the_pawn_selects_it() {
+            let mut app = pawn_app();
+            click_pawn(&mut app);
+
+            step(&mut app);
+
+            assert_eq!(app.selection.selected(), Some(PLAYER_PAWN));
+        }
+
+        #[test]
+        fn strategy_click_on_empty_ground_clears_the_selection() {
+            let mut app = pawn_app();
+            select_the_pawn(&mut app);
+            assert_eq!(app.selection.selected(), Some(PLAYER_PAWN));
+            let ground = ground_at(&app, 6.3, 9.1);
+            click_on(&mut app, ground);
+
+            step(&mut app);
+
+            assert!(app.pointer_hit.is_some(), "the click found the ground");
+            assert_eq!(app.selection.selected(), None);
+        }
+
+        #[test]
+        fn strategy_click_on_the_sky_clears_the_selection() {
+            let mut app = pawn_app();
+            select_the_pawn(&mut app);
+            assert_eq!(app.selection.selected(), Some(PLAYER_PAWN));
+            click_the_sky(&mut app);
+
+            step(&mut app);
+
+            assert!(app.pointer_hit.is_none(), "the click found no ground");
+            assert_eq!(app.selection.selected(), None);
+        }
+
+        #[test]
+        fn strategy_click_on_a_pawn_hidden_by_a_hill_does_not_select_it() {
+            let mut app = pawn_app();
+            let grid = app
+                .light_system
+                .as_mut()
+                .expect("App starts with a light system")
+                .grid_mut();
+            for x in 5..=11 {
+                for y in 4..=16 {
+                    for z in 13..=15 {
+                        grid.mutator()
+                            .place(flagstone_voxel::BlockPos::new(x, y, z), 1, None);
+                    }
+                }
+            }
+            click_pawn(&mut app);
+            let mut open = pawn_app();
+            click_pawn(&mut open);
+
+            step(&mut app);
+            step(&mut open);
+
+            assert_eq!(
+                open.selection.selected(),
+                Some(PLAYER_PAWN),
+                "without the hill the same click selects"
+            );
+            let hit = app.pointer_hit.expect("the click hit the hill");
+            assert!(
+                hit.position.z > 12.0,
+                "the click landed on the hill, not past it: {:?}",
+                hit.position
+            );
+            assert_eq!(app.selection.selected(), None);
+        }
+
+        #[test]
+        fn first_person_click_does_not_select() {
+            let mut unselected = pawn_app();
+            unselected
+                .simulation
+                .set_camera_mode(CameraMode::FirstPerson);
+            click_pawn(&mut unselected);
+            let mut selected = pawn_app();
+            select_the_pawn(&mut selected);
+            selected.simulation.set_camera_mode(CameraMode::FirstPerson);
+            click_the_sky(&mut selected);
+
+            let command = step(&mut unselected);
+            step(&mut selected);
+
+            assert!(command.select.is_none());
+            assert_eq!(unselected.selection.selected(), None);
+            assert_eq!(
+                selected.selection.selected(),
+                Some(PLAYER_PAWN),
+                "a first-person click leaves the selection untouched"
+            );
+        }
+
+        #[test]
+        fn possessing_with_a_selection_keeps_it_and_enters_first_person() {
+            let mut app = pawn_app();
+            select_the_pawn(&mut app);
+            let before = (app.simulation.position(), app.simulation.yaw_pitch());
+            tap_possess(&mut app);
+
+            step(&mut app);
+
+            assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+            assert_eq!(app.selection.selected(), Some(PLAYER_PAWN));
+            assert_eq!(
+                (app.simulation.position(), app.simulation.yaw_pitch()),
+                before,
+                "first person starts at the pawn"
+            );
+        }
+
+        #[test]
+        fn returning_from_possession_keeps_the_pawn_selected() {
+            let mut app = pawn_app();
+            select_the_pawn(&mut app);
+            tap_possess(&mut app);
+            step(&mut app);
+            assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+
+            tap_possess(&mut app);
+            step(&mut app);
+
+            assert_eq!(app.simulation.camera_mode(), CameraMode::Isometric);
+            assert_eq!(app.selection.selected(), Some(PLAYER_PAWN));
+        }
+
+        #[test]
+        fn selection_mark_outlines_the_pawn_in_strategy_view() {
+            let mut app = pawn_app();
+            let before = outlines(&mut app).len();
+            select_the_pawn(&mut app);
+
+            frame(&mut app);
+
+            let marks = outlines(&mut app);
+            assert_eq!(before, 0);
+            assert_eq!(marks.len(), 1, "one outline: {marks:?}");
+            assert!(is_pawn_box(&marks[0], centre(&app)), "{:?}", marks[0]);
+            assert!(
+                fills(&mut app).is_empty(),
+                "the mark is an outline, not a fill"
+            );
+        }
+
+        #[test]
+        fn selection_mark_follows_the_pawn_when_it_moves() {
+            let mut app = pawn_app();
+            select_the_pawn(&mut app);
+            frame(&mut app);
+            app.simulation
+                .set_position_yaw_pitch(Vec3::new(9.0, 5.15, 6.0), 0.0, 0.0);
+
+            frame(&mut app);
+
+            let marks = outlines(&mut app);
+            assert_eq!(marks.len(), 1, "{marks:?}");
+            assert!(
+                is_pawn_box(&marks[0], Vec3::new(9.0, 5.15, 6.0)),
+                "{:?}",
+                marks[0]
+            );
+        }
+
+        #[test]
+        fn selection_mark_is_hidden_in_first_person_and_returns_on_return() {
+            let mut app = pawn_app();
+            select_the_pawn(&mut app);
+            frame(&mut app);
+            let in_strategy = outlines(&mut app).len();
+            tap_possess(&mut app);
+            step(&mut app);
+
+            frame(&mut app);
+            let in_first_person = outlines(&mut app).len();
+            tap_possess(&mut app);
+            step(&mut app);
+            frame(&mut app);
+
+            assert_eq!(in_strategy, 1);
+            assert_eq!(in_first_person, 0);
+            assert_eq!(outlines(&mut app).len(), 1);
+        }
+
+        #[test]
+        fn selection_mark_is_restored_after_a_console_marker_clear() {
+            let mut app = pawn_app();
+            select_the_pawn(&mut app);
+            frame(&mut app);
+            app.scene.markers_mut().clear();
+            assert!(outlines(&mut app).is_empty(), "the clear removed it");
+
+            frame(&mut app);
+
+            assert_eq!(outlines(&mut app).len(), 1);
+        }
+
+        #[test]
+        fn clearing_the_selection_removes_the_mark() {
+            let mut app = pawn_app();
+            select_the_pawn(&mut app);
+            frame(&mut app);
+            let selected = outlines(&mut app).len();
+            click_the_sky(&mut app);
+            step(&mut app);
+
+            frame(&mut app);
+
+            assert_eq!(selected, 1);
+            assert!(outlines(&mut app).is_empty());
+        }
+
+        #[test]
+        fn the_click_selects_on_the_next_tick_not_on_the_event() {
+            let mut app = pawn_app();
+
+            click_pawn(&mut app);
+            let on_the_event = app.selection.selected();
+            let command = Game::command(&mut app);
+            let before_the_tick = app.selection.selected();
+            tick_app(&mut app, &command);
+
+            assert_eq!(on_the_event, None);
+            assert!(
+                command.select.is_some(),
+                "the click is in the sampled command"
+            );
+            assert_eq!(before_the_tick, None, "sampling selects nothing");
+            assert_eq!(app.selection.selected(), Some(PLAYER_PAWN));
+        }
+
+        #[test]
+        fn selecting_publishes_the_placeholder_cue() {
+            let mut app = pawn_app();
+            let audio = record_audio(&app);
+            click_pawn(&mut app);
+
+            step(&mut app);
+
+            let published = cues(&app, &audio);
+            assert!(
+                matches!(published.as_slice(), [AudioEvent::ButtonClick]),
+                "{published:?}"
+            );
         }
     }
 
