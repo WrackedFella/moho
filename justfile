@@ -33,9 +33,22 @@ test-doc:
 comment-refs base=base:
     scripts/check-comment-refs.sh {{base}}
 
-# Licenses, advisories, banned and duplicate crates, crate sources.
+# Licenses, advisories, banned and duplicate crates, crate sources, and the physics crates'
+# required enhanced-determinism feature (cargo deny bans features but cannot require one).
 deny:
+    #!/usr/bin/env bash
+    set -euo pipefail
     cargo deny check
+    scripts/check-physics-features.sh
+    status=0
+    out=$(MOHO_PHYSICS_METADATA=scripts/fixtures/physics-metadata-missing.json scripts/check-physics-features.sh 2>&1) || status=$?
+    if [ "$status" -ne 0 ] && grep -qF -- 'rapier3d' <<<"$out" && grep -qF -- 'parry3d' <<<"$out"; then
+        exit 0
+    fi
+    echo "physics-features self-test failed: expected non-zero exit naming rapier3d and parry3d" >&2
+    echo "  got: exit $status, output:" >&2
+    sed 's/^/    /' <<<"$out" >&2
+    exit 1
 
 # LCOV coverage report at lcov.info.
 cov:
