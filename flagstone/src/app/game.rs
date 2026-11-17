@@ -2926,8 +2926,38 @@ mod tests {
         fn the_click_selects_on_the_next_tick_not_on_the_event() {
             let mut app = app_with_pawn(CameraMode::Isometric);
             let pawn = app.simulation.position();
+            let (view, proj, _) = app.camera;
+            let ndc = (proj * view).project_point3(pawn);
+            let position = winit::dpi::PhysicalPosition::new(
+                f64::from((ndc.x + 1.0) * 0.5 * super::pointer_select::VIEWPORT.x as f32),
+                f64::from((1.0 - ndc.y) * 0.5 * super::pointer_select::VIEWPORT.y as f32),
+            );
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+            let device_id = winit::event::DeviceId::dummy();
 
-            click_on(&mut app, pawn);
+            Game::event(
+                &mut app,
+                &mut ctx,
+                moho_app::Event::Window(WindowEvent::CursorMoved {
+                    device_id,
+                    position,
+                }),
+            );
+            for state in [
+                winit::event::ElementState::Pressed,
+                winit::event::ElementState::Released,
+            ] {
+                Game::event(
+                    &mut app,
+                    &mut ctx,
+                    moho_app::Event::Window(WindowEvent::MouseInput {
+                        device_id,
+                        state,
+                        button: winit::event::MouseButton::Left,
+                    }),
+                );
+            }
             let on_the_event = app.selection.selected();
             let command = Game::command(&mut app);
             let before_the_tick = app.selection.selected();
@@ -2969,15 +2999,20 @@ mod tests {
         }
 
         #[test]
-        fn no_selection_draws_no_mark() {
-            let mut app = app_with_pawn(CameraMode::Isometric);
-            let unselected = outlines_after_a_frame(&mut app);
-            app.selection.click(Some(PLAYER_PAWN));
+        fn clearing_click_publishes_no_cue() {
+            let mut app = selected_app();
+            let audio = record_audio(&app);
+            app.event_bus.process_deferred();
+            let _drained: Vec<AudioEvent> = audio.try_iter().collect();
+            let ground = ground_at(&app, 12.0, 12.0);
 
-            let selected = outlines_after_a_frame(&mut app);
+            click_on(&mut app, ground);
+            step(&mut app);
+            app.event_bus.process_deferred();
+            let cues: Vec<AudioEvent> = audio.try_iter().collect();
 
-            assert!(unselected.is_empty(), "{unselected:?}");
-            assert_eq!(selected.len(), 1, "selecting draws the mark");
+            assert_eq!(app.selection.selected(), None, "the click cleared it");
+            assert!(cues.is_empty(), "clearing plays no cue: {cues:?}");
         }
 
         #[test]

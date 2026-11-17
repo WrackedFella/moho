@@ -184,6 +184,8 @@ mod tests {
 
         assert_eq!(pick(inside, None), Some(PLAYER_PAWN));
         assert_eq!(pick(inside, Some(0.5)), Some(PLAYER_PAWN));
+        assert_eq!(pick(inside, Some(0.2)), Some(PLAYER_PAWN));
+        assert_eq!(ray_box_entry(inside, pawn_box()), Some(0.0));
     }
 
     #[test]
