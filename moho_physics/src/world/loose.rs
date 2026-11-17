@@ -345,8 +345,8 @@ impl PhysicsWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::test_support::{floor_mesh, slab_mesh, slope_mesh, TEST_TAG};
     use crate::world::RayQuery;
-    use crate::world::test_support::{TEST_TAG, floor_mesh, slab_mesh, slope_mesh};
     use glam::Mat3;
     use moho_render_api::{WorldMesh, WorldMeshId};
     use proptest::prelude::*;
@@ -1629,7 +1629,9 @@ mod tests {
 
         /// Drops the next wave when one is due, then steps the world once.
         fn advance(&mut self) {
-            if self.ticks % PILE_WAVE_TICKS == 0 && self.ticks / PILE_WAVE_TICKS < PILE_WAVES {
+            if self.ticks.is_multiple_of(PILE_WAVE_TICKS)
+                && self.ticks / PILE_WAVE_TICKS < PILE_WAVES
+            {
                 let wave = (self.ticks / PILE_WAVE_TICKS) as usize;
                 for (shape, spawn) in &self.specs[wave * PILE_WAVE_SIZE..][..PILE_WAVE_SIZE] {
                     self.objects.push((self.world.spawn_loose(spawn), *shape));
