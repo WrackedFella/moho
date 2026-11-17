@@ -1,6 +1,6 @@
 use super::PhysicsWorld;
 use glam::{Quat, Vec3};
-use rapier3d::prelude::{ColliderBuilder, Pose, RigidBodyBuilder};
+use rapier3d::prelude::{ColliderBuilder, Pose, RigidBody, RigidBodyBuilder, RigidBodyHandle};
 
 /// Stable, engine-issued name of a loose object.
 ///
@@ -44,6 +44,14 @@ impl LooseShape {
         }
     }
 
+    /// The radius a shape rolls on, `None` for a box.
+    fn roll_radius(self) -> Option<f32> {
+        match self {
+            Self::Box { .. } => None,
+            Self::Capsule { radius, .. } | Self::Cylinder { radius, .. } => Some(radius),
+        }
+    }
+
     fn assert_valid(self) {
         match self {
             Self::Box { half_extents } => assert!(
@@ -67,6 +75,16 @@ impl LooseShape {
 
 /// Steepest ground, radians from level, on which a fresh world brakes loose objects to rest.
 pub(super) const DEFAULT_REST_SLOPE: f32 = 5.0 * std::f32::consts::PI / 180.0;
+
+/// A contact point deeper than this, in metres, is an overlap the solver is still pushing apart;
+/// braking then would freeze the overlap.
+const DEEP_CONTACT: f32 = 0.005;
+
+/// A loose object's body and, for a shape that rolls, the radius it rolls on.
+pub(super) struct Loose {
+    body: RigidBodyHandle,
+    roll_radius: Option<f32>,
+}
 
 /// Everything a game states when it drops a loose object.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -157,18 +175,20 @@ pub struct UnknownLoose;
 impl PhysicsWorld {
     /// Drop a loose object into the world and return its id.
     ///
-    /// The object advances inside [`PhysicsWorld::step`] under the world's gravity.
+    /// The object advances inside [`PhysicsWorld::step`] under the world's gravity. A capsule or
+    /// cylinder touching ground within [`PhysicsWorld::rest_slope`] of level is braked to rest
+    /// (boxes are not).
     ///
-    /// Characters do not ignore loose objects: a loose box blocks a character or is stepped
-    /// onto like geometry, and any overlap shoves the box because the solver treats the
-    /// character as infinitely heavy. Rays skip loose boxes because their colliders carry no
+    /// Characters do not ignore loose objects: a loose object blocks a character or is stepped
+    /// onto like geometry, and any overlap shoves it because the solver treats the
+    /// character as infinitely heavy. Rays skip loose objects because their colliders carry no
     /// tag.
     ///
     /// # Panics
-    /// If the spawn would poison the simulation: a mass or half extent that is not positive and
-    /// finite, a friction, restitution or damping that is negative or not finite, a position or
-    /// velocity that is not finite, or a rotation that is not finite or whose squared length is
-    /// more than 2e-4 from 1 (glam's `Quat::is_normalized`).
+    /// If the spawn would poison the simulation: a mass, half extent, half height or radius that
+    /// is not positive and finite, a friction, restitution or damping that is negative or not
+    /// finite, a position or velocity that is not finite, or a rotation that is not finite or
+    /// whose squared length is more than 2e-4 from 1 (glam's `Quat::is_normalized`).
     pub fn spawn_loose(&mut self, spawn: &LooseSpawn) -> LooseId {
         spawn.assert_valid();
 
@@ -192,13 +212,19 @@ impl PhysicsWorld {
 
         let id = LooseId(self.next_loose);
         self.next_loose += 1;
-        self.loose.insert(id, handle);
+        self.loose.insert(
+            id,
+            Loose {
+                body: handle,
+                roll_radius: spawn.shape.roll_radius(),
+            },
+        );
         id
     }
 
     /// The object's current state; `None` for an id never spawned or removed.
     pub fn loose(&self, id: LooseId) -> Option<LooseState> {
-        let body = self.rigid_body_set.get(*self.loose.get(&id)?)?;
+        let body = self.rigid_body_set.get(self.loose.get(&id)?.body)?;
         Some(LooseState {
             position: body.translation(),
             rotation: *body.rotation(),
@@ -213,9 +239,9 @@ impl PhysicsWorld {
     /// # Errors
     /// [`UnknownLoose`] if `id` was never spawned or was already removed.
     pub fn remove_loose(&mut self, id: LooseId) -> Result<(), UnknownLoose> {
-        let handle = self.loose.remove(&id).ok_or(UnknownLoose)?;
+        let loose = self.loose.remove(&id).ok_or(UnknownLoose)?;
         self.rigid_body_set.remove(
-            handle,
+            loose.body,
             &mut self.island_manager,
             &mut self.collider_set,
             &mut self.impulse_joint_set,
@@ -248,6 +274,72 @@ impl PhysicsWorld {
     pub fn loose_count(&self) -> usize {
         self.loose.len()
     }
+
+    /// Whether `body` rests on ground within the rest slope of level and no contact is a deep
+    /// overlap. `cos_slope` is the cosine of the rest slope; `up` is the unit up direction.
+    fn on_brakable_ground(&self, body: RigidBodyHandle, up: Vec3, cos_slope: f32) -> bool {
+        let Some(body) = self.rigid_body_set.get(body) else {
+            return false;
+        };
+        let mut on_ground = false;
+        for &collider in body.colliders() {
+            for pair in self.narrow_phase.contact_pairs_with(collider) {
+                // The manifold normal points from the first collider to the second.
+                let into_body = if pair.collider1 == collider {
+                    -1.0
+                } else {
+                    1.0
+                };
+                for manifold in pair.manifolds() {
+                    let flat = (manifold.data.normal * into_body).dot(up) >= cos_slope;
+                    for point in &manifold.points {
+                        if point.dist < -DEEP_CONTACT {
+                            return false;
+                        }
+                        on_ground |= flat && point.dist <= 0.0;
+                    }
+                }
+            }
+        }
+        on_ground
+    }
+
+    /// Slow every awake rolling object that rests on near-flat ground, on velocities only.
+    pub(super) fn brake_rolling(&mut self, dt: f32) {
+        let gravity = self.gravity.length();
+        if self.rest_slope == 0.0 || gravity == 0.0 {
+            return;
+        }
+        let up = -self.gravity / gravity;
+        let cos_slope = self.rest_slope.cos();
+        let decel = gravity * self.rest_slope.tan() * dt;
+        for loose in self.loose.values() {
+            let Some(radius) = loose.roll_radius else {
+                continue;
+            };
+            if self
+                .rigid_body_set
+                .get(loose.body)
+                .is_none_or(RigidBody::is_sleeping)
+                || !self.on_brakable_ground(loose.body, up, cos_slope)
+            {
+                continue;
+            }
+            let Some(body) = self.rigid_body_set.get_mut(loose.body) else {
+                continue;
+            };
+            let axis = *body.rotation() * Vec3::Y;
+            let spin = body.angvel().dot(axis);
+            let spin_cut = spin.signum() * spin.abs().min(decel / radius);
+            let across = axis.cross(up).normalize_or_zero();
+            let speed = body.linvel().dot(across);
+            let speed_cut = speed.signum() * speed.abs().min(decel);
+            let angvel = body.angvel() - axis * spin_cut;
+            let linvel = body.linvel() - across * speed_cut;
+            body.set_angvel(angvel, false);
+            body.set_linvel(linvel, false);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -279,7 +371,7 @@ mod tests {
     }
 
     fn body_of(world: &PhysicsWorld, id: LooseId) -> rapier3d::prelude::RigidBodyHandle {
-        *world.loose.get(&id).expect("the object is alive")
+        world.loose.get(&id).expect("the object is alive").body
     }
 
     fn cuboid(half_extents: Vec3) -> LooseShape {
