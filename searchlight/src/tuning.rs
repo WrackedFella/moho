@@ -57,7 +57,6 @@ pub fn tuning(kit: Kit) -> SimConfig {
         },
         gravity: 18.0,
         character_body: SHIPPED_BODY,
-        range: weapon.range,
         damage: weapon.damage,
         cooldown_ticks: weapon.cooldown_ticks,
         reload_ticks: weapon.reload_ticks,
@@ -104,7 +103,6 @@ mod tests {
             cooldown_ticks: 9,
             reload_ticks: 77,
             charge_ticks: 13,
-            range: 55.5,
         };
         let mut rig = Rig::new(ItemId::new("test_rig"), &RigSpec { magazine_slots: 2 });
         rig.stow(mag(17, 17)).unwrap();
@@ -128,7 +126,6 @@ mod tests {
         assert_eq!(config.cooldown_ticks, 9);
         assert_eq!(config.reload_ticks, 77);
         assert_eq!(config.charge_ticks, 13);
-        assert!((config.range - 55.5).abs() < f32::EPSILON);
         assert_eq!(config.loadout, loadout);
         assert_eq!(config.rounds, rounds);
     }
@@ -144,7 +141,6 @@ mod tests {
                 cooldown_ticks: 6,
                 reload_ticks: 120,
                 charge_ticks: 30,
-                range: 100.0,
             },
             loadout: Loadout::new(rifle_from(mag(17, 17)), rig),
             rounds: BTreeMap::new(),
@@ -211,7 +207,6 @@ mod tests {
                 cooldown_ticks: 6,
                 reload_ticks: 120,
                 charge_ticks: 30,
-                range: 100.0,
             },
             loadout: Loadout::new(rifle_from(mag(17, 17)), rig),
             rounds: BTreeMap::new(),

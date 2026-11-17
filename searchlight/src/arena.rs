@@ -362,12 +362,15 @@ impl Arena {
         world.step(SETTLE_DT);
         world
     }
-}
 
-impl Arena {
     /// The box rounds may fly in: every mesh grown by [`FLIGHT_MARGIN`].
     pub fn flight_bounds(&self) -> FlightBounds {
-        FlightBounds::around(&[], 0.0)
+        let vertices: Vec<Vec3> = self
+            .meshes
+            .iter()
+            .flat_map(|mesh| mesh.positions().iter().copied().map(Vec3::from))
+            .collect();
+        FlightBounds::around(&vertices, FLIGHT_MARGIN)
     }
 }
 

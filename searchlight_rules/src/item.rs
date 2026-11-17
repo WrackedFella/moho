@@ -1,5 +1,6 @@
 //! Items defined in data: one model for weapons, magazines, rounds, rigs and tools.
 
+use crate::ballistics::MIN_SPEED;
 use crate::weapon::RifleDef;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -95,16 +96,53 @@ pub enum Lifecycle {
 
 /// The round section of an item definition.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "RawRoundSpec")]
 pub struct RoundSpec {
     /// Caliber of the round.
     pub caliber: Caliber,
-    /// Speed at the muzzle, m/s.
-    #[serde(default)]
+    /// Speed at the muzzle, m/s; above [`MIN_SPEED`].
     pub muzzle_velocity: f32,
-    /// Speed lost to drag, 1/s.
-    #[serde(default)]
+    /// Speed lost to drag, 1/s; not negative.
     pub drag: f32,
+}
+
+/// Why a round section was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Error)]
+#[non_exhaustive]
+pub enum RoundSpecError {
+    /// The muzzle velocity is not above the speed at which a round is spent.
+    #[error("muzzle_velocity must be above {min} m/s, got {0}", min = MIN_SPEED)]
+    MuzzleVelocity(f32),
+    /// The drag is negative or not finite.
+    #[error("drag must be 0 or more, got {0}")]
+    Drag(f32),
+}
+
+/// Unvalidated wire form of a [`RoundSpec`].
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRoundSpec {
+    caliber: Caliber,
+    muzzle_velocity: f32,
+    drag: f32,
+}
+
+impl TryFrom<RawRoundSpec> for RoundSpec {
+    type Error = RoundSpecError;
+
+    fn try_from(raw: RawRoundSpec) -> Result<Self, Self::Error> {
+        if !(raw.muzzle_velocity.is_finite() && raw.muzzle_velocity > MIN_SPEED) {
+            return Err(RoundSpecError::MuzzleVelocity(raw.muzzle_velocity));
+        }
+        if !(raw.drag.is_finite() && raw.drag >= 0.0) {
+            return Err(RoundSpecError::Drag(raw.drag));
+        }
+        Ok(Self {
+            caliber: raw.caliber,
+            muzzle_velocity: raw.muzzle_velocity,
+            drag: raw.drag,
+        })
+    }
 }
 
 /// The magazine section of an item definition.
@@ -290,8 +328,7 @@ mod tests {
             "fire": "semi_auto",
             "cooldown_ticks": 6,
             "reload_ticks": 120,
-            "charge_ticks": 30,
-            "range": 100.0
+            "charge_ticks": 30
         })
     }
 
@@ -406,7 +443,6 @@ mod tests {
                 cooldown_ticks: 6,
                 reload_ticks: 120,
                 charge_ticks: 30,
-                range: 100.0,
             }
         );
     }

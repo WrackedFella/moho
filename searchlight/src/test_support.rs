@@ -267,7 +267,6 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
         move_settings: test_move_settings(),
         gravity: 18.0,
         character_body: SHIPPED_BODY,
-        range: 100.0,
         damage: 30,
         cooldown_ticks: 3,
         reload_ticks: 10,

@@ -49,6 +49,39 @@ pub fn parse_tgm(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
     }
 }
 
+/// Parses `simple [0|1]`; no argument toggles.
+pub fn parse_simple(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    match args {
+        [] => Ok((ConsoleCommand::Simple(SimpleArg::Toggle), String::new())),
+        ["1"] => Ok((
+            ConsoleCommand::Simple(SimpleArg::Set(true)),
+            "Simple: on".to_owned(),
+        )),
+        ["0"] => Ok((
+            ConsoleCommand::Simple(SimpleArg::Set(false)),
+            "Simple: off".to_owned(),
+        )),
+        _ => Err("Usage: simple [0|1]".to_owned()),
+    }
+}
+
+/// Parses `round_gravity <scale>`; the scale is 0 to 1000.
+pub fn parse_round_gravity(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    let [text] = args else {
+        return Err("Usage: round_gravity <scale>".to_owned());
+    };
+    text.parse::<f32>()
+        .ok()
+        .and_then(|value| GravityScale::new(value).ok())
+        .map(|scale| {
+            (
+                ConsoleCommand::RoundGravity(scale),
+                format!("Round gravity: {text}"),
+            )
+        })
+        .ok_or_else(|| "Usage: round_gravity <scale>".to_owned())
+}
+
 /// Parses `fullscreen`; it takes no arguments.
 pub fn parse_fullscreen(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
     match args {
@@ -104,6 +137,22 @@ fn console_with_grade(
             parse: parse_tgm,
         })
         .expect("\"tgm\" is not an engine command and is registered once");
+    console
+        .register(CommandSpec {
+            name: "simple".to_owned(),
+            usage: "simple [0|1]".to_owned(),
+            help: "toggle Simple: shots land the tick they are fired".to_owned(),
+            parse: parse_simple,
+        })
+        .expect("\"simple\" is not an engine command and is registered once");
+    console
+        .register(CommandSpec {
+            name: "round_gravity".to_owned(),
+            usage: "round_gravity <scale>".to_owned(),
+            help: "scale gravity for rounds in flight (0 to 1000, 1 at launch)".to_owned(),
+            parse: parse_round_gravity,
+        })
+        .expect("\"round_gravity\" is not an engine command and is registered once");
     console
         .register(CommandSpec {
             name: "fullscreen".to_owned(),

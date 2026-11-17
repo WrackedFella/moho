@@ -100,7 +100,7 @@ mod tests {
     use moho_core::content::ContentRoots;
     use moho_level::{Level, LevelMesh};
     use moho_physics::RayQuery;
-    use searchlight_rules::BodyPart;
+    use searchlight_rules::{BodyPart, MIN_SPEED};
 
     use super::*;
     use crate::arena::{self, LevelMode};
@@ -284,10 +284,13 @@ mod tests {
     #[test]
     fn the_200_m_dummy_is_in_rifle_range_from_the_firing_line() {
         let roots = ContentRoots::base(&content_root()).expect("the shipped content folder");
-        let range = kit::load(&roots, START_KIT_ID)
-            .expect("the shipped start kit loads")
-            .weapon
-            .range;
+        let kit = kit::load(&roots, START_KIT_ID).expect("the shipped start kit loads");
+        let ball = kit
+            .rounds
+            .values()
+            .next()
+            .expect("the start kit names a round");
+        let range = (ball.muzzle_velocity - MIN_SPEED) / ball.drag;
         let (_, markers) = shipped("proving_ground.glb");
         let spawn = markers.player_spawn.as_ref().expect("a firing line spawn");
         let far = markers

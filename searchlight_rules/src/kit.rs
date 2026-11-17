@@ -131,7 +131,7 @@ impl KitDef {
             return Err(wrong(&self.weapon, "weapon"));
         };
 
-        let build = |entry: &KitMagazine| -> Result<Magazine, KitError> {
+        let build = |entry: &KitMagazine| -> Result<(Magazine, Ballistics), KitError> {
             let ItemKind::Magazine(spec) = &find(&entry.magazine)?.kind else {
                 return Err(wrong(&entry.magazine, "magazine"));
             };
@@ -145,16 +145,22 @@ impl KitDef {
                 });
             }
             let rounds = entry.rounds.unwrap_or(spec.capacity);
-            Magazine::filled(entry.magazine.clone(), spec, &entry.round, rounds).map_err(|_| {
-                KitError::OverCapacity {
+            let magazine = Magazine::filled(entry.magazine.clone(), spec, &entry.round, rounds)
+                .map_err(|_| KitError::OverCapacity {
                     magazine: entry.magazine.clone(),
                     rounds,
                     capacity: spec.capacity,
-                }
-            })
+                })?;
+            let ballistics = Ballistics {
+                muzzle_velocity: round.muzzle_velocity,
+                drag: round.drag,
+            };
+            Ok((magazine, ballistics))
         };
 
-        let in_hand = build(&self.loaded)?;
+        let mut flights = BTreeMap::new();
+        let (in_hand, ballistics) = build(&self.loaded)?;
+        flights.insert(self.loaded.round.clone(), ballistics);
         let rifle = Rifle::loaded(weapon.well.clone(), in_hand).map_err(|_| {
             KitError::MagazineDoesNotFit {
                 magazine: self.loaded.magazine.clone(),
@@ -163,17 +169,18 @@ impl KitDef {
         })?;
         let mut rig = Rig::new(self.rig.clone(), rig_spec);
         for entry in &self.magazines {
-            rig.stow(build(entry)?)
-                .map_err(|_| KitError::RigOverfilled {
-                    rig: self.rig.clone(),
-                    slots: rig_spec.magazine_slots,
-                    magazines: self.magazines.len(),
-                })?;
+            let (magazine, ballistics) = build(entry)?;
+            flights.insert(entry.round.clone(), ballistics);
+            rig.stow(magazine).map_err(|_| KitError::RigOverfilled {
+                rig: self.rig.clone(),
+                slots: rig_spec.magazine_slots,
+                magazines: self.magazines.len(),
+            })?;
         }
         Ok(Kit {
             weapon: weapon.clone(),
             loadout: Loadout::new(rifle, rig),
-            rounds: BTreeMap::new(),
+            rounds: flights,
         })
     }
 }
@@ -193,7 +200,7 @@ mod tests {
                 "class": "weapon", "size": [2, 5], "condition": 100,
                 "weapon": {
                     "well": "rifle", "damage": 30, "fire": "semi_auto", "cooldown_ticks": 6,
-                    "reload_ticks": 120, "charge_ticks": 30, "range": 100.0
+                    "reload_ticks": 120, "charge_ticks": 30
                 }
             },
             "mag_rifle": {
@@ -292,7 +299,6 @@ mod tests {
                 cooldown_ticks: 6,
                 reload_ticks: 120,
                 charge_ticks: 30,
-                range: 100.0,
             }
         );
     }
