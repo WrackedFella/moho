@@ -1206,7 +1206,8 @@ mod tests {
     use super::*;
     use crate::sim::Feedback;
     use crate::test_support::{
-        WaveScore, arena_with, mag, press, rifle_from, test_config, wave_tuning,
+        WaveScore, arena_with, arena_with_controls, control_config, mag, press, rifle_from,
+        test_config, wave_tuning,
     };
     use searchlight_rules::{Grade, LeanSide};
 
@@ -1853,6 +1854,186 @@ mod tests {
         headless.advance(&mut game, Duration::ZERO);
 
         assert!(game.sim().pending_feedback().is_empty());
+    }
+
+    /// A game on a floor with no enemies and a next-wave post on each of `controls`, its player
+    /// at the origin with the eye 1 m up, facing +Z.
+    fn control_game(controls: &[Vec3]) -> SearchlightGame {
+        let mode = ArenaMode::new(
+            arena_with_controls(&[], Vec3::ZERO, &[], &[], controls),
+            control_config(rifle_from(mag(30, 30))),
+            wave_tuning(1),
+        );
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
+    }
+
+    const POST_IN_REACH: Vec3 = Vec3::new(0.0, 0.0, 1.5);
+
+    /// Runs a frame and says whether it put any text on screen, which in play only a prompt does.
+    fn text_on_screen(
+        game: &mut SearchlightGame,
+        headless: &mut HeadlessLoop<SearchlightGame>,
+    ) -> bool {
+        headless.advance(game, Duration::ZERO);
+        game.stage.shell().ui_frame([1280, 720]).is_some()
+    }
+
+    fn moving_and_turning(forward: f32, yaw_delta: f32) -> SearchlightCommand {
+        SearchlightCommand {
+            movement: moho_physics::CharacterCommand {
+                forward,
+                yaw_delta,
+                ..moho_physics::CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        }
+    }
+
+    #[test]
+    fn the_prompt_shows_while_the_button_is_in_reach() {
+        let mut near = control_game(&[POST_IN_REACH]);
+        let mut far = control_game(&[Vec3::new(0.0, 0.0, 6.0)]);
+        let mut empty = control_game(&[]);
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        headless.step(&mut near, 1);
+        let mut far_headless = HeadlessLoop::new(LoopConfig::new(60));
+        far_headless.step(&mut far, 1);
+        let mut empty_headless = HeadlessLoop::new(LoopConfig::new(60));
+        empty_headless.step(&mut empty, 1);
+
+        let in_reach = text_on_screen(&mut near, &mut headless);
+        let out_of_reach = text_on_screen(&mut far, &mut far_headless);
+        let no_control = text_on_screen(&mut empty, &mut empty_headless);
+
+        assert!(in_reach, "no prompt for a control in view and reach");
+        assert!(!out_of_reach, "a prompt for a control out of reach");
+        assert!(!no_control, "a prompt with no control");
+    }
+
+    #[test]
+    fn no_prompt_when_looking_away() {
+        let mut game = control_game(&[POST_IN_REACH]);
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        headless.step(&mut game, 1);
+        let facing = text_on_screen(&mut game, &mut headless);
+
+        tick_with(
+            &mut game,
+            &mut clock,
+            &moving_and_turning(0.0, std::f32::consts::PI),
+        );
+        let away = text_on_screen(&mut game, &mut headless);
+        tick_with(
+            &mut game,
+            &mut clock,
+            &moving_and_turning(0.0, std::f32::consts::PI),
+        );
+        let facing_again = text_on_screen(&mut game, &mut headless);
+
+        assert!(facing, "no prompt while facing the control");
+        assert!(!away, "a prompt after looking away");
+        assert!(facing_again, "no prompt after looking back");
+    }
+
+    #[test]
+    fn no_prompt_after_stepping_out_of_reach() {
+        let mut game = control_game(&[POST_IN_REACH]);
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        headless.step(&mut game, 1);
+        let near = text_on_screen(&mut game, &mut headless);
+
+        for _ in 0..90 {
+            tick_with(&mut game, &mut clock, &moving_and_turning(-1.0, 0.0));
+        }
+        let away = text_on_screen(&mut game, &mut headless);
+
+        assert!(near, "no prompt before stepping back");
+        assert!(
+            game.sim().player().position.z < -1.0,
+            "the player stayed put"
+        );
+        assert!(!away, "a prompt for a control out of reach");
+    }
+
+    #[test]
+    fn no_prompt_while_dead_or_paused() {
+        let mut dying = control_game(&[POST_IN_REACH]);
+        let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+        headless.step(&mut dying, 1);
+        let alive = text_on_screen(&mut dying, &mut headless);
+        dying.mode.sim_mut().kill_player();
+        headless.step(&mut dying, 1);
+        let dead = text_on_screen(&mut dying, &mut headless);
+        let paused_menu = |controls: &[Vec3]| {
+            let mut game = control_game(controls);
+            let mut headless = HeadlessLoop::new(LoopConfig::new(60));
+            headless.step(&mut game, 1);
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+            game.route_input(&mut ctx, Input::Key(Key::Escape), true, false);
+            headless.advance(&mut game, Duration::ZERO);
+            let frame = game.stage.shell().ui_frame([1280, 720]);
+            (game.screen, frame.expect("the pause menu draws").meshes)
+        };
+
+        let (screen, paused_in_reach) = paused_menu(&[POST_IN_REACH]);
+        let (_, paused_with_nothing_near) = paused_menu(&[]);
+
+        assert!(
+            alive,
+            "no prompt while alive, so the dead case proves nothing"
+        );
+        assert!(!dead, "a prompt while dead");
+        assert_eq!(screen, Screen::Paused);
+        assert_eq!(
+            paused_in_reach, paused_with_nothing_near,
+            "the paused frame carries more than the pause menu"
+        );
+    }
+
+    #[test]
+    fn control_mesh_ids_share_no_id_with_arena_dummy_or_enemy_meshes() {
+        use crate::arena::{arena_mesh_id, control_mesh_id};
+        let enemy_ids = [0, 1, 500, u16::MAX].into_iter().flat_map(|target| {
+            let rig = EnemyRig {
+                target,
+                shown: false,
+                gun_flash: 0,
+            };
+            (0..ENEMY_MESH_SLOTS as usize).map(move |slot| rig.mesh_id(slot).0)
+        });
+        let others: Vec<u64> = (0..4096)
+            .map(|index| arena_mesh_id(index).0)
+            .chain(
+                dummy_segments(&SHIPPED_BODY, &[Vec3::ZERO; 40])
+                    .iter()
+                    .map(|segment| segment.id.0),
+            )
+            .chain(enemy_ids)
+            .collect();
+        let controls: Vec<u64> = [0, 1, 2, 255, 256, usize::from(u16::MAX)]
+            .into_iter()
+            .map(|index| control_mesh_id(index).0)
+            .collect();
+
+        let clashes: Vec<u64> = controls
+            .iter()
+            .copied()
+            .filter(|id| others.contains(id))
+            .collect();
+        let mut distinct = controls.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+
+        assert_eq!(clashes, Vec::<u64>::new());
+        assert_eq!(distinct.len(), controls.len(), "two controls share an id");
+        assert!(
+            controls.iter().all(|id| id >> 32 == 3),
+            "controls are not in the 3 << 32 range: {controls:?}"
+        );
     }
 
     #[test]

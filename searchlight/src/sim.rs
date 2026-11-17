@@ -28,6 +28,9 @@ use crate::tuning::SHIPPED_BODY;
 /// off a wall.
 const LEAN_CLEARANCE: f32 = 0.15;
 
+/// How far from the eye a control can be used, in metres.
+pub const USE_REACH: f32 = 2.0;
+
 /// Height of the shipped body's capsule centre above its feet, in metres: half its hull. For
 /// code with no [`SimConfig`] at hand; the sim itself spawns the configured body.
 pub const STAND_HEIGHT: f32 = SHIPPED_BODY.standing.hull.length / 2.0;
@@ -852,6 +855,12 @@ impl SearchlightSim {
         self.leaned_eye(&self.player())
     }
 
+    /// The placed control the player could use now: the one the first surface along the view,
+    /// within [`USE_REACH`] of the eye, belongs to. `None` while dead.
+    pub fn control_in_reach(&self) -> Option<u16> {
+        None
+    }
+
     fn leaned_eye(&self, state: &CharacterState) -> Vec3 {
         state.eye_position() + lean_offset(state.yaw, self.lean.shift(&self.lean_tuning))
     }
@@ -1062,7 +1071,10 @@ mod tests {
 
     use super::*;
     use crate::tag::SurfaceTag;
-    use crate::test_support::{DT, flat_floor, foreign_mag, mag, rifle_from, room, test_config};
+    use crate::test_support::{
+        DT, arena_with_controls, control_config, flat_floor, foreign_mag, mag, rifle_from, room,
+        test_config,
+    };
 
     fn rifle_with(rounds: u32) -> Rifle {
         rifle_from(mag(30, rounds))
@@ -1071,7 +1083,9 @@ mod tests {
     fn part_of(volume: &HitVolume) -> BodyPart {
         match SurfaceTag::try_from(volume.tag).expect("a body volume carries a body tag") {
             SurfaceTag::Part { part, .. } | SurfaceTag::Player(part) => part,
-            other @ SurfaceTag::World => panic!("not a body part: {other:?}"),
+            other @ (SurfaceTag::World | SurfaceTag::Control(_)) => {
+                panic!("not a body part: {other:?}")
+            }
         }
     }
 
@@ -1201,6 +1215,133 @@ mod tests {
             "{at:?}"
         );
         assert!((at.y - (spawn.y + STAND_HEIGHT)).abs() < 1e-3, "{at:?}");
+    }
+
+    /// A sim of a bare floor with a `next_wave` post on each of `controls`, behind `walls`,
+    /// and a player at the origin whose eye is 1 m up, facing +Z.
+    fn control_sim(walls: &[(Vec3, Vec3)], controls: &[Vec3]) -> SearchlightSim {
+        let arena = arena_with_controls(walls, Vec3::ZERO, &[], &[], controls);
+        settled(SearchlightSim::start(arena, control_config(rifle_with(30))))
+    }
+
+    fn settled(mut sim: SearchlightSim) -> SearchlightSim {
+        sim.tick(&idle(), DT);
+        sim
+    }
+
+    fn turning(yaw_delta: f32) -> SearchlightCommand {
+        SearchlightCommand {
+            movement: CharacterCommand {
+                yaw_delta,
+                ..CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        }
+    }
+
+    #[test]
+    fn a_control_in_view_and_reach_is_found() {
+        let far_left = Vec3::new(-6.0, 0.0, 0.0);
+        let ahead = Vec3::new(0.0, 0.0, 1.5);
+
+        let sim = control_sim(&[], &[far_left, ahead]);
+
+        assert_eq!(sim.control_in_reach(), Some(1));
+    }
+
+    #[test]
+    fn a_control_out_of_view_is_not_found() {
+        let ahead = Vec3::new(0.0, 0.0, 1.5);
+        let in_view = control_sim(&[], &[ahead]).control_in_reach();
+
+        let looking_elsewhere: Vec<Option<u16>> = [FRAC_PI_2, std::f32::consts::PI, -FRAC_PI_2]
+            .into_iter()
+            .map(|yaw| {
+                let mut sim = control_sim(&[], &[ahead]);
+                sim.tick(&turning(yaw), DT);
+                sim.control_in_reach()
+            })
+            .collect();
+
+        assert_eq!(in_view, Some(0));
+        assert_eq!(looking_elsewhere, [None, None, None]);
+    }
+
+    #[test]
+    fn a_control_beyond_reach_is_not_found() {
+        assert_eq!(USE_REACH, 2.0);
+        let post_at = |z: f32| control_sim(&[], &[Vec3::new(0.0, 0.0, z)]).control_in_reach();
+
+        let just_inside = post_at(2.1);
+        let just_outside = post_at(2.5);
+        let far = post_at(8.0);
+
+        assert_eq!(just_inside, Some(0), "its face is 1.9 m from the eye");
+        assert_eq!(just_outside, None, "its face is 2.3 m from the eye");
+        assert_eq!(far, None);
+    }
+
+    #[test]
+    fn a_control_behind_a_wall_is_not_found() {
+        let post = Vec3::new(0.0, 0.0, 1.5);
+        let wall = (Vec3::new(-2.0, 0.0, 0.8), Vec3::new(2.0, 3.0, 1.0));
+
+        let open = control_sim(&[], &[post]).control_in_reach();
+        let walled = control_sim(&[wall], &[post]).control_in_reach();
+
+        assert_eq!(open, Some(0));
+        assert_eq!(walled, None);
+    }
+
+    #[test]
+    fn a_body_in_front_of_a_control_blocks_it() {
+        let post = Vec3::new(0.0, 0.0, 1.9);
+        let open = control_sim(&[], &[post]);
+        let mut arena = (*arena_with_controls(&[], Vec3::ZERO, &[], &[], &[post])).clone();
+        arena.dummy_spawns.push(Vec3::new(0.0, 0.0, 1.0));
+
+        let guarded = settled(SearchlightSim::start(
+            Arc::new(arena),
+            control_config(rifle_with(30)),
+        ));
+
+        assert_eq!(open.control_in_reach(), Some(0));
+        assert_eq!(guarded.control_in_reach(), None);
+    }
+
+    #[test]
+    fn no_control_is_found_while_the_player_is_dead() {
+        let mut sim = control_sim(&[], &[Vec3::new(0.0, 0.0, 1.5)]);
+        let alive = sim.control_in_reach();
+
+        sim.kill_player();
+        sim.tick(&idle(), DT);
+
+        assert_eq!(alive, Some(0));
+        assert_eq!(sim.control_in_reach(), None);
+    }
+
+    #[test]
+    fn a_shot_at_a_control_damages_nothing() {
+        let mut sim = control_sim(&[], &[Vec3::new(0.0, 0.0, 1.5)]);
+        let strike = resolve_shot(
+            &sim.world,
+            ShotRay {
+                origin: sim.player_eye(),
+                direction: Vec3::Z,
+                range: 100.0,
+                ignore: Some(sim.player),
+            },
+        )
+        .expect("the post stops the shot");
+
+        let ticks = run(&mut sim, &[pull(), idle()]);
+
+        assert_eq!(strike.tag, SurfaceTag::Control(0));
+        assert!((strike.distance - 1.3).abs() < 1e-3, "{strike:?}");
+        assert_eq!(ticks[0], [Feedback::Fired]);
+        assert_eq!(sim.kills(), 0);
+        assert_eq!(sim.control_in_reach(), Some(0));
     }
 
     #[test]

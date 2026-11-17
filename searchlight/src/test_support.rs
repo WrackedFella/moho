@@ -16,8 +16,9 @@ use searchlight_rules::{
     MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
 };
 
-use crate::arena::{Arena, nav_profile};
+use crate::arena::{Arena, ArenaControl, nav_profile};
 use crate::brain::EnemyTuning;
+use crate::control::ControlAction;
 use crate::input::SearchlightAction;
 use crate::mode::ArenaMode;
 use crate::sim::SimConfig;
@@ -194,6 +195,14 @@ pub(crate) fn set_eye_above_centre(config: &mut SimConfig, height: f32) {
     standing.eye_height = height + standing.hull.length / 2.0;
 }
 
+/// [`test_config`] for a player whose eye is 1 m above the feet, so a level gaze meets a
+/// control post's 1.2 m side rather than passing over its top.
+pub(crate) fn control_config(rifle: Rifle) -> SimConfig {
+    let mut config = test_config(rifle, vec![]);
+    config.character_body.standing.eye_height = 1.0;
+    config
+}
+
 /// Enemy tuning with a 3-tick reaction (so the first shot is on tick 2), a 4-tick cooldown,
 /// 10 damage, no aim error and a fast turn.
 pub(crate) fn enemy_tuning() -> EnemyTuning {
@@ -225,14 +234,44 @@ pub(crate) fn arena_with(
     enemies: &[Vec3],
     route: &[Vec3],
 ) -> Arc<Arena> {
+    arena_with_controls(boxes, player, enemies, route, &[])
+}
+
+/// A control post's footprint and height, in metres.
+const POST_SIDE: f32 = 0.4;
+const POST_HEIGHT: f32 = 1.2;
+
+/// [`arena_with`] plus one `next_wave` control post standing on each of `controls`, numbered in
+/// that order; the navmesh is built around the posts as well.
+pub(crate) fn arena_with_controls(
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+    controls: &[Vec3],
+) -> Arc<Arena> {
     let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
     let meshes: Vec<WorldMesh> = std::iter::once(&floor)
         .chain(boxes)
         .map(|&(min, max)| box_mesh(min, max))
         .collect();
-    let nav = Arc::new(NavMesh::build(&meshes, nav_profile()).expect("box worlds build a navmesh"));
+    let half = Vec3::new(POST_SIDE / 2.0, 0.0, POST_SIDE / 2.0);
+    let posts: Vec<WorldMesh> = controls
+        .iter()
+        .map(|&at| box_mesh(at - half, at + half + Vec3::Y * POST_HEIGHT))
+        .collect();
+    let walkable: Vec<WorldMesh> = meshes.iter().chain(&posts).cloned().collect();
+    let nav =
+        Arc::new(NavMesh::build(&walkable, nav_profile()).expect("box worlds build a navmesh"));
     Arc::new(Arena {
         material_names: vec![None; meshes.len()],
+        controls: posts
+            .into_iter()
+            .map(|mesh| ArenaControl {
+                action: ControlAction::NextWave,
+                mesh,
+            })
+            .collect(),
         meshes,
         nav,
         nav_fallback: false,
