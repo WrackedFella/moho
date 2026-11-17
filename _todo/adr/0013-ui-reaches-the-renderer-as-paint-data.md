@@ -1,6 +1,6 @@
 # 0013 — UI reaches the renderer as plain paint data; the renderer owns UI drawing
 
-**Status:** Accepted (2026-10-10); amended by [0036](0036-crates-may-test-against-the-gpu-stack.md)
+**Status:** Accepted (2026-10-10)
 
 ## Context
 

@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Stand-in for cargo in the collect_graph self-test: answers only the `cargo tree` calls
-# check-layering.sh makes, from canned trees. STUB_CARGO_UI=clean|dirty|devonly picks whether
-# flagstone_ui's third-party wrapper (glyphon) pulls in wgpu, or flagstone_ui names egui-wgpu
-# as a dev-dependency only. Anything else fails loudly.
+# check-layering.sh makes, from canned trees. STUB_CARGO_UI=clean|dirty picks whether
+# flagstone_ui's third-party wrapper (glyphon) pulls in wgpu. Anything else fails loudly.
 set -euo pipefail
 
 fail() { echo "stub-cargo: unexpected call: cargo $*" >&2; exit 97; }
@@ -29,7 +28,7 @@ while (($#)); do
         *) fail "$all" ;;
     esac
 done
-[[ "$prefix" == depth && "$format" == '{p}' && ( "$edges" == normal,build,dev || "$edges" == normal,build ) \
+[[ "$prefix" == depth && "$format" == '{p}' && "$edges" == normal,build,dev \
     && "$target" == all && -n "$all_features" ]] || fail "$all"
 
 pruned="${prune[*]-}"
@@ -39,7 +38,6 @@ case "$crate:$pruned" in
     flagstone_ui:)
         printf '%s\n' '0flagstone_ui v0.1.0' '1glyphon v0.1.0'
         if [[ "${STUB_CARGO_UI:-}" == dirty ]]; then echo '2wgpu v29.0.0'; fi
-        if [[ "${STUB_CARGO_UI:-}" == devonly && "$edges" == normal,build,dev ]]; then echo '1egui-wgpu v29.0.0'; fi
         ;;
     flagstone:)
         printf '%s\n' '0flagstone v0.1.0' '1moho_renderer v0.1.0' '2wgpu v29.0.0' ;;
