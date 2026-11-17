@@ -767,14 +767,27 @@ impl SearchlightSim {
             },
         );
         let end = strike.map_or(origin + view.forward * reach, |strike| strike.point);
+        self.land_player_strike(origin, end, strike, state.position, &mut Vec::new());
+    }
+
+    /// Lands a player shot from `origin` to `end` that struck `strike`: counts its near misses
+    /// and, when it struck a part, applies the hit.
+    fn land_player_strike(
+        &mut self,
+        origin: Vec3,
+        end: Vec3,
+        strike: Option<Strike>,
+        from: Vec3,
+        near_missed: &mut Vec<u16>,
+    ) {
         let hit = strike.and_then(|strike| match strike.tag {
             SurfaceTag::Part { target, part } => Some((target, part, strike.point)),
             _ => None,
         });
         let struck = hit.map(|(target, _, _)| usize::from(target));
-        self.record_near_misses(origin, end, struck, state.position, &mut Vec::new());
+        self.record_near_misses(origin, end, struck, from, near_missed);
         if let Some((target, part, point)) = hit {
-            self.apply_player_hit(target, part, self.damage, state.position, point);
+            self.apply_player_hit(target, part, self.damage, from, point);
         }
     }
 
@@ -800,33 +813,26 @@ impl SearchlightSim {
     /// struck anything, is spent or left the flight bounds.
     fn step_rounds(&mut self, gravity: f32, dt: f32) {
         let bounds = self.origin.0.bounds;
-        for mut round in std::mem::take(&mut self.rounds) {
-            let step = step_round(&self.world, &round, gravity, dt);
-            let part = step.strike.and_then(|strike| match strike.tag {
-                SurfaceTag::Part { target, part } => Some((target, part, strike.point)),
-                _ => None,
-            });
-            let struck = part.map(|(target, _, _)| usize::from(target));
-            let mut near_missed = std::mem::take(&mut round.near_missed);
-            self.record_near_misses(
+        // Taken out so landing a strike can borrow `self` while the rounds are edited in place.
+        let mut rounds = std::mem::take(&mut self.rounds);
+        rounds.retain_mut(|round| {
+            let step = step_round(&self.world, round, gravity, dt);
+            self.land_player_strike(
                 round.flight.position,
                 step.end,
-                struck,
+                step.strike,
                 round.from,
-                &mut near_missed,
+                &mut round.near_missed,
             );
-            if let Some((target, part, point)) = part {
-                self.apply_player_hit(target, part, self.damage, round.from, point);
-            }
-            if step.strike.is_none()
+            let flies_on = step.strike.is_none()
                 && !step.flight.is_spent()
-                && bounds.contains(step.flight.position)
-            {
+                && bounds.contains(step.flight.position);
+            if flies_on {
                 round.flight = step.flight;
-                round.near_missed = near_missed;
-                self.rounds.push(round);
             }
-        }
+            flies_on
+        });
+        self.rounds = rounds;
     }
 
     /// Counts a near miss for every living enemy but `struck` that the shot from `origin` to

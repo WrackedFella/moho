@@ -1,6 +1,6 @@
 //! Items defined in data: one model for weapons, magazines, rounds, rigs and tools.
 
-use crate::ballistics::MIN_SPEED;
+use crate::ballistics::{Ballistics, MIN_SPEED};
 use crate::weapon::RifleDef;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -106,12 +106,23 @@ pub struct RoundSpec {
     pub drag: f32,
 }
 
+impl RoundSpec {
+    /// How this round moves through the air.
+    #[must_use]
+    pub fn ballistics(&self) -> Ballistics {
+        Ballistics {
+            muzzle_velocity: self.muzzle_velocity,
+            drag: self.drag,
+        }
+    }
+}
+
 /// Why a round section was refused.
 #[derive(Debug, Clone, PartialEq, Error)]
 #[non_exhaustive]
 pub enum RoundSpecError {
     /// The muzzle velocity is not finite and above the minimum speed.
-    #[error("muzzle_velocity must be above 100 m/s, got {0}")]
+    #[error("muzzle_velocity must be above {min} m/s, got {0}", min = MIN_SPEED)]
     MuzzleVelocity(f32),
     /// The drag is negative or not finite.
     #[error("drag must be 0 or more, got {0}")]
