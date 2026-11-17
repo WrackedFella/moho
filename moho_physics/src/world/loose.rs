@@ -7,12 +7,13 @@ use rapier3d::prelude::{
 use std::f32::consts::FRAC_PI_2;
 
 /// The rest slope of a world that never calls [`PhysicsWorld::set_rest_slope`]: 5 degrees.
-pub(super) const DEFAULT_REST_SLOPE: f32 = 5.0 * std::f32::consts::PI / 180.0;
+pub(super) const DEFAULT_REST_SLOPE: f32 = 5.0_f32.to_radians();
 
 /// A contact point deeper than this, m, means two bodies are still being pushed apart, so the
 /// brake leaves both of them, and any body touching either, alone: braking would stop the
 /// solver's separating velocity and freeze the overlap.
 const DEEP_CONTACT: f32 = 0.005;
+
 /// Stable, engine-issued name of a loose object.
 ///
 /// Issued in increasing order from zero and never reused, so the same call sequence issues the
@@ -180,16 +181,16 @@ impl PhysicsWorld {
     /// Capsules and cylinders touching ground within the rest slope of level are braked to rest;
     /// see [`PhysicsWorld::set_rest_slope`]. Boxes are not braked.
     ///
-    /// Characters do not ignore loose objects: a loose box blocks a character or is stepped
-    /// onto like geometry, and any overlap shoves the box because the solver treats the
-    /// character as infinitely heavy. Rays skip loose boxes because their colliders carry no
-    /// tag.
+    /// Characters do not ignore loose objects: a loose object blocks a character or is
+    /// stepped onto like geometry, and any overlap shoves the object because the solver treats
+    /// the character as infinitely heavy. Rays skip loose objects because their colliders
+    /// carry no tag.
     ///
     /// # Panics
     /// If the spawn would poison the simulation: a mass, half extent, half height or radius that
-    /// is not positive and finite, a friction, restitution or damping that is negative or not finite, a position or
-    /// velocity that is not finite, or a rotation that is not finite or whose squared length is
-    /// more than 2e-4 from 1 (glam's `Quat::is_normalized`).
+    /// is not positive and finite, a friction, restitution or damping that is negative or not
+    /// finite, a position or velocity that is not finite, or a rotation that is not finite or
+    /// whose squared length is more than 2e-4 from 1 (glam's `Quat::is_normalized`).
     pub fn spawn_loose(&mut self, spawn: &LooseSpawn) -> LooseId {
         spawn.assert_valid();
 
@@ -308,13 +309,11 @@ impl PhysicsWorld {
             let mut angvel = body.angvel();
 
             let spin = angvel.dot(axis);
-            let braked_spin = spin.signum() * (spin.abs() - decel / radius).max(0.0);
-            angvel += axis * (braked_spin - spin);
+            angvel += axis * (shrink_toward_zero(spin, decel / radius) - spin);
 
             if let Some(across) = axis.cross(up).try_normalize() {
                 let speed = linvel.dot(across);
-                let braked = speed.signum() * (speed.abs() - decel).max(0.0);
-                linvel += across * (braked - speed);
+                linvel += across * (shrink_toward_zero(speed, decel) - speed);
             }
 
             if let Some(body) = self.rigid_body_set.get_mut(loose.body) {
@@ -338,15 +337,10 @@ impl PhysicsWorld {
                 return false;
             }
             for pair in self.narrow_phase.contact_pairs_with(collider) {
-                let into_body = if pair.collider2 == collider {
-                    1.0
+                let (other, into_body) = if pair.collider1 == collider {
+                    (pair.collider2, -1.0)
                 } else {
-                    -1.0
-                };
-                let other = if pair.collider1 == collider {
-                    pair.collider2
-                } else {
-                    pair.collider1
+                    (pair.collider1, 1.0)
                 };
                 let mut touching = false;
                 for manifold in pair.manifolds() {
@@ -385,6 +379,11 @@ impl PhysicsWorld {
             .flat_map(|manifold| &manifold.points)
             .any(|point| point.dist < -DEEP_CONTACT)
     }
+}
+
+/// `value` moved `by` closer to zero, stopping at zero.
+fn shrink_toward_zero(value: f32, by: f32) -> f32 {
+    value.signum() * (value.abs() - by).max(0.0)
 }
 
 #[cfg(test)]
