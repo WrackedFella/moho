@@ -676,12 +676,27 @@ mod tests {
             });
         }
 
+        let over_panel = press_consumed(adapter.pointer_over_ui(), adapter.cursor_free());
+        let panel_hit = adapter.pointer_over_ui();
+        let _ = run_ui(
+            &adapter.context,
+            input(vec![egui::Event::PointerMoved(egui::pos2(100.0, 450.0))]),
+            |ui| {
+                rendering::render_game_state(ui, &mut adapter.ui_state, GameState::Playing);
+            },
+        );
+
         assert!(adapter.cursor_free());
-        assert!(adapter.pointer_over_ui());
-        assert!(press_consumed(
-            adapter.pointer_over_ui(),
-            adapter.cursor_free()
-        ));
+        assert!(panel_hit);
+        assert!(over_panel, "a press on the panel is consumed");
+        assert!(
+            !adapter.pointer_over_ui(),
+            "open ground is not over a panel"
+        );
+        assert!(
+            !press_consumed(adapter.pointer_over_ui(), adapter.cursor_free()),
+            "a press on open ground reaches the world"
+        );
     }
 
     #[test]

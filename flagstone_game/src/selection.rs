@@ -101,36 +101,147 @@ mod tests {
 
     #[test]
     fn a_ray_just_outside_each_face_misses() {
-        let aabb = unit_box();
-        let mm = 0.001;
-        // (origin offset on the face plane, direction); the ray runs parallel to the
-        // face normal axis, displaced along a perpendicular axis.
-        let cases: [(&str, Vec3, Vec3); 6] = [
-            ("+x", Vec3::new(5.0, 0.0, 1.0), Vec3::NEG_X),
-            ("-x", Vec3::new(-5.0, 0.0, 1.0), Vec3::X),
-            ("+y", Vec3::new(0.0, 5.0, 1.0), Vec3::NEG_Y),
-            ("-y", Vec3::new(0.0, -5.0, 1.0), Vec3::Y),
-            ("+z", Vec3::new(1.0, 0.0, 5.0), Vec3::NEG_Z),
-            ("-z", Vec3::new(1.0, 0.0, -5.0), Vec3::Z),
+        let unit = unit_box();
+        let pawn = Aabb {
+            min: Vec3::new(-0.3, -1.15, -0.3),
+            max: Vec3::new(0.3, 1.15, 0.3),
+        };
+        let diagonal = Vec3::new(1.0, 0.0, 1.0);
+        // (name, box, origin, direction, hits): each ray runs along a face normal, 1 mm
+        // either side of that face's edge.
+        let cases: [(&str, Aabb, Vec3, Vec3, bool); 18] = [
+            (
+                "+x outside",
+                unit,
+                Vec3::new(5.0, 0.0, 1.001),
+                Vec3::NEG_X,
+                false,
+            ),
+            (
+                "+x inside",
+                unit,
+                Vec3::new(5.0, 0.0, 0.999),
+                Vec3::NEG_X,
+                true,
+            ),
+            (
+                "-x outside",
+                unit,
+                Vec3::new(-5.0, 0.0, 1.001),
+                Vec3::X,
+                false,
+            ),
+            (
+                "-x inside",
+                unit,
+                Vec3::new(-5.0, 0.0, 0.999),
+                Vec3::X,
+                true,
+            ),
+            (
+                "+y outside",
+                unit,
+                Vec3::new(1.001, 5.0, 0.0),
+                Vec3::NEG_Y,
+                false,
+            ),
+            (
+                "+y inside",
+                unit,
+                Vec3::new(0.999, 5.0, 0.0),
+                Vec3::NEG_Y,
+                true,
+            ),
+            (
+                "-y outside",
+                unit,
+                Vec3::new(1.001, -5.0, 0.0),
+                Vec3::Y,
+                false,
+            ),
+            (
+                "-y inside",
+                unit,
+                Vec3::new(0.999, -5.0, 0.0),
+                Vec3::Y,
+                true,
+            ),
+            (
+                "+z outside",
+                unit,
+                Vec3::new(1.001, 0.0, 5.0),
+                Vec3::NEG_Z,
+                false,
+            ),
+            (
+                "+z inside",
+                unit,
+                Vec3::new(0.999, 0.0, 5.0),
+                Vec3::NEG_Z,
+                true,
+            ),
+            (
+                "-z outside",
+                unit,
+                Vec3::new(1.001, 0.0, -5.0),
+                Vec3::Z,
+                false,
+            ),
+            (
+                "-z inside",
+                unit,
+                Vec3::new(0.999, 0.0, -5.0),
+                Vec3::Z,
+                true,
+            ),
+            (
+                "pawn top outside",
+                pawn,
+                Vec3::new(-5.0, 1.151, 0.0),
+                Vec3::X,
+                false,
+            ),
+            (
+                "pawn top inside",
+                pawn,
+                Vec3::new(-5.0, 1.149, 0.0),
+                Vec3::X,
+                true,
+            ),
+            (
+                "pawn bottom outside",
+                pawn,
+                Vec3::new(-5.0, -1.151, 0.0),
+                Vec3::X,
+                false,
+            ),
+            (
+                "pawn bottom inside",
+                pawn,
+                Vec3::new(-5.0, -1.149, 0.0),
+                Vec3::X,
+                true,
+            ),
+            (
+                "diagonal near miss",
+                unit,
+                Vec3::new(-3.0, 0.0, -0.999),
+                diagonal,
+                false,
+            ),
+            (
+                "diagonal shifted 1 mm onto the box",
+                unit,
+                Vec3::new(-3.0, 0.0, -1.001),
+                diagonal,
+                true,
+            ),
         ];
 
-        for (face, edge_origin, direction) in cases {
-            let mut outside = edge_origin;
-            let mut inside = edge_origin;
-            // Displace along the axis that holds the 1.0 (the face edge).
-            if edge_origin.z == 1.0 {
-                outside.z += mm;
-                inside.z -= mm;
-            } else {
-                outside.x += mm;
-                inside.x -= mm;
-            }
+        for (name, aabb, origin, direction, hits) in cases {
+            let entry = ray_box_entry(&ray(origin, direction), &aabb);
 
-            let miss = ray_box_entry(&self::ray(outside, direction), &aabb);
-            let hit = ray_box_entry(&self::ray(inside, direction), &aabb);
-
-            assert!(miss.is_none(), "{face}: 1 mm outside must miss");
-            assert!(hit.is_some(), "{face}: 1 mm inside must hit");
+            assert_eq!(entry.is_some(), hits, "{name}: entry {entry:?}");
         }
     }
 
@@ -139,10 +250,13 @@ mod tests {
         let aabb = pawn_aabb(Vec3::new(0.0, 5.0, 0.0));
         let ray = ray(Vec3::new(0.0, 5.0, 10.0), Vec3::NEG_Z);
 
-        let hidden = pick_pawn(&ray, [(PLAYER_PAWN, aabb)], Some(5.0));
-        let visible = pick_pawn(&ray, [(PLAYER_PAWN, aabb)], None);
+        // The box is entered at 9.7 (centre 10, exit 10.3).
+        for terrain in [5.0, 9.6] {
+            let hidden = pick_pawn(&ray, [(PLAYER_PAWN, aabb)], Some(terrain));
 
-        assert_eq!(hidden, None);
+            assert_eq!(hidden, None, "terrain at {terrain} hides it");
+        }
+        let visible = pick_pawn(&ray, [(PLAYER_PAWN, aabb)], None);
         assert_eq!(visible, Some(PLAYER_PAWN), "only the terrain hides it");
     }
 
@@ -151,9 +265,12 @@ mod tests {
         let aabb = pawn_aabb(Vec3::new(0.0, 5.0, 0.0));
         let ray = ray(Vec3::new(0.0, 5.0, 10.0), Vec3::NEG_Z);
 
-        let picked = pick_pawn(&ray, [(PLAYER_PAWN, aabb)], Some(20.0));
+        // The box is entered at 9.7 (centre 10, exit 10.3).
+        for terrain in [9.9, 20.0] {
+            let picked = pick_pawn(&ray, [(PLAYER_PAWN, aabb)], Some(terrain));
 
-        assert_eq!(picked, Some(PLAYER_PAWN));
+            assert_eq!(picked, Some(PLAYER_PAWN), "terrain at {terrain}");
+        }
     }
 
     #[test]

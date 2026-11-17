@@ -3049,10 +3049,45 @@ mod tests {
             step(&mut app);
 
             let published = cues(&app, &audio);
+            step(&mut app);
+            let later = cues(&app, &audio);
             assert!(
                 matches!(published.as_slice(), [AudioEvent::ButtonClick]),
                 "{published:?}"
             );
+            assert!(
+                later.is_empty(),
+                "a tick without a click is silent: {later:?}"
+            );
+        }
+
+        #[test]
+        fn possessing_and_returning_without_a_selection_selects_nothing() {
+            let mut app = pawn_app();
+            tap_possess(&mut app);
+            step(&mut app);
+            assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+
+            tap_possess(&mut app);
+            step(&mut app);
+
+            assert_eq!(app.simulation.camera_mode(), CameraMode::Isometric);
+            assert_eq!(app.selection.selected(), None);
+        }
+
+        #[test]
+        fn the_pawn_body_is_transient_not_an_actor() {
+            let mut app = pawn_app();
+            let actors = app.entities.actors.cubes().len();
+            let spheres = app.entities.actors.spheres().len();
+
+            let pawn = centre(&app);
+
+            let drawn: Vec<usize> = (0..3).map(|_| bodies_at(&frame(&mut app), pawn)).collect();
+
+            assert_eq!(drawn, [1, 1, 1], "each frame draws exactly one body");
+            assert_eq!(app.entities.actors.cubes().len(), actors);
+            assert_eq!(app.entities.actors.spheres().len(), spheres);
         }
     }
 
