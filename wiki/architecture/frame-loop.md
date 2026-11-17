@@ -84,7 +84,7 @@ The tick drains one channel per event family, in this order:
 |---|---|---|
 | 1 | `process_ui_events` | load/new world, exit and main-menu requests (their auto-save runs in `frame`), resume, menus |
 | 2 | `process_graphics_events` | time of day, debug view |
-| 3 | `process_world_events` | every world event → `LightSystem::handle_event`; each `ChunkMeshDirty` chunk → remesh once (draw + collider) |
+| 3 | `process_world_events` | every world event → `LightSystem::handle_event`; each `ChunkMeshDirty` chunk → remesh once (draw + collider); `BlockPlaced`, `BlockRemoved` and `BlocksBatchModified` mark the world edited for autosave |
 | 4 | `process_input_events` | wheel zoom, mine action |
 | 5 | `process_debug_events` | spawn, noclip; point lights and shadow/SSAO quality are queued as `RenderRequest`s |
 
@@ -109,6 +109,7 @@ The renderer is reachable only through the contexts, so ticks queue renderer cha
    camera (`Listener::from_view`); then drain audio events;
 3. if the UI asked to quit: auto-save, `request_exit`, stop;
 4. if the UI asked for the main menu (Exit to main menu): auto-save, then `show_menu`, and go on;
+   otherwise, if `AutosaveSchedule::due()` (world edited and 2 minutes of Playing ticks since the last save), auto-save; a failed save resets the count and keeps the edit, so it retries next interval. Every auto-save is skipped when no world is loaded (`generation.last_spec` unset), so a menu exit cannot overwrite a save;
 5. `update_hud_data`, `update_cut_caps` (rebuild [cut-face caps](rendering.md#3-cut-face-caps)), then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
    with actors, the sphere and cube mesh handles and the frame camera (below).
 

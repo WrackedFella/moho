@@ -305,7 +305,7 @@ impl App {
         match self.auto_save_on_shutdown(clock, &lights) {
             Ok(()) => {
                 self.autosave.saved();
-                tracing::debug!(
+                tracing::info!(
                     duration_ms = started.elapsed().as_millis() as u64,
                     "Autosave finished"
                 );
