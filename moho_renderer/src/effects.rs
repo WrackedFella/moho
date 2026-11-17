@@ -1598,6 +1598,46 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_flash_or_mark_with_an_unusable_size_draws_nothing() {
+        for size in [f32::NAN, f32::INFINITY, 0.0, -0.4] {
+            let mut flash = Rig::new();
+            flash
+                .effects
+                .flash(Vec3::new(1.0, 2.0, 3.0), 0.0, flash_style(size, 0, 5000));
+            let mut mark = Rig::new();
+            mark.effects
+                .mark(Vec3::new(1.0, 2.0, 3.0), Vec3::Y, 0.0, mark_style(size, 0));
+
+            assert!(flash.frame(EYE).is_empty(), "flash of size {size}");
+            assert!(mark.frame(EYE).is_empty(), "mark of size {size}");
+        }
+    }
+
+    #[test]
+    fn a_flash_seen_from_a_non_finite_eye_draws_nothing() {
+        let eyes = [
+            Vec3::new(f32::NAN, 0.0, 0.0),
+            Vec3::new(0.0, f32::INFINITY, 0.0),
+            Vec3::splat(f32::NEG_INFINITY),
+        ];
+        for eye in eyes {
+            let mut rig = Rig::new();
+            rig.effects
+                .flash(Vec3::new(1.0, 2.0, 3.0), 0.0, flash_style(0.4, 0, 5000));
+
+            let drawn = rig.frame(eye);
+
+            assert!(
+                drawn
+                    .iter()
+                    .all(|i| i.model.iter().flatten().all(|v| v.is_finite())),
+                "no non-finite matrix reaches the GPU, eye {eye}"
+            );
+            assert!(drawn.is_empty(), "eye {eye}");
+        }
+    }
+
     fn scripted_frames() -> Vec<Vec<([[f32; 4]; 4], u32)>> {
         let mut rig = Rig::new();
         rig.effects
