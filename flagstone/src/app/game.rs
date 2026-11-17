@@ -292,17 +292,26 @@ impl App {
     }
 
     /// Autosaves with the renderer's lights, queued ones included, logging a failure.
+    /// Returns whether the save succeeded.
     fn autosave(
         &mut self,
         clock: &moho_app::GameClock,
         renderer: Option<&mut (dyn moho_renderer::RendererBackend + 'static)>,
-    ) {
+    ) -> bool {
+        let started = std::time::Instant::now();
         let lights = renderer.map_or_else(Vec::new, |r| {
             self.apply_pending_render(r);
             r.all_lights_as_descs()
         });
-        if let Err(e) = self.auto_save_on_shutdown(clock, &lights) {
-            tracing::warn!(error = %e, "Failed to auto-save on exit");
+        match self.auto_save_on_shutdown(clock, &lights) {
+            Ok(()) => {
+                tracing::debug!(elapsed_ms = started.elapsed().as_millis(), "Autosave done");
+                true
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to auto-save");
+                false
+            }
         }
     }
 
@@ -453,6 +462,10 @@ impl moho_app::Game for App {
         event_processor.check_generation_cancel(self);
 
         GenerationProcessor::new().poll_generation(self);
+
+        if self.game_state == GameState::Playing {
+            self.autosave.tick();
+        }
     }
 
     fn init(&mut self, ctx: &mut moho_app::InitContext<'_>) {
@@ -514,6 +527,14 @@ impl moho_app::Game for App {
             self.main_menu_requested = false;
             self.autosave(ctx.clock(), ctx.renderer());
             self.show_menu();
+        }
+
+        if self.autosave.due() {
+            if self.autosave(ctx.clock(), ctx.renderer()) {
+                self.autosave.saved();
+            } else {
+                self.autosave.save_failed();
+            }
         }
 
         let clock = ctx.clock();

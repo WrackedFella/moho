@@ -288,8 +288,13 @@ impl EventProcessor {
             if let Some(light_system) = app.light_system.as_mut() {
                 light_system.handle_event(&event);
             }
-            if let WorldEvent::ChunkMeshDirty { chunk_pos, .. } = event {
-                dirty_chunks.insert(chunk_pos);
+            match event {
+                WorldEvent::ChunkMeshDirty { chunk_pos, .. } => {
+                    dirty_chunks.insert(chunk_pos);
+                }
+                WorldEvent::BlockPlaced { .. }
+                | WorldEvent::BlockRemoved { .. }
+                | WorldEvent::BlocksBatchModified { .. } => app.autosave.mark_edited(),
             }
         }
 

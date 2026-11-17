@@ -17,31 +17,45 @@ impl AutosaveSchedule {
     }
 
     /// One simulation tick has passed.
-    pub fn tick(&mut self) {}
+    pub fn tick(&mut self) {
+        self.ticks_since_save = self.ticks_since_save.saturating_add(1);
+    }
 
     /// A block was placed, removed or modified.
-    pub fn mark_edited(&mut self) {}
+    pub fn mark_edited(&mut self) {
+        self.edited = true;
+    }
 
     /// Whether an edited world has waited a full interval since the last save attempt.
     pub fn due(&self) -> bool {
-        false
+        self.edited && self.ticks_since_save >= self.interval_ticks
     }
 
     /// The world was written: nothing is pending and the interval restarts.
-    pub fn saved(&mut self) {}
+    pub fn saved(&mut self) {
+        self.edited = false;
+        self.ticks_since_save = 0;
+    }
 
     /// The write failed: the interval restarts but the edits stay pending.
-    pub fn save_failed(&mut self) {}
+    pub fn save_failed(&mut self) {
+        self.ticks_since_save = 0;
+    }
 }
 
 /// Save the current scene to `saves_dir/scene.bin`, creating the directory
-/// if needed.
+/// if needed. Writes nothing when no world is loaded, so a fresh app cannot
+/// overwrite the previous save.
 pub fn auto_save_on_shutdown(
     app: &mut crate::App,
     clock: &moho_app::GameClock,
     saves_dir: &std::path::Path,
     lights: &[moho_render_api::LightDesc],
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(mut spec) = app.generation.last_spec.clone() else {
+        tracing::info!("No world loaded; nothing to auto-save");
+        return Ok(());
+    };
     tracing::info!("Auto-saving on shutdown...");
 
     std::fs::create_dir_all(saves_dir)?;
@@ -52,18 +66,6 @@ pub fn auto_save_on_shutdown(
 
     let scene_bytes =
         flagstone_game::scene_persistence::encode_to_bytes(&app.entities, camera_data, lights)?;
-    let mut spec =
-        app.generation
-            .last_spec
-            .clone()
-            .unwrap_or(flagstone_game::scene_builders::WorldSpec {
-                name: "autosave".to_string(),
-                seed: None,
-                size_xz: 64,
-                day_length_seconds: 600.0,
-                night_length_seconds: 420.0,
-                initial_time_of_day: 6.0,
-            });
     spec.initial_time_of_day = clock.time_of_day();
     let block_records: Vec<crate::save::BlockRecord> = app
         .light_system
