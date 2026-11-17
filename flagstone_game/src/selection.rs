@@ -23,23 +23,46 @@ pub const PAWN_HALF_EXTENTS: Vec3 = Vec3::new(0.3, 1.15, 0.3);
 /// The pawn's box when its capsule centre is at `center`.
 pub fn pawn_aabb(center: Vec3) -> Aabb {
     Aabb {
-        min: center,
-        max: center,
+        min: center - PAWN_HALF_EXTENTS,
+        max: center + PAWN_HALF_EXTENTS,
     }
 }
 
 /// The distance along `ray` at which it enters `aabb`, `None` when it never does.
-pub fn ray_box_entry(_ray: Ray, _aabb: Aabb) -> Option<f32> {
-    None
+/// A ray that starts inside the box enters it at `0.0`.
+pub fn ray_box_entry(ray: Ray, aabb: Aabb) -> Option<f32> {
+    let mut near = 0.0_f32;
+    let mut far = f32::INFINITY;
+    for axis in 0..3 {
+        let origin = ray.origin[axis];
+        let direction = ray.direction[axis];
+        if direction == 0.0 {
+            if origin < aabb.min[axis] || origin > aabb.max[axis] {
+                return None;
+            }
+            continue;
+        }
+        let t1 = (aabb.min[axis] - origin) / direction;
+        let t2 = (aabb.max[axis] - origin) / direction;
+        near = near.max(t1.min(t2));
+        far = far.min(t1.max(t2));
+    }
+    (near <= far).then_some(near)
 }
 
 /// The nearest pawn whose box `ray` enters at `t >= 0` and `t < terrain_distance`.
 pub fn pick_pawn(
-    _ray: Ray,
-    _pawns: impl IntoIterator<Item = (PawnId, Aabb)>,
-    _terrain_distance: Option<f32>,
+    ray: Ray,
+    pawns: impl IntoIterator<Item = (PawnId, Aabb)>,
+    terrain_distance: Option<f32>,
 ) -> Option<PawnId> {
-    None
+    let limit = terrain_distance.unwrap_or(f32::INFINITY);
+    pawns
+        .into_iter()
+        .filter_map(|(id, aabb)| ray_box_entry(ray, aabb).map(|t| (id, t)))
+        .filter(|&(_, t)| t < limit)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(id, _)| id)
 }
 
 /// The player's current selection.
@@ -55,7 +78,9 @@ impl Selection {
     }
 
     /// Replaces the selection with what the click hit.
-    pub fn click(&mut self, _hit: Option<PawnId>) {}
+    pub fn click(&mut self, hit: Option<PawnId>) {
+        self.selected = hit;
+    }
 }
 
 #[cfg(test)]

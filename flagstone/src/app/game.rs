@@ -4,16 +4,20 @@ use crate::app::event_loop::{EventProcessor, FrameProcessor, GenerationProcessor
 use crate::app::input_state::Designation;
 use crate::game_state::GameState;
 use crate::{App, RenderRequest};
+use flagstone_game::actors::Cube;
 use flagstone_game::colony::MarkChange;
 use flagstone_game::controller::{
     CameraMode, ControllerInput, EDGE_PAN_MARGIN_PX, controller_to_camera, edge_pan_axes,
 };
 use flagstone_game::raycast::raycast_surface;
+use flagstone_game::selection::{PAWN_HALF_EXTENTS, PLAYER_PAWN, pawn_aabb, pick_pawn};
 use flagstone_ui::actions::StrategyAction;
 use flagstone_ui::console_commands::StrategyConsoleCommand;
+use flagstone_voxel::MaterialType;
 use moho_core::pointer::{Ray, screen_ray};
 use moho_input::action_map;
 use moho_input::bindings::Input;
+use moho_render_api::{Marker, MarkerId, MarkerStyle};
 use moho_ui_shell::host::input_of;
 use moho_ui_shell::{EngineCommand, Routing};
 use winit::event::{ElementState, KeyEvent, WindowEvent};
@@ -25,6 +29,13 @@ pub const POINTER_RAY_RANGE: f32 = 256.0;
 const MARK_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/mark.wav");
 const UNMARK_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/unmark.wav");
 const MARK_VOLUME: f32 = 0.6;
+
+/// Reserved so the selection mark never collides with a console marker id in practice.
+const SELECTION_MARKER_ID: MarkerId = MarkerId(u64::MAX);
+/// Bright yellow, opaque: reads against grass, stone and shadow.
+const SELECTION_COLOR: [f32; 4] = [1.0, 0.9, 0.1, 1.0];
+/// The pawn body's albedo.
+const PAWN_COLOR: glam::Vec3 = glam::Vec3::new(0.2, 0.45, 0.85);
 
 /// One tick's worth of player input.
 #[derive(Clone, Debug, Default)]
@@ -206,9 +217,42 @@ impl App {
                 POINTER_RAY_RANGE,
             );
             tracing::debug!(hit = ?self.pointer_hit, "Pointer ray cast");
+            self.select_pawn(ray);
         }
         if let Some(ray) = command.mark {
             self.apply_mark(ray);
+        }
+    }
+
+    /// Selects the pawn the click `ray` reaches before the terrain it hit, or clears the
+    /// selection when it reaches none. Selecting plays the placeholder cue; clearing is silent.
+    fn select_pawn(&mut self, ray: Ray) {
+        let pawn = (PLAYER_PAWN, pawn_aabb(self.simulation.position()));
+        let terrain = self.pointer_hit.map(|hit| hit.distance);
+        let picked = pick_pawn(ray, [pawn], terrain);
+        self.selection.click(picked);
+        if picked.is_some() {
+            self.event_bus
+                .publish(moho_core::events::AudioEvent::ButtonClick);
+        }
+    }
+
+    /// Outlines the selected pawn in the strategy view and removes the outline otherwise.
+    fn sync_selection_marker(&mut self) {
+        let markers = self.scene.markers_mut();
+        match (
+            self.selection.selected(),
+            self.simulation.camera_mode() == CameraMode::Isometric,
+        ) {
+            (Some(_), true) => {
+                let aabb = pawn_aabb(self.simulation.position());
+                markers.upsert(
+                    SELECTION_MARKER_ID,
+                    Marker::new(aabb.min.to_array(), aabb.max.to_array(), SELECTION_COLOR)
+                        .with_style(MarkerStyle::Outline),
+                );
+            }
+            _ => markers.remove(SELECTION_MARKER_ID),
         }
     }
 
@@ -332,10 +376,21 @@ impl App {
         renderer: &mut dyn moho_renderer::RendererBackend,
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     ) {
+        let mut cubes = self.entities.actors.cubes().to_vec();
+        if self.simulation.camera_mode() == CameraMode::Isometric {
+            let size = PAWN_HALF_EXTENTS * 2.0;
+            cubes.push(Cube::new(
+                self.simulation.position(),
+                size.x,
+                size.z,
+                size.y,
+                MaterialType::Lambertian { albedo: PAWN_COLOR },
+            ));
+        }
         if let Err(e) = self.scene.render(
             renderer,
             self.entities.actors.spheres(),
-            self.entities.actors.cubes(),
+            &cubes,
             self.mesh_handle,
             self.cube_mesh_handle,
             camera,
@@ -595,6 +650,7 @@ impl moho_app::Game for App {
         frame_processor.update_cut_caps(self);
         self.designation_markers
             .sync(&self.colony.marks, self.scene.markers_mut());
+        self.sync_selection_marker();
         if let Some(renderer) = ctx.renderer() {
             frame_processor.update_lighting(self, clock, &mut *renderer);
             self.render_scene(renderer, camera);
