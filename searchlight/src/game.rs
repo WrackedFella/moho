@@ -5417,6 +5417,63 @@ mod control_tests {
         })
     }
 
+    /// Like `ahead`, with the `Use` action bound to nothing.
+    fn ahead_with_use_unbound() -> SearchlightGame {
+        let mut game = ahead();
+        let mut bindings = game.input.bindings().clone();
+        bindings.set(SearchlightAction::Use, vec![]);
+        game.input = ActionMap::new(bindings, 1.0);
+        game
+    }
+
+    /// What the shell paints for a frame of `game` as it stands.
+    fn painted(game: &SearchlightGame) -> Option<moho_render_api::UiFrame> {
+        game.stage.shell().ui_frame([1280, 720])
+    }
+
+    /// What the shell paints when handed exactly `text` as the use prompt, on a game that has
+    /// not run a frame.
+    fn painted_with_prompt(text: &str) -> Option<moho_render_api::UiFrame> {
+        let game = ahead();
+        let prompt = ScreenText {
+            text: text.to_owned(),
+            anchor: Anchor::Center,
+            offset: [0.0, PROMPT_OFFSET_Y],
+            size: PROMPT_SIZE,
+            color: [255, 255, 255, 255],
+        };
+        game.stage
+            .shell()
+            .set_texts(vec![prompt])
+            .expect("a valid prompt");
+        painted(&game)
+    }
+
+    #[test]
+    fn the_prompt_reads_f_next_wave_with_the_default_binding() {
+        let mut game = ahead();
+
+        run_frame(&mut game);
+
+        let shown = painted(&game).expect("a prompt was painted");
+        assert_eq!(Some(shown), painted_with_prompt("[F] Next wave"));
+        assert_ne!(
+            painted_with_prompt("[F] Next wave"),
+            painted_with_prompt("[unbound] Next wave"),
+            "the paint does not tell the two prompts apart"
+        );
+    }
+
+    #[test]
+    fn the_prompt_reads_unbound_next_wave_when_use_has_no_binding() {
+        let mut game = ahead_with_use_unbound();
+
+        run_frame(&mut game);
+
+        let shown = painted(&game).expect("a prompt was painted");
+        assert_eq!(Some(shown), painted_with_prompt("[unbound] Next wave"));
+    }
+
     #[test]
     fn the_prompt_shows_while_the_button_is_in_reach() {
         let mut game = ahead();

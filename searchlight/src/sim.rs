@@ -5364,11 +5364,15 @@ mod grade_tests {
 
 #[cfg(test)]
 mod control_tests {
+    use moho_level::{Level, LevelMesh};
     use moho_physics::PhysicsWorld;
     use moho_render_api::WorldMeshId;
 
     use super::*;
-    use crate::test_support::{DT, box_mesh, flat_floor, mag, rifle_from, test_config};
+    use crate::arena::{Arena, ArenaMarkers};
+    use crate::test_support::{
+        DT, box_mesh, flat_floor, level_marker, mag, mode_marker, rifle_from, test_config,
+    };
 
     /// The sim's player stands at the origin facing +Z.
     const INDEX: u16 = 3;
@@ -5397,6 +5401,48 @@ mod control_tests {
     fn sim_over(world: PhysicsWorld, dummies: &[Vec3]) -> SearchlightSim {
         let config = test_config(rifle_from(mag(30, 5)), vec![]);
         SearchlightSim::new(world, Vec3::ZERO, dummies, config)
+    }
+
+    /// A sandbox level whose only post is a shipped-size `control_01` naming the next wave,
+    /// standing on the floor with its centre 0.9 m ahead of the player.
+    fn shipped_post_sim() -> SearchlightSim {
+        let mut post = level_marker("control_01", Vec3::new(0.0, 0.0, 0.9));
+        post.properties
+            .insert("action".to_owned(), "next_wave".to_owned());
+        let level = Level {
+            meshes: vec![LevelMesh {
+                mesh: box_mesh(Vec3::new(-10.0, -1.0, -10.0), Vec3::new(10.0, 0.0, 10.0)),
+                material: None,
+            }],
+            markers: vec![mode_marker("sandbox"), post],
+        };
+        let markers = ArenaMarkers::from_level(&level).expect("a valid sandbox level");
+        let arena = Arena::from_level(&level, &markers).expect("the level builds");
+        let config = test_config(rifle_from(mag(30, 5)), vec![]);
+        SearchlightSim::new(arena.physics_world(), arena.player_spawn, &[], config)
+    }
+
+    #[test]
+    fn a_shipped_height_post_is_found_when_the_player_looks_down_at_it() {
+        let mut level_gaze = shipped_post_sim();
+        let mut downward = shipped_post_sim();
+        let look_down = SearchlightCommand {
+            movement: CharacterCommand {
+                pitch_delta: -1.0,
+                ..CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+
+        level_gaze.tick(&SearchlightCommand::default(), DT);
+        downward.tick(&look_down, DT);
+
+        assert_eq!(
+            level_gaze.control_in_reach(),
+            None,
+            "a level gaze passes over a 1.2 m post"
+        );
+        assert_eq!(downward.control_in_reach(), Some(0));
     }
 
     #[test]
