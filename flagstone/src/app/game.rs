@@ -376,21 +376,31 @@ impl App {
         renderer: &mut dyn moho_renderer::RendererBackend,
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     ) {
-        let mut cubes = self.entities.actors.cubes().to_vec();
-        if self.simulation.camera_mode() == CameraMode::Isometric {
+        let with_body: Vec<Cube>;
+        let cubes = if self.simulation.camera_mode() == CameraMode::Isometric {
             let size = PAWN_HALF_EXTENTS * 2.0;
-            cubes.push(Cube::new(
-                self.simulation.position(),
-                size.x,
-                size.z,
-                size.y,
-                MaterialType::Lambertian { albedo: PAWN_COLOR },
-            ));
-        }
+            with_body = self
+                .entities
+                .actors
+                .cubes()
+                .iter()
+                .copied()
+                .chain(std::iter::once(Cube::new(
+                    self.simulation.position(),
+                    size.x,
+                    size.z,
+                    size.y,
+                    MaterialType::Lambertian { albedo: PAWN_COLOR },
+                )))
+                .collect();
+            &with_body[..]
+        } else {
+            self.entities.actors.cubes()
+        };
         if let Err(e) = self.scene.render(
             renderer,
             self.entities.actors.spheres(),
-            &cubes,
+            cubes,
             self.mesh_handle,
             self.cube_mesh_handle,
             camera,
