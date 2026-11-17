@@ -879,11 +879,16 @@ mod tests {
         max - min
     }
 
-    fn mark_extent(rig: &mut Rig, normal: Vec3) -> Option<f32> {
+    /// Extents of the first drawn mark along `u` and along `normal x u`.
+    fn mark_extent(rig: &mut Rig, normal: Vec3) -> Option<(f32, f32)> {
         let drawn = frame_meshes(rig, EYE);
         let (mesh, instance) = drawn.first()?;
         let points = world_points(rig, *mesh, instance);
-        Some(extent_along(&points, normal.any_orthonormal_vector()))
+        let u = normal.any_orthonormal_vector();
+        Some((
+            extent_along(&points, u),
+            extent_along(&points, normal.cross(u)),
+        ))
     }
 
     #[test]
@@ -892,21 +897,42 @@ mod tests {
         rig.effects
             .flash(Vec3::new(1.0, 2.0, 3.0), 0.0, flash_style(0.4, ms(50)));
 
-        let full = rig.frame(EYE);
+        let full = flash_extents(&mut rig, Vec3::new(1.0, 2.0, 3.0));
         rig.effects.advance(ms(25));
-        let half = rig.frame(EYE);
+        let half = flash_extents(&mut rig, Vec3::new(1.0, 2.0, 3.0));
         rig.effects.advance(ms(25));
-        let gone = rig.frame(EYE);
+        let gone = flash_extents(&mut rig, Vec3::new(1.0, 2.0, 3.0));
 
-        assert_eq!(full.len(), 1);
-        assert!((x_axis(&full[0]).length() - 0.4).abs() < EPS);
-        assert!((y_axis(&full[0]).length() - 0.4).abs() < EPS);
-        assert_eq!(full[0].material, 5);
-        assert_eq!(half.len(), 1);
-        assert!((x_axis(&half[0]).length() - 0.2).abs() < EPS);
-        assert!((y_axis(&half[0]).length() - 0.2).abs() < EPS);
-        assert!(gone.is_empty());
+        for (label, got, size) in [("spawn", full, 0.4), ("25ms", half, 0.2)] {
+            let (material, across_x, across_y, along_eye) =
+                got.unwrap_or_else(|| panic!("drawn at {label}"));
+            assert_eq!(material, 5);
+            assert!(
+                (across_x - size).abs() < EPS,
+                "{label}: x extent {across_x}"
+            );
+            assert!(
+                (across_y - size).abs() < EPS,
+                "{label}: y extent {across_y}"
+            );
+            assert!(along_eye < EPS, "{label}: the star is flat");
+        }
+        assert_eq!(gone, None);
         assert_eq!(rig.effects.live(), 0);
+    }
+
+    /// `(material, extent along X, extent along Y, extent along the eye direction)` of the
+    /// first drawn instance's world-space star.
+    fn flash_extents(rig: &mut Rig, at: Vec3) -> Option<(u32, f32, f32, f32)> {
+        let drawn = frame_meshes(rig, EYE);
+        let (mesh, instance) = drawn.first()?;
+        let points = world_points(rig, *mesh, instance);
+        Some((
+            instance.material,
+            extent_along(&points, x_axis(instance).normalize()),
+            extent_along(&points, y_axis(instance).normalize()),
+            extent_along(&points, (EYE - at).normalize()),
+        ))
     }
 
     #[test]
@@ -934,6 +960,14 @@ mod tests {
             z_axis(&turned[0]).normalize(),
             z_axis(&plain[0]).normalize(),
         );
+        assert_near(z_axis(&plain[0]).normalize(), (EYE - at).normalize());
+
+        let other_eye = Vec3::new(-8.0, -5.0, 11.0);
+        let mut moved = Rig::new();
+        moved.effects.flash(at, 0.0, flash_style(0.4, ms(50)));
+        let seen = moved.frame(other_eye);
+        assert_eq!(seen.len(), 1);
+        assert_near(z_axis(&seen[0]).normalize(), (other_eye - at).normalize());
     }
 
     #[test]
@@ -977,9 +1011,15 @@ mod tests {
         rig.effects.advance(ms(500));
         let gone = mark_extent(&mut rig, normal);
 
-        assert!((young.expect("drawn at spawn") - 0.2).abs() < EPS);
-        assert!((full.expect("still full at 9s") - 0.2).abs() < EPS);
-        assert!((half.expect("fading at 9.5s") - 0.1).abs() < EPS);
+        for (label, got, size) in [
+            ("spawn", young, 0.2),
+            ("9s", full, 0.2),
+            ("9.5s", half, 0.1),
+        ] {
+            let (along_u, along_v) = got.unwrap_or_else(|| panic!("drawn at {label}"));
+            assert!((along_u - size).abs() < EPS, "{label}: u extent {along_u}");
+            assert!((along_v - size).abs() < EPS, "{label}: v extent {along_v}");
+        }
         assert_eq!(gone, None);
         assert_eq!(rig.effects.live(), 0);
     }
@@ -1018,18 +1058,83 @@ mod tests {
         rig.effects.flash(Vec3::ZERO, 0.0, flash_style(0.4, ms(50)));
 
         assert_eq!(rig.effects.live(), 32);
-        for handle in &handles {
-            rig.effects.place_streak(*handle, Vec3::X, Vec3::X);
+        for (i, handle) in (0u8..).zip(&handles) {
+            let head = Vec3::new(f32::from(i) * 10.0, 0.0, 0.0);
+            rig.effects.place_streak(*handle, head, Vec3::X);
         }
-        assert_eq!(frame_meshes(&mut rig, EYE).len(), 32, "every streak stays");
+        let drawn = frame_meshes(&mut rig, EYE);
+        assert_eq!(drawn.len(), 32, "every streak stays");
+        let streak_mesh_handle = drawn[0].0;
+        assert!(
+            drawn.iter().all(|(mesh, _)| *mesh == streak_mesh_handle),
+            "only streaks draw"
+        );
+        let mut heads: Vec<f32> = drawn.iter().map(|(_, i)| head_of(i).x).collect();
+        heads.sort_by(f32::total_cmp);
+        let expected: Vec<f32> = (0u8..32).map(|i| f32::from(i) * 10.0).collect();
+        assert_eq!(heads, expected, "every streak head is present");
+        assert_eq!(rig.backend.registered.len(), 1, "only the streak mesh");
+        assert_eq!(rig.backend.registered[0].0.len(), 4, "and it is the kite");
+    }
+
+    #[test]
+    fn a_refused_mark_is_never_queued_for_when_streaks_end() {
+        let mut rig = Rig::new();
+        rig.effects.set_quality(1);
+        let handles: Vec<EffectHandle> = (0..32)
+            .map(|_| rig.effects.begin_streak(style(2.0, 0.1)))
+            .collect();
+        rig.effects.mark(Vec3::ZERO, Vec3::Y, 0.0, mark_style(0.2));
         for handle in &handles {
             rig.effects.end(*handle);
         }
+
         rig.effects.advance(Duration::from_secs(1));
+
         assert_eq!(rig.effects.live(), 0, "the refused mark never queued");
         rig.effects.mark(Vec3::ZERO, Vec3::Y, 0.0, mark_style(0.2));
         assert_eq!(rig.effects.live(), 1, "room again, so a mark is admitted");
         assert_eq!(frame_meshes(&mut rig, EYE).len(), 1);
+    }
+
+    #[test]
+    fn a_full_mixed_cap_drops_the_oldest_mark_and_keeps_the_streak() {
+        let mut rig = Rig::new();
+        rig.effects.set_quality(1);
+        let streak = rig.effects.begin_streak(style(2.0, 0.1));
+        rig.effects
+            .place_streak(streak, Vec3::new(500.0, 0.0, 0.0), Vec3::X);
+        for i in 0..31u8 {
+            let at = Vec3::new(f32::from(i), 0.0, 5.0);
+            rig.effects.mark(at, Vec3::Y, 0.0, mark_style(0.2));
+        }
+        assert_eq!(rig.effects.live(), 32);
+
+        rig.effects
+            .mark(Vec3::new(100.0, 0.0, 5.0), Vec3::Y, 0.0, mark_style(0.2));
+
+        assert_eq!(rig.effects.live(), 32);
+        let drawn = frame_meshes(&mut rig, EYE);
+        assert_eq!(drawn.len(), 32);
+        assert!(
+            drawn
+                .iter()
+                .any(|(_, i)| (head_of(i).x - 500.0).abs() < EPS),
+            "the streak still draws"
+        );
+        let mut mark_xs: Vec<f32> = drawn
+            .iter()
+            .map(|(_, i)| translation(i))
+            .filter(|t| (t.z - 5.0).abs() < 0.3)
+            .map(|t| t.x)
+            .collect();
+        mark_xs.sort_by(f32::total_cmp);
+        assert_eq!(mark_xs.len(), 31);
+        assert!(
+            mark_xs[0] > 0.5,
+            "the first mark (x = 0) was dropped: {mark_xs:?}"
+        );
+        assert!(mark_xs[30] > 99.0, "the new mark is admitted");
     }
 
     #[test]
@@ -1101,6 +1206,42 @@ mod tests {
             vertex_counts,
             vec![4, 8],
             "a unit quad and an 8-vertex star"
+        );
+        for (positions, indices) in &rig.backend.registered {
+            assert!(
+                positions.iter().all(|p| p[2] == 0.0),
+                "the mesh lies in the XY plane"
+            );
+            assert!(!indices.is_empty() && indices.len() % 3 == 0);
+            for triangle in indices.chunks(3) {
+                let [a, b, c] = [0, 1, 2].map(|i| Vec3::from(positions[triangle[i] as usize]));
+                assert!(
+                    (b - a).cross(c - a).z > 0.0,
+                    "triangle {triangle:?} of a {}-vertex mesh is counter-clockwise seen from +Z",
+                    positions.len()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn effect_meshes_stay_inside_the_reserved_id_range() {
+        let mut rig = Rig::new();
+        for offset in [1, 2] {
+            let id = WorldMeshId(EFFECT_MESH_IDS_FROM - offset);
+            rig.meshes.upsert(id, streak_mesh(), 0);
+        }
+        let streak = rig.effects.begin_streak(style(2.0, 0.1));
+        rig.effects.place_streak(streak, Vec3::X * 5.0, Vec3::X);
+        rig.effects.flash(Vec3::Z, 0.0, flash_style(0.4, ms(50)));
+        rig.effects.mark(Vec3::Y, Vec3::Y, 0.0, mark_style(0.2));
+
+        frame_meshes(&mut rig, EYE);
+
+        assert_eq!(
+            rig.meshes.live_len(),
+            5,
+            "two game meshes and three effect meshes, none replacing another"
         );
     }
 
