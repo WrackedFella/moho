@@ -418,6 +418,9 @@ jobs:
           plugin_marketplaces: https://github.com/WrackedFella/claude-skills.git
           plugins: devflow@claude-skills
           display_report: true
+          # orchestrate-eval.yml dispatches dry runs on its replays as github-actions[bot].
+          # Only a workflow in this repository or a writer can dispatch, so allow that bot.
+          allowed_bots: github-actions
           prompt: /devflow:pr-review --dry-run ${{ env.RANGE }} ${{ env.ISSUE }} ${{ runner.temp }}/pr-review-dry-run.md
           claude_args: |
             --model claude-opus-5-5
