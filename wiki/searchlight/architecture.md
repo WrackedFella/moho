@@ -52,7 +52,7 @@ flowchart LR
 | `hud` | Text for rifle state, hits, health, death and the wave and score line (omitted without a `Tally`), the use prompt (`use_prompt`); the hit-edge direction; the death overlay |
 | `menu` | The main (Play, Settings, Quit), pause (Resume, Settings, Quit) and settings (the engine's setting rows, Apply, Back) screens as `moho_ui_shell::MenuScreen` values (`main_screen`, `pause_screen`, `settings_screen(EngineSettings)`); `MenuAction` is what choosing an item asks the game to do. Focus, hit-testing and drawing belong to the shell's `MenuStack` |
 | `console_commands` | Builds the FPS `Console` from the game's `[bindings]`; the game's own commands register here (`tgm`, `fullscreen`, `grade`, `simple` and `round_gravity`, parsed into `ConsoleCommand`); `console_for` takes the level's mode, and in a sandbox `grade` replies "No waves in a sandbox" |
-| `debug_settings` | `DebugSettings`: the loaded `Prefs` and its path; reads and saves the game's `[debug]` values (`god_mode`); `set_engine_settings` writes the applied `EngineSettings` rows into the prefs and saves, keeping every other value |
+| `debug_settings` | `DebugSettings`: the loaded `Prefs` and its path; reads and saves the game's `[debug]` values (`god_mode`, `simple`); `set_engine_settings` writes the applied `EngineSettings` rows into the prefs and saves, keeping every other value |
 | `game` | `SearchlightGame`, the `moho_app::Game` implementation: samples look every frame while focused, playing and the console is closed (the camera draws the sim turned by the pending look, and `input::look_to_turn` is the one look mapping for command and camera), samples input, ticks the `ArenaMode`, turns `Feedback` into sound, title status line, hit flash, damage-direction edge, death tint and crosshair; asks the loop to pause while the shell captures input (console open) or a menu shows (main, pause or settings), so the sim freezes instead of ticking with an ignored command; while it does, `command()` still applies console commands but does not end the action-map tick, so the look already shown stays pending and is not lost |
 
 `SearchlightSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
@@ -104,8 +104,8 @@ Window mode: `main.rs` passes the `fullscreen` binding (default F11) as `AppConf
 Game commands (`tgm [0|1]`, `grade <name|off>`, `simple [0|1]`, `round_gravity <scale>`) queue as `ConsoleCommand` on the console. `SearchlightGame` drains them
 at the start of each `command()` sample (`apply_console_commands`), applies them in order, saves
 a changed value through `DebugSettings` (a failed save is logged, not fatal) and echoes a bare
-toggle's result to the console. God mode is loaded from `[debug]` at start (`with_debug_settings`)
-and carried on every tick as `SearchlightCommand::god_mode`. While on, enemy hits still emit
+toggle's result to the console. God mode and Simple are loaded from `[debug]` at start (`with_debug_settings`)
+and carried on every tick as `SearchlightCommand::god_mode` and `simple`. While on, enemy hits still emit
 `Feedback::PlayerHit` but do not damage the player's `Body`; it does not revive a dead player.
 The title status line appends `GOD MODE` (`hud::god_mode_text`).
 
