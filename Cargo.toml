@@ -25,8 +25,11 @@ rapier3d = { version = "0.36", features = ["enhanced-determinism"] }
 tempfile = "3.5"
 gltf = { version = "1.4.1", default-features = false, features = ["utils", "names", "extras"] }
 serde_json = "1"
+image = { version = "0.25", default-features = false }
 egui = "0.36.2"
 egui-winit = { version = "0.36.2", default-features = false, features = ["clipboard", "wayland", "x11"] }
+egui-wgpu = "0.36.2"
+egui_kittest = "0.36.2"
 rerecast = { version = "0.4", default-features = false, features = ["std"] }
 
 [workspace.lints.rust]

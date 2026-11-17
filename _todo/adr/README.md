@@ -26,7 +26,7 @@ ADRs written before ENG-F27 (2026-10-15) keep the crate names of their day. Read
 | [0010](0010-world-geometry-is-a-mesh-contract.md) | The engine sees world geometry as meshes; voxels belong to the strategy line | Accepted; amended by 0025 |
 | [0011](0011-simulation-stays-network-ready.md) | The simulation advances only from per-tick commands over plain data, so replay and later netcode stay possible | Accepted; narrowed by 0018 |
 | [0012](0012-engine-crate-map-for-m2.md) | Engine capabilities land as modules first; crate map and seam list for M1–M2 | Accepted |
-| [0013](0013-ui-reaches-the-renderer-as-paint-data.md) | UI reaches the renderer as plain paint data; the renderer owns UI drawing | Accepted |
+| [0013](0013-ui-reaches-the-renderer-as-paint-data.md) | UI reaches the renderer as plain paint data; the renderer owns UI drawing | Accepted; amended by 0036 |
 | [0014](0014-characters-move-by-velocity.md) | Characters move by velocity; a movement step owns the rules and reports impacts, physics only resolves contact | Superseded by 0022 |
 | [0015](0015-fps-rules-are-a-platform-free-crate.md) | FPS rules are a platform-free crate; every shot resolves through one path | Accepted; amended by 0033 |
 | [0016](0016-game-lines-own-their-save-kinds.md) | Game lines own their save kinds and versions; the envelope stays content-blind | Accepted |
@@ -48,3 +48,4 @@ ADRs written before ENG-F27 (2026-10-15) keep the crate names of their day. Read
 | [0033](0033-rounds-fly-as-stepped-segments.md) | A fired round is sim data stepped once a tick as a cast segment: flight maths in the rules without platform maths, first step on the next tick, after movement; round gravity and Simple are host levels | Accepted |
 | [0034](0034-authoring-tools-outside-the-build-may-be-copyleft.md) | Copyleft authoring tools (the Blender add-on) are allowed outside the shipped build; they share data with the game, never code | Accepted on merge of #824 |
 | [0035](0035-map-components-are-defined-once-as-content.md) | Map components are defined once as content, read by the add-on and the game; exported as named marker nodes with extras; facing is glTF +Z (Blender -Y) | Accepted on merge of #824 |
+| [0036](0036-crates-may-test-against-the-gpu-stack.md) | A crate in the `gpu-dev` layering row may reach wgpu, egui-wgpu and naga in dev-dependencies only (tests, examples); runtime GPU reach stays with `moho_renderer` | Accepted on merge of #843; amends 0013 |
