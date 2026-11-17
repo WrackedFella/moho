@@ -3,6 +3,7 @@
 use glam::Vec3;
 use searchlight_rules::{BodyPart, MagazineLevel};
 
+use crate::control::ControlAction;
 use crate::mode::Tally;
 use crate::sim::Feedback;
 
@@ -110,6 +111,13 @@ pub fn death_text(dead: bool) -> Option<&'static str> {
     dead.then_some("Dead - press F8 to restart")
 }
 
+/// The prompt for a control in reach: the use `key` label and what the control does, such as
+/// `[F] Next wave`.
+pub fn use_prompt(key: &str, action: ControlAction) -> String {
+    let _ = (key, action);
+    todo!("name the key and the action")
+}
+
 /// A translucent rectangle in screen pixels, colour as straight RGBA.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Overlay {
@@ -130,6 +138,17 @@ pub fn death_overlay(dead: bool, screen: [u32; 2]) -> Option<Overlay> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_use_prompt_names_the_key_and_next_wave() {
+        let default = use_prompt("F", ControlAction::NextWave);
+        let rebound = use_prompt("Mouse4", ControlAction::NextWave);
+        let unbound = use_prompt("unbound", ControlAction::NextWave);
+
+        assert_eq!(default, "[F] Next wave");
+        assert_eq!(rebound, "[Mouse4] Next wave");
+        assert_eq!(unbound, "[unbound] Next wave");
+    }
 
     #[test]
     fn magazine_levels_read_as_the_acceptance_wording() {

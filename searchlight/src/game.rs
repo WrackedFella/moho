@@ -29,6 +29,7 @@ use moho_ui_shell::{
     apply_engine_settings,
 };
 
+use crate::arena::ArenaControl;
 use crate::console_commands::{self, ConsoleCommand, GodModeArg};
 use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
@@ -956,6 +957,13 @@ impl SearchlightGame {
         self.stage.body = *self.mode.sim().character_body();
         self.stage
             .add_named_arena(meshes, material_names, dummy_spawns);
+        self
+    }
+
+    /// Draws the arena's `controls` and names their actions in the use prompt.
+    #[must_use]
+    pub fn with_controls(self, controls: &[ArenaControl]) -> Self {
+        let _ = controls;
         self
     }
 
@@ -5340,5 +5348,148 @@ mod enemy_and_hud_tests {
         assert_eq!(mesh.vertices.len(), 4 + 16);
         assert_eq!(mesh.vertices[0].color, [120, 0, 0, 140]);
         assert_eq!(mesh.vertices[2].pos, [800.0, 600.0]);
+    }
+}
+
+#[cfg(test)]
+mod control_tests {
+    use std::time::Duration;
+
+    use moho_app::GameClock;
+    use moho_input::bindings::ActionBindings;
+
+    use super::*;
+    use crate::arena::{arena_mesh_id, control_mesh_id};
+    use crate::control::ControlAction;
+    use crate::test_support::{arena_with_controls, mag, rifle_from, test_config, wave_tuning};
+
+    /// A game on an open floor with a next-wave post whose centre is at `post`; the player
+    /// stands at the origin facing +Z.
+    fn game_with_a_button_at(post: Vec3) -> SearchlightGame {
+        let arena = arena_with_controls(
+            &[],
+            Vec3::ZERO,
+            &[],
+            &[],
+            &[(post, ControlAction::NextWave)],
+        );
+        let mode = ArenaMode::new(
+            arena.clone(),
+            test_config(rifle_from(mag(30, 5)), vec![]),
+            wave_tuning(1),
+        );
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        SearchlightGame::new(mode, ActionMap::new(bindings, 1.0)).with_controls(&arena.controls)
+    }
+
+    fn ahead() -> SearchlightGame {
+        game_with_a_button_at(Vec3::new(0.0, 0.0, 1.5))
+    }
+
+    fn behind() -> SearchlightGame {
+        game_with_a_button_at(Vec3::new(0.0, 0.0, -1.5))
+    }
+
+    fn run_frame(game: &mut SearchlightGame) {
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(Duration::from_millis(16), &clock, None, None);
+        game.frame(&mut ctx, 0.5);
+    }
+
+    /// Whether the shell has anything to paint this frame, taking it as the renderer would.
+    fn shell_paints(game: &SearchlightGame) -> bool {
+        game.stage.shell().ui_frame([1280, 720]).is_some()
+    }
+
+    /// The vertices the shell paints this frame.
+    fn shell_vertices(game: &SearchlightGame) -> usize {
+        game.stage.shell().ui_frame([1280, 720]).map_or(0, |frame| {
+            frame.meshes.iter().map(|mesh| mesh.vertices.len()).sum()
+        })
+    }
+
+    #[test]
+    fn the_prompt_shows_while_the_button_is_in_reach() {
+        let mut game = ahead();
+
+        run_frame(&mut game);
+
+        assert!(
+            shell_paints(&game),
+            "no prompt text was handed to the shell"
+        );
+    }
+
+    #[test]
+    fn the_prompt_is_set_again_on_every_frame_the_button_stays_in_reach() {
+        let mut game = ahead();
+        run_frame(&mut game);
+        assert!(shell_paints(&game), "the prompt shows to begin with");
+
+        run_frame(&mut game);
+
+        assert!(shell_paints(&game), "the shell clears its text each paint");
+    }
+
+    #[test]
+    fn no_prompt_when_looking_away() {
+        let mut facing = ahead();
+        let mut away = behind();
+
+        run_frame(&mut facing);
+        run_frame(&mut away);
+
+        assert!(shell_paints(&facing));
+        assert!(!shell_paints(&away), "a prompt shows for a button behind");
+    }
+
+    #[test]
+    fn no_prompt_while_dead_or_paused() {
+        let mut dead = ahead();
+        dead.mode.sim_mut().kill_player();
+        let mut paused = ahead();
+        let mut paused_away = behind();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        paused.route_input(&mut ctx, Input::Key(Key::Escape), true, false);
+        paused_away.route_input(&mut ctx, Input::Key(Key::Escape), true, false);
+        let mut playing = ahead();
+        run_frame(&mut playing);
+
+        run_frame(&mut dead);
+        run_frame(&mut paused);
+        run_frame(&mut paused_away);
+
+        assert_eq!(paused.screen, Screen::Paused);
+        assert!(shell_paints(&playing), "the prompt shows while playing");
+        assert!(!shell_paints(&dead), "a prompt shows to a dead player");
+        assert_eq!(
+            shell_vertices(&paused),
+            shell_vertices(&paused_away),
+            "a prompt shows over the pause menu"
+        );
+    }
+
+    #[test]
+    fn control_mesh_ids_share_no_id_with_arena_dummy_or_enemy_meshes() {
+        let controls: Vec<u64> = [0usize, 1, 2, 255, usize::from(u16::MAX)]
+            .map(|index| control_mesh_id(index).0)
+            .to_vec();
+        let arena_end = arena_mesh_id(u32::MAX as usize).0;
+        let last_enemy_id = ENEMY_MESH_BASE + u64::from(u16::MAX) * ENEMY_MESH_SLOTS + 7;
+
+        for (i, &id) in controls.iter().enumerate() {
+            assert!(
+                id > last_enemy_id,
+                "control id {id:#x} is in the enemy range"
+            );
+            assert!(id > DUMMY_MESH_BASE + (1 << 32) - 1, "control id {id:#x}");
+            assert!(id > arena_end, "control id {id:#x} is in the arena range");
+            assert!(
+                !controls[..i].contains(&id),
+                "control ids repeat: {controls:?}"
+            );
+        }
+        assert_eq!(controls[0], 3 << 32);
     }
 }

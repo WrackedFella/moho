@@ -251,6 +251,9 @@ fn next_signed(rng: &mut SimRng) -> f32 {
     rng.next_f32() * 2.0 - 1.0
 }
 
+/// How far from the eye, in metres, the player can use a control.
+pub const USE_REACH: f32 = 2.0;
+
 /// The world, the player, the rifle, the dummies and the enemies.
 #[derive(Debug)]
 pub struct SearchlightSim {
@@ -856,6 +859,12 @@ impl SearchlightSim {
         state.eye_position() + lean_offset(state.yaw, self.lean.shift(&self.lean_tuning))
     }
 
+    /// The control the player looks at within [`USE_REACH`], or `None` while dead, when the
+    /// first surface the view meets is not a control, or when it is out of reach.
+    pub fn control_in_reach(&self) -> Option<u16> {
+        todo!("cast one ray from the leaned eye along the view")
+    }
+
     /// How far the player leans after the last tick.
     pub fn player_lean(&self) -> Lean {
         self.lean
@@ -1071,7 +1080,9 @@ mod tests {
     fn part_of(volume: &HitVolume) -> BodyPart {
         match SurfaceTag::try_from(volume.tag).expect("a body volume carries a body tag") {
             SurfaceTag::Part { part, .. } | SurfaceTag::Player(part) => part,
-            other @ SurfaceTag::World => panic!("not a body part: {other:?}"),
+            other @ (SurfaceTag::World | SurfaceTag::Control(_)) => {
+                panic!("not a body part: {other:?}")
+            }
         }
     }
 
@@ -5331,5 +5342,145 @@ mod grade_tests {
             "a 5 m radius did not count a shot 4 m wide"
         );
         assert_eq!(ignored_at, None, "a 0.5 m radius counted a shot 1 m wide");
+    }
+}
+
+#[cfg(test)]
+mod control_tests {
+    use moho_physics::PhysicsWorld;
+    use moho_render_api::WorldMeshId;
+
+    use super::*;
+    use crate::test_support::{DT, box_mesh, flat_floor, mag, rifle_from, test_config};
+
+    /// The sim's player stands at the origin facing +Z.
+    const INDEX: u16 = 3;
+
+    /// A world of the flat floor, one control post `INDEX` whose front face is `distance`
+    /// ahead of the player (`-distance` puts it behind), and the `extra` boxes.
+    fn world_with_control(distance: f32, extra: &[(Vec3, Vec3)]) -> PhysicsWorld {
+        let mut world = flat_floor();
+        let (near, far) = (distance.min(distance + 0.4), distance.max(distance + 0.4));
+        world.set_world_mesh(
+            WorldMeshId(900),
+            &box_mesh(Vec3::new(-0.2, 0.0, near), Vec3::new(0.2, 2.0, far)),
+            SurfaceTag::Control(INDEX).into(),
+        );
+        for (id, &(min, max)) in extra.iter().enumerate() {
+            world.set_world_mesh(
+                WorldMeshId(901 + id as u64),
+                &box_mesh(min, max),
+                SurfaceTag::World.into(),
+            );
+        }
+        world.step(DT);
+        world
+    }
+
+    fn sim_over(world: PhysicsWorld, dummies: &[Vec3]) -> SearchlightSim {
+        let config = test_config(rifle_from(mag(30, 5)), vec![]);
+        SearchlightSim::new(world, Vec3::ZERO, dummies, config)
+    }
+
+    #[test]
+    fn a_control_in_view_and_reach_is_found() {
+        let sim = sim_over(world_with_control(1.5, &[]), &[]);
+
+        let found = sim.control_in_reach();
+
+        assert_eq!(found, Some(INDEX));
+    }
+
+    #[test]
+    fn a_control_out_of_view_is_not_found() {
+        let ahead = sim_over(world_with_control(1.5, &[]), &[]);
+        let behind = sim_over(world_with_control(-1.9, &[]), &[]);
+
+        let looking_at = ahead.control_in_reach();
+        let looking_away = behind.control_in_reach();
+
+        assert_eq!(looking_at, Some(INDEX));
+        assert_eq!(looking_away, None);
+    }
+
+    #[test]
+    fn a_control_beyond_reach_is_not_found() {
+        let near = sim_over(world_with_control(1.9, &[]), &[]);
+        let far = sim_over(world_with_control(USE_REACH + 0.5, &[]), &[]);
+
+        let within = near.control_in_reach();
+        let beyond = far.control_in_reach();
+
+        assert_eq!(within, Some(INDEX));
+        assert_eq!(beyond, None);
+    }
+
+    #[test]
+    fn a_control_behind_a_wall_is_not_found() {
+        let wall = (Vec3::new(-2.0, 0.0, 0.8), Vec3::new(2.0, 3.0, 0.9));
+        let open = sim_over(world_with_control(1.5, &[]), &[]);
+        let walled = sim_over(world_with_control(1.5, &[wall]), &[]);
+
+        let without_wall = open.control_in_reach();
+        let with_wall = walled.control_in_reach();
+
+        assert_eq!(without_wall, Some(INDEX));
+        assert_eq!(with_wall, None);
+    }
+
+    #[test]
+    fn a_body_in_front_of_a_control_blocks_it() {
+        let dummy = Vec3::new(0.0, 0.0, 0.9);
+        let open = sim_over(world_with_control(1.6, &[]), &[]);
+        let blocked = sim_over(world_with_control(1.6, &[]), &[dummy]);
+
+        let without_body = open.control_in_reach();
+        let with_body = blocked.control_in_reach();
+
+        assert_eq!(without_body, Some(INDEX));
+        assert_eq!(with_body, None);
+    }
+
+    #[test]
+    fn a_dead_player_has_no_control_in_reach() {
+        let mut sim = sim_over(world_with_control(1.5, &[]), &[]);
+        let alive = sim.control_in_reach();
+
+        sim.kill_player();
+        let dead = sim.control_in_reach();
+
+        assert_eq!(alive, Some(INDEX));
+        assert_eq!(dead, None);
+    }
+
+    #[test]
+    fn a_shot_at_a_control_damages_nothing() {
+        let dummy = [Vec3::new(0.0, 0.0, 3.0)];
+        let mut sim = sim_over(world_with_control(1.5, &[]), &dummy);
+        let mut open = SearchlightSim::new(
+            flat_floor(),
+            Vec3::ZERO,
+            &dummy,
+            test_config(rifle_from(mag(30, 5)), vec![]),
+        );
+        let shoot = SearchlightCommand {
+            fire: true,
+            ..SearchlightCommand::default()
+        };
+
+        sim.tick(&shoot, DT);
+        open.tick(&shoot, DT);
+        let feedback = sim.drain_feedback();
+
+        assert!(
+            open.dummy_body(0).expect("a dummy").health() < 100,
+            "the dummy is in the line of fire without the control"
+        );
+        assert!(feedback.contains(&Feedback::Fired));
+        assert!(
+            !feedback.iter().any(|fb| matches!(fb, Feedback::Hit { .. })),
+            "{feedback:?}"
+        );
+        assert_eq!(sim.dummy_body(0).expect("a dummy").health(), 100);
     }
 }
