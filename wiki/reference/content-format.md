@@ -77,9 +77,9 @@ Item sections (`ItemKind`), each valid only on its class:
 
 | Section | Class | Fields |
 |---|---|---|
-| `weapon` | `weapon` | `well`, `damage`, `fire` (`semi_auto`), `cooldown_ticks`, `reload_ticks`, `charge_ticks` (ticks added to a reload when the chamber is empty), `range` (metres); `searchlight_rules::RifleDef` |
+| `weapon` | `weapon` | `well`, `damage`, `fire` (`semi_auto`), `cooldown_ticks`, `reload_ticks`, `charge_ticks` (ticks added to a reload when the chamber is empty); `searchlight_rules::RifleDef`. A `range` field is refused |
 | `magazine` | `gear` | `well` (the weapon's `well` it fits), `caliber`, `capacity` |
-| `round` | `consumable` | `caliber` |
+| `round` | `consumable` | `caliber`, `muzzle_velocity` (m/s, above `MIN_SPEED`, 100), `drag` (1/s, 0 or more); `searchlight_rules::RoundSpec`, `ballistics()` gives `Ballistics` |
 | `rig` | `gear` | `magazine_slots` |
 
 A kit entry in `loaded` or `magazines` is `{ magazine, round, rounds }`; `rounds` defaults to a
