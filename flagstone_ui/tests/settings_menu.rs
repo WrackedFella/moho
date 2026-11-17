@@ -731,6 +731,138 @@ fn saving_a_toggle_writes_action_modes() {
     assert_eq!(saved.action_modes().get("move_forward"), None);
 }
 
+/// Runs one frame on a shared context with the given modifier state held.
+fn modifier_frame(ctx: &egui::Context, menu: &mut SettingsMenu, modifiers: egui::Modifiers) {
+    let input = egui::RawInput {
+        events: vec![egui::Event::ModifiersChanged(modifiers)],
+        ..Default::default()
+    };
+    run_ui(ctx, input, |ui| {
+        menu.render(ui);
+    });
+}
+
+/// Move Forward listening, Shift pressed (conflicts with Sprint), then released and
+/// Alt pressed while the conflict prompt is still open. Returns the menu.
+fn menu_with_stray_alt_after_shift_conflict() -> SettingsMenu {
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let ctx = egui::Context::default();
+    menu.start_listening(0);
+
+    modifier_frame(&ctx, &mut menu, egui::Modifiers::SHIFT);
+    modifier_frame(&ctx, &mut menu, egui::Modifiers::NONE);
+    modifier_frame(&ctx, &mut menu, egui::Modifiers::ALT);
+
+    menu
+}
+
+fn all_bindings(menu: &SettingsMenu) -> Vec<Vec<Binding>> {
+    ROW_ACTIONS
+        .iter()
+        .enumerate()
+        .map(|(i, _)| menu.get_staged_binding(i).to_vec())
+        .collect()
+}
+
+/// The prompt names the key being bound and the row that holds it.
+#[test]
+fn conflicting_key_names_key_and_holder() {
+    use flagstone_ui::screens::Screen;
+
+    for (listening_row, key, key_name, holder) in [
+        (0, Key::Shift, "Shift", "Sprint"),
+        (0, Key::S, "S", "Move Back"),
+    ] {
+        let mut menu = SettingsMenu::with_prefs(Prefs::default());
+        menu.start_listening(listening_row);
+        menu.apply_key_while_listening(key);
+
+        let mut modal = Screen::take_pending_modal(&mut menu).expect("conflict should prompt");
+
+        let ctx = egui::Context::default();
+        let output = run_ui(&ctx, egui::RawInput::default(), |ui| {
+            modal.render(ui);
+        });
+        let text = rendered_text(&output);
+        assert!(
+            text.contains(&format!("The binding '{key_name}' is currently used by:")),
+            "key name missing in:\n{text}"
+        );
+        assert!(
+            text.lines().any(|l| l == holder),
+            "holder {holder} missing in:\n{text}"
+        );
+    }
+}
+
+/// Keys pressed after a conflicting modifier, while the prompt is open, bind nothing.
+#[test]
+fn keys_pressed_while_prompt_open_bind_nothing() {
+    let menu = menu_with_stray_alt_after_shift_conflict();
+
+    assert!(!menu.is_listening());
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::W), pad_stick(StickDir::Up)]
+    );
+    for i in 0..ROW_ACTIONS.len() {
+        assert!(
+            !menu.get_staged_binding(i).contains(&Binding::key(Key::Alt)),
+            "row {i} bound to Alt"
+        );
+    }
+}
+
+/// Confirming applies the prompted Shift only, not a key pressed while the prompt was open.
+#[test]
+fn confirm_after_stray_key_applies_only_prompted_key() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = menu_with_stray_alt_after_shift_conflict();
+
+    Screen::on_modal_confirm(&mut menu);
+
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::Shift), pad_stick(StickDir::Up)]
+    );
+    assert_eq!(
+        menu.get_staged_binding(6),
+        [Binding::pad(PadInput::Button(PadButton::LeftThumb))]
+    );
+    for i in 0..ROW_ACTIONS.len() {
+        assert!(
+            !menu.get_staged_binding(i).contains(&Binding::key(Key::Alt)),
+            "row {i} bound to Alt"
+        );
+    }
+}
+
+/// Cancelling after a stray key leaves every binding as it was.
+#[test]
+fn cancel_after_stray_key_changes_nothing() {
+    use flagstone_ui::screens::Screen;
+
+    let before = all_bindings(&SettingsMenu::with_prefs(Prefs::default()));
+    let mut menu = menu_with_stray_alt_after_shift_conflict();
+
+    Screen::on_modal_cancel(&mut menu);
+
+    assert_eq!(all_bindings(&menu), before);
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::W), pad_stick(StickDir::Up)]
+    );
+    assert_eq!(
+        menu.get_staged_binding(6),
+        [
+            Binding::key(Key::Shift),
+            Binding::pad(PadInput::Button(PadButton::LeftThumb))
+        ]
+    );
+    assert!(!menu.is_listening());
+}
+
 /// Runs one frame and clears its texture delta; egui asserts in debug builds
 /// that a non-empty delta is not dropped, and these tests never paint it.
 fn run_ui(
