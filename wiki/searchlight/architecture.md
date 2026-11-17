@@ -1,6 +1,6 @@
 # Searchlight
 
-**Source:** `searchlight/src/`, `searchlight_rules/src/posture.rs`, `moho_level/src/nav.rs`, `searchlight/assets/`, `searchlight/content/`, `moho_ui_shell/src/`.
+**Source:** `searchlight/src/`, `searchlight_rules/src/posture.rs`, `searchlight_rules/src/ballistics.rs`, `moho_level/src/nav.rs`, `searchlight/assets/`, `searchlight/content/`, `moho_ui_shell/src/`.
 **Decisions:** [ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md),
 [ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md),
 [ADR-0019](../../_todo/adr/0019-navigation-is-an-engine-seam.md).
@@ -43,7 +43,7 @@ flowchart LR
 | `lean` | `lean_offset` (horizontal eye shift for a lean at a yaw) and `rolled_view_matrix` (view with up tipped about forward); pure `glam` maths the game and sim share ([posture](#8-posture)) |
 | `tag` | `SurfaceTag` (`World`, `Part { target, part }`, `Player(part)` or `Control(index)`) and its lossless round trip through the engine's opaque `moho_physics::HitTag` |
 | `shot` | `resolve_shot`: first tagged surface along a `ShotRay` in the `PhysicsWorld`; `passes_within`: whether a shot segment comes within a radius of a point |
-| `round` | `RoundInFlight` (a round's `Flight`, `Ballistics` and caliber) and `step_round`: one tick of a round's flight and the segment it sweeps, resolved through `shot` ([shot path](#6-shot-path)). Flight maths (`Flight`, `Ballistics`, `FlightBounds`, `GravityScale`) is platform-free in `searchlight_rules::ballistics` |
+| `round` | `RoundInFlight` (a round's `Flight` and `Ballistics`, its shooter, where it was fired from, and the enemies it has already near-missed) and `step_round`: one tick of a round's flight and the segment it sweeps, resolved through `shot` ([shot path](#6-shot-path)). Flight maths (`Flight`, `Ballistics`, `FlightBounds`, `GravityScale`) is platform-free in `searchlight_rules::ballistics` |
 | `brain` | `Brain`: the enemy state machine (`Patrol`, `Engage`, `Cover`, `Chase`), pure over `glam` types; `Percept` and a `steer` function in, `Intent` out; `EnemyTuning` holds its numbers; `EnemyTuning::graded` scales reaction, cooldown and aim error by a `Grade` ([enemies](#5-enemies)) |
 | `cover` | `pick` and `offer`: choose the nearest free cover point an enemy under fire should run to, using world-only rays (level geometry and placed controls count as world) against the player (`Threat`) |
 | `sim` | `SearchlightSim`: player character and body, `Loadout` (rifle and `Rig` of spare magazines), dummies and enemies; emits `Feedback`; counts player kills |

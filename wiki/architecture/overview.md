@@ -52,7 +52,7 @@ flowchart TD
 ```
 
 Blue is the engine line, green is the flagstone line, orange is the searchlight line.
-`searchlight_rules` holds plain serialisable item, weapon, body and enemy-grade rules (`ItemDef`, `Rifle`, `Magazine`, `Rig`, `Loadout`, `Kit`, `Body`, `Grade`)
+`searchlight_rules` holds plain serialisable item, weapon, body, enemy-grade and round-flight (`ballistics`) rules (`ItemDef`, `Rifle`, `Magazine`, `Rig`, `Loadout`, `Kit`, `Body`, `Grade`)
 with no engine dependency. `searchlight` is the only searchlight-line crate that reaches the engine: a library
 plus the `searchlight` binary, described in [Searchlight](../searchlight/architecture.md). Every shot resolves
 through one path (ray, surface tag, part, rule call) for player and enemy alike
