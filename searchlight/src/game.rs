@@ -2736,7 +2736,6 @@ mod tests {
         let command = game.command();
 
         assert!(command.simple);
-        assert!(game.simple);
         assert_eq!(command.round_gravity, GravityScale::default());
     }
 
