@@ -97,6 +97,12 @@ impl FrameProcessor {
     /// controller and the dig through `Pawn::dig`, the actions a possessed pawn uses. A pawn
     /// with nothing to do is not moved at all.
     fn run_pawn_job(&self, app: &mut App, dt: f32) {
+        use flagstone_game::jobs::{Job, JobAction, Pose, steer, step};
+        use flagstone_game::pawn::MINE_REACH;
+        use flagstone_game::selection::{PAWN_HALF_EXTENTS, PLAYER_PAWN};
+        use glam::Vec3;
+        use moho_physics::CharacterCommand;
+
         let Some(state) = app
             .physics
             .player
@@ -109,15 +115,15 @@ impl FrameProcessor {
             return;
         };
         let grid = light_system.grid_mut();
-        let pose = flagstone_game::jobs::Pose {
-            feet: state.position - glam::Vec3::Y * flagstone_game::selection::PAWN_HALF_EXTENTS.y,
+        let pose = Pose {
+            feet: state.position - Vec3::Y * PAWN_HALF_EXTENTS.y,
             yaw: state.yaw,
         };
 
         let mut job = std::mem::take(&mut app.pawn.job);
-        let action = flagstone_game::jobs::step(
+        let action = step(
             &mut job,
-            flagstone_game::selection::PLAYER_PAWN,
+            PLAYER_PAWN,
             &mut app.pawn,
             pose,
             &mut app.colony.marks,
@@ -126,13 +132,13 @@ impl FrameProcessor {
         app.pawn.job = job;
 
         match action {
-            flagstone_game::jobs::JobAction::Wait => {}
-            flagstone_game::jobs::JobAction::Walk { to } => {
-                let walk = flagstone_game::jobs::steer(pose, to);
-                let command = moho_physics::CharacterCommand {
+            JobAction::Wait => {}
+            JobAction::Walk { to } => {
+                let walk = steer(pose, to);
+                let command = CharacterCommand {
                     forward: walk.forward,
                     yaw_delta: walk.yaw_delta,
-                    ..moho_physics::CharacterCommand::default()
+                    ..CharacterCommand::default()
                 };
                 if let Some(moved) =
                     app.physics
@@ -142,14 +148,12 @@ impl FrameProcessor {
                         .set_position_yaw_pitch(moved.position, moved.yaw, moved.pitch);
                 }
             }
-            flagstone_game::jobs::JobAction::Dig { block, aim } => {
+            JobAction::Dig { block, aim } => {
                 let dir = (aim - state.position).normalize_or_zero();
-                let outcome =
-                    app.pawn
-                        .dig(grid, state.position, dir, flagstone_game::pawn::MINE_REACH);
+                let outcome = app.pawn.dig(grid, state.position, dir, MINE_REACH);
                 // The job ends on any removal or miss; the mark stays claimable until its
                 // block is gone, so a dig that took a neighbour is retried.
-                app.pawn.job = flagstone_game::jobs::Job::Idle;
+                app.pawn.job = Job::Idle;
                 app.colony.marks.release(block.to_array());
                 let Some(outcome) = outcome else {
                     tracing::debug!(?block, "Pawn dig found nothing solid in reach");

@@ -8,8 +8,10 @@
 
 use crate::input_event::InputEvent;
 use crate::{App, RenderRequest};
-use flagstone_game::pawn::MINE_REACH;
+use flagstone_game::pawn::{MINE_REACH, MineOutcome};
 use flagstone_voxel::{BlockChangeReason, CRYSTAL_MATERIAL_ID, VoxelChunk, WorldEvent};
+use glam::{IVec3, Vec3};
+use moho_core::EventBus;
 use moho_core::events::{AudioEvent, GraphicsEvent, UiEvent};
 use moho_render_api::{Marker, MarkerId};
 use std::collections::HashSet;
@@ -24,11 +26,7 @@ const DIG_VOLUME: f32 = 0.6;
 /// Publishes the removal of the block `outcome` mined: `BlockRemoved`, then a remesh of
 /// every chunk whose mesh the block shaped. Shared by the player's mine handler and the
 /// pawn's job so marks drop and chunks remesh by the same path.
-pub(crate) fn publish_removal(
-    event_bus: &moho_core::EventBus,
-    outcome: &flagstone_game::pawn::MineOutcome,
-    chunk_size: i32,
-) {
+pub(crate) fn publish_removal(event_bus: &EventBus, outcome: &MineOutcome, chunk_size: i32) {
     event_bus.publish(WorldEvent::BlockRemoved {
         position: outcome.block_pos,
         old_material_id: outcome.old_material_id,
@@ -44,11 +42,11 @@ pub(crate) fn publish_removal(
 }
 
 /// Publishes the cue for a pawn digging `block`, at the block's centre.
-pub(crate) fn publish_dig_cue(event_bus: &moho_core::EventBus, block: glam::IVec3) {
+pub(crate) fn publish_dig_cue(event_bus: &EventBus, block: IVec3) {
     event_bus.publish(AudioEvent::PlaySoundAt {
         path: DIG_SOUND.to_string(),
         volume: DIG_VOLUME,
-        position: block.as_vec3() + glam::Vec3::splat(0.5),
+        position: block.as_vec3() + Vec3::splat(0.5),
     });
 }
 

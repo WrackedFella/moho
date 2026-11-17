@@ -1,7 +1,7 @@
 //! The pawn's job loop: claim a marked block, route to it over the ground, walk the
 //! route and dig from inside the player's mining reach.
 
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::{FRAC_PI_3, PI, TAU};
 
 use flagstone_voxel::{BlockPos, VoxelGrid};
 use glam::{Vec2, Vec3};
@@ -10,13 +10,14 @@ use crate::TICK_HZ;
 use crate::colony::MineMarks;
 use crate::pawn::{Pawn, PawnId, TOOL_SLOT};
 use crate::routing::{ROUTE_NODE_BUDGET, feet_cell, route, standable};
+use crate::selection::PAWN_HALF_EXTENTS;
 
 /// How close, horizontally, the feet must be to a waypoint's centre to have reached it, m.
 pub const ARRIVE_RADIUS: f32 = 0.35;
 /// Ticks without progress toward a waypoint before the pawn gives the mark up.
 pub const STALL_TICKS: u32 = 120;
 /// Fastest turn, radians per second: one full turn a second.
-pub const TURN_RATE: f32 = std::f32::consts::TAU;
+pub const TURN_RATE: f32 = TAU;
 /// Route searches an idle pawn starts in one tick.
 pub const MAX_ROUTE_ATTEMPTS: usize = 4;
 
@@ -30,9 +31,9 @@ pub struct Pose {
 /// Smallest closing of the distance to a waypoint that counts as progress, m per tick.
 const PROGRESS_EPSILON: f32 = 1e-3;
 /// The pawn's eye above its feet: the capsule centre, half the capsule's height.
-const EYE_HEIGHT: f32 = 1.15;
+const EYE_HEIGHT: f32 = PAWN_HALF_EXTENTS.y;
 /// Widest angle off its facing at which a pawn still walks instead of turning in place.
-const WALK_CONE: f32 = std::f32::consts::FRAC_PI_3;
+const WALK_CONE: f32 = FRAC_PI_3;
 
 /// Tracks whether a walk toward a waypoint is still getting closer.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -114,19 +115,18 @@ const FACES: [BlockPos; 6] = [
     BlockPos::NEG_Z,
 ];
 
-/// Whether any face of `block` borders air.
-fn has_exposed_face(grid: &VoxelGrid, block: BlockPos) -> bool {
-    FACES.iter().any(|face| !grid.is_solid_at(block + *face))
-}
-
-/// The centre of the face of `block` bordering air that is nearest `eye`.
-fn nearest_exposed_face(grid: &VoxelGrid, block: BlockPos, eye: Vec3) -> Option<Vec3> {
+/// The centres of the faces of `block` that border air.
+fn exposed_faces(grid: &VoxelGrid, block: BlockPos) -> impl Iterator<Item = Vec3> + '_ {
     let centre = block.as_vec3() + Vec3::splat(0.5);
     FACES
         .iter()
-        .filter(|face| !grid.is_solid_at(block + **face))
-        .map(|face| centre + face.as_vec3() * 0.5)
-        .min_by(|a, b| a.distance_squared(eye).total_cmp(&b.distance_squared(eye)))
+        .filter(move |face| !grid.is_solid_at(block + **face))
+        .map(move |face| centre + face.as_vec3() * 0.5)
+}
+
+/// The horizontal distance from `feet` to `to`, m.
+fn horizontal_gap(feet: Vec3, to: Vec3) -> f32 {
+    Vec2::new(to.x - feet.x, to.z - feet.z).length()
 }
 
 /// The feet position at the centre of route cell `cell`.
@@ -148,7 +148,7 @@ fn claim_nearest(
     let mut candidates: Vec<BlockPos> = marks
         .unclaimed()
         .map(BlockPos::from_array)
-        .filter(|block| has_exposed_face(grid, *block))
+        .filter(|block| exposed_faces(grid, *block).next().is_some())
         .collect();
     candidates.sort_by_key(|block| (*block - start).length_squared());
 
@@ -190,12 +190,6 @@ pub fn step(
     marks: &mut MineMarks,
     grid: &VoxelGrid,
 ) -> JobAction {
-    if matches!(job, Job::Idle) {
-        match claim_nearest(who, pawn, pose, marks, grid) {
-            Some(claimed) => *job = claimed,
-            None => return JobAction::Wait,
-        }
-    }
     let Job::Mine {
         mark,
         route,
@@ -203,7 +197,11 @@ pub fn step(
         stall,
     } = job
     else {
-        return JobAction::Wait;
+        let Some(claimed) = claim_nearest(who, pawn, pose, marks, grid) else {
+            return JobAction::Wait;
+        };
+        *job = claimed;
+        return step(job, who, pawn, pose, marks, grid);
     };
     let target = *mark;
     let block = BlockPos::from_array(target);
@@ -212,23 +210,23 @@ pub fn step(
         return JobAction::Wait;
     }
 
-    let arrived = route.get(*next).is_some_and(|cell| {
-        let to = waypoint(*cell);
-        Vec2::new(to.x - pose.feet.x, to.z - pose.feet.z).length() < ARRIVE_RADIUS
-    });
+    let arrived = route
+        .get(*next)
+        .is_some_and(|cell| horizontal_gap(pose.feet, waypoint(*cell)) < ARRIVE_RADIUS);
     if arrived {
         *next += 1;
         *stall = StallGuard::default();
     }
 
-    let action = match route.get(*next) {
-        Some(cell) => {
-            let to = waypoint(*cell);
-            let distance = Vec2::new(to.x - pose.feet.x, to.z - pose.feet.z).length();
-            (standable(grid, *cell) && !stall.stalled(distance)).then_some(JobAction::Walk { to })
-        }
-        None => nearest_exposed_face(grid, block, pose.feet + Vec3::Y * EYE_HEIGHT)
-            .map(|aim| JobAction::Dig { block, aim }),
+    let action = if let Some(cell) = route.get(*next) {
+        let to = waypoint(*cell);
+        let distance = horizontal_gap(pose.feet, to);
+        (standable(grid, *cell) && !stall.stalled(distance)).then_some(JobAction::Walk { to })
+    } else {
+        let eye = pose.feet + Vec3::Y * EYE_HEIGHT;
+        exposed_faces(grid, block)
+            .min_by(|a, b| a.distance_squared(eye).total_cmp(&b.distance_squared(eye)))
+            .map(|aim| JobAction::Dig { block, aim })
     };
     action.unwrap_or_else(|| {
         marks.release(target);

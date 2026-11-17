@@ -128,7 +128,7 @@ impl Pawn {
     }
 
     /// Raycast from `origin` along `dir`, break the first solid voxel within
-    /// `max_distance`, and deposit its resource (if any) into this pawn's
+    /// `reach`, and deposit its resource (if any) into this pawn's
     /// inventory. Returns `None` if nothing was in range, or if no tool is
     /// currently equipped (a no-op — the world is left unchanged).
     ///
@@ -140,9 +140,9 @@ impl Pawn {
         grid: &mut VoxelGrid,
         origin: Vec3,
         dir: Vec3,
-        max_distance: f32,
+        reach: f32,
     ) -> Option<MineOutcome> {
-        let outcome = self.dig(grid, origin, dir, max_distance)?;
+        let outcome = self.dig(grid, origin, dir, reach)?;
         if let Some(yield_) = outcome.yield_ {
             self.deposit(yield_);
         }
