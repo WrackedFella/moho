@@ -640,7 +640,6 @@ impl Drop for App {
     }
 }
 
-/// The schedule for a prefs interval; `None` is autosave off.
 fn autosave_schedule(interval: Option<std::time::Duration>) -> app::autosave::AutosaveSchedule {
     interval.map_or_else(
         app::autosave::AutosaveSchedule::off,
