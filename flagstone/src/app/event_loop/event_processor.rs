@@ -1723,6 +1723,20 @@ mod tests {
     }
 
     #[test]
+    fn a_hand_mine_fills_the_pawn_and_not_the_colony_stock() {
+        let mut app = app_aimed_at_block_with(Some(7));
+
+        EventProcessor::new().handle_input_event(&mut app, InputEvent::MineRequested);
+
+        assert_eq!(
+            app.pawn.inventory.count(7),
+            1,
+            "the possessed pawn keeps it"
+        );
+        assert!(app.colony.stock.is_empty(), "the colony total is untouched");
+    }
+
+    #[test]
     fn dig_asset_exists() {
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/dig.wav");
 

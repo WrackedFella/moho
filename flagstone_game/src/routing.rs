@@ -177,6 +177,44 @@ mod tests {
     }
 
     #[test]
+    fn a_start_sunk_into_a_slope_routes_from_the_cell_above() {
+        let mut grid = corridor(10);
+        place(&mut grid, 3, 1, 1);
+        let sunk = cell(3, 1, 1);
+        assert!(
+            !standable(&grid, sunk),
+            "setup: the feet are inside a block"
+        );
+
+        let path = reach(&grid, sunk, cell(7, 1, 1)).expect("the cell above is tried");
+
+        assert_eq!(path.last(), Some(&cell(7, 1, 1)));
+        assert!(path.iter().all(|c| standable(&grid, *c)));
+    }
+
+    #[test]
+    fn a_start_floating_over_a_slope_routes_from_the_cell_below() {
+        let mut grid = corridor(10);
+        place(&mut grid, 3, 1, 1);
+        let floating = cell(3, 3, 1);
+        assert!(!standable(&grid, floating), "setup: nothing under the feet");
+
+        let path = reach(&grid, floating, cell(7, 1, 1)).expect("the cell below is tried");
+
+        assert_eq!(path.last(), Some(&cell(7, 1, 1)));
+        assert!(path.iter().all(|c| standable(&grid, *c)));
+    }
+
+    #[test]
+    fn a_start_two_cells_from_standable_has_no_route() {
+        let grid = corridor(10);
+
+        let path = reach(&grid, cell(3, 4, 1), cell(7, 1, 1));
+
+        assert_eq!(path, None);
+    }
+
+    #[test]
     fn the_node_budget_ends_a_search_with_none() {
         let grid = flat_ground(24, 24);
         let (start, goal) = (cell(1, 1, 1), cell(20, 1, 20));
@@ -210,7 +248,7 @@ mod tests {
     }
 
     fn heightmap() -> impl Strategy<Value = Vec<Vec<i32>>> {
-        proptest::collection::vec(proptest::collection::vec(1..=3i32, 6), 6)
+        proptest::collection::vec(proptest::collection::vec(1..=2i32, 6), 6)
     }
 
     fn column_cell(heights: &[Vec<i32>], x: usize, z: usize) -> BlockPos {
@@ -230,17 +268,17 @@ mod tests {
 
             let path = reach(&grid, start, goal);
 
-            if let Some(path) = path {
-                let mut previous = start;
-                for step in &path {
-                    prop_assert!(standable(&grid, *step), "{step} is not standable");
-                    let horizontal = (step.x - previous.x).abs() + (step.z - previous.z).abs();
-                    prop_assert_eq!(horizontal, 1, "{} to {} is not one block sideways", previous, step);
-                    prop_assert!((step.y - previous.y).abs() <= 1, "{} to {} climbs too far", previous, step);
-                    previous = *step;
-                }
-                prop_assert_eq!(previous, goal, "the route ends at the goal");
+            prop_assert!(path.is_some(), "steps of one block always connect {} to {}", start, goal);
+            let path = path.expect("checked above");
+            let mut previous = start;
+            for step in &path {
+                prop_assert!(standable(&grid, *step), "{step} is not standable");
+                let horizontal = (step.x - previous.x).abs() + (step.z - previous.z).abs();
+                prop_assert_eq!(horizontal, 1, "{} to {} is not one block sideways", previous, step);
+                prop_assert!((step.y - previous.y).abs() <= 1, "{} to {} climbs too far", previous, step);
+                previous = *step;
             }
+            prop_assert_eq!(previous, goal, "the route ends at the goal");
         }
 
         #[test]

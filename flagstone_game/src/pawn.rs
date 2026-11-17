@@ -345,6 +345,9 @@ mod tests {
         grid.mutator().place(far, 1, None);
         let pawn = Pawn::default();
 
+        let short = pawn.dig(&mut grid, Vec3::new(0.5, 0.5, 0.0), Vec3::Z, 5.0);
+        assert!(short.is_none(), "a block 6 m away is out of a 5 m reach");
+        assert!(grid.material_at(near).is_some(), "and is left standing");
         let past = pawn.dig(&mut grid, Vec3::new(8.5, 0.5, 0.0), Vec3::Z, MINE_REACH);
         let within = pawn.dig(&mut grid, Vec3::new(0.5, 0.5, 0.0), Vec3::Z, MINE_REACH);
 

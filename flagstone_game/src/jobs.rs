@@ -192,23 +192,34 @@ mod tests {
         assert!(matches!(rig.job, Job::Idle));
     }
 
-    #[test]
-    fn a_mark_with_no_exposed_face_is_not_claimed() {
-        let mut rig = Rig::on(flat_ground(10, 10), cell(1, 1, 1));
-        for x in 4..=6 {
-            for y in 1..=3 {
-                for z in 4..=6 {
-                    rig.grid.mutator().place(cell(x, y, z), 0, None);
+    /// Ground three blocks thick, `y` in `-2..=0`, so a block can sit buried in the middle layer.
+    fn thick_ground(width: i32, depth: i32) -> VoxelGrid {
+        let mut grid = VoxelGrid::new(16);
+        for x in 0..width {
+            for y in -2..=0 {
+                for z in 0..depth {
+                    grid.mutator().place(cell(x, y, z), 0, None);
                 }
             }
         }
-        rig.marks.toggle([5, 2, 5]);
+        grid
+    }
+
+    #[test]
+    fn a_mark_with_no_exposed_face_is_not_claimed() {
+        let mut rig = Rig::on(thick_ground(10, 10), cell(1, 1, 1));
+        let buried = cell(5, -1, 5);
+        rig.marks.toggle(buried.to_array());
+        assert!(
+            crate::routing::standable(&rig.grid, cell(5, 1, 5)),
+            "setup: a stand cell on the surface above it is open"
+        );
 
         let action = rig.step();
 
         assert_eq!(action, JobAction::Wait);
         assert!(matches!(rig.job, Job::Idle));
-        assert_eq!(rig.claimed_by(cell(5, 2, 5)), None);
+        assert_eq!(rig.claimed_by(buried), None);
     }
 
     #[test]
@@ -216,6 +227,7 @@ mod tests {
         let mut rig = Rig::on(flat_ground(14, 6), cell(12, 1, 1));
         rig.mark(cell(2, 1, 1));
         rig.mark(cell(9, 1, 1));
+        rig.mark(cell(13, 1, 4));
         rig.pawn.select_slot(3);
         assert_eq!(rig.pawn.equipped_tool, None, "setup: the tool is put away");
 
@@ -228,8 +240,84 @@ mod tests {
         );
         assert_eq!(rig.claimed_by(cell(9, 1, 1)), Some(PAWN));
         assert_eq!(rig.claimed_by(cell(2, 1, 1)), None, "the far mark is left");
+        assert_eq!(rig.claimed_by(cell(13, 1, 4)), None, "so is the later key");
         assert_eq!(rig.pawn.equipped_tool, Some(STARTING_TOOL));
         assert_eq!(rig.pawn.selected_slot, TOOL_SLOT);
+    }
+
+    #[test]
+    fn equally_near_marks_go_to_the_lower_key() {
+        let mut rig = Rig::on(flat_ground(14, 6), cell(6, 1, 3));
+        rig.mark(cell(8, 1, 3));
+        rig.mark(cell(4, 1, 3));
+
+        rig.step();
+
+        assert!(
+            matches!(rig.job, Job::Mine { mark, .. } if mark == [4, 1, 3]),
+            "{:?}",
+            rig.job
+        );
+    }
+
+    /// Ground `x` in `0..14` and, past a one-column gap, an island `x` in `15..24`, all `z` in
+    /// `0..6`; nothing walks across the gap.
+    fn ground_and_island() -> VoxelGrid {
+        let mut grid = flat_ground(14, 6);
+        for x in 15..24 {
+            for z in 0..6 {
+                grid.mutator().place(cell(x, 0, z), 0, None);
+            }
+        }
+        grid
+    }
+
+    #[test]
+    fn an_unroutable_nearer_mark_falls_through_to_a_farther_reachable_one() {
+        let mut rig = Rig::on(ground_and_island(), cell(12, 1, 1));
+        rig.mark(cell(16, 1, 2));
+        rig.mark(cell(2, 1, 1));
+
+        rig.step();
+
+        assert!(
+            matches!(rig.job, Job::Mine { mark, .. } if mark == [2, 1, 1]),
+            "{:?}",
+            rig.job
+        );
+        assert_eq!(
+            rig.claimed_by(cell(16, 1, 2)),
+            None,
+            "the island mark is not held"
+        );
+    }
+
+    #[test]
+    fn a_tick_tries_at_most_the_route_attempt_limit_of_marks() {
+        let mut rig = Rig::on(ground_and_island(), cell(12, 1, 1));
+        for x in 16..16 + MAX_ROUTE_ATTEMPTS as i32 + 1 {
+            rig.mark(cell(x, 1, 1));
+        }
+        rig.mark(cell(2, 1, 1));
+
+        let first = rig.step();
+
+        assert_eq!(first, JobAction::Wait, "every attempt this tick failed");
+        assert!(matches!(rig.job, Job::Idle));
+        let mut claimed_on = None;
+        for tick in 2..=12 {
+            rig.step();
+            if matches!(rig.job, Job::Mine { .. }) {
+                claimed_on = Some(tick);
+                break;
+            }
+        }
+        assert!(claimed_on.is_some(), "the reachable mark is never reached");
+        assert!(
+            matches!(rig.job, Job::Mine { mark, .. } if mark == [2, 1, 1]),
+            "{:?}",
+            rig.job
+        );
     }
 
     #[test]
@@ -285,33 +373,59 @@ mod tests {
         }
     }
 
-    proptest! {
-        #[test]
-        fn every_stand_cell_is_within_the_mining_reach(
-            block in (-50..50i32, -50..50i32, -50..50i32),
-            offset in (-3..=3i32, -3..=4i32, -3..=3i32),
-        ) {
-            let block = cell(block.0, block.1, block.2);
-            let feet = cell(block.x + offset.0, block.y + offset.1, block.z + offset.2);
-            let in_window = offset.0.abs() <= 1 && offset.2.abs() <= 1 && (-1..=2).contains(&offset.1);
+    #[test]
+    fn the_dig_aims_at_the_top_face_from_a_cell_a_block_above_the_blocks_level() {
+        let block = cell(6, 1, 1);
+        let mut rig = Rig::on(flat_ground(12, 5), cell(5, 2, 1));
+        rig.grid.mutator().place(cell(5, 1, 1), 0, None);
+        rig.mark(block);
 
-            let stands = is_stand_cell(block, feet);
+        let (walked, dig) = rig.walk_and_dig();
 
-            prop_assert_eq!(stands, in_window);
-            if stands {
-                let eye = centre(feet) + Vec3::Y * EYE_HEIGHT;
-                let farthest = (0..8)
-                    .map(|corner| {
-                        block.as_vec3()
-                            + Vec3::new(
-                                (corner & 1) as f32,
-                                ((corner >> 1) & 1) as f32,
-                                ((corner >> 2) & 1) as f32,
-                            )
-                    })
-                    .map(|point| point.distance(eye))
-                    .fold(0.0, f32::max);
-                prop_assert!(farthest <= MINE_REACH, "{farthest} m from {feet} to {block}");
+        let JobAction::Dig { block: dug, aim } = dig else {
+            unreachable!("walk_and_dig returns a dig");
+        };
+        assert!(walked.is_empty(), "already on a stand cell");
+        assert_eq!(dug, block);
+        let top = Vec3::new(6.5, 2.0, 1.5);
+        assert!(
+            aim.abs_diff_eq(top, 1e-4),
+            "the west face is covered by the platform; aimed at {aim}, the top is {top}"
+        );
+    }
+
+    #[test]
+    fn every_stand_cell_is_within_the_mining_reach() {
+        let block = cell(-7, 3, 12);
+
+        for dx in -3..=3 {
+            for dy in -3..=4 {
+                for dz in -3..=3 {
+                    let feet = cell(block.x + dx, block.y + dy, block.z + dz);
+                    let in_window = dx.abs() <= 1 && dz.abs() <= 1 && (-1..=2).contains(&dy);
+
+                    let stands = is_stand_cell(block, feet);
+
+                    assert_eq!(stands, in_window, "offset ({dx}, {dy}, {dz})");
+                    if stands {
+                        let eye = centre(feet) + Vec3::Y * EYE_HEIGHT;
+                        let farthest = (0..8)
+                            .map(|corner| {
+                                block.as_vec3()
+                                    + Vec3::new(
+                                        (corner & 1) as f32,
+                                        ((corner >> 1) & 1) as f32,
+                                        ((corner >> 2) & 1) as f32,
+                                    )
+                            })
+                            .map(|point| point.distance(eye))
+                            .fold(0.0, f32::max);
+                        assert!(
+                            farthest <= MINE_REACH,
+                            "{farthest} m from {feet} to {block}"
+                        );
+                    }
+                }
             }
         }
     }
@@ -403,14 +517,14 @@ mod tests {
 
     #[test]
     fn a_slow_but_steady_walk_is_not_stalled() {
-        let mut rig = Rig::on(flat_ground(40, 4), cell(1, 1, 1));
-        rig.mark(cell(30, 1, 1));
-        let crawl = 0.05;
+        let mut rig = Rig::on(flat_ground(12, 4), cell(1, 1, 1));
+        rig.mark(cell(6, 1, 1));
+        let crawl = 0.004;
         let mut ticks = 0;
 
         let dug = loop {
             ticks += 1;
-            assert!(ticks < 5000, "the pawn never arrived");
+            assert!(ticks < 20_000, "the pawn never arrived");
             match rig.step() {
                 JobAction::Wait => {}
                 JobAction::Walk { to } => {
@@ -427,7 +541,7 @@ mod tests {
             );
         };
 
-        assert_eq!(dug, cell(30, 1, 1));
+        assert_eq!(dug, cell(6, 1, 1));
         assert!(
             ticks > 2 * STALL_TICKS,
             "the walk outlasted one stall window"
@@ -524,6 +638,10 @@ mod tests {
             (0.0_f32, 1.0_f32),
             (30.0, 1.0),
             (-30.0, 1.0),
+            (55.0, 1.0),
+            (-55.0, 1.0),
+            (65.0, 0.0),
+            (-65.0, 0.0),
             (90.0, 0.0),
             (-90.0, 0.0),
             (120.0, 0.0),
