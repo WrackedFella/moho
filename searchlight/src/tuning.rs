@@ -34,7 +34,11 @@ pub const SHIPPED_BODY: CharacterBody = CharacterBody {
 
 /// Builds the simulation tuning around the starting `kit`: its weapon's numbers and its loadout.
 pub fn tuning(kit: Kit) -> SimConfig {
-    let Kit { weapon, loadout } = kit;
+    let Kit {
+        weapon,
+        loadout,
+        rounds,
+    } = kit;
     SimConfig {
         move_settings: MoveSettings {
             max_speed: 6.0,
@@ -65,6 +69,7 @@ pub fn tuning(kit: Kit) -> SimConfig {
             leg_status: 60,
         },
         loadout,
+        rounds,
         enemy: EnemyTuning::default(),
         enemy_aim_at: BodyPart::Torso,
         lean: LeanTuning {
@@ -82,10 +87,12 @@ mod tests {
     use crate::input::SearchlightCommand;
     use crate::sim::SearchlightSim;
     use crate::test_support::{DT, arena_with, mag, rifle_from};
+    use std::collections::BTreeMap;
+
     use glam::Vec3;
     use moho_physics::{Hull, HullShape, Stature};
     use searchlight_rules::{
-        FireBehaviour, ItemId, Kit, Loadout, MagazineWell, RifleDef, Rig, RigSpec,
+        Ballistics, FireBehaviour, ItemId, Kit, Loadout, MagazineWell, RifleDef, Rig, RigSpec,
     };
 
     #[test]
@@ -102,9 +109,17 @@ mod tests {
         let mut rig = Rig::new(ItemId::new("test_rig"), &RigSpec { magazine_slots: 2 });
         rig.stow(mag(17, 17)).unwrap();
         let loadout = Loadout::new(rifle_from(mag(17, 17)), rig);
+        let rounds = BTreeMap::from([(
+            ItemId::new("test_round"),
+            Ballistics {
+                muzzle_velocity: 812.0,
+                drag: 2.5,
+            },
+        )]);
         let kit = Kit {
             weapon,
             loadout: loadout.clone(),
+            rounds: rounds.clone(),
         };
 
         let config = tuning(kit);
@@ -115,6 +130,7 @@ mod tests {
         assert_eq!(config.charge_ticks, 13);
         assert!((config.range - 55.5).abs() < f32::EPSILON);
         assert_eq!(config.loadout, loadout);
+        assert_eq!(config.rounds, rounds);
     }
 
     fn shipped_config() -> SimConfig {
@@ -131,6 +147,7 @@ mod tests {
                 range: 100.0,
             },
             loadout: Loadout::new(rifle_from(mag(17, 17)), rig),
+            rounds: BTreeMap::new(),
         })
     }
 
@@ -197,6 +214,7 @@ mod tests {
                 range: 100.0,
             },
             loadout: Loadout::new(rifle_from(mag(17, 17)), rig),
+            rounds: BTreeMap::new(),
         };
 
         let config = tuning(kit);

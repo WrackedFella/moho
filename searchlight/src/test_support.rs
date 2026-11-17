@@ -12,16 +12,16 @@ use moho_level::{LevelMarker, NavMesh};
 use moho_physics::{MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::{
-    BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId, LeanTuning, Loadout, Magazine,
-    MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
+    Ballistics, BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId, LeanTuning, Loadout,
+    Magazine, MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
 };
 
 use crate::arena::{Arena, ArenaControl, nav_profile};
 use crate::brain::EnemyTuning;
 use crate::control::ControlAction;
-use crate::input::SearchlightAction;
+use crate::input::{SearchlightAction, SearchlightCommand};
 use crate::mode::ArenaMode;
-use crate::sim::SimConfig;
+use crate::sim::{Feedback, SearchlightSim, SimConfig};
 use crate::tag::SurfaceTag;
 use crate::tuning::SHIPPED_BODY;
 use crate::wave::WaveTuning;
@@ -88,6 +88,102 @@ pub(crate) fn room() -> PhysicsWorld {
 /// A floor only, top at y = 0.
 pub(crate) fn flat_floor() -> PhysicsWorld {
     world_with(&[(Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0))])
+}
+
+/// A floor only, top at y = 0, 400 m long in z so a target can stand 60 m or more away.
+pub(crate) fn long_floor() -> PhysicsWorld {
+    world_with(&[(Vec3::new(-30.0, -1.0, -200.0), Vec3::new(30.0, 0.0, 200.0))])
+}
+
+/// `config` with the `test` round flying as `ballistics`.
+pub(crate) fn with_round(mut config: SimConfig, ballistics: Ballistics) -> SimConfig {
+    config.rounds.insert(ItemId::new("test_round"), ballistics);
+    config
+}
+
+/// What a player does on the ticks after `first`: nothing, but the levels `first` carries
+/// (Simple, the gravity scale, god mode, a forced grade, a held lean) stay as they were.
+fn hold_of(first: &SearchlightCommand) -> SearchlightCommand {
+    SearchlightCommand {
+        movement: moho_physics::CharacterCommand::default(),
+        fire: false,
+        reload: false,
+        check: false,
+        restart: false,
+        use_pressed: false,
+        ..*first
+    }
+}
+
+/// The first hit a run reported, and everything reported up to and including its tick.
+#[derive(Debug)]
+pub(crate) struct Landed {
+    /// Ticks since the run began, 0 being the first.
+    pub tick: usize,
+    pub target: u16,
+    pub part: BodyPart,
+    pub point: Vec3,
+    /// Each tick's feedback, oldest first.
+    pub ticks: Vec<Vec<Feedback>>,
+}
+
+/// Ticks `sim` under `first`, then under what `first` leaves held, until a [`Feedback::Hit`]
+/// is reported or `limit` ticks have run.
+pub(crate) fn run_until_hit(
+    sim: &mut SearchlightSim,
+    first: &SearchlightCommand,
+    limit: usize,
+) -> Option<Landed> {
+    let hold = hold_of(first);
+    let mut ticks = Vec::new();
+    for tick in 0..limit {
+        let command = if tick == 0 { first } else { &hold };
+        sim.tick(command, DT);
+        let feedback = sim.drain_feedback();
+        let hit = feedback.iter().find_map(|fb| match fb {
+            Feedback::Hit {
+                target,
+                part,
+                point,
+                ..
+            } => Some((*target, *part, *point)),
+            _ => None,
+        });
+        ticks.push(feedback);
+        if let Some((target, part, point)) = hit {
+            return Some(Landed {
+                tick,
+                target,
+                part,
+                point,
+                ticks,
+            });
+        }
+    }
+    None
+}
+
+/// Ticks `sim` under `first`, then under what `first` leaves held, until none of its rounds is
+/// in flight.
+///
+/// # Panics
+/// If a round is still flying after `limit` ticks.
+pub(crate) fn run_until_settled(
+    sim: &mut SearchlightSim,
+    first: &SearchlightCommand,
+    limit: usize,
+) -> Vec<Vec<Feedback>> {
+    let hold = hold_of(first);
+    let mut ticks = Vec::new();
+    for tick in 0..limit {
+        let command = if tick == 0 { first } else { &hold };
+        sim.tick(command, DT);
+        ticks.push(sim.drain_feedback());
+        if sim.rounds_in_flight() == 0 {
+            return ticks;
+        }
+    }
+    panic!("a round was still in flight after {limit} ticks");
 }
 
 /// A magazine of the `test` well holding `rounds` of `test_round`.
@@ -178,6 +274,13 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
         charge_ticks: 0,
         body: test_profile(),
         loadout: Loadout::new(rifle, rig),
+        rounds: BTreeMap::from([(
+            ItemId::new("test_round"),
+            Ballistics {
+                muzzle_velocity: 940.0,
+                drag: 1.0,
+            },
+        )]),
         enemy: enemy_tuning(),
         enemy_aim_at: BodyPart::Torso,
         lean: LeanTuning {

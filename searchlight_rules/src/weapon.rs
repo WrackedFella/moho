@@ -111,6 +111,17 @@ mod tests {
     }
 
     #[test]
+    fn a_rifle_that_still_names_a_range_is_refused() {
+        let mut value = valid();
+        value["range"] = json!(100.0);
+
+        let error = serde_json::from_value::<RifleDef>(value)
+            .expect_err("a range belongs to the round's flight now");
+
+        assert!(error.to_string().contains("range"), "{error}");
+    }
+
+    #[test]
     fn an_unknown_rifle_field_is_refused() {
         let mut value = valid();
         value["dammage"] = json!(20);

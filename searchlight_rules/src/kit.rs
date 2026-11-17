@@ -1,5 +1,6 @@
 //! Starting kits: a rig, a rifle and magazines named by item id, resolved against item data.
 
+use crate::ballistics::Ballistics;
 use crate::item::{ItemDef, ItemId, ItemKind};
 use crate::loadout::Loadout;
 use crate::magazine::Magazine;
@@ -7,6 +8,7 @@ use crate::rifle::Rifle;
 use crate::rig::Rig;
 use crate::weapon::RifleDef;
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// A magazine in a kit: which magazine item, which round it holds, and how many.
@@ -44,6 +46,8 @@ pub struct Kit {
     pub weapon: RifleDef,
     /// The rifle and rig, ready to play.
     pub loadout: Loadout,
+    /// The flight of every round the kit names.
+    pub rounds: BTreeMap<ItemId, Ballistics>,
 }
 
 /// Why a kit could not be resolved.
@@ -169,6 +173,7 @@ impl KitDef {
         Ok(Kit {
             weapon: weapon.clone(),
             loadout: Loadout::new(rifle, rig),
+            rounds: BTreeMap::new(),
         })
     }
 }
@@ -199,8 +204,18 @@ mod tests {
                 "class": "gear", "size": [1, 1],
                 "magazine": {"well": "pistol", "caliber": "9mm", "capacity": 15}
             },
-            "round_ball": {"class": "consumable", "size": [1, 1], "round": {"caliber": "5.56x45"}},
-            "round_9mm": {"class": "consumable", "size": [1, 1], "round": {"caliber": "9mm"}},
+            "round_ball": {
+                "class": "consumable", "size": [1, 1],
+                "round": {"caliber": "5.56x45", "muzzle_velocity": 940.0, "drag": 1.0}
+            },
+            "round_unused": {
+                "class": "consumable", "size": [1, 1],
+                "round": {"caliber": "5.56x45", "muzzle_velocity": 500.0, "drag": 3.0}
+            },
+            "round_9mm": {
+                "class": "consumable", "size": [1, 1],
+                "round": {"caliber": "9mm", "muzzle_velocity": 350.0, "drag": 2.0}
+            },
             "rig_chest": {"class": "gear", "size": [3, 2], "rig": {"magazine_slots": 3}},
             "crowbar": {"class": "tool", "size": [1, 3], "condition": 100}
         });
@@ -280,6 +295,34 @@ mod tests {
                 range: 100.0,
             }
         );
+    }
+
+    #[test]
+    fn a_resolved_kit_carries_the_ballistics_of_every_round_it_names() {
+        let def = start(json!([
+            {"magazine": "mag_pistol", "round": "round_9mm"},
+            {"magazine": "mag_rifle", "round": "round_ball"}
+        ]));
+
+        let kit = resolve(&def).expect("the kit resolves");
+
+        let expected = BTreeMap::from([
+            (
+                id("round_ball"),
+                Ballistics {
+                    muzzle_velocity: 940.0,
+                    drag: 1.0,
+                },
+            ),
+            (
+                id("round_9mm"),
+                Ballistics {
+                    muzzle_velocity: 350.0,
+                    drag: 2.0,
+                },
+            ),
+        ]);
+        assert_eq!(kit.rounds, expected);
     }
 
     #[test]

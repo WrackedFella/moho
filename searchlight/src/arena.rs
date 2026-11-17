@@ -8,6 +8,7 @@ use glam::{Quat, Vec3};
 use moho_level::{AgentProfile, Level, LevelError, LevelMarker, NavBuildError, NavMesh};
 use moho_physics::PhysicsWorld;
 use moho_render_api::{WorldMesh, WorldMeshId};
+use searchlight_rules::FlightBounds;
 
 use crate::control::ControlAction;
 use crate::sim::{CAPSULE_RADIUS, STAND_HEIGHT};
@@ -363,6 +364,16 @@ impl Arena {
     }
 }
 
+impl Arena {
+    /// The box rounds may fly in: every mesh grown by [`FLIGHT_MARGIN`].
+    pub fn flight_bounds(&self) -> FlightBounds {
+        FlightBounds::around(&[], 0.0)
+    }
+}
+
+/// Metres a round may fly past the arena's meshes before it is dropped.
+pub const FLIGHT_MARGIN: f32 = 100.0;
+
 /// Reads the level at `path` and its markers.
 ///
 /// # Errors
@@ -510,6 +521,18 @@ mod tests {
             (profile.max_slope - std::f32::consts::FRAC_PI_4).abs() < 1e-6,
             "{profile:?}"
         );
+    }
+
+    #[test]
+    fn flight_bounds_enclose_every_mesh_with_the_margin() {
+        let tower = (Vec3::new(-5.0, 0.0, 40.0), Vec3::new(5.0, 8.0, 45.0));
+        let arena = crate::test_support::arena_with(&[tower], Vec3::ZERO, &[], &[]);
+
+        let bounds = arena.flight_bounds();
+
+        assert_eq!(FLIGHT_MARGIN, 100.0);
+        assert_eq!(bounds.min, Vec3::new(-130.0, -101.0, -130.0));
+        assert_eq!(bounds.max, Vec3::new(130.0, 108.0, 145.0));
     }
 
     #[test]

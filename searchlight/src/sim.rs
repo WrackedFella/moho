@@ -1,6 +1,7 @@
 //! The fixed-tick simulation: player, rifle, dummies and the feedback they produce.
 //! It holds no renderer, audio or UI handle.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use glam::{Quat, Vec3};
@@ -11,8 +12,8 @@ use moho_physics::{
     MoveSettings, PhysicsWorld, first_person_view,
 };
 use searchlight_rules::{
-    Body, BodyPart, BodyProfile, Grade, HitReport, Lean, LeanReach, LeanSide, LeanTuning, Loadout,
-    MagazineLevel, Rifle, Rig, Shot,
+    Ballistics, Body, BodyPart, BodyProfile, Grade, HitReport, ItemId, Lean, LeanReach, LeanSide,
+    LeanTuning, Loadout, MagazineLevel, Rifle, Rig, Shot,
 };
 
 use crate::arena::{Arena, SETTLE_DT};
@@ -20,6 +21,7 @@ use crate::brain::{Brain, EnemyTuning, Percept};
 use crate::cover::{self, Threat};
 use crate::input::SearchlightCommand;
 use crate::lean::lean_offset;
+use crate::round::RoundInFlight;
 use crate::shot::{ShotRay, Strike, passes_within, resolve_shot};
 use crate::tag::SurfaceTag;
 use crate::tuning::SHIPPED_BODY;
@@ -119,6 +121,8 @@ pub struct SimConfig {
     pub body: BodyProfile,
     /// The rifle in hand and the rig it reloads from.
     pub loadout: Loadout,
+    /// The flight of every round the kit names.
+    pub rounds: BTreeMap<ItemId, Ballistics>,
     /// How every enemy notices, aims and fires. `damage` and `cooldown_ticks` here are the
     /// enemies'; the fields above are the player's.
     pub enemy: EnemyTuning,
@@ -140,6 +144,8 @@ pub enum Feedback {
         target: u16,
         part: BodyPart,
         report: HitReport,
+        /// Where the shot struck.
+        point: Vec3,
     },
     /// The player checked the magazine.
     MagazineLevel(MagazineLevel),
@@ -267,6 +273,8 @@ pub struct SearchlightSim {
     reload_ticks: u32,
     charge_ticks: u32,
     loadout: Loadout,
+    /// The player's rounds in flight; empty after a restart.
+    rounds: Vec<RoundInFlight>,
     /// Indexed by target number: the dummies, then the enemies.
     targets: Vec<Target>,
     dummy_count: usize,
@@ -412,6 +420,7 @@ impl SearchlightSim {
             reload_ticks: config.reload_ticks,
             charge_ticks: config.charge_ticks,
             loadout: config.loadout.clone(),
+            rounds: Vec::new(),
             targets,
             dummy_count: spawns.dummies.len(),
             player_body: Body::new(config.body),
@@ -723,7 +732,8 @@ impl SearchlightSim {
         }
         match self.loadout.fire() {
             Shot::Dry => self.outbox.push(Feedback::Dry),
-            Shot::Fired => {
+            Shot::Fired(_) => {
+                self.rounds.clear();
                 self.outbox.push(Feedback::Fired);
                 if self.cooldown_ticks > 0 {
                     self.weapon = Weapon::Cooling(self.cooldown_ticks);
@@ -810,6 +820,7 @@ impl SearchlightSim {
             target,
             part,
             report,
+            point: Vec3::ZERO,
         });
     }
 
@@ -1067,6 +1078,12 @@ impl SearchlightSim {
         self.world.character(handle)
     }
 
+    /// How many of the player's rounds are still flying.
+    #[cfg(test)]
+    pub(crate) fn rounds_in_flight(&self) -> usize {
+        self.rounds.len()
+    }
+
     /// Feedback produced and not yet drained.
     pub fn pending_feedback(&self) -> &[Feedback] {
         &self.outbox
@@ -1088,7 +1105,8 @@ mod tests {
     use super::*;
     use crate::tag::SurfaceTag;
     use crate::test_support::{
-        DT, arena_with_controls, flat_floor, foreign_mag, mag, rifle_from, room, test_config,
+        DT, arena_with_controls, flat_floor, foreign_mag, mag, rifle_from, room, run_until_hit,
+        run_until_settled, test_config,
     };
 
     fn rifle_with(rounds: u32) -> Rifle {
@@ -1742,9 +1760,10 @@ mod tests {
                 config,
             );
 
-            sim.tick(&pull(), DT);
+            let landed = run_until_hit(&mut sim, &pull(), 30)
+                .unwrap_or_else(|| panic!("{part:?}: the round hit nothing"));
 
-            let feedback = sim.drain_feedback();
+            let feedback = landed.ticks.concat();
             let hit = feedback
                 .iter()
                 .find_map(|fb| match fb {
@@ -1752,6 +1771,7 @@ mod tests {
                         target,
                         part,
                         report,
+                        ..
                     } => Some((*target, *part, *report)),
                     _ => None,
                 })
@@ -1794,41 +1814,10 @@ mod tests {
             config,
         );
 
-        sim.tick(&pull(), DT);
+        let ticks = run_until_settled(&mut sim, &pull(), 60);
 
-        assert_eq!(sim.drain_feedback(), [Feedback::Fired]);
+        assert_eq!(ticks.concat(), [Feedback::Fired]);
         assert_eq!(sim.dummy_body(0).expect("dummy 0 exists").health(), 100);
-    }
-
-    #[test]
-    fn a_dummy_beyond_the_range_is_not_hit() {
-        let torso = SurfaceTag::Part {
-            target: 0,
-            part: BodyPart::Torso,
-        };
-        let volume = dummy_hit_volumes(0)
-            .into_iter()
-            .find(|v| v.tag == torso.into())
-            .expect("a torso volume");
-        let shoot_with_range = |range: f32| {
-            let mut config = test_config(rifle_with(5), vec![]);
-            crate::test_support::set_eye_above_centre(&mut config, volume.offset.y);
-            config.range = range;
-            let mut sim = SearchlightSim::new(
-                flat_floor(),
-                Vec3::new(volume.offset.x, 0.0, 0.0),
-                &[Vec3::new(0.0, 0.0, 8.0)],
-                config,
-            );
-            sim.tick(&pull(), DT);
-            sim.dummy_body(0).expect("dummy 0 exists").health()
-        };
-
-        let short = shoot_with_range(5.0);
-        let long = shoot_with_range(12.0);
-
-        assert_eq!(short, 100);
-        assert_eq!(long, 70);
     }
 
     #[test]
@@ -4784,7 +4773,7 @@ mod grade_tests {
     use moho_physics::CharacterCommand;
 
     use super::*;
-    use crate::test_support::{DT, arena_with, mag, rifle_from, test_config};
+    use crate::test_support::{DT, arena_with, mag, rifle_from, run_until_settled, test_config};
 
     const ENEMY_SPAWN: Vec3 = Vec3::new(0.0, 0.0, 10.0);
     const TOWARD_PLAYER: Vec3 = Vec3::new(0.0, 0.0, 6.0);
@@ -5420,7 +5409,7 @@ mod grade_tests {
         for _ in 0..3 {
             let at = enemy_at(&sim, 0);
             let shot = fire_past(&sim, at, NEAR);
-            tick_with(&mut sim, &shot);
+            run_until_settled(&mut sim, &shot, 60);
             near_misses_after_shot.push(enemy_target(&sim, 0).near_misses);
             idle_for(&mut sim, 10);
         }
@@ -5435,14 +5424,14 @@ mod grade_tests {
         let mut sim = cover_duel(Grade::Professional, &[LOW_WALL, beside]);
 
         let shot = fire_wide(&sim, NEAR);
-        tick_with(&mut sim, &shot);
+        run_until_settled(&mut sim, &shot, 60);
         let player = sim.player();
         let strike = resolve_shot(
             &sim.world,
             ShotRay {
                 origin: player.eye_position(),
                 direction: Vec3::new(player.yaw.sin(), 0.0, player.yaw.cos()),
-                range: sim.range,
+                range: 100.0,
                 ignore: Some(sim.player),
             },
         )
@@ -5500,5 +5489,533 @@ mod grade_tests {
             "a 5 m radius did not count a shot 4 m wide"
         );
         assert_eq!(ignored_at, None, "a 0.5 m radius counted a shot 1 m wide");
+    }
+}
+
+#[cfg(test)]
+mod round_tests {
+    use moho_physics::{CharacterCommand, PITCH_LIMIT};
+    use searchlight_rules::GravityScale;
+
+    use super::*;
+    use crate::test_support::{
+        DT, Landed, arena_with, long_floor, mag, rifle_from, run_until_hit, run_until_settled,
+        set_eye_above_centre, test_config, with_round,
+    };
+
+    /// Height of the torso volume's centre above the capsule centre.
+    const TORSO_Y: f32 = 0.25;
+    /// Height of the head volume's centre above the capsule centre.
+    const HEAD_Y: f32 = 0.72;
+    /// Metres off a target's centre of a round that passes close to it.
+    const NEAR: f32 = 1.0;
+
+    fn ball(muzzle_velocity: f32, drag: f32) -> Ballistics {
+        Ballistics {
+            muzzle_velocity,
+            drag,
+        }
+    }
+
+    fn scale(value: f32) -> GravityScale {
+        GravityScale::new(value).expect("a valid gravity scale")
+    }
+
+    fn idle() -> SearchlightCommand {
+        SearchlightCommand::default()
+    }
+
+    fn pull() -> SearchlightCommand {
+        SearchlightCommand {
+            fire: true,
+            ..SearchlightCommand::default()
+        }
+    }
+
+    fn pull_at(round_gravity: f32) -> SearchlightCommand {
+        SearchlightCommand {
+            round_gravity: scale(round_gravity),
+            ..pull()
+        }
+    }
+
+    /// Tuning whose player's eye is level with the part `above_centre` metres over a dummy's
+    /// capsule centre, firing `ballistics`, with a deep magazine.
+    fn aimed_config(above_centre: f32, ballistics: Ballistics) -> SimConfig {
+        let mut config = with_round(test_config(rifle_from(mag(100, 100)), vec![]), ballistics);
+        set_eye_above_centre(&mut config, above_centre);
+        config
+    }
+
+    /// The player at the origin facing +Z and a dummy `distance` m ahead on a long floor.
+    fn dummy_sim(distance: f32, config: SimConfig) -> SearchlightSim {
+        SearchlightSim::new(
+            long_floor(),
+            Vec3::ZERO,
+            &[Vec3::new(0.0, 0.0, distance)],
+            config,
+        )
+    }
+
+    fn is_hit(feedback: &Feedback) -> bool {
+        matches!(feedback, Feedback::Hit { .. })
+    }
+
+    /// The player's height at the aim point and what a level round fired at the head of a dummy
+    /// 60 m away, under gravity scale `value`, struck.
+    fn level_head_shot(value: f32) -> (f32, Option<Landed>) {
+        let mut sim = dummy_sim(60.0, aimed_config(HEAD_Y, ball(940.0, 1.0)));
+        let aim = sim.player_eye().y;
+
+        let landed = run_until_hit(&mut sim, &pull_at(value), 60);
+
+        (aim, landed)
+    }
+
+    fn ticks_to_hit(distance: f32, ballistics: Ballistics) -> usize {
+        let mut sim = dummy_sim(distance, aimed_config(TORSO_Y, ballistics));
+        let landed = run_until_hit(&mut sim, &pull(), 200)
+            .unwrap_or_else(|| panic!("{ballistics:?}: the round never reached {distance} m"));
+        assert_eq!((landed.target, landed.part), (0, BodyPart::Torso));
+        landed.tick
+    }
+
+    #[test]
+    fn a_round_at_a_dummy_60_m_away_hits_its_torso_only_on_a_later_tick() {
+        let mut sim = dummy_sim(60.0, aimed_config(TORSO_Y, ball(940.0, 1.0)));
+
+        let landed = run_until_hit(&mut sim, &pull(), 30).expect("the round reaches the dummy");
+
+        assert_eq!((landed.target, landed.part), (0, BodyPart::Torso));
+        assert!(
+            landed.tick > 0,
+            "the round hit on the tick it was fired: {:?}",
+            landed.ticks
+        );
+        assert!(landed.ticks[0].contains(&Feedback::Fired));
+        assert!(!landed.ticks[0].iter().any(is_hit));
+        assert_eq!(sim.dummy_body(0).expect("dummy 0 exists").health(), 70);
+    }
+
+    #[test]
+    fn a_round_takes_more_ticks_to_a_dummy_60_m_away_than_to_one_20_m_away() {
+        let near = ticks_to_hit(20.0, ball(940.0, 1.0));
+        let far = ticks_to_hit(60.0, ball(940.0, 1.0));
+
+        assert!(near >= 1, "the near round hit on the tick it was fired");
+        assert!(far > near, "near {near} ticks, far {far} ticks");
+    }
+
+    #[test]
+    fn the_faster_of_two_rounds_hits_a_dummy_60_m_away_first() {
+        let fast = ticks_to_hit(60.0, ball(940.0, 1.0));
+        let slow = ticks_to_hit(60.0, ball(400.0, 1.0));
+
+        assert!(fast < slow, "fast {fast} ticks, slow {slow} ticks");
+    }
+
+    #[test]
+    fn the_round_with_more_drag_hits_a_dummy_60_m_away_later() {
+        let light = ticks_to_hit(60.0, ball(940.0, 0.0));
+        let heavy = ticks_to_hit(60.0, ball(940.0, 5.0));
+
+        assert!(light < heavy, "light {light} ticks, heavy {heavy} ticks");
+    }
+
+    #[test]
+    fn a_level_round_at_a_head_60_m_away_strikes_by_gravity_scale() {
+        let (aim, none) = level_head_shot(0.0);
+        let (_, one) = level_head_shot(1.0);
+        let (_, thirty) = level_head_shot(30.0);
+
+        let none = none.expect("a round without gravity reaches the dummy");
+        assert_eq!(none.part, BodyPart::Head);
+        assert!(
+            (none.point.y - aim).abs() < 0.01,
+            "scale 0 struck at {:?}, aim {aim}",
+            none.point
+        );
+        let one = one.expect("a round under gravity reaches the dummy");
+        assert_eq!(one.part, BodyPart::Head);
+        assert!(
+            one.point.y < aim - 0.005,
+            "scale 1 struck at {:?}, aim {aim}",
+            one.point
+        );
+        if let Some(thirty) = thirty {
+            assert_ne!(thirty.part, BodyPart::Head, "{thirty:?}");
+            assert!(
+                thirty.point.y < aim - 0.12,
+                "scale 30 struck at {:?}, aim {aim}",
+                thirty.point
+            );
+        }
+    }
+
+    #[test]
+    fn a_gravity_scale_of_30_leaves_the_world_gravity_and_jump_height_unchanged() {
+        let jump_at = |value: f32| {
+            let mut sim = SearchlightSim::new(
+                long_floor(),
+                Vec3::ZERO,
+                &[],
+                test_config(rifle_from(mag(30, 30)), vec![]),
+            );
+            let level = SearchlightCommand {
+                round_gravity: scale(value),
+                ..SearchlightCommand::default()
+            };
+            let jump = SearchlightCommand {
+                movement: CharacterCommand {
+                    jump: true,
+                    ..CharacterCommand::default()
+                },
+                ..level
+            };
+            for _ in 0..10 {
+                sim.tick(&level, DT);
+            }
+            let standing = sim.player().position.y;
+            let mut peak = standing;
+            sim.tick(&jump, DT);
+            for _ in 0..90 {
+                peak = peak.max(sim.player().position.y);
+                sim.tick(&level, DT);
+            }
+            (peak - standing, sim.world.gravity())
+        };
+
+        let (normal_rise, normal_gravity) = jump_at(1.0);
+        let (heavy_rise, heavy_gravity) = jump_at(30.0);
+        let (_, normal) = level_head_shot(1.0);
+        let (_, heavy) = level_head_shot(30.0);
+
+        assert!(normal_rise > 1.0, "the player never jumped: {normal_rise}");
+        assert_eq!(heavy_rise, normal_rise);
+        assert_eq!((normal_gravity, heavy_gravity), (18.0, 18.0));
+        let normal = normal.expect("a round at scale 1 reaches the dummy");
+        assert_eq!(normal.part, BodyPart::Head);
+        assert!(
+            heavy
+                .as_ref()
+                .is_none_or(|landed| landed.part != BodyPart::Head),
+            "scale 30 did not drop the round: {heavy:?}"
+        );
+    }
+
+    #[test]
+    fn a_round_into_open_sky_ends_and_none_stays_in_flight() {
+        for ballistics in [ball(940.0, 1.0), ball(150.0, 5.0)] {
+            let mut sim = SearchlightSim::new(
+                long_floor(),
+                Vec3::ZERO,
+                &[],
+                aimed_config(TORSO_Y, ballistics),
+            );
+            let look_up = SearchlightCommand {
+                movement: CharacterCommand {
+                    pitch_delta: 0.8,
+                    ..CharacterCommand::default()
+                },
+                ..pull()
+            };
+
+            sim.tick(&look_up, DT);
+            let in_flight = sim.rounds_in_flight();
+            let fired = sim.drain_feedback();
+            let ticks = run_until_settled(&mut sim, &idle(), 200);
+
+            assert_eq!(fired, [Feedback::Fired], "{ballistics:?}");
+            assert_eq!(in_flight, 1, "{ballistics:?}: the round did not fly");
+            assert!(
+                !ticks.iter().flatten().any(is_hit),
+                "{ballistics:?}: {ticks:?}"
+            );
+            assert_eq!(sim.rounds_in_flight(), 0, "{ballistics:?}");
+        }
+    }
+
+    /// A trigger pull with the player turned to pass `wide` metres to the -x side of the floor
+    /// point `at`, which is ahead of it.
+    fn fire_past(sim: &SearchlightSim, at: Vec3, wide: f32) -> SearchlightCommand {
+        let from = sim.player().position;
+        let distance = Vec3::new(at.x - from.x, 0.0, at.z - from.z).length();
+        let bearing = (at.x - from.x).atan2(at.z - from.z) - (wide / distance).asin();
+        SearchlightCommand {
+            movement: CharacterCommand {
+                yaw_delta: bearing - sim.player().yaw,
+                ..CharacterCommand::default()
+            },
+            ..pull()
+        }
+    }
+
+    /// The player at (0, 0, -`half`), one enemy of `grade` at (0, 0, `half`) that never walks and
+    /// never sees the player, on the floor of the shipped test arena.
+    fn far_duel(half: f32, grade: Grade, ballistics: Ballistics) -> SearchlightSim {
+        let arena = arena_with(
+            &[],
+            Vec3::new(0.0, 0.0, -half),
+            &[Vec3::new(0.0, 0.0, half)],
+            &[Vec3::new(0.0, 0.0, half - 2.0)],
+        );
+        let mut config = aimed_config(0.0, ballistics);
+        config.enemy.sight_range = 1.0;
+        config.enemy.patrol_speed = 0.0;
+        config.body.max_health = 1_000_000;
+        let mut sim = SearchlightSim::with_start(arena, config, Start::Empty);
+        sim.spawn_enemy(0, grade).expect("the marker is free");
+        sim
+    }
+
+    #[test]
+    fn a_round_passing_a_veteran_60_m_away_puts_it_under_fire_on_the_passing_tick() {
+        let mut sim = far_duel(29.0, Grade::Veteran, ball(940.0, 1.0));
+        let from = sim.player().position;
+        let shot = fire_past(&sim, Vec3::new(0.0, 0.0, 29.0), NEAR);
+        let mut under_fire = Vec::new();
+        let wait = idle();
+
+        for tick in 0..8 {
+            sim.tick(if tick == 0 { &shot } else { &wait }, DT);
+            sim.drain_feedback();
+            under_fire.push(sim.targets[sim.dummy_count].under_fire);
+        }
+
+        let flags: Vec<bool> = under_fire.iter().map(Option::is_some).collect();
+        assert_eq!(
+            flags,
+            [false, false, false, false, true, false, false, false],
+            "940 m/s covers 60 m on the fourth step, so the round passes on tick 4"
+        );
+        let put_from = under_fire[4].expect("the enemy was put under fire");
+        assert!(put_from.distance(from) < 0.05, "{put_from:?} from {from:?}");
+    }
+
+    #[test]
+    fn a_round_near_missing_one_enemy_over_two_steps_counts_once() {
+        let mut sim = far_duel(12.5, Grade::Experienced, ball(150.0, 0.0));
+        let shot = fire_past(&sim, Vec3::new(0.0, 0.0, 12.5), NEAR);
+
+        sim.tick(&shot, DT);
+        let in_flight = sim.rounds_in_flight();
+        let at_firing = sim.targets[sim.dummy_count].near_misses;
+        run_until_settled(&mut sim, &idle(), 200);
+
+        assert_eq!(in_flight, 1, "the round did not fly");
+        assert_eq!(at_firing, 0, "the near miss counted on the firing tick");
+        let enemy = &sim.targets[sim.dummy_count];
+        assert_eq!(enemy.near_misses, 1, "a round that passes counts once");
+        assert_eq!(enemy.under_fire, None);
+    }
+
+    #[test]
+    fn rounds_in_flight_when_the_player_dies_hit_nothing_after_the_restart() {
+        let mut sim = dummy_sim(60.0, aimed_config(TORSO_Y, ball(940.0, 1.0)));
+
+        sim.tick(&pull(), DT);
+        let in_flight = sim.rounds_in_flight();
+        sim.drain_feedback();
+        sim.kill_player();
+        sim.tick(
+            &SearchlightCommand {
+                restart: true,
+                ..idle()
+            },
+            DT,
+        );
+        let after_restart = sim.rounds_in_flight();
+        let mut feedback = Vec::new();
+        for _ in 0..30 {
+            sim.tick(&idle(), DT);
+            feedback.extend(sim.drain_feedback());
+        }
+
+        assert_eq!(in_flight, 1, "the round did not fly");
+        assert_eq!(after_restart, 0, "the restart left a round flying");
+        assert!(!feedback.iter().any(is_hit), "{feedback:?}");
+        assert_eq!(sim.dummy_body(0).expect("dummy 0 exists").health(), 100);
+    }
+
+    #[test]
+    fn under_simple_a_head_60_m_away_is_hit_on_the_firing_tick_at_the_aim_point_at_scale_30() {
+        let mut sim = dummy_sim(60.0, aimed_config(HEAD_Y, ball(940.0, 1.0)));
+        let aim = sim.player_eye();
+        let command = SearchlightCommand {
+            simple: true,
+            ..pull_at(30.0)
+        };
+
+        sim.tick(&command, DT);
+
+        let feedback = sim.drain_feedback();
+        let Some(Feedback::Hit {
+            target,
+            part,
+            point,
+            ..
+        }) = feedback.iter().find(|fb| is_hit(fb))
+        else {
+            panic!("no hit on the firing tick: {feedback:?}");
+        };
+        assert_eq!((*target, *part), (0, BodyPart::Head));
+        assert!((point.y - aim.y).abs() < 0.01, "{point:?}, aim {aim:?}");
+        assert!((point.x - aim.x).abs() < 0.01, "{point:?}, aim {aim:?}");
+        assert!((59.7..60.0).contains(&point.z), "{point:?}");
+        assert_eq!(sim.rounds_in_flight(), 0, "Simple flies nothing");
+    }
+
+    #[test]
+    fn a_fight_with_rounds_in_flight_replays_every_feedback_tick_for_tick() {
+        const PULL_EVERY: usize = 4;
+        let fight = || {
+            let arena = arena_with(
+                &[],
+                Vec3::ZERO,
+                &[Vec3::new(0.0, 0.0, 10.0)],
+                &[Vec3::new(0.0, 0.0, 6.0)],
+            );
+            let mut config = aimed_config(HEAD_Y, ball(940.0, 1.0));
+            config.body = BodyProfile {
+                max_health: 1_000_000,
+                head_status: 1_000_000,
+                arm_status: 1_000_000,
+                leg_status: 1_000_000,
+            };
+            config.enemy.aim_error = 0.05;
+            config.enemy.damage = 1;
+            config.enemy.seed = 3;
+            let mut sim = SearchlightSim::start(arena, config);
+            (0..300)
+                .map(|tick| {
+                    let command = if tick % PULL_EVERY == 0 {
+                        pull()
+                    } else {
+                        idle()
+                    };
+                    sim.tick(&command, DT);
+                    sim.drain_feedback()
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let first = fight();
+        let again = fight();
+
+        assert_eq!(first, again);
+        let hit_ticks: Vec<usize> = first
+            .iter()
+            .enumerate()
+            .filter(|(_, feedback)| feedback.iter().any(is_hit))
+            .map(|(tick, _)| tick)
+            .collect();
+        assert!(!hit_ticks.is_empty(), "no round of the player's hit");
+        assert!(
+            hit_ticks.iter().all(|tick| tick % PULL_EVERY != 0),
+            "a round hit on its firing tick: {hit_ticks:?}"
+        );
+        assert!(
+            first
+                .iter()
+                .flatten()
+                .any(|fb| matches!(fb, Feedback::PlayerHit { .. })),
+            "no enemy shot hit the player"
+        );
+    }
+
+    #[test]
+    fn a_round_at_a_dummy_1_m_away_still_hits_on_the_next_tick() {
+        let mut sim = dummy_sim(1.0, aimed_config(TORSO_Y, ball(940.0, 1.0)));
+
+        let landed = run_until_hit(&mut sim, &pull(), 10).expect("the round reaches the dummy");
+
+        assert_eq!((landed.target, landed.part), (0, BodyPart::Torso));
+        assert_eq!(landed.tick, 1, "{:?}", landed.ticks);
+    }
+
+    #[test]
+    fn a_round_fired_down_never_hits_the_shooter() {
+        let mut sim = SearchlightSim::new(
+            long_floor(),
+            Vec3::ZERO,
+            &[],
+            aimed_config(TORSO_Y, ball(940.0, 1.0)),
+        );
+        let straight_down = SearchlightCommand {
+            movement: CharacterCommand {
+                pitch_delta: -10.0,
+                ..CharacterCommand::default()
+            },
+            ..pull()
+        };
+
+        sim.tick(&straight_down, DT);
+        let in_flight = sim.rounds_in_flight();
+        let first = sim.drain_feedback();
+        let ticks = run_until_settled(&mut sim, &idle(), 60);
+
+        assert_eq!(sim.player().pitch, -PITCH_LIMIT);
+        assert_eq!(in_flight, 1, "the round did not fly");
+        assert_eq!(first, [Feedback::Fired]);
+        assert!(
+            !ticks
+                .iter()
+                .flatten()
+                .any(|fb| is_hit(fb) || matches!(fb, Feedback::PlayerHit { .. })),
+            "{ticks:?}"
+        );
+        assert_eq!(
+            sim.player_body().health(),
+            sim.player_max_health(),
+            "the shooter was wounded by its own round"
+        );
+    }
+
+    #[test]
+    fn a_round_leaving_the_flight_bounds_ends() {
+        let mut sim = SearchlightSim::new(
+            long_floor(),
+            Vec3::ZERO,
+            &[],
+            aimed_config(TORSO_Y, ball(940.0, 1.0)),
+        );
+        let mut in_flight = Vec::new();
+
+        sim.tick(&pull(), DT);
+        in_flight.push(sim.rounds_in_flight());
+        for _ in 0..11 {
+            sim.tick(&idle(), DT);
+            in_flight.push(sim.rounds_in_flight());
+        }
+
+        assert_eq!(
+            in_flight[..6],
+            [1; 6],
+            "the round was dropped inside the 100 m margin: {in_flight:?}"
+        );
+        assert_eq!(
+            in_flight[9..],
+            [0; 3],
+            "the round outlived the margin: {in_flight:?}"
+        );
+    }
+
+    #[test]
+    fn a_round_with_no_ballistics_entry_flies_nothing() {
+        let mut config = aimed_config(TORSO_Y, ball(940.0, 1.0));
+        config.rounds.clear();
+        let mut sim = dummy_sim(8.0, config);
+
+        let ticks = run_until_settled(&mut sim, &pull(), 60);
+        let mut later = Vec::new();
+        for _ in 0..30 {
+            sim.tick(&idle(), DT);
+            later.extend(sim.drain_feedback());
+        }
+
+        assert_eq!(ticks.concat(), [Feedback::Fired]);
+        assert!(later.is_empty(), "{later:?}");
+        assert_eq!(sim.rounds_in_flight(), 0);
+        assert_eq!(sim.dummy_body(0).expect("dummy 0 exists").health(), 100);
     }
 }
