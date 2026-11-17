@@ -298,10 +298,10 @@ impl Effects {
     /// Age every effect by the frame time, start the fade of any streak past its `max_age`
     /// and drop the finished ones.
     pub fn advance(&mut self, dt: Duration) {
-        for effect in self.store.values_mut() {
+        self.store.retain(|_, effect| {
             effect.advance(dt);
-        }
-        self.store.retain(|_, effect| !effect.finished());
+            !effect.finished()
+        });
     }
 
     /// Cap new effects for `quality` (0 off to 4 ultra; higher clamps). Lowering keeps
@@ -367,8 +367,10 @@ impl Effects {
     }
 }
 
-/// `x` and `y` turned by `roll` about their common normal.
-fn rolled(x: Vec3, y: Vec3, roll: f32) -> (Vec3, Vec3) {
+/// An orthonormal pair `(x, y)` across the unit `normal`, turned by `roll` about it.
+fn rolled_basis(normal: Vec3, roll: f32) -> (Vec3, Vec3) {
+    let x = normal.any_orthonormal_vector();
+    let y = normal.cross(x);
     let (sin, cos) = roll.sin_cos();
     (x * cos + y * sin, y * cos - x * sin)
 }
@@ -380,8 +382,7 @@ fn flash_transform(flash: &Flash, eye: Vec3) -> Option<Affine3A> {
         return None;
     }
     let toward_eye = (eye - flash.at).try_normalize()?;
-    let x = toward_eye.any_orthonormal_vector();
-    let (x, y) = rolled(x, toward_eye.cross(x), flash.roll);
+    let (x, y) = rolled_basis(toward_eye, flash.roll);
     Some(Affine3A::from_cols(
         (x * size).into(),
         (y * size).into(),
@@ -396,8 +397,7 @@ fn mark_transform(mark: &Mark) -> Option<Affine3A> {
     if !size.is_finite() || size <= 0.0 {
         return None;
     }
-    let x = mark.normal.any_orthonormal_vector();
-    let (x, y) = rolled(x, mark.normal.cross(x), mark.roll);
+    let (x, y) = rolled_basis(mark.normal, mark.roll);
     Some(Affine3A::from_cols(
         (x * size).into(),
         (y * size).into(),
@@ -406,7 +406,7 @@ fn mark_transform(mark: &Mark) -> Option<Affine3A> {
     ))
 }
 
-/// A mesh with up-facing normals and neutral channels, one value per vertex.
+/// A mesh with +Z normals and neutral channels, one value per vertex.
 fn flat_mesh(positions: Vec<[f32; 3]>, indices: Vec<u32>) -> WorldMesh {
     let count = positions.len();
     WorldMesh::new(
