@@ -29,6 +29,8 @@ pub struct ChunkStreamer {
     terrain_config: TerrainConfig,
     streaming_config: StreamingConfig,
     world_name: String,
+    /// Where chunk files live: `<saves_dir>/<world_name>/chunks`.
+    saves_dir: std::path::PathBuf,
     last_player_chunk_xz: (i32, i32),
 }
 
@@ -37,11 +39,13 @@ impl ChunkStreamer {
         terrain_config: TerrainConfig,
         streaming_config: StreamingConfig,
         world_name: impl Into<String>,
+        saves_dir: impl Into<std::path::PathBuf>,
     ) -> Self {
         Self {
             terrain_config,
             streaming_config,
             world_name: world_name.into(),
+            saves_dir: saves_dir.into(),
             last_player_chunk_xz: (i32::MAX, i32::MAX),
         }
     }
@@ -225,6 +229,7 @@ mod tests {
                 chunks_per_frame: budget,
             },
             WORLD,
+            "saves",
         )
     }
 
@@ -286,6 +291,7 @@ mod tests {
                 chunks_per_frame: budget,
             },
             WORLD,
+            "saves",
         )
     }
 
@@ -340,6 +346,34 @@ mod tests {
             origin_column,
             vec![IVec3::ZERO],
             "the occupied column is left as it was"
+        );
+    }
+
+    #[test]
+    fn evicted_chunk_is_written_under_the_streamers_saves_dir() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let world = "evicted_chunk_saves_dir_unit_test_world";
+        let mut streamer = ChunkStreamer::new(
+            TerrainConfig::default(),
+            StreamingConfig {
+                load_radius_chunks: 0,
+                unload_radius_chunks: 0,
+                chunks_per_frame: 1,
+            },
+            world,
+            temp.path(),
+        );
+        let mut grid = VoxelGrid::new(16);
+        grid.mutator().place(IVec3::new(1, 1, 1), 4, None);
+
+        let (_, evicted) = streamer.update(&mut grid, Vec3::new(80.0, 64.0, 80.0));
+
+        assert_eq!(evicted, vec![IVec3::ZERO]);
+        let file = temp.path().join(world).join("chunks").join("0_0_0.bin");
+        assert!(
+            file.is_file(),
+            "expected a chunk file at {}",
+            file.display()
         );
     }
 }

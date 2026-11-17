@@ -521,6 +521,7 @@ mod tests {
                 chunks_per_frame: 1,
             },
             "headless-test-chunk-streaming",
+            "saves",
         ));
         let far = glam::IVec3::new(10, 4, 10);
         let grid = app
@@ -565,6 +566,7 @@ mod tests {
                 chunks_per_frame: 16,
             },
             "headless-test-streamed-lit",
+            "saves",
         ));
         // Light left over from before the chunks' blocks existed, one voxel per layer.
         let planted: Vec<glam::IVec3> = (0..=8)

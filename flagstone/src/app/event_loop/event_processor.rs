@@ -596,6 +596,56 @@ mod tests {
     }
 
     #[test]
+    fn block_edit_events_mark_the_world_edited() {
+        use flagstone_voxel::BlockChangeReason;
+        let edits = [
+            WorldEvent::BlockPlaced {
+                position: glam::IVec3::new(1, 2, 3),
+                material_id: 1,
+                reason: BlockChangeReason::Player,
+            },
+            WorldEvent::BlockRemoved {
+                position: glam::IVec3::new(1, 2, 3),
+                old_material_id: 1,
+                reason: BlockChangeReason::Player,
+            },
+            WorldEvent::BlocksBatchModified {
+                chunk_pos: glam::IVec3::ZERO,
+                positions: vec![glam::IVec3::new(1, 2, 3)],
+                reason: BlockChangeReason::Explosion,
+            },
+        ];
+        for edit in edits {
+            let mut app = App::headless();
+            app.autosave = crate::app::autosave::AutosaveSchedule::new(0);
+            assert!(!app.autosave.due(), "nothing is edited yet");
+            let description = format!("{edit:?}");
+
+            app.event_bus.publish(edit);
+            app.event_bus.process_deferred();
+            EventProcessor::new().process_world_events(&mut app);
+
+            assert!(app.autosave.due(), "{description} marks the world edited");
+        }
+    }
+
+    #[test]
+    fn mesh_dirty_event_does_not_mark_the_world_edited() {
+        let mut app = App::headless();
+        app.autosave = crate::app::autosave::AutosaveSchedule::new(0);
+
+        app.event_bus.publish(WorldEvent::ChunkMeshDirty {
+            chunk_pos: glam::IVec3::ZERO,
+            terrain_dirty: true,
+            structure_dirty: false,
+        });
+        app.event_bus.process_deferred();
+        EventProcessor::new().process_world_events(&mut app);
+
+        assert!(!app.autosave.due());
+    }
+
+    #[test]
     fn toggle_collision_off_enables_noclip() {
         let mut app = App::headless();
         app.event_bus

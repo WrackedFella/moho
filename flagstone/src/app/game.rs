@@ -633,6 +633,28 @@ mod tests {
     }
 
     #[test]
+    fn paused_game_does_not_advance_the_autosave_schedule() {
+        let mut app = App::headless();
+        app.autosave = crate::app::autosave::AutosaveSchedule::new(3);
+        app.autosave.mark_edited();
+
+        for _ in 0..10 {
+            let cmd = Game::command(&mut app);
+            tick_app(&mut app, &cmd);
+        }
+        let due_while_in_the_menu = app.autosave.due();
+        app.game_state = GameState::Playing;
+        for _ in 0..3 {
+            let cmd = Game::command(&mut app);
+            tick_app(&mut app, &cmd);
+        }
+
+        assert_eq!(app.game_state, GameState::Playing);
+        assert!(!due_while_in_the_menu, "menu ticks do not count");
+        assert!(app.autosave.due(), "playing ticks do count");
+    }
+
+    #[test]
     fn held_jump_binding_sets_the_command_jump_flag() {
         let mut app = playing_app();
         hold(&mut app, StrategyAction::Jump);
@@ -841,10 +863,11 @@ mod tests {
         LoopConfig::new(TICK_HZ).tick_length()
     }
 
-    /// An app whose autosaves land in a fresh temp dir, which must outlive it.
+    /// An app with a loaded world whose autosaves land in a fresh temp dir, which must outlive it.
     fn app_with_saves_dir() -> (App, tempfile::TempDir) {
         let temp = tempfile::tempdir().expect("temp dir");
         let mut app = playing_app();
+        app.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
         app.saves_dir = temp.path().join("saves");
         (app, temp)
     }
