@@ -34,7 +34,6 @@ const MARK_VOLUME: f32 = 0.6;
 const SELECTION_MARKER_ID: MarkerId = MarkerId(u64::MAX);
 /// Bright yellow, opaque: reads against grass, stone and shadow.
 const SELECTION_COLOR: [f32; 4] = [1.0, 0.9, 0.1, 1.0];
-/// The pawn body's albedo.
 const PAWN_COLOR: glam::Vec3 = glam::Vec3::new(0.2, 0.45, 0.85);
 
 /// One tick's worth of player input.
@@ -237,7 +236,6 @@ impl App {
         }
     }
 
-    /// Outlines the selected pawn in the strategy view and removes the outline otherwise.
     fn sync_selection_marker(&mut self) {
         let markers = self.scene.markers_mut();
         match (
@@ -2800,7 +2798,6 @@ mod tests {
             rx
         }
 
-        /// Cube instances drawn this frame as `(translation, scale)`.
         fn cube_draws(fake: &FakeRenderer, cube_mesh: u32) -> Vec<(Vec3, Vec3)> {
             fake.draws
                 .iter()
@@ -2830,7 +2827,6 @@ mod tests {
                 .collect()
         }
 
-        /// The outline markers on the scene after one frame.
         fn outlines_after_a_frame(app: &mut App) -> Vec<MarkerGpu> {
             frame_without_renderer(app);
             app.scene.markers_mut().draws(Vec3::ZERO).outlines

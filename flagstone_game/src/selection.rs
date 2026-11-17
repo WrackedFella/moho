@@ -10,7 +10,6 @@ pub struct PawnId(pub u32);
 /// The one pawn that exists today.
 pub const PLAYER_PAWN: PawnId = PawnId(0);
 
-/// An axis-aligned box in world space.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Aabb {
     pub min: Vec3,
@@ -20,7 +19,6 @@ pub struct Aabb {
 /// Half the pawn box's size per axis: spans the character capsule.
 pub const PAWN_HALF_EXTENTS: Vec3 = Vec3::new(0.3, 1.15, 0.3);
 
-/// The pawn's box when its capsule centre is at `center`.
 pub fn pawn_aabb(center: Vec3) -> Aabb {
     Aabb {
         min: center - PAWN_HALF_EXTENTS,
@@ -65,19 +63,16 @@ pub fn pick_pawn(
         .map(|(id, _)| id)
 }
 
-/// The player's current selection.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Selection {
     selected: Option<PawnId>,
 }
 
 impl Selection {
-    /// The selected pawn, if any.
     pub fn selected(&self) -> Option<PawnId> {
         self.selected
     }
 
-    /// Replaces the selection with what the click hit.
     pub fn click(&mut self, hit: Option<PawnId>) {
         self.selected = hit;
     }

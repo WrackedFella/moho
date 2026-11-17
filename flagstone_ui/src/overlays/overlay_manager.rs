@@ -99,10 +99,8 @@ pub struct HudData {
 pub struct SelectionHud {
     pub title: String,
 
-    /// The equipped tool's label, `None` when nothing is equipped.
     pub tool: Option<String>,
 
-    /// Carried resources as `(display name, count)`.
     pub carried: Vec<(String, u32)>,
 }
 
