@@ -1,0 +1,179 @@
+name: Orchestrate eval
+
+# Replays closed work items through /devflow:orchestrate from the commit their merged PR
+# started at, to measure the workflow before and after a change to it. Each replay pushes
+# only to eval/<label>/<ID>-r<n> and never touches the issue, the board or a PR: the
+# allow-list leaves out every tracker write. The set is .github/eval/orchestrate-set.json;
+# each entry's reference commit is the merged result, kept for comparison.
+#
+# Per replay the job log carries one `EVAL-RECORD {json}` line: outcome, gate, held-out
+# tests, commits, turns, wall time and tokens per model (scripts/review-usage.sh record).
+# With review on, the replay's range is dispatched to pr-review.yml as a dry run, whose
+# log carries the verdict. Delete eval/ branches once a set is scored.
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: Run label, used in branch names (letters, digits, dashes), for example baseline
+        required: true
+      cards:
+        description: Comma-separated card IDs from the set (empty for all)
+        required: false
+      runs:
+        description: Replays per card
+        default: "2"
+      model:
+        description: Orchestrator model
+        type: choice
+        options: [default, sonnet, opus]
+        default: default
+      review:
+        description: Dispatch a pr-review dry run on each replay
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: plan
+        env:
+          LABEL: ${{ inputs.label }}
+          CARDS: ${{ inputs.cards }}
+          RUNS: ${{ inputs.runs }}
+        run: |
+          [[ $LABEL =~ ^[a-z0-9-]+$ && $RUNS =~ ^[1-9]$ ]] || { echo "::error::label must be [a-z0-9-]+ and runs 1-9"; exit 1; }
+          matrix=$(jq -c --arg cards "$CARDS" --argjson runs "$RUNS" '
+            ($cards | split(",") | map(gsub("^ +| +$"; "")) | map(select(. != ""))) as $want
+            | [ .[] | select(($want | length) == 0 or (.id as $id | $want | index($id)))
+                | . as $c | range(1; $runs + 1) | $c + {run: .} ]' .github/eval/orchestrate-set.json)
+          [ "$(jq length <<<"$matrix")" -gt 0 ] || { echo "::error::no card in the set matches"; exit 1; }
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  replay:
+    name: ${{ matrix.card.id }} r${{ matrix.card.run }}
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        card: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ID: ${{ matrix.card.id }}
+      ISSUE: ${{ matrix.card.issue }}
+      BASE_SHA: ${{ matrix.card.base }}
+      BRANCH: eval/${{ inputs.label }}/${{ matrix.card.id }}-r${{ matrix.card.run }}
+      MOHO_BASE: origin/eval-base/${{ matrix.card.id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.card.base }}
+          fetch-depth: 0
+      # The skill branches from "the base branch"; a branch at the replay's start commit
+      # gives it one, and MOHO_BASE points the gate and mutation diff at it.
+      - name: Base branch
+        run: |
+          git push origin "$BASE_SHA:refs/heads/eval-base/$ID" || git ls-remote --exit-code origin "refs/heads/eval-base/$ID"
+          git fetch origin "eval-base/$ID:refs/remotes/origin/eval-base/$ID"
+          echo "MODEL_ARG=$([ '${{ inputs.model }}' = default ] || echo '--model ${{ inputs.model }}')" >> "$GITHUB_ENV"
+      - name: Install toolchain
+        run: |
+          bash scripts/cloud-tools.sh --force
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        env:
+          CARGO_TERM_COLOR: always
+          CARGO_INCREMENTAL: 0
+          RUST_BACKTRACE: 1
+        with:
+          shared-key: gate-ubuntu-latest
+          save-if: false
+      - uses: anthropics/claude-code-action@v1
+        id: claude
+        env:
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          plugin_marketplaces: https://github.com/WrackedFella/claude-skills.git
+          plugins: devflow@claude-skills
+          display_report: true
+          prompt: /devflow:orchestrate ${{ matrix.card.issue }}
+          # Tracker writes are left out of the allow-list, so the overrides below are
+          # enforced, not only requested.
+          claude_args: |
+            ${{ env.MODEL_ARG }}
+            --max-turns 200
+            --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never end your turn with a status message: after a skill or subagent returns, continue with the next step. EVAL REPLAY: this run replays a closed work item to measure the workflow, and nothing it does may reach the tracker. Overrides to the orchestrate skill: the item counts as ready although its issue is closed. Its base branch is origin/eval-base/${{ env.ID }} (MOHO_BASE is set to it); use it wherever the skill names the base branch. Ignore every existing branch and pull request for the item and create the work branch ${{ env.BRANCH }} from that base. Never comment on, label or edit the issue. The board is unreachable: treat it as board exit 5. Skip step 9's full-platform CI run and say so in the report. Open no pull request: at step 12 commit and push to the work branch, then end with the final report. Where the skill would pause, put the questions in the final report and stop."
+            --add-dir /home/runner/.claude/plugins/cache
+            --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue view:*),Bash(gh run list:*),Bash(gh run view:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(rg:*),Bash(grep:*),Bash(jq:*),Bash(mkdir:*),Edit,Write,Task,Skill"
+      - name: Score
+        if: always()
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+          REFERENCE: ${{ matrix.card.reference }}
+          GATE_CLASS: ${{ matrix.card.gate }}
+          RUN_NO: ${{ matrix.card.run }}
+          LABEL: ${{ inputs.label }}
+          REVIEW: ${{ inputs.review }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # The checkout is the replay's base, which may predate the usage script.
+          git show "$GITHUB_SHA:scripts/review-usage.sh" > "$RUNNER_TEMP/review-usage.sh"
+          chmod +x "$RUNNER_TEMP/review-usage.sh"
+          head="" commits=0 gate=none heldout=n/a
+          if git fetch origin "$BRANCH" 2>/dev/null; then
+            head=$(git rev-parse FETCH_HEAD)
+            commits=$(git rev-list --count "$BASE_SHA..$head")
+            git checkout --force --detach "$head"
+            git clean -fdq
+            if just check > "$RUNNER_TEMP/gate.log" 2>&1; then gate=pass; else gate=fail; fi
+            tail -n 40 "$RUNNER_TEMP/gate.log"
+            # Held-out tests: the reference's integration-test files, laid over the replay.
+            # Inline unit tests can't be laid over without the reference's code, so a card
+            # whose reference adds none reports n/a.
+            mapfile -t held < <(git diff --name-only --diff-filter=AM "$BASE_SHA" "$REFERENCE" -- '*/tests/*.rs')
+            if [ "${#held[@]}" -gt 0 ]; then
+              git checkout "$REFERENCE" -- "${held[@]}"
+              if just test > "$RUNNER_TEMP/heldout.log" 2>&1; then heldout=pass; else heldout=fail; fi
+              tail -n 40 "$RUNNER_TEMP/heldout.log"
+              git checkout --force --detach "$head"
+            fi
+            if [ "$REVIEW" = true ] && [ "$commits" -gt 0 ]; then
+              gh workflow run pr-review.yml --repo "$GITHUB_REPOSITORY" \
+                --ref "${{ github.event.repository.default_branch }}" \
+                -f dry_run_range="$BASE_SHA..$head" -f dry_run_issue="$ISSUE"
+            fi
+          fi
+          usage='{}'
+          [ -f "$EXECUTION_FILE" ] && usage=$(STEP=orchestrate-eval HEAD_SHA="$head" "$RUNNER_TEMP/review-usage.sh" record "$EXECUTION_FILE")
+          record=$(jq -c --arg label "$LABEL" --arg id "$ID" --argjson issue "$ISSUE" --arg gate_class "$GATE_CLASS" \
+            --argjson run "$RUN_NO" --arg branch "$BRANCH" --arg head "$head" --argjson commits "$commits" \
+            --arg gate "$gate" --arg heldout "$heldout" \
+            '{label: $label, id: $id, issue: $issue, gate_class: $gate_class, run: $run, branch: $branch,
+              head: $head, commits: $commits, gate: $gate, heldout: $heldout} + {usage: .}' <<<"$usage")
+          echo "EVAL-RECORD $record"
+          {
+            echo "### $ID r$RUN_NO ($LABEL)"
+            echo
+            echo '```json'
+            jq . <<<"$record"
+            echo '```'
+            if [ -f "$EXECUTION_FILE" ]; then
+              echo
+              echo "Final report:"
+              echo
+              jq -r '[.[] | select(.type == "result")] | last | .result // ""' "$EXECUTION_FILE"
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"

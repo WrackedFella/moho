@@ -1,0 +1,72 @@
+[
+  {
+    "id": "ENG-F1-10",
+    "issue": 246,
+    "gate": "glue",
+    "base": "15220c15d76299460ed8a1ffb222a8ac4082bad0",
+    "reference": "aa080e94ccb9a39bb9c1fbe40e6394bb1853929a"
+  },
+  {
+    "id": "ENG-F18-16",
+    "issue": 447,
+    "gate": "domain",
+    "base": "3ac3f2bd3be8022fda3354bff694718859ed7aee",
+    "reference": "70b44fbf683f236aedd4b861f0a220bd99000d06"
+  },
+  {
+    "id": "ENG-F45-02",
+    "issue": 734,
+    "gate": "glue",
+    "base": "1b6533036cb6d8e0d6f3b18090dc28b62dce9913",
+    "reference": "94316474103b364556d4080777ddd0ae6cc839c4"
+  },
+  {
+    "id": "SG-F4-03",
+    "issue": 437,
+    "gate": "domain",
+    "base": "dede1b08123bece8cda55b9138901b7038637cec",
+    "reference": "af16a9b444fd95361e93044d819a80677918c170"
+  },
+  {
+    "id": "SG-F5-03",
+    "issue": 443,
+    "gate": "domain",
+    "base": "8c9c14406a5becc7cd7123da43beed51a52d6410",
+    "reference": "298682c63ed26830eaee19d7d737081c96916cf4"
+  },
+  {
+    "id": "ENG-F48-07",
+    "issue": 804,
+    "gate": "domain",
+    "base": "1dd7b98d4b0abf165c2981bf50895dce94c19dc4",
+    "reference": "8c9c14406a5becc7cd7123da43beed51a52d6410"
+  },
+  {
+    "id": "ENG-F40-02",
+    "issue": 764,
+    "gate": "domain",
+    "base": "a6647b52450272d67999960e06a7ab803f147c96",
+    "reference": "00ab5492f245d6c009a21edd53143d62712c9c3e"
+  },
+  {
+    "id": "FPS-F15-01",
+    "issue": 754,
+    "gate": "domain",
+    "base": "0ee2fc97510d6e3a072da3d06f266f522f914f1f",
+    "reference": "cb27bcef6dac94d298ec011b5a2c4637108652f5"
+  },
+  {
+    "id": "FPS-F9-01",
+    "issue": 624,
+    "gate": "glue",
+    "base": "bf5d7a283529a031ec8713bbdd32fbd172644914",
+    "reference": "3e54a6af2e1ca4eed5c68332ef33533c00456b44"
+  },
+  {
+    "id": "SG-F2-03",
+    "issue": 343,
+    "gate": "glue",
+    "base": "f5a873bcf5e0177032bf6eb20a94a017aa698d5d",
+    "reference": "bf5d7a283529a031ec8713bbdd32fbd172644914"
+  }
+]
