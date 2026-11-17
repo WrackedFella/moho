@@ -364,6 +364,55 @@ mod tests {
     }
 
     #[test]
+    fn a_ray_parallel_to_a_slab_and_on_its_face_grazes_and_hits() {
+        let aabb = unit_box();
+        let on_each_face = [
+            Vec3::new(-3.0, 1.0, 0.0),
+            Vec3::new(-3.0, -1.0, 0.0),
+            Vec3::new(-3.0, 0.0, 1.0),
+            Vec3::new(-3.0, 0.0, -1.0),
+        ];
+
+        for origin in on_each_face {
+            let entry = ray_box_entry(&ray(origin, Vec3::X), &aabb);
+
+            assert_eq!(entry, Some(2.0), "origin {origin:?}");
+        }
+    }
+
+    #[test]
+    fn a_ray_touching_the_box_at_a_single_point_hits() {
+        let aabb = unit_box();
+        let corner_graze = ray(Vec3::new(-3.0, -1.0, 0.0), Vec3::new(1.0, 1.0, 0.0));
+
+        let entry = ray_box_entry(&corner_graze, &aabb);
+
+        assert!(entry.is_some(), "entry equals exit at the corner");
+    }
+
+    #[test]
+    fn a_ray_on_a_face_moving_away_from_the_box_enters_at_zero() {
+        let aabb = unit_box();
+        let leaving = ray(Vec3::new(1.0, 0.0, 0.0), Vec3::X);
+
+        let entry = ray_box_entry(&leaving, &aabb);
+
+        assert_eq!(entry, Some(0.0));
+    }
+
+    #[test]
+    fn a_box_entered_exactly_at_the_terrain_distance_is_not_picked() {
+        let aabb = unit_box();
+        let ray = ray(Vec3::new(-3.0, 0.0, 0.0), Vec3::X);
+
+        let at_terrain = pick_pawn(&ray, [(PLAYER_PAWN, aabb)], Some(2.0));
+        let before_terrain = pick_pawn(&ray, [(PLAYER_PAWN, aabb)], Some(2.5));
+
+        assert_eq!(at_terrain, None);
+        assert_eq!(before_terrain, Some(PLAYER_PAWN));
+    }
+
+    #[test]
     fn a_click_that_hits_nothing_clears_the_selection() {
         let mut selection = Selection::default();
         selection.click(Some(PLAYER_PAWN));
