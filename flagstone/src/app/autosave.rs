@@ -1,13 +1,11 @@
-/// Time of play between autosaves of an edited world.
-pub const DEFAULT_AUTOSAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(120);
-
 /// When an edited world is next due an autosave, counted in simulation ticks.
 ///
 /// A world is due once it has been edited since the last save and at least
-/// `interval_ticks` ticks have passed since that save. An idle world is never due.
+/// `interval_ticks` ticks have passed since that save. An idle world is never due, and
+/// neither is any world when the interval is `None`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AutosaveSchedule {
-    interval_ticks: u64,
+    interval_ticks: Option<u64>,
     ticks_since_save: u64,
     edited: bool,
 }
@@ -15,14 +13,19 @@ pub struct AutosaveSchedule {
 impl AutosaveSchedule {
     pub fn new(interval_ticks: u64) -> Self {
         Self {
-            interval_ticks,
+            interval_ticks: Some(interval_ticks),
             ticks_since_save: 0,
             edited: false,
         }
     }
 
+    /// A schedule that is never due.
     pub fn off() -> Self {
-        todo!("a schedule that is never due")
+        Self {
+            interval_ticks: None,
+            ticks_since_save: 0,
+            edited: false,
+        }
     }
 
     /// A schedule due `interval` of play after the last save, at the simulation tick rate.
@@ -40,7 +43,8 @@ impl AutosaveSchedule {
     }
 
     pub fn due(&self) -> bool {
-        self.edited && self.ticks_since_save >= self.interval_ticks
+        self.interval_ticks
+            .is_some_and(|interval| self.edited && self.ticks_since_save >= interval)
     }
 
     /// A save succeeded: nothing is unsaved and the interval starts again.
@@ -751,7 +755,7 @@ mod tests {
         #[test]
         fn default_interval_schedule_is_due_after_120_seconds_of_ticks() {
             let due_at = 120 * u64::from(TICK_HZ);
-            let mut schedule = AutosaveSchedule::for_interval(DEFAULT_AUTOSAVE_INTERVAL);
+            let mut schedule = AutosaveSchedule::for_interval(Duration::from_secs(120));
             schedule.mark_edited();
 
             for _ in 0..due_at - 1 {

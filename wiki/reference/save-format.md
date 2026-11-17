@@ -67,8 +67,9 @@ menu and periodically. With no world loaded (`App::generation.last_spec` is `Non
 
 - It advances once per tick, only in `GameState::Playing`; a paused game, a menu or the
   console does not count toward the interval.
-- A world is due when it has been edited since the last save and `DEFAULT_AUTOSAVE_INTERVAL`
-  (120 s of play, `App::autosave_interval`) has passed. An idle world is never due.
+- A world is due when it has been edited since the last save and `App::autosave_interval`
+  (`[world] autosave_seconds` in prefs, default 120 s of play; 0 turns the timer off, the
+  quit and menu-return saves stay) has passed. An idle world is never due.
 - `process_world_events` marks it edited on `BlockPlaced`, `BlockRemoved` and
   `BlocksBatchModified`. Chunk streaming events (`ChunkMeshDirty`) do not.
 - A successful save resets the interval and clears the edited flag; a failed save resets the

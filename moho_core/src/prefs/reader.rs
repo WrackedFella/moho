@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use super::{Prefs, WindowMode};
+use super::{AUTOSAVE_MAX_SECONDS, AUTOSAVE_MIN_SECONDS, Prefs, WindowMode};
 
 /// One problem found while loading preferences.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,6 +164,15 @@ const KNOWN_KEYS: &[(&str, &str, Setter)] = &[
             &mut p.world_chunks_per_frame,
             parse_u32(s).filter(|&v| v > 0),
         )
+    }),
+    ("world", "autosave_seconds", |p, s| {
+        let seconds = parse_u32(s)?;
+        p.world_autosave_seconds = if seconds == 0 {
+            0
+        } else {
+            seconds.clamp(AUTOSAVE_MIN_SECONDS, AUTOSAVE_MAX_SECONDS)
+        };
+        Some(())
     }),
     ("content", "mods", |p, s| {
         p.content_mods = s
