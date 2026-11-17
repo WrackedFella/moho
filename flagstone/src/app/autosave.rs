@@ -652,7 +652,7 @@ mod tests {
             );
             let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
             let mined = mine_surface_block(&mut app, 40, 40);
-            sim.step(&mut app, 600 * TICK_HZ);
+            sim.step(&mut app, 5 * TICK_HZ);
             draw_frame(&mut app, &mut sim);
             assert!(
                 !scene_file(&saves).exists(),
@@ -663,6 +663,36 @@ mod tests {
 
             assert!(exit);
             assert!(scene_file(&saves).is_file(), "quitting wrote no save");
+            let mut reloaded = load_save(&saves);
+            assert!(is_mined_out(&mut reloaded, mined));
+        }
+
+        #[test]
+        fn autosave_off_still_saves_on_return_to_menu() {
+            let temp = tempfile::tempdir().expect("temp dir");
+            let saves = saves_dir(&temp);
+            let mut app = loaded_session_with_prefs(
+                "autosave_test_off_menu",
+                &temp,
+                prefs_with_autosave_seconds(0),
+            );
+            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+            let mined = mine_surface_block(&mut app, 40, 40);
+            sim.step(&mut app, 5 * TICK_HZ);
+            draw_frame(&mut app, &mut sim);
+            assert!(
+                !scene_file(&saves).exists(),
+                "test setup: nothing written before leaving"
+            );
+
+            app.main_menu_requested = true;
+            draw_frame(&mut app, &mut sim);
+
+            assert_eq!(app.game_state, GameState::Menu);
+            assert!(
+                scene_file(&saves).is_file(),
+                "returning to the menu wrote no save"
+            );
             let mut reloaded = load_save(&saves);
             assert!(is_mined_out(&mut reloaded, mined));
         }
