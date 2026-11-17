@@ -1562,6 +1562,42 @@ mod tests {
         assert!(rig.frame(EYE).is_empty());
     }
 
+    #[test]
+    fn a_flash_or_mark_with_a_non_finite_position_or_roll_is_refused() {
+        let finite_at = Vec3::new(1.0, 2.0, 3.0);
+        let bad_positions = [
+            Vec3::new(f32::NAN, 0.0, 0.0),
+            Vec3::new(0.0, f32::INFINITY, 0.0),
+            Vec3::new(0.0, 0.0, f32::NEG_INFINITY),
+        ];
+        let bad_rolls = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY];
+        for as_flash in [true, false] {
+            let spawn = |rig: &mut Rig, at: Vec3, roll: f32| {
+                if as_flash {
+                    rig.effects.flash(at, roll, flash_style(0.4, 0, 5000));
+                } else {
+                    rig.effects.mark(at, Vec3::Y, roll, mark_style(0.2, 0));
+                }
+            };
+            for at in bad_positions {
+                let mut rig = Rig::new();
+
+                spawn(&mut rig, at, 0.5);
+
+                assert_eq!(rig.effects.live(), 0, "flash: {as_flash}, at {at}");
+                assert!(rig.frame(EYE).is_empty());
+            }
+            for roll in bad_rolls {
+                let mut rig = Rig::new();
+
+                spawn(&mut rig, finite_at, roll);
+
+                assert_eq!(rig.effects.live(), 0, "flash: {as_flash}, roll {roll}");
+                assert!(rig.frame(EYE).is_empty());
+            }
+        }
+    }
+
     fn scripted_frames() -> Vec<Vec<([[f32; 4]; 4], u32)>> {
         let mut rig = Rig::new();
         rig.effects
