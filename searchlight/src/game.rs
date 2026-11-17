@@ -2773,14 +2773,44 @@ mod tests {
     #[test]
     fn a_saved_simple_starts_the_game_in_simple() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut settings, path) = settings_in(&dir);
-        settings.set_simple(true).unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut first = game().with_debug_settings(settings);
+        type_into_console(&first, "simple 1");
+        let during = first.command().simple;
+        let (prefs, _) = Prefs::load_from(&path);
+        let relaunched = DebugSettings::new(prefs, path);
+
+        let mut second = game().with_debug_settings(relaunched);
+
+        assert!(during);
+        assert!(second.command().simple);
+    }
+
+    #[test]
+    fn a_bare_simple_toggles_simple_and_prints_the_new_state() {
+        let mut game = game();
+
+        let start = game.command().simple;
+        type_into_console(&game, "simple");
+        let first = game.command().simple;
+        type_into_console(&game, "simple");
+        let second = game.command().simple;
+
+        assert_eq!([start, first, second], [false, true, false]);
+        let lines = console_lines(&game);
+        let tail = &lines[lines.len() - 4..];
+        assert_eq!(tail, ["> simple", "Simple: on", "> simple", "Simple: off"]);
+    }
+
+    #[test]
+    fn simple_1_saves_the_setting() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
         let mut game = game().with_debug_settings(settings);
 
-        let command = game.command();
+        type_into_console(&game, "simple 1");
+        game.command();
 
-        assert!(command.simple);
-        assert!(game.simple);
         let (saved, _) = Prefs::load_from(&path);
         assert_eq!(saved.debug_value("simple"), Some("1"));
     }

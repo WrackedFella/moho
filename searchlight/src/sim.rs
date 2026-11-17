@@ -5623,33 +5623,46 @@ mod round_tests {
     }
 
     #[test]
-    fn a_level_round_at_a_head_60_m_away_strikes_by_gravity_scale() {
-        let (aim, none) = level_head_shot(0.0);
-        let (_, one) = level_head_shot(1.0);
-        let (_, thirty) = level_head_shot(30.0);
+    fn a_level_round_at_a_head_60_m_away_without_gravity_strikes_the_head_at_the_aim_point() {
+        let (aim, landed) = level_head_shot(0.0);
 
-        let none = none.expect("a round without gravity reaches the dummy");
-        assert_eq!(none.part, BodyPart::Head);
+        let landed = landed.expect("a round without gravity reaches the dummy");
+
+        assert_eq!(landed.part, BodyPart::Head);
         assert!(
-            (none.point.y - aim).abs() < 0.01,
+            (landed.point.y - aim).abs() < 0.01,
             "scale 0 struck at {:?}, aim {aim}",
-            none.point
+            landed.point
         );
-        let one = one.expect("a round under gravity reaches the dummy");
-        assert_eq!(one.part, BodyPart::Head);
+    }
+
+    #[test]
+    fn a_level_round_at_a_head_60_m_away_at_scale_1_strikes_the_head_below_the_aim_point() {
+        let (aim, landed) = level_head_shot(1.0);
+
+        let landed = landed.expect("a round under gravity reaches the dummy");
+
+        assert_eq!(landed.part, BodyPart::Head);
         assert!(
-            one.point.y < aim - 0.005,
+            landed.point.y < aim - 0.005,
             "scale 1 struck at {:?}, aim {aim}",
-            one.point
+            landed.point
         );
-        if let Some(thirty) = thirty {
-            assert_ne!(thirty.part, BodyPart::Head, "{thirty:?}");
-            assert!(
-                thirty.point.y < aim - 0.12,
-                "scale 30 struck at {:?}, aim {aim}",
-                thirty.point
-            );
-        }
+    }
+
+    #[test]
+    fn a_level_round_at_a_head_60_m_away_at_scale_30_strikes_the_torso_well_below_the_aim_point() {
+        let (aim, landed) = level_head_shot(30.0);
+
+        let landed = landed.expect("a round at scale 30 still reaches the dummy's body");
+
+        assert_ne!(landed.part, BodyPart::Head, "{landed:?}");
+        assert_eq!(landed.part, BodyPart::Torso, "{landed:?}");
+        assert!(
+            landed.point.y < aim - 0.12,
+            "scale 30 struck at {:?}, aim {aim}",
+            landed.point
+        );
     }
 
     #[test]
@@ -5692,7 +5705,7 @@ mod round_tests {
 
         assert!(normal_rise > 1.0, "the player never jumped: {normal_rise}");
         assert_eq!(heavy_rise, normal_rise);
-        assert_eq!((normal_gravity, heavy_gravity), (18.0, 18.0));
+        assert_eq!(heavy_gravity, normal_gravity);
         let normal = normal.expect("a round at scale 1 reaches the dummy");
         assert_eq!(normal.part, BodyPart::Head);
         assert!(
@@ -5704,35 +5717,42 @@ mod round_tests {
     }
 
     #[test]
-    fn a_round_into_open_sky_ends_and_none_stays_in_flight() {
-        for ballistics in [ball(940.0, 1.0), ball(150.0, 5.0)] {
-            let mut sim = SearchlightSim::new(
-                long_floor(),
-                Vec3::ZERO,
-                &[],
-                aimed_config(TORSO_Y, ballistics),
-            );
-            let look_up = SearchlightCommand {
-                movement: CharacterCommand {
-                    pitch_delta: 0.8,
-                    ..CharacterCommand::default()
-                },
-                ..pull()
-            };
+    fn a_round_into_open_sky_leaves_the_bounds_and_none_stays_in_flight() {
+        assert_sky_round_ends(ball(940.0, 1.0));
+    }
 
-            sim.tick(&look_up, DT);
-            let in_flight = sim.rounds_in_flight();
-            let fired = sim.drain_feedback();
-            let ticks = run_until_settled(&mut sim, &idle(), 200);
+    #[test]
+    fn a_round_into_open_sky_slowed_below_the_minimum_speed_ends_and_none_stays_in_flight() {
+        assert_sky_round_ends(ball(150.0, 5.0));
+    }
 
-            assert_eq!(fired, [Feedback::Fired], "{ballistics:?}");
-            assert_eq!(in_flight, 1, "{ballistics:?}: the round did not fly");
-            assert!(
-                !ticks.iter().flatten().any(is_hit),
-                "{ballistics:?}: {ticks:?}"
-            );
-            assert_eq!(sim.rounds_in_flight(), 0, "{ballistics:?}");
-        }
+    fn assert_sky_round_ends(ballistics: Ballistics) {
+        let mut sim = SearchlightSim::new(
+            long_floor(),
+            Vec3::ZERO,
+            &[],
+            aimed_config(TORSO_Y, ballistics),
+        );
+        let look_up = SearchlightCommand {
+            movement: CharacterCommand {
+                pitch_delta: 0.8,
+                ..CharacterCommand::default()
+            },
+            ..pull()
+        };
+
+        sim.tick(&look_up, DT);
+        let in_flight = sim.rounds_in_flight();
+        let fired = sim.drain_feedback();
+        let ticks = run_until_settled(&mut sim, &idle(), 200);
+
+        assert_eq!(fired, [Feedback::Fired], "{ballistics:?}");
+        assert_eq!(in_flight, 1, "{ballistics:?}: the round did not fly");
+        assert!(
+            !ticks.iter().flatten().any(is_hit),
+            "{ballistics:?}: {ticks:?}"
+        );
+        assert_eq!(sim.rounds_in_flight(), 0, "{ballistics:?}");
     }
 
     /// A trigger pull with the player turned to pass `wide` metres to the -x side of the floor
@@ -5775,20 +5795,35 @@ mod round_tests {
         let shot = fire_past(&sim, Vec3::new(0.0, 0.0, 29.0), NEAR);
         let mut under_fire = Vec::new();
         let wait = idle();
+        let strafe = SearchlightCommand {
+            movement: CharacterCommand {
+                right: 1.0,
+                ..CharacterCommand::default()
+            },
+            ..idle()
+        };
 
-        for tick in 0..8 {
-            sim.tick(if tick == 0 { &shot } else { &wait }, DT);
+        for tick in 0..5 {
+            let command = match tick {
+                0 => &shot,
+                1..=3 => &strafe,
+                _ => &wait,
+            };
+            sim.tick(command, DT);
             sim.drain_feedback();
             under_fire.push(sim.targets[sim.dummy_count].under_fire);
         }
 
-        let flags: Vec<bool> = under_fire.iter().map(Option::is_some).collect();
+        let before: Vec<bool> = under_fire[..4].iter().map(Option::is_some).collect();
         assert_eq!(
-            flags,
-            [false, false, false, false, true, false, false, false],
-            "940 m/s covers 60 m on the fourth step, so the round passes on tick 4"
+            before, [false; 4],
+            "940 m/s covers 60 m on the fourth step, so nothing is under fire before tick 4"
         );
-        let put_from = under_fire[4].expect("the enemy was put under fire");
+        assert!(
+            sim.player().position.distance(from) > 0.05,
+            "the player never strafed"
+        );
+        let put_from = under_fire[4].expect("the enemy was put under fire on tick 4");
         assert!(put_from.distance(from) < 0.05, "{put_from:?} from {from:?}");
     }
 
@@ -5835,6 +5870,42 @@ mod round_tests {
         assert_eq!(after_restart, 0, "the restart left a round flying");
         assert!(!feedback.iter().any(is_hit), "{feedback:?}");
         assert_eq!(sim.dummy_body(0).expect("dummy 0 exists").health(), 100);
+    }
+
+    #[test]
+    fn a_round_in_flight_while_the_player_is_dead_does_not_step_and_hits_nothing() {
+        let mut sim = dummy_sim(60.0, aimed_config(TORSO_Y, ball(940.0, 1.0)));
+
+        sim.tick(&pull(), DT);
+        sim.drain_feedback();
+        sim.kill_player();
+        let mut feedback = Vec::new();
+        for _ in 0..10 {
+            sim.tick(&idle(), DT);
+            feedback.extend(sim.drain_feedback());
+        }
+
+        assert!(!feedback.iter().any(is_hit), "{feedback:?}");
+        assert_eq!(sim.dummy_body(0).expect("dummy 0 exists").health(), 100);
+        assert_eq!(sim.rounds_in_flight(), 1, "a dead player's round stepped");
+    }
+
+    #[test]
+    fn under_simple_a_dummy_150_m_away_is_hit_on_the_firing_tick() {
+        let mut sim = dummy_sim(150.0, aimed_config(TORSO_Y, ball(940.0, 1.0)));
+        let command = SearchlightCommand {
+            simple: true,
+            ..pull()
+        };
+
+        sim.tick(&command, DT);
+
+        let feedback = sim.drain_feedback();
+        let Some(Feedback::Hit { target, part, .. }) = feedback.iter().find(|fb| is_hit(fb)) else {
+            panic!("no hit on the firing tick: {feedback:?}");
+        };
+        assert_eq!((*target, *part), (0, BodyPart::Torso));
+        assert_eq!(sim.rounds_in_flight(), 0, "Simple flies nothing");
     }
 
     #[test]
