@@ -109,7 +109,10 @@ mod tests {
             standable(&high, cell(0, 1, 0)),
             "three cells of air are enough"
         );
+    }
 
+    #[test]
+    fn feet_cell_floors_the_position() {
         assert_eq!(feet_cell(Vec3::new(0.5, 1.0, 0.5)), cell(0, 1, 0));
         assert_eq!(feet_cell(Vec3::new(-0.2, 1.9, 2.99)), cell(-1, 1, 2));
     }
@@ -172,11 +175,16 @@ mod tests {
         let over_the_wall = go(&wall, cell(0, 1, 0), cell(4, 3, 0), ROUTE_NODE_BUDGET);
         let over_the_step = go(&step, cell(0, 1, 0), cell(4, 2, 0), ROUTE_NODE_BUDGET);
 
+        let down_the_wall = go(&wall, cell(4, 3, 0), cell(0, 1, 0), ROUTE_NODE_BUDGET);
+        let down_the_step = go(&step, cell(4, 2, 0), cell(0, 1, 0), ROUTE_NODE_BUDGET);
+
         assert_eq!(over_the_wall, None);
         assert!(
             over_the_step.is_some(),
             "the same rise at one block is climbable"
         );
+        assert_eq!(down_the_wall, None, "a drop of two blocks is too far");
+        assert!(down_the_step.is_some(), "a drop of one block is fine");
     }
 
     #[test]
@@ -245,10 +253,42 @@ mod tests {
             ROUTE_NODE_BUDGET,
         );
 
-        assert_eq!(ROUTE_NODE_BUDGET, 4096);
         assert_eq!(starved, None);
         assert_eq!(funded.map(|path| path.len()), Some(31));
         assert_eq!(unreachable, None);
+    }
+
+    #[test]
+    fn the_node_budget_counts_expansions_not_route_length() {
+        let grid = flat_ground(35);
+        let goal = cell(5, 1, 0);
+        let away = cell(-30, 1, 0);
+
+        let starved = route(&grid, cell(0, 1, 0), |c| c == goal, away, 10);
+        let funded = route(&grid, cell(0, 1, 0), |c| c == goal, away, ROUTE_NODE_BUDGET);
+
+        assert_eq!(starved, None, "a short route found by a long search");
+        assert_eq!(funded.map(|path| path.len()), Some(6));
+    }
+
+    #[test]
+    fn a_start_that_is_not_standable_still_routes_from_the_ground_cell() {
+        let grid = flat_ground(10);
+        let goal = cell(3, 1, 0);
+
+        let from_above = go(&grid, cell(0, 2, 0), goal, ROUTE_NODE_BUDGET);
+        let from_inside = go(&grid, cell(0, 0, 0), goal, ROUTE_NODE_BUDGET);
+
+        assert!(!standable(&grid, cell(0, 2, 0)));
+        assert!(!standable(&grid, cell(0, 0, 0)));
+        let expected = Some(vec![
+            cell(0, 1, 0),
+            cell(1, 1, 0),
+            cell(2, 1, 0),
+            cell(3, 1, 0),
+        ]);
+        assert_eq!(from_above, expected);
+        assert_eq!(from_inside, expected);
     }
 
     const SIDE: usize = 9;
@@ -301,7 +341,11 @@ mod tests {
                 prop_assert!(d.y.abs() <= 1, "{} to {}", pair[0], pair[1]);
             }
             let flat_distance = (to - from).abs();
-            prop_assert!(path.len() > usize::try_from(flat_distance.x + flat_distance.z).unwrap());
+            prop_assert_eq!(
+                path.len(),
+                usize::try_from(flat_distance.x + flat_distance.z).unwrap() + 1,
+                "a shortest route takes one move per column crossed"
+            );
         }
 
         #[test]

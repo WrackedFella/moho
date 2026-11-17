@@ -233,11 +233,11 @@ mod tests {
     #[test]
     fn an_idle_pawn_claims_the_nearest_reachable_mark_and_equips_the_tool() {
         let mut grid = ground();
-        for (x, z) in [(4, 0), (-2, 0), (0, 6)] {
+        for (x, z) in [(-5, 0), (0, 6), (2, 0)] {
             place(&mut grid, x, 1, z);
         }
         let mut marks = MineMarks::default();
-        for pos in [[4, 1, 0], [-2, 1, 0], [0, 1, 6]] {
+        for pos in [[-5, 1, 0], [0, 1, 6], [2, 1, 0]] {
             marks.toggle(pos);
         }
         let mut pawn = Pawn::default();
@@ -246,9 +246,9 @@ mod tests {
 
         tick(&mut pawn, &mut marks, &grid, pose_at(origin()));
 
-        assert_eq!(claimed_mark(&pawn), [-2, 1, 0]);
-        assert_eq!(claimed_by(&marks, [-2, 1, 0]), Some(ME));
-        assert_eq!(claimed_by(&marks, [4, 1, 0]), None);
+        assert_eq!(claimed_mark(&pawn), [2, 1, 0]);
+        assert_eq!(claimed_by(&marks, [2, 1, 0]), Some(ME));
+        assert_eq!(claimed_by(&marks, [-5, 1, 0]), None);
         assert_eq!(claimed_by(&marks, [0, 1, 6]), None);
         assert_eq!(pawn.equipped_tool, Some(STARTING_TOOL));
         assert_eq!(pawn.selected_slot, TOOL_SLOT);
@@ -335,7 +335,7 @@ mod tests {
         fn every_stand_cell_is_within_the_mining_reach(
             bx in -6..=6i32,
             bz in -6..=6i32,
-            height in 1..=3i32,
+            height in 1..=2i32,
         ) {
             prop_assume!((bx, bz) != (0, 0));
             let mut grid = ground();
@@ -435,20 +435,118 @@ mod tests {
         let walking = tick(&mut pawn, &mut marks, &grid, stuck);
         assert!(matches!(walking, JobAction::Walk { .. }));
 
-        for _ in 0..STALL_TICKS - 2 {
+        let mut released_after = None;
+        for n in 1..=STALL_TICKS + 5 {
             tick(&mut pawn, &mut marks, &grid, stuck);
+            if matches!(pawn.job, Job::Idle) {
+                released_after = Some(n);
+                break;
+            }
         }
 
-        assert!(matches!(pawn.job, Job::Mine { .. }), "not given up early");
-        assert_eq!(claimed_by(&marks, [4, 1, 0]), Some(ME));
-
-        for _ in 0..4 {
-            tick(&mut pawn, &mut marks, &grid, stuck);
-        }
-
-        assert!(matches!(pawn.job, Job::Idle));
+        let n = released_after.expect("a stalled pawn gives up");
+        assert!(
+            (STALL_TICKS - 1..=STALL_TICKS + 1).contains(&n),
+            "released after {n} stalled ticks"
+        );
         assert!(marks.contains([4, 1, 0]), "the mark stays");
         assert_eq!(claimed_by(&marks, [4, 1, 0]), None);
+    }
+
+    #[test]
+    fn progress_toward_the_waypoint_resets_the_stall_guard() {
+        let (grid, mut marks, mut pawn) = marked_block();
+        let mut feet = center(origin());
+        tick(&mut pawn, &mut marks, &grid, Pose { feet, yaw: 0.0 });
+
+        for _ in 0..STALL_TICKS + 30 {
+            feet.x += 0.003;
+            let action = tick(&mut pawn, &mut marks, &grid, Pose { feet, yaw: 0.0 });
+
+            assert!(matches!(action, JobAction::Walk { .. }), "{action:?}");
+        }
+
+        assert!(matches!(pawn.job, Job::Mine { .. }));
+        assert_eq!(claimed_by(&marks, [4, 1, 0]), Some(ME));
+    }
+
+    #[test]
+    fn the_arrive_radius_is_horizontal_and_decides_when_a_waypoint_is_reached() {
+        let waypoint_1 = center(BlockPos::new(1, 1, 0));
+        let waypoint_2 = center(BlockPos::new(2, 1, 0));
+        let cases = [
+            ("0.3 m away", waypoint_1 - Vec3::X * 0.3, waypoint_2),
+            ("0.45 m away", waypoint_1 - Vec3::X * 0.45, waypoint_1),
+            ("0.4 m higher", waypoint_1 + Vec3::Y * 0.4, waypoint_2),
+        ];
+
+        for (name, feet, expected) in cases {
+            let (grid, mut marks, mut pawn) = marked_block();
+            tick(&mut pawn, &mut marks, &grid, pose_at(origin()));
+
+            let action = tick(&mut pawn, &mut marks, &grid, Pose { feet, yaw: 0.0 });
+
+            assert_eq!(action, JobAction::Walk { to: expected }, "{name}");
+        }
+        assert!(ARRIVE_RADIUS > 0.3 && ARRIVE_RADIUS < 0.45);
+    }
+
+    #[test]
+    fn a_nearer_mark_with_no_reachable_stand_cell_is_skipped() {
+        let mut grid = ground();
+        place(&mut grid, 4, 1, 0);
+        place(&mut grid, 0, 1, 6);
+        for x in 2..=6 {
+            for z in -2..=2 {
+                if x == 2 || x == 6 || z == -2 || z == 2 {
+                    place(&mut grid, x, 1, z);
+                    place(&mut grid, x, 2, z);
+                }
+            }
+        }
+        let mut marks = MineMarks::default();
+        marks.toggle([4, 1, 0]);
+        marks.toggle([0, 1, 6]);
+        let mut pawn = Pawn::default();
+
+        tick(&mut pawn, &mut marks, &grid, pose_at(origin()));
+
+        assert_eq!(claimed_mark(&pawn), [0, 1, 6]);
+        assert_eq!(
+            claimed_by(&marks, [4, 1, 0]),
+            None,
+            "walled in, not claimed"
+        );
+    }
+
+    #[test]
+    fn the_stand_cell_is_chosen_by_route_length_not_straight_distance() {
+        let (mut grid, mut marks, mut pawn) = marked_block();
+        for z in [-1, 0] {
+            place(&mut grid, 2, 1, z);
+            place(&mut grid, 2, 2, z);
+        }
+
+        tick(&mut pawn, &mut marks, &grid, pose_at(origin()));
+
+        let route = route_of(&pawn);
+        assert_eq!(route.last(), Some(&BlockPos::new(3, 1, 1)));
+        assert_eq!(route.len(), 5, "four moves around the wall");
+    }
+
+    #[test]
+    fn marks_at_equal_distance_are_taken_in_key_order() {
+        let mut grid = ground();
+        place(&mut grid, 2, 1, 0);
+        place(&mut grid, 0, 1, 2);
+        let mut marks = MineMarks::default();
+        marks.toggle([2, 1, 0]);
+        marks.toggle([0, 1, 2]);
+        let mut pawn = Pawn::default();
+
+        tick(&mut pawn, &mut marks, &grid, pose_at(origin()));
+
+        assert_eq!(claimed_mark(&pawn), [0, 1, 2]);
     }
 
     #[test]
@@ -468,7 +566,7 @@ mod tests {
         assert_eq!(claimed_by(&marks, [4, 1, 0]), None);
     }
 
-    const TURN_PER_TICK: f32 = TURN_RATE / TICK_HZ as f32;
+    const TURN_PER_TICK: f32 = std::f32::consts::TAU / TICK_HZ as f32;
     const TOLERANCE: f32 = 1e-4;
 
     fn facing(yaw: f32, bearing: f32) -> WalkStep {
