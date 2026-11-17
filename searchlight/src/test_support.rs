@@ -12,16 +12,17 @@ use moho_level::{LevelMarker, NavMesh};
 use moho_physics::{MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::{
-    BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId, LeanTuning, Loadout, Magazine,
-    MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
+    Ballistics, BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId, LeanTuning, Loadout,
+    Magazine, MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
 };
 
 use crate::arena::{Arena, ArenaControl, nav_profile};
 use crate::brain::EnemyTuning;
 use crate::control::ControlAction;
 use crate::input::SearchlightAction;
+use crate::input::SearchlightCommand;
 use crate::mode::ArenaMode;
-use crate::sim::SimConfig;
+use crate::sim::{Feedback, SearchlightSim, SimConfig};
 use crate::tag::SurfaceTag;
 use crate::tuning::SHIPPED_BODY;
 use crate::wave::WaveTuning;
@@ -171,7 +172,13 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
         move_settings: test_move_settings(),
         gravity: 18.0,
         character_body: SHIPPED_BODY,
-        range: 100.0,
+        rounds: BTreeMap::from([(
+            ItemId::new("test_round"),
+            Ballistics {
+                muzzle_velocity: 940.0,
+                drag: 1.0,
+            },
+        )]),
         damage: 30,
         cooldown_ticks: 3,
         reload_ticks: 10,
@@ -226,7 +233,18 @@ pub(crate) fn arena_with(
     enemies: &[Vec3],
     route: &[Vec3],
 ) -> Arc<Arena> {
-    arena_with_controls(boxes, player, enemies, route, &[])
+    arena_with_floor(30.0, boxes, player, enemies, route)
+}
+
+/// Like [`arena_with`] with a floor spanning `half` m either way of the origin on x and z.
+pub(crate) fn arena_with_floor(
+    half: f32,
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+) -> Arc<Arena> {
+    arena_with_floor_and_controls(half, boxes, player, enemies, route, &[])
 }
 
 /// Like [`arena_with`], plus one next-wave control per `(min, max)` box in `controls`, in
@@ -238,7 +256,18 @@ pub(crate) fn arena_with_controls(
     route: &[Vec3],
     controls: &[(Vec3, Vec3)],
 ) -> Arc<Arena> {
-    let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
+    arena_with_floor_and_controls(30.0, boxes, player, enemies, route, controls)
+}
+
+fn arena_with_floor_and_controls(
+    half: f32,
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+    controls: &[(Vec3, Vec3)],
+) -> Arc<Arena> {
+    let floor = (Vec3::new(-half, -1.0, -half), Vec3::new(half, 0.0, half));
     let meshes: Vec<WorldMesh> = std::iter::once(&floor)
         .chain(boxes)
         .map(|&(min, max)| box_mesh(min, max))
@@ -311,6 +340,56 @@ impl WaveScore for ArenaMode {
     fn score(&self) -> u32 {
         self.tally().expect("this mode runs waves").score
     }
+}
+
+/// Ticks no test waits past for a round to land or leave; a round that is still flying then
+/// is a failure, not a long wait.
+const FLIGHT_TICK_LIMIT: usize = 1200;
+
+/// Ticks `sim` once with `first`, then idle until a `Feedback::Hit` has been reported, and
+/// returns every tick's drained feedback, the firing tick first and the hit's tick last.
+///
+/// # Panics
+/// If nothing is hit within [`FLIGHT_TICK_LIMIT`] ticks.
+pub(crate) fn run_until_hit(
+    sim: &mut SearchlightSim,
+    first: &SearchlightCommand,
+) -> Vec<Vec<Feedback>> {
+    let idle = SearchlightCommand::default();
+    let mut ticks = Vec::new();
+    for tick in 0..FLIGHT_TICK_LIMIT {
+        sim.tick(if tick == 0 { first } else { &idle }, DT);
+        ticks.push(sim.drain_feedback());
+        if ticks
+            .last()
+            .is_some_and(|feedback| feedback.iter().any(|fb| matches!(fb, Feedback::Hit { .. })))
+        {
+            return ticks;
+        }
+    }
+    panic!("nothing was hit within {FLIGHT_TICK_LIMIT} ticks of the shot");
+}
+
+/// Ticks `sim` once with `first`, then idle until no round is in flight, and returns every
+/// tick's drained feedback, the firing tick first. A hit or miss that comes late is in the
+/// result, so a test cannot pass by asserting before it lands.
+///
+/// # Panics
+/// If a round is still in flight after [`FLIGHT_TICK_LIMIT`] ticks.
+pub(crate) fn run_until_settled(
+    sim: &mut SearchlightSim,
+    first: &SearchlightCommand,
+) -> Vec<Vec<Feedback>> {
+    let idle = SearchlightCommand::default();
+    let mut ticks = Vec::new();
+    for tick in 0..FLIGHT_TICK_LIMIT {
+        sim.tick(if tick == 0 { first } else { &idle }, DT);
+        ticks.push(sim.drain_feedback());
+        if sim.rounds_in_flight() == 0 {
+            return ticks;
+        }
+    }
+    panic!("a round was still in flight {FLIGHT_TICK_LIMIT} ticks after the shot");
 }
 
 /// Presses the first default binding of `action` on `map`.

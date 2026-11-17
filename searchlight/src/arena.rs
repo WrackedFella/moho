@@ -8,6 +8,7 @@ use glam::{Quat, Vec3};
 use moho_level::{AgentProfile, Level, LevelError, LevelMarker, NavBuildError, NavMesh};
 use moho_physics::PhysicsWorld;
 use moho_render_api::{WorldMesh, WorldMeshId};
+use searchlight_rules::FlightBounds;
 
 use crate::control::ControlAction;
 use crate::sim::{CAPSULE_RADIUS, STAND_HEIGHT};
@@ -248,6 +249,9 @@ pub struct Arena {
     pub nav_fallback: bool,
 }
 
+/// Metres a round may fly past the arena's geometry before it is gone.
+pub const FLIGHT_MARGIN: f32 = 100.0;
+
 /// Extra metres of clearance on top of the capsule radius, so paths do not graze corners.
 const NAV_CLEARANCE: f32 = 0.1;
 
@@ -262,6 +266,11 @@ pub fn nav_profile() -> AgentProfile {
 }
 
 impl Arena {
+    /// The box rounds may fly in: every mesh's box grown by [`FLIGHT_MARGIN`].
+    pub fn flight_bounds(&self) -> FlightBounds {
+        todo!("flight bounds are not implemented")
+    }
+
     /// The arena `level` and its `markers` describe.
     ///
     /// In a sandbox a navmesh that cannot be built is a warning and an empty navmesh
@@ -494,6 +503,29 @@ mod tests {
 
     fn shipped_arena() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/arena.glb")
+    }
+
+    #[test]
+    fn flight_bounds_enclose_every_mesh_with_the_margin() {
+        let tower = (Vec3::new(40.0, 0.0, 40.0), Vec3::new(45.0, 10.0, 45.0));
+        let arena = crate::test_support::arena_with(&[tower], Vec3::new(0.0, 0.0, -10.0), &[], &[]);
+
+        let bounds = arena.flight_bounds();
+
+        assert_eq!(FLIGHT_MARGIN, 100.0);
+        assert_eq!(bounds.min, Vec3::new(-130.0, -101.0, -130.0));
+        assert_eq!(bounds.max, Vec3::new(145.0, 110.0, 145.0));
+    }
+
+    #[test]
+    fn flight_bounds_of_one_mesh_are_its_box_grown_by_the_margin_on_every_side() {
+        let mut arena = (*crate::test_support::arena_with(&[], Vec3::ZERO, &[], &[])).clone();
+        arena.meshes = vec![box_mesh(Vec3::new(1.0, 2.0, 3.0), Vec3::new(4.0, 6.0, 8.0))];
+
+        let bounds = arena.flight_bounds();
+
+        assert_eq!(bounds.min, Vec3::new(-99.0, -98.0, -97.0));
+        assert_eq!(bounds.max, Vec3::new(104.0, 106.0, 108.0));
     }
 
     #[test]

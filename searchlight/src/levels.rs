@@ -282,12 +282,14 @@ mod tests {
     }
 
     #[test]
-    fn the_200_m_dummy_is_in_rifle_range_from_the_firing_line() {
+    fn the_200_m_dummy_is_within_the_flight_of_the_shipped_round_from_the_firing_line() {
         let roots = ContentRoots::base(&content_root()).expect("the shipped content folder");
-        let range = kit::load(&roots, START_KIT_ID)
-            .expect("the shipped start kit loads")
-            .weapon
-            .range;
+        let kit = kit::load(&roots, START_KIT_ID).expect("the shipped start kit loads");
+        let ballistics = kit
+            .rounds
+            .get(&searchlight_rules::ItemId::new("round_rifle_ball"))
+            .expect("the start kit names the rifle ball");
+        let range = (ballistics.muzzle_velocity - searchlight_rules::MIN_SPEED) / ballistics.drag;
         let (_, markers) = shipped("proving_ground.glb");
         let spawn = markers.player_spawn.as_ref().expect("a firing line spawn");
         let far = markers
@@ -315,7 +317,7 @@ mod tests {
 
         assert!(
             distance <= range,
-            "the torso's near face is {distance} m from the eye; the rifle reaches {range} m"
+            "the torso's near face is {distance} m from the eye; the round flies {range} m above its minimum speed"
         );
     }
 

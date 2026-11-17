@@ -6,7 +6,7 @@ use moho_input::bindings::{ActionBindings, Binding};
 use moho_input::key::{Key, MouseButton};
 use moho_input::{Action, LookSettings};
 use moho_physics::CharacterCommand;
-use searchlight_rules::{Grade, LeanSide};
+use searchlight_rules::{Grade, GravityScale, LeanSide};
 
 /// Everything the player can ask of the prototype.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -133,6 +133,12 @@ pub struct SearchlightCommand {
     pub restart: bool,
     /// God mode is on: a level, carried on every tick like a pause.
     pub god_mode: bool,
+    /// Simple is on: the player's shots are hitscan. A level, carried on every tick like
+    /// `god_mode`.
+    pub simple: bool,
+    /// The scale on gravity for rounds in flight: a level, carried on every tick like
+    /// `god_mode`.
+    pub round_gravity: GravityScale,
     /// The grade every enemy spawned this tick gets, or `None` for the normal grade: a level,
     /// carried on every tick. A host action like `god_mode`: once commands are per player
     /// slot, only slot 0's is read.
@@ -196,6 +202,8 @@ impl SearchlightCommand {
             check: frame.pressed(SearchlightAction::CheckMagazine),
             restart: frame.pressed(SearchlightAction::Restart),
             god_mode: false,
+            simple: false,
+            round_gravity: GravityScale::default(),
             forced_grade: None,
             lean: None,
             use_pressed: frame.pressed(SearchlightAction::Use),
@@ -468,6 +476,20 @@ mod tests {
 
         assert!(!sampled.god_mode);
         assert!(!SearchlightCommand::default().god_mode);
+    }
+
+    #[test]
+    fn a_command_starts_with_simple_off_and_round_gravity_1() {
+        let mut map = fresh_map();
+        press(&mut map, SearchlightAction::Fire);
+
+        let sampled = SearchlightCommand::from_frame(&map.end_tick());
+
+        assert!(!sampled.simple);
+        assert_eq!(sampled.round_gravity, GravityScale::default());
+        assert_eq!(sampled.round_gravity.gravity(), 9.81);
+        assert!(!SearchlightCommand::default().simple);
+        assert_eq!(SearchlightCommand::default().round_gravity.gravity(), 9.81);
     }
 
     #[test]

@@ -6,13 +6,17 @@ use std::collections::BTreeMap;
 use moho_input::bindings::BindingWarning;
 use moho_ui_shell::Console;
 use moho_ui_shell::console::registry::{CommandSpec, ParseFn};
-use searchlight_rules::Grade;
+use searchlight_rules::{Grade, GravityScale};
 
 use crate::arena::LevelMode;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ConsoleCommand {
     GodMode(GodModeArg),
+    /// Switch Simple, the hitscan shots of the player, on or off.
+    Simple(SimpleArg),
+    /// Scale gravity for rounds in flight.
+    RoundGravity(GravityScale),
     Fullscreen,
     /// Force the grade of new enemies, or with `None` clear the force.
     ForceGrade(Option<Grade>),
@@ -22,6 +26,22 @@ pub enum ConsoleCommand {
 pub enum GodModeArg {
     Toggle,
     Set(bool),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SimpleArg {
+    Toggle,
+    Set(bool),
+}
+
+/// Parses `simple [0|1]`; no argument toggles.
+pub fn parse_simple(_args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    todo!("Simple is not implemented")
+}
+
+/// Parses `round_gravity <scale>`.
+pub fn parse_round_gravity(_args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    todo!("the round gravity scale is not implemented")
 }
 
 /// Parses `tgm [0|1]`; no argument toggles.
@@ -95,6 +115,22 @@ fn console_with_grade(
             parse: parse_tgm,
         })
         .expect("\"tgm\" is not an engine command and is registered once");
+    console
+        .register(CommandSpec {
+            name: "simple".to_owned(),
+            usage: "simple [0|1]".to_owned(),
+            help: "toggle hitscan shots".to_owned(),
+            parse: parse_simple,
+        })
+        .expect("\"simple\" is not an engine command and is registered once");
+    console
+        .register(CommandSpec {
+            name: "round_gravity".to_owned(),
+            usage: "round_gravity <scale>".to_owned(),
+            help: "scale gravity for rounds in flight".to_owned(),
+            parse: parse_round_gravity,
+        })
+        .expect("\"round_gravity\" is not an engine command and is registered once");
     console
         .register(CommandSpec {
             name: "fullscreen".to_owned(),
@@ -198,6 +234,122 @@ mod tests {
             assert!(reply.contains("tgm [0|1]"), "{line}: {reply:?}");
             assert!(!reply.starts_with("God mode"), "{line}: {reply:?}");
         }
+    }
+
+    #[test]
+    fn simple_toggles_and_sets() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        console.submit("simple");
+        let toggle = (console.take_commands(), last_line(&console));
+        console.submit("simple 1");
+        let on = (console.take_commands(), last_line(&console));
+        console.submit("simple 0");
+        let off = (console.take_commands(), last_line(&console));
+
+        assert_eq!(
+            toggle,
+            (
+                vec![ConsoleCommand::Simple(SimpleArg::Toggle)],
+                "> simple".to_owned()
+            )
+        );
+        assert_eq!(
+            on,
+            (
+                vec![ConsoleCommand::Simple(SimpleArg::Set(true))],
+                "Simple: on".to_owned()
+            )
+        );
+        assert_eq!(
+            off,
+            (
+                vec![ConsoleCommand::Simple(SimpleArg::Set(false))],
+                "Simple: off".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn simple_refuses_an_unusable_argument_and_queues_nothing() {
+        for line in ["simple 2", "simple on", "simple 1 0", "simple -1"] {
+            let (mut console, _) = console(&BTreeMap::new());
+
+            console.submit(line);
+
+            assert!(console.take_commands().is_empty(), "{line}");
+            let reply = last_line(&console);
+            assert!(reply.contains("simple [0|1]"), "{line}: {reply:?}");
+            assert!(!reply.starts_with("Simple"), "{line}: {reply:?}");
+        }
+    }
+
+    #[test]
+    fn round_gravity_sets_a_valid_scale() {
+        let scale = |value: f32| GravityScale::new(value).expect("a valid scale");
+        for (line, expected) in [
+            ("round_gravity 30", scale(30.0)),
+            ("round_gravity 0", scale(0.0)),
+            ("round_gravity 0.5", scale(0.5)),
+            ("round_gravity 1000", scale(1000.0)),
+        ] {
+            let (mut console, _) = console(&BTreeMap::new());
+
+            console.submit(line);
+
+            assert_eq!(
+                console.take_commands(),
+                vec![ConsoleCommand::RoundGravity(expected)],
+                "{line}"
+            );
+            let reply = last_line(&console);
+            assert!(!reply.starts_with("Usage"), "{line}: {reply:?}");
+        }
+    }
+
+    #[test]
+    fn round_gravity_refuses_negative_and_non_numeric_values() {
+        for line in [
+            "round_gravity",
+            "round_gravity -1",
+            "round_gravity abc",
+            "round_gravity nan",
+            "round_gravity inf",
+            "round_gravity 1000.5",
+            "round_gravity 1 2",
+        ] {
+            let (mut console, _) = console(&BTreeMap::new());
+
+            console.submit(line);
+
+            assert!(console.take_commands().is_empty(), "{line}");
+            let reply = last_line(&console);
+            assert!(
+                reply.starts_with("Usage: round_gravity <scale>"),
+                "{line}: {reply:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn help_lists_simple_and_round_gravity() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        console.submit("help");
+
+        let lines = printed(&console);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("  simple [0|1] - ")),
+            "{lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("  round_gravity <scale> - ")),
+            "{lines:?}"
+        );
     }
 
     #[test]
