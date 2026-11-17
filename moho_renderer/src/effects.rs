@@ -1313,6 +1313,71 @@ mod tests {
         assert_eq!(frame_meshes(&mut rig, EYE).len(), 1);
     }
 
+    /// Each case breaks exactly one input: `(label, at, roll, size, lifetime)`.
+    fn single_bad_inputs() -> Vec<(&'static str, Vec3, f32, f32, Duration)> {
+        let at = Vec3::new(1.0, 2.0, 3.0);
+        let life = Duration::from_secs(10);
+        vec![
+            ("NaN at", Vec3::new(f32::NAN, 2.0, 3.0), 0.3, 0.2, life),
+            (
+                "infinite at",
+                Vec3::new(1.0, f32::INFINITY, 3.0),
+                0.3,
+                0.2,
+                life,
+            ),
+            ("NaN roll", at, f32::NAN, 0.2, life),
+            ("infinite roll", at, f32::INFINITY, 0.2, life),
+            ("NaN size", at, 0.3, f32::NAN, life),
+            ("infinite size", at, 0.3, f32::INFINITY, life),
+            ("zero size", at, 0.3, 0.0, life),
+            ("negative size", at, 0.3, -0.2, life),
+            ("zero lifetime", at, 0.3, 0.2, Duration::ZERO),
+        ]
+    }
+
+    #[test]
+    fn a_flash_with_any_single_bad_input_is_refused() {
+        for (label, at, roll, size, lifetime) in single_bad_inputs() {
+            let mut rig = Rig::new();
+            let mut flash = flash_style(size, lifetime);
+            flash.lifetime = lifetime;
+
+            rig.effects.flash(at, roll, flash);
+
+            assert_eq!(rig.effects.live(), 0, "{label}");
+            assert!(frame_meshes(&mut rig, EYE).is_empty(), "{label}");
+        }
+        let mut control = Rig::new();
+        control
+            .effects
+            .flash(Vec3::new(1.0, 2.0, 3.0), 0.3, flash_style(0.2, ms(50)));
+        assert_eq!(control.effects.live(), 1, "the valid control is admitted");
+    }
+
+    #[test]
+    fn a_mark_with_any_single_bad_input_is_refused() {
+        for (label, at, roll, size, lifetime) in single_bad_inputs() {
+            let mut rig = Rig::new();
+            let style = MarkStyle {
+                size,
+                material: 6,
+                lifetime,
+                fade: Duration::ZERO,
+            };
+
+            rig.effects.mark(at, Vec3::Y, roll, style);
+
+            assert_eq!(rig.effects.live(), 0, "{label}");
+            assert!(frame_meshes(&mut rig, EYE).is_empty(), "{label}");
+        }
+        let mut control = Rig::new();
+        control
+            .effects
+            .mark(Vec3::new(1.0, 2.0, 3.0), Vec3::Y, 0.3, mark_style(0.2));
+        assert_eq!(control.effects.live(), 1, "the valid control is admitted");
+    }
+
     #[test]
     fn a_refused_spawn_evicts_nothing() {
         let mut rig = Rig::new();
