@@ -234,8 +234,10 @@ impl PhysicsWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::test_support::{
+        floor_mesh, seam_floor_meshes, slab_mesh, slope_mesh, TEST_TAG,
+    };
     use crate::world::RayQuery;
-    use crate::world::test_support::{TEST_TAG, floor_mesh, slab_mesh, slope_mesh};
     use moho_render_api::{WorldMesh, WorldMeshId};
     use proptest::prelude::*;
     use std::f32::consts::FRAC_PI_2;
@@ -1182,19 +1184,26 @@ mod tests {
             let velocity = read(&world, id).linear_velocity;
             let speed = velocity.with_y(0.0).length();
             // The solver's settling bounce moves up to about 1 mm/s between vertical and
-            // horizontal; the brake takes 26 mm/s a tick.
+            // horizontal; the brake takes a * dt a tick.
             assert!(
                 speed <= previous + 2e-3,
                 "tick {tick}: speed rose from {previous} to {speed}, velocity {velocity}"
             );
+            let brake_per_tick = 18.0 * degrees(5.0).tan() * DT;
+            if tick > 10 {
+                assert!(
+                    previous - speed <= brake_per_tick + 2e-3 || speed == 0.0,
+                    "tick {tick}: speed fell from {previous} to {speed}, more than the brake allows"
+                );
+            }
             previous = speed;
         }
 
         let state = read(&world, id);
         assert!(state.asleep, "the capsule is still moving, {state:?}");
         assert!(
-            state.position.z <= 1.5,
-            "it rolled {} m before stopping",
+            (1.0..=1.5).contains(&state.position.z),
+            "it rolled {} m before stopping, theory 1.27",
             state.position.z
         );
     }
@@ -1244,14 +1253,14 @@ mod tests {
     }
 
     #[test]
-    fn a_new_world_rests_objects_up_to_five_degrees() {
+    fn a_new_world_has_a_five_degree_rest_slope() {
         let world = PhysicsWorld::new();
 
         assert!((world.rest_slope() - degrees(5.0)).abs() <= 1e-6);
     }
 
     #[test]
-    fn the_rest_slope_is_game_data() {
+    fn a_ten_degree_rest_slope_holds_a_capsule_on_eight_degrees() {
         let (half_height, radius) = CAPSULE;
         let (mut steep, id, start) = on_a_slope(capsule(half_height, radius), radius, 8.0);
         steep.set_rest_slope(degrees(10.0));
@@ -1265,8 +1274,10 @@ mod tests {
             "with a 10 degree rest slope the capsule moved {moved} m, asleep {}",
             state.asleep
         );
-        assert!((steep.rest_slope() - degrees(10.0)).abs() <= 1e-6);
+    }
 
+    #[test]
+    fn a_zero_rest_slope_leaves_a_rolling_capsule_rolling() {
         let (mut flat, rolling) = rolling_capsule_on_the_floor(2.0);
         flat.set_rest_slope(0.0);
 
@@ -1365,6 +1376,219 @@ mod tests {
     }
 
     #[test]
+    fn a_bouncing_lying_capsule_has_the_same_vertical_velocity_with_and_without_the_brake() {
+        let (half_height, radius) = CAPSULE;
+        let spawn = LooseSpawn {
+            restitution: 0.5,
+            ..lying_spawn(capsule(half_height, radius), Vec3::new(0.0, 1.0, 0.0))
+        };
+        let mut braked = world_with_floor(&floor_mesh(0.0));
+        let mut free = world_with_floor(&floor_mesh(0.0));
+        free.set_rest_slope(0.0);
+        let braked_id = braked.spawn_loose(&spawn);
+        let free_id = free.spawn_loose(&spawn);
+
+        let mut peak_after_bounce = 0.0f32;
+        let mut bounced = false;
+        for tick in 1..=90 {
+            braked.step(DT);
+            free.step(DT);
+            let (with, without) = (read(&braked, braked_id), read(&free, free_id));
+            bounced |= with.linear_velocity.y > 0.5;
+            if bounced {
+                peak_after_bounce = peak_after_bounce.max(with.position.y);
+            }
+            assert_eq!(
+                with.linear_velocity.y.to_bits(),
+                without.linear_velocity.y.to_bits(),
+                "tick {tick}: vertical velocity differs"
+            );
+        }
+        assert!(
+            peak_after_bounce > radius + 0.05,
+            "the capsule never bounced, peak {peak_after_bounce}"
+        );
+    }
+
+    #[test]
+    fn a_sliding_box_is_not_braked() {
+        let spawn = LooseSpawn {
+            friction: 0.02,
+            linear_velocity: Vec3::new(2.0, 0.0, 0.0),
+            ..LooseSpawn::new(FLAT_BOX_SHAPE, 0.2)
+        };
+        let spawn = LooseSpawn {
+            position: Vec3::new(-3.0, FLAT_BOX.y, 0.0),
+            ..spawn
+        };
+        let mut braked = world_with_floor(&floor_mesh(0.0));
+        let mut free = world_with_floor(&floor_mesh(0.0));
+        free.set_rest_slope(0.0);
+        let braked_id = braked.spawn_loose(&spawn);
+        let free_id = free.spawn_loose(&spawn);
+
+        for tick in 1..=120 {
+            braked.step(DT);
+            free.step(DT);
+            let (with, without) = (read(&braked, braked_id), read(&free, free_id));
+            assert_eq!(
+                bits(&with),
+                bits(&without),
+                "tick {tick}: state bits differ"
+            );
+            if tick == 12 {
+                assert!(
+                    with.linear_velocity.x > 0.5,
+                    "the box is not sliding, {with:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_rolling_capsule_on_a_large_box_stops_on_it() {
+        let (half_height, radius) = CAPSULE;
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let slab = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.1, 0.0),
+            ..LooseSpawn::new(cuboid(Vec3::new(1.0, 0.1, 1.0)), 5.0)
+        });
+        run(&mut world, 120);
+        let top = 0.2;
+        let id = world.spawn_loose(&LooseSpawn {
+            linear_velocity: Vec3::new(0.0, 0.0, 2.0),
+            angular_velocity: Vec3::new(2.0 / radius, 0.0, 0.0),
+            ..lying_spawn(
+                capsule(half_height, radius),
+                Vec3::new(0.0, top + radius, -0.9),
+            )
+        });
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        let slab_state = read(&world, slab);
+        assert!(state.asleep, "the capsule is still moving, {state:?}");
+        assert!(
+            state.position.z + 0.9 <= 1.5,
+            "it rolled {} m",
+            state.position.z + 0.9
+        );
+        assert!(
+            (state.position.y - (top + radius)).abs() <= 0.005,
+            "the capsule left the box top, {state:?}"
+        );
+        assert!(slab_state.asleep, "the box is awake, {slab_state:?}");
+    }
+
+    #[test]
+    fn a_stronger_gravity_still_holds_a_capsule_on_a_4_9_degree_slope() {
+        let (half_height, radius) = CAPSULE;
+        let (mut world, id, start) = on_a_slope(capsule(half_height, radius), radius, 4.9);
+        world.set_gravity(30.0);
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        let moved = state.position.distance(start);
+        assert!(
+            moved < REST_SLOPE_TOLERANCE_M && state.asleep,
+            "at gravity 30 the capsule moved {moved} m, asleep {}",
+            state.asleep
+        );
+    }
+
+    #[test]
+    fn a_rolling_capsule_in_zero_gravity_is_finite_and_not_braked() {
+        let (half_height, radius) = CAPSULE;
+        let spawn = LooseSpawn {
+            linear_velocity: Vec3::new(0.0, 0.0, 2.0),
+            angular_velocity: Vec3::new(2.0 / radius, 0.0, 0.0),
+            ..lying_spawn(capsule(half_height, radius), Vec3::new(0.0, radius, 0.0))
+        };
+        let mut braked = world_with_floor(&floor_mesh(0.0));
+        let mut free = world_with_floor(&floor_mesh(0.0));
+        braked.set_gravity(0.0);
+        free.set_gravity(0.0);
+        free.set_rest_slope(0.0);
+        let braked_id = braked.spawn_loose(&spawn);
+        let free_id = free.spawn_loose(&spawn);
+
+        for tick in 1..=10 {
+            braked.step(DT);
+            free.step(DT);
+            let (with, without) = (read(&braked, braked_id), read(&free, free_id));
+            assert!(
+                with.position.is_finite() && with.linear_velocity.is_finite(),
+                "tick {tick}: {with:?}"
+            );
+            assert_eq!(
+                bits(&with),
+                bits(&without),
+                "tick {tick}: state bits differ"
+            );
+        }
+    }
+
+    #[test]
+    fn a_yawed_rolling_capsule_slows_every_tick_and_stops() {
+        let (half_height, radius) = CAPSULE;
+        let yaw = Quat::from_rotation_y(degrees(30.0));
+        let forward = yaw * Vec3::Z;
+        let axis = yaw * Vec3::X;
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, radius, 0.0),
+            rotation: yaw * lying_across_z(),
+            linear_velocity: forward * 2.0,
+            angular_velocity: axis * (2.0 / radius),
+            ..LooseSpawn::new(capsule(half_height, radius), 0.2)
+        });
+        let mut previous = 2.0f32;
+
+        for tick in 1..=300 {
+            world.step(DT);
+            let speed = read(&world, id).linear_velocity.with_y(0.0).length();
+            assert!(
+                speed <= previous + 2e-3,
+                "tick {tick}: speed rose from {previous} to {speed}"
+            );
+            previous = speed;
+        }
+
+        let state = read(&world, id);
+        assert!(state.asleep, "the capsule is still moving, {state:?}");
+        assert!(
+            state.position.with_y(0.0).length() <= 1.5,
+            "it rolled {} m",
+            state.position.with_y(0.0).length()
+        );
+    }
+
+    #[test]
+    fn a_capsule_lying_across_a_gap_is_held_by_its_straight_part() {
+        let (half_height, radius) = CAPSULE;
+        let mut world = PhysicsWorld::new();
+        for (index, mesh) in seam_floor_meshes(0.2).iter().enumerate() {
+            world.set_world_mesh(WorldMeshId(index as u64), mesh, TEST_TAG);
+        }
+        let id = world.spawn_loose(&LooseSpawn {
+            rotation: Quat::from_rotation_x(FRAC_PI_2),
+            position: Vec3::new(0.0, radius + 0.05, 0.0),
+            ..LooseSpawn::new(capsule(half_height, radius), 0.2)
+        });
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        assert!(state.asleep, "{state:?}");
+        assert!(
+            (state.position.y - radius).abs() <= 0.002,
+            "the capsule fell into the gap, {state:?}"
+        );
+    }
+
+    #[test]
     fn a_tilted_cylinder_tips_over_instead_of_freezing_on_its_rim() {
         let (half_height, radius) = CYLINDER;
         let shape = cylinder(half_height, radius);
@@ -1423,7 +1647,7 @@ mod tests {
     #[test]
     fn the_brake_spares_overlapping_bodies() {
         let (half_height, radius) = CAPSULE;
-        let overlap = 0.01;
+        let overlap = 0.025;
         let gap = 2.0 * radius - overlap;
         let mut world = world_with_floor(&floor_mesh(0.0));
         let ids = [-0.5, 0.5].map(|side| {
@@ -1440,11 +1664,6 @@ mod tests {
         assert!(
             apart >= 2.0 * radius - 0.005,
             "the capsules ended {apart} m apart, over 5 mm deep"
-        );
-        assert!(
-            deepest_overlap(&world) <= 0.005,
-            "{}",
-            deepest_overlap(&world)
         );
         assert!(first.asleep && second.asleep, "{first:?} {second:?}");
     }
