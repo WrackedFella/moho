@@ -603,6 +603,28 @@ mod tests {
     }
 
     #[test]
+    fn enemies_path_round_a_control_post() {
+        let post = Vec3::new(0.0, 0.0, 0.0);
+        let level = control_level(&[("control_01", post, Some("next_wave"))]);
+        let arena = arena_of(&level).expect("a floor with one post builds");
+        let (west, east) = (Vec3::new(-5.0, 0.0, 0.0), Vec3::new(5.0, 0.0, 0.0));
+
+        let path = arena
+            .nav
+            .path(west, east)
+            .expect("the floor round the post is walkable");
+
+        let through_post = path.windows(2).any(|leg| {
+            (0..=100).any(|step| {
+                let at = leg[0].lerp(leg[1], step as f32 / 100.0);
+                at.x.abs() < 0.2 && at.z.abs() < 0.2
+            })
+        });
+        assert!(!through_post, "the path crosses the post: {path:?}");
+        assert!(path.len() > 2, "the path is a straight line: {path:?}");
+    }
+
+    #[test]
     fn the_shipped_arena_has_a_next_wave_control() {
         let (level, markers) = load(&shipped_arena()).expect("the shipped arena loads");
 

@@ -3460,6 +3460,55 @@ mod tests {
     }
 
     #[test]
+    fn no_prompt_while_the_console_is_open() {
+        let mut renderer = SettingsRenderer::default();
+        let mut with_control = control_game(true);
+        let mut without_control = control_game(false);
+        draw_frame(&mut with_control, &mut renderer);
+        let alive = painted_vertices(&with_control);
+        let clock = GameClock::default();
+        open_the_console(&mut with_control, &clock);
+        open_the_console(&mut without_control, &clock);
+
+        draw_frame(&mut with_control, &mut renderer);
+        draw_frame(&mut without_control, &mut renderer);
+
+        assert!(alive > 0, "the prompt shows while playing");
+        assert_eq!(
+            painted_vertices(&with_control),
+            painted_vertices(&without_control),
+            "the prompt was painted under the open console"
+        );
+    }
+
+    /// A game on the default bindings with `use` set to `value` in the `[bindings]` section.
+    fn game_with_use_bound_to(value: Option<&str>) -> SearchlightGame {
+        let section: BTreeMap<String, String> = value
+            .map(|v| ("use".to_owned(), v.to_owned()))
+            .into_iter()
+            .collect();
+        let (bindings, warnings) = ActionBindings::load(&section);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let mode = ArenaMode::new(
+            crate::test_support::arena_with_controls(&[], Vec3::ZERO, &[], &[], &[]),
+            test_config(rifle_from(mag(30, 30)), vec![]),
+            wave_tuning(1),
+        );
+        SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
+    }
+
+    #[test]
+    fn the_use_prompt_names_the_bound_key_or_unbound() {
+        let default = game_with_use_bound_to(None);
+        let rebound = game_with_use_bound_to(Some("G"));
+        let cleared = game_with_use_bound_to(Some("Unbound"));
+
+        assert_eq!(default.use_key_label(), "F");
+        assert_eq!(rebound.use_key_label(), "G");
+        assert_eq!(cleared.use_key_label(), "unbound");
+    }
+
+    #[test]
     fn control_mesh_ids_share_no_id_with_arena_dummy_or_enemy_meshes() {
         use crate::arena::{arena_mesh_id, control_mesh_id};
 
