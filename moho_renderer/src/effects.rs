@@ -244,7 +244,7 @@ impl Effects {
         self.insert(handle, Effect::Flash(flash));
     }
 
-    /// Spawn a quad on a surface at `at` with unit-length-normalised `normal`, turned by
+    /// Spawn a quad on a surface at `at` facing `normal` (normalised), turned by
     /// `roll` radians about it. A zero or non-finite normal drops the mark. At the cap it
     /// replaces the oldest flash or mark; with none, it is dropped.
     pub fn mark(&mut self, at: Vec3, normal: Vec3, roll: f32, style: MarkStyle) {
