@@ -563,7 +563,8 @@ functions over `glam` types and run without a GPU.
 
 ## 10 Effects
 
-Effects are engine-owned presentation state a game starts, places and ends by handle
+Effects are engine-owned presentation state, never sim state: a game either places one by
+handle or spawns one that expires on its own
 ([ADR-0031](../../_todo/adr/0031-effects-are-engine-presentation-state-placed-by-handle.md)).
 `moho_renderer::Effects` (`moho_renderer/src/effects.rs`, reached via `Scene::effects_mut`)
 issues an `EffectHandle`, monotonic and never reused; a stale, unknown or inert handle is ignored.
@@ -581,8 +582,8 @@ Two lifecycles share one store, cap and unshadowed draw. The streak (a tracer) i
 
 The flash and the mark are fire-and-forget: `flash(at, roll, FlashStyle)` and
 `mark(at, normal, roll, MarkStyle)` spawn once, return no handle and expire on their own
-`lifetime`. A flash is a four-point star facing the eye that shrinks linearly to nothing; a mark is
-a flat square on a surface (lifted `0.01` along `normal`) that holds full size, then shrinks over
+`lifetime`. A flash is a four-point star (`size` tip to tip) facing the eye that shrinks linearly to
+nothing; a mark is a flat square (`size` across) on a surface (lifted `0.01` along `normal`) that holds full size, then shrinks over
 `MarkStyle::fade`. A spawn that could never draw (zero lifetime, non-finite position or roll,
 non-positive size, zero or non-finite mark normal) is refused before anything is evicted. At the
 cap a spawn evicts the oldest flash or mark; streaks are never evicted, so with only streaks live
