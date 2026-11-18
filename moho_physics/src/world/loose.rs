@@ -568,11 +568,58 @@ mod tests {
             "{state:?}"
         );
         assert!(!state.asleep, "a fresh object is awake");
-        let mass = world.rigid_body_set[world.loose[&id]].mass();
+        assert_eq!(world.rigid_body_set.len(), 1, "the world holds one body");
+        let (_, body) = world.rigid_body_set.iter().next().expect("one body");
+        let mass = body.mass();
         assert!(
             (mass - 3.5).abs() <= 1e-4,
             "the body weighs the stated mass, mass={mass}"
         );
+        assert_eq!(world.collider_set.len(), 1, "the world holds one collider");
+        let (_, collider) = world.collider_set.iter().next().expect("one collider");
+        match shape {
+            LooseShape::Box { half_extents } => {
+                let cuboid = collider.shape().as_cuboid().expect("a box is a cuboid");
+                assert!(
+                    cuboid.half_extents.abs_diff_eq(half_extents, 1e-6),
+                    "{:?}",
+                    cuboid.half_extents
+                );
+            }
+            LooseShape::Capsule {
+                half_height,
+                radius,
+            } => {
+                let capsule = collider
+                    .shape()
+                    .as_capsule()
+                    .expect("a capsule is a capsule");
+                assert!(
+                    capsule
+                        .segment
+                        .a
+                        .abs_diff_eq(Vec3::new(0.0, -half_height, 0.0), 1e-6)
+                        && capsule
+                            .segment
+                            .b
+                            .abs_diff_eq(Vec3::new(0.0, half_height, 0.0), 1e-6),
+                    "the capsule runs along local Y, {:?}",
+                    capsule.segment
+                );
+                assert!((capsule.radius - radius).abs() <= 1e-6);
+            }
+            LooseShape::Cylinder {
+                half_height,
+                radius,
+            } => {
+                let cylinder = collider
+                    .shape()
+                    .as_cylinder()
+                    .expect("a cylinder is a cylinder");
+                assert!((cylinder.half_height - half_height).abs() <= 1e-6);
+                assert!((cylinder.radius - radius).abs() <= 1e-6);
+            }
+        }
     }
 
     #[test]
@@ -1104,26 +1151,37 @@ mod tests {
 
     #[test]
     fn a_rolling_capsule_slows_every_tick_and_stops() {
-        let mut world = world_with_floor(&floor_mesh(0.0));
-        let start = Vec3::new(0.0, CAPSULE_RADIUS, -5.0);
-        let id = world.spawn_loose(&rolling_capsule(start, 2.0));
-        let mut previous = read(&world, id).linear_velocity.length();
+        // The brake decelerates by gravity times tan 5 degrees: v^2 / 2a is 1.27 m at 18 and
+        // 2.54 m at 9, so a hard-coded gravity falls outside one of the bands.
+        for (gravity, stops_within) in [(18.0, 1.0..=1.5), (9.0, 2.0..=3.0)] {
+            let mut world = world_with_floor(&floor_mesh(0.0));
+            world.set_gravity(gravity);
+            let start = Vec3::new(0.0, CAPSULE_RADIUS, -5.0);
+            let id = world.spawn_loose(&rolling_capsule(start, 2.0));
+            let mut previous = read(&world, id).linear_velocity.length();
 
-        for tick in 1..=600 {
-            world.step(DT);
-            let speed = read(&world, id).linear_velocity.length();
+            for tick in 1..=600 {
+                world.step(DT);
+                let speed = read(&world, id).linear_velocity.length();
+                assert!(
+                    speed <= previous + 1e-5,
+                    "gravity {gravity}, tick {tick}: speed rose from {previous} to {speed}"
+                );
+                previous = speed;
+            }
+
+            let end = read(&world, id);
+            let rolled = end.position.distance(start);
             assert!(
-                speed <= previous + 1e-5,
-                "tick {tick}: speed rose from {previous} to {speed}"
+                stops_within.contains(&rolled),
+                "gravity {gravity}: rolled {rolled} m before stopping, wanted {stops_within:?}"
             );
-            previous = speed;
+            assert!(
+                end.linear_velocity.length() < 0.01,
+                "gravity {gravity}: still moving: {end:?}"
+            );
+            assert!(end.asleep, "gravity {gravity}: not asleep, {end:?}");
         }
-
-        let end = read(&world, id);
-        let rolled = end.position.distance(start);
-        assert!(rolled <= 1.5, "rolled {rolled} m before stopping");
-        assert!(end.linear_velocity.length() < 0.01, "still moving: {end:?}");
-        assert!(end.asleep, "a stopped capsule sleeps, {end:?}");
     }
 
     fn slope_world(degrees: f32) -> PhysicsWorld {
@@ -1256,38 +1314,33 @@ mod tests {
 
     #[test]
     fn the_brake_never_touches_vertical_velocity() {
-        let mut braked = world_with_floor(&floor_mesh(0.0));
-        let mut free = world_with_floor(&floor_mesh(0.0));
-        free.set_rest_slope(0.0);
-        let spawn = LooseSpawn {
-            position: Vec3::new(0.0, 1.0, 0.0),
-            linear_velocity: Vec3::new(1.5, 0.0, -0.5),
-            angular_velocity: Vec3::new(3.0, 2.0, -4.0),
-            ..LooseSpawn::new(cube(0.05), 0.2)
-        };
-        let braked_id = braked.spawn_loose(&spawn);
-        let free_id = free.spawn_loose(&spawn);
-        let mut compared = 0;
+        for down in [0.5, 2.0, 5.0] {
+            let mut braked = world_with_floor(&floor_mesh(0.0));
+            let mut free = world_with_floor(&floor_mesh(0.0));
+            free.set_rest_slope(0.0);
+            let spawn = LooseSpawn {
+                restitution: 0.5,
+                linear_velocity: Vec3::new(0.0, -down, 2.0),
+                ..rolling_capsule(Vec3::new(0.0, CAPSULE_RADIUS - 0.0005, -5.0), 2.0)
+            };
+            let braked_id = braked.spawn_loose(&spawn);
+            let free_id = free.spawn_loose(&spawn);
 
-        for tick in 1..=60 {
             braked.step(DT);
             free.step(DT);
+
             let (a, b) = (read(&braked, braked_id), read(&free, free_id));
-            if a.position.y - 0.05 <= 0.11 {
-                break;
-            }
             assert_eq!(
                 a.linear_velocity.y.to_bits(),
                 b.linear_velocity.y.to_bits(),
-                "tick {tick}: vertical velocity differs in free fall"
+                "falling at {down} m/s: vertical velocity differs, braked {a:?}, free {b:?}"
             );
-            compared += 1;
+            assert_ne!(
+                (a.linear_velocity.x.to_bits(), a.linear_velocity.z.to_bits()),
+                (b.linear_velocity.x.to_bits(), b.linear_velocity.z.to_bits()),
+                "falling at {down} m/s: the brake did not act, braked {a:?}, free {b:?}"
+            );
         }
-
-        assert!(
-            compared >= 10,
-            "only {compared} ticks of free fall compared"
-        );
     }
 
     #[test]
@@ -1308,10 +1361,34 @@ mod tests {
             let axis = state.rotation * Vec3::Y;
             let from_vertical = angle_from_vertical_degrees(axis);
             let from_vertical = from_vertical.min(180.0 - from_vertical);
+            let standing = from_vertical <= 2.0;
+            let lying = from_vertical >= 88.0;
             assert!(
-                from_vertical <= 2.0 || from_vertical >= 88.0,
+                standing || lying,
                 "released at {degrees} degrees it froze {from_vertical} degrees from vertical, {state:?}"
             );
+            // It tips over past atan(radius / half height), about 32 degrees.
+            if degrees <= 20.0 {
+                assert!(
+                    standing,
+                    "released at {degrees} degrees it should stand, {state:?}"
+                );
+                assert!(
+                    (state.position.y - CYLINDER_HALF_HEIGHT).abs() <= 0.001,
+                    "standing centre height {}",
+                    state.position.y
+                );
+            } else if degrees >= 45.0 {
+                assert!(
+                    lying,
+                    "released at {degrees} degrees it should lie, {state:?}"
+                );
+                assert!(
+                    (state.position.y - CYLINDER_RADIUS).abs() <= 0.001,
+                    "lying centre height {}",
+                    state.position.y
+                );
+            }
             assert!(
                 state.asleep,
                 "released at {degrees} degrees it is awake, {state:?}"
@@ -1337,7 +1414,30 @@ mod tests {
                 lowest_point(capsule(), &a) > 0.0,
                 "tick {tick}: the capsule touched the floor, {a:?}"
             );
+            let gaps = floor_contact_gaps(&braked);
+            assert!(
+                gaps.iter().any(|&gap| gap > 0.0),
+                "tick {tick}: no predicted floor contact point, gaps {gaps:?}"
+            );
         }
+    }
+
+    /// The `dist` of every contact point between a loose body and the fixed floor; positive
+    /// means predicted but not yet touching.
+    fn floor_contact_gaps(world: &PhysicsWorld) -> Vec<f32> {
+        let mut gaps = Vec::new();
+        for contact in world.narrow_phase.contact_pairs() {
+            let loose_sides = [contact.collider1, contact.collider2]
+                .iter()
+                .filter(|&&handle| world.collider_set[handle].parent().is_some())
+                .count();
+            if loose_sides == 1 {
+                for manifold in contact.manifolds() {
+                    gaps.extend(manifold.points.iter().map(|point| point.dist));
+                }
+            }
+        }
+        gaps
     }
 
     /// The deepest penetration, in metres, of any contact between two loose bodies and of any
@@ -1395,6 +1495,123 @@ mod tests {
         for id in ids {
             assert!(read(&world, id).asleep, "a capsule is awake");
         }
+    }
+
+    fn is_finite(state: &LooseState) -> bool {
+        state.position.is_finite()
+            && state.rotation.is_finite()
+            && state.linear_velocity.is_finite()
+            && state.angular_velocity.is_finite()
+    }
+
+    #[test]
+    fn a_box_is_never_braked() {
+        let mut braked = world_with_floor(&floor_mesh(0.0));
+        let mut free = world_with_floor(&floor_mesh(0.0));
+        free.set_rest_slope(0.0);
+        let spawn = LooseSpawn {
+            position: Vec3::new(0.0, FLAT_BOX.y, 0.0),
+            linear_velocity: Vec3::new(1.5, 0.0, 0.0),
+            ..LooseSpawn::new(cuboid(FLAT_BOX), 0.2)
+        };
+        let braked_id = braked.spawn_loose(&spawn);
+        let free_id = free.spawn_loose(&spawn);
+
+        for tick in 1..=60 {
+            braked.step(DT);
+            free.step(DT);
+            let (a, b) = (read(&braked, braked_id), read(&free, free_id));
+            assert_eq!(bits(&a), bits(&b), "tick {tick}: state bits differ");
+        }
+    }
+
+    #[test]
+    fn a_capsule_sliding_along_its_axis_is_not_braked() {
+        let travel = |rest_slope: Option<f32>| {
+            let mut world = world_with_floor(&floor_mesh(0.0));
+            if let Some(slope) = rest_slope {
+                world.set_rest_slope(slope);
+            }
+            let id = world.spawn_loose(&LooseSpawn {
+                position: Vec3::new(-5.0, CAPSULE_RADIUS, 0.0),
+                rotation: lying_across(),
+                linear_velocity: Vec3::new(2.0, 0.0, 0.0),
+                ..LooseSpawn::new(capsule(), 0.2)
+            });
+            run(&mut world, 60);
+            read(&world, id).position.x + 5.0
+        };
+
+        let braked = travel(None);
+        let free = travel(Some(0.0));
+
+        assert!(free > 0.1, "the capsule slid {free} m");
+        assert!(
+            (braked - free).abs() <= 0.001,
+            "braked slid {braked} m, free slid {free} m"
+        );
+    }
+
+    #[test]
+    fn a_capsule_rolling_on_a_box_top_stops_on_it() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.1, 0.0),
+            ..LooseSpawn::new(cuboid(Vec3::new(1.0, 0.1, 1.0)), 50.0)
+        });
+        run(&mut world, 120);
+        let start = Vec3::new(0.0, 0.2 + CAPSULE_RADIUS, -0.5);
+        let id = world.spawn_loose(&rolling_capsule(start, 0.5));
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        let rolled = state.position.distance(start);
+        assert!(rolled < 0.3, "rolled {rolled} m on the box top, {state:?}");
+        assert!(
+            state.position.y > 0.2 + CAPSULE_RADIUS - 0.005,
+            "the capsule left the box top, {state:?}"
+        );
+        assert!(state.asleep, "the capsule is awake, {state:?}");
+    }
+
+    #[test]
+    fn zero_gravity_turns_the_brake_off() {
+        let mut braked = world_with_floor(&floor_mesh(0.0));
+        let mut free = world_with_floor(&floor_mesh(0.0));
+        braked.set_gravity(0.0);
+        free.set_gravity(0.0);
+        free.set_rest_slope(0.0);
+        let spawn = rolling_capsule(Vec3::new(0.0, CAPSULE_RADIUS, -5.0), 2.0);
+        let braked_id = braked.spawn_loose(&spawn);
+        let free_id = free.spawn_loose(&spawn);
+
+        for tick in 1..=60 {
+            braked.step(DT);
+            free.step(DT);
+            let (a, b) = (read(&braked, braked_id), read(&free, free_id));
+            assert!(
+                is_finite(&a),
+                "tick {tick}: braked state is not finite, {a:?}"
+            );
+            assert_eq!(bits(&a), bits(&b), "tick {tick}: state bits differ");
+        }
+    }
+
+    #[test]
+    fn spawn_rejects_a_bad_mass_on_a_capsule_or_cylinder() {
+        let mut rows = Vec::new();
+
+        for (shape_name, shape) in [("capsule", capsule()), ("cylinder", cylinder())] {
+            for (name, mass) in BAD_POSITIVE {
+                rows.push((
+                    format!("{name} mass on a {shape_name}"),
+                    LooseSpawn::new(shape, mass),
+                ));
+            }
+        }
+
+        assert_rows_rejected(&rows, "mass must be positive and finite");
     }
 
     const PILE_SEEDS: [u64; 4] = [1, 7, 42, 0x776];
