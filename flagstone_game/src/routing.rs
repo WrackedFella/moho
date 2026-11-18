@@ -287,6 +287,118 @@ mod tests {
         assert_eq!(funded.map(|r| r.len()), Some(31));
     }
 
+    fn least_budget(grid: &VoxelGrid, start: BlockPos, goal: BlockPos) -> Option<usize> {
+        (0..200).find(|&budget| route(grid, start, |c| c == goal, goal, budget).is_some())
+    }
+
+    #[test]
+    fn a_search_along_x_expands_only_the_cells_toward_the_goal() {
+        let grid = flat(0..=30, -2..=2);
+
+        let least = least_budget(&grid, cell(0, 1, 0), cell(30, 1, 0));
+
+        assert_eq!(least, Some(30), "one expansion per cell before the goal");
+    }
+
+    #[test]
+    fn a_search_along_z_expands_only_the_cells_toward_the_goal() {
+        let grid = flat(-2..=2, 0..=30);
+
+        let least = least_budget(&grid, cell(0, 1, 0), cell(0, 1, 30));
+
+        assert_eq!(least, Some(30), "one expansion per cell before the goal");
+    }
+
+    #[test]
+    fn a_search_with_decoy_branches_ignores_them() {
+        let mut grid = VoxelGrid::new(16);
+        for x in -10..=10 {
+            solid(&mut grid, cell(x, 0, 0));
+        }
+        for z in -10..=10 {
+            solid(&mut grid, cell(10, 0, z));
+            if z < 0 {
+                solid(&mut grid, cell(0, 0, z));
+            }
+        }
+        let goal = cell(10, 1, 10);
+
+        let least = least_budget(&grid, cell(0, 1, 0), goal);
+
+        assert_eq!(
+            least,
+            Some(20),
+            "only the cells of the real path are expanded"
+        );
+    }
+
+    #[test]
+    fn equally_short_routes_break_ties_by_cost_then_insertion_order() {
+        let grid = flat(-3..=3, -3..=3);
+
+        let found = go(&grid, cell(0, 1, 0), cell(2, 1, 2));
+
+        assert_eq!(
+            found,
+            Some(vec![
+                cell(0, 1, 0),
+                cell(1, 1, 0),
+                cell(2, 1, 0),
+                cell(2, 1, 1),
+                cell(2, 1, 2)
+            ])
+        );
+    }
+
+    #[test]
+    fn the_shortest_way_round_a_wall_is_taken() {
+        let mut grid = flat(-1..=12, -6..=6);
+        for z in -5..=5 {
+            for y in 1..=2 {
+                solid(&mut grid, cell(5, y, z));
+            }
+        }
+        let goal = cell(10, 1, 0);
+
+        let found = go(&grid, cell(0, 1, 0), goal);
+
+        let found = found.expect("the wall has gaps at both ends");
+        assert_eq!(
+            found.len(),
+            23,
+            "10 columns across and 12 round the wall: {found:?}"
+        );
+    }
+
+    #[test]
+    fn a_route_through_scattered_pillars_is_the_shortest_possible() {
+        const LCG_MUL: u64 = 6_364_136_223_846_793_005;
+        const LCG_ADD: u64 = 1_442_695_040_888_963_407;
+        // Seeds whose pillar fields (30% of columns, two blocks high) still leave a way across,
+        // and on which a search that ignores the cost so far wanders off the shortest way.
+        for seed in [5u64, 10, 16, 31] {
+            let mut grid = flat(0..=9, 0..=9);
+            let mut state = seed.wrapping_mul(LCG_MUL).wrapping_add(LCG_ADD);
+            for x in 0..=9 {
+                for z in 0..=9 {
+                    state = state.wrapping_mul(LCG_MUL).wrapping_add(LCG_ADD);
+                    if (state >> 33) % 100 < 30 && (x, z) != (0, 0) && (x, z) != (9, 9) {
+                        solid(&mut grid, cell(x, 1, z));
+                        solid(&mut grid, cell(x, 2, z));
+                    }
+                }
+            }
+
+            let found = go(&grid, cell(0, 1, 0), cell(9, 1, 9));
+
+            assert_eq!(
+                found.map(|r| r.len()),
+                Some(19),
+                "seed {seed}: 18 columns across is 18 steps"
+            );
+        }
+    }
+
     #[test]
     fn a_start_inside_the_ground_tries_the_cell_above_and_nothing_further() {
         let mut grid = flat(-2..=8, -2..=2);
@@ -339,6 +451,7 @@ mod tests {
                 d.x.abs() + d.z.abs() == 1 && d.y.abs() <= 1
             });
             prop_assert!(adjacent);
+            prop_assert_eq!(found.len(), 15, "14 columns apart is 14 steps");
             let last = *found.last().expect("a route has cells");
             prop_assert!(last.x == 7 && last.z == 7);
         }

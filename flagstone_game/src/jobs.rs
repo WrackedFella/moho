@@ -629,6 +629,153 @@ mod tests {
         assert!(marks.contains([5, 1, 0]));
     }
 
+    #[test]
+    fn the_eye_is_the_capsule_centre_above_the_feet() {
+        let pose = Pose {
+            feet: Vec3::new(1.0, 2.0, 3.0),
+            yaw: 0.7,
+        };
+
+        let eye = pose.eye();
+
+        assert!((eye - Vec3::new(1.0, 3.15, 3.0)).length() < 1e-5, "{eye}");
+    }
+
+    #[test]
+    fn a_block_open_on_one_side_aims_at_that_face_and_counts_as_exposed() {
+        let block = cell(5, 5, 5);
+        for open in NEIGHBOURS {
+            let mut grid = VoxelGrid::new(16);
+            grid.mutator().place(block, 1, None);
+            for d in NEIGHBOURS.into_iter().filter(|&d| d != open) {
+                grid.mutator().place(block + d, 1, None);
+            }
+            let far_eye = Vec3::new(5.5, 5.5, 5.5) + Vec3::new(3.0, 4.0, 5.0);
+
+            let aim = nearest_exposed_face(&grid, block, far_eye);
+
+            let expected = Vec3::new(5.5, 5.5, 5.5) + open.as_vec3() * 0.5;
+            assert!(
+                aim.is_some_and(|a| (a - expected).length() < 1e-5),
+                "open {open}: {aim:?}"
+            );
+            assert!(has_exposed_face(&grid, block), "open {open}");
+        }
+    }
+
+    #[test]
+    fn a_block_with_every_side_solid_has_no_face_to_aim_at() {
+        let block = cell(5, 5, 5);
+        let mut grid = VoxelGrid::new(16);
+        grid.mutator().place(block, 1, None);
+        for d in NEIGHBOURS {
+            grid.mutator().place(block + d, 1, None);
+        }
+
+        assert!(!has_exposed_face(&grid, block));
+        assert_eq!(nearest_exposed_face(&grid, block, Vec3::ZERO), None);
+    }
+
+    fn stall_after(feet: Vec3, stall: StallGuard) -> (usize, StallGuard) {
+        let mut grid = ground();
+        place(&mut grid, &[[5, 1, 0]]);
+        let mut marks = marked(&[[5, 1, 0]]);
+        let mut job = Job::Mine {
+            mark: [5, 1, 0],
+            route: vec![cell(0, 1, 0), cell(4, 1, 0)],
+            next: 0,
+            stall,
+        };
+
+        step(
+            &mut job,
+            ME,
+            &mut Pawn::default(),
+            Pose { feet, yaw: 0.0 },
+            &mut marks,
+            &grid,
+        );
+
+        match job {
+            Job::Mine { next, stall, .. } => (next, stall),
+            Job::Idle => panic!("the job ended"),
+        }
+    }
+
+    #[test]
+    fn progress_must_beat_the_best_distance_by_the_epsilon() {
+        let waypoint_x = 0.5;
+        let guard = StallGuard {
+            ticks: 5,
+            best_distance: 1.0,
+        };
+        let exactly_epsilon = 1.0 - PROGRESS_EPSILON;
+        let clearly_closer = 0.9;
+
+        let (_, barely) = stall_after(Vec3::new(waypoint_x - exactly_epsilon, 1.0, 0.5), guard);
+        let (_, closer) = stall_after(Vec3::new(waypoint_x - clearly_closer, 1.0, 0.5), guard);
+
+        assert_eq!(
+            barely.ticks, 6,
+            "a gain of exactly the epsilon is no progress"
+        );
+        assert_eq!(barely.best_distance, 1.0);
+        assert_eq!(closer.ticks, 0);
+        assert_eq!(closer.best_distance, clearly_closer);
+    }
+
+    #[test]
+    fn a_waypoint_counts_as_reached_at_exactly_the_arrive_radius() {
+        let guard = StallGuard {
+            ticks: 0,
+            best_distance: 1.0,
+        };
+
+        let (at_edge, _) = stall_after(Vec3::new(0.5 - ARRIVE_RADIUS, 1.0, 0.5), guard);
+        let (outside, _) = stall_after(Vec3::new(0.5 - ARRIVE_RADIUS - 0.01, 1.0, 0.5), guard);
+
+        assert_eq!(at_edge, 1);
+        assert_eq!(outside, 0);
+    }
+
+    #[test]
+    fn steer_does_not_walk_at_exactly_the_edge_of_the_cone() {
+        let to = Vec3::new(1.0, 0.0, 0.0);
+        let heading = std::f32::consts::FRAC_PI_2;
+        let base = i64::from((heading - WALK_CONE).to_bits());
+        let error_of = |yaw: f32| (heading - yaw + PI).rem_euclid(TAU) - PI;
+        let yaw = (-300..=300)
+            .map(|k| f32::from_bits((base + k) as u32))
+            .find(|&yaw| error_of(yaw) == WALK_CONE)
+            .expect("some yaw puts the heading error exactly on the cone edge");
+
+        let at_edge = steer(
+            Pose {
+                feet: Vec3::ZERO,
+                yaw,
+            },
+            to,
+        );
+
+        assert_eq!(at_edge.forward, 0.0);
+    }
+
+    #[test]
+    fn steer_turns_through_the_wrap_at_pi() {
+        let per_tick = TURN_RATE / TICK_HZ as f32;
+        let facing_just_before_pi = Pose {
+            feet: Vec3::ZERO,
+            yaw: 3.0,
+        };
+        let heading = -3.0f32;
+        let to = Vec3::new(heading.sin(), 0.0, heading.cos()) * 4.0;
+
+        let step = steer(facing_just_before_pi, to);
+
+        assert!((step.yaw_delta - per_tick).abs() < 1e-4, "{step:?}");
+        assert_eq!(step.forward, 1.0, "0.28 rad off is within the cone");
+    }
+
     proptest! {
         #[test]
         fn every_stand_cell_is_within_the_mining_reach(
