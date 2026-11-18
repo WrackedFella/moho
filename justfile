@@ -39,6 +39,7 @@ deny:
     cargo deny check
     scripts/check-physics-features.sh
     "{{replace(just_executable(), '\', '/')}}" _physics-rejects rapier-missing rapier3d parry3d
+    "{{replace(just_executable(), '\', '/')}}" _physics-rejects rapier-two-versions rapier3d parry3d
     "{{replace(just_executable(), '\', '/')}}" _physics-rejects parry-missing parry3d rapier3d
     "{{replace(just_executable(), '\', '/')}}" _physics-rejects parry-absent parry3d rapier3d
     "{{replace(just_executable(), '\', '/')}}" _physics-accepts both-enabled
