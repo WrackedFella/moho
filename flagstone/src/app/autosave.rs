@@ -810,6 +810,30 @@ mod tests {
         }
 
         #[test]
+        fn off_schedule_is_never_due_after_edits_and_a_huge_tick_count() {
+            let mut schedule = AutosaveSchedule::off();
+            schedule.mark_edited();
+
+            schedule.ticks_since_save = u64::MAX - 1;
+            schedule.tick();
+            schedule.tick();
+            assert!(!schedule.due(), "an off schedule became due");
+
+            schedule.saved();
+            schedule.mark_edited();
+            schedule.ticks_since_save = u64::MAX;
+            schedule.tick();
+            assert!(!schedule.due(), "an off schedule became due after a save");
+
+            schedule.save_failed();
+            schedule.tick();
+            assert!(
+                !schedule.due(),
+                "an off schedule became due after a failure"
+            );
+        }
+
+        #[test]
         fn schedule_failed_save_retries_next_interval() {
             let mut schedule = AutosaveSchedule::new(2);
             schedule.mark_edited();

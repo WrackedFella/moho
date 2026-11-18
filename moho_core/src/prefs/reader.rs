@@ -697,6 +697,71 @@ mod tests {
     }
 
     #[test]
+    fn u32_max_autosave_seconds_clamps_to_an_hour_without_warning() {
+        let (prefs, issues) = world_autosave("4294967295");
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(prefs.autosave_interval(), Some(Duration::from_secs(3600)));
+    }
+
+    #[test]
+    fn one_second_autosave_clamps_to_30_seconds_and_is_not_off() {
+        let (prefs, issues) = world_autosave("1");
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(prefs.autosave_interval(), Some(Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn u32_overflowing_autosave_seconds_is_malformed_and_falls_back() {
+        let (prefs, issues) = world_autosave("4294967296");
+
+        assert_eq!(
+            issues,
+            vec![malformed("world", "autosave_seconds", Some("4294967296"))]
+        );
+        assert_eq!(prefs.autosave_interval(), Some(Duration::from_secs(120)));
+        let text = PrefsWarning {
+            file: PathBuf::from("prefs.ini"),
+            issue: issues[0].clone(),
+        }
+        .to_string();
+        assert!(text.contains("[world] autosave_seconds"), "{text}");
+    }
+
+    #[test]
+    fn plus_signed_autosave_seconds_loads_without_warning() {
+        let (prefs, issues) = world_autosave("+300");
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(prefs.autosave_interval(), Some(Duration::from_secs(300)));
+    }
+
+    #[test]
+    fn fractional_autosave_seconds_is_malformed_and_falls_back() {
+        let (prefs, issues) = world_autosave("300.5");
+
+        assert_eq!(
+            issues,
+            vec![malformed("world", "autosave_seconds", Some("300.5"))]
+        );
+        assert_eq!(prefs.autosave_interval(), Some(Duration::from_secs(120)));
+    }
+
+    #[test]
+    fn autosave_off_survives_a_save_and_reload() {
+        let prefs = Prefs {
+            world_autosave_seconds: 0,
+            ..Prefs::default()
+        };
+
+        let (reloaded, issues) = Prefs::parse(&prefs.to_ini_string());
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(reloaded.autosave_interval(), None);
+    }
+
+    #[test]
     fn autosave_bounds_load_unchanged_without_warning() {
         for seconds in [30, 3600] {
             let (prefs, issues) = world_autosave(&seconds.to_string());
