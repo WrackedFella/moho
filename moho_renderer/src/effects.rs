@@ -1,5 +1,6 @@
-//! Engine-drawn effects, placed by handle: a game starts one, places it every frame and
-//! ends it; the engine owns its life, fade, cap and unshadowed draw.
+//! Engine-drawn effects. A streak is placed by handle: a game starts it, places it every
+//! frame and ends it. A flash or mark is spawned at a point and forgotten. The engine owns
+//! every effect's life, fade, cap and unshadowed draw.
 
 use crate::WorldMeshes;
 use glam::{Affine3A, Vec3};

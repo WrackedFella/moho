@@ -37,7 +37,7 @@ impl Scene {
         &mut self.markers
     }
 
-    /// Begin, place and end engine-drawn effects; they draw on the next `render`.
+    /// Start, place and end streaks and spawn flashes and marks; they draw on the next `render`.
     pub fn effects_mut(&mut self) -> &mut Effects {
         &mut self.effects
     }
