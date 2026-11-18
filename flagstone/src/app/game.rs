@@ -3802,6 +3802,28 @@ mod tests {
         }
 
         #[test]
+        fn a_click_on_the_pawns_feet_selects_it() {
+            let (mut app, camera) = selection_app();
+            let feet = Vec3::new(
+                PAWN_CENTRE.x,
+                PAWN_CENTRE.y - PAWN_HALF_EXTENTS.y + 0.1,
+                PAWN_CENTRE.z + PAWN_HALF_EXTENTS.z,
+            );
+
+            click_world(&mut app, camera, feet);
+            step(&mut app);
+
+            let hit = app.pointer_hit.expect("the click also reaches the ground");
+            let box_entry = (feet - camera.2).length();
+            assert!(
+                hit.distance > box_entry,
+                "the ground ({}) lies behind the box entry ({box_entry})",
+                hit.distance
+            );
+            assert_eq!(selected(&app), Some(PLAYER_PAWN));
+        }
+
+        #[test]
         fn strategy_click_on_empty_ground_clears_the_selection() {
             let (mut app, camera) = selection_app();
             click_the_pawn(&mut app, camera);

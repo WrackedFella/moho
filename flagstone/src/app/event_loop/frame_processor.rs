@@ -1189,6 +1189,38 @@ mod tests {
     }
 
     #[test]
+    fn selection_panel_lists_carried_resources_in_id_order() {
+        let expected_panel = flagstone_ui::overlays::SelectionHud {
+            title: "Pawn".to_string(),
+            tool: Some("Pickaxe".to_string()),
+            carried: vec![("Iron ore".to_string(), 12), ("Resource 3".to_string(), 5)],
+        };
+        let reversed_panel = flagstone_ui::overlays::SelectionHud {
+            carried: vec![("Resource 3".to_string(), 5), ("Iron ore".to_string(), 12)],
+            ..expected_panel.clone()
+        };
+
+        for _ in 0..8 {
+            let mut app = App::headless();
+            app.pawn.inventory.add(3, 5);
+            app.pawn.inventory.add(1, 12);
+            app.selection
+                .click(Some(flagstone_game::selection::PLAYER_PAWN));
+
+            let (produced, expected) = selection_frames(&mut app, Some(expected_panel.clone()));
+            let (_, reversed) = selection_frames(&mut app, Some(reversed_panel.clone()));
+            let (again, _) = selection_frames(&mut app, None);
+
+            assert!(
+                produced == expected,
+                "the carried list is not [Iron ore 12, Resource 3 5] in id order"
+            );
+            assert!(produced != reversed, "the reversed list paints the same");
+            assert!(produced == again, "the order changes between frames");
+        }
+    }
+
+    #[test]
     fn selection_panel_omits_the_tool_when_unequipped() {
         let mut app = selected_app_carrying_iron_ore();
         app.pawn.equipped_tool = None;
