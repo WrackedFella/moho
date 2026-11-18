@@ -1285,6 +1285,38 @@ mod tests {
         }
 
         #[test]
+        fn returning_to_first_person_starts_where_the_pawn_walked_to() {
+            use crate::app::event_loop::frame_processor::tests::colony_jobs::{
+                colony_app, player_state,
+            };
+            let mut app = colony_app(2.5, false, None);
+            let start = player_state(&app).position;
+            app.colony.marks.toggle([12, 3, 8]);
+            for _ in 0..30 {
+                step(&mut app);
+            }
+            let walked_to = player_state(&app).position;
+            assert!(
+                walked_to.distance(start) > 0.5,
+                "the pawn set off on its job: {start} to {walked_to}"
+            );
+
+            tap(&mut app);
+            step(&mut app);
+
+            assert_eq!(mode(&app), CameraMode::FirstPerson);
+            let (position, _) = pose(&app);
+            assert!(
+                position.distance(walked_to) < 0.05,
+                "possession starts at {position}, not where the pawn walked to, {walked_to}"
+            );
+            assert!(
+                player_state(&app).position.distance(walked_to) < 0.05,
+                "the body resumes from the walked-to spot"
+            );
+        }
+
+        #[test]
         fn possess_return_possess_restores_the_same_pawn_pose() {
             let mut app = app_in(CameraMode::FirstPerson);
             let before = pose(&app);

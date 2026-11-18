@@ -103,6 +103,9 @@ pub struct HudData {
     pub selection: Option<SelectionHud>,
     /// Whether the mining designation is active, for the HUD control's state.
     pub mine_designation_active: bool,
+
+    /// The colony's total of each resource as `(resource_id, count)`, sorted by id.
+    pub colony_stock: Vec<(u32, u32)>,
 }
 
 impl Default for HudData {
@@ -126,6 +129,7 @@ impl Default for HudData {
             pickups: Vec::new(),
             selection: None,
             mine_designation_active: false,
+            colony_stock: Vec::new(),
         }
     }
 }

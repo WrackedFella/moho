@@ -573,6 +573,11 @@ pub(crate) fn lod_for_chunk(chunk_pos: glam::IVec3, player_chunk: glam::IVec3) -
     u8::from(dist >= 4)
 }
 
+/// Publishes what a pawn's dig changed: the block's removal, the chunks to remesh, and the
+/// dig cue at the block.
+#[cfg(test)]
+pub(crate) fn publish_pawn_dig(_app: &mut App, _outcome: &flagstone_game::pawn::MineOutcome) {}
+
 impl Default for EventProcessor {
     fn default() -> Self {
         Self::new()
@@ -1716,6 +1721,96 @@ mod tests {
     #[test]
     fn pickup_asset_exists() {
         let path = pickup_asset_path();
+
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+
+        assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
+    }
+
+    fn dig_asset_path() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/dig.wav")
+    }
+
+    #[test]
+    fn a_pawn_dig_publishes_the_removal_and_the_cue() {
+        let mut app = App::headless();
+        // On a chunk's negative face, so the removal also dirties the neighbours.
+        let block = flagstone_voxel::BlockPos::new(16, 70, 5);
+        let chunk_size = app
+            .light_system
+            .as_ref()
+            .expect("App starts with a light system")
+            .grid()
+            .chunk_size();
+        let outcome = flagstone_game::pawn::MineOutcome {
+            block_pos: block,
+            old_material_id: 1,
+            distance: 2.0,
+            yield_: None,
+        };
+        let removed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dirtied = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (removed_sink, dirtied_sink) = (
+            std::sync::Arc::clone(&removed),
+            std::sync::Arc::clone(&dirtied),
+        );
+        app.event_bus.subscribe(move |e: &WorldEvent| match e {
+            WorldEvent::BlockRemoved {
+                position,
+                old_material_id,
+                ..
+            } => removed_sink
+                .lock()
+                .unwrap()
+                .push((*position, *old_material_id)),
+            WorldEvent::ChunkMeshDirty { chunk_pos, .. } => {
+                dirtied_sink.lock().unwrap().push(*chunk_pos);
+            }
+            WorldEvent::BlockPlaced { .. } | WorldEvent::BlocksBatchModified { .. } => {}
+        });
+        let _ = app.audio_event_rx.try_iter().count();
+
+        publish_pawn_dig(&mut app, &outcome);
+        app.event_bus.process_deferred();
+
+        assert_eq!(*removed.lock().unwrap(), [(block, 1)]);
+        let mut expected: Vec<_> = flagstone_voxel::chunks_meshed_from(block, chunk_size).collect();
+        let mut dirtied = dirtied.lock().unwrap().clone();
+        expected.sort_by_key(|c| c.to_array());
+        dirtied.sort_by_key(|c| c.to_array());
+        dirtied.dedup();
+        assert!(expected.len() > 1, "the block sits on a chunk face");
+        assert_eq!(dirtied, expected, "every chunk the block meshes into");
+        let cues: Vec<_> = app
+            .audio_event_rx
+            .try_iter()
+            .filter_map(|event| match event {
+                moho_core::events::AudioEvent::PlaySoundAt {
+                    path,
+                    volume,
+                    position,
+                } => Some((path, volume, position)),
+                _ => None,
+            })
+            .collect();
+        let [(path, volume, position)] = cues.as_slice() else {
+            panic!("one dig cue expected: {cues:?}");
+        };
+        assert_eq!(
+            std::path::Path::new(path),
+            dig_asset_path().as_path(),
+            "the dig clip"
+        );
+        assert!(*volume > 0.0, "audible: {volume}");
+        assert!(
+            position.distance(glam::Vec3::new(16.5, 70.5, 5.5)) < 1e-4,
+            "the cue sits at the block centre: {position:?}"
+        );
+    }
+
+    #[test]
+    fn dig_asset_exists() {
+        let path = dig_asset_path();
 
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
 
