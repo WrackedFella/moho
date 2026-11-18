@@ -2481,6 +2481,35 @@ mod tests {
     }
 
     #[test]
+    fn at_the_shipped_eye_height_a_post_is_found_by_looking_down_at_it() {
+        // The post's near face is 1.0 m ahead; its middle is 0.6 m up, 1.03 m below the eye.
+        let post = Vec3::new(0.0, 0.0, 1.2);
+        let arena = arena_with_controls(
+            &[],
+            Vec3::ZERO,
+            &[],
+            &[],
+            &[(post, ControlAction::NextWave)],
+        );
+        let mut sim = SearchlightSim::start(arena, test_config(rifle_with(5), vec![]));
+        let looking_down = SearchlightCommand {
+            movement: CharacterCommand {
+                pitch_delta: -(1.03_f32.atan2(1.0)),
+                ..CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        sim.tick(&idle(), DT);
+        let level = sim.control_in_reach();
+
+        sim.tick(&looking_down, DT);
+        let aimed_down = sim.control_in_reach();
+
+        assert_eq!(level, None, "a level view passes over the 1.2 m post");
+        assert_eq!(aimed_down, Some(0));
+    }
+
+    #[test]
     fn a_dead_player_finds_no_control() {
         let mut sim = post_sim(Vec3::ZERO, &[], &[Vec3::new(0.0, 0.0, 1.5)]);
         sim.tick(&idle(), DT);
