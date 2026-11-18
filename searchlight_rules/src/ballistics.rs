@@ -70,7 +70,22 @@ pub struct GravityScaleError {
 
 /// A tester's multiplier on the pull of gravity on rounds.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "f32", into = "f32")]
 pub struct GravityScale(f32);
+
+impl TryFrom<f32> for GravityScale {
+    type Error = GravityScaleError;
+
+    fn try_from(value: f32) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl From<GravityScale> for f32 {
+    fn from(scale: GravityScale) -> Self {
+        scale.0
+    }
+}
 
 impl GravityScale {
     /// A scale of `value`.
