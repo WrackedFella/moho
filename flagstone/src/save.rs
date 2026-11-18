@@ -147,14 +147,11 @@ fn chunk_dir_in(saves_dir: &Path, world_name: &str) -> std::path::PathBuf {
     saves_dir.join(world_name).join("chunks")
 }
 
-fn chunk_dir(world_name: &str) -> std::path::PathBuf {
-    chunk_dir_in(Path::new("saves"), world_name)
-}
-
-/// Remove all saved chunk files for `world_name`. Called when generating a new
-/// world so stale chunk data from a previous session cannot override fresh terrain.
-pub fn clear_chunk_files(world_name: &str) -> io::Result<()> {
-    let dir = chunk_dir(world_name);
+/// Remove all saved chunk files for `world_name` under `saves_dir`. Called when
+/// generating a new world so stale chunk data from a previous session cannot
+/// override fresh terrain.
+pub fn clear_chunk_files_in(saves_dir: &Path, world_name: &str) -> io::Result<()> {
+    let dir = chunk_dir_in(saves_dir, world_name);
     if dir.exists() {
         fs::remove_dir_all(&dir)?;
         tracing::info!(world = world_name, "Cleared chunk save files for world");
@@ -184,6 +181,25 @@ mod tests {
         let mut path = std::env::temp_dir();
         path.push(format!("moho_test_save_{now}_{suffix}.bin"));
         path
+    }
+
+    #[test]
+    fn clearing_chunk_files_in_a_saves_dir_removes_that_worlds_chunks_only() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let pos = IVec3::new(1, 2, 3);
+        write_chunk_file_in(temp.path(), "alpha", pos, b"chunk").expect("write alpha");
+        write_chunk_file_in(temp.path(), "beta", pos, b"chunk").expect("write beta");
+
+        clear_chunk_files_in(temp.path(), "alpha").expect("clear alpha");
+
+        assert_eq!(
+            read_chunk_file_in(temp.path(), "alpha", pos).expect("read alpha"),
+            None
+        );
+        assert_eq!(
+            read_chunk_file_in(temp.path(), "beta", pos).expect("read beta"),
+            Some(b"chunk".to_vec())
+        );
     }
 
     fn spec(name: &str) -> flagstone_game::scene_builders::WorldSpec {

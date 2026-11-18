@@ -525,7 +525,11 @@ impl moho_app::Game for App {
 
         if self.main_menu_requested {
             self.main_menu_requested = false;
-            self.autosave(ctx.clock(), ctx.renderer());
+            if self.autosave(ctx.clock(), ctx.renderer()) {
+                self.autosave_schedule.saved();
+            } else {
+                self.autosave_schedule.save_failed();
+            }
             self.show_menu();
         }
 
@@ -695,6 +699,7 @@ mod tests {
     fn paused_game_does_not_advance_the_autosave_schedule() {
         let mut app = playing_app();
         app.autosave_interval = Duration::from_secs(1);
+        app.autosave_schedule = crate::app::autosave::AutosaveSchedule::new(TICK_HZ);
         app.autosave_schedule.mark_edited();
         let idle = StrategyCommand::default();
 
@@ -810,6 +815,8 @@ mod tests {
         lightings: Vec<LightingGpu>,
         frames_begun: u32,
         cameras: Vec<(glam::Mat4, glam::Mat4, glam::Vec3)>,
+        /// One per autosave, which reads the renderer's lights exactly once.
+        light_queries: std::cell::Cell<u32>,
     }
 
     impl RendererBackend for FakeRenderer {
@@ -858,6 +865,10 @@ mod tests {
         }
         fn remove_light(&mut self, _id: u32) -> bool {
             true
+        }
+        fn all_lights_as_descs(&self) -> Vec<moho_render_api::LightDesc> {
+            self.light_queries.set(self.light_queries.get() + 1);
+            Vec::new()
         }
         fn set_light_position(&mut self, _id: u32, _position: glam::Vec3) {}
         fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
@@ -2913,6 +2924,22 @@ mod tests {
 
             assert_eq!(screen_shown(&adapter).as_deref(), Some("pause"));
             assert_eq!(app.game_state, GameState::Paused);
+        }
+
+        #[test]
+        fn exit_to_main_menu_with_a_due_schedule_saves_once() {
+            let (mut app, _temp) = app_with_saves_dir();
+            app.autosave_schedule = crate::app::autosave::AutosaveSchedule::new(1);
+            app.autosave_schedule.mark_edited();
+            app.autosave_schedule.tick();
+            assert!(app.autosave_schedule.due());
+            app.main_menu_requested = true;
+            let mut fake = FakeRenderer::default();
+
+            run_frame(&mut app, &mut fake);
+
+            assert_eq!(fake.light_queries.get(), 1, "one save for the frame");
+            assert!(!app.autosave_schedule.due());
         }
 
         #[test]
