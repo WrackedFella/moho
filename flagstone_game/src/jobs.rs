@@ -643,6 +643,34 @@ mod tests {
     }
 
     #[test]
+    fn a_mark_cancelled_and_remarked_between_ticks_stays_claimed_by_the_walking_pawn() {
+        let mut grid = floor(12, 10);
+        place(&mut grid, 8, 1, 4);
+        let mut marks = marked(&[[8, 1, 4]]);
+        let mut pawn = Pawn::default();
+        let pose = pose_in(1, 1, 4);
+        for _ in 0..3 {
+            step(ME, &mut pawn, pose, &mut marks, &grid);
+        }
+        assert!(is_mining(&pawn), "walking to the mark");
+        marks.toggle([8, 1, 4]);
+        marks.toggle([8, 1, 4]);
+        assert_eq!(claimed_by(&marks, [8, 1, 4]), None, "a fresh mark");
+
+        step(ME, &mut pawn, pose, &mut marks, &grid);
+
+        if is_mining(&pawn) {
+            assert_eq!(
+                claimed_by(&marks, [8, 1, 4]),
+                Some(ME),
+                "a walking pawn holds the claim on its mark"
+            );
+        }
+        step(ME, &mut pawn, pose, &mut marks, &grid);
+        assert_eq!(claimed_by(&marks, [8, 1, 4]), Some(ME));
+    }
+
+    #[test]
     fn a_stalled_walk_releases_the_claim_and_keeps_the_mark() {
         let mut grid = floor(12, 10);
         place(&mut grid, 8, 1, 4);

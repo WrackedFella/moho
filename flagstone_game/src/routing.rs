@@ -242,6 +242,31 @@ mod tests {
     }
 
     #[test]
+    fn stepping_down_needs_headroom_over_the_lower_cell() {
+        let mut grid = floor(7, 3);
+        for x in 0..=2 {
+            for z in 0..3 {
+                place(&mut grid, x, 1, z);
+            }
+        }
+        let upper = BlockPos::new(2, 2, 1);
+        let lower = BlockPos::new(3, 1, 1);
+        assert!(standable(&grid, upper) && standable(&grid, lower));
+        assert!(
+            find(&grid, upper, lower).is_some(),
+            "an open drop can be taken"
+        );
+        for z in 0..3 {
+            place(&mut grid, 3, 4, z);
+        }
+        assert!(standable(&grid, lower), "the overhang is above the capsule");
+
+        let found = find(&grid, upper, lower);
+
+        assert_eq!(found, None, "the capsule's top cannot pass the overhang");
+    }
+
+    #[test]
     fn an_enclosed_goal_has_no_route() {
         let mut grid = floor(11, 11);
         for (x, z) in [(4, 5), (6, 5), (5, 4), (5, 6)] {
