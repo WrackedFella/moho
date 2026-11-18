@@ -111,7 +111,6 @@ struct App {
 
     saves_dir: std::path::PathBuf,
 
-    /// How much play passes between autosaves of an edited world.
     autosave_interval: std::time::Duration,
     /// When the world is next due a save; `tick` advances it, `frame` acts on it.
     autosave_schedule: app::autosave::AutosaveSchedule,

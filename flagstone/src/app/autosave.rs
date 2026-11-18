@@ -23,7 +23,6 @@ impl AutosaveSchedule {
         self.interval_ticks = interval_ticks;
     }
 
-    /// One simulation tick of play has passed.
     pub fn tick(&mut self) {
         self.ticks_since_save = self.ticks_since_save.saturating_add(1);
     }
@@ -253,7 +252,6 @@ mod tests {
             }
         }
 
-        /// Writes a save of a world with no edits, standing near the origin.
         fn untouched_save(saves: &Path) {
             let mut writer = App::headless();
             writer.generation.last_spec = Some(spec());
@@ -281,7 +279,6 @@ mod tests {
             HeadlessLoop::new(LoopConfig::new(TICK_HZ))
         }
 
-        /// A running session on the untouched world saved under `saves`.
         fn session(saves: &Path) -> (App, HeadlessLoop<App>) {
             untouched_save(saves);
             let app = load(saves);
@@ -293,7 +290,6 @@ mod tests {
             app.light_system.as_ref().expect("light system").grid()
         }
 
-        /// The terrain surface block of column `(x, z)`.
         fn surface(app: &App, x: i32, z: i32) -> BlockPos {
             let y = grid(app).get_height(x, z).expect("terrain in the column");
             BlockPos::new(x, y, z)
@@ -343,7 +339,6 @@ mod tests {
             ctx.exit_requested()
         }
 
-        /// The mined block's column is loaded in `app` and the block is gone.
         fn assert_mined(app: &App, pos: BlockPos) {
             let chunk = glam::IVec3::new(
                 pos.x.div_euclid(16),
@@ -354,7 +349,6 @@ mod tests {
             assert!(!grid(app).is_solid_at(pos), "the mined block {pos} is back");
         }
 
-        /// Moves the player to chunk column `column_x` on the surface row and streams.
         fn walk_to(app: &mut App, sim: &mut HeadlessLoop<App>, column_x: i32) {
             // High enough that the character is still falling, not past the kill plane (which
             // respawns it at column 0), when the destination's chunks finish loading under it.
@@ -448,7 +442,6 @@ mod tests {
             assert_mined(&loaded, block);
         }
 
-        /// A save with one block of its own, written by an earlier session.
         fn save_with_a_block(saves: &Path) -> BlockPos {
             let block = BlockPos::new(3, 70, 3);
             let mut writer = App::headless();
