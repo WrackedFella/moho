@@ -172,7 +172,8 @@ fn claim(pawn_id: PawnId, pawn: &mut Pawn, pose: Pose, marks: &mut MineMarks, gr
         let found = route(
             grid,
             feet,
-            |cell| is_stand_cell(grid, block, cell),
+            // Not the cell on top of the block: digging there removes the pawn's own ground.
+            |cell| cell != block + BlockPos::Y && is_stand_cell(grid, block, cell),
             block,
             ROUTE_NODE_BUDGET,
         );
