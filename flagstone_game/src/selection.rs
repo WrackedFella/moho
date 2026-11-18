@@ -63,8 +63,11 @@ pub fn pick_pawn(
     let limit = terrain_distance.unwrap_or(f32::INFINITY);
     pawns
         .into_iter()
-        .filter_map(|(id, aabb)| ray_box_entry(ray, aabb).map(|t| (id, t)))
-        .filter(|&(_, t)| t < limit)
+        .filter_map(|(id, aabb)| {
+            ray_box_entry(ray, aabb)
+                .filter(|&t| t < limit)
+                .map(|t| (id, t))
+        })
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(id, _)| id)
 }

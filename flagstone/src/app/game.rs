@@ -10,7 +10,7 @@ use flagstone_game::controller::{
     CameraMode, ControllerInput, EDGE_PAN_MARGIN_PX, controller_to_camera, edge_pan_axes,
 };
 use flagstone_game::raycast::raycast_surface;
-use flagstone_game::selection::{PAWN_HALF_EXTENTS, PLAYER_PAWN, pawn_aabb, pick_pawn};
+use flagstone_game::selection::{Aabb, PLAYER_PAWN, pawn_aabb, pick_pawn};
 use flagstone_ui::actions::StrategyAction;
 use flagstone_ui::console_commands::StrategyConsoleCommand;
 use moho_core::pointer::{Ray, screen_ray};
@@ -233,11 +233,11 @@ impl App {
 
     /// Outlines the selected pawn in the strategy view and removes the outline otherwise.
     fn sync_selection_marker(&mut self) {
+        let shown = self
+            .visible_pawn_box()
+            .filter(|_| self.selection.selected().is_some());
         let markers = self.scene.markers_mut();
-        let shown = self.selection.selected().is_some()
-            && self.simulation.camera_mode() != CameraMode::FirstPerson;
-        if shown {
-            let aabb = pawn_aabb(self.simulation.position());
+        if let Some(aabb) = shown {
             markers.upsert(
                 SELECTION_MARKER_ID,
                 Marker::new(
@@ -367,24 +367,42 @@ impl App {
             && self.physics.is_kcc_active()
     }
 
+    /// The player pawn's box as the strategy view shows it, or `None` in first person where
+    /// the camera is inside it.
+    fn visible_pawn_box(&self) -> Option<Aabb> {
+        (self.simulation.camera_mode() != CameraMode::FirstPerson)
+            .then(|| pawn_aabb(self.simulation.position()))
+    }
+
+    /// The pawn's body: a cube filling its visible box, so what is drawn is what is picked.
+    fn pawn_body(&self) -> Option<Cube> {
+        let aabb = self.visible_pawn_box()?;
+        let size = aabb.max - aabb.min;
+        Some(Cube::new(
+            (aabb.min + aabb.max) * 0.5,
+            size.x,
+            size.z,
+            size.y,
+            flagstone_voxel::MaterialType::Lambertian {
+                albedo: PAWN_BODY_ALBEDO,
+            },
+        ))
+    }
+
     fn render_scene(
         &mut self,
         renderer: &mut dyn moho_renderer::RendererBackend,
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     ) {
-        let mut cubes = self.entities.actors.cubes().to_vec();
-        if self.simulation.camera_mode() != CameraMode::FirstPerson {
-            let aabb = pawn_aabb(self.simulation.position());
-            cubes.push(Cube::new(
-                (aabb.min + aabb.max) * 0.5,
-                PAWN_HALF_EXTENTS.x * 2.0,
-                PAWN_HALF_EXTENTS.z * 2.0,
-                PAWN_HALF_EXTENTS.y * 2.0,
-                flagstone_voxel::MaterialType::Lambertian {
-                    albedo: PAWN_BODY_ALBEDO,
-                },
-            ));
-        }
+        let actor_cubes = self.entities.actors.cubes();
+        let cubes = match self.pawn_body() {
+            Some(body) => {
+                let mut all = actor_cubes.to_vec();
+                all.push(body);
+                std::borrow::Cow::Owned(all)
+            }
+            None => std::borrow::Cow::Borrowed(actor_cubes),
+        };
         if let Err(e) = self.scene.render(
             renderer,
             self.entities.actors.spheres(),

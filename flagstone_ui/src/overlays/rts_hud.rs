@@ -97,16 +97,16 @@ fn render_selection_panel(ui: &mut egui::Ui, selection: &SelectionHud) {
                 .fill(egui::Color32::from_rgba_premultiplied(0, 0, 0, 120))
                 .inner_margin(egui::Margin::same(6))
                 .show(ui, |ui| {
+                    ui.visuals_mut().override_text_color = Some(text_color);
                     ui.label(
                         egui::RichText::new(&selection.title)
-                            .font(egui::FontId::proportional(16.0))
-                            .color(text_color),
+                            .font(egui::FontId::proportional(16.0)),
                     );
                     if let Some(tool) = &selection.tool {
-                        ui.label(egui::RichText::new(tool).color(text_color));
+                        ui.label(tool);
                     }
                     for (name, count) in &selection.carried {
-                        ui.label(egui::RichText::new(format!("{name}: {count}")).color(text_color));
+                        ui.label(format!("{name}: {count}"));
                     }
                 });
         });
