@@ -54,7 +54,7 @@ pub struct MarkStyle {
     pub fade: Duration,
 }
 
-/// How far a mark floats off its surface.
+/// Lifts a mark off its surface so it does not z-fight with it.
 const MARK_OFFSET: f32 = 0.01;
 
 /// Live-effect cap per effects quality, indexed like `QUALITY_NAMES`.
