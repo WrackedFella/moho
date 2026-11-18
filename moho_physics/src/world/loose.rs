@@ -1600,6 +1600,40 @@ mod tests {
     }
 
     #[test]
+    fn a_rolling_capsule_spawned_before_its_box_stops_on_it() {
+        let (half_height, radius) = CAPSULE;
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let speed = 1.0;
+        let id = world.spawn_loose(&LooseSpawn {
+            linear_velocity: Vec3::new(0.0, 0.0, speed),
+            angular_velocity: Vec3::new(speed / radius, 0.0, 0.0),
+            ..lying_spawn(
+                capsule(half_height, radius),
+                Vec3::new(0.0, 0.2 + radius + 0.01, -0.9),
+            )
+        });
+        let slab = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.102, 0.0),
+            ..LooseSpawn::new(cuboid(Vec3::new(1.0, 0.1, 1.0)), 5.0)
+        });
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        let rolled = state.position.z + 0.9;
+        assert!(state.asleep, "the capsule is still moving, {state:?}");
+        assert!(
+            (0.2..=0.6).contains(&rolled),
+            "it rolled {rolled} m, theory 0.32"
+        );
+        assert!(
+            (state.position.y - (0.2 + radius)).abs() <= 0.005,
+            "the capsule left the box top, {state:?}"
+        );
+        assert!(read(&world, slab).asleep, "the box is awake");
+    }
+
+    #[test]
     fn a_stronger_gravity_still_holds_a_capsule_on_a_4_9_degree_slope() {
         let (half_height, radius) = CAPSULE;
         let (mut world, id, start) = on_a_slope(capsule(half_height, radius), radius, 4.9);
