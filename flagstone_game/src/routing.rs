@@ -349,6 +349,25 @@ mod tests {
     }
 
     #[test]
+    fn the_heuristic_counts_the_climb_too() {
+        let mut grid = floor(12, 12);
+        for x in 6..12 {
+            for z in 0..12 {
+                place(&mut grid, x, 1, z);
+            }
+        }
+        let start = BlockPos::new(1, 1, 5);
+        let goal = BlockPos::new(10, 2, 7);
+
+        let expansions = expansions_needed(&grid, start, goal);
+
+        assert_eq!(
+            expansions, 24,
+            "the search is guided by the height gap as well as the horizontal one"
+        );
+    }
+
+    #[test]
     fn equal_routes_break_ties_by_insertion_order() {
         let grid = floor(8, 8);
         let start = BlockPos::new(3, 1, 3);
