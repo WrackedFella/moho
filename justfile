@@ -33,9 +33,48 @@ test-doc:
 comment-refs base=base:
     scripts/check-comment-refs.sh {{base}}
 
-# Licenses, advisories, banned and duplicate crates, crate sources.
+# Licenses, advisories, banned and duplicate crates, crate sources, and that rapier3d and
+# parry3d resolve with enhanced-determinism (the check's self-tests run on fixtures).
 deny:
     cargo deny check
+    scripts/check-physics-features.sh
+    "{{replace(just_executable(), '\', '/')}}" _physics-rejects rapier-missing rapier3d parry3d
+    "{{replace(just_executable(), '\', '/')}}" _physics-rejects parry-missing parry3d rapier3d
+    "{{replace(just_executable(), '\', '/')}}" _physics-rejects parry-absent parry3d rapier3d
+    "{{replace(just_executable(), '\', '/')}}" _physics-accepts both-enabled
+
+# Fails unless the physics feature check exits non-zero on the fixture, names `crate` and
+# does not name `other` (only the offending crate may be reported).
+[private]
+_physics-rejects fixture crate other:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    out=$(MOHO_PHYSICS_METADATA=scripts/fixtures/physics-features/{{fixture}}.json scripts/check-physics-features.sh 2>&1)
+    status=$?
+    if [ "$status" -ne 0 ] && grep -qF -- '{{crate}}' <<<"$out" && ! grep -qF -- '{{other}}' <<<"$out"; then
+        exit 0
+    fi
+    echo "physics-features self-test failed: {{fixture}}" >&2
+    echo "  expected: non-zero exit, output naming {{crate}} and not naming {{other}}" >&2
+    echo "  got: exit $status, output:" >&2
+    sed 's/^/    /' <<<"$out" >&2
+    exit 1
+
+# Fails unless the physics feature check exits 0 on the fixture.
+[private]
+_physics-accepts fixture:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    out=$(MOHO_PHYSICS_METADATA=scripts/fixtures/physics-features/{{fixture}}.json scripts/check-physics-features.sh 2>&1)
+    status=$?
+    if [ "$status" -eq 0 ]; then
+        exit 0
+    fi
+    echo "physics-features self-test failed: {{fixture}}" >&2
+    echo "  expected: exit 0" >&2
+    echo "  got: exit $status, output:" >&2
+    sed 's/^/    /' <<<"$out" >&2
+    exit 1
 
 # LCOV coverage report at lcov.info.
 cov:
