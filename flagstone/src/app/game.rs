@@ -208,15 +208,15 @@ impl App {
             self.apply_cursor();
         }
         if let Some(ray) = command.select {
-            if let Some(light_system) = &self.light_system {
-                self.pointer_hit = raycast_surface(
+            self.pointer_hit = self.light_system.as_ref().and_then(|light_system| {
+                raycast_surface(
                     light_system.grid(),
                     ray.origin,
                     ray.direction,
                     POINTER_RAY_RANGE,
-                );
-                tracing::debug!(hit = ?self.pointer_hit, "Pointer ray cast");
-            }
+                )
+            });
+            tracing::debug!(hit = ?self.pointer_hit, "Pointer ray cast");
             self.select_pawn(ray);
         }
         if let Some(ray) = command.mark {
