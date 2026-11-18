@@ -3,9 +3,6 @@ use std::time::Duration;
 /// How much play passes between autosaves of an edited world.
 pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(120);
 
-/// [`DEFAULT_INTERVAL`] in simulation ticks.
-pub const DEFAULT_INTERVAL_TICKS: u32 = 120 * flagstone_game::TICK_HZ;
-
 /// When an edited world is next due to be autosaved, counted in simulation ticks.
 #[derive(Clone, Debug)]
 pub struct AutosaveSchedule {

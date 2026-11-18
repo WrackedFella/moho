@@ -259,7 +259,7 @@ impl App {
             saves_dir: std::path::PathBuf::from("saves"),
             autosave_interval: app::autosave::DEFAULT_INTERVAL,
             autosave_schedule: app::autosave::AutosaveSchedule::new(
-                app::autosave::DEFAULT_INTERVAL_TICKS,
+                app::autosave::interval_to_ticks(app::autosave::DEFAULT_INTERVAL),
             ),
             exit_requested: false,
             main_menu_requested: false,
