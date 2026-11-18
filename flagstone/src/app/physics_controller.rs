@@ -730,4 +730,28 @@ mod tests {
         assert_eq!(pw.collider_set.len(), with_geometry + 1);
         assert_eq!(pw.rigid_body_set.len(), 1, "only the character body");
     }
+
+    #[test]
+    fn the_pawn_box_matches_the_character_capsule() {
+        use flagstone_game::selection::{PAWN_HALF_EXTENTS, pawn_aabb};
+        let controller = grounded_player_on_floor();
+        let hull = moho_physics::CharacterBody::default().standing.hull;
+
+        let state = player_state(&controller);
+        let aabb = pawn_aabb(state.position);
+
+        assert_eq!(
+            PAWN_HALF_EXTENTS,
+            glam::Vec3::new(hull.radius, hull.length / 2.0, hull.radius),
+            "the box is the capsule's extents"
+        );
+        assert!(
+            (state.position.y - PAWN_HALF_EXTENTS.y).abs() < 0.02,
+            "standing on the floor at y = 0, the centre is a half height up: {state:?}"
+        );
+        assert!(
+            aabb.min.y.abs() < 0.02,
+            "the box stands on the floor, not in or above it: {aabb:?}"
+        );
+    }
 }

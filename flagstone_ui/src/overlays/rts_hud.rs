@@ -154,7 +154,7 @@ fn render_time_of_day(ui: &mut egui::Ui, time: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::overlays::overlay_manager::{HudIntents, ViewHeightHud};
+    use crate::overlays::overlay_manager::{HudIntents, SelectionHud, ViewHeightHud};
     use crate::overlays::test_support::{
         input, rect_of, run_ui, second_frame, small_rect_centers, texts,
     };
@@ -410,6 +410,110 @@ mod tests {
 
         assert!(texts(&in_strategy).contains(&MINE_LABEL.to_string()));
         assert!(!texts(&in_first_person).contains(&MINE_LABEL.to_string()));
+    }
+
+    fn pawn_panel(tool: Option<&str>) -> SelectionHud {
+        SelectionHud {
+            title: "Pawn".to_string(),
+            tool: tool.map(str::to_string),
+            carried: vec![("Iron ore".to_string(), 12)],
+        }
+    }
+
+    /// Strategy HUD data at 07:00, so no clock text holds the carried count `12`.
+    fn panel_data(selection: Option<SelectionHud>, is_fps_mode: bool) -> HudData {
+        HudData {
+            is_fps_mode,
+            time_of_day: 7.0,
+            selection,
+            ..Default::default()
+        }
+    }
+
+    fn drawn_in(data: &HudData) -> Vec<String> {
+        texts(&settled(data).2)
+    }
+
+    #[test]
+    fn selection_panel_lists_the_tool_and_carried_resources() {
+        let data = panel_data(Some(pawn_panel(Some("Pickaxe"))), false);
+
+        let drawn = drawn_in(&data);
+
+        assert!(drawn.iter().any(|t| t.contains("Pawn")), "{drawn:?}");
+        assert!(drawn.iter().any(|t| t.contains("Pickaxe")), "{drawn:?}");
+        assert!(drawn.iter().any(|t| t.contains("Iron ore")), "{drawn:?}");
+        assert!(drawn.iter().any(|t| t.contains("12")), "{drawn:?}");
+    }
+
+    #[test]
+    fn selection_panel_omits_the_tool_when_there_is_none() {
+        let data = panel_data(Some(pawn_panel(None)), false);
+
+        let drawn = drawn_in(&data);
+
+        assert!(drawn.iter().any(|t| t.contains("Pawn")), "{drawn:?}");
+        assert!(drawn.iter().any(|t| t.contains("Iron ore")), "{drawn:?}");
+        assert!(!drawn.iter().any(|t| t.contains("Pickaxe")), "{drawn:?}");
+    }
+
+    #[test]
+    fn selection_panel_is_absent_without_a_selection() {
+        let data = panel_data(None, false);
+        let selected = drawn_in(&panel_data(Some(pawn_panel(Some("Pickaxe"))), false));
+
+        let drawn = drawn_in(&data);
+
+        assert!(
+            selected.iter().any(|t| t.contains("Pawn")),
+            "the panel shows with a selection: {selected:?}"
+        );
+        assert!(!drawn.iter().any(|t| t.contains("Pawn")), "{drawn:?}");
+        assert!(!drawn.iter().any(|t| t.contains("Iron ore")), "{drawn:?}");
+        assert!(
+            drawn.contains(&"Strategy".to_string()),
+            "the rest of the HUD still draws: {drawn:?}"
+        );
+    }
+
+    #[test]
+    fn selection_panel_is_hidden_in_first_person() {
+        let data = panel_data(Some(pawn_panel(Some("Pickaxe"))), true);
+        let in_strategy = drawn_in(&panel_data(Some(pawn_panel(Some("Pickaxe"))), false));
+
+        let drawn = drawn_in(&data);
+
+        assert!(
+            in_strategy.iter().any(|t| t.contains("Pawn")),
+            "the panel shows in strategy: {in_strategy:?}"
+        );
+        assert!(!drawn.iter().any(|t| t.contains("Pawn")), "{drawn:?}");
+        assert!(!drawn.iter().any(|t| t.contains("Iron ore")), "{drawn:?}");
+        assert!(!drawn.iter().any(|t| t.contains("Pickaxe")), "{drawn:?}");
+    }
+
+    /// Whether egui reports the pointer over a panel once it rests at `at`.
+    fn pointer_over_egui_at(data: &HudData, at: egui::Pos2) -> bool {
+        let (ctx, mut hud, _) = settled(data);
+        frame(&ctx, &mut hud, data, vec![egui::Event::PointerMoved(at)]);
+        frame(&ctx, &mut hud, data, Vec::new());
+        ctx.is_pointer_over_egui()
+    }
+
+    #[test]
+    fn the_pointer_over_the_selection_panel_is_over_egui() {
+        let selected = panel_data(Some(pawn_panel(Some("Pickaxe"))), false);
+        let unselected = panel_data(None, false);
+        let on_the_panel = rect_of(&settled(&selected).2, "Pawn").center();
+
+        assert!(
+            pointer_over_egui_at(&selected, on_the_panel),
+            "the pointer on the panel's title"
+        );
+        assert!(
+            !pointer_over_egui_at(&unselected, on_the_panel),
+            "nothing else is under that spot, so the panel is what reports it"
+        );
     }
 
     #[test]
