@@ -33,9 +33,48 @@ test-doc:
 comment-refs base=base:
     scripts/check-comment-refs.sh {{base}}
 
-# Licenses, advisories, banned and duplicate crates, crate sources.
+# Licenses, advisories, banned and duplicate crates, crate sources, and the physics
+# determinism feature on the real workspace, plus self-tests of that check on fixtures.
 deny:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just_bin="{{replace(just_executable(), '\', '/')}}"
     cargo deny check
+    scripts/check-physics-features.sh
+    "$just_bin" _physics-rejects physics-metadata-missing-feature rapier3d
+    "$just_bin" _physics-accepts physics-metadata-ok
+
+# Fails unless the physics feature check exits non-zero on the fixture and names the crate.
+[private]
+_physics-rejects fixture expected:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    out=$(MOHO_PHYSICS_METADATA=scripts/fixtures/{{fixture}}.json scripts/check-physics-features.sh 2>&1)
+    status=$?
+    if [ "$status" -ne 0 ] && grep -qF -- '{{expected}}' <<<"$out"; then
+        exit 0
+    fi
+    echo "physics-features self-test failed: {{fixture}}" >&2
+    echo "  expected: non-zero exit and output naming: {{expected}}" >&2
+    echo "  got: exit $status, output:" >&2
+    sed 's/^/    /' <<<"$out" >&2
+    exit 1
+
+# Fails unless the physics feature check passes on the fixture.
+[private]
+_physics-accepts fixture:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    out=$(MOHO_PHYSICS_METADATA=scripts/fixtures/{{fixture}}.json scripts/check-physics-features.sh 2>&1)
+    status=$?
+    if [ "$status" -eq 0 ] && grep -qF -- 'physics-features: OK' <<<"$out"; then
+        exit 0
+    fi
+    echo "physics-features self-test failed: {{fixture}}" >&2
+    echo "  expected: exit 0 and 'physics-features: OK'" >&2
+    echo "  got: exit $status, output:" >&2
+    sed 's/^/    /' <<<"$out" >&2
+    exit 1
 
 # LCOV coverage report at lcov.info.
 cov:
