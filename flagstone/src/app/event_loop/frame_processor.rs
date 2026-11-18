@@ -5,7 +5,7 @@
 use crate::App;
 use crate::app::event_loop::event_processor::{lod_for_chunk, lod_player_chunk, publish_pawn_dig};
 use crate::app::input_state::Designation;
-use flagstone_game::jobs::{self, Job, JobAction, PawnPose};
+use flagstone_game::jobs::{self, JobAction, PawnPose};
 use flagstone_game::pawn::MINE_REACH;
 use flagstone_game::selection::PAWN_HALF_EXTENTS;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -505,10 +505,7 @@ fn run_pawn_job(app: &mut App, dt: f32) {
             }
         }
         JobAction::Dig { block, aim } => {
-            if let Job::Mine { mark, .. } = &job {
-                app.colony.marks.release(*mark);
-            }
-            job = Job::Idle;
+            jobs::end(&mut job, &mut app.colony.marks);
             pawn_dig(app, state.position, aim, block);
         }
     }

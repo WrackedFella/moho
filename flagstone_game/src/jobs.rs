@@ -41,7 +41,7 @@ pub const ARRIVE_RADIUS: f32 = 0.35;
 pub const STALL_TICKS: u32 = 120;
 
 /// How fast a pawn turns toward its target, in radians per second: one turn per second.
-pub const TURN_RATE: f32 = std::f32::consts::TAU;
+pub const TURN_RATE: f32 = TAU;
 
 /// What a pawn is doing on its own.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -113,7 +113,7 @@ pub struct WalkStep {
 /// the grid allow.
 ///
 /// A pawn that gets as far as [`JobAction::Dig`] keeps its job and claim: the caller digs,
-/// then ends the job.
+/// then ends the job with [`end`].
 pub fn step(
     job: &mut Job,
     pawn: &mut Pawn,
@@ -134,22 +134,20 @@ pub fn step(
 /// at most [`MAX_ROUTE_ATTEMPTS`] marks.
 fn claim(pawn: &mut Pawn, pose: PawnPose, marks: &mut MineMarks, grid: &VoxelGrid) -> Option<Job> {
     let feet = routing::feet_cell(pose.feet);
-    let mut candidates: Vec<[i32; 3]> = marks
-        .unclaimed()
-        .filter(|&mark| {
-            exposed_faces(grid, BlockPos::from_array(mark))
-                .next()
-                .is_some()
-        })
-        .collect();
+    let mut candidates: Vec<[i32; 3]> = marks.unclaimed().collect();
     // Stable, so equal distances stay in key order.
     candidates.sort_by_key(|&mark| {
         (BlockPos::from_array(mark) - feet)
             .as_i64vec3()
             .length_squared()
     });
+    let exposed = candidates.into_iter().filter(|&mark| {
+        exposed_faces(grid, BlockPos::from_array(mark))
+            .next()
+            .is_some()
+    });
 
-    for mark in candidates.into_iter().take(MAX_ROUTE_ATTEMPTS) {
+    for mark in exposed.take(MAX_ROUTE_ATTEMPTS) {
         let block = BlockPos::from_array(mark);
         let found = routing::route(
             grid,
@@ -188,12 +186,17 @@ fn exposed_faces(grid: &VoxelGrid, block: BlockPos) -> impl Iterator<Item = Vec3
         .map(move |d| block.as_vec3() + Vec3::splat(0.5) + d.as_vec3() * 0.5)
 }
 
-/// Gives the claim up and goes idle, leaving the mark for any pawn to take.
-fn release(job: &mut Job, marks: &mut MineMarks) -> JobAction {
+/// Ends `job`: gives its claim up and goes idle, leaving the mark for any pawn to take.
+pub fn end(job: &mut Job, marks: &mut MineMarks) {
     if let Job::Mine { mark, .. } = job {
         marks.release(*mark);
     }
     *job = Job::Idle;
+}
+
+/// Ends `job` and waits out the tick.
+fn release(job: &mut Job, marks: &mut MineMarks) -> JobAction {
+    end(job, marks);
     JobAction::Wait
 }
 
