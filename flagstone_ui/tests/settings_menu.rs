@@ -727,6 +727,65 @@ fn cancel_after_stray_key_changes_nothing() {
     assert!(!menu.is_listening());
 }
 
+/// Listening again after a cancelled conflict still binds a free modifier.
+#[test]
+fn relistening_after_cancelled_conflict_binds_a_free_modifier() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = menu_with_shift_conflict_open();
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+    Screen::on_modal_cancel(&mut menu);
+    modifiers_frame(&mut menu, egui::Modifiers::NONE);
+    menu.start_listening(0);
+
+    modifiers_frame(&mut menu, egui::Modifiers::ALT);
+
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::Alt), pad_stick(StickDir::Up)]
+    );
+    assert_eq!(
+        menu.get_staged_binding(6),
+        [Binding::key(Key::Shift), SPRINT_PAD]
+    );
+    assert!(!menu.is_listening());
+    assert!(Screen::take_pending_modal(&mut menu).is_none());
+}
+
+/// A key event in the same frame as a conflicting modifier binds nothing.
+#[test]
+fn key_event_in_the_conflicting_modifier_frame_binds_nothing() {
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let before = all_bindings(&menu);
+    menu.start_listening(0);
+
+    render_frame(
+        &mut menu,
+        vec![
+            egui::Event::ModifiersChanged(egui::Modifiers::SHIFT),
+            key_event(egui::Key::F, true),
+        ],
+    );
+
+    assert_eq!(all_bindings(&menu), before);
+    assert!(
+        !all_bindings(&menu)
+            .iter()
+            .flatten()
+            .any(|b| *b == Binding::key(Key::F))
+    );
+    assert!(!menu.is_listening());
+    let text = modal_text(&mut menu);
+    assert!(
+        text.contains("The binding 'Shift' is currently used by:"),
+        "Shift missing from:\n{text}"
+    );
+    assert!(
+        text.lines().any(|l| l == "Sprint"),
+        "Sprint missing from:\n{text}"
+    );
+}
+
 /// Rebinding a row replaces its plain key and keeps its hold bindings, in the settings text too.
 #[test]
 fn rebinding_sprint_keeps_its_hold_bindings() {
