@@ -3,6 +3,9 @@
 //! A cell is the block position of a pawn's feet. Reading the grid through `is_solid_at`
 //! keeps this a pawn rule on the strategy line rather than a property of the voxel store.
 
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
+
 use flagstone_voxel::{BlockPos, VoxelGrid};
 use glam::Vec3;
 
@@ -11,8 +14,39 @@ pub const ROUTE_NODE_BUDGET: usize = 4096;
 
 /// Whether a pawn can stand with its feet in `cell`: ground below and three cells of air
 /// from the feet up (the capsule is 2.3 m tall).
-pub fn standable(_grid: &VoxelGrid, _cell: BlockPos) -> bool {
-    false
+pub fn standable(grid: &VoxelGrid, cell: BlockPos) -> bool {
+    grid.is_solid_at(cell - BlockPos::Y)
+        && (0..CAPSULE_CELLS).all(|up| !grid.is_solid_at(cell + BlockPos::Y * up))
+}
+
+/// Cells of air a standing pawn occupies, from the feet up.
+const CAPSULE_CELLS: i32 = 3;
+
+const HORIZONTAL_STEPS: [BlockPos; 4] =
+    [BlockPos::X, BlockPos::NEG_X, BlockPos::Z, BlockPos::NEG_Z];
+
+/// A search node's ordering key: lowest cost estimate, then lowest cost so far, then the
+/// order it was queued in.
+type Queued = Reverse<(i32, i32, u32)>;
+
+fn manhattan(a: BlockPos, b: BlockPos) -> i32 {
+    (a.x - b.x).abs() + (a.z - b.z).abs()
+}
+
+/// The standable cells one step from `from`: level, one up (with a fourth cell of air above
+/// the current feet) or one down.
+fn neighbours(grid: &VoxelGrid, from: BlockPos) -> impl Iterator<Item = BlockPos> {
+    let can_climb = !grid.is_solid_at(from + BlockPos::Y * CAPSULE_CELLS);
+    HORIZONTAL_STEPS.into_iter().flat_map(move |step| {
+        let level = from + step;
+        [
+            (level, true),
+            (level + BlockPos::Y, can_climb),
+            (level - BlockPos::Y, true),
+        ]
+        .into_iter()
+        .filter_map(|(cell, allowed)| (allowed && standable(grid, cell)).then_some(cell))
+    })
 }
 
 /// The cell a pawn's feet are in.
@@ -29,13 +63,69 @@ pub fn feet_cell(feet: Vec3) -> BlockPos {
 /// route. A `start` that is not standable tries the cell above and the cell below it.
 /// `None` when no route exists or `budget` expansions are spent first.
 pub fn route(
-    _grid: &VoxelGrid,
-    _start: BlockPos,
-    _is_goal: impl Fn(BlockPos) -> bool,
-    _toward: BlockPos,
-    _budget: usize,
+    grid: &VoxelGrid,
+    start: BlockPos,
+    is_goal: impl Fn(BlockPos) -> bool,
+    toward: BlockPos,
+    budget: usize,
 ) -> Option<Vec<BlockPos>> {
+    let start = [start, start + BlockPos::Y, start - BlockPos::Y]
+        .into_iter()
+        .find(|&cell| standable(grid, cell))?;
+
+    // The cell of each queue entry, indexed by its insertion order.
+    let mut queued_cells = vec![start];
+    let mut open: BinaryHeap<Queued> = BinaryHeap::new();
+    open.push(Reverse((manhattan(start, toward), 0, 0)));
+    // Cheapest known cost to each cell and the cell it was reached from.
+    let mut reached: HashMap<BlockPos, (i32, Option<BlockPos>)> = HashMap::new();
+    reached.insert(start, (0, None));
+    let mut expansions = 0;
+
+    while let Some(Reverse((_, cost, order))) = open.pop() {
+        let cell = queued_cells[order as usize];
+        if reached[&cell].0 < cost {
+            continue;
+        }
+        if is_goal(cell) {
+            return Some(path_to(&reached, cell));
+        }
+        if expansions == budget {
+            return None;
+        }
+        expansions += 1;
+        for next in neighbours(grid, cell) {
+            let next_cost = cost + 1;
+            if reached
+                .get(&next)
+                .is_some_and(|&(known, _)| known <= next_cost)
+            {
+                continue;
+            }
+            reached.insert(next, (next_cost, Some(cell)));
+            let order = u32::try_from(queued_cells.len())
+                .expect("the node budget keeps the queue far below u32::MAX entries");
+            queued_cells.push(next);
+            open.push(Reverse((
+                next_cost + manhattan(next, toward),
+                next_cost,
+                order,
+            )));
+        }
+    }
     None
+}
+
+/// The cells from the one after the start up to `end`.
+fn path_to(reached: &HashMap<BlockPos, (i32, Option<BlockPos>)>, end: BlockPos) -> Vec<BlockPos> {
+    let mut path = Vec::new();
+    let mut cell = end;
+    while let Some(from) = reached[&cell].1 {
+        path.push(cell);
+        cell = from;
+    }
+    path.reverse();
+    path
 }
 
 #[cfg(test)]

@@ -15,7 +15,9 @@ pub struct Colony {
 
 impl Colony {
     /// Adds a mining yield to the colony's stock.
-    pub fn deposit(&mut self, _yield: ResourceYield) {}
+    pub fn deposit(&mut self, yield_: ResourceYield) {
+        self.stock.add(yield_.resource_id, yield_.amount);
+    }
 }
 
 /// What a mark order does to a block that is, or is not, marked.
@@ -60,16 +62,29 @@ impl MineMarks {
 
     /// Gives an unclaimed mark to `pawn`. Returns whether the claim was made: `false` when
     /// the block is not marked or another pawn (or this one) already holds it.
-    pub fn claim(&mut self, _pos: [i32; 3], _pawn: PawnId) -> bool {
-        false
+    pub fn claim(&mut self, pos: [i32; 3], pawn: PawnId) -> bool {
+        match self.marks.get_mut(&pos) {
+            Some(mark) if mark.claimed_by.is_none() => {
+                mark.claimed_by = Some(pawn);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Frees the claim on a mark and keeps the mark; does nothing for an unmarked block.
-    pub fn release(&mut self, _pos: [i32; 3]) {}
+    pub fn release(&mut self, pos: [i32; 3]) {
+        if let Some(mark) = self.marks.get_mut(&pos) {
+            mark.claimed_by = None;
+        }
+    }
 
     /// The marks no pawn has claimed, in key order.
     pub fn unclaimed(&self) -> impl Iterator<Item = [i32; 3]> {
-        self.marks.keys().copied()
+        self.marks
+            .iter()
+            .filter(|(_, mark)| mark.claimed_by.is_none())
+            .map(|(pos, _)| *pos)
     }
 
     /// Drops the mark on a block that no longer exists; does nothing for an unmarked one.
