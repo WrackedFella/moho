@@ -16,8 +16,9 @@ use searchlight_rules::{
     MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
 };
 
-use crate::arena::{Arena, nav_profile};
+use crate::arena::{Arena, ArenaControl, nav_profile};
 use crate::brain::EnemyTuning;
+use crate::control::ControlAction;
 use crate::input::SearchlightAction;
 use crate::mode::ArenaMode;
 use crate::sim::SimConfig;
@@ -225,12 +226,39 @@ pub(crate) fn arena_with(
     enemies: &[Vec3],
     route: &[Vec3],
 ) -> Arc<Arena> {
+    arena_with_controls(boxes, player, enemies, route, &[])
+}
+
+/// [`arena_with`] plus one control post, 0.4 x 1.2 x 0.4 m, standing on each floor point of
+/// `controls`, in order. The navmesh is built from the arena and the posts, as the shipped one is.
+pub(crate) fn arena_with_controls(
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+    controls: &[(Vec3, ControlAction)],
+) -> Arc<Arena> {
     let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
     let meshes: Vec<WorldMesh> = std::iter::once(&floor)
         .chain(boxes)
         .map(|&(min, max)| box_mesh(min, max))
         .collect();
-    let nav = Arc::new(NavMesh::build(&meshes, nav_profile()).expect("box worlds build a navmesh"));
+    let controls: Vec<ArenaControl> = controls
+        .iter()
+        .map(|&(at, action)| ArenaControl {
+            action,
+            mesh: box_mesh(
+                at + Vec3::new(-0.2, 0.0, -0.2),
+                at + Vec3::new(0.2, 1.2, 0.2),
+            ),
+        })
+        .collect();
+    let walls: Vec<WorldMesh> = meshes
+        .iter()
+        .cloned()
+        .chain(controls.iter().map(|control| control.mesh.clone()))
+        .collect();
+    let nav = Arc::new(NavMesh::build(&walls, nav_profile()).expect("box worlds build a navmesh"));
     Arc::new(Arena {
         material_names: vec![None; meshes.len()],
         meshes,
@@ -241,7 +269,27 @@ pub(crate) fn arena_with(
         enemy_spawns: enemies.to_vec(),
         route: route.to_vec(),
         covers: Vec::new(),
+        controls,
     })
+}
+
+/// A player standing at the origin looking along +Z at a next-wave post 1.5 m ahead, with the
+/// eye 0.6 m up so a level view meets the 1.2 m post. `markers` are the enemy markers.
+pub(crate) fn button_arena(markers: &[Vec3], boxes: &[(Vec3, Vec3)]) -> Arc<Arena> {
+    arena_with_controls(
+        boxes,
+        Vec3::ZERO,
+        markers,
+        &[Vec3::new(0.0, 0.0, 25.0)],
+        &[(Vec3::new(0.0, 0.0, 1.5), ControlAction::NextWave)],
+    )
+}
+
+/// `config` with the eye 0.6 m above the feet, so a level view from the origin meets a control
+/// post.
+pub(crate) fn with_low_eye(mut config: SimConfig) -> SimConfig {
+    config.character_body.standing.eye_height = 0.6;
+    config
 }
 
 /// Waves of experienced enemies that open with `first_size` enemies, grow by one and score 100

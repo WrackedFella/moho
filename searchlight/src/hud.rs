@@ -3,6 +3,7 @@
 use glam::Vec3;
 use searchlight_rules::{BodyPart, MagazineLevel};
 
+use crate::control::ControlAction;
 use crate::mode::Tally;
 use crate::sim::Feedback;
 
@@ -108,6 +109,12 @@ pub fn god_mode_text(vitals: &str, god_mode: bool) -> String {
 /// What the dead player reads in the title, or `None` while alive.
 pub fn death_text(dead: bool) -> Option<&'static str> {
     dead.then_some("Dead - press F8 to restart")
+}
+
+/// What the player reads while looking at a control within reach: the `key` that uses it and
+/// what it does, such as `[F] Next wave`.
+pub fn use_prompt(_key: &str, _action: ControlAction) -> String {
+    todo!("the prompt wording")
 }
 
 /// A translucent rectangle in screen pixels, colour as straight RGBA.
@@ -286,6 +293,17 @@ mod feedback_tests {
         assert_eq!(arena_text(3, 200), "Wave 3  Score 200");
         assert_eq!(arena_text(1, 0), "Wave 1  Score 0");
         assert_eq!(arena_text(12, 4_000), "Wave 12  Score 4000");
+    }
+
+    #[test]
+    fn the_use_prompt_names_the_key_and_next_wave() {
+        let on_f = use_prompt("F", ControlAction::NextWave);
+        let on_space = use_prompt("Space", ControlAction::NextWave);
+        let unbound = use_prompt("unbound", ControlAction::NextWave);
+
+        assert_eq!(on_f, "[F] Next wave");
+        assert_eq!(on_space, "[Space] Next wave");
+        assert_eq!(unbound, "[unbound] Next wave");
     }
 
     #[test]

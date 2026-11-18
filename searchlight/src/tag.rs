@@ -12,6 +12,9 @@ pub enum SurfaceTag {
     Part { target: u16, part: BodyPart },
     /// One body part of the player.
     Player(BodyPart),
+    /// The placed control numbered `index` in the arena's file order: stops a ray, damages
+    /// nothing, and is what a use is aimed at.
+    Control(u16),
 }
 
 /// The engine tag does not encode any [`SurfaceTag`].
@@ -52,6 +55,7 @@ impl From<SurfaceTag> for HitTag {
         match tag {
             SurfaceTag::World => HitTag(WORLD),
             SurfaceTag::Player(part) => HitTag(PLAYER_BASE + part_index(part)),
+            SurfaceTag::Control(_) => todo!("the control tag range"),
             SurfaceTag::Part { target, part } => {
                 HitTag(PART_BASE + ((u32::from(target) << PART_BITS) | part_index(part)))
             }
@@ -101,6 +105,7 @@ mod tests {
             Just(SurfaceTag::World),
             (any::<u16>(), proptest::sample::select(PARTS.to_vec()))
                 .prop_map(|(target, part)| SurfaceTag::Part { target, part }),
+            any::<u16>().prop_map(SurfaceTag::Control),
         ]
     }
 
@@ -182,6 +187,32 @@ mod encoding_tests {
 #[cfg(test)]
 mod player_encoding_tests {
     use super::*;
+
+    #[test]
+    fn control_tags_sit_above_every_player_tag_and_round_trip_at_both_ends() {
+        let control = |index| HitTag::from(SurfaceTag::Control(index));
+        let right_leg = HitTag::from(SurfaceTag::Player(BodyPart::RightLeg));
+
+        let first = control(0);
+        let last = control(u16::MAX);
+
+        assert!(first.0 > right_leg.0, "{first:?} vs {right_leg:?}");
+        assert!(last.0 > first.0, "{last:?} vs {first:?}");
+        assert_eq!(SurfaceTag::try_from(first), Ok(SurfaceTag::Control(0)));
+        assert_eq!(
+            SurfaceTag::try_from(last),
+            Ok(SurfaceTag::Control(u16::MAX))
+        );
+    }
+
+    #[test]
+    fn a_tag_past_the_last_control_is_rejected() {
+        let last = HitTag::from(SurfaceTag::Control(u16::MAX));
+
+        let decoded = SurfaceTag::try_from(HitTag(last.0 + 1));
+
+        assert_eq!(decoded, Err(UnknownTag(last.0 + 1)));
+    }
 
     #[test]
     fn player_tags_start_one_past_the_world_tag_above_every_target_part() {

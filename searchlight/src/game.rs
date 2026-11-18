@@ -970,6 +970,12 @@ impl SearchlightGame {
         self.mode.sim()
     }
 
+    /// The use prompt the last frame handed the shell, or `None` when it showed none.
+    #[cfg(test)]
+    fn prompt_text(&self) -> Option<String> {
+        todo!("the prompt the last frame set")
+    }
+
     /// The input map, for feeding it device events.
     pub fn input_mut(&mut self) -> &mut ActionMap<SearchlightAction> {
         &mut self.input
@@ -1204,9 +1210,11 @@ mod tests {
     use winit::event::{DeviceEvent, WindowEvent};
 
     use super::*;
+    use crate::control::ControlAction;
     use crate::sim::Feedback;
     use crate::test_support::{
-        WaveScore, arena_with, mag, press, rifle_from, test_config, wave_tuning,
+        WaveScore, arena_with, arena_with_controls, mag, press, rifle_from, test_config,
+        wave_tuning, with_low_eye,
     };
     use searchlight_rules::{Grade, LeanSide};
 
@@ -1510,6 +1518,140 @@ mod tests {
                 "alpha {alpha}: the view is rolled, up is {up:?}"
             );
         }
+    }
+
+    /// A game whose player faces a next-wave post 1.5 m ahead, with `bindings`.
+    fn control_game_with(bindings: ActionBindings<SearchlightAction>) -> SearchlightGame {
+        let arena = arena_with_controls(
+            &[],
+            Vec3::ZERO,
+            &[],
+            &[],
+            &[(Vec3::new(0.0, 0.0, 1.5), ControlAction::NextWave)],
+        );
+        let config = with_low_eye(test_config(rifle_from(mag(30, 5)), vec![]));
+        let mode = ArenaMode::new(arena, config, wave_tuning(1));
+        SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
+    }
+
+    fn control_game() -> SearchlightGame {
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        control_game_with(bindings)
+    }
+
+    /// Runs one frame with no renderer.
+    fn frame_once(game: &mut SearchlightGame) {
+        let clock = GameClock::default();
+        let mut ctx = FrameContext::new(TICK, &clock, None, None);
+        game.frame(&mut ctx, 0.0);
+    }
+
+    fn turn_away() -> SearchlightCommand {
+        SearchlightCommand {
+            movement: moho_physics::CharacterCommand {
+                yaw_delta: std::f32::consts::PI,
+                ..moho_physics::CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        }
+    }
+
+    #[test]
+    fn the_prompt_shows_while_the_button_is_in_reach() {
+        let mut game = control_game();
+
+        frame_once(&mut game);
+
+        assert_eq!(game.prompt_text().as_deref(), Some("[F] Next wave"));
+    }
+
+    #[test]
+    fn the_prompt_names_the_rebound_use_key() {
+        let section = BTreeMap::from([("use".to_owned(), "X".to_owned())]);
+        let (bindings, warnings) = ActionBindings::load(&section);
+        assert_eq!(warnings, vec![]);
+        let mut game = control_game_with(bindings);
+
+        frame_once(&mut game);
+
+        assert_eq!(game.prompt_text().as_deref(), Some("[X] Next wave"));
+    }
+
+    #[test]
+    fn no_prompt_when_looking_away() {
+        let mut game = control_game();
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        frame_once(&mut game);
+        let facing_it = game.prompt_text();
+
+        tick_with(&mut game, &mut clock, &turn_away());
+        frame_once(&mut game);
+
+        assert_eq!(facing_it.as_deref(), Some("[F] Next wave"));
+        assert_eq!(game.prompt_text(), None);
+    }
+
+    #[test]
+    fn no_prompt_while_dead_or_paused() {
+        let mut dead = control_game();
+        let mut paused = control_game();
+        let mut in_menu = control_game();
+        for game in [&mut dead, &mut paused, &mut in_menu] {
+            frame_once(game);
+        }
+        let showing = [&dead, &paused, &in_menu].map(SearchlightGame::prompt_text);
+
+        dead.mode.sim_mut().kill_player();
+        paused.pause();
+        in_menu.screen = Screen::MainMenu;
+        for game in [&mut dead, &mut paused, &mut in_menu] {
+            frame_once(game);
+        }
+
+        let prompt = Some("[F] Next wave".to_owned());
+        assert_eq!(showing, [prompt.clone(), prompt.clone(), prompt]);
+        assert_eq!(dead.prompt_text(), None);
+        assert_eq!(paused.prompt_text(), None);
+        assert_eq!(in_menu.prompt_text(), None);
+    }
+
+    #[test]
+    fn control_mesh_ids_share_no_id_with_arena_dummy_or_enemy_meshes() {
+        let controls: Vec<u64> = [0, 1, 7, 100, usize::from(u16::MAX)]
+            .into_iter()
+            .map(|index| crate::arena::control_mesh_id(index).0)
+            .collect();
+        let dummy_spawns: Vec<Vec3> = (0..50).map(|n| Vec3::new(n as f32, 0.0, 0.0)).collect();
+        let dummies: Vec<u64> = dummy_segments(&SHIPPED_BODY, &dummy_spawns)
+            .iter()
+            .map(|segment| segment.id.0)
+            .collect();
+        let enemies: Vec<u64> = [0, 1, 50, 300, u16::MAX]
+            .into_iter()
+            .flat_map(|target| {
+                let rig = EnemyRig {
+                    target,
+                    shown: false,
+                    gun_flash: 0,
+                };
+                (0..ENEMY_SEGMENT_COUNT).map(move |slot| rig.mesh_id(slot).0)
+            })
+            .collect();
+        let arena_ids = 0..DUMMY_MESH_BASE;
+
+        for id in &controls {
+            assert!(!arena_ids.contains(id), "{id} is in the arena range");
+            assert!(!dummies.contains(id), "{id} is a dummy segment id");
+            assert!(!enemies.contains(id), "{id} is an enemy segment id");
+            assert!(
+                *id >= ENEMY_MESH_BASE + (u64::from(u16::MAX) + 1) * ENEMY_MESH_SLOTS,
+                "{id} is inside the dummy or enemy ranges"
+            );
+        }
+        let mut distinct = controls.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), controls.len(), "controls share an id");
     }
 
     const BACKTICK: Input = Input::Key(Key::Backtick);
