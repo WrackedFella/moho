@@ -1,7 +1,8 @@
 /// When an edited world is next due an autosave, counted in simulation ticks.
 ///
 /// A world is due once it has been edited since the last save and at least
-/// `interval_ticks` ticks have passed since that save. An idle world is never due.
+/// `interval_ticks` ticks have passed since that save. An idle world is never due,
+/// and a schedule with no interval (autosave off) is never due.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AutosaveSchedule {
     interval_ticks: Option<u64>,
