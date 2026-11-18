@@ -193,7 +193,7 @@ mod tests {
                 "class": "weapon", "size": [2, 5], "condition": 100,
                 "weapon": {
                     "well": "rifle", "damage": 30, "fire": "semi_auto", "cooldown_ticks": 6,
-                    "reload_ticks": 120, "charge_ticks": 30, "range": 100.0
+                    "reload_ticks": 120, "charge_ticks": 30
                 }
             },
             "mag_rifle": {
@@ -296,7 +296,6 @@ mod tests {
                 cooldown_ticks: 6,
                 reload_ticks: 120,
                 charge_ticks: 30,
-                range: 100.0,
             }
         );
     }

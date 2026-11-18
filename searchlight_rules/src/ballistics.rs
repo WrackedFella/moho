@@ -191,6 +191,16 @@ mod tests {
     }
 
     #[test]
+    fn a_partial_drag_step_scales_velocity_linearly() {
+        let before = flight(Vec3::ZERO, Vec3::new(100.0, 0.0, -50.0));
+
+        let next = before.step(&ballistics(940.0, 1.0), 0.0, 0.5);
+
+        assert_eq!(next.velocity, Vec3::new(50.0, 0.0, -25.0));
+        assert_eq!(next.position, Vec3::new(25.0, 0.0, -12.5));
+    }
+
+    #[test]
     fn a_flight_at_the_minimum_speed_is_spent() {
         let at = |velocity| flight(Vec3::ZERO, velocity).is_spent();
 

@@ -62,7 +62,6 @@ fire = "semi_auto"
 cooldown_ticks = 6
 reload_ticks = 120
 charge_ticks = 30
-range = 100.0
 "#;
 
     const OTHER_ITEMS: &str = r#"
@@ -159,7 +158,6 @@ condition = 100
         assert_eq!(kit.weapon.cooldown_ticks, 6);
         assert_eq!(kit.weapon.reload_ticks, 120);
         assert_eq!(kit.weapon.charge_ticks, 30);
-        assert!((kit.weapon.range - 200.0).abs() < f32::EPSILON);
         assert_eq!(kit.weapon.well, MagazineWell::new("rifle"));
     }
 

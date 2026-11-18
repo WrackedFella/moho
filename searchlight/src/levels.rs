@@ -97,19 +97,17 @@ mod tests {
     use std::collections::BTreeSet;
 
     use glam::Vec3;
-    use moho_core::content::ContentRoots;
     use moho_level::{Level, LevelMesh};
     use moho_physics::RayQuery;
-    use searchlight_rules::BodyPart;
+    use searchlight_rules::{Ballistics, BodyPart, Flight, STANDARD_GRAVITY};
 
     use super::*;
     use crate::arena::{self, LevelMode};
-    use crate::kit::{self, START_KIT_ID};
+    use crate::assets_root;
     use crate::sim::{STAND_HEIGHT, dummy_hit_volumes};
     use crate::tag::SurfaceTag;
     use crate::test_support::{box_mesh, level_marker, mode_marker};
     use crate::tuning::SHIPPED_BODY;
-    use crate::{assets_root, content_root};
 
     fn chosen(arg: &str) -> Result<LevelChoice, UnknownLevel> {
         choose(Some(OsStr::new(arg)))
@@ -282,13 +280,11 @@ mod tests {
     }
 
     #[test]
-    fn the_200_m_dummy_is_in_rifle_range_from_the_firing_line() {
-        let roots = ContentRoots::base(&content_root()).expect("the shipped content folder");
-        let range = kit::load(&roots, START_KIT_ID)
-            .expect("the shipped start kit loads")
-            .weapon
-            .range;
-        let (_, markers) = shipped("proving_ground.glb");
+    fn the_200_m_dummy_is_within_a_rifle_rounds_flight_from_the_firing_line() {
+        let (level, markers) = shipped("proving_ground.glb");
+        let bounds = Arena::from_level(&level, &markers)
+            .expect("the proving ground builds")
+            .flight_bounds();
         let spawn = markers.player_spawn.as_ref().expect("a firing line spawn");
         let far = markers
             .dummies
@@ -312,10 +308,22 @@ mod tests {
         let near_face = centre - Vec3::Z * torso.half_extents.z;
 
         let distance = eye.distance(near_face);
+        let ballistics = Ballistics {
+            muzzle_velocity: 940.0,
+            drag: 1.0,
+        };
+        let mut flight = Flight::fired(eye, near_face - eye, &ballistics);
+        while flight.position.distance(eye) < distance {
+            flight = flight.step(&ballistics, STANDARD_GRAVITY, 1.0 / 60.0);
+        }
 
         assert!(
-            distance <= range,
-            "the torso's near face is {distance} m from the eye; the rifle reaches {range} m"
+            bounds.contains(near_face),
+            "{near_face} is outside {bounds:?}"
+        );
+        assert!(
+            !flight.is_spent(),
+            "a 940 m/s round is spent before the torso's near face, {distance} m from the eye"
         );
     }
 

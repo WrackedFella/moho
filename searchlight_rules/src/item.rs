@@ -292,8 +292,7 @@ mod tests {
             "fire": "semi_auto",
             "cooldown_ticks": 6,
             "reload_ticks": 120,
-            "charge_ticks": 30,
-            "range": 100.0
+            "charge_ticks": 30
         })
     }
 
@@ -408,7 +407,6 @@ mod tests {
                 cooldown_ticks: 6,
                 reload_ticks: 120,
                 charge_ticks: 30,
-                range: 100.0,
             }
         );
     }
@@ -473,19 +471,13 @@ mod tests {
     }
 
     #[test]
-    fn a_round_with_a_muzzle_velocity_of_0_is_refused_naming_the_field() {
-        let text = error_text(round_with(0.0, 1.0));
-
-        assert!(text.contains("muzzle_velocity"), "{text}");
-    }
-
-    #[test]
     fn a_round_at_the_minimum_speed_is_refused_naming_the_field() {
+        let zero = error_text(round_with(0.0, 1.0));
         let at_minimum = error_text(round_with(100.0, 1.0));
         let below = error_text(round_with(99.0, 1.0));
         let negative = error_text(round_with(-940.0, 1.0));
 
-        for text in [at_minimum, below, negative] {
+        for text in [zero, at_minimum, below, negative] {
             assert!(text.contains("muzzle_velocity"), "{text}");
         }
         assert!(parse(round_with(100.5, 1.0)).is_ok());

@@ -30,8 +30,6 @@ pub struct RifleDef {
     pub reload_ticks: u32,
     /// Ticks added to `reload_ticks` when the chamber is empty, to charge the rifle.
     pub charge_ticks: u32,
-    /// How far a shot reaches, in metres.
-    pub range: f32,
 }
 
 #[cfg(test)]
@@ -47,8 +45,7 @@ mod tests {
             "fire": "semi_auto",
             "cooldown_ticks": 6,
             "reload_ticks": 120,
-            "charge_ticks": 30,
-            "range": 100.0
+            "charge_ticks": 30
         })
     }
 
@@ -65,7 +62,6 @@ mod tests {
                 cooldown_ticks: 6,
                 reload_ticks: 120,
                 charge_ticks: 30,
-                range: 100.0,
             }
         );
     }
@@ -102,15 +98,8 @@ mod tests {
 
     #[test]
     fn a_rifle_that_still_names_a_range_is_refused() {
-        let value = json!({
-            "well": "rifle",
-            "damage": 30,
-            "fire": "semi_auto",
-            "cooldown_ticks": 6,
-            "reload_ticks": 120,
-            "charge_ticks": 30,
-            "range": 100.0
-        });
+        let mut value = valid();
+        value["range"] = json!(100.0);
 
         let error =
             serde_json::from_value::<RifleDef>(value).expect_err("a rifle no longer has a range");

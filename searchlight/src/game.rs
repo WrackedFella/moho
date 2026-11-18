@@ -2900,20 +2900,21 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_round_gravity_leaves_the_scale_unchanged_and_a_new_game_starts_at_1() {
-        let mut game = game();
-        type_into_console(&game, "round_gravity 30");
-        game.command();
+    fn the_gravity_scale_is_not_saved_so_a_new_game_on_the_same_prefs_starts_at_1() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut first = game().with_debug_settings(settings);
+        type_into_console(&first, "simple 1");
+        type_into_console(&first, "round_gravity 30");
+        let set = first.command().round_gravity;
+        let (prefs, _) = Prefs::load_from(&path);
+        let mut second = game().with_debug_settings(DebugSettings::new(prefs, path));
 
-        type_into_console(&game, "round_gravity -2");
-        let after_negative = game.command().round_gravity;
-        type_into_console(&game, "round_gravity abc");
-        let after_text = game.command().round_gravity;
-        let fresh = self::game().command().round_gravity;
+        let relaunched = second.command();
 
-        assert_eq!(after_negative, scale(30.0));
-        assert_eq!(after_text, scale(30.0));
-        assert_eq!(fresh, scale(1.0));
+        assert_eq!(set, scale(30.0));
+        assert_eq!(relaunched.round_gravity, scale(1.0));
+        assert!(relaunched.simple, "Simple is the setting that is kept");
     }
 
     use crate::menu::MenuAction;

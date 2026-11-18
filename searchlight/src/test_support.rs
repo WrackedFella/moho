@@ -170,8 +170,11 @@ pub(crate) fn long_floor() -> PhysicsWorld {
     )])
 }
 
-/// Ticks `sim` once with `command`, then idle, until a hit lands, the round is spent or 600
-/// ticks pass; returns every feedback that came, drained.
+/// Ticks `sim` once with `command`, then idle, until a hit lands or no round is in flight;
+/// returns every feedback that came, drained.
+///
+/// # Panics
+/// If 600 ticks pass without either.
 pub(crate) fn run_until_hit(
     sim: &mut SearchlightSim,
     command: &SearchlightCommand,
@@ -181,8 +184,11 @@ pub(crate) fn run_until_hit(
     })
 }
 
-/// Ticks `sim` once with `command`, then idle, until no round is in flight or 600 ticks pass;
-/// returns every feedback that came, drained.
+/// Ticks `sim` once with `command`, then idle, until no round is in flight; returns every
+/// feedback that came, drained.
+///
+/// # Panics
+/// If 600 ticks pass with a round still in flight.
 pub(crate) fn run_until_settled(
     sim: &mut SearchlightSim,
     command: &SearchlightCommand,
@@ -202,11 +208,11 @@ fn run_while(
         sim.tick(next, DT);
         all.extend(sim.drain_feedback());
         if done(sim, &all) {
-            break;
+            return all;
         }
         next = &idle;
     }
-    all
+    panic!("600 ticks passed and a round was still in flight, so no hit or miss can be read yet");
 }
 
 /// Tuning with a 3-tick cooldown, 10-tick reload, 30 damage and the given rifle, with
@@ -226,7 +232,6 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
         move_settings: test_move_settings(),
         gravity: 18.0,
         character_body: SHIPPED_BODY,
-        range: 100.0,
         rounds: BTreeMap::from([(ItemId::new("test_round"), test_ballistics())]),
         damage: 30,
         cooldown_ticks: 3,
