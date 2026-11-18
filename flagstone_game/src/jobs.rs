@@ -171,11 +171,12 @@ fn claim(pawn: &mut Pawn, pose: PawnPose, marks: &mut MineMarks, grid: &VoxelGri
     None
 }
 
-/// A cell to dig `block` from: within one column of it and with the feet between one below
+/// A cell to dig `block` from: in a neighbouring column (never the block's own, whose
+/// ground the dig would remove from under the pawn) and with the feet between one below
 /// and two above it, so the dig is always inside [`MINE_REACH`].
 fn is_stand_cell(cell: BlockPos, block: BlockPos) -> bool {
     let d = cell - block;
-    d.x.abs() <= 1 && d.z.abs() <= 1 && (-1..=2).contains(&d.y)
+    d.x.abs() <= 1 && d.z.abs() <= 1 && (d.x, d.z) != (0, 0) && (-1..=2).contains(&d.y)
 }
 
 /// The centres of the faces of `block` that border open space.
