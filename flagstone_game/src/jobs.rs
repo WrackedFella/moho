@@ -252,12 +252,13 @@ mod tests {
     fn an_idle_pawn_claims_the_nearest_reachable_mark_and_equips_the_tool() {
         let mut grid = flat(10, 1);
         grid.mutator()
-            .fill_region(cell(0, 0, 4), cell(2, 0, 5), GROUND);
-        let marked = [[9, 1, 0], [1, 1, 4], [5, 1, 1]];
+            .fill_region(cell(5, 0, 3), cell(7, 0, 4), GROUND);
+        let marked = [[2, 1, 1], [9, 1, 1], [6, 1, 3]];
         for [x, y, z] in marked {
             grid.mutator().place(cell(x, y, z), GROUND, None);
         }
         let mut scene = Scene::on(grid, &marked);
+        scene.pose.feet = Vec3::new(6.5, 1.0, 1.5);
         scene.pawn.select_slot(3);
 
         scene.tick();
@@ -267,12 +268,12 @@ mod tests {
         };
         assert_eq!(
             *mark,
-            [5, 1, 1],
-            "nearer [1, 1, 4] is on an unreachable island"
+            [9, 1, 1],
+            "[6, 1, 3] is nearest but on an unreachable island; [2, 1, 1] is farther than [9, 1, 1]"
         );
-        assert_eq!(scene.claimed_by([5, 1, 1]), Some(PawnId(0)));
-        assert_eq!(scene.claimed_by([1, 1, 4]), None);
-        assert_eq!(scene.claimed_by([9, 1, 0]), None);
+        assert_eq!(scene.claimed_by([9, 1, 1]), Some(PawnId(0)));
+        assert_eq!(scene.claimed_by([6, 1, 3]), None);
+        assert_eq!(scene.claimed_by([2, 1, 1]), None);
         assert_eq!(scene.pawn.equipped_tool, Some(STARTING_TOOL));
         assert_eq!(scene.pawn.selected_slot, TOOL_SLOT);
     }
@@ -364,7 +365,62 @@ mod tests {
                 distance <= MINE_REACH,
                 "digging from {:?} aims {} m away", scene.pose.feet, distance
             );
+            let feet = cell(
+                scene.pose.feet.x.floor() as i32,
+                scene.pose.feet.y.floor() as i32,
+                scene.pose.feet.z.floor() as i32,
+            );
+            prop_assert!((feet.x - bx).abs() <= 1, "stand cell {feet:?} is too far in x");
+            prop_assert!((feet.z - bz).abs() <= 1, "stand cell {feet:?} is too far in z");
+            prop_assert!(
+                (-1..=2).contains(&(feet.y - by)),
+                "stand cell {feet:?} is at a bad height for the block at y = {by}"
+            );
         }
+    }
+
+    #[test]
+    fn the_route_attempts_per_tick_are_capped_at_four() {
+        let mut scene = Scene::new(&[[12, 1, 1]]);
+        scene
+            .grid
+            .mutator()
+            .fill_region(cell(0, 0, 5), cell(3, 0, 5), GROUND);
+        for x in 0..=3 {
+            scene.grid.mutator().place(cell(x, 1, 5), GROUND, None);
+            scene.marks.toggle([x, 1, 5]);
+        }
+
+        let action = scene.tick();
+
+        assert_eq!(
+            action,
+            JobAction::Wait,
+            "four failed routes use the tick up"
+        );
+        assert_eq!(scene.job, Job::Idle);
+        assert_eq!(scene.claimed_by([12, 1, 1]), None);
+    }
+
+    #[test]
+    fn a_waypoint_is_reached_within_the_arrive_radius_horizontally() {
+        let next_after = |dx: f32| {
+            let mut scene = Scene::new(&[[8, 1, 1]]);
+            scene.tick();
+            let c = scene.waypoint();
+            scene.pose.feet = Vec3::new(c.x as f32 + 0.5 + dx, c.y as f32 + 0.4, c.z as f32 + 0.5);
+            scene.tick();
+            let Job::Mine { next, .. } = &scene.job else {
+                panic!("the pawn should still be walking: {:?}", scene.job);
+            };
+            *next
+        };
+
+        let inside = next_after(0.3);
+        let outside = next_after(0.4);
+
+        assert_eq!(inside, 1, "0.3 m off horizontally counts as arrived");
+        assert_eq!(outside, 0, "0.4 m off horizontally does not");
     }
 
     #[test]

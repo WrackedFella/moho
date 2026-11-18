@@ -81,17 +81,43 @@ mod tests {
             !standable(&grid, cell(0, 1, 0)),
             "a ceiling two cells above the feet"
         );
+
+        let blocked = |at: BlockPos| {
+            let mut grid = VoxelGrid::new(16);
+            grid.mutator().place(cell(0, 0, 0), GROUND, None);
+            grid.mutator().place(at, GROUND, None);
+            grid
+        };
+        assert!(
+            !standable(&blocked(cell(0, 1, 0)), cell(0, 1, 0)),
+            "a solid block in the feet cell"
+        );
+        assert!(
+            !standable(&blocked(cell(0, 2, 0)), cell(0, 1, 0)),
+            "a block at feet + 1"
+        );
+        assert!(
+            !standable(&blocked(cell(0, 3, 0)), cell(0, 1, 0)),
+            "a block at feet + 2"
+        );
     }
 
     #[test]
-    fn standable_rejects_a_block_at_each_of_the_three_air_cells() {
-        for y in 1..=3 {
-            let mut grid = VoxelGrid::new(16);
-            grid.mutator().place(cell(0, 0, 0), GROUND, None);
-            grid.mutator().place(cell(0, y, 0), GROUND, None);
+    fn a_start_off_the_standable_cells_tries_one_above_and_one_below() {
+        let grid = flat(8, 2);
+        let goal = cell(4, 1, 0);
 
-            assert!(!standable(&grid, cell(0, 1, 0)), "block at y = {y}");
-        }
+        let from_below = find(&grid, cell(0, 0, 0), goal);
+        let from_above = find(&grid, cell(0, 2, 0), goal);
+
+        assert!(
+            from_below.is_some_and(|r| r.last() == Some(&goal)),
+            "a start one cell below a standable cell"
+        );
+        assert!(
+            from_above.is_some_and(|r| r.last() == Some(&goal)),
+            "a start one cell above a standable cell"
+        );
     }
 
     #[test]
@@ -208,12 +234,15 @@ mod tests {
         let found = route(
             &grid,
             cell(5, 1, 0),
-            |c| c == cell(1, 1, 0) || c == cell(9, 1, 0),
-            cell(1, 1, 0),
+            |c| c == cell(2, 1, 0) || c == cell(9, 1, 0),
+            cell(5, 1, 0),
             ROUTE_NODE_BUDGET,
         );
 
-        assert_eq!(found.map(|r| r.last().copied()), Some(Some(cell(9, 1, 0))));
+        assert_eq!(
+            found,
+            Some(vec![cell(4, 1, 0), cell(3, 1, 0), cell(2, 1, 0)])
+        );
     }
 
     fn terrain(heights: &[u8]) -> VoxelGrid {

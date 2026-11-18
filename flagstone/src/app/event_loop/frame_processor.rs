@@ -1269,15 +1269,46 @@ pub(crate) mod tests {
     fn an_idle_pawn_digs_a_marked_ore_block_and_the_stock_grows_by_one() {
         let target = BlockPos::new(8, 3, 8);
         let mut app = colony_app(target, Some(ORE), false);
+        let removed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let removed_sink = std::sync::Arc::clone(&removed);
+        app.event_bus.subscribe(move |e: &WorldEvent| {
+            if let WorldEvent::BlockRemoved { position, .. } = e {
+                removed_sink.lock().unwrap().push(*position);
+            }
+        });
+        let (tx, audio) = std::sync::mpsc::channel();
+        app.event_bus
+            .subscribe(move |e: &moho_core::events::AudioEvent| {
+                let _ = tx.send(e.clone());
+            });
 
         let dug = tick_until(&mut app, WAIT_TICKS, |app| !is_solid(app, target));
         run(&mut app, 1);
+        app.event_bus.process_deferred();
 
         assert!(dug.is_some(), "the block is still there after 20 s");
         assert!(
             horizontal(pawn_state(&app).position, PAWN_START) > 2.0,
             "the pawn dug from where it started"
         );
+        assert_eq!(
+            *removed.lock().unwrap(),
+            vec![target],
+            "one removal event for the block"
+        );
+        let cues: Vec<moho_core::events::AudioEvent> = audio.try_iter().collect();
+        let [moho_core::events::AudioEvent::PlaySoundAt { path, position, .. }] = cues.as_slice()
+        else {
+            panic!("expected one positioned dig cue, got {cues:?}");
+        };
+        assert_eq!(
+            std::path::Path::new(path),
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("assets/dig.wav")
+                .as_path(),
+            "the dig clip"
+        );
+        assert_eq!(*position, centre_of(target));
         assert_eq!(app.colony.stock.iter().collect::<Vec<_>>(), [(ORE, 1)]);
         assert!(
             app.pawn.inventory.is_empty(),

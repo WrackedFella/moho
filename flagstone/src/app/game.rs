@@ -1387,6 +1387,7 @@ mod tests {
             };
             let target = flagstone_voxel::BlockPos::new(8, 3, 8);
             let mut app = colony_app(target, None, false);
+            let focus_before = app.simulation.player_controller.rts_look_target;
             tick_until(&mut app, WAIT_TICKS, |app| {
                 !app.light_system
                     .as_ref()
@@ -1401,6 +1402,7 @@ mod tests {
             )
             .length();
             let in_strategy = app.simulation.position();
+            let focus_after = app.simulation.player_controller.rts_look_target;
             tap(&mut app);
 
             step(&mut app);
@@ -1409,6 +1411,10 @@ mod tests {
             }
 
             assert!(walked > 2.0, "the pawn never walked: {walked} m");
+            assert_eq!(
+                focus_after, focus_before,
+                "the pawn's walk does not move the RTS camera focus"
+            );
             assert!(
                 in_strategy.distance(walked_to.position) < 1e-3,
                 "the strategy view kept the start: {in_strategy} vs {}",

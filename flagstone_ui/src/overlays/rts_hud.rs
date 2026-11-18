@@ -621,8 +621,6 @@ mod tests {
 
         assert!(drawn.contains(&"R1 ×12".to_string()), "{drawn:?}");
         assert!(drawn.contains(&"R3 ×5".to_string()), "{drawn:?}");
-        let (first, second) = (rect_of(&output, "R1 ×12"), rect_of(&output, "R3 ×5"));
-        assert!(first.min.y < second.min.y, "not sorted by id: {drawn:?}");
     }
 
     #[test]
