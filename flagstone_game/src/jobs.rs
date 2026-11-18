@@ -26,13 +26,13 @@ pub const ARRIVE_RADIUS: f32 = 0.35;
 pub const STALL_TICKS: u32 = 120;
 
 /// Radians per second a pawn turns at: one full turn per second.
-pub const TURN_RATE: f32 = std::f32::consts::TAU;
+pub const TURN_RATE: f32 = TAU;
 
 /// Height of the eye above the feet, in metres: the centre of the 2.3 m capsule.
 pub const EYE_HEIGHT: f32 = 1.15;
 
 /// Counts ticks without progress toward the current waypoint.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StallGuard {
     pub ticks: u32,
     pub best_distance: f32,
