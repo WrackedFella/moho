@@ -20,17 +20,15 @@ impl AutosaveSchedule {
         }
     }
 
-    /// Counts one simulation tick of play.
     pub fn tick(&mut self) {
         self.ticks_since_save = self.ticks_since_save.saturating_add(1);
     }
 
-    /// Changes the interval, for when the configured one changes after construction.
+    /// Changes the interval after construction.
     pub fn set_interval_ticks(&mut self, interval_ticks: u32) {
         self.interval_ticks = interval_ticks;
     }
 
-    /// Records that the world changed since the last save.
     pub fn mark_edited(&mut self) {
         self.edited = true;
     }
