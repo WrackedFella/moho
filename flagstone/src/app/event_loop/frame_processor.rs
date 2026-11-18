@@ -1464,6 +1464,33 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn two_marked_ore_blocks_are_both_dug_and_the_colony_stock_is_two() {
+        const FAR_MARK: [i32; 3] = [10, 3, 8];
+        let mut app = colony_app(false);
+        for mark in [FLAT_MARK, FAR_MARK] {
+            make_ore(&mut app, mark);
+            app.colony.marks.toggle(mark);
+        }
+
+        let dug = run_until(&mut app, 2 * DIG_BUDGET, |app| {
+            !block_is_solid(app, FLAT_MARK) && !block_is_solid(app, FAR_MARK)
+        });
+
+        assert!(
+            dug.is_some(),
+            "a block is still there after {} ticks",
+            2 * DIG_BUDGET
+        );
+        assert!(!app.colony.marks.contains(FLAT_MARK));
+        assert!(!app.colony.marks.contains(FAR_MARK));
+        assert_eq!(app.colony.stock.count(ORE), 2);
+        assert!(
+            app.pawn.inventory.is_empty(),
+            "a job's yield goes to the colony, not the pawn's hands"
+        );
+    }
+
+    #[test]
     fn the_pawn_crosses_a_one_block_rise_without_leaving_the_ground() {
         let mut app = colony_app(true);
         app.colony.marks.toggle(RISE_MARK);

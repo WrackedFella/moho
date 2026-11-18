@@ -406,6 +406,77 @@ mod tests {
     }
 
     #[test]
+    fn a_reachable_mark_behind_many_unreachable_nearer_ones_is_claimed_within_ten_ticks() {
+        let enclosed: Vec<[i32; 3]> = [-6, -3, 0, 3, 6].map(|z| [3, 1, z]).to_vec();
+        let reachable = [-7, 1, 0];
+        let mut all = enclosed.clone();
+        all.push(reachable);
+        let (mut grid, mut marks) = world_with_marks(&all);
+        for &[cx, _, cz] in &enclosed {
+            for x in cx - 1..=cx + 1 {
+                for y in 1..=2 {
+                    for z in cz - 1..=cz + 1 {
+                        if (x, z) != (cx, cz) {
+                            grid.mutator().place(cell(x, y, z), 1, None);
+                        }
+                    }
+                }
+            }
+        }
+        let mut pawn = Pawn::default();
+        let start = standing_in(cell(0, 1, 0));
+
+        let mut claimed_after = None;
+        for tick in 1..=10 {
+            step(PawnId(0), &mut pawn, start, &mut marks, &grid);
+            if claimed_by(&marks, reachable) == Some(PawnId(0)) {
+                claimed_after = Some(tick);
+                break;
+            }
+        }
+
+        assert!(
+            claimed_after.is_some(),
+            "the reachable mark starved behind five unreachable nearer ones"
+        );
+        for pos in enclosed {
+            assert_eq!(claimed_by(&marks, pos), None);
+        }
+    }
+
+    #[test]
+    fn two_reachable_marks_are_dug_one_after_the_other_and_the_pawn_ends_idle() {
+        let (grid, mut marks) = world_with_marks(&[[3, 1, 0], [-3, 1, 0]]);
+        let mut pawn = Pawn::default();
+        let mut at = standing_in(cell(0, 1, 0));
+        let mut dug = Vec::new();
+
+        for _ in 0..200 {
+            match step(PawnId(0), &mut pawn, at, &mut marks, &grid) {
+                JobAction::Dig { block, .. } => {
+                    marks.block_removed(block.to_array());
+                    dug.push(block);
+                }
+                JobAction::Walk { to } => at = pose(to, at.yaw),
+                JobAction::Wait => {}
+            }
+            if dug.len() == 2 {
+                break;
+            }
+        }
+
+        assert_eq!(dug.len(), 2, "both marks are dug: {dug:?}");
+        assert_ne!(dug[0], dug[1], "each mark is dug once");
+        assert!(dug.contains(&cell(3, 1, 0)) && dug.contains(&cell(-3, 1, 0)));
+        assert_eq!(marks.iter().count(), 0, "no mark or claim lingers");
+        assert_eq!(pawn.job, Job::Idle);
+        assert_eq!(
+            step(PawnId(0), &mut pawn, at, &mut marks, &grid),
+            JobAction::Wait
+        );
+    }
+
+    #[test]
     fn a_mark_above_the_feet_is_dug_from_a_stand_cell_at_another_height() {
         let (mut grid, mut marks) = world_with_marks(&[[3, 2, 0]]);
         grid.mutator().place(cell(3, 1, 0), 1, None);
