@@ -28,8 +28,8 @@ const MARK_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/mark.wav")
 const UNMARK_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/unmark.wav");
 const MARK_VOLUME: f32 = 0.6;
 
-/// The id the selection mark is drawn under; `u64::MAX` is a value the console's and the
-/// mining marks' ids never reach.
+/// The id the selection mark is drawn under. The mining marks never reach `u64::MAX`; a console
+/// marker given that id is overwritten by the per-frame sync.
 const SELECTION_MARKER_ID: moho_render_api::MarkerId = moho_render_api::MarkerId(u64::MAX);
 /// RGBA of the selection outline.
 const SELECTION_COLOR: [f32; 4] = [1.0, 0.9, 0.2, 1.0];
