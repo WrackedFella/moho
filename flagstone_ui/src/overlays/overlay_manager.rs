@@ -27,6 +27,18 @@ pub struct HudIntents {
     pub toggle_mine_designation: bool,
 }
 
+/// The selected pawn as the panel describes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionHud {
+    pub title: String,
+
+    /// Label of the equipped tool, `None` when nothing is equipped.
+    pub tool: Option<String>,
+
+    /// Carried resources as `(display name, count)`.
+    pub carried: Vec<(String, u32)>,
+}
+
 /// Per-frame data pushed from the game loop into all overlays.
 #[derive(Debug, Clone)]
 pub struct HudData {
@@ -88,6 +100,9 @@ pub struct HudData {
 
     /// Whether the mining designation is active, for the HUD control's state.
     pub mine_designation_active: bool,
+
+    /// The selected pawn's panel; `None` when no pawn is selected.
+    pub selection: Option<SelectionHud>,
 }
 
 impl Default for HudData {
@@ -110,6 +125,7 @@ impl Default for HudData {
             view_height: None,
             pickups: Vec::new(),
             mine_designation_active: false,
+            selection: None,
         }
     }
 }

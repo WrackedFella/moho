@@ -453,6 +453,26 @@ mod tests {
     }
 
     #[test]
+    fn the_pawn_box_matches_the_character_capsule() {
+        let controller = grounded_player_on_floor();
+        let state = player_state(&controller);
+        assert!(state.grounded, "settled on the floor");
+
+        let aabb = flagstone_game::selection::pawn_aabb(state.position);
+
+        assert!(
+            (state.position.y - flagstone_game::selection::PAWN_HALF_EXTENTS.y).abs() < 0.02,
+            "the capsule centre stands {} above the floor",
+            state.position.y
+        );
+        assert!(
+            aabb.min.y.abs() < 0.02,
+            "the pawn box starts {} off the floor",
+            aabb.min.y
+        );
+    }
+
+    #[test]
     fn move_character_without_a_jump_command_on_the_ground_does_not_rise() {
         let mut controller = grounded_player_on_floor();
         assert!(player_state(&controller).grounded, "settled on the floor");

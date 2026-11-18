@@ -422,6 +422,7 @@ impl FrameProcessor {
                 .map(|e| (e.resource_id, e.amount, e.life()))
                 .collect(),
             mine_designation_active: app.input.designation == Designation::Mine,
+            selection: None,
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {
@@ -1034,6 +1035,131 @@ mod tests {
             "the designation is not on the HUD data"
         );
         assert!(active != inactive, "the control looks the same either way");
+    }
+
+    /// The frame `update_hud_data` produces for `app` in the strategy view, and the frames
+    /// painted from the same world's HUD data carrying each of `references` as its panel.
+    fn strategy_frames(
+        app: &mut App,
+        hotbar: Vec<(u32, u32)>,
+        tool: Option<&str>,
+        references: &[Option<flagstone_ui::overlays::SelectionHud>],
+    ) -> (moho_render_api::UiFrame, Vec<moho_render_api::UiFrame>) {
+        use moho_render_api::UiFrameSource;
+        app.simulation
+            .set_camera_mode(flagstone_game::controller::CameraMode::Isometric);
+        let clock = moho_app::GameClock::default();
+        let adapter = std::sync::Arc::new(std::sync::Mutex::new(hud_adapter()));
+        app.ui_adapter = Some(std::sync::Arc::clone(&adapter));
+        FrameProcessor::new().update_hud_data(app, &clock, Duration::from_secs_f32(DT));
+        let produced = adapter
+            .lock()
+            .unwrap()
+            .ui_frame([800, 600])
+            .expect("playing paints");
+
+        let pos = app.simulation.position();
+        let cp = lod_player_chunk(pos);
+        let painted = references
+            .iter()
+            .map(|selection| {
+                let mut reference = hud_adapter();
+                reference.update_hud_data(flagstone_ui::overlays::HudData {
+                    player_position: [pos.x, pos.y, pos.z],
+                    chunk_position: [cp.x, cp.y, cp.z],
+                    camera_mode: "Isometric".to_string(),
+                    is_fps_mode: false,
+                    frame_time_secs: DT,
+                    time_of_day: clock.time_of_day(),
+                    camera_yaw: app.simulation.yaw_pitch().0,
+                    hotbar: hotbar.clone(),
+                    equipped_tool_label: tool.map(str::to_string),
+                    selection: selection.clone(),
+                    ..Default::default()
+                });
+                reference.ui_frame([800, 600]).expect("playing paints")
+            })
+            .collect();
+        (produced, painted)
+    }
+
+    fn pawn_panel(tool: Option<&str>) -> flagstone_ui::overlays::SelectionHud {
+        flagstone_ui::overlays::SelectionHud {
+            title: "Pawn".to_string(),
+            tool: tool.map(str::to_string),
+            carried: vec![("Iron ore".to_string(), 12)],
+        }
+    }
+
+    #[test]
+    fn selection_panel_lists_the_tool_and_carried_resources() {
+        let mut app = App::headless();
+        app.selection
+            .click(Some(flagstone_game::selection::PLAYER_PAWN));
+        app.pawn.inventory.add(1, 12);
+
+        let (produced, painted) = strategy_frames(
+            &mut app,
+            vec![(1, 12)],
+            Some("Pickaxe"),
+            &[Some(pawn_panel(Some("Pickaxe"))), None],
+        );
+
+        assert!(
+            painted[0] != painted[1],
+            "the HUD draws no panel for the data"
+        );
+        assert!(
+            produced == painted[0],
+            "the pawn, its tool and 12 iron ore are not on the HUD data"
+        );
+    }
+
+    #[test]
+    fn selection_panel_omits_the_tool_when_unequipped() {
+        let mut app = App::headless();
+        app.selection
+            .click(Some(flagstone_game::selection::PLAYER_PAWN));
+        app.pawn.inventory.add(1, 12);
+        app.pawn.equipped_tool = None;
+
+        let (produced, painted) = strategy_frames(
+            &mut app,
+            vec![(1, 12)],
+            None,
+            &[Some(pawn_panel(None)), Some(pawn_panel(Some("Pickaxe")))],
+        );
+
+        assert!(
+            painted[0] != painted[1],
+            "the HUD draws the tool row for a panel without one"
+        );
+        assert!(
+            produced == painted[0],
+            "an unequipped pawn is shown with a tool"
+        );
+    }
+
+    #[test]
+    fn no_selection_means_no_panel() {
+        let mut app = App::headless();
+        app.pawn.inventory.add(1, 12);
+
+        let (produced, painted) = strategy_frames(
+            &mut app,
+            vec![(1, 12)],
+            Some("Pickaxe"),
+            &[None, Some(pawn_panel(Some("Pickaxe")))],
+        );
+
+        assert!(
+            painted[0] != painted[1],
+            "the HUD draws no panel for the data"
+        );
+        assert!(
+            produced == painted[0],
+            "a panel shows with nothing selected"
+        );
     }
 
     #[test]
