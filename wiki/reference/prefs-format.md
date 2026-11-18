@@ -83,6 +83,7 @@ opened there still saves to the default path).
 | | `fps_max` | unsigned integer frames per second applied while `vsync` is off; `0` is uncapped; the Video tab's cap control clamps a value above 1000 to 1000 when shown | `300` |
 | `[world]` | `load_radius` `unload_radius` | integer chunks | `8` `12` |
 | | `chunks_per_frame` | unsigned integer, 1 or more | `4` |
+| | `autosave_seconds` | unsigned integer seconds between periodic autosaves of an edited world; `0` is off; any other value clamps to 30 to 3600 without a warning; text or a negative number is malformed and gives the default | `120` |
 | `[content]` | `mods` | comma-separated mod names, order kept, blanks dropped; see [content format](content-format.md#mods) | none |
 | `[debug]` | one key per game debug value | free text, see below | none |
 | `[game]` | one key per game setting | free text, see below | none |
@@ -165,7 +166,7 @@ Action ids are persisted and never renamed.
 Audio sections map to `AudioCategory` in `moho_audio/src/audio_source.rs`: `SoundEffect`,
 `Music`, `UserInterface`, `Voice`.
 
-World keys drive [world streaming](../architecture/world-streaming.md).
+`load_radius`, `unload_radius` and `chunks_per_frame` drive [world streaming](../architecture/world-streaming.md). `autosave_seconds` (`Prefs::autosave_interval`, `None` when off) sets flagstone's [periodic autosave](save-format.md#autosave); the FPS does not read it.
 
 ## 3 Example
 
@@ -201,4 +202,5 @@ fps_max=300
 load_radius=8
 unload_radius=12
 chunks_per_frame=4
+autosave_seconds=120
 ```
