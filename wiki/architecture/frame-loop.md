@@ -1,7 +1,7 @@
 # Frame loop
 
 **Source:** `flagstone_game/src/pickups.rs`, `moho_app/src/` (`runner.rs`, `lib.rs`, `window_keys.rs`, `loop_requests.rs`, `headless.rs`, `fixed_step.rs`, `clock.rs`), `flagstone/src/app/game.rs`
-(`impl moho_app::Game for App`), `flagstone/src/app/event_loop/`.
+(`impl moho_app::Game for App`), `flagstone/src/app/event_loop/`, `flagstone_game/src/jobs.rs`, `flagstone_game/src/routing.rs`.
 **Related:** [ADR-0009](../../_todo/adr/0009-simulation-time-is-one-fixed-tick.md) (fixed tick).
 
 `moho_app::run` owns the window, the winit `ApplicationHandler` (`runner.rs`) and the
@@ -128,6 +128,7 @@ turned by the pending look (`PlayerController::turned`), with no eye blend; in i
 unchanged. Frames sample look only while Playing, focused and in first person; otherwise the pending look stays frozen and still drawn.
 
 The isometric (strategy) camera is a free pan over the terrain, separate from the pawn.
+In the same Playing step, `FrameProcessor::run_pawn_job` runs the pawn's job: `Walk` goes through the pawn's own `PhysicsController::move_character` with `STRATEGY_MOVE_SETTINGS` and writes the result back to the player position; `Dig` calls `Pawn::dig`, deposits the yield into `Colony::stock`, then `publish_pawn_dig` publishes `BlockRemoved` (reason `Mechanic`), the chunk remeshes and `AudioEvent::PlaySoundAt` for `flagstone/assets/dig.wav`. `HudData::colony_stock` feeds the strategy HUD totals.
 Pan input is the move axes plus an edge-pan term (`flagstone_game::controller::edge_pan_axes`,
 band `EDGE_PAN_MARGIN_PX`) added only while Playing, focused and isometric, then clamped to
 -1..1; a pointer that left the window pans nothing. `PlayerController::apply_input` takes a
