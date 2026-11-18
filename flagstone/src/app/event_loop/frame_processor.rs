@@ -1503,6 +1503,16 @@ pub(crate) mod tests {
             feet_y < 4.3,
             "the feet are {feet_y} m up, above the ground at y 4"
         );
+        let below_feet = BlockPos::new(
+            state.position.x.floor() as i32,
+            feet_y.floor() as i32 - 1,
+            state.position.z.floor() as i32,
+        );
+        assert!(
+            is_solid(&app, below_feet),
+            "nothing under the feet at {below_feet:?}; the pawn is floating"
+        );
+        assert!(!is_solid(&app, target), "the target block is gone");
     }
 
     #[test]

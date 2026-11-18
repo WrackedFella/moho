@@ -636,6 +636,36 @@ mod tests {
     }
 
     #[test]
+    fn marks_past_the_route_attempt_cap_are_tried_on_a_later_tick() {
+        let fifth = [12, 1, 1];
+        let mut scene = Scene::new(&[fifth]);
+        scene
+            .grid
+            .mutator()
+            .fill_region(cell(0, 0, 5), cell(3, 0, 5), GROUND);
+        for x in 0..=3 {
+            scene.grid.mutator().place(cell(x, 1, 5), GROUND, None);
+            scene.marks.toggle([x, 1, 5]);
+        }
+
+        let mut claimed_on = None;
+        for tick in 1..=10 {
+            scene.tick();
+            if matches!(scene.job, Job::Mine { mark, .. } if mark == fifth) {
+                claimed_on = Some(tick);
+                break;
+            }
+        }
+
+        assert_eq!(
+            claimed_on,
+            Some(2),
+            "the farther reachable mark is claimed on the second tick; job {:?}",
+            scene.job
+        );
+    }
+
+    #[test]
     fn a_waypoint_is_reached_within_the_arrive_radius_horizontally() {
         let next_after = |dx: f32| {
             let mut scene = Scene::new(&[[8, 1, 1]]);
@@ -846,7 +876,7 @@ mod tests {
         }
     }
 
-    /// A target `distance` metres from the pose along heading `yaw`.
+    /// A target five metres from the pose along heading `yaw`.
     fn along(pose: PawnPose, yaw: f32) -> Vec3 {
         pose.feet + Vec3::new(yaw.sin(), 0.0, yaw.cos()) * 5.0
     }
