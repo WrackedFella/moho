@@ -70,8 +70,7 @@ impl ArenaMode {
             return;
         };
         let kills = self.sim.kills();
-        let scan = !self.sim.player_body().is_dead()
-            && (waves.state.to_spawn() != 0 || self.sim.enemies_alive() == 0);
+        let scan = !self.sim.player_body().is_dead() && waves.state.to_spawn() != 0;
         let free = if scan {
             self.sim.free_enemy_spawns()
         } else {

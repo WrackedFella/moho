@@ -33,7 +33,7 @@ const PART_BITS: u32 = 3;
 const PLAYER_BASE: u32 = PART_BASE + (1 << (16 + PART_BITS));
 
 /// Engine tag of the first control, above every player tag; control tags run one per index.
-const CONTROL_BASE: u32 = PLAYER_BASE + 6;
+const CONTROL_BASE: u32 = PLAYER_BASE + PARTS.len() as u32;
 
 /// Every part, at the index its tag stores.
 const PARTS: [BodyPart; 6] = [

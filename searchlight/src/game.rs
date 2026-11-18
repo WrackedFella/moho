@@ -426,10 +426,14 @@ impl Stage {
 
     /// Shows `prompt` below the crosshair, or nothing for `None`.
     fn show_prompt(&mut self, prompt: Option<String>) {
+        #[cfg(test)]
+        {
+            self.prompt.clone_from(&prompt);
+        }
         let texts = prompt
-            .iter()
+            .into_iter()
             .map(|text| ScreenText {
-                text: text.clone(),
+                text,
                 anchor: Anchor::Center,
                 offset: [0.0, PROMPT_OFFSET_Y],
                 size: PROMPT_SIZE,
@@ -438,10 +442,6 @@ impl Stage {
             .collect();
         if let Err(error) = self.shell().set_texts(texts) {
             tracing::warn!(%error, "use prompt not shown");
-        }
-        #[cfg(test)]
-        {
-            self.prompt = prompt;
         }
     }
 
@@ -977,10 +977,10 @@ impl SearchlightGame {
         self.stage.prompt.clone()
     }
 
-    /// The prompt for the control in reach, or `None` unless the game is being played and the
-    /// player is alive.
+    /// The prompt for the control in reach, or `None` unless the game is being played and a
+    /// control is in reach (the sim rules out a dead player).
     fn use_prompt(&self) -> Option<String> {
-        if self.screen != Screen::Playing || self.mode.sim().player_body().is_dead() {
+        if self.screen != Screen::Playing {
             return None;
         }
         let action = self.mode.control_in_reach()?;

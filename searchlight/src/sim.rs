@@ -734,28 +734,34 @@ impl SearchlightSim {
         }
     }
 
-    fn resolve_player_shot(&mut self) {
+    /// The ray the player aims along, `range` long: from the leaned eye along the view, ignoring
+    /// the player's own body.
+    fn player_aim(&self, range: f32) -> ShotRay {
         let state = self.player();
         let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
-        let origin = self.leaned_eye(&state);
-        let strike = resolve_shot(
-            &self.world,
-            ShotRay {
-                origin,
-                direction: view.forward,
-                range: self.range,
-                ignore: Some(self.player),
-            },
-        );
-        let end = strike.map_or(origin + view.forward * self.range, |strike| strike.point);
+        ShotRay {
+            origin: self.leaned_eye(&state),
+            direction: view.forward,
+            range,
+            ignore: Some(self.player),
+        }
+    }
+
+    fn resolve_player_shot(&mut self) {
+        let aim = self.player_aim(self.range);
+        let strike = resolve_shot(&self.world, aim);
+        let end = strike.map_or(aim.origin + aim.direction * aim.range, |strike| {
+            strike.point
+        });
         let hit = strike.and_then(|strike| match strike.tag {
             SurfaceTag::Part { target, part } => Some((target, part)),
             _ => None,
         });
         let struck = hit.map(|(target, _)| usize::from(target));
-        self.record_near_misses(origin, end, struck, state.position);
+        let from = self.player().position;
+        self.record_near_misses(aim.origin, end, struck, from);
         if let Some((target, part)) = hit {
-            self.apply_player_hit(target, part, self.damage, state.position);
+            self.apply_player_hit(target, part, self.damage, from);
         }
     }
 
@@ -1051,17 +1057,7 @@ impl SearchlightSim {
         if self.player_body().is_dead() {
             return None;
         }
-        let state = self.player();
-        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
-        let strike = resolve_shot(
-            &self.world,
-            ShotRay {
-                origin: self.leaned_eye(&state),
-                direction: view.forward,
-                range: USE_REACH,
-                ignore: Some(self.player),
-            },
-        )?;
+        let strike = resolve_shot(&self.world, self.player_aim(USE_REACH))?;
         match strike.tag {
             SurfaceTag::Control(index) => Some(index),
             _ => None,
