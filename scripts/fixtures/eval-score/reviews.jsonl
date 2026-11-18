@@ -1,0 +1,4 @@
+{"verdict":"approve","route":"none","sign_off":"agent","head":"2ba69a7e28e67b4da14eb69281637480da34c699","tier":"light","round":1,"blockers":[],"cause":"pass"}
+{"verdict":"reject","route":"fix","sign_off":"human","head":"83969a65598744c2cb07d7dbcc8cee661dac2c15","tier":"light","round":1,"blockers":[{"id":"X1","class":"B2","needs_decision":false}],"cause":"defect"}
+{"verdict":"reject","route":"human","sign_off":"human","head":"dca46335b59f60998d43915d23cc8f8496f1cff3","tier":"full","round":1,"blockers":[{"id":"X1","class":"B4","needs_decision":true}],"cause":"conflict"}
+{"verdict":"reject","route":"fix","sign_off":"human","head":"e377e53d2ac1e623f60db5539dc7255cba1dac82","tier":"full","round":1,"blockers":[{"id":"X1","class":"B2","needs_decision":false},{"id":"X2","class":"B4","needs_decision":false}],"cause":"defect"}
