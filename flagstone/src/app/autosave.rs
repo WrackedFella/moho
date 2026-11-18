@@ -542,6 +542,64 @@ mod tests {
         assert!(!on_time.mined_present, "the edit is saved after 30 s");
     }
 
+    #[test]
+    fn idle_world_is_not_rewritten_after_an_interval() {
+        let saves = tempfile::tempdir().expect("temp dir");
+        let mut app = playing_world(saves.path(), "autosave_idle_world");
+        set_autosave_interval(&mut app, Duration::from_secs(10));
+        let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+        let scene = saves.path().join("scene.bin");
+        std::fs::remove_file(&scene).expect("the seed save exists");
+
+        play(&mut sim, &mut app, ticks_in(Duration::from_secs(25)));
+        let after_idle = scene.exists();
+        let edit = mine_at_home(&mut app);
+        play(&mut sim, &mut app, ticks_in(Duration::from_secs(11)));
+
+        assert!(!after_idle, "an idle world is not rewritten");
+        assert!(scene.is_file(), "the loop runs: an edit is saved");
+        assert_save_holds_the_edit(saves.path(), &edit);
+    }
+
+    #[test]
+    fn failed_interval_save_retries_one_interval_later() {
+        let saves = tempfile::tempdir().expect("temp dir");
+        let mut app = playing_world(saves.path(), "autosave_failing_world");
+        set_autosave_interval(&mut app, Duration::from_secs(10));
+        let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+        let scene = saves.path().join("scene.bin");
+        std::fs::remove_file(&scene).expect("the seed save exists");
+        let not_a_dir = saves.path().join("a_file");
+        std::fs::write(&not_a_dir, b"x").expect("write file");
+        app.saves_dir = not_a_dir.clone();
+        let edit = mine_at_home(&mut app);
+
+        play(
+            &mut sim,
+            &mut app,
+            ticks_in(Duration::from_secs(10)) + ticks_in(Duration::from_secs(1)),
+        );
+
+        assert!(!scene.exists(), "nothing is saved");
+        assert!(app.autosave.edited, "the edit stays unsaved");
+        assert!(
+            app.autosave.ticks_since_save < app.autosave.interval_ticks,
+            "the failed save reset the interval: {} ticks",
+            app.autosave.ticks_since_save
+        );
+        assert!(
+            app.autosave.ticks_since_save <= u64::from(ticks_in(Duration::from_secs(2))),
+            "no retry every frame: {} ticks since the failure",
+            app.autosave.ticks_since_save
+        );
+
+        app.saves_dir = saves.path().to_path_buf();
+        play(&mut sim, &mut app, ticks_in(Duration::from_secs(10)));
+
+        assert!(scene.is_file(), "the retry saved");
+        assert_save_holds_the_edit(saves.path(), &edit);
+    }
+
     fn schedule() -> AutosaveSchedule {
         AutosaveSchedule::new(Duration::from_secs(1), Duration::from_millis(100))
     }
