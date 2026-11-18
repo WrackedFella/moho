@@ -553,12 +553,11 @@ mod tests {
         let (loaded, warnings) = Prefs::load_from(&path);
 
         assert_eq!(warnings, vec![]);
-        assert_eq!(loaded.world_autosave_seconds, 300);
+        assert_eq!(loaded, prefs);
         assert_eq!(
             loaded.autosave_interval(),
             Some(std::time::Duration::from_secs(300))
         );
-        assert!(prefs.to_ini_string().contains("autosave_seconds=300\n"));
     }
 
     #[test]

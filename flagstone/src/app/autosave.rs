@@ -271,6 +271,16 @@ mod tests {
         ctx.exit_requested()
     }
 
+    /// Chooses Main Menu in the pause menu and runs the frame that handles it.
+    fn return_to_menu(app: &mut App) {
+        let mut clock = GameClock::default();
+        app.event_bus.publish(UiEvent::MainMenuRequested);
+        app.event_bus.process_deferred();
+        EventProcessor::new().process_ui_events(app, &mut clock);
+        let mut ctx = FrameContext::new(tick_length(), &clock, None, None);
+        Game::frame(app, &mut ctx, 0.0);
+    }
+
     /// A fresh app loading the save in `saves`, as the player does from the start menu.
     fn load_save(saves: &Path) -> App {
         let mut app = App::headless();
@@ -587,6 +597,53 @@ mod tests {
             assert!(is_mined_out(&mut reloaded, mined));
             assert!(block_below_is_present(&reloaded, mined));
         }
+
+        #[test]
+        fn idle_world_is_not_rewritten_after_the_interval() {
+            let temp = tempfile::tempdir().expect("temp dir");
+            let saves = saves_dir(&temp);
+            let mut app = loaded_session("autosave_test_idle", &temp);
+            set_interval(&mut app, Some(Duration::from_secs(1)));
+            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+
+            sim.step(&mut app, 3 * TICK_HZ);
+            draw_frame(&mut app, &mut sim);
+
+            assert!(!scene_file(&saves).exists(), "an unedited world was saved");
+        }
+
+        #[test]
+        fn failed_autosave_retries_after_the_next_interval_not_the_next_frame() {
+            let temp = tempfile::tempdir().expect("temp dir");
+            let working_saves = saves_dir(&temp);
+            let mut app = loaded_session("autosave_test_failed", &temp);
+            set_interval(&mut app, Some(Duration::from_secs(1)));
+            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+            let mined = mine_surface_block(&mut app, 40, 40);
+            let blocker = temp.path().join("blocker");
+            std::fs::write(&blocker, b"a file where the saves directory should be")
+                .expect("write blocker");
+            app.saves_dir = blocker.join("saves");
+
+            sim.step(&mut app, TICK_HZ + 10);
+            draw_frame(&mut app, &mut sim);
+            app.saves_dir = working_saves.clone();
+            draw_frame(&mut app, &mut sim);
+            let retried_on_the_next_frame = scene_file(&working_saves).exists();
+            sim.step(&mut app, TICK_HZ + 10);
+            draw_frame(&mut app, &mut sim);
+
+            assert!(
+                !retried_on_the_next_frame,
+                "a failed save was retried on the very next frame"
+            );
+            assert!(
+                scene_file(&working_saves).is_file(),
+                "the edit was never saved once the disk recovered"
+            );
+            let mut reloaded = load_save(&working_saves);
+            assert!(is_mined_out(&mut reloaded, mined));
+        }
     }
 
     fn prefs_with_autosave_seconds(seconds: u32) -> Prefs {
@@ -641,6 +698,35 @@ mod tests {
     }
 
     #[test]
+    fn autosave_off_still_saves_on_return_to_menu() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let saves = saves_dir(&temp);
+        let mut app = loaded_session_with_prefs(
+            "autosave_test_off_menu",
+            &temp,
+            prefs_with_autosave_seconds(0),
+        );
+        let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+        let mined = mine_surface_block(&mut app, 40, 40);
+        sim.step(&mut app, 600 * TICK_HZ);
+        draw_frame(&mut app, &mut sim);
+        assert!(
+            !scene_file(&saves).exists(),
+            "test setup: autosave off wrote nothing before returning to the menu"
+        );
+        app.game_state = GameState::Paused;
+
+        return_to_menu(&mut app);
+
+        assert!(
+            scene_file(&saves).is_file(),
+            "returning to the menu wrote no save"
+        );
+        let mut reloaded = load_save(&saves);
+        assert!(is_mined_out(&mut reloaded, mined));
+    }
+
+    #[test]
     fn interval_comes_from_prefs() {
         let temp = tempfile::tempdir().expect("temp dir");
         let saves = saves_dir(&temp);
@@ -663,57 +749,6 @@ mod tests {
             scene_file(&saves).is_file(),
             "no save after 30 seconds of play"
         );
-    }
-
-    mod idle {
-        use super::*;
-
-        #[test]
-        fn idle_world_is_not_rewritten_after_the_interval() {
-            let temp = tempfile::tempdir().expect("temp dir");
-            let saves = saves_dir(&temp);
-            let mut app = loaded_session("autosave_test_idle", &temp);
-            set_interval(&mut app, Some(Duration::from_secs(1)));
-            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
-
-            sim.step(&mut app, 3 * TICK_HZ);
-            draw_frame(&mut app, &mut sim);
-
-            assert!(!scene_file(&saves).exists(), "an unedited world was saved");
-        }
-
-        #[test]
-        fn failed_autosave_retries_after_the_next_interval_not_the_next_frame() {
-            let temp = tempfile::tempdir().expect("temp dir");
-            let working_saves = saves_dir(&temp);
-            let mut app = loaded_session("autosave_test_failed", &temp);
-            set_interval(&mut app, Some(Duration::from_secs(1)));
-            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
-            let mined = mine_surface_block(&mut app, 40, 40);
-            let blocker = temp.path().join("blocker");
-            std::fs::write(&blocker, b"a file where the saves directory should be")
-                .expect("write blocker");
-            app.saves_dir = blocker.join("saves");
-
-            sim.step(&mut app, TICK_HZ + 10);
-            draw_frame(&mut app, &mut sim);
-            app.saves_dir = working_saves.clone();
-            draw_frame(&mut app, &mut sim);
-            let retried_on_the_next_frame = scene_file(&working_saves).exists();
-            sim.step(&mut app, TICK_HZ + 10);
-            draw_frame(&mut app, &mut sim);
-
-            assert!(
-                !retried_on_the_next_frame,
-                "a failed save was retried on the very next frame"
-            );
-            assert!(
-                scene_file(&working_saves).is_file(),
-                "the edit was never saved once the disk recovered"
-            );
-            let mut reloaded = load_save(&working_saves);
-            assert!(is_mined_out(&mut reloaded, mined));
-        }
     }
 
     mod schedule {

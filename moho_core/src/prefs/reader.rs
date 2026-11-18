@@ -596,6 +596,7 @@ mod tests {
             ("video", "vsync", "off"),
             ("video", "fps_max", "-1"),
             ("world", "chunks_per_frame", "0"),
+            ("world", "autosave_seconds", "soon"),
         ];
         let default = snapshot(&Prefs::default());
         let base = snapshot(&base_prefs());
@@ -653,7 +654,7 @@ mod tests {
 
     #[test]
     fn out_of_range_autosave_seconds_clamps_without_warning() {
-        for (raw, expected) in [("5", 30), ("99999", 3600)] {
+        for (raw, expected) in [("5", 30), ("30", 30), ("3600", 3600), ("99999", 3600)] {
             let (prefs, issues) = Prefs::parse(&format!("[world]\nautosave_seconds={raw}\n"));
 
             assert_eq!(issues, vec![], "{raw}");
@@ -661,20 +662,6 @@ mod tests {
                 prefs.autosave_interval(),
                 Some(Duration::from_secs(expected)),
                 "{raw}"
-            );
-        }
-    }
-
-    #[test]
-    fn autosave_bounds_load_unchanged_without_warning() {
-        for bound in [30, 3600] {
-            let (prefs, issues) = Prefs::parse(&format!("[world]\nautosave_seconds={bound}\n"));
-
-            assert_eq!(issues, vec![], "{bound}");
-            assert_eq!(
-                prefs.autosave_interval(),
-                Some(Duration::from_secs(bound)),
-                "{bound}"
             );
         }
     }
