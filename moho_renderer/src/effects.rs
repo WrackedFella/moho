@@ -145,13 +145,13 @@ impl Effect {
     fn advance(&mut self, dt: Duration) {
         match self {
             Self::Streak(streak) => {
-                streak.age += dt;
+                streak.age = streak.age.saturating_add(dt);
                 if streak.age >= streak.style.max_age {
                     streak.ended_at.get_or_insert(streak.style.max_age);
                 }
             }
-            Self::Flash(flash) => flash.age += dt,
-            Self::Mark(mark) => mark.age += dt,
+            Self::Flash(flash) => flash.age = flash.age.saturating_add(dt),
+            Self::Mark(mark) => mark.age = mark.age.saturating_add(dt),
         }
     }
 
