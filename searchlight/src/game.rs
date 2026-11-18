@@ -475,7 +475,6 @@ impl Stage {
         }
     }
 
-    /// Draws each of `controls` as a post in [`Paint::Control`].
     fn add_controls(&mut self, controls: &[ArenaControl]) {
         let material = self.scene.material_table.find_or_push(&Paint::Control);
         for (index, control) in controls.iter().enumerate() {
@@ -1278,7 +1277,6 @@ mod tests {
         SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
     }
 
-    /// Turns the player to `point` on one tick, then draws a frame.
     fn look_and_draw(game: &mut SearchlightGame, point: Vec3) {
         let mut clock = GameClock::new(0.0, 1.0, 1.0);
         let look = look_toward(game.sim(), point);

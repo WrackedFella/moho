@@ -255,7 +255,6 @@ mod tests {
         calm_mode_with(&[], marker_count, waves)
     }
 
-    /// Turns the player to look at the next-wave post.
     fn look_at_the_button(mode: &mut ArenaMode, forced_grade: Option<Grade>) {
         let look = SearchlightCommand {
             forced_grade,
