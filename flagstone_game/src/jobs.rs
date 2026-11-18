@@ -739,6 +739,211 @@ mod tests {
         assert_eq!(marks.unclaimed().collect::<Vec<_>>(), [[3, 1, 0]]);
     }
 
+    #[test]
+    fn a_stall_guard_never_trips_while_each_tick_gets_closer() {
+        let mut guard = StallGuard::default();
+
+        let tripped = (0..3 * STALL_TICKS).any(|i| guard.stalled(1000.0 - i as f32));
+
+        assert!(!tripped);
+    }
+
+    #[test]
+    fn a_stall_guard_trips_after_stall_ticks_without_getting_closer() {
+        let mut guard = StallGuard::default();
+        assert!(!guard.stalled(5.0), "the first distance is the best so far");
+
+        let mut results = Vec::new();
+        for i in 0..STALL_TICKS {
+            let distance = if i % 2 == 0 { 5.0 } else { 6.0 };
+            results.push(guard.stalled(distance));
+        }
+
+        let (last, earlier) = results.split_last().expect("STALL_TICKS is not zero");
+        assert!(earlier.iter().all(|stalled| !stalled));
+        assert!(last, "tripped on the {STALL_TICKS}th tick without progress");
+    }
+
+    #[test]
+    fn a_closer_tick_resets_the_stall_guard_count() {
+        let mut guard = StallGuard::default();
+        guard.stalled(5.0);
+        for _ in 0..STALL_TICKS - 1 {
+            assert!(!guard.stalled(5.0));
+        }
+
+        let closer = guard.stalled(4.0);
+        let after: Vec<bool> = (0..STALL_TICKS - 1).map(|_| guard.stalled(4.0)).collect();
+
+        assert!(!closer);
+        assert!(after.iter().all(|stalled| !stalled));
+        assert!(guard.stalled(4.0));
+    }
+
+    #[test]
+    fn the_nearest_mark_is_judged_from_the_pawns_own_cell_not_the_origin() {
+        let (grid, mut marks) = world_with_marks(&[[5, 1, 0], [-2, 1, 0]]);
+        let mut pawn = Pawn::default();
+
+        let action = step(
+            PawnId(0),
+            &mut pawn,
+            standing_in(cell(4, 1, 0)),
+            &mut marks,
+            &grid,
+        );
+
+        assert!(
+            matches!(action, JobAction::Dig { block, .. } if block == cell(5, 1, 0)),
+            "{action:?}"
+        );
+        assert_eq!(claimed_by(&marks, [-2, 1, 0]), None);
+    }
+
+    /// Marks each walled in by solid blocks on every side, so no route reaches a stand cell.
+    fn enclosed_world(marks: &[[i32; 3]]) -> (VoxelGrid, MineMarks) {
+        let (mut grid, mine_marks) = world_with_marks(marks);
+        for &[cx, _, cz] in marks {
+            for x in cx - 1..=cx + 1 {
+                for y in 1..=2 {
+                    for z in cz - 1..=cz + 1 {
+                        if (x, z) != (cx, cz) {
+                            grid.mutator().place(cell(x, y, z), 1, None);
+                        }
+                    }
+                }
+            }
+        }
+        (grid, mine_marks)
+    }
+
+    #[test]
+    fn failed_scans_advance_the_cursor_by_the_attempts_made_and_wrap_at_the_list_length() {
+        let blocks = [
+            [3, 1, -6],
+            [3, 1, -3],
+            [3, 1, 0],
+            [3, 1, 3],
+            [3, 1, 6],
+            [6, 1, 0],
+        ];
+        let (grid, mut marks) = enclosed_world(&blocks);
+        let mut pawn = Pawn::default();
+        let at = standing_in(cell(0, 1, 0));
+
+        let mut cursors = Vec::new();
+        for _ in 0..3 {
+            step(PawnId(0), &mut pawn, at, &mut marks, &grid);
+            cursors.push(pawn.scan_cursor);
+        }
+
+        assert_eq!(cursors, [4, 2, 0]);
+        assert_eq!(pawn.job, Job::Idle);
+    }
+
+    #[test]
+    fn a_stand_cell_two_above_the_marks_height_is_accepted() {
+        let (mut grid, mut marks) = world_with_marks(&[[3, 1, 0]]);
+        for x in 2..=4 {
+            for z in -1..=1 {
+                if (x, z) != (3, 0) {
+                    for y in 1..=2 {
+                        grid.mutator().place(cell(x, y, z), 1, None);
+                    }
+                }
+            }
+        }
+        grid.mutator().place(cell(3, 3, 0), 1, None);
+        grid.mutator().place(cell(1, 1, 0), 1, None);
+        let mut pawn = Pawn::default();
+
+        step(
+            PawnId(0),
+            &mut pawn,
+            standing_in(cell(0, 1, 0)),
+            &mut marks,
+            &grid,
+        );
+
+        let Job::Mine { mark, route, .. } = &pawn.job else {
+            panic!(
+                "the ring top two above the mark is a stand cell: {:?}",
+                pawn.job
+            );
+        };
+        assert_eq!(*mark, [3, 1, 0]);
+        let stand = route.last().expect("a route has cells");
+        assert_eq!(stand.y - 1, 2, "feet two above the mark");
+        assert!((stand.x - 3).abs() <= 1 && stand.z.abs() <= 1);
+    }
+
+    #[test]
+    fn stepping_from_the_route_start_cell_moves_on_to_the_next_waypoint() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let (grid, mut marks) = world_with_marks(&[[3, 1, 0]]);
+            let mut pawn = Pawn::default();
+            let action = step(
+                PawnId(0),
+                &mut pawn,
+                standing_in(cell(0, 1, 0)),
+                &mut marks,
+                &grid,
+            );
+            tx.send(action).expect("the test waits for the step");
+        });
+
+        let action = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the step returned instead of looping on the start cell");
+
+        assert_eq!(
+            action,
+            JobAction::Walk {
+                to: Vec3::new(1.5, 1.0, 0.5)
+            }
+        );
+    }
+
+    #[test]
+    fn steer_measures_the_target_from_the_pawns_feet() {
+        let feet = Vec3::new(10.0, 0.0, -5.0);
+        let at = pose(feet, 0.0);
+
+        let right = steer(at, feet + facing_target(std::f32::consts::FRAC_PI_2));
+        let left = steer(at, feet + facing_target(-std::f32::consts::FRAC_PI_2));
+
+        assert!(
+            (right.yaw_delta - max_turn_per_tick()).abs() < 1e-5,
+            "{right:?}"
+        );
+        assert!(
+            (left.yaw_delta + max_turn_per_tick()).abs() < 1e-5,
+            "{left:?}"
+        );
+    }
+
+    #[test]
+    fn steer_takes_the_short_way_across_the_half_turn_and_from_yaws_beyond_it() {
+        let cases = [
+            (3.1_f32, -3.1_f32),
+            (-3.1, 3.1),
+            (4.0, 0.5),
+            (-4.0, -0.2),
+            (7.0, 0.5),
+        ];
+
+        for (yaw, bearing) in cases {
+            let walk = steer(pose(Vec3::ZERO, yaw), facing_target(bearing));
+
+            let expected = wrap(bearing - yaw).clamp(-max_turn_per_tick(), max_turn_per_tick());
+            assert!(
+                (walk.yaw_delta - expected).abs() < 1e-4,
+                "yaw {yaw}, bearing {bearing}: {walk:?} vs {expected}"
+            );
+        }
+    }
+
     fn facing_target(angle: f32) -> Vec3 {
         Vec3::new(angle.sin(), 0.0, angle.cos()) * 3.0
     }

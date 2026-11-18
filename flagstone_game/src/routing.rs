@@ -273,6 +273,90 @@ mod tests {
         assert_eq!(inside.last(), Some(&cell(4, 1, 0)));
     }
 
+    #[test]
+    fn the_heuristic_steers_the_search_so_open_ground_needs_few_expansions() {
+        let grid = floor(-20..=20, -20..=20);
+        // (start x, start z, goal x, goal z, expansions a distance-guided search needs)
+        let cases = [
+            (0, 0, 12, 0, 12),
+            (0, 0, -12, 0, 12),
+            (0, 0, 0, 12, 12),
+            (0, 0, 0, -12, 12),
+            (0, 0, 6, 6, 48),
+            (3, 4, -5, -7, 107),
+            (-4, 5, 7, -3, 107),
+        ];
+
+        for (sx, sz, gx, gz, budget) in cases {
+            let goal = cell(gx, 1, gz);
+
+            let found = route(&grid, cell(sx, 1, sz), |c| c == goal, goal, budget);
+
+            let cells = found.unwrap_or_else(|| {
+                panic!("({sx},{sz}) -> ({gx},{gz}) needs no more than {budget} expansions")
+            });
+            assert_eq!(cells.len() as i32, (sx - gx).abs() + (sz - gz).abs() + 1);
+        }
+    }
+
+    #[test]
+    fn a_route_through_scattered_pillars_is_as_short_as_the_open_ground_allows() {
+        let mut grid = floor(-1..=12, -1..=12);
+        let pillars = [
+            (11, 3),
+            (11, 5),
+            (4, 6),
+            (8, 3),
+            (4, 0),
+            (9, 4),
+            (11, 7),
+            (5, 0),
+            (4, 4),
+            (2, 0),
+            (9, 11),
+            (2, 10),
+            (1, 8),
+            (1, 0),
+            (9, 10),
+            (8, 10),
+            (11, 9),
+            (10, 3),
+            (0, 4),
+            (2, 5),
+            (8, 8),
+            (0, 6),
+            (10, 6),
+            (7, 2),
+            (3, 8),
+            (6, 6),
+            (5, 7),
+        ];
+        for (x, z) in pillars {
+            for y in 1..=2 {
+                place(&mut grid, x, y, z);
+            }
+        }
+
+        let found = reach(&grid, cell(0, 1, 0), cell(11, 1, 11)).expect("a way through");
+
+        assert_eq!(found.len(), 23, "a monotone route of 22 moves: {found:?}");
+    }
+
+    #[test]
+    fn a_route_around_a_wall_takes_the_shortest_way() {
+        let mut grid = floor(-20..=20, -20..=20);
+        for y in 1..=2 {
+            for z in -3..=3 {
+                place(&mut grid, 5, y, z);
+            }
+        }
+
+        let found = reach(&grid, cell(0, 1, 0), cell(10, 1, 0)).expect("a way round the wall");
+
+        assert_eq!(found.len(), 19, "10 across and 4 out and back: {found:?}");
+        assert!(found.iter().any(|c| c.x == 5 && c.z.abs() == 4));
+    }
+
     fn terrain(heights: &[i32]) -> VoxelGrid {
         let mut grid = VoxelGrid::new(16);
         for (i, &h) in heights.iter().enumerate() {
