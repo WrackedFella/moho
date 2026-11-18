@@ -182,14 +182,16 @@ impl PhysicsWorld {
     ///
     /// The object advances inside [`PhysicsWorld::step`] under the world's gravity.
     ///
-    /// Characters do not ignore loose objects: a loose box blocks a character or is stepped
-    /// onto like geometry, and any overlap shoves the box because the solver treats the
-    /// character as infinitely heavy. Rays skip loose boxes because their colliders carry no
-    /// tag.
+    /// Characters do not ignore loose objects: a loose object blocks a character or is stepped
+    /// onto like geometry, and any overlap shoves it because the solver treats the character as
+    /// infinitely heavy. Rays skip loose objects because their colliders carry no tag.
+    ///
+    /// A capsule or cylinder is braked to rest on near-flat ground; see
+    /// [`PhysicsWorld::set_rest_slope`].
     ///
     /// # Panics
-    /// If the spawn would poison the simulation: a mass or half extent that is not positive and
-    /// finite, a friction, restitution or damping that is negative or not finite, a position or
+    /// If the spawn would poison the simulation: a mass, half extent, half height or radius that
+    /// is not positive and finite, a friction, restitution or damping that is negative or not finite, a position or
     /// velocity that is not finite, or a rotation that is not finite or whose squared length is
     /// more than 2e-4 from 1 (glam's `Quat::is_normalized`).
     pub fn spawn_loose(&mut self, spawn: &LooseSpawn) -> LooseId {
@@ -268,6 +270,11 @@ impl PhysicsWorld {
         self.rest_slope = slope;
     }
 
+    /// The rest slope, radians; 5 degrees until [`PhysicsWorld::set_rest_slope`] is called.
+    pub fn rest_slope(&self) -> f32 {
+        self.rest_slope
+    }
+
     /// Brakes the rolling motion of every awake capsule and cylinder lying on near-flat ground.
     ///
     /// Runs after the solver and changes velocities only; a sleeping body is skipped and never
@@ -312,21 +319,17 @@ impl PhysicsWorld {
                     } else {
                         manifold.data.normal
                     };
+                    let flat = into_body.dot(up) >= min_up_dot;
                     for point in &manifold.points {
                         if point.dist < -DEEP_CONTACT {
                             return false;
                         }
-                        on_ground |= point.dist <= 0.0 && into_body.dot(up) >= min_up_dot;
+                        on_ground |= point.dist <= 0.0 && flat;
                     }
                 }
             }
         }
         on_ground
-    }
-
-    /// The rest slope, radians; 5 degrees until [`PhysicsWorld::set_rest_slope`] is called.
-    pub fn rest_slope(&self) -> f32 {
-        self.rest_slope
     }
 
     /// How many loose objects are alive.
