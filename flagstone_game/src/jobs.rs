@@ -271,7 +271,7 @@ mod tests {
     use std::f32::consts::{PI, TAU};
 
     const GROUND: u32 = 1;
-    /// Half the 2.3 m capsule above the feet: where the eye is.
+    /// Written out, not imported, so a change to the production eye height fails the tests.
     const EYE_HEIGHT: f32 = 1.15;
     const START: Vec3 = Vec3::new(0.5, 1.0, 1.5);
 

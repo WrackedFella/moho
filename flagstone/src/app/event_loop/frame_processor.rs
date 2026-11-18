@@ -19,8 +19,7 @@ const MOVE_SPEED: f32 = 4.0;
 /// Sprinting speed in m/s.
 const SPRINT_SPEED: f32 = 6.0;
 
-/// Distance from the character's capsule centre down to its feet: half the cylinder plus the
-/// cap radius of the 2.3 m capsule.
+/// Capsule centre to feet: half the cylinder plus the cap radius.
 const CAPSULE_HALF_HEIGHT: f32 = PAWN_HALF_EXTENTS.y;
 
 /// Strategy-line walking feel: acceleration and friction high enough to reach speed, or
