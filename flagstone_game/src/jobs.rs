@@ -188,13 +188,14 @@ mod tests {
         let mut grid = flat_world();
         let mut marks = MineMarks::default();
         for x in 2..=4 {
-            for y in 1..=3 {
+            for y in 1..=2 {
                 for z in -1..=1 {
                     grid.mutator().place(cell(x, y, z), 1, None);
                 }
             }
         }
-        marks.toggle([3, 2, 0]);
+        grid.mutator().place(cell(1, 1, 0), 1, None);
+        marks.toggle([3, 1, 0]);
         let mut pawn = Pawn::default();
 
         let action = step(
@@ -207,7 +208,60 @@ mod tests {
 
         assert_eq!(action, JobAction::Wait);
         assert_eq!(pawn.job, Job::Idle);
-        assert_eq!(claimed_by(&marks, [3, 2, 0]), None);
+        assert_eq!(claimed_by(&marks, [3, 1, 0]), None);
+        assert_eq!(marks.unclaimed().collect::<Vec<_>>(), [[3, 1, 0]]);
+    }
+
+    #[test]
+    fn a_walled_in_nearest_mark_is_skipped_for_a_reachable_farther_one() {
+        let (mut grid, mut marks) = world_with_marks(&[[3, 1, 0], [-6, 1, 0]]);
+        for x in 2..=4 {
+            for y in 1..=2 {
+                for z in -1..=1 {
+                    if (x, z) != (3, 0) {
+                        grid.mutator().place(cell(x, y, z), 1, None);
+                    }
+                }
+            }
+        }
+        let mut pawn = Pawn::default();
+
+        step(
+            PawnId(0),
+            &mut pawn,
+            standing_in(cell(0, 1, 0)),
+            &mut marks,
+            &grid,
+        );
+
+        assert_eq!(claimed_by(&marks, [-6, 1, 0]), Some(PawnId(0)));
+        assert_eq!(claimed_by(&marks, [3, 1, 0]), None);
+        assert!(matches!(
+            pawn.job,
+            Job::Mine {
+                mark: [-6, 1, 0],
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn a_mark_above_the_feet_is_dug_from_a_stand_cell_at_another_height() {
+        let (mut grid, mut marks) = world_with_marks(&[[3, 2, 0]]);
+        grid.mutator().place(cell(3, 1, 0), 1, None);
+        let mut pawn = Pawn::default();
+        let start = standing_in(cell(0, 1, 0));
+
+        let (actions, at) = run_to_dig(&mut pawn, start, &mut marks, &grid);
+
+        let Some(JobAction::Dig { block, aim }) = actions.last() else {
+            panic!("the run ends in a dig");
+        };
+        assert_eq!(*block, cell(3, 2, 0));
+        let stand = feet_cell(at.feet);
+        assert_eq!(stand, cell(2, 1, 0), "the nearest standable cell beside it");
+        assert_ne!(stand.y, block.y, "feet are not at the block's height");
+        assert!(aim.distance(at.eye) <= crate::pawn::MINE_REACH);
     }
 
     #[test]
@@ -280,6 +334,28 @@ mod tests {
         assert!(
             aim.distance(west_face) < 1e-4,
             "aims at the west face centre {west_face}, got {aim}"
+        );
+    }
+
+    #[test]
+    fn the_dig_skips_a_covered_face_for_the_nearest_exposed_one() {
+        let (mut grid, mut marks) = world_with_marks(&[[3, 1, 0]]);
+        for (x, y, z) in [(3, 2, 0), (2, 1, 0), (2, 1, 1)] {
+            grid.mutator().place(cell(x, y, z), 1, None);
+        }
+        let mut pawn = Pawn::default();
+        let start = standing_in(cell(2, 2, 1));
+
+        let (actions, _) = run_to_dig(&mut pawn, start, &mut marks, &grid);
+
+        let Some(JobAction::Dig { block, aim }) = actions.last() else {
+            panic!("the run ends in a dig");
+        };
+        assert_eq!(*block, cell(3, 1, 0));
+        let south_face = Vec3::new(3.5, 1.5, 1.0);
+        assert!(
+            aim.distance(south_face) < 1e-4,
+            "aims at the exposed south face {south_face}, got {aim}"
         );
     }
 
@@ -386,9 +462,9 @@ mod tests {
         let mut pawn = Pawn::default();
         let mut at = standing_in(cell(0, 1, 0));
 
-        for _ in 0..(2 * STALL_TICKS) {
+        for _ in 0..(3 * STALL_TICKS) {
             if let JobAction::Walk { to } = step(PawnId(0), &mut pawn, at, &mut marks, &grid) {
-                let toward = (to - at.feet).normalize_or_zero() * 0.01;
+                let toward = (to - at.feet).normalize_or_zero() * 0.004;
                 at = pose(at.feet + toward, at.yaw);
             }
         }
@@ -402,13 +478,18 @@ mod tests {
         let (mut grid, mut marks) = world_with_marks(&[[3, 1, 0]]);
         let mut pawn = Pawn::default();
         let start = standing_in(cell(0, 1, 0));
-        let waypoint = loop {
+        let mut waypoint = None;
+        for _ in 0..4 {
             match step(PawnId(0), &mut pawn, start, &mut marks, &grid) {
-                JobAction::Walk { to } if feet_cell(to) != cell(0, 1, 0) => break feet_cell(to),
-                JobAction::Walk { .. } => {}
-                other => panic!("expected a walk, got {other:?}"),
+                JobAction::Walk { to } if feet_cell(to) != cell(0, 1, 0) => {
+                    waypoint = Some(feet_cell(to));
+                    break;
+                }
+                JobAction::Walk { .. } | JobAction::Wait => {}
+                other @ JobAction::Dig { .. } => panic!("expected a walk, got {other:?}"),
             }
-        };
+        }
+        let waypoint = waypoint.expect("a walk to a waypoint beyond the start within 4 ticks");
         grid.mutator()
             .place(cell(waypoint.x, waypoint.y + 2, waypoint.z), 1, None);
 

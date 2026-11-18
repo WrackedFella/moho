@@ -236,6 +236,26 @@ mod tests {
         assert_eq!(change, MarkChange::Cancelled);
         assert_eq!(marks.unclaimed().count(), 0);
         assert_eq!(marked(&marks), Vec::<[i32; 3]>::new());
+
+        let remarked = marks.toggle([3, 4, 5]);
+
+        assert_eq!(remarked, MarkChange::Marked);
+        assert_eq!(marks.unclaimed().collect::<Vec<_>>(), [[3, 4, 5]]);
+        assert_eq!(claimed_by(&marks, [3, 4, 5]), None);
+    }
+
+    #[test]
+    fn block_removed_drops_the_claim_with_the_mark() {
+        let mut marks = MineMarks::default();
+        marks.toggle([3, 4, 5]);
+        marks.claim([3, 4, 5], PawnId(0));
+
+        marks.block_removed([3, 4, 5]);
+        let remarked = marks.toggle([3, 4, 5]);
+
+        assert_eq!(remarked, MarkChange::Marked);
+        assert_eq!(marks.unclaimed().collect::<Vec<_>>(), [[3, 4, 5]]);
+        assert_eq!(claimed_by(&marks, [3, 4, 5]), None);
     }
 
     proptest! {

@@ -194,6 +194,8 @@ mod tests {
         let above = reach(&grid, cell(0, 2, 0), cell(4, 1, 0)).expect("start one above ground");
         let inside = reach(&grid, cell(0, 0, 0), cell(4, 1, 0)).expect("start one below ground");
 
+        assert_eq!(above.first(), Some(&cell(0, 1, 0)));
+        assert_eq!(inside.first(), Some(&cell(0, 1, 0)));
         assert_eq!(above.last(), Some(&cell(4, 1, 0)));
         assert_eq!(inside.last(), Some(&cell(4, 1, 0)));
     }
@@ -212,24 +214,40 @@ mod tests {
     proptest! {
         #[test]
         fn every_route_cell_is_standable_and_adjacent_to_the_previous(
-            heights in proptest::collection::vec(1i32..=3, 25),
+            heights in proptest::collection::vec(1i32..=2, 25),
             (sx, sz, gx, gz) in (0i32..5, 0i32..5, 0i32..5, 0i32..5),
         ) {
             let grid = terrain(&heights);
             let at = |x: i32, z: i32| cell(x, heights[(z * 5 + x) as usize], z);
-            let goal = at(gx, gz);
+            let (start, goal) = (at(sx, sz), at(gx, gz));
 
-            let found = route(&grid, at(sx, sz), |c| c == goal, goal, ROUTE_NODE_BUDGET);
+            let found = route(&grid, start, |c| c == goal, goal, ROUTE_NODE_BUDGET);
 
-            if let Some(cells) = found {
-                prop_assert_eq!(cells.last(), Some(&goal));
-                for c in &cells {
-                    prop_assert!(standable(&grid, *c), "{c:?} is not standable");
-                }
-                for pair in cells.windows(2) {
-                    prop_assert!(adjacent(pair[0], pair[1]), "{:?} -> {:?}", pair[0], pair[1]);
-                }
+            let cells = found.expect("one-block steps over open ground always connect");
+            prop_assert_eq!(cells.first(), Some(&start));
+            prop_assert_eq!(cells.last(), Some(&goal));
+            for c in &cells {
+                prop_assert!(standable(&grid, *c), "{c:?} is not standable");
             }
+            for pair in cells.windows(2) {
+                prop_assert!(adjacent(pair[0], pair[1]), "{:?} -> {:?}", pair[0], pair[1]);
+            }
+        }
+
+        #[test]
+        fn a_route_over_legal_steps_is_as_short_as_the_manhattan_distance(
+            heights in proptest::collection::vec(1i32..=2, 25),
+            (sx, sz, gx, gz) in (0i32..5, 0i32..5, 0i32..5, 0i32..5),
+        ) {
+            let grid = terrain(&heights);
+            let at = |x: i32, z: i32| cell(x, heights[(z * 5 + x) as usize], z);
+            let (start, goal) = (at(sx, sz), at(gx, gz));
+
+            let found = route(&grid, start, |c| c == goal, goal, ROUTE_NODE_BUDGET);
+
+            let cells = found.expect("every move is a legal one-block step");
+            let manhattan = ((sx - gx).abs() + (sz - gz).abs()) as usize;
+            prop_assert_eq!(cells.len(), manhattan + 1);
         }
 
         #[test]

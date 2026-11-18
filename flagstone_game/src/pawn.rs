@@ -360,6 +360,41 @@ mod tests {
     }
 
     #[test]
+    fn dig_beyond_reach_returns_none_and_keeps_the_block() {
+        let mut grid = VoxelGrid::new(16);
+        let pos = BlockPos::new(0, 0, 12);
+        grid.mutator().place(pos, 1, Some(7));
+        let pawn = Pawn::default();
+
+        let outcome = pawn.dig(&mut grid, Vec3::new(0.5, 0.5, 0.0), Vec3::Z, MINE_REACH);
+
+        assert!(outcome.is_none());
+        assert!(grid.material_at(pos).is_some(), "the block stays");
+    }
+
+    #[test]
+    fn dig_on_a_plain_block_yields_nothing() {
+        let mut grid = VoxelGrid::new(16);
+        let pos = BlockPos::new(0, 0, 0);
+        grid.mutator().place(pos, 1, None);
+        let pawn = Pawn::default();
+
+        let outcome = pawn
+            .dig(&mut grid, Vec3::new(0.5, 0.5, -5.0), Vec3::Z, MINE_REACH)
+            .expect("ray should hit the placed block");
+
+        assert_eq!(outcome.block_pos, pos);
+        assert!(outcome.yield_.is_none());
+        assert!(grid.material_at(pos).is_none(), "the block is removed");
+        assert!(pawn.inventory.is_empty());
+    }
+
+    #[test]
+    fn the_mine_reach_is_eight_blocks() {
+        assert!((MINE_REACH - 8.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
     fn mining_ore_adds_one_pickup() {
         let mut grid = VoxelGrid::new(16);
         grid.mutator().place(BlockPos::new(0, 0, 0), 1, Some(7));
