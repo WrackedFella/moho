@@ -213,21 +213,65 @@ mod tests {
     }
 
     #[test]
-    fn test_conflict_detection() {
+    fn key_conflict_ends_listening() {
         let mut handler = KeybindCaptureHandler::new();
-        let bindings = registry(); // Move Forward holds W
+        let bindings = registry(); // Move Back holds S
         let mut bindings_changed = vec![];
+        handler.start_listening(0);
 
-        handler.start_listening(1);
-
-        let consumed = handler.apply_key_while_listening(Key::W, &bindings, |action, b| {
+        let consumed = handler.apply_key_while_listening(Key::S, &bindings, |action, b| {
             bindings_changed.push((action, b));
         });
 
         assert!(consumed);
         assert!(!handler.is_listening());
-        assert!(bindings_changed.is_empty()); // No binding applied yet
-        assert!(handler.has_pending_binding()); // Conflict modal should be triggered
+        assert!(bindings_changed.is_empty());
+        assert_eq!(
+            handler.take_conflict_modal(),
+            Some(("Move Back".to_string(), "S".to_string()))
+        );
+    }
+
+    #[test]
+    fn lone_modifier_conflict_ends_listening() {
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry(); // Sprint holds Shift
+        let mut bindings_changed = vec![];
+        handler.start_listening(0);
+
+        let applied = handler.capture_modifier_if_listening(2, &bindings, |action, b| {
+            bindings_changed.push((action, b));
+        });
+
+        assert!(applied);
+        assert!(!handler.is_listening());
+        assert!(bindings_changed.is_empty());
+        assert_eq!(
+            handler.take_conflict_modal(),
+            Some(("Sprint".to_string(), "Shift".to_string()))
+        );
+    }
+
+    #[test]
+    fn lone_modifier_after_conflict_binds_nothing() {
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry();
+        let mut bindings_changed = vec![];
+        handler.start_listening(0);
+        handler.capture_modifier_if_listening(2, &bindings, |_, _| {});
+
+        // Shift up, then Alt down: the release-then-press order of a stray key.
+        for mods in [0, 4] {
+            handler.capture_modifier_if_listening(mods, &bindings, |action, b| {
+                bindings_changed.push((action, b));
+            });
+        }
+
+        assert!(bindings_changed.is_empty());
+        assert_eq!(
+            handler.take_conflict_modal(),
+            Some(("Sprint".to_string(), "Shift".to_string()))
+        );
     }
 
     #[test]
