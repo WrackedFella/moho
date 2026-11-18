@@ -219,7 +219,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
-    // No chunk files exist under saves/ for this name, so every load generates from seed.
+    // No chunk files exist for this name in `unused_saves()`, so every load generates from seed.
     const WORLD: &str = "chunk_streamer_unit_test_nonexistent_world";
 
     /// A saves directory nothing is written to: these tests only generate from seed.
