@@ -76,7 +76,6 @@ pub struct Prefs {
     world_load_radius: u32,
     world_unload_radius: u32,
     world_chunks_per_frame: u32,
-    /// Seconds of play between autosaves; 0 is off.
     world_autosave_seconds: u32,
     bindings: BTreeMap<String, String>,
     action_modes: BTreeMap<String, String>,
@@ -91,7 +90,7 @@ const MAX_BLOOM_QUALITY: u32 = 2;
 const MIN_BRIGHTNESS: f32 = 0.5;
 const MAX_BRIGHTNESS: f32 = 2.0;
 const DEFAULT_BRIGHTNESS: f32 = 1.0;
-// Autosave interval bounds in seconds; a stored 0 means off and is not clamped.
+// Autosave bounds in seconds; 0 means off and bypasses the clamp.
 const DEFAULT_AUTOSAVE_SECONDS: u32 = 120;
 const MIN_AUTOSAVE_SECONDS: u32 = 30;
 const MAX_AUTOSAVE_SECONDS: u32 = 3600;
@@ -326,7 +325,6 @@ impl Prefs {
         };
     }
 
-    /// Stores the autosave interval: 0 stays 0 (off), anything else is clamped to `30..=3600`.
     fn set_autosave_seconds(&mut self, seconds: u32) {
         self.world_autosave_seconds = if seconds == 0 {
             0

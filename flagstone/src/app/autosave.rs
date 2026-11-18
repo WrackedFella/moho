@@ -1,8 +1,8 @@
 /// When an edited world is next due an autosave, counted in simulation ticks.
 ///
 /// A world is due once it has been edited since the last save and at least
-/// `interval_ticks` ticks have passed since that save. An idle world is never due,
-/// and a schedule with no interval is never due.
+/// `interval_ticks` ticks have passed since that save. An idle world, or one with no
+/// interval, is never due.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AutosaveSchedule {
     interval_ticks: Option<u64>,
@@ -15,7 +15,6 @@ impl AutosaveSchedule {
         Self::with_interval(Some(interval_ticks))
     }
 
-    /// A schedule that is never due.
     pub fn off() -> Self {
         Self::with_interval(None)
     }
@@ -34,7 +33,6 @@ impl AutosaveSchedule {
         Self::new(u64::try_from(ticks).unwrap_or(u64::MAX))
     }
 
-    /// A schedule due `interval` of play after the last save, or never when `None`.
     pub fn every(interval: Option<std::time::Duration>) -> Self {
         interval.map_or_else(Self::off, Self::for_interval)
     }
