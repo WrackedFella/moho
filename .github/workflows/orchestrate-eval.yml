@@ -188,7 +188,7 @@ jobs:
           claude_args: |
             ${{ env.MODEL_ARG }}
             --max-turns 200
-            --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never end your turn with a status message: after a skill or subagent returns, continue with the next step. EVAL REPLAY: this run replays a closed work item to measure the workflow, and nothing it does may reach the tracker. Overrides to the orchestrate skill: the item counts as ready although its issue is closed. Its base branch is origin/eval-base/${{ env.ID }} (MOHO_BASE is set to it); use it wherever the skill names the base branch. Ignore every existing branch and pull request for the item and create the work branch ${{ env.BRANCH }} from that base. Never comment on, label or edit the issue. The board is unreachable: treat it as board exit 5. Skip step 9's full-platform CI run and say so in the report. Open no pull request: at step 12 commit and push to the work branch, then end with the final report. Where the skill would pause, put the questions in the final report, end it with the line EVAL-PAUSED, and stop."
+            --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never end your turn with a status message: after a skill or subagent returns, continue with the next step. EVAL REPLAY: this run replays a closed work item to measure the workflow, and nothing it does may reach the tracker. Overrides to the orchestrate skill: the item counts as ready although its issue is closed. Its base branch is origin/eval-base/${{ env.ID }} (MOHO_BASE is set to it); use it wherever the skill names the base branch. Ignore every existing branch and pull request for the item and create the work branch ${{ env.BRANCH }} from that base. Never comment on, label or edit the issue. The board is unreachable: treat it as board exit 5. Skip step 9's full-platform CI run and say so in the report. Open no pull request: at step 12 commit and push to the work branch, then end with the final report. Where the skill would pause, start the final report with the line 'Paused: needs a human answer', then the numbered questions, and stop."
             --add-dir /home/runner/.claude/plugins/cache
             --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue view:*),Bash(gh run list:*),Bash(gh run view:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(rg:*),Bash(grep:*),Bash(jq:*),Bash(mkdir:*),Edit,Write,Task,Skill"
       - name: Score
@@ -213,8 +213,8 @@ jobs:
             resets=$(jq -r '[.[] | select(.type == "result")] | last | .result // ""' "$EXECUTION_FILE" \
               | grep -oiE "hit your .*limit.*resets [^(]+\(UTC\)" | head -n1 | sed -E 's/.*resets +//; s/ *\(UTC\)//' || true)
             [ -n "$resets" ] && limited=true
-            # The eval prompt has a run that would pause end its report with this line.
-            jq -r '[.[] | select(.type == "result")] | last | .result // ""' "$EXECUTION_FILE" | grep -qE '^[[:space:]*`]*EVAL-PAUSED[[:space:]*`]*$' && marked=true
+            # A run that would pause opens its final report with the pause comment's first line.
+            jq -r '[.[] | select(.type == "result")] | last | .result // ""' "$EXECUTION_FILE" | grep -qE '^[[:space:]*]*Paused: needs a human answer' && marked=true
             context=$("$RUNNER_TEMP/eval-score.sh" context "$EXECUTION_FILE" || echo null)
           fi
           if git fetch origin "$BRANCH" 2>/dev/null; then
