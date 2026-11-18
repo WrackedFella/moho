@@ -118,6 +118,35 @@ mod tests {
                 }
             }
         }
+
+        for face_axis in 0..3 {
+            let travel_axis = (face_axis + 1) % 3;
+            for sign in [-1.0_f32, 1.0] {
+                for (offset, should_hit) in [(-0.001_f32, false), (0.001, true)] {
+                    // Crosses the face plane at the box's far edge along the travel axis,
+                    // offset outside (miss) or inside (hit), moving at 45 degrees.
+                    let mut crossing = Vec3::ZERO;
+                    crossing[face_axis] = sign * half[face_axis];
+                    crossing[travel_axis] = -half[travel_axis] + offset;
+                    let mut direction = Vec3::ZERO;
+                    direction[travel_axis] = -1.0;
+                    direction[face_axis] = -sign;
+                    let direction = direction.normalize();
+                    let oblique = Ray {
+                        origin: crossing - direction * 10.0,
+                        direction,
+                    };
+
+                    let picked = pick_pawn(oblique, [(PLAYER_PAWN, unit_box())], None);
+
+                    assert_eq!(
+                        picked.is_some(),
+                        should_hit,
+                        "oblique face axis {face_axis} sign {sign} offset {offset}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -133,9 +162,11 @@ mod tests {
     fn terrain_behind_the_pawn_does_not_hide_it() {
         let ray = ray(Vec3::new(0.0, 0.0, 10.0), Vec3::NEG_Z);
 
-        let picked = pick_pawn(ray, [(PLAYER_PAWN, unit_box())], Some(50.0));
+        let far_behind = pick_pawn(ray, [(PLAYER_PAWN, unit_box())], Some(50.0));
+        let between_entry_and_exit = pick_pawn(ray, [(PLAYER_PAWN, unit_box())], Some(10.0));
 
-        assert_eq!(picked, Some(PLAYER_PAWN));
+        assert_eq!(far_behind, Some(PLAYER_PAWN));
+        assert_eq!(between_entry_and_exit, Some(PLAYER_PAWN));
     }
 
     #[test]
@@ -183,9 +214,11 @@ mod tests {
         let far = (PawnId(1), pawn_box_at(Vec3::new(0.0, 0.0, -5.0)));
         let near = (PawnId(2), pawn_box_at(Vec3::new(0.0, 0.0, 5.0)));
 
-        let picked = pick_pawn(ray, [far, near], None);
+        let far_first = pick_pawn(ray, [far, near], None);
+        let near_first = pick_pawn(ray, [near, far], None);
 
-        assert_eq!(picked, Some(PawnId(2)));
+        assert_eq!(far_first, Some(PawnId(2)));
+        assert_eq!(near_first, Some(PawnId(2)));
     }
 
     fn pawn_box_at(center: Vec3) -> Aabb {
@@ -217,6 +250,7 @@ mod tests {
             prop_assert!(t >= 0.0);
             let p = ray.origin + ray.direction * t;
             let eps = 1e-3;
+            prop_assert!(t <= (target - origin).length() + eps);
             for axis in 0..3 {
                 prop_assert!(p[axis] >= aabb.min[axis] - eps && p[axis] <= aabb.max[axis] + eps);
             }
@@ -235,6 +269,26 @@ mod tests {
         selection.click(None);
 
         assert_eq!(selection.selected(), None);
+    }
+
+    #[test]
+    fn a_click_on_another_pawn_moves_the_selection_to_it() {
+        let mut selection = Selection::default();
+        selection.click(Some(PawnId(1)));
+
+        selection.click(Some(PawnId(2)));
+
+        assert_eq!(selection.selected(), Some(PawnId(2)));
+    }
+
+    #[test]
+    fn a_click_on_the_selected_pawn_keeps_it_selected() {
+        let mut selection = Selection::default();
+        selection.click(Some(PawnId(1)));
+
+        selection.click(Some(PawnId(1)));
+
+        assert_eq!(selection.selected(), Some(PawnId(1)));
     }
 
     #[test]

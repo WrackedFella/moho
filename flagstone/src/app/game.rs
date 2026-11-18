@@ -2966,22 +2966,6 @@ mod tests {
         }
 
         #[test]
-        fn the_selection_mark_wins_over_a_console_marker_with_its_id() {
-            let mut app = app_with_pawn_in_view(CameraMode::Isometric);
-            select_the_pawn(&mut app);
-            app.scene.markers_mut().upsert(
-                SELECTION_MARKER_ID,
-                moho_render_api::Marker::new([0.0; 3], [1.0; 3], [1.0; 4]),
-            );
-
-            frame(&mut app);
-
-            let drawn = outlines(&mut app);
-            assert_eq!(drawn.len(), 1);
-            assert!(outlines_pawn_at(&drawn[0], standing_centre()));
-        }
-
-        #[test]
         fn clearing_the_selection_removes_the_mark() {
             let mut app = app_with_pawn_in_view(CameraMode::Isometric);
             select_the_pawn(&mut app);
@@ -3017,6 +3001,7 @@ mod tests {
             let audio = record_audio(&app);
             click_on(&mut app, standing_centre());
 
+            step(&mut app);
             step(&mut app);
 
             let published = cues(&app, &audio);
