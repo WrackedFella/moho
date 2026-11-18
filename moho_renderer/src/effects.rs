@@ -1683,6 +1683,25 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_huge_advance_expires_everything_without_overflow() {
+        let mut rig = Rig::new();
+        rig.effects
+            .flash(Vec3::new(1.0, 0.0, 0.0), 0.0, flash_style(0.4, ms(50)));
+        rig.effects
+            .mark(Vec3::new(2.0, 0.0, 0.0), Vec3::Y, 0.0, long_mark());
+        let streak = rig.effects.begin_streak(style(2.0, 0.1));
+        rig.effects
+            .place_streak(streak, Vec3::new(10.0, 0.0, 0.0), Vec3::X);
+        rig.effects.advance(ms(10));
+        assert_eq!(rig.effects.live(), 3);
+
+        rig.effects.advance(Duration::MAX);
+
+        assert_eq!(rig.effects.live(), 0);
+        assert!(rig.frame(EYE).is_empty());
+    }
+
     fn assert_faces_eye(transform: Affine3A, eye: Vec3) {
         let x = Vec3::from(transform.matrix3.x_axis);
         let y = Vec3::from(transform.matrix3.y_axis);
