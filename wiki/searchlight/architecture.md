@@ -42,6 +42,7 @@ flowchart LR
 | `input` | `SearchlightAction` set and default bindings; `build_action_map` builds the `ActionMap` at startup, with mouse look (`look_settings`: sensitivity, smoothing, invert Y) taken from `Prefs`, and a sensitivity not above zero falling back to the default 3.0; `SearchlightCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on F8); `Use` (default F) sets `SearchlightCommand::use_pressed` on the tick it goes down; `resolve_lean` turns the held `LeanLeft` and `LeanRight` actions (Q, E) into one `LeanSide` |
 | `lean` | `lean_offset` (horizontal eye shift for a lean at a yaw) and `rolled_view_matrix` (view with up tipped about forward); pure `glam` maths the game and sim share ([posture](#8-posture)) |
 | `tag` | `SurfaceTag` (`World`, `Part { target, part }`, `Player(part)` or `Control(index)`) and its lossless round trip through the engine's opaque `moho_physics::HitTag` |
+| `round` | `RoundInFlight` and `step_round`: one tick of a player's round, its `Flight` stepped under drag and gravity and the path cast against the world ([shot path](#6-shot-path)) |
 | `shot` | `resolve_shot`: first tagged surface along a `ShotRay` in the `PhysicsWorld`; `passes_within`: whether a shot segment comes within a radius of a point |
 | `brain` | `Brain`: the enemy state machine (`Patrol`, `Engage`, `Cover`, `Chase`), pure over `glam` types; `Percept` and a `steer` function in, `Intent` out; `EnemyTuning` holds its numbers; `EnemyTuning::graded` scales reaction, cooldown and aim error by a `Grade` ([enemies](#5-enemies)) |
 | `cover` | `pick` and `offer`: choose the nearest free cover point an enemy under fire should run to, using world-only rays (level geometry and placed controls count as world) against the player (`Threat`) |
@@ -56,7 +57,7 @@ flowchart LR
 
 `SearchlightSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
 `Feedback` is the only output: `SearchlightSim::tick` queues it, the game drains it
-(`drain_feedback`) and reacts. `TICK_HZ` is 60. The rifle's numbers (damage, cooldown, reload, charge, range, magazine size) load from
+(`drain_feedback`) and reacts. `TICK_HZ` is 60. The rifle's numbers (damage, cooldown, reload, charge, magazine size) and the round's flight numbers (muzzle velocity, drag) load from
 `content/items.toml` and the `start` kit in `content/kits.toml`, then the mods listed in prefs (`mods/<name>/…`), at start ([content format](../reference/content-format.md)); a load failure
 exits the binary. `tuning::tuning` combines them with the numbers still set in code (speeds, body
 profile, `EnemyTuning`, the player part enemies aim at) as a `SimConfig`.
@@ -176,7 +177,7 @@ Each enemy has a `searchlight_rules::Grade` (`Rookie`, `Novice`, `Experienced`, 
 
 ## 6 Shot path
 
-Player and enemy shots go through one route:
+The player's shots are rounds in flight; enemy shots are rays. Both resolve a strike through one route:
 
 1. `ShotRay` from the eye with range and the shooter's `CharacterHandle` as `ignore`.
 2. `PhysicsWorld::cast_ray` returns the first collider hit and its `HitTag`.
@@ -189,6 +190,10 @@ Tag encoding: `0` is `World`; a `Part` is `1 + ((target << 3) | part_index)`, wi
 (`dummy_hit_volumes`), one per `BodyPart`, tagged with the target number; the player carries the
 same boxes tagged `Player` (`player_hit_volumes`). The leg volumes reach the feet of the configured
 hull, and the game draws dummies and enemies from the sim's own `character_body()`.
+
+A player's shot spends a round from the `Loadout` and joins `SearchlightSim`'s rounds in flight, taking its `Ballistics` (muzzle velocity, drag) from the round item. Each tick, before the weapon acts, `step_rounds` advances every round with `searchlight_rules::Flight::step` (drag and gravity, correctly rounded IEEE operations only (no `exp`, no `powf`) so a replay is exact) and casts the step's segment through `step_round`. A round ends on a strike, when it slows to `MIN_SPEED`, or when it leaves the `FlightBounds` box (`Arena::flight_bounds`: the box around the level's meshes, grown by `FLIGHT_MARGIN`, 100 m); a round fired this tick first steps on the next. Near misses count per round, once per enemy. A strike on a part applies damage and emits feedback as above. `SearchlightCommand::round_gravity` (a `GravityScale`, set by `round_gravity`) scales gravity on the rounds.
+
+`SearchlightCommand::simple` (the `simple` console command, saved under `[debug]`) switches the player to Simple: the shot is one ray across the whole flight box and lands on the firing tick.
 
 ## 7 Arena contract
 
