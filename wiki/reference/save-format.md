@@ -62,4 +62,4 @@ Invariants:
 - Time is simulation ticks while `GameState::Playing`, so a paused game never comes due.
 - A save is due when the world is edited and a full interval (default 2 minutes) has passed since the last save or failed attempt; a failure keeps the edit pending and retries one interval later.
 - Saving does nothing while no world is loaded (`generation.last_spec` is `None`), so the empty startup grid never overwrites a real save.
-- Exit and return to the main menu save regardless of the schedule.
+- Closing the window, Exit, and return to the main menu save regardless of the schedule.
