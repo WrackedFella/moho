@@ -33,7 +33,8 @@ test-doc:
 comment-refs base=base:
     scripts/check-comment-refs.sh {{base}}
 
-# Licenses, advisories, banned and duplicate crates, crate sources.
+# Licenses, advisories, banned and duplicate crates, crate sources, and rapier3d/parry3d
+# keeping `enhanced-determinism` (cargo deny bans features but cannot require them).
 deny:
     #!/usr/bin/env bash
     set -euo pipefail
