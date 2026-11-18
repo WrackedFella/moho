@@ -2837,44 +2837,15 @@ mod tests {
 
             click_the_sky(&mut app, camera);
 
+            assert!(app.pointer_hit.is_none(), "the click met no terrain");
             assert_eq!(selected(&app), None);
         }
 
         #[test]
         fn strategy_click_on_a_pawn_hidden_by_a_hill_does_not_select_it() {
-            let (mut open, camera) = strategy_scene();
-            click_the_pawn(&mut open, camera);
-            let (mut walled, camera) = strategy_scene();
-            let grid = walled
-                .light_system
-                .as_mut()
-                .expect("App starts with a light system")
-                .grid_mut();
-            for x in 4..=12 {
-                for y in 4..=12 {
-                    for z in 13..=14 {
-                        grid.mutator()
-                            .place(flagstone_voxel::BlockPos::new(x, y, z), 1, None);
-                    }
-                }
-            }
-
-            click_the_pawn(&mut walled, camera);
-
-            assert_eq!(
-                selected(&open),
-                Some(PLAYER_PAWN),
-                "without the hill the same click selects the pawn"
-            );
-            assert!(walled.pointer_hit.is_some(), "the click met the hill");
-            assert_eq!(selected(&walled), None);
-        }
-
-        #[test]
-        fn a_click_that_meets_a_hill_in_front_of_the_pawn_clears_a_selection() {
             let (mut app, camera) = strategy_scene();
             click_the_pawn(&mut app, camera);
-            assert_eq!(selected(&app), Some(PLAYER_PAWN), "the pawn is selected");
+            let in_the_open = selected(&app);
             let grid = app
                 .light_system
                 .as_mut()
@@ -2891,6 +2862,12 @@ mod tests {
 
             click_the_pawn(&mut app, camera);
 
+            assert_eq!(
+                in_the_open,
+                Some(PLAYER_PAWN),
+                "without the hill the same click selects the pawn"
+            );
+            assert!(app.pointer_hit.is_some(), "the click met the hill");
             assert_eq!(selected(&app), None);
         }
 
@@ -2974,21 +2951,6 @@ mod tests {
         }
 
         #[test]
-        fn selection_mark_is_absent_until_something_is_selected() {
-            let (mut app, _) = strategy_scene();
-            let before = {
-                sync_marks(&mut app);
-                outlines(&mut app).len()
-            };
-            app.selection.click(Some(PLAYER_PAWN));
-
-            sync_marks(&mut app);
-
-            assert_eq!(before, 0, "nothing selected, nothing marked");
-            assert_eq!(outlines(&mut app).len(), 1);
-        }
-
-        #[test]
         fn selection_mark_follows_the_pawn_when_it_moves() {
             let (mut app, camera) = strategy_scene();
             click_the_pawn(&mut app, camera);
@@ -3056,12 +3018,49 @@ mod tests {
             assert!(outlines(&mut app).is_empty());
         }
 
+        /// Delivers a left press with the cursor over `world` as winit events, the way the
+        /// window does.
+        fn press_through_window_events(
+            app: &mut App,
+            camera: (glam::Mat4, glam::Mat4, Vec3),
+            world: Vec3,
+        ) {
+            use winit::dpi::PhysicalPosition;
+            use winit::event::DeviceId;
+
+            app.camera = camera;
+            let ndc = (camera.1 * camera.0).project_point3(world);
+            let (x, y) = (
+                f64::from((ndc.x + 1.0) * 0.5 * app.viewport.x as f32),
+                f64::from((1.0 - ndc.y) * 0.5 * app.viewport.y as f32),
+            );
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+
+            Game::event(
+                app,
+                &mut ctx,
+                moho_app::Event::Window(WindowEvent::CursorMoved {
+                    device_id: DeviceId::dummy(),
+                    position: PhysicalPosition::new(x, y),
+                }),
+            );
+            Game::event(
+                app,
+                &mut ctx,
+                moho_app::Event::Window(WindowEvent::MouseInput {
+                    device_id: DeviceId::dummy(),
+                    state: winit::event::ElementState::Pressed,
+                    button: winit::event::MouseButton::Left,
+                }),
+            );
+        }
+
         #[test]
         fn the_click_selects_on_the_next_tick_not_on_the_event() {
             let (mut app, camera) = strategy_scene();
-            app.camera = camera;
 
-            click_on(&mut app, PAWN_AT);
+            press_through_window_events(&mut app, camera, PAWN_AT);
             let on_the_click_event = selected(&app);
             let command = Game::command(&mut app);
             let before_the_tick = selected(&app);
@@ -3074,6 +3073,36 @@ mod tests {
         }
 
         #[test]
+        fn a_click_selects_only_inside_the_drawn_box() {
+            // Offsets from the pawn's centre. The ray from the camera through the second
+            // passes 0.09 m or more outside the +x face along its whole length in z, then
+            // lands on the ground behind the pawn.
+            for (label, offset, selects) in [
+                ("just inside the top", Vec3::new(0.0, 1.05, 0.0), true),
+                ("0.1 m outside a side face", Vec3::new(0.4, 0.0, 0.0), false),
+            ] {
+                let (mut app, camera) = strategy_scene();
+                if !selects {
+                    click_the_pawn(&mut app, camera);
+                    assert_eq!(
+                        selected(&app),
+                        Some(PLAYER_PAWN),
+                        "{label}: prior selection"
+                    );
+                }
+                let target = app.simulation.position() + offset;
+
+                click_world(&mut app, camera, target);
+
+                assert!(
+                    app.pointer_hit.is_some(),
+                    "{label}: the click ends on the ground"
+                );
+                assert_eq!(selected(&app), selects.then_some(PLAYER_PAWN), "{label}");
+            }
+        }
+
+        #[test]
         fn selecting_publishes_the_placeholder_cue() {
             let (mut app, camera) = strategy_scene();
             let audio = record_audio(&app);
@@ -3083,6 +3112,8 @@ mod tests {
             let on_empty_ground = cues(&app, &audio);
             click_the_pawn(&mut app, camera);
             let on_the_pawn = cues(&app, &audio);
+            click_world(&mut app, camera, ground);
+            let on_clearing = cues(&app, &audio);
 
             assert!(
                 on_empty_ground.is_empty(),
@@ -3091,6 +3122,11 @@ mod tests {
             assert!(
                 matches!(on_the_pawn.as_slice(), [AudioEvent::ButtonClick]),
                 "selecting: {on_the_pawn:?}"
+            );
+            assert_eq!(selected(&app), None, "the last click cleared the selection");
+            assert!(
+                on_clearing.is_empty(),
+                "clearing the selection plays no cue: {on_clearing:?}"
             );
         }
     }

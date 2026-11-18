@@ -173,22 +173,19 @@ mod tests {
 
     #[test]
     fn terrain_nearer_than_the_pawn_hides_it() {
-        let open = pick_pawn(forward_ray(), [(PAWN, ahead_box())], None);
+        for (terrain, expected) in [
+            (None, Some(PAWN)),
+            (Some(3.9), None),
+            (Some(4.0), None),
+            (Some(4.1), Some(PAWN)),
+        ] {
+            let picked = pick_pawn(forward_ray(), [(PAWN, ahead_box())], terrain);
 
-        let hidden = pick_pawn(forward_ray(), [(PAWN, ahead_box())], Some(3.9));
-
-        assert_eq!(open, Some(PAWN), "the pawn is in the ray's path");
-        assert_eq!(hidden, None);
-    }
-
-    #[test]
-    fn terrain_at_the_pawns_entry_distance_hides_it() {
-        let open = pick_pawn(forward_ray(), [(PAWN, ahead_box())], None);
-
-        let hidden = pick_pawn(forward_ray(), [(PAWN, ahead_box())], Some(4.0));
-
-        assert_eq!(open, Some(PAWN), "the pawn is in the ray's path");
-        assert_eq!(hidden, None);
+            assert_eq!(
+                picked, expected,
+                "terrain at {terrain:?}, pawn entered at 4"
+            );
+        }
     }
 
     #[test]
@@ -333,6 +330,7 @@ mod tests {
     fn a_click_that_hits_nothing_clears_the_selection() {
         let mut selection = Selection::default();
         selection.click(Some(PAWN));
+        assert_eq!(selection.selected(), Some(PAWN), "the pawn starts selected");
 
         selection.click(None);
 
