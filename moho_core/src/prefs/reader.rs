@@ -874,7 +874,7 @@ mod tests {
 
     #[test]
     fn unparseable_autosave_seconds_warns_and_falls_back() {
-        for raw in ["soon", "-5"] {
+        for raw in ["soon", "-5", "4294967296"] {
             let (prefs, issues) = Prefs::parse(&format!("[world]\nautosave_seconds={raw}\n"));
 
             assert_eq!(
@@ -888,7 +888,14 @@ mod tests {
 
     #[test]
     fn out_of_range_autosave_seconds_clamps_without_warning() {
-        for (raw, expected) in [("5", 30), ("99999", 3600)] {
+        for (raw, expected) in [
+            ("1", 30),
+            ("5", 30),
+            ("29", 30),
+            ("3601", 3600),
+            ("99999", 3600),
+            ("4294967295", 3600),
+        ] {
             let (prefs, issues) = Prefs::parse(&format!("[world]\nautosave_seconds={raw}\n"));
 
             assert_eq!(issues, vec![], "value {raw}");
@@ -898,7 +905,7 @@ mod tests {
 
     #[test]
     fn autosave_bounds_load_unchanged_without_warning() {
-        for bound in [30, 3600] {
+        for bound in [30, 31, 3599, 3600] {
             let (prefs, issues) = Prefs::parse(&format!("[world]\nautosave_seconds={bound}\n"));
 
             assert_eq!(issues, vec![], "bound {bound}");
