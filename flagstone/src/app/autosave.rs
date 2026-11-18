@@ -23,8 +23,7 @@ impl AutosaveSchedule {
     pub fn off() -> Self {
         Self {
             interval_ticks: None,
-            ticks_since_save: 0,
-            edited: false,
+            ..Self::new(0)
         }
     }
 

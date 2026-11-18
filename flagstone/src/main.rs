@@ -332,10 +332,10 @@ impl App {
 
     /// The schedule for a configured interval; `None` is periodic autosave off.
     fn autosave_schedule(interval: Option<std::time::Duration>) -> app::autosave::AutosaveSchedule {
-        match interval {
-            Some(interval) => app::autosave::AutosaveSchedule::for_interval(interval),
-            None => app::autosave::AutosaveSchedule::off(),
-        }
+        interval.map_or_else(
+            app::autosave::AutosaveSchedule::off,
+            app::autosave::AutosaveSchedule::for_interval,
+        )
     }
 
     fn generate_new_world(
