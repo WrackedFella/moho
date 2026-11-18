@@ -428,7 +428,7 @@ mod tests {
         apply_console_command(&mut app, &StrategyConsoleCommand::ToggleNoclip);
         let clock = tick(&mut app);
         assert!(app.physics.noclip, "noclip is on before the relaunch");
-        app.auto_save_on_shutdown(&clock, &[])
+        app.save_world(&clock, &[])
             .expect("the autosave is written");
         app.save_prefs();
 

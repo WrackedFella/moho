@@ -90,15 +90,15 @@ pub fn read_scene_and_metadata<P: AsRef<Path>>(path: P) -> Result<SavePayload, P
 /// `data` is an already-enveloped chunk file. Called by the streaming system
 /// when a modified chunk is evicted. Uses an atomic rename so a crash
 /// mid-write never leaves a corrupt file.
-pub fn write_chunk_file_in(
+pub fn write_chunk_file(
     saves_dir: &Path,
     world_name: &str,
     pos: IVec3,
     data: &[u8],
 ) -> io::Result<()> {
-    let dir = chunk_dir_in(saves_dir, world_name);
+    let dir = chunk_dir(saves_dir, world_name);
     fs::create_dir_all(&dir)?;
-    let path = chunk_path_in(saves_dir, world_name, pos);
+    let path = chunk_path(saves_dir, world_name, pos);
     let tmp = path.with_extension("tmp");
     let mut f = File::create(&tmp)?;
     f.write_all(data)?;
@@ -115,26 +115,26 @@ pub fn write_chunk_file_in(
 ///
 /// Returns `Ok(None)` if the file does not exist (chunk was never modified, so
 /// the caller should fall back to generating it from the terrain function).
-pub fn read_chunk_file_in(
+pub fn read_chunk_file(
     saves_dir: &Path,
     world_name: &str,
     pos: IVec3,
 ) -> Result<Option<Vec<u8>>, PersistError> {
-    match fs::read(chunk_path_in(saves_dir, world_name, pos)) {
+    match fs::read(chunk_path(saves_dir, world_name, pos)) {
         Ok(data) => Ok(Some(data)),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e.into()),
     }
 }
 
-fn chunk_dir_in(saves_dir: &Path, world_name: &str) -> std::path::PathBuf {
+fn chunk_dir(saves_dir: &Path, world_name: &str) -> std::path::PathBuf {
     saves_dir.join(world_name).join("chunks")
 }
 
 /// Remove all saved chunk files for `world_name` under `saves_dir`. Called when generating a
 /// new world so stale chunk data from a previous session cannot override fresh terrain.
 pub fn clear_chunk_files(saves_dir: &Path, world_name: &str) -> io::Result<()> {
-    let dir = chunk_dir_in(saves_dir, world_name);
+    let dir = chunk_dir(saves_dir, world_name);
     if dir.exists() {
         fs::remove_dir_all(&dir)?;
         tracing::info!(world = world_name, "Cleared chunk save files for world");
@@ -142,27 +142,8 @@ pub fn clear_chunk_files(saves_dir: &Path, world_name: &str) -> io::Result<()> {
     Ok(())
 }
 
-fn chunk_path_in(saves_dir: &Path, world_name: &str, pos: IVec3) -> std::path::PathBuf {
-    chunk_dir_in(saves_dir, world_name).join(format!("{}_{}_{}.bin", pos.x, pos.y, pos.z))
-}
-
-/// The working-directory `saves` folder the unit tests below write chunk files to.
-#[cfg(test)]
-const TEST_SAVES_DIR: &str = "saves";
-
-#[cfg(test)]
-fn write_chunk_file(world_name: &str, pos: IVec3, data: &[u8]) -> io::Result<()> {
-    write_chunk_file_in(Path::new(TEST_SAVES_DIR), world_name, pos, data)
-}
-
-#[cfg(test)]
-fn read_chunk_file(world_name: &str, pos: IVec3) -> Result<Option<Vec<u8>>, PersistError> {
-    read_chunk_file_in(Path::new(TEST_SAVES_DIR), world_name, pos)
-}
-
-#[cfg(test)]
-fn chunk_path(world_name: &str, pos: IVec3) -> std::path::PathBuf {
-    chunk_path_in(Path::new(TEST_SAVES_DIR), world_name, pos)
+fn chunk_path(saves_dir: &Path, world_name: &str, pos: IVec3) -> std::path::PathBuf {
+    chunk_dir(saves_dir, world_name).join(format!("{}_{}_{}.bin", pos.x, pos.y, pos.z))
 }
 
 #[cfg(test)]
@@ -227,34 +208,15 @@ mod tests {
         result.expect_err("must reject")
     }
 
-    /// Unique world name whose chunk folder (and an emptied `saves/`) is removed on drop.
-    struct ScratchWorld(String);
-
-    impl ScratchWorld {
-        fn new(suffix: &str) -> Self {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("time ok")
-                .as_nanos();
-            Self(format!("moho_test_world_{now}_{suffix}"))
-        }
-    }
-
-    impl Drop for ScratchWorld {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(Path::new("saves").join(&self.0));
-            let _ = fs::remove_dir("saves");
-        }
-    }
-
     #[test]
     fn chunk_file_round_trips_and_a_missing_one_is_none() {
-        let world = ScratchWorld::new("chunk_rt");
+        let saves = tempfile::tempdir().expect("temp saves dir");
+        let world = "chunk_rt";
         let pos = IVec3::new(1, -2, 3);
 
-        let before = read_chunk_file(&world.0, pos).expect("missing is not an error");
-        write_chunk_file(&world.0, pos, &[7, 8, 9]).expect("write ok");
-        let after = read_chunk_file(&world.0, pos).expect("read ok");
+        let before = read_chunk_file(saves.path(), world, pos).expect("missing is not an error");
+        write_chunk_file(saves.path(), world, pos, &[7, 8, 9]).expect("write ok");
+        let after = read_chunk_file(saves.path(), world, pos).expect("read ok");
 
         assert_eq!(before, None);
         assert_eq!(after, Some(vec![7, 8, 9]));
@@ -262,11 +224,13 @@ mod tests {
 
     #[test]
     fn unreadable_chunk_file_returns_io_error() {
-        let world = ScratchWorld::new("chunk_unreadable");
+        let saves = tempfile::tempdir().expect("temp saves dir");
+        let world = "chunk_unreadable";
         let pos = IVec3::ZERO;
-        fs::create_dir_all(chunk_path(&world.0, pos)).expect("directory in place of the file");
+        fs::create_dir_all(chunk_path(saves.path(), world, pos))
+            .expect("directory in place of the file");
 
-        let err = read_chunk_file(&world.0, pos).expect_err("must fail");
+        let err = read_chunk_file(saves.path(), world, pos).expect_err("must fail");
 
         assert!(matches!(err, PersistError::Io(_)), "{err:?}");
     }

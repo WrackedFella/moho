@@ -302,11 +302,11 @@ impl App {
             self.apply_pending_render(r);
             r.all_lights_as_descs()
         });
-        match self.auto_save_on_shutdown(clock, &lights) {
-            Ok(()) => self.autosave.saved(),
+        match self.save_world(clock, &lights) {
+            Ok(()) => self.autosave_schedule.saved(),
             Err(e) => {
                 tracing::warn!(error = %e, "Failed to auto-save");
-                self.autosave.save_failed();
+                self.autosave_schedule.save_failed();
             }
         }
     }
@@ -435,7 +435,7 @@ impl moho_app::Game for App {
 
         let frame_number = frame_processor.publish_frame_start(self, dt);
         if self.game_state == GameState::Playing {
-            self.autosave.tick();
+            self.autosave_schedule.tick();
             self.apply_command(command);
         }
         for console_command in &command.console {
@@ -522,7 +522,7 @@ impl moho_app::Game for App {
             self.show_menu();
         }
 
-        if self.autosave.due() {
+        if self.autosave_schedule.due() {
             self.autosave(ctx.clock(), ctx.renderer());
         }
 
@@ -612,7 +612,7 @@ mod tests {
         }
 
         assert_eq!(
-            app.autosave.ticks_since_save, 0,
+            app.autosave_schedule.ticks_since_save, 0,
             "paused ticks do not count"
         );
         app.game_state = GameState::Playing;
@@ -620,7 +620,10 @@ mod tests {
             let command = Game::command(&mut app);
             tick_app(&mut app, &command);
         }
-        assert_eq!(app.autosave.ticks_since_save, 5, "playing ticks do");
+        assert_eq!(
+            app.autosave_schedule.ticks_since_save, 5,
+            "playing ticks do"
+        );
     }
 
     #[test]

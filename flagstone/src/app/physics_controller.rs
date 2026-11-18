@@ -287,7 +287,7 @@ mod tests {
         for pos in positions {
             saved.entities.chunks.insert(chunk_at(pos));
         }
-        crate::app::autosave::auto_save_on_shutdown(
+        crate::app::autosave::save_world(
             &mut saved,
             &moho_app::GameClock::default(),
             temp.path(),
@@ -686,7 +686,7 @@ mod tests {
         for pos in positions {
             saved.entities.chunks.insert(chunk_at(pos));
         }
-        crate::app::autosave::auto_save_on_shutdown(
+        crate::app::autosave::save_world(
             &mut saved,
             &moho_app::GameClock::default(),
             temp.path(),

@@ -252,7 +252,7 @@ mod tests {
                     saved.entities.chunks.insert(chunk);
                 }
             }
-            crate::app::autosave::auto_save_on_shutdown(
+            crate::app::autosave::save_world(
                 &mut saved,
                 &moho_app::GameClock::default(),
                 temp.path(),
@@ -416,7 +416,7 @@ mod tests {
         grid.mutator()
             .fill_region(BlockPos::new(0, 0, 0), BlockPos::new(15, 7, 15), 0);
         grid.mutator().place(BlockPos::new(5, 12, 5), 0, None);
-        crate::app::autosave::auto_save_on_shutdown(
+        crate::app::autosave::save_world(
             &mut saved,
             &moho_app::GameClock::default(),
             temp.path(),

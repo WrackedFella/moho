@@ -109,7 +109,7 @@ struct App {
     saves_dir: std::path::PathBuf,
 
     /// When the running world is next autosaved.
-    autosave: app::autosave::AutosaveSchedule,
+    autosave_schedule: app::autosave::AutosaveSchedule,
 
     // Set when the UI asks to quit; `frame` autosaves and leaves the loop
     exit_requested: bool,
@@ -256,8 +256,8 @@ impl App {
             pending_frame_cap: None,
             frame_cap_changed: false,
             saves_dir: std::path::PathBuf::from("saves"),
-            autosave: app::autosave::AutosaveSchedule::new(
-                std::time::Duration::from_secs(120),
+            autosave_schedule: app::autosave::AutosaveSchedule::new(
+                app::autosave::DEFAULT_AUTOSAVE_INTERVAL,
                 moho_app::LoopConfig::new(flagstone_game::TICK_HZ).tick_length(),
             ),
             exit_requested: false,
@@ -312,13 +312,13 @@ impl App {
         crate::app::world_generator::generate_new_world(self, spec, &saves_dir)
     }
 
-    fn auto_save_on_shutdown(
+    fn save_world(
         &mut self,
         clock: &moho_app::GameClock,
         lights: &[moho_render_api::LightDesc],
     ) -> Result<(), Box<dyn std::error::Error>> {
         let saves_dir = self.saves_dir.clone();
-        crate::app::autosave::auto_save_on_shutdown(self, clock, &saves_dir, lights)
+        crate::app::autosave::save_world(self, clock, &saves_dir, lights)
     }
 
     fn load_scene<P: AsRef<std::path::Path>>(

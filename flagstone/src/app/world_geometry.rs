@@ -470,7 +470,7 @@ pub(crate) mod tests {
         let mut saved = App::headless();
         saved.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
         saved.entities.chunks.insert(chunk_at(IVec3::new(7, 0, 7)));
-        crate::app::autosave::auto_save_on_shutdown(
+        crate::app::autosave::save_world(
             &mut saved,
             &moho_app::GameClock::default(),
             temp.path(),
@@ -979,7 +979,7 @@ pub(crate) mod tests {
         let mut saved = App::headless();
         saved.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
         saved.entities.chunks.insert(chunk_at(IVec3::new(7, 0, 7)));
-        crate::app::autosave::auto_save_on_shutdown(
+        crate::app::autosave::save_world(
             &mut saved,
             &moho_app::GameClock::default(),
             temp.path(),

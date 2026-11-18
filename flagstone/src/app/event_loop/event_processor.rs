@@ -294,7 +294,7 @@ impl EventProcessor {
                 }
                 WorldEvent::BlockPlaced { .. }
                 | WorldEvent::BlockRemoved { .. }
-                | WorldEvent::BlocksBatchModified { .. } => app.autosave.mark_edited(),
+                | WorldEvent::BlocksBatchModified { .. } => app.autosave_schedule.mark_edited(),
             }
         }
 
@@ -975,12 +975,15 @@ mod tests {
         for (row, event, edits) in rows {
             let mut app = App::headless();
             let _ = app.world_event_rx.try_iter().count();
-            assert!(!app.autosave.edited, "row {row}: nothing edited yet");
+            assert!(
+                !app.autosave_schedule.edited,
+                "row {row}: nothing edited yet"
+            );
             app.event_bus.publish(event);
 
             EventProcessor::new().process_world_events(&mut app);
 
-            assert_eq!(app.autosave.edited, edits, "row {row}");
+            assert_eq!(app.autosave_schedule.edited, edits, "row {row}");
         }
     }
 

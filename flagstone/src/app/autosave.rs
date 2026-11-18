@@ -1,3 +1,6 @@
+/// How long play runs between autosaves unless the interval is set otherwise.
+pub const DEFAULT_AUTOSAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// When the running world is next autosaved: after an edit, once an interval of
 /// simulation ticks has passed since the last save.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,11 +53,11 @@ impl AutosaveSchedule {
 }
 
 /// Save the current scene to `saves_dir/scene.bin`, creating the directory
-/// if needed.
+/// if needed. Used for the interval save and the saves on close, exit and return to menu.
 ///
 /// With no world loaded there is nothing to save: nothing is written, so the previous save
 /// stays, and the call is not an error.
-pub fn auto_save_on_shutdown(
+pub fn save_world(
     app: &mut crate::App,
     clock: &moho_app::GameClock,
     saves_dir: &std::path::Path,
@@ -65,7 +68,7 @@ pub fn auto_save_on_shutdown(
         return Ok(());
     };
     let started = std::time::Instant::now();
-    tracing::info!("Auto-saving...");
+    tracing::info!("Saving world...");
 
     std::fs::create_dir_all(saves_dir)?;
 
@@ -135,7 +138,7 @@ mod tests {
             .mutator()
             .place(flagstone_voxel::BlockPos::new(3, 70, 3), 1, None);
 
-        auto_save_on_shutdown(&mut saved, &saved_clock, &saves, &[]).expect("autosave");
+        save_world(&mut saved, &saved_clock, &saves, &[]).expect("autosave");
         let mut loaded = App::headless();
         let mut loaded_clock = GameClock::default();
         crate::app::scene_loader::load_scene(
@@ -225,7 +228,7 @@ mod tests {
             .grid_mut();
         small_streamer(world, saves).load_columns_now(grid, (0, 0), 2);
 
-        auto_save_on_shutdown(&mut app, &GameClock::default(), saves, &[]).expect("seed save");
+        save_world(&mut app, &GameClock::default(), saves, &[]).expect("seed save");
     }
 
     /// The save in `saves`, loaded as the player loads it.
@@ -370,7 +373,7 @@ mod tests {
     }
 
     fn set_autosave_interval(app: &mut App, interval: Duration) {
-        app.autosave = AutosaveSchedule::new(interval, tick_length());
+        app.autosave_schedule = AutosaveSchedule::new(interval, tick_length());
     }
 
     #[test]
@@ -581,16 +584,16 @@ mod tests {
         );
 
         assert!(!scene.exists(), "nothing is saved");
-        assert!(app.autosave.edited, "the edit stays unsaved");
+        assert!(app.autosave_schedule.edited, "the edit stays unsaved");
         assert!(
-            app.autosave.ticks_since_save < app.autosave.interval_ticks,
+            app.autosave_schedule.ticks_since_save < app.autosave_schedule.interval_ticks,
             "the failed save reset the interval: {} ticks",
-            app.autosave.ticks_since_save
+            app.autosave_schedule.ticks_since_save
         );
         assert!(
-            app.autosave.ticks_since_save <= u64::from(ticks_in(Duration::from_secs(2))),
+            app.autosave_schedule.ticks_since_save <= u64::from(ticks_in(Duration::from_secs(2))),
             "no retry every frame: {} ticks since the failure",
-            app.autosave.ticks_since_save
+            app.autosave_schedule.ticks_since_save
         );
 
         app.saves_dir = saves.path().to_path_buf();
@@ -676,9 +679,9 @@ mod tests {
         let ticks = u64::from(ticks_in(Duration::from_secs(120)));
 
         assert!(
-            (ticks..=ticks + 1).contains(&app.autosave.interval_ticks),
+            (ticks..=ticks + 1).contains(&app.autosave_schedule.interval_ticks),
             "{} ticks vs {ticks}",
-            app.autosave.interval_ticks
+            app.autosave_schedule.interval_ticks
         );
     }
 }
