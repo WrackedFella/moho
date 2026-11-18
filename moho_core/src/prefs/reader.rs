@@ -1107,7 +1107,7 @@ mod tests {
 
     #[test]
     fn out_of_range_autosave_seconds_clamps_without_warning() {
-        for (raw, expected) in [("5", 30), ("99999", 3600)] {
+        for (raw, expected) in [("5", 30), ("29", 30), ("3601", 3600), ("99999", 3600)] {
             let (prefs, issues) = world_autosave(raw);
 
             assert_eq!(issues, vec![], "{raw}");
@@ -1117,7 +1117,7 @@ mod tests {
 
     #[test]
     fn autosave_bounds_load_unchanged_without_warning() {
-        for (raw, expected) in [("30", 30), ("3600", 3600), ("29", 30), ("3601", 3600)] {
+        for (raw, expected) in [("30", 30), ("3600", 3600)] {
             let (prefs, issues) = world_autosave(raw);
 
             assert_eq!(issues, vec![], "{raw}");

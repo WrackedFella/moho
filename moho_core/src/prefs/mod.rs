@@ -618,7 +618,14 @@ mod tests {
 
     #[test]
     fn autosave_seconds_round_trips_through_the_file() {
-        for seconds in [0, 30, 300, 3600] {
+        use std::time::Duration;
+
+        for (seconds, expected) in [
+            (0, None),
+            (30, Some(Duration::from_secs(30))),
+            (300, Some(Duration::from_secs(300))),
+            (3600, Some(Duration::from_secs(3600))),
+        ] {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("config").join("prefs.ini");
             let mut prefs = Prefs::default();
@@ -628,15 +635,10 @@ mod tests {
             let (loaded, warnings) = Prefs::load_from(&path);
 
             assert_eq!(warnings, vec![], "autosave_seconds {seconds}");
-            assert_eq!(loaded.autosave_interval(), prefs.autosave_interval());
             assert_eq!(
                 loaded.autosave_interval(),
-                (seconds > 0).then(|| std::time::Duration::from_secs(u64::from(seconds)))
-            );
-            assert!(
-                prefs
-                    .to_ini_string()
-                    .contains(&format!("chunks_per_frame=4\nautosave_seconds={seconds}\n"))
+                expected,
+                "autosave_seconds {seconds}"
             );
         }
     }

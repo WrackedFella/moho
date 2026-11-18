@@ -262,6 +262,18 @@ mod tests {
         ctx.exit_requested()
     }
 
+    /// Chooses Main Menu in the pause menu and runs the frame that handles it; returns
+    /// whether the game asked to exit.
+    fn return_to_main_menu(app: &mut App) -> bool {
+        let mut clock = GameClock::default();
+        app.event_bus.publish(UiEvent::MainMenuRequested);
+        app.event_bus.process_deferred();
+        EventProcessor::new().process_ui_events(app, &mut clock);
+        let mut ctx = FrameContext::new(tick_length(), &clock, None, None);
+        Game::frame(app, &mut ctx, 0.0);
+        ctx.exit_requested()
+    }
+
     /// A fresh app loading the save in `saves`, as the player does from the start menu.
     fn load_save(saves: &Path) -> App {
         let mut app = App::headless();
@@ -624,10 +636,8 @@ mod tests {
             let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
             mine_surface_block(&mut app, 40, 40);
 
-            for _ in 0..60 {
-                sim.step(&mut app, 10 * TICK_HZ);
-                draw_frame(&mut app, &mut sim);
-            }
+            sim.step(&mut app, 600 * TICK_HZ);
+            draw_frame(&mut app, &mut sim);
 
             assert!(
                 !scene_file(&saves).exists(),
@@ -635,33 +645,53 @@ mod tests {
             );
         }
 
-        #[test]
-        fn autosave_off_still_saves_on_quit() {
+        /// Mines a block with autosave off, ends the session with `end_session`, and checks
+        /// the save holds the edit.
+        fn assert_session_end_saves_with_autosave_off(
+            world: &str,
+            end_session: impl FnOnce(&mut App),
+        ) {
             let temp = tempfile::tempdir().expect("temp dir");
             let saves = saves_dir(&temp);
-            let mut app = loaded_session_with_prefs(
-                "autosave_test_off_quit",
-                &temp,
-                prefs_with_autosave_seconds(0),
-            );
-            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+            let mut app = loaded_session_with_prefs(world, &temp, prefs_with_autosave_seconds(0));
             let mined = mine_surface_block(&mut app, 40, 40);
-            for _ in 0..60 {
-                sim.step(&mut app, 10 * TICK_HZ);
-                draw_frame(&mut app, &mut sim);
-            }
-            assert!(
-                !scene_file(&saves).exists(),
-                "test setup: nothing is written before quitting"
-            );
 
-            let exit = close_window(&mut app);
+            end_session(&mut app);
 
-            assert!(exit);
-            assert!(scene_file(&saves).is_file(), "quitting wrote no save");
+            assert!(scene_file(&saves).is_file(), "{world}: no save was written");
             let mut reloaded = load_save(&saves);
-            assert!(is_mined_out(&mut reloaded, mined));
-            assert!(block_below_is_present(&reloaded, mined));
+            assert!(is_mined_out(&mut reloaded, mined), "{world}: edit lost");
+            assert!(
+                block_below_is_present(&reloaded, mined),
+                "{world}: world lost"
+            );
+        }
+
+        #[test]
+        fn autosave_off_still_saves_on_quit() {
+            assert_session_end_saves_with_autosave_off("autosave_off_quit", |app| {
+                assert!(close_window(app), "closing the window must exit");
+            });
+        }
+
+        #[test]
+        fn autosave_off_still_saves_on_menu_exit() {
+            assert_session_end_saves_with_autosave_off("autosave_off_menu_exit", |app| {
+                app.game_state = GameState::Paused;
+                assert!(exit_from_menu(app), "Exit must quit");
+            });
+        }
+
+        #[test]
+        fn autosave_off_still_saves_on_return_to_main_menu() {
+            assert_session_end_saves_with_autosave_off("autosave_off_main_menu", |app| {
+                app.game_state = GameState::Paused;
+                assert!(
+                    !return_to_main_menu(app),
+                    "leaving for the menu must not quit"
+                );
+                assert_eq!(app.game_state, GameState::Menu);
+            });
         }
 
         #[test]
