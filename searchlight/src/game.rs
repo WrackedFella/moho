@@ -18,7 +18,7 @@ use moho_render_api::{
     WorldMeshId,
 };
 use moho_renderer::{LightingGpu, RendererBackend, Scene, WorldMeshes};
-use searchlight_rules::{Grade, Lean, LeanSide};
+use searchlight_rules::{Grade, GravityScale, Lean, LeanSide};
 use winit::event::WindowEvent;
 use winit::window::{CursorGrabMode, Window};
 
@@ -30,7 +30,7 @@ use moho_ui_shell::{
 };
 
 use crate::arena::{box_mesh, control_mesh_id, oriented_box_mesh};
-use crate::console_commands::{self, ConsoleCommand, GodModeArg};
+use crate::console_commands::{self, ConsoleCommand, GodModeArg, SimpleArg};
 use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
 use crate::input::{SearchlightAction, SearchlightCommand, look_from, look_to_turn, resolve_lean};
@@ -710,6 +710,10 @@ pub struct SearchlightGame {
     focused: bool,
     stage: Stage,
     god_mode: bool,
+    /// Simple: the player's shots land the tick they are fired. Saved like `god_mode`.
+    simple: bool,
+    /// The tester's multiplier on the pull of gravity on rounds; session state, 1 at launch.
+    round_gravity: GravityScale,
     /// The grade the `grade` command forces on new enemies; not saved, a force is a tuning
     /// session's lever. A host action like `god_mode`: once commands are per player slot, only
     /// slot 0's is read.
@@ -737,6 +741,8 @@ impl SearchlightGame {
             focused: true,
             stage: Stage::new(),
             god_mode: false,
+            simple: false,
+            round_gravity: GravityScale::default(),
             forced_grade: None,
             debug_settings: None,
             flip_window_pending: false,
@@ -834,11 +840,12 @@ impl SearchlightGame {
         }
     }
 
-    /// Starts in the god mode `settings` holds and saves every change to it. The engine settings
-    /// it holds apply on the first frame.
+    /// Starts in the god mode and Simple `settings` holds and saves every change to them. The
+    /// engine settings it holds apply on the first frame.
     #[must_use]
     pub fn with_debug_settings(mut self, settings: DebugSettings) -> Self {
         self.god_mode = settings.god_mode();
+        self.simple = settings.simple();
         self.pending_settings = Some(EngineSettings::from_prefs(settings.prefs()));
         self.debug_settings = Some(settings);
         self
@@ -865,6 +872,7 @@ impl SearchlightGame {
             return;
         }
         let before = self.god_mode;
+        let simple_before = self.simple;
         for command in queued {
             match command {
                 ConsoleCommand::GodMode(GodModeArg::Toggle) => {
@@ -879,8 +887,24 @@ impl SearchlightGame {
                 ConsoleCommand::GodMode(GodModeArg::Set(on)) => self.god_mode = on,
                 ConsoleCommand::Fullscreen => self.flip_window_pending = true,
                 ConsoleCommand::ForceGrade(grade) => self.forced_grade = grade,
-                ConsoleCommand::Simple(_) | ConsoleCommand::RoundGravity(_) => {}
+                ConsoleCommand::Simple(SimpleArg::Toggle) => {
+                    self.simple = !self.simple;
+                    let text = if self.simple {
+                        "Simple: on"
+                    } else {
+                        "Simple: off"
+                    };
+                    self.stage.shell().console_mut().print(text);
+                }
+                ConsoleCommand::Simple(SimpleArg::Set(on)) => self.simple = on,
+                ConsoleCommand::RoundGravity(scale) => self.round_gravity = scale,
             }
+        }
+        if self.simple != simple_before
+            && let Some(settings) = &mut self.debug_settings
+            && let Err(error) = settings.set_simple(self.simple)
+        {
+            tracing::warn!(%error, simple = self.simple, "simple not saved");
         }
         if self.god_mode != before
             && let Some(settings) = &mut self.debug_settings
@@ -1079,6 +1103,8 @@ impl Game for SearchlightGame {
         SearchlightCommand {
             god_mode: self.god_mode,
             forced_grade: self.forced_grade,
+            simple: self.simple,
+            round_gravity: self.round_gravity,
             lean: self.lean_side,
             ..SearchlightCommand::from_frame(&frame)
         }

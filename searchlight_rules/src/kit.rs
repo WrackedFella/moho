@@ -131,7 +131,8 @@ impl KitDef {
             return Err(wrong(&self.weapon, "weapon"));
         };
 
-        let build = |entry: &KitMagazine| -> Result<Magazine, KitError> {
+        let mut ballistics = BTreeMap::new();
+        let mut build = |entry: &KitMagazine| -> Result<Magazine, KitError> {
             let ItemKind::Magazine(spec) = &find(&entry.magazine)?.kind else {
                 return Err(wrong(&entry.magazine, "magazine"));
             };
@@ -144,6 +145,13 @@ impl KitDef {
                     magazine: entry.magazine.clone(),
                 });
             }
+            ballistics.insert(
+                entry.round.clone(),
+                Ballistics {
+                    muzzle_velocity: round.muzzle_velocity,
+                    drag: round.drag,
+                },
+            );
             let rounds = entry.rounds.unwrap_or(spec.capacity);
             Magazine::filled(entry.magazine.clone(), spec, &entry.round, rounds).map_err(|_| {
                 KitError::OverCapacity {
@@ -173,7 +181,7 @@ impl KitDef {
         Ok(Kit {
             weapon: weapon.clone(),
             loadout: Loadout::new(rifle, rig),
-            rounds: BTreeMap::new(),
+            rounds: ballistics,
         })
     }
 }

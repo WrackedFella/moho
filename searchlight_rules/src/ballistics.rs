@@ -35,19 +35,27 @@ pub struct Flight {
 impl Flight {
     /// A round leaving `origin` along `direction` at the muzzle velocity.
     pub fn fired(origin: Vec3, direction: Vec3, ballistics: &Ballistics) -> Self {
-        let _ = (origin, direction, ballistics);
-        todo!("the muzzle velocity along the normalised direction")
+        Self {
+            position: origin,
+            velocity: direction.normalize_or_zero() * ballistics.muzzle_velocity,
+        }
     }
 
     /// The flight one tick of `dt` seconds later, under drag and `gravity` in m/s².
+    ///
+    /// Uses only correctly rounded IEEE operations so a replay is exact (no `exp`, no `powf`).
     pub fn step(&self, ballistics: &Ballistics, gravity: f32, dt: f32) -> Self {
-        let _ = (ballistics, gravity, dt);
-        todo!("v' = v * max(0, 1 - drag * dt) - Y * gravity * dt; p' = p + v' * dt")
+        let kept = (1.0 - ballistics.drag * dt).max(0.0);
+        let velocity = self.velocity * kept - Vec3::Y * gravity * dt;
+        Self {
+            position: self.position + velocity * dt,
+            velocity,
+        }
     }
 
     /// Whether the round has slowed to [`MIN_SPEED`] or below.
     pub fn is_spent(&self) -> bool {
-        todo!("speed at or below the minimum")
+        self.velocity.length() <= MIN_SPEED
     }
 }
 
@@ -72,13 +80,16 @@ impl GravityScale {
     /// [`GravityScaleError`] when `value` is negative, not finite or above
     /// [`MAX_GRAVITY_SCALE`].
     pub fn new(value: f32) -> Result<Self, GravityScaleError> {
-        let _ = value;
-        todo!("refuse negative, non-finite and over-1000 scales")
+        if value.is_finite() && (0.0..=MAX_GRAVITY_SCALE).contains(&value) {
+            Ok(Self(value))
+        } else {
+            Err(GravityScaleError { value })
+        }
     }
 
     /// The pull on a round in m/s²: [`STANDARD_GRAVITY`] times the scale.
     pub fn gravity(self) -> f32 {
-        todo!("STANDARD_GRAVITY * scale")
+        STANDARD_GRAVITY * self.0
     }
 }
 
@@ -100,19 +111,24 @@ pub struct FlightBounds {
 impl FlightBounds {
     /// The box around `points`, grown by `margin` metres on every side.
     pub fn around(points: impl IntoIterator<Item = Vec3>, margin: f32) -> Self {
-        let _ = (points, margin);
-        todo!("the points' box grown by the margin")
+        let (min, max) = points.into_iter().fold(
+            (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+            |(min, max), point| (min.min(point), max.max(point)),
+        );
+        Self {
+            min: min - Vec3::splat(margin),
+            max: max + Vec3::splat(margin),
+        }
     }
 
     /// Whether `point` is inside the box or on its surface.
     pub fn contains(&self, point: Vec3) -> bool {
-        let _ = point;
-        todo!("inside or on a face")
+        point.cmpge(self.min).all() && point.cmple(self.max).all()
     }
 
     /// The length of the box's diagonal: the farthest a straight ray inside it can run.
     pub fn reach(&self) -> f32 {
-        todo!("the box diagonal")
+        (self.max - self.min).length()
     }
 }
 

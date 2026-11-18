@@ -12,16 +12,16 @@ use moho_physics::{
     MoveSettings, PhysicsWorld, first_person_view,
 };
 use searchlight_rules::{
-    Ballistics, Body, BodyPart, BodyProfile, Grade, HitReport, ItemId, Lean, LeanReach, LeanSide,
-    LeanTuning, Loadout, MagazineLevel, Rifle, Rig, Shot,
+    Ballistics, Body, BodyPart, BodyProfile, Flight, FlightBounds, Grade, HitReport, ItemId, Lean,
+    LeanReach, LeanSide, LeanTuning, Loadout, MagazineLevel, Rifle, Rig, Shot,
 };
 
-use crate::arena::{Arena, SETTLE_DT};
+use crate::arena::{Arena, FLIGHT_MARGIN, SETTLE_DT};
 use crate::brain::{Brain, EnemyTuning, Percept};
 use crate::cover::{self, Threat};
 use crate::input::SearchlightCommand;
 use crate::lean::lean_offset;
-use crate::round::RoundInFlight;
+use crate::round::{RoundInFlight, step_round};
 use crate::shot::{ShotRay, Strike, passes_within, resolve_shot};
 use crate::tag::SurfaceTag;
 use crate::tuning::SHIPPED_BODY;
@@ -29,8 +29,6 @@ use crate::tuning::SHIPPED_BODY;
 /// How far past a full lean the reach rays go, in metres, so the eye and the near plane stay
 /// off a wall.
 const LEAN_CLEARANCE: f32 = 0.15;
-/// How far the player's shot reaches until rounds fly, in metres.
-const HITSCAN_RANGE: f32 = 100.0;
 /// How far from the eye a control can be used, in metres.
 pub const USE_REACH: f32 = 2.0;
 
@@ -310,6 +308,8 @@ struct Spawns {
     route: Vec<Vec3>,
     covers: Vec<Vec3>,
     nav: Arc<NavMesh>,
+    /// The box a round may fly in; it also sets how far Simple's ray reaches.
+    bounds: FlightBounds,
 }
 
 /// A target standing on the floor point `spawn` as target number `index`. With a route and a
@@ -374,6 +374,10 @@ impl SearchlightSim {
             route: Vec::new(),
             covers: Vec::new(),
             nav: Arc::default(),
+            bounds: FlightBounds::around(
+                std::iter::once(player_spawn).chain(dummy_spawns.iter().copied()),
+                FLIGHT_MARGIN,
+            ),
         };
         Self::assemble(world, spawns, config)
     }
@@ -441,9 +445,11 @@ impl SearchlightSim {
     /// Runs one tick of `dt` seconds.
     ///
     /// While the player is dead only `command.restart` is read, and it puts every character
-    /// back at its spawn, as a fresh sim over the same world would have them. Otherwise the enemies perceive and move, the player moves (slower while a lean is held), the
-    /// world steps, the player's lean blends within the room beside it, the player's weapon actions apply, then the enemies that decided to fire
-    /// do, and enemies that died leave the world.
+    /// back at its spawn, as a fresh sim over the same world would have them, with no round in
+    /// flight. Otherwise the enemies perceive and move, the player moves (slower while a lean is
+    /// held), the world steps, the player's lean blends within the room beside it, the rounds in
+    /// flight step, the player's weapon actions apply (a round pulled now first steps next tick),
+    /// then the enemies that decided to fire do, and enemies that died leave the world.
     pub fn tick(&mut self, command: &SearchlightCommand, dt: f32) {
         if self.player_body.is_dead() {
             if command.restart {
@@ -466,10 +472,11 @@ impl SearchlightSim {
             .expect("the sim never removes the player");
         self.world.step(dt);
         self.step_lean(command.lean, dt);
+        self.step_rounds(command.round_gravity.gravity(), dt);
 
         self.advance_weapon();
         if command.fire {
-            self.pull_trigger();
+            self.pull_trigger(command.simple);
         }
         if command.reload {
             self.begin_reload();
@@ -724,57 +731,122 @@ impl SearchlightSim {
         };
     }
 
-    fn pull_trigger(&mut self) {
+    /// Spends a round. Under `simple` the shot lands at once; otherwise the round joins those in
+    /// flight and first steps on the next tick.
+    fn pull_trigger(&mut self, simple: bool) {
         if self.weapon != Weapon::Ready {
             return;
         }
         match self.loadout.fire() {
             Shot::Dry => self.outbox.push(Feedback::Dry),
-            Shot::Fired(_) => {
+            Shot::Fired(round) => {
                 self.outbox.push(Feedback::Fired);
                 if self.cooldown_ticks > 0 {
                     self.weapon = Weapon::Cooling(self.cooldown_ticks);
                 }
-                self.resolve_player_shot();
+                if simple {
+                    self.resolve_hitscan_shot();
+                } else {
+                    self.launch_round(&round);
+                }
             }
         }
     }
 
-    fn resolve_player_shot(&mut self) {
+    /// Resolves the player's shot as a ray over the whole flight box, landing this tick.
+    fn resolve_hitscan_shot(&mut self) {
         let state = self.player();
         let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
         let origin = self.leaned_eye(&state);
+        let range = self.origin.0.bounds.reach();
         let strike = resolve_shot(
             &self.world,
             ShotRay {
                 origin,
                 direction: view.forward,
-                range: HITSCAN_RANGE,
+                range,
                 ignore: Some(self.player),
             },
         );
-        let end = strike.map_or(origin + view.forward * HITSCAN_RANGE, |strike| strike.point);
+        let end = strike.map_or(origin + view.forward * range, |strike| strike.point);
         let hit = strike.and_then(|strike| match strike.tag {
             SurfaceTag::Part { target, part } => Some((target, part)),
             _ => None,
         });
         let struck = hit.map(|(target, _)| usize::from(target));
-        self.record_near_misses(origin, end, struck, state.position);
+        self.record_near_misses(origin, end, struck, state.position, &mut Vec::new());
         if let (Some((target, part)), Some(strike)) = (hit, strike) {
             self.apply_player_hit(target, part, self.damage, state.position, strike.point);
         }
     }
 
-    /// Counts a near miss for every living enemy but `struck` that the shot from `origin` to
-    /// `end` passed within the near-miss radius of, and puts those whose count reached their
-    /// grade's under fire from `from`.
-    fn record_near_misses(&mut self, origin: Vec3, end: Vec3, struck: Option<usize>, from: Vec3) {
+    /// Sends `round` from the leaned eye along the view; a round the config has no ballistics
+    /// for flies nothing.
+    fn launch_round(&mut self, round: &ItemId) {
+        let Some(ballistics) = self.origin.1.rounds.get(round).copied() else {
+            tracing::warn!(%round, "the round has no ballistics entry, so it flies nothing");
+            return;
+        };
+        let state = self.player();
+        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
+        self.rounds.push(RoundInFlight {
+            flight: Flight::fired(self.leaned_eye(&state), view.forward, &ballistics),
+            ballistics,
+            shooter: Some(self.player),
+            from: state.position,
+            near_missed: Vec::new(),
+        });
+    }
+
+    /// Steps every round in flight once. A round that struck anything, is spent or left the
+    /// flight box ends; the rest keep flying.
+    fn step_rounds(&mut self, gravity: f32, dt: f32) {
+        let bounds = self.origin.0.bounds;
+        for mut round in std::mem::take(&mut self.rounds) {
+            let step = step_round(&self.world, &round, gravity, dt);
+            let hit = step.strike.and_then(|strike| match strike.tag {
+                SurfaceTag::Part { target, part } => Some((target, part, strike.point)),
+                _ => None,
+            });
+            self.record_near_misses(
+                round.flight.position,
+                step.end,
+                hit.map(|(target, ..)| usize::from(target)),
+                round.from,
+                &mut round.near_missed,
+            );
+            if let Some((target, part, point)) = hit {
+                self.apply_player_hit(target, part, self.damage, round.from, point);
+            }
+            if step.strike.is_none()
+                && !step.flight.is_spent()
+                && bounds.contains(step.flight.position)
+            {
+                round.flight = step.flight;
+                self.rounds.push(round);
+            }
+        }
+    }
+
+    /// Counts a near miss for every living enemy but `struck`, and none in `counted`, that the
+    /// shot from `origin` to `end` passed within the near-miss radius of, and puts those whose
+    /// count reached their grade's under fire from `from`. Each enemy counted is added to
+    /// `counted`, so one round counts once per enemy.
+    fn record_near_misses(
+        &mut self,
+        origin: Vec3,
+        end: Vec3,
+        struck: Option<usize>,
+        from: Vec3,
+        counted: &mut Vec<u16>,
+    ) {
         let radius = self.enemy.near_miss_radius;
         for (index, target) in self.targets.iter_mut().enumerate().skip(self.dummy_count) {
             let (Some(handle), Some(enemy)) = (target.handle, target.enemy) else {
                 continue;
             };
-            if struck == Some(index) {
+            let number = target_number(index);
+            if struck == Some(index) || counted.contains(&number) {
                 continue;
             }
             let Some(needed) = enemy.grade.near_misses_to_cover() else {
@@ -788,6 +860,7 @@ impl SearchlightSim {
             if !passes_within(origin, end, centre, radius) {
                 continue;
             }
+            counted.push(number);
             target.near_misses += 1;
             if target.near_misses >= needed {
                 target.near_misses = 0;
@@ -936,6 +1009,7 @@ impl SearchlightSim {
             route: arena.route.clone(),
             covers: arena.covers.clone(),
             nav: Arc::clone(&arena.nav),
+            bounds: arena.flight_bounds(),
         };
         Self::assemble(arena.physics_world(), spawns, config)
     }
@@ -1998,8 +2072,16 @@ mod tests {
     fn a_level_round_at_a_head_60_m_away_strikes_by_gravity_scale() {
         let strikes = |value: f32| {
             let mut sim = dummy_sim(60.0, aimed_config(HEAD_CENTRE_Y));
-            let ticks = fire_then_idle(&mut sim, pull_at_scale(value), 40);
-            (sim.player_eye(), hits(&ticks))
+            run(&mut sim, &[idle(); 60]);
+            sim.tick(&pull_at_scale(value), DT);
+            let aim = sim.player_eye();
+            let mut ticks = vec![sim.drain_feedback()];
+            let level = SearchlightCommand {
+                round_gravity: scale(value),
+                ..idle()
+            };
+            ticks.extend(run(&mut sim, &[level; 39]));
+            (aim, hits(&ticks))
         };
 
         let (aim, none) = strikes(0.0);
@@ -2032,11 +2114,14 @@ mod tests {
                 &[],
                 test_config(rifle_with(5), vec![]),
             );
-            let start = sim.player().position.y;
             let level = SearchlightCommand {
                 round_gravity: scale(value),
                 ..idle()
             };
+            for _ in 0..10 {
+                sim.tick(&level, DT);
+            }
+            let start = sim.player().position.y;
             let jump = SearchlightCommand {
                 movement: CharacterCommand {
                     jump: true,
@@ -2220,15 +2305,22 @@ mod tests {
     fn under_simple_a_head_60_m_away_is_hit_on_the_firing_tick_at_the_aim_point_at_scale_30() {
         let fire_with = |simple: bool| {
             let mut sim = dummy_sim(60.0, aimed_config(HEAD_CENTRE_Y));
+            run(&mut sim, &[idle(); 60]);
             let command = SearchlightCommand {
                 simple,
                 ..pull_at_scale(30.0)
             };
             sim.tick(&command, DT);
+            let aim = sim.player_eye();
             let in_flight_after_firing = sim.rounds.len();
             let mut ticks = vec![sim.drain_feedback()];
-            ticks.extend(run(&mut sim, &[idle(); 10]));
-            (sim.player_eye(), hits(&ticks), in_flight_after_firing)
+            let level = SearchlightCommand {
+                simple,
+                round_gravity: scale(30.0),
+                ..idle()
+            };
+            ticks.extend(run(&mut sim, &[level; 10]));
+            (aim, hits(&ticks), in_flight_after_firing)
         };
 
         let (aim, simple, simple_in_flight) = fire_with(true);
@@ -2241,8 +2333,8 @@ mod tests {
         assert!((point.y - aim.y).abs() < 0.01, "{point} against aim {aim}");
         assert!((point.x - aim.x).abs() < 0.01, "{point} against aim {aim}");
         assert!(
-            flying.is_empty(),
-            "a flying round landed on its firing tick"
+            flying.iter().all(|&(tick, ..)| tick >= 1),
+            "a flying round landed on its firing tick: {flying:?}"
         );
     }
 

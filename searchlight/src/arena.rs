@@ -366,9 +366,15 @@ impl Arena {
         world
     }
 
-    /// The box a round may fly in: the box around every mesh, grown by [`FLIGHT_MARGIN`].
+    /// The box a round may fly in: the box around every mesh and the player's spawn (so an
+    /// arena with no mesh still has a box), grown by [`FLIGHT_MARGIN`].
     pub fn flight_bounds(&self) -> FlightBounds {
-        todo!("the meshes' box grown by FLIGHT_MARGIN")
+        let vertices = self
+            .meshes
+            .iter()
+            .chain(self.controls.iter().map(|control| &control.mesh))
+            .flat_map(|mesh| mesh.positions().iter().copied().map(Vec3::from_array));
+        FlightBounds::around(vertices.chain([self.player_spawn]), FLIGHT_MARGIN)
     }
 }
 

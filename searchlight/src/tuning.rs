@@ -1,7 +1,5 @@
 //! The simulation's tuning, with the rifle's numbers taken from its definition.
 
-use std::collections::BTreeMap;
-
 use moho_physics::{CharacterBody, Hull, HullShape, MoveSettings, Stature};
 use searchlight_rules::{BodyPart, BodyProfile, Kit, LeanTuning};
 
@@ -37,7 +35,9 @@ pub const SHIPPED_BODY: CharacterBody = CharacterBody {
 /// Builds the simulation tuning around the starting `kit`: its weapon's numbers and its loadout.
 pub fn tuning(kit: Kit) -> SimConfig {
     let Kit {
-        weapon, loadout, ..
+        weapon,
+        loadout,
+        rounds,
     } = kit;
     SimConfig {
         move_settings: MoveSettings {
@@ -57,7 +57,7 @@ pub fn tuning(kit: Kit) -> SimConfig {
         },
         gravity: 18.0,
         character_body: SHIPPED_BODY,
-        rounds: BTreeMap::new(),
+        rounds,
         damage: weapon.damage,
         cooldown_ticks: weapon.cooldown_ticks,
         reload_ticks: weapon.reload_ticks,
