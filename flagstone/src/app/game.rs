@@ -9,7 +9,7 @@ use flagstone_game::controller::{
     CameraMode, ControllerInput, EDGE_PAN_MARGIN_PX, controller_to_camera, edge_pan_axes,
 };
 use flagstone_game::raycast::raycast_surface;
-use flagstone_game::selection::{PAWN_HALF_EXTENTS, PLAYER_PAWN, pawn_aabb, pick_pawn};
+use flagstone_game::selection::{Aabb, PLAYER_PAWN, pawn_aabb, pawn_body, pick_pawn};
 use flagstone_ui::actions::StrategyAction;
 use flagstone_ui::console_commands::StrategyConsoleCommand;
 use moho_core::pointer::{Ray, screen_ray};
@@ -28,10 +28,11 @@ const MARK_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/mark.wav")
 const UNMARK_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/unmark.wav");
 const MARK_VOLUME: f32 = 0.6;
 
-/// The id the selection mark is drawn under, apart from the console's and the mining marks'.
+/// The id the selection mark is drawn under; `u64::MAX` is a value the console's and the
+/// mining marks' ids never reach.
 const SELECTION_MARKER_ID: moho_render_api::MarkerId = moho_render_api::MarkerId(u64::MAX);
+/// RGBA of the selection outline.
 const SELECTION_COLOR: [f32; 4] = [1.0, 0.9, 0.2, 1.0];
-const PAWN_BODY_COLOR: glam::Vec3 = glam::Vec3::new(0.2, 0.5, 0.9);
 
 /// One tick's worth of player input.
 #[derive(Clone, Debug, Default)]
@@ -213,7 +214,7 @@ impl App {
                 POINTER_RAY_RANGE,
             );
             tracing::debug!(hit = ?self.pointer_hit, "Pointer ray cast");
-            let pawns = [(PLAYER_PAWN, pawn_aabb(self.simulation.position()))];
+            let pawns = [(PLAYER_PAWN, self.pawn_box())];
             let picked = pick_pawn(ray, pawns, self.pointer_hit.map(|hit| hit.distance));
             self.selection.click(picked);
             if picked.is_some() {
@@ -254,13 +255,18 @@ impl App {
         tracing::debug!(?pos, ?change, "Mining mark toggled");
     }
 
+    /// The player pawn's box at its current position.
+    fn pawn_box(&self) -> Aabb {
+        pawn_aabb(self.simulation.position())
+    }
+
     /// Draws the selection mark over the selected pawn, or removes it.
     fn sync_selection_mark(&mut self) {
+        let aabb = self.pawn_box();
         let markers = self.scene.markers_mut();
         if self.selection.selected.is_some()
             && self.simulation.camera_mode() == CameraMode::Isometric
         {
-            let aabb = pawn_aabb(self.simulation.position());
             markers.upsert(
                 SELECTION_MARKER_ID,
                 Marker::new(aabb.min.to_array(), aabb.max.to_array(), SELECTION_COLOR)
@@ -363,22 +369,16 @@ impl App {
         renderer: &mut dyn moho_renderer::RendererBackend,
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     ) {
-        let mut cubes = self.entities.actors.cubes().to_vec();
+        self.frame_cubes.clear();
+        self.frame_cubes
+            .extend_from_slice(self.entities.actors.cubes());
         if self.simulation.camera_mode() == CameraMode::Isometric {
-            cubes.push(flagstone_game::actors::Cube::new(
-                self.simulation.position(),
-                PAWN_HALF_EXTENTS.x * 2.0,
-                PAWN_HALF_EXTENTS.z * 2.0,
-                PAWN_HALF_EXTENTS.y * 2.0,
-                flagstone_voxel::MaterialType::Lambertian {
-                    albedo: PAWN_BODY_COLOR,
-                },
-            ));
+            self.frame_cubes.push(pawn_body(self.simulation.position()));
         }
         if let Err(e) = self.scene.render(
             renderer,
             self.entities.actors.spheres(),
-            &cubes,
+            &self.frame_cubes,
             self.mesh_handle,
             self.cube_mesh_handle,
             camera,

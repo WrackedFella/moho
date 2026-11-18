@@ -166,6 +166,8 @@ struct App {
     viewport: glam::UVec2,
     /// The surface under the last strategy-view click, `None` when it hit nothing.
     pointer_hit: Option<flagstone_game::raycast::SurfaceHit>,
+    /// The cubes handed to the scene each frame, kept to reuse its allocation.
+    frame_cubes: Vec<flagstone_game::actors::Cube>,
 
     /// The orders the player has given the world.
     colony: flagstone_game::colony::Colony,
@@ -310,6 +312,7 @@ impl App {
 
             viewport: glam::UVec2::ZERO,
             pointer_hit: None,
+            frame_cubes: Vec::new(),
 
             colony: flagstone_game::colony::Colony::default(),
             designation_markers: app::designation_markers::DesignationMarkers::default(),

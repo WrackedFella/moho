@@ -1,5 +1,7 @@
 //! Which pawn the player has selected, and the ray test that picks it.
 
+use crate::actors::Cube;
+use flagstone_voxel::MaterialType;
 use glam::Vec3;
 use moho_core::pointer::Ray;
 
@@ -26,6 +28,22 @@ pub fn pawn_aabb(center: Vec3) -> Aabb {
         min: center - PAWN_HALF_EXTENTS,
         max: center + PAWN_HALF_EXTENTS,
     }
+}
+
+/// Albedo of the pawn's body cube.
+pub const PAWN_BODY_COLOR: Vec3 = Vec3::new(0.2, 0.5, 0.9);
+
+/// The cube drawn for a pawn whose capsule centre is `center`, sized to match [`pawn_aabb`].
+pub fn pawn_body(center: Vec3) -> Cube {
+    Cube::new(
+        center,
+        PAWN_HALF_EXTENTS.x * 2.0,
+        PAWN_HALF_EXTENTS.z * 2.0,
+        PAWN_HALF_EXTENTS.y * 2.0,
+        MaterialType::Lambertian {
+            albedo: PAWN_BODY_COLOR,
+        },
+    )
 }
 
 /// The distance along `ray` at which it enters `aabb`, `None` when it never does.
@@ -57,10 +75,11 @@ pub fn pick_pawn(
     pawns: impl IntoIterator<Item = (PawnId, Aabb)>,
     terrain_distance: Option<f32>,
 ) -> Option<PawnId> {
+    let limit = terrain_distance.unwrap_or(f32::INFINITY);
     pawns
         .into_iter()
         .filter_map(|(id, aabb)| ray_box_entry(ray, aabb).map(|t| (id, t.max(0.0))))
-        .filter(|&(_, t)| t < terrain_distance.unwrap_or(f32::INFINITY))
+        .filter(|&(_, t)| t < limit)
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(id, _)| id)
 }
