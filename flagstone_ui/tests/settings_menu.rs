@@ -820,6 +820,11 @@ fn confirm_after_stray_key_applies_only_prompted_key() {
     modifiers_frame(&mut menu, egui::Modifiers::NONE);
     modifiers_frame(&mut menu, egui::Modifiers::ALT);
 
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::W), pad_stick(StickDir::Up)],
+        "the stray Alt must bind nothing before the prompt is answered"
+    );
     assert!(Screen::take_pending_modal(&mut menu).is_some());
     Screen::on_modal_confirm(&mut menu);
 
