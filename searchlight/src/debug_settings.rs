@@ -28,7 +28,7 @@ impl DebugSettings {
 
     /// Whether god mode is stored as on; an absent or unrecognised value reads as off.
     pub fn god_mode(&self) -> bool {
-        self.prefs.debug_value(GOD_MODE) == Some("1")
+        self.flag(GOD_MODE)
     }
 
     /// Stores god mode and saves the prefs file.
@@ -36,15 +36,12 @@ impl DebugSettings {
     /// # Errors
     /// The I/O error if the file cannot be written.
     pub fn set_god_mode(&mut self, on: bool) -> io::Result<()> {
-        self.prefs
-            .set_debug_value(GOD_MODE, if on { "1" } else { "0" })
-            .expect("\"god_mode\" with \"1\" or \"0\" is a name and value prefs always accepts");
-        self.prefs.save_to(&self.path)
+        self.set_flag(GOD_MODE, on)
     }
 
     /// Whether Simple is stored as on; an absent or unrecognised value reads as off.
     pub fn simple(&self) -> bool {
-        self.prefs.debug_value(SIMPLE) == Some("1")
+        self.flag(SIMPLE)
     }
 
     /// Stores Simple and saves the prefs file.
@@ -52,9 +49,19 @@ impl DebugSettings {
     /// # Errors
     /// The I/O error if the file cannot be written.
     pub fn set_simple(&mut self, on: bool) -> io::Result<()> {
+        self.set_flag(SIMPLE, on)
+    }
+
+    fn flag(&self, key: &str) -> bool {
+        self.prefs.debug_value(key) == Some("1")
+    }
+
+    fn set_flag(&mut self, key: &str, on: bool) -> io::Result<()> {
         self.prefs
-            .set_debug_value(SIMPLE, if on { "1" } else { "0" })
-            .expect("\"simple\" with \"1\" or \"0\" is a name and value prefs always accepts");
+            .set_debug_value(key, if on { "1" } else { "0" })
+            .expect(
+                "a debug flag name with \"1\" or \"0\" is a name and value prefs always accepts",
+            );
         self.prefs.save_to(&self.path)
     }
 

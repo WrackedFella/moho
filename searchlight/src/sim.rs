@@ -296,6 +296,22 @@ pub struct SearchlightSim {
     origin: (Spawns, SimConfig),
 }
 
+/// Where the player's shot leaves, which way, and where the player stands (what a hit or near
+/// miss reports as where it came from).
+struct Muzzle {
+    origin: Vec3,
+    forward: Vec3,
+    from: Vec3,
+}
+
+/// The target and part a strike landed on, if it struck a body part.
+fn hit_part(strike: &Strike) -> Option<(u16, BodyPart)> {
+    match strike.tag {
+        SurfaceTag::Part { target, part } => Some((target, part)),
+        _ => None,
+    }
+}
+
 /// Where a sim's characters start.
 #[derive(Clone, Debug)]
 struct Spawns {
@@ -755,28 +771,38 @@ impl SearchlightSim {
 
     /// Resolves the player's shot as a ray over the whole flight box, landing this tick.
     fn resolve_hitscan_shot(&mut self) {
-        let state = self.player();
-        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
-        let origin = self.leaned_eye(&state);
+        let Muzzle {
+            origin,
+            forward,
+            from,
+        } = self.muzzle();
         let range = self.origin.0.bounds.reach();
         let strike = resolve_shot(
             &self.world,
             ShotRay {
                 origin,
-                direction: view.forward,
+                direction: forward,
                 range,
                 ignore: Some(self.player),
             },
         );
-        let end = strike.map_or(origin + view.forward * range, |strike| strike.point);
-        let hit = strike.and_then(|strike| match strike.tag {
-            SurfaceTag::Part { target, part } => Some((target, part)),
-            _ => None,
-        });
+        let end = strike.map_or(origin + forward * range, |strike| strike.point);
+        let hit = strike.as_ref().and_then(hit_part);
         let struck = hit.map(|(target, _)| usize::from(target));
-        self.record_near_misses(origin, end, struck, state.position, &mut Vec::new());
+        self.record_near_misses(origin, end, struck, from, &mut Vec::new());
         if let (Some((target, part)), Some(strike)) = (hit, strike) {
-            self.apply_player_hit(target, part, self.damage, state.position, strike.point);
+            self.apply_player_hit(target, part, self.damage, from, strike.point);
+        }
+    }
+
+    /// Where the player's shot leaves and which way.
+    fn muzzle(&self) -> Muzzle {
+        let state = self.player();
+        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
+        Muzzle {
+            origin: self.leaned_eye(&state),
+            forward: view.forward,
+            from: state.position,
         }
     }
 
@@ -787,13 +813,16 @@ impl SearchlightSim {
             tracing::warn!(%round, "the round has no ballistics entry, so it flies nothing");
             return;
         };
-        let state = self.player();
-        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
+        let Muzzle {
+            origin,
+            forward,
+            from,
+        } = self.muzzle();
         self.rounds.push(RoundInFlight {
-            flight: Flight::fired(self.leaned_eye(&state), view.forward, &ballistics),
+            flight: Flight::fired(origin, forward, &ballistics),
             ballistics,
             shooter: Some(self.player),
-            from: state.position,
+            from,
             near_missed: Vec::new(),
         });
     }
@@ -802,30 +831,30 @@ impl SearchlightSim {
     /// flight box ends; the rest keep flying.
     fn step_rounds(&mut self, gravity: f32, dt: f32) {
         let bounds = self.origin.0.bounds;
-        for mut round in std::mem::take(&mut self.rounds) {
-            let step = step_round(&self.world, &round, gravity, dt);
-            let hit = step.strike.and_then(|strike| match strike.tag {
-                SurfaceTag::Part { target, part } => Some((target, part, strike.point)),
-                _ => None,
-            });
+        // Taken so `self` stays free to borrow, and put back so the buffer keeps its capacity.
+        let mut rounds = std::mem::take(&mut self.rounds);
+        rounds.retain_mut(|round| {
+            let step = step_round(&self.world, round, gravity, dt);
+            let hit = step.strike.as_ref().and_then(hit_part);
             self.record_near_misses(
                 round.flight.position,
                 step.end,
-                hit.map(|(target, ..)| usize::from(target)),
+                hit.map(|(target, _)| usize::from(target)),
                 round.from,
                 &mut round.near_missed,
             );
-            if let Some((target, part, point)) = hit {
-                self.apply_player_hit(target, part, self.damage, round.from, point);
+            if let (Some((target, part)), Some(strike)) = (hit, step.strike) {
+                self.apply_player_hit(target, part, self.damage, round.from, strike.point);
             }
-            if step.strike.is_none()
+            let flying = step.strike.is_none()
                 && !step.flight.is_spent()
-                && bounds.contains(step.flight.position)
-            {
+                && bounds.contains(step.flight.position);
+            if flying {
                 round.flight = step.flight;
-                self.rounds.push(round);
             }
-        }
+            flying
+        });
+        self.rounds = rounds;
     }
 
     /// Counts a near miss for every living enemy but `struck`, and none in `counted`, that the

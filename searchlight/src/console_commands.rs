@@ -50,17 +50,22 @@ pub fn parse_tgm(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
     }
 }
 
+/// The console line that reports Simple's state.
+pub fn simple_state(on: bool) -> &'static str {
+    if on { "Simple: on" } else { "Simple: off" }
+}
+
 /// Parses `simple [0|1]`; no argument toggles.
 pub fn parse_simple(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
     match args {
         [] => Ok((ConsoleCommand::Simple(SimpleArg::Toggle), String::new())),
         ["1"] => Ok((
             ConsoleCommand::Simple(SimpleArg::Set(true)),
-            "Simple: on".to_owned(),
+            simple_state(true).to_owned(),
         )),
         ["0"] => Ok((
             ConsoleCommand::Simple(SimpleArg::Set(false)),
-            "Simple: off".to_owned(),
+            simple_state(false).to_owned(),
         )),
         _ => Err("Usage: simple [0|1]".to_owned()),
     }

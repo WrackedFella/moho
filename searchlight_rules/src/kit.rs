@@ -145,13 +145,7 @@ impl KitDef {
                     magazine: entry.magazine.clone(),
                 });
             }
-            ballistics.insert(
-                entry.round.clone(),
-                Ballistics {
-                    muzzle_velocity: round.muzzle_velocity,
-                    drag: round.drag,
-                },
-            );
+            ballistics.insert(entry.round.clone(), round.ballistics());
             let rounds = entry.rounds.unwrap_or(spec.capacity);
             Magazine::filled(entry.magazine.clone(), spec, &entry.round, rounds).map_err(|_| {
                 KitError::OverCapacity {

@@ -889,11 +889,7 @@ impl SearchlightGame {
                 ConsoleCommand::ForceGrade(grade) => self.forced_grade = grade,
                 ConsoleCommand::Simple(SimpleArg::Toggle) => {
                     self.simple = !self.simple;
-                    let text = if self.simple {
-                        "Simple: on"
-                    } else {
-                        "Simple: off"
-                    };
+                    let text = console_commands::simple_state(self.simple);
                     self.stage.shell().console_mut().print(text);
                 }
                 ConsoleCommand::Simple(SimpleArg::Set(on)) => self.simple = on,
