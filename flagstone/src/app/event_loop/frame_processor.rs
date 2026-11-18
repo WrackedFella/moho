@@ -1330,7 +1330,6 @@ pub(crate) mod tests {
         );
     }
 
-    /// The resource of an ore block.
     pub(crate) const ORE: u32 = 1;
     /// A block of flat ground 4 m from the pawn's start, in `colony_app(false)`.
     pub(crate) const FLAT_MARK: [i32; 3] = [8, 3, 8];
@@ -1371,7 +1370,6 @@ pub(crate) mod tests {
         app
     }
 
-    /// Turns the block at `pos` into ore.
     pub(crate) fn make_ore(app: &mut App, pos: [i32; 3]) {
         app.light_system
             .as_mut()
