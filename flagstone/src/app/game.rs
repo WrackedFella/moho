@@ -3992,6 +3992,59 @@ mod tests {
         }
 
         #[test]
+        fn a_click_without_a_world_ignores_an_earlier_terrain_hit() {
+            let (mut app, camera) = selection_app();
+            app.light_system = None;
+            app.pointer_hit = Some(flagstone_game::raycast::SurfaceHit {
+                block_pos: flagstone_voxel::BlockPos::new(0, 0, 0),
+                position: Vec3::ZERO,
+                distance: 1.0,
+            });
+
+            click_the_pawn(&mut app, camera);
+
+            assert_eq!(selected(&app), Some(PLAYER_PAWN));
+        }
+
+        #[test]
+        fn a_select_press_queued_before_a_pause_does_not_select_on_resume() {
+            let (mut app, camera) = selection_app();
+            click_world(&mut app, camera, PAWN_CENTRE);
+
+            app.game_state = GameState::Paused;
+            app.drop_pending_input();
+            app.game_state = GameState::Playing;
+            step(&mut app);
+
+            assert_eq!(selected(&app), None);
+        }
+
+        #[test]
+        fn a_click_with_the_mine_designation_neither_selects_nor_clears() {
+            let (mut app, camera) = selection_app();
+            app.input.designation = crate::app::input_state::Designation::Mine;
+            let from_nothing = {
+                click_the_pawn(&mut app, camera);
+                selected(&app)
+            };
+            app.selection.click(Some(PLAYER_PAWN));
+            let audio = record_audio(&app);
+
+            click_the_pawn(&mut app, camera);
+            let kept = selected(&app);
+            let cued = cues(&app, &audio);
+
+            assert_eq!(from_nothing, None, "a mark click selects nothing");
+            assert_eq!(kept, Some(PLAYER_PAWN), "a mark click leaves the selection");
+            assert!(
+                !cued
+                    .iter()
+                    .any(|cue| matches!(cue, AudioEvent::ButtonClick)),
+                "{cued:?}"
+            );
+        }
+
+        #[test]
         fn selecting_publishes_the_placeholder_cue() {
             let (mut app, camera) = selection_app();
             let audio = record_audio(&app);
