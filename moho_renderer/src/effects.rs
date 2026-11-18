@@ -1431,7 +1431,7 @@ mod tests {
     }
 
     #[test]
-    fn a_mark_with_zero_or_overlong_fade_stays_finite() {
+    fn a_zero_fade_mark_holds_full_size_until_its_lifetime() {
         let life = Duration::from_secs(1);
 
         let mut abrupt = Rig::new();
@@ -1446,6 +1446,11 @@ mod tests {
         abrupt.effects.advance(ms(1));
         assert_eq!(abrupt.effects.live(), 0);
         assert!(abrupt.frame(EYE).is_empty());
+    }
+
+    #[test]
+    fn a_fade_longer_than_the_lifetime_scales_by_remaining_life_over_fade() {
+        let life = Duration::from_secs(1);
 
         let mut overlong = Rig::new();
         overlong.effects.mark(
@@ -1551,6 +1556,118 @@ mod tests {
         );
     }
 
+    fn sentinel_mesh(k: f32) -> WorldMesh {
+        WorldMesh::new(
+            vec![[k, 0.0, 0.0], [k + 1.0, 0.0, 0.0], [k, 1.0, 0.0]],
+            vec![[0.0, 0.0, 1.0]; 3],
+            vec![1.0; 3],
+            vec![[1.0; 3]; 3],
+            vec![1.0; 3],
+            vec![0; 3],
+            vec![0, 1, 2],
+        )
+        .expect("the sentinel's channels are all three vertices long and its indices are in range")
+    }
+
+    #[test]
+    fn effects_never_overwrite_game_meshes_below_the_reserved_ids() {
+        let mut rig = Rig::new();
+        let ids = [0, 1, EFFECT_MESH_IDS_FROM - 1];
+        let sentinels = [
+            (ids[0], 10.0, 100),
+            (ids[1], 20.0, 101),
+            (ids[2], 30.0, 102),
+        ];
+        for (id, k, _) in sentinels {
+            rig.meshes.upsert_movable(WorldMeshId(id), sentinel_mesh(k));
+        }
+        let streak = rig.effects.begin_streak(StreakStyle::new(2.0, 0.1, 1));
+        rig.effects.flash(
+            Vec3::new(0.0, 5.0, 0.0),
+            0.0,
+            FlashStyle {
+                material: 2,
+                ..flash_style(0.4, Duration::from_secs(5))
+            },
+        );
+        rig.effects.mark(
+            Vec3::new(0.0, 0.0, 5.0),
+            Vec3::Y,
+            0.0,
+            MarkStyle {
+                material: 3,
+                ..mark_style(0.2, Duration::from_secs(10), ms(1000))
+            },
+        );
+
+        for _ in 0..2 {
+            for (id, _, material) in sentinels {
+                rig.meshes
+                    .place_unshadowed(WorldMeshId(id), Affine3A::IDENTITY, material);
+            }
+            rig.effects
+                .place_streak(streak, Vec3::new(5.0, 0.0, 0.0), Vec3::X);
+            let drawn = rig.frame_with_handles(EYE);
+
+            assert_eq!(drawn.len(), 6, "three game meshes and three effects draw");
+            let handle_of = |material: u32| {
+                drawn
+                    .iter()
+                    .find(|(_, instance)| instance.material == material)
+                    .map(|(handle, _)| *handle)
+                    .expect("an instance of that material drew")
+            };
+            for (_, k, material) in sentinels {
+                let (positions, _) = &rig.backend.registered[handle_of(material) as usize - 1];
+                assert_eq!(
+                    positions,
+                    &vec![[k, 0.0, 0.0], [k + 1.0, 0.0, 0.0], [k, 1.0, 0.0]],
+                    "game mesh {material} keeps its geometry"
+                );
+            }
+            let effect_handles: std::collections::BTreeSet<u32> =
+                [1, 2, 3].map(handle_of).into_iter().collect();
+            let game_handles: std::collections::BTreeSet<u32> =
+                [100, 101, 102].map(handle_of).into_iter().collect();
+            assert_eq!(effect_handles.len(), 3);
+            assert!(effect_handles.is_disjoint(&game_handles));
+            rig.effects.advance(ms(1));
+        }
+
+        assert_eq!(
+            rig.backend.registered.len(),
+            6,
+            "the effect meshes are additional, uploaded once"
+        );
+    }
+
+    #[test]
+    fn a_spawn_that_eviction_cannot_make_room_for_evicts_nothing() {
+        let mut rig = Rig::new();
+        let style = mark_style(0.2, Duration::from_secs(10), ms(1000));
+        for _ in 0..35 {
+            rig.effects.begin_streak(self::style(2.0, 0.1));
+        }
+        for i in 0..5 {
+            let x = 10.0 * i as f32;
+            rig.effects
+                .mark(Vec3::new(x, 0.0, 0.0), Vec3::Y, 0.0, style);
+        }
+        assert_eq!(rig.effects.live(), 40);
+        rig.effects.set_quality(1);
+
+        rig.effects
+            .mark(Vec3::new(1000.0, 0.0, 0.0), Vec3::Y, 0.0, style);
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(rig.effects.live(), 40, "refused, and nothing evicted");
+        assert_eq!(drawn.len(), 5, "the five old marks still draw");
+        assert!(
+            drawn.iter().all(|i| translation(i).x < 100.0),
+            "the new mark did not"
+        );
+    }
+
     #[derive(Debug, Clone)]
     enum Op {
         Begin,
@@ -1577,7 +1694,7 @@ mod tests {
 
     proptest! {
         #[test]
-        fn handles_are_never_reused(ops in ops()) {
+        fn random_ops_keep_handles_unique_spawns_capped_and_streaks_unevicted(ops in ops()) {
             let mut rig = Rig::new();
             let mut quality = 4u32;
             let mut clock = 0u64;
