@@ -681,6 +681,62 @@ mod tests {
     }
 
     #[test]
+    fn autosave_seconds_at_and_around_the_bounds_clamps_without_warning() {
+        for (raw, expected) in [
+            ("29", 30),
+            ("31", 31),
+            ("3599", 3599),
+            ("3601", 3600),
+            ("4294967295", 3600),
+        ] {
+            let (prefs, issues) = Prefs::parse(&format!("[world]\nautosave_seconds={raw}\n"));
+
+            assert_eq!(issues, vec![], "{raw}");
+            assert_eq!(
+                prefs.autosave_interval(),
+                Some(Duration::from_secs(expected)),
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn overflowing_fractional_or_empty_autosave_seconds_warns_and_falls_back() {
+        for raw in ["99999999999", "3600.5", ""] {
+            let (prefs, issues) = Prefs::parse(&format!("[world]\nautosave_seconds={raw}\n"));
+
+            assert_eq!(
+                issues,
+                vec![malformed("world", "autosave_seconds", Some(raw))],
+                "{raw:?}"
+            );
+            assert_eq!(
+                prefs.autosave_interval(),
+                Some(Duration::from_secs(120)),
+                "{raw:?}"
+            );
+            let text = PrefsWarning {
+                file: PathBuf::from("prefs.ini"),
+                issue: issues[0].clone(),
+            }
+            .to_string();
+            assert!(text.contains("[world] autosave_seconds"), "{text}");
+        }
+    }
+
+    #[test]
+    fn malformed_autosave_seconds_leaves_chunks_per_frame_untouched() {
+        let (prefs, issues) = Prefs::parse("[world]\nchunks_per_frame=2\nautosave_seconds=soon\n");
+
+        assert_eq!(
+            issues,
+            vec![malformed("world", "autosave_seconds", Some("soon"))]
+        );
+        assert_eq!(prefs.world_chunks_per_frame(), 2);
+        assert_eq!(prefs.autosave_interval(), Some(Duration::from_secs(120)));
+    }
+
+    #[test]
     fn missing_autosave_seconds_is_120_without_warning() {
         let (prefs, issues) = Prefs::parse("[world]\nload_radius=5\n");
 
