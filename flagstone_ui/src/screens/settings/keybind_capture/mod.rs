@@ -253,6 +253,35 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_modifier_conflict_leaves_the_row_free_to_rebind() {
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry();
+        let mut bindings_changed = vec![];
+        handler.start_listening(0);
+        handler.capture_modifier_if_listening(2, &bindings, |_, _| {});
+        handler.cancel_pending_binding();
+        handler.start_listening(0);
+
+        let applied = handler.capture_modifier_if_listening(4, &bindings, |action, b| {
+            bindings_changed.push((action, b));
+        });
+
+        assert!(applied);
+        assert!(!handler.is_listening());
+        assert!(!handler.conflict_modal().is_visible());
+        assert_eq!(
+            bindings_changed,
+            vec![(
+                StrategyAction::MoveForward,
+                vec![
+                    Binding::key(Key::Alt),
+                    Binding::pad(PadInput::Stick(Stick::LeftStick, StickDir::Up))
+                ]
+            )]
+        );
+    }
+
+    #[test]
     fn take_conflict_modal_returns_holder_name_then_key_description() {
         let mut handler = KeybindCaptureHandler::new();
         let bindings = registry();
