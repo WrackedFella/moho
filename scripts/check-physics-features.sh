@@ -42,7 +42,7 @@ for crate in "${crates[@]}"; do
 done
 
 if [[ -n "$violations" ]]; then
-    echo "Physics determinism violations (Cargo.toml must enable $feature on rapier3d and parry3d):" >&2
+    echo "Physics determinism violations (Cargo.toml must enable $feature on these crates):" >&2
     printf '%s' "$violations" >&2
     exit 1
 fi
