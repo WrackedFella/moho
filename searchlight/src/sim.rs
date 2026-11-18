@@ -2458,6 +2458,33 @@ mod tests {
     }
 
     #[test]
+    fn a_body_in_front_of_a_control_blocks_it() {
+        // Offset 0.1 m so the level view meets a leg rather than the gap between them.
+        let player = Vec3::new(0.1, 0.0, 0.0);
+        let controls = [(Vec3::new(0.1, 0.0, 1.5), ControlAction::NextWave)];
+        let arena = arena_with_controls(&[], player, &[], &[], &controls);
+        let with_dummy_at = |spawn: Vec3| {
+            let mut arena = (*arena).clone();
+            arena.dummy_spawns = vec![spawn];
+            SearchlightSim::start(
+                Arc::new(arena),
+                with_low_eye(test_config(rifle_with(5), vec![])),
+            )
+        };
+        let mut aside = with_dummy_at(Vec3::new(3.0, 0.0, 1.0));
+        let mut in_front = with_dummy_at(Vec3::new(0.0, 0.0, 1.0));
+        aside.tick(&idle(), DT);
+        in_front.tick(&idle(), DT);
+
+        assert_eq!(
+            aside.control_in_reach(),
+            Some(0),
+            "nothing stands in the way"
+        );
+        assert_eq!(in_front.control_in_reach(), None);
+    }
+
+    #[test]
     fn a_dead_player_finds_no_control() {
         let mut sim = post_sim(Vec3::ZERO, &[], &[Vec3::new(0.0, 0.0, 1.5)]);
         sim.tick(&idle(), DT);

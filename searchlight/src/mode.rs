@@ -364,6 +364,37 @@ mod tests {
     }
 
     #[test]
+    fn a_use_in_a_sandbox_does_nothing() {
+        let arena = button_arena(&markers(3), &[]);
+        let mut mode = ArenaMode::sandbox(arena, button_config());
+
+        for _ in 0..5 {
+            mode.tick(&using(), DT);
+        }
+
+        assert_eq!(mode.control_in_reach(), Some(ControlAction::NextWave));
+        assert!(mode.tally().is_none());
+        assert_eq!(mode.sim().enemy_count(), 0);
+        assert_eq!(mode.sim().enemies_alive(), 0);
+    }
+
+    #[test]
+    fn a_use_on_the_tick_the_last_enemy_dies_calls_the_next_wave() {
+        let mut mode = calm_mode(4, tuning(1, 2, 100));
+        let before = (mode.wave(), mode.sim().enemies_alive());
+        mode.sim_mut().kill_enemy(0);
+
+        mode.tick(&using(), DT);
+
+        assert_eq!(before, (1, 1));
+        assert_eq!(mode.sim().control_in_reach(), Some(0));
+        assert_eq!(mode.wave(), 2);
+        assert_eq!(mode.score(), 100);
+        assert_eq!(mode.sim().enemies_alive(), 3);
+        assert_eq!(mode.sim().enemy_count(), 4);
+    }
+
+    #[test]
     fn a_use_while_dead_does_nothing() {
         let mut mode = calm_mode(4, tuning(1, 2, 100));
         mode.sim_mut().kill_enemy(0);
