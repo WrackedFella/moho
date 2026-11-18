@@ -54,6 +54,9 @@ impl Overlay for RtsHud {
         render_mode_label(ui);
         self.mine_toggled |= render_mine_control(ui, data.mine_designation_active);
         render_time_of_day(ui, data.time_of_day);
+        if !data.colony_stock.is_empty() {
+            render_colony_stock(ui, &data.colony_stock);
+        }
         if let Some(view_height) = data.view_height {
             self.chosen = render_view_height(ui, view_height).or(self.chosen);
         }
@@ -66,6 +69,25 @@ impl Overlay for RtsHud {
         out.view_level = self.chosen.take().or(out.view_level);
         out.toggle_mine_designation |= std::mem::take(&mut self.mine_toggled);
     }
+}
+
+/// The colony's totals, one `R<id> ×n` line per resource, under the clock.
+fn render_colony_stock(ui: &mut egui::Ui, stock: &[(u32, u32)]) {
+    egui::Area::new("rts_colony_stock".into())
+        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 48.0))
+        .show(ui.ctx(), |ui| {
+            egui::Frame::new()
+                .fill(egui::Color32::from_rgba_premultiplied(0, 0, 0, 120))
+                .inner_margin(egui::Margin::same(6))
+                .show(ui, |ui| {
+                    for (resource_id, count) in stock {
+                        ui.label(
+                            egui::RichText::new(format!("R{resource_id} ×{count}"))
+                                .color(egui::Color32::from_rgb(220, 220, 200)),
+                        );
+                    }
+                });
+        });
 }
 
 /// The selected pawn's panel under the mine control and its hint. An egui area, so a press on it is

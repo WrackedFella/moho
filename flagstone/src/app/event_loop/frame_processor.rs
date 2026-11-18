@@ -77,6 +77,10 @@ impl FrameProcessor {
             };
             let (view, proj, eye) = app.simulation.apply_input(dt, ground);
             app.camera = (view, proj, eye);
+
+            if app.simulation.camera_mode() == flagstone_game::controller::CameraMode::Isometric {
+                self.run_pawn_job(app, dt);
+            }
         }
 
         // Step rigid bodies in both KCC and non-KCC paths (test spheres, etc.)
@@ -86,6 +90,76 @@ impl FrameProcessor {
 
         // Clear zoom delta after use
         app.simulation.controller_input.zoom_delta = 0.0;
+    }
+
+    /// Runs the job of the pawn the player is not possessing: one walk step through the
+    /// character controller, or the dig, whose yield joins the colony's stock. An idle pawn
+    /// with nothing to take is not moved.
+    fn run_pawn_job(&self, app: &mut App, dt: f32) {
+        let Some(light_system) = app.light_system.as_ref() else {
+            return;
+        };
+        let Some(body) = app
+            .physics
+            .player
+            .zip(app.physics.world.as_ref())
+            .and_then(|(handle, world)| world.character(handle))
+        else {
+            return;
+        };
+        let pose = flagstone_game::jobs::Pose {
+            feet: body.position - glam::Vec3::Y * flagstone_game::jobs::EYE_HEIGHT,
+            yaw: body.yaw,
+        };
+
+        // Taken out so `step` can borrow the pawn alongside its own job.
+        let mut job = std::mem::take(&mut app.pawn.job);
+        let action = flagstone_game::jobs::step(
+            &mut job,
+            flagstone_game::pawn::PawnId(0),
+            &mut app.pawn,
+            pose,
+            &mut app.colony.marks,
+            light_system.grid(),
+        );
+        app.pawn.job = job;
+
+        match action {
+            flagstone_game::jobs::JobAction::Wait => {}
+            flagstone_game::jobs::JobAction::Walk { to } => {
+                let walk = flagstone_game::jobs::steer(pose, to);
+                let command = moho_physics::CharacterCommand {
+                    forward: walk.forward,
+                    yaw_delta: walk.yaw_delta,
+                    ..moho_physics::CharacterCommand::default()
+                };
+                let state = app
+                    .physics
+                    .move_character(&command, &STRATEGY_MOVE_SETTINGS, dt)
+                    .expect("the character was read above, so it is live");
+                app.simulation
+                    .set_position_yaw_pitch(state.position, state.yaw, state.pitch);
+            }
+            flagstone_game::jobs::JobAction::Dig { block, aim } => {
+                let Some(light_system) = app.light_system.as_mut() else {
+                    return;
+                };
+                let outcome = app.pawn.dig(
+                    light_system.grid_mut(),
+                    body.position,
+                    (aim - body.position).normalize_or_zero(),
+                    flagstone_game::pawn::MINE_REACH,
+                );
+                let Some(outcome) = outcome else {
+                    tracing::debug!(block = ?block, "Pawn dig found nothing solid within reach");
+                    return;
+                };
+                if let Some(yield_) = outcome.yield_ {
+                    app.colony.stock.add(yield_.resource_id, yield_.amount);
+                }
+                crate::app::event_loop::event_processor::publish_pawn_dig(app, &outcome);
+            }
+        }
     }
 
     fn update_game_state_fps_kcc(&self, app: &mut App, dt: f32) {
@@ -436,7 +510,11 @@ impl FrameProcessor {
                 .collect(),
             selection,
             mine_designation_active: app.input.designation == Designation::Mine,
-            colony_stock: Vec::new(),
+            colony_stock: {
+                let mut stock: Vec<(u32, u32)> = app.colony.stock.iter().collect();
+                stock.sort_by_key(|(resource_id, _)| *resource_id);
+                stock
+            },
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {
