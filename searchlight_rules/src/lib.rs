@@ -1,6 +1,7 @@
 //! Platform-free rules for the FPS line: items, magazine, rifle, loadout, body damage, lean,
 //! enemy grades and the grade mix of each wave.
 
+mod ballistics;
 mod body;
 mod grade;
 mod item;
@@ -15,11 +16,15 @@ mod rig;
 mod test_support;
 mod weapon;
 
+pub use ballistics::{
+    Ballistics, Flight, FlightBounds, GravityScale, GravityScaleError, MAX_GRAVITY_SCALE,
+    MIN_SPEED, STANDARD_GRAVITY,
+};
 pub use body::{Body, BodyPart, BodyProfile, HitReport};
 pub use grade::{Grade, GradeDials, UnknownGrade};
 pub use item::{
     Caliber, ItemClass, ItemDef, ItemDefError, ItemId, ItemKind, Lifecycle, MagazineSpec,
-    MagazineWell, RigSpec, RoundSpec, Size,
+    MagazineWell, RigSpec, RoundSpec, RoundSpecError, Size,
 };
 pub use kit::{Kit, KitDef, KitError, KitMagazine};
 pub use loadout::Loadout;

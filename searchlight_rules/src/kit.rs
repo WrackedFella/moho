@@ -1,5 +1,6 @@
 //! Starting kits: a rig, a rifle and magazines named by item id, resolved against item data.
 
+use crate::ballistics::Ballistics;
 use crate::item::{ItemDef, ItemId, ItemKind};
 use crate::loadout::Loadout;
 use crate::magazine::Magazine;
@@ -7,6 +8,7 @@ use crate::rifle::Rifle;
 use crate::rig::Rig;
 use crate::weapon::RifleDef;
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// A magazine in a kit: which magazine item, which round it holds, and how many.
@@ -44,6 +46,8 @@ pub struct Kit {
     pub weapon: RifleDef,
     /// The rifle and rig, ready to play.
     pub loadout: Loadout,
+    /// The flight numbers of every round the kit names.
+    pub rounds: BTreeMap<ItemId, Ballistics>,
 }
 
 /// Why a kit could not be resolved.
@@ -169,6 +173,8 @@ impl KitDef {
         Ok(Kit {
             weapon: weapon.clone(),
             loadout: Loadout::new(rifle, rig),
+            // TODO: fill with the ballistics of every round the kit names.
+            rounds: BTreeMap::new(),
         })
     }
 }
@@ -176,10 +182,12 @@ impl KitDef {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ballistics::Ballistics;
     use crate::item::{ItemDef, ItemId, MagazineWell};
     use crate::test_support::id;
     use crate::weapon::{FireBehaviour, RifleDef};
     use serde_json::{Value, json};
+    use std::collections::BTreeMap;
     use std::collections::HashMap;
 
     fn items() -> HashMap<ItemId, ItemDef> {
@@ -188,7 +196,7 @@ mod tests {
                 "class": "weapon", "size": [2, 5], "condition": 100,
                 "weapon": {
                     "well": "rifle", "damage": 30, "fire": "semi_auto", "cooldown_ticks": 6,
-                    "reload_ticks": 120, "charge_ticks": 30, "range": 100.0
+                    "reload_ticks": 120, "charge_ticks": 30
                 }
             },
             "mag_rifle": {
@@ -199,8 +207,14 @@ mod tests {
                 "class": "gear", "size": [1, 1],
                 "magazine": {"well": "pistol", "caliber": "9mm", "capacity": 15}
             },
-            "round_ball": {"class": "consumable", "size": [1, 1], "round": {"caliber": "5.56x45"}},
-            "round_9mm": {"class": "consumable", "size": [1, 1], "round": {"caliber": "9mm"}},
+            "round_ball": {
+                "class": "consumable", "size": [1, 1],
+                "round": {"caliber": "5.56x45", "muzzle_velocity": 940.0, "drag": 1.0}
+            },
+            "round_9mm": {
+                "class": "consumable", "size": [1, 1],
+                "round": {"caliber": "9mm", "muzzle_velocity": 380.0, "drag": 2.5}
+            },
             "rig_chest": {"class": "gear", "size": [3, 2], "rig": {"magazine_slots": 3}},
             "crowbar": {"class": "tool", "size": [1, 3], "condition": 100}
         });
@@ -277,9 +291,45 @@ mod tests {
                 cooldown_ticks: 6,
                 reload_ticks: 120,
                 charge_ticks: 30,
-                range: 100.0,
             }
         );
+    }
+
+    #[test]
+    fn a_resolved_kit_carries_the_ballistics_of_every_round_it_names() {
+        let def = start(json!([
+            {"magazine": "mag_pistol", "round": "round_9mm"},
+            {"magazine": "mag_rifle", "round": "round_ball"}
+        ]));
+
+        let kit = resolve(&def).expect("the kit resolves");
+
+        let expected = BTreeMap::from([
+            (
+                id("round_ball"),
+                Ballistics {
+                    muzzle_velocity: 940.0,
+                    drag: 1.0,
+                },
+            ),
+            (
+                id("round_9mm"),
+                Ballistics {
+                    muzzle_velocity: 380.0,
+                    drag: 2.5,
+                },
+            ),
+        ]);
+        assert_eq!(kit.rounds, expected);
+    }
+
+    #[test]
+    fn a_kit_names_only_the_rounds_it_carries() {
+        let kit = resolve(&start(two_full())).expect("the starting kit resolves");
+
+        let named: Vec<&ItemId> = kit.rounds.keys().collect();
+
+        assert_eq!(named, [&id("round_ball")]);
     }
 
     #[test]

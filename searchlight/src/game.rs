@@ -879,6 +879,8 @@ impl SearchlightGame {
                 ConsoleCommand::GodMode(GodModeArg::Set(on)) => self.god_mode = on,
                 ConsoleCommand::Fullscreen => self.flip_window_pending = true,
                 ConsoleCommand::ForceGrade(grade) => self.forced_grade = grade,
+                // TODO: carry Simple and the round gravity on the command.
+                ConsoleCommand::Simple(_) | ConsoleCommand::RoundGravity(_) => {}
             }
         }
         if self.god_mode != before
@@ -1231,7 +1233,7 @@ mod tests {
         WaveScore, arena_with, arena_with_controls, mag, press, rifle_from, test_config,
         wave_tuning,
     };
-    use searchlight_rules::{Grade, LeanSide};
+    use searchlight_rules::{Grade, GravityScale, LeanSide};
 
     #[test]
     fn a_sandbox_title_line_has_no_wave() {
@@ -2683,6 +2685,75 @@ mod tests {
             game.sim().player_body().health(),
             game.sim().player_max_health()
         );
+    }
+
+    #[test]
+    fn a_saved_simple_starts_the_game_in_simple() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut settings, _) = settings_in(&dir);
+        settings.set_simple(true).unwrap();
+        let mut game = game().with_debug_settings(settings);
+
+        let command = game.command();
+
+        assert!(command.simple);
+    }
+
+    #[test]
+    fn simple_typed_in_the_console_rides_on_every_command_and_is_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = game().with_debug_settings(settings);
+        let before = game.command().simple;
+
+        type_into_console(&game, "simple 1");
+        let on: Vec<bool> = (0..3).map(|_| game.command().simple).collect();
+        let (saved, _) = Prefs::load_from(&path);
+
+        assert!(!before);
+        assert_eq!(on, [true, true, true]);
+        assert_eq!(saved.debug_value("simple"), Some("1"));
+    }
+
+    #[test]
+    fn the_gravity_scale_starts_at_1_and_both_levels_survive_a_restart() {
+        let mode = ArenaMode::new(arena_arena(), arena_config(), wave_tuning(1));
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0));
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let at_launch = game.command().round_gravity;
+        type_into_console(&game, "round_gravity 30");
+        type_into_console(&game, "simple 1");
+        let set = game.command();
+        game.mode.sim_mut().kill_player();
+
+        let restart = SearchlightCommand {
+            restart: true,
+            ..game.command()
+        };
+        tick_with(&mut game, &mut clock, &restart);
+        let after = game.command();
+
+        assert_eq!(at_launch, GravityScale::new(1.0).unwrap());
+        assert_eq!(set.round_gravity, GravityScale::new(30.0).unwrap());
+        assert!(set.simple);
+        assert_eq!(after.round_gravity, GravityScale::new(30.0).unwrap());
+        assert!(after.simple);
+    }
+
+    #[test]
+    fn a_refused_round_gravity_leaves_the_scale_unchanged() {
+        let mut game = game();
+        type_into_console(&game, "round_gravity 30");
+        game.command();
+
+        type_into_console(&game, "round_gravity -3");
+        let after_negative = game.command().round_gravity;
+        type_into_console(&game, "round_gravity 5000");
+        let after_huge = game.command().round_gravity;
+
+        assert_eq!(after_negative, GravityScale::new(30.0).unwrap());
+        assert_eq!(after_huge, GravityScale::new(30.0).unwrap());
     }
 
     fn saved_window_mode(path: &std::path::Path) -> Option<moho_core::prefs::WindowMode> {
@@ -4542,6 +4613,7 @@ mod presentation_tests {
                 leg_status: 10,
             })
             .hit(BodyPart::Head, 1),
+            point: Vec3::ZERO,
         };
 
         stage.react(&hit, None);
@@ -4648,6 +4720,7 @@ mod mutation_tests {
             target: 0,
             part: BodyPart::Head,
             report,
+            point: Vec3::ZERO,
         }
     }
 

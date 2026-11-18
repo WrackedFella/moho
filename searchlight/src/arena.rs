@@ -8,6 +8,7 @@ use glam::{Quat, Vec3};
 use moho_level::{AgentProfile, Level, LevelError, LevelMarker, NavBuildError, NavMesh};
 use moho_physics::PhysicsWorld;
 use moho_render_api::{WorldMesh, WorldMeshId};
+use searchlight_rules::FlightBounds;
 
 use crate::control::ControlAction;
 use crate::sim::{CAPSULE_RADIUS, STAND_HEIGHT};
@@ -248,6 +249,9 @@ pub struct Arena {
     pub nav_fallback: bool,
 }
 
+/// How far past the arena's geometry a round may fly before it is dropped, in metres.
+pub const FLIGHT_MARGIN: f32 = 100.0;
+
 /// Extra metres of clearance on top of the capsule radius, so paths do not graze corners.
 const NAV_CLEARANCE: f32 = 0.1;
 
@@ -342,6 +346,15 @@ impl Arena {
             covers: positions(&markers.covers),
             controls,
         })
+    }
+
+    /// The box a round may fly in: every mesh's vertices grown by [`FLIGHT_MARGIN`].
+    pub fn flight_bounds(&self) -> FlightBounds {
+        // TODO: the box around every mesh vertex, grown by `FLIGHT_MARGIN`.
+        FlightBounds {
+            min: Vec3::ZERO,
+            max: Vec3::ZERO,
+        }
     }
 
     /// A physics world whose static colliders are this arena's meshes, tagged
@@ -494,6 +507,42 @@ mod tests {
 
     fn shipped_arena() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/arena.glb")
+    }
+
+    #[test]
+    fn flight_bounds_enclose_every_mesh_with_the_margin() {
+        let boxes = [
+            (Vec3::new(40.0, 0.0, -5.0), Vec3::new(41.0, 10.0, 5.0)),
+            (Vec3::new(-2.0, 0.0, -45.0), Vec3::new(2.0, 3.0, -44.0)),
+        ];
+        let arena = crate::test_support::arena_with(&boxes, Vec3::ZERO, &[], &[]);
+
+        let bounds = arena.flight_bounds();
+
+        assert_eq!(
+            bounds.min,
+            Vec3::new(-30.0, -1.0, -45.0) - Vec3::splat(FLIGHT_MARGIN)
+        );
+        assert_eq!(
+            bounds.max,
+            Vec3::new(41.0, 10.0, 30.0) + Vec3::splat(FLIGHT_MARGIN)
+        );
+        for mesh in &arena.meshes {
+            for position in mesh.positions() {
+                assert!(bounds.contains(Vec3::from(*position)), "{position:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn flight_bounds_keep_the_margin_a_round_needs_to_leave_by_a_floor_edge() {
+        let arena = crate::test_support::arena_with(&[], Vec3::ZERO, &[], &[]);
+
+        let bounds = arena.flight_bounds();
+
+        assert!(bounds.contains(Vec3::new(30.0 + FLIGHT_MARGIN, 0.0, 0.0)));
+        assert!(!bounds.contains(Vec3::new(30.0 + FLIGHT_MARGIN + 0.01, 0.0, 0.0)));
+        assert!(!bounds.contains(Vec3::new(0.0, 0.0, -30.0 - FLIGHT_MARGIN - 0.01)));
     }
 
     #[test]

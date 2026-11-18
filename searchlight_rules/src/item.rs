@@ -1,5 +1,6 @@
 //! Items defined in data: one model for weapons, magazines, rounds, rigs and tools.
 
+use crate::ballistics::MIN_SPEED;
 use crate::weapon::RifleDef;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -94,11 +95,57 @@ pub enum Lifecycle {
 }
 
 /// The round section of an item definition.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(try_from = "RawRoundSpec")]
 pub struct RoundSpec {
     /// Caliber of the round.
     pub caliber: Caliber,
+    /// Speed at the muzzle, in m/s; above [`MIN_SPEED`].
+    pub muzzle_velocity: f32,
+    /// Drag, in 1/s; 0 or more.
+    pub drag: f32,
+}
+
+/// Why a round section was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Error)]
+#[non_exhaustive]
+pub enum RoundSpecError {
+    /// The muzzle velocity is not finite or not above [`MIN_SPEED`].
+    #[error("muzzle_velocity must be above {MIN_SPEED} m/s, got {value}")]
+    MuzzleVelocity {
+        /// The value given.
+        value: f32,
+    },
+    /// The drag is negative or not finite.
+    #[error("drag must be 0 or more, got {value}")]
+    Drag {
+        /// The value given.
+        value: f32,
+    },
+}
+
+/// Unvalidated wire form of a [`RoundSpec`].
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRoundSpec {
+    caliber: Caliber,
+    // TODO: both fields are required; `default` is a placeholder until the checks exist.
+    #[serde(default)]
+    muzzle_velocity: f32,
+    #[serde(default)]
+    drag: f32,
+}
+
+impl TryFrom<RawRoundSpec> for RoundSpec {
+    type Error = RoundSpecError;
+
+    fn try_from(raw: RawRoundSpec) -> Result<Self, Self::Error> {
+        Ok(Self {
+            caliber: raw.caliber,
+            muzzle_velocity: raw.muzzle_velocity,
+            drag: raw.drag,
+        })
+    }
 }
 
 /// The magazine section of an item definition.
@@ -284,9 +331,35 @@ mod tests {
             "fire": "semi_auto",
             "cooldown_ticks": 6,
             "reload_ticks": 120,
-            "charge_ticks": 30,
-            "range": 100.0
+            "charge_ticks": 30
         })
+    }
+
+    fn round_section() -> Value {
+        json!({"caliber": "5.56x45", "muzzle_velocity": 940.0, "drag": 1.0})
+    }
+
+    fn round_with(field: &str, value: Value) -> Value {
+        let mut section = round_section();
+        section[field] = value;
+        json!({"class": "consumable", "size": [1, 1], "round": section})
+    }
+
+    fn round_without(field: &str) -> Value {
+        let mut section = round_section();
+        section
+            .as_object_mut()
+            .expect("the section is an object")
+            .remove(field);
+        json!({"class": "consumable", "size": [1, 1], "round": section})
+    }
+
+    fn raw_round(muzzle_velocity: f32, drag: f32) -> RawRoundSpec {
+        RawRoundSpec {
+            caliber: Caliber::new("5.56x45"),
+            muzzle_velocity,
+            drag,
+        }
     }
 
     fn error_text(value: Value) -> String {
@@ -400,7 +473,6 @@ mod tests {
                 cooldown_ticks: 6,
                 reload_ticks: 120,
                 charge_ticks: 30,
-                range: 100.0,
             }
         );
     }
@@ -429,7 +501,7 @@ mod tests {
     #[test]
     fn a_round_section_loads_its_caliber() {
         let item = parse(json!({
-            "class": "consumable", "size": [1, 1], "round": {"caliber": "5.56x45"}
+            "class": "consumable", "size": [1, 1], "round": round_section()
         }))
         .expect("a consumable with a round section loads");
 
@@ -437,6 +509,72 @@ mod tests {
             panic!("expected a round kind, got {:?}", item.kind);
         };
         assert_eq!(spec.caliber, Caliber::new("5.56x45"));
+        assert_eq!(spec.muzzle_velocity, 940.0);
+        assert_eq!(spec.drag, 1.0);
+    }
+
+    #[test]
+    fn a_round_without_muzzle_velocity_is_refused_naming_the_field() {
+        let text = error_text(round_without("muzzle_velocity"));
+
+        assert!(text.contains("muzzle_velocity"), "{text}");
+    }
+
+    #[test]
+    fn a_round_without_drag_is_refused_naming_the_field() {
+        let text = error_text(round_without("drag"));
+
+        assert!(text.contains("drag"), "{text}");
+    }
+
+    #[test]
+    fn a_round_with_a_muzzle_velocity_of_0_is_refused_naming_the_field() {
+        let text = error_text(round_with("muzzle_velocity", json!(0.0)));
+
+        assert!(text.contains("muzzle_velocity"), "{text}");
+        assert!(text.contains("100"), "{text}");
+    }
+
+    #[test]
+    fn a_round_at_the_minimum_speed_is_refused_naming_the_field() {
+        let at = error_text(round_with("muzzle_velocity", json!(100.0)));
+        let above = parse(round_with("muzzle_velocity", json!(100.5)));
+
+        assert!(at.contains("muzzle_velocity"), "{at}");
+        assert!(above.is_ok(), "{above:?}");
+    }
+
+    #[test]
+    fn a_round_with_negative_drag_is_refused_naming_the_field() {
+        let text = error_text(round_with("drag", json!(-0.5)));
+
+        assert!(text.contains("drag"), "{text}");
+    }
+
+    #[test]
+    fn a_round_with_drag_0_is_accepted() {
+        let item = parse(round_with("drag", json!(0.0))).expect("drag 0 is a vacuum round");
+
+        let ItemKind::Round(spec) = item.kind else {
+            panic!("expected a round kind, got {:?}", item.kind);
+        };
+        assert_eq!(spec.drag, 0.0);
+    }
+
+    #[test]
+    fn a_round_with_non_finite_values_are_refused() {
+        let bad = [
+            ("muzzle_velocity", raw_round(f32::NAN, 1.0)),
+            ("muzzle_velocity", raw_round(f32::INFINITY, 1.0)),
+            ("drag", raw_round(940.0, f32::NAN)),
+            ("drag", raw_round(940.0, f32::INFINITY)),
+        ];
+        for (field, raw) in bad {
+            let result = RoundSpec::try_from(raw);
+
+            let error = result.expect_err("a non-finite value is refused");
+            assert!(error.to_string().contains(field), "{field}: {error}");
+        }
     }
 
     #[test]
@@ -461,7 +599,7 @@ mod tests {
                 "magazine",
                 json!({"well": "w", "caliber": "c", "capacity": 1}),
             ),
-            ("gear", "round", json!({"caliber": "c"})),
+            ("gear", "round", round_section()),
             ("consumable", "rig", json!({"magazine_slots": 1})),
             ("tool", "rig", json!({"magazine_slots": 1})),
         ];

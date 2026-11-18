@@ -6,16 +6,26 @@ use std::collections::BTreeMap;
 use moho_input::bindings::BindingWarning;
 use moho_ui_shell::Console;
 use moho_ui_shell::console::registry::{CommandSpec, ParseFn};
-use searchlight_rules::Grade;
+use searchlight_rules::{Grade, GravityScale};
 
 use crate::arena::LevelMode;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ConsoleCommand {
     GodMode(GodModeArg),
     Fullscreen,
     /// Force the grade of new enemies, or with `None` clear the force.
     ForceGrade(Option<Grade>),
+    /// Switch Simple (hitscan for the player's shots) on, off or over.
+    Simple(SimpleArg),
+    /// Scale the gravity the player's rounds feel.
+    RoundGravity(GravityScale),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SimpleArg {
+    Toggle,
+    Set(bool),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -320,6 +330,109 @@ mod tests {
         let lines = printed(&console);
         let expected = format!("  {GRADE_USAGE} - force the grade of new enemies");
         assert!(lines.contains(&expected), "{lines:?}");
+    }
+
+    #[test]
+    fn simple_toggles_and_sets() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        console.submit("simple");
+        let toggled = console.take_commands();
+        console.submit("simple 1");
+        let on = (console.take_commands(), last_line(&console));
+        console.submit("simple 0");
+        let off = (console.take_commands(), last_line(&console));
+
+        assert_eq!(toggled, vec![ConsoleCommand::Simple(SimpleArg::Toggle)]);
+        assert_eq!(on.0, vec![ConsoleCommand::Simple(SimpleArg::Set(true))]);
+        assert!(on.1.starts_with("Simple") && on.1.ends_with("on"), "{on:?}");
+        assert_eq!(off.0, vec![ConsoleCommand::Simple(SimpleArg::Set(false))]);
+        assert!(
+            off.1.starts_with("Simple") && off.1.ends_with("off"),
+            "{off:?}"
+        );
+    }
+
+    #[test]
+    fn simple_refuses_an_unusable_argument_and_queues_nothing() {
+        for line in ["simple 2", "simple on", "simple 1 0", "simple -1"] {
+            let (mut console, _) = console(&BTreeMap::new());
+
+            console.submit(line);
+
+            assert!(console.take_commands().is_empty(), "{line}");
+            let reply = last_line(&console);
+            assert!(reply.contains("simple [0|1]"), "{line}: {reply:?}");
+        }
+    }
+
+    #[test]
+    fn round_gravity_sets_a_valid_scale() {
+        let (mut console, _) = console(&BTreeMap::new());
+        let scale = |value| GravityScale::new(value).expect("a valid scale");
+
+        let mut queued = Vec::new();
+        for line in [
+            "round_gravity 30",
+            "round_gravity 0",
+            "round_gravity 0.5",
+            "round_gravity 1000",
+        ] {
+            console.submit(line);
+            queued.extend(console.take_commands());
+        }
+
+        assert_eq!(
+            queued,
+            vec![
+                ConsoleCommand::RoundGravity(scale(30.0)),
+                ConsoleCommand::RoundGravity(scale(0.0)),
+                ConsoleCommand::RoundGravity(scale(0.5)),
+                ConsoleCommand::RoundGravity(scale(1000.0)),
+            ]
+        );
+    }
+
+    #[test]
+    fn round_gravity_refuses_negative_and_non_numeric_values() {
+        for line in [
+            "round_gravity",
+            "round_gravity -1",
+            "round_gravity fast",
+            "round_gravity NaN",
+            "round_gravity inf",
+            "round_gravity 1000.5",
+            "round_gravity 1 2",
+        ] {
+            let (mut console, _) = console(&BTreeMap::new());
+
+            console.submit(line);
+
+            assert!(console.take_commands().is_empty(), "{line}");
+            let reply = last_line(&console);
+            assert!(reply.contains("round_gravity <scale>"), "{line}: {reply:?}");
+        }
+    }
+
+    #[test]
+    fn help_lists_simple_and_round_gravity() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        console.submit("help");
+
+        let lines = printed(&console);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("  simple [0|1] - ")),
+            "{lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("  round_gravity <scale> - ")),
+            "{lines:?}"
+        );
     }
 
     #[test]

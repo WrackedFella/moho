@@ -12,16 +12,16 @@ use moho_level::{LevelMarker, NavMesh};
 use moho_physics::{MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::{
-    BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId, LeanTuning, Loadout, Magazine,
-    MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
+    Ballistics, BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId, LeanTuning, Loadout,
+    Magazine, MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
 };
 
 use crate::arena::{Arena, ArenaControl, nav_profile};
 use crate::brain::EnemyTuning;
 use crate::control::ControlAction;
-use crate::input::SearchlightAction;
+use crate::input::{SearchlightAction, SearchlightCommand};
 use crate::mode::ArenaMode;
-use crate::sim::SimConfig;
+use crate::sim::{Feedback, SearchlightSim, SimConfig};
 use crate::tag::SurfaceTag;
 use crate::tuning::SHIPPED_BODY;
 use crate::wave::WaveTuning;
@@ -154,6 +154,81 @@ pub(crate) fn test_profile() -> BodyProfile {
     }
 }
 
+/// The shipped rifle ball: 940 m/s with a drag of 1/s, so a round is still above the minimum
+/// speed at 800 m.
+pub(crate) fn test_ballistics() -> Ballistics {
+    Ballistics {
+        muzzle_velocity: 940.0,
+        drag: 1.0,
+    }
+}
+
+/// Most ticks a helper runs waiting for a round to land or end: two seconds at 60 Hz, far
+/// longer than any round the tests fire takes.
+const WAIT_TICKS: usize = 120;
+
+/// Ticks `sim` once per command in `script`, then idle ticks until a hit has been reported
+/// or [`WAIT_TICKS`] have passed, draining feedback after each tick. Returns the feedback of
+/// every tick, in order.
+pub(crate) fn run_until_hit(
+    sim: &mut SearchlightSim,
+    script: &[SearchlightCommand],
+) -> Vec<Vec<Feedback>> {
+    let mut ticks = Vec::new();
+    let landed = |ticks: &[Vec<Feedback>]| {
+        ticks
+            .iter()
+            .flatten()
+            .any(|feedback| matches!(feedback, Feedback::Hit { .. }))
+    };
+    for command in script {
+        sim.tick(command, DT);
+        ticks.push(sim.drain_feedback());
+    }
+    let idle = idle_after(script);
+    while !landed(&ticks) && ticks.len() < script.len() + WAIT_TICKS {
+        sim.tick(&idle, DT);
+        ticks.push(sim.drain_feedback());
+    }
+    ticks
+}
+
+/// The command that follows `script`: no presses and no movement, but the levels the host
+/// carries on every tick (god mode, Simple, the round gravity, a held lean) as the last command
+/// left them.
+fn idle_after(script: &[SearchlightCommand]) -> SearchlightCommand {
+    script
+        .last()
+        .map_or_else(SearchlightCommand::default, |last| SearchlightCommand {
+            god_mode: last.god_mode,
+            forced_grade: last.forced_grade,
+            simple: last.simple,
+            round_gravity: last.round_gravity,
+            lean: last.lean,
+            ..SearchlightCommand::default()
+        })
+}
+
+/// Ticks `sim` once per command in `script`, then idle ticks until no round of the player's
+/// is in flight, so a later hit or miss cannot pass unseen. Returns the feedback of every
+/// tick, in order.
+pub(crate) fn run_until_settled(
+    sim: &mut SearchlightSim,
+    script: &[SearchlightCommand],
+) -> Vec<Vec<Feedback>> {
+    let mut ticks = Vec::new();
+    for command in script {
+        sim.tick(command, DT);
+        ticks.push(sim.drain_feedback());
+    }
+    let idle = idle_after(script);
+    while !sim.rounds.is_empty() && ticks.len() < script.len() + WAIT_TICKS {
+        sim.tick(&idle, DT);
+        ticks.push(sim.drain_feedback());
+    }
+    ticks
+}
+
 /// Tuning with a 3-tick cooldown, 10-tick reload, 30 damage and the given rifle, with
 /// `spares` stowed in order on a rig that has one slot per spare.
 pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
@@ -171,7 +246,7 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
         move_settings: test_move_settings(),
         gravity: 18.0,
         character_body: SHIPPED_BODY,
-        range: 100.0,
+        rounds: BTreeMap::from([(ItemId::new("test_round"), test_ballistics())]),
         damage: 30,
         cooldown_ticks: 3,
         reload_ticks: 10,
@@ -226,7 +301,18 @@ pub(crate) fn arena_with(
     enemies: &[Vec3],
     route: &[Vec3],
 ) -> Arc<Arena> {
-    arena_with_controls(boxes, player, enemies, route, &[])
+    arena_with_floor(60.0, boxes, player, enemies, route)
+}
+
+/// [`arena_with`] on a square floor `floor_size` m across, centred on the origin.
+pub(crate) fn arena_with_floor(
+    floor_size: f32,
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+) -> Arc<Arena> {
+    arena_with_floor_and_controls(floor_size, boxes, player, enemies, route, &[])
 }
 
 /// Like [`arena_with`], plus one next-wave control per `(min, max)` box in `controls`, in
@@ -238,7 +324,19 @@ pub(crate) fn arena_with_controls(
     route: &[Vec3],
     controls: &[(Vec3, Vec3)],
 ) -> Arc<Arena> {
-    let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
+    arena_with_floor_and_controls(60.0, boxes, player, enemies, route, controls)
+}
+
+fn arena_with_floor_and_controls(
+    floor_size: f32,
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+    controls: &[(Vec3, Vec3)],
+) -> Arc<Arena> {
+    let half = floor_size / 2.0;
+    let floor = (Vec3::new(-half, -1.0, -half), Vec3::new(half, 0.0, half));
     let meshes: Vec<WorldMesh> = std::iter::once(&floor)
         .chain(boxes)
         .map(|&(min, max)| box_mesh(min, max))

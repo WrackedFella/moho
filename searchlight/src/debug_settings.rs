@@ -41,6 +41,21 @@ impl DebugSettings {
         self.prefs.save_to(&self.path)
     }
 
+    /// Whether Simple is stored as on; an absent or unrecognised value reads as off.
+    pub fn simple(&self) -> bool {
+        false
+    }
+
+    /// Stores Simple and saves the prefs file.
+    ///
+    /// # Errors
+    /// The I/O error if the file cannot be written.
+    pub fn set_simple(&mut self, on: bool) -> io::Result<()> {
+        // TODO: store `on` under `[debug] simple` and save.
+        let _ = on;
+        Ok(())
+    }
+
     /// Stores the engine's settings rows and saves the prefs file; every other value in the
     /// file is kept, and the rows are kept for the session if the save fails.
     ///
@@ -123,6 +138,38 @@ mod tests {
         assert!(after_on);
         assert!(!after_off);
         assert!(!settings.god_mode());
+    }
+
+    #[test]
+    fn simple_survives_save_and_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config/searchlight.ini");
+        let mut settings = settings_at(&path);
+        let fresh = settings.simple();
+
+        settings.set_simple(true).unwrap();
+        let after_on = settings_at(&path).simple();
+        settings.set_simple(false).unwrap();
+        let after_off = settings_at(&path).simple();
+
+        assert!(!fresh);
+        assert!(after_on);
+        assert!(!after_off);
+        assert!(!settings.simple());
+    }
+
+    #[test]
+    fn simple_is_kept_apart_from_god_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("searchlight.ini");
+        let mut settings = settings_at(&path);
+
+        settings.set_simple(true).unwrap();
+
+        let reloaded = settings_at(&path);
+        assert!(reloaded.simple());
+        assert!(!reloaded.god_mode());
+        assert_eq!(reloaded.prefs().debug_value("simple"), Some("1"));
     }
 
     #[test]
