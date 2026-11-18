@@ -589,13 +589,14 @@ Three kinds exist: the streak (a tracer, placed by handle), the flash and the ma
   spawns nothing.
 
 **Cap.** `set_quality(0..=4)` sets the live cap (0/32/64/128/256), counted over all kinds. At the
-cap `begin_streak` returns an inert handle; `flash` and `mark` evict the oldest flashes and marks
-to make room, and spawn nothing if streaks alone fill the cap. Lowering keeps live effects, 0
+cap `begin_streak`, `flash` and `mark` evict the oldest flashes and marks to make room; if streaks
+alone fill the cap, `flash` and `mark` spawn nothing and `begin_streak` returns an inert handle. Lowering keeps live effects, 0
 clears them. A game hands the saved `effects_quality` pref to it on start and on apply.
 
 `Scene::render` calls `Effects::draw` first: each streak becomes one placement of a shared kite
-mesh (flashes and marks use shared flat meshes), uploaded on first use under `EFFECT_MESH_IDS_FROM` (`u64::MAX - 63`, reserved; games keep
-their ids below it), turned to face the camera eye. Placements go through
+mesh, uploaded on first use under `EFFECT_MESH_IDS_FROM` (`u64::MAX - 63`, reserved; games keep
+their ids below it); flashes and marks use shared flat meshes under the next two ids. Streaks and
+flashes are turned to face the camera eye; a mark lies along its normal. Placements go through
 `WorldMeshes::place_unshadowed` and reach the backend via `RendererBackend::enqueue_unshadowed_draw`
 (default: `enqueue_draw`). In the renderer the draw key has `casts_shadow = false`, so
 `render_shadow_passes` skips it and the main pass draws it. A second camera sees a streak

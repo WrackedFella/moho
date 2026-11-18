@@ -1,5 +1,6 @@
-//! Engine-drawn effects, placed by handle: a game starts one, places it every frame and
-//! ends it; the engine owns its life, fade, cap and unshadowed draw.
+//! Engine-drawn effects. A streak is placed by handle: a game starts one, places it every
+//! frame and ends it. A flash or mark is fire and forget: a game spawns it once. The engine
+//! owns every effect's life, fade, cap and unshadowed draw.
 
 use crate::WorldMeshes;
 use glam::{Affine3A, Vec3};
@@ -38,6 +39,7 @@ impl StreakStyle {
 /// A camera-facing star that shrinks linearly over its lifetime.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FlashStyle {
+    /// Width tip to tip at spawn, in world units.
     pub size: f32,
     pub material: u32,
     pub lifetime: Duration,
@@ -46,6 +48,7 @@ pub struct FlashStyle {
 /// A flat square lying on a surface that holds, then shrinks out over its fade.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MarkStyle {
+    /// Side to side while held, in world units.
     pub size: f32,
     pub material: u32,
     pub lifetime: Duration,
@@ -177,11 +180,12 @@ impl Default for Effects {
 }
 
 impl Effects {
-    /// Start a streak. At the quality's cap the handle is inert: never stored, so placing
-    /// or ending it does nothing.
+    /// Start a streak, evicting the oldest flashes and marks if the cap needs the room
+    /// (see `evict_for_one`). When streaks alone fill the cap the handle is inert: never
+    /// stored, so placing or ending it does nothing.
     pub fn begin_streak(&mut self, style: StreakStyle) -> EffectHandle {
         let handle = self.issue_handle();
-        if self.store.len() < self.cap {
+        if self.evict_for_one() {
             self.store.insert(
                 handle,
                 Effect::Streak(Streak {
@@ -253,19 +257,15 @@ impl Effects {
         let Some(over) = (self.store.len() + 1).checked_sub(self.cap) else {
             return true;
         };
-        let oldest: Vec<EffectHandle> = self
-            .store
-            .iter()
-            .filter(|(_, effect)| effect.is_evictable())
-            .map(|(handle, _)| *handle)
-            .take(over)
-            .collect();
-        if oldest.len() < over {
+        if self.store.values().filter(|e| e.is_evictable()).count() < over {
             return false;
         }
-        for handle in oldest {
-            self.store.remove(&handle);
-        }
+        let mut left = over;
+        self.store.retain(|_, effect| {
+            let evict = left > 0 && effect.is_evictable();
+            left -= usize::from(evict);
+            !evict
+        });
         true
     }
 
@@ -409,16 +409,16 @@ fn flat_mesh(positions: Vec<[f32; 3]>, indices: Vec<u32>) -> WorldMesh {
     .expect("every channel is as long as the positions and the indices are in range")
 }
 
-/// A four-point star in the XY plane, tips at radius 1 on the axes, counter-clockwise
-/// seen from +Z. Vertices 0..4 are the tips, 4..8 the notches between them.
+/// A four-point star in the XY plane, tips at 0.5 on the axes (one unit tip to tip),
+/// counter-clockwise seen from +Z. Vertices 0..4 are the tips, 4..8 the notches between them.
 fn flash_mesh() -> WorldMesh {
-    const NOTCH: f32 = 0.18;
+    const NOTCH: f32 = 0.09;
     flat_mesh(
         vec![
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [-1.0, 0.0, 0.0],
-            [0.0, -1.0, 0.0],
+            [0.5, 0.0, 0.0],
+            [0.0, 0.5, 0.0],
+            [-0.5, 0.0, 0.0],
+            [0.0, -0.5, 0.0],
             [NOTCH, NOTCH, 0.0],
             [-NOTCH, NOTCH, 0.0],
             [-NOTCH, -NOTCH, 0.0],
@@ -444,10 +444,10 @@ fn mark_mesh() -> WorldMesh {
     )
 }
 
-/// A square of `size` centred on `centre`, facing along the unit `z` and turned by `roll`
-/// about it, with a right-handed X and Y.
-fn rolled_square(z: Vec3, roll: f32, size: f32, centre: Vec3) -> Affine3A {
-    let x = z.any_orthonormal_vector();
+/// A square of `size` centred on `centre`, facing along the unit `z`, with the unit `x`
+/// perpendicular to it turned by `roll` about `z` (positive toward Y); X and Y are
+/// right-handed.
+fn rolled_square(z: Vec3, x: Vec3, roll: f32, size: f32, centre: Vec3) -> Affine3A {
     let y = z.cross(x);
     let (sin, cos) = roll.sin_cos();
     let rolled_x = x * cos + y * sin;
@@ -470,8 +470,17 @@ fn flash_transform(flash: &Flash, eye: Vec3) -> Option<Affine3A> {
     } else {
         to_eye.normalize()
     };
+    // X from world up keeps the star steady as the eye moves; straight above or below
+    // there is no "up" to use.
+    let across = Vec3::Y.cross(z);
+    let x = if across.length() < 1e-4 {
+        z.any_orthonormal_vector()
+    } else {
+        across.normalize()
+    };
     Some(rolled_square(
         z,
+        x,
         flash.roll,
         flash.style.size * flash.scale(),
         flash.at,
@@ -482,6 +491,7 @@ fn flash_transform(flash: &Flash, eye: Vec3) -> Option<Affine3A> {
 fn mark_transform(mark: &Mark) -> Affine3A {
     rolled_square(
         mark.normal,
+        mark.normal.any_orthonormal_vector(),
         mark.roll,
         mark.style.size * mark.scale(),
         mark.at + mark.normal * MARK_OFFSET,
