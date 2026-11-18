@@ -22,9 +22,8 @@ if [[ -n "$source_file" ]]; then
         echo "check-physics-features: metadata file '$source_file' not found" >&2
         exit 1
     fi
-    metadata="$(cat "$source_file")"
+    metadata="$(<"$source_file")"
 else
-    # Command substitution drops errexit, so a cargo failure returns explicitly.
     metadata="$(cargo metadata --format-version 1)" || {
         echo "check-physics-features: cargo metadata failed" >&2
         exit 1
