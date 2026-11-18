@@ -41,6 +41,8 @@ deny:
     "{{replace(just_executable(), '\', '/')}}" _physics-rejects rapier-missing rapier3d parry3d
     "{{replace(just_executable(), '\', '/')}}" _physics-rejects rapier-two-versions rapier3d parry3d
     "{{replace(just_executable(), '\', '/')}}" _physics-rejects parry-missing parry3d rapier3d
+    "{{replace(just_executable(), '\', '/')}}" _physics-rejects parry-two-versions parry3d rapier3d
+    "{{replace(just_executable(), '\', '/')}}" _physics-rejects-missing-file
     "{{replace(just_executable(), '\', '/')}}" _physics-rejects parry-absent parry3d rapier3d
     "{{replace(just_executable(), '\', '/')}}" _physics-accepts both-enabled
 
@@ -57,6 +59,24 @@ _physics-rejects fixture crate other:
     fi
     echo "physics-features self-test failed: {{fixture}}" >&2
     echo "  expected: non-zero exit, output naming {{crate}} and not naming {{other}}" >&2
+    echo "  got: exit $status, output:" >&2
+    sed 's/^/    /' <<<"$out" >&2
+    exit 1
+
+# Fails unless the physics feature check exits non-zero, without reporting success, when
+# MOHO_PHYSICS_METADATA names a file that does not exist (a typo must not fall through to
+# a pass or to the real workspace).
+[private]
+_physics-rejects-missing-file:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    out=$(MOHO_PHYSICS_METADATA=scripts/fixtures/physics-features/no-such-fixture.json scripts/check-physics-features.sh 2>&1)
+    status=$?
+    if [ "$status" -ne 0 ] && ! grep -qF -- 'physics-features: OK' <<<"$out"; then
+        exit 0
+    fi
+    echo "physics-features self-test failed: missing metadata file" >&2
+    echo "  expected: non-zero exit, no 'physics-features: OK' in the output" >&2
     echo "  got: exit $status, output:" >&2
     sed 's/^/    /' <<<"$out" >&2
     exit 1
