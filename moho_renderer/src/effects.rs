@@ -1684,6 +1684,22 @@ mod tests {
     }
 
     #[test]
+    fn a_flash_seen_from_a_non_finite_eye_draws_nothing() {
+        let mut rig = Rig::new();
+        rig.effects
+            .flash(Vec3::new(1.0, 2.0, 3.0), 0.0, flash_style(0.4, ms(50)));
+
+        for eye in [Vec3::splat(f32::NAN), Vec3::new(f32::INFINITY, 0.0, 0.0)] {
+            assert!(rig.frame(eye).is_empty(), "eye {eye}");
+        }
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(rig.effects.live(), 1, "still live");
+        assert_eq!(drawn.len(), 1, "and it draws once the eye is sane");
+        assert!(drawn[0].model.iter().flatten().all(|v| v.is_finite()));
+    }
+
+    #[test]
     fn a_huge_advance_expires_everything_without_overflow() {
         let mut rig = Rig::new();
         rig.effects
