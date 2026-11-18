@@ -1054,9 +1054,11 @@ mod tests {
         );
         for p in positions {
             let distance = Vec3::from(*p).length();
+            let is_tip = (p[0].abs() - 0.5).abs() < EPS && p[1].abs() < EPS
+                || (p[1].abs() - 0.5).abs() < EPS && p[0].abs() < EPS;
             assert!(
-                (distance - 0.5).abs() < EPS || distance < 0.3,
-                "each vertex is a tip at 0.5 or an inner one under 0.3, got {distance}"
+                is_tip || distance < 0.5,
+                "a vertex that is not a tip is strictly inside them, got {distance}"
             );
         }
         assert_ccw_toward_plus_z(positions, indices);
@@ -1352,13 +1354,28 @@ mod tests {
     #[test]
     fn a_flash_with_the_eye_at_its_position_is_finite() {
         let at = Vec3::new(3.0, 1.0, -2.0);
-        for eye in [
-            at,
-            at + Vec3::Y * 5.0,
-            at - Vec3::Y * 5.0,
-            at + Vec3::Z * 5.0,
-            at - Vec3::X * 5.0,
+        let mut rig = Rig::new();
+        rig.effects.flash(at, 0.5, quick_flash());
+
+        let drawn = rig.frame(at);
+
+        assert_eq!(drawn.len(), 1);
+        assert!(drawn[0].model.iter().flatten().all(|v| v.is_finite()));
+        assert!((x_axis(&drawn[0]).length() - 0.4).abs() < EPS);
+        assert!((y_axis(&drawn[0]).length() - 0.4).abs() < EPS);
+        assert!(x_axis(&drawn[0]).dot(y_axis(&drawn[0])).abs() < EPS);
+    }
+
+    #[test]
+    fn a_flash_faces_an_eye_straight_above_below_or_along_an_axis() {
+        let at = Vec3::new(3.0, 1.0, -2.0);
+        for offset in [
+            Vec3::Y * 5.0,
+            Vec3::NEG_Y * 5.0,
+            Vec3::Z * 5.0,
+            Vec3::NEG_X * 5.0,
         ] {
+            let eye = at + offset;
             let mut rig = Rig::new();
             rig.effects.flash(at, 0.5, quick_flash());
 
@@ -1375,13 +1392,21 @@ mod tests {
                 x_axis(&drawn[0]).dot(y_axis(&drawn[0])).abs() < EPS,
                 "eye {eye}"
             );
+            assert_near(
+                x_axis(&drawn[0]).cross(y_axis(&drawn[0])).normalize(),
+                offset.normalize(),
+            );
         }
     }
 
     #[test]
-    fn a_mark_with_a_zero_or_non_finite_normal_is_refused() {
+    fn a_spawn_with_a_zero_or_non_finite_input_is_refused() {
         let mut rig = Rig::new();
         let at = Vec3::new(1.0, 2.0, 3.0);
+        let bad_at = [
+            Vec3::new(f32::NAN, 0.0, 0.0),
+            Vec3::new(0.0, f32::INFINITY, 0.0),
+        ];
 
         for normal in [
             Vec3::ZERO,
@@ -1389,22 +1414,45 @@ mod tests {
             Vec3::new(f32::INFINITY, 0.0, 0.0),
         ] {
             rig.effects.mark(at, normal, 0.0, quick_mark());
+            assert_eq!(rig.effects.live(), 0, "mark with normal {normal}");
         }
-        rig.effects
-            .mark(Vec3::new(f32::NAN, 0.0, 0.0), Vec3::Y, 0.0, quick_mark());
-        rig.effects.mark(
-            Vec3::new(0.0, f32::INFINITY, 0.0),
-            Vec3::Y,
-            0.0,
-            quick_mark(),
-        );
-
-        assert_eq!(rig.effects.live(), 0);
+        for bad in bad_at {
+            rig.effects.mark(bad, Vec3::Y, 0.0, quick_mark());
+            assert_eq!(rig.effects.live(), 0, "mark at {bad}");
+            rig.effects.flash(bad, 0.0, quick_flash());
+            assert_eq!(rig.effects.live(), 0, "flash at {bad}");
+        }
         assert!(rig.frame(EYE).is_empty());
 
         rig.effects.mark(at, Vec3::Y, 0.0, quick_mark());
-        assert_eq!(rig.effects.live(), 1, "a valid mark is still accepted");
-        assert_eq!(rig.frame(EYE).len(), 1);
+        rig.effects.flash(at, 0.0, quick_flash());
+        assert_eq!(rig.effects.live(), 2, "valid spawns are still accepted");
+        assert_eq!(rig.frame(EYE).len(), 2);
+    }
+
+    #[test]
+    fn an_invalid_spawn_at_a_full_cap_evicts_nothing() {
+        let mut rig = Rig::new();
+        rig.effects.set_quality(1);
+        for i in 0..32u8 {
+            rig.effects.mark(
+                Vec3::new(f32::from(i), 0.0, 0.0),
+                Vec3::Y,
+                0.0,
+                quick_mark(),
+            );
+        }
+        assert_eq!(rig.effects.live(), 32);
+
+        rig.effects
+            .mark(Vec3::new(100.0, 0.0, 0.0), Vec3::ZERO, 0.0, quick_mark());
+        rig.effects
+            .flash(Vec3::new(f32::NAN, 0.0, 0.0), 0.0, quick_flash());
+
+        assert_eq!(rig.effects.live(), 32);
+        let xs: Vec<f32> = rig.frame(EYE).iter().map(|i| translation(i).x).collect();
+        assert_eq!(xs.len(), 32);
+        assert!(xs.contains(&0.0), "the oldest mark still draws");
     }
 
     #[test]
