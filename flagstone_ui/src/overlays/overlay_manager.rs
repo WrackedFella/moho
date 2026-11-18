@@ -18,6 +18,20 @@ pub struct ViewHeightHud {
     pub level: i32,
 }
 
+/// What the selection panel shows about the selected pawn. Primitive types only:
+/// `flagstone_ui` does not depend on `flagstone_game`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionHud {
+    /// What the panel is titled, e.g. `"Pawn"`.
+    pub title: String,
+
+    /// Display name of the equipped tool, `None` when nothing is equipped.
+    pub tool: Option<String>,
+
+    /// Carried resources as `(display name, count)`.
+    pub carried: Vec<(String, u32)>,
+}
+
 /// What the player asked for through the HUD this frame, for the game to apply.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct HudIntents {
@@ -88,6 +102,9 @@ pub struct HudData {
 
     /// Whether the mining designation is active, for the HUD control's state.
     pub mine_designation_active: bool,
+
+    /// The selected pawn's panel; `None` when nothing is selected.
+    pub selection: Option<SelectionHud>,
 }
 
 impl Default for HudData {
@@ -110,6 +127,7 @@ impl Default for HudData {
             view_height: None,
             pickups: Vec::new(),
             mine_designation_active: false,
+            selection: None,
         }
     }
 }

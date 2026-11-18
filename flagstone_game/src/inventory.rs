@@ -36,9 +36,21 @@ impl Inventory {
     }
 }
 
+/// Display name of a resource id.
+pub fn resource_name(_id: u32) -> String {
+    todo!("resource_name: 1 is Iron ore, others Resource N")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resource_name_names_iron_ore_and_falls_back_for_unknown_ids() {
+        assert_eq!(resource_name(1), "Iron ore");
+        assert_eq!(resource_name(7), "Resource 7");
+        assert_eq!(resource_name(0), "Resource 0");
+    }
 
     #[test]
     fn count_when_resource_never_added_returns_zero() {
