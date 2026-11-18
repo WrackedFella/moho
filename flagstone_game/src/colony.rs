@@ -48,6 +48,11 @@ impl MineMarks {
         self.marks.contains_key(&pos)
     }
 
+    /// The pawn walking to the mark at `pos`; `None` for an unclaimed or unmarked block.
+    pub fn claimed_by(&self, pos: [i32; 3]) -> Option<PawnId> {
+        self.marks.get(&pos)?.claimed_by
+    }
+
     /// The marked blocks in key order.
     pub fn iter(&self) -> impl Iterator<Item = ([i32; 3], &MineMark)> {
         self.marks.iter().map(|(pos, mark)| (*pos, mark))

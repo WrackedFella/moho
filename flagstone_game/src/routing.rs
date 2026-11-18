@@ -87,14 +87,24 @@ pub fn route(
     None
 }
 
-/// The standable cells one step from `cell`: level, one up (with headroom) or one down.
+/// The standable cells one step from `cell`: level, one up or one down. A step up needs air
+/// one cell above the capsule at `cell`; a step down needs air at the capsule's old top in
+/// the destination column, so the body clears an overhang there.
 fn neighbours(grid: &VoxelGrid, cell: BlockPos) -> impl Iterator<Item = BlockPos> + '_ {
     let headroom = !grid.is_solid_at(cell + BlockPos::Y * CAPSULE_CELLS);
     HORIZONTAL.into_iter().flat_map(move |side| {
         let level = cell + side;
+        let drop_clear = !grid.is_solid_at(level + BlockPos::Y * (CAPSULE_CELLS - 1));
         [level, level + BlockPos::Y, level - BlockPos::Y]
             .into_iter()
-            .filter(move |&next| (next.y <= cell.y || headroom) && standable(grid, next))
+            .filter(move |&next| {
+                let allowed = match next.y.cmp(&cell.y) {
+                    std::cmp::Ordering::Greater => headroom,
+                    std::cmp::Ordering::Less => drop_clear,
+                    std::cmp::Ordering::Equal => true,
+                };
+                allowed && standable(grid, next)
+            })
     })
 }
 

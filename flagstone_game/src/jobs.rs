@@ -152,7 +152,7 @@ pub fn step(
     if pawn.job == Job::Idle {
         claim(pawn_id, pawn, pose, marks, grid);
     }
-    follow(pawn, pose, marks, grid)
+    follow(pawn_id, pawn, pose, marks, grid)
 }
 
 /// Starts a job on the nearest unclaimed mark with a way to it, trying at most
@@ -197,7 +197,13 @@ fn claim(pawn_id: PawnId, pawn: &mut Pawn, pose: Pose, marks: &mut MineMarks, gr
 }
 
 /// Moves a mining pawn along its route; does nothing for an idle one.
-fn follow(pawn: &mut Pawn, pose: Pose, marks: &mut MineMarks, grid: &VoxelGrid) -> JobAction {
+fn follow(
+    pawn_id: PawnId,
+    pawn: &mut Pawn,
+    pose: Pose,
+    marks: &mut MineMarks,
+    grid: &VoxelGrid,
+) -> JobAction {
     let Job::Mine {
         mark,
         route,
@@ -208,7 +214,9 @@ fn follow(pawn: &mut Pawn, pose: Pose, marks: &mut MineMarks, grid: &VoxelGrid) 
         return JobAction::Wait;
     };
     let mark = *mark;
-    if !marks.contains(mark.to_array()) {
+    // A mark that is gone, or was cancelled and re-marked (so no longer ours), ends the job;
+    // an idle pawn re-claims a re-marked block on the next tick.
+    if marks.claimed_by(mark.to_array()) != Some(pawn_id) {
         pawn.job = Job::Idle;
         return JobAction::Wait;
     }
