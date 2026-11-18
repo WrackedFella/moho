@@ -363,10 +363,11 @@ fn flash_transform(flash: &Timed<FlashStyle>, eye: Vec3) -> Option<Affine3A> {
 
 fn mark_transform(mark: &Timed<MarkStyle>) -> Affine3A {
     let remaining = mark.style.lifetime.saturating_sub(mark.age);
-    let scale = if remaining >= mark.style.fade {
+    let fade = mark.style.fade.min(mark.style.lifetime);
+    let scale = if remaining >= fade {
         1.0
     } else {
-        remaining.as_secs_f32() / mark.style.fade.as_secs_f32()
+        remaining.as_secs_f32() / fade.as_secs_f32()
     };
     let size = mark.style.size * scale;
     let (x, y) = rolled_basis(mark.normal, mark.roll);
@@ -1358,6 +1359,37 @@ mod tests {
         assert!((x_axis(&before[0]).length() - 0.2).abs() < EPS);
         assert!(after.is_empty());
         assert_eq!(rig.effects.live(), 0);
+    }
+
+    #[test]
+    fn a_mark_whose_fade_exceeds_its_lifetime_starts_at_full_size() {
+        let mut rig = Rig::new();
+        rig.effects.mark(
+            Vec3::ZERO,
+            Vec3::Y,
+            0.0,
+            mark_style(0.2, Duration::from_secs(1), Duration::from_secs(2)),
+        );
+
+        let start = rig.frame(EYE);
+        rig.effects.advance(ms(500));
+        let half = rig.frame(EYE);
+        rig.effects.advance(ms(500));
+        let gone = rig.frame(EYE);
+
+        assert_eq!(start.len(), 1);
+        assert!(
+            (x_axis(&start[0]).length() - 0.2).abs() < EPS,
+            "full size at age 0, got {}",
+            x_axis(&start[0]).length()
+        );
+        assert_eq!(half.len(), 1);
+        assert!(
+            (x_axis(&half[0]).length() - 0.1).abs() < EPS,
+            "half size at half the lifetime, got {}",
+            x_axis(&half[0]).length()
+        );
+        assert!(gone.is_empty(), "gone at its lifetime");
     }
 
     fn mark_at_x(rig: &mut Rig, x: f32) {
