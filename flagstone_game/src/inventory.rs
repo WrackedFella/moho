@@ -36,7 +36,6 @@ impl Inventory {
     }
 }
 
-/// Display name for a resource id.
 pub fn resource_name(resource_id: u32) -> String {
     match resource_id {
         1 => "Iron ore".to_string(),

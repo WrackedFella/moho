@@ -27,7 +27,6 @@ const MARK_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/mark.wav")
 const UNMARK_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/unmark.wav");
 const MARK_VOLUME: f32 = 0.6;
 
-/// The marker id the selection mark is drawn under.
 pub(crate) const SELECTION_MARKER_ID: moho_render_api::MarkerId =
     moho_render_api::MarkerId(u64::MAX);
 
@@ -906,7 +905,6 @@ mod tests {
         lightings: Vec<LightingGpu>,
         frames_begun: u32,
         cameras: Vec<(glam::Mat4, glam::Mat4, glam::Vec3)>,
-        /// Every instance handed to `enqueue_draw`, across all frames.
         instances: Vec<InstanceGpu>,
     }
 

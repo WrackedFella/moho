@@ -3,7 +3,6 @@
 use glam::Vec3;
 use moho_core::pointer::Ray;
 
-/// Identity of a pawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PawnId(pub u32);
 
@@ -20,7 +19,6 @@ pub struct Aabb {
     pub max: Vec3,
 }
 
-/// The pawn's box around its capsule centre.
 pub fn pawn_aabb(center: Vec3) -> Aabb {
     Aabb {
         min: center - PAWN_HALF_EXTENTS,
@@ -71,14 +69,13 @@ pub fn pick_pawn(
         .map(|(id, _)| id)
 }
 
-/// The currently selected pawn, if any.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Selection {
     selected: Option<PawnId>,
 }
 
 impl Selection {
-    /// Replaces the selection with what the click hit.
+    /// A click that hit no pawn (`None`) clears the selection.
     pub fn click(&mut self, hit: Option<PawnId>) {
         self.selected = hit;
     }

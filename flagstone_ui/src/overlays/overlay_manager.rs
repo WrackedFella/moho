@@ -27,7 +27,6 @@ pub struct HudIntents {
     pub toggle_mine_designation: bool,
 }
 
-/// The selected pawn as the panel describes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectionHud {
     pub title: String,
@@ -35,7 +34,6 @@ pub struct SelectionHud {
     /// Label of the equipped tool, `None` when nothing is equipped.
     pub tool: Option<String>,
 
-    /// Carried resources as `(display name, count)`.
     pub carried: Vec<(String, u32)>,
 }
 
@@ -101,7 +99,7 @@ pub struct HudData {
     /// Whether the mining designation is active, for the HUD control's state.
     pub mine_designation_active: bool,
 
-    /// The selected pawn's panel; `None` when no pawn is selected.
+    /// `None` when no pawn is selected.
     pub selection: Option<SelectionHud>,
 }
 
