@@ -425,21 +425,15 @@ fn effect_mesh(positions: Vec<[f32; 3]>, indices: Vec<u32>) -> WorldMesh {
 
 /// A kite from the tail at the origin to the head at x = 1, counter-clockwise seen from +Z.
 fn streak_mesh() -> WorldMesh {
-    WorldMesh::new(
+    effect_mesh(
         vec![
             [0.0, 0.0, 0.0],
             [0.8, -0.5, 0.0],
             [1.0, 0.0, 0.0],
             [0.8, 0.5, 0.0],
         ],
-        vec![[0.0, 0.0, 1.0]; 4],
-        vec![1.0; 4],
-        vec![[1.0; 3]; 4],
-        vec![1.0; 4],
-        vec![0; 4],
         vec![0, 1, 2, 0, 2, 3],
     )
-    .expect("the kite's channels are all four vertices long and its indices are in range")
 }
 
 /// Where a streak from `head - dir * length` to `head` is drawn so that it faces `eye`.
