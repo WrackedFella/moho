@@ -223,37 +223,62 @@ mod tests {
 
     #[test]
     fn a_mark_with_no_exposed_face_is_not_claimed() {
-        let mut grid = ground();
-        for x in 4..=6 {
-            for y in 1..=3 {
-                for z in -1..=1 {
-                    place(&mut grid, &[[x, y, z]]);
-                }
+        let surrounded = |cap: bool| {
+            let mut grid = ground();
+            place(
+                &mut grid,
+                &[[4, 1, 0], [6, 1, 0], [5, 1, -1], [5, 1, 1], [5, 1, 0]],
+            );
+            if cap {
+                place(&mut grid, &[[5, 2, 0]]);
             }
-        }
-        let mut marks = marked(&[[5, 2, 0]]);
+            grid
+        };
+
+        let mut marks = marked(&[[5, 1, 0]]);
         let mut job = Job::Idle;
         let mut pawn = Pawn::default();
-
         let action = step(
             &mut job,
             ME,
             &mut pawn,
             at(cell(0, 1, 0)),
             &mut marks,
-            &grid,
+            &surrounded(true),
         );
 
         assert_eq!(action, JobAction::Wait);
         assert_eq!(mining(&job), None);
-        assert_eq!(claimed_by(&marks, [5, 2, 0]), None);
+        assert_eq!(claimed_by(&marks, [5, 1, 0]), None);
+
+        let mut open_marks = marked(&[[5, 1, 0]]);
+        let mut open_job = Job::Idle;
+        step(
+            &mut open_job,
+            ME,
+            &mut pawn,
+            at(cell(0, 1, 0)),
+            &mut open_marks,
+            &surrounded(false),
+        );
+
+        assert_eq!(mining(&open_job), Some([5, 1, 0]), "an open top is a face");
+        assert_eq!(claimed_by(&open_marks, [5, 1, 0]), Some(ME));
     }
 
     #[test]
     fn an_idle_pawn_claims_the_nearest_reachable_mark_and_equips_the_tool() {
         let mut grid = ground();
-        place(&mut grid, &[[9, 1, 0], [5, 1, 0]]);
-        let mut marks = marked(&[[9, 1, 0], [5, 1, 0]]);
+        place(&mut grid, &[[2, 1, 0], [9, 1, 0], [5, 1, 0]]);
+        // A walled-in block nearer than every other mark: no air beside it, so no route.
+        for x in -1..=1 {
+            for y in 1..=3 {
+                for z in -3..=-1 {
+                    place(&mut grid, &[[x + 11, y, z]]);
+                }
+            }
+        }
+        let mut marks = marked(&[[2, 1, 0], [9, 1, 0], [11, 2, -2]]);
         let mut job = Job::Idle;
         let mut pawn = Pawn::default();
         pawn.select_slot(3);
@@ -262,14 +287,15 @@ mod tests {
             &mut job,
             ME,
             &mut pawn,
-            at(cell(0, 1, 0)),
+            at(cell(12, 1, 0)),
             &mut marks,
             &grid,
         );
 
-        assert_eq!(mining(&job), Some([5, 1, 0]));
-        assert_eq!(claimed_by(&marks, [5, 1, 0]), Some(ME));
-        assert_eq!(claimed_by(&marks, [9, 1, 0]), None);
+        assert_eq!(mining(&job), Some([9, 1, 0]));
+        assert_eq!(claimed_by(&marks, [9, 1, 0]), Some(ME));
+        assert_eq!(claimed_by(&marks, [2, 1, 0]), None);
+        assert_eq!(claimed_by(&marks, [11, 2, -2]), None);
         assert_eq!(pawn.selected_slot, TOOL_SLOT);
         assert_eq!(pawn.equipped_tool, Some(STARTING_TOOL));
     }
@@ -400,6 +426,27 @@ mod tests {
     }
 
     #[test]
+    fn a_pawn_creeping_toward_its_waypoint_is_not_stalled() {
+        let mut grid = ground();
+        place(&mut grid, &[[5, 1, 0]]);
+        let mut marks = marked(&[[5, 1, 0]]);
+        let mut job = Job::Idle;
+        let mut pawn = Pawn::default();
+        let mut pose = at(cell(0, 1, 0));
+
+        for tick in 0..STALL_TICKS + 30 {
+            let action = step(&mut job, ME, &mut pawn, pose, &mut marks, &grid);
+            assert!(mining(&job).is_some(), "released at tick {tick}");
+            if let JobAction::Walk { to } = action {
+                let toward = Vec3::new(to.x - pose.feet.x, 0.0, to.z - pose.feet.z);
+                pose.feet += toward.normalize_or_zero() * 0.005;
+            }
+        }
+
+        assert_eq!(claimed_by(&marks, [5, 1, 0]), Some(ME));
+    }
+
+    #[test]
     fn a_waypoint_that_stops_being_standable_releases_the_claim() {
         let mut grid = ground();
         place(&mut grid, &[[5, 1, 0]]);
@@ -448,10 +495,14 @@ mod tests {
         #[test]
         fn steer_turns_toward_the_target_no_faster_than_the_turn_rate(
             yaw in -10.0f32..10.0,
-            error in -3.0f32..3.0,
+            error in -3.1f32..3.1,
             distance in 1.0f32..10.0,
         ) {
             let per_tick = TURN_RATE / TICK_HZ as f32;
+            let facing = Pose { feet: Vec3::ZERO, yaw: 0.0 };
+            let behind = steer(facing, Vec3::new(0.0, 0.0, -5.0));
+            prop_assert!((behind.yaw_delta.abs() - per_tick).abs() < 1e-5, "{behind:?}");
+            prop_assert_eq!(behind.forward, 0.0);
             let pose = Pose { feet: Vec3::new(1.0, 1.0, 1.0), yaw };
             let heading = yaw + error;
             let to = pose.feet + Vec3::new(heading.sin(), 0.0, heading.cos()) * distance;
@@ -478,29 +529,5 @@ mod tests {
             let expected = if error.abs() < FRAC_PI_3 { 1.0 } else { 0.0 };
             prop_assert_eq!(step.forward, expected);
         }
-    }
-
-    #[test]
-    fn steer_turns_the_short_way_round() {
-        let per_tick = TURN_RATE / TICK_HZ as f32;
-        let facing_north = Pose {
-            feet: Vec3::ZERO,
-            yaw: 0.0,
-        };
-
-        let left = steer(facing_north, Vec3::new(-5.0, 0.0, 0.0));
-        let right = steer(facing_north, Vec3::new(5.0, 0.0, 0.0));
-        let behind = steer(facing_north, Vec3::new(0.0, 0.0, -5.0));
-
-        assert!((left.yaw_delta + per_tick).abs() < 1e-5, "{left:?}");
-        assert!((right.yaw_delta - per_tick).abs() < 1e-5, "{right:?}");
-        assert!(
-            (behind.yaw_delta.abs() - per_tick).abs() < 1e-5,
-            "{behind:?}"
-        );
-        assert_eq!(
-            (left.forward, right.forward, behind.forward),
-            (0.0, 0.0, 0.0)
-        );
     }
 }

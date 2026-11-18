@@ -220,6 +220,13 @@ mod tests {
 
         let from_slope = go(&grid, cell(0, 1, 0), cell(3, 1, 0));
         let from_the_air = go(&grid, cell(0, 6, 0), cell(3, 1, 0));
+        let open = flat(-2..=8, -2..=2);
+        let from_above = go(&open, cell(0, 2, 0), cell(3, 1, 0));
+        assert_eq!(
+            from_above.and_then(|r| r.first().copied()),
+            Some(cell(0, 1, 0)),
+            "one cell above standable ground tries the cell below"
+        );
 
         let from_slope = from_slope.expect("the pawn is one cell low on a slope");
         assert_eq!(from_slope.first(), Some(&cell(0, 2, 0)));

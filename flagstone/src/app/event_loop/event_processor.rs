@@ -1710,6 +1710,19 @@ mod tests {
     }
 
     #[test]
+    fn a_possessed_pawn_mining_by_hand_fills_its_own_inventory_not_the_colony() {
+        let mut app = app_aimed_at_block_with(Some(7));
+
+        EventProcessor::new().handle_input_event(&mut app, InputEvent::MineRequested);
+
+        assert_eq!(app.pawn.inventory.count(7), 1);
+        assert!(
+            app.colony.stock.is_empty(),
+            "only pawn jobs feed the colony"
+        );
+    }
+
+    #[test]
     fn mining_plain_block_publishes_no_cue() {
         let mut app = app_aimed_at_block_with(None);
 

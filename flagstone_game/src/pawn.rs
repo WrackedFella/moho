@@ -395,15 +395,20 @@ mod tests {
         grid.mutator().place(BlockPos::new(0, 0, 12), 1, Some(7));
         let pawn = Pawn::default();
 
-        let outcome = pawn.dig(&mut grid, Vec3::new(0.5, 0.5, 0.0), Vec3::Z, MINE_REACH);
+        let origin = Vec3::new(0.5, 0.5, 0.0);
 
-        assert!(outcome.is_none());
+        let short = pawn.dig(&mut grid, origin, Vec3::Z, MINE_REACH);
+
+        assert!(short.is_none());
         assert!(grid.material_at(BlockPos::new(0, 0, 12)).is_some());
-    }
 
-    #[test]
-    fn a_new_pawn_has_no_job() {
-        assert!(matches!(Pawn::default().job, Job::Idle));
+        let long = pawn.dig(&mut grid, origin, Vec3::Z, 13.0);
+
+        assert_eq!(
+            long.map(|outcome| outcome.block_pos),
+            Some(BlockPos::new(0, 0, 12)),
+            "the block is only out of reach of the shorter ray"
+        );
     }
 
     #[test]

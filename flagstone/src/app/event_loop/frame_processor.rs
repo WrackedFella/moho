@@ -1355,10 +1355,46 @@ pub(crate) mod tests {
             let mut app = colony_app(NEAR_X, false, resource);
             let start = player_state(&app).position;
             app.colony.marks.toggle(TARGET.to_array());
+            let dirtied = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let dirtied_sink = std::sync::Arc::clone(&dirtied);
+            app.event_bus
+                .subscribe(move |e: &flagstone_voxel::WorldEvent| {
+                    if let flagstone_voxel::WorldEvent::ChunkMeshDirty { chunk_pos, .. } = e {
+                        dirtied_sink.lock().unwrap().push(*chunk_pos);
+                    }
+                });
+            let _ = app.audio_event_rx.try_iter().count();
 
             let dug_at = run_until_dug(&mut app, TARGET, |_| {});
 
             assert!(dug_at.is_some(), "the block outlived {MAX_TICKS} ticks");
+            app.event_bus.process_deferred();
+            let cues: Vec<_> = app
+                .audio_event_rx
+                .try_iter()
+                .filter_map(|event| match event {
+                    moho_core::events::AudioEvent::PlaySoundAt { path, position, .. } => {
+                        Some((path, position))
+                    }
+                    _ => None,
+                })
+                .collect();
+            let [(path, position)] = cues.as_slice() else {
+                panic!("one dig cue expected: {cues:?}");
+            };
+            assert_eq!(
+                std::path::Path::new(path),
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/dig.wav"),
+                "the dig clip"
+            );
+            assert!(
+                position.distance(Vec3::new(12.5, 3.5, 8.5)) < 1e-4,
+                "the cue sits at the block centre: {position:?}"
+            );
+            assert!(
+                dirtied.lock().unwrap().contains(&glam::IVec3::ZERO),
+                "the chunk was told to remesh"
+            );
             let end = player_state(&app).position;
             assert!(
                 end.x - start.x > 2.0,
@@ -1513,14 +1549,15 @@ pub(crate) mod tests {
         #[test]
         fn hud_data_carries_the_colony_stock() {
             let mut app = App::headless();
-            app.colony.stock.add(7, 3);
-            app.colony.stock.add(2, 1);
+            for (id, amount) in [(9, 2), (3, 1), (7, 3), (1, 4), (5, 5)] {
+                app.colony.stock.add(id, amount);
+            }
             let mut empty = App::headless();
 
             let produced = produced_strategy_hud(&mut app);
 
             let expected = painted_strategy_hud(flagstone_ui::overlays::HudData {
-                colony_stock: vec![(2, 1), (7, 3)],
+                colony_stock: vec![(1, 4), (3, 1), (5, 5), (7, 3), (9, 2)],
                 ..strategy_hud_data(&app)
             });
             assert!(produced == expected, "not the totals sorted by resource id");
