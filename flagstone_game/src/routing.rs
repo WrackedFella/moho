@@ -1,5 +1,8 @@
 //! Walking routes over the voxel grid: where a pawn can stand and how it gets between cells.
 
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet};
+
 use flagstone_voxel::{BlockPos, VoxelGrid};
 use glam::Vec3;
 
@@ -8,13 +11,29 @@ pub const ROUTE_NODE_BUDGET: usize = 4096;
 
 /// Whether a pawn can stand with its feet in `cell`: solid ground below and three cells of
 /// air from the feet up (the capsule is 2.3 m tall).
-pub fn standable(_grid: &VoxelGrid, _cell: BlockPos) -> bool {
-    false
+pub fn standable(grid: &VoxelGrid, cell: BlockPos) -> bool {
+    grid.is_solid_at(cell - BlockPos::Y)
+        && (0..3).all(|up| !grid.is_solid_at(cell + BlockPos::Y * up))
 }
 
 /// The block cell containing a feet position.
-pub fn feet_cell(_feet: Vec3) -> BlockPos {
-    BlockPos::ZERO
+pub fn feet_cell(feet: Vec3) -> BlockPos {
+    feet.floor().as_ivec3()
+}
+
+const HORIZONTAL: [BlockPos; 4] = [BlockPos::X, BlockPos::NEG_X, BlockPos::Z, BlockPos::NEG_Z];
+
+/// The cells a pawn standing in `cell` can step to in one move.
+fn neighbours(grid: &VoxelGrid, cell: BlockPos) -> impl Iterator<Item = BlockPos> + '_ {
+    let can_climb = !grid.is_solid_at(cell + BlockPos::Y * 3);
+    HORIZONTAL.into_iter().filter_map(move |d| {
+        let beside = cell + d;
+        [beside, beside + BlockPos::Y, beside - BlockPos::Y]
+            .into_iter()
+            .enumerate()
+            .find(|&(i, c)| (i != 1 || can_climb) && standable(grid, c))
+            .map(|(_, c)| c)
+    })
 }
 
 /// A* over standable cells from `start` to the nearest cell satisfying `is_goal`.
@@ -25,12 +44,67 @@ pub fn feet_cell(_feet: Vec3) -> BlockPos {
 /// standable tries the cell above, then the cell below, before giving up. Gives up with `None`
 /// when no route exists or `budget` expansions are spent.
 pub fn route(
-    _grid: &VoxelGrid,
-    _start: BlockPos,
-    _is_goal: impl Fn(BlockPos) -> bool,
-    _toward: BlockPos,
-    _budget: usize,
+    grid: &VoxelGrid,
+    start: BlockPos,
+    is_goal: impl Fn(BlockPos) -> bool,
+    toward: BlockPos,
+    budget: usize,
 ) -> Option<Vec<BlockPos>> {
+    let start = [start, start + BlockPos::Y, start - BlockPos::Y]
+        .into_iter()
+        .find(|&c| standable(grid, c))?;
+    // Horizontal Manhattan distance: a step up or down still moves one column, so this never
+    // overestimates.
+    let heuristic = |c: BlockPos| ((c.x - toward.x).abs() + (c.z - toward.z).abs()) as u32;
+
+    let mut open = BinaryHeap::new();
+    let mut best_cost: HashMap<BlockPos, u32> = HashMap::from([(start, 0)]);
+    let mut parent: HashMap<BlockPos, BlockPos> = HashMap::new();
+    let mut closed: HashSet<BlockPos> = HashSet::new();
+    let mut inserted = 0u64;
+    open.push(Reverse((
+        heuristic(start),
+        0u32,
+        inserted,
+        start.to_array(),
+    )));
+    let mut expansions = 0;
+
+    while let Some(Reverse((_, cost, _, cell))) = open.pop() {
+        let cell = BlockPos::from_array(cell);
+        if !closed.insert(cell) {
+            continue;
+        }
+        if is_goal(cell) {
+            let mut path = vec![cell];
+            let mut at = cell;
+            while let Some(&before) = parent.get(&at) {
+                path.push(before);
+                at = before;
+            }
+            path.reverse();
+            return Some(path);
+        }
+        if expansions >= budget {
+            return None;
+        }
+        expansions += 1;
+        for next in neighbours(grid, cell) {
+            let next_cost = cost + 1;
+            if closed.contains(&next) || best_cost.get(&next).is_some_and(|&g| g <= next_cost) {
+                continue;
+            }
+            best_cost.insert(next, next_cost);
+            parent.insert(next, cell);
+            inserted += 1;
+            open.push(Reverse((
+                next_cost + heuristic(next),
+                next_cost,
+                inserted,
+                next.to_array(),
+            )));
+        }
+    }
     None
 }
 
