@@ -925,6 +925,61 @@ mod tests {
     }
 
     #[test]
+    fn block_edit_events_mark_the_world_edited() {
+        let at = flagstone_voxel::BlockPos::new(3, 70, 3);
+        type Row = (&'static str, WorldEvent, bool);
+        let rows: [Row; 4] = [
+            (
+                "block placed",
+                WorldEvent::BlockPlaced {
+                    position: at,
+                    material_id: 1,
+                    reason: BlockChangeReason::Player,
+                },
+                true,
+            ),
+            (
+                "block removed",
+                WorldEvent::BlockRemoved {
+                    position: at,
+                    old_material_id: 1,
+                    reason: BlockChangeReason::Player,
+                },
+                true,
+            ),
+            (
+                "blocks batch modified",
+                WorldEvent::BlocksBatchModified {
+                    chunk_pos: glam::IVec3::new(0, 4, 0),
+                    positions: vec![at],
+                    reason: BlockChangeReason::Explosion,
+                },
+                true,
+            ),
+            (
+                "chunk mesh dirty",
+                WorldEvent::ChunkMeshDirty {
+                    chunk_pos: glam::IVec3::new(0, 4, 0),
+                    terrain_dirty: true,
+                    structure_dirty: true,
+                },
+                false,
+            ),
+        ];
+
+        for (row, event, edits) in rows {
+            let mut app = App::headless();
+            let _ = app.world_event_rx.try_iter().count();
+            assert!(!app.autosave.edited, "row {row}: nothing edited yet");
+            app.event_bus.publish(event);
+
+            EventProcessor::new().process_world_events(&mut app);
+
+            assert_eq!(app.autosave.edited, edits, "row {row}");
+        }
+    }
+
+    #[test]
     fn duplicate_mesh_dirty_events_mesh_a_chunk_once() {
         let chunk_pos = glam::IVec3::new(0, 4, 0);
         let meshed_collider = |dirty_flags: &[(bool, bool)]| {

@@ -37,6 +37,7 @@ impl ChunkStreamer {
         terrain_config: TerrainConfig,
         streaming_config: StreamingConfig,
         world_name: impl Into<String>,
+        _saves_dir: impl Into<std::path::PathBuf>,
     ) -> Self {
         Self {
             terrain_config,
@@ -216,6 +217,11 @@ mod tests {
     // No chunk files exist under saves/ for this name, so every load generates from seed.
     const WORLD: &str = "chunk_streamer_unit_test_nonexistent_world";
 
+    /// A saves directory nothing is written to: these tests only generate from seed.
+    fn unused_saves() -> std::path::PathBuf {
+        std::env::temp_dir().join("chunk_streamer_unit_test_unused_saves")
+    }
+
     fn streamer(load_radius: u32, budget: u32) -> ChunkStreamer {
         ChunkStreamer::new(
             TerrainConfig::default(),
@@ -225,6 +231,7 @@ mod tests {
                 chunks_per_frame: budget,
             },
             WORLD,
+            unused_saves(),
         )
     }
 
@@ -286,6 +293,7 @@ mod tests {
                 chunks_per_frame: budget,
             },
             WORLD,
+            unused_saves(),
         )
     }
 
@@ -319,6 +327,35 @@ mod tests {
                 "column {column:?} holds its terrain chunks, got {ys:?}"
             );
         }
+    }
+
+    #[test]
+    fn evicted_chunk_is_written_under_the_streamers_saves_dir() {
+        let saves = tempfile::tempdir().expect("temp dir");
+        let mut streamer = ChunkStreamer::new(
+            TerrainConfig::default(),
+            StreamingConfig {
+                load_radius_chunks: 0,
+                unload_radius_chunks: 1,
+                chunks_per_frame: 1,
+            },
+            "chunk_streamer_unit_test_saves_dir_world",
+            saves.path(),
+        );
+        let mut grid = VoxelGrid::new(16);
+        let far = IVec3::new(10, 4, 10);
+        grid.mutator()
+            .place(flagstone_voxel::BlockPos::new(165, 70, 165), 1, None);
+
+        let (_, evicted) = streamer.update(&mut grid, Vec3::new(0.0, 64.0, 0.0));
+
+        assert!(evicted.contains(&far), "the far chunk is out of range");
+        let file = saves
+            .path()
+            .join("chunk_streamer_unit_test_saves_dir_world")
+            .join("chunks")
+            .join("10_4_10.bin");
+        assert!(file.is_file(), "the edited chunk is saved at {file:?}");
     }
 
     #[test]

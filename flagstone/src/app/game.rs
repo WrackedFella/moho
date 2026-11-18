@@ -592,6 +592,28 @@ mod tests {
     }
 
     #[test]
+    fn paused_game_does_not_advance_the_autosave_schedule() {
+        let mut app = playing_app();
+        app.game_state = GameState::Paused;
+
+        for _ in 0..5 {
+            let command = Game::command(&mut app);
+            tick_app(&mut app, &command);
+        }
+
+        assert_eq!(
+            app.autosave.ticks_since_save, 0,
+            "paused ticks do not count"
+        );
+        app.game_state = GameState::Playing;
+        for _ in 0..5 {
+            let command = Game::command(&mut app);
+            tick_app(&mut app, &command);
+        }
+        assert_eq!(app.autosave.ticks_since_save, 5, "playing ticks do");
+    }
+
+    #[test]
     fn held_forward_binding_is_in_the_tick_command_and_moves_player() {
         let mut app = playing_app();
         hold(&mut app, StrategyAction::MoveForward);
@@ -846,6 +868,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("temp dir");
         let mut app = playing_app();
         app.saves_dir = temp.path().join("saves");
+        app.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
         (app, temp)
     }
 

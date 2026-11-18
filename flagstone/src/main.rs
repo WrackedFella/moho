@@ -108,6 +108,9 @@ struct App {
 
     saves_dir: std::path::PathBuf,
 
+    /// When the running world is next autosaved.
+    autosave: app::autosave::AutosaveSchedule,
+
     // Set when the UI asks to quit; `frame` autosaves and leaves the loop
     exit_requested: bool,
 
@@ -253,6 +256,10 @@ impl App {
             pending_frame_cap: None,
             frame_cap_changed: false,
             saves_dir: std::path::PathBuf::from("saves"),
+            autosave: app::autosave::AutosaveSchedule::new(
+                std::time::Duration::from_secs(120),
+                moho_app::LoopConfig::new(flagstone_game::TICK_HZ).tick_length(),
+            ),
             exit_requested: false,
             main_menu_requested: false,
             event_bus: initialized.event_bus,
