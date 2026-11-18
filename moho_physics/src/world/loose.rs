@@ -1155,7 +1155,6 @@ mod tests {
         }
     }
 
-    /// Height of the lowest point of the shape above y = 0 for the pose in `state`.
     fn bottom(shape: LooseShape, state: &LooseState) -> f32 {
         let local_y = |axis: Vec3| (state.rotation * axis).y.abs();
         let reach = match shape {
@@ -1179,7 +1178,6 @@ mod tests {
         state.position.y - reach
     }
 
-    /// The deepest penetration, in metres, between any two loose colliders.
     fn deepest_overlap(world: &PhysicsWorld) -> f32 {
         let mut deepest = 0.0f32;
         for pair in world.narrow_phase.contact_pairs() {
@@ -1858,9 +1856,8 @@ mod tests {
         (world, objects)
     }
 
-    /// Seeds 1 to 24 were run with the brake on: all slept with every object within 0.6 mm of
-    /// the floor, and 17 kept every pair within 5 mm. The others overlap by 6 to 27 mm, which
-    /// rapier's contact tolerance also allows with the brake off; these four are among the 17.
+    /// Seeds whose piles stay within 5 mm overlap; other seeds overlap by up to 27 mm, which
+    /// rapier's contact tolerance also allows with the brake off.
     const PILE_SEEDS: [u64; 4] = [1, 3, 12, 16];
 
     #[test]
