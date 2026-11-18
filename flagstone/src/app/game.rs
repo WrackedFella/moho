@@ -670,6 +670,29 @@ mod tests {
 
     use std::time::Duration;
 
+    #[test]
+    fn paused_game_does_not_advance_the_autosave_schedule() {
+        let mut app = playing_app();
+        app.autosave_interval = Duration::from_secs(1);
+        app.autosave_schedule.mark_edited();
+        let idle = StrategyCommand::default();
+
+        for state in [GameState::Menu, GameState::Paused, GameState::ConsoleOpen] {
+            app.game_state = state;
+            for _ in 0..TICK_HZ * 2 {
+                tick_app(&mut app, &idle);
+            }
+        }
+        let due_after_pausing = app.autosave_schedule.due();
+        app.game_state = GameState::Playing;
+        for _ in 0..TICK_HZ + 1 {
+            tick_app(&mut app, &idle);
+        }
+
+        assert!(!due_after_pausing, "paused ticks do not count");
+        assert!(app.autosave_schedule.due(), "playing ticks do");
+    }
+
     const TICKS: u32 = 120;
 
     fn floor() -> moho_render_api::WorldMesh {
@@ -846,6 +869,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("temp dir");
         let mut app = playing_app();
         app.saves_dir = temp.path().join("saves");
+        app.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
         (app, temp)
     }
 

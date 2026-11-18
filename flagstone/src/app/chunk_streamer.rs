@@ -37,6 +37,7 @@ impl ChunkStreamer {
         terrain_config: TerrainConfig,
         streaming_config: StreamingConfig,
         world_name: impl Into<String>,
+        _saves_dir: impl Into<std::path::PathBuf>,
     ) -> Self {
         Self {
             terrain_config,
@@ -225,6 +226,7 @@ mod tests {
                 chunks_per_frame: budget,
             },
             WORLD,
+            "saves",
         )
     }
 
@@ -286,6 +288,7 @@ mod tests {
                 chunks_per_frame: budget,
             },
             WORLD,
+            "saves",
         )
     }
 
@@ -340,6 +343,41 @@ mod tests {
             origin_column,
             vec![IVec3::ZERO],
             "the occupied column is left as it was"
+        );
+    }
+
+    #[test]
+    fn evicted_chunk_is_written_under_the_streamers_saves_dir() {
+        let saves = tempfile::tempdir().expect("temp dir");
+        let world = "chunk_streamer_unit_test_saves_dir_world";
+        let mut streamer = ChunkStreamer::new(
+            TerrainConfig::default(),
+            StreamingConfig {
+                load_radius_chunks: 0,
+                unload_radius_chunks: 0,
+                chunks_per_frame: 1,
+            },
+            world,
+            saves.path(),
+        );
+        let mut grid = VoxelGrid::new(16);
+        streamer.update(&mut grid, Vec3::new(8.0, 64.0, 8.0));
+        grid.mutator()
+            .place(flagstone_voxel::BlockPos::new(3, 70, 3), 1, None);
+        let edited = IVec3::new(0, 4, 0);
+        assert!(
+            grid.serialize_chunk(edited).is_some(),
+            "the edited chunk is modified, so eviction saves it"
+        );
+
+        let (_, evicted) = streamer.update(&mut grid, Vec3::new(8.0 + 16.0 * 5.0, 64.0, 8.0));
+
+        assert!(evicted.contains(&edited), "the edited chunk was evicted");
+        let written = saves.path().join(world).join("chunks").join("0_4_0.bin");
+        assert!(
+            written.is_file(),
+            "the chunk file is under the streamer's saves dir: {}",
+            written.display()
         );
     }
 }

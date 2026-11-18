@@ -925,6 +925,67 @@ mod tests {
     }
 
     #[test]
+    fn block_edit_events_mark_the_world_edited() {
+        use crate::app::autosave::AutosaveSchedule;
+        let position = flagstone_voxel::BlockPos::new(3, 70, 3);
+        let chunk_pos = glam::IVec3::new(0, 4, 0);
+        let rows = [
+            (
+                "placed",
+                WorldEvent::BlockPlaced {
+                    position,
+                    material_id: 1,
+                    reason: BlockChangeReason::Player,
+                },
+                true,
+            ),
+            (
+                "removed",
+                WorldEvent::BlockRemoved {
+                    position,
+                    old_material_id: 1,
+                    reason: BlockChangeReason::Player,
+                },
+                true,
+            ),
+            (
+                "batch",
+                WorldEvent::BlocksBatchModified {
+                    chunk_pos,
+                    positions: vec![position],
+                    reason: BlockChangeReason::Explosion,
+                },
+                true,
+            ),
+            (
+                "mesh dirty alone",
+                WorldEvent::ChunkMeshDirty {
+                    chunk_pos,
+                    terrain_dirty: true,
+                    structure_dirty: true,
+                },
+                false,
+            ),
+        ];
+
+        for (row, event, edits) in rows {
+            let mut app = App::headless();
+            app.autosave_schedule = AutosaveSchedule::new(1);
+            app.autosave_schedule.tick();
+            let _ = app.world_event_rx.try_iter().count();
+            assert!(
+                !app.autosave_schedule.due(),
+                "row {row}: nothing edited yet"
+            );
+            app.event_bus.publish(event);
+
+            EventProcessor::new().process_world_events(&mut app);
+
+            assert_eq!(app.autosave_schedule.due(), edits, "row {row}");
+        }
+    }
+
+    #[test]
     fn duplicate_mesh_dirty_events_mesh_a_chunk_once() {
         let chunk_pos = glam::IVec3::new(0, 4, 0);
         let meshed_collider = |dirty_flags: &[(bool, bool)]| {
