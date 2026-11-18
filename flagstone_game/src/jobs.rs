@@ -679,6 +679,25 @@ mod tests {
     }
 
     #[test]
+    fn the_pawn_never_digs_the_block_it_stands_on() {
+        let grid = floor(10, 10);
+        let mut marks = marked(&[[5, 0, 5]]);
+        let mut pawn = Pawn::default();
+
+        let (_, at_dig, dig) = walk_until_dig(&mut pawn, pose_in(5, 1, 5), &mut marks, &grid);
+
+        assert!(
+            matches!(dig, Some(JobAction::Dig { block, .. }) if block == BlockPos::new(5, 0, 5)),
+            "{dig:?}"
+        );
+        assert_ne!(
+            crate::routing::feet_cell(at_dig.feet),
+            BlockPos::new(5, 1, 5),
+            "digging the ground under the pawn would leave it floating"
+        );
+    }
+
+    #[test]
     fn a_stalled_walk_releases_the_claim_and_keeps_the_mark() {
         let mut grid = floor(12, 10);
         place(&mut grid, 8, 1, 4);
