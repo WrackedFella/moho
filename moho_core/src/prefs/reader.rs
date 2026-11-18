@@ -95,6 +95,17 @@ fn parse_u32(s: &str) -> Option<u32> {
     s.parse().ok()
 }
 
+const AUTOSAVE_SECONDS_MIN: u32 = 30;
+const AUTOSAVE_SECONDS_MAX: u32 = 3600;
+
+/// `0` (autosave off) is kept; any other value is clamped into the supported range.
+fn parse_autosave_seconds(s: &str) -> Option<u32> {
+    parse_u32(s).map(|v| match v {
+        0 => 0,
+        v => v.clamp(AUTOSAVE_SECONDS_MIN, AUTOSAVE_SECONDS_MAX),
+    })
+}
+
 /// Every key `parse` accepts: `(section, key, setter)`.
 const KNOWN_KEYS: &[(&str, &str, Setter)] = &[
     ("prefs", "mouse_sensitivity", |p, s| {
@@ -164,6 +175,9 @@ const KNOWN_KEYS: &[(&str, &str, Setter)] = &[
             &mut p.world_chunks_per_frame,
             parse_u32(s).filter(|&v| v > 0),
         )
+    }),
+    ("world", "autosave_seconds", |p, s| {
+        set(&mut p.world_autosave_seconds, parse_autosave_seconds(s))
     }),
     ("content", "mods", |p, s| {
         p.content_mods = s

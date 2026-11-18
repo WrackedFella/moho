@@ -449,7 +449,8 @@ impl Prefs {
              \n[world]\n\
              load_radius={load}\n\
              unload_radius={unload}\n\
-             chunks_per_frame={chunks}\n",
+             chunks_per_frame={chunks}\n\
+             autosave_seconds={autosave}\n",
             mouse_sensitivity = self.mouse_sensitivity,
             mouse_smoothing = self.mouse_smoothing,
             invert_mouse_y = self.invert_mouse_y,
@@ -472,6 +473,7 @@ impl Prefs {
             load = self.world_load_radius,
             unload = self.world_unload_radius,
             chunks = self.world_chunks_per_frame,
+            autosave = self.world_autosave_seconds,
         );
         if !self.content_mods.is_empty() {
             text.push_str("\n[content]\nmods=");
@@ -546,8 +548,10 @@ mod tests {
     fn autosave_seconds_round_trips_through_the_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config").join("prefs.ini");
-        let mut prefs = Prefs::default();
-        prefs.world_autosave_seconds = 300;
+        let prefs = Prefs {
+            world_autosave_seconds: 300,
+            ..Prefs::default()
+        };
 
         prefs.save_to(&path).unwrap();
         let (loaded, warnings) = Prefs::load_from(&path);
