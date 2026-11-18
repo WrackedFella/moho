@@ -1356,6 +1356,31 @@ mod tests {
     }
 
     #[test]
+    fn a_mark_fade_of_two_seconds_scales_by_the_fade_length() {
+        let mut rig = Rig::new();
+        rig.effects.mark(
+            Vec3::ZERO,
+            Vec3::Y,
+            0.0,
+            mark_style(0.2, Duration::from_secs(10), Duration::from_secs(2)),
+        );
+
+        rig.effects.advance(Duration::from_secs(8));
+        let full = rig.frame(EYE);
+        rig.effects.advance(Duration::from_secs(1));
+        let half = rig.frame(EYE);
+        rig.effects.advance(ms(500));
+        let quarter = rig.frame(EYE);
+
+        assert!((x_axis(&full[0]).length() - 0.2).abs() < EPS, "full at 8 s");
+        assert!((x_axis(&half[0]).length() - 0.1).abs() < EPS, "half at 9 s");
+        assert!(
+            (y_axis(&quarter[0]).length() - 0.05).abs() < EPS,
+            "quarter at 9.5 s"
+        );
+    }
+
+    #[test]
     fn a_mark_whose_fade_exceeds_its_lifetime_starts_at_full_size() {
         let mut rig = Rig::new();
         rig.effects.mark(
