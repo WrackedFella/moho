@@ -326,6 +326,7 @@ mod tests {
     use crate::prefs::WindowMode;
     use proptest::prelude::*;
     use std::fmt::Write as _;
+    use std::time::Duration;
 
     #[test]
     fn content_mods_keep_their_order() {
@@ -448,6 +449,7 @@ mod tests {
                 ("load_radius", "5"),
                 ("unload_radius", "9"),
                 ("chunks_per_frame", "2"),
+                ("autosave_seconds", "300"),
             ],
         ),
     ];
@@ -490,6 +492,7 @@ mod tests {
         p.world_load_radius = 5;
         p.world_unload_radius = 9;
         p.world_chunks_per_frame = 2;
+        p.world_autosave_seconds = 300;
         p
     }
 
@@ -535,6 +538,10 @@ mod tests {
             (
                 "world.chunks_per_frame",
                 format!("{:?}", p.world_chunks_per_frame()),
+            ),
+            (
+                "world.autosave_seconds",
+                format!("{:?}", p.world_autosave_seconds),
             ),
         ]
     }
@@ -610,6 +617,82 @@ mod tests {
                 assert_eq!(value, expected, "{label}: {name}");
             }
         }
+    }
+
+    #[test]
+    fn autosave_seconds_sets_the_interval() {
+        let (prefs, issues) = Prefs::parse("[world]\nautosave_seconds=300\n");
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(prefs.autosave_interval(), Some(Duration::from_secs(300)));
+    }
+
+    #[test]
+    fn unparseable_autosave_seconds_warns_and_falls_back() {
+        for raw in ["soon", "-5"] {
+            let (prefs, issues) = Prefs::parse(&format!("[world]\nautosave_seconds={raw}\n"));
+
+            assert_eq!(
+                issues,
+                vec![malformed("world", "autosave_seconds", Some(raw))],
+                "{raw}"
+            );
+            assert_eq!(
+                prefs.autosave_interval(),
+                Some(Duration::from_secs(120)),
+                "{raw}"
+            );
+            let text = PrefsWarning {
+                file: PathBuf::from("prefs.ini"),
+                issue: issues[0].clone(),
+            }
+            .to_string();
+            assert!(text.contains("[world] autosave_seconds"), "{text}");
+        }
+    }
+
+    #[test]
+    fn out_of_range_autosave_seconds_clamps_without_warning() {
+        for (raw, expected) in [("5", 30), ("99999", 3600)] {
+            let (prefs, issues) = Prefs::parse(&format!("[world]\nautosave_seconds={raw}\n"));
+
+            assert_eq!(issues, vec![], "{raw}");
+            assert_eq!(
+                prefs.autosave_interval(),
+                Some(Duration::from_secs(expected)),
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn autosave_bounds_load_unchanged_without_warning() {
+        for bound in [30, 3600] {
+            let (prefs, issues) = Prefs::parse(&format!("[world]\nautosave_seconds={bound}\n"));
+
+            assert_eq!(issues, vec![], "{bound}");
+            assert_eq!(
+                prefs.autosave_interval(),
+                Some(Duration::from_secs(bound)),
+                "{bound}"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_autosave_seconds_is_120_without_warning() {
+        let (prefs, issues) = Prefs::parse("[world]\nload_radius=5\n");
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(prefs.autosave_interval(), Some(Duration::from_secs(120)));
+    }
+
+    #[test]
+    fn zero_autosave_seconds_is_off() {
+        let (prefs, issues) = Prefs::parse("[world]\nautosave_seconds=0\n");
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(prefs.autosave_interval(), None);
     }
 
     #[test]
@@ -1096,7 +1179,8 @@ mod tests {
              \n[world]\n\
              load_radius=8\n\
              unload_radius=12\n\
-             chunks_per_frame=4\n";
+             chunks_per_frame=4\n\
+             autosave_seconds=120\n";
 
         assert_eq!(Prefs::default().to_ini_string(), expected);
         assert_eq!(Prefs::parse(expected), (Prefs::default(), vec![]));
