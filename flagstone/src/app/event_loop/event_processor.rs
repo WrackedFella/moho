@@ -31,6 +31,43 @@ const DEFAULT_POINT_LIGHT_RANGE: f32 = 20.0;
 /// Console markers' colour: translucent amber, linear RGBA with straight alpha.
 const MARKER_COLOR: [f32; 4] = [1.0, 0.55, 0.0, 0.35];
 
+/// Cue played at a block a pawn has dug on its own.
+pub(crate) const DIG_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/dig.wav");
+
+/// Announces a block `outcome` removed from the grid: `BlockRemoved`, and a remesh of every
+/// chunk whose mesh reads the block.
+pub(crate) fn publish_block_removal(
+    app: &mut App,
+    outcome: &flagstone_game::pawn::MineOutcome,
+    reason: BlockChangeReason,
+) {
+    let chunk_size = app
+        .light_system
+        .as_ref()
+        .expect("a block was removed from the light system's grid")
+        .grid()
+        .chunk_size();
+    let dirty_chunks: Vec<_> =
+        flagstone_voxel::chunks_meshed_from(outcome.block_pos, chunk_size).collect();
+
+    app.event_bus.publish(WorldEvent::BlockRemoved {
+        position: outcome.block_pos,
+        old_material_id: outcome.old_material_id,
+        reason,
+    });
+    for chunk_pos in dirty_chunks {
+        app.event_bus.publish(WorldEvent::ChunkMeshDirty {
+            chunk_pos,
+            terrain_dirty: true,
+            structure_dirty: true,
+        });
+    }
+}
+
+/// Announces a block a pawn dug on its own job: the removal, as for the player's mining, and
+/// the dig cue at the block's centre.
+pub(crate) fn publish_pawn_dig(_app: &mut App, _outcome: &flagstone_game::pawn::MineOutcome) {}
+
 /// Handles processing of all event types
 pub struct EventProcessor;
 
@@ -241,21 +278,7 @@ impl EventProcessor {
             return;
         };
 
-        let dirty_chunks: Vec<_> =
-            flagstone_voxel::chunks_meshed_from(outcome.block_pos, grid.chunk_size()).collect();
-
-        app.event_bus.publish(WorldEvent::BlockRemoved {
-            position: outcome.block_pos,
-            old_material_id: outcome.old_material_id,
-            reason: BlockChangeReason::Player,
-        });
-        for chunk_pos in dirty_chunks {
-            app.event_bus.publish(WorldEvent::ChunkMeshDirty {
-                chunk_pos,
-                terrain_dirty: true,
-                structure_dirty: true,
-            });
-        }
+        publish_block_removal(app, &outcome, BlockChangeReason::Player);
 
         if let Some(y) = outcome.yield_ {
             app.event_bus.publish(AudioEvent::PlaySound {
@@ -1720,5 +1743,99 @@ mod tests {
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
 
         assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
+    }
+
+    #[test]
+    fn dig_asset_exists() {
+        let bytes = std::fs::read(DIG_SOUND).unwrap_or_else(|e| panic!("{DIG_SOUND}: {e}"));
+
+        assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
+        assert_eq!(&bytes[8..12], b"WAVE", "not a WAV file");
+        assert!(
+            std::path::Path::new(DIG_SOUND).ends_with("assets/dig.wav"),
+            "the cue is flagstone/assets/dig.wav: {DIG_SOUND}"
+        );
+    }
+
+    #[test]
+    fn a_pawn_dig_publishes_the_removal_and_the_cue() {
+        let mut app = App::headless();
+        // Local x 0 of chunk (1, 4, 0): the block is read by its negative neighbour too.
+        let dug = flagstone_voxel::BlockPos::new(16, 70, 3);
+        app.light_system
+            .as_mut()
+            .expect("App starts with a light system")
+            .grid_mut()
+            .mutator()
+            .place(dug, 1, Some(7));
+        let chunk_size = app
+            .light_system
+            .as_ref()
+            .expect("light system")
+            .grid()
+            .chunk_size();
+        let expected_dirty: HashSet<glam::IVec3> =
+            flagstone_voxel::chunks_meshed_from(dug, chunk_size).collect();
+        let removed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dirty = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let removed_sink = std::sync::Arc::clone(&removed);
+        let dirty_sink = std::sync::Arc::clone(&dirty);
+        app.event_bus.subscribe(move |e: &WorldEvent| match e {
+            WorldEvent::BlockRemoved {
+                position,
+                old_material_id,
+                ..
+            } => removed_sink
+                .lock()
+                .unwrap()
+                .push((*position, *old_material_id)),
+            WorldEvent::ChunkMeshDirty { chunk_pos, .. } => {
+                dirty_sink.lock().unwrap().push(*chunk_pos);
+            }
+            _ => {}
+        });
+        let _ = app.audio_event_rx.try_iter().count();
+        let outcome = flagstone_game::pawn::MineOutcome {
+            block_pos: dug,
+            old_material_id: 1,
+            distance: 3.0,
+            yield_: None,
+        };
+
+        publish_pawn_dig(&mut app, &outcome);
+        app.event_bus.process_deferred();
+
+        assert_eq!(*removed.lock().unwrap(), vec![(dug, 1)]);
+        let dirty = dirty.lock().unwrap();
+        assert_eq!(
+            dirty.iter().copied().collect::<HashSet<_>>(),
+            expected_dirty,
+            "the chunks that read the block are remeshed"
+        );
+        assert_eq!(dirty.len(), expected_dirty.len(), "each once: {dirty:?}");
+        let cues: Vec<(String, f32, glam::Vec3)> = app
+            .audio_event_rx
+            .try_iter()
+            .filter_map(|event| match event {
+                AudioEvent::PlaySoundAt {
+                    path,
+                    volume,
+                    position,
+                } => Some((path, volume, position)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(cues.len(), 1, "one cue for one dig: {cues:?}");
+        assert_eq!(
+            std::path::Path::new(&cues[0].0),
+            std::path::Path::new(DIG_SOUND)
+        );
+        assert!(cues[0].1 > 0.0, "audible: {cues:?}");
+        assert!(
+            cues[0]
+                .2
+                .abs_diff_eq(glam::Vec3::new(16.5, 70.5, 3.5), 1e-4),
+            "the cue sounds at the block's centre: {cues:?}"
+        );
     }
 }

@@ -441,6 +441,48 @@ mod tests {
         assert!(!texts(&in_first_person).contains(&MINE_LABEL.to_string()));
     }
 
+    fn stocked_data(is_fps_mode: bool) -> HudData {
+        HudData {
+            is_fps_mode,
+            colony_stock: vec![(1, 3), (7, 12)],
+            ..strategy_data(TOP)
+        }
+    }
+
+    #[test]
+    fn strategy_hud_lists_the_colony_totals() {
+        let drawn = drawn_texts(&stocked_data(false));
+
+        assert!(
+            drawn.iter().any(|t| t.contains("R1 ×3")),
+            "resource 1 and its total are not listed: {drawn:?}"
+        );
+        assert!(
+            drawn.iter().any(|t| t.contains("R7 ×12")),
+            "resource 7 and its total are not listed: {drawn:?}"
+        );
+    }
+
+    #[test]
+    fn no_totals_in_first_person() {
+        let in_strategy = drawn_texts(&stocked_data(false));
+
+        let in_first_person = drawn_texts(&stocked_data(true));
+
+        assert!(
+            in_strategy.iter().any(|t| t.contains("R1 ×3")),
+            "the totals show in strategy: {in_strategy:?}"
+        );
+        assert!(
+            !in_first_person.iter().any(|t| t.contains("R1 ×3")),
+            "{in_first_person:?}"
+        );
+        assert!(
+            !in_first_person.iter().any(|t| t.contains("R7 ×12")),
+            "{in_first_person:?}"
+        );
+    }
+
     #[test]
     fn strategy_hud_names_the_mode() {
         let ctx = egui::Context::default();

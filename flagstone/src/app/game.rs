@@ -1285,6 +1285,37 @@ mod tests {
         }
 
         #[test]
+        fn returning_to_first_person_starts_where_the_pawn_walked_to() {
+            use crate::app::event_loop::frame_processor::tests::{
+                headless_loop, pawn_feet, pawn_state, pawn_world,
+            };
+            let block = flagstone_voxel::BlockPos::new(12, 70, 8);
+            let feet = glam::Vec3::new(2.5, 71.0, 8.5);
+            let mut app = pawn_world(block, None, feet, false);
+            app.colony.marks.toggle(block.to_array());
+            let mut sim = headless_loop();
+
+            sim.step(&mut app, 60);
+
+            let walked_to = pawn_state(&app).position;
+            let moved = pawn_feet(&app) - feet;
+            let walked = glam::Vec2::new(moved.x, moved.z).length();
+            assert!(walked > 1.0, "the pawn walked only {walked} m");
+            assert!(
+                app.simulation.position().distance(walked_to) < 1e-3,
+                "the player's position is not where the pawn walked to"
+            );
+            tap(&mut app);
+            step(&mut app);
+            assert_eq!(mode(&app), CameraMode::FirstPerson);
+            let started = app.simulation.position();
+            assert!(
+                glam::Vec2::new(started.x - walked_to.x, started.z - walked_to.z).length() < 0.1,
+                "first person starts at {started:?}, the pawn walked to {walked_to:?}"
+            );
+        }
+
+        #[test]
         fn possess_return_possess_restores_the_same_pawn_pose() {
             let mut app = app_in(CameraMode::FirstPerson);
             let before = pose(&app);
