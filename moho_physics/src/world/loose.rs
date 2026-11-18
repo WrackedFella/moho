@@ -1,6 +1,6 @@
 use super::PhysicsWorld;
 use glam::{Quat, Vec3};
-use rapier3d::prelude::{ColliderBuilder, Pose, RigidBodyBuilder};
+use rapier3d::prelude::{ColliderBuilder, Pose, RigidBodyBuilder, RigidBodyHandle};
 
 /// Stable, engine-issued name of a loose object.
 ///
@@ -28,6 +28,14 @@ pub enum LooseShape {
 }
 
 impl LooseShape {
+    /// The radius a shape rolls on, or `None` for a box.
+    fn roll_radius(self) -> Option<f32> {
+        match self {
+            Self::Box { .. } => None,
+            Self::Capsule { radius, .. } | Self::Cylinder { radius, .. } => Some(radius),
+        }
+    }
+
     fn collider(self) -> ColliderBuilder {
         match self {
             Self::Box { half_extents } => {
@@ -47,6 +55,16 @@ impl LooseShape {
 
 /// Steepest ground, radians from level, on which loose objects are braked to rest by default.
 pub(super) const DEFAULT_REST_SLOPE: f32 = 5.0 * std::f32::consts::PI / 180.0;
+
+/// Contact depth, m, beyond which a body is being pushed apart and must not be braked.
+const DEEP_CONTACT: f32 = 0.005;
+
+/// A loose object's engine handle and the radius it rolls on (`None` for a box).
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Loose {
+    pub(super) body: RigidBodyHandle,
+    pub(super) roll_radius: Option<f32>,
+}
 
 /// Everything a game states when it drops a loose object.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -188,8 +206,85 @@ impl PhysicsWorld {
 
         let id = LooseId(self.next_loose);
         self.next_loose += 1;
-        self.loose.insert(id, handle);
+        self.loose.insert(
+            id,
+            Loose {
+                body: handle,
+                roll_radius: spawn.shape.roll_radius(),
+            },
+        );
         id
+    }
+
+    /// Cut the rolling motion of awake loose bodies resting on near-flat ground, so rolling
+    /// shapes stop. Reads the contacts the step just computed and changes velocities only.
+    ///
+    /// The pull `g * tan(rest_slope)` is exactly what holds a sliding object on the rest slope.
+    /// Spin about the axis falls by `a * dt / r` and travel across axis and up by `a * dt`,
+    /// together, so rolling stays rolling while it slows. Tipping and the velocity along up are
+    /// left alone.
+    pub(super) fn brake_rolling(&mut self, dt: f32) {
+        let gravity = self.gravity.length();
+        if gravity == 0.0 || self.rest_slope == 0.0 {
+            return;
+        }
+        let up = -self.gravity / gravity;
+        let min_cos = self.rest_slope.cos();
+        let cut = gravity * self.rest_slope.tan() * dt;
+
+        for loose in self.loose.values() {
+            let Some(radius) = loose.roll_radius else {
+                continue;
+            };
+            let Some(body) = self.rigid_body_set.get(loose.body) else {
+                continue;
+            };
+            if body.is_sleeping() {
+                continue;
+            }
+
+            let mut grounded = false;
+            let mut separating = false;
+            for &collider in body.colliders() {
+                for pair in self.narrow_phase.contact_pairs_with(collider) {
+                    let sign = if pair.collider1 == collider {
+                        -1.0
+                    } else {
+                        1.0
+                    };
+                    for manifold in pair.manifolds() {
+                        let into_body = manifold.data.normal * sign;
+                        for point in &manifold.points {
+                            if point.dist > 0.0 {
+                                continue;
+                            }
+                            separating |= -point.dist > DEEP_CONTACT;
+                            grounded |= into_body.dot(up) >= min_cos;
+                        }
+                    }
+                }
+            }
+            if !grounded || separating {
+                continue;
+            }
+
+            let axis = *body.rotation() * Vec3::Y;
+            let travel = axis.cross(up).normalize_or_zero();
+            let linvel = body.linvel();
+            let angvel = body.angvel();
+            let spin = angvel.dot(axis);
+            let along = linvel.dot(travel);
+            let new_spin = spin.signum() * (spin.abs() - cut / radius).max(0.0);
+            let new_along = along.signum() * (along.abs() - cut).max(0.0);
+            let handle = loose.body;
+            let new_linvel = linvel + travel * (new_along - along);
+            let new_angvel = angvel + axis * (new_spin - spin);
+
+            if let Some(body) = self.rigid_body_set.get_mut(handle) {
+                body.set_linvel(new_linvel, false);
+                body.set_angvel(new_angvel, false);
+            }
+        }
     }
 
     /// Steepest ground, radians from level against gravity, on which loose objects are
@@ -212,7 +307,7 @@ impl PhysicsWorld {
 
     /// The object's current state; `None` for an id never spawned or removed.
     pub fn loose(&self, id: LooseId) -> Option<LooseState> {
-        let body = self.rigid_body_set.get(*self.loose.get(&id)?)?;
+        let body = self.rigid_body_set.get(self.loose.get(&id)?.body)?;
         Some(LooseState {
             position: body.translation(),
             rotation: *body.rotation(),
@@ -227,9 +322,9 @@ impl PhysicsWorld {
     /// # Errors
     /// [`UnknownLoose`] if `id` was never spawned or was already removed.
     pub fn remove_loose(&mut self, id: LooseId) -> Result<(), UnknownLoose> {
-        let handle = self.loose.remove(&id).ok_or(UnknownLoose)?;
+        let loose = self.loose.remove(&id).ok_or(UnknownLoose)?;
         self.rigid_body_set.remove(
-            handle,
+            loose.body,
             &mut self.island_manager,
             &mut self.collider_set,
             &mut self.impulse_joint_set,
@@ -249,8 +344,8 @@ impl PhysicsWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::test_support::{floor_mesh, slab_mesh, slope_mesh, TEST_TAG};
     use crate::world::RayQuery;
-    use crate::world::test_support::{TEST_TAG, floor_mesh, slab_mesh, slope_mesh};
     use glam::Vec3Swizzles;
     use moho_render_api::{WorldMesh, WorldMeshId};
     use proptest::prelude::*;
@@ -603,7 +698,7 @@ mod tests {
             "{state:?}"
         );
         assert!(!state.asleep, "a fresh object is awake");
-        let mass = world.rigid_body_set[world.loose[&id]].mass();
+        let mass = world.rigid_body_set[world.loose[&id].body].mass();
         assert!(
             (mass - 3.5).abs() <= 1e-4,
             "{shape:?}: the body weighs the stated mass, mass={mass}"
@@ -1249,18 +1344,19 @@ mod tests {
     }
 
     #[test]
-    fn a_hard_gravity_does_not_move_the_rest_slope() {
-        let mut world = slope_world(4.9);
-        world.set_gravity(36.0);
-        let spawn = on_slope(capsule(), CAPSULE_RADIUS, 4.9);
-        let id = world.spawn_loose(&spawn);
+    fn a_brake_follows_the_worlds_gravity() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        world.set_gravity(27.0);
+        let start = rolling_capsule(2.0);
+        let id = world.spawn_loose(&start);
 
         run(&mut world, 300);
 
-        let state = read(&world, id);
-        let moved = (state.position - spawn.position).length();
-        assert!(moved < 0.02, "the capsule moved {moved} m");
-        assert!(state.asleep, "the capsule is awake");
+        let rolled = (read(&world, id).position - start.position).xz().length();
+        assert!(
+            rolled <= 1.0,
+            "rolled {rolled} m at gravity 27; a brake fixed at gravity 18 rolls 1.27 m"
+        );
     }
 
     #[test]
