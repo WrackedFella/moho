@@ -76,6 +76,8 @@ pub struct Prefs {
     world_load_radius: u32,
     world_unload_radius: u32,
     world_chunks_per_frame: u32,
+    /// Seconds of play between autosaves; 0 is off.
+    world_autosave_seconds: u32,
     bindings: BTreeMap<String, String>,
     action_modes: BTreeMap<String, String>,
     debug: BTreeMap<String, String>,
@@ -89,6 +91,10 @@ const MAX_BLOOM_QUALITY: u32 = 2;
 const MIN_BRIGHTNESS: f32 = 0.5;
 const MAX_BRIGHTNESS: f32 = 2.0;
 const DEFAULT_BRIGHTNESS: f32 = 1.0;
+/// Autosave interval bounds in seconds; a stored 0 means off and is not clamped.
+const DEFAULT_AUTOSAVE_SECONDS: u32 = 120;
+const MIN_AUTOSAVE_SECONDS: u32 = 30;
+const MAX_AUTOSAVE_SECONDS: u32 = 3600;
 
 /// Why a name or value for a game-owned section was refused.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -228,6 +234,11 @@ impl Prefs {
     }
     pub fn world_chunks_per_frame(&self) -> u32 {
         self.world_chunks_per_frame
+    }
+    /// Play time between autosaves of an edited world; `None` is off.
+    pub fn autosave_interval(&self) -> Option<std::time::Duration> {
+        (self.world_autosave_seconds > 0)
+            .then(|| std::time::Duration::from_secs(u64::from(self.world_autosave_seconds)))
     }
     pub fn window_mode(&self) -> WindowMode {
         self.window_mode
@@ -391,6 +402,7 @@ impl Default for Prefs {
             world_load_radius: 8,
             world_unload_radius: 12,
             world_chunks_per_frame: 4,
+            world_autosave_seconds: DEFAULT_AUTOSAVE_SECONDS,
             bindings: BTreeMap::new(),
             action_modes: BTreeMap::new(),
             debug: BTreeMap::new(),
@@ -442,7 +454,8 @@ impl Prefs {
              \n[world]\n\
              load_radius={load}\n\
              unload_radius={unload}\n\
-             chunks_per_frame={chunks}\n",
+             chunks_per_frame={chunks}\n\
+             autosave_seconds={autosave}\n",
             mouse_sensitivity = self.mouse_sensitivity,
             mouse_smoothing = self.mouse_smoothing,
             invert_mouse_y = self.invert_mouse_y,
@@ -465,6 +478,7 @@ impl Prefs {
             load = self.world_load_radius,
             unload = self.world_unload_radius,
             chunks = self.world_chunks_per_frame,
+            autosave = self.world_autosave_seconds,
         );
         if !self.content_mods.is_empty() {
             text.push_str("\n[content]\nmods=");
@@ -628,8 +642,10 @@ mod tests {
         ] {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("config").join("prefs.ini");
-            let mut prefs = Prefs::default();
-            prefs.world_autosave_seconds = seconds;
+            let prefs = Prefs {
+                world_autosave_seconds: seconds,
+                ..Prefs::default()
+            };
 
             prefs.save_to(&path).unwrap();
             let (loaded, warnings) = Prefs::load_from(&path);
