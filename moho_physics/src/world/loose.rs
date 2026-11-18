@@ -27,6 +27,11 @@ pub enum LooseShape {
     Cylinder { half_height: f32, radius: f32 },
 }
 
+/// `value` moved toward zero by `by`, stopping at zero rather than crossing it.
+fn shrink(value: f32, by: f32) -> f32 {
+    value.signum() * (value.abs() - by).max(0.0)
+}
+
 impl LooseShape {
     /// The radius a shape rolls on, or `None` for a box.
     fn roll_radius(self) -> Option<f32> {
@@ -274,13 +279,12 @@ impl PhysicsWorld {
             let angvel = body.angvel();
             let spin = angvel.dot(axis);
             let along = linvel.dot(travel);
-            let new_spin = spin.signum() * (spin.abs() - cut / radius).max(0.0);
-            let new_along = along.signum() * (along.abs() - cut).max(0.0);
-            let handle = loose.body;
+            let new_spin = shrink(spin, cut / radius);
+            let new_along = shrink(along, cut);
             let new_linvel = linvel + travel * (new_along - along);
             let new_angvel = angvel + axis * (new_spin - spin);
 
-            if let Some(body) = self.rigid_body_set.get_mut(handle) {
+            if let Some(body) = self.rigid_body_set.get_mut(loose.body) {
                 body.set_linvel(new_linvel, false);
                 body.set_angvel(new_angvel, false);
             }
