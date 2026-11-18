@@ -1816,6 +1816,112 @@ mod tests {
         assert!(streak_transform(head, Vec3::X, 2.0, 0.1, Vec3::splat(f32::NAN)).is_none());
     }
 
+    /// The mesh's vertices carried into the world by the instance's model matrix.
+    fn world_vertices(instance: &InstanceGpu, positions: &[[f32; 3]]) -> Vec<Vec3> {
+        positions
+            .iter()
+            .map(|p| {
+                x_axis(instance) * p[0]
+                    + y_axis(instance) * p[1]
+                    + z_axis(instance) * p[2]
+                    + translation(instance)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_mark_whose_fade_is_its_lifetime_shrinks_from_spawn() {
+        let mut rig = Rig::new();
+        rig.effects.mark(
+            Vec3::new(2.0, 0.0, 2.0),
+            Vec3::Y,
+            0.0,
+            mark_style(0.2, Duration::from_secs(2), Duration::from_secs(2)),
+        );
+
+        let spawn = rig.frame(EYE);
+        rig.effects.advance(ms(500));
+        let quarter = rig.frame(EYE);
+        rig.effects.advance(Duration::from_secs(1));
+        let late = rig.frame(EYE);
+
+        assert_eq!(spawn.len(), 1);
+        assert!(
+            (x_axis(&spawn[0]).length() - 0.2).abs() < EPS,
+            "full at spawn"
+        );
+        assert_eq!(quarter.len(), 1);
+        assert!(
+            (x_axis(&quarter[0]).length() - 0.15).abs() < EPS,
+            "got {}",
+            x_axis(&quarter[0]).length()
+        );
+        assert_eq!(late.len(), 1);
+        assert!(
+            (x_axis(&late[0]).length() - 0.05).abs() < EPS,
+            "got {}",
+            x_axis(&late[0]).length()
+        );
+
+        rig.effects.advance(ms(500));
+
+        assert!(rig.frame(EYE).is_empty());
+        assert_eq!(rig.effects.live(), 0);
+    }
+
+    #[test]
+    fn a_flash_spans_its_size_tip_to_tip_in_the_world() {
+        let mut rig = Rig::new();
+        let at = Vec3::new(1.0, 2.0, 3.0);
+        rig.effects.flash(at, 0.3, flash_style(0.4, ms(50)));
+
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(drawn.len(), 1);
+        let (positions, _) = &rig.backend.registered[0];
+        let world = world_vertices(&drawn[0], positions);
+        let mut widest = 0.0f32;
+        for a in &world {
+            assert!((*a - at).length() <= 0.2 + EPS, "{a} is within 0.2 of {at}");
+            for b in &world {
+                widest = widest.max((*a - *b).length());
+            }
+        }
+        assert!(
+            (widest - 0.4).abs() < EPS,
+            "tip to tip is 0.4, got {widest}"
+        );
+    }
+
+    #[test]
+    fn a_mark_spans_its_size_in_the_world() {
+        let mut rig = Rig::new();
+        rig.effects.mark(
+            Vec3::new(4.0, 5.0, 6.0),
+            Vec3::new(0.0, 1.0, 1.0),
+            0.4,
+            mark_style(0.2, Duration::from_secs(10), Duration::from_secs(1)),
+        );
+
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(drawn.len(), 1);
+        let (positions, _) = &rig.backend.registered[0];
+        let corners = world_vertices(&drawn[0], positions);
+        assert_eq!(corners.len(), 4);
+        for i in 0..4 {
+            let side = (corners[i] - corners[(i + 1) % 4]).length();
+            assert!((side - 0.2).abs() < EPS, "side {i} is 0.2, got {side}");
+        }
+        for (a, b) in [(0, 2), (1, 3)] {
+            let diagonal = (corners[a] - corners[b]).length();
+            assert!(
+                (diagonal - 0.2 * std::f32::consts::SQRT_2).abs() < EPS,
+                "diagonal {a}-{b} got {diagonal}"
+            );
+        }
+    }
+
     #[derive(Debug, Clone)]
     enum Op {
         Begin,
