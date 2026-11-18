@@ -275,9 +275,8 @@ impl App {
             frame_cap_changed: false,
             saves_dir: std::path::PathBuf::from("saves"),
             autosave_interval: initialized.prefs.autosave_interval(),
-            autosave: initialized.prefs.autosave_interval().map_or_else(
-                app::autosave::AutosaveSchedule::off,
-                app::autosave::AutosaveSchedule::for_interval,
+            autosave: app::autosave::AutosaveSchedule::for_setting(
+                initialized.prefs.autosave_interval(),
             ),
             exit_requested: false,
             main_menu_requested: false,
@@ -329,10 +328,7 @@ impl App {
 
     /// Called as a world starts, so edits made before it do not count against the new one.
     fn restart_autosave(&mut self) {
-        self.autosave = self.autosave_interval.map_or_else(
-            app::autosave::AutosaveSchedule::off,
-            app::autosave::AutosaveSchedule::for_interval,
-        );
+        self.autosave = app::autosave::AutosaveSchedule::for_setting(self.autosave_interval);
     }
 
     fn generate_new_world(
