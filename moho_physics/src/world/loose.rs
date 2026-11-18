@@ -1833,6 +1833,64 @@ mod tests {
         );
     }
 
+    /// Steps `world` for `ticks` and says whether the narrow phase ever listed the loose body's
+    /// collider first in a contact pair.
+    fn runs_with_body_listed_first(world: &mut PhysicsWorld, id: LooseId, ticks: u32) -> bool {
+        let collider = world.loose[&id].collider;
+        let mut listed_first = false;
+        for _ in 0..ticks {
+            world.step(DT);
+            listed_first |= world
+                .narrow_phase
+                .contact_pairs_with(collider)
+                .any(|pair| pair.collider1 == collider);
+        }
+        listed_first
+    }
+
+    #[test]
+    fn the_brake_holds_whichever_collider_the_pair_lists_first() {
+        // The capsule is spawned before the ground, so its collider can come first in the pair.
+        let mut on_floor = PhysicsWorld::new();
+        let start = Vec3::new(0.0, CAPSULE_RADIUS, -5.0);
+        let rolling = on_floor.spawn_loose(&rolling_capsule(start, 2.0));
+        on_floor.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+
+        let floor_first = runs_with_body_listed_first(&mut on_floor, rolling, 600);
+
+        let state = read(&on_floor, rolling);
+        let rolled = state.position.distance(start);
+        assert!(
+            rolled <= 1.5,
+            "on the floor it rolled {rolled} m, {state:?}"
+        );
+        assert!(state.asleep, "on the floor it is awake, {state:?}");
+
+        let mut on_box = PhysicsWorld::new();
+        let start = Vec3::new(0.0, 0.2 + CAPSULE_RADIUS, -0.5);
+        let rolling = on_box.spawn_loose(&rolling_capsule(start, 0.5));
+        on_box.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.1, 0.0),
+            ..LooseSpawn::new(cuboid(Vec3::new(1.0, 0.1, 1.0)), 50.0)
+        });
+        on_box.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+
+        let box_first = runs_with_body_listed_first(&mut on_box, rolling, 300);
+
+        let state = read(&on_box, rolling);
+        let rolled = state.position.distance(start);
+        assert!(rolled < 0.3, "on the box it rolled {rolled} m, {state:?}");
+        assert!(
+            state.position.y > 0.2 + CAPSULE_RADIUS - 0.005,
+            "the capsule left the box top, {state:?}"
+        );
+        assert!(state.asleep, "on the box it is awake, {state:?}");
+        assert!(
+            floor_first || box_first,
+            "the narrow phase never listed the capsule first, so the test misses the branch"
+        );
+    }
+
     #[test]
     fn spawn_rejects_a_bad_mass_on_a_capsule_or_cylinder() {
         let mut rows = Vec::new();
