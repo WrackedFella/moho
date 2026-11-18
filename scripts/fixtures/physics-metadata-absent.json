@@ -1,0 +1,10 @@
+{
+  "packages": [
+    {"name": "rapier3d", "id": "rapier3d 0.22.0 (registry+https://github.com/rust-lang/crates.io-index)"}
+  ],
+  "resolve": {
+    "nodes": [
+      {"id": "rapier3d 0.22.0 (registry+https://github.com/rust-lang/crates.io-index)", "features": ["default", "dim3", "enhanced-determinism", "f32"]}
+    ]
+  }
+}

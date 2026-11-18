@@ -41,6 +41,8 @@ deny:
     cargo deny check
     scripts/check-physics-features.sh
     "{{replace(just_executable(), '\', '/')}}" _physics-features-rejects physics-metadata-missing rapier3d
+    "{{replace(just_executable(), '\', '/')}}" _physics-features-rejects physics-metadata-parry-missing parry3d
+    "{{replace(just_executable(), '\', '/')}}" _physics-features-rejects physics-metadata-absent parry3d
     "{{replace(just_executable(), '\', '/')}}" _physics-features-accepts physics-metadata-ok
 
 # Fails unless the physics feature check exits non-zero on the fixture and names the crate.
