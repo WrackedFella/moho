@@ -44,6 +44,9 @@ pub struct Pawn {
     pub pickups: PickupFeed,
     /// What the pawn is doing on its own while nobody possesses it.
     pub job: Job,
+    /// Nearest exposed marks the idle pawn has already failed to route to, so the next
+    /// claim attempt starts past them; 0 after a claim or once the list is exhausted.
+    pub(crate) routes_skipped: usize,
 }
 
 impl Default for Pawn {
@@ -54,6 +57,7 @@ impl Default for Pawn {
             selected_slot: TOOL_SLOT,
             pickups: PickupFeed::default(),
             job: Job::default(),
+            routes_skipped: 0,
         }
     }
 }

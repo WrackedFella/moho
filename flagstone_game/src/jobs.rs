@@ -131,7 +131,8 @@ pub fn step(
 }
 
 /// Takes the nearest unclaimed mark with an exposed face that routes to a stand cell, trying
-/// at most [`MAX_ROUTE_ATTEMPTS`] marks.
+/// at most [`MAX_ROUTE_ATTEMPTS`] marks per call. A call that claims nothing moves the next
+/// one on to the following marks, wrapping to the nearest once the list runs out.
 fn claim(pawn: &mut Pawn, pose: PawnPose, marks: &mut MineMarks, grid: &VoxelGrid) -> Option<Job> {
     let feet = routing::feet_cell(pose.feet);
     let mut candidates: Vec<[i32; 3]> = marks.unclaimed().collect();
@@ -147,7 +148,9 @@ fn claim(pawn: &mut Pawn, pose: PawnPose, marks: &mut MineMarks, grid: &VoxelGri
             .is_some()
     });
 
-    for mark in exposed.take(MAX_ROUTE_ATTEMPTS) {
+    let mut attempts = 0;
+    for mark in exposed.skip(pawn.routes_skipped).take(MAX_ROUTE_ATTEMPTS) {
+        attempts += 1;
         let block = BlockPos::from_array(mark);
         let found = routing::route(
             grid,
@@ -158,6 +161,7 @@ fn claim(pawn: &mut Pawn, pose: PawnPose, marks: &mut MineMarks, grid: &VoxelGri
         );
         if let Some(route) = found {
             marks.claim(mark, PawnId(0));
+            pawn.routes_skipped = 0;
             pawn.select_slot(TOOL_SLOT);
             return Some(Job::Mine {
                 mark,
@@ -167,6 +171,12 @@ fn claim(pawn: &mut Pawn, pose: PawnPose, marks: &mut MineMarks, grid: &VoxelGri
             });
         }
     }
+    // A full round may have left marks untried; a short one reached the end of the list.
+    pawn.routes_skipped = if attempts == MAX_ROUTE_ATTEMPTS {
+        pawn.routes_skipped + attempts
+    } else {
+        0
+    };
     None
 }
 
