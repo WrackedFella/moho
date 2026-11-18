@@ -115,7 +115,8 @@ The title status line appends `GOD MODE` (`hud::god_mode_text`).
 
 `SearchlightSim::tick(command, dt)` lets the enemies perceive and move, moves the player character
 (slower while a lean is held), steps the physics world, blends the player's lean ([posture](#8-posture)),
-applies weapon actions, then resolves the shots the enemies decided
+steps the player's rounds in flight ([shot path](#6-shot-path)), applies weapon actions (a round
+fired now first steps on the next tick), then resolves the shots the enemies decided
 on and removes enemies that died. The rifle is in one state at a time (ready, cooling down
 after a shot, reloading); cooldown and reload are tick counts. A reload takes `reload_ticks`, plus
 `charge_ticks` when the chamber is empty. It swaps in the next fitting magazine from the `Rig`
@@ -152,10 +153,11 @@ stays visible, fires after `reaction_ticks` of continuous sight, within `fire_co
 bearing and off cooldown. Aim error comes from the `searchlight.enemy_spread` `SimRng` stream, started from
 `EnemyTuning::seed`, so runs repeat and a restart replays a fresh start.
 
-An enemy is put under fire by a non-lethal hit, or by near misses. Every player shot that
+An enemy is put under fire by a non-lethal hit, or by near misses. Every player round that
 passes within `EnemyTuning::near_miss_radius` of a living enemy's capsule centre
-(`shot::passes_within`, on the segment from the eye to the strike point or the rifle's range)
-counts a near miss on that enemy, except the enemy the shot hit. When the count reaches
+(`shot::passes_within`, on the segment the round flew this tick, from its last position to its
+strike point or new position; under Simple, from the eye to the strike point or across the flight
+box) counts a near miss on that enemy, once per round, except the enemy the round hit. When the count reaches
 `Grade::near_misses_to_cover` (`None` for a rookie, so only a hit moves it) the count resets and
 the enemy is under fire. The sim then records the player's position on
 that enemy (`Target::under_fire`) and, from the `Arena` cover points, asks `cover::offer` for a
@@ -191,7 +193,7 @@ Tag encoding: `0` is `World`; a `Part` is `1 + ((target << 3) | part_index)`, wi
 same boxes tagged `Player` (`player_hit_volumes`). The leg volumes reach the feet of the configured
 hull, and the game draws dummies and enemies from the sim's own `character_body()`.
 
-A player's shot spends a round from the `Loadout` and joins `SearchlightSim`'s rounds in flight, taking its `Ballistics` (muzzle velocity, drag) from the round item. Each tick, before the weapon acts, `step_rounds` advances every round with `searchlight_rules::Flight::step` (drag and gravity, correctly rounded IEEE operations only (no `exp`, no `powf`) so a replay is exact) and casts the step's segment through `step_round`. A round ends on a strike, when it slows to `MIN_SPEED`, or when it leaves the `FlightBounds` box (`Arena::flight_bounds`: the box around the level's meshes, grown by `FLIGHT_MARGIN`, 100 m); a round fired this tick first steps on the next. Near misses count per round, once per enemy. A strike on a part applies damage and emits feedback as above. `SearchlightCommand::round_gravity` (a `GravityScale`, set by `round_gravity`) scales gravity on the rounds.
+A player's shot spends a round from the `Loadout` and joins `SearchlightSim`'s rounds in flight, taking its `Ballistics` (muzzle velocity, drag) from the round item. Each tick, before the weapon acts, `step_rounds` advances every round with `searchlight_rules::Flight::step` (drag and gravity, correctly rounded IEEE operations only (no `exp`, no `powf`) so a replay is exact) and casts the step's segment through `step_round`. A round ends on a strike, when it slows to `MIN_SPEED`, or when it leaves the `FlightBounds` box (`Arena::flight_bounds`: the box around the level's meshes, controls and player spawn, grown by `FLIGHT_MARGIN`, 100 m); a round fired this tick first steps on the next. Near misses count per round, once per enemy. A strike on a part applies damage and emits feedback as above. `SearchlightCommand::round_gravity` (a `GravityScale`, set by `round_gravity`) scales gravity on the rounds.
 
 `SearchlightCommand::simple` (the `simple` console command, saved under `[debug]`) switches the player to Simple: the shot is one ray across the whole flight box and lands on the firing tick.
 
