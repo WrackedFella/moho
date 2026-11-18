@@ -680,11 +680,20 @@ mod tests {
             );
         }
 
+        let on_the_panel = press_consumed(adapter.pointer_over_ui(), adapter.cursor_free());
+        let open_world = egui::pos2(100.0, 300.0);
+        let _ = crate::overlays::test_support::run_ui(
+            &adapter.context,
+            crate::overlays::test_support::input(vec![egui::Event::PointerMoved(open_world)]),
+            |ui| {
+                rendering::render_game_state(ui, &mut adapter.ui_state, GameState::Playing);
+            },
+        );
+        let off_the_panel = press_consumed(adapter.pointer_over_ui(), adapter.cursor_free());
+
         assert!(adapter.cursor_free());
-        assert!(press_consumed(
-            adapter.pointer_over_ui(),
-            adapter.cursor_free()
-        ));
+        assert!(on_the_panel, "a press on the panel reaches the game");
+        assert!(!off_the_panel, "a press on open world is taken by the UI");
     }
 
     #[test]

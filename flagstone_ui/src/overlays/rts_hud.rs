@@ -462,7 +462,12 @@ mod tests {
         assert!(drawn.contains(&"Pawn".to_string()), "{drawn:?}");
         assert!(all.contains("Pickaxe"), "{drawn:?}");
         assert!(all.contains("Iron ore"), "{drawn:?}");
-        assert!(all.contains("12"), "{drawn:?}");
+        assert!(
+            drawn
+                .iter()
+                .any(|text| text.contains("Iron ore") && text.contains("12") && text != "12:00"),
+            "no one label pairs the resource with its count: {drawn:?}"
+        );
     }
 
     #[test]

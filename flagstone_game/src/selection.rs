@@ -93,9 +93,40 @@ mod tests {
 
     #[test]
     fn a_ray_through_the_pawn_picks_it() {
-        let picked = pick_pawn(ray_at_center(10.0), [(PLAYER_PAWN, pawn_at_center())], None);
+        let origin = CENTER + Vec3::new(-6.0, 8.0, 6.0);
+        let from_above = ray(origin, CENTER - origin);
+
+        let picked = pick_pawn(from_above, [(PLAYER_PAWN, pawn_at_center())], None);
 
         assert_eq!(picked, Some(PLAYER_PAWN));
+    }
+
+    /// Rays along `(1, 0, -1)` and `(1, -1, 0)` that pass an edge of the box `offset` metres
+    /// (measured along the sum of the two moving axes) beyond it; positive misses.
+    fn assert_oblique_edges_decide_by_interval_overlap() {
+        let aabb = pawn_at_center();
+        let delta = 0.0014;
+        let xz_edge = |offset: f32| {
+            let sum = aabb.max.x + aabb.max.z + offset;
+            let x = CENTER.x - 10.0;
+            ray(Vec3::new(x, CENTER.y, sum - x), Vec3::new(1.0, 0.0, -1.0))
+        };
+        let top_edge = |offset: f32| {
+            let sum = aabb.max.x + aabb.max.y + offset;
+            let x = CENTER.x - 10.0;
+            ray(Vec3::new(x, sum - x, CENTER.z), Vec3::new(1.0, -1.0, 0.0))
+        };
+
+        for (name, line) in [
+            ("xz edge", &xz_edge as &dyn Fn(f32) -> Ray),
+            ("top edge", &top_edge),
+        ] {
+            let outside = pick_pawn(line(delta), [(PLAYER_PAWN, aabb)], None);
+            let inside = pick_pawn(line(-delta), [(PLAYER_PAWN, aabb)], None);
+
+            assert_eq!(outside, None, "{name}: 1 mm outside must miss");
+            assert_eq!(inside, Some(PLAYER_PAWN), "{name}: 1 mm inside must hit");
+        }
     }
 
     #[test]
@@ -126,6 +157,8 @@ mod tests {
                 );
             }
         }
+
+        assert_oblique_edges_decide_by_interval_overlap();
     }
 
     #[test]
@@ -141,13 +174,16 @@ mod tests {
 
     #[test]
     fn terrain_behind_the_pawn_does_not_hide_it() {
-        let picked = pick_pawn(
-            ray_at_center(10.0),
-            [(PLAYER_PAWN, pawn_at_center())],
-            Some(20.0),
-        );
+        // The box is entered at 9.7 and left at 10.3.
+        for terrain in [9.8, 10.0, 10.2, 20.0] {
+            let picked = pick_pawn(
+                ray_at_center(10.0),
+                [(PLAYER_PAWN, pawn_at_center())],
+                Some(terrain),
+            );
 
-        assert_eq!(picked, Some(PLAYER_PAWN));
+            assert_eq!(picked, Some(PLAYER_PAWN), "terrain at {terrain}");
+        }
     }
 
     #[test]
@@ -256,7 +292,14 @@ mod tests {
         let mut selection = Selection::default();
 
         selection.click(Some(PLAYER_PAWN));
+        let first = selection.selected();
+        selection.click(Some(PLAYER_PAWN));
 
-        assert_eq!(selection.selected(), Some(PLAYER_PAWN));
+        assert_eq!(first, Some(PLAYER_PAWN));
+        assert_eq!(
+            selection.selected(),
+            Some(PLAYER_PAWN),
+            "clicking again must not toggle"
+        );
     }
 }
