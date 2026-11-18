@@ -1,6 +1,6 @@
 //! Items defined in data: one model for weapons, magazines, rounds, rigs and tools.
 
-use crate::ballistics::MIN_SPEED;
+use crate::ballistics::{Ballistics, MIN_SPEED};
 use crate::weapon::RifleDef;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -104,6 +104,17 @@ pub struct RoundSpec {
     pub muzzle_velocity: f32,
     /// Drag, in 1/s; 0 or more.
     pub drag: f32,
+}
+
+impl RoundSpec {
+    /// The flight constants of this round.
+    #[must_use]
+    pub fn ballistics(&self) -> Ballistics {
+        Ballistics {
+            muzzle_velocity: self.muzzle_velocity,
+            drag: self.drag,
+        }
+    }
 }
 
 /// Why a round section was refused.

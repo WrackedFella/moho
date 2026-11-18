@@ -41,6 +41,13 @@ fn standing_centre(body: &CharacterBody, floor: Vec3) -> Vec3 {
     floor + Vec3::Y * (body.standing.hull.length / 2.0)
 }
 
+/// Where the player's shot leaves, which way it points, and where the player stands.
+struct PlayerAim {
+    origin: Vec3,
+    direction: Vec3,
+    from: Vec3,
+}
+
 /// The target number of the dummy at `index` in a spawn list.
 ///
 /// # Panics
@@ -739,21 +746,13 @@ impl SearchlightSim {
     fn step_rounds(&mut self, gravity: f32, dt: f32) {
         for mut round in std::mem::take(&mut self.rounds) {
             let step = step_round(&self.world, &round, gravity, dt);
-            let hit = step.strike.and_then(|strike| match strike.tag {
-                SurfaceTag::Part { target, part } => Some((target, part, strike.point)),
-                _ => None,
-            });
-            let struck = hit.map(|(target, ..)| usize::from(target));
-            self.record_near_misses(
+            self.land_segment(
                 round.flight.position,
                 step.end,
-                struck,
+                step.strike,
                 round.from,
                 &mut round.near_missed,
             );
-            if let Some((target, part, point)) = hit {
-                self.apply_player_hit(target, part, self.damage, round.from, point);
-            }
             let ended = step.strike.is_some()
                 || step.flight.is_spent()
                 || !self.origin.0.bounds.contains(step.flight.position);
@@ -790,43 +789,67 @@ impl SearchlightSim {
             tracing::warn!(%round, "the round has no ballistics, nothing flies");
             return;
         };
-        let state = self.player();
-        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
-        let origin = self.leaned_eye(&state);
+        let aim = self.player_aim();
         self.rounds.push(RoundInFlight {
-            flight: Flight::fired(origin, view.forward, &ballistics),
+            flight: Flight::fired(aim.origin, aim.direction, &ballistics),
             ballistics,
             shooter: Some(self.player),
-            from: state.position,
+            from: aim.from,
             near_missed: Vec::new(),
         });
+    }
+
+    /// Where the player's shot leaves and which way, and where the player stands.
+    fn player_aim(&self) -> PlayerAim {
+        let state = self.player();
+        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
+        PlayerAim {
+            origin: self.leaned_eye(&state),
+            direction: view.forward,
+            from: state.position,
+        }
     }
 
     /// Simple's shot: one ray from the leaned eye along the view, as far as the flight bounds
     /// reach.
     fn resolve_player_shot(&mut self) {
-        let state = self.player();
-        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
-        let origin = self.leaned_eye(&state);
+        let PlayerAim {
+            origin,
+            direction,
+            from,
+        } = self.player_aim();
         let range = self.origin.0.bounds.reach();
         let strike = resolve_shot(
             &self.world,
             ShotRay {
                 origin,
-                direction: view.forward,
+                direction,
                 range,
                 ignore: Some(self.player),
             },
         );
-        let end = strike.map_or(origin + view.forward * range, |strike| strike.point);
+        let end = strike.map_or(origin + direction * range, |strike| strike.point);
+        self.land_segment(origin, end, strike, from, &mut Vec::new());
+    }
+
+    /// Lands one stretch of a player's shot from `origin` to `end`, fired from `from`: counts
+    /// its near misses (once per enemy in `counted`) and lands `strike` if it is a body part.
+    fn land_segment(
+        &mut self,
+        origin: Vec3,
+        end: Vec3,
+        strike: Option<Strike>,
+        from: Vec3,
+        counted: &mut Vec<u16>,
+    ) {
         let hit = strike.and_then(|strike| match strike.tag {
-            SurfaceTag::Part { target, part } => Some((target, part)),
+            SurfaceTag::Part { target, part } => Some((target, part, strike.point)),
             _ => None,
         });
-        let struck = hit.map(|(target, _)| usize::from(target));
-        self.record_near_misses(origin, end, struck, state.position, &mut Vec::new());
-        if let (Some((target, part)), Some(strike)) = (hit, strike) {
-            self.apply_player_hit(target, part, self.damage, state.position, strike.point);
+        let struck = hit.map(|(target, ..)| usize::from(target));
+        self.record_near_misses(origin, end, struck, from, counted);
+        if let Some((target, part, point)) = hit {
+            self.apply_player_hit(target, part, self.damage, from, point);
         }
     }
 

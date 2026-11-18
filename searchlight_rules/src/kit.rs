@@ -174,13 +174,7 @@ impl KitDef {
         for entry in std::iter::once(&self.loaded).chain(&self.magazines) {
             // `build` already proved each round id names a round.
             if let ItemKind::Round(round) = &find(&entry.round)?.kind {
-                rounds.insert(
-                    entry.round.clone(),
-                    Ballistics {
-                        muzzle_velocity: round.muzzle_velocity,
-                        drag: round.drag,
-                    },
-                );
+                rounds.insert(entry.round.clone(), round.ballistics());
             }
         }
         Ok(Kit {
