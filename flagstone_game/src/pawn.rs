@@ -44,12 +44,15 @@ pub struct Pawn {
     pub pickups: PickupFeed,
     /// What the pawn is doing on its own; `Job::Idle` while possessed.
     pub job: Job,
+    /// Where the idle mark scan resumes among the distance-sorted candidates.
+    pub(crate) scan_cursor: usize,
 }
 
 impl Default for Pawn {
     fn default() -> Self {
         Self {
             job: Job::Idle,
+            scan_cursor: 0,
             inventory: Inventory::default(),
             equipped_tool: Some(STARTING_TOOL),
             selected_slot: TOOL_SLOT,

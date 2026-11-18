@@ -115,7 +115,7 @@ pub fn step(
     grid: &VoxelGrid,
 ) -> JobAction {
     let (job, action) = match std::mem::take(&mut pawn.job) {
-        Job::Idle => match claim_nearest(id, pose, marks, grid) {
+        Job::Idle => match claim_nearest(id, pose, marks, grid, &mut pawn.scan_cursor) {
             Some(job) => {
                 pawn.select_slot(TOOL_SLOT);
                 advance(job, pose, marks, grid)
@@ -134,7 +134,18 @@ fn is_exposed(grid: &VoxelGrid, block: BlockPos) -> bool {
 }
 
 /// Claims the nearest unclaimed mark with an exposed face that routes to a stand cell.
-fn claim_nearest(id: PawnId, pose: Pose, marks: &mut MineMarks, grid: &VoxelGrid) -> Option<Job> {
+///
+/// Each call tries at most `MAX_ROUTE_ATTEMPTS` candidates, nearest first, starting at
+/// `cursor` (an index into the distance-sorted list). A failed scan moves `cursor` past
+/// the candidates tried, wrapping, so unreachable near marks cannot starve far reachable
+/// ones; a claim resets it to the nearest.
+fn claim_nearest(
+    id: PawnId,
+    pose: Pose,
+    marks: &mut MineMarks,
+    grid: &VoxelGrid,
+    cursor: &mut usize,
+) -> Option<Job> {
     let from = feet_cell(pose.feet);
     let mut candidates: Vec<BlockPos> = marks
         .unclaimed()
@@ -143,7 +154,16 @@ fn claim_nearest(id: PawnId, pose: Pose, marks: &mut MineMarks, grid: &VoxelGrid
         .collect();
     candidates.sort_by_key(|&block| (block - from).length_squared());
 
-    for block in candidates.into_iter().take(MAX_ROUTE_ATTEMPTS) {
+    if candidates.is_empty() {
+        *cursor = 0;
+        return None;
+    }
+    let start = *cursor % candidates.len();
+    let attempts = MAX_ROUTE_ATTEMPTS.min(candidates.len());
+    *cursor = (start + attempts) % candidates.len();
+
+    for offset in 0..attempts {
+        let block = candidates[(start + offset) % candidates.len()];
         let is_stand_cell = |c: BlockPos| {
             (c.x - block.x).abs() <= 1
                 && (c.z - block.z).abs() <= 1
@@ -157,6 +177,7 @@ fn claim_nearest(id: PawnId, pose: Pose, marks: &mut MineMarks, grid: &VoxelGrid
         if !marks.claim(mark, id) {
             continue;
         }
+        *cursor = 0;
         return Some(Job::Mine {
             mark,
             route,
