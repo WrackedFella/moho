@@ -412,7 +412,6 @@ impl Stage {
         }
     }
 
-    /// Draws each of `controls` in [`Paint::Control`].
     fn add_controls(&mut self, controls: &[ArenaControl]) {
         let material = self.scene.material_table.find_or_push(&Paint::Control);
         for (index, control) in controls.iter().enumerate() {
@@ -424,7 +423,6 @@ impl Stage {
         }
     }
 
-    /// Shows `prompt` below the crosshair, or nothing for `None`.
     fn show_prompt(&mut self, prompt: Option<String>) {
         #[cfg(test)]
         {
@@ -1565,7 +1563,6 @@ mod tests {
         control_game_with(bindings)
     }
 
-    /// Runs one frame with no renderer.
     fn frame_once(game: &mut SearchlightGame) {
         let clock = GameClock::default();
         let mut ctx = FrameContext::new(TICK, &clock, None, None);
