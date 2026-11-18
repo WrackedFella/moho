@@ -2493,9 +2493,7 @@ mod tests {
                 }
             }
 
-            assert_eq!(kills_after[..4], [0, 0, 0, 0]);
-            assert_eq!(kills_after.last(), Some(&1));
-            assert!(kills_after.windows(2).all(|pair| pair[0] <= pair[1]));
+            assert_eq!(kills_after, [0, 0, 0, 0, 1, 1, 1, 1, 1, 1]);
             assert_eq!(sim.enemies_alive(), 0);
             assert_eq!(sim.enemy_count(), 1);
         }
@@ -5708,17 +5706,104 @@ mod round_tests {
             point.y < aim.y - 0.005,
             "scale 1 struck {point:?}, not below the aim point {aim:?}"
         );
-        for (_, _, part, point) in heavy {
-            assert_ne!(
-                part,
-                BodyPart::Head,
-                "scale 30 still hit the head at {point:?}"
-            );
-            assert!(
-                point.y < aim.y - HEAD_HALF,
-                "scale 30 struck {point:?}, not below the head volume around {aim:?}"
-            );
+        let [(_, 0, part, point)] = heavy[..] else {
+            panic!("scale 30 should strike the dummy once: {heavy:?}");
+        };
+        assert_ne!(
+            part,
+            BodyPart::Head,
+            "scale 30 still hit the head at {point:?}"
+        );
+        assert!(
+            point.y < aim.y - HEAD_HALF,
+            "scale 30 struck {point:?}, not below the head volume around {aim:?}"
+        );
+    }
+
+    #[test]
+    fn a_round_that_strikes_a_dummy_stops_there() {
+        let mut sim = SearchlightSim::new(
+            long_floor(),
+            Vec3::ZERO,
+            &[Vec3::new(0.0, 0.0, 20.0), Vec3::new(0.0, 0.0, 30.0)],
+            config_with(test_ballistics(), TORSO_Y),
+        );
+
+        let ticks = run_until_settled(&mut sim, &[pull()]);
+
+        let landed: Vec<_> = hits(&ticks)
+            .into_iter()
+            .map(|(tick, target, part, _)| (tick > 0, target, part))
+            .collect();
+        assert_eq!(landed, [(true, 0, BodyPart::Torso)], "{ticks:?}");
+        assert_eq!(sim.dummy_body(1).expect("a dummy stands").health(), 100);
+        assert!(sim.rounds.is_empty(), "the round flew on past the dummy");
+    }
+
+    #[test]
+    fn a_round_below_its_minimum_speed_ends_in_open_air() {
+        // At 60 Hz this round keeps 5/6 of its speed a tick, so it is below 100 m/s after three
+        // steps and has flown about 5 m, far short of the dummy and of the bounds.
+        let slow = Ballistics {
+            muzzle_velocity: 150.0,
+            drag: 10.0,
+        };
+        let mut sim = dummy_sim(30.0, TORSO_Y, slow);
+
+        let ticks = run_until_settled(&mut sim, &[fire_at(0.0)]);
+
+        assert!(!ticks.iter().flatten().any(is_hit), "{ticks:?}");
+        assert!(sim.rounds.is_empty(), "the round never ended");
+        assert!(
+            ticks.len() <= 6,
+            "the round flew {} ticks, so it was not spent",
+            ticks.len()
+        );
+        assert_eq!(sim.dummy_body(0).expect("a dummy stands").health(), 100);
+    }
+
+    #[test]
+    fn under_simple_the_hitscan_reaches_as_far_as_the_flight_bounds() {
+        let mut sim = dummy_sim(250.0, TORSO_Y, test_ballistics());
+        let simple = SearchlightCommand {
+            simple: true,
+            ..pull()
+        };
+
+        let ticks = run_until_hit(&mut sim, &[simple]);
+
+        let landed: Vec<_> = hits(&ticks)
+            .into_iter()
+            .map(|(tick, target, part, _)| (tick, target, part))
+            .collect();
+        assert_eq!(landed, [(0, 0, BodyPart::Torso)], "{ticks:?}");
+        assert!(sim.rounds.is_empty(), "Simple left a round flying");
+    }
+
+    #[test]
+    fn rounds_in_flight_do_not_step_while_the_player_is_dead() {
+        let mut sim = dummy_sim(60.0, TORSO_Y, test_ballistics());
+        sim.tick(&pull(), DT);
+        sim.tick(&idle(), DT);
+        sim.drain_feedback();
+        let before: Vec<_> = sim.rounds.iter().map(|round| round.flight).collect();
+        sim.kill_player();
+
+        let mut ticks = Vec::new();
+        for _ in 0..5 {
+            sim.tick(&idle(), DT);
+            ticks.push(sim.drain_feedback());
         }
+
+        let after: Vec<_> = sim.rounds.iter().map(|round| round.flight).collect();
+        assert_eq!(
+            before.len(),
+            1,
+            "no round was in flight when the player died"
+        );
+        assert_eq!(after, before, "a round moved while the player was dead");
+        assert!(!ticks.iter().flatten().any(is_hit), "{ticks:?}");
+        assert_eq!(sim.dummy_body(0).expect("a dummy stands").health(), 100);
     }
 
     #[test]
@@ -6047,20 +6132,26 @@ mod round_tests {
         assert!(sim.rounds.is_empty(), "Simple left a round flying");
     }
 
-    /// A duel on a long floor in which neither body can die: the player pulls every fourth
-    /// tick at an enemy 10 m ahead that fires back with aim error, for 240 ticks.
-    fn fight() -> Vec<Vec<Feedback>> {
-        let arena = arena_with_floor(
-            60.0,
-            &[],
-            Vec3::ZERO,
-            &[Vec3::new(0.0, 0.0, 10.0)],
-            &[Vec3::new(0.0, 0.0, 10.0)],
-        );
-        let mut config = config_with(test_ballistics(), HEAD_Y);
+    /// The enemies of the fight, 40 m and 58 m from the player.
+    const NEAR_FOE: Vec3 = Vec3::new(0.0, 0.0, 40.0);
+    const FAR_FOE: Vec3 = Vec3::new(3.0, 0.0, 58.0);
+
+    /// A fight on a long floor in which neither body can die: the player pulls every fourth
+    /// tick at enemies 40 m and 58 m ahead that fire back with aim error, for 240 ticks. A
+    /// 400 m/s round takes 6 to 9 ticks to arrive, so rounds overlap in flight, and the player
+    /// swings the aim 0.004 rad to the side and back so the strike points vary. Returns every
+    /// tick's feedback and the most rounds that were in flight after any tick.
+    fn fight() -> (Vec<Vec<Feedback>>, usize) {
+        let arena = arena_with_floor(140.0, &[], Vec3::ZERO, &[NEAR_FOE, FAR_FOE], &[NEAR_FOE]);
+        let slow = Ballistics {
+            muzzle_velocity: 400.0,
+            drag: 1.0,
+        };
+        let mut config = config_with(slow, HEAD_Y);
         config.enemy.aim_error = 0.05;
         config.enemy.damage = 1;
         config.enemy.patrol_speed = 0.0;
+        config.enemy.sight_range = 100.0;
         config.body = BodyProfile {
             max_health: 1_000_000,
             head_status: 1_000_000,
@@ -6068,20 +6159,41 @@ mod round_tests {
             leg_status: 1_000_000,
         };
         let mut sim = SearchlightSim::start(arena, config);
-        (0..240)
+        let mut most_in_flight = 0;
+        let ticks = (0..240)
             .map(|tick| {
-                sim.tick(&if tick % 4 == 0 { pull() } else { idle() }, DT);
+                let yaw_delta = match tick % 16 {
+                    1 => 0.004,
+                    9 => -0.004,
+                    _ => 0.0,
+                };
+                let command = SearchlightCommand {
+                    movement: CharacterCommand {
+                        yaw_delta,
+                        ..CharacterCommand::default()
+                    },
+                    fire: tick % 4 == 0,
+                    ..idle()
+                };
+                sim.tick(&command, DT);
+                most_in_flight = most_in_flight.max(sim.rounds.len());
                 sim.drain_feedback()
             })
-            .collect()
+            .collect();
+        (ticks, most_in_flight)
     }
 
     #[test]
     fn a_fight_with_rounds_in_flight_replays_every_feedback_tick_for_tick() {
-        let first = fight();
-        let second = fight();
+        let (first, first_most) = fight();
+        let (second, second_most) = fight();
 
         assert_eq!(first, second);
+        assert_eq!(first_most, second_most);
+        assert!(
+            first_most >= 2,
+            "at most {first_most} round was in flight at once"
+        );
         let landed = hits(&first);
         assert!(landed.len() >= 20, "the fight landed {} hits", landed.len());
         assert!(
@@ -6089,9 +6201,9 @@ mod round_tests {
             "a round landed on the tick it was pulled: {landed:?}"
         );
         assert!(
-            landed
-                .iter()
-                .all(|(_, _, _, point)| (point.z - 10.0).abs() < 1.0),
+            landed.iter().all(|(_, _, _, point)| {
+                (point.z - NEAR_FOE.z).abs() < 1.0 || (point.z - FAR_FOE.z).abs() < 1.0
+            }),
             "{landed:?}"
         );
         assert!(

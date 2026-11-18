@@ -226,6 +226,11 @@ pub(crate) fn run_until_settled(
         sim.tick(&idle, DT);
         ticks.push(sim.drain_feedback());
     }
+    assert!(
+        sim.rounds.is_empty(),
+        "{} round(s) still in flight after {WAIT_TICKS} idle ticks",
+        sim.rounds.len()
+    );
     ticks
 }
 

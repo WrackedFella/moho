@@ -164,6 +164,23 @@ mod tests {
     }
 
     #[test]
+    fn a_step_with_drag_and_gravity_applies_drag_before_gravity() {
+        let flight = Flight {
+            position: Vec3::ZERO,
+            velocity: Vec3::new(600.0, 0.0, 0.0),
+        };
+        let ballistics = Ballistics {
+            muzzle_velocity: 600.0,
+            drag: 2.0,
+        };
+
+        let next = flight.step(&ballistics, 10.0, 0.25);
+
+        assert_eq!(next.velocity, Vec3::new(300.0, -2.5, 0.0));
+        assert_eq!(next.position, Vec3::new(75.0, -0.625, 0.0));
+    }
+
+    #[test]
     fn drag_past_one_step_stops_the_round_and_never_reverses_it() {
         let heavy = Ballistics {
             muzzle_velocity: 940.0,
@@ -188,6 +205,17 @@ mod tests {
         assert!(at(0.0).is_spent());
         assert!(!at(MIN_SPEED + 0.01).is_spent());
         assert!(!at(940.0).is_spent());
+    }
+
+    #[test]
+    fn a_flight_is_spent_by_its_speed_not_by_one_axis() {
+        let moving = |velocity: Vec3| Flight {
+            position: Vec3::ZERO,
+            velocity,
+        };
+
+        assert!(!moving(Vec3::new(80.0, 0.0, 80.0)).is_spent());
+        assert!(moving(Vec3::new(60.0, 0.0, 80.0)).is_spent());
     }
 
     #[test]
@@ -226,17 +254,19 @@ mod tests {
         let a = Vec3::new(0.0, 0.0, 0.0);
         let b = Vec3::new(10.0, 20.0, 30.0);
 
-        let bounds = FlightBounds::around([a, b], 5.0);
+        let bounds = FlightBounds::around([b, Vec3::new(0.0, 40.0, 0.0), a], 5.0);
 
+        assert_eq!(bounds.min, Vec3::new(-5.0, -5.0, -5.0));
+        assert_eq!(bounds.max, Vec3::new(15.0, 45.0, 35.0));
         assert!(bounds.contains(a));
         assert!(bounds.contains(b));
         assert!(bounds.contains(Vec3::new(-5.0, -5.0, -5.0)), "on a face");
-        assert!(bounds.contains(Vec3::new(15.0, 25.0, 35.0)), "on a face");
+        assert!(bounds.contains(Vec3::new(15.0, 45.0, 35.0)), "on a face");
         assert!(!bounds.contains(Vec3::new(-5.01, 0.0, 0.0)));
         assert!(!bounds.contains(Vec3::new(0.0, -5.01, 0.0)));
         assert!(!bounds.contains(Vec3::new(0.0, 0.0, -5.01)));
         assert!(!bounds.contains(Vec3::new(15.01, 0.0, 0.0)));
-        assert!(!bounds.contains(Vec3::new(0.0, 25.01, 0.0)));
+        assert!(!bounds.contains(Vec3::new(0.0, 45.01, 0.0)));
         assert!(!bounds.contains(Vec3::new(0.0, 0.0, 35.01)));
     }
 

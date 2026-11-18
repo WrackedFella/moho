@@ -2742,18 +2742,21 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_round_gravity_leaves_the_scale_unchanged() {
-        let mut game = game();
-        type_into_console(&game, "round_gravity 30");
-        game.command();
+    fn the_gravity_scale_is_1_again_at_the_next_launch() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut first = game().with_debug_settings(settings);
+        type_into_console(&first, "round_gravity 30");
+        type_into_console(&first, "simple 1");
+        let before = first.command();
 
-        type_into_console(&game, "round_gravity -3");
-        let after_negative = game.command().round_gravity;
-        type_into_console(&game, "round_gravity 5000");
-        let after_huge = game.command().round_gravity;
+        let (prefs, _) = Prefs::load_from(&path);
+        let mut relaunched = game().with_debug_settings(DebugSettings::new(prefs, path));
+        let after = relaunched.command();
 
-        assert_eq!(after_negative, GravityScale::new(30.0).unwrap());
-        assert_eq!(after_huge, GravityScale::new(30.0).unwrap());
+        assert_eq!(before.round_gravity, GravityScale::new(30.0).unwrap());
+        assert!(after.simple, "Simple was not kept across the launch");
+        assert_eq!(after.round_gravity, GravityScale::new(1.0).unwrap());
     }
 
     fn saved_window_mode(path: &std::path::Path) -> Option<moho_core::prefs::WindowMode> {

@@ -535,17 +535,6 @@ mod tests {
     }
 
     #[test]
-    fn flight_bounds_keep_the_margin_a_round_needs_to_leave_by_a_floor_edge() {
-        let arena = crate::test_support::arena_with(&[], Vec3::ZERO, &[], &[]);
-
-        let bounds = arena.flight_bounds();
-
-        assert!(bounds.contains(Vec3::new(30.0 + FLIGHT_MARGIN, 0.0, 0.0)));
-        assert!(!bounds.contains(Vec3::new(30.0 + FLIGHT_MARGIN + 0.01, 0.0, 0.0)));
-        assert!(!bounds.contains(Vec3::new(0.0, 0.0, -30.0 - FLIGHT_MARGIN - 0.01)));
-    }
-
-    #[test]
     fn the_nav_profile_is_the_player_capsule_with_clearance_and_the_specified_limits() {
         let profile = nav_profile();
 

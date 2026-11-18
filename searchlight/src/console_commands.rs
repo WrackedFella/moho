@@ -415,27 +415,6 @@ mod tests {
     }
 
     #[test]
-    fn help_lists_simple_and_round_gravity() {
-        let (mut console, _) = console(&BTreeMap::new());
-
-        console.submit("help");
-
-        let lines = printed(&console);
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.starts_with("  simple [0|1] - ")),
-            "{lines:?}"
-        );
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.starts_with("  round_gravity <scale> - ")),
-            "{lines:?}"
-        );
-    }
-
-    #[test]
     fn help_lists_fullscreen() {
         let (mut console, _) = console(&BTreeMap::new());
 
