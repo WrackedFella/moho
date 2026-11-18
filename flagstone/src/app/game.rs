@@ -10,7 +10,7 @@ use flagstone_game::controller::{
     CameraMode, ControllerInput, EDGE_PAN_MARGIN_PX, controller_to_camera, edge_pan_axes,
 };
 use flagstone_game::raycast::raycast_surface;
-use flagstone_game::selection::{PLAYER_PAWN, pawn_aabb, pick_pawn};
+use flagstone_game::selection::{Aabb, PLAYER_PAWN, pawn_aabb, pick_pawn};
 use flagstone_ui::actions::StrategyAction;
 use flagstone_ui::console_commands::StrategyConsoleCommand;
 use flagstone_voxel::MaterialType;
@@ -224,12 +224,17 @@ impl App {
         }
     }
 
+    /// The pawn's box where it stands.
+    fn pawn_box(&self) -> Aabb {
+        pawn_aabb(self.simulation.position())
+    }
+
     /// Selects the pawn the ray reaches before the terrain, or clears the selection when it
     /// reaches none; selecting plays the click cue.
     fn select_pawn(&mut self, ray: Ray) {
         let picked = pick_pawn(
             ray,
-            [(PLAYER_PAWN, pawn_aabb(self.simulation.position()))],
+            [(PLAYER_PAWN, self.pawn_box())],
             self.pointer_hit.map(|hit| hit.distance),
         );
         self.selection.click(picked);
@@ -242,18 +247,17 @@ impl App {
     /// Draws or removes the selection mark: an outline of the pawn's box while it is selected
     /// in the strategy view.
     fn sync_selection_marker(&mut self) {
+        let shown = self.selection.selected().is_some()
+            && self.simulation.camera_mode() == CameraMode::Isometric;
+        let marked = shown.then(|| self.pawn_box());
         let markers = self.scene.markers_mut();
-        let shown = self.simulation.camera_mode() == CameraMode::Isometric;
-        match self.selection.selected() {
-            Some(_) if shown => {
-                let aabb = pawn_aabb(self.simulation.position());
-                markers.upsert(
-                    SELECTION_MARKER_ID,
-                    Marker::new(aabb.min.to_array(), aabb.max.to_array(), SELECTION_COLOR)
-                        .with_style(MarkerStyle::Outline),
-                );
-            }
-            _ => markers.remove(SELECTION_MARKER_ID),
+        match marked {
+            Some(aabb) => markers.upsert(
+                SELECTION_MARKER_ID,
+                Marker::new(aabb.min.to_array(), aabb.max.to_array(), SELECTION_COLOR)
+                    .with_style(MarkerStyle::Outline),
+            ),
+            None => markers.remove(SELECTION_MARKER_ID),
         }
     }
 
@@ -377,14 +381,15 @@ impl App {
         renderer: &mut dyn moho_renderer::RendererBackend,
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     ) {
-        let mut cubes = self.entities.actors.cubes().to_vec();
+        let mut cubes = std::borrow::Cow::Borrowed(self.entities.actors.cubes());
         if self.simulation.camera_mode() == CameraMode::Isometric {
-            let aabb = pawn_aabb(self.simulation.position());
-            cubes.push(Cube::new(
+            let aabb = self.pawn_box();
+            let size = aabb.max - aabb.min;
+            cubes.to_mut().push(Cube::new(
                 self.simulation.position(),
-                aabb.max.x - aabb.min.x,
-                aabb.max.z - aabb.min.z,
-                aabb.max.y - aabb.min.y,
+                size.x,
+                size.z,
+                size.y,
                 PAWN_BODY_MATERIAL,
             ));
         }
