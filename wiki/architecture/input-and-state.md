@@ -93,7 +93,17 @@ The same ray also picks the pawn: `flagstone_game::selection::pick_pawn` tests i
 
 `StrategyAction::MineDesignation` (`M` by default, or the HUD toggle) flips `Designation` in `flagstone/src/app/input_state.rs` between `None` and `Mine`. While `Mine` is active, the click's ray goes into `StrategyCommand::mark` instead of `select`. The apply step casts it as above and toggles the hit block in `flagstone_game::colony::Colony::marks` (`MineMarks`), then plays the `mark` or `unmark` cue through `AudioEvent::PlaySound`; a miss changes nothing. `process_world_events` drops a block's mark on every `WorldEvent::BlockRemoved`, the one path every removal takes. Each frame `DesignationMarkers::sync` (`flagstone/src/app/designation_markers.rs`) mirrors the marks into scene markers ([rendering](rendering.md#6-markers)).
 
-`StrategyAction::Possess` (`Tab` by default) switches between the strategy view and first person. A tick with `Possess` pressed sets `StrategyCommand::toggle_view`; the apply step then calls `App::toggle_camera_mode` and `apply_cursor`, so the switch happens once per press, on the tick, and never outside `Playing`. The mode switch publishes a placeholder `AudioEvent` (`Confirm` entering first person, `Cancel` returning). The pawn keeps its pose across the switch and does not move while in the strategy view.
+`StrategyAction::Possess` (`Tab` by default) switches between the strategy view and first person. A tick with `Possess` pressed sets `StrategyCommand::toggle_view`; the apply step then calls `App::toggle_camera_mode` and `apply_cursor`, so the switch happens once per press, on the tick, and never outside `Playing`. The mode switch publishes a placeholder `AudioEvent` (`Confirm` entering first person, `Cancel` returning). The pawn keeps its pose across the switch; in the strategy view it works the marks on its own ([pawn jobs](#21-pawn-jobs)), so returning to first person starts where it walked to.
+
+### 2.1 Pawn jobs
+
+In the strategy view, `FrameProcessor::run_pawn_job` (`flagstone/src/app/event_loop/frame_processor.rs`) runs once per tick after the camera update. It calls `flagstone_game::jobs::step` on the pawn's `Job` (`Idle` or `Mine`) and acts on the returned `JobAction`:
+
+- `Wait`: nothing moves.
+- `Walk`: `jobs::steer` turns the target into a `CharacterCommand` (forward and yaw only), moved with `STRATEGY_MOVE_SETTINGS` through the same `move_character` the first-person player uses; the simulation pose follows the body.
+- `Dig`: `Pawn::dig` aims from the eye at the marked block within `MINE_REACH`, adds the yield to `Colony::stock`, and `publish_pawn_dig` publishes the removal and a positional dig cue.
+
+An idle pawn claims the nearest unclaimed mark it can route to (`MineMarks::claim`, at most `ROUTE_ATTEMPTS_PER_TICK` searches per tick). The route is a walkable-cell search over the grid (`flagstone_game::routing::route`, bounded by `ROUTE_NODE_BUDGET`; a cell is `standable` with ground below and three cells of air). A `StallGuard` drops the mark after `STALL_TICKS` without progress, and cancelling the mark or removing the block releases the claim. A dig ends the job.
 
 ## 3 GameState
 
