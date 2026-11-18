@@ -311,6 +311,37 @@ mod tests {
     }
 
     #[test]
+    fn the_heuristic_keeps_an_open_field_search_inside_a_small_budget() {
+        let grid = flat(30, 30);
+        let start = cell(2, 1, 15);
+        let goal = cell(22, 1, 15);
+
+        let found = route(&grid, start, |c| c == goal, goal, 25);
+
+        assert_eq!(
+            found.map(|r| r.len()),
+            Some(20),
+            "a Manhattan-guided search walks the line; a blind one floods the field"
+        );
+    }
+
+    #[test]
+    fn a_route_around_a_concave_wall_is_the_shortest_one() {
+        let mut grid = flat(12, 12);
+        fill(&mut grid, [6, 1, 3], [6, 2, 7]);
+        fill(&mut grid, [3, 1, 3], [6, 2, 3]);
+        fill(&mut grid, [3, 1, 7], [6, 2, 7]);
+
+        let found = find(&grid, cell(0, 1, 5), cell(10, 1, 5));
+
+        assert_eq!(
+            found.map(|r| r.len()),
+            Some(16),
+            "3 down to z = 2, 10 across, 3 back up"
+        );
+    }
+
+    #[test]
     fn the_search_stops_at_the_nearest_of_several_goals() {
         let grid = flat(10, 0);
 
@@ -345,7 +376,76 @@ mod tests {
         )
     }
 
+    const SIDE: usize = 8;
+
+    fn square_terrain(heights: &[u8]) -> VoxelGrid {
+        let mut grid = VoxelGrid::new(16);
+        for (i, &h) in heights.iter().enumerate() {
+            let (x, z) = ((i % SIDE) as i32, (i / SIDE) as i32);
+            fill(&mut grid, [x, 0, z], [x, i32::from(h) - 1, z]);
+        }
+        grid
+    }
+
+    fn square_feet(heights: &[u8], index: usize) -> BlockPos {
+        cell(
+            (index % SIDE) as i32,
+            i32::from(heights[index]),
+            (index / SIDE) as i32,
+        )
+    }
+
+    /// The moves the spec allows, written out independently of the search.
+    fn steps(grid: &VoxelGrid, from: BlockPos) -> Vec<BlockPos> {
+        let headroom = !grid.is_solid_at(from + BlockPos::Y * 3);
+        let mut out = Vec::new();
+        for d in [BlockPos::X, BlockPos::NEG_X, BlockPos::Z, BlockPos::NEG_Z] {
+            let level = from + d;
+            if standable(grid, level) {
+                out.push(level);
+            } else if headroom && standable(grid, level + BlockPos::Y) {
+                out.push(level + BlockPos::Y);
+            } else if standable(grid, level - BlockPos::Y) {
+                out.push(level - BlockPos::Y);
+            }
+        }
+        out
+    }
+
+    fn breadth_first_length(grid: &VoxelGrid, start: BlockPos, goal: BlockPos) -> Option<usize> {
+        let mut seen: HashMap<BlockPos, usize> = HashMap::from([(start, 0)]);
+        let mut queue = std::collections::VecDeque::from([start]);
+        while let Some(at) = queue.pop_front() {
+            let dist = seen[&at];
+            if at == goal {
+                return Some(dist);
+            }
+            for next in steps(grid, at) {
+                if let std::collections::hash_map::Entry::Vacant(slot) = seen.entry(next) {
+                    slot.insert(dist + 1);
+                    queue.push_back(next);
+                }
+            }
+        }
+        None
+    }
+
     proptest! {
+        #[test]
+        fn routes_are_as_short_as_a_breadth_first_search(
+            heights in proptest::collection::vec(1u8..=4, SIDE * SIDE),
+            from in 0usize..SIDE * SIDE,
+            to in 0usize..SIDE * SIDE,
+        ) {
+            let grid = square_terrain(&heights);
+            let start = square_feet(&heights, from);
+            let goal = square_feet(&heights, to);
+
+            let found = find(&grid, start, goal).map(|r| r.len());
+
+            prop_assert_eq!(found, breadth_first_length(&grid, start, goal));
+        }
+
         #[test]
         fn every_route_cell_is_standable_and_adjacent_to_the_previous(
             heights in proptest::collection::vec(1u8..=3, 25),

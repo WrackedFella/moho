@@ -766,6 +766,58 @@ mod tests {
     }
 
     #[test]
+    fn a_walk_that_keeps_closing_in_on_one_waypoint_is_never_stalled() {
+        let mut scene = Scene::new(&[[12, 1, 1]]);
+        scene.tick();
+        let waypoint = scene.waypoint();
+        let centre = waypoint.as_vec3() + Vec3::splat(0.5);
+        if let Job::Mine { stall, .. } = &mut scene.job {
+            *stall = StallGuard::default();
+        }
+        scene.pose.feet = Vec3::new(centre.x - 4.0, 1.0, centre.z);
+
+        for tick in 1..=STALL_TICKS + 30 {
+            let action = scene.tick();
+
+            assert_eq!(
+                action,
+                JobAction::Walk { to: centre },
+                "tick {tick} of a steady approach"
+            );
+            assert!(
+                matches!(scene.job, Job::Mine { next: 0, .. }),
+                "still walking to the first waypoint on tick {tick}: {:?}",
+                scene.job
+            );
+            scene.pose.feet.x += 0.02;
+        }
+    }
+
+    #[test]
+    fn the_dig_aims_from_an_eye_one_point_one_five_above_the_feet() {
+        let mut scene = Scene::new(&[[3, 1, 0]]);
+        scene.pose.feet = Vec3::new(2.9, 1.0, 0.5);
+        scene.marks.claim([3, 1, 0], PawnId(0));
+        scene.job = Job::Mine {
+            mark: [3, 1, 0],
+            route: vec![],
+            next: 0,
+            stall: StallGuard::default(),
+        };
+
+        let action = scene.tick();
+
+        assert_eq!(
+            action,
+            JobAction::Dig {
+                block: cell(3, 1, 0),
+                aim: Vec3::new(3.5, 2.0, 0.5)
+            },
+            "from an eye at 2.15 m the top face is nearer than the west face"
+        );
+    }
+
+    #[test]
     fn a_waypoint_that_stops_being_standable_releases_the_claim() {
         let mut scene = Scene::new(&[[8, 1, 1]]);
         scene.tick();
@@ -835,6 +887,39 @@ mod tests {
         assert_near(past_edge.forward, 0.0, "63 degrees off turns in place");
         assert_near(behind.forward, 0.0, "behind");
         assert_near(above.forward, 1.0, "height is ignored");
+    }
+
+    #[test]
+    fn steer_handles_a_diagonal_target() {
+        let pose = facing(0.0);
+
+        let ahead_right = steer(pose, pose.feet + Vec3::new(3.0, 0.0, 3.0));
+        let facing_it = steer(facing(PI / 4.0), pose.feet + Vec3::new(3.0, 0.0, 3.0));
+        let behind_left = steer(pose, pose.feet + Vec3::new(-3.0, 0.0, -3.0));
+
+        assert_near(ahead_right.forward, 1.0, "45 degrees off still walks");
+        assert_near(
+            ahead_right.yaw_delta,
+            per_tick().min(PI / 4.0),
+            "turns right",
+        );
+        assert_near(facing_it.forward, 1.0, "facing a diagonal target");
+        assert_near(facing_it.yaw_delta, 0.0, "no turn needed");
+        assert_near(behind_left.forward, 0.0, "135 degrees off turns in place");
+        assert_near(behind_left.yaw_delta, -per_tick(), "turns left");
+    }
+
+    #[test]
+    fn steer_stands_still_for_a_target_straight_above_or_at_the_feet() {
+        let pose = facing(0.0);
+
+        let above = steer(pose, pose.feet + Vec3::new(0.0, 5.0, 0.0));
+        let at_feet = steer(pose, pose.feet);
+
+        for walk in [above, at_feet] {
+            assert_near(walk.yaw_delta, 0.0, "no turn");
+            assert_near(walk.forward, 0.0, "no walk");
+        }
     }
 
     proptest! {
