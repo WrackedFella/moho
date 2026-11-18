@@ -603,6 +603,44 @@ mod tests {
         );
     }
 
+    fn stocked_data(is_fps_mode: bool) -> HudData {
+        HudData {
+            is_fps_mode,
+            colony_stock: vec![(1, 12), (3, 5)],
+            ..strategy_data(TOP)
+        }
+    }
+
+    #[test]
+    fn strategy_hud_lists_the_colony_totals() {
+        let ctx = egui::Context::default();
+        let mut hud = RtsHud::new();
+        let output = settled_frame(&ctx, &mut hud, &stocked_data(false));
+
+        let drawn = texts(&output);
+
+        assert!(drawn.contains(&"R1 ×12".to_string()), "{drawn:?}");
+        assert!(drawn.contains(&"R3 ×5".to_string()), "{drawn:?}");
+        let (first, second) = (rect_of(&output, "R1 ×12"), rect_of(&output, "R3 ×5"));
+        assert!(first.min.y < second.min.y, "not sorted by id: {drawn:?}");
+    }
+
+    #[test]
+    fn no_totals_in_first_person() {
+        let strategy = drawn_texts(&stocked_data(false));
+
+        let first_person = drawn_texts(&stocked_data(true));
+
+        assert!(
+            strategy.iter().any(|t| t.starts_with("R1")),
+            "the totals show in strategy: {strategy:?}"
+        );
+        assert!(
+            !first_person.iter().any(|t| t.starts_with('R')),
+            "{first_person:?}"
+        );
+    }
+
     #[test]
     fn render_time_of_day_shows_clock_in_top_right() {
         let ctx = egui::Context::default();

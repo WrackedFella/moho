@@ -436,6 +436,7 @@ impl FrameProcessor {
                 .collect(),
             selection,
             mine_designation_active: app.input.designation == Designation::Mine,
+            colony_stock: Vec::new(),
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {
@@ -451,7 +452,7 @@ impl Default for FrameProcessor {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::game_state::GameState;
     use flagstone_voxel::{VoxelChunk, WorldEvent};
@@ -1241,5 +1242,288 @@ mod tests {
             produced == painted_with(vec![(7, 2, 0.25)]),
             "a pickup with 30 of 120 ticks left is drawn at a quarter life"
         );
+    }
+
+    use flagstone_game::controller::CameraMode;
+    use flagstone_game::jobs::Job;
+    use flagstone_game::pawn::MINE_REACH;
+    use flagstone_voxel::BlockPos;
+
+    fn is_solid(app: &App, block: BlockPos) -> bool {
+        app.light_system
+            .as_ref()
+            .expect("light system")
+            .grid()
+            .is_solid_at(block)
+    }
+
+    fn centre_of(block: BlockPos) -> glam::Vec3 {
+        glam::Vec3::new(block.x as f32, block.y as f32, block.z as f32) + glam::Vec3::splat(0.5)
+    }
+
+    fn horizontal(a: glam::Vec3, b: glam::Vec3) -> f32 {
+        glam::Vec2::new(a.x - b.x, a.z - b.z).length()
+    }
+
+    #[test]
+    fn an_idle_pawn_digs_a_marked_ore_block_and_the_stock_grows_by_one() {
+        let target = BlockPos::new(8, 3, 8);
+        let mut app = colony_app(target, Some(ORE), false);
+
+        let dug = tick_until(&mut app, WAIT_TICKS, |app| !is_solid(app, target));
+        run(&mut app, 1);
+
+        assert!(dug.is_some(), "the block is still there after 20 s");
+        assert!(
+            horizontal(pawn_state(&app).position, PAWN_START) > 2.0,
+            "the pawn dug from where it started"
+        );
+        assert_eq!(app.colony.stock.iter().collect::<Vec<_>>(), [(ORE, 1)]);
+        assert!(
+            app.pawn.inventory.is_empty(),
+            "a job's yield goes to the colony, not the pawn"
+        );
+        assert!(!app.colony.marks.contains(target.to_array()), "marker gone");
+    }
+
+    #[test]
+    fn a_plain_block_is_dug_and_the_stock_is_unchanged() {
+        let target = BlockPos::new(8, 3, 8);
+        let mut app = colony_app(target, None, false);
+
+        let dug = tick_until(&mut app, WAIT_TICKS, |app| !is_solid(app, target));
+        run(&mut app, 1);
+
+        assert!(dug.is_some(), "the block is still there after 20 s");
+        assert!(
+            horizontal(pawn_state(&app).position, PAWN_START) > 2.0,
+            "the pawn dug from where it started"
+        );
+        assert!(app.colony.stock.is_empty(), "a plain block yields nothing");
+        assert!(app.pawn.inventory.is_empty());
+        assert!(!app.colony.marks.contains(target.to_array()), "marker gone");
+    }
+
+    #[test]
+    fn the_pawn_crosses_a_one_block_rise_without_leaving_the_ground() {
+        let target = BlockPos::new(14, 3, 8);
+        let mut app = colony_app(target, None, true);
+        let mut sim =
+            moho_app::HeadlessLoop::<App>::new(moho_app::LoopConfig::new(flagstone_game::TICK_HZ));
+        let mut airborne_ticks = Vec::new();
+
+        let mut dug = false;
+        for tick in 0..WAIT_TICKS {
+            sim.step(&mut app, 1);
+            if tick > 0 && !pawn_state(&app).grounded {
+                airborne_ticks.push(tick);
+            }
+            if !is_solid(&app, target) {
+                dug = true;
+                break;
+            }
+        }
+
+        assert!(dug, "the block beyond the rise is still there after 20 s");
+        assert!(
+            airborne_ticks.is_empty(),
+            "left the ground on ticks {airborne_ticks:?}"
+        );
+        assert!(
+            pawn_state(&app).position.x > 11.5,
+            "the pawn dug from the far side of the rise"
+        );
+    }
+
+    #[test]
+    fn the_pawn_digs_within_the_mining_reach() {
+        // 12 m from the start: out of reach until the pawn has walked.
+        let target = BlockPos::new(16, 3, 8);
+        let mut app = colony_app(target, Some(ORE), false);
+        let start_distance = PAWN_START.distance(centre_of(target));
+
+        let dug = tick_until(&mut app, WAIT_TICKS, |app| !is_solid(app, target));
+
+        assert!(
+            start_distance > MINE_REACH,
+            "the block starts out of reach: {start_distance}"
+        );
+        assert!(dug.is_some(), "the block is still there after 20 s");
+        let eye = pawn_state(&app).position;
+        let distance = eye.distance(centre_of(target));
+        assert!(
+            distance <= MINE_REACH,
+            "dug from {distance} m, reach is {MINE_REACH}"
+        );
+    }
+
+    #[test]
+    fn nothing_marked_leaves_the_pawn_where_it_was() {
+        let mut app = colony_app(BlockPos::new(8, 3, 8), Some(ORE), false);
+        app.colony.marks.toggle([8, 3, 8]);
+        let before = (app.simulation.position(), pawn_state(&app).position);
+
+        run(&mut app, 120);
+
+        assert!(app.colony.marks.iter().next().is_none(), "nothing marked");
+        assert_eq!(
+            (app.simulation.position(), pawn_state(&app).position),
+            before
+        );
+    }
+
+    #[test]
+    fn cancelling_the_mark_stops_the_pawn_and_keeps_the_block() {
+        let target = BlockPos::new(16, 3, 8);
+        let mut app = colony_app(target, Some(ORE), false);
+        let walking = tick_until(&mut app, WAIT_TICKS, |app| {
+            horizontal(pawn_state(app).position, PAWN_START) > 0.5
+        });
+        let before_cancel = pawn_state(&app).position;
+
+        app.colony.marks.toggle(target.to_array());
+        run(&mut app, 1);
+        let stopped = pawn_state(&app).position;
+        run(&mut app, 60);
+
+        assert!(walking.is_some(), "the pawn never started walking");
+        assert_eq!(
+            pawn_state(&app).position,
+            stopped,
+            "the pawn walked on after the cancel"
+        );
+        assert!(
+            stopped.distance(before_cancel) < 0.2,
+            "more than a step after the cancel"
+        );
+        assert!(is_solid(&app, target), "the block is not dug");
+        assert!(app.colony.stock.is_empty());
+        assert_eq!(app.pawn.job, Job::Idle, "the pawn is free");
+    }
+
+    #[test]
+    fn a_possessed_pawn_runs_no_job() {
+        let target = BlockPos::new(8, 3, 8);
+        let mut app = colony_app(target, Some(ORE), false);
+        app.simulation.set_camera_mode(CameraMode::FirstPerson);
+        run(&mut app, 30);
+        let settled = pawn_state(&app).position;
+
+        run(&mut app, 300);
+
+        assert!(
+            pawn_state(&app).position.distance(settled) < 1e-3,
+            "the possessed pawn walked off on its own"
+        );
+        assert!(is_solid(&app, target), "the block is not dug");
+        assert!(app.colony.marks.contains(target.to_array()), "mark kept");
+        assert!(app.colony.stock.is_empty());
+        assert_eq!(app.pawn.job, Job::Idle);
+    }
+
+    #[test]
+    fn hud_data_carries_the_colony_stock() {
+        let mut app = App::headless();
+        app.colony.stock.add(7, 3);
+        app.colony.stock.add(2, 5);
+        let mut empty = App::headless();
+
+        let produced = produced_strategy_hud(&mut app);
+
+        let expected = painted_strategy_hud(flagstone_ui::overlays::HudData {
+            equipped_tool_label: Some("Pickaxe".to_string()),
+            colony_stock: vec![(2, 5), (7, 3)],
+            ..strategy_hud_data(&app)
+        });
+        assert!(produced == expected, "not the totals sorted by id");
+        assert!(
+            produced != produced_strategy_hud(&mut empty),
+            "the totals are not drawn"
+        );
+    }
+
+    /// Twenty seconds of ticks: a failing walk ends in an assertion, not a hang.
+    pub(crate) const WAIT_TICKS: u32 = 20 * flagstone_game::TICK_HZ;
+
+    /// The resource a marked ore block yields.
+    pub(crate) const ORE: u32 = 7;
+
+    /// The pawn's capsule centre on the flat ground of `colony_app`: the feet 4 m from the
+    /// block at x 8, on the top face at y 4, facing +Z.
+    pub(crate) const PAWN_START: glam::Vec3 = glam::Vec3::new(4.5, 5.2, 8.5);
+
+    /// A strategy view over smooth ground, blocks x `0..32`, z `0..16`, y `0..=3` (top face at
+    /// y 4), with the pawn at `PAWN_START` and `target` marked for mining.
+    ///
+    /// `target` yields `resource`. With `ridge`, a one-block rise across the whole width at
+    /// x `8..=11` (a 45 degree face each way) leaves no way around it.
+    pub(crate) fn colony_app(
+        target: flagstone_voxel::BlockPos,
+        resource: Option<u32>,
+        ridge: bool,
+    ) -> App {
+        let mut app = App::headless();
+        app.game_state = GameState::Playing;
+        app.simulation.set_position_yaw_pitch(PAWN_START, 0.0, 0.0);
+        app.simulation
+            .set_camera_mode(flagstone_game::controller::CameraMode::Isometric);
+        let grid = app
+            .light_system
+            .as_mut()
+            .expect("App starts with a light system")
+            .grid_mut();
+        for x in 0..32 {
+            for z in 0..16 {
+                let top = if ridge && (8..=11).contains(&x) { 4 } else { 3 };
+                for y in 0..=top {
+                    let pos = flagstone_voxel::BlockPos::new(x, y, z);
+                    let yields = if pos == target { resource } else { None };
+                    grid.mutator().place(pos, 1, yields);
+                }
+            }
+        }
+        let chunks: Vec<VoxelChunk> = (0..2)
+            .map(|x| VoxelChunk::from_grid_lod(grid, glam::IVec3::new(x, 0, 0), 0))
+            .collect();
+        for chunk in chunks {
+            crate::app::world_geometry::insert_chunk(&mut app, chunk);
+        }
+        app.physics.spawn_player(PAWN_START);
+        app.colony.marks.toggle(target.to_array());
+        app
+    }
+
+    /// The pawn's character in the physics world.
+    pub(crate) fn pawn_state(app: &App) -> moho_physics::CharacterState {
+        app.physics
+            .world
+            .as_ref()
+            .expect("physics world")
+            .character(app.physics.player.expect("the pawn was spawned"))
+            .expect("the pawn exists")
+    }
+
+    /// Runs `ticks` ticks of the game loop.
+    pub(crate) fn run(app: &mut App, ticks: u32) {
+        moho_app::HeadlessLoop::<App>::new(moho_app::LoopConfig::new(flagstone_game::TICK_HZ))
+            .step(app, ticks);
+    }
+
+    /// Runs ticks one at a time until `done`, at most `limit`; the number of ticks run, or
+    /// `None` when it never held.
+    pub(crate) fn tick_until(
+        app: &mut App,
+        limit: u32,
+        mut done: impl FnMut(&App) -> bool,
+    ) -> Option<u32> {
+        let mut sim =
+            moho_app::HeadlessLoop::<App>::new(moho_app::LoopConfig::new(flagstone_game::TICK_HZ));
+        for tick in 1..=limit {
+            sim.step(app, 1);
+            if done(app) {
+                return Some(tick);
+            }
+        }
+        None
     }
 }

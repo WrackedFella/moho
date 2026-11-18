@@ -1381,6 +1381,60 @@ mod tests {
         }
 
         #[test]
+        fn returning_to_first_person_starts_where_the_pawn_walked_to() {
+            use crate::app::event_loop::frame_processor::tests::{
+                PAWN_START, WAIT_TICKS, colony_app, pawn_state, tick_until,
+            };
+            let target = flagstone_voxel::BlockPos::new(8, 3, 8);
+            let mut app = colony_app(target, None, false);
+            tick_until(&mut app, WAIT_TICKS, |app| {
+                !app.light_system
+                    .as_ref()
+                    .expect("light system")
+                    .grid()
+                    .is_solid_at(target)
+            });
+            let walked_to = pawn_state(&app);
+            let walked = glam::Vec2::new(
+                walked_to.position.x - PAWN_START.x,
+                walked_to.position.z - PAWN_START.z,
+            )
+            .length();
+            let in_strategy = app.simulation.position();
+            tap(&mut app);
+
+            step(&mut app);
+            for _ in 0..30 {
+                step(&mut app);
+            }
+
+            assert!(walked > 2.0, "the pawn never walked: {walked} m");
+            assert!(
+                in_strategy.distance(walked_to.position) < 1e-3,
+                "the strategy view kept the start: {in_strategy} vs {}",
+                walked_to.position
+            );
+            assert_eq!(mode(&app), CameraMode::FirstPerson);
+            let resumed = app.simulation.position();
+            assert!(
+                glam::Vec2::new(
+                    resumed.x - walked_to.position.x,
+                    resumed.z - walked_to.position.z
+                )
+                .length()
+                    < 0.05,
+                "resumed at {resumed}, the pawn stood at {}",
+                walked_to.position
+            );
+            assert!(
+                (app.simulation.yaw_pitch().0 - walked_to.yaw).abs() < 1e-3,
+                "resumed facing {}, the pawn faced {}",
+                app.simulation.yaw_pitch().0,
+                walked_to.yaw
+            );
+        }
+
+        #[test]
         fn switch_publishes_the_placeholder_cue() {
             let mut app = app_in(CameraMode::Isometric);
             let audio = record_audio(&app);
