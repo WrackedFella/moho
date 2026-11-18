@@ -241,6 +241,48 @@ mod tests {
     }
 
     #[test]
+    fn a_ray_parallel_to_a_slab_and_on_its_face_plane_still_hits() {
+        let aabb = Aabb {
+            min: Vec3::splat(-1.0),
+            max: Vec3::splat(1.0),
+        };
+        for slab_axis in [1, 2] {
+            for plane in [-1.0_f32, 1.0] {
+                let mut origin = Vec3::new(-10.0, 0.0, 0.0);
+                origin[slab_axis] = plane;
+
+                let entry = ray_box_entry(
+                    Ray {
+                        origin,
+                        direction: Vec3::X,
+                    },
+                    &aabb,
+                );
+
+                assert_eq!(entry, Some(9.0), "slab axis {slab_axis} plane {plane}");
+            }
+        }
+    }
+
+    #[test]
+    fn terrain_exactly_at_the_pawn_entry_distance_hides_it() {
+        let aabb = Aabb {
+            min: Vec3::splat(-1.0),
+            max: Vec3::splat(1.0),
+        };
+        let ray = Ray {
+            origin: Vec3::new(0.0, 0.0, 10.0),
+            direction: Vec3::NEG_Z,
+        };
+
+        let at_entry = pick_pawn(ray, [(PLAYER_PAWN, aabb)], Some(9.0));
+        let just_beyond = pick_pawn(ray, [(PLAYER_PAWN, aabb)], Some(9.5));
+
+        assert_eq!(at_entry, None);
+        assert_eq!(just_beyond, Some(PLAYER_PAWN));
+    }
+
+    #[test]
     fn the_nearer_of_two_pawns_wins() {
         let ray = ray(Vec3::new(0.0, 0.0, 20.0), Vec3::NEG_Z);
         let far = (PawnId(1), pawn_box_at(Vec3::new(0.0, 0.0, -5.0)));
