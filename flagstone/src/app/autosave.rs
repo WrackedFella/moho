@@ -33,7 +33,6 @@ impl AutosaveSchedule {
         Self::new(u64::try_from(ticks).unwrap_or(u64::MAX))
     }
 
-    /// `for_interval` for `Some`, `off` for `None`.
     pub fn for_setting(interval: Option<std::time::Duration>) -> Self {
         interval.map_or_else(Self::off, Self::for_interval)
     }
@@ -181,7 +180,7 @@ mod tests {
         loaded_session_with_prefs(world, temp, Prefs::default())
     }
 
-    /// `loaded_session` for an app started from `prefs`.
+    /// `loaded_session` with the given `prefs`.
     fn loaded_session_with_prefs(world: &str, temp: &tempfile::TempDir, prefs: Prefs) -> App {
         let seed_dir = temp.path().join("seed");
         let mut seed = App::headless();
@@ -276,7 +275,6 @@ mod tests {
         ctx.exit_requested()
     }
 
-    /// Chooses Main Menu in the pause menu and runs the frame that handles it.
     fn return_to_menu(app: &mut App) {
         let mut clock = GameClock::default();
         app.event_bus.publish(UiEvent::MainMenuRequested);
