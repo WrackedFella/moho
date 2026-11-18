@@ -489,6 +489,95 @@ mod tests {
     }
 
     #[test]
+    fn a_pawn_standing_on_the_marked_block_digs_at_once_without_walking() {
+        let mut grid = ground();
+        place(&mut grid, &[[5, 1, 0]]);
+        let mut marks = marked(&[[5, 1, 0]]);
+        let mut job = Job::Idle;
+        let mut pawn = Pawn::default();
+
+        let action = step(
+            &mut job,
+            ME,
+            &mut pawn,
+            at(cell(5, 2, 0)),
+            &mut marks,
+            &grid,
+        );
+
+        let JobAction::Dig { block, aim } = action else {
+            panic!("expected a dig, got {action:?}");
+        };
+        assert_eq!(block, cell(5, 1, 0));
+        assert!((aim - Vec3::new(5.5, 2.0, 0.5)).length() < 1e-4, "{aim}");
+        assert_eq!(mining(&job), None);
+        assert_eq!(claimed_by(&marks, [5, 1, 0]), None);
+        assert!(marks.contains([5, 1, 0]));
+    }
+
+    #[test]
+    fn equally_near_marks_are_taken_in_key_order() {
+        let mut grid = ground();
+        place(&mut grid, &[[3, 1, 0], [-3, 1, 0]]);
+        let mut marks = marked(&[[3, 1, 0], [-3, 1, 0]]);
+        let mut job = Job::Idle;
+        let mut pawn = Pawn::default();
+
+        step(
+            &mut job,
+            ME,
+            &mut pawn,
+            at(cell(0, 1, 0)),
+            &mut marks,
+            &grid,
+        );
+
+        assert_eq!(mining(&job), Some([-3, 1, 0]));
+        assert_eq!(claimed_by(&marks, [3, 1, 0]), None);
+    }
+
+    #[test]
+    fn a_mark_above_a_pawn_in_a_shaft_is_not_claimed() {
+        let mut grid = ground();
+        for y in 1..=6 {
+            place(&mut grid, &[[1, y, 0], [-1, y, 0], [0, y, 1], [0, y, -1]]);
+        }
+        place(&mut grid, &[[0, 5, 0], [0, 6, 0]]);
+        let mut marks = marked(&[[0, 5, 0]]);
+        let mut job = Job::Idle;
+        let mut pawn = Pawn::default();
+
+        let action = step(
+            &mut job,
+            ME,
+            &mut pawn,
+            at(cell(0, 1, 0)),
+            &mut marks,
+            &grid,
+        );
+
+        assert_eq!(action, JobAction::Wait);
+        assert_eq!(mining(&job), None);
+        assert_eq!(claimed_by(&marks, [0, 5, 0]), None);
+    }
+
+    #[test]
+    fn steer_toward_the_pawns_own_feet_is_finite() {
+        let pose = Pose {
+            feet: Vec3::new(1.0, 1.0, 1.0),
+            yaw: 0.7,
+        };
+
+        let level = steer(pose, pose.feet);
+        let above = steer(pose, pose.feet + Vec3::Y * 3.0);
+
+        for step in [level, above] {
+            assert!(step.yaw_delta.is_finite(), "{step:?}");
+            assert!(step.forward.is_finite(), "{step:?}");
+        }
+    }
+
+    #[test]
     fn the_pawn_walks_the_waypoints_then_digs_from_the_stand_cell() {
         let mut grid = ground();
         place(&mut grid, &[[5, 1, 0]]);

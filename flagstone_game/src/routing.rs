@@ -433,6 +433,43 @@ mod tests {
     }
 
     #[test]
+    fn a_pawn_in_a_one_block_pit_climbs_out_over_standable_cells() {
+        let mut grid = flat(-3..=8, -3..=3);
+        for pos in [cell(1, 1, 0), cell(-1, 1, 0), cell(0, 1, 1), cell(0, 1, -1)] {
+            solid(&mut grid, pos);
+        }
+
+        let found = go(&grid, cell(0, 1, 0), cell(6, 1, 0));
+
+        let found = found.expect("a one-block wall can be climbed");
+        assert_eq!(found.first(), Some(&cell(0, 1, 0)));
+        assert_eq!(found.last(), Some(&cell(6, 1, 0)));
+        assert!(
+            found
+                .iter()
+                .all(|&c| standable(&grid, c) && !grid.is_solid_at(c))
+        );
+    }
+
+    #[test]
+    fn a_goal_needing_more_than_the_node_budget_gives_none_not_a_partial_route() {
+        let mut grid = flat(0..=119, 0..=119);
+        for z in 0..=118 {
+            for y in 1..=2 {
+                solid(&mut grid, cell(60, y, z));
+            }
+        }
+        let start = cell(0, 1, 60);
+        let goal = cell(119, 1, 60);
+
+        let within_budget = route(&grid, start, |c| c == goal, goal, ROUTE_NODE_BUDGET);
+        let unlimited = route(&grid, start, |c| c == goal, goal, 1_000_000);
+
+        assert_eq!(within_budget, None);
+        assert_eq!(unlimited.map(|r| r.len()), Some(238));
+    }
+
+    #[test]
     fn a_start_inside_the_ground_tries_the_cell_above_and_nothing_further() {
         let mut grid = flat(-2..=8, -2..=2);
         solid(&mut grid, cell(0, 1, 0));
