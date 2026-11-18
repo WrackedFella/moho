@@ -37,8 +37,11 @@ impl Inventory {
 }
 
 /// Display name of a resource id.
-pub fn resource_name(_id: u32) -> String {
-    todo!("resource_name: 1 is Iron ore, others Resource N")
+pub fn resource_name(id: u32) -> String {
+    match id {
+        1 => "Iron ore".to_string(),
+        other => format!("Resource {other}"),
+    }
 }
 
 #[cfg(test)]
