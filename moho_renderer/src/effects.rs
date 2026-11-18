@@ -105,8 +105,21 @@ impl Flash {
     /// The size factor: 1 when new, falling linearly to 0 at the lifetime; `None` once
     /// the lifetime is spent (a zero lifetime never draws).
     fn scale(&self) -> Option<f32> {
-        let remaining = self.style.lifetime.saturating_sub(self.age);
-        (!remaining.is_zero()).then(|| remaining.as_secs_f32() / self.style.lifetime.as_secs_f32())
+        fade_scale(self.age, self.style.lifetime, self.style.lifetime)
+    }
+}
+
+/// The size factor of an effect of `lifetime`: 1 until its last `fade`, then falling
+/// linearly to 0; `None` once the lifetime is spent. `fade` is clamped to the lifetime.
+fn fade_scale(age: Duration, lifetime: Duration, fade: Duration) -> Option<f32> {
+    let remaining = lifetime.saturating_sub(age);
+    let fade = fade.min(lifetime);
+    if remaining.is_zero() {
+        None
+    } else if remaining >= fade {
+        Some(1.0)
+    } else {
+        Some(remaining.as_secs_f32() / fade.as_secs_f32())
     }
 }
 
@@ -125,15 +138,7 @@ impl Mark {
     /// The size factor: 1 until the fade starts, then falling linearly to 0 at the
     /// lifetime; `None` once the lifetime is spent.
     fn scale(&self) -> Option<f32> {
-        let remaining = self.style.lifetime.saturating_sub(self.age);
-        let fade = self.style.fade.min(self.style.lifetime);
-        if remaining.is_zero() {
-            None
-        } else if remaining >= fade {
-            Some(1.0)
-        } else {
-            Some(remaining.as_secs_f32() / fade.as_secs_f32())
-        }
+        fade_scale(self.age, self.style.lifetime, self.style.fade)
     }
 }
 
@@ -188,11 +193,11 @@ impl Effects {
     }
 
     /// Store `effect` under `handle` if there is room. At the cap, a flash or mark
-    /// (`evict_oldest`) replaces the oldest fixed-lifetime effect, and with none to drop
-    /// the spawn is refused.
-    fn insert(&mut self, handle: EffectHandle, effect: Effect, evict_oldest: bool) {
+    /// replaces the oldest fixed-lifetime effect, and with none to drop the spawn is
+    /// refused. A streak never evicts.
+    fn insert(&mut self, handle: EffectHandle, effect: Effect) {
         if self.store.len() >= self.cap {
-            if !evict_oldest {
+            if !effect.has_fixed_lifetime() {
                 return;
             }
             let oldest = self
@@ -222,7 +227,6 @@ impl Effects {
                 age: Duration::ZERO,
                 ended_at: None,
             }),
-            false,
         );
         handle
     }
@@ -237,7 +241,7 @@ impl Effects {
             roll,
             age: Duration::ZERO,
         };
-        self.insert(handle, Effect::Flash(flash), true);
+        self.insert(handle, Effect::Flash(flash));
     }
 
     /// Spawn a quad on a surface at `at` with unit-length-normalised `normal`, turned by
@@ -255,7 +259,7 @@ impl Effects {
             roll,
             age: Duration::ZERO,
         };
-        self.insert(handle, Effect::Mark(mark), true);
+        self.insert(handle, Effect::Mark(mark));
     }
 
     /// Place the streak's head for this frame. A zero-length heading keeps the last one;
@@ -359,30 +363,31 @@ impl Effects {
 fn flash_transform(flash: &Flash, eye: Vec3) -> Option<Affine3A> {
     let size = flash.style.size * flash.scale()?;
     let view = (eye - flash.at).try_normalize()?;
-    let x = Quat::from_axis_angle(view, flash.roll) * view.any_orthonormal_vector();
-    let y = view.cross(x);
-    finite(Affine3A::from_cols(
-        (x * size).into(),
-        (y * size).into(),
-        view.into(),
-        flash.at.into(),
-    ))
+    rolled_quad(view, flash.roll, size, flash.at)
 }
 
 /// Where a mark is drawn: flat on its surface, turned by its roll, scaled by its fade.
 fn mark_transform(mark: &Mark) -> Option<Affine3A> {
     let size = mark.style.size * mark.scale()?;
-    let x = Quat::from_axis_angle(mark.normal, mark.roll) * mark.normal.any_orthonormal_vector();
-    let y = mark.normal.cross(x);
-    finite(Affine3A::from_cols(
-        (x * size).into(),
-        (y * size).into(),
-        mark.normal.into(),
-        (mark.at + mark.normal * MARK_OFFSET).into(),
-    ))
+    rolled_quad(
+        mark.normal,
+        mark.roll,
+        size,
+        mark.at + mark.normal * MARK_OFFSET,
+    )
 }
 
-fn finite(transform: Affine3A) -> Option<Affine3A> {
+/// A square of side `size` centred on `origin`, facing along the unit `normal` and turned
+/// by `roll` radians about it; `None` if any part is not finite.
+fn rolled_quad(normal: Vec3, roll: f32, size: f32, origin: Vec3) -> Option<Affine3A> {
+    let x = Quat::from_axis_angle(normal, roll) * normal.any_orthonormal_vector();
+    let y = normal.cross(x);
+    let transform = Affine3A::from_cols(
+        (x * size).into(),
+        (y * size).into(),
+        normal.into(),
+        origin.into(),
+    );
     transform.is_finite().then_some(transform)
 }
 
