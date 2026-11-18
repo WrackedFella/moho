@@ -9,9 +9,14 @@ pub struct AutosaveSchedule {
 
 impl AutosaveSchedule {
     /// A schedule that comes due `interval` after the last save, counted in ticks of `tick_length`.
-    pub fn new(_interval: std::time::Duration, _tick_length: std::time::Duration) -> Self {
+    ///
+    /// The interval rounds up to whole ticks, so a save never comes early, and is at least one
+    /// tick, so a zero interval saves at most once per tick instead of every frame.
+    pub fn new(interval: std::time::Duration, tick_length: std::time::Duration) -> Self {
+        let tick_nanos = tick_length.as_nanos().max(1);
+        let ticks = interval.as_nanos().div_ceil(tick_nanos).max(1);
         Self {
-            interval_ticks: 0,
+            interval_ticks: u64::try_from(ticks).unwrap_or(u64::MAX),
             ticks_since_save: 0,
             edited: false,
         }
@@ -19,39 +24,48 @@ impl AutosaveSchedule {
 
     /// Counts one simulation tick.
     pub fn tick(&mut self) {
-        todo!("count the tick")
+        self.ticks_since_save = self.ticks_since_save.saturating_add(1);
     }
 
     /// Records that the world changed since the last save.
     pub fn mark_edited(&mut self) {
-        todo!("remember the edit")
+        self.edited = true;
     }
 
     /// Whether the world has an unsaved edit and a full interval has passed since the last save.
     pub fn due(&self) -> bool {
-        todo!("edited and an interval of ticks since the last save")
+        self.edited && self.ticks_since_save >= self.interval_ticks
     }
 
     /// A save succeeded: the edit is on disk and the interval starts over.
     pub fn saved(&mut self) {
-        todo!("reset the ticks and the edit")
+        self.ticks_since_save = 0;
+        self.edited = false;
     }
 
     /// A save failed: the interval starts over so the retry waits, and the edit stays unsaved.
     pub fn save_failed(&mut self) {
-        todo!("reset the ticks, keep the edit")
+        self.ticks_since_save = 0;
     }
 }
 
 /// Save the current scene to `saves_dir/scene.bin`, creating the directory
 /// if needed.
+///
+/// With no world loaded there is nothing to save: nothing is written, so the previous save
+/// stays, and the call is not an error.
 pub fn auto_save_on_shutdown(
     app: &mut crate::App,
     clock: &moho_app::GameClock,
     saves_dir: &std::path::Path,
     lights: &[moho_render_api::LightDesc],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    tracing::info!("Auto-saving on shutdown...");
+    let Some(mut spec) = app.generation.last_spec.clone() else {
+        tracing::debug!("No world loaded; autosave skipped");
+        return Ok(());
+    };
+    let started = std::time::Instant::now();
+    tracing::info!("Auto-saving...");
 
     std::fs::create_dir_all(saves_dir)?;
 
@@ -61,18 +75,6 @@ pub fn auto_save_on_shutdown(
 
     let scene_bytes =
         flagstone_game::scene_persistence::encode_to_bytes(&app.entities, camera_data, lights)?;
-    let mut spec =
-        app.generation
-            .last_spec
-            .clone()
-            .unwrap_or(flagstone_game::scene_builders::WorldSpec {
-                name: "autosave".to_string(),
-                seed: None,
-                size_xz: 64,
-                day_length_seconds: 600.0,
-                night_length_seconds: 420.0,
-                initial_time_of_day: 6.0,
-            });
     spec.initial_time_of_day = clock.time_of_day();
     let block_records: Vec<crate::save::BlockRecord> = app
         .light_system
@@ -89,6 +91,7 @@ pub fn auto_save_on_shutdown(
         path = %save_path.display(),
         spec = ?spec.name,
         count = block_records.len(),
+        elapsed_ms = started.elapsed().as_millis(),
         "Auto-saved scene (envelope)"
     );
 

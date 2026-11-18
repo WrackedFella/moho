@@ -288,8 +288,13 @@ impl EventProcessor {
             if let Some(light_system) = app.light_system.as_mut() {
                 light_system.handle_event(&event);
             }
-            if let WorldEvent::ChunkMeshDirty { chunk_pos, .. } = event {
-                dirty_chunks.insert(chunk_pos);
+            match event {
+                WorldEvent::ChunkMeshDirty { chunk_pos, .. } => {
+                    dirty_chunks.insert(chunk_pos);
+                }
+                WorldEvent::BlockPlaced { .. }
+                | WorldEvent::BlockRemoved { .. }
+                | WorldEvent::BlocksBatchModified { .. } => app.autosave.mark_edited(),
             }
         }
 
@@ -926,8 +931,8 @@ mod tests {
 
     #[test]
     fn block_edit_events_mark_the_world_edited() {
-        let at = flagstone_voxel::BlockPos::new(3, 70, 3);
         type Row = (&'static str, WorldEvent, bool);
+        let at = flagstone_voxel::BlockPos::new(3, 70, 3);
         let rows: [Row; 4] = [
             (
                 "block placed",
