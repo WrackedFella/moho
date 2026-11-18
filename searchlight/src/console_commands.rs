@@ -6,16 +6,26 @@ use std::collections::BTreeMap;
 use moho_input::bindings::BindingWarning;
 use moho_ui_shell::Console;
 use moho_ui_shell::console::registry::{CommandSpec, ParseFn};
-use searchlight_rules::Grade;
+use searchlight_rules::{Grade, GravityScale};
 
 use crate::arena::LevelMode;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ConsoleCommand {
     GodMode(GodModeArg),
     Fullscreen,
     /// Force the grade of new enemies, or with `None` clear the force.
     ForceGrade(Option<Grade>),
+    /// Turn Simple (hitscan) on or off.
+    Simple(SimpleArg),
+    /// Set the gravity scale rounds fly under.
+    RoundGravity(GravityScale),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SimpleArg {
+    Toggle,
+    Set(bool),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -197,6 +207,106 @@ mod tests {
             let reply = last_line(&console);
             assert!(reply.contains("tgm [0|1]"), "{line}: {reply:?}");
             assert!(!reply.starts_with("God mode"), "{line}: {reply:?}");
+        }
+    }
+
+    #[test]
+    fn simple_toggles_and_sets() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        console.submit("simple");
+        let toggled = console.take_commands();
+        console.submit("simple 1");
+        let on = (console.take_commands(), last_line(&console));
+        console.submit("simple 0");
+        let off = (console.take_commands(), last_line(&console));
+
+        assert_eq!(toggled, vec![ConsoleCommand::Simple(SimpleArg::Toggle)]);
+        assert_eq!(
+            on,
+            (
+                vec![ConsoleCommand::Simple(SimpleArg::Set(true))],
+                "Simple: on".to_owned()
+            )
+        );
+        assert_eq!(
+            off,
+            (
+                vec![ConsoleCommand::Simple(SimpleArg::Set(false))],
+                "Simple: off".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn simple_refuses_an_unusable_argument_and_queues_nothing() {
+        for line in ["simple 2", "simple on", "simple 1 0", "simple -1"] {
+            let (mut console, _) = console(&BTreeMap::new());
+
+            console.submit(line);
+
+            assert!(console.take_commands().is_empty(), "{line}");
+            let reply = last_line(&console);
+            assert!(reply.contains("simple [0|1]"), "{line}: {reply:?}");
+        }
+    }
+
+    #[test]
+    fn round_gravity_sets_a_valid_scale() {
+        for (line, value) in [
+            ("round_gravity 30", 30.0),
+            ("round_gravity 0", 0.0),
+            ("round_gravity 1", 1.0),
+            ("round_gravity 0.5", 0.5),
+            ("round_gravity 1000", 1000.0),
+        ] {
+            let (mut console, _) = console(&BTreeMap::new());
+
+            console.submit(line);
+
+            let scale = GravityScale::new(value).expect("the test scale is valid");
+            assert_eq!(
+                console.take_commands(),
+                vec![ConsoleCommand::RoundGravity(scale)],
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn round_gravity_refuses_negative_and_non_numeric_values() {
+        for line in [
+            "round_gravity",
+            "round_gravity -1",
+            "round_gravity abc",
+            "round_gravity 1000.5",
+            "round_gravity 1001",
+            "round_gravity nan",
+            "round_gravity inf",
+            "round_gravity 1 2",
+        ] {
+            let (mut console, _) = console(&BTreeMap::new());
+
+            console.submit(line);
+
+            assert!(console.take_commands().is_empty(), "{line}");
+            let reply = last_line(&console);
+            assert!(reply.contains("round_gravity <scale>"), "{line}: {reply:?}");
+        }
+    }
+
+    #[test]
+    fn help_lists_simple_and_round_gravity() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        console.submit("help");
+
+        let lines = printed(&console);
+        for usage in ["  simple [0|1] - ", "  round_gravity <scale> - "] {
+            assert!(
+                lines.iter().any(|line| line.starts_with(usage)),
+                "{usage}: {lines:?}"
+            );
         }
     }
 

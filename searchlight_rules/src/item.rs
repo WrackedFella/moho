@@ -94,11 +94,17 @@ pub enum Lifecycle {
 }
 
 /// The round section of an item definition.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoundSpec {
     /// Caliber of the round.
     pub caliber: Caliber,
+    /// Speed at the muzzle, in m/s.
+    #[serde(default)]
+    pub muzzle_velocity: f32,
+    /// Fraction of its velocity the round loses per second, in 1/s.
+    #[serde(default)]
+    pub drag: f32,
 }
 
 /// The magazine section of an item definition.
@@ -270,6 +276,8 @@ impl TryFrom<RawItemDef> for ItemDef {
 mod tests {
     use super::*;
     use crate::weapon::{FireBehaviour, RifleDef};
+    use serde::de::value::{Error as DeError, MapDeserializer};
+    use serde::de::{Deserializer, IntoDeserializer, Visitor};
     use serde_json::{Value, json};
     use std::num::NonZeroU32;
 
@@ -426,17 +434,136 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_round_section_loads_its_caliber() {
-        let item = parse(json!({
-            "class": "consumable", "size": [1, 1], "round": {"caliber": "5.56x45"}
+    fn round_item(round: Value) -> Value {
+        json!({"class": "consumable", "size": [1, 1], "round": round})
+    }
+
+    fn round_with(muzzle_velocity: f64, drag: f64) -> Value {
+        round_item(json!({
+            "caliber": "5.56x45", "muzzle_velocity": muzzle_velocity, "drag": drag
         }))
-        .expect("a consumable with a round section loads");
+    }
+
+    #[test]
+    fn a_round_section_loads_its_caliber_muzzle_velocity_and_drag() {
+        let item = parse(round_with(940.0, 1.0)).expect("a consumable with a round section loads");
 
         let ItemKind::Round(spec) = item.kind else {
             panic!("expected a round kind, got {:?}", item.kind);
         };
         assert_eq!(spec.caliber, Caliber::new("5.56x45"));
+        assert_eq!(spec.muzzle_velocity, 940.0);
+        assert_eq!(spec.drag, 1.0);
+    }
+
+    #[test]
+    fn a_round_without_muzzle_velocity_is_refused_naming_the_field() {
+        let text = error_text(round_item(json!({"caliber": "5.56x45", "drag": 1.0})));
+
+        assert!(text.contains("muzzle_velocity"), "{text}");
+    }
+
+    #[test]
+    fn a_round_without_drag_is_refused_naming_the_field() {
+        let text = error_text(round_item(
+            json!({"caliber": "5.56x45", "muzzle_velocity": 940.0}),
+        ));
+
+        assert!(text.contains("drag"), "{text}");
+    }
+
+    #[test]
+    fn a_round_with_a_muzzle_velocity_of_0_is_refused_naming_the_field() {
+        let text = error_text(round_with(0.0, 1.0));
+
+        assert!(text.contains("muzzle_velocity"), "{text}");
+    }
+
+    #[test]
+    fn a_round_at_the_minimum_speed_is_refused_naming_the_field() {
+        let at_minimum = error_text(round_with(100.0, 1.0));
+        let below = error_text(round_with(99.0, 1.0));
+        let negative = error_text(round_with(-940.0, 1.0));
+
+        for text in [at_minimum, below, negative] {
+            assert!(text.contains("muzzle_velocity"), "{text}");
+        }
+        assert!(parse(round_with(100.5, 1.0)).is_ok());
+    }
+
+    #[test]
+    fn a_round_with_negative_drag_is_refused_naming_the_field() {
+        let text = error_text(round_with(940.0, -0.5));
+
+        assert!(text.contains("drag"), "{text}");
+    }
+
+    #[test]
+    fn a_round_with_drag_0_is_accepted() {
+        let item = parse(round_with(940.0, 0.0)).expect("a round that loses no speed is valid");
+
+        let ItemKind::Round(spec) = item.kind else {
+            panic!("expected a round kind, got {:?}", item.kind);
+        };
+        assert_eq!(spec.drag, 0.0);
+    }
+
+    /// A scalar the way a TOML file can state it but JSON cannot: `nan` and `inf`.
+    enum Scalar {
+        Text(&'static str),
+        Number(f32),
+    }
+
+    impl<'de> IntoDeserializer<'de, DeError> for Scalar {
+        type Deserializer = Self;
+
+        fn into_deserializer(self) -> Self {
+            self
+        }
+    }
+
+    impl<'de> Deserializer<'de> for Scalar {
+        type Error = DeError;
+
+        fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, DeError> {
+            match self {
+                Self::Text(text) => visitor.visit_str(text),
+                Self::Number(number) => visitor.visit_f32(number),
+            }
+        }
+
+        serde::forward_to_deserialize_any! {
+            bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string bytes
+            byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct map struct
+            enum identifier ignored_any
+        }
+    }
+
+    fn round_spec_of(muzzle_velocity: f32, drag: f32) -> Result<RoundSpec, DeError> {
+        RoundSpec::deserialize(MapDeserializer::new(
+            [
+                ("caliber", Scalar::Text("5.56x45")),
+                ("muzzle_velocity", Scalar::Number(muzzle_velocity)),
+                ("drag", Scalar::Number(drag)),
+            ]
+            .into_iter(),
+        ))
+    }
+
+    #[test]
+    fn a_round_with_non_finite_values_is_refused() {
+        assert!(round_spec_of(940.0, 1.0).is_ok());
+
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let velocity = round_spec_of(bad, 1.0).expect_err("a non-finite muzzle velocity");
+            let drag = round_spec_of(940.0, bad).expect_err("a non-finite drag");
+
+            assert!(
+                velocity.to_string().contains("muzzle_velocity"),
+                "{bad}: {velocity}"
+            );
+            assert!(drag.to_string().contains("drag"), "{bad}: {drag}");
+        }
     }
 
     #[test]
@@ -461,7 +588,11 @@ mod tests {
                 "magazine",
                 json!({"well": "w", "caliber": "c", "capacity": 1}),
             ),
-            ("gear", "round", json!({"caliber": "c"})),
+            (
+                "gear",
+                "round",
+                json!({"caliber": "c", "muzzle_velocity": 940.0, "drag": 1.0}),
+            ),
             ("consumable", "rig", json!({"magazine_slots": 1})),
             ("tool", "rig", json!({"magazine_slots": 1})),
         ];

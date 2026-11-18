@@ -1,5 +1,7 @@
 //! The simulation's tuning, with the rifle's numbers taken from its definition.
 
+use std::collections::BTreeMap;
+
 use moho_physics::{CharacterBody, Hull, HullShape, MoveSettings, Stature};
 use searchlight_rules::{BodyPart, BodyProfile, Kit, LeanTuning};
 
@@ -34,7 +36,9 @@ pub const SHIPPED_BODY: CharacterBody = CharacterBody {
 
 /// Builds the simulation tuning around the starting `kit`: its weapon's numbers and its loadout.
 pub fn tuning(kit: Kit) -> SimConfig {
-    let Kit { weapon, loadout } = kit;
+    let Kit {
+        weapon, loadout, ..
+    } = kit;
     SimConfig {
         move_settings: MoveSettings {
             max_speed: 6.0,
@@ -54,6 +58,7 @@ pub fn tuning(kit: Kit) -> SimConfig {
         gravity: 18.0,
         character_body: SHIPPED_BODY,
         range: weapon.range,
+        rounds: BTreeMap::new(),
         damage: weapon.damage,
         cooldown_ticks: weapon.cooldown_ticks,
         reload_ticks: weapon.reload_ticks,
@@ -85,8 +90,9 @@ mod tests {
     use glam::Vec3;
     use moho_physics::{Hull, HullShape, Stature};
     use searchlight_rules::{
-        FireBehaviour, ItemId, Kit, Loadout, MagazineWell, RifleDef, Rig, RigSpec,
+        Ballistics, FireBehaviour, ItemId, Kit, Loadout, MagazineWell, RifleDef, Rig, RigSpec,
     };
+    use std::collections::BTreeMap;
 
     #[test]
     fn every_rifle_number_comes_from_the_kits_weapon() {
@@ -105,6 +111,7 @@ mod tests {
         let kit = Kit {
             weapon,
             loadout: loadout.clone(),
+            rounds: BTreeMap::new(),
         };
 
         let config = tuning(kit);
@@ -115,6 +122,36 @@ mod tests {
         assert_eq!(config.charge_ticks, 13);
         assert!((config.range - 55.5).abs() < f32::EPSILON);
         assert_eq!(config.loadout, loadout);
+    }
+
+    #[test]
+    fn the_kits_rounds_table_reaches_the_config() {
+        let mut rig = Rig::new(ItemId::new("test_rig"), &RigSpec { magazine_slots: 1 });
+        rig.stow(mag(17, 17)).unwrap();
+        let rounds = BTreeMap::from([(
+            ItemId::new("test_round"),
+            Ballistics {
+                muzzle_velocity: 812.5,
+                drag: 2.5,
+            },
+        )]);
+        let kit = Kit {
+            weapon: RifleDef {
+                well: MagazineWell::new("test"),
+                damage: 30,
+                fire: FireBehaviour::SemiAuto,
+                cooldown_ticks: 6,
+                reload_ticks: 120,
+                charge_ticks: 30,
+                range: 100.0,
+            },
+            loadout: Loadout::new(rifle_from(mag(17, 17)), rig),
+            rounds: rounds.clone(),
+        };
+
+        let config = tuning(kit);
+
+        assert_eq!(config.rounds, rounds);
     }
 
     fn shipped_config() -> SimConfig {
@@ -131,6 +168,7 @@ mod tests {
                 range: 100.0,
             },
             loadout: Loadout::new(rifle_from(mag(17, 17)), rig),
+            rounds: BTreeMap::new(),
         })
     }
 
@@ -197,6 +235,7 @@ mod tests {
                 range: 100.0,
             },
             loadout: Loadout::new(rifle_from(mag(17, 17)), rig),
+            rounds: BTreeMap::new(),
         };
 
         let config = tuning(kit);

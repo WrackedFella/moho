@@ -879,6 +879,7 @@ impl SearchlightGame {
                 ConsoleCommand::GodMode(GodModeArg::Set(on)) => self.god_mode = on,
                 ConsoleCommand::Fullscreen => self.flip_window_pending = true,
                 ConsoleCommand::ForceGrade(grade) => self.forced_grade = grade,
+                ConsoleCommand::Simple(_) | ConsoleCommand::RoundGravity(_) => {}
             }
         }
         if self.god_mode != before
@@ -1231,7 +1232,7 @@ mod tests {
         WaveScore, arena_with, arena_with_controls, mag, press, rifle_from, test_config,
         wave_tuning,
     };
-    use searchlight_rules::{Grade, LeanSide};
+    use searchlight_rules::{Grade, GravityScale, LeanSide};
 
     #[test]
     fn a_sandbox_title_line_has_no_wave() {
@@ -2802,6 +2803,117 @@ mod tests {
 
         assert!(on && later);
         assert!(!off);
+    }
+
+    fn saved_simple(path: &std::path::Path) -> Option<String> {
+        let (saved, _) = Prefs::load_from(path);
+        saved.debug_value("simple").map(str::to_owned)
+    }
+
+    fn scale(value: f32) -> GravityScale {
+        GravityScale::new(value).expect("the test scale is valid")
+    }
+
+    #[test]
+    fn a_saved_simple_starts_the_game_in_simple() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut settings, path) = settings_in(&dir);
+        settings.set_simple(true).unwrap();
+        let mut game = game().with_debug_settings(settings);
+
+        let command = game.command();
+
+        assert!(command.simple);
+        assert_eq!(saved_simple(&path).as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn a_game_with_no_saved_simple_starts_in_flight() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, _) = settings_in(&dir);
+        let mut game = game().with_debug_settings(settings);
+
+        let command = game.command();
+
+        assert!(!command.simple);
+    }
+
+    #[test]
+    fn the_simple_command_rides_on_every_tick_and_is_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = game().with_debug_settings(settings);
+
+        type_into_console(&game, "simple 1");
+        let on = game.command().simple;
+        let later: Vec<bool> = (0..3).map(|_| game.command().simple).collect();
+        let saved_on = saved_simple(&path);
+        type_into_console(&game, "simple");
+        let toggled = game.command().simple;
+        let saved_off = saved_simple(&path);
+
+        assert!(on);
+        assert_eq!(later, [true, true, true]);
+        assert_eq!(saved_on.as_deref(), Some("1"));
+        assert!(!toggled);
+        assert_eq!(saved_off.as_deref(), Some("0"));
+    }
+
+    #[test]
+    fn a_bare_simple_prints_the_state_it_set() {
+        let mut game = game();
+
+        type_into_console(&game, "simple");
+        game.command();
+        type_into_console(&game, "simple");
+        game.command();
+
+        let lines = console_lines(&game);
+        let tail = &lines[lines.len() - 4..];
+        assert_eq!(tail, ["> simple", "Simple: on", "> simple", "Simple: off"]);
+    }
+
+    #[test]
+    fn the_gravity_scale_starts_at_1_and_both_levels_survive_a_restart() {
+        let mode = ArenaMode::new(arena_arena(), arena_config(), wave_tuning(1));
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0));
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let at_launch = game.command().round_gravity;
+        game.mode.sim_mut().kill_player();
+        type_into_console(&game, "round_gravity 30");
+        type_into_console(&game, "simple 1");
+
+        let restart = SearchlightCommand {
+            restart: true,
+            ..game.command()
+        };
+        tick_with(&mut game, &mut clock, &restart);
+        let after = game.command();
+
+        assert_eq!(at_launch, scale(1.0));
+        assert!(!game.sim().player_body().is_dead());
+        assert_eq!(restart.round_gravity, scale(30.0));
+        assert!(restart.simple);
+        assert_eq!(after.round_gravity, scale(30.0));
+        assert!(after.simple);
+    }
+
+    #[test]
+    fn a_refused_round_gravity_leaves_the_scale_unchanged_and_a_new_game_starts_at_1() {
+        let mut game = game();
+        type_into_console(&game, "round_gravity 30");
+        game.command();
+
+        type_into_console(&game, "round_gravity -2");
+        let after_negative = game.command().round_gravity;
+        type_into_console(&game, "round_gravity abc");
+        let after_text = game.command().round_gravity;
+        let fresh = self::game().command().round_gravity;
+
+        assert_eq!(after_negative, scale(30.0));
+        assert_eq!(after_text, scale(30.0));
+        assert_eq!(fresh, scale(1.0));
     }
 
     use crate::menu::MenuAction;
@@ -4542,6 +4654,7 @@ mod presentation_tests {
                 leg_status: 10,
             })
             .hit(BodyPart::Head, 1),
+            point: Vec3::ZERO,
         };
 
         stage.react(&hit, None);
@@ -4648,6 +4761,7 @@ mod mutation_tests {
             target: 0,
             part: BodyPart::Head,
             report,
+            point: Vec3::ZERO,
         }
     }
 

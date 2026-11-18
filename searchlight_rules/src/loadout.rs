@@ -231,7 +231,9 @@ mod tests {
 
         let shots: Vec<Shot> = (0..3).map(|_| loadout.fire()).collect();
 
-        assert_eq!(shots, [Shot::Fired, Shot::Fired, Shot::Dry]);
+        assert!(matches!(shots[0], Shot::Fired(_)), "{shots:?}");
+        assert!(matches!(shots[1], Shot::Fired(_)), "{shots:?}");
+        assert_eq!(shots[2], Shot::Dry);
         assert_eq!(loadout.rifle().magazine().rounds(), 0);
     }
 

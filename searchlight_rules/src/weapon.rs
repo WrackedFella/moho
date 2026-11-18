@@ -101,6 +101,26 @@ mod tests {
     }
 
     #[test]
+    fn a_rifle_that_still_names_a_range_is_refused() {
+        let value = json!({
+            "well": "rifle",
+            "damage": 30,
+            "fire": "semi_auto",
+            "cooldown_ticks": 6,
+            "reload_ticks": 120,
+            "charge_ticks": 30,
+            "range": 100.0
+        });
+
+        let error =
+            serde_json::from_value::<RifleDef>(value).expect_err("a rifle no longer has a range");
+
+        let text = error.to_string();
+        assert!(text.contains("unknown field"), "{text}");
+        assert!(text.contains("range"), "{text}");
+    }
+
+    #[test]
     fn an_unknown_fire_behaviour_is_refused() {
         let mut value = valid();
         value["fire"] = json!("burst");

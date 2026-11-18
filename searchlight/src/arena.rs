@@ -8,6 +8,7 @@ use glam::{Quat, Vec3};
 use moho_level::{AgentProfile, Level, LevelError, LevelMarker, NavBuildError, NavMesh};
 use moho_physics::PhysicsWorld;
 use moho_render_api::{WorldMesh, WorldMeshId};
+use searchlight_rules::FlightBounds;
 
 use crate::control::ControlAction;
 use crate::sim::{CAPSULE_RADIUS, STAND_HEIGHT};
@@ -248,6 +249,9 @@ pub struct Arena {
     pub nav_fallback: bool,
 }
 
+/// Metres past the arena's geometry a round may fly before it ends.
+pub const FLIGHT_MARGIN: f32 = 100.0;
+
 /// Extra metres of clearance on top of the capsule radius, so paths do not graze corners.
 const NAV_CLEARANCE: f32 = 0.1;
 
@@ -360,6 +364,11 @@ impl Arena {
         }
         world.step(SETTLE_DT);
         world
+    }
+
+    /// The box a round may fly in: the box around every mesh, grown by [`FLIGHT_MARGIN`].
+    pub fn flight_bounds(&self) -> FlightBounds {
+        todo!("the meshes' box grown by FLIGHT_MARGIN")
     }
 }
 
@@ -1004,6 +1013,23 @@ mod tests {
     fn build(level: &Level) -> Result<Arena, ArenaError> {
         let markers = ArenaMarkers::from_level(level).expect("a valid marker set");
         Arena::from_level(level, &markers)
+    }
+
+    #[test]
+    fn flight_bounds_enclose_every_mesh_with_the_margin() {
+        assert_eq!(FLIGHT_MARGIN, 100.0);
+        let level = island_level(&[("waypoint_01", ON_FLOOR)]);
+
+        let bounds = build(&level).expect("the level builds").flight_bounds();
+
+        assert_eq!(bounds.min, Vec3::new(-110.0, -101.0, -110.0));
+        assert_eq!(bounds.max, Vec3::new(110.0, 103.0, 110.0));
+        assert!(
+            bounds.contains(Vec3::new(8.0, 3.0, -4.0)),
+            "the island's top corner"
+        );
+        assert!(!bounds.contains(Vec3::new(0.0, 104.0, 0.0)));
+        assert!(!bounds.contains(Vec3::new(111.0, 0.0, 0.0)));
     }
 
     #[test]

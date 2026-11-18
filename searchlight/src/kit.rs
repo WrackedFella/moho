@@ -74,7 +74,7 @@ magazine = { well = "rifle", caliber = "5.56x45", capacity = 30 }
 [round_ball]
 class = "consumable"
 size = [1, 1]
-round = { caliber = "5.56x45" }
+round = { caliber = "5.56x45", muzzle_velocity = 940.0, drag = 1.0 }
 
 [rig_chest]
 class = "gear"
@@ -229,6 +229,44 @@ condition = 100
     }
 
     #[test]
+    fn a_bad_round_fails_the_load_naming_the_round_and_the_field() {
+        const GOOD: &str = "round = { caliber = \"5.56x45\", muzzle_velocity = 940.0, drag = 1.0 }";
+        let cases = [
+            (
+                "no muzzle velocity",
+                "round = { caliber = \"5.56x45\", drag = 1.0 }",
+                "muzzle_velocity",
+            ),
+            (
+                "a muzzle velocity of 0",
+                "round = { caliber = \"5.56x45\", muzzle_velocity = 0.0, drag = 1.0 }",
+                "muzzle_velocity",
+            ),
+            (
+                "a negative drag",
+                "round = { caliber = \"5.56x45\", muzzle_velocity = 940.0, drag = -1.0 }",
+                "drag",
+            ),
+        ];
+        for (problem, bad_round, field) in cases {
+            let items = items_toml();
+            assert!(items.contains(GOOD), "the fixture round line changed");
+            let (dir, roots) = base_with(&items.replace(GOOD, bad_round), &start_kit(2));
+
+            let Err(error) = load(&roots, START_KIT_ID) else {
+                panic!("a round with {problem} loaded");
+            };
+
+            let KitLoadError::Content(ContentError::Invalid { file, id, reason }) = &error else {
+                panic!("{problem}: expected Invalid content, got {error:?}");
+            };
+            assert_eq!(file, &dir.path().join("items.toml"), "{problem}");
+            assert_eq!(id, "round_ball", "{problem}");
+            assert!(reason.contains(field), "{problem}: {reason}");
+        }
+    }
+
+    #[test]
     fn an_unknown_kit_id_is_a_missing_id_error() {
         let (_dir, roots) = base_with(&items_toml(), &start_kit(2));
 
@@ -287,7 +325,10 @@ magazine = { well = "rifle", caliber = "5.56x45", capacity = 20 }
 
         let shots: Vec<Shot> = (0..21).map(|_| kit.loadout.fire()).collect();
         let (fired, dry) = shots.split_at(20);
-        assert!(fired.iter().all(|shot| *shot == Shot::Fired), "{shots:?}");
+        assert!(
+            fired.iter().all(|shot| matches!(shot, Shot::Fired(_))),
+            "{shots:?}"
+        );
         assert_eq!(dry, [Shot::Dry]);
     }
 }

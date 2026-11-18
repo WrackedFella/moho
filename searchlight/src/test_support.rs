@@ -12,16 +12,16 @@ use moho_level::{LevelMarker, NavMesh};
 use moho_physics::{MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::{
-    BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId, LeanTuning, Loadout, Magazine,
-    MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
+    Ballistics, BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId, LeanTuning, Loadout,
+    Magazine, MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
 };
 
 use crate::arena::{Arena, ArenaControl, nav_profile};
 use crate::brain::EnemyTuning;
 use crate::control::ControlAction;
-use crate::input::SearchlightAction;
+use crate::input::{SearchlightAction, SearchlightCommand};
 use crate::mode::ArenaMode;
-use crate::sim::SimConfig;
+use crate::sim::{Feedback, SearchlightSim, SimConfig};
 use crate::tag::SurfaceTag;
 use crate::tuning::SHIPPED_BODY;
 use crate::wave::WaveTuning;
@@ -154,6 +154,61 @@ pub(crate) fn test_profile() -> BodyProfile {
     }
 }
 
+/// The `test_round`'s flight: fast enough to stay above the minimum speed for hundreds of metres.
+pub(crate) fn test_ballistics() -> Ballistics {
+    Ballistics {
+        muzzle_velocity: 940.0,
+        drag: 1.0,
+    }
+}
+
+/// A floor only, top at y = 0, spanning x and z in [-100, 100], long enough for a 60 m shot.
+pub(crate) fn long_floor() -> PhysicsWorld {
+    world_with(&[(
+        Vec3::new(-100.0, -1.0, -100.0),
+        Vec3::new(100.0, 0.0, 100.0),
+    )])
+}
+
+/// Ticks `sim` once with `command`, then idle, until a hit lands, the round is spent or 600
+/// ticks pass; returns every feedback that came, drained.
+pub(crate) fn run_until_hit(
+    sim: &mut SearchlightSim,
+    command: &SearchlightCommand,
+) -> Vec<Feedback> {
+    run_while(sim, command, |sim, feedback| {
+        feedback.iter().any(|fb| matches!(fb, Feedback::Hit { .. })) || sim.rounds.is_empty()
+    })
+}
+
+/// Ticks `sim` once with `command`, then idle, until no round is in flight or 600 ticks pass;
+/// returns every feedback that came, drained.
+pub(crate) fn run_until_settled(
+    sim: &mut SearchlightSim,
+    command: &SearchlightCommand,
+) -> Vec<Feedback> {
+    run_while(sim, command, |sim, _| sim.rounds.is_empty())
+}
+
+fn run_while(
+    sim: &mut SearchlightSim,
+    command: &SearchlightCommand,
+    done: impl Fn(&SearchlightSim, &[Feedback]) -> bool,
+) -> Vec<Feedback> {
+    let mut all = Vec::new();
+    let mut next = command;
+    let idle = SearchlightCommand::default();
+    for _ in 0..600 {
+        sim.tick(next, DT);
+        all.extend(sim.drain_feedback());
+        if done(sim, &all) {
+            break;
+        }
+        next = &idle;
+    }
+    all
+}
+
 /// Tuning with a 3-tick cooldown, 10-tick reload, 30 damage and the given rifle, with
 /// `spares` stowed in order on a rig that has one slot per spare.
 pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
@@ -172,6 +227,7 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
         gravity: 18.0,
         character_body: SHIPPED_BODY,
         range: 100.0,
+        rounds: BTreeMap::from([(ItemId::new("test_round"), test_ballistics())]),
         damage: 30,
         cooldown_ticks: 3,
         reload_ticks: 10,
@@ -238,7 +294,22 @@ pub(crate) fn arena_with_controls(
     route: &[Vec3],
     controls: &[(Vec3, Vec3)],
 ) -> Arc<Arena> {
-    let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
+    arena_on_floor(30.0, boxes, player, enemies, route, controls)
+}
+
+/// Like [`arena_with_controls`] on a floor spanning x and z in [-`half_extent`, `half_extent`].
+pub(crate) fn arena_on_floor(
+    half_extent: f32,
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+    controls: &[(Vec3, Vec3)],
+) -> Arc<Arena> {
+    let floor = (
+        Vec3::new(-half_extent, -1.0, -half_extent),
+        Vec3::new(half_extent, 0.0, half_extent),
+    );
     let meshes: Vec<WorldMesh> = std::iter::once(&floor)
         .chain(boxes)
         .map(|&(min, max)| box_mesh(min, max))
