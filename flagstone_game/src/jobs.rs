@@ -662,7 +662,7 @@ mod tests {
     }
 
     #[test]
-    fn a_mark_cancelled_and_remarked_between_ticks_stays_claimed_by_the_walking_pawn() {
+    fn a_mark_cancelled_and_remarked_between_ticks_is_given_up_then_reclaimed() {
         let mut grid = floor(12, 10);
         place(&mut grid, 8, 1, 4);
         let mut marks = marked(&[[8, 1, 4]]);
@@ -678,15 +678,72 @@ mod tests {
 
         step(ME, &mut pawn, pose, &mut marks, &grid);
 
-        if is_mining(&pawn) {
-            assert_eq!(
-                claimed_by(&marks, [8, 1, 4]),
-                Some(ME),
-                "a walking pawn holds the claim on its mark"
-            );
-        }
+        assert_eq!(
+            pawn.job,
+            Job::Idle,
+            "the old claim is not the pawn's any more"
+        );
+        assert_eq!(claimed_by(&marks, [8, 1, 4]), None);
+
         step(ME, &mut pawn, pose, &mut marks, &grid);
+
+        assert!(
+            matches!(&pawn.job, Job::Mine { mark, .. } if *mark == BlockPos::new(8, 1, 4)),
+            "{:?}",
+            pawn.job
+        );
         assert_eq!(claimed_by(&marks, [8, 1, 4]), Some(ME));
+    }
+
+    #[test]
+    fn the_pawn_never_digs_from_a_cell_whose_ground_blocks_the_aim() {
+        let mut grid = floor(12, 10);
+        for x in 0..=6 {
+            for y in 1..=2 {
+                for z in 0..10 {
+                    place(&mut grid, x, y, z);
+                }
+            }
+        }
+        place(&mut grid, 7, 1, 8);
+        let mark = BlockPos::new(6, 1, 5);
+        let dig_from = |feet: Vec3| {
+            let mut marks = marked(&[mark.to_array()]);
+            let mut pawn = Pawn::default();
+            let mut pose = Pose { feet, yaw: 0.0 };
+            for _ in 0..80 {
+                match step(ME, &mut pawn, pose, &mut marks, &grid) {
+                    JobAction::Walk { to } => pose.feet = to,
+                    JobAction::Dig { block, aim } => return Some((pose, block, aim)),
+                    JobAction::Wait => {}
+                }
+            }
+            None
+        };
+        let hit_from = |pose: Pose, aim: Vec3| {
+            let eye = pose.feet + Vec3::Y * EYE_HEIGHT;
+            crate::raycast::raycast_surface(&grid, eye, aim - eye, MINE_REACH)
+                .map(|hit| hit.block_pos)
+        };
+
+        let (from_the_floor, block, aim) =
+            dig_from(Vec3::new(8.5, 1.0, 5.5)).expect("the open side is reachable");
+        assert_eq!(block, mark);
+        assert_eq!(
+            hit_from(from_the_floor, aim),
+            Some(mark),
+            "digging from the open side lands on the mark"
+        );
+
+        let (from_the_plateau, block, aim) =
+            dig_from(Vec3::new(3.5, 3.0, 5.5)).expect("the stairs lead to the open side");
+        assert_eq!(block, mark);
+        assert_eq!(
+            hit_from(from_the_plateau, aim),
+            Some(mark),
+            "dug from {:?}, the ray runs through the pawn's own ground",
+            from_the_plateau.feet
+        );
     }
 
     #[test]
