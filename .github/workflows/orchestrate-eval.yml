@@ -8,9 +8,13 @@ name: Orchestrate eval
 #
 # Per replay the job log carries one `EVAL-RECORD {json}` line: outcome, gate, held-out
 # tests, commits, mandatory steps the orchestrator never called (devflow's step-check),
-# turns, wall time and tokens per model (scripts/review-usage.sh record).
+# turns, wall time and tokens per model (scripts/review-usage.sh record), the main loop's
+# peak context, and how many of the reference's new test names the replay has.
+# `scripts/eval-score.sh collect <label> | scripts/eval-score.sh report` scores a set.
 # With review on, the replay's range is dispatched to pr-review.yml as a dry run, whose
-# log carries the verdict. Delete eval/ branches once a set is scored.
+# log carries the verdict. With rereview on, nothing is replayed: each existing
+# eval/<label>/ branch gets one more dry run, which measures how often the review's
+# verdict flips on the same head. Delete eval/ branches once a set is scored.
 #
 # A replay the subscription's usage limit cuts off is recorded with `limited: true`, gets
 # no review, and is not scored. The Resume job waits for the limit to reset and dispatches
@@ -42,6 +46,10 @@ on:
       attempt:
         description: Resume attempt (set by Resume)
         default: "1"
+      rereview:
+        description: Replay nothing; dispatch one more review dry run on each eval/<label>/ branch
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -78,9 +86,32 @@ jobs:
           [ "$(jq length <<<"$matrix")" -gt 0 ] || { echo "::error::no card in the set matches"; exit 1; }
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
+  rereview:
+    name: Re-review
+    needs: plan
+    if: inputs.rereview
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      LABEL: ${{ inputs.label }}
+      MATRIX: ${{ needs.plan.outputs.matrix }}
+    steps:
+      - name: Dispatch a dry run on each replay branch
+        run: |
+          jq -r '.[] | "\(.id) \(.run) \(.issue)"' <<<"$MATRIX" | while read -r id run issue; do
+            head=$(git ls-remote "https://github.com/$GITHUB_REPOSITORY" "refs/heads/eval/$LABEL/$id-r$run" | cut -f1)
+            base=$(git ls-remote "https://github.com/$GITHUB_REPOSITORY" "refs/heads/eval-base/$id" | cut -f1)
+            if [ -z "$head" ] || [ -z "$base" ]; then echo "::warning::no eval/$LABEL/$id-r$run or eval-base/$id"; continue; fi
+            gh workflow run pr-review.yml --repo "$GITHUB_REPOSITORY" \
+              --ref "${{ github.event.repository.default_branch }}" \
+              -f dry_run_range="$base..$head" -f dry_run_issue="$issue"
+            echo "Dispatched $id r$run: $base..$head"
+          done
+
   replay:
     name: ${{ matrix.card.id }} r${{ matrix.card.run }}
     needs: plan
+    if: ${{ !inputs.rereview }}
     runs-on: ubuntu-latest
     # About 120 minutes for the agent after setup; domain replays hit 75 in the baseline.
     timeout-minutes: 135
@@ -157,7 +188,7 @@ jobs:
           claude_args: |
             ${{ env.MODEL_ARG }}
             --max-turns 200
-            --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never end your turn with a status message: after a skill or subagent returns, continue with the next step. EVAL REPLAY: this run replays a closed work item to measure the workflow, and nothing it does may reach the tracker. Overrides to the orchestrate skill: the item counts as ready although its issue is closed. Its base branch is origin/eval-base/${{ env.ID }} (MOHO_BASE is set to it); use it wherever the skill names the base branch. Ignore every existing branch and pull request for the item and create the work branch ${{ env.BRANCH }} from that base. Never comment on, label or edit the issue. The board is unreachable: treat it as board exit 5. Skip step 9's full-platform CI run and say so in the report. Open no pull request: at step 12 commit and push to the work branch, then end with the final report. Where the skill would pause, put the questions in the final report and stop."
+            --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never end your turn with a status message: after a skill or subagent returns, continue with the next step. EVAL REPLAY: this run replays a closed work item to measure the workflow, and nothing it does may reach the tracker. Overrides to the orchestrate skill: the item counts as ready although its issue is closed. Its base branch is origin/eval-base/${{ env.ID }} (MOHO_BASE is set to it); use it wherever the skill names the base branch. Ignore every existing branch and pull request for the item and create the work branch ${{ env.BRANCH }} from that base. Never comment on, label or edit the issue. The board is unreachable: treat it as board exit 5. Skip step 9's full-platform CI run and say so in the report. Open no pull request: at step 12 commit and push to the work branch, then end with the final report. Where the skill would pause, put the questions in the final report, end it with the line EVAL-PAUSED, and stop."
             --add-dir /home/runner/.claude/plugins/cache
             --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue view:*),Bash(gh run list:*),Bash(gh run view:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(rg:*),Bash(grep:*),Bash(jq:*),Bash(mkdir:*),Edit,Write,Task,Skill"
       - name: Score
@@ -171,15 +202,20 @@ jobs:
           REVIEW: ${{ inputs.review }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          # The checkout is the replay's base, which may predate the usage script.
-          git show "$GITHUB_SHA:scripts/review-usage.sh" > "$RUNNER_TEMP/review-usage.sh"
-          chmod +x "$RUNNER_TEMP/review-usage.sh"
-          head="" commits=0 gate=none heldout=n/a limited=false resets=""
+          # The checkout is the replay's base, which may predate the scoring scripts.
+          for s in review-usage.sh eval-score.sh; do
+            git show "$GITHUB_SHA:scripts/$s" > "$RUNNER_TEMP/$s"
+            chmod +x "$RUNNER_TEMP/$s"
+          done
+          head="" commits=0 gate=none heldout=n/a limited=false resets="" reftests=null context=null marked=false
           # A replay cut off by the subscription's usage limit says so in its last result.
           if [ -f "$EXECUTION_FILE" ]; then
             resets=$(jq -r '[.[] | select(.type == "result")] | last | .result // ""' "$EXECUTION_FILE" \
               | grep -oiE "hit your .*limit.*resets [^(]+\(UTC\)" | head -n1 | sed -E 's/.*resets +//; s/ *\(UTC\)//' || true)
             [ -n "$resets" ] && limited=true
+            # The eval prompt has a run that would pause end its report with this line.
+            jq -r '[.[] | select(.type == "result")] | last | .result // ""' "$EXECUTION_FILE" | grep -qE '^[[:space:]*`]*EVAL-PAUSED[[:space:]*`]*$' && marked=true
+            context=$("$RUNNER_TEMP/eval-score.sh" context "$EXECUTION_FILE" || echo null)
           fi
           if git fetch origin "$BRANCH" 2>/dev/null; then
             head=$(git rev-parse FETCH_HEAD)
@@ -188,6 +224,11 @@ jobs:
             git clean -fdq
             if just check > "$RUNNER_TEMP/gate.log" 2>&1; then gate=pass; else gate=fail; fi
             tail -n 40 "$RUNNER_TEMP/gate.log"
+            # The reference's new test names present in the replay: spec coverage that
+            # doesn't depend on the review. Needs the gate's build.
+            if [ "$gate" = pass ]; then
+              reftests=$("$RUNNER_TEMP/eval-score.sh" reftests "$BASE_SHA" "$REFERENCE" || echo null)
+            fi
             # Held-out tests: the reference's integration-test files, laid over the replay.
             # Inline unit tests can't be laid over without the reference's code, so a card
             # whose reference adds none reports n/a.
@@ -219,11 +260,13 @@ jobs:
             --argjson run "$RUN_NO" --arg branch "$BRANCH" --arg head "$head" --argjson commits "$commits" \
             --arg gate "$gate" --arg heldout "$heldout" --argjson steps "$steps" \
             --argjson limited "$limited" --arg resets "$resets" \
+            --argjson reftests "$reftests" --argjson context "$context" --argjson marked "$marked" \
             '{label: $label, id: $id, issue: $issue, gate_class: $gate_class, run: $run, branch: $branch,
               head: $head, commits: $commits, gate: $gate, heldout: $heldout,
               limited: $limited, resets: (if $resets == "" then null else $resets end),
               steps_missing: ($steps | if . == null then null else .missing end),
-              paused: ($steps | if . == null then null else .paused end)} + {usage: .}' <<<"$usage")
+              paused: ($marked or ($steps | if . == null then false else .paused end)),
+              reftests: $reftests, context: $context} + {usage: .}' <<<"$usage")
           echo "EVAL-RECORD $record"
           mkdir -p "$RUNNER_TEMP/limited"
           if [ "$limited" = true ]; then echo "$resets" > "$RUNNER_TEMP/limited/$ID-r$RUN_NO"; fi
@@ -254,7 +297,7 @@ jobs:
   resume:
     name: Resume
     needs: replay
-    if: always() && !cancelled()
+    if: always() && !cancelled() && !inputs.rereview
     runs-on: ubuntu-latest
     timeout-minutes: 330
     env:

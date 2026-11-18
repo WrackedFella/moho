@@ -112,6 +112,19 @@ review-usage-test:
     diff "$f/total.md" <(scripts/review-usage.sh total - < "$f/records.jsonl")
     echo "review-usage: OK"
 
+# Self-test of the orchestrate eval scoring against fixtures: review cause classes (a
+# needs-decision outside the Blockers section doesn't count), main-loop context per call,
+# and the report.
+eval-score-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    f=scripts/fixtures/eval-score
+    diff "$f/reviews.jsonl" <(for r in approve defect conflict follow-up-decision; do
+        scripts/eval-score.sh review < "$f/review-$r.md"; done)
+    diff "$f/context.json" <(scripts/eval-score.sh context "$f/execution.json")
+    diff "$f/report.md" <(scripts/eval-score.sh report < "$f/records.jsonl")
+    echo "eval-score: OK"
+
 # Layering check on the real crate graph, plus self-tests that each rule rejects its fixture.
 layering:
     #!/usr/bin/env bash
