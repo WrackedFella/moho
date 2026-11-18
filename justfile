@@ -42,6 +42,7 @@ deny:
     cargo deny check
     scripts/check-physics-features.sh
     "$just_bin" _physics-rejects physics-metadata-missing-feature rapier3d
+    "$just_bin" _physics-rejects physics-metadata-parry-missing parry3d
     "$just_bin" _physics-accepts physics-metadata-ok
 
 # Fails unless the physics feature check exits non-zero on the fixture and names the crate.
