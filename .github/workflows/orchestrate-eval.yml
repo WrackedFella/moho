@@ -189,8 +189,8 @@ jobs:
             ${{ env.MODEL_ARG }}
             --max-turns 200
             --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never end your turn with a status message: after a skill or subagent returns, continue with the next step. EVAL REPLAY: this run replays a closed work item to measure the workflow, and nothing it does may reach the tracker. Overrides to the orchestrate skill: the item counts as ready although its issue is closed. Its base branch is origin/eval-base/${{ env.ID }} (MOHO_BASE is set to it); use it wherever the skill names the base branch. Ignore every existing branch and pull request for the item and create the work branch ${{ env.BRANCH }} from that base. Never comment on, label or edit the issue. The board is unreachable: treat it as board exit 5. Skip step 9's full-platform CI run and say so in the report. Open no pull request: at step 12 commit and push to the work branch, then end with the final report. Where the skill would pause, start the final report with the line 'Paused: needs a human answer', then the numbered questions, and stop."
-            --add-dir /home/runner/.claude/plugins/cache
-            --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue view:*),Bash(gh run list:*),Bash(gh run view:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(rg:*),Bash(grep:*),Bash(jq:*),Bash(mkdir:*),Edit,Write,Task,Skill"
+            --add-dir /home/runner/.claude/plugins/cache /tmp
+            --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue view:*),Bash(gh api:*),Bash(gh run list:*),Bash(gh run view:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(rg:*),Bash(grep:*),Bash(jq:*),Bash(mkdir:*),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/pr-facts *),Edit,Write,Task,Skill"
       - name: Score
         if: always()
         env:
