@@ -114,23 +114,20 @@ pub fn step(
     marks: &mut MineMarks,
     grid: &VoxelGrid,
 ) -> JobAction {
-    let (job, action) = match std::mem::take(&mut pawn.job) {
-        Job::Idle => match claim_nearest(id, pose, marks, grid, &mut pawn.scan_cursor) {
-            Some(job) => {
-                pawn.select_slot(TOOL_SLOT);
-                advance(job, pose, marks, grid)
-            }
-            None => (Job::Idle, JobAction::Wait),
-        },
-        job @ Job::Mine { .. } => advance(job, pose, marks, grid),
-    };
-    pawn.job = job;
-    action
+    if matches!(pawn.job, Job::Idle)
+        && let Some(job) = claim_nearest(id, pose, marks, grid, &mut pawn.scan_cursor)
+    {
+        pawn.select_slot(TOOL_SLOT);
+        pawn.job = job;
+    }
+    advance(&mut pawn.job, pose, marks, grid)
 }
 
-/// Whether a block has a face open to air, so a pawn can aim at it.
-fn is_exposed(grid: &VoxelGrid, block: BlockPos) -> bool {
-    FACES.iter().any(|&face| !grid.is_solid_at(block + face))
+/// The faces of `block` open to air, as offsets from the block.
+fn open_faces(grid: &VoxelGrid, block: BlockPos) -> impl Iterator<Item = BlockPos> + '_ {
+    FACES
+        .into_iter()
+        .filter(move |&face| !grid.is_solid_at(block + face))
 }
 
 /// Claims the nearest unclaimed mark with an exposed face that routes to a stand cell.
@@ -150,7 +147,7 @@ fn claim_nearest(
     let mut candidates: Vec<BlockPos> = marks
         .unclaimed()
         .map(|[x, y, z]| BlockPos::new(x, y, z))
-        .filter(|&block| is_exposed(grid, block))
+        .filter(|&block| open_faces(grid, block).next().is_some())
         .collect();
     candidates.sort_by_key(|&block| (block - from).length_squared());
 
@@ -192,63 +189,53 @@ fn cell_centre(cell: BlockPos) -> Vec3 {
     cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5)
 }
 
-/// Gives up the claim and goes idle, leaving the mark for another try.
-fn give_up(mark: [i32; 3], marks: &mut MineMarks) -> (Job, JobAction) {
+/// Releases the claim on `mark` and goes idle, leaving the mark on offer.
+fn release_and_idle(job: &mut Job, mark: [i32; 3], marks: &mut MineMarks) {
     marks.release(mark);
-    (Job::Idle, JobAction::Wait)
+    *job = Job::Idle;
 }
 
-/// One tick of a mining job: walk the route, then dig.
-fn advance(job: Job, pose: Pose, marks: &mut MineMarks, grid: &VoxelGrid) -> (Job, JobAction) {
+/// One tick of a mining job: walk the route, then dig. An idle job waits.
+fn advance(job: &mut Job, pose: Pose, marks: &mut MineMarks, grid: &VoxelGrid) -> JobAction {
     let Job::Mine {
         mark,
         route,
-        mut next,
-        mut stall,
+        next,
+        stall,
     } = job
     else {
-        return (Job::Idle, JobAction::Wait);
+        return JobAction::Wait;
     };
+    let mark = *mark;
     if !marks.contains(mark) {
-        return give_up(mark, marks);
+        release_and_idle(job, mark, marks);
+        return JobAction::Wait;
     }
 
-    while route.get(next).is_some_and(|&waypoint| {
+    while route.get(*next).is_some_and(|&waypoint| {
         cell_centre(waypoint).xz().distance(pose.feet.xz()) <= ARRIVE_RADIUS
     }) {
-        next += 1;
+        *next += 1;
     }
 
-    let Some(&waypoint) = route.get(next) else {
+    let Some(&waypoint) = route.get(*next) else {
         let block = BlockPos::from_array(mark);
-        let aim = FACES
-            .iter()
-            .filter(|&&face| !grid.is_solid_at(block + face))
-            .map(|&face| block.as_vec3() + Vec3::splat(0.5) + face.as_vec3() * 0.5)
+        let aim = open_faces(grid, block)
+            .map(|face| block.as_vec3() + Vec3::splat(0.5) + face.as_vec3() * 0.5)
             .min_by(|a, b| {
                 a.distance_squared(pose.eye)
                     .total_cmp(&b.distance_squared(pose.eye))
             });
-        let Some(aim) = aim else {
-            return give_up(mark, marks);
-        };
-        marks.release(mark);
-        return (Job::Idle, JobAction::Dig { block, aim });
+        release_and_idle(job, mark, marks);
+        return aim.map_or(JobAction::Wait, |aim| JobAction::Dig { block, aim });
     };
 
     let to = cell_centre(waypoint);
     if !standable(grid, waypoint) || stall.stalled(to.distance(pose.feet)) {
-        return give_up(mark, marks);
+        release_and_idle(job, mark, marks);
+        return JobAction::Wait;
     }
-    (
-        Job::Mine {
-            mark,
-            route,
-            next,
-            stall,
-        },
-        JobAction::Walk { to },
-    )
+    JobAction::Walk { to }
 }
 
 /// Turns toward `to` at no more than `TURN_RATE` per tick and walks at full speed once

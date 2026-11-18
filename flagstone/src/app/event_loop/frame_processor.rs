@@ -9,6 +9,7 @@ use crate::app::event_loop::event_processor::{
 use crate::app::input_state::Designation;
 use flagstone_game::jobs::{self, JobAction, Pose};
 use flagstone_game::pawn::{MINE_REACH, PawnId};
+use flagstone_game::selection::PAWN_HALF_EXTENTS;
 use flagstone_voxel::BlockChangeReason;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -23,8 +24,6 @@ const SPRINT_SPEED: f32 = 6.0;
 
 /// The one pawn until a pawn store exists.
 const PAWN_ID: PawnId = PawnId(0);
-/// Half the pawn capsule's height: its centre sits this far above its feet.
-const PAWN_HALF_HEIGHT: f32 = 1.15;
 
 /// Strategy-line walking feel: acceleration and friction high enough to reach speed, or
 /// stop, within a tick. `max_speed` and `air_speed_cap` are set per tick from sprint.
@@ -43,6 +42,13 @@ const STRATEGY_MOVE_SETTINGS: moho_physics::MoveSettings = moho_physics::MoveSet
     prone_ticks: 0,
     lean_ticks: 0,
 };
+
+/// `(resource id, count)` pairs in id order, so the HUD lists are stable.
+fn sorted_by_id(counts: impl Iterator<Item = (u32, u32)>) -> Vec<(u32, u32)> {
+    let mut list: Vec<(u32, u32)> = counts.collect();
+    list.sort_by_key(|(resource_id, _)| *resource_id);
+    list
+}
 
 /// Handles frame timing and game state updates
 pub struct FrameProcessor;
@@ -114,7 +120,7 @@ impl FrameProcessor {
             return;
         };
         let pose = Pose {
-            feet: body.position - glam::Vec3::Y * PAWN_HALF_HEIGHT,
+            feet: body.position - glam::Vec3::Y * PAWN_HALF_EXTENTS.y,
             eye: body.position,
             yaw: body.yaw,
         };
@@ -470,11 +476,8 @@ impl FrameProcessor {
             })
             .unwrap_or_default();
 
-        let mut hotbar: Vec<(u32, u32)> = app.pawn.inventory.iter().collect();
-        hotbar.sort_by_key(|(resource_id, _)| *resource_id);
-
-        let mut colony_stock: Vec<(u32, u32)> = app.colony.stock.iter().collect();
-        colony_stock.sort_by_key(|(resource_id, _)| *resource_id);
+        let hotbar = sorted_by_id(app.pawn.inventory.iter());
+        let colony_stock = sorted_by_id(app.colony.stock.iter());
 
         // Only one tool exists today (`flagstone_game::tools::STARTING_TOOL`); the
         // label is a fixed string until a real tool-name lookup exists.

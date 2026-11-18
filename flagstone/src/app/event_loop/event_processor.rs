@@ -14,12 +14,12 @@ use moho_core::events::{AudioEvent, GraphicsEvent, UiEvent};
 use moho_render_api::{Marker, MarkerId};
 use std::collections::HashSet;
 
+/// Volume of the pickup and dig cues.
+const CUE_VOLUME: f32 = 0.6;
 /// Cue played when a mined block yields a resource.
 const PICKUP_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/pickup.wav");
-const PICKUP_VOLUME: f32 = 0.6;
 /// Cue played where a pawn's job removes a block.
 const DIG_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/dig.wav");
-const DIG_VOLUME: f32 = 0.6;
 
 // ── Spawn / interaction constants ──────────────────────────────────────
 const MOUSE_WHEEL_ZOOM_FACTOR: f32 = 0.5;
@@ -251,7 +251,7 @@ impl EventProcessor {
         if let Some(y) = outcome.yield_ {
             app.event_bus.publish(AudioEvent::PlaySound {
                 path: PICKUP_SOUND.to_string(),
-                volume: PICKUP_VOLUME,
+                volume: CUE_VOLUME,
             });
             tracing::debug!(
                 pos = ?outcome.block_pos,
@@ -426,7 +426,7 @@ pub(crate) fn publish_block_removal(
 pub(crate) fn publish_dig_cue(bus: &moho_core::EventBus, block: flagstone_voxel::BlockPos) {
     bus.publish(AudioEvent::PlaySoundAt {
         path: DIG_SOUND.to_string(),
-        volume: DIG_VOLUME,
+        volume: CUE_VOLUME,
         position: block.as_vec3() + glam::Vec3::splat(0.5),
     });
 }

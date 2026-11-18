@@ -59,25 +59,25 @@ pub fn route(
         .into_iter()
         .find(|&c| standable(grid, c))?;
 
-    // Cells by insertion order; the heap orders (f, g, insertion order) so ties are stable.
-    let mut inserted = vec![start];
+    // Cells by insertion order, each with the insertion index it was reached from; the
+    // heap orders (f, g, insertion order) so ties are stable.
+    let mut inserted: Vec<(BlockPos, Option<usize>)> = vec![(start, None)];
     let mut open = BinaryHeap::new();
     open.push(Reverse((manhattan(start, toward), 0, 0usize)));
     let mut best_g = HashMap::from([(start, 0)]);
-    let mut came_from: HashMap<BlockPos, BlockPos> = HashMap::new();
     let mut expansions = 0;
 
     while let Some(Reverse((_, g, index))) = open.pop() {
-        let cell = inserted[index];
+        let (cell, _) = inserted[index];
         if best_g.get(&cell).is_some_and(|&best| g > best) {
             continue;
         }
         if is_goal(cell) {
-            let mut path = vec![cell];
-            let mut at = cell;
-            while let Some(&before) = came_from.get(&at) {
-                path.push(before);
-                at = before;
+            let mut path = Vec::new();
+            let mut at = Some(index);
+            while let Some(i) = at {
+                path.push(inserted[i].0);
+                at = inserted[i].1;
             }
             path.reverse();
             return Some(path);
@@ -93,8 +93,7 @@ pub fn route(
                 continue;
             }
             best_g.insert(next, next_g);
-            came_from.insert(next, cell);
-            inserted.push(next);
+            inserted.push((next, Some(index)));
             open.push(Reverse((
                 next_g + manhattan(next, toward),
                 next_g,
