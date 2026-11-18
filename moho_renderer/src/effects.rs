@@ -362,6 +362,15 @@ mod tests {
             self.meshes.clear_placements();
             drawn
         }
+
+        /// Like `frame`, with the backend handle each instance draws with.
+        fn frame_with_handles(&mut self, eye: Vec3) -> Vec<(u32, InstanceGpu)> {
+            self.effects.draw(&mut self.meshes, eye);
+            self.meshes.flush(&mut self.backend);
+            let drawn = self.meshes.unshadowed_draws().collect();
+            self.meshes.clear_placements();
+            drawn
+        }
     }
 
     const EYE: Vec3 = Vec3::new(9.0, 6.0, 3.0);
@@ -926,10 +935,32 @@ mod tests {
         let (positions, indices) = &rig.backend.registered[0];
         assert_eq!(positions.len(), 8, "a four-point star");
         assert!(positions.iter().all(|p| p[2] == 0.0), "flat in XY");
+        let mut points: Vec<(f32, f32)> = positions
+            .iter()
+            .map(|p| (p[1].atan2(p[0]), p[0].hypot(p[1])))
+            .collect();
+        points.sort_by(|a, b| a.0.partial_cmp(&b.0).expect("finite"));
+        let tip = |radius: f32| (radius - 0.5).abs() < EPS;
+        let tips = points.iter().filter(|p| tip(p.1)).count();
+        assert_eq!(tips, 4, "four tips at radius 0.5, so size is tip to tip");
+        let inner: Vec<f32> = points.iter().filter(|p| !tip(p.1)).map(|p| p.1).collect();
+        assert_eq!(inner.len(), 4);
         assert!(
-            positions.iter().any(|p| p[0] != 0.0 || p[1] != 0.0),
-            "not collapsed to the origin"
+            inner
+                .iter()
+                .all(|r| *r > EPS && *r < 0.5 - EPS && (r - inner[0]).abs() < EPS),
+            "four inner points at one smaller positive radius, got {inner:?}"
         );
+        for i in 0..points.len() {
+            let next = points[(i + 1) % points.len()];
+            assert_ne!(
+                tip(points[i].1),
+                tip(next.1),
+                "tips and inner points alternate"
+            );
+        }
+        assert!(!indices.is_empty() && indices.len() % 3 == 0);
+        assert!(indices.iter().all(|i| *i < 8), "indices are in range");
         for triangle in indices.chunks(3) {
             let [a, b, c] = [0, 1, 2].map(|i| Vec3::from(positions[triangle[i] as usize]));
             assert!(
@@ -1139,6 +1170,71 @@ mod tests {
         assert!(
             drawn.iter().all(|i| translation(i).x < 50.0),
             "the mark was refused"
+        );
+    }
+
+    #[test]
+    fn streak_flash_and_mark_each_draw_with_their_own_mesh() {
+        let mut rig = Rig::new();
+        let streak = rig.effects.begin_streak(style(2.0, 0.1));
+        let head = Vec3::new(10.0, 1.0, 0.0);
+        rig.effects.place_streak(streak, head, Vec3::X);
+        rig.effects
+            .flash(Vec3::new(1.0, 2.0, 3.0), 0.0, flash_style(0.4, ms(50)));
+        rig.effects.mark(
+            Vec3::new(4.0, 0.0, 1.0),
+            Vec3::Y,
+            0.0,
+            mark_style(0.2, ms(10_000), ms(1000)),
+        );
+
+        let first = rig.frame_with_handles(EYE);
+        rig.effects.place_streak(streak, head, Vec3::X);
+        let second = rig.frame_with_handles(EYE);
+
+        assert_eq!(rig.backend.registered.len(), 3, "kite, star and quad");
+        assert_eq!(first.len(), 3);
+        let max_x = |handle: u32| {
+            let (positions, _) = &rig.backend.registered[handle as usize - 1];
+            let x = positions.iter().map(|p| p[0]).fold(f32::MIN, f32::max);
+            (positions.len(), x)
+        };
+        // Drawn in mesh-id order: the streak's id, then the flash's, then the mark's.
+        assert_eq!(max_x(first[0].0), (4, 1.0), "the streak's kite");
+        assert_eq!(max_x(first[1].0), (8, 0.5), "the flash's star");
+        assert_eq!(max_x(first[2].0), (4, 0.5), "the mark's quad");
+        assert_near(translation(&first[1].1), Vec3::new(1.0, 2.0, 3.0));
+        assert_near(translation(&first[2].1), Vec3::new(4.0, MARK_OFFSET, 1.0));
+        let handles = |frame: &[(u32, InstanceGpu)]| frame.iter().map(|d| d.0).collect::<Vec<_>>();
+        assert_eq!(handles(&second), handles(&first), "no re-registration");
+    }
+
+    #[test]
+    fn a_full_cap_skips_an_older_streak_to_drop_the_oldest_mark() {
+        let mut rig = Rig::new();
+        rig.effects.set_quality(1);
+        let streak = rig.effects.begin_streak(style(2.0, 0.1));
+        let marks = mark_style(0.2, ms(10_000), ms(1000));
+        for i in 1..32u8 {
+            rig.effects
+                .mark(Vec3::new(f32::from(i), 0.0, 0.0), Vec3::Y, 0.0, marks);
+        }
+        assert_eq!(rig.effects.live(), 32);
+
+        rig.effects
+            .mark(Vec3::new(32.0, 0.0, 0.0), Vec3::Y, 0.0, marks);
+        rig.effects
+            .place_streak(streak, Vec3::new(100.0, 1.0, 0.0), Vec3::X);
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(rig.effects.live(), 32);
+        let mut xs: Vec<f32> = drawn.iter().map(|i| translation(i).x).collect();
+        xs.sort_by(|a, b| a.partial_cmp(b).expect("finite"));
+        let mut expected: Vec<f32> = (2..=32u8).map(f32::from).collect();
+        expected.push(98.0);
+        assert_eq!(
+            xs, expected,
+            "mark 1 went; the streak and the new mark drew"
         );
     }
 
