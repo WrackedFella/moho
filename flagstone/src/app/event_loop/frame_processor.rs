@@ -6,7 +6,7 @@ use crate::App;
 use crate::app::event_loop::event_processor::{lod_for_chunk, lod_player_chunk, publish_pawn_dig};
 use crate::app::input_state::Designation;
 use flagstone_game::jobs::{self, EYE_HEIGHT, JobAction, Pose};
-use flagstone_game::pawn::PawnId;
+use flagstone_game::pawn::{MINE_REACH, PawnId};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -142,12 +142,8 @@ impl FrameProcessor {
             JobAction::Dig { aim, .. } => {
                 let eye = character.position;
                 let dir = (aim - eye).normalize_or_zero();
-                let Some(outcome) = app.pawn.dig(
-                    light_system.grid_mut(),
-                    eye,
-                    dir,
-                    flagstone_game::pawn::MINE_REACH,
-                ) else {
+                let Some(outcome) = app.pawn.dig(light_system.grid_mut(), eye, dir, MINE_REACH)
+                else {
                     tracing::debug!(?aim, "Pawn dig found nothing solid within reach");
                     return;
                 };

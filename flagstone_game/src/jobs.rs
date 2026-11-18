@@ -136,9 +136,16 @@ fn digs_from(grid: &VoxelGrid, block: BlockPos, cell: BlockPos) -> bool {
     cell != block + BlockPos::Y && is_stand_cell(grid, block, cell)
 }
 
+/// The directions of `block`'s faces that border air.
+fn open_faces(grid: &VoxelGrid, block: BlockPos) -> impl Iterator<Item = BlockPos> + '_ {
+    FACES
+        .into_iter()
+        .filter(move |&face| !grid.is_solid_at(block + face))
+}
+
 /// Whether any face of `block` borders air.
 fn is_exposed(grid: &VoxelGrid, block: BlockPos) -> bool {
-    FACES.iter().any(|&face| !grid.is_solid_at(block + face))
+    open_faces(grid, block).next().is_some()
 }
 
 fn centre(cell: BlockPos) -> Vec3 {
@@ -258,10 +265,8 @@ fn dig(
 ) -> JobAction {
     let eye = pose.feet + Vec3::Y * EYE_HEIGHT;
     let middle = mark.as_vec3() + Vec3::splat(0.5);
-    let nearest = FACES
-        .iter()
-        .filter(|&&face| !grid.is_solid_at(mark + face))
-        .map(|&face| middle + face.as_vec3() * 0.5)
+    let nearest = open_faces(grid, mark)
+        .map(|face| middle + face.as_vec3() * 0.5)
         .min_by(|a, b| a.distance_squared(eye).total_cmp(&b.distance_squared(eye)));
     release(pawn, mark, marks);
     match nearest {
