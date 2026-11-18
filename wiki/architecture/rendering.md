@@ -591,8 +591,10 @@ Streaks:
   `effects_quality` pref to it on start and on apply.
 
 `Scene::render` calls `Effects::draw` first: each streak becomes one placement of a shared kite
-mesh, each flash of a star mesh and each mark of a square mesh, uploaded on first use under `EFFECT_MESH_IDS_FROM` (`u64::MAX - 63`, reserved; games keep
-their ids below it; one id per kind), turned to face the camera eye. Placements go through
+mesh, each flash of a star mesh and each mark of a square mesh, uploaded on first use under
+`EFFECT_MESH_IDS_FROM` (`u64::MAX - 63`, reserved; games keep their ids below it; one id per
+kind). Streaks and flashes are turned to face the camera eye; a mark lies along its normal.
+Placements go through
 `WorldMeshes::place_unshadowed` and reach the backend via `RendererBackend::enqueue_unshadowed_draw`
 (default: `enqueue_draw`). In the renderer the draw key has `casts_shadow = false`, so
 `render_shadow_passes` skips it and the main pass draws it. A second camera sees a streak

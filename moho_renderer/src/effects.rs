@@ -51,7 +51,7 @@ pub struct MarkStyle {
 }
 
 /// How far a mark floats off its surface along the normal, so it does not z-fight.
-pub const MARK_OFFSET: f32 = 0.01;
+pub(crate) const MARK_OFFSET: f32 = 0.01;
 
 /// Live-effect cap per effects quality, indexed like `QUALITY_NAMES`.
 const CAPS: [usize; 5] = [0, 32, 64, 128, 256];
@@ -1575,6 +1575,67 @@ mod tests {
 
         assert_eq!(rig.effects.live(), 0);
         assert!(rig.frame(EYE).is_empty());
+    }
+
+    #[test]
+    fn a_mark_with_a_non_unit_normal_is_offset_by_the_mark_offset_only() {
+        let mut rig = Rig::new();
+        let at = Vec3::new(4.0, 1.0, 2.0);
+        rig.effects.mark(
+            at,
+            Vec3::new(0.0, 2.0, 0.0),
+            0.0,
+            mark_style(0.2, ms(500), ms(100)),
+        );
+
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(drawn.len(), 1);
+        assert_near(translation(&drawn[0]), at + Vec3::Y * MARK_OFFSET);
+        assert_near(z_axis(&drawn[0]), Vec3::Y);
+    }
+
+    #[test]
+    fn a_mark_with_a_zero_or_nan_normal_spawns_nothing() {
+        for normal in [Vec3::ZERO, Vec3::new(f32::NAN, 0.0, 1.0)] {
+            let mut rig = Rig::new();
+
+            rig.effects
+                .mark(Vec3::ZERO, normal, 0.0, mark_style(0.2, ms(500), ms(100)));
+
+            assert_eq!(rig.effects.live(), 0, "normal {normal:?}");
+            assert!(rig.frame(EYE).is_empty(), "normal {normal:?}");
+        }
+    }
+
+    #[test]
+    fn a_full_cap_of_marks_drops_the_oldest_mark() {
+        let mut rig = Rig::new();
+        rig.effects.set_quality(1);
+        for i in 0..32 {
+            let at = Vec3::new(i as f32, 0.0, 0.0);
+            rig.effects
+                .mark(at, Vec3::Y, 0.0, mark_style(0.2, ms(5000), ms(100)));
+        }
+        assert_eq!(rig.effects.live(), 32);
+
+        rig.effects.mark(
+            Vec3::new(100.0, 0.0, 0.0),
+            Vec3::Y,
+            0.0,
+            mark_style(0.2, ms(5000), ms(100)),
+        );
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(rig.effects.live(), 32);
+        assert_eq!(drawn.len(), 32);
+        let xs: Vec<f32> = drawn.iter().map(|d| translation(d).x).collect();
+        assert!(!xs.iter().any(|x| x.abs() < 0.5), "oldest gone: {xs:?}");
+        assert!(
+            xs.iter().any(|x| (x - 1.0).abs() < EPS),
+            "next-oldest stays"
+        );
+        assert!(xs.iter().any(|x| (x - 100.0).abs() < EPS), "newest present");
     }
 
     fn spawn_scene(rig: &mut Rig) -> Vec<InstanceGpu> {
