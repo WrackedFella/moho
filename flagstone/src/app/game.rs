@@ -9,7 +9,7 @@ use flagstone_game::controller::{
     CameraMode, ControllerInput, EDGE_PAN_MARGIN_PX, controller_to_camera, edge_pan_axes,
 };
 use flagstone_game::raycast::raycast_surface;
-use flagstone_game::selection::{PLAYER_PAWN, pawn_aabb, pick_pawn};
+use flagstone_game::selection::{PAWN_HALF_EXTENTS, PLAYER_PAWN, pawn_aabb, pick_pawn};
 use flagstone_ui::actions::StrategyAction;
 use flagstone_ui::console_commands::StrategyConsoleCommand;
 use moho_core::pointer::{Ray, screen_ray};
@@ -258,13 +258,19 @@ impl App {
         tracing::debug!(?pos, ?change, "Mining mark toggled");
     }
 
+    /// The pawn's box while the strategy view shows its body; `None` in first person.
+    fn strategy_pawn_aabb(&self) -> Option<flagstone_game::selection::Aabb> {
+        (self.simulation.camera_mode() != CameraMode::FirstPerson)
+            .then(|| pawn_aabb(self.simulation.position()))
+    }
+
     /// Draws the selection mark over the pawn in the strategy view and removes it otherwise.
     /// Runs every frame so the mark follows the pawn and survives a console marker clear.
     fn sync_selection_mark(&mut self) {
-        let show = self.selection.selected().is_some()
-            && self.simulation.camera_mode() != CameraMode::FirstPerson;
-        if show {
-            let aabb = pawn_aabb(self.simulation.position());
+        let aabb = self
+            .strategy_pawn_aabb()
+            .filter(|_| self.selection.selected().is_some());
+        if let Some(aabb) = aabb {
             self.scene.markers_mut().upsert(
                 SELECTION_MARKER_ID,
                 moho_render_api::Marker::new(
@@ -371,23 +377,26 @@ impl App {
         renderer: &mut dyn moho_renderer::RendererBackend,
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     ) {
-        let mut cubes = self.entities.actors.cubes().to_vec();
-        if self.simulation.camera_mode() != CameraMode::FirstPerson {
-            let aabb = pawn_aabb(self.simulation.position());
-            cubes.push(flagstone_game::actors::Cube::new(
-                (aabb.min + aabb.max) * 0.5,
-                aabb.max.x - aabb.min.x,
-                aabb.max.z - aabb.min.z,
-                aabb.max.y - aabb.min.y,
+        let mut with_body;
+        let cubes = if self.strategy_pawn_aabb().is_some() {
+            with_body = self.entities.actors.cubes().to_vec();
+            with_body.push(flagstone_game::actors::Cube::new(
+                self.simulation.position(),
+                2.0 * PAWN_HALF_EXTENTS.x,
+                2.0 * PAWN_HALF_EXTENTS.z,
+                2.0 * PAWN_HALF_EXTENTS.y,
                 flagstone_voxel::MaterialType::Lambertian {
                     albedo: PAWN_BODY_COLOR,
                 },
             ));
-        }
+            with_body.as_slice()
+        } else {
+            self.entities.actors.cubes()
+        };
         if let Err(e) = self.scene.render(
             renderer,
             self.entities.actors.spheres(),
-            &cubes,
+            cubes,
             self.mesh_handle,
             self.cube_mesh_handle,
             camera,
