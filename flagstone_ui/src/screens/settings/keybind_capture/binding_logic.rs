@@ -82,7 +82,8 @@ impl KeybindCaptureHandler {
         });
     }
 
-    /// Returns true if a binding was applied or a conflict modal was queued.
+    /// Returns true if a lone modifier resolved to a row: the binding was applied or
+    /// the conflict modal queued, and listening has ended either way.
     pub(crate) fn capture_modifier_if_listening<F>(
         &mut self,
         cur_mods: u8,
@@ -105,9 +106,8 @@ impl KeybindCaptureHandler {
                 let Some(target) = row_action(listen_id) else {
                     return false;
                 };
-                if self.place_key(target, key, bindings, on_binding_changed) {
-                    self.listening = None;
-                }
+                self.place_key(target, key, bindings, on_binding_changed);
+                self.listening = None;
                 return true;
             }
         }
@@ -116,15 +116,13 @@ impl KeybindCaptureHandler {
     }
 
     /// Bind `key` to `target`, or queue the conflict modal when another row holds it.
-    /// Returns true if the binding was applied.
     fn place_key<F>(
         &mut self,
         target: StrategyAction,
         key: Key,
         bindings: &BindingRegistry,
         mut on_binding_changed: F,
-    ) -> bool
-    where
+    ) where
         F: FnMut(StrategyAction, Vec<Binding>),
     {
         if let Some(conflicting) = bindings.find_conflict(key, target) {
@@ -137,10 +135,8 @@ impl KeybindCaptureHandler {
             let conflict_binding_desc = binding_label(&[Binding::key(key)]);
             self.conflict_modal
                 .show(pending, conflict_key_name, conflict_binding_desc);
-            false
         } else {
             on_binding_changed(target, rebind_key(bindings.get_binding(target), key));
-            true
         }
     }
 

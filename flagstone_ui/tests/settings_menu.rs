@@ -850,6 +850,9 @@ fn cancel_after_stray_key_changes_nothing() {
         menu.get_staged_binding(0),
         [Binding::key(Key::W), pad_stick(StickDir::Up)]
     );
-    assert_eq!(menu.get_staged_binding(6), [Binding::key(Key::Shift), THUMB]);
+    assert_eq!(
+        menu.get_staged_binding(6),
+        [Binding::key(Key::Shift), THUMB]
+    );
     assert!(!menu.is_listening());
 }
