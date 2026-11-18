@@ -237,7 +237,7 @@ impl PhysicsWorld {
         self.rest_slope = slope;
     }
 
-    /// The steepest ground, radians, on which loose objects are braked to rest.
+    /// The current rest slope; see [`Self::set_rest_slope`].
     pub fn rest_slope(&self) -> f32 {
         self.rest_slope
     }
@@ -1190,7 +1190,6 @@ mod tests {
         }
     }
 
-    /// The radius of a capsule's or cylinder's round cross-section.
     fn round_radius(shape: LooseShape) -> f32 {
         match shape {
             LooseShape::Capsule { radius, .. } | LooseShape::Cylinder { radius, .. } => radius,
@@ -1203,7 +1202,6 @@ mod tests {
         Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)
     }
 
-    /// Height of the lowest point of `shape` in pose `state`.
     fn lowest_point(shape: LooseShape, state: &LooseState) -> f32 {
         let axis_y = (state.rotation * Vec3::Y).y.abs();
         let reach = match shape {
