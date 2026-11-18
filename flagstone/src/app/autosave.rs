@@ -655,6 +655,28 @@ mod tests {
             );
         }
 
+        #[test]
+        fn adopting_settings_keeps_the_startup_interval() {
+            let temp = tempfile::tempdir().expect("temp dir");
+            let saves = saves_dir(&temp);
+            let mut app = loaded_session_with_prefs(
+                "autosave_test_adopt_keeps_interval",
+                &temp,
+                prefs_with_autosave_seconds(0),
+            );
+            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+            app.adopt_settings(Prefs::default());
+            mine_surface_block(&mut app, 40, 40);
+
+            sim.step(&mut app, 600 * TICK_HZ);
+            draw_frame(&mut app, &mut sim);
+
+            assert!(
+                !scene_file(&saves).exists(),
+                "adopting settings turned autosave back on"
+            );
+        }
+
         /// Mines a block with autosave off, ends the session with `end_session`, and checks
         /// the save holds the edit.
         fn assert_session_end_saves_with_autosave_off(

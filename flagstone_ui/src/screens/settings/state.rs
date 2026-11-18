@@ -231,6 +231,24 @@ mod tests {
     }
 
     #[test]
+    fn applying_settings_keeps_autosave_seconds() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("prefs.ini");
+        let initial = Prefs::parse("[world]\nautosave_seconds=0\n").0;
+        let mut state = SettingsState::from_prefs_at(initial, path.clone());
+        *state.staged_mut().music_volume_mut() = 2.5;
+
+        state.apply_changes().unwrap();
+        let (reloaded, warnings) = Prefs::load_from(&path);
+
+        assert_eq!(warnings, vec![]);
+        assert_eq!(reloaded.music_volume(), 2.5);
+        assert_eq!(reloaded.autosave_interval(), None);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("autosave_seconds=0"), "{text}");
+    }
+
+    #[test]
     fn saving_settings_keeps_debug_values() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("prefs.ini");

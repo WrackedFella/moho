@@ -1115,8 +1115,27 @@ mod tests {
     }
 
     #[test]
+    fn overflowing_autosave_seconds_warns_and_falls_back() {
+        let raw = "4294967296";
+
+        let (prefs, issues) = world_autosave(raw);
+
+        assert_eq!(
+            issues,
+            vec![malformed("world", "autosave_seconds", Some(raw))]
+        );
+        assert_eq!(prefs.autosave_interval(), secs(120));
+    }
+
+    #[test]
     fn out_of_range_autosave_seconds_clamps_without_warning() {
-        for (raw, expected) in [("5", 30), ("29", 30), ("3601", 3600), ("99999", 3600)] {
+        for (raw, expected) in [
+            ("5", 30),
+            ("29", 30),
+            ("3601", 3600),
+            ("99999", 3600),
+            ("4294967295", 3600),
+        ] {
             let (prefs, issues) = world_autosave(raw);
 
             assert_eq!(issues, vec![], "{raw}");
