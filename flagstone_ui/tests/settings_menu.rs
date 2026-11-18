@@ -691,6 +691,8 @@ fn confirm_after_stray_key_applies_only_prompted_key() {
     let mut menu = menu_with_shift_conflict_open();
     assert!(Screen::take_pending_modal(&mut menu).is_some());
     press_stray_alt(&mut menu);
+    assert!(!alt_is_bound(&menu));
+    assert!(!menu.has_unsaved_changes());
 
     Screen::on_modal_confirm(&mut menu);
 
