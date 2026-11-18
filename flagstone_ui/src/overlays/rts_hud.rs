@@ -3,7 +3,7 @@
 //! Draws the time of day and the view-height slider, and reports the player's pick
 //! through `take_intents`.
 
-use super::overlay_manager::{HudData, HudIntents, Overlay, ViewHeightHud};
+use super::overlay_manager::{HudData, HudIntents, Overlay, SelectionHud, ViewHeightHud};
 
 const SLIDER_LENGTH: f32 = 200.0;
 
@@ -54,6 +54,9 @@ impl Overlay for RtsHud {
         render_mode_label(ui);
         self.mine_toggled |= render_mine_control(ui, data.mine_designation_active);
         render_time_of_day(ui, data.time_of_day);
+        if let Some(selection) = &data.selection {
+            render_selection_panel(ui, selection);
+        }
         if let Some(view_height) = data.view_height {
             self.chosen = render_view_height(ui, view_height).or(self.chosen);
         }
@@ -81,6 +84,32 @@ fn render_mine_control(ui: &mut egui::Ui, active: bool) -> bool {
         })
         .inner
         .clicked()
+}
+
+/// The selected pawn's panel in the bottom-left corner. It is an egui area, so a click
+/// on it is consumed before it can clear the selection.
+fn render_selection_panel(ui: &mut egui::Ui, selection: &SelectionHud) {
+    let text_color = egui::Color32::from_rgb(220, 220, 200);
+    egui::Area::new("rts_selection_panel".into())
+        .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(12.0, -12.0))
+        .show(ui.ctx(), |ui| {
+            egui::Frame::new()
+                .fill(egui::Color32::from_rgba_premultiplied(0, 0, 0, 120))
+                .inner_margin(egui::Margin::same(6))
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(&selection.title)
+                            .font(egui::FontId::proportional(16.0))
+                            .color(text_color),
+                    );
+                    if let Some(tool) = &selection.tool {
+                        ui.label(egui::RichText::new(format!("Tool: {tool}")).color(text_color));
+                    }
+                    for (name, count) in &selection.carried {
+                        ui.label(egui::RichText::new(format!("{name}: {count}")).color(text_color));
+                    }
+                });
+        });
 }
 
 /// Vertical view-height slider on the right edge, below the minimap and the clock.

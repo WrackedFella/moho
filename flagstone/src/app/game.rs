@@ -9,6 +9,7 @@ use flagstone_game::controller::{
     CameraMode, ControllerInput, EDGE_PAN_MARGIN_PX, controller_to_camera, edge_pan_axes,
 };
 use flagstone_game::raycast::raycast_surface;
+use flagstone_game::selection::{PLAYER_PAWN, pawn_aabb, pick_pawn};
 use flagstone_ui::actions::StrategyAction;
 use flagstone_ui::console_commands::StrategyConsoleCommand;
 use moho_core::pointer::{Ray, screen_ray};
@@ -29,6 +30,9 @@ const MARK_VOLUME: f32 = 0.6;
 /// The marker id the selection mark is drawn under.
 pub(crate) const SELECTION_MARKER_ID: moho_render_api::MarkerId =
     moho_render_api::MarkerId(u64::MAX);
+
+const SELECTION_MARK_COLOR: [f32; 4] = [0.2, 1.0, 0.4, 1.0];
+const PAWN_BODY_COLOR: glam::Vec3 = glam::Vec3::new(0.8, 0.25, 0.2);
 
 /// One tick's worth of player input.
 #[derive(Clone, Debug, Default)]
@@ -210,6 +214,16 @@ impl App {
                 POINTER_RAY_RANGE,
             );
             tracing::debug!(hit = ?self.pointer_hit, "Pointer ray cast");
+            let picked = pick_pawn(
+                ray,
+                [(PLAYER_PAWN, pawn_aabb(self.simulation.position()))],
+                self.pointer_hit.map(|hit| hit.distance),
+            );
+            self.selection.click(picked);
+            if picked.is_some() {
+                self.event_bus
+                    .publish(moho_core::events::AudioEvent::ButtonClick);
+            }
         }
         if let Some(ray) = command.mark {
             self.apply_mark(ray);
@@ -242,6 +256,27 @@ impl App {
                 volume: MARK_VOLUME,
             });
         tracing::debug!(?pos, ?change, "Mining mark toggled");
+    }
+
+    /// Draws the selection mark over the pawn in the strategy view and removes it otherwise.
+    /// Runs every frame so the mark follows the pawn and survives a console marker clear.
+    fn sync_selection_mark(&mut self) {
+        let show = self.selection.selected().is_some()
+            && self.simulation.camera_mode() != CameraMode::FirstPerson;
+        if show {
+            let aabb = pawn_aabb(self.simulation.position());
+            self.scene.markers_mut().upsert(
+                SELECTION_MARKER_ID,
+                moho_render_api::Marker::new(
+                    aabb.min.to_array(),
+                    aabb.max.to_array(),
+                    SELECTION_MARK_COLOR,
+                )
+                .with_style(moho_render_api::MarkerStyle::Outline),
+            );
+        } else {
+            self.scene.markers_mut().remove(SELECTION_MARKER_ID);
+        }
     }
 
     /// Applies what the player asked for through the HUD this frame.
@@ -336,10 +371,23 @@ impl App {
         renderer: &mut dyn moho_renderer::RendererBackend,
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     ) {
+        let mut cubes = self.entities.actors.cubes().to_vec();
+        if self.simulation.camera_mode() != CameraMode::FirstPerson {
+            let aabb = pawn_aabb(self.simulation.position());
+            cubes.push(flagstone_game::actors::Cube::new(
+                (aabb.min + aabb.max) * 0.5,
+                aabb.max.x - aabb.min.x,
+                aabb.max.z - aabb.min.z,
+                aabb.max.y - aabb.min.y,
+                flagstone_voxel::MaterialType::Lambertian {
+                    albedo: PAWN_BODY_COLOR,
+                },
+            ));
+        }
         if let Err(e) = self.scene.render(
             renderer,
             self.entities.actors.spheres(),
-            self.entities.actors.cubes(),
+            &cubes,
             self.mesh_handle,
             self.cube_mesh_handle,
             camera,
@@ -599,6 +647,7 @@ impl moho_app::Game for App {
         frame_processor.update_cut_caps(self);
         self.designation_markers
             .sync(&self.colony.marks, self.scene.markers_mut());
+        self.sync_selection_mark();
         if let Some(renderer) = ctx.renderer() {
             frame_processor.update_lighting(self, clock, &mut *renderer);
             self.render_scene(renderer, camera);
@@ -2837,10 +2886,12 @@ mod tests {
                 .as_mut()
                 .expect("App starts with a light system")
                 .grid_mut();
-            for x in 4..=12 {
-                for y in 4..=12 {
-                    grid.mutator()
-                        .place(flagstone_voxel::BlockPos::new(x, y, 13), 1, None);
+            for x in 11..=17 {
+                for y in 5..=12 {
+                    for z in 11..=17 {
+                        grid.mutator()
+                            .place(flagstone_voxel::BlockPos::new(x, y, z), 1, None);
+                    }
                 }
             }
             click_on(&mut app, standing_centre());

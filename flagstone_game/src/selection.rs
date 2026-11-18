@@ -21,22 +21,54 @@ pub struct Aabb {
 }
 
 /// The pawn's box around its capsule centre.
-pub fn pawn_aabb(_center: Vec3) -> Aabb {
-    todo!("pawn_aabb")
+pub fn pawn_aabb(center: Vec3) -> Aabb {
+    Aabb {
+        min: center - PAWN_HALF_EXTENTS,
+        max: center + PAWN_HALF_EXTENTS,
+    }
 }
 
 /// Distance along `ray` at which it enters `aabb`, or `None` on a miss.
-pub fn ray_box_entry(_ray: Ray, _aabb: &Aabb) -> Option<f32> {
-    todo!("ray_box_entry")
+///
+/// A ray that starts inside the box enters at `0.0`; a box wholly behind the
+/// origin is a miss. Uses the slab method.
+pub fn ray_box_entry(ray: Ray, aabb: &Aabb) -> Option<f32> {
+    let mut t_near = f32::NEG_INFINITY;
+    let mut t_far = f32::INFINITY;
+    for axis in 0..3 {
+        let origin = ray.origin[axis];
+        let direction = ray.direction[axis];
+        if direction == 0.0 {
+            // Parallel to this slab: it either lies inside it for all t or never.
+            if origin < aabb.min[axis] || origin > aabb.max[axis] {
+                return None;
+            }
+            continue;
+        }
+        let t1 = (aabb.min[axis] - origin) / direction;
+        let t2 = (aabb.max[axis] - origin) / direction;
+        t_near = t_near.max(t1.min(t2));
+        t_far = t_far.min(t1.max(t2));
+    }
+    (t_near <= t_far && t_far >= 0.0).then(|| t_near.max(0.0))
 }
 
 /// The nearest pawn whose box the ray enters before the terrain.
+///
+/// `terrain_distance` is the distance to the terrain the ray hit; `None`
+/// means the ray hit no terrain, so nothing hides a pawn.
 pub fn pick_pawn(
-    _ray: Ray,
-    _pawns: impl IntoIterator<Item = (PawnId, Aabb)>,
-    _terrain_distance: Option<f32>,
+    ray: Ray,
+    pawns: impl IntoIterator<Item = (PawnId, Aabb)>,
+    terrain_distance: Option<f32>,
 ) -> Option<PawnId> {
-    todo!("pick_pawn")
+    let limit = terrain_distance.unwrap_or(f32::INFINITY);
+    pawns
+        .into_iter()
+        .filter_map(|(id, aabb)| ray_box_entry(ray, &aabb).map(|t| (id, t)))
+        .filter(|&(_, t)| t < limit)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(id, _)| id)
 }
 
 /// The currently selected pawn, if any.
@@ -47,8 +79,8 @@ pub struct Selection {
 
 impl Selection {
     /// Replaces the selection with what the click hit.
-    pub fn click(&mut self, _hit: Option<PawnId>) {
-        todo!("Selection::click")
+    pub fn click(&mut self, hit: Option<PawnId>) {
+        self.selected = hit;
     }
 
     pub fn selected(&self) -> Option<PawnId> {
