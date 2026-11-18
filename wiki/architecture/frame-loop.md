@@ -109,7 +109,8 @@ The renderer is reachable only through the contexts, so ticks queue renderer cha
    camera (`Listener::from_view`); then drain audio events;
 3. if the UI asked to quit: auto-save, `request_exit`, stop;
 4. if the UI asked for the main menu (Exit to main menu): auto-save, then `show_menu`, and go on;
-5. `update_hud_data`, `update_cut_caps` (rebuild [cut-face caps](rendering.md#3-cut-face-caps)), then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
+5. if `AutosaveSchedule` (`flagstone/src/app/autosave.rs`) is due: auto-save, then `saved` (clean, interval restarts) or `save_failed` (interval restarts, edit kept, so the next interval retries). The schedule counts only ticks run in `Playing`, against `App::autosave_interval`; block edit `WorldEvent`s (`process_world_events`) mark it edited. It is due only when edited and a full interval has passed. No world loaded: nothing is written;
+6. `update_hud_data`, `update_cut_caps` (rebuild [cut-face caps](rendering.md#3-cut-face-caps)), then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
    with actors, the sphere and cube mesh handles and the frame camera (below).
 
 A `FrameError` skips the frame with a `warn`. Pass order inside the renderer:
