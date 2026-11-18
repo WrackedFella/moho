@@ -6024,6 +6024,136 @@ mod round_tests {
     }
 
     #[test]
+    fn a_round_puts_an_enemy_under_fire_from_where_the_player_fired() {
+        let slow = Ballistics {
+            muzzle_velocity: 150.0,
+            drag: 0.0,
+        };
+        let mut sim = far_duel(Grade::Veteran, 1.5, slow);
+        let shot = SearchlightCommand {
+            round_gravity: scale(0.0),
+            ..fire_past_the_enemy(&sim, 0.8, 0.0)
+        };
+        let sidestep = SearchlightCommand {
+            movement: CharacterCommand {
+                right: 1.0,
+                ..CharacterCommand::default()
+            },
+            round_gravity: scale(0.0),
+            ..idle()
+        };
+
+        sim.tick(&shot, DT);
+        let fired_from = sim.player().position;
+        let mut threat = None;
+        let mut ticks = 0;
+        while threat.is_none() && ticks < 100 {
+            sim.tick(&sidestep, DT);
+            threat = sim.targets[sim.dummy_count].under_fire;
+            ticks += 1;
+        }
+
+        let moved = sim.player().position.distance(fired_from);
+        assert!(
+            moved > 1.0,
+            "the player only moved {moved} m while the round flew"
+        );
+        assert_eq!(
+            threat,
+            Some(fired_from),
+            "the threat was not where the player fired from (player now at {:?})",
+            sim.player().position
+        );
+    }
+
+    #[test]
+    fn a_step_that_passes_one_enemy_and_strikes_another_counts_a_near_miss_only_for_the_first() {
+        let first_at = ENEMY_AT;
+        let second_at = Vec3::new(-0.84, 0.0, 33.0);
+        let arena = arena_with_floor(
+            140.0,
+            &[],
+            // Far enough back that a step of the round ends short of the first enemy's radius
+            // and the next one runs through it to the second enemy.
+            Vec3::new(0.0, 0.0, -33.0),
+            &[first_at, second_at],
+            &[Vec3::new(0.0, 0.0, 50.0)],
+        );
+        let mut config = config_with(test_ballistics(), HEAD_Y);
+        config.enemy.damage = 1;
+        config.enemy.patrol_speed = 0.0;
+        config.enemy.near_miss_radius = 1.5;
+        config.body.max_health = 1_000_000;
+        let mut sim = SearchlightSim::with_start(arena, config, Start::Empty);
+        sim.spawn_enemy(0, Grade::Veteran)
+            .expect("the marker is free");
+        sim.spawn_enemy(1, Grade::Experienced)
+            .expect("the marker is free");
+        let first = sim.dummy_count;
+        let second = first + 1;
+        let shot = fire_past_the_enemy(&sim, 0.8, 0.0);
+        let level = SearchlightCommand {
+            round_gravity: scale(0.0),
+            ..idle()
+        };
+
+        sim.tick(&shot, DT);
+        let mut ticks = vec![sim.drain_feedback()];
+        let mut before_last_step = sim.rounds.first().map(|round| round.flight.position.z);
+        let mut first_under_fire = false;
+        for _ in 0..30 {
+            if sim.rounds.is_empty() {
+                break;
+            }
+            before_last_step = sim.rounds.first().map(|round| round.flight.position.z);
+            sim.tick(&level, DT);
+            first_under_fire |= sim.targets[first].under_fire.is_some();
+            ticks.push(sim.drain_feedback());
+        }
+
+        let landed = hits(&ticks);
+        assert_eq!(landed.len(), 1, "{ticks:?}");
+        assert_eq!(usize::from(landed[0].1), second, "{ticks:?}");
+        let started_at = before_last_step.expect("the round was in flight before the last step");
+        assert!(
+            started_at < ENEMY_AT.z - 2.0,
+            "the striking step started at z {started_at}, not before the first enemy's radius"
+        );
+        assert!(
+            first_under_fire,
+            "the passed veteran was never put under fire"
+        );
+        assert_eq!(sim.targets[second].near_misses, 0);
+    }
+
+    #[test]
+    fn a_round_spent_in_the_step_that_crosses_a_dummy_still_hits_it() {
+        // Drag 30/s keeps half the speed each 1/60 s step: 190 m/s becomes about 95 m/s, spent,
+        // after a step of about 1.6 m that crosses the torso of a dummy 1.2 m ahead.
+        let spent_at_once = Ballistics {
+            muzzle_velocity: 190.0,
+            drag: 30.0,
+        };
+        let mut sim = dummy_sim(1.2, TORSO_Y, spent_at_once);
+        let level = SearchlightCommand {
+            round_gravity: scale(0.0),
+            ..pull()
+        };
+
+        let mut ticks = run_until_hit(&mut sim, &[level]);
+        ticks.extend(run_until_settled(&mut sim, &[]));
+
+        let landed = hits(&ticks);
+        assert_eq!(landed.len(), 1, "{ticks:?}");
+        assert_eq!(
+            (landed[0].1, landed[0].2),
+            (0, BodyPart::Torso),
+            "{ticks:?}"
+        );
+        assert!(sim.rounds.is_empty());
+    }
+
+    #[test]
     fn a_round_near_missing_one_enemy_over_two_steps_counts_once() {
         // At 150 m/s a round moves 2.5 m a tick, so a 5 m radius spans several steps.
         let slow = Ballistics {
