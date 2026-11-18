@@ -956,6 +956,48 @@ mod tests {
     }
 
     #[test]
+    fn a_use_in_a_sandbox_does_nothing() {
+        let arena = arena_with_controls(
+            &[],
+            Vec3::ZERO,
+            &markers(4),
+            &[Vec3::new(0.0, 0.0, 25.0)],
+            &[POST],
+        );
+        let mut mode = ArenaMode::sandbox(arena, control_config());
+        mode.tick(&idle(), DT);
+        let in_reach = mode.sim().control_in_reach();
+
+        for _ in 0..5 {
+            mode.tick(&using(), DT);
+        }
+
+        assert_eq!(in_reach, Some(0), "the post is in reach");
+        assert_eq!(mode.sim().enemy_count(), 0);
+        assert_eq!(mode.tally(), None);
+    }
+
+    #[test]
+    fn killing_the_last_enemy_and_using_on_the_same_tick_calls_the_next_wave() {
+        let markers = markers(4);
+        let mut mode = control_mode(&[], 4, tuning(1, 2, 100));
+        mode.sim_mut().kill_enemy(0);
+
+        mode.tick(&using(), DT);
+
+        assert_eq!(
+            mode.tally(),
+            Some(Tally {
+                wave: 2,
+                score: 100
+            })
+        );
+        assert_eq!(mode.sim().enemies_alive(), 3);
+        assert_eq!(mode.sim().enemy_count(), 4);
+        assert_enemy_at(&mode, 1, markers[0]);
+    }
+
+    #[test]
     fn a_use_while_dead_does_nothing() {
         let mut mode = control_mode(&[], 4, tuning(1, 2, 100));
         kill_and_tick(&mut mode, 0);

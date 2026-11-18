@@ -3025,7 +3025,7 @@ mod enemy_tests {
 
     use super::*;
     use crate::arena;
-    use crate::test_support::{DT, arena_with, mag, rifle_from, test_config};
+    use crate::test_support::{DT, arena_with, arena_with_controls, mag, rifle_from, test_config};
 
     /// Height of the head volume's centre above the capsule centre: a level shot from here
     /// strikes a standing body's head.
@@ -3273,6 +3273,24 @@ mod enemy_tests {
         assert_eq!(count(&ticks, player_hit), 0);
         assert_eq!(count(&ticks, enemy_fired), 0);
         assert_eq!(sim.player_body().health(), 100);
+    }
+
+    #[test]
+    fn a_control_post_blocks_an_enemys_sight_of_the_player() {
+        let row: Vec<Vec3> = (-5..=5)
+            .map(|step| Vec3::new(0.4 * step as f32, 0.0, 0.8))
+            .collect();
+        let open = arena_with_controls(&[], Vec3::ZERO, &[ENEMY_SPAWN], &[TOWARD_PLAYER], &[]);
+        let screened = arena_with_controls(&[], Vec3::ZERO, &[ENEMY_SPAWN], &[TOWARD_PLAYER], &row);
+        let mut open_sim = SearchlightSim::start(open, config());
+        let mut screened_sim = SearchlightSim::start(screened, config());
+
+        let open_ticks = run(&mut open_sim, &script(60, &[]));
+        let screened_ticks = run(&mut screened_sim, &script(60, &[]));
+
+        assert!(count(&open_ticks, player_hit) > 0, "the open duel hits");
+        assert_eq!(count(&screened_ticks, player_hit), 0);
+        assert_eq!(screened_sim.player_body().health(), 100);
     }
 
     #[test]

@@ -436,6 +436,31 @@ mod tests {
     }
 
     #[test]
+    fn holding_use_sets_use_pressed_only_on_the_press() {
+        let mut map = fresh_map();
+        press(&mut map, SearchlightAction::Use);
+
+        let first = SearchlightCommand::from_frame(&map.end_tick());
+        let second = SearchlightCommand::from_frame(&map.end_tick());
+        release(&mut map, SearchlightAction::Use);
+        let released = SearchlightCommand::from_frame(&map.end_tick());
+        press(&mut map, SearchlightAction::Use);
+        let again = SearchlightCommand::from_frame(&map.end_tick());
+        let held_again = SearchlightCommand::from_frame(&map.end_tick());
+
+        assert_eq!(
+            [
+                first.use_pressed,
+                second.use_pressed,
+                released.use_pressed,
+                again.use_pressed,
+                held_again.use_pressed
+            ],
+            [true, false, false, true, false]
+        );
+    }
+
+    #[test]
     fn searchlight_default_bindings_name_no_protected_key() {
         let protected = [
             Key::Enter,
