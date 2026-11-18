@@ -33,9 +33,51 @@ test-doc:
 comment-refs base=base:
     scripts/check-comment-refs.sh {{base}}
 
-# Licenses, advisories, banned and duplicate crates, crate sources.
+# Licenses, advisories, banned and duplicate crates, crate sources, and that rapier3d and
+# parry3d resolve with enhanced-determinism, plus self-tests that the feature check rejects
+# a lost feature and accepts a present one.
 deny:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Forward slashes: bash strips the backslashes of an unquoted Windows path.
+    just() { "{{replace(just_executable(), '\', '/')}}" "$@"; }
     cargo deny check
+    scripts/check-physics-features.sh
+    just _physics-features-rejects physics-features-no-rapier rapier3d
+    just _physics-features-rejects physics-features-no-parry parry3d
+    just _physics-features-accepts physics-features-ok
+
+# Fails unless the physics feature check exits non-zero on the fixture and names the crate.
+[private]
+_physics-features-rejects fixture expected:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    out=$(MOHO_PHYSICS_METADATA=scripts/fixtures/{{fixture}}.json scripts/check-physics-features.sh 2>&1)
+    status=$?
+    if [ "$status" -ne 0 ] && grep -qF -- '{{expected}}' <<<"$out"; then
+        exit 0
+    fi
+    echo "physics-features self-test failed: {{fixture}}" >&2
+    echo "  expected: non-zero exit and output naming: {{expected}}" >&2
+    echo "  got: exit $status, output:" >&2
+    sed 's/^/    /' <<<"$out" >&2
+    exit 1
+
+# Fails unless the physics feature check exits 0 on the fixture.
+[private]
+_physics-features-accepts fixture:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    out=$(MOHO_PHYSICS_METADATA=scripts/fixtures/{{fixture}}.json scripts/check-physics-features.sh 2>&1)
+    status=$?
+    if [ "$status" -eq 0 ]; then
+        exit 0
+    fi
+    echo "physics-features self-test failed: {{fixture}}" >&2
+    echo "  expected: exit 0" >&2
+    echo "  got: exit $status, output:" >&2
+    sed 's/^/    /' <<<"$out" >&2
+    exit 1
 
 # LCOV coverage report at lcov.info.
 cov:
