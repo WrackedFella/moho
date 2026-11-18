@@ -53,22 +53,26 @@ impl MineMarks {
     }
 
     /// Records that `pawn` has taken the mark on `pos`. Does nothing for an unmarked block.
-    #[expect(clippy::todo, reason = "stub until implemented")]
-    pub fn claim(&mut self, _pos: [i32; 3], _pawn: PawnId) {
-        todo!()
+    pub fn claim(&mut self, pos: [i32; 3], pawn: PawnId) {
+        if let Some(mark) = self.marks.get_mut(&pos) {
+            mark.claimed_by = Some(pawn);
+        }
     }
 
     /// Frees the mark on `pos` for any pawn to take. The mark stays. Does nothing for an
     /// unmarked block.
-    #[expect(clippy::todo, reason = "stub until implemented")]
-    pub fn release(&mut self, _pos: [i32; 3]) {
-        todo!()
+    pub fn release(&mut self, pos: [i32; 3]) {
+        if let Some(mark) = self.marks.get_mut(&pos) {
+            mark.claimed_by = None;
+        }
     }
 
     /// The marked blocks no pawn has claimed, in key order.
     pub fn unclaimed(&self) -> impl Iterator<Item = [i32; 3]> {
-        // Stub: yields nothing until implemented.
-        std::iter::empty()
+        self.marks
+            .iter()
+            .filter(|(_, mark)| mark.claimed_by.is_none())
+            .map(|(pos, _)| *pos)
     }
 
     /// Drops the mark on a block that no longer exists; does nothing for an unmarked one.

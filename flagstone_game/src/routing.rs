@@ -1,5 +1,8 @@
 //! Routes over the voxel ground: which cells a pawn can stand on and the way between them.
 
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet};
+
 use flagstone_voxel::{BlockPos, VoxelGrid};
 use glam::Vec3;
 
@@ -8,29 +11,109 @@ pub const ROUTE_NODE_BUDGET: usize = 4096;
 
 /// Whether a pawn can stand with its feet in `cell`: ground below and three cells of air
 /// from the feet up (the capsule is 2.3 m tall).
-#[expect(clippy::todo, reason = "stub until implemented")]
-pub fn standable(_grid: &VoxelGrid, _cell: BlockPos) -> bool {
-    todo!()
+pub fn standable(grid: &VoxelGrid, cell: BlockPos) -> bool {
+    grid.is_solid_at(cell - BlockPos::Y)
+        && (0..CLEARANCE).all(|up| !grid.is_solid_at(cell + BlockPos::Y * up))
 }
 
 /// The cell holding `feet`, flooring each axis.
-#[expect(clippy::todo, reason = "stub until implemented")]
-pub fn feet_cell(_feet: Vec3) -> BlockPos {
-    todo!()
+pub fn feet_cell(feet: Vec3) -> BlockPos {
+    feet.floor().as_ivec3()
+}
+
+/// Cells of air a pawn needs from its feet up.
+const CLEARANCE: i32 = 3;
+
+/// The four horizontal neighbours, in the fixed order the search tries them.
+const HORIZONTAL: [BlockPos; 4] = [BlockPos::X, BlockPos::NEG_X, BlockPos::Z, BlockPos::NEG_Z];
+
+/// The standable cells one step from `from`: level, one block up (with a fourth air cell
+/// above `from` to rise into) or one block down.
+fn neighbours(grid: &VoxelGrid, from: BlockPos) -> impl Iterator<Item = BlockPos> {
+    let can_rise = !grid.is_solid_at(from + BlockPos::Y * CLEARANCE);
+    HORIZONTAL.into_iter().filter_map(move |d| {
+        let level = from + d;
+        let up = level + BlockPos::Y;
+        let down = level - BlockPos::Y;
+        if standable(grid, level) {
+            Some(level)
+        } else if can_rise && standable(grid, up) {
+            Some(up)
+        } else if standable(grid, down) {
+            Some(down)
+        } else {
+            None
+        }
+    })
+}
+
+/// Ground-plane Manhattan distance; vertical steps cost the same as level ones, so height
+/// stays out of the estimate to keep it admissible.
+fn estimate(from: BlockPos, toward: BlockPos) -> u32 {
+    from.x.abs_diff(toward.x) + from.z.abs_diff(toward.z)
 }
 
 /// The cells to walk from `start` to the nearest cell satisfying `is_goal`, excluding
 /// `start` and ending on the goal cell; empty when `start` is itself a goal. `None` when
 /// no goal is reachable within `budget` expansions. `toward` steers the heuristic.
-#[expect(clippy::todo, reason = "stub until implemented")]
+///
+/// A `start` that is not standable falls back to the cell one above, then one below, for a
+/// pawn standing on a slope; `None` if neither stands either.
 pub fn route(
-    _grid: &VoxelGrid,
-    _start: BlockPos,
-    _is_goal: impl Fn(BlockPos) -> bool,
-    _toward: BlockPos,
-    _budget: usize,
+    grid: &VoxelGrid,
+    start: BlockPos,
+    is_goal: impl Fn(BlockPos) -> bool,
+    toward: BlockPos,
+    budget: usize,
 ) -> Option<Vec<BlockPos>> {
-    todo!()
+    let start = [start, start + BlockPos::Y, start - BlockPos::Y]
+        .into_iter()
+        .find(|&cell| standable(grid, cell))?;
+
+    // Nodes in insertion order: (cell, index of the node it was reached from). The heap
+    // orders by (f, g, insertion index), so the search never depends on hash order.
+    let mut nodes: Vec<(BlockPos, Option<usize>)> = vec![(start, None)];
+    let mut open = BinaryHeap::new();
+    open.push(Reverse((estimate(start, toward), 0u32, 0usize)));
+    let mut best: HashMap<BlockPos, u32> = HashMap::from([(start, 0)]);
+    let mut closed: HashSet<BlockPos> = HashSet::new();
+    let mut expanded = 0usize;
+
+    while let Some(Reverse((_, g, index))) = open.pop() {
+        let (cell, _) = nodes[index];
+        if !closed.insert(cell) {
+            continue;
+        }
+        if is_goal(cell) {
+            let mut cells = Vec::new();
+            let mut at = index;
+            while let (cell, Some(parent)) = nodes[at] {
+                cells.push(cell);
+                at = parent;
+            }
+            cells.reverse();
+            return Some(cells);
+        }
+        if expanded == budget {
+            return None;
+        }
+        expanded += 1;
+
+        for next in neighbours(grid, cell) {
+            let cost = g + 1;
+            if closed.contains(&next) || best.get(&next).is_some_and(|&known| known <= cost) {
+                continue;
+            }
+            best.insert(next, cost);
+            nodes.push((next, Some(index)));
+            open.push(Reverse((
+                cost + estimate(next, toward),
+                cost,
+                nodes.len() - 1,
+            )));
+        }
+    }
+    None
 }
 
 #[cfg(test)]
