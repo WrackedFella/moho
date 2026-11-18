@@ -15,7 +15,6 @@ pub const PLAYER_PAWN: PawnId = PawnId(0);
 /// Half extents of the pawn's box, spanning the character capsule.
 pub const PAWN_HALF_EXTENTS: Vec3 = Vec3::new(0.3, 1.15, 0.3);
 
-/// An axis-aligned box in world space.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Aabb {
     pub min: Vec3,
@@ -30,7 +29,6 @@ pub fn pawn_aabb(center: Vec3) -> Aabb {
     }
 }
 
-/// Albedo of the pawn's body cube.
 pub const PAWN_BODY_COLOR: Vec3 = Vec3::new(0.2, 0.5, 0.9);
 
 /// The cube drawn for a pawn whose capsule centre is `center`, sized to match [`pawn_aabb`].
@@ -84,7 +82,6 @@ pub fn pick_pawn(
         .map(|(id, _)| id)
 }
 
-/// The pawn the player has selected, if any.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Selection {
     pub selected: Option<PawnId>,

@@ -255,7 +255,6 @@ impl App {
         tracing::debug!(?pos, ?change, "Mining mark toggled");
     }
 
-    /// The player pawn's box at its current position.
     fn pawn_box(&self) -> Aabb {
         pawn_aabb(self.simulation.position())
     }
@@ -2756,7 +2755,6 @@ mod tests {
             click_on(app, ground);
         }
 
-        /// A strategy view in which the pawn has been selected by clicking it.
         fn app_with_the_pawn_selected() -> App {
             let mut app = strategy_app();
             click_the_pawn(&mut app);
