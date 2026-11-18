@@ -694,6 +694,86 @@ mod tests {
         assert!(mining(&pawn, [14, 1, 8]));
     }
 
+    /// Five floating marks nobody can reach, four of which fill a tick's search attempts.
+    fn five_unreachable() -> (VoxelGrid, [[i32; 3]; 5]) {
+        let mut grid = floor();
+        let unreachable = [[3, 6, 6], [3, 6, 7], [3, 6, 8], [3, 6, 9], [3, 6, 10]];
+        for [x, y, z] in unreachable {
+            place(&mut grid, x, y, z);
+        }
+        (grid, unreachable)
+    }
+
+    #[test]
+    fn a_search_that_ran_past_the_shrunken_list_starts_over_from_the_nearest() {
+        let (mut grid, unreachable) = five_unreachable();
+        place(&mut grid, 14, 1, 8);
+        let mut marks = marked(&unreachable);
+        marks.toggle([14, 1, 8]);
+        let mut pawn = Pawn::default();
+        let pose = pose_in(0, 1, 8);
+        let first = step(ME, &mut pawn, pose, &mut marks, &grid);
+        assert_eq!(first, JobAction::Wait);
+        // Four candidates remain, the reachable one last, exactly where the search left off.
+        marks.toggle([3, 6, 6]);
+        marks.toggle([3, 6, 10]);
+
+        let second = step(ME, &mut pawn, pose, &mut marks, &grid);
+
+        assert!(matches!(second, JobAction::Walk { .. }), "{second:?}");
+        assert_eq!(claimed_by(&marks, [14, 1, 8]), Some(ME));
+    }
+
+    #[test]
+    fn a_search_that_tried_every_candidate_starts_over_next_tick() {
+        let (mut grid, unreachable) = five_unreachable();
+        place(&mut grid, 4, 1, 8);
+        let mut marks = marked(&unreachable[..4]);
+        let mut pawn = Pawn::default();
+        let pose = pose_in(0, 1, 8);
+        let first = step(ME, &mut pawn, pose, &mut marks, &grid);
+        assert_eq!(first, JobAction::Wait, "all four are out of reach");
+        // A reachable mark nearer than all four joins the list.
+        marks.toggle([4, 1, 8]);
+
+        let second = step(ME, &mut pawn, pose, &mut marks, &grid);
+
+        assert!(matches!(second, JobAction::Walk { .. }), "{second:?}");
+        assert_eq!(claimed_by(&marks, [4, 1, 8]), Some(ME));
+    }
+
+    #[test]
+    fn the_dig_aim_depends_on_the_eye_being_the_capsule_centre_over_the_feet() {
+        let mut grid = floor();
+        place(&mut grid, 8, 1, 8);
+        // West of the block. The west and top faces tie with the eye 2.5 m up; feet at 1.0
+        // put the eye below that and feet at 1.5 put it above.
+        let cases = [
+            (
+                1.0,
+                Vec3::new(8.0, 1.5, 8.5),
+                "eye 2.15 m up: the west face",
+            ),
+            (1.5, Vec3::new(8.5, 2.0, 8.5), "eye 2.65 m up: the top face"),
+        ];
+
+        for (feet_y, expected, why) in cases {
+            let mut marks = marked(&[[8, 1, 8]]);
+            let mut pawn = Pawn::default();
+            let pose = Pose {
+                feet: Vec3::new(7.5, feet_y, 8.5),
+                yaw: 0.0,
+            };
+
+            let action = step(ME, &mut pawn, pose, &mut marks, &grid);
+
+            let JobAction::Dig { aim, .. } = action else {
+                panic!("{why}: {action:?}");
+            };
+            assert!((aim - expected).length() < 1e-4, "{why}: aim {aim:?}");
+        }
+    }
+
     #[test]
     fn arrival_is_horizontal_within_the_arrive_radius() {
         let mut grid = floor();

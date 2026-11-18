@@ -337,6 +337,50 @@ mod tests {
     }
 
     #[test]
+    fn a_diagonal_search_expands_exactly_the_cells_the_manhattan_heuristic_leaves_open() {
+        let grid = floor(16, 16);
+        let start = BlockPos::new(3, 1, 2);
+        let goal = BlockPos::new(9, 1, 6);
+
+        let at_the_minimum = route(&grid, start, goal_at(goal), goal, 34);
+        let one_short = route(&grid, start, goal_at(goal), goal, 33);
+
+        assert_eq!(
+            at_the_minimum.map(|path| path.len()),
+            Some(10),
+            "six east and four south"
+        );
+        assert_eq!(one_short, None, "34 expansions is what the search needs");
+    }
+
+    #[test]
+    fn equal_detours_round_a_wall_take_the_one_queued_first() {
+        // A two-high wall across z = 2..=4 at x = 4, with floor beyond it on both sides.
+        let mut grid = floor(10, 8);
+        for z in 2..=4 {
+            place(&mut grid, 4, 1, z);
+            place(&mut grid, 4, 2, z);
+        }
+
+        let found = run(&grid, (2, 1, 3), (6, 1, 3));
+
+        assert_eq!(
+            found,
+            Some(cells(&[
+                (3, 1, 3),
+                (3, 1, 4),
+                (3, 1, 5),
+                (4, 1, 5),
+                (5, 1, 5),
+                (6, 1, 5),
+                (6, 1, 4),
+                (6, 1, 3),
+            ])),
+            "round by +z: the +z neighbour is queued before the -z one"
+        );
+    }
+
+    #[test]
     fn an_enclosed_goal_has_no_route() {
         let mut grid = floor(9, 9);
         assert!(run(&grid, (0, 1, 0), (4, 1, 4)).is_some());
