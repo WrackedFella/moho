@@ -301,6 +301,16 @@ mod tests {
     }
 
     #[test]
+    fn reach_is_the_diagonal_of_a_box_away_from_the_origin() {
+        let bounds = FlightBounds::around(
+            [Vec3::new(-10.0, -20.0, 5.0), Vec3::new(20.0, 20.0, 45.0)],
+            0.0,
+        );
+
+        assert!((bounds.reach() - 4100.0_f32.sqrt()).abs() < 1e-3);
+    }
+
+    #[test]
     fn a_fired_flight_has_the_muzzle_speed_along_a_non_unit_direction() {
         let origin = Vec3::new(1.0, 2.0, 3.0);
 
