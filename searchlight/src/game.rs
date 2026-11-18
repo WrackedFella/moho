@@ -1024,7 +1024,11 @@ impl SearchlightGame {
     /// alive, below the crosshair; shows nothing otherwise.
     fn refresh_use_prompt(&mut self) {
         let playing = self.screen == Screen::Playing && !self.mode.sim().player_body().is_dead();
-        let action = self.mode.action_in_reach().filter(|_| playing);
+        let action = if playing {
+            self.mode.action_in_reach()
+        } else {
+            None
+        };
         let prompt = action.map(|action| {
             let key = self
                 .input

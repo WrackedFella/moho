@@ -877,9 +877,10 @@ impl SearchlightSim {
                 ignore: Some(self.player),
             },
         )?;
-        match strike.tag {
-            SurfaceTag::Control(index) => Some(index),
-            _ => None,
+        if let SurfaceTag::Control(index) = strike.tag {
+            Some(index)
+        } else {
+            None
         }
     }
 
