@@ -25,10 +25,11 @@ use winit::window::{CursorGrabMode, Window};
 use moho_core::prefs::Prefs;
 use moho_ui_shell::host::input_of;
 use moho_ui_shell::{
-    EngineSettings, MenuEvent, Routing, UiLayers, UiShell, apply_engine_command,
-    apply_engine_settings,
+    Anchor, EngineSettings, MenuEvent, Routing, ScreenText, UiLayers, UiShell,
+    apply_engine_command, apply_engine_settings,
 };
 
+use crate::arena::{ArenaControl, box_mesh, control_mesh_id, oriented_box_mesh};
 use crate::console_commands::{self, ConsoleCommand, GodModeArg};
 use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
@@ -63,6 +64,9 @@ const GUN_HALF: Vec3 = Vec3::new(0.04, 0.04, 0.3);
 const NO_MESH: u32 = u32::MAX;
 /// The window title before any status line is appended.
 pub const WINDOW_TITLE: &str = "Searchlight";
+/// Pixels from the screen centre down to the use prompt, clear of the crosshair.
+const PROMPT_OFFSET_Y: f32 = 48.0;
+const PROMPT_SIZE: f32 = 20.0;
 const FOV_DEGREES: f32 = 75.0;
 const NEAR: f32 = 0.05;
 const FAR: f32 = 500.0;
@@ -96,6 +100,7 @@ enum Paint {
     Enemy,
     Struck,
     ArenaMark,
+    Control,
 }
 
 impl RenderMaterial for Paint {
@@ -115,6 +120,7 @@ impl RenderMaterial for Paint {
             Paint::Enemy => ([0.3, 0.4, 0.62], [0.22, 0.3, 0.5], 0.0, 0.0),
             Paint::Struck => ([1.0, 0.15, 0.1], [1.0, 0.15, 0.1], 1.0, 0.0),
             Paint::ArenaMark => ([0.95, 0.9, 0.2], [0.8, 0.75, 0.15], 0.0, 0.0),
+            Paint::Control => ([0.2, 0.85, 0.35], [0.12, 0.6, 0.25], 0.0, 0.0),
         };
         MaterialGpu {
             albedo: [top[0], top[1], top[2], gloss],
@@ -146,49 +152,6 @@ impl Renderable for NoActor {
     fn to_instance_with_material(&self, _material_index: u32) -> InstanceGpu {
         match *self {}
     }
-}
-
-/// A closed box with outward-facing triangles and a normal per face.
-fn box_mesh(centre: Vec3, half: Vec3) -> WorldMesh {
-    oriented_box_mesh(centre, half, Quat::IDENTITY)
-}
-
-/// [`box_mesh`] with its axes turned by `rotation` about its centre.
-fn oriented_box_mesh(centre: Vec3, half: Vec3, rotation: Quat) -> WorldMesh {
-    // (normal, u, v) with u x v = normal, so (-u-v, +u-v, +u+v, -u+v) winds counter-clockwise
-    // seen from outside.
-    const FACES: [(Vec3, Vec3, Vec3); 6] = [
-        (Vec3::X, Vec3::Y, Vec3::Z),
-        (Vec3::NEG_X, Vec3::Z, Vec3::Y),
-        (Vec3::Y, Vec3::Z, Vec3::X),
-        (Vec3::NEG_Y, Vec3::X, Vec3::Z),
-        (Vec3::Z, Vec3::X, Vec3::Y),
-        (Vec3::NEG_Z, Vec3::Y, Vec3::X),
-    ];
-    let mut positions = Vec::with_capacity(24);
-    let mut normals = Vec::with_capacity(24);
-    let mut indices = Vec::with_capacity(36);
-    for (normal, u, v) in FACES {
-        let first = positions.len() as u32;
-        let (du, dv) = (u * half, v * half);
-        let face_centre = centre + rotation * (normal * half);
-        for corner in [-du - dv, du - dv, du + dv, -du + dv] {
-            positions.push((face_centre + rotation * corner).to_array());
-            normals.push((rotation * normal).to_array());
-        }
-        indices.extend([first, first + 1, first + 2, first, first + 2, first + 3]);
-    }
-    let count = positions.len();
-    WorldMesh::new(
-        positions,
-        normals,
-        vec![1.0; count],
-        vec![[0.0; 3]; count],
-        vec![1.0; count],
-        vec![0; count],
-        indices,
-    )
-    .expect("a box has matching channels and whole triangles")
 }
 
 /// One drawn body part of a dummy, lit while it flashes.
@@ -404,6 +367,9 @@ struct Stage {
     shell: Arc<Mutex<UiShell<ConsoleCommand, MenuAction>>>,
     /// Whether the cursor is captured for mouse look.
     cursor_captured: bool,
+    /// The use prompt the last frame handed the shell, if it showed one, so tests can see it.
+    #[cfg(test)]
+    prompt: Option<String>,
     /// Times the cursor was captured, windowed or not, so tests can see it.
     #[cfg(test)]
     cursor_captures: u32,
@@ -440,7 +406,42 @@ impl Stage {
             ))),
             cursor_captured: false,
             #[cfg(test)]
+            prompt: None,
+            #[cfg(test)]
             cursor_captures: 0,
+        }
+    }
+
+    /// Draws each of `controls` in [`Paint::Control`].
+    fn add_controls(&mut self, controls: &[ArenaControl]) {
+        let material = self.scene.material_table.find_or_push(&Paint::Control);
+        for (index, control) in controls.iter().enumerate() {
+            self.scene.world_meshes_mut().upsert(
+                control_mesh_id(index),
+                control.mesh.clone(),
+                material,
+            );
+        }
+    }
+
+    /// Shows `prompt` below the crosshair, or nothing for `None`.
+    fn show_prompt(&mut self, prompt: Option<String>) {
+        let texts = prompt
+            .iter()
+            .map(|text| ScreenText {
+                text: text.clone(),
+                anchor: Anchor::Center,
+                offset: [0.0, PROMPT_OFFSET_Y],
+                size: PROMPT_SIZE,
+                color: [255; 4],
+            })
+            .collect();
+        if let Err(error) = self.shell().set_texts(texts) {
+            tracing::warn!(%error, "use prompt not shown");
+        }
+        #[cfg(test)]
+        {
+            self.prompt = prompt;
         }
     }
 
@@ -973,7 +974,30 @@ impl SearchlightGame {
     /// The use prompt the last frame handed the shell, or `None` when it showed none.
     #[cfg(test)]
     fn prompt_text(&self) -> Option<String> {
-        todo!("the prompt the last frame set")
+        self.stage.prompt.clone()
+    }
+
+    /// The prompt for the control in reach, or `None` unless the game is being played and the
+    /// player is alive.
+    fn use_prompt(&self) -> Option<String> {
+        if self.screen != Screen::Playing || self.mode.sim().player_body().is_dead() {
+            return None;
+        }
+        let action = self.mode.control_in_reach()?;
+        let key = self
+            .input
+            .bindings()
+            .get(SearchlightAction::Use)
+            .first()
+            .map_or_else(|| "unbound".to_owned(), |binding| binding.label());
+        Some(hud::use_prompt(&key, action))
+    }
+
+    /// Draws the arena's `controls`, posts that stand out from the walls.
+    #[must_use]
+    pub fn with_controls(mut self, controls: &[ArenaControl]) -> Self {
+        self.stage.add_controls(controls);
+        self
     }
 
     /// The input map, for feeding it device events.
@@ -1161,6 +1185,8 @@ impl Game for SearchlightGame {
             }
             self.stage.react(&feedback, ctx.audio());
         }
+        let prompt = self.use_prompt();
+        self.stage.show_prompt(prompt);
         if self.screen == Screen::MainMenu {
             self.menu_frame(ctx);
             return;

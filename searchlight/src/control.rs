@@ -9,18 +9,23 @@ pub enum ControlAction {
 
 impl ControlAction {
     /// The action a marker's `action` value names, or `None` when the list has no such action.
-    pub fn parse(_value: &str) -> Option<Self> {
-        todo!("the action list")
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "next_wave" => Some(Self::NextWave),
+            _ => None,
+        }
     }
 
     /// Whether only the host may use a control of this action.
     pub fn is_host_action(self) -> bool {
-        todo!("which actions are the host's")
+        match self {
+            Self::NextWave => true,
+        }
     }
 
     /// Whether a use by the player in `slot` is honored: a host action only from slot 0.
-    pub fn honored_from(self, _slot: u8) -> bool {
-        todo!("the slot rule")
+    pub fn honored_from(self, slot: u8) -> bool {
+        !self.is_host_action() || slot == 0
     }
 }
 
