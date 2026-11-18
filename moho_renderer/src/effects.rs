@@ -1212,6 +1212,84 @@ mod tests {
     }
 
     #[test]
+    fn the_flash_star_alternates_axis_tips_and_diagonal_inner_vertices() {
+        let mut rig = Rig::new();
+        rig.effects.flash(Vec3::ZERO, 0.0, flash_style(0.4, ms(50)));
+        rig.frame(EYE);
+
+        let (positions, _) = &rig.backend.registered[0];
+
+        let tips = [[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0], [0.0, -1.0]];
+        for (k, tip) in tips.iter().enumerate() {
+            let p = positions[2 * k];
+            assert!(
+                (p[0] - tip[0]).abs() < EPS && (p[1] - tip[1]).abs() < EPS,
+                "vertex {} is the tip at {tip:?}, got {p:?}",
+                2 * k
+            );
+        }
+        let signs = [[1.0, 1.0], [-1.0, 1.0], [-1.0, -1.0], [1.0, -1.0]];
+        let inner_radius = Vec3::from(positions[1]).length();
+        assert!(
+            inner_radius > 0.0 && inner_radius < 1.0,
+            "inner vertices sit inside the tips, got {inner_radius}"
+        );
+        for (k, sign) in signs.iter().enumerate() {
+            let p = positions[2 * k + 1];
+            let expected_axis = inner_radius * std::f32::consts::FRAC_1_SQRT_2;
+            assert!(
+                (p[0] - sign[0] * expected_axis).abs() < EPS
+                    && (p[1] - sign[1] * expected_axis).abs() < EPS,
+                "vertex {} is on the diagonal {sign:?} at radius {inner_radius}, got {p:?}",
+                2 * k + 1
+            );
+        }
+    }
+
+    #[test]
+    fn each_kind_is_placed_under_its_own_reserved_mesh_id() {
+        let mut rig = Rig::new();
+        let streak = rig.effects.begin_streak(style(2.0, 0.1));
+        rig.effects
+            .place_streak(streak, Vec3::new(-50.0, 0.0, 0.0), Vec3::X);
+        rig.effects
+            .flash(Vec3::new(10.0, 0.0, 0.0), 0.0, flash_style(0.4, ms(50)));
+        rig.effects.mark(
+            Vec3::new(20.0, 0.0, 0.0),
+            Vec3::Y,
+            0.0,
+            mark_style(0.2, ms(500), ms(100)),
+        );
+        rig.frame(EYE);
+
+        for offset in 0..3 {
+            rig.meshes.place_unshadowed(
+                WorldMeshId(EFFECT_MESH_IDS_FROM + offset),
+                Affine3A::IDENTITY,
+                100 + u32::try_from(offset).expect("small"),
+            );
+        }
+        let probes: Vec<(u32, InstanceGpu)> = rig.meshes.unshadowed_draws().collect();
+
+        assert_eq!(probes.len(), 3, "the first three reserved ids are live");
+        let materials: Vec<u32> = probes.iter().map(|(_, i)| i.material).collect();
+        assert_eq!(materials, vec![100, 101, 102], "in id order");
+        let positions_of = |probe: usize| {
+            let handle = usize::try_from(probes[probe].0).expect("small");
+            &rig.backend.registered[handle - 1].0
+        };
+        assert!(
+            positions_of(0).contains(&[1.0, 0.0, 0.0]),
+            "the first id is the streak kite"
+        );
+        assert_eq!(positions_of(1).len(), 8, "the second id is the flash star");
+        assert!(
+            positions_of(2).iter().all(|p| p[0].abs() == 0.5),
+            "the third id is the mark quad"
+        );
+    }
+
+    #[test]
     fn the_mark_quad_is_registered_once_as_the_unit_square_in_the_xy_plane() {
         let mut rig = Rig::new();
         rig.effects
