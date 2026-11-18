@@ -526,6 +526,26 @@ mod tests {
     }
 
     #[test]
+    fn a_mark_under_the_pawns_feet_is_dug_from_where_it_stands() {
+        let grid = floor();
+        let mut marks = marked(&[[8, 0, 8]]);
+        let mut pawn = Pawn::default();
+
+        let action = step(ME, &mut pawn, pose_in(8, 1, 8), &mut marks, &grid);
+
+        assert_eq!(
+            action,
+            JobAction::Dig {
+                block: BlockPos::new(8, 0, 8),
+                aim: Vec3::new(8.5, 1.0, 8.5),
+            }
+        );
+        assert_eq!(pawn.job, Job::Idle, "the dig ends the job");
+        assert_eq!(claimed_by(&marks, [8, 0, 8]), None, "the claim is released");
+        assert_eq!(pawn.equipped_tool, Some(STARTING_TOOL));
+    }
+
+    #[test]
     fn a_cancelled_mark_releases_the_pawn_mid_walk() {
         let mut grid = floor();
         place(&mut grid, 8, 1, 8);

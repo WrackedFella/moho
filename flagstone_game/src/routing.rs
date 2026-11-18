@@ -406,6 +406,80 @@ mod tests {
         (grid, tops)
     }
 
+    /// Columns of height 1 to 4 over a 6 by 6 board, so walls and steps make detours.
+    fn rough_terrain(heights: &[u8]) -> (VoxelGrid, Vec<i32>) {
+        let mut grid = VoxelGrid::new(16);
+        let mut tops = Vec::new();
+        for (i, &top) in heights.iter().enumerate() {
+            let (x, z) = ((i % 6) as i32, (i / 6) as i32);
+            for y in 0..i32::from(top) {
+                place(&mut grid, x, y, z);
+            }
+            tops.push(i32::from(top));
+        }
+        (grid, tops)
+    }
+
+    /// The fewest steps from `start` to a cell satisfying `is_goal`, by plain breadth-first
+    /// search over the documented move rule.
+    fn shortest_route_len(
+        grid: &VoxelGrid,
+        start: BlockPos,
+        is_goal: impl Fn(BlockPos) -> bool,
+    ) -> Option<usize> {
+        let mut seen = std::collections::HashSet::from([start]);
+        let mut frontier = vec![start];
+        let mut steps = 0;
+        while !frontier.is_empty() {
+            if frontier.iter().any(|&cell| is_goal(cell)) {
+                return Some(steps);
+            }
+            let mut next = Vec::new();
+            for cell in frontier {
+                let can_climb = !grid.is_solid_at(cell + BlockPos::Y * 3);
+                for step in [BlockPos::X, BlockPos::NEG_X, BlockPos::Z, BlockPos::NEG_Z] {
+                    let level = cell + step;
+                    let options = [
+                        (level, true),
+                        (level + BlockPos::Y, can_climb),
+                        (level - BlockPos::Y, true),
+                    ];
+                    for (candidate, allowed) in options {
+                        if allowed && standable(grid, candidate) && seen.insert(candidate) {
+                            next.push(candidate);
+                        }
+                    }
+                }
+            }
+            frontier = next;
+            steps += 1;
+        }
+        None
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn a_route_to_a_goal_set_is_as_short_as_any(
+            heights in proptest::collection::vec(1u8..=4, 36),
+            from in (0..6i32, 0..6i32),
+            to in (0..6i32, 0..6i32),
+            depth in 0..4i32,
+        ) {
+            let (grid, tops) = rough_terrain(&heights);
+            let top = |(x, z): (i32, i32)| tops[(z * 6 + x) as usize];
+            let start = BlockPos::new(from.0, top(from), from.1);
+            let block = BlockPos::new(to.0, (top(to) - 1 - depth).max(0), to.1);
+            let is_goal = |cell: BlockPos| crate::jobs::is_stand_cell(block, cell);
+
+            let found = route(&grid, start, is_goal, block, ROUTE_NODE_BUDGET);
+
+            let shortest = shortest_route_len(&grid, start, is_goal);
+            prop_assert_eq!(found.map(|path| path.len()), shortest, "block {}, start {}", block, start);
+        }
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(32))]
 

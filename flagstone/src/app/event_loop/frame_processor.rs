@@ -1547,6 +1547,46 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_pawn_walks_around_a_wall_to_the_block() {
+        let block = BlockPos::new(14, 70, 8);
+        let feet = glam::Vec3::new(6.5, GROUND_FEET_Y, 8.5);
+        let mut app = pawn_world(block, Some(ORE), feet, false);
+        // A two-high wall at x = 10 across z = 4..=12, so the way round turns away from the
+        // block, passes the wall's end and turns back.
+        let grid = app
+            .light_system
+            .as_mut()
+            .expect("App starts with a light system")
+            .grid_mut();
+        grid.mutator()
+            .fill_region(BlockPos::new(10, 71, 4), BlockPos::new(10, 72, 12), 1);
+        let chunks: Vec<VoxelChunk> = (0..2)
+            .flat_map(|x| (0..2).map(move |z| glam::IVec3::new(x, 4, z)))
+            .map(|pos| VoxelChunk::from_grid_lod(grid, pos, 0))
+            .collect();
+        for chunk in chunks {
+            crate::app::world_geometry::insert_chunk(&mut app, chunk);
+        }
+        app.colony.marks.toggle(block.to_array());
+
+        let dig = run_until_dug(&mut app, block);
+
+        assert_dug(&dig);
+        assert!(
+            dig.grounded_after_the_first,
+            "the pawn left the ground on the way"
+        );
+        assert!(
+            dig.highest_feet < GROUND_FEET_Y + 0.3,
+            "the pawn climbed the wall: highest feet {}",
+            dig.highest_feet
+        );
+        assert_eq!(app.colony.stock.count(ORE), 1);
+        assert_eq!(total_stock(&app), 1, "nothing else joins the stock");
+        assert!(!app.colony.marks.contains(block.to_array()));
+    }
+
+    #[test]
     fn the_pawn_digs_within_the_mining_reach() {
         let block = BlockPos::new(12, 70, 8);
         let feet = glam::Vec3::new(2.5, GROUND_FEET_Y, 8.5);
