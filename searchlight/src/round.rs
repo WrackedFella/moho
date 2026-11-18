@@ -4,7 +4,7 @@ use glam::Vec3;
 use moho_physics::{CharacterHandle, PhysicsWorld};
 use searchlight_rules::{Ballistics, Flight};
 
-use crate::shot::Strike;
+use crate::shot::{ShotRay, Strike, resolve_shot};
 
 /// A round flying: where it is, what it flies with, and who fired it.
 #[derive(Clone, Debug, PartialEq)]
@@ -32,12 +32,21 @@ pub struct RoundStep {
 
 /// Steps `round` once under `gravity` for `dt` seconds and casts the way it went.
 pub fn step_round(world: &PhysicsWorld, round: &RoundInFlight, gravity: f32, dt: f32) -> RoundStep {
-    // TODO: step the flight and cast `position -> flight.position` through `resolve_shot`.
-    let _ = (world, gravity, dt);
+    let flight = round.flight.step(&round.ballistics, gravity, dt);
+    let way = flight.position - round.flight.position;
+    let strike = resolve_shot(
+        world,
+        ShotRay {
+            origin: round.flight.position,
+            direction: way,
+            range: way.length(),
+            ignore: round.shooter,
+        },
+    );
     RoundStep {
-        flight: round.flight,
-        end: round.flight.position,
-        strike: None,
+        flight,
+        end: strike.map_or(flight.position, |strike| strike.point),
+        strike,
     }
 }
 

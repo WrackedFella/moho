@@ -350,11 +350,12 @@ impl Arena {
 
     /// The box a round may fly in: every mesh's vertices grown by [`FLIGHT_MARGIN`].
     pub fn flight_bounds(&self) -> FlightBounds {
-        // TODO: the box around every mesh vertex, grown by `FLIGHT_MARGIN`.
-        FlightBounds {
-            min: Vec3::ZERO,
-            max: Vec3::ZERO,
-        }
+        FlightBounds::around(
+            self.meshes
+                .iter()
+                .flat_map(|mesh| mesh.positions().iter().copied().map(Vec3::from)),
+            FLIGHT_MARGIN,
+        )
     }
 
     /// A physics world whose static colliders are this arena's meshes, tagged

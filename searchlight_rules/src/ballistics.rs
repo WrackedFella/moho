@@ -34,17 +34,28 @@ pub struct Flight {
 impl Flight {
     /// A round leaving `origin` along `direction` (any length) at the muzzle velocity.
     pub fn fired(origin: Vec3, direction: Vec3, ballistics: &Ballistics) -> Self {
-        todo!("{origin} {direction} {ballistics:?}")
+        Self {
+            position: origin,
+            velocity: direction.normalize() * ballistics.muzzle_velocity,
+        }
     }
 
     /// The flight one step of `dt` seconds later, under `gravity` in m/s².
+    ///
+    /// Drag acts before gravity and never reverses the round. Only correctly rounded IEEE
+    /// operations are used, so a replay is exact on one platform.
     pub fn step(&self, ballistics: &Ballistics, gravity: f32, dt: f32) -> Self {
-        todo!("{ballistics:?} {gravity} {dt}")
+        let keep = (1.0 - ballistics.drag * dt).max(0.0);
+        let velocity = self.velocity * keep - Vec3::Y * (gravity * dt);
+        Self {
+            position: self.position + velocity * dt,
+            velocity,
+        }
     }
 
     /// Whether the round has slowed to [`MIN_SPEED`] or below.
     pub fn is_spent(&self) -> bool {
-        false
+        self.velocity.length() <= MIN_SPEED
     }
 }
 
@@ -72,18 +83,23 @@ impl GravityScale {
     /// [`GravityScaleError`] when `value` is negative, not finite or above
     /// [`MAX_GRAVITY_SCALE`].
     pub fn new(value: f32) -> Result<Self, GravityScaleError> {
-        Ok(Self(value))
+        if value.is_finite() && (0.0..=MAX_GRAVITY_SCALE).contains(&value) {
+            Ok(Self(value))
+        } else {
+            Err(GravityScaleError::OutOfRange { value })
+        }
     }
 
     /// The round gravity this scale gives, in m/s².
     pub fn gravity(self) -> f32 {
-        0.0
+        STANDARD_GRAVITY * self.0
     }
 }
 
 impl Default for GravityScale {
+    /// Scale 1: standard gravity (a derived default would be 0).
     fn default() -> Self {
-        Self(0.0)
+        Self(1.0)
     }
 }
 
@@ -99,18 +115,25 @@ pub struct FlightBounds {
 impl FlightBounds {
     /// The box around `points`, grown by `margin` on every side.
     pub fn around(points: impl IntoIterator<Item = Vec3>, margin: f32) -> Self {
-        let _ = (points.into_iter().count(), margin);
-        todo!()
+        let (min, max) = points
+            .into_iter()
+            .fold((Vec3::INFINITY, Vec3::NEG_INFINITY), |(min, max), p| {
+                (min.min(p), max.max(p))
+            });
+        Self {
+            min: min - Vec3::splat(margin),
+            max: max + Vec3::splat(margin),
+        }
     }
 
     /// Whether `point` is inside the box or on its surface.
     pub fn contains(&self, point: Vec3) -> bool {
-        todo!("{point}")
+        point.cmpge(self.min).all() && point.cmple(self.max).all()
     }
 
     /// The length of the box's diagonal.
     pub fn reach(&self) -> f32 {
-        todo!()
+        (self.max - self.min).length()
     }
 }
 

@@ -129,10 +129,7 @@ pub enum RoundSpecError {
 #[serde(deny_unknown_fields)]
 struct RawRoundSpec {
     caliber: Caliber,
-    // TODO: both fields are required; `default` is a placeholder until the checks exist.
-    #[serde(default)]
     muzzle_velocity: f32,
-    #[serde(default)]
     drag: f32,
 }
 
@@ -140,6 +137,14 @@ impl TryFrom<RawRoundSpec> for RoundSpec {
     type Error = RoundSpecError;
 
     fn try_from(raw: RawRoundSpec) -> Result<Self, Self::Error> {
+        if !(raw.muzzle_velocity.is_finite() && raw.muzzle_velocity > MIN_SPEED) {
+            return Err(RoundSpecError::MuzzleVelocity {
+                value: raw.muzzle_velocity,
+            });
+        }
+        if !(raw.drag.is_finite() && raw.drag >= 0.0) {
+            return Err(RoundSpecError::Drag { value: raw.drag });
+        }
         Ok(Self {
             caliber: raw.caliber,
             muzzle_velocity: raw.muzzle_velocity,

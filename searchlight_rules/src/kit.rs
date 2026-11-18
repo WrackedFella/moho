@@ -170,11 +170,23 @@ impl KitDef {
                     magazines: self.magazines.len(),
                 })?;
         }
+        let mut rounds = BTreeMap::new();
+        for entry in std::iter::once(&self.loaded).chain(&self.magazines) {
+            // `build` already proved each round id names a round.
+            if let ItemKind::Round(round) = &find(&entry.round)?.kind {
+                rounds.insert(
+                    entry.round.clone(),
+                    Ballistics {
+                        muzzle_velocity: round.muzzle_velocity,
+                        drag: round.drag,
+                    },
+                );
+            }
+        }
         Ok(Kit {
             weapon: weapon.clone(),
             loadout: Loadout::new(rifle, rig),
-            // TODO: fill with the ballistics of every round the kit names.
-            rounds: BTreeMap::new(),
+            rounds,
         })
     }
 }

@@ -92,12 +92,11 @@ impl Rifle {
 
     /// Spends the chambered round, then chambers the next from the magazine.
     pub fn fire(&mut self) -> Shot {
-        if self.chamber.take().is_none() {
+        let Some(round) = self.chamber.take() else {
             return Shot::Dry;
-        }
+        };
         self.feed();
-        // TODO: report the chambered round, not a placeholder id.
-        Shot::Fired(ItemId::new(""))
+        Shot::Fired(round)
     }
 
     /// Swaps in `spare` and returns the ejected magazine.
@@ -284,7 +283,7 @@ mod tests {
 
             let bound = capacity + 2;
             for _ in 0..before_reload {
-                if rifle.fire() != Shot::Dry { fired += 1; }
+                if matches!(rifle.fire(), Shot::Fired(_)) { fired += 1; }
             }
             if let Some(spare) = spare {
                 let spare = spare.min(capacity);
@@ -295,7 +294,7 @@ mod tests {
             }
             let mut drained = false;
             for _ in 0..bound {
-                if rifle.fire() != Shot::Dry {
+                if matches!(rifle.fire(), Shot::Fired(_)) {
                     fired += 1;
                 } else {
                     drained = true;
