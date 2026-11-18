@@ -216,6 +216,19 @@ impl Effect {
     }
 }
 
+fn drawable_size(size: f32) -> bool {
+    size.is_finite() && size > 0.0
+}
+
+/// `v` as a unit vector, or `None` if it is zero or non-finite. Scaling by the largest
+/// component first keeps a long (or tiny) vector from overflowing (or underflowing).
+fn unit_direction(v: Vec3) -> Option<Vec3> {
+    if !v.is_finite() {
+        return None;
+    }
+    (v / v.abs().max_element()).try_normalize()
+}
+
 /// X and Y across a unit `normal`, turned by `roll` about it, with X x Y along it.
 fn rolled_basis(normal: Vec3, roll: f32) -> (Vec3, Vec3) {
     let x = Quat::from_axis_angle(normal, roll) * normal.any_orthonormal_vector();
@@ -303,7 +316,11 @@ impl Effects {
     /// eye and shrinks to nothing over its lifetime. A zero lifetime or non-finite `at`
     /// is refused; at the cap it evicts the oldest flash or mark, else it is refused.
     pub fn flash(&mut self, at: Vec3, roll: f32, style: FlashStyle) {
-        if style.lifetime.is_zero() || !at.is_finite() {
+        if style.lifetime.is_zero()
+            || !at.is_finite()
+            || !roll.is_finite()
+            || !drawable_size(style.size)
+        {
             return;
         }
         self.spawn_fixed(Effect::Flash(Flash {
@@ -318,10 +335,14 @@ impl Effects {
     /// A zero lifetime, a zero or non-finite `normal` or a non-finite `at` is refused;
     /// at the cap it evicts the oldest flash or mark, else it is refused.
     pub fn mark(&mut self, at: Vec3, normal: Vec3, roll: f32, style: MarkStyle) {
-        let Some(normal) = normal.try_normalize() else {
+        let Some(normal) = unit_direction(normal) else {
             return;
         };
-        if style.lifetime.is_zero() || !at.is_finite() {
+        if style.lifetime.is_zero()
+            || !at.is_finite()
+            || !roll.is_finite()
+            || !drawable_size(style.size)
+        {
             return;
         }
         let (x, y) = rolled_basis(normal, roll);
