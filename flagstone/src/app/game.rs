@@ -668,6 +668,32 @@ mod tests {
         assert!(!cmd.jump);
     }
 
+    #[test]
+    fn paused_game_does_not_advance_the_autosave_schedule() {
+        let mut app = playing_app();
+        let interval_ticks = TICK_HZ;
+        app.autosave_interval = Duration::from_secs(1);
+        app.autosave_schedule = crate::app::autosave::AutosaveSchedule::new(interval_ticks);
+        app.autosave_schedule.mark_edited();
+        app.game_state = GameState::Paused;
+
+        for _ in 0..2 * interval_ticks {
+            tick_app(&mut app, &StrategyCommand::default());
+        }
+
+        assert!(!app.autosave_schedule.due(), "paused ticks count as play");
+        app.game_state = GameState::Playing;
+        for _ in 0..interval_ticks - 1 {
+            tick_app(&mut app, &StrategyCommand::default());
+        }
+        assert!(!app.autosave_schedule.due(), "one playing tick short");
+        tick_app(&mut app, &StrategyCommand::default());
+        assert!(
+            app.autosave_schedule.due(),
+            "a full interval of play is due"
+        );
+    }
+
     use std::time::Duration;
 
     const TICKS: u32 = 120;
@@ -846,6 +872,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("temp dir");
         let mut app = playing_app();
         app.saves_dir = temp.path().join("saves");
+        app.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
         (app, temp)
     }
 

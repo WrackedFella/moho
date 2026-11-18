@@ -225,6 +225,7 @@ mod tests {
                 chunks_per_frame: budget,
             },
             WORLD,
+            "saves",
         )
     }
 
@@ -286,6 +287,7 @@ mod tests {
                 chunks_per_frame: budget,
             },
             WORLD,
+            "saves",
         )
     }
 
@@ -319,6 +321,43 @@ mod tests {
                 "column {column:?} holds its terrain chunks, got {ys:?}"
             );
         }
+    }
+
+    #[test]
+    fn evicted_chunk_is_written_under_the_streamers_saves_dir() {
+        const SAVES_DIR_WORLD: &str = "chunk_streamer_unit_test_saves_dir_world";
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut streamer = ChunkStreamer::new(
+            TerrainConfig::default(),
+            StreamingConfig {
+                load_radius_chunks: 0,
+                unload_radius_chunks: 1,
+                chunks_per_frame: 1,
+            },
+            SAVES_DIR_WORLD,
+            temp.path(),
+        );
+        let edited = flagstone_voxel::BlockPos::new(165, 70, 165);
+        let mut grid = VoxelGrid::new(16);
+        grid.mutator().place(edited, 1, None);
+
+        let (_, evicted) = streamer.update(&mut grid, Vec3::new(8.0, 64.0, 8.0));
+
+        let far = IVec3::new(10, 4, 10);
+        assert_eq!(evicted, vec![far], "the edited chunk was evicted");
+        let file = temp
+            .path()
+            .join(SAVES_DIR_WORLD)
+            .join("chunks")
+            .join("10_4_10.bin");
+        assert!(file.is_file(), "chunk file missing at {}", file.display());
+        assert!(
+            !std::path::Path::new("saves").join(SAVES_DIR_WORLD).exists(),
+            "nothing is written under the working directory"
+        );
+        let mut restored = VoxelGrid::new(16);
+        streamer.load_columns_now(&mut restored, (10, 10), 0);
+        assert!(restored.is_solid_at(edited), "the edit is read back");
     }
 
     #[test]

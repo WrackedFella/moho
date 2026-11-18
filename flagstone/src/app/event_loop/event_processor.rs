@@ -924,6 +924,71 @@ mod tests {
         }
     }
 
+    /// Whether an autosave is due after `event` is processed and one interval of play passes.
+    fn due_after(event: Option<WorldEvent>) -> bool {
+        let interval_ticks = flagstone_game::TICK_HZ;
+        let mut app = App::headless();
+        app.autosave_interval = std::time::Duration::from_secs(1);
+        app.autosave_schedule = crate::app::autosave::AutosaveSchedule::new(interval_ticks);
+        if let Some(event) = event {
+            app.event_bus.publish(event);
+        }
+
+        EventProcessor::new().process_world_events(&mut app);
+        for _ in 0..interval_ticks {
+            app.autosave_schedule.tick();
+        }
+
+        app.autosave_schedule.due()
+    }
+
+    #[test]
+    fn block_edit_events_mark_the_world_edited() {
+        let position = flagstone_voxel::BlockPos::new(3, 70, 3);
+        let rows = [
+            (
+                "BlockPlaced",
+                WorldEvent::BlockPlaced {
+                    position,
+                    material_id: 1,
+                    reason: BlockChangeReason::Player,
+                },
+            ),
+            (
+                "BlockRemoved",
+                WorldEvent::BlockRemoved {
+                    position,
+                    old_material_id: 1,
+                    reason: BlockChangeReason::Player,
+                },
+            ),
+            (
+                "BlocksBatchModified",
+                WorldEvent::BlocksBatchModified {
+                    chunk_pos: glam::IVec3::new(0, 4, 0),
+                    positions: vec![position],
+                    reason: BlockChangeReason::Explosion,
+                },
+            ),
+        ];
+
+        for (row, event) in rows {
+            assert!(due_after(Some(event)), "row {row}: the edit was not noted");
+        }
+    }
+
+    #[test]
+    fn idle_world_and_remeshing_alone_do_not_mark_the_world_edited() {
+        let remesh = WorldEvent::ChunkMeshDirty {
+            chunk_pos: glam::IVec3::new(0, 4, 0),
+            terrain_dirty: true,
+            structure_dirty: true,
+        };
+
+        assert!(!due_after(None), "an idle world is not rewritten");
+        assert!(!due_after(Some(remesh)), "a remesh is not an edit");
+    }
+
     #[test]
     fn duplicate_mesh_dirty_events_mesh_a_chunk_once() {
         let chunk_pos = glam::IVec3::new(0, 4, 0);
