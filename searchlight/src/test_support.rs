@@ -16,8 +16,9 @@ use searchlight_rules::{
     MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
 };
 
-use crate::arena::{Arena, nav_profile};
+use crate::arena::{Arena, ArenaControl, control_mesh_id, nav_profile};
 use crate::brain::EnemyTuning;
+use crate::control::ControlAction;
 use crate::input::SearchlightAction;
 use crate::mode::ArenaMode;
 use crate::sim::SimConfig;
@@ -225,12 +226,45 @@ pub(crate) fn arena_with(
     enemies: &[Vec3],
     route: &[Vec3],
 ) -> Arc<Arena> {
+    arena_with_controls(boxes, player, enemies, route, &[])
+}
+
+/// A control post as the arena builds it: 0.4 m by 1.2 m by 0.4 m, standing on `floor_point`.
+pub(crate) fn control_post(floor_point: Vec3) -> WorldMesh {
+    box_mesh(
+        floor_point + Vec3::new(-0.2, 0.0, -0.2),
+        floor_point + Vec3::new(0.2, 1.2, 0.2),
+    )
+}
+
+/// [`arena_with`] plus one `next_wave` control post standing on each of `controls`, numbered in
+/// order, in the walkable area and the colliders alike.
+pub(crate) fn arena_with_controls(
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+    controls: &[Vec3],
+) -> Arc<Arena> {
     let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
     let meshes: Vec<WorldMesh> = std::iter::once(&floor)
         .chain(boxes)
         .map(|&(min, max)| box_mesh(min, max))
         .collect();
-    let nav = Arc::new(NavMesh::build(&meshes, nav_profile()).expect("box worlds build a navmesh"));
+    let controls: Vec<ArenaControl> = controls
+        .iter()
+        .map(|&point| ArenaControl {
+            action: ControlAction::NextWave,
+            mesh: control_post(point),
+        })
+        .collect();
+    let walkable: Vec<WorldMesh> = meshes
+        .iter()
+        .cloned()
+        .chain(controls.iter().map(|control| control.mesh.clone()))
+        .collect();
+    let nav =
+        Arc::new(NavMesh::build(&walkable, nav_profile()).expect("box worlds build a navmesh"));
     Arc::new(Arena {
         material_names: vec![None; meshes.len()],
         meshes,
@@ -241,7 +275,31 @@ pub(crate) fn arena_with(
         enemy_spawns: enemies.to_vec(),
         route: route.to_vec(),
         covers: Vec::new(),
+        controls,
     })
+}
+
+/// A world holding one `World`-tagged box per `(min, max)` pair and one control post standing
+/// on each of `posts`, tagged and numbered as the arena does, stepped once.
+pub(crate) fn world_with_controls(boxes: &[(Vec3, Vec3)], posts: &[Vec3]) -> PhysicsWorld {
+    let mut world = PhysicsWorld::new();
+    for (id, &(min, max)) in boxes.iter().enumerate() {
+        world.set_world_mesh(
+            WorldMeshId(id as u64),
+            &box_mesh(min, max),
+            SurfaceTag::World.into(),
+        );
+    }
+    for (index, &post) in posts.iter().enumerate() {
+        let index = u16::try_from(index).expect("a handful of test controls");
+        world.set_world_mesh(
+            control_mesh_id(usize::from(index)),
+            &control_post(post),
+            SurfaceTag::Control(index).into(),
+        );
+    }
+    world.step(DT);
+    world
 }
 
 /// Waves of experienced enemies that open with `first_size` enemies, grow by one and score 100

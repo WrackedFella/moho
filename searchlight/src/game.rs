@@ -3349,6 +3349,120 @@ mod tests {
         assert!(restart.restart, "F8 restarts once playing again");
         assert!(!ctx.exit_requested());
     }
+
+    /// A game on a floor with a `next_wave` control post 1.5 m ahead of the player (when
+    /// `with_control`), the eye 1.015 m up so a level view meets the post.
+    fn control_game(with_control: bool) -> SearchlightGame {
+        let posts = [Vec3::new(0.0, 0.0, 1.5)];
+        let controls: &[Vec3] = if with_control { &posts } else { &[] };
+        let mut config = test_config(rifle_from(mag(30, 30)), vec![]);
+        crate::test_support::set_eye_above_centre(&mut config, 0.1);
+        let mode = ArenaMode::new(
+            crate::test_support::arena_with_controls(&[], Vec3::ZERO, &[], &[], controls),
+            config,
+            wave_tuning(1),
+        );
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
+    }
+
+    /// Vertices the shell paints on the next frame; its console is closed, so with no menu
+    /// open they are the game's screen text.
+    fn painted_vertices(game: &SearchlightGame) -> usize {
+        game.stage.shell().ui_frame([1280, 720]).map_or(0, |frame| {
+            frame.meshes.iter().map(|m| m.vertices.len()).sum()
+        })
+    }
+
+    fn turn_around(game: &mut SearchlightGame) {
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let turn = SearchlightCommand {
+            movement: moho_physics::CharacterCommand {
+                yaw_delta: std::f32::consts::PI,
+                ..moho_physics::CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        tick_with(game, &mut clock, &turn);
+    }
+
+    #[test]
+    fn the_prompt_shows_while_the_button_is_in_reach() {
+        let mut game = control_game(true);
+        let mut renderer = SettingsRenderer::default();
+
+        draw_frame(&mut game, &mut renderer);
+
+        assert_eq!(game.sim().control_in_reach(), Some(0));
+        assert!(painted_vertices(&game) > 0, "no prompt text was queued");
+    }
+
+    #[test]
+    fn no_prompt_when_looking_away() {
+        let mut game = control_game(true);
+        let mut renderer = SettingsRenderer::default();
+        draw_frame(&mut game, &mut renderer);
+        let facing = painted_vertices(&game);
+
+        turn_around(&mut game);
+        draw_frame(&mut game, &mut renderer);
+
+        assert!(facing > 0, "the prompt shows while facing the button");
+        assert_eq!(game.sim().control_in_reach(), None);
+        assert_eq!(painted_vertices(&game), 0);
+    }
+
+    #[test]
+    fn no_prompt_while_dead_or_paused() {
+        let mut renderer = SettingsRenderer::default();
+        let mut dead = control_game(true);
+        draw_frame(&mut dead, &mut renderer);
+        let alive = painted_vertices(&dead);
+        dead.mode.sim_mut().kill_player();
+        let mut paused = control_game(true);
+        let mut paused_without_a_control = control_game(false);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        pause(&mut paused, &mut ctx);
+        pause(&mut paused_without_a_control, &mut ctx);
+        let mut on_the_menu = control_game(true).with_main_menu();
+        let mut menu_without_a_control = control_game(false).with_main_menu();
+
+        draw_frame(&mut dead, &mut renderer);
+        draw_frame(&mut paused, &mut renderer);
+        draw_frame(&mut paused_without_a_control, &mut renderer);
+        draw_frame(&mut on_the_menu, &mut renderer);
+        draw_frame(&mut menu_without_a_control, &mut renderer);
+
+        assert!(alive > 0, "the prompt shows while alive and playing");
+        assert_eq!(painted_vertices(&dead), 0, "dead");
+        let paused_text = painted_vertices(&paused);
+        assert!(paused_text > 0, "the pause menu paints its own text");
+        assert_eq!(paused_text, painted_vertices(&paused_without_a_control));
+        let menu_text = painted_vertices(&on_the_menu);
+        assert!(menu_text > 0, "the main menu paints its own text");
+        assert_eq!(menu_text, painted_vertices(&menu_without_a_control));
+    }
+
+    #[test]
+    fn control_mesh_ids_share_no_id_with_arena_dummy_or_enemy_meshes() {
+        use crate::arena::{arena_mesh_id, control_mesh_id};
+
+        let last_enemy_id = ENEMY_MESH_BASE + u64::from(u16::MAX) * ENEMY_MESH_SLOTS + 7;
+        let indices = [0usize, 1, 2, 63, 1000, usize::from(u16::MAX)];
+
+        let ids: Vec<WorldMeshId> = indices.into_iter().map(control_mesh_id).collect();
+
+        for (id, index) in ids.iter().zip(indices) {
+            assert!(id.0 > last_enemy_id, "control {index}: {id:?}");
+            assert_ne!(*id, arena_mesh_id(index), "control {index}");
+        }
+        let mut distinct = ids.clone();
+        distinct.sort_by_key(|id| id.0);
+        distinct.dedup();
+        assert_eq!(distinct.len(), ids.len(), "controls share an id: {ids:?}");
+        const { assert!(DUMMY_MESH_BASE < ENEMY_MESH_BASE) };
+    }
 }
 
 /// The menus, observed through the shell's screen stack and the game's outward behavior.
