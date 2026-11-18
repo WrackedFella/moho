@@ -25,12 +25,10 @@ impl AutosaveSchedule {
         }
     }
 
-    /// Counts one simulation tick.
     pub fn tick(&mut self) {
         self.ticks_since_save = self.ticks_since_save.saturating_add(1);
     }
 
-    /// Records that the world changed since the last save.
     pub fn mark_edited(&mut self) {
         self.edited = true;
     }
@@ -267,7 +265,6 @@ mod tests {
         BlockPos::new(x, top, z)
     }
 
-    /// The player aims down at `block` and clicks.
     fn mine(app: &mut App, block: BlockPos) {
         let eye = block.as_vec3() + Vec3::new(0.5, 3.0, 0.5);
         app.camera.0 = glam::camera::rh::view::look_to_mat4(eye, Vec3::NEG_Y, Vec3::Z);
