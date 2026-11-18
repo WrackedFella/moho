@@ -1,14 +1,23 @@
 //! Walking routes over the voxel grid: which cells a pawn can stand in and how it gets between them.
 
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BinaryHeap};
+
 use flagstone_voxel::{BlockPos, VoxelGrid};
 use glam::Vec3;
+
+/// Cells of air a standing pawn needs from its feet up: the 2.3 m capsule.
+const CAPSULE_CELLS: i32 = 3;
+
+const HORIZONTAL: [BlockPos; 4] = [BlockPos::X, BlockPos::NEG_X, BlockPos::Z, BlockPos::NEG_Z];
 
 /// The most cells one search expands before it gives up.
 pub const ROUTE_NODE_BUDGET: usize = 4096;
 
 /// Whether a pawn's feet can be in `cell`: ground below and air for the capsule's height.
-pub fn standable(_grid: &VoxelGrid, _cell: BlockPos) -> bool {
-    false
+pub fn standable(grid: &VoxelGrid, cell: BlockPos) -> bool {
+    grid.is_solid_at(cell - BlockPos::Y)
+        && (0..CAPSULE_CELLS).all(|up| !grid.is_solid_at(cell + BlockPos::Y * up))
 }
 
 /// The cell holding a pawn's feet at `feet`.
@@ -18,14 +27,89 @@ pub fn feet_cell(feet: Vec3) -> BlockPos {
 
 /// The cheapest walkable route from `start` to the first cell `is_goal` accepts, both ends
 /// included, or `None` when there is none within `budget` expansions.
+///
+/// A start that is not standable is moved one cell up, then one down, before giving up. The
+/// search is A* with a Manhattan heuristic toward `toward`; ties break on cost so far, then
+/// insertion order, so the same grid always gives the same route.
 pub fn route(
-    _grid: &VoxelGrid,
-    _start: BlockPos,
-    _is_goal: impl Fn(BlockPos) -> bool,
-    _toward: BlockPos,
-    _budget: usize,
+    grid: &VoxelGrid,
+    start: BlockPos,
+    is_goal: impl Fn(BlockPos) -> bool,
+    toward: BlockPos,
+    budget: usize,
 ) -> Option<Vec<BlockPos>> {
+    let start = [start, start + BlockPos::Y, start - BlockPos::Y]
+        .into_iter()
+        .find(|&cell| standable(grid, cell))?;
+    let heuristic = |cell: BlockPos| {
+        let gap = (cell - toward).abs();
+        gap.x + gap.y + gap.z
+    };
+
+    let mut best: BTreeMap<[i32; 3], (i32, [i32; 3])> = BTreeMap::new();
+    let mut open = BinaryHeap::new();
+    let mut inserted = 0u64;
+    best.insert(start.to_array(), (0, start.to_array()));
+    open.push(Reverse((heuristic(start), 0, inserted, start.to_array())));
+
+    let mut expansions = 0;
+    while let Some(Reverse((_, cost, _, key))) = open.pop() {
+        let cell = BlockPos::from_array(key);
+        if best.get(&key).is_some_and(|&(known, _)| cost > known) {
+            continue;
+        }
+        if is_goal(cell) {
+            return Some(walk_back(&best, key));
+        }
+        expansions += 1;
+        if expansions > budget {
+            return None;
+        }
+        for next in neighbours(grid, cell) {
+            let next_key = next.to_array();
+            let next_cost = cost + 1;
+            if best
+                .get(&next_key)
+                .is_some_and(|&(known, _)| known <= next_cost)
+            {
+                continue;
+            }
+            best.insert(next_key, (next_cost, key));
+            inserted += 1;
+            open.push(Reverse((
+                next_cost + heuristic(next),
+                next_cost,
+                inserted,
+                next_key,
+            )));
+        }
+    }
     None
+}
+
+/// The standable cells one step from `cell`: level, one up (with headroom) or one down.
+fn neighbours(grid: &VoxelGrid, cell: BlockPos) -> impl Iterator<Item = BlockPos> + '_ {
+    let headroom = !grid.is_solid_at(cell + BlockPos::Y * CAPSULE_CELLS);
+    HORIZONTAL.into_iter().flat_map(move |side| {
+        let level = cell + side;
+        [level, level + BlockPos::Y, level - BlockPos::Y]
+            .into_iter()
+            .filter(move |&next| (next.y <= cell.y || headroom) && standable(grid, next))
+    })
+}
+
+fn walk_back(best: &BTreeMap<[i32; 3], (i32, [i32; 3])>, goal: [i32; 3]) -> Vec<BlockPos> {
+    let mut path = vec![BlockPos::from_array(goal)];
+    let mut key = goal;
+    while let Some(&(_, parent)) = best.get(&key) {
+        if parent == key {
+            break;
+        }
+        path.push(BlockPos::from_array(parent));
+        key = parent;
+    }
+    path.reverse();
+    path
 }
 
 #[cfg(test)]

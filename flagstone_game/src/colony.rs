@@ -62,7 +62,11 @@ impl MineMarks {
     }
 
     /// Records `pawn` as walking to the mark at `pos`; does nothing for an unmarked block.
-    pub fn claim(&mut self, _pos: [i32; 3], _pawn: PawnId) {}
+    pub fn claim(&mut self, pos: [i32; 3], pawn: PawnId) {
+        if let Some(mark) = self.marks.get_mut(&pos) {
+            mark.claimed_by = Some(pawn);
+        }
+    }
 
     /// Frees the claim on the mark at `pos`; does nothing for an unmarked block.
     pub fn release(&mut self, pos: [i32; 3]) {

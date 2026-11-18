@@ -1,12 +1,13 @@
 //! What an unpossessed pawn does: claim a marked block, walk to it, dig it.
 
-use std::f32::consts::TAU;
+use std::f32::consts::{PI, TAU};
 
 use flagstone_voxel::{BlockPos, VoxelGrid};
 use glam::Vec3;
 
 use crate::colony::MineMarks;
-use crate::pawn::{Pawn, PawnId};
+use crate::pawn::{Pawn, PawnId, TOOL_SLOT};
+use crate::routing::{ROUTE_NODE_BUDGET, feet_cell, route, standable};
 
 /// How close, horizontally, the feet must be to a waypoint's centre to have reached it.
 pub const ARRIVE_RADIUS: f32 = 0.35;
@@ -34,7 +35,7 @@ pub struct Pose {
 }
 
 /// Counts ticks spent without getting closer to the current waypoint.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct StallGuard {
     best_distance: f32,
     idle_ticks: u32,
@@ -80,27 +81,200 @@ pub struct WalkStep {
     pub forward: f32,
 }
 
-/// Whether a pawn standing with its feet in `cell` can dig `block` from there.
-pub fn is_stand_cell(_grid: &VoxelGrid, _block: BlockPos, _cell: BlockPos) -> bool {
-    false
+impl Default for StallGuard {
+    fn default() -> Self {
+        Self {
+            best_distance: f32::INFINITY,
+            idle_ticks: 0,
+        }
+    }
 }
 
-/// Advances `pawn`'s job one tick.
+impl StallGuard {
+    /// Records this tick's distance to the waypoint; true once `STALL_TICKS` ticks in a row
+    /// brought the pawn no closer.
+    fn stalled(&mut self, distance: f32) -> bool {
+        if distance < self.best_distance - PROGRESS_EPSILON {
+            self.best_distance = distance;
+            self.idle_ticks = 0;
+        } else {
+            self.idle_ticks += 1;
+        }
+        self.idle_ticks >= STALL_TICKS
+    }
+}
+
+/// The least a pawn must close in on a waypoint, in metres, for a tick to count as progress.
+const PROGRESS_EPSILON: f32 = 1e-3;
+
+/// Lowest stand cell below a block, in cells, and highest above it: the dig stays in reach.
+const STAND_BELOW: i32 = 1;
+const STAND_ABOVE: i32 = 2;
+
+const FACES: [BlockPos; 6] = [
+    BlockPos::X,
+    BlockPos::NEG_X,
+    BlockPos::Y,
+    BlockPos::NEG_Y,
+    BlockPos::Z,
+    BlockPos::NEG_Z,
+];
+
+/// Whether a pawn standing with its feet in `cell` can dig `block` from there: within one
+/// column of it, feet from one below to two above it, and standable.
+pub fn is_stand_cell(grid: &VoxelGrid, block: BlockPos, cell: BlockPos) -> bool {
+    let off = cell - block;
+    off.x.abs() <= 1
+        && off.z.abs() <= 1
+        && (-STAND_BELOW..=STAND_ABOVE).contains(&off.y)
+        && standable(grid, cell)
+}
+
+/// Whether any face of `block` borders air.
+fn is_exposed(grid: &VoxelGrid, block: BlockPos) -> bool {
+    FACES.iter().any(|&face| !grid.is_solid_at(block + face))
+}
+
+fn centre(cell: BlockPos) -> Vec3 {
+    Vec3::new(cell.x as f32 + 0.5, cell.y as f32, cell.z as f32 + 0.5)
+}
+
+/// Advances `pawn`'s job one tick: an idle pawn claims the nearest mark it can route to, a
+/// mining pawn walks its route and finally digs. A dig ends the job and frees the claim; the
+/// mark itself goes when the block does.
 pub fn step(
-    _pawn_id: PawnId,
-    _pawn: &mut Pawn,
-    _pose: Pose,
-    _marks: &mut MineMarks,
-    _grid: &VoxelGrid,
+    pawn_id: PawnId,
+    pawn: &mut Pawn,
+    pose: Pose,
+    marks: &mut MineMarks,
+    grid: &VoxelGrid,
 ) -> JobAction {
-    JobAction::Wait
+    if pawn.job == Job::Idle {
+        claim(pawn_id, pawn, pose, marks, grid);
+    }
+    follow(pawn, pose, marks, grid)
 }
 
-/// Turn and walk to head for `to` over a tick of `dt` seconds.
-pub fn steer(_pose: Pose, _to: Vec3, _dt: f32) -> WalkStep {
+/// Starts a job on the nearest unclaimed mark with a way to it, trying at most
+/// `ROUTE_ATTEMPTS_PER_TICK` marks. Marks that failed stay in `Pawn::route_tried` until the
+/// candidates run out or a route is found, so the next tick carries on past them.
+fn claim(pawn_id: PawnId, pawn: &mut Pawn, pose: Pose, marks: &mut MineMarks, grid: &VoxelGrid) {
+    let feet = feet_cell(pose.feet);
+    let mut candidates: Vec<BlockPos> = marks
+        .unclaimed()
+        .map(BlockPos::from_array)
+        .filter(|&block| !pawn.route_tried.contains(&block.to_array()) && is_exposed(grid, block))
+        .collect();
+    candidates.sort_by_key(|&block| (block - feet).length_squared());
+    let all_tried_now = candidates.len() <= ROUTE_ATTEMPTS_PER_TICK;
+
+    for block in candidates.into_iter().take(ROUTE_ATTEMPTS_PER_TICK) {
+        let found = route(
+            grid,
+            feet,
+            |cell| is_stand_cell(grid, block, cell),
+            block,
+            ROUTE_NODE_BUDGET,
+        );
+        let Some(route) = found else {
+            pawn.route_tried.push(block.to_array());
+            continue;
+        };
+        marks.claim(block.to_array(), pawn_id);
+        pawn.select_slot(TOOL_SLOT);
+        pawn.route_tried.clear();
+        pawn.job = Job::Mine {
+            mark: block,
+            route,
+            next: 0,
+            stall: StallGuard::default(),
+        };
+        return;
+    }
+    if all_tried_now {
+        pawn.route_tried.clear();
+    }
+}
+
+/// Moves a mining pawn along its route; does nothing for an idle one.
+fn follow(pawn: &mut Pawn, pose: Pose, marks: &mut MineMarks, grid: &VoxelGrid) -> JobAction {
+    let Job::Mine {
+        mark,
+        route,
+        next,
+        stall,
+    } = &mut pawn.job
+    else {
+        return JobAction::Wait;
+    };
+    let mark = *mark;
+    if !marks.contains(mark.to_array()) {
+        pawn.job = Job::Idle;
+        return JobAction::Wait;
+    }
+
+    if *next < route.len() && horizontal_gap(pose.feet, centre(route[*next])) <= ARRIVE_RADIUS {
+        *next += 1;
+        *stall = StallGuard::default();
+    }
+    let Some(&waypoint) = route.get(*next) else {
+        return dig(pawn, pose, mark, marks, grid);
+    };
+    let to = centre(waypoint);
+    if !standable(grid, waypoint) || stall.stalled(horizontal_gap(pose.feet, to)) {
+        release(pawn, mark, marks);
+        return JobAction::Wait;
+    }
+    JobAction::Walk { to }
+}
+
+fn release(pawn: &mut Pawn, mark: BlockPos, marks: &mut MineMarks) {
+    marks.release(mark.to_array());
+    pawn.job = Job::Idle;
+}
+
+/// Ends the job with a dig at the centre of the face of `mark` nearest the eye; a block with
+/// no face left open is given up instead.
+fn dig(
+    pawn: &mut Pawn,
+    pose: Pose,
+    mark: BlockPos,
+    marks: &mut MineMarks,
+    grid: &VoxelGrid,
+) -> JobAction {
+    let eye = pose.feet + Vec3::Y * EYE_HEIGHT;
+    let middle = mark.as_vec3() + Vec3::splat(0.5);
+    let nearest = FACES
+        .iter()
+        .filter(|&&face| !grid.is_solid_at(mark + face))
+        .map(|&face| middle + face.as_vec3() * 0.5)
+        .min_by(|a, b| a.distance_squared(eye).total_cmp(&b.distance_squared(eye)));
+    release(pawn, mark, marks);
+    match nearest {
+        Some(aim) => JobAction::Dig { block: mark, aim },
+        None => JobAction::Wait,
+    }
+}
+
+fn horizontal_gap(feet: Vec3, to: Vec3) -> f32 {
+    (to.x - feet.x).hypot(to.z - feet.z)
+}
+
+/// Turn and walk to head for `to` over a tick of `dt` seconds: turn at `TURN_RATE` (never past
+/// the target), and walk too while the target is within `WALK_CONE` of the facing.
+pub fn steer(pose: Pose, to: Vec3, dt: f32) -> WalkStep {
+    let (dx, dz) = (to.x - pose.feet.x, to.z - pose.feet.z);
+    if dx == 0.0 && dz == 0.0 {
+        return WalkStep {
+            yaw_delta: 0.0,
+            forward: 0.0,
+        };
+    }
+    let off = (dx.atan2(dz) - pose.yaw + PI).rem_euclid(TAU) - PI;
+    let max_turn = TURN_RATE * dt;
     WalkStep {
-        yaw_delta: 0.0,
-        forward: 0.0,
+        yaw_delta: off.clamp(-max_turn, max_turn),
+        forward: if off.abs() <= WALK_CONE { 1.0 } else { 0.0 },
     }
 }
 
