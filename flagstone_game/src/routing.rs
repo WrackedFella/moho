@@ -87,7 +87,8 @@ mod tests {
     fn standable_needs_ground_below_and_the_capsules_height_of_air() {
         let mut grid = floor(5, 5);
         place(&mut grid, 1, 1, 1);
-        place(&mut grid, 3, 2, 3);
+        place(&mut grid, 3, 3, 3);
+        place(&mut grid, 0, 2, 4);
         place(&mut grid, 4, 4, 4);
 
         let open = standable(&grid, BlockPos::new(2, 1, 2));
@@ -97,8 +98,10 @@ mod tests {
         let inside_a_block = standable(&grid, BlockPos::new(1, 1, 1));
         let low_ceiling = standable(&grid, BlockPos::new(3, 1, 3));
         let ceiling_above_the_capsule = standable(&grid, BlockPos::new(4, 1, 4));
+        let block_at_the_chest = standable(&grid, BlockPos::new(0, 1, 4));
 
         assert!(open, "air from the feet up over solid ground");
+        assert!(!block_at_the_chest, "a block one cell above the feet");
         assert!(!air_below, "no ground under the feet");
         assert!(!inside_ground, "the feet cell must be air");
         assert!(on_a_block, "a placed block is ground too");
@@ -173,12 +176,57 @@ mod tests {
         let mut grid = floor(8, 3);
         for z in 0..3 {
             place(&mut grid, 3, 1, z);
+        }
+        assert!(
+            run(&grid, (0, 1, 1), (6, 1, 1)).is_some(),
+            "a one-block wall is climbed"
+        );
+        for z in 0..3 {
             place(&mut grid, 3, 2, z);
         }
 
         let found = run(&grid, (0, 1, 1), (6, 1, 1));
 
         assert_eq!(found, None);
+    }
+
+    #[test]
+    fn a_start_inside_the_ground_or_one_above_standable_still_routes() {
+        let grid = floor(8, 3);
+
+        let from_the_ground = run(&grid, (2, 0, 1), (5, 1, 1));
+        let from_the_air = run(&grid, (2, 2, 1), (5, 1, 1));
+
+        for (found, why) in [
+            (from_the_ground, "feet floored into the ground"),
+            (from_the_air, "one cell above a standable cell"),
+        ] {
+            let path = found.unwrap_or_else(|| panic!("{why}: no route"));
+            assert_eq!(path.last(), Some(&BlockPos::new(5, 1, 1)), "{why}");
+        }
+    }
+
+    #[test]
+    fn a_drop_of_two_blocks_is_not_taken() {
+        // A platform two blocks high at x = 0..=2 whose only way down is off its east edge.
+        let mut grid = floor(8, 3);
+        for x in 0..=2 {
+            for z in 0..3 {
+                place(&mut grid, x, 1, z);
+                place(&mut grid, x, 2, z);
+            }
+        }
+
+        let two_down = run(&grid, (0, 3, 1), (6, 1, 1));
+
+        assert_eq!(two_down, None, "the ledge is two blocks above the floor");
+        for z in 0..3 {
+            place(&mut grid, 3, 1, z);
+        }
+
+        let with_a_step = run(&grid, (0, 3, 1), (6, 1, 1));
+
+        assert!(with_a_step.is_some(), "two drops of one block each");
     }
 
     #[test]

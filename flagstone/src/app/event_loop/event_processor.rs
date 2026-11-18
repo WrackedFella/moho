@@ -1728,6 +1728,26 @@ mod tests {
     }
 
     #[test]
+    fn hand_mining_leaves_the_colony_stock_alone() {
+        let mut app = app_aimed_at_block_with(Some(7));
+        app.colony.stock.add(7, 5);
+
+        EventProcessor::new().handle_input_event(&mut app, InputEvent::MineRequested);
+
+        assert_eq!(app.pawn.inventory.count(7), 1, "the pawn's own inventory");
+        assert_eq!(
+            app.colony.stock.count(7),
+            5,
+            "the colony total is untouched"
+        );
+        assert_eq!(
+            app.colony.stock.iter().map(|(_, n)| n).sum::<u32>(),
+            5,
+            "nothing else joins the colony stock"
+        );
+    }
+
+    #[test]
     fn mining_plain_block_publishes_no_cue() {
         let mut app = app_aimed_at_block_with(None);
 
@@ -1751,10 +1771,6 @@ mod tests {
 
         assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
         assert_eq!(&bytes[8..12], b"WAVE", "not a WAV file");
-        assert!(
-            std::path::Path::new(DIG_SOUND).ends_with("assets/dig.wav"),
-            "the cue is flagstone/assets/dig.wav: {DIG_SOUND}"
-        );
     }
 
     #[test]

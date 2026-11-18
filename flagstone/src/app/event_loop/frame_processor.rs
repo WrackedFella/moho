@@ -1397,11 +1397,14 @@ pub(crate) mod tests {
         app.colony.stock.iter().map(|(_, count)| count).sum()
     }
 
-    #[test]
-    fn an_idle_pawn_digs_a_marked_ore_block_and_the_stock_grows_by_one() {
-        let (mut app, block) = flat_pawn_world(Some(ORE));
+    /// Marks a block carrying `resource` in the open, lets the idle pawn dig it, and checks
+    /// the marker, the colony stock (`expected` of `resource`, nothing else), the pawn's own
+    /// inventory, the walk and the dig cue.
+    fn assert_idle_pawn_digs(resource: Option<u32>, expected: u32) {
+        let (mut app, block) = flat_pawn_world(resource);
         app.colony.marks.toggle(block.to_array());
         let start = pawn_feet(&app);
+        let _ = app.audio_event_rx.try_iter().count();
 
         let dig = run_until_dug(&mut app, block);
 
@@ -1412,10 +1415,10 @@ pub(crate) mod tests {
         );
         assert_eq!(
             app.colony.stock.count(ORE),
-            1,
-            "the colony's ore total after one ore block"
+            expected,
+            "the colony's ore total after the dig"
         );
-        assert_eq!(total_stock(&app), 1, "nothing else joins the stock");
+        assert_eq!(total_stock(&app), expected, "nothing else joins the stock");
         assert!(
             app.pawn.inventory.is_empty(),
             "a pawn's job feeds the colony, not its own inventory"
@@ -1424,27 +1427,29 @@ pub(crate) mod tests {
         let gained =
             (target - horizontal(start)).length() - (target - horizontal(pawn_feet(&app))).length();
         assert!(gained > 1.5, "the pawn walked {gained} m towards the block");
+        let cues: Vec<String> = app
+            .audio_event_rx
+            .try_iter()
+            .filter_map(|event| match event {
+                moho_core::events::AudioEvent::PlaySoundAt { path, .. } => Some(path),
+                _ => None,
+            })
+            .filter(|path| {
+                std::path::Path::new(path)
+                    == std::path::Path::new(crate::app::event_loop::event_processor::DIG_SOUND)
+            })
+            .collect();
+        assert_eq!(cues.len(), 1, "one dig cue for one dig: {cues:?}");
+    }
+
+    #[test]
+    fn an_idle_pawn_digs_a_marked_ore_block_and_the_stock_grows_by_one() {
+        assert_idle_pawn_digs(Some(ORE), 1);
     }
 
     #[test]
     fn a_plain_block_is_dug_and_the_stock_is_unchanged() {
-        let (mut app, block) = flat_pawn_world(None);
-        app.colony.marks.toggle(block.to_array());
-        let start = pawn_feet(&app);
-
-        let dig = run_until_dug(&mut app, block);
-
-        assert_dug(&dig);
-        assert!(
-            !app.colony.marks.contains(block.to_array()),
-            "the mining marker is still there"
-        );
-        assert_eq!(total_stock(&app), 0, "a plain block yields nothing");
-        assert!(app.pawn.inventory.is_empty());
-        let target = horizontal(centre_of(block));
-        let gained =
-            (target - horizontal(start)).length() - (target - horizontal(pawn_feet(&app))).length();
-        assert!(gained > 1.5, "the pawn walked {gained} m towards the block");
+        assert_idle_pawn_digs(None, 0);
     }
 
     #[test]

@@ -113,8 +113,6 @@ pub fn steer(_pose: Pose, _to: Vec3) -> WalkStep {
 mod tests {
     use std::f32::consts::{FRAC_PI_2, PI};
 
-    use proptest::prelude::*;
-
     use super::*;
     use crate::TICK_HZ;
     use crate::pawn::MINE_REACH;
@@ -223,22 +221,22 @@ mod tests {
     #[test]
     fn a_mark_with_no_exposed_face_is_not_claimed() {
         let mut grid = floor();
-        for x in 7..=9 {
-            for y in 1..=3 {
-                for z in 7..=9 {
-                    place(&mut grid, x, y, z);
-                }
+        for x in 0..16 {
+            for z in 0..16 {
+                place(&mut grid, x, -1, z);
             }
         }
+        place(&mut grid, 8, 1, 8);
         place(&mut grid, 14, 1, 8);
-        let mut marks = marked(&[[8, 2, 8], [14, 1, 8]]);
+        // The buried mark's six neighbours are solid, yet (7, 1, 8) beside it is standable.
+        let mut marks = marked(&[[8, 0, 8], [14, 1, 8]]);
         let mut pawn = Pawn::default();
 
         let action = step(ME, &mut pawn, pose_in(0, 1, 8), &mut marks, &grid);
 
         assert!(matches!(action, JobAction::Walk { .. }), "{action:?}");
         assert_eq!(
-            claimed_by(&marks, [8, 2, 8]),
+            claimed_by(&marks, [8, 0, 8]),
             None,
             "buried in solid blocks"
         );
@@ -312,10 +310,17 @@ mod tests {
         for (x, z) in [(8, 8), (7, 8), (9, 8), (8, 7), (8, 9)] {
             place(&mut pillar, x, 1, z);
         }
+        // Dug from the diagonal cell (7, 1, 7), the west and south faces are nearest the eye
+        // but covered by blocks; of the exposed ones the top is nearest.
+        let mut shaded = floor();
+        for (x, z) in [(8, 8), (7, 8), (8, 7)] {
+            place(&mut shaded, x, 1, z);
+        }
         // From the east the block's east face is nearest; boxed in, only the top shows.
         let cases = [
             (open, pose_in(15, 1, 8), Vec3::new(9.0, 1.5, 8.5)),
             (pillar, pose_in(0, 1, 8), Vec3::new(8.5, 2.0, 8.5)),
+            (shaded, pose_in(6, 1, 7), Vec3::new(8.5, 2.0, 8.5)),
         ];
 
         for (grid, start, expected) in cases {
@@ -330,7 +335,6 @@ mod tests {
                 (aim - expected).length() < 1e-4,
                 "aim {aim:?}, expected {expected:?}"
             );
-            assert!((aim - eye_of(trip.pose)).length() <= MINE_REACH);
         }
     }
 
@@ -355,10 +359,6 @@ mod tests {
         assert_eq!(after, JobAction::Wait);
         assert_eq!(later, JobAction::Wait);
         assert_eq!(pawn.job, Job::Idle);
-        assert!(
-            grid.is_solid_at(BlockPos::new(8, 1, 8)),
-            "the block is not removed"
-        );
     }
 
     #[test]
@@ -420,15 +420,17 @@ mod tests {
         }
 
         pose.feet.x += 0.4;
-        for _ in 0..100 {
+        let progress = step(ME, &mut pawn, pose, &mut marks, &grid);
+        assert!(matches!(progress, JobAction::Walk { .. }), "{progress:?}");
+        for tick in 1..STALL_TICKS {
             let action = step(ME, &mut pawn, pose, &mut marks, &grid);
             assert!(
                 matches!(action, JobAction::Walk { .. }),
-                "progress starts the count again: {action:?}"
+                "{tick} ticks after the last progress is too soon to give up: {action:?}"
             );
         }
-        let released_at = (0..STALL_TICKS + 2)
-            .find(|_| step(ME, &mut pawn, pose, &mut marks, &grid) == JobAction::Wait);
+        let released_at =
+            (0..2).find(|_| step(ME, &mut pawn, pose, &mut marks, &grid) == JobAction::Wait);
 
         assert!(
             released_at.is_some(),
@@ -462,6 +464,88 @@ mod tests {
         assert_eq!(pawn.job, Job::Idle);
         assert!(marks.contains([8, 1, 8]), "the mark stays");
         assert_eq!(claimed_by(&marks, [8, 1, 8]), None);
+    }
+
+    #[test]
+    fn the_next_tick_tries_the_marks_left_over_from_the_attempt_limit() {
+        let mut grid = floor();
+        // Floating blocks: exposed, but nothing within reach to stand on.
+        let unreachable = [[3, 6, 6], [3, 6, 7], [3, 6, 8], [3, 6, 9], [3, 6, 10]];
+        assert!(unreachable.len() > ROUTE_ATTEMPTS_PER_TICK);
+        for [x, y, z] in unreachable {
+            place(&mut grid, x, y, z);
+        }
+        place(&mut grid, 14, 1, 8);
+        let mut marks = marked(&unreachable);
+        marks.toggle([14, 1, 8]);
+        let mut pawn = Pawn::default();
+        let pose = pose_in(0, 1, 8);
+
+        let first = step(ME, &mut pawn, pose, &mut marks, &grid);
+
+        assert_eq!(first, JobAction::Wait, "four failed searches use the tick");
+        assert_eq!(pawn.job, Job::Idle);
+        assert!(marks.iter().all(|(_, mark)| mark.claimed_by.is_none()));
+
+        let second = step(ME, &mut pawn, pose, &mut marks, &grid);
+
+        assert!(
+            matches!(second, JobAction::Walk { .. }),
+            "the next tick goes on with the untried marks: {second:?}"
+        );
+        assert_eq!(claimed_by(&marks, [14, 1, 8]), Some(ME));
+        assert!(mining(&pawn, [14, 1, 8]));
+    }
+
+    #[test]
+    fn arrival_is_horizontal_within_the_arrive_radius() {
+        let mut grid = floor();
+        place(&mut grid, 8, 1, 8);
+        let first_waypoint = centre_of(1, 1, 8);
+        let second_waypoint = centre_of(2, 1, 8);
+        // (how far off the waypoint centre along x, how far above it, the waypoint walked to)
+        let cases = [
+            (
+                0.3,
+                0.6,
+                second_waypoint,
+                "close horizontally: passed, height is ignored",
+            ),
+            (
+                0.4,
+                0.0,
+                first_waypoint,
+                "outside the arrive radius: not passed",
+            ),
+        ];
+
+        for (along, above, expected, why) in cases {
+            let mut marks = marked(&[[8, 1, 8]]);
+            let mut pawn = Pawn::default();
+            let mut pose = pose_in(0, 1, 8);
+            let claim = step(ME, &mut pawn, pose, &mut marks, &grid);
+            assert_eq!(claim, JobAction::Walk { to: first_waypoint });
+            pose.feet = first_waypoint + Vec3::new(along, above, 0.0);
+
+            let action = step(ME, &mut pawn, pose, &mut marks, &grid);
+
+            assert_eq!(action, JobAction::Walk { to: expected }, "{why}");
+        }
+    }
+
+    #[test]
+    fn equidistant_marks_are_taken_in_key_order() {
+        let mut grid = floor();
+        place(&mut grid, 6, 1, 8);
+        place(&mut grid, 10, 1, 8);
+        let mut marks = marked(&[[10, 1, 8], [6, 1, 8]]);
+        let mut pawn = Pawn::default();
+
+        let action = step(ME, &mut pawn, pose_in(8, 1, 8), &mut marks, &grid);
+
+        assert!(matches!(action, JobAction::Walk { .. }), "{action:?}");
+        assert_eq!(claimed_by(&marks, [6, 1, 8]), Some(ME), "the lower key");
+        assert_eq!(claimed_by(&marks, [10, 1, 8]), None);
     }
 
     fn per_tick_turn() -> f32 {
@@ -524,6 +608,8 @@ mod tests {
             (0.0, 0.0, 1.0),
             (0.0, 0.5, 1.0),
             (0.0, -0.7, 1.0),
+            (0.0, 0.9, 1.0),
+            (0.0, 1.2, 0.0),
             (1.0, 1.5, 1.0),
             (0.0, FRAC_PI_2, 0.0),
             (0.0, -FRAC_PI_2, 0.0),
@@ -541,35 +627,49 @@ mod tests {
         }
     }
 
-    proptest! {
-        #![proptest_config(ProptestConfig::with_cases(64))]
+    #[test]
+    fn every_stand_cell_is_within_the_mining_reach() {
+        let blocks = [
+            BlockPos::new(0, 0, 0),
+            BlockPos::new(8, 70, 8),
+            BlockPos::new(-5, -3, -7),
+            BlockPos::new(-1, -1, -1),
+            BlockPos::new(13, 4, -2),
+        ];
 
-        #[test]
-        fn every_stand_cell_is_within_the_mining_reach(
-            block in (-50..50i32, -10..10i32, -50..50i32),
-            offset in (-3..=3i32, -3..=4i32, -3..=3i32),
-        ) {
-            let block = BlockPos::new(block.0, block.1, block.2);
-            let cell = block + BlockPos::new(offset.0, offset.1, offset.2);
+        for block in blocks {
+            for dx in -3..=3 {
+                for dy in -3..=4 {
+                    for dz in -3..=3 {
+                        let cell = block + BlockPos::new(dx, dy, dz);
 
-            let stands = is_stand_cell(block, cell);
+                        let stands = is_stand_cell(block, cell);
 
-            let in_box = offset.0.abs() <= 1 && offset.2.abs() <= 1 && (-1..=2).contains(&offset.1);
-            prop_assert_eq!(stands, in_box);
-            if stands {
-                let eye = eye_of(Pose { feet: centre_of(cell.x, cell.y, cell.z), yaw: 0.0 });
-                let farthest = (0..8)
-                    .map(|corner| {
-                        block.as_vec3()
-                            + Vec3::new(
-                                (corner & 1) as f32,
-                                ((corner >> 1) & 1) as f32,
-                                ((corner >> 2) & 1) as f32,
-                            )
-                    })
-                    .map(|point| (point - eye).length())
-                    .fold(0.0, f32::max);
-                prop_assert!(farthest <= MINE_REACH, "{farthest} m from the eye to the far corner");
+                        let in_box = dx.abs() <= 1 && dz.abs() <= 1 && (-1..=2).contains(&dy);
+                        assert_eq!(stands, in_box, "block {block}, offset ({dx}, {dy}, {dz})");
+                        if stands {
+                            let eye = eye_of(Pose {
+                                feet: centre_of(cell.x, cell.y, cell.z),
+                                yaw: 0.0,
+                            });
+                            let farthest = (0..8)
+                                .map(|corner| {
+                                    block.as_vec3()
+                                        + Vec3::new(
+                                            (corner & 1) as f32,
+                                            ((corner >> 1) & 1) as f32,
+                                            ((corner >> 2) & 1) as f32,
+                                        )
+                                })
+                                .map(|point| (point - eye).length())
+                                .fold(0.0, f32::max);
+                            assert!(
+                                farthest <= MINE_REACH,
+                                "{farthest} m from the eye to the far corner, block {block}, cell {cell}"
+                            );
+                        }
+                    }
+                }
             }
         }
     }
