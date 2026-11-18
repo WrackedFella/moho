@@ -104,8 +104,8 @@ impl ArenaMode {
         waves.state.unspawned(spawn - spawned);
     }
 
-    /// Runs one tick of `dt` seconds: the sim, then the score of its kills and the wave's
-    /// spawns. A restart of a dead player begins wave 1 again with no score.
+    /// Runs one tick of `dt` seconds: the sim, then a use of the control in reach, then the
+    /// score of its kills and the wave's spawns. A restart of a dead player begins wave 1 again with no score.
     pub fn tick(&mut self, command: &SearchlightCommand, dt: f32) {
         let restarting = command.restart && self.sim.player_body().is_dead();
         self.sim.tick(command, dt);

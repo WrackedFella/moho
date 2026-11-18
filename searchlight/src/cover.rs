@@ -82,7 +82,7 @@ fn world_blocks(world: &PhysicsWorld, from: Vec3, to: Vec3) -> bool {
         let Some(strike) = resolve_shot(world, ray) else {
             return false;
         };
-        if strike.tag == SurfaceTag::World {
+        if matches!(strike.tag, SurfaceTag::World | SurfaceTag::Control(_)) {
             return true;
         }
         origin = strike.point + direction * STEP_PAST_CHARACTER;
@@ -442,6 +442,28 @@ mod tests {
 
         assert!(!from_the_head);
         assert!(!across_it);
+    }
+
+    #[test]
+    fn a_control_post_between_two_points_blocks_the_line_like_world() {
+        let post = Vec3::new(0.0, 0.0, 4.0);
+        let arena = crate::test_support::arena_with_controls(
+            &[],
+            Vec3::ZERO,
+            &[],
+            &[],
+            &[(crate::control::ControlAction::NextWave, post)],
+        );
+        let world = arena.physics_world();
+        let centre = crate::test_support::post_centre(post);
+
+        let blocked = world_blocks(
+            &world,
+            centre - Vec3::new(0.0, 0.0, 3.0),
+            centre + Vec3::new(0.0, 0.0, 3.0),
+        );
+
+        assert!(blocked);
     }
 
     #[test]
