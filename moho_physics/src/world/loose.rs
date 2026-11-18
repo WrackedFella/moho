@@ -251,6 +251,7 @@ mod tests {
     use super::*;
     use crate::world::RayQuery;
     use crate::world::test_support::{TEST_TAG, floor_mesh, slab_mesh, slope_mesh};
+    use glam::Vec3Swizzles;
     use moho_render_api::{WorldMesh, WorldMeshId};
     use proptest::prelude::*;
 
@@ -1158,12 +1159,15 @@ mod tests {
     #[test]
     fn a_rolling_capsule_slows_every_tick_and_stops() {
         let mut world = world_with_floor(&floor_mesh(0.0));
-        let id = world.spawn_loose(&rolling_capsule(2.0));
+        let start = rolling_capsule(2.0);
+        let id = world.spawn_loose(&start);
         let mut previous = ground_speed(&read(&world, id));
 
         for tick in 1..=300 {
             world.step(DT);
             let speed = ground_speed(&read(&world, id));
+            // Solver ripple: the unbraked capsule's speed wobbles up by about 1e-3 a tick. The
+            // brake cuts about 0.026 a tick, so 5e-3 hides the ripple and still catches a rise.
             assert!(
                 speed <= previous + 5e-3,
                 "tick {tick}: speed rose from {previous} to {speed}"
@@ -1172,25 +1176,25 @@ mod tests {
         }
 
         let state = read(&world, id);
-        assert!(
-            state.position.z <= 1.5,
-            "rolled {} m before stopping",
-            state.position.z
-        );
+        let rolled = (state.position - start.position).xz().length();
+        assert!(rolled <= 1.5, "rolled {rolled} m before stopping");
+        assert!(rolled >= 1.0, "stopped after only {rolled} m");
         assert!(state.asleep, "the capsule is asleep, state {state:?}");
     }
 
     #[test]
     fn the_rest_slope_decides() {
-        let rows = [
-            ("capsule", capsule(), CAPSULE_RADIUS, 2.0, true),
-            ("capsule", capsule(), CAPSULE_RADIUS, 4.9, true),
-            ("cylinder", cylinder(), CYLINDER_RADIUS, 4.9, true),
-            ("capsule", capsule(), CAPSULE_RADIUS, 5.5, false),
-            ("cylinder", cylinder(), CYLINDER_RADIUS, 10.0, false),
+        let rest_rows = [
+            ("capsule", capsule(), CAPSULE_RADIUS, 2.0),
+            ("capsule", capsule(), CAPSULE_RADIUS, 4.9),
+            ("cylinder", cylinder(), CYLINDER_RADIUS, 4.9),
+        ];
+        let roll_rows = [
+            ("capsule", capsule(), CAPSULE_RADIUS, 5.5),
+            ("cylinder", cylinder(), CYLINDER_RADIUS, 10.0),
         ];
 
-        for (name, shape, radius, degrees, rests) in rows {
+        for (name, shape, radius, degrees) in rest_rows {
             let mut world = slope_world(degrees);
             let spawn = on_slope(shape, radius, degrees);
             let id = world.spawn_loose(&spawn);
@@ -1199,53 +1203,130 @@ mod tests {
 
             let state = read(&world, id);
             let moved = (state.position - spawn.position).length();
-            if rests {
-                assert!(
-                    moved < 0.02 && state.asleep,
-                    "{name} on {degrees} degrees moved {moved} m, asleep {}",
-                    state.asleep
-                );
-            } else {
-                assert!(
-                    moved > 1.0,
-                    "{name} on {degrees} degrees moved only {moved} m"
-                );
-            }
+            assert!(moved < 0.02, "{name} on {degrees} degrees moved {moved} m");
+            assert!(state.asleep, "{name} on {degrees} degrees is awake");
+        }
+        for (name, shape, radius, degrees) in roll_rows {
+            let mut world = slope_world(degrees);
+            let spawn = on_slope(shape, radius, degrees);
+            let id = world.spawn_loose(&spawn);
+
+            run(&mut world, 300);
+
+            let down = spawn.position.z - read(&world, id).position.z;
+            assert!(
+                down > 1.0,
+                "{name} on {degrees} degrees rolled only {down} m down"
+            );
         }
     }
 
     #[test]
-    fn the_rest_slope_is_game_data() {
-        let mut steep = slope_world(8.0);
-        steep.set_rest_slope(10.0_f32.to_radians());
+    fn a_ten_degree_rest_slope_holds_a_capsule_on_eight_degrees() {
+        let mut world = slope_world(8.0);
+        world.set_rest_slope(10.0_f32.to_radians());
         let spawn = on_slope(capsule(), CAPSULE_RADIUS, 8.0);
-        let on_eight = steep.spawn_loose(&spawn);
-        let mut flat = world_with_floor(&floor_mesh(0.0));
-        flat.set_rest_slope(0.0);
-        let rolling = flat.spawn_loose(&rolling_capsule(2.0));
+        let id = world.spawn_loose(&spawn);
 
-        run(&mut steep, 300);
-        run(&mut flat, 120);
+        run(&mut world, 300);
 
-        let held = read(&steep, on_eight);
-        let moved = (held.position - spawn.position).length();
+        let state = read(&world, id);
+        let moved = (state.position - spawn.position).length();
+        assert!(moved < 0.02, "the capsule moved {moved} m");
+        assert!(state.asleep, "the capsule is awake");
+    }
+
+    #[test]
+    fn a_zero_rest_slope_leaves_a_capsule_rolling() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        world.set_rest_slope(0.0);
+        let id = world.spawn_loose(&rolling_capsule(2.0));
+
+        run(&mut world, 120);
+
+        let speed = ground_speed(&read(&world, id));
+        assert!(speed > 1.5, "the capsule slowed to {speed} m/s");
+    }
+
+    #[test]
+    fn a_hard_gravity_does_not_move_the_rest_slope() {
+        let mut world = slope_world(4.9);
+        world.set_gravity(36.0);
+        let spawn = on_slope(capsule(), CAPSULE_RADIUS, 4.9);
+        let id = world.spawn_loose(&spawn);
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        let moved = (state.position - spawn.position).length();
+        assert!(moved < 0.02, "the capsule moved {moved} m");
+        assert!(state.asleep, "the capsule is awake");
+    }
+
+    #[test]
+    fn zero_gravity_leaves_a_rolling_capsule_unbraked() {
+        let rolled = |rest_slope: Option<f32>| {
+            let mut world = world_with_floor(&floor_mesh(0.0));
+            world.set_gravity(0.0);
+            if let Some(slope) = rest_slope {
+                world.set_rest_slope(slope);
+            }
+            let id = world.spawn_loose(&rolling_capsule(2.0));
+            run(&mut world, 60);
+            read(&world, id)
+        };
+
+        let braked = rolled(None);
+        let free = rolled(Some(0.0));
+
+        assert!(braked.linear_velocity.is_finite() && braked.angular_velocity.is_finite());
         assert!(
-            moved < 0.02 && held.asleep,
-            "with a 10 degree rest slope the capsule holds on 8 degrees: moved {moved} m, asleep {}",
-            held.asleep
-        );
-        let speed = ground_speed(&read(&flat, rolling));
-        assert!(
-            speed > 1.5,
-            "with no brake the capsule keeps rolling, speed {speed}"
+            ground_speed(&braked) >= ground_speed(&free),
+            "braked {} m/s, free {} m/s",
+            ground_speed(&braked),
+            ground_speed(&free)
         );
     }
 
     #[test]
-    fn the_default_rest_slope_is_five_degrees() {
-        let world = PhysicsWorld::new();
+    fn a_capsule_on_a_box_top_is_braked_and_stays_on_it() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.05, 0.0),
+            ..LooseSpawn::new(cuboid(Vec3::new(0.5, 0.05, 0.5)), 50.0)
+        });
+        let capsule_id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.1 + CAPSULE_RADIUS, 0.0),
+            rotation: lying_along_x(),
+            linear_velocity: Vec3::new(0.0, 0.0, 0.3),
+            angular_velocity: Vec3::new(0.3 / CAPSULE_RADIUS, 0.0, 0.0),
+            ..LooseSpawn::new(capsule(), 0.2)
+        });
 
-        assert!((world.rest_slope() - 5.0_f32.to_radians()).abs() <= 1e-6);
+        run(&mut world, 600);
+
+        let state = read(&world, capsule_id);
+        assert!(state.asleep, "the capsule is awake, {state:?}");
+        assert!(
+            (state.position.y - (0.1 + CAPSULE_RADIUS)).abs() <= 0.002
+                && state.position.xz().abs().max_element() < 0.5,
+            "the capsule left the box top, {state:?}"
+        );
+    }
+
+    #[test]
+    fn an_upright_capsule_stays_where_it_stands() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let height = CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS;
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, height, 0.0),
+            ..LooseSpawn::new(capsule(), 0.2)
+        });
+
+        run(&mut world, 3);
+
+        let y = read(&world, id).position.y;
+        assert!((y - height).abs() <= 0.001, "the capsule moved to y={y}");
     }
 
     #[test]
@@ -1271,7 +1352,7 @@ mod tests {
     #[test]
     fn set_rest_slope_accepts_zero_and_just_under_a_right_angle() {
         let mut world = PhysicsWorld::new();
-        let near_right = 1.5;
+        let near_right = f32::from_bits(std::f32::consts::FRAC_PI_2.to_bits() - 1);
 
         world.set_rest_slope(0.0);
         let zero = world.rest_slope();
@@ -1283,35 +1364,34 @@ mod tests {
 
     #[test]
     fn the_brake_never_touches_vertical_velocity() {
-        for shape in [cuboid(FLAT_BOX), capsule()] {
-            let mut braked = world_with_floor(&floor_mesh(0.0));
-            let mut free = world_with_floor(&floor_mesh(0.0));
-            free.set_rest_slope(0.0);
-            let spawn = LooseSpawn {
-                position: Vec3::new(0.0, 1.0, 0.0),
-                linear_velocity: Vec3::new(1.0, 0.0, 0.5),
-                angular_velocity: Vec3::new(3.0, 0.0, 0.0),
-                ..LooseSpawn::new(shape, 0.2)
-            };
-            let braked_id = braked.spawn_loose(&spawn);
-            let free_id = free.spawn_loose(&spawn);
-            let mut in_air = 0;
+        let mut braked = world_with_floor(&floor_mesh(0.0));
+        let mut free = world_with_floor(&floor_mesh(0.0));
+        free.set_rest_slope(0.0);
+        let spawn = LooseSpawn {
+            position: Vec3::new(0.0, CAPSULE_RADIUS + 0.03, 0.0),
+            restitution: 0.5,
+            ..rolling_capsule(2.0)
+        };
+        let braked_id = braked.spawn_loose(&spawn);
+        let free_id = free.spawn_loose(&spawn);
+        let mut braking_began = false;
 
-            for tick in 1..=40 {
-                braked.step(DT);
-                free.step(DT);
-                let (a, b) = (read(&braked, braked_id), read(&free, free_id));
-                if a.position.y > 0.3 {
-                    in_air += 1;
-                    assert_eq!(
-                        a.linear_velocity.y.to_bits(),
-                        b.linear_velocity.y.to_bits(),
-                        "{shape:?} tick {tick}: vertical velocity differs"
-                    );
-                }
+        for tick in 1..=60 {
+            braked.step(DT);
+            free.step(DT);
+            let (a, b) = (read(&braked, braked_id), read(&free, free_id));
+            assert_eq!(
+                a.linear_velocity.y.to_bits(),
+                b.linear_velocity.y.to_bits(),
+                "tick {tick}: vertical velocity differs"
+            );
+            braking_began = ground_speed(&a).to_bits() != ground_speed(&b).to_bits();
+            if braking_began {
+                break;
             }
-            assert!(in_air >= 10, "{shape:?} fell for {in_air} ticks");
         }
+
+        assert!(braking_began, "the brake never changed the ground speed");
     }
 
     #[test]
@@ -1417,8 +1497,9 @@ mod tests {
             .collect()
     }
 
-    /// The deepest penetration, m, between two loose objects in the last step's contacts.
-    fn deepest_pair_overlap(world: &PhysicsWorld) -> f32 {
+    /// How far each contact point between two loose objects in the last step's contacts
+    /// penetrates, m; a gap reads negative.
+    fn loose_pair_penetrations(world: &PhysicsWorld) -> Vec<f32> {
         world
             .narrow_phase
             .contact_pairs()
@@ -1429,7 +1510,7 @@ mod tests {
             })
             .flat_map(|pair| pair.manifolds().iter())
             .flat_map(|manifold| manifold.points.iter().map(|point| -point.dist))
-            .fold(0.0, f32::max)
+            .collect()
     }
 
     #[test]
@@ -1450,7 +1531,12 @@ mod tests {
                     -bottom
                 );
             }
-            let overlap = deepest_pair_overlap(&world);
+            let penetrations = loose_pair_penetrations(&world);
+            assert!(
+                !penetrations.is_empty(),
+                "seed {seed}: no two objects touch, so the overlap check proves nothing"
+            );
+            let overlap = penetrations.into_iter().fold(f32::MIN, f32::max);
             assert!(
                 overlap <= 0.005,
                 "seed {seed}: two objects overlap by {overlap} m"
