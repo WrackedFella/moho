@@ -54,14 +54,15 @@ impl LooseShape {
 }
 
 /// Steepest ground, radians, a world brakes loose objects on until it is told otherwise.
-pub(super) const DEFAULT_REST_SLOPE: f32 = 5.0 * std::f32::consts::PI / 180.0;
+pub(super) const DEFAULT_REST_SLOPE: f32 = 5.0_f32.to_radians();
 
 /// Contact depth, m, past which a loose body counts as being pushed out of an overlap.
 const DEEP_CONTACT: f32 = 0.005;
 
-/// A loose object's body and the radius it rolls on.
+/// A loose object's body, its one collider and the radius it rolls on.
 pub(super) struct Loose {
     body: RigidBodyHandle,
+    collider: ColliderHandle,
     roll_radius: Option<f32>,
 }
 
@@ -206,8 +207,9 @@ impl PhysicsWorld {
             .friction(spawn.friction)
             .restitution(spawn.restitution)
             .build();
-        self.collider_set
-            .insert_with_parent(collider, handle, &mut self.rigid_body_set);
+        let collider =
+            self.collider_set
+                .insert_with_parent(collider, handle, &mut self.rigid_body_set);
 
         let id = LooseId(self.next_loose);
         self.next_loose += 1;
@@ -215,6 +217,7 @@ impl PhysicsWorld {
             id,
             Loose {
                 body: handle,
+                collider,
                 roll_radius: spawn.shape.roll_radius(),
             },
         );
@@ -261,11 +264,7 @@ impl PhysicsWorld {
             if body.is_sleeping() {
                 continue;
             }
-            let Some(&collider) = body.colliders().first() else {
-                continue;
-            };
-
-            if !self.rests_on_flat_ground(collider, up, min_up_dot) {
+            if !self.rests_on_flat_ground(loose.collider, up, min_up_dot) {
                 continue;
             }
 
@@ -279,8 +278,11 @@ impl PhysicsWorld {
                 (roll_cut != 0.0).then(|| linvel + dir * roll_cut)
             });
 
-            let handle = loose.body;
-            let Some(body) = self.rigid_body_set.get_mut(handle) else {
+            if new_angvel.is_none() && new_linvel.is_none() {
+                continue;
+            }
+            // `get_mut` marks the body modified, so it is taken only when a velocity changes.
+            let Some(body) = self.rigid_body_set.get_mut(loose.body) else {
                 continue;
             };
             if let Some(angvel) = new_angvel {
