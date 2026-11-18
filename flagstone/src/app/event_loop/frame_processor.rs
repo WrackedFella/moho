@@ -1487,6 +1487,34 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_pawn_standing_on_its_marked_block_digs_it_and_stays_grounded() {
+        let target = BlockPos::new(4, 3, 8);
+        let mut app = colony_app(target, None, false);
+
+        let dug = tick_until(&mut app, WAIT_TICKS, |app| !is_solid(app, target));
+        run(&mut app, 60);
+
+        assert!(dug.is_some(), "the block is still there after 20 s");
+        let state = pawn_state(&app);
+        let feet_y = state.position.y - 1.15;
+        assert!(
+            state.position.x.floor() as i32 != target.x
+                || state.position.z.floor() as i32 != target.z,
+            "the pawn stands in the dug column at {:?}",
+            state.position
+        );
+        assert!(
+            state.grounded,
+            "the pawn is left in the air at {:?}",
+            state.position
+        );
+        assert!(
+            feet_y < 4.3,
+            "the feet are {feet_y} m up, above the ground at y 4"
+        );
+    }
+
+    #[test]
     fn nothing_marked_leaves_the_pawn_where_it_was() {
         let mut app = colony_app(BlockPos::new(8, 3, 8), Some(ORE), false);
         app.colony.marks.toggle([8, 3, 8]);

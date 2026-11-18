@@ -548,6 +548,65 @@ mod tests {
         }
     }
 
+    fn feet_cell_of(feet: Vec3) -> BlockPos {
+        cell(
+            feet.x.floor() as i32,
+            feet.y.floor() as i32,
+            feet.z.floor() as i32,
+        )
+    }
+
+    #[test]
+    fn a_pawn_on_its_marked_block_steps_off_before_digging() {
+        let block = cell(5, 0, 1);
+        let mut scene = Scene::new(&[]);
+        scene.marks.toggle(block.to_array());
+        scene.pose.feet = Vec3::new(5.5, 1.0, 1.5);
+
+        let first = scene.tick();
+        let JobAction::Walk { .. } = first else {
+            panic!("the pawn on its own block must walk off it first, got {first:?}");
+        };
+        scene.arrive();
+        let (_, dig) = scene.walk_to_the_dig();
+
+        let stand = feet_cell_of(scene.pose.feet);
+        assert!(
+            (stand.x - block.x, stand.z - block.z) != (0, 0),
+            "digs from {stand:?}, in the block's own column"
+        );
+        assert!(matches!(dig, JobAction::Dig { block: b, .. } if b == block));
+    }
+
+    proptest! {
+        #[test]
+        fn no_stand_cell_is_in_the_blocks_own_column(
+            bx in 2i32..=11,
+            by in 0i32..=2,
+            bz in 0i32..=2,
+            sx in 0i32..=12,
+            sz in 0i32..=2,
+        ) {
+            let mut scene = Scene::new(&[]);
+            if by >= 1 {
+                scene.grid.mutator().fill_region(cell(bx, 1, bz), cell(bx, by, bz), GROUND);
+            }
+            prop_assume!(by == 0 || (sx, sz) != (bx, bz));
+            scene.marks.toggle([bx, by, bz]);
+            scene.pose.feet = Vec3::new(sx as f32 + 0.5, 1.0, sz as f32 + 0.5);
+
+            let (_, dig) = scene.walk_to_the_dig();
+
+            let JobAction::Dig { block, .. } = dig else { unreachable!("walk_to_the_dig returns a dig") };
+            prop_assert_eq!(block, cell(bx, by, bz));
+            let stand = feet_cell_of(scene.pose.feet);
+            prop_assert!(
+                (stand.x, stand.z) != (bx, bz),
+                "digs the block at {:?} from {:?}, in its own column", block, stand
+            );
+        }
+    }
+
     #[test]
     fn the_route_attempts_per_tick_are_capped_at_four() {
         let mut scene = Scene::new(&[[12, 1, 1]]);
