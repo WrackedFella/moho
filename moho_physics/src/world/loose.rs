@@ -1,6 +1,6 @@
 use super::PhysicsWorld;
 use glam::{Quat, Vec3};
-use rapier3d::prelude::{ColliderBuilder, Pose, RigidBodyBuilder, RigidBodyHandle};
+use rapier3d::prelude::{ColliderBuilder, ColliderHandle, Pose, RigidBodyBuilder, RigidBodyHandle};
 
 /// Stable, engine-issued name of a loose object.
 ///
@@ -265,23 +265,7 @@ impl PhysicsWorld {
                 continue;
             };
 
-            let mut on_ground = false;
-            let mut separating = false;
-            for pair in self.narrow_phase.contact_pairs_with(collider) {
-                let into_body = if pair.collider1 == collider {
-                    -1.0
-                } else {
-                    1.0
-                };
-                for manifold in pair.manifolds() {
-                    let flat = (manifold.data.normal * into_body).dot(up) >= min_up_dot;
-                    for point in &manifold.points {
-                        separating |= point.dist < -DEEP_CONTACT;
-                        on_ground |= flat && point.dist <= 0.0;
-                    }
-                }
-            }
-            if !on_ground || separating {
+            if !self.rests_on_flat_ground(collider, up, min_up_dot) {
                 continue;
             }
 
@@ -289,24 +273,47 @@ impl PhysicsWorld {
             let angvel = body.angvel();
             let linvel = body.linvel();
             let spin_cut = cut(angvel.dot(axis), decel * dt / radius);
-            let roll_cut = axis
-                .cross(up)
-                .try_normalize()
-                .map_or((Vec3::ZERO, 0.0), |dir| {
-                    (dir, cut(linvel.dot(dir), decel * dt))
-                });
+            let new_angvel = (spin_cut != 0.0).then(|| angvel + axis * spin_cut);
+            let new_linvel = axis.cross(up).try_normalize().and_then(|dir| {
+                let roll_cut = cut(linvel.dot(dir), decel * dt);
+                (roll_cut != 0.0).then(|| linvel + dir * roll_cut)
+            });
 
             let handle = loose.body;
             let Some(body) = self.rigid_body_set.get_mut(handle) else {
                 continue;
             };
-            if spin_cut != 0.0 {
-                body.set_angvel(angvel + axis * spin_cut, false);
+            if let Some(angvel) = new_angvel {
+                body.set_angvel(angvel, false);
             }
-            if roll_cut.1 != 0.0 {
-                body.set_linvel(linvel + roll_cut.0 * roll_cut.1, false);
+            if let Some(linvel) = new_linvel {
+                body.set_linvel(linvel, false);
             }
         }
+    }
+
+    /// Whether a touching point (`dist <= 0`; a predicted contact is not ground) has a normal
+    /// within the rest slope of `up`, and no point is deeper than [`DEEP_CONTACT`] (braking
+    /// would freeze the velocity the solver uses to push an overlap apart).
+    fn rests_on_flat_ground(&self, collider: ColliderHandle, up: Vec3, min_up_dot: f32) -> bool {
+        let mut on_ground = false;
+        for pair in self.narrow_phase.contact_pairs_with(collider) {
+            let into_body = if pair.collider1 == collider {
+                -1.0
+            } else {
+                1.0
+            };
+            for manifold in pair.manifolds() {
+                let flat = (manifold.data.normal * into_body).dot(up) >= min_up_dot;
+                for point in &manifold.points {
+                    if point.dist < -DEEP_CONTACT {
+                        return false;
+                    }
+                    on_ground |= flat && point.dist <= 0.0;
+                }
+            }
+        }
+        on_ground
     }
 
     /// The object's current state; `None` for an id never spawned or removed.
