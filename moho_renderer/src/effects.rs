@@ -2206,4 +2206,166 @@ mod tests {
             }
         }
     }
+
+    fn all_finite(instance: &InstanceGpu) -> bool {
+        instance.model.iter().flatten().all(|v| v.is_finite())
+    }
+
+    #[test]
+    fn a_huge_roll_still_draws_a_finite_size_correct_flash_and_mark() {
+        let mut rig = Rig::new();
+        rig.effects
+            .flash(Vec3::ZERO, 1e30, flash_style(0.4, Duration::from_secs(1)));
+        let flash = rig.frame(EYE);
+        rig.effects.advance(Duration::from_secs(2));
+        rig.effects.mark(
+            Vec3::ZERO,
+            Vec3::Y,
+            1e30,
+            mark_style(0.2, Duration::from_secs(10), ms(0)),
+        );
+        let mark = rig.frame(EYE);
+
+        for (drawn, size, what) in [(&flash, 0.4, "flash"), (&mark, 0.2, "mark")] {
+            assert_eq!(drawn.len(), 1, "{what} draws one instance");
+            assert!(all_finite(&drawn[0]), "{what} columns are finite");
+            assert_len(x_axis(&drawn[0]), size, what);
+            assert_len(y_axis(&drawn[0]), size, what);
+            assert_orthogonal(x_axis(&drawn[0]), y_axis(&drawn[0]), what);
+        }
+    }
+
+    #[test]
+    fn a_flash_whose_eye_is_not_finite_skips_the_frame_and_draws_again_after() {
+        let mut rig = Rig::new();
+        rig.effects
+            .flash(Vec3::ZERO, 0.0, flash_style(0.4, Duration::from_secs(1)));
+
+        let blind = rig.frame(Vec3::splat(f32::NAN));
+        let live_after_blind = rig.effects.live();
+        let next = rig.frame(EYE);
+
+        assert!(blind.is_empty(), "a NaN eye draws nothing");
+        assert_eq!(live_after_blind, 1);
+        assert_eq!(next.len(), 1);
+        assert!(all_finite(&next[0]));
+    }
+
+    #[test]
+    fn an_effect_spawned_after_time_has_passed_starts_at_full_size() {
+        let mut rig = Rig::new();
+        rig.effects.advance(Duration::from_secs(5));
+
+        rig.effects.flash(Vec3::ZERO, 0.0, flash_style(0.4, ms(50)));
+        rig.effects.mark(
+            Vec3::new(3.0, 0.0, 0.0),
+            Vec3::Y,
+            0.0,
+            mark_style(0.2, Duration::from_secs(10), Duration::from_secs(1)),
+        );
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(drawn.len(), 2);
+        let mut lengths: Vec<f32> = drawn.iter().map(|i| x_axis(i).length()).collect();
+        lengths.sort_by(f32::total_cmp);
+        assert!(
+            (lengths[0] - 0.2).abs() < EPS,
+            "mark full size: {lengths:?}"
+        );
+        assert!(
+            (lengths[1] - 0.4).abs() < EPS,
+            "flash full size: {lengths:?}"
+        );
+    }
+
+    #[test]
+    fn a_streak_over_a_lowered_cap_evicts_flashes_down_to_the_cap() {
+        let mut rig = Rig::new();
+        for i in 0..40 {
+            rig.effects.flash(
+                Vec3::new(i as f32 * 10.0, 0.0, 0.0),
+                0.0,
+                flash_style(0.4, Duration::from_secs(10)),
+            );
+        }
+        assert_eq!(rig.effects.live(), 40);
+
+        rig.effects.set_quality(1);
+        let handle = rig.effects.begin_streak(style(2.0, 0.1));
+        rig.effects
+            .place_streak(handle, Vec3::new(0.0, 500.0, 0.0), Vec3::X);
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(rig.effects.live(), 32);
+        assert_eq!(drawn.len(), 32);
+        assert!(
+            drawn.iter().any(|i| (translation(i).y - 500.0).abs() < 1.0),
+            "the streak draws"
+        );
+        let flash_xs: Vec<f32> = drawn
+            .iter()
+            .map(translation)
+            .filter(|t| t.y.abs() < 1.0)
+            .map(|t| t.x)
+            .collect();
+        assert_eq!(flash_xs.len(), 31);
+        for i in 0..9 {
+            assert!(
+                !flash_xs.iter().any(|x| (x - i as f32 * 10.0).abs() < 1.0),
+                "flash {i} is among the 9 oldest and is gone"
+            );
+        }
+        for i in 9..40 {
+            assert!(
+                flash_xs.iter().any(|x| (x - i as f32 * 10.0).abs() < 1.0),
+                "flash {i} survives"
+            );
+        }
+    }
+
+    #[test]
+    fn a_mark_with_a_tiny_normal_is_unit_or_refused_never_nan() {
+        let mut rig = Rig::new();
+
+        rig.effects.mark(
+            Vec3::ZERO,
+            Vec3::new(0.0, 1e-30, 0.0),
+            0.0,
+            mark_style(0.2, Duration::from_secs(10), ms(0)),
+        );
+        let drawn = rig.frame(EYE);
+
+        if rig.effects.live() == 0 {
+            assert!(drawn.is_empty());
+        } else {
+            assert_eq!(drawn.len(), 1);
+            assert!(all_finite(&drawn[0]), "columns are finite");
+            assert_len(z_axis(&drawn[0]), 1.0, "z");
+        }
+    }
+
+    #[test]
+    fn advancing_by_zero_changes_nothing() {
+        let mut rig = Rig::new();
+        rig.effects
+            .flash(Vec3::ZERO, 0.3, flash_style(0.4, Duration::from_secs(1)));
+        rig.effects.mark(
+            Vec3::new(3.0, 0.0, 0.0),
+            Vec3::Y,
+            0.5,
+            mark_style(0.2, Duration::from_secs(10), Duration::from_secs(1)),
+        );
+        let before = rig.frame(EYE);
+
+        rig.effects.advance(Duration::ZERO);
+        let after = rig.frame(EYE);
+
+        assert_eq!(before.len(), 2);
+        assert_eq!(before.len(), after.len());
+        for (b, a) in before.iter().zip(&after) {
+            assert_eq!(b.model, a.model);
+            assert_eq!(b.material, a.material);
+        }
+        assert_eq!(rig.effects.live(), 2);
+    }
 }
