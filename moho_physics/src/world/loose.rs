@@ -1743,6 +1743,88 @@ mod tests {
     }
 
     #[test]
+    fn an_upright_capsule_spinning_on_its_end_comes_to_rest() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS, 0.0),
+            angular_velocity: Vec3::new(0.0, 10.0, 0.0),
+            ..LooseSpawn::new(capsule(), 0.2)
+        });
+        let mut previous = read(&world, id).angular_velocity.length();
+        let mut asleep_at = None;
+
+        for tick in 1..=300 {
+            world.step(DT);
+            let state = read(&world, id);
+            assert!(is_finite(&state), "tick {tick}: not finite, {state:?}");
+            let spin = state.angular_velocity.length();
+            assert!(
+                spin <= previous + 1e-5,
+                "tick {tick}: spin rose from {previous} to {spin}, {state:?}"
+            );
+            previous = spin;
+            if state.asleep && asleep_at.is_none() {
+                asleep_at = Some(tick);
+            }
+        }
+
+        let state = read(&world, id);
+        assert!(asleep_at.is_some(), "not asleep after 300 ticks, {state:?}");
+    }
+
+    #[test]
+    fn a_steep_rest_slope_stops_a_roll_without_reversing_it() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        world.set_rest_slope(1.5);
+        let id = world.spawn_loose(&rolling_capsule(Vec3::new(0.0, CAPSULE_RADIUS, -5.0), 2.0));
+        let mut asleep_at = None;
+
+        for tick in 1..=120 {
+            world.step(DT);
+            let state = read(&world, id);
+            assert!(
+                state.linear_velocity.z >= -1e-4,
+                "tick {tick}: the roll reversed, {state:?}"
+            );
+            if state.asleep && asleep_at.is_none() {
+                asleep_at = Some(tick);
+            }
+        }
+
+        assert!(
+            asleep_at.is_some(),
+            "not asleep after 120 ticks, {:?}",
+            read(&world, id)
+        );
+    }
+
+    #[test]
+    fn a_standing_cylinder_sliding_is_not_braked() {
+        let slid = |rest_slope: Option<f32>| {
+            let mut world = world_with_floor(&floor_mesh(0.0));
+            if let Some(slope) = rest_slope {
+                world.set_rest_slope(slope);
+            }
+            let id = world.spawn_loose(&LooseSpawn {
+                position: Vec3::new(-5.0, CYLINDER_HALF_HEIGHT, 0.0),
+                linear_velocity: Vec3::new(1.5, 0.0, 0.0),
+                ..LooseSpawn::new(cylinder(), 0.2)
+            });
+            run(&mut world, 60);
+            read(&world, id).position.x + 5.0
+        };
+
+        let braked = slid(None);
+        let free = slid(Some(0.0));
+
+        assert!(free > 0.05, "the cylinder slid {free} m");
+        assert!(
+            (braked - free).abs() <= 0.001,
+            "braked slid {braked} m, free slid {free} m"
+        );
+    }
+
+    #[test]
     fn spawn_rejects_a_bad_mass_on_a_capsule_or_cylinder() {
         let mut rows = Vec::new();
 
