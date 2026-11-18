@@ -5612,7 +5612,9 @@ mod grade_tests {
     use moho_physics::CharacterCommand;
 
     use super::*;
-    use crate::test_support::{DT, arena_with, mag, rifle_from, run_until_settled, test_config};
+    use crate::test_support::{
+        DT, arena_with, mag, rifle_from, run_until_settled, test_ballistics, test_config,
+    };
 
     const ENEMY_SPAWN: Vec3 = Vec3::new(0.0, 0.0, 10.0);
     const TOWARD_PLAYER: Vec3 = Vec3::new(0.0, 0.0, 6.0);
@@ -6287,6 +6289,68 @@ mod grade_tests {
             "the professional stayed at {:?}",
             enemy_at(&sim, 0)
         );
+    }
+
+    #[test]
+    fn a_round_stopped_by_a_wall_short_of_an_enemy_is_no_near_miss() {
+        let mut sim = cover_duel(Grade::Veteran, &[TALL_WALL]);
+        let radius = sim.enemy.near_miss_radius;
+        let centre = enemy_at(&sim, 0);
+
+        let shot = fire_wide(&sim, NEAR);
+        tick_with(&mut sim, &shot);
+        let player = sim.player();
+        let forward = first_person_view(&player, &player, 1.0, (0.0, 0.0)).forward;
+        let ballistics = test_ballistics();
+        let start = sim.player_eye();
+        let unobstructed = Flight::fired(start, forward, &ballistics)
+            .step(&ballistics, searchlight_rules::STANDARD_GRAVITY, DT)
+            .position;
+        let strike = resolve_shot(
+            &sim.world,
+            ShotRay {
+                origin: start,
+                direction: unobstructed - start,
+                range: (unobstructed - start).length(),
+                ignore: Some(sim.player),
+            },
+        )
+        .expect("the round strikes the wall");
+        let health = enemy_target(&sim, 0).body.health();
+        let mut hit_anyone = false;
+        let mut under_fire = false;
+        let mut near_misses = 0;
+        for _ in 0..30 {
+            sim.tick(&SearchlightCommand::default(), DT);
+            hit_anyone |= sim
+                .drain_feedback()
+                .iter()
+                .any(|fb| matches!(fb, Feedback::Hit { .. }));
+            under_fire |= enemy_target(&sim, 0).under_fire.is_some();
+            near_misses += enemy_target(&sim, 0).near_misses;
+        }
+
+        assert!(
+            passes_within(start, unobstructed, centre, radius),
+            "the step the wall cut short was meant to pass the enemy: {unobstructed:?}"
+        );
+        assert_eq!(strike.tag, SurfaceTag::World);
+        assert!(
+            !passes_within(start, strike.point, centre, radius),
+            "the wall strike {:?} is within {radius} m of the enemy at {centre:?}",
+            strike.point
+        );
+        assert!(sim.rounds.is_empty(), "the round did not end");
+        assert!(
+            !under_fire,
+            "the wall-stopped round put the enemy under fire"
+        );
+        assert_eq!(
+            near_misses, 0,
+            "the wall-stopped round counted as a near miss"
+        );
+        assert!(!hit_anyone, "the round was meant to hit nothing");
+        assert_eq!(enemy_target(&sim, 0).body.health(), health);
     }
 
     #[test]
