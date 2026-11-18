@@ -59,5 +59,7 @@ Out-of-range quality values are rejected with a message. Unknown commands print 
 | Command | Args | Effect |
 |---|---|---|
 | `tgm` | `[0\|1]` | God mode: no argument toggles, `1` on, `0` off. Enemy hits stop damaging the player. Stored as `god_mode` under `[debug]` in the game's prefs file, so it persists across runs |
+| `simple` | `[0\|1]` | Simple: no argument toggles (and prints the new state), `1` on, `0` off. The player's shots are one ray that lands on the tick it is fired, at the aim point. Stored as `simple` under `[debug]`, so it persists across runs |
+| `round_gravity` | `<scale>` | Scales the gravity the player's rounds feel (0 to 1000; 1 is standard gravity). Rounds only: the world and the player's jump are unchanged. Not saved: 1 at every launch, kept across restarts. A missing, negative, non-numeric or over-1000 value prints the usage |
 | `fullscreen` | none | Flips between windowed and borderless fullscreen and prints the new mode. Saved like the F11 and Alt+Enter flips |
 | `grade` | `<rookie\|novice\|experienced\|veteran\|professional\|off>` | Forces the grade of enemies spawned from then on; `off` clears the force. Not saved; applies to later waves and restarts, not to enemies already alive |
