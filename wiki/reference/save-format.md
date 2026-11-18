@@ -39,7 +39,7 @@ for that kind.
 |---|---|---|
 | World | caller-chosen path passed to `write_scene_with_metadata` | `WorldFile`: `WorldSpec`, the Scene file as embedded bytes, block records |
 | Scene | embedded in the World payload, or standalone via `scene_persistence::save_to_file` | `SceneDesc`: spheres, cubes, voxel chunk meshes, camera, lights |
-| Chunk | `saves/<world>/chunks/<cx>_<cy>_<cz>.bin` | `ChunkSnapshot`: palette, 4096 indices, resources |
+| Chunk | `<saves_dir>/<world>/chunks/<cx>_<cy>_<cz>.bin` (`saves_dir` defaults to `saves`) | `ChunkSnapshot`: palette, 4096 indices, resources |
 
 Each payload's encoding is pinned by a test (`PINNED_WORLD`, `PINNED_SCENE`,
 `PINNED_CHUNK`). Changing a payload struct fails it; bump the kind's `version` and update
@@ -53,3 +53,16 @@ Invariants:
   grid or entities unchanged.
 - World and chunk files are written to a temporary file, synced, then renamed over the target.
 - A missing chunk file is not an error: the chunk is regenerated from terrain.
+
+## When the world is saved
+
+`save_world` in `flagstone/src/app/autosave.rs` writes the World file. It runs on window
+close, Exit, return to the main menu, and from `AutosaveSchedule` during play.
+
+- The schedule counts simulation ticks. It comes due once a world edit has been marked and a
+  full interval (`DEFAULT_AUTOSAVE_INTERVAL`, 120 s) has passed since the last save; an idle
+  world is not rewritten.
+- A failed save restarts the interval and keeps the edit pending, so the retry waits one interval.
+- With no world loaded nothing is written, so an existing save is never replaced by an empty one.
+- Chunk files are read and written under the app's `saves_dir`, passed to `write_chunk_file`,
+  `read_chunk_file` and `clear_chunk_files`.
