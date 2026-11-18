@@ -126,12 +126,13 @@ impl Mark {
     /// lifetime; `None` once the lifetime is spent.
     fn scale(&self) -> Option<f32> {
         let remaining = self.style.lifetime.saturating_sub(self.age);
+        let fade = self.style.fade.min(self.style.lifetime);
         if remaining.is_zero() {
             None
-        } else if remaining >= self.style.fade {
+        } else if remaining >= fade {
             Some(1.0)
         } else {
-            Some(remaining.as_secs_f32() / self.style.fade.as_secs_f32())
+            Some(remaining.as_secs_f32() / fade.as_secs_f32())
         }
     }
 }
@@ -1308,6 +1309,57 @@ mod tests {
             "half at 9.5s"
         );
         assert!((y_axis(&half[0]).length() - 0.1).abs() < EPS);
+        assert!(gone.is_empty());
+        assert_eq!(rig.effects.live(), 0);
+    }
+
+    #[test]
+    fn a_mark_whose_fade_exceeds_its_lifetime_shrinks_from_full_over_its_lifetime() {
+        let mut rig = Rig::new();
+        rig.effects.mark(
+            Vec3::ZERO,
+            Vec3::Y,
+            0.0,
+            mark_style(0.2, Duration::from_secs(2), Duration::from_secs(5)),
+        );
+
+        let fresh = rig.frame(EYE);
+        rig.effects.advance(Duration::from_secs(1));
+        let half = rig.frame(EYE);
+        rig.effects.advance(Duration::from_secs(1));
+        let gone = rig.frame(EYE);
+
+        assert_eq!(fresh.len(), 1);
+        assert!(
+            (x_axis(&fresh[0]).length() - 0.2).abs() < EPS,
+            "full at age 0"
+        );
+        assert_eq!(half.len(), 1);
+        assert!((x_axis(&half[0]).length() - 0.1).abs() < EPS, "half at 1s");
+        assert!(gone.is_empty());
+        assert_eq!(rig.effects.live(), 0);
+    }
+
+    #[test]
+    fn a_mark_with_zero_fade_holds_full_size_until_its_lifetime_then_vanishes() {
+        let mut rig = Rig::new();
+        rig.effects.mark(
+            Vec3::ZERO,
+            Vec3::Y,
+            0.0,
+            mark_style(0.2, Duration::from_secs(1), Duration::ZERO),
+        );
+
+        rig.effects.advance(ms(999));
+        let held = rig.frame(EYE);
+        rig.effects.advance(ms(1));
+        let gone = rig.frame(EYE);
+
+        assert_eq!(held.len(), 1);
+        assert!(
+            (x_axis(&held[0]).length() - 0.2).abs() < EPS,
+            "full at 999ms"
+        );
         assert!(gone.is_empty());
         assert_eq!(rig.effects.live(), 0);
     }
