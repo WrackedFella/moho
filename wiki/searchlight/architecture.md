@@ -19,6 +19,7 @@ flowchart LR
     game --> mode["mode.rs<br/>ArenaMode"]
     mode --> wave["wave.rs<br/>WaveTuning, WaveState"]
     mode --> sim["sim.rs<br/>SearchlightSim"]
+    mode --> control["control.rs<br/>ControlAction"]
     game --> input["input.rs<br/>SearchlightAction, SearchlightCommand"]
     game --> lean["lean.rs<br/>eye offset, rolled view"]
     game --> hud["hud.rs<br/>status wording"]
@@ -37,15 +38,16 @@ flowchart LR
 | `arena` | Loads a level file (`assets/arena.glb` by default) through `moho_level`; `ArenaMarkers` carries the `LevelMode` read from the `searchlight_level` marker; `ArenaMarkers` sorts named markers by kind and orders waypoints into the patrol route; `Arena` is the loaded level the sim starts from (meshes and their glTF material names, spawns, route, cover points, `nav`) and builds the world colliders; `Arena::from_level` also builds the `NavMesh` for `nav_profile` (the player-sized capsule plus clearance) and fails with `ArenaError::Nav` when that fails; it also drops waypoints no enemy spawn has a navmesh path to (logged as a warning) and fails with `ArenaError::NoReachableWaypoint` when none is left. A sandbox skips both failures: a navmesh error leaves an empty `NavMesh` and sets `nav_fallback`, and the route check does not run |
 | `kit` | `kit::load(roots, START_KIT_ID)`: loads `items` and `kits` through the content roots and resolves the `start` kit into a `searchlight_rules::Kit` (weapon numbers plus a ready `Loadout`); `KitLoadError` separates content errors from an invalid kit |
 | `tuning` | `tuning(Kit)`: builds the `SimConfig`, taking the rifle's numbers from the kit's weapon and the player's `Loadout` from the kit |
-| `input` | `SearchlightAction` set and default bindings; `build_action_map` builds the `ActionMap` at startup, with mouse look (`look_settings`: sensitivity, smoothing, invert Y) taken from `Prefs`, and a sensitivity not above zero falling back to the default 3.0; `SearchlightCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on F8); `resolve_lean` turns the held `LeanLeft` and `LeanRight` actions (Q, E) into one `LeanSide` |
+| `input` | `SearchlightAction` set and default bindings; `build_action_map` builds the `ActionMap` at startup, with mouse look (`look_settings`: sensitivity, smoothing, invert Y) taken from `Prefs`, and a sensitivity not above zero falling back to the default 3.0; `SearchlightCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, use on F, restart on F8); `resolve_lean` turns the held `LeanLeft` and `LeanRight` actions (Q, E) into one `LeanSide` |
 | `lean` | `lean_offset` (horizontal eye shift for a lean at a yaw) and `rolled_view_matrix` (view with up tipped about forward); pure `glam` maths the game and sim share ([posture](#8-posture)) |
-| `tag` | `SurfaceTag` (`World`, `Part { target, part }` or `Player(part)`) and its lossless round trip through the engine's opaque `moho_physics::HitTag` |
+| `control` | `ControlAction` (`NextWave`): what a placed control does, parsed from a marker's `action` extra (`parse`); a host action (`is_host_action`) is honored only from player slot 0 (`honored_from`) |
+| `tag` | `SurfaceTag` (`World`, `Part { target, part }`, `Player(part)` or `Control(index)`) and its lossless round trip through the engine's opaque `moho_physics::HitTag` |
 | `shot` | `resolve_shot`: first tagged surface along a `ShotRay` in the `PhysicsWorld`; `passes_within`: whether a shot segment comes within a radius of a point |
 | `brain` | `Brain`: the enemy state machine (`Patrol`, `Engage`, `Cover`, `Chase`), pure over `glam` types; `Percept` and a `steer` function in, `Intent` out; `EnemyTuning` holds its numbers; `EnemyTuning::graded` scales reaction, cooldown and aim error by a `Grade` ([enemies](#5-enemies)) |
 | `cover` | `pick` and `offer`: choose the nearest free cover point an enemy under fire should run to, using world-only rays against the player (`Threat`) |
 | `sim` | `SearchlightSim`: player character and body, `Loadout` (rifle and `Rig` of spare magazines), dummies and enemies; emits `Feedback`; counts player kills |
-| `wave` | `WaveTuning` (first wave size, growth per wave, points per kill, grade mix; zero size or growth is refused) and `WaveState` (running wave, enemies still to spawn, the wave's grades, score) as plain numbers, no physics |
-| `mode` | `ArenaMode`: a level as a game mode. Owns a `SearchlightSim` started empty; in an arena it scores kills and spawns each wave's enemies, graded by the wave's mix, at free enemy markers; in a sandbox (`ArenaMode::sandbox`) it has no waves and `tally()` is `None`. `ArenaMode::for_level` picks by `LevelMode` |
+| `wave` | `WaveTuning` (first wave size, growth per wave, points per kill, grade mix; zero size or growth is refused) and `WaveState` (running wave, enemies still to spawn, the wave's grades, score) as plain numbers, no physics; `WaveState::call_next` is the only way a wave advances ([waves](#4-waves)) |
+| `mode` | `ArenaMode`: a level as a game mode. Owns a `SearchlightSim` started empty; in an arena it scores kills and spawns each wave's enemies, graded by the wave's mix, at free enemy markers, and starts the next wave only when the player uses a next-wave control ([controls](#9-controls)); in a sandbox (`ArenaMode::sandbox`) it has no waves and `tally()` is `None`. `ArenaMode::for_level` picks by `LevelMode` |
 | `hud` | Text for rifle state, hits, health, death and the wave and score line (omitted without a `Tally`); the hit-edge direction; the death overlay |
 | `menu` | The main (Play, Settings, Quit), pause (Resume, Settings, Quit) and settings (the engine's setting rows, Apply, Back) screens as `moho_ui_shell::MenuScreen` values (`main_screen`, `pause_screen`, `settings_screen(EngineSettings)`); `MenuAction` is what choosing an item asks the game to do. Focus, hit-testing and drawing belong to the shell's `MenuStack` |
 | `console_commands` | Builds the FPS `Console` from the game's `[bindings]`; the game's own commands register here (`tgm`, `fullscreen` and `grade`, parsed into `ConsoleCommand`); `console_for` takes the level's mode, and in a sandbox `grade` replies "No waves in a sandbox" |
@@ -130,8 +132,7 @@ dummies and the player stand, enemy markers are remembered but unoccupied. Each
 `ArenaMode::tick` runs the sim, then `WaveState::step` with the sim's new kills and the number of
 free markers (`SearchlightSim::free_enemy_spawns`: no living character within two `CAPSULE_RADIUS`) and
 spawns that many enemies through `SearchlightSim::spawn_enemy`. An enemy's grade is the command's `forced_grade` when set, else the wave's mix grade for its place in the wave (`WaveGrades::grade_of`, lowest grade first); the force applies to enemies spawned after it, including the wave a restart brings. Wave 1 holds `first_size` enemies and each
-later wave `growth` more; the next wave begins when the current one has nothing left to spawn and
-none alive. Spawned enemies take the next target number after the dummies; the dead keep theirs.
+later wave `growth` more; a cleared wave (nothing left to spawn, none alive) waits: the next begins only through `WaveState::call_next`, which does nothing while enemies are alive or to come ([controls](#9-controls)). Spawned enemies take the next target number after the dummies; the dead keep theirs.
 Nothing spawns while the player is dead; the restart rebuilds the sim empty and begins wave 1
 with no score. `SearchlightGame` reads `ArenaMode::tally()` (`Tally { wave, score }`) for the HUD.
 
@@ -192,7 +193,7 @@ hull, and the game draws dummies and enemies from the sim's own `character_body(
 ## 7 Arena contract
 
 Markers are node names in the glTF file. A `searchlight_level` marker with the extra `mode` (`arena` or `sandbox`) sets the `LevelMode`; a missing marker means sandbox, a duplicate is `ArenaError::DuplicateMarker` and any other value is `ArenaError::BadMode`. The rules below are the arena's. A sandbox requires no `player_spawn` (at most one; without it the player starts at the origin), no `dummy_NN`, and skips the waypoint checks; if its navmesh cannot be built, `Arena::nav_fallback` is set and `nav` is empty instead of failing. In an arena `player_spawn` is required and unique; at least one
-`dummy_NN` is required; `enemy_spawn_NN` and `cover_NN` are optional (cover points feed `Arena::covers`; without them enemies under fire stand and fight; full-height `screen_NN` walls are plain geometry with no marker). `waypoint_NN` is optional
+`dummy_NN` is required; `enemy_spawn_NN`, `cover_NN` and `control_NN` are optional (`control_NN`: [controls](#9-controls); cover points feed `Arena::covers`; without them enemies under fire stand and fight; full-height `screen_NN` walls are plain geometry with no marker). `waypoint_NN` is optional
 unless an `enemy_spawn_NN` exists, then at least one is required (`ArenaError::MissingMarker`);
 the patrol route follows the waypoint numbers, not file order. A waypoint that no enemy spawn can walk to is dropped from the route with a warning; if enemy spawns exist and no waypoint is reachable, loading fails with `ArenaError::NoReachableWaypoint`. Waypoints are not checked when there are no enemy spawns. Each
 `cover_NN` carries a `shielded_from` extra (`+x`, `-x`, `+z`, `-z`). A mesh whose glTF material is named `floor` draws glossy (`SearchlightGame::with_named_arena`); a mesh whose material is named `mark` draws in a distinct marking paint (`Paint::ArenaMark`); every other mesh draws matte. Spawns are floor points;
@@ -225,3 +226,13 @@ Flow per tick:
 The lean is blended between the last two ticks at draw time like the player's position; `SearchlightGame::frame`
 shifts the eye with `lean_offset` and rolls the view by `lean * roll` through `rolled_view_matrix`. A restart
 resets the previous lean so the first frame is upright.
+
+## 9 Controls
+
+A `control_NN` marker places a control on a floor point. Its `action` extra names a `ControlAction`; a missing or unknown action fails the load with `ArenaError::BadControl`. `Arena::controls` lists them in file order (`ArenaControl`: action and post mesh); the index is the control's id. The shipped arena has one `next_wave` control beside the player spawn.
+
+Each control is a post: a box mesh drawn under an id from `control_mesh_id` and a world collider tagged `SurfaceTag::Control(index)`. The tag stops rays and damages nothing.
+
+Using: `SearchlightAction::Use` (default F) sets `SearchlightCommand::use_pressed` on its press tick. `SearchlightSim::control_in_reach` casts one ray from the leaned eye along the view; it returns the control only when that control is the first thing hit within `USE_REACH` (2 m), and nothing while the player is dead. `ArenaMode::tick` applies the action of that control when `use_pressed` is set and `ControlAction::honored_from` accepts the player's slot (always 0 until the engine names slots). `NextWave` calls `WaveState::call_next`. A sandbox has no waves, so the action does nothing.
+
+While playing and alive, `SearchlightGame::frame` shows `hud::use_prompt` (the bound key's label and the action, e.g. `[F] Next wave`) below the crosshair whenever `ArenaMode::action_in_reach` is `Some`.
