@@ -18,21 +18,21 @@ fi
 
 failed=0
 for crate in "${crates[@]}"; do
-    # One line per resolved version: "true"/"false" for whether it has the feature.
-    versions="$(jq -r --arg name "$crate" --arg feature "$feature" '
-        . as $m
-        | [$m.resolve.nodes[]
-            | . as $node
-            | select(any($m.packages[]; .id == $node.id and .name == $name))
-            | (.features | index($feature)) != null]
-        | .[]' <<<"$metadata")"
-    if [[ -z "$versions" ]]; then
-        echo "check-physics-features: $crate is absent from the resolved metadata" >&2
-        failed=1
-    elif grep -qx false <<<"$versions"; then
-        echo "check-physics-features: $crate lacks the $feature feature" >&2
-        failed=1
-    fi
+    verdict="$(jq -r --arg name "$crate" --arg feature "$feature" '
+        [.packages[] | select(.name == $name) | .id] as $ids
+        | [.resolve.nodes[] | select(.id | IN($ids[])) | .features | any(. == $feature)]
+        | if length == 0 then "absent" elif all then "ok" else "lacks" end' <<<"$metadata")"
+    case "$verdict" in
+        ok) ;;
+        absent)
+            echo "check-physics-features: $crate is absent from the resolved metadata" >&2
+            failed=1
+            ;;
+        *)
+            echo "check-physics-features: $crate lacks the $feature feature" >&2
+            failed=1
+            ;;
+    esac
 done
 
 [[ $failed -eq 0 ]] || exit 1
