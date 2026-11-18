@@ -116,6 +116,7 @@ mod tests {
     use glam::Vec3;
     use moho_app::{EventContext, FrameContext, Game, GameClock, HeadlessLoop, LoopConfig};
     use moho_core::events::UiEvent;
+    use moho_core::prefs::Prefs;
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
@@ -163,13 +164,24 @@ mod tests {
     /// (40, 40) of chunk column (2, 2). The streamer keeps only that 5x5 block of chunk
     /// columns. Autosaves go to `temp`'s saves directory, which holds no save yet.
     fn loaded_session(world: &str, temp: &tempfile::TempDir) -> App {
+        loaded_session_with_prefs(world, temp, Prefs::default())
+    }
+
+    /// Like `loaded_session`, with the app built from `prefs` as the game builds it from
+    /// the player's prefs file.
+    fn loaded_session_with_prefs(world: &str, temp: &tempfile::TempDir, prefs: Prefs) -> App {
         let seed_dir = temp.path().join("seed");
         let mut seed = App::headless();
         seed.generation.last_spec = Some(world_spec(world));
         seed.simulation
             .set_position_yaw_pitch(Vec3::new(40.5, 200.0, 40.5), 0.0, 0.0);
         auto_save_on_shutdown(&mut seed, &GameClock::default(), &seed_dir, &[]).expect("seed save");
-        let mut app = App::headless();
+        let mut app = App::from_config(
+            crate::app::config::AppConfig::builder()
+                .prefs(prefs)
+                .build(),
+        );
+        app.prefs_path = None;
         app.saves_dir = saves_dir(temp);
         crate::app::scene_loader::load_scene(
             &mut app,
@@ -568,6 +580,87 @@ mod tests {
             assert!(block_below_is_present(&reloaded, mined));
         }
 
+        /// Prefs as parsed from a file whose `[world]` section holds `autosave_seconds`.
+        fn prefs_with_autosave_seconds(seconds: u32) -> Prefs {
+            Prefs::parse(&format!("[world]\nautosave_seconds={seconds}\n")).0
+        }
+
+        #[test]
+        fn interval_comes_from_prefs() {
+            let temp = tempfile::tempdir().expect("temp dir");
+            let saves = saves_dir(&temp);
+            let mut app = loaded_session_with_prefs(
+                "autosave_test_prefs_interval",
+                &temp,
+                prefs_with_autosave_seconds(30),
+            );
+            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+            let mined = mine_surface_block(&mut app, 40, 40);
+
+            sim.step(&mut app, 30 * TICK_HZ - 6);
+            draw_frame(&mut app, &mut sim);
+            let saved_at_29_9_seconds = scene_file(&saves).exists();
+            sim.step(&mut app, 6);
+            draw_frame(&mut app, &mut sim);
+
+            assert!(!saved_at_29_9_seconds, "saved before the interval passed");
+            assert!(
+                scene_file(&saves).is_file(),
+                "no save after 30 seconds of play"
+            );
+            let mut reloaded = load_save(&saves);
+            assert!(is_mined_out(&mut reloaded, mined));
+        }
+
+        #[test]
+        fn autosave_off_writes_nothing_after_ten_minutes() {
+            let temp = tempfile::tempdir().expect("temp dir");
+            let saves = saves_dir(&temp);
+            let mut app = loaded_session_with_prefs(
+                "autosave_test_off_ten_minutes",
+                &temp,
+                prefs_with_autosave_seconds(0),
+            );
+            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+            mine_surface_block(&mut app, 40, 40);
+
+            sim.step(&mut app, 10 * 60 * TICK_HZ);
+            draw_frame(&mut app, &mut sim);
+
+            assert!(
+                !scene_file(&saves).exists(),
+                "an autosave was written with autosave off"
+            );
+        }
+
+        #[test]
+        fn autosave_off_still_saves_on_quit() {
+            let temp = tempfile::tempdir().expect("temp dir");
+            let saves = saves_dir(&temp);
+            let mut app = loaded_session_with_prefs(
+                "autosave_test_off_quit",
+                &temp,
+                prefs_with_autosave_seconds(0),
+            );
+            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+            let mined = mine_surface_block(&mut app, 40, 40);
+            sim.step(&mut app, 10 * 60 * TICK_HZ);
+            draw_frame(&mut app, &mut sim);
+            let written_while_playing = scene_file(&saves).exists();
+
+            let exit = close_window(&mut app);
+
+            assert!(
+                !written_while_playing,
+                "an autosave was written with autosave off"
+            );
+            assert!(exit);
+            assert!(scene_file(&saves).is_file(), "quitting wrote no save");
+            let mut reloaded = load_save(&saves);
+            assert!(is_mined_out(&mut reloaded, mined));
+            assert!(block_below_is_present(&reloaded, mined));
+        }
+
         #[test]
         fn idle_world_is_not_rewritten_after_the_interval() {
             let temp = tempfile::tempdir().expect("temp dir");
@@ -622,7 +715,10 @@ mod tests {
         #[test]
         fn default_interval_schedule_is_due_after_120_seconds_of_ticks() {
             let due_at = 120 * u64::from(TICK_HZ);
-            let mut schedule = AutosaveSchedule::for_interval(DEFAULT_AUTOSAVE_INTERVAL);
+            let default_interval = Prefs::default()
+                .autosave_interval()
+                .expect("default prefs autosave");
+            let mut schedule = AutosaveSchedule::for_interval(default_interval);
             schedule.mark_edited();
 
             for _ in 0..due_at - 1 {
