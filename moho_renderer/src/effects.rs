@@ -120,7 +120,7 @@ impl Mark {
         if self.age < lifetime.saturating_sub(fade) {
             return 1.0;
         }
-        (lifetime.saturating_sub(self.age).as_secs_f32() / fade.as_secs_f32()).clamp(0.0, 1.0)
+        lifetime.saturating_sub(self.age).as_secs_f32() / fade.as_secs_f32()
     }
 }
 
@@ -138,8 +138,9 @@ const MARK_SLOT: usize = 2;
 const MESH_BUILDERS: [fn() -> WorldMesh; 3] = [streak_mesh, flash_mesh, mark_mesh];
 
 impl Effect {
-    fn is_streak(&self) -> bool {
-        matches!(self, Self::Streak(_))
+    /// Whether a full cap may drop this effect to make room: fixed-lifetime ones only.
+    fn evictable(&self) -> bool {
+        !matches!(self, Self::Streak(_))
     }
 
     fn advance(&mut self, dt: Duration) {
@@ -183,41 +184,43 @@ impl Effect {
             }
             Self::Flash(flash) => {
                 let remaining = 1.0 - flash.age.as_secs_f32() / flash.style.lifetime.as_secs_f32();
-                let scale = flash.style.size * remaining.max(0.0);
-                if !eye.is_finite() || !scale.is_finite() || scale <= 0.0 {
+                let scale = flash.style.size * remaining;
+                if !eye.is_finite() || scale <= 0.0 {
                     return None;
                 }
                 // Standing on the eye has no direction to face; any fixed one stays finite.
                 let toward_eye = (eye - flash.at).try_normalize().unwrap_or(Vec3::Z);
                 let (x, y) = rolled_basis(toward_eye, flash.roll);
-                let transform = Affine3A::from_cols(
-                    (x * scale).into(),
-                    (y * scale).into(),
-                    toward_eye.into(),
-                    flash.at.into(),
-                );
+                let transform = scaled_basis(x, y, toward_eye, scale, flash.at);
                 Some((FLASH_SLOT, transform, flash.style.material))
             }
             Self::Mark(mark) => {
                 let scale = mark.style.size * mark.size_scale();
-                if !scale.is_finite() || scale <= 0.0 {
+                if scale <= 0.0 {
                     return None;
                 }
                 let [x, y, z] = mark.axes;
-                let transform = Affine3A::from_cols(
-                    (x * scale).into(),
-                    (y * scale).into(),
-                    z.into(),
-                    mark.centre.into(),
-                );
+                let transform = scaled_basis(x, y, z, scale, mark.centre);
                 Some((MARK_SLOT, transform, mark.style.material))
             }
         }
     }
 }
 
-fn drawable_size(size: f32) -> bool {
-    size.is_finite() && size > 0.0
+/// Whether a flash or mark with these values can ever draw: a non-zero lifetime and a
+/// finite `at`, `roll` and positive `size`.
+fn can_spawn(at: Vec3, roll: f32, size: f32, lifetime: Duration) -> bool {
+    !lifetime.is_zero() && at.is_finite() && roll.is_finite() && size.is_finite() && size > 0.0
+}
+
+/// A transform with X and Y scaled by `scale`, unit `z` and the given `origin`.
+fn scaled_basis(x: Vec3, y: Vec3, z: Vec3, scale: f32, origin: Vec3) -> Affine3A {
+    Affine3A::from_cols(
+        (x * scale).into(),
+        (y * scale).into(),
+        z.into(),
+        origin.into(),
+    )
 }
 
 /// `v` as a unit vector, or `None` if it is zero or non-finite. Scaling by the largest
@@ -240,7 +243,7 @@ pub struct Effects {
     store: BTreeMap<EffectHandle, Effect>,
     next_handle: u64,
     cap: usize,
-    mesh_uploaded: [bool; 3],
+    mesh_uploaded: [bool; MESH_BUILDERS.len()],
 }
 
 impl Default for Effects {
@@ -249,7 +252,7 @@ impl Default for Effects {
             store: BTreeMap::new(),
             next_handle: 0,
             cap: CAPS[DEFAULT_QUALITY],
-            mesh_uploaded: [false; 3],
+            mesh_uploaded: [false; MESH_BUILDERS.len()],
         }
     }
 }
@@ -258,8 +261,7 @@ impl Effects {
     /// Start a streak. At the quality's cap the handle is inert: never stored, so placing
     /// or ending it does nothing.
     pub fn begin_streak(&mut self, style: StreakStyle) -> EffectHandle {
-        let handle = EffectHandle(self.next_handle);
-        self.next_handle += 1;
+        let handle = self.issue_handle();
         if self.store.len() < self.cap {
             self.store.insert(
                 handle,
@@ -273,6 +275,12 @@ impl Effects {
                 }),
             );
         }
+        handle
+    }
+
+    fn issue_handle(&mut self) -> EffectHandle {
+        let handle = EffectHandle(self.next_handle);
+        self.next_handle += 1;
         handle
     }
 
@@ -290,14 +298,13 @@ impl Effects {
             let oldest = self
                 .store
                 .iter()
-                .find_map(|(handle, effect)| (!effect.is_streak()).then_some(*handle));
+                .find_map(|(handle, effect)| effect.evictable().then_some(*handle));
             let Some(oldest) = oldest else {
                 return;
             };
             self.store.remove(&oldest);
         }
-        let handle = EffectHandle(self.next_handle);
-        self.next_handle += 1;
+        let handle = self.issue_handle();
         self.store.insert(handle, effect);
     }
 
@@ -313,14 +320,11 @@ impl Effects {
     }
 
     /// Spawn a flash at `at`, rolled by `roll` radians about the view axis. It faces the
-    /// eye and shrinks to nothing over its lifetime. A zero lifetime or non-finite `at`
-    /// is refused; at the cap it evicts the oldest flash or mark, else it is refused.
+    /// eye and shrinks to nothing over its lifetime. One that could never draw (see
+    /// `can_spawn`) is refused; at the cap it evicts the oldest flash or mark, else it is
+    /// refused.
     pub fn flash(&mut self, at: Vec3, roll: f32, style: FlashStyle) {
-        if style.lifetime.is_zero()
-            || !at.is_finite()
-            || !roll.is_finite()
-            || !drawable_size(style.size)
-        {
+        if !can_spawn(at, roll, style.size, style.lifetime) {
             return;
         }
         self.spawn_fixed(Effect::Flash(Flash {
@@ -332,17 +336,13 @@ impl Effects {
     }
 
     /// Spawn a mark at `at` on a surface with `normal`, rolled by `roll` radians about it.
-    /// A zero lifetime, a zero or non-finite `normal` or a non-finite `at` is refused;
-    /// at the cap it evicts the oldest flash or mark, else it is refused.
+    /// A zero or non-finite `normal`, or one that could never draw (see `can_spawn`), is
+    /// refused; at the cap it evicts the oldest flash or mark, else it is refused.
     pub fn mark(&mut self, at: Vec3, normal: Vec3, roll: f32, style: MarkStyle) {
         let Some(normal) = unit_direction(normal) else {
             return;
         };
-        if style.lifetime.is_zero()
-            || !at.is_finite()
-            || !roll.is_finite()
-            || !drawable_size(style.size)
-        {
+        if !can_spawn(at, roll, style.size, style.lifetime) {
             return;
         }
         let (x, y) = rolled_basis(normal, roll);
@@ -364,10 +364,10 @@ impl Effects {
     /// Age every effect by the frame time, start the fade of any streak past its
     /// `max_age` and drop the finished ones.
     pub fn advance(&mut self, dt: Duration) {
-        for effect in self.store.values_mut() {
+        self.store.retain(|_, effect| {
             effect.advance(dt);
-        }
-        self.store.retain(|_, effect| !effect.finished());
+            !effect.finished()
+        });
     }
 
     /// Cap new effects for `quality` (0 off to 4 ultra; higher clamps). Lowering keeps
