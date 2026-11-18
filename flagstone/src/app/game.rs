@@ -1301,6 +1301,32 @@ mod tests {
         }
 
         #[test]
+        fn returning_to_first_person_starts_where_the_pawn_walked_to() {
+            use crate::app::event_loop::frame_processor::tests::{FLAT_MARK, colony_app};
+            let mut app = colony_app(false);
+            let start = app.simulation.position();
+            app.colony.marks.toggle(FLAT_MARK);
+            for _ in 0..30 {
+                step(&mut app);
+            }
+            let walked_to = app.simulation.position();
+
+            tap(&mut app);
+            step(&mut app);
+
+            assert!(
+                walked_to.distance(start) > 1.0,
+                "the pawn did not walk: {start} to {walked_to}"
+            );
+            assert_eq!(mode(&app), CameraMode::FirstPerson);
+            assert!(
+                app.simulation.position().distance(walked_to) < 0.2,
+                "possession resumed at {} not {walked_to}",
+                app.simulation.position()
+            );
+        }
+
+        #[test]
         fn possess_key_in_first_person_switches_to_strategy() {
             let mut app = app_in(CameraMode::FirstPerson);
             tap(&mut app);
