@@ -157,6 +157,7 @@ impl GenerationProcessor {
         self.setup_physics_for_world(app, &preloaded);
 
         // Switch to game mode and hide menu
+        app.autosave_schedule.reset_for_new_world();
         app.game_state = crate::game_state::GameState::Playing;
         app.hide_menu();
     }

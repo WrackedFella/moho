@@ -43,6 +43,12 @@ impl AutosaveSchedule {
         self.edited && self.ticks_since_save >= self.interval_ticks
     }
 
+    /// A different world was entered: forgets the previous world's edits and elapsed play,
+    /// keeping the interval.
+    pub fn reset_for_new_world(&mut self) {
+        *self = Self::new(self.interval_ticks);
+    }
+
     /// A save succeeded: the world is clean and the interval restarts.
     pub fn saved(&mut self) {
         self.ticks_since_save = 0;
@@ -450,6 +456,35 @@ mod tests {
         assert!(
             after == before,
             "Exit from the start menu leaves the saved world alone"
+        );
+    }
+
+    #[test]
+    fn world_loaded_after_leaving_an_edited_one_is_not_autosaved_untouched() {
+        let (temp, mut app, block) = loaded_world("autosave_unit_test_stale_schedule");
+        app.autosave_interval = std::time::Duration::from_secs(2);
+        let interval_ticks = 2 * TICK_HZ;
+        let mut sim = sim();
+        mine(&mut app, block);
+        play(&mut app, &mut sim, 5);
+        app.main_menu_requested = true;
+        let clock = GameClock::default();
+        let tick_length = LoopConfig::new(TICK_HZ).tick_length();
+        let mut ctx = FrameContext::new(tick_length, &clock, None, None);
+        Game::frame(&mut app, &mut ctx, 0.5);
+        assert_eq!(app.game_state, GameState::Menu, "the player is at the menu");
+        let save = temp.path().join("scene.bin");
+        let left_behind = std::fs::read(&save).expect("leaving saved the edited world");
+        crate::app::scene_loader::load_scene(&mut app, &mut GameClock::default(), &save)
+            .expect("the save loads");
+        std::fs::remove_file(&save).expect("clear the save, so only an autosave can write one");
+
+        play(&mut app, &mut sim, interval_ticks + 5);
+
+        assert!(
+            !save.exists(),
+            "a world with no edit since loading is not autosaved ({} bytes saved)",
+            left_behind.len()
         );
     }
 
