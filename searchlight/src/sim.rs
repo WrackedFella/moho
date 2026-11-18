@@ -1201,14 +1201,17 @@ mod tests {
     use std::f32::consts::FRAC_PI_2;
 
     use moho_physics::CharacterCommand;
-    use searchlight_rules::{GravityScale, ItemId, Loadout, Magazine, MagazineLevel, Rig, RigSpec};
+    use searchlight_rules::{
+        Flight, GravityScale, ItemId, Loadout, Magazine, MagazineLevel, Rig, RigSpec,
+        STANDARD_GRAVITY,
+    };
 
     use super::*;
     use crate::tag::SurfaceTag;
     use crate::test_support::{
         DT, arena_on_floor, arena_with, arena_with_controls, box_mesh, flat_floor, foreign_mag,
-        long_floor, mag, rifle_from, room, run_until_hit, run_until_settled, test_config,
-        world_with,
+        long_floor, mag, rifle_from, room, run_until_hit, run_until_settled, test_ballistics,
+        test_config, world_with,
     };
 
     fn rifle_with(rounds: u32) -> Rifle {
@@ -2235,9 +2238,13 @@ mod tests {
         let rest = idle();
         let mut under_fire_on = Vec::new();
         let mut hit_anyone = false;
+        let mut passes_on = 0;
 
         for tick in 0..30 {
             sim.tick(if tick == 0 { &first } else { &rest }, DT);
+            if tick == 0 {
+                passes_on = passing_tick(&sim, 0, 1.5);
+            }
             hit_anyone |= !hits(&[sim.drain_feedback()]).is_empty();
             if sim.targets[sim.dummy_count].under_fire.is_some() {
                 under_fire_on.push(tick);
@@ -2245,13 +2252,30 @@ mod tests {
         }
 
         assert!(!hit_anyone, "the round was meant to miss");
-        let first_under_fire = under_fire_on.first().copied();
-        assert_ne!(first_under_fire, Some(0), "under fire on the firing tick");
-        let tick = first_under_fire.expect("the near miss never put the veteran under fire");
-        assert!(
-            (1..=6).contains(&tick),
-            "put under fire on tick {tick}, the round was fired on tick 0 and takes ticks to pass"
+        assert_ne!(
+            under_fire_on.first(),
+            Some(&0),
+            "under fire on the firing tick"
         );
+        assert_eq!(under_fire_on.first(), Some(&passes_on), "{under_fire_on:?}");
+    }
+
+    /// The tick the round just fired from the player's eye first comes within `radius` of the
+    /// enemy's centre, stepping its flight as the sim does; `fired_on` is the firing tick.
+    fn passing_tick(sim: &SearchlightSim, fired_on: usize, radius: f32) -> usize {
+        let state = sim.player();
+        let forward = first_person_view(&state, &state, 1.0, (0.0, 0.0)).forward;
+        let centre = sim.enemy_state(0).expect("the enemy is alive").position;
+        let ballistics = test_ballistics();
+        let mut flight = Flight::fired(sim.player_eye(), forward, &ballistics);
+        for step in 1..200 {
+            let next = flight.step(&ballistics, STANDARD_GRAVITY, DT);
+            if passes_within(flight.position, next.position, centre, radius) {
+                return fired_on + step;
+            }
+            flight = next;
+        }
+        panic!("the round never comes within {radius} m of the enemy");
     }
 
     #[test]
@@ -2259,10 +2283,12 @@ mod tests {
         let mut sim = enemy_ahead(60.0, Grade::Novice, 1.5);
         let near_misses = |sim: &SearchlightSim| sim.targets[sim.dummy_count].near_misses;
         let under_fire = |sim: &SearchlightSim| sim.targets[sim.dummy_count].under_fire.is_some();
-        // Rounds fired on ticks 0, 4 and 8 pass the enemy about four ticks later, one metre
-        // wide of it; the 3-tick cooldown allows each pull.
+        // Rounds fired on ticks 0, 4 and 8 (the 3-tick cooldown allows each pull) fly the same
+        // path, one metre wide of the enemy, so each passes the same number of ticks after it
+        // was fired.
         let mut first_under_fire = None;
-        let mut near_misses_at_11 = 0;
+        let mut near_miss_counts = Vec::new();
+        let mut delay = 0;
         let mut hit_anyone = false;
 
         for tick in 0..30 {
@@ -2272,22 +2298,24 @@ mod tests {
                 _ => idle(),
             };
             sim.tick(&command, DT);
-            hit_anyone |= !hits(&[sim.drain_feedback()]).is_empty();
-            if tick == 11 {
-                near_misses_at_11 = near_misses(&sim);
+            if tick == 0 {
+                delay = passing_tick(&sim, 0, 1.5);
             }
+            hit_anyone |= !hits(&[sim.drain_feedback()]).is_empty();
+            near_miss_counts.push(near_misses(&sim));
             if first_under_fire.is_none() && under_fire(&sim) {
                 first_under_fire = Some(tick);
             }
         }
 
+        let (first, second, third) = (delay, 4 + delay, 8 + delay);
         assert!(!hit_anyone, "the rounds were meant to miss");
-        assert_eq!(near_misses_at_11, 2, "two rounds had passed by tick 11");
-        let tick = first_under_fire.expect("three passing rounds never put the novice under fire");
-        assert!(
-            (9..=14).contains(&tick),
-            "put under fire on tick {tick}, when the third round passes"
-        );
+        assert_eq!(near_miss_counts[first - 1], 0, "{near_miss_counts:?}");
+        assert_eq!(near_miss_counts[first], 1, "{near_miss_counts:?}");
+        assert_eq!(near_miss_counts[second - 1], 1, "{near_miss_counts:?}");
+        assert_eq!(near_miss_counts[second], 2, "{near_miss_counts:?}");
+        assert_eq!(near_miss_counts[third - 1], 2, "{near_miss_counts:?}");
+        assert_eq!(first_under_fire, Some(third), "{near_miss_counts:?}");
     }
 
     #[test]
