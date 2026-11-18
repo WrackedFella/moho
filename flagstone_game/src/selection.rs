@@ -376,4 +376,62 @@ mod tests {
         assert_eq!(again, Some(PAWN), "re-selecting keeps it selected");
         assert_eq!(selection.selected(), Some(OTHER), "a click replaces");
     }
+
+    fn unit_box() -> Aabb {
+        Aabb {
+            min: Vec3::ZERO,
+            max: Vec3::ONE,
+        }
+    }
+
+    #[test]
+    fn a_ray_grazing_a_face_in_its_plane_hits() {
+        let on_min_plane = ray(Vec3::new(0.0, 0.5, -1.0), Vec3::Z);
+        let on_max_plane = ray(Vec3::new(1.0, 0.5, -1.0), Vec3::Z);
+
+        let min_hit = ray_box_entry(on_min_plane, unit_box());
+        let max_hit = ray_box_entry(on_max_plane, unit_box());
+
+        assert_eq!(min_hit, Some(1.0));
+        assert_eq!(max_hit, Some(1.0));
+    }
+
+    #[test]
+    fn a_diagonal_ray_beside_the_box_misses() {
+        let beside = Ray {
+            origin: Vec3::new(2.5, 0.0, -0.5),
+            direction: Vec3::new(-1.0, 1.0, 1.0),
+        };
+        let control = Ray {
+            origin: Vec3::new(1.5, 0.0, -0.5),
+            direction: Vec3::new(-1.0, 1.0, 1.0),
+        };
+
+        assert_eq!(ray_box_entry(beside, unit_box()), None);
+        assert_eq!(ray_box_entry(control, unit_box()), Some(0.5));
+    }
+
+    #[test]
+    fn a_ray_touching_an_edge_hits() {
+        let touching = Ray {
+            origin: Vec3::new(2.0, 0.0, -0.5),
+            direction: Vec3::new(-1.0, 1.0, 1.0),
+        };
+
+        let entry = ray_box_entry(touching, unit_box());
+
+        assert_eq!(entry, Some(1.0));
+    }
+
+    #[test]
+    fn a_ray_leaving_from_a_face_enters_at_zero() {
+        let leaving = Ray {
+            origin: Vec3::new(1.0, 0.5, 0.5),
+            direction: Vec3::X,
+        };
+
+        let entry = ray_box_entry(leaving, unit_box());
+
+        assert_eq!(entry, Some(0.0));
+    }
 }
