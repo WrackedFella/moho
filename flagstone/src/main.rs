@@ -108,8 +108,8 @@ struct App {
 
     saves_dir: std::path::PathBuf,
 
-    /// Time of play between autosaves of an edited world.
-    autosave_interval: std::time::Duration,
+    /// Time of play between autosaves of an edited world; `None` is off.
+    autosave_interval: Option<std::time::Duration>,
     autosave: app::autosave::AutosaveSchedule,
 
     // Set when the UI asks to quit; `frame` autosaves and leaves the loop
@@ -253,6 +253,7 @@ impl App {
             initialized.event_bus.clone(),
         );
         tracing::info!("Created LightSystem for frame loop integration");
+        let autosave_interval = initialized.prefs.autosave_interval();
 
         Self {
             entities: initialized.entities,
@@ -274,10 +275,8 @@ impl App {
             pending_frame_cap: None,
             frame_cap_changed: false,
             saves_dir: std::path::PathBuf::from("saves"),
-            autosave_interval: app::autosave::DEFAULT_AUTOSAVE_INTERVAL,
-            autosave: app::autosave::AutosaveSchedule::for_interval(
-                app::autosave::DEFAULT_AUTOSAVE_INTERVAL,
-            ),
+            autosave_interval,
+            autosave: Self::autosave_schedule(autosave_interval),
             exit_requested: false,
             main_menu_requested: false,
             event_bus: initialized.event_bus,
@@ -328,7 +327,15 @@ impl App {
 
     /// Called as a world starts, so edits made before it do not count against the new one.
     fn restart_autosave(&mut self) {
-        self.autosave = app::autosave::AutosaveSchedule::for_interval(self.autosave_interval);
+        self.autosave = Self::autosave_schedule(self.autosave_interval);
+    }
+
+    /// The schedule for a configured interval; `None` is periodic autosave off.
+    fn autosave_schedule(interval: Option<std::time::Duration>) -> app::autosave::AutosaveSchedule {
+        match interval {
+            Some(interval) => app::autosave::AutosaveSchedule::for_interval(interval),
+            None => app::autosave::AutosaveSchedule::off(),
+        }
     }
 
     fn generate_new_world(

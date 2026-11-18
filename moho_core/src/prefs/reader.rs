@@ -165,6 +165,10 @@ const KNOWN_KEYS: &[(&str, &str, Setter)] = &[
             parse_u32(s).filter(|&v| v > 0),
         )
     }),
+    ("world", "autosave_seconds", |p, s| {
+        p.set_autosave_seconds(parse_u32(s)?);
+        Some(())
+    }),
     ("content", "mods", |p, s| {
         p.content_mods = s
             .split(',')

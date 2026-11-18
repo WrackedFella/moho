@@ -1,13 +1,11 @@
-/// Time of play between autosaves of an edited world.
-pub const DEFAULT_AUTOSAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(120);
-
 /// When an edited world is next due an autosave, counted in simulation ticks.
 ///
 /// A world is due once it has been edited since the last save and at least
-/// `interval_ticks` ticks have passed since that save. An idle world is never due.
+/// `interval_ticks` ticks have passed since that save. An idle world is never due,
+/// and a schedule with no interval is never due.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AutosaveSchedule {
-    interval_ticks: u64,
+    interval_ticks: Option<u64>,
     ticks_since_save: u64,
     edited: bool,
 }
@@ -15,7 +13,16 @@ pub struct AutosaveSchedule {
 impl AutosaveSchedule {
     pub fn new(interval_ticks: u64) -> Self {
         Self {
-            interval_ticks,
+            interval_ticks: Some(interval_ticks),
+            ticks_since_save: 0,
+            edited: false,
+        }
+    }
+
+    /// A schedule that never comes due: periodic autosave is off.
+    pub fn off() -> Self {
+        Self {
+            interval_ticks: None,
             ticks_since_save: 0,
             edited: false,
         }
@@ -36,7 +43,10 @@ impl AutosaveSchedule {
     }
 
     pub fn due(&self) -> bool {
-        self.edited && self.ticks_since_save >= self.interval_ticks
+        self.edited
+            && self
+                .interval_ticks
+                .is_some_and(|interval| self.ticks_since_save >= interval)
     }
 
     /// A save succeeded: nothing is unsaved and the interval starts again.
@@ -301,7 +311,7 @@ mod tests {
             .is_some()
     }
 
-    fn set_interval(app: &mut App, interval: Duration) {
+    fn set_interval(app: &mut App, interval: Option<Duration>) {
         app.autosave_interval = interval;
         app.restart_autosave();
     }
@@ -524,7 +534,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("temp dir");
             let saves = saves_dir(&temp);
             let mut app = loaded_session("autosave_test_killed", &temp);
-            set_interval(&mut app, Duration::from_secs(2));
+            set_interval(&mut app, Some(Duration::from_secs(2)));
             let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
             let mut mined = Vec::new();
 
@@ -560,7 +570,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("temp dir");
             let saves = saves_dir(&temp);
             let mut app = loaded_session("autosave_test_30_seconds", &temp);
-            set_interval(&mut app, Duration::from_secs(30));
+            set_interval(&mut app, Some(Duration::from_secs(30)));
             let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
             let mined = mine_surface_block(&mut app, 40, 40);
 
@@ -724,7 +734,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("temp dir");
             let saves = saves_dir(&temp);
             let mut app = loaded_session("autosave_test_idle", &temp);
-            set_interval(&mut app, Duration::from_secs(1));
+            set_interval(&mut app, Some(Duration::from_secs(1)));
             let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
 
             sim.step(&mut app, 3 * TICK_HZ);
@@ -738,7 +748,7 @@ mod tests {
             let temp = tempfile::tempdir().expect("temp dir");
             let working_saves = saves_dir(&temp);
             let mut app = loaded_session("autosave_test_failed", &temp);
-            set_interval(&mut app, Duration::from_secs(1));
+            set_interval(&mut app, Some(Duration::from_secs(1)));
             let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
             let mined = mine_surface_block(&mut app, 40, 40);
             let blocker = temp.path().join("blocker");
