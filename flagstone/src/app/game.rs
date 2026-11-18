@@ -1301,6 +1301,42 @@ mod tests {
         }
 
         #[test]
+        fn returning_to_first_person_starts_where_the_pawn_walked_to() {
+            use crate::app::event_loop::frame_processor::tests::{Ground, ORE, dig_world};
+            let (mut app, _block) = dig_world(Some(ORE), Ground::Flat);
+            let start = app.simulation.position();
+            for _ in 0..30 {
+                step(&mut app);
+            }
+            let walked_to = app.simulation.position();
+            assert!(
+                walked_to.distance(start) > 0.5,
+                "the pawn walks in strategy view: {start:?} to {walked_to:?}"
+            );
+
+            tap(&mut app);
+            step(&mut app);
+
+            assert_eq!(mode(&app), CameraMode::FirstPerson);
+            let player = app.simulation.position();
+            assert!(
+                player.distance(walked_to) < 0.1,
+                "the player starts at {player:?}, the pawn stood at {walked_to:?}"
+            );
+            let character = app
+                .physics
+                .world
+                .as_ref()
+                .expect("physics world")
+                .character(app.physics.player.expect("player"))
+                .expect("player resolves");
+            assert!(
+                player.distance(character.position) < 1e-3,
+                "the player follows the pawn's body"
+            );
+        }
+
+        #[test]
         fn possess_key_in_first_person_switches_to_strategy() {
             let mut app = app_in(CameraMode::FirstPerson);
             tap(&mut app);
