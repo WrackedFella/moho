@@ -675,6 +675,63 @@ mod tests {
         );
     }
 
+    /// Marked blocks on a strip of ground at z = 5, two cells of air from the walkable ground.
+    fn unreachable_island(scene: &mut Scene, xs: std::ops::RangeInclusive<i32>) {
+        scene
+            .grid
+            .mutator()
+            .fill_region(cell(*xs.start(), 0, 5), cell(*xs.end(), 0, 5), GROUND);
+        for x in xs {
+            scene.grid.mutator().place(cell(x, 1, 5), GROUND, None);
+            scene.marks.toggle([x, 1, 5]);
+        }
+    }
+
+    #[test]
+    fn a_new_nearer_mark_is_tried_first_after_a_failed_round() {
+        let far = [12, 1, 1];
+        let new = [2, 1, 1];
+        let mut scene = Scene::new(&[far]);
+        unreachable_island(&mut scene, 0..=7);
+
+        scene.tick();
+        assert_eq!(scene.job, Job::Idle, "four unreachable marks claim nothing");
+        scene.grid.mutator().place(cell(2, 1, 1), GROUND, None);
+        scene.marks.toggle(new);
+        scene.tick();
+
+        assert!(
+            matches!(scene.job, Job::Mine { mark, .. } if mark == new),
+            "the new nearest mark is tried before the ones that already failed; job {:?}",
+            scene.job
+        );
+    }
+
+    #[test]
+    fn marks_are_retried_from_the_nearest_after_the_list_runs_out() {
+        let nearest = [0, 1, 5];
+        let mut scene = Scene::new(&[]);
+        unreachable_island(&mut scene, 0..=4);
+
+        scene.tick();
+        assert_eq!(scene.job, Job::Idle, "tick 1 reaches nothing");
+        scene.tick();
+        assert_eq!(scene.job, Job::Idle, "tick 2 reaches nothing");
+        assert_eq!(scene.claimed_by(nearest), None);
+        scene
+            .grid
+            .mutator()
+            .fill_region(cell(0, 0, 3), cell(0, 0, 4), GROUND);
+        scene.tick();
+
+        assert!(
+            matches!(scene.job, Job::Mine { mark, .. } if mark == nearest),
+            "the nearest mark is tried again once the list has run out; job {:?}",
+            scene.job
+        );
+        assert_eq!(scene.claimed_by(nearest), Some(PawnId(0)));
+    }
+
     #[test]
     fn a_waypoint_is_reached_within_the_arrive_radius_horizontally() {
         let next_after = |dx: f32| {
