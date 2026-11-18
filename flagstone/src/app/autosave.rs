@@ -643,6 +643,28 @@ mod tests {
         }
 
         #[test]
+        fn adopting_settings_keeps_the_startup_autosave_interval() {
+            let temp = tempfile::tempdir().expect("temp dir");
+            let mut app = loaded_session_with_prefs(
+                "autosave_test_adopt_keeps_interval",
+                &temp,
+                prefs_with_autosave_seconds(0),
+            );
+
+            app.adopt_settings(prefs_with_autosave_seconds(30));
+
+            assert_eq!(app.autosave_interval, None);
+            app.autosave.mark_edited();
+            for _ in 0..31 * TICK_HZ {
+                app.autosave.tick();
+            }
+            assert!(
+                !app.autosave.due(),
+                "adopting settings turned autosave on mid-session"
+            );
+        }
+
+        #[test]
         fn autosave_off_still_saves_on_quit() {
             let temp = tempfile::tempdir().expect("temp dir");
             let saves = saves_dir(&temp);

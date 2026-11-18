@@ -873,6 +873,14 @@ mod tests {
     }
 
     #[test]
+    fn autosave_seconds_ignores_surrounding_whitespace() {
+        let (prefs, issues) = Prefs::parse("[world]\nautosave_seconds = 300 \n");
+
+        assert_eq!(issues, vec![]);
+        assert_eq!(prefs.autosave_interval(), secs(300));
+    }
+
+    #[test]
     fn unparseable_autosave_seconds_warns_and_falls_back() {
         for raw in ["soon", "-5", "4294967296"] {
             let (prefs, issues) = Prefs::parse(&format!("[world]\nautosave_seconds={raw}\n"));
