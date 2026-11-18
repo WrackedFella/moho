@@ -1806,11 +1806,11 @@ mod tests {
             WorldEvent::BlockRemoved {
                 position,
                 old_material_id,
-                ..
+                reason,
             } => removed_sink
                 .lock()
                 .unwrap()
-                .push((*position, *old_material_id)),
+                .push((*position, *old_material_id, reason.clone())),
             WorldEvent::ChunkMeshDirty { chunk_pos, .. } => {
                 dirty_sink.lock().unwrap().push(*chunk_pos);
             }
@@ -1827,7 +1827,11 @@ mod tests {
         publish_pawn_dig(&mut app, &outcome);
         app.event_bus.process_deferred();
 
-        assert_eq!(*removed.lock().unwrap(), vec![(dug, 1)]);
+        assert_eq!(
+            *removed.lock().unwrap(),
+            vec![(dug, 1, BlockChangeReason::Mechanic)],
+            "a pawn's own dig is the game's doing, not the player's"
+        );
         let dirty = dirty.lock().unwrap();
         assert_eq!(
             dirty.iter().copied().collect::<HashSet<_>>(),
