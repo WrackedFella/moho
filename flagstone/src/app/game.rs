@@ -224,7 +224,6 @@ impl App {
         }
     }
 
-    /// The pawn's box where it stands.
     fn pawn_box(&self) -> Aabb {
         pawn_aabb(self.simulation.position())
     }

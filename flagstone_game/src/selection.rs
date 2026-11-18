@@ -7,7 +7,6 @@ use moho_core::pointer::Ray;
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct PawnId(pub u32);
 
-/// The pawn the player controls.
 pub const PLAYER_PAWN: PawnId = PawnId(0);
 
 /// Half the pawn's box size on each axis; matches the physics capsule.
