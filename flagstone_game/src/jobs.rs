@@ -708,6 +708,129 @@ mod tests {
         );
     }
 
+    /// A pawn that has claimed a mark at the far end of a corridor and reached its first cell;
+    /// its current waypoint is the next cell, 1 m ahead along x.
+    fn far_from_the_first_waypoint() -> (VoxelGrid, MineMarks, Pawn) {
+        let mut grid = floor(30, 1);
+        place(&mut grid, 25, 1, 0);
+        let mut marks = marked(&[[25, 1, 0]]);
+        let mut pawn = Pawn::default();
+        step(ME, &mut pawn, pose_in(0, 1, 0), &mut marks, &grid);
+        assert!(is_mining(&pawn), "claimed on the first tick");
+        (grid, marks, pawn)
+    }
+
+    /// The pose `metres` along x from the corridor's first cell centre, in steps too small to
+    /// reach the next waypoint within a few hundred ticks.
+    fn at_x(metres: f32) -> Pose {
+        Pose {
+            feet: Vec3::new(0.5 + metres, 1.0, 0.5),
+            yaw: 0.0,
+        }
+    }
+
+    #[test]
+    fn closing_in_on_one_far_waypoint_never_stalls() {
+        let (grid, mut marks, mut pawn) = far_from_the_first_waypoint();
+
+        for tick in 1..=STALL_TICKS + 30 {
+            let pose = at_x(0.002 * tick as f32);
+            step(ME, &mut pawn, pose, &mut marks, &grid);
+            assert!(is_mining(&pawn), "gave up on tick {tick} while closing in");
+            assert_eq!(claimed_by(&marks, [25, 1, 0]), Some(ME));
+        }
+    }
+
+    #[test]
+    fn backing_away_from_the_waypoint_stalls() {
+        let (grid, mut marks, mut pawn) = far_from_the_first_waypoint();
+        let mut ticks = 0;
+
+        while is_mining(&pawn) && ticks < 2 * STALL_TICKS {
+            ticks += 1;
+            let pose = at_x(-0.002 * ticks as f32);
+            step(ME, &mut pawn, pose, &mut marks, &grid);
+        }
+
+        assert!(
+            (STALL_TICKS..=STALL_TICKS + 2).contains(&ticks),
+            "released after {ticks} ticks of backing away"
+        );
+        assert!(marks.contains([25, 1, 0]), "the mark stays");
+        assert_eq!(claimed_by(&marks, [25, 1, 0]), None);
+    }
+
+    #[test]
+    fn the_dig_aim_is_chosen_from_the_eye_not_the_feet() {
+        let aim_from = |feet: Vec3| {
+            let mut grid = floor(10, 10);
+            place(&mut grid, 5, 1, 5);
+            let mut marks = marked(&[[5, 1, 5]]);
+            let mut pawn = Pawn::default();
+            let pose = Pose { feet, yaw: 0.0 };
+            for _ in 0..5 {
+                if let JobAction::Dig { aim, .. } = step(ME, &mut pawn, pose, &mut marks, &grid) {
+                    return aim;
+                }
+            }
+            panic!("no dig from {feet:?}");
+        };
+
+        let eye_level_with_the_block_top = aim_from(Vec3::new(4.5, 1.5, 5.5));
+        let beside_the_block = aim_from(Vec3::new(4.5, 1.0, 5.5));
+
+        assert!(
+            near(eye_level_with_the_block_top, Vec3::new(5.5, 2.0, 5.5)),
+            "an eye at 2.65 m is nearest the top face, got {eye_level_with_the_block_top:?}"
+        );
+        assert!(
+            near(beside_the_block, Vec3::new(5.0, 1.5, 5.5)),
+            "an eye at 2.15 m is nearest the facing side, got {beside_the_block:?}"
+        );
+    }
+
+    #[test]
+    fn steer_measures_the_target_from_the_feet() {
+        let pose = Pose {
+            feet: Vec3::new(10.0, 1.0, -7.0),
+            yaw: 0.0,
+        };
+        let from_feet = |offset: Vec3| pose.feet + offset;
+        let max_turn = TURN_RATE * DT;
+
+        let ahead = steer(pose, from_feet(Vec3::new(0.0, 0.0, 5.0)), DT);
+        let left = steer(pose, from_feet(Vec3::new(-5.0, 0.0, 0.0)), DT);
+        let right = steer(pose, from_feet(Vec3::new(5.0, 0.0, 0.0)), DT);
+        let just_inside = steer(
+            pose,
+            from_feet(Vec3::new(
+                59.5f32.to_radians().sin(),
+                0.0,
+                59.5f32.to_radians().cos(),
+            )),
+            DT,
+        );
+        let just_outside = steer(
+            pose,
+            from_feet(Vec3::new(
+                60.5f32.to_radians().sin(),
+                0.0,
+                60.5f32.to_radians().cos(),
+            )),
+            DT,
+        );
+
+        assert!(
+            ahead.yaw_delta.abs() < 1e-4 && ahead.forward == 1.0,
+            "{ahead:?}"
+        );
+        assert!((left.yaw_delta + max_turn).abs() < 1e-4, "{left:?}");
+        assert_eq!(left.forward, 0.0);
+        assert!((right.yaw_delta - max_turn).abs() < 1e-4, "{right:?}");
+        assert_eq!(just_inside.forward, 1.0);
+        assert_eq!(just_outside.forward, 0.0);
+    }
+
     #[test]
     fn a_stalled_walk_releases_the_claim_and_keeps_the_mark() {
         let mut grid = floor(12, 10);

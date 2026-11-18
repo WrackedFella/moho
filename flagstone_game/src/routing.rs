@@ -303,6 +303,125 @@ mod tests {
     }
 
     #[test]
+    fn the_budget_counts_expansions_exactly() {
+        let length = 10;
+        let grid = floor(length, 1);
+        let start = BlockPos::new(0, 1, 0);
+        let goal = BlockPos::new(length - 1, 1, 0);
+        let with_budget = |budget: usize| route(&grid, start, |cell| cell == goal, goal, budget);
+
+        let smallest = (0..100)
+            .find(|&budget| with_budget(budget).is_some())
+            .expect("some budget reaches the end of the corridor");
+
+        assert_eq!(
+            smallest,
+            usize::try_from(length - 1).expect("positive"),
+            "every cell but the goal is expanded once"
+        );
+        assert_eq!(with_budget(smallest - 1), None);
+        assert!(with_budget(smallest).is_some());
+    }
+
+    /// The smallest budget with which `route` finds `goal` from `start`.
+    fn expansions_needed(grid: &VoxelGrid, start: BlockPos, goal: BlockPos) -> usize {
+        (0..4096)
+            .find(|&budget| route(grid, start, |cell| cell == goal, goal, budget).is_some())
+            .expect("the goal is reachable")
+    }
+
+    #[test]
+    fn the_heuristic_keeps_the_search_on_the_way_to_the_goal() {
+        let grid = floor(12, 12);
+        let along_x = expansions_needed(&grid, BlockPos::new(1, 1, 5), BlockPos::new(10, 1, 5));
+        let along_z = expansions_needed(&grid, BlockPos::new(5, 1, 1), BlockPos::new(5, 1, 10));
+        let diagonal = expansions_needed(&grid, BlockPos::new(2, 1, 2), BlockPos::new(8, 1, 6));
+
+        assert_eq!(
+            (along_x, along_z),
+            (9, 9),
+            "a straight line expands each cell once"
+        );
+        assert_eq!(
+            diagonal, 34,
+            "every cell of the 7 by 5 box between start and goal but the goal, none outside it"
+        );
+    }
+
+    #[test]
+    fn equal_routes_break_ties_by_insertion_order() {
+        let grid = floor(8, 8);
+        let start = BlockPos::new(3, 1, 3);
+        let goal = BlockPos::new(5, 1, 5);
+
+        let found = find(&grid, start, goal);
+
+        assert_eq!(
+            found,
+            Some(cells(&[
+                (3, 1, 3),
+                (4, 1, 3),
+                (5, 1, 3),
+                (5, 1, 4),
+                (5, 1, 5)
+            ])),
+            "+X is generated before +Z, so the first shortest route found goes along x"
+        );
+    }
+
+    /// The length of the shortest walk from `start` to `goal` by the movement rules, found by
+    /// breadth first search.
+    fn shortest_walk(grid: &VoxelGrid, start: BlockPos, goal: BlockPos) -> Option<usize> {
+        let mut seen = std::collections::HashSet::from([start]);
+        let mut frontier = std::collections::VecDeque::from([(start, 1usize)]);
+        while let Some((cell, length)) = frontier.pop_front() {
+            if cell == goal {
+                return Some(length);
+            }
+            for side in [BlockPos::X, BlockPos::NEG_X, BlockPos::Z, BlockPos::NEG_Z] {
+                let level = cell + side;
+                let up = level + BlockPos::Y;
+                let down = level - BlockPos::Y;
+                let can_go_up = !grid.is_solid_at(cell + BlockPos::Y * 3);
+                let can_go_down = !grid.is_solid_at(level + BlockPos::Y * 2);
+                for (next, allowed) in [(level, true), (up, can_go_up), (down, can_go_down)] {
+                    if allowed && standable(grid, next) && seen.insert(next) {
+                        frontier.push_back((next, length + 1));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    proptest! {
+        /// Heights run one to three, so some neighbours differ by two and wall each other off.
+        #[test]
+        fn a_route_is_as_short_as_a_breadth_first_search(
+            heights in proptest::collection::vec(1i32..=3, 36),
+            sx in 0..6, sz in 0..6, gx in 0..6, gz in 0..6,
+            shift in (-10i32..10, -3i32..3, -10i32..10),
+        ) {
+            let shift = BlockPos::new(shift.0, shift.1, shift.2);
+            let mut grid = VoxelGrid::new(16);
+            for x in 0..6 {
+                for z in 0..6 {
+                    let top = heights[usize::try_from(x * 6 + z).expect("small index")];
+                    for y in 0..top {
+                        grid.mutator().place(BlockPos::new(x, y, z) + shift, 1, None);
+                    }
+                }
+            }
+            let start = surface(&heights, sx, sz) + shift;
+            let goal = surface(&heights, gx, gz) + shift;
+
+            let found = find(&grid, start, goal);
+
+            prop_assert_eq!(found.map(|path| path.len()), shortest_walk(&grid, start, goal));
+        }
+    }
+
+    #[test]
     fn a_start_off_the_surface_is_moved_one_up_or_down() {
         let grid = floor(6, 3);
         let goal = BlockPos::new(4, 1, 1);
