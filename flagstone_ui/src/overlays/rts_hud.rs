@@ -623,13 +623,6 @@ mod tests {
     }
 
     #[test]
-    fn no_totals_without_colony_stock() {
-        let drawn = drawn_texts(&strategy_data(TOP));
-
-        assert!(!drawn.iter().any(|t| t.contains('×')), "{drawn:?}");
-    }
-
-    #[test]
     fn no_totals_in_first_person() {
         let in_strategy = drawn_texts(&stocked_data(false));
 

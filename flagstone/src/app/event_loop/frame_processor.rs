@@ -1251,6 +1251,8 @@ pub(crate) mod tests {
         Flat,
         /// A floor with a one-block rise between the pawn and the marked block.
         Rise,
+        /// A level floor, the marked block 9 m east of the pawn: out of the mining reach.
+        Far,
     }
 
     /// A resource id the digging scenarios mark, so the colony total of it can be told apart.
@@ -1288,13 +1290,14 @@ pub(crate) mod tests {
         let block = match ground {
             Ground::Flat => BlockPos::new(8, 65, 4),
             Ground::Rise => BlockPos::new(9, 66, 4),
+            Ground::Far => BlockPos::new(13, 65, 4),
         };
         let grid = app
             .light_system
             .as_mut()
             .expect("App starts with a light system")
             .grid_mut();
-        for x in 0..12 {
+        for x in 0..16 {
             for z in 0..12 {
                 grid.mutator().place(BlockPos::new(x, 64, z), 1, None);
                 if matches!(ground, Ground::Rise) && x >= 7 {
@@ -1368,12 +1371,46 @@ pub(crate) mod tests {
         let (mut app, block) = dig_world(resource, Ground::Flat);
         app.colony.stock.add(ORE, 3);
         let start = pawn_state(&app).position;
+        let dirty = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dirty_sink = std::sync::Arc::clone(&dirty);
+        app.event_bus.subscribe(move |e: &WorldEvent| {
+            if let WorldEvent::ChunkMeshDirty { chunk_pos, .. } = e {
+                dirty_sink.lock().unwrap().push(*chunk_pos);
+            }
+        });
+        let _ = app.audio_event_rx.try_iter().count();
 
         let ticks = ticks_to_dig(&mut app, block, MAX_TICKS);
 
         assert!(
             ticks.is_some(),
             "the marked block still stands after {MAX_TICKS} ticks"
+        );
+        app.event_bus.process_deferred();
+        let cues: Vec<_> = app
+            .audio_event_rx
+            .try_iter()
+            .filter_map(|event| match event {
+                moho_core::events::AudioEvent::PlaySoundAt { path, position, .. } => {
+                    Some((path, position))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(cues.len(), 1, "one dig cue for one dig: {cues:?}");
+        assert_eq!(
+            std::path::Path::new(&cues[0].0),
+            std::path::Path::new(crate::app::event_loop::event_processor::DIG_SOUND)
+        );
+        let centre = glam::Vec3::new(8.5, 65.5, 4.5);
+        assert!(
+            cues[0].1.distance(centre) < 1e-4,
+            "the cue sounds at the block: {:?}",
+            cues[0].1
+        );
+        assert!(
+            dirty.lock().unwrap().contains(&glam::IVec3::new(0, 4, 0)),
+            "the block's chunk is not remeshed"
         );
         let end = pawn_state(&app).position;
         assert!(
@@ -1434,21 +1471,30 @@ pub(crate) mod tests {
 
     #[test]
     fn the_pawn_digs_within_the_mining_reach() {
-        let (mut app, block) = dig_world(Some(ORE), Ground::Flat);
-
-        let ticks = ticks_to_dig(&mut app, block, MAX_TICKS);
-
-        assert!(ticks.is_some(), "the marked block still stands");
-        let eye = pawn_state(&app).position;
+        let (mut app, block) = dig_world(Some(ORE), Ground::Far);
+        let spawn = pawn_state(&app).position;
         let centre = glam::Vec3::new(
             block.x as f32 + 0.5,
             block.y as f32 + 0.5,
             block.z as f32 + 0.5,
         );
-        let distance = eye.distance(centre);
+        let start_gap = glam::Vec2::new(centre.x - spawn.x, centre.z - spawn.z).length();
+        let reach = flagstone_game::pawn::MINE_REACH;
         assert!(
-            distance <= flagstone_game::pawn::MINE_REACH,
-            "dug from {distance} m away"
+            start_gap > reach,
+            "the block starts out of reach: {start_gap}"
+        );
+
+        let ticks = ticks_to_dig(&mut app, block, MAX_TICKS);
+
+        assert!(ticks.is_some(), "the marked block still stands");
+        let eye = pawn_state(&app).position;
+        let distance = eye.distance(centre);
+        assert!(distance <= reach, "dug from {distance} m away");
+        let walked = glam::Vec2::new(eye.x - spawn.x, eye.z - spawn.z).length();
+        assert!(
+            walked >= start_gap - reach,
+            "the pawn walked {walked} m of the {start_gap} m to the block"
         );
     }
 

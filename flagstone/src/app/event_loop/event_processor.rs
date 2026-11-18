@@ -1792,6 +1792,19 @@ mod tests {
     }
 
     #[test]
+    fn mining_by_hand_fills_the_pawns_inventory_not_the_colony_stock() {
+        let mut app = app_aimed_at_block_with(Some(7));
+
+        EventProcessor::new().handle_input_event(&mut app, InputEvent::MineRequested);
+
+        assert_eq!(app.pawn.inventory.count(7), 1);
+        assert!(
+            app.colony.stock.is_empty(),
+            "the colony stock is not fed by hand"
+        );
+    }
+
+    #[test]
     fn dig_asset_exists() {
         let path = std::path::PathBuf::from(DIG_SOUND);
 

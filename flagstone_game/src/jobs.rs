@@ -203,16 +203,23 @@ mod tests {
     #[test]
     fn a_mark_with_no_exposed_face_is_not_claimed() {
         let mut grid = floor(12, 12);
-        for x in 4..=6 {
-            for y in 1..=3 {
-                for z in 4..=6 {
-                    place(&mut grid, x, y, z);
-                }
-            }
+        for (x, y, z) in [
+            (5, 1, 5),
+            (5, 2, 5),
+            (4, 1, 5),
+            (6, 1, 5),
+            (5, 1, 4),
+            (5, 1, 6),
+        ] {
+            place(&mut grid, x, y, z);
         }
         place(&mut grid, 10, 1, 10);
-        let buried = [5, 2, 5];
+        let buried = [5, 1, 5];
         let open = [10, 1, 10];
+        assert!(
+            is_stand_cell(&grid, BlockPos::new(5, 1, 5), BlockPos::new(4, 2, 5)),
+            "the buried block has a reachable stand cell, only its faces are covered"
+        );
         let mut marks = marked(&[buried, open]);
         let mut pawn = Pawn::default();
 
@@ -228,6 +235,67 @@ mod tests {
             Some(ME),
             "the open mark is taken instead"
         );
+    }
+
+    /// Two-block walls round the square x, z in `lo..=hi`: no pawn outside can get in.
+    fn fence(grid: &mut VoxelGrid, lo: i32, hi: i32) {
+        for a in lo..=hi {
+            for y in 1..=2 {
+                for (x, z) in [(a, lo), (a, hi), (lo, a), (hi, a)] {
+                    place(grid, x, y, z);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_nearer_unroutable_mark_is_skipped_for_a_reachable_one() {
+        let mut grid = floor(12, 12);
+        fence(&mut grid, 3, 7);
+        place(&mut grid, 5, 1, 5);
+        place(&mut grid, 10, 1, 10);
+        let fenced = [5, 1, 5];
+        let reachable = [10, 1, 10];
+        let mut marks = marked(&[fenced, reachable]);
+        let mut pawn = Pawn::default();
+
+        step(ME, &mut pawn, pose_in(5, 1, 1), &mut marks, &grid);
+
+        assert_eq!(claimed_by(&marks, fenced), None, "no way in");
+        assert_eq!(
+            claimed_by(&marks, reachable),
+            Some(ME),
+            "claimed on the first tick"
+        );
+    }
+
+    #[test]
+    fn the_route_attempts_are_capped_per_tick_and_resume_next_tick() {
+        let mut grid = floor(20, 20);
+        fence(&mut grid, 3, 8);
+        let fenced = [[4, 1, 4], [7, 1, 4], [4, 1, 7], [7, 1, 7]];
+        for [x, y, z] in fenced {
+            place(&mut grid, x, y, z);
+        }
+        place(&mut grid, 15, 1, 0);
+        let reachable = [15, 1, 0];
+        let mut marks = marked(&[fenced[0], fenced[1], fenced[2], fenced[3], reachable]);
+        let mut pawn = Pawn::default();
+        let pose = pose_in(5, 1, 0);
+
+        step(ME, &mut pawn, pose, &mut marks, &grid);
+
+        assert_eq!(pawn.job, Job::Idle, "four failed searches use the tick up");
+        assert_eq!(claimed_by(&marks, reachable), None);
+
+        step(ME, &mut pawn, pose, &mut marks, &grid);
+
+        assert_eq!(
+            claimed_by(&marks, reachable),
+            Some(ME),
+            "the next tick carries on with the marks not yet tried"
+        );
+        assert!(is_mining(&pawn));
     }
 
     #[test]
@@ -313,6 +381,36 @@ mod tests {
     }
 
     #[test]
+    fn a_waypoint_is_reached_within_the_arrive_radius_and_not_before() {
+        let mut grid = floor(12, 10);
+        place(&mut grid, 8, 1, 4);
+        let mut marks = marked(&[[8, 1, 4]]);
+        let mut pawn = Pawn::default();
+        step(ME, &mut pawn, pose_in(1, 1, 4), &mut marks, &grid);
+        let Job::Mine { route, next, .. } = &pawn.job else {
+            panic!("expected a claimed mark, got {:?}", pawn.job);
+        };
+        let current = route[*next];
+        let after = route[*next + 1];
+        let centre = |cell: BlockPos| [cell.x as f32 + 0.5, cell.z as f32 + 0.5];
+        let target = |action: JobAction| match action {
+            JobAction::Walk { to } => horizontal(to),
+            other => panic!("expected a walk, got {other:?}"),
+        };
+        let [cx, cz] = centre(current);
+        let feet_off = |gap: f32| Pose {
+            feet: Vec3::new(cx - gap, current.y as f32, cz),
+            yaw: 0.0,
+        };
+
+        let outside = step(ME, &mut pawn, feet_off(0.40), &mut marks, &grid);
+        let inside = step(ME, &mut pawn, feet_off(0.30), &mut marks, &grid);
+
+        assert_eq!(target(outside), centre(current), "0.40 m is not arrived");
+        assert_eq!(target(inside), centre(after), "0.30 m is arrived");
+    }
+
+    #[test]
     fn the_dig_aims_at_the_exposed_face_nearest_the_eye() {
         let mut grid = floor(10, 10);
         place(&mut grid, 5, 1, 4);
@@ -337,45 +435,36 @@ mod tests {
 
     #[test]
     fn a_cancelled_mark_releases_the_pawn_mid_walk() {
-        let mut grid = floor(12, 10);
-        place(&mut grid, 8, 1, 4);
-        let mut marks = marked(&[[8, 1, 4]]);
-        let mut pawn = Pawn::default();
-        let pose = pose_in(1, 1, 4);
-        for _ in 0..3 {
-            step(ME, &mut pawn, pose, &mut marks, &grid);
-        }
-        assert!(is_mining(&pawn), "walking to the mark");
+        let walking = || {
+            let mut grid = floor(12, 10);
+            place(&mut grid, 8, 1, 4);
+            let mut marks = marked(&[[8, 1, 4]]);
+            let mut pawn = Pawn::default();
+            for _ in 0..3 {
+                step(ME, &mut pawn, pose_in(1, 1, 4), &mut marks, &grid);
+            }
+            assert!(is_mining(&pawn), "walking to the mark");
+            (grid, marks, pawn)
+        };
+
+        let (grid, mut marks, mut pawn) = walking();
         marks.toggle([8, 1, 4]);
+        let after_cancel = step(ME, &mut pawn, pose_in(1, 1, 4), &mut marks, &grid);
 
-        let action = step(ME, &mut pawn, pose, &mut marks, &grid);
-
-        assert_eq!(action, JobAction::Wait);
+        assert_eq!(after_cancel, JobAction::Wait);
         assert_eq!(pawn.job, Job::Idle);
         assert!(
             !marks.contains([8, 1, 4]),
             "a released claim does not bring the mark back"
         );
         assert!(grid.is_solid_at(BlockPos::new(8, 1, 4)), "the block stays");
-    }
 
-    #[test]
-    fn a_mark_dug_by_another_pawn_releases_the_claim() {
-        let mut grid = floor(12, 10);
-        place(&mut grid, 8, 1, 4);
-        let mut marks = marked(&[[8, 1, 4]]);
-        let mut pawn = Pawn::default();
-        let pose = pose_in(1, 1, 4);
-        for _ in 0..3 {
-            step(ME, &mut pawn, pose, &mut marks, &grid);
-        }
-        assert!(is_mining(&pawn), "walking to the mark");
+        let (mut grid, mut marks, mut pawn) = walking();
         grid.mutator().remove(BlockPos::new(8, 1, 4));
         marks.block_removed([8, 1, 4]);
+        let after_dug = step(ME, &mut pawn, pose_in(1, 1, 4), &mut marks, &grid);
 
-        let action = step(ME, &mut pawn, pose, &mut marks, &grid);
-
-        assert_eq!(action, JobAction::Wait);
+        assert_eq!(after_dug, JobAction::Wait);
         assert_eq!(pawn.job, Job::Idle);
     }
 
@@ -452,7 +541,10 @@ mod tests {
 
     #[test]
     fn steer_turns_toward_the_target_no_faster_than_the_turn_rate() {
-        let pose = pose_in(0, 1, 0);
+        let pose = Pose {
+            feet: Vec3::new(0.0, 1.0, 0.0),
+            yaw: 0.0,
+        };
         let max_turn = TURN_RATE * DT;
         let right = Vec3::new(10.0, 1.0, 0.0);
         let left = Vec3::new(-10.0, 1.0, 0.0);
@@ -493,15 +585,18 @@ mod tests {
 
     #[test]
     fn steer_walks_only_when_facing_the_target() {
-        let pose = pose_in(0, 1, 0);
+        let pose = Pose {
+            feet: Vec3::new(0.0, 1.0, 0.0),
+            yaw: 0.0,
+        };
         let at = |degrees: f32| {
             let angle = degrees.to_radians();
             Vec3::new(angle.sin() * 5.0, 1.0, angle.cos() * 5.0)
         };
 
         let ahead = steer(pose, at(0.0), DT);
-        let close_enough = steer(pose, at(59.0), DT);
-        let too_far_round = steer(pose, at(61.0), DT);
+        let close_enough = steer(pose, at(59.5), DT);
+        let too_far_round = steer(pose, at(60.5), DT);
 
         assert_eq!(ahead.forward, 1.0);
         assert!(ahead.yaw_delta.abs() < 1e-4, "{ahead:?}");
@@ -581,10 +676,11 @@ mod tests {
             is_stand_cell(&low, block_high_up, BlockPos::new(4, 2, 5)),
             "one below"
         );
-        assert!(
-            !is_stand_cell(&low, block_high_up, BlockPos::new(4, 1, 5)),
-            "two below"
-        );
+        let mut bare = floor(10, 10);
+        place(&mut bare, 5, 3, 5);
+        let two_below = BlockPos::new(4, 1, 5);
+        assert!(standable(&bare, two_below), "bare floor to stand on");
+        assert!(!is_stand_cell(&bare, block_high_up, two_below), "two below");
     }
 
     proptest! {

@@ -184,27 +184,29 @@ mod tests {
     }
 
     #[test]
-    fn a_start_inside_the_ground_steps_up_to_the_surface() {
+    fn a_start_off_the_surface_is_moved_one_up_or_down() {
         let grid = floor(6, 3);
+        let goal = BlockPos::new(4, 1, 1);
         let sunk = BlockPos::new(1, 0, 1);
-
-        let found = find(&grid, sunk, BlockPos::new(4, 1, 1));
-
-        let path = found.expect("a start one below the surface is tried one above");
-        assert_eq!(path.last(), Some(&BlockPos::new(4, 1, 1)));
-        assert!(path.iter().all(|&cell| standable(&grid, cell)));
-    }
-
-    #[test]
-    fn a_start_floating_above_the_ground_drops_to_the_surface() {
-        let grid = floor(6, 3);
         let floating = BlockPos::new(1, 2, 1);
 
-        let found = find(&grid, floating, BlockPos::new(4, 1, 1));
+        let from_below = find(&grid, sunk, goal);
+        let from_above = find(&grid, floating, goal);
 
-        let path = found.expect("a start one above the surface is tried one below");
-        assert_eq!(path.last(), Some(&BlockPos::new(4, 1, 1)));
-        assert!(path.iter().all(|&cell| standable(&grid, cell)));
+        for (found, why) in [
+            (
+                from_below,
+                "a start one below the surface is tried one above",
+            ),
+            (
+                from_above,
+                "a start one above the surface is tried one below",
+            ),
+        ] {
+            let path = found.expect(why);
+            assert_eq!(path.last(), Some(&goal));
+            assert!(path.iter().all(|&cell| standable(&grid, cell)));
+        }
     }
 
     /// A 6 by 6 patch of columns two or three blocks deep (surface cells at y 1 or 2), so
