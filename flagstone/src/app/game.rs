@@ -708,6 +708,44 @@ mod tests {
         );
     }
 
+    #[test]
+    fn failed_interval_autosave_retries_after_one_interval() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let blocker = temp.path().join("blocker");
+        std::fs::write(&blocker, b"a file, not a directory").expect("write blocker");
+        let mut app = playing_app();
+        app.saves_dir = blocker.join("saves");
+        app.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
+        let interval_ticks = TICK_HZ;
+        app.autosave_interval = Duration::from_secs(1);
+        app.autosave_schedule = crate::app::autosave::AutosaveSchedule::new(interval_ticks);
+        app.autosave_schedule.mark_edited();
+        for _ in 0..interval_ticks {
+            tick_app(&mut app, &StrategyCommand::default());
+        }
+        assert!(
+            app.autosave_schedule.due(),
+            "the edit is due before the frame"
+        );
+
+        frame_without_renderer(&mut app);
+
+        assert!(
+            !app.autosave_schedule.due(),
+            "the attempt was made; no retry every frame"
+        );
+        assert!(!app.saves_dir.exists(), "nothing was written");
+        for _ in 0..interval_ticks - 1 {
+            tick_app(&mut app, &StrategyCommand::default());
+        }
+        assert!(!app.autosave_schedule.due(), "one playing tick short");
+        tick_app(&mut app, &StrategyCommand::default());
+        assert!(
+            app.autosave_schedule.due(),
+            "the failed edit is still pending after an interval"
+        );
+    }
+
     use std::time::Duration;
 
     const TICKS: u32 = 120;

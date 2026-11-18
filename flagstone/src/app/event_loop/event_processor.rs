@@ -933,7 +933,6 @@ mod tests {
     fn due_after(event: Option<WorldEvent>) -> bool {
         let interval_ticks = flagstone_game::TICK_HZ;
         let mut app = App::headless();
-        app.autosave_interval = std::time::Duration::from_secs(1);
         app.autosave_schedule = crate::app::autosave::AutosaveSchedule::new(interval_ticks);
         if let Some(event) = event {
             app.event_bus.publish(event);
