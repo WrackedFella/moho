@@ -242,6 +242,55 @@ mod tests {
         assert_eq!(picked, Some(PLAYER_PAWN));
     }
 
+    fn unit_box() -> Aabb {
+        Aabb {
+            min: Vec3::ZERO,
+            max: Vec3::ONE,
+        }
+    }
+
+    #[test]
+    fn a_ray_lying_in_a_face_plane_touches_the_box() {
+        for x in [0.0, 1.0] {
+            let along_the_face = ray(Vec3::new(x, 0.5, -5.0), Vec3::Z);
+
+            let entry = ray_box_entry(along_the_face, unit_box());
+
+            assert_eq!(entry, Some(5.0), "ray in the x = {x} plane");
+        }
+    }
+
+    #[test]
+    fn a_ray_touching_only_an_edge_touches_the_box() {
+        let grazing = ray(Vec3::new(-1.0, 3.0, 0.5), Vec3::new(1.0, -1.0, 0.0));
+
+        let entry = ray_box_entry(grazing, unit_box());
+
+        assert!(entry.is_some(), "the slab intervals meet at the corner");
+    }
+
+    #[test]
+    fn a_ray_starting_on_the_far_face_pointing_out_touches_the_box() {
+        let leaving = ray(Vec3::new(1.0, 0.5, 0.5), Vec3::X);
+
+        let entry = ray_box_entry(leaving, unit_box());
+
+        assert_eq!(entry, Some(0.0));
+    }
+
+    #[test]
+    fn terrain_exactly_at_the_box_entry_hides_the_pawn() {
+        let toward = ray(Vec3::new(-1.0, 0.5, 0.5), Vec3::X);
+        let entry = ray_box_entry(toward, unit_box()).expect("the ray enters the box");
+
+        let at_entry = pick_pawn(toward, [(PLAYER_PAWN, unit_box())], Some(entry));
+        let just_beyond = pick_pawn(toward, [(PLAYER_PAWN, unit_box())], Some(entry + 0.5));
+
+        assert_eq!(entry, 1.0);
+        assert_eq!(at_entry, None);
+        assert_eq!(just_beyond, Some(PLAYER_PAWN));
+    }
+
     #[test]
     fn a_ray_parallel_to_a_slab_outside_it_misses() {
         let beside = ray(CENTER + Vec3::new(1.0, 0.0, 10.0), Vec3::NEG_Z);
