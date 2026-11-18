@@ -57,7 +57,7 @@ sequenceDiagram
     T->>T: clock time scale = 1 if Playing, else 0<br/>autosave schedule and pawn pickup feed tick (Playing only)
     T->>Bus: SystemEvent::FrameStart
     T->>Sim: apply command, update_game_state (Playing only)
-    Note over Sim: KCC: command → physics character (look + move) → camera;<br/>free-fly: controller input → camera;<br/>step rigid bodies
+    Note over Sim: KCC: command → physics character (look + move) → camera;<br/>free-fly: controller input → camera, then in the strategy view<br/>the pawn's job loop (walk or dig);<br/>step rigid bodies
     T->>LS: update_chunk_streaming
     Note over LS: evict / load chunks, light arrived chunks,<br/>publish WorldEvent::ChunkMeshDirty
     T->>LS: update_light_system (budgeted jobs, then sky refresh)
@@ -72,9 +72,10 @@ gets that tick's advance on top.
 
 All gameplay steps early-return unless `GameState::Playing`. `dt` is the fixed tick length.
 
-Mining publishes its block event while `process_input_events` drains, after
-`process_world_events`, so the light system queues the edit on the next tick and lights it in
-the tick after (two ticks, about 33 ms at 60 Hz).
+A possessed pawn's mining publishes its block event while `process_input_events` drains,
+after `process_world_events`; an unpossessed pawn's dig publishes inside
+`update_game_state`. For the possessed pawn the light system queues the edit on the next
+tick and lights it in the tick after (two ticks, about 33 ms at 60 Hz).
 
 ## 3 Event drain
 

@@ -42,7 +42,8 @@ pub struct Pawn {
     pub selected_slot: usize,
     /// Recent pickups, for the HUD's popups.
     pub pickups: PickupFeed,
-    /// What the pawn is doing on its own; `Job::Idle` while possessed.
+    /// What the pawn is doing on its own; a possessed pawn runs no
+    /// job and its job is left as is.
     pub job: Job,
     /// Where the idle mark scan resumes among the distance-sorted candidates.
     pub(crate) scan_cursor: usize,

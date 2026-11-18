@@ -216,6 +216,7 @@ fn advance(job: &mut Job, pose: Pose, marks: &mut MineMarks, grid: &VoxelGrid) -
         cell_centre(waypoint).xz().distance(pose.feet.xz()) <= ARRIVE_RADIUS
     }) {
         *next += 1;
+        *stall = StallGuard::default();
     }
 
     let Some(&waypoint) = route.get(*next) else {
