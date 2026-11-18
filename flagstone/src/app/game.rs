@@ -291,7 +291,8 @@ impl App {
         ctx.window.request_redraw();
     }
 
-    /// Autosaves with the renderer's lights, queued ones included, logging a failure.
+    /// Autosaves with the renderer's lights, queued ones included, and tells the
+    /// schedule how it went. A failure is logged.
     fn autosave(
         &mut self,
         clock: &moho_app::GameClock,
@@ -301,8 +302,12 @@ impl App {
             self.apply_pending_render(r);
             r.all_lights_as_descs()
         });
-        if let Err(e) = self.auto_save_on_shutdown(clock, &lights) {
-            tracing::warn!(error = %e, "Failed to auto-save on exit");
+        match self.auto_save_on_shutdown(clock, &lights) {
+            Ok(()) => self.autosave_schedule.saved(),
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to auto-save");
+                self.autosave_schedule.failed();
+            }
         }
     }
 
@@ -438,6 +443,11 @@ impl moho_app::Game for App {
         for engine_command in &command.engine {
             crate::app::console::apply_engine_command(self, engine_command);
         }
+        if self.game_state == GameState::Playing {
+            self.autosave_schedule
+                .set_interval_ticks(crate::app::autosave::interval_ticks(self.autosave_interval));
+            self.autosave_schedule.tick();
+        }
         frame_processor.update_game_state(self, dt);
         frame_processor.update_chunk_streaming(self);
         // Light propagation runs after game state
@@ -514,6 +524,10 @@ impl moho_app::Game for App {
             self.main_menu_requested = false;
             self.autosave(ctx.clock(), ctx.renderer());
             self.show_menu();
+        }
+
+        if self.autosave_schedule.due() {
+            self.autosave(ctx.clock(), ctx.renderer());
         }
 
         let clock = ctx.clock();

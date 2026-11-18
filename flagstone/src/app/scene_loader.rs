@@ -98,6 +98,7 @@ pub fn load_scene(
             terrain_config,
             streaming,
             spec.name.clone(),
+            app.saves_dir.clone(),
         );
 
         // Reconstruct VoxelGrid from persisted block records, then initialize LightSystem.

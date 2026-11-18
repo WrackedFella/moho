@@ -84,7 +84,7 @@ impl GenerationProcessor {
 
         // Clear stale chunk files so saved data from a previous world cannot
         // override freshly generated terrain.
-        if let Err(e) = crate::save::clear_chunk_files(&spec.name) {
+        if let Err(e) = crate::save::clear_chunk_files_in(&app.saves_dir, &spec.name) {
             tracing::warn!(world = %spec.name, error = %e, "Failed to clear chunk files");
         }
 
@@ -117,6 +117,7 @@ impl GenerationProcessor {
             terrain_config,
             streaming,
             spec.name.clone(),
+            app.saves_dir.clone(),
         ));
 
         // Complete progress UI

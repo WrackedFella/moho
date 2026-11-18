@@ -1,12 +1,76 @@
+use std::time::{Duration, Instant};
+
+/// When the running world is next worth saving, counted in simulation ticks.
+///
+/// Time is ticks, not wall clock (ADR-0009), so a paused game never comes due.
+#[derive(Clone, Debug)]
+pub struct AutosaveSchedule {
+    interval_ticks: u32,
+    ticks_since_save: u32,
+    edited: bool,
+}
+
+impl AutosaveSchedule {
+    pub fn new(interval_ticks: u32) -> Self {
+        Self {
+            interval_ticks,
+            ticks_since_save: 0,
+            edited: false,
+        }
+    }
+
+    pub fn set_interval_ticks(&mut self, interval_ticks: u32) {
+        self.interval_ticks = interval_ticks;
+    }
+
+    /// One simulation tick of play has passed.
+    pub fn tick(&mut self) {
+        self.ticks_since_save = self.ticks_since_save.saturating_add(1);
+    }
+
+    /// The world changed since the last save.
+    pub fn mark_edited(&mut self) {
+        self.edited = true;
+    }
+
+    /// An edit is waiting and a whole interval has passed since the last save or attempt.
+    pub fn due(&self) -> bool {
+        self.edited && self.ticks_since_save >= self.interval_ticks
+    }
+
+    /// A save succeeded: nothing is waiting and the interval starts over.
+    pub fn saved(&mut self) {
+        self.ticks_since_save = 0;
+        self.edited = false;
+    }
+
+    /// A save failed: the edit stays waiting, but the retry is a whole interval away.
+    pub fn failed(&mut self) {
+        self.ticks_since_save = 0;
+    }
+}
+
+/// `interval` in simulation ticks, rounded down and saturating.
+pub fn interval_ticks(interval: Duration) -> u32 {
+    let ticks = interval.as_millis() * u128::from(flagstone_game::TICK_HZ) / 1000;
+    u32::try_from(ticks).unwrap_or(u32::MAX)
+}
+
 /// Save the current scene to `saves_dir/scene.bin`, creating the directory
-/// if needed.
+/// if needed. Does nothing while no world is loaded: the grid then is the
+/// empty one a fresh `App` holds, and saving it would overwrite a real save.
 pub fn auto_save_on_shutdown(
     app: &mut crate::App,
     clock: &moho_app::GameClock,
     saves_dir: &std::path::Path,
     lights: &[moho_render_api::LightDesc],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    tracing::info!("Auto-saving on shutdown...");
+    let Some(mut spec) = app.generation.last_spec.clone() else {
+        tracing::info!("No world loaded; autosave skipped");
+        return Ok(());
+    };
+    let started = Instant::now();
+    tracing::info!("Auto-saving...");
 
     std::fs::create_dir_all(saves_dir)?;
 
@@ -16,18 +80,6 @@ pub fn auto_save_on_shutdown(
 
     let scene_bytes =
         flagstone_game::scene_persistence::encode_to_bytes(&app.entities, camera_data, lights)?;
-    let mut spec =
-        app.generation
-            .last_spec
-            .clone()
-            .unwrap_or(flagstone_game::scene_builders::WorldSpec {
-                name: "autosave".to_string(),
-                seed: None,
-                size_xz: 64,
-                day_length_seconds: 600.0,
-                night_length_seconds: 420.0,
-                initial_time_of_day: 6.0,
-            });
     spec.initial_time_of_day = clock.time_of_day();
     let block_records: Vec<crate::save::BlockRecord> = app
         .light_system
@@ -44,6 +96,7 @@ pub fn auto_save_on_shutdown(
         path = %save_path.display(),
         spec = ?spec.name,
         count = block_records.len(),
+        elapsed_ms = started.elapsed().as_millis(),
         "Auto-saved scene (envelope)"
     );
 
@@ -303,12 +356,13 @@ mod tests {
 
         /// Moves the player to chunk column `column_x` on the surface row and streams.
         fn walk_to(app: &mut App, sim: &mut HeadlessLoop<App>, column_x: i32) {
-            let y = app.simulation.position().y;
-            app.simulation.set_position_yaw_pitch(
-                glam::Vec3::new(column_x as f32 * 16.0 + 8.5, y, 8.5),
-                0.0,
-                0.0,
-            );
+            // High enough that the character is still falling, not past the kill plane (which
+            // respawns it at column 0), when the destination's chunks finish loading under it.
+            let target = glam::Vec3::new(column_x as f32 * 16.0 + 8.5, 250.0, 8.5);
+            app.simulation.set_position_yaw_pitch(target, 0.0, 0.0);
+            // First person: each tick copies the physics character back into the simulation,
+            // so the character has to be relocated too, as a respawn does.
+            app.physics.teleport_character(target);
             // Eviction is immediate; loading is budgeted, so give the walk-back time.
             play(app, sim, 200);
         }

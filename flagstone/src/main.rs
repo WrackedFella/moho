@@ -77,6 +77,9 @@ enum RenderRequest {
     ToneMap(bool),
 }
 
+/// How much play passes between autosaves of an edited world.
+const DEFAULT_AUTOSAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(120);
+
 struct App {
     entities: SceneEntities,
     scene: moho_renderer::Scene,
@@ -107,6 +110,11 @@ struct App {
     frame_cap_changed: bool,
 
     saves_dir: std::path::PathBuf,
+
+    /// How much play passes between autosaves of an edited world.
+    autosave_interval: std::time::Duration,
+    /// When the world is next due a save; `tick` advances it, `frame` acts on it.
+    autosave_schedule: app::autosave::AutosaveSchedule,
 
     // Set when the UI asks to quit; `frame` autosaves and leaves the loop
     exit_requested: bool,
@@ -253,6 +261,10 @@ impl App {
             pending_frame_cap: None,
             frame_cap_changed: false,
             saves_dir: std::path::PathBuf::from("saves"),
+            autosave_interval: DEFAULT_AUTOSAVE_INTERVAL,
+            autosave_schedule: app::autosave::AutosaveSchedule::new(app::autosave::interval_ticks(
+                DEFAULT_AUTOSAVE_INTERVAL,
+            )),
             exit_requested: false,
             main_menu_requested: false,
             event_bus: initialized.event_bus,
