@@ -979,7 +979,7 @@ impl SearchlightGame {
     /// Queues the use prompt below the crosshair while the player, playing and alive, looks at
     /// a control within reach; otherwise queues no text.
     fn show_use_prompt(&self, dead: bool) {
-        let playing = self.screen == Screen::Playing && !dead;
+        let playing = !self.input_captured() && !dead;
         let action = if playing {
             self.mode.action_in_reach()
         } else {
@@ -995,9 +995,10 @@ impl SearchlightGame {
             })
             .into_iter()
             .collect();
-        if let Err(error) = self.stage.shell().set_texts(texts) {
-            tracing::warn!(%error, "use prompt not shown");
-        }
+        self.stage
+            .shell()
+            .set_texts(texts)
+            .expect("the prompt size is finite and positive");
     }
 
     /// A frame of the main menu: the title bare, the HUD hidden and an empty world; the shell
