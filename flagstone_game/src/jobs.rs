@@ -110,7 +110,6 @@ pub fn is_stand_cell(block: BlockPos, cell: BlockPos) -> bool {
     d.x.abs() <= 1 && d.z.abs() <= 1 && (-1..=2).contains(&d.y)
 }
 
-/// The six unit steps from a block to its neighbours.
 const NEIGHBOURS: [BlockPos; 6] = [
     BlockPos::X,
     BlockPos::NEG_X,
@@ -138,7 +137,6 @@ fn nearest_exposed_face(grid: &VoxelGrid, block: BlockPos, eye: Vec3) -> Option<
         .min_by(|a, b| a.distance_squared(eye).total_cmp(&b.distance_squared(eye)))
 }
 
-/// Horizontal distance from `feet` to the centre of `cell`.
 fn horizontal_distance(feet: Vec3, cell: BlockPos) -> f32 {
     let c = centre_of(cell);
     Vec2::new(c.x - feet.x, c.z - feet.z).length()
