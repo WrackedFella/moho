@@ -12,17 +12,17 @@ pub struct AutosaveSchedule {
 
 impl AutosaveSchedule {
     pub fn new(interval_ticks: u64) -> Self {
-        Self {
-            interval_ticks: Some(interval_ticks),
-            ticks_since_save: 0,
-            edited: false,
-        }
+        Self::with_interval(Some(interval_ticks))
     }
 
     /// A schedule that is never due.
     pub fn off() -> Self {
+        Self::with_interval(None)
+    }
+
+    fn with_interval(interval_ticks: Option<u64>) -> Self {
         Self {
-            interval_ticks: None,
+            interval_ticks,
             ticks_since_save: 0,
             edited: false,
         }
@@ -32,6 +32,11 @@ impl AutosaveSchedule {
     pub fn for_interval(interval: std::time::Duration) -> Self {
         let ticks = interval.as_millis() * u128::from(flagstone_game::TICK_HZ) / 1000;
         Self::new(u64::try_from(ticks).unwrap_or(u64::MAX))
+    }
+
+    /// A schedule due `interval` of play after the last save, or never when `None`.
+    pub fn every(interval: Option<std::time::Duration>) -> Self {
+        interval.map_or_else(Self::off, Self::for_interval)
     }
 
     pub fn tick(&mut self) {

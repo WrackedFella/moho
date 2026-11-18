@@ -108,8 +108,7 @@ struct App {
 
     saves_dir: std::path::PathBuf,
 
-    /// Time of play between autosaves of an edited world.
-    /// Play time between autosaves; `None` turns periodic autosave off.
+    /// Play time between autosaves of an edited world; `None` turns periodic autosave off.
     autosave_interval: Option<std::time::Duration>,
     autosave: app::autosave::AutosaveSchedule,
 
@@ -174,13 +173,6 @@ struct App {
     colony: flagstone_game::colony::Colony,
     /// The markers drawn for the colony's mining marks.
     designation_markers: app::designation_markers::DesignationMarkers,
-}
-
-fn autosave_schedule(interval: Option<std::time::Duration>) -> app::autosave::AutosaveSchedule {
-    interval.map_or_else(
-        app::autosave::AutosaveSchedule::off,
-        app::autosave::AutosaveSchedule::for_interval,
-    )
 }
 
 impl App {
@@ -262,6 +254,8 @@ impl App {
         );
         tracing::info!("Created LightSystem for frame loop integration");
 
+        let autosave_interval = initialized.prefs.autosave_interval();
+
         Self {
             entities: initialized.entities,
             scene,
@@ -282,8 +276,8 @@ impl App {
             pending_frame_cap: None,
             frame_cap_changed: false,
             saves_dir: std::path::PathBuf::from("saves"),
-            autosave_interval: initialized.prefs.autosave_interval(),
-            autosave: autosave_schedule(initialized.prefs.autosave_interval()),
+            autosave_interval,
+            autosave: app::autosave::AutosaveSchedule::every(autosave_interval),
             exit_requested: false,
             main_menu_requested: false,
             event_bus: initialized.event_bus,
@@ -334,7 +328,7 @@ impl App {
 
     /// Called as a world starts, so edits made before it do not count against the new one.
     fn restart_autosave(&mut self) {
-        self.autosave = autosave_schedule(self.autosave_interval);
+        self.autosave = app::autosave::AutosaveSchedule::every(self.autosave_interval);
     }
 
     fn generate_new_world(

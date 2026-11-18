@@ -91,7 +91,7 @@ const MAX_BLOOM_QUALITY: u32 = 2;
 const MIN_BRIGHTNESS: f32 = 0.5;
 const MAX_BRIGHTNESS: f32 = 2.0;
 const DEFAULT_BRIGHTNESS: f32 = 1.0;
-/// Autosave interval bounds in seconds; a stored 0 means off and is not clamped.
+// Autosave interval bounds in seconds; a stored 0 means off and is not clamped.
 const DEFAULT_AUTOSAVE_SECONDS: u32 = 120;
 const MIN_AUTOSAVE_SECONDS: u32 = 30;
 const MAX_AUTOSAVE_SECONDS: u32 = 3600;
@@ -323,6 +323,15 @@ impl Prefs {
             DEFAULT_BRIGHTNESS
         } else {
             brightness.clamp(MIN_BRIGHTNESS, MAX_BRIGHTNESS)
+        };
+    }
+
+    /// Stores the autosave interval: 0 stays 0 (off), anything else is clamped to `30..=3600`.
+    fn set_autosave_seconds(&mut self, seconds: u32) {
+        self.world_autosave_seconds = if seconds == 0 {
+            0
+        } else {
+            seconds.clamp(MIN_AUTOSAVE_SECONDS, MAX_AUTOSAVE_SECONDS)
         };
     }
 
