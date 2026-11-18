@@ -666,23 +666,36 @@ mod tests {
             "Pawn",
         )
         .center();
-        let mut adapter = adapter();
-        adapter.set_game_state(GameState::Playing);
-        adapter.update_hud_data(data);
+        let press_at_panel_consumed = |data: HudData| {
+            let mut adapter = adapter();
+            adapter.set_game_state(GameState::Playing);
+            adapter.update_hud_data(data);
+            for events in [
+                Vec::new(),
+                Vec::new(),
+                vec![egui::Event::PointerMoved(on_the_panel)],
+            ] {
+                let _ = run_ui(&adapter.context, input(events), |ui| {
+                    rendering::render_game_state(ui, &mut adapter.ui_state, GameState::Playing);
+                });
+            }
+            press_consumed(adapter.pointer_over_ui(), adapter.cursor_free())
+        };
+        let without_selection = HudData {
+            selection: None,
+            ..data.clone()
+        };
 
-        for events in [
-            Vec::new(),
-            Vec::new(),
-            vec![egui::Event::PointerMoved(on_the_panel)],
-        ] {
-            let _ = run_ui(&adapter.context, input(events), |ui| {
-                rendering::render_game_state(ui, &mut adapter.ui_state, GameState::Playing);
-            });
-        }
+        let with_panel = press_at_panel_consumed(data);
+        let without_panel = press_at_panel_consumed(without_selection);
 
         assert!(
-            press_consumed(adapter.pointer_over_ui(), adapter.cursor_free()),
+            with_panel,
             "a press on the panel reaches the game and would clear the selection"
+        );
+        assert!(
+            !without_panel,
+            "the same point is free of egui when no panel is drawn"
         );
     }
 

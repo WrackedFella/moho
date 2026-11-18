@@ -173,6 +173,8 @@ struct App {
     colony: flagstone_game::colony::Colony,
     /// The markers drawn for the colony's mining marks.
     designation_markers: app::designation_markers::DesignationMarkers,
+    /// Actor cubes plus the pawn body, reused each frame so drawing the pawn body allocates nothing. Not saved.
+    frame_cubes: Vec<flagstone_game::actors::Cube>,
 }
 
 impl App {
@@ -314,6 +316,7 @@ impl App {
 
             colony: flagstone_game::colony::Colony::default(),
             designation_markers: app::designation_markers::DesignationMarkers::default(),
+            frame_cubes: Vec::new(),
         }
     }
 

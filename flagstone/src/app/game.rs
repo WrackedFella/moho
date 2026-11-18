@@ -394,19 +394,20 @@ impl App {
         renderer: &mut dyn moho_renderer::RendererBackend,
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     ) {
-        let actor_cubes = self.entities.actors.cubes();
         let cubes = match self.pawn_body() {
             Some(body) => {
-                let mut all = actor_cubes.to_vec();
-                all.push(body);
-                std::borrow::Cow::Owned(all)
+                self.frame_cubes.clear();
+                self.frame_cubes
+                    .extend_from_slice(self.entities.actors.cubes());
+                self.frame_cubes.push(body);
+                self.frame_cubes.as_slice()
             }
-            None => std::borrow::Cow::Borrowed(actor_cubes),
+            None => self.entities.actors.cubes(),
         };
         if let Err(e) = self.scene.render(
             renderer,
             self.entities.actors.spheres(),
-            &cubes,
+            cubes,
             self.mesh_handle,
             self.cube_mesh_handle,
             camera,
