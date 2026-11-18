@@ -244,6 +244,20 @@ mod tests {
     }
 
     #[test]
+    fn a_gravity_scale_read_from_data_is_checked_like_new() {
+        for bad in [-5.0, 2000.0, 1000.5] {
+            let read = serde_json::from_value::<GravityScale>(serde_json::json!(bad));
+
+            assert!(read.is_err(), "{bad} was accepted: {read:?}");
+        }
+
+        let read = serde_json::from_value::<GravityScale>(serde_json::json!(30.0))
+            .expect("30 is a valid scale");
+
+        assert_eq!(read.gravity(), STANDARD_GRAVITY * 30.0);
+    }
+
+    #[test]
     fn gravity_scale_defaults_to_1() {
         assert_eq!(GravityScale::default(), scale(1.0));
         assert_eq!(GravityScale::default().gravity(), STANDARD_GRAVITY);

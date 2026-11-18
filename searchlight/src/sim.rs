@@ -2226,6 +2226,42 @@ mod tests {
     }
 
     #[test]
+    fn three_rounds_passing_a_novice_put_it_under_fire_on_the_third() {
+        let mut sim = enemy_ahead(60.0, Grade::Novice, 1.5);
+        let near_misses = |sim: &SearchlightSim| sim.targets[sim.dummy_count].near_misses;
+        let under_fire = |sim: &SearchlightSim| sim.targets[sim.dummy_count].under_fire.is_some();
+        // Rounds fired on ticks 0, 4 and 8 pass the enemy about four ticks later, one metre
+        // wide of it; the 3-tick cooldown allows each pull.
+        let mut first_under_fire = None;
+        let mut near_misses_at_11 = 0;
+        let mut hit_anyone = false;
+
+        for tick in 0..30 {
+            let command = match tick {
+                0 => pull_past(60.0),
+                4 | 8 => pull(),
+                _ => idle(),
+            };
+            sim.tick(&command, DT);
+            hit_anyone |= !hits(&[sim.drain_feedback()]).is_empty();
+            if tick == 11 {
+                near_misses_at_11 = near_misses(&sim);
+            }
+            if first_under_fire.is_none() && under_fire(&sim) {
+                first_under_fire = Some(tick);
+            }
+        }
+
+        assert!(!hit_anyone, "the rounds were meant to miss");
+        assert_eq!(near_misses_at_11, 2, "two rounds had passed by tick 11");
+        let tick = first_under_fire.expect("three passing rounds never put the novice under fire");
+        assert!(
+            (9..=14).contains(&tick),
+            "put under fire on tick {tick}, when the third round passes"
+        );
+    }
+
+    #[test]
     fn an_enemy_put_under_fire_by_a_round_is_told_where_the_player_fired_from() {
         let mut sim = enemy_ahead(60.0, Grade::Veteran, 1.5);
         let strafe = SearchlightCommand {
