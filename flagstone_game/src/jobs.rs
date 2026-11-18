@@ -1,0 +1,576 @@
+//! What an unpossessed pawn does on its own: take a marked block, walk to it, dig it.
+//!
+//! Everything here is a pure function of the pawn, its pose, the marks and the grid. The
+//! caller applies the resulting [`JobAction`] through the pawn's own physics step and
+//! [`Pawn::dig`](crate::pawn::Pawn::dig), the same ones a possessed pawn uses.
+
+use flagstone_voxel::{BlockPos, VoxelGrid};
+use glam::Vec3;
+
+use crate::colony::MineMarks;
+use crate::pawn::{Pawn, PawnId};
+
+/// How close, horizontally, the feet must come to a waypoint's centre to have reached it.
+pub const ARRIVE_RADIUS: f32 = 0.35;
+
+/// Ticks without getting closer to the current waypoint before the pawn gives the mark up.
+pub const STALL_TICKS: u32 = 120;
+
+/// Fastest turn towards a target, in radians per second: one full turn a second.
+pub const TURN_RATE: f32 = std::f32::consts::TAU;
+
+/// Route searches an idle pawn may spend in one tick.
+pub const ROUTE_ATTEMPTS_PER_TICK: usize = 4;
+
+/// Where a pawn stands and which way it faces; yaw 0 faces +Z and turns towards +X.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Pose {
+    /// The point on the ground under the capsule's centre.
+    pub feet: Vec3,
+    pub yaw: f32,
+}
+
+/// Counts the ticks a walking pawn has made no progress towards its waypoint.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct StallGuard {
+    pub still_ticks: u32,
+    /// The smallest distance to the waypoint seen so far.
+    pub closest: f32,
+}
+
+/// A pawn's current occupation.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum Job {
+    #[default]
+    Idle,
+    /// Walking `route` (the cells after the pawn's own, ending at the stand cell) to dig the
+    /// marked block `mark`; `next` indexes the waypoint being walked to.
+    Mine {
+        mark: BlockPos,
+        route: Vec<BlockPos>,
+        next: usize,
+        stall: StallGuard,
+    },
+}
+
+/// What the pawn does this tick.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum JobAction {
+    Wait,
+    /// Walk towards the world point `to`, the centre of a waypoint cell at its feet height.
+    Walk {
+        to: Vec3,
+    },
+    /// Dig `block` by aiming at the world point `aim`.
+    Dig {
+        block: BlockPos,
+        aim: Vec3,
+    },
+}
+
+/// One tick of walking: turn by `yaw_delta` radians, and move along the facing at `forward`
+/// (`1.0` full speed, `0.0` stand still).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WalkStep {
+    pub yaw_delta: f32,
+    pub forward: f32,
+}
+
+/// Whether a pawn with its feet in `cell` can dig the block `block` from there: within one
+/// column of it in x and z, and with the feet from one below to two above the block.
+pub fn is_stand_cell(_block: BlockPos, _cell: BlockPos) -> bool {
+    false
+}
+
+/// Advances `pawn`'s job one tick and returns what to do about it.
+///
+/// An idle pawn takes the nearest unclaimed, exposed mark it can route to (claiming it for
+/// `id` and equipping the tool) and starts walking in the same call. Releasing a claim on
+/// a vanished mark, a waypoint that is no longer standable or a stalled walk sends the pawn
+/// back to idle and returns [`JobAction::Wait`]; the mark stays. The tick that returns a
+/// [`JobAction::Dig`] also releases the claim and ends the job.
+pub fn step(
+    _id: PawnId,
+    _pawn: &mut Pawn,
+    _pose: Pose,
+    _marks: &mut MineMarks,
+    _grid: &VoxelGrid,
+) -> JobAction {
+    JobAction::Wait
+}
+
+/// The turn and walk that take a pawn at `pose` towards the world point `to`: turn by the
+/// shortest way at no more than [`TURN_RATE`] (per tick), and walk only once the target is
+/// within 60 degrees of the facing, turning in place until then.
+pub fn steer(_pose: Pose, _to: Vec3) -> WalkStep {
+    WalkStep {
+        yaw_delta: 0.0,
+        forward: 0.0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::f32::consts::{FRAC_PI_2, PI};
+
+    use proptest::prelude::*;
+
+    use super::*;
+    use crate::TICK_HZ;
+    use crate::pawn::MINE_REACH;
+    use crate::routing::{feet_cell, standable};
+    use crate::selection::PAWN_HALF_EXTENTS;
+    use crate::tools::STARTING_TOOL;
+
+    const ME: PawnId = PawnId(0);
+
+    fn place(grid: &mut VoxelGrid, x: i32, y: i32, z: i32) {
+        grid.mutator().place(BlockPos::new(x, y, z), 1, None);
+    }
+
+    /// A 16 by 16 floor of blocks at y = 0, so feet cells are y = 1.
+    fn floor() -> VoxelGrid {
+        let mut grid = VoxelGrid::new(16);
+        for x in 0..16 {
+            for z in 0..16 {
+                place(&mut grid, x, 0, z);
+            }
+        }
+        grid
+    }
+
+    fn marked(blocks: &[[i32; 3]]) -> MineMarks {
+        let mut marks = MineMarks::default();
+        for &block in blocks {
+            marks.toggle(block);
+        }
+        marks
+    }
+
+    fn pose_in(x: i32, y: i32, z: i32) -> Pose {
+        Pose {
+            feet: Vec3::new(x as f32 + 0.5, y as f32, z as f32 + 0.5),
+            yaw: 0.0,
+        }
+    }
+
+    fn centre_of(x: i32, y: i32, z: i32) -> Vec3 {
+        Vec3::new(x as f32 + 0.5, y as f32, z as f32 + 0.5)
+    }
+
+    /// Where the capsule centre, and so the eye, is for a pawn with these feet.
+    fn eye_of(pose: Pose) -> Vec3 {
+        pose.feet + Vec3::Y * PAWN_HALF_EXTENTS.y
+    }
+
+    fn claimed_by(marks: &MineMarks, block: [i32; 3]) -> Option<PawnId> {
+        marks
+            .iter()
+            .find(|(pos, _)| *pos == block)
+            .and_then(|(_, mark)| mark.claimed_by)
+    }
+
+    fn mining(pawn: &Pawn, block: [i32; 3]) -> bool {
+        matches!(&pawn.job, Job::Mine { mark, .. } if mark.to_array() == block)
+    }
+
+    /// What a pawn did walking to a block, teleporting to each waypoint it is told to walk to.
+    struct Trip {
+        walks: Vec<Vec3>,
+        dig: Option<(BlockPos, Vec3)>,
+        pose: Pose,
+    }
+
+    fn trip(pawn: &mut Pawn, marks: &mut MineMarks, grid: &VoxelGrid, mut pose: Pose) -> Trip {
+        let mut walks = Vec::new();
+        for _ in 0..64 {
+            match step(ME, pawn, pose, marks, grid) {
+                JobAction::Walk { to } => {
+                    walks.push(to);
+                    pose.feet = to;
+                }
+                JobAction::Dig { block, aim } => {
+                    return Trip {
+                        walks,
+                        dig: Some((block, aim)),
+                        pose,
+                    };
+                }
+                JobAction::Wait => break,
+            }
+        }
+        Trip {
+            walks,
+            dig: None,
+            pose,
+        }
+    }
+
+    #[test]
+    fn no_marks_leaves_the_pawn_waiting() {
+        let grid = floor();
+        let mut marks = MineMarks::default();
+        let mut pawn = Pawn::default();
+        pawn.select_slot(1);
+
+        let action = step(ME, &mut pawn, pose_in(3, 1, 3), &mut marks, &grid);
+
+        assert_eq!(action, JobAction::Wait);
+        assert_eq!(pawn.job, Job::Idle);
+        assert_eq!(pawn.equipped_tool, None, "nothing to dig, nothing equipped");
+    }
+
+    #[test]
+    fn a_mark_with_no_exposed_face_is_not_claimed() {
+        let mut grid = floor();
+        for x in 7..=9 {
+            for y in 1..=3 {
+                for z in 7..=9 {
+                    place(&mut grid, x, y, z);
+                }
+            }
+        }
+        place(&mut grid, 14, 1, 8);
+        let mut marks = marked(&[[8, 2, 8], [14, 1, 8]]);
+        let mut pawn = Pawn::default();
+
+        let action = step(ME, &mut pawn, pose_in(0, 1, 8), &mut marks, &grid);
+
+        assert!(matches!(action, JobAction::Walk { .. }), "{action:?}");
+        assert_eq!(
+            claimed_by(&marks, [8, 2, 8]),
+            None,
+            "buried in solid blocks"
+        );
+        assert_eq!(claimed_by(&marks, [14, 1, 8]), Some(ME));
+        assert!(mining(&pawn, [14, 1, 8]));
+    }
+
+    #[test]
+    fn an_idle_pawn_claims_the_nearest_reachable_mark_and_equips_the_tool() {
+        let mut grid = floor();
+        place(&mut grid, 3, 4, 8);
+        place(&mut grid, 7, 1, 8);
+        place(&mut grid, 0, 1, 12);
+        // Nearest is out of anyone's reach (nothing to stand on); the farthest sorts first.
+        let mut marks = marked(&[[3, 4, 8], [7, 1, 8], [0, 1, 12]]);
+        let mut pawn = Pawn::default();
+        pawn.select_slot(1);
+
+        let action = step(ME, &mut pawn, pose_in(3, 1, 8), &mut marks, &grid);
+
+        assert_eq!(
+            action,
+            JobAction::Walk {
+                to: centre_of(4, 1, 8)
+            }
+        );
+        assert_eq!(claimed_by(&marks, [7, 1, 8]), Some(ME));
+        assert_eq!(
+            claimed_by(&marks, [3, 4, 8]),
+            None,
+            "no stand cell reaches it"
+        );
+        assert_eq!(
+            claimed_by(&marks, [0, 1, 12]),
+            None,
+            "farther than the nearest"
+        );
+        assert!(mining(&pawn, [7, 1, 8]));
+        assert_eq!(pawn.equipped_tool, Some(STARTING_TOOL));
+    }
+
+    #[test]
+    fn the_pawn_walks_the_waypoints_then_digs_from_the_stand_cell() {
+        let mut grid = floor();
+        place(&mut grid, 8, 1, 8);
+        let mut marks = marked(&[[8, 1, 8]]);
+        let mut pawn = Pawn::default();
+
+        let trip = trip(&mut pawn, &mut marks, &grid, pose_in(0, 1, 8));
+
+        let expected: Vec<Vec3> = (1..=7).map(|x| centre_of(x, 1, 8)).collect();
+        assert_eq!(trip.walks, expected);
+        let (block, _) = trip.dig.expect("the pawn digs at the end of the walk");
+        assert_eq!(block, BlockPos::new(8, 1, 8));
+        let stand = feet_cell(trip.pose.feet);
+        assert_eq!(stand, BlockPos::new(7, 1, 8));
+        assert!(is_stand_cell(block, stand));
+        assert_eq!(pawn.job, Job::Idle, "the dig ends the job");
+        assert_eq!(claimed_by(&marks, [8, 1, 8]), None, "the claim is released");
+        assert!(
+            marks.contains([8, 1, 8]),
+            "the mark stays until the block goes"
+        );
+    }
+
+    #[test]
+    fn the_dig_aims_at_the_exposed_face_nearest_the_eye() {
+        let mut open = floor();
+        place(&mut open, 8, 1, 8);
+        let mut pillar = floor();
+        for (x, z) in [(8, 8), (7, 8), (9, 8), (8, 7), (8, 9)] {
+            place(&mut pillar, x, 1, z);
+        }
+        // From the east the block's east face is nearest; boxed in, only the top shows.
+        let cases = [
+            (open, pose_in(15, 1, 8), Vec3::new(9.0, 1.5, 8.5)),
+            (pillar, pose_in(0, 1, 8), Vec3::new(8.5, 2.0, 8.5)),
+        ];
+
+        for (grid, start, expected) in cases {
+            let mut marks = marked(&[[8, 1, 8]]);
+            let mut pawn = Pawn::default();
+
+            let trip = trip(&mut pawn, &mut marks, &grid, start);
+
+            let (block, aim) = trip.dig.expect("the pawn digs");
+            assert_eq!(block, BlockPos::new(8, 1, 8));
+            assert!(
+                (aim - expected).length() < 1e-4,
+                "aim {aim:?}, expected {expected:?}"
+            );
+            assert!((aim - eye_of(trip.pose)).length() <= MINE_REACH);
+        }
+    }
+
+    #[test]
+    fn a_cancelled_mark_releases_the_pawn_mid_walk() {
+        let mut grid = floor();
+        place(&mut grid, 8, 1, 8);
+        let mut marks = marked(&[[8, 1, 8]]);
+        let mut pawn = Pawn::default();
+        let mut pose = pose_in(0, 1, 8);
+        for _ in 0..3 {
+            let JobAction::Walk { to } = step(ME, &mut pawn, pose, &mut marks, &grid) else {
+                panic!("the pawn should be walking to the mark");
+            };
+            pose.feet = to;
+        }
+
+        marks.toggle([8, 1, 8]);
+        let after = step(ME, &mut pawn, pose, &mut marks, &grid);
+        let later = step(ME, &mut pawn, pose, &mut marks, &grid);
+
+        assert_eq!(after, JobAction::Wait);
+        assert_eq!(later, JobAction::Wait);
+        assert_eq!(pawn.job, Job::Idle);
+        assert!(
+            grid.is_solid_at(BlockPos::new(8, 1, 8)),
+            "the block is not removed"
+        );
+    }
+
+    #[test]
+    fn a_mark_dug_by_another_pawn_releases_the_claim() {
+        let mut grid = floor();
+        place(&mut grid, 8, 1, 8);
+        place(&mut grid, 12, 1, 3);
+        let mut marks = marked(&[[8, 1, 8], [12, 1, 3]]);
+        let mut pawn = Pawn::default();
+        let pose = pose_in(0, 1, 8);
+        step(ME, &mut pawn, pose, &mut marks, &grid);
+        assert!(mining(&pawn, [8, 1, 8]));
+
+        grid.mutator().remove(BlockPos::new(8, 1, 8));
+        marks.block_removed([8, 1, 8]);
+        let released = step(ME, &mut pawn, pose, &mut marks, &grid);
+
+        assert_eq!(released, JobAction::Wait);
+        assert_eq!(pawn.job, Job::Idle);
+
+        let next = step(ME, &mut pawn, pose, &mut marks, &grid);
+
+        assert!(matches!(next, JobAction::Walk { .. }), "{next:?}");
+        assert!(mining(&pawn, [12, 1, 3]), "free to take the next mark");
+    }
+
+    #[test]
+    fn a_claimed_mark_is_not_offered_to_a_second_pawn() {
+        let mut grid = floor();
+        place(&mut grid, 6, 1, 8);
+        place(&mut grid, 12, 1, 8);
+        let mut marks = marked(&[[6, 1, 8], [12, 1, 8]]);
+        assert!(marks.claim([6, 1, 8], PawnId(7)));
+        let mut pawn = Pawn::default();
+
+        let action = step(ME, &mut pawn, pose_in(0, 1, 8), &mut marks, &grid);
+
+        assert!(matches!(action, JobAction::Walk { .. }), "{action:?}");
+        assert_eq!(
+            claimed_by(&marks, [6, 1, 8]),
+            Some(PawnId(7)),
+            "still theirs"
+        );
+        assert_eq!(claimed_by(&marks, [12, 1, 8]), Some(ME));
+        assert!(mining(&pawn, [12, 1, 8]));
+    }
+
+    #[test]
+    fn a_stalled_walk_releases_the_claim_and_keeps_the_mark() {
+        let mut grid = floor();
+        place(&mut grid, 8, 1, 8);
+        let mut marks = marked(&[[8, 1, 8]]);
+        let mut pawn = Pawn::default();
+        let mut pose = pose_in(0, 1, 8);
+        step(ME, &mut pawn, pose, &mut marks, &grid);
+        for _ in 0..100 {
+            let action = step(ME, &mut pawn, pose, &mut marks, &grid);
+            assert!(matches!(action, JobAction::Walk { .. }), "{action:?}");
+        }
+
+        pose.feet.x += 0.4;
+        for _ in 0..100 {
+            let action = step(ME, &mut pawn, pose, &mut marks, &grid);
+            assert!(
+                matches!(action, JobAction::Walk { .. }),
+                "progress starts the count again: {action:?}"
+            );
+        }
+        let released_at = (0..STALL_TICKS + 2)
+            .find(|_| step(ME, &mut pawn, pose, &mut marks, &grid) == JobAction::Wait);
+
+        assert!(
+            released_at.is_some(),
+            "no progress for {STALL_TICKS} ticks gives up"
+        );
+        assert_eq!(pawn.job, Job::Idle);
+        assert!(marks.contains([8, 1, 8]), "the mark stays");
+        assert_eq!(claimed_by(&marks, [8, 1, 8]), None);
+    }
+
+    #[test]
+    fn a_waypoint_that_stops_being_standable_releases_the_claim() {
+        let mut grid = floor();
+        place(&mut grid, 8, 1, 8);
+        let mut marks = marked(&[[8, 1, 8]]);
+        let mut pawn = Pawn::default();
+        let pose = pose_in(0, 1, 8);
+        let first = step(ME, &mut pawn, pose, &mut marks, &grid);
+        assert_eq!(
+            first,
+            JobAction::Walk {
+                to: centre_of(1, 1, 8)
+            }
+        );
+
+        place(&mut grid, 1, 1, 8);
+        assert!(!standable(&grid, BlockPos::new(1, 1, 8)));
+        let action = step(ME, &mut pawn, pose, &mut marks, &grid);
+
+        assert_eq!(action, JobAction::Wait);
+        assert_eq!(pawn.job, Job::Idle);
+        assert!(marks.contains([8, 1, 8]), "the mark stays");
+        assert_eq!(claimed_by(&marks, [8, 1, 8]), None);
+    }
+
+    fn per_tick_turn() -> f32 {
+        TURN_RATE / TICK_HZ as f32
+    }
+
+    fn facing(yaw: f32, target_yaw: f32) -> (Pose, Vec3) {
+        let pose = Pose {
+            feet: Vec3::new(2.0, 1.0, 2.0),
+            yaw,
+        };
+        let to = pose.feet + Vec3::new(target_yaw.sin(), 0.0, target_yaw.cos()) * 5.0;
+        (pose, to)
+    }
+
+    #[test]
+    fn steer_turns_toward_the_target_no_faster_than_the_turn_rate() {
+        let max = per_tick_turn();
+        let cases = [
+            (0.0, FRAC_PI_2, max, "a quarter turn right is clamped"),
+            (0.0, -FRAC_PI_2, -max, "a quarter turn left is clamped"),
+            (0.0, 0.02, 0.02, "a small error is closed exactly"),
+            (
+                0.0,
+                -0.03,
+                -0.03,
+                "a small error to the left is closed exactly",
+            ),
+            (
+                3.0,
+                -3.0,
+                max,
+                "turning across the wrap takes the short way",
+            ),
+            (
+                -3.0,
+                3.0,
+                -max,
+                "turning back across the wrap takes the short way",
+            ),
+            (1.0, 1.0, 0.0, "facing the target needs no turn"),
+        ];
+
+        for (yaw, target, expected, why) in cases {
+            let (pose, to) = facing(yaw, target);
+
+            let step = steer(pose, to);
+
+            assert!(
+                (step.yaw_delta - expected).abs() < 1e-4,
+                "{why}: {}",
+                step.yaw_delta
+            );
+        }
+    }
+
+    #[test]
+    fn steer_walks_only_when_facing_the_target() {
+        let cases = [
+            (0.0, 0.0, 1.0),
+            (0.0, 0.5, 1.0),
+            (0.0, -0.7, 1.0),
+            (1.0, 1.5, 1.0),
+            (0.0, FRAC_PI_2, 0.0),
+            (0.0, -FRAC_PI_2, 0.0),
+            (0.0, 2.1, 0.0),
+            (0.0, PI - 0.1, 0.0),
+            (3.0, -3.0, 1.0),
+        ];
+
+        for (yaw, target, forward) in cases {
+            let (pose, to) = facing(yaw, target);
+
+            let step = steer(pose, to);
+
+            assert_eq!(step.forward, forward, "yaw {yaw}, target bearing {target}");
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn every_stand_cell_is_within_the_mining_reach(
+            block in (-50..50i32, -10..10i32, -50..50i32),
+            offset in (-3..=3i32, -3..=4i32, -3..=3i32),
+        ) {
+            let block = BlockPos::new(block.0, block.1, block.2);
+            let cell = block + BlockPos::new(offset.0, offset.1, offset.2);
+
+            let stands = is_stand_cell(block, cell);
+
+            let in_box = offset.0.abs() <= 1 && offset.2.abs() <= 1 && (-1..=2).contains(&offset.1);
+            prop_assert_eq!(stands, in_box);
+            if stands {
+                let eye = eye_of(Pose { feet: centre_of(cell.x, cell.y, cell.z), yaw: 0.0 });
+                let farthest = (0..8)
+                    .map(|corner| {
+                        block.as_vec3()
+                            + Vec3::new(
+                                (corner & 1) as f32,
+                                ((corner >> 1) & 1) as f32,
+                                ((corner >> 2) & 1) as f32,
+                            )
+                    })
+                    .map(|point| (point - eye).length())
+                    .fold(0.0, f32::max);
+                prop_assert!(farthest <= MINE_REACH, "{farthest} m from the eye to the far corner");
+            }
+        }
+    }
+}
