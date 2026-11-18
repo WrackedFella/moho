@@ -12,9 +12,11 @@ pub struct ResourceYield {
 }
 
 /// The display name of a resource: `1` is "Iron ore"; any other id reads "Resource N".
-pub fn resource_name(_id: u32) -> String {
-    // TODO: name known resources and fall back to "Resource N"; this stub names nothing.
-    String::new()
+pub fn resource_name(id: u32) -> String {
+    match id {
+        1 => "Iron ore".to_string(),
+        _ => format!("Resource {id}"),
+    }
 }
 
 /// Per-resource integer counters. Keyed on raw `resource_id`, matching the
