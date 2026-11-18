@@ -9,6 +9,7 @@ use moho_level::{AgentProfile, Level, LevelError, LevelMarker, NavBuildError, Na
 use moho_physics::PhysicsWorld;
 use moho_render_api::{WorldMesh, WorldMeshId};
 
+use crate::control::ControlAction;
 use crate::sim::{CAPSULE_RADIUS, STAND_HEIGHT};
 use crate::tag::SurfaceTag;
 
@@ -47,6 +48,21 @@ pub enum ArenaError {
     /// The `searchlight_level` marker's `mode` is missing or is neither `arena` nor `sandbox`.
     #[error("level mode `{value}` is not `arena` or `sandbox`")]
     BadMode { value: String },
+    /// A `control_NN` marker's `action` is missing or not on the action list.
+    #[error("arena control `{marker}` needs an `action` from the action list")]
+    BadControl { marker: String },
+}
+
+/// A placed control: the action using it takes, and the post that stands for it.
+#[derive(Debug, Clone)]
+pub struct ArenaControl {
+    pub action: ControlAction,
+    pub mesh: WorldMesh,
+}
+
+/// The id under which the physics world and the renderer both know control `index`.
+pub fn control_mesh_id(index: usize) -> WorldMeshId {
+    WorldMeshId(index as u64)
 }
 
 /// What a level plays as: waves and a score, or a sandbox with neither.
@@ -217,6 +233,8 @@ pub struct Arena {
     /// The loop every enemy patrols, in order.
     pub route: Vec<Vec3>,
     pub covers: Vec<Vec3>,
+    /// The placed controls, in file order; the index is the control's id.
+    pub controls: Vec<ArenaControl>,
     /// Where an enemy of [`nav_profile`] size can walk.
     pub nav: Arc<NavMesh>,
     /// Whether the navmesh could not be built and `nav` is empty (sandbox levels only).
@@ -292,6 +310,7 @@ impl Arena {
             enemy_spawns,
             route,
             covers: positions(&markers.covers),
+            controls: Vec::new(),
         })
     }
 
@@ -976,6 +995,142 @@ mod tests {
         let arena = build(&level).expect("nothing walks the route");
 
         assert_eq!(arena.route, [ON_ISLAND]);
+    }
+
+    /// A `control_NN` marker at `position`, naming `action` when given.
+    fn control_marker(name: &str, position: Vec3, action: Option<&str>) -> LevelMarker {
+        let mut control = marker(name, position);
+        if let Some(action) = action {
+            control
+                .properties
+                .insert("action".to_owned(), action.to_owned());
+        }
+        control
+    }
+
+    /// Reads markers then builds, as a load does, so either step's refusal shows.
+    fn load_level(level: &Level) -> Result<Arena, ArenaError> {
+        let markers = ArenaMarkers::from_level(level)?;
+        Arena::from_level(level, &markers)
+    }
+
+    #[test]
+    fn a_control_naming_an_unknown_action_is_refused() {
+        let mut level = island_level(&[("waypoint_01", ON_FLOOR)]);
+        level.markers.push(control_marker(
+            "control_01",
+            Vec3::new(2.0, 0.0, 2.0),
+            Some("self_destruct"),
+        ));
+
+        let Err(error) = load_level(&level) else {
+            panic!("an unknown action is refused");
+        };
+
+        assert!(
+            matches!(&error, ArenaError::BadControl { marker } if marker == "control_01"),
+            "{error:?}"
+        );
+        assert!(error.to_string().contains("control_01"), "{error}");
+    }
+
+    #[test]
+    fn a_control_with_no_action_is_refused() {
+        let mut level = island_level(&[("waypoint_01", ON_FLOOR)]);
+        level.markers.push(control_marker(
+            "control_01",
+            Vec3::new(2.0, 0.0, 2.0),
+            Some("next_wave"),
+        ));
+        level
+            .markers
+            .push(control_marker("control_02", Vec3::new(3.0, 0.0, 2.0), None));
+
+        let Err(error) = load_level(&level) else {
+            panic!("a missing action is refused");
+        };
+
+        assert!(
+            matches!(&error, ArenaError::BadControl { marker } if marker == "control_02"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_control_marker_gives_a_collider_tagged_with_its_index() {
+        let mut level = island_level(&[("waypoint_01", ON_FLOOR)]);
+        level.markers.push(control_marker(
+            "control_01",
+            Vec3::new(-2.0, 0.0, 2.0),
+            Some("next_wave"),
+        ));
+        level.markers.push(control_marker(
+            "control_02",
+            Vec3::new(2.0, 0.0, 2.0),
+            Some("next_wave"),
+        ));
+        let arena = load_level(&level).expect("two valid controls load");
+
+        let world = arena.physics_world();
+        let aim_at = |x: f32| {
+            world.cast_ray(&RayQuery {
+                origin: Vec3::new(x, 0.6, 0.0),
+                direction: Vec3::Z,
+                max_distance: 5.0,
+                ignore: None,
+            })
+        };
+        let first = aim_at(-2.0).expect("the first post stops the ray");
+        let second = aim_at(2.0).expect("the second post stops the ray");
+
+        assert_eq!(arena.controls.len(), 2);
+        assert!(
+            arena
+                .controls
+                .iter()
+                .all(|c| c.action == ControlAction::NextWave)
+        );
+        assert_eq!(SurfaceTag::try_from(first.tag), Ok(SurfaceTag::Control(0)));
+        assert_eq!(SurfaceTag::try_from(second.tag), Ok(SurfaceTag::Control(1)));
+        assert!((first.distance - 1.8).abs() < 1e-3, "{first:?}");
+    }
+
+    #[test]
+    fn a_control_post_is_forty_centimetres_square_and_one_point_two_tall() {
+        let mut level = island_level(&[("waypoint_01", ON_FLOOR)]);
+        level.markers.push(control_marker(
+            "control_01",
+            Vec3::new(2.0, 0.0, 2.0),
+            Some("next_wave"),
+        ));
+        let arena = load_level(&level).expect("a valid control loads");
+
+        let world = arena.physics_world();
+        let ray = |origin: Vec3, direction: Vec3| {
+            world.cast_ray(&RayQuery {
+                origin,
+                direction,
+                max_distance: 5.0,
+                ignore: None,
+            })
+        };
+        let side = ray(Vec3::new(2.0, 0.6, 0.0), Vec3::Z).expect("the post's side");
+        let over_the_top = ray(Vec3::new(2.0, 1.3, 0.0), Vec3::Z);
+        let past_the_edge = ray(Vec3::new(2.25, 0.6, 0.0), Vec3::Z);
+
+        assert!((side.distance - 1.8).abs() < 1e-3, "{side:?}");
+        assert!(over_the_top.is_none(), "{over_the_top:?}");
+        assert!(past_the_edge.is_none(), "{past_the_edge:?}");
+    }
+
+    #[test]
+    fn the_shipped_arena_has_a_next_wave_control() {
+        let (level, markers) = load(&shipped_arena()).expect("the shipped arena loads");
+
+        let arena = Arena::from_level(&level, &markers).expect("the shipped arena builds");
+
+        assert_eq!(arena.controls.len(), 1, "one control in the shipped arena");
+        assert_eq!(arena.controls[0].action, ControlAction::NextWave);
     }
 
     /// Collects what `tracing` writes while `run` executes.

@@ -9,18 +9,19 @@ use moho_input::Action;
 use moho_input::action_map::ActionMap;
 use moho_input::bindings::Input;
 use moho_level::{LevelMarker, NavMesh};
-use moho_physics::{MoveSettings, PhysicsWorld};
+use moho_physics::{CharacterCommand, MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::{
     BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId, LeanTuning, Loadout, Magazine,
     MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
 };
 
-use crate::arena::{Arena, nav_profile};
+use crate::arena::{Arena, ArenaControl, nav_profile};
 use crate::brain::EnemyTuning;
-use crate::input::SearchlightAction;
+use crate::control::ControlAction;
+use crate::input::{SearchlightAction, SearchlightCommand};
 use crate::mode::ArenaMode;
-use crate::sim::SimConfig;
+use crate::sim::{SearchlightSim, SimConfig};
 use crate::tag::SurfaceTag;
 use crate::tuning::SHIPPED_BODY;
 use crate::wave::WaveTuning;
@@ -241,7 +242,68 @@ pub(crate) fn arena_with(
         enemy_spawns: enemies.to_vec(),
         route: route.to_vec(),
         covers: Vec::new(),
+        controls: Vec::new(),
     })
+}
+
+/// [`arena_with`] plus one control per `(action, floor point)` pair, each a 0.4 x 1.2 x 0.4 m
+/// post standing on its point.
+pub(crate) fn arena_with_controls(
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+    controls: &[(ControlAction, Vec3)],
+) -> Arc<Arena> {
+    let mut arena = Arc::unwrap_or_clone(arena_with(boxes, player, enemies, route));
+    arena.controls = controls
+        .iter()
+        .map(|&(action, at)| ArenaControl {
+            action,
+            mesh: box_mesh(
+                at + Vec3::new(-0.2, 0.0, -0.2),
+                at + Vec3::new(0.2, 1.2, 0.2),
+            ),
+        })
+        .collect();
+    Arc::new(arena)
+}
+
+/// The command that turns the player's view from where it points now to `point`.
+pub(crate) fn look_toward(sim: &SearchlightSim, point: Vec3) -> SearchlightCommand {
+    let state = sim.player();
+    let offset = point - sim.player_eye();
+    let yaw = offset.x.atan2(offset.z);
+    let pitch = offset.y.atan2(offset.x.hypot(offset.z));
+    SearchlightCommand {
+        movement: CharacterCommand {
+            yaw_delta: yaw - state.yaw,
+            pitch_delta: pitch - state.pitch,
+            ..CharacterCommand::default()
+        },
+        ..SearchlightCommand::default()
+    }
+}
+
+/// A control post standing 1.5 m in front of a player at the origin, within reach.
+pub(crate) const NEAR_POST: Vec3 = Vec3::new(0.0, 0.0, 1.5);
+
+/// The middle of the post standing on `floor_point`: where a player looks to look at it.
+pub(crate) fn post_centre(floor_point: Vec3) -> Vec3 {
+    floor_point + Vec3::Y * 0.6
+}
+
+/// A sim over a walled-in floor with the player at the origin and one next-wave post on
+/// `post`, behind `boxes` of extra world.
+pub(crate) fn sim_with_post(post: Vec3, boxes: &[(Vec3, Vec3)]) -> SearchlightSim {
+    let arena = arena_with_controls(
+        boxes,
+        Vec3::ZERO,
+        &[],
+        &[],
+        &[(ControlAction::NextWave, post)],
+    );
+    SearchlightSim::start(arena, test_config(rifle_from(mag(30, 30)), vec![]))
 }
 
 /// Waves of experienced enemies that open with `first_size` enemies, grow by one and score 100

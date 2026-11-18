@@ -28,6 +28,9 @@ use crate::tuning::SHIPPED_BODY;
 /// off a wall.
 const LEAN_CLEARANCE: f32 = 0.15;
 
+/// How far from the eye, in metres, the player can use a control.
+pub const USE_REACH: f32 = 2.0;
+
 /// Height of the shipped body's capsule centre above its feet, in metres: half its hull. For
 /// code with no [`SimConfig`] at hand; the sim itself spawns the configured body.
 pub const STAND_HEIGHT: f32 = SHIPPED_BODY.standing.hull.length / 2.0;
@@ -856,6 +859,13 @@ impl SearchlightSim {
         state.eye_position() + lean_offset(state.yaw, self.lean.shift(&self.lean_tuning))
     }
 
+    /// The control the player is looking at within [`USE_REACH`], if any: one ray from the
+    /// leaned eye along the view, stopped by anything in front of the control. `None` while
+    /// the player is dead.
+    pub fn control_in_reach(&self) -> Option<u16> {
+        None
+    }
+
     /// How far the player leans after the last tick.
     pub fn player_lean(&self) -> Lean {
         self.lean
@@ -1071,7 +1081,9 @@ mod tests {
     fn part_of(volume: &HitVolume) -> BodyPart {
         match SurfaceTag::try_from(volume.tag).expect("a body volume carries a body tag") {
             SurfaceTag::Part { part, .. } | SurfaceTag::Player(part) => part,
-            other @ SurfaceTag::World => panic!("not a body part: {other:?}"),
+            other @ (SurfaceTag::World | SurfaceTag::Control(_)) => {
+                panic!("not a body part: {other:?}")
+            }
         }
     }
 
@@ -5331,5 +5343,94 @@ mod grade_tests {
             "a 5 m radius did not count a shot 4 m wide"
         );
         assert_eq!(ignored_at, None, "a 0.5 m radius counted a shot 1 m wide");
+    }
+}
+
+#[cfg(test)]
+mod control_tests {
+    use super::*;
+    use crate::test_support::{DT, NEAR_POST, look_toward, post_centre, sim_with_post};
+
+    fn look_at_post(sim: &mut SearchlightSim, post: Vec3) {
+        let look = look_toward(sim, post_centre(post));
+        sim.tick(&look, DT);
+    }
+
+    #[test]
+    fn a_control_in_view_and_reach_is_found() {
+        let mut sim = sim_with_post(NEAR_POST, &[]);
+
+        look_at_post(&mut sim, NEAR_POST);
+
+        assert_eq!(sim.control_in_reach(), Some(0));
+    }
+
+    #[test]
+    fn a_control_out_of_view_is_not_found() {
+        let mut sim = sim_with_post(NEAR_POST, &[]);
+        look_at_post(&mut sim, NEAR_POST);
+        let looking = sim.control_in_reach();
+
+        let away = look_toward(&sim, Vec3::new(0.0, 0.6, -1.5));
+        sim.tick(&away, DT);
+
+        assert_eq!(looking, Some(0));
+        assert_eq!(sim.control_in_reach(), None);
+    }
+
+    #[test]
+    fn a_control_beyond_reach_is_not_found() {
+        let far = Vec3::new(0.0, 0.0, 3.0);
+        let mut near_sim = sim_with_post(NEAR_POST, &[]);
+        let mut far_sim = sim_with_post(far, &[]);
+
+        look_at_post(&mut near_sim, NEAR_POST);
+        look_at_post(&mut far_sim, far);
+
+        assert_eq!(near_sim.control_in_reach(), Some(0));
+        assert_eq!(far_sim.control_in_reach(), None);
+    }
+
+    #[test]
+    fn a_control_behind_a_wall_is_not_found() {
+        let wall = (Vec3::new(-2.0, 0.0, 0.8), Vec3::new(2.0, 3.0, 1.0));
+        let mut open = sim_with_post(NEAR_POST, &[]);
+        let mut walled = sim_with_post(NEAR_POST, &[wall]);
+
+        look_at_post(&mut open, NEAR_POST);
+        look_at_post(&mut walled, NEAR_POST);
+
+        assert_eq!(open.control_in_reach(), Some(0));
+        assert_eq!(walled.control_in_reach(), None);
+    }
+
+    #[test]
+    fn a_dead_player_finds_no_control() {
+        let mut sim = sim_with_post(NEAR_POST, &[]);
+        look_at_post(&mut sim, NEAR_POST);
+        let alive = sim.control_in_reach();
+
+        sim.kill_player();
+
+        assert_eq!(alive, Some(0));
+        assert_eq!(sim.control_in_reach(), None);
+    }
+
+    #[test]
+    fn a_shot_at_a_control_damages_nothing() {
+        let mut sim = sim_with_post(NEAR_POST, &[]);
+        look_at_post(&mut sim, NEAR_POST);
+        sim.drain_feedback();
+        let fire = SearchlightCommand {
+            fire: true,
+            ..SearchlightCommand::default()
+        };
+
+        sim.tick(&fire, DT);
+
+        assert_eq!(sim.drain_feedback(), [Feedback::Fired]);
+        assert_eq!(sim.kills(), 0);
+        assert!(!sim.player_body().is_dead());
+        assert_eq!(sim.control_in_reach(), Some(0));
     }
 }

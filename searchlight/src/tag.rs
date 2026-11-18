@@ -12,6 +12,8 @@ pub enum SurfaceTag {
     Part { target: u16, part: BodyPart },
     /// One body part of the player.
     Player(BodyPart),
+    /// The placed control with this index: stops a ray, damages nothing.
+    Control(u16),
 }
 
 /// The engine tag does not encode any [`SurfaceTag`].
@@ -52,6 +54,7 @@ impl From<SurfaceTag> for HitTag {
         match tag {
             SurfaceTag::World => HitTag(WORLD),
             SurfaceTag::Player(part) => HitTag(PLAYER_BASE + part_index(part)),
+            SurfaceTag::Control(_) => HitTag(WORLD),
             SurfaceTag::Part { target, part } => {
                 HitTag(PART_BASE + ((u32::from(target) << PART_BITS) | part_index(part)))
             }
@@ -108,6 +111,7 @@ mod tests {
         prop_oneof![
             surface_tags(),
             proptest::sample::select(PARTS.to_vec()).prop_map(SurfaceTag::Player),
+            any::<u16>().prop_map(SurfaceTag::Control),
         ]
     }
 
@@ -122,7 +126,10 @@ mod tests {
         }
 
         #[test]
-        fn distinct_surface_tags_get_distinct_engine_tags(a in surface_tags(), b in surface_tags()) {
+        fn distinct_surface_tags_get_distinct_engine_tags(
+            a in surface_tags_with_player(),
+            b in surface_tags_with_player(),
+        ) {
             prop_assume!(a != b);
 
             prop_assert_ne!(HitTag::from(a), HitTag::from(b));
@@ -138,6 +145,20 @@ mod tests {
             let player = HitTag::from(SurfaceTag::Player(part));
 
             prop_assert_ne!(player, HitTag::from(other));
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn control_tags_never_collide_with_player_target_or_world_tags(
+            index in any::<u16>(),
+            other in surface_tags_with_player(),
+        ) {
+            prop_assume!(!matches!(other, SurfaceTag::Control(_)));
+
+            let control = HitTag::from(SurfaceTag::Control(index));
+
+            prop_assert_ne!(control, HitTag::from(other));
         }
     }
 

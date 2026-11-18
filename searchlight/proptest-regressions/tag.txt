@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc 2ce7b161ea60c5d67e107c5f725426a0c2d0ab1709a97939a1e868fe79f9f197 # shrinks to a = World, b = Part { target: 0, part: Head }
 cc d20b2b806532bdc98d9eead0badaaa2ec0e8260a6b4a5f0738391aba82172408 # shrinks to tag = World
+cc 8db148b383b9dc6a5fd36981629bfe76026c325af8e694b0de9a4b169ef173a2 # shrinks to index = 0, other = World

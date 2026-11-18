@@ -1029,6 +1029,11 @@ impl SearchlightGame {
         routing
     }
 
+    /// The use prompt the last frame put on screen, if any.
+    pub fn use_prompt(&self) -> Option<String> {
+        None
+    }
+
     /// The window title's vitals line: health or death, the wave and score when the mode
     /// has them, and god mode.
     fn vitals_line(&self) -> String {
@@ -1204,9 +1209,12 @@ mod tests {
     use winit::event::{DeviceEvent, WindowEvent};
 
     use super::*;
+    use crate::arena::control_mesh_id;
+    use crate::control::ControlAction;
     use crate::sim::Feedback;
     use crate::test_support::{
-        WaveScore, arena_with, mag, press, rifle_from, test_config, wave_tuning,
+        NEAR_POST, WaveScore, arena_with, arena_with_controls, look_toward, mag, post_centre,
+        press, rifle_from, test_config, wave_tuning,
     };
     use searchlight_rules::{Grade, LeanSide};
 
@@ -1228,6 +1236,95 @@ mod tests {
 
         assert_eq!(waves.vitals_line(), "HP 100/100 | Wave 1  Score 0");
         assert_eq!(sandbox_line, "HP 100/100");
+    }
+
+    /// A game whose player stands 1.5 m from a next-wave post.
+    fn game_with_a_button() -> SearchlightGame {
+        let arena = arena_with_controls(
+            &[],
+            Vec3::ZERO,
+            &[],
+            &[],
+            &[(ControlAction::NextWave, NEAR_POST)],
+        );
+        let mode = ArenaMode::new(
+            arena,
+            test_config(rifle_from(mag(30, 5)), vec![]),
+            wave_tuning(1),
+        );
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
+    }
+
+    /// Turns the player to `point` on one tick, then draws a frame.
+    fn look_and_draw(game: &mut SearchlightGame, point: Vec3) {
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let look = look_toward(game.sim(), point);
+        tick_with(game, &mut clock, &look);
+        let ctx_clock = GameClock::default();
+        let mut ctx = FrameContext::new(TICK, &ctx_clock, None, None);
+        game.frame(&mut ctx, 1.0);
+    }
+
+    #[test]
+    fn the_prompt_shows_while_the_button_is_in_reach() {
+        let mut game = game_with_a_button();
+
+        look_and_draw(&mut game, post_centre(NEAR_POST));
+
+        assert_eq!(game.use_prompt().as_deref(), Some("[F] Next wave"));
+    }
+
+    #[test]
+    fn no_prompt_when_looking_away() {
+        let mut game = game_with_a_button();
+        look_and_draw(&mut game, post_centre(NEAR_POST));
+        let looking = game.use_prompt();
+
+        look_and_draw(&mut game, Vec3::new(0.0, 0.6, -1.5));
+
+        assert_eq!(looking.as_deref(), Some("[F] Next wave"));
+        assert_eq!(game.use_prompt(), None);
+    }
+
+    #[test]
+    fn no_prompt_while_dead_or_paused() {
+        let mut dead = game_with_a_button();
+        look_and_draw(&mut dead, post_centre(NEAR_POST));
+        let alive = dead.use_prompt();
+        let mut paused = game_with_a_button();
+        look_and_draw(&mut paused, post_centre(NEAR_POST));
+
+        dead.mode.sim_mut().kill_player();
+        paused.pause();
+        let ctx_clock = GameClock::default();
+        for game in [&mut dead, &mut paused] {
+            let mut ctx = FrameContext::new(TICK, &ctx_clock, None, None);
+            game.frame(&mut ctx, 1.0);
+        }
+
+        assert_eq!(alive.as_deref(), Some("[F] Next wave"));
+        assert_eq!(dead.use_prompt(), None);
+        assert_eq!(paused.use_prompt(), None);
+    }
+
+    #[test]
+    fn control_mesh_ids_share_no_id_with_arena_dummy_or_enemy_meshes() {
+        let enemy_end = ENEMY_MESH_BASE + u64::from(u16::MAX) * ENEMY_MESH_SLOTS + ENEMY_MESH_SLOTS;
+
+        let ids: Vec<u64> = (0..8).map(|index| control_mesh_id(index).0).collect();
+
+        for id in &ids {
+            assert!(
+                *id >= enemy_end,
+                "control mesh id {id} is inside the arena, dummy or enemy ranges"
+            );
+        }
+        let mut distinct = ids.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), ids.len());
+        assert_eq!(ids[0], 3 << 32);
     }
 
     fn game() -> SearchlightGame {
