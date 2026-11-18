@@ -7,7 +7,8 @@ name: Orchestrate eval
 # each entry's reference commit is the merged result, kept for comparison.
 #
 # Per replay the job log carries one `EVAL-RECORD {json}` line: outcome, gate, held-out
-# tests, commits, turns, wall time and tokens per model (scripts/review-usage.sh record).
+# tests, commits, mandatory steps the orchestrator never called (devflow's step-check),
+# turns, wall time and tokens per model (scripts/review-usage.sh record).
 # With review on, the replay's range is dispatched to pr-review.yml as a dry run, whose
 # log carries the verdict. Delete eval/ branches once a set is scored.
 on:
@@ -64,7 +65,8 @@ jobs:
     name: ${{ matrix.card.id }} r${{ matrix.card.run }}
     needs: plan
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    # About 120 minutes for the agent after setup; domain replays hit 75 in the baseline.
+    timeout-minutes: 135
     strategy:
       fail-fast: false
       max-parallel: 4
@@ -179,13 +181,24 @@ jobs:
                 -f dry_run_range="$BASE_SHA..$head" -f dry_run_issue="$ISSUE"
             fi
           fi
-          usage='{}'
-          [ -f "$EXECUTION_FILE" ] && usage=$(STEP=orchestrate-eval HEAD_SHA="$head" "$RUNNER_TEMP/review-usage.sh" record "$EXECUTION_FILE")
+          usage='{}' steps='null'
+          if [ -f "$EXECUTION_FILE" ]; then
+            usage=$(STEP=orchestrate-eval HEAD_SHA="$head" "$RUNNER_TEMP/review-usage.sh" record "$EXECUTION_FILE")
+            # The plugin's own copy, so the score matches the Stop hook the run had.
+            step_check=$(find "$HOME/.claude/plugins" -path '*devflow*/scripts/step-check' -type f 2>/dev/null | head -n1)
+            if [ -n "$step_check" ]; then
+              steps=$(git show "$GITHUB_SHA:CLAUDE.md" > "$RUNNER_TEMP/CLAUDE.md" \
+                && bash "$step_check" --claude-md "$RUNNER_TEMP/CLAUDE.md" "$EXECUTION_FILE" || true)
+              jq -e . >/dev/null 2>&1 <<<"$steps" || steps='null'
+            fi
+          fi
           record=$(jq -c --arg label "$LABEL" --arg id "$ID" --argjson issue "$ISSUE" --arg gate_class "$GATE_CLASS" \
             --argjson run "$RUN_NO" --arg branch "$BRANCH" --arg head "$head" --argjson commits "$commits" \
-            --arg gate "$gate" --arg heldout "$heldout" \
+            --arg gate "$gate" --arg heldout "$heldout" --argjson steps "$steps" \
             '{label: $label, id: $id, issue: $issue, gate_class: $gate_class, run: $run, branch: $branch,
-              head: $head, commits: $commits, gate: $gate, heldout: $heldout} + {usage: .}' <<<"$usage")
+              head: $head, commits: $commits, gate: $gate, heldout: $heldout,
+              steps_missing: ($steps | if . == null then null else .missing end),
+              paused: ($steps | if . == null then null else .paused end)} + {usage: .}' <<<"$usage")
           echo "EVAL-RECORD $record"
           {
             echo "### $ID r$RUN_NO ($LABEL)"
