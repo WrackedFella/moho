@@ -180,8 +180,7 @@ impl Effects {
     /// Start a streak. At the quality's cap the handle is inert: never stored, so placing
     /// or ending it does nothing.
     pub fn begin_streak(&mut self, style: StreakStyle) -> EffectHandle {
-        let handle = EffectHandle(self.next_handle);
-        self.next_handle += 1;
+        let handle = self.issue_handle();
         if self.store.len() < self.cap {
             self.store.insert(
                 handle,
@@ -238,9 +237,14 @@ impl Effects {
         if !self.evict_for_one() {
             return;
         }
+        let handle = self.issue_handle();
+        self.store.insert(handle, effect);
+    }
+
+    fn issue_handle(&mut self) -> EffectHandle {
         let handle = EffectHandle(self.next_handle);
         self.next_handle += 1;
-        self.store.insert(handle, effect);
+        handle
     }
 
     /// Make room for one more effect by dropping the oldest flashes and marks. If that
@@ -356,7 +360,8 @@ enum EffectMesh {
 }
 
 impl EffectMesh {
-    const COUNT: usize = 3;
+    const ALL: [Self; 3] = [Self::Streak, Self::Flash, Self::Mark];
+    const COUNT: usize = Self::ALL.len();
 
     fn index(self) -> usize {
         self as usize
@@ -439,14 +444,19 @@ fn mark_mesh() -> WorldMesh {
     )
 }
 
-/// The right-handed X and Y spanning the plane normal to the unit `z`, turned by `roll`
-/// about it.
-fn rolled_plane(z: Vec3, roll: f32) -> (Vec3, Vec3) {
+/// A square of `size` centred on `centre`, facing along the unit `z` and turned by `roll`
+/// about it, with a right-handed X and Y.
+fn rolled_square(z: Vec3, roll: f32, size: f32, centre: Vec3) -> Affine3A {
     let x = z.any_orthonormal_vector();
     let y = z.cross(x);
     let (sin, cos) = roll.sin_cos();
     let rolled_x = x * cos + y * sin;
-    (rolled_x, z.cross(rolled_x))
+    Affine3A::from_cols(
+        (rolled_x * size).into(),
+        (z.cross(rolled_x) * size).into(),
+        z.into(),
+        centre.into(),
+    )
 }
 
 /// Where a flash is drawn: its plane faces `eye`, falling back to +Z when the eye sits on it.
@@ -460,45 +470,35 @@ fn flash_transform(flash: &Flash, eye: Vec3) -> Option<Affine3A> {
     } else {
         to_eye.normalize()
     };
-    let (x, y) = rolled_plane(z, flash.roll);
-    let size = flash.style.size * flash.scale();
-    Some(Affine3A::from_cols(
-        (x * size).into(),
-        (y * size).into(),
-        z.into(),
-        flash.at.into(),
+    Some(rolled_square(
+        z,
+        flash.roll,
+        flash.style.size * flash.scale(),
+        flash.at,
     ))
 }
 
 /// Where a mark is drawn: lying along its normal, lifted off the surface by `MARK_OFFSET`.
 fn mark_transform(mark: &Mark) -> Affine3A {
-    let (x, y) = rolled_plane(mark.normal, mark.roll);
-    let size = mark.style.size * mark.scale();
-    Affine3A::from_cols(
-        (x * size).into(),
-        (y * size).into(),
-        mark.normal.into(),
-        (mark.at + mark.normal * MARK_OFFSET).into(),
+    rolled_square(
+        mark.normal,
+        mark.roll,
+        mark.style.size * mark.scale(),
+        mark.at + mark.normal * MARK_OFFSET,
     )
 }
 
 /// A kite from the tail at the origin to the head at x = 1, counter-clockwise seen from +Z.
 fn streak_mesh() -> WorldMesh {
-    WorldMesh::new(
+    flat_mesh(
         vec![
             [0.0, 0.0, 0.0],
             [0.8, -0.5, 0.0],
             [1.0, 0.0, 0.0],
             [0.8, 0.5, 0.0],
         ],
-        vec![[0.0, 0.0, 1.0]; 4],
-        vec![1.0; 4],
-        vec![[1.0; 3]; 4],
-        vec![1.0; 4],
-        vec![0; 4],
         vec![0, 1, 2, 0, 2, 3],
     )
-    .expect("the kite's channels are all four vertices long and its indices are in range")
 }
 
 /// Where a streak from `head - dir * length` to `head` is drawn so that it faces `eye`.
