@@ -3049,6 +3049,36 @@ mod tests {
         }
 
         #[test]
+        fn a_click_that_selects_nothing_is_silent() {
+            let count = |app: &App, audio: &Receiver<AudioEvent>| {
+                cues(app, audio)
+                    .iter()
+                    .filter(|cue| matches!(cue, AudioEvent::ButtonClick))
+                    .count()
+            };
+            let mut selecting = strategy_app();
+            let selecting_audio = record_audio(&selecting);
+            click_the_pawn(&mut selecting);
+            step(&mut selecting);
+            let mut empty = strategy_app();
+            let audio = record_audio(&empty);
+            click_the_ground(&mut empty);
+
+            step(&mut empty);
+
+            assert_eq!(
+                count(&selecting, &selecting_audio),
+                1,
+                "a selecting click is audible"
+            );
+            assert_eq!(
+                count(&empty, &audio),
+                0,
+                "a click on empty ground is silent"
+            );
+        }
+
+        #[test]
         fn selecting_publishes_the_placeholder_cue() {
             let mut app = strategy_app();
             let audio = record_audio(&app);

@@ -173,7 +173,8 @@ mod tests {
         let pawns = [(PLAYER_PAWN, unit_box_at(Vec3::ZERO))];
         let toward = ray(Vec3::new(0.0, 0.0, -10.0), Vec3::Z);
 
-        let picked = pick_pawn(toward, pawns, Some(15.0));
+        // Entry at 9, exit at 11: terrain between them is still behind the entry.
+        let picked = pick_pawn(toward, pawns, Some(9.5));
 
         assert_eq!(picked, Some(PLAYER_PAWN));
     }
