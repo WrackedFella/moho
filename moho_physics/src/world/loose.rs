@@ -64,7 +64,6 @@ pub(super) const DEFAULT_REST_SLOPE: f32 = 5.0 * std::f32::consts::PI / 180.0;
 /// Contact depth, m, beyond which a body is being pushed apart and must not be braked.
 const DEEP_CONTACT: f32 = 0.005;
 
-/// A loose object's engine handle and the radius it rolls on (`None` for a box).
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Loose {
     pub(super) body: RigidBodyHandle,
@@ -304,7 +303,7 @@ impl PhysicsWorld {
         self.rest_slope = slope;
     }
 
-    /// The rest slope in radians.
+    /// The rest slope, radians.
     pub fn rest_slope(&self) -> f32 {
         self.rest_slope
     }
@@ -1401,6 +1400,32 @@ mod tests {
             linear_velocity: Vec3::new(0.0, 0.0, 0.3),
             angular_velocity: Vec3::new(0.3 / CAPSULE_RADIUS, 0.0, 0.0),
             ..LooseSpawn::new(capsule(), 0.2)
+        });
+
+        run(&mut world, 600);
+
+        let state = read(&world, capsule_id);
+        assert!(state.asleep, "the capsule is awake, {state:?}");
+        assert!(
+            (state.position.y - (0.1 + CAPSULE_RADIUS)).abs() <= 0.002
+                && state.position.xz().abs().max_element() < 0.5,
+            "the capsule left the box top, {state:?}"
+        );
+    }
+
+    #[test]
+    fn a_capsule_spawned_before_the_box_it_rolls_on_is_braked_and_stays_on_it() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let capsule_id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.1 + CAPSULE_RADIUS, 0.0),
+            rotation: lying_along_x(),
+            linear_velocity: Vec3::new(0.0, 0.0, 0.3),
+            angular_velocity: Vec3::new(0.3 / CAPSULE_RADIUS, 0.0, 0.0),
+            ..LooseSpawn::new(capsule(), 0.2)
+        });
+        world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.05, 0.0),
+            ..LooseSpawn::new(cuboid(Vec3::new(0.5, 0.05, 0.5)), 50.0)
         });
 
         run(&mut world, 600);
