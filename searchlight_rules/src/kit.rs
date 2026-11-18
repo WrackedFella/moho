@@ -172,10 +172,10 @@ impl KitDef {
         }
         let mut rounds = BTreeMap::new();
         for entry in std::iter::once(&self.loaded).chain(&self.magazines) {
-            // `build` already proved each round id names a round.
-            if let ItemKind::Round(round) = &find(&entry.round)?.kind {
-                rounds.insert(entry.round.clone(), round.ballistics());
-            }
+            let ItemKind::Round(round) = &find(&entry.round)?.kind else {
+                return Err(wrong(&entry.round, "round"));
+            };
+            rounds.insert(entry.round.clone(), round.ballistics());
         }
         Ok(Kit {
             weapon: weapon.clone(),
