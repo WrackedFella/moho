@@ -9,11 +9,13 @@ use flagstone_game::controller::{
     CameraMode, ControllerInput, EDGE_PAN_MARGIN_PX, controller_to_camera, edge_pan_axes,
 };
 use flagstone_game::raycast::raycast_surface;
+use flagstone_game::selection::{PAWN_HALF_EXTENTS, PLAYER_PAWN, pawn_aabb, pick_pawn};
 use flagstone_ui::actions::StrategyAction;
 use flagstone_ui::console_commands::StrategyConsoleCommand;
 use moho_core::pointer::{Ray, screen_ray};
 use moho_input::action_map;
 use moho_input::bindings::Input;
+use moho_render_api::{Marker, MarkerStyle};
 use moho_ui_shell::host::input_of;
 use moho_ui_shell::{EngineCommand, Routing};
 use winit::event::{ElementState, KeyEvent, WindowEvent};
@@ -28,6 +30,8 @@ const MARK_VOLUME: f32 = 0.6;
 
 /// The id the selection mark is drawn under, apart from the console's and the mining marks'.
 const SELECTION_MARKER_ID: moho_render_api::MarkerId = moho_render_api::MarkerId(u64::MAX);
+const SELECTION_COLOR: [f32; 4] = [1.0, 0.9, 0.2, 1.0];
+const PAWN_BODY_COLOR: glam::Vec3 = glam::Vec3::new(0.2, 0.5, 0.9);
 
 /// One tick's worth of player input.
 #[derive(Clone, Debug, Default)]
@@ -209,6 +213,13 @@ impl App {
                 POINTER_RAY_RANGE,
             );
             tracing::debug!(hit = ?self.pointer_hit, "Pointer ray cast");
+            let pawns = [(PLAYER_PAWN, pawn_aabb(self.simulation.position()))];
+            let picked = pick_pawn(ray, pawns, self.pointer_hit.map(|hit| hit.distance));
+            self.selection.click(picked);
+            if picked.is_some() {
+                self.event_bus
+                    .publish(moho_core::events::AudioEvent::ButtonClick);
+            }
         }
         if let Some(ray) = command.mark {
             self.apply_mark(ray);
@@ -245,8 +256,19 @@ impl App {
 
     /// Draws the selection mark over the selected pawn, or removes it.
     fn sync_selection_mark(&mut self) {
-        let _selected = self.selection.selected;
-        self.scene.markers_mut().remove(SELECTION_MARKER_ID);
+        let markers = self.scene.markers_mut();
+        if self.selection.selected.is_some()
+            && self.simulation.camera_mode() == CameraMode::Isometric
+        {
+            let aabb = pawn_aabb(self.simulation.position());
+            markers.upsert(
+                SELECTION_MARKER_ID,
+                Marker::new(aabb.min.to_array(), aabb.max.to_array(), SELECTION_COLOR)
+                    .with_style(MarkerStyle::Outline),
+            );
+        } else {
+            markers.remove(SELECTION_MARKER_ID);
+        }
     }
 
     /// Applies what the player asked for through the HUD this frame.
@@ -341,10 +363,22 @@ impl App {
         renderer: &mut dyn moho_renderer::RendererBackend,
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     ) {
+        let mut cubes = self.entities.actors.cubes().to_vec();
+        if self.simulation.camera_mode() == CameraMode::Isometric {
+            cubes.push(flagstone_game::actors::Cube::new(
+                self.simulation.position(),
+                PAWN_HALF_EXTENTS.x * 2.0,
+                PAWN_HALF_EXTENTS.z * 2.0,
+                PAWN_HALF_EXTENTS.y * 2.0,
+                flagstone_voxel::MaterialType::Lambertian {
+                    albedo: PAWN_BODY_COLOR,
+                },
+            ));
+        }
         if let Err(e) = self.scene.render(
             renderer,
             self.entities.actors.spheres(),
-            self.entities.actors.cubes(),
+            &cubes,
             self.mesh_handle,
             self.cube_mesh_handle,
             camera,

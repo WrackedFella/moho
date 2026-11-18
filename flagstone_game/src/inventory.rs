@@ -38,8 +38,10 @@ impl Inventory {
 
 /// The player-facing name of a resource.
 pub fn resource_name(resource_id: u32) -> String {
-    let _ = resource_id;
-    todo!()
+    match resource_id {
+        1 => "Iron ore".to_owned(),
+        other => format!("Resource {other}"),
+    }
 }
 
 #[cfg(test)]

@@ -22,14 +22,32 @@ pub struct Aabb {
 
 /// The box of a pawn whose capsule centre is `center`.
 pub fn pawn_aabb(center: Vec3) -> Aabb {
-    let _ = center;
-    todo!()
+    Aabb {
+        min: center - PAWN_HALF_EXTENTS,
+        max: center + PAWN_HALF_EXTENTS,
+    }
 }
 
 /// The distance along `ray` at which it enters `aabb`, `None` when it never does.
 pub fn ray_box_entry(ray: Ray, aabb: Aabb) -> Option<f32> {
-    let _ = (ray, aabb);
-    todo!()
+    let mut t_near = f32::NEG_INFINITY;
+    let mut t_far = f32::INFINITY;
+    for axis in 0..3 {
+        let origin = ray.origin[axis];
+        let direction = ray.direction[axis];
+        let (min, max) = (aabb.min[axis], aabb.max[axis]);
+        if direction == 0.0 {
+            if origin < min || origin > max {
+                return None;
+            }
+            continue;
+        }
+        let a = (min - origin) / direction;
+        let b = (max - origin) / direction;
+        t_near = t_near.max(a.min(b));
+        t_far = t_far.min(a.max(b));
+    }
+    (t_near <= t_far && t_far >= 0.0).then_some(t_near)
 }
 
 /// The nearest pawn whose box `ray` enters at a distance `t >= 0` and `t < terrain_distance`.
@@ -39,8 +57,12 @@ pub fn pick_pawn(
     pawns: impl IntoIterator<Item = (PawnId, Aabb)>,
     terrain_distance: Option<f32>,
 ) -> Option<PawnId> {
-    let _ = (ray, pawns.into_iter().count(), terrain_distance);
-    todo!()
+    pawns
+        .into_iter()
+        .filter_map(|(id, aabb)| ray_box_entry(ray, aabb).map(|t| (id, t.max(0.0))))
+        .filter(|&(_, t)| t < terrain_distance.unwrap_or(f32::INFINITY))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(id, _)| id)
 }
 
 /// The pawn the player has selected, if any.
@@ -52,8 +74,7 @@ pub struct Selection {
 impl Selection {
     /// Replaces the selection with what a click hit: select, re-select and clear in one call.
     pub fn click(&mut self, hit: Option<PawnId>) {
-        let _ = hit;
-        todo!()
+        self.selected = hit;
     }
 }
 
