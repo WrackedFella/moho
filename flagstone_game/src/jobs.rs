@@ -1,10 +1,14 @@
 //! A pawn's own work: the mine job loop and the steering that walks its route.
 
-use flagstone_voxel::{BlockPos, VoxelGrid};
-use glam::Vec3;
+use std::f32::consts::{PI, TAU};
 
+use flagstone_voxel::{BlockPos, VoxelGrid};
+use glam::{Vec3, Vec3Swizzles};
+
+use crate::TICK_HZ;
 use crate::colony::MineMarks;
-use crate::pawn::{Pawn, PawnId};
+use crate::pawn::{Pawn, PawnId, TOOL_SLOT};
+use crate::routing::{ROUTE_NODE_BUDGET, feet_cell, route, standable};
 
 /// Horizontal distance from a waypoint centre, in world units, at which a pawn counts as
 /// having reached it.
@@ -16,11 +20,41 @@ pub const STALL_TICKS: u32 = 120;
 /// Fastest turn, in radians per second: one full turn per second.
 pub const TURN_RATE: f32 = std::f32::consts::TAU;
 
+/// Half-angle, in radians, of the cone around its facing inside which a pawn walks
+/// instead of turning in place.
+const WALK_CONE: f32 = std::f32::consts::FRAC_PI_3;
+
+/// Route searches an idle pawn makes in one tick.
+const MAX_ROUTE_ATTEMPTS: usize = 4;
+
+const FACES: [BlockPos; 6] = [
+    BlockPos::X,
+    BlockPos::NEG_X,
+    BlockPos::Y,
+    BlockPos::NEG_Y,
+    BlockPos::Z,
+    BlockPos::NEG_Z,
+];
+
 /// Counts ticks a walking pawn has made no progress toward its waypoint.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct StallGuard {
     best_distance: Option<f32>,
     stalled_ticks: u32,
+}
+
+impl StallGuard {
+    /// Records this tick's distance to the waypoint; true once `STALL_TICKS` ticks in a
+    /// row have not got closer than the best so far.
+    fn stalled(&mut self, distance: f32) -> bool {
+        if self.best_distance.is_none_or(|best| distance < best) {
+            self.best_distance = Some(distance);
+            self.stalled_ticks = 0;
+        } else {
+            self.stalled_ticks += 1;
+        }
+        self.stalled_ticks >= STALL_TICKS
+    }
 }
 
 /// What a pawn is doing on its own.
@@ -74,19 +108,145 @@ pub struct WalkStep {
 /// mark and equips its tool; a mining pawn walks its route, then digs. `id` is the
 /// identity written on the claim.
 pub fn step(
-    _id: PawnId,
-    _pawn: &mut Pawn,
-    _pose: Pose,
-    _marks: &mut MineMarks,
-    _grid: &VoxelGrid,
+    id: PawnId,
+    pawn: &mut Pawn,
+    pose: Pose,
+    marks: &mut MineMarks,
+    grid: &VoxelGrid,
 ) -> JobAction {
-    todo!("step")
+    let (job, action) = match std::mem::take(&mut pawn.job) {
+        Job::Idle => match claim_nearest(id, pose, marks, grid) {
+            Some(job) => {
+                pawn.select_slot(TOOL_SLOT);
+                advance(job, pose, marks, grid)
+            }
+            None => (Job::Idle, JobAction::Wait),
+        },
+        job @ Job::Mine { .. } => advance(job, pose, marks, grid),
+    };
+    pawn.job = job;
+    action
+}
+
+/// Whether a block has a face open to air, so a pawn can aim at it.
+fn is_exposed(grid: &VoxelGrid, block: BlockPos) -> bool {
+    FACES.iter().any(|&face| !grid.is_solid_at(block + face))
+}
+
+/// Claims the nearest unclaimed mark with an exposed face that routes to a stand cell.
+fn claim_nearest(id: PawnId, pose: Pose, marks: &mut MineMarks, grid: &VoxelGrid) -> Option<Job> {
+    let from = feet_cell(pose.feet);
+    let mut candidates: Vec<BlockPos> = marks
+        .unclaimed()
+        .map(|[x, y, z]| BlockPos::new(x, y, z))
+        .filter(|&block| is_exposed(grid, block))
+        .collect();
+    candidates.sort_by_key(|&block| (block - from).length_squared());
+
+    for block in candidates.into_iter().take(MAX_ROUTE_ATTEMPTS) {
+        let is_stand_cell = |c: BlockPos| {
+            (c.x - block.x).abs() <= 1
+                && (c.z - block.z).abs() <= 1
+                && (-1..=2).contains(&(c.y - block.y))
+                && standable(grid, c)
+        };
+        let Some(route) = route(grid, from, is_stand_cell, block, ROUTE_NODE_BUDGET) else {
+            continue;
+        };
+        let mark = block.to_array();
+        if !marks.claim(mark, id) {
+            continue;
+        }
+        return Some(Job::Mine {
+            mark,
+            route,
+            next: 0,
+            stall: StallGuard::default(),
+        });
+    }
+    None
+}
+
+fn cell_centre(cell: BlockPos) -> Vec3 {
+    cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5)
+}
+
+/// Gives up the claim and goes idle, leaving the mark for another try.
+fn give_up(mark: [i32; 3], marks: &mut MineMarks) -> (Job, JobAction) {
+    marks.release(mark);
+    (Job::Idle, JobAction::Wait)
+}
+
+/// One tick of a mining job: walk the route, then dig.
+fn advance(job: Job, pose: Pose, marks: &mut MineMarks, grid: &VoxelGrid) -> (Job, JobAction) {
+    let Job::Mine {
+        mark,
+        route,
+        mut next,
+        mut stall,
+    } = job
+    else {
+        return (Job::Idle, JobAction::Wait);
+    };
+    if !marks.contains(mark) {
+        return give_up(mark, marks);
+    }
+
+    while route.get(next).is_some_and(|&waypoint| {
+        cell_centre(waypoint).xz().distance(pose.feet.xz()) <= ARRIVE_RADIUS
+    }) {
+        next += 1;
+    }
+
+    let Some(&waypoint) = route.get(next) else {
+        let block = BlockPos::from_array(mark);
+        let aim = FACES
+            .iter()
+            .filter(|&&face| !grid.is_solid_at(block + face))
+            .map(|&face| block.as_vec3() + Vec3::splat(0.5) + face.as_vec3() * 0.5)
+            .min_by(|a, b| {
+                a.distance_squared(pose.eye)
+                    .total_cmp(&b.distance_squared(pose.eye))
+            });
+        let Some(aim) = aim else {
+            return give_up(mark, marks);
+        };
+        marks.release(mark);
+        return (Job::Idle, JobAction::Dig { block, aim });
+    };
+
+    let to = cell_centre(waypoint);
+    if !standable(grid, waypoint) || stall.stalled(to.distance(pose.feet)) {
+        return give_up(mark, marks);
+    }
+    (
+        Job::Mine {
+            mark,
+            route,
+            next,
+            stall,
+        },
+        JobAction::Walk { to },
+    )
 }
 
 /// Turns toward `to` at no more than `TURN_RATE` per tick and walks at full speed once
 /// within 60 degrees of facing it, else turns in place.
-pub fn steer(_pose: Pose, _to: Vec3) -> WalkStep {
-    todo!("steer")
+pub fn steer(pose: Pose, to: Vec3) -> WalkStep {
+    let offset = to - pose.feet;
+    if offset.xz().length_squared() <= f32::EPSILON {
+        return WalkStep {
+            yaw_delta: 0.0,
+            forward: 0.0,
+        };
+    }
+    let bearing = offset.x.atan2(offset.z);
+    let diff = (bearing - pose.yaw + PI).rem_euclid(TAU) - PI;
+    let max_turn = TURN_RATE / TICK_HZ as f32;
+    WalkStep {
+        yaw_delta: diff.clamp(-max_turn, max_turn),
+        forward: if diff.abs() <= WALK_CONE { 1.0 } else { 0.0 },
+    }
 }
 
 #[cfg(test)]
