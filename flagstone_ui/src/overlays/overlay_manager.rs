@@ -88,6 +88,22 @@ pub struct HudData {
 
     /// Whether the mining designation is active, for the HUD control's state.
     pub mine_designation_active: bool,
+
+    /// The selected pawn's panel; `None` when nothing is selected. Primitive types only, for
+    /// the same reason as `hotbar`.
+    pub selection: Option<SelectionHud>,
+}
+
+/// What the selection panel shows about the selected pawn.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionHud {
+    pub title: String,
+
+    /// The equipped tool's label; `None` when no tool is equipped.
+    pub tool: Option<String>,
+
+    /// Carried resources as `(name, count)` pairs.
+    pub carried: Vec<(String, u32)>,
 }
 
 impl Default for HudData {
@@ -110,6 +126,7 @@ impl Default for HudData {
             view_height: None,
             pickups: Vec::new(),
             mine_designation_active: false,
+            selection: None,
         }
     }
 }

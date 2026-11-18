@@ -171,6 +171,8 @@ struct App {
     colony: flagstone_game::colony::Colony,
     /// The markers drawn for the colony's mining marks.
     designation_markers: app::designation_markers::DesignationMarkers,
+    /// The pawn the player has selected.
+    selection: flagstone_game::selection::Selection,
 }
 
 impl App {
@@ -311,6 +313,7 @@ impl App {
 
             colony: flagstone_game::colony::Colony::default(),
             designation_markers: app::designation_markers::DesignationMarkers::default(),
+            selection: flagstone_game::selection::Selection::default(),
         }
     }
 

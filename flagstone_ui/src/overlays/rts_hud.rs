@@ -440,6 +440,98 @@ mod tests {
         assert!(!drawn.contains(&"Strategy".to_string()), "{drawn:?}");
     }
 
+    const PANEL_TITLE: &str = "Pawn";
+
+    fn selected_data() -> HudData {
+        HudData {
+            selection: Some(crate::overlays::SelectionHud {
+                title: PANEL_TITLE.to_string(),
+                tool: Some("Pickaxe".to_string()),
+                carried: vec![("Iron ore".to_string(), 12)],
+            }),
+            ..strategy_data(TOP)
+        }
+    }
+
+    fn drawn_in(data: &HudData) -> Vec<String> {
+        let (_ctx, _hud, output) = settled(data);
+        texts(&output)
+    }
+
+    #[test]
+    fn selection_panel_lists_the_tool_and_carried_resources() {
+        let drawn = drawn_in(&selected_data());
+
+        assert!(drawn.contains(&PANEL_TITLE.to_string()), "{drawn:?}");
+        assert!(
+            drawn.iter().any(|text| text.contains("Pickaxe")),
+            "the equipped tool is listed: {drawn:?}"
+        );
+        assert!(
+            drawn
+                .iter()
+                .any(|text| text.contains("Iron ore") && text.contains("12")),
+            "the carried resource and its count are listed together: {drawn:?}"
+        );
+    }
+
+    #[test]
+    fn selection_panel_is_absent_without_a_selection() {
+        let selected = drawn_in(&selected_data());
+        let unselected = HudData {
+            selection: None,
+            ..selected_data()
+        };
+
+        let drawn = drawn_in(&unselected);
+
+        assert!(selected.contains(&PANEL_TITLE.to_string()), "{selected:?}");
+        assert!(!drawn.contains(&PANEL_TITLE.to_string()), "{drawn:?}");
+        assert!(
+            !drawn.iter().any(|text| text.contains("Pickaxe")),
+            "{drawn:?}"
+        );
+    }
+
+    #[test]
+    fn selection_panel_is_hidden_in_first_person() {
+        let strategy = drawn_in(&selected_data());
+        let first_person = HudData {
+            is_fps_mode: true,
+            ..selected_data()
+        };
+
+        let drawn = drawn_in(&first_person);
+
+        assert!(strategy.contains(&PANEL_TITLE.to_string()), "{strategy:?}");
+        assert!(!drawn.contains(&PANEL_TITLE.to_string()), "{drawn:?}");
+    }
+
+    #[test]
+    fn the_pointer_over_the_selection_panel_is_over_egui() {
+        let data = selected_data();
+        let (ctx, mut hud, output) = settled(&data);
+        let on_the_panel = rect_of(&output, PANEL_TITLE).center();
+        let open_world = egui::pos2(400.0, 300.0);
+
+        frame(
+            &ctx,
+            &mut hud,
+            &data,
+            vec![egui::Event::PointerMoved(open_world)],
+        );
+        let over_world = ctx.is_pointer_over_egui();
+        frame(
+            &ctx,
+            &mut hud,
+            &data,
+            vec![egui::Event::PointerMoved(on_the_panel)],
+        );
+
+        assert!(!over_world, "open ground is not over the HUD");
+        assert!(ctx.is_pointer_over_egui(), "the panel takes the pointer");
+    }
+
     #[test]
     fn render_time_of_day_shows_clock_in_top_right() {
         let ctx = egui::Context::default();

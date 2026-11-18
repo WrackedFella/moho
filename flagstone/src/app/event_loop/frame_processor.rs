@@ -422,6 +422,7 @@ impl FrameProcessor {
                 .map(|e| (e.resource_id, e.amount, e.life()))
                 .collect(),
             mine_designation_active: app.input.designation == Designation::Mine,
+            selection: None,
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {
@@ -982,6 +983,111 @@ mod tests {
                 "level {level}: the HUD data carries no slider"
             );
         }
+    }
+
+    /// The overlay frame `update_hud_data` produces for `app` in the strategy view, and the
+    /// frame painted from the same world's HUD data with `selection` in place of what the
+    /// app reports.
+    fn hud_frames_selecting(
+        app: &mut App,
+        selection: Option<flagstone_ui::overlays::SelectionHud>,
+    ) -> (moho_render_api::UiFrame, moho_render_api::UiFrame) {
+        use moho_render_api::UiFrameSource;
+        app.simulation
+            .set_camera_mode(flagstone_game::controller::CameraMode::Isometric);
+        let clock = moho_app::GameClock::default();
+        let adapter = std::sync::Arc::new(std::sync::Mutex::new(hud_adapter()));
+        app.ui_adapter = Some(std::sync::Arc::clone(&adapter));
+        FrameProcessor::new().update_hud_data(app, &clock, Duration::from_secs_f32(DT));
+        let produced = adapter
+            .lock()
+            .unwrap()
+            .ui_frame([800, 600])
+            .expect("playing paints");
+
+        let pos = app.simulation.position();
+        let cp = lod_player_chunk(pos);
+        let mut hotbar: Vec<(u32, u32)> = app.pawn.inventory.iter().collect();
+        hotbar.sort_unstable();
+        let mut reference = hud_adapter();
+        reference.update_hud_data(flagstone_ui::overlays::HudData {
+            player_position: [pos.x, pos.y, pos.z],
+            chunk_position: [cp.x, cp.y, cp.z],
+            camera_mode: "Isometric".to_string(),
+            is_fps_mode: false,
+            frame_time_secs: DT,
+            time_of_day: clock.time_of_day(),
+            camera_yaw: app.simulation.yaw_pitch().0,
+            hotbar,
+            equipped_tool_label: app.pawn.equipped_tool.map(|_| "Pickaxe".to_string()),
+            selection,
+            ..Default::default()
+        });
+        let expected = reference.ui_frame([800, 600]).expect("playing paints");
+        (produced, expected)
+    }
+
+    fn pawn_panel(
+        tool: Option<&str>,
+        carried: &[(&str, u32)],
+    ) -> flagstone_ui::overlays::SelectionHud {
+        flagstone_ui::overlays::SelectionHud {
+            title: "Pawn".to_string(),
+            tool: tool.map(str::to_string),
+            carried: carried
+                .iter()
+                .map(|&(name, count)| (name.to_string(), count))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn selection_panel_lists_the_tool_and_carried_resources() {
+        let mut app = App::headless();
+        app.pawn.inventory.add(1, 12);
+        app.selection.selected = Some(flagstone_game::selection::PLAYER_PAWN);
+        let panel = pawn_panel(Some("Pickaxe"), &[("Iron ore", 12)]);
+
+        let (produced, expected) = hud_frames_selecting(&mut app, Some(panel));
+        let (_, without_panel) = hud_frames_selecting(&mut app, None);
+
+        assert!(
+            produced == expected,
+            "the panel does not list the pickaxe and 12 iron ore"
+        );
+        assert!(produced != without_panel, "the HUD data carries no panel");
+    }
+
+    #[test]
+    fn selection_panel_omits_the_tool_when_unequipped() {
+        let mut app = App::headless();
+        app.pawn.inventory.add(1, 12);
+        app.pawn.equipped_tool = None;
+        app.selection.selected = Some(flagstone_game::selection::PLAYER_PAWN);
+        let panel = pawn_panel(None, &[("Iron ore", 12)]);
+
+        let (produced, expected) = hud_frames_selecting(&mut app, Some(panel));
+        let (_, with_tool) = hud_frames_selecting(
+            &mut app,
+            Some(pawn_panel(Some("Pickaxe"), &[("Iron ore", 12)])),
+        );
+
+        assert!(produced == expected, "the panel lists a tool, or no panel");
+        assert!(produced != with_tool, "the panel still lists the pickaxe");
+    }
+
+    #[test]
+    fn no_selection_means_no_panel() {
+        let mut app = App::headless();
+        app.pawn.inventory.add(1, 12);
+        app.selection.selected = Some(flagstone_game::selection::PLAYER_PAWN);
+        let (selected, without_panel) = hud_frames_selecting(&mut app, None);
+
+        app.selection.selected = None;
+        let (cleared, expected) = hud_frames_selecting(&mut app, None);
+
+        assert!(selected != without_panel, "a selected pawn has no panel");
+        assert!(cleared == expected, "a cleared selection still has a panel");
     }
 
     #[test]
