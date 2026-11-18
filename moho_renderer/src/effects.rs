@@ -187,7 +187,11 @@ impl Effects {
     /// shrinks linearly and is gone after its lifetime. Nothing is spawned for a zero
     /// lifetime or a non-finite input, nor when the cap leaves no room (see `evict_for`).
     pub fn flash(&mut self, at: Vec3, roll: f32, style: FlashStyle) {
-        if style.lifetime.is_zero() || !at.is_finite() || !roll.is_finite() {
+        if style.lifetime.is_zero()
+            || !at.is_finite()
+            || !roll.is_finite()
+            || !is_drawable_size(style.size)
+        {
             return;
         }
         self.spawn(Effect::Flash(Flash {
@@ -205,7 +209,11 @@ impl Effects {
         let Some(normal) = normal.try_normalize() else {
             return;
         };
-        if style.lifetime.is_zero() || !at.is_finite() || !roll.is_finite() {
+        if style.lifetime.is_zero()
+            || !at.is_finite()
+            || !roll.is_finite()
+            || !is_drawable_size(style.size)
+        {
             return;
         }
         self.spawn(Effect::Mark(Mark {
@@ -355,6 +363,11 @@ impl Effects {
             }
         }
     }
+}
+
+/// Whether a flash or mark of this size can be seen: finite and positive.
+fn is_drawable_size(size: f32) -> bool {
+    size.is_finite() && size > 0.0
 }
 
 /// Place `transform` on the effect mesh at `offset` into the reserved ids, uploading the
