@@ -43,22 +43,25 @@ deny:
     just() { "{{replace(just_executable(), '\', '/')}}" "$@"; }
     cargo deny check
     scripts/check-physics-features.sh
-    just _physics-features-rejects physics-features-no-rapier rapier3d
-    just _physics-features-rejects physics-features-no-parry parry3d
+    just _physics-features-rejects physics-features-no-rapier rapier3d parry3d
+    just _physics-features-rejects physics-features-no-parry parry3d rapier3d
+    just _physics-features-rejects physics-features-absent-rapier rapier3d parry3d
+    just _physics-features-rejects physics-features-two-parry parry3d rapier3d
     just _physics-features-accepts physics-features-ok
 
-# Fails unless the physics feature check exits non-zero on the fixture and names the crate.
+# Fails unless the physics feature check exits non-zero on the fixture, names the expected
+# crate and does not name the other one.
 [private]
-_physics-features-rejects fixture expected:
+_physics-features-rejects fixture expected not_expected:
     #!/usr/bin/env bash
     set -uo pipefail
     out=$(MOHO_PHYSICS_METADATA=scripts/fixtures/{{fixture}}.json scripts/check-physics-features.sh 2>&1)
     status=$?
-    if [ "$status" -ne 0 ] && grep -qF -- '{{expected}}' <<<"$out"; then
+    if [ "$status" -ne 0 ] && grep -qF -- '{{expected}}' <<<"$out" && ! grep -qF -- '{{not_expected}}' <<<"$out"; then
         exit 0
     fi
     echo "physics-features self-test failed: {{fixture}}" >&2
-    echo "  expected: non-zero exit and output naming: {{expected}}" >&2
+    echo "  expected: non-zero exit and output naming {{expected}} but not {{not_expected}}" >&2
     echo "  got: exit $status, output:" >&2
     sed 's/^/    /' <<<"$out" >&2
     exit 1
