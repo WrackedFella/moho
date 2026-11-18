@@ -42,7 +42,8 @@ pub struct Pawn {
     pub selected_slot: usize,
     /// Recent pickups, for the HUD's popups.
     pub pickups: PickupFeed,
-    /// What the pawn is doing on its own; `Job::Idle` while possessed.
+    /// What the pawn is doing on its own. Only the strategy-view job loop reads it; nothing
+    /// resets it on possession yet.
     pub job: Job,
 }
 

@@ -27,10 +27,17 @@ fn neighbours(grid: &VoxelGrid, cell: BlockPos) -> impl Iterator<Item = BlockPos
     let can_climb = !grid.is_solid_at(cell + BlockPos::Y * 3);
     HORIZONTAL.into_iter().filter_map(move |d| {
         let beside = cell + d;
+        // The capsule crosses the edge at the current feet height, so a step down also needs the
+        // cell two above `beside` clear.
+        let can_descend = !grid.is_solid_at(beside + BlockPos::Y * 2);
         [beside, beside + BlockPos::Y, beside - BlockPos::Y]
             .into_iter()
             .enumerate()
-            .find(|&(i, c)| (i != 1 || can_climb) && standable(grid, c))
+            .find(|&(i, c)| match i {
+                1 => can_climb && standable(grid, c),
+                2 => can_descend && standable(grid, c),
+                _ => standable(grid, c),
+            })
             .map(|(_, c)| c)
     })
 }
