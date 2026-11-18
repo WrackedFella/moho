@@ -742,3 +742,114 @@ fn run_ui(
     output.textures_delta.clear();
     output
 }
+
+const THUMB: Binding = Binding::pad(PadInput::Button(PadButton::LeftThumb));
+
+fn modifiers_frame(menu: &mut SettingsMenu, modifiers: egui::Modifiers) {
+    render_frame(menu, vec![egui::Event::ModifiersChanged(modifiers)]);
+}
+
+/// Row 0 (Move Forward) listens, then a lone Shift raises the conflict with Sprint.
+fn menu_with_shift_conflict() -> SettingsMenu {
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(0);
+    modifiers_frame(&mut menu, egui::Modifiers::SHIFT);
+    menu
+}
+
+fn modal_text(menu: &mut SettingsMenu) -> String {
+    use flagstone_ui::screens::Screen;
+
+    let mut modal = Screen::take_pending_modal(menu).expect("conflict should produce a modal");
+    let ctx = egui::Context::default();
+    let output = run_ui(&ctx, egui::RawInput::default(), |ui| {
+        modal.render(ui);
+    });
+    rendered_text(&output)
+}
+
+/// A conflicting key raises a prompt naming the key and the action holding it.
+#[test]
+fn conflicting_key_names_key_and_holder() {
+    let mut menu = menu_with_shift_conflict();
+
+    let text = modal_text(&mut menu);
+
+    assert!(text.contains("'Shift'"), "key missing in:\n{text}");
+    assert!(text.contains("Sprint"), "holder missing in:\n{text}");
+    assert!(!menu.is_listening());
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(0);
+    menu.apply_key_while_listening(Key::S);
+
+    let text = modal_text(&mut menu);
+
+    assert!(text.contains("'S'"), "key missing in:\n{text}");
+    assert!(text.contains("Move Back"), "holder missing in:\n{text}");
+    assert!(!menu.is_listening());
+}
+
+/// Modifiers pressed while the prompt is open bind nothing.
+#[test]
+fn keys_pressed_while_prompt_open_bind_nothing() {
+    let mut menu = menu_with_shift_conflict();
+
+    modifiers_frame(&mut menu, egui::Modifiers::NONE);
+    modifiers_frame(&mut menu, egui::Modifiers::ALT);
+
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::W), pad_stick(StickDir::Up)]
+    );
+    assert!(
+        ROW_ACTIONS
+            .iter()
+            .enumerate()
+            .all(|(i, _)| !menu.get_staged_binding(i).contains(&Binding::key(Key::Alt))),
+        "Alt was bound"
+    );
+}
+
+/// Confirming after a stray key moves only the prompted key.
+#[test]
+fn confirm_after_stray_key_applies_only_prompted_key() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = menu_with_shift_conflict();
+    modifiers_frame(&mut menu, egui::Modifiers::NONE);
+    modifiers_frame(&mut menu, egui::Modifiers::ALT);
+
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+    Screen::on_modal_confirm(&mut menu);
+
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::Shift), pad_stick(StickDir::Up)]
+    );
+    assert_eq!(menu.get_staged_binding(6), [THUMB]);
+    assert!(
+        (0..7).all(|i| !menu.get_staged_binding(i).contains(&Binding::key(Key::Alt))),
+        "Alt was bound"
+    );
+}
+
+/// Cancelling after a stray key changes nothing and leaves no row listening.
+#[test]
+fn cancel_after_stray_key_changes_nothing() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = menu_with_shift_conflict();
+    modifiers_frame(&mut menu, egui::Modifiers::NONE);
+    modifiers_frame(&mut menu, egui::Modifiers::ALT);
+
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+    Screen::on_modal_cancel(&mut menu);
+
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::W), pad_stick(StickDir::Up)]
+    );
+    assert_eq!(menu.get_staged_binding(6), [Binding::key(Key::Shift), THUMB]);
+    assert!(!menu.is_listening());
+}
