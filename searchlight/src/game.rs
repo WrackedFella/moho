@@ -934,7 +934,6 @@ impl SearchlightGame {
         self
     }
 
-    /// Draws the arena's `controls`.
     #[must_use]
     pub fn with_controls(mut self, controls: &[ArenaControl]) -> Self {
         self.stage.add_controls(controls);
