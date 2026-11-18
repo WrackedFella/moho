@@ -42,6 +42,7 @@ flowchart LR
 | `input` | `SearchlightAction` set and default bindings; `build_action_map` builds the `ActionMap` at startup, with mouse look (`look_settings`: sensitivity, smoothing, invert Y) taken from `Prefs`, and a sensitivity not above zero falling back to the default 3.0; `SearchlightCommand::from_frame` builds the per-tick command from an `ActionFrame` (fire, reload, check magazine, restart on F8); `Use` (default F) sets `SearchlightCommand::use_pressed` on the tick it goes down; `resolve_lean` turns the held `LeanLeft` and `LeanRight` actions (Q, E) into one `LeanSide` |
 | `lean` | `lean_offset` (horizontal eye shift for a lean at a yaw) and `rolled_view_matrix` (view with up tipped about forward); pure `glam` maths the game and sim share ([posture](#8-posture)) |
 | `tag` | `SurfaceTag` (`World`, `Part { target, part }`, `Player(part)` or `Control(index)`) and its lossless round trip through the engine's opaque `moho_physics::HitTag` |
+| `round` | `RoundInFlight` (a `Flight`, its `Ballistics`, the shooter, where it was fired from, enemies already counted as near misses) and `step_round`: one flight step cast against the world with `resolve_shot` ([shot path](#6-shot-path)) |
 | `shot` | `resolve_shot`: first tagged surface along a `ShotRay` in the `PhysicsWorld`; `passes_within`: whether a shot segment comes within a radius of a point |
 | `brain` | `Brain`: the enemy state machine (`Patrol`, `Engage`, `Cover`, `Chase`), pure over `glam` types; `Percept` and a `steer` function in, `Intent` out; `EnemyTuning` holds its numbers; `EnemyTuning::graded` scales reaction, cooldown and aim error by a `Grade` ([enemies](#5-enemies)) |
 | `cover` | `pick` and `offer`: choose the nearest free cover point an enemy under fire should run to, using world-only rays (level geometry and placed controls count as world) against the player (`Threat`) |
@@ -56,7 +57,7 @@ flowchart LR
 
 `SearchlightSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
 `Feedback` is the only output: `SearchlightSim::tick` queues it, the game drains it
-(`drain_feedback`) and reacts. `TICK_HZ` is 60. The rifle's numbers (damage, cooldown, reload, charge, range, magazine size) load from
+(`drain_feedback`) and reacts. `TICK_HZ` is 60. The rifle's numbers (damage, cooldown, reload, charge, magazine size) and each round's flight numbers (muzzle velocity, drag) load from
 `content/items.toml` and the `start` kit in `content/kits.toml`, then the mods listed in prefs (`mods/<name>/…`), at start ([content format](../reference/content-format.md)); a load failure
 exits the binary. `tuning::tuning` combines them with the numbers still set in code (speeds, body
 profile, `EnemyTuning`, the player part enemies aim at) as a `SimConfig`.
@@ -100,7 +101,7 @@ pause menu resumes (its `back` action). Console routing still comes first.
 
 Window mode: `main.rs` passes the `fullscreen` binding (default F11) as `AppConfig::toggle_keys` (Alt+Enter always works). After a flip the runner calls `SearchlightGame::window_mode_changed`, which releases held keys, drops pending look and, unless the shell captures input, grabs the cursor again, since the platform loses key releases and the grab across the change. The mode persists: `window_mode_changed` saves it to the prefs file through `DebugSettings` (skipped when it already matches), and `main.rs` reads it at startup through `start_window_mode` into `AppConfig::window_mode`; a saved `Fullscreen` opens borderless ([prefs format](../reference/prefs-format.md)). The `fullscreen` console command queues a flag in `command()` (no context there); the next `frame()` requests the toggled mode from the runner, prints it, and runs the same `window_mode_applied` step (the runner does not call `window_mode_changed` for a mode the game asked for).
 
-Game commands (`tgm [0|1]`, `grade <name|off>`) queue as `ConsoleCommand` on the console. `SearchlightGame` drains them
+Game commands (`tgm [0|1]`, `simple [0|1]`, `round_gravity <scale>`, `grade <name|off>`) queue as `ConsoleCommand` on the console. `SearchlightGame` drains them
 at the start of each `command()` sample (`apply_console_commands`), applies them in order, saves
 a changed value through `DebugSettings` (a failed save is logged, not fatal) and echoes a bare
 toggle's result to the console. God mode is loaded from `[debug]` at start (`with_debug_settings`)
@@ -153,7 +154,7 @@ bearing and off cooldown. Aim error comes from the `searchlight.enemy_spread` `S
 
 An enemy is put under fire by a non-lethal hit, or by near misses. Every player shot that
 passes within `EnemyTuning::near_miss_radius` of a living enemy's capsule centre
-(`shot::passes_within`, on the segment from the eye to the strike point or the rifle's range)
+(`shot::passes_within`, on each stretch of the round's flight, up to its strike point)
 counts a near miss on that enemy, except the enemy the shot hit. When the count reaches
 `Grade::near_misses_to_cover` (`None` for a rookie, so only a hit moves it) the count resets and
 the enemy is under fire. The sim then records the player's position on
@@ -176,9 +177,11 @@ Each enemy has a `searchlight_rules::Grade` (`Rookie`, `Novice`, `Experienced`, 
 
 ## 6 Shot path
 
-Player and enemy shots go through one route:
+The player's rounds fly. A pull adds a `RoundInFlight` to `SearchlightSim` (the round's `Ballistics`, from `SimConfig::rounds`, is looked up by the loaded round's item id; a round without one flies nothing). Each tick, after the lean has stepped, `step_rounds` advances every round with `searchlight_rules::Flight::step` (drag, then gravity, `round_gravity` taken from `SearchlightCommand`) and casts the stretch it covered with `step_round`. A round ends when it strikes anything, slows to `MIN_SPEED` (`Flight::is_spent`) or leaves `FlightBounds` (the level's box, from `Arena::flight_bounds`). A body-part strike and the near misses along each stretch land the same way for every shot. Rounds do not step while the player is dead. `GravityScale` (0 to `MAX_GRAVITY_SCALE`) scales only the rounds' gravity, not the world's. The `simple` console command (saved as `[debug] simple`) makes the player's shot one ray as far as the flight box's diagonal, landing on the tick it is fired. Enemy shots are single rays.
 
-1. `ShotRay` from the eye with range and the shooter's `CharacterHandle` as `ignore`.
+Both kinds of shot resolve a ray through one route:
+
+1. `ShotRay` from the eye with its length and the shooter's `CharacterHandle` as `ignore`.
 2. `PhysicsWorld::cast_ray` returns the first collider hit and its `HitTag`.
 3. `SurfaceTag::try_from` decodes the tag; an unknown tag is logged and counts as a miss.
 4. A `Part` strike (dummy or enemy) or a `Player` strike applies damage through `Body` in `searchlight_rules`.
