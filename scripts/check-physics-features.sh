@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Fails unless the resolved features of rapier3d and parry3d include enhanced-determinism.
 # The feature makes rapier, parry and nalgebra use libm instead of the platform math
-# library, so a physics step gives the same bits on every host; without it a recorded run
-# can stop replaying on another OS. Feature unification means a dependency edit elsewhere
-# can drop it silently, so the resolved graph is checked, not the manifest. If
-# MOHO_PHYSICS_METADATA names a file, the `cargo metadata` JSON is read from it (the
+# library, so a physics step's results do not depend on the host's libm; without it a
+# recorded run can stop replaying on another OS. Feature unification means a dependency
+# edit elsewhere can drop it silently, so the resolved graph is checked, not the manifest.
+# If MOHO_PHYSICS_METADATA names a file, the `cargo metadata` JSON is read from it (the
 # self-tests point it at fixtures).
 set -euo pipefail
 
