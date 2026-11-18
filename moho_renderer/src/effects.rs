@@ -35,6 +35,8 @@ impl StreakStyle {
     }
 }
 
+/// A camera-facing star that shrinks linearly to nothing over its `lifetime`; `size` is
+/// its tip-to-tip width at the start.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FlashStyle {
     pub size: f32,
@@ -42,6 +44,8 @@ pub struct FlashStyle {
     pub lifetime: Duration,
 }
 
+/// A square decal that holds `size` until `fade` before its `lifetime` ends, then
+/// shrinks linearly to nothing.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MarkStyle {
     pub size: f32,
@@ -92,21 +96,75 @@ impl Streak {
     }
 }
 
+/// A flash or mark: it ages on its own and needs no placement.
+#[derive(Debug)]
+struct Timed<S> {
+    style: S,
+    at: Vec3,
+    /// Unit view axis for a mark; unused by a flash, which faces the eye.
+    normal: Vec3,
+    roll: f32,
+    age: Duration,
+}
+
+#[derive(Debug)]
+enum Effect {
+    Streak(Streak),
+    Flash(Timed<FlashStyle>),
+    Mark(Timed<MarkStyle>),
+}
+
+impl Effect {
+    fn is_fixed_lifetime(&self) -> bool {
+        !matches!(self, Self::Streak(_))
+    }
+
+    fn finished(&self) -> bool {
+        match self {
+            Self::Streak(streak) => streak.finished_fading(),
+            Self::Flash(flash) => flash.age >= flash.style.lifetime,
+            Self::Mark(mark) => mark.age >= mark.style.lifetime,
+        }
+    }
+}
+
+/// The three effect meshes, in id order from `EFFECT_MESH_IDS_FROM`.
+#[derive(Debug, Clone, Copy)]
+enum MeshKind {
+    Streak = 0,
+    Flash = 1,
+    Mark = 2,
+}
+
+impl MeshKind {
+    fn id(self) -> WorldMeshId {
+        WorldMeshId(EFFECT_MESH_IDS_FROM + self as u64)
+    }
+
+    fn mesh(self) -> WorldMesh {
+        match self {
+            Self::Streak => streak_mesh(),
+            Self::Flash => flash_mesh(),
+            Self::Mark => mark_mesh(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Effects {
-    streaks: BTreeMap<EffectHandle, Streak>,
+    store: BTreeMap<EffectHandle, Effect>,
     next_handle: u64,
     cap: usize,
-    mesh_uploaded: bool,
+    mesh_uploaded: [bool; 3],
 }
 
 impl Default for Effects {
     fn default() -> Self {
         Self {
-            streaks: BTreeMap::new(),
+            store: BTreeMap::new(),
             next_handle: 0,
             cap: CAPS[DEFAULT_QUALITY],
-            mesh_uploaded: false,
+            mesh_uploaded: [false; 3],
         }
     }
 }
@@ -115,32 +173,86 @@ impl Effects {
     /// Start a streak. At the quality's cap the handle is inert: never stored, so placing
     /// or ending it does nothing.
     pub fn begin_streak(&mut self, style: StreakStyle) -> EffectHandle {
-        let handle = EffectHandle(self.next_handle);
-        self.next_handle += 1;
-        if self.streaks.len() < self.cap {
-            self.streaks.insert(
+        let handle = self.issue_handle();
+        if self.store.len() < self.cap {
+            self.store.insert(
                 handle,
-                Streak {
+                Effect::Streak(Streak {
                     style,
                     head: Vec3::ZERO,
                     heading: None,
                     placed_this_frame: false,
                     age: Duration::ZERO,
                     ended_at: None,
-                },
+                }),
             );
         }
         handle
     }
 
-    pub fn flash(&mut self, _at: Vec3, _roll: f32, _style: FlashStyle) {}
+    /// Spawn a flash at `at`, turned by `roll` about the view axis. Spawns nothing for a
+    /// non-positive or non-finite size, a zero lifetime or a non-finite `at` or `roll`.
+    /// At the cap it replaces the oldest flash or mark; with none to replace it is refused.
+    pub fn flash(&mut self, at: Vec3, roll: f32, style: FlashStyle) {
+        if !valid_timed(at, roll, style.size, style.lifetime) {
+            return;
+        }
+        self.spawn_timed(Effect::Flash(Timed {
+            style,
+            at,
+            normal: Vec3::ZERO,
+            roll,
+            age: Duration::ZERO,
+        }));
+    }
 
-    pub fn mark(&mut self, _at: Vec3, _normal: Vec3, _roll: f32, _style: MarkStyle) {}
+    /// Spawn a mark on a surface at `at` facing `normal`, turned by `roll` about it. Spawns
+    /// nothing for the invalid inputs of `flash` or a zero or non-finite `normal`; the cap
+    /// behaves as for `flash`.
+    pub fn mark(&mut self, at: Vec3, normal: Vec3, roll: f32, style: MarkStyle) {
+        let Some(normal) = normal.try_normalize() else {
+            return;
+        };
+        if !valid_timed(at, roll, style.size, style.lifetime) {
+            return;
+        }
+        self.spawn_timed(Effect::Mark(Timed {
+            style,
+            at,
+            normal,
+            roll,
+            age: Duration::ZERO,
+        }));
+    }
+
+    fn issue_handle(&mut self) -> EffectHandle {
+        let handle = EffectHandle(self.next_handle);
+        self.next_handle += 1;
+        handle
+    }
+
+    fn spawn_timed(&mut self, effect: Effect) {
+        if self.cap == 0 {
+            return;
+        }
+        if self.store.len() >= self.cap {
+            let oldest = self
+                .store
+                .iter()
+                .find_map(|(handle, effect)| effect.is_fixed_lifetime().then_some(*handle));
+            let Some(oldest) = oldest else {
+                return;
+            };
+            self.store.remove(&oldest);
+        }
+        let handle = self.issue_handle();
+        self.store.insert(handle, effect);
+    }
 
     /// Place the streak's head for this frame. A zero-length heading keeps the last one;
     /// a stale or unknown handle is ignored.
     pub fn place_streak(&mut self, handle: EffectHandle, head: Vec3, heading: Vec3) {
-        let Some(streak) = self.streaks.get_mut(&handle) else {
+        let Some(Effect::Streak(streak)) = self.store.get_mut(&handle) else {
             return;
         };
         streak.head = head;
@@ -150,21 +262,27 @@ impl Effects {
 
     /// Start the fade; the streak then draws at its last placement until it is gone.
     pub fn end(&mut self, handle: EffectHandle) {
-        if let Some(streak) = self.streaks.get_mut(&handle) {
+        if let Some(Effect::Streak(streak)) = self.store.get_mut(&handle) {
             streak.ended_at.get_or_insert(streak.age);
         }
     }
 
-    /// Age every effect by the frame time, start the fade of any past its `max_age` and
-    /// drop the finished ones.
+    /// Age every effect by the frame time, start the fade of any streak past its `max_age`
+    /// and drop the finished ones.
     pub fn advance(&mut self, dt: Duration) {
-        for streak in self.streaks.values_mut() {
-            streak.age += dt;
-            if streak.age >= streak.style.max_age {
-                streak.ended_at.get_or_insert(streak.style.max_age);
+        for effect in self.store.values_mut() {
+            match effect {
+                Effect::Streak(streak) => {
+                    streak.age += dt;
+                    if streak.age >= streak.style.max_age {
+                        streak.ended_at.get_or_insert(streak.style.max_age);
+                    }
+                }
+                Effect::Flash(flash) => flash.age += dt,
+                Effect::Mark(mark) => mark.age += dt,
             }
         }
-        self.streaks.retain(|_, streak| !streak.finished_fading());
+        self.store.retain(|_, effect| !effect.finished());
     }
 
     /// Cap new effects for `quality` (0 off to 4 ultra; higher clamps). Lowering keeps
@@ -173,40 +291,135 @@ impl Effects {
         self.cap = CAPS
             [usize::try_from(quality.min(MAX_QUALITY)).expect("a quality of at most 4 fits usize")];
         if self.cap == 0 {
-            self.streaks.clear();
+            self.store.clear();
         }
     }
 
     /// How many effects are live, fading ones included.
     pub fn live(&self) -> usize {
-        self.streaks.len()
+        self.store.len()
     }
 
-    /// Place every streak placed this frame or fading, unshadowed, facing `eye`.
+    /// Place every streak placed this frame or fading, and every flash and mark,
+    /// unshadowed, facing `eye`.
     pub(crate) fn draw(&mut self, meshes: &mut WorldMeshes, eye: Vec3) {
-        for streak in self.streaks.values_mut() {
-            let placed = std::mem::take(&mut streak.placed_this_frame);
-            if !placed && streak.ended_at.is_none() {
-                continue;
-            }
-            let Some(heading) = streak.heading else {
-                continue;
-            };
-            let width = streak.style.width * streak.width_scale();
-            if let Some(transform) =
-                streak_transform(streak.head, heading, streak.style.length, width, eye)
-            {
-                if !std::mem::replace(&mut self.mesh_uploaded, true) {
-                    meshes.upsert_movable(WorldMeshId(EFFECT_MESH_IDS_FROM), streak_mesh());
+        for effect in self.store.values_mut() {
+            let drawn = match effect {
+                Effect::Streak(streak) => {
+                    let placed = std::mem::take(&mut streak.placed_this_frame);
+                    if !placed && streak.ended_at.is_none() {
+                        continue;
+                    }
+                    let Some(heading) = streak.heading else {
+                        continue;
+                    };
+                    let width = streak.style.width * streak.width_scale();
+                    streak_transform(streak.head, heading, streak.style.length, width, eye)
+                        .map(|transform| (MeshKind::Streak, transform, streak.style.material))
                 }
-                meshes.place_unshadowed(
-                    WorldMeshId(EFFECT_MESH_IDS_FROM),
-                    transform,
-                    streak.style.material,
-                );
+                Effect::Flash(flash) => flash_transform(flash, eye)
+                    .map(|transform| (MeshKind::Flash, transform, flash.style.material)),
+                Effect::Mark(mark) => {
+                    Some((MeshKind::Mark, mark_transform(mark), mark.style.material))
+                }
+            };
+            if let Some((kind, transform, material)) = drawn {
+                if !std::mem::replace(&mut self.mesh_uploaded[kind as usize], true) {
+                    meshes.upsert_movable(kind.id(), kind.mesh());
+                }
+                meshes.place_unshadowed(kind.id(), transform, material);
             }
         }
     }
+}
+
+fn valid_timed(at: Vec3, roll: f32, size: f32, lifetime: Duration) -> bool {
+    at.is_finite() && roll.is_finite() && size.is_finite() && size > 0.0 && !lifetime.is_zero()
+}
+
+/// `(x, y)` perpendicular to the unit `z`, turned by `roll` about it, with `x` × `y` = `z`.
+fn rolled_basis(z: Vec3, roll: f32) -> (Vec3, Vec3) {
+    let x = z.any_orthonormal_vector();
+    let y = z.cross(x);
+    let (sin, cos) = roll.sin_cos();
+    (x * cos + y * sin, y * cos - x * sin)
+}
+
+fn flash_transform(flash: &Timed<FlashStyle>, eye: Vec3) -> Option<Affine3A> {
+    if !eye.is_finite() {
+        return None;
+    }
+    let lifetime = flash.style.lifetime.as_secs_f32();
+    let scale = flash.style.size * (1.0 - flash.age.as_secs_f32() / lifetime).clamp(0.0, 1.0);
+    let z = (eye - flash.at).try_normalize().unwrap_or(Vec3::Z);
+    let (x, y) = rolled_basis(z, flash.roll);
+    Some(Affine3A::from_cols(
+        (x * scale).into(),
+        (y * scale).into(),
+        z.into(),
+        flash.at.into(),
+    ))
+}
+
+fn mark_transform(mark: &Timed<MarkStyle>) -> Affine3A {
+    let remaining = mark.style.lifetime.saturating_sub(mark.age);
+    let scale = if remaining >= mark.style.fade {
+        1.0
+    } else {
+        remaining.as_secs_f32() / mark.style.fade.as_secs_f32()
+    };
+    let size = mark.style.size * scale;
+    let (x, y) = rolled_basis(mark.normal, mark.roll);
+    Affine3A::from_cols(
+        (x * size).into(),
+        (y * size).into(),
+        mark.normal.into(),
+        (mark.at + mark.normal * MARK_OFFSET).into(),
+    )
+}
+
+/// A four-point star in the XY plane, counter-clockwise seen from +Z: tips at radius 0.5
+/// on the axes, notches at radius 0.2 between them.
+fn flash_mesh() -> WorldMesh {
+    const TIP: f32 = 0.5;
+    const NOTCH: f32 = 0.2;
+    let positions: Vec<[f32; 3]> = (0..8)
+        .map(|i| {
+            let angle = i as f32 * std::f32::consts::FRAC_PI_4;
+            let radius = if i % 2 == 0 { TIP } else { NOTCH };
+            [radius * angle.cos(), radius * angle.sin(), 0.0]
+        })
+        .collect();
+    // Each tip's triangle between its two notches, then the square the notches bound.
+    let indices = vec![7, 0, 1, 1, 2, 3, 3, 4, 5, 5, 6, 7, 1, 3, 5, 1, 5, 7];
+    effect_mesh(positions, indices)
+}
+
+/// A unit quad centred on the origin, counter-clockwise seen from +Z.
+fn mark_mesh() -> WorldMesh {
+    effect_mesh(
+        vec![
+            [-0.5, -0.5, 0.0],
+            [0.5, -0.5, 0.0],
+            [0.5, 0.5, 0.0],
+            [-0.5, 0.5, 0.0],
+        ],
+        vec![0, 1, 2, 0, 2, 3],
+    )
+}
+
+fn effect_mesh(positions: Vec<[f32; 3]>, indices: Vec<u32>) -> WorldMesh {
+    let n = positions.len();
+    WorldMesh::new(
+        positions,
+        vec![[0.0, 0.0, 1.0]; n],
+        vec![1.0; n],
+        vec![[1.0; 3]; n],
+        vec![1.0; n],
+        vec![0; n],
+        indices,
+    )
+    .expect("the channels are all one length and the indices are in range")
 }
 
 /// A kite from the tail at the origin to the head at x = 1, counter-clockwise seen from +Z.
@@ -1160,6 +1373,8 @@ mod tests {
         drawn.iter().map(|i| translation(i).x.round()).collect()
     }
 
+    type Spawner = fn(&mut Rig, f32);
+
     fn flash_at_x(rig: &mut Rig, x: f32) {
         rig.effects.flash(
             Vec3::new(x, 0.0, 0.0),
@@ -1170,7 +1385,7 @@ mod tests {
 
     #[test]
     fn a_full_cap_drops_the_oldest_fixed_lifetime_effect() {
-        let spawners: [(&str, fn(&mut Rig, f32)); 2] = [("mark", mark_at_x), ("flash", flash_at_x)];
+        let spawners: [(&str, Spawner); 2] = [("mark", mark_at_x), ("flash", flash_at_x)];
         for (kind, spawn) in spawners {
             let mut rig = Rig::new();
             rig.effects.set_quality(1);
@@ -1339,6 +1554,7 @@ mod tests {
             let before = rig.meshes.live_len();
             rig.meshes
                 .remove(WorldMeshId(EFFECT_MESH_IDS_FROM + offset));
+            rig.meshes.flush(&mut rig.backend);
             assert_eq!(
                 rig.meshes.live_len(),
                 before - 1,
