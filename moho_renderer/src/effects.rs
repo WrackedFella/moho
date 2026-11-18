@@ -1314,6 +1314,77 @@ mod tests {
     }
 
     #[test]
+    fn a_streak_started_at_a_cap_full_of_marks_evicts_the_oldest_mark() {
+        let mut rig = Rig::new();
+        rig.effects.set_quality(1);
+        let life = Duration::from_secs(10);
+        for i in 0..32 {
+            let x = 10.0 * i as f32;
+            rig.effects.mark(
+                Vec3::new(x, 0.0, 0.0),
+                Vec3::Y,
+                0.0,
+                mark_style(0.2, life, ms(1000)),
+            );
+        }
+        assert_eq!(rig.effects.live(), 32);
+
+        let streak = rig.effects.begin_streak(style(2.0, 0.1));
+        rig.effects
+            .place_streak(streak, Vec3::new(0.0, 0.0, 500.0), Vec3::X);
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(rig.effects.live(), 32, "a mark made room");
+        assert_eq!(drawn.len(), 32);
+        assert!(
+            drawn.iter().any(|i| (translation(i).z - 500.0).abs() < 1.0),
+            "the streak is live, not inert"
+        );
+        let mut mark_xs: Vec<f32> = drawn
+            .iter()
+            .filter(|i| translation(i).z.abs() < 1.0)
+            .map(|i| translation(i).x)
+            .collect();
+        mark_xs.sort_by(f32::total_cmp);
+        let expected: Vec<f32> = (1..32).map(|i| 10.0 * i as f32).collect();
+        assert_eq!(mark_xs, expected, "the oldest mark went, the other 31 stay");
+    }
+
+    #[test]
+    fn the_flash_star_spans_its_size_tip_to_tip() {
+        let mut rig = Rig::new();
+        rig.effects.flash(Vec3::ZERO, 0.0, flash_style(0.4, ms(50)));
+
+        rig.frame(EYE);
+
+        assert_eq!(rig.backend.registered.len(), 1);
+        let (positions, _) = &rig.backend.registered[0];
+        let max_x = positions.iter().map(|p| p[0].abs()).fold(0.0, f32::max);
+        let max_y = positions.iter().map(|p| p[1].abs()).fold(0.0, f32::max);
+        assert!((max_x - 0.5).abs() < EPS, "tips on +-X at 0.5, got {max_x}");
+        assert!((max_y - 0.5).abs() < EPS, "tips on +-Y at 0.5, got {max_y}");
+    }
+
+    #[test]
+    fn a_flash_does_not_spin_as_the_eye_crosses_an_axis_plane() {
+        let x_for = |eye: Vec3| {
+            let mut rig = Rig::new();
+            rig.effects.flash(Vec3::ZERO, 0.0, flash_style(0.4, ms(50)));
+            let drawn = rig.frame(eye);
+            assert_eq!(drawn.len(), 1, "eye {eye}");
+            x_axis(&drawn[0]).normalize()
+        };
+
+        let above = x_for(Vec3::new(5.0, 1.0, 0.01));
+        let below = x_for(Vec3::new(5.0, 1.0, -0.01));
+
+        assert!(
+            above.dot(below) > 0.99,
+            "X jumped from {above} to {below} across the z = 0 plane"
+        );
+    }
+
+    #[test]
     fn a_positive_roll_turns_x_toward_y_about_the_facing_axis() {
         let roll = 0.5;
         let life = Duration::from_secs(10);
