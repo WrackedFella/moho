@@ -438,9 +438,9 @@ impl Stage {
                 color: [255; 4],
             })
             .collect();
-        if let Err(error) = self.shell().set_texts(texts) {
-            tracing::warn!(%error, "use prompt not shown");
-        }
+        self.shell()
+            .set_texts(texts)
+            .expect("PROMPT_SIZE is a finite positive constant, the only thing set_texts rejects");
     }
 
     /// Captures the cursor for mouse look, if there is a window to capture it in.
