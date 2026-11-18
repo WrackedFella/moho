@@ -45,7 +45,7 @@ pub struct Pawn {
     pub job: Job,
     /// Marks an idle pawn found no route to and will not retry until the others have been
     /// tried; lives here because `Job::Idle` carries no data.
-    pub(crate) route_tried: Vec<[i32; 3]>,
+    pub(crate) route_tried: Vec<BlockPos>,
 }
 
 impl Default for Pawn {

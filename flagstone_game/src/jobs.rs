@@ -130,6 +130,12 @@ pub fn is_stand_cell(grid: &VoxelGrid, block: BlockPos, cell: BlockPos) -> bool 
         && standable(grid, cell)
 }
 
+/// Whether a job digs `block` from `cell`: a stand cell other than the one on top of the
+/// block, since digging there would remove the pawn's own ground.
+fn digs_from(grid: &VoxelGrid, block: BlockPos, cell: BlockPos) -> bool {
+    cell != block + BlockPos::Y && is_stand_cell(grid, block, cell)
+}
+
 /// Whether any face of `block` borders air.
 fn is_exposed(grid: &VoxelGrid, block: BlockPos) -> bool {
     FACES.iter().any(|&face| !grid.is_solid_at(block + face))
@@ -163,7 +169,7 @@ fn claim(pawn_id: PawnId, pawn: &mut Pawn, pose: Pose, marks: &mut MineMarks, gr
     let mut candidates: Vec<BlockPos> = marks
         .unclaimed()
         .map(BlockPos::from_array)
-        .filter(|&block| !pawn.route_tried.contains(&block.to_array()) && is_exposed(grid, block))
+        .filter(|&block| !pawn.route_tried.contains(&block) && is_exposed(grid, block))
         .collect();
     candidates.sort_by_key(|&block| (block - feet).length_squared());
     let all_tried_now = candidates.len() <= ROUTE_ATTEMPTS_PER_TICK;
@@ -172,13 +178,12 @@ fn claim(pawn_id: PawnId, pawn: &mut Pawn, pose: Pose, marks: &mut MineMarks, gr
         let found = route(
             grid,
             feet,
-            // Not the cell on top of the block: digging there removes the pawn's own ground.
-            |cell| cell != block + BlockPos::Y && is_stand_cell(grid, block, cell),
+            |cell| digs_from(grid, block, cell),
             block,
             ROUTE_NODE_BUDGET,
         );
         let Some(route) = found else {
-            pawn.route_tried.push(block.to_array());
+            pawn.route_tried.push(block);
             continue;
         };
         marks.claim(block.to_array(), pawn_id);

@@ -24,14 +24,7 @@ const DIG_VOLUME: f32 = 0.6;
 
 /// Publishes a mined block's removal and the chunks it dirties, so marks drop and meshes
 /// rebuild by one path whoever mined it.
-fn publish_removal(app: &App, outcome: &flagstone_game::pawn::MineOutcome) {
-    let chunk_size = app
-        .light_system
-        .as_ref()
-        .expect("a mining outcome comes from the light system's grid")
-        .grid()
-        .chunk_size();
-
+fn publish_removal(app: &App, outcome: &flagstone_game::pawn::MineOutcome, chunk_size: i32) {
     app.event_bus.publish(WorldEvent::BlockRemoved {
         position: outcome.block_pos,
         old_material_id: outcome.old_material_id,
@@ -49,16 +42,14 @@ fn publish_removal(app: &App, outcome: &flagstone_game::pawn::MineOutcome) {
 /// Publishes what a pawn's dig changed: the removal, the chunks it dirties and the dig cue
 /// at the block's centre.
 pub(crate) fn publish_pawn_dig(app: &App, outcome: &flagstone_game::pawn::MineOutcome) {
-    publish_removal(app, outcome);
-    let block = outcome.block_pos;
+    let Some(light_system) = app.light_system.as_ref() else {
+        return;
+    };
+    publish_removal(app, outcome, light_system.grid().chunk_size());
     app.event_bus.publish(AudioEvent::PlaySoundAt {
         path: DIG_SOUND.to_string(),
         volume: DIG_VOLUME,
-        position: glam::Vec3::new(
-            block.x as f32 + 0.5,
-            block.y as f32 + 0.5,
-            block.z as f32 + 0.5,
-        ),
+        position: outcome.block_pos.as_vec3() + glam::Vec3::splat(0.5),
     });
 }
 
@@ -282,7 +273,8 @@ impl EventProcessor {
             return;
         };
 
-        publish_removal(app, &outcome);
+        let chunk_size = grid.chunk_size();
+        publish_removal(app, &outcome, chunk_size);
 
         if let Some(y) = outcome.yield_ {
             app.event_bus.publish(AudioEvent::PlaySound {
