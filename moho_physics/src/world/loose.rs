@@ -1632,6 +1632,95 @@ mod tests {
     }
 
     #[test]
+    fn a_cylinder_standing_on_its_cap_keeps_finite_state_and_loses_spin() {
+        let (half_height, radius) = CYLINDER;
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, half_height, 0.0),
+            linear_velocity: Vec3::new(1.0, 0.0, 0.0),
+            angular_velocity: Vec3::new(0.0, 5.0, 0.0),
+            ..LooseSpawn::new(cylinder(half_height, radius), 0.2)
+        });
+
+        for tick in 1..=60 {
+            world.step(DT);
+            let state = read(&world, id);
+            assert!(
+                bits(&state).iter().all(|b| f32::from_bits(*b).is_finite()),
+                "tick {tick}: {state:?}"
+            );
+            let spin = state.angular_velocity.dot(state.rotation * Vec3::Y);
+            assert!(spin <= 5.0 + 1e-3, "tick {tick}: axial spin rose to {spin}");
+        }
+    }
+
+    #[test]
+    fn a_sleeping_capsule_is_left_asleep_and_unchanged() {
+        let (mut world, id) = rolling_capsule_on_the_floor(2.0);
+        run(&mut world, 300);
+        let asleep = read(&world, id);
+        assert!(asleep.asleep, "the capsule never slept, {asleep:?}");
+
+        run(&mut world, 120);
+
+        let later = read(&world, id);
+        assert!(later.asleep, "the capsule was woken, {later:?}");
+        assert_eq!(bits(&asleep), bits(&later));
+    }
+
+    #[test]
+    fn removing_a_braked_capsule_mid_roll_leaves_the_other_braked() {
+        let (half_height, radius) = CAPSULE;
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let [doomed, survivor] = [-1.0, 1.0].map(|x| {
+            world.spawn_loose(&LooseSpawn {
+                linear_velocity: Vec3::new(0.0, 0.0, 2.0),
+                angular_velocity: Vec3::new(2.0 / radius, 0.0, 0.0),
+                ..lying_spawn(capsule(half_height, radius), Vec3::new(x, radius, 0.0))
+            })
+        });
+        run(&mut world, 15);
+        assert!(
+            read(&world, doomed).linear_velocity.z < 1.9,
+            "it was not braked"
+        );
+
+        world.remove_loose(doomed).expect("the capsule is alive");
+        run(&mut world, 30);
+
+        assert_eq!(world.loose_count(), 1);
+        assert!(world.loose(doomed).is_none());
+        run(&mut world, 255);
+        let state = read(&world, survivor);
+        assert!(state.asleep, "the survivor is still moving, {state:?}");
+        assert!(state.position.z <= 1.5, "it rolled {} m", state.position.z);
+    }
+
+    #[test]
+    fn the_brake_follows_a_gravity_change_at_once() {
+        let (mut world, id) = rolling_capsule_on_the_floor(2.0);
+        run(&mut world, 12);
+        world.set_gravity(30.0);
+        let allowed = 30.0 * degrees(5.0).tan() * DT;
+        let mut previous = read(&world, id).linear_velocity.with_y(0.0).length();
+
+        for tick in 1..=10 {
+            world.step(DT);
+            let speed = read(&world, id).linear_velocity.with_y(0.0).length();
+            let drop = previous - speed;
+            assert!(
+                drop <= allowed + 2e-3,
+                "tick {tick}: speed fell {drop}, more than {allowed}"
+            );
+            assert!(
+                drop >= allowed / 2.0,
+                "tick {tick}: speed fell only {drop}, under half of {allowed}"
+            );
+            previous = speed;
+        }
+    }
+
+    #[test]
     fn a_stronger_gravity_still_holds_a_capsule_on_a_4_9_degree_slope() {
         let (half_height, radius) = CAPSULE;
         let (mut world, id, start) = on_a_slope(capsule(half_height, radius), radius, 4.9);
