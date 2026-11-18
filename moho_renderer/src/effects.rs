@@ -1584,6 +1584,84 @@ mod tests {
         assert!((y_axis(&drawn[0]).length() - 0.4).abs() < EPS);
     }
 
+    #[test]
+    fn a_non_finite_roll_is_refused_and_evicts_nothing() {
+        let mut rig = rig_full_of_marks();
+        let at = Vec3::new(500.0, 0.0, 0.0);
+
+        for roll in [f32::NAN, f32::INFINITY] {
+            rig.effects.flash(at, roll, flash_style(0.4, ms(50)));
+        }
+        for roll in [f32::NAN, f32::NEG_INFINITY] {
+            rig.effects.mark(at, Vec3::Y, roll, long_mark());
+        }
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(rig.effects.live(), 32);
+        assert_eq!(drawn_xs(&drawn), (0..32).collect::<Vec<i32>>());
+        assert!(
+            drawn
+                .iter()
+                .all(|d| d.model.iter().flatten().all(|v| v.is_finite()))
+        );
+    }
+
+    #[test]
+    fn a_size_that_cannot_draw_is_refused_and_evicts_nothing() {
+        let mut rig = rig_full_of_marks();
+        let at = Vec3::new(500.0, 0.0, 0.0);
+
+        for size in [0.0, -0.3, f32::NAN, f32::INFINITY] {
+            rig.effects.flash(at, 0.0, flash_style(size, ms(50)));
+            rig.effects.mark(
+                at,
+                Vec3::Y,
+                0.0,
+                mark_style(size, Duration::from_secs(10), Duration::from_secs(1)),
+            );
+        }
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(rig.effects.live(), 32);
+        assert_eq!(drawn_xs(&drawn), (0..32).collect::<Vec<i32>>());
+    }
+
+    #[test]
+    fn spawning_over_a_lowered_cap_replaces_the_oldest_and_grows_nothing() {
+        let mut rig = Rig::new();
+        for i in 0..40 {
+            rig.effects
+                .mark(Vec3::new(i as f32, 0.0, 0.0), Vec3::Y, 0.0, long_mark());
+        }
+        rig.effects.set_quality(1);
+
+        rig.effects
+            .mark(Vec3::new(100.0, 0.0, 0.0), Vec3::Y, 0.0, long_mark());
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(rig.effects.live(), 40);
+        let mut expected: Vec<i32> = (1..40).collect();
+        expected.push(100);
+        assert_eq!(drawn_xs(&drawn), expected);
+    }
+
+    #[test]
+    fn a_long_normal_is_still_a_direction() {
+        for (normal, expected) in [
+            (Vec3::new(1e30, 0.0, 0.0), Vec3::X),
+            (Vec3::new(0.0, -3e38, 0.0), -Vec3::Y),
+        ] {
+            let mut rig = Rig::new();
+
+            rig.effects.mark(Vec3::ZERO, normal, 0.0, long_mark());
+            let drawn = rig.frame(EYE);
+
+            assert_eq!(drawn.len(), 1, "normal {normal}");
+            assert!(drawn[0].model.iter().flatten().all(|v| v.is_finite()));
+            assert_near(z_axis(&drawn[0]), expected);
+        }
+    }
+
     fn assert_faces_eye(transform: Affine3A, eye: Vec3) {
         let x = Vec3::from(transform.matrix3.x_axis);
         let y = Vec3::from(transform.matrix3.y_axis);
