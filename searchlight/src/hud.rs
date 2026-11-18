@@ -113,8 +113,10 @@ pub fn death_text(dead: bool) -> Option<&'static str> {
 
 /// The prompt for using a control: the `key` label in brackets, then what `action` does.
 pub fn use_prompt(key: &str, action: ControlAction) -> String {
-    let _ = (key, action);
-    String::new()
+    let what = match action {
+        ControlAction::NextWave => "Next wave",
+    };
+    format!("[{key}] {what}")
 }
 
 /// A translucent rectangle in screen pixels, colour as straight RGBA.

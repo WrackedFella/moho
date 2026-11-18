@@ -31,6 +31,9 @@ const PART_BITS: u32 = 3;
 /// Engine tag of the player's first part, above every target part tag.
 const PLAYER_BASE: u32 = PART_BASE + (1 << (16 + PART_BITS));
 
+/// Engine tag of the first control, above the player's parts.
+const CONTROL_BASE: u32 = PLAYER_BASE + 8;
+
 /// Every part, at the index its tag stores.
 const PARTS: [BodyPart; 6] = [
     BodyPart::Head,
@@ -54,7 +57,7 @@ impl From<SurfaceTag> for HitTag {
         match tag {
             SurfaceTag::World => HitTag(WORLD),
             SurfaceTag::Player(part) => HitTag(PLAYER_BASE + part_index(part)),
-            SurfaceTag::Control(_) => HitTag(WORLD),
+            SurfaceTag::Control(index) => HitTag(CONTROL_BASE + u32::from(index)),
             SurfaceTag::Part { target, part } => {
                 HitTag(PART_BASE + ((u32::from(target) << PART_BITS) | part_index(part)))
             }
@@ -68,6 +71,11 @@ impl TryFrom<HitTag> for SurfaceTag {
     fn try_from(tag: HitTag) -> Result<Self, Self::Error> {
         if tag.0 == WORLD {
             return Ok(SurfaceTag::World);
+        }
+        if let Some(index) = tag.0.checked_sub(CONTROL_BASE) {
+            return u16::try_from(index)
+                .map(SurfaceTag::Control)
+                .map_err(|_| UnknownTag(tag.0));
         }
         if let Some(index) = tag.0.checked_sub(PLAYER_BASE) {
             return PARTS

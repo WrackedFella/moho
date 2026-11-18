@@ -11,19 +11,22 @@ pub enum ControlAction {
 impl ControlAction {
     /// The action a level marker names, or `None` when `name` is not on the list.
     pub fn parse(name: &str) -> Option<Self> {
-        let _ = name;
-        None
+        match name {
+            "next_wave" => Some(Self::NextWave),
+            _ => None,
+        }
     }
 
     /// Whether the action changes the match for everyone, so only the host may use it.
     pub fn is_host_action(self) -> bool {
-        false
+        match self {
+            Self::NextWave => true,
+        }
     }
 
     /// Whether a use from player `slot` is honored.
     pub fn honored_from(self, slot: u8) -> bool {
-        let _ = slot;
-        true
+        !self.is_host_action() || slot == 0
     }
 }
 
