@@ -11,6 +11,10 @@ name: Orchestrate eval
 # turns, wall time and tokens per model (scripts/review-usage.sh record).
 # With review on, the replay's range is dispatched to pr-review.yml as a dry run, whose
 # log carries the verdict. Delete eval/ branches once a set is scored.
+#
+# A replay the subscription's usage limit cuts off is recorded with `limited: true`, gets
+# no review, and is not scored. The Resume job waits for the limit to reset and dispatches
+# those replays again under `<label>-a<attempt>`, at most twice.
 on:
   workflow_dispatch:
     inputs:
@@ -32,6 +36,12 @@ on:
         description: Dispatch a pr-review dry run on each replay
         type: boolean
         default: true
+      replays:
+        description: Comma-separated replays as ID-rN (overrides cards and runs; used by Resume)
+        required: false
+      attempt:
+        description: Resume attempt (set by Resume)
+        default: "1"
 
 permissions:
   contents: write
@@ -52,12 +62,19 @@ jobs:
           LABEL: ${{ inputs.label }}
           CARDS: ${{ inputs.cards }}
           RUNS: ${{ inputs.runs }}
+          REPLAYS: ${{ inputs.replays }}
         run: |
           [[ $LABEL =~ ^[a-z0-9-]+$ && $RUNS =~ ^[1-9]$ ]] || { echo "::error::label must be [a-z0-9-]+ and runs 1-9"; exit 1; }
-          matrix=$(jq -c --arg cards "$CARDS" --argjson runs "$RUNS" '
-            ($cards | split(",") | map(gsub("^ +| +$"; "")) | map(select(. != ""))) as $want
-            | [ .[] | select(($want | length) == 0 or (.id as $id | $want | index($id)))
-                | . as $c | range(1; $runs + 1) | $c + {run: .} ]' .github/eval/orchestrate-set.json)
+          matrix=$(jq -c --arg cards "$CARDS" --argjson runs "$RUNS" --arg replays "$REPLAYS" '
+            def list: split(",") | map(gsub("^ +| +$"; "")) | map(select(. != ""));
+            ($cards | list) as $want | ($replays | list) as $only
+            | if ($only | length) > 0 then
+                [ .[] | . as $c | $only[] | select(startswith($c.id + "-r"))
+                  | $c + {run: (ltrimstr($c.id + "-r") | tonumber)} ]
+              else
+                [ .[] | select(($want | length) == 0 or (.id as $id | $want | index($id)))
+                  | . as $c | range(1; $runs + 1) | $c + {run: .} ]
+              end' .github/eval/orchestrate-set.json)
           [ "$(jq length <<<"$matrix")" -gt 0 ] || { echo "::error::no card in the set matches"; exit 1; }
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
@@ -157,7 +174,13 @@ jobs:
           # The checkout is the replay's base, which may predate the usage script.
           git show "$GITHUB_SHA:scripts/review-usage.sh" > "$RUNNER_TEMP/review-usage.sh"
           chmod +x "$RUNNER_TEMP/review-usage.sh"
-          head="" commits=0 gate=none heldout=n/a
+          head="" commits=0 gate=none heldout=n/a limited=false resets=""
+          # A replay cut off by the subscription's usage limit says so in its last result.
+          if [ -f "$EXECUTION_FILE" ]; then
+            resets=$(jq -r '[.[] | select(.type == "result")] | last | .result // ""' "$EXECUTION_FILE" \
+              | grep -oiE "hit your .*limit.*resets [^(]+\(UTC\)" | head -n1 | sed -E 's/.*resets +//; s/ *\(UTC\)//' || true)
+            [ -n "$resets" ] && limited=true
+          fi
           if git fetch origin "$BRANCH" 2>/dev/null; then
             head=$(git rev-parse FETCH_HEAD)
             commits=$(git rev-list --count "$BASE_SHA..$head")
@@ -175,7 +198,7 @@ jobs:
               tail -n 40 "$RUNNER_TEMP/heldout.log"
               git checkout --force --detach "$head"
             fi
-            if [ "$REVIEW" = true ] && [ "$commits" -gt 0 ]; then
+            if [ "$REVIEW" = true ] && [ "$commits" -gt 0 ] && [ "$limited" = false ]; then
               gh workflow run pr-review.yml --repo "$GITHUB_REPOSITORY" \
                 --ref "${{ github.event.repository.default_branch }}" \
                 -f dry_run_range="$BASE_SHA..$head" -f dry_run_issue="$ISSUE"
@@ -195,11 +218,15 @@ jobs:
           record=$(jq -c --arg label "$LABEL" --arg id "$ID" --argjson issue "$ISSUE" --arg gate_class "$GATE_CLASS" \
             --argjson run "$RUN_NO" --arg branch "$BRANCH" --arg head "$head" --argjson commits "$commits" \
             --arg gate "$gate" --arg heldout "$heldout" --argjson steps "$steps" \
+            --argjson limited "$limited" --arg resets "$resets" \
             '{label: $label, id: $id, issue: $issue, gate_class: $gate_class, run: $run, branch: $branch,
               head: $head, commits: $commits, gate: $gate, heldout: $heldout,
+              limited: $limited, resets: (if $resets == "" then null else $resets end),
               steps_missing: ($steps | if . == null then null else .missing end),
               paused: ($steps | if . == null then null else .paused end)} + {usage: .}' <<<"$usage")
           echo "EVAL-RECORD $record"
+          mkdir -p "$RUNNER_TEMP/limited"
+          if [ "$limited" = true ]; then echo "$resets" > "$RUNNER_TEMP/limited/$ID-r$RUN_NO"; fi
           {
             echo "### $ID r$RUN_NO ($LABEL)"
             echo
@@ -213,3 +240,50 @@ jobs:
               jq -r '[.[] | select(.type == "result")] | last | .result // ""' "$EXECUTION_FILE"
             fi
           } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Mark a replay the usage limit cut off
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: limited-${{ matrix.card.id }}-r${{ matrix.card.run }}
+          path: ${{ runner.temp }}/limited
+          if-no-files-found: ignore
+          retention-days: 2
+
+  # Replays the usage limit cut off run again once it resets. The job sleeps on the runner
+  # (minutes are free on a public repository) and gives up after two resumes.
+  resume:
+    name: Resume
+    needs: replay
+    if: always() && !cancelled()
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      GH_TOKEN: ${{ github.token }}
+      LABEL: ${{ inputs.label }}
+      ATTEMPT: ${{ inputs.attempt }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: limited-*
+          path: limited
+          merge-multiple: true
+      - name: Dispatch the cut-off replays after the reset
+        run: |
+          shopt -s nullglob
+          files=(limited/*)
+          [ "${#files[@]}" -gt 0 ] || { echo "No replay hit the usage limit."; exit 0; }
+          replays=$(for f in "${files[@]}"; do basename "$f"; done | paste -sd, -)
+          [[ $ATTEMPT =~ ^[0-9]+$ ]] || ATTEMPT=1
+          if [ "$ATTEMPT" -ge 3 ]; then echo "::warning::still limited after $ATTEMPT attempts: $replays"; exit 0; fi
+          # "3:50am": the next such time, plus a 5-minute margin.
+          reset=$(cat "${files[@]}" | sort -u | head -n1)
+          target=$(date -u -d "$reset" +%s 2>/dev/null || date -u -d "+5 hours" +%s)
+          now=$(date -u +%s)
+          [ "$target" -le "$now" ] && target=$((target + 86400))
+          wait=$((target - now + 300))
+          [ "$wait" -gt 18900 ] && wait=18900
+          echo "Waiting $((wait / 60)) minutes for the limit to reset, then replaying: $replays"
+          sleep "$wait"
+          gh workflow run orchestrate-eval.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
+            -f label="${LABEL%-a[0-9]*}-a$((ATTEMPT + 1))" -f replays="$replays" \
+            -f model='${{ inputs.model }}' -f review='${{ inputs.review }}' -f attempt="$((ATTEMPT + 1))"
