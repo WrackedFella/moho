@@ -1811,6 +1811,81 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_flash_with_the_eye_at_its_position_draws_a_finite_basis() {
+        let mut rig = Rig::new();
+        let at = Vec3::new(1.0, 2.0, 3.0);
+        rig.effects.flash(at, 0.4, flash_style(0.4, ms(50)));
+
+        let drawn = rig.frame(at);
+
+        assert_eq!(drawn.len(), 1);
+        assert_finite(&drawn[0]);
+        assert_near(translation(&drawn[0]), at);
+    }
+
+    #[test]
+    fn a_flash_advanced_far_past_its_lifetime_is_gone_and_draws_nothing() {
+        let mut rig = Rig::new();
+        rig.effects.flash(Vec3::ZERO, 0.0, flash_style(0.4, ms(50)));
+
+        rig.effects.advance(Duration::from_secs(10));
+
+        assert_eq!(rig.effects.live(), 0);
+        assert!(rig.frame(EYE).is_empty());
+    }
+
+    #[test]
+    fn a_flash_after_lowering_quality_below_the_live_count_never_grows_the_store() {
+        let mut rig = Rig::new();
+        for x in 0..40 {
+            flash_at_x(&mut rig, x as f32 * 10.0);
+        }
+        rig.effects.set_quality(1);
+
+        flash_at_x(&mut rig, 400.0);
+        let drawn = rig.frame(EYE);
+
+        assert!(rig.effects.live() <= 40, "live {}", rig.effects.live());
+        assert_eq!(drawn.len(), rig.effects.live());
+        drawn.iter().for_each(assert_finite);
+        let xs = drawn_xs(&drawn);
+        assert!(!xs.contains(&0.0), "the oldest flash is dropped");
+        assert!(xs.contains(&10.0), "the next oldest stays");
+        assert!(xs.contains(&400.0), "the new flash is kept");
+    }
+
+    #[test]
+    fn a_streak_begun_after_an_eviction_at_a_full_cap_is_distinct_and_inert() {
+        let mut rig = Rig::new();
+        rig.effects.set_quality(1);
+        let first = rig.effects.begin_streak(style(2.0, 0.1));
+        for x in 1..32 {
+            mark_at_x(&mut rig, x as f32 * 10.0);
+        }
+        assert_eq!(rig.effects.live(), 32);
+        mark_at_x(&mut rig, 320.0);
+        assert_eq!(rig.effects.live(), 32);
+
+        let refused = rig.effects.begin_streak(style(2.0, 0.1));
+        let refused_again = rig.effects.begin_streak(style(2.0, 0.1));
+
+        assert_ne!(refused, first);
+        assert_ne!(refused, refused_again);
+        assert_eq!(rig.effects.live(), 32, "the cap is full, so it is refused");
+        rig.effects
+            .place_streak(refused, Vec3::new(0.0, 7.0, 0.0), Vec3::X);
+        rig.effects.end(refused);
+        rig.effects.advance(ms(1));
+        let drawn = rig.frame(EYE);
+        assert_eq!(rig.effects.live(), 32, "place and end changed nothing");
+        assert_eq!(
+            drawn.len(),
+            31,
+            "the 31 marks draw; the unplaced first streak and the refused one do not"
+        );
+    }
+
     #[derive(Debug, Clone)]
     enum Op {
         Begin,
