@@ -263,6 +263,41 @@ mod tests {
     }
 
     #[test]
+    fn a_ray_parallel_to_a_slab_and_on_its_face_enters() {
+        let aabb = unit_box_at(Vec3::ZERO);
+        let on_min_face = ray(Vec3::new(-1.0, 0.0, -10.0), Vec3::Z);
+        let on_max_face = ray(Vec3::new(1.0, 0.0, -10.0), Vec3::Z);
+
+        let min_entry = ray_box_entry(on_min_face, aabb);
+        let max_entry = ray_box_entry(on_max_face, aabb);
+
+        assert_eq!(min_entry, Some(9.0), "origin on the min face");
+        assert_eq!(max_entry, Some(9.0), "origin on the max face");
+    }
+
+    #[test]
+    fn terrain_at_exactly_the_entry_distance_hides_the_pawn() {
+        let pawns = [(PLAYER_PAWN, unit_box_at(Vec3::ZERO))];
+        let toward = ray(Vec3::new(0.0, 0.0, -10.0), Vec3::Z);
+
+        let picked = pick_pawn(toward, pawns, Some(9.0));
+
+        assert_eq!(picked, None);
+    }
+
+    #[test]
+    fn pawn_body_matches_the_pawn_box_dimensions_and_centre() {
+        let center = Vec3::new(1.0, 2.0, 3.0);
+
+        let body = pawn_body(center);
+
+        assert_eq!(body.center, center);
+        assert!((body.length - 0.6).abs() < 1e-6, "x {}", body.length);
+        assert!((body.height - 2.3).abs() < 1e-6, "y {}", body.height);
+        assert!((body.width - 0.6).abs() < 1e-6, "z {}", body.width);
+    }
+
+    #[test]
     fn the_nearer_of_two_pawns_wins() {
         let near_box = unit_box_at(Vec3::ZERO);
         let far_box = unit_box_at(Vec3::new(0.0, 0.0, 6.0));
