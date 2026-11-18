@@ -1279,7 +1279,7 @@ mod tests {
     }
 
     #[test]
-    fn degenerate_durations_never_draw_nan() {
+    fn a_zero_fade_mark_holds_full_size_until_its_lifetime() {
         let at = Vec3::new(3.0, 0.0, 0.0);
 
         let mut abrupt = Rig::new();
@@ -1296,6 +1296,11 @@ mod tests {
         abrupt.effects.advance(ms(100));
         assert!(abrupt.frame(EYE).is_empty(), "gone at 2 s");
         assert_eq!(abrupt.effects.live(), 0);
+    }
+
+    #[test]
+    fn a_fade_longer_than_the_lifetime_clamps_to_it() {
+        let at = Vec3::new(3.0, 0.0, 0.0);
 
         let mut clamped = Rig::new();
         clamped
@@ -1311,6 +1316,11 @@ mod tests {
         );
         clamped.effects.advance(ms(1000));
         assert!(clamped.frame(EYE).is_empty(), "gone at 2 s");
+    }
+
+    #[test]
+    fn a_zero_lifetime_flash_or_mark_is_refused_and_evicts_nothing() {
+        let at = Vec3::new(3.0, 0.0, 0.0);
 
         let mut rig = rig_full_of_marks();
         rig.effects.flash(at, 0.0, flash_style(0.4, Duration::ZERO));
