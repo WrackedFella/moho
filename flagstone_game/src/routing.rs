@@ -399,6 +399,33 @@ mod tests {
     }
 
     #[test]
+    fn stepping_down_needs_headroom_at_the_current_feet_height() {
+        let with_overhang = |overhang: bool| {
+            let mut grid = flat(0..=6, -2..=2);
+            for x in 0..=3 {
+                for z in -2..=2 {
+                    solid(&mut grid, cell(x, 1, z));
+                }
+            }
+            if overhang {
+                for z in -2..=2 {
+                    solid(&mut grid, cell(4, 4, z));
+                }
+            }
+            grid
+        };
+
+        let open = go(&with_overhang(false), cell(0, 2, 0), cell(6, 1, 0));
+        let low = go(&with_overhang(true), cell(0, 2, 0), cell(6, 1, 0));
+
+        assert!(open.is_some(), "the platform edge can be stepped off");
+        assert_eq!(
+            low, None,
+            "the capsule would cross the edge into the overhang"
+        );
+    }
+
+    #[test]
     fn a_start_inside_the_ground_tries_the_cell_above_and_nothing_further() {
         let mut grid = flat(-2..=8, -2..=2);
         solid(&mut grid, cell(0, 1, 0));

@@ -456,6 +456,39 @@ mod tests {
     }
 
     #[test]
+    fn an_exposed_mark_that_cannot_be_reached_does_not_stop_a_farther_one_being_taken() {
+        let mut grid = ground();
+        for x in 2..=4 {
+            for y in 1..=3 {
+                for z in -1..=1 {
+                    place(&mut grid, &[[x, y, z]]);
+                }
+            }
+        }
+        place(&mut grid, &[[3, 4, 0], [9, 1, 0]]);
+        let mut marks = marked(&[[3, 4, 0], [9, 1, 0]]);
+        let mut job = Job::Idle;
+        let mut pawn = Pawn::default();
+
+        step(
+            &mut job,
+            ME,
+            &mut pawn,
+            at(cell(0, 1, 0)),
+            &mut marks,
+            &grid,
+        );
+
+        assert_eq!(mining(&job), Some([9, 1, 0]));
+        assert_eq!(claimed_by(&marks, [9, 1, 0]), Some(ME));
+        assert_eq!(
+            claimed_by(&marks, [3, 4, 0]),
+            None,
+            "a three-high cliff is no way up"
+        );
+    }
+
+    #[test]
     fn the_pawn_walks_the_waypoints_then_digs_from_the_stand_cell() {
         let mut grid = ground();
         place(&mut grid, &[[5, 1, 0]]);
