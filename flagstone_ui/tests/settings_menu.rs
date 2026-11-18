@@ -719,6 +719,68 @@ fn cancel_after_stray_key_changes_nothing() {
     assert!(!menu.has_unsaved_changes());
 }
 
+/// A second modifier pressed after the first conflict ended listening binds nothing.
+#[test]
+fn shift_pressed_after_ctrl_conflict_changes_no_binding() {
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let before = all_row_bindings(&menu);
+    let ctx = egui::Context::default();
+    menu.start_listening(0);
+
+    frame_with_modifiers(&mut menu, &ctx, egui::Modifiers::CTRL);
+
+    assert_eq!(menu.conflict_modal().conflict_binding_desc(), "Ctrl");
+    assert!(!menu.is_listening(), "Ctrl conflict ends listening");
+
+    frame_with_modifiers(&mut menu, &ctx, egui::Modifiers::NONE);
+    frame_with_modifiers(&mut menu, &ctx, egui::Modifiers::SHIFT);
+
+    assert_eq!(all_row_bindings(&menu), before);
+    assert_eq!(
+        menu.get_staged_binding(6),
+        [
+            Binding::key(Key::Shift),
+            Binding::pad(PadInput::Button(PadButton::LeftThumb))
+        ]
+    );
+    assert_eq!(menu.conflict_modal().conflict_binding_desc(), "Ctrl");
+    assert!(!menu.is_listening());
+    assert!(!menu.has_unsaved_changes());
+}
+
+/// Escape and an ordinary key through the frame leave an open prompt intact and confirmable.
+#[test]
+fn escape_and_plain_key_with_prompt_open_leave_prompt_confirmable() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let before = all_row_bindings(&menu);
+    let _ctx = raise_shift_conflict_on_move_forward(&mut menu);
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+
+    render_frame(&mut menu, vec![key_event(egui::Key::Escape, true)]);
+    render_frame(&mut menu, vec![key_event(egui::Key::D, true)]);
+
+    assert_eq!(all_row_bindings(&menu), before);
+    assert!(!menu.is_listening());
+    assert!(!menu.has_unsaved_changes());
+
+    Screen::on_modal_confirm(&mut menu);
+
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::Shift), pad_stick(StickDir::Up)]
+    );
+    assert_eq!(
+        menu.get_staged_binding(6),
+        [Binding::pad(PadInput::Button(PadButton::LeftThumb))]
+    );
+    assert_eq!(
+        menu.get_staged_binding(3),
+        [Binding::key(Key::D), pad_stick(StickDir::Right)]
+    );
+}
+
 /// Rebinding a row replaces its plain key and keeps its hold bindings, in the settings text too.
 #[test]
 fn rebinding_sprint_keeps_its_hold_bindings() {
