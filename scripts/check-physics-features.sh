@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Fails unless every resolved version of rapier3d and parry3d has the enhanced-determinism
-# feature, which keeps physics bit-for-bit reproducible across platforms (replays depend on
-# it). Cargo unifies features, so another dependency edge could drop it silently; this reads
-# the resolved features from `cargo metadata` and names each crate lacking it. A crate
-# absent from the metadata also fails. If MOHO_PHYSICS_METADATA names a non-empty path, the
-# metadata JSON is read from that file instead of running cargo (the self-tests use this).
+# feature, which makes their physics step use libm instead of the platform math library.
+# A dependency edit could drop it without any test noticing. A crate
+# absent from the metadata also fails. A non-empty MOHO_PHYSICS_METADATA path replaces
+# `cargo metadata` as the JSON source (the self-tests use this).
 set -euo pipefail
 
 feature="enhanced-determinism"

@@ -33,9 +33,8 @@ test-doc:
 comment-refs base=base:
     scripts/check-comment-refs.sh {{base}}
 
-# Licenses, advisories, banned and duplicate crates, crate sources, and that rapier3d and
-# parry3d resolve with enhanced-determinism, plus self-tests that the feature check rejects
-# a lost feature and accepts a present one.
+# Licenses, advisories, banned and duplicate crates, crate sources, physics determinism
+# feature check and its self-tests.
 deny:
     #!/usr/bin/env bash
     set -euo pipefail
