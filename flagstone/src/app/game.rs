@@ -2872,6 +2872,25 @@ mod tests {
         }
 
         #[test]
+        fn a_mining_mark_click_keeps_the_selection() {
+            let (mut app, camera) = strategy_scene();
+            click_the_pawn(&mut app, camera);
+            assert_eq!(selected(&app), Some(PLAYER_PAWN), "the pawn is selected");
+            app.input.designation = crate::app::input_state::Designation::Mine;
+            let ground = ground_at(&app, 11.0, 6.0);
+
+            click_world(&mut app, camera, ground);
+            let after_ground = selected(&app);
+            let marks = app.colony.marks.iter().count();
+            click_the_pawn(&mut app, camera);
+            let after_pawn = selected(&app);
+
+            assert_eq!(marks, 1, "the ground click placed a mining mark");
+            assert_eq!(after_ground, Some(PLAYER_PAWN), "after the ground click");
+            assert_eq!(after_pawn, Some(PLAYER_PAWN), "after the click on the pawn");
+        }
+
+        #[test]
         fn strategy_click_on_empty_ground_clears_the_selection() {
             let (mut app, camera) = strategy_scene();
             click_the_pawn(&mut app, camera);
