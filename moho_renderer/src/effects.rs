@@ -1899,6 +1899,57 @@ mod tests {
     }
 
     #[test]
+    fn a_flash_or_mark_with_a_non_positive_or_non_finite_size_spawns_nothing() {
+        let bad_sizes = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 0.0, -0.4];
+        let life = Duration::from_secs(10);
+
+        let mut empty = Rig::new();
+        for size in bad_sizes {
+            empty
+                .effects
+                .flash(Vec3::X, 0.0, flash_style(size, Duration::from_secs(5)));
+            empty
+                .effects
+                .mark(Vec3::X, Vec3::Y, 0.0, mark_style(size, life, ms(1000)));
+            assert_eq!(empty.effects.live(), 0, "size {size} spawns nothing");
+        }
+        assert!(empty.frame(EYE).is_empty());
+
+        let mut full = Rig::new();
+        full.effects.set_quality(1);
+        for i in 0..32 {
+            let x = 10.0 * i as f32;
+            full.effects.mark(
+                Vec3::new(x, 0.0, 0.0),
+                Vec3::Y,
+                0.0,
+                mark_style(0.2, life, ms(1000)),
+            );
+        }
+        for size in bad_sizes {
+            full.effects.mark(
+                Vec3::new(1000.0, 0.0, 0.0),
+                Vec3::Y,
+                0.0,
+                mark_style(size, life, ms(1000)),
+            );
+            full.effects.flash(
+                Vec3::new(1000.0, 0.0, 0.0),
+                0.0,
+                flash_style(size, Duration::from_secs(5)),
+            );
+        }
+        let drawn = full.frame(EYE);
+
+        assert_eq!(full.effects.live(), 32, "bad sizes evict nothing");
+        assert_eq!(drawn.len(), 32, "all 32 originals still draw");
+        let mut xs: Vec<f32> = drawn.iter().map(|i| translation(i).x).collect();
+        xs.sort_by(f32::total_cmp);
+        let expected: Vec<f32> = (0..32).map(|i| 10.0 * i as f32).collect();
+        assert_eq!(xs, expected, "the originals, none replaced");
+    }
+
+    #[test]
     fn a_spawn_that_eviction_cannot_make_room_for_evicts_nothing() {
         let mut rig = Rig::new();
         let style = mark_style(0.2, Duration::from_secs(10), ms(1000));
