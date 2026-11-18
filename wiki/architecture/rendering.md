@@ -567,7 +567,18 @@ Effects are engine-owned presentation state a game starts, places and ends by ha
 ([ADR-0031](../../_todo/adr/0031-effects-are-engine-presentation-state-placed-by-handle.md)).
 `moho_renderer::Effects` (`moho_renderer/src/effects.rs`, reached via `Scene::effects_mut`)
 issues an `EffectHandle`, monotonic and never reused; a stale, unknown or inert handle is ignored.
-The one kind is the streak (a tracer):
+Three kinds share one store, one handle counter and one cap: the streak (a tracer), the
+flash and the mark.
+
+A flash (`Effects::flash(at, roll, FlashStyle)`) is a camera-facing four-point star that
+shrinks linearly to nothing over `FlashStyle::lifetime`. A mark (`Effects::mark(at, normal, roll,
+MarkStyle)`) is a quad lying on a surface, offset by `MARK_OFFSET` along the normal; it holds
+full size, then shrinks over the last `MarkStyle::fade` of its `lifetime` (clamped to it). Both
+are fire-and-forget: no handle, the engine ages and drops them, and a zero lifetime never draws.
+A mark with a zero or non-finite normal is dropped. At the cap a flash or mark replaces the
+oldest flash or mark; with none to replace it is dropped. Streaks are never evicted.
+
+Streaks:
 
 - `begin_streak(StreakStyle)` starts it; `place_streak(handle, head, heading)` sets its head
   every frame, already interpolated by the game; `end(handle)` starts the fade.
@@ -580,9 +591,9 @@ The one kind is the streak (a tracer):
   `effects_quality` pref to it on start and on apply.
 
 `Scene::render` calls `Effects::draw` first: each streak becomes one placement of a shared kite
-mesh, uploaded on first use under `EFFECT_MESH_IDS_FROM` (`u64::MAX - 63`, reserved; games keep
-their ids below it), turned to face the camera eye. Placements go through
+mesh, each flash of a star mesh and each mark of a square mesh, uploaded on first use under `EFFECT_MESH_IDS_FROM` (`u64::MAX - 63`, reserved; games keep
+their ids below it; one id per kind), turned to face the camera eye. Placements go through
 `WorldMeshes::place_unshadowed` and reach the backend via `RendererBackend::enqueue_unshadowed_draw`
 (default: `enqueue_draw`). In the renderer the draw key has `casts_shadow = false`, so
 `render_shadow_passes` skips it and the main pass draws it. A second camera sees a streak
-turned toward the first eye.
+or flash turned toward the first eye.
