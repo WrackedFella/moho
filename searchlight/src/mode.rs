@@ -6,6 +6,7 @@ use std::sync::Arc;
 use searchlight_rules::Grade;
 
 use crate::arena::{Arena, LevelMode};
+use crate::control::ControlAction;
 use crate::input::SearchlightCommand;
 use crate::sim::{Feedback, SearchlightSim, SimConfig, Start};
 use crate::wave::{WaveState, WaveTuning};
@@ -30,16 +31,22 @@ struct Waves {
 #[derive(Debug)]
 pub struct ArenaMode {
     sim: SearchlightSim,
+    /// Where the controls' actions are looked up.
+    arena: Arc<Arena>,
     /// `None` in a sandbox: nothing spawns and nothing is scored.
     waves: Option<Waves>,
 }
+
+/// The slot of the only player the sim holds.
+const HOST_SLOT: u8 = 0;
 
 impl ArenaMode {
     /// A mode over `arena` whose first wave is already standing, as far as the enemy markers
     /// allow, before the first tick.
     pub fn new(arena: Arc<Arena>, config: SimConfig, waves: WaveTuning) -> Self {
         let mut mode = Self {
-            sim: SearchlightSim::with_start(arena, config, Start::Empty),
+            sim: SearchlightSim::with_start(Arc::clone(&arena), config, Start::Empty),
+            arena,
             waves: Some(Waves {
                 state: WaveState::begin(&waves),
                 tuning: waves,
@@ -97,7 +104,40 @@ impl ArenaMode {
             waves.state = WaveState::begin(&waves.tuning);
             waves.seen_kills = 0;
         }
+        if command.use_pressed {
+            self.use_control();
+        }
         self.step_waves(command.forced_grade);
+    }
+
+    /// The action of the control the player is looking at within reach, if any.
+    pub fn action_in_reach(&self) -> Option<ControlAction> {
+        let index = self.sim.control_in_reach()?;
+        let control = self
+            .arena
+            .controls
+            .get(usize::from(index))
+            .expect("the sim only tags controls the arena registered");
+        Some(control.action)
+    }
+
+    /// Applies the action of the control the player is looking at within reach, if the host
+    /// slot may use it.
+    fn use_control(&mut self) {
+        let Some(action) = self.action_in_reach() else {
+            return;
+        };
+        if !action.honored_from(HOST_SLOT) {
+            return;
+        }
+        match action {
+            ControlAction::NextWave => {
+                let alive = self.sim.enemies_alive();
+                if let Some(waves) = self.waves.as_mut() {
+                    waves.state.call_next(&waves.tuning, alive);
+                }
+            }
+        }
     }
 
     pub fn sim(&self) -> &SearchlightSim {
@@ -120,7 +160,8 @@ impl ArenaMode {
     /// A mode over `arena` with no waves: nothing spawns and nothing is scored.
     pub fn sandbox(arena: Arc<Arena>, config: SimConfig) -> Self {
         Self {
-            sim: SearchlightSim::with_start(arena, config, Start::Empty),
+            sim: SearchlightSim::with_start(Arc::clone(&arena), config, Start::Empty),
+            arena,
             waves: None,
         }
     }
@@ -538,6 +579,7 @@ mod tests {
         mode.sim_mut().kill_enemy(0);
 
         mode.tick(&forcing(Some(Grade::Rookie)), DT);
+        call_wave_with(&mut mode, &forcing(Some(Grade::Rookie)));
 
         assert_eq!(mode.sim().enemy_count(), 4);
         assert_eq!(grades_from(&mode, 0)[0], Some(Grade::Experienced));
