@@ -736,18 +736,10 @@ impl SearchlightSim {
 
     fn resolve_player_shot(&mut self) {
         let state = self.player();
-        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
-        let origin = self.leaned_eye(&state);
-        let strike = resolve_shot(
-            &self.world,
-            ShotRay {
-                origin,
-                direction: view.forward,
-                range: self.range,
-                ignore: Some(self.player),
-            },
-        );
-        let end = strike.map_or(origin + view.forward * self.range, |strike| strike.point);
+        let ray = self.player_ray(self.range);
+        let origin = ray.origin;
+        let strike = resolve_shot(&self.world, ray);
+        let end = strike.map_or(origin + ray.direction * self.range, |strike| strike.point);
         let hit = strike.and_then(|strike| match strike.tag {
             SurfaceTag::Part { target, part } => Some((target, part)),
             _ => None,
@@ -850,17 +842,7 @@ impl SearchlightSim {
         if self.player_body.is_dead() {
             return None;
         }
-        let state = self.player();
-        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
-        let strike = resolve_shot(
-            &self.world,
-            ShotRay {
-                origin: self.leaned_eye(&state),
-                direction: view.forward,
-                range: USE_REACH,
-                ignore: Some(self.player),
-            },
-        )?;
+        let strike = resolve_shot(&self.world, self.player_ray(USE_REACH))?;
         match strike.tag {
             SurfaceTag::Control(index) => Some(index),
             _ => None,
@@ -876,6 +858,19 @@ impl SearchlightSim {
     /// lean.
     pub fn player_eye(&self) -> Vec3 {
         self.leaned_eye(&self.player())
+    }
+
+    /// The ray from the player's leaned eye along the view forward, `range` long, ignoring the
+    /// player. The shot and the use reach share it, so both start where the player looks.
+    fn player_ray(&self, range: f32) -> ShotRay {
+        let state = self.player();
+        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
+        ShotRay {
+            origin: self.leaned_eye(&state),
+            direction: view.forward,
+            range,
+            ignore: Some(self.player),
+        }
     }
 
     fn leaned_eye(&self, state: &CharacterState) -> Vec3 {

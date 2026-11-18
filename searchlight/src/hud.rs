@@ -114,10 +114,7 @@ pub fn death_text(dead: bool) -> Option<&'static str> {
 /// What the player reads when looking at a usable control: the use `key` and what using it
 /// does, such as `[F] Next wave`.
 pub fn use_prompt(key: &str, action: ControlAction) -> String {
-    let what = match action {
-        ControlAction::NextWave => "Next wave",
-    };
-    format!("[{key}] {what}")
+    format!("[{key}] {}", action.label())
 }
 
 /// A translucent rectangle in screen pixels, colour as straight RGBA.

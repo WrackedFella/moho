@@ -968,28 +968,34 @@ impl SearchlightGame {
         self
     }
 
+    /// The label of the first key bound to use, or `unbound` when none is.
+    fn use_key_label(&self) -> String {
+        self.input
+            .bindings()
+            .get(SearchlightAction::Use)
+            .first()
+            .map_or_else(|| "unbound".to_owned(), |binding| binding.label())
+    }
+
     /// Queues the use prompt below the crosshair while the player, playing and alive, looks at
     /// a control within reach; otherwise queues no text.
     fn show_use_prompt(&self, dead: bool) {
-        let action = self
-            .mode
-            .action_in_reach()
-            .filter(|_| self.screen == Screen::Playing && !dead);
-        let texts = action.map_or_else(Vec::new, |action| {
-            let key = self
-                .input
-                .bindings()
-                .get(SearchlightAction::Use)
-                .first()
-                .map_or_else(|| "unbound".to_owned(), |binding| binding.label());
-            vec![ScreenText {
-                text: hud::use_prompt(&key, action),
+        let playing = self.screen == Screen::Playing && !dead;
+        let action = if playing {
+            self.mode.action_in_reach()
+        } else {
+            None
+        };
+        let texts: Vec<ScreenText> = action
+            .map(|action| ScreenText {
+                text: hud::use_prompt(&self.use_key_label(), action),
                 anchor: Anchor::Center,
                 offset: [0.0, PROMPT_OFFSET],
                 size: PROMPT_SIZE,
                 color: [255; 4],
-            }]
-        });
+            })
+            .into_iter()
+            .collect();
         if let Err(error) = self.stage.shell().set_texts(texts) {
             tracing::warn!(%error, "use prompt not shown");
         }

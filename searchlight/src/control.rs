@@ -16,6 +16,13 @@ impl ControlAction {
         }
     }
 
+    /// What using the control does, as the player reads it in the use prompt.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::NextWave => "Next wave",
+        }
+    }
+
     /// Whether the action changes the game for everyone, so only the host may use it.
     pub fn is_host_action(self) -> bool {
         match self {
