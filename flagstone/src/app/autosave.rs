@@ -662,6 +662,64 @@ mod tests {
         }
 
         #[test]
+        fn autosave_off_never_comes_due_even_after_an_hour() {
+            let temp = tempfile::tempdir().expect("temp dir");
+            let mut app = loaded_session_with_prefs(
+                "autosave_test_off_never_due",
+                &temp,
+                prefs_with_autosave_seconds(0),
+            );
+            mine_surface_block(&mut app, 40, 40);
+            EventProcessor::new().process_world_events(&mut app);
+
+            for _ in 0..2 * 3600 * u64::from(TICK_HZ) {
+                app.autosave.tick();
+            }
+
+            assert!(
+                !app.autosave.due(),
+                "an edited world came due with autosave off"
+            );
+        }
+
+        #[test]
+        fn autosave_off_still_saves_on_return_to_main_menu() {
+            let temp = tempfile::tempdir().expect("temp dir");
+            let saves = saves_dir(&temp);
+            let mut app = loaded_session_with_prefs(
+                "autosave_test_off_main_menu",
+                &temp,
+                prefs_with_autosave_seconds(0),
+            );
+            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+            let mined = mine_surface_block(&mut app, 40, 40);
+            sim.step(&mut app, 3 * 60 * TICK_HZ);
+            draw_frame(&mut app, &mut sim);
+            let written_while_playing = scene_file(&saves).exists();
+
+            let mut clock = GameClock::default();
+            app.game_state = GameState::Paused;
+            app.event_bus.publish(UiEvent::MainMenuRequested);
+            app.event_bus.process_deferred();
+            EventProcessor::new().process_ui_events(&mut app, &mut clock);
+            let mut ctx = FrameContext::new(tick_length(), &clock, None, None);
+            Game::frame(&mut app, &mut ctx, 0.0);
+
+            assert!(
+                !written_while_playing,
+                "an autosave was written with autosave off"
+            );
+            assert_eq!(app.game_state, GameState::Menu);
+            assert!(
+                scene_file(&saves).is_file(),
+                "leaving for the menu wrote no save"
+            );
+            let mut reloaded = load_save(&saves);
+            assert!(is_mined_out(&mut reloaded, mined));
+            assert!(block_below_is_present(&reloaded, mined));
+        }
+
+        #[test]
         fn idle_world_is_not_rewritten_after_the_interval() {
             let temp = tempfile::tempdir().expect("temp dir");
             let saves = saves_dir(&temp);
