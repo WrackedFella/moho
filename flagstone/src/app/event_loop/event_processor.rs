@@ -8,6 +8,7 @@
 
 use crate::input_event::InputEvent;
 use crate::{App, RenderRequest};
+use flagstone_game::pawn::MINE_REACH;
 use flagstone_voxel::{BlockChangeReason, CRYSTAL_MATERIAL_ID, VoxelChunk, WorldEvent};
 use moho_core::events::{AudioEvent, GraphicsEvent, UiEvent};
 use moho_render_api::{Marker, MarkerId};
@@ -22,10 +23,6 @@ const MOUSE_WHEEL_ZOOM_FACTOR: f32 = 0.5;
 const SPAWN_RAYCAST_MAX_DISTANCE: f32 = 100.0;
 const SPAWN_NORMAL_OFFSET: f32 = 0.5;
 const SPAWN_FALLBACK_DISTANCE: f32 = 5.0;
-/// Maximum reach for the player's direct mining action — shorter than
-/// `SPAWN_RAYCAST_MAX_DISTANCE`, which is a debug-console placement aid, not
-/// a gameplay reach limit.
-const MINE_MAX_DISTANCE: f32 = 8.0;
 const DEFAULT_POINT_LIGHT_INTENSITY: f32 = 5.0;
 const DEFAULT_POINT_LIGHT_RANGE: f32 = 20.0;
 /// Console markers' colour: translucent amber, linear RGBA with straight alpha.
@@ -33,6 +30,7 @@ const MARKER_COLOR: [f32; 4] = [1.0, 0.55, 0.0, 0.35];
 
 /// Cue played at a block a pawn has dug on its own.
 pub(crate) const DIG_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/dig.wav");
+const DIG_VOLUME: f32 = 0.7;
 
 /// Announces a block `outcome` removed from the grid: `BlockRemoved`, and a remesh of every
 /// chunk whose mesh reads the block.
@@ -66,7 +64,15 @@ pub(crate) fn publish_block_removal(
 
 /// Announces a block a pawn dug on its own job: the removal, as for the player's mining, and
 /// the dig cue at the block's centre.
-pub(crate) fn publish_pawn_dig(_app: &mut App, _outcome: &flagstone_game::pawn::MineOutcome) {}
+pub(crate) fn publish_pawn_dig(app: &mut App, outcome: &flagstone_game::pawn::MineOutcome) {
+    // `Mechanic` is the game's own doing: `Player` would say a person dug it.
+    publish_block_removal(app, outcome, BlockChangeReason::Mechanic);
+    app.event_bus.publish(AudioEvent::PlaySoundAt {
+        path: DIG_SOUND.to_string(),
+        volume: DIG_VOLUME,
+        position: outcome.block_pos.as_vec3() + glam::Vec3::splat(0.5),
+    });
+}
 
 /// Handles processing of all event types
 pub struct EventProcessor;
@@ -270,9 +276,9 @@ impl EventProcessor {
         };
         let grid = light_system.grid_mut();
 
-        let Some(outcome) = app.pawn.mine(grid, camera_pos, forward, MINE_MAX_DISTANCE) else {
+        let Some(outcome) = app.pawn.mine(grid, camera_pos, forward, MINE_REACH) else {
             tracing::debug!(
-                distance = MINE_MAX_DISTANCE,
+                distance = MINE_REACH,
                 "Mine attempt found nothing solid within range"
             );
             return;

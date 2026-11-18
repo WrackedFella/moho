@@ -77,6 +77,10 @@ impl FrameProcessor {
             };
             let (view, proj, eye) = app.simulation.apply_input(dt, ground);
             app.camera = (view, proj, eye);
+
+            if app.simulation.camera_mode() == flagstone_game::controller::CameraMode::Isometric {
+                self.run_pawn_job(app, dt);
+            }
         }
 
         // Step rigid bodies in both KCC and non-KCC paths (test spheres, etc.)
@@ -86,6 +90,72 @@ impl FrameProcessor {
 
         // Clear zoom delta after use
         app.simulation.controller_input.zoom_delta = 0.0;
+    }
+
+    /// Runs the unpossessed pawn's job for one tick through its own physics step and mining
+    /// action. An idle pawn is not moved at all.
+    fn run_pawn_job(&self, app: &mut App, dt: f32) {
+        use flagstone_game::jobs::{self, JobAction, Pose};
+        use flagstone_game::pawn::{MINE_REACH, PawnId};
+
+        let half_height = flagstone_game::selection::PAWN_HALF_EXTENTS.y;
+        let (Some(world), Some(player)) = (app.physics.world.as_ref(), app.physics.player) else {
+            return;
+        };
+        let Some(state) = world.character(player) else {
+            return;
+        };
+        let Some(light_system) = app.light_system.as_ref() else {
+            return;
+        };
+        let pose = Pose {
+            feet: state.position - glam::Vec3::Y * half_height,
+            yaw: state.yaw,
+        };
+
+        let action = jobs::step(
+            PawnId(0),
+            &mut app.pawn,
+            pose,
+            &mut app.colony.marks,
+            light_system.grid(),
+        );
+
+        match action {
+            JobAction::Wait => {}
+            JobAction::Walk { to } => {
+                let walk = jobs::steer(pose, to);
+                let command = moho_physics::CharacterCommand {
+                    forward: walk.forward,
+                    yaw_delta: walk.yaw_delta,
+                    ..moho_physics::CharacterCommand::default()
+                };
+                let moved = app
+                    .physics
+                    .move_character(&command, &STRATEGY_MOVE_SETTINGS, dt)
+                    .expect("the character resolved above and is still in the world");
+                // Possession resumes from here; the RTS focus is a separate field and stays.
+                app.simulation
+                    .set_position_yaw_pitch(moved.position, moved.yaw, moved.pitch);
+            }
+            JobAction::Dig { block, aim } => {
+                let eye = state.position;
+                let grid = app
+                    .light_system
+                    .as_mut()
+                    .expect("the light system was read above")
+                    .grid_mut();
+                let outcome = app.pawn.dig(grid, eye, (aim - eye).normalize(), MINE_REACH);
+                let Some(outcome) = outcome else {
+                    tracing::warn!(block = ?block, "Pawn dig removed nothing");
+                    return;
+                };
+                if let Some(yield_) = outcome.yield_ {
+                    app.colony.deposit(yield_);
+                }
+                super::event_processor::publish_pawn_dig(app, &outcome);
+            }
+        }
     }
 
     fn update_game_state_fps_kcc(&self, app: &mut App, dt: f32) {
@@ -393,6 +463,9 @@ impl FrameProcessor {
         let mut hotbar: Vec<(u32, u32)> = app.pawn.inventory.iter().collect();
         hotbar.sort_by_key(|(resource_id, _)| *resource_id);
 
+        let mut colony_stock: Vec<(u32, u32)> = app.colony.stock.iter().collect();
+        colony_stock.sort_by_key(|(resource_id, _)| *resource_id);
+
         // Only one tool exists today (`flagstone_game::tools::STARTING_TOOL`); the
         // label is a fixed string until a real tool-name lookup exists.
         let equipped_tool_label = app.pawn.equipped_tool.map(|_| "Pickaxe".to_string());
@@ -436,7 +509,7 @@ impl FrameProcessor {
                 .collect(),
             selection,
             mine_designation_active: app.input.designation == Designation::Mine,
-            colony_stock: Vec::new(),
+            colony_stock,
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {
