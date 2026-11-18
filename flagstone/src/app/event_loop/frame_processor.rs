@@ -1538,6 +1538,41 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_far_marked_block_is_dug_from_within_the_mining_reach() {
+        const REACH_MARK: [i32; 3] = [16, 3, 8];
+        const BUDGET: u32 = 3 * DIG_BUDGET;
+        let mut app = colony_app(false);
+        app.colony.marks.toggle(REACH_MARK);
+        let block_centre = glam::Vec3::new(16.5, 3.5, 8.5);
+        let start_distance = PAWN_START.distance(block_centre);
+        let mut eye_at_dig = None;
+
+        let dug = run_until(&mut app, BUDGET, |app| {
+            let removed = !block_is_solid(app, REACH_MARK);
+            if removed {
+                eye_at_dig = Some(app.simulation.position());
+            }
+            removed
+        });
+
+        assert!(
+            dug.is_some(),
+            "the block is still there after {BUDGET} ticks"
+        );
+        assert!(
+            start_distance > flagstone_game::pawn::MINE_REACH,
+            "control: the start is out of reach: {start_distance} m"
+        );
+        let eye = eye_at_dig.expect("recorded on the tick the block was removed");
+        let distance = eye.distance(block_centre);
+        assert!(
+            distance <= flagstone_game::pawn::MINE_REACH,
+            "dug from {distance} m"
+        );
+        assert!(walked_from_start(&app) > 1.0, "the pawn did not walk");
+    }
+
+    #[test]
     fn nothing_marked_leaves_the_pawn_where_it_was() {
         let mut marked = colony_app(false);
         marked.colony.marks.toggle(FLAT_MARK);

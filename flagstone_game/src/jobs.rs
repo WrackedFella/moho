@@ -701,15 +701,72 @@ mod tests {
         let mut pawn = Pawn::default();
         let mut at = standing_in(cell(0, 1, 0));
 
-        for _ in 0..(3 * STALL_TICKS) {
-            if let JobAction::Walk { to } = step(PawnId(0), &mut pawn, at, &mut marks, &grid) {
-                let toward = (to - at.feet).normalize_or_zero() * 0.004;
-                at = pose(at.feet + toward, at.yaw);
-            }
+        for tick in 0..(3 * STALL_TICKS) {
+            let action = step(PawnId(0), &mut pawn, at, &mut marks, &grid);
+            let JobAction::Walk { to } = action else {
+                panic!("tick {tick}: expected a walk, got {action:?}");
+            };
+            let toward = (to - at.feet).normalize_or_zero() * 0.004;
+            at = pose(at.feet + toward, at.yaw);
+            assert!(
+                matches!(pawn.job, Job::Mine { .. }),
+                "tick {tick}: the claim was released"
+            );
         }
 
         assert!(matches!(pawn.job, Job::Mine { .. }), "still walking");
         assert_eq!(claimed_by(&marks, [7, 1, 0]), Some(PawnId(0)));
+    }
+
+    #[test]
+    fn a_long_straight_route_walked_steadily_never_stalls_across_waypoints() {
+        // A power-of-two stride that divides the 1 m waypoint spacing exactly, so every
+        // waypoint is approached through the same distances and a guard that keeps one
+        // best distance for the whole route never sees a strictly closer tick.
+        const SPEED: f32 = 0.0625;
+        let mut grid = VoxelGrid::new(16);
+        for x in -12..=12 {
+            for z in -2..=2 {
+                grid.mutator().place(cell(x, 0, z), 1, None);
+            }
+        }
+        let mut marks = MineMarks::default();
+        grid.mutator().place(cell(12, 1, 0), 1, Some(7));
+        marks.toggle([12, 1, 0]);
+        let mut pawn = Pawn::default();
+        let mut at = standing_in(cell(-12, 1, 0));
+
+        let mut ticks = 0u32;
+        let dug = loop {
+            let action = step(PawnId(0), &mut pawn, at, &mut marks, &grid);
+            ticks += 1;
+            match action {
+                JobAction::Walk { to } => {
+                    let offset = to - at.feet;
+                    let stride = offset.length().min(SPEED);
+                    at = pose(at.feet + offset.normalize_or_zero() * stride, at.yaw);
+                    assert!(
+                        matches!(pawn.job, Job::Mine { .. }),
+                        "tick {ticks}: walking but the job is {:?}",
+                        pawn.job
+                    );
+                    assert_eq!(
+                        claimed_by(&marks, [12, 1, 0]),
+                        Some(PawnId(0)),
+                        "tick {ticks}: the claim was lost mid-walk"
+                    );
+                }
+                JobAction::Dig { block, .. } => break block,
+                JobAction::Wait => panic!("tick {ticks}: waited mid-walk, job {:?}", pawn.job),
+            }
+            assert!(ticks < 2_000, "never reached the mark");
+        };
+
+        assert_eq!(dug, cell(12, 1, 0));
+        assert!(
+            ticks > STALL_TICKS,
+            "the walk must outlast the stall limit to mean anything: {ticks}"
+        );
     }
 
     #[test]
