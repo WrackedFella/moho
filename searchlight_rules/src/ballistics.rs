@@ -273,6 +273,18 @@ mod tests {
     }
 
     #[test]
+    fn a_gravity_scale_serialises_as_its_value_and_reads_back() {
+        let thirty = scale(30.0);
+
+        let written = serde_json::to_value(thirty).expect("a scale serialises");
+        let read = serde_json::from_value::<GravityScale>(written.clone())
+            .expect("what was written reads back");
+
+        assert_eq!(written, serde_json::json!(30.0));
+        assert_eq!(read, thirty);
+    }
+
+    #[test]
     fn gravity_scale_defaults_to_1() {
         assert_eq!(GravityScale::default(), scale(1.0));
         assert_eq!(GravityScale::default().gravity(), STANDARD_GRAVITY);
