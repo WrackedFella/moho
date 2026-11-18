@@ -10,12 +10,13 @@ use crate::TICK_HZ;
 use crate::colony::MineMarks;
 use crate::pawn::{Pawn, PawnId, TOOL_SLOT};
 use crate::routing::{self, ROUTE_NODE_BUDGET};
+use crate::selection::PAWN_HALF_EXTENTS;
 
 /// Marks a pawn tries to route to in one tick; the rest wait for the next.
 const MAX_ROUTE_ATTEMPTS: usize = 4;
 
 /// Half the 2.3 m capsule above the feet: where the eye is.
-const EYE_HEIGHT: f32 = 1.15;
+const EYE_HEIGHT: f32 = PAWN_HALF_EXTENTS.y;
 
 /// Closer than this to a waypoint, in metres, per tick is progress.
 const MIN_PROGRESS: f32 = 1e-3;
