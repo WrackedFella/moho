@@ -105,9 +105,10 @@ impl FrameProcessor {
         let Some(state) = world.character(player) else {
             return;
         };
-        let Some(light_system) = app.light_system.as_ref() else {
+        let Some(light_system) = app.light_system.as_mut() else {
             return;
         };
+        let grid = light_system.grid_mut();
         let pose = Pose {
             feet: state.position - glam::Vec3::Y * half_height,
             yaw: state.yaw,
@@ -118,7 +119,7 @@ impl FrameProcessor {
             &mut app.pawn,
             pose,
             &mut app.colony.marks,
-            light_system.grid(),
+            &*grid,
         );
 
         match action {
@@ -140,11 +141,6 @@ impl FrameProcessor {
             }
             JobAction::Dig { block, aim } => {
                 let eye = state.position;
-                let grid = app
-                    .light_system
-                    .as_mut()
-                    .expect("the light system was read above")
-                    .grid_mut();
                 let outcome = app.pawn.dig(grid, eye, (aim - eye).normalize(), MINE_REACH);
                 let Some(outcome) = outcome else {
                     tracing::warn!(block = ?block, "Pawn dig removed nothing");
@@ -460,11 +456,8 @@ impl FrameProcessor {
             })
             .unwrap_or_default();
 
-        let mut hotbar: Vec<(u32, u32)> = app.pawn.inventory.iter().collect();
-        hotbar.sort_by_key(|(resource_id, _)| *resource_id);
-
-        let mut colony_stock: Vec<(u32, u32)> = app.colony.stock.iter().collect();
-        colony_stock.sort_by_key(|(resource_id, _)| *resource_id);
+        let hotbar = by_resource_id(&app.pawn.inventory);
+        let colony_stock = by_resource_id(&app.colony.stock);
 
         // Only one tool exists today (`flagstone_game::tools::STARTING_TOOL`); the
         // label is a fixed string until a real tool-name lookup exists.
@@ -516,6 +509,13 @@ impl FrameProcessor {
             adapter.update_hud_data(data);
         }
     }
+}
+
+/// An inventory's `(resource id, count)` pairs, sorted by resource id.
+fn by_resource_id(inventory: &flagstone_game::inventory::Inventory) -> Vec<(u32, u32)> {
+    let mut counts: Vec<(u32, u32)> = inventory.iter().collect();
+    counts.sort_by_key(|(resource_id, _)| *resource_id);
+    counts
 }
 
 impl Default for FrameProcessor {

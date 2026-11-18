@@ -36,7 +36,7 @@ pub struct Pose {
 }
 
 /// Counts the ticks a walking pawn has made no progress towards its waypoint.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StallGuard {
     pub still_ticks: u32,
     /// The smallest distance to the waypoint seen so far.
@@ -154,12 +154,13 @@ fn take_a_mark(
     } else {
         0
     };
-    pawn.search_cursor = 0;
-    for (attempts, (index, &block)) in candidates.iter().enumerate().skip(first).enumerate() {
-        if attempts == ROUTE_ATTEMPTS_PER_TICK {
-            pawn.search_cursor = index;
-            return false;
-        }
+    let untried = first + ROUTE_ATTEMPTS_PER_TICK;
+    pawn.search_cursor = if untried < candidates.len() {
+        untried
+    } else {
+        0
+    };
+    for &block in candidates.iter().skip(first).take(ROUTE_ATTEMPTS_PER_TICK) {
         let found = route(
             grid,
             from,
@@ -171,23 +172,17 @@ fn take_a_mark(
             && marks.claim(block.to_array(), id)
         {
             pawn.select_slot(TOOL_SLOT);
+            pawn.search_cursor = 0;
             pawn.job = Job::Mine {
                 mark: block,
                 route,
                 next: 0,
-                stall: StallGuard::fresh(),
+                stall: StallGuard::default(),
             };
             return true;
         }
     }
     false
-}
-
-/// What walking the current job's route comes to this tick.
-enum Progress {
-    Walk(Vec3),
-    Dig(Vec3),
-    GiveUp,
 }
 
 /// Runs the pawn's `Mine` job one tick, ending it when it digs or gives up.
@@ -202,23 +197,17 @@ fn work(pawn: &mut Pawn, pose: Pose, marks: &mut MineMarks, grid: &VoxelGrid) ->
         return JobAction::Wait;
     };
     let block = *mark;
-    let progress = progress(block, route, next, stall, pose, marks, grid);
+    let action = progress(block, route, next, stall, pose, marks, grid);
 
-    match progress {
-        Progress::Walk(to) => JobAction::Walk { to },
-        Progress::Dig(aim) => {
-            marks.release(block.to_array());
-            pawn.job = Job::Idle;
-            JobAction::Dig { block, aim }
-        }
-        Progress::GiveUp => {
-            marks.release(block.to_array());
-            pawn.job = Job::Idle;
-            JobAction::Wait
-        }
+    if !matches!(action, JobAction::Walk { .. }) {
+        marks.release(block.to_array());
+        pawn.job = Job::Idle;
     }
+    action
 }
 
+/// What walking the route comes to this tick: a walk, the dig at its end, or `Wait` when
+/// the pawn gives the mark up.
 fn progress(
     block: BlockPos,
     route: &[BlockPos],
@@ -227,22 +216,23 @@ fn progress(
     pose: Pose,
     marks: &MineMarks,
     grid: &VoxelGrid,
-) -> Progress {
+) -> JobAction {
     if !marks.contains(block.to_array()) {
-        return Progress::GiveUp;
+        return JobAction::Wait;
     }
     while route
         .get(*next)
         .is_some_and(|&cell| horizontal_distance(pose.feet, centre_of(cell)) <= ARRIVE_RADIUS)
     {
         *next += 1;
-        *stall = StallGuard::fresh();
+        *stall = StallGuard::default();
     }
     let Some(&cell) = route.get(*next) else {
-        return nearest_exposed_face(grid, block, pose).map_or(Progress::GiveUp, Progress::Dig);
+        return nearest_exposed_face(grid, block, pose)
+            .map_or(JobAction::Wait, |aim| JobAction::Dig { block, aim });
     };
     if !standable(grid, cell) {
-        return Progress::GiveUp;
+        return JobAction::Wait;
     }
     let to = centre_of(cell);
     let distance = horizontal_distance(pose.feet, to);
@@ -252,10 +242,10 @@ fn progress(
     } else {
         stall.still_ticks += 1;
         if stall.still_ticks >= STALL_TICKS {
-            return Progress::GiveUp;
+            return JobAction::Wait;
         }
     }
-    Progress::Walk(to)
+    JobAction::Walk { to }
 }
 
 /// The centre of the exposed face of `block` nearest the pawn's eye.
@@ -269,9 +259,9 @@ fn nearest_exposed_face(grid: &VoxelGrid, block: BlockPos, pose: Pose) -> Option
         .min_by(|a, b| a.distance_squared(eye).total_cmp(&b.distance_squared(eye)))
 }
 
-impl StallGuard {
+impl Default for StallGuard {
     /// A guard for a waypoint not yet approached.
-    fn fresh() -> Self {
+    fn default() -> Self {
         Self {
             still_ticks: 0,
             closest: f32::INFINITY,

@@ -33,9 +33,9 @@ fn manhattan(a: BlockPos, b: BlockPos) -> i32 {
     (a.x - b.x).abs() + (a.z - b.z).abs()
 }
 
-/// The standable cells one step from `from`: level, one up (with a fourth cell of air above
-/// the current feet) or one down.
-fn neighbours(grid: &VoxelGrid, from: BlockPos) -> impl Iterator<Item = BlockPos> {
+/// The cells one step from `from` a move may land in: level, one up (with a fourth cell of
+/// air above the current feet) or one down. The caller still checks each is standable.
+fn steps_from(grid: &VoxelGrid, from: BlockPos) -> impl Iterator<Item = BlockPos> {
     let can_climb = !grid.is_solid_at(from + BlockPos::Y * CAPSULE_CELLS);
     HORIZONTAL_STEPS.into_iter().flat_map(move |step| {
         let level = from + step;
@@ -45,7 +45,7 @@ fn neighbours(grid: &VoxelGrid, from: BlockPos) -> impl Iterator<Item = BlockPos
             (level - BlockPos::Y, true),
         ]
         .into_iter()
-        .filter_map(|(cell, allowed)| (allowed && standable(grid, cell)).then_some(cell))
+        .filter_map(|(cell, allowed)| allowed.then_some(cell))
     })
 }
 
@@ -94,13 +94,14 @@ pub fn route(
             return None;
         }
         expansions += 1;
-        for next in neighbours(grid, cell) {
-            let next_cost = cost + 1;
-            if reached
-                .get(&next)
-                .is_some_and(|&(known, _)| known <= next_cost)
-            {
-                continue;
+        let next_cost = cost + 1;
+        for next in steps_from(grid, cell) {
+            // A reached cell is already known to be standable; test the grid only for new ones.
+            match reached.get(&next) {
+                Some(&(known, _)) if known <= next_cost => continue,
+                Some(_) => {}
+                None if !standable(grid, next) => continue,
+                None => {}
             }
             reached.insert(next, (next_cost, Some(cell)));
             let order = u32::try_from(queued_cells.len())

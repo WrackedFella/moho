@@ -46,7 +46,7 @@ pub struct Pawn {
     pub job: Job,
     /// How many of the idle pawn's candidate marks a previous tick already tried without
     /// finding a route, so the next tick goes on with the rest instead of restarting.
-    pub search_cursor: usize,
+    pub(crate) search_cursor: usize,
 }
 
 impl Default for Pawn {
