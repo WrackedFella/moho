@@ -1,6 +1,7 @@
 //! What an idle pawn does on its own: take a marked block, walk to it over the ground and
 //! dig it with the pawn's own mining action.
 
+use std::collections::BTreeSet;
 use std::f32::consts::{PI, TAU};
 
 use flagstone_voxel::{BlockPos, VoxelGrid};
@@ -131,8 +132,10 @@ pub fn step(
 }
 
 /// Takes the nearest unclaimed mark with an exposed face that routes to a stand cell, trying
-/// at most [`MAX_ROUTE_ATTEMPTS`] marks per call. A call that claims nothing moves the next
-/// one on to the following marks, wrapping to the nearest once the list runs out.
+/// at most [`MAX_ROUTE_ATTEMPTS`] marks per call. Marks that fail to route are remembered
+/// in `Pawn::routes_failed` and skipped by later calls, so a mark that appears nearer is
+/// still tried first; once every mark has failed the memory is cleared and the nearest is
+/// tried again.
 fn claim(pawn: &mut Pawn, pose: PawnPose, marks: &mut MineMarks, grid: &VoxelGrid) -> Option<Job> {
     let feet = routing::feet_cell(pose.feet);
     let mut candidates: Vec<[i32; 3]> = marks.unclaimed().collect();
@@ -142,15 +145,27 @@ fn claim(pawn: &mut Pawn, pose: PawnPose, marks: &mut MineMarks, grid: &VoxelGri
             .as_i64vec3()
             .length_squared()
     });
-    let exposed = candidates.into_iter().filter(|&mark| {
-        exposed_faces(grid, BlockPos::from_array(mark))
-            .next()
-            .is_some()
-    });
+    let untried = |failed: &BTreeSet<[i32; 3]>| -> Vec<[i32; 3]> {
+        candidates
+            .iter()
+            .copied()
+            .filter(|mark| !failed.contains(mark))
+            .filter(|&mark| {
+                exposed_faces(grid, BlockPos::from_array(mark))
+                    .next()
+                    .is_some()
+            })
+            .take(MAX_ROUTE_ATTEMPTS)
+            .collect()
+    };
 
-    let mut attempts = 0;
-    for mark in exposed.skip(pawn.routes_skipped).take(MAX_ROUTE_ATTEMPTS) {
-        attempts += 1;
+    let mut round = untried(&pawn.routes_failed);
+    if round.is_empty() && !pawn.routes_failed.is_empty() {
+        // Every mark has failed this cycle: start over from the nearest without an empty tick.
+        pawn.routes_failed.clear();
+        round = untried(&pawn.routes_failed);
+    }
+    for mark in round {
         let block = BlockPos::from_array(mark);
         let found = routing::route(
             grid,
@@ -161,7 +176,7 @@ fn claim(pawn: &mut Pawn, pose: PawnPose, marks: &mut MineMarks, grid: &VoxelGri
         );
         if let Some(route) = found {
             marks.claim(mark, PawnId(0));
-            pawn.routes_skipped = 0;
+            pawn.routes_failed.clear();
             pawn.select_slot(TOOL_SLOT);
             return Some(Job::Mine {
                 mark,
@@ -170,13 +185,8 @@ fn claim(pawn: &mut Pawn, pose: PawnPose, marks: &mut MineMarks, grid: &VoxelGri
                 stall: StallGuard::default(),
             });
         }
+        pawn.routes_failed.insert(mark);
     }
-    // A full round may have left marks untried; a short one reached the end of the list.
-    pawn.routes_skipped = if attempts == MAX_ROUTE_ATTEMPTS {
-        pawn.routes_skipped + attempts
-    } else {
-        0
-    };
     None
 }
 

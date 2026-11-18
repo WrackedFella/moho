@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use flagstone_voxel::{BlockPos, VoxelGrid};
 use glam::Vec3;
 
@@ -44,9 +46,9 @@ pub struct Pawn {
     pub pickups: PickupFeed,
     /// What the pawn is doing on its own while nobody possesses it.
     pub job: Job,
-    /// Nearest exposed marks the idle pawn has already failed to route to, so the next
-    /// claim attempt starts past them; 0 after a claim or once the list is exhausted.
-    pub(crate) routes_skipped: usize,
+    /// Marks the idle pawn has failed to route to this cycle, skipped by the next claim
+    /// attempts; emptied after a claim or once every mark has failed.
+    pub(crate) routes_failed: BTreeSet<[i32; 3]>,
 }
 
 impl Default for Pawn {
@@ -57,7 +59,7 @@ impl Default for Pawn {
             selected_slot: TOOL_SLOT,
             pickups: PickupFeed::default(),
             job: Job::default(),
-            routes_skipped: 0,
+            routes_failed: BTreeSet::new(),
         }
     }
 }
