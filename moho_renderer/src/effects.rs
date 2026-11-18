@@ -1314,6 +1314,43 @@ mod tests {
     }
 
     #[test]
+    fn a_positive_roll_turns_x_toward_y_about_the_facing_axis() {
+        let roll = 0.5;
+        let life = Duration::from_secs(10);
+        let draw_pair = |spawn: &dyn Fn(&mut Effects, f32)| {
+            let mut plain = Rig::new();
+            let mut rolled = Rig::new();
+            spawn(&mut plain.effects, 0.0);
+            spawn(&mut rolled.effects, roll);
+            let before = plain.frame(EYE);
+            let after = rolled.frame(EYE);
+            assert_eq!((before.len(), after.len()), (1, 1), "both draw");
+            (before[0], after[0])
+        };
+        let mut pairs = Vec::new();
+        for normal in [Vec3::Y, Vec3::new(1.0, 2.0, 2.0).normalize()] {
+            pairs.push(draw_pair(&|effects, roll| {
+                effects.mark(Vec3::X, normal, roll, mark_style(0.2, life, ms(1000)));
+            }));
+        }
+        pairs.push(draw_pair(&|effects, roll| {
+            effects.flash(Vec3::X, roll, flash_style(0.4, life));
+        }));
+
+        for (before, after) in pairs {
+            let z = z_axis(&before);
+            let x0 = x_axis(&before).normalize();
+            let x1 = x_axis(&after).normalize();
+            assert!((x0.dot(x1) - roll.cos()).abs() < EPS, "cos of the roll");
+            let toward_y = x1.dot(z.cross(x0));
+            assert!(
+                (toward_y - roll.sin()).abs() < EPS,
+                "a positive roll turns X toward Y, sin was {toward_y}"
+            );
+        }
+    }
+
+    #[test]
     fn a_mark_roll_turns_it_about_its_normal() {
         let roll = 0.5;
         for normal in [Vec3::Y, Vec3::new(1.0, 2.0, 2.0).normalize()] {
