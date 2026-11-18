@@ -92,6 +92,18 @@ impl Streak {
         self.ended_at
             .is_some_and(|ended_at| self.age.saturating_sub(ended_at) >= self.style.fade)
     }
+
+    /// Where the streak draws this frame, facing `eye`; consumes the frame's placement.
+    /// `None` when it was not placed and is not fading, has no heading yet, or is degenerate.
+    fn frame_transform(&mut self, eye: Vec3) -> Option<Affine3A> {
+        let placed = std::mem::take(&mut self.placed_this_frame);
+        if !placed && self.ended_at.is_none() {
+            return None;
+        }
+        let heading = self.heading?;
+        let width = self.style.width * self.width_scale();
+        streak_transform(self.head, heading, self.style.length, width, eye)
+    }
 }
 
 /// A fixed-lifetime star, placed by the engine at spawn.
@@ -101,6 +113,13 @@ struct Flash {
     at: Vec3,
     roll: f32,
     age: Duration,
+}
+
+impl Flash {
+    /// The size factor: 1 at spawn, falling linearly to 0 at `lifetime`.
+    fn scale(&self) -> f32 {
+        (1.0 - self.age.as_secs_f32() / self.style.lifetime.as_secs_f32()).clamp(0.0, 1.0)
+    }
 }
 
 /// A fixed-lifetime quad lying on a surface; `normal` is a unit vector.
@@ -143,9 +162,7 @@ pub struct Effects {
     store: BTreeMap<EffectHandle, Effect>,
     next_handle: u64,
     cap: usize,
-    streak_uploaded: bool,
-    flash_uploaded: bool,
-    mark_uploaded: bool,
+    uploaded: [bool; EffectMesh::COUNT],
 }
 
 impl Default for Effects {
@@ -154,9 +171,7 @@ impl Default for Effects {
             store: BTreeMap::new(),
             next_handle: 0,
             cap: CAPS[DEFAULT_QUALITY],
-            streak_uploaded: false,
-            flash_uploaded: false,
-            mark_uploaded: false,
+            uploaded: [false; EffectMesh::COUNT],
         }
     }
 }
@@ -185,13 +200,10 @@ impl Effects {
 
     /// Spawn a camera-facing star at `at`, rolled by `roll` about the facing axis. It
     /// shrinks linearly and is gone after its lifetime. Nothing is spawned for a zero
-    /// lifetime or a non-finite input, nor when the cap leaves no room (see `evict_for`).
+    /// lifetime, a non-positive or non-finite size or a non-finite input, nor when the cap
+    /// leaves no room (see `evict_for_one`).
     pub fn flash(&mut self, at: Vec3, roll: f32, style: FlashStyle) {
-        if style.lifetime.is_zero()
-            || !at.is_finite()
-            || !roll.is_finite()
-            || !is_drawable_size(style.size)
-        {
+        if !spawnable(at, roll, style.size, style.lifetime) {
             return;
         }
         self.spawn(Effect::Flash(Flash {
@@ -204,16 +216,13 @@ impl Effects {
 
     /// Spawn a quad lying on a surface at `at` with the given `normal` (normalised here),
     /// rolled by `roll` about it. Nothing is spawned for a zero or non-finite normal, a
-    /// zero lifetime, a non-finite input, or when the cap leaves no room (see `evict_for`).
+    /// zero lifetime, a non-positive or non-finite size, a non-finite input, or when the cap
+    /// leaves no room (see `evict_for_one`).
     pub fn mark(&mut self, at: Vec3, normal: Vec3, roll: f32, style: MarkStyle) {
         let Some(normal) = normal.try_normalize() else {
             return;
         };
-        if style.lifetime.is_zero()
-            || !at.is_finite()
-            || !roll.is_finite()
-            || !is_drawable_size(style.size)
-        {
+        if !spawnable(at, roll, style.size, style.lifetime) {
             return;
         }
         self.spawn(Effect::Mark(Mark {
@@ -315,76 +324,69 @@ impl Effects {
     /// unshadowed, facing `eye` where they face it.
     pub(crate) fn draw(&mut self, meshes: &mut WorldMeshes, eye: Vec3) {
         for effect in self.store.values_mut() {
-            match effect {
-                Effect::Streak(streak) => {
-                    let placed = std::mem::take(&mut streak.placed_this_frame);
-                    if !placed && streak.ended_at.is_none() {
-                        continue;
-                    }
-                    let Some(heading) = streak.heading else {
-                        continue;
-                    };
-                    let width = streak.style.width * streak.width_scale();
-                    if let Some(transform) =
-                        streak_transform(streak.head, heading, streak.style.length, width, eye)
-                    {
-                        place(
-                            meshes,
-                            &mut self.streak_uploaded,
-                            0,
-                            streak_mesh,
-                            transform,
-                            streak.style.material,
-                        );
-                    }
-                }
-                Effect::Flash(flash) => {
-                    if let Some(transform) = flash_transform(flash, eye) {
-                        place(
-                            meshes,
-                            &mut self.flash_uploaded,
-                            1,
-                            flash_mesh,
-                            transform,
-                            flash.style.material,
-                        );
-                    }
-                }
+            let drawn = match effect {
+                Effect::Streak(streak) => streak
+                    .frame_transform(eye)
+                    .map(|transform| (EffectMesh::Streak, transform, streak.style.material)),
+                Effect::Flash(flash) => flash_transform(flash, eye)
+                    .map(|transform| (EffectMesh::Flash, transform, flash.style.material)),
                 Effect::Mark(mark) => {
-                    place(
-                        meshes,
-                        &mut self.mark_uploaded,
-                        2,
-                        mark_mesh,
-                        mark_transform(mark),
-                        mark.style.material,
-                    );
+                    Some((EffectMesh::Mark, mark_transform(mark), mark.style.material))
                 }
+            };
+            if let Some((mesh, transform, material)) = drawn {
+                place(meshes, &mut self.uploaded, mesh, transform, material);
             }
         }
     }
 }
 
-/// Whether a flash or mark of this size can be seen: finite and positive.
-fn is_drawable_size(size: f32) -> bool {
-    size.is_finite() && size > 0.0
+/// Whether a flash or mark can be spawned: finite place and roll, a positive finite size
+/// and a non-zero lifetime.
+fn spawnable(at: Vec3, roll: f32, size: f32, lifetime: Duration) -> bool {
+    at.is_finite() && roll.is_finite() && size.is_finite() && size > 0.0 && !lifetime.is_zero()
 }
 
-/// Place `transform` on the effect mesh at `offset` into the reserved ids, uploading the
-/// mesh from `make` on first use.
+/// The built-in meshes effects draw with, one reserved id each.
+#[derive(Debug, Clone, Copy)]
+enum EffectMesh {
+    Streak,
+    Flash,
+    Mark,
+}
+
+impl EffectMesh {
+    const COUNT: usize = 3;
+
+    fn index(self) -> usize {
+        self as usize
+    }
+
+    fn id(self) -> WorldMeshId {
+        WorldMeshId(EFFECT_MESH_IDS_FROM + self as u64)
+    }
+
+    fn build(self) -> WorldMesh {
+        match self {
+            Self::Streak => streak_mesh(),
+            Self::Flash => flash_mesh(),
+            Self::Mark => mark_mesh(),
+        }
+    }
+}
+
+/// Place `transform` on `mesh`, uploading it on first use.
 fn place(
     meshes: &mut WorldMeshes,
-    uploaded: &mut bool,
-    offset: u64,
-    make: fn() -> WorldMesh,
+    uploaded: &mut [bool; EffectMesh::COUNT],
+    mesh: EffectMesh,
     transform: Affine3A,
     material: u32,
 ) {
-    let id = WorldMeshId(EFFECT_MESH_IDS_FROM + offset);
-    if !std::mem::replace(uploaded, true) {
-        meshes.upsert_movable(id, make());
+    if !std::mem::replace(&mut uploaded[mesh.index()], true) {
+        meshes.upsert_movable(mesh.id(), mesh.build());
     }
-    meshes.place_unshadowed(id, transform, material);
+    meshes.place_unshadowed(mesh.id(), transform, material);
 }
 
 /// A flat mesh facing +Z: every channel but the positions is the same for each vertex.
@@ -459,8 +461,7 @@ fn flash_transform(flash: &Flash, eye: Vec3) -> Option<Affine3A> {
         to_eye.normalize()
     };
     let (x, y) = rolled_plane(z, flash.roll);
-    let size = flash.style.size
-        * (1.0 - flash.age.as_secs_f32() / flash.style.lifetime.as_secs_f32()).clamp(0.0, 1.0);
+    let size = flash.style.size * flash.scale();
     Some(Affine3A::from_cols(
         (x * size).into(),
         (y * size).into(),
