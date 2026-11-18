@@ -39,6 +39,7 @@ impl StreakStyle {
 /// A camera-facing star that shrinks linearly to nothing over its lifetime.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FlashStyle {
+    /// The star's tip-to-tip width.
     pub size: f32,
     pub material: u32,
     pub lifetime: Duration,
@@ -47,6 +48,7 @@ pub struct FlashStyle {
 /// A flat square on a surface that holds full size, then shrinks out over `fade`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MarkStyle {
+    /// The square's side.
     pub size: f32,
     pub material: u32,
     pub lifetime: Duration,
@@ -114,13 +116,14 @@ struct Mark {
 
 impl Mark {
     /// Full size until `lifetime - fade` (fade clamped to the lifetime), then linear to 0.
+    /// A zero fade stays full; the mark is removed at its lifetime before it can drop.
     fn size_scale(&self) -> f32 {
         let lifetime = self.style.lifetime;
         let fade = self.style.fade.min(lifetime);
-        if self.age < lifetime.saturating_sub(fade) {
+        if fade.is_zero() {
             return 1.0;
         }
-        lifetime.saturating_sub(self.age).as_secs_f32() / fade.as_secs_f32()
+        (lifetime.saturating_sub(self.age).as_secs_f32() / fade.as_secs_f32()).min(1.0)
     }
 }
 
@@ -429,18 +432,19 @@ fn streak_mesh() -> WorldMesh {
     )
 }
 
-/// A four-point star with tips at radius 1 on the axes, counter-clockwise seen from +Z.
+/// A four-point star one unit tip to tip (tips at 0.5 on the axes), counter-clockwise
+/// seen from +Z.
 fn flash_mesh() -> WorldMesh {
     flat_mesh(
         vec![
-            [1.0, 0.0, 0.0],
-            [0.25, 0.25, 0.0],
-            [0.0, 1.0, 0.0],
-            [-0.25, 0.25, 0.0],
-            [-1.0, 0.0, 0.0],
-            [-0.25, -0.25, 0.0],
-            [0.0, -1.0, 0.0],
-            [0.25, -0.25, 0.0],
+            [0.5, 0.0, 0.0],
+            [0.125, 0.125, 0.0],
+            [0.0, 0.5, 0.0],
+            [-0.125, 0.125, 0.0],
+            [-0.5, 0.0, 0.0],
+            [-0.125, -0.125, 0.0],
+            [0.0, -0.5, 0.0],
+            [0.125, -0.125, 0.0],
         ],
         vec![7, 0, 1, 1, 2, 3, 3, 4, 5, 5, 6, 7, 1, 3, 5, 1, 5, 7],
     )
@@ -1018,6 +1022,11 @@ mod tests {
         let (positions, indices) = &rig.backend.registered[0];
         assert_eq!(positions.len(), 8, "a four-point star");
         assert_flat_and_wound_toward_plus_z(positions, indices);
+        for axis in 0..2 {
+            let low = positions.iter().map(|p| p[axis]).fold(f32::MAX, f32::min);
+            let high = positions.iter().map(|p| p[axis]).fold(f32::MIN, f32::max);
+            assert_eq!((low, high), (-0.5, 0.5), "tip to tip is 1, axis {axis}");
+        }
 
         rig.effects.advance(ms(25));
         let half = rig.frame(EYE);
