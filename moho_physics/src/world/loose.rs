@@ -1,6 +1,6 @@
 use super::PhysicsWorld;
 use glam::{Quat, Vec3};
-use rapier3d::prelude::{ColliderBuilder, Pose, RigidBodyBuilder, RigidBodyHandle};
+use rapier3d::prelude::{ColliderBuilder, Pose, RigidBody, RigidBodyBuilder, RigidBodyHandle};
 
 /// Stable, engine-issued name of a loose object.
 ///
@@ -74,7 +74,7 @@ impl LooseShape {
 }
 
 /// Steepest ground, radians from level, on which loose objects are braked to rest.
-pub(super) const DEFAULT_REST_SLOPE: f32 = 5.0 * std::f32::consts::PI / 180.0;
+const DEFAULT_REST_SLOPE: f32 = 5.0 * std::f32::consts::PI / 180.0;
 
 /// Contact depth, m, past which a body is being pushed out of another and must not be braked:
 /// braking zeroes the velocity the solver separates them with and the overlap freezes.
@@ -106,7 +106,7 @@ impl Default for RestSlope {
 
 /// A loose object's body and what the brake needs of its shape.
 pub(super) struct Loose {
-    pub(super) body: RigidBodyHandle,
+    body: RigidBodyHandle,
     /// Radius of the rolling shape; `None` for a box.
     roll_radius: Option<f32>,
 }
@@ -114,6 +114,39 @@ pub(super) struct Loose {
 /// Reduce `value` toward zero by `amount`, stopping at zero.
 fn cut(value: f32, amount: f32) -> f32 {
     value.signum() * (value.abs() - amount).max(0.0)
+}
+
+/// What a body's contacts say about braking it.
+#[derive(Default)]
+struct GroundContact {
+    /// Some touching point has a normal within the rest slope of `up`.
+    on_near_flat_ground: bool,
+    /// Some contact is deeper than [`DEEP_CONTACT`].
+    being_separated: bool,
+}
+
+/// The spin and linear velocity after one tick of braking, given the shape's `axis`.
+///
+/// Spin about `axis` falls by `deceleration·dt / radius` and velocity along `axis × up` by
+/// `deceleration·dt`; everything else is returned unchanged.
+fn braked(
+    axis: Vec3,
+    up: Vec3,
+    spin: Vec3,
+    velocity: Vec3,
+    radius: f32,
+    deceleration: f32,
+    dt: f32,
+) -> (Vec3, Vec3) {
+    let spin_about_axis = spin.dot(axis);
+    let new_spin =
+        spin + axis * (cut(spin_about_axis, deceleration * dt / radius) - spin_about_axis);
+    let mut new_velocity = velocity;
+    if let Some(roll) = axis.cross(up).try_normalize() {
+        let along = velocity.dot(roll);
+        new_velocity += roll * (cut(along, deceleration * dt) - along);
+    }
+    (new_spin, new_velocity)
 }
 
 /// Everything a game states when it drops a loose object.
@@ -219,9 +252,8 @@ impl PhysicsWorld {
     /// # Panics
     /// If the spawn would poison the simulation: a mass, half extent, half height or radius
     /// that is not positive and finite, a friction, restitution or damping that is negative or
-    /// not finite, a position or
-    /// velocity that is not finite, or a rotation that is not finite or whose squared length is
-    /// more than 2e-4 from 1 (glam's `Quat::is_normalized`).
+    /// not finite, a position or velocity that is not finite, or a rotation that is not finite
+    /// or whose squared length is more than 2e-4 from 1 (glam's `Quat::is_normalized`).
     pub fn spawn_loose(&mut self, spawn: &LooseSpawn) -> LooseId {
         spawn.assert_valid();
 
@@ -331,46 +363,50 @@ impl PhysicsWorld {
                 continue;
             }
 
-            let mut on_near_flat_ground = false;
-            let mut being_separated = false;
-            for &collider in body.colliders() {
-                for pair in self.narrow_phase.contact_pairs_with(collider) {
-                    let into_body = if pair.collider1 == collider {
-                        -1.0
-                    } else {
-                        1.0
-                    };
-                    for manifold in pair.manifolds() {
-                        let normal = manifold.data.normal * into_body;
-                        for point in &manifold.points {
-                            being_separated |= point.dist < -DEEP_CONTACT;
-                            on_near_flat_ground |=
-                                point.dist <= 0.0 && normal.dot(up) >= self.rest_slope.cos;
-                        }
-                    }
-                }
-            }
-            if !on_near_flat_ground || being_separated {
+            let contact = self.ground_contact(body, up);
+            if !contact.on_near_flat_ground || contact.being_separated {
                 continue;
             }
 
             let axis = *body.rotation() * Vec3::Y;
-            let spin = body.angvel();
-            let velocity = body.linvel();
-            let spin_about_axis = spin.dot(axis);
-            let new_spin =
-                spin + axis * (cut(spin_about_axis, deceleration * dt / radius) - spin_about_axis);
-            let mut new_velocity = velocity;
-            if let Some(roll) = axis.cross(up).try_normalize() {
-                let along = velocity.dot(roll);
-                new_velocity += roll * (cut(along, deceleration * dt) - along);
-            }
+            let (new_spin, new_velocity) = braked(
+                axis,
+                up,
+                body.angvel(),
+                body.linvel(),
+                radius,
+                deceleration,
+                dt,
+            );
             let handle = loose.body;
             if let Some(body) = self.rigid_body_set.get_mut(handle) {
                 body.set_angvel(new_spin, false);
                 body.set_linvel(new_velocity, false);
             }
         }
+    }
+
+    /// What the body touches, read from the narrow phase against the rest slope around `up`.
+    fn ground_contact(&self, body: &RigidBody, up: Vec3) -> GroundContact {
+        let mut contact = GroundContact::default();
+        for &collider in body.colliders() {
+            for pair in self.narrow_phase.contact_pairs_with(collider) {
+                let into_body = if pair.collider1 == collider {
+                    -1.0
+                } else {
+                    1.0
+                };
+                for manifold in pair.manifolds() {
+                    let normal = manifold.data.normal * into_body;
+                    for point in &manifold.points {
+                        contact.being_separated |= point.dist < -DEEP_CONTACT;
+                        contact.on_near_flat_ground |=
+                            point.dist <= 0.0 && normal.dot(up) >= self.rest_slope.cos;
+                    }
+                }
+            }
+        }
+        contact
     }
 
     /// How many loose objects are alive.
