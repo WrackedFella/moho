@@ -1966,4 +1966,149 @@ mod tests {
             prop_assert!((translation(instance) - (at + unit * MARK_OFFSET)).length() < 1e-3);
         }
     }
+
+    #[test]
+    fn a_mark_with_zero_fade_is_full_size_until_its_lifetime_ends() {
+        let mut rig = Rig::new();
+        rig.effects.mark(
+            Vec3::X,
+            Vec3::Y,
+            0.0,
+            mark_style(0.2, Duration::from_secs(2), Duration::ZERO),
+        );
+        let start = rig.frame(EYE);
+        assert_eq!(start.len(), 1);
+        assert!(all_finite(&start[0]), "finite at spawn");
+        assert!((x_axis(&start[0]).length() - 0.2).abs() < EPS);
+
+        rig.effects.advance(ms(1999));
+        let last = rig.frame(EYE);
+
+        assert_eq!(last.len(), 1, "still drawn at 1.999s");
+        assert!(all_finite(&last[0]), "finite at 1.999s");
+        assert!((x_axis(&last[0]).length() - 0.2).abs() < EPS, "full size");
+        assert!((y_axis(&last[0]).length() - 0.2).abs() < EPS, "full size");
+        assert_eq!(rig.effects.live(), 1);
+
+        rig.effects.advance(ms(1));
+
+        assert_eq!(rig.effects.live(), 0, "gone at 2s");
+        assert!(rig.frame(EYE).is_empty());
+    }
+
+    #[test]
+    fn one_huge_advance_removes_flash_and_mark_and_frees_their_cap_slots() {
+        let mut rig = Rig::new();
+        rig.effects.set_quality(1);
+        let hour = Duration::from_secs(3600);
+        let survivor = Vec3::new(700.0, 0.0, 0.0);
+        for i in 0..16u8 {
+            let at = Vec3::new(f32::from(i), 0.0, 0.0);
+            rig.effects.flash(at, 0.0, flash_style(0.4, ms(50)));
+            rig.effects.mark(
+                at + Vec3::Z * 3.0,
+                Vec3::Y,
+                0.0,
+                mark_style(0.2, Duration::from_secs(10), ms(500)),
+            );
+        }
+        rig.effects.mark(
+            survivor,
+            Vec3::Y,
+            0.0,
+            mark_style(0.2, hour * 2, Duration::from_secs(1)),
+        );
+        assert_eq!(rig.effects.live(), 32, "the cap is full");
+
+        rig.effects.advance(hour);
+
+        assert_eq!(rig.effects.live(), 1, "only the long-lived mark remains");
+        for i in 0..31u8 {
+            rig.effects.flash(
+                Vec3::new(f32::from(i), 10.0, 0.0),
+                0.0,
+                flash_style(0.4, hour * 2),
+            );
+        }
+        let drawn = rig.frame(EYE);
+        assert_eq!(rig.effects.live(), 32);
+        assert_eq!(drawn.len(), 32);
+        assert!(
+            any_drawn_near(&drawn, survivor + Vec3::Y * MARK_OFFSET),
+            "refilling to the cap evicted nothing live"
+        );
+    }
+
+    #[test]
+    fn a_mark_with_a_tiny_normal_and_a_huge_roll_draws_finite_with_a_unit_z() {
+        let mut rig = Rig::new();
+        rig.effects.mark(
+            Vec3::X,
+            Vec3::new(1e-20, 0.0, 0.0),
+            1e6,
+            mark_style(0.2, Duration::from_secs(10), ms(500)),
+        );
+
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(drawn.len(), 1, "a tiny normal still has a direction");
+        let instance = &drawn[0];
+        assert!(all_finite(instance));
+        assert!((z_axis(instance).length() - 1.0).abs() < EPS, "Z is unit");
+        assert_near(z_axis(instance), Vec3::X);
+        assert!(x_axis(instance).dot(Vec3::X).abs() < EPS);
+        assert!(y_axis(instance).dot(Vec3::X).abs() < EPS);
+        assert!((x_axis(instance).length() - 0.2).abs() < EPS);
+    }
+
+    #[test]
+    fn a_flash_with_its_eye_almost_on_it_never_draws_non_finite_columns() {
+        let at = Vec3::new(1.0, 2.0, 3.0);
+        for offset in [
+            Vec3::X * 1e-6,
+            Vec3::new(0.0, -1e-6, 0.0),
+            Vec3::new(1e-7, 1e-7, 1e-7),
+        ] {
+            let mut rig = Rig::new();
+            rig.effects.flash(at, 0.4, flash_style(0.4, ms(50)));
+
+            let drawn = rig.frame(at + offset);
+
+            assert!(drawn.iter().all(all_finite), "offset {offset}");
+            assert!(drawn.len() <= 1, "offset {offset}");
+        }
+    }
+
+    #[test]
+    fn eviction_at_the_cap_takes_fixed_effects_in_spawn_order() {
+        let mut rig = Rig::new();
+        rig.effects.set_quality(1);
+        let long = Duration::from_secs(60);
+        let at = |i: u16| Vec3::new(f32::from(i) * 2.0, 0.0, 0.0);
+        for i in 0..32 {
+            rig.effects
+                .mark(at(i), Vec3::Y, 0.0, mark_style(0.2, long, ms(500)));
+        }
+        rig.effects
+            .mark(at(100), Vec3::Y, 0.0, mark_style(0.2, long, ms(500)));
+
+        rig.effects
+            .mark(at(101), Vec3::Y, 0.0, mark_style(0.2, long, ms(500)));
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(rig.effects.live(), 32);
+        assert!(!any_drawn_near(&drawn, at(0)), "the oldest went first");
+        assert!(
+            !any_drawn_near(&drawn, at(1)),
+            "the next oldest went second"
+        );
+        assert!(
+            any_drawn_near(&drawn, at(100)),
+            "the earlier newcomer stays"
+        );
+        assert!(any_drawn_near(&drawn, at(101)));
+        for i in 2..32 {
+            assert!(any_drawn_near(&drawn, at(i)), "{i} is kept");
+        }
+    }
 }
