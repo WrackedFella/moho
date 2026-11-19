@@ -103,6 +103,16 @@ struct Flash {
     age: Duration,
 }
 
+impl Flash {
+    /// The size factor: 1 at birth, falling linearly to 0 at the end of its lifetime.
+    fn scale(&self) -> f32 {
+        remaining(
+            self.style.lifetime.saturating_sub(self.age),
+            self.style.lifetime,
+        )
+    }
+}
+
 #[derive(Debug)]
 struct Mark {
     /// Already lifted off the surface by `MARK_OFFSET`.
@@ -346,11 +356,7 @@ impl Effects {
                     (MeshKind::Streak, transform, streak.style.material)
                 }
                 Effect::Flash(flash) => {
-                    let size = flash.style.size
-                        * remaining(
-                            flash.style.lifetime.saturating_sub(flash.age),
-                            flash.style.lifetime,
-                        );
+                    let size = flash.style.size * flash.scale();
                     let transform = flash_transform(flash.at, flash.roll, size, eye);
                     (MeshKind::Flash, transform, flash.style.material)
                 }
