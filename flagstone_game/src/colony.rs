@@ -72,13 +72,11 @@ impl MineMarks {
     }
 
     /// The marked blocks nobody has claimed, in key order.
-    pub fn unclaimed(&self) -> std::vec::IntoIter<[i32; 3]> {
+    pub fn unclaimed(&self) -> impl Iterator<Item = [i32; 3]> + '_ {
         self.marks
             .iter()
             .filter(|(_, mark)| mark.claimed_by.is_none())
             .map(|(pos, _)| *pos)
-            .collect::<Vec<_>>()
-            .into_iter()
     }
 
     /// Drops the mark on a block that no longer exists; does nothing for an unmarked one.

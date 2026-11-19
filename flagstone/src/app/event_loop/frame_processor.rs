@@ -21,7 +21,7 @@ const MOVE_SPEED: f32 = 4.0;
 const SPRINT_SPEED: f32 = 6.0;
 
 /// Half the character capsule's height: the distance from its centre to the feet.
-const HULL_HALF_HEIGHT: f32 = 1.15;
+const HULL_HALF_HEIGHT: f32 = flagstone_game::selection::PAWN_HALF_EXTENTS.y;
 
 /// Strategy-line walking feel: acceleration and friction high enough to reach speed, or
 /// stop, within a tick. `max_speed` and `air_speed_cap` are set per tick from sprint.

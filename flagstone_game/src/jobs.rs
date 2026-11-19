@@ -17,7 +17,7 @@ pub const ARRIVE_RADIUS: f32 = 0.35;
 pub const STALL_TICKS: u32 = 120;
 
 /// The fastest a pawn turns, in radians per second.
-pub const TURN_RATE: f32 = std::f32::consts::TAU;
+pub const TURN_RATE: f32 = TAU;
 
 /// Route searches an idle pawn makes in one tick.
 pub const ROUTE_ATTEMPTS_PER_TICK: usize = 4;
@@ -39,9 +39,9 @@ pub struct StallGuard {
 }
 
 impl StallGuard {
-    /// Records the distance left to the waypoint; `None` once `STALL_TICKS` ticks have passed
+    /// Records the distance left to the waypoint; `false` once `STALL_TICKS` ticks have passed
     /// without getting closer.
-    fn observe(&mut self, distance: f32) -> Option<()> {
+    fn observe(&mut self, distance: f32) -> bool {
         if self
             .closest
             .is_none_or(|closest| distance < closest - PROGRESS_EPSILON)
@@ -51,7 +51,7 @@ impl StallGuard {
         } else {
             self.stalled_ticks += 1;
         }
-        (self.stalled_ticks < STALL_TICKS).then_some(())
+        self.stalled_ticks < STALL_TICKS
     }
 }
 
@@ -122,12 +122,12 @@ pub fn step(
         return JobAction::Wait;
     };
     let mark = *mark;
-    let action = mine_step(mark, route, next, stall, pose, marks, grid);
-    if action.is_none() {
-        marks.release(mark);
-        pawn.job = Job::Idle;
+    if let Some(action) = mine_step(mark, route, next, stall, pose, marks, grid) {
+        return action;
     }
-    action.unwrap_or(JobAction::Wait)
+    marks.release(mark);
+    pawn.job = Job::Idle;
+    JobAction::Wait
 }
 
 /// The turn and walk that take a pawn at `pose` toward `to`.
@@ -217,7 +217,9 @@ fn mine_step(
         return None;
     }
     let to = waypoint_centre(*waypoint);
-    stall.observe(horizontal_distance(pose.feet, to))?;
+    if !stall.observe(horizontal_distance(pose.feet, to)) {
+        return None;
+    }
     Some(JobAction::Walk { to })
 }
 
