@@ -621,7 +621,6 @@ fn shift_prompt_then_alt() -> SettingsMenu {
     menu
 }
 
-/// A conflicting key ends listening and the prompt names the key and its holder.
 #[test]
 fn conflicting_key_names_key_and_holder() {
     use flagstone_ui::screens::Screen;
@@ -657,7 +656,6 @@ fn conflicting_key_names_key_and_holder() {
     }
 }
 
-/// Keys pressed while the prompt is open bind nothing.
 #[test]
 fn keys_pressed_while_prompt_open_bind_nothing() {
     let menu = shift_prompt_then_alt();
@@ -676,7 +674,6 @@ fn keys_pressed_while_prompt_open_bind_nothing() {
     assert!(!menu.has_unsaved_changes());
 }
 
-/// Confirming after a stray key applies only the prompted key.
 #[test]
 fn confirm_after_stray_key_applies_only_prompted_key() {
     use flagstone_ui::screens::Screen;
@@ -704,7 +701,6 @@ fn confirm_after_stray_key_applies_only_prompted_key() {
     assert!(!menu.is_listening());
 }
 
-/// Cancelling after a stray key changes nothing.
 #[test]
 fn cancel_after_stray_key_changes_nothing() {
     use flagstone_ui::screens::Screen;
