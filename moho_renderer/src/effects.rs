@@ -71,6 +71,11 @@ const MAX_QUALITY: u32 = 4;
 /// Quality used until a game sets one; matches the default `effects_quality` pref.
 const DEFAULT_QUALITY: usize = 3;
 
+/// Whether a flash or mark of this size can be seen: finite and above zero.
+fn is_drawable_size(size: f32) -> bool {
+    size.is_finite() && size > 0.0
+}
+
 #[derive(Debug)]
 struct Streak {
     style: StreakStyle,
@@ -252,12 +257,13 @@ impl Effects {
 
     /// Spawn a flash at `at`, rolled by `roll` radians about the line to the eye.
     ///
-    /// Refused, drawing nothing, when `at`, `roll` or the size is not finite or the
-    /// lifetime is zero, and at the quality's cap when no older flash or mark can make room.
+    /// Refused, drawing nothing, when `at` or `roll` is not finite, the size is not finite
+    /// and positive, or the lifetime is zero, and at the quality's cap when no older flash
+    /// or mark can make room.
     pub fn flash(&mut self, at: Vec3, roll: f32, style: FlashStyle) {
         let valid = at.is_finite()
             && roll.is_finite()
-            && style.size.is_finite()
+            && is_drawable_size(style.size)
             && !style.lifetime.is_zero();
         if valid {
             self.store(Effect::Flash(Flash {
@@ -271,14 +277,14 @@ impl Effects {
 
     /// Spawn a mark at `at` lying on a surface with `normal`, rolled by `roll` radians.
     ///
-    /// Refused, drawing nothing, when `at`, `roll` or the size is not finite, `normal` is
-    /// zero or not finite, or the lifetime is zero, and at the quality's cap when no older
-    /// flash or mark can make room.
+    /// Refused, drawing nothing, when `at` or `roll` is not finite, the size is not finite
+    /// and positive, `normal` is zero or not finite, or the lifetime is zero, and at the
+    /// quality's cap when no older flash or mark can make room.
     pub fn mark(&mut self, at: Vec3, normal: Vec3, roll: f32, style: MarkStyle) {
         let unit = normal.try_normalize();
         let valid = at.is_finite()
             && roll.is_finite()
-            && style.size.is_finite()
+            && is_drawable_size(style.size)
             && !style.lifetime.is_zero();
         if let (true, Some(normal)) = (valid, unit) {
             self.store(Effect::Mark(Mark {
@@ -1674,5 +1680,82 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_flash_or_mark_with_a_zero_or_negative_size_is_refused() {
+        for size in [0.0, -0.4] {
+            let mut rig = Rig::new();
+
+            rig.effects.flash(Vec3::X, 0.0, flash_style(size, 50));
+            assert_eq!(rig.effects.live(), 0, "flash of size {size}");
+            rig.effects.mark(Vec3::Y, Vec3::Y, 0.0, mark_style(size));
+
+            assert_eq!(rig.effects.live(), 0, "mark of size {size}");
+            assert!(rig.frame(EYE).is_empty(), "size {size}");
+        }
+    }
+
+    #[test]
+    fn a_refused_zero_size_spawn_at_a_full_cap_evicts_nothing() {
+        for (older, refused) in [(Kind::Mark, Kind::Mark), (Kind::Flash, Kind::Flash)] {
+            let mut rig = Rig::new();
+            rig.effects.set_quality(1);
+            let oldest = Vec3::new(10.0, 0.0, 0.0);
+            for i in 0..32 {
+                spawn(
+                    &mut rig.effects,
+                    older,
+                    Vec3::new(10.0 + i as f32, 0.0, 0.0),
+                );
+            }
+            assert_eq!(rig.effects.live(), 32);
+
+            match refused {
+                Kind::Flash => {
+                    rig.effects
+                        .flash(Vec3::new(100.0, 0.0, 0.0), 0.0, flash_style(0.0, 500));
+                }
+                Kind::Mark => {
+                    rig.effects
+                        .mark(Vec3::new(100.0, 0.0, 0.0), Vec3::Z, 0.0, mark_style(0.0));
+                }
+            }
+            let drawn = rig.frame(EYE);
+
+            assert_eq!(rig.effects.live(), 32, "{refused:?} refused");
+            assert_eq!(drawn.len(), 32, "{refused:?} refused");
+            assert!(
+                drawn
+                    .iter()
+                    .any(|d| (translation(d) - drawn_position(older, oldest)).length() < EPS),
+                "the oldest {older:?} survives a refused {refused:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_mark_over_a_lowered_cap_is_refused_and_the_live_ones_stay() {
+        let mut rig = Rig::new();
+        for i in 0..20 {
+            let at = Vec3::new(i as f32, 0.0, 0.0);
+            spawn(&mut rig.effects, Kind::Flash, at);
+            spawn(&mut rig.effects, Kind::Mark, at + Vec3::Y * 5.0);
+        }
+        assert_eq!(rig.effects.live(), 40);
+
+        rig.effects.set_quality(1);
+        rig.effects
+            .mark(Vec3::new(100.0, 0.0, 0.0), Vec3::Z, 0.0, mark_style(0.2));
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(rig.effects.live(), 40, "none dropped, none added");
+        assert_eq!(drawn.len(), 40);
+        assert!(
+            drawn
+                .iter()
+                .all(|d| (translation(d) - Vec3::new(100.0, 0.0, 0.01)).length() > 1.0),
+            "the new mark is not drawn"
+        );
     }
 }
