@@ -663,7 +663,12 @@ fn confirm_after_stray_key_applies_only_prompted_key() {
     use flagstone_ui::screens::Screen;
 
     let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let before = staged_rows(&menu);
+
     press_shift_then_stray_alt(&mut menu);
+
+    assert_eq!(staged_rows(&menu), before);
+    assert!(!menu.is_listening());
 
     Screen::on_modal_confirm(&mut menu);
 

@@ -231,6 +231,24 @@ mod tests {
     }
 
     #[test]
+    fn key_conflict_on_row_zero_ends_listening() {
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry(); // Move Back holds S
+        let mut bindings_changed = vec![];
+
+        handler.start_listening(0);
+
+        let consumed = handler.apply_key_while_listening(Key::S, &bindings, |action, b| {
+            bindings_changed.push((action, b));
+        });
+
+        assert!(consumed);
+        assert!(!handler.is_listening());
+        assert!(bindings_changed.is_empty());
+        assert!(handler.has_pending_binding());
+    }
+
+    #[test]
     fn lone_modifier_conflict_ends_listening() {
         let mut handler = KeybindCaptureHandler::new();
         let bindings = registry(); // Sprint holds Shift
