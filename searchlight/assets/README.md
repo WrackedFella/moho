@@ -2,7 +2,7 @@
 
 | File | What it is |
 |---|---|
-| `arena.glb` | Greybox arena: floor, perimeter walls, hip-high crates, two full-height screen walls that break line of sight (no cover marker), and the named marker nodes the game reads (`player_spawn`, `dummy_NN`, `enemy_spawn_NN`, `waypoint_NN`, `cover_NN`). |
+| `arena.glb` | Greybox arena: floor, perimeter walls, hip-high crates, two full-height screen walls that break line of sight (no cover marker), and the named marker nodes the game reads (`player_spawn`, `dummy_NN`, `enemy_spawn_NN`, `waypoint_NN`, `cover_NN`, `control_NN`). |
 | `proving_ground.glb` | Sandbox range, +Z downrange from a firing line at z = 0 (the player spawn): dummies at 25, 50, 100 and 200 m, each distance marked on the floor by a strip and its number in block digits (1 cm high, material `mark`); 0.6, 1.0 and 1.4 m cover blocks beside the firing line; a 3 m platform behind it, reached by stairs (0.2 m rise, 0.3 m run) or a 30 degree slope, whose front edge is a ledge over a marked drop area. No enemy spawns, waypoints or covers. |
 | `rifle_shot.wav` | A short synthesized gunshot (22.05 kHz, mono, 16-bit). |
 
@@ -18,6 +18,14 @@ or `.gltf` file: `cargo run -p searchlight -- proving_ground`. Put borrowed maps
 `searchlight/assets/local/`, which git ignores; never commit them. CC0 maps
 are fine to keep locally; game maps (for example Counter-Strike) are all rights reserved,
 so use them for private testing only and never share them.
+
+## Controls
+
+A `control_NN` marker places a usable post (0.4 x 1.2 x 0.4 m) on its floor point. Its `action`
+extra names what using it does; the only action today is `next_wave`, which calls the next wave
+once the running one is cleared. A missing or unknown `action` fails the level load, naming the
+marker. `arena.glb` has one, `control_01`, beside the player spawn. A sandbox level's controls
+do nothing.
 
 ## Origin
 

@@ -9,18 +9,24 @@ pub enum ControlAction {
 
 impl ControlAction {
     /// The action a level file's `action` value names, or `None` when it names no action.
-    pub fn parse(_name: &str) -> Option<Self> {
-        None
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "next_wave" => Some(Self::NextWave),
+            _ => None,
+        }
     }
 
     /// Whether the action changes the whole game, not only the player who used it.
     pub fn is_host_action(self) -> bool {
-        false
+        match self {
+            Self::NextWave => true,
+        }
     }
 
-    /// Whether a use of this action by the player in `slot` takes effect.
-    pub fn honored_from(self, _slot: u8) -> bool {
-        false
+    /// Whether a use of this action by the player in `slot` takes effect: host actions only
+    /// from slot 0.
+    pub fn honored_from(self, slot: u8) -> bool {
+        !self.is_host_action() || slot == 0
     }
 }
 

@@ -195,7 +195,7 @@ impl SearchlightCommand {
             reload: frame.pressed(SearchlightAction::Reload),
             check: frame.pressed(SearchlightAction::CheckMagazine),
             restart: frame.pressed(SearchlightAction::Restart),
-            use_pressed: false,
+            use_pressed: frame.pressed(SearchlightAction::Use),
             god_mode: false,
             forced_grade: None,
             lean: None,

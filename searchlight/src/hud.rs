@@ -85,8 +85,11 @@ pub fn health_text(health: u32, max_health: u32) -> String {
 
 /// What the player reads while looking at a control in reach: the use key in brackets, then the
 /// action, such as `[F] Next wave`.
-pub fn use_prompt(_key: &str, _action: ControlAction) -> String {
-    String::new()
+pub fn use_prompt(key: &str, action: ControlAction) -> String {
+    let wording = match action {
+        ControlAction::NextWave => "Next wave",
+    };
+    format!("[{key}] {wording}")
 }
 
 /// The wave and score line, such as `Wave 3  Score 200`.
