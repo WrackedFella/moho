@@ -452,7 +452,6 @@ fn flash_mesh() -> WorldMesh {
             [0.0, -0.5],
             [0.1, -0.1],
         ],
-        // The inner square, then a triangle on each of its sides out to a tip.
         vec![1, 3, 5, 1, 5, 7, 7, 0, 1, 1, 2, 3, 3, 4, 5, 5, 6, 7],
     )
 }
