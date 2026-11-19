@@ -1526,6 +1526,30 @@ mod tests {
     }
 
     #[test]
+    fn hud_colony_stock_is_sorted_by_resource_id_whatever_the_fill_order() {
+        let mut app = App::headless();
+        for id in [9, 4, 2] {
+            app.colony.stock.add(id, id + 1);
+        }
+
+        let produced = produced_strategy_hud(&mut app);
+
+        let sorted = painted_strategy_hud(flagstone_ui::overlays::HudData {
+            colony_stock: vec![(2, 3), (4, 5), (9, 10)],
+            ..strategy_hud_data(&app)
+        });
+        let reversed = painted_strategy_hud(flagstone_ui::overlays::HudData {
+            colony_stock: vec![(9, 10), (4, 5), (2, 3)],
+            ..strategy_hud_data(&app)
+        });
+        assert!(produced == sorted, "not sorted by resource id");
+        assert!(
+            produced != reversed,
+            "the order is not visible in the frame"
+        );
+    }
+
+    #[test]
     fn hud_data_carries_the_colony_stock() {
         let mut app = App::headless();
         app.colony.stock.add(7, 2);

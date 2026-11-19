@@ -611,6 +611,21 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_stock_draws_no_totals() {
+        let drawn = drawn_texts(&strategy_data(TOP));
+
+        assert!(
+            !drawn.iter().any(|t| t.contains('×')
+                || t.starts_with('R') && t.chars().nth(1).is_some_and(|c| c.is_ascii_digit())),
+            "{drawn:?}"
+        );
+        assert!(
+            drawn.contains(&"Strategy".to_string()),
+            "the HUD itself draws"
+        );
+    }
+
+    #[test]
     fn no_totals_in_first_person() {
         let strategy = drawn_texts(&stocked_data(false));
 

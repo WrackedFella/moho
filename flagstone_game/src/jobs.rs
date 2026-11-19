@@ -783,6 +783,101 @@ mod tests {
         assert_eq!(claimed_by(&marks, block), None);
     }
 
+    #[test]
+    fn a_pawn_already_in_the_stand_envelope_digs_the_tick_after_claiming() {
+        let mut grid = floor(12, 5);
+        fill(&mut grid, 8..=8, 1..=1, 2..=2);
+        let block = at(8, 1, 2);
+        let mut marks = marked(&[block]);
+        let mut walker = Walker::new();
+        let beside = standing_in(at(7, 1, 2));
+
+        let claiming = walker.step(beside, &mut marks, &grid);
+        let next = walker.step(beside, &mut marks, &grid);
+
+        assert!(
+            !matches!(claiming, JobAction::Walk { .. }),
+            "nothing to walk to: {claiming:?}"
+        );
+        assert!(
+            matches!(next, JobAction::Dig { block: dug, .. } if dug == block),
+            "{next:?}"
+        );
+    }
+
+    #[test]
+    fn covering_every_open_face_mid_walk_gives_the_mark_up() {
+        let mut grid = floor(12, 5);
+        fill(&mut grid, 8..=8, 1..=1, 2..=2);
+        let block = at(8, 1, 2);
+        let mut marks = marked(&[block]);
+        let mut walker = Walker::new();
+        let start = standing_in(at(1, 1, 2));
+        walker.step(start, &mut marks, &grid);
+        assert!(matches!(walker.job, Job::Mine { .. }), "walking");
+        for cover in [
+            at(8, 2, 2),
+            at(7, 1, 2),
+            at(9, 1, 2),
+            at(8, 1, 1),
+            at(8, 1, 3),
+        ] {
+            grid.mutator().place(cover, 1, None);
+        }
+
+        let action = walker.step(start, &mut marks, &grid);
+
+        assert!(!matches!(action, JobAction::Dig { .. }), "{action:?}");
+        assert_eq!(walker.job, Job::Idle);
+        assert!(marks.contains(block.to_array()), "the mark stays");
+        assert!(
+            marks.unclaimed().any(|pos| pos == block.to_array()),
+            "the claim is released"
+        );
+    }
+
+    #[test]
+    fn a_mark_cancelled_and_made_again_is_not_walked_on_a_stale_claim() {
+        let (grid, mut marks) = near_far_world();
+        marks.toggle(at(3, 1, 2).to_array());
+        let mut walker = Walker::new();
+        let start = standing_in(at(11, 1, 2));
+        walker.step(start, &mut marks, &grid);
+        assert!(matches!(walker.job, Job::Mine { .. }), "walking");
+        marks.toggle(at(9, 1, 2).to_array());
+        marks.toggle(at(9, 1, 2).to_array());
+
+        walker.step(start, &mut marks, &grid);
+
+        if let Job::Mine { mark, .. } = &walker.job {
+            assert_eq!(
+                claimed_by(&marks, *mark),
+                Some(ME),
+                "walking to {mark:?} on a claim the marks do not hold"
+            );
+        }
+    }
+
+    #[test]
+    fn steer_walks_at_exactly_sixty_degrees_and_not_just_past_it() {
+        let at_sixty = steer(pose_facing(0.0), heading(60.0_f32.to_radians()));
+        let past_sixty = steer(pose_facing(0.0), heading(60.5_f32.to_radians()));
+        let past_sixty_the_other_way = steer(pose_facing(0.0), heading((-60.5_f32).to_radians()));
+
+        assert_eq!(at_sixty.forward, 1.0, "60 degrees is still facing it");
+        assert_eq!(past_sixty.forward, 0.0);
+        assert_eq!(past_sixty_the_other_way.forward, 0.0);
+    }
+
+    #[test]
+    fn steer_turns_the_short_way_across_the_wrap_for_a_small_gap() {
+        let up = steer(pose_facing(3.1), heading(-3.1));
+        let down = steer(pose_facing(-3.1), heading(3.1));
+
+        assert!((up.yaw_delta - (2.0 * PI - 6.2)).abs() < 1e-3, "{up:?}");
+        assert!((down.yaw_delta + (2.0 * PI - 6.2)).abs() < 1e-3, "{down:?}");
+    }
+
     fn turn_per_tick() -> f32 {
         TURN_RATE / TICK_HZ as f32
     }
