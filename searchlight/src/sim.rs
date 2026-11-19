@@ -736,18 +736,10 @@ impl SearchlightSim {
 
     fn resolve_player_shot(&mut self) {
         let state = self.player();
-        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
-        let origin = self.leaned_eye(&state);
-        let strike = resolve_shot(
-            &self.world,
-            ShotRay {
-                origin,
-                direction: view.forward,
-                range: self.range,
-                ignore: Some(self.player),
-            },
-        );
-        let end = strike.map_or(origin + view.forward * self.range, |strike| strike.point);
+        let ray = self.view_ray(&state, self.range);
+        let origin = ray.origin;
+        let strike = resolve_shot(&self.world, ray);
+        let end = strike.map_or(origin + ray.direction * self.range, |strike| strike.point);
         let hit = strike.and_then(|strike| match strike.tag {
             SurfaceTag::Part { target, part } => Some((target, part)),
             _ => None,
@@ -863,7 +855,26 @@ impl SearchlightSim {
     /// surface along the view from the leaned eye is control `i`; `None` while the player is
     /// dead.
     pub fn control_in_reach(&self) -> Option<u16> {
-        todo!("cast the use ray and keep a first surface that is a control")
+        if self.player_body.is_dead() {
+            return None;
+        }
+        let strike = resolve_shot(&self.world, self.view_ray(&self.player(), USE_REACH))?;
+        match strike.tag {
+            SurfaceTag::Control(index) => Some(index),
+            _ => None,
+        }
+    }
+
+    /// The ray the player's eye sends along the view for `range` metres, ignoring the player: the
+    /// shot and the use test share it.
+    fn view_ray(&self, state: &CharacterState, range: f32) -> ShotRay {
+        let view = first_person_view(state, state, 1.0, (0.0, 0.0));
+        ShotRay {
+            origin: self.leaned_eye(state),
+            direction: view.forward,
+            range,
+            ignore: Some(self.player),
+        }
     }
 
     /// How far the player leans after the last tick.
