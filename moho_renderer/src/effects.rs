@@ -193,8 +193,8 @@ impl Effects {
         handle
     }
 
-    /// Spawn a flash at `at`, rolled by `roll` about the view axis. Non-finite inputs are
-    /// refused; see `spawn_fixed` for the cap.
+    /// Spawn a flash at `at`, rolled by `roll` about the view axis. Non-finite inputs, a
+    /// zero lifetime and a size that is not positive are refused; see `spawn_fixed` for the cap.
     pub fn flash(&mut self, at: Vec3, roll: f32, style: FlashStyle) {
         self.spawn_fixed(Fixed {
             kind: FixedKind::Flash,
@@ -209,8 +209,8 @@ impl Effects {
     }
 
     /// Spawn a mark on a surface at `at` with the given `normal`, rolled by `roll` about it.
-    /// A zero or non-finite normal and other non-finite inputs are refused. The fade is
-    /// clamped to the lifetime.
+    /// A zero or non-finite normal, other non-finite inputs, a zero lifetime and a size that
+    /// is not positive are refused. The fade is clamped to the lifetime.
     pub fn mark(&mut self, at: Vec3, normal: Vec3, roll: f32, style: MarkStyle) {
         let Some(normal) = normal.try_normalize() else {
             return;
@@ -227,23 +227,29 @@ impl Effects {
         });
     }
 
-    /// Store a flash or mark. At the cap the oldest flashes and marks are evicted to make
-    /// room; streaks are never evicted, so with none left to evict the spawn is refused.
+    /// Store a flash or mark. A zero lifetime or a size that is not positive is refused.
+    /// At the cap the oldest flashes and marks are evicted to make room; streaks are never
+    /// evicted, so if evicting every flash and mark would still not fit the spawn, it is
+    /// refused and nothing is evicted.
     fn spawn_fixed(&mut self, fixed: Fixed) {
         if !(fixed.at.is_finite() && fixed.roll.is_finite() && fixed.size.is_finite())
+            || fixed.size <= 0.0
+            || fixed.lifetime.is_zero()
             || self.cap == 0
         {
             return;
         }
-        while self.live.len() >= self.cap {
-            let oldest = self
-                .live
-                .iter()
-                .find_map(|(handle, e)| matches!(e, Effect::Fixed(_)).then_some(*handle));
-            let Some(oldest) = oldest else {
-                return;
-            };
-            self.live.remove(&oldest);
+        let evictable: Vec<EffectHandle> = self
+            .live
+            .iter()
+            .filter_map(|(handle, e)| matches!(e, Effect::Fixed(_)).then_some(*handle))
+            .collect();
+        if self.live.len() - evictable.len() >= self.cap {
+            return;
+        }
+        let excess = (self.live.len() + 1).saturating_sub(self.cap);
+        for handle in evictable.into_iter().take(excess) {
+            self.live.remove(&handle);
         }
         let handle = self.next_handle();
         self.live.insert(handle, Effect::Fixed(fixed));

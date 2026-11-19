@@ -585,9 +585,10 @@ Flash and mark (no handle, no placement call):
 - `mark(at, normal, roll, MarkStyle)` spawns a quad lying on a surface (an impact mark),
   offset slightly along `normal` against z-fighting, full size until the last `fade` of its
   `lifetime` (clamped to it), then shrinking to nothing.
-- Both expire on their own through `advance`. Non-finite inputs and a zero `normal` are
-  refused. At the cap the oldest flashes and marks are evicted to make room; streaks are never
-  evicted, so with none left to evict the spawn is refused.
+- Both expire on their own through `advance`. Non-finite inputs, a zero `normal`, a zero
+  `lifetime` and a non-positive `size` are refused. At the cap the oldest flashes and marks are
+  evicted to make room; streaks are never evicted, so if evicting every flash and mark would
+  still not make room the spawn is refused and nothing is evicted.
 
 Shared rules:
 
