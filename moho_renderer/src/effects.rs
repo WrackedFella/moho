@@ -117,7 +117,6 @@ impl Flash {
 struct Mark {
     /// Already lifted off the surface by `MARK_OFFSET`.
     at: Vec3,
-    /// Unit surface normal.
     normal: Vec3,
     roll: f32,
     style: MarkStyle,
