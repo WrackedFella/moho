@@ -173,8 +173,8 @@ impl PhysicsWorld {
     /// tag.
     ///
     /// # Panics
-    /// If the spawn would poison the simulation: a mass or half extent that is not positive and
-    /// finite, a friction, restitution or damping that is negative or not finite, a position or
+    /// If the spawn would poison the simulation: a mass, half extent, half height or radius that
+    /// is not positive and finite, a friction, restitution or damping that is negative or not finite, a position or
     /// velocity that is not finite, or a rotation that is not finite or whose squared length is
     /// more than 2e-4 from 1 (glam's `Quat::is_normalized`).
     pub fn spawn_loose(&mut self, spawn: &LooseSpawn) -> LooseId {
@@ -255,7 +255,8 @@ impl PhysicsWorld {
             let axis = *body.rotation() * Vec3::Y;
             let spin = body.angvel();
             let linear = body.linvel();
-            let new_spin = spin + axis * (shrink(spin.dot(axis), decel / radius) - spin.dot(axis));
+            let about_axis = spin.dot(axis);
+            let new_spin = spin + axis * (shrink(about_axis, decel / radius) - about_axis);
             // The linear cut fades with |axis x up|: full for a lying body, none for an upright
             // one, which is not rolling and has no rolling direction.
             let roll = axis.cross(up);
