@@ -37,22 +37,28 @@ comment-refs base=base:
 deny: && physics-features
     cargo deny check
 
-# rapier3d and parry3d keep `enhanced-determinism` (cargo-deny can ban a feature, not
-# require one). The self-test expects the fixture lacking it to fail, naming rapier3d.
+# rapier3d and parry3d keep `enhanced-determinism`; the self-test expects each fixture
+# lacking it to fail, naming only the crate that lacks it.
 physics-features:
     #!/usr/bin/env bash
     set -uo pipefail
     bash scripts/check-physics-features.sh || exit 1
-    out=$(MOHO_PHYSICS_METADATA=scripts/fixtures/physics-features-missing.json bash scripts/check-physics-features.sh 2>&1)
-    status=$?
-    if [ "$status" -ne 0 ] && grep -qF -- 'check-physics-features: rapier3d' <<<"$out"; then
-        exit 0
-    fi
-    echo "physics-features self-test failed" >&2
-    echo "  expected: non-zero exit and a line naming rapier3d" >&2
-    echo "  got: exit $status, output:" >&2
-    sed 's/^/    /' <<<"$out" >&2
-    exit 1
+    # expect_failure <fixture> <crate that lacks the feature> <crate that has it>
+    expect_failure() {
+        local out status
+        out=$(MOHO_PHYSICS_METADATA="$1" bash scripts/check-physics-features.sh 2>&1)
+        status=$?
+        if [ "$status" -ne 0 ] && grep -qF -- "check-physics-features: $2" <<<"$out" && ! grep -qF -- "$3" <<<"$out"; then
+            return 0
+        fi
+        echo "physics-features self-test failed on $1" >&2
+        echo "  expected: non-zero exit, a line naming $2, no mention of $3" >&2
+        echo "  got: exit $status, output:" >&2
+        sed 's/^/    /' <<<"$out" >&2
+        return 1
+    }
+    expect_failure scripts/fixtures/physics-features-missing.json rapier3d parry3d || exit 1
+    expect_failure scripts/fixtures/physics-features-parry-missing.json parry3d rapier3d || exit 1
 
 # LCOV coverage report at lcov.info.
 cov:
