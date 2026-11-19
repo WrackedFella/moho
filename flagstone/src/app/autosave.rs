@@ -1,3 +1,6 @@
+/// How long a world goes between autosaves unless told otherwise.
+pub const DEFAULT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// When the running world is next due an autosave, counted in play ticks.
 #[derive(Debug, Clone)]
 pub struct AutosaveSchedule {
@@ -510,6 +513,70 @@ mod tests {
                 vec![false; 3],
                 "blocks mined before the last autosave are gone"
             );
+        }
+
+        #[test]
+        fn idle_world_is_not_rewritten_after_loading() {
+            let (mut app, temp) = loaded_world();
+            app.autosave_interval = Duration::from_secs(2);
+            let sentinel = b"sentinel: an idle world must not overwrite this".to_vec();
+            std::fs::write(temp.path().join("scene.bin"), &sentinel).expect("plant sentinel");
+            let mut sim = new_loop();
+
+            play(&mut app, &mut sim, 6 * TICK_HZ);
+
+            assert!(
+                !app.autosave_schedule.edited(),
+                "loading a world is not an edit"
+            );
+            assert!(
+                scene_bytes(temp.path()) == sentinel,
+                "an untouched world is not rewritten"
+            );
+        }
+
+        #[test]
+        fn failed_autosave_retries_once_per_interval_then_saves_when_repaired() {
+            let (mut app, temp) = loaded_world();
+            app.autosave_interval = Duration::from_secs(2);
+            let interval_ticks = 2 * TICK_HZ;
+            let blocker = temp.path().join("blocker");
+            std::fs::write(&blocker, b"a file, not a directory").expect("blocker file");
+            app.saves_dir = blocker.join("saves");
+            let mined = surface_blocks(&app, 1)[0];
+            let mut sim = new_loop();
+            mine(&mut app, mined);
+
+            let mut attempts = 0;
+            let mut previous = 0;
+            for _ in 0..3 * interval_ticks {
+                play(&mut app, &mut sim, 1);
+                let now = app.autosave_schedule.ticks_since_save();
+                if now < previous {
+                    attempts += 1;
+                }
+                previous = now;
+                assert!(
+                    now <= interval_ticks,
+                    "ticks since save {now} exceeds the interval: no retry happened"
+                );
+            }
+
+            assert!(app.autosave_schedule.edited(), "the edit is still unsaved");
+            assert!(
+                (1..=3).contains(&attempts),
+                "at most one attempt per interval, got {attempts}"
+            );
+            assert!(
+                app.autosave_schedule.ticks_since_save() < interval_ticks,
+                "the last failed attempt restarted the interval"
+            );
+
+            app.saves_dir = temp.path().to_path_buf();
+            play(&mut app, &mut sim, interval_ticks + 1);
+
+            assert!(!app.autosave_schedule.edited(), "the retry saved the edit");
+            assert_eq!(present_after_load(temp.path(), &[mined]), vec![false]);
         }
 
         #[test]
