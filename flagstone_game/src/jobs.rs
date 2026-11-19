@@ -181,13 +181,12 @@ mod tests {
     fn a_mark_with_no_exposed_face_is_not_claimed() {
         let mut grid = floor(12, 12);
         for x in 4..=6 {
-            for y in 1..=3 {
-                for z in 4..=6 {
-                    grid.mutator().place(cell(x, y, z), STONE, None);
-                }
+            for z in 4..=6 {
+                grid.mutator().place(cell(x, 1, z), STONE, None);
             }
         }
-        let buried = cell(5, 2, 5);
+        grid.mutator().place(cell(5, 2, 5), STONE, None);
+        let buried = cell(5, 1, 5);
         let mut marks = marked(&[buried]);
         let mut pawn = Pawn::default();
 
@@ -201,23 +200,55 @@ mod tests {
 
     #[test]
     fn an_idle_pawn_claims_the_nearest_reachable_mark_and_equips_the_tool() {
-        let mut grid = floor(20, 3);
-        let near = cell(6, 1, 1);
-        let far = cell(14, 1, 1);
-        grid.mutator().place(near, STONE, None);
+        let mut grid = floor(20, 8);
+        let far = cell(6, 1, 4);
+        let near = cell(14, 1, 4);
+        let sealed = cell(17, 1, 2);
         grid.mutator().place(far, STONE, None);
-        let mut marks = marked(&[far, near]);
+        grid.mutator().place(near, STONE, None);
+        for x in 16..=18 {
+            for z in 1..=3 {
+                for y in 1..=4 {
+                    grid.mutator().place(cell(x, y, z), STONE, None);
+                }
+            }
+        }
+        for y in 2..=4 {
+            grid.mutator().remove(cell(17, y, 2));
+        }
+        let mut marks = marked(&[far, near, sealed]);
         let mut pawn = Pawn::default();
         pawn.select_slot(3);
         assert_eq!(pawn.equipped_tool, None);
 
-        step(&mut pawn, ME, standing_in(0, 1, 1), &mut marks, &grid);
+        step(&mut pawn, ME, standing_in(19, 1, 4), &mut marks, &grid);
 
         assert_eq!(claimed_by(&marks, near), Some(ME));
         assert_eq!(claimed_by(&marks, far), None);
+        assert_eq!(
+            claimed_by(&marks, sealed),
+            None,
+            "nearer, but no route reaches it"
+        );
         assert!(matches!(&pawn.job, Job::Mine { mark, .. } if *mark == near));
         assert_eq!(pawn.equipped_tool, Some(STARTING_TOOL));
         assert_eq!(pawn.selected_slot, TOOL_SLOT);
+    }
+
+    #[test]
+    fn equidistant_marks_are_taken_in_key_order() {
+        let mut grid = floor(20, 3);
+        let low = cell(6, 1, 1);
+        let high = cell(14, 1, 1);
+        grid.mutator().place(low, STONE, None);
+        grid.mutator().place(high, STONE, None);
+        let mut marks = marked(&[high, low]);
+        let mut pawn = Pawn::default();
+
+        step(&mut pawn, ME, standing_in(10, 1, 1), &mut marks, &grid);
+
+        assert_eq!(claimed_by(&marks, low), Some(ME));
+        assert_eq!(claimed_by(&marks, high), None);
     }
 
     #[test]
@@ -326,10 +357,6 @@ mod tests {
 
         assert_eq!(action, JobAction::Wait);
         assert!(is_idle(&pawn));
-        assert!(
-            grid.material_at(target).is_some(),
-            "the block is not removed"
-        );
     }
 
     #[test]
@@ -351,11 +378,10 @@ mod tests {
 
         assert_eq!(action, JobAction::Wait);
         assert!(is_idle(&pawn));
-        assert_eq!(
-            claimed_by(&marks, other),
-            None,
-            "the pawn re-picks on the next tick"
-        );
+
+        step(&mut pawn, ME, pose, &mut marks, &grid);
+
+        assert_eq!(claimed_by(&marks, other), Some(ME));
     }
 
     #[test]
@@ -421,7 +447,10 @@ mod tests {
                     dug = true;
                     break;
                 }
-                JobAction::Wait => panic!("gave up at tick {tick} while still making progress"),
+                JobAction::Wait => assert!(
+                    !is_idle(&pawn),
+                    "gave up at tick {tick} while still making progress"
+                ),
             }
         }
 

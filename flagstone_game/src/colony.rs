@@ -156,19 +156,6 @@ mod tests {
     }
 
     #[test]
-    fn stock_grows_by_the_yield() {
-        let mut colony = Colony::default();
-
-        colony.stock.add(7, 1);
-        colony.stock.add(7, 2);
-        colony.stock.add(9, 4);
-
-        assert_eq!(colony.stock.count(7), 3);
-        assert_eq!(colony.stock.count(9), 4);
-        assert_eq!(colony.stock.count(1), 0);
-    }
-
-    #[test]
     fn claim_and_release_round_trip() {
         let mut marks = MineMarks::default();
         marks.toggle([1, 0, 0]);

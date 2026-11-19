@@ -1717,6 +1717,16 @@ mod tests {
     }
 
     #[test]
+    fn a_player_mined_ore_block_fills_the_pawn_inventory_not_the_colony_stock() {
+        let mut app = app_aimed_at_block_with(Some(7));
+
+        EventProcessor::new().handle_input_event(&mut app, InputEvent::MineRequested);
+
+        assert_eq!(app.pawn.inventory.count(7), 1);
+        assert!(app.colony.stock.is_empty(), "{:?}", app.colony.stock);
+    }
+
+    #[test]
     fn pickup_asset_exists() {
         let path = pickup_asset_path();
 

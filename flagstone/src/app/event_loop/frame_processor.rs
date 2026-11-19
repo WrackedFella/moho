@@ -1367,15 +1367,30 @@ pub(crate) mod tests {
         let block = BlockPos::new(16, 4, 12);
         let mut app = colony_app(None, Some((block, Some(ORE))));
         app.colony.marks.toggle(block.to_array());
+        let _ = app.audio_event_rx.try_iter().count();
 
         let removed = run_until_removed(&mut app, block, DIG_TICKS, |_, _| {});
+        app.event_bus.process_deferred();
 
         let walked = horizontal(app.simulation.position()).distance(horizontal(PAWN_START));
+        let cues: Vec<String> = app
+            .audio_event_rx
+            .try_iter()
+            .filter_map(|event| match event {
+                moho_core::events::AudioEvent::PlaySoundAt { path, .. } => Some(path),
+                _ => None,
+            })
+            .collect();
         assert!(removed, "the block is still there after {DIG_TICKS} ticks");
         assert!(walked > 1.0, "the pawn walked to the block: {walked} m");
         assert!(
             !app.colony.marks.contains(block.to_array()),
             "the mark outlives the block"
+        );
+        assert_eq!(cues.len(), 1, "one dig cue: {cues:?}");
+        assert!(
+            std::path::Path::new(&cues[0]).ends_with("assets/dig.wav"),
+            "{cues:?}"
         );
         assert_eq!(app.colony.stock.count(ORE), 1);
         assert_eq!(app.colony.stock.iter().count(), 1, "only the ore is banked");

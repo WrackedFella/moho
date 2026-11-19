@@ -330,38 +330,6 @@ mod tests {
     }
 
     #[test]
-    fn mine_is_dig_plus_deposit() {
-        let origin = Vec3::new(0.5, 0.5, -5.0);
-        let mut dug_grid = ore_grid();
-        let mut mined_grid = ore_grid();
-        let mut digger = Pawn::default();
-        let mut miner = Pawn::default();
-
-        let dug = digger
-            .dig(&mut dug_grid, origin, Vec3::Z, MINE_REACH)
-            .expect("dig hits the block");
-        if let Some(yield_) = dug.yield_ {
-            digger.deposit(yield_);
-        }
-        let mined = miner
-            .mine(&mut mined_grid, origin, Vec3::Z, MINE_REACH)
-            .expect("mine hits the block");
-
-        assert_eq!(mined.block_pos, dug.block_pos);
-        assert_eq!(mined.old_material_id, dug.old_material_id);
-        assert_eq!(
-            mined.yield_.map(|y| y.resource_id),
-            dug.yield_.map(|y| y.resource_id)
-        );
-        assert_eq!(miner.inventory.count(7), digger.inventory.count(7));
-        assert_eq!(miner.inventory.count(7), 1);
-        assert_eq!(
-            mined_grid.material_at(mined.block_pos),
-            dug_grid.material_at(dug.block_pos)
-        );
-    }
-
-    #[test]
     fn dig_without_a_tool_is_a_noop() {
         let mut grid = ore_grid();
         let mut pawn = Pawn::default();

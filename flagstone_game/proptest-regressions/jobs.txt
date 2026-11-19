@@ -4,4 +4,4 @@
 #
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
-cc 460c27f63a87e0d392b4183c18c5cd89dfcae30ce30180dbcc8d21d33b75c7fd # shrinks to (bx, bz) = (4, 4), stack = 1, (sx, sz) = (0, 0)
+cc 7000570de5d5bfd87479273a444f90de67fa3cde3a94fb9ffc52dee77a122891 # shrinks to (bx, bz) = (4, 4), stack = 1, (sx, sz) = (0, 0)
