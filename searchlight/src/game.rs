@@ -2777,18 +2777,62 @@ mod tests {
         saved.debug_value("simple").map(str::to_owned)
     }
 
+    fn simple_tick(game: &mut SearchlightGame, line: &str) -> bool {
+        type_into_console(game, line);
+        game.command().simple
+    }
+
     #[test]
     fn a_saved_simple_starts_the_game_in_simple() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut settings, path) = settings_in(&dir);
+        let (mut settings, _path) = settings_in(&dir);
         settings.set_simple(true).unwrap();
         let mut game = game().with_debug_settings(settings);
 
         let command = game.command();
 
         assert!(command.simple);
-        assert!(game.simple);
-        assert_eq!(saved_simple(&path).as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn simple_flips_each_time() {
+        let mut game = game();
+
+        let start = game.command().simple;
+        let first = simple_tick(&mut game, "simple");
+        let second = simple_tick(&mut game, "simple");
+        let third = simple_tick(&mut game, "simple");
+
+        assert_eq!([start, first, second, third], [false, true, false, true]);
+    }
+
+    #[test]
+    fn bare_simple_prints_the_value_it_set() {
+        let mut game = game();
+
+        type_into_console(&game, "simple");
+        game.command();
+        type_into_console(&game, "simple");
+        game.command();
+
+        let lines = console_lines(&game);
+        let tail = &lines[lines.len() - 4..];
+        assert_eq!(tail, ["> simple", "Simple: on", "> simple", "Simple: off"]);
+    }
+
+    #[test]
+    fn simple_saves_the_setting() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = game().with_debug_settings(settings);
+
+        simple_tick(&mut game, "simple 1");
+        let on = saved_simple(&path);
+        simple_tick(&mut game, "simple");
+        let off = saved_simple(&path);
+
+        assert_eq!(on.as_deref(), Some("1"));
+        assert_eq!(off.as_deref(), Some("0"));
     }
 
     #[test]

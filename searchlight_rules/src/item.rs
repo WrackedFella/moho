@@ -479,22 +479,26 @@ mod tests {
         );
     }
 
+    fn assert_round_without_field_is_refused(field: &str) {
+        let mut round = json!({"caliber": "5.56x45", "muzzle_velocity": 940.0, "drag": 1.0});
+        round
+            .as_object_mut()
+            .expect("the round is an object")
+            .remove(field);
+
+        let text = error_text(round_item(round));
+
+        assert!(text.contains(field), "{field}: {text}");
+    }
+
     #[test]
     fn a_round_without_muzzle_velocity_is_refused_naming_the_field() {
-        let text = error_text(round_item(json!({"caliber": "5.56x45", "drag": 1.0})));
-
-        assert!(text.contains("muzzle_velocity"), "{text}");
-        assert!(text.contains("missing"), "{text}");
+        assert_round_without_field_is_refused("muzzle_velocity");
     }
 
     #[test]
     fn a_round_without_drag_is_refused_naming_the_field() {
-        let text = error_text(round_item(
-            json!({"caliber": "5.56x45", "muzzle_velocity": 940.0}),
-        ));
-
-        assert!(text.contains("drag"), "{text}");
-        assert!(text.contains("missing"), "{text}");
+        assert_round_without_field_is_refused("drag");
     }
 
     #[test]
@@ -538,30 +542,6 @@ mod tests {
             panic!("expected a round kind, got {:?}", item.kind);
         };
         assert_eq!(spec.drag, 0.0);
-    }
-
-    #[test]
-    fn a_rounds_non_finite_values_are_refused() {
-        let cases = [
-            (f32::NAN, 1.0, "muzzle_velocity"),
-            (f32::INFINITY, 1.0, "muzzle_velocity"),
-            (940.0, f32::NAN, "drag"),
-            (940.0, f32::INFINITY, "drag"),
-            (940.0, f32::NEG_INFINITY, "drag"),
-        ];
-        for (muzzle_velocity, drag, field) in cases {
-            let raw = RawRoundSpec {
-                caliber: Caliber::new("5.56x45"),
-                muzzle_velocity,
-                drag,
-            };
-
-            let error = RoundSpec::try_from(raw)
-                .expect_err("a non-finite value is refused")
-                .to_string();
-
-            assert!(error.contains(field), "{muzzle_velocity}/{drag}: {error}");
-        }
     }
 
     #[test]

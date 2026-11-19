@@ -104,7 +104,6 @@ mod tests {
 
     use super::*;
     use crate::arena::{self, LevelMode};
-    use crate::kit::{self, START_KIT_ID};
     use crate::sim::{STAND_HEIGHT, dummy_hit_volumes};
     use crate::tag::SurfaceTag;
     use crate::test_support::{box_mesh, level_marker, mode_marker};
@@ -284,7 +283,6 @@ mod tests {
     #[test]
     fn the_200_m_dummy_is_in_rifle_range_from_the_firing_line() {
         let roots = ContentRoots::base(&content_root()).expect("the shipped content folder");
-        kit::load(&roots, START_KIT_ID).expect("the shipped start kit loads");
         let items = load_kind::<ItemDef>(&roots, "items").expect("the shipped items load");
         let ItemKind::Round(round) = &items
             .require("round_rifle_ball")

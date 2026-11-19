@@ -226,6 +226,34 @@ condition = 100
     }
 
     #[test]
+    fn a_rounds_non_finite_values_are_refused() {
+        let good = "round = { caliber = \"5.56x45\", muzzle_velocity = 940.0, drag = 1.0 }";
+        let cases = [
+            ("muzzle_velocity", "nan", "940.0".to_owned()),
+            ("muzzle_velocity", "inf", "940.0".to_owned()),
+            ("drag", "940.0", "nan".to_owned()),
+            ("drag", "940.0", "inf".to_owned()),
+            ("drag", "940.0", "-inf".to_owned()),
+        ];
+        for (field, velocity, drag) in cases {
+            let bad = format!(
+                "round = {{ caliber = \"5.56x45\", muzzle_velocity = {velocity}, drag = {drag} }}"
+            );
+            let items = items_toml().replace(good, &bad);
+            assert_ne!(items, items_toml(), "{field}: the fixture was not changed");
+            let (_dir, roots) = base_with(&items, &start_kit(2));
+
+            let result = load_kind::<ItemDef>(&roots, "items");
+
+            let Err(ContentError::Invalid { id, reason, .. }) = result else {
+                panic!("{field} {velocity}/{drag}: the round did not fail as invalid content");
+            };
+            assert_eq!(id, "round_ball", "{field} {velocity}/{drag}");
+            assert!(reason.contains(field), "{velocity}/{drag}: {reason}");
+        }
+    }
+
+    #[test]
     fn the_shipped_tool_resolves_by_id() {
         let roots = ContentRoots::base(&content_root()).expect("the shipped content folder");
 

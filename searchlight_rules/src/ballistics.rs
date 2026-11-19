@@ -179,6 +179,20 @@ mod tests {
     }
 
     #[test]
+    fn a_step_with_drag_and_gravity_slows_first_then_drops_by_gravity() {
+        let before = flight(Vec3::ZERO, Vec3::new(0.0, 10.0, 200.0));
+        let ballistics = Ballistics {
+            muzzle_velocity: 200.0,
+            drag: 1.0,
+        };
+
+        let next = before.step(&ballistics, 8.0, 0.25);
+
+        assert_eq!(next.velocity, Vec3::new(0.0, 5.5, 150.0));
+        assert_eq!(next.position, Vec3::new(0.0, 1.375, 37.5));
+    }
+
+    #[test]
     fn gravity_changes_only_the_vertical_velocity() {
         let before = flight(Vec3::ZERO, Vec3::new(3.0, 4.0, 5.0));
 
@@ -264,7 +278,7 @@ mod tests {
     #[test]
     fn a_flight_at_the_minimum_speed_is_spent() {
         let at = flight(Vec3::ZERO, Vec3::new(60.0, 80.0, 0.0));
-        let above = flight(Vec3::ZERO, Vec3::new(0.0, 0.0, 100.01));
+        let above = flight(Vec3::ZERO, Vec3::new(70.0, 75.0, 0.0));
         let below = flight(Vec3::ZERO, Vec3::new(0.0, 99.99, 0.0));
         let stopped = flight(Vec3::ZERO, Vec3::ZERO);
 
