@@ -1,6 +1,6 @@
 # Frame loop
 
-**Source:** `flagstone_game/src/pickups.rs`, `moho_app/src/` (`runner.rs`, `lib.rs`, `window_keys.rs`, `loop_requests.rs`, `headless.rs`, `fixed_step.rs`, `clock.rs`), `flagstone/src/app/game.rs`
+**Source:** `flagstone_game/src/pickups.rs`, `flagstone_game/src/jobs.rs`, `moho_app/src/` (`runner.rs`, `lib.rs`, `window_keys.rs`, `loop_requests.rs`, `headless.rs`, `fixed_step.rs`, `clock.rs`), `flagstone/src/app/game.rs`
 (`impl moho_app::Game for App`), `flagstone/src/app/event_loop/`.
 **Related:** [ADR-0009](../../_todo/adr/0009-simulation-time-is-one-fixed-tick.md) (fixed tick).
 
@@ -136,3 +136,9 @@ band `EDGE_PAN_MARGIN_PX`) added only while Playing, focused and isometric, then
 ground under the focus, then the focus is raised so the eye stays `CAMERA_CLEARANCE` above
 the surface under the eye. A column that is not loaded skips its rule. Pan speed scales with
 the zoom height (`rts_height`).
+
+In the same strategy branch of `FrameProcessor::update_game_state`, right after the camera input,
+`run_pawn_job` runs the pawn's job once per tick while the camera is isometric (a possessed pawn,
+in first person, runs none). `flagstone_game::jobs::step` reads the marks, the grid and the pawn's
+pose and returns wait, walk or dig; the walk goes through the same `move_character` step as the
+first-person path and the dig through `Pawn::dig`. An idle pawn with nothing marked is not moved.
