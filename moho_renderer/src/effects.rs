@@ -104,6 +104,9 @@ impl Streak {
     }
 }
 
+/// How many built-in meshes there are: the variants of `MeshKind`.
+const MESH_KINDS: usize = 3;
+
 /// The built-in meshes, each uploaded once under its reserved id.
 #[derive(Debug, Clone, Copy)]
 enum MeshKind {
@@ -159,9 +162,8 @@ impl Timed {
     /// full size, then shrinks to zero over its last `fade`.
     fn scale(&self) -> f32 {
         let left = self.lifetime.saturating_sub(self.age).as_secs_f32();
-        let total = self.lifetime.as_secs_f32();
         match self.shape {
-            Shape::Flash { .. } => left / total,
+            Shape::Flash { .. } => left / self.lifetime.as_secs_f32(),
             Shape::Mark { fade, .. } if fade.is_zero() => 1.0,
             Shape::Mark { fade, .. } => left / fade.as_secs_f32(),
         }
@@ -204,7 +206,7 @@ pub struct Effects {
     store: BTreeMap<EffectHandle, Effect>,
     next_handle: u64,
     cap: usize,
-    mesh_uploaded: [bool; 3],
+    mesh_uploaded: [bool; MESH_KINDS],
 }
 
 impl Default for Effects {
@@ -213,7 +215,7 @@ impl Default for Effects {
             store: BTreeMap::new(),
             next_handle: 0,
             cap: CAPS[DEFAULT_QUALITY],
-            mesh_uploaded: [false; 3],
+            mesh_uploaded: [false; MESH_KINDS],
         }
     }
 }
@@ -300,6 +302,11 @@ impl Effects {
     /// Store a fixed-lifetime effect, dropping the oldest of them while at the cap.
     fn spawn(&mut self, effect: Timed) {
         if effect.lifetime.is_zero() || self.cap == 0 {
+            return;
+        }
+        if self.store.len() < self.cap {
+            let handle = self.next_handle();
+            self.store.insert(handle, Effect::Timed(effect));
             return;
         }
         let evictable: Vec<EffectHandle> = self
@@ -431,21 +438,15 @@ fn mark_mesh() -> WorldMesh {
 
 /// A kite from the tail at the origin to the head at x = 1, counter-clockwise seen from +Z.
 fn streak_mesh() -> WorldMesh {
-    WorldMesh::new(
+    flat_mesh(
         vec![
             [0.0, 0.0, 0.0],
             [0.8, -0.5, 0.0],
             [1.0, 0.0, 0.0],
             [0.8, 0.5, 0.0],
         ],
-        vec![[0.0, 0.0, 1.0]; 4],
-        vec![1.0; 4],
-        vec![[1.0; 3]; 4],
-        vec![1.0; 4],
-        vec![0; 4],
         vec![0, 1, 2, 0, 2, 3],
     )
-    .expect("the kite's channels are all four vertices long and its indices are in range")
 }
 
 /// Where a streak from `head - dir * length` to `head` is drawn so that it faces `eye`.
