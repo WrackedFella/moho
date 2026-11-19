@@ -739,21 +739,13 @@ impl SearchlightSim {
         let rounds = std::mem::take(&mut self.rounds);
         for mut round in rounds {
             let step = step_round(&self.world, &round, gravity, dt);
-            let hit = step.strike.and_then(|strike| match strike.tag {
-                SurfaceTag::Part { target, part } => Some((target, part)),
-                _ => None,
-            });
-            let struck = hit.map(|(target, _)| usize::from(target));
-            self.record_near_misses(
+            self.land_segment(
                 round.flight.position,
                 step.end,
-                struck,
+                step.strike,
                 round.from,
                 &mut round.near_missed,
             );
-            if let Some((target, part)) = hit {
-                self.land_player_hit(target, part, self.damage, round.from, step.end);
-            }
             let ended = step.strike.is_some()
                 || step.flight.is_spent()
                 || !self.origin.0.bounds.contains(step.flight.position);
@@ -790,41 +782,58 @@ impl SearchlightSim {
             tracing::warn!(%round, "fired a round with no ballistics, it flies nothing");
             return;
         };
-        let state = self.player();
-        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
+        let (from, forward, eye) = self.player_muzzle();
         self.rounds.push(RoundInFlight {
-            flight: Flight::fired(self.leaned_eye(&state), view.forward, &ballistics),
+            flight: Flight::fired(eye, forward, &ballistics),
             ballistics,
             shooter: Some(self.player),
-            from: state.position,
+            from,
             near_missed: Vec::new(),
         });
     }
 
     /// Simple: the shot lands the tick it is fired, along a ray as long as the flight bounds.
     fn hitscan_player_shot(&mut self) {
-        let state = self.player();
-        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
-        let origin = self.leaned_eye(&state);
+        let (from, forward, origin) = self.player_muzzle();
         let reach = self.origin.0.bounds.reach();
         let strike = resolve_shot(
             &self.world,
             ShotRay {
                 origin,
-                direction: view.forward,
+                direction: forward,
                 range: reach,
                 ignore: Some(self.player),
             },
         );
-        let end = strike.map_or(origin + view.forward * reach, |strike| strike.point);
+        let end = strike.map_or(origin + forward * reach, |strike| strike.point);
+        self.land_segment(origin, end, strike, from, &mut Vec::new());
+    }
+
+    /// The player's feet position (where a shot is `from`), view forward and leaned eye.
+    fn player_muzzle(&self) -> (Vec3, Vec3, Vec3) {
+        let state = self.player();
+        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
+        (state.position, view.forward, self.leaned_eye(&state))
+    }
+
+    /// Resolves a player's shot segment from `origin` to `end`: records the near misses of the
+    /// enemies it passed but did not strike, then lands the hit when `strike` is on a body part.
+    fn land_segment(
+        &mut self,
+        origin: Vec3,
+        end: Vec3,
+        strike: Option<Strike>,
+        from: Vec3,
+        near_missed: &mut Vec<u16>,
+    ) {
         let hit = strike.and_then(|strike| match strike.tag {
             SurfaceTag::Part { target, part } => Some((target, part)),
             _ => None,
         });
         let struck = hit.map(|(target, _)| usize::from(target));
-        self.record_near_misses(origin, end, struck, state.position, &mut Vec::new());
+        self.record_near_misses(origin, end, struck, from, near_missed);
         if let Some((target, part)) = hit {
-            self.land_player_hit(target, part, self.damage, state.position, end);
+            self.land_player_hit(target, part, self.damage, from, end);
         }
     }
 
