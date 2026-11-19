@@ -118,29 +118,6 @@ mod tests {
         }
     }
 
-    /// Clears the `saves/<world>` chunk folder under the working directory, where chunk
-    /// files land while the streamer ignores the saves directory it was given.
-    struct StrayChunks(&'static str);
-
-    impl StrayChunks {
-        fn new(world: &'static str) -> Self {
-            let stray = Self(world);
-            stray.clear();
-            stray
-        }
-
-        fn clear(&self) {
-            std::fs::remove_dir_all(Path::new("saves").join(self.0)).unwrap_or_default();
-            std::fs::remove_dir("saves").unwrap_or_default();
-        }
-    }
-
-    impl Drop for StrayChunks {
-        fn drop(&mut self) {
-            self.clear();
-        }
-    }
-
     fn tick_length() -> Duration {
         LoopConfig::new(TICK_HZ).tick_length()
     }
@@ -273,7 +250,6 @@ mod tests {
     }
 
     fn assert_mined_block_absent_after(world: &'static str, movement: Movement, exit: Exit) {
-        let _stray = StrayChunks::new(world);
         let temp = tempfile::tempdir().expect("temp dir");
         let saves = temp.path().join("saves");
         let mut app = loaded_app(world, &saves);
@@ -348,7 +324,6 @@ mod tests {
         world: &'static str,
         leave: impl FnOnce(&mut App),
     ) {
-        let _stray = StrayChunks::new(world);
         let temp = tempfile::tempdir().expect("temp dir");
         let saves = temp.path().join("saves");
         let mut session = loaded_app(world, &saves);

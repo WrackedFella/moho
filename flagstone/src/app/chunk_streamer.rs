@@ -329,21 +329,9 @@ mod tests {
         }
     }
 
-    /// Removes the `saves/<world>` folder under the working directory, where a streamer
-    /// that ignores its saves directory leaves chunk files.
-    struct StrayChunks(&'static str);
-
-    impl Drop for StrayChunks {
-        fn drop(&mut self) {
-            std::fs::remove_dir_all(std::path::Path::new("saves").join(self.0)).unwrap_or_default();
-            std::fs::remove_dir("saves").unwrap_or_default();
-        }
-    }
-
     #[test]
     fn evicted_chunk_is_written_under_the_streamers_saves_dir() {
         const SAVES_DIR_WORLD: &str = "chunk_streamer_unit_test_saves_dir_world";
-        let _stray = StrayChunks(SAVES_DIR_WORLD);
         let temp = tempfile::tempdir().expect("temp dir");
         let mut streamer = ChunkStreamer::new(
             TerrainConfig {
