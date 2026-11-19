@@ -135,3 +135,12 @@ band `EDGE_PAN_MARGIN_PX`) added only while Playing, focused and isometric, then
 ground under the focus, then the focus is raised so the eye stays `CAMERA_CLEARANCE` above
 the surface under the eye. A column that is not loaded skips its rule. Pan speed scales with
 the zoom height (`rts_height`).
+
+### 4.2 Autosave
+
+Besides the quit and main-menu saves, `AutosaveSchedule` (`flagstone/src/app/autosave.rs`)
+advances once per Playing tick, so paused and menu time does not count. A block edit marks
+it edited; once an edit has waited a full interval (`DEFAULT_INTERVAL`, converted to ticks
+by `autosave_interval_ticks`), `App::frame` saves. An untouched world is never rewritten,
+and a failed save keeps the edit pending and retries one interval later. Nothing is saved
+while no world is loaded, so a session that never reached one cannot replace the save on disk.
