@@ -1696,6 +1696,90 @@ mod tests {
         assert!(read(&world, slab).asleep, "the box sleeps");
     }
 
+    /// Whether the loose object's collider is `collider1` of every contact pair it is in, and
+    /// that it is in at least one.
+    fn is_collider1_in_all_pairs(world: &PhysicsWorld, id: LooseId) -> bool {
+        let collider = world.rigid_body_set[body_of(world, id)].colliders()[0];
+        let pairs: Vec<_> = world.narrow_phase.contact_pairs_with(collider).collect();
+        !pairs.is_empty() && pairs.iter().all(|pair| pair.collider1 == collider)
+    }
+
+    #[test]
+    fn a_capsule_spawned_before_the_floor_still_rolls_to_rest() {
+        let mut world = PhysicsWorld::new();
+        let id = world.spawn_loose(&rolling_capsule_spawn(0.0));
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+
+        world.step(DT);
+
+        assert!(
+            is_collider1_in_all_pairs(&world, id),
+            "the capsule must be collider1 of its contact pairs for this test to cover the case"
+        );
+
+        run(&mut world, 299);
+
+        let state = read(&world, id);
+        assert!(state.asleep, "the capsule sleeps, state {state:?}");
+        assert!(
+            (1.0..=1.5).contains(&state.position.z),
+            "it rests within 1.5 m, travelled {}",
+            state.position.z
+        );
+    }
+
+    #[test]
+    fn a_capsule_spawned_before_a_steep_slope_still_rolls_away() {
+        let degrees = 5.5f32;
+        let rise = degrees.to_radians().tan() * 10.0;
+        let mut world = PhysicsWorld::new();
+        let spawn = lying_on_slope(CAPSULE, degrees);
+        let id = world.spawn_loose(&spawn);
+        world.set_world_mesh(
+            WorldMeshId(0),
+            &slope_mesh(-10.0, -rise, 10.0, rise),
+            TEST_TAG,
+        );
+
+        world.step(DT);
+
+        assert!(
+            is_collider1_in_all_pairs(&world, id),
+            "the capsule must be collider1 of its contact pairs for this test to cover the case"
+        );
+
+        run(&mut world, 299);
+
+        let moved = (read(&world, id).position - spawn.position).length();
+        assert!(moved > 1.0, "the capsule rolled only {moved} m");
+    }
+
+    #[test]
+    fn a_capsule_rolling_on_a_fixed_body_is_braked_like_on_the_world_mesh() {
+        let mut world = PhysicsWorld::new();
+        let ground = world.rigid_body_set.insert(
+            RigidBodyBuilder::fixed()
+                .translation(Vec3::new(0.0, -0.5, 0.0))
+                .build(),
+        );
+        world.collider_set.insert_with_parent(
+            ColliderBuilder::cuboid(50.0, 0.5, 50.0).build(),
+            ground,
+            &mut world.rigid_body_set,
+        );
+        let id = world.spawn_loose(&rolling_capsule_spawn(0.0));
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        assert!(state.asleep, "the capsule sleeps, state {state:?}");
+        assert!(
+            (1.0..=1.5).contains(&state.position.z),
+            "it rests within 1.5 m, travelled {}",
+            state.position.z
+        );
+    }
+
     #[test]
     fn the_brake_spares_overlapping_bodies() {
         let mut world = world_with_floor(&floor_mesh(0.0));
