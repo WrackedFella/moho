@@ -1838,4 +1838,177 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn an_invalid_mark_draws_nothing_and_a_following_valid_mark_still_draws() {
+        let valid_at = Vec3::new(7.0, 0.0, 0.0);
+        let invalid: [(Vec3, Vec3); 4] = [
+            (Vec3::new(1.0, 0.0, 0.0), Vec3::ZERO),
+            (Vec3::new(1.0, 0.0, 0.0), Vec3::new(f32::NAN, 0.0, 1.0)),
+            (Vec3::new(f32::INFINITY, 0.0, 0.0), Vec3::Y),
+            (Vec3::new(0.0, f32::NAN, 0.0), Vec3::Y),
+        ];
+        for (at, normal) in invalid {
+            let mut rig = Rig::new();
+
+            rig.effects.mark(at, normal, 0.0, mark_style(0.2));
+            let none = rig.frame(EYE);
+            rig.effects.mark(valid_at, Vec3::Y, 0.0, mark_style(0.2));
+            let one = rig.frame(EYE);
+
+            assert!(none.is_empty(), "at {at}, normal {normal}");
+            assert_eq!(one.len(), 1, "at {at}, normal {normal}");
+            assert!(columns_finite(&one[0]));
+            assert_near(translation(&one[0]), valid_at + Vec3::Y * MARK_OFFSET);
+        }
+    }
+
+    #[test]
+    fn a_flash_or_mark_with_a_non_positive_or_nan_size_draws_nothing() {
+        for size in [0.0, -0.4, f32::NAN, f32::INFINITY] {
+            let mut rig = Rig::new();
+
+            rig.effects.flash(Vec3::X, 0.0, flash_style(size, 50));
+            rig.effects
+                .mark(Vec3::Z * 5.0, Vec3::Y, 0.0, mark_style(size));
+            let drawn = rig.frame(EYE);
+
+            assert!(drawn.is_empty(), "size {size}");
+        }
+    }
+
+    #[test]
+    fn a_mark_with_a_non_unit_normal_draws_the_same_instance_as_the_unit_normal() {
+        let at = Vec3::new(2.0, 3.0, 4.0);
+        let mut unit = Rig::new();
+        unit.effects.mark(at, Vec3::Z, 0.5, mark_style(0.2));
+        let expected = unit.frame(EYE);
+        for scale in [5.0, 0.25, 1e3] {
+            let mut rig = Rig::new();
+
+            rig.effects.mark(at, Vec3::Z * scale, 0.5, mark_style(0.2));
+            let drawn = rig.frame(EYE);
+
+            assert_eq!(drawn.len(), 1, "scale {scale}");
+            assert_near(translation(&drawn[0]), at + Vec3::Z * MARK_OFFSET);
+            for (got, want) in drawn[0]
+                .model
+                .iter()
+                .flatten()
+                .zip(expected[0].model.iter().flatten())
+            {
+                assert!((got - want).abs() < EPS, "scale {scale}: {got} vs {want}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_flash_at_the_eye_draws_nothing_that_frame_and_draws_once_the_eye_moves() {
+        let at = Vec3::new(1.0, 2.0, 3.0);
+        let mut rig = Rig::new();
+        rig.effects.flash(at, 0.0, flash_style(0.4, 5000));
+
+        let at_eye = rig.frame(at);
+        let moved = rig.frame(at + Vec3::new(0.0, 0.0, 5.0));
+
+        assert!(at_eye.is_empty(), "no draw, so no NaN instance");
+        assert_eq!(rig.effects.live(), 1, "still live");
+        assert_eq!(moved.len(), 1);
+        assert!(columns_finite(&moved[0]));
+        assert_near(translation(&moved[0]), at);
+        assert!((x_axis(&moved[0]).length() - 0.4).abs() < EPS);
+    }
+
+    #[test]
+    fn refused_spawns_do_not_consume_a_handle() {
+        let mut rig = Rig::new();
+        let first = rig.effects.begin_streak(style(2.0, 0.1));
+
+        rig.effects.flash(Vec3::X, 0.0, flash_style(0.4, 0));
+        rig.effects.mark(
+            Vec3::X,
+            Vec3::Y,
+            0.0,
+            MarkStyle::new(0.2, 0, Duration::ZERO, Duration::ZERO),
+        );
+        let second = rig.effects.begin_streak(style(2.0, 0.1));
+        rig.effects.set_quality(0);
+        rig.effects.flash(Vec3::X, 0.0, flash_style(0.4, 50));
+        rig.effects.mark(Vec3::X, Vec3::Y, 0.0, mark_style(0.2));
+        rig.effects.set_quality(4);
+        let third = rig.effects.begin_streak(style(2.0, 0.1));
+
+        assert!(first < second && second < third, "ordered, never reused");
+        assert_eq!(second.0, first.0 + 1, "zero-lifetime spawns took no handle");
+        assert_eq!(third.0, second.0 + 1, "quality-0 spawns took no handle");
+    }
+
+    #[test]
+    fn a_spawn_refused_by_a_cap_of_streaks_does_not_consume_a_handle() {
+        let mut rig = Rig::new();
+        rig.effects.set_quality(1);
+        let handles: Vec<EffectHandle> = (0..32)
+            .map(|_| rig.effects.begin_streak(style(2.0, 0.1)))
+            .collect();
+        let last = *handles.last().expect("32 streaks");
+
+        rig.effects.mark(Vec3::X, Vec3::Y, 0.0, mark_style(0.2));
+        rig.effects.flash(Vec3::X, 0.0, flash_style(0.4, 50));
+        let next = rig.effects.begin_streak(style(2.0, 0.1));
+
+        assert!(next > last);
+        assert_eq!(next.0, last.0 + 1, "the refused spawns took no handle");
+    }
+
+    #[test]
+    fn an_invalid_mark_at_a_full_cap_never_exceeds_the_cap() {
+        let mut rig = Rig::new();
+        rig.effects.set_quality(1);
+        for i in 0..32 {
+            rig.effects
+                .mark(Vec3::new(i as f32, 0.0, 0.0), Vec3::Y, 0.0, mark_style(0.2));
+        }
+
+        rig.effects
+            .mark(Vec3::new(99.0, 0.0, 0.0), Vec3::ZERO, 0.0, mark_style(0.2));
+        let drawn = rig.frame(EYE);
+
+        assert!(rig.effects.live() <= 32, "live {}", rig.effects.live());
+        assert!(drawn.len() <= 32);
+        println!(
+            "invalid mark at a full cap: live {}, drawn {}",
+            rig.effects.live(),
+            drawn.len()
+        );
+    }
+
+    #[test]
+    fn a_huge_advance_removes_flashes_and_marks() {
+        let mut rig = Rig::new();
+        rig.effects.flash(Vec3::X, 0.0, flash_style(0.4, 50));
+        rig.effects
+            .mark(Vec3::Z * 5.0, Vec3::Y, 0.0, mark_style(0.2));
+
+        rig.effects.advance(Duration::from_secs(1_000_000));
+
+        assert_eq!(rig.effects.live(), 0);
+        assert!(rig.frame(EYE).is_empty());
+    }
+
+    #[test]
+    fn a_flash_a_mark_and_a_streak_in_one_cell_draw_three_times_on_three_meshes() {
+        let cell = Vec3::new(2.0, 3.0, 4.0);
+        let mut rig = Rig::new();
+        let streak = rig.effects.begin_streak(style(2.0, 0.1));
+        rig.effects.place_streak(streak, cell, Vec3::X);
+        rig.effects.flash(cell, 0.0, flash_style(0.4, 5000));
+        rig.effects.mark(cell, Vec3::Y, 0.0, mark_style(0.2));
+
+        let frame = frame_by_mesh(&mut rig);
+
+        assert_eq!(frame.len(), 3);
+        let meshes: std::collections::BTreeSet<u32> = frame.iter().map(|(m, _)| *m).collect();
+        assert_eq!(meshes.len(), 3, "one draw per mesh id");
+        assert!(frame.iter().all(|(_, i)| columns_finite(i)));
+    }
 }
