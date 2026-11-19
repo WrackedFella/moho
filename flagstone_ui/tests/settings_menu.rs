@@ -696,6 +696,39 @@ fn cancel_after_stray_key_changes_nothing() {
     assert!(!menu.is_listening());
 }
 
+/// An egui key press after a lone-modifier prompt opened is not captured as a binding.
+#[test]
+fn egui_key_press_after_modifier_prompt_binds_nothing() {
+    let mut menu = menu_with_shift_prompt_open();
+
+    render_frame(&mut menu, vec![key_event(egui::Key::A, true)]);
+
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::W), pad_stick(StickDir::Up)]
+    );
+    assert!(
+        (0..ROW_ACTIONS.len())
+            .filter(|i| *i != 1)
+            .all(|i| !menu.get_staged_binding(i).contains(&Binding::key(Key::A)))
+    );
+    assert!(!menu.is_listening());
+}
+
+/// Escape while the prompt is open leaves every row's bindings unchanged.
+#[test]
+fn escape_while_prompt_open_leaves_bindings_unchanged() {
+    let fresh = SettingsMenu::with_prefs(Prefs::default());
+    let mut menu = menu_with_shift_prompt_open();
+
+    render_frame(&mut menu, vec![key_event(egui::Key::Escape, true)]);
+
+    for i in 0..ROW_ACTIONS.len() {
+        assert_eq!(menu.get_staged_binding(i), fresh.get_staged_binding(i));
+    }
+    assert!(!menu.is_listening());
+}
+
 /// Rebinding a row replaces its plain key and keeps its hold bindings, in the settings text too.
 #[test]
 fn rebinding_sprint_keeps_its_hold_bindings() {

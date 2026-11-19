@@ -250,6 +250,26 @@ mod tests {
     }
 
     #[test]
+    fn lone_ctrl_held_by_another_row_raises_prompt_and_ends_listening() {
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry(); // Descend holds Ctrl
+        let mut bindings_changed = vec![];
+        handler.start_listening(0);
+
+        let applied = handler.capture_modifier_if_listening(1, &bindings, |action, b| {
+            bindings_changed.push((action, b));
+        });
+
+        assert!(applied);
+        assert!(bindings_changed.is_empty());
+        assert_eq!(handler.listening_id(), None);
+        assert_eq!(
+            handler.take_conflict_modal(),
+            Some(("Move Down".to_string(), "Ctrl".to_string()))
+        );
+    }
+
+    #[test]
     fn take_conflict_modal_returns_holder_name_then_key_description() {
         let mut handler = KeybindCaptureHandler::new();
         let bindings = registry();
