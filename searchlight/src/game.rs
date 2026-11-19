@@ -96,6 +96,7 @@ enum Paint {
     Enemy,
     Struck,
     ArenaMark,
+    Control,
 }
 
 impl RenderMaterial for Paint {
@@ -104,7 +105,7 @@ impl RenderMaterial for Paint {
         // the rest, and `params.w > 0` makes the surface glow its colour.
         // `albedo.w` is a world mesh's gloss.
         let (top, side, glow, gloss) = match self {
-            Paint::Arena => ([0.62, 0.62, 0.64], [0.42, 0.43, 0.46], 0.0, 0.0),
+            Paint::Arena | Paint::Control => ([0.62, 0.62, 0.64], [0.42, 0.43, 0.46], 0.0, 0.0),
             Paint::ArenaFloor => (
                 [0.62, 0.62, 0.64],
                 [0.42, 0.43, 0.46],
@@ -1206,7 +1207,8 @@ mod tests {
     use super::*;
     use crate::sim::Feedback;
     use crate::test_support::{
-        WaveScore, arena_with, mag, press, rifle_from, test_config, wave_tuning,
+        CONTROL_AT, CONTROL_FACE, WaveScore, arena_with, mag, press, rifle_from, test_config,
+        wave_tuning,
     };
     use searchlight_rules::{Grade, LeanSide};
 
@@ -3348,6 +3350,192 @@ mod tests {
         );
         assert!(restart.restart, "F8 restarts once playing again");
         assert!(!ctx.exit_requested());
+    }
+
+    /// A game of a player at the origin with a next-wave button just ahead and no enemy marker,
+    /// with `bindings` loaded over the defaults.
+    fn button_game(bindings: &[(&str, &str)]) -> (SearchlightGame, GameClock) {
+        let arena = crate::test_support::arena_with_controls(
+            &[],
+            Vec3::ZERO,
+            &[],
+            &[],
+            &[(crate::control::ControlAction::NextWave, CONTROL_AT)],
+        );
+        let mode = ArenaMode::new(
+            arena,
+            test_config(rifle_from(mag(30, 30)), vec![]),
+            wave_tuning(1),
+        );
+        let saved = bindings
+            .iter()
+            .map(|&(name, key)| (name.to_owned(), key.to_owned()))
+            .collect();
+        let (bindings, warnings) = ActionBindings::load(&saved);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        (
+            SearchlightGame::new(mode, ActionMap::new(bindings, 1.0)),
+            GameClock::default(),
+        )
+    }
+
+    /// Ticks the game once, turning the player to face `point`.
+    fn look_at_point(game: &mut SearchlightGame, clock: &mut GameClock, point: Vec3) {
+        let command = crate::test_support::look_at(game.sim(), point);
+        tick_with(game, clock, &command);
+    }
+
+    /// Runs one frame, with nothing painted yet.
+    fn run_one_frame(game: &mut SearchlightGame, clock: &GameClock) {
+        let mut ctx = FrameContext::new(TICK, clock, None, None);
+        game.frame(&mut ctx, 0.0);
+    }
+
+    /// Runs one frame and takes what the shell then paints: `None` when it has nothing to paint.
+    fn painted(game: &mut SearchlightGame, clock: &GameClock) -> Option<UiFrame> {
+        run_one_frame(game, clock);
+        game.stage.shell().ui_frame([800, 600])
+    }
+
+    #[test]
+    fn the_prompt_shows_while_the_button_is_in_reach() {
+        let (mut game, mut clock) = button_game(&[]);
+        let looking_over_it = painted(&mut game, &clock);
+
+        look_at_point(&mut game, &mut clock, CONTROL_FACE);
+        let looking_at_it = painted(&mut game, &clock);
+
+        assert!(looking_over_it.is_none(), "no prompt before the look");
+        let prompt = looking_at_it.expect("the button in reach has a prompt");
+        assert!(!prompt.meshes.is_empty());
+    }
+
+    #[test]
+    fn the_prompt_names_the_key_the_use_action_is_bound_to() {
+        let prompt_with = |bindings: &[(&str, &str)]| {
+            let (mut game, mut clock) = button_game(bindings);
+            look_at_point(&mut game, &mut clock, CONTROL_FACE);
+            painted(&mut game, &clock).expect("the button in reach has a prompt")
+        };
+
+        let on_f = prompt_with(&[]);
+        let on_g = prompt_with(&[("use", "G")]);
+
+        assert_ne!(on_f.meshes, on_g.meshes);
+    }
+
+    #[test]
+    fn no_prompt_when_looking_away() {
+        let (mut game, mut clock) = button_game(&[]);
+        look_at_point(&mut game, &mut clock, CONTROL_FACE);
+        let shown = painted(&mut game, &clock);
+        run_one_frame(&mut game, &clock);
+        let eye = game.sim().player_eye();
+
+        look_at_point(&mut game, &mut clock, eye + Vec3::X * 5.0);
+        let after = painted(&mut game, &clock);
+
+        assert!(shown.is_some(), "the fixture shows the prompt");
+        assert_eq!(game.sim().control_in_reach(), None);
+        assert!(after.is_none(), "the prompt outlived the look");
+    }
+
+    #[test]
+    fn no_prompt_while_dead_or_paused() {
+        let (mut game, mut clock) = button_game(&[]);
+        look_at_point(&mut game, &mut clock, CONTROL_FACE);
+        let alive = painted(&mut game, &clock);
+        run_one_frame(&mut game, &clock);
+
+        game.mode.sim_mut().kill_player();
+        let dead = painted(&mut game, &clock);
+
+        assert!(alive.is_some(), "the fixture shows the prompt");
+        assert!(dead.is_none(), "the dead are shown no prompt");
+        let menus_over = |looking_at_the_button: bool, main_menu: bool| {
+            let (mut game, mut clock) = button_game(&[]);
+            let eye = game.sim().player_eye();
+            let target = if looking_at_the_button {
+                CONTROL_FACE
+            } else {
+                eye + Vec3::X * 5.0
+            };
+            look_at_point(&mut game, &mut clock, target);
+            let mut game = if main_menu {
+                game.with_main_menu()
+            } else {
+                game.pause();
+                game
+            };
+            painted(&mut game, &clock).map(|frame| frame.meshes)
+        };
+        for main_menu in [false, true] {
+            let at_button = menus_over(true, main_menu);
+            let away = menus_over(false, main_menu);
+
+            assert!(
+                at_button.is_some(),
+                "the menu paints (main menu {main_menu})"
+            );
+            assert_eq!(at_button, away, "main menu {main_menu}");
+        }
+    }
+
+    #[test]
+    fn control_mesh_ids_share_no_id_with_arena_dummy_or_enemy_meshes() {
+        use crate::arena::{arena_mesh_id, control_mesh_id};
+        let controls: Vec<u64> = (0..64).map(|i| control_mesh_id(i).0).collect();
+        let arena: Vec<u64> = (0..64).map(|i| arena_mesh_id(i).0).collect();
+        // Every enemy has `ENEMY_MESH_SLOTS` ids from its rig's place; a rig for each target.
+        let enemies_end = ENEMY_MESH_BASE + (u64::from(u16::MAX) + 1) * ENEMY_MESH_SLOTS;
+
+        let mut distinct = controls.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+
+        assert_eq!(
+            distinct.len(),
+            controls.len(),
+            "each control has its own id"
+        );
+        assert!(
+            controls.iter().all(|&id| id >= DUMMY_MESH_BASE),
+            "{controls:?} reach into the arena meshes' ids"
+        );
+        assert!(
+            controls.iter().all(|&id| id >= enemies_end),
+            "{controls:?} reach into the enemy meshes' ids"
+        );
+        assert!(controls.iter().all(|id| !arena.contains(id)));
+        assert!(controls.iter().all(|&id| id >> 32 == 3));
+    }
+
+    #[test]
+    fn the_control_paint_stands_out_from_every_other_paint() {
+        let others = [
+            Paint::Arena,
+            Paint::ArenaFloor,
+            Paint::Dummy,
+            Paint::Enemy,
+            Paint::Struck,
+            Paint::ArenaMark,
+        ];
+        let control = Paint::Control.to_gpu();
+
+        for other in others {
+            let gpu = other.to_gpu();
+
+            assert_ne!(
+                (control.albedo, control.params),
+                (gpu.albedo, gpu.params),
+                "{other:?}"
+            );
+            assert_ne!(
+                Paint::Control.dedup_key().variant,
+                other.dedup_key().variant,
+                "{other:?}"
+            );
+        }
     }
 }
 

@@ -72,6 +72,9 @@ fn nearest_waypoint(spawn: Vec3, route: &[Vec3]) -> (usize, f32) {
 /// Radius of the shipped body's capsule, in metres; two shipped bodies touch at twice this.
 pub const CAPSULE_RADIUS: f32 = SHIPPED_BODY.standing.hull.radius;
 
+/// How far from the eye the player can use a control, in metres.
+pub const USE_REACH: f32 = 2.0;
+
 /// Whether a sim starts with an enemy at each enemy spawn marker.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Start {
@@ -982,6 +985,12 @@ impl SearchlightSim {
         self.kills
     }
 
+    /// The control the living player is looking at within [`USE_REACH`]: one ray from the
+    /// leaned eye along the view, ignoring the player, whose first surface is that control's.
+    pub fn control_in_reach(&self) -> Option<u16> {
+        None
+    }
+
     /// Applies a lethal hit to enemy `index` (enemy order) as a player's shot would.
     #[cfg(test)]
     pub(crate) fn kill_enemy(&mut self, index: usize) {
@@ -1071,7 +1080,9 @@ mod tests {
     fn part_of(volume: &HitVolume) -> BodyPart {
         match SurfaceTag::try_from(volume.tag).expect("a body volume carries a body tag") {
             SurfaceTag::Part { part, .. } | SurfaceTag::Player(part) => part,
-            other @ SurfaceTag::World => panic!("not a body part: {other:?}"),
+            other @ (SurfaceTag::World | SurfaceTag::Control(_)) => {
+                panic!("not a body part: {other:?}")
+            }
         }
     }
 
@@ -2336,6 +2347,191 @@ mod tests {
             }
 
             assert_eq!(sim.kills(), 1);
+        }
+    }
+
+    mod controls {
+        use super::*;
+        use crate::control::ControlAction;
+        use crate::test_support::{CONTROL_AT, CONTROL_FACE, arena_with_controls, look_at};
+
+        const NEXT_WAVE: ControlAction = ControlAction::NextWave;
+
+        fn sim_in(arena: Arc<Arena>) -> SearchlightSim {
+            SearchlightSim::start(arena, test_config(rifle_with(30), vec![]))
+        }
+
+        /// A sim of a player at the origin facing +Z, with `boxes` standing and a control post on
+        /// each of `posts`.
+        fn sim_with(boxes: &[(Vec3, Vec3)], posts: &[Vec3]) -> SearchlightSim {
+            let controls: Vec<(ControlAction, Vec3)> =
+                posts.iter().map(|&at| (NEXT_WAVE, at)).collect();
+            sim_in(arena_with_controls(boxes, Vec3::ZERO, &[], &[], &controls))
+        }
+
+        /// Turns the player to face `point`.
+        fn look(sim: &mut SearchlightSim, point: Vec3) {
+            let command = look_at(sim, point);
+            sim.tick(&command, DT);
+        }
+
+        #[test]
+        fn a_control_in_view_and_reach_is_found() {
+            let mut sim = sim_with(&[], &[CONTROL_AT]);
+
+            look(&mut sim, CONTROL_FACE);
+
+            assert_eq!(sim.control_in_reach(), Some(0));
+        }
+
+        #[test]
+        fn a_control_is_found_by_its_place_in_the_list() {
+            let left = Vec3::new(-0.8, 0.0, 1.2);
+            let right = Vec3::new(0.8, 0.0, 1.2);
+            let mut sim = sim_with(&[], &[left, right]);
+
+            look(&mut sim, left + Vec3::new(0.0, 0.6, -0.2));
+            let first = sim.control_in_reach();
+            look(&mut sim, right + Vec3::new(0.0, 0.6, -0.2));
+            let second = sim.control_in_reach();
+
+            assert_eq!((first, second), (Some(0), Some(1)));
+        }
+
+        #[test]
+        fn a_control_out_of_view_is_not_found() {
+            let mut sim = sim_with(&[], &[CONTROL_AT]);
+            look(&mut sim, CONTROL_FACE);
+            assert_eq!(sim.control_in_reach(), Some(0), "the fixture finds it");
+            let eye = sim.player_eye();
+
+            look(&mut sim, eye + Vec3::new(0.0, 0.0, 1.0));
+            let over_the_post = sim.control_in_reach();
+            look(&mut sim, CONTROL_FACE);
+            look(&mut sim, eye + Vec3::new(5.0, 0.0, 0.0));
+            let turned_aside = sim.control_in_reach();
+            look(&mut sim, CONTROL_FACE);
+            look(&mut sim, eye - Vec3::Z);
+            let turned_round = sim.control_in_reach();
+
+            assert_eq!(over_the_post, None, "the post is below the eye line");
+            assert_eq!(turned_aside, None);
+            assert_eq!(turned_round, None);
+        }
+
+        /// What a player facing the near face of a post whose face is `face_z` away finds.
+        fn found_with_face_at(face_z: f32) -> Option<u16> {
+            let mut sim = sim_with(&[], &[Vec3::new(0.0, 0.0, face_z + 0.2)]);
+            look(&mut sim, Vec3::new(0.0, 0.6, face_z));
+            sim.control_in_reach()
+        }
+
+        #[test]
+        fn a_control_beyond_reach_is_not_found() {
+            // The eye is 1.03 m above the middle of the face, so these faces are 1.945 m and
+            // 2.03 m from it.
+            let inside = found_with_face_at(1.65);
+            let outside = found_with_face_at(1.75);
+            let far = found_with_face_at(6.0);
+
+            assert_eq!(USE_REACH, 2.0);
+            assert_eq!(inside, Some(0));
+            assert_eq!(outside, None);
+            assert_eq!(far, None);
+        }
+
+        #[test]
+        fn a_control_behind_a_wall_is_not_found() {
+            let wall = (Vec3::new(-2.0, 0.0, 0.5), Vec3::new(2.0, 3.0, 0.7));
+            let mut open = sim_with(&[], &[CONTROL_AT]);
+            let mut walled = sim_with(&[wall], &[CONTROL_AT]);
+
+            look(&mut open, CONTROL_FACE);
+            look(&mut walled, CONTROL_FACE);
+
+            assert_eq!(open.control_in_reach(), Some(0), "the fixture finds it");
+            assert_eq!(walled.control_in_reach(), None);
+        }
+
+        #[test]
+        fn a_body_in_front_of_a_control_blocks_it() {
+            let face = Vec3::new(0.0, 0.6, 1.5);
+            let post = Vec3::new(0.0, 0.0, 1.7);
+            let open = arena_with_controls(&[], Vec3::ZERO, &[], &[], &[(NEXT_WAVE, post)]);
+            let mut crowded = (*open).clone();
+            crowded.dummy_spawns.push(Vec3::new(0.0, 0.0, 0.9));
+            let mut open = sim_in(open);
+            let mut crowded = sim_in(Arc::new(crowded));
+
+            look(&mut open, face);
+            look(&mut crowded, face);
+
+            assert_eq!(open.control_in_reach(), Some(0), "the fixture finds it");
+            assert_eq!(crowded.control_in_reach(), None);
+        }
+
+        #[test]
+        fn a_dead_player_reaches_no_control() {
+            let mut sim = sim_with(&[], &[CONTROL_AT]);
+            look(&mut sim, CONTROL_FACE);
+            assert_eq!(sim.control_in_reach(), Some(0), "the fixture finds it");
+
+            sim.kill_player();
+
+            assert_eq!(sim.control_in_reach(), None);
+        }
+
+        #[test]
+        fn the_reach_ray_starts_at_the_leaned_eye() {
+            let lean = Some(searchlight_rules::LeanSide::Left);
+            let leaning = SearchlightCommand { lean, ..idle() };
+            let mut sim = sim_with(&[], &[CONTROL_AT]);
+            for _ in 0..40 {
+                sim.tick(&leaning, DT);
+            }
+            let aside = sim.player_eye().x - sim.player().position.x;
+            assert!(aside.abs() > 0.25, "the lean moved the eye {aside} m");
+
+            for _ in 0..2 {
+                let aim = SearchlightCommand {
+                    lean,
+                    ..look_at(&sim, CONTROL_FACE)
+                };
+                sim.tick(&aim, DT);
+            }
+
+            assert_eq!(sim.control_in_reach(), Some(0));
+        }
+
+        #[test]
+        fn a_shot_at_a_control_damages_nothing() {
+            let mut arena =
+                (*arena_with_controls(&[], Vec3::ZERO, &[], &[], &[(NEXT_WAVE, CONTROL_AT)]))
+                    .clone();
+            arena.dummy_spawns.push(Vec3::new(6.0, 0.0, 6.0));
+            let mut sim = sim_in(Arc::new(arena));
+            look(&mut sim, CONTROL_FACE);
+            assert_eq!(sim.control_in_reach(), Some(0), "the fixture finds it");
+            let eye = sim.player_eye();
+            let strike = resolve_shot(
+                &sim.world,
+                ShotRay {
+                    origin: eye,
+                    direction: CONTROL_FACE - eye,
+                    range: 100.0,
+                    ignore: Some(sim.player),
+                },
+            )
+            .expect("the post stops the shot");
+            let health = sim.dummy_body(0).expect("one dummy").health();
+
+            sim.tick(&pull(), DT);
+
+            assert_eq!(strike.tag, SurfaceTag::Control(0));
+            assert!((strike.point - CONTROL_FACE).length() < 1e-2, "{strike:?}");
+            assert_eq!(sim.drain_feedback(), [Feedback::Fired]);
+            assert_eq!(sim.dummy_body(0).expect("one dummy").health(), health);
+            assert_eq!(sim.kills(), 0);
         }
     }
 }

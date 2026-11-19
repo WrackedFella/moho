@@ -9,18 +9,19 @@ use moho_input::Action;
 use moho_input::action_map::ActionMap;
 use moho_input::bindings::Input;
 use moho_level::{LevelMarker, NavMesh};
-use moho_physics::{MoveSettings, PhysicsWorld};
+use moho_physics::{CharacterCommand, MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::{
     BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId, LeanTuning, Loadout, Magazine,
     MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
 };
 
-use crate::arena::{Arena, nav_profile};
+use crate::arena::{Arena, ArenaControl, nav_profile};
 use crate::brain::EnemyTuning;
-use crate::input::SearchlightAction;
+use crate::control::ControlAction;
+use crate::input::{SearchlightAction, SearchlightCommand};
 use crate::mode::ArenaMode;
-use crate::sim::SimConfig;
+use crate::sim::{SearchlightSim, SimConfig};
 use crate::tag::SurfaceTag;
 use crate::tuning::SHIPPED_BODY;
 use crate::wave::WaveTuning;
@@ -225,12 +226,47 @@ pub(crate) fn arena_with(
     enemies: &[Vec3],
     route: &[Vec3],
 ) -> Arc<Arena> {
+    arena_with_controls(boxes, player, enemies, route, &[])
+}
+
+/// Where a control post stands in tests, as a floor point: just ahead of a player at the origin
+/// facing +Z, so that its near face is `CONTROL_FACE` away.
+pub(crate) const CONTROL_AT: Vec3 = Vec3::new(0.0, 0.0, 1.2);
+
+/// The middle of the near face of a post at [`CONTROL_AT`]: what a player at the origin looks at
+/// to look at the control. Posts are 0.4 x 1.2 x 0.4 m.
+pub(crate) const CONTROL_FACE: Vec3 = Vec3::new(0.0, 0.6, 1.0);
+
+/// Like [`arena_with`], with a control post standing on each `(action, floor point)` of
+/// `controls`, in order: a 0.4 x 1.2 x 0.4 m box, in the navmesh as well as the world.
+pub(crate) fn arena_with_controls(
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+    controls: &[(ControlAction, Vec3)],
+) -> Arc<Arena> {
     let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
     let meshes: Vec<WorldMesh> = std::iter::once(&floor)
         .chain(boxes)
         .map(|&(min, max)| box_mesh(min, max))
         .collect();
-    let nav = Arc::new(NavMesh::build(&meshes, nav_profile()).expect("box worlds build a navmesh"));
+    let controls: Vec<ArenaControl> = controls
+        .iter()
+        .map(|&(action, at)| ArenaControl {
+            action,
+            mesh: box_mesh(
+                at + Vec3::new(-0.2, 0.0, -0.2),
+                at + Vec3::new(0.2, 1.2, 0.2),
+            ),
+        })
+        .collect();
+    let walls: Vec<WorldMesh> = meshes
+        .iter()
+        .cloned()
+        .chain(controls.iter().map(|control| control.mesh.clone()))
+        .collect();
+    let nav = Arc::new(NavMesh::build(&walls, nav_profile()).expect("box worlds build a navmesh"));
     Arc::new(Arena {
         material_names: vec![None; meshes.len()],
         meshes,
@@ -241,7 +277,26 @@ pub(crate) fn arena_with(
         enemy_spawns: enemies.to_vec(),
         route: route.to_vec(),
         covers: Vec::new(),
+        controls,
     })
+}
+
+/// The command that turns the player of `sim` to face `point` from where their eye is now.
+pub(crate) fn look_at(sim: &SearchlightSim, point: Vec3) -> SearchlightCommand {
+    let to = point - sim.player_eye();
+    let state = sim.player();
+    let yaw = to.x.atan2(to.z);
+    let turn = (yaw - state.yaw + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
+        - std::f32::consts::PI;
+    let pitch = to.y.atan2(to.x.hypot(to.z));
+    SearchlightCommand {
+        movement: CharacterCommand {
+            yaw_delta: turn,
+            pitch_delta: pitch - state.pitch,
+            ..CharacterCommand::default()
+        },
+        ..SearchlightCommand::default()
+    }
 }
 
 /// Waves of experienced enemies that open with `first_size` enemies, grow by one and score 100
@@ -260,6 +315,17 @@ pub(crate) fn level_marker(name: &str, position: Vec3) -> LevelMarker {
         rotation: Quat::IDENTITY,
         properties: BTreeMap::new(),
     }
+}
+
+/// A level marker named `name` at `position` whose `action` is `action`, if any.
+pub(crate) fn control_marker(name: &str, position: Vec3, action: Option<&str>) -> LevelMarker {
+    let mut marker = level_marker(name, position);
+    if let Some(action) = action {
+        marker
+            .properties
+            .insert("action".to_owned(), action.to_owned());
+    }
+    marker
 }
 
 /// The `searchlight_level` marker whose `mode` is `value`.

@@ -12,6 +12,9 @@ pub enum SurfaceTag {
     Part { target: u16, part: BodyPart },
     /// One body part of the player.
     Player(BodyPart),
+    /// The placed control numbered by its place in the arena's control list: stops a ray,
+    /// damages nothing.
+    Control(u16),
 }
 
 /// The engine tag does not encode any [`SurfaceTag`].
@@ -50,7 +53,7 @@ fn part_index(part: BodyPart) -> u32 {
 impl From<SurfaceTag> for HitTag {
     fn from(tag: SurfaceTag) -> Self {
         match tag {
-            SurfaceTag::World => HitTag(WORLD),
+            SurfaceTag::World | SurfaceTag::Control(_) => HitTag(WORLD),
             SurfaceTag::Player(part) => HitTag(PLAYER_BASE + part_index(part)),
             SurfaceTag::Part { target, part } => {
                 HitTag(PART_BASE + ((u32::from(target) << PART_BITS) | part_index(part)))
@@ -99,6 +102,7 @@ mod tests {
     fn surface_tags() -> impl Strategy<Value = SurfaceTag> {
         prop_oneof![
             Just(SurfaceTag::World),
+            any::<u16>().prop_map(SurfaceTag::Control),
             (any::<u16>(), proptest::sample::select(PARTS.to_vec()))
                 .prop_map(|(target, part)| SurfaceTag::Part { target, part }),
         ]
@@ -141,6 +145,28 @@ mod tests {
         }
     }
 
+    proptest! {
+        #[test]
+        fn control_tags_never_collide_with_player_tags(
+            index in any::<u16>(),
+            part in proptest::sample::select(PARTS.to_vec()),
+        ) {
+            let control = HitTag::from(SurfaceTag::Control(index));
+
+            prop_assert_ne!(control, HitTag::from(SurfaceTag::Player(part)));
+            prop_assert_ne!(control, HitTag::from(SurfaceTag::World));
+        }
+
+        #[test]
+        fn control_tags_sit_above_every_player_tag(index in any::<u16>()) {
+            let last_player = HitTag::from(SurfaceTag::Player(BodyPart::RightLeg));
+
+            let control = HitTag::from(SurfaceTag::Control(index));
+
+            prop_assert!(control.0 > last_player.0);
+        }
+    }
+
     #[test]
     fn unknown_tag_is_rejected() {
         let unknown = HitTag(u32::MAX);
@@ -176,6 +202,41 @@ mod encoding_tests {
 
             assert_eq!(decoded, Err(UnknownTag(raw)), "tag {raw}");
         }
+    }
+}
+
+#[cfg(test)]
+mod control_encoding_tests {
+    use super::*;
+
+    #[test]
+    fn a_tag_just_past_the_last_control_is_rejected() {
+        let last = HitTag::from(SurfaceTag::Control(u16::MAX));
+
+        let past = SurfaceTag::try_from(HitTag(last.0 + 1));
+
+        assert_eq!(past, Err(UnknownTag(last.0 + 1)));
+    }
+
+    #[test]
+    fn a_tag_just_below_the_first_control_is_not_a_control() {
+        let first = HitTag::from(SurfaceTag::Control(0));
+
+        let below = SurfaceTag::try_from(HitTag(first.0 - 1));
+
+        assert!(
+            !matches!(below, Ok(SurfaceTag::Control(_))),
+            "{below:?} decoded as a control"
+        );
+    }
+
+    #[test]
+    fn a_control_decodes_to_its_own_index_not_a_neighbours() {
+        let tag = |index| HitTag::from(SurfaceTag::Control(index));
+
+        assert_ne!(tag(0), tag(1));
+        assert_eq!(SurfaceTag::try_from(tag(0)), Ok(SurfaceTag::Control(0)));
+        assert_eq!(SurfaceTag::try_from(tag(41)), Ok(SurfaceTag::Control(41)));
     }
 }
 
