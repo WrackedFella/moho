@@ -676,6 +676,12 @@ fn confirm_after_stray_key_applies_only_prompted_key() {
     modifier_frame(&mut menu, egui::Modifiers::NONE);
     modifier_frame(&mut menu, egui::Modifiers::ALT);
 
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::W), pad_stick(StickDir::Up)]
+    );
+    assert!(!menu.has_unsaved_changes());
+
     Screen::on_modal_confirm(&mut menu);
 
     let mut expected = before;
