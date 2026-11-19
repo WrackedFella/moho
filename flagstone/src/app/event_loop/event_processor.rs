@@ -1713,6 +1713,22 @@ mod tests {
         assert!(sounds.is_empty(), "{sounds:?}");
     }
 
+    /// Guard: hand mining already behaves this way; it must keep doing so once pawn digs
+    /// feed the colony stock.
+    #[test]
+    fn hand_mining_fills_the_pawn_inventory_not_the_colony_stock() {
+        let mut app = app_aimed_at_block_with(Some(7));
+
+        EventProcessor::new().handle_input_event(&mut app, InputEvent::MineRequested);
+        app.event_bus.process_deferred();
+
+        assert_eq!(app.pawn.inventory.count(7), 1);
+        assert!(
+            app.colony.stock.is_empty(),
+            "the colony total is pawn jobs only"
+        );
+    }
+
     #[test]
     fn pickup_asset_exists() {
         let path = pickup_asset_path();

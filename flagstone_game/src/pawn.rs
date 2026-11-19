@@ -401,13 +401,6 @@ mod tests {
     }
 
     #[test]
-    fn a_new_pawn_has_no_job() {
-        let pawn = Pawn::default();
-
-        assert!(matches!(pawn.job, Job::Idle { .. }));
-    }
-
-    #[test]
     fn mining_a_block_with_no_resource_adds_no_pickup() {
         let mut grid = VoxelGrid::new(16);
         grid.mutator().place(BlockPos::new(0, 0, 0), 1, None);

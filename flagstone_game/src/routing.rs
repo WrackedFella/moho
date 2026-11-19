@@ -320,6 +320,34 @@ mod tests {
             }
         }
 
+        /// Heights differ by at most one between neighbours and nothing roofs the walk,
+        /// so every pair of tops is connected and a search must find the route.
+        #[test]
+        fn open_terrain_always_has_a_route_of_standable_adjacent_cells(
+            heights in proptest::collection::vec(1i32..=2, 36),
+            from in 0usize..36,
+            goal in 0usize..36,
+        ) {
+            let grid = terrain(&heights);
+            let top = |i: usize| cell(i as i32 % 6, heights[i], i as i32 / 6);
+            let (start, goal) = (top(from), top(goal));
+
+            let found = to(&grid, start, goal);
+
+            prop_assert!(found.is_some(), "no route from {start} to {goal}");
+            let path = found.expect("checked above");
+            prop_assert_eq!(path.first(), Some(&start));
+            prop_assert_eq!(path.last(), Some(&goal));
+            for c in &path {
+                prop_assert!(standable(&grid, *c), "{c} is not standable");
+            }
+            for pair in path.windows(2) {
+                let d = pair[1] - pair[0];
+                prop_assert_eq!(d.x.abs() + d.z.abs(), 1, "one horizontal step");
+                prop_assert!(d.y.abs() <= 1, "at most one block up or down");
+            }
+        }
+
         #[test]
         fn the_same_grid_gives_the_same_route(
             heights in proptest::collection::vec(1i32..=2, 36),

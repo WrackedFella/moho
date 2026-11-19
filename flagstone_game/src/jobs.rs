@@ -210,27 +210,22 @@ mod tests {
 
     #[test]
     fn a_mark_with_no_exposed_face_is_not_claimed() {
-        let mut scene = Scene::new();
-        for x in 7..=9 {
-            for y in 1..=3 {
-                for z in 1..=3 {
-                    scene.solid([x, y, z]);
-                }
-            }
+        let mut scene = Scene::new().marked_block([8, 1, 2]);
+        for pos in [[7, 1, 2], [9, 1, 2], [8, 1, 1], [8, 1, 3], [8, 2, 2]] {
+            scene.solid(pos);
         }
-        scene.marks.toggle([8, 2, 2]);
 
         let action = scene.step(pose_at(start()));
 
         assert_eq!(action, JobAction::Wait);
         assert!(scene.is_idle());
-        assert_eq!(scene.claimed_by([8, 2, 2]), None);
+        assert_eq!(scene.claimed_by([8, 1, 2]), None);
     }
 
     #[test]
     fn an_idle_pawn_claims_the_nearest_reachable_mark_and_equips_the_tool() {
         let mut scene = Scene::new()
-            .marked_block([12, 1, 2])
+            .marked_block([1, 1, 12])
             .marked_block([8, 1, 2]);
         scene.pawn.select_slot(1);
 
@@ -241,9 +236,20 @@ mod tests {
         };
         assert_horizontal(to, 3.5, 2.5);
         assert_eq!(scene.claimed_by([8, 1, 2]), Some(ID));
-        assert_eq!(scene.claimed_by([12, 1, 2]), None);
+        assert_eq!(scene.claimed_by([1, 1, 12]), None);
         assert_eq!(scene.pawn.equipped_tool, Some(STARTING_TOOL));
         assert!(matches!(scene.job, Job::Mine { mark, .. } if mark == block(8, 1, 2)));
+    }
+
+    #[test]
+    fn two_equidistant_marks_claim_the_lower_key() {
+        let mut scene = Scene::new().marked_block([5, 1, 2]).marked_block([2, 1, 5]);
+
+        let action = scene.step(pose_at(start()));
+
+        assert!(matches!(action, JobAction::Walk { .. }), "{action:?}");
+        assert_eq!(scene.claimed_by([2, 1, 5]), Some(ID));
+        assert_eq!(scene.claimed_by([5, 1, 2]), None);
     }
 
     #[test]
@@ -259,24 +265,35 @@ mod tests {
         assert_eq!(scene.claimed_by([12, 1, 2]), Some(ID));
     }
 
-    #[test]
-    fn a_pawn_behind_four_unreachable_marks_reaches_a_fifth() {
+    fn behind_unreachable_marks(count: i32) -> Scene {
         let mut scene = Scene::new();
-        for x in 0..5 {
+        for x in 0..count {
             scene = scene.marked_block([x, 8, 0]);
         }
-        scene = scene.marked_block([14, 1, 14]);
+        scene.marked_block([14, 1, 14])
+    }
+
+    #[test]
+    fn a_pawn_behind_three_unreachable_marks_reaches_a_fourth_in_one_tick() {
+        let mut scene = behind_unreachable_marks(3);
 
         let first = scene.step(pose_at(start()));
-        let mut later = JobAction::Wait;
-        for _ in 0..3 {
-            if matches!(later, JobAction::Wait) {
-                later = scene.step(pose_at(start()));
-            }
-        }
+
+        assert!(matches!(first, JobAction::Walk { .. }), "{first:?}");
+        assert_eq!(scene.claimed_by([14, 1, 14]), Some(ID));
+    }
+
+    #[test]
+    fn a_pawn_behind_four_unreachable_marks_waits_a_tick_then_reaches_a_fifth() {
+        let mut scene = behind_unreachable_marks(4);
+
+        let first = scene.step(pose_at(start()));
+        let claimed_after_first = scene.claimed_by([14, 1, 14]);
+        let second = scene.step(pose_at(start()));
 
         assert_eq!(first, JobAction::Wait, "four attempts a tick, then wait");
-        assert!(matches!(later, JobAction::Walk { .. }), "{later:?}");
+        assert_eq!(claimed_after_first, None);
+        assert!(matches!(second, JobAction::Walk { .. }), "{second:?}");
         assert_eq!(scene.claimed_by([14, 1, 14]), Some(ID));
     }
 
@@ -332,51 +349,62 @@ mod tests {
 
     #[test]
     fn the_dig_aims_at_the_exposed_face_nearest_the_eye() {
-        let mut scene = Scene::new().marked_block([8, 1, 2]);
-        scene.step(pose_at(start()));
-        for x in 3..=6 {
-            scene.step(pose_at(centre(x, 1, 2)));
+        let cases = [
+            (
+                Vec3::new(8.2, 0.6, 2.5),
+                Vec3::new(8.0, 1.5, 2.5),
+                "below the block: the bottom face is buried in the floor, so the west face",
+            ),
+            (
+                Vec3::new(7.5, 2.9, 2.5),
+                Vec3::new(8.5, 2.0, 2.5),
+                "above and beside the block: the top face is nearer than the west face",
+            ),
+        ];
+
+        for (eye, expected, name) in cases {
+            let mut scene = Scene::new().marked_block([8, 1, 2]);
+            scene.step(pose_at(start()));
+            for x in 3..=6 {
+                scene.step(pose_at(centre(x, 1, 2)));
+            }
+            let mut at_stand = pose_at(centre(7, 1, 2));
+            at_stand.eye = eye;
+
+            let action = scene.step(at_stand);
+
+            let JobAction::Dig { aim, .. } = action else {
+                panic!("{name}: expected a dig, got {action:?}");
+            };
+            assert_eq!(aim, expected, "{name}");
         }
-        let mut below_the_block = pose_at(centre(7, 1, 2));
-        below_the_block.eye = Vec3::new(8.2, 0.6, 2.5);
-
-        let action = scene.step(below_the_block);
-
-        let JobAction::Dig { aim, .. } = action else {
-            panic!("expected a dig, got {action:?}");
-        };
-        assert_eq!(
-            aim,
-            Vec3::new(8.0, 1.5, 2.5),
-            "the bottom face is buried in the floor"
-        );
     }
 
     #[test]
     fn a_cancelled_mark_releases_the_pawn_mid_walk() {
-        let mut scene = Scene::new().marked_block([8, 1, 2]);
-        scene.step(pose_at(start()));
-        scene.step(pose_at(centre(3, 1, 2)));
-        scene.marks.toggle([8, 1, 2]);
+        for dug_by_another_pawn in [false, true] {
+            let mut scene = Scene::new().marked_block([8, 1, 2]);
+            scene.step(pose_at(start()));
+            scene.step(pose_at(centre(3, 1, 2)));
+            if dug_by_another_pawn {
+                scene.grid.mutator().remove(block(8, 1, 2));
+                scene.marks.block_removed([8, 1, 2]);
+            } else {
+                scene.marks.toggle([8, 1, 2]);
+            }
 
-        let action = scene.step(pose_at(centre(4, 1, 2)));
+            let action = scene.step(pose_at(centre(4, 1, 2)));
 
-        assert_eq!(action, JobAction::Wait);
-        assert!(scene.is_idle());
-        assert!(scene.grid.is_solid_at(block(8, 1, 2)), "the block stays");
-    }
-
-    #[test]
-    fn a_mark_dug_by_another_pawn_releases_the_claim() {
-        let mut scene = Scene::new().marked_block([8, 1, 2]);
-        scene.step(pose_at(start()));
-        scene.grid.mutator().remove(block(8, 1, 2));
-        scene.marks.block_removed([8, 1, 2]);
-
-        let action = scene.step(pose_at(centre(3, 1, 2)));
-
-        assert_eq!(action, JobAction::Wait);
-        assert!(scene.is_idle());
+            assert_eq!(
+                action,
+                JobAction::Wait,
+                "dug_by_another_pawn: {dug_by_another_pawn}"
+            );
+            assert!(
+                scene.is_idle(),
+                "dug_by_another_pawn: {dug_by_another_pawn}"
+            );
+        }
     }
 
     #[test]
@@ -391,6 +419,8 @@ mod tests {
         assert_eq!(scene.claimed_by([8, 1, 2]), Some(PawnId(1)));
     }
 
+    // Progress means a new best (smaller) horizontal distance to the current waypoint;
+    // standing still, or only matching an earlier distance, is a stalled tick.
     #[test]
     fn a_stalled_walk_releases_the_claim_and_keeps_the_mark() {
         let mut scene = Scene::new().marked_block([8, 1, 2]);
@@ -412,6 +442,7 @@ mod tests {
         assert_eq!(scene.claimed_by([8, 1, 2]), None);
     }
 
+    // Each tick closes 0.02 m on the waypoint, a new best horizontal distance every time.
     #[test]
     fn steady_progress_never_counts_as_a_stall() {
         let mut scene = Scene::new().marked_block([8, 1, 2]);
@@ -468,13 +499,31 @@ mod tests {
     #[test]
     fn the_cell_on_top_of_the_marked_block_is_not_a_stand_cell() {
         let mut scene = Scene::new().marked_block([8, 1, 2]);
-        scene.step(pose_at(start()));
+        let mut pose = pose_at(centre(8, 2, 2));
 
-        let (pose, action) = scene.walk_until_dig(start());
+        let first = scene.step(pose);
 
-        assert!(matches!(action, JobAction::Dig { .. }));
+        let JobAction::Walk { to } = first else {
+            panic!("standing on the block is not a place to dig it from: {first:?}");
+        };
+        pose = pose_at(to);
+        let mut dig_pose = None;
+        for _ in 0..200 {
+            match scene.step(pose) {
+                JobAction::Walk { to } => pose = pose_at(to),
+                JobAction::Dig { .. } => {
+                    dig_pose = Some(pose);
+                    break;
+                }
+                JobAction::Wait => panic!("the pawn stopped before digging"),
+            }
+        }
+        let dig_pose = dig_pose.expect("the pawn digs from beside the block");
         assert_ne!(
-            (pose.feet.x.floor() as i32, pose.feet.z.floor() as i32),
+            (
+                dig_pose.feet.x.floor() as i32,
+                dig_pose.feet.z.floor() as i32
+            ),
             (8, 2),
             "the pawn digs from beside the block, not from on it"
         );
@@ -519,10 +568,13 @@ mod tests {
 
     #[test]
     fn steer_walks_straight_at_a_target_dead_ahead() {
-        let step = steer(facing(0.0), Vec3::new(0.5, 4.0, 5.5));
+        let step = steer(facing(0.0), Vec3::new(0.5, 2.5, 0.9));
 
         assert_near(step.yaw_delta, 0.0);
-        assert_eq!(step.forward, 1.0, "height does not matter");
+        assert_eq!(
+            step.forward, 1.0,
+            "the target is 75 degrees off in 3D but dead ahead horizontally"
+        );
     }
 
     #[test]

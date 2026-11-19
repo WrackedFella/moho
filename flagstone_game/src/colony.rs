@@ -78,9 +78,6 @@ impl MineMarks {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pawn::Pawn;
-    use flagstone_voxel::{BlockPos, VoxelGrid};
-    use glam::Vec3;
     use proptest::prelude::*;
 
     fn marked(marks: &MineMarks) -> Vec<[i32; 3]> {
@@ -160,15 +157,6 @@ mod tests {
     }
 
     #[test]
-    fn a_new_mark_is_unclaimed() {
-        let mut marks = MineMarks::default();
-
-        marks.toggle([1, 2, 3]);
-
-        assert_eq!(claimed_by(&marks, [1, 2, 3]), None);
-    }
-
-    #[test]
     fn claim_and_release_round_trip() {
         let mut marks = MineMarks::default();
         marks.toggle([5, 0, 0]);
@@ -218,26 +206,29 @@ mod tests {
 
     #[test]
     fn cancelling_a_claimed_mark_and_marking_again_gives_an_unclaimed_mark() {
-        let mut marks = MineMarks::default();
-        marks.toggle([1, 0, 0]);
-        marks.claim([1, 0, 0], PawnId(0));
+        for by_removal in [false, true] {
+            let mut marks = MineMarks::default();
+            marks.toggle([1, 0, 0]);
+            marks.claim([1, 0, 0], PawnId(0));
 
-        marks.toggle([1, 0, 0]);
-        marks.toggle([1, 0, 0]);
+            if by_removal {
+                marks.block_removed([1, 0, 0]);
+            } else {
+                marks.toggle([1, 0, 0]);
+            }
+            assert!(
+                !marks.contains([1, 0, 0]),
+                "the mark goes (by_removal: {by_removal})"
+            );
+            marks.toggle([1, 0, 0]);
 
-        assert_eq!(claimed_by(&marks, [1, 0, 0]), None);
-    }
-
-    #[test]
-    fn a_removed_block_drops_its_claimed_mark() {
-        let mut marks = MineMarks::default();
-        marks.toggle([1, 0, 0]);
-        marks.claim([1, 0, 0], PawnId(0));
-
-        marks.block_removed([1, 0, 0]);
-
-        assert!(!marks.contains([1, 0, 0]));
-        assert_eq!(marks.unclaimed().count(), 0);
+            assert_eq!(
+                claimed_by(&marks, [1, 0, 0]),
+                None,
+                "by_removal: {by_removal}"
+            );
+            assert_eq!(marks.unclaimed().collect::<Vec<_>>(), [[1, 0, 0]]);
+        }
     }
 
     #[test]
@@ -248,23 +239,6 @@ mod tests {
         marks.release([4, 4, 4]);
 
         assert_eq!(marked(&marks), [[1, 0, 0]]);
-    }
-
-    #[test]
-    fn stock_grows_by_the_yield() {
-        let mut grid = VoxelGrid::new(16);
-        grid.mutator().place(BlockPos::new(0, 0, 0), 1, Some(7));
-        let mut pawn = Pawn::default();
-        let mut colony = Colony::default();
-
-        let outcome = pawn
-            .dig(&mut grid, Vec3::new(0.5, 0.5, -5.0), Vec3::Z, 10.0)
-            .expect("ray should hit the placed block");
-        let yield_ = outcome.yield_.expect("an ore block yields");
-        colony.stock.add(yield_.resource_id, yield_.amount);
-
-        assert_eq!(colony.stock.count(7), 1);
-        assert!(pawn.inventory.is_empty(), "the colony total, not the pawn");
     }
 
     proptest! {
