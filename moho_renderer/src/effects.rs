@@ -322,7 +322,7 @@ impl Effects {
                         place(
                             meshes,
                             &mut self.uploaded.streak,
-                            (EFFECT_MESH_IDS_FROM, streak_mesh),
+                            (STREAK_MESH_ID, streak_mesh),
                             transform,
                             streak.style.material,
                         );
@@ -345,6 +345,7 @@ impl Effects {
     }
 }
 
+const STREAK_MESH_ID: u64 = EFFECT_MESH_IDS_FROM;
 const STAR_MESH_ID: u64 = EFFECT_MESH_IDS_FROM + 1;
 const QUAD_MESH_ID: u64 = EFFECT_MESH_IDS_FROM + 2;
 
@@ -394,7 +395,7 @@ fn fixed_transform(fixed: &Fixed, eye: Vec3) -> Option<Affine3A> {
 /// seen from +Z.
 fn star_mesh() -> WorldMesh {
     const INNER: f32 = 0.1;
-    WorldMesh::new(
+    flat_mesh(
         vec![
             [0.5, 0.0, 0.0],
             [INNER, INNER, 0.0],
@@ -405,52 +406,50 @@ fn star_mesh() -> WorldMesh {
             [0.0, -0.5, 0.0],
             [INNER, -INNER, 0.0],
         ],
-        vec![[0.0, 0.0, 1.0]; 8],
-        vec![1.0; 8],
-        vec![[1.0; 3]; 8],
-        vec![1.0; 8],
-        vec![0; 8],
         vec![1, 3, 5, 1, 5, 7, 7, 0, 1, 1, 2, 3, 3, 4, 5, 5, 6, 7],
     )
-    .expect("the star's channels are all eight vertices long and its indices are in range")
 }
 
 /// A unit quad centred on the origin, counter-clockwise seen from +Z.
 fn quad_mesh() -> WorldMesh {
-    WorldMesh::new(
+    flat_mesh(
         vec![
             [-0.5, -0.5, 0.0],
             [0.5, -0.5, 0.0],
             [0.5, 0.5, 0.0],
             [-0.5, 0.5, 0.0],
         ],
-        vec![[0.0, 0.0, 1.0]; 4],
-        vec![1.0; 4],
-        vec![[1.0; 3]; 4],
-        vec![1.0; 4],
-        vec![0; 4],
         vec![0, 1, 2, 0, 2, 3],
     )
-    .expect("the quad's channels are all four vertices long and its indices are in range")
 }
 
 /// A kite from the tail at the origin to the head at x = 1, counter-clockwise seen from +Z.
 fn streak_mesh() -> WorldMesh {
-    WorldMesh::new(
+    flat_mesh(
         vec![
             [0.0, 0.0, 0.0],
             [0.8, -0.5, 0.0],
             [1.0, 0.0, 0.0],
             [0.8, 0.5, 0.0],
         ],
-        vec![[0.0, 0.0, 1.0]; 4],
-        vec![1.0; 4],
-        vec![[1.0; 3]; 4],
-        vec![1.0; 4],
-        vec![0; 4],
         vec![0, 1, 2, 0, 2, 3],
     )
-    .expect("the kite's channels are all four vertices long and its indices are in range")
+}
+
+/// A mesh facing +Z with every per-vertex channel neutral, so it takes the material and
+/// lighting of the instance alone.
+fn flat_mesh(positions: Vec<[f32; 3]>, indices: Vec<u32>) -> WorldMesh {
+    let n = positions.len();
+    WorldMesh::new(
+        positions,
+        vec![[0.0, 0.0, 1.0]; n],
+        vec![1.0; n],
+        vec![[1.0; 3]; n],
+        vec![1.0; n],
+        vec![0; n],
+        indices,
+    )
+    .expect("every channel is as long as the positions and the indices are in range")
 }
 
 /// Where a streak from `head - dir * length` to `head` is drawn so that it faces `eye`.
