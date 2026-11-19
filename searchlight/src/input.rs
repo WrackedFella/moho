@@ -38,6 +38,7 @@ impl Action for SearchlightAction {
         SearchlightAction::Restart,
         SearchlightAction::LeanLeft,
         SearchlightAction::LeanRight,
+        SearchlightAction::Use,
     ];
 
     fn name(self) -> &'static str {
@@ -53,7 +54,7 @@ impl Action for SearchlightAction {
             SearchlightAction::Restart => "restart",
             SearchlightAction::LeanLeft => "lean_left",
             SearchlightAction::LeanRight => "lean_right",
-            SearchlightAction::Use => todo!("name the use action"),
+            SearchlightAction::Use => "use",
         }
     }
 
@@ -72,7 +73,7 @@ impl Action for SearchlightAction {
             SearchlightAction::Restart => const { &[Binding::key(Key::F8)] },
             SearchlightAction::LeanLeft => const { &[Binding::key(Key::Q)] },
             SearchlightAction::LeanRight => const { &[Binding::key(Key::E)] },
-            SearchlightAction::Use => todo!("bind the use action"),
+            SearchlightAction::Use => const { &[Binding::key(Key::F)] },
         }
     }
 }
@@ -194,7 +195,7 @@ impl SearchlightCommand {
             reload: frame.pressed(SearchlightAction::Reload),
             check: frame.pressed(SearchlightAction::CheckMagazine),
             restart: frame.pressed(SearchlightAction::Restart),
-            use_pressed: false,
+            use_pressed: frame.pressed(SearchlightAction::Use),
             god_mode: false,
             forced_grade: None,
             lean: None,

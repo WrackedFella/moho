@@ -842,7 +842,24 @@ impl SearchlightSim {
     /// surface must be a control. `None` while the player is dead, or when a wall or a body
     /// is in front, or nothing is in reach.
     pub fn control_in_reach(&self) -> Option<u16> {
-        todo!("look for a control within {USE_REACH} m")
+        if self.player_body().is_dead() {
+            return None;
+        }
+        let state = self.player();
+        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
+        let strike = resolve_shot(
+            &self.world,
+            ShotRay {
+                origin: self.leaned_eye(&state),
+                direction: view.forward,
+                range: USE_REACH,
+                ignore: Some(self.player),
+            },
+        )?;
+        match strike.tag {
+            SurfaceTag::Control(index) => Some(index),
+            _ => None,
+        }
     }
 
     /// The player's state after the last tick.
