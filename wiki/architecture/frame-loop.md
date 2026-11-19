@@ -109,7 +109,8 @@ The renderer is reachable only through the contexts, so ticks queue renderer cha
    camera (`Listener::from_view`); then drain audio events;
 3. if the UI asked to quit: auto-save, `request_exit`, stop;
 4. if the UI asked for the main menu (Exit to main menu): auto-save, then `show_menu`, and go on;
-5. `update_hud_data`, `update_cut_caps` (rebuild [cut-face caps](rendering.md#3-cut-face-caps)), then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
+5. if the autosave is due ([4.2](#42-autosave)): auto-save;
+6. `update_hud_data`, `update_cut_caps` (rebuild [cut-face caps](rendering.md#3-cut-face-caps)), then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
    with actors, the sphere and cube mesh handles and the frame camera (below).
 
 A `FrameError` skips the frame with a `warn`. Pass order inside the renderer:
@@ -135,3 +136,7 @@ band `EDGE_PAN_MARGIN_PX`) added only while Playing, focused and isometric, then
 ground under the focus, then the focus is raised so the eye stays `CAMERA_CLEARANCE` above
 the surface under the eye. A column that is not loaded skips its rule. Pan speed scales with
 the zoom height (`rts_height`).
+
+### 4.2 Autosave
+
+`AutosaveSchedule` (`flagstone/src/app/autosave.rs`) counts simulation ticks, only while `GameState::Playing`. It is due when a block edit is waiting and a full interval (`App::autosave_interval`, two minutes by default) has passed since the last save. `process_world_events` marks the edit on `BlockPlaced`, `BlockRemoved` and `BlocksBatchModified`; `ChunkMeshDirty` alone does not. `App::autosave` runs on exit, on Exit to main menu and when due: success clears the edit and restarts the interval; failure is logged and retried after a full interval, the edit still waiting. Loading or generating a world resets the schedule. With no world loaded (`generation.last_spec` is `None`) nothing is written, so an earlier save is never replaced.

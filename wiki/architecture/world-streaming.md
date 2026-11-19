@@ -86,6 +86,7 @@ Chunks are 16³ voxels; columns span chunk Y 0..=8.
 - Freshly generated, unmodified chunks are not persisted on eviction. Only player edits
   are saved ([ADR-0006](../../_todo/adr/0006-save-format-contract.md) covers the format).
 - Eviction saves run synchronously in the frame, bounded by `chunks_per_frame`.
+- Evicted chunks are written under `<saves_dir>/<world_name>/chunks/` (`save::world_chunk_dir`); `ChunkStreamer` takes `saves_dir` (`App::saves_dir`) at construction.
 - Chunks that enter the grid (streamed in, preloaded by generation, loaded from a save) are
   lit synchronously by `LightSystem::light_arrived_chunks` before the next tick: sky
   exposure is refreshed, stale block light that spread in before their blocks were known is
