@@ -325,7 +325,7 @@ impl Effects {
                 Effect::Mark(mark) => (
                     MARK_MESH,
                     mark_mesh as fn() -> WorldMesh,
-                    Some(mark_transform(mark)),
+                    mark_transform(mark),
                     mark.style.material,
                 ),
             };
@@ -400,7 +400,7 @@ fn rolled_basis(z: Vec3, roll: f32) -> (Vec3, Vec3) {
 /// eye is not finite.
 fn flash_transform(flash: &Flash, eye: Vec3) -> Option<Affine3A> {
     let lifetime = flash.style.lifetime.as_secs_f32();
-    if !eye.is_finite() || lifetime <= 0.0 {
+    if !eye.is_finite() || lifetime <= 0.0 || !is_drawable_size(flash.style.size) {
         return None;
     }
     let scale = flash.style.size * (1.0 - flash.age.as_secs_f32() / lifetime);
@@ -414,16 +414,25 @@ fn flash_transform(flash: &Flash, eye: Vec3) -> Option<Affine3A> {
     ))
 }
 
-/// The mark quad on its surface, lifted by `MARK_OFFSET` and scaled by its fade.
-fn mark_transform(mark: &Mark) -> Affine3A {
+/// A size that can be drawn: finite and positive.
+fn is_drawable_size(size: f32) -> bool {
+    size.is_finite() && size > 0.0
+}
+
+/// The mark quad on its surface, lifted by `MARK_OFFSET` and scaled by its fade; `None` when
+/// spent or when its size cannot be drawn.
+fn mark_transform(mark: &Mark) -> Option<Affine3A> {
+    if mark.age >= mark.style.lifetime || !is_drawable_size(mark.style.size) {
+        return None;
+    }
     let scale = mark.style.size * mark.size_scale();
     let (x, y) = rolled_basis(mark.normal, mark.roll);
-    Affine3A::from_cols(
+    Some(Affine3A::from_cols(
         (x * scale).into(),
         (y * scale).into(),
         mark.normal.into(),
         (mark.at + mark.normal * MARK_OFFSET).into(),
-    )
+    ))
 }
 
 /// A kite from the tail at the origin to the head at x = 1, counter-clockwise seen from +Z.
@@ -1679,5 +1688,135 @@ mod tests {
             axis_after.dot((EYE - at).normalize()) > 0.99,
             "still faces the eye"
         );
+    }
+
+    fn is_finite_instance(instance: &InstanceGpu) -> bool {
+        instance.model.iter().flatten().all(|v| v.is_finite())
+    }
+
+    #[test]
+    fn a_zero_lifetime_flash_draws_nothing_before_any_advance() {
+        let mut rig = Rig::new();
+        rig.effects
+            .flash(Vec3::X, 0.0, flash_style(0.4, Duration::ZERO));
+
+        let drawn = rig.frame(EYE);
+
+        assert!(drawn.is_empty(), "gone at its lifetime: {drawn:?}");
+    }
+
+    #[test]
+    fn a_zero_lifetime_mark_draws_nothing_before_any_advance() {
+        for fade in [Duration::ZERO, Duration::from_secs(1)] {
+            let mut rig = Rig::new();
+            rig.effects
+                .mark(Vec3::X, Vec3::Y, 0.0, mark_style(0.2, Duration::ZERO, fade));
+
+            let drawn = rig.frame(EYE);
+
+            assert!(drawn.is_empty(), "fade {fade:?} drew {drawn:?}");
+        }
+    }
+
+    #[test]
+    fn a_zero_lifetime_mark_is_not_live_after_the_first_advance() {
+        for fade in [Duration::ZERO, Duration::from_secs(1)] {
+            let mut rig = Rig::new();
+            rig.effects
+                .mark(Vec3::X, Vec3::Y, 0.0, mark_style(0.2, Duration::ZERO, fade));
+
+            rig.effects.advance(ms(1));
+
+            assert_eq!(rig.effects.live(), 0, "fade {fade:?}");
+            assert!(rig.frame(EYE).is_empty(), "fade {fade:?}");
+        }
+    }
+
+    #[test]
+    fn a_flash_with_a_bad_size_draws_nothing_finite_wrong() {
+        for size in [f32::NAN, f32::INFINITY, 0.0, -0.4, f32::NEG_INFINITY] {
+            let mut rig = Rig::new();
+            rig.effects.flash(Vec3::X, 0.0, flash_style(size, ms(50)));
+
+            let drawn = rig.frame(EYE);
+
+            assert!(
+                drawn.iter().all(is_finite_instance),
+                "size {size} drew a non-finite instance: {drawn:?}"
+            );
+            if size.is_nan() || size <= 0.0 {
+                assert!(drawn.is_empty(), "size {size} drew {drawn:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_mark_with_a_bad_size_draws_nothing_finite_wrong() {
+        for size in [f32::NAN, f32::INFINITY, 0.0, -0.2, f32::NEG_INFINITY] {
+            let mut rig = Rig::new();
+            rig.effects.mark(
+                Vec3::X,
+                Vec3::Y,
+                0.0,
+                mark_style(size, Duration::from_secs(10), ms(1000)),
+            );
+
+            let drawn = rig.frame(EYE);
+
+            assert!(
+                drawn.iter().all(is_finite_instance),
+                "size {size} drew a non-finite instance: {drawn:?}"
+            );
+            if size.is_nan() || size <= 0.0 {
+                assert!(drawn.is_empty(), "size {size} drew {drawn:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_mark_whose_fade_exceeds_its_lifetime_only_shrinks_and_is_gone_at_its_lifetime() {
+        let mut rig = Rig::new();
+        let size = 0.2;
+        rig.effects.mark(
+            Vec3::X,
+            Vec3::Y,
+            0.0,
+            mark_style(size, Duration::from_secs(1), Duration::from_secs(4)),
+        );
+
+        let mut previous = f32::INFINITY;
+        for step in 0..10 {
+            let drawn = rig.frame(EYE);
+
+            assert_eq!(drawn.len(), 1, "alive at step {step}");
+            assert!(is_finite_instance(&drawn[0]), "step {step}");
+            let scale = x_axis(&drawn[0]).length();
+            assert!(scale <= size + EPS, "step {step}: {scale} above size");
+            assert!(scale <= previous + EPS, "step {step}: grew to {scale}");
+            previous = scale;
+            rig.effects.advance(ms(100));
+        }
+
+        assert!(rig.frame(EYE).is_empty(), "gone at 1 s");
+        assert_eq!(rig.effects.live(), 0);
+    }
+
+    #[test]
+    fn lowering_quality_then_spawning_a_flash_never_grows_live_and_drops_the_oldest() {
+        let mut rig = Rig::new();
+        let mark = mark_style(0.2, Duration::from_secs(10), ms(1000));
+        for i in 0..100u8 {
+            rig.effects
+                .mark(Vec3::new(f32::from(i) * 10.0, 0.0, 0.0), Vec3::Y, 0.0, mark);
+        }
+        assert_eq!(rig.effects.live(), 100);
+        rig.effects.set_quality(1);
+        let before = rig.effects.live();
+
+        rig.effects
+            .flash(Vec3::new(5000.0, 0.0, 0.0), 0.0, flash_style(0.4, ms(50)));
+
+        assert!(rig.effects.live() <= before, "live grew past {before}");
+        assert_eq!(rig.effects.live(), 100);
     }
 }
