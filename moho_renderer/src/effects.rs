@@ -133,9 +133,9 @@ enum Effect {
 
 /// Each effect mesh's offset from `EFFECT_MESH_IDS_FROM`, also its slot in
 /// `Effects::uploaded`.
-const STREAK_MESH: u64 = 0;
-const FLASH_MESH: u64 = 1;
-const MARK_MESH: u64 = 2;
+const STREAK_MESH: usize = 0;
+const FLASH_MESH: usize = 1;
+const MARK_MESH: usize = 2;
 
 #[derive(Debug)]
 pub struct Effects {
@@ -224,12 +224,11 @@ impl Effects {
             return;
         }
         if self.store.len() >= self.cap {
-            let oldest = self
+            let Some((&oldest, _)) = self
                 .store
                 .iter()
                 .find(|(_, e)| !matches!(e, Effect::Streak(_)))
-                .map(|(handle, _)| *handle);
-            let Some(oldest) = oldest else {
+            else {
                 return;
             };
             self.store.remove(&oldest);
@@ -259,22 +258,22 @@ impl Effects {
     /// Age every effect by the frame time, start the fade of any streak past its `max_age`
     /// and drop the finished and expired ones.
     pub fn advance(&mut self, dt: Duration) {
-        for effect in self.store.values_mut() {
-            match effect {
-                Effect::Streak(streak) => {
-                    streak.age += dt;
-                    if streak.age >= streak.style.max_age {
-                        streak.ended_at.get_or_insert(streak.style.max_age);
-                    }
-                }
-                Effect::Flash(flash) => flash.age += dt,
-                Effect::Mark(mark) => mark.age += dt,
-            }
-        }
         self.store.retain(|_, effect| match effect {
-            Effect::Streak(streak) => !streak.finished_fading(),
-            Effect::Flash(flash) => flash.age < flash.style.lifetime,
-            Effect::Mark(mark) => mark.age < mark.style.lifetime,
+            Effect::Streak(streak) => {
+                streak.age += dt;
+                if streak.age >= streak.style.max_age {
+                    streak.ended_at.get_or_insert(streak.style.max_age);
+                }
+                !streak.finished_fading()
+            }
+            Effect::Flash(flash) => {
+                flash.age += dt;
+                flash.age < flash.style.lifetime
+            }
+            Effect::Mark(mark) => {
+                mark.age += dt;
+                mark.age < mark.style.lifetime
+            }
         });
     }
 
@@ -332,9 +331,8 @@ impl Effects {
             let Some(transform) = transform else {
                 continue;
             };
-            let id = WorldMeshId(EFFECT_MESH_IDS_FROM + mesh);
-            let slot = usize::try_from(mesh).expect("a mesh offset of at most 2 fits usize");
-            if !std::mem::replace(&mut self.uploaded[slot], true) {
+            let id = WorldMeshId(EFFECT_MESH_IDS_FROM + mesh as u64);
+            if !std::mem::replace(&mut self.uploaded[mesh], true) {
                 meshes.upsert_movable(id, build());
             }
             meshes.place_unshadowed(id, transform, material);
@@ -437,21 +435,15 @@ fn mark_transform(mark: &Mark) -> Option<Affine3A> {
 
 /// A kite from the tail at the origin to the head at x = 1, counter-clockwise seen from +Z.
 fn streak_mesh() -> WorldMesh {
-    WorldMesh::new(
+    flat_mesh(
         vec![
             [0.0, 0.0, 0.0],
             [0.8, -0.5, 0.0],
             [1.0, 0.0, 0.0],
             [0.8, 0.5, 0.0],
         ],
-        vec![[0.0, 0.0, 1.0]; 4],
-        vec![1.0; 4],
-        vec![[1.0; 3]; 4],
-        vec![1.0; 4],
-        vec![0; 4],
         vec![0, 1, 2, 0, 2, 3],
     )
-    .expect("the kite's channels are all four vertices long and its indices are in range")
 }
 
 /// Where a streak from `head - dir * length` to `head` is drawn so that it faces `eye`.
@@ -463,7 +455,7 @@ pub(crate) fn streak_transform(
     eye: Vec3,
 ) -> Option<Affine3A> {
     let finite = head.is_finite() && dir.is_finite() && eye.is_finite() && length.is_finite();
-    if !finite || !width.is_finite() || width <= 0.0 || length <= 0.0 {
+    if !finite || !is_drawable_size(width) || length <= 0.0 {
         return None;
     }
     let tail = head - dir * length;
