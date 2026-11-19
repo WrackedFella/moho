@@ -36,6 +36,8 @@ pub struct PhysicsWorld {
     loose: BTreeMap<LooseId, RigidBodyHandle>,
     next_loose: u64,
     rest_slope: f32,
+    /// `tan(rest_slope)`, cached by `set_rest_slope` so the brake does no trig per tick.
+    rest_slope_tan: f32,
 }
 
 impl std::fmt::Debug for PhysicsWorld {
@@ -79,6 +81,7 @@ impl PhysicsWorld {
             loose: BTreeMap::new(),
             next_loose: 0,
             rest_slope: loose::DEFAULT_REST_SLOPE,
+            rest_slope_tan: loose::DEFAULT_REST_SLOPE.tan(),
         }
     }
 
@@ -100,6 +103,7 @@ impl PhysicsWorld {
             &(),
             &(),
         );
+        self.brake_rolling(dt);
     }
 
     /// Set the downward acceleration, m/s², positive down, that pulls rigid bodies and

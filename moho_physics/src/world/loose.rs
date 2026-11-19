@@ -1,6 +1,6 @@
 use super::PhysicsWorld;
 use glam::{Quat, Vec3};
-use rapier3d::prelude::{ColliderBuilder, Pose, RigidBodyBuilder};
+use rapier3d::prelude::{ColliderBuilder, ColliderHandle, Pose, RigidBodyBuilder, RigidBodyHandle};
 
 /// Stable, engine-issued name of a loose object.
 ///
@@ -67,6 +67,14 @@ impl LooseShape {
 
 /// Steepest ground, radians from level, on which loose objects are braked to rest.
 pub(super) const DEFAULT_REST_SLOPE: f32 = 5.0 * std::f32::consts::PI / 180.0;
+
+/// Contact depth, m, beyond which a body is being separated from an overlap and not braked.
+const DEEP_CONTACT: f32 = 0.005;
+
+/// `speed` moved toward zero by `cut`, stopping at zero.
+fn shrink(speed: f32, cut: f32) -> f32 {
+    speed.signum() * (speed.abs() - cut).max(0.0)
+}
 
 /// Everything a game states when it drops a loose object.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -207,6 +215,85 @@ impl PhysicsWorld {
             "rest slope must be finite and in [0, pi/2), got {slope}"
         );
         self.rest_slope = slope;
+        self.rest_slope_tan = slope.tan();
+    }
+
+    /// Brake rolling loose bodies resting on near-flat ground; see
+    /// [`PhysicsWorld::set_rest_slope`]. Runs after the step on velocities only, so the
+    /// solver's contact and position correction is untouched.
+    pub(super) fn brake_rolling(&mut self, dt: f32) {
+        let Some(up) = (-self.gravity).try_normalize() else {
+            return;
+        };
+        if self.rest_slope_tan <= 0.0 {
+            return;
+        }
+        let decel = self.gravity.length() * self.rest_slope_tan * dt;
+        let handles: Vec<RigidBodyHandle> = self.loose.values().copied().collect();
+        for handle in handles {
+            let Some(body) = self.rigid_body_set.get(handle) else {
+                continue;
+            };
+            if body.is_sleeping() {
+                continue;
+            }
+            let Some(&collider) = body.colliders().first() else {
+                continue;
+            };
+            let Some(radius) = self.collider_set.get(collider).and_then(|c| {
+                let shape = c.shape();
+                shape
+                    .as_capsule()
+                    .map(|s| s.radius)
+                    .or_else(|| shape.as_cylinder().map(|s| s.radius))
+            }) else {
+                continue;
+            };
+            if !self.on_near_flat_ground(collider, up) {
+                continue;
+            }
+            let axis = *body.rotation() * Vec3::Y;
+            let spin = body.angvel();
+            let linear = body.linvel();
+            let new_spin = spin + axis * (shrink(spin.dot(axis), decel / radius) - spin.dot(axis));
+            let new_linear = match axis.cross(up).try_normalize() {
+                Some(roll) => {
+                    let along = linear.dot(roll);
+                    linear + roll * (shrink(along, decel) - along)
+                }
+                None => linear,
+            };
+            if let Some(body) = self.rigid_body_set.get_mut(handle) {
+                body.set_linvel(new_linear, false);
+                body.set_angvel(new_spin, false);
+            }
+        }
+    }
+
+    /// Whether `collider` rests on ground within the rest slope of level, and is not being
+    /// pushed out of an overlap deeper than [`DEEP_CONTACT`].
+    fn on_near_flat_ground(&self, collider: ColliderHandle, up: Vec3) -> bool {
+        let mut on_ground = false;
+        for pair in self.narrow_phase.contact_pairs_with(collider) {
+            let ours_first = pair.collider1 == collider;
+            for manifold in pair.manifolds() {
+                if manifold.points.iter().any(|p| p.dist < -DEEP_CONTACT) {
+                    return false;
+                }
+                if !manifold.points.iter().any(|p| p.dist <= 0.0) {
+                    continue;
+                }
+                let into_body = if ours_first {
+                    -manifold.data.normal
+                } else {
+                    manifold.data.normal
+                };
+                let flat = into_body.dot(up);
+                on_ground |=
+                    flat > 0.0 && into_body.cross(up).length() <= self.rest_slope_tan * flat;
+            }
+        }
+        on_ground
     }
 
     /// The rest slope in radians; see [`PhysicsWorld::set_rest_slope`].
@@ -589,7 +676,7 @@ mod tests {
             LooseShape::Box { half_extents } => {
                 let cuboid = collider.shape().as_cuboid().expect("a box has a cuboid");
                 assert!(
-                    Vec3::from(cuboid.half_extents).abs_diff_eq(half_extents, 1e-6),
+                    cuboid.half_extents.abs_diff_eq(half_extents, 1e-6),
                     "{shape:?}"
                 );
             }
@@ -1565,7 +1652,7 @@ mod tests {
                 let axis = rng.vec(1.0).try_normalize().unwrap_or(Vec3::Y);
                 let id = world.spawn_loose(&LooseSpawn {
                     position,
-                    rotation: Quat::from_axis_angle(axis, rng.between(0.0, 6.28)),
+                    rotation: Quat::from_axis_angle(axis, rng.between(0.0, std::f32::consts::TAU)),
                     linear_velocity: rng.vec(1.0),
                     angular_velocity: rng.vec(8.0),
                     ..LooseSpawn::new(shape, 0.2)
