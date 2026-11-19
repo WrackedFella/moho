@@ -126,8 +126,6 @@ impl Streak {
 #[derive(Debug)]
 struct Timed<S> {
     at: Vec3,
-    /// A mark's surface normal; unused by a flash.
-    normal: Vec3,
     roll: f32,
     style: S,
     age: Duration,
@@ -137,7 +135,8 @@ struct Timed<S> {
 enum Effect {
     Streak(Streak),
     Flash(Timed<FlashStyle>),
-    Mark(Timed<MarkStyle>),
+    /// The mark's state and its surface normal.
+    Mark(Timed<MarkStyle>, Vec3),
 }
 
 /// Which built-in mesh an effect draws with; the index into `MESH_BUILDERS`, and the
@@ -147,6 +146,9 @@ const FLASH_MESH: usize = 1;
 const MARK_MESH: usize = 2;
 
 const MESH_BUILDERS: [fn() -> WorldMesh; 3] = [streak_mesh, flash_mesh, mark_mesh];
+
+/// One upload flag per built-in mesh.
+type MeshUploaded = [bool; MESH_BUILDERS.len()];
 
 impl Effect {
     /// Streaks end when their owner says so; flashes and marks have a fixed lifetime and
@@ -164,7 +166,7 @@ impl Effect {
                 }
             }
             Self::Flash(flash) => flash.age += dt,
-            Self::Mark(mark) => mark.age += dt,
+            Self::Mark(mark, _) => mark.age += dt,
         }
     }
 
@@ -172,7 +174,7 @@ impl Effect {
         match self {
             Self::Streak(streak) => streak.finished_fading(),
             Self::Flash(flash) => flash.age >= flash.style.lifetime,
-            Self::Mark(mark) => mark.age >= mark.style.lifetime,
+            Self::Mark(mark, _) => mark.age >= mark.style.lifetime,
         }
     }
 
@@ -202,7 +204,7 @@ impl Effect {
                     rolled_frame(flash.at, facing, flash.roll, flash.style.size * scale)?;
                 Some((FLASH_MESH, transform, flash.style.material))
             }
-            Self::Mark(mark) => {
+            Self::Mark(mark, normal) => {
                 let lifetime = mark.style.lifetime;
                 let fade = mark.style.fade.min(lifetime);
                 let remaining = lifetime.saturating_sub(mark.age);
@@ -211,7 +213,7 @@ impl Effect {
                 } else {
                     remaining.as_secs_f32() / fade.as_secs_f32()
                 };
-                let normal = mark.normal.try_normalize()?;
+                let normal = normal.try_normalize()?;
                 let transform = rolled_frame(
                     mark.at + normal * MARK_OFFSET,
                     normal,
@@ -230,7 +232,7 @@ pub struct Effects {
     store: BTreeMap<EffectHandle, Effect>,
     next_handle: u64,
     cap: usize,
-    mesh_uploaded: [bool; 3],
+    mesh_uploaded: MeshUploaded,
 }
 
 impl Default for Effects {
@@ -239,7 +241,7 @@ impl Default for Effects {
             store: BTreeMap::new(),
             next_handle: 0,
             cap: CAPS[DEFAULT_QUALITY],
-            mesh_uploaded: [false; 3],
+            mesh_uploaded: [false; MESH_BUILDERS.len()],
         }
     }
 }
@@ -304,7 +306,6 @@ impl Effects {
     pub fn flash(&mut self, at: Vec3, roll: f32, style: FlashStyle) {
         let flash = Timed {
             at,
-            normal: Vec3::ZERO,
             roll,
             style,
             age: Duration::ZERO,
@@ -317,12 +318,11 @@ impl Effects {
     pub fn mark(&mut self, at: Vec3, normal: Vec3, roll: f32, style: MarkStyle) {
         let mark = Timed {
             at,
-            normal,
             roll,
             style,
             age: Duration::ZERO,
         };
-        self.spawn_timed(Effect::Mark(mark), style.lifetime);
+        self.spawn_timed(Effect::Mark(mark, normal), style.lifetime);
     }
 
     /// Start the fade; the streak then draws at its last placement until it is gone.
@@ -335,10 +335,10 @@ impl Effects {
     /// Age every effect by the frame time, start the fade of any streak past its `max_age`
     /// and drop the finished ones.
     pub fn advance(&mut self, dt: Duration) {
-        for effect in self.store.values_mut() {
+        self.store.retain(|_, effect| {
             effect.age(dt);
-        }
-        self.store.retain(|_, effect| !effect.finished());
+            !effect.finished()
+        });
     }
 
     /// Cap new effects for `quality` (0 off to 4 ultra; higher clamps). Lowering keeps
@@ -1975,11 +1975,6 @@ mod tests {
 
         assert!(rig.effects.live() <= 32, "live {}", rig.effects.live());
         assert!(drawn.len() <= 32);
-        println!(
-            "invalid mark at a full cap: live {}, drawn {}",
-            rig.effects.live(),
-            drawn.len()
-        );
     }
 
     #[test]
