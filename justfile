@@ -38,7 +38,7 @@ comment-refs base=base:
 deny:
     cargo deny check
     just _physics-features-selftest
-    scripts/check-physics-features.sh
+    bash scripts/check-physics-features.sh
 
 # The feature check passes on a fixture with both features and fails, naming the crate,
 # on a fixture missing either one.
@@ -47,11 +47,11 @@ _physics-features-selftest:
     #!/usr/bin/env bash
     set -uo pipefail
     f=scripts/fixtures
-    MOHO_PHYSICS_METADATA=$f/physics-metadata-ok.json scripts/check-physics-features.sh >/dev/null \
+    MOHO_PHYSICS_METADATA=$f/physics-metadata-ok.json bash scripts/check-physics-features.sh >/dev/null \
         || { echo "physics-features self-test: the passing fixture was rejected" >&2; exit 1; }
     for crate in rapier3d parry3d; do
         rc=0
-        out=$(MOHO_PHYSICS_METADATA=$f/physics-metadata-lacks-${crate%3d}.json scripts/check-physics-features.sh 2>&1) || rc=$?
+        out=$(MOHO_PHYSICS_METADATA=$f/physics-metadata-lacks-${crate%3d}.json bash scripts/check-physics-features.sh 2>&1) || rc=$?
         if [ "$rc" -eq 0 ] || ! grep -qF -- "$crate" <<<"$out"; then
             echo "physics-features self-test: expected failure naming $crate, got exit $rc: $out" >&2
             exit 1
