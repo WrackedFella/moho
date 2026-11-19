@@ -480,6 +480,109 @@ mod tests {
     }
 
     #[test]
+    fn idle_interval_after_an_autosave_rewrites_nothing() {
+        let mut session = start_session("autosave_unit_test_idle_after_save");
+        autosave_every(&mut session.app, Duration::from_secs(5));
+        let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+        mine(&mut session);
+        play(&mut sim, &mut session.app, 5 * 60 + 6);
+        let save = session.saves.join("scene.bin");
+        assert!(save.exists(), "the edit was autosaved");
+        std::fs::remove_file(&save).expect("remove the first autosave");
+
+        play(&mut sim, &mut session.app, 2 * 5 * 60);
+
+        assert!(
+            !save.exists(),
+            "no edit since the save, so nothing is rewritten"
+        );
+    }
+
+    #[test]
+    fn failed_autosave_is_retried_after_another_interval_once_the_dir_works() {
+        let mut session = start_session("autosave_unit_test_failed_then_recovered");
+        autosave_every(&mut session.app, Duration::from_secs(5));
+        let blocker = session
+            .saves
+            .parent()
+            .expect("saves dir sits inside the temp dir")
+            .join("not_a_dir");
+        std::fs::write(&blocker, b"a file").expect("blocker file");
+        let broken = blocker.join("saves");
+        let working = session.saves.clone();
+        session.app.saves_dir = broken.clone();
+        let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+        let mined = mine(&mut session);
+
+        play(&mut sim, &mut session.app, 5 * 60 + 6);
+        let wrote_while_broken =
+            broken.join("scene.bin").exists() || working.join("scene.bin").exists();
+        session.app.saves_dir = working.clone();
+        play(&mut sim, &mut session.app, 5 * 60 - 12);
+        let saved_early = working.join("scene.bin").exists();
+        play(&mut sim, &mut session.app, 18);
+
+        assert!(
+            !wrote_while_broken,
+            "nothing is written while the dir is unusable"
+        );
+        assert!(
+            !saved_early,
+            "the retry waits a full interval after the failure"
+        );
+        assert!(latest_save_lacks(&working, mined), "the kept edit is saved");
+    }
+
+    #[test]
+    fn loading_another_world_drops_the_pending_edit() {
+        let mut session = start_session("autosave_unit_test_edit_then_load");
+        autosave_every(&mut session.app, Duration::from_secs(5));
+        let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+        let source = tempfile::tempdir().expect("source dir");
+        let mut other = App::headless();
+        other.generation.last_spec = Some(WorldSpec::default());
+        auto_save_on_shutdown(&mut other, &GameClock::default(), source.path(), &[])
+            .expect("a world to load");
+        mine(&mut session);
+        play(&mut sim, &mut session.app, 1);
+
+        crate::app::scene_loader::load_scene(
+            &mut session.app,
+            &mut GameClock::default(),
+            &source.path().join("scene.bin"),
+        )
+        .expect("load");
+        play(&mut sim, &mut session.app, 3 * 5 * 60);
+
+        assert!(
+            !session.saves.join("scene.bin").exists(),
+            "the new world has no edit to save"
+        );
+    }
+
+    #[test]
+    fn autosave_waits_while_not_playing_and_resumes_when_playing() {
+        for state in [GameState::Paused, GameState::Menu] {
+            let mut session = start_session("autosave_unit_test_not_playing");
+            autosave_every(&mut session.app, Duration::from_secs(5));
+            let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+            let mined = mine(&mut session);
+            session.app.game_state = state;
+
+            play(&mut sim, &mut session.app, 3 * 5 * 60);
+            let saved_while_away = session.saves.join("scene.bin").exists();
+            session.app.game_state = GameState::Playing;
+            play(&mut sim, &mut session.app, 5 * 60 + 6);
+
+            assert!(!saved_while_away, "no autosave while {state:?}");
+            assert!(
+                latest_save_lacks(&session.saves, mined),
+                "saved once playing"
+            );
+        }
+    }
+
+    #[test]
     fn default_autosave_interval_is_two_minutes() {
         let mut app = App::headless();
 
