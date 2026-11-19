@@ -263,7 +263,7 @@ mod tests {
         assert_eq!(path, None);
     }
 
-    /// Terrain of `heights` columns of ground (1 to 3 blocks), 8 by 8.
+    /// Terrain of `heights` columns of ground (1 to 2 blocks), 8 by 8.
     fn terrain(heights: &[i32]) -> VoxelGrid {
         let mut grid = VoxelGrid::new(16);
         for (i, &height) in heights.iter().enumerate() {
@@ -282,7 +282,7 @@ mod tests {
     proptest! {
         #[test]
         fn every_route_cell_is_standable_and_adjacent_to_the_previous(
-            heights in proptest::collection::vec(1..=3i32, 64),
+            heights in proptest::collection::vec(1..=2i32, 64),
             sx in 0..8i32, sz in 0..8i32, gx in 0..8i32, gz in 0..8i32,
         ) {
             let grid = terrain(&heights);
@@ -291,37 +291,23 @@ mod tests {
 
             let path = route(&grid, start, to(goal), goal, ROUTE_NODE_BUDGET);
 
-            if let Some(path) = path {
-                let walked = steps(&path, start);
-                prop_assert_eq!(walked.last().copied().unwrap_or(start), goal);
-                let mut previous = start;
-                for next in walked {
-                    prop_assert!(standable(&grid, next), "{next:?} cannot be stood on");
-                    let d = next - previous;
-                    prop_assert!(d.x.abs() + d.z.abs() == 1, "{previous:?} to {next:?}");
-                    prop_assert!(d.y.abs() <= 1, "{previous:?} to {next:?}");
-                    previous = next;
-                }
+            let path = path.expect("terrain that never rises more than a block can be crossed");
+            let walked = steps(&path, start);
+            prop_assert_eq!(walked.last().copied().unwrap_or(start), goal);
+            let mut previous = start;
+            for next in walked {
+                prop_assert!(standable(&grid, next), "{next:?} cannot be stood on");
+                let d = next - previous;
+                prop_assert!(d.x.abs() + d.z.abs() == 1, "{previous:?} to {next:?}");
+                prop_assert!(d.y.abs() <= 1, "{previous:?} to {next:?}");
+                previous = next;
             }
-        }
-
-        #[test]
-        fn the_same_grid_gives_the_same_route(
-            heights in proptest::collection::vec(1..=3i32, 64),
-            sx in 0..8i32, sz in 0..8i32, gx in 0..8i32, gz in 0..8i32,
-        ) {
-            let start = on_top(&heights, sx, sz);
-            let goal = on_top(&heights, gx, gz);
-
-            let first = route(&terrain(&heights), start, to(goal), goal, ROUTE_NODE_BUDGET);
-            let second = route(&terrain(&heights), start, to(goal), goal, ROUTE_NODE_BUDGET);
-
-            prop_assert_eq!(first, second);
         }
     }
 
+    /// Open ground offers many equal-length routes; the same grid must always give the same one.
     #[test]
-    fn equal_length_routes_across_open_ground_are_chosen_the_same_way_every_time() {
+    fn the_same_grid_gives_the_same_route() {
         let start = cell(1, 1, 1);
         let goal = cell(8, 1, 8);
 

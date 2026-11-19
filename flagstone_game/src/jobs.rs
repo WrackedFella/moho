@@ -176,22 +176,18 @@ mod tests {
     #[test]
     fn a_mark_with_no_exposed_face_is_not_claimed() {
         let mut grid = field(12);
-        for x in 4..=6 {
-            for y in 1..=3 {
-                for z in 4..=6 {
-                    grid.mutator().place(cell(x, y, z), 1, None);
-                }
-            }
-        }
+        grid.mutator().place(cell(5, -1, 5), 1, None);
+        grid.mutator().place(cell(5, 1, 5), 1, None);
         let mut marks = MineMarks::default();
-        marks.toggle([5, 2, 5]);
+        marks.toggle([5, 0, 5]);
         let mut pawn = Pawn::default();
 
         let action = step(&mut pawn, ID, &pose_at(cell(1, 1, 1)), &mut marks, &grid);
 
+        assert!(standable(&grid, cell(4, 1, 5)), "the block is within reach");
         assert_eq!(action, JobAction::Wait);
         assert_eq!(pawn.job, Job::Idle);
-        assert_eq!(claimed_by(&marks, [5, 2, 5]), Some(None), "the mark stays");
+        assert_eq!(claimed_by(&marks, [5, 0, 5]), Some(None), "the mark stays");
     }
 
     #[test]
@@ -277,13 +273,10 @@ mod tests {
         assert_eq!(block, cell(8, 1, 1));
         assert!(walked.len() >= 3, "the block is 7 m away: {walked:?}");
         let stand = crate::routing::feet_cell(at.feet);
-        assert!(
-            (stand.x - 8).abs() <= 1 && (stand.z - 1).abs() <= 1,
-            "dug from {stand:?}, too far from the block"
-        );
-        assert!(
-            (0..=3).contains(&stand.y),
-            "dug from {stand:?}, off the block's height"
+        assert_eq!(
+            stand,
+            cell(7, 1, 1),
+            "the nearest stand cell by route length"
         );
         for to in walked {
             let waypoint = crate::routing::feet_cell(to);
@@ -327,6 +320,8 @@ mod tests {
         let mut marks = MineMarks::default();
         mark_block(&mut grid, &mut marks, [6, 1, 1]);
         grid.mutator().place(cell(5, 1, 1), 1, None);
+        grid.mutator().place(cell(6, 2, 1), 1, None);
+        grid.mutator().place(cell(6, 1, 2), 1, None);
         let stand = cell(5, 2, 1);
         let mut pawn = walking(&mut marks, [6, 1, 1], vec![stand]);
         if let Job::Mine { next, .. } = &mut pawn.job {
@@ -339,15 +334,15 @@ mod tests {
             panic!("expected a dig, got {action:?}");
         };
         assert!(
-            aim.distance(Vec3::new(6.0, 1.5, 1.5)) > 0.1,
-            "aimed through the neighbour at {aim}"
+            aim.distance(Vec3::new(6.5, 1.5, 1.0)) < 1e-3,
+            "only the south and east faces are open, and the south is nearer: aimed at {aim}"
         );
     }
 
     proptest! {
         #[test]
         fn every_stand_cell_is_within_the_mining_reach(
-            heights in proptest::collection::vec(1..=3i32, 64),
+            heights in proptest::collection::vec(1..=2i32, 64),
             mx in 0..8i32, mz in 0..8i32, sx in 0..8i32, sz in 0..8i32,
         ) {
             let mut grid = VoxelGrid::new(16);
@@ -365,76 +360,80 @@ mod tests {
 
             step(&mut pawn, ID, &start, &mut marks, &grid);
 
-            if let Job::Mine { route, .. } = &pawn.job {
-                let stand = route.last().copied().unwrap_or(cell(sx, top(sx, sz), sz));
-                prop_assert!((stand.x - block[0]).abs() <= 1, "{stand:?} for {block:?}");
-                prop_assert!((stand.z - block[2]).abs() <= 1, "{stand:?} for {block:?}");
-                prop_assert!(
-                    (block[1] - 1..=block[1] + 2).contains(&stand.y),
-                    "{stand:?} for {block:?}"
-                );
-                let eye = pose_at(stand).eye;
-                let centre = Vec3::new(
-                    block[0] as f32 + 0.5,
-                    block[1] as f32 + 0.5,
-                    block[2] as f32 + 0.5,
-                );
-                prop_assert!(
-                    eye.distance(centre) <= MINE_REACH,
-                    "eye {eye} is {} from the block at {block:?}",
-                    eye.distance(centre)
-                );
-            }
+            let Job::Mine { route, .. } = &pawn.job else {
+                return Err(TestCaseError::fail(format!(
+                    "a reachable, exposed mark at {block:?} was not claimed: {:?}",
+                    pawn.job
+                )));
+            };
+            let stand = route.last().copied().unwrap_or(cell(sx, top(sx, sz), sz));
+            prop_assert!((stand.x - block[0]).abs() <= 1, "{stand:?} for {block:?}");
+            prop_assert!((stand.z - block[2]).abs() <= 1, "{stand:?} for {block:?}");
+            prop_assert!(
+                (block[1] - 1..=block[1] + 2).contains(&stand.y),
+                "{stand:?} for {block:?}"
+            );
+            let eye = pose_at(stand).eye;
+            let centre = Vec3::new(
+                block[0] as f32 + 0.5,
+                block[1] as f32 + 0.5,
+                block[2] as f32 + 0.5,
+            );
+            prop_assert!(
+                eye.distance(centre) <= MINE_REACH,
+                "eye {eye} is {} from the block at {block:?}",
+                eye.distance(centre)
+            );
         }
     }
 
     #[test]
-    fn a_claim_comes_with_a_route() {
+    fn a_cancelled_mark_releases_the_pawn_mid_walk() {
+        // Both ways a mark can vanish mid-walk: the player cancels it, or another pawn digs
+        // the block (`a_mark_dug_by_another_pawn_releases_the_claim`).
+        let ways: [(&str, fn(&mut VoxelGrid, &mut MineMarks)); 2] = [
+            ("cancelled by toggle", |_, marks| {
+                marks.toggle([8, 1, 1]);
+            }),
+            ("dug by another pawn", |grid, marks| {
+                grid.mutator().remove(cell(8, 1, 1));
+                marks.block_removed([8, 1, 1]);
+            }),
+        ];
+
+        for (how, vanish) in ways {
+            let mut grid = field(12);
+            let mut marks = MineMarks::default();
+            mark_block(&mut grid, &mut marks, [8, 1, 1]);
+            let route: Vec<BlockPos> = (2..=7).map(|x| cell(x, 1, 1)).collect();
+            let mut pawn = walking(&mut marks, [8, 1, 1], route);
+            let mid_walk = pose_at(cell(3, 1, 1));
+            vanish(&mut grid, &mut marks);
+
+            let action = step(&mut pawn, ID, &mid_walk, &mut marks, &grid);
+
+            assert_eq!(action, JobAction::Wait, "{how}");
+            assert_eq!(pawn.job, Job::Idle, "{how}");
+        }
+    }
+
+    #[test]
+    fn equally_near_marks_go_to_the_lower_key() {
         let mut grid = field(12);
         let mut marks = MineMarks::default();
-        mark_block(&mut grid, &mut marks, [8, 1, 8]);
+        mark_block(&mut grid, &mut marks, [8, 1, 5]);
+        mark_block(&mut grid, &mut marks, [2, 1, 5]);
         let mut pawn = Pawn::default();
 
-        step(&mut pawn, ID, &pose_at(cell(1, 1, 1)), &mut marks, &grid);
+        step(&mut pawn, ID, &pose_at(cell(5, 1, 5)), &mut marks, &grid);
 
         assert!(
-            matches!(&pawn.job, Job::Mine { route, .. } if !route.is_empty()),
+            matches!(&pawn.job, Job::Mine { mark, .. } if *mark == [2, 1, 5]),
             "{:?}",
             pawn.job
         );
-    }
-
-    #[test]
-    fn a_cancelled_mark_releases_the_pawn_mid_walk() {
-        let mut grid = field(12);
-        let mut marks = MineMarks::default();
-        mark_block(&mut grid, &mut marks, [8, 1, 1]);
-        let route: Vec<BlockPos> = (2..=7).map(|x| cell(x, 1, 1)).collect();
-        let mut pawn = walking(&mut marks, [8, 1, 1], route);
-        let mid_walk = pose_at(cell(3, 1, 1));
-        marks.toggle([8, 1, 1]);
-
-        let action = step(&mut pawn, ID, &mid_walk, &mut marks, &grid);
-
-        assert_eq!(action, JobAction::Wait);
-        assert_eq!(pawn.job, Job::Idle);
-        assert!(grid.is_solid_at(cell(8, 1, 1)), "the block is untouched");
-    }
-
-    #[test]
-    fn a_mark_dug_by_another_pawn_releases_the_claim() {
-        let mut grid = field(12);
-        let mut marks = MineMarks::default();
-        mark_block(&mut grid, &mut marks, [8, 1, 1]);
-        let route: Vec<BlockPos> = (2..=7).map(|x| cell(x, 1, 1)).collect();
-        let mut pawn = walking(&mut marks, [8, 1, 1], route);
-        grid.mutator().remove(cell(8, 1, 1));
-        marks.block_removed([8, 1, 1]);
-
-        let action = step(&mut pawn, ID, &pose_at(cell(3, 1, 1)), &mut marks, &grid);
-
-        assert_eq!(action, JobAction::Wait);
-        assert_eq!(pawn.job, Job::Idle);
+        assert_eq!(claimed_by(&marks, [2, 1, 5]), Some(Some(ID)));
+        assert_eq!(claimed_by(&marks, [8, 1, 5]), Some(None));
     }
 
     #[test]

@@ -1247,15 +1247,16 @@ pub(crate) mod tests {
     #[test]
     fn hud_data_carries_the_colony_stock() {
         let mut app = App::headless();
-        app.colony.stock.add(7, 2);
-        app.colony.stock.add(1, 5);
+        for (id, count) in [(9, 1), (7, 2), (5, 3), (3, 4), (1, 5)] {
+            app.colony.stock.add(id, count);
+        }
         let mut empty = App::headless();
 
         let produced = produced_strategy_hud(&mut app);
 
         let expected = painted_strategy_hud(flagstone_ui::overlays::HudData {
             equipped_tool_label: Some("Pickaxe".to_string()),
-            colony_stock: vec![(1, 5), (7, 2)],
+            colony_stock: vec![(1, 5), (3, 4), (5, 3), (7, 2), (9, 1)],
             ..strategy_hud_data(&app)
         });
         assert!(produced == expected, "not the totals, sorted by id");

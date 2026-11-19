@@ -1713,6 +1713,16 @@ mod tests {
         assert!(sounds.is_empty(), "{sounds:?}");
     }
 
+    #[test]
+    fn a_possessed_mine_of_ore_fills_the_pawn_and_leaves_the_colony_stock_empty() {
+        let mut app = app_aimed_at_block_with(Some(7));
+
+        EventProcessor::new().handle_input_event(&mut app, InputEvent::MineRequested);
+
+        assert_eq!(app.pawn.inventory.count(7), 1, "the pawn carries the ore");
+        assert!(app.colony.stock.is_empty(), "the colony is not credited");
+    }
+
     fn dig_asset_path() -> std::path::PathBuf {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/dig.wav")
     }
