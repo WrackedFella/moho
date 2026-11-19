@@ -514,6 +514,57 @@ mod tests {
     }
 
     #[test]
+    fn loaded_world_is_not_rewritten_after_the_interval_without_an_edit() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let saves = temp.path().join("saves");
+        let mut session = loaded_app("autosave_unit_test_load_idle", &saves);
+        let mined = surface(&session, 8, 8);
+        mine(&mut session, mined);
+        close_window(&mut session);
+        let mut loaded = load_save(&saves);
+        loaded.autosave_interval = Duration::from_secs(1);
+        std::fs::remove_file(saves.join("scene.bin")).expect("remove the save to detect a rewrite");
+        let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+
+        play(&mut sim, &mut loaded, 5 * TICK_HZ);
+
+        assert!(
+            !saves.join("scene.bin").exists(),
+            "a loaded world with no edit is not rewritten"
+        );
+    }
+
+    #[test]
+    fn failed_autosave_is_followed_by_a_save_of_the_edit_once_the_dir_is_fixed() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let saves = temp.path().join("saves");
+        let blocker = temp.path().join("blocker");
+        std::fs::write(&blocker, b"a file where the saves directory must go").expect("blocker");
+        let mut app = loaded_app("autosave_unit_test_recover", &saves);
+        app.autosave_interval = Duration::from_secs(1);
+        app.saves_dir = blocker.join("saves");
+        let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+        let mined = surface(&app, 8, 8);
+        mine(&mut app, mined);
+        play(&mut sim, &mut app, TICK_HZ);
+        let pending_after_failure = app.autosave_schedule.edited;
+        let written_while_broken = saves.join("scene.bin").exists();
+        app.saves_dir = saves.clone();
+
+        play(&mut sim, &mut app, TICK_HZ);
+
+        assert!(pending_after_failure, "the failed save keeps the edit");
+        assert!(!written_while_broken, "nothing was written while broken");
+        assert!(saves.join("scene.bin").is_file(), "the recovery saved");
+        let blocks = saved_blocks(&saves);
+        assert!(!blocks.is_empty(), "the recovered save holds the world");
+        assert!(
+            !blocks.contains(&mined),
+            "the recovered save holds the edit"
+        );
+    }
+
+    #[test]
     fn autosave_then_load_restores_actors_camera_time_and_blocks() {
         let temp = tempfile::tempdir().expect("temp dir");
         let saves = temp.path().join("not").join("yet").join("created");
