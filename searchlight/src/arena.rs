@@ -373,10 +373,9 @@ pub fn control_mesh_id(index: usize) -> WorldMeshId {
     WorldMeshId(CONTROL_MESH_BASE + index as u64)
 }
 
-/// Control mesh ids start here, clear of the arena's, the dummies' and the enemies'.
 const CONTROL_MESH_BASE: u64 = 3 << 32;
 
-/// Post size: 0.4 m square, 1.2 m tall.
+/// Half-extents of a post: 0.4 m square, 1.2 m tall.
 const CONTROL_HALF: Vec3 = Vec3::new(0.2, 0.6, 0.2);
 
 /// The controls `level`'s `control_NN` markers place, in file order.
