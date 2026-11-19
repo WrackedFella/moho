@@ -972,4 +972,110 @@ mod tests {
         assert_eq!(mode.tally(), None);
         assert_eq!(mode.sim().enemy_count(), 0);
     }
+
+    #[test]
+    fn a_use_on_the_tick_of_the_last_kill_calls_exactly_one_wave() {
+        let mut mode = calm_mode(4, tuning(1, 2, 100));
+        mode.sim_mut().kill_enemy(0);
+
+        mode.tick(&using(), DT);
+        let called = (mode.wave(), mode.sim().enemy_count(), mode.score());
+        mode.tick(&idle(), DT);
+
+        assert_eq!(called, (2, 4, 100), "one wave of three followed the kill");
+        assert_eq!(mode.wave(), 2);
+        assert_eq!(mode.sim().enemy_count(), 4);
+    }
+
+    #[test]
+    fn a_use_on_every_tick_after_a_call_keeps_the_wave_and_adds_no_enemy() {
+        let mut mode = calm_mode(2, tuning(1, 2, 100));
+        mode.sim_mut().kill_enemy(0);
+        mode.tick(&idle(), DT);
+        mode.tick(&using(), DT);
+        let after_call = (mode.wave(), mode.sim().enemy_count());
+
+        for _ in 0..120 {
+            mode.tick(&using(), DT);
+        }
+
+        assert_eq!(
+            after_call,
+            (2, 3),
+            "wave 2 is of three, two markers carry two"
+        );
+        assert_eq!(mode.wave(), 2);
+        assert_eq!(mode.sim().enemy_count(), 3);
+        assert_eq!(mode.sim().enemies_alive(), 2);
+    }
+
+    #[test]
+    fn a_use_held_for_two_ticks_calls_one_wave_even_with_few_free_markers() {
+        let mut mode = calm_mode(1, tuning(1, 2, 100));
+        mode.sim_mut().kill_enemy(0);
+        mode.tick(&idle(), DT);
+
+        mode.tick(&using(), DT);
+        mode.tick(&using(), DT);
+
+        assert_eq!(mode.wave(), 2);
+        assert_eq!(mode.sim().enemy_count(), 2);
+        assert_eq!(mode.sim().enemies_alive(), 1);
+    }
+
+    #[test]
+    fn a_body_between_the_player_and_the_button_blocks_the_use() {
+        let arena = arena_with_controls(
+            &[],
+            Vec3::ZERO,
+            &[Vec3::new(0.0, 0.0, 0.9)],
+            &[Vec3::new(0.0, 0.0, 25.0)],
+            &[POST],
+        );
+        let mut mode = ArenaMode::new(arena, calm_config(), tuning(1, 2, 100));
+        let turn = look_at(mode.sim().player_eye(), post_target());
+        mode.tick(&turn, DT);
+        let standing = mode.sim().enemies_alive();
+        let blocked = mode.control_in_reach();
+        mode.tick(&using(), DT);
+        let after_use = (mode.wave(), mode.sim().enemy_count());
+        mode.sim_mut().kill_enemy(0);
+        mode.tick(&idle(), DT);
+
+        let clear = mode.control_in_reach();
+
+        assert_eq!(standing, 1, "the enemy stands between player and post");
+        assert_eq!(blocked, None);
+        assert_eq!(after_use, (1, 1));
+        assert_eq!(clear, Some(ControlAction::NextWave));
+    }
+
+    #[test]
+    fn a_restart_then_a_use_at_once_leaves_wave_one_with_its_enemies() {
+        let mut mode = calm_mode(4, tuning(1, 1, 100));
+        mode.sim_mut().kill_enemy(0);
+        mode.tick(&idle(), DT);
+        mode.tick(&using(), DT);
+        mode.sim_mut().kill_enemy(1);
+        mode.sim_mut().kill_enemy(2);
+        mode.tick(&idle(), DT);
+        mode.sim_mut().kill_player();
+        mode.tick(&idle(), DT);
+        let both = SearchlightCommand {
+            restart: true,
+            use_pressed: true,
+            ..SearchlightCommand::default()
+        };
+
+        mode.tick(&both, DT);
+        let at_once = (mode.wave(), mode.score(), mode.sim().enemy_count());
+        for _ in 0..30 {
+            mode.tick(&using(), DT);
+        }
+
+        assert_eq!(at_once, (1, 0, 1));
+        assert_eq!(mode.wave(), 1);
+        assert_eq!(mode.sim().enemy_count(), 1);
+        assert_eq!(mode.sim().enemies_alive(), 1);
+    }
 }
