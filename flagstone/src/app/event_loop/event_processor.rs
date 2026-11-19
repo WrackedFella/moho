@@ -576,6 +576,49 @@ mod tests {
         assert!(app.exit_requested);
     }
 
+    #[test]
+    fn block_edit_events_mark_the_world_edited() {
+        let position = flagstone_voxel::BlockPos::new(3, 70, 3);
+        let edits = [
+            WorldEvent::BlockPlaced {
+                position,
+                material_id: 1,
+                reason: BlockChangeReason::Player,
+            },
+            WorldEvent::BlockRemoved {
+                position,
+                old_material_id: 1,
+                reason: BlockChangeReason::Player,
+            },
+            WorldEvent::BlocksBatchModified {
+                chunk_pos: glam::IVec3::new(0, 4, 0),
+                positions: vec![position],
+                reason: BlockChangeReason::Explosion,
+            },
+        ];
+        let mut quiet = App::headless();
+        quiet.event_bus.publish(WorldEvent::ChunkMeshDirty {
+            chunk_pos: glam::IVec3::new(0, 4, 0),
+            terrain_dirty: true,
+            structure_dirty: false,
+        });
+
+        EventProcessor::new().process_world_events(&mut quiet);
+
+        assert!(
+            !quiet.autosave_schedule.edited(),
+            "a re-mesh is not an edit"
+        );
+        for edit in edits {
+            let mut app = App::headless();
+            app.event_bus.publish(edit.clone());
+
+            EventProcessor::new().process_world_events(&mut app);
+
+            assert!(app.autosave_schedule.edited(), "{edit:?} is an edit");
+        }
+    }
+
     use super::*;
     use moho_core::events::DebugEvent;
 

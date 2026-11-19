@@ -617,6 +617,24 @@ mod tests {
     }
 
     #[test]
+    fn paused_game_does_not_advance_the_autosave_schedule() {
+        let mut app = playing_app();
+        app.game_state = GameState::Paused;
+
+        for _ in 0..5 {
+            tick_app(&mut app, &StrategyCommand::default());
+        }
+        let while_paused = app.autosave_schedule.ticks_since_save();
+        app.game_state = GameState::Playing;
+        for _ in 0..5 {
+            tick_app(&mut app, &StrategyCommand::default());
+        }
+
+        assert_eq!(while_paused, 0, "paused ticks are not play time");
+        assert_eq!(app.autosave_schedule.ticks_since_save(), 5);
+    }
+
+    #[test]
     fn tick_without_held_keys_does_not_move_player() {
         let mut app = playing_app();
         let before = app.simulation.position();
@@ -846,6 +864,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("temp dir");
         let mut app = playing_app();
         app.saves_dir = temp.path().join("saves");
+        app.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
         (app, temp)
     }
 
