@@ -217,6 +217,21 @@ mod tests {
         assert!(!marks.contains([1, 0, 0]));
         assert!(!marks.contains([2, 0, 0]));
         assert!(unclaimed(&marks).is_empty());
+
+        marks.toggle([1, 0, 0]);
+        marks.toggle([2, 0, 0]);
+
+        assert_eq!(
+            claimed_by(&marks, [1, 0, 0]),
+            None,
+            "no claim outlives its mark"
+        );
+        assert_eq!(
+            claimed_by(&marks, [2, 0, 0]),
+            None,
+            "no claim outlives its block"
+        );
+        assert_eq!(unclaimed(&marks), [[1, 0, 0], [2, 0, 0]]);
     }
 
     proptest! {

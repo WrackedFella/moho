@@ -1337,16 +1337,23 @@ mod tests {
         let centre = block.as_vec3() + glam::Vec3::splat(0.5);
         let at_the_start = world::pawn_state(&app).position.distance(centre);
         let mut eye_at_the_removal = None;
+        let mut sim_at_the_removal = glam::Vec3::ZERO;
 
         for _ in 0..JOB_TICKS {
             world::tick(&mut app);
             if !world::is_solid(&app, block) {
                 eye_at_the_removal = Some(world::pawn_state(&app).position);
+                sim_at_the_removal = app.simulation.position();
                 break;
             }
         }
 
         let eye = eye_at_the_removal.expect("the block was never removed");
+        assert!(
+            eye.distance(centre) < 2.5 && sim_at_the_removal.distance(centre) < 2.5,
+            "the pawn dug from outside the stand-cell envelope: body {eye}, simulation \
+             {sim_at_the_removal}, block {centre}"
+        );
         assert!(
             at_the_start > MINE_REACH,
             "the block starts out of reach: {at_the_start}"

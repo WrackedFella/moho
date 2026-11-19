@@ -245,16 +245,70 @@ mod tests {
 
     #[test]
     fn a_mark_with_no_exposed_face_is_not_claimed() {
-        let mut grid = floor(10, 10);
-        fill(&mut grid, 4..=6, 1..=3, 4..=6);
-        let mut marks = marked(&[at(5, 2, 5)]);
+        let mut grid = VoxelGrid::new(16);
+        fill(&mut grid, 0..=9, -1..=1, 0..=9);
+        let buried = at(5, 0, 5);
+        let mut marks = marked(&[buried]);
         let mut walker = Walker::new();
+        assert!(
+            standable(&grid, at(5, 2, 5)),
+            "the top of the floor is a reachable stand cell within reach of the block"
+        );
 
-        let action = walker.step(standing_in(at(1, 1, 1)), &mut marks, &grid);
+        let action = walker.step(standing_in(at(1, 2, 1)), &mut marks, &grid);
 
         assert_eq!(action, JobAction::Wait);
         assert_eq!(walker.job, Job::Idle);
-        assert_eq!(claimed_by(&marks, at(5, 2, 5)), None);
+        assert_eq!(claimed_by(&marks, buried), None);
+    }
+
+    #[test]
+    fn four_unreachable_marks_nearer_than_a_reachable_one_cost_a_tick() {
+        let mut grid = floor(14, 9);
+        fill(&mut grid, 3..=7, 1..=3, 3..=7);
+        for x in 4..=6 {
+            for y in 1..=3 {
+                for z in 4..=6 {
+                    grid.mutator().remove(at(x, y, z));
+                }
+            }
+        }
+        let pen = [at(4, 1, 4), at(4, 1, 5), at(4, 1, 6), at(5, 1, 4)];
+        for block in pen {
+            grid.mutator().place(block, 1, None);
+        }
+        let reachable = at(11, 1, 5);
+        grid.mutator().place(reachable, 1, None);
+        let mut blocks = pen.to_vec();
+        blocks.push(reachable);
+        let mut marks = marked(&blocks);
+        let mut walker = Walker::new();
+        let start = standing_in(at(1, 1, 5));
+
+        let first = walker.step(start, &mut marks, &grid);
+
+        assert_eq!(first, JobAction::Wait, "four attempts are spent on the pen");
+        assert_eq!(walker.job, Job::Idle);
+        assert_eq!(claimed_by(&marks, reachable), None);
+    }
+
+    #[test]
+    fn marks_at_equal_distance_are_taken_in_key_order() {
+        let mut grid = floor(12, 9);
+        fill(&mut grid, 3..=3, 1..=1, 5..=5);
+        fill(&mut grid, 7..=7, 1..=1, 5..=5);
+        let mut marks = marked(&[at(7, 1, 5), at(3, 1, 5)]);
+        let mut walker = Walker::new();
+
+        walker.step(standing_in(at(5, 1, 5)), &mut marks, &grid);
+
+        assert!(
+            matches!(&walker.job, Job::Mine { mark, .. } if *mark == at(3, 1, 5)),
+            "{:?}",
+            walker.job
+        );
+        assert_eq!(claimed_by(&marks, at(3, 1, 5)), Some(ME));
+        assert_eq!(claimed_by(&marks, at(7, 1, 5)), None);
     }
 
     #[test]
