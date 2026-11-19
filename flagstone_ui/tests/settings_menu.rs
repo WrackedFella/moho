@@ -586,7 +586,6 @@ fn egui_lone_modifier_while_listening_binds_the_row() {
     assert!(!menu.is_listening());
 }
 
-/// Renders one frame with the given modifiers held.
 fn render_with_mods(menu: &mut SettingsMenu, modifiers: egui::Modifiers) {
     render_frame(menu, vec![egui::Event::ModifiersChanged(modifiers)]);
 }
@@ -597,8 +596,7 @@ fn all_staged(menu: &SettingsMenu) -> Vec<Vec<Binding>> {
         .collect()
 }
 
-/// Move Forward is rebound, Shift (held by Sprint) opens the prompt, then Alt is
-/// pressed after releasing Shift.
+/// Opens the conflict prompt on Shift (held by Sprint), then presses Alt.
 fn prompt_open_then_stray_alt() -> SettingsMenu {
     use flagstone_ui::screens::Screen;
 
