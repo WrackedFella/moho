@@ -914,6 +914,17 @@ mod tests {
     }
 
     #[test]
+    fn each_mesh_kind_takes_its_offset_id_inside_the_reserved_range() {
+        let streak = MeshKind::Streak.id();
+        let flash = MeshKind::Flash.id();
+        let mark = MeshKind::Mark.id();
+
+        assert_eq!(streak, WorldMeshId(EFFECT_MESH_IDS_FROM));
+        assert_eq!(flash, WorldMeshId(EFFECT_MESH_IDS_FROM + 1));
+        assert_eq!(mark, WorldMeshId(EFFECT_MESH_IDS_FROM + 2));
+    }
+
+    #[test]
     fn quality_above_four_clamps_to_ultra() {
         for quality in [5, 9, u32::MAX] {
             let mut rig = Rig::new();
