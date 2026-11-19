@@ -902,6 +902,34 @@ mod tests {
     }
 
     #[test]
+    fn the_streak_star_and_quad_meshes_sit_at_the_first_three_reserved_ids() {
+        for offset in 0..3 {
+            let mut rig = Rig::new();
+            let streak = rig.effects.begin_streak(style(2.0, 0.1));
+            rig.effects.place_streak(streak, Vec3::X, Vec3::X);
+            rig.effects.flash(Vec3::X, 0.0, flash_style(0.4, ms(500)));
+            rig.effects.mark(
+                Vec3::Y,
+                Vec3::Y,
+                0.0,
+                mark_style(0.2, Duration::from_secs(10), ms(500)),
+            );
+            rig.frame(EYE);
+            assert_eq!(rig.meshes.live_len(), 3);
+
+            rig.meshes
+                .remove(WorldMeshId(EFFECT_MESH_IDS_FROM + offset));
+            rig.meshes.flush(&mut rig.backend);
+
+            assert_eq!(
+                rig.meshes.live_len(),
+                2,
+                "no mesh sits at reserved id +{offset}"
+            );
+        }
+    }
+
+    #[test]
     fn quality_above_four_clamps_to_ultra() {
         for quality in [5, 9, u32::MAX] {
             let mut rig = Rig::new();
