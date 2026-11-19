@@ -76,7 +76,7 @@ In the isometric (strategy) view the tick also runs `run_pawn_job` after the cam
 idle pawn takes the nearest unclaimed mark, walks the route through its own character at
 walking speed and digs from its last cell with `Pawn::dig`, as a possessed pawn would. The
 yield goes to `Colony::stock`, and the removal and a `dig.wav` cue are published like a hand
-mine (`publish_removal`, `publish_dig_cue` in `flagstone/src/app/event_loop/frame_processor.rs`).
+mine (`publish_removal`, `publish_dig_cue` in `flagstone/src/app/event_loop/event_processor.rs`).
 A possessed pawn runs no job. Rules: `flagstone_game/src/jobs.rs`, `flagstone_game/src/routing.rs`.
 
 Mining publishes its block event while `process_input_events` drains, after
