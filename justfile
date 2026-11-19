@@ -35,7 +35,48 @@ comment-refs base=base:
 
 # Licenses, advisories, banned and duplicate crates, crate sources.
 deny:
+    #!/usr/bin/env bash
+    set -euo pipefail
     cargo deny check
+    scripts/check-physics-features.sh
+    "{{replace(just_executable(), '\', '/')}}" _physics-accepts physics-metadata-ok
+    "{{replace(just_executable(), '\', '/')}}" _physics-rejects physics-metadata-missing rapier3d parry3d
+    "{{replace(just_executable(), '\', '/')}}" _physics-rejects physics-metadata-missing-parry parry3d rapier3d
+
+# Fails unless the physics feature check passes on the metadata fixture.
+[private]
+_physics-accepts fixture:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    out=$(MOHO_PHYSICS_METADATA=scripts/fixtures/{{fixture}}.json scripts/check-physics-features.sh 2>&1)
+    status=$?
+    if [ "$status" -eq 0 ]; then
+        exit 0
+    fi
+    echo "physics-features self-test failed: {{fixture}}" >&2
+    echo "  expected: exit 0" >&2
+    echo "  got: exit $status, output:" >&2
+    sed 's/^/    /' <<<"$out" >&2
+    exit 1
+
+# Fails unless the check exits non-zero on the fixture, prints 'physics-features: <lacking> lacks
+# enhanced-determinism', and does not name the crate that has the feature.
+[private]
+_physics-rejects fixture lacking having:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    out=$(MOHO_PHYSICS_METADATA=scripts/fixtures/{{fixture}}.json scripts/check-physics-features.sh 2>&1)
+    status=$?
+    if [ "$status" -ne 0 ] \
+        && grep -qF -- 'physics-features: {{lacking}} lacks enhanced-determinism' <<<"$out" \
+        && ! grep -qF -- '{{having}}' <<<"$out"; then
+        exit 0
+    fi
+    echo "physics-features self-test failed: {{fixture}}" >&2
+    echo "  expected: non-zero exit, line 'physics-features: {{lacking}} lacks enhanced-determinism', no mention of {{having}}" >&2
+    echo "  got: exit $status, output:" >&2
+    sed 's/^/    /' <<<"$out" >&2
+    exit 1
 
 # LCOV coverage report at lcov.info.
 cov:
