@@ -334,7 +334,7 @@ impl PhysicsWorld {
     }
 
     /// Steepest ground, radians from level against gravity, on which loose objects are
-    /// braked to rest. 0 turns the brake off.
+    /// braked to rest. 0 turns the brake off. Default 5°.
     ///
     /// # Panics
     /// If `slope` is not finite or not in `[0, π/2)`.
@@ -1633,8 +1633,12 @@ mod tests {
 
             let state = read(&world, id);
             let moved = (state.position - spawn.position).length();
-            let held = moved < 0.02 && state.asleep;
-            if rests != held && (rests || moved <= 1.0) {
+            let as_expected = if rests {
+                moved < 0.02 && state.asleep
+            } else {
+                moved > 1.0
+            };
+            if !as_expected {
                 problems.push(format!(
                     "{name} on {degrees} degrees (rests: {rests}) moved {moved} m, {state:?}"
                 ));
