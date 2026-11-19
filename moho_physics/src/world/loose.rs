@@ -1513,6 +1513,80 @@ mod tests {
     }
 
     #[test]
+    fn a_capsule_rolling_on_a_loose_box_is_braked() {
+        let platform = LooseSpawn {
+            position: Vec3::new(0.0, 0.25, 0.0),
+            ..LooseSpawn::new(
+                LooseShape::Box {
+                    half_extents: Vec3::new(2.0, 0.25, 2.0),
+                },
+                50.0,
+            )
+        };
+        let roller = LooseSpawn {
+            position: Vec3::new(0.0, 0.5 + CAPSULE_RADIUS, -1.5),
+            ..rolling_capsule(2.0)
+        };
+        let mut braked = world_with_floor(&floor_mesh(0.0));
+        let mut free = world_with_floor(&floor_mesh(0.0));
+        free.set_rest_slope(0.0);
+        braked.spawn_loose(&platform);
+        free.spawn_loose(&platform);
+        let braked_id = braked.spawn_loose(&roller);
+        let free_id = free.spawn_loose(&roller);
+
+        run(&mut braked, 300);
+        run(&mut free, 120);
+
+        let (stopped, rolled) = (read(&braked, braked_id), read(&free, free_id));
+        let braked_travel = stopped.position.z + 1.5;
+        let free_travel = rolled.position.z + 1.5;
+        assert!(stopped.asleep, "the braked capsule rests, {stopped:?}");
+        assert!(stopped.position.y > 0.5, "it rests on the box, {stopped:?}");
+        assert!(
+            (0.5..=1.5).contains(&braked_travel),
+            "it rolled {braked_travel} m before stopping"
+        );
+        assert!(
+            free_travel > 2.0 * braked_travel,
+            "unbraked it rolled {free_travel} m against {braked_travel} m braked, {rolled:?}"
+        );
+    }
+
+    #[test]
+    fn a_crossed_capsule_spawned_deep_in_another_settles_apart() {
+        let lower = LooseSpawn {
+            position: Vec3::new(0.0, CAPSULE_RADIUS, 0.0),
+            rotation: Quat::from_rotation_x(FRAC_PI_2),
+            ..LooseSpawn::new(CAPSULE, 0.2)
+        };
+        let upper = LooseSpawn {
+            position: Vec3::new(0.0, 2.0 * CAPSULE_RADIUS + CAPSULE_RADIUS - 0.03, 0.0),
+            rotation: Quat::from_rotation_z(FRAC_PI_2),
+            ..LooseSpawn::new(CAPSULE, 0.2)
+        };
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let lower_id = world.spawn_loose(&lower);
+        let upper_id = world.spawn_loose(&upper);
+
+        run(&mut world, 300);
+
+        let (below, above) = (read(&world, lower_id), read(&world, upper_id));
+        let depth = overlap_depth((CAPSULE, &below), (CAPSULE, &above));
+        assert!(depth <= 0.005, "the pair ends {depth} m deep");
+        assert!(
+            below.asleep && above.asleep,
+            "both sleep, {below:?} and {above:?}"
+        );
+        let slid = (above.position - upper.position) * Vec3::new(1.0, 0.0, 1.0);
+        assert!(
+            slid.length() <= 0.05,
+            "the upper capsule slid {} m, {above:?}",
+            slid.length()
+        );
+    }
+
+    #[test]
     fn at_zero_gravity_the_brake_does_nothing() {
         let touching = rolling_capsule(2.0);
         let mut braked = world_with_floor(&floor_mesh(0.0));
