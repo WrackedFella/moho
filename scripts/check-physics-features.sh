@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Fails unless every resolved rapier3d and parry3d enables `enhanced-determinism`, which
-# swaps platform math for libm in the physics step (ADR-0011). Prints the crate that lost
-# it. cargo-deny bans features but cannot require one, hence this script. If
-# MOHO_PHYSICS_METADATA names a file, its `cargo metadata --format-version 1` JSON is read
-# instead of running cargo (the self-test points it at a fixture).
+# swaps platform math for libm in the physics step (ADR-0011). cargo-deny can ban a
+# feature but not require one, hence this script. MOHO_PHYSICS_METADATA, if set, names a
+# `cargo metadata` JSON file read instead of running cargo (the self-test's fixture).
 set -euo pipefail
 
 feature="enhanced-determinism"
