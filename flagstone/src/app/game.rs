@@ -592,6 +592,32 @@ mod tests {
     }
 
     #[test]
+    fn paused_game_does_not_advance_the_autosave_schedule() {
+        let mut app = playing_app();
+        let idle = StrategyCommand::default();
+        for _ in 0..3 {
+            tick_app(&mut app, &idle);
+        }
+        let while_playing = app.autosave_schedule.ticks_since_save;
+
+        for state in [GameState::Paused, GameState::Menu, GameState::ConsoleOpen] {
+            app.game_state = state;
+            for _ in 0..10 {
+                tick_app(&mut app, &idle);
+            }
+            assert_eq!(
+                app.autosave_schedule.ticks_since_save, while_playing,
+                "time advanced in {state:?}"
+            );
+        }
+        app.game_state = GameState::Playing;
+        tick_app(&mut app, &idle);
+
+        assert_eq!(while_playing, 3, "each playing tick counts");
+        assert_eq!(app.autosave_schedule.ticks_since_save, 4, "play resumes it");
+    }
+
+    #[test]
     fn held_forward_binding_is_in_the_tick_command_and_moves_player() {
         let mut app = playing_app();
         hold(&mut app, StrategyAction::MoveForward);
@@ -841,10 +867,12 @@ mod tests {
         LoopConfig::new(TICK_HZ).tick_length()
     }
 
-    /// An app whose autosaves land in a fresh temp dir, which must outlive it.
+    /// An app with a loaded world whose autosaves land in a fresh temp dir, which must
+    /// outlive it.
     fn app_with_saves_dir() -> (App, tempfile::TempDir) {
         let temp = tempfile::tempdir().expect("temp dir");
         let mut app = playing_app();
+        app.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
         app.saves_dir = temp.path().join("saves");
         (app, temp)
     }

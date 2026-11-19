@@ -37,6 +37,7 @@ impl ChunkStreamer {
         terrain_config: TerrainConfig,
         streaming_config: StreamingConfig,
         world_name: impl Into<String>,
+        _saves_dir: impl Into<std::path::PathBuf>,
     ) -> Self {
         Self {
             terrain_config,
@@ -225,6 +226,7 @@ mod tests {
                 chunks_per_frame: budget,
             },
             WORLD,
+            "saves",
         )
     }
 
@@ -286,6 +288,7 @@ mod tests {
                 chunks_per_frame: budget,
             },
             WORLD,
+            "saves",
         )
     }
 
@@ -319,6 +322,30 @@ mod tests {
                 "column {column:?} holds its terrain chunks, got {ys:?}"
             );
         }
+    }
+
+    #[test]
+    fn evicted_chunk_is_written_under_the_streamers_saves_dir() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let world = "chunk_streamer_unit_test_saves_dir_world";
+        let mut streamer = ChunkStreamer::new(
+            TerrainConfig::default(),
+            StreamingConfig {
+                load_radius_chunks: 0,
+                unload_radius_chunks: 0,
+                chunks_per_frame: 1,
+            },
+            world,
+            temp.path().to_path_buf(),
+        );
+        let mut grid = VoxelGrid::new(16);
+        grid.mutator().place(IVec3::new(1, 1, 1), 4, None);
+
+        let (_, evicted) = streamer.update(&mut grid, Vec3::new(16.0 * 5.0 + 0.5, 1.0, 0.5));
+
+        assert_eq!(evicted, vec![IVec3::ZERO], "the edited chunk left range");
+        let file = temp.path().join(world).join("chunks").join("0_0_0.bin");
+        assert!(file.is_file(), "no chunk file at {}", file.display());
     }
 
     #[test]

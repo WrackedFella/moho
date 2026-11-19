@@ -286,6 +286,7 @@ mod tests {
         for pos in positions {
             saved.entities.chunks.insert(chunk_at(pos));
         }
+        saved.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
         crate::app::autosave::auto_save_on_shutdown(
             &mut saved,
             &moho_app::GameClock::default(),
@@ -684,6 +685,7 @@ mod tests {
         for pos in positions {
             saved.entities.chunks.insert(chunk_at(pos));
         }
+        saved.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
         crate::app::autosave::auto_save_on_shutdown(
             &mut saved,
             &moho_app::GameClock::default(),

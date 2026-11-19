@@ -469,6 +469,7 @@ pub(crate) mod tests {
         let temp = tempfile::tempdir().expect("temp dir");
         let mut saved = App::headless();
         saved.entities.chunks.insert(chunk_at(IVec3::new(7, 0, 7)));
+        saved.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
         crate::app::autosave::auto_save_on_shutdown(
             &mut saved,
             &moho_app::GameClock::default(),
@@ -577,6 +578,7 @@ pub(crate) mod tests {
                 chunks_per_frame: 1,
             },
             "headless-test-evicted-chunk-not-drawn",
+            app.saves_dir.clone(),
         ));
         let far = IVec3::new(10, 4, 10);
         let grid = app
@@ -827,6 +829,7 @@ pub(crate) mod tests {
                 chunks_per_frame: 1,
             },
             "headless-test-eviction-frees-draw-and-collider",
+            app.saves_dir.clone(),
         ));
         let far = IVec3::new(10, 4, 10);
         remesh_with_block(&mut app, flagstone_voxel::BlockPos::new(165, 70, 165), far);
@@ -975,6 +978,7 @@ pub(crate) mod tests {
         let temp = tempfile::tempdir().expect("temp dir");
         let mut saved = App::headless();
         saved.entities.chunks.insert(chunk_at(IVec3::new(7, 0, 7)));
+        saved.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
         crate::app::autosave::auto_save_on_shutdown(
             &mut saved,
             &moho_app::GameClock::default(),

@@ -925,6 +925,64 @@ mod tests {
     }
 
     #[test]
+    fn block_edit_events_mark_the_world_edited() {
+        let position = glam::IVec3::new(3, 70, 3);
+        let edits = [
+            (
+                "placed",
+                WorldEvent::BlockPlaced {
+                    position,
+                    material_id: 1,
+                    reason: BlockChangeReason::Player,
+                },
+            ),
+            (
+                "removed",
+                WorldEvent::BlockRemoved {
+                    position,
+                    old_material_id: 1,
+                    reason: BlockChangeReason::Player,
+                },
+            ),
+            (
+                "batch",
+                WorldEvent::BlocksBatchModified {
+                    chunk_pos: glam::IVec3::ZERO,
+                    positions: vec![position],
+                    reason: BlockChangeReason::Explosion,
+                },
+            ),
+        ];
+
+        for (name, event) in edits {
+            let mut app = App::headless();
+            assert!(!app.autosave_schedule.edited, "{name}: clean to begin with");
+            app.event_bus.publish(event);
+
+            EventProcessor::new().process_world_events(&mut app);
+
+            assert!(app.autosave_schedule.edited, "{name}: not marked edited");
+        }
+    }
+
+    #[test]
+    fn mesh_dirty_events_alone_do_not_mark_the_world_edited() {
+        let mut app = App::headless();
+        app.event_bus.publish(WorldEvent::ChunkMeshDirty {
+            chunk_pos: glam::IVec3::ZERO,
+            terrain_dirty: true,
+            structure_dirty: true,
+        });
+
+        EventProcessor::new().process_world_events(&mut app);
+
+        assert!(
+            !app.autosave_schedule.edited,
+            "streaming dirties meshes without an edit"
+        );
+    }
+
+    #[test]
     fn duplicate_mesh_dirty_events_mesh_a_chunk_once() {
         let chunk_pos = glam::IVec3::new(0, 4, 0);
         let meshed_collider = |dirty_flags: &[(bool, bool)]| {
