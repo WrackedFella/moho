@@ -1484,6 +1484,36 @@ mod tests {
     }
 
     #[test]
+    fn a_flash_or_mark_with_a_non_finite_position_or_roll_alone_is_refused() {
+        let nan = f32::NAN;
+        let inf = f32::INFINITY;
+        let positions = [
+            ("NaN position", Vec3::new(nan, 0.0, 0.0)),
+            ("infinite position", Vec3::new(0.0, inf, 0.0)),
+            ("negative infinite position", Vec3::new(0.0, 0.0, -inf)),
+        ];
+        let rolls = [
+            ("NaN roll", nan),
+            ("infinite roll", inf),
+            ("negative infinite roll", -inf),
+        ];
+        let bad_position_cases = positions.iter().map(|(case, at)| (*case, *at, 0.5));
+        let bad_roll_cases = rolls.iter().map(|(case, roll)| (*case, Vec3::ZERO, *roll));
+        for (case, at, roll) in bad_position_cases.chain(bad_roll_cases) {
+            let mut flash = Rig::new();
+            let mut mark = Rig::new();
+
+            flash.effects.flash(at, roll, flash_style(0.4, 0));
+            mark.effects.mark(at, Vec3::Y, roll, mark_style(0.2, 0));
+
+            assert_eq!(flash.effects.live(), 0, "flash with {case}");
+            assert!(flash.frame(EYE).is_empty(), "flash with {case}");
+            assert_eq!(mark.effects.live(), 0, "mark with {case}");
+            assert!(mark.frame(EYE).is_empty(), "mark with {case}");
+        }
+    }
+
+    #[test]
     fn a_mark_fade_is_clamped_to_its_lifetime_and_a_zero_fade_is_abrupt() {
         let mut clamped = Rig::new();
         let long_fade = MarkStyle::new(0.2, 0, Duration::from_secs(1), Duration::from_secs(5));
