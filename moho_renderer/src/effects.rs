@@ -1277,6 +1277,76 @@ mod tests {
     }
 
     #[test]
+    fn a_mark_with_a_four_second_fade_shrinks_in_proportion_to_the_time_left() {
+        let mut rig = Rig::new();
+        rig.effects.mark(
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::Y,
+            0.0,
+            MarkStyle::new(0.8, 0, Duration::from_secs(10), Duration::from_secs(4)),
+        );
+
+        rig.effects.advance(Duration::from_secs(6));
+        let start_of_fade = rig.frame(EYE);
+        assert_eq!(start_of_fade.len(), 1);
+        assert!(
+            (x_axis(&start_of_fade[0]).length() - 0.8).abs() < EPS,
+            "full size with 4 s left, got {}",
+            x_axis(&start_of_fade[0]).length()
+        );
+
+        for (elapsed_s, expected) in [(1_u64, 0.6_f32), (1, 0.4), (1, 0.2)] {
+            rig.effects.advance(Duration::from_secs(elapsed_s));
+            let drawn = rig.frame(EYE);
+
+            assert_eq!(drawn.len(), 1);
+            assert!(
+                (x_axis(&drawn[0]).length() - expected).abs() < EPS,
+                "expected side {expected}, got {}",
+                x_axis(&drawn[0]).length()
+            );
+            assert!((y_axis(&drawn[0]).length() - expected).abs() < EPS);
+        }
+    }
+
+    #[test]
+    fn the_streak_flash_and_mark_draw_under_the_first_three_reserved_mesh_ids() {
+        type Spawn = fn(&mut Effects);
+        let spawns: [(u64, Spawn); 3] = [
+            (EFFECT_MESH_IDS_FROM, |effects| {
+                let streak = effects.begin_streak(style(2.0, 0.1));
+                effects.place_streak(streak, Vec3::ZERO, Vec3::X);
+            }),
+            (EFFECT_MESH_IDS_FROM + 1, |effects| {
+                effects.flash(Vec3::ZERO, 0.0, flash_style(0.4, 5000));
+            }),
+            (EFFECT_MESH_IDS_FROM + 2, |effects| {
+                effects.mark(Vec3::ZERO, Vec3::Y, 0.0, mark_style(0.2));
+            }),
+        ];
+
+        for (id, spawn) in spawns {
+            let mut rig = Rig::new();
+            spawn(&mut rig.effects);
+            rig.effects.draw(&mut rig.meshes, EYE);
+            rig.meshes.flush(&mut rig.backend);
+            assert_eq!(rig.meshes.unshadowed_draws().count(), 1);
+            assert_eq!(rig.meshes.live_len(), 1);
+
+            rig.meshes.remove(WorldMeshId(id));
+            rig.meshes.flush(&mut rig.backend);
+
+            assert!(id >= EFFECT_MESH_IDS_FROM);
+            assert_eq!(
+                rig.meshes.live_len(),
+                0,
+                "the effect's mesh is registered under id {id}"
+            );
+            assert_eq!(rig.meshes.unshadowed_draws().count(), 0);
+        }
+    }
+
+    #[test]
     fn a_full_cap_drops_the_oldest_fixed_lifetime_effect() {
         let mut rig = Rig::new();
         rig.effects.set_quality(1);
