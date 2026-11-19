@@ -155,7 +155,7 @@ impl Timed {
         let (x, y, z) = match self.shape {
             Shape::Flash { roll } => {
                 let facing = (eye - self.at).try_normalize()?;
-                let x = Quat::from_axis_angle(facing, roll) * facing.any_orthonormal_vector();
+                let x = rolled_perpendicular(facing, roll);
                 (x, facing.cross(x), facing)
             }
             Shape::Mark { x, normal } => (x, normal.cross(x), normal),
@@ -282,7 +282,7 @@ impl Effects {
         if !at.is_finite() || !roll.is_finite() {
             return;
         }
-        let x = Quat::from_axis_angle(normal, roll) * normal.any_orthonormal_vector();
+        let x = rolled_perpendicular(normal, roll);
         self.spawn_timed(Timed {
             shape: Shape::Mark { x, normal },
             at: at + normal * MARK_OFFSET,
@@ -396,6 +396,11 @@ impl Effects {
             meshes.place_unshadowed(kind.id(), transform, material);
         }
     }
+}
+
+/// A unit vector perpendicular to the unit `axis`, turned by `roll` radians about it.
+fn rolled_perpendicular(axis: Vec3, roll: f32) -> Vec3 {
+    Quat::from_axis_angle(axis, roll) * axis.any_orthonormal_vector()
 }
 
 /// A mesh flat in the XY plane with +Z normals and neutral lighting channels.
