@@ -9,6 +9,8 @@
 //! Each component is designed to be testable in isolation while maintaining
 //! a clean separation of concerns.
 
+#[cfg(test)]
+pub(crate) mod colony_world;
 pub mod event_processor;
 pub mod frame_processor;
 pub mod generation_processor;

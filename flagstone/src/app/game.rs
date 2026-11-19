@@ -802,6 +802,48 @@ mod tests {
         assert!(!cmd.jump);
     }
 
+    #[test]
+    fn returning_to_first_person_starts_where_the_pawn_walked_to() {
+        use crate::app::event_loop::colony_world::{
+            character, colony_app, feet_at, is_solid, ticker,
+        };
+        let block = [12, 70, 8];
+        let mut app = colony_app(feet_at(2.5, 8.5), false, block, Some(7));
+        let start = app.simulation.position();
+        let mut sim = ticker();
+        sim.step(&mut app, 60);
+        let walked = character(&app);
+        assert!(is_solid(&app, block), "the job finished before the possess");
+        assert!(
+            (walked.position - start).length() > 1.0,
+            "the pawn did not walk: {start:?} to {:?}",
+            walked.position
+        );
+        assert!(
+            (app.simulation.position() - walked.position).length() < 1e-3,
+            "the strategy view keeps the pawn's pose at the start, not where it walked to"
+        );
+        let key = default_key(&app, StrategyAction::Possess);
+        app.input.actions.key(key, true);
+        app.input.actions.key(key, false);
+
+        sim.step(&mut app, 1);
+
+        assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+        let (yaw, _) = app.simulation.yaw_pitch();
+        assert!(
+            (app.simulation.position() - walked.position).length() < 0.15,
+            "possession starts at {:?}, the pawn walked to {:?}",
+            app.simulation.position(),
+            walked.position
+        );
+        assert!(
+            (yaw - walked.yaw).abs() < 0.01,
+            "possession faces {yaw}, the pawn faced {}",
+            walked.yaw
+        );
+    }
+
     use std::time::Duration;
 
     const TICKS: u32 = 120;
