@@ -92,28 +92,36 @@ jobs:
         with:
           app-id: ${{ vars.REVIEWER_APP_ID }}
           private-key: ${{ secrets.REVIEWER_APP_KEY }}
-      # Skips a PR that is closed, has lost its head branch, or whose head already has a
-      # review. A green CI run resumes the loop only when ci-fix.yml commented since the last
-      # review. Reviews count only from the identities this workflow posts with (the reviewer
-      # App, or the Claude app without it): the repo is public, and anyone can post a review
-      # that starts with `Verdict:`.
+      # Skips a PR that is closed, has lost its head branch, changes no code, or whose head
+      # already has a review. Non-code is docs (Markdown, wiki/, _todo/, as in ci.yml's plan
+      # job) plus agent, CI and editor config (.github/, .claude/, .vscode/, .mcp.json,
+      # .gitignore). Build, lint, toolchain and gate config (Cargo.toml, Cargo.lock, *.toml,
+      # justfile, scripts/, .cargo/, .config/) is reviewed, since it changes what ships or what
+      # the gate checks. A green CI run resumes the loop only when ci-fix.yml commented since
+      # the last review. Reviews count only from the identities this workflow posts with (the
+      # reviewer App, or the Claude app without it): the repo is public, and anyone can post a
+      # review that starts with `Verdict:`.
       - name: Resolve the PR
         id: pr
         env:
           REVIEWERS: '["github-actions[bot]", "claude[bot]", "${{ steps.app.outputs.app-slug }}[bot]"]'
           EVENT: ${{ github.event_name }}
           RUN_HEAD: ${{ github.event.workflow_run.head_sha }}
+          NON_CODE: '\.md$|^wiki/|^_todo/|^\.github/|^\.claude/|^\.vscode/|^\.mcp\.json$|^\.gitignore$'
         run: |
           read -r state repo ref head_sha author < <(gh api "repos/$GH_REPO/pulls/$PR" \
             --jq '[.state, (.head.repo.full_name // "-"), .head.ref, .head.sha, .user.login] | @tsv')
           reviews=$(gh api "repos/$GH_REPO/pulls/$PR/reviews" --paginate \
             --jq ".[] | select(.user.login as \$u | $REVIEWERS | index(\$u)) | select(.body | startswith(\"Verdict:\"))" | jq -sc .)
+          files=$(gh api "repos/$GH_REPO/pulls/$PR/files" --paginate --jq '.[].filename')
           reviewed=$(jq --arg sha "$head_sha" '[.[] | select(.commit_id == $sha)] | length' <<<"$reviews")
           reason=""
           if [ "$state" != "open" ]; then
             reason="PR #$PR is $state."
           elif [ "$repo" = "-" ] || ! gh api "repos/$repo/branches/$ref" --silent 2>/dev/null; then
             reason="The head branch \`$ref\` of PR #$PR no longer exists."
+          elif ! grep -Evq "$NON_CODE" <<<"$files"; then
+            reason="PR #$PR changes no code (docs and config only)."
           elif [ "$reviewed" -gt 0 ]; then
             reason="PR #$PR head $head_sha already has a review."
           elif [ "$EVENT" = "workflow_run" ]; then
