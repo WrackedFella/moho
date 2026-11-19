@@ -35,6 +35,7 @@ pub struct PhysicsWorld {
     characters: HashMap<CharacterHandle, Character>,
     loose: BTreeMap<LooseId, RigidBodyHandle>,
     next_loose: u64,
+    rest_slope: f32,
 }
 
 impl std::fmt::Debug for PhysicsWorld {
@@ -77,6 +78,7 @@ impl PhysicsWorld {
             characters: HashMap::new(),
             loose: BTreeMap::new(),
             next_loose: 0,
+            rest_slope: loose::DEFAULT_REST_SLOPE,
         }
     }
 
@@ -104,6 +106,21 @@ impl PhysicsWorld {
     /// characters whose `MoveSettings::gravity` is `None`.
     pub fn set_gravity(&mut self, gravity: f32) {
         self.gravity = Vec3::new(0.0, -gravity, 0.0);
+    }
+
+    /// Steepest ground, radians from level against gravity, on which loose objects are
+    /// braked to rest. 0 turns the brake off.
+    ///
+    /// # Panics
+    /// If `slope` is not finite or not in `[0, π/2)`.
+    pub fn set_rest_slope(&mut self, slope: f32) {
+        // Stub: no range validation yet.
+        self.rest_slope = slope;
+    }
+
+    /// The rest slope, radians.
+    pub fn rest_slope(&self) -> f32 {
+        self.rest_slope
     }
 
     /// The downward acceleration, m/s², positive down.
