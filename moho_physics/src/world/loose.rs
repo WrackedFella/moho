@@ -575,7 +575,12 @@ mod tests {
                 "{shape:?}: {state:?}"
             );
             assert!(!state.asleep, "{shape:?}: a fresh object is awake");
-            let mass = world.rigid_body_set[world.loose[&id]].mass();
+            let (_, body) = world
+                .rigid_body_set
+                .iter()
+                .next()
+                .expect("the spawn made the world's only body");
+            let mass = body.mass();
             assert!(
                 (mass - 3.5).abs() <= 1e-4,
                 "{shape:?}: the body weighs the stated mass, mass={mass}"
@@ -1204,30 +1209,35 @@ mod tests {
     }
 
     #[test]
-    fn the_rest_slope_is_game_data() {
+    fn a_raised_rest_slope_holds_a_capsule_on_a_steeper_slope() {
         let mut steep_rest = slope_world(8.0);
         steep_rest.set_rest_slope(10.0_f32.to_radians());
         let spawn = capsule_on_slope(8.0);
         let on_slope = steep_rest.spawn_loose(&spawn);
-        let mut free_roll = world_with_floor(&floor_mesh(0.0));
-        free_roll.set_rest_slope(0.0);
-        let rolling = free_roll.spawn_loose(&rolling_capsule(2.0));
 
         run(&mut steep_rest, 300);
-        run(&mut free_roll, 120);
 
         assert!(
             (steep_rest.rest_slope() - 10.0_f32.to_radians()).abs() <= 1e-6,
             "the rest slope reads back, got {}",
             steep_rest.rest_slope()
         );
-        assert_eq!(free_roll.rest_slope(), 0.0);
         let held = read(&steep_rest, on_slope);
         assert!(
             (held.position - spawn.position).length() < 0.02,
             "an 8 degree slope holds under a 10 degree rest slope, {held:?}"
         );
         assert!(held.asleep, "the capsule sleeps on 8 degrees, {held:?}");
+    }
+
+    #[test]
+    fn a_zero_rest_slope_lets_a_capsule_keep_rolling() {
+        let mut free_roll = world_with_floor(&floor_mesh(0.0));
+        free_roll.set_rest_slope(0.0);
+        let rolling = free_roll.spawn_loose(&rolling_capsule(2.0));
+
+        run(&mut free_roll, 120);
+
         let rolled = read(&free_roll, rolling);
         assert!(
             rolled.linear_velocity.length() > 1.9,
@@ -1271,47 +1281,113 @@ mod tests {
 
     #[test]
     fn the_brake_never_touches_vertical_velocity() {
-        let box_drop = LooseSpawn {
-            position: Vec3::new(0.0, 1.0, 0.0),
-            linear_velocity: Vec3::new(1.0, 0.0, 0.0),
-            angular_velocity: Vec3::new(3.0, 2.0, 1.0),
-            ..LooseSpawn::new(BOX, 0.2)
-        };
-        let capsule_drop = LooseSpawn {
-            position: Vec3::new(0.0, 1.0, 0.0),
+        let drop = LooseSpawn {
+            restitution: 0.5,
+            position: Vec3::new(0.0, 0.5, 0.0),
             rotation: Quat::from_rotation_z(FRAC_PI_2),
-            linear_velocity: Vec3::new(0.0, 0.0, 1.0),
-            angular_velocity: Vec3::new(25.0, 0.0, 0.0),
             ..LooseSpawn::new(CAPSULE, 0.2)
         };
+        let mut braked = world_with_floor(&floor_mesh(0.0));
+        let mut free = world_with_floor(&floor_mesh(0.0));
+        free.set_rest_slope(0.0);
+        let braked_id = braked.spawn_loose(&drop);
+        let free_id = free.spawn_loose(&drop);
+        let mut lowest_speed = 0.0f32;
+        let mut rebounded = false;
 
-        for (name, spawn, half) in [("box", box_drop, 0.05), ("capsule", capsule_drop, 0.04)] {
-            let mut braked = world_with_floor(&floor_mesh(0.0));
-            let mut free = world_with_floor(&floor_mesh(0.0));
-            free.set_rest_slope(0.0);
-            let braked_id = braked.spawn_loose(&spawn);
-            let free_id = free.spawn_loose(&spawn);
-            let mut airborne_ticks = 0;
+        for tick in 1..=30 {
+            braked.step(DT);
+            free.step(DT);
+            let (a, b) = (read(&braked, braked_id), read(&free, free_id));
+            assert_eq!(
+                a.linear_velocity.y.to_bits(),
+                b.linear_velocity.y.to_bits(),
+                "tick {tick}: vertical velocity differs, {a:?} vs {b:?}"
+            );
+            lowest_speed = lowest_speed.min(a.linear_velocity.y);
+            rebounded |= lowest_speed < -2.0 && a.linear_velocity.y > 0.5;
+        }
 
-            for tick in 1..=30 {
-                braked.step(DT);
-                free.step(DT);
-                let (a, b) = (read(&braked, braked_id), read(&free, free_id));
-                if a.position.y <= half + 0.02 || b.position.y <= half + 0.02 {
-                    break;
-                }
-                airborne_ticks += 1;
-                assert_eq!(
-                    a.linear_velocity.y.to_bits(),
-                    b.linear_velocity.y.to_bits(),
-                    "{name} tick {tick}: vertical velocity differs, {a:?} vs {b:?}"
+        assert!(
+            rebounded,
+            "the capsule hit the floor and bounced in 30 ticks"
+        );
+    }
+
+    #[test]
+    fn a_sliding_box_is_never_braked() {
+        let slide = LooseSpawn {
+            position: Vec3::new(0.0, 0.05, 0.0),
+            linear_velocity: Vec3::new(0.0, 0.0, 2.0),
+            ..LooseSpawn::new(BOX, 0.2)
+        };
+        let mut braked = world_with_floor(&floor_mesh(0.0));
+        let mut free = world_with_floor(&floor_mesh(0.0));
+        free.set_rest_slope(0.0);
+        let braked_id = braked.spawn_loose(&slide);
+        let free_id = free.spawn_loose(&slide);
+
+        for tick in 1..=60 {
+            braked.step(DT);
+            free.step(DT);
+            let (a, b) = (read(&braked, braked_id), read(&free, free_id));
+            assert_eq!(bits(&a), bits(&b), "tick {tick}: state bits differ");
+            assert_eq!(a.asleep, b.asleep, "tick {tick}: asleep differs");
+        }
+
+        let state = read(&braked, braked_id);
+        assert!(state.position.z > 0.05, "the box slid, {state:?}");
+    }
+
+    #[test]
+    fn at_zero_gravity_the_brake_does_nothing() {
+        let touching = rolling_capsule(2.0);
+        let mut braked = world_with_floor(&floor_mesh(0.0));
+        let mut free = world_with_floor(&floor_mesh(0.0));
+        braked.set_gravity(0.0);
+        free.set_gravity(0.0);
+        free.set_rest_slope(0.0);
+        let braked_id = braked.spawn_loose(&touching);
+        let free_id = free.spawn_loose(&touching);
+
+        for tick in 1..=60 {
+            braked.step(DT);
+            free.step(DT);
+            let (a, b) = (read(&braked, braked_id), read(&free, free_id));
+            assert_eq!(bits(&a), bits(&b), "tick {tick}: state bits differ");
+            assert_eq!(a.asleep, b.asleep, "tick {tick}: asleep differs");
+        }
+
+        let state = read(&braked, braked_id);
+        assert!(
+            state.linear_velocity.z > 1.9,
+            "the capsule keeps rolling, {state:?}"
+        );
+    }
+
+    #[test]
+    fn the_rest_slope_threshold_does_not_depend_on_gravity() {
+        let rows = [(4.9, true), (5.5, false)];
+
+        for (degrees, rests) in rows {
+            let mut world = slope_world(degrees);
+            world.set_gravity(9.0);
+            let spawn = capsule_on_slope(degrees);
+            let id = world.spawn_loose(&spawn);
+
+            run(&mut world, 300);
+
+            let state = read(&world, id);
+            let moved = (state.position - spawn.position).length();
+            if rests {
+                assert!(moved < 0.02, "{degrees} degrees moved {moved} m, {state:?}");
+                assert!(state.asleep, "{degrees} degrees: not asleep, {state:?}");
+            } else {
+                assert!(
+                    moved > 1.0,
+                    "{degrees} degrees moved only {moved} m, {state:?}"
                 );
             }
-
-            assert!(
-                airborne_ticks >= 10,
-                "{name}: only {airborne_ticks} ticks were compared before touchdown"
-            );
         }
     }
 
@@ -1382,8 +1458,8 @@ mod tests {
             rotation: Quat::from_rotation_z(FRAC_PI_2),
             ..LooseSpawn::new(CAPSULE, 0.2)
         };
-        let first = world.spawn_loose(&side_by_side(-0.035));
-        let second = world.spawn_loose(&side_by_side(0.035));
+        let first = world.spawn_loose(&side_by_side(-0.026));
+        let second = world.spawn_loose(&side_by_side(0.026));
 
         run(&mut world, 300);
 
