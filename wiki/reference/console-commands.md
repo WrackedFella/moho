@@ -59,5 +59,7 @@ Out-of-range quality values are rejected with a message. Unknown commands print 
 | Command | Args | Effect |
 |---|---|---|
 | `tgm` | `[0\|1]` | God mode: no argument toggles, `1` on, `0` off. Enemy hits stop damaging the player. Stored as `god_mode` under `[debug]` in the game's prefs file, so it persists across runs |
+| `simple` | `[0\|1]` | Simple: the player's shots land the tick they are fired (hitscan) instead of flying. No argument toggles. Stored as `simple` under `[debug]`, so it persists across runs |
+| `round_gravity` | `<scale>` | Sets how many times standard gravity pulls on the player's rounds (0 up to 1000), to read drop at short range; world gravity is unchanged. Not saved |
 | `fullscreen` | none | Flips between windowed and borderless fullscreen and prints the new mode. Saved like the F11 and Alt+Enter flips |
 | `grade` | `<rookie\|novice\|experienced\|veteran\|professional\|off>` | Forces the grade of enemies spawned from then on; `off` clears the force. Not saved; applies to later waves and restarts, not to enemies already alive |

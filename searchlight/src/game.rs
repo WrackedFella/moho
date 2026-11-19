@@ -841,8 +841,8 @@ impl SearchlightGame {
         }
     }
 
-    /// Starts in the god mode and Simple `settings` holds and saves every change to them. The engine settings
-    /// it holds apply on the first frame.
+    /// Starts in the god mode and Simple `settings` holds and saves every change to them. The
+    /// engine settings it holds apply on the first frame.
     #[must_use]
     pub fn with_debug_settings(mut self, settings: DebugSettings) -> Self {
         self.god_mode = settings.god_mode();

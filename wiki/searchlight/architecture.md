@@ -43,6 +43,7 @@ flowchart LR
 | `lean` | `lean_offset` (horizontal eye shift for a lean at a yaw) and `rolled_view_matrix` (view with up tipped about forward); pure `glam` maths the game and sim share ([posture](#8-posture)) |
 | `tag` | `SurfaceTag` (`World`, `Part { target, part }`, `Player(part)` or `Control(index)`) and its lossless round trip through the engine's opaque `moho_physics::HitTag` |
 | `shot` | `resolve_shot`: first tagged surface along a `ShotRay` in the `PhysicsWorld`; `passes_within`: whether a shot segment comes within a radius of a point |
+| `round` | `RoundInFlight` and `step_round`: one fixed step of a round, cast through the world as a segment ([shot path](#6-shot-path)) |
 | `brain` | `Brain`: the enemy state machine (`Patrol`, `Engage`, `Cover`, `Chase`), pure over `glam` types; `Percept` and a `steer` function in, `Intent` out; `EnemyTuning` holds its numbers; `EnemyTuning::graded` scales reaction, cooldown and aim error by a `Grade` ([enemies](#5-enemies)) |
 | `cover` | `pick` and `offer`: choose the nearest free cover point an enemy under fire should run to, using world-only rays (level geometry and placed controls count as world) against the player (`Threat`) |
 | `sim` | `SearchlightSim`: player character and body, `Loadout` (rifle and `Rig` of spare magazines), dummies and enemies; emits `Feedback`; counts player kills |
@@ -56,7 +57,7 @@ flowchart LR
 
 `SearchlightSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
 `Feedback` is the only output: `SearchlightSim::tick` queues it, the game drains it
-(`drain_feedback`) and reacts. `TICK_HZ` is 60. The rifle's numbers (damage, cooldown, reload, charge, range, magazine size) load from
+(`drain_feedback`) and reacts. `TICK_HZ` is 60. The rifle's numbers (damage, cooldown, reload, charge, magazine size) load from
 `content/items.toml` and the `start` kit in `content/kits.toml`, then the mods listed in prefs (`mods/<name>/…`), at start ([content format](../reference/content-format.md)); a load failure
 exits the binary. `tuning::tuning` combines them with the numbers still set in code (speeds, body
 profile, `EnemyTuning`, the player part enemies aim at) as a `SimConfig`.
@@ -153,7 +154,7 @@ bearing and off cooldown. Aim error comes from the `searchlight.enemy_spread` `S
 
 An enemy is put under fire by a non-lethal hit, or by near misses. Every player shot that
 passes within `EnemyTuning::near_miss_radius` of a living enemy's capsule centre
-(`shot::passes_within`, on the segment from the eye to the strike point or the rifle's range)
+(`shot::passes_within`, on each segment a round flies, or on the whole ray to its strike point under Simple)
 counts a near miss on that enemy, except the enemy the shot hit. When the count reaches
 `Grade::near_misses_to_cover` (`None` for a rookie, so only a hit moves it) the count resets and
 the enemy is under fire. The sim then records the player's position on
@@ -176,7 +177,9 @@ Each enemy has a `searchlight_rules::Grade` (`Rookie`, `Novice`, `Experienced`, 
 
 ## 6 Shot path
 
-Player and enemy shots go through one route:
+The player's rounds fly; `SearchlightSim` holds each as a `RoundInFlight` (`round.rs`). `Ballistics` (`muzzle_velocity` and `drag`, from the round item) and `Flight` live in `searchlight_rules`: a step applies drag (`1 - drag * dt`, floored at zero), then gravity to the vertical velocity, then moves by the new velocity, using only correctly rounded IEEE operations so replays are exact. Each tick `step_round` casts the segment from the old to the new position through the route below. A round ends when it strikes, is spent (`Flight::is_spent`, at or below `MIN_SPEED`) or leaves the `FlightBounds` around the spawns. Strike and near-miss handling is one path (`land_segment`), shared with Simple, the hitscan mode that lands the player's shot on the tick it is fired along a ray as long as the bounds. Simple is the `simple` console command and persists as `simple` under `[debug]`. Gravity on rounds is the `round_gravity` console scale (`GravityScale`, up to `MAX_GRAVITY_SCALE`, times `STANDARD_GRAVITY`); world gravity is unchanged. Rationale: [ADR-0033](../../_todo/adr/0033-rounds-fly-as-stepped-segments.md).
+
+Every ray or round segment goes through one route:
 
 1. `ShotRay` from the eye with range and the shooter's `CharacterHandle` as `ignore`.
 2. `PhysicsWorld::cast_ray` returns the first collider hit and its `HitTag`.

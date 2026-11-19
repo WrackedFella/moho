@@ -45,3 +45,4 @@ ADRs written before ENG-F27 (2026-10-15) keep the crate names of their day. Read
 | [0030](0030-skinned-meshes-are-skinned-once-per-frame.md) | Skinned meshes are skinned once per frame by a compute pass into a vertex arena; every geometry pass draws the arena like an ordinary mesh | Accepted on merge of #701 |
 | [0031](0031-effects-are-engine-presentation-state-placed-by-handle.md) | Effects are engine presentation state placed by handle: retained, frame-time, drawn unshadowed; the seam list gains `Effects` | Proposed; amends 0012 |
 | [0032](0032-level-switch-is-a-pinned-command.md) | A level switch is a command carrying the level name and a SHA-256 content hash; a replay or peer whose file hashes differently refuses | Accepted |
+| [0033](0033-rounds-fly-as-stepped-segments.md) | A fired round is sim data stepped once a tick as a cast segment under gravity and drag; amends 0015 §3 | Accepted; amends 0015 |
