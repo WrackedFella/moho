@@ -395,6 +395,36 @@ mod tests {
     }
 
     #[test]
+    fn reach_is_the_diagonal_when_the_box_is_centred_on_the_origin() {
+        let bounds = FlightBounds::around(
+            [Vec3::new(-3.0, -4.0, -12.0), Vec3::new(3.0, 4.0, 12.0)],
+            0.0,
+        );
+
+        assert_eq!(bounds.reach(), 26.0);
+    }
+
+    #[test]
+    fn reach_is_the_diagonal_when_the_box_lies_in_negative_coordinates() {
+        let bounds = FlightBounds::around(
+            [Vec3::new(-6.0, -8.0, -24.0), Vec3::new(-3.0, -4.0, -12.0)],
+            0.0,
+        );
+
+        assert_eq!(bounds.reach(), 13.0);
+    }
+
+    #[test]
+    fn reach_grows_by_the_margin_on_every_side() {
+        let bounds = FlightBounds::around(
+            [Vec3::new(-2.0, -2.0, -2.0), Vec3::new(-2.0, -2.0, -2.0)],
+            1.0,
+        );
+
+        assert_eq!(bounds.reach(), 12.0_f32.sqrt());
+    }
+
+    #[test]
     fn a_fired_flight_has_the_muzzle_speed_along_a_non_unit_direction() {
         let origin = Vec3::new(1.0, 2.0, 3.0);
 
