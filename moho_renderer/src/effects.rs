@@ -890,6 +890,93 @@ mod tests {
     }
 
     #[test]
+    fn each_built_in_mesh_has_its_own_id_counting_up_from_the_reserved_base() {
+        assert_eq!(MeshKind::Streak.id(), WorldMeshId(EFFECT_MESH_IDS_FROM));
+        assert_eq!(MeshKind::Flash.id(), WorldMeshId(EFFECT_MESH_IDS_FROM + 1));
+        assert_eq!(MeshKind::Mark.id(), WorldMeshId(EFFECT_MESH_IDS_FROM + 2));
+    }
+
+    /// Inputs with exactly one of position, roll and size bad, the rest valid.
+    fn single_bad_input_cases() -> Vec<(Vec3, f32, f32)> {
+        let mut cases = Vec::new();
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            cases.push((Vec3::new(bad, 1.0, 2.0), 0.5, 1.0));
+            cases.push((Vec3::new(1.0, 2.0, bad), 0.5, 1.0));
+            cases.push((Vec3::new(1.0, 2.0, 3.0), bad, 1.0));
+            cases.push((Vec3::new(1.0, 2.0, 3.0), 0.5, bad));
+        }
+        cases
+    }
+
+    #[test]
+    fn a_flash_with_exactly_one_non_finite_input_is_refused() {
+        for (at, roll, size) in single_bad_input_cases() {
+            let mut rig = Rig::new();
+
+            rig.effects.flash(
+                at,
+                roll,
+                FlashStyle {
+                    size,
+                    material: 0,
+                    lifetime: Duration::from_secs(1),
+                },
+            );
+
+            assert_eq!(rig.effects.live(), 0, "at {at} roll {roll} size {size}");
+            assert!(rig.frame(EYE).is_empty(), "at {at} roll {roll} size {size}");
+        }
+    }
+
+    #[test]
+    fn a_mark_with_exactly_one_non_finite_input_is_refused() {
+        for (at, roll, size) in single_bad_input_cases() {
+            let mut rig = Rig::new();
+
+            rig.effects.mark(
+                at,
+                Vec3::Y,
+                roll,
+                MarkStyle {
+                    size,
+                    material: 0,
+                    lifetime: Duration::from_secs(1),
+                    fade: Duration::from_millis(100),
+                },
+            );
+
+            assert_eq!(rig.effects.live(), 0, "at {at} roll {roll} size {size}");
+            assert!(rig.frame(EYE).is_empty(), "at {at} roll {roll} size {size}");
+        }
+    }
+
+    #[test]
+    fn a_mark_with_a_zero_or_non_finite_normal_is_refused() {
+        for normal in [
+            Vec3::ZERO,
+            Vec3::new(f32::NAN, 1.0, 0.0),
+            Vec3::new(0.0, f32::INFINITY, 0.0),
+        ] {
+            let mut rig = Rig::new();
+
+            rig.effects.mark(
+                Vec3::new(1.0, 2.0, 3.0),
+                normal,
+                0.5,
+                MarkStyle {
+                    size: 1.0,
+                    material: 0,
+                    lifetime: Duration::from_secs(1),
+                    fade: Duration::from_millis(100),
+                },
+            );
+
+            assert_eq!(rig.effects.live(), 0, "normal {normal}");
+            assert!(rig.frame(EYE).is_empty(), "normal {normal}");
+        }
+    }
+
+    #[test]
     fn quality_above_four_clamps_to_ultra() {
         for quality in [5, 9, u32::MAX] {
             let mut rig = Rig::new();
