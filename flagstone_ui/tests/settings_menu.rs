@@ -586,6 +586,117 @@ fn egui_lone_modifier_while_listening_binds_the_row() {
     assert!(!menu.is_listening());
 }
 
+/// Renders one frame with the given modifier bits held (Ctrl 1, Shift 2, Alt 4).
+fn render_with_mods(menu: &mut SettingsMenu, mods: u8) {
+    let modifiers = egui::Modifiers {
+        ctrl: mods & 1 != 0,
+        shift: mods & 2 != 0,
+        alt: mods & 4 != 0,
+        ..Default::default()
+    };
+
+    render_frame(menu, vec![egui::Event::ModifiersChanged(modifiers)]);
+}
+
+fn all_staged(menu: &SettingsMenu) -> Vec<Vec<Binding>> {
+    (0..ROW_ACTIONS.len())
+        .map(|i| menu.get_staged_binding(i).to_vec())
+        .collect()
+}
+
+/// Move Forward is rebound, Shift (held by Sprint) opens the prompt, then Alt is
+/// pressed after releasing Shift.
+fn prompt_open_then_stray_alt() -> SettingsMenu {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(0);
+    render_with_mods(&mut menu, 2);
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+    render_with_mods(&mut menu, 0);
+    render_with_mods(&mut menu, 4);
+    menu
+}
+
+/// A conflicting lone modifier names the key and its holder and ends listening.
+#[test]
+fn conflicting_key_names_key_and_holder() {
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(0);
+
+    render_with_mods(&mut menu, 2);
+
+    assert_eq!(menu.conflict_modal().conflict_key_name(), "Sprint");
+    assert_eq!(menu.conflict_modal().conflict_binding_desc(), "Shift");
+    assert!(!menu.is_listening());
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(0);
+
+    render_frame(&mut menu, vec![key_event(egui::Key::S, true)]);
+
+    assert_eq!(menu.conflict_modal().conflict_key_name(), "Move Back");
+    assert_eq!(menu.conflict_modal().conflict_binding_desc(), "S");
+    assert!(!menu.is_listening());
+}
+
+/// Keys pressed while the conflict prompt is open bind nothing.
+#[test]
+fn keys_pressed_while_prompt_open_bind_nothing() {
+    let menu = prompt_open_then_stray_alt();
+
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::W), pad_stick(StickDir::Up)]
+    );
+    assert!(
+        all_staged(&menu)
+            .iter()
+            .all(|row| !row.contains(&Binding::key(Key::Alt))),
+        "Alt must not be bound"
+    );
+    assert!(!menu.is_listening());
+}
+
+/// Confirming applies only the prompted key, not a key pressed while the prompt was open.
+#[test]
+fn confirm_after_stray_key_applies_only_prompted_key() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = prompt_open_then_stray_alt();
+
+    Screen::on_modal_confirm(&mut menu);
+
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::Shift), pad_stick(StickDir::Up)]
+    );
+    assert_eq!(
+        menu.get_staged_binding(6),
+        [Binding::pad(PadInput::Button(PadButton::LeftThumb))]
+    );
+    assert!(
+        all_staged(&menu)
+            .iter()
+            .all(|row| !row.contains(&Binding::key(Key::Alt))),
+        "Alt must not be bound"
+    );
+}
+
+/// Cancelling after a stray key leaves every binding as it was and nothing listening.
+#[test]
+fn cancel_after_stray_key_changes_nothing() {
+    use flagstone_ui::screens::Screen;
+
+    let before = all_staged(&SettingsMenu::with_prefs(Prefs::default()));
+    let mut menu = prompt_open_then_stray_alt();
+
+    Screen::on_modal_cancel(&mut menu);
+
+    assert_eq!(all_staged(&menu), before);
+    assert!(!menu.is_listening());
+}
+
 /// Rebinding a row replaces its plain key and keeps its hold bindings, in the settings text too.
 #[test]
 fn rebinding_sprint_keeps_its_hold_bindings() {
