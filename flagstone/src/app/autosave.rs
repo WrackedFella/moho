@@ -20,33 +20,47 @@ impl AutosaveSchedule {
 
     /// Counts one simulation tick of play.
     pub fn tick(&mut self) {
-        todo!("count the tick")
+        self.ticks_since_save = self.ticks_since_save.saturating_add(1);
     }
 
     /// Records that the world changed since the last save.
     pub fn mark_edited(&mut self) {
-        todo!("record the edit")
+        self.edited = true;
     }
 
     /// Whether the world is edited and a full interval has passed since the last save.
     pub fn due(&self) -> bool {
-        todo!("edited and interval elapsed")
+        self.edited && self.ticks_since_save >= self.interval_ticks
+    }
+
+    /// Records a failed save: the clock restarts so the retry waits a full interval, and the
+    /// edit stays pending.
+    pub fn save_failed(&mut self) {
+        self.ticks_since_save = 0;
     }
 
     /// Records a successful save: the clock and the edit flag both restart.
     pub fn saved(&mut self) {
-        todo!("reset both")
+        self.ticks_since_save = 0;
+        self.edited = false;
     }
 }
 
 /// Save the current scene to `saves_dir/scene.bin`, creating the directory
 /// if needed.
+///
+/// Writes nothing when no world is loaded (no `generation.last_spec`), so leaving
+/// from the start menu cannot overwrite an earlier save with an empty world.
 pub fn auto_save_on_shutdown(
     app: &mut crate::App,
     clock: &moho_app::GameClock,
     saves_dir: &std::path::Path,
     lights: &[moho_render_api::LightDesc],
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(mut spec) = app.generation.last_spec.clone() else {
+        tracing::debug!("No world loaded; autosave skipped");
+        return Ok(());
+    };
     tracing::info!("Auto-saving on shutdown...");
 
     std::fs::create_dir_all(saves_dir)?;
@@ -57,18 +71,6 @@ pub fn auto_save_on_shutdown(
 
     let scene_bytes =
         flagstone_game::scene_persistence::encode_to_bytes(&app.entities, camera_data, lights)?;
-    let mut spec =
-        app.generation
-            .last_spec
-            .clone()
-            .unwrap_or(flagstone_game::scene_builders::WorldSpec {
-                name: "autosave".to_string(),
-                seed: None,
-                size_xz: 64,
-                day_length_seconds: 600.0,
-                night_length_seconds: 420.0,
-                initial_time_of_day: 6.0,
-            });
     spec.initial_time_of_day = clock.time_of_day();
     let block_records: Vec<crate::save::BlockRecord> = app
         .light_system

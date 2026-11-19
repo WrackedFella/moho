@@ -301,9 +301,26 @@ impl App {
             self.apply_pending_render(r);
             r.all_lights_as_descs()
         });
-        if let Err(e) = self.auto_save_on_shutdown(clock, &lights) {
-            tracing::warn!(error = %e, "Failed to auto-save on exit");
+        let started = std::time::Instant::now();
+        match self.auto_save_on_shutdown(clock, &lights) {
+            Ok(()) => {
+                self.autosave_schedule.saved();
+                tracing::debug!(
+                    duration_ms = started.elapsed().as_millis() as u64,
+                    "Autosave finished"
+                );
+            }
+            Err(e) => {
+                self.autosave_schedule.save_failed();
+                tracing::warn!(error = %e, "Failed to auto-save");
+            }
         }
+    }
+
+    /// Autosave ticks per interval at the simulation rate.
+    fn autosave_interval_ticks(&self) -> u64 {
+        let ticks = self.autosave_interval.as_millis() * u128::from(flagstone_game::TICK_HZ) / 1000;
+        u64::try_from(ticks).unwrap_or(u64::MAX)
     }
 
     fn handle_window_event(&mut self, ctx: &mut moho_app::EventContext<'_>, event: WindowEvent) {
@@ -444,6 +461,11 @@ impl moho_app::Game for App {
         frame_processor.update_light_system(self);
         frame_processor.publish_frame_end(self, frame_number);
 
+        if self.game_state == GameState::Playing {
+            self.autosave_schedule.interval_ticks = self.autosave_interval_ticks();
+            self.autosave_schedule.tick();
+        }
+
         event_processor.process_ui_events(self, ctx.clock);
         event_processor.process_graphics_events(self, ctx.clock);
         event_processor.process_world_events(self);
@@ -514,6 +536,10 @@ impl moho_app::Game for App {
             self.main_menu_requested = false;
             self.autosave(ctx.clock(), ctx.renderer());
             self.show_menu();
+        }
+
+        if self.autosave_schedule.due() {
+            self.autosave(ctx.clock(), ctx.renderer());
         }
 
         let clock = ctx.clock();
