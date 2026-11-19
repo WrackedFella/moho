@@ -1,5 +1,6 @@
-//! Engine-drawn effects, placed by handle: a game starts one, places it every frame and
-//! ends it; the engine owns its life, fade, cap and unshadowed draw.
+//! Engine-drawn effects. A streak is placed by handle: a game starts it, places it every
+//! frame and ends it. A flash or a mark is spawned at a point and forgotten. The engine owns
+//! each one's life, fade, cap and unshadowed draw.
 
 use crate::WorldMeshes;
 use glam::{Affine3A, Quat, Vec3};
@@ -2043,8 +2044,42 @@ mod tests {
             .mark(Vec3::new(99.0, 0.0, 0.0), Vec3::ZERO, 0.0, mark_style(0.2));
         let drawn = rig.frame(EYE);
 
-        assert!(rig.effects.live() <= 32, "live {}", rig.effects.live());
-        assert!(drawn.len() <= 32);
+        assert_eq!(rig.effects.live(), 32);
+        assert_eq!(drawn.len(), 31);
+        assert_eq!(mark_xs(&drawn), (1..32).collect::<Vec<i32>>());
+    }
+
+    #[test]
+    fn an_invalid_mark_is_stored_and_counts_as_live_though_it_never_draws() {
+        for normal in [Vec3::ZERO, Vec3::new(f32::NAN, 0.0, 1.0)] {
+            let mut rig = Rig::new();
+            rig.effects.set_quality(1);
+
+            rig.effects.mark(Vec3::X, normal, 0.0, mark_style(0.2));
+            let drawn = rig.frame(EYE);
+
+            assert_eq!(rig.effects.live(), 1, "normal {normal}");
+            assert!(drawn.is_empty(), "normal {normal}");
+        }
+    }
+
+    #[test]
+    fn a_streak_begun_at_a_full_cap_of_marks_is_inert_and_evicts_nothing() {
+        let mut rig = Rig::new();
+        rig.effects.set_quality(1);
+        for i in 0..32 {
+            rig.effects
+                .mark(Vec3::new(i as f32, 0.0, 0.0), Vec3::Y, 0.0, mark_style(0.2));
+        }
+
+        let handle = rig.effects.begin_streak(style(2.0, 0.1));
+        rig.effects
+            .place_streak(handle, Vec3::new(500.0, 50.0, 0.0), Vec3::X);
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(rig.effects.live(), 32);
+        assert_eq!(drawn.len(), 32, "no streak drawn");
+        assert_eq!(mark_xs(&drawn), (0..32).collect::<Vec<i32>>());
     }
 
     #[test]
