@@ -178,7 +178,7 @@ flowchart LR
 | Voxel grid, light | `flagstone_voxel::LightSystem` (owns the grid) |
 | Chunk meshes | `ChunkStore` in `flagstone_voxel`; the renderer holds its own copy as `WorldMeshes` ([rendering](rendering.md#2-world-geometry)) |
 | Actors (spheres, cubes) | `ActorStore` in `flagstone_game` |
-| Player orders (mining marks) | `Colony` in `flagstone_game::colony`, independent of any pawn; the binary holds it on `App` |
+| Player orders (mining marks), colony stock | `Colony` in `flagstone_game::colony`, independent of any pawn; the binary holds it on `App`. `stock` totals what pawns dig, shown on the strategy HUD. An idle pawn in the isometric view runs a job loop (`flagstone_game::jobs`: pick a marked block, walk, dig) over walking routes from `flagstone_game::routing` (a bounded search over standable cells); the binary applies each `JobAction` per tick through the character controller or `Pawn::dig`, then publishes the dig's events and `flagstone/assets/dig.wav` |
 | Time of day | `moho_app::GameClock`, owned by the loop and advanced after each `Game::tick` |
 | App mode | `flagstone_ui::GameState` ([input-and-state](input-and-state.md#3-gamestate)) |
 | GPU resources | `moho_renderer`; game types reach it only through `moho_render_api` ([rendering](rendering.md)) |
