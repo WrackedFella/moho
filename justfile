@@ -59,7 +59,6 @@ deny:
     expect_fail parry-missing parry3d rapier3d
     expect_fail rapier-split rapier3d parry3d
     expect_fail rapier-absent rapier3d parry3d
-    # A workspace with the feature on both crates must pass.
     if ! out="$(MOHO_PHYSICS_METADATA=scripts/fixtures/physics-features-ok.metadata.json scripts/check-physics-features.sh 2>&1)"; then
         echo "check-physics-features rejected physics-features-ok; got: $out" >&2
         exit 1
