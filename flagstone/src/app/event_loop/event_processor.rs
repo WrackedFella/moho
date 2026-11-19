@@ -8,24 +8,54 @@
 
 use crate::input_event::InputEvent;
 use crate::{App, RenderRequest};
+use flagstone_game::pawn::{MINE_REACH, MineOutcome};
 use flagstone_voxel::{BlockChangeReason, CRYSTAL_MATERIAL_ID, VoxelChunk, WorldEvent};
 use moho_core::events::{AudioEvent, GraphicsEvent, UiEvent};
 use moho_render_api::{Marker, MarkerId};
 use std::collections::HashSet;
 
+/// Announces a mined block's removal and the chunks whose meshes it changes, so marks drop
+/// and chunks remesh the same way for the player's mining and a pawn's job.
+pub(crate) fn publish_block_removal(
+    event_bus: &moho_core::EventBus,
+    chunk_size: i32,
+    outcome: &MineOutcome,
+) {
+    event_bus.publish(WorldEvent::BlockRemoved {
+        position: outcome.block_pos,
+        old_material_id: outcome.old_material_id,
+        reason: BlockChangeReason::Player,
+    });
+    for chunk_pos in flagstone_voxel::chunks_meshed_from(outcome.block_pos, chunk_size) {
+        event_bus.publish(WorldEvent::ChunkMeshDirty {
+            chunk_pos,
+            terrain_dirty: true,
+            structure_dirty: true,
+        });
+    }
+}
+
+/// Plays the dig cue at the centre of the block a pawn's job removed.
+pub(crate) fn publish_dig_cue(event_bus: &moho_core::EventBus, block: flagstone_voxel::BlockPos) {
+    event_bus.publish(AudioEvent::PlaySoundAt {
+        path: DIG_SOUND.to_string(),
+        volume: DIG_VOLUME,
+        position: block.as_vec3() + glam::Vec3::splat(0.5),
+    });
+}
+
 /// Cue played when a mined block yields a resource.
 const PICKUP_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/pickup.wav");
 const PICKUP_VOLUME: f32 = 0.6;
+/// Cue played at a block a pawn's job digs out.
+const DIG_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/dig.wav");
+const DIG_VOLUME: f32 = 0.6;
 
 // ── Spawn / interaction constants ──────────────────────────────────────
 const MOUSE_WHEEL_ZOOM_FACTOR: f32 = 0.5;
 const SPAWN_RAYCAST_MAX_DISTANCE: f32 = 100.0;
 const SPAWN_NORMAL_OFFSET: f32 = 0.5;
 const SPAWN_FALLBACK_DISTANCE: f32 = 5.0;
-/// Maximum reach for the player's direct mining action — shorter than
-/// `SPAWN_RAYCAST_MAX_DISTANCE`, which is a debug-console placement aid, not
-/// a gameplay reach limit.
-const MINE_MAX_DISTANCE: f32 = 8.0;
 const DEFAULT_POINT_LIGHT_INTENSITY: f32 = 5.0;
 const DEFAULT_POINT_LIGHT_RANGE: f32 = 20.0;
 /// Console markers' colour: translucent amber, linear RGBA with straight alpha.
@@ -233,29 +263,15 @@ impl EventProcessor {
         };
         let grid = light_system.grid_mut();
 
-        let Some(outcome) = app.pawn.mine(grid, camera_pos, forward, MINE_MAX_DISTANCE) else {
+        let Some(outcome) = app.pawn.mine(grid, camera_pos, forward, MINE_REACH) else {
             tracing::debug!(
-                distance = MINE_MAX_DISTANCE,
+                distance = MINE_REACH,
                 "Mine attempt found nothing solid within range"
             );
             return;
         };
 
-        let dirty_chunks: Vec<_> =
-            flagstone_voxel::chunks_meshed_from(outcome.block_pos, grid.chunk_size()).collect();
-
-        app.event_bus.publish(WorldEvent::BlockRemoved {
-            position: outcome.block_pos,
-            old_material_id: outcome.old_material_id,
-            reason: BlockChangeReason::Player,
-        });
-        for chunk_pos in dirty_chunks {
-            app.event_bus.publish(WorldEvent::ChunkMeshDirty {
-                chunk_pos,
-                terrain_dirty: true,
-                structure_dirty: true,
-            });
-        }
+        publish_block_removal(&app.event_bus, grid.chunk_size(), &outcome);
 
         if let Some(y) = outcome.yield_ {
             app.event_bus.publish(AudioEvent::PlaySound {
