@@ -317,7 +317,6 @@ impl App {
         }
     }
 
-    /// Autosave ticks per interval at the simulation rate.
     fn autosave_interval_ticks(&self) -> u64 {
         let ticks = self.autosave_interval.as_millis() * u128::from(flagstone_game::TICK_HZ) / 1000;
         u64::try_from(ticks).unwrap_or(u64::MAX)
