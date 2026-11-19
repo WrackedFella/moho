@@ -1,0 +1,33 @@
+{
+  "packages": [
+    {
+      "name": "rapier3d",
+      "version": "0.22.0",
+      "id": "registry+https://github.com/rust-lang/crates.io-index#rapier3d@0.22.0"
+    },
+    {
+      "name": "parry3d",
+      "version": "0.17.6",
+      "id": "registry+https://github.com/rust-lang/crates.io-index#parry3d@0.17.6"
+    }
+  ],
+  "workspace_members": [],
+  "resolve": {
+    "nodes": [
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#rapier3d@0.22.0",
+        "dependencies": [
+          "registry+https://github.com/rust-lang/crates.io-index#parry3d@0.17.6"
+        ],
+        "features": ["default", "dim3", "enhanced-determinism", "f32"]
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#parry3d@0.17.6",
+        "dependencies": [],
+        "features": ["default", "dim3", "enhanced-determinism", "f32"]
+      }
+    ],
+    "root": null
+  },
+  "version": 1
+}

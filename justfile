@@ -48,6 +48,34 @@ deny:
         echo "check-physics-features did not name rapier3d for physics-features-missing; got: $out" >&2
         exit 1
     fi
+    # expect_fail <fixture> <crate that must be named> [crate that must not be named]
+    expect_fail() {
+        local fixture="scripts/fixtures/physics-features-$1.metadata.json" out
+        if out="$(MOHO_PHYSICS_METADATA="$fixture" scripts/check-physics-features.sh 2>&1)"; then
+            echo "check-physics-features accepted physics-features-$1" >&2
+            exit 1
+        fi
+        if ! grep -q "$2" <<<"$out"; then
+            echo "check-physics-features did not name $2 for physics-features-$1; got: $out" >&2
+            exit 1
+        fi
+        if [[ -n "${3:-}" ]] && grep -q "$3" <<<"$out"; then
+            echo "check-physics-features wrongly named $3 for physics-features-$1; got: $out" >&2
+            exit 1
+        fi
+    }
+    expect_fail parry-missing parry3d rapier3d
+    expect_fail rapier-split rapier3d parry3d
+    expect_fail rapier-absent rapier3d parry3d
+    # A workspace with the feature on both crates must pass.
+    if ! out="$(MOHO_PHYSICS_METADATA=scripts/fixtures/physics-features-ok.metadata.json scripts/check-physics-features.sh 2>&1)"; then
+        echo "check-physics-features rejected physics-features-ok; got: $out" >&2
+        exit 1
+    fi
+    if [[ "$out" != "physics-features: OK" ]]; then
+        echo "check-physics-features did not print 'physics-features: OK' for physics-features-ok; got: $out" >&2
+        exit 1
+    fi
 
 # LCOV coverage report at lcov.info.
 cov:
