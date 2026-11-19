@@ -103,8 +103,26 @@ impl Pawn {
         dir: Vec3,
         reach: f32,
     ) -> Option<MineOutcome> {
-        let _ = (grid, origin, dir, reach);
-        todo!("dig: the tool gate, surface raycast and removal, yield computed")
+        self.equipped_tool?;
+
+        // Aims at the rendered isosurface, not the raw voxel cubes — see
+        // `raycast_surface`'s docs for why the cube-stepping raycast misses
+        // most of what the player can actually see.
+        let hit = raycast::raycast_surface(grid, origin, dir, reach)?;
+        // material_at is guaranteed Some here — raycast only stops on solid voxels.
+        let old_material_id = grid.material_at(hit.block_pos)?;
+        let resource_id = grid.resource_at(hit.block_pos);
+        grid.mutator().remove(hit.block_pos);
+
+        Some(MineOutcome {
+            block_pos: hit.block_pos,
+            old_material_id,
+            distance: hit.distance,
+            yield_: resource_id.map(|resource_id| ResourceYield {
+                resource_id,
+                amount: 1,
+            }),
+        })
     }
 
     /// Raycast from `origin` along `dir`, break the first solid voxel within
@@ -122,32 +140,11 @@ impl Pawn {
         dir: Vec3,
         max_distance: f32,
     ) -> Option<MineOutcome> {
-        self.equipped_tool?;
-
-        // Aims at the rendered isosurface, not the raw voxel cubes — see
-        // `raycast_surface`'s docs for why the cube-stepping raycast misses
-        // most of what the player can actually see.
-        let hit = raycast::raycast_surface(grid, origin, dir, max_distance)?;
-        // material_at is guaranteed Some here — raycast only stops on solid voxels.
-        let old_material_id = grid.material_at(hit.block_pos)?;
-        let resource_id = grid.resource_at(hit.block_pos);
-        grid.mutator().remove(hit.block_pos);
-
-        let yield_ = resource_id.map(|resource_id| {
-            let yield_ = ResourceYield {
-                resource_id,
-                amount: 1,
-            };
+        let outcome = self.dig(grid, origin, dir, max_distance)?;
+        if let Some(yield_) = outcome.yield_ {
             self.deposit(yield_);
-            yield_
-        });
-
-        Some(MineOutcome {
-            block_pos: hit.block_pos,
-            old_material_id,
-            distance: hit.distance,
-            yield_,
-        })
+        }
+        Some(outcome)
     }
 }
 
