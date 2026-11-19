@@ -1,6 +1,9 @@
 //! Walking routes over the voxel ground: where a pawn can stand and how it gets from one
 //! standing cell to another.
 
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
+
 use flagstone_voxel::{BlockPos, VoxelGrid};
 use glam::Vec3;
 
@@ -8,25 +11,112 @@ use glam::Vec3;
 pub const ROUTE_NODE_BUDGET: usize = 4096;
 
 /// Whether a pawn's feet can be in `cell`: ground below and three cells of air from the feet up.
-pub fn standable(_grid: &VoxelGrid, _cell: BlockPos) -> bool {
-    todo!()
+pub fn standable(grid: &VoxelGrid, cell: BlockPos) -> bool {
+    grid.is_solid_at(cell - BlockPos::Y) && clear_above(grid, cell, 3)
+}
+
+/// Whether the `count` cells from `cell` upward are air.
+fn clear_above(grid: &VoxelGrid, cell: BlockPos, count: i32) -> bool {
+    (0..count).all(|up| !grid.is_solid_at(cell + BlockPos::Y * up))
 }
 
 /// The cell holding `feet`.
-pub fn feet_cell(_feet: Vec3) -> BlockPos {
-    todo!()
+pub fn feet_cell(feet: Vec3) -> BlockPos {
+    feet.floor().as_ivec3()
+}
+
+const HORIZONTAL: [BlockPos; 4] = [BlockPos::X, BlockPos::NEG_X, BlockPos::Z, BlockPos::NEG_Z];
+
+/// The standable cells one horizontal step from `cell`, at the same height or one up or down.
+fn neighbours(grid: &VoxelGrid, cell: BlockPos) -> impl Iterator<Item = BlockPos> + '_ {
+    let can_climb = clear_above(grid, cell, 4);
+    HORIZONTAL.into_iter().filter_map(move |step| {
+        let side = cell + step;
+        [
+            Some(side),
+            can_climb.then_some(side + BlockPos::Y),
+            Some(side - BlockPos::Y),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|&candidate| standable(grid, candidate))
+    })
+}
+
+fn manhattan(a: BlockPos, b: BlockPos) -> i32 {
+    let delta = (a - b).abs();
+    delta.x + delta.y + delta.z
 }
 
 /// The cells to walk through, not including `start`, from `start` to the nearest cell
 /// `is_goal` accepts; `None` when none is reachable within `budget` expansions.
+///
+/// A `start` that is not standable falls back to the cell above or below it. `toward`
+/// only orders the search; it does not decide which goal cell is accepted.
 pub fn route(
-    _grid: &VoxelGrid,
-    _start: BlockPos,
-    _is_goal: impl Fn(BlockPos) -> bool,
-    _toward: BlockPos,
-    _budget: usize,
+    grid: &VoxelGrid,
+    start: BlockPos,
+    is_goal: impl Fn(BlockPos) -> bool,
+    toward: BlockPos,
+    budget: usize,
 ) -> Option<Vec<BlockPos>> {
-    todo!()
+    let start = [start, start + BlockPos::Y, start - BlockPos::Y]
+        .into_iter()
+        .find(|&cell| standable(grid, cell))?;
+
+    // Ordered by (f, g, insertion order) so equal-cost routes resolve the same way every time.
+    let mut open = BinaryHeap::new();
+    let mut best: HashMap<BlockPos, (i32, Option<BlockPos>)> = HashMap::new();
+    let mut inserted = 0_u32;
+    best.insert(start, (0, None));
+    open.push(Reverse((
+        manhattan(start, toward),
+        0,
+        inserted,
+        start.to_array(),
+    )));
+
+    let mut expansions = 0;
+    while let Some(Reverse((_, g, _, cell))) = open.pop() {
+        let cell = BlockPos::from_array(cell);
+        if best.get(&cell).is_some_and(|&(known, _)| g > known) {
+            continue;
+        }
+        if is_goal(cell) {
+            return Some(walk_back(&best, cell));
+        }
+        expansions += 1;
+        if expansions > budget {
+            return None;
+        }
+        for next in neighbours(grid, cell) {
+            let next_g = g + 1;
+            if best.get(&next).is_some_and(|&(known, _)| known <= next_g) {
+                continue;
+            }
+            best.insert(next, (next_g, Some(cell)));
+            inserted += 1;
+            open.push(Reverse((
+                next_g + manhattan(next, toward),
+                next_g,
+                inserted,
+                next.to_array(),
+            )));
+        }
+    }
+    None
+}
+
+/// The cells from the start (excluded) to `end`, following the recorded parents.
+fn walk_back(best: &HashMap<BlockPos, (i32, Option<BlockPos>)>, end: BlockPos) -> Vec<BlockPos> {
+    let mut cells = Vec::new();
+    let mut cell = end;
+    while let Some(&(_, Some(parent))) = best.get(&cell) {
+        cells.push(cell);
+        cell = parent;
+    }
+    cells.reverse();
+    cells
 }
 
 #[cfg(test)]
