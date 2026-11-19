@@ -35,7 +35,7 @@ Switch settings and where runs happen: [`_todo/WORKFLOW.md`](../../_todo/WORKFLO
 | `just check`: fmt, clippy `-D warnings`, nextest, doctests, comment refs | Every agent stop with Rust changes; CI | Stop hook, CI |
 | `just mutants` on changed domain code | Orchestrator step; PR evidence; a survivor fails the PR check | Orchestrator, CI |
 | Weekly full mutation run | Whole workspace, glue included; survivors reviewed, not gated | Scheduled CI |
-| `just deny` | CI | CI |
+| `just deny`: licenses, advisories, sources, and the rapier `enhanced-determinism` feature check | CI | CI |
 | Format on edit | Every Rust edit in a single-repo session | PostToolUse hook |
 | CI matrix | Linux on PRs into `dev`; three OSes on `main` and manual runs | CI |
 | Test review | Domain tests, before implementation | `devflow:test-critic` (or you under `required`) |
