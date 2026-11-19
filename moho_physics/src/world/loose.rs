@@ -1,7 +1,8 @@
 use super::PhysicsWorld;
 use glam::{Quat, Vec3};
 use rapier3d::prelude::{
-    ColliderBuilder, NarrowPhase, Pose, RigidBody, RigidBodyBuilder, RigidBodyHandle,
+    ColliderBuilder, ColliderHandle, ColliderSet, NarrowPhase, Pose, RigidBody, RigidBodyBuilder,
+    RigidBodyHandle,
 };
 use std::f32::consts::FRAC_PI_2;
 
@@ -26,6 +27,9 @@ pub(super) const DEFAULT_REST_SLOPE: f32 = 5.0_f32.to_radians();
 /// leaves such bodies alone, or it would zero the velocity that separates them and freeze
 /// the overlap.
 const DEEP_CONTACT: f32 = 0.005;
+
+/// A contact normal this close to its triangle's normal (dot product, about 8°) is on the face.
+const SAME_FACE_DOT: f32 = 0.99;
 
 /// The collision shape of a loose object.
 ///
@@ -173,6 +177,7 @@ fn shrink(value: f32, amount: f32) -> f32 {
 /// be braked.
 fn on_near_flat_ground(
     narrow_phase: &NarrowPhase,
+    colliders: &ColliderSet,
     body: &RigidBody,
     up: Vec3,
     cos_rest: f32,
@@ -182,13 +187,19 @@ fn on_near_flat_ground(
         for pair in narrow_phase.contact_pairs_with(collider) {
             // Manifold normals point from the first collider to the second; turn them to
             // point into this body.
-            let into_body = if pair.collider1 == collider {
-                -1.0
+            let own_first = pair.collider1 == collider;
+            let into_body = if own_first { -1.0 } else { 1.0 };
+            let (other, other_subshape) = if own_first {
+                (pair.collider2, 1)
             } else {
-                1.0
+                (pair.collider1, 0)
             };
             for manifold in pair.manifolds() {
-                let normal = manifold.data.normal * into_body;
+                let subshape = [manifold.subshape1, manifold.subshape2][other_subshape];
+                let contact_normal = manifold.data.normal;
+                let normal = exact_face_normal(colliders, other, subshape, contact_normal)
+                    .unwrap_or(contact_normal)
+                    * into_body;
                 let near_flat = normal.dot(up) >= cos_rest;
                 for point in &manifold.points {
                     if point.dist < -DEEP_CONTACT && !near_flat {
@@ -200,6 +211,29 @@ fn on_near_flat_ground(
         }
     }
     on_ground
+}
+
+/// The touched trimesh triangle's normal, turned to face the same way as `contact_normal`.
+///
+/// The contact normal of a rounded shape against a triangle is a few tenths of a degree off the
+/// face, and by a different amount depending on which collider was created first. Near the rest
+/// slope that flips the ground test, so a face the contact agrees with is read exactly. `None`
+/// for a collider that is not a trimesh or a contact that is not on the face (an edge).
+fn exact_face_normal(
+    colliders: &ColliderSet,
+    collider: ColliderHandle,
+    subshape: u32,
+    contact_normal: Vec3,
+) -> Option<Vec3> {
+    let found = colliders.get(collider)?;
+    let face = found.shape().as_trimesh()?.triangle(subshape).normal()?;
+    let world = found.position().rotation * face;
+    let facing = if world.dot(contact_normal) < 0.0 {
+        -world
+    } else {
+        world
+    };
+    (facing.dot(contact_normal) > SAME_FACE_DOT).then_some(facing)
 }
 
 /// A loose object as the game reads it back: plain data, no engine handle.
@@ -339,7 +373,9 @@ impl PhysicsWorld {
             let Some(body) = self.rigid_body_set.get(loose.body) else {
                 continue;
             };
-            if body.is_sleeping() || !on_near_flat_ground(&self.narrow_phase, body, up, cos_rest) {
+            if body.is_sleeping()
+                || !on_near_flat_ground(&self.narrow_phase, &self.collider_set, body, up, cos_rest)
+            {
                 continue;
             }
 
@@ -1551,6 +1587,61 @@ mod tests {
             free_travel > 2.0 * braked_travel,
             "unbraked it rolled {free_travel} m against {braked_travel} m braked, {rolled:?}"
         );
+    }
+
+    /// A world whose loose object is spawned before the floor exists, so the object's collider
+    /// handle is the lower one and the solver lists it as the first collider of its contacts.
+    fn spawn_then_floor(spawn: &LooseSpawn, floor: &WorldMesh) -> (PhysicsWorld, LooseId) {
+        let mut world = PhysicsWorld::new();
+        let id = world.spawn_loose(spawn);
+        world.set_world_mesh(WorldMeshId(0), floor, TEST_TAG);
+        (world, id)
+    }
+
+    #[test]
+    fn a_roller_spawned_before_the_floor_comes_to_rest() {
+        let (mut world, id) = spawn_then_floor(&rolling_capsule(2.0), &floor_mesh(0.0));
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        assert!(state.asleep, "the capsule rests, {state:?}");
+        assert!(
+            (0.5..=1.5).contains(&state.position.z),
+            "it stops within 1.5 m after a real roll, z={}",
+            state.position.z
+        );
+    }
+
+    #[test]
+    fn the_rest_slope_decides_for_shapes_spawned_before_the_ground() {
+        type OnSlope = fn(f32) -> LooseSpawn;
+        let rows: [(&str, OnSlope, f32, bool); 4] = [
+            ("capsule", capsule_on_slope, 4.9, true),
+            ("cylinder", cylinder_on_slope, 4.9, true),
+            ("capsule", capsule_on_slope, 5.5, false),
+            ("cylinder", cylinder_on_slope, 10.0, false),
+        ];
+
+        let mut problems = Vec::new();
+        for (name, make, degrees, rests) in rows {
+            let spawn = make(degrees);
+            let rise = 10.0 * degrees.to_radians().tan();
+            let (mut world, id) = spawn_then_floor(&spawn, &slope_mesh(-10.0, -rise, 10.0, rise));
+
+            run(&mut world, 300);
+
+            let state = read(&world, id);
+            let moved = (state.position - spawn.position).length();
+            let held = moved < 0.02 && state.asleep;
+            if rests != held && (rests || moved <= 1.0) {
+                problems.push(format!(
+                    "{name} on {degrees} degrees (rests: {rests}) moved {moved} m, {state:?}"
+                ));
+            }
+        }
+
+        assert!(problems.is_empty(), "{problems:#?}");
     }
 
     #[test]
