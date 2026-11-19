@@ -9,16 +9,17 @@ use moho_input::Action;
 use moho_input::action_map::ActionMap;
 use moho_input::bindings::Input;
 use moho_level::{LevelMarker, NavMesh};
-use moho_physics::{MoveSettings, PhysicsWorld};
+use moho_physics::{CharacterCommand, MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::{
     BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId, LeanTuning, Loadout, Magazine,
     MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
 };
 
-use crate::arena::{Arena, nav_profile};
+use crate::arena::{Arena, ArenaControl, nav_profile};
 use crate::brain::EnemyTuning;
-use crate::input::SearchlightAction;
+use crate::control::ControlAction;
+use crate::input::{SearchlightAction, SearchlightCommand};
 use crate::mode::ArenaMode;
 use crate::sim::SimConfig;
 use crate::tag::SurfaceTag;
@@ -225,13 +226,49 @@ pub(crate) fn arena_with(
     enemies: &[Vec3],
     route: &[Vec3],
 ) -> Arc<Arena> {
+    arena_with_controls(boxes, player, enemies, route, &[])
+}
+
+/// Height of a control post, and so the height its middle is looked at.
+pub(crate) const POST_HEIGHT: f32 = 1.2;
+
+/// The post a control marker at floor point `at` makes: 0.4 x 1.2 x 0.4 m standing on `at`.
+pub(crate) fn control_post(at: Vec3) -> WorldMesh {
+    box_mesh(
+        Vec3::new(at.x - 0.2, at.y, at.z - 0.2),
+        Vec3::new(at.x + 0.2, at.y + POST_HEIGHT, at.z + 0.2),
+    )
+}
+
+/// [`arena_with`] plus one next-wave control post standing on each of `controls`, numbered in
+/// order. The navmesh is built from the floor, the boxes and the posts, as the loader does.
+pub(crate) fn arena_with_controls(
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+    controls: &[Vec3],
+) -> Arc<Arena> {
     let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
     let meshes: Vec<WorldMesh> = std::iter::once(&floor)
         .chain(boxes)
         .map(|&(min, max)| box_mesh(min, max))
         .collect();
-    let nav = Arc::new(NavMesh::build(&meshes, nav_profile()).expect("box worlds build a navmesh"));
+    let controls: Vec<ArenaControl> = controls
+        .iter()
+        .map(|&at| ArenaControl {
+            action: ControlAction::NextWave,
+            mesh: control_post(at),
+        })
+        .collect();
+    let solid: Vec<WorldMesh> = meshes
+        .iter()
+        .cloned()
+        .chain(controls.iter().map(|control| control.mesh.clone()))
+        .collect();
+    let nav = Arc::new(NavMesh::build(&solid, nav_profile()).expect("box worlds build a navmesh"));
     Arc::new(Arena {
+        controls,
         material_names: vec![None; meshes.len()],
         meshes,
         nav,
@@ -284,6 +321,27 @@ impl WaveScore for ArenaMode {
 
     fn score(&self) -> u32 {
         self.tally().expect("this mode runs waves").score
+    }
+}
+
+/// A command that pitches a player facing +z, eye `eye_height` above the floor, down at the
+/// middle of a post standing `distance` m ahead. Pitch persists, so later idle commands keep
+/// looking there.
+pub(crate) fn look_at_post_ahead(eye_height: f32, distance: f32) -> SearchlightCommand {
+    SearchlightCommand {
+        movement: CharacterCommand {
+            pitch_delta: -(eye_height - POST_HEIGHT / 2.0).atan2(distance),
+            ..CharacterCommand::default()
+        },
+        ..SearchlightCommand::default()
+    }
+}
+
+/// A command whose only input is the use press.
+pub(crate) fn use_command() -> SearchlightCommand {
+    SearchlightCommand {
+        use_pressed: true,
+        ..SearchlightCommand::default()
     }
 }
 

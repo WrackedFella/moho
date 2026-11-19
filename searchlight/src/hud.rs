@@ -3,6 +3,7 @@
 use glam::Vec3;
 use searchlight_rules::{BodyPart, MagazineLevel};
 
+use crate::control::ControlAction;
 use crate::mode::Tally;
 use crate::sim::Feedback;
 
@@ -110,6 +111,12 @@ pub fn death_text(dead: bool) -> Option<&'static str> {
     dead.then_some("Dead - press F8 to restart")
 }
 
+/// The prompt for a control the player looks at: the use `key`'s label in brackets, then what
+/// using it does, such as `[F] Next wave`.
+pub fn use_prompt(key: &str, action: ControlAction) -> String {
+    todo!("prompt for {action:?} on {key}")
+}
+
 /// A translucent rectangle in screen pixels, colour as straight RGBA.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Overlay {
@@ -148,6 +155,22 @@ mod tests {
 
         let expected: Vec<&str> = levels.iter().map(|&(_, w)| w).collect();
         assert_eq!(words, expected);
+    }
+
+    #[test]
+    fn the_use_prompt_names_the_key_and_next_wave() {
+        let prompt = use_prompt("F", ControlAction::NextWave);
+
+        assert_eq!(prompt, "[F] Next wave");
+    }
+
+    #[test]
+    fn the_use_prompt_shows_whatever_key_label_it_is_given() {
+        let rebound = use_prompt("Mouse4", ControlAction::NextWave);
+        let unbound = use_prompt("unbound", ControlAction::NextWave);
+
+        assert_eq!(rebound, "[Mouse4] Next wave");
+        assert_eq!(unbound, "[unbound] Next wave");
     }
 }
 

@@ -96,6 +96,7 @@ enum Paint {
     Enemy,
     Struck,
     ArenaMark,
+    Control,
 }
 
 impl RenderMaterial for Paint {
@@ -115,6 +116,7 @@ impl RenderMaterial for Paint {
             Paint::Enemy => ([0.3, 0.4, 0.62], [0.22, 0.3, 0.5], 0.0, 0.0),
             Paint::Struck => ([1.0, 0.15, 0.1], [1.0, 0.15, 0.1], 1.0, 0.0),
             Paint::ArenaMark => ([0.95, 0.9, 0.2], [0.8, 0.75, 0.15], 0.0, 0.0),
+            Paint::Control => ([0.62, 0.62, 0.64], [0.42, 0.43, 0.46], 0.0, 0.0),
         };
         MaterialGpu {
             albedo: [top[0], top[1], top[2], gloss],
@@ -407,6 +409,9 @@ struct Stage {
     /// Times the cursor was captured, windowed or not, so tests can see it.
     #[cfg(test)]
     cursor_captures: u32,
+    /// The use prompt the last frame handed the shell, so tests can see it.
+    #[cfg(test)]
+    prompt: Option<String>,
 }
 
 impl Stage {
@@ -441,6 +446,8 @@ impl Stage {
             cursor_captured: false,
             #[cfg(test)]
             cursor_captures: 0,
+            #[cfg(test)]
+            prompt: None,
         }
     }
 
@@ -2003,6 +2010,181 @@ mod tests {
             (-look_x, -look_y),
         )
         .view_matrix()
+    }
+
+    /// A playing game with a next-wave button straight ahead of the player, who has not yet
+    /// looked at it; `bindings` holds the saved key names.
+    fn game_beside_a_button_with(saved: &BTreeMap<String, String>) -> (SearchlightGame, GameClock) {
+        let arena = crate::test_support::arena_with_controls(
+            &[],
+            Vec3::ZERO,
+            &[],
+            &[],
+            &[Vec3::new(0.0, 0.0, 1.5)],
+        );
+        let mode = ArenaMode::new(
+            arena,
+            test_config(rifle_from(mag(30, 5)), vec![]),
+            wave_tuning(1),
+        );
+        let (bindings, _) = ActionBindings::load(saved);
+        let game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0));
+        (game, GameClock::new(0.0, 1.0, 1.0))
+    }
+
+    fn game_beside_a_button() -> (SearchlightGame, GameClock) {
+        game_beside_a_button_with(&BTreeMap::new())
+    }
+
+    fn look_at_the_button(game: &mut SearchlightGame, clock: &mut GameClock) {
+        let look = crate::test_support::look_at_post_ahead(game.sim().eye_height(), 1.5);
+        tick_with(game, clock, &look);
+    }
+
+    /// The prompt after one more frame.
+    fn prompt_after_a_frame(game: &mut SearchlightGame) -> Option<String> {
+        draw_frame(game, &mut SettingsRenderer::default());
+        game.stage.prompt.clone()
+    }
+
+    #[test]
+    fn the_prompt_shows_while_the_button_is_in_reach() {
+        let (mut game, mut clock) = game_beside_a_button();
+        let before_looking = prompt_after_a_frame(&mut game);
+        look_at_the_button(&mut game, &mut clock);
+
+        let prompt = prompt_after_a_frame(&mut game);
+
+        assert_eq!(before_looking, None);
+        assert_eq!(prompt.as_deref(), Some("[F] Next wave"));
+    }
+
+    #[test]
+    fn the_prompt_names_the_key_the_use_action_is_bound_to() {
+        let saved = BTreeMap::from([("use".to_owned(), "G".to_owned())]);
+        let (mut game, mut clock) = game_beside_a_button_with(&saved);
+        look_at_the_button(&mut game, &mut clock);
+
+        let prompt = prompt_after_a_frame(&mut game);
+
+        let key = moho_input::bindings::Binding::key(Key::G).label();
+        assert_eq!(prompt, Some(format!("[{key}] Next wave")));
+    }
+
+    #[test]
+    fn no_prompt_when_looking_away() {
+        let (mut game, mut clock) = game_beside_a_button();
+        look_at_the_button(&mut game, &mut clock);
+        let showing = prompt_after_a_frame(&mut game);
+        let turn = SearchlightCommand {
+            movement: moho_physics::CharacterCommand {
+                yaw_delta: std::f32::consts::PI,
+                ..moho_physics::CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        tick_with(&mut game, &mut clock, &turn);
+
+        let after_turning = prompt_after_a_frame(&mut game);
+
+        assert_eq!(showing.as_deref(), Some("[F] Next wave"));
+        assert_eq!(after_turning, None);
+    }
+
+    #[test]
+    fn no_prompt_while_dead_or_paused() {
+        let (mut dead, mut clock) = game_beside_a_button();
+        look_at_the_button(&mut dead, &mut clock);
+        let alive = prompt_after_a_frame(&mut dead);
+        dead.mode.sim_mut().kill_player();
+        tick_with(&mut dead, &mut clock, &SearchlightCommand::default());
+        let (mut paused, mut clock) = game_beside_a_button();
+        look_at_the_button(&mut paused, &mut clock);
+        paused.pause();
+        let while_paused = prompt_after_a_frame(&mut paused);
+        paused.enter_play();
+        let resumed = prompt_after_a_frame(&mut paused);
+
+        let while_dead = prompt_after_a_frame(&mut dead);
+
+        assert_eq!(alive.as_deref(), Some("[F] Next wave"));
+        assert_eq!(while_dead, None);
+        assert_eq!(while_paused, None);
+        assert_eq!(resumed.as_deref(), Some("[F] Next wave"));
+    }
+
+    #[test]
+    fn the_use_key_puts_use_pressed_on_the_next_command_only() {
+        let (mut game, _clock) = game_beside_a_button();
+        press(game.input_mut(), SearchlightAction::Use);
+
+        let pressed = game.command();
+        let held = game.command();
+
+        assert!(pressed.use_pressed);
+        assert!(!held.use_pressed);
+    }
+
+    #[test]
+    fn use_pressed_over_a_menu_does_not_reach_the_arena() {
+        let (mut game, _clock) = game_beside_a_button();
+        press(game.input_mut(), SearchlightAction::Use);
+        game.pause();
+
+        let command = game.command();
+
+        assert!(!command.use_pressed);
+    }
+
+    #[test]
+    fn a_control_draws_in_a_paint_of_its_own() {
+        let control = Paint::Control.to_gpu();
+        let others = [
+            Paint::Arena,
+            Paint::ArenaFloor,
+            Paint::Dummy,
+            Paint::Enemy,
+            Paint::Struck,
+            Paint::ArenaMark,
+        ];
+
+        for other in others {
+            let gpu = other.to_gpu();
+
+            assert_ne!(
+                (control.albedo, control.params),
+                (gpu.albedo, gpu.params),
+                "{other:?} looks like a control"
+            );
+            assert_ne!(Paint::Control.dedup_key(), other.dedup_key(), "{other:?}");
+        }
+    }
+
+    #[test]
+    fn control_mesh_ids_share_no_id_with_arena_dummy_or_enemy_meshes() {
+        let controls: Vec<WorldMeshId> = (0..64).map(crate::arena::control_mesh_id).collect();
+        let arena = (0..4096).map(crate::arena::arena_mesh_id);
+        let dummies = (0..6 * 64).map(|n| WorldMeshId(DUMMY_MESH_BASE + n));
+        let enemies = (0..64u16).flat_map(|target| {
+            let rig = EnemyRig {
+                target,
+                shown: false,
+                gun_flash: 0,
+            };
+            (0..ENEMY_MESH_SLOTS as usize).map(move |slot| rig.mesh_id(slot))
+        });
+
+        let clashes: Vec<WorldMeshId> = arena
+            .chain(dummies)
+            .chain(enemies)
+            .filter(|id| controls.contains(id))
+            .collect();
+
+        let mut raw: Vec<u64> = controls.iter().map(|id| id.0).collect();
+        raw.dedup();
+
+        assert_eq!(clashes, vec![]);
+        assert_eq!(raw.len(), controls.len(), "control ids are distinct");
     }
 
     #[test]

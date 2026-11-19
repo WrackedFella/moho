@@ -12,6 +12,9 @@ pub enum SurfaceTag {
     Part { target: u16, part: BodyPart },
     /// One body part of the player.
     Player(BodyPart),
+    /// The placed control numbered by its index in the arena's controls: stops a ray, damages
+    /// nothing.
+    Control(u16),
 }
 
 /// The engine tag does not encode any [`SurfaceTag`].
@@ -52,6 +55,7 @@ impl From<SurfaceTag> for HitTag {
         match tag {
             SurfaceTag::World => HitTag(WORLD),
             SurfaceTag::Player(part) => HitTag(PLAYER_BASE + part_index(part)),
+            SurfaceTag::Control(_) => todo!("encode a control tag"),
             SurfaceTag::Part { target, part } => {
                 HitTag(PART_BASE + ((u32::from(target) << PART_BITS) | part_index(part)))
             }
@@ -101,6 +105,7 @@ mod tests {
             Just(SurfaceTag::World),
             (any::<u16>(), proptest::sample::select(PARTS.to_vec()))
                 .prop_map(|(target, part)| SurfaceTag::Part { target, part }),
+            any::<u16>().prop_map(SurfaceTag::Control),
         ]
     }
 
@@ -139,6 +144,45 @@ mod tests {
 
             prop_assert_ne!(player, HitTag::from(other));
         }
+
+        #[test]
+        fn control_tags_sit_above_every_player_tag(
+            index in any::<u16>(),
+            part in proptest::sample::select(PARTS.to_vec()),
+        ) {
+            let control = HitTag::from(SurfaceTag::Control(index));
+            let player = HitTag::from(SurfaceTag::Player(part));
+
+            prop_assert!(control.0 > player.0, "{control:?} vs {player:?}");
+        }
+
+        #[test]
+        fn control_tags_follow_their_index_in_order(a in any::<u16>(), b in any::<u16>()) {
+            let (first, second) = (
+                HitTag::from(SurfaceTag::Control(a)),
+                HitTag::from(SurfaceTag::Control(b)),
+            );
+
+            prop_assert_eq!(first.0.cmp(&second.0), a.cmp(&b));
+        }
+    }
+
+    #[test]
+    fn the_tag_past_the_last_control_is_rejected() {
+        let last = HitTag::from(SurfaceTag::Control(u16::MAX));
+
+        let decoded = SurfaceTag::try_from(HitTag(last.0 + 1));
+
+        assert_eq!(decoded, Err(UnknownTag(last.0 + 1)));
+    }
+
+    #[test]
+    fn a_control_tag_decodes_as_a_control_not_a_body_part() {
+        let engine = HitTag::from(SurfaceTag::Control(0));
+
+        let decoded = SurfaceTag::try_from(engine);
+
+        assert_eq!(decoded, Ok(SurfaceTag::Control(0)));
     }
 
     #[test]
