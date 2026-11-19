@@ -1713,6 +1713,83 @@ mod tests {
         assert!(sounds.is_empty(), "{sounds:?}");
     }
 
+    fn dig_asset_path() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/dig.wav")
+    }
+
+    #[test]
+    fn a_pawn_dig_publishes_the_removal_and_the_cue() {
+        use crate::app::event_loop::frame_processor::tests::{
+            NEAR, WALK_TICKS, block_centre, is_solid, mark, pawn_world, run_ticks, run_until,
+        };
+        let mut app = pawn_world(|_| {});
+        mark(&mut app, NEAR);
+        let removed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dirty = std::sync::Arc::new(std::sync::Mutex::new(HashSet::new()));
+        let cues = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let removed_sink = std::sync::Arc::clone(&removed);
+        let dirty_sink = std::sync::Arc::clone(&dirty);
+        app.event_bus.subscribe(move |e: &WorldEvent| match e {
+            WorldEvent::BlockRemoved { position, .. } => {
+                removed_sink.lock().unwrap().push(*position);
+            }
+            WorldEvent::ChunkMeshDirty { chunk_pos, .. } => {
+                dirty_sink.lock().unwrap().insert(*chunk_pos);
+            }
+            _ => {}
+        });
+        let cue_sink = std::sync::Arc::clone(&cues);
+        app.event_bus
+            .subscribe(move |e: &moho_core::events::AudioEvent| {
+                cue_sink.lock().unwrap().push(e.clone());
+            });
+
+        let dug = run_until(&mut app, WALK_TICKS, |app| !is_solid(app, NEAR));
+        run_ticks(&mut app, 5);
+
+        assert!(dug.is_some(), "the pawn never dug the block");
+        assert_eq!(*removed.lock().unwrap(), vec![NEAR]);
+        let chunk_size = app
+            .light_system
+            .as_ref()
+            .expect("light system")
+            .grid()
+            .chunk_size();
+        for chunk in flagstone_voxel::chunks_meshed_from(NEAR, chunk_size) {
+            assert!(
+                dirty.lock().unwrap().contains(&chunk),
+                "chunk {chunk:?} is not remeshed"
+            );
+        }
+        let cues = cues.lock().unwrap();
+        let [
+            AudioEvent::PlaySoundAt {
+                path,
+                volume,
+                position,
+            },
+        ] = cues.as_slice()
+        else {
+            panic!("expected one positioned cue, got {cues:?}");
+        };
+        assert_eq!(
+            std::path::Path::new(path),
+            dig_asset_path().as_path(),
+            "the cue's clip"
+        );
+        assert!(*volume > 0.0, "inaudible cue");
+        assert_eq!(*position, block_centre(NEAR));
+    }
+
+    #[test]
+    fn dig_asset_exists() {
+        let path = dig_asset_path();
+
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+
+        assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
+    }
+
     #[test]
     fn pickup_asset_exists() {
         let path = pickup_asset_path();

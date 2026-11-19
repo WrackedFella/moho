@@ -1437,6 +1437,40 @@ mod tests {
         }
     }
 
+    #[test]
+    fn returning_to_first_person_starts_where_the_pawn_walked_to() {
+        use crate::app::event_loop::frame_processor::tests::{
+            FAR, START, WALK_TICKS, character, horizontal_distance, is_solid, mark, pawn_world,
+            run_ticks, run_until,
+        };
+        let mut app = pawn_world(|_| {});
+        mark(&mut app, FAR);
+        run_until(&mut app, WALK_TICKS, |app| !is_solid(app, FAR))
+            .expect("the pawn digs the block");
+        run_ticks(&mut app, 10);
+        let walked_to = app.simulation.position();
+        let yaw = app.simulation.yaw_pitch().0;
+        assert!(
+            horizontal_distance(walked_to, START) > 5.0,
+            "the pawn did not walk: {walked_to:?}"
+        );
+        let key = default_key(&app, StrategyAction::Possess);
+        app.input.actions.key(key, true);
+        app.input.actions.key(key, false);
+
+        let command = Game::command(&mut app);
+        tick_app(&mut app, &command);
+
+        assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+        let started_at = app.simulation.position();
+        assert!(
+            (started_at - walked_to).length() < 0.1,
+            "first person starts at {started_at:?}, the pawn stood at {walked_to:?}"
+        );
+        assert!((app.simulation.yaw_pitch().0 - yaw).abs() < 0.1);
+        assert!((character(&app).position - walked_to).length() < 0.1);
+    }
+
     mod frame {
         use super::*;
         use moho_core::prefs::Prefs;

@@ -561,6 +561,43 @@ mod tests {
     }
 
     #[test]
+    fn strategy_hud_lists_the_colony_totals() {
+        let totals = |is_fps_mode| HudData {
+            colony_stock: vec![(1, 5), (3, 2)],
+            ..strategy_data_in(is_fps_mode)
+        };
+        let ctx = egui::Context::default();
+        let mut hud = RtsHud::new();
+
+        let strategy = settled_frame(&ctx, &mut hud, &totals(false));
+        let drawn = texts(&strategy);
+        let first_person = drawn_texts(&totals(true));
+        let without = drawn_texts(&strategy_data(TOP));
+
+        assert!(drawn.iter().any(|t| t == "R1 ×5"), "{drawn:?}");
+        assert!(drawn.iter().any(|t| t == "R3 ×2"), "{drawn:?}");
+        assert!(
+            rect_of(&strategy, "R1 ×5").min.y < rect_of(&strategy, "R3 ×2").min.y,
+            "the totals are not listed by id: {drawn:?}"
+        );
+        assert!(
+            !first_person.iter().any(|t| t.contains('×')),
+            "totals in first person: {first_person:?}"
+        );
+        assert!(
+            !without.iter().any(|t| t.contains('×')),
+            "totals drawn for an empty stock: {without:?}"
+        );
+    }
+
+    fn strategy_data_in(is_fps_mode: bool) -> HudData {
+        HudData {
+            is_fps_mode,
+            ..strategy_data(TOP)
+        }
+    }
+
+    #[test]
     fn the_pointer_over_the_selection_panel_is_over_egui() {
         let data = selected_data(false);
         let ctx = egui::Context::default();
