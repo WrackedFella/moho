@@ -555,6 +555,62 @@ mod tests {
     }
 
     #[test]
+    fn the_claim_offset_wraps_around_the_candidate_list_when_every_mark_is_unroutable() {
+        let mut rig = walled_rig();
+        for z in 1..=7 {
+            rig.mark(9, 0, z);
+        }
+
+        rig.step();
+        assert_eq!(rig.pawn.claim_offset, 4, "four of seven tried");
+
+        rig.step();
+        assert_eq!(rig.pawn.claim_offset, 1, "4 + 4 wraps to 1 of 7");
+
+        rig.step();
+        assert_eq!(rig.pawn.claim_offset, 5);
+        assert_eq!(rig.job, Job::Idle);
+    }
+
+    #[test]
+    fn a_window_that_wraps_the_list_end_reaches_a_routable_mark_at_the_front() {
+        let mut rig = walled_rig();
+        rig.mark(7, 0, 4);
+        for z in 1..=6 {
+            rig.mark(9, 0, z);
+        }
+        rig.pawn.claim_offset = 5;
+
+        let action = rig.step();
+
+        assert!(
+            matches!(action, JobAction::Dig { block, .. } if block == cell(7, 0, 4)),
+            "the pawn already stands beside it, so it digs at once: {action:?}"
+        );
+        assert_eq!(rig.pawn.claim_offset, 0, "a claim restarts the rotation");
+    }
+
+    #[test]
+    fn a_window_that_wraps_the_list_end_reaches_a_routable_mark_in_the_middle() {
+        let mut rig = walled_rig();
+        for z in 3..=5 {
+            rig.mark(9, 0, z);
+            rig.mark(16, 0, z);
+        }
+        rig.mark(0, 0, 4);
+        rig.pawn.claim_offset = 5;
+
+        rig.step();
+
+        assert_eq!(rig.mined_mark(), None, "window 5, 6, 0, 1 misses index 3");
+        assert_eq!(rig.pawn.claim_offset, 2, "5 + 4 wraps to 2 of 7");
+
+        rig.step();
+
+        assert_eq!(rig.mined_mark(), Some([0, 0, 4]));
+    }
+
+    #[test]
     fn the_pawn_walks_the_waypoints_then_digs_from_the_stand_cell() {
         let mut rig = rig_with_a_near_mark();
 
