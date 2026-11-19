@@ -96,11 +96,18 @@ mod tests {
         marks.iter().map(|(pos, _)| pos).collect()
     }
 
-    fn claim_of(marks: &MineMarks, pos: [i32; 3]) -> Option<Option<PawnId>> {
-        marks
-            .iter()
-            .find(|(marked, _)| *marked == pos)
-            .map(|(_, mark)| mark.claimed_by)
+    #[derive(Debug, PartialEq)]
+    enum Claim {
+        Unmarked,
+        Free,
+        By(PawnId),
+    }
+
+    fn claim_of(marks: &MineMarks, pos: [i32; 3]) -> Claim {
+        match marks.iter().find(|(marked, _)| *marked == pos) {
+            None => Claim::Unmarked,
+            Some((_, mark)) => mark.claimed_by.map_or(Claim::Free, Claim::By),
+        }
     }
 
     #[test]
@@ -115,8 +122,8 @@ mod tests {
 
         assert!(claimed);
         assert_eq!(freed, [[1, 1, 1], [3, 4, 5]], "release keeps the mark");
-        assert_eq!(claim_of(&marks, [3, 4, 5]), Some(None));
-        assert_eq!(claim_of(&marks, [1, 1, 1]), Some(None));
+        assert_eq!(claim_of(&marks, [3, 4, 5]), Claim::Free);
+        assert_eq!(claim_of(&marks, [1, 1, 1]), Claim::Free);
     }
 
     #[test]
@@ -129,7 +136,7 @@ mod tests {
 
         let offered: Vec<[i32; 3]> = marks.unclaimed().collect();
         assert_eq!(offered, [[1, 1, 1]]);
-        assert_eq!(claim_of(&marks, [1, 1, 1]), Some(None));
+        assert_eq!(claim_of(&marks, [1, 1, 1]), Claim::Free);
     }
 
     #[test]
@@ -141,7 +148,7 @@ mod tests {
         let second = marks.claim([3, 4, 5], PawnId(1));
 
         assert!(!second, "a claim is not taken from its pawn");
-        assert_eq!(claim_of(&marks, [3, 4, 5]), Some(Some(PawnId(0))));
+        assert_eq!(claim_of(&marks, [3, 4, 5]), Claim::By(PawnId(0)));
     }
 
     #[test]
@@ -163,7 +170,7 @@ mod tests {
 
         marks.claim([3, 4, 5], PawnId(2));
 
-        assert_eq!(claim_of(&marks, [3, 4, 5]), Some(Some(PawnId(2))));
+        assert_eq!(claim_of(&marks, [3, 4, 5]), Claim::By(PawnId(2)));
     }
 
     #[test]
@@ -175,7 +182,7 @@ mod tests {
         marks.release([8, 8, 8]);
 
         assert_eq!(marked(&marks), [[3, 4, 5]]);
-        assert_eq!(claim_of(&marks, [3, 4, 5]), Some(None));
+        assert_eq!(claim_of(&marks, [3, 4, 5]), Claim::Free);
     }
 
     #[test]
@@ -187,7 +194,7 @@ mod tests {
         marks.toggle([3, 4, 5]);
         marks.toggle([3, 4, 5]);
 
-        assert_eq!(claim_of(&marks, [3, 4, 5]), Some(None));
+        assert_eq!(claim_of(&marks, [3, 4, 5]), Claim::Free);
     }
 
     #[test]
@@ -198,7 +205,7 @@ mod tests {
 
         marks.block_removed([3, 4, 5]);
 
-        assert_eq!(claim_of(&marks, [3, 4, 5]), None);
+        assert_eq!(claim_of(&marks, [3, 4, 5]), Claim::Unmarked);
         assert_eq!(marks.unclaimed().count(), 0);
     }
 

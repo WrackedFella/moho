@@ -292,12 +292,22 @@ mod tests {
         marks.toggle(at);
     }
 
-    fn claimed_by(marks: &MineMarks, at: [i32; 3]) -> Option<Option<PawnId>> {
-        marks
+    #[derive(Debug, PartialEq)]
+    enum Claim {
+        Free,
+        By(PawnId),
+    }
+
+    /// The claim on the mark at `at`; panics when `at` is not marked.
+    fn claimed_by(marks: &MineMarks, at: [i32; 3]) -> Claim {
+        let (_, mark) = marks
             .iter()
             .find(|(pos, _)| *pos == at)
-            .map(|(_, mark)| mark.claimed_by)
+            .unwrap_or_else(|| panic!("no mark at {at:?}"));
+        mark.claimed_by.map_or(Claim::Free, Claim::By)
     }
+
+    type Vanish = fn(&mut VoxelGrid, &mut MineMarks);
 
     fn horizontal(v: Vec3) -> (f32, f32) {
         (v.x, v.z)
@@ -347,7 +357,7 @@ mod tests {
         assert!(standable(&grid, cell(4, 1, 5)), "the block is within reach");
         assert_eq!(action, JobAction::Wait);
         assert_eq!(pawn.job, Job::Idle);
-        assert_eq!(claimed_by(&marks, [5, 0, 5]), Some(None), "the mark stays");
+        assert_eq!(claimed_by(&marks, [5, 0, 5]), Claim::Free, "the mark stays");
     }
 
     #[test]
@@ -368,9 +378,9 @@ mod tests {
             "{:?}",
             pawn.job
         );
-        assert_eq!(claimed_by(&marks, [4, 1, 1]), Some(Some(ID)));
-        assert_eq!(claimed_by(&marks, [9, 1, 9]), Some(None));
-        assert_eq!(claimed_by(&marks, [1, 1, 7]), Some(None));
+        assert_eq!(claimed_by(&marks, [4, 1, 1]), Claim::By(ID));
+        assert_eq!(claimed_by(&marks, [9, 1, 9]), Claim::Free);
+        assert_eq!(claimed_by(&marks, [1, 1, 7]), Claim::Free);
         assert!(pawn.equipped_tool.is_some(), "the pickaxe is in hand");
         assert_eq!(pawn.selected_slot, TOOL_SLOT);
     }
@@ -398,7 +408,7 @@ mod tests {
             "{:?}",
             pawn.job
         );
-        assert_eq!(claimed_by(&marks, [5, 1, 5]), Some(None));
+        assert_eq!(claimed_by(&marks, [5, 1, 5]), Claim::Free);
     }
 
     #[test]
@@ -551,7 +561,7 @@ mod tests {
     fn a_cancelled_mark_releases_the_pawn_mid_walk() {
         // Both ways a mark can vanish mid-walk: the player cancels it, or another pawn digs
         // the block (`a_mark_dug_by_another_pawn_releases_the_claim`).
-        let ways: [(&str, fn(&mut VoxelGrid, &mut MineMarks)); 2] = [
+        let ways: [(&str, Vanish); 2] = [
             ("cancelled by toggle", |_, marks| {
                 marks.toggle([8, 1, 1]);
             }),
@@ -592,8 +602,8 @@ mod tests {
             "{:?}",
             pawn.job
         );
-        assert_eq!(claimed_by(&marks, [2, 1, 5]), Some(Some(ID)));
-        assert_eq!(claimed_by(&marks, [8, 1, 5]), Some(None));
+        assert_eq!(claimed_by(&marks, [2, 1, 5]), Claim::By(ID));
+        assert_eq!(claimed_by(&marks, [8, 1, 5]), Claim::Free);
     }
 
     #[test]
@@ -609,7 +619,7 @@ mod tests {
         step(&mut pawn, ID, &pose_at(cell(1, 1, 1)), &mut marks, &grid);
 
         assert_eq!(alone, JobAction::Wait, "the only mark is taken");
-        assert_eq!(claimed_by(&marks, [4, 1, 1]), Some(Some(PawnId(1))));
+        assert_eq!(claimed_by(&marks, [4, 1, 1]), Claim::By(PawnId(1)));
         assert!(
             matches!(&pawn.job, Job::Mine { mark, .. } if *mark == [9, 1, 9]),
             "the free mark goes to the free pawn: {:?}",
@@ -642,7 +652,7 @@ mod tests {
         );
         assert_eq!(
             claimed_by(&marks, [8, 1, 1]),
-            Some(None),
+            Claim::Free,
             "the mark stays, unclaimed"
         );
     }
@@ -669,7 +679,7 @@ mod tests {
             matches!(pawn.job, Job::Mine { .. }),
             "a pawn creeping toward its goal still has its job"
         );
-        assert_eq!(claimed_by(&marks, [36, 1, 1]), Some(Some(ID)));
+        assert_eq!(claimed_by(&marks, [36, 1, 1]), Claim::By(ID));
     }
 
     #[test]
@@ -687,7 +697,7 @@ mod tests {
         assert_eq!(pawn.job, Job::Idle);
         assert_eq!(
             claimed_by(&marks, [8, 1, 1]),
-            Some(None),
+            Claim::Free,
             "the mark stays, unclaimed"
         );
     }
