@@ -1479,6 +1479,131 @@ mod tests {
     }
 
     #[test]
+    fn set_rest_slope_accepts_zero_then_just_below_a_right_angle_on_one_world() {
+        let mut world = PhysicsWorld::new();
+
+        world.set_rest_slope(0.0);
+        world.set_rest_slope(1.5);
+
+        assert_eq!(world.rest_slope(), 1.5);
+    }
+
+    #[test]
+    fn a_rest_slope_set_mid_roll_brakes_from_the_next_tick() {
+        let mut late_brake = world_with_floor(&floor_mesh(0.0));
+        late_brake.set_rest_slope(0.0);
+        let id = late_brake.spawn_loose(&rolling_capsule(2.0));
+        run(&mut late_brake, 30);
+        let before = read(&late_brake, id);
+
+        late_brake.set_rest_slope(5.0_f32.to_radians());
+        run(&mut late_brake, 300);
+
+        let after = read(&late_brake, id);
+        assert!(
+            before.linear_velocity.length() > 1.5,
+            "no brake before the change, {before:?}"
+        );
+        assert!(after.asleep, "the brake stops it once set, {after:?}");
+        assert!(
+            after.position.z - before.position.z <= 1.5,
+            "it stops within 1.5 m of the change, from {} to {}",
+            before.position.z,
+            after.position.z
+        );
+    }
+
+    #[test]
+    fn a_rest_slope_cleared_mid_roll_stops_braking_from_the_next_tick() {
+        let mut default_only = world_with_floor(&floor_mesh(0.0));
+        let default_id = default_only.spawn_loose(&rolling_capsule(2.0));
+        let mut released = world_with_floor(&floor_mesh(0.0));
+        let released_id = released.spawn_loose(&rolling_capsule(2.0));
+        run(&mut released, 10);
+
+        released.set_rest_slope(0.0);
+        run(&mut released, 300);
+        run(&mut default_only, 310);
+
+        let braked = read(&default_only, default_id);
+        let freed = read(&released, released_id);
+        assert!(
+            freed.position.z > braked.position.z + 1.0,
+            "released roll z={} against default z={}",
+            freed.position.z,
+            braked.position.z
+        );
+    }
+
+    #[test]
+    fn removing_a_loose_object_does_not_disturb_the_braking_of_the_others() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let ids: Vec<LooseId> = [-1.0, 0.0, 1.0]
+            .into_iter()
+            .map(|x| {
+                let mut spawn = rolling_capsule(2.0);
+                spawn.position.x = x;
+                world.spawn_loose(&spawn)
+            })
+            .collect();
+        run(&mut world, 20);
+
+        world.remove_loose(ids[1]).expect("the middle one is alive");
+        run(&mut world, 280);
+
+        assert!(world.loose(ids[1]).is_none(), "the middle one is gone");
+        for lane in [0, 2] {
+            let state = read(&world, ids[lane]);
+            assert!(state.asleep, "lane {lane} rests, {state:?}");
+            assert!(
+                state.position.z <= 1.5 && state.position.z >= 0.5,
+                "lane {lane} stops within 1.5 m after a real roll, z={}",
+                state.position.z
+            );
+        }
+    }
+
+    /// A capsule standing on its end, spinning about its own axis at 6 rad/s.
+    fn spinning_upright_capsule() -> LooseSpawn {
+        LooseSpawn {
+            position: Vec3::new(0.0, 0.1 + CAPSULE_RADIUS, 0.0),
+            angular_velocity: Vec3::new(0.0, 6.0, 0.0),
+            ..LooseSpawn::new(CAPSULE, 0.2)
+        }
+    }
+
+    #[test]
+    fn an_upright_capsule_spinning_about_its_axis_stops_spinning_and_stays_put() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&spinning_upright_capsule());
+
+        run(&mut world, 60);
+
+        let state = read(&world, id);
+        assert!(
+            state.angular_velocity.length() < 0.1,
+            "the spin decays, {state:?}"
+        );
+        let drift = Vec3::new(state.position.x, 0.0, state.position.z).length();
+        assert!(drift < 0.02, "it does not travel, moved {drift} m");
+    }
+
+    #[test]
+    fn an_upright_capsule_keeps_spinning_without_the_brake() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        world.set_rest_slope(0.0);
+        let id = world.spawn_loose(&spinning_upright_capsule());
+
+        run(&mut world, 60);
+
+        let state = read(&world, id);
+        assert!(
+            state.angular_velocity.length() >= 0.1,
+            "contrast: with no brake the spin survives, {state:?}"
+        );
+    }
+
+    #[test]
     fn the_brake_never_touches_vertical_velocity() {
         let drop = LooseSpawn {
             restitution: 0.5,
