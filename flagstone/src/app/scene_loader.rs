@@ -50,6 +50,7 @@ pub fn load_scene(
         // Remember the WorldSpec from the loaded file so autosaves and
         // subsequent writes preserve the original metadata.
         app.generation.last_spec = Some(spec.clone());
+        app.autosave = crate::app::autosave::AutosaveSchedule::for_interval(app.autosave_interval);
         tracing::info!(spec = ?spec, "Loaded WorldSpec from save");
         // Restore time of day from the persisted WorldSpec.
         clock.reset_to(spec.initial_time_of_day);

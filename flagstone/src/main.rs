@@ -168,6 +168,8 @@ struct App {
     pointer_hit: Option<flagstone_game::raycast::SurfaceHit>,
 }
 
+const DEFAULT_AUTOSAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(120);
+
 impl App {
     /// Writes the running prefs to `prefs_path`; does nothing without one. A failed
     /// write is logged: the running prefs stay in effect either way.
@@ -257,10 +259,8 @@ impl App {
             pending_frame_cap: None,
             frame_cap_changed: false,
             saves_dir: std::path::PathBuf::from("saves"),
-            autosave_interval: std::time::Duration::from_secs(120),
-            autosave: app::autosave::AutosaveSchedule::for_interval(
-                std::time::Duration::from_secs(120),
-            ),
+            autosave_interval: DEFAULT_AUTOSAVE_INTERVAL,
+            autosave: app::autosave::AutosaveSchedule::for_interval(DEFAULT_AUTOSAVE_INTERVAL),
             exit_requested: false,
             main_menu_requested: false,
             event_bus: initialized.event_bus,

@@ -28,21 +28,22 @@ const MAX_CHUNK_Y: i32 = 8;
 pub struct ChunkStreamer {
     terrain_config: TerrainConfig,
     streaming_config: StreamingConfig,
-    world_name: String,
+    chunk_dir: std::path::PathBuf,
     last_player_chunk_xz: (i32, i32),
 }
 
 impl ChunkStreamer {
+    /// Streams `world_name`, keeping its edited chunks under `<saves_dir>/<world_name>/chunks`.
     pub fn new(
         terrain_config: TerrainConfig,
         streaming_config: StreamingConfig,
-        world_name: impl Into<String>,
-        _saves_dir: impl Into<std::path::PathBuf>,
+        world_name: impl AsRef<str>,
+        saves_dir: impl AsRef<std::path::Path>,
     ) -> Self {
         Self {
             terrain_config,
             streaming_config,
-            world_name: world_name.into(),
+            chunk_dir: save::world_chunk_dir(saves_dir.as_ref(), world_name.as_ref()),
             last_player_chunk_xz: (i32::MAX, i32::MAX),
         }
     }
@@ -107,7 +108,7 @@ impl ChunkStreamer {
 
         for &pos in &to_evict {
             if let Some(data) = grid.serialize_chunk(pos) {
-                if let Err(e) = save::write_chunk_file(&self.world_name, pos, &data) {
+                if let Err(e) = save::write_chunk_file_in(&self.chunk_dir, pos, &data) {
                     tracing::warn!(chunk = ?pos, error = %e, "Failed to save evicted chunk");
                 } else {
                     tracing::debug!(chunk = ?pos, "Saved evicted chunk");
@@ -167,7 +168,7 @@ impl ChunkStreamer {
     /// Returns `true` if the chunk has any blocks (not all-air).
     fn load_chunk(&self, grid: &mut VoxelGrid, pos: IVec3) -> bool {
         // Try disk first (player-modified chunk saved on a previous eviction).
-        let loaded = save::read_chunk_file(&self.world_name, pos).and_then(|data| {
+        let loaded = save::read_chunk_file_in(&self.chunk_dir, pos).and_then(|data| {
             data.map_or(Ok(false), |data| {
                 grid.deserialize_chunk_into(pos, &data).map(|()| true)
             })
