@@ -38,7 +38,7 @@ pub struct StrategyCommand {
 }
 
 /// `interval` in play ticks, rounded down.
-fn autosave_interval_ticks(interval: std::time::Duration) -> u32 {
+pub(crate) fn autosave_interval_ticks(interval: std::time::Duration) -> u32 {
     let ticks = interval.as_millis() * u128::from(flagstone_game::TICK_HZ) / 1000;
     u32::try_from(ticks).unwrap_or(u32::MAX)
 }

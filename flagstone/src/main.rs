@@ -257,8 +257,10 @@ impl App {
             pending_frame_cap: None,
             frame_cap_changed: false,
             saves_dir: std::path::PathBuf::from("saves"),
-            autosave_interval: std::time::Duration::from_secs(120),
-            autosave_schedule: app::autosave::AutosaveSchedule::new(120 * flagstone_game::TICK_HZ),
+            autosave_interval: app::autosave::DEFAULT_INTERVAL,
+            autosave_schedule: app::autosave::AutosaveSchedule::new(
+                app::game::autosave_interval_ticks(app::autosave::DEFAULT_INTERVAL),
+            ),
             exit_requested: false,
             main_menu_requested: false,
             event_bus: initialized.event_bus,
