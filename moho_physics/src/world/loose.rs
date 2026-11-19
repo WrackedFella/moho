@@ -1754,4 +1754,124 @@ mod tests {
             "{state:?}"
         );
     }
+
+    #[test]
+    fn a_capsule_rolling_on_a_loose_box_is_braked_to_rest() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.5, 0.0),
+            ..LooseSpawn::new(cube(0.5), 5.0)
+        });
+        run(&mut world, 60);
+        let start = Vec3::new(-0.45, 1.04, 0.0);
+        let id = world.spawn_loose(&LooseSpawn {
+            position: start,
+            rotation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+            linear_velocity: Vec3::new(1.0, 0.0, 0.0),
+            angular_velocity: Vec3::new(0.0, 0.0, -1.0 / 0.04),
+            ..LooseSpawn::new(CAPSULE, 0.2)
+        });
+
+        run(&mut world, 600);
+
+        let state = read(&world, id);
+        assert!(state.asleep, "it rests asleep on the box, {state:?}");
+        assert!(
+            state.position.y > 0.9,
+            "it stayed on the box top, {state:?}"
+        );
+        assert!(
+            (state.position - start).length() < 1.0,
+            "it travelled under 1 m, {state:?}"
+        );
+    }
+
+    #[test]
+    fn setting_the_rest_slope_never_wakes_a_sleeping_capsule() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.04, 0.0),
+            rotation: Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+            ..LooseSpawn::new(CAPSULE, 0.2)
+        });
+        run(&mut world, 300);
+        let asleep = read(&world, id);
+        assert!(asleep.asleep, "precondition: it sleeps, {asleep:?}");
+
+        for slope in [0.0, degrees(12.0)] {
+            world.set_rest_slope(slope);
+            run(&mut world, 60);
+
+            let state = read(&world, id);
+            assert!(state.asleep, "slope {slope}: still asleep, {state:?}");
+            assert_eq!(
+                bits(&state),
+                bits(&asleep),
+                "slope {slope}: the state is unchanged"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cylinder_sliding_on_its_flat_end_keeps_its_linear_velocity_under_the_brake() {
+        let spawn = LooseSpawn {
+            position: Vec3::new(0.0, 0.08, 0.0),
+            linear_velocity: Vec3::new(1.0, 0.0, 0.0),
+            ..LooseSpawn::new(CYLINDER, 0.2)
+        };
+        let mut braked = world_with_floor(&floor_mesh(0.0));
+        let braked_id = braked.spawn_loose(&spawn);
+        let mut free = world_with_floor(&floor_mesh(0.0));
+        free.set_rest_slope(0.0);
+        let free_id = free.spawn_loose(&spawn);
+
+        braked.step(DT);
+        free.step(DT);
+
+        let (b, f) = (read(&braked, braked_id), read(&free, free_id));
+        // The spurious cut is about 0.026 m/s; a hair of axis tilt may leave a tiny residue.
+        for (axis, braked_v, free_v) in [
+            ("x", b.linear_velocity.x, f.linear_velocity.x),
+            ("z", b.linear_velocity.z, f.linear_velocity.z),
+        ] {
+            assert!(
+                (braked_v - free_v).abs() < 1e-3,
+                "{axis}: braked {:?} vs free {:?}",
+                b.linear_velocity,
+                f.linear_velocity
+            );
+        }
+    }
+
+    #[test]
+    fn a_capsule_pointing_down_a_slope_gets_no_extra_braking() {
+        let angle = 10.0_f32;
+        let rise = degrees(angle).tan() * 10.0;
+        let (sin, cos) = degrees(angle).sin_cos();
+        let radius = 0.04;
+        let spawn = LooseSpawn {
+            position: Vec3::new(0.0, radius * cos, -radius * sin),
+            // Local y (the capsule axis) onto the downhill direction (0, -sin, -cos).
+            rotation: Quat::from_rotation_arc(Vec3::Y, Vec3::new(0.0, -sin, -cos)),
+            ..LooseSpawn::new(CAPSULE, 0.2)
+        };
+        let displacement = |rest_slope: Option<f32>| {
+            let mut world = world_with_floor(&slope_mesh(-10.0, -rise, 10.0, rise));
+            if let Some(slope) = rest_slope {
+                world.set_rest_slope(slope);
+            }
+            let id = world.spawn_loose(&spawn);
+            let start = read(&world, id).position;
+            run(&mut world, 120);
+            read(&world, id).position - start
+        };
+
+        let braked = displacement(None);
+        let free = displacement(Some(0.0));
+
+        assert!(
+            (braked - free).length() < 0.01,
+            "braked {braked:?} vs free {free:?}"
+        );
+    }
 }
