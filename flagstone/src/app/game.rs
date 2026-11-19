@@ -37,6 +37,12 @@ pub struct StrategyCommand {
     pub engine: Vec<EngineCommand>,
 }
 
+/// `interval` in play ticks, rounded down.
+fn autosave_interval_ticks(interval: std::time::Duration) -> u32 {
+    let ticks = interval.as_millis() * u128::from(flagstone_game::TICK_HZ) / 1000;
+    u32::try_from(ticks).unwrap_or(u32::MAX)
+}
+
 /// Yaw and pitch deltas for a look. Mouse motion is fed unnegated, so look is inverted here.
 ///
 /// The one mapping, shared by the command and the camera so a tick lands where the frame drew.
@@ -301,8 +307,12 @@ impl App {
             self.apply_pending_render(r);
             r.all_lights_as_descs()
         });
-        if let Err(e) = self.auto_save_on_shutdown(clock, &lights) {
-            tracing::warn!(error = %e, "Failed to auto-save on exit");
+        match self.auto_save_on_shutdown(clock, &lights) {
+            Ok(()) => self.autosave_schedule.saved(),
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to autosave");
+                self.autosave_schedule.save_failed();
+            }
         }
     }
 
@@ -430,6 +440,9 @@ impl moho_app::Game for App {
 
         let frame_number = frame_processor.publish_frame_start(self, dt);
         if self.game_state == GameState::Playing {
+            self.autosave_schedule
+                .set_interval_ticks(autosave_interval_ticks(self.autosave_interval));
+            self.autosave_schedule.tick();
             self.apply_command(command);
         }
         for console_command in &command.console {
@@ -514,6 +527,10 @@ impl moho_app::Game for App {
             self.main_menu_requested = false;
             self.autosave(ctx.clock(), ctx.renderer());
             self.show_menu();
+        }
+
+        if self.autosave_schedule.due() {
+            self.autosave(ctx.clock(), ctx.renderer());
         }
 
         let clock = ctx.clock();

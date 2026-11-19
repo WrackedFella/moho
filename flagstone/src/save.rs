@@ -90,10 +90,21 @@ pub fn read_scene_and_metadata<P: AsRef<Path>>(path: P) -> Result<SavePayload, P
 /// `data` is an already-enveloped chunk file. Called by the streaming system
 /// when a modified chunk is evicted. Uses an atomic rename so a crash
 /// mid-write never leaves a corrupt file.
+#[cfg(test)]
 pub fn write_chunk_file(world_name: &str, pos: IVec3, data: &[u8]) -> io::Result<()> {
-    let dir = chunk_dir(world_name);
+    write_chunk_file_in(Path::new(SAVES_DIR), world_name, pos, data)
+}
+
+/// As [`write_chunk_file`], under `saves_dir/<world_name>/chunks/`.
+pub fn write_chunk_file_in(
+    saves_dir: &Path,
+    world_name: &str,
+    pos: IVec3,
+    data: &[u8],
+) -> io::Result<()> {
+    let dir = chunk_dir_in(saves_dir, world_name);
     fs::create_dir_all(&dir)?;
-    let path = chunk_path(world_name, pos);
+    let path = chunk_path_in(saves_dir, world_name, pos);
     let tmp = path.with_extension("tmp");
     let mut f = File::create(&tmp)?;
     f.write_all(data)?;
@@ -110,24 +121,35 @@ pub fn write_chunk_file(world_name: &str, pos: IVec3, data: &[u8]) -> io::Result
 ///
 /// Returns `Ok(None)` if the file does not exist (chunk was never modified, so
 /// the caller should fall back to generating it from the terrain function).
+#[cfg(test)]
 pub fn read_chunk_file(world_name: &str, pos: IVec3) -> Result<Option<Vec<u8>>, PersistError> {
-    match fs::read(chunk_path(world_name, pos)) {
+    read_chunk_file_in(Path::new(SAVES_DIR), world_name, pos)
+}
+
+/// As [`read_chunk_file`], under `saves_dir/<world_name>/chunks/`.
+pub fn read_chunk_file_in(
+    saves_dir: &Path,
+    world_name: &str,
+    pos: IVec3,
+) -> Result<Option<Vec<u8>>, PersistError> {
+    match fs::read(chunk_path_in(saves_dir, world_name, pos)) {
         Ok(data) => Ok(Some(data)),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e.into()),
     }
 }
 
-fn chunk_dir(world_name: &str) -> std::path::PathBuf {
-    std::path::PathBuf::from("saves")
-        .join(world_name)
-        .join("chunks")
+#[cfg(test)]
+const SAVES_DIR: &str = "saves";
+
+fn chunk_dir_in(saves_dir: &Path, world_name: &str) -> std::path::PathBuf {
+    saves_dir.join(world_name).join("chunks")
 }
 
 /// Remove all saved chunk files for `world_name`. Called when generating a new
 /// world so stale chunk data from a previous session cannot override fresh terrain.
-pub fn clear_chunk_files(world_name: &str) -> io::Result<()> {
-    let dir = chunk_dir(world_name);
+pub fn clear_chunk_files(saves_dir: &Path, world_name: &str) -> io::Result<()> {
+    let dir = chunk_dir_in(saves_dir, world_name);
     if dir.exists() {
         fs::remove_dir_all(&dir)?;
         tracing::info!(world = world_name, "Cleared chunk save files for world");
@@ -135,8 +157,13 @@ pub fn clear_chunk_files(world_name: &str) -> io::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 fn chunk_path(world_name: &str, pos: IVec3) -> std::path::PathBuf {
-    chunk_dir(world_name).join(format!("{}_{}_{}.bin", pos.x, pos.y, pos.z))
+    chunk_path_in(Path::new(SAVES_DIR), world_name, pos)
+}
+
+fn chunk_path_in(saves_dir: &Path, world_name: &str, pos: IVec3) -> std::path::PathBuf {
+    chunk_dir_in(saves_dir, world_name).join(format!("{}_{}_{}.bin", pos.x, pos.y, pos.z))
 }
 
 #[cfg(test)]
