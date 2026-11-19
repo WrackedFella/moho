@@ -875,6 +875,75 @@ mod tests {
     }
 
     #[test]
+    fn a_pawn_standing_on_a_marked_block_does_not_dig_the_block_under_its_feet() {
+        let mut grid = field(12);
+        let mut marks = MineMarks::default();
+        mark_block(&mut grid, &mut marks, [5, 1, 5]);
+        let mut pawn = Pawn::default();
+        let mut pose = pose_at(cell(5, 2, 5));
+
+        for tick in 0..60 {
+            let action = step(&mut pawn, ID, &pose, &mut marks, &grid);
+
+            if let Job::Mine { route, .. } = &pawn.job {
+                let stand = route.last().copied().unwrap_or(feet_cell(pose.feet));
+                assert_ne!(
+                    (stand.x, stand.z),
+                    (5, 5),
+                    "tick {tick}: claimed a stand cell in the mark's own column"
+                );
+            }
+            match action {
+                JobAction::Dig { block, .. } => {
+                    let ground = feet_cell(pose.feet) - BlockPos::Y;
+                    assert_eq!(block, cell(5, 1, 5));
+                    assert_ne!(ground, block, "tick {tick}: dug the block it stands on");
+                    return;
+                }
+                JobAction::Walk { to } => {
+                    pose = Pose {
+                        feet: to,
+                        eye: to + Vec3::Y * EYE_HEIGHT,
+                        yaw: 0.0,
+                    };
+                }
+                JobAction::Wait => {}
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn a_claimed_stand_cell_is_never_in_the_marks_own_column(
+            heights in proptest::collection::vec(1..=2i32, 64),
+            mx in 0..8i32, mz in 0..8i32, sx in 0..8i32, sz in 0..8i32,
+        ) {
+            let mut grid = VoxelGrid::new(16);
+            for (i, &height) in heights.iter().enumerate() {
+                for y in 0..height {
+                    grid.mutator().place(cell((i % 8) as i32, y, (i / 8) as i32), 1, None);
+                }
+            }
+            let top = |x: i32, z: i32| heights[(z * 8 + x) as usize];
+            let block = [mx, top(mx, mz) - 1, mz];
+            let mut marks = MineMarks::default();
+            marks.toggle(block);
+            let mut pawn = Pawn::default();
+            let start = cell(sx, top(sx, sz), sz);
+
+            step(&mut pawn, ID, &pose_at(start), &mut marks, &grid);
+
+            if let Job::Mine { route, .. } = &pawn.job {
+                let stand = route.last().copied().unwrap_or(start);
+                prop_assert!(
+                    (stand.x, stand.z) != (mx, mz),
+                    "stand cell {stand:?} is in the column of {block:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn the_stall_guard_gives_up_exactly_at_the_stall_limit() {
         let mut guard = StallGuard::default();
         assert!(guard.observe(5.0), "the first distance is progress");

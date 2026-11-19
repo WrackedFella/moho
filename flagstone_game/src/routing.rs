@@ -446,6 +446,58 @@ mod tests {
         None
     }
 
+    /// Breadth-first step count from `start` to the nearest cell where `is_goal` holds.
+    fn fewest_steps_to_any(
+        grid: &VoxelGrid,
+        start: BlockPos,
+        is_goal: impl Fn(BlockPos) -> bool,
+    ) -> Option<usize> {
+        let mut seen = HashMap::from([(start, 0usize)]);
+        let mut queue = std::collections::VecDeque::from([start]);
+        while let Some(at) = queue.pop_front() {
+            if is_goal(at) {
+                return seen.get(&at).copied();
+            }
+            for next in neighbours(grid, at) {
+                if !seen.contains_key(&next) {
+                    seen.insert(next, seen[&at] + 1);
+                    queue.push_back(next);
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn the_route_ends_at_the_nearest_stand_cell_by_route_length() {
+        let mut grid = field(12);
+        let block = cell(5, 1, 5);
+        place(&mut grid, 5, 1, 5);
+        for x in 6..=8 {
+            for z in 6..=8 {
+                place(&mut grid, x, 1, z);
+                place(&mut grid, x, 2, z);
+            }
+        }
+        place(&mut grid, 8, 1, 5);
+        let start = cell(8, 3, 8);
+        let is_stand_cell = |c: BlockPos| {
+            (c.x - block.x).abs() <= 1
+                && (c.z - block.z).abs() <= 1
+                && (c.x, c.z) != (block.x, block.z)
+                && (block.y - 1..=block.y + 2).contains(&c.y)
+                && standable(&grid, c)
+        };
+
+        let shortest = fewest_steps_to_any(&grid, start, is_stand_cell);
+        let path = route(&grid, start, is_stand_cell, block, ROUTE_NODE_BUDGET)
+            .expect("the platform leads to stand cells");
+
+        assert_eq!(shortest, Some(4), "(6, 3, 6) is four steps from the start");
+        assert_eq!(path.len(), 4, "{path:?}");
+        assert_eq!(path.last().copied(), Some(cell(6, 3, 6)));
+    }
+
     #[test]
     fn a_route_around_walls_is_as_short_as_any_route() {
         let mut state: u64 = 0x2545_f491_4f6c_dd1d;
