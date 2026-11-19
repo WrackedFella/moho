@@ -586,15 +586,8 @@ fn egui_lone_modifier_while_listening_binds_the_row() {
     assert!(!menu.is_listening());
 }
 
-/// Renders one frame with the given modifier bits held (Ctrl 1, Shift 2, Alt 4).
-fn render_with_mods(menu: &mut SettingsMenu, mods: u8) {
-    let modifiers = egui::Modifiers {
-        ctrl: mods & 1 != 0,
-        shift: mods & 2 != 0,
-        alt: mods & 4 != 0,
-        ..Default::default()
-    };
-
+/// Renders one frame with the given modifiers held.
+fn render_with_mods(menu: &mut SettingsMenu, modifiers: egui::Modifiers) {
     render_frame(menu, vec![egui::Event::ModifiersChanged(modifiers)]);
 }
 
@@ -611,10 +604,10 @@ fn prompt_open_then_stray_alt() -> SettingsMenu {
 
     let mut menu = SettingsMenu::with_prefs(Prefs::default());
     menu.start_listening(0);
-    render_with_mods(&mut menu, 2);
+    render_with_mods(&mut menu, egui::Modifiers::SHIFT);
     assert!(Screen::take_pending_modal(&mut menu).is_some());
-    render_with_mods(&mut menu, 0);
-    render_with_mods(&mut menu, 4);
+    render_with_mods(&mut menu, egui::Modifiers::NONE);
+    render_with_mods(&mut menu, egui::Modifiers::ALT);
     menu
 }
 
@@ -624,7 +617,7 @@ fn conflicting_key_names_key_and_holder() {
     let mut menu = SettingsMenu::with_prefs(Prefs::default());
     menu.start_listening(0);
 
-    render_with_mods(&mut menu, 2);
+    render_with_mods(&mut menu, egui::Modifiers::SHIFT);
 
     assert_eq!(menu.conflict_modal().conflict_key_name(), "Sprint");
     assert_eq!(menu.conflict_modal().conflict_binding_desc(), "Shift");
