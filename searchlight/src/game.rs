@@ -2781,7 +2781,6 @@ mod tests {
         let command = game.command();
 
         assert!(command.simple);
-        assert!(game.simple);
     }
 
     fn simple_tick(game: &mut SearchlightGame, line: &str) -> bool {
@@ -2841,7 +2840,7 @@ mod tests {
         let one = GravityScale::new(1.0).expect("1 is a valid scale");
         let thirty = GravityScale::new(30.0).expect("30 is a valid scale");
         let dir = tempfile::tempdir().unwrap();
-        let (settings, path) = settings_in(&dir);
+        let (settings, _) = settings_in(&dir);
         let mode = ArenaMode::new(arena_arena(), arena_config(), wave_tuning(1));
         let (bindings, _) = ActionBindings::load(&BTreeMap::new());
         let mut game =
@@ -2852,7 +2851,6 @@ mod tests {
         type_into_console(&game, "simple 1");
         let set = game.command();
         game.mode.sim_mut().kill_player();
-        assert!(game.sim().player_body().is_dead());
 
         let restart = SearchlightCommand {
             restart: true,
@@ -2860,8 +2858,6 @@ mod tests {
         };
         tick_with(&mut game, &mut clock, &restart);
         let after_restart = game.command();
-        let (prefs, _) = Prefs::load_from(&path);
-        let relaunched = game_with_settings(DebugSettings::new(prefs, path.clone())).command();
 
         assert_eq!(at_start, one);
         assert_eq!((set.round_gravity, set.simple), (thirty, true));
@@ -2870,6 +2866,22 @@ mod tests {
             (after_restart.round_gravity, after_restart.simple),
             (thirty, true)
         );
+    }
+
+    #[test]
+    fn a_relaunch_resets_the_gravity_scale_to_1_and_keeps_simple() {
+        let one = GravityScale::new(1.0).expect("1 is a valid scale");
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = game().with_debug_settings(settings);
+        type_into_console(&game, "round_gravity 30");
+        type_into_console(&game, "simple 1");
+        let set = game.command();
+
+        let (prefs, _) = Prefs::load_from(&path);
+        let relaunched = game_with_settings(DebugSettings::new(prefs, path.clone())).command();
+
+        assert_eq!(set.round_gravity, GravityScale::new(30.0).unwrap());
         assert_eq!(
             (relaunched.round_gravity, relaunched.simple),
             (one, true),

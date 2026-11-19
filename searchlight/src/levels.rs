@@ -97,9 +97,10 @@ mod tests {
     use std::collections::BTreeSet;
 
     use glam::Vec3;
+    use moho_core::content::ContentRoots;
     use moho_level::{Level, LevelMesh};
     use moho_physics::RayQuery;
-    use searchlight_rules::BodyPart;
+    use searchlight_rules::{BodyPart, Flight, ItemId, MIN_SPEED};
 
     use super::*;
     use crate::arena::{self, LevelMode};
@@ -280,9 +281,8 @@ mod tests {
     }
 
     #[test]
-    fn the_200_m_dummy_is_in_rifle_range_from_the_firing_line() {
-        let range = 200.0_f32;
-        let (_, markers) = shipped("proving_ground.glb");
+    fn the_200_m_dummy_is_inside_the_flight_bounds_and_reached_by_the_shipped_round() {
+        let (level, markers) = shipped("proving_ground.glb");
         let spawn = markers.player_spawn.as_ref().expect("a firing line spawn");
         let far = markers
             .dummies
@@ -306,11 +306,38 @@ mod tests {
         let near_face = centre - Vec3::Z * torso.half_extents.z;
 
         let distance = eye.distance(near_face);
+        let arena = Arena::from_level(&level, &markers).expect("the proving ground is an arena");
+        let roots = ContentRoots::base(&crate::content_root()).expect("the shipped content folder");
+        let ball = *crate::kit::load(&roots, crate::kit::START_KIT_ID)
+            .expect("the shipped start kit loads")
+            .rounds
+            .get(&ItemId::new("round_rifle_ball"))
+            .expect("the kit names the ball round");
+        let mut flight = Flight::fired(eye, near_face - eye, &ball);
+        let mut flown = 0.0_f32;
+        let mut steps = 0;
+        while flown < distance && steps < 600 {
+            let next = flight.step(&ball, 0.0, 1.0 / 60.0);
+            flown += flight.position.distance(next.position);
+            flight = next;
+            steps += 1;
+        }
 
+        let bounds = arena.flight_bounds();
         assert!(
-            distance <= range,
-            "the torso's near face is {distance} m from the eye; the rifle reaches {range} m"
+            bounds.contains(eye) && bounds.contains(near_face),
+            "the firing line {eye:?} and the far torso {near_face:?} must be inside {bounds:?}"
         );
+        assert!(
+            flown >= distance,
+            "the round flew {flown} m of the {distance} m in {steps} steps"
+        );
+        assert!(
+            flight.velocity.length() > MIN_SPEED,
+            "the round is down to {} m/s after {distance} m",
+            flight.velocity.length()
+        );
+        assert!(!flight.is_spent());
     }
 
     /// A 10 m floor and a sandbox marker, plus `names` as markers at the origin.

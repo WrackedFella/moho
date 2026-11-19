@@ -332,25 +332,28 @@ mod tests {
 
     #[test]
     fn flight_bounds_contain_their_points_grown_by_the_margin() {
-        let bounds =
-            FlightBounds::around([Vec3::new(10.0, -5.0, 2.0), Vec3::new(0.0, 5.0, -2.0)], 3.0);
+        let bounds = FlightBounds::around(
+            [Vec3::new(30.0, 15.0, 22.0), Vec3::new(20.0, 25.0, 18.0)],
+            3.0,
+        );
 
-        assert!(bounds.contains(Vec3::new(10.0, -5.0, 2.0)));
-        assert!(bounds.contains(Vec3::new(0.0, 5.0, -2.0)));
-        assert!(bounds.contains(Vec3::new(5.0, 0.0, 0.0)));
-        assert!(bounds.contains(Vec3::new(-3.0, -8.0, -5.0)), "min corner");
-        assert!(bounds.contains(Vec3::new(13.0, 8.0, 5.0)), "max corner");
+        assert!(bounds.contains(Vec3::new(30.0, 15.0, 22.0)));
+        assert!(bounds.contains(Vec3::new(20.0, 25.0, 18.0)));
+        assert!(bounds.contains(Vec3::new(25.0, 20.0, 20.0)));
+        assert!(bounds.contains(Vec3::new(17.0, 12.0, 15.0)), "min corner");
+        assert!(bounds.contains(Vec3::new(33.0, 28.0, 25.0)), "max corner");
         assert!(
-            bounds.contains(Vec3::new(13.0, 0.0, 0.0)),
+            bounds.contains(Vec3::new(33.0, 20.0, 20.0)),
             "a point on a face"
         );
+        assert!(!bounds.contains(Vec3::ZERO), "the origin is outside");
         for outside in [
-            Vec3::new(-3.01, 0.0, 0.0),
-            Vec3::new(13.01, 0.0, 0.0),
-            Vec3::new(5.0, -8.01, 0.0),
-            Vec3::new(5.0, 8.01, 0.0),
-            Vec3::new(5.0, 0.0, -5.01),
-            Vec3::new(5.0, 0.0, 5.01),
+            Vec3::new(16.99, 20.0, 20.0),
+            Vec3::new(33.01, 20.0, 20.0),
+            Vec3::new(25.0, 11.99, 20.0),
+            Vec3::new(25.0, 28.01, 20.0),
+            Vec3::new(25.0, 20.0, 14.99),
+            Vec3::new(25.0, 20.0, 25.01),
         ] {
             assert!(!bounds.contains(outside), "{outside:?}");
         }
@@ -364,12 +367,15 @@ mod tests {
 
         assert!(bounds.contains(point));
         assert!(!bounds.contains(point + Vec3::X * 0.01));
+        assert!(!bounds.contains(Vec3::ZERO));
+        assert_eq!((bounds.min, bounds.max), (point, point));
     }
 
     #[test]
     fn reach_is_the_box_diagonal() {
-        let flat = FlightBounds::around([Vec3::ZERO, Vec3::new(3.0, 4.0, 12.0)], 0.0);
-        let grown = FlightBounds::around([Vec3::ZERO, Vec3::new(3.0, 4.0, 12.0)], 2.0);
+        let flat = FlightBounds::around([Vec3::new(1.0, 1.0, 1.0), Vec3::new(4.0, 5.0, 13.0)], 0.0);
+        let grown =
+            FlightBounds::around([Vec3::new(1.0, 1.0, 1.0), Vec3::new(4.0, 5.0, 13.0)], 2.0);
 
         assert!(near(flat.reach(), 13.0, 1e-5), "{}", flat.reach());
         assert!(

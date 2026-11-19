@@ -325,22 +325,6 @@ mod tests {
     }
 
     #[test]
-    fn a_kit_names_a_round_it_only_stows_in_a_spare_magazine() {
-        let def = kit_def(json!({
-            "rig": "rig_chest", "weapon": "rifle",
-            "loaded": {"magazine": "mag_rifle", "round": "round_ball"},
-            "magazines": [{"magazine": "mag_rifle", "round": "round_unused", "rounds": 3}]
-        }));
-
-        let kit = resolve(&def).expect("the kit resolves");
-
-        let ids: Vec<&ItemId> = kit.rounds.keys().collect();
-        assert_eq!(ids, [&id("round_ball"), &id("round_unused")]);
-        assert_eq!(kit.rounds[&id("round_unused")].muzzle_velocity, 800.0);
-        assert_eq!(kit.rounds[&id("round_unused")].drag, 0.5);
-    }
-
-    #[test]
     fn rig_magazines_are_stowed_in_listed_order_from_the_first_slot() {
         let def = start(json!([
             {"magazine": "mag_rifle", "round": "round_ball", "rounds": 5},

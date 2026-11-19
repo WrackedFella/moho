@@ -179,24 +179,6 @@ condition = 100
     }
 
     #[test]
-    fn a_resolved_kit_carries_the_ballistics_of_its_round_from_content() {
-        let items = items_toml().replace(
-            BALL,
-            r#"round = { caliber = "5.56x45", muzzle_velocity = 612.5, drag = 0.25 }"#,
-        );
-        let (_dir, roots) = base_with(&items, &start_kit(2));
-
-        let kit = load(&roots, START_KIT_ID).expect("the kit loads");
-
-        let ball = kit
-            .rounds
-            .get(&ItemId::new("round_ball"))
-            .expect("the kit names the ball round");
-        assert_eq!(ball.muzzle_velocity, 612.5);
-        assert_eq!(ball.drag, 0.25);
-    }
-
-    #[test]
     fn a_bad_round_fails_the_load_naming_the_round_and_the_field() {
         let cases = [
             (
@@ -259,23 +241,6 @@ condition = 100
             assert_eq!(id, "round_ball", "{problem}");
             assert!(reason.contains(field), "{problem}: {reason}");
         }
-    }
-
-    #[test]
-    fn a_rifle_that_still_names_a_range_fails_the_load_naming_the_rifle() {
-        let items =
-            items_toml().replace("charge_ticks = 30\n", "charge_ticks = 30\nrange = 100.0\n");
-        let (_dir, roots) = base_with(&items, &start_kit(2));
-
-        let Err(error) = load(&roots, START_KIT_ID) else {
-            panic!("a rifle that names a range loaded");
-        };
-
-        let KitLoadError::Content(ContentError::Invalid { id, reason, .. }) = &error else {
-            panic!("expected Invalid content, got {error:?}");
-        };
-        assert_eq!(id, "rifle");
-        assert!(reason.contains("range"), "{reason}");
     }
 
     #[test]

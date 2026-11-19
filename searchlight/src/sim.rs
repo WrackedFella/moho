@@ -5918,7 +5918,7 @@ mod rounds_in_flight_tests {
         assert_eq!(in_flight, 1, "the round should still be flying");
         let gone_after = gone_after.expect("the round never left the bounds");
         assert!(gone_after > 1, "gone after {gone_after} ticks");
-        assert_eq!(outside_feedback, []);
+        assert_eq!(outside_feedback, [Feedback::Fired]);
         assert_eq!(outside.dummy_body(0).expect("a dummy").health(), 100);
     }
 
@@ -5978,6 +5978,19 @@ mod rounds_in_flight_tests {
             "struck at {point:?}"
         );
         assert!(sim.rounds.is_empty());
+    }
+
+    #[test]
+    fn under_simple_a_torso_150_m_away_is_hit_on_the_firing_tick() {
+        let mut sim = dummy_sim(config_at(TORSO), 150.0);
+
+        let ticks = fight(&mut sim, pull_with(true, 1.0), 6);
+
+        let hits = hits_of(&ticks);
+        let [(tick, target, part, _)] = hits[..] else {
+            panic!("Simple should hit once past the old 100 m: {ticks:?}");
+        };
+        assert_eq!((tick, target, part), (0, 0, BodyPart::Torso));
     }
 
     #[test]
