@@ -256,10 +256,13 @@ impl PhysicsWorld {
             let spin = body.angvel();
             let linear = body.linvel();
             let new_spin = spin + axis * (shrink(spin.dot(axis), decel / radius) - spin.dot(axis));
-            let new_linear = match axis.cross(up).try_normalize() {
-                Some(roll) => {
-                    let along = linear.dot(roll);
-                    linear + roll * (shrink(along, decel) - along)
+            // The linear cut fades with |axis x up|: full for a lying body, none for an upright
+            // one, which is not rolling and has no rolling direction.
+            let roll = axis.cross(up);
+            let new_linear = match roll.try_normalize() {
+                Some(dir) => {
+                    let along = linear.dot(dir);
+                    linear + dir * (shrink(along, decel * roll.length().min(1.0)) - along)
                 }
                 None => linear,
             };
