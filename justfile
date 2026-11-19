@@ -35,7 +35,19 @@ comment-refs base=base:
 
 # Licenses, advisories, banned and duplicate crates, crate sources.
 deny:
+    #!/usr/bin/env bash
+    set -euo pipefail
     cargo deny check
+    scripts/check-physics-features.sh
+    # The check must fail on a workspace where rapier3d lacks the feature, and name the crate.
+    if out="$(MOHO_PHYSICS_METADATA=scripts/fixtures/physics-features-missing.metadata.json scripts/check-physics-features.sh 2>&1)"; then
+        echo "check-physics-features accepted physics-features-missing" >&2
+        exit 1
+    fi
+    if ! grep -q 'rapier3d' <<<"$out"; then
+        echo "check-physics-features did not name rapier3d for physics-features-missing; got: $out" >&2
+        exit 1
+    fi
 
 # LCOV coverage report at lcov.info.
 cov:
