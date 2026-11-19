@@ -60,18 +60,29 @@ impl MineMarks {
 
     /// Claims an unclaimed mark for `pawn`. Returns `false`, changing nothing, when the
     /// block is not marked or another pawn holds the claim.
-    pub fn claim(&mut self, _pos: [i32; 3], _pawn: PawnId) -> bool {
-        todo!("claim a mark")
+    pub fn claim(&mut self, pos: [i32; 3], pawn: PawnId) -> bool {
+        match self.marks.get_mut(&pos) {
+            Some(mark) if mark.claimed_by.is_none() => {
+                mark.claimed_by = Some(pawn);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Frees the claim on a mark, keeping the mark; does nothing for an unmarked block.
-    pub fn release(&mut self, _pos: [i32; 3]) {
-        todo!("release a claim")
+    pub fn release(&mut self, pos: [i32; 3]) {
+        if let Some(mark) = self.marks.get_mut(&pos) {
+            mark.claimed_by = None;
+        }
     }
 
     /// The marks nobody has claimed, in key order.
     pub fn unclaimed(&self) -> impl Iterator<Item = [i32; 3]> + '_ {
-        std::iter::empty()
+        self.marks
+            .iter()
+            .filter(|(_, mark)| mark.claimed_by.is_none())
+            .map(|(pos, _)| *pos)
     }
 }
 

@@ -1,5 +1,8 @@
 //! Ground routing for pawns: which cells a pawn can stand on and the way between them.
 
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
+
 use flagstone_voxel::{BlockPos, VoxelGrid};
 use glam::Vec3;
 
@@ -8,13 +11,45 @@ pub const ROUTE_NODE_BUDGET: usize = 4096;
 
 /// Whether a pawn can stand with its feet in `cell`: ground below and three cells of air
 /// from the feet up.
-pub fn standable(_grid: &VoxelGrid, _cell: BlockPos) -> bool {
-    todo!("standable")
+pub fn standable(grid: &VoxelGrid, cell: BlockPos) -> bool {
+    grid.is_solid_at(cell - BlockPos::Y) && clear_above(grid, cell, 0)
+}
+
+/// Whether the three cells of the capsule's height from `cell + lift` up are air.
+fn clear_above(grid: &VoxelGrid, cell: BlockPos, lift: i32) -> bool {
+    (lift..lift + 3).all(|dy| !grid.is_solid_at(cell + BlockPos::new(0, dy, 0)))
 }
 
 /// The cell a pawn's feet are in.
-pub fn feet_cell(_feet: Vec3) -> BlockPos {
-    todo!("feet_cell")
+pub fn feet_cell(feet: Vec3) -> BlockPos {
+    feet.floor().as_ivec3()
+}
+
+/// The horizontal neighbours a pawn steps to, in the fixed order that makes ties repeatable.
+const STEPS: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+
+/// The standable cells one step from `cell`: level, one block up (with a fourth cell of
+/// air over the current feet), or one block down (with the capsule's height clear at the
+/// current level).
+fn neighbours(grid: &VoxelGrid, cell: BlockPos) -> impl Iterator<Item = BlockPos> + '_ {
+    let head_clear = !grid.is_solid_at(cell + BlockPos::new(0, 3, 0));
+    STEPS.into_iter().flat_map(move |(dx, dz)| {
+        let level = cell + BlockPos::new(dx, 0, dz);
+        let up = level + BlockPos::Y;
+        let down = level - BlockPos::Y;
+        let on_level = standable(grid, level).then_some(level);
+        let climbing = (head_clear && standable(grid, up)).then_some(up);
+        let dropping = (standable(grid, down) && clear_above(grid, level, 0)).then_some(down);
+        [on_level, climbing, dropping].into_iter().flatten()
+    })
+}
+
+fn key(cell: BlockPos) -> (i32, i32, i32) {
+    (cell.x, cell.y, cell.z)
+}
+
+fn horizontal_distance(a: BlockPos, b: BlockPos) -> i32 {
+    (a.x - b.x).abs() + (a.z - b.z).abs()
 }
 
 /// The cheapest walkable route from `start` to the nearest cell satisfying `is_goal`,
@@ -23,13 +58,69 @@ pub fn feet_cell(_feet: Vec3) -> BlockPos {
 ///
 /// A `start` that is not standable tries the cells one above and one below it.
 pub fn route(
-    _grid: &VoxelGrid,
-    _start: BlockPos,
-    _is_goal: impl Fn(BlockPos) -> bool,
-    _toward: BlockPos,
-    _budget: usize,
+    grid: &VoxelGrid,
+    start: BlockPos,
+    is_goal: impl Fn(BlockPos) -> bool,
+    toward: BlockPos,
+    budget: usize,
 ) -> Option<Vec<BlockPos>> {
-    todo!("route")
+    let start = [start, start + BlockPos::Y, start - BlockPos::Y]
+        .into_iter()
+        .find(|&cell| standable(grid, cell))?;
+
+    // Ordered by (f, larger g first, insertion order); `Reverse` makes the heap a min-heap.
+    let mut open = BinaryHeap::new();
+    let mut best_cost = HashMap::from([(key(start), 0_i32)]);
+    let mut came_from: HashMap<(i32, i32, i32), BlockPos> = HashMap::new();
+    let mut inserted = 0_u32;
+    open.push(Reverse((
+        horizontal_distance(start, toward),
+        Reverse(0_i32),
+        inserted,
+        key(start),
+    )));
+
+    let mut expansions = 0;
+    while let Some(Reverse((_, Reverse(cost), _, current))) = open.pop() {
+        let cell = BlockPos::new(current.0, current.1, current.2);
+        if best_cost.get(&current).is_some_and(|&best| cost > best) {
+            continue;
+        }
+        if is_goal(cell) {
+            let mut path = vec![cell];
+            let mut at = cell;
+            while let Some(&previous) = came_from.get(&key(at)) {
+                path.push(previous);
+                at = previous;
+            }
+            path.reverse();
+            return Some(path);
+        }
+        if expansions >= budget {
+            return None;
+        }
+        expansions += 1;
+
+        for next in neighbours(grid, cell) {
+            let next_cost = cost + 1;
+            if best_cost
+                .get(&key(next))
+                .is_some_and(|&best| best <= next_cost)
+            {
+                continue;
+            }
+            best_cost.insert(key(next), next_cost);
+            came_from.insert(key(next), cell);
+            inserted += 1;
+            open.push(Reverse((
+                next_cost + horizontal_distance(next, toward),
+                Reverse(next_cost),
+                inserted,
+                key(next),
+            )));
+        }
+    }
+    None
 }
 
 #[cfg(test)]
