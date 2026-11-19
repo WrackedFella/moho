@@ -132,12 +132,10 @@ impl FrameProcessor {
                     yaw_delta: walk.yaw_delta,
                     ..moho_physics::CharacterCommand::default()
                 };
-                let settings = moho_physics::MoveSettings {
-                    max_speed: MOVE_SPEED,
-                    air_speed_cap: MOVE_SPEED,
-                    ..STRATEGY_MOVE_SETTINGS
-                };
-                if let Some(moved) = app.physics.move_character(&command, &settings, dt) {
+                if let Some(moved) =
+                    app.physics
+                        .move_character(&command, &STRATEGY_MOVE_SETTINGS, dt)
+                {
                     app.simulation
                         .set_position_yaw_pitch(moved.position, moved.yaw, moved.pitch);
                 }
