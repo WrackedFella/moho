@@ -64,6 +64,13 @@ impl AutosaveSchedule {
         }
     }
 
+    /// Sets the interval from a duration at `tick_hz` ticks per second, rounded up to a
+    /// whole tick so a save is never due before the duration has passed.
+    pub fn set_interval(&mut self, interval: std::time::Duration, tick_hz: u32) {
+        let ticks = (interval.as_nanos() * u128::from(tick_hz)).div_ceil(1_000_000_000);
+        self.interval_ticks = u64::try_from(ticks).unwrap_or(u64::MAX);
+    }
+
     /// One simulation tick of play has passed.
     pub fn tick(&mut self) {
         self.ticks_since_save = self.ticks_since_save.saturating_add(1);
@@ -472,6 +479,30 @@ mod tests {
             "saved before the interval ended"
         );
         assert!(at_30_seconds != unmined, "nothing saved at 30 seconds");
+        assert_absent_after_loading(&saves, world, block);
+    }
+
+    #[test]
+    fn interval_of_1_5_seconds_does_not_save_before_1_5_seconds() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let saves = temp.path().join("saves");
+        let world = &unique("autosave_unit_interval_1_5s");
+        let mut app = new_world(&saves, world);
+        app.autosave_interval = Duration::from_millis(1500);
+        let unmined = std::fs::read(saves.join("scene.bin")).expect("seed save is readable");
+        let mut sim = new_loop();
+        let block = mine_surface(&mut app, 8, 8);
+
+        play(&mut app, &mut sim, 84);
+        let at_1_4_seconds = std::fs::read(saves.join("scene.bin")).expect("save is readable");
+        play(&mut app, &mut sim, 6);
+        let at_1_5_seconds = std::fs::read(saves.join("scene.bin")).expect("save is readable");
+
+        assert!(
+            at_1_4_seconds == unmined,
+            "saved before the 1.5 second interval ended"
+        );
+        assert!(at_1_5_seconds != unmined, "nothing saved at 1.5 seconds");
         assert_absent_after_loading(&saves, world, block);
     }
 

@@ -435,8 +435,8 @@ impl moho_app::Game for App {
         let frame_number = frame_processor.publish_frame_start(self, dt);
         if self.game_state == GameState::Playing {
             self.apply_command(command);
-            self.autosave_schedule.interval_ticks =
-                self.autosave_interval.as_secs() * u64::from(flagstone_game::TICK_HZ);
+            self.autosave_schedule
+                .set_interval(self.autosave_interval, flagstone_game::TICK_HZ);
             self.autosave_schedule.tick();
         }
         for console_command in &command.console {
