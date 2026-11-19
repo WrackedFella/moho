@@ -12,7 +12,7 @@ use moho_physics::{
     MoveSettings, PhysicsWorld, first_person_view,
 };
 use searchlight_rules::{
-    Ballistics, Body, BodyPart, BodyProfile, FlightBounds, Grade, HitReport, ItemId, Lean,
+    Ballistics, Body, BodyPart, BodyProfile, Flight, FlightBounds, Grade, HitReport, ItemId, Lean,
     LeanReach, LeanSide, LeanTuning, Loadout, MagazineLevel, Rifle, Rig, Shot,
 };
 
@@ -21,7 +21,7 @@ use crate::brain::{Brain, EnemyTuning, Percept};
 use crate::cover::{self, Threat};
 use crate::input::SearchlightCommand;
 use crate::lean::lean_offset;
-use crate::round::RoundInFlight;
+use crate::round::{RoundInFlight, step_round};
 use crate::shot::{ShotRay, Strike, passes_within, resolve_shot};
 use crate::tag::SurfaceTag;
 use crate::tuning::SHIPPED_BODY;
@@ -31,9 +31,6 @@ use crate::tuning::SHIPPED_BODY;
 const LEAN_CLEARANCE: f32 = 0.15;
 /// How far from the eye a control can be used, in metres.
 pub const USE_REACH: f32 = 2.0;
-
-/// How far a hitscan shot reaches, in metres.
-const HITSCAN_RANGE: f32 = 100.0;
 
 /// Height of the shipped body's capsule centre above its feet, in metres: half its hull. For
 /// code with no [`SimConfig`] at hand; the sim itself spawns the configured body.
@@ -448,9 +445,12 @@ impl SearchlightSim {
     /// Runs one tick of `dt` seconds.
     ///
     /// While the player is dead only `command.restart` is read, and it puts every character
-    /// back at its spawn, as a fresh sim over the same world would have them. Otherwise the enemies perceive and move, the player moves (slower while a lean is held), the
-    /// world steps, the player's lean blends within the room beside it, the player's weapon actions apply, then the enemies that decided to fire
-    /// do, and enemies that died leave the world.
+    /// back at its spawn, as a fresh sim over the same world would have them. Otherwise the
+    /// enemies perceive and move, the player moves (slower while a lean is held), the world
+    /// steps, the player's lean blends within the room beside it, the rounds already in flight
+    /// step, the player's weapon actions apply (a pull adds a round that first steps next tick,
+    /// or under `command.simple` lands at once), then the enemies that decided to fire do, and
+    /// enemies that died leave the world.
     pub fn tick(&mut self, command: &SearchlightCommand, dt: f32) {
         if self.player_body.is_dead() {
             if command.restart {
@@ -474,9 +474,11 @@ impl SearchlightSim {
         self.world.step(dt);
         self.step_lean(command.lean, dt);
 
+        self.step_rounds(command.round_gravity.gravity(), dt);
+
         self.advance_weapon();
         if command.fire {
-            self.pull_trigger();
+            self.pull_trigger(command.simple);
         }
         if command.reload {
             self.begin_reload();
@@ -731,57 +733,119 @@ impl SearchlightSim {
         };
     }
 
-    fn pull_trigger(&mut self) {
+    /// Steps every round in flight once. A round that struck something, is spent or left the
+    /// flight bounds ends; the rest fly on.
+    fn step_rounds(&mut self, gravity: f32, dt: f32) {
+        let rounds = std::mem::take(&mut self.rounds);
+        for mut round in rounds {
+            let step = step_round(&self.world, &round, gravity, dt);
+            let hit = step.strike.and_then(|strike| match strike.tag {
+                SurfaceTag::Part { target, part } => Some((target, part)),
+                _ => None,
+            });
+            let struck = hit.map(|(target, _)| usize::from(target));
+            self.record_near_misses(
+                round.flight.position,
+                step.end,
+                struck,
+                round.from,
+                &mut round.near_missed,
+            );
+            if let Some((target, part)) = hit {
+                self.land_player_hit(target, part, self.damage, round.from, step.end);
+            }
+            let ended = step.strike.is_some()
+                || step.flight.is_spent()
+                || !self.origin.0.bounds.contains(step.flight.position);
+            if !ended {
+                round.flight = step.flight;
+                self.rounds.push(round);
+            }
+        }
+    }
+
+    fn pull_trigger(&mut self, simple: bool) {
         if self.weapon != Weapon::Ready {
             return;
         }
         match self.loadout.fire() {
             Shot::Dry => self.outbox.push(Feedback::Dry),
-            Shot::Fired(_) => {
+            Shot::Fired(round) => {
                 self.outbox.push(Feedback::Fired);
                 if self.cooldown_ticks > 0 {
                     self.weapon = Weapon::Cooling(self.cooldown_ticks);
                 }
-                self.resolve_player_shot();
+                if simple {
+                    self.hitscan_player_shot();
+                } else {
+                    self.launch_player_round(&round);
+                }
             }
         }
     }
 
-    fn resolve_player_shot(&mut self) {
+    /// Puts a round of the kind `round` in flight from the leaned eye along the view.
+    fn launch_player_round(&mut self, round: &ItemId) {
+        let Some(&ballistics) = self.origin.1.rounds.get(round) else {
+            tracing::warn!(%round, "fired a round with no ballistics, it flies nothing");
+            return;
+        };
+        let state = self.player();
+        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
+        self.rounds.push(RoundInFlight {
+            flight: Flight::fired(self.leaned_eye(&state), view.forward, &ballistics),
+            ballistics,
+            shooter: Some(self.player),
+            from: state.position,
+            near_missed: Vec::new(),
+        });
+    }
+
+    /// Simple: the shot lands the tick it is fired, along a ray as long as the flight bounds.
+    fn hitscan_player_shot(&mut self) {
         let state = self.player();
         let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
         let origin = self.leaned_eye(&state);
+        let reach = self.origin.0.bounds.reach();
         let strike = resolve_shot(
             &self.world,
             ShotRay {
                 origin,
                 direction: view.forward,
-                range: HITSCAN_RANGE,
+                range: reach,
                 ignore: Some(self.player),
             },
         );
-        let end = strike.map_or(origin + view.forward * HITSCAN_RANGE, |strike| strike.point);
+        let end = strike.map_or(origin + view.forward * reach, |strike| strike.point);
         let hit = strike.and_then(|strike| match strike.tag {
             SurfaceTag::Part { target, part } => Some((target, part)),
             _ => None,
         });
         let struck = hit.map(|(target, _)| usize::from(target));
-        self.record_near_misses(origin, end, struck, state.position);
+        self.record_near_misses(origin, end, struck, state.position, &mut Vec::new());
         if let Some((target, part)) = hit {
-            self.apply_player_hit(target, part, self.damage, state.position);
+            self.land_player_hit(target, part, self.damage, state.position, end);
         }
     }
 
-    /// Counts a near miss for every living enemy but `struck` that the shot from `origin` to
-    /// `end` passed within the near-miss radius of, and puts those whose count reached their
-    /// grade's under fire from `from`.
-    fn record_near_misses(&mut self, origin: Vec3, end: Vec3, struck: Option<usize>, from: Vec3) {
+    /// Counts a near miss for every living enemy but `struck` that the segment from `origin` to
+    /// `end` passed within the near-miss radius of and that `near_missed` does not list yet,
+    /// lists them, and puts those whose count reached their grade's under fire from `from`.
+    fn record_near_misses(
+        &mut self,
+        origin: Vec3,
+        end: Vec3,
+        struck: Option<usize>,
+        from: Vec3,
+        near_missed: &mut Vec<u16>,
+    ) {
         let radius = self.enemy.near_miss_radius;
         for (index, target) in self.targets.iter_mut().enumerate().skip(self.dummy_count) {
             let (Some(handle), Some(enemy)) = (target.handle, target.enemy) else {
                 continue;
             };
-            if struck == Some(index) {
+            let number = target_number(index);
+            if struck == Some(index) || near_missed.contains(&number) {
                 continue;
             }
             let Some(needed) = enemy.grade.near_misses_to_cover() else {
@@ -795,6 +859,7 @@ impl SearchlightSim {
             if !passes_within(origin, end, centre, radius) {
                 continue;
             }
+            near_missed.push(number);
             target.near_misses += 1;
             if target.near_misses >= needed {
                 target.near_misses = 0;
@@ -803,9 +868,23 @@ impl SearchlightSim {
         }
     }
 
-    /// Lands a player's hit of `damage` on `part` of target `target`, shot from `from`: wounds
-    /// the body, alerts a surviving enemy, counts a kill and reports the hit.
+    /// [`Self::land_player_hit`] for a hit with no strike point of its own: the point is `from`.
+    #[cfg(test)]
     fn apply_player_hit(&mut self, target: u16, part: BodyPart, damage: u32, from: Vec3) {
+        self.land_player_hit(target, part, damage, from, from);
+    }
+
+    /// Lands a player's hit of `damage` on `part` of target `target`, shot from `from` and
+    /// striking at `point`: wounds the body, alerts a surviving enemy, counts a kill and reports
+    /// the hit.
+    fn land_player_hit(
+        &mut self,
+        target: u16,
+        part: BodyPart,
+        damage: u32,
+        from: Vec3,
+        point: Vec3,
+    ) {
         let Some(struck) = self.targets.get_mut(usize::from(target)) else {
             tracing::warn!(target, "shot struck a target with no body, dropped");
             return;
@@ -824,7 +903,7 @@ impl SearchlightSim {
             target,
             part,
             report,
-            point: Vec3::ZERO,
+            point,
         });
     }
 
@@ -2407,6 +2486,10 @@ mod tests {
             },
             ..levels
         };
+        // A fresh character is not grounded until it has settled on the floor.
+        for _ in 0..10 {
+            sim.tick(&levels, DT);
+        }
         let mut apex = f32::MIN;
         for tick in 0..120 {
             sim.tick(if tick == 0 { &jump } else { &levels }, DT);
@@ -3161,6 +3244,7 @@ mod tests {
             // Two 30-damage head hits kill; each round lands on a later tick than its pull.
             run_until_hit(&mut sim, &pull());
             let after_first = (sim.kills(), sim.enemies_alive());
+            sim.drain_feedback();
             let wounded = !sim.enemy_body(0).expect("an enemy").is_dead();
             for _ in 0..3 {
                 sim.tick(&idle(), DT);
@@ -4120,7 +4204,7 @@ mod enemy_tests {
         run(&mut walking, &script(5, &[]));
         let before = walking.enemy_state(0).expect("alive unshot").position;
         let walked = run(&mut walking, &script(3, &[0]));
-        let killed = run(&mut walking, &script(1, &[0]));
+        let killed = run(&mut walking, &script(2, &[0]));
         let after_death = run(&mut walking, &script(60, &[]));
         let shooting = run(&mut firing, &script(90, &[3]));
 
@@ -4132,7 +4216,7 @@ mod enemy_tests {
                 .any(|fb| hit_of(fb) == Some((0, BodyPart::Head)))
         );
         assert!(
-            killed[0].contains(&Feedback::EnemyDied { target: 0 }),
+            killed[1].contains(&Feedback::EnemyDied { target: 0 }),
             "{killed:?}"
         );
         assert!(walking.enemy_state(0).is_none());
@@ -4141,7 +4225,7 @@ mod enemy_tests {
         assert_eq!(ticks_where(&shooting, enemy_fired), [2]);
         assert_eq!(
             ticks_where(&shooting, |fb| *fb == Feedback::EnemyDied { target: 0 }),
-            [3]
+            [4]
         );
         assert_eq!(count(&shooting, player_hit), 1);
         assert_eq!(firing.player_body().health(), 90);
@@ -4160,13 +4244,13 @@ mod enemy_tests {
         config.damage = PLAYER_ONE_SHOT;
         let mut sim = SearchlightSim::start(arena, config);
 
-        let ticks = run(&mut sim, &script(4, &[0, 3]));
+        let ticks = run(&mut sim, &script(12, &[0, 3]));
 
         assert!(
-            ticks[0].contains(&Feedback::EnemyDied { target: 0 }),
+            ticks[1].contains(&Feedback::EnemyDied { target: 0 }),
             "{ticks:?}"
         );
-        let second: Vec<_> = ticks[3].iter().filter_map(hit_of).collect();
+        let second: Vec<_> = ticks[2..].iter().flatten().filter_map(hit_of).collect();
         assert_eq!(second, [(1, BodyPart::Head)], "{ticks:?}");
     }
 
@@ -4178,7 +4262,7 @@ mod enemy_tests {
         let mut contested = SearchlightSim::start(duel(&[]), config);
 
         let undisturbed = run(&mut control, &script(60, &[]));
-        let shot_down = run(&mut contested, &script(60, &[2]));
+        let shot_down = run(&mut contested, &script(60, &[1]));
 
         assert_eq!(ticks_where(&undisturbed, enemy_fired)[0], 2);
         assert!(

@@ -30,7 +30,7 @@ use moho_ui_shell::{
 };
 
 use crate::arena::{box_mesh, control_mesh_id, oriented_box_mesh};
-use crate::console_commands::{self, ConsoleCommand, GodModeArg};
+use crate::console_commands::{self, ConsoleCommand, GodModeArg, SimpleArg};
 use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
 use crate::input::{SearchlightAction, SearchlightCommand, look_from, look_to_turn, resolve_lean};
@@ -841,7 +841,7 @@ impl SearchlightGame {
         }
     }
 
-    /// Starts in the god mode `settings` holds and saves every change to it. The engine settings
+    /// Starts in the god mode and Simple `settings` holds and saves every change to them. The engine settings
     /// it holds apply on the first frame.
     #[must_use]
     pub fn with_debug_settings(mut self, settings: DebugSettings) -> Self {
@@ -873,6 +873,7 @@ impl SearchlightGame {
             return;
         }
         let before = self.god_mode;
+        let simple_before = self.simple;
         for command in queued {
             match command {
                 ConsoleCommand::GodMode(GodModeArg::Toggle) => {
@@ -887,8 +888,24 @@ impl SearchlightGame {
                 ConsoleCommand::GodMode(GodModeArg::Set(on)) => self.god_mode = on,
                 ConsoleCommand::Fullscreen => self.flip_window_pending = true,
                 ConsoleCommand::ForceGrade(grade) => self.forced_grade = grade,
-                ConsoleCommand::Simple(_) | ConsoleCommand::RoundGravity(_) => {}
+                ConsoleCommand::Simple(SimpleArg::Toggle) => {
+                    self.simple = !self.simple;
+                    let text = if self.simple {
+                        "Simple: on"
+                    } else {
+                        "Simple: off"
+                    };
+                    self.stage.shell().console_mut().print(text);
+                }
+                ConsoleCommand::Simple(SimpleArg::Set(on)) => self.simple = on,
+                ConsoleCommand::RoundGravity(scale) => self.round_gravity = scale,
             }
+        }
+        if self.simple != simple_before
+            && let Some(settings) = &mut self.debug_settings
+            && let Err(error) = settings.set_simple(self.simple)
+        {
+            tracing::warn!(%error, simple = self.simple, "simple not saved");
         }
         if self.god_mode != before
             && let Some(settings) = &mut self.debug_settings

@@ -1,5 +1,6 @@
 //! Items defined in data: one model for weapons, magazines, rounds, rigs and tools.
 
+use crate::ballistics::MIN_SPEED;
 use crate::weapon::RifleDef;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -110,9 +111,7 @@ pub struct RoundSpec {
 #[serde(deny_unknown_fields)]
 struct RawRoundSpec {
     caliber: Caliber,
-    #[serde(default)]
     muzzle_velocity: f32,
-    #[serde(default)]
     drag: f32,
 }
 
@@ -120,6 +119,16 @@ impl TryFrom<RawRoundSpec> for RoundSpec {
     type Error = String;
 
     fn try_from(raw: RawRoundSpec) -> Result<Self, Self::Error> {
+        // Written so NaN fails: a comparison with NaN is false.
+        if !(raw.muzzle_velocity.is_finite() && raw.muzzle_velocity > MIN_SPEED) {
+            return Err(format!(
+                "muzzle_velocity must be above {MIN_SPEED} m/s, got {}",
+                raw.muzzle_velocity
+            ));
+        }
+        if !(raw.drag.is_finite() && raw.drag >= 0.0) {
+            return Err(format!("drag must be 0 or more, got {}", raw.drag));
+        }
         Ok(Self {
             caliber: raw.caliber,
             muzzle_velocity: raw.muzzle_velocity,

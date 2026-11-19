@@ -36,20 +36,29 @@ impl Flight {
     /// A round leaving `origin` along `direction` (need not be unit length) at the muzzle
     /// velocity.
     pub fn fired(origin: Vec3, direction: Vec3, ballistics: &Ballistics) -> Self {
-        let _ = (origin, direction, ballistics);
-        todo!("the muzzle velocity along the normalised direction")
+        Self {
+            position: origin,
+            velocity: direction.normalize() * ballistics.muzzle_velocity,
+        }
     }
 
-    /// One step of `dt` seconds under `gravity` (m/s², positive down).
+    /// One step of `dt` seconds under `gravity` (m/s², positive down): drag slows the round
+    /// (never past a stop), gravity then pulls its vertical velocity down, and it moves by the
+    /// new velocity. Only correctly rounded IEEE operations, so replays are exact.
     #[must_use]
     pub fn step(&self, ballistics: &Ballistics, gravity: f32, dt: f32) -> Flight {
-        let _ = (ballistics, gravity, dt);
-        todo!("v' = v * max(0, 1 - drag * dt) - Y * gravity * dt, p' = p + v' * dt")
+        let keep = (1.0 - ballistics.drag * dt).max(0.0);
+        let mut velocity = self.velocity * keep;
+        velocity.y -= gravity * dt;
+        Flight {
+            position: self.position + velocity * dt,
+            velocity,
+        }
     }
 
     /// Whether the round has slowed to [`MIN_SPEED`] or below.
     pub fn is_spent(&self) -> bool {
-        todo!("speed at or below MIN_SPEED")
+        self.velocity.length() <= MIN_SPEED
     }
 }
 
@@ -75,12 +84,16 @@ impl GravityScale {
     /// [`GravityScaleError::OutOfRange`] when `scale` is negative, not finite or above
     /// [`MAX_GRAVITY_SCALE`].
     pub fn new(scale: f32) -> Result<Self, GravityScaleError> {
-        Ok(Self(scale))
+        if scale.is_finite() && (0.0..=MAX_GRAVITY_SCALE).contains(&scale) {
+            Ok(Self(scale))
+        } else {
+            Err(GravityScaleError::OutOfRange(scale))
+        }
     }
 
     /// The downward acceleration this scale gives rounds, in m/s².
     pub fn gravity(self) -> f32 {
-        todo!("STANDARD_GRAVITY * scale")
+        STANDARD_GRAVITY * self.0
     }
 }
 
@@ -94,7 +107,7 @@ impl TryFrom<f32> for GravityScale {
 
 impl Default for GravityScale {
     fn default() -> Self {
-        Self(0.0)
+        Self(1.0)
     }
 }
 
@@ -110,22 +123,25 @@ pub struct FlightBounds {
 impl FlightBounds {
     /// The box around `points`, grown by `margin` metres on every side.
     pub fn around(points: impl IntoIterator<Item = Vec3>, margin: f32) -> Self {
-        let _ = (points.into_iter().count(), margin);
+        let (min, max) = points
+            .into_iter()
+            .fold((Vec3::INFINITY, Vec3::NEG_INFINITY), |(min, max), p| {
+                (min.min(p), max.max(p))
+            });
         Self {
-            min: Vec3::ZERO,
-            max: Vec3::ZERO,
+            min: min - Vec3::splat(margin),
+            max: max + Vec3::splat(margin),
         }
     }
 
     /// Whether `point` is inside the box or on a face.
     pub fn contains(&self, point: Vec3) -> bool {
-        let _ = point;
-        false
+        point.cmpge(self.min).all() && point.cmple(self.max).all()
     }
 
     /// The length of the box's diagonal, in metres.
     pub fn reach(&self) -> f32 {
-        0.0
+        (self.max - self.min).length()
     }
 }
 

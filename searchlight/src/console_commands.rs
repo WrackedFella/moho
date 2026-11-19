@@ -36,17 +36,36 @@ pub enum SimpleArg {
 
 /// Parses `simple [0|1]`; no argument toggles.
 pub fn parse_simple(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
-    let _ = args;
-    todo!(
-        "simple [0|1]: bare toggles, 0 and 1 set and print the state, anything else prints the usage"
-    )
+    match args {
+        [] => Ok((ConsoleCommand::Simple(SimpleArg::Toggle), String::new())),
+        ["1"] => Ok((
+            ConsoleCommand::Simple(SimpleArg::Set(true)),
+            "Simple: on".to_owned(),
+        )),
+        ["0"] => Ok((
+            ConsoleCommand::Simple(SimpleArg::Set(false)),
+            "Simple: off".to_owned(),
+        )),
+        _ => Err("Usage: simple [0|1]".to_owned()),
+    }
 }
 
 /// Parses `round_gravity <scale>`; a missing, negative, non-numeric or too large scale prints
 /// the usage.
 pub fn parse_round_gravity(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
-    let _ = args;
-    todo!("round_gravity <scale>")
+    let usage = || "Usage: round_gravity <scale>".to_owned();
+    let [text] = args else {
+        return Err(usage());
+    };
+    let scale = text
+        .parse::<f32>()
+        .ok()
+        .and_then(|scale| GravityScale::new(scale).ok())
+        .ok_or_else(usage)?;
+    Ok((
+        ConsoleCommand::RoundGravity(scale),
+        format!("Round gravity: {text}"),
+    ))
 }
 
 /// Parses `tgm [0|1]`; no argument toggles.

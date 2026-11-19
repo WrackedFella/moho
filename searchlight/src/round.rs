@@ -4,7 +4,7 @@ use glam::Vec3;
 use moho_physics::{CharacterHandle, PhysicsWorld};
 use searchlight_rules::{Ballistics, Flight};
 
-use crate::shot::Strike;
+use crate::shot::{ShotRay, Strike, resolve_shot};
 
 /// A round that has left the muzzle and not yet struck anything.
 #[derive(Debug, Clone, PartialEq)]
@@ -35,8 +35,28 @@ pub struct RoundStep {
 /// Steps `round` once by `dt` seconds under `gravity` and casts the segment from where it was
 /// to where it is.
 pub fn step_round(world: &PhysicsWorld, round: &RoundInFlight, gravity: f32, dt: f32) -> RoundStep {
-    let _ = (world, round, gravity, dt);
-    todo!("step the flight, then resolve the segment as a shot")
+    let flight = round.flight.step(&round.ballistics, gravity, dt);
+    let segment = flight.position - round.flight.position;
+    let range = segment.length();
+    // A round stopped dead by drag has no direction to cast along.
+    let strike = if range > 0.0 {
+        resolve_shot(
+            world,
+            ShotRay {
+                origin: round.flight.position,
+                direction: segment,
+                range,
+                ignore: round.shooter,
+            },
+        )
+    } else {
+        None
+    };
+    RoundStep {
+        flight,
+        end: strike.map_or(flight.position, |strike| strike.point),
+        strike,
+    }
 }
 
 #[cfg(test)]

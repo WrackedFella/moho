@@ -7,6 +7,7 @@ use moho_core::prefs::{Prefs, WindowMode};
 use moho_ui_shell::EngineSettings;
 
 const GOD_MODE: &str = "god_mode";
+const SIMPLE: &str = "simple";
 
 /// The whole loaded prefs and where to save them, so a save keeps every other value.
 #[derive(Clone, Debug)]
@@ -43,7 +44,7 @@ impl DebugSettings {
 
     /// Whether Simple is stored as on; an absent or unrecognised value reads as off.
     pub fn simple(&self) -> bool {
-        false
+        self.prefs.debug_value(SIMPLE) == Some("1")
     }
 
     /// Stores Simple and saves the prefs file.
@@ -51,8 +52,10 @@ impl DebugSettings {
     /// # Errors
     /// The I/O error if the file cannot be written.
     pub fn set_simple(&mut self, on: bool) -> io::Result<()> {
-        let _ = on;
-        Ok(())
+        self.prefs
+            .set_debug_value(SIMPLE, if on { "1" } else { "0" })
+            .expect("\"simple\" with \"1\" or \"0\" is a name and value prefs always accepts");
+        self.prefs.save_to(&self.path)
     }
 
     /// Stores the engine's settings rows and saves the prefs file; every other value in the
