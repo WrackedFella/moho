@@ -52,8 +52,9 @@ _physics-features-selftest:
     for crate in rapier3d parry3d; do
         rc=0
         out=$(MOHO_PHYSICS_METADATA=$f/physics-metadata-lacks-${crate%3d}.json bash scripts/check-physics-features.sh 2>&1) || rc=$?
-        if [ "$rc" -eq 0 ] || ! grep -qF -- "$crate" <<<"$out"; then
-            echo "physics-features self-test: expected failure naming $crate, got exit $rc: $out" >&2
+        other=$([ "$crate" = rapier3d ] && echo parry3d || echo rapier3d)
+        if [ "$rc" -eq 0 ] || ! grep -qF -- "$crate" <<<"$out" || grep -qF -- "$other" <<<"$out"; then
+            echo "physics-features self-test: expected failure naming only $crate, got exit $rc: $out" >&2
             exit 1
         fi
     done

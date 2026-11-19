@@ -16,7 +16,7 @@ fi
 status=0
 for crate in rapier3d parry3d; do
     if ! jq -e --arg crate "$crate" --arg feature "$feature" '
-        [.resolve.nodes[] | select(.id | test("#" + $crate + "@")) | .features | index($feature)]
+        [.resolve.nodes[] | select(.id | contains("#" + $crate + "@")) | .features | index($feature)]
         | length > 0 and all(. != null)' "$metadata" >/dev/null; then
         echo "check-physics-features: $crate does not enable $feature" >&2
         status=1
