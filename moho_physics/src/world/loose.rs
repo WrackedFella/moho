@@ -304,26 +304,19 @@ impl PhysicsWorld {
                 continue;
             }
 
-            let (mut on_ground, mut deep, mut touches_loose) = (false, false, false);
+            let (mut on_ground, mut deep) = (false, false);
             for &collider in body.colliders() {
                 for pair in self.narrow_phase.contact_pairs_with(collider) {
-                    let (other, into_body) = if pair.collider2 == collider {
-                        (pair.collider1, 1.0)
+                    let into_body = if pair.collider2 == collider {
+                        1.0
                     } else {
-                        (pair.collider2, -1.0)
-                    };
-                    let other_loose = || {
-                        self.collider_set[other]
-                            .parent()
-                            .is_some_and(|b| self.loose.values().any(|l| l.body == b))
+                        -1.0
                     };
                     for manifold in pair.manifolds() {
                         let normal = manifold.data.normal * into_body;
                         for point in &manifold.points {
-                            let touching = point.dist <= 0.0;
                             deep |= point.dist < -deep_limit;
-                            on_ground |= touching && normal.dot(up) >= min_up_dot;
-                            touches_loose = touches_loose || (touching && other_loose());
+                            on_ground |= point.dist <= 0.0 && normal.dot(up) >= min_up_dot;
                         }
                     }
                 }
@@ -339,13 +332,7 @@ impl PhysicsWorld {
             let spin_cut = -spin.signum() * (brake / radius).min(spin.abs());
             let slide_cut = -slide.signum() * brake.min(slide.abs());
             let angvel = body.angvel() + axis * spin_cut;
-            // Against another loose object the solver's separating push is linear, so cutting
-            // linear velocity would freeze piles overlapped; cut only the spin.
-            let linvel = if touches_loose {
-                body.linvel()
-            } else {
-                body.linvel() + travel * slide_cut
-            };
+            let linvel = body.linvel() + travel * slide_cut;
 
             body.set_angvel(angvel, false);
             body.set_linvel(linvel, false);
@@ -1340,15 +1327,67 @@ mod tests {
         }
     }
 
-    /// How far the shape travels in 5 s on the slope, and whether it then sleeps.
-    fn settle_on_slope(world: &mut PhysicsWorld, shape: LooseShape, degrees: f32) -> (f32, bool) {
+    /// How far `displacement` goes down the slope of [`slope_world`], which descends toward
+    /// -z; negative when it goes uphill, zero for sideways motion.
+    fn downhill(displacement: Vec3, degrees: f32) -> f32 {
+        let angle = degrees.to_radians();
+        displacement.dot(Vec3::new(0.0, -angle.sin(), -angle.cos()))
+    }
+
+    /// How far the shape travels in 5 s on the slope, how far of that is downhill, and whether
+    /// it then sleeps.
+    fn settle_on_slope(
+        world: &mut PhysicsWorld,
+        shape: LooseShape,
+        degrees: f32,
+    ) -> (f32, f32, bool) {
         let spawn = lying_on_slope(shape, degrees);
         let id = world.spawn_loose(&spawn);
 
         run(world, 300);
 
         let state = read(world, id);
-        ((state.position - spawn.position).length(), state.asleep)
+        let displacement = state.position - spawn.position;
+        (
+            displacement.length(),
+            downhill(displacement, degrees),
+            state.asleep,
+        )
+    }
+
+    /// Two shapes lying across the slope of [`slope_world`], side by side along x with their
+    /// ends touching and no deeper, `first` on the -x side. Returns how far each moved over 5 s
+    /// and whether each sleeps.
+    fn settle_touching_pair(
+        first: LooseShape,
+        second: LooseShape,
+        degrees: f32,
+    ) -> [(f32, bool); 2] {
+        let reach = |shape| match shape {
+            LooseShape::Capsule {
+                half_height,
+                radius,
+            } => half_height + radius,
+            LooseShape::Cylinder { half_height, .. } => half_height,
+            LooseShape::Box { .. } => panic!("a box does not lie along an axis"),
+        };
+        let offset = (reach(first) + reach(second)) / 2.0;
+        let mut world = slope_world(degrees);
+        let spawns = [(first, -offset), (second, offset)].map(|(shape, x)| {
+            let spawn = lying_on_slope(shape, degrees);
+            LooseSpawn {
+                position: spawn.position + Vec3::X * x,
+                ..spawn
+            }
+        });
+        let ids = spawns.map(|spawn| world.spawn_loose(&spawn));
+
+        run(&mut world, 300);
+
+        [0, 1].map(|i| {
+            let state = read(&world, ids[i]);
+            ((state.position - spawns[i].position).length(), state.asleep)
+        })
     }
 
     #[test]
@@ -1364,12 +1403,12 @@ mod tests {
         for (name, shape, degrees, rolls) in rows {
             let mut world = slope_world(degrees);
 
-            let (moved, asleep) = settle_on_slope(&mut world, shape, degrees);
+            let (moved, down, asleep) = settle_on_slope(&mut world, shape, degrees);
 
             if rolls {
                 assert!(
-                    moved > 1.0,
-                    "{name} on {degrees} degrees rolled only {moved} m"
+                    down > 1.0,
+                    "{name} on {degrees} degrees rolled only {down} m downhill"
                 );
             } else {
                 assert!(moved < 0.02, "{name} on {degrees} degrees moved {moved} m");
@@ -1379,10 +1418,33 @@ mod tests {
     }
 
     #[test]
+    fn touching_shapes_on_a_rest_slope_still_rest() {
+        let rows = [
+            ("two capsules", CAPSULE, CAPSULE),
+            ("a cylinder against a capsule", CYLINDER, CAPSULE),
+        ];
+
+        for (name, first, second) in rows {
+            let results = settle_touching_pair(first, second, 4.9);
+
+            for (moved, asleep) in results {
+                assert!(
+                    moved < 0.02,
+                    "{name} on 4.9 degrees: one moved {moved} m, results {results:?}"
+                );
+                assert!(
+                    asleep,
+                    "{name} on 4.9 degrees: one is not asleep, results {results:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn the_rest_slope_is_game_data() {
         let mut steep = slope_world(8.0);
         steep.set_rest_slope(10.0f32.to_radians());
-        let (moved, asleep) = settle_on_slope(&mut steep, CAPSULE, 8.0);
+        let (moved, _, asleep) = settle_on_slope(&mut steep, CAPSULE, 8.0);
 
         let mut flat = world_with_floor(&floor_mesh(0.0));
         flat.set_rest_slope(0.0);
@@ -1748,8 +1810,8 @@ mod tests {
 
         run(&mut world, 299);
 
-        let moved = (read(&world, id).position - spawn.position).length();
-        assert!(moved > 1.0, "the capsule rolled only {moved} m");
+        let down = downhill(read(&world, id).position - spawn.position, degrees);
+        assert!(down > 1.0, "the capsule rolled only {down} m downhill");
     }
 
     #[test]
