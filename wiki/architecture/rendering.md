@@ -567,22 +567,40 @@ Effects are engine-owned presentation state a game starts, places and ends by ha
 ([ADR-0031](../../_todo/adr/0031-effects-are-engine-presentation-state-placed-by-handle.md)).
 `moho_renderer::Effects` (`moho_renderer/src/effects.rs`, reached via `Scene::effects_mut`)
 issues an `EffectHandle`, monotonic and never reused; a stale, unknown or inert handle is ignored.
-The one kind is the streak (a tracer):
+Two kinds exist: the streak (a tracer), held by handle, and the flash and mark, which a game
+fires and forgets.
+
+Streak:
 
 - `begin_streak(StreakStyle)` starts it; `place_streak(handle, head, heading)` sets its head
   every frame, already interpolated by the game; `end(handle)` starts the fade.
 - A streak not placed in a frame and not ended is skipped that frame. One past
   `StreakStyle::max_age` fades as if ended, so a forgotten `end` does not leak.
 - Fade tapers the width linearly over `StreakStyle::fade`; draws are opaque.
+
+Flash and mark (no handle, no placement call):
+
+- `flash(at, roll, FlashStyle)` spawns a camera-facing star (a muzzle flash) that shrinks to
+  nothing over its whole `lifetime`; `roll` turns it about the view axis.
+- `mark(at, normal, roll, MarkStyle)` spawns a quad lying on a surface (an impact mark),
+  offset slightly along `normal` against z-fighting, full size until the last `fade` of its
+  `lifetime` (clamped to it), then shrinking to nothing.
+- Both expire on their own through `advance`. Non-finite inputs and a zero `normal` are
+  refused. At the cap the oldest flashes and marks are evicted to make room; streaks are never
+  evicted, so with none left to evict the spawn is refused.
+
+Shared rules:
+
 - `advance(dt)` ages effects by frame time, not sim time, so pause and time scale do not slow them.
 - `set_quality(0..=4)` sets the live cap (0/32/64/128/256); at the cap `begin_streak` returns an
   inert handle, lowering keeps live effects, 0 clears them. A game hands the saved
   `effects_quality` pref to it on start and on apply.
 
 `Scene::render` calls `Effects::draw` first: each streak becomes one placement of a shared kite
-mesh, uploaded on first use under `EFFECT_MESH_IDS_FROM` (`u64::MAX - 63`, reserved; games keep
-their ids below it), turned to face the camera eye. Placements go through
+mesh, each flash of a shared star mesh and each mark of a shared quad mesh, uploaded on first
+use under `EFFECT_MESH_IDS_FROM` (`u64::MAX - 63`, reserved, the first three ids; games keep
+their ids below it). Streaks and flashes are turned to face the camera eye; marks lie on their surface. Placements go through
 `WorldMeshes::place_unshadowed` and reach the backend via `RendererBackend::enqueue_unshadowed_draw`
 (default: `enqueue_draw`). In the renderer the draw key has `casts_shadow = false`, so
-`render_shadow_passes` skips it and the main pass draws it. A second camera sees a streak
-turned toward the first eye.
+`render_shadow_passes` skips it and the main pass draws it. A second camera sees a streak or
+flash turned toward the first eye.
