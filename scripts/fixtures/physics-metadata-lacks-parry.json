@@ -1,0 +1,1 @@
+{"resolve":{"nodes":[{"id":"registry+https://github.com/rust-lang/crates.io-index#rapier3d@0.36.0","features":["enhanced-determinism","std"]},{"id":"registry+https://github.com/rust-lang/crates.io-index#parry3d@0.26.0","features":["std"]}]}}
