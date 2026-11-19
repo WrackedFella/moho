@@ -5,7 +5,6 @@
 | `pickup.wav` | A placeholder pickup cue: a 0.1 s rising blip (22.05 kHz, mono, 16-bit). |
 | `mark.wav` | A placeholder cue for marking a block for mining: a 0.1 s rising blip (520 to 780 Hz, same format). |
 | `unmark.wav` | A placeholder cue for cancelling a mark: the same blip falling (780 to 520 Hz). |
-
 | `dig.wav` | A placeholder cue for a pawn digging a marked block: a 0.15 s low thud (180 to 90 Hz) with a short noise attack (22.05 kHz, mono, 16-bit). |
 
 ## Origin

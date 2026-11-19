@@ -8,7 +8,7 @@ use std::f32::consts::{PI, TAU};
 use crate::TICK_HZ;
 use crate::colony::MineMarks;
 use crate::pawn::{Pawn, PawnId, TOOL_SLOT};
-use crate::routing::{ROUTE_NODE_BUDGET, feet_cell, route, standable};
+use crate::routing::{ROUTE_NODE_BUDGET, feet_cell, in_stand_box, route, standable};
 
 /// How close, horizontally, the feet must be to a waypoint's centre to have reached it, in metres.
 pub const ARRIVE_RADIUS: f32 = 0.35;
@@ -166,9 +166,8 @@ fn claim_nearest(
     for mark in candidates.into_iter().take(ROUTE_ATTEMPTS_PER_TICK) {
         let block = BlockPos::from_array(mark);
         let is_stand_cell = |cell: BlockPos| {
-            (cell.x - block.x).abs() <= 1
-                && (cell.z - block.z).abs() <= 1
-                && (block.y - 1..=block.y + 2).contains(&cell.y)
+            in_stand_box(cell, block)
+                && (cell.x, cell.z) != (block.x, block.z)
                 && standable(grid, cell)
         };
         if let Some(route) = route(grid, from, is_stand_cell, block, ROUTE_NODE_BUDGET)
@@ -561,8 +560,8 @@ mod tests {
 
     #[test]
     fn a_cancelled_mark_releases_the_pawn_mid_walk() {
-        // Both ways a mark can vanish mid-walk: the player cancels it, or another pawn digs
-        // the block (`a_mark_dug_by_another_pawn_releases_the_claim`).
+        // Both ways a mark can vanish mid-walk are cases of this test: the player cancels it,
+        // or another pawn digs the block.
         let ways: [(&str, Vanish); 2] = [
             ("cancelled by toggle", |_, marks| {
                 marks.toggle([8, 1, 1]);

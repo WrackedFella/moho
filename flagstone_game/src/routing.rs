@@ -44,8 +44,26 @@ fn neighbours(grid: &VoxelGrid, cell: BlockPos) -> impl Iterator<Item = BlockPos
     })
 }
 
-fn manhattan(a: BlockPos, b: BlockPos) -> u32 {
-    a.x.abs_diff(b.x) + a.y.abs_diff(b.y) + a.z.abs_diff(b.z)
+/// How far from a block's column, in x and z, a pawn can stand and still dig it.
+pub const STAND_REACH: i32 = 1;
+/// How far below the block's own height a pawn's feet can be and still dig it.
+pub const STAND_BELOW: i32 = 1;
+/// How far above the block's own height a pawn's feet can be and still dig it.
+pub const STAND_ABOVE: i32 = 2;
+
+/// Whether `cell` lies in the box around `block` that stand cells are drawn from.
+pub fn in_stand_box(cell: BlockPos, block: BlockPos) -> bool {
+    stand_box_gap(cell, block) == 0
+}
+
+/// Manhattan distance from `cell` to the stand box around `block`, clamped per axis. It never
+/// overestimates the route to any stand cell, so it keeps A* optimal.
+fn stand_box_gap(cell: BlockPos, block: BlockPos) -> u32 {
+    let gap =
+        |delta: i32, below: i32, above: i32| (-below - delta).max(delta - above).max(0) as u32;
+    gap(cell.x - block.x, STAND_REACH, STAND_REACH)
+        + gap(cell.z - block.z, STAND_REACH, STAND_REACH)
+        + gap(cell.y - block.y, STAND_BELOW, STAND_ABOVE)
 }
 
 /// The cells to walk from `start` to the first cell where `is_goal` holds, found by A* over
@@ -62,13 +80,19 @@ pub fn route(
         .into_iter()
         .find(|cell| standable(grid, *cell))?;
 
-    // Nodes are numbered in insertion order, which is the final tie-break of the queue.
+    // Equal estimates expand the deeper node first (the box heuristic is flat across the box, so
+    // shallow ties would fan out sideways). Nodes are numbered in insertion order, which is the
+    // final tie-break of the queue.
     let mut nodes = vec![(start, None::<usize>)];
     let mut best_g = HashMap::from([(start, 0u32)]);
-    let mut open = BinaryHeap::from([Reverse((manhattan(start, toward), 0u32, 0usize))]);
+    let mut open = BinaryHeap::from([Reverse((
+        stand_box_gap(start, toward),
+        Reverse(0u32),
+        0usize,
+    ))]);
     let mut expansions = 0;
 
-    while let Some(Reverse((_, g, index))) = open.pop() {
+    while let Some(Reverse((_, Reverse(g), index))) = open.pop() {
         let (cell, _) = nodes[index];
         if best_g.get(&cell).is_some_and(|best| *best < g) {
             continue;
@@ -88,8 +112,8 @@ pub fn route(
             best_g.insert(next, next_g);
             nodes.push((next, Some(index)));
             open.push(Reverse((
-                next_g + manhattan(next, toward),
-                next_g,
+                next_g + stand_box_gap(next, toward),
+                Reverse(next_g),
                 nodes.len() - 1,
             )));
         }
