@@ -325,6 +325,158 @@ mod tests {
         );
     }
 
+    /// A shelf at `y = 0` for `x <= 3` stepping down to a lower floor at `y = -1` beyond, so a
+    /// pawn walking east drops one block at `x = 4`.
+    fn shelf_over_a_drop() -> VoxelGrid {
+        let mut grid = VoxelGrid::new(16);
+        for z in 0..3 {
+            for x in 0..=3 {
+                grid.mutator().place(cell(x, 0, z), STONE, None);
+            }
+            for x in 4..10 {
+                grid.mutator().place(cell(x, -1, z), STONE, None);
+            }
+        }
+        grid
+    }
+
+    #[test]
+    fn a_route_steps_down_one_block_exactly_onto_the_lower_floor() {
+        let grid = shelf_over_a_drop();
+
+        let path = route(
+            &grid,
+            cell(2, 1, 1),
+            goal_at(cell(6, 0, 1)),
+            cell(6, 0, 1),
+            4096,
+        );
+
+        let expected = vec![cell(3, 1, 1), cell(4, 0, 1), cell(5, 0, 1), cell(6, 0, 1)];
+        assert_eq!(path, Some(expected));
+    }
+
+    #[test]
+    fn stepping_down_needs_a_clear_cell_above_the_head_at_the_lower_floor() {
+        let mut grid = shelf_over_a_drop();
+        for z in 0..3 {
+            grid.mutator().place(cell(4, 3, z), STONE, None);
+        }
+
+        let path = route(
+            &grid,
+            cell(2, 1, 1),
+            goal_at(cell(6, 0, 1)),
+            cell(6, 0, 1),
+            4096,
+        );
+
+        assert_eq!(path, None, "the block at (4, 3) is over the lowered pawn");
+    }
+
+    #[test]
+    fn stepping_down_ignores_a_block_beside_the_drop_that_is_not_in_the_way() {
+        let mut grid = shelf_over_a_drop();
+        for z in 0..3 {
+            grid.mutator().place(cell(4, 4, z), STONE, None);
+            grid.mutator().place(cell(3, 4, z), STONE, None);
+        }
+
+        let path = route(
+            &grid,
+            cell(2, 1, 1),
+            goal_at(cell(6, 0, 1)),
+            cell(6, 0, 1),
+            4096,
+        );
+
+        assert_eq!(path.map(|p| p.len()), Some(4));
+    }
+
+    /// The least budget that still finds a route, searched upward; the heuristic decides it.
+    fn least_budget(grid: &VoxelGrid, start: BlockPos, goal: BlockPos) -> usize {
+        (0..=ROUTE_NODE_BUDGET)
+            .find(|&budget| route(grid, start, goal_at(goal), goal, budget).is_some())
+            .expect("the goal is reachable within the default budget")
+    }
+
+    #[test]
+    fn a_corridor_search_toward_positive_x_expands_only_the_cells_on_the_way() {
+        let grid = floor(30, 3);
+
+        let budget = least_budget(&grid, cell(5, 1, 1), cell(25, 1, 1));
+
+        assert_eq!(budget, 20);
+    }
+
+    #[test]
+    fn a_corridor_search_toward_negative_x_expands_only_the_cells_on_the_way() {
+        let grid = floor(30, 3);
+
+        let budget = least_budget(&grid, cell(25, 1, 1), cell(5, 1, 1));
+
+        assert_eq!(budget, 20);
+    }
+
+    #[test]
+    fn a_corridor_search_toward_positive_z_expands_only_the_cells_on_the_way() {
+        let grid = floor(3, 30);
+
+        let budget = least_budget(&grid, cell(1, 1, 5), cell(1, 1, 25));
+
+        assert_eq!(budget, 20);
+    }
+
+    #[test]
+    fn a_corridor_search_toward_negative_z_expands_only_the_cells_on_the_way() {
+        let grid = floor(3, 30);
+
+        let budget = least_budget(&grid, cell(1, 1, 25), cell(1, 1, 5));
+
+        assert_eq!(budget, 20);
+    }
+
+    #[test]
+    fn a_search_across_open_ground_leans_on_both_axes_of_the_heuristic() {
+        let grid = floor(30, 30);
+
+        let toward_far_corner = least_budget(&grid, cell(5, 1, 5), cell(20, 1, 20));
+        let toward_near_corner = least_budget(&grid, cell(20, 1, 20), cell(5, 1, 5));
+
+        let rectangle_between = 16 * 16;
+        assert!(
+            toward_far_corner <= rectangle_between,
+            "{toward_far_corner}"
+        );
+        assert!(
+            toward_near_corner <= rectangle_between,
+            "{toward_near_corner}"
+        );
+    }
+
+    #[test]
+    fn the_route_takes_the_shorter_gap_though_the_longer_one_looks_closer_to_the_goal() {
+        let mut grid = floor(9, 8);
+        wall(&mut grid, 4, 8, 1..=2);
+        for y in 1..=2 {
+            for z in [0, 7] {
+                grid.clear_block(cell(4, y, z));
+            }
+        }
+
+        let path = route(
+            &grid,
+            cell(0, 1, 1),
+            goal_at(cell(8, 1, 5)),
+            cell(8, 1, 5),
+            4096,
+        )
+        .expect("both gaps lead through");
+
+        assert_eq!(path.len(), 14, "via the gap at z = 0, not z = 7");
+        assert!(path.contains(&cell(4, 1, 0)));
+    }
+
     /// Column heights over an 8x8 patch: solid from `y = 0` up to the height, so a pawn's
     /// feet cell is at `y = height`.
     fn terrain(heights: &[i32]) -> VoxelGrid {

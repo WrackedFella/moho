@@ -642,6 +642,303 @@ mod tests {
         assert_eq!(claimed_by(&marks, target), None);
     }
 
+    #[test]
+    fn stall_guard_trips_on_exactly_the_stall_tick_without_progress() {
+        let mut guard = StallGuard::default();
+
+        assert!(!guard.stalled(5.0), "the first distance is progress");
+        for tick in 1..STALL_TICKS {
+            assert!(!guard.stalled(5.0), "tripped early at {tick}");
+        }
+
+        assert!(guard.stalled(5.0));
+    }
+
+    #[test]
+    fn stall_guard_progress_restarts_the_count() {
+        let mut guard = StallGuard::default();
+        guard.stalled(10.0);
+        for _ in 1..STALL_TICKS {
+            assert!(!guard.stalled(10.0));
+        }
+
+        assert!(!guard.stalled(9.99), "a closer approach is progress");
+        for tick in 1..STALL_TICKS {
+            assert!(!guard.stalled(9.99), "tripped early at {tick}");
+        }
+
+        assert!(guard.stalled(9.99));
+    }
+
+    #[test]
+    fn stall_guard_ignores_an_approach_of_only_the_progress_epsilon() {
+        let mut guard = StallGuard::default();
+        guard.stalled(5.0);
+        let barely = 5.0 - PROGRESS_EPSILON;
+        for tick in 1..STALL_TICKS {
+            assert!(!guard.stalled(barely), "tripped early at {tick}");
+        }
+
+        assert!(guard.stalled(barely), "that approach is not progress");
+    }
+
+    #[test]
+    fn stall_guard_never_trips_while_the_distance_keeps_shrinking() {
+        let mut guard = StallGuard::default();
+
+        for tick in 0..(STALL_TICKS * 3) {
+            let distance = 100.0 - tick as f32 * 0.01;
+            assert!(!guard.stalled(distance), "tripped at {tick}");
+        }
+    }
+
+    #[test]
+    fn a_pawn_already_beside_the_mark_digs_on_its_first_step() {
+        let mut grid = floor(12, 3);
+        let target = cell(6, 1, 1);
+        grid.mutator().place(target, STONE, None);
+        let mut marks = marked(&[target]);
+        let mut pawn = Pawn::default();
+
+        let action = step(&mut pawn, ME, standing_in(5, 1, 1), &mut marks, &grid);
+
+        let JobAction::Dig { block, aim } = action else {
+            panic!("expected a dig, got {action:?}");
+        };
+        assert_eq!(block, target);
+        assert!((aim - Vec3::new(6.0, 1.5, 1.5)).length() < EPS, "{aim}");
+    }
+
+    fn walk_after_claiming(feet_on_second_step: Vec3) -> JobAction {
+        let mut grid = floor(12, 3);
+        let target = cell(6, 1, 1);
+        grid.mutator().place(target, STONE, None);
+        let mut marks = marked(&[target]);
+        let mut pawn = Pawn::default();
+        step(&mut pawn, ME, standing_in(0, 1, 1), &mut marks, &grid);
+        let pose = Pose {
+            feet: feet_on_second_step,
+            yaw: 0.0,
+        };
+
+        step(&mut pawn, ME, pose, &mut marks, &grid)
+    }
+
+    fn walks_to(action: JobAction, x: f32) -> bool {
+        matches!(action, JobAction::Walk { to } if (to.x - x).abs() < EPS && (to.z - 1.5).abs() < EPS)
+    }
+
+    #[test]
+    fn a_pawn_just_inside_the_arrival_radius_moves_on_to_the_next_waypoint() {
+        let inside = ARRIVE_RADIUS - 0.01;
+
+        let along_x = walk_after_claiming(Vec3::new(1.5 - inside, 1.0, 1.5));
+        let along_z = walk_after_claiming(Vec3::new(1.5, 1.0, 1.5 + inside));
+
+        assert!(walks_to(along_x, 2.5), "{along_x:?}");
+        assert!(walks_to(along_z, 2.5), "{along_z:?}");
+    }
+
+    #[test]
+    fn a_pawn_just_outside_the_arrival_radius_keeps_walking_to_the_same_waypoint() {
+        let outside = ARRIVE_RADIUS + 0.01;
+
+        let along_x = walk_after_claiming(Vec3::new(1.5 - outside, 1.0, 1.5));
+        let along_z = walk_after_claiming(Vec3::new(1.5, 1.0, 1.5 + outside));
+
+        assert!(walks_to(along_x, 1.5), "{along_x:?}");
+        assert!(walks_to(along_z, 1.5), "{along_z:?}");
+    }
+
+    #[test]
+    fn the_dig_aim_is_measured_from_an_eye_above_the_feet() {
+        let mut grid = floor(12, 3);
+        let target = cell(6, 1, 1);
+        grid.mutator().place(target, STONE, None);
+        let mut marks = marked(&[target]);
+        let mut pawn = Pawn {
+            job: Job::Mine {
+                mark: target,
+                route: Vec::new(),
+                next: 0,
+                stall: StallGuard::default(),
+            },
+            ..Pawn::default()
+        };
+        // Eye at y 2.65: the top face centre (6.5, 2.0, 1.5) is nearer than the west one
+        // (6.0, 1.5, 1.5). An eye at the feet, below them or at a different height picks west.
+        let pose = Pose {
+            feet: Vec3::new(5.5, 1.5, 1.5),
+            yaw: 0.0,
+        };
+
+        let action = step(&mut pawn, ME, pose, &mut marks, &grid);
+
+        let JobAction::Dig { aim, .. } = action else {
+            panic!("expected a dig, got {action:?}");
+        };
+        assert!((aim - Vec3::new(6.5, 2.0, 1.5)).length() < EPS, "{aim}");
+    }
+
+    #[test]
+    fn a_pawn_stands_on_ground_two_blocks_above_the_mark_when_that_is_the_nearest_stand_cell() {
+        let mut grid = VoxelGrid::new(16);
+        for x in 0..12 {
+            for z in 0..3 {
+                for y in 0..=2 {
+                    grid.mutator().place(cell(x, y, z), STONE, None);
+                }
+            }
+        }
+        let target = cell(6, 1, 1);
+        grid.mutator().remove(cell(6, 2, 1));
+        let mut marks = marked(&[target]);
+        let mut pawn = Pawn::default();
+
+        let (actions, pose) = walk_until_dig(&mut pawn, standing_in(0, 3, 1), &mut marks, &grid);
+
+        assert!(
+            matches!(actions.last(), Some(JobAction::Dig { block, .. }) if *block == target),
+            "{actions:?}"
+        );
+        assert!(
+            (pose.feet.x - 5.5).abs() < EPS,
+            "digs from the plateau beside the pit, not from inside it: {:?}",
+            pose.feet
+        );
+    }
+
+    #[test]
+    fn a_block_is_exposed_through_any_one_open_face() {
+        for open in FACES {
+            let mut grid = VoxelGrid::new(16);
+            let block = cell(5, 5, 5);
+            grid.mutator().place(block, STONE, None);
+            for face in FACES {
+                if face != open {
+                    grid.mutator().place(block + face, STONE, None);
+                }
+            }
+
+            assert!(is_exposed(&grid, block), "open face {open}");
+        }
+    }
+
+    #[test]
+    fn a_block_walled_in_on_all_sides_is_not_exposed() {
+        let mut grid = VoxelGrid::new(16);
+        let block = cell(5, 5, 5);
+        grid.mutator().place(block, STONE, None);
+        for face in FACES {
+            grid.mutator().place(block + face, STONE, None);
+        }
+
+        assert!(!is_exposed(&grid, block));
+    }
+
+    #[test]
+    fn the_aim_is_the_centre_of_the_only_open_face() {
+        let block = cell(5, 5, 5);
+        let centre = Vec3::new(5.5, 5.5, 5.5);
+        for open in FACES {
+            let mut grid = VoxelGrid::new(16);
+            grid.mutator().place(block, STONE, None);
+            for face in FACES {
+                if face != open {
+                    grid.mutator().place(block + face, STONE, None);
+                }
+            }
+            let eye = Vec3::new(1.0, 12.0, -3.0);
+
+            let aim = nearest_exposed_face(&grid, block, eye);
+
+            let want = centre + open.as_vec3() * 0.5;
+            assert!(
+                aim.is_some_and(|aim| (aim - want).length() < EPS),
+                "open face {open}: {aim:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_aim_is_the_open_face_nearest_the_eye_on_each_axis_and_side() {
+        let block = cell(5, 5, 5);
+        let mut grid = VoxelGrid::new(16);
+        grid.mutator().place(block, STONE, None);
+        let centre = Vec3::new(5.5, 5.5, 5.5);
+
+        for face in FACES {
+            let eye = centre + face.as_vec3() * 20.0;
+
+            let aim = nearest_exposed_face(&grid, block, eye);
+
+            let want = centre + face.as_vec3() * 0.5;
+            assert!(
+                aim.is_some_and(|aim| (aim - want).length() < EPS),
+                "eye toward {face}: {aim:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_walled_in_block_has_no_aim() {
+        let mut grid = VoxelGrid::new(16);
+        let block = cell(5, 5, 5);
+        grid.mutator().place(block, STONE, None);
+        for face in FACES {
+            grid.mutator().place(block + face, STONE, None);
+        }
+
+        assert_eq!(nearest_exposed_face(&grid, block, Vec3::ZERO), None);
+    }
+
+    fn steer_toward(feet: Vec3, yaw: f32, angle_from_north: f32) -> WalkStep {
+        let to = feet + Vec3::new(angle_from_north.sin(), 0.0, angle_from_north.cos()) * 5.0;
+        steer(Pose { feet, yaw }, to)
+    }
+
+    #[test]
+    fn steer_aims_from_the_pawns_own_position_not_the_origin() {
+        let feet_cases = [
+            Vec3::new(10.0, 0.0, 20.0),
+            Vec3::new(-8.0, 0.0, -15.0),
+            Vec3::new(-30.0, 0.0, 12.0),
+            Vec3::new(14.0, 0.0, -25.0),
+        ];
+        // (yaw, target bearing, expected yaw_delta, expected forward)
+        let max = max_turn_per_tick();
+        let tau = std::f32::consts::TAU;
+        let cases = [
+            (0.0, 0.05, 0.05, 1.0),
+            (0.0, -0.05, -0.05, 1.0),
+            (1.0, 1.05, 0.05, 1.0),
+            (-1.0, -1.05, -0.05, 1.0),
+            (0.0, 2.0, max, 0.0),
+            (0.0, -2.0, -max, 0.0),
+            (0.0, 3.04, max, 0.0),
+            (0.0, -3.04, -max, 0.0),
+            (3.0, -3.2, tau - 6.2, 1.0),
+            (-3.0, 3.2, 6.2 - tau, 1.0),
+            (2.0, -2.0, tau - 4.0, 0.0),
+        ];
+
+        for feet in feet_cases {
+            for (yaw, bearing, delta, forward) in cases {
+                let got = steer_toward(feet, yaw, bearing);
+
+                let expected_delta = delta.clamp(-max, max);
+                assert!(
+                    (got.yaw_delta - expected_delta).abs() < 1e-4,
+                    "feet {feet}, yaw {yaw}, bearing {bearing}: {got:?}, want {expected_delta}"
+                );
+                assert_eq!(
+                    got.forward, forward,
+                    "feet {feet}, yaw {yaw}, bearing {bearing}"
+                );
+            }
+        }
+    }
+
     fn facing_target(angle_from_ahead: f32) -> Vec3 {
         Vec3::new(angle_from_ahead.sin(), 0.0, angle_from_ahead.cos()) * 5.0
     }
