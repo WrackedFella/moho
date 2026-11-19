@@ -603,6 +603,66 @@ mod tests {
         );
     }
 
+    fn stocked_data(is_fps_mode: bool) -> HudData {
+        HudData {
+            is_fps_mode,
+            colony_stock: vec![(2, 5), (7, 12)],
+            ..strategy_data(TOP)
+        }
+    }
+
+    #[test]
+    fn strategy_hud_lists_the_colony_totals() {
+        let ctx = egui::Context::default();
+        let mut hud = RtsHud::new();
+
+        let output = settled_frame(&ctx, &mut hud, &stocked_data(false));
+
+        let drawn = texts(&output);
+        assert!(drawn.contains(&"R2 ×5".to_string()), "{drawn:?}");
+        assert!(drawn.contains(&"R7 ×12".to_string()), "{drawn:?}");
+        assert!(
+            rect_of(&output, "R2 ×5").center().y < rect_of(&output, "R7 ×12").center().y,
+            "totals are listed in id order"
+        );
+    }
+
+    #[test]
+    fn an_empty_colony_stock_lists_no_totals() {
+        let empty = HudData {
+            colony_stock: Vec::new(),
+            ..stocked_data(false)
+        };
+
+        let drawn = drawn_texts(&empty);
+
+        assert!(!drawn.iter().any(|t| t.contains('×')), "{drawn:?}");
+        assert!(
+            drawn_texts(&stocked_data(false))
+                .iter()
+                .any(|t| t.contains('×')),
+            "the totals show when there is stock"
+        );
+    }
+
+    #[test]
+    fn no_totals_in_first_person() {
+        let strategy = drawn_texts(&stocked_data(false));
+
+        let first_person = drawn_texts(&stocked_data(true));
+
+        assert!(
+            strategy.iter().any(|t| t.contains("R7")),
+            "the totals show in strategy: {strategy:?}"
+        );
+        assert!(
+            !first_person
+                .iter()
+                .any(|t| t.contains("R7") || t.contains("R2")),
+            "{first_person:?}"
+        );
+    }
+
     #[test]
     fn render_time_of_day_shows_clock_in_top_right() {
         let ctx = egui::Context::default();

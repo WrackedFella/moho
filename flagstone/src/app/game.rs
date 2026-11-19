@@ -4269,4 +4269,44 @@ mod tests {
 
         assert!(outlined_markers(&mut app).is_empty());
     }
+
+    #[test]
+    fn returning_to_first_person_starts_where_the_pawn_walked_to() {
+        use crate::app::event_loop::frame_processor::job_world::{
+            START, block_stands, pawn_centre, strategy_world,
+        };
+        let block = [20, 2, 8];
+        let mut app = strategy_world(|grid| {
+            grid.mutator()
+                .place(flagstone_voxel::BlockPos::from_array(block), 1, Some(7));
+        });
+        app.colony.marks.toggle(block);
+        let apart = |a: glam::Vec3, b: glam::Vec3| glam::Vec2::new(a.x - b.x, a.z - b.z).length();
+        for _ in 0..300 {
+            step_once(&mut app);
+            if apart(app.simulation.position(), START) >= 3.0 {
+                break;
+            }
+        }
+        let walked_to = app.simulation.position();
+        assert!(
+            apart(walked_to, START) >= 3.0,
+            "setup: the pawn walked on its own and the simulation followed: {walked_to:?}"
+        );
+        assert!(block_stands(&app, block), "setup: still on its way");
+
+        tap_possess(&mut app);
+        step_once(&mut app);
+
+        assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+        let resumed = app.simulation.position();
+        assert!(
+            apart(resumed, walked_to) < 0.05,
+            "possession starts at {resumed:?}, not where the pawn walked to ({walked_to:?})"
+        );
+        assert!(
+            apart(pawn_centre(&app), resumed) < 1e-3,
+            "the character and the view agree"
+        );
+    }
 }

@@ -1721,4 +1721,120 @@ mod tests {
 
         assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
     }
+
+    fn dig_asset_path() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/dig.wav")
+    }
+
+    #[test]
+    fn dig_asset_exists() {
+        let path = dig_asset_path();
+
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+
+        assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
+    }
+
+    /// What a pawn's dig of the block at `(12, 2, 8)` published, as removed positions,
+    /// dirty chunks and positioned sounds.
+    struct DigEvents {
+        removed: Vec<(glam::IVec3, u32)>,
+        dirty: Vec<glam::IVec3>,
+        sounds: Vec<(String, f32, glam::Vec3)>,
+    }
+
+    fn events_of_a_pawn_digging(resource: Option<u32>) -> DigEvents {
+        use crate::app::event_loop::frame_processor::job_world::{
+            block_stands, headless_loop, run_until, strategy_world,
+        };
+        let block = [12, 2, 8];
+        let mut app = strategy_world(|grid| {
+            grid.mutator()
+                .place(flagstone_voxel::BlockPos::from_array(block), 1, resource);
+        });
+        let removed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dirty = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (removed_sink, dirty_sink) = (
+            std::sync::Arc::clone(&removed),
+            std::sync::Arc::clone(&dirty),
+        );
+        app.event_bus.subscribe(move |e: &WorldEvent| match e {
+            WorldEvent::BlockRemoved {
+                position,
+                old_material_id,
+                ..
+            } => removed_sink
+                .lock()
+                .unwrap()
+                .push((*position, *old_material_id)),
+            WorldEvent::ChunkMeshDirty { chunk_pos, .. } => {
+                dirty_sink.lock().unwrap().push(*chunk_pos);
+            }
+            _ => {}
+        });
+        let _ = app.audio_event_rx.try_iter().count();
+        app.colony.marks.toggle(block);
+        let mut sim = headless_loop();
+
+        let done = run_until(&mut app, &mut sim, 900, |app| !block_stands(app, block));
+        assert!(done.is_some(), "the pawn never removed the block");
+        app.event_bus.process_deferred();
+
+        let sounds = app
+            .audio_event_rx
+            .try_iter()
+            .filter_map(|event| match event {
+                AudioEvent::PlaySoundAt {
+                    path,
+                    volume,
+                    position,
+                } => Some((path, volume, position)),
+                _ => None,
+            })
+            .collect();
+        let removed = removed.lock().unwrap().clone();
+        let dirty = dirty.lock().unwrap().clone();
+        DigEvents {
+            removed,
+            dirty,
+            sounds,
+        }
+    }
+
+    #[test]
+    fn a_pawn_dig_publishes_the_removal_and_the_cue() {
+        let block = flagstone_voxel::BlockPos::new(12, 2, 8);
+        let block_centre = block.as_vec3() + glam::Vec3::splat(0.5);
+
+        for resource in [Some(7), None] {
+            let events = events_of_a_pawn_digging(resource);
+
+            assert_eq!(
+                events.removed,
+                [(block, 1)],
+                "one removal of the block, resource {resource:?}"
+            );
+            let expected_dirty: Vec<glam::IVec3> =
+                flagstone_voxel::chunks_meshed_from(block, 16).collect();
+            for chunk in expected_dirty {
+                assert!(
+                    events.dirty.contains(&chunk),
+                    "chunk {chunk:?} is not remeshed, resource {resource:?}"
+                );
+            }
+            assert_eq!(
+                events.sounds.len(),
+                1,
+                "one cue for one dig, resource {resource:?}: {:?}",
+                events.sounds
+            );
+            let (path, volume, position) = &events.sounds[0];
+            assert_eq!(std::path::Path::new(path), dig_asset_path().as_path());
+            assert!(*volume > 0.0, "audible");
+            assert!(
+                (*position - block_centre).length() < 1e-4,
+                "the cue plays at the block, not at {position:?}"
+            );
+        }
+    }
 }
