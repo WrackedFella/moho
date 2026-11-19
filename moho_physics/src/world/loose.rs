@@ -293,13 +293,11 @@ impl PhysicsWorld {
         // Resting contacts sag in proportion to gravity, so the guard grows with it.
         let deep_limit = DEEP_CONTACT * (gravity / super::DEFAULT_GRAVITY).max(1.0);
 
-        let rollers: Vec<_> = self
-            .loose
-            .values()
-            .filter_map(|loose| Some((loose.body, loose.roll_radius?)))
-            .collect();
-        for (handle, radius) in rollers {
-            let Some(body) = self.rigid_body_set.get(handle) else {
+        for loose in self.loose.values() {
+            let Some(radius) = loose.roll_radius else {
+                continue;
+            };
+            let Some(body) = self.rigid_body_set.get_mut(loose.body) else {
                 continue;
             };
             if body.is_sleeping() {
@@ -314,16 +312,18 @@ impl PhysicsWorld {
                     } else {
                         (pair.collider2, -1.0)
                     };
-                    let other_loose = self.collider_set[other]
-                        .parent()
-                        .is_some_and(|b| self.loose.values().any(|l| l.body == b));
+                    let other_loose = || {
+                        self.collider_set[other]
+                            .parent()
+                            .is_some_and(|b| self.loose.values().any(|l| l.body == b))
+                    };
                     for manifold in pair.manifolds() {
                         let normal = manifold.data.normal * into_body;
                         for point in &manifold.points {
                             let touching = point.dist <= 0.0;
                             deep |= point.dist < -deep_limit;
                             on_ground |= touching && normal.dot(up) >= min_up_dot;
-                            touches_loose |= touching && other_loose;
+                            touches_loose = touches_loose || (touching && other_loose());
                         }
                     }
                 }
@@ -336,21 +336,19 @@ impl PhysicsWorld {
             let travel = axis.cross(up).normalize_or_zero();
             let spin = body.angvel().dot(axis);
             let slide = body.linvel().dot(travel);
-            let new_spin = spin - spin.signum() * (brake / radius).min(spin.abs());
-            let new_slide = slide - slide.signum() * brake.min(slide.abs());
-            let angvel = body.angvel() + axis * (new_spin - spin);
+            let spin_cut = -spin.signum() * (brake / radius).min(spin.abs());
+            let slide_cut = -slide.signum() * brake.min(slide.abs());
+            let angvel = body.angvel() + axis * spin_cut;
             // Against another loose object the solver's separating push is linear, so only the
             // spin is cut: cutting it too froze piles with the objects overlapped.
             let linvel = if touches_loose {
                 body.linvel()
             } else {
-                body.linvel() + travel * (new_slide - slide)
+                body.linvel() + travel * slide_cut
             };
 
-            if let Some(body) = self.rigid_body_set.get_mut(handle) {
-                body.set_angvel(angvel, false);
-                body.set_linvel(linvel, false);
-            }
+            body.set_angvel(angvel, false);
+            body.set_linvel(linvel, false);
         }
     }
 }
