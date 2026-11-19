@@ -484,6 +484,81 @@ mod tests {
     }
 
     #[test]
+    fn a_use_on_the_tick_the_last_enemy_dies_calls_the_next_wave() {
+        let mut mode = calm_mode(4, tuning(1, 2, 100));
+        let aim = SearchlightCommand {
+            movement: look_at(mode.sim(), CONTROL_FACE).movement,
+            ..idle()
+        };
+        mode.tick(&aim, DT);
+        assert_eq!(mode.sim().enemies_alive(), 1);
+        mode.sim_mut().kill_enemy(0);
+
+        mode.tick(
+            &SearchlightCommand {
+                use_pressed: true,
+                ..idle()
+            },
+            DT,
+        );
+
+        assert_eq!(mode.wave(), 2);
+        assert_eq!(mode.score(), 100);
+        assert_eq!(mode.sim().enemies_alive(), 3);
+    }
+
+    #[test]
+    fn using_the_button_on_consecutive_ticks_calls_only_the_next_wave() {
+        let mut mode = calm_mode(6, tuning(1, 1, 100));
+        kill_the_wave(&mut mode);
+        let aim = SearchlightCommand {
+            movement: look_at(mode.sim(), CONTROL_FACE).movement,
+            ..idle()
+        };
+        mode.tick(&aim, DT);
+        let use_it = SearchlightCommand {
+            use_pressed: true,
+            ..idle()
+        };
+
+        mode.tick(&use_it, DT);
+        mode.tick(&use_it, DT);
+
+        assert_eq!(mode.wave(), 2);
+        assert_eq!(
+            mode.sim().enemy_count(),
+            3,
+            "wave 1's enemy and wave 2's two"
+        );
+        assert_eq!(mode.sim().enemies_alive(), 2);
+    }
+
+    #[test]
+    fn a_use_on_the_tick_of_a_restart_while_a_wave_waits_leaves_wave_one() {
+        let mut mode = calm_mode(4, tuning(1, 1, 100));
+        kill_the_wave(&mut mode);
+        use_the_button(&mut mode);
+        kill_the_wave(&mut mode);
+        assert_eq!(mode.wave(), 2);
+        mode.sim_mut().kill_player();
+        mode.tick(&idle(), DT);
+
+        mode.tick(
+            &SearchlightCommand {
+                restart: true,
+                use_pressed: true,
+                ..idle()
+            },
+            DT,
+        );
+        mode.tick(&idle(), DT);
+
+        assert_eq!((mode.wave(), mode.score()), (1, 0));
+        assert_eq!(mode.sim().enemy_count(), 1);
+        assert_eq!(mode.sim().enemies_alive(), 1);
+    }
+
+    #[test]
     fn a_sandbox_ignores_the_use_button() {
         let mut mode = ArenaMode::sandbox(button_arena(3, &[]), calm_config());
         let aim = SearchlightCommand {

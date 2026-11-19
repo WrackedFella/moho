@@ -3458,6 +3458,41 @@ mod tests {
     }
 
     #[test]
+    fn pausing_with_the_prompt_showing_removes_it_on_the_next_frame() {
+        // Atlas coordinates depend on which glyphs were rasterized first, so compare placement
+        // and colour only.
+        let layout = |frame: UiFrame| {
+            frame
+                .meshes
+                .iter()
+                .flat_map(|mesh| {
+                    mesh.vertices
+                        .iter()
+                        .map(|v| (v.pos.map(f32::to_bits), v.color))
+                })
+                .collect::<Vec<_>>()
+        };
+        let paused_looking_away = {
+            let (mut game, mut clock) = button_game(&[]);
+            let eye = game.sim().player_eye();
+            look_at_point(&mut game, &mut clock, eye + Vec3::X * 5.0);
+            game.pause();
+            painted(&mut game, &clock).map(layout)
+        };
+        let (mut game, mut clock) = button_game(&[]);
+        look_at_point(&mut game, &mut clock, CONTROL_FACE);
+        let shown = painted(&mut game, &clock);
+
+        game.pause();
+        let after = painted(&mut game, &clock).map(layout);
+
+        assert!(shown.is_some(), "the fixture shows the prompt");
+        assert_eq!(game.sim().control_in_reach(), Some(0));
+        assert!(after.is_some(), "the pause menu paints");
+        assert_eq!(after, paused_looking_away, "the prompt outlived the pause");
+    }
+
+    #[test]
     fn no_prompt_while_dead_or_paused() {
         let (mut game, mut clock) = button_game(&[]);
         look_at_point(&mut game, &mut clock, CONTROL_FACE);

@@ -248,6 +248,22 @@ mod tests {
     }
 
     #[test]
+    fn calling_from_the_smallest_tuning_gives_the_tuned_size_and_one_wave_more() {
+        let tuning = tuning(1, 1, 10);
+        let mut state = WaveState::begin(&tuning);
+        state.step(&tuning, 0, 0, 1);
+        state.step(&tuning, 1, 0, 1);
+
+        let called = state.call_next(&tuning, 0);
+
+        assert!(called);
+        assert_eq!(state.wave(), 2);
+        assert_eq!(state.to_spawn(), tuning.size(2));
+        assert_eq!(state.grades().size(), tuning.size(2));
+        assert_eq!(state.score(), 10);
+    }
+
+    #[test]
     fn calling_with_enemies_alive_or_to_come_does_nothing() {
         let tuning = tuning(3, 2, 10);
         let before_any_spawn = WaveState::begin(&tuning);
