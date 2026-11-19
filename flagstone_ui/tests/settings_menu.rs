@@ -742,6 +742,56 @@ fn cancel_after_stray_key_changes_nothing() {
     assert!(!menu.has_unsaved_changes());
 }
 
+/// After cancelling a lone-modifier conflict, listening again binds a free modifier.
+#[test]
+fn listening_again_after_cancelled_modifier_conflict_binds_free_modifier() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let ctx = egui::Context::default();
+    menu.start_listening(0);
+    modifiers_frame(&ctx, &mut menu, egui::Modifiers::SHIFT);
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+    Screen::on_modal_cancel(&mut menu);
+
+    menu.start_listening(0);
+    modifiers_frame(&ctx, &mut menu, egui::Modifiers::NONE);
+    modifiers_frame(&ctx, &mut menu, egui::Modifiers::ALT);
+
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::Alt), pad_stick(StickDir::Up)]
+    );
+    assert!(!menu.is_listening());
+    assert_eq!(
+        menu.get_staged_binding(6),
+        [
+            Binding::key(Key::Shift),
+            Binding::pad(PadInput::Button(PadButton::LeftThumb))
+        ]
+    );
+}
+
+/// A lone-modifier conflict on a row other than the first still ends listening and names the holder.
+#[test]
+fn lone_modifier_conflict_on_move_down_names_sprint_and_ends_listening() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(5);
+
+    modifiers_frame(&egui::Context::default(), &mut menu, egui::Modifiers::SHIFT);
+
+    assert!(!menu.is_listening());
+    let mut modal = Screen::take_pending_modal(&mut menu).expect("Shift conflicts with Sprint");
+    let text = modal_text(&mut modal);
+    assert!(
+        text.contains("The binding 'Shift' is currently used by:"),
+        "{text}"
+    );
+    assert!(text.lines().any(|l| l == "Sprint"), "{text}");
+}
+
 /// Rebinding a row replaces its plain key and keeps its hold bindings, in the settings text too.
 #[test]
 fn rebinding_sprint_keeps_its_hold_bindings() {

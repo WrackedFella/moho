@@ -254,6 +254,44 @@ mod tests {
     }
 
     #[test]
+    fn modifiers_after_lone_modifier_conflict_bind_nothing_and_keep_pending_shift() {
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry(); // Sprint holds Shift, Alt is free
+        let mut changed = vec![];
+        handler.start_listening(0);
+        handler.capture_modifier_if_listening(2, &bindings, |_, _| {});
+
+        let after_release = handler.capture_modifier_if_listening(0, &bindings, |a, b| {
+            changed.push((a, b));
+        });
+        let after_alt = handler.capture_modifier_if_listening(4, &bindings, |a, b| {
+            changed.push((a, b));
+        });
+
+        assert!(!after_release);
+        assert!(!after_alt);
+        assert!(changed.is_empty());
+        assert!(handler.has_pending_binding());
+        let mut applied = vec![];
+        handler.apply_pending(&bindings, |a, b| applied.push((a, b)));
+        assert_eq!(applied.len(), 2);
+        assert!(applied.contains(&(
+            StrategyAction::MoveForward,
+            vec![
+                Binding::key(Key::Shift),
+                Binding::pad(PadInput::Stick(Stick::LeftStick, StickDir::Up))
+            ]
+        )));
+        assert!(applied.contains(&(StrategyAction::Sprint, vec![THUMB])));
+        assert!(
+            applied
+                .iter()
+                .flat_map(|(_, b)| b)
+                .all(|b| *b != Binding::key(Key::Alt))
+        );
+    }
+
+    #[test]
     fn take_conflict_modal_returns_holder_name_then_key_description() {
         let mut handler = KeybindCaptureHandler::new();
         let bindings = registry();
