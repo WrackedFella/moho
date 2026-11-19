@@ -1,5 +1,8 @@
 //! Walking routes over the voxel ground for the strategy line's pawns.
 
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
+
 use flagstone_voxel::{BlockPos, VoxelGrid};
 use glam::Vec3;
 
@@ -8,25 +11,104 @@ pub const ROUTE_NODE_BUDGET: usize = 4096;
 
 /// Whether a pawn can stand with its feet in `cell`: ground below and the capsule's
 /// height of air from the feet up.
-pub fn standable(_grid: &VoxelGrid, _cell: BlockPos) -> bool {
-    todo!()
+pub fn standable(grid: &VoxelGrid, cell: BlockPos) -> bool {
+    grid.is_solid_at(cell - BlockPos::Y)
+        && (0..CAPSULE_CELLS).all(|up| !grid.is_solid_at(cell + BlockPos::Y * up))
 }
 
 /// The cell a pawn with its feet at `feet` stands in.
-pub fn feet_cell(_feet: Vec3) -> BlockPos {
-    todo!()
+pub fn feet_cell(feet: Vec3) -> BlockPos {
+    feet.floor().as_ivec3()
 }
 
-/// The standable cells from `start` to the first cell `is_goal` accepts, or `None` when
-/// none is reachable within `budget` expansions. `toward` steers the search.
+/// The standable cells from `start` to the first cell `is_goal` accepts, start included,
+/// or `None` when none is reachable within `budget` expansions. `toward` steers the search
+/// (Manhattan distance to it) and should lie near the goal cells.
+///
+/// A start that is not standable is replaced by the standable cell one above, else one
+/// below it, so a pawn on a slope still routes; the first cell of the route is that cell.
 pub fn route(
-    _grid: &VoxelGrid,
-    _start: BlockPos,
-    _is_goal: impl Fn(BlockPos) -> bool,
-    _toward: BlockPos,
-    _budget: usize,
+    grid: &VoxelGrid,
+    start: BlockPos,
+    is_goal: impl Fn(BlockPos) -> bool,
+    toward: BlockPos,
+    budget: usize,
 ) -> Option<Vec<BlockPos>> {
-    todo!()
+    let start = [start, start + BlockPos::Y, start - BlockPos::Y]
+        .into_iter()
+        .find(|&cell| standable(grid, cell))?;
+    let heuristic = |cell: BlockPos| (cell - toward).abs().element_sum().unsigned_abs();
+
+    // Each node remembers its parent's index; the heap orders by (f, g, insertion index).
+    let mut nodes = vec![(start, usize::MAX)];
+    let mut best_cost = HashMap::from([(start, 0_u32)]);
+    let mut open = BinaryHeap::from([Reverse((heuristic(start), 0_u32, 0_usize))]);
+    let mut expanded = 0;
+
+    while let Some(Reverse((_, cost, index))) = open.pop() {
+        let (cell, _) = nodes[index];
+        if best_cost[&cell] < cost {
+            continue;
+        }
+        if is_goal(cell) {
+            return Some(path_to(&nodes, index));
+        }
+        if expanded == budget {
+            return None;
+        }
+        expanded += 1;
+
+        for next in steps_from(grid, cell) {
+            let next_cost = cost + 1;
+            if best_cost
+                .get(&next)
+                .is_some_and(|&known| known <= next_cost)
+            {
+                continue;
+            }
+            best_cost.insert(next, next_cost);
+            nodes.push((next, index));
+            open.push(Reverse((
+                next_cost + heuristic(next),
+                next_cost,
+                nodes.len() - 1,
+            )));
+        }
+    }
+    None
+}
+
+/// Cells of air a standing pawn needs from its feet up (the capsule is 2.3 m tall).
+const CAPSULE_CELLS: i32 = 3;
+
+const HORIZONTAL: [BlockPos; 4] = [BlockPos::X, BlockPos::NEG_X, BlockPos::Z, BlockPos::NEG_Z];
+
+/// The standable cells a pawn in `cell` can step to: level, up one (with a fourth cell of
+/// air above its feet to climb into) or down one.
+fn steps_from(grid: &VoxelGrid, cell: BlockPos) -> impl Iterator<Item = BlockPos> + '_ {
+    let can_climb = !grid.is_solid_at(cell + BlockPos::Y * CAPSULE_CELLS);
+    HORIZONTAL.into_iter().filter_map(move |dir| {
+        let level = cell + dir;
+        [
+            Some(level),
+            can_climb.then_some(level + BlockPos::Y),
+            Some(level - BlockPos::Y),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|&candidate| standable(grid, candidate))
+    })
+}
+
+fn path_to(nodes: &[(BlockPos, usize)], goal: usize) -> Vec<BlockPos> {
+    let mut path = Vec::new();
+    let mut at = goal;
+    while at != usize::MAX {
+        path.push(nodes[at].0);
+        at = nodes[at].1;
+    }
+    path.reverse();
+    path
 }
 
 #[cfg(test)]
