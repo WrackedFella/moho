@@ -931,6 +931,20 @@ mod tests {
     }
 
     #[test]
+    fn each_slot_takes_the_next_reserved_mesh_id_in_order() {
+        let ids = [Slot::Streak, Slot::Flash, Slot::Mark].map(Slot::id);
+
+        assert_eq!(
+            ids,
+            [
+                WorldMeshId(EFFECT_MESH_IDS_FROM),
+                WorldMeshId(EFFECT_MESH_IDS_FROM + 1),
+                WorldMeshId(EFFECT_MESH_IDS_FROM + 2),
+            ]
+        );
+    }
+
+    #[test]
     fn quality_above_four_clamps_to_ultra() {
         for quality in [5, 9, u32::MAX] {
             let mut rig = Rig::new();
