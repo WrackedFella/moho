@@ -72,6 +72,13 @@ gets that tick's advance on top.
 
 All gameplay steps early-return unless `GameState::Playing`. `dt` is the fixed tick length.
 
+Autosave timing: a Playing tick advances `AutosaveSchedule` (`flagstone/src/app/autosave.rs`) by one
+tick and refreshes its interval from `App::autosave_interval` (rounded up to whole ticks). Paused,
+menu and console ticks do not count. `process_world_events` marks the schedule edited on
+`BlockPlaced`, `BlockRemoved` and `BlocksBatchModified`; `ChunkMeshDirty` alone does not. The schedule
+is due once the world is edited and the interval has passed; `Game::frame` then autosaves
+([section 4](#4-frame)).
+
 Mining publishes its block event while `process_input_events` drains, after
 `process_world_events`, so the light system queues the edit on the next tick and lights it in
 the tick after (two ticks, about 33 ms at 60 Hz).
@@ -109,8 +116,12 @@ The renderer is reachable only through the contexts, so ticks queue renderer cha
    camera (`Listener::from_view`); then drain audio events;
 3. if the UI asked to quit: auto-save, `request_exit`, stop;
 4. if the UI asked for the main menu (Exit to main menu): auto-save, then `show_menu`, and go on;
-5. `update_hud_data`, `update_cut_caps` (rebuild [cut-face caps](rendering.md#3-cut-face-caps)), then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
+5. if the autosave schedule is due: autosave (success resets it; failure restarts the interval but keeps the world edited);
+6. `update_hud_data`, `update_cut_caps` (rebuild [cut-face caps](rendering.md#3-cut-face-caps)), then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
    with actors, the sphere and cube mesh handles and the frame camera (below).
+
+A window close request autosaves in `Game::event` before the loop exits. An autosave with no loaded world
+(`last_spec` unset) writes nothing, so it never replaces an earlier save.
 
 A `FrameError` skips the frame with a `warn`. Pass order inside the renderer:
 [rendering](rendering.md#5-pass-order).

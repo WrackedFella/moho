@@ -85,6 +85,8 @@ Chunks are 16³ voxels; columns span chunk Y 0..=8.
 - Streaming works in whole XZ columns.
 - Freshly generated, unmodified chunks are not persisted on eviction. Only player edits
   are saved ([ADR-0006](../../_todo/adr/0006-save-format-contract.md) covers the format).
+- `ChunkStreamer` reads and writes chunk files under the `App::saves_dir` it was built with, the
+  same directory as the world file.
 - Eviction saves run synchronously in the frame, bounded by `chunks_per_frame`.
 - Chunks that enter the grid (streamed in, preloaded by generation, loaded from a save) are
   lit synchronously by `LightSystem::light_arrived_chunks` before the next tick: sky

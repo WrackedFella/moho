@@ -39,7 +39,7 @@ for that kind.
 |---|---|---|
 | World | caller-chosen path passed to `write_scene_with_metadata` | `WorldFile`: `WorldSpec`, the Scene file as embedded bytes, block records |
 | Scene | embedded in the World payload, or standalone via `scene_persistence::save_to_file` | `SceneDesc`: spheres, cubes, voxel chunk meshes, camera, lights |
-| Chunk | `saves/<world>/chunks/<cx>_<cy>_<cz>.bin` | `ChunkSnapshot`: palette, 4096 indices, resources |
+| Chunk | `<saves_dir>/<world>/chunks/<cx>_<cy>_<cz>.bin` | `ChunkSnapshot`: palette, 4096 indices, resources |
 
 Each payload's encoding is pinned by a test (`PINNED_WORLD`, `PINNED_SCENE`,
 `PINNED_CHUNK`). Changing a payload struct fails it; bump the kind's `version` and update
