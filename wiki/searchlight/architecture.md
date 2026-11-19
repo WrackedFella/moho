@@ -44,6 +44,7 @@ flowchart LR
 | `brain` | `Brain`: the enemy state machine (`Patrol`, `Engage`, `Cover`, `Chase`), pure over `glam` types; `Percept` and a `steer` function in, `Intent` out; `EnemyTuning` holds its numbers; `EnemyTuning::graded` scales reaction, cooldown and aim error by a `Grade` ([enemies](#5-enemies)) |
 | `cover` | `pick` and `offer`: choose the nearest free cover point an enemy under fire should run to, using world-only rays against the player (`Threat`) |
 | `sim` | `SearchlightSim`: player character and body, `Loadout` (rifle and `Rig` of spare magazines), dummies and enemies; emits `Feedback`; counts player kills |
+| `control` | `ControlAction` (`NextWave`): what a level's `control_NN` marker does when used, parsed from the marker's `action` value; a host action is honored only from slot 0 |
 | `wave` | `WaveTuning` (first wave size, growth per wave, points per kill, grade mix; zero size or growth is refused) and `WaveState` (running wave, enemies still to spawn, the wave's grades, score) as plain numbers, no physics |
 | `mode` | `ArenaMode`: a level as a game mode. Owns a `SearchlightSim` started empty; in an arena it scores kills and spawns each wave's enemies, graded by the wave's mix, at free enemy markers; in a sandbox (`ArenaMode::sandbox`) it has no waves and `tally()` is `None`. `ArenaMode::for_level` picks by `LevelMode` |
 | `hud` | Text for rifle state, hits, health, death and the wave and score line (omitted without a `Tally`); the hit-edge direction; the death overlay |
@@ -131,9 +132,13 @@ dummies and the player stand, enemy markers are remembered but unoccupied. Each
 free markers (`SearchlightSim::free_enemy_spawns`: no living character within two `CAPSULE_RADIUS`) and
 spawns that many enemies through `SearchlightSim::spawn_enemy`. An enemy's grade is the command's `forced_grade` when set, else the wave's mix grade for its place in the wave (`WaveGrades::grade_of`, lowest grade first); the force applies to enemies spawned after it, including the wave a restart brings. Wave 1 holds `first_size` enemies and each
 later wave `growth` more; the next wave begins when the current one has nothing left to spawn and
-none alive. Spawned enemies take the next target number after the dummies; the dead keep theirs.
+none alive, and only when the player calls it: a cleared wave waits (`WaveState::call_next`, refused while enemies remain to spawn or stand). Spawned enemies take the next target number after the dummies; the dead keep theirs.
 Nothing spawns while the player is dead; the restart rebuilds the sim empty and begins wave 1
-with no score. `SearchlightGame` reads `ArenaMode::tally()` (`Tally { wave, score }`) for the HUD.
+with no score.
+
+The call comes from a world control. A level's `control_NN` marker names an action; the arena stands a post there (`ArenaControl`, one mesh per control). When the use input goes down, `ArenaMode::tick` carries out the control the player looks at within `USE_REACH` of the eye (`SearchlightSim::control_in_reach`: the first surface along the view ray, so a wall in between blocks it), and the HUD shows a `use_prompt` for it. A marker with a missing or unknown `action` fails the level load.
+
+`SearchlightGame` reads `ArenaMode::tally()` (`Tally { wave, score }`) for the HUD.
 
 A sandbox level has no `WaveState`: `ArenaMode::sandbox` spawns no enemy, scores nothing and `tally()` is `None`, so the title line shows health only. A dead player still restarts the sim.
 
