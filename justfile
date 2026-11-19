@@ -42,6 +42,7 @@ deny:
     "{{replace(just_executable(), '\', '/')}}" _physics-accepts physics-metadata-ok
     "{{replace(just_executable(), '\', '/')}}" _physics-rejects physics-metadata-missing rapier3d parry3d
     "{{replace(just_executable(), '\', '/')}}" _physics-rejects physics-metadata-missing-parry parry3d rapier3d
+    "{{replace(just_executable(), '\', '/')}}" _physics-rejects physics-metadata-missing-second-version rapier3d parry3d
 
 # Fails unless the physics feature check passes on the metadata fixture.
 [private]
