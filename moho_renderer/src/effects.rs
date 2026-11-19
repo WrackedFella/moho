@@ -1710,4 +1710,177 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn a_flash_at_the_eye_draws_a_finite_instance_with_size() {
+        let mut rig = Rig::new();
+        rig.effects.flash(EYE, 0.0, flash_style(0.4, secs(5.0)));
+
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(drawn.len(), 1);
+        assert!(all_finite(&drawn));
+        assert_near(translation(&drawn[0]), EYE);
+        assert!((x_axis(&drawn[0]).length() - 0.4).abs() < EPS);
+        assert!((y_axis(&drawn[0]).length() - 0.4).abs() < EPS);
+    }
+
+    #[test]
+    fn spawning_after_lowering_quality_over_a_full_store_evicts_the_oldest_mark_only() {
+        let mut rig = Rig::new();
+        let streaks: Vec<EffectHandle> = (0..2)
+            .map(|_| rig.effects.begin_streak(style(2.0, 0.1)))
+            .collect();
+        for i in 0..62 {
+            rig.effects.mark(
+                Vec3::new(i as f32, 0.0, 0.0),
+                Vec3::Y,
+                0.0,
+                mark_style(0.2, secs(10.0), secs(1.0)),
+            );
+        }
+        assert_eq!(rig.effects.live(), 64);
+        rig.effects.set_quality(1);
+
+        rig.effects.mark(
+            Vec3::new(1000.0, 0.0, 0.0),
+            Vec3::Y,
+            0.0,
+            mark_style(0.2, secs(10.0), secs(1.0)),
+        );
+
+        assert!(rig.effects.live() <= 64, "got {}", rig.effects.live());
+        for handle in &streaks {
+            rig.effects
+                .place_streak(*handle, Vec3::new(-500.0, 0.0, 0.0), Vec3::X);
+        }
+        let drawn = rig.frame(EYE);
+        let streak_draws = drawn.iter().filter(|i| translation(i).x < -400.0).count();
+        assert_eq!(streak_draws, 2, "both streaks untouched");
+        let mut mark_xs: Vec<f32> = drawn
+            .iter()
+            .map(|i| translation(i).x)
+            .filter(|x| *x > -400.0)
+            .map(f32::round)
+            .collect();
+        mark_xs.sort_by(f32::total_cmp);
+        assert_eq!(mark_xs.len(), 62);
+        assert_eq!(mark_xs[0], 1.0, "the oldest mark (x = 0) is the one gone");
+        assert_eq!(mark_xs[61], 1000.0, "the new mark is live");
+    }
+
+    #[test]
+    fn a_flash_with_zero_lifetime_draws_nothing_and_is_gone_after_a_zero_advance() {
+        let mut rig = Rig::new();
+        rig.effects
+            .flash(Vec3::ONE, 0.0, flash_style(0.4, Duration::ZERO));
+
+        let drawn = rig.frame(EYE);
+        assert!(all_finite(&drawn));
+        assert!(drawn.is_empty());
+        rig.effects.advance(Duration::ZERO);
+
+        assert_eq!(rig.effects.live(), 0);
+        assert!(rig.frame(EYE).is_empty());
+    }
+
+    #[test]
+    fn eviction_goes_by_spawn_order_across_kinds_and_handles_are_not_reused() {
+        let mut rig = Rig::new();
+        rig.effects.set_quality(1);
+        let early_streak = rig.effects.begin_streak(style(2.0, 0.1));
+        rig.effects
+            .flash(Vec3::new(500.0, 0.0, 0.0), 0.0, flash_style(0.4, secs(5.0)));
+        let spawn_mark = |rig: &mut Rig, x: f32| {
+            rig.effects.mark(
+                Vec3::new(x, 0.0, 0.0),
+                Vec3::Y,
+                0.0,
+                mark_style(0.2, secs(10.0), secs(1.0)),
+            );
+        };
+        for i in 0..30 {
+            spawn_mark(&mut rig, i as f32);
+        }
+        assert_eq!(rig.effects.live(), 32);
+
+        spawn_mark(&mut rig, 100.0);
+        rig.effects
+            .place_streak(early_streak, Vec3::new(-500.0, 0.0, 0.0), Vec3::X);
+        let after_first = rig.frame(EYE);
+
+        assert_eq!(after_first.len(), 32);
+        assert!(
+            after_first
+                .iter()
+                .all(|i| (translation(i).x - 500.0).abs() > 1.0),
+            "the flash, spawned before every mark, went first"
+        );
+        assert!(after_first.iter().any(|i| translation(i).x.abs() < 0.5));
+
+        spawn_mark(&mut rig, 101.0);
+        rig.effects
+            .place_streak(early_streak, Vec3::new(-500.0, 0.0, 0.0), Vec3::X);
+        let after_second = rig.frame(EYE);
+
+        assert_eq!(after_second.len(), 32);
+        assert!(
+            after_second
+                .iter()
+                .all(|i| translation(i).x.abs() > 0.5 || translation(i).x < -400.0),
+            "then the oldest mark (x = 0)"
+        );
+        rig.effects.set_quality(4);
+        let later = rig.effects.begin_streak(style(2.0, 0.1));
+        assert!(later > early_streak, "a later handle is greater");
+        assert_eq!(
+            later.0 + 1,
+            rig.effects.next_handle,
+            "no handle was handed back for reuse"
+        );
+        assert!(
+            later.0 >= 33,
+            "every spawn consumed or skipped a handle, never reused one"
+        );
+    }
+
+    #[test]
+    fn a_tiny_non_zero_normal_is_refused_or_drawn_finite() {
+        let mut rig = Rig::new();
+
+        rig.effects.mark(
+            Vec3::ONE,
+            Vec3::new(1e-30, 0.0, 0.0),
+            0.0,
+            mark_style(0.2, secs(10.0), secs(1.0)),
+        );
+        let drawn = rig.frame(EYE);
+
+        assert!(all_finite(&drawn));
+        assert_eq!(drawn.len(), rig.effects.live(), "drawn iff stored");
+    }
+
+    #[test]
+    fn a_huge_advance_removes_flash_mark_and_streak_without_panic() {
+        let mut rig = Rig::new();
+        let streak = rig.effects.begin_streak(style(2.0, 0.1));
+        rig.effects.place_streak(streak, Vec3::X * 5.0, Vec3::X);
+        rig.effects
+            .flash(Vec3::ONE, 0.0, flash_style(0.4, secs(5.0)));
+        rig.effects.mark(
+            Vec3::ZERO,
+            Vec3::Y,
+            0.0,
+            mark_style(0.2, secs(10.0), secs(1.0)),
+        );
+        assert_eq!(rig.frame(EYE).len(), 3);
+
+        rig.effects
+            .advance(Duration::from_secs(u64::from(u32::MAX)));
+        let drawn = rig.frame(EYE);
+
+        assert!(all_finite(&drawn));
+        assert!(drawn.is_empty());
+        assert_eq!(rig.effects.live(), 0);
+    }
 }
