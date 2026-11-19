@@ -277,6 +277,15 @@ mod tests {
         world.loose(id).expect("the object is alive")
     }
 
+    /// The one place tests reach into the world's loose-object storage.
+    fn body_of(world: &PhysicsWorld, id: LooseId) -> rapier3d::prelude::RigidBodyHandle {
+        world.loose[&id]
+    }
+
+    fn all_bodies(world: &PhysicsWorld) -> Vec<rapier3d::prelude::RigidBodyHandle> {
+        world.loose.keys().map(|id| body_of(world, *id)).collect()
+    }
+
     fn cuboid(half_extents: Vec3) -> LooseShape {
         LooseShape::Box { half_extents }
     }
@@ -614,7 +623,7 @@ mod tests {
                 "{shape:?}: {state:?}"
             );
             assert!(!state.asleep, "{shape:?}: a fresh object is awake");
-            let mass = world.rigid_body_set[world.loose[&id]].mass();
+            let mass = world.rigid_body_set[body_of(&world, id)].mass();
             assert!(
                 (mass - 3.5).abs() <= 1e-4,
                 "{shape:?}: the body weighs the stated mass, mass={mass}"
@@ -1101,7 +1110,7 @@ mod tests {
 
     impl PhysicsWorld {
         fn loose_aabb(&self, id: LooseId) -> rapier3d::prelude::Aabb {
-            let collider = self.rigid_body_set[self.loose[&id]].colliders()[0];
+            let collider = self.rigid_body_set[body_of(self, id)].colliders()[0];
             self.collider_set[collider].compute_aabb()
         }
     }
@@ -1113,10 +1122,9 @@ mod tests {
     /// The deepest penetration, in metres, of any loose object into the world mesh and into
     /// another loose object, read from the contacts the last step left.
     fn worst_penetration(world: &PhysicsWorld) -> (f32, f32) {
-        let loose_colliders: Vec<_> = world
-            .loose
-            .values()
-            .map(|body| world.rigid_body_set[*body].colliders()[0])
+        let loose_colliders: Vec<_> = all_bodies(world)
+            .into_iter()
+            .map(|body| world.rigid_body_set[body].colliders()[0])
             .collect();
         let (mut floor, mut pair) = (0.0f32, 0.0f32);
         for contact in world.narrow_phase.contact_pairs() {
@@ -1200,8 +1208,9 @@ mod tests {
         assert!(state.asleep, "the capsule sleeps, state {state:?}");
         let travelled = state.position.z;
         assert!(
-            (0.0..=1.5).contains(&travelled),
-            "it rests within 1.5 m, travelled {travelled}"
+            (1.0..=1.5).contains(&travelled),
+            "it rests within 1.5 m, and a brake of g tan(5 degrees) carries it 1.27 m, \
+             travelled {travelled}"
         );
     }
 
@@ -1363,6 +1372,46 @@ mod tests {
 
             assert!(fell_ticks > 10, "{name} fell for a while before landing");
         }
+
+        for (name, shape) in [("capsule", CAPSULE), ("cylinder", CYLINDER)] {
+            let radius = radius_of(shape);
+            let spawn = LooseSpawn {
+                position: Vec3::new(0.0, radius + 0.3, 0.0),
+                rotation: lying_across_z(),
+                restitution: 0.5,
+                ..LooseSpawn::new(shape, 0.2)
+            };
+            let mut braked = world_with_floor(&floor_mesh(0.0));
+            let mut free = world_with_floor(&floor_mesh(0.0));
+            free.set_rest_slope(0.0);
+            let braked_id = braked.spawn_loose(&spawn);
+            let free_id = free.spawn_loose(&spawn);
+
+            for tick in 1..=90 {
+                braked.step(DT);
+                free.step(DT);
+                let (a, b) = (read(&braked, braked_id), read(&free, free_id));
+                assert!(
+                    (a.linear_velocity.y - b.linear_velocity.y).abs() <= 1e-5,
+                    "{name} tick {tick}: vertical velocity {} with the brake, {} without",
+                    a.linear_velocity.y,
+                    b.linear_velocity.y
+                );
+            }
+
+            let mut braked = world_with_floor(&floor_mesh(0.0));
+            let mut free = world_with_floor(&floor_mesh(0.0));
+            free.set_rest_slope(0.0);
+            let braked_id = braked.spawn_loose(&spawn);
+            let free_id = free.spawn_loose(&spawn);
+            let braked_peak = peak_rebound(&mut braked, braked_id, radius);
+            let free_peak = peak_rebound(&mut free, free_id, radius);
+            assert!(free_peak > 0.005, "{name} bounces, peak {free_peak}");
+            assert!(
+                (braked_peak - free_peak).abs() <= 0.001,
+                "{name} rebounds {braked_peak} m with the brake, {free_peak} m without"
+            );
+        }
     }
 
     #[test]
@@ -1419,6 +1468,103 @@ mod tests {
             bits(&read(&free, free_id)),
             "a predicted contact is not ground"
         );
+    }
+
+    #[test]
+    fn a_box_sliding_on_flat_ground_is_not_braked() {
+        let spawn = LooseSpawn {
+            position: Vec3::new(0.0, FLAT_BOX.y, 0.0),
+            linear_velocity: Vec3::new(1.5, 0.0, 0.7),
+            angular_velocity: Vec3::new(0.0, 3.0, 0.0),
+            friction: 0.0,
+            ..LooseSpawn::new(BOX, 0.2)
+        };
+        let mut braked = world_with_floor(&floor_mesh(0.0));
+        let mut free = world_with_floor(&floor_mesh(0.0));
+        free.set_rest_slope(0.0);
+        let braked_id = braked.spawn_loose(&spawn);
+        let free_id = free.spawn_loose(&spawn);
+
+        run(&mut braked, 10);
+        run(&mut free, 10);
+
+        let state = read(&braked, braked_id);
+        assert!(
+            state.linear_velocity.x > 0.3,
+            "the box is still sliding, state {state:?}"
+        );
+        assert_eq!(
+            bits(&state),
+            bits(&read(&free, free_id)),
+            "a box does not roll, so the brake leaves it alone"
+        );
+    }
+
+    #[test]
+    fn the_brake_strength_follows_the_gravity_input() {
+        let mut world = slope_world(4.9);
+        world.set_gravity(36.0);
+
+        let (moved, asleep) = settle_on_slope(&mut world, CAPSULE, 4.9);
+
+        assert!(
+            moved < 0.02,
+            "at gravity 36 the brake holds 4.9 degrees, moved {moved}"
+        );
+        assert!(asleep, "the capsule sleeps at gravity 36");
+    }
+
+    #[test]
+    fn a_rolling_capsule_without_gravity_keeps_its_speed() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        world.set_gravity(0.0);
+        let id = world.spawn_loose(&rolling_capsule_spawn(0.0));
+
+        run(&mut world, 60);
+
+        let state = read(&world, id);
+        assert!(
+            state.linear_velocity.is_finite()
+                && state.angular_velocity.is_finite()
+                && state.position.is_finite(),
+            "the state stays finite, state {state:?}"
+        );
+        assert!(
+            state.linear_velocity.with_y(0.0).length() > 1.9,
+            "with no gravity there is no up and no brake, state {state:?}"
+        );
+    }
+
+    #[test]
+    fn a_capsule_rolling_on_a_box_top_is_braked_to_rest() {
+        let box_half = Vec3::new(1.0, 0.1, 0.5);
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let slab = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, box_half.y, 0.0),
+            ..LooseSpawn::new(cuboid(box_half), 20.0)
+        });
+        let capsule = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 2.0 * box_half.y + 0.04, 0.0),
+            rotation: lying_across_z(),
+            linear_velocity: Vec3::new(0.0, 0.0, 0.5),
+            angular_velocity: Vec3::new(0.5 / 0.04, 0.0, 0.0),
+            ..LooseSpawn::new(CAPSULE, 0.2)
+        });
+
+        run(&mut world, 300);
+
+        let state = read(&world, capsule);
+        let bottom = bottom_of(&world, capsule);
+        assert!(
+            (bottom - 2.0 * box_half.y).abs() <= 0.001,
+            "the capsule rests on the box top, bottom {bottom}, state {state:?}"
+        );
+        assert!(
+            state.position.z.abs() <= 0.4,
+            "it stopped near where it started, state {state:?}"
+        );
+        assert!(state.asleep, "the capsule sleeps, state {state:?}");
+        assert!(read(&world, slab).asleep, "the box sleeps");
     }
 
     #[test]
