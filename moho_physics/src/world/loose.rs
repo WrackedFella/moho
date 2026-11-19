@@ -1,6 +1,8 @@
 use super::PhysicsWorld;
 use glam::{Quat, Vec3};
-use rapier3d::prelude::{ColliderBuilder, Pose, RigidBody, RigidBodyBuilder, RigidBodyHandle};
+use rapier3d::prelude::{
+    Collider, ColliderBuilder, Pose, RigidBody, RigidBodyBuilder, RigidBodyHandle,
+};
 
 /// Stable, engine-issued name of a loose object.
 ///
@@ -76,8 +78,10 @@ impl LooseShape {
 /// Steepest ground, radians from level, on which loose objects are braked to rest.
 const DEFAULT_REST_SLOPE: f32 = 5.0 * std::f32::consts::PI / 180.0;
 
-/// Contact depth, m, past which a body is being pushed out of another and must not be braked:
-/// braking zeroes the velocity the solver separates them with and the overlap freezes.
+/// Contact depth, m, past which a body is being pushed out of another dynamic body and must not
+/// be braked: braking zeroes the velocity the solver separates them with and the overlap freezes.
+/// Static ground is exempt: it never moves, and a rolling shape rests 5 to 8 mm into a mesh
+/// floor without ever separating, so counting it would leave the shape rolling forever.
 const DEEP_CONTACT: f32 = 0.005;
 
 /// The rest slope with its tangent and cosine, worked out once when it is set.
@@ -121,7 +125,7 @@ fn cut(value: f32, amount: f32) -> f32 {
 struct GroundContact {
     /// Some touching point has a normal within the rest slope of `up`.
     on_near_flat_ground: bool,
-    /// Some contact is deeper than [`DEEP_CONTACT`].
+    /// Some contact with another dynamic body is deeper than [`DEEP_CONTACT`].
     being_separated: bool,
 }
 
@@ -341,7 +345,8 @@ impl PhysicsWorld {
     /// with `a = g·tan(rest slope)`, so a rolling body keeps `v = ωr` and both reach zero
     /// together. Motion in the plane of the axis and up is left alone so a shape can tip over
     /// an edge, and so is anything along up. A body with a contact deeper than
-    /// [`DEEP_CONTACT`] is skipped: its velocity is what separates it from the other body.
+    /// [`DEEP_CONTACT`] against another dynamic body is skipped: its velocity is what separates
+    /// it from that body. Depth into static ground does not count.
     pub(super) fn brake_rolling(&mut self, dt: f32) {
         let gravity = self.gravity.length();
         let Some(up) = (-self.gravity).try_normalize() else {
@@ -392,6 +397,17 @@ impl PhysicsWorld {
         for &collider in body.colliders() {
             for pair in self.narrow_phase.contact_pairs_with(collider) {
                 let body_is_first = pair.collider1 == collider;
+                let other = if body_is_first {
+                    pair.collider2
+                } else {
+                    pair.collider1
+                };
+                let other_is_dynamic = self
+                    .collider_set
+                    .get(other)
+                    .and_then(Collider::parent)
+                    .and_then(|parent| self.rigid_body_set.get(parent))
+                    .is_some_and(RigidBody::is_dynamic);
                 for manifold in pair.manifolds() {
                     let normal = if body_is_first {
                         -manifold.data.normal
@@ -399,7 +415,7 @@ impl PhysicsWorld {
                         manifold.data.normal
                     };
                     for point in &manifold.points {
-                        contact.being_separated |= point.dist < -DEEP_CONTACT;
+                        contact.being_separated |= other_is_dynamic && point.dist < -DEEP_CONTACT;
                         contact.on_near_flat_ground |=
                             point.dist <= 0.0 && normal.dot(up) >= self.rest_slope.cos;
                     }
@@ -1718,7 +1734,13 @@ mod tests {
             .collect()
     }
 
-    const PILE_SEEDS: [u32; 4] = [0x9E37_79B1, 0x85EB_CA6B, 0xC2B2_AE35, 0x27D4_EB2F];
+    const PILE_SEEDS: [u32; 5] = [
+        0x9E37_79B1,
+        0x85EB_CA6B,
+        0xC2B2_AE35,
+        0x27D4_EB2F,
+        0xE1DE_0007,
+    ];
 
     #[test]
     fn a_pile_of_every_shape_settles() {
