@@ -68,7 +68,7 @@ impl KeybindCaptureHandler {
     }
 
     /// Handle a winit WindowEvent when listening for a binding.
-    /// Returns true if the event was consumed (binding applied or cancelled).
+    /// Returns true if the event was consumed (binding applied, conflict queued, or cancelled).
     ///
     /// # Arguments
     /// * `event` - The winit WindowEvent to process
