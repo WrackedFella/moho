@@ -35,6 +35,7 @@ pub struct PhysicsWorld {
     characters: HashMap<CharacterHandle, Character>,
     loose: BTreeMap<LooseId, RigidBodyHandle>,
     next_loose: u64,
+    rest_slope: f32,
 }
 
 impl std::fmt::Debug for PhysicsWorld {
@@ -77,6 +78,7 @@ impl PhysicsWorld {
             characters: HashMap::new(),
             loose: BTreeMap::new(),
             next_loose: 0,
+            rest_slope: loose::DEFAULT_REST_SLOPE,
         }
     }
 
