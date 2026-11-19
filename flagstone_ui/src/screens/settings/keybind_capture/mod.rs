@@ -213,7 +213,7 @@ mod tests {
     }
 
     #[test]
-    fn test_conflict_detection() {
+    fn key_conflict_ends_listening() {
         let mut handler = KeybindCaptureHandler::new();
         let bindings = registry(); // Move Forward holds W
         let mut bindings_changed = vec![];
@@ -226,8 +226,38 @@ mod tests {
 
         assert!(consumed);
         assert!(!handler.is_listening());
-        assert!(bindings_changed.is_empty()); // No binding applied yet
-        assert!(handler.has_pending_binding()); // Conflict modal should be triggered
+        assert!(bindings_changed.is_empty());
+        assert!(handler.has_pending_binding());
+    }
+
+    /// Modifier bits: Ctrl 1, Shift 2, Alt 4. Sprint holds Shift by default.
+    #[test]
+    fn lone_modifier_conflict_ends_listening() {
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry();
+        let mut changed = vec![];
+        handler.start_listening(0);
+
+        let applied = handler.capture_modifier_if_listening(2, &bindings, |action, b| {
+            changed.push((action, b));
+        });
+        let alt_released_first =
+            handler.capture_modifier_if_listening(0, &bindings, |action, b| {
+                changed.push((action, b));
+            });
+        let alt_applied = handler.capture_modifier_if_listening(4, &bindings, |action, b| {
+            changed.push((action, b));
+        });
+
+        assert!(applied);
+        assert!(!alt_released_first);
+        assert!(!alt_applied, "a later modifier must not be captured");
+        assert!(!handler.is_listening());
+        assert!(changed.is_empty());
+        assert_eq!(
+            handler.take_conflict_modal(),
+            Some(("Sprint".to_string(), "Shift".to_string()))
+        );
     }
 
     #[test]
