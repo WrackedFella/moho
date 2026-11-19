@@ -85,17 +85,17 @@ pub fn read_scene_and_metadata<P: AsRef<Path>>(path: P) -> Result<SavePayload, P
     Ok((file.spec, file.scene, file.blocks))
 }
 
-/// Persist a serialized chunk to `saves/<world_name>/chunks/<cx>_<cy>_<cz>.bin`.
-///
-/// `data` is an already-enveloped chunk file. Called by the streaming system
-/// when a modified chunk is evicted. Uses an atomic rename so a crash
-/// mid-write never leaves a corrupt file.
+/// [`write_chunk_file_in`] under the default `saves` directory.
 #[cfg(test)]
 pub fn write_chunk_file(world_name: &str, pos: IVec3, data: &[u8]) -> io::Result<()> {
     write_chunk_file_in(Path::new(SAVES_DIR), world_name, pos, data)
 }
 
-/// As [`write_chunk_file`], under `saves_dir/<world_name>/chunks/`.
+/// Persist a serialized chunk to `<saves_dir>/<world_name>/chunks/<cx>_<cy>_<cz>.bin`.
+///
+/// `data` is an already-enveloped chunk file. Called by the streaming system
+/// when a modified chunk is evicted. Uses an atomic rename so a crash
+/// mid-write never leaves a corrupt file.
 pub fn write_chunk_file_in(
     saves_dir: &Path,
     world_name: &str,
@@ -117,16 +117,16 @@ pub fn write_chunk_file_in(
     Ok(())
 }
 
-/// Load a serialized chunk from `saves/<world_name>/chunks/<cx>_<cy>_<cz>.bin`.
-///
-/// Returns `Ok(None)` if the file does not exist (chunk was never modified, so
-/// the caller should fall back to generating it from the terrain function).
+/// [`read_chunk_file_in`] under the default `saves` directory.
 #[cfg(test)]
 pub fn read_chunk_file(world_name: &str, pos: IVec3) -> Result<Option<Vec<u8>>, PersistError> {
     read_chunk_file_in(Path::new(SAVES_DIR), world_name, pos)
 }
 
-/// As [`read_chunk_file`], under `saves_dir/<world_name>/chunks/`.
+/// Load a serialized chunk from `<saves_dir>/<world_name>/chunks/<cx>_<cy>_<cz>.bin`.
+///
+/// Returns `Ok(None)` if the file does not exist (chunk was never modified, so
+/// the caller should fall back to generating it from the terrain function).
 pub fn read_chunk_file_in(
     saves_dir: &Path,
     world_name: &str,
