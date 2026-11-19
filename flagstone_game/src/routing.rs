@@ -452,6 +452,44 @@ mod tests {
         assert!(path.is_some(), "18 expansions reach the goal");
     }
 
+    /// Climbing makes the heuristic overestimate a move, so a cell is sometimes queued again by
+    /// a shorter way. Expanding its longer, stale entry too costs one more expansion than the
+    /// search needs here (26), which a budget of exactly that many exposes.
+    #[test]
+    fn a_stale_queue_entry_is_skipped_not_expanded_again() {
+        let heights = [
+            3, 1, 1, 1, 3, 2, 3, 1, 2, 3, 3, 3, 1, 1, 1, 2, 2, 2, 1, 1, 1, 2, 1, 2, 2, 3, 1, 3, 1,
+            2, 2, 2, 1, 3, 3, 3, 1, 3, 3, 1, 1, 2, 2, 3, 2, 3, 1, 1, 2, 3, 3, 1, 3, 1, 2, 2, 3, 2,
+            1, 2, 2, 2, 3, 3,
+        ];
+        let grid = terrain(&heights);
+        let start = on_top(&heights, 6, 1);
+        let block = on_top(&heights, 3, 3);
+
+        let path = route(&grid, start, |c| in_stand_box(c, block), block, 26);
+
+        assert!(path.is_some(), "26 expansions reach the stand box");
+    }
+
+    #[test]
+    fn the_stand_box_gap_sums_the_gap_on_every_axis() {
+        let block = cell(0, 10, 0);
+
+        let inside = stand_box_gap(cell(1, 9, -1), block);
+        let x_only = stand_box_gap(cell(4, 10, 0), block);
+        let z_only = stand_box_gap(cell(0, 10, -5), block);
+        let too_low = stand_box_gap(cell(0, 7, 0), block);
+        let too_high = stand_box_gap(cell(0, 14, 0), block);
+        let all_three = stand_box_gap(cell(-3, 14, 4), block);
+
+        assert_eq!(inside, 0);
+        assert_eq!(x_only, 3);
+        assert_eq!(z_only, 4);
+        assert_eq!(too_low, 2, "feet may be one below the block");
+        assert_eq!(too_high, 2, "feet may be two above the block");
+        assert_eq!(all_three, 2 + 2 + 3);
+    }
+
     /// Breadth-first shortest step count from `start` to `goal`.
     fn fewest_steps(grid: &VoxelGrid, start: BlockPos, goal: BlockPos) -> Option<usize> {
         let mut seen = HashMap::from([(start, 0usize)]);
