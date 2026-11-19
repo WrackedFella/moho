@@ -200,7 +200,8 @@ fn nearest_exposed_face(grid: &VoxelGrid, block: BlockPos, eye: Vec3) -> Option<
 
 /// Claims the nearest marked block that has an exposed face and a route to a stand cell,
 /// equips the tool and returns the job; `Idle` when there is none. Tries at most
-/// `ROUTE_ATTEMPTS_PER_TICK` routes.
+/// `ROUTE_ATTEMPTS_PER_TICK` routes, then resumes after them on the next call
+/// (`Pawn::claim_offset`), so every candidate is tried within a bounded number of ticks.
 fn claim_nearest(
     id: PawnId,
     pawn: &mut Pawn,
@@ -212,10 +213,20 @@ fn claim_nearest(
     let mut candidates = marks.unclaimed();
     candidates.sort_by_key(|&pos| (BlockPos::from(pos) - start).length_squared());
 
+    candidates.retain(|&pos| exposed_faces(grid, BlockPos::from(pos)).next().is_some());
+    if candidates.is_empty() {
+        pawn.claim_offset = 0;
+        return Job::Idle;
+    }
+    let first = pawn.claim_offset % candidates.len();
+    let attempts = candidates.len().min(ROUTE_ATTEMPTS_PER_TICK);
+
     let reachable = candidates
-        .into_iter()
-        .filter(|&pos| exposed_faces(grid, BlockPos::from(pos)).next().is_some())
-        .take(ROUTE_ATTEMPTS_PER_TICK)
+        .iter()
+        .copied()
+        .cycle()
+        .skip(first)
+        .take(attempts)
         .find_map(|pos| {
             let block = BlockPos::from(pos);
             let is_stand_cell = |cell: BlockPos| {
@@ -226,9 +237,11 @@ fn claim_nearest(
             route(grid, start, is_stand_cell, block, ROUTE_NODE_BUDGET).map(|route| (pos, route))
         });
     let Some((mark, route)) = reachable else {
+        pawn.claim_offset = (first + attempts) % candidates.len();
         return Job::Idle;
     };
 
+    pawn.claim_offset = 0;
     if !marks.claim(mark, id) {
         return Job::Idle;
     }
@@ -513,6 +526,32 @@ mod tests {
             Some([0, 0, 4]),
             "the fourth search is still allowed"
         );
+    }
+
+    #[test]
+    fn a_routable_mark_behind_four_nearer_unroutable_ones_is_claimed_within_a_few_ticks() {
+        let mut rig = walled_rig();
+        for z in 3..=6 {
+            rig.mark(9, 0, z);
+        }
+        rig.mark(0, 0, 4);
+
+        for _ in 0..10 {
+            rig.step();
+            if rig.mined_mark().is_some() {
+                break;
+            }
+        }
+
+        assert_eq!(
+            rig.mined_mark(),
+            Some([0, 0, 4]),
+            "the unroutable marks must not starve the routable one"
+        );
+        assert_eq!(rig.claim_of([0, 0, 4]), held_by(ID));
+        for z in 3..=6 {
+            assert_eq!(rig.claim_of([9, 0, z]), FREE, "walled mark at z = {z}");
+        }
     }
 
     #[test]

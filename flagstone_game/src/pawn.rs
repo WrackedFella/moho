@@ -40,6 +40,9 @@ pub struct Pawn {
     pub pickups: PickupFeed,
     /// What the pawn is doing on its own account.
     pub job: Job,
+    /// Where in the distance-sorted marks the next idle claim search starts, so marks that
+    /// failed to route do not shut out the ones behind them.
+    pub claim_offset: usize,
 }
 
 impl Default for Pawn {
@@ -50,6 +53,7 @@ impl Default for Pawn {
             selected_slot: TOOL_SLOT,
             pickups: PickupFeed::default(),
             job: Job::Idle,
+            claim_offset: 0,
         }
     }
 }
