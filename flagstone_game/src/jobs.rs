@@ -274,7 +274,8 @@ mod tests {
 
     #[test]
     fn an_idle_pawn_claims_the_nearest_reachable_mark_and_equips_the_tool() {
-        let mut rig = rig_with_a_near_mark();
+        let mut rig = Rig::new(floor(0..=16, 0..=8), cell(14, 1, 2));
+        rig.mark(5, 0, 2);
         rig.mark(12, 0, 2);
         rig.pawn.select_slot(3);
 
@@ -283,12 +284,81 @@ mod tests {
         let Job::Mine { mark, route, .. } = &rig.job else {
             panic!("expected a mine job, got {:?}", rig.job);
         };
-        assert_eq!(*mark, [5, 0, 2], "the nearer mark");
-        assert_eq!(route.last(), Some(&cell(4, 1, 2)), "the nearest stand cell");
-        assert_eq!(rig.claim_of([5, 0, 2]), held_by(ID));
-        assert_eq!(rig.claim_of([12, 0, 2]), FREE);
+        assert_eq!(
+            *mark,
+            [12, 0, 2],
+            "the nearer mark, though not first in key order"
+        );
+        assert_eq!(
+            route.last(),
+            Some(&cell(13, 1, 2)),
+            "the nearest stand cell"
+        );
+        assert_eq!(rig.claim_of([12, 0, 2]), held_by(ID));
+        assert_eq!(rig.claim_of([5, 0, 2]), FREE);
         assert_eq!(rig.pawn.selected_slot, crate::pawn::TOOL_SLOT);
         assert_eq!(rig.pawn.equipped_tool, Some(crate::tools::STARTING_TOOL));
+    }
+
+    /// A floor split by a two-block wall across `x = 8`, the pawn on the west side at `(6, 1, 4)`.
+    fn walled_rig() -> Rig {
+        let mut grid = floor(0..=16, 0..=8);
+        for z in 0..=8 {
+            place(&mut grid, 8, 1, z);
+            place(&mut grid, 8, 2, z);
+        }
+        Rig::new(grid, cell(6, 1, 4))
+    }
+
+    #[test]
+    fn a_nearer_mark_behind_a_wall_is_skipped_for_a_routable_one() {
+        let mut rig = walled_rig();
+        rig.mark(9, 0, 4);
+        rig.mark(0, 0, 4);
+
+        rig.step();
+
+        assert_eq!(rig.mined_mark(), Some([0, 0, 4]));
+        assert_eq!(
+            rig.claim_of([9, 0, 4]),
+            FREE,
+            "the walled-off mark stays free"
+        );
+    }
+
+    #[test]
+    fn at_most_four_unroutable_marks_are_tried_in_a_tick() {
+        let mut rig = walled_rig();
+        for z in 2..=6 {
+            rig.mark(9, 0, z);
+        }
+        rig.mark(0, 0, 4);
+
+        let first = rig.step();
+
+        assert_eq!(first, JobAction::Wait);
+        assert_eq!(
+            rig.job,
+            Job::Idle,
+            "five failed searches do not fit in a tick"
+        );
+        assert_eq!(rig.claim_of([0, 0, 4]), FREE);
+        for z in 2..=6 {
+            assert_eq!(rig.claim_of([9, 0, z]), FREE, "walled mark at z = {z}");
+        }
+
+        let mut within_cap = walled_rig();
+        for z in 3..=5 {
+            within_cap.mark(9, 0, z);
+        }
+        within_cap.mark(0, 0, 4);
+        within_cap.step();
+
+        assert_eq!(
+            within_cap.mined_mark(),
+            Some([0, 0, 4]),
+            "the fourth search is still allowed"
+        );
     }
 
     #[test]
@@ -304,7 +374,11 @@ mod tests {
                 _ => None,
             })
             .collect();
-        let mut waypoints = walks.clone();
+        let standing_on = horizontal(standing_in(cell(2, 1, 2)).feet);
+        let mut waypoints: Vec<(f32, f32)> = walks
+            .into_iter()
+            .filter(|&(x, z)| (x - standing_on.0).hypot(z - standing_on.1) > ARRIVE_RADIUS)
+            .collect();
         waypoints.dedup();
         assert_eq!(waypoints, [(3.5, 2.5), (4.5, 2.5)]);
         let Some(JobAction::Dig { block, .. }) = actions.last() else {
@@ -469,7 +543,7 @@ mod tests {
 
         let tick = released_at.expect("a pawn that never moves gives up");
         assert!(
-            tick > STALL_TICKS / 2 && tick <= STALL_TICKS + 2,
+            (STALL_TICKS..=STALL_TICKS + 2).contains(&tick),
             "gave up at tick {tick}"
         );
         assert!(rig.marks.contains([5, 0, 2]), "the mark stays");

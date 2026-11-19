@@ -1568,6 +1568,42 @@ mod tests {
         assert!(app.colony.stock.is_empty());
     }
 
+    /// The whole HUD frame `update_hud_data` produces in `mode`, with or without a colony stock.
+    fn hud_frame_with_stock(
+        mode: flagstone_game::controller::CameraMode,
+        stocked: bool,
+    ) -> moho_render_api::UiFrame {
+        use moho_render_api::UiFrameSource;
+        let mut app = App::headless();
+        app.simulation.set_camera_mode(mode);
+        if stocked {
+            app.colony.stock.add(7, 3);
+        }
+        let adapter = std::sync::Arc::new(std::sync::Mutex::new(hud_adapter()));
+        app.ui_adapter = Some(std::sync::Arc::clone(&adapter));
+        FrameProcessor::new().update_hud_data(
+            &app,
+            &moho_app::GameClock::default(),
+            Duration::from_secs_f32(DT),
+        );
+        let mut adapter = adapter.lock().unwrap();
+        let _sizing = adapter.ui_frame([800, 600]);
+        adapter.ui_frame([800, 600]).expect("playing paints")
+    }
+
+    #[test]
+    fn the_whole_first_person_hud_shows_no_colony_totals() {
+        use flagstone_game::controller::CameraMode;
+
+        let strategy_differs = hud_frame_with_stock(CameraMode::Isometric, true)
+            != hud_frame_with_stock(CameraMode::Isometric, false);
+        let first_person_same = hud_frame_with_stock(CameraMode::FirstPerson, true)
+            == hud_frame_with_stock(CameraMode::FirstPerson, false);
+
+        assert!(strategy_differs, "the totals show in the strategy HUD");
+        assert!(first_person_same, "a first-person overlay draws the totals");
+    }
+
     #[test]
     fn hud_data_carries_the_colony_stock() {
         let mut app = App::headless();

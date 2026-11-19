@@ -628,24 +628,6 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_colony_stock_lists_no_totals() {
-        let empty = HudData {
-            colony_stock: Vec::new(),
-            ..stocked_data(false)
-        };
-
-        let drawn = drawn_texts(&empty);
-
-        assert!(!drawn.iter().any(|t| t.contains('×')), "{drawn:?}");
-        assert!(
-            drawn_texts(&stocked_data(false))
-                .iter()
-                .any(|t| t.contains('×')),
-            "the totals show when there is stock"
-        );
-    }
-
-    #[test]
     fn no_totals_in_first_person() {
         let strategy = drawn_texts(&stocked_data(false));
 

@@ -234,6 +234,19 @@ mod tests {
         assert_eq!(marks.unclaimed(), [[2, 0, 2]]);
     }
 
+    #[test]
+    fn a_removed_claimed_block_marked_again_comes_back_unclaimed() {
+        let mut marks = MineMarks::default();
+        marks.toggle([2, 0, 2]);
+        marks.claim([2, 0, 2], PawnId(0));
+
+        marks.block_removed([2, 0, 2]);
+        marks.toggle([2, 0, 2]);
+
+        assert_eq!(mark_at(&marks, [2, 0, 2]), FREE);
+        assert_eq!(marks.unclaimed(), [[2, 0, 2]]);
+    }
+
     proptest! {
         #[test]
         fn toggling_twice_leaves_the_marks_unchanged(

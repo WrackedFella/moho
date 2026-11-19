@@ -69,37 +69,28 @@ mod tests {
 
     #[test]
     fn standable_needs_ground_below_and_the_capsules_height_of_air() {
-        let mut grid = floor(0..=8, 0..=8);
-        assert!(standable(&grid, cell(4, 1, 4)), "ground below, open air");
+        let open = floor(0..=8, 0..=8);
+        assert!(standable(&open, cell(4, 1, 4)), "ground below, open air");
         assert!(
-            !standable(&grid, cell(4, 2, 4)),
+            !standable(&open, cell(4, 2, 4)),
             "a cell above air has no ground"
         );
-        assert!(!standable(&grid, cell(4, 0, 4)), "inside the floor");
+        assert!(!standable(&open, cell(4, 0, 4)), "inside the floor");
 
-        place(&mut grid, 4, 4, 4);
-        assert!(
-            standable(&grid, cell(4, 1, 4)),
-            "a block three cells above the feet leaves three cells of air"
-        );
+        for blocked in 1..=4 {
+            let mut grid = floor(0..=8, 0..=8);
+            place(&mut grid, 4, blocked, 4);
 
-        place(&mut grid, 4, 3, 4);
-        assert!(
-            !standable(&grid, cell(4, 1, 4)),
-            "a block in the third cell of the capsule's height"
-        );
-        assert!(
-            standable(&grid, cell(5, 1, 4)),
-            "the neighbouring column is untouched"
-        );
-    }
-
-    #[test]
-    fn standable_rejects_a_block_in_the_second_cell_of_air() {
-        let mut grid = floor(0..=8, 0..=8);
-        place(&mut grid, 4, 2, 4);
-
-        assert!(!standable(&grid, cell(4, 1, 4)));
+            assert_eq!(
+                standable(&grid, cell(4, 1, 4)),
+                blocked == 4,
+                "a block at y = {blocked}: only one above the capsule's three cells is fine"
+            );
+            assert!(
+                standable(&grid, cell(5, 1, 4)),
+                "the neighbouring column is untouched"
+            );
+        }
     }
 
     #[test]
@@ -222,10 +213,15 @@ mod tests {
         let grid = floor(0..=10, 0..=8);
         let goal = cell(6, 1, 2);
 
-        let route = find(&grid, cell(2, 2, 2), goal);
+        let above = find(&grid, cell(2, 2, 2), goal);
+        let inside = find(&grid, cell(2, 0, 2), goal);
 
         assert_eq!(
-            route.expect("a pawn a cell high still routes").last(),
+            above.expect("a pawn a cell high still routes").last(),
+            Some(&goal)
+        );
+        assert_eq!(
+            inside.expect("a pawn a cell low still routes").last(),
             Some(&goal)
         );
     }
