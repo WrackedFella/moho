@@ -52,6 +52,9 @@ pub enum ArenaError {
     /// A `control_NN` marker's `action` is missing or not on the action list.
     #[error("arena control `{marker}` needs an `action` from the action list")]
     BadControl { marker: String },
+    /// The level places more `control_NN` markers than a surface tag can index.
+    #[error("arena places {count} controls; at most 65535 are supported")]
+    TooManyControls { count: usize },
 }
 
 /// What a level plays as: waves and a score, or a sandbox with neither.
@@ -380,6 +383,13 @@ const CONTROL_HALF: Vec3 = Vec3::new(0.2, 0.6, 0.2);
 
 /// The controls `level`'s `control_NN` markers place, in file order.
 fn controls_of(level: &Level) -> Result<Vec<ArenaControl>, ArenaError> {
+    check_control_count(
+        level
+            .markers
+            .iter()
+            .filter(|marker| marker.name.starts_with(CONTROL_PREFIX))
+            .count(),
+    )?;
     level
         .markers
         .iter()
@@ -398,6 +408,18 @@ fn controls_of(level: &Level) -> Result<Vec<ArenaControl>, ArenaError> {
             })
         })
         .collect()
+}
+
+/// Rejects a level placing more controls than a `u16` surface tag can index, which
+/// `Arena::physics_world` relies on.
+///
+/// # Errors
+/// [`ArenaError::TooManyControls`] when `count` exceeds [`u16::MAX`].
+fn check_control_count(count: usize) -> Result<(), ArenaError> {
+    if count > usize::from(u16::MAX) {
+        return Err(ArenaError::TooManyControls { count });
+    }
+    Ok(())
 }
 
 /// A closed box with outward-facing triangles and a normal per face.
@@ -455,6 +477,20 @@ mod tests {
     use super::*;
     use crate::tag::SurfaceTag;
     use crate::test_support::{box_mesh, control_marker, mode_marker};
+
+    #[test]
+    fn control_count_accepts_the_most_a_tag_can_index_and_rejects_one_more() {
+        let most = usize::from(u16::MAX);
+
+        let accepted = check_control_count(most);
+        let rejected = check_control_count(most + 1);
+
+        assert!(accepted.is_ok(), "{accepted:?}");
+        assert!(
+            matches!(rejected, Err(ArenaError::TooManyControls { count }) if count == most + 1),
+            "{rejected:?}"
+        );
+    }
 
     fn marker(name: &str, position: Vec3) -> LevelMarker {
         LevelMarker {
