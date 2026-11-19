@@ -15,7 +15,6 @@ use std::time::Duration;
 /// Frame counter for tracking frame numbers
 static FRAME_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// The one pawn there is.
 const PAWN_ID: PawnId = PawnId(0);
 
 /// Walking speed in m/s.

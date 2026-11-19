@@ -17,7 +17,6 @@ use std::collections::HashSet;
 /// Cue played when a mined block yields a resource.
 const PICKUP_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/pickup.wav");
 const PICKUP_VOLUME: f32 = 0.6;
-/// Cue played where a pawn's job digs a block.
 const DIG_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/dig.wav");
 const DIG_VOLUME: f32 = 0.6;
 
