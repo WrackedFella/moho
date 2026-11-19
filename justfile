@@ -34,8 +34,25 @@ comment-refs base=base:
     scripts/check-comment-refs.sh {{base}}
 
 # Licenses, advisories, banned and duplicate crates, crate sources.
-deny:
+deny: && physics-features
     cargo deny check
+
+# rapier3d and parry3d keep `enhanced-determinism` (cargo-deny can ban a feature, not
+# require one). The self-test expects the fixture lacking it to fail, naming rapier3d.
+physics-features:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    bash scripts/check-physics-features.sh || exit 1
+    out=$(MOHO_PHYSICS_METADATA=scripts/fixtures/physics-features-missing.json bash scripts/check-physics-features.sh 2>&1)
+    status=$?
+    if [ "$status" -ne 0 ] && grep -qF -- 'check-physics-features: rapier3d' <<<"$out"; then
+        exit 0
+    fi
+    echo "physics-features self-test failed" >&2
+    echo "  expected: non-zero exit and a line naming rapier3d" >&2
+    echo "  got: exit $status, output:" >&2
+    sed 's/^/    /' <<<"$out" >&2
+    exit 1
 
 # LCOV coverage report at lcov.info.
 cov:
