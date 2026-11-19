@@ -649,6 +649,51 @@ fn keys_pressed_while_prompt_open_bind_nothing() {
     assert!(!menu.is_listening());
 }
 
+/// Ordinary keys pressed while the prompt is open bind nothing and leave the row alone.
+#[test]
+fn egui_keys_pressed_while_prompt_open_bind_nothing() {
+    use flagstone_ui::screens::Screen;
+
+    let before = all_staged(&SettingsMenu::with_prefs(Prefs::default()));
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(0);
+    render_with_mods(&mut menu, egui::Modifiers::SHIFT);
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+
+    render_frame(
+        &mut menu,
+        vec![key_event(egui::Key::W, true), key_event(egui::Key::S, true)],
+    );
+
+    assert_eq!(all_staged(&menu), before);
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::W), pad_stick(StickDir::Up)]
+    );
+    assert!(!menu.is_listening());
+}
+
+/// After cancelling a conflict, the row can be rebound to a free lone modifier.
+#[test]
+fn rebinding_to_free_modifier_after_cancel_binds_it() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(0);
+    render_with_mods(&mut menu, egui::Modifiers::SHIFT);
+    Screen::on_modal_cancel(&mut menu);
+    render_with_mods(&mut menu, egui::Modifiers::NONE);
+
+    menu.start_listening(0);
+    render_with_mods(&mut menu, egui::Modifiers::ALT);
+
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::Alt), pad_stick(StickDir::Up)]
+    );
+    assert!(!menu.is_listening());
+}
+
 /// Confirming applies only the prompted key, not a key pressed while the prompt was open.
 #[test]
 fn confirm_after_stray_key_applies_only_prompted_key() {

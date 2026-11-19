@@ -322,6 +322,31 @@ mod tests {
     }
 
     #[test]
+    fn modifier_pressed_after_ctrl_conflict_binds_nothing() {
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry(); // Descend holds Ctrl
+        let mut changed = vec![];
+        handler.start_listening(0);
+        handler.capture_modifier_if_listening(1, &bindings, |_, _| {});
+
+        let released = handler.capture_modifier_if_listening(0, &bindings, |a, b| {
+            changed.push((a, b));
+        });
+        let alt = handler.capture_modifier_if_listening(4, &bindings, |a, b| {
+            changed.push((a, b));
+        });
+
+        assert!(!released);
+        assert!(!alt);
+        assert!(!handler.is_listening());
+        assert!(changed.is_empty());
+        assert_eq!(
+            handler.take_conflict_modal(),
+            Some(("Move Down".to_string(), "Ctrl".to_string()))
+        );
+    }
+
+    #[test]
     fn modifier_multiple_mods_ignored() {
         let mut handler = KeybindCaptureHandler::new();
         let bindings = registry();
