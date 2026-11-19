@@ -8,6 +8,7 @@ use glam::{Quat, Vec3};
 use moho_level::{AgentProfile, Level, LevelError, LevelMarker, NavBuildError, NavMesh};
 use moho_physics::PhysicsWorld;
 use moho_render_api::{WorldMesh, WorldMeshId};
+use searchlight_rules::FlightBounds;
 
 use crate::control::ControlAction;
 use crate::sim::{CAPSULE_RADIUS, STAND_HEIGHT};
@@ -251,6 +252,9 @@ pub struct Arena {
 /// Extra metres of clearance on top of the capsule radius, so paths do not graze corners.
 const NAV_CLEARANCE: f32 = 0.1;
 
+/// How far past the arena's meshes a round may fly before it is gone, in metres.
+pub const FLIGHT_MARGIN: f32 = 100.0;
+
 /// The agent the arena's navmesh is built for: the player-sized capsule.
 pub fn nav_profile() -> AgentProfile {
     AgentProfile {
@@ -342,6 +346,14 @@ impl Arena {
             covers: positions(&markers.covers),
             controls,
         })
+    }
+
+    /// The box rounds fly in: every mesh's box grown by [`FLIGHT_MARGIN`].
+    pub fn flight_bounds(&self) -> FlightBounds {
+        FlightBounds {
+            min: Vec3::ZERO,
+            max: Vec3::ZERO,
+        }
     }
 
     /// A physics world whose static colliders are this arena's meshes, tagged
@@ -1271,6 +1283,41 @@ mod tests {
         let hit = hit.expect("the box stops the ray");
         assert_eq!(SurfaceTag::try_from(hit.tag), Ok(SurfaceTag::World));
         assert!((hit.distance - 4.0).abs() < 1e-3, "{hit:?}");
+    }
+
+    #[test]
+    fn flight_bounds_enclose_every_mesh_with_the_margin() {
+        // The floor spans x and z in [-30, 30] and y in [-1, 0]; the tower reaches x = 50 and
+        // y = 12, the farthest the arena's meshes go on those axes.
+        let tower = (Vec3::new(-3.0, 0.0, -2.0), Vec3::new(50.0, 12.0, 8.0));
+        let arena = crate::test_support::arena_with(&[tower], Vec3::ZERO, &[], &[]);
+
+        let bounds = arena.flight_bounds();
+
+        for mesh in &arena.meshes {
+            for &[x, y, z] in mesh.positions() {
+                assert!(bounds.contains(Vec3::new(x, y, z)), "{x} {y} {z}");
+            }
+        }
+        assert_eq!(FLIGHT_MARGIN, 100.0);
+        assert!(
+            bounds.contains(Vec3::new(150.0, 112.0, 130.0)),
+            "max corner"
+        );
+        assert!(
+            bounds.contains(Vec3::new(-130.0, -101.0, -130.0)),
+            "min corner"
+        );
+        for outside in [
+            Vec3::new(150.01, 0.0, 0.0),
+            Vec3::new(-130.01, 0.0, 0.0),
+            Vec3::new(0.0, 112.01, 0.0),
+            Vec3::new(0.0, -101.01, 0.0),
+            Vec3::new(0.0, 0.0, 130.01),
+            Vec3::new(0.0, 0.0, -130.01),
+        ] {
+            assert!(!bounds.contains(outside), "{outside:?}");
+        }
     }
 }
 

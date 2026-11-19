@@ -18,7 +18,7 @@ use moho_render_api::{
     WorldMeshId,
 };
 use moho_renderer::{LightingGpu, RendererBackend, Scene, WorldMeshes};
-use searchlight_rules::{Grade, Lean, LeanSide};
+use searchlight_rules::{Grade, GravityScale, Lean, LeanSide};
 use winit::event::WindowEvent;
 use winit::window::{CursorGrabMode, Window};
 
@@ -714,6 +714,11 @@ pub struct SearchlightGame {
     /// session's lever. A host action like `god_mode`: once commands are per player slot, only
     /// slot 0's is read.
     forced_grade: Option<Grade>,
+    /// Whether the player's shots land the tick they are fired; saved like `god_mode`.
+    simple: bool,
+    /// How many times standard gravity pulls on the player's rounds; session state, 1 at every
+    /// launch.
+    round_gravity: GravityScale,
     debug_settings: Option<DebugSettings>,
     /// A `fullscreen` command waiting for a frame, the first place a window mode can be
     /// requested.
@@ -738,6 +743,8 @@ impl SearchlightGame {
             stage: Stage::new(),
             god_mode: false,
             forced_grade: None,
+            simple: false,
+            round_gravity: GravityScale::default(),
             debug_settings: None,
             flip_window_pending: false,
             pending_settings: None,
@@ -839,6 +846,7 @@ impl SearchlightGame {
     #[must_use]
     pub fn with_debug_settings(mut self, settings: DebugSettings) -> Self {
         self.god_mode = settings.god_mode();
+        self.simple = settings.simple();
         self.pending_settings = Some(EngineSettings::from_prefs(settings.prefs()));
         self.debug_settings = Some(settings);
         self
@@ -879,6 +887,7 @@ impl SearchlightGame {
                 ConsoleCommand::GodMode(GodModeArg::Set(on)) => self.god_mode = on,
                 ConsoleCommand::Fullscreen => self.flip_window_pending = true,
                 ConsoleCommand::ForceGrade(grade) => self.forced_grade = grade,
+                ConsoleCommand::Simple(_) | ConsoleCommand::RoundGravity(_) => {}
             }
         }
         if self.god_mode != before
@@ -1078,6 +1087,8 @@ impl Game for SearchlightGame {
         SearchlightCommand {
             god_mode: self.god_mode,
             forced_grade: self.forced_grade,
+            simple: self.simple,
+            round_gravity: self.round_gravity,
             lean: self.lean_side,
             ..SearchlightCommand::from_frame(&frame)
         }
@@ -2759,6 +2770,55 @@ mod tests {
         assert!(command.god_mode);
         assert!(game.god_mode);
         assert_eq!(saved_god_mode(&path).as_deref(), Some("1"));
+    }
+
+    fn saved_simple(path: &std::path::Path) -> Option<String> {
+        let (saved, _) = Prefs::load_from(path);
+        saved.debug_value("simple").map(str::to_owned)
+    }
+
+    #[test]
+    fn a_saved_simple_starts_the_game_in_simple() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut settings, path) = settings_in(&dir);
+        settings.set_simple(true).unwrap();
+        let mut game = game().with_debug_settings(settings);
+
+        let command = game.command();
+
+        assert!(command.simple);
+        assert!(game.simple);
+        assert_eq!(saved_simple(&path).as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn the_gravity_scale_starts_at_1_and_both_levels_survive_a_restart() {
+        let mode = ArenaMode::new(arena_arena(), arena_config(), wave_tuning(1));
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0));
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let one = GravityScale::new(1.0).expect("1 is a valid scale");
+        let thirty = GravityScale::new(30.0).expect("30 is a valid scale");
+        let at_start = game.command();
+        game.mode.sim_mut().kill_player();
+        assert!(game.sim().player_body().is_dead());
+        type_into_console(&game, "simple 1");
+        type_into_console(&game, "round_gravity 30");
+
+        let restart = SearchlightCommand {
+            restart: true,
+            ..game.command()
+        };
+        tick_with(&mut game, &mut clock, &restart);
+        let after_restart = game.command();
+
+        assert!(!game.sim().player_body().is_dead());
+        assert!(!at_start.simple);
+        assert_eq!(at_start.round_gravity, one);
+        assert!(restart.simple);
+        assert_eq!(restart.round_gravity, thirty);
+        assert!(after_restart.simple);
+        assert_eq!(after_restart.round_gravity, thirty);
     }
 
     #[test]
@@ -4542,6 +4602,7 @@ mod presentation_tests {
                 leg_status: 10,
             })
             .hit(BodyPart::Head, 1),
+            point: Vec3::ZERO,
         };
 
         stage.react(&hit, None);
@@ -4648,6 +4709,7 @@ mod mutation_tests {
             target: 0,
             part: BodyPart::Head,
             report,
+            point: Vec3::ZERO,
         }
     }
 

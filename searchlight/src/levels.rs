@@ -97,10 +97,10 @@ mod tests {
     use std::collections::BTreeSet;
 
     use glam::Vec3;
-    use moho_core::content::ContentRoots;
+    use moho_core::content::{ContentRoots, load_kind};
     use moho_level::{Level, LevelMesh};
     use moho_physics::RayQuery;
-    use searchlight_rules::BodyPart;
+    use searchlight_rules::{BodyPart, ItemDef, ItemKind, MIN_SPEED};
 
     use super::*;
     use crate::arena::{self, LevelMode};
@@ -284,10 +284,17 @@ mod tests {
     #[test]
     fn the_200_m_dummy_is_in_rifle_range_from_the_firing_line() {
         let roots = ContentRoots::base(&content_root()).expect("the shipped content folder");
-        let range = kit::load(&roots, START_KIT_ID)
-            .expect("the shipped start kit loads")
-            .weapon
-            .range;
+        kit::load(&roots, START_KIT_ID).expect("the shipped start kit loads");
+        let items = load_kind::<ItemDef>(&roots, "items").expect("the shipped items load");
+        let ItemKind::Round(round) = &items
+            .require("round_rifle_ball")
+            .expect("the shipped items define the rifle round")
+            .kind
+        else {
+            panic!("round_rifle_ball is not a round");
+        };
+        // Drag takes the speed from the muzzle velocity down to the minimum at this distance.
+        let range = (round.muzzle_velocity - MIN_SPEED) / round.drag;
         let (_, markers) = shipped("proving_ground.glb");
         let spawn = markers.player_spawn.as_ref().expect("a firing line spawn");
         let far = markers
