@@ -113,8 +113,8 @@ jobs:
     needs: plan
     if: ${{ !inputs.rereview }}
     runs-on: ubuntu-latest
-    # About 120 minutes for the agent after setup; domain replays hit 75 in the baseline.
-    timeout-minutes: 135
+    # About 165 minutes for the agent after setup; with step 11 running the full review, two domain replays passed 135.
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       max-parallel: 4

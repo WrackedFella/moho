@@ -106,7 +106,7 @@ jobs:
                   && github.event.comment.user.type != 'Bot'
                   && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))))
     runs-on: ubuntu-latest
-    timeout-minutes: 135
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - name: Ensure pause label
