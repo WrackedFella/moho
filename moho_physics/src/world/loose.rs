@@ -620,7 +620,7 @@ mod tests {
             "{state:?}"
         );
         assert!(!state.asleep, "a fresh object is awake");
-        let mass = world.rigid_body_set[world.loose[&id]].mass();
+        let mass = world.rigid_body_set[body_of(&world, id)].mass();
         assert!(
             (mass - 3.5).abs() <= 1e-4,
             "the body weighs the stated mass, mass={mass}"
@@ -1084,19 +1084,29 @@ mod tests {
         state.position.y - reach
     }
 
-    fn collider_of(world: &PhysicsWorld, id: LooseId) -> rapier3d::prelude::ColliderHandle {
-        world.rigid_body_set[world.loose[&id]].colliders()[0]
+    /// The one place a test reads the world's private body storage.
+    fn body_of(world: &PhysicsWorld, id: LooseId) -> rapier3d::prelude::RigidBodyHandle {
+        world.loose[&id]
     }
 
-    /// How deep, in metres, the two objects overlap; 0 when apart.
-    fn overlap_depth(world: &PhysicsWorld, a: LooseId, b: LooseId) -> f32 {
-        let first = &world.collider_set[collider_of(world, a)];
-        let second = &world.collider_set[collider_of(world, b)];
-        let pos12 = first.position().inv_mul(second.position());
+    /// How deep, in metres, two objects overlap, from the shapes the test kept and the poses
+    /// the world reports; 0 when apart.
+    fn overlap_depth(
+        world: &PhysicsWorld,
+        (first_shape, first): (LooseShape, LooseId),
+        (second_shape, second): (LooseShape, LooseId),
+    ) -> f32 {
+        let pose_of = |id| {
+            let state = read(world, id);
+            Pose::from_parts(state.position, state.rotation)
+        };
+        let first_collider = first_shape.collider().build();
+        let second_collider = second_shape.collider().build();
+        let pos12 = pose_of(first).inv_mul(&pose_of(second));
         let contact = world
             .narrow_phase
             .query_dispatcher()
-            .contact(&pos12, first.shape(), second.shape(), 0.0)
+            .contact(&pos12, first_collider.shape(), second_collider.shape(), 0.0)
             .expect("convex shapes have a contact query");
         contact.map_or(0.0, |found| (-found.dist).max(0.0))
     }
@@ -1207,7 +1217,10 @@ mod tests {
 
         let state = read(&world, id);
         let rolled = state.position.z + 5.0;
-        assert!(rolled <= 1.5, "rolled {rolled} m before stopping");
+        assert!(
+            (1.0..=1.5).contains(&rolled),
+            "rolled {rolled} m before stopping; theory says about 1.27"
+        );
         assert!(state.asleep, "the capsule stopped, state {state:?}");
     }
 
@@ -1415,25 +1428,81 @@ mod tests {
     #[test]
     fn the_brake_spares_overlapping_bodies() {
         let (half_height, radius) = TEST_CAPSULE;
+        let shape = capsule(half_height, radius);
+        for overlap in [0.01, 0.029] {
+            let mut world = world_with_floor(&floor_mesh(0.0));
+            let side = |z: f32| LooseSpawn {
+                position: Vec3::new(0.0, radius, z),
+                rotation: lying_along_x(),
+                ..LooseSpawn::new(shape, 0.2)
+            };
+            let first = world.spawn_loose(&side(-(radius - overlap / 2.0)));
+            let second = world.spawn_loose(&side(radius - overlap / 2.0));
+            assert!(
+                overlap_depth(&world, (shape, first), (shape, second)) > 0.0,
+                "{overlap} m: the capsules start overlapped"
+            );
+
+            run(&mut world, 300);
+
+            let depth = overlap_depth(&world, (shape, first), (shape, second));
+            assert!(
+                depth <= 0.005,
+                "{overlap} m: the capsules still overlap by {depth} m"
+            );
+            assert!(
+                read(&world, first).asleep && read(&world, second).asleep,
+                "{overlap} m: the capsules are not both asleep"
+            );
+        }
+    }
+
+    #[test]
+    fn brake_strength_follows_the_gravity_input() {
         let mut world = world_with_floor(&floor_mesh(0.0));
-        let side = |z: f32| LooseSpawn {
-            position: Vec3::new(0.0, radius, z),
-            rotation: lying_along_x(),
-            ..LooseSpawn::new(capsule(half_height, radius), 0.2)
-        };
-        let overlap = 0.01;
-        let first = world.spawn_loose(&side(-(radius - overlap / 2.0)));
-        let second = world.spawn_loose(&side(radius - overlap / 2.0));
+        world.set_gravity(9.0);
+        let id = rolling_capsule(&mut world, -5.0, 2.0);
+
+        run(&mut world, 600);
+
+        let state = read(&world, id);
+        let rolled = state.position.z + 5.0;
         assert!(
-            overlap_depth(&world, first, second) > 0.0,
-            "the capsules start overlapped"
+            (2.0..=3.0).contains(&rolled),
+            "at gravity 9 the roll is about 2.54 m, rolled {rolled} m"
         );
+        assert!(state.asleep, "the capsule stopped, state {state:?}");
+    }
 
-        run(&mut world, 300);
+    #[test]
+    fn no_gravity_means_no_brake() {
+        let run_with = |slope: Option<f32>| {
+            let mut world = world_with_floor(&floor_mesh(0.0));
+            world.set_gravity(0.0);
+            if let Some(slope) = slope {
+                world.set_rest_slope(slope);
+            }
+            let (half_height, radius) = TEST_CAPSULE;
+            let id = world.spawn_loose(&LooseSpawn {
+                position: Vec3::new(0.0, radius, 0.0),
+                rotation: lying_along_x(),
+                angular_velocity: Vec3::new(5.0, 3.0, 0.0),
+                ..LooseSpawn::new(capsule(half_height, radius), 0.2)
+            });
+            run(&mut world, 30);
+            read(&world, id)
+        };
 
-        let depth = overlap_depth(&world, first, second);
-        assert!(depth <= 0.005, "the capsules still overlap by {depth} m");
-        assert!(read(&world, first).asleep && read(&world, second).asleep);
+        let braked = run_with(None);
+        let off = run_with(Some(0.0));
+
+        for value in braked.linear_velocity.to_array() {
+            assert!(value.is_finite(), "linear velocity is finite, {braked:?}");
+        }
+        for value in braked.angular_velocity.to_array() {
+            assert!(value.is_finite(), "angular velocity is finite, {braked:?}");
+        }
+        assert_eq!(bits(&braked), bits(&off));
     }
 
     /// Twenty objects of all three shapes in a 1 m square, one above the other.
@@ -1490,12 +1559,13 @@ mod tests {
                     ));
                 }
             }
-            for (index, (_, a)) in pile.iter().enumerate() {
-                for (_, b) in &pile[index + 1..] {
-                    let depth = overlap_depth(&world, *a, *b);
+            for (index, first) in pile.iter().enumerate() {
+                for second in &pile[index + 1..] {
+                    let depth = overlap_depth(&world, *first, *second);
                     if depth > 0.005 {
                         failures.push(format!(
-                            "seed {seed:#x}: {a:?} and {b:?} overlap by {depth} m"
+                            "seed {seed:#x}: {:?} and {:?} overlap by {depth} m",
+                            first.1, second.1
                         ));
                     }
                 }
