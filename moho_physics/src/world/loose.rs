@@ -339,8 +339,8 @@ impl PhysicsWorld {
             let spin_cut = -spin.signum() * (brake / radius).min(spin.abs());
             let slide_cut = -slide.signum() * brake.min(slide.abs());
             let angvel = body.angvel() + axis * spin_cut;
-            // Against another loose object the solver's separating push is linear, so only the
-            // spin is cut: cutting it too froze piles with the objects overlapped.
+            // Against another loose object the solver's separating push is linear, so cutting
+            // linear velocity would freeze piles overlapped; cut only the spin.
             let linvel = if touches_loose {
                 body.linvel()
             } else {
