@@ -1862,6 +1862,72 @@ mod tests {
         assert!(previous < 1.5, "the capsule slowed, speed={previous}");
     }
 
+    /// Steps 300 ticks and checks the capsule's speed never rises, it rolls under 1.5 m along x
+    /// and it ends asleep.
+    fn assert_capsule_rolls_to_rest(world: &mut PhysicsWorld, id: LooseId, start_x: f32) {
+        let mut previous = read(world, id).linear_velocity.length();
+
+        for tick in 1..=300 {
+            world.step(DT);
+            let speed = read(world, id).linear_velocity.length();
+            assert!(
+                speed <= previous + 1e-4,
+                "tick {tick}: speed rose from {previous} to {speed}"
+            );
+            previous = speed;
+        }
+
+        let state = read(world, id);
+        let rolled = state.position.x - start_x;
+        assert!(
+            (0.2..1.5).contains(&rolled),
+            "it rolls a while but stops within 1.5 m, rolled {rolled}"
+        );
+        assert!(state.asleep, "the capsule came to rest, {state:?}");
+    }
+
+    #[test]
+    fn a_capsule_spawned_before_the_floor_is_braked_like_any_other() {
+        let mut world = PhysicsWorld::new();
+        world.set_gravity(GRAVITY);
+        let id = world.spawn_loose(&rolling_capsule(2.0));
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+
+        assert_capsule_rolls_to_rest(&mut world, id, 0.0);
+    }
+
+    #[test]
+    fn a_capsule_spawned_before_the_box_it_rolls_on_is_braked() {
+        let mut world = gravity_world(&floor_mesh(0.0));
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(-0.2, 0.2 + 0.04 + 0.001, 0.0),
+            rotation: Quat::from_rotation_x(FRAC_PI_2),
+            linear_velocity: Vec3::new(1.0, 0.0, 0.0),
+            angular_velocity: Vec3::new(0.0, 0.0, -1.0 / 0.04),
+            ..LooseSpawn::new(CAPSULE, 0.2)
+        });
+        let slab = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.1, 0.0),
+            ..LooseSpawn::new(cuboid(Vec3::new(1.0, 0.1, 0.5)), 20.0)
+        });
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        assert!(
+            (-0.2..0.8).contains(&state.position.x),
+            "the capsule stopped on the box top, x={}",
+            state.position.x
+        );
+        assert!(
+            (state.position.y - 0.24).abs() <= 0.002,
+            "the capsule rests on the box top, y={}",
+            state.position.y
+        );
+        assert!(state.asleep, "the capsule sleeps, {state:?}");
+        assert!(read(&world, slab).asleep, "the box sleeps");
+    }
+
     #[test]
     fn the_brake_cuts_speed_and_spin_at_matched_rates() {
         let decel_per_tick = GRAVITY * 5.0f32.to_radians().tan() * DT;
