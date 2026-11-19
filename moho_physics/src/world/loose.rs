@@ -404,7 +404,7 @@ impl PhysicsWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::test_support::{floor_mesh, slab_mesh, slope_mesh, TEST_TAG};
+    use crate::world::test_support::{floor_mesh, slab_mesh, slope_mesh, x_wall_mesh, TEST_TAG};
     use crate::world::RayQuery;
     use moho_render_api::{WorldMesh, WorldMeshId};
     use proptest::prelude::*;
@@ -1642,6 +1642,22 @@ mod tests {
         }
 
         assert!(problems.is_empty(), "{problems:#?}");
+    }
+
+    #[test]
+    fn a_wall_near_the_end_cap_does_not_veto_the_floor_brake() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        world.set_world_mesh(WorldMeshId(1), &x_wall_mesh(0.1445), TEST_TAG);
+        let id = world.spawn_loose(&rolling_capsule(2.0));
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        assert!(state.asleep, "the capsule rests, {state:?}");
+        assert!(
+            (0.3..=1.5).contains(&state.position.z),
+            "it stops within 1.5 m after a real roll, {state:?}"
+        );
     }
 
     #[test]
