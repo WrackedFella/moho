@@ -183,12 +183,17 @@ fn horizontal_distance(a: Vec3, b: Vec3) -> f32 {
     (a.x - b.x).hypot(a.z - b.z)
 }
 
+/// The directions of the faces of `block` with air beyond them.
+fn exposed_faces(grid: &VoxelGrid, block: BlockPos) -> impl Iterator<Item = BlockPos> + '_ {
+    FACE_DIRECTIONS
+        .into_iter()
+        .filter(move |&dir| !grid.is_solid_at(block + dir))
+}
+
 /// The centre of the face of `block` nearest `eye` among those with air beyond them.
 fn nearest_exposed_face(grid: &VoxelGrid, block: BlockPos, eye: Vec3) -> Option<Vec3> {
     let centre = block.as_vec3() + Vec3::splat(0.5);
-    FACE_DIRECTIONS
-        .into_iter()
-        .filter(|&dir| !grid.is_solid_at(block + dir))
+    exposed_faces(grid, block)
         .map(|dir| centre + dir.as_vec3() * 0.5)
         .min_by(|a, b| a.distance_squared(eye).total_cmp(&b.distance_squared(eye)))
 }
@@ -209,12 +214,7 @@ fn claim_nearest(
 
     let reachable = candidates
         .into_iter()
-        .filter(|&pos| {
-            let block = BlockPos::from(pos);
-            FACE_DIRECTIONS
-                .iter()
-                .any(|&dir| !grid.is_solid_at(block + dir))
-        })
+        .filter(|&pos| exposed_faces(grid, BlockPos::from(pos)).next().is_some())
         .take(ROUTE_ATTEMPTS_PER_TICK)
         .find_map(|pos| {
             let block = BlockPos::from(pos);
@@ -229,7 +229,9 @@ fn claim_nearest(
         return Job::Idle;
     };
 
-    assert!(marks.claim(mark, id), "an unclaimed mark can be claimed");
+    if !marks.claim(mark, id) {
+        return Job::Idle;
+    }
     pawn.select_slot(TOOL_SLOT);
     Job::Mine {
         mark,

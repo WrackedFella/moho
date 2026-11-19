@@ -3,7 +3,9 @@
 //! Handles per-tick game state updates and per-frame lighting and HUD data.
 
 use crate::App;
-use crate::app::event_loop::event_processor::{lod_for_chunk, lod_player_chunk};
+use crate::app::event_loop::event_processor::{
+    lod_for_chunk, lod_player_chunk, publish_block_removal, publish_dig_cue,
+};
 use crate::app::input_state::Designation;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -118,7 +120,7 @@ impl FrameProcessor {
         else {
             return;
         };
-        let Some(light_system) = app.light_system.as_ref() else {
+        let Some(light_system) = app.light_system.as_mut() else {
             return;
         };
         let pose = Pose {
@@ -156,9 +158,6 @@ impl FrameProcessor {
                     .set_position_yaw_pitch(moved.position, moved.yaw, moved.pitch);
             }
             JobAction::Dig { block, aim } => {
-                let Some(light_system) = app.light_system.as_mut() else {
-                    return;
-                };
                 let grid = light_system.grid_mut();
                 let dir = (aim - pose.eye).normalize_or_zero();
                 let Some(outcome) = app.pawn.dig(grid, pose.eye, dir, MINE_REACH) else {
@@ -168,15 +167,8 @@ impl FrameProcessor {
                 if let Some(yield_) = outcome.yield_ {
                     app.colony.stock.add(yield_.resource_id, yield_.amount);
                 }
-                crate::app::event_loop::event_processor::publish_block_removal(
-                    &app.event_bus,
-                    grid.chunk_size(),
-                    &outcome,
-                );
-                crate::app::event_loop::event_processor::publish_dig_cue(
-                    &app.event_bus,
-                    outcome.block_pos,
-                );
+                publish_block_removal(&app.event_bus, grid.chunk_size(), &outcome);
+                publish_dig_cue(&app.event_bus, outcome.block_pos);
             }
         }
     }
@@ -483,11 +475,8 @@ impl FrameProcessor {
             })
             .unwrap_or_default();
 
-        let mut hotbar: Vec<(u32, u32)> = app.pawn.inventory.iter().collect();
-        hotbar.sort_by_key(|(resource_id, _)| *resource_id);
-
-        let mut colony_stock: Vec<(u32, u32)> = app.colony.stock.iter().collect();
-        colony_stock.sort_by_key(|(resource_id, _)| *resource_id);
+        let hotbar = app.pawn.inventory.sorted();
+        let colony_stock = app.colony.stock.sorted();
 
         // Only one tool exists today (`flagstone_game::tools::STARTING_TOOL`); the
         // label is a fixed string until a real tool-name lookup exists.
