@@ -925,6 +925,61 @@ mod tests {
     }
 
     #[test]
+    fn block_edit_events_mark_the_world_edited() {
+        let position = flagstone_voxel::BlockPos::new(3, 70, 3);
+        let edits = [
+            (
+                "BlockPlaced",
+                WorldEvent::BlockPlaced {
+                    position,
+                    material_id: 1,
+                    reason: BlockChangeReason::Player,
+                },
+            ),
+            (
+                "BlockRemoved",
+                WorldEvent::BlockRemoved {
+                    position,
+                    old_material_id: 1,
+                    reason: BlockChangeReason::Player,
+                },
+            ),
+            (
+                "BlocksBatchModified",
+                WorldEvent::BlocksBatchModified {
+                    chunk_pos: glam::IVec3::new(0, 4, 0),
+                    positions: vec![position],
+                    reason: BlockChangeReason::Explosion,
+                },
+            ),
+        ];
+        let mut mesh_only = App::headless();
+        mesh_only.event_bus.publish(WorldEvent::ChunkMeshDirty {
+            chunk_pos: glam::IVec3::new(0, 4, 0),
+            terrain_dirty: true,
+            structure_dirty: true,
+        });
+
+        EventProcessor::new().process_world_events(&mut mesh_only);
+
+        assert!(
+            !mesh_only.autosave_schedule.edited,
+            "a re-mesh alone is not an edit"
+        );
+        for (name, event) in edits {
+            let mut app = App::headless();
+            app.event_bus.publish(event);
+
+            EventProcessor::new().process_world_events(&mut app);
+
+            assert!(
+                app.autosave_schedule.edited,
+                "{name} marks the world edited"
+            );
+        }
+    }
+
+    #[test]
     fn duplicate_mesh_dirty_events_mesh_a_chunk_once() {
         let chunk_pos = glam::IVec3::new(0, 4, 0);
         let meshed_collider = |dirty_flags: &[(bool, bool)]| {

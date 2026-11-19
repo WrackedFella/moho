@@ -841,12 +841,33 @@ mod tests {
         LoopConfig::new(TICK_HZ).tick_length()
     }
 
-    /// An app whose autosaves land in a fresh temp dir, which must outlive it.
+    /// An app with a world loaded whose autosaves land in a fresh temp dir, which must
+    /// outlive it.
     fn app_with_saves_dir() -> (App, tempfile::TempDir) {
         let temp = tempfile::tempdir().expect("temp dir");
         let mut app = playing_app();
         app.saves_dir = temp.path().join("saves");
+        app.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
         (app, temp)
+    }
+
+    #[test]
+    fn paused_game_does_not_advance_the_autosave_schedule() {
+        let mut app = playing_app();
+        let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+
+        sim.step(&mut app, 5);
+        let after_play = app.autosave_schedule.ticks_since_save;
+        app.game_state = GameState::Paused;
+        sim.step(&mut app, 100);
+        let after_pause = app.autosave_schedule.ticks_since_save;
+        app.game_state = GameState::Menu;
+        sim.step(&mut app, 100);
+        let after_menu = app.autosave_schedule.ticks_since_save;
+
+        assert_eq!(after_play, 5, "each playing tick counts");
+        assert_eq!(after_pause, 5, "paused ticks do not count");
+        assert_eq!(after_menu, 5, "menu ticks do not count");
     }
 
     fn run_frame(app: &mut App, fake: &mut FakeRenderer) -> bool {

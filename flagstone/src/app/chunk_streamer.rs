@@ -37,6 +37,7 @@ impl ChunkStreamer {
         terrain_config: TerrainConfig,
         streaming_config: StreamingConfig,
         world_name: impl Into<String>,
+        _saves_dir: impl Into<std::path::PathBuf>,
     ) -> Self {
         Self {
             terrain_config,
@@ -225,6 +226,7 @@ mod tests {
                 chunks_per_frame: budget,
             },
             WORLD,
+            "saves",
         )
     }
 
@@ -286,6 +288,7 @@ mod tests {
                 chunks_per_frame: budget,
             },
             WORLD,
+            "saves",
         )
     }
 
@@ -319,6 +322,58 @@ mod tests {
                 "column {column:?} holds its terrain chunks, got {ys:?}"
             );
         }
+    }
+
+    /// Removes the `saves/<world>` folder under the working directory, where a streamer
+    /// that ignores its saves directory leaves chunk files.
+    struct StrayChunks(&'static str);
+
+    impl Drop for StrayChunks {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(std::path::Path::new("saves").join(self.0)).unwrap_or_default();
+            std::fs::remove_dir("saves").unwrap_or_default();
+        }
+    }
+
+    #[test]
+    fn evicted_chunk_is_written_under_the_streamers_saves_dir() {
+        const SAVES_DIR_WORLD: &str = "chunk_streamer_unit_test_saves_dir_world";
+        let _stray = StrayChunks(SAVES_DIR_WORLD);
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut streamer = ChunkStreamer::new(
+            TerrainConfig {
+                world_size: 256,
+                ..TerrainConfig::default()
+            },
+            StreamingConfig {
+                load_radius_chunks: 0,
+                unload_radius_chunks: 0,
+                chunks_per_frame: 1,
+            },
+            SAVES_DIR_WORLD,
+            temp.path(),
+        );
+        let mut grid = VoxelGrid::new(16);
+        streamer.update(&mut grid, Vec3::new(8.0, 64.0, 8.0));
+        let surface = grid.get_height(8, 8).expect("terrain at the origin column");
+        assert!(
+            grid.mutator()
+                .remove(flagstone_voxel::BlockPos::new(8, surface, 8))
+        );
+
+        let (_, evicted) = streamer.update(&mut grid, Vec3::new(1000.0, 64.0, 1000.0));
+
+        let edited_chunk = IVec3::new(0, surface.div_euclid(16), 0);
+        assert!(
+            evicted.contains(&edited_chunk),
+            "the edited chunk was evicted"
+        );
+        let written = temp
+            .path()
+            .join(SAVES_DIR_WORLD)
+            .join("chunks")
+            .join(format!("0_{}_0.bin", edited_chunk.y));
+        assert!(written.is_file(), "chunk file at {}", written.display());
     }
 
     #[test]

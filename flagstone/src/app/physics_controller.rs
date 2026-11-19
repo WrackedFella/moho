@@ -283,6 +283,7 @@ mod tests {
         ];
         let temp = tempfile::tempdir().expect("temp dir");
         let mut saved = crate::App::headless();
+        saved.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
         for pos in positions {
             saved.entities.chunks.insert(chunk_at(pos));
         }
@@ -681,6 +682,7 @@ mod tests {
         let positions = [glam::IVec3::new(7, 0, 7), glam::IVec3::new(8, 0, 7)];
         let temp = tempfile::tempdir().expect("temp dir");
         let mut saved = crate::App::headless();
+        saved.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
         for pos in positions {
             saved.entities.chunks.insert(chunk_at(pos));
         }
