@@ -1562,6 +1562,11 @@ mod tests {
         let mut rig = Rig::new();
         rig.effects
             .flash(Vec3::X, 0.0, flash_style(0.4, Duration::ZERO));
+        assert_eq!(
+            rig.effects.live(),
+            0,
+            "refused at spawn, before any advance"
+        );
         rig.effects
             .flash(Vec3::Y * 5.0, 0.0, flash_style(0.4, ms(50)));
 
@@ -1582,6 +1587,11 @@ mod tests {
             0.0,
             mark_style(0.2, Duration::ZERO, Duration::ZERO),
         );
+        assert_eq!(
+            rig.effects.live(),
+            0,
+            "refused at spawn, before any advance"
+        );
         rig.effects
             .flash(Vec3::Y * 5.0, 0.0, flash_style(0.4, ms(50)));
 
@@ -1591,6 +1601,114 @@ mod tests {
         assert_eq!(drawn.len(), 1);
         assert_near(translation(&drawn[0]), Vec3::Y * 5.0);
         assert_eq!(rig.effects.live(), 1);
+    }
+
+    #[test]
+    fn a_flash_or_mark_with_no_size_is_refused_at_spawn() {
+        for size in [0.0, -0.5] {
+            let mut rig = Rig::new();
+
+            rig.effects
+                .flash(Vec3::X, 0.0, flash_style(size, Duration::from_secs(10)));
+            let after_flash = rig.effects.live();
+            rig.effects.mark(
+                Vec3::X,
+                Vec3::Y,
+                0.0,
+                mark_style(size, Duration::from_secs(10), ms(500)),
+            );
+
+            assert_eq!(after_flash, 0, "flash of size {size}");
+            assert_eq!(rig.effects.live(), 0, "mark of size {size}");
+            assert!(rig.frame(EYE).is_empty(), "size {size}");
+        }
+    }
+
+    #[test]
+    fn a_refused_flash_or_mark_at_a_full_cap_evicts_nothing() {
+        let long = Duration::from_secs(60);
+        let cases = [
+            ("zero-lifetime flash", 0),
+            ("zero-lifetime mark", 1),
+            ("zero-size flash", 2),
+            ("zero-size mark", 3),
+            ("negative-size flash", 4),
+            ("negative-size mark", 5),
+        ];
+        for (name, case) in cases {
+            let mut rig = Rig::new();
+            rig.effects.set_quality(1);
+            let at = |i: u8| Vec3::new(f32::from(i), 0.0, 0.0);
+            for i in 0..32 {
+                rig.effects
+                    .mark(at(i), Vec3::Y, 0.0, mark_style(0.2, long, ms(500)));
+            }
+            assert_eq!(rig.effects.live(), 32);
+
+            match case {
+                0 => rig
+                    .effects
+                    .flash(Vec3::Y * 50.0, 0.0, flash_style(0.4, Duration::ZERO)),
+                1 => rig.effects.mark(
+                    Vec3::Y * 50.0,
+                    Vec3::Y,
+                    0.0,
+                    mark_style(0.2, Duration::ZERO, Duration::ZERO),
+                ),
+                2 | 4 => {
+                    let size = if case == 2 { 0.0 } else { -1.0 };
+                    rig.effects
+                        .flash(Vec3::Y * 50.0, 0.0, flash_style(size, long));
+                }
+                _ => {
+                    let size = if case == 3 { 0.0 } else { -1.0 };
+                    rig.effects.mark(
+                        Vec3::Y * 50.0,
+                        Vec3::Y,
+                        0.0,
+                        mark_style(size, long, ms(500)),
+                    );
+                }
+            }
+            let drawn = rig.frame(EYE);
+
+            assert_eq!(rig.effects.live(), 32, "{name}");
+            assert_eq!(drawn.len(), 32, "{name}: all 32 marks still draw");
+            for i in 0..32 {
+                assert!(any_drawn_near(&drawn, at(i)), "{name}: mark {i} kept");
+            }
+        }
+    }
+
+    #[test]
+    fn a_spawn_that_cannot_get_under_the_cap_evicts_nothing() {
+        let mut rig = Rig::new();
+        let long = Duration::from_secs(60);
+        let handles: Vec<EffectHandle> = (0..40)
+            .map(|_| rig.effects.begin_streak(style(2.0, 0.1)))
+            .collect();
+        let at = |i: u8| Vec3::new(f32::from(i) * 2.0, 0.0, 0.0);
+        for i in 0..5 {
+            rig.effects
+                .mark(at(i), Vec3::Y, 0.0, mark_style(0.2, long, ms(500)));
+        }
+        rig.effects.set_quality(1);
+        assert_eq!(rig.effects.live(), 45);
+
+        rig.effects
+            .flash(Vec3::Y * 50.0, 0.0, flash_style(0.4, long));
+        for handle in &handles {
+            rig.effects
+                .place_streak(*handle, Vec3::new(10.0, 0.0, 30.0), Vec3::X);
+        }
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(rig.effects.live(), 45, "refused, nothing evicted");
+        assert_eq!(drawn.len(), 45);
+        for i in 0..5 {
+            assert!(any_drawn_near(&drawn, at(i)), "mark {i} kept");
+        }
+        assert!(!any_drawn_near(&drawn, Vec3::Y * 50.0));
     }
 
     #[test]
