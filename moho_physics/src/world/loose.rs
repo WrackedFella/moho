@@ -356,8 +356,8 @@ impl PhysicsWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::test_support::{floor_mesh, slab_mesh, slope_mesh, TEST_TAG};
     use crate::world::RayQuery;
+    use crate::world::test_support::{TEST_TAG, floor_mesh, slab_mesh, slope_mesh};
     use moho_render_api::{WorldMesh, WorldMeshId};
     use proptest::prelude::*;
     use std::f32::consts::{FRAC_PI_2, PI};
@@ -1860,6 +1860,56 @@ mod tests {
         }
 
         assert!(previous < 1.5, "the capsule slowed, speed={previous}");
+    }
+
+    #[test]
+    fn the_brake_cuts_speed_and_spin_at_matched_rates() {
+        let decel_per_tick = GRAVITY * 5.0f32.to_radians().tan() * DT;
+
+        for shape in [CAPSULE, CYLINDER] {
+            let radius = lying_height(shape);
+            let mut world = gravity_world(&floor_mesh(0.0));
+            let id = world.spawn_loose(&LooseSpawn {
+                position: Vec3::new(0.0, radius, 0.0),
+                rotation: Quat::from_rotation_x(FRAC_PI_2),
+                linear_velocity: Vec3::new(2.0, 0.0, 0.0),
+                angular_velocity: Vec3::new(0.0, 0.0, -2.0 / radius),
+                ..LooseSpawn::new(shape, 0.2)
+            });
+            let mut at_tick_10 = (0.0, 0.0);
+            let mut at_tick_40 = (0.0, 0.0);
+
+            for tick in 1..=40 {
+                world.step(DT);
+                let state = read(&world, id);
+                let (speed, spin) = (
+                    state.linear_velocity.length(),
+                    state.angular_velocity.length(),
+                );
+                assert!(
+                    (spin * radius - speed).abs() <= 0.1 * speed,
+                    "{shape:?} tick {tick}: stopped rolling, speed {speed}, spin {spin}"
+                );
+                match tick {
+                    10 => at_tick_10 = (speed, spin),
+                    40 => at_tick_40 = (speed, spin),
+                    _ => {}
+                }
+            }
+
+            // The solver's friction makes single ticks jitter by about 20%, so the matched
+            // rates are pinned on the mean over 30 ticks.
+            let speed_drop = (at_tick_10.0 - at_tick_40.0) / 30.0;
+            let spin_drop = (at_tick_10.1 - at_tick_40.1) * radius / 30.0;
+            assert!(
+                (speed_drop - decel_per_tick).abs() <= 0.15 * decel_per_tick,
+                "{shape:?}: speed drops {speed_drop} per tick, expected {decel_per_tick}"
+            );
+            assert!(
+                (spin_drop - decel_per_tick).abs() <= 0.15 * decel_per_tick,
+                "{shape:?}: spin (times radius) drops {spin_drop} per tick, expected {decel_per_tick}"
+            );
+        }
     }
 
     #[test]
