@@ -1759,4 +1759,131 @@ mod tests {
             assert_mark_basis(normal, roll);
         }
     }
+
+    #[test]
+    fn a_flash_at_the_eye_draws_nothing_without_hiding_another_flash() {
+        let mut rig = Rig::new();
+        rig.effects.flash(EYE, 0.0, flash_style(0.4, 1));
+        let elsewhere = Vec3::new(2.0, 3.0, 4.0);
+        rig.effects.flash(elsewhere, 0.0, flash_style(0.4, 2));
+
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(rig.effects.live(), 2, "the coincident flash stays live");
+        assert_eq!(drawn.len(), 1);
+        assert_eq!(drawn[0].material, 2);
+        assert_near(translation(&drawn[0]), elsewhere);
+    }
+
+    #[test]
+    fn a_lowered_cap_below_the_live_count_evicts_exactly_the_oldest_mark() {
+        let mut rig = Rig::new();
+        for i in 0..40 {
+            rig.effects.mark(
+                Vec3::new(i as f32, 0.0, 0.0),
+                Vec3::Y,
+                0.0,
+                mark_style(0.2, 0),
+            );
+        }
+        rig.effects.set_quality(1);
+
+        rig.effects
+            .mark(Vec3::new(100.0, 0.0, 0.0), Vec3::Y, 0.0, mark_style(0.2, 0));
+
+        assert_eq!(rig.effects.live(), 40, "neither grows nor shrinks");
+        let mut xs: Vec<f32> = rig.frame(EYE).iter().map(|d| translation(d).x).collect();
+        xs.sort_by(f32::total_cmp);
+        assert_eq!(xs.len(), 40);
+        assert!(xs[0] > 0.5 && xs[0] < 1.5, "only x = 0 is gone, got {xs:?}");
+        assert!((xs[39] - 100.0).abs() < EPS);
+    }
+
+    #[test]
+    fn a_mark_with_a_huge_roll_keeps_an_orthogonal_sized_basis() {
+        for normal in [Vec3::Y, Vec3::new(1.0, 2.0, 2.0).normalize()] {
+            let mut rig = Rig::new();
+            rig.effects
+                .mark(Vec3::ZERO, normal, 1.0e6, mark_style(0.5, 0));
+
+            let drawn = rig.frame(EYE);
+
+            assert_eq!(drawn.len(), 1);
+            let d = &drawn[0];
+            assert!(
+                (x_axis(d).length() - 0.5).abs() < 1e-3,
+                "{}",
+                x_axis(d).length()
+            );
+            assert!(
+                (y_axis(d).length() - 0.5).abs() < 1e-3,
+                "{}",
+                y_axis(d).length()
+            );
+            assert!(x_axis(d).dot(normal).abs() < 1e-3);
+            assert!(y_axis(d).dot(normal).abs() < 1e-3);
+            assert!(x_axis(d).dot(y_axis(d)).abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn a_tiny_but_non_zero_normal_is_accepted_and_faces_along_it() {
+        let mut rig = Rig::new();
+        rig.effects.mark(
+            Vec3::ZERO,
+            Vec3::new(1.0e-10, 0.0, 0.0),
+            0.0,
+            mark_style(0.5, 0),
+        );
+
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(drawn.len(), 1);
+        assert_finite(&drawn[0]);
+        assert_near(z_axis(&drawn[0]), Vec3::X);
+        assert!((z_axis(&drawn[0]).length() - 1.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn huge_finite_sizes_and_positions_never_draw_a_non_finite_instance() {
+        let mut rig = Rig::new();
+        rig.effects
+            .flash(Vec3::new(1.0, 2.0, 3.0), 0.0, flash_style(1.0e30, 1));
+        rig.effects.mark(
+            Vec3::new(1.0, 2.0, 3.0),
+            Vec3::Y,
+            0.0,
+            mark_style(1.0e30, 2),
+        );
+        rig.effects
+            .mark(Vec3::splat(1.0e30), Vec3::Y, 0.0, mark_style(0.5, 3));
+        rig.effects
+            .flash(Vec3::splat(1.0e30), 0.0, flash_style(0.5, 4));
+
+        let drawn = rig.frame(EYE);
+
+        for d in &drawn {
+            assert_finite(d);
+        }
+    }
+
+    #[test]
+    fn handles_keep_increasing_across_a_streak_that_faded_away_before_a_mark() {
+        let mut rig = Rig::new();
+        let first = rig.effects.begin_streak(style(2.0, 0.1));
+        rig.effects.end(first);
+        rig.effects.advance(Duration::from_secs(1));
+        assert_eq!(rig.effects.live(), 0);
+
+        rig.effects
+            .mark(Vec3::ZERO, Vec3::Y, 0.0, mark_style(0.2, 6));
+        let mark_handle = *rig.effects.store.keys().next().expect("the mark is live");
+        let second = rig.effects.begin_streak(style(2.0, 0.1));
+
+        assert!(first < mark_handle && mark_handle < second);
+        rig.effects.advance(ms(1));
+        assert_eq!(rig.effects.live(), 2);
+        rig.effects.advance(Duration::from_secs(10));
+        assert_eq!(rig.effects.live(), 1, "only the streak is left");
+    }
 }
