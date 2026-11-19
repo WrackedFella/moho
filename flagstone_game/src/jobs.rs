@@ -776,6 +776,141 @@ mod tests {
     }
 
     #[test]
+    fn steer_measures_the_bearing_from_the_feet_not_the_origin() {
+        let feet = Vec3::new(10.0, 0.0, 10.0);
+        let pose = Pose {
+            feet,
+            eye: feet + Vec3::Y * EYE_HEIGHT,
+            yaw: 0.0,
+        };
+
+        let dead_ahead = steer(&pose, Vec3::new(10.0, 0.0, 15.0));
+        let behind_to_the_east = steer(&pose, Vec3::new(12.0, 0.0, 5.0));
+
+        assert_eq!(dead_ahead.forward, 1.0, "{dead_ahead:?}");
+        assert!(dead_ahead.yaw_delta.abs() < 1e-5, "{dead_ahead:?}");
+        assert_eq!(behind_to_the_east.forward, 0.0, "{behind_to_the_east:?}");
+        assert!(
+            (behind_to_the_east.yaw_delta - TURN_PER_TICK).abs() < 1e-5,
+            "{behind_to_the_east:?}"
+        );
+    }
+
+    /// The mark `claim_nearest` picks for a pawn standing at `from`.
+    fn claimed_mark(grid: &VoxelGrid, marks: &mut MineMarks, from: BlockPos) -> [i32; 3] {
+        let mut pawn = Pawn::default();
+
+        step(&mut pawn, ID, &pose_at(from), marks, grid);
+
+        let Job::Mine { mark, .. } = pawn.job else {
+            panic!("a reachable mark was not claimed: {:?}", pawn.job);
+        };
+        mark
+    }
+
+    #[test]
+    fn nearest_is_measured_from_the_pawn_not_the_origin() {
+        let mut grid = field(24);
+        let mut marks = MineMarks::default();
+        mark_block(&mut grid, &mut marks, [3, 1, 3]);
+        mark_block(&mut grid, &mut marks, [14, 1, 12]);
+
+        let claimed = claimed_mark(&grid, &mut marks, cell(12, 1, 12));
+
+        assert_eq!(claimed, [14, 1, 12]);
+    }
+
+    #[test]
+    fn a_mark_one_level_up_counts_that_level_in_its_distance() {
+        // From (6, 1, 6): the level mark is 25 away (5, 0, 0), the raised one 26 (3, 1, 4).
+        let mut grid = field(16);
+        let mut marks = MineMarks::default();
+        mark_block(&mut grid, &mut marks, [11, 1, 6]);
+        grid.mutator().place(cell(9, 1, 10), 1, None);
+        mark_block(&mut grid, &mut marks, [9, 2, 10]);
+
+        let claimed = claimed_mark(&grid, &mut marks, cell(6, 1, 6));
+
+        assert_eq!(claimed, [11, 1, 6]);
+    }
+
+    #[test]
+    fn nearest_adds_the_squares_of_the_offsets() {
+        // From (6, 1, 6): the raised mark is 11 away (3, 1, 1), the level one 25 (5, 0, 0).
+        let mut grid = field(16);
+        let mut marks = MineMarks::default();
+        mark_block(&mut grid, &mut marks, [11, 1, 6]);
+        grid.mutator().place(cell(9, 1, 7), 1, None);
+        mark_block(&mut grid, &mut marks, [9, 2, 7]);
+
+        let claimed = claimed_mark(&grid, &mut marks, cell(6, 1, 6));
+
+        assert_eq!(claimed, [9, 2, 7]);
+    }
+
+    #[test]
+    fn a_block_overhead_is_dug_from_the_floor_a_level_below_it() {
+        let mut grid = VoxelGrid::new(16);
+        for x in 0..=10 {
+            for z in 0..=10 {
+                grid.mutator().place(cell(x, -1, z), 1, None);
+            }
+        }
+        grid.mutator().place(cell(5, 0, 5), 1, None);
+        let mut marks = MineMarks::default();
+        mark_block(&mut grid, &mut marks, [5, 1, 5]);
+        let mut pawn = Pawn::default();
+
+        step(&mut pawn, ID, &pose_at(cell(1, 0, 5)), &mut marks, &grid);
+
+        let Job::Mine { route, .. } = &pawn.job else {
+            panic!("the block can be dug from the floor: {:?}", pawn.job);
+        };
+        let stand = route.last().expect("the pawn has to walk to the block");
+        assert_eq!(stand.y, 0, "{stand:?}");
+        assert!(
+            (stand.x - 5).abs() <= 1 && (stand.z - 5).abs() <= 1,
+            "{stand:?}"
+        );
+    }
+
+    #[test]
+    fn the_stall_guard_gives_up_exactly_at_the_stall_limit() {
+        let mut guard = StallGuard::default();
+        assert!(guard.observe(5.0), "the first distance is progress");
+
+        for tick in 1..STALL_TICKS {
+            assert!(guard.observe(5.0), "stalled {tick} ticks");
+        }
+
+        assert!(!guard.observe(5.0), "stalled {STALL_TICKS} ticks");
+    }
+
+    #[test]
+    fn the_stall_guard_never_gives_up_while_the_distance_keeps_shrinking() {
+        let mut guard = StallGuard::default();
+        let mut distance = 100.0f32;
+
+        for tick in 0..3 * STALL_TICKS {
+            assert!(guard.observe(distance), "tick {tick}");
+            distance -= 0.01;
+        }
+    }
+
+    #[test]
+    fn the_stall_guard_does_not_count_the_progress_epsilon_as_progress() {
+        let mut guard = StallGuard::default();
+        guard.observe(1.0);
+        let barely_closer = 1.0 - PROGRESS_EPSILON;
+
+        for tick in 1..STALL_TICKS {
+            assert!(guard.observe(barely_closer), "stalled {tick} ticks");
+        }
+
+        assert!(!guard.observe(barely_closer), "stalled {STALL_TICKS} ticks");
+    }
+
+    #[test]
     fn steer_walks_only_when_facing_the_target() {
         let ahead = Vec3::new(0.0, 0.0, 5.0);
         let at_fifty_degrees = Vec3::new(50f32.to_radians().sin(), 0.0, 50f32.to_radians().cos());

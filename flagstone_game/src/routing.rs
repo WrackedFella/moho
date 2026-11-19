@@ -393,4 +393,92 @@ mod tests {
         assert!(first.is_some(), "open ground has a route");
         assert_eq!(first, second);
     }
+
+    /// A straight walk on open ground costs about one expansion a step, so a budget of a few
+    /// more than the steps is enough only when the search is steered at the goal on every axis.
+    #[test]
+    fn a_straight_route_on_open_ground_is_found_within_a_few_expansions_of_its_length() {
+        let grid = field(40);
+        let along_x = (cell(10, 1, 20), cell(25, 1, 20));
+        let along_z = (cell(20, 1, 10), cell(20, 1, 25));
+
+        for (start, goal) in [along_x, along_z] {
+            let path = route(&grid, start, to(goal), goal, 20);
+
+            let path = path.unwrap_or_else(|| panic!("{start:?} to {goal:?} needs few expansions"));
+            assert_eq!(path.len(), 15, "{start:?} to {goal:?}");
+        }
+    }
+
+    /// Climbing makes a cell reachable again by a shorter way after it was first queued; the
+    /// longer queue entry must not be expanded a second time.
+    #[test]
+    fn a_cell_reached_again_by_a_shorter_way_is_expanded_once() {
+        let heights = [
+            2, 1, 2, 1, 2, 1, 1, 1, 2, 1, 2, 1, 2, 1, 1, 2, 1, 1, 1, 2, 2, 2, 2, 2, 1, 1, 1, 2, 2,
+            2, 2, 1, 2, 1, 1, 2, 1, 2, 2, 1, 1, 1, 2, 1, 1, 1, 2, 1, 2, 2, 2, 2, 1, 2, 1, 2, 2, 1,
+            1, 2, 1, 1, 2, 2,
+        ];
+        let grid = terrain(&heights);
+        let start = on_top(&heights, 4, 0);
+        let goal = on_top(&heights, 7, 3);
+
+        let path = route(&grid, start, to(goal), cell(7, 2, 2), 18);
+
+        assert!(path.is_some(), "18 expansions reach the goal");
+    }
+
+    /// Breadth-first shortest step count from `start` to `goal`.
+    fn fewest_steps(grid: &VoxelGrid, start: BlockPos, goal: BlockPos) -> Option<usize> {
+        let mut seen = HashMap::from([(start, 0usize)]);
+        let mut queue = std::collections::VecDeque::from([start]);
+        while let Some(at) = queue.pop_front() {
+            if at == goal {
+                return seen.get(&at).copied();
+            }
+            for next in neighbours(grid, at) {
+                if !seen.contains_key(&next) {
+                    seen.insert(next, seen[&at] + 1);
+                    queue.push_back(next);
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn a_route_around_walls_is_as_short_as_any_route() {
+        let mut state: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut random_percent = move || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (state >> 33) % 100
+        };
+        let start = cell(0, 1, 0);
+        let goal = cell(11, 1, 11);
+        let mut routed = 0;
+
+        for layout in 0..80 {
+            let mut grid = field(12);
+            for x in 0..12 {
+                for z in 0..12 {
+                    if cell(x, 1, z) != start && cell(x, 1, z) != goal && random_percent() < 35 {
+                        place(&mut grid, x, 1, z);
+                        place(&mut grid, x, 2, z);
+                    }
+                }
+            }
+
+            let path = route(&grid, start, to(goal), goal, ROUTE_NODE_BUDGET);
+
+            assert_eq!(
+                path.as_ref().map(Vec::len),
+                fewest_steps(&grid, start, goal),
+                "layout {layout}"
+            );
+            routed += usize::from(path.is_some());
+        }
+        assert!(routed >= 20, "only {routed} layouts could be crossed");
+    }
 }
