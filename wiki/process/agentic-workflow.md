@@ -39,7 +39,7 @@ Switch settings and where runs happen: [`_todo/WORKFLOW.md`](../../_todo/WORKFLO
 | Format on edit | Every Rust edit in a single-repo session | PostToolUse hook |
 | CI matrix | Linux on PRs into `dev`; three OSes on `main` and manual runs | CI |
 | Test review | Domain tests, before implementation | `devflow:test-critic` (or you under `required`) |
-| PR review | Every PR when `PR_REVIEW_ENABLED` is on: verdict, route and sign-off; fix loop on agent PRs | `pr-review.yml` (devflow `pr-review`) |
+| PR review | Every PR that changes code (not only docs or agent, CI and editor config) when `PR_REVIEW_ENABLED` is on: verdict, route and sign-off; fix loop on agent PRs | `pr-review.yml` (devflow `pr-review`) |
 | Human review | Every PR, including the tests; every PR the review routes to `needs-human` | You |
 
 ## Coordinating lanes
