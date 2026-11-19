@@ -12,8 +12,8 @@ use moho_level::{LevelMarker, NavMesh};
 use moho_physics::{MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::{
-    Ballistics, BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId, LeanTuning, Loadout,
-    Magazine, MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
+    Ballistics, BodyPart, BodyProfile, Caliber, Grade, GradeMix, GravityScale, ItemId, LeanTuning,
+    Loadout, Magazine, MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
 };
 
 use crate::arena::{Arena, ArenaControl, nav_profile};
@@ -215,33 +215,67 @@ pub(crate) fn with_ball(mut config: SimConfig, muzzle_velocity: f32, drag: f32) 
 /// more has lost it.
 const WAIT_TICKS: usize = 240;
 
-/// Takes the pending feedback of `sim`, then ticks it with no input until a hit on a target has
-/// been reported (or [`WAIT_TICKS`] pass), and returns everything drained, oldest first.
+/// A tick with no input that sends the gravity scale `round_gravity`, as the sim reads it each
+/// tick.
+fn waiting(round_gravity: GravityScale) -> SearchlightCommand {
+    SearchlightCommand {
+        round_gravity,
+        ..SearchlightCommand::default()
+    }
+}
+
+/// Takes the pending feedback of `sim`, then ticks it with no input at the default gravity scale
+/// until a hit on a target has been reported, and returns everything drained, oldest first.
+///
+/// # Panics
+///
+/// If no hit arrives within [`WAIT_TICKS`].
 pub(crate) fn run_until_hit(sim: &mut SearchlightSim) -> Vec<Feedback> {
     let is_hit = |feedback: &Feedback| matches!(feedback, Feedback::Hit { .. });
     let mut drained = sim.drain_feedback();
     for _ in 0..WAIT_TICKS {
         if drained.iter().any(is_hit) {
-            break;
+            return drained;
         }
-        sim.tick(&SearchlightCommand::default(), DT);
+        sim.tick(&waiting(GravityScale::default()), DT);
         drained.extend(sim.drain_feedback());
     }
+    assert!(
+        drained.iter().any(is_hit),
+        "no hit within {WAIT_TICKS} ticks: {drained:?}"
+    );
     drained
 }
 
-/// Takes the pending feedback of `sim`, then ticks it with no input until no round is in flight
-/// (or [`WAIT_TICKS`] pass), and returns everything drained, oldest first: so a hit or a near
+/// Takes the pending feedback of `sim`, then ticks it with no input at the default gravity scale
+/// until no round is in flight, and returns everything drained, oldest first: so a hit or a near
 /// miss that comes later cannot pass unseen.
+///
+/// # Panics
+///
+/// If a round is still in flight after [`WAIT_TICKS`].
 pub(crate) fn run_until_settled(sim: &mut SearchlightSim) -> Vec<Feedback> {
+    run_until_settled_at(sim, GravityScale::default())
+}
+
+/// [`run_until_settled`] with every waiting tick carrying the gravity scale `round_gravity`.
+pub(crate) fn run_until_settled_at(
+    sim: &mut SearchlightSim,
+    round_gravity: GravityScale,
+) -> Vec<Feedback> {
     let mut drained = sim.drain_feedback();
     for _ in 0..WAIT_TICKS {
         if sim.rounds.is_empty() {
-            break;
+            return drained;
         }
-        sim.tick(&SearchlightCommand::default(), DT);
+        sim.tick(&waiting(round_gravity), DT);
         drained.extend(sim.drain_feedback());
     }
+    assert!(
+        sim.rounds.is_empty(),
+        "{} round(s) still in flight after {WAIT_TICKS} ticks: {drained:?}",
+        sim.rounds.len()
+    );
     drained
 }
 

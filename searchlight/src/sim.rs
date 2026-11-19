@@ -5848,15 +5848,19 @@ mod rounds_in_flight_tests {
     }
 
     /// The feedback of each of `ticks` ticks, the first run with `first` and the rest with no
-    /// input.
+    /// input but `first`'s gravity scale, which the command carries every tick.
     fn fight(
         sim: &mut SearchlightSim,
         first: SearchlightCommand,
         ticks: usize,
     ) -> Vec<Vec<Feedback>> {
+        let after = SearchlightCommand {
+            round_gravity: first.round_gravity,
+            ..idle()
+        };
         (0..ticks)
             .map(|tick| {
-                sim.tick(&if tick == 0 { first } else { idle() }, DT);
+                sim.tick(&if tick == 0 { first } else { after }, DT);
                 sim.drain_feedback()
             })
             .collect()
@@ -5986,6 +5990,10 @@ mod rounds_in_flight_tests {
         );
         let head_bottom = heavy_aim.y - HEAD_HALF_HEIGHT;
         assert!(
+            !heavy.is_empty(),
+            "scale 30 struck nothing below the head: {heavy:?}"
+        );
+        assert!(
             heavy.iter().all(|hit| hit.2 != BodyPart::Head),
             "scale 30 still hit the head: {heavy:?}"
         );
@@ -6048,6 +6056,51 @@ mod rounds_in_flight_tests {
             },
             ..pull()
         }
+    }
+
+    /// The vertical velocity of the one round in flight after each of four ticks: a shot into the
+    /// sky at gravity scale 30 on tick 0, scale 30 on tick 1, then `later` on ticks 2 and 3.
+    fn vertical_velocities_when_the_scale_changes_to(later: f32) -> Vec<f32> {
+        let config = with_ball(test_config(rifle_from(mag(30, 30)), vec![]), 150.0, 0.0);
+        let mut sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], config);
+        let scale = |tick: usize| {
+            GravityScale::new(if tick < 2 { 30.0 } else { later }).expect("a valid scale")
+        };
+
+        (0..4)
+            .map(|tick| {
+                let command = SearchlightCommand {
+                    round_gravity: scale(tick),
+                    ..if tick == 0 { skyward() } else { idle() }
+                };
+                sim.tick(&command, DT);
+                sim.rounds
+                    .first()
+                    .unwrap_or_else(|| panic!("the round ended by tick {tick}"))
+                    .flight
+                    .velocity
+                    .y
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_round_in_flight_follows_the_gravity_scale_the_command_carries_each_tick() {
+        let switched = vertical_velocities_when_the_scale_changes_to(1.0);
+        let kept = vertical_velocities_when_the_scale_changes_to(30.0);
+
+        assert_eq!(
+            switched[..2],
+            kept[..2],
+            "the runs differ before the switch"
+        );
+        let fall_switched = switched[1] - switched[3];
+        let fall_kept = kept[1] - kept[3];
+        assert!(fall_switched > 0.0, "scale 1 did not pull the round down");
+        assert!(
+            fall_kept > fall_switched * 10.0,
+            "after the switch the round fell {fall_switched} m/s at scale 1 against {fall_kept} m/s kept at 30"
+        );
     }
 
     /// Ticks `sim` with no input until no round is in flight, returning how many ticks that
