@@ -2,7 +2,7 @@
 
 **Source:** `flagstone/src/input_dispatcher.rs`, `moho_input/src/`, `flagstone_ui/src/actions.rs`, `flagstone/src/app/renderer_setup.rs` (registrations),
 `moho_core/src/pointer.rs`, `flagstone/src/app/game.rs` (`Game::event`, `poll_gamepads`), `flagstone/src/main.rs` (`handle_keyboard_input`), `flagstone_ui/src/app_state/game_state.rs`,
-`flagstone_ui/src/app_state/state_coordinator.rs`, `flagstone_ui/src/screens/pause.rs`, `moho_ui_shell/src/console/` (console key routing).
+`flagstone_ui/src/app_state/state_coordinator.rs`, `flagstone_ui/src/screens/pause.rs`, `flagstone_game/src/jobs.rs`, `flagstone_game/src/routing.rs`, `moho_ui_shell/src/console/` (console key routing).
 
 ## 1 Input routing
 
@@ -93,7 +93,18 @@ The same ray also picks the pawn: `flagstone_game::selection::pick_pawn` tests i
 
 `StrategyAction::MineDesignation` (`M` by default, or the HUD toggle) flips `Designation` in `flagstone/src/app/input_state.rs` between `None` and `Mine`. While `Mine` is active, the click's ray goes into `StrategyCommand::mark` instead of `select`. The apply step casts it as above and toggles the hit block in `flagstone_game::colony::Colony::marks` (`MineMarks`), then plays the `mark` or `unmark` cue through `AudioEvent::PlaySound`; a miss changes nothing. `process_world_events` drops a block's mark on every `WorldEvent::BlockRemoved`, the one path every removal takes. Each frame `DesignationMarkers::sync` (`flagstone/src/app/designation_markers.rs`) mirrors the marks into scene markers ([rendering](rendering.md#6-markers)).
 
-`StrategyAction::Possess` (`Tab` by default) switches between the strategy view and first person. A tick with `Possess` pressed sets `StrategyCommand::toggle_view`; the apply step then calls `App::toggle_camera_mode` and `apply_cursor`, so the switch happens once per press, on the tick, and never outside `Playing`. The mode switch publishes a placeholder `AudioEvent` (`Confirm` entering first person, `Cancel` returning). The pawn keeps its pose across the switch and does not move while in the strategy view.
+`StrategyAction::Possess` (`Tab` by default) switches between the strategy view and first person. A tick with `Possess` pressed sets `StrategyCommand::toggle_view`; the apply step then calls `App::toggle_camera_mode` and `apply_cursor`, so the switch happens once per press, on the tick, and never outside `Playing`. The mode switch publishes a placeholder `AudioEvent` (`Confirm` entering first person, `Cancel` returning). The pawn keeps its pose across the switch. In the strategy view an idle pawn works the marks on its own ([2.1](#21-pawn-jobs)); the simulation follows the pawn's character, so possessing it again starts where it walked to.
+
+### 2.1 Pawn jobs
+
+In the strategy view each tick, after `Simulation::apply_input`, `FrameProcessor::run_pawn_job` (`flagstone/src/app/event_loop/frame_processor.rs`) advances the pawn's `Job` (`flagstone_game/src/jobs.rs`); a possessed pawn runs none. `jobs::step` returns a `JobAction`:
+
+- An `Idle` pawn claims the nearest unclaimed mark it has a route to (`MineMarks::claim`, `MineMark::claimed_by`), routed by `flagstone_game::routing::route` over standable cells (`standable`, budgeted by `ROUTE_NODE_BUDGET`); the job becomes `Job::Mine`. With no reachable mark it stays idle and still.
+- `Walk`: `jobs::steer` turns the next waypoint into a `CharacterCommand` (turn rate capped, forward only inside a cone), which `PhysicsWorld::move_character` runs through the same `moho_physics::step` the player uses, at the slower `JOB_SPEED`. The new pose is written back with `Simulation::set_position_yaw_pitch`.
+- `Dig`: on arrival `Pawn::dig` (`flagstone_game/src/pawn.rs`) breaks the block within `MINE_REACH`, the reach the possessed `Pawn::mine` also uses. Unlike `mine` it deposits nothing: the yield goes to `Colony::stock` and the pawn's own inventory is untouched. The claim is released and the job ends; a mark that survives is offered again.
+- The job is dropped, claim released, when its mark is cancelled or removed, a waypoint stops being standable, or the walk makes no progress for `STALL_TICKS`.
+
+A dig publishes the same `WorldEvent::BlockRemoved` and `ChunkMeshDirty` events as hand mining (`publish_block_removal`, `flagstone/src/app/event_loop/event_processor.rs`), so marks drop and chunks remesh through the usual path, plus an `AudioEvent::PlaySoundAt` dig cue. The strategy HUD lists `Colony::stock` (`HudData::colony_stock`, sorted by resource id); the first-person HUD does not.
 
 ## 3 GameState
 
