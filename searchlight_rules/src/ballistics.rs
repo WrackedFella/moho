@@ -34,23 +34,31 @@ pub struct Flight {
 impl Flight {
     /// A round leaving `origin` along `direction` (any length) at the muzzle velocity.
     #[must_use]
-    pub fn fired(origin: Vec3, _direction: Vec3, _ballistics: &Ballistics) -> Self {
+    pub fn fired(origin: Vec3, direction: Vec3, ballistics: &Ballistics) -> Self {
         Self {
             position: origin,
-            velocity: Vec3::ZERO,
+            velocity: direction.normalize_or_zero() * ballistics.muzzle_velocity,
         }
     }
 
     /// The flight `dt` seconds later under `gravity` (metres per second squared, downward).
+    ///
+    /// Drag never reverses a round: the speed kept in one step is floored at 0. Only correctly
+    /// rounded IEEE operations are used, so a replay is exact on one platform.
     #[must_use]
-    pub fn step(&self, _ballistics: &Ballistics, _gravity: f32, _dt: f32) -> Flight {
-        *self
+    pub fn step(&self, ballistics: &Ballistics, gravity: f32, dt: f32) -> Flight {
+        let kept = (1.0 - ballistics.drag * dt).max(0.0);
+        let velocity = self.velocity * kept - Vec3::Y * gravity * dt;
+        Flight {
+            position: self.position + velocity * dt,
+            velocity,
+        }
     }
 
     /// Whether the round is at or below [`MIN_SPEED`].
     #[must_use]
     pub fn is_spent(&self) -> bool {
-        self.velocity.length_squared() < 0.0
+        self.velocity.length_squared() <= MIN_SPEED * MIN_SPEED
     }
 }
 
@@ -75,19 +83,23 @@ impl GravityScale {
     /// [`GravityScaleError`] when `scale` is negative, not finite or above
     /// [`MAX_GRAVITY_SCALE`].
     pub fn new(scale: f32) -> Result<Self, GravityScaleError> {
-        Ok(Self(scale))
+        if scale.is_finite() && (0.0..=MAX_GRAVITY_SCALE).contains(&scale) {
+            Ok(Self(scale))
+        } else {
+            Err(GravityScaleError { value: scale })
+        }
     }
 
     /// The downward acceleration this scale gives rounds.
     #[must_use]
     pub fn gravity(self) -> f32 {
-        self.0 * 0.0
+        STANDARD_GRAVITY * self.0
     }
 }
 
 impl Default for GravityScale {
     fn default() -> Self {
-        Self(0.0)
+        Self(1.0)
     }
 }
 
@@ -103,18 +115,20 @@ pub struct FlightBounds {
 impl FlightBounds {
     /// The box around `points`, grown by `margin` metres on every side.
     #[must_use]
-    pub fn around(points: impl IntoIterator<Item = Vec3>, _margin: f32) -> Self {
-        let first = points.into_iter().next().unwrap_or(Vec3::ZERO);
+    pub fn around(points: impl IntoIterator<Item = Vec3>, margin: f32) -> Self {
+        let mut points = points.into_iter();
+        let first = points.next().unwrap_or(Vec3::ZERO);
+        let (min, max) = points.fold((first, first), |(min, max), p| (min.min(p), max.max(p)));
         Self {
-            min: first,
-            max: first,
+            min: min - Vec3::splat(margin),
+            max: max + Vec3::splat(margin),
         }
     }
 
     /// Whether `point` is inside the box, faces included.
     #[must_use]
     pub fn contains(&self, point: Vec3) -> bool {
-        point == self.min && point == self.max
+        point.cmpge(self.min).all() && point.cmple(self.max).all()
     }
 
     /// The length of the box diagonal: the farthest a ray inside it can run.

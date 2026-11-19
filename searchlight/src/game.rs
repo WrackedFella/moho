@@ -30,7 +30,7 @@ use moho_ui_shell::{
 };
 
 use crate::arena::{box_mesh, control_mesh_id, oriented_box_mesh};
-use crate::console_commands::{self, ConsoleCommand, GodModeArg};
+use crate::console_commands::{self, ConsoleCommand, GodModeArg, SimpleArg};
 use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
 use crate::input::{SearchlightAction, SearchlightCommand, look_from, look_to_turn, resolve_lean};
@@ -864,14 +864,14 @@ impl SearchlightGame {
         }
     }
 
-    /// Applies the console's queued commands in order, saves god mode once if they changed it,
-    /// and reports the value after each bare `tgm`.
+    /// Applies the console's queued commands in order, saves god mode and Simple once each if
+    /// they changed them, and reports the value after each bare `tgm` or `simple`.
     fn apply_console_commands(&mut self) {
         let queued = self.stage.shell().console_mut().take_commands();
         if queued.is_empty() {
             return;
         }
-        let before = self.god_mode;
+        let before = (self.god_mode, self.simple);
         for command in queued {
             match command {
                 ConsoleCommand::GodMode(GodModeArg::Toggle) => {
@@ -886,14 +886,31 @@ impl SearchlightGame {
                 ConsoleCommand::GodMode(GodModeArg::Set(on)) => self.god_mode = on,
                 ConsoleCommand::Fullscreen => self.flip_window_pending = true,
                 ConsoleCommand::ForceGrade(grade) => self.forced_grade = grade,
-                ConsoleCommand::Simple(_) | ConsoleCommand::RoundGravity(_) => {}
+                ConsoleCommand::Simple(SimpleArg::Toggle) => {
+                    self.simple = !self.simple;
+                    let text = if self.simple {
+                        "Simple: on"
+                    } else {
+                        "Simple: off"
+                    };
+                    self.stage.shell().console_mut().print(text);
+                }
+                ConsoleCommand::Simple(SimpleArg::Set(on)) => self.simple = on,
+                ConsoleCommand::RoundGravity(scale) => self.round_gravity = scale,
             }
         }
-        if self.god_mode != before
-            && let Some(settings) = &mut self.debug_settings
+        let Some(settings) = &mut self.debug_settings else {
+            return;
+        };
+        if self.god_mode != before.0
             && let Err(error) = settings.set_god_mode(self.god_mode)
         {
             tracing::warn!(%error, god_mode = self.god_mode, "god mode not saved");
+        }
+        if self.simple != before.1
+            && let Err(error) = settings.set_simple(self.simple)
+        {
+            tracing::warn!(%error, simple = self.simple, "simple not saved");
         }
     }
 

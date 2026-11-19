@@ -10,7 +10,7 @@ use moho_physics::PhysicsWorld;
 use moho_render_api::{WorldMesh, WorldMeshId};
 
 use crate::control::ControlAction;
-use crate::sim::{CAPSULE_RADIUS, STAND_HEIGHT, STAND_IN_BOUNDS};
+use crate::sim::{CAPSULE_RADIUS, STAND_HEIGHT};
 use crate::tag::SurfaceTag;
 use searchlight_rules::FlightBounds;
 
@@ -350,7 +350,12 @@ impl Arena {
 
     /// The box rounds may fly in: every mesh's box, grown by [`FLIGHT_MARGIN`] on every side.
     pub fn flight_bounds(&self) -> FlightBounds {
-        STAND_IN_BOUNDS
+        FlightBounds::around(
+            self.meshes
+                .iter()
+                .flat_map(|mesh| mesh.positions().iter().copied().map(Vec3::from)),
+            FLIGHT_MARGIN,
+        )
     }
 
     /// A physics world whose static colliders are this arena's meshes, tagged

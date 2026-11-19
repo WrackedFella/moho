@@ -92,11 +92,11 @@ impl Rifle {
 
     /// Spends the chambered round, then chambers the next from the magazine.
     pub fn fire(&mut self) -> Shot {
-        let Some(_round) = self.chamber.take() else {
+        let Some(round) = self.chamber.take() else {
             return Shot::Dry;
         };
         self.feed();
-        Shot::Fired(ItemId::new(""))
+        Shot::Fired(round)
     }
 
     /// Swaps in `spare` and returns the ejected magazine.

@@ -24,7 +24,7 @@ pub use body::{Body, BodyPart, BodyProfile, HitReport};
 pub use grade::{Grade, GradeDials, UnknownGrade};
 pub use item::{
     Caliber, ItemClass, ItemDef, ItemDefError, ItemId, ItemKind, Lifecycle, MagazineSpec,
-    MagazineWell, RigSpec, RoundSpec, Size,
+    MagazineWell, RigSpec, RoundSpec, RoundSpecError, Size,
 };
 pub use kit::{Kit, KitDef, KitError, KitMagazine};
 pub use loadout::Loadout;

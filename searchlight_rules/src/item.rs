@@ -1,5 +1,6 @@
 //! Items defined in data: one model for weapons, magazines, rounds, rigs and tools.
 
+use crate::ballistics::MIN_SPEED;
 use crate::weapon::RifleDef;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -95,14 +96,66 @@ pub enum Lifecycle {
 
 /// The round section of an item definition.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "RawRoundSpec")]
 pub struct RoundSpec {
     /// Caliber of the round.
     pub caliber: Caliber,
-    /// Speed at the muzzle, in metres per second.
+    /// Speed at the muzzle, in metres per second; finite and above [`MIN_SPEED`].
     pub muzzle_velocity: f32,
-    /// Speed lost per second, as a fraction of the speed, in 1/s.
+    /// Speed lost per second, as a fraction of the speed, in 1/s; finite and not negative.
     pub drag: f32,
+}
+
+/// Why a round section was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Error)]
+#[non_exhaustive]
+pub enum RoundSpecError {
+    /// The muzzle velocity was not a finite speed above the minimum.
+    #[error("muzzle_velocity must be above {MIN_SPEED} m/s, got {value}")]
+    MuzzleVelocity {
+        /// The value given.
+        value: f32,
+    },
+    /// The drag was negative or not finite.
+    #[error("drag must be 0 or more, got {value}")]
+    Drag {
+        /// The value given.
+        value: f32,
+    },
+}
+
+/// Unvalidated wire form of a [`RoundSpec`].
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRoundSpec {
+    caliber: Caliber,
+    muzzle_velocity: f32,
+    drag: f32,
+}
+
+impl TryFrom<RawRoundSpec> for RoundSpec {
+    type Error = RoundSpecError;
+
+    fn try_from(raw: RawRoundSpec) -> Result<Self, Self::Error> {
+        let RawRoundSpec {
+            caliber,
+            muzzle_velocity,
+            drag,
+        } = raw;
+        if !muzzle_velocity.is_finite() || muzzle_velocity <= MIN_SPEED {
+            return Err(RoundSpecError::MuzzleVelocity {
+                value: muzzle_velocity,
+            });
+        }
+        if !drag.is_finite() || drag < 0.0 {
+            return Err(RoundSpecError::Drag { value: drag });
+        }
+        Ok(Self {
+            caliber,
+            muzzle_velocity,
+            drag,
+        })
+    }
 }
 
 /// The magazine section of an item definition.

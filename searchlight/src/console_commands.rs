@@ -35,13 +35,36 @@ pub enum SimpleArg {
 }
 
 /// Parses `simple [0|1]`; no argument toggles.
-pub fn parse_simple(_args: &[&str]) -> Result<(ConsoleCommand, String), String> {
-    Err("Usage: simple [0|1]".to_owned())
+pub fn parse_simple(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    match args {
+        [] => Ok((ConsoleCommand::Simple(SimpleArg::Toggle), String::new())),
+        ["1"] => Ok((
+            ConsoleCommand::Simple(SimpleArg::Set(true)),
+            "Simple: on".to_owned(),
+        )),
+        ["0"] => Ok((
+            ConsoleCommand::Simple(SimpleArg::Set(false)),
+            "Simple: off".to_owned(),
+        )),
+        _ => Err("Usage: simple [0|1]".to_owned()),
+    }
 }
 
-/// Parses `round_gravity <scale>`.
-pub fn parse_round_gravity(_args: &[&str]) -> Result<(ConsoleCommand, String), String> {
-    Err("Usage: round_gravity <scale>".to_owned())
+/// Parses `round_gravity <scale>`; the scale must be from 0 to 1000.
+pub fn parse_round_gravity(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    let usage = || "Usage: round_gravity <scale>".to_owned();
+    let [text] = args else {
+        return Err(usage());
+    };
+    let scale = text
+        .parse::<f32>()
+        .ok()
+        .and_then(|value| GravityScale::new(value).ok())
+        .ok_or_else(usage)?;
+    Ok((
+        ConsoleCommand::RoundGravity(scale),
+        format!("Round gravity: {text}"),
+    ))
 }
 
 /// Parses `tgm [0|1]`; no argument toggles.
@@ -457,6 +480,46 @@ mod tests {
                 "{line}: {reply:?}"
             );
         }
+    }
+
+    #[test]
+    fn simple_and_round_gravity_refuse_extra_and_malformed_arguments() {
+        for line in [
+            "simple 1 1",
+            "simple 2",
+            "simple on",
+            "round_gravity 5 6",
+            "round_gravity 1000.5",
+            "round_gravity nan",
+            "round_gravity inf",
+            "round_gravity -inf",
+        ] {
+            let (mut console, _) = console(&BTreeMap::new());
+
+            console.submit(line);
+
+            assert!(console.take_commands().is_empty(), "{line}");
+            let reply = last_line(&console);
+            assert!(reply.starts_with("Usage"), "{line}: {reply:?}");
+        }
+    }
+
+    #[test]
+    fn round_gravity_1000_is_accepted_and_negative_zero_is_not_negative() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        console.submit("round_gravity 1000");
+        let top = console.take_commands();
+        console.submit("round_gravity -0");
+        let negative_zero = console.take_commands();
+        let reply = last_line(&console);
+
+        assert_eq!(top, vec![ConsoleCommand::RoundGravity(scale(1000.0))]);
+        assert_eq!(
+            negative_zero,
+            vec![ConsoleCommand::RoundGravity(scale(0.0))]
+        );
+        assert!(!reply.starts_with("Usage"), "{reply:?}");
     }
 
     #[test]
