@@ -18,6 +18,8 @@ Markers are empty, named glTF nodes that the game reads by name (see searchlight
     dummy_NN          training dummy, a floor point
     enemy_spawn_NN    where an enemy starts, a floor point
     waypoint_NN       a patrol point, a floor point
+    control_NN        a floor point a post stands on; its `action` extra (next_wave) says what
+                      using it does
     cover_NN          a floor point an enemy can hide at; its extras say which way the
                       hiding geometry lies
 
@@ -50,6 +52,10 @@ PLAYER_SPAWN = (0.0, 0.0, -17.0)
 DUMMIES = [(-9.0, 6.0), (-3.0, 12.0), (5.0, 9.0), (11.0, 14.0)]
 ENEMY_SPAWNS = [(-14.0, 15.0), (14.0, 16.0), (0.0, 19.0)]
 WAYPOINTS = [(-12.0, -10.0), (12.0, -10.0), (10.0, 4.0), (0.0, 8.0), (-10.0, 2.0)]
+
+# Controls the player uses: (x, z, action), a floor point beside the player spawn. The game
+# stands a 0.4 x 1.2 x 0.4 m post on it.
+CONTROLS = [(1.5, -17.0, "next_wave")]
 
 # Cover blocks: (centre x, centre z, size x, size z, direction from the cover point to the
 # block). The cover point is COVER_DEPTH behind the face opposite that direction.
@@ -200,6 +206,8 @@ def markers():
         x, z = cover_point(block)
         out.append((f"cover_{index:02d}", (x, 0.0, z),
                     {"shielded_from": direction_name(block[4])}))
+    for index, (x, z, action) in enumerate(CONTROLS, start=1):
+        out.append((f"control_{index:02d}", (x, 0.0, z), {"action": action}))
     out.append(("searchlight_level", (0.0, 0.0, 0.0), {"mode": "arena"}))
     return out
 

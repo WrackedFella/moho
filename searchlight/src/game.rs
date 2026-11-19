@@ -25,10 +25,11 @@ use winit::window::{CursorGrabMode, Window};
 use moho_core::prefs::Prefs;
 use moho_ui_shell::host::input_of;
 use moho_ui_shell::{
-    EngineSettings, MenuEvent, Routing, UiLayers, UiShell, apply_engine_command,
-    apply_engine_settings,
+    Anchor, EngineSettings, MenuEvent, Routing, ScreenText, UiLayers, UiShell,
+    apply_engine_command, apply_engine_settings,
 };
 
+use crate::arena::{ArenaControl, box_mesh, control_mesh_id, oriented_box_mesh};
 use crate::console_commands::{self, ConsoleCommand, GodModeArg};
 use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
@@ -41,6 +42,9 @@ use crate::tag::SurfaceTag;
 use crate::tuning::SHIPPED_BODY;
 use crate::{TICK_HZ, hud};
 
+/// Where the use prompt sits below the screen centre, in logical points.
+const PROMPT_OFFSET_Y: f32 = 48.0;
+const PROMPT_SIZE: f32 = 20.0;
 /// Ticks a struck dummy segment stays lit.
 const FLASH_TICKS: u32 = TICK_HZ / 6;
 /// Dummy segment mesh ids start here, clear of the arena's (which count up from 0).
@@ -105,7 +109,8 @@ impl RenderMaterial for Paint {
         // the rest, and `params.w > 0` makes the surface glow its colour.
         // `albedo.w` is a world mesh's gloss.
         let (top, side, glow, gloss) = match self {
-            Paint::Arena | Paint::Control => ([0.62, 0.62, 0.64], [0.42, 0.43, 0.46], 0.0, 0.0),
+            Paint::Arena => ([0.62, 0.62, 0.64], [0.42, 0.43, 0.46], 0.0, 0.0),
+            Paint::Control => ([0.2, 0.75, 0.35], [0.14, 0.55, 0.25], 0.0, 0.0),
             Paint::ArenaFloor => (
                 [0.62, 0.62, 0.64],
                 [0.42, 0.43, 0.46],
@@ -147,49 +152,6 @@ impl Renderable for NoActor {
     fn to_instance_with_material(&self, _material_index: u32) -> InstanceGpu {
         match *self {}
     }
-}
-
-/// A closed box with outward-facing triangles and a normal per face.
-fn box_mesh(centre: Vec3, half: Vec3) -> WorldMesh {
-    oriented_box_mesh(centre, half, Quat::IDENTITY)
-}
-
-/// [`box_mesh`] with its axes turned by `rotation` about its centre.
-fn oriented_box_mesh(centre: Vec3, half: Vec3, rotation: Quat) -> WorldMesh {
-    // (normal, u, v) with u x v = normal, so (-u-v, +u-v, +u+v, -u+v) winds counter-clockwise
-    // seen from outside.
-    const FACES: [(Vec3, Vec3, Vec3); 6] = [
-        (Vec3::X, Vec3::Y, Vec3::Z),
-        (Vec3::NEG_X, Vec3::Z, Vec3::Y),
-        (Vec3::Y, Vec3::Z, Vec3::X),
-        (Vec3::NEG_Y, Vec3::X, Vec3::Z),
-        (Vec3::Z, Vec3::X, Vec3::Y),
-        (Vec3::NEG_Z, Vec3::Y, Vec3::X),
-    ];
-    let mut positions = Vec::with_capacity(24);
-    let mut normals = Vec::with_capacity(24);
-    let mut indices = Vec::with_capacity(36);
-    for (normal, u, v) in FACES {
-        let first = positions.len() as u32;
-        let (du, dv) = (u * half, v * half);
-        let face_centre = centre + rotation * (normal * half);
-        for corner in [-du - dv, du - dv, du + dv, -du + dv] {
-            positions.push((face_centre + rotation * corner).to_array());
-            normals.push((rotation * normal).to_array());
-        }
-        indices.extend([first, first + 1, first + 2, first, first + 2, first + 3]);
-    }
-    let count = positions.len();
-    WorldMesh::new(
-        positions,
-        normals,
-        vec![1.0; count],
-        vec![[0.0; 3]; count],
-        vec![1.0; count],
-        vec![0; count],
-        indices,
-    )
-    .expect("a box has matching channels and whole triangles")
 }
 
 /// One drawn body part of a dummy, lit while it flashes.
@@ -509,6 +471,35 @@ impl Stage {
                 segment.mesh.clone(),
                 self.dummy_material,
             );
+        }
+    }
+
+    /// Draws each of `controls` as a post in [`Paint::Control`].
+    fn add_controls(&mut self, controls: &[ArenaControl]) {
+        let material = self.scene.material_table.find_or_push(&Paint::Control);
+        for (index, control) in controls.iter().enumerate() {
+            self.scene.world_meshes_mut().upsert(
+                control_mesh_id(index),
+                control.mesh.clone(),
+                material,
+            );
+        }
+    }
+
+    /// Shows `prompt` below the crosshair, or nothing for `None`.
+    fn show_prompt(&self, prompt: Option<String>) {
+        let texts = prompt
+            .map(|text| ScreenText {
+                text,
+                anchor: Anchor::Center,
+                offset: [0.0, PROMPT_OFFSET_Y],
+                size: PROMPT_SIZE,
+                color: [255; 4],
+            })
+            .into_iter()
+            .collect();
+        if let Err(error) = self.shell().set_texts(texts) {
+            tracing::warn!(%error, "use prompt not shown");
         }
     }
 
@@ -960,6 +951,30 @@ impl SearchlightGame {
         self
     }
 
+    /// Draws `controls` as posts the player can tell from the arena.
+    #[must_use]
+    pub fn with_controls(mut self, controls: &[ArenaControl]) -> Self {
+        self.stage.add_controls(controls);
+        self
+    }
+
+    /// What the player reads while looking at a control in reach, or `None` when they are not
+    /// playing, are dead or look at none.
+    fn use_prompt(&self) -> Option<String> {
+        let sim = self.mode.sim();
+        if self.screen != Screen::Playing || sim.player_body().is_dead() {
+            return None;
+        }
+        let action = self.mode.control_action(sim.control_in_reach()?)?;
+        let key = self
+            .input
+            .bindings()
+            .get(SearchlightAction::Use)
+            .first()
+            .map_or_else(|| "unbound".to_owned(), |binding| binding.label());
+        Some(hud::use_prompt(&key, action))
+    }
+
     /// Plays the sound file at `path` for every shot fired.
     #[must_use]
     pub fn with_shot_sound(mut self, path: &Path) -> Self {
@@ -990,6 +1005,7 @@ impl SearchlightGame {
     /// A frame of the main menu: the title bare, the HUD hidden and an empty world; the shell
     /// paints the menu.
     fn menu_frame(&mut self, ctx: &mut FrameContext<'_>) {
+        self.stage.show_prompt(None);
         self.stage.refresh_title("");
         self.stage.hide_hud();
         if let Some(renderer) = ctx.renderer() {
@@ -1164,6 +1180,7 @@ impl Game for SearchlightGame {
         let vitals = self.vitals_line();
         self.stage.refresh_title(&vitals);
         self.stage.refresh_hud(dead);
+        self.stage.show_prompt(self.use_prompt());
         if self.screen == Screen::Paused {
             self.stage.hide_hud();
         }
