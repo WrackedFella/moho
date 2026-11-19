@@ -1979,6 +1979,94 @@ mod tests {
     }
 
     #[test]
+    fn a_capsule_rolling_along_a_diagonal_heading_stops_and_sleeps() {
+        let yaw = Quat::from_rotation_y(FRAC_PI_2 / 2.0);
+        let base = rolling_capsule(2.0);
+        let mut world = gravity_world(&floor_mesh(0.0));
+        let id = world.spawn_loose(&LooseSpawn {
+            rotation: yaw * base.rotation,
+            linear_velocity: yaw * base.linear_velocity,
+            angular_velocity: yaw * base.angular_velocity,
+            ..base
+        });
+        let mut previous = read(&world, id).linear_velocity.length();
+
+        for tick in 1..=300 {
+            world.step(DT);
+            let speed = read(&world, id).linear_velocity.length();
+            assert!(
+                speed <= previous + 1e-4 || previous <= 1e-3,
+                "tick {tick}: speed rose from {previous} to {speed}"
+            );
+            previous = speed;
+        }
+
+        let state = read(&world, id);
+        let rolled = Vec3::new(state.position.x, 0.0, state.position.z).length();
+        assert!(
+            (0.2..1.5).contains(&rolled),
+            "it rolls a while but stops within 1.5 m, rolled {rolled}"
+        );
+        assert!(state.asleep, "the capsule came to rest, {state:?}");
+    }
+
+    #[test]
+    fn changing_the_rest_slope_mid_run_applies_from_the_next_step() {
+        let mut braked = floor_world_with_rest_slope(0.0);
+        let braked_id = braked.spawn_loose(&rolling_capsule(2.0));
+        run(&mut braked, 30);
+        let speed_at_switch = read(&braked, braked_id).linear_velocity.length();
+        braked.set_rest_slope(5.0f32.to_radians());
+
+        run(&mut braked, 120);
+
+        let stopped = read(&braked, braked_id).linear_velocity.length();
+        assert!(
+            speed_at_switch > 1.5,
+            "rest slope 0 does not brake, speed {speed_at_switch}"
+        );
+        assert!(stopped < 1e-3, "the raised slope stops it, speed {stopped}");
+
+        let mut released = floor_world_with_rest_slope(5.0f32.to_radians());
+        let released_id = released.spawn_loose(&rolling_capsule(2.0));
+        run(&mut released, 30);
+        let speed_at_release = read(&released, released_id).linear_velocity.length();
+        released.set_rest_slope(0.0);
+
+        run(&mut released, 120);
+
+        let rolling = read(&released, released_id).linear_velocity.length();
+        assert!(
+            rolling >= speed_at_release - 0.1,
+            "slope 0 keeps it rolling, {speed_at_release} -> {rolling}"
+        );
+    }
+
+    #[test]
+    fn a_cylinder_rolling_under_weak_gravity_stops_within_the_theoretical_distance_and_sleeps() {
+        let radius = lying_height(CYLINDER);
+        let mut world = gravity_world(&floor_mesh(0.0));
+        world.set_gravity(9.0);
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, radius, 0.0),
+            rotation: Quat::from_rotation_x(FRAC_PI_2),
+            linear_velocity: Vec3::new(2.0, 0.0, 0.0),
+            angular_velocity: Vec3::new(0.0, 0.0, -2.0 / radius),
+            ..LooseSpawn::new(CYLINDER, 0.2)
+        });
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        assert!(
+            (1.0..3.0).contains(&state.position.x),
+            "it rolls about 2.5 m, x={}",
+            state.position.x
+        );
+        assert!(state.asleep, "the cylinder came to rest, {state:?}");
+    }
+
+    #[test]
     fn spawn_rejects_a_bad_capsule_or_cylinder() {
         type Build = fn(f32, f32) -> LooseShape;
         let builds: [(&str, Build); 2] = [
