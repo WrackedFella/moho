@@ -1301,6 +1301,60 @@ mod tests {
         }
 
         #[test]
+        fn returning_to_first_person_starts_where_the_pawn_walked_to() {
+            let block = flagstone_voxel::BlockPos::new(26, 4, 12);
+            let mut app = crate::app::event_loop::frame_processor::tests::colony_app(
+                None,
+                Some((block, Some(7))),
+            );
+            let start = pose(&app);
+            app.colony.marks.toggle(block.to_array());
+            for _ in 0..45 {
+                step(&mut app);
+            }
+            let walked = pose(&app);
+            let body = app
+                .physics
+                .world
+                .as_ref()
+                .expect("physics world")
+                .character(app.physics.player.expect("the pawn was spawned"))
+                .expect("the pawn exists");
+
+            tap(&mut app);
+            step(&mut app);
+
+            let first_person = pose(&app);
+            let moved = glam::Vec2::new(walked.0.x - start.0.x, walked.0.z - start.0.z).length();
+            assert!(moved > 1.0, "the pawn walked {moved} m");
+            assert!(
+                walked.0.distance(body.position) < 1e-3,
+                "strategy view reports {:?}, the body stands at {:?}",
+                walked.0,
+                body.position
+            );
+            assert!(
+                (walked.1.0 - start.1.0).abs() > 0.1,
+                "the pawn turned toward the block: yaw {} to {}",
+                start.1.0,
+                walked.1.0
+            );
+            assert_eq!(mode(&app), CameraMode::FirstPerson);
+            assert!(
+                first_person.0.distance(walked.0) < 0.05,
+                "possession resumed at {:?}, the pawn stood at {:?}",
+                first_person.0,
+                walked.0
+            );
+            assert!(
+                (first_person.1.0 - walked.1.0).abs() < 1e-3,
+                "possession resumed facing {}, the pawn faced {}",
+                first_person.1.0,
+                walked.1.0
+            );
+        }
+
+        #[test]
         fn possess_key_in_first_person_switches_to_strategy() {
             let mut app = app_in(CameraMode::FirstPerson);
             tap(&mut app);

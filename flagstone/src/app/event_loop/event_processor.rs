@@ -8,6 +8,7 @@
 
 use crate::input_event::InputEvent;
 use crate::{App, RenderRequest};
+use flagstone_game::pawn::{MINE_REACH, MineOutcome};
 use flagstone_voxel::{BlockChangeReason, CRYSTAL_MATERIAL_ID, VoxelChunk, WorldEvent};
 use moho_core::events::{AudioEvent, GraphicsEvent, UiEvent};
 use moho_render_api::{Marker, MarkerId};
@@ -22,14 +23,16 @@ const MOUSE_WHEEL_ZOOM_FACTOR: f32 = 0.5;
 const SPAWN_RAYCAST_MAX_DISTANCE: f32 = 100.0;
 const SPAWN_NORMAL_OFFSET: f32 = 0.5;
 const SPAWN_FALLBACK_DISTANCE: f32 = 5.0;
-/// Maximum reach for the player's direct mining action — shorter than
-/// `SPAWN_RAYCAST_MAX_DISTANCE`, which is a debug-console placement aid, not
-/// a gameplay reach limit.
-const MINE_MAX_DISTANCE: f32 = 8.0;
 const DEFAULT_POINT_LIGHT_INTENSITY: f32 = 5.0;
 const DEFAULT_POINT_LIGHT_RANGE: f32 = 20.0;
 /// Console markers' colour: translucent amber, linear RGBA with straight alpha.
 const MARKER_COLOR: [f32; 4] = [1.0, 0.55, 0.0, 0.35];
+
+/// Publishes a pawn's dig: `BlockRemoved` and the chunks to remesh, as the player's mine
+/// handler does, and the dig cue at the block's centre.
+pub(crate) fn publish_pawn_dig(app: &mut App, outcome: &MineOutcome) {
+    let _ = (app, outcome);
+}
 
 /// Handles processing of all event types
 pub struct EventProcessor;
@@ -233,9 +236,9 @@ impl EventProcessor {
         };
         let grid = light_system.grid_mut();
 
-        let Some(outcome) = app.pawn.mine(grid, camera_pos, forward, MINE_MAX_DISTANCE) else {
+        let Some(outcome) = app.pawn.mine(grid, camera_pos, forward, MINE_REACH) else {
             tracing::debug!(
-                distance = MINE_MAX_DISTANCE,
+                distance = MINE_REACH,
                 "Mine attempt found nothing solid within range"
             );
             return;
@@ -1720,5 +1723,84 @@ mod tests {
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
 
         assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
+    }
+
+    fn dig_asset_path() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/dig.wav")
+    }
+
+    #[test]
+    fn dig_asset_exists() {
+        let path = dig_asset_path();
+
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+
+        assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
+    }
+
+    #[test]
+    fn a_pawn_dig_publishes_the_removal_and_the_cue() {
+        let mut app = App::headless();
+        // On a chunk's negative x edge, so the neighbour that samples it is remeshed too.
+        let block = flagstone_voxel::BlockPos::new(16, 5, 3);
+        let outcome = MineOutcome {
+            block_pos: block,
+            old_material_id: 1,
+            distance: 3.0,
+            yield_: Some(flagstone_game::inventory::ResourceYield {
+                resource_id: 7,
+                amount: 1,
+            }),
+        };
+        let _ = app.audio_event_rx.try_iter().count();
+        let _ = app.world_event_rx.try_iter().count();
+
+        publish_pawn_dig(&mut app, &outcome);
+        app.event_bus.process_deferred();
+
+        let events: Vec<WorldEvent> = app.world_event_rx.try_iter().collect();
+        let removed: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                WorldEvent::BlockRemoved {
+                    position,
+                    old_material_id,
+                    ..
+                } => Some((*position, *old_material_id)),
+                _ => None,
+            })
+            .collect();
+        let dirty: HashSet<glam::IVec3> = events
+            .iter()
+            .filter_map(|event| match event {
+                WorldEvent::ChunkMeshDirty { chunk_pos, .. } => Some(*chunk_pos),
+                _ => None,
+            })
+            .collect();
+        let cues: Vec<(String, f32, glam::Vec3)> = app
+            .audio_event_rx
+            .try_iter()
+            .filter_map(|event| match event {
+                AudioEvent::PlaySoundAt {
+                    path,
+                    volume,
+                    position,
+                } => Some((path, volume, position)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(removed, [(block, 1)], "one removal of the dug block");
+        assert!(
+            dirty.contains(&glam::IVec3::new(1, 0, 0)) && dirty.contains(&glam::IVec3::ZERO),
+            "the block's chunk and its negative neighbour remesh: {dirty:?}"
+        );
+        assert_eq!(cues.len(), 1, "one cue for one dig: {cues:?}");
+        assert_eq!(std::path::Path::new(&cues[0].0), dig_asset_path().as_path());
+        assert!(cues[0].1 > 0.0, "audible: {cues:?}");
+        assert!(
+            cues[0].2.abs_diff_eq(glam::Vec3::new(16.5, 5.5, 3.5), 1e-4),
+            "the cue plays at the block's centre: {:?}",
+            cues[0].2
+        );
     }
 }
