@@ -82,7 +82,7 @@ fn world_blocks(world: &PhysicsWorld, from: Vec3, to: Vec3) -> bool {
         let Some(strike) = resolve_shot(world, ray) else {
             return false;
         };
-        if strike.tag == SurfaceTag::World {
+        if matches!(strike.tag, SurfaceTag::World | SurfaceTag::Control(_)) {
             return true;
         }
         origin = strike.point + direction * STEP_PAST_CHARACTER;
@@ -104,7 +104,7 @@ pub(crate) fn floor_below(world: &PhysicsWorld, from: Vec3) -> Vec3 {
         let Some(strike) = resolve_shot(world, ray) else {
             return from;
         };
-        if strike.tag == SurfaceTag::World {
+        if matches!(strike.tag, SurfaceTag::World | SurfaceTag::Control(_)) {
             return strike.point;
         }
         let next = strike.point + Vec3::NEG_Y * STEP_PAST_CHARACTER;
@@ -537,6 +537,65 @@ mod tests {
 
         assert_eq!(floor_below(&world, off_the_floor), off_the_floor);
         assert_eq!(floor_below(&world, beyond_range), beyond_range);
+    }
+
+    /// A world of the `FLOOR` and, for each `(min, max)` box, a collider tagged `Control(0)`.
+    fn world_with_control_boxes(boxes: &[(Vec3, Vec3)]) -> PhysicsWorld {
+        let mut world = world_with(&[FLOOR]);
+        for (index, &(min, max)) in boxes.iter().enumerate() {
+            world.set_world_mesh(
+                moho_render_api::WorldMeshId(100 + index as u64),
+                &crate::test_support::box_mesh(min, max),
+                SurfaceTag::Control(0).into(),
+            );
+        }
+        world.step(crate::test_support::DT);
+        world
+    }
+
+    #[test]
+    fn a_control_post_between_two_points_blocks_the_line() {
+        let world =
+            world_with_control_boxes(&[(Vec3::new(-0.2, 0.0, -0.2), Vec3::new(0.2, 1.2, 0.2))]);
+
+        let through_the_post =
+            world_blocks(&world, Vec3::new(0.0, 0.6, -3.0), Vec3::new(0.0, 0.6, 3.0));
+        let beside_the_post =
+            world_blocks(&world, Vec3::new(1.0, 0.6, -3.0), Vec3::new(1.0, 0.6, 3.0));
+
+        assert!(through_the_post, "a control post stops sight like a wall");
+        assert!(!beside_the_post);
+    }
+
+    #[test]
+    fn a_point_behind_a_control_post_is_a_firing_position() {
+        let (min, max) = wall_of_height(1.2);
+        let world = world_with_control_boxes(&[(min, max)]);
+
+        let picked = offer(
+            &world,
+            &[MARKER],
+            &[],
+            Vec3::new(0.0, 0.915, 12.0),
+            PLAYER,
+            ENEMY_EYE,
+            &enemy_tuning(),
+        );
+
+        assert_eq!(picked, offered(0, MARKER));
+    }
+
+    #[test]
+    fn floor_below_stops_on_the_top_of_a_control_post() {
+        let world =
+            world_with_control_boxes(&[(Vec3::new(-1.0, 0.0, -1.0), Vec3::new(1.0, 1.2, 1.0))]);
+
+        let dropped = floor_below(&world, Vec3::new(0.0, 3.0, 0.0));
+
+        assert!(
+            (dropped.y - 1.2).abs() < 1e-3,
+            "dropped through the post to {dropped:?}"
+        );
     }
 
     #[test]

@@ -1202,6 +1202,38 @@ mod tests {
     }
 
     #[test]
+    fn an_enemy_path_across_a_control_post_walks_round_it() {
+        let open = island_level(&[("waypoint_01", ON_FLOOR)]);
+        let posted = with_control(
+            island_level(&[("waypoint_01", ON_FLOOR)]),
+            "control_01",
+            Vec3::new(0.0, 0.0, 6.0),
+            Some("next_wave"),
+        );
+        let west = Vec3::new(-2.0, 0.0, 6.0);
+        let east = Vec3::new(2.0, 0.0, 6.0);
+        let length =
+            |corners: &[Vec3]| -> f32 { corners.windows(2).map(|w| w[0].distance(w[1])).sum() };
+
+        let straight = build(&open).expect("builds").nav.path(west, east);
+        let round = build(&posted).expect("builds").nav.path(west, east);
+
+        let straight = straight.expect("the open floor joins the points");
+        let round = round.expect("the floor round the post joins the points");
+        assert!((length(&straight) - 4.0).abs() < 1e-3, "{straight:?}");
+        assert!(
+            length(&round) > 4.05,
+            "the path cuts through the post: {round:?}"
+        );
+        assert!(
+            round
+                .iter()
+                .all(|c| !(c.x.abs() < 0.2 && (c.z - 6.0).abs() < 0.2)),
+            "a corner lies inside the post footprint: {round:?}"
+        );
+    }
+
+    #[test]
     fn the_shipped_arena_has_a_next_wave_control() {
         let (level, markers) = load(&shipped_arena()).expect("the shipped arena loads");
         let arena = Arena::from_level(&level, &markers).expect("the shipped arena builds");

@@ -1308,6 +1308,31 @@ mod tests {
     }
 
     #[test]
+    fn the_prompt_text_names_the_use_key_and_next_wave() {
+        let game = game_looking_at(post_target());
+
+        assert_eq!(game.use_prompt().as_deref(), Some("[F] Next wave"));
+    }
+
+    #[test]
+    fn the_prompt_text_says_unbound_when_use_has_no_binding() {
+        let arena = arena_with_controls(&[], Vec3::ZERO, &[], &[], &[POST]);
+        let mode = ArenaMode::new(
+            arena.clone(),
+            test_config(rifle_from(mag(30, 5)), vec![]),
+            wave_tuning(1),
+        );
+        let (mut bindings, _) = ActionBindings::load(&BTreeMap::new());
+        bindings.set(SearchlightAction::Use, Vec::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
+            .with_controls(&arena.controls);
+        let turn = look_at(game.sim().player_eye(), post_target());
+        game.mode.tick(&turn, 1.0 / 60.0);
+
+        assert_eq!(game.use_prompt().as_deref(), Some("[unbound] Next wave"));
+    }
+
+    #[test]
     fn no_prompt_when_looking_away() {
         let mut looking_at_it = game_looking_at(post_target());
         let mut looking_to_the_side = game_looking_at(Vec3::new(5.0, 0.0, 1.5));
