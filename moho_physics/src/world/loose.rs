@@ -391,13 +391,13 @@ impl PhysicsWorld {
         let mut contact = GroundContact::default();
         for &collider in body.colliders() {
             for pair in self.narrow_phase.contact_pairs_with(collider) {
-                let into_body = if pair.collider1 == collider {
-                    -1.0
-                } else {
-                    1.0
-                };
+                let body_is_first = pair.collider1 == collider;
                 for manifold in pair.manifolds() {
-                    let normal = manifold.data.normal * into_body;
+                    let normal = if body_is_first {
+                        -manifold.data.normal
+                    } else {
+                        manifold.data.normal
+                    };
                     for point in &manifold.points {
                         contact.being_separated |= point.dist < -DEEP_CONTACT;
                         contact.on_near_flat_ground |=
@@ -1826,6 +1826,40 @@ mod tests {
             linear_velocity: Vec3::new(0.0, 0.0, 1.0),
             angular_velocity: Vec3::new(1.0 / radius, 0.0, 0.0),
             ..LooseSpawn::new(capsule(half_height, radius), 0.2)
+        });
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        assert!(state.asleep, "the capsule sleeps on the box, {state:?}");
+        assert!(
+            (state.position.z - start_z).abs() <= 0.5,
+            "the capsule stops within 0.5 m, z={}",
+            state.position.z
+        );
+        assert!(
+            (state.position.y - (top + radius)).abs() <= 0.002,
+            "the capsule is still on the box top, y={}",
+            state.position.y
+        );
+    }
+
+    #[test]
+    fn a_capsule_spawned_before_the_box_it_rolls_on_is_braked_and_stays_on_it() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let top = 0.2;
+        let (half_height, radius) = TEST_CAPSULE;
+        let start_z = -0.4;
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, top + radius + 0.0005, start_z),
+            rotation: lying_along_x(),
+            linear_velocity: Vec3::new(0.0, 0.0, 1.0),
+            angular_velocity: Vec3::new(1.0 / radius, 0.0, 0.0),
+            ..LooseSpawn::new(capsule(half_height, radius), 0.2)
+        });
+        world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.1, 0.0),
+            ..LooseSpawn::new(cuboid(Vec3::new(0.5, 0.1, 0.5)), 5.0)
         });
 
         run(&mut world, 300);
