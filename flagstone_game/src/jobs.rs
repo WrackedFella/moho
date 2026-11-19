@@ -833,4 +833,163 @@ mod tests {
         assert_eq!(at(-61.0), 0.0);
         assert_eq!(at(180.0), 0.0);
     }
+
+    /// Runs `work` on its own thread so a loop that never ends fails the test instead of
+    /// hanging the run.
+    fn within_five_seconds<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+        let (done, result) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            done.send(work())
+                .expect("the test is still waiting for the result");
+        });
+        result
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the step never returned")
+    }
+
+    #[test]
+    fn the_waypoint_under_the_pawns_feet_is_passed_and_the_next_one_walked_to() {
+        let (action, next) = within_five_seconds(|| {
+            let mut rig = rig_with_a_near_mark();
+
+            let action = rig.step();
+
+            let Job::Mine { next, .. } = rig.job else {
+                panic!("expected a mine job, got {:?}", rig.job);
+            };
+            (action, next)
+        });
+
+        assert_eq!(
+            action,
+            JobAction::Walk {
+                to: Vec3::new(3.5, 1.0, 2.5)
+            }
+        );
+        assert_eq!(next, 1, "the start cell is behind the pawn");
+    }
+
+    /// A rig mid-walk to `(3, 1, 2)` with `closest` already measured as 4 m, the pawn
+    /// standing `distance` metres west of the waypoint's centre; the guard after one step.
+    fn guard_after_a_step_at(distance: f32) -> StallGuard {
+        let mut rig = Rig::new(floor(0..=16, 0..=8), cell(2, 1, 2));
+        rig.mark(5, 0, 2);
+        rig.pose.feet = Vec3::new(3.5 - distance, 1.0, 2.5);
+        assert_eq!(
+            horizontal_distance(rig.pose.feet, cell_centre(cell(3, 1, 2))),
+            distance,
+            "setup: the distance is exact"
+        );
+        rig.job = Job::Mine {
+            mark: [5, 0, 2],
+            route: vec![cell(3, 1, 2), cell(4, 1, 2)],
+            next: 0,
+            stall: StallGuard {
+                ticks: 0,
+                closest: Some(4.0),
+            },
+        };
+
+        rig.step();
+
+        let Job::Mine { stall, .. } = rig.job else {
+            panic!("expected a mine job, got {:?}", rig.job);
+        };
+        stall
+    }
+
+    #[test]
+    fn closing_the_distance_by_more_than_the_epsilon_counts_as_progress() {
+        let stall = guard_after_a_step_at(3.99);
+
+        assert_eq!(
+            stall,
+            StallGuard {
+                ticks: 0,
+                closest: Some(3.99)
+            }
+        );
+    }
+
+    #[test]
+    fn closing_the_distance_by_exactly_the_epsilon_is_not_progress() {
+        let stall = guard_after_a_step_at(4.0 - PROGRESS_EPSILON);
+
+        assert_eq!(
+            stall,
+            StallGuard {
+                ticks: 1,
+                closest: Some(4.0)
+            }
+        );
+    }
+
+    #[test]
+    fn a_pawn_that_never_gets_closer_is_not_progressing() {
+        let stall = guard_after_a_step_at(4.0);
+
+        assert_eq!(
+            stall,
+            StallGuard {
+                ticks: 1,
+                closest: Some(4.0)
+            }
+        );
+    }
+
+    #[test]
+    fn a_slow_but_steady_approach_never_stalls() {
+        let mut rig = rig_with_a_near_mark();
+        rig.step();
+
+        for tick in 0..(STALL_TICKS * 2) {
+            rig.pose.feet.x += 0.002;
+            let action = rig.step();
+
+            assert!(
+                matches!(action, JobAction::Walk { .. }),
+                "gave up at tick {tick}: {action:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_the_open_face_of_an_otherwise_buried_block_is_exposed() {
+        let block = cell(5, 5, 5);
+
+        for open in FACE_DIRECTIONS {
+            let mut grid = VoxelGrid::new(16);
+            place(&mut grid, block.x, block.y, block.z);
+            for dir in FACE_DIRECTIONS.into_iter().filter(|&dir| dir != open) {
+                let neighbour = block + dir;
+                place(&mut grid, neighbour.x, neighbour.y, neighbour.z);
+            }
+
+            let exposed: Vec<BlockPos> = exposed_faces(&grid, block).collect();
+            let aim = nearest_exposed_face(&grid, block, block.as_vec3() + Vec3::splat(0.5));
+
+            assert_eq!(exposed, [open]);
+            let centre = block.as_vec3() + Vec3::splat(0.5);
+            let expected = centre + open.as_vec3() * 0.5;
+            assert!(
+                aim.is_some_and(|aim| near(aim, expected)),
+                "open {open:?}: aimed at {aim:?}, expected {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_block_is_dug_from_a_stand_cell_one_below_its_own_level() {
+        let mut rig = Rig::new(floor(0..=10, 0..=8), cell(2, 1, 2));
+        place(&mut rig.grid, 5, 1, 2);
+        place(&mut rig.grid, 5, 2, 2);
+        rig.mark(5, 2, 2);
+
+        let actions = rig.work_until_the_dig(60);
+
+        assert!(
+            matches!(actions.last(), Some(JobAction::Dig { block, .. }) if *block == cell(5, 2, 2)),
+            "never dug the raised block: {actions:?}"
+        );
+    }
 }

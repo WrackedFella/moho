@@ -291,6 +291,143 @@ mod tests {
     }
 
     #[test]
+    fn a_straight_walk_needs_one_expansion_per_cell_before_the_goal() {
+        let grid = floor(0..=20, 0..=2);
+        let start = cell(0, 1, 1);
+        let goal = cell(10, 1, 1);
+
+        let exact = route(&grid, start, |c| c == goal, goal, 10);
+        let one_short = route(&grid, start, |c| c == goal, goal, 9);
+
+        assert_eq!(exact.map(|r| r.len()), Some(11));
+        assert_eq!(one_short, None);
+    }
+
+    #[test]
+    fn equal_detours_around_a_pillar_pass_it_on_the_positive_z_side() {
+        let mut grid = floor(0..=8, 0..=8);
+        place(&mut grid, 4, 1, 4);
+        place(&mut grid, 4, 2, 4);
+        let start = cell(2, 1, 4);
+        let goal = cell(6, 1, 4);
+
+        let route = find(&grid, start, goal).expect("the pillar can be walked around");
+
+        assert_eq!(
+            route,
+            [
+                cell(2, 1, 4),
+                cell(3, 1, 4),
+                cell(3, 1, 5),
+                cell(4, 1, 5),
+                cell(5, 1, 5),
+                cell(6, 1, 5),
+                cell(6, 1, 4),
+            ]
+        );
+    }
+
+    /// Walls (two blocks high) on a flat floor, `walled[x * SIDE + z]` true where one stands.
+    fn walled_floor(walled: &[bool]) -> VoxelGrid {
+        let mut grid = floor(0..=SIDE - 1, 0..=SIDE - 1);
+        for x in 0..SIDE {
+            for z in 0..SIDE {
+                if walled[(x * SIDE + z) as usize] {
+                    place(&mut grid, x, 1, z);
+                    place(&mut grid, x, 2, z);
+                }
+            }
+        }
+        grid
+    }
+
+    /// Fewest steps between two columns of a walled floor, by breadth-first search.
+    fn fewest_steps(walled: &[bool], from: usize, to: usize) -> Option<usize> {
+        let mut steps = vec![None; walled.len()];
+        steps[from] = Some(0);
+        let mut queue = std::collections::VecDeque::from([from]);
+        while let Some(at) = queue.pop_front() {
+            let (x, z) = (at as i32 / SIDE, at as i32 % SIDE);
+            for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                let (nx, nz) = (x + dx, z + dz);
+                if !(0..SIDE).contains(&nx) || !(0..SIDE).contains(&nz) {
+                    continue;
+                }
+                let next = (nx * SIDE + nz) as usize;
+                if walled[next] || steps[next].is_some() {
+                    continue;
+                }
+                steps[next] = steps[at].map(|s| s + 1);
+                queue.push_back(next);
+            }
+        }
+        steps[to]
+    }
+
+    #[test]
+    fn a_route_around_a_dead_end_pocket_is_the_shortest() {
+        // A pocket open to the west whose back faces the goal, so a search that only
+        // looks at the goal's direction walks into it first.
+        let mut walled = vec![false; (SIDE * SIDE) as usize];
+        for z in 1..=5 {
+            walled[(4 * SIDE + z) as usize] = true;
+        }
+        for x in 2..=3 {
+            walled[(x * SIDE + 1) as usize] = true;
+            walled[(x * SIDE + 5) as usize] = true;
+        }
+        let grid = walled_floor(&walled);
+        let start = cell(0, 1, 3);
+        let goal = cell(6, 1, 3);
+
+        let route = find(&grid, start, goal).expect("the way round the pocket is open");
+
+        assert_eq!(
+            Some(route.len() - 1),
+            fewest_steps(&walled, 3, (6 * SIDE + 3) as usize)
+        );
+    }
+
+    proptest! {
+        #[test]
+        fn a_route_over_flat_ground_is_a_shortest_one(
+            walled in proptest::collection::vec(proptest::bool::weighted(0.3), (SIDE * SIDE) as usize),
+            from in 0..(SIDE * SIDE) as usize,
+            to in 0..(SIDE * SIDE) as usize,
+        ) {
+            prop_assume!(!walled[from] && !walled[to]);
+            let grid = walled_floor(&walled);
+            let cell_of = |i: usize| cell(i as i32 / SIDE, 1, i as i32 % SIDE);
+
+            let found = find(&grid, cell_of(from), cell_of(to));
+
+            prop_assert_eq!(
+                found.map(|route| route.len() - 1),
+                fewest_steps(&walled, from, to)
+            );
+        }
+    }
+
+    #[test]
+    fn queue_entries_made_stale_by_a_cheaper_path_cost_no_budget() {
+        // Hilly ground, where a cell is sometimes queued by a dearer path before a
+        // cheaper one reaches it; the dearer entry must be dropped when it surfaces.
+        let heights = [
+            2, 1, 2, 2, 1, 1, 3, 3, 3, 3, 2, 3, 1, 1, 2, 1, 1, 2, 3, 1, 3, 2, 3, 3, 1, 1, 1, 2, 1,
+            3, 2, 3, 3, 1, 3, 3, 3, 1, 1, 1, 1, 2, 1, 1, 1, 2, 1, 3, 3,
+        ];
+        let grid = terrain(&heights);
+        let start = stand_on(&heights, 13);
+        let goal = stand_on(&heights, 23);
+
+        let exact = route(&grid, start, |c| c == goal, goal, 29);
+        let one_short = route(&grid, start, |c| c == goal, goal, 28);
+
+        assert!(exact.is_some(), "29 expansions are enough");
+        assert_eq!(one_short, None, "28 are not");
+    }
+
+    #[test]
     fn a_start_a_cell_above_the_ground_still_routes() {
         let grid = floor(0..=10, 0..=8);
         let goal = cell(6, 1, 2);

@@ -113,4 +113,22 @@ mod tests {
 
         assert_eq!(pairs, vec![(3, 5), (7, 3)]);
     }
+
+    #[test]
+    fn sorted_lists_every_resource_by_id_whatever_the_order_added() {
+        let mut inventory = Inventory::default();
+        inventory.add(9, 4);
+        inventory.add(2, 1);
+        inventory.add(5, 7);
+        inventory.add(2, 2);
+
+        let listing = inventory.sorted();
+
+        assert_eq!(listing, vec![(2, 3), (5, 7), (9, 4)]);
+    }
+
+    #[test]
+    fn sorted_of_an_empty_inventory_is_empty() {
+        assert_eq!(Inventory::default().sorted(), vec![]);
+    }
 }
