@@ -586,15 +586,10 @@ fn egui_lone_modifier_while_listening_binds_the_row() {
     assert!(!menu.is_listening());
 }
 
-/// Runs one frame of `ctx` in which the held modifiers become `mods`.
-fn modifiers_frame(ctx: &egui::Context, menu: &mut SettingsMenu, mods: egui::Modifiers) {
-    let input = egui::RawInput {
-        events: vec![egui::Event::ModifiersChanged(mods)],
-        ..Default::default()
-    };
-    run_ui(ctx, input, |ui| {
-        menu.render(ui);
-    });
+/// Runs one frame in which the held modifiers become `mods`. The previous modifiers live in
+/// the menu's capture handler, so a fresh egui context per frame is enough.
+fn modifiers_frame(menu: &mut SettingsMenu, mods: egui::Modifiers) {
+    render_frame(menu, vec![egui::Event::ModifiersChanged(mods)]);
 }
 
 /// Text the modal draws, one label per line.
@@ -613,14 +608,11 @@ fn all_staged(menu: &SettingsMenu) -> Vec<Vec<Binding>> {
 }
 
 /// Move Forward listens, Shift is pressed (Sprint holds it), released, then Alt is pressed.
-/// Returns the context so the caller can keep driving frames.
-fn shift_conflict_then_stray_alt(menu: &mut SettingsMenu) -> egui::Context {
-    let ctx = egui::Context::default();
+fn shift_conflict_then_stray_alt(menu: &mut SettingsMenu) {
     menu.start_listening(0);
-    modifiers_frame(&ctx, menu, egui::Modifiers::SHIFT);
-    modifiers_frame(&ctx, menu, egui::Modifiers::NONE);
-    modifiers_frame(&ctx, menu, egui::Modifiers::ALT);
-    ctx
+    modifiers_frame(menu, egui::Modifiers::SHIFT);
+    modifiers_frame(menu, egui::Modifiers::NONE);
+    modifiers_frame(menu, egui::Modifiers::ALT);
 }
 
 /// A key another row holds raises the prompt naming the key and holder, and ends listening.
@@ -631,7 +623,7 @@ fn conflicting_key_names_key_and_holder() {
     // Shift is held by Sprint and arrives as a lone modifier.
     let mut menu = SettingsMenu::with_prefs(Prefs::default());
     menu.start_listening(0);
-    modifiers_frame(&egui::Context::default(), &mut menu, egui::Modifiers::SHIFT);
+    modifiers_frame(&mut menu, egui::Modifiers::SHIFT);
 
     let mut modal = Screen::take_pending_modal(&mut menu).expect("Shift conflicts with Sprint");
     let text = modal_text(&mut modal);
@@ -748,15 +740,14 @@ fn listening_again_after_cancelled_modifier_conflict_binds_free_modifier() {
     use flagstone_ui::screens::Screen;
 
     let mut menu = SettingsMenu::with_prefs(Prefs::default());
-    let ctx = egui::Context::default();
     menu.start_listening(0);
-    modifiers_frame(&ctx, &mut menu, egui::Modifiers::SHIFT);
+    modifiers_frame(&mut menu, egui::Modifiers::SHIFT);
     assert!(Screen::take_pending_modal(&mut menu).is_some());
     Screen::on_modal_cancel(&mut menu);
 
     menu.start_listening(0);
-    modifiers_frame(&ctx, &mut menu, egui::Modifiers::NONE);
-    modifiers_frame(&ctx, &mut menu, egui::Modifiers::ALT);
+    modifiers_frame(&mut menu, egui::Modifiers::NONE);
+    modifiers_frame(&mut menu, egui::Modifiers::ALT);
 
     assert_eq!(
         menu.get_staged_binding(0),
@@ -780,7 +771,7 @@ fn lone_modifier_conflict_on_move_down_names_sprint_and_ends_listening() {
     let mut menu = SettingsMenu::with_prefs(Prefs::default());
     menu.start_listening(5);
 
-    modifiers_frame(&egui::Context::default(), &mut menu, egui::Modifiers::SHIFT);
+    modifiers_frame(&mut menu, egui::Modifiers::SHIFT);
 
     assert!(!menu.is_listening());
     let mut modal = Screen::take_pending_modal(&mut menu).expect("Shift conflicts with Sprint");
