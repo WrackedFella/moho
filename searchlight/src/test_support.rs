@@ -12,16 +12,17 @@ use moho_level::{LevelMarker, NavMesh};
 use moho_physics::{MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::{
-    BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId, LeanTuning, Loadout, Magazine,
-    MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
+    Ballistics, BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId, LeanTuning, Loadout,
+    Magazine, MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
 };
 
 use crate::arena::{Arena, ArenaControl, nav_profile};
 use crate::brain::EnemyTuning;
 use crate::control::ControlAction;
 use crate::input::SearchlightAction;
+use crate::input::SearchlightCommand;
 use crate::mode::ArenaMode;
-use crate::sim::SimConfig;
+use crate::sim::{Feedback, SearchlightSim, SimConfig};
 use crate::tag::SurfaceTag;
 use crate::tuning::SHIPPED_BODY;
 use crate::wave::WaveTuning;
@@ -171,7 +172,7 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
         move_settings: test_move_settings(),
         gravity: 18.0,
         character_body: SHIPPED_BODY,
-        range: 100.0,
+        rounds: BTreeMap::from([(ItemId::new("test_round"), test_ball())]),
         damage: 30,
         cooldown_ticks: 3,
         reload_ticks: 10,
@@ -187,6 +188,61 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
             speed_factor: 0.5,
         },
     }
+}
+
+/// The flight of the `test_round` every test magazine holds: fast and light enough to cover 60 m
+/// above the minimum speed (940 m/s, 1 per second of drag).
+pub(crate) fn test_ball() -> Ballistics {
+    Ballistics {
+        muzzle_velocity: 940.0,
+        drag: 1.0,
+    }
+}
+
+/// `config` with the `test_round` flying at `muzzle_velocity` m/s with `drag` per second.
+pub(crate) fn with_ball(mut config: SimConfig, muzzle_velocity: f32, drag: f32) -> SimConfig {
+    config.rounds.insert(
+        ItemId::new("test_round"),
+        Ballistics {
+            muzzle_velocity,
+            drag,
+        },
+    );
+    config
+}
+
+/// The most ticks a round is waited on: a round lives a handful of ticks, so a test that needs
+/// more has lost it.
+const WAIT_TICKS: usize = 240;
+
+/// Takes the pending feedback of `sim`, then ticks it with no input until a hit on a target has
+/// been reported (or [`WAIT_TICKS`] pass), and returns everything drained, oldest first.
+pub(crate) fn run_until_hit(sim: &mut SearchlightSim) -> Vec<Feedback> {
+    let is_hit = |feedback: &Feedback| matches!(feedback, Feedback::Hit { .. });
+    let mut drained = sim.drain_feedback();
+    for _ in 0..WAIT_TICKS {
+        if drained.iter().any(is_hit) {
+            break;
+        }
+        sim.tick(&SearchlightCommand::default(), DT);
+        drained.extend(sim.drain_feedback());
+    }
+    drained
+}
+
+/// Takes the pending feedback of `sim`, then ticks it with no input until no round is in flight
+/// (or [`WAIT_TICKS`] pass), and returns everything drained, oldest first: so a hit or a near
+/// miss that comes later cannot pass unseen.
+pub(crate) fn run_until_settled(sim: &mut SearchlightSim) -> Vec<Feedback> {
+    let mut drained = sim.drain_feedback();
+    for _ in 0..WAIT_TICKS {
+        if sim.rounds.is_empty() {
+            break;
+        }
+        sim.tick(&SearchlightCommand::default(), DT);
+        drained.extend(sim.drain_feedback());
+    }
+    drained
 }
 
 /// Puts `config`'s eye `height` m above the capsule centre, the frame hit volumes are posed in.
@@ -226,7 +282,18 @@ pub(crate) fn arena_with(
     enemies: &[Vec3],
     route: &[Vec3],
 ) -> Arc<Arena> {
-    arena_with_controls(boxes, player, enemies, route, &[])
+    arena_with_floor(boxes, player, enemies, route, 60.0)
+}
+
+/// Like [`arena_with`] on a square floor `floor_size` m across, centred on the origin.
+pub(crate) fn arena_with_floor(
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+    floor_size: f32,
+) -> Arc<Arena> {
+    arena_on_floor(boxes, player, enemies, route, &[], floor_size)
 }
 
 /// Like [`arena_with`], plus one next-wave control per `(min, max)` box in `controls`, in
@@ -238,7 +305,19 @@ pub(crate) fn arena_with_controls(
     route: &[Vec3],
     controls: &[(Vec3, Vec3)],
 ) -> Arc<Arena> {
-    let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
+    arena_on_floor(boxes, player, enemies, route, controls, 60.0)
+}
+
+fn arena_on_floor(
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+    controls: &[(Vec3, Vec3)],
+    floor_size: f32,
+) -> Arc<Arena> {
+    let half = floor_size / 2.0;
+    let floor = (Vec3::new(-half, -1.0, -half), Vec3::new(half, 0.0, half));
     let meshes: Vec<WorldMesh> = std::iter::once(&floor)
         .chain(boxes)
         .map(|&(min, max)| box_mesh(min, max))

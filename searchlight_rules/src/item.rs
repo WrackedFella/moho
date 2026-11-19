@@ -94,11 +94,15 @@ pub enum Lifecycle {
 }
 
 /// The round section of an item definition.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoundSpec {
     /// Caliber of the round.
     pub caliber: Caliber,
+    /// Speed at the muzzle, in metres per second.
+    pub muzzle_velocity: f32,
+    /// Speed lost per second, as a fraction of the speed, in 1/s.
+    pub drag: f32,
 }
 
 /// The magazine section of an item definition.
@@ -284,9 +288,16 @@ mod tests {
             "fire": "semi_auto",
             "cooldown_ticks": 6,
             "reload_ticks": 120,
-            "charge_ticks": 30,
-            "range": 100.0
+            "charge_ticks": 30
         })
+    }
+
+    fn round_section(muzzle_velocity: Value, drag: Value) -> Value {
+        json!({"caliber": "5.56x45", "muzzle_velocity": muzzle_velocity, "drag": drag})
+    }
+
+    fn round_item(section: Value) -> Value {
+        json!({"class": "consumable", "size": [1, 1], "round": section})
     }
 
     fn error_text(value: Value) -> String {
@@ -400,7 +411,6 @@ mod tests {
                 cooldown_ticks: 6,
                 reload_ticks: 120,
                 charge_ticks: 30,
-                range: 100.0,
             }
         );
     }
@@ -427,16 +437,107 @@ mod tests {
     }
 
     #[test]
-    fn a_round_section_loads_its_caliber() {
-        let item = parse(json!({
-            "class": "consumable", "size": [1, 1], "round": {"caliber": "5.56x45"}
-        }))
-        .expect("a consumable with a round section loads");
+    fn a_round_section_loads_its_caliber_muzzle_velocity_and_drag() {
+        let item = parse(round_item(round_section(json!(940.0), json!(1.0))))
+            .expect("a consumable with a round section loads");
 
         let ItemKind::Round(spec) = item.kind else {
             panic!("expected a round kind, got {:?}", item.kind);
         };
-        assert_eq!(spec.caliber, Caliber::new("5.56x45"));
+        assert_eq!(
+            spec,
+            RoundSpec {
+                caliber: Caliber::new("5.56x45"),
+                muzzle_velocity: 940.0,
+                drag: 1.0,
+            }
+        );
+    }
+
+    #[test]
+    fn a_round_without_muzzle_velocity_is_refused_naming_the_field() {
+        let text = error_text(round_item(json!({"caliber": "5.56x45", "drag": 1.0})));
+
+        assert!(text.contains("muzzle_velocity"), "{text}");
+    }
+
+    #[test]
+    fn a_round_without_drag_is_refused_naming_the_field() {
+        let text = error_text(round_item(
+            json!({"caliber": "5.56x45", "muzzle_velocity": 940.0}),
+        ));
+
+        assert!(text.contains("drag"), "{text}");
+    }
+
+    #[test]
+    fn a_round_with_a_muzzle_velocity_of_0_is_refused_naming_the_field() {
+        let text = error_text(round_item(round_section(json!(0.0), json!(1.0))));
+
+        assert!(text.contains("muzzle_velocity"), "{text}");
+        assert!(text.contains("100"), "the minimum is named: {text}");
+    }
+
+    #[test]
+    fn a_negative_muzzle_velocity_is_refused_naming_the_field() {
+        let text = error_text(round_item(round_section(json!(-940.0), json!(1.0))));
+
+        assert!(text.contains("muzzle_velocity"), "{text}");
+    }
+
+    #[test]
+    fn a_round_at_the_minimum_speed_is_refused_naming_the_field() {
+        let at = error_text(round_item(round_section(json!(100.0), json!(1.0))));
+        let below = error_text(round_item(round_section(json!(99.9), json!(1.0))));
+        let above = parse(round_item(round_section(
+            json!(f64::from(100.0_f32.next_up())),
+            json!(1.0),
+        )));
+
+        assert!(at.contains("muzzle_velocity"), "{at}");
+        assert!(below.contains("muzzle_velocity"), "{below}");
+        assert!(above.is_ok(), "just above the minimum loads: {above:?}");
+    }
+
+    #[test]
+    fn a_round_with_negative_drag_is_refused_naming_the_field() {
+        let text = error_text(round_item(round_section(json!(940.0), json!(-0.5))));
+
+        assert!(text.contains("drag"), "{text}");
+        assert!(!text.contains("muzzle_velocity"), "{text}");
+    }
+
+    #[test]
+    fn a_round_with_drag_0_is_accepted() {
+        let item = parse(round_item(round_section(json!(940.0), json!(0.0))))
+            .expect("a round with no drag is valid");
+
+        let ItemKind::Round(spec) = item.kind else {
+            panic!("expected a round kind, got {:?}", item.kind);
+        };
+        assert_eq!(spec.drag, 0.0);
+    }
+
+    #[test]
+    fn a_round_with_non_finite_values_is_refused_naming_the_field() {
+        let infinite = json!(1.0e39);
+
+        let velocity = error_text(round_item(round_section(infinite.clone(), json!(1.0))));
+        let drag = error_text(round_item(round_section(json!(940.0), infinite)));
+
+        assert!(velocity.contains("muzzle_velocity"), "{velocity}");
+        assert!(drag.contains("drag"), "{drag}");
+        assert!(!drag.contains("muzzle_velocity"), "{drag}");
+    }
+
+    #[test]
+    fn a_round_naming_an_unknown_key_is_refused() {
+        let mut section = round_section(json!(940.0), json!(1.0));
+        section["range"] = json!(100.0);
+
+        let text = error_text(round_item(section));
+
+        assert!(text.contains("range"), "{text}");
     }
 
     #[test]
@@ -461,7 +562,7 @@ mod tests {
                 "magazine",
                 json!({"well": "w", "caliber": "c", "capacity": 1}),
             ),
-            ("gear", "round", json!({"caliber": "c"})),
+            ("gear", "round", round_section(json!(940.0), json!(1.0))),
             ("consumable", "rig", json!({"magazine_slots": 1})),
             ("tool", "rig", json!({"magazine_slots": 1})),
         ];

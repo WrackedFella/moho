@@ -97,19 +97,17 @@ mod tests {
     use std::collections::BTreeSet;
 
     use glam::Vec3;
-    use moho_core::content::ContentRoots;
     use moho_level::{Level, LevelMesh};
     use moho_physics::RayQuery;
     use searchlight_rules::BodyPart;
 
     use super::*;
     use crate::arena::{self, LevelMode};
-    use crate::kit::{self, START_KIT_ID};
+    use crate::assets_root;
     use crate::sim::{STAND_HEIGHT, dummy_hit_volumes};
     use crate::tag::SurfaceTag;
     use crate::test_support::{box_mesh, level_marker, mode_marker};
     use crate::tuning::SHIPPED_BODY;
-    use crate::{assets_root, content_root};
 
     fn chosen(arg: &str) -> Result<LevelChoice, UnknownLevel> {
         choose(Some(OsStr::new(arg)))
@@ -283,11 +281,7 @@ mod tests {
 
     #[test]
     fn the_200_m_dummy_is_in_rifle_range_from_the_firing_line() {
-        let roots = ContentRoots::base(&content_root()).expect("the shipped content folder");
-        let range = kit::load(&roots, START_KIT_ID)
-            .expect("the shipped start kit loads")
-            .weapon
-            .range;
+        let range = 200.0_f32;
         let (_, markers) = shipped("proving_ground.glb");
         let spawn = markers.player_spawn.as_ref().expect("a firing line spawn");
         let far = markers

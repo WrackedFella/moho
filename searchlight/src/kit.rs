@@ -62,8 +62,9 @@ fire = "semi_auto"
 cooldown_ticks = 6
 reload_ticks = 120
 charge_ticks = 30
-range = 100.0
 "#;
+
+    const BALL: &str = r#"round = { caliber = "5.56x45", muzzle_velocity = 940.0, drag = 1.0 }"#;
 
     const OTHER_ITEMS: &str = r#"
 [mag_rifle]
@@ -74,7 +75,7 @@ magazine = { well = "rifle", caliber = "5.56x45", capacity = 30 }
 [round_ball]
 class = "consumable"
 size = [1, 1]
-round = { caliber = "5.56x45" }
+round = { caliber = "5.56x45", muzzle_velocity = 940.0, drag = 1.0 }
 
 [rig_chest]
 class = "gear"
@@ -159,8 +160,122 @@ condition = 100
         assert_eq!(kit.weapon.cooldown_ticks, 6);
         assert_eq!(kit.weapon.reload_ticks, 120);
         assert_eq!(kit.weapon.charge_ticks, 30);
-        assert!((kit.weapon.range - 200.0).abs() < f32::EPSILON);
         assert_eq!(kit.weapon.well, MagazineWell::new("rifle"));
+    }
+
+    #[test]
+    fn the_shipped_start_kit_carries_the_ballistics_of_its_ball_round() {
+        let roots = ContentRoots::base(&content_root()).expect("the shipped content folder");
+
+        let kit = load(&roots, START_KIT_ID).expect("the shipped start kit loads");
+
+        let ball = kit
+            .rounds
+            .get(&ItemId::new("round_rifle_ball"))
+            .expect("the kit names the ball round");
+        assert_eq!(ball.muzzle_velocity, 940.0);
+        assert_eq!(ball.drag, 1.0);
+        assert_eq!(kit.rounds.len(), 1);
+    }
+
+    #[test]
+    fn a_resolved_kit_carries_the_ballistics_of_its_round_from_content() {
+        let items = items_toml().replace(
+            BALL,
+            r#"round = { caliber = "5.56x45", muzzle_velocity = 612.5, drag = 0.25 }"#,
+        );
+        let (_dir, roots) = base_with(&items, &start_kit(2));
+
+        let kit = load(&roots, START_KIT_ID).expect("the kit loads");
+
+        let ball = kit
+            .rounds
+            .get(&ItemId::new("round_ball"))
+            .expect("the kit names the ball round");
+        assert_eq!(ball.muzzle_velocity, 612.5);
+        assert_eq!(ball.drag, 0.25);
+    }
+
+    #[test]
+    fn a_bad_round_fails_the_load_naming_the_round_and_the_field() {
+        let cases = [
+            (
+                "no muzzle velocity",
+                r#"round = { caliber = "5.56x45", drag = 1.0 }"#,
+                "muzzle_velocity",
+            ),
+            (
+                "a muzzle velocity of 0",
+                r#"round = { caliber = "5.56x45", muzzle_velocity = 0.0, drag = 1.0 }"#,
+                "muzzle_velocity",
+            ),
+            (
+                "a muzzle velocity at the minimum",
+                r#"round = { caliber = "5.56x45", muzzle_velocity = 100.0, drag = 1.0 }"#,
+                "muzzle_velocity",
+            ),
+            (
+                "an infinite muzzle velocity",
+                r#"round = { caliber = "5.56x45", muzzle_velocity = inf, drag = 1.0 }"#,
+                "muzzle_velocity",
+            ),
+            (
+                "a nan muzzle velocity",
+                r#"round = { caliber = "5.56x45", muzzle_velocity = nan, drag = 1.0 }"#,
+                "muzzle_velocity",
+            ),
+            (
+                "no drag",
+                r#"round = { caliber = "5.56x45", muzzle_velocity = 940.0 }"#,
+                "drag",
+            ),
+            (
+                "a negative drag",
+                r#"round = { caliber = "5.56x45", muzzle_velocity = 940.0, drag = -1.0 }"#,
+                "drag",
+            ),
+            (
+                "an infinite drag",
+                r#"round = { caliber = "5.56x45", muzzle_velocity = 940.0, drag = inf }"#,
+                "drag",
+            ),
+            (
+                "a nan drag",
+                r#"round = { caliber = "5.56x45", muzzle_velocity = 940.0, drag = nan }"#,
+                "drag",
+            ),
+        ];
+        for (problem, section, field) in cases {
+            let (dir, roots) = base_with(&items_toml().replace(BALL, section), &start_kit(2));
+
+            let Err(error) = load(&roots, START_KIT_ID) else {
+                panic!("a round with {problem} loaded");
+            };
+
+            let KitLoadError::Content(ContentError::Invalid { file, id, reason }) = &error else {
+                panic!("{problem}: expected Invalid content, got {error:?}");
+            };
+            assert_eq!(file, &dir.path().join("items.toml"), "{problem}");
+            assert_eq!(id, "round_ball", "{problem}");
+            assert!(reason.contains(field), "{problem}: {reason}");
+        }
+    }
+
+    #[test]
+    fn a_rifle_that_still_names_a_range_fails_the_load_naming_the_rifle() {
+        let items =
+            items_toml().replace("charge_ticks = 30\n", "charge_ticks = 30\nrange = 100.0\n");
+        let (_dir, roots) = base_with(&items, &start_kit(2));
+
+        let Err(error) = load(&roots, START_KIT_ID) else {
+            panic!("a rifle that names a range loaded");
+        };
+
+        let KitLoadError::Content(ContentError::Invalid { id, reason, .. }) = &error else {
+            panic!("expected Invalid content, got {error:?}");
+        };
+        assert_eq!(id, "rifle");
+        assert!(reason.contains("range"), "{reason}");
     }
 
     #[test]
@@ -287,7 +402,10 @@ magazine = { well = "rifle", caliber = "5.56x45", capacity = 20 }
 
         let shots: Vec<Shot> = (0..21).map(|_| kit.loadout.fire()).collect();
         let (fired, dry) = shots.split_at(20);
-        assert!(fired.iter().all(|shot| *shot == Shot::Fired), "{shots:?}");
+        assert!(
+            fired.iter().all(|shot| matches!(shot, Shot::Fired(_))),
+            "{shots:?}"
+        );
         assert_eq!(dry, [Shot::Dry]);
     }
 }

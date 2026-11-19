@@ -41,6 +41,19 @@ impl DebugSettings {
         self.prefs.save_to(&self.path)
     }
 
+    /// Whether Simple is stored as on; an absent or unrecognised value reads as off.
+    pub fn simple(&self) -> bool {
+        false
+    }
+
+    /// Stores Simple and saves the prefs file.
+    ///
+    /// # Errors
+    /// The I/O error if the file cannot be written.
+    pub fn set_simple(&mut self, _on: bool) -> io::Result<()> {
+        self.prefs.save_to(&self.path)
+    }
+
     /// Stores the engine's settings rows and saves the prefs file; every other value in the
     /// file is kept, and the rows are kept for the session if the save fails.
     ///
@@ -123,6 +136,53 @@ mod tests {
         assert!(after_on);
         assert!(!after_off);
         assert!(!settings.god_mode());
+    }
+
+    #[test]
+    fn simple_survives_save_and_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config/searchlight.ini");
+        let mut settings = settings_at(&path);
+        let fresh = settings_at(&path).simple();
+
+        settings.set_simple(true).unwrap();
+        let after_on = settings_at(&path);
+        settings.set_simple(false).unwrap();
+        let after_off = settings_at(&path).simple();
+
+        assert!(!fresh);
+        assert!(after_on.simple());
+        assert_eq!(after_on.prefs().debug_value("simple"), Some("1"));
+        assert!(!after_off);
+        assert!(!settings.simple());
+    }
+
+    #[test]
+    fn simple_and_god_mode_are_kept_apart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("searchlight.ini");
+        let mut settings = settings_at(&path);
+
+        settings.set_simple(true).unwrap();
+        let only_simple = settings_at(&path);
+        settings.set_god_mode(true).unwrap();
+        settings.set_simple(false).unwrap();
+        let only_god = settings_at(&path);
+
+        assert!(only_simple.simple() && !only_simple.god_mode());
+        assert!(only_god.god_mode() && !only_god.simple());
+    }
+
+    #[test]
+    fn an_unrecognised_simple_value_reads_as_off() {
+        for value in ["0", "2", "yes", "true", "on", "11"] {
+            let mut prefs = Prefs::default();
+            prefs.set_debug_value("simple", value).unwrap();
+
+            let settings = DebugSettings::new(prefs, PathBuf::from("unused.ini"));
+
+            assert!(!settings.simple(), "{value:?}");
+        }
     }
 
     #[test]

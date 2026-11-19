@@ -10,8 +10,9 @@ use moho_physics::PhysicsWorld;
 use moho_render_api::{WorldMesh, WorldMeshId};
 
 use crate::control::ControlAction;
-use crate::sim::{CAPSULE_RADIUS, STAND_HEIGHT};
+use crate::sim::{CAPSULE_RADIUS, STAND_HEIGHT, STAND_IN_BOUNDS};
 use crate::tag::SurfaceTag;
+use searchlight_rules::FlightBounds;
 
 /// One nominal tick, enough for a step to index freshly added colliders.
 pub(crate) const SETTLE_DT: f32 = 1.0 / 60.0;
@@ -248,6 +249,9 @@ pub struct Arena {
     pub nav_fallback: bool,
 }
 
+/// Metres past the arena's meshes a round may fly before it is gone.
+pub const FLIGHT_MARGIN: f32 = 100.0;
+
 /// Extra metres of clearance on top of the capsule radius, so paths do not graze corners.
 const NAV_CLEARANCE: f32 = 0.1;
 
@@ -342,6 +346,11 @@ impl Arena {
             covers: positions(&markers.covers),
             controls,
         })
+    }
+
+    /// The box rounds may fly in: every mesh's box, grown by [`FLIGHT_MARGIN`] on every side.
+    pub fn flight_bounds(&self) -> FlightBounds {
+        STAND_IN_BOUNDS
     }
 
     /// A physics world whose static colliders are this arena's meshes, tagged
@@ -494,6 +503,22 @@ mod tests {
 
     fn shipped_arena() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/arena.glb")
+    }
+
+    #[test]
+    fn flight_bounds_enclose_every_mesh_with_the_margin() {
+        let tower = (Vec3::new(40.0, 0.0, -10.0), Vec3::new(50.0, 5.0, 60.0));
+        let pit = (Vec3::new(-20.0, -8.0, 0.0), Vec3::new(-10.0, 0.0, 10.0));
+        let arena = crate::test_support::arena_with(&[tower, pit], Vec3::ZERO, &[], &[]);
+
+        let bounds = arena.flight_bounds();
+
+        // The floor spans -30 to 30 on x and z and -1 to 0 on y.
+        assert_eq!(FLIGHT_MARGIN, 100.0);
+        assert_eq!(bounds.min, Vec3::new(-130.0, -108.0, -130.0));
+        assert_eq!(bounds.max, Vec3::new(150.0, 105.0, 160.0));
+        assert!(bounds.contains(Vec3::new(150.0, 105.0, 160.0)));
+        assert!(!bounds.contains(Vec3::new(150.1, 0.0, 0.0)));
     }
 
     #[test]

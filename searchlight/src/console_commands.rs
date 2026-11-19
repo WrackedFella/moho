@@ -6,22 +6,42 @@ use std::collections::BTreeMap;
 use moho_input::bindings::BindingWarning;
 use moho_ui_shell::Console;
 use moho_ui_shell::console::registry::{CommandSpec, ParseFn};
-use searchlight_rules::Grade;
+use searchlight_rules::{Grade, GravityScale};
 
 use crate::arena::LevelMode;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ConsoleCommand {
     GodMode(GodModeArg),
     Fullscreen,
     /// Force the grade of new enemies, or with `None` clear the force.
     ForceGrade(Option<Grade>),
+    /// Turn Simple (hitscan) on or off.
+    Simple(SimpleArg),
+    /// How strongly gravity pulls rounds.
+    RoundGravity(GravityScale),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GodModeArg {
     Toggle,
     Set(bool),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SimpleArg {
+    Toggle,
+    Set(bool),
+}
+
+/// Parses `simple [0|1]`; no argument toggles.
+pub fn parse_simple(_args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    Err("Usage: simple [0|1]".to_owned())
+}
+
+/// Parses `round_gravity <scale>`.
+pub fn parse_round_gravity(_args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    Err("Usage: round_gravity <scale>".to_owned())
 }
 
 /// Parses `tgm [0|1]`; no argument toggles.
@@ -111,6 +131,22 @@ fn console_with_grade(
             parse: parse_grade,
         })
         .expect("\"grade\" is not an engine command and is registered once");
+    console
+        .register(CommandSpec {
+            name: "simple".to_owned(),
+            usage: "simple [0|1]".to_owned(),
+            help: "toggle simple (hitscan) shots".to_owned(),
+            parse: parse_simple,
+        })
+        .expect("\"simple\" is not an engine command and is registered once");
+    console
+        .register(CommandSpec {
+            name: "round_gravity".to_owned(),
+            usage: "round_gravity <scale>".to_owned(),
+            help: "scale the gravity on rounds in flight".to_owned(),
+            parse: parse_round_gravity,
+        })
+        .expect("\"round_gravity\" is not an engine command and is registered once");
     (console, warnings)
 }
 
@@ -320,6 +356,123 @@ mod tests {
         let lines = printed(&console);
         let expected = format!("  {GRADE_USAGE} - force the grade of new enemies");
         assert!(lines.contains(&expected), "{lines:?}");
+    }
+
+    /// Whether `line` reports Simple as `state`, however it is worded.
+    fn reports_simple(line: &str, state: &str) -> bool {
+        line.starts_with("Simple") && line.ends_with(state)
+    }
+
+    #[test]
+    fn simple_toggles_and_sets() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        console.submit("simple");
+        let toggled = (console.take_commands(), last_line(&console));
+        console.submit("simple 1");
+        let on = (console.take_commands(), last_line(&console));
+        console.submit("simple 0");
+        let off = (console.take_commands(), last_line(&console));
+
+        assert_eq!(
+            toggled,
+            (
+                vec![ConsoleCommand::Simple(SimpleArg::Toggle)],
+                "> simple".to_owned()
+            )
+        );
+        assert_eq!(on.0, vec![ConsoleCommand::Simple(SimpleArg::Set(true))]);
+        assert!(reports_simple(&on.1, "on"), "{:?}", on.1);
+        assert_eq!(off.0, vec![ConsoleCommand::Simple(SimpleArg::Set(false))]);
+        assert!(reports_simple(&off.1, "off"), "{:?}", off.1);
+    }
+
+    #[test]
+    fn simple_refuses_an_unusable_argument_and_queues_nothing() {
+        for line in [
+            "simple 2",
+            "simple on",
+            "simple 1 0",
+            "simple 01",
+            "simple -1",
+        ] {
+            let (mut console, _) = console(&BTreeMap::new());
+
+            console.submit(line);
+
+            assert!(console.take_commands().is_empty(), "{line}");
+            let reply = last_line(&console);
+            assert!(reply.contains("simple [0|1]"), "{line}: {reply:?}");
+        }
+    }
+
+    fn scale(value: f32) -> GravityScale {
+        GravityScale::new(value).expect("the test scale is valid")
+    }
+
+    #[test]
+    fn round_gravity_sets_a_valid_scale() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        for (line, expected) in [
+            ("round_gravity 30", 30.0),
+            ("round_gravity 0", 0.0),
+            ("round_gravity 1", 1.0),
+            ("round_gravity 0.5", 0.5),
+            ("round_gravity 1000", 1000.0),
+        ] {
+            console.submit(line);
+
+            assert_eq!(
+                console.take_commands(),
+                vec![ConsoleCommand::RoundGravity(scale(expected))],
+                "{line}"
+            );
+            let reply = last_line(&console);
+            assert!(!reply.starts_with("Usage"), "{line}: {reply:?}");
+        }
+    }
+
+    #[test]
+    fn round_gravity_refuses_negative_and_non_numeric_values() {
+        for line in [
+            "round_gravity",
+            "round_gravity -1",
+            "round_gravity -0.5",
+            "round_gravity abc",
+            "round_gravity 1000.5",
+            "round_gravity 1001",
+            "round_gravity nan",
+            "round_gravity inf",
+            "round_gravity 1 2",
+        ] {
+            let (mut console, _) = console(&BTreeMap::new());
+
+            console.submit(line);
+
+            assert!(console.take_commands().is_empty(), "{line}");
+            let reply = last_line(&console);
+            assert!(
+                reply.contains("Usage: round_gravity <scale>"),
+                "{line}: {reply:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn help_lists_simple_and_round_gravity() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        console.submit("help");
+
+        let lines = printed(&console);
+        for usage in ["simple [0|1]", "round_gravity <scale>"] {
+            let listed = format!("  {usage} - ");
+            assert!(
+                lines.iter().any(|line| line.starts_with(&listed)),
+                "{usage}: {lines:?}"
+            );
+        }
     }
 
     #[test]

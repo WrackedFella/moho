@@ -1,5 +1,6 @@
 //! Starting kits: a rig, a rifle and magazines named by item id, resolved against item data.
 
+use crate::ballistics::Ballistics;
 use crate::item::{ItemDef, ItemId, ItemKind};
 use crate::loadout::Loadout;
 use crate::magazine::Magazine;
@@ -7,6 +8,7 @@ use crate::rifle::Rifle;
 use crate::rig::Rig;
 use crate::weapon::RifleDef;
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use thiserror::Error;
 
 /// A magazine in a kit: which magazine item, which round it holds, and how many.
@@ -44,6 +46,8 @@ pub struct Kit {
     pub weapon: RifleDef,
     /// The rifle and rig, ready to play.
     pub loadout: Loadout,
+    /// The ballistics of every round the kit names, by round item.
+    pub rounds: BTreeMap<ItemId, Ballistics>,
 }
 
 /// Why a kit could not be resolved.
@@ -169,6 +173,7 @@ impl KitDef {
         Ok(Kit {
             weapon: weapon.clone(),
             loadout: Loadout::new(rifle, rig),
+            rounds: BTreeMap::new(),
         })
     }
 }
@@ -188,7 +193,7 @@ mod tests {
                 "class": "weapon", "size": [2, 5], "condition": 100,
                 "weapon": {
                     "well": "rifle", "damage": 30, "fire": "semi_auto", "cooldown_ticks": 6,
-                    "reload_ticks": 120, "charge_ticks": 30, "range": 100.0
+                    "reload_ticks": 120, "charge_ticks": 30
                 }
             },
             "mag_rifle": {
@@ -199,8 +204,18 @@ mod tests {
                 "class": "gear", "size": [1, 1],
                 "magazine": {"well": "pistol", "caliber": "9mm", "capacity": 15}
             },
-            "round_ball": {"class": "consumable", "size": [1, 1], "round": {"caliber": "5.56x45"}},
-            "round_9mm": {"class": "consumable", "size": [1, 1], "round": {"caliber": "9mm"}},
+            "round_ball": {
+                "class": "consumable", "size": [1, 1],
+                "round": {"caliber": "5.56x45", "muzzle_velocity": 940.0, "drag": 1.0}
+            },
+            "round_9mm": {
+                "class": "consumable", "size": [1, 1],
+                "round": {"caliber": "9mm", "muzzle_velocity": 350.0, "drag": 2.5}
+            },
+            "round_unused": {
+                "class": "consumable", "size": [1, 1],
+                "round": {"caliber": "5.56x45", "muzzle_velocity": 800.0, "drag": 0.5}
+            },
             "rig_chest": {"class": "gear", "size": [3, 2], "rig": {"magazine_slots": 3}},
             "crowbar": {"class": "tool", "size": [1, 3], "condition": 100}
         });
@@ -277,9 +292,52 @@ mod tests {
                 cooldown_ticks: 6,
                 reload_ticks: 120,
                 charge_ticks: 30,
-                range: 100.0,
             }
         );
+    }
+
+    #[test]
+    fn a_resolved_kit_carries_the_ballistics_of_every_round_it_names() {
+        let ball = Ballistics {
+            muzzle_velocity: 940.0,
+            drag: 1.0,
+        };
+        let nine = Ballistics {
+            muzzle_velocity: 350.0,
+            drag: 2.5,
+        };
+        let one_round = resolve(&start(two_full())).expect("the starting kit resolves");
+        let two_rounds = resolve(&start(json!([
+            {"magazine": "mag_pistol", "round": "round_9mm"},
+            {"magazine": "mag_rifle", "round": "round_ball"}
+        ])))
+        .expect("a rig magazine of another round resolves");
+
+        assert_eq!(
+            one_round.rounds,
+            BTreeMap::from([(id("round_ball"), ball)]),
+            "a round the kit does not name is absent"
+        );
+        assert_eq!(
+            two_rounds.rounds,
+            BTreeMap::from([(id("round_ball"), ball), (id("round_9mm"), nine)])
+        );
+    }
+
+    #[test]
+    fn a_kit_names_a_round_it_only_stows_in_a_spare_magazine() {
+        let def = kit_def(json!({
+            "rig": "rig_chest", "weapon": "rifle",
+            "loaded": {"magazine": "mag_rifle", "round": "round_ball"},
+            "magazines": [{"magazine": "mag_rifle", "round": "round_unused", "rounds": 3}]
+        }));
+
+        let kit = resolve(&def).expect("the kit resolves");
+
+        let ids: Vec<&ItemId> = kit.rounds.keys().collect();
+        assert_eq!(ids, [&id("round_ball"), &id("round_unused")]);
+        assert_eq!(kit.rounds[&id("round_unused")].muzzle_velocity, 800.0);
+        assert_eq!(kit.rounds[&id("round_unused")].drag, 0.5);
     }
 
     #[test]
