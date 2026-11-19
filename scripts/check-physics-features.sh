@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Fails unless the resolved features of rapier3d and parry3d include enhanced-determinism,
-# which keeps the physics step off the platform math library. `cargo deny` bans features
-# but cannot require them, hence this check. MOHO_PHYSICS_METADATA names a file holding
-# `cargo metadata --format-version 1` output; the self-tests point it at fixtures.
+# enhanced-determinism keeps the physics step off the platform math library, and `cargo deny`
+# cannot require a feature, hence this check. MOHO_PHYSICS_METADATA replaces the
+# `cargo metadata --format-version 1` input with a file (the self-test fixtures).
 set -euo pipefail
 
 feature="enhanced-determinism"

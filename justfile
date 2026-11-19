@@ -40,8 +40,6 @@ deny:
     just _physics-features-selftest
     bash scripts/check-physics-features.sh
 
-# The feature check passes on a fixture with both features and fails, naming the crate,
-# on a fixture missing either one.
 [private]
 _physics-features-selftest:
     #!/usr/bin/env bash
