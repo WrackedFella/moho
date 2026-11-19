@@ -54,17 +54,24 @@ impl MineMarks {
 
     /// Records that `pawn` has taken the mark on `pos`.
     pub fn claim(&mut self, pos: [i32; 3], pawn: PawnId) {
-        todo!("claim {pos:?} for {pawn:?}")
+        if let Some(mark) = self.marks.get_mut(&pos) {
+            mark.claimed_by = Some(pawn);
+        }
     }
 
     /// Frees the mark on `pos` for any pawn to take; the mark itself stays.
     pub fn release(&mut self, pos: [i32; 3]) {
-        todo!("release {pos:?}")
+        if let Some(mark) = self.marks.get_mut(&pos) {
+            mark.claimed_by = None;
+        }
     }
 
     /// The marks no pawn has claimed, in key order.
     pub fn unclaimed(&self) -> impl Iterator<Item = [i32; 3]> {
-        std::iter::empty()
+        self.marks
+            .iter()
+            .filter(|(_, mark)| mark.claimed_by.is_none())
+            .map(|(pos, _)| *pos)
     }
 
     /// Drops the mark on a block that no longer exists; does nothing for an unmarked one.

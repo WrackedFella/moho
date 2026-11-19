@@ -1,6 +1,9 @@
 //! Where a pawn can stand and walk on the voxel grid: standable cells and a route search
 //! over them. A pawn rule, so it lives with the strategy line rather than in the voxel crate.
 
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
+
 use flagstone_voxel::{BlockPos, VoxelGrid};
 use glam::Vec3;
 
@@ -9,13 +12,16 @@ pub const ROUTE_NODE_BUDGET: usize = 4096;
 
 /// Whether a pawn can stand with its feet in `cell`: ground in the cell below and air in
 /// the three cells from the feet up (the capsule is 2.3 m tall).
-pub fn standable(_grid: &VoxelGrid, cell: BlockPos) -> bool {
-    todo!("standable {cell:?}")
+pub fn standable(grid: &VoxelGrid, cell: BlockPos) -> bool {
+    grid.is_solid_at(cell - BlockPos::Y)
+        && !grid.is_solid_at(cell)
+        && !grid.is_solid_at(cell + BlockPos::Y)
+        && !grid.is_solid_at(cell + BlockPos::Y * 2)
 }
 
 /// The cell a pawn whose feet are at `feet` stands in: each axis floored.
 pub fn feet_cell(feet: Vec3) -> BlockPos {
-    todo!("feet_cell {feet:?}")
+    feet.floor().as_ivec3()
 }
 
 /// A route over standable cells from `start` to the first cell `is_goal` accepts, the
@@ -27,13 +33,82 @@ pub fn feet_cell(feet: Vec3) -> BlockPos {
 /// is tried one cell above and one below before giving up. `toward` steers the search
 /// (Manhattan distance); the same grid always gives the same route.
 pub fn route(
-    _grid: &VoxelGrid,
+    grid: &VoxelGrid,
     start: BlockPos,
-    _is_goal: impl Fn(BlockPos) -> bool,
+    is_goal: impl Fn(BlockPos) -> bool,
     toward: BlockPos,
     budget: usize,
 ) -> Option<Vec<BlockPos>> {
-    todo!("route {start:?} toward {toward:?} within {budget}")
+    let start = [start, start + BlockPos::Y, start - BlockPos::Y]
+        .into_iter()
+        .find(|&cell| standable(grid, cell))?;
+    let heuristic = |cell: BlockPos| (cell - toward).abs().element_sum().unsigned_abs();
+
+    // Cheapest known cost to each reached cell, and the cell it was reached from.
+    let mut reached: HashMap<BlockPos, (u32, Option<BlockPos>)> = HashMap::new();
+    let mut open = BinaryHeap::new();
+    let mut inserted = 0u32;
+    reached.insert(start, (0, None));
+    open.push(Reverse((heuristic(start), 0, inserted, start.to_array())));
+
+    let mut expansions = 0;
+    while let Some(Reverse((_, g, _, cell))) = open.pop() {
+        let cell = BlockPos::from_array(cell);
+        if reached.get(&cell).is_some_and(|&(best, _)| g > best) {
+            continue;
+        }
+        if is_goal(cell) {
+            return Some(path_to(&reached, cell));
+        }
+        if expansions == budget {
+            return None;
+        }
+        expansions += 1;
+
+        for next in neighbours(grid, cell) {
+            let cost = g + 1;
+            if reached.get(&next).is_some_and(|&(best, _)| best <= cost) {
+                continue;
+            }
+            reached.insert(next, (cost, Some(cell)));
+            inserted += 1;
+            open.push(Reverse((
+                cost + heuristic(next),
+                cost,
+                inserted,
+                next.to_array(),
+            )));
+        }
+    }
+    None
+}
+
+/// The standable cells one horizontal step from `cell`, level, up or down one block.
+fn neighbours(grid: &VoxelGrid, cell: BlockPos) -> impl Iterator<Item = BlockPos> + '_ {
+    let can_climb = !grid.is_solid_at(cell + BlockPos::Y * 3);
+    [BlockPos::X, BlockPos::NEG_X, BlockPos::Z, BlockPos::NEG_Z]
+        .into_iter()
+        .flat_map(move |step| {
+            let beside = cell + step;
+            [
+                (true, beside),
+                (can_climb, beside + BlockPos::Y),
+                (true, beside - BlockPos::Y),
+            ]
+        })
+        .filter(|&(allowed, next)| allowed && standable(grid, next))
+        .map(|(_, next)| next)
+}
+
+fn path_to(reached: &HashMap<BlockPos, (u32, Option<BlockPos>)>, goal: BlockPos) -> Vec<BlockPos> {
+    let mut path = vec![goal];
+    let mut at = goal;
+    while let Some(&(_, Some(from))) = reached.get(&at) {
+        path.push(from);
+        at = from;
+    }
+    path.reverse();
+    path
 }
 
 #[cfg(test)]

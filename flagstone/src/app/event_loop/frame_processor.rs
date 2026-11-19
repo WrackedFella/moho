@@ -3,13 +3,19 @@
 //! Handles per-tick game state updates and per-frame lighting and HUD data.
 
 use crate::App;
-use crate::app::event_loop::event_processor::{lod_for_chunk, lod_player_chunk};
+use crate::app::event_loop::event_processor::{
+    lod_for_chunk, lod_player_chunk, publish_dig_cue, publish_removal,
+};
 use crate::app::input_state::Designation;
+use flagstone_game::pawn::{MINE_REACH, PawnId};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 /// Frame counter for tracking frame numbers
 static FRAME_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// The one pawn there is.
+const PAWN_ID: PawnId = PawnId(0);
 
 /// Walking speed in m/s.
 const MOVE_SPEED: f32 = 4.0;
@@ -77,6 +83,10 @@ impl FrameProcessor {
             };
             let (view, proj, eye) = app.simulation.apply_input(dt, ground);
             app.camera = (view, proj, eye);
+
+            if app.simulation.camera_mode() == flagstone_game::controller::CameraMode::Isometric {
+                self.run_pawn_job(app, dt);
+            }
         }
 
         // Step rigid bodies in both KCC and non-KCC paths (test spheres, etc.)
@@ -86,6 +96,72 @@ impl FrameProcessor {
 
         // Clear zoom delta after use
         app.simulation.controller_input.zoom_delta = 0.0;
+    }
+
+    /// One tick of the unpossessed pawn's job: the walk goes through the pawn's own character
+    /// at walking speed, and the dig through `Pawn::dig`, as a possessed pawn's would. The
+    /// yield goes to the colony's stock. An idle pawn is not moved at all.
+    fn run_pawn_job(&self, app: &mut App, dt: f32) {
+        let Some(state) = app
+            .physics
+            .world
+            .as_ref()
+            .zip(app.physics.player)
+            .and_then(|(world, player)| world.character(player))
+        else {
+            return;
+        };
+        let Some(light_system) = app.light_system.as_mut() else {
+            return;
+        };
+        let grid = light_system.grid_mut();
+        let pose = flagstone_game::jobs::Pose {
+            feet: state.position - glam::Vec3::Y * flagstone_game::jobs::EYE_HEIGHT,
+            yaw: state.yaw,
+        };
+
+        // The job leaves the pawn for the call: `step` borrows both.
+        let mut job = std::mem::take(&mut app.pawn.job);
+        let action = flagstone_game::jobs::step(
+            &mut job,
+            &mut app.pawn,
+            PAWN_ID,
+            pose,
+            &mut app.colony.marks,
+            grid,
+        );
+        app.pawn.job = job;
+
+        match action {
+            flagstone_game::jobs::JobAction::Wait => {}
+            flagstone_game::jobs::JobAction::Walk { to } => {
+                let walk = flagstone_game::jobs::steer(pose, to);
+                let command = moho_physics::CharacterCommand {
+                    forward: walk.forward,
+                    yaw_delta: walk.yaw_delta,
+                    ..moho_physics::CharacterCommand::default()
+                };
+                if let Some(moved) =
+                    app.physics
+                        .move_character(&command, &STRATEGY_MOVE_SETTINGS, dt)
+                {
+                    app.simulation
+                        .set_position_yaw_pitch(moved.position, moved.yaw, moved.pitch);
+                }
+            }
+            flagstone_game::jobs::JobAction::Dig { block, aim } => {
+                let dir = (aim - state.position).normalize_or_zero();
+                let Some(outcome) = app.pawn.dig(grid, state.position, dir, MINE_REACH) else {
+                    tracing::debug!(block = ?block, "Pawn dig found nothing to remove");
+                    return;
+                };
+                if let Some(yield_) = outcome.yield_ {
+                    app.colony.stock.add(yield_.resource_id, yield_.amount);
+                }
+                publish_removal(&app.event_bus, grid.chunk_size(), &outcome);
+                publish_dig_cue(&app.event_bus, outcome.block_pos);
+            }
+        }
     }
 
     fn update_game_state_fps_kcc(&self, app: &mut App, dt: f32) {
@@ -392,6 +468,8 @@ impl FrameProcessor {
 
         let mut hotbar: Vec<(u32, u32)> = app.pawn.inventory.iter().collect();
         hotbar.sort_by_key(|(resource_id, _)| *resource_id);
+        let mut colony_stock: Vec<(u32, u32)> = app.colony.stock.iter().collect();
+        colony_stock.sort_by_key(|(resource_id, _)| *resource_id);
 
         // Only one tool exists today (`flagstone_game::tools::STARTING_TOOL`); the
         // label is a fixed string until a real tool-name lookup exists.
@@ -436,7 +514,7 @@ impl FrameProcessor {
                 .collect(),
             selection,
             mine_designation_active: app.input.designation == Designation::Mine,
-            colony_stock: Vec::new(),
+            colony_stock,
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {

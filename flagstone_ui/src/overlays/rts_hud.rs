@@ -1,6 +1,6 @@
 //! RTS HUD overlay — visible during isometric/RTS camera mode.
 //!
-//! Draws the time of day, the view-height slider and the selection panel, and reports the
+//! Draws the time of day, the colony totals, the view-height slider and the selection panel, and reports the
 //! player's pick through `take_intents`.
 
 use super::overlay_manager::{HudData, HudIntents, Overlay, SelectionHud, ViewHeightHud};
@@ -60,6 +60,9 @@ impl Overlay for RtsHud {
         if let Some(selection) = &data.selection {
             render_selection(ui, selection);
         }
+        if !data.colony_stock.is_empty() {
+            render_colony_stock(ui, &data.colony_stock);
+        }
     }
 
     fn take_intents(&mut self, out: &mut HudIntents) {
@@ -89,6 +92,26 @@ fn render_selection(ui: &mut egui::Ui, selection: &SelectionHud) {
                     }
                     for (name, count) in &selection.carried {
                         ui.label(egui::RichText::new(format!("{name}: {count}")).color(colour));
+                    }
+                });
+        });
+}
+
+/// The colony's totals, one `R<id> ×n` line per resource in the given order, under the clock.
+/// There is no resource-name table yet, so the label is the hotbar's.
+fn render_colony_stock(ui: &mut egui::Ui, stock: &[(u32, u32)]) {
+    egui::Area::new("rts_colony_stock".into())
+        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 48.0))
+        .show(ui.ctx(), |ui| {
+            egui::Frame::new()
+                .fill(egui::Color32::from_rgba_premultiplied(0, 0, 0, 120))
+                .inner_margin(egui::Margin::same(6))
+                .show(ui, |ui| {
+                    for (id, count) in stock {
+                        ui.label(
+                            egui::RichText::new(format!("R{id} ×{count}"))
+                                .color(egui::Color32::from_rgb(220, 220, 200)),
+                        );
                     }
                 });
         });
