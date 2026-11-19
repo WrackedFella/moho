@@ -256,6 +256,32 @@ mod tests {
     }
 
     #[test]
+    fn lone_modifier_after_a_conflict_is_not_captured_and_changes_nothing() {
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry(); // Descend holds Ctrl
+        let mut changed = vec![];
+        handler.start_listening(0);
+        let first =
+            handler.capture_modifier_if_listening(1, &bindings, |a, b| changed.push((a, b)));
+
+        let release =
+            handler.capture_modifier_if_listening(0, &bindings, |a, b| changed.push((a, b)));
+        let second =
+            handler.capture_modifier_if_listening(4, &bindings, |a, b| changed.push((a, b)));
+
+        assert!(first);
+        assert!(!release);
+        assert!(!second);
+        assert!(!handler.is_listening());
+        assert!(changed.is_empty());
+        assert!(handler.has_pending_binding());
+        assert_eq!(
+            handler.take_conflict_modal(),
+            Some(("Move Down".to_string(), "Ctrl".to_string()))
+        );
+    }
+
+    #[test]
     fn take_conflict_modal_returns_holder_name_then_key_description() {
         let mut handler = KeybindCaptureHandler::new();
         let bindings = registry();

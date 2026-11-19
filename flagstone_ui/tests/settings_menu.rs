@@ -719,6 +719,48 @@ fn cancel_after_stray_key_changes_nothing() {
     assert!(!menu.is_listening());
 }
 
+/// A Ctrl conflict ends listening, and a later Alt (release, then press) binds nothing.
+#[test]
+fn ctrl_conflict_ends_listening_and_later_alt_binds_nothing() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let before = all_staged_bindings(&menu);
+    menu.start_listening(0);
+
+    render_with_modifiers(&mut menu, egui::Modifiers::CTRL);
+
+    assert_eq!(menu.conflict_modal().conflict_binding_desc(), "Ctrl");
+    assert_eq!(menu.conflict_modal().conflict_key_name(), "Move Down");
+    assert!(!menu.is_listening());
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+
+    render_with_modifiers(&mut menu, egui::Modifiers::NONE);
+    render_with_modifiers(&mut menu, egui::Modifiers::ALT);
+
+    assert_eq!(all_staged_bindings(&menu), before);
+    assert!(!menu.is_listening());
+}
+
+/// After a cancelled prompt, the same row listens again and binds a free Alt.
+#[test]
+fn listening_works_again_after_a_cancelled_conflict() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = menu_with_shift_prompt_open();
+    Screen::on_modal_cancel(&mut menu);
+    assert!(!menu.is_listening());
+
+    menu.start_listening(0);
+    render_with_modifiers(&mut menu, egui::Modifiers::ALT);
+
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::Alt), pad_stick(StickDir::Up)]
+    );
+    assert!(!menu.is_listening());
+}
+
 /// Rebinding a row replaces its plain key and keeps its hold bindings, in the settings text too.
 #[test]
 fn rebinding_sprint_keeps_its_hold_bindings() {
