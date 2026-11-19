@@ -87,7 +87,7 @@ a round of another caliber than its magazine, more rounds than the magazine hold
 magazine whose `well` differs from the weapon's, or more magazines than the rig has slots. Rig
 magazines of another `well` are allowed; reload skips them.
 
-A `Kit` also carries the `Ballistics` of every round item in the content, by item id (`Kit::rounds`); the sim looks a fired round up there.
+A `Kit` also carries the `Ballistics` of every round the kit names, by item id (`Kit::rounds`); the sim looks a fired round up there.
 
 `weapons.toml` is no longer read: a mod that still ships one is ignored without an error.
 

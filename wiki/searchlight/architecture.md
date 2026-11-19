@@ -117,7 +117,7 @@ The title status line appends `GOD MODE` (`hud::god_mode_text`).
 
 `SearchlightSim::tick(command, dt)` lets the enemies perceive and move, moves the player character
 (slower while a lean is held), steps the physics world, blends the player's lean ([posture](#8-posture)),
-applies weapon actions, then resolves the shots the enemies decided
+steps the rounds in flight ([shot path](#6-shot-path)), applies weapon actions, then resolves the shots the enemies decided
 on and removes enemies that died. The rifle is in one state at a time (ready, cooling down
 after a shot, reloading); cooldown and reload are tick counts. A reload takes `reload_ticks`, plus
 `charge_ticks` when the chamber is empty. It swaps in the next fitting magazine from the `Rig`
@@ -179,7 +179,7 @@ Each enemy has a `searchlight_rules::Grade` (`Rookie`, `Novice`, `Experienced`, 
 
 ## 6 Shot path
 
-The player's shot is a round in flight unless Simple is on. Pulling the trigger launches a `RoundInFlight` (`round.rs`) from the leaned eye along the view, with the `Ballistics` of the fired round from `SimConfig::rounds` (a round without an entry flies nothing). Each tick `SearchlightSim::step_rounds` advances every round with `searchlight_rules::Flight::step` under gravity and drag, and `round::step_round` casts the segment it flew through the physics world by the route below. A part strike lands damage; a round is removed when it strikes anything, falls to `MIN_SPEED` (`Flight::is_spent`) or leaves the `FlightBounds` from `Arena::flight_bounds` (the arena's meshes grown by `FLIGHT_MARGIN`). Near misses are counted per segment, once per enemy per round. The round's gravity is set at launch from `round_gravity`. Under Simple the shot resolves at once as one ray from the eye, with no gravity or drag. A weapon has no range: a round flies until it ends.
+The player's shot is a round in flight unless Simple is on. Pulling the trigger launches a `RoundInFlight` (`round.rs`) from the leaned eye along the view, with the `Ballistics` of the fired round from `SimConfig::rounds` (a round without an entry flies nothing). Each tick `SearchlightSim::step_rounds` advances every round with `searchlight_rules::Flight::step` under gravity and drag, and `round::step_round` casts the segment it flew through the physics world by the route below. A part strike lands damage; a round is removed when it strikes anything, falls to `MIN_SPEED` (`Flight::is_spent`) or leaves the `FlightBounds` from `Arena::flight_bounds` (the arena's meshes grown by `FLIGHT_MARGIN`). Near misses are counted per segment, once per enemy per round. Every round in flight falls under the `round_gravity` the current tick's command carries. Under Simple the shot resolves at once as one ray from the eye, with no gravity or drag. A weapon has no range: a round flies until it ends.
 
 Enemy shots, and Simple player shots, go through one route:
 

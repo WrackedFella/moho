@@ -12,8 +12,8 @@ use moho_physics::{
     MoveSettings, PhysicsWorld, first_person_view,
 };
 use searchlight_rules::{
-    Ballistics, Body, BodyPart, BodyProfile, Flight, FlightBounds, Grade, GravityScale, HitReport,
-    ItemId, Lean, LeanReach, LeanSide, LeanTuning, Loadout, MagazineLevel, Rifle, Rig, Shot,
+    Ballistics, Body, BodyPart, BodyProfile, Flight, FlightBounds, Grade, HitReport, ItemId, Lean,
+    LeanReach, LeanSide, LeanTuning, Loadout, MagazineLevel, Rifle, Rig, Shot,
 };
 
 use crate::arena::{Arena, FLIGHT_MARGIN, SETTLE_DT};
@@ -269,9 +269,6 @@ pub struct SearchlightSim {
     bounds: FlightBounds,
     /// Player rounds in the air, oldest first.
     pub(crate) rounds: Vec<RoundInFlight>,
-    /// The downward acceleration the rounds in flight fall under: the gravity scale in force at
-    /// the last pull.
-    round_gravity: f32,
     damage: u32,
     cooldown_ticks: u32,
     reload_ticks: u32,
@@ -437,7 +434,6 @@ impl SearchlightSim {
             body: config.character_body,
             bounds: spawns.bounds,
             rounds: Vec::new(),
-            round_gravity: GravityScale::default().gravity(),
             damage: config.damage,
             cooldown_ticks: config.cooldown_ticks,
             reload_ticks: config.reload_ticks,
@@ -465,9 +461,11 @@ impl SearchlightSim {
     /// Runs one tick of `dt` seconds.
     ///
     /// While the player is dead only `command.restart` is read, and it puts every character
-    /// back at its spawn, as a fresh sim over the same world would have them. Otherwise the enemies perceive and move, the player moves (slower while a lean is held), the
-    /// world steps, the player's lean blends within the room beside it, the player's weapon actions apply, then the enemies that decided to fire
-    /// do, and enemies that died leave the world.
+    /// back at its spawn, as a fresh sim over the same world would have them. Otherwise the
+    /// enemies perceive and move, the player moves (slower while a lean is held), the world
+    /// steps, the player's lean blends within the room beside it, the rounds in flight advance
+    /// under `command.round_gravity`, the player's weapon actions apply, then the enemies that
+    /// decided to fire do, and enemies that died leave the world.
     pub fn tick(&mut self, command: &SearchlightCommand, dt: f32) {
         if self.player_body.is_dead() {
             if command.restart {
@@ -491,7 +489,7 @@ impl SearchlightSim {
             .expect("the sim never removes the player");
         self.world.step(dt);
         self.step_lean(command.lean, dt);
-        self.step_rounds(dt);
+        self.step_rounds(command.round_gravity.gravity(), dt);
 
         self.advance_weapon();
         if command.fire {
@@ -513,10 +511,11 @@ impl SearchlightSim {
     }
 
     /// Steps every round in flight one tick: counts the near misses on the segment it flew, lands
-    /// a part strike, and drops a round that struck anything, is spent or left the bounds.
-    fn step_rounds(&mut self, dt: f32) {
+    /// a part strike, and drops a round that struck anything, is spent or left the bounds. Every
+    /// round falls under `gravity`, whatever it was when the round was fired.
+    fn step_rounds(&mut self, gravity: f32, dt: f32) {
         for mut round in std::mem::take(&mut self.rounds) {
-            let step = step_round(&self.world, &round, self.round_gravity, dt);
+            let step = step_round(&self.world, &round, gravity, dt);
             let struck = match step.strike.map(|strike| strike.tag) {
                 Some(SurfaceTag::Part { target, .. }) => Some(usize::from(target)),
                 _ => None,
@@ -785,7 +784,7 @@ impl SearchlightSim {
     }
 
     /// Spends the chambered round; it is hitscan under `command.simple`, else it flies from the
-    /// next tick, and the rounds in flight fall under `command.round_gravity` from now on.
+    /// next tick.
     /// `stood` is where the player stood when the tick began.
     fn pull_trigger(&mut self, command: &SearchlightCommand, stood: Vec3) {
         if self.weapon != Weapon::Ready {
@@ -801,7 +800,6 @@ impl SearchlightSim {
                 if command.simple {
                     self.resolve_player_shot();
                 } else {
-                    self.round_gravity = command.round_gravity.gravity();
                     self.launch_round(&round, stood);
                 }
             }
