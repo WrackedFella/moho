@@ -151,11 +151,7 @@ impl KitDef {
                     rounds,
                     capacity: spec.capacity,
                 })?;
-            let ballistics = Ballistics {
-                muzzle_velocity: round.muzzle_velocity,
-                drag: round.drag,
-            };
-            Ok((magazine, ballistics))
+            Ok((magazine, Ballistics::from(round)))
         };
 
         let mut rounds = BTreeMap::new();
