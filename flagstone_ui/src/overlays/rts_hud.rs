@@ -560,6 +560,50 @@ mod tests {
         );
     }
 
+    fn stocked_data(is_fps_mode: bool) -> HudData {
+        HudData {
+            is_fps_mode,
+            colony_stock: vec![(1, 3), (7, 12)],
+            ..strategy_data(TOP)
+        }
+    }
+
+    #[test]
+    fn strategy_hud_lists_the_colony_totals() {
+        let empty = drawn_texts(&strategy_data(TOP));
+
+        let drawn = drawn_texts(&stocked_data(false));
+
+        assert!(
+            drawn.iter().any(|t| t.contains("R1 ×3")),
+            "resource 1's total is not listed: {drawn:?}"
+        );
+        assert!(
+            drawn.iter().any(|t| t.contains("R7 ×12")),
+            "resource 7's total is not listed: {drawn:?}"
+        );
+        assert!(
+            !empty.iter().any(|t| t.contains('×')),
+            "a colony with nothing in stock lists no totals: {empty:?}"
+        );
+    }
+
+    #[test]
+    fn no_totals_in_first_person() {
+        let strategy = drawn_texts(&stocked_data(false));
+
+        let first_person = drawn_texts(&stocked_data(true));
+
+        assert!(
+            strategy.iter().any(|t| t.contains("R1 ×3")),
+            "the totals show in strategy"
+        );
+        assert!(
+            !first_person.iter().any(|t| t.contains('×')),
+            "{first_person:?}"
+        );
+    }
+
     #[test]
     fn the_pointer_over_the_selection_panel_is_over_egui() {
         let data = selected_data(false);

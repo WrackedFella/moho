@@ -2,9 +2,14 @@ use flagstone_voxel::{BlockPos, VoxelGrid};
 use glam::Vec3;
 
 use crate::inventory::{Inventory, ResourceYield};
+use crate::jobs::Job;
 use crate::pickups::PickupFeed;
 use crate::raycast;
+pub use crate::selection::PawnId;
 use crate::tools::{STARTING_TOOL, ToolId};
+
+/// How far a pawn digs from its eye, in metres: the player's mining reach.
+pub const MINE_REACH: f32 = 8.0;
 
 /// Number of hotbar slots. Shared by `select_slot`'s valid range and, today
 /// coincidentally, `flagstone_ui`'s own `HOTBAR_SLOTS` — the two aren't coupled
@@ -33,6 +38,8 @@ pub struct Pawn {
     pub selected_slot: usize,
     /// Recent pickups, for the HUD's popups.
     pub pickups: PickupFeed,
+    /// What the pawn is doing when no one possesses it.
+    pub job: Job,
 }
 
 impl Default for Pawn {
@@ -42,6 +49,7 @@ impl Default for Pawn {
             equipped_tool: Some(STARTING_TOOL),
             selected_slot: TOOL_SLOT,
             pickups: PickupFeed::default(),
+            job: Job::default(),
         }
     }
 }
@@ -80,6 +88,19 @@ impl Pawn {
         } else {
             None
         };
+    }
+
+    /// Raycast from `origin` along `dir` and break the first solid voxel within `reach`,
+    /// returning what it yielded without depositing it. `None`, and the world unchanged,
+    /// when nothing is in reach or no tool is equipped.
+    pub fn dig(
+        &self,
+        _grid: &mut VoxelGrid,
+        _origin: Vec3,
+        _dir: Vec3,
+        _reach: f32,
+    ) -> Option<MineOutcome> {
+        todo!()
     }
 
     /// Raycast from `origin` along `dir`, break the first solid voxel within
@@ -280,6 +301,96 @@ mod tests {
             .map(|e| (e.resource_id, e.amount))
             .collect();
         assert_eq!(listed, [(7, 1)]);
+    }
+
+    fn wall_with(resource: Option<u32>) -> (VoxelGrid, BlockPos) {
+        let mut grid = VoxelGrid::new(16);
+        let pos = BlockPos::new(0, 0, 0);
+        grid.mutator().place(pos, 1, resource);
+        (grid, pos)
+    }
+
+    #[test]
+    fn dig_removes_the_block_without_depositing() {
+        let (mut grid, pos) = wall_with(Some(7));
+        let pawn = Pawn::default();
+
+        let outcome = pawn
+            .dig(&mut grid, Vec3::new(0.5, 0.5, -5.0), Vec3::Z, MINE_REACH)
+            .expect("ray should hit the placed block");
+
+        assert_eq!(outcome.block_pos, pos);
+        assert_eq!(outcome.old_material_id, 1);
+        let yield_ = outcome.yield_.expect("an ore block yields");
+        assert_eq!((yield_.resource_id, yield_.amount), (7, 1));
+        assert!(grid.material_at(pos).is_none(), "the block is removed");
+        assert!(pawn.inventory.is_empty(), "nothing is deposited");
+        assert!(pawn.pickups.entries().is_empty(), "no pickup is shown");
+    }
+
+    #[test]
+    fn dig_of_a_plain_block_yields_nothing() {
+        let (mut grid, pos) = wall_with(None);
+        let pawn = Pawn::default();
+
+        let outcome = pawn
+            .dig(&mut grid, Vec3::new(0.5, 0.5, -5.0), Vec3::Z, MINE_REACH)
+            .expect("ray should hit the placed block");
+
+        assert!(outcome.yield_.is_none());
+        assert!(grid.material_at(pos).is_none());
+    }
+
+    #[test]
+    fn dig_beyond_the_reach_finds_nothing() {
+        let (mut grid, pos) = wall_with(Some(7));
+        let pawn = Pawn::default();
+
+        let outcome = pawn.dig(&mut grid, Vec3::new(0.5, 0.5, -5.0), Vec3::Z, 3.0);
+
+        assert!(outcome.is_none());
+        assert!(grid.material_at(pos).is_some());
+    }
+
+    #[test]
+    fn mine_is_dig_plus_deposit() {
+        let (mut dug_grid, _) = wall_with(Some(7));
+        let (mut mined_grid, pos) = wall_with(Some(7));
+        let mut digger = Pawn::default();
+        let mut miner = Pawn::default();
+        let origin = Vec3::new(0.5, 0.5, -5.0);
+
+        let dug = digger
+            .dig(&mut dug_grid, origin, Vec3::Z, MINE_REACH)
+            .expect("ray should hit the placed block");
+        digger.deposit(dug.yield_.expect("an ore block yields"));
+        let mined = miner
+            .mine(&mut mined_grid, origin, Vec3::Z, MINE_REACH)
+            .expect("ray should hit the placed block");
+
+        assert_eq!(mined.block_pos, dug.block_pos);
+        assert_eq!(mined.old_material_id, dug.old_material_id);
+        assert_eq!(mined.yield_.map(|y| y.resource_id), Some(7));
+        assert_eq!(miner.inventory.count(7), digger.inventory.count(7));
+        assert_eq!(miner.inventory.count(7), 1);
+        assert_eq!(
+            miner.pickups.entries().len(),
+            digger.pickups.entries().len()
+        );
+        assert_eq!(dug_grid.material_at(pos), mined_grid.material_at(pos));
+    }
+
+    #[test]
+    fn dig_without_a_tool_is_a_noop() {
+        let (mut grid, pos) = wall_with(Some(7));
+        let mut pawn = Pawn::default();
+        pawn.select_slot(1);
+
+        let outcome = pawn.dig(&mut grid, Vec3::new(0.5, 0.5, -5.0), Vec3::Z, MINE_REACH);
+
+        assert!(outcome.is_none());
+        assert!(grid.material_at(pos).is_some(), "the block stays");
+        assert!(pawn.inventory.is_empty());
     }
 
     #[test]

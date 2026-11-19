@@ -4269,4 +4269,35 @@ mod tests {
 
         assert!(outlined_markers(&mut app).is_empty());
     }
+
+    #[test]
+    fn returning_to_first_person_starts_where_the_pawn_walked_to() {
+        use crate::app::event_loop::colony_world as world;
+        let mut app = world::colony_app();
+        let start = app.simulation.position();
+        let block = world::floor_block(20, 8);
+        app.colony.marks.toggle(block.to_array());
+        let dug = world::tick_until_unmarked(&mut app, 600);
+        let standing = app.simulation.position();
+        let body = world::pawn_state(&app).position;
+
+        tap_possess(&mut app);
+        step_once(&mut app);
+
+        assert!(dug, "the pawn never dug the block");
+        assert!(
+            standing.distance(start) > 5.0,
+            "the pawn walked from {start} to {standing}"
+        );
+        assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+        assert!(
+            app.simulation.position().distance(standing) < 0.05,
+            "first person starts at {}, not where the pawn stood, {standing}",
+            app.simulation.position()
+        );
+        assert!(
+            world::pawn_state(&app).position.distance(body) < 0.05,
+            "the character moved when possession began"
+        );
+    }
 }

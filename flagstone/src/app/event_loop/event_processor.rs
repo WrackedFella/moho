@@ -1721,4 +1721,77 @@ mod tests {
 
         assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
     }
+
+    fn dig_asset_path() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/dig.wav")
+    }
+
+    #[test]
+    fn dig_asset_exists() {
+        let path = dig_asset_path();
+
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+
+        assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
+    }
+
+    #[test]
+    fn a_pawn_dig_publishes_the_removal_and_the_cue() {
+        use crate::app::event_loop::colony_world as world;
+        let mut app = world::colony_app();
+        let block = world::floor_block(12, 8);
+        app.colony.marks.toggle(block.to_array());
+        let removed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dirtied = std::sync::Arc::new(std::sync::Mutex::new(HashSet::new()));
+        let (removed_sink, dirtied_sink) = (
+            std::sync::Arc::clone(&removed),
+            std::sync::Arc::clone(&dirtied),
+        );
+        app.event_bus.subscribe(move |e: &WorldEvent| match e {
+            WorldEvent::BlockRemoved { position, .. } => {
+                removed_sink.lock().unwrap().push(*position)
+            }
+            WorldEvent::ChunkMeshDirty { chunk_pos, .. } => {
+                dirtied_sink.lock().unwrap().insert(*chunk_pos);
+            }
+            _ => {}
+        });
+        let _ = app.audio_event_rx.try_iter().count();
+
+        let unmarked = world::tick_until_unmarked(&mut app, 600);
+        app.event_bus.process_deferred();
+
+        let cues: Vec<(String, f32, glam::Vec3)> = app
+            .audio_event_rx
+            .try_iter()
+            .filter_map(|event| match event {
+                AudioEvent::PlaySoundAt {
+                    path,
+                    volume,
+                    position,
+                } => Some((path, volume, position)),
+                _ => None,
+            })
+            .collect();
+        assert!(unmarked, "the pawn never dug the block");
+        assert_eq!(
+            *removed.lock().unwrap(),
+            [block],
+            "one removal, of the mark"
+        );
+        let grid = app.light_system.as_ref().expect("light system").grid();
+        let remeshed: HashSet<glam::IVec3> =
+            flagstone_voxel::chunks_meshed_from(block, grid.chunk_size()).collect();
+        assert!(
+            remeshed.is_subset(&dirtied.lock().unwrap()),
+            "chunks {remeshed:?} are not all marked dirty"
+        );
+        assert_eq!(cues.len(), 1, "one cue for one dig: {cues:?}");
+        assert_eq!(std::path::Path::new(&cues[0].0), dig_asset_path().as_path());
+        assert!(cues[0].1 > 0.0, "audible: {cues:?}");
+        assert!(
+            cues[0].2.distance(block.as_vec3() + glam::Vec3::splat(0.5)) < 1e-3,
+            "the cue sounds at the block's centre: {cues:?}"
+        );
+    }
 }
