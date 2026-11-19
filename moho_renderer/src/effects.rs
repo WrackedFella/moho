@@ -76,6 +76,12 @@ fn is_drawable_size(size: f32) -> bool {
     size.is_finite() && size > 0.0
 }
 
+/// Whether a flash or mark at `at` can be spawned: a finite position and roll, a drawable
+/// size and a non-zero lifetime.
+fn spawnable(at: Vec3, roll: f32, size: f32, lifetime: Duration) -> bool {
+    at.is_finite() && roll.is_finite() && is_drawable_size(size) && !lifetime.is_zero()
+}
+
 #[derive(Debug)]
 struct Streak {
     style: StreakStyle,
@@ -178,7 +184,7 @@ impl Effect {
     }
 
     /// The mesh slot, transform and material to draw this frame, if any.
-    fn drawn(&mut self, eye: Vec3) -> Option<(usize, Affine3A, u32)> {
+    fn drawn(&mut self, eye: Vec3) -> Option<(Slot, Affine3A, u32)> {
         match self {
             Self::Streak(streak) => {
                 let placed = std::mem::take(&mut streak.placed_this_frame);
@@ -193,13 +199,13 @@ impl Effect {
                     width,
                     eye,
                 )?;
-                Some((STREAK_SLOT, transform, streak.style.material))
+                Some((Slot::Streak, transform, streak.style.material))
             }
             Self::Flash(flash) => {
                 let facing = (eye - flash.at).try_normalize().unwrap_or(Vec3::Z);
                 let size = flash.style.size * flash.scale();
                 Some((
-                    FLASH_SLOT,
+                    Slot::Flash,
                     surface_transform(flash.at, facing, flash.roll, size),
                     flash.style.material,
                 ))
@@ -207,7 +213,7 @@ impl Effect {
             Self::Mark(mark) => {
                 let size = mark.style.size * mark.scale();
                 Some((
-                    MARK_SLOT,
+                    Slot::Mark,
                     surface_transform(mark.at, mark.normal, mark.roll, size),
                     mark.style.material,
                 ))
@@ -216,11 +222,30 @@ impl Effect {
     }
 }
 
-/// Mesh slots, added to `EFFECT_MESH_IDS_FROM`.
-const STREAK_SLOT: usize = 0;
-const FLASH_SLOT: usize = 1;
-const MARK_SLOT: usize = 2;
+/// The mesh an effect draws with; its discriminant is added to `EFFECT_MESH_IDS_FROM`.
+#[derive(Debug, Clone, Copy)]
+enum Slot {
+    Streak,
+    Flash,
+    Mark,
+}
+
+/// How many `Slot` variants there are.
 const SLOTS: usize = 3;
+
+impl Slot {
+    fn id(self) -> WorldMeshId {
+        WorldMeshId(EFFECT_MESH_IDS_FROM + self as u64)
+    }
+
+    fn mesh(self) -> WorldMesh {
+        match self {
+            Self::Streak => streak_mesh(),
+            Self::Flash => flash_mesh(),
+            Self::Mark => mark_mesh(),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct Effects {
@@ -261,18 +286,15 @@ impl Effects {
     /// and positive, or the lifetime is zero, and at the quality's cap when no older flash
     /// or mark can make room.
     pub fn flash(&mut self, at: Vec3, roll: f32, style: FlashStyle) {
-        let valid = at.is_finite()
-            && roll.is_finite()
-            && is_drawable_size(style.size)
-            && !style.lifetime.is_zero();
-        if valid {
-            self.store(Effect::Flash(Flash {
-                at,
-                roll,
-                style,
-                age: Duration::ZERO,
-            }));
+        if !spawnable(at, roll, style.size, style.lifetime) {
+            return;
         }
+        self.store(Effect::Flash(Flash {
+            at,
+            roll,
+            style,
+            age: Duration::ZERO,
+        }));
     }
 
     /// Spawn a mark at `at` lying on a surface with `normal`, rolled by `roll` radians.
@@ -281,20 +303,19 @@ impl Effects {
     /// and positive, `normal` is zero or not finite, or the lifetime is zero, and at the
     /// quality's cap when no older flash or mark can make room.
     pub fn mark(&mut self, at: Vec3, normal: Vec3, roll: f32, style: MarkStyle) {
-        let unit = normal.try_normalize();
-        let valid = at.is_finite()
-            && roll.is_finite()
-            && is_drawable_size(style.size)
-            && !style.lifetime.is_zero();
-        if let (true, Some(normal)) = (valid, unit) {
-            self.store(Effect::Mark(Mark {
-                at: at + normal * MARK_OFFSET,
-                normal,
-                roll,
-                style,
-                age: Duration::ZERO,
-            }));
+        if !spawnable(at, roll, style.size, style.lifetime) {
+            return;
         }
+        let Some(normal) = normal.try_normalize() else {
+            return;
+        };
+        self.store(Effect::Mark(Mark {
+            at: at + normal * MARK_OFFSET,
+            normal,
+            roll,
+            style,
+            age: Duration::ZERO,
+        }));
     }
 
     /// Issue the next handle and keep `effect` under it if the cap allows.
@@ -321,7 +342,12 @@ impl Effects {
             .iter()
             .find(|(_, effect)| effect.is_fixed_lifetime())
             .map(|(handle, _)| *handle);
-        oldest.is_some_and(|handle| self.stored.remove(&handle).is_some())
+        if let Some(handle) = oldest {
+            self.stored.remove(&handle);
+            true
+        } else {
+            false
+        }
     }
 
     fn streak_mut(&mut self, handle: EffectHandle) -> Option<&mut Streak> {
@@ -380,20 +406,12 @@ impl Effects {
             let Some((slot, transform, material)) = effect.drawn(eye) else {
                 continue;
             };
-            let id = WorldMeshId(EFFECT_MESH_IDS_FROM + slot as u64);
-            if !std::mem::replace(&mut self.mesh_uploaded[slot], true) {
-                meshes.upsert_movable(id, slot_mesh(slot));
+            let id = slot.id();
+            if !std::mem::replace(&mut self.mesh_uploaded[slot as usize], true) {
+                meshes.upsert_movable(id, slot.mesh());
             }
             meshes.place_unshadowed(id, transform, material);
         }
-    }
-}
-
-fn slot_mesh(slot: usize) -> WorldMesh {
-    match slot {
-        STREAK_SLOT => streak_mesh(),
-        FLASH_SLOT => flash_mesh(),
-        _ => mark_mesh(),
     }
 }
 
