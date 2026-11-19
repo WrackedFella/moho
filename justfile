@@ -47,9 +47,10 @@ _physics-features-selftest:
     f=scripts/fixtures
     MOHO_PHYSICS_METADATA=$f/physics-metadata-ok.json bash scripts/check-physics-features.sh >/dev/null \
         || { echo "physics-features self-test: the passing fixture was rejected" >&2; exit 1; }
-    for crate in rapier3d parry3d; do
+    for case in lacks-rapier:rapier3d lacks-parry:parry3d rapier-mixed:rapier3d no-parry:parry3d parry-lookalike:parry3d; do
+        crate=${case#*:}
         rc=0
-        out=$(MOHO_PHYSICS_METADATA=$f/physics-metadata-lacks-${crate%3d}.json bash scripts/check-physics-features.sh 2>&1) || rc=$?
+        out=$(MOHO_PHYSICS_METADATA=$f/physics-metadata-${case%%:*}.json bash scripts/check-physics-features.sh 2>&1) || rc=$?
         other=$([ "$crate" = rapier3d ] && echo parry3d || echo rapier3d)
         if [ "$rc" -eq 0 ] || ! grep -qF -- "$crate" <<<"$out" || grep -qF -- "$other" <<<"$out"; then
             echo "physics-features self-test: expected failure naming only $crate, got exit $rc: $out" >&2
