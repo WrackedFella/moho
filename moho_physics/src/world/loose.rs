@@ -20,7 +20,7 @@ impl LooseId {
 }
 
 /// The rest slope, radians, of a world that never calls [`PhysicsWorld::set_rest_slope`]: 5°.
-pub(super) const DEFAULT_REST_SLOPE: f32 = 5.0 * std::f32::consts::PI / 180.0;
+pub(super) const DEFAULT_REST_SLOPE: f32 = 5.0_f32.to_radians();
 
 /// Penetration, m, past which a contact is the solver pushing two bodies apart. The brake
 /// leaves such bodies alone, or it would zero the velocity that separates them and freeze
