@@ -586,6 +586,155 @@ fn egui_lone_modifier_while_listening_binds_the_row() {
     assert!(!menu.is_listening());
 }
 
+fn modifier_frame(menu: &mut SettingsMenu, modifiers: egui::Modifiers) {
+    let ctx = egui::Context::default();
+    let input = egui::RawInput {
+        events: vec![egui::Event::ModifiersChanged(modifiers)],
+        ..Default::default()
+    };
+    run_ui(&ctx, input, |ui| {
+        menu.render(ui);
+    });
+}
+
+fn modal_text(modal: &mut dyn flagstone_ui::Modal) -> String {
+    let ctx = egui::Context::default();
+    let output = run_ui(&ctx, egui::RawInput::default(), |ui| {
+        modal.render(ui);
+    });
+    rendered_text(&output)
+}
+
+fn staged_rows(menu: &SettingsMenu) -> Vec<Vec<Binding>> {
+    (0..7)
+        .map(|i| menu.get_staged_binding(i).to_vec())
+        .collect()
+}
+
+/// Rebinding Move Forward, then Shift (held by Sprint) then Alt via egui frames.
+fn shift_prompt_then_alt() -> SettingsMenu {
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(0);
+    modifier_frame(&mut menu, egui::Modifiers::SHIFT);
+    modifier_frame(&mut menu, egui::Modifiers::NONE);
+    modifier_frame(&mut menu, egui::Modifiers::ALT);
+    menu
+}
+
+/// A conflicting key ends listening and the prompt names the key and its holder.
+#[test]
+fn conflicting_key_names_key_and_holder() {
+    use flagstone_ui::screens::Screen;
+
+    for (key, holder) in [(Key::Shift, "Sprint"), (Key::S, "Move Back")] {
+        let mut menu = SettingsMenu::with_prefs(Prefs::default());
+        menu.start_listening(0);
+
+        if key == Key::Shift {
+            modifier_frame(&mut menu, egui::Modifiers::SHIFT);
+        } else {
+            render_frame(&mut menu, vec![key_event(egui::Key::S, true)]);
+        }
+
+        let mut modal = Screen::take_pending_modal(&mut menu)
+            .unwrap_or_else(|| panic!("{key:?} should raise the prompt"));
+        let text = modal_text(modal.as_mut());
+        assert!(
+            text.contains(&format!(
+                "'{}'",
+                if key == Key::Shift { "Shift" } else { "S" }
+            )),
+            "key missing from:\n{text}"
+        );
+        assert!(
+            text.lines().any(|l| l == holder),
+            "holder {holder:?} missing from:\n{text}"
+        );
+        assert!(
+            !menu.is_listening(),
+            "{key:?} conflict leaves the row listening"
+        );
+    }
+}
+
+/// Keys pressed while the prompt is open bind nothing.
+#[test]
+fn keys_pressed_while_prompt_open_bind_nothing() {
+    let menu = shift_prompt_then_alt();
+
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::W), pad_stick(StickDir::Up)]
+    );
+    assert!(
+        !staged_rows(&menu)
+            .iter()
+            .flatten()
+            .any(|b| *b == Binding::key(Key::Alt)),
+        "nothing may be bound to Alt"
+    );
+    assert!(!menu.has_unsaved_changes());
+}
+
+/// Confirming after a stray key applies only the prompted key.
+#[test]
+fn confirm_after_stray_key_applies_only_prompted_key() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = shift_prompt_then_alt();
+
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+    Screen::on_modal_confirm(&mut menu);
+
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::Shift), pad_stick(StickDir::Up)]
+    );
+    assert_eq!(
+        menu.get_staged_binding(6),
+        [Binding::pad(PadInput::Button(PadButton::LeftThumb))]
+    );
+    assert!(
+        !staged_rows(&menu)
+            .iter()
+            .flatten()
+            .any(|b| *b == Binding::key(Key::Alt)),
+        "nothing may be bound to Alt"
+    );
+    assert!(!menu.is_listening());
+}
+
+/// Cancelling after a stray key changes nothing.
+#[test]
+fn cancel_after_stray_key_changes_nothing() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let before = staged_rows(&menu);
+    menu.start_listening(0);
+    modifier_frame(&mut menu, egui::Modifiers::SHIFT);
+    modifier_frame(&mut menu, egui::Modifiers::NONE);
+    modifier_frame(&mut menu, egui::Modifiers::ALT);
+
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+    Screen::on_modal_cancel(&mut menu);
+
+    assert_eq!(staged_rows(&menu), before);
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::W), pad_stick(StickDir::Up)]
+    );
+    assert_eq!(
+        menu.get_staged_binding(6),
+        [
+            Binding::key(Key::Shift),
+            Binding::pad(PadInput::Button(PadButton::LeftThumb))
+        ]
+    );
+    assert!(!menu.is_listening());
+    assert!(!menu.has_unsaved_changes());
+}
+
 /// Rebinding a row replaces its plain key and keeps its hold bindings, in the settings text too.
 #[test]
 fn rebinding_sprint_keeps_its_hold_bindings() {
