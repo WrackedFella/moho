@@ -14,19 +14,22 @@ if [[ -n "${MOHO_PHYSICS_METADATA:-}" ]]; then
     fi
     metadata="$(cat "$MOHO_PHYSICS_METADATA")"
 else
-    metadata="$(cargo metadata --format-version 1)"
+    metadata="$(cargo metadata --format-version 1 --locked)"
 fi
+
+# One line per resolved package of the named crates: "<crate> yes|no" for the feature.
+states_all="$(jq -r --args '
+    . as $m
+    | $ARGS.positional[] as $name
+    | [$m.packages[] | select(.name == $name) | .id] as $ids
+    | $m.resolve.nodes[]
+    | select(.id as $id | $ids | index($id))
+    | "\($name) \(if (.features // [] | index("enhanced-determinism")) then "yes" else "no" end)"
+' <<<"$metadata" rapier3d parry3d)"
 
 failed=0
 for crate in rapier3d parry3d; do
-    # One line per resolved package of that name: "yes" or "no" for the feature.
-    states="$(jq -r --arg name "$crate" '
-        . as $m
-        | [$m.packages[] | select(.name == $name) | .id] as $ids
-        | $m.resolve.nodes[]
-        | select(.id as $id | $ids | index($id))
-        | if (.features // [] | index("enhanced-determinism")) then "yes" else "no" end
-    ' <<<"$metadata")"
+    states="$(grep "^$crate " <<<"$states_all" || true)"
     if [[ -z "$states" ]]; then
         echo "physics-features: $crate is absent from the resolved dependency graph" >&2
         failed=1
