@@ -1639,6 +1639,59 @@ mod tests {
     }
 
     #[test]
+    fn an_idle_pawn_digs_two_marked_blocks_in_turn() {
+        let east = [12, 2, 8];
+        let west = [2, 2, 8];
+        let mut app = strategy_world(|grid| {
+            grid.mutator().place(BlockPos::from_array(east), 1, Some(7));
+            grid.mutator().place(BlockPos::from_array(west), 1, Some(7));
+        });
+        app.colony.marks.toggle(east);
+        app.colony.marks.toggle(west);
+        let mut sim = headless_loop();
+        let mut airborne_ticks = Vec::new();
+        let mut finished = false;
+
+        for tick in 0..2 * TICK_LIMIT {
+            sim.step(&mut app, 1);
+            if tick > 0 && !pawn_state(&app).grounded {
+                airborne_ticks.push(tick);
+            }
+            if !block_stands(&app, east)
+                && !block_stands(&app, west)
+                && app.colony.marks.iter().count() == 0
+            {
+                finished = true;
+                break;
+            }
+        }
+
+        assert!(finished, "both blocks were not dug and unmarked in time");
+        assert_eq!(app.colony.stock.count(7), 2);
+        assert!(
+            airborne_ticks.is_empty(),
+            "off the ground on ticks {airborne_ticks:?}"
+        );
+    }
+
+    #[test]
+    fn a_mark_on_a_fully_enclosed_block_leaves_the_pawn_still_and_idle() {
+        let buried = [5, 1, 5];
+        let mut app = world_with_block(buried, Some(7));
+        app.colony.marks.toggle(buried);
+        let before = (pawn_centre(&app), app.simulation.position());
+        let mut sim = headless_loop();
+
+        sim.step(&mut app, 200);
+
+        assert_eq!(pawn_centre(&app), before.0);
+        assert_eq!(app.simulation.position(), before.1);
+        assert!(block_stands(&app, buried));
+        assert_eq!(app.pawn.job, Job::Idle);
+        assert!(app.colony.stock.is_empty());
+    }
+
+    #[test]
     fn a_possessed_pawn_runs_no_job() {
         let mut app = world_with_block(BLOCK, Some(7));
         app.simulation

@@ -703,6 +703,47 @@ mod tests {
     }
 
     #[test]
+    fn a_pawn_already_in_a_stand_cell_digs_on_the_first_step_without_walking() {
+        let mut rig = Rig::new(floor(0..=10, 0..=8), cell(4, 1, 2));
+        rig.mark(5, 0, 2);
+
+        let first = rig.step();
+
+        assert!(
+            matches!(first, JobAction::Dig { block, .. } if block == cell(5, 0, 2)),
+            "expected an immediate dig, got {first:?}"
+        );
+        assert_eq!(rig.job, Job::Idle);
+        assert_eq!(rig.claim_of([5, 0, 2]), FREE, "the claim is released");
+    }
+
+    #[test]
+    fn a_surviving_mark_is_unclaimed_after_a_dig_and_claimed_again_by_the_next_step() {
+        let mut rig = Rig::new(floor(0..=10, 0..=8), cell(4, 1, 2));
+        rig.mark(5, 0, 2);
+        let first = rig.step();
+        assert!(matches!(first, JobAction::Dig { .. }), "setup: {first:?}");
+
+        assert!(rig.marks.contains([5, 0, 2]), "the mark stays after a dig");
+        assert_eq!(rig.claim_of([5, 0, 2]), FREE);
+
+        rig.pawn.select_slot(3);
+        let second = rig.step();
+
+        assert!(
+            matches!(second, JobAction::Dig { block, .. } if block == cell(5, 0, 2)),
+            "the surviving mark is dug again, got {second:?}"
+        );
+        assert_eq!(
+            rig.pawn.selected_slot,
+            crate::pawn::TOOL_SLOT,
+            "re-claiming draws the tool"
+        );
+        assert_eq!(rig.job, Job::Idle);
+        assert_eq!(rig.claim_of([5, 0, 2]), FREE);
+    }
+
+    #[test]
     fn a_waypoint_that_stops_being_standable_releases_the_claim() {
         let mut rig = Rig::new(floor(2..=10, 2..=2), cell(2, 1, 2));
         rig.mark(5, 0, 2);
