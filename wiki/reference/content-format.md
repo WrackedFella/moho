@@ -25,7 +25,6 @@ fire = "semi_auto"
 cooldown_ticks = 6
 reload_ticks = 120
 charge_ticks = 30
-range = 200.0
 
 [mag_rifle]
 class = "gear"
@@ -77,9 +76,9 @@ Item sections (`ItemKind`), each valid only on its class:
 
 | Section | Class | Fields |
 |---|---|---|
-| `weapon` | `weapon` | `well`, `damage`, `fire` (`semi_auto`), `cooldown_ticks`, `reload_ticks`, `charge_ticks` (ticks added to a reload when the chamber is empty), `range` (metres); `searchlight_rules::RifleDef` |
+| `weapon` | `weapon` | `well`, `damage`, `fire` (`semi_auto`), `cooldown_ticks`, `reload_ticks`, `charge_ticks` (ticks added to a reload when the chamber is empty); `searchlight_rules::RifleDef` |
 | `magazine` | `gear` | `well` (the weapon's `well` it fits), `caliber`, `capacity` |
-| `round` | `consumable` | `caliber` |
+| `round` | `consumable` | `caliber`, `muzzle_velocity` (m/s, finite and above `MIN_SPEED`), `drag` (1/s, 0 or more); `searchlight_rules::RoundSpec`, turned into `Ballistics` |
 | `rig` | `gear` | `magazine_slots` |
 
 A kit entry in `loaded` or `magazines` is `{ magazine, round, rounds }`; `rounds` defaults to a
@@ -87,6 +86,8 @@ full magazine. `Kit` resolution fails (`KitError`) on an unknown item, an item o
 a round of another caliber than its magazine, more rounds than the magazine holds, a `loaded`
 magazine whose `well` differs from the weapon's, or more magazines than the rig has slots. Rig
 magazines of another `well` are allowed; reload skips them.
+
+A `Kit` also carries the `Ballistics` of every round item in the content, by item id (`Kit::rounds`); the sim looks a fired round up there.
 
 `weapons.toml` is no longer read: a mod that still ships one is ignored without an error.
 
