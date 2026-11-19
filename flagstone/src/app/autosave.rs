@@ -18,7 +18,6 @@ impl AutosaveSchedule {
         }
     }
 
-    /// Counts one play tick.
     pub fn tick(&mut self) {
         self.ticks_since_save = self.ticks_since_save.saturating_add(1);
     }
@@ -28,7 +27,6 @@ impl AutosaveSchedule {
         self.interval_ticks = interval_ticks;
     }
 
-    /// Records that the world changed since the last save.
     pub fn mark_edited(&mut self) {
         self.edited = true;
     }
