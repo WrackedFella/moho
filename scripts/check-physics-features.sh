@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fails unless the resolved feature set of rapier3d and parry3d includes enhanced-determinism,
-# which keeps physics replays bit-identical across platforms. Reads `cargo metadata` output
+# so rapier's and parry's physics step stops calling the platform math library. Reads `cargo metadata` output
 # from the file named by MOHO_PHYSICS_METADATA when set (the self-test points it at a fixture),
 # and runs cargo otherwise. Needs jq.
 set -euo pipefail
