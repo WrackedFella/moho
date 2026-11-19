@@ -22,7 +22,6 @@ impl AutosaveSchedule {
         Self::new(ticks as u64)
     }
 
-    /// Counts one simulation tick since the last save.
     pub fn tick(&mut self) {
         self.ticks_since_save = self.ticks_since_save.saturating_add(1);
     }
