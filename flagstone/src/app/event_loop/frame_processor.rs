@@ -7,6 +7,7 @@ use crate::app::event_loop::event_processor::{
     lod_for_chunk, lod_player_chunk, publish_dig_cue, publish_removal,
 };
 use crate::app::input_state::Designation;
+use flagstone_game::jobs::{self, JobAction, Pose};
 use flagstone_game::pawn::{MINE_REACH, PawnId};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -115,14 +116,14 @@ impl FrameProcessor {
             return;
         };
         let grid = light_system.grid_mut();
-        let pose = flagstone_game::jobs::Pose {
-            feet: state.position - glam::Vec3::Y * flagstone_game::jobs::EYE_HEIGHT,
+        let pose = Pose {
+            feet: state.position - glam::Vec3::Y * jobs::EYE_HEIGHT,
             yaw: state.yaw,
         };
 
         // The job leaves the pawn for the call: `step` borrows both.
         let mut job = std::mem::take(&mut app.pawn.job);
-        let action = flagstone_game::jobs::step(
+        let action = jobs::step(
             &mut job,
             &mut app.pawn,
             PAWN_ID,
@@ -133,35 +134,55 @@ impl FrameProcessor {
         app.pawn.job = job;
 
         match action {
-            flagstone_game::jobs::JobAction::Wait => {}
-            flagstone_game::jobs::JobAction::Walk { to } => {
-                let walk = flagstone_game::jobs::steer(pose, to);
-                let command = moho_physics::CharacterCommand {
-                    forward: walk.forward,
-                    yaw_delta: walk.yaw_delta,
-                    ..moho_physics::CharacterCommand::default()
-                };
-                if let Some(moved) =
-                    app.physics
-                        .move_character(&command, &STRATEGY_MOVE_SETTINGS, dt)
-                {
-                    app.simulation
-                        .set_position_yaw_pitch(moved.position, moved.yaw, moved.pitch);
-                }
-            }
-            flagstone_game::jobs::JobAction::Dig { block, aim } => {
-                let dir = (aim - state.position).normalize_or_zero();
-                let Some(outcome) = app.pawn.dig(grid, state.position, dir, MINE_REACH) else {
-                    tracing::debug!(block = ?block, "Pawn dig found nothing to remove");
-                    return;
-                };
-                if let Some(yield_) = outcome.yield_ {
-                    app.colony.stock.add(yield_.resource_id, yield_.amount);
-                }
-                publish_removal(&app.event_bus, grid.chunk_size(), &outcome);
-                publish_dig_cue(&app.event_bus, outcome.block_pos);
+            JobAction::Wait => {}
+            JobAction::Walk { to } => self.walk_pawn(app, pose, to, dt),
+            JobAction::Dig { block, aim } => {
+                self.dig_block(app, state.position, block, aim);
             }
         }
+    }
+
+    /// Steers the pawn's character one tick toward `to` and mirrors the result into the
+    /// simulation's camera.
+    fn walk_pawn(&self, app: &mut App, pose: Pose, to: glam::Vec3, dt: f32) {
+        let walk = jobs::steer(pose, to);
+        let command = moho_physics::CharacterCommand {
+            forward: walk.forward,
+            yaw_delta: walk.yaw_delta,
+            ..moho_physics::CharacterCommand::default()
+        };
+        if let Some(moved) = app
+            .physics
+            .move_character(&command, &STRATEGY_MOVE_SETTINGS, dt)
+        {
+            app.simulation
+                .set_position_yaw_pitch(moved.position, moved.yaw, moved.pitch);
+        }
+    }
+
+    /// Digs `block` from `eye` toward `aim`, adds the yield to the colony's stock and
+    /// publishes the removal and the dig cue.
+    fn dig_block(
+        &self,
+        app: &mut App,
+        eye: glam::Vec3,
+        block: flagstone_voxel::BlockPos,
+        aim: glam::Vec3,
+    ) {
+        let Some(light_system) = app.light_system.as_mut() else {
+            return;
+        };
+        let grid = light_system.grid_mut();
+        let dir = (aim - eye).normalize_or_zero();
+        let Some(outcome) = app.pawn.dig(grid, eye, dir, MINE_REACH) else {
+            tracing::debug!(block = ?block, "Pawn dig found nothing to remove");
+            return;
+        };
+        if let Some(yield_) = outcome.yield_ {
+            app.colony.stock.add(yield_.resource_id, yield_.amount);
+        }
+        publish_removal(&app.event_bus, grid.chunk_size(), &outcome);
+        publish_dig_cue(&app.event_bus, outcome.block_pos);
     }
 
     fn update_game_state_fps_kcc(&self, app: &mut App, dt: f32) {

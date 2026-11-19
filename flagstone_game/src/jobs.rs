@@ -40,10 +40,26 @@ pub enum Job {
 }
 
 /// Notices a walk that has stopped getting closer to its waypoint.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug)]
 pub struct StallGuard {
     pub closest: f32,
     pub ticks: u32,
+}
+
+impl StallGuard {
+    /// A guard that has seen no waypoint distance yet, so the first one counts as progress.
+    pub fn new() -> Self {
+        Self {
+            closest: f32::INFINITY,
+            ticks: 0,
+        }
+    }
+}
+
+impl Default for StallGuard {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Where a pawn stands and which way it faces. Yaw is as the first-person camera's:
@@ -199,10 +215,7 @@ fn start(
             mark,
             route,
             next: 0,
-            stall: StallGuard {
-                closest: f32::INFINITY,
-                ticks: 0,
-            },
+            stall: StallGuard::new(),
         };
         return;
     }
@@ -242,10 +255,7 @@ fn work(
             break;
         }
         *next += 1;
-        *stall = StallGuard {
-            closest: f32::INFINITY,
-            ticks: 0,
-        };
+        *stall = StallGuard::new();
     }
     let Some(&cell) = route.get(*next) else {
         return Tick::Finish {
