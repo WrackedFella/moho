@@ -19,6 +19,9 @@ mod input_event;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{CursorGrabMode, Window};
 
+/// Simulated seconds of play between autosaves of an edited world.
+const DEFAULT_AUTOSAVE_SECS: u64 = 120;
+
 // Core game state module
 mod game_state;
 
@@ -257,9 +260,9 @@ impl App {
             pending_frame_cap: None,
             frame_cap_changed: false,
             saves_dir: std::path::PathBuf::from("saves"),
-            autosave_interval: std::time::Duration::from_secs(120),
+            autosave_interval: std::time::Duration::from_secs(DEFAULT_AUTOSAVE_SECS),
             autosave_schedule: app::autosave::AutosaveSchedule::new(
-                120 * u64::from(flagstone_game::TICK_HZ),
+                DEFAULT_AUTOSAVE_SECS * u64::from(flagstone_game::TICK_HZ),
             ),
             exit_requested: false,
             main_menu_requested: false,
