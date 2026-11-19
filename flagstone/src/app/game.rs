@@ -4098,6 +4098,46 @@ mod tests {
     }
 
     #[test]
+    fn returning_to_first_person_starts_where_the_pawn_walked_to() {
+        use crate::app::event_loop::frame_processor::tests::{
+            GROUND_TOP, colony_app, mark, marked_block, pawn_body, tick_until_removed,
+        };
+        let at = [15, GROUND_TOP, 8];
+        let mut app = colony_app(1, marked_block(None, at));
+        mark(&mut app, at);
+        let start = app.simulation.position();
+
+        let dug = tick_until_removed(&mut app, at, 900, |_, _| {});
+        let stood = pawn_body(&app);
+        let before_possessing = (app.simulation.position(), app.simulation.yaw_pitch().0);
+        tap_possess(&mut app);
+        step_once(&mut app);
+
+        assert!(dug.is_some(), "the pawn walked to the block and dug it");
+        assert!(
+            stood.position.distance(start) > 5.0,
+            "the pawn walked from {start} to {}",
+            stood.position
+        );
+        assert!(
+            before_possessing.0.distance(stood.position) < 1e-3
+                && (before_possessing.1 - stood.yaw).abs() < 1e-3,
+            "the simulation follows the pawn: {before_possessing:?} vs {stood:?}"
+        );
+        assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+        assert!(
+            app.simulation.position().distance(stood.position) < 0.05,
+            "possession starts at {} where the pawn stood, {}",
+            app.simulation.position(),
+            stood.position
+        );
+        assert!(
+            (app.simulation.yaw_pitch().0 - stood.yaw).abs() < 1e-3,
+            "and facing the way it walked"
+        );
+    }
+
+    #[test]
     fn possessing_with_a_selection_keeps_it_and_enters_first_person() {
         let mut app = app_with_pawn_in_view();
         select_the_pawn(&mut app);

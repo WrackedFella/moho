@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc b1f50005475bc62ec4a18aed44cee7adc51593fd4005c7e621b9a6f01df297c9 # shrinks to yaw = 0.0, bearing = 0.0
+cc 963dab571d6eda9f5d3bd0ae80dcaf731967640595d69a49db25bb03dfd05682 # shrinks to heights = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], mx = 0, mz = 0, sx = 0, sz = 0

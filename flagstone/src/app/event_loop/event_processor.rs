@@ -1713,6 +1713,80 @@ mod tests {
         assert!(sounds.is_empty(), "{sounds:?}");
     }
 
+    fn dig_asset_path() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/dig.wav")
+    }
+
+    #[test]
+    fn a_pawn_dig_publishes_the_removal_and_the_cue() {
+        use crate::app::event_loop::frame_processor::tests::{
+            GROUND_TOP, colony_app, mark, marked_block, tick_until_removed,
+        };
+        let at = [6, GROUND_TOP, 8];
+        let mut app = colony_app(3, marked_block(None, at));
+        mark(&mut app, at);
+        let removed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dirty = std::sync::Arc::new(std::sync::Mutex::new(HashSet::new()));
+        let cues = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let removed_sink = std::sync::Arc::clone(&removed);
+        let dirty_sink = std::sync::Arc::clone(&dirty);
+        app.event_bus.subscribe(move |e: &WorldEvent| match e {
+            WorldEvent::BlockRemoved { position, .. } => {
+                removed_sink.lock().unwrap().push(position.to_array());
+            }
+            WorldEvent::ChunkMeshDirty { chunk_pos, .. } => {
+                dirty_sink.lock().unwrap().insert(*chunk_pos);
+            }
+            _ => {}
+        });
+        let cue_sink = std::sync::Arc::clone(&cues);
+        app.event_bus
+            .subscribe(move |e: &moho_core::events::AudioEvent| {
+                if let moho_core::events::AudioEvent::PlaySoundAt {
+                    path,
+                    volume,
+                    position,
+                } = e
+                {
+                    cue_sink
+                        .lock()
+                        .unwrap()
+                        .push((path.clone(), *volume, *position));
+                }
+            });
+
+        let done = tick_until_removed(&mut app, at, 600, |_, _| {});
+
+        assert!(done.is_some(), "the pawn never dug the block");
+        assert_eq!(*removed.lock().unwrap(), vec![at], "one removal, published");
+        assert!(
+            dirty.lock().unwrap().contains(&glam::IVec3::new(0, 0, 0)),
+            "the block's chunk is remeshed"
+        );
+        let cues = cues.lock().unwrap();
+        assert_eq!(cues.len(), 1, "one cue for one dig: {cues:?}");
+        let (path, volume, position) = &cues[0];
+        assert_eq!(
+            std::path::Path::new(path),
+            dig_asset_path().as_path(),
+            "the dig clip"
+        );
+        assert!(*volume > 0.0, "audible");
+        assert!(
+            position.distance(glam::Vec3::new(6.5, GROUND_TOP as f32 + 0.5, 8.5)) < 1e-3,
+            "the cue sounds at the block's centre: {position}"
+        );
+    }
+
+    #[test]
+    fn dig_asset_exists() {
+        let path = dig_asset_path();
+
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+
+        assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
+    }
+
     #[test]
     fn pickup_asset_exists() {
         let path = pickup_asset_path();

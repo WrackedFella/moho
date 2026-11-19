@@ -2,10 +2,15 @@
 
 use std::collections::BTreeSet;
 
-/// The orders a colony holds.
+use crate::inventory::Inventory;
+use crate::pawn::PawnId;
+
+/// The orders a colony holds, and what its pawns have brought in.
 #[derive(Debug, Default)]
 pub struct Colony {
     pub marks: MineMarks,
+    /// The colony total of each resource, filled by pawn jobs.
+    pub stock: Inventory,
 }
 
 /// What a mark order does to a block that is, or is not, marked.
@@ -17,7 +22,10 @@ pub enum MarkChange {
 
 /// An order to dig one block.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct MineMark;
+pub struct MineMark {
+    /// The pawn walking to this block, if any.
+    pub claimed_by: Option<PawnId>,
+}
 
 /// The blocks marked for mining, keyed by block position.
 ///
@@ -45,7 +53,26 @@ impl MineMarks {
 
     /// The marked blocks in key order.
     pub fn iter(&self) -> impl Iterator<Item = ([i32; 3], &MineMark)> {
-        self.marks.iter().map(|pos| (*pos, &MineMark))
+        self.marks
+            .iter()
+            .map(|pos| (*pos, &MineMark { claimed_by: None }))
+    }
+
+    /// Claims a marked block for `pawn`. `false` when the block is unmarked or already claimed.
+    pub fn claim(&mut self, pos: [i32; 3], pawn: PawnId) -> bool {
+        let _ = (pos, pawn);
+        todo!("claim")
+    }
+
+    /// Frees the claim on a block; the mark stays. Does nothing for an unmarked or unclaimed block.
+    pub fn release(&mut self, pos: [i32; 3]) {
+        let _ = pos;
+        todo!("release")
+    }
+
+    /// The marked blocks nobody has claimed, in key order.
+    pub fn unclaimed(&self) -> std::vec::IntoIter<[i32; 3]> {
+        todo!("unclaimed")
     }
 
     /// Drops the mark on a block that no longer exists; does nothing for an unmarked one.
@@ -61,6 +88,95 @@ mod tests {
 
     fn marked(marks: &MineMarks) -> Vec<[i32; 3]> {
         marks.iter().map(|(pos, _)| pos).collect()
+    }
+
+    fn claim_of(marks: &MineMarks, pos: [i32; 3]) -> Option<Option<PawnId>> {
+        marks
+            .iter()
+            .find(|(marked, _)| *marked == pos)
+            .map(|(_, mark)| mark.claimed_by)
+    }
+
+    #[test]
+    fn stock_grows_by_the_yield() {
+        let mut colony = Colony::default();
+
+        colony.stock.add(7, 1);
+        colony.stock.add(7, 2);
+        colony.stock.add(9, 5);
+
+        assert_eq!(colony.stock.count(7), 3);
+        assert_eq!(colony.stock.count(9), 5);
+        assert_eq!(colony.stock.count(1), 0);
+    }
+
+    #[test]
+    fn claim_and_release_round_trip() {
+        let mut marks = MineMarks::default();
+        marks.toggle([3, 4, 5]);
+        marks.toggle([1, 1, 1]);
+
+        let claimed = marks.claim([3, 4, 5], PawnId(0));
+        let taken: Vec<[i32; 3]> = marks.unclaimed().collect();
+        let second_claim = marks.claim([3, 4, 5], PawnId(1));
+        let unmarked_claim = marks.claim([9, 9, 9], PawnId(0));
+        marks.release([3, 4, 5]);
+        let freed: Vec<[i32; 3]> = marks.unclaimed().collect();
+
+        assert!(claimed);
+        assert_eq!(claim_of(&marks, [1, 1, 1]), Some(None));
+        assert_eq!(taken, [[1, 1, 1]], "a claimed mark is not offered");
+        assert!(!second_claim, "a claim is not taken from its pawn");
+        assert!(!unmarked_claim, "nothing to claim at an unmarked block");
+        assert!(!marks.contains([9, 9, 9]));
+        assert_eq!(freed, [[1, 1, 1], [3, 4, 5]], "release keeps the mark");
+        assert_eq!(claim_of(&marks, [3, 4, 5]), Some(None));
+    }
+
+    #[test]
+    fn the_claim_names_its_pawn() {
+        let mut marks = MineMarks::default();
+        marks.toggle([3, 4, 5]);
+
+        marks.claim([3, 4, 5], PawnId(2));
+
+        assert_eq!(claim_of(&marks, [3, 4, 5]), Some(Some(PawnId(2))));
+    }
+
+    #[test]
+    fn releasing_an_unclaimed_or_unmarked_block_changes_nothing() {
+        let mut marks = MineMarks::default();
+        marks.toggle([3, 4, 5]);
+
+        marks.release([3, 4, 5]);
+        marks.release([8, 8, 8]);
+
+        assert_eq!(marked(&marks), [[3, 4, 5]]);
+        assert_eq!(claim_of(&marks, [3, 4, 5]), Some(None));
+    }
+
+    #[test]
+    fn a_cancelled_mark_forgets_its_claim() {
+        let mut marks = MineMarks::default();
+        marks.toggle([3, 4, 5]);
+        marks.claim([3, 4, 5], PawnId(0));
+
+        marks.toggle([3, 4, 5]);
+        marks.toggle([3, 4, 5]);
+
+        assert_eq!(claim_of(&marks, [3, 4, 5]), Some(None));
+    }
+
+    #[test]
+    fn a_removed_block_takes_its_claim_with_its_mark() {
+        let mut marks = MineMarks::default();
+        marks.toggle([3, 4, 5]);
+        marks.claim([3, 4, 5], PawnId(0));
+
+        marks.block_removed([3, 4, 5]);
+
+        assert_eq!(claim_of(&marks, [3, 4, 5]), None);
+        assert_eq!(marks.unclaimed().count(), 0);
     }
 
     #[test]
