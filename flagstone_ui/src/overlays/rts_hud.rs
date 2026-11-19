@@ -603,6 +603,46 @@ mod tests {
         );
     }
 
+    fn stocked_data(is_fps_mode: bool) -> HudData {
+        HudData {
+            is_fps_mode,
+            colony_stock: vec![(1, 5), (7, 12)],
+            ..strategy_data(TOP)
+        }
+    }
+
+    #[test]
+    fn strategy_hud_lists_the_colony_totals() {
+        let drawn = drawn_texts(&stocked_data(false));
+        let empty = drawn_texts(&strategy_data(TOP));
+
+        let first = drawn.iter().position(|t| t.contains("R1 ×5"));
+        let second = drawn.iter().position(|t| t.contains("R7 ×12"));
+        assert!(first.is_some(), "no line for resource 1: {drawn:?}");
+        assert!(second.is_some(), "no line for resource 7: {drawn:?}");
+        assert!(first < second, "totals are listed in id order: {drawn:?}");
+        assert!(
+            !empty.iter().any(|t| t.contains('×')),
+            "no stock, no totals: {empty:?}"
+        );
+    }
+
+    #[test]
+    fn no_totals_in_first_person() {
+        let strategy = drawn_texts(&stocked_data(false));
+
+        let first_person = drawn_texts(&stocked_data(true));
+
+        assert!(
+            strategy.iter().any(|t| t.contains("R7 ×12")),
+            "the totals show in strategy: {strategy:?}"
+        );
+        assert!(
+            !first_person.iter().any(|t| t.contains("R7")),
+            "{first_person:?}"
+        );
+    }
+
     #[test]
     fn render_time_of_day_shows_clock_in_top_right() {
         let ctx = egui::Context::default();

@@ -1132,6 +1132,38 @@ mod tests {
         assert_eq!(fake.cameras.last().copied(), Some(app.camera));
     }
 
+    #[test]
+    fn returning_to_first_person_starts_where_the_pawn_walked_to() {
+        use crate::app::event_loop::frame_processor::tests::{FLOOR_TOP, colony_app};
+        let target = flagstone_voxel::BlockPos::new(10, FLOOR_TOP, 0);
+        let mut app = colony_app(false, target, Some(7), true);
+        let start = app.simulation.position();
+        let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+        sim.step(&mut app, 45);
+        let walked_to = walker_state(&app).position;
+        let toggle = StrategyCommand {
+            toggle_view: true,
+            ..StrategyCommand::default()
+        };
+
+        tick_app(&mut app, &toggle);
+
+        assert!(
+            walked_to.distance(start) > 2.0,
+            "the pawn walked on its own: {walked_to:?} from {start:?}"
+        );
+        assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+        let resumed = app.simulation.position();
+        assert!(
+            resumed.distance(walked_to) < 0.5,
+            "possession starts at {resumed:?}, not where the pawn stood at {walked_to:?}"
+        );
+        assert!(
+            resumed.distance(start) > 2.0,
+            "possession starts back at the pawn's old spot {start:?}"
+        );
+    }
+
     mod command_axes {
         use super::*;
 
