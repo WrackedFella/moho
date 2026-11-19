@@ -21,7 +21,7 @@ wgpu = "30.0.1"
 winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
 moho_physics = { path = "moho_physics" }
 searchlight_rules = { path = "searchlight_rules" }
-rapier3d = "0.36"
+rapier3d = { version = "0.36", features = ["enhanced-determinism"] }
 tempfile = "3.5"
 gltf = { version = "1.4.1", default-features = false, features = ["utils", "names", "extras"] }
 serde_json = "1"
