@@ -1,6 +1,9 @@
 //! Walking routes over the voxel ground: what a pawn can stand on and the cells it passes
 //! to reach a goal.
 
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
+
 use flagstone_voxel::{BlockPos, VoxelGrid};
 use glam::Vec3;
 
@@ -10,12 +13,47 @@ pub const ROUTE_NODE_BUDGET: usize = 4096;
 /// Whether a pawn can stand with its feet in `cell`: solid ground below and three cells of
 /// air from the feet up (the capsule is 2.3 m tall).
 pub fn standable(grid: &VoxelGrid, cell: BlockPos) -> bool {
-    todo!("standable({grid:p}, {cell})")
+    grid.is_solid_at(cell - BlockPos::Y) && air_above(grid, cell, 3)
+}
+
+/// Whether the `count` cells from `cell` upward are all air.
+fn air_above(grid: &VoxelGrid, cell: BlockPos, count: i32) -> bool {
+    (0..count).all(|dy| !grid.is_solid_at(cell + BlockPos::Y * dy))
 }
 
 /// The cell holding a pawn's feet at `feet`.
 pub fn feet_cell(feet: Vec3) -> BlockPos {
-    todo!("feet_cell({feet})")
+    feet.floor().as_ivec3()
+}
+
+const HORIZONTAL_STEPS: [BlockPos; 4] = [
+    BlockPos::new(1, 0, 0),
+    BlockPos::new(-1, 0, 0),
+    BlockPos::new(0, 0, 1),
+    BlockPos::new(0, 0, -1),
+];
+
+/// The standable cells one horizontal step from `cell`, on the same level, one block up
+/// (needing a fourth air cell over `cell`) or one block down.
+fn neighbours(grid: &VoxelGrid, cell: BlockPos) -> impl Iterator<Item = BlockPos> + '_ {
+    HORIZONTAL_STEPS.into_iter().filter_map(move |step| {
+        let side = cell + step;
+        if standable(grid, side) {
+            Some(side)
+        } else if standable(grid, side + BlockPos::Y) && air_above(grid, cell + BlockPos::Y * 3, 1)
+        {
+            Some(side + BlockPos::Y)
+        } else if standable(grid, side - BlockPos::Y) && air_above(grid, side + BlockPos::Y * 2, 1)
+        {
+            Some(side - BlockPos::Y)
+        } else {
+            None
+        }
+    })
+}
+
+fn manhattan(a: BlockPos, b: BlockPos) -> i32 {
+    (a.x - b.x).abs() + (a.z - b.z).abs()
 }
 
 /// A* over standable cells from `start` to the first cell `is_goal` accepts, with the
@@ -29,8 +67,50 @@ pub fn route(
     toward: BlockPos,
     budget: usize,
 ) -> Option<Vec<BlockPos>> {
-    let _ = (&is_goal, budget);
-    todo!("route({grid:p}, {start}, {toward})")
+    let start = [start, start + BlockPos::Y, start - BlockPos::Y]
+        .into_iter()
+        .find(|&cell| standable(grid, cell))?;
+
+    // Nodes are `(cell, parent, steps from start)`; the heap orders by (f, g, insertion).
+    let mut nodes = vec![(start, usize::MAX, 0)];
+    let mut best: HashMap<BlockPos, i32> = HashMap::from([(start, 0)]);
+    let mut open = BinaryHeap::from([Reverse((manhattan(start, toward), 0, 0usize))]);
+    let mut expansions = 0;
+
+    while let Some(Reverse((_, g, index))) = open.pop() {
+        let (cell, ..) = nodes[index];
+        if best[&cell] < g {
+            continue;
+        }
+        if is_goal(cell) {
+            let mut path = Vec::new();
+            let mut at = index;
+            while nodes[at].1 != usize::MAX {
+                path.push(nodes[at].0);
+                at = nodes[at].1;
+            }
+            path.reverse();
+            return Some(path);
+        }
+        if expansions >= budget {
+            return None;
+        }
+        expansions += 1;
+        for next in neighbours(grid, cell) {
+            let next_g = g + 1;
+            if best.get(&next).is_some_and(|&known| known <= next_g) {
+                continue;
+            }
+            best.insert(next, next_g);
+            nodes.push((next, index, next_g));
+            open.push(Reverse((
+                next_g + manhattan(next, toward),
+                next_g,
+                nodes.len() - 1,
+            )));
+        }
+    }
+    None
 }
 
 #[cfg(test)]

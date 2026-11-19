@@ -61,18 +61,29 @@ impl MineMarks {
     /// Records `pawn` as walking to the mark at `pos`. Returns whether the claim was taken:
     /// `false` when `pos` is not marked or another pawn already holds it.
     pub fn claim(&mut self, pos: [i32; 3], pawn: PawnId) -> bool {
-        todo!("claim({pos:?}, {pawn:?})")
+        match self.marks.get_mut(&pos) {
+            Some(mark) if mark.claimed_by.is_none() => {
+                mark.claimed_by = Some(pawn);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Frees the claim on the mark at `pos`, keeping the mark. Does nothing for an
     /// unmarked or unclaimed block.
     pub fn release(&mut self, pos: [i32; 3]) {
-        todo!("release({pos:?})")
+        if let Some(mark) = self.marks.get_mut(&pos) {
+            mark.claimed_by = None;
+        }
     }
 
     /// The marks no pawn has claimed, in key order.
     pub fn unclaimed(&self) -> impl Iterator<Item = [i32; 3]> + '_ {
-        self.marks.keys().copied()
+        self.marks
+            .iter()
+            .filter(|(_, mark)| mark.claimed_by.is_none())
+            .map(|(pos, _)| *pos)
     }
 }
 
