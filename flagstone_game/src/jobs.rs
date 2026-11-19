@@ -587,6 +587,143 @@ mod tests {
         assert_near(east.dig.1, Vec3::new(6.0, 0.5, 0.5));
     }
 
+    #[test]
+    fn a_mark_with_only_a_side_face_exposed_is_aimed_at_that_faces_centre() {
+        let mut grid = flat();
+        for x in 5..=6 {
+            for z in -2..=2 {
+                for y in 0..=1 {
+                    place(&mut grid, x, y, z);
+                }
+            }
+        }
+        let mut marks = MineMarks::default();
+        marks.toggle([5, 0, 0]);
+        let mut pawn = Pawn::default();
+        let mut job = Job::Idle;
+
+        let outing = walk_until_dig(&mut job, &mut pawn, standing_in(0, 0, 0), &mut marks, &grid);
+
+        assert_eq!(outing.dig.0, BlockPos::new(5, 0, 0));
+        assert_near(outing.dig.1, Vec3::new(5.0, 0.5, 0.5));
+    }
+
+    #[test]
+    fn a_mark_with_only_its_top_exposed_is_aimed_at_the_top_faces_centre() {
+        let mut grid = flat();
+        for (x, z) in [(5, 0), (7, 0), (6, 1), (6, -1)] {
+            place(&mut grid, x, 0, z);
+        }
+        let mut marks = MineMarks::default();
+        marked(&mut grid, &mut marks, 6, 0, 0);
+        let mut pawn = Pawn::default();
+        let mut job = Job::Idle;
+
+        let outing = walk_until_dig(&mut job, &mut pawn, standing_in(0, 0, 0), &mut marks, &grid);
+
+        assert_eq!(outing.dig.0, BlockPos::new(6, 0, 0));
+        assert_near(outing.dig.1, Vec3::new(6.5, 1.0, 0.5));
+    }
+
+    #[test]
+    fn a_mark_with_only_its_underside_exposed_is_aimed_at_the_bottom_faces_centre() {
+        let mut grid = flat();
+        for (x, z) in [(5, 0), (7, 0), (6, 1), (6, -1)] {
+            place(&mut grid, x, 1, z);
+        }
+        place(&mut grid, 6, 2, 0);
+        let mut marks = MineMarks::default();
+        marked(&mut grid, &mut marks, 6, 1, 0);
+        let mut pawn = Pawn::default();
+        let mut job = Job::Idle;
+
+        let outing = walk_until_dig(&mut job, &mut pawn, standing_in(0, 0, 0), &mut marks, &grid);
+
+        assert_eq!(outing.dig.0, BlockPos::new(6, 1, 0));
+        assert_near(outing.dig.1, Vec3::new(6.5, 1.0, 0.5));
+    }
+
+    #[test]
+    fn the_dig_picks_the_face_nearest_the_eye_by_the_eye_height_above_the_feet() {
+        let mut grid = flat();
+        for (x, z) in [(5, 0), (7, 0), (6, 1), (6, -1)] {
+            place(&mut grid, x, 1, z);
+        }
+        let mut marks = MineMarks::default();
+        marked(&mut grid, &mut marks, 6, 1, 0);
+        let mut pawn = Pawn::default();
+        let mut job = Job::Mine {
+            mark: [6, 1, 0],
+            route: Vec::new(),
+            next: 0,
+            stall: StallGuard::new(),
+        };
+        let pose = Pose {
+            feet: Vec3::new(3.5, 0.5, 0.5),
+            yaw: 0.0,
+        };
+
+        let action = tick(&mut job, &mut pawn, pose, &mut marks, &grid);
+
+        assert_eq!(
+            action,
+            JobAction::Dig {
+                block: BlockPos::new(6, 1, 0),
+                aim: Vec3::new(6.5, 2.0, 0.5),
+            }
+        );
+    }
+
+    #[test]
+    fn the_nearest_mark_wins_when_the_pawn_is_off_the_origin_and_marks_lie_on_both_sides() {
+        let mut grid = flat();
+        let mut marks = MineMarks::default();
+        marked(&mut grid, &mut marks, 2, 0, 0);
+        marked(&mut grid, &mut marks, 9, 0, 0);
+        let mut pawn = Pawn::default();
+        let mut job = Job::Idle;
+
+        let action = tick(&mut job, &mut pawn, standing_in(6, 0, 0), &mut marks, &grid);
+
+        assert!(matches!(action, JobAction::Walk { .. }), "{action:?}");
+        assert_eq!(claimed_marks(&marks), [[9, 0, 0]]);
+    }
+
+    #[test]
+    fn a_pawn_on_a_waypoint_moves_on_to_the_next_one() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut grid = flat();
+            let mut marks = MineMarks::default();
+            marked(&mut grid, &mut marks, 4, 0, 0);
+            let mut pawn = Pawn::default();
+            let mut job = Job::Mine {
+                mark: [4, 0, 0],
+                route: (0..=3).map(|x| BlockPos::new(x, 0, 0)).collect(),
+                next: 0,
+                stall: StallGuard::new(),
+            };
+            let action = tick(&mut job, &mut pawn, standing_in(0, 0, 0), &mut marks, &grid);
+            let next = match job {
+                Job::Mine { next, .. } => Some(next),
+                Job::Idle => None,
+            };
+            let _ = sender.send((action, next));
+        });
+
+        let (action, next) = receiver
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .expect("the pawn never got past the waypoint it stood on");
+
+        assert_eq!(
+            action,
+            JobAction::Walk {
+                to: Vec3::new(1.5, 0.0, 0.5)
+            }
+        );
+        assert_eq!(next, Some(1));
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(48))]
 

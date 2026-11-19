@@ -309,6 +309,32 @@ mod tests {
         assert_eq!(fed.map(|r| r.len()), Some(19));
     }
 
+    /// Runs `work` on its own thread and fails the test when it has not finished in time,
+    /// so a search that never ends reads as a failure rather than a hung test run.
+    fn finishes_promptly<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(work());
+        });
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .expect("the route search did not finish")
+    }
+
+    #[test]
+    fn a_route_succeeds_with_exactly_the_expansions_it_needs_and_fails_with_one_fewer() {
+        let (enough, one_short) = finishes_promptly(|| {
+            let grid = flat();
+            let goal = cell(5, 0, 0);
+            let with = |budget| route(&grid, cell(0, 0, 0), |c| c == goal, goal, budget);
+            (with(5), with(4))
+        });
+
+        let expected: Vec<_> = (0..=5).map(|x| cell(x, 0, 0)).collect();
+        assert_eq!(enough, Some(expected));
+        assert_eq!(one_short, None);
+    }
+
     #[test]
     fn a_start_in_the_ground_or_just_above_it_is_moved_onto_the_ground() {
         let grid = flat();
