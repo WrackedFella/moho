@@ -72,6 +72,9 @@ fn nearest_waypoint(spawn: Vec3, route: &[Vec3]) -> (usize, f32) {
 /// Radius of the shipped body's capsule, in metres; two shipped bodies touch at twice this.
 pub const CAPSULE_RADIUS: f32 = SHIPPED_BODY.standing.hull.radius;
 
+/// How far from the eye, in metres, the player can use a control.
+pub const USE_REACH: f32 = 2.0;
+
 /// Whether a sim starts with an enemy at each enemy spawn marker.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Start {
@@ -856,6 +859,13 @@ impl SearchlightSim {
         state.eye_position() + lean_offset(state.yaw, self.lean.shift(&self.lean_tuning))
     }
 
+    /// The control the player is looking at within [`USE_REACH`]: `Some(i)` only when the first
+    /// surface along the view from the leaned eye is control `i`; `None` while the player is
+    /// dead.
+    pub fn control_in_reach(&self) -> Option<u16> {
+        todo!("cast the use ray and keep a first surface that is a control")
+    }
+
     /// How far the player leans after the last tick.
     pub fn player_lean(&self) -> Lean {
         self.lean
@@ -1071,7 +1081,9 @@ mod tests {
     fn part_of(volume: &HitVolume) -> BodyPart {
         match SurfaceTag::try_from(volume.tag).expect("a body volume carries a body tag") {
             SurfaceTag::Part { part, .. } | SurfaceTag::Player(part) => part,
-            other @ SurfaceTag::World => panic!("not a body part: {other:?}"),
+            other @ (SurfaceTag::World | SurfaceTag::Control(_)) => {
+                panic!("not a body part: {other:?}")
+            }
         }
     }
 
@@ -1687,6 +1699,130 @@ mod tests {
 
     /// Ticks that settle any lean: twice the blend time.
     const SETTLE_TICKS: usize = 30;
+
+    use crate::test_support::{POST, arena_with_controls, look_at, post_target};
+
+    /// A player at the origin facing +Z on a 60 m floor, a control post on each floor point of
+    /// `posts` and a wall box for each of `walls`.
+    fn post_sim(walls: &[(Vec3, Vec3)], posts: &[Vec3]) -> SearchlightSim {
+        let arena = arena_with_controls(walls, Vec3::ZERO, &[], &[], posts);
+        SearchlightSim::start(arena, test_config(rifle_with(5), vec![]))
+    }
+
+    /// Turns the player to look at `target`; the view settles in one tick.
+    fn look_at_point(sim: &mut SearchlightSim, target: Vec3) {
+        let turn = look_at(sim.player_eye(), target);
+        sim.tick(&turn, DT);
+    }
+
+    /// The control found by a fresh player looking at `target` with `walls` standing.
+    fn found_looking_at(walls: &[(Vec3, Vec3)], posts: &[Vec3], target: Vec3) -> Option<u16> {
+        let mut sim = post_sim(walls, posts);
+        look_at_point(&mut sim, target);
+        sim.control_in_reach()
+    }
+
+    #[test]
+    fn a_control_in_view_and_reach_is_found() {
+        let posts = [POST, Vec3::new(1.2, 0.0, 1.5)];
+
+        let first = found_looking_at(&[], &posts, post_target());
+        let second = found_looking_at(&[], &posts, Vec3::new(1.2, 0.6, 1.5));
+
+        assert_eq!(first, Some(0));
+        assert_eq!(second, Some(1));
+    }
+
+    #[test]
+    fn a_control_out_of_view_is_not_found() {
+        let eye_height = SHIPPED_BODY.standing.eye_height;
+        let looking_at_it = found_looking_at(&[], &[POST], post_target());
+
+        let to_the_side = found_looking_at(&[], &[POST], Vec3::new(5.0, 0.0, 1.5));
+        let at_the_floor_short_of_it = found_looking_at(&[], &[POST], Vec3::new(0.0, 0.0, 0.8));
+        let level_over_its_top = found_looking_at(&[], &[POST], Vec3::new(0.0, eye_height, 1.5));
+        let behind = found_looking_at(&[], &[POST], Vec3::new(0.0, 0.6, -1.5));
+
+        assert_eq!(
+            looking_at_it,
+            Some(0),
+            "the same post is found when looked at"
+        );
+        assert_eq!(to_the_side, None);
+        assert_eq!(at_the_floor_short_of_it, None);
+        assert_eq!(level_over_its_top, None, "the post is lower than the eye");
+        assert_eq!(behind, None);
+    }
+
+    #[test]
+    fn a_control_beyond_reach_is_not_found() {
+        let drop = SHIPPED_BODY.standing.eye_height - 0.6;
+        let found_at_ray_length = |length: f32| {
+            let face = (length * length - drop * drop).sqrt();
+            found_looking_at(
+                &[],
+                &[Vec3::new(0.0, 0.0, face + 0.2)],
+                Vec3::new(0.0, 0.6, face),
+            )
+        };
+
+        let just_inside = found_at_ray_length(USE_REACH - 0.05);
+        let just_outside = found_at_ray_length(USE_REACH + 0.05);
+        let far = found_at_ray_length(USE_REACH + 5.0);
+
+        assert_eq!(just_inside, Some(0));
+        assert_eq!(just_outside, None);
+        assert_eq!(far, None);
+    }
+
+    #[test]
+    fn a_control_behind_a_wall_is_not_found() {
+        let wall = (Vec3::new(-3.0, 0.0, 0.8), Vec3::new(3.0, 3.0, 0.9));
+
+        let without_the_wall = found_looking_at(&[], &[POST], post_target());
+        let with_the_wall = found_looking_at(&[wall], &[POST], post_target());
+
+        assert_eq!(without_the_wall, Some(0));
+        assert_eq!(with_the_wall, None);
+    }
+
+    #[test]
+    fn a_dead_player_finds_no_control() {
+        let mut sim = post_sim(&[], &[POST]);
+        look_at_point(&mut sim, post_target());
+        let alive = sim.control_in_reach();
+
+        sim.kill_player();
+
+        assert_eq!(alive, Some(0));
+        assert_eq!(sim.control_in_reach(), None);
+    }
+
+    #[test]
+    fn a_shot_at_a_control_damages_nothing() {
+        let mut sim = post_sim(&[], &[POST]);
+        look_at_point(&mut sim, post_target());
+        let state = sim.player();
+        let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
+        let strike = resolve_shot(
+            &sim.world,
+            ShotRay {
+                origin: sim.player_eye(),
+                direction: view.forward,
+                range: 100.0,
+                ignore: Some(sim.player),
+            },
+        );
+
+        sim.tick(&pull(), DT);
+
+        let strike = strike.expect("the post stops the shot");
+        assert_eq!(strike.tag, SurfaceTag::Control(0));
+        assert_eq!(sim.drain_feedback(), [Feedback::Fired]);
+        assert_eq!(sim.kills(), 0);
+        assert_eq!(sim.enemies_alive(), 0);
+        assert!(!sim.player_body().is_dead());
+    }
 
     fn leaning(side: Option<LeanSide>) -> SearchlightCommand {
         SearchlightCommand {

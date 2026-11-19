@@ -9,16 +9,17 @@ use moho_input::Action;
 use moho_input::action_map::ActionMap;
 use moho_input::bindings::Input;
 use moho_level::{LevelMarker, NavMesh};
-use moho_physics::{MoveSettings, PhysicsWorld};
+use moho_physics::{CharacterCommand, MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::{
     BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId, LeanTuning, Loadout, Magazine,
     MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
 };
 
-use crate::arena::{Arena, nav_profile};
+use crate::arena::{Arena, ArenaControl, nav_profile};
 use crate::brain::EnemyTuning;
-use crate::input::SearchlightAction;
+use crate::control::ControlAction;
+use crate::input::{SearchlightAction, SearchlightCommand};
 use crate::mode::ArenaMode;
 use crate::sim::SimConfig;
 use crate::tag::SurfaceTag;
@@ -225,12 +226,50 @@ pub(crate) fn arena_with(
     enemies: &[Vec3],
     route: &[Vec3],
 ) -> Arc<Arena> {
+    arena_with_controls(boxes, player, enemies, route, &[])
+}
+
+/// The floor point of the control the tests look at: 1.5 m ahead of a player at the origin.
+pub(crate) const POST: Vec3 = Vec3::new(0.0, 0.0, 1.5);
+
+/// A point on `POST`'s front half, 0.6 m up its 1.2 m height.
+pub(crate) fn post_target() -> Vec3 {
+    POST + Vec3::Y * 0.6
+}
+
+/// The post of a `next_wave` control standing on floor point `at`: 0.4 x 1.2 x 0.4 m.
+pub(crate) fn control_post(at: Vec3) -> ArenaControl {
+    ArenaControl {
+        action: ControlAction::NextWave,
+        mesh: box_mesh(
+            at + Vec3::new(-0.2, 0.0, -0.2),
+            at + Vec3::new(0.2, 1.2, 0.2),
+        ),
+    }
+}
+
+/// [`arena_with`] plus one `next_wave` control post on each floor point of `controls`, in order,
+/// and a navmesh that walks round them.
+pub(crate) fn arena_with_controls(
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+    controls: &[Vec3],
+) -> Arc<Arena> {
     let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
     let meshes: Vec<WorldMesh> = std::iter::once(&floor)
         .chain(boxes)
         .map(|&(min, max)| box_mesh(min, max))
         .collect();
-    let nav = Arc::new(NavMesh::build(&meshes, nav_profile()).expect("box worlds build a navmesh"));
+    let controls: Vec<ArenaControl> = controls.iter().map(|&at| control_post(at)).collect();
+    let walkable: Vec<WorldMesh> = meshes
+        .iter()
+        .cloned()
+        .chain(controls.iter().map(|control| control.mesh.clone()))
+        .collect();
+    let nav =
+        Arc::new(NavMesh::build(&walkable, nav_profile()).expect("box worlds build a navmesh"));
     Arc::new(Arena {
         material_names: vec![None; meshes.len()],
         meshes,
@@ -241,7 +280,22 @@ pub(crate) fn arena_with(
         enemy_spawns: enemies.to_vec(),
         route: route.to_vec(),
         covers: Vec::new(),
+        controls,
     })
+}
+
+/// A command that turns a fresh player (yaw 0, level) with its eye at `eye` to look at `target`.
+/// The turn adds to the player's view, so send it once.
+pub(crate) fn look_at(eye: Vec3, target: Vec3) -> SearchlightCommand {
+    let to = target - eye;
+    SearchlightCommand {
+        movement: CharacterCommand {
+            yaw_delta: to.x.atan2(to.z),
+            pitch_delta: to.y.atan2(to.x.hypot(to.z)),
+            ..CharacterCommand::default()
+        },
+        ..SearchlightCommand::default()
+    }
 }
 
 /// Waves of experienced enemies that open with `first_size` enemies, grow by one and score 100

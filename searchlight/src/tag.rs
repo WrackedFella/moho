@@ -12,6 +12,9 @@ pub enum SurfaceTag {
     Part { target: u16, part: BodyPart },
     /// One body part of the player.
     Player(BodyPart),
+    /// The placed control numbered by its index in the arena's controls: stops a ray, damages
+    /// nothing.
+    Control(u16),
 }
 
 /// The engine tag does not encode any [`SurfaceTag`].
@@ -50,7 +53,7 @@ fn part_index(part: BodyPart) -> u32 {
 impl From<SurfaceTag> for HitTag {
     fn from(tag: SurfaceTag) -> Self {
         match tag {
-            SurfaceTag::World => HitTag(WORLD),
+            SurfaceTag::World | SurfaceTag::Control(_) => HitTag(WORLD),
             SurfaceTag::Player(part) => HitTag(PLAYER_BASE + part_index(part)),
             SurfaceTag::Part { target, part } => {
                 HitTag(PART_BASE + ((u32::from(target) << PART_BITS) | part_index(part)))
@@ -101,6 +104,7 @@ mod tests {
             Just(SurfaceTag::World),
             (any::<u16>(), proptest::sample::select(PARTS.to_vec()))
                 .prop_map(|(target, part)| SurfaceTag::Part { target, part }),
+            any::<u16>().prop_map(SurfaceTag::Control),
         ]
     }
 
@@ -195,5 +199,55 @@ mod player_encoding_tests {
         assert_eq!(head, HitTag(524_289));
         assert_eq!(right_leg, HitTag(524_294));
         assert!(last_target_part.0 < head.0);
+    }
+}
+
+#[cfg(test)]
+mod control_encoding_tests {
+    use super::*;
+
+    const PARTS: [BodyPart; 6] = [
+        BodyPart::Head,
+        BodyPart::Torso,
+        BodyPart::LeftArm,
+        BodyPart::RightArm,
+        BodyPart::LeftLeg,
+        BodyPart::RightLeg,
+    ];
+
+    #[test]
+    fn control_tags_sit_above_every_player_tag_and_count_up_with_the_index() {
+        let highest_player = PARTS
+            .iter()
+            .map(|&part| HitTag::from(SurfaceTag::Player(part)).0)
+            .max()
+            .expect("the player has parts");
+
+        let first = HitTag::from(SurfaceTag::Control(0));
+        let second = HitTag::from(SurfaceTag::Control(1));
+        let last = HitTag::from(SurfaceTag::Control(u16::MAX));
+
+        assert!(first.0 > highest_player, "{first:?} vs {highest_player}");
+        assert_eq!(second.0, first.0 + 1);
+        assert_eq!(u32::from(u16::MAX), last.0 - first.0);
+    }
+
+    #[test]
+    fn a_control_tag_decodes_to_its_own_index_and_not_to_the_world() {
+        let tag = HitTag::from(SurfaceTag::Control(7));
+
+        let decoded = SurfaceTag::try_from(tag);
+
+        assert_eq!(decoded, Ok(SurfaceTag::Control(7)));
+        assert_ne!(tag, HitTag::from(SurfaceTag::World));
+    }
+
+    #[test]
+    fn a_tag_past_the_last_control_is_rejected() {
+        let last = HitTag::from(SurfaceTag::Control(u16::MAX));
+
+        let decoded = SurfaceTag::try_from(HitTag(last.0 + 1));
+
+        assert_eq!(decoded, Err(UnknownTag(last.0 + 1)));
     }
 }

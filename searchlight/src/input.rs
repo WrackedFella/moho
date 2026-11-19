@@ -22,6 +22,7 @@ pub enum SearchlightAction {
     Restart,
     LeanLeft,
     LeanRight,
+    Use,
 }
 
 impl Action for SearchlightAction {
@@ -37,6 +38,7 @@ impl Action for SearchlightAction {
         SearchlightAction::Restart,
         SearchlightAction::LeanLeft,
         SearchlightAction::LeanRight,
+        SearchlightAction::Use,
     ];
 
     fn name(self) -> &'static str {
@@ -52,6 +54,7 @@ impl Action for SearchlightAction {
             SearchlightAction::Restart => "restart",
             SearchlightAction::LeanLeft => "lean_left",
             SearchlightAction::LeanRight => "lean_right",
+            SearchlightAction::Use => "use",
         }
     }
 
@@ -70,6 +73,7 @@ impl Action for SearchlightAction {
             SearchlightAction::Restart => const { &[Binding::key(Key::F8)] },
             SearchlightAction::LeanLeft => const { &[Binding::key(Key::Q)] },
             SearchlightAction::LeanRight => const { &[Binding::key(Key::E)] },
+            SearchlightAction::Use => const { &[Binding::key(Key::U)] },
         }
     }
 }
@@ -135,6 +139,8 @@ pub struct SearchlightCommand {
     pub forced_grade: Option<Grade>,
     /// The side the player holds a lean toward, after key resolution.
     pub lean: Option<LeanSide>,
+    /// The use input went down this tick.
+    pub use_pressed: bool,
 }
 
 /// The lean side held this tick: a side pressed this tick wins (right on a same-tick tie),
@@ -192,6 +198,7 @@ impl SearchlightCommand {
             god_mode: false,
             forced_grade: None,
             lean: None,
+            use_pressed: false,
         }
     }
 }
@@ -338,6 +345,50 @@ mod tests {
 
         assert!(pressed.check && !pressed.reload);
         assert!(!held.check);
+    }
+
+    #[test]
+    fn use_defaults_to_f_and_sets_use_pressed_on_its_press() {
+        let mut map = fresh_map();
+        map.key(Key::F, true);
+
+        let pressed = SearchlightCommand::from_frame(&map.end_tick());
+        let held = SearchlightCommand::from_frame(&map.end_tick());
+        map.key(Key::F, false);
+        let released = SearchlightCommand::from_frame(&map.end_tick());
+        map.key(Key::F, true);
+        let again = SearchlightCommand::from_frame(&map.end_tick());
+        map.key(Key::F, false);
+        map.key(Key::E, true);
+        let lean_key = SearchlightCommand::from_frame(&map.end_tick());
+
+        assert_eq!(SearchlightAction::Use.name(), "use");
+        assert_eq!(
+            SearchlightAction::Use.default_bindings(),
+            [Binding::key(Key::F)]
+        );
+        assert!(SearchlightAction::ALL.contains(&SearchlightAction::Use));
+        assert_eq!(
+            [
+                pressed.use_pressed,
+                held.use_pressed,
+                released.use_pressed,
+                again.use_pressed
+            ],
+            [true, false, false, true]
+        );
+        assert!(!lean_key.use_pressed, "E and Q stay the lean keys");
+        assert!(!pressed.fire && !pressed.reload && !pressed.check && !pressed.restart);
+    }
+
+    #[test]
+    fn a_bindings_file_without_use_keeps_the_default() {
+        let saved = BTreeMap::from([("jump".to_owned(), "Space".to_owned())]);
+
+        let (bindings, warnings) = ActionBindings::<SearchlightAction>::load(&saved);
+
+        assert_eq!(warnings, vec![]);
+        assert_eq!(bindings.get(SearchlightAction::Use), [Binding::key(Key::F)]);
     }
 
     #[test]

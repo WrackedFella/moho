@@ -3,6 +3,7 @@
 use glam::Vec3;
 use searchlight_rules::{BodyPart, MagazineLevel};
 
+use crate::control::ControlAction;
 use crate::mode::Tally;
 use crate::sim::Feedback;
 
@@ -110,6 +111,12 @@ pub fn death_text(dead: bool) -> Option<&'static str> {
     dead.then_some("Dead - press F8 to restart")
 }
 
+/// The prompt for a control in reach: the use `key`'s label in brackets, then what using it
+/// does, such as `[F] Next wave`.
+pub fn use_prompt(_key: &str, _action: ControlAction) -> String {
+    todo!("name the use key and the action")
+}
+
 /// A translucent rectangle in screen pixels, colour as straight RGBA.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Overlay {
@@ -148,6 +155,17 @@ mod tests {
 
         let expected: Vec<&str> = levels.iter().map(|&(_, w)| w).collect();
         assert_eq!(words, expected);
+    }
+
+    #[test]
+    fn the_use_prompt_names_the_key_and_next_wave() {
+        let default_key = use_prompt("F", ControlAction::NextWave);
+        let rebound = use_prompt("G", ControlAction::NextWave);
+        let unbound = use_prompt("unbound", ControlAction::NextWave);
+
+        assert_eq!(default_key, "[F] Next wave");
+        assert_eq!(rebound, "[G] Next wave");
+        assert_eq!(unbound, "[unbound] Next wave");
     }
 }
 

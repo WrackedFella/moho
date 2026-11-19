@@ -29,6 +29,7 @@ use moho_ui_shell::{
     apply_engine_settings,
 };
 
+use crate::arena::ArenaControl;
 use crate::console_commands::{self, ConsoleCommand, GodModeArg};
 use crate::debug_settings::DebugSettings;
 use crate::hud::Edge;
@@ -96,6 +97,7 @@ enum Paint {
     Enemy,
     Struck,
     ArenaMark,
+    Control,
 }
 
 impl RenderMaterial for Paint {
@@ -115,6 +117,7 @@ impl RenderMaterial for Paint {
             Paint::Enemy => ([0.3, 0.4, 0.62], [0.22, 0.3, 0.5], 0.0, 0.0),
             Paint::Struck => ([1.0, 0.15, 0.1], [1.0, 0.15, 0.1], 1.0, 0.0),
             Paint::ArenaMark => ([0.95, 0.9, 0.2], [0.8, 0.75, 0.15], 0.0, 0.0),
+            Paint::Control => ([0.62, 0.62, 0.64], [0.42, 0.43, 0.46], 0.0, 0.0),
         };
         MaterialGpu {
             albedo: [top[0], top[1], top[2], gloss],
@@ -959,6 +962,12 @@ impl SearchlightGame {
         self
     }
 
+    /// Draws `controls` as posts in [`Paint::Control`] and names them in the use prompt.
+    #[must_use]
+    pub fn with_controls(self, _controls: &[ArenaControl]) -> Self {
+        self
+    }
+
     /// Plays the sound file at `path` for every shot fired.
     #[must_use]
     pub fn with_shot_sound(mut self, path: &Path) -> Self {
@@ -1250,6 +1259,132 @@ mod tests {
 
         assert_eq!(game.sim().pending_feedback(), [Feedback::Fired]);
         assert_eq!(game.sim().rifle().magazine().rounds(), 3);
+    }
+
+    use crate::test_support::{POST, arena_with_controls, look_at, post_target};
+
+    /// A playing game on an arena with a control post 1.5 m ahead of the player at the origin,
+    /// who turns to look at `target`.
+    fn game_looking_at(target: Vec3) -> SearchlightGame {
+        let arena = arena_with_controls(&[], Vec3::ZERO, &[], &[], &[POST]);
+        let mode = ArenaMode::new(
+            arena.clone(),
+            test_config(rifle_from(mag(30, 5)), vec![]),
+            wave_tuning(1),
+        );
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
+            .with_controls(&arena.controls);
+        let turn = look_at(game.sim().player_eye(), target);
+        game.mode.tick(&turn, 1.0 / 60.0);
+        game
+    }
+
+    /// Draws one frame of `game` and takes what the shell paints over it.
+    fn shell_paint_after_a_frame(game: &mut SearchlightGame) -> Option<UiFrame> {
+        let mut renderer = SettingsRenderer::default();
+        draw_frame(game, &mut renderer);
+        game.stage.shell().ui_frame([1280, 720])
+    }
+
+    #[test]
+    fn the_prompt_shows_while_the_button_is_in_reach() {
+        let mut game = game_looking_at(post_target());
+
+        let painted = shell_paint_after_a_frame(&mut game);
+
+        let painted = painted.expect("the shell paints the use prompt");
+        assert!(!painted.meshes.is_empty());
+    }
+
+    #[test]
+    fn no_prompt_when_looking_away() {
+        let mut looking_at_it = game_looking_at(post_target());
+        let mut looking_to_the_side = game_looking_at(Vec3::new(5.0, 0.0, 1.5));
+        let mut turned_away = game_looking_at(post_target());
+        let on_the_post = shell_paint_after_a_frame(&mut turned_away).is_some();
+        turned_away.mode.tick(
+            &SearchlightCommand {
+                movement: moho_physics::CharacterCommand {
+                    yaw_delta: std::f32::consts::PI,
+                    ..moho_physics::CharacterCommand::default()
+                },
+                ..SearchlightCommand::default()
+            },
+            1.0 / 60.0,
+        );
+
+        assert!(shell_paint_after_a_frame(&mut looking_at_it).is_some());
+        assert!(on_the_post, "the prompt shows before the player turns away");
+        assert!(shell_paint_after_a_frame(&mut looking_to_the_side).is_none());
+        assert!(shell_paint_after_a_frame(&mut turned_away).is_none());
+    }
+
+    #[test]
+    fn no_prompt_while_dead_or_paused() {
+        let mut game = game_looking_at(post_target());
+        let mut renderer = SettingsRenderer::default();
+        draw_frame(&mut game, &mut renderer);
+        let while_alive = game.stage.shell().ui_frame([1280, 720]).is_some();
+        // The prompt of this frame is still queued, unpainted, when the next one is built.
+        draw_frame(&mut game, &mut renderer);
+        game.mode.sim_mut().kill_player();
+        draw_frame(&mut game, &mut renderer);
+        let while_dead = game.stage.shell().ui_frame([1280, 720]);
+        let paused_paint = |target: Vec3| {
+            let mut game = game_looking_at(target);
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+            game.route_input(&mut ctx, Input::Key(Key::Escape), true, false);
+            assert_eq!(game.screen, Screen::Paused);
+            let painted = shell_paint_after_a_frame(&mut game).expect("the pause menu paints");
+            painted
+                .meshes
+                .iter()
+                .map(|m| m.vertices.len())
+                .sum::<usize>()
+        };
+
+        let paused_at_the_post = paused_paint(post_target());
+        let paused_looking_away = paused_paint(Vec3::new(5.0, 0.0, 1.5));
+
+        assert!(while_alive, "the prompt shows before the player dies");
+        assert!(while_dead.is_none(), "a prompt shows over a dead player");
+        assert_eq!(
+            paused_at_the_post, paused_looking_away,
+            "a prompt shows behind the pause menu"
+        );
+    }
+
+    #[test]
+    fn control_mesh_ids_share_no_id_with_arena_dummy_or_enemy_meshes() {
+        use crate::arena::{arena_mesh_id, control_mesh_id};
+
+        let controls: Vec<WorldMeshId> = (0..16).map(control_mesh_id).collect();
+        let arena: Vec<WorldMeshId> = (0..10_000).map(arena_mesh_id).collect();
+        let dummies: Vec<WorldMeshId> = dummy_segments(&SHIPPED_BODY, &[Vec3::ZERO; 200])
+            .iter()
+            .map(|segment| segment.id)
+            .collect();
+        let enemies: Vec<WorldMeshId> = [0, 1, 1000, u16::MAX]
+            .into_iter()
+            .flat_map(|target| {
+                let rig = EnemyRig {
+                    target,
+                    shown: false,
+                    gun_flash: 0,
+                };
+                (0..ENEMY_MESH_SLOTS as usize).map(move |slot| rig.mesh_id(slot))
+            })
+            .collect();
+
+        assert_eq!(control_mesh_id(0), WorldMeshId(3 << 32));
+        for (index, id) in controls.iter().enumerate() {
+            assert!(!arena.contains(id), "control {index} shares an arena id");
+            assert!(!dummies.contains(id), "control {index} shares a dummy id");
+            assert!(!enemies.contains(id), "control {index} shares an enemy id");
+            assert!(!controls[..index].contains(id), "control {index} repeats");
+        }
     }
 
     fn arena_config() -> crate::sim::SimConfig {
@@ -4600,6 +4735,39 @@ mod mutation_tests {
             renderer.drawn_materials()[1..]
                 .iter()
                 .all(|m| m.params == Paint::Dummy.to_gpu().params)
+        );
+    }
+
+    #[test]
+    fn a_control_post_draws_in_its_own_paint() {
+        use crate::test_support::{POST, arena_with_controls, mag, rifle_from, test_config};
+
+        let arena = arena_with_controls(&[], Vec3::ZERO, &[], &[], &[POST]);
+        let mode = ArenaMode::new(
+            arena.clone(),
+            test_config(rifle_from(mag(30, 30)), vec![]),
+            crate::test_support::wave_tuning(1),
+        );
+        let (bindings, _) = moho_input::bindings::ActionBindings::load(&BTreeMap::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
+            .with_arena(vec![box_mesh(Vec3::ZERO, Vec3::ONE)], &[])
+            .with_controls(&arena.controls);
+        let mut renderer = FakeRenderer::default();
+
+        frame_with(&mut game, &mut renderer);
+
+        let drawn = renderer.drawn_materials();
+        let (control, plain) = (Paint::Control.to_gpu(), Paint::Arena.to_gpu());
+        let posts = drawn
+            .iter()
+            .filter(|m| (m.albedo, m.params) == (control.albedo, control.params))
+            .count();
+        assert_eq!(drawn.len(), 2, "the arena box and the post");
+        assert_eq!(posts, 1);
+        assert_ne!(
+            (control.albedo, control.params),
+            (plain.albedo, plain.params),
+            "the post stands out from the arena"
         );
     }
 
