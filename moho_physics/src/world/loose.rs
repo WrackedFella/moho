@@ -1771,4 +1771,75 @@ mod tests {
             "{state:?}"
         );
     }
+
+    #[test]
+    fn a_capsule_rolling_on_a_box_top_is_braked_and_stays_on_it() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let top = 0.2;
+        let big_box = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.1, 0.0),
+            ..LooseSpawn::new(cuboid(Vec3::new(0.5, 0.1, 0.5)), 5.0)
+        });
+        run(&mut world, 300);
+        assert!(read(&world, big_box).asleep, "the box settles first");
+        let (half_height, radius) = TEST_CAPSULE;
+        let start_z = -0.4;
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, top + radius + 0.0005, start_z),
+            rotation: lying_along_x(),
+            linear_velocity: Vec3::new(0.0, 0.0, 1.0),
+            angular_velocity: Vec3::new(1.0 / radius, 0.0, 0.0),
+            ..LooseSpawn::new(capsule(half_height, radius), 0.2)
+        });
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        assert!(state.asleep, "the capsule sleeps on the box, {state:?}");
+        assert!(
+            (state.position.z - start_z).abs() <= 0.5,
+            "the capsule stops within 0.5 m, z={}",
+            state.position.z
+        );
+        assert!(
+            (state.position.y - (top + radius)).abs() <= 0.002,
+            "the capsule is still on the box top, y={}",
+            state.position.y
+        );
+    }
+
+    #[test]
+    fn a_standing_cylinder_loses_its_spin_about_its_axis() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let (half_height, radius) = TEST_CYLINDER;
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, half_height + 0.0005, 0.0),
+            angular_velocity: Vec3::new(0.0, 5.0, 0.0),
+            ..LooseSpawn::new(cylinder(half_height, radius), 0.2)
+        });
+
+        run(&mut world, 120);
+
+        let state = read(&world, id);
+        assert!(
+            state.angular_velocity.y.abs() < 0.05,
+            "the axial spin is cut, {state:?}"
+        );
+        assert!(state.asleep, "a standing cylinder sleeps, {state:?}");
+    }
+
+    #[test]
+    fn a_sleeping_capsule_is_never_woken_by_the_brake() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = rolling_capsule(&mut world, -5.0, 2.0);
+        run(&mut world, 600);
+        let before = read(&world, id);
+        assert!(before.asleep, "the capsule rolled to rest, {before:?}");
+
+        run(&mut world, 30);
+
+        let after = read(&world, id);
+        assert!(after.asleep, "still asleep, {after:?}");
+        assert_eq!(bits(&after), bits(&before), "nothing moved");
+    }
 }
