@@ -37,6 +37,7 @@ impl ChunkStreamer {
         terrain_config: TerrainConfig,
         streaming_config: StreamingConfig,
         world_name: impl Into<String>,
+        _saves_dir: impl Into<std::path::PathBuf>,
     ) -> Self {
         Self {
             terrain_config,
@@ -225,6 +226,7 @@ mod tests {
                 chunks_per_frame: budget,
             },
             WORLD,
+            "saves",
         )
     }
 
@@ -286,6 +288,7 @@ mod tests {
                 chunks_per_frame: budget,
             },
             WORLD,
+            "saves",
         )
     }
 
@@ -319,6 +322,52 @@ mod tests {
                 "column {column:?} holds its terrain chunks, got {ys:?}"
             );
         }
+    }
+
+    /// Chunk files written under the working directory's `saves/`, removed on drop.
+    struct StrayChunkFiles(&'static str);
+
+    impl Drop for StrayChunkFiles {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(std::path::Path::new("saves").join(self.0));
+        }
+    }
+
+    #[test]
+    fn evicted_chunk_is_written_under_the_streamers_saves_dir() {
+        const SAVED_WORLD: &str = "chunk_streamer_unit_test_saves_dir";
+        let _stray = StrayChunkFiles(SAVED_WORLD);
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut streamer = ChunkStreamer::new(
+            TerrainConfig::default(),
+            StreamingConfig {
+                load_radius_chunks: 0,
+                unload_radius_chunks: 0,
+                chunks_per_frame: 1,
+            },
+            SAVED_WORLD,
+            temp.path(),
+        );
+        let mut grid = VoxelGrid::new(16);
+        streamer.update(&mut grid, Vec3::new(8.0, 64.0, 8.0));
+        grid.mutator().place(IVec3::new(3, 70, 3), 1, None);
+
+        let (_, evicted) = streamer.update(&mut grid, Vec3::new(8.0 + 16.0 * 10.0, 64.0, 8.0));
+
+        assert!(
+            evicted.contains(&IVec3::new(0, 4, 0)),
+            "the edited chunk left"
+        );
+        let file = temp
+            .path()
+            .join(SAVED_WORLD)
+            .join("chunks")
+            .join("0_4_0.bin");
+        assert!(file.is_file(), "no chunk file at {}", file.display());
+        assert!(
+            !std::path::Path::new("saves").join(SAVED_WORLD).exists(),
+            "nothing is written under the working directory"
+        );
     }
 
     #[test]

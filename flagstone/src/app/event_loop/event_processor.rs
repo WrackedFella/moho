@@ -924,6 +924,54 @@ mod tests {
         }
     }
 
+    /// Whether processing `event` leaves an edit waiting for the next autosave.
+    fn marks_the_world_edited(event: WorldEvent) -> bool {
+        let mut app = App::headless();
+        app.autosave = crate::app::autosave::AutosaveSchedule::new(1);
+        let _ = app.world_event_rx.try_iter().count();
+        app.event_bus.publish(event);
+
+        EventProcessor::new().process_world_events(&mut app);
+        app.autosave.tick();
+
+        app.autosave.due()
+    }
+
+    #[test]
+    fn block_edit_events_mark_the_world_edited() {
+        let position = flagstone_voxel::BlockPos::new(3, 70, 3);
+        let placed = WorldEvent::BlockPlaced {
+            position,
+            material_id: 1,
+            reason: BlockChangeReason::Player,
+        };
+        let removed = WorldEvent::BlockRemoved {
+            position,
+            old_material_id: 1,
+            reason: BlockChangeReason::Player,
+        };
+        let batch = WorldEvent::BlocksBatchModified {
+            chunk_pos: glam::IVec3::new(0, 4, 0),
+            positions: vec![position],
+            reason: BlockChangeReason::Explosion,
+        };
+
+        assert!(marks_the_world_edited(placed), "BlockPlaced");
+        assert!(marks_the_world_edited(removed), "BlockRemoved");
+        assert!(marks_the_world_edited(batch), "BlocksBatchModified");
+    }
+
+    #[test]
+    fn mesh_dirty_events_alone_do_not_mark_the_world_edited() {
+        let dirty = WorldEvent::ChunkMeshDirty {
+            chunk_pos: glam::IVec3::new(0, 4, 0),
+            terrain_dirty: true,
+            structure_dirty: true,
+        };
+
+        assert!(!marks_the_world_edited(dirty));
+    }
+
     #[test]
     fn duplicate_mesh_dirty_events_mesh_a_chunk_once() {
         let chunk_pos = glam::IVec3::new(0, 4, 0);

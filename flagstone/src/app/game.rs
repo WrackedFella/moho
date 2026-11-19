@@ -846,6 +846,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("temp dir");
         let mut app = playing_app();
         app.saves_dir = temp.path().join("saves");
+        app.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
         (app, temp)
     }
 
@@ -865,6 +866,26 @@ mod tests {
         let clock = GameClock::default();
         let mut ctx = FrameContext::new(tick(), &clock, None, None);
         Game::frame(app, &mut ctx, 0.5);
+    }
+
+    #[test]
+    fn paused_game_does_not_advance_the_autosave_schedule() {
+        let mut app = playing_app();
+        app.autosave = crate::app::autosave::AutosaveSchedule::new(3);
+        app.autosave.mark_edited();
+        let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+        app.game_state = GameState::Paused;
+
+        sim.step(&mut app, 10);
+        let while_paused = app.autosave.due();
+        app.game_state = GameState::Playing;
+        sim.step(&mut app, 2);
+        let two_ticks_playing = app.autosave.due();
+        sim.step(&mut app, 1);
+
+        assert!(!while_paused, "paused ticks do not count");
+        assert!(!two_ticks_playing, "playing ticks count one by one");
+        assert!(app.autosave.due(), "three playing ticks make it due");
     }
 
     fn walker_state(app: &App) -> moho_physics::CharacterState {

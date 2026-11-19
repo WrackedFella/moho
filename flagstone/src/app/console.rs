@@ -423,6 +423,7 @@ mod tests {
         let prefs_path = dir.path().join("prefs.ini");
         let mut app = headless_saving_to(&prefs_path);
         app.saves_dir = dir.path().join("saves");
+        app.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
         app.game_state = GameState::Playing;
         apply_console_command(&mut app, &StrategyConsoleCommand::ToggleNoclip);
         let clock = tick(&mut app);
