@@ -123,9 +123,15 @@ pub fn step(
         return JobAction::Wait;
     };
     let block = *mark;
-    if !marks.contains(block.to_array()) {
+    let holds_claim = marks
+        .iter()
+        .any(|(pos, mark)| pos == block.to_array() && mark.claimed_by == Some(id));
+    if !holds_claim {
         *job = Job::Idle;
         return JobAction::Wait;
+    }
+    if open_faces(grid, block).next().is_none() {
+        return give_up(job, marks, block);
     }
 
     while let Some(&cell) = route.get(*next) {
