@@ -1528,6 +1528,195 @@ mod tests {
         SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
     }
 
+    /// A game whose player faces the next-wave button a metre and a half ahead, with an eye 1.0 m
+    /// up, below the top of the 1.2 m button, so a level view finds it. The one enemy is calm.
+    fn game_by_the_button() -> SearchlightGame {
+        let arena = crate::test_support::arena_with_controls(
+            &[],
+            Vec3::ZERO,
+            &[Vec3::new(0.0, 0.0, 10.0)],
+            &[Vec3::new(0.0, 0.0, 25.0)],
+            &[Vec3::new(0.0, 0.0, 1.5)],
+        );
+        let mut config = test_config(rifle_from(mag(30, 30)), vec![]);
+        config.character_body.standing.eye_height = 1.0;
+        config.enemy.sight_range = 0.5;
+        config.enemy.patrol_speed = 0.0;
+        let mode = ArenaMode::new(arena, config, wave_tuning(1));
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
+    }
+
+    /// Runs one frame with a renderer that draws nothing.
+    fn frame_of(game: &mut SearchlightGame) {
+        let clock = GameClock::default();
+        let mut renderer = SettingsRenderer::default();
+        let backend: &mut dyn RendererBackend = &mut renderer;
+        let mut ctx = FrameContext::new(TICK, &clock, Some(backend), None);
+        game.frame(&mut ctx, 0.5);
+    }
+
+    /// The vertices the shell paints for the frame just run, 0 when it paints nothing. Taking
+    /// them clears the shell's text, as drawing does.
+    fn shell_vertices(game: &SearchlightGame) -> usize {
+        game.stage.shell().ui_frame([1280, 720]).map_or(0, |frame| {
+            frame.meshes.iter().map(|mesh| mesh.vertices.len()).sum()
+        })
+    }
+
+    /// Ticks once with `forward` and a turn of `yaw` radians.
+    fn walk_and_turn(game: &mut SearchlightGame, forward: f32, yaw: f32) {
+        let mut clock = GameClock::default();
+        let command = SearchlightCommand {
+            movement: moho_physics::CharacterCommand {
+                forward,
+                yaw_delta: yaw,
+                ..moho_physics::CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        tick_with(game, &mut clock, &command);
+    }
+
+    #[test]
+    fn the_prompt_shows_while_the_button_is_in_reach() {
+        let mut game = game_by_the_button();
+
+        frame_of(&mut game);
+
+        assert_eq!(game.sim().control_in_reach(), Some(0));
+        assert!(
+            shell_vertices(&game) > 0,
+            "no prompt was handed to the shell"
+        );
+    }
+
+    #[test]
+    fn no_prompt_when_looking_away() {
+        let mut game = game_by_the_button();
+        frame_of(&mut game);
+        let facing = shell_vertices(&game);
+
+        walk_and_turn(&mut game, 0.0, std::f32::consts::PI);
+        frame_of(&mut game);
+        let away = shell_vertices(&game);
+
+        assert!(facing > 0, "the prompt shows while the button is faced");
+        assert_eq!(away, 0);
+    }
+
+    #[test]
+    fn no_prompt_when_out_of_reach() {
+        let mut game = game_by_the_button();
+        frame_of(&mut game);
+        let near = shell_vertices(&game);
+
+        for _ in 0..60 {
+            walk_and_turn(&mut game, -1.0, 0.0);
+        }
+        frame_of(&mut game);
+        let far = shell_vertices(&game);
+
+        assert!(near > 0, "the prompt shows while the button is in reach");
+        assert_eq!(far, 0);
+    }
+
+    #[test]
+    fn no_prompt_while_dead_or_paused() {
+        let mut dead = game_by_the_button();
+        frame_of(&mut dead);
+        let alive = shell_vertices(&dead);
+        let mut paused = game_by_the_button();
+        let mut paused_away = game_by_the_button();
+        walk_and_turn(&mut paused_away, 0.0, std::f32::consts::PI);
+
+        dead.mode.sim_mut().kill_player();
+        frame_of(&mut dead);
+        let dead_vertices = shell_vertices(&dead);
+        paused.pause();
+        paused_away.pause();
+        frame_of(&mut paused);
+        frame_of(&mut paused_away);
+
+        assert!(alive > 0, "the prompt shows while alive and playing");
+        assert_eq!(dead_vertices, 0);
+        assert_eq!(
+            shell_vertices(&paused),
+            shell_vertices(&paused_away),
+            "the pause menu holds a prompt the other frame lacks"
+        );
+    }
+
+    #[test]
+    fn no_prompt_on_the_main_menu() {
+        let mut playing = game_by_the_button();
+        frame_of(&mut playing);
+        let mut menu = game_by_the_button().with_main_menu();
+        let mut menu_away = game_by_the_button().with_main_menu();
+        walk_and_turn(&mut menu_away, 0.0, std::f32::consts::PI);
+
+        frame_of(&mut menu);
+        frame_of(&mut menu_away);
+
+        assert!(shell_vertices(&playing) > 0);
+        assert_eq!(shell_vertices(&menu), shell_vertices(&menu_away));
+    }
+
+    #[test]
+    fn using_the_button_after_a_clear_shows_wave_two() {
+        let mut game = game_by_the_button();
+        let mut clock = GameClock::default();
+        game.mode.sim_mut().kill_enemy(0);
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        let waiting = game.vitals_line();
+
+        press(game.input_mut(), SearchlightAction::Use);
+        let command = game.command();
+        tick_with(&mut game, &mut clock, &command);
+
+        assert_eq!(waiting, "HP 100/100 | Wave 1  Score 100");
+        assert_eq!(game.vitals_line(), "HP 100/100 | Wave 2  Score 100");
+    }
+
+    #[test]
+    fn control_mesh_ids_share_no_id_with_arena_dummy_or_enemy_meshes() {
+        use std::collections::HashSet;
+
+        use crate::arena::{arena_mesh_id, control_mesh_id};
+
+        let spawns: Vec<Vec3> = (0..64).map(|i| Vec3::new(i as f32, 0.0, 0.0)).collect();
+        let mut others: HashSet<u64> = HashSet::new();
+        others.extend((0..64).map(|index| arena_mesh_id(index).0));
+        others.extend(
+            dummy_segments(&SHIPPED_BODY, &spawns)
+                .iter()
+                .map(|segment| segment.id.0),
+        );
+        for target in [0, 1, 63, u16::MAX] {
+            let rig = EnemyRig {
+                target,
+                shown: false,
+                gun_flash: 0,
+            };
+            others.extend((0..ENEMY_SEGMENT_COUNT).map(|slot| rig.mesh_id(slot).0));
+        }
+        let controls: Vec<u64> = (0..64)
+            .chain([usize::from(u16::MAX)])
+            .map(|index| control_mesh_id(index).0)
+            .collect();
+
+        let distinct: HashSet<u64> = controls.iter().copied().collect();
+        let shared: Vec<u64> = controls
+            .iter()
+            .copied()
+            .filter(|id| others.contains(id))
+            .collect();
+
+        assert_eq!(shared, Vec::<u64>::new());
+        assert_eq!(distinct.len(), controls.len(), "two controls share an id");
+        assert_eq!(control_mesh_id(0).0, 3 << 32);
+    }
+
     #[test]
     fn an_open_console_freezes_the_simulation() {
         let mut game = game_with_a_moving_enemy();

@@ -16,8 +16,9 @@ use searchlight_rules::{
     MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
 };
 
-use crate::arena::{Arena, nav_profile};
+use crate::arena::{Arena, ArenaControl, nav_profile};
 use crate::brain::EnemyTuning;
+use crate::control::ControlAction;
 use crate::input::SearchlightAction;
 use crate::mode::ArenaMode;
 use crate::sim::SimConfig;
@@ -225,12 +226,39 @@ pub(crate) fn arena_with(
     enemies: &[Vec3],
     route: &[Vec3],
 ) -> Arc<Arena> {
+    arena_with_controls(boxes, player, enemies, route, &[])
+}
+
+/// [`arena_with`] plus one `next_wave` control standing on each of the floor points `controls`,
+/// numbered in order. A control is the 0.4 x 1.2 x 0.4 m post a level's `control_NN` marker makes.
+pub(crate) fn arena_with_controls(
+    boxes: &[(Vec3, Vec3)],
+    player: Vec3,
+    enemies: &[Vec3],
+    route: &[Vec3],
+    controls: &[Vec3],
+) -> Arc<Arena> {
     let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
     let meshes: Vec<WorldMesh> = std::iter::once(&floor)
         .chain(boxes)
         .map(|&(min, max)| box_mesh(min, max))
         .collect();
-    let nav = Arc::new(NavMesh::build(&meshes, nav_profile()).expect("box worlds build a navmesh"));
+    let controls: Vec<ArenaControl> = controls
+        .iter()
+        .map(|&at| ArenaControl {
+            action: ControlAction::NextWave,
+            mesh: box_mesh(
+                at + Vec3::new(-0.2, 0.0, -0.2),
+                at + Vec3::new(0.2, 1.2, 0.2),
+            ),
+        })
+        .collect();
+    let solids: Vec<WorldMesh> = meshes
+        .iter()
+        .cloned()
+        .chain(controls.iter().map(|control| control.mesh.clone()))
+        .collect();
+    let nav = Arc::new(NavMesh::build(&solids, nav_profile()).expect("box worlds build a navmesh"));
     Arc::new(Arena {
         material_names: vec![None; meshes.len()],
         meshes,
@@ -241,6 +269,7 @@ pub(crate) fn arena_with(
         enemy_spawns: enemies.to_vec(),
         route: route.to_vec(),
         covers: Vec::new(),
+        controls,
     })
 }
 

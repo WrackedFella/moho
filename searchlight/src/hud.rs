@@ -3,6 +3,7 @@
 use glam::Vec3;
 use searchlight_rules::{BodyPart, MagazineLevel};
 
+use crate::control::ControlAction;
 use crate::mode::Tally;
 use crate::sim::Feedback;
 
@@ -82,6 +83,12 @@ pub fn health_text(health: u32, max_health: u32) -> String {
     format!("HP {health}/{max_health}")
 }
 
+/// What the player reads while looking at a control in reach: the use key in brackets, then the
+/// action, such as `[F] Next wave`.
+pub fn use_prompt(_key: &str, _action: ControlAction) -> String {
+    String::new()
+}
+
 /// The wave and score line, such as `Wave 3  Score 200`.
 pub fn arena_text(wave: u32, score: u32) -> String {
     format!("Wave {wave}  Score {score}")
@@ -148,6 +155,17 @@ mod tests {
 
         let expected: Vec<&str> = levels.iter().map(|&(_, w)| w).collect();
         assert_eq!(words, expected);
+    }
+
+    #[test]
+    fn the_use_prompt_names_the_key_and_next_wave() {
+        let bound = use_prompt("F", ControlAction::NextWave);
+        let rebound = use_prompt("Mouse Right", ControlAction::NextWave);
+        let unbound = use_prompt("unbound", ControlAction::NextWave);
+
+        assert_eq!(bound, "[F] Next wave");
+        assert_eq!(rebound, "[Mouse Right] Next wave");
+        assert_eq!(unbound, "[unbound] Next wave");
     }
 }
 

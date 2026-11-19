@@ -152,10 +152,19 @@ mod tests {
 
     use super::*;
     use crate::sim::STAND_HEIGHT;
-    use crate::test_support::{DT, WaveScore, arena_with, mag, rifle_from, test_config};
+    use crate::test_support::{
+        DT, WaveScore, arena_with, arena_with_controls, mag, rifle_from, test_config,
+    };
 
     fn idle() -> SearchlightCommand {
         SearchlightCommand::default()
+    }
+
+    fn using() -> SearchlightCommand {
+        SearchlightCommand {
+            use_pressed: true,
+            ..SearchlightCommand::default()
+        }
     }
 
     fn restart() -> SearchlightCommand {
@@ -189,14 +198,46 @@ mod tests {
         WaveTuning::new(first_size, growth, score_per_kill).expect("a valid tuning")
     }
 
-    fn calm_mode(marker_count: usize, waves: WaveTuning) -> ArenaMode {
-        let arena = arena_with(
-            &[],
+    /// Where the next-wave button stands: a metre and a half in front of the player, who faces +Z.
+    const BUTTON: Vec3 = Vec3::new(0.0, 0.0, 1.5);
+
+    /// [`calm_config`] with the player's eye 1.0 m up, below the top of the 1.2 m button, so a
+    /// level view from the spawn finds it.
+    fn button_config() -> SimConfig {
+        let mut config = calm_config();
+        config.character_body.standing.eye_height = 1.0;
+        config
+    }
+
+    /// An arena of `marker_count` enemy markers and the button, with `boxes` as extra solids.
+    fn button_arena(marker_count: usize, boxes: &[(Vec3, Vec3)]) -> Arc<Arena> {
+        arena_with_controls(
+            boxes,
             Vec3::ZERO,
             &markers(marker_count),
             &[Vec3::new(0.0, 0.0, 25.0)],
-        );
-        ArenaMode::new(arena, calm_config(), waves)
+            &[BUTTON],
+        )
+    }
+
+    fn calm_mode(marker_count: usize, waves: WaveTuning) -> ArenaMode {
+        ArenaMode::new(button_arena(marker_count, &[]), button_config(), waves)
+    }
+
+    /// Kills every enemy standing.
+    fn kill_standing(mode: &mut ArenaMode) {
+        for index in 0..mode.sim().enemy_count() {
+            if mode.sim().enemy_state(index).is_some() {
+                mode.sim_mut().kill_enemy(index);
+            }
+        }
+    }
+
+    /// Kills the newest enemy and ticks once.
+    fn kill_newest(mode: &mut ArenaMode) {
+        let newest = mode.sim().enemy_count() - 1;
+        mode.sim_mut().kill_enemy(newest);
+        mode.tick(&idle(), DT);
     }
 
     fn assert_enemy_at(mode: &ArenaMode, index: usize, marker: Vec3) {
@@ -229,19 +270,170 @@ mod tests {
     }
 
     #[test]
-    fn killing_the_last_enemy_starts_the_next_wave() {
-        let markers = markers(4);
+    fn a_cleared_wave_waits_thirty_seconds_without_a_use() {
         let mut mode = calm_mode(4, tuning(1, 2, 100));
         mode.sim_mut().kill_enemy(0);
 
         mode.tick(&idle(), DT);
+        let on_the_clear = (
+            mode.wave(),
+            mode.score(),
+            mode.sim().enemy_count(),
+            mode.sim().enemies_alive(),
+        );
+        for _ in 0..1800 {
+            mode.tick(&idle(), DT);
+        }
 
-        assert_eq!(mode.wave(), 2);
+        assert_eq!(on_the_clear, (1, 100, 1, 0));
+        assert_eq!((mode.wave(), mode.score()), (1, 100));
+        assert_eq!(mode.sim().enemy_count(), 1, "an enemy of wave 2 appeared");
+        assert_eq!(mode.sim().enemies_alive(), 0);
+    }
+
+    #[test]
+    fn using_the_button_after_a_clear_spawns_wave_two_at_the_markers() {
+        let markers = markers(4);
+        let mut mode = calm_mode(4, tuning(1, 2, 100));
+        mode.sim_mut().kill_enemy(0);
+        mode.tick(&idle(), DT);
+        let waiting = (mode.wave(), mode.sim().enemy_count());
+
+        mode.tick(&using(), DT);
+
+        assert_eq!(waiting, (1, 1));
+        assert_eq!(
+            mode.tally(),
+            Some(Tally {
+                wave: 2,
+                score: 100
+            })
+        );
         assert_eq!(mode.sim().enemies_alive(), 3);
         assert_eq!(mode.sim().enemy_count(), 4);
         assert_enemy_at(&mode, 1, markers[0]);
         assert_enemy_at(&mode, 2, markers[1]);
         assert_enemy_at(&mode, 3, markers[2]);
+    }
+
+    #[test]
+    fn using_the_button_with_enemies_left_changes_nothing() {
+        let mut mode = calm_mode(2, tuning(3, 2, 100));
+
+        mode.tick(&using(), DT);
+        let while_enemies_stand = (
+            mode.wave(),
+            mode.sim().enemy_count(),
+            mode.sim().enemies_alive(),
+        );
+        kill_standing(&mut mode);
+        mode.tick(&idle(), DT);
+        let third_arrives = (
+            mode.wave(),
+            mode.sim().enemy_count(),
+            mode.sim().enemies_alive(),
+        );
+        kill_standing(&mut mode);
+        mode.tick(&idle(), DT);
+        let cleared = (
+            mode.wave(),
+            mode.sim().enemy_count(),
+            mode.sim().enemies_alive(),
+        );
+        mode.tick(&using(), DT);
+
+        assert_eq!(while_enemies_stand, (1, 2, 2), "one more is yet to appear");
+        assert_eq!(third_arrives, (1, 3, 1));
+        assert_eq!(cleared, (1, 3, 0), "a use made too early is not kept");
+        assert_eq!(mode.wave(), 2, "a use after the clear calls the wave");
+        assert_eq!(mode.sim().enemy_count(), 5);
+    }
+
+    #[test]
+    fn a_use_through_a_wall_calls_no_wave() {
+        let wall = (Vec3::new(-2.0, 0.0, 0.8), Vec3::new(2.0, 3.0, 0.9));
+        let waves = || tuning(1, 2, 100);
+        let mut open = calm_mode(4, waves());
+        let mut walled = ArenaMode::new(button_arena(4, &[wall]), button_config(), waves());
+
+        for mode in [&mut open, &mut walled] {
+            mode.sim_mut().kill_enemy(0);
+            mode.tick(&idle(), DT);
+            mode.tick(&using(), DT);
+        }
+        for _ in 0..60 {
+            walled.tick(&using(), DT);
+        }
+
+        assert_eq!(open.wave(), 2, "without the wall the button works");
+        assert_eq!(walled.wave(), 1);
+        assert_eq!(walled.sim().enemy_count(), 1);
+        assert_eq!(walled.sim().enemies_alive(), 0);
+    }
+
+    #[test]
+    fn a_use_while_dead_does_nothing() {
+        let mut alive = calm_mode(4, tuning(1, 2, 100));
+        let mut dead = calm_mode(4, tuning(1, 2, 100));
+        for mode in [&mut alive, &mut dead] {
+            mode.sim_mut().kill_enemy(0);
+            mode.tick(&idle(), DT);
+        }
+        dead.sim_mut().kill_player();
+        dead.tick(&idle(), DT);
+
+        alive.tick(&using(), DT);
+        dead.tick(&using(), DT);
+        dead.tick(&using(), DT);
+
+        assert_eq!(alive.wave(), 2, "a living player's use works");
+        assert!(dead.sim().player_body().is_dead());
+        assert_eq!(dead.wave(), 1);
+        assert_eq!(dead.sim().enemy_count(), 1);
+        assert_eq!(dead.sim().enemies_alive(), 0);
+    }
+
+    #[test]
+    fn a_use_in_a_sandbox_does_nothing() {
+        let mut mode = ArenaMode::sandbox(button_arena(4, &[]), button_config());
+        let in_reach = mode.sim().control_in_reach();
+
+        mode.tick(&using(), DT);
+
+        assert_eq!(
+            in_reach,
+            Some(0),
+            "the button must be in reach for this test"
+        );
+        assert_eq!(mode.tally(), None);
+        assert_eq!(mode.sim().enemy_count(), 0);
+    }
+
+    #[test]
+    fn a_restart_while_a_wave_waits_brings_wave_one() {
+        let markers = markers(4);
+        let mut mode = calm_mode(4, tuning(1, 1, 100));
+        clear_wave(&mut mode);
+        kill_standing(&mut mode);
+        mode.tick(&idle(), DT);
+        let waiting = (
+            mode.wave(),
+            mode.sim().enemies_alive(),
+            mode.sim().enemy_count(),
+        );
+        mode.sim_mut().kill_player();
+        mode.tick(&idle(), DT);
+
+        mode.tick(&restart(), DT);
+        let right_after = mode.tally();
+        mode.tick(&idle(), DT);
+
+        assert_eq!(waiting, (2, 0, 3), "wave 2 stood cleared and waiting");
+        assert_eq!(right_after, Some(Tally { wave: 1, score: 0 }));
+        assert_eq!(mode.tally(), Some(Tally { wave: 1, score: 0 }));
+        assert_eq!(mode.sim().enemy_count(), 1);
+        assert_eq!(mode.sim().enemies_alive(), 1);
+        assert_enemy_at(&mode, 0, markers[0]);
     }
 
     #[test]
@@ -289,11 +481,8 @@ mod tests {
     fn restart_after_death_returns_to_wave_one_with_no_score() {
         let markers = markers(4);
         let mut mode = calm_mode(4, tuning(1, 1, 100));
-        mode.sim_mut().kill_enemy(0);
-        mode.tick(&idle(), DT);
-        mode.sim_mut().kill_enemy(1);
-        mode.sim_mut().kill_enemy(2);
-        mode.tick(&idle(), DT);
+        clear_wave(&mut mode);
+        clear_wave(&mut mode);
         assert_eq!((mode.wave(), mode.score()), (3, 300));
         mode.sim_mut().kill_player();
         mode.tick(&idle(), DT);
@@ -314,8 +503,7 @@ mod tests {
     #[test]
     fn restart_while_alive_keeps_wave_and_score() {
         let mut mode = calm_mode(4, tuning(1, 1, 100));
-        mode.sim_mut().kill_enemy(0);
-        mode.tick(&idle(), DT);
+        clear_wave(&mut mode);
         assert_eq!((mode.wave(), mode.score()), (2, 100));
         let enemies = mode.sim().enemy_count();
 
@@ -399,9 +587,12 @@ mod tests {
         mode.sim_mut().kill_enemy(1);
         mode.sim_mut().kill_enemy(2);
         mode.tick(&idle(), DT);
+        let cleared = (mode.wave(), mode.sim().enemy_count());
+        mode.tick(&using(), DT);
 
         assert_eq!(waiting, 2);
         assert_eq!(freed, (3, 2, 1, 100));
+        assert_eq!(cleared, (1, 3), "the cleared wave waits for the button");
         assert_enemy_at(&mode, 3, markers[0]);
         assert_enemy_at(&mode, 4, markers[1]);
         assert_eq!(mode.wave(), 2);
@@ -441,14 +632,18 @@ mod tests {
             .collect()
     }
 
-    /// Kills every enemy standing and ticks with `command`, so the next wave comes.
+    /// Kills every enemy standing, lets a tick score the clear, then uses the button on a tick
+    /// that carries `command`, so the next wave comes.
     fn clear_wave_with(mode: &mut ArenaMode, command: &SearchlightCommand) {
-        for index in 0..mode.sim().enemy_count() {
-            if mode.sim().enemy_state(index).is_some() {
-                mode.sim_mut().kill_enemy(index);
-            }
-        }
-        mode.tick(command, DT);
+        kill_standing(mode);
+        mode.tick(&idle(), DT);
+        mode.tick(
+            &SearchlightCommand {
+                use_pressed: true,
+                ..*command
+            },
+            DT,
+        );
     }
 
     fn clear_wave(mode: &mut ArenaMode) {
@@ -511,9 +706,8 @@ mod tests {
     #[test]
     fn a_forced_grade_sets_every_new_spawn() {
         let mut mode = calm_mode(4, tuning(1, 2, 100));
-        mode.sim_mut().kill_enemy(0);
 
-        mode.tick(&forcing(Some(Grade::Rookie)), DT);
+        clear_wave_with(&mut mode, &forcing(Some(Grade::Rookie)));
 
         assert_eq!(mode.sim().enemy_count(), 4);
         assert_eq!(grades_from(&mode, 0)[0], Some(Grade::Experienced));
@@ -588,10 +782,12 @@ mod tests {
     fn a_wave_held_back_by_busy_markers_keeps_its_grades_in_order() {
         let mut mode = calm_mode(1, mixed_tuning(2, 2, 100));
 
-        for _ in 0..5 {
-            let newest = mode.sim().enemy_count() - 1;
-            mode.sim_mut().kill_enemy(newest);
-            mode.tick(&idle(), DT);
+        for _ in 0..2 {
+            kill_newest(&mut mode);
+        }
+        mode.tick(&using(), DT);
+        for _ in 0..3 {
+            kill_newest(&mut mode);
         }
 
         assert_eq!(mode.wave(), 2);
