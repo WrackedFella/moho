@@ -77,6 +77,9 @@ impl FrameProcessor {
             };
             let (view, proj, eye) = app.simulation.apply_input(dt, ground);
             app.camera = (view, proj, eye);
+            if app.simulation.camera_mode() == flagstone_game::controller::CameraMode::Isometric {
+                self.run_pawn_job(app, dt);
+            }
         }
 
         // Step rigid bodies in both KCC and non-KCC paths (test spheres, etc.)
@@ -86,6 +89,76 @@ impl FrameProcessor {
 
         // Clear zoom delta after use
         app.simulation.controller_input.zoom_delta = 0.0;
+    }
+
+    /// Runs the unpossessed pawn's job for one tick and applies what it asks for through the
+    /// pawn's own actions: the character controller to walk, `Pawn::dig` to mine.
+    fn run_pawn_job(&self, app: &mut App, dt: f32) {
+        use flagstone_game::jobs::{JobAction, Pose, steer, step};
+
+        let Some(handle) = app.physics.player else {
+            return;
+        };
+        let Some(state) = app
+            .physics
+            .world
+            .as_ref()
+            .and_then(|world| world.character(handle))
+        else {
+            return;
+        };
+        let Some(light_system) = app.light_system.as_mut() else {
+            return;
+        };
+        let pose = Pose {
+            feet: state.position - glam::Vec3::Y * flagstone_game::selection::PAWN_HALF_EXTENTS.y,
+            yaw: state.yaw,
+        };
+
+        let action = step(
+            &mut app.pawn,
+            flagstone_game::selection::PLAYER_PAWN,
+            pose,
+            &mut app.colony.marks,
+            light_system.grid(),
+        );
+
+        match action {
+            JobAction::Wait => {}
+            JobAction::Walk { to } => {
+                let walk = steer(pose, to);
+                let command = moho_physics::CharacterCommand {
+                    forward: walk.forward,
+                    yaw_delta: walk.yaw_delta,
+                    ..moho_physics::CharacterCommand::default()
+                };
+                let settings = moho_physics::MoveSettings {
+                    max_speed: MOVE_SPEED,
+                    air_speed_cap: MOVE_SPEED,
+                    ..STRATEGY_MOVE_SETTINGS
+                };
+                if let Some(moved) = app.physics.move_character(&command, &settings, dt) {
+                    app.simulation
+                        .set_position_yaw_pitch(moved.position, moved.yaw, moved.pitch);
+                }
+            }
+            JobAction::Dig { block: _, aim } => {
+                let eye = state.position;
+                let dir = (aim - eye).normalize_or_zero();
+                let Some(outcome) = app.pawn.dig(
+                    light_system.grid_mut(),
+                    eye,
+                    dir,
+                    flagstone_game::pawn::MINE_REACH,
+                ) else {
+                    return;
+                };
+                if let Some(yield_) = outcome.yield_ {
+                    app.colony.stock.add(yield_.resource_id, yield_.amount);
+                }
+                crate::app::event_loop::event_processor::publish_pawn_dig(app, &outcome);
+            }
+        }
     }
 
     fn update_game_state_fps_kcc(&self, app: &mut App, dt: f32) {
@@ -393,6 +466,9 @@ impl FrameProcessor {
         let mut hotbar: Vec<(u32, u32)> = app.pawn.inventory.iter().collect();
         hotbar.sort_by_key(|(resource_id, _)| *resource_id);
 
+        let mut colony_stock: Vec<(u32, u32)> = app.colony.stock.iter().collect();
+        colony_stock.sort_by_key(|(resource_id, _)| *resource_id);
+
         // Only one tool exists today (`flagstone_game::tools::STARTING_TOOL`); the
         // label is a fixed string until a real tool-name lookup exists.
         let equipped_tool_label = app.pawn.equipped_tool.map(|_| "Pickaxe".to_string());
@@ -436,7 +512,7 @@ impl FrameProcessor {
                 .collect(),
             selection,
             mine_designation_active: app.input.designation == Designation::Mine,
-            colony_stock: Vec::new(),
+            colony_stock,
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {

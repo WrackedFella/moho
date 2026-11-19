@@ -17,6 +17,9 @@ use std::collections::HashSet;
 /// Cue played when a mined block yields a resource.
 const PICKUP_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/pickup.wav");
 const PICKUP_VOLUME: f32 = 0.6;
+/// Cue played where a pawn's job breaks a block.
+const DIG_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/dig.wav");
+const DIG_VOLUME: f32 = 0.6;
 
 // ── Spawn / interaction constants ──────────────────────────────────────
 const MOUSE_WHEEL_ZOOM_FACTOR: f32 = 0.5;
@@ -31,7 +34,36 @@ const MARKER_COLOR: [f32; 4] = [1.0, 0.55, 0.0, 0.35];
 /// Publishes a pawn's dig: `BlockRemoved` and the chunks to remesh, as the player's mine
 /// handler does, and the dig cue at the block's centre.
 pub(crate) fn publish_pawn_dig(app: &mut App, outcome: &MineOutcome) {
-    let _ = (app, outcome);
+    publish_block_removal(app, outcome);
+    app.event_bus.publish(AudioEvent::PlaySoundAt {
+        path: DIG_SOUND.to_string(),
+        volume: DIG_VOLUME,
+        position: outcome.block_pos.as_vec3() + glam::Vec3::splat(0.5),
+    });
+}
+
+/// Publishes `BlockRemoved` for a mined block and `ChunkMeshDirty` for every chunk whose
+/// mesh samples it, so marks drop and the terrain remeshes whoever did the mining.
+fn publish_block_removal(app: &mut App, outcome: &MineOutcome) {
+    let Some(light_system) = app.light_system.as_ref() else {
+        return;
+    };
+    let dirty_chunks: Vec<_> =
+        flagstone_voxel::chunks_meshed_from(outcome.block_pos, light_system.grid().chunk_size())
+            .collect();
+
+    app.event_bus.publish(WorldEvent::BlockRemoved {
+        position: outcome.block_pos,
+        old_material_id: outcome.old_material_id,
+        reason: BlockChangeReason::Player,
+    });
+    for chunk_pos in dirty_chunks {
+        app.event_bus.publish(WorldEvent::ChunkMeshDirty {
+            chunk_pos,
+            terrain_dirty: true,
+            structure_dirty: true,
+        });
+    }
 }
 
 /// Handles processing of all event types
@@ -244,21 +276,7 @@ impl EventProcessor {
             return;
         };
 
-        let dirty_chunks: Vec<_> =
-            flagstone_voxel::chunks_meshed_from(outcome.block_pos, grid.chunk_size()).collect();
-
-        app.event_bus.publish(WorldEvent::BlockRemoved {
-            position: outcome.block_pos,
-            old_material_id: outcome.old_material_id,
-            reason: BlockChangeReason::Player,
-        });
-        for chunk_pos in dirty_chunks {
-            app.event_bus.publish(WorldEvent::ChunkMeshDirty {
-                chunk_pos,
-                terrain_dirty: true,
-                structure_dirty: true,
-            });
-        }
+        publish_block_removal(app, &outcome);
 
         if let Some(y) = outcome.yield_ {
             app.event_bus.publish(AudioEvent::PlaySound {
