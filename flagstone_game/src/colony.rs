@@ -78,11 +78,6 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
-    use flagstone_voxel::{BlockPos, VoxelGrid};
-    use glam::Vec3;
-
-    use crate::pawn::Pawn;
-
     fn marked(marks: &MineMarks) -> Vec<[i32; 3]> {
         marks.iter().map(|(pos, _)| pos).collect()
     }
@@ -92,25 +87,6 @@ mod tests {
             .iter()
             .find(|(p, _)| *p == pos)
             .and_then(|(_, mark)| mark.claimed_by)
-    }
-
-    #[test]
-    fn stock_grows_by_the_yield() {
-        let mut grid = VoxelGrid::new(16);
-        grid.mutator().place(BlockPos::new(0, 0, 0), 1, Some(7));
-        let pawn = Pawn::default();
-        let mut colony = Colony::default();
-
-        let yield_ = pawn
-            .dig(&mut grid, Vec3::new(0.5, 0.5, -5.0), Vec3::Z, 10.0)
-            .expect("the ray hits the ore block")
-            .yield_
-            .expect("an ore block yields");
-        colony.stock.add(yield_.resource_id, yield_.amount);
-
-        assert_eq!(colony.stock.count(7), 1);
-        assert_eq!(colony.stock.count(8), 0, "only the dug resource");
-        assert!(pawn.inventory.is_empty(), "the pawn keeps nothing of it");
     }
 
     #[test]

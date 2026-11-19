@@ -338,29 +338,73 @@ mod tests {
     #[test]
     fn mine_is_dig_plus_deposit() {
         let origin = Vec3::new(0.5, 0.5, -5.0);
-        let mut mined_grid = ore_grid();
-        let mut mined = Pawn::default();
-        let mut dug_grid = ore_grid();
-        let mut dug = Pawn::default();
+        let block = BlockPos::new(0, 0, 0);
+        let cases: [(&str, Option<u32>, f32, Vec<(u32, u32)>); 3] = [
+            ("ore", Some(7), 10.0, vec![(7, 1)]),
+            ("plain", None, 10.0, vec![]),
+            ("beyond reach", Some(7), 2.0, vec![]),
+        ];
 
-        let by_mine = mined
-            .mine(&mut mined_grid, origin, Vec3::Z, 10.0)
-            .expect("mine hits");
-        let by_dig = dug
-            .dig(&mut dug_grid, origin, Vec3::Z, 10.0)
-            .expect("dig hits");
-        let yield_ = by_dig.yield_.expect("an ore block yields");
-        dug.deposit(yield_);
+        for (name, resource, reach, deposited) in cases {
+            let mut mined_grid = VoxelGrid::new(16);
+            mined_grid.mutator().place(block, 1, resource);
+            let mut mined = Pawn::default();
+            let mut dug_grid = VoxelGrid::new(16);
+            dug_grid.mutator().place(block, 1, resource);
+            let mut dug = Pawn::default();
 
-        assert_eq!(by_mine.block_pos, by_dig.block_pos);
-        assert_eq!(by_mine.old_material_id, by_dig.old_material_id);
-        assert_eq!(by_mine.distance, by_dig.distance);
-        assert_eq!(
-            by_mine.yield_.map(|y| (y.resource_id, y.amount)),
-            Some((7, 1))
-        );
-        assert_eq!(mined.inventory.count(7), dug.inventory.count(7));
-        assert_eq!(mined.pickups.entries().len(), dug.pickups.entries().len());
+            let by_mine = mined.mine(&mut mined_grid, origin, Vec3::Z, reach);
+            let by_dig = dug.dig(&mut dug_grid, origin, Vec3::Z, reach);
+            if let Some(yield_) = by_dig.and_then(|outcome| outcome.yield_) {
+                dug.deposit(yield_);
+            }
+
+            assert_eq!(by_mine.is_some(), by_dig.is_some(), "{name}: a hit");
+            assert_eq!(
+                by_mine.map(|o| (o.block_pos, o.old_material_id, o.distance)),
+                by_dig.map(|o| (o.block_pos, o.old_material_id, o.distance)),
+                "{name}: the outcome"
+            );
+            assert_eq!(
+                by_mine
+                    .and_then(|o| o.yield_)
+                    .map(|y| (y.resource_id, y.amount)),
+                by_dig
+                    .and_then(|o| o.yield_)
+                    .map(|y| (y.resource_id, y.amount)),
+                "{name}: the yield"
+            );
+            assert_eq!(
+                mined.inventory.iter().collect::<Vec<_>>(),
+                deposited,
+                "{name}: what mine deposits"
+            );
+            assert_eq!(
+                dug.inventory.iter().collect::<Vec<_>>(),
+                deposited,
+                "{name}: what dig then deposit holds"
+            );
+            assert_eq!(
+                mined.pickups.entries().len(),
+                dug.pickups.entries().len(),
+                "{name}: pickups"
+            );
+            assert_eq!(
+                by_mine.is_some(),
+                reach > 5.0,
+                "{name}: reach decides the hit"
+            );
+            assert_eq!(
+                mined_grid.is_solid_at(block),
+                by_mine.is_none(),
+                "{name}: the block after mine"
+            );
+            assert_eq!(
+                dug_grid.is_solid_at(block),
+                by_dig.is_none(),
+                "{name}: the block after dig"
+            );
+        }
     }
 
     #[test]

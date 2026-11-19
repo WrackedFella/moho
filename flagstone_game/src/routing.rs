@@ -159,6 +159,24 @@ mod tests {
     }
 
     #[test]
+    fn a_route_through_a_gap_off_to_the_side_is_the_shortest() {
+        let mut grid = flat();
+        fill(&mut grid, 3..=3, 0..=1, -ARENA..=5);
+        fill(&mut grid, 3..=3, 0..=1, 7..=ARENA);
+
+        let found = route_to(&grid, cell(0, 0, 0), cell(6, 0, 0)).expect("the gap is a way round");
+
+        assert_eq!(
+            found.len(),
+            19,
+            "6 across and 6 each way to the gap and back"
+        );
+        assert_eq!(found.first().copied(), Some(cell(0, 0, 0)));
+        assert_eq!(found.last().copied(), Some(cell(6, 0, 0)));
+        assert!(found.contains(&cell(3, 0, 6)), "through the gap");
+    }
+
+    #[test]
     fn climbing_needs_headroom() {
         let open_rise = rise();
         let mut ceilinged_rise = rise();
@@ -295,6 +313,7 @@ mod tests {
             let again = route_to(&first_grid, start, goal);
             let rebuilt = route_to(&second_grid, start, goal);
 
+            prop_assert!(first.is_some(), "all-reachable terrain has a route");
             prop_assert_eq!(&first, &again);
             prop_assert_eq!(&first, &rebuilt);
         }

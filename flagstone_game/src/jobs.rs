@@ -214,15 +214,15 @@ mod tests {
     #[test]
     fn a_mark_with_no_exposed_face_is_not_claimed() {
         let mut grid = flat();
-        for x in 3..=5 {
-            for y in 0..=2 {
-                for z in -1..=1 {
+        for x in -ARENA..=ARENA {
+            for z in -ARENA..=ARENA {
+                for y in -3..=-2 {
                     place(&mut grid, x, y, z);
                 }
             }
         }
         let mut marks = MineMarks::default();
-        marks.toggle([4, 1, 0]);
+        marks.toggle([4, -2, 0]);
         let mut pawn = Pawn::default();
         let mut job = Job::Idle;
 
@@ -278,7 +278,7 @@ mod tests {
         let action = tick(
             &mut job,
             &mut pawn,
-            standing_in(-3, 0, 0),
+            standing_in(-1, 0, 0),
             &mut marks,
             &grid,
         );
@@ -386,7 +386,6 @@ mod tests {
             sx in -6i32..=6,
             sz in -6i32..=6,
         ) {
-            prop_assume!((sx, sz) != (bx, bz));
             let mut grid = flat();
             let mut marks = MineMarks::default();
             if by == 1 {
@@ -396,16 +395,103 @@ mod tests {
             let mut pawn = Pawn::default();
             let mut job = Job::Idle;
 
-            let outing = walk_until_dig(&mut job, &mut pawn, standing_in(sx, 0, sz), &mut marks, &grid);
+            let on_the_mark = (sx, sz) == (bx, bz);
+            let start = standing_in(sx, if on_the_mark { by + 1 } else { 0 }, sz);
+
+            let outing = walk_until_dig(&mut job, &mut pawn, start, &mut marks, &grid);
 
             let stand = outing.pose.feet.floor().as_ivec3();
             prop_assert_eq!(outing.dig.0, BlockPos::new(bx, by, bz));
+            prop_assert_ne!(stand, BlockPos::new(bx, by + 1, bz), "stood on the block it digs");
             prop_assert!((stand.x - bx).abs() <= 1 && (stand.z - bz).abs() <= 1, "stood at {:?}", stand);
             prop_assert!(stand.y >= by - 1 && stand.y <= by + 2, "stood at {:?}", stand);
             let block_centre = BlockPos::new(bx, by, bz).as_vec3() + Vec3::splat(0.5);
             prop_assert!(eye(outing.pose).distance(outing.dig.1) <= MINE_REACH);
             prop_assert!(eye(outing.pose).distance(block_centre) <= MINE_REACH);
         }
+    }
+
+    #[test]
+    fn the_cell_on_top_of_the_marked_block_is_not_a_stand_cell() {
+        let mut grid = flat();
+        let mut marks = MineMarks::default();
+        marked(&mut grid, &mut marks, 4, 0, 0);
+        let mut pawn = Pawn::default();
+        let mut job = Job::Idle;
+        let on_top = standing_in(4, 1, 0);
+        let mut another_job = Job::Idle;
+        let mut another_marks = MineMarks::default();
+        another_marks.toggle([4, 0, 0]);
+
+        let first = tick(&mut job, &mut pawn, on_top, &mut marks, &grid);
+        let outing = walk_until_dig(
+            &mut another_job,
+            &mut Pawn::default(),
+            on_top,
+            &mut another_marks,
+            &grid,
+        );
+
+        assert!(
+            matches!(first, JobAction::Walk { .. }),
+            "told to dig its own footing: {first:?}"
+        );
+        assert_eq!(outing.dig.0, BlockPos::new(4, 0, 0));
+        let stand = outing.pose.feet.floor().as_ivec3();
+        assert_ne!(
+            stand,
+            BlockPos::new(4, 1, 0),
+            "dug from on top of the block"
+        );
+        assert_eq!(stand.y, 0, "dug from the ground beside it: {stand:?}");
+    }
+
+    #[test]
+    fn the_stand_cell_is_the_nearest_by_route_not_by_straight_line() {
+        let mut grid = flat();
+        for z in -ARENA..=ARENA {
+            if z != -3 {
+                for y in 0..=1 {
+                    place(&mut grid, 3, y, z);
+                }
+            }
+        }
+        let mut marks = MineMarks::default();
+        marked(&mut grid, &mut marks, 6, 0, 0);
+        let mut pawn = Pawn::default();
+        let mut job = Job::Idle;
+
+        let outing = walk_until_dig(&mut job, &mut pawn, standing_in(0, 0, 0), &mut marks, &grid);
+
+        assert_eq!(outing.dig.0, BlockPos::new(6, 0, 0));
+        assert_near(outing.pose.feet, Vec3::new(5.5, 0.0, -0.5));
+        assert!(
+            outing
+                .waypoints
+                .iter()
+                .any(|to| (to.x, to.z) == (3.5, -2.5)),
+            "round by the gap: {:?}",
+            outing.waypoints
+        );
+    }
+
+    #[test]
+    fn two_marks_at_equal_distance_are_taken_in_key_order() {
+        let mut grid = flat();
+        let mut marks = MineMarks::default();
+        marked(&mut grid, &mut marks, 4, 0, 0);
+        marked(&mut grid, &mut marks, -4, 0, 0);
+        let mut pawn = Pawn::default();
+        let mut job = Job::Idle;
+
+        let action = tick(&mut job, &mut pawn, standing_in(0, 0, 0), &mut marks, &grid);
+
+        assert!(matches!(action, JobAction::Walk { .. }), "{action:?}");
+        assert_eq!(claimed_marks(&marks), [[-4, 0, 0]]);
+        assert!(
+            matches!(&job, Job::Mine { mark, .. } if *mark == [-4, 0, 0]),
+            "{job:?}"
+        );
     }
 
     #[test]
@@ -493,17 +579,24 @@ mod tests {
         let mut pawn = Pawn::default();
         let mut job = Job::Idle;
         let stuck = standing_in(0, 0, 0);
-        tick(&mut job, &mut pawn, stuck, &mut marks, &grid);
+        let mut ticks = 1;
+        let claimed = tick(&mut job, &mut pawn, stuck, &mut marks, &grid);
+        assert!(matches!(claimed, JobAction::Walk { .. }), "{claimed:?}");
 
-        for _ in 0..STALL_TICKS - 2 {
-            tick(&mut job, &mut pawn, stuck, &mut marks, &grid);
-        }
-        assert!(matches!(job, Job::Mine { .. }), "not yet stalled");
-        for _ in 0..4 {
-            tick(&mut job, &mut pawn, stuck, &mut marks, &grid);
-        }
+        let released = loop {
+            ticks += 1;
+            assert!(ticks <= STALL_TICKS + 10, "the pawn never gave up");
+            let action = tick(&mut job, &mut pawn, stuck, &mut marks, &grid);
+            if matches!(job, Job::Idle) {
+                break action;
+            }
+        };
 
-        assert!(matches!(job, Job::Idle), "{job:?}");
+        assert!(
+            ticks.abs_diff(STALL_TICKS) <= 2,
+            "gave up after {ticks} ticks, not about {STALL_TICKS}"
+        );
+        assert_eq!(released, JobAction::Wait);
         assert!(marks.contains([4, 0, 0]), "the mark stays");
         assert!(claimed_marks(&marks).is_empty(), "the claim is released");
     }
@@ -517,14 +610,24 @@ mod tests {
         let mut job = Job::Idle;
         let mut pose = standing_in(0, 0, 0);
         let mut ticks = 0;
+        let mut heading_for = Vec3::NAN;
+        let mut ticks_on_it = 0;
+        let mut longest_on_one_waypoint = 0;
 
         let dug = loop {
             ticks += 1;
-            assert!(ticks < 600, "the pawn never arrived");
+            assert!(ticks < 2000, "the pawn never arrived");
             match tick(&mut job, &mut pawn, pose, &mut marks, &grid) {
                 JobAction::Walk { to } => {
+                    if to == heading_for {
+                        ticks_on_it += 1;
+                    } else {
+                        heading_for = to;
+                        ticks_on_it = 1;
+                    }
+                    longest_on_one_waypoint = longest_on_one_waypoint.max(ticks_on_it);
                     let toward = (to.x - pose.feet.x).signum();
-                    pose.feet.x += toward * 0.015_f32.min((to.x - pose.feet.x).abs());
+                    pose.feet.x += toward * 0.005_f32.min((to.x - pose.feet.x).abs());
                     pose.feet.z = to.z;
                     assert!(
                         matches!(job, Job::Mine { .. }),
@@ -536,7 +639,10 @@ mod tests {
             }
         };
 
-        assert!(ticks > STALL_TICKS, "the walk outlasted the stall limit");
+        assert!(
+            longest_on_one_waypoint > STALL_TICKS,
+            "one waypoint took {longest_on_one_waypoint} ticks, within the stall limit"
+        );
         assert_eq!(dug, BlockPos::new(4, 0, 0));
     }
 
@@ -550,13 +656,12 @@ mod tests {
         let start = standing_in(0, 0, 0);
         tick(&mut job, &mut pawn, start, &mut marks, &grid);
 
-        for x in 1..=5 {
+        for x in 0..=5 {
             place(&mut grid, x, 2, 0);
         }
-        for _ in 0..3 {
-            tick(&mut job, &mut pawn, start, &mut marks, &grid);
-        }
+        let action = tick(&mut job, &mut pawn, start, &mut marks, &grid);
 
+        assert_eq!(action, JobAction::Wait);
         assert!(matches!(job, Job::Idle), "{job:?}");
         assert!(marks.contains([6, 0, 0]), "the mark stays");
         assert!(claimed_marks(&marks).is_empty(), "the claim is released");
