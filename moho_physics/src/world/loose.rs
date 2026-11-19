@@ -1785,6 +1785,83 @@ mod tests {
         );
     }
 
+    fn all_finite(state: &LooseState) -> bool {
+        state.position.is_finite()
+            && state.rotation.is_finite()
+            && state.linear_velocity.is_finite()
+            && state.angular_velocity.is_finite()
+    }
+
+    #[test]
+    fn an_upright_spinning_cylinder_comes_to_rest_asleep() {
+        let mut world = gravity_world(&floor_mesh(0.0));
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.2, 0.0),
+            linear_velocity: Vec3::new(0.5, 0.0, 0.0),
+            angular_velocity: Vec3::new(0.0, 20.0, 0.0),
+            ..LooseSpawn::new(CYLINDER, 0.2)
+        });
+
+        for tick in 1..=300 {
+            world.step(DT);
+            let state = read(&world, id);
+            assert!(all_finite(&state), "tick {tick}: not finite, {state:?}");
+        }
+
+        let state = read(&world, id);
+        assert!(
+            lowest_point(&state, CYLINDER).abs() <= 0.001,
+            "the cylinder rests on the floor, {state:?}"
+        );
+        assert!(state.asleep, "the cylinder sleeps, {state:?}");
+    }
+
+    #[test]
+    fn a_huge_rest_slope_keeps_a_rolling_capsule_finite_and_stops_it() {
+        let mut world = floor_world_with_rest_slope(FRAC_PI_2 - 0.001);
+        let id = world.spawn_loose(&rolling_capsule(2.0));
+
+        for tick in 1..=120 {
+            world.step(DT);
+            let state = read(&world, id);
+            assert!(all_finite(&state), "tick {tick}: not finite, {state:?}");
+        }
+
+        let state = read(&world, id);
+        assert!(
+            state.linear_velocity.length() < 1e-3,
+            "the capsule is at rest, {state:?}"
+        );
+    }
+
+    #[test]
+    fn removing_a_capsule_mid_simulation_leaves_the_rolling_one_braked() {
+        let mut world = gravity_world(&floor_mesh(0.0));
+        let removed = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.04, 2.0),
+            rotation: Quat::from_rotation_x(FRAC_PI_2),
+            ..LooseSpawn::new(CAPSULE, 0.2)
+        });
+        let rolling = world.spawn_loose(&rolling_capsule(2.0));
+        run(&mut world, 10);
+
+        world.remove_loose(removed).expect("the capsule is alive");
+        let mut previous = read(&world, rolling).linear_velocity.length();
+        for tick in 1..=60 {
+            world.step(DT);
+            let state = read(&world, rolling);
+            assert!(all_finite(&state), "tick {tick}: not finite, {state:?}");
+            let speed = state.linear_velocity.length();
+            assert!(
+                speed <= previous + 1e-4,
+                "tick {tick}: speed rose from {previous} to {speed}"
+            );
+            previous = speed;
+        }
+
+        assert!(previous < 1.5, "the capsule slowed, speed={previous}");
+    }
+
     #[test]
     fn spawn_rejects_a_bad_capsule_or_cylinder() {
         type Build = fn(f32, f32) -> LooseShape;
