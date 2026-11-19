@@ -6,7 +6,12 @@ pub fn auto_save_on_shutdown(
     saves_dir: &std::path::Path,
     lights: &[moho_render_api::LightDesc],
 ) -> Result<(), Box<dyn std::error::Error>> {
-    tracing::info!("Auto-saving on shutdown...");
+    let Some(mut spec) = app.generation.last_spec.clone() else {
+        tracing::info!("No world loaded; nothing to auto-save");
+        return Ok(());
+    };
+    tracing::info!("Auto-saving...");
+    let started = std::time::Instant::now();
 
     std::fs::create_dir_all(saves_dir)?;
 
@@ -16,18 +21,6 @@ pub fn auto_save_on_shutdown(
 
     let scene_bytes =
         flagstone_game::scene_persistence::encode_to_bytes(&app.entities, camera_data, lights)?;
-    let mut spec =
-        app.generation
-            .last_spec
-            .clone()
-            .unwrap_or(flagstone_game::scene_builders::WorldSpec {
-                name: "autosave".to_string(),
-                seed: None,
-                size_xz: 64,
-                day_length_seconds: 600.0,
-                night_length_seconds: 420.0,
-                initial_time_of_day: 6.0,
-            });
     spec.initial_time_of_day = clock.time_of_day();
     let block_records: Vec<crate::save::BlockRecord> = app
         .light_system
@@ -44,6 +37,7 @@ pub fn auto_save_on_shutdown(
         path = %save_path.display(),
         spec = ?spec.name,
         count = block_records.len(),
+        elapsed_ms = started.elapsed().as_millis(),
         "Auto-saved scene (envelope)"
     );
 
@@ -71,21 +65,30 @@ impl AutosaveSchedule {
     }
 
     /// One simulation tick of play has passed.
-    pub fn tick(&mut self) {}
+    pub fn tick(&mut self) {
+        self.ticks_since_save = self.ticks_since_save.saturating_add(1);
+    }
 
     /// The world changed since the last save.
-    pub fn mark_edited(&mut self) {}
+    pub fn mark_edited(&mut self) {
+        self.edited = true;
+    }
 
     pub fn due(&self) -> bool {
-        false
+        self.edited && self.ticks_since_save >= self.interval_ticks
     }
 
     /// A save succeeded: the world is clean and the interval starts over.
-    pub fn saved(&mut self) {}
+    pub fn saved(&mut self) {
+        self.edited = false;
+        self.ticks_since_save = 0;
+    }
 
     /// A save failed: the interval starts over but the world stays edited, so the save
     /// is retried next interval and not on every frame.
-    pub fn save_failed(&mut self) {}
+    pub fn save_failed(&mut self) {
+        self.ticks_since_save = 0;
+    }
 }
 
 #[cfg(test)]

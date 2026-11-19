@@ -301,8 +301,12 @@ impl App {
             self.apply_pending_render(r);
             r.all_lights_as_descs()
         });
-        if let Err(e) = self.auto_save_on_shutdown(clock, &lights) {
-            tracing::warn!(error = %e, "Failed to auto-save on exit");
+        match self.auto_save_on_shutdown(clock, &lights) {
+            Ok(()) => self.autosave_schedule.saved(),
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to auto-save");
+                self.autosave_schedule.save_failed();
+            }
         }
     }
 
@@ -431,6 +435,9 @@ impl moho_app::Game for App {
         let frame_number = frame_processor.publish_frame_start(self, dt);
         if self.game_state == GameState::Playing {
             self.apply_command(command);
+            self.autosave_schedule.interval_ticks =
+                self.autosave_interval.as_secs() * u64::from(flagstone_game::TICK_HZ);
+            self.autosave_schedule.tick();
         }
         for console_command in &command.console {
             crate::app::console::apply_console_command(self, console_command);
@@ -514,6 +521,10 @@ impl moho_app::Game for App {
             self.main_menu_requested = false;
             self.autosave(ctx.clock(), ctx.renderer());
             self.show_menu();
+        }
+
+        if self.autosave_schedule.due() {
+            self.autosave(ctx.clock(), ctx.renderer());
         }
 
         let clock = ctx.clock();
