@@ -1,7 +1,7 @@
 //! The collide-and-slide behind [`crate::movement::step`], on parry shape casts.
 
 use crate::movement::{
-    CharacterQueries, Ground, HullPose, HullShape, STEP_HEIGHT, Slide, WALKABLE_NORMAL_Y,
+    CharacterQueries, Ground, HullPose, HullShape, Slide, STEP_HEIGHT, WALKABLE_NORMAL_Y,
 };
 use crate::world::CharacterState;
 use glam::{Quat, Vec3};
@@ -674,15 +674,15 @@ impl Slider<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::PhysicsWorld;
     use super::super::test_support::TEST_TAG;
     use super::super::test_support::{
         ceiling_mesh, quad_mesh, seam_floor_meshes, slope_mesh, step_box_mesh, wall_mesh,
         x_wall_mesh, x_wall_mesh_reversed,
     };
+    use super::super::PhysicsWorld;
     use super::*;
-    use crate::Hull;
     use crate::movement::CharacterBody;
+    use crate::Hull;
     use moho_render_api::{WorldMesh, WorldMeshId};
     use rapier3d::prelude::{QueryFilter, SharedShape};
 
