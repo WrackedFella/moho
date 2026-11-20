@@ -1214,6 +1214,46 @@ mod tests {
     }
 
     #[test]
+    fn a_capsule_spawned_before_the_floor_still_rolls_to_rest() {
+        let mut world = PhysicsWorld::new();
+        let spawn = lying_spawn(small_capsule(), CAPSULE.1, 2.0);
+        let id = world.spawn_loose(&spawn);
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        let rolled = sideways_distance(spawn.position, &state);
+        assert!(rolled <= 1.5, "rolled {rolled} m before stopping");
+        assert!(rolled >= 1.0, "stopped after only {rolled} m");
+        assert!(state.asleep, "the capsule is at rest, {state:?}");
+    }
+
+    #[test]
+    fn a_capsule_spawned_before_the_box_under_it_sleeps_on_it() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let box_half = Vec3::splat(1.0);
+        let top = 2.0 * box_half.y + CAPSULE.1;
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, top, -0.5),
+            ..lying_spawn(small_capsule(), CAPSULE.1, 1.5)
+        });
+        world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, box_half.y, 0.0),
+            ..LooseSpawn::new(cuboid(box_half), 500.0)
+        });
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        assert!(state.asleep, "the capsule is at rest, {state:?}");
+        assert!(
+            state.position.x.abs() <= box_half.x && state.position.z.abs() <= box_half.z,
+            "the capsule is over the box, {state:?}"
+        );
+    }
+
+    #[test]
     fn a_tilted_cylinder_tips_over_instead_of_freezing_on_its_rim() {
         for tilt_degrees in [10.0f32, 18.0, 27.0, 35.0, 45.0] {
             let tilt = degrees(tilt_degrees);
