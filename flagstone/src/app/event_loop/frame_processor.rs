@@ -18,8 +18,8 @@ const MOVE_SPEED: f32 = 4.0;
 /// Sprinting speed in m/s.
 const SPRINT_SPEED: f32 = 6.0;
 
-/// How far the pawn's capsule centre, where its mining action starts, is above its feet; the
-/// selection box's half height, which a test pins to the capsule's standing height.
+/// Height of the pawn's capsule centre (where mining starts) above its feet: the selection
+/// box's half height, pinned to the capsule by a test.
 const PAWN_CENTRE_HEIGHT: f32 = flagstone_game::selection::PAWN_HALF_EXTENTS.y;
 
 /// Strategy-line walking feel: acceleration and friction high enough to reach speed, or
