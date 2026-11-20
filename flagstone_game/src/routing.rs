@@ -251,24 +251,26 @@ mod tests {
     proptest! {
         #[test]
         fn every_route_cell_is_standable_and_adjacent_to_the_previous(
-            heights in proptest::collection::vec(0i32..4, 64),
+            heights in proptest::collection::vec(0i32..2, 64),
             (sx, sz, gx, gz) in (0i32..8, 0i32..8, 0i32..8, 0i32..8),
         ) {
             let grid = terrain(&heights, false);
             let start = top(&heights, sx, sz);
             let goal = top(&heights, gx, gz);
 
-            if let Some(found) = find(&grid, start, goal) {
-                prop_assert_eq!(found.first(), Some(&start));
-                prop_assert_eq!(found.last(), Some(&goal));
-                for c in &found {
-                    prop_assert!(standable(&grid, *c), "{:?} is not standable", c);
-                }
-                for pair in found.windows(2) {
-                    let step = pair[1] - pair[0];
-                    prop_assert_eq!(step.x.abs() + step.z.abs(), 1, "one horizontal step");
-                    prop_assert!(step.y.abs() <= 1, "at most one block up or down");
-                }
+            let found = find(&grid, start, goal);
+
+            prop_assert!(found.is_some(), "steps of at most one block always have a route");
+            let found = found.unwrap();
+            prop_assert_eq!(found.first(), Some(&start));
+            prop_assert_eq!(found.last(), Some(&goal));
+            for c in &found {
+                prop_assert!(standable(&grid, *c), "{:?} is not standable", c);
+            }
+            for pair in found.windows(2) {
+                let step = pair[1] - pair[0];
+                prop_assert_eq!(step.x.abs() + step.z.abs(), 1, "one horizontal step");
+                prop_assert!(step.y.abs() <= 1, "at most one block up or down");
             }
         }
 

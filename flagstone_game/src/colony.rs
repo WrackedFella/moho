@@ -215,6 +215,12 @@ mod tests {
         assert_eq!(change, MarkChange::Cancelled);
         assert_eq!(marks.unclaimed().count(), 0);
         assert_eq!(claimant(&marks, [1, 0, 0]), None);
+
+        let change = marks.toggle([1, 0, 0]);
+
+        assert_eq!(change, MarkChange::Marked);
+        assert_eq!(claimant(&marks, [1, 0, 0]), Some(None));
+        assert_eq!(marks.unclaimed().collect::<Vec<_>>(), vec![[1, 0, 0]]);
     }
 
     fn dug_into_stock(resource: Option<u32>) -> Colony {

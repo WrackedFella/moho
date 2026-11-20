@@ -241,10 +241,19 @@ mod tests {
         for block in [cell(2, 1, 2), cell(10, 1, 10)] {
             world.grid.mutator().place(block, 1, None);
         }
+        for y in 1..=3 {
+            world.grid.mutator().place(cell(12, y, 11), 1, None);
+        }
+        world.mark(cell(12, 3, 11));
         world.pawn.select_slot(3);
 
         world.tick();
 
+        assert_eq!(
+            world.claimant(cell(12, 3, 11)),
+            Some(None),
+            "the nearer mark atop the pillar has no stand cell"
+        );
         assert_eq!(world.claimant(cell(10, 1, 10)), Some(Some(PawnId(0))));
         assert_eq!(
             world.claimant(cell(2, 1, 2)),
@@ -434,8 +443,8 @@ mod tests {
         let Job::Mine { route, next, .. } = world.job.clone() else {
             panic!("walking");
         };
-        let target = route[next];
-        world.grid.mutator().remove(target - cell(0, 1, 0));
+        let upcoming = route[next + 1];
+        world.grid.mutator().remove(upcoming - cell(0, 1, 0));
 
         let action = world.tick();
 
@@ -443,6 +452,120 @@ mod tests {
         assert_eq!(world.job, Job::Idle);
         assert!(world.marks.contains([6, 1, 0]), "the mark stays");
         assert_eq!(world.claimant(cell(6, 1, 0)), Some(None));
+    }
+
+    #[test]
+    fn a_stall_counter_resets_while_the_feet_make_progress() {
+        let mut world = World::new(strip(8), cell(0, 1, 0));
+        world.grid.mutator().place(cell(6, 1, 0), 1, None);
+        world.mark(cell(6, 1, 0));
+        world.tick();
+
+        for _ in 0..STALL_TICKS + 30 {
+            step(
+                &mut world.job,
+                &mut world.pawn,
+                &world.pose,
+                &mut world.marks,
+                &world.grid,
+            );
+            world.pose = pose_at(world.pose.feet + Vec3::X * 0.003);
+
+            assert!(matches!(world.job, Job::Mine { .. }), "{:?}", world.job);
+            assert_eq!(world.claimant(cell(6, 1, 0)), Some(Some(PawnId(0))));
+        }
+    }
+
+    /// A claimed walk on a strip, with the route and the waypoint being walked to.
+    fn claimed_walk() -> (World, Vec<BlockPos>, usize) {
+        let mut world = World::new(strip(8), cell(0, 1, 0));
+        world.grid.mutator().place(cell(6, 1, 0), 1, None);
+        world.mark(cell(6, 1, 0));
+        world.tick();
+        let Job::Mine { route, next, .. } = world.job.clone() else {
+            panic!("claimed: {:?}", world.job);
+        };
+        (world, route, next)
+    }
+
+    fn next_waypoint(world: &World) -> usize {
+        let Job::Mine { next, .. } = world.job else {
+            panic!("still walking: {:?}", world.job);
+        };
+        next
+    }
+
+    #[test]
+    fn a_waypoint_counts_as_reached_within_the_horizontal_arrive_radius_whatever_the_height() {
+        let (mut world, route, next) = claimed_walk();
+        let off = Vec3::new(ARRIVE_RADIUS - 0.05, 1.0, 0.0);
+        world.pose = pose_at(centre(route[next]) + off);
+
+        world.tick();
+
+        assert_eq!(next_waypoint(&world), next + 1);
+    }
+
+    #[test]
+    fn a_waypoint_is_not_reached_outside_the_horizontal_arrive_radius() {
+        let (mut world, route, next) = claimed_walk();
+        let off = Vec3::new(ARRIVE_RADIUS + 0.15, 0.0, 0.0);
+        world.pose = pose_at(centre(route[next]) + off);
+
+        let action = world.tick();
+
+        assert_eq!(next_waypoint(&world), next);
+        assert!(matches!(action, JobAction::Walk { .. }), "{action:?}");
+    }
+
+    #[test]
+    fn at_most_four_unreachable_marks_are_tried_per_tick() {
+        let mut grid = plane(14);
+        let pillars = [2, 4, 6, 8, 10];
+        for x in pillars {
+            for y in 1..=3 {
+                grid.mutator().place(cell(x, y, 0), 1, None);
+            }
+        }
+        grid.mutator().place(cell(12, 1, 12), 1, None);
+        let mut world = World::new(grid, cell(0, 1, 0));
+        for x in pillars {
+            world.mark(cell(x, 3, 0));
+        }
+        world.mark(cell(12, 1, 12));
+
+        let first = world.tick();
+
+        assert_eq!(first, JobAction::Wait);
+        assert_eq!(world.job, Job::Idle);
+        assert_eq!(world.claimant(cell(12, 1, 12)), Some(None));
+
+        for _ in 0..3 {
+            world.tick();
+        }
+
+        assert_eq!(
+            world.claimant(cell(12, 1, 12)),
+            Some(Some(PawnId(0))),
+            "a later tick reaches the reachable mark"
+        );
+        for x in pillars {
+            assert_eq!(world.claimant(cell(x, 3, 0)), Some(None));
+        }
+    }
+
+    #[test]
+    fn equally_near_reachable_marks_go_to_the_lower_key() {
+        let mut world = World::new(plane(14), cell(5, 1, 5));
+        for block in [cell(7, 1, 5), cell(3, 1, 5)] {
+            world.grid.mutator().place(block, 1, None);
+            world.mark(block);
+        }
+
+        world.tick();
+
+        assert_eq!(world.claimant(cell(3, 1, 5)), Some(Some(PawnId(0))));
+        assert_eq!(world.claimant(cell(7, 1, 5)), Some(None));
     }
 
     fn facing(yaw: f32, angle_off: f32) -> (Pose, Vec3) {

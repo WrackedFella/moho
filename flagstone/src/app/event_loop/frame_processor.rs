@@ -1470,6 +1470,29 @@ mod tests {
     }
 
     #[test]
+    fn a_possessed_pawn_mining_a_marked_ore_block_fills_its_own_inventory_not_the_stock() {
+        let block = BlockPos::new(10, FLOOR_TOP, 16);
+        let mut app = flat_world();
+        place(&mut app, block, Some(ORE));
+        mark(&mut app, block);
+        app.simulation.set_camera_mode(CameraMode::FirstPerson);
+        app.pawn.select_slot(flagstone_game::pawn::TOOL_SLOT);
+        app.camera.0 =
+            glam::Mat4::from_translation(glam::Vec3::new(10.5, FLOOR_TOP as f32 + 0.5, 20.5))
+                .inverse();
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.input.unconsumed_rx = Some(rx);
+        tx.send(crate::input_event::InputEvent::MineRequested)
+            .expect("the receiver is alive");
+
+        crate::app::event_loop::EventProcessor::new().process_input_events(&mut app);
+
+        assert!(!is_solid(&app, block), "setup: the hand dug the block");
+        assert!(app.colony.stock.is_empty(), "hand mining fed the colony");
+        assert_eq!(app.pawn.inventory.count(ORE), 1);
+    }
+
+    #[test]
     fn hud_data_carries_the_colony_stock() {
         let mut app = App::headless();
         app.colony.stock.add(7, 3);
