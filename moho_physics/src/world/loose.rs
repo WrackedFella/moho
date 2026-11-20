@@ -1763,6 +1763,134 @@ mod tests {
         assert!(settled.position.y < 1.0, "the pile fell, {settled:?}");
     }
 
+    fn assert_finite(state: &LooseState, context: &str) {
+        let finite = bits(state)
+            .map(f32::from_bits)
+            .iter()
+            .all(|value| value.is_finite());
+        assert!(finite, "{context}: non-finite state {state:?}");
+    }
+
+    #[test]
+    fn an_upright_spinning_cylinder_stops_spinning_and_sleeps() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.08, 0.0),
+            angular_velocity: Vec3::new(0.0, 20.0, 0.0),
+            ..LooseSpawn::new(CYLINDER, 0.2)
+        });
+
+        for tick in 1..=300 {
+            world.step(DT);
+            assert_finite(&read(&world, id), &format!("tick {tick}"));
+        }
+
+        let state = read(&world, id);
+        assert!(state.asleep, "the cylinder rests, {state:?}");
+        assert!(
+            state.angular_velocity.length() < 0.05,
+            "the spin stops, {state:?}"
+        );
+    }
+
+    #[test]
+    fn a_capsule_rolling_backwards_comes_to_rest_asleep() {
+        let radius = radius_of(CAPSULE);
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, radius, 0.0),
+            rotation: Quat::from_rotation_x(FRAC_PI_2),
+            linear_velocity: Vec3::new(-2.0, 0.0, 0.0),
+            angular_velocity: Vec3::new(0.0, 0.0, 2.0 / radius),
+            ..LooseSpawn::new(CAPSULE, 0.2)
+        });
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        assert!(state.asleep, "the capsule rests, {state:?}");
+        let rolled = -state.position.x;
+        assert!(rolled <= 1.5, "backward rolled {rolled} m");
+    }
+
+    #[test]
+    fn a_zero_step_leaves_a_rolling_capsule_finite() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&rolling_capsule(2.0));
+        run(&mut world, 5);
+
+        world.step(0.0);
+
+        assert_finite(&read(&world, id), "after step(0.0)");
+        run(&mut world, 5);
+        assert_finite(&read(&world, id), "after resuming");
+    }
+
+    #[test]
+    fn removing_a_neighbour_from_a_settled_pile_leaves_the_rest_stepping() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let ids: Vec<_> = (0..4)
+            .map(|index| {
+                world.spawn_loose(&LooseSpawn {
+                    position: Vec3::new(0.01 * index as f32, 0.1 + 0.12 * index as f32, 0.0),
+                    rotation: Quat::from_rotation_z(FRAC_PI_2),
+                    ..LooseSpawn::new(CAPSULE, 0.2)
+                })
+            })
+            .collect();
+        run(&mut world, 300);
+
+        world.remove_loose(ids[1]).expect("the capsule is alive");
+
+        for tick in 1..=300 {
+            world.step(DT);
+            for id in [ids[0], ids[2], ids[3]] {
+                assert_finite(&read(&world, id), &format!("tick {tick}"));
+            }
+        }
+        for id in [ids[0], ids[2], ids[3]] {
+            let state = read(&world, id);
+            assert!(state.asleep, "the rest settle, {state:?}");
+        }
+    }
+
+    #[test]
+    fn a_capsule_spinning_about_its_own_axis_stops_and_sleeps() {
+        let radius = radius_of(CAPSULE);
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, radius, 0.0),
+            rotation: Quat::from_rotation_z(FRAC_PI_2),
+            angular_velocity: Vec3::new(-15.0, 0.0, 0.0),
+            ..LooseSpawn::new(CAPSULE, 0.2)
+        });
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        assert!(state.asleep, "the capsule rests, {state:?}");
+        assert!(state.angular_velocity.length() < 0.05, "{state:?}");
+        assert!(state.position.length() < 0.05 + radius, "{state:?}");
+    }
+
+    #[test]
+    fn a_tipped_standing_capsule_falls_over_and_rests_flat() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.14, 0.0),
+            angular_velocity: Vec3::new(0.0, 0.0, 0.3),
+            ..LooseSpawn::new(CAPSULE, 0.2)
+        });
+
+        run(&mut world, 500);
+
+        let state = read(&world, id);
+        let axis_height = (state.rotation * Vec3::Y).y.abs();
+        assert!(state.asleep, "the capsule rests, {state:?}");
+        assert!(axis_height < 0.1, "the capsule lies flat, {state:?}");
+        assert!(bottom(CAPSULE, &state).abs() <= 0.001, "{state:?}");
+    }
+
     #[test]
     fn spawn_rejects_a_bad_capsule_or_cylinder() {
         type ShapeBuilder = fn(f32, f32) -> LooseShape;
