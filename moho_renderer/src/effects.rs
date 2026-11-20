@@ -1450,6 +1450,105 @@ mod tests {
     }
 
     #[test]
+    fn a_mark_shrinks_in_proportion_to_a_fade_longer_than_a_second() {
+        let mut rig = Rig::new();
+        rig.effects.mark(
+            Vec3::ZERO,
+            Vec3::Y,
+            0.0,
+            mark_style(0.2, Duration::from_secs(10), Duration::from_secs(4)),
+        );
+
+        for (elapsed, expected) in [(6, 0.2), (2, 0.1), (1, 0.05)] {
+            rig.effects.advance(Duration::from_secs(elapsed));
+            let drawn = rig.frame(EYE);
+
+            assert_eq!(drawn.len(), 1);
+            assert!(
+                (x_axis(&drawn[0]).length() - expected).abs() < EPS,
+                "expected {expected}, got {}",
+                x_axis(&drawn[0]).length()
+            );
+        }
+    }
+
+    #[test]
+    fn a_flash_and_a_mark_of_size_zero_draw_nothing() {
+        let mut rig = Rig::new();
+        let long = Duration::from_secs(10);
+        rig.effects.flash(Vec3::Y, 0.0, flash_style(0.0, long));
+        rig.effects
+            .mark(Vec3::Z, Vec3::Y, 0.0, mark_style(0.0, long, ms(500)));
+
+        assert!(rig.frame(EYE).is_empty());
+
+        rig.effects.flash(Vec3::X, 0.0, flash_style(0.4, long));
+        assert_eq!(rig.frame(EYE).len(), 1, "only the control draws");
+        assert_eq!(rig.effects.live(), 3, "the empty ones are still live");
+    }
+
+    #[test]
+    fn a_flash_with_a_non_finite_eye_draws_nothing_until_the_eye_is_finite() {
+        let mut rig = Rig::new();
+        rig.effects
+            .flash(Vec3::Y, 0.0, flash_style(0.4, Duration::from_secs(10)));
+
+        for eye in [
+            Vec3::new(f32::NAN, 0.0, 0.0),
+            Vec3::new(0.0, f32::INFINITY, 0.0),
+            Vec3::splat(f32::NEG_INFINITY),
+        ] {
+            assert!(rig.frame(eye).is_empty(), "eye {eye}");
+        }
+
+        assert_eq!(rig.frame(EYE).len(), 1);
+    }
+
+    #[test]
+    fn each_effect_kind_draws_under_its_own_reserved_mesh_id() {
+        let probe = |meshes: &mut WorldMeshes, offset: u64| {
+            meshes.place_unshadowed(
+                WorldMeshId(EFFECT_MESH_IDS_FROM + offset),
+                Affine3A::IDENTITY,
+                0,
+            );
+            let handles: Vec<u32> = meshes.unshadowed_draws().map(|(h, _)| h).collect();
+            meshes.clear_placements();
+            handles
+        };
+        let mut streak = Rig::new();
+        let handle = streak.effects.begin_streak(style(2.0, 0.1));
+        streak.effects.place_streak(handle, Vec3::X, Vec3::X);
+        let mut flash = Rig::new();
+        flash
+            .effects
+            .flash(Vec3::Y, 0.0, flash_style(0.4, Duration::from_secs(1)));
+        let mut mark = Rig::new();
+        mark.effects.mark(
+            Vec3::Z,
+            Vec3::Y,
+            0.0,
+            mark_style(0.2, Duration::from_secs(10), ms(500)),
+        );
+
+        for (rig, offset, vertices) in [(&mut streak, 0, 4), (&mut flash, 1, 8), (&mut mark, 2, 4)]
+        {
+            rig.frame(EYE);
+            let handles = probe(&mut rig.meshes, offset);
+
+            assert_eq!(handles.len(), 1, "a mesh is live at offset {offset}");
+            assert_eq!(rig.positions_of(handles[0]).len(), vertices);
+            assert_eq!(rig.meshes.live_len(), 1, "and only that one");
+            for other in (0..3).filter(|o| *o != offset) {
+                assert!(
+                    probe(&mut rig.meshes, other).is_empty(),
+                    "nothing is live at offset {other}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn a_full_cap_drops_the_oldest_fixed_lifetime_effect() {
         let mut rig = Rig::new();
         rig.effects.set_quality(1);
