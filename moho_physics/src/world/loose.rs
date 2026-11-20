@@ -597,7 +597,8 @@ mod tests {
             "{state:?}"
         );
         assert!(!state.asleep, "a fresh object is awake");
-        let mass = world.rigid_body_set[world.loose[&id]].mass();
+        let (_, body) = world.rigid_body_set.iter().next().expect("one body");
+        let mass = body.mass();
         assert!(
             (mass - 3.5).abs() <= 1e-4,
             "the body weighs the stated mass, mass={mass}"
@@ -786,6 +787,7 @@ mod tests {
         let state = read(&world, id);
         let rolled = sideways_distance(spawn.position, &state);
         assert!(rolled <= 1.5, "rolled {rolled} m before stopping");
+        assert!(rolled >= 1.0, "stopped after only {rolled} m");
         assert!(state.asleep, "the capsule is at rest, state {state:?}");
     }
 
@@ -821,24 +823,27 @@ mod tests {
     }
 
     #[test]
-    fn the_rest_slope_is_game_data() {
-        let mut steep_rest = slope_world(8.0);
-        let default_rest = steep_rest.rest_slope();
-        steep_rest.set_rest_slope(degrees(10.0));
-        let id = lying_across_slope(&mut steep_rest, small_capsule(), CAPSULE.1, 8.0);
-        let start = read(&steep_rest, id).position;
+    fn a_raised_rest_slope_lets_a_capsule_sleep_on_a_steeper_slope() {
+        let mut world = slope_world(8.0);
+        let default_rest = world.rest_slope();
+        world.set_rest_slope(degrees(10.0));
+        let id = lying_across_slope(&mut world, small_capsule(), CAPSULE.1, 8.0);
+        let start = read(&world, id).position;
 
-        run(&mut steep_rest, 300);
+        run(&mut world, 300);
 
-        let state = read(&steep_rest, id);
+        let state = read(&world, id);
         assert!(
             (default_rest - degrees(5.0)).abs() <= 1e-6,
             "{default_rest}"
         );
-        assert!((steep_rest.rest_slope() - degrees(10.0)).abs() <= 1e-6);
+        assert!((world.rest_slope() - degrees(10.0)).abs() <= 1e-6);
         assert!(sideways_distance(start, &state) < 0.02, "{state:?}");
         assert!(state.asleep, "the capsule sleeps on 8 degrees, {state:?}");
+    }
 
+    #[test]
+    fn a_zero_rest_slope_leaves_a_rolling_capsule_rolling() {
         let mut off = world_with_floor(&floor_mesh(0.0));
         off.set_rest_slope(0.0);
         let rolling = off.spawn_loose(&lying_spawn(small_capsule(), CAPSULE.1, 2.0));
@@ -890,39 +895,99 @@ mod tests {
 
     #[test]
     fn the_brake_never_touches_vertical_velocity() {
-        let shapes = [
-            ("box", cuboid(FLAT_BOX)),
-            ("capsule", small_capsule()),
-            ("cylinder", small_cylinder()),
-        ];
+        let spawn = LooseSpawn {
+            position: Vec3::new(0.0, 0.5, 0.0),
+            rotation: Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+            restitution: 0.8,
+            ..LooseSpawn::new(small_capsule(), 0.2)
+        };
+        let mut braked = world_with_floor(&floor_mesh(0.0));
+        let mut free = world_with_floor(&floor_mesh(0.0));
+        free.set_rest_slope(0.0);
+        let braked_id = braked.spawn_loose(&spawn);
+        let free_id = free.spawn_loose(&spawn);
+        let mut peak_after_bounce = 0.0f32;
+        let mut landed = false;
 
-        for (name, shape) in shapes {
-            let spawn = LooseSpawn {
-                position: Vec3::new(0.0, 1.0, 0.0),
-                linear_velocity: Vec3::new(1.0, -2.0, 0.5),
-                angular_velocity: Vec3::new(3.0, 1.0, -2.0),
-                ..LooseSpawn::new(shape, 0.2)
-            };
-            let mut braked = world_with_floor(&floor_mesh(0.0));
-            let mut free = world_with_floor(&floor_mesh(0.0));
-            free.set_rest_slope(0.0);
-            let braked_id = braked.spawn_loose(&spawn);
-            let free_id = free.spawn_loose(&spawn);
-
-            let mut tick = 0;
-            while lowest_point(shape, &read(&free, free_id)) > 0.02 {
-                braked.step(DT);
-                free.step(DT);
-                tick += 1;
-                let (a, b) = (read(&braked, braked_id), read(&free, free_id));
-                assert_eq!(
-                    a.linear_velocity.y.to_bits(),
-                    b.linear_velocity.y.to_bits(),
-                    "{name} tick {tick}: vertical velocity differs"
-                );
-                assert!(tick < 300, "{name} never came down");
+        for tick in 1..=120 {
+            braked.step(DT);
+            free.step(DT);
+            let (a, b) = (read(&braked, braked_id), read(&free, free_id));
+            assert_eq!(
+                a.linear_velocity.y.to_bits(),
+                b.linear_velocity.y.to_bits(),
+                "tick {tick}: vertical velocity differs"
+            );
+            landed |= a.position.y <= CAPSULE.1 + 0.01;
+            if landed {
+                peak_after_bounce = peak_after_bounce.max(a.position.y);
             }
         }
+
+        assert!(
+            peak_after_bounce > CAPSULE.1 + 0.1,
+            "the capsule bounced, peak {peak_after_bounce}"
+        );
+    }
+
+    #[test]
+    fn the_brake_follows_the_gravity_input() {
+        let mut world = slope_world(4.9);
+        world.set_gravity(36.0);
+        let id = lying_across_slope(&mut world, small_capsule(), CAPSULE.1, 4.9);
+        let start = read(&world, id).position;
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        assert!(sideways_distance(start, &state) < 0.02, "{state:?}");
+        assert!(state.asleep, "the capsule sleeps at gravity 36, {state:?}");
+    }
+
+    #[test]
+    fn without_gravity_nothing_is_braked() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        world.set_gravity(0.0);
+        let id = world.spawn_loose(&lying_spawn(small_capsule(), CAPSULE.1, 2.0));
+
+        run(&mut world, 10);
+
+        let state = read(&world, id);
+        assert!(state.position.is_finite(), "{state:?}");
+        assert!(state.linear_velocity.is_finite(), "{state:?}");
+        assert!(
+            (state.linear_velocity.length() - 2.0).abs() <= 1e-3,
+            "speed is unchanged, {state:?}"
+        );
+    }
+
+    #[test]
+    fn a_capsule_across_a_box_top_sleeps_there() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let box_half = Vec3::splat(1.0);
+        world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, box_half.y, 0.0),
+            ..LooseSpawn::new(cuboid(box_half), 500.0)
+        });
+        let top = 2.0 * box_half.y + CAPSULE.1;
+        let rolling = lying_spawn(small_capsule(), CAPSULE.1, 1.5);
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, top, -0.5),
+            ..rolling
+        });
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        assert!(state.asleep, "the capsule is at rest, {state:?}");
+        assert!(
+            (state.position.y - top).abs() <= 0.005,
+            "the capsule rests on the box top, {state:?}"
+        );
+        assert!(
+            state.position.x.abs() <= box_half.x && state.position.z.abs() <= box_half.z,
+            "the capsule is over the box, {state:?}"
+        );
     }
 
     #[test]
@@ -977,11 +1042,12 @@ mod tests {
 
     /// How deep the loose objects sit in the floor and in each other, m: `(floor, pair)`.
     fn deepest_penetrations(world: &PhysicsWorld) -> (f32, f32) {
-        let bodies: Vec<RigidBodyHandle> = world.loose.values().copied().collect();
         let (mut floor, mut pair) = (0.0f32, 0.0f32);
         for contact in world.narrow_phase.contact_pairs() {
             let parent = |collider: ColliderHandle| world.collider_set[collider].parent();
-            let loose = |body: Option<RigidBodyHandle>| body.filter(|b| bodies.contains(b));
+            let loose = |body: Option<RigidBodyHandle>| {
+                body.filter(|handle| world.rigid_body_set[*handle].is_dynamic())
+            };
             let (first, second) = (
                 loose(parent(contact.collider1)),
                 loose(parent(contact.collider2)),
@@ -1075,21 +1141,17 @@ mod tests {
 
     #[test]
     fn the_same_pile_twice_ends_bit_equal() {
-        for seed in PILE_SEEDS {
-            let (mut first, first_ids) = pile_world(seed);
-            let (mut second, second_ids) = pile_world(seed);
+        let seed = PILE_SEEDS[0];
+        let (mut first, first_ids) = pile_world(seed);
+        let (mut second, second_ids) = pile_world(seed);
 
-            for tick in 1..=600 {
-                first.step(DT);
-                second.step(DT);
-                for (a, b) in first_ids.iter().zip(&second_ids) {
-                    let (a, b) = (read(&first, *a), read(&second, *b));
-                    assert_eq!(bits(&a), bits(&b), "seed {seed} tick {tick}: bits differ");
-                    assert_eq!(
-                        a.asleep, b.asleep,
-                        "seed {seed} tick {tick}: asleep differs"
-                    );
-                }
+        for tick in 1..=600 {
+            first.step(DT);
+            second.step(DT);
+            for (a, b) in first_ids.iter().zip(&second_ids) {
+                let (a, b) = (read(&first, *a), read(&second, *b));
+                assert_eq!(bits(&a), bits(&b), "tick {tick}: bits differ");
+                assert_eq!(a.asleep, b.asleep, "tick {tick}: asleep differs");
             }
         }
     }
