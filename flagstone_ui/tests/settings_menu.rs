@@ -742,3 +742,132 @@ fn run_ui(
     output.textures_delta.clear();
     output
 }
+
+/// Runs one frame of `menu` on `ctx` with `modifiers` held.
+fn frame_with_modifiers(ctx: &egui::Context, menu: &mut SettingsMenu, modifiers: egui::Modifiers) {
+    let input = egui::RawInput {
+        events: vec![egui::Event::ModifiersChanged(modifiers)],
+        ..Default::default()
+    };
+    run_ui(ctx, input, |ui| {
+        menu.render(ui);
+    });
+}
+
+fn all_rows(menu: &SettingsMenu) -> Vec<Vec<Binding>> {
+    (0..ROW_ACTIONS.len())
+        .map(|i| menu.get_staged_binding(i).to_vec())
+        .collect()
+}
+
+/// The text the conflict dialog draws.
+fn modal_text(modal: &mut dyn flagstone_ui::modal::Modal) -> String {
+    let ctx = egui::Context::default();
+    let output = run_ui(&ctx, egui::RawInput::default(), |ui| {
+        modal.render(ui);
+    });
+    rendered_text(&output)
+}
+
+/// Shift (held by Sprint) conflicts, then Shift is released and Alt is pressed alone.
+/// Leaves the dialog taken, as the adapter does, and the conflict still pending.
+fn shift_conflict_then_stray_alt(menu: &mut SettingsMenu) {
+    use flagstone_ui::screens::Screen;
+
+    let ctx = egui::Context::default();
+    menu.start_listening(0);
+    frame_with_modifiers(&ctx, menu, egui::Modifiers::SHIFT);
+    assert!(Screen::take_pending_modal(menu).is_some());
+
+    frame_with_modifiers(&ctx, menu, egui::Modifiers::NONE);
+    frame_with_modifiers(&ctx, menu, egui::Modifiers::ALT);
+}
+
+/// The dialog names the contested key and the row that holds it.
+#[test]
+fn conflicting_key_names_key_and_holder() {
+    use flagstone_ui::screens::Screen;
+
+    let mut by_modifier = SettingsMenu::with_prefs(Prefs::default());
+    by_modifier.start_listening(0);
+    let ctx = egui::Context::default();
+    frame_with_modifiers(&ctx, &mut by_modifier, egui::Modifiers::SHIFT);
+    let mut by_key = SettingsMenu::with_prefs(Prefs::default());
+    by_key.start_listening(0);
+    by_key.apply_key_while_listening(Key::S);
+
+    let mut shift_modal = Screen::take_pending_modal(&mut by_modifier).expect("Shift conflicts");
+    let mut key_modal = Screen::take_pending_modal(&mut by_key).expect("S conflicts");
+
+    let shift_text = modal_text(shift_modal.as_mut());
+    assert!(
+        shift_text.contains("The binding 'Shift' is currently used by:"),
+        "in:\n{shift_text}"
+    );
+    assert!(
+        shift_text.lines().any(|l| l == "Sprint"),
+        "in:\n{shift_text}"
+    );
+    let key_text = modal_text(key_modal.as_mut());
+    assert!(
+        key_text.contains("The binding 'S' is currently used by:"),
+        "in:\n{key_text}"
+    );
+    assert!(
+        key_text.lines().any(|l| l == "Move Back"),
+        "in:\n{key_text}"
+    );
+}
+
+/// Modifiers pressed while the dialog is open bind nothing.
+#[test]
+fn keys_pressed_while_prompt_open_bind_nothing() {
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let before = all_rows(&menu);
+
+    shift_conflict_then_stray_alt(&mut menu);
+
+    assert_eq!(all_rows(&menu), before);
+    assert!(!menu.is_listening());
+    assert!(!menu.has_unsaved_changes());
+}
+
+/// Confirming applies the prompted key, not a key pressed while the dialog was open.
+#[test]
+fn confirm_after_stray_key_applies_only_prompted_key() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let mut expected = all_rows(&menu);
+    expected[0] = vec![Binding::key(Key::Shift), pad_stick(StickDir::Up)];
+    expected[6] = vec![Binding::pad(PadInput::Button(PadButton::LeftThumb))];
+    shift_conflict_then_stray_alt(&mut menu);
+
+    Screen::on_modal_confirm(&mut menu);
+
+    assert_eq!(all_rows(&menu), expected);
+    assert!(!menu.is_listening());
+}
+
+/// Cancelling leaves every row as it was, whatever was pressed while the dialog was open.
+#[test]
+fn cancel_after_stray_key_changes_nothing() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let before = all_rows(&menu);
+    assert_eq!(before[0], [Binding::key(Key::W), pad_stick(StickDir::Up)]);
+    assert_eq!(
+        before[6],
+        [
+            Binding::key(Key::Shift),
+            Binding::pad(PadInput::Button(PadButton::LeftThumb))
+        ]
+    );
+    shift_conflict_then_stray_alt(&mut menu);
+
+    Screen::on_modal_cancel(&mut menu);
+
+    assert_eq!(all_rows(&menu), before);
+    assert!(!menu.is_listening());
+}
