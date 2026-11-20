@@ -1,6 +1,6 @@
 //! Colony state: the orders the player has given the world, independent of any pawn.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use crate::inventory::Inventory;
 use crate::pawn::PawnId;
@@ -28,53 +28,52 @@ pub struct MineMark {
 }
 
 /// The blocks marked for mining, keyed by block position.
-///
-/// A set while a mark carries no data (`clippy::zero_sized_map_values`); it becomes a map
-/// from position to [`MineMark`] when a mark gains a claim.
 #[derive(Debug, Default)]
 pub struct MineMarks {
-    marks: BTreeSet<[i32; 3]>,
+    marks: BTreeMap<[i32; 3], MineMark>,
 }
 
 impl MineMarks {
     /// Marks an unmarked block and cancels a marked one.
     pub fn toggle(&mut self, pos: [i32; 3]) -> MarkChange {
-        if self.marks.remove(&pos) {
+        if self.marks.remove(&pos).is_some() {
             MarkChange::Cancelled
         } else {
-            self.marks.insert(pos);
+            self.marks.insert(pos, MineMark::default());
             MarkChange::Marked
         }
     }
 
     pub fn contains(&self, pos: [i32; 3]) -> bool {
-        self.marks.contains(&pos)
+        self.marks.contains_key(&pos)
     }
 
     /// The marked blocks in key order.
     pub fn iter(&self) -> impl Iterator<Item = ([i32; 3], &MineMark)> {
-        self.marks
-            .iter()
-            .map(|pos| (*pos, &MineMark { claimed_by: None }))
+        self.marks.iter().map(|(pos, mark)| (*pos, mark))
     }
 
     /// Records `pawn` as the claimant of the marked block at `pos`; does nothing for an
     /// unmarked block.
     pub fn claim(&mut self, pos: [i32; 3], pawn: PawnId) {
-        let _ = (pos, pawn);
-        todo!()
+        if let Some(mark) = self.marks.get_mut(&pos) {
+            mark.claimed_by = Some(pawn);
+        }
     }
 
     /// Clears the claim on the block at `pos`; the mark stays.
     pub fn release(&mut self, pos: [i32; 3]) {
-        let _ = pos;
-        todo!()
+        if let Some(mark) = self.marks.get_mut(&pos) {
+            mark.claimed_by = None;
+        }
     }
 
     /// The marked blocks nobody has claimed, in key order.
     pub fn unclaimed(&self) -> impl Iterator<Item = [i32; 3]> {
-        let none: Option<[i32; 3]> = todo!();
-        none.into_iter()
+        self.marks
+            .iter()
+            .filter(|(_, mark)| mark.claimed_by.is_none())
+            .map(|(pos, _)| *pos)
     }
 
     /// Drops the mark on a block that no longer exists; does nothing for an unmarked one.
@@ -158,11 +157,20 @@ mod tests {
         );
     }
 
-    fn claimant(marks: &MineMarks, pos: [i32; 3]) -> Option<Option<PawnId>> {
+    #[derive(Debug, PartialEq)]
+    enum Claim {
+        Unmarked,
+        Free,
+        By(PawnId),
+    }
+
+    fn claimant(marks: &MineMarks, pos: [i32; 3]) -> Claim {
         marks
             .iter()
             .find(|(p, _)| *p == pos)
-            .map(|(_, mark)| mark.claimed_by)
+            .map_or(Claim::Unmarked, |(_, mark)| {
+                mark.claimed_by.map_or(Claim::Free, Claim::By)
+            })
     }
 
     #[test]
@@ -173,17 +181,17 @@ mod tests {
 
         marks.claim([1, 0, 0], PawnId(4));
 
-        assert_eq!(claimant(&marks, [1, 0, 0]), Some(Some(PawnId(4))));
+        assert_eq!(claimant(&marks, [1, 0, 0]), Claim::By(PawnId(4)));
         assert_eq!(
             claimant(&marks, [2, 0, 0]),
-            Some(None),
+            Claim::Free,
             "other marks stay free"
         );
         assert_eq!(marks.unclaimed().collect::<Vec<_>>(), [[2, 0, 0]]);
 
         marks.release([1, 0, 0]);
 
-        assert_eq!(claimant(&marks, [1, 0, 0]), Some(None));
+        assert_eq!(claimant(&marks, [1, 0, 0]), Claim::Free);
         assert!(marks.contains([1, 0, 0]), "release keeps the mark");
         assert_eq!(
             marks.unclaimed().collect::<Vec<_>>(),
@@ -214,12 +222,12 @@ mod tests {
 
         assert_eq!(change, MarkChange::Cancelled);
         assert_eq!(marks.unclaimed().count(), 0);
-        assert_eq!(claimant(&marks, [1, 0, 0]), None);
+        assert_eq!(claimant(&marks, [1, 0, 0]), Claim::Unmarked);
 
         let change = marks.toggle([1, 0, 0]);
 
         assert_eq!(change, MarkChange::Marked);
-        assert_eq!(claimant(&marks, [1, 0, 0]), Some(None));
+        assert_eq!(claimant(&marks, [1, 0, 0]), Claim::Free);
         assert_eq!(marks.unclaimed().collect::<Vec<_>>(), vec![[1, 0, 0]]);
     }
 

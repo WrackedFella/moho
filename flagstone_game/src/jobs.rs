@@ -1,12 +1,20 @@
 //! What an idle pawn does with the marks: claim one, walk to it, dig it.
 
-use std::f32::consts::TAU;
+use std::f32::consts::{PI, TAU};
 
 use flagstone_voxel::{BlockPos, VoxelGrid};
 use glam::Vec3;
 
+use crate::TICK_HZ;
 use crate::colony::MineMarks;
-use crate::pawn::Pawn;
+use crate::pawn::{Pawn, TOOL_SLOT};
+use crate::routing::{ROUTE_NODE_BUDGET, feet_cell, route, standable};
+
+/// Route searches an idle pawn may spend per tick.
+const ROUTE_ATTEMPTS_PER_TICK: usize = 4;
+
+/// Half-angle, in radians, within which a pawn walks while it turns: 60 degrees.
+const WALK_CONE: f32 = PI / 3.0;
 
 /// How close, horizontally, the feet must be to a waypoint's centre to have reached it.
 pub const ARRIVE_RADIUS: f32 = 0.35;
@@ -18,12 +26,36 @@ pub const STALL_TICKS: u32 = 120;
 pub const TURN_RATE: f32 = TAU;
 
 /// Plain-data progress tracker for a walk; counts ticks, holds no clock.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StallGuard {
     /// Ticks since the feet last came closer to the current waypoint.
     pub ticks: u32,
     /// Closest horizontal approach to the current waypoint so far, in millimetres.
     pub closest_mm: u32,
+}
+
+impl Default for StallGuard {
+    /// A guard that has seen no approach yet: the first reading counts as progress.
+    fn default() -> Self {
+        Self {
+            ticks: 0,
+            closest_mm: u32::MAX,
+        }
+    }
+}
+
+impl StallGuard {
+    /// Records the current distance to the waypoint; true once progress has stopped for
+    /// [`STALL_TICKS`].
+    fn stalled(&mut self, distance_mm: u32) -> bool {
+        if distance_mm < self.closest_mm {
+            self.closest_mm = distance_mm;
+            self.ticks = 0;
+        } else {
+            self.ticks += 1;
+        }
+        self.ticks >= STALL_TICKS
+    }
 }
 
 /// What a pawn is doing when nobody is at its controls.
@@ -79,15 +111,163 @@ pub fn step(
     marks: &mut MineMarks,
     grid: &VoxelGrid,
 ) -> JobAction {
-    let _ = (job, pawn, pose, marks, grid);
-    todo!()
+    if matches!(job, Job::Idle) {
+        let Some(started) = claim_nearest(pawn, pose, marks, grid) else {
+            return JobAction::Wait;
+        };
+        *job = started;
+    }
+    follow(job, pose, marks, grid)
+}
+
+/// Claims the nearest mark that has a route to a stand cell, trying at most
+/// [`ROUTE_ATTEMPTS_PER_TICK`] routes and resuming after them on the next tick.
+fn claim_nearest(
+    pawn: &mut Pawn,
+    pose: &Pose,
+    marks: &mut MineMarks,
+    grid: &VoxelGrid,
+) -> Option<Job> {
+    let feet = feet_cell(pose.feet);
+    let mut candidates: Vec<[i32; 3]> = marks
+        .unclaimed()
+        .filter(|pos| {
+            exposed_faces(grid, BlockPos::from_array(*pos))
+                .next()
+                .is_some()
+        })
+        .collect();
+    candidates.sort_by_key(|pos| (feet.distance_squared(BlockPos::from_array(*pos)), *pos));
+    let first = if pawn.search_cursor < candidates.len() {
+        pawn.search_cursor
+    } else {
+        0
+    };
+
+    let mut tried = 0;
+    for pos in candidates.iter().skip(first).take(ROUTE_ATTEMPTS_PER_TICK) {
+        tried += 1;
+        let block = BlockPos::from_array(*pos);
+        let found = route(
+            grid,
+            feet,
+            |cell| is_stand_cell(grid, block, cell),
+            block,
+            ROUTE_NODE_BUDGET,
+        );
+        if let Some(route) = found {
+            pawn.search_cursor = 0;
+            marks.claim(*pos, pawn.id);
+            pawn.select_slot(TOOL_SLOT);
+            return Some(Job::Mine {
+                mark: block,
+                route,
+                next: 0,
+                stall: StallGuard::default(),
+            });
+        }
+    }
+    pawn.search_cursor = first + tried;
+    None
+}
+
+/// A standable cell from which `block` is inside the mining reach: within one column of it
+/// and with the feet from one below to two above it, never on the block itself.
+fn is_stand_cell(grid: &VoxelGrid, block: BlockPos, cell: BlockPos) -> bool {
+    let off = cell - block;
+    off.x.abs() <= 1
+        && off.z.abs() <= 1
+        && (-1..=2).contains(&off.y)
+        && off != BlockPos::Y
+        && standable(grid, cell)
+}
+
+/// The directions in which the solid `block` has an air neighbour.
+fn exposed_faces(grid: &VoxelGrid, block: BlockPos) -> impl Iterator<Item = BlockPos> + '_ {
+    grid.is_solid_at(block)
+        .then_some(())
+        .into_iter()
+        .flat_map(|()| {
+            [
+                BlockPos::X,
+                BlockPos::NEG_X,
+                BlockPos::Y,
+                BlockPos::NEG_Y,
+                BlockPos::Z,
+                BlockPos::NEG_Z,
+            ]
+        })
+        .filter(move |dir| !grid.is_solid_at(block + *dir))
+}
+
+fn waypoint_centre(cell: BlockPos) -> Vec3 {
+    Vec3::new(cell.x as f32 + 0.5, cell.y as f32, cell.z as f32 + 0.5)
+}
+
+/// Walks a claimed route, then digs; gives the claim up when it cannot continue.
+fn follow(job: &mut Job, pose: &Pose, marks: &mut MineMarks, grid: &VoxelGrid) -> JobAction {
+    let Job::Mine {
+        mark,
+        route,
+        next,
+        stall,
+    } = job
+    else {
+        return JobAction::Wait;
+    };
+    let block = *mark;
+    let route_is_open = route[*next..].iter().all(|cell| standable(grid, *cell));
+    if !marks.contains(block.to_array()) || !route_is_open {
+        marks.release(block.to_array());
+        *job = Job::Idle;
+        return JobAction::Wait;
+    }
+
+    while *next < route.len()
+        && horizontal_distance(pose.feet, waypoint_centre(route[*next])) <= ARRIVE_RADIUS
+    {
+        *next += 1;
+        *stall = StallGuard::default();
+    }
+    let Some(&waypoint) = route.get(*next) else {
+        let aim = exposed_faces(grid, block)
+            .map(|dir| block.as_vec3() + Vec3::splat(0.5) + dir.as_vec3() * 0.5)
+            .min_by(|a, b| {
+                a.distance_squared(pose.eye)
+                    .total_cmp(&b.distance_squared(pose.eye))
+            });
+        if let Some(aim) = aim {
+            return JobAction::Dig { block, aim };
+        }
+        marks.release(block.to_array());
+        *job = Job::Idle;
+        return JobAction::Wait;
+    };
+
+    let to = waypoint_centre(waypoint);
+    if stall.stalled((horizontal_distance(pose.feet, to) * 1000.0) as u32) {
+        marks.release(block.to_array());
+        *job = Job::Idle;
+        return JobAction::Wait;
+    }
+    JobAction::Walk { to }
+}
+
+fn horizontal_distance(a: Vec3, b: Vec3) -> f32 {
+    (a.x - b.x).hypot(a.z - b.z)
 }
 
 /// The turn and walk that take `pose` toward `to`: turns at [`TURN_RATE`], clamped per tick,
 /// and walks at full speed only once within 60 degrees of facing it.
 pub fn steer(pose: &Pose, to: Vec3) -> WalkStep {
-    let _ = (pose, to);
-    todo!()
+    let offset = to - pose.feet;
+    let heading = offset.x.atan2(offset.z);
+    let turn = (heading - pose.yaw + PI).rem_euclid(TAU) - PI;
+    let per_tick = TURN_RATE / TICK_HZ as f32;
+    WalkStep {
+        yaw_delta: turn.clamp(-per_tick, per_tick),
+        forward: if turn.abs() <= WALK_CONE { 1.0 } else { 0.0 },
+    }
 }
 
 #[cfg(test)]
@@ -136,6 +316,13 @@ mod tests {
             }
         }
         grid
+    }
+
+    #[derive(Debug, PartialEq)]
+    enum Claim {
+        Unmarked,
+        Free,
+        By(PawnId),
     }
 
     struct World {
@@ -189,11 +376,13 @@ mod tests {
             panic!("the pawn never dug; walked {walked:?}, job {:?}", self.job);
         }
 
-        fn claimant(&self, block: BlockPos) -> Option<Option<PawnId>> {
+        fn claimant(&self, block: BlockPos) -> Claim {
             self.marks
                 .iter()
                 .find(|(pos, _)| *pos == block.to_array())
-                .map(|(_, mark)| mark.claimed_by)
+                .map_or(Claim::Unmarked, |(_, mark)| {
+                    mark.claimed_by.map_or(Claim::Free, Claim::By)
+                })
         }
     }
 
@@ -230,7 +419,7 @@ mod tests {
 
         assert_eq!(action, JobAction::Wait);
         assert_eq!(world.job, Job::Idle);
-        assert_eq!(world.claimant(cell(5, 1, 5)), Some(None));
+        assert_eq!(world.claimant(cell(5, 1, 5)), Claim::Free);
     }
 
     #[test]
@@ -251,13 +440,13 @@ mod tests {
 
         assert_eq!(
             world.claimant(cell(12, 3, 11)),
-            Some(None),
+            Claim::Free,
             "the nearer mark atop the pillar has no stand cell"
         );
-        assert_eq!(world.claimant(cell(10, 1, 10)), Some(Some(PawnId(0))));
+        assert_eq!(world.claimant(cell(10, 1, 10)), Claim::By(PawnId(0)));
         assert_eq!(
             world.claimant(cell(2, 1, 2)),
-            Some(None),
+            Claim::Free,
             "the far mark stays free"
         );
         assert!(matches!(world.job, Job::Mine { mark, .. } if mark == cell(10, 1, 10)));
@@ -404,7 +593,7 @@ mod tests {
 
         assert_eq!(action, JobAction::Wait);
         assert_eq!(second_job, Job::Idle);
-        assert_eq!(world.claimant(cell(6, 1, 0)), Some(Some(PawnId(0))));
+        assert_eq!(world.claimant(cell(6, 1, 0)), Claim::By(PawnId(0)));
     }
 
     #[test]
@@ -434,7 +623,7 @@ mod tests {
             "released on tick {released_at}"
         );
         assert!(world.marks.contains([6, 1, 0]), "the mark stays");
-        assert_eq!(world.claimant(cell(6, 1, 0)), Some(None));
+        assert_eq!(world.claimant(cell(6, 1, 0)), Claim::Free);
     }
 
     #[test]
@@ -451,7 +640,7 @@ mod tests {
         assert_eq!(action, JobAction::Wait);
         assert_eq!(world.job, Job::Idle);
         assert!(world.marks.contains([6, 1, 0]), "the mark stays");
-        assert_eq!(world.claimant(cell(6, 1, 0)), Some(None));
+        assert_eq!(world.claimant(cell(6, 1, 0)), Claim::Free);
     }
 
     #[test]
@@ -472,7 +661,7 @@ mod tests {
             world.pose = pose_at(world.pose.feet + Vec3::X * 0.003);
 
             assert!(matches!(world.job, Job::Mine { .. }), "{:?}", world.job);
-            assert_eq!(world.claimant(cell(6, 1, 0)), Some(Some(PawnId(0))));
+            assert_eq!(world.claimant(cell(6, 1, 0)), Claim::By(PawnId(0)));
         }
     }
 
@@ -538,7 +727,7 @@ mod tests {
 
         assert_eq!(first, JobAction::Wait);
         assert_eq!(world.job, Job::Idle);
-        assert_eq!(world.claimant(cell(12, 1, 12)), Some(None));
+        assert_eq!(world.claimant(cell(12, 1, 12)), Claim::Free);
 
         for _ in 0..3 {
             world.tick();
@@ -546,11 +735,11 @@ mod tests {
 
         assert_eq!(
             world.claimant(cell(12, 1, 12)),
-            Some(Some(PawnId(0))),
+            Claim::By(PawnId(0)),
             "a later tick reaches the reachable mark"
         );
         for x in pillars {
-            assert_eq!(world.claimant(cell(x, 3, 0)), Some(None));
+            assert_eq!(world.claimant(cell(x, 3, 0)), Claim::Free);
         }
     }
 
@@ -564,8 +753,8 @@ mod tests {
 
         world.tick();
 
-        assert_eq!(world.claimant(cell(3, 1, 5)), Some(Some(PawnId(0))));
-        assert_eq!(world.claimant(cell(7, 1, 5)), Some(None));
+        assert_eq!(world.claimant(cell(3, 1, 5)), Claim::By(PawnId(0)));
+        assert_eq!(world.claimant(cell(7, 1, 5)), Claim::Free);
     }
 
     fn facing(yaw: f32, angle_off: f32) -> (Pose, Vec3) {

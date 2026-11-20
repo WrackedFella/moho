@@ -1,5 +1,8 @@
 //! Where a pawn can stand and how it gets from one standable cell to another.
 
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet};
+
 use flagstone_voxel::{BlockPos, VoxelGrid};
 use glam::Vec3;
 
@@ -9,14 +12,13 @@ pub const ROUTE_NODE_BUDGET: usize = 4096;
 /// Whether a pawn's feet can be in `cell`: ground below (`cell - Y` solid) and three cells
 /// of air from the feet up (the capsule is 2.3 m tall).
 pub fn standable(grid: &VoxelGrid, cell: BlockPos) -> bool {
-    let _ = (grid, cell);
-    todo!()
+    grid.is_solid_at(cell - BlockPos::Y)
+        && (0..3).all(|up| !grid.is_solid_at(cell + BlockPos::Y * up))
 }
 
 /// The cell containing `feet`, flooring each axis.
 pub fn feet_cell(feet: Vec3) -> BlockPos {
-    let _ = feet;
-    todo!()
+    feet.floor().as_ivec3()
 }
 
 /// A* over standable cells from `start` to the nearest cell satisfying `is_goal`.
@@ -34,8 +36,68 @@ pub fn route(
     toward: BlockPos,
     budget: usize,
 ) -> Option<Vec<BlockPos>> {
-    let _ = (grid, start, &is_goal, toward, budget);
-    todo!()
+    let start = [start, start + BlockPos::Y, start - BlockPos::Y]
+        .into_iter()
+        .find(|&cell| standable(grid, cell))?;
+    let heuristic = |cell: BlockPos| (toward - cell).abs().element_sum();
+
+    // `nodes[i]` is a cell and the index of the node it was reached from.
+    let mut nodes = vec![(start, usize::MAX)];
+    let mut best_g: HashMap<BlockPos, i32> = HashMap::from([(start, 0)]);
+    let mut closed: HashSet<BlockPos> = HashSet::new();
+    let mut open = BinaryHeap::new();
+    open.push(Reverse((heuristic(start), 0, 0usize)));
+    let mut expansions = 0;
+
+    while let Some(Reverse((_, g, index))) = open.pop() {
+        let cell = nodes[index].0;
+        if !closed.insert(cell) {
+            continue;
+        }
+        if is_goal(cell) {
+            let mut path = vec![cell];
+            let mut at = index;
+            while nodes[at].1 != usize::MAX {
+                at = nodes[at].1;
+                path.push(nodes[at].0);
+            }
+            path.reverse();
+            return Some(path);
+        }
+        expansions += 1;
+        if expansions > budget {
+            return None;
+        }
+        for next in neighbours(grid, cell) {
+            let next_g = g + 1;
+            if closed.contains(&next) || best_g.get(&next).is_some_and(|&known| known <= next_g) {
+                continue;
+            }
+            best_g.insert(next, next_g);
+            nodes.push((next, index));
+            open.push(Reverse((next_g + heuristic(next), next_g, nodes.len() - 1)));
+        }
+    }
+    None
+}
+
+/// The cells a pawn standing in `cell` can step to, in a fixed order.
+fn neighbours(grid: &VoxelGrid, cell: BlockPos) -> Vec<BlockPos> {
+    let can_climb = !grid.is_solid_at(cell + BlockPos::Y * 3);
+    let mut found = Vec::new();
+    for side in [BlockPos::X, BlockPos::NEG_X, BlockPos::Z, BlockPos::NEG_Z] {
+        let level = cell + side;
+        if can_climb && standable(grid, level + BlockPos::Y) {
+            found.push(level + BlockPos::Y);
+        }
+        if standable(grid, level) {
+            found.push(level);
+        }
+        if standable(grid, level - BlockPos::Y) {
+            found.push(level - BlockPos::Y);
+        }
+    }
+    found
 }
 
 #[cfg(test)]
