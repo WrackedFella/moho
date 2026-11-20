@@ -21,8 +21,12 @@ const HORIZONTAL_STEPS: [BlockPos; 4] = [
 /// Whether a pawn can stand with its feet in `cell`: ground below and three cells of air from
 /// the feet up.
 pub fn standable(grid: &VoxelGrid, cell: BlockPos) -> bool {
-    grid.is_solid_at(cell - BlockPos::Y)
-        && (0..3).all(|up| !grid.is_solid_at(cell + BlockPos::Y * up))
+    grid.is_solid_at(cell - BlockPos::Y) && has_room(grid, cell)
+}
+
+/// Whether the three cells of a pawn's body, from the feet up, are air.
+fn has_room(grid: &VoxelGrid, feet: BlockPos) -> bool {
+    (0..3).all(|up| !grid.is_solid_at(feet + BlockPos::Y * up))
 }
 
 /// The cell a pawn whose feet are at `feet` stands in.
@@ -38,11 +42,10 @@ fn neighbours(grid: &VoxelGrid, cell: BlockPos) -> impl Iterator<Item = BlockPos
         let level = cell + step;
         // The body passes through the target column at the current height, so a drop needs
         // the same room there as standing would.
-        let body_fits = (0..3).all(|up| !grid.is_solid_at(level + BlockPos::Y * up));
         [
             Some(level),
             can_climb.then_some(level + BlockPos::Y),
-            body_fits.then_some(level - BlockPos::Y),
+            has_room(grid, level).then_some(level - BlockPos::Y),
         ]
         .into_iter()
         .flatten()

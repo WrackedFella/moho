@@ -18,8 +18,9 @@ const MOVE_SPEED: f32 = 4.0;
 /// Sprinting speed in m/s.
 const SPRINT_SPEED: f32 = 6.0;
 
-/// How far the pawn's capsule centre is above its feet, in metres.
-const PAWN_EYE_HEIGHT: f32 = 1.15;
+/// How far the pawn's capsule centre, where its mining action starts, is above its feet; the
+/// selection box's half height, which a test pins to the capsule's standing height.
+const PAWN_CENTRE_HEIGHT: f32 = flagstone_game::selection::PAWN_HALF_EXTENTS.y;
 
 /// Strategy-line walking feel: acceleration and friction high enough to reach speed, or
 /// stop, within a tick. `max_speed` and `air_speed_cap` are set per tick from sprint.
@@ -109,13 +110,13 @@ impl FrameProcessor {
         else {
             return;
         };
-        let Some(light_system) = app.light_system.as_ref() else {
-            return;
-        };
         let pose = Pose {
-            feet: body.position - glam::Vec3::Y * PAWN_EYE_HEIGHT,
+            feet: body.position - glam::Vec3::Y * PAWN_CENTRE_HEIGHT,
             eye: body.position,
             yaw: body.yaw,
+        };
+        let Some(light_system) = app.light_system.as_ref() else {
+            return;
         };
         let action = jobs::step(
             PawnId(0),
@@ -127,37 +128,44 @@ impl FrameProcessor {
 
         match action {
             JobAction::Wait => {}
-            JobAction::Walk { to } => {
-                let walk = jobs::steer(&pose, to);
-                let command = moho_physics::CharacterCommand {
-                    forward: walk.forward,
-                    yaw_delta: walk.yaw_delta,
-                    ..moho_physics::CharacterCommand::default()
-                };
-                if let Some(moved) =
-                    app.physics
-                        .move_character(&command, &STRATEGY_MOVE_SETTINGS, dt)
-                {
-                    app.simulation
-                        .set_position_yaw_pitch(moved.position, moved.yaw, moved.pitch);
-                }
+            JobAction::Walk { to } => self.walk_pawn(app, &pose, to, dt),
+            JobAction::Dig { aim, .. } => self.dig_with_pawn(app, &pose, aim),
+        }
+    }
+
+    /// Moves the pawn's body one tick toward `to`, and its simulation pose with it.
+    fn walk_pawn(&self, app: &mut App, pose: &Pose, to: glam::Vec3, dt: f32) {
+        let walk = jobs::steer(pose, to);
+        let command = moho_physics::CharacterCommand {
+            forward: walk.forward,
+            yaw_delta: walk.yaw_delta,
+            ..moho_physics::CharacterCommand::default()
+        };
+        if let Some(moved) = app
+            .physics
+            .move_character(&command, &STRATEGY_MOVE_SETTINGS, dt)
+        {
+            app.simulation
+                .set_position_yaw_pitch(moved.position, moved.yaw, moved.pitch);
+        }
+    }
+
+    /// Digs toward `aim` with the pawn's own mining action, ends its job, and adds the yield
+    /// to the colony's stock.
+    fn dig_with_pawn(&self, app: &mut App, pose: &Pose, aim: glam::Vec3) {
+        let Some(light_system) = app.light_system.as_mut() else {
+            return;
+        };
+        let dir = (aim - pose.eye).normalize_or_zero();
+        let outcome = app
+            .pawn
+            .dig(light_system.grid_mut(), pose.eye, dir, MINE_REACH);
+        jobs::finish(&mut app.pawn, &mut app.colony.marks);
+        if let Some(outcome) = outcome {
+            if let Some(yield_) = outcome.yield_ {
+                app.colony.stock.add(yield_.resource_id, yield_.amount);
             }
-            JobAction::Dig { aim, .. } => {
-                let Some(light_system) = app.light_system.as_mut() else {
-                    return;
-                };
-                let dir = (aim - pose.eye).normalize_or_zero();
-                let outcome = app
-                    .pawn
-                    .dig(light_system.grid_mut(), pose.eye, dir, MINE_REACH);
-                jobs::finish(&mut app.pawn, &mut app.colony.marks);
-                if let Some(outcome) = outcome {
-                    if let Some(yield_) = outcome.yield_ {
-                        app.colony.stock.add(yield_.resource_id, yield_.amount);
-                    }
-                    publish_pawn_dig(app, &outcome);
-                }
-            }
+            publish_pawn_dig(app, &outcome);
         }
     }
 
@@ -463,10 +471,13 @@ impl FrameProcessor {
             })
             .unwrap_or_default();
 
-        let mut hotbar: Vec<(u32, u32)> = app.pawn.inventory.iter().collect();
-        hotbar.sort_by_key(|(resource_id, _)| *resource_id);
-        let mut colony_stock: Vec<(u32, u32)> = app.colony.stock.iter().collect();
-        colony_stock.sort_by_key(|(resource_id, _)| *resource_id);
+        let by_resource = |inventory: &flagstone_game::inventory::Inventory| {
+            let mut entries: Vec<(u32, u32)> = inventory.iter().collect();
+            entries.sort_by_key(|(resource_id, _)| *resource_id);
+            entries
+        };
+        let hotbar = by_resource(&app.pawn.inventory);
+        let colony_stock = by_resource(&app.colony.stock);
 
         // Only one tool exists today (`flagstone_game::tools::STARTING_TOOL`); the
         // label is a fixed string until a real tool-name lookup exists.

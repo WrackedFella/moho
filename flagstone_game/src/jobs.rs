@@ -165,7 +165,7 @@ pub fn steer(pose: &Pose, to: Vec3) -> WalkStep {
     let most = TURN_RATE / TICK_HZ as f32;
     WalkStep {
         yaw_delta: error.clamp(-most, most),
-        forward: f32::from(u8::from(error.abs() <= WALK_CONE)),
+        forward: if error.abs() <= WALK_CONE { 1.0 } else { 0.0 },
     }
 }
 
