@@ -1364,11 +1364,12 @@ mod tests {
                     1 => capsule(rng.range(0.04, 0.08), rng.range(0.02, 0.04)),
                     _ => cylinder(rng.range(0.03, 0.06), rng.range(0.03, 0.05)),
                 };
+                let (column, row, layer) = (index % 4, (index / 4) % 4, index / 16);
                 LooseSpawn {
                     position: Vec3::new(
-                        rng.range(-0.5, 0.5),
-                        0.3 + 0.25 * index as f32,
-                        rng.range(-0.5, 0.5),
+                        -0.375 + 0.25 * column as f32,
+                        0.3 + 0.3 * layer as f32,
+                        -0.375 + 0.25 * row as f32,
                     ),
                     rotation: rng.rotation(),
                     angular_velocity: rng.vec3(-5.0, 5.0),
