@@ -217,11 +217,11 @@ impl Effects {
     /// Spawn a flash at `at`, turned by `roll` radians about the line to the eye. It draws
     /// every frame until its lifetime ends; nothing is returned or needs removing.
     ///
-    /// Refused, storing and evicting nothing, when `at` is not finite or `size` is not a
-    /// positive finite number, and at quality 0. At the cap the oldest flash or mark is
+    /// Refused, storing and evicting nothing, when `at` or `roll` is not finite or `size` is
+    /// not a positive finite number, and at quality 0. At the cap the oldest flash or mark is
     /// dropped; with only streaks live the flash is refused.
     pub fn flash(&mut self, at: Vec3, roll: f32, style: FlashStyle) {
-        if !(at.is_finite() && style.size.is_finite() && style.size > 0.0) {
+        if !(at.is_finite() && roll.is_finite() && style.size.is_finite() && style.size > 0.0) {
             return;
         }
         self.spawn(Effect::Flash(Flash {
@@ -236,14 +236,14 @@ impl Effects {
     /// `roll` radians about the normal. It holds full size until `fade` before the end of
     /// its lifetime, then shrinks out; nothing is returned or needs removing.
     ///
-    /// Refused, storing and evicting nothing, when `at` is not finite, `normal` cannot be
-    /// normalised or `size` is not a positive finite number, and at quality 0. At the cap
+    /// Refused, storing and evicting nothing, when `at` or `roll` is not finite, `normal`
+    /// cannot be normalised or `size` is not a positive finite number, and at quality 0. At the cap
     /// the oldest flash or mark is dropped; with only streaks live the mark is refused.
     pub fn mark(&mut self, at: Vec3, normal: Vec3, roll: f32, style: MarkStyle) {
         let Some(normal) = normal.try_normalize() else {
             return;
         };
-        if !(at.is_finite() && style.size.is_finite() && style.size > 0.0) {
+        if !(at.is_finite() && roll.is_finite() && style.size.is_finite() && style.size > 0.0) {
             return;
         }
         self.spawn(Effect::Mark(Mark {
@@ -1760,6 +1760,50 @@ mod tests {
         assert_eq!(materials(&mut rig), [10, 12], "removing +1 drops the flash");
         rig.meshes.remove(WorldMeshId(EFFECT_MESH_IDS_FROM + 2));
         assert_eq!(materials(&mut rig), [10], "removing +2 drops the mark");
+    }
+
+    #[test]
+    fn a_non_finite_roll_is_refused_without_evicting_and_draws_nothing() {
+        let life = Duration::from_secs(10);
+        let spawn_bad = |effects: &mut Effects| {
+            for roll in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                effects.flash(AT, roll, flash_style(0.4, life));
+                effects.mark(AT, Vec3::Y, roll, mark_style(0.2, life, ms(500)));
+            }
+        };
+        let mut rig = Rig::new();
+        rig.effects.set_quality(1);
+
+        spawn_bad(&mut rig.effects);
+        assert_eq!(rig.effects.live(), 0, "refused on an empty store");
+        assert!(rig.frame(EYE).is_empty());
+        for x in 0..32u8 {
+            spawn_fixed(&mut rig.effects, false, f32::from(x));
+        }
+        spawn_bad(&mut rig.effects);
+
+        assert_eq!(rig.effects.live(), 32, "nothing evicted");
+        assert_xs(&rig.frame(EYE), &xs_from(0..=31));
+    }
+
+    #[test]
+    fn a_zero_lifetime_flash_or_mark_never_draws_and_is_gone_after_any_advance() {
+        for advance in [Duration::ZERO, ms(1)] {
+            let mut rig = Rig::new();
+            rig.effects.flash(AT, 0.0, flash_style(0.4, Duration::ZERO));
+            rig.effects.mark(
+                AT,
+                Vec3::Y,
+                0.0,
+                mark_style(0.2, Duration::ZERO, Duration::ZERO),
+            );
+            assert!(rig.frame(EYE).is_empty(), "never draws a frame");
+
+            rig.effects.advance(advance);
+
+            assert!(rig.frame(EYE).is_empty());
+            assert_eq!(rig.effects.live(), 0, "gone after advance({advance:?})");
+        }
     }
 
     fn unit_normals() -> impl Strategy<Value = Vec3> {
