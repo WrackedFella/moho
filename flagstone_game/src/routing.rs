@@ -1,21 +1,61 @@
 //! Walking routes over the voxel grid: what a pawn can stand on and the cheapest way between
 //! two standable cells.
 
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet};
+
 use flagstone_voxel::{BlockPos, VoxelGrid};
 use glam::Vec3;
 
 /// Cells a search may expand before it gives up.
 pub const ROUTE_NODE_BUDGET: usize = 4096;
 
+/// The four horizontal moves, in the order a search tries them.
+const HORIZONTAL_STEPS: [BlockPos; 4] = [
+    BlockPos::new(1, 0, 0),
+    BlockPos::new(-1, 0, 0),
+    BlockPos::new(0, 0, 1),
+    BlockPos::new(0, 0, -1),
+];
+
 /// Whether a pawn can stand with its feet in `cell`: ground below and three cells of air from
 /// the feet up.
-pub fn standable(_grid: &VoxelGrid, _cell: BlockPos) -> bool {
-    todo!("standable is not implemented yet")
+pub fn standable(grid: &VoxelGrid, cell: BlockPos) -> bool {
+    grid.is_solid_at(cell - BlockPos::Y)
+        && (0..3).all(|up| !grid.is_solid_at(cell + BlockPos::Y * up))
 }
 
 /// The cell a pawn whose feet are at `feet` stands in.
-pub fn feet_cell(_feet: Vec3) -> BlockPos {
-    BlockPos::ZERO
+pub fn feet_cell(feet: Vec3) -> BlockPos {
+    feet.floor().as_ivec3()
+}
+
+/// The standable cells one move from `cell`: level, one up (which needs a fourth cell of air
+/// above the current feet) or one down.
+fn neighbours(grid: &VoxelGrid, cell: BlockPos) -> impl Iterator<Item = BlockPos> + '_ {
+    let can_climb = !grid.is_solid_at(cell + BlockPos::Y * 3);
+    HORIZONTAL_STEPS.into_iter().filter_map(move |step| {
+        let level = cell + step;
+        [
+            Some(level),
+            can_climb.then_some(level + BlockPos::Y),
+            Some(level - BlockPos::Y),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|&target| standable(grid, target))
+    })
+}
+
+/// `start` if a pawn can stand there, else the cell above or below it (a pawn on a slope).
+fn standing_start(grid: &VoxelGrid, start: BlockPos) -> Option<BlockPos> {
+    [start, start + BlockPos::Y, start - BlockPos::Y]
+        .into_iter()
+        .find(|&cell| standable(grid, cell))
+}
+
+fn manhattan(a: BlockPos, b: BlockPos) -> u32 {
+    (a - b).abs().element_sum().unsigned_abs()
 }
 
 /// The cheapest walk from `start` to the nearest cell satisfying `is_goal`, as the cells to
@@ -25,13 +65,62 @@ pub fn feet_cell(_feet: Vec3) -> BlockPos {
 ///
 /// `None` when no goal is reachable, or when `budget` cells were expanded without finding one.
 pub fn route(
-    _grid: &VoxelGrid,
-    _start: BlockPos,
-    _is_goal: impl Fn(BlockPos) -> bool,
-    _toward: BlockPos,
-    _budget: usize,
+    grid: &VoxelGrid,
+    start: BlockPos,
+    is_goal: impl Fn(BlockPos) -> bool,
+    toward: BlockPos,
+    budget: usize,
 ) -> Option<Vec<BlockPos>> {
-    todo!("route is not implemented yet")
+    let start = standing_start(grid, start)?;
+    // Ordered by estimate, then cost so far, then insertion: the same grid, the same route.
+    let mut open = BinaryHeap::new();
+    let mut inserted = 0usize;
+    let mut cost: HashMap<BlockPos, u32> = HashMap::from([(start, 0)]);
+    let mut parent: HashMap<BlockPos, BlockPos> = HashMap::new();
+    let mut closed: HashSet<BlockPos> = HashSet::new();
+    open.push(Reverse((
+        manhattan(start, toward),
+        0u32,
+        inserted,
+        start.to_array(),
+    )));
+
+    let mut expanded = 0;
+    while let Some(Reverse((_, so_far, _, cell))) = open.pop() {
+        let cell = BlockPos::from_array(cell);
+        if !closed.insert(cell) {
+            continue;
+        }
+        if is_goal(cell) {
+            let mut cells = vec![cell];
+            while let Some(&previous) = parent.get(cells.last()?) {
+                cells.push(previous);
+            }
+            cells.pop();
+            cells.reverse();
+            return Some(cells);
+        }
+        if expanded >= budget {
+            return None;
+        }
+        expanded += 1;
+        for next in neighbours(grid, cell) {
+            let next_cost = so_far + 1;
+            if cost.get(&next).is_some_and(|&known| known <= next_cost) {
+                continue;
+            }
+            cost.insert(next, next_cost);
+            parent.insert(next, cell);
+            inserted += 1;
+            open.push(Reverse((
+                next_cost + manhattan(next, toward),
+                next_cost,
+                inserted,
+                next.to_array(),
+            )));
+        }
+    }
+    None
 }
 
 #[cfg(test)]
