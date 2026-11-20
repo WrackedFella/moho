@@ -1298,6 +1298,64 @@ mod tests {
         assert!(state.asleep, "the capsule rests, {state:?}");
     }
 
+    fn rolled_distance(state: &LooseState) -> f32 {
+        Vec2::new(state.position.x, state.position.z).length()
+    }
+
+    #[test]
+    fn a_rolling_capsule_stops_where_the_rest_slope_brake_predicts() {
+        // Stop distance is v^2 / (2 * gravity * tan(slope)) at 2 m/s and gravity 18.
+        let rows = [
+            ("default 5 degrees", None, 1.0, 1.5),
+            ("10 degrees", Some(10.0f32), 0.5, 0.8),
+        ];
+        for (name, slope, low, high) in rows {
+            let mut world = world_with_floor(&floor_mesh(0.0));
+            if let Some(degrees) = slope {
+                world.set_rest_slope(degrees.to_radians());
+            }
+            let id = world.spawn_loose(&rolling_capsule(2.0));
+
+            run(&mut world, 300);
+
+            let state = read(&world, id);
+            let travelled = rolled_distance(&state);
+            assert!(
+                (low..=high).contains(&travelled),
+                "{name}: rolled {travelled} m, expected {low}..{high}, {state:?}"
+            );
+            assert!(state.asleep, "{name}: the capsule rests, {state:?}");
+        }
+    }
+
+    #[test]
+    fn a_rolling_capsule_stops_when_the_floor_collider_has_the_higher_handle() {
+        let mut world = PhysicsWorld::new();
+        let id = world.spawn_loose(&rolling_capsule(2.0));
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+        let body = world.loose[&id].body;
+        let collider = world.rigid_body_set.get(body).expect("body").colliders()[0];
+
+        world.step(DT);
+
+        let first_pair = world
+            .narrow_phase
+            .contact_pairs_with(collider)
+            .next()
+            .expect("the capsule touches the floor");
+        assert_eq!(first_pair.collider1, collider, "the capsule is collider1");
+
+        run(&mut world, 299);
+
+        let state = read(&world, id);
+        let travelled = rolled_distance(&state);
+        assert!(
+            travelled <= 1.5,
+            "rolled {travelled} m before stopping, {state:?}"
+        );
+        assert!(state.asleep, "the capsule rests, {state:?}");
+    }
+
     /// Places `shape` lying across the slope, runs 5 s, and returns how far it went and where
     /// it ended up.
     fn settle_on_slope(
