@@ -871,3 +871,84 @@ fn cancel_after_stray_key_changes_nothing() {
     assert_eq!(all_rows(&menu), before);
     assert!(!menu.is_listening());
 }
+
+/// Runs one frame of `menu` on `ctx` with `events`.
+fn frame_with_events(ctx: &egui::Context, menu: &mut SettingsMenu, events: Vec<egui::Event>) {
+    let input = egui::RawInput {
+        events,
+        ..Default::default()
+    };
+    run_ui(ctx, input, |ui| {
+        menu.render(ui);
+    });
+}
+
+/// A lone Alt held by another action raises the prompt and ends listening, as Shift does.
+#[test]
+fn lone_alt_conflict_raises_prompt_and_ends_listening() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let ctx = egui::Context::default();
+    menu.start_listening(1);
+    frame_with_modifiers(&ctx, &mut menu, egui::Modifiers::ALT);
+    frame_with_modifiers(&ctx, &mut menu, egui::Modifiers::NONE);
+    assert!(menu.get_staged_binding(1).contains(&Binding::key(Key::Alt)));
+    assert!(!menu.is_listening());
+    let before = all_rows(&menu);
+    menu.start_listening(0);
+
+    frame_with_modifiers(&ctx, &mut menu, egui::Modifiers::ALT);
+
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+    assert!(!menu.is_listening());
+    assert_eq!(all_rows(&menu), before);
+}
+
+/// An ordinary key press while the prompt is open binds nothing.
+#[test]
+fn ordinary_key_while_prompt_open_binds_nothing() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let ctx = egui::Context::default();
+    menu.start_listening(0);
+    frame_with_modifiers(&ctx, &mut menu, egui::Modifiers::SHIFT);
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+    let before = all_rows(&menu);
+
+    frame_with_events(&ctx, &mut menu, vec![key_event(egui::Key::Z, true)]);
+    frame_with_events(&ctx, &mut menu, vec![key_event(egui::Key::Z, false)]);
+
+    assert_eq!(all_rows(&menu), before);
+    assert_eq!(before[0][0], Binding::key(Key::W));
+    assert!(!menu.is_listening());
+}
+
+/// After cancelling the prompt, listening can start again and a free lone modifier binds.
+#[test]
+fn listening_is_rearmable_after_cancelled_prompt() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    // Move Down holds Ctrl by default; free it first.
+    menu.start_listening(5);
+    menu.apply_key_while_listening(Key::Z);
+    let ctx = egui::Context::default();
+    menu.start_listening(0);
+    frame_with_modifiers(&ctx, &mut menu, egui::Modifiers::SHIFT);
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+    Screen::on_modal_cancel(&mut menu);
+    frame_with_modifiers(&ctx, &mut menu, egui::Modifiers::NONE);
+    assert!(!menu.is_listening());
+
+    menu.start_listening(0);
+    assert!(menu.is_listening());
+    frame_with_modifiers(&ctx, &mut menu, egui::Modifiers::CTRL);
+
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::Ctrl), pad_stick(StickDir::Up)]
+    );
+    assert!(!menu.is_listening());
+}
