@@ -1054,6 +1054,93 @@ mod tests {
     }
 
     #[test]
+    fn a_spinning_upright_cylinder_stops_spinning_and_sleeps() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let spawn = LooseSpawn {
+            position: Vec3::new(0.0, CYLINDER.0, 0.0),
+            angular_velocity: Vec3::new(0.0, 5.0, 0.0),
+            ..LooseSpawn::new(small_cylinder(), 0.2)
+        };
+        let id = world.spawn_loose(&spawn);
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        assert!(state.position.is_finite(), "{state:?}");
+        assert!(state.asleep, "the cylinder stops spinning, {state:?}");
+        assert!(
+            sideways_distance(spawn.position, &state) < 0.01,
+            "{state:?}"
+        );
+    }
+
+    #[test]
+    fn a_capsule_lying_off_the_axes_rolls_to_rest() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let rotation = Quat::from_rotation_y(degrees(30.0))
+            * Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        let axis = rotation * Vec3::Y;
+        let roll = axis.cross(Vec3::Y);
+        let spawn = LooseSpawn {
+            position: Vec3::new(0.0, CAPSULE.1, 0.0),
+            rotation,
+            linear_velocity: roll * 2.0,
+            angular_velocity: axis * (2.0 / CAPSULE.1),
+            ..LooseSpawn::new(small_capsule(), 0.2)
+        };
+        let id = world.spawn_loose(&spawn);
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        let rolled = sideways_distance(spawn.position, &state);
+        assert!(rolled <= 1.5, "rolled {rolled} m before stopping");
+        assert!(rolled >= 1.0, "stopped after only {rolled} m");
+        assert!(state.asleep, "the capsule is at rest, {state:?}");
+    }
+
+    #[test]
+    fn removing_a_capsule_mid_run_leaves_the_rolling_one_to_stop() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let rolling = world.spawn_loose(&lying_spawn(small_capsule(), CAPSULE.1, 2.0));
+        let removed = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(2.0, CAPSULE.1, 0.0),
+            rotation: Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+            ..LooseSpawn::new(small_capsule(), 0.2)
+        });
+        run(&mut world, 10);
+
+        world.remove_loose(removed).expect("the capsule is alive");
+        run(&mut world, 120);
+
+        let state = read(&world, rolling);
+        assert_eq!(world.loose_count(), 1);
+        assert_eq!(world.loose(removed), None);
+        assert!(state.position.z <= 1.5, "{state:?}");
+        assert!(state.asleep, "the other capsule still stops, {state:?}");
+    }
+
+    #[test]
+    fn the_brake_never_wakes_a_sleeping_capsule() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, CAPSULE.1, 0.0),
+            rotation: Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+            ..LooseSpawn::new(small_capsule(), 0.2)
+        });
+        run(&mut world, 300);
+        let asleep = read(&world, id);
+        assert!(asleep.asleep, "the capsule sleeps, {asleep:?}");
+
+        for tick in 1..=60 {
+            world.step(DT);
+            let state = read(&world, id);
+            assert!(state.asleep, "tick {tick}: woken, {state:?}");
+            assert_eq!(bits(&state), bits(&asleep), "tick {tick}: state changed");
+        }
+    }
+
+    #[test]
     fn without_gravity_nothing_is_braked() {
         let mut world = world_with_floor(&floor_mesh(0.0));
         world.set_gravity(0.0);
