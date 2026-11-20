@@ -1,6 +1,8 @@
 use super::PhysicsWorld;
 use glam::{Quat, Vec3};
-use rapier3d::prelude::{ColliderBuilder, Pose, RigidBodyBuilder, RigidBodyHandle};
+use rapier3d::prelude::{
+    ColliderBuilder, NarrowPhase, Pose, RigidBody, RigidBodyBuilder, RigidBodyHandle, RigidBodySet,
+};
 
 /// Stable, engine-issued name of a loose object.
 ///
@@ -38,6 +40,14 @@ pub(super) struct Loose {
     body: RigidBodyHandle,
     /// The radius of a shape that rolls about its local Y axis; `None` for a box.
     roll_radius: Option<f32>,
+}
+
+/// How a loose body sits on what it touches.
+struct Footing {
+    /// A contact at or inside the surface, on ground within the rest slope of level.
+    on_ground: bool,
+    /// A contact deeper than [`DEEP_CONTACT`]: the solver is pushing this body out of another.
+    being_separated: bool,
 }
 
 impl LooseShape {
@@ -265,13 +275,18 @@ impl PhysicsWorld {
         self.rest_slope = slope;
     }
 
-    /// Whether the body touches ground within the rest slope of level, and whether any of its
-    /// contacts is deeper than [`DEEP_CONTACT`]. `up` is a unit vector.
-    fn ground_contact(&self, handle: RigidBodyHandle, up: Vec3) -> (bool, bool) {
-        let min_cos = self.rest_slope.cos();
+    /// What the body touches, from the contacts of the step just run. `up` is a unit vector and
+    /// `min_cos` the cosine of the rest slope.
+    fn footing(
+        bodies: &RigidBodySet,
+        narrow_phase: &NarrowPhase,
+        handle: RigidBodyHandle,
+        up: Vec3,
+        min_cos: f32,
+    ) -> Footing {
         let (mut on_ground, mut deep) = (false, false);
-        for &collider in self.rigid_body_set[handle].colliders() {
-            for pair in self.narrow_phase.contact_pairs_with(collider) {
+        for &collider in bodies[handle].colliders() {
+            for pair in narrow_phase.contact_pairs_with(collider) {
                 let body_is_first = pair.collider1 == collider;
                 for manifold in pair.manifolds() {
                     let into_body = if body_is_first {
@@ -286,7 +301,24 @@ impl PhysicsWorld {
                 }
             }
         }
-        (on_ground, deep)
+        Footing {
+            on_ground,
+            being_separated: deep,
+        }
+    }
+
+    /// Cut the spin about the body's Y axis by `decel * dt / radius` and its linear velocity along
+    /// `axis x up` by `decel * dt`, each to zero at most, without waking the body.
+    fn cut_rolling(body: &mut RigidBody, up: Vec3, decel: f32, dt: f32, radius: f32) {
+        let axis = body.rotation() * Vec3::Y;
+        let spin = body.angvel().dot(axis);
+        let spin_after = spin.signum() * (spin.abs() - decel * dt / radius).max(0.0);
+        body.set_angvel(body.angvel() + axis * (spin_after - spin), false);
+        if let Some(roll) = axis.cross(up).try_normalize() {
+            let speed = body.linvel().dot(roll);
+            let speed_after = speed.signum() * (speed.abs() - decel * dt).max(0.0);
+            body.set_linvel(body.linvel() + roll * (speed_after - speed), false);
+        }
     }
 
     /// Cut the rolling motion of awake capsules and cylinders that touch near-flat ground, so
@@ -299,28 +331,23 @@ impl PhysicsWorld {
         if decel <= 0.0 {
             return;
         }
-        let bodies: Vec<(RigidBodyHandle, f32)> = self
-            .loose
-            .values()
-            .filter_map(|loose| Some((loose.body, loose.roll_radius?)))
-            .collect();
-        for (handle, radius) in bodies {
-            if self.rigid_body_set[handle].is_sleeping() {
+        let min_cos = self.rest_slope.cos();
+        for loose in self.loose.values() {
+            let Some(radius) = loose.roll_radius else {
+                continue;
+            };
+            if self.rigid_body_set[loose.body].is_sleeping() {
                 continue;
             }
-            let (on_ground, deep) = self.ground_contact(handle, up);
-            if !on_ground || deep {
-                continue;
-            }
-            let body = &mut self.rigid_body_set[handle];
-            let axis = body.rotation() * Vec3::Y;
-            let spin = body.angvel().dot(axis);
-            let spin_after = spin.signum() * (spin.abs() - decel * dt / radius).max(0.0);
-            body.set_angvel(body.angvel() + axis * (spin_after - spin), false);
-            if let Some(roll) = axis.cross(up).try_normalize() {
-                let speed = body.linvel().dot(roll);
-                let speed_after = speed.signum() * (speed.abs() - decel * dt).max(0.0);
-                body.set_linvel(body.linvel() + roll * (speed_after - speed), false);
+            let footing = Self::footing(
+                &self.rigid_body_set,
+                &self.narrow_phase,
+                loose.body,
+                up,
+                min_cos,
+            );
+            if footing.on_ground && !footing.being_separated {
+                Self::cut_rolling(&mut self.rigid_body_set[loose.body], up, decel, dt, radius);
             }
         }
     }
