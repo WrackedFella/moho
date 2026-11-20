@@ -369,7 +369,7 @@ fn flat_mesh(positions: Vec<[f32; 3]>, indices: Vec<u32>) -> WorldMesh {
 /// The flash facing `eye`, rolled counter-clockwise about its facing axis and shrunk by age.
 fn flash_transform(flash: &Flash, eye: Vec3) -> Option<Affine3A> {
     let lifetime = flash.style.lifetime.as_secs_f32();
-    if lifetime <= 0.0 || !flash.at.is_finite() || !eye.is_finite() {
+    if lifetime <= 0.0 || !flash.at.is_finite() || !eye.is_finite() || !flash.roll.is_finite() {
         return None;
     }
     let size = flash.style.size * (1.0 - flash.age.as_secs_f32() / lifetime).clamp(0.0, 1.0);
@@ -384,7 +384,7 @@ fn flash_transform(flash: &Flash, eye: Vec3) -> Option<Affine3A> {
 fn mark_transform(mark: &Mark) -> Option<Affine3A> {
     let normal = mark.normal?;
     let size = mark.style.size * mark.size_scale();
-    if !size.is_finite() || size <= 0.0 || !mark.at.is_finite() {
+    if !size.is_finite() || size <= 0.0 || !mark.at.is_finite() || !mark.roll.is_finite() {
         return None;
     }
     Some(rolled_basis(
