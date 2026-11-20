@@ -1721,4 +1721,85 @@ mod tests {
 
         assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
     }
+
+    fn dig_asset_path() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/dig.wav")
+    }
+
+    #[test]
+    fn dig_asset_exists() {
+        let path = dig_asset_path();
+
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+
+        assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
+    }
+
+    #[test]
+    fn a_pawn_dig_publishes_the_removal_and_the_cue() {
+        use crate::app::colony_world::{FLOOR_TOP, ORE, flat_world, is_solid, mark, place};
+        let block = flagstone_voxel::BlockPos::new(10, FLOOR_TOP, 16);
+        let mut app = flat_world();
+        place(&mut app, block, Some(ORE));
+        mark(&mut app, block);
+        let removed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dirtied = std::sync::Arc::new(std::sync::Mutex::new(HashSet::new()));
+        let cues = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (removed_sink, dirtied_sink) = (removed.clone(), dirtied.clone());
+        app.event_bus.subscribe(move |e: &WorldEvent| match e {
+            WorldEvent::BlockRemoved { position, .. } => {
+                removed_sink.lock().unwrap().push(*position);
+            }
+            WorldEvent::ChunkMeshDirty { chunk_pos, .. } => {
+                dirtied_sink.lock().unwrap().insert(*chunk_pos);
+            }
+            _ => {}
+        });
+        let cue_sink = cues.clone();
+        app.event_bus.subscribe(move |e: &AudioEvent| {
+            if let AudioEvent::PlaySoundAt {
+                path,
+                volume,
+                position,
+            } = e
+            {
+                cue_sink
+                    .lock()
+                    .unwrap()
+                    .push((path.clone(), *volume, *position));
+            }
+        });
+        let mut sim =
+            moho_app::HeadlessLoop::<App>::new(moho_app::LoopConfig::new(flagstone_game::TICK_HZ));
+
+        for _ in 0..900 {
+            if !is_solid(&app, block) {
+                break;
+            }
+            sim.step(&mut app, 1);
+        }
+        app.event_bus.process_deferred();
+
+        assert!(!is_solid(&app, block), "the pawn never dug the block");
+        assert_eq!(
+            *removed.lock().unwrap(),
+            [block],
+            "one removal, of the mark"
+        );
+        let expected_chunks: HashSet<_> = flagstone_voxel::chunks_meshed_from(block, 16).collect();
+        let dirtied = dirtied.lock().unwrap();
+        assert!(
+            expected_chunks.is_subset(&dirtied),
+            "chunks to remesh {expected_chunks:?}, dirtied {dirtied:?}"
+        );
+        let cues = cues.lock().unwrap();
+        assert_eq!(cues.len(), 1, "one cue for one dig: {cues:?}");
+        let (path, volume, position) = &cues[0];
+        assert_eq!(std::path::Path::new(path), dig_asset_path().as_path());
+        assert!(*volume > 0.0, "audible: {volume}");
+        assert!(
+            position.distance(glam::Vec3::new(10.5, FLOOR_TOP as f32 + 0.5, 16.5)) < 1e-4,
+            "the cue sounds at the block's centre: {position}"
+        );
+    }
 }

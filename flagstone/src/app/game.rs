@@ -4269,4 +4269,47 @@ mod tests {
 
         assert!(outlined_markers(&mut app).is_empty());
     }
+
+    #[test]
+    fn returning_to_first_person_starts_where_the_pawn_walked_to() {
+        use crate::app::colony_world::{FLOOR_TOP, flat_world, is_solid, mark, pawn_state, place};
+        let block = flagstone_voxel::BlockPos::new(20, FLOOR_TOP, 16);
+        let mut app = flat_world();
+        let start = app.simulation.position();
+        place(&mut app, block, None);
+        mark(&mut app, block);
+        for _ in 0..900 {
+            if !is_solid(&app, block) {
+                break;
+            }
+            step_once(&mut app);
+        }
+        let walked_to = pawn_state(&app);
+        assert!(
+            !is_solid(&app, block) && walked_to.position.distance(start) > 5.0,
+            "setup: the pawn walked to the block and dug it"
+        );
+
+        tap_possess(&mut app);
+        step_once(&mut app);
+
+        assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+        assert!(
+            app.simulation.position().distance(walked_to.position) < 0.05,
+            "possession starts at {} not where the pawn stands, {}",
+            app.simulation.position(),
+            walked_to.position
+        );
+        assert!(
+            pawn_state(&app).position.distance(walked_to.position) < 0.05,
+            "the body did not stay where it walked"
+        );
+        let yaw_error = (app.simulation.yaw_pitch().0 - walked_to.yaw).abs();
+        assert!(
+            walked_to.yaw.abs() > 0.5 && yaw_error < 0.05,
+            "facing {} is not where the pawn turned to, {}",
+            app.simulation.yaw_pitch().0,
+            walked_to.yaw
+        );
+    }
 }

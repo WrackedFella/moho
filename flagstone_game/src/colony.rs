@@ -2,10 +2,15 @@
 
 use std::collections::BTreeSet;
 
-/// The orders a colony holds.
+use crate::inventory::Inventory;
+use crate::pawn::PawnId;
+
+/// The orders a colony holds and what its pawns have brought in.
 #[derive(Debug, Default)]
 pub struct Colony {
     pub marks: MineMarks,
+    /// The colony total per resource.
+    pub stock: Inventory,
 }
 
 /// What a mark order does to a block that is, or is not, marked.
@@ -17,7 +22,10 @@ pub enum MarkChange {
 
 /// An order to dig one block.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct MineMark;
+pub struct MineMark {
+    /// The pawn walking to or digging this block, if any.
+    pub claimed_by: Option<PawnId>,
+}
 
 /// The blocks marked for mining, keyed by block position.
 ///
@@ -45,7 +53,28 @@ impl MineMarks {
 
     /// The marked blocks in key order.
     pub fn iter(&self) -> impl Iterator<Item = ([i32; 3], &MineMark)> {
-        self.marks.iter().map(|pos| (*pos, &MineMark))
+        self.marks
+            .iter()
+            .map(|pos| (*pos, &MineMark { claimed_by: None }))
+    }
+
+    /// Records `pawn` as the claimant of the marked block at `pos`; does nothing for an
+    /// unmarked block.
+    pub fn claim(&mut self, pos: [i32; 3], pawn: PawnId) {
+        let _ = (pos, pawn);
+        todo!()
+    }
+
+    /// Clears the claim on the block at `pos`; the mark stays.
+    pub fn release(&mut self, pos: [i32; 3]) {
+        let _ = pos;
+        todo!()
+    }
+
+    /// The marked blocks nobody has claimed, in key order.
+    pub fn unclaimed(&self) -> impl Iterator<Item = [i32; 3]> {
+        let none: Option<[i32; 3]> = todo!();
+        none.into_iter()
     }
 
     /// Drops the mark on a block that no longer exists; does nothing for an unmarked one.
@@ -57,6 +86,9 @@ impl MineMarks {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pawn::Pawn;
+    use flagstone_voxel::{BlockPos, VoxelGrid};
+    use glam::Vec3;
     use proptest::prelude::*;
 
     fn marked(marks: &MineMarks) -> Vec<[i32; 3]> {
@@ -124,6 +156,100 @@ mod tests {
             order,
             [[-1, 9, 9], [0, 0, 0], [5, -3, 2], [5, 0, -1], [5, 0, 0]]
         );
+    }
+
+    fn claimant(marks: &MineMarks, pos: [i32; 3]) -> Option<Option<PawnId>> {
+        marks
+            .iter()
+            .find(|(p, _)| *p == pos)
+            .map(|(_, mark)| mark.claimed_by)
+    }
+
+    #[test]
+    fn claim_and_release_round_trip() {
+        let mut marks = MineMarks::default();
+        marks.toggle([1, 0, 0]);
+        marks.toggle([2, 0, 0]);
+
+        marks.claim([1, 0, 0], PawnId(4));
+
+        assert_eq!(claimant(&marks, [1, 0, 0]), Some(Some(PawnId(4))));
+        assert_eq!(
+            claimant(&marks, [2, 0, 0]),
+            Some(None),
+            "other marks stay free"
+        );
+        assert_eq!(marks.unclaimed().collect::<Vec<_>>(), [[2, 0, 0]]);
+
+        marks.release([1, 0, 0]);
+
+        assert_eq!(claimant(&marks, [1, 0, 0]), Some(None));
+        assert!(marks.contains([1, 0, 0]), "release keeps the mark");
+        assert_eq!(
+            marks.unclaimed().collect::<Vec<_>>(),
+            [[1, 0, 0], [2, 0, 0]]
+        );
+    }
+
+    #[test]
+    fn claiming_an_unmarked_block_marks_nothing() {
+        let mut marks = MineMarks::default();
+        marks.toggle([1, 0, 0]);
+
+        marks.claim([9, 9, 9], PawnId(0));
+        marks.release([8, 8, 8]);
+
+        assert!(!marks.contains([9, 9, 9]));
+        assert_eq!(marked(&marks), [[1, 0, 0]]);
+        assert_eq!(marks.unclaimed().collect::<Vec<_>>(), [[1, 0, 0]]);
+    }
+
+    #[test]
+    fn cancelling_a_claimed_mark_removes_it_from_the_unclaimed_list() {
+        let mut marks = MineMarks::default();
+        marks.toggle([1, 0, 0]);
+        marks.claim([1, 0, 0], PawnId(0));
+
+        let change = marks.toggle([1, 0, 0]);
+
+        assert_eq!(change, MarkChange::Cancelled);
+        assert_eq!(marks.unclaimed().count(), 0);
+        assert_eq!(claimant(&marks, [1, 0, 0]), None);
+    }
+
+    fn dug_into_stock(resource: Option<u32>) -> Colony {
+        let mut grid = VoxelGrid::new(16);
+        grid.mutator().place(BlockPos::new(0, 0, 0), 1, resource);
+        let pawn = Pawn::default();
+        let mut colony = Colony::default();
+
+        let outcome = pawn
+            .dig(&mut grid, Vec3::new(0.5, 0.5, -5.0), Vec3::Z, 10.0)
+            .expect("ray should hit the placed block");
+        if let Some(yield_) = outcome.yield_ {
+            colony.stock.add(yield_.resource_id, yield_.amount);
+        }
+
+        assert!(
+            pawn.inventory.is_empty(),
+            "a pawn job does not fill the pawn's own inventory"
+        );
+        colony
+    }
+
+    #[test]
+    fn stock_grows_by_the_yield() {
+        let colony = dug_into_stock(Some(7));
+
+        assert_eq!(colony.stock.count(7), 1);
+        assert_eq!(colony.stock.iter().count(), 1);
+    }
+
+    #[test]
+    fn stock_is_unchanged_by_a_plain_block() {
+        let colony = dug_into_stock(None);
+
+        assert!(colony.stock.is_empty());
     }
 
     proptest! {
