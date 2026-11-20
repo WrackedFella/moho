@@ -35,7 +35,28 @@ comment-refs base=base:
 
 # Licenses, advisories, banned and duplicate crates, crate sources.
 deny:
-    cargo deny check
+    #!/usr/bin/env bash
+    set -uo pipefail
+    cargo deny check || exit 1
+    # Self-tests: the check must reject each fixture naming the crate, and accept the good one.
+    check() {
+        expect=$1; fixture=$2; needle=$3
+        out=$(MOHO_PHYSICS_METADATA=scripts/fixtures/$fixture.json scripts/check-physics-features.sh 2>&1)
+        status=$?
+        if [ "$expect" = reject ]; then
+            [ "$status" -ne 0 ] && grep -qF -- "$needle" <<<"$out" && return 0
+        else
+            [ "$status" -eq 0 ] && return 0
+        fi
+        echo "physics-features self-test failed: $fixture (expected $expect, naming '$needle')" >&2
+        echo "  got: exit $status, output:" >&2
+        sed 's/^/    /' <<<"$out" >&2
+        exit 1
+    }
+    check reject physics-features-no-rapier rapier3d
+    check reject physics-features-no-parry parry3d
+    check accept physics-features-good ''
+    scripts/check-physics-features.sh
 
 # LCOV coverage report at lcov.info.
 cov:

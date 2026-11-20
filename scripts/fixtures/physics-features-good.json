@@ -1,0 +1,14 @@
+{
+  "packages": [
+    {"name": "rapier3d", "version": "0.1.0", "id": "registry+https://github.com/rust-lang/crates.io-index#rapier3d@0.1.0"},
+    {"name": "parry3d", "version": "0.1.0", "id": "registry+https://github.com/rust-lang/crates.io-index#parry3d@0.1.0"},
+    {"name": "other", "version": "0.1.0", "id": "registry+https://github.com/rust-lang/crates.io-index#other@0.1.0"}
+  ],
+  "resolve": {
+    "nodes": [
+      {"id": "registry+https://github.com/rust-lang/crates.io-index#rapier3d@0.1.0", "features": ["default", "enhanced-determinism", "std"]},
+      {"id": "registry+https://github.com/rust-lang/crates.io-index#parry3d@0.1.0", "features": ["enhanced-determinism", "std"]},
+      {"id": "registry+https://github.com/rust-lang/crates.io-index#other@0.1.0", "features": []}
+    ]
+  }
+}
