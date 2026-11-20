@@ -16,6 +16,8 @@ use std::collections::HashSet;
 /// Cue played when a mined block yields a resource.
 const PICKUP_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/pickup.wav");
 const PICKUP_VOLUME: f32 = 0.6;
+/// Cue played at a block a job-driven pawn digs.
+const DIG_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/dig.wav");
 
 // ── Spawn / interaction constants ──────────────────────────────────────
 const MOUSE_WHEEL_ZOOM_FACTOR: f32 = 0.5;
@@ -409,6 +411,12 @@ impl EventProcessor {
     }
 }
 
+/// Publishes what a pawn's dig changed: the block's removal, the chunks it dirties, and the
+/// dig cue at the block's centre.
+pub(crate) fn publish_pawn_dig(_app: &mut App, _outcome: &flagstone_game::pawn::MineOutcome) {
+    todo!("SG-F4-03: publish_pawn_dig plays {DIG_SOUND}")
+}
+
 /// Camera position and forward direction read from a view matrix.
 fn spawn_ray(view: &glam::Mat4) -> (glam::Vec3, glam::Vec3) {
     let camera_to_world = view.inverse();
@@ -788,6 +796,78 @@ mod tests {
             mined.z == 3 && mined.x == 4,
             "the block facing the camera is mined: {mined:?}"
         );
+    }
+
+    #[test]
+    fn a_pawn_dig_publishes_the_removal_and_the_cue() {
+        let mut app = App::headless();
+        // Local x 0 of chunk (1, 4, 0): its removal dirties the negative neighbour too.
+        let block = flagstone_voxel::BlockPos::new(16, 70, 3);
+        let outcome = flagstone_game::pawn::MineOutcome {
+            block_pos: block,
+            old_material_id: 1,
+            distance: 3.0,
+            yield_: None,
+        };
+        let removed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dirty = std::sync::Arc::new(std::sync::Mutex::new(HashSet::new()));
+        let removed_sink = std::sync::Arc::clone(&removed);
+        let dirty_sink = std::sync::Arc::clone(&dirty);
+        app.event_bus.subscribe(move |e: &WorldEvent| match e {
+            WorldEvent::BlockRemoved {
+                position,
+                old_material_id,
+                ..
+            } => removed_sink
+                .lock()
+                .unwrap()
+                .push((*position, *old_material_id)),
+            WorldEvent::ChunkMeshDirty { chunk_pos, .. } => {
+                dirty_sink.lock().unwrap().insert(*chunk_pos);
+            }
+            _ => {}
+        });
+        let (tx, audio) = std::sync::mpsc::channel();
+        app.event_bus.subscribe(move |e: &AudioEvent| {
+            let _ = tx.send(e.clone());
+        });
+
+        publish_pawn_dig(&mut app, &outcome);
+        app.event_bus.process_deferred();
+
+        assert_eq!(*removed.lock().unwrap(), vec![(block, 1)]);
+        let expected: HashSet<glam::IVec3> = [glam::IVec3::new(1, 4, 0), glam::IVec3::new(0, 4, 0)]
+            .into_iter()
+            .collect();
+        assert_eq!(*dirty.lock().unwrap(), expected);
+        let cues: Vec<(String, f32, glam::Vec3)> = audio
+            .try_iter()
+            .filter_map(|event| match event {
+                AudioEvent::PlaySoundAt {
+                    path,
+                    volume,
+                    position,
+                } => Some((path, volume, position)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(cues.len(), 1, "one cue per dig: {cues:?}");
+        let (path, volume, position) = &cues[0];
+        assert_eq!(path, DIG_SOUND);
+        assert!(*volume > 0.0, "audible: {volume}");
+        assert!(
+            position.distance(glam::Vec3::new(16.5, 70.5, 3.5)) < 1e-4,
+            "the cue sits at the block's centre: {position:?}"
+        );
+    }
+
+    #[test]
+    fn dig_asset_exists() {
+        let path = std::path::Path::new(DIG_SOUND);
+
+        let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+
+        assert!(bytes.starts_with(b"RIFF"), "dig.wav is not a WAV file");
     }
 
     #[test]

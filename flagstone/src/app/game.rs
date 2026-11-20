@@ -4269,4 +4269,29 @@ mod tests {
 
         assert!(outlined_markers(&mut app).is_empty());
     }
+
+    #[test]
+    fn returning_to_first_person_starts_where_the_pawn_walked_to() {
+        use crate::app::event_loop::frame_processor::tests::{colony_world, pawn_state};
+        let block = flagstone_voxel::BlockPos::new(22, 4, 16);
+        let mut app = colony_world(false, Some((block, None)));
+        let start = pawn_state(&app).position;
+        let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
+        sim.step(&mut app, 60);
+        let walked_to = pawn_state(&app).position;
+        tap_possess(&mut app);
+
+        step_once(&mut app);
+
+        assert!(
+            walked_to.distance(start) > 1.0,
+            "setup: the pawn walked from {start} to {walked_to}"
+        );
+        assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+        let began = app.simulation.position();
+        assert!(
+            glam::Vec2::new(began.x - walked_to.x, began.z - walked_to.z).length() < 0.01,
+            "first person begins at {began}, not where the pawn stands at {walked_to}"
+        );
+    }
 }
