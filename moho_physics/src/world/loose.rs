@@ -247,8 +247,9 @@ impl PhysicsWorld {
     /// loses `a dt / r` and the velocity along `axis x up` loses `a dt`, each down to zero, so
     /// a rolling body keeps `v = w r` while it slows. Tipping, in the plane of the axis and up,
     /// and the velocity along up are not braked. A body with any contact point with another
-    /// body deeper than [`DEEP_CONTACT`] is skipped, because zeroing its velocity would freeze the overlap the
-    /// solver is still pushing apart. Sleeping bodies are skipped and never woken.
+    /// body deeper than [`DEEP_CONTACT`] is skipped, because zeroing its velocity would freeze
+    /// the overlap the solver is still pushing apart. Sleeping bodies are skipped and never
+    /// woken.
     pub(super) fn brake_rolling(&mut self, dt: f32) {
         let pull = -self.gravity;
         let strength = pull.length();
