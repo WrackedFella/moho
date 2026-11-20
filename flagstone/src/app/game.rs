@@ -4269,4 +4269,48 @@ mod tests {
 
         assert!(outlined_markers(&mut app).is_empty());
     }
+
+    #[test]
+    fn returning_to_first_person_starts_where_the_pawn_walked_to() {
+        use crate::app::strategy_test_world as world;
+        let block = [12, 3, 8];
+        let mut app = world::strategy_world(|grid| {
+            grid.mutator()
+                .place(flagstone_voxel::BlockPos::new(12, 3, 8), 1, Some(7));
+        });
+        app.colony.marks.toggle(block);
+        let mut sim = world::sim();
+        let start = app.simulation.position();
+
+        let dug = world::run_until(&mut app, &mut sim, 900, |app| !world::solid(app, block));
+
+        assert!(dug.is_some(), "the pawn never dug the block");
+        let body = world::pawn_state(&app);
+        let walked_to = app.simulation.position();
+        assert!(
+            glam::Vec2::new(walked_to.x - start.x, walked_to.z - start.z).length() > 2.5,
+            "setup: the pawn walked from {start} to {walked_to}"
+        );
+        assert!(
+            walked_to.distance(body.position) < 1e-3,
+            "the pawn's pose is {walked_to}, its body is at {}",
+            body.position
+        );
+        assert!(
+            (app.simulation.yaw_pitch().0 - body.yaw).abs() < 1e-3,
+            "the pawn faces {}, its body {}",
+            app.simulation.yaw_pitch().0,
+            body.yaw
+        );
+
+        tap_possess(&mut app);
+        step_once(&mut app);
+
+        assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+        let resumed = app.simulation.position();
+        assert!(
+            resumed.distance(walked_to) < 0.1,
+            "possession resumed at {resumed}, the pawn stood at {walked_to}"
+        );
+    }
 }

@@ -1,0 +1,281 @@
+//! Where a pawn can stand and the way between two such places over the voxel ground.
+//!
+//! What a pawn can stand on is a pawn rule, so it lives on the strategy line rather than
+//! with the voxel grid.
+
+use flagstone_voxel::{BlockPos, VoxelGrid};
+use glam::Vec3;
+
+/// Most cells a search expands before it gives up.
+pub const ROUTE_NODE_BUDGET: usize = 4096;
+
+/// The cell whose volume holds `feet`: each axis floored.
+pub fn feet_cell(_feet: Vec3) -> BlockPos {
+    todo!("floor the position to its cell")
+}
+
+/// Whether a pawn can stand with its feet in `cell`: solid ground under it and the capsule's
+/// height of air, three cells, from the feet up.
+pub fn standable(_grid: &VoxelGrid, _cell: BlockPos) -> bool {
+    todo!("ground below and three cells of air")
+}
+
+/// The cheapest walk from `start` to a cell `is_goal` accepts, over standable cells.
+///
+/// A walk moves to one of the four horizontal neighbours, one block up or down at most; a step
+/// up needs a fourth cell of air above the current feet. A `start` that is not standable
+/// tries the cells one above and one below it before giving up. `toward` is where the goal
+/// lies, for the search's estimate. The result lists the cells after the one the walk began
+/// in, ending in the goal, so a `start` that is already a goal gives `Some` of an empty route.
+/// Ties between equal routes break the same way every time. `None` when there is no route, or
+/// the search expands `budget` cells without reaching a goal.
+pub fn route(
+    _grid: &VoxelGrid,
+    _start: BlockPos,
+    _is_goal: impl Fn(BlockPos) -> bool,
+    _toward: BlockPos,
+    _budget: usize,
+) -> Option<Vec<BlockPos>> {
+    todo!("A* over standable cells")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn cell(x: i32, y: i32, z: i32) -> BlockPos {
+        BlockPos::new(x, y, z)
+    }
+
+    /// A one-block-wide floor along +X: blocks at y 0, x `0..=last`, z 0.
+    fn corridor(last: i32) -> VoxelGrid {
+        let mut grid = VoxelGrid::new(16);
+        grid.mutator()
+            .fill_region(cell(0, 0, 0), cell(last, 0, 0), 1);
+        grid
+    }
+
+    /// A flat floor of blocks at y 0 over x and z `0..=last`.
+    fn plain(last: i32) -> VoxelGrid {
+        let mut grid = VoxelGrid::new(16);
+        grid.mutator()
+            .fill_region(cell(0, 0, 0), cell(last, 0, last), 1);
+        grid
+    }
+
+    fn place(grid: &mut VoxelGrid, x: i32, y: i32, z: i32) {
+        grid.mutator().place(cell(x, y, z), 1, None);
+    }
+
+    fn route_to(grid: &VoxelGrid, start: BlockPos, goal: BlockPos) -> Option<Vec<BlockPos>> {
+        route(grid, start, |c| c == goal, goal, ROUTE_NODE_BUDGET)
+    }
+
+    #[test]
+    fn feet_cell_floors_each_axis() {
+        let cases = [
+            (Vec3::new(3.7, 1.0, 5.2), cell(3, 1, 5)),
+            (Vec3::new(-0.2, 4.05, -3.9), cell(-1, 4, -4)),
+            (Vec3::new(2.0, 0.999, -0.0), cell(2, 0, 0)),
+        ];
+
+        for (feet, expected) in cases {
+            assert_eq!(feet_cell(feet), expected, "feet {feet}");
+        }
+    }
+
+    #[test]
+    fn standable_needs_ground_below_and_the_capsules_height_of_air() {
+        let mut grid = VoxelGrid::new(16);
+        place(&mut grid, 0, 0, 0);
+
+        assert!(standable(&grid, cell(0, 1, 0)), "ground and open air");
+        assert!(!standable(&grid, cell(1, 1, 0)), "no ground below");
+        assert!(!standable(&grid, cell(0, 2, 0)), "the ground is two down");
+        assert!(!standable(&grid, cell(0, 0, 0)), "the cell itself is solid");
+        for blocked in [1, 2, 3] {
+            let mut roofed = VoxelGrid::new(16);
+            place(&mut roofed, 0, 0, 0);
+            place(&mut roofed, 0, blocked, 0);
+
+            assert!(
+                !standable(&roofed, cell(0, 1, 0)),
+                "a block at y {blocked} is inside the capsule"
+            );
+        }
+        let mut high_roof = VoxelGrid::new(16);
+        place(&mut high_roof, 0, 0, 0);
+        place(&mut high_roof, 0, 4, 0);
+        assert!(
+            standable(&high_roof, cell(0, 1, 0)),
+            "a roof above the capsule is clear of it"
+        );
+    }
+
+    #[test]
+    fn a_route_on_flat_ground_is_a_straight_line() {
+        let grid = corridor(9);
+
+        let found = route_to(&grid, cell(0, 1, 0), cell(5, 1, 0));
+
+        assert_eq!(
+            found,
+            Some((1..=5).map(|x| cell(x, 1, 0)).collect::<Vec<_>>())
+        );
+    }
+
+    #[test]
+    fn a_start_that_is_the_goal_needs_no_steps() {
+        let grid = corridor(9);
+
+        let found = route_to(&grid, cell(3, 1, 0), cell(3, 1, 0));
+
+        assert_eq!(found, Some(Vec::new()));
+    }
+
+    #[test]
+    fn a_route_climbs_a_one_block_rise_and_descends_it() {
+        let mut grid = corridor(9);
+        place(&mut grid, 4, 1, 0);
+        place(&mut grid, 5, 1, 0);
+
+        let found = route_to(&grid, cell(0, 1, 0), cell(9, 1, 0));
+
+        let heights: Vec<i32> = found
+            .expect("a one-block rise can be walked over")
+            .iter()
+            .map(|c| c.y)
+            .collect();
+        assert_eq!(heights, [1, 1, 1, 2, 2, 1, 1, 1, 1]);
+    }
+
+    #[test]
+    fn a_two_block_wall_blocks_the_route() {
+        let mut grid = corridor(9);
+        place(&mut grid, 4, 1, 0);
+        place(&mut grid, 4, 2, 0);
+
+        let found = route_to(&grid, cell(0, 1, 0), cell(9, 1, 0));
+
+        assert_eq!(found, None);
+    }
+
+    #[test]
+    fn climbing_needs_headroom() {
+        let mut grid = corridor(9);
+        place(&mut grid, 4, 1, 0);
+        let clear = route_to(&grid, cell(0, 1, 0), cell(9, 1, 0));
+        // Four cells above the feet at x 3, where the step up begins.
+        place(&mut grid, 3, 4, 0);
+
+        let roofed = route_to(&grid, cell(0, 1, 0), cell(9, 1, 0));
+
+        assert!(clear.is_some(), "the rise is walkable without the roof");
+        assert_eq!(roofed, None, "the step up would hit the roof");
+    }
+
+    #[test]
+    fn an_enclosed_goal_has_no_route() {
+        let mut grid = plain(8);
+        for (x, z) in [(3, 4), (5, 4), (4, 3), (4, 5)] {
+            place(&mut grid, x, 1, z);
+            place(&mut grid, x, 2, z);
+        }
+
+        let found = route_to(&grid, cell(0, 1, 0), cell(4, 1, 4));
+
+        assert_eq!(found, None);
+    }
+
+    #[test]
+    fn the_node_budget_ends_a_search_with_none() {
+        let grid = corridor(30);
+        let goal = cell(25, 1, 0);
+
+        let starved = route(&grid, cell(0, 1, 0), |c| c == goal, goal, 5);
+        let funded = route(&grid, cell(0, 1, 0), |c| c == goal, goal, ROUTE_NODE_BUDGET);
+
+        assert_eq!(starved, None, "25 steps cannot be found in 5 expansions");
+        assert_eq!(funded.map(|r| r.len()), Some(25));
+    }
+
+    #[test]
+    fn a_start_on_a_slope_tries_the_cells_above_and_below() {
+        let mut grid = corridor(9);
+        place(&mut grid, 4, 1, 0);
+
+        // Feet a block too high, and a block too low: inside the ground at x 4.
+        let above = route_to(&grid, cell(0, 2, 0), cell(2, 1, 0));
+        let below = route_to(&grid, cell(4, 1, 0), cell(6, 1, 0));
+
+        assert_eq!(above.map(|r| r.last().copied()), Some(Some(cell(2, 1, 0))));
+        assert_eq!(below.map(|r| r.last().copied()), Some(Some(cell(6, 1, 0))));
+    }
+
+    /// A 6 by 6 patch of columns, each `heights[x * 6 + z]` blocks tall.
+    fn hills(heights: &[i32]) -> VoxelGrid {
+        let mut grid = VoxelGrid::new(16);
+        for x in 0..6 {
+            for z in 0..6 {
+                for y in 0..heights[(x * 6 + z) as usize] {
+                    place(&mut grid, x, y, z);
+                }
+            }
+        }
+        grid
+    }
+
+    fn top_of(heights: &[i32], x: i32, z: i32) -> BlockPos {
+        cell(x, heights[(x * 6 + z) as usize], z)
+    }
+
+    proptest! {
+        #[test]
+        fn every_route_cell_is_standable_and_adjacent_to_the_previous(
+            heights in proptest::collection::vec(1..=4i32, 36),
+            start in (0..6i32, 0..6i32),
+            goal in (0..6i32, 0..6i32),
+        ) {
+            let grid = hills(&heights);
+            let start = top_of(&heights, start.0, start.1);
+            let goal = top_of(&heights, goal.0, goal.1);
+
+            let found = route_to(&grid, start, goal);
+
+            if start == goal {
+                prop_assert_eq!(&found, &Some(Vec::new()));
+            }
+            if let Some(cells) = found {
+                let mut previous = start;
+                for next in &cells {
+                    prop_assert!(standable(&grid, *next), "{next} is not standable");
+                    let step = *next - previous;
+                    prop_assert_eq!(step.x.abs() + step.z.abs(), 1, "{} to {}", previous, next);
+                    prop_assert!(step.y.abs() <= 1, "{} to {}", previous, next);
+                    previous = *next;
+                }
+                prop_assert_eq!(previous, goal);
+            }
+        }
+
+        #[test]
+        fn the_same_grid_gives_the_same_route(
+            heights in proptest::collection::vec(1..=3i32, 36),
+            start in (0..6i32, 0..6i32),
+            goal in (0..6i32, 0..6i32),
+        ) {
+            let first_grid = hills(&heights);
+            let second_grid = hills(&heights);
+            let start = top_of(&heights, start.0, start.1);
+            let goal = top_of(&heights, goal.0, goal.1);
+
+            let first = route_to(&first_grid, start, goal);
+            let again = route_to(&first_grid, start, goal);
+            let rebuilt = route_to(&second_grid, start, goal);
+
+            prop_assert_eq!(&first, &again);
+            prop_assert_eq!(&first, &rebuilt);
+        }
+    }
+}

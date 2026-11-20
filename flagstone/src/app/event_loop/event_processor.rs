@@ -549,6 +549,12 @@ fn spawn_sphere(app: &mut App, pos: glam::Vec3) {
     tracing::info!(pos = ?pos, "Spawned sphere");
 }
 
+/// Announces a block a pawn's job dug: the removal and the chunks to remesh, by the path the
+/// player's mining takes, and the dig cue at the block's centre.
+pub(crate) fn publish_pawn_dig(_app: &App, _outcome: &flagstone_game::pawn::MineOutcome) {
+    todo!("publish the removal, the dirty chunks and the cue")
+}
+
 /// Compute chunk coordinates from a world-space position.
 pub(crate) fn lod_player_chunk(pos: glam::Vec3) -> glam::IVec3 {
     const CHUNK_SIZE: i32 = 16;
@@ -1720,5 +1726,87 @@ mod tests {
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
 
         assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
+    }
+
+    fn dig_asset_path() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/dig.wav")
+    }
+
+    #[test]
+    fn dig_asset_exists() {
+        let path = dig_asset_path();
+
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+
+        assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
+    }
+
+    #[test]
+    fn a_pawn_dig_publishes_the_removal_and_the_cue() {
+        // A plain block: the cue is for the dig, not for a pickup.
+        let mut app = app_aimed_at_block_with(None);
+        let removed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dirty = std::sync::Arc::new(std::sync::Mutex::new(HashSet::new()));
+        let removed_sink = std::sync::Arc::clone(&removed);
+        let dirty_sink = std::sync::Arc::clone(&dirty);
+        app.event_bus.subscribe(move |e: &WorldEvent| match e {
+            WorldEvent::BlockRemoved { position, .. } => {
+                removed_sink.lock().unwrap().push(*position);
+            }
+            WorldEvent::ChunkMeshDirty { chunk_pos, .. } => {
+                dirty_sink.lock().unwrap().insert(*chunk_pos);
+            }
+            _ => {}
+        });
+        let _ = app.audio_event_rx.try_iter().count();
+        let grid = app
+            .light_system
+            .as_mut()
+            .expect("App starts with a light system")
+            .grid_mut();
+        let outcome = app
+            .pawn
+            .dig(
+                grid,
+                glam::Vec3::new(4.5, 70.5, 6.5),
+                glam::Vec3::NEG_Z,
+                flagstone_game::pawn::MINE_REACH,
+            )
+            .expect("the ray hits the wall");
+        let chunk_size = app
+            .light_system
+            .as_ref()
+            .expect("light")
+            .grid()
+            .chunk_size();
+
+        publish_pawn_dig(&app, &outcome);
+        app.event_bus.process_deferred();
+
+        assert_eq!(*removed.lock().unwrap(), vec![outcome.block_pos]);
+        let expected: HashSet<glam::IVec3> =
+            flagstone_voxel::chunks_meshed_from(outcome.block_pos, chunk_size).collect();
+        assert_eq!(*dirty.lock().unwrap(), expected, "the chunks to remesh");
+        let cues: Vec<_> = app
+            .audio_event_rx
+            .try_iter()
+            .filter_map(|event| match event {
+                AudioEvent::PlaySoundAt {
+                    path,
+                    volume,
+                    position,
+                } => Some((path, volume, position)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(cues.len(), 1, "one dig cue: {cues:?}");
+        let (path, volume, position) = &cues[0];
+        assert_eq!(std::path::Path::new(path), dig_asset_path().as_path());
+        assert!(*volume > 0.0, "audible: {volume}");
+        let block_centre = outcome.block_pos.as_vec3() + glam::Vec3::splat(0.5);
+        assert!(
+            position.distance(block_centre) < 1e-4,
+            "the cue is at {position}, not the block's centre {block_centre}"
+        );
     }
 }

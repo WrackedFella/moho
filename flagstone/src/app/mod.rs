@@ -19,6 +19,8 @@ pub mod input_state;
 pub mod physics_controller;
 pub mod renderer_setup;
 pub mod scene_loader;
+#[cfg(test)]
+pub(crate) mod strategy_test_world;
 pub mod view_level;
 pub mod world_generator;
 pub mod world_geometry;
