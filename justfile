@@ -33,9 +33,21 @@ test-doc:
 comment-refs base=base:
     scripts/check-comment-refs.sh {{base}}
 
-# Licenses, advisories, banned and duplicate crates, crate sources.
+# Licenses, advisories, banned and duplicate crates, crate sources, and the physics
+# determinism features, with a self-test that a workspace missing them fails.
 deny:
+    #!/usr/bin/env bash
+    set -euo pipefail
     cargo deny check
+    scripts/check-physics-features.sh
+    MOHO_PHYSICS_METADATA=scripts/fixtures/physics-metadata-ok.json scripts/check-physics-features.sh
+    if out="$(MOHO_PHYSICS_METADATA=scripts/fixtures/physics-metadata-missing.json scripts/check-physics-features.sh 2>&1)"; then
+        echo "check-physics-features: fixture without the feature passed" >&2
+        exit 1
+    fi
+    for crate in rapier3d parry3d; do
+        [[ "$out" == *"$crate does not enable"* ]] || { echo "check-physics-features: failure did not name $crate" >&2; exit 1; }
+    done
 
 # LCOV coverage report at lcov.info.
 cov:
