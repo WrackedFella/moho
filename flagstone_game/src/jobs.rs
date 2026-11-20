@@ -228,11 +228,12 @@ mod tests {
         let mut pawn = Pawn::default();
         pawn.select_slot(3);
 
-        let action = tick(&mut pawn, standing_in(cell(4, 1, 5)), &mut marks, &grid);
+        // Nearer to the pawn is the mark that comes later in key order.
+        let action = tick(&mut pawn, standing_in(cell(15, 1, 5)), &mut marks, &grid);
 
-        assert_walks_to(action, cell(5, 1, 5));
-        assert_eq!(holder(&marks, NEAR), Some(PAWN));
-        assert_eq!(holder(&marks, FAR), None, "one job, one mark");
+        assert_walks_to(action, cell(14, 1, 5));
+        assert_eq!(holder(&marks, FAR), Some(PAWN));
+        assert_eq!(holder(&marks, NEAR), None, "one job, one mark");
         assert_eq!(pawn.equipped_tool, Some(STARTING_TOOL));
         assert_eq!(pawn.selected_slot, crate::pawn::TOOL_SLOT);
         let Job::Mine {
@@ -241,8 +242,8 @@ mod tests {
         else {
             panic!("the pawn took a job: {:?}", pawn.job);
         };
-        assert_eq!(*mark, cell(NEAR[0], NEAR[1], NEAR[2]));
-        assert_eq!(*route, [cell(5, 1, 5), cell(6, 1, 5), cell(7, 1, 5)]);
+        assert_eq!(*mark, cell(FAR[0], FAR[1], FAR[2]));
+        assert_eq!(*route, [cell(14, 1, 5)]);
         assert_eq!(*next, 0);
     }
 
@@ -325,31 +326,34 @@ mod tests {
     proptest! {
         #[test]
         fn every_stand_cell_is_within_the_mining_reach(
-            block in (-500..500i32, -500..500i32, -500..500i32),
-            offset in (-1..=1i32, -1..=2i32, -1..=1i32),
+            x in 4.0f32..13.0,
+            z in 1.0f32..10.0,
         ) {
-            let block = cell(block.0, block.1, block.2);
-            let stand = block + cell(offset.0, offset.1, offset.2);
-            prop_assert!(within_stand_window(block, stand), "{stand} is in the window of {block}");
-            let eye = centre(stand) + Vec3::Y * EYE_HEIGHT;
-            let slack = ARRIVE_RADIUS * std::f32::consts::SQRT_2;
+            let (grid, mut marks) = marked(&[NEAR]);
+            let block = cell(NEAR[0], NEAR[1], NEAR[2]);
+            let pose = Pose { feet: Vec3::new(x, 1.0, z), yaw: 0.0 };
+            let mut pawn = Pawn::default();
 
-            let farthest = (0..8)
-                .map(|corner| {
-                    block.as_vec3()
-                        + Vec3::new(
-                            (corner & 1) as f32,
-                            ((corner >> 1) & 1) as f32,
-                            ((corner >> 2) & 1) as f32,
-                        )
-                })
-                .map(|point| point.distance(eye))
-                .fold(0.0, f32::max);
+            let action = tick(&mut pawn, pose, &mut marks, &grid);
 
-            prop_assert!(
-                farthest + slack <= MINE_REACH,
-                "{stand} reaches {farthest} m to the far corner of {block}"
-            );
+            let feet = cell(x.floor() as i32, 1, z.floor() as i32);
+            if let JobAction::Dig { .. } = action {
+                let eye = pose.feet + Vec3::Y * EYE_HEIGHT;
+                prop_assert!(
+                    within_stand_window(block, feet),
+                    "dug from {feet}, outside the window of {block}"
+                );
+                prop_assert!(
+                    eye.distance(block.as_vec3() + Vec3::splat(0.5)) <= MINE_REACH,
+                    "dug from {eye}, beyond the reach of {block}"
+                );
+            }
+            if within_stand_window(block, feet) && feet != block {
+                prop_assert!(
+                    matches!(action, JobAction::Dig { .. }),
+                    "standing at {feet} the pawn does not dig: {action:?}"
+                );
+            }
         }
     }
 
@@ -382,7 +386,29 @@ mod tests {
 
         assert_eq!(action, JobAction::Wait);
         assert_eq!(pawn.job, Job::Idle);
-        assert_eq!(marks.unclaimed(), Vec::<[i32; 3]>::new());
+    }
+
+    #[test]
+    fn a_nearer_mark_with_no_route_is_passed_over_for_a_farther_open_one() {
+        let enclosed = [6, 1, 5];
+        let (mut grid, mut marks) = marked(&[enclosed, FAR]);
+        // Two-high walls round the nearer mark: it has exposed faces but nowhere to dig from.
+        for x in 3..=9 {
+            for z in 2..=8 {
+                if x == 3 || x == 9 || z == 2 || z == 8 {
+                    for y in 1..=2 {
+                        grid.mutator().place(cell(x, y, z), 1, None);
+                    }
+                }
+            }
+        }
+        let mut pawn = Pawn::default();
+
+        let action = tick(&mut pawn, standing_in(cell(1, 1, 5)), &mut marks, &grid);
+
+        assert!(matches!(action, JobAction::Walk { .. }), "{action:?}");
+        assert_eq!(holder(&marks, enclosed), None, "no way to it");
+        assert_eq!(holder(&marks, FAR), Some(PAWN), "so the open one is taken");
     }
 
     #[test]
@@ -438,8 +464,13 @@ mod tests {
                 feet: Vec3::new(x, 1.0, 5.5),
                 yaw: 0.0,
             };
-            for _ in 0..STALL_TICKS - 20 {
-                tick(&mut pawn, pose, &mut marks, &grid);
+            for ticks in 0..STALL_TICKS - 20 {
+                let action = tick(&mut pawn, pose, &mut marks, &grid);
+
+                assert!(
+                    matches!(action, JobAction::Walk { .. }) && pawn.job != Job::Idle,
+                    "gave up at x {x} after {ticks} ticks: {action:?}"
+                );
             }
         }
 

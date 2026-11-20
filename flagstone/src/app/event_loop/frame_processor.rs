@@ -1285,13 +1285,31 @@ mod tests {
         glam::Vec2::new(a.x - b.x, a.z - b.z).length()
     }
 
-    /// Lets the pawn dig the marked `NEAR_BLOCK`, and returns the app and how far the pawn
-    /// walked.
-    fn pawn_digs_the_near_block(resource: Option<u32>) -> (App, f32) {
+    /// What happened while the pawn dug the marked `NEAR_BLOCK`.
+    struct DigRun {
+        app: App,
+        /// How far the pawn walked, in metres.
+        walked: f32,
+        /// The chunks announced for remeshing during the run.
+        dirty: std::collections::HashSet<glam::IVec3>,
+        /// How far the strategy camera's focus moved, horizontally.
+        focus_moved: f32,
+    }
+
+    /// Lets the pawn dig the marked `NEAR_BLOCK`.
+    fn pawn_digs_the_near_block(resource: Option<u32>) -> DigRun {
         let mut app = world_marking(NEAR_BLOCK, resource);
         let mut sim = world::sim();
         assert_eq!(mark_markers(&mut app), 1, "setup: the mark shows a marker");
         let start = world::pawn_state(&app).position;
+        let focus = app.simulation.player_controller.rts_look_target;
+        let dirty = std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+        let sink = std::sync::Arc::clone(&dirty);
+        app.event_bus.subscribe(move |e: &WorldEvent| {
+            if let WorldEvent::ChunkMeshDirty { chunk_pos, .. } = e {
+                sink.lock().unwrap().insert(*chunk_pos);
+            }
+        });
 
         let dug = world::run_until(&mut app, &mut sim, JOB_TICKS, |app| {
             !world::solid(app, NEAR_BLOCK)
@@ -1300,14 +1318,58 @@ mod tests {
 
         assert!(dug.is_some(), "the pawn never dug the block");
         let walked = horizontal(world::pawn_state(&app).position, start);
-        (app, walked)
+        let focus_moved = horizontal(app.simulation.player_controller.rts_look_target, focus);
+        let dirty = dirty.lock().unwrap().clone();
+        DigRun {
+            app,
+            walked,
+            dirty,
+            focus_moved,
+        }
     }
 
     #[test]
     fn an_idle_pawn_digs_a_marked_ore_block_and_the_stock_grows_by_one() {
-        let (mut app, walked) = pawn_digs_the_near_block(Some(ORE));
+        let DigRun {
+            mut app,
+            walked,
+            dirty,
+            focus_moved,
+        } = pawn_digs_the_near_block(Some(ORE));
 
+        let cues: Vec<_> = app
+            .audio_event_rx
+            .try_iter()
+            .filter_map(|event| match event {
+                moho_core::events::AudioEvent::PlaySoundAt { path, position, .. } => {
+                    Some((path, position))
+                }
+                _ => None,
+            })
+            .collect();
+        let chunk_size = app
+            .light_system
+            .as_ref()
+            .expect("light")
+            .grid()
+            .chunk_size();
         assert!(walked > 2.5, "the pawn walked {walked} m to the block");
+        assert!(focus_moved < 1e-4, "the camera focus moved {focus_moved} m");
+        assert_eq!(cues.len(), 1, "one dig cue: {cues:?}");
+        assert!(
+            std::path::Path::new(&cues[0].0).ends_with("assets/dig.wav"),
+            "{cues:?}"
+        );
+        assert!(
+            cues[0].1.distance(block_centre(NEAR_BLOCK)) < 1e-4,
+            "{cues:?}"
+        );
+        for chunk in flagstone_voxel::chunks_meshed_from(
+            flagstone_voxel::BlockPos::new(NEAR_BLOCK[0], NEAR_BLOCK[1], NEAR_BLOCK[2]),
+            chunk_size,
+        ) {
+            assert!(dirty.contains(&chunk), "chunk {chunk} was not remeshed");
+        }
         assert!(!app.colony.marks.contains(NEAR_BLOCK), "the mark is gone");
         assert_eq!(mark_markers(&mut app), 0, "and so is its marker");
         assert_eq!(app.colony.stock.count(ORE), 1, "one ore joins the colony");
@@ -1319,7 +1381,9 @@ mod tests {
 
     #[test]
     fn a_plain_block_is_dug_and_the_stock_is_unchanged() {
-        let (mut app, walked) = pawn_digs_the_near_block(None);
+        let DigRun {
+            mut app, walked, ..
+        } = pawn_digs_the_near_block(None);
 
         assert!(walked > 2.5, "the pawn walked {walked} m to the block");
         assert!(!app.colony.marks.contains(NEAR_BLOCK), "the mark is gone");

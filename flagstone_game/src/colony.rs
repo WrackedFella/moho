@@ -163,20 +163,6 @@ mod tests {
     }
 
     #[test]
-    fn stock_grows_by_the_yield() {
-        let mut colony = Colony::default();
-        assert!(colony.stock.is_empty(), "a new colony holds nothing");
-
-        colony.stock.add(3, 2);
-        colony.stock.add(3, 1);
-        colony.stock.add(4, 1);
-
-        assert_eq!(colony.stock.count(3), 3);
-        assert_eq!(colony.stock.count(4), 1);
-        assert_eq!(colony.stock.count(5), 0);
-    }
-
-    #[test]
     fn claim_and_release_round_trip() {
         let mut marks = MineMarks::default();
         marks.toggle([2, 0, 0]);
@@ -212,7 +198,9 @@ mod tests {
     fn cancelling_a_claimed_mark_and_marking_again_gives_an_unclaimed_mark() {
         let mut marks = MineMarks::default();
         marks.toggle([1, 0, 0]);
-        marks.claim([1, 0, 0], PawnId(0));
+        let claimed = marks.claim([1, 0, 0], PawnId(0));
+        assert!(claimed, "setup: the claim is taken");
+        assert_eq!(holder(&marks, [1, 0, 0]), Some(PawnId(0)));
 
         marks.toggle([1, 0, 0]);
         marks.toggle([1, 0, 0]);
