@@ -1600,6 +1600,66 @@ mod tests {
         );
     }
 
+    /// `(horizontal speed, spin about the axis times radius)` after `ticks` ticks of rolling at
+    /// 2 m/s along +x on the floor, and the rest distance after 600 ticks.
+    fn roll_measure(shape: LooseShape, ticks: u32) -> (f32, f32, f32) {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&rolling_on_the_floor(shape, 2.0));
+        run(&mut world, ticks);
+        let state = read(&world, id);
+        let spin = (state.rotation * Vec3::Y).dot(state.angular_velocity);
+        let (speed, rim) = (state.linear_velocity.x, -spin * radius_of(shape));
+        run(&mut world, 600 - ticks);
+        (speed, rim, read(&world, id).position.x)
+    }
+
+    #[test]
+    fn braking_strength_follows_the_rest_slope_and_spin_matches_travel() {
+        // Theory is v - g tan(5 deg) t = 1.21 m/s after 0.5 s; the landing settle costs the
+        // capsule about 0.2 m/s more, and the wider cylinder about 0 m/s.
+        let rows = [(CAPSULE, 1.02), (CYLINDER, 1.23)];
+
+        for (shape, expected) in rows {
+            let (speed, rim, _) = roll_measure(shape, 30);
+
+            assert!(
+                (speed - expected).abs() <= 0.1,
+                "{shape:?}: speed {speed} after 30 ticks, expected {expected} within 0.1"
+            );
+            assert!(
+                (rim - speed).abs() <= 0.1,
+                "{shape:?}: spin times radius {rim} against travel {speed}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_rolling_capsule_stops_about_where_theory_says() {
+        let (_, _, rest) = roll_measure(CAPSULE, 30);
+
+        assert!(
+            (1.0..=1.5).contains(&rest),
+            "rolled {rest} m, theory 1.27 m less the landing settle"
+        );
+    }
+
+    #[test]
+    fn a_rolling_capsule_spawned_before_the_floor_stops_and_sleeps() {
+        let mut world = PhysicsWorld::new();
+        let id = world.spawn_loose(&rolling_on_the_floor(CAPSULE, 2.0));
+        world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+
+        run(&mut world, 600);
+
+        let state = read(&world, id);
+        assert!(state.asleep, "the capsule stops, state {state:?}");
+        assert!(
+            (1.0..=1.5).contains(&state.position.x),
+            "it rolled {} m, as on a floor registered first",
+            state.position.x
+        );
+    }
+
     #[test]
     fn a_tilted_cylinder_tips_over_instead_of_freezing_on_its_rim() {
         let (half_height, radius) = (0.08f32, 0.05f32);
