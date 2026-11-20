@@ -1,6 +1,6 @@
 use super::PhysicsWorld;
 use glam::{Quat, Vec3};
-use rapier3d::prelude::{ColliderBuilder, Pose, RigidBodyBuilder};
+use rapier3d::prelude::{ColliderBuilder, Pose, RigidBodyBuilder, RigidBodyHandle};
 
 /// Stable, engine-issued name of a loose object.
 ///
@@ -18,6 +18,22 @@ impl LooseId {
 
 /// Steepest ground, radians from level, on which loose objects are braked to rest by default.
 pub(super) const DEFAULT_REST_SLOPE: f32 = 5.0 * std::f32::consts::PI / 180.0;
+
+/// Penetration, metres, past which a contact is being pushed apart and the brake leaves the
+/// body alone, so the overlap is not frozen.
+const DEEP_CONTACT: f32 = 0.005;
+
+/// A loose body and what the brake needs to know about its shape.
+pub(super) struct Loose {
+    pub(super) body: RigidBodyHandle,
+    /// The radius a shape rolls on, `None` for a shape that does not roll.
+    roll_radius: Option<f32>,
+}
+
+/// `value` moved `amount` towards zero, stopping at zero.
+fn toward_zero(value: f32, amount: f32) -> f32 {
+    value.signum() * (value.abs() - amount).max(0.0)
+}
 
 /// The collision shape of a loose object.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -44,6 +60,13 @@ impl LooseShape {
                 half_height,
                 radius,
             } => ColliderBuilder::cylinder(half_height, radius),
+        }
+    }
+
+    fn roll_radius(self) -> Option<f32> {
+        match self {
+            Self::Box { .. } => None,
+            Self::Capsule { radius, .. } | Self::Cylinder { radius, .. } => Some(radius),
         }
     }
 
@@ -161,14 +184,14 @@ impl PhysicsWorld {
     ///
     /// Characters do not ignore loose objects: a loose box blocks a character or is stepped
     /// onto like geometry, and any overlap shoves the box because the solver treats the
-    /// character as infinitely heavy. Rays skip loose boxes because their colliders carry no
-    /// tag.
+    /// character as infinitely heavy; the same holds for a capsule or cylinder. Rays skip loose
+    /// objects of every shape because their colliders carry no tag.
     ///
     /// # Panics
-    /// If the spawn would poison the simulation: a mass or half extent that is not positive and
-    /// finite, a friction, restitution or damping that is negative or not finite, a position or
-    /// velocity that is not finite, or a rotation that is not finite or whose squared length is
-    /// more than 2e-4 from 1 (glam's `Quat::is_normalized`).
+    /// If the spawn would poison the simulation: a mass, half extent, half height or radius that
+    /// is not positive and finite, a friction, restitution or damping that is negative or not
+    /// finite, a position or velocity that is not finite, or a rotation that is not finite or
+    /// whose squared length is more than 2e-4 from 1 (glam's `Quat::is_normalized`).
     pub fn spawn_loose(&mut self, spawn: &LooseSpawn) -> LooseId {
         spawn.assert_valid();
 
@@ -192,8 +215,79 @@ impl PhysicsWorld {
 
         let id = LooseId(self.next_loose);
         self.next_loose += 1;
-        self.loose.insert(id, handle);
+        self.loose.insert(
+            id,
+            Loose {
+                body: handle,
+                roll_radius: spawn.shape.roll_radius(),
+            },
+        );
         id
+    }
+
+    /// Slow every awake loose rolling shape that touches near-flat ground, on velocities only.
+    ///
+    /// Cuts the spin about the shape's axis and the velocity along `axis x up` at matching
+    /// rates, so a rolling body stays rolling while it slows and both reach zero together. Skips
+    /// a body with a contact point deeper than [`DEEP_CONTACT`], so the solver can still
+    /// separate overlapping bodies. Never wakes a sleeping body.
+    pub(super) fn brake_rolling(&mut self, dt: f32) {
+        let Some(up) = (-self.gravity).try_normalize() else {
+            return;
+        };
+        let rest_slope = self.rest_slope;
+        if rest_slope == 0.0 {
+            return;
+        }
+        let min_cos = rest_slope.cos();
+        let decel = self.gravity.length() * rest_slope.tan();
+
+        for loose in self.loose.values() {
+            let Some(radius) = loose.roll_radius else {
+                continue;
+            };
+            let Some(body) = self.rigid_body_set.get(loose.body) else {
+                continue;
+            };
+            if body.is_sleeping() {
+                continue;
+            }
+
+            let mut on_ground = false;
+            let mut too_deep = false;
+            for &collider in body.colliders() {
+                for pair in self.narrow_phase.contact_pairs_with(collider) {
+                    for manifold in pair.manifolds() {
+                        let into_body = if pair.collider2 == collider {
+                            manifold.data.normal
+                        } else {
+                            -manifold.data.normal
+                        };
+                        let flat = into_body.dot(up) >= min_cos;
+                        for point in &manifold.points {
+                            too_deep |= -point.dist > DEEP_CONTACT;
+                            on_ground |= flat && point.dist <= 0.0;
+                        }
+                    }
+                }
+            }
+            if !on_ground || too_deep {
+                continue;
+            }
+
+            let axis = *body.rotation() * Vec3::Y;
+            let along = axis.cross(up).normalize_or_zero();
+            let (mut linvel, mut angvel) = (body.linvel(), body.angvel());
+            let spin = angvel.dot(axis);
+            angvel += axis * (toward_zero(spin, decel * dt / radius) - spin);
+            let travel = linvel.dot(along);
+            linvel += along * (toward_zero(travel, decel * dt) - travel);
+
+            if let Some(body) = self.rigid_body_set.get_mut(loose.body) {
+                body.set_linvel(linvel, false);
+                body.set_angvel(angvel, false);
+            }
+        }
     }
 
     /// Steepest ground, radians from level against gravity, on which loose objects are
@@ -216,7 +310,7 @@ impl PhysicsWorld {
 
     /// The object's current state; `None` for an id never spawned or removed.
     pub fn loose(&self, id: LooseId) -> Option<LooseState> {
-        let body = self.rigid_body_set.get(*self.loose.get(&id)?)?;
+        let body = self.rigid_body_set.get(self.loose.get(&id)?.body)?;
         Some(LooseState {
             position: body.translation(),
             rotation: *body.rotation(),
@@ -231,7 +325,7 @@ impl PhysicsWorld {
     /// # Errors
     /// [`UnknownLoose`] if `id` was never spawned or was already removed.
     pub fn remove_loose(&mut self, id: LooseId) -> Result<(), UnknownLoose> {
-        let handle = self.loose.remove(&id).ok_or(UnknownLoose)?;
+        let handle = self.loose.remove(&id).ok_or(UnknownLoose)?.body;
         self.rigid_body_set.remove(
             handle,
             &mut self.island_manager,
@@ -618,7 +712,7 @@ mod tests {
             "{shape:?}: {state:?}"
         );
         assert!(!state.asleep, "{shape:?}: a fresh object is awake");
-        let mass = world.rigid_body_set[world.loose[&id]].mass();
+        let mass = world.rigid_body_set[world.loose[&id].body].mass();
         assert!(
             (mass - 3.5).abs() <= 1e-4,
             "{shape:?}: the body weighs the stated mass, mass={mass}"
@@ -1045,7 +1139,7 @@ mod tests {
 
     /// The lowest point of the object's collider, from its bounding box.
     fn bottom(world: &PhysicsWorld, id: LooseId) -> f32 {
-        let body = &world.rigid_body_set[world.loose[&id]];
+        let body = &world.rigid_body_set[world.loose[&id].body];
         let collider = body.colliders()[0];
         world.collider_set[collider].compute_aabb().mins.y
     }
@@ -1277,16 +1371,6 @@ mod tests {
         assert_eq!(world.rest_slope(), 1.5, "just under pi/2 is accepted");
     }
 
-    /// Vertical velocity of `id` after each of `ticks` steps.
-    fn vertical_velocities(world: &mut PhysicsWorld, id: LooseId, ticks: u32) -> Vec<f32> {
-        (0..ticks)
-            .map(|_| {
-                world.step(DT);
-                read(world, id).linear_velocity.y
-            })
-            .collect()
-    }
-
     #[test]
     fn upright_shapes_rest_at_their_collider_height() {
         let rows = [
@@ -1313,37 +1397,43 @@ mod tests {
 
     #[test]
     fn the_brake_never_touches_vertical_velocity() {
-        let capsule_drop = |rest_slope: f32| {
-            let mut world = world_with_floor(&floor_mesh(0.0));
-            world.set_rest_slope(rest_slope);
-            let id = world.spawn_loose(&LooseSpawn {
-                restitution: 0.3,
-                position: Vec3::new(0.0, 0.5, 0.0),
-                ..rolling_spawn(CAPSULE, CAPSULE_RADIUS, 2.0)
-            });
-            let vertical = vertical_velocities(&mut world, id, 120);
-            (vertical, read(&world, id).linear_velocity.z)
+        let spawn = LooseSpawn {
+            restitution: 0.3,
+            position: Vec3::new(0.0, 0.5, 0.0),
+            ..rolling_spawn(CAPSULE, CAPSULE_RADIUS, 2.0)
         };
+        let mut braked = world_with_floor(&floor_mesh(0.0));
+        let mut free = world_with_floor(&floor_mesh(0.0));
+        free.set_rest_slope(0.0);
+        let braked_id = braked.spawn_loose(&spawn);
+        let free_id = free.spawn_loose(&spawn);
+        let mut first_braking_tick = None;
 
-        let (capsule_braked, braked_speed) = capsule_drop(degrees(5.0));
-        let (capsule_free, free_speed) = capsule_drop(0.0);
-
-        assert!(
-            capsule_free.iter().any(|vy| *vy > 0.1),
-            "the capsule bounced, so the control reaches a contact"
-        );
-        assert!(
-            braked_speed < free_speed - 0.1,
-            "the brake acted on the capsule: braked {braked_speed}, free {free_speed}"
-        );
-        // A brake that cut vertical velocity would move it by up to a*dt = g*tan(5 deg)*dt =
-        // 0.026 m/s per tick; 0.01 allows only the small solver coupling of the slower roll.
-        for (tick, (braked, free)) in capsule_braked.iter().zip(&capsule_free).enumerate() {
-            assert!(
-                (braked - free).abs() <= 0.01,
-                "tick {tick}: vertical velocity {braked} with the brake, {free} without"
+        // The worlds only diverge once the brake acts, so up to and including that tick the
+        // vertical velocities must agree exactly; after it the hops legitimately differ.
+        for tick in 1..=120 {
+            braked.step(DT);
+            free.step(DT);
+            let (b, f) = (read(&braked, braked_id), read(&free, free_id));
+            assert_eq!(
+                b.linear_velocity.y.to_bits(),
+                f.linear_velocity.y.to_bits(),
+                "tick {tick}: vertical velocity {} with the brake, {} without",
+                b.linear_velocity.y,
+                f.linear_velocity.y
             );
+            if b.linear_velocity.x != f.linear_velocity.x
+                || b.linear_velocity.z != f.linear_velocity.z
+            {
+                first_braking_tick = Some(tick);
+                break;
+            }
         }
+
+        assert!(
+            first_braking_tick.is_some(),
+            "the brake never acted on the falling capsule"
+        );
     }
 
     #[test]
@@ -1443,11 +1533,17 @@ mod tests {
                 } else {
                     axis.normalize()
                 };
+                // One object per cell of a 5 by 4 grid over the square, scattered so grid
+                // neighbours differ in height; the highest release is 0.53 m, so no impact
+                // exceeds about 4.4 m/s, under the 7 cm a 60 Hz tick moves it against the
+                // 8 cm width of the thinnest shape.
+                let cell = (index * 3) % 20;
+                let centre = |slot: usize, count: usize| (slot as f32 + 0.5) / count as f32 - 0.5;
                 world.spawn_loose(&LooseSpawn {
                     position: Vec3::new(
-                        rng.range(-0.5, 0.5),
-                        0.3 + 0.3 * index as f32,
-                        rng.range(-0.5, 0.5),
+                        centre(cell % 5, 5) + rng.range(-0.03, 0.03),
+                        0.15 + 0.02 * index as f32,
+                        centre(cell / 5, 4) + rng.range(-0.03, 0.03),
                     ),
                     rotation: Quat::from_axis_angle(axis, rng.range(0.0, std::f32::consts::TAU)),
                     ..LooseSpawn::new(shapes[index % 3], 0.2)
