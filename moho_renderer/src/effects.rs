@@ -284,23 +284,22 @@ impl Effects {
             return;
         }
         let over = (self.live.len() + 1).saturating_sub(self.cap);
-        if over > 0 {
-            let evictable = self
+        let evictable = self
+            .live
+            .values()
+            .filter(|effect| matches!(effect, Effect::Fixed(_)))
+            .take(over)
+            .count();
+        if evictable < over {
+            return;
+        }
+        for _ in 0..over {
+            let oldest = self
                 .live
-                .values()
-                .filter(|effect| matches!(effect, Effect::Fixed(_)))
-                .take(over)
-                .count();
-            if evictable < over {
-                return;
-            }
-            for _ in 0..over {
-                let oldest = self.live.iter().find_map(|(handle, effect)| {
-                    matches!(effect, Effect::Fixed(_)).then_some(*handle)
-                });
-                if let Some(handle) = oldest {
-                    self.live.remove(&handle);
-                }
+                .iter()
+                .find_map(|(handle, effect)| matches!(effect, Effect::Fixed(_)).then_some(*handle));
+            if let Some(handle) = oldest {
+                self.live.remove(&handle);
             }
         }
         let handle = self.issue_handle();
@@ -1806,6 +1805,30 @@ mod tests {
             "got {}",
             x_axis(&after[0]).length()
         );
+    }
+
+    #[test]
+    fn the_kite_star_and_quad_take_the_first_three_reserved_mesh_ids() {
+        let mut rig = Rig::new();
+        let streak = rig.effects.begin_streak(style(2.0, 0.1));
+        rig.effects.place_streak(streak, Vec3::X * 5.0, Vec3::X);
+        rig.effects.flash(Vec3::X, 0.0, flash_style(1.0, ms(500)));
+        rig.effects
+            .mark(Vec3::X, Vec3::Y, 0.0, mark_style(1.0, ms(500), ms(100)));
+        rig.frame(EYE);
+        assert_eq!(rig.meshes.live_len(), 3);
+
+        for below in [1, 2] {
+            rig.meshes.remove(WorldMeshId(EFFECT_MESH_IDS_FROM - below));
+            rig.meshes.flush(&mut rig.backend);
+            assert_eq!(rig.meshes.live_len(), 3, "nothing lives below the range");
+        }
+        for (offset, left) in [(0, 2), (1, 1), (2, 0)] {
+            rig.meshes
+                .remove(WorldMeshId(EFFECT_MESH_IDS_FROM + offset));
+            rig.meshes.flush(&mut rig.backend);
+            assert_eq!(rig.meshes.live_len(), left, "id FROM + {offset} was live");
+        }
     }
 
     fn unit_normal() -> impl Strategy<Value = Vec3> {
