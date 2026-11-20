@@ -11,7 +11,8 @@
 # Tokens stay four counts per model, never summed across models or kinds.
 #
 #   eval-score.sh review < review.md               pr-review verdict -> JSON
-#   eval-score.sh context <execution-file>         main-loop context per turn -> JSON
+#   eval-score.sh context <execution-file>         main-loop context per turn, and the tool
+#                                                  results that fill it -> JSON
 #   eval-score.sh reftests <base> <reference>      reference's new test names found in the
 #                                                  checked-out tree's `cargo nextest list`
 #                                                  -> JSON (run after the gate built it)
@@ -76,13 +77,35 @@ review() {
 # several messages is counted once.
 context() {
     jq -c '
-        [ (if type == "array" then .[] else . end)
-          | select(.type == "assistant" and (.parent_tool_use_id // null) == null and .message.usage != null)
-          | {id: .message.id, u: .message.usage} ]
+        [ (if type == "array" then .[] else . end) | select((.parent_tool_use_id // null) == null) ] as $main
+        | [ $main[] | select(.type == "assistant" and .message.usage != null)
+            | {id: .message.id, u: .message.usage} ]
         | unique_by(.id)
         | map(.u | (.input_tokens // 0) + (.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0))
         | {calls: length, peak: (max // null),
-           mean: (if length == 0 then null else (add / length | floor) end)}' "$1"
+           mean: (if length == 0 then null else (add / length | floor) end)} as $ctx
+        # Where main-loop context comes from: each tool result is re-read on every later
+        # call, so "carried" weighs its characters by the main-loop calls left after it.
+        | [ $main | to_entries[] | .key as $i | .value | select(.type == "assistant")
+            | .message.content[]? | select(.type == "tool_use")
+            | {id, i: $i, key: (if .name == "Bash" then "Bash " + ((.input.command // "") | split(" ") | map(select(. != ""))
+                                     | map(split("/") | last)
+                                     | if .[0] == "run-log" then [.[0]] + .[2:4] else .[0:2] end
+                                     | join(" "))
+                                elif .name == "Task" or .name == "Agent" then "Task " + (.input.subagent_type // "general")
+                                elif .name == "Skill" then "Skill " + (.input.skill // .input.command // "")
+                                else .name end)} ] as $uses
+        | ($uses | map({key: .id, value: .}) | from_entries) as $byid
+        | [ $main | to_entries[] | .key as $i | .value | select(.type == "user")
+            | .message.content[]? | select(type == "object" and .type == "tool_result")
+            | {key: ($byid[.tool_use_id].key // "unknown"), i: $i,
+               chars: (.content | if type == "string" then length
+                                  else (map(.text // "") | add // "" | length) end)} ] as $results
+        | $ctx + {sources: ($results
+            | map(. as $r | . + {carried: (.chars * ([ $main | to_entries[] | select(.key > $r.i and .value.type == "assistant") ] | length))})
+            | group_by(.key)
+            | map({key: .[0].key, calls: length, chars: (map(.chars) | add), carried: (map(.carried) | add)})
+            | sort_by(-.carried) | .[0:12])}' "$1"
 }
 
 # Test functions the reference added (`#[test]`-style attribute, then `fn name`), and
