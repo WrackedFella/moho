@@ -793,6 +793,68 @@ mod tests {
     }
 
     #[test]
+    fn steer_aims_at_the_target_relative_to_the_feet_not_the_origin() {
+        let pose = pose_at(Vec3::new(10.0, 0.0, 10.0));
+
+        let step = steer(&pose, Vec3::new(10.0, 0.0, 15.0));
+
+        assert!(step.yaw_delta.abs() < EPS, "{}", step.yaw_delta);
+        assert_eq!(step.forward, 1.0);
+    }
+
+    #[test]
+    fn exposed_faces_lists_only_the_directions_with_air() {
+        let mut grid = strip(8);
+        grid.mutator().place(cell(3, 1, 0), 1, None);
+        grid.mutator().place(cell(4, 1, 0), 1, None);
+
+        let faces: Vec<BlockPos> = exposed_faces(&grid, cell(4, 1, 0)).collect();
+
+        assert_eq!(
+            faces,
+            vec![BlockPos::X, BlockPos::Y, BlockPos::Z, BlockPos::NEG_Z]
+        );
+        assert_eq!(
+            exposed_faces(&grid, cell(4, 2, 0)).count(),
+            0,
+            "air has none"
+        );
+    }
+
+    #[test]
+    fn the_dig_aims_at_the_top_face_of_a_block_set_in_the_ground() {
+        let mut grid = plane(9);
+        for x in 0..9 {
+            for z in 0..9 {
+                grid.mutator().place(cell(x, 1, z), 1, None);
+            }
+        }
+        let mut world = World::new(grid, cell(0, 2, 0));
+        world.mark(cell(4, 1, 4));
+
+        let (_, block, aim) = world.until_dig();
+
+        assert_eq!(block, cell(4, 1, 4));
+        assert!(
+            (aim - Vec3::new(4.5, 2.0, 4.5)).length() < EPS,
+            "only the top is exposed: {aim}"
+        );
+    }
+
+    #[test]
+    fn a_search_cursor_at_the_end_of_the_candidates_wraps_to_the_start() {
+        let mut world = World::new(strip(8), cell(0, 1, 0));
+        world.grid.mutator().place(cell(4, 1, 0), 1, None);
+        world.mark(cell(4, 1, 0));
+        world.pawn.search_cursor = 1;
+
+        world.tick();
+
+        assert_eq!(world.claimant(cell(4, 1, 0)), Claim::By(PawnId(0)));
+        assert_eq!(world.pawn.search_cursor, 0);
+    }
+
+    #[test]
     fn steer_does_not_overshoot_a_small_remaining_angle() {
         let (pose, to) = facing(0.7, 0.01);
 

@@ -178,7 +178,8 @@ flowchart LR
 | Voxel grid, light | `flagstone_voxel::LightSystem` (owns the grid) |
 | Chunk meshes | `ChunkStore` in `flagstone_voxel`; the renderer holds its own copy as `WorldMeshes` ([rendering](rendering.md#2-world-geometry)) |
 | Actors (spheres, cubes) | `ActorStore` in `flagstone_game` |
-| Player orders (mining marks) | `Colony` in `flagstone_game::colony`, independent of any pawn; the binary holds it on `App` |
+| Player orders (mining marks and their claims), colony stock | `Colony` in `flagstone_game::colony`, independent of any pawn; the binary holds it on `App`. `MineMark::claimed_by` names the pawn working a mark; `stock` is the colony total per resource |
+| Pawn job | `Job` in `flagstone_game::jobs` (`Idle` or `Mine` with the claimed block, route and stall guard); advanced per tick by `jobs::step` ([input-and-state](input-and-state.md#2-pointer-picking)) |
 | Time of day | `moho_app::GameClock`, owned by the loop and advanced after each `Game::tick` |
 | App mode | `flagstone_ui::GameState` ([input-and-state](input-and-state.md#3-gamestate)) |
 | GPU resources | `moho_renderer`; game types reach it only through `moho_render_api` ([rendering](rendering.md)) |

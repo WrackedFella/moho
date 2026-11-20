@@ -6,6 +6,7 @@ use crate::App;
 use crate::app::event_loop::event_processor::{lod_for_chunk, lod_player_chunk};
 use crate::app::input_state::Designation;
 use flagstone_game::pawn::MINE_REACH;
+use flagstone_game::selection::PAWN_HALF_EXTENTS;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -16,9 +17,6 @@ static FRAME_COUNTER: AtomicU64 = AtomicU64::new(0);
 const MOVE_SPEED: f32 = 4.0;
 /// Sprinting speed in m/s.
 const SPRINT_SPEED: f32 = 6.0;
-
-/// The capsule centre's height above the pawn's feet.
-const PAWN_CENTRE_HEIGHT: f32 = 1.15;
 
 /// Strategy-line walking feel: acceleration and friction high enough to reach speed, or
 /// stop, within a tick. `max_speed` and `air_speed_cap` are set per tick from sprint.
@@ -112,7 +110,7 @@ impl FrameProcessor {
             return;
         };
         let pose = Pose {
-            feet: state.position - glam::Vec3::Y * PAWN_CENTRE_HEIGHT,
+            feet: state.position - glam::Vec3::Y * PAWN_HALF_EXTENTS.y,
             eye: state.position,
             yaw: state.yaw,
         };

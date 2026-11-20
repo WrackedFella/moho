@@ -263,6 +263,16 @@ mod tests {
     }
 
     #[test]
+    fn the_heuristic_guides_the_search_toward_the_goal_within_a_tight_budget() {
+        let grid = plane(24);
+        let goal = cell(20, 1, 2);
+
+        let found = route(&grid, cell(0, 1, 0), to(goal), goal, 100);
+
+        assert_eq!(found.map(|r| r.len()), Some(23));
+    }
+
+    #[test]
     fn a_start_one_above_or_below_the_ground_is_corrected() {
         let grid = strip(6);
         let goal = cell(5, 1, 0);
