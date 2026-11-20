@@ -168,9 +168,7 @@ fn claim_nearest(
 
     for block in candidates.into_iter().take(MAX_ROUTE_ATTEMPTS) {
         let is_stand_cell = |cell: BlockPos| {
-            // A pawn already in reach still takes a step, so a claim always starts a walk.
-            cell != feet
-                && (cell.x - block.x).abs() <= 1
+            (cell.x - block.x).abs() <= 1
                 && (cell.z - block.z).abs() <= 1
                 && (block.y - 1..=block.y + 2).contains(&cell.y)
                 && standable(grid, cell)
@@ -485,7 +483,7 @@ mod tests {
         scene.mark(cell(12, 1, 2));
         scene.pawn.select_slot(1);
 
-        scene.step(at(13.5, 1.0, 2.5));
+        scene.step(at(15.5, 1.0, 2.5));
 
         assert_eq!(scene.claimed_by(cell(12, 1, 2)), Some(ME));
         assert_eq!(scene.claimed_by(cell(6, 1, 2)), None);
@@ -642,6 +640,24 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_pawn_already_on_a_stand_cell_digs_at_once_without_walking() {
+        let mut scene = Scene::new(flat_ground());
+        scene.mark(cell(6, 1, 2));
+
+        let action = scene.step(at(5.5, 1.0, 2.5));
+
+        match action {
+            JobAction::Dig { block, aim } => {
+                assert_eq!(block, cell(6, 1, 2));
+                assert_near(aim, Vec3::new(6.0, 1.5, 2.5));
+            }
+            other => panic!("expected an immediate dig, got {other:?}"),
+        }
+        assert!(scene.is_idle(), "the dig ends the job");
+        assert_eq!(scene.claimed_by(cell(6, 1, 2)), None);
+    }
+
     /// Walks a pawn toward the mark at `(6, 1, 2)`, then applies `withdraw`: the pawn must
     /// drop the job and wait.
     fn assert_withdrawn_mark_releases_the_pawn(withdraw: impl Fn(&mut Scene), case: &str) {
@@ -762,11 +778,15 @@ mod tests {
             let mut scene = Scene::new(grid);
             scene.marks.toggle(key(block));
 
-            scene.step(at(0.5, start.y as f32, 0.5));
-            scene.step(at(0.5, start.y as f32, 0.5));
-
-            prop_assert!(!scene.is_idle(), "a reachable mark was not claimed");
-            let stand = scene.route().last().copied().unwrap_or(start);
+            let first = scene.step(at(0.5, start.y as f32, 0.5));
+            let stand = if let JobAction::Dig { block: dug, .. } = first {
+                prop_assert_eq!(dug, block);
+                start
+            } else {
+                scene.step(at(0.5, start.y as f32, 0.5));
+                prop_assert!(!scene.is_idle(), "a reachable mark was not claimed");
+                scene.route().last().copied().unwrap_or(start)
+            };
             prop_assert!(standable(&scene.grid, stand));
             prop_assert!((stand.x - block.x).abs() <= 1 && (stand.z - block.z).abs() <= 1);
             prop_assert!((-1..=2).contains(&(stand.y - block.y)), "{stand} against {block}");
