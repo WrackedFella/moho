@@ -28,6 +28,14 @@ pub enum LooseShape {
 }
 
 impl LooseShape {
+    /// The radius the shape rolls on about its local Y axis; `None` for a box, which does not roll.
+    fn roll_radius(self) -> Option<f32> {
+        match self {
+            Self::Box { .. } => None,
+            Self::Capsule { radius, .. } | Self::Cylinder { radius, .. } => Some(radius),
+        }
+    }
+
     fn collider(self) -> ColliderBuilder {
         match self {
             Self::Box { half_extents } => {
@@ -203,17 +211,11 @@ impl PhysicsWorld {
 
         let id = LooseId(self.next_loose);
         self.next_loose += 1;
-        let roll_radius = match spawn.shape {
-            LooseShape::Box { .. } => None,
-            LooseShape::Capsule { radius, .. } | LooseShape::Cylinder { radius, .. } => {
-                Some(radius)
-            }
-        };
         self.loose.insert(
             id,
             Loose {
                 body: handle,
-                roll_radius,
+                roll_radius: spawn.shape.roll_radius(),
             },
         );
         id
