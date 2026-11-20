@@ -105,9 +105,8 @@ impl KeybindCaptureHandler {
                 let Some(target) = row_action(listen_id) else {
                     return false;
                 };
-                if self.place_key(target, key, bindings, on_binding_changed) {
-                    self.listening = None;
-                }
+                self.place_key(target, key, bindings, on_binding_changed);
+                self.listening = None;
                 return true;
             }
         }
