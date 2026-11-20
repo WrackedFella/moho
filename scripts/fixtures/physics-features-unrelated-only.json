@@ -1,0 +1,10 @@
+{
+  "packages": [
+    {"name": "other", "version": "0.1.0", "id": "registry+https://github.com/rust-lang/crates.io-index#other@0.1.0"}
+  ],
+  "resolve": {
+    "nodes": [
+      {"id": "registry+https://github.com/rust-lang/crates.io-index#other@0.1.0", "features": []}
+    ]
+  }
+}

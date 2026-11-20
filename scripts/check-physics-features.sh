@@ -8,7 +8,7 @@ set -euo pipefail
 
 filter='
     (.packages | map({key: .id, value: .name}) | from_entries) as $name
-    | .resolve.nodes as $nodes
+    | (.resolve.nodes // []) as $nodes
     | ["rapier3d", "parry3d"][] as $crate
     | [$nodes[] | select($name[.id] == $crate)] as $copies
     | select(

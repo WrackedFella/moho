@@ -56,6 +56,10 @@ deny:
     check reject physics-features-no-rapier rapier3d
     check reject physics-features-no-parry parry3d
     check reject physics-features-second-parry parry3d
+    check reject physics-features-unrelated-only rapier3d
+    check reject physics-features-no-features-key rapier3d
+    check reject physics-features-null-resolve rapier3d
+    check reject physics-features-extra-suffix rapier3d
     check accept physics-features-good ''
     scripts/check-physics-features.sh
 
