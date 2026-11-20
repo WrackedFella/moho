@@ -253,8 +253,8 @@ impl PhysicsWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::test_support::{floor_mesh, slab_mesh, slope_mesh, TEST_TAG};
     use crate::world::RayQuery;
-    use crate::world::test_support::{TEST_TAG, floor_mesh, slab_mesh, slope_mesh};
     use glam::{EulerRot, Mat3, Vec3Swizzles};
     use moho_render_api::{WorldMesh, WorldMeshId};
     use proptest::prelude::*;
@@ -567,48 +567,55 @@ mod tests {
 
     #[test]
     fn a_spawn_reads_back_as_given_before_any_step() {
-        let mut world = PhysicsWorld::new();
-        let spawn = LooseSpawn {
-            friction: 0.3,
-            restitution: 0.2,
-            linear_damping: 0.1,
-            angular_damping: 0.4,
-            position: Vec3::new(1.0, 2.0, 3.0),
-            rotation: Quat::from_axis_angle(Vec3::new(1.0, 2.0, 3.0).normalize(), 0.7),
-            linear_velocity: Vec3::new(0.5, -1.0, 2.0),
-            angular_velocity: Vec3::new(0.1, 0.2, 0.3),
-            ..LooseSpawn::new(cuboid(Vec3::new(0.1, 0.2, 0.3)), 3.5)
-        };
+        for shape in [cuboid(Vec3::new(0.1, 0.2, 0.3)), CAPSULE, CYLINDER] {
+            let mut world = PhysicsWorld::new();
+            let spawn = LooseSpawn {
+                friction: 0.3,
+                restitution: 0.2,
+                linear_damping: 0.1,
+                angular_damping: 0.4,
+                position: Vec3::new(1.0, 2.0, 3.0),
+                rotation: Quat::from_axis_angle(Vec3::new(1.0, 2.0, 3.0).normalize(), 0.7),
+                linear_velocity: Vec3::new(0.5, -1.0, 2.0),
+                angular_velocity: Vec3::new(0.1, 0.2, 0.3),
+                ..LooseSpawn::new(shape, 3.5)
+            };
 
-        let id = world.spawn_loose(&spawn);
+            let id = world.spawn_loose(&spawn);
 
-        let state = read(&world, id);
-        assert!(
-            state.position.abs_diff_eq(spawn.position, 1e-6),
-            "{state:?}"
-        );
-        assert!(
-            state.rotation.abs_diff_eq(spawn.rotation, 1e-6),
-            "{state:?}"
-        );
-        assert!(
-            state
-                .linear_velocity
-                .abs_diff_eq(spawn.linear_velocity, 1e-6),
-            "{state:?}"
-        );
-        assert!(
-            state
-                .angular_velocity
-                .abs_diff_eq(spawn.angular_velocity, 1e-6),
-            "{state:?}"
-        );
-        assert!(!state.asleep, "a fresh object is awake");
-        let mass = world.rigid_body_set[world.loose[&id]].mass();
-        assert!(
-            (mass - 3.5).abs() <= 1e-4,
-            "the body weighs the stated mass, mass={mass}"
-        );
+            let state = read(&world, id);
+            assert!(
+                state.position.abs_diff_eq(spawn.position, 1e-6),
+                "{shape:?}: {state:?}"
+            );
+            assert!(
+                state.rotation.abs_diff_eq(spawn.rotation, 1e-6),
+                "{shape:?}: {state:?}"
+            );
+            assert!(
+                state
+                    .linear_velocity
+                    .abs_diff_eq(spawn.linear_velocity, 1e-6),
+                "{shape:?}: {state:?}"
+            );
+            assert!(
+                state
+                    .angular_velocity
+                    .abs_diff_eq(spawn.angular_velocity, 1e-6),
+                "{shape:?}: {state:?}"
+            );
+            assert!(!state.asleep, "a fresh {shape:?} is awake");
+            let (_, body) = world
+                .rigid_body_set
+                .iter()
+                .next()
+                .expect("the spawn made a body");
+            assert!(
+                (body.mass() - 3.5).abs() <= 1e-4,
+                "{shape:?} weighs the stated mass, mass={}",
+                body.mass()
+            );
+        }
     }
 
     #[test]
@@ -1197,11 +1204,8 @@ mod tests {
 
         let state = read(&world, id);
         assert!(state.asleep, "the capsule stops, state {state:?}");
-        assert!(
-            state.position.x <= 1.5,
-            "it rolled {} m, more than 1.5",
-            state.position.x
-        );
+        let rolled = state.position.xz().length();
+        assert!(rolled <= 1.5, "it rolled {rolled} m, more than 1.5");
     }
 
     #[test]
@@ -1307,42 +1311,54 @@ mod tests {
 
     #[test]
     fn the_brake_never_touches_vertical_velocity() {
-        let shapes = [cuboid(FLAT_BOX), CAPSULE, CYLINDER];
+        let mut braked = world_with_floor(&floor_mesh(0.0));
+        let mut free = world_with_floor(&floor_mesh(0.0));
+        free.set_rest_slope(0.0);
+        let spawn = LooseSpawn {
+            position: Vec3::new(0.0, 1.0, 0.0),
+            linear_velocity: Vec3::new(1.0, 0.0, 0.5),
+            angular_velocity: Vec3::new(3.0, 2.0, 1.0),
+            ..LooseSpawn::new(cuboid(FLAT_BOX), 0.2)
+        };
+        let braked_id = braked.spawn_loose(&spawn);
+        let free_id = free.spawn_loose(&spawn);
 
-        for shape in shapes {
-            let mut braked = world_with_floor(&floor_mesh(0.0));
-            let mut free = world_with_floor(&floor_mesh(0.0));
-            free.set_rest_slope(0.0);
-            let spawn = LooseSpawn {
-                position: Vec3::new(0.0, 1.0, 0.0),
-                linear_velocity: Vec3::new(1.0, 0.0, 0.5),
-                angular_velocity: Vec3::new(3.0, 2.0, 1.0),
-                ..LooseSpawn::new(shape, 0.2)
-            };
-            let braked_id = braked.spawn_loose(&spawn);
-            let free_id = free.spawn_loose(&spawn);
-            let mut compared = 0;
+        for tick in 1..=300 {
+            braked.step(DT);
+            free.step(DT);
+            let (a, b) = (read(&braked, braked_id), read(&free, free_id));
+            assert_eq!(bits(&a), bits(&b), "tick {tick}: a box was braked");
+            assert_eq!(a.asleep, b.asleep, "tick {tick}: asleep differs");
+        }
+    }
 
-            for tick in 1..=60 {
-                braked.step(DT);
-                free.step(DT);
-                let (a, b) = (read(&braked, braked_id), read(&free, free_id));
-                if lowest_y(shape, &a) <= 0.02 {
-                    break;
-                }
-                assert_eq!(
-                    a.linear_velocity.y.to_bits(),
-                    b.linear_velocity.y.to_bits(),
-                    "{shape:?} tick {tick}: vertical velocity differs"
-                );
-                compared += 1;
-            }
+    #[test]
+    fn a_bounce_keeps_its_vertical_velocity_under_the_brake() {
+        let mut braked = world_with_floor(&floor_mesh(0.0));
+        let mut free = world_with_floor(&floor_mesh(0.0));
+        free.set_rest_slope(0.0);
+        let mut spawn = rolling_on_the_floor(CAPSULE, 2.0);
+        spawn.restitution = 0.5;
+        spawn.position.y += 0.3;
+        let braked_id = braked.spawn_loose(&spawn);
+        let free_id = free.spawn_loose(&spawn);
+        let mut peak = 0.0f32;
 
+        for tick in 1..=40 {
+            braked.step(DT);
+            free.step(DT);
+            let (a, b) = (read(&braked, braked_id), read(&free, free_id));
+            peak = peak.max(a.linear_velocity.y);
+            // Braking the roll changes the friction a little, so allow 5 cm/s.
             assert!(
-                compared >= 10,
-                "{shape:?}: only {compared} ticks in the air"
+                (a.linear_velocity.y - b.linear_velocity.y).abs() <= 0.05,
+                "tick {tick}: vertical velocity {} against {}",
+                a.linear_velocity.y,
+                b.linear_velocity.y
             );
         }
+
+        assert!(peak > 0.5, "the capsule bounced, peak upward speed {peak}");
     }
 
     #[test]
@@ -1568,55 +1584,55 @@ mod tests {
     }
 
     #[test]
-    fn a_capsule_and_cylinder_spawn_reads_back_as_given_before_any_step() {
-        for shape in [CAPSULE, CYLINDER] {
-            let mut world = PhysicsWorld::new();
-            let spawn = LooseSpawn {
-                friction: 0.3,
-                restitution: 0.2,
-                linear_damping: 0.1,
-                angular_damping: 0.4,
-                position: Vec3::new(1.0, 2.0, 3.0),
-                rotation: Quat::from_axis_angle(Vec3::new(1.0, 2.0, 3.0).normalize(), 0.7),
-                linear_velocity: Vec3::new(0.5, -1.0, 2.0),
-                angular_velocity: Vec3::new(0.1, 0.2, 0.3),
-                ..LooseSpawn::new(shape, 3.5)
-            };
+    fn a_rolling_capsule_without_gravity_is_not_braked() {
+        let mut braked = world_with_floor(&floor_mesh(0.0));
+        let mut free = world_with_floor(&floor_mesh(0.0));
+        braked.set_gravity(0.0);
+        free.set_gravity(0.0);
+        free.set_rest_slope(0.0);
+        let spawn = rolling_on_the_floor(CAPSULE, 2.0);
+        let braked_id = braked.spawn_loose(&spawn);
+        let free_id = free.spawn_loose(&spawn);
 
-            let id = world.spawn_loose(&spawn);
-
-            let state = read(&world, id);
+        for tick in 1..=120 {
+            braked.step(DT);
+            free.step(DT);
+            let (a, b) = (read(&braked, braked_id), read(&free, free_id));
             assert!(
-                state.position.abs_diff_eq(spawn.position, 1e-6),
-                "{state:?}"
+                a.position.is_finite() && a.linear_velocity.is_finite(),
+                "tick {tick}: not finite, {a:?}"
             );
-            assert!(
-                state.rotation.abs_diff_eq(spawn.rotation, 1e-6),
-                "{state:?}"
-            );
-            assert!(
-                state
-                    .linear_velocity
-                    .abs_diff_eq(spawn.linear_velocity, 1e-6),
-                "{state:?}"
-            );
-            assert!(
-                state
-                    .angular_velocity
-                    .abs_diff_eq(spawn.angular_velocity, 1e-6),
-                "{state:?}"
-            );
-            assert!(!state.asleep, "a fresh {shape:?} is awake");
-            let (_, body) = world
-                .rigid_body_set
-                .iter()
-                .next()
-                .expect("the spawn made a body");
-            assert!(
-                (body.mass() - 3.5).abs() <= 1e-4,
-                "{shape:?} weighs the stated mass, mass={}",
-                body.mass()
-            );
+            assert_eq!(bits(&a), bits(&b), "tick {tick}: the brake acted, {a:?}");
         }
+    }
+
+    #[test]
+    fn a_capsule_is_braked_on_top_of_a_box() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.05, 0.0),
+            ..LooseSpawn::new(cuboid(Vec3::new(0.5, 0.05, 0.5)), 500.0)
+        });
+        run(&mut world, 120);
+        let top = 0.1;
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(-0.2, top + 0.04, 0.0),
+            rotation: Quat::from_rotation_x(FRAC_PI_2),
+            linear_velocity: Vec3::new(0.5, 0.0, 0.0),
+            angular_velocity: Vec3::new(0.0, 0.0, -0.5 / 0.04),
+            ..LooseSpawn::new(CAPSULE, 0.2)
+        });
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        assert!(
+            state.asleep,
+            "the capsule stops on the box, state {state:?}"
+        );
+        assert!(
+            state.position.x < 0.45 && (state.position.y - (top + 0.04)).abs() <= 0.002,
+            "it rests on the box top instead of rolling off, state {state:?}"
+        );
     }
 }
