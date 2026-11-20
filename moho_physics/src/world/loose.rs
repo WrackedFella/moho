@@ -64,7 +64,6 @@ const DEEP_CONTACT: f32 = 0.005;
 /// What the world keeps per loose object: its body, and the radius it rolls on if it rolls.
 pub(super) struct Loose {
     pub(super) body: RigidBodyHandle,
-    /// The radius of a capsule or cylinder; `None` for a box, which does not roll.
     roll_radius: Option<f32>,
 }
 
@@ -239,7 +238,6 @@ impl PhysicsWorld {
         self.rest_slope = slope;
     }
 
-    /// The rest slope in radians.
     pub fn rest_slope(&self) -> f32 {
         self.rest_slope
     }
