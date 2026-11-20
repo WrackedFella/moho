@@ -19,8 +19,8 @@ impl LooseId {
 /// Steepest ground, radians from level, on which loose objects are braked to rest by default.
 pub(super) const DEFAULT_REST_SLOPE: f32 = 5.0 * std::f32::consts::PI / 180.0;
 
-/// Penetration, metres, past which a contact is being pushed apart and the brake leaves the
-/// body alone, so the overlap is not frozen.
+/// Penetration, metres, past which a non-flat contact is being pushed apart and the brake
+/// leaves the body alone, so the overlap is not frozen.
 const DEEP_CONTACT: f32 = 0.005;
 
 /// A loose body and what the brake needs to know about its shape.
@@ -229,8 +229,10 @@ impl PhysicsWorld {
     ///
     /// Cuts the spin about the shape's axis and the velocity along `axis x up` at matching
     /// rates, so a rolling body stays rolling while it slows and both reach zero together. Skips
-    /// a body with a contact point deeper than [`DEEP_CONTACT`], so the solver can still
-    /// separate overlapping bodies. Never wakes a sleeping body.
+    /// a body with a non-flat contact point deeper than [`DEEP_CONTACT`], so the solver can
+    /// still separate overlapping bodies; a flat contact is exempt because the brake changes
+    /// no velocity along the normal and soft contacts rest about 5 mm deep on a box top. Never
+    /// wakes a sleeping body.
     pub(super) fn brake_rolling(&mut self, dt: f32) {
         let Some(up) = (-self.gravity).try_normalize() else {
             return;
@@ -265,7 +267,7 @@ impl PhysicsWorld {
                         };
                         let flat = into_body.dot(up) >= min_cos;
                         for point in &manifold.points {
-                            too_deep |= -point.dist > DEEP_CONTACT;
+                            too_deep |= !flat && -point.dist > DEEP_CONTACT;
                             on_ground |= flat && point.dist <= 0.0;
                         }
                     }
@@ -1585,6 +1587,170 @@ mod tests {
             }
             let overlap = deepest_pair_overlap(&world);
             assert!(overlap <= 0.005, "seed {seed}: pair overlap {overlap}");
+        }
+    }
+
+    /// Two floor worlds, one with the default rest slope and one with the brake off, each
+    /// holding `spawn`.
+    fn braked_and_free(spawn: &LooseSpawn) -> ((PhysicsWorld, LooseId), (PhysicsWorld, LooseId)) {
+        let mut braked = world_with_floor(&floor_mesh(0.0));
+        let mut free = world_with_floor(&floor_mesh(0.0));
+        free.set_rest_slope(0.0);
+        let braked_id = braked.spawn_loose(spawn);
+        let free_id = free.spawn_loose(spawn);
+        ((braked, braked_id), (free, free_id))
+    }
+
+    fn assert_bit_equal_every_tick(
+        braked: &mut (PhysicsWorld, LooseId),
+        free: &mut (PhysicsWorld, LooseId),
+        ticks: u32,
+    ) {
+        for tick in 1..=ticks {
+            braked.0.step(DT);
+            free.0.step(DT);
+            let (b, f) = (read(&braked.0, braked.1), read(&free.0, free.1));
+            assert_eq!(bits(&b), bits(&f), "tick {tick}: state bits differ");
+            assert_eq!(b.asleep, f.asleep, "tick {tick}: asleep differs");
+        }
+    }
+
+    #[test]
+    fn a_box_is_not_braked() {
+        let spawn = LooseSpawn {
+            position: Vec3::new(0.0, FLAT_BOX.y, 0.0),
+            linear_velocity: Vec3::new(2.0, 0.0, 1.0),
+            angular_velocity: Vec3::new(0.0, 3.0, 0.0),
+            ..LooseSpawn::new(FLAT_BOX_SHAPE, 0.2)
+        };
+        let (mut braked, mut free) = braked_and_free(&spawn);
+
+        assert_bit_equal_every_tick(&mut braked, &mut free, 120);
+
+        let slid = read(&braked.0, braked.1).position.x;
+        assert!(slid > 0.1, "the box slid, x={slid}");
+    }
+
+    #[test]
+    fn a_capsule_on_a_loose_box_is_braked() {
+        let platform = LooseSpawn {
+            position: Vec3::new(0.0, 0.1, 0.0),
+            ..LooseSpawn::new(cuboid(Vec3::new(1.5, 0.1, 1.5)), 200.0)
+        };
+        let capsule = LooseSpawn {
+            position: Vec3::new(0.0, 0.2 + CAPSULE_RADIUS, -0.8),
+            ..rolling_spawn(CAPSULE, CAPSULE_RADIUS, 2.0)
+        };
+        let ground_speed = |world: &PhysicsWorld, id: LooseId| {
+            let velocity = read(world, id).linear_velocity;
+            Vec3::new(velocity.x, 0.0, velocity.z).length()
+        };
+        let setup = |rest_slope: f32| {
+            let mut world = world_with_floor(&floor_mesh(0.0));
+            world.set_rest_slope(rest_slope);
+            world.spawn_loose(&platform);
+            let id = world.spawn_loose(&capsule);
+            (world, id)
+        };
+        let (mut braked, braked_id) = setup(degrees(5.0));
+        let (mut free, free_id) = setup(0.0);
+
+        for tick in 1..=30 {
+            braked.step(DT);
+            free.step(DT);
+            let (b, f) = (
+                ground_speed(&braked, braked_id),
+                ground_speed(&free, free_id),
+            );
+            assert!(
+                b <= f + 1e-3,
+                "tick {tick}: braked speed {b} above free speed {f}"
+            );
+        }
+
+        let (b, f) = (
+            ground_speed(&braked, braked_id),
+            ground_speed(&free, free_id),
+        );
+        assert!(
+            b < f - 0.3,
+            "after 30 ticks on the box: braked {b}, free {f}"
+        );
+    }
+
+    /// Spawns a rolling `shape` 3 cm into the top of a settled loose box, runs 300 ticks and
+    /// checks the two end within 5 mm of touching, both asleep.
+    fn assert_pressed_shape_is_pushed_out(name: &str, shape: LooseShape, radius: f32) {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let platform = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.1, 0.0),
+            ..LooseSpawn::new(cuboid(Vec3::new(1.0, 0.1, 1.0)), 20.0)
+        });
+        run(&mut world, 120);
+        assert!(
+            read(&world, platform).asleep,
+            "{name}: the box settles first"
+        );
+        let rider = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.2 + radius - 0.03, -0.8),
+            ..rolling_spawn(shape, radius, 2.0)
+        });
+
+        run(&mut world, 300);
+
+        let (box_state, rider_state) = (read(&world, platform), read(&world, rider));
+        assert!(
+            box_state.asleep && rider_state.asleep,
+            "{name}: both sleep, {box_state:?} {rider_state:?}"
+        );
+        let overlap = deepest_pair_overlap(&world);
+        assert!(overlap <= 0.005, "{name}: ends {overlap} m into the box");
+    }
+
+    #[test]
+    fn a_capsule_pressed_into_a_box_top_is_pushed_out() {
+        assert_pressed_shape_is_pushed_out("capsule", CAPSULE, CAPSULE_RADIUS);
+    }
+
+    #[test]
+    fn a_cylinder_pressed_into_a_box_top_is_pushed_out() {
+        assert_pressed_shape_is_pushed_out("cylinder", CYLINDER, CYLINDER_RADIUS);
+    }
+
+    #[test]
+    fn zero_gravity_means_no_brake() {
+        let spawn = rolling_spawn(CAPSULE, CAPSULE_RADIUS, 2.0);
+        let (mut braked, mut free) = braked_and_free(&spawn);
+        braked.0.set_gravity(0.0);
+        free.0.set_gravity(0.0);
+
+        assert_bit_equal_every_tick(&mut braked, &mut free, 60);
+
+        let state = read(&braked.0, braked.1);
+        assert!(
+            state.linear_velocity.is_finite() && state.angular_velocity.is_finite(),
+            "{state:?}"
+        );
+        assert!(
+            state.linear_velocity.z > 1.9,
+            "the capsule keeps rolling, {state:?}"
+        );
+    }
+
+    #[test]
+    fn a_sleeping_capsule_stays_asleep() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&rolling_spawn(CAPSULE, CAPSULE_RADIUS, 2.0));
+        run(&mut world, 300);
+        let mut previous = read(&world, id);
+        assert!(previous.asleep, "the capsule sleeps first, {previous:?}");
+
+        for tick in 1..=120 {
+            world.step(DT);
+            let state = read(&world, id);
+            assert!(state.asleep, "tick {tick}: woke, {state:?}");
+            assert_eq!(bits(&state), bits(&previous), "tick {tick}: state moved");
+            previous = state;
         }
     }
 
