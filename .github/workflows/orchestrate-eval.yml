@@ -16,6 +16,10 @@ name: Orchestrate eval
 # eval/<label>/ branch gets one more dry run, which measures how often the review's
 # verdict flips on the same head. Delete eval/ branches once a set is scored.
 #
+# With intake_only on, each replay stops after step 1's conformance check, which measures
+# intake pauses alone. devflow_ref loads devflow from a claude-skills branch or SHA instead
+# of main, so an unmerged change can be measured.
+#
 # A replay the subscription's usage limit cuts off is recorded with `limited: true`, gets
 # no review, and is not scored. The Resume job waits for the limit to reset and dispatches
 # those replays again under `<label>-a<attempt>`, at most twice.
@@ -50,6 +54,13 @@ on:
         description: Replay nothing; dispatch one more review dry run on each eval/<label>/ branch
         type: boolean
         default: false
+      intake_only:
+        description: Stop each replay after step 1's conformance check (measures intake pauses; no branch, gate or review)
+        type: boolean
+        default: false
+      devflow_ref:
+        description: claude-skills branch or SHA to load devflow from (empty for the marketplace's main)
+        required: false
 
 permissions:
   contents: write
@@ -158,6 +169,21 @@ jobs:
           git fetch origin "eval-base/$ID:refs/remotes/origin/eval-base/$ID"
           echo "MODEL_ARG=$([ '${{ inputs.model }}' = default ] || echo '--model ${{ inputs.model }}')" >> "$GITHUB_ENV"
           echo "BASE_DATE=$(git show -s --format=%cI "$BASE_SHA")" >> "$GITHUB_ENV"
+      # An unmerged devflow change is measured from a clone loaded with --plugin-dir, so a
+      # set never needs a merge into claude-skills main before it is scored.
+      - name: Devflow source
+        env:
+          DEVFLOW_REF: ${{ inputs.devflow_ref }}
+        run: |
+          if [ -z "$DEVFLOW_REF" ]; then
+            echo "DEVFLOW_MARKETPLACE=https://github.com/WrackedFella/claude-skills.git" >> "$GITHUB_ENV"
+            echo "DEVFLOW_PLUGIN=devflow@claude-skills" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          [[ $DEVFLOW_REF =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "::error::bad devflow_ref"; exit 1; }
+          git clone -q https://github.com/WrackedFella/claude-skills.git "$RUNNER_TEMP/claude-skills"
+          git -C "$RUNNER_TEMP/claude-skills" checkout -q "$DEVFLOW_REF"
+          echo "PLUGIN_ARG=--plugin-dir $RUNNER_TEMP/claude-skills/plugins/devflow" >> "$GITHUB_ENV"
       - name: Install toolchain
         run: |
           bash scripts/cloud-tools.sh --force
@@ -180,8 +206,8 @@ jobs:
           # The job's own token, not the Claude App's: it can push branches but has read-only
           # issues and pull requests, so no tracker write is possible whatever the agent runs.
           github_token: ${{ github.token }}
-          plugin_marketplaces: https://github.com/WrackedFella/claude-skills.git
-          plugins: devflow@claude-skills
+          plugin_marketplaces: ${{ env.DEVFLOW_MARKETPLACE }}
+          plugins: ${{ env.DEVFLOW_PLUGIN }}
           display_report: true
           # The Resume job redispatches cut-off replays as github-actions[bot]; only a
           # workflow in this repository or a writer can dispatch, so allow that bot.
@@ -191,10 +217,11 @@ jobs:
           # enforced, not only requested.
           claude_args: |
             ${{ env.MODEL_ARG }}
+            ${{ env.PLUGIN_ARG }}
             --max-turns 200
-            --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never end your turn with a status message: after a skill or subagent returns, continue with the next step. EVAL REPLAY: this run replays a closed work item to measure the workflow, and nothing it does may reach the tracker. Overrides to the orchestrate skill: the item counts as ready although its issue is closed. Its base branch is origin/eval-base/${{ env.ID }} (MOHO_BASE is set to it); use it wherever the skill names the base branch. Ignore every existing branch and pull request for the item and create the work branch ${{ env.BRANCH }} from that base. Never comment on, label or edit the issue. The replay starts at ${{ env.BASE_DATE }}: issues, pull requests and comments created after that did not exist yet, so ignore them wherever you or a subagent read the tracker, and put this sentence in every subagent brief. The board is unreachable: treat it as board exit 5. Skip step 9's full-platform CI run and say so in the report. Open no pull request: at step 12 commit and push to the work branch, then end with the final report. Where the skill would pause, start the final report with the line 'Paused: needs a human answer', then the numbered questions, and stop."
+            --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never end your turn with a status message: after a skill or subagent returns, continue with the next step. EVAL REPLAY: this run replays a closed work item to measure the workflow, and nothing it does may reach the tracker. Overrides to the orchestrate skill: the item counts as ready although its issue is closed. Its base branch is origin/eval-base/${{ env.ID }} (MOHO_BASE is set to it); use it wherever the skill names the base branch. Ignore every existing branch and pull request for the item and create the work branch ${{ env.BRANCH }} from that base. Never comment on, label or edit the issue. The replay starts at ${{ env.BASE_DATE }}: issues, pull requests and comments created after that did not exist yet, so ignore them wherever you or a subagent read the tracker, and put this sentence in every subagent brief. The board is unreachable: treat it as board exit 5. Skip step 9's full-platform CI run and say so in the report. Open no pull request: at step 12 commit and push to the work branch, then end with the final report. Where the skill would pause, start the final report with the line 'Paused: needs a human answer', then the numbered questions, and stop.${{ inputs.intake_only && ' INTAKE ONLY: this replay measures step 1 alone. Skip the claim and the environment setup command, run step 1 through its conformance check, then end the run without starting step 2 and without pushing. If the check pauses, end as a pause above; otherwise start the final report with the line Intake: proceed, then the unconfirmed findings it reported, if any. The Stop hook will name steps 2 to 11 as missing: this override exempts them, so say so and stop.' || '' }}"
             --add-dir /home/runner/.claude/plugins/cache /tmp
-            --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue view:*),Bash(gh api:*),Bash(gh run list:*),Bash(gh run view:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(rg:*),Bash(grep:*),Bash(jq:*),Bash(mkdir:*),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/pr-facts *),Edit,Write,Task,Skill"
+            --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue view:*),Bash(gh api:*),Bash(gh run list:*),Bash(gh run view:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(rg:*),Bash(grep:*),Bash(jq:*),Bash(mkdir:*),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/pr-facts *),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/intake-agree *),Bash(/home/runner/work/_temp/claude-skills/plugins/devflow/scripts/pr-facts *),Bash(/home/runner/work/_temp/claude-skills/plugins/devflow/scripts/intake-agree *),Edit,Write,Task,Skill"
       - name: Score
         if: always()
         env:
@@ -253,7 +280,7 @@ jobs:
           if [ -f "$EXECUTION_FILE" ]; then
             usage=$(STEP=orchestrate-eval HEAD_SHA="$head" "$RUNNER_TEMP/review-usage.sh" record "$EXECUTION_FILE")
             # The plugin's own copy, so the score matches the Stop hook the run had.
-            step_check=$(find "$HOME/.claude/plugins" -path '*devflow*/scripts/step-check' -type f 2>/dev/null | head -n1)
+            step_check=$(find "$HOME/.claude/plugins" "$RUNNER_TEMP/claude-skills/plugins" -path '*devflow*/scripts/step-check' -type f 2>/dev/null | head -n1)
             if [ -n "$step_check" ]; then
               steps=$(git show "$GITHUB_SHA:CLAUDE.md" > "$RUNNER_TEMP/CLAUDE.md" \
                 && bash "$step_check" --claude-md "$RUNNER_TEMP/CLAUDE.md" "$EXECUTION_FILE" || true)
@@ -333,4 +360,5 @@ jobs:
           sleep "$wait"
           gh workflow run orchestrate-eval.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
             -f label="${LABEL%-a[0-9]*}-a$((ATTEMPT + 1))" -f replays="$replays" \
-            -f model='${{ inputs.model }}' -f review='${{ inputs.review }}' -f attempt="$((ATTEMPT + 1))"
+            -f model='${{ inputs.model }}' -f review='${{ inputs.review }}' -f attempt="$((ATTEMPT + 1))" \
+            -f intake_only='${{ inputs.intake_only }}' -f devflow_ref='${{ inputs.devflow_ref }}'
