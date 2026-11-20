@@ -1905,4 +1905,56 @@ mod tests {
             "{state:?}"
         );
     }
+
+    #[test]
+    fn an_upright_spinning_cylinder_stays_finite_and_rests() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.08 + 0.05, 0.0),
+            linear_velocity: Vec3::X,
+            angular_velocity: Vec3::new(0.0, 10.0, 0.0),
+            ..LooseSpawn::new(CYLINDER, 0.2)
+        });
+
+        for tick in 1..=300 {
+            world.step(DT);
+            let state = read(&world, id);
+            assert!(
+                state.position.is_finite()
+                    && state.rotation.is_finite()
+                    && state.linear_velocity.is_finite()
+                    && state.angular_velocity.is_finite(),
+                "tick {tick}: non-finite state {state:?}"
+            );
+        }
+
+        let state = read(&world, id);
+        assert!(state.asleep, "the cylinder sleeps, {state:?}");
+        // Sliding at 1 m/s tips the cylinder onto its side with or without the brake, so it
+        // may end standing (half height) or lying (radius); anywhere else it is stuck or sunk.
+        let standing = (state.position.y - 0.08).abs() <= 0.001;
+        let lying_down = (state.position.y - 0.05).abs() <= 0.001;
+        assert!(
+            standing || lying_down,
+            "it rests on an end or its side, {state:?}"
+        );
+    }
+
+    #[test]
+    fn the_brake_follows_a_tilted_axis() {
+        let (world, spawn) = slope_setup(CAPSULE, CAPSULE_RADIUS, 2.0);
+        let spawn = LooseSpawn {
+            rotation: Quat::from_rotation_y(std::f32::consts::FRAC_PI_4) * lying(),
+            ..spawn
+        };
+        let mut world = world;
+        let id = world.spawn_loose(&spawn);
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        let moved = (state.position - spawn.position).length();
+        assert!(moved < 0.02, "moved {moved}, expected under 2 cm");
+        assert!(state.asleep, "the capsule sleeps, {state:?}");
+    }
 }
