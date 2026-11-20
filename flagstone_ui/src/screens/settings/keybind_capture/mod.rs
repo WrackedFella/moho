@@ -335,6 +335,67 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_conflict_ends_listening_and_later_modifiers_bind_nothing() {
+        const CTRL: u8 = 1;
+        const ALT: u8 = 4;
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry(); // Descend holds Ctrl
+        let mut changed = vec![];
+        handler.start_listening(0);
+
+        let raised = handler.capture_modifier_if_listening(CTRL, &bindings, |a, b| {
+            changed.push((a, b));
+        });
+
+        assert!(raised);
+        assert!(!handler.is_listening());
+        assert_eq!(
+            handler.take_conflict_modal(),
+            Some(("Move Down".to_string(), "Ctrl".to_string()))
+        );
+        let released = handler.capture_modifier_if_listening(0, &bindings, |a, b| {
+            changed.push((a, b));
+        });
+        let stray = handler.capture_modifier_if_listening(ALT, &bindings, |a, b| {
+            changed.push((a, b));
+        });
+        assert!(!released);
+        assert!(!stray);
+        assert!(changed.is_empty());
+    }
+
+    #[test]
+    fn rearming_after_cancel_raises_the_prompt_again() {
+        const SHIFT: u8 = 2;
+        const ALT: u8 = 4;
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry(); // Sprint holds Shift
+        let mut changed = vec![];
+        handler.start_listening(0);
+        handler.capture_modifier_if_listening(SHIFT, &bindings, |a, b| changed.push((a, b)));
+        assert!(!handler.is_listening());
+        handler.cancel_pending_binding();
+
+        handler.start_listening(0);
+        let raised =
+            handler.capture_modifier_if_listening(SHIFT, &bindings, |a, b| changed.push((a, b)));
+
+        assert!(raised);
+        assert!(!handler.is_listening());
+        assert_eq!(
+            handler.take_conflict_modal(),
+            Some(("Sprint".to_string(), "Shift".to_string()))
+        );
+        let released =
+            handler.capture_modifier_if_listening(0, &bindings, |a, b| changed.push((a, b)));
+        let stray =
+            handler.capture_modifier_if_listening(ALT, &bindings, |a, b| changed.push((a, b)));
+        assert!(!released);
+        assert!(!stray);
+        assert!(changed.is_empty());
+    }
+
+    #[test]
     fn modifier_multiple_mods_ignored() {
         let mut handler = KeybindCaptureHandler::new();
         let bindings = registry();
