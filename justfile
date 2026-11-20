@@ -47,6 +47,8 @@ physics-features-test:
     just="{{replace(just_executable(), '\', '/')}}"
     "$just" _physics-features-rejects physics-features-rapier-missing rapier3d parry3d
     "$just" _physics-features-rejects physics-features-parry-missing parry3d rapier3d
+    "$just" _physics-features-rejects physics-features-parry-absent parry3d rapier3d
+    "$just" _physics-features-rejects physics-features-rapier-two-versions rapier3d parry3d
     "$just" _physics-features-accepts physics-features-good
     echo "physics-features: OK"
 
