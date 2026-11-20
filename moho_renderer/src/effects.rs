@@ -1643,4 +1643,34 @@ mod tests {
         assert!(rig.frame(EYE).is_empty());
         assert_eq!(rig.effects.live(), 0);
     }
+
+    #[test]
+    fn a_non_finite_roll_draws_nothing() {
+        let mut rig = Rig::new();
+        rig.effects
+            .flash(Vec3::X, 0.5, flash_style(0.3, Duration::from_secs(10)));
+        rig.effects.mark(
+            Vec3::X,
+            Vec3::Z,
+            0.5,
+            mark_style(0.2, Duration::from_secs(10), ms(500)),
+        );
+        assert_eq!(rig.frame(EYE).len(), 2, "a finite roll draws");
+
+        for roll in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut rig = Rig::new();
+            rig.effects
+                .flash(Vec3::X, roll, flash_style(0.3, Duration::from_secs(10)));
+            assert!(rig.frame(EYE).is_empty(), "flash roll {roll}");
+
+            let mut rig = Rig::new();
+            rig.effects.mark(
+                Vec3::X,
+                Vec3::Z,
+                roll,
+                mark_style(0.2, Duration::from_secs(10), ms(500)),
+            );
+            assert!(rig.frame(EYE).is_empty(), "mark roll {roll}");
+        }
+    }
 }
