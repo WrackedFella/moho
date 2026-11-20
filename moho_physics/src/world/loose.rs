@@ -16,11 +16,56 @@ impl LooseId {
     }
 }
 
+/// Steepest ground, radians from level, on which loose objects are braked to rest by default.
+pub(super) const DEFAULT_REST_SLOPE: f32 = 5.0 * std::f32::consts::PI / 180.0;
+
 /// The collision shape of a loose object.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LooseShape {
     /// A box centred on the body, `half_extents` m from the centre to each face.
     Box { half_extents: Vec3 },
+    /// A capsule along the body's local Y: a cylinder of `half_height` capped by hemispheres.
+    Capsule { half_height: f32, radius: f32 },
+    /// A cylinder along the body's local Y.
+    Cylinder { half_height: f32, radius: f32 },
+}
+
+impl LooseShape {
+    fn collider(self) -> ColliderBuilder {
+        match self {
+            Self::Box { half_extents } => {
+                ColliderBuilder::cuboid(half_extents.x, half_extents.y, half_extents.z)
+            }
+            Self::Capsule {
+                half_height,
+                radius,
+            } => ColliderBuilder::capsule_y(half_height, radius),
+            Self::Cylinder {
+                half_height,
+                radius,
+            } => ColliderBuilder::cylinder(half_height, radius),
+        }
+    }
+
+    fn assert_valid(self) {
+        match self {
+            Self::Box { half_extents } => assert!(
+                half_extents.is_finite() && half_extents.min_element() > 0.0,
+                "half extents must be positive and finite, got {half_extents}"
+            ),
+            Self::Capsule {
+                half_height,
+                radius,
+            }
+            | Self::Cylinder {
+                half_height,
+                radius,
+            } => assert!(
+                half_height.is_finite() && half_height > 0.0 && radius.is_finite() && radius > 0.0,
+                "half height and radius must be positive and finite, got {half_height} and {radius}"
+            ),
+        }
+    }
 }
 
 /// Everything a game states when it drops a loose object.
@@ -58,16 +103,12 @@ impl LooseSpawn {
 
     /// Panics on any field that would poison the simulation; see [`PhysicsWorld::spawn_loose`].
     fn assert_valid(&self) {
-        let LooseShape::Box { half_extents } = self.shape;
         assert!(
             self.mass.is_finite() && self.mass > 0.0,
             "mass must be positive and finite, got {}",
             self.mass
         );
-        assert!(
-            half_extents.is_finite() && half_extents.min_element() > 0.0,
-            "half extents must be positive and finite, got {half_extents}"
-        );
+        self.shape.assert_valid();
         assert!(
             self.linear_velocity.is_finite() && self.angular_velocity.is_finite(),
             "velocity must be finite, got linear {} and angular {}",
@@ -130,7 +171,6 @@ impl PhysicsWorld {
     /// more than 2e-4 from 1 (glam's `Quat::is_normalized`).
     pub fn spawn_loose(&mut self, spawn: &LooseSpawn) -> LooseId {
         spawn.assert_valid();
-        let LooseShape::Box { half_extents } = spawn.shape;
 
         let body = RigidBodyBuilder::dynamic()
             .pose(Pose::from_parts(spawn.position, spawn.rotation))
@@ -140,7 +180,9 @@ impl PhysicsWorld {
             .angular_damping(spawn.angular_damping)
             .build();
         let handle = self.rigid_body_set.insert(body);
-        let collider = ColliderBuilder::cuboid(half_extents.x, half_extents.y, half_extents.z)
+        let collider = spawn
+            .shape
+            .collider()
             .mass(spawn.mass)
             .friction(spawn.friction)
             .restitution(spawn.restitution)
@@ -152,6 +194,24 @@ impl PhysicsWorld {
         self.next_loose += 1;
         self.loose.insert(id, handle);
         id
+    }
+
+    /// Steepest ground, radians from level against gravity, on which loose objects are
+    /// braked to rest. 0 turns the brake off. Default 5°.
+    ///
+    /// # Panics
+    /// If `slope` is not finite or not in `[0, π/2)`.
+    pub fn set_rest_slope(&mut self, slope: f32) {
+        assert!(
+            slope.is_finite() && (0.0..std::f32::consts::FRAC_PI_2).contains(&slope),
+            "rest slope must be finite and in [0, pi/2), got {slope}"
+        );
+        self.rest_slope = slope;
+    }
+
+    /// The steepest ground, radians from level, on which loose objects are braked to rest.
+    pub fn rest_slope(&self) -> f32 {
+        self.rest_slope
     }
 
     /// The object's current state; `None` for an id never spawned or removed.
@@ -193,10 +253,11 @@ impl PhysicsWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::test_support::{floor_mesh, slab_mesh, TEST_TAG};
     use crate::world::RayQuery;
+    use crate::world::test_support::{TEST_TAG, floor_mesh, slab_mesh, slope_mesh};
     use moho_render_api::{WorldMesh, WorldMeshId};
     use proptest::prelude::*;
+    use rapier3d::prelude::ColliderHandle;
 
     const DT: f32 = 1.0 / 60.0;
 
@@ -503,6 +564,23 @@ mod tests {
 
     #[test]
     fn a_spawn_reads_back_as_given_before_any_step() {
+        let shapes = [
+            cuboid(Vec3::new(0.1, 0.2, 0.3)),
+            LooseShape::Capsule {
+                half_height: 0.2,
+                radius: 0.1,
+            },
+            LooseShape::Cylinder {
+                half_height: 0.2,
+                radius: 0.1,
+            },
+        ];
+        for shape in shapes {
+            assert_spawn_reads_back(shape);
+        }
+    }
+
+    fn assert_spawn_reads_back(shape: LooseShape) {
         let mut world = PhysicsWorld::new();
         let spawn = LooseSpawn {
             friction: 0.3,
@@ -513,7 +591,7 @@ mod tests {
             rotation: Quat::from_axis_angle(Vec3::new(1.0, 2.0, 3.0).normalize(), 0.7),
             linear_velocity: Vec3::new(0.5, -1.0, 2.0),
             angular_velocity: Vec3::new(0.1, 0.2, 0.3),
-            ..LooseSpawn::new(cuboid(Vec3::new(0.1, 0.2, 0.3)), 3.5)
+            ..LooseSpawn::new(shape, 3.5)
         };
 
         let id = world.spawn_loose(&spawn);
@@ -521,29 +599,29 @@ mod tests {
         let state = read(&world, id);
         assert!(
             state.position.abs_diff_eq(spawn.position, 1e-6),
-            "{state:?}"
+            "{shape:?}: {state:?}"
         );
         assert!(
             state.rotation.abs_diff_eq(spawn.rotation, 1e-6),
-            "{state:?}"
+            "{shape:?}: {state:?}"
         );
         assert!(
             state
                 .linear_velocity
                 .abs_diff_eq(spawn.linear_velocity, 1e-6),
-            "{state:?}"
+            "{shape:?}: {state:?}"
         );
         assert!(
             state
                 .angular_velocity
                 .abs_diff_eq(spawn.angular_velocity, 1e-6),
-            "{state:?}"
+            "{shape:?}: {state:?}"
         );
-        assert!(!state.asleep, "a fresh object is awake");
+        assert!(!state.asleep, "{shape:?}: a fresh object is awake");
         let mass = world.rigid_body_set[world.loose[&id]].mass();
         assert!(
             (mass - 3.5).abs() <= 1e-4,
-            "the body weighs the stated mass, mass={mass}"
+            "{shape:?}: the body weighs the stated mass, mass={mass}"
         );
     }
 
@@ -929,6 +1007,503 @@ mod tests {
             "the top box falls to the floor, y={}",
             state.position.y
         );
+    }
+
+    const CAPSULE: LooseShape = LooseShape::Capsule {
+        half_height: 0.1,
+        radius: 0.04,
+    };
+    const CAPSULE_RADIUS: f32 = 0.04;
+    const CYLINDER: LooseShape = LooseShape::Cylinder {
+        half_height: 0.08,
+        radius: 0.05,
+    };
+    const CYLINDER_RADIUS: f32 = 0.05;
+    const FLAT_BOX_SHAPE: LooseShape = LooseShape::Box {
+        half_extents: FLAT_BOX,
+    };
+
+    /// A deterministic generator so every run drops the same objects.
+    struct Seeded(u32);
+
+    impl Seeded {
+        fn new(seed: u32) -> Self {
+            Self(seed.wrapping_mul(2_654_435_761).wrapping_add(0x9E37_79B9) | 1)
+        }
+
+        fn unit(&mut self) -> f32 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 17;
+            self.0 ^= self.0 << 5;
+            (self.0 >> 8) as f32 / (1u32 << 24) as f32
+        }
+
+        fn range(&mut self, low: f32, high: f32) -> f32 {
+            low + (high - low) * self.unit()
+        }
+    }
+
+    /// The lowest point of the object's collider, from its bounding box.
+    fn bottom(world: &PhysicsWorld, id: LooseId) -> f32 {
+        let body = &world.rigid_body_set[world.loose[&id]];
+        let collider = body.colliders()[0];
+        world.collider_set[collider].compute_aabb().mins.y
+    }
+
+    /// Rotation that lays a shape's local Y along world X.
+    fn lying() -> Quat {
+        Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)
+    }
+
+    /// A shape of `radius` lying along X on level ground at y = 0, rolling along +Z at `speed`
+    /// without slipping.
+    fn rolling_spawn(shape: LooseShape, radius: f32, speed: f32) -> LooseSpawn {
+        LooseSpawn {
+            position: Vec3::new(0.0, radius, 0.0),
+            rotation: lying(),
+            linear_velocity: Vec3::new(0.0, 0.0, speed),
+            angular_velocity: Vec3::new(speed / radius, 0.0, 0.0),
+            ..LooseSpawn::new(shape, 0.2)
+        }
+    }
+
+    fn degrees(angle: f32) -> f32 {
+        angle.to_radians()
+    }
+
+    /// A world whose ground rises toward +Z at `angle` degrees, and a spawn of `shape` lying
+    /// across it (axis along X) at rest, touching the surface above z = 0.
+    fn slope_setup(shape: LooseShape, radius: f32, angle: f32) -> (PhysicsWorld, LooseSpawn) {
+        let rise = degrees(angle).tan();
+        let ground = slope_mesh(-10.0, 0.0, 10.0, 20.0 * rise);
+        let world = world_with_floor(&ground);
+        let normal = Vec3::new(0.0, degrees(angle).cos(), -degrees(angle).sin());
+        let spawn = LooseSpawn {
+            position: Vec3::new(0.0, 10.0 * rise, 0.0) + normal * radius,
+            rotation: lying(),
+            ..LooseSpawn::new(shape, 0.2)
+        };
+        (world, spawn)
+    }
+
+    #[test]
+    fn each_shape_comes_to_rest_asleep() {
+        for (name, shape) in [
+            ("box", FLAT_BOX_SHAPE),
+            ("capsule", CAPSULE),
+            ("cylinder", CYLINDER),
+        ] {
+            for seed in 0..8 {
+                let mut rng = Seeded::new(seed);
+                let mut world = world_with_floor(&floor_mesh(0.0));
+                let id = world.spawn_loose(&LooseSpawn {
+                    position: Vec3::new(0.0, 1.0, 0.0),
+                    angular_velocity: Vec3::new(
+                        rng.range(-20.0, 20.0),
+                        rng.range(-20.0, 20.0),
+                        rng.range(-20.0, 20.0),
+                    ),
+                    linear_velocity: Vec3::new(rng.range(-3.0, 3.0), 0.0, rng.range(-3.0, 3.0)),
+                    ..LooseSpawn::new(shape, 0.2)
+                });
+
+                run(&mut world, 300);
+
+                let state = read(&world, id);
+                assert!(state.asleep, "{name} seed {seed}: not asleep, {state:?}");
+                let low = bottom(&world, id);
+                assert!(
+                    low.abs() <= 0.001,
+                    "{name} seed {seed}: bottom is {low} from the floor"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_rolling_capsule_slows_every_tick_and_stops() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&rolling_spawn(CAPSULE, CAPSULE_RADIUS, 2.0));
+        let along_ground = |world: &PhysicsWorld| {
+            let velocity = read(world, id).linear_velocity;
+            Vec3::new(velocity.x, 0.0, velocity.z).length()
+        };
+        let mut previous = along_ground(&world);
+
+        for tick in 1..=300 {
+            world.step(DT);
+            let speed = along_ground(&world);
+            assert!(
+                speed <= previous + 5e-3,
+                "tick {tick}: speed rose from {previous} to {speed}"
+            );
+            previous = speed;
+        }
+
+        let state = read(&world, id);
+        assert!(state.asleep, "the capsule stops and sleeps, {state:?}");
+        assert!(
+            state.position.z <= 1.5,
+            "it rests within 1.5 m, z={}",
+            state.position.z
+        );
+        assert!(
+            state.position.z > 0.5,
+            "it rolled before stopping, z={}",
+            state.position.z
+        );
+    }
+
+    #[test]
+    fn the_rest_slope_decides() {
+        let rows = [
+            ("capsule", CAPSULE, CAPSULE_RADIUS, 2.0, true),
+            ("capsule", CAPSULE, CAPSULE_RADIUS, 4.9, true),
+            ("cylinder", CYLINDER, CYLINDER_RADIUS, 4.9, true),
+            ("capsule", CAPSULE, CAPSULE_RADIUS, 5.5, false),
+            ("cylinder", CYLINDER, CYLINDER_RADIUS, 10.0, false),
+        ];
+
+        for (name, shape, radius, angle, rests) in rows {
+            let (mut world, spawn) = slope_setup(shape, radius, angle);
+            let id = world.spawn_loose(&spawn);
+
+            run(&mut world, 300);
+
+            let state = read(&world, id);
+            let moved = (state.position - spawn.position).length();
+            if rests {
+                assert!(
+                    moved < 0.02,
+                    "{name} on {angle} degrees moved {moved}, expected under 2 cm"
+                );
+                assert!(state.asleep, "{name} on {angle} degrees is awake");
+            } else {
+                assert!(
+                    moved > 1.0,
+                    "{name} on {angle} degrees moved only {moved}, expected over 1 m"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_rest_slope_is_game_data() {
+        let (mut steep, spawn) = slope_setup(CAPSULE, CAPSULE_RADIUS, 8.0);
+        steep.set_rest_slope(degrees(10.0));
+        let on_slope = steep.spawn_loose(&spawn);
+        let mut flat = world_with_floor(&floor_mesh(0.0));
+        flat.set_rest_slope(0.0);
+        let rolling = flat.spawn_loose(&rolling_spawn(CAPSULE, CAPSULE_RADIUS, 2.0));
+
+        run(&mut steep, 300);
+        run(&mut flat, 120);
+
+        assert_eq!(steep.rest_slope(), degrees(10.0));
+        assert_eq!(flat.rest_slope(), 0.0);
+        let held = read(&steep, on_slope);
+        assert!(
+            (held.position - spawn.position).length() < 0.02 && held.asleep,
+            "a 10 degree rest slope holds the capsule on 8 degrees, {held:?}"
+        );
+        let state = read(&flat, rolling);
+        assert!(
+            state.linear_velocity.z > 1.5 && !state.asleep,
+            "with no brake the capsule is still rolling after 2 s, {state:?}"
+        );
+    }
+
+    #[test]
+    fn the_default_rest_slope_is_five_degrees() {
+        let world = PhysicsWorld::new();
+
+        let slope = world.rest_slope();
+
+        assert!((slope - degrees(5.0)).abs() <= 1e-6, "slope={slope}");
+    }
+
+    #[test]
+    fn set_rest_slope_rejects_out_of_range() {
+        let bad = [
+            ("NaN", f32::NAN),
+            ("+inf", f32::INFINITY),
+            ("-inf", f32::NEG_INFINITY),
+            ("negative", -0.01),
+            ("pi/2", std::f32::consts::FRAC_PI_2),
+            ("above pi/2", 2.0),
+        ];
+
+        for (name, slope) in bad {
+            let mut world = PhysicsWorld::new();
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                world.set_rest_slope(slope);
+            }));
+            assert!(outcome.is_err(), "{name} was accepted");
+        }
+        let mut world = PhysicsWorld::new();
+        world.set_rest_slope(0.0);
+        assert_eq!(world.rest_slope(), 0.0, "zero turns the brake off");
+        world.set_rest_slope(1.5);
+        assert_eq!(world.rest_slope(), 1.5, "just under pi/2 is accepted");
+    }
+
+    /// Vertical velocity of `id` after each of `ticks` steps.
+    fn vertical_velocities(world: &mut PhysicsWorld, id: LooseId, ticks: u32) -> Vec<f32> {
+        (0..ticks)
+            .map(|_| {
+                world.step(DT);
+                read(world, id).linear_velocity.y
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_brake_never_touches_vertical_velocity() {
+        let box_drop = |rest_slope: f32| {
+            let mut world = world_with_floor(&floor_mesh(0.0));
+            world.set_rest_slope(rest_slope);
+            let id = world.spawn_loose(&LooseSpawn {
+                position: Vec3::new(0.0, 0.5, 0.0),
+                ..LooseSpawn::new(cube(0.05), 0.2)
+            });
+            vertical_velocities(&mut world, id, 20)
+        };
+        let capsule_drop = |rest_slope: f32| {
+            let mut world = world_with_floor(&floor_mesh(0.0));
+            world.set_rest_slope(rest_slope);
+            let id = world.spawn_loose(&LooseSpawn {
+                restitution: 0.3,
+                position: Vec3::new(0.0, 0.5, 0.0),
+                ..rolling_spawn(CAPSULE, CAPSULE_RADIUS, 2.0)
+            });
+            let vertical = vertical_velocities(&mut world, id, 120);
+            (vertical, read(&world, id).linear_velocity.z)
+        };
+
+        let box_braked = box_drop(degrees(5.0));
+        let box_free = box_drop(0.0);
+        let (capsule_braked, braked_speed) = capsule_drop(degrees(5.0));
+        let (capsule_free, free_speed) = capsule_drop(0.0);
+
+        assert_eq!(box_braked, box_free, "a falling box is unchanged");
+        assert!(
+            capsule_free.iter().any(|vy| *vy > 0.1),
+            "the capsule bounced, so the control reaches a contact"
+        );
+        assert!(
+            braked_speed < free_speed - 0.1,
+            "the brake acted on the capsule: braked {braked_speed}, free {free_speed}"
+        );
+        for (tick, (braked, free)) in capsule_braked.iter().zip(&capsule_free).enumerate() {
+            assert!(
+                (braked - free).abs() <= 0.01,
+                "tick {tick}: vertical velocity {braked} with the brake, {free} without"
+            );
+        }
+    }
+
+    #[test]
+    fn a_tilted_cylinder_tips_over_instead_of_freezing_on_its_rim() {
+        for angle in [10.0f32, 20.0, 27.0, 35.0, 45.0] {
+            let mut world = world_with_floor(&floor_mesh(0.0));
+            let (half_height, radius) = (0.08, CYLINDER_RADIUS);
+            let tilt = degrees(angle);
+            let id = world.spawn_loose(&LooseSpawn {
+                position: Vec3::new(
+                    0.0,
+                    half_height * tilt.cos() + radius * tilt.sin() + 0.001,
+                    0.0,
+                ),
+                rotation: Quat::from_rotation_x(tilt),
+                ..LooseSpawn::new(CYLINDER, 0.2)
+            });
+
+            run(&mut world, 300);
+
+            let state = read(&world, id);
+            assert!(state.asleep, "{angle} degrees: still moving, {state:?}");
+            let axis_tilt = angle_from_vertical_degrees(state.rotation * Vec3::Y);
+            let standing = axis_tilt.min(180.0 - axis_tilt) <= 0.5;
+            let lying_down = (axis_tilt - 90.0).abs() <= 0.5;
+            assert!(
+                standing || lying_down,
+                "{angle} degrees: froze at {axis_tilt} degrees from vertical"
+            );
+            let low = bottom(&world, id);
+            assert!(low.abs() <= 0.001, "{angle} degrees: bottom at {low}");
+        }
+    }
+
+    #[test]
+    fn a_shape_just_above_the_floor_is_not_braked() {
+        let after_two_ticks = |height: f32, rest_slope: f32| {
+            let mut world = world_with_floor(&floor_mesh(0.0));
+            world.set_rest_slope(rest_slope);
+            let mut spawn = rolling_spawn(CAPSULE, CAPSULE_RADIUS, 2.0);
+            spawn.position.y += height;
+            let id = world.spawn_loose(&spawn);
+            run(&mut world, 2);
+            read(&world, id)
+        };
+
+        let airborne_braked = after_two_ticks(0.019, degrees(5.0));
+        let airborne_free = after_two_ticks(0.019, 0.0);
+        let touching_braked = after_two_ticks(0.0, degrees(5.0));
+        let touching_free = after_two_ticks(0.0, 0.0);
+
+        assert_eq!(bits(&airborne_braked), bits(&airborne_free));
+        assert!(
+            touching_braked.linear_velocity.z < touching_free.linear_velocity.z - 0.01,
+            "control: a touching capsule is braked, {} against {}",
+            touching_braked.linear_velocity.z,
+            touching_free.linear_velocity.z
+        );
+    }
+
+    #[test]
+    fn the_brake_spares_overlapping_bodies() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let first = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, CAPSULE_RADIUS, 0.0),
+            rotation: lying(),
+            ..LooseSpawn::new(CAPSULE, 0.2)
+        });
+        let second = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, CAPSULE_RADIUS, 2.0 * CAPSULE_RADIUS - 0.01),
+            rotation: lying(),
+            ..LooseSpawn::new(CAPSULE, 0.2)
+        });
+
+        run(&mut world, 300);
+
+        let (a, b) = (read(&world, first), read(&world, second));
+        assert!(a.asleep && b.asleep, "both sleep, {a:?} {b:?}");
+        let overlap = 2.0 * CAPSULE_RADIUS - (b.position.z - a.position.z);
+        assert!(overlap <= 0.005, "they end {overlap} m overlapped");
+    }
+
+    /// Twenty objects of all shapes dropped over a 1 m square, each 0.3 m above the last.
+    fn pile_world(seed: u32) -> (PhysicsWorld, Vec<LooseId>) {
+        let mut rng = Seeded::new(seed);
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let shapes = [FLAT_BOX_SHAPE, CAPSULE, CYLINDER];
+        let ids = (0..20)
+            .map(|index| {
+                let axis = Vec3::new(
+                    rng.range(-1.0, 1.0),
+                    rng.range(-1.0, 1.0),
+                    rng.range(-1.0, 1.0),
+                );
+                let axis = if axis.length() < 0.1 {
+                    Vec3::Y
+                } else {
+                    axis.normalize()
+                };
+                world.spawn_loose(&LooseSpawn {
+                    position: Vec3::new(
+                        rng.range(-0.5, 0.5),
+                        0.3 + 0.3 * index as f32,
+                        rng.range(-0.5, 0.5),
+                    ),
+                    rotation: Quat::from_axis_angle(axis, rng.range(0.0, std::f32::consts::TAU)),
+                    ..LooseSpawn::new(shapes[index % 3], 0.2)
+                })
+            })
+            .collect();
+        (world, ids)
+    }
+
+    /// The deepest penetration, in metres, between two loose objects in the last step.
+    fn deepest_pair_overlap(world: &PhysicsWorld) -> f32 {
+        let mut deepest = 0.0f32;
+        for pair in world.narrow_phase.contact_pairs() {
+            let parented = |handle: ColliderHandle| world.collider_set[handle].parent().is_some();
+            if !(parented(pair.collider1) && parented(pair.collider2)) {
+                continue;
+            }
+            for manifold in pair.manifolds() {
+                for point in &manifold.points {
+                    deepest = deepest.max(-point.dist);
+                }
+            }
+        }
+        deepest
+    }
+
+    #[test]
+    fn a_pile_of_every_shape_settles() {
+        for seed in [1, 2, 3, 4] {
+            let (mut world, ids) = pile_world(seed);
+
+            run(&mut world, 600);
+
+            for id in &ids {
+                let state = read(&world, *id);
+                assert!(state.asleep, "seed {seed}: {id:?} is awake, {state:?}");
+                let low = bottom(&world, *id);
+                assert!(low >= -0.001, "seed {seed}: {id:?} is {low} into the floor");
+            }
+            let overlap = deepest_pair_overlap(&world);
+            assert!(overlap <= 0.005, "seed {seed}: pair overlap {overlap}");
+        }
+    }
+
+    #[test]
+    fn the_same_pile_twice_ends_bit_equal() {
+        let (mut first, first_ids) = pile_world(7);
+        let (mut second, second_ids) = pile_world(7);
+
+        for tick in 1..=600 {
+            first.step(DT);
+            second.step(DT);
+            for (a, b) in first_ids.iter().zip(&second_ids) {
+                let (a, b) = (read(&first, *a), read(&second, *b));
+                assert_eq!(bits(&a), bits(&b), "tick {tick}: state bits differ");
+                assert_eq!(a.asleep, b.asleep, "tick {tick}: asleep differs");
+            }
+        }
+    }
+
+    #[test]
+    fn spawn_rejects_a_bad_capsule_or_cylinder() {
+        let mut rows = Vec::new();
+        for (name, value) in BAD_POSITIVE {
+            let shapes = [
+                (
+                    format!("{name} capsule half height"),
+                    LooseShape::Capsule {
+                        half_height: value,
+                        radius: 0.04,
+                    },
+                ),
+                (
+                    format!("{name} capsule radius"),
+                    LooseShape::Capsule {
+                        half_height: 0.1,
+                        radius: value,
+                    },
+                ),
+                (
+                    format!("{name} cylinder half height"),
+                    LooseShape::Cylinder {
+                        half_height: value,
+                        radius: 0.05,
+                    },
+                ),
+                (
+                    format!("{name} cylinder radius"),
+                    LooseShape::Cylinder {
+                        half_height: 0.08,
+                        radius: value,
+                    },
+                ),
+            ];
+            for (row, shape) in shapes {
+                rows.push((row, LooseSpawn::new(shape, 1.0)));
+            }
+        }
+
+        assert_rows_rejected(&rows, "half height and radius must be positive and finite");
     }
 
     #[test]
