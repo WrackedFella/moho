@@ -578,7 +578,7 @@ gone at their lifetime.
 - Fade tapers the width linearly over `StreakStyle::fade`; draws are opaque.
 - `flash(at, roll, FlashStyle)` spawns a camera-facing four-point star that shrinks
   linearly to nothing over its lifetime. `mark(at, normal, roll, MarkStyle)` spawns a flat
-  square on a surface (no projection onto curved geometry), lifted `MARK_OFFSET` along the normal, at full size until
+  square on a surface (no projection onto curved geometry), lifted 1 cm along the normal, at full size until
   `lifetime - fade`, then shrinking to nothing.
 - Invalid input (non-finite values, a zero normal, a non-positive size, a zero lifetime)
   spawns nothing.
