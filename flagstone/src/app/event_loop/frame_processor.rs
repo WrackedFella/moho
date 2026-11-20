@@ -16,6 +16,9 @@ const MOVE_SPEED: f32 = 4.0;
 /// Sprinting speed in m/s.
 const SPRINT_SPEED: f32 = 6.0;
 
+/// The one pawn the job loop drives until a pawn store exists.
+const PAWN_ID: flagstone_game::pawn::PawnId = flagstone_game::pawn::PawnId(0);
+
 /// Strategy-line walking feel: acceleration and friction high enough to reach speed, or
 /// stop, within a tick. `max_speed` and `air_speed_cap` are set per tick from sprint.
 const STRATEGY_MOVE_SETTINGS: moho_physics::MoveSettings = moho_physics::MoveSettings {
@@ -77,6 +80,10 @@ impl FrameProcessor {
             };
             let (view, proj, eye) = app.simulation.apply_input(dt, ground);
             app.camera = (view, proj, eye);
+
+            if app.simulation.camera_mode() == flagstone_game::controller::CameraMode::Isometric {
+                self.run_pawn_job(app, dt);
+            }
         }
 
         // Step rigid bodies in both KCC and non-KCC paths (test spheres, etc.)
@@ -86,6 +93,72 @@ impl FrameProcessor {
 
         // Clear zoom delta after use
         app.simulation.controller_input.zoom_delta = 0.0;
+    }
+
+    /// One tick of the idle pawn's job: walk its route with the physics character, or dig.
+    /// A pawn with nothing to do is not moved at all.
+    fn run_pawn_job(&self, app: &mut App, dt: f32) {
+        let Some(state) = app
+            .physics
+            .player
+            .zip(app.physics.world.as_ref())
+            .and_then(|(handle, world)| world.character(handle))
+        else {
+            return;
+        };
+        let Some(light_system) = app.light_system.as_mut() else {
+            return;
+        };
+        let pose = flagstone_game::jobs::Pose {
+            feet: state.position - glam::Vec3::Y * flagstone_game::jobs::EYE_HEIGHT,
+            yaw: state.yaw,
+        };
+
+        let mut job = std::mem::take(&mut app.pawn.job);
+        let action = flagstone_game::jobs::step(
+            PAWN_ID,
+            &mut job,
+            &mut app.pawn,
+            pose,
+            &mut app.colony.marks,
+            light_system.grid(),
+        );
+        app.pawn.job = job;
+
+        match action {
+            flagstone_game::jobs::JobAction::Wait => {}
+            flagstone_game::jobs::JobAction::Walk { to } => {
+                let walk = flagstone_game::jobs::steer(pose, to);
+                let command = moho_physics::CharacterCommand {
+                    forward: walk.forward,
+                    yaw_delta: walk.yaw_delta,
+                    ..moho_physics::CharacterCommand::default()
+                };
+                let moved = app
+                    .physics
+                    .move_character(&command, &STRATEGY_MOVE_SETTINGS, dt)
+                    .expect("the pawn's character exists: it was read above");
+                app.simulation
+                    .set_position_yaw_pitch(moved.position, moved.yaw, moved.pitch);
+            }
+            flagstone_game::jobs::JobAction::Dig { block, aim } => {
+                let dir = (aim - state.position).normalize_or_zero();
+                let outcome = app.pawn.dig(
+                    light_system.grid_mut(),
+                    state.position,
+                    dir,
+                    flagstone_game::pawn::MINE_REACH,
+                );
+                let Some(outcome) = outcome else {
+                    tracing::debug!(?block, "Pawn dig found nothing to remove");
+                    return;
+                };
+                if let Some(yield_) = outcome.yield_ {
+                    app.colony.stock.add(yield_.resource_id, yield_.amount);
+                }
+                crate::app::event_loop::event_processor::publish_pawn_dig(app, &outcome);
+            }
+        }
     }
 
     fn update_game_state_fps_kcc(&self, app: &mut App, dt: f32) {
@@ -393,6 +466,9 @@ impl FrameProcessor {
         let mut hotbar: Vec<(u32, u32)> = app.pawn.inventory.iter().collect();
         hotbar.sort_by_key(|(resource_id, _)| *resource_id);
 
+        let mut colony_stock: Vec<(u32, u32)> = app.colony.stock.iter().collect();
+        colony_stock.sort_by_key(|(resource_id, _)| *resource_id);
+
         // Only one tool exists today (`flagstone_game::tools::STARTING_TOOL`); the
         // label is a fixed string until a real tool-name lookup exists.
         let equipped_tool_label = app.pawn.equipped_tool.map(|_| "Pickaxe".to_string());
@@ -436,7 +512,7 @@ impl FrameProcessor {
                 .collect(),
             selection,
             mine_designation_active: app.input.designation == Designation::Mine,
-            colony_stock: Vec::new(),
+            colony_stock,
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {

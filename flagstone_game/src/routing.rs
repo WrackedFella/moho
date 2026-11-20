@@ -1,5 +1,8 @@
 //! Ground routing over the voxel grid: where a pawn can stand and how it walks between cells.
 
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap, HashSet};
+
 use flagstone_voxel::{BlockPos, VoxelGrid};
 use glam::Vec3;
 
@@ -8,13 +11,14 @@ pub const ROUTE_NODE_BUDGET: usize = 4096;
 
 /// Whether a pawn's feet can rest in `cell`: solid ground directly below and three cells of
 /// air from the feet up (the capsule is 2.3 m tall).
-pub fn standable(_grid: &VoxelGrid, _cell: BlockPos) -> bool {
-    todo!("SG-F4-03: standable")
+pub fn standable(grid: &VoxelGrid, cell: BlockPos) -> bool {
+    grid.is_solid_at(cell - BlockPos::Y)
+        && (0..3).all(|up| !grid.is_solid_at(cell + BlockPos::Y * up))
 }
 
 /// The cell holding a pawn's feet: each coordinate floored.
-pub fn feet_cell(_feet: Vec3) -> BlockPos {
-    todo!("SG-F4-03: feet_cell")
+pub fn feet_cell(feet: Vec3) -> BlockPos {
+    feet.floor().as_ivec3()
 }
 
 /// A* over standable cells from `start` to the nearest cell satisfying `is_goal`.
@@ -25,13 +29,91 @@ pub fn feet_cell(_feet: Vec3) -> BlockPos {
 /// is already a goal). A `start` that is not standable tries the cell one above and one below.
 /// Returns `None` when no route exists or `budget` expansions are spent first.
 pub fn route(
-    _grid: &VoxelGrid,
-    _start: BlockPos,
-    _is_goal: impl Fn(BlockPos) -> bool,
-    _toward: BlockPos,
-    _budget: usize,
+    grid: &VoxelGrid,
+    start: BlockPos,
+    is_goal: impl Fn(BlockPos) -> bool,
+    toward: BlockPos,
+    budget: usize,
 ) -> Option<Vec<BlockPos>> {
-    todo!("SG-F4-03: route")
+    let start = [start, start + BlockPos::Y, start - BlockPos::Y]
+        .into_iter()
+        .find(|&cell| standable(grid, cell))?;
+    let heuristic = |cell: BlockPos| {
+        let delta = (cell - toward).abs();
+        delta.x + delta.y + delta.z
+    };
+
+    // Entries order by (f, g, insertion order); the key makes the pop order deterministic.
+    let mut open = BinaryHeap::new();
+    let mut seen: HashMap<[i32; 3], (i32, Option<BlockPos>)> = HashMap::new();
+    let mut closed: HashSet<[i32; 3]> = HashSet::new();
+    let mut inserted = 0_usize;
+    open.push(Reverse((heuristic(start), 0, inserted, start.to_array())));
+    seen.insert(start.to_array(), (0, None));
+
+    let mut expansions = 0;
+    while let Some(Reverse((_, g, _, key))) = open.pop() {
+        if !closed.insert(key) {
+            continue;
+        }
+        let cell = BlockPos::from_array(key);
+        if is_goal(cell) {
+            return Some(path_to(&seen, cell, start));
+        }
+        if expansions >= budget {
+            return None;
+        }
+        expansions += 1;
+
+        for neighbour in neighbours(grid, cell) {
+            let next_key = neighbour.to_array();
+            let next_g = g + 1;
+            if closed.contains(&next_key)
+                || seen.get(&next_key).is_some_and(|&(best, _)| best <= next_g)
+            {
+                continue;
+            }
+            seen.insert(next_key, (next_g, Some(cell)));
+            inserted += 1;
+            open.push(Reverse((
+                next_g + heuristic(neighbour),
+                next_g,
+                inserted,
+                next_key,
+            )));
+        }
+    }
+    None
+}
+
+/// The cells reachable from `cell` in one move, in a fixed order.
+fn neighbours(grid: &VoxelGrid, cell: BlockPos) -> impl Iterator<Item = BlockPos> + '_ {
+    let can_climb = !grid.is_solid_at(cell + BlockPos::Y * 3);
+    [BlockPos::X, BlockPos::NEG_X, BlockPos::Z, BlockPos::NEG_Z]
+        .into_iter()
+        .flat_map(move |side| {
+            let level = cell + side;
+            [level, level + BlockPos::Y, level - BlockPos::Y]
+        })
+        .filter(move |&next| (next.y <= cell.y || can_climb) && standable(grid, next))
+}
+
+/// The cells from `start` (exclusive) to `goal`, following the recorded parents.
+fn path_to(
+    seen: &HashMap<[i32; 3], (i32, Option<BlockPos>)>,
+    goal: BlockPos,
+    start: BlockPos,
+) -> Vec<BlockPos> {
+    let mut path = Vec::new();
+    let mut cell = goal;
+    while cell != start {
+        path.push(cell);
+        cell = seen[&cell.to_array()]
+            .1
+            .expect("every cell but the start was reached from a parent");
+    }
+    path.reverse();
+    path
 }
 
 #[cfg(test)]
