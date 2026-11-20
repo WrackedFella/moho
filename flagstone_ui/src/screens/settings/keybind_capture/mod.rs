@@ -337,6 +337,23 @@ mod tests {
     }
 
     #[test]
+    fn combo_modifier_on_a_conflicting_row_keeps_listening_without_a_prompt() {
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry(); // Descend holds Ctrl and Sprint holds Shift
+        let mut changed = vec![];
+        handler.start_listening(0);
+
+        let applied = handler.capture_modifier_if_listening(3, &bindings, |action, b| {
+            changed.push((action, b));
+        });
+
+        assert!(!applied);
+        assert!(handler.is_listening());
+        assert!(changed.is_empty());
+        assert_eq!(handler.take_conflict_modal(), None);
+    }
+
+    #[test]
     fn new_handler_has_no_pending_binding() {
         assert!(!KeybindCaptureHandler::new().has_pending_binding());
     }

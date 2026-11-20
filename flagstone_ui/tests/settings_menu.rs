@@ -735,6 +735,63 @@ fn cancel_after_stray_key_changes_nothing() {
     assert!(!menu.is_listening());
 }
 
+/// After a cancelled conflict, listening again captures a lone modifier as usual.
+#[test]
+fn rearming_after_a_cancelled_conflict_binds_a_lone_modifier() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let ctx = egui::Context::default();
+    menu.start_listening(0);
+    render_with_modifiers(&mut menu, &ctx, egui::Modifiers::SHIFT);
+    prompt_text(&mut menu);
+    Screen::on_modal_cancel(&mut menu);
+
+    menu.start_listening(0);
+    render_with_modifiers(&mut menu, &ctx, egui::Modifiers::NONE);
+    render_with_modifiers(&mut menu, &ctx, egui::Modifiers::ALT);
+
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::Alt), pad_stick(StickDir::Up)]
+    );
+    assert_eq!(
+        menu.get_staged_binding(6),
+        [Binding::key(Key::Shift), LEFT_THUMB]
+    );
+    assert!(!menu.is_listening());
+}
+
+/// Escape while the prompt is open changes nothing, and the prompt can still be confirmed.
+#[test]
+fn escape_while_prompt_open_changes_nothing_and_confirm_still_applies() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    let before = all_bindings(&menu);
+    let ctx = egui::Context::default();
+    menu.start_listening(0);
+    render_with_modifiers(&mut menu, &ctx, egui::Modifiers::SHIFT);
+    prompt_text(&mut menu);
+
+    let input = egui::RawInput {
+        events: vec![key_event(egui::Key::Escape, true)],
+        ..Default::default()
+    };
+    run_ui(&ctx, input, |ui| {
+        menu.render(ui);
+    });
+
+    assert_eq!(all_bindings(&menu), before);
+    assert!(!menu.is_listening());
+    Screen::on_modal_confirm(&mut menu);
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::Shift), pad_stick(StickDir::Up)]
+    );
+    assert_eq!(menu.get_staged_binding(6), [LEFT_THUMB]);
+}
+
 /// Rebinding a row replaces its plain key and keeps its hold bindings, in the settings text too.
 #[test]
 fn rebinding_sprint_keeps_its_hold_bindings() {
