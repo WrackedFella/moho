@@ -153,8 +153,7 @@ impl Timed {
 
     /// The size factor: 1 until the last `fade` of the lifetime, then falling linearly to 0.
     fn size_scale(&self) -> f32 {
-        let fade_from = self.lifetime.saturating_sub(self.fade);
-        if self.age <= fade_from || self.fade.is_zero() {
+        if self.fade.is_zero() {
             return 1.0;
         }
         let left = self.lifetime.saturating_sub(self.age);
@@ -1701,6 +1700,77 @@ mod tests {
                 mark_style(0.2, Duration::from_secs(10), ms(500)),
             );
             assert!(rig.frame(EYE).is_empty(), "mark roll {roll}");
+        }
+    }
+
+    #[test]
+    fn a_zero_lifetime_flash_or_a_non_finite_eye_draws_no_flash() {
+        let mut rig = Rig::new();
+        rig.effects.flash(Vec3::X, 0.0, flash_style(0.3, ms(50)));
+        assert_eq!(rig.frame(EYE).len(), 1, "a live flash draws");
+
+        let mut rig = Rig::new();
+        rig.effects
+            .flash(Vec3::X, 0.0, flash_style(0.3, Duration::ZERO));
+        assert!(rig.frame(EYE).is_empty(), "zero lifetime, finite eye");
+
+        for eye in [Vec3::splat(f32::INFINITY), Vec3::splat(f32::NAN)] {
+            let mut rig = Rig::new();
+            rig.effects.flash(Vec3::X, 0.0, flash_style(0.3, ms(50)));
+            assert!(rig.frame(eye).is_empty(), "eye {eye}");
+        }
+    }
+
+    #[test]
+    fn a_flash_or_mark_with_no_finite_positive_size_draws_nothing() {
+        for size in [0.0, -0.3, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut rig = Rig::new();
+            rig.effects
+                .flash(Vec3::X, 0.0, flash_style(size, Duration::from_secs(10)));
+            assert!(rig.frame(EYE).is_empty(), "flash size {size}");
+
+            let mut rig = Rig::new();
+            rig.effects.mark(
+                Vec3::X,
+                Vec3::Z,
+                0.0,
+                mark_style(size, Duration::from_secs(10), ms(500)),
+            );
+            assert!(rig.frame(EYE).is_empty(), "mark size {size}");
+        }
+        let mut rig = Rig::new();
+        rig.effects
+            .flash(Vec3::X, 0.0, flash_style(0.3, Duration::from_secs(10)));
+        rig.effects.mark(
+            Vec3::X,
+            Vec3::Z,
+            0.0,
+            mark_style(0.3, Duration::from_secs(10), ms(500)),
+        );
+        assert_eq!(rig.frame(EYE).len(), 2, "a positive size draws both");
+    }
+
+    #[test]
+    fn each_kind_has_its_own_mesh_id_above_the_reserved_base() {
+        assert_eq!(Kind::Streak.mesh_id(), WorldMeshId(EFFECT_MESH_IDS_FROM));
+        assert_eq!(Kind::Flash.mesh_id(), WorldMeshId(EFFECT_MESH_IDS_FROM + 1));
+        assert_eq!(Kind::Mark.mesh_id(), WorldMeshId(EFFECT_MESH_IDS_FROM + 2));
+    }
+
+    #[test]
+    fn the_flash_star_has_a_vertex_every_forty_five_degrees_alternating_tip_and_inner() {
+        let mut rig = Rig::new();
+        rig.effects.flash(Vec3::X, 0.0, flash_style(0.4, ms(50)));
+        rig.frame(EYE);
+
+        let (positions, _) = &rig.backend.registered[0];
+        assert_eq!(positions.len(), 8);
+        for (i, p) in (0u8..).zip(positions) {
+            let radius = if i % 2 == 0 { 1.0 } else { 0.3 };
+            let angle = f32::from(i) * std::f32::consts::FRAC_PI_4;
+            assert!((p[0] - radius * angle.cos()).abs() < 1e-5, "x of {i}");
+            assert!((p[1] - radius * angle.sin()).abs() < 1e-5, "y of {i}");
+            assert_eq!(p[2], 0.0, "z of {i}");
         }
     }
 }
