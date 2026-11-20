@@ -41,14 +41,7 @@ deny:
     cargo deny check
     scripts/check-physics-features.sh
     MOHO_PHYSICS_METADATA=scripts/fixtures/physics-metadata-ok.json scripts/check-physics-features.sh
-    if out="$(MOHO_PHYSICS_METADATA=scripts/fixtures/physics-metadata-missing.json scripts/check-physics-features.sh 2>&1)"; then
-        echo "check-physics-features: fixture without the feature passed" >&2
-        exit 1
-    fi
-    for crate in rapier3d parry3d; do
-        [[ "$out" == *"$crate does not enable"* ]] || { echo "check-physics-features: failure did not name $crate" >&2; exit 1; }
-    done
-    # Each fixture must fail and name exactly the listed crate (empty = no crate named, e.g. unreadable metadata).
+    # Each fixture must fail and name exactly the listed crates.
     expect_failure() {
         local fixture="$1" named="$2" crate
         if out="$(MOHO_PHYSICS_METADATA="scripts/fixtures/$fixture" scripts/check-physics-features.sh 2>&1)"; then
@@ -56,13 +49,14 @@ deny:
             exit 1
         fi
         for crate in rapier3d parry3d; do
-            if [[ "$crate" == "$named" ]]; then
+            if [[ " $named " == *" $crate "* ]]; then
                 [[ "$out" == *"$crate does not enable"* ]] || { echo "check-physics-features: $fixture failure did not name $crate" >&2; exit 1; }
             else
                 [[ "$out" != *"$crate does not enable"* ]] || { echo "check-physics-features: $fixture failure wrongly named $crate" >&2; exit 1; }
             fi
         done
     }
+    expect_failure physics-metadata-missing.json "rapier3d parry3d"
     expect_failure physics-metadata-parry-missing.json parry3d
     expect_failure physics-metadata-parry-absent.json parry3d
     expect_failure physics-metadata-rapier-unresolved.json rapier3d
