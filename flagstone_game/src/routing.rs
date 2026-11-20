@@ -35,7 +35,9 @@ pub fn standable(grid: &VoxelGrid, cell: BlockPos) -> bool {
         && (0..CAPSULE_CELLS).all(|up| !grid.is_solid_at(cell + BlockPos::Y * up))
 }
 
-/// The cheapest walk from `start` to a cell `is_goal` accepts, over standable cells.
+/// A short walk from `start` to a cell `is_goal` accepts, over standable cells. The estimate
+/// aims at `toward` and can overshoot when the goal is a window around it, so the walk is
+/// not always the shortest.
 ///
 /// A walk moves to one of the four horizontal neighbours, one block up or down at most; a step
 /// up needs a fourth cell of air above the current feet. A `start` that is not standable

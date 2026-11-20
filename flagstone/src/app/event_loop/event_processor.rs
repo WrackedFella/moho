@@ -548,7 +548,12 @@ pub(crate) fn publish_pawn_dig(app: &App, outcome: &MineOutcome) {
 
 /// Announces a removed block and the chunks it dirties, whoever dug it.
 fn publish_removal(app: &App, outcome: &MineOutcome) {
-    let chunk_size = flagstone_voxel::LIGHT_CHUNK_SIZE;
+    let chunk_size = app
+        .light_system
+        .as_ref()
+        .map_or(flagstone_voxel::LIGHT_CHUNK_SIZE, |light_system| {
+            light_system.grid().chunk_size()
+        });
     app.event_bus.publish(WorldEvent::BlockRemoved {
         position: outcome.block_pos,
         old_material_id: outcome.old_material_id,

@@ -57,7 +57,7 @@ sequenceDiagram
     T->>T: clock time scale = 1 if Playing, else 0<br/>autosave schedule and pawn pickup feed tick (Playing only)
     T->>Bus: SystemEvent::FrameStart
     T->>Sim: apply command, update_game_state (Playing only)
-    Note over Sim: KCC: command → physics character (look + move) → camera;<br/>free-fly: controller input → camera;<br/>step rigid bodies
+    Note over Sim: KCC: command → physics character (look + move) → camera;<br/>strategy view: idle pawn's job step (walk or dig) first;<br/>free-fly: controller input → camera;<br/>step rigid bodies
     T->>LS: update_chunk_streaming
     Note over LS: evict / load chunks, light arrived chunks,<br/>publish WorldEvent::ChunkMeshDirty
     T->>LS: update_light_system (budgeted jobs, then sky refresh)
@@ -74,7 +74,8 @@ All gameplay steps early-return unless `GameState::Playing`. `dt` is the fixed t
 
 Mining publishes its block event while `process_input_events` drains, after
 `process_world_events`, so the light system queues the edit on the next tick and lights it in
-the tick after (two ticks, about 33 ms at 60 Hz).
+the tick after (two ticks, about 33 ms at 60 Hz). A pawn's dig publishes the same events
+from `update_game_state` instead, so its edit is queued by the next tick's `process_world_events`.
 
 ## 3 Event drain
 
@@ -110,7 +111,7 @@ The renderer is reachable only through the contexts, so ticks queue renderer cha
 3. if the UI asked to quit: auto-save, `request_exit`, stop;
 4. if the UI asked for the main menu (Exit to main menu): auto-save, then `show_menu`, and go on;
 5. if the autosave schedule is due: auto-save ([periodic autosave](../reference/save-format.md#autosave));
-6. `update_hud_data` (includes the pawn's pickups as `(resource_id, amount, life)`, which the first-person HUD draws as fading popups; `PickupFeed` in `flagstone_game/src/pickups.rs` keeps up to 8 for 2 s of ticks each), `update_cut_caps` (rebuild [cut-face caps](rendering.md#3-cut-face-caps)), then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
+6. `update_hud_data` (includes the colony's mined `colony_stock` as `(resource_id, amount)` for the strategy HUD, and the pawn's pickups as `(resource_id, amount, life)`, which the first-person HUD draws as fading popups; `PickupFeed` in `flagstone_game/src/pickups.rs` keeps up to 8 for 2 s of ticks each), `update_cut_caps` (rebuild [cut-face caps](rendering.md#3-cut-face-caps)), then `update_lighting` (sun, moon, ambient) and `scene.render(...)`
    with actors, the sphere and cube mesh handles and the frame camera (below).
 
 A `FrameError` skips the frame with a `warn`. Pass order inside the renderer:
