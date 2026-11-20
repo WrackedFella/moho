@@ -567,7 +567,8 @@ Effects are engine-owned presentation state a game starts, places and ends by ha
 ([ADR-0031](../../_todo/adr/0031-effects-are-engine-presentation-state-placed-by-handle.md)).
 `moho_renderer::Effects` (`moho_renderer/src/effects.rs`, reached via `Scene::effects_mut`)
 issues an `EffectHandle`, monotonic and never reused; a stale, unknown or inert handle is ignored.
-The one kind is the streak (a tracer):
+Three kinds: the streak (a tracer), the flash (a muzzle flash) and the mark (an impact mark).
+The streak is handle-placed:
 
 - `begin_streak(StreakStyle)` starts it; `place_streak(handle, head, heading)` sets its head
   every frame, already interpolated by the game; `end(handle)` starts the fade.
@@ -579,8 +580,16 @@ The one kind is the streak (a tracer):
   inert handle, lowering keeps live effects, 0 clears them. A game hands the saved
   `effects_quality` pref to it on start and on apply.
 
-`Scene::render` calls `Effects::draw` first: each streak becomes one placement of a shared kite
-mesh, uploaded on first use under `EFFECT_MESH_IDS_FROM` (`u64::MAX - 63`, reserved; games keep
+Flashes and marks are fire-and-forget: `flash(at, roll, FlashStyle)` and
+`mark(at, normal, roll, MarkStyle)` return no handle and expire on their own by frame time
+after `lifetime`. A flash faces the eye and shrinks linearly to nothing; a mark is a flat square
+on its surface (floated `MARK_OFFSET` off it), holds its size and shrinks over the last
+`MarkStyle::fade`; a zero or non-finite normal draws nothing. They share the live cap with
+streaks: at the cap a new one replaces the oldest flash or mark, and is refused when none
+exists or at quality 0.
+
+`Scene::render` calls `Effects::draw` first: each streak, flash and mark becomes one placement of
+a shared mesh per kind (kite, four-pointed star, square), uploaded on first use under `EFFECT_MESH_IDS_FROM` (`u64::MAX - 63`, reserved; games keep
 their ids below it), turned to face the camera eye. Placements go through
 `WorldMeshes::place_unshadowed` and reach the backend via `RendererBackend::enqueue_unshadowed_draw`
 (default: `enqueue_draw`). In the renderer the draw key has `casts_shadow = false`, so
