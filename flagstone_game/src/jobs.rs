@@ -174,11 +174,12 @@ pub fn step(
         return drop_job(pawn, marks, pos);
     }
 
-    while let Some(&waypoint) = route.get(*next) {
-        if horizontal_gap(pose.feet, waypoint) > ARRIVE_RADIUS {
-            break;
-        }
-        *next += 1;
+    let arrived = route[*next..]
+        .iter()
+        .take_while(|&&waypoint| horizontal_gap(pose.feet, waypoint) <= ARRIVE_RADIUS)
+        .count();
+    if arrived > 0 {
+        *next += arrived;
         *stall = StallGuard::default();
     }
     let Some(&waypoint) = route.get(*next) else {
@@ -677,6 +678,145 @@ mod tests {
 
             assert_eq!(holder(&marks, low), Some(PAWN));
             assert_eq!(holder(&marks, high), None);
+        }
+    }
+
+    #[test]
+    fn a_block_open_on_one_face_only_is_exposed_whichever_face_it_is() {
+        let block = cell(8, 4, 5);
+        let buried = || {
+            let mut grid = VoxelGrid::new(16);
+            grid.mutator().place(block, 1, None);
+            for face in FACES {
+                grid.mutator().place(block + face, 1, None);
+            }
+            grid
+        };
+        assert!(!is_exposed(&buried(), block), "setup: nothing is open");
+
+        for face in FACES {
+            let mut grid = buried();
+            grid.mutator().remove(block + face);
+
+            assert!(is_exposed(&grid, block), "open only toward {face}");
+        }
+    }
+
+    #[test]
+    fn the_dig_aims_at_the_nearest_face_from_every_side() {
+        let block = cell(8, 4, 5);
+        let cases = [
+            (
+                "+x",
+                cell(9, 4, 5),
+                Vec3::new(9.5, 4.0, 5.5),
+                Vec3::new(9.0, 4.5, 5.5),
+            ),
+            (
+                "-x",
+                cell(7, 4, 5),
+                Vec3::new(7.5, 4.0, 5.5),
+                Vec3::new(8.0, 4.5, 5.5),
+            ),
+            (
+                "+z",
+                cell(8, 4, 6),
+                Vec3::new(8.5, 4.0, 6.5),
+                Vec3::new(8.5, 4.5, 6.0),
+            ),
+            (
+                "-z",
+                cell(8, 4, 4),
+                Vec3::new(8.5, 4.0, 4.5),
+                Vec3::new(8.5, 4.5, 5.0),
+            ),
+            (
+                "+y",
+                cell(9, 5, 6),
+                Vec3::new(9.5, 5.0, 6.5),
+                Vec3::new(8.5, 5.0, 5.5),
+            ),
+            (
+                "-y",
+                cell(8, 3, 5),
+                Vec3::new(8.5, 3.0, 5.5),
+                Vec3::new(8.5, 4.0, 5.5),
+            ),
+        ];
+
+        for (side, stand, feet, expected) in cases {
+            let mut grid = VoxelGrid::new(16);
+            grid.mutator().place(block, 1, None);
+            let mut marks = MineMarks::default();
+            marks.toggle(block.to_array());
+            let mut pawn = Pawn::default();
+            let pose = Pose { feet, yaw: 0.0 };
+            assert_eq!(feet_cell(feet), stand, "setup: {side}");
+
+            let action = dig(&mut pawn, &mut marks, block.to_array(), pose, &grid);
+
+            let JobAction::Dig { aim, .. } = action else {
+                panic!("{side}: {action:?}");
+            };
+            assert!(
+                aim.distance(expected) < 1e-4,
+                "{side}: aims at {aim}, not {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_waypoint_exactly_at_the_arrival_radius_is_reached() {
+        let mut grid = VoxelGrid::new(16);
+        grid.mutator()
+            .fill_region(cell(-8, 0, 0), cell(7, 0, 10), 1);
+        let block = cell(-4, 1, 5);
+        grid.mutator().place(block, 1, Some(7));
+        let mut marks = MineMarks::default();
+        marks.toggle(block.to_array());
+        marks.claim(block.to_array(), PAWN);
+        let mut pawn = Pawn {
+            job: Job::Mine {
+                mark: block,
+                route: vec![cell(-1, 1, 5), cell(-2, 1, 5), cell(-3, 1, 5)],
+                next: 0,
+                stall: StallGuard::default(),
+            },
+            ..Pawn::default()
+        };
+        // Exactly ARRIVE_RADIUS from the first waypoint's centre at x -0.5.
+        let pose = Pose {
+            feet: Vec3::new(-0.5 + ARRIVE_RADIUS, 1.0, 5.5),
+            yaw: 0.0,
+        };
+        assert_eq!(horizontal_gap(pose.feet, cell(-1, 1, 5)), ARRIVE_RADIUS);
+
+        let action = tick(&mut pawn, pose, &mut marks, &grid);
+
+        assert_walks_to(action, cell(-2, 1, 5));
+    }
+
+    #[test]
+    fn steer_stands_still_only_when_the_target_is_at_the_feet() {
+        let pose = Pose {
+            feet: Vec3::ZERO,
+            yaw: 0.0,
+        };
+        let cases = [
+            (0.0, false),
+            (f32::EPSILON / 2.0, false),
+            (f32::EPSILON, true),
+            (0.01, true),
+        ];
+
+        for (distance, turns) in cases {
+            let walk = steer(pose, Vec3::new(distance, 0.0, 0.0));
+
+            assert_eq!(
+                walk.yaw_delta != 0.0,
+                turns,
+                "target {distance} m away: {walk:?}"
+            );
         }
     }
 

@@ -288,6 +288,57 @@ mod tests {
         assert_eq!(below.map(|r| r.last().copied()), Some(Some(cell(6, 1, 0))));
     }
 
+    #[test]
+    fn a_start_inside_the_ground_steps_up_to_the_cell_above_it() {
+        let mut grid = corridor(9);
+        place(&mut grid, 4, 1, 0);
+
+        let found = route_to(&grid, cell(4, 1, 0), cell(6, 1, 0));
+
+        assert_eq!(found, Some(vec![cell(5, 1, 0), cell(6, 1, 0)]));
+    }
+
+    #[test]
+    fn an_open_search_expands_only_the_cells_on_the_way() {
+        let grid = plain(20);
+        let start = cell(2, 1, 10);
+        let goal = cell(10, 1, 10);
+
+        // The eight cells from the start to the one before the goal, and no others.
+        let exact = route(&grid, start, |c| c == goal, goal, 8);
+        let short = route(&grid, start, |c| c == goal, goal, 7);
+
+        assert_eq!(exact.map(|r| r.len()), Some(8));
+        assert_eq!(short, None);
+    }
+
+    /// The fewest steps from `start` to `goal`, by breadth-first search over the same moves.
+    fn fewest_steps(grid: &VoxelGrid, start: BlockPos, goal: BlockPos) -> Option<usize> {
+        let sides = [cell(1, 0, 0), cell(-1, 0, 0), cell(0, 0, 1), cell(0, 0, -1)];
+        let mut steps = std::collections::HashMap::from([(start, 0usize)]);
+        let mut queue = std::collections::VecDeque::from([start]);
+        while let Some(at) = queue.pop_front() {
+            if at == goal {
+                return steps.get(&at).copied();
+            }
+            let headroom = !grid.is_solid_at(at + cell(0, 3, 0));
+            for side in sides {
+                for rise in [0, 1, -1] {
+                    let next = at + side + cell(0, rise, 0);
+                    if (rise == 1 && !headroom)
+                        || steps.contains_key(&next)
+                        || !standable(grid, next)
+                    {
+                        continue;
+                    }
+                    steps.insert(next, steps[&at] + 1);
+                    queue.push_back(next);
+                }
+            }
+        }
+        None
+    }
+
     /// A 6 by 6 patch of columns, each `heights[x * 6 + z]` blocks tall.
     fn hills(heights: &[i32]) -> VoxelGrid {
         let mut grid = VoxelGrid::new(16);
@@ -305,7 +356,55 @@ mod tests {
         cell(x, heights[(x * 6 + z) as usize], z)
     }
 
+    /// Column heights of a 6 by 6 patch that climbs and falls by at most a block per step along
+    /// each row and column, so a goal can lie several blocks above or below the start.
+    fn terraces(steps: &[i32]) -> Vec<i32> {
+        let mut heights = vec![1; 36];
+        for x in 0..6usize {
+            for z in 0..6usize {
+                let before = match (x, z) {
+                    (0, 0) => 4,
+                    (_, 0) => heights[(x - 1) * 6],
+                    _ => heights[x * 6 + z - 1],
+                };
+                heights[x * 6 + z] = (before + steps[x * 6 + z]).clamp(1, 9);
+            }
+        }
+        heights
+    }
+
     proptest! {
+        #[test]
+        fn a_route_over_terraces_is_as_short_as_any_walk(
+            steps in proptest::collection::vec(-1..=1i32, 36),
+            start in (0..6i32, 0..6i32),
+            goal in (0..6i32, 0..6i32),
+        ) {
+            let heights = terraces(&steps);
+            let grid = hills(&heights);
+            let start = top_of(&heights, start.0, start.1);
+            let goal = top_of(&heights, goal.0, goal.1);
+
+            let found = route_to(&grid, start, goal);
+
+            prop_assert_eq!(found.map(|cells| cells.len()), fewest_steps(&grid, start, goal));
+        }
+
+        #[test]
+        fn a_route_is_as_short_as_any_walk_and_exists_whenever_a_walk_does(
+            heights in proptest::collection::vec(1..=4i32, 36),
+            start in (0..6i32, 0..6i32),
+            goal in (0..6i32, 0..6i32),
+        ) {
+            let grid = hills(&heights);
+            let start = top_of(&heights, start.0, start.1);
+            let goal = top_of(&heights, goal.0, goal.1);
+
+            let found = route_to(&grid, start, goal);
+
+            prop_assert_eq!(found.map(|cells| cells.len()), fewest_steps(&grid, start, goal));
+        }
+
         #[test]
         fn every_route_cell_is_standable_and_adjacent_to_the_previous(
             heights in proptest::collection::vec(1..=4i32, 36),
