@@ -1,0 +1,24 @@
+{
+  "packages": [
+    {"id": "registry+https://github.com/rust-lang/crates.io-index#rapier3d@0.22.0", "name": "rapier3d"},
+    {"id": "registry+https://github.com/rust-lang/crates.io-index#parry3d@0.17.0", "name": "parry3d"},
+    {"id": "path+file:///work/moho/moho_physics#0.1.0", "name": "moho_physics"}
+  ],
+  "resolve": {
+    "nodes": [
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#rapier3d@0.22.0",
+        "features": ["default", "enhanced-determinism", "f32", "dim3"]
+      },
+      {
+        "id": "registry+https://github.com/rust-lang/crates.io-index#parry3d@0.17.0",
+        "features": ["default", "enhanced-determinism", "std"]
+      },
+      {
+        "id": "path+file:///work/moho/moho_physics#0.1.0",
+        "features": []
+      }
+    ],
+    "root": null
+  }
+}

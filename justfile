@@ -33,9 +33,54 @@ test-doc:
 comment-refs base=base:
     scripts/check-comment-refs.sh {{base}}
 
-# Licenses, advisories, banned and duplicate crates, crate sources.
-deny:
+# Licenses, advisories, banned and duplicate crates, crate sources, and the physics
+# determinism features on the real workspace.
+deny: physics-features-test
+    scripts/check-physics-features.sh
     cargo deny check
+
+# Self-test of the physics determinism check: each fixture missing `enhanced-determinism` on
+# one crate is rejected naming only that crate, and the good fixture passes.
+physics-features-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just="{{replace(just_executable(), '\', '/')}}"
+    "$just" _physics-features-rejects physics-features-rapier-missing rapier3d parry3d
+    "$just" _physics-features-rejects physics-features-parry-missing parry3d rapier3d
+    "$just" _physics-features-accepts physics-features-good
+    echo "physics-features: OK"
+
+# Fails unless the check exits non-zero on the fixture, names `named`, and leaves `other` unnamed.
+[private]
+_physics-features-rejects fixture named other:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    out=$(MOHO_PHYSICS_METADATA=scripts/fixtures/{{fixture}}.json scripts/check-physics-features.sh 2>&1)
+    status=$?
+    if [ "$status" -ne 0 ] && grep -qF -- '{{named}}' <<<"$out" && ! grep -qF -- '{{other}}' <<<"$out"; then
+        exit 0
+    fi
+    echo "physics-features self-test failed: {{fixture}}" >&2
+    echo "  expected: non-zero exit naming {{named}} and not {{other}}" >&2
+    echo "  got: exit $status, output:" >&2
+    sed 's/^/    /' <<<"$out" >&2
+    exit 1
+
+# Fails unless the check exits 0 on the fixture.
+[private]
+_physics-features-accepts fixture:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    out=$(MOHO_PHYSICS_METADATA=scripts/fixtures/{{fixture}}.json scripts/check-physics-features.sh 2>&1)
+    status=$?
+    if [ "$status" -eq 0 ]; then
+        exit 0
+    fi
+    echo "physics-features self-test failed: {{fixture}}" >&2
+    echo "  expected: exit 0" >&2
+    echo "  got: exit $status, output:" >&2
+    sed 's/^/    /' <<<"$out" >&2
+    exit 1
 
 # LCOV coverage report at lcov.info.
 cov:
