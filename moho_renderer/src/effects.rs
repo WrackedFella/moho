@@ -121,8 +121,12 @@ struct Mark {
 }
 
 impl Mark {
-    /// The size factor: 1 until the last `fade` of the lifetime, then falling linearly to 0.
+    /// The size factor: 1 until the last `fade` of the lifetime, then falling linearly to 0;
+    /// 0 for a zero lifetime.
     fn size_scale(&self) -> f32 {
+        if self.style.lifetime.is_zero() {
+            return 0.0;
+        }
         if self.style.fade.is_zero() {
             return 1.0;
         }
@@ -1485,6 +1489,25 @@ mod tests {
         rig.effects.flash(Vec3::X, 0.0, flash_style(0.4, long));
         assert_eq!(rig.frame(EYE).len(), 1, "only the control draws");
         assert_eq!(rig.effects.live(), 3, "the empty ones are still live");
+    }
+
+    #[test]
+    fn a_mark_with_a_zero_lifetime_draws_nothing_on_its_first_frame() {
+        for fade in [Duration::ZERO, Duration::from_secs(1)] {
+            let mut rig = Rig::new();
+            rig.effects
+                .mark(Vec3::Z, Vec3::Y, 0.0, mark_style(0.2, Duration::ZERO, fade));
+
+            assert!(rig.frame(EYE).is_empty(), "fade {fade:?}");
+
+            rig.effects.mark(
+                Vec3::X,
+                Vec3::Y,
+                0.0,
+                mark_style(0.2, Duration::from_secs(10), fade),
+            );
+            assert_eq!(rig.frame(EYE).len(), 1, "only the control draws");
+        }
     }
 
     #[test]

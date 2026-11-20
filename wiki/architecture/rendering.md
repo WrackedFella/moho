@@ -589,8 +589,9 @@ streaks: at the cap a new one replaces the oldest flash or mark, and is refused 
 exists or at quality 0.
 
 `Scene::render` calls `Effects::draw` first: each streak, flash and mark becomes one placement of
-a shared mesh per kind (kite, four-pointed star, square), uploaded on first use under `EFFECT_MESH_IDS_FROM` (`u64::MAX - 63`, reserved; games keep
-their ids below it), turned to face the camera eye. Placements go through
+a shared mesh per kind (kite, four-pointed star, square), uploaded on first use under
+`EFFECT_MESH_IDS_FROM + 0`, `+ 1` and `+ 2` (from `u64::MAX - 63`, reserved; games keep their ids
+below it). Streaks and flashes are turned to face the camera eye; marks lie along their normal. Placements go through
 `WorldMeshes::place_unshadowed` and reach the backend via `RendererBackend::enqueue_unshadowed_draw`
 (default: `enqueue_draw`). In the renderer the draw key has `casts_shadow = false`, so
 `render_shadow_passes` skips it and the main pass draws it. A second camera sees a streak
