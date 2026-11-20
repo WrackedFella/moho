@@ -1,0 +1,1 @@
+{"packages":[{"id":"registry+https://github.com/rust-lang/crates.io-index#rapier3d@0.36.0","name":"rapier3d"}],"workspace_members":[],"resolve":{"nodes":[{"id":"registry+https://github.com/rust-lang/crates.io-index#rapier3d@0.36.0","features":["default","dim3","enhanced-determinism","f32","std"]}],"root":null},"version":1}

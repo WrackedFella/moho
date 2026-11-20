@@ -43,6 +43,7 @@ deny:
     "$just" _physics-features-accepts physics-features-ok
     "$just" _physics-features-rejects physics-features-no-rapier rapier3d
     "$just" _physics-features-rejects physics-features-no-parry parry3d
+    "$just" _physics-features-rejects physics-features-no-parry-package parry3d
 
 # Fails unless the physics feature check exits non-zero on the fixture and names the crate.
 [private]
@@ -67,11 +68,11 @@ _physics-features-accepts fixture:
     set -uo pipefail
     out=$(MOHO_PHYSICS_METADATA=scripts/fixtures/{{fixture}}.json scripts/check-physics-features.sh 2>&1)
     status=$?
-    if [ "$status" -eq 0 ]; then
+    if [ "$status" -eq 0 ] && grep -qF -- 'physics-features: OK' <<<"$out"; then
         exit 0
     fi
     echo "physics-features self-test failed: {{fixture}}" >&2
-    echo "  expected: exit 0" >&2
+    echo "  expected: exit 0 and output containing 'physics-features: OK'" >&2
     echo "  got: exit $status, output:" >&2
     sed 's/^/    /' <<<"$out" >&2
     exit 1

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Fails unless rapier3d and parry3d both resolve with enhanced-determinism, which keeps
-# physics replay bit-for-bit across platforms. The feature is set on rapier3d and reaches
+# Fails unless rapier3d and parry3d both resolve with enhanced-determinism, so rapier's
+# step stops calling the platform math library. The feature is set on rapier3d and reaches
 # parry3d through it; losing it from either breaks determinism without failing any
 # same-machine test. A crate missing from the graph fails too. MOHO_PHYSICS_METADATA, if
 # set, names a `cargo metadata` JSON file read instead of running cargo (for fixtures).
