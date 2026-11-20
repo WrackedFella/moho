@@ -148,9 +148,13 @@ impl Effect {
     }
 }
 
-/// Mesh slots after the streak kite, as offsets from `EFFECT_MESH_IDS_FROM`.
+/// Mesh slots as offsets from `EFFECT_MESH_IDS_FROM`; each indexes `SLOT_MESHES`.
+const STREAK_SLOT: usize = 0;
 const FLASH_SLOT: usize = 1;
 const MARK_SLOT: usize = 2;
+
+/// Builds the mesh of each slot, uploaded on its first draw.
+const SLOT_MESHES: [fn() -> WorldMesh; 3] = [streak_mesh, star_mesh, quad_mesh];
 
 #[derive(Debug)]
 pub struct Effects {
@@ -158,7 +162,7 @@ pub struct Effects {
     next_handle: u64,
     cap: usize,
     /// Whether the mesh at each slot (streak, flash, mark) has been uploaded.
-    mesh_uploaded: [bool; 3],
+    mesh_uploaded: [bool; SLOT_MESHES.len()],
 }
 
 impl Default for Effects {
@@ -167,7 +171,7 @@ impl Default for Effects {
             store: BTreeMap::new(),
             next_handle: 0,
             cap: CAPS[DEFAULT_QUALITY],
-            mesh_uploaded: [false; 3],
+            mesh_uploaded: [false; SLOT_MESHES.len()],
         }
     }
 }
@@ -310,7 +314,7 @@ impl Effects {
                     let width = streak.style.width * streak.width_scale();
                     let transform =
                         streak_transform(streak.head, heading, streak.style.length, width, eye);
-                    (0, transform, streak.style.material)
+                    (STREAK_SLOT, transform, streak.style.material)
                 }
                 Effect::Flash(flash) => (
                     FLASH_SLOT,
@@ -324,18 +328,10 @@ impl Effects {
             };
             let id = WorldMeshId(EFFECT_MESH_IDS_FROM + slot as u64);
             if !std::mem::replace(&mut self.mesh_uploaded[slot], true) {
-                meshes.upsert_movable(id, effect_mesh(slot));
+                meshes.upsert_movable(id, SLOT_MESHES[slot]());
             }
             meshes.place_unshadowed(id, transform, material);
         }
-    }
-}
-
-fn effect_mesh(slot: usize) -> WorldMesh {
-    match slot {
-        FLASH_SLOT => star_mesh(),
-        MARK_SLOT => quad_mesh(),
-        _ => streak_mesh(),
     }
 }
 
@@ -424,21 +420,15 @@ fn mark_transform(mark: &Mark) -> Option<Affine3A> {
 
 /// A kite from the tail at the origin to the head at x = 1, counter-clockwise seen from +Z.
 fn streak_mesh() -> WorldMesh {
-    WorldMesh::new(
+    flat_mesh(
         vec![
             [0.0, 0.0, 0.0],
             [0.8, -0.5, 0.0],
             [1.0, 0.0, 0.0],
             [0.8, 0.5, 0.0],
         ],
-        vec![[0.0, 0.0, 1.0]; 4],
-        vec![1.0; 4],
-        vec![[1.0; 3]; 4],
-        vec![1.0; 4],
-        vec![0; 4],
         vec![0, 1, 2, 0, 2, 3],
     )
-    .expect("the kite's channels are all four vertices long and its indices are in range")
 }
 
 /// Where a streak from `head - dir * length` to `head` is drawn so that it faces `eye`.
