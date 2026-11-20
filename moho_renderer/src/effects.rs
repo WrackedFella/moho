@@ -1376,6 +1376,38 @@ mod tests {
     }
 
     #[test]
+    fn a_mark_fade_shrinks_in_proportion_to_its_length_whatever_that_is() {
+        for (lifetime, fade, ages_and_scales) in [
+            (
+                Duration::from_secs(10),
+                Duration::from_secs(4),
+                [(6000, 1.0), (7000, 0.75), (8000, 0.5), (9000, 0.25)],
+            ),
+            (
+                Duration::from_secs(1),
+                ms(400),
+                [(600, 1.0), (700, 0.75), (800, 0.5), (900, 0.25)],
+            ),
+        ] {
+            let mut rig = Rig::new();
+            rig.effects
+                .mark(AT, Vec3::Y, 0.0, mark_style(0.2, lifetime, fade));
+            let mut elapsed = 0;
+
+            for (age_ms, scale) in ages_and_scales {
+                rig.effects.advance(ms(age_ms - elapsed));
+                elapsed = age_ms;
+                let drawn = one_drawn(&mut rig, EYE);
+                assert!(
+                    (x_axis(&drawn).length() - 0.2 * scale).abs() < EPS,
+                    "fade {fade:?} at {age_ms} ms: expected scale {scale}, size {}",
+                    x_axis(&drawn).length()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn a_mark_with_no_fade_holds_full_size_until_its_lifetime_then_is_gone() {
         let mut rig = Rig::new();
         rig.effects.mark(
