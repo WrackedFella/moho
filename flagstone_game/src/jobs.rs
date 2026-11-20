@@ -13,6 +13,7 @@ use crate::TICK_HZ;
 use crate::colony::MineMarks;
 use crate::pawn::{Pawn, PawnId, TOOL_SLOT};
 use crate::routing::{ROUTE_NODE_BUDGET, feet_cell, route, standable};
+use crate::selection::PAWN_HALF_EXTENTS;
 
 /// How near the feet must come to a waypoint's centre, horizontally, to have reached it.
 pub const ARRIVE_RADIUS: f32 = 0.35;
@@ -27,7 +28,7 @@ pub const TURN_RATE: f32 = TAU;
 const WALK_ARC: f32 = FRAC_PI_3;
 
 /// How far above the feet the capsule centre, where the eye is, sits.
-pub const EYE_HEIGHT: f32 = 1.15;
+pub const EYE_HEIGHT: f32 = PAWN_HALF_EXTENTS.y;
 
 /// Marks an idle pawn tries to route to in one tick.
 pub const ROUTE_ATTEMPTS_PER_TICK: usize = 4;
@@ -40,7 +41,7 @@ pub struct Pose {
 }
 
 /// Progress bookkeeping for a walk, so a pawn that is stuck gives up.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StallGuard {
     /// The closest the feet have been to the current waypoint.
     pub closest: f32,
@@ -48,9 +49,9 @@ pub struct StallGuard {
     pub ticks_without_progress: u32,
 }
 
-impl StallGuard {
+impl Default for StallGuard {
     /// A guard that has seen no progress yet and counts no idle ticks.
-    fn fresh() -> Self {
+    fn default() -> Self {
         Self {
             closest: f32::INFINITY,
             ticks_without_progress: 0,
@@ -121,10 +122,6 @@ const FACES: [BlockPos; 6] = [
     BlockPos::new(0, 0, -1),
 ];
 
-fn block_at(pos: [i32; 3]) -> BlockPos {
-    BlockPos::new(pos[0], pos[1], pos[2])
-}
-
 /// Whether `block` exists and has an air neighbour to dig it from.
 fn is_exposed(grid: &VoxelGrid, block: BlockPos) -> bool {
     grid.is_solid_at(block) && FACES.iter().any(|&face| !grid.is_solid_at(block + face))
@@ -182,7 +179,7 @@ pub fn step(
             break;
         }
         *next += 1;
-        *stall = StallGuard::fresh();
+        *stall = StallGuard::default();
     }
     let Some(&waypoint) = route.get(*next) else {
         return dig(pawn, marks, pos, pose, grid);
@@ -218,12 +215,13 @@ fn dig(
     pose: Pose,
     grid: &VoxelGrid,
 ) -> JobAction {
-    let block = block_at(pos);
+    let block = BlockPos::from_array(pos);
     if !can_dig_from(block, feet_cell(pose.feet)) {
         return drop_job(pawn, marks, pos);
     }
     let eye = pose.feet + Vec3::Y * EYE_HEIGHT;
-    let aim = is_exposed(grid, block)
+    let aim = grid
+        .is_solid_at(block)
         .then(|| {
             FACES
                 .iter()
@@ -249,7 +247,7 @@ fn claim_nearest(
     let mut candidates: Vec<BlockPos> = marks
         .unclaimed()
         .into_iter()
-        .map(block_at)
+        .map(BlockPos::from_array)
         .filter(|&block| is_exposed(grid, block))
         .collect();
     // Stable, so marks equally near stay in key order.
@@ -270,7 +268,7 @@ fn claim_nearest(
                 mark: block,
                 route,
                 next: 0,
-                stall: StallGuard::fresh(),
+                stall: StallGuard::default(),
             };
             return true;
         }

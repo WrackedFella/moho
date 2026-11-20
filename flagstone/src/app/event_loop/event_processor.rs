@@ -550,10 +550,7 @@ pub(crate) fn publish_pawn_dig(app: &App, outcome: &MineOutcome) {
 /// Announces a removed block and the chunks whose meshes it changes, so marks drop, lighting
 /// updates and chunks remesh, whoever did the digging.
 fn publish_removal(app: &App, outcome: &MineOutcome) {
-    let chunk_size = app
-        .light_system
-        .as_ref()
-        .map_or(16, |light_system| light_system.grid().chunk_size());
+    let chunk_size = flagstone_voxel::LIGHT_CHUNK_SIZE;
     app.event_bus.publish(WorldEvent::BlockRemoved {
         position: outcome.block_pos,
         old_material_id: outcome.old_material_id,
