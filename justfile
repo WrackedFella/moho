@@ -55,6 +55,7 @@ deny:
     }
     check reject physics-features-no-rapier rapier3d
     check reject physics-features-no-parry parry3d
+    check reject physics-features-second-parry parry3d
     check accept physics-features-good ''
     scripts/check-physics-features.sh
 

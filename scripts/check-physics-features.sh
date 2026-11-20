@@ -7,13 +7,13 @@
 set -euo pipefail
 
 filter='
-    . as $m
+    (.packages | map({key: .id, value: .name}) | from_entries) as $name
+    | .resolve.nodes as $nodes
     | ["rapier3d", "parry3d"][] as $crate
-    | ([$m.packages[] | select(.name == $crate) | .id]) as $ids
+    | [$nodes[] | select($name[.id] == $crate)] as $copies
     | select(
-        ($ids | length) == 0
-        or ([$m.resolve.nodes[] | select(.id as $i | $ids | index($i)) | .features[]?]
-            | index("enhanced-determinism") | not)
+        ($copies | length) == 0
+        or any($copies[]; (.features // []) | index("enhanced-determinism") | not)
       )
     | "physics-features: \($crate) does not resolve with enhanced-determinism"'
 
