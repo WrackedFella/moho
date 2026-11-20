@@ -72,6 +72,17 @@ gets that tick's advance on top.
 
 All gameplay steps early-return unless `GameState::Playing`. `dt` is the fixed tick length.
 
+In the strategy view (`CameraMode::Isometric`) each tick also runs the pawn's job
+(`App::run_pawn_job` in `flagstone/src/app/event_loop/frame_processor.rs`).
+`flagstone_game::jobs::step` claims an unclaimed mining mark, routes to a stand cell
+(`flagstone_game::routing`: A* over standable cells, one block up or down per step, bounded by
+`ROUTE_NODE_BUDGET`) and answers a `JobAction`. `Walk` is turned by `jobs::steer` into a
+`CharacterCommand` for the same physics character first person uses, and the camera state
+follows it, so a switch to first person starts where the pawn stands. `Dig` calls `Pawn::dig`
+within `MINE_REACH` and deposits the yield in `Colony::stock`, not the pawn's inventory, then
+publishes the dig through `publish_pawn_dig`. A pawn that makes no progress for `STALL_TICKS`
+releases its claim; the mark stays. A pawn with nothing to do is not moved.
+
 Mining publishes its block event while `process_input_events` drains, after
 `process_world_events`, so the light system queues the edit on the next tick and lights it in
 the tick after (two ticks, about 33 ms at 60 Hz).
