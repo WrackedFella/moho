@@ -3,21 +3,36 @@
 //! What a pawn can stand on is a pawn rule, so it lives on the strategy line rather than
 //! with the voxel grid.
 
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
+
 use flagstone_voxel::{BlockPos, VoxelGrid};
 use glam::Vec3;
+
+/// Cells of air a standing pawn needs from its feet up: the capsule is 2.3 m tall.
+const CAPSULE_CELLS: i32 = 3;
+
+/// The four horizontal steps, in the order they are tried.
+const HORIZONTAL: [BlockPos; 4] = [
+    BlockPos::new(1, 0, 0),
+    BlockPos::new(-1, 0, 0),
+    BlockPos::new(0, 0, 1),
+    BlockPos::new(0, 0, -1),
+];
 
 /// Most cells a search expands before it gives up.
 pub const ROUTE_NODE_BUDGET: usize = 4096;
 
 /// The cell whose volume holds `feet`: each axis floored.
-pub fn feet_cell(_feet: Vec3) -> BlockPos {
-    todo!("floor the position to its cell")
+pub fn feet_cell(feet: Vec3) -> BlockPos {
+    feet.floor().as_ivec3()
 }
 
 /// Whether a pawn can stand with its feet in `cell`: solid ground under it and the capsule's
 /// height of air, three cells, from the feet up.
-pub fn standable(_grid: &VoxelGrid, _cell: BlockPos) -> bool {
-    todo!("ground below and three cells of air")
+pub fn standable(grid: &VoxelGrid, cell: BlockPos) -> bool {
+    grid.is_solid_at(cell - BlockPos::Y)
+        && (0..CAPSULE_CELLS).all(|up| !grid.is_solid_at(cell + BlockPos::Y * up))
 }
 
 /// The cheapest walk from `start` to a cell `is_goal` accepts, over standable cells.
@@ -30,13 +45,73 @@ pub fn standable(_grid: &VoxelGrid, _cell: BlockPos) -> bool {
 /// Ties between equal routes break the same way every time. `None` when there is no route, or
 /// the search expands `budget` cells without reaching a goal.
 pub fn route(
-    _grid: &VoxelGrid,
-    _start: BlockPos,
-    _is_goal: impl Fn(BlockPos) -> bool,
-    _toward: BlockPos,
-    _budget: usize,
+    grid: &VoxelGrid,
+    start: BlockPos,
+    is_goal: impl Fn(BlockPos) -> bool,
+    toward: BlockPos,
+    budget: usize,
 ) -> Option<Vec<BlockPos>> {
-    todo!("A* over standable cells")
+    let start = [start, start + BlockPos::Y, start - BlockPos::Y]
+        .into_iter()
+        .find(|&cell| standable(grid, cell))?;
+    let estimate = |cell: BlockPos| {
+        let gap = (cell - toward).abs();
+        gap.x + gap.y + gap.z
+    };
+
+    // Each node remembers where it was reached from. The queue orders by estimated total cost,
+    // then cost so far, then insertion, so equal routes always break the same way.
+    let mut nodes = vec![(start, usize::MAX)];
+    let mut cheapest: HashMap<BlockPos, i32> = HashMap::from([(start, 0)]);
+    let mut queue = BinaryHeap::from([Reverse((estimate(start), 0, 0usize))]);
+    let mut expanded = 0;
+    while let Some(Reverse((_, cost, index))) = queue.pop() {
+        let (cell, _) = nodes[index];
+        if cheapest.get(&cell).is_some_and(|&best| best < cost) {
+            continue;
+        }
+        if is_goal(cell) {
+            let mut cells = Vec::new();
+            let mut at = index;
+            while nodes[at].1 != usize::MAX {
+                cells.push(nodes[at].0);
+                at = nodes[at].1;
+            }
+            cells.reverse();
+            return Some(cells);
+        }
+        if expanded >= budget {
+            return None;
+        }
+        expanded += 1;
+        for next in neighbours(grid, cell) {
+            let next_cost = cost + 1;
+            if cheapest.get(&next).is_some_and(|&best| best <= next_cost) {
+                continue;
+            }
+            cheapest.insert(next, next_cost);
+            nodes.push((next, index));
+            queue.push(Reverse((
+                next_cost + estimate(next),
+                next_cost,
+                nodes.len() - 1,
+            )));
+        }
+    }
+    None
+}
+
+/// The standable cells a pawn can step to from `cell`, in a fixed order.
+fn neighbours(grid: &VoxelGrid, cell: BlockPos) -> impl Iterator<Item = BlockPos> + '_ {
+    // A step up needs a fourth cell of air over the current feet.
+    let headroom = !grid.is_solid_at(cell + BlockPos::Y * CAPSULE_CELLS);
+    HORIZONTAL.into_iter().flat_map(move |side| {
+        [0, 1, -1]
+            .into_iter()
+            .filter(move |&rise| rise != 1 || headroom)
+            .map(move |rise| cell + side + BlockPos::Y * rise)
+            .filter(|&next| standable(grid, next))
+    })
 }
 
 #[cfg(test)]

@@ -60,6 +60,9 @@ impl Overlay for RtsHud {
         if let Some(selection) = &data.selection {
             render_selection(ui, selection);
         }
+        if !data.colony_stock.is_empty() {
+            render_colony_stock(ui, &data.colony_stock);
+        }
     }
 
     fn take_intents(&mut self, out: &mut HudIntents) {
@@ -89,6 +92,26 @@ fn render_selection(ui: &mut egui::Ui, selection: &SelectionHud) {
                     }
                     for (name, count) in &selection.carried {
                         ui.label(egui::RichText::new(format!("{name}: {count}")).color(colour));
+                    }
+                });
+        });
+}
+
+/// The colony's totals under the clock, one `R<id> ×n` line per resource, like the hotbar's
+/// labels.
+fn render_colony_stock(ui: &mut egui::Ui, stock: &[(u32, u32)]) {
+    egui::Area::new("rts_colony_stock".into())
+        .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 48.0))
+        .show(ui.ctx(), |ui| {
+            egui::Frame::new()
+                .fill(egui::Color32::from_rgba_premultiplied(0, 0, 0, 120))
+                .inner_margin(egui::Margin::same(6))
+                .show(ui, |ui| {
+                    for (resource_id, count) in stock {
+                        ui.label(
+                            egui::RichText::new(format!("R{resource_id} ×{count}"))
+                                .color(egui::Color32::from_rgb(220, 220, 200)),
+                        );
                     }
                 });
         });
