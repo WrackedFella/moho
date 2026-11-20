@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Fails unless rapier3d and parry3d resolve with the enhanced-determinism feature, which
-# keeps the physics step off the platform math library. Reads
-# `cargo metadata` resolved features per package, so a member crate that overrides the
-# workspace dependency, or a dependency that drops the feature, is caught. If
-# MOHO_PHYSICS_METADATA names a file, its JSON is read instead of running cargo (the
-# self-tests point it at fixtures).
+# Fails unless rapier3d and parry3d resolve with enhanced-determinism, which keeps the
+# physics step off the platform math library. Checks resolved features from
+# `cargo metadata`, so a member crate overriding the workspace dependency, or a dependency
+# dropping the feature, is caught. MOHO_PHYSICS_METADATA names a JSON file to read instead
+# of running cargo (used by the self-tests).
 set -euo pipefail
 
 filter='
