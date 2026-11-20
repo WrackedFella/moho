@@ -235,6 +235,49 @@ mod tests {
     }
 
     #[test]
+    fn lone_ctrl_conflict_raises_prompt_and_ends_listening() {
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry(); // Descend holds Ctrl
+        let mut bindings_changed = vec![];
+        handler.start_listening(0);
+
+        let applied = handler.capture_modifier_if_listening(1, &bindings, |action, b| {
+            bindings_changed.push((action, b));
+        });
+
+        assert!(applied);
+        assert!(!handler.is_listening());
+        assert!(bindings_changed.is_empty());
+        let modal = handler.take_conflict_modal();
+        assert_eq!(modal.map(|(_, key)| key), Some("Ctrl".to_string()));
+    }
+
+    #[test]
+    fn keys_after_a_lone_modifier_conflict_bind_nothing() {
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry(); // Sprint holds Shift
+        let mut bindings_changed = vec![];
+        handler.start_listening(0);
+        handler.capture_modifier_if_listening(2, &bindings, |_, _| {});
+
+        let key_consumed = handler.apply_key_while_listening(Key::A, &bindings, |action, b| {
+            bindings_changed.push((action, b));
+        });
+        let released = handler.capture_modifier_if_listening(0, &bindings, |action, b| {
+            bindings_changed.push((action, b));
+        });
+        let alt = handler.capture_modifier_if_listening(4, &bindings, |action, b| {
+            bindings_changed.push((action, b));
+        });
+
+        assert!(!key_consumed);
+        assert!(!released);
+        assert!(!alt);
+        assert!(bindings_changed.is_empty());
+        assert!(!handler.is_listening());
+    }
+
+    #[test]
     fn lone_modifier_conflict_ends_listening() {
         let mut handler = KeybindCaptureHandler::new();
         let bindings = registry(); // Sprint holds Shift

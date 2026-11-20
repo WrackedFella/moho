@@ -714,6 +714,58 @@ fn cancel_after_stray_key_changes_nothing() {
     assert!(!menu.has_unsaved_changes());
 }
 
+/// After a cancelled conflict the same row listens again and binds a free lone modifier.
+#[test]
+fn listening_again_after_cancel_binds_a_free_lone_modifier() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(0);
+    modifier_frame(&mut menu, egui::Modifiers::SHIFT);
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+    Screen::on_modal_cancel(&mut menu);
+
+    menu.start_listening(0);
+    modifier_frame(&mut menu, egui::Modifiers::NONE);
+    modifier_frame(&mut menu, egui::Modifiers::ALT);
+
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::Alt), pad_stick(StickDir::Up)]
+    );
+    assert!(!menu.is_listening());
+    assert!(Screen::take_pending_modal(&mut menu).is_none());
+}
+
+/// After a confirmed conflict no prompt is left, and a free modifier binds without one.
+#[test]
+fn confirm_leaves_no_stale_prompt_and_free_modifier_binds() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(0);
+    modifier_frame(&mut menu, egui::Modifiers::SHIFT);
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+    Screen::on_modal_confirm(&mut menu);
+
+    assert!(Screen::take_pending_modal(&mut menu).is_none());
+    assert_eq!(menu.get_staged_binding(6), [sprint_pad()]);
+    menu.start_listening(6);
+    modifier_frame(&mut menu, egui::Modifiers::NONE);
+    modifier_frame(&mut menu, egui::Modifiers::ALT);
+
+    assert!(Screen::take_pending_modal(&mut menu).is_none());
+    assert_eq!(
+        menu.get_staged_binding(6),
+        [Binding::key(Key::Alt), sprint_pad()]
+    );
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::Shift), pad_stick(StickDir::Up)]
+    );
+    assert!(!menu.is_listening());
+}
+
 /// Rebinding a row replaces its plain key and keeps its hold bindings, in the settings text too.
 #[test]
 fn rebinding_sprint_keeps_its_hold_bindings() {
