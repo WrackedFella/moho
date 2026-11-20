@@ -1194,22 +1194,151 @@ mod tests {
             .map(|_| rig.effects.begin_streak(style(2.0, 0.1)))
             .collect();
         assert_eq!(rig.effects.live(), 32);
+        let far = Vec3::new(500.0, 2.0, 3.0);
 
         rig.effects.mark(
-            AT,
+            far,
             Vec3::Y,
             0.0,
             mark_style(0.2, Duration::from_secs(10), Duration::from_secs(1)),
         );
         rig.effects
-            .flash(AT, 0.0, flash_style(0.4, Duration::from_secs(1)));
+            .flash(far, 0.0, flash_style(0.4, Duration::from_secs(1)));
 
         assert_eq!(rig.effects.live(), 32, "refused, nothing evicted");
-        for handle in &handles {
-            rig.effects.place_streak(*handle, Vec3::X * 5.0, Vec3::X);
+        for (i, handle) in (0..32u8).zip(&handles) {
+            let head = Vec3::new(f32::from(i) * 3.0, 0.0, 0.0);
+            rig.effects.place_streak(*handle, head, Vec3::X);
         }
-        assert_eq!(rig.frame(EYE).len(), 32, "every streak still draws");
-        assert_eq!(rig.backend.registered.len(), 1, "only the kite uploaded");
+        let drawn = rig.frame(EYE);
+        let tails: Vec<f32> = (0..32u8).map(|i| f32::from(i) * 3.0 - 2.0).collect();
+        assert_xs(&drawn, &tails);
+        assert!(
+            drawn.iter().all(|i| (translation(i) - far).length() > 1.0),
+            "nothing draws at the refused spawns"
+        );
+    }
+
+    fn spawn_fixed(effects: &mut Effects, flash: bool, x: f32) {
+        let at = Vec3::new(x, 0.0, 0.0);
+        if flash {
+            effects.flash(at, 0.0, flash_style(0.4, Duration::from_secs(1)));
+        } else {
+            effects.mark(
+                at,
+                Vec3::Y,
+                0.0,
+                mark_style(0.2, Duration::from_secs(10), Duration::from_secs(1)),
+            );
+        }
+    }
+
+    #[test]
+    fn a_full_cap_drops_the_oldest_effect_whatever_the_kind_of_it_and_of_the_newcomer() {
+        for (oldest_is_flash, new_is_flash) in
+            [(true, true), (true, false), (false, true), (false, false)]
+        {
+            let mut rig = Rig::new();
+            rig.effects.set_quality(1);
+            for x in 0..32u8 {
+                spawn_fixed(&mut rig.effects, oldest_is_flash, f32::from(x));
+            }
+            assert_eq!(rig.effects.live(), 32);
+
+            spawn_fixed(&mut rig.effects, new_is_flash, 100.0);
+
+            assert_eq!(
+                rig.effects.live(),
+                32,
+                "flash first {oldest_is_flash}, flash new {new_is_flash}"
+            );
+            let mut expected = xs_from(1..=31);
+            expected.push(100.0);
+            assert_xs(&rig.frame(EYE), &expected);
+        }
+    }
+
+    #[test]
+    fn a_mark_with_a_normal_that_cannot_be_normalised_is_refused_without_evicting() {
+        let mut rig = Rig::new();
+        rig.effects.set_quality(1);
+        let style = mark_style(0.2, Duration::from_secs(10), Duration::from_secs(1));
+        for normal in [
+            Vec3::ZERO,
+            Vec3::splat(f32::NAN),
+            Vec3::new(f32::INFINITY, 0.0, 1.0),
+        ] {
+            rig.effects.mark(AT, normal, 0.0, style);
+        }
+        assert_eq!(rig.effects.live(), 0, "refused on an empty store");
+        assert!(rig.frame(EYE).is_empty());
+        for x in 0..32u8 {
+            spawn_fixed(&mut rig.effects, false, f32::from(x));
+        }
+
+        for normal in [
+            Vec3::ZERO,
+            Vec3::splat(f32::NAN),
+            Vec3::new(f32::INFINITY, 0.0, 1.0),
+        ] {
+            rig.effects
+                .mark(Vec3::new(100.0, 0.0, 0.0), normal, 0.0, style);
+        }
+
+        assert_eq!(rig.effects.live(), 32);
+        assert_xs(&rig.frame(EYE), &xs_from(0..=31));
+    }
+
+    #[test]
+    fn a_non_unit_normal_is_normalised_and_draws_like_the_unit_one() {
+        let style = mark_style(0.2, Duration::from_secs(10), Duration::from_secs(1));
+        let mut unit_rig = Rig::new();
+        let mut long_rig = Rig::new();
+        unit_rig.effects.mark(AT, Vec3::Z, 0.4, style);
+        long_rig.effects.mark(AT, Vec3::Z * 5.0, 0.4, style);
+
+        let unit = one_drawn(&mut unit_rig, EYE);
+        let long = one_drawn(&mut long_rig, EYE);
+
+        assert_near(translation(&long), translation(&unit));
+        assert_near(x_axis(&long), x_axis(&unit));
+        assert_near(y_axis(&long), y_axis(&unit));
+        assert_near(z_axis(&long).normalize(), Vec3::Z);
+        assert!((x_axis(&long).length() - 0.2).abs() < EPS, "size unscaled");
+    }
+
+    #[test]
+    fn a_spawn_that_cannot_draw_is_refused_without_evicting() {
+        let mut rig = Rig::new();
+        rig.effects.set_quality(1);
+        let bad_points = [
+            Vec3::new(f32::NAN, 0.0, 0.0),
+            Vec3::new(0.0, f32::INFINITY, 0.0),
+            Vec3::new(0.0, 0.0, f32::NEG_INFINITY),
+        ];
+        let bad_sizes = [0.0, -0.5, f32::NAN, f32::INFINITY];
+        let life = Duration::from_secs(10);
+        let spawn_bad = |effects: &mut Effects| {
+            for at in bad_points {
+                effects.flash(at, 0.0, flash_style(0.4, life));
+                effects.mark(at, Vec3::Y, 0.0, mark_style(0.2, life, ms(500)));
+            }
+            for size in bad_sizes {
+                effects.flash(Vec3::X, 0.0, flash_style(size, life));
+                effects.mark(Vec3::X, Vec3::Y, 0.0, mark_style(size, life, ms(500)));
+            }
+        };
+
+        spawn_bad(&mut rig.effects);
+        assert_eq!(rig.effects.live(), 0, "refused on an empty store");
+        assert!(rig.frame(EYE).is_empty());
+        for x in 0..32u8 {
+            spawn_fixed(&mut rig.effects, false, f32::from(x));
+        }
+        spawn_bad(&mut rig.effects);
+
+        assert_eq!(rig.effects.live(), 32, "nothing evicted");
+        assert_xs(&rig.frame(EYE), &xs_from(0..=31));
     }
 
     #[test]
@@ -1300,6 +1429,7 @@ mod tests {
         assert!(radii[3] - radii[0] < EPS, "four inner vertices");
         assert!(radii[7] - radii[4] < EPS, "four tips");
         assert!(radii[4] - radii[3] > EPS, "tips reach past the inner ones");
+        assert!((radii[7] - 0.5).abs() < EPS, "size is tip to tip");
         assert_ccw_from_plus_z(positions, indices);
         let used: std::collections::BTreeSet<u32> = indices.iter().copied().collect();
         assert_eq!(used.len(), 8, "every vertex is used");
@@ -1333,7 +1463,7 @@ mod tests {
     }
 
     #[test]
-    fn flash_and_mark_take_the_next_two_reserved_mesh_ids_and_upload_once_unshadowed() {
+    fn flash_and_mark_upload_their_meshes_once_each_beside_the_streak() {
         let mut rig = Rig::new();
         let streak = rig.effects.begin_streak(style(2.0, 0.1));
         rig.effects
@@ -1344,29 +1474,51 @@ mod tests {
             0.0,
             mark_style(0.2, Duration::from_secs(10), Duration::from_secs(1)),
         );
-        rig.effects.place_streak(streak, Vec3::X * 5.0, Vec3::X);
 
-        let first = rig.frame_with_meshes(EYE);
-        rig.effects.place_streak(streak, Vec3::X * 5.0, Vec3::X);
-        let second = rig.frame_with_meshes(EYE);
+        for _ in 0..2 {
+            rig.effects.place_streak(streak, Vec3::X * 5.0, Vec3::X);
+            assert_eq!(rig.frame(EYE).len(), 3);
+        }
 
-        let handles = |drawn: &[(u32, InstanceGpu)]| drawn.iter().map(|d| d.0).collect::<Vec<_>>();
-        assert_eq!(
-            handles(&first),
-            [1, 2, 3],
-            "streak, flash, mark in id order"
-        );
-        assert_eq!(handles(&second), [1, 2, 3]);
-        let sizes: Vec<usize> = rig.backend.registered.iter().map(|m| m.0.len()).collect();
-        assert_eq!(sizes, [4, 8, 4], "each mesh uploaded once");
+        let mut sizes: Vec<usize> = rig.backend.registered.iter().map(|m| m.0.len()).collect();
+        sizes.sort_unstable();
+        assert_eq!(sizes, [4, 4, 8], "kite, quad and star, each uploaded once");
         assert_eq!(rig.meshes.live_len(), 3);
+    }
+
+    #[test]
+    fn flash_and_mark_draw_under_the_next_two_reserved_mesh_ids() {
+        let mut rig = Rig::new();
+        let streak = rig.effects.begin_streak(StreakStyle::new(2.0, 0.1, 10));
+        rig.effects.flash(
+            AT,
+            0.0,
+            FlashStyle {
+                material: 11,
+                ..flash_style(0.4, Duration::from_secs(5))
+            },
+        );
+        rig.effects.mark(
+            AT,
+            Vec3::Y,
+            0.0,
+            MarkStyle {
+                material: 12,
+                ..mark_style(0.2, Duration::from_secs(10), Duration::from_secs(1))
+            },
+        );
+        let materials = |rig: &mut Rig| {
+            rig.effects.place_streak(streak, Vec3::X * 5.0, Vec3::X);
+            let mut m: Vec<u32> = rig.frame(EYE).iter().map(|i| i.material).collect();
+            m.sort_unstable();
+            m
+        };
+        assert_eq!(materials(&mut rig), [10, 11, 12]);
 
         rig.meshes.remove(WorldMeshId(EFFECT_MESH_IDS_FROM + 1));
-        rig.effects.place_streak(streak, Vec3::X * 5.0, Vec3::X);
-        assert_eq!(handles(&rig.frame_with_meshes(EYE)), [1, 3], "no flash");
+        assert_eq!(materials(&mut rig), [10, 12], "removing +1 drops the flash");
         rig.meshes.remove(WorldMeshId(EFFECT_MESH_IDS_FROM + 2));
-        rig.effects.place_streak(streak, Vec3::X * 5.0, Vec3::X);
-        assert_eq!(handles(&rig.frame_with_meshes(EYE)), [1], "no mark");
+        assert_eq!(materials(&mut rig), [10], "removing +2 drops the mark");
     }
 
     fn unit_normals() -> impl Strategy<Value = Vec3> {
