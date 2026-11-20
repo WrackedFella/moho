@@ -75,17 +75,21 @@ struct Streak {
     ended_at: Option<Duration>,
 }
 
+/// 1 at `elapsed` zero falling linearly to 0 at `span`, and 0 for a zero span.
+fn linear_fade(elapsed: Duration, span: Duration) -> f32 {
+    if span.is_zero() {
+        return 0.0;
+    }
+    (1.0 - elapsed.as_secs_f32() / span.as_secs_f32()).clamp(0.0, 1.0)
+}
+
 impl Streak {
     /// The width factor of the fade: 1 until ended, then falling linearly to 0.
     fn width_scale(&self) -> f32 {
         let Some(ended_at) = self.ended_at else {
             return 1.0;
         };
-        if self.style.fade.is_zero() {
-            return 0.0;
-        }
-        let since_end = self.age.saturating_sub(ended_at);
-        (1.0 - since_end.as_secs_f32() / self.style.fade.as_secs_f32()).clamp(0.0, 1.0)
+        linear_fade(self.age.saturating_sub(ended_at), self.style.fade)
     }
 
     fn finished_fading(&self) -> bool {
@@ -125,7 +129,7 @@ impl Fixed {
         let into_fade = self
             .age
             .saturating_sub(self.lifetime.saturating_sub(self.fade));
-        (1.0 - into_fade.as_secs_f32() / self.fade.as_secs_f32()).clamp(0.0, 1.0)
+        linear_fade(into_fade, self.fade)
     }
 
     /// Where the unit mesh of this effect is drawn, or `None` if it has no valid basis.
@@ -148,12 +152,39 @@ impl Fixed {
         ))
     }
 
-    /// The reserved mesh slot (1 star, 2 quad) this effect draws.
-    fn mesh_slot(&self) -> usize {
+    /// Whether every input is usable: a finite position and roll, a mark's unit normal, a
+    /// positive finite size and a non-zero lifetime.
+    fn is_valid(&self) -> bool {
+        let kind_valid = match self.kind {
+            FixedKind::Flash { roll } => roll.is_finite(),
+            FixedKind::Mark { normal, roll } => roll.is_finite() && normal.length_squared() > 0.0,
+        };
+        kind_valid
+            && self.at.is_finite()
+            && self.size.is_finite()
+            && self.size > 0.0
+            && !self.lifetime.is_zero()
+    }
+
+    fn mesh(&self) -> MeshSlot {
         match self.kind {
-            FixedKind::Flash { .. } => 1,
-            FixedKind::Mark { .. } => 2,
+            FixedKind::Flash { .. } => MeshSlot::Star,
+            FixedKind::Mark { .. } => MeshSlot::Quad,
         }
+    }
+}
+
+/// The meshes effects draw, each in its own reserved id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum MeshSlot {
+    Kite = 0,
+    Star = 1,
+    Quad = 2,
+}
+
+impl MeshSlot {
+    fn id(self) -> WorldMeshId {
+        WorldMeshId(EFFECT_MESH_IDS_FROM + self as u64)
     }
 }
 
@@ -169,7 +200,7 @@ pub struct Effects {
     live: BTreeMap<EffectHandle, Effect>,
     next_handle: u64,
     cap: usize,
-    /// Whether the streak kite, star and quad meshes are uploaded, by mesh slot.
+    /// Whether each mesh is uploaded, indexed by `MeshSlot`.
     uploaded: [bool; 3],
 }
 
@@ -216,9 +247,6 @@ impl Effects {
     /// spawns) for a non-finite input, a non-positive size or a zero lifetime; at the cap
     /// it replaces the oldest flash or mark, or is refused when only streaks are live.
     pub fn flash(&mut self, at: Vec3, roll: f32, style: FlashStyle) {
-        if !(at.is_finite() && roll.is_finite()) {
-            return;
-        }
         self.spawn_fixed(Fixed {
             kind: FixedKind::Flash { roll },
             at,
@@ -236,14 +264,12 @@ impl Effects {
     /// lifetime; at the cap it replaces the oldest flash or mark, or is refused when
     /// only streaks are live.
     pub fn mark(&mut self, at: Vec3, normal: Vec3, roll: f32, style: MarkStyle) {
-        let Some(normal) = normal.try_normalize() else {
-            return;
-        };
-        if !(at.is_finite() && roll.is_finite()) {
-            return;
-        }
         self.spawn_fixed(Fixed {
-            kind: FixedKind::Mark { normal, roll },
+            // Zero for a zero or non-finite normal, which `Fixed::is_valid` refuses.
+            kind: FixedKind::Mark {
+                normal: normal.normalize_or_zero(),
+                roll,
+            },
             at,
             size: style.size,
             material: style.material,
@@ -254,26 +280,27 @@ impl Effects {
     }
 
     fn spawn_fixed(&mut self, fixed: Fixed) {
-        if !fixed.size.is_finite() || fixed.size <= 0.0 || fixed.lifetime.is_zero() {
+        if self.cap == 0 || !fixed.is_valid() {
             return;
         }
         let over = (self.live.len() + 1).saturating_sub(self.cap);
-        if self.cap == 0 {
-            return;
-        }
         if over > 0 {
-            let victims: Vec<EffectHandle> = self
+            let evictable = self
                 .live
-                .iter()
-                .filter(|(_, effect)| matches!(effect, Effect::Fixed(_)))
-                .map(|(handle, _)| *handle)
+                .values()
+                .filter(|effect| matches!(effect, Effect::Fixed(_)))
                 .take(over)
-                .collect();
-            if victims.len() < over {
+                .count();
+            if evictable < over {
                 return;
             }
-            for victim in victims {
-                self.live.remove(&victim);
+            for _ in 0..over {
+                let oldest = self.live.iter().find_map(|(handle, effect)| {
+                    matches!(effect, Effect::Fixed(_)).then_some(*handle)
+                });
+                if let Some(handle) = oldest {
+                    self.live.remove(&handle);
+                }
             }
         }
         let handle = self.issue_handle();
@@ -301,20 +328,18 @@ impl Effects {
     /// Age every effect by the frame time, start the fade of any streak past its
     /// `max_age` and drop the finished ones.
     pub fn advance(&mut self, dt: Duration) {
-        for effect in self.live.values_mut() {
-            match effect {
-                Effect::Streak(streak) => {
-                    streak.age += dt;
-                    if streak.age >= streak.style.max_age {
-                        streak.ended_at.get_or_insert(streak.style.max_age);
-                    }
-                }
-                Effect::Fixed(fixed) => fixed.age += dt,
-            }
-        }
         self.live.retain(|_, effect| match effect {
-            Effect::Streak(streak) => !streak.finished_fading(),
-            Effect::Fixed(fixed) => fixed.age < fixed.lifetime,
+            Effect::Streak(streak) => {
+                streak.age += dt;
+                if streak.age >= streak.style.max_age {
+                    streak.ended_at.get_or_insert(streak.style.max_age);
+                }
+                !streak.finished_fading()
+            }
+            Effect::Fixed(fixed) => {
+                fixed.age += dt;
+                fixed.age < fixed.lifetime
+            }
         });
     }
 
@@ -348,20 +373,19 @@ impl Effects {
                     };
                     let width = streak.style.width * streak.width_scale();
                     streak_transform(streak.head, heading, streak.style.length, width, eye)
-                        .map(|transform| (0, transform, streak.style.material))
+                        .map(|transform| (MeshSlot::Kite, transform, streak.style.material))
                 }
                 Effect::Fixed(fixed) => fixed
                     .transform(eye)
-                    .map(|transform| (fixed.mesh_slot(), transform, fixed.material)),
+                    .map(|transform| (fixed.mesh(), transform, fixed.material)),
             };
             let Some((slot, transform, material)) = placement else {
                 continue;
             };
-            let id = WorldMeshId(EFFECT_MESH_IDS_FROM + slot as u64);
-            if !std::mem::replace(&mut self.uploaded[slot], true) {
-                meshes.upsert_movable(id, effect_mesh(slot));
+            if !std::mem::replace(&mut self.uploaded[slot as usize], true) {
+                meshes.upsert_movable(slot.id(), effect_mesh(slot));
             }
-            meshes.place_unshadowed(id, transform, material);
+            meshes.place_unshadowed(slot.id(), transform, material);
         }
     }
 }
@@ -381,11 +405,11 @@ fn flat_mesh(positions: Vec<[f32; 3]>, indices: Vec<u32>) -> WorldMesh {
     .expect("every channel has one entry per vertex and the indices are in range")
 }
 
-/// The mesh in a reserved slot: 0 the streak kite, 1 the flash star, 2 the mark quad.
-fn effect_mesh(slot: usize) -> WorldMesh {
+/// The mesh a slot draws.
+fn effect_mesh(slot: MeshSlot) -> WorldMesh {
     match slot {
         // A kite from the tail at the origin to the head at x = 1.
-        0 => flat_mesh(
+        MeshSlot::Kite => flat_mesh(
             vec![
                 [0.0, 0.0, 0.0],
                 [0.8, -0.5, 0.0],
@@ -395,7 +419,7 @@ fn effect_mesh(slot: usize) -> WorldMesh {
             vec![0, 1, 2, 0, 2, 3],
         ),
         // Four tips on the axes, half a unit out, alternating with four inner corners.
-        1 => flat_mesh(
+        MeshSlot::Star => flat_mesh(
             vec![
                 [0.5, 0.0, 0.0],
                 [0.1, 0.1, 0.0],
@@ -409,7 +433,7 @@ fn effect_mesh(slot: usize) -> WorldMesh {
             vec![7, 0, 1, 1, 2, 3, 3, 4, 5, 5, 6, 7, 1, 3, 5, 1, 5, 7],
         ),
         // A unit square centred on the origin.
-        _ => flat_mesh(
+        MeshSlot::Quad => flat_mesh(
             vec![
                 [-0.5, -0.5, 0.0],
                 [0.5, -0.5, 0.0],
