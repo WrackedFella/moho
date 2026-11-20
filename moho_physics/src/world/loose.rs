@@ -1,6 +1,6 @@
 use super::PhysicsWorld;
 use glam::{Quat, Vec3};
-use rapier3d::prelude::{ColliderBuilder, Pose, RigidBodyBuilder, RigidBodyHandle};
+use rapier3d::prelude::{ColliderBuilder, ColliderHandle, Pose, RigidBodyBuilder, RigidBodyHandle};
 use std::f32::consts::{FRAC_PI_2, PI};
 
 /// Stable, engine-issued name of a loose object.
@@ -42,6 +42,14 @@ impl LooseShape {
                 half_height,
                 radius,
             } => ColliderBuilder::cylinder(half_height, radius),
+        }
+    }
+
+    /// The radius the shape rolls on; `None` for a box, which does not roll.
+    fn roll_radius(self) -> Option<f32> {
+        match self {
+            Self::Box { .. } => None,
+            Self::Capsule { radius, .. } | Self::Cylinder { radius, .. } => Some(radius),
         }
     }
 }
@@ -114,7 +122,8 @@ impl LooseSpawn {
                 radius,
             } => assert!(
                 half_height.is_finite() && half_height > 0.0 && radius.is_finite() && radius > 0.0,
-                "half height and radius must be positive and finite, got half height {half_height} and radius {radius}"
+                "half height and radius must be positive and finite, \
+                 got half height {half_height} and radius {radius}"
             ),
         }
         assert!(
@@ -176,9 +185,9 @@ impl PhysicsWorld {
     ///
     /// # Panics
     /// If the spawn would poison the simulation: a mass, half extent, half height or radius
-    /// that is not positive and finite, a friction, restitution or damping that is negative or not finite, a position or
-    /// velocity that is not finite, or a rotation that is not finite or whose squared length is
-    /// more than 2e-4 from 1 (glam's `Quat::is_normalized`).
+    /// that is not positive and finite, a friction, restitution or damping that is negative or
+    /// not finite, a position or velocity that is not finite, or a rotation that is not finite
+    /// or whose squared length is more than 2e-4 from 1 (glam's `Quat::is_normalized`).
     pub fn spawn_loose(&mut self, spawn: &LooseSpawn) -> LooseId {
         spawn.assert_valid();
 
@@ -202,17 +211,11 @@ impl PhysicsWorld {
 
         let id = LooseId(self.next_loose);
         self.next_loose += 1;
-        let roll_radius = match spawn.shape {
-            LooseShape::Box { .. } => None,
-            LooseShape::Capsule { radius, .. } | LooseShape::Cylinder { radius, .. } => {
-                Some(radius)
-            }
-        };
         self.loose.insert(
             id,
             Loose {
                 body: handle,
-                roll_radius,
+                roll_radius: spawn.shape.roll_radius(),
             },
         );
         id
@@ -305,41 +308,60 @@ impl PhysicsWorld {
                 continue;
             };
 
-            let mut on_ground = false;
-            let mut separating = false;
-            for pair in self.narrow_phase.contact_pairs_with(collider) {
-                let flip = if pair.collider1 == collider {
-                    -1.0
-                } else {
-                    1.0
-                };
-                for manifold in pair.manifolds() {
-                    let toward_body = manifold.data.normal * flip;
-                    for point in &manifold.points {
-                        separating |= point.dist < -DEEP_CONTACT;
-                        on_ground |= point.dist <= 0.0 && toward_body.dot(up) >= min_up_dot;
-                    }
-                }
-            }
-            if !on_ground || separating {
+            if !self.rests_on_ground(collider, up, min_up_dot) {
                 continue;
             }
 
             let axis = *body.rotation() * Vec3::Y;
-            let mut linvel = body.linvel();
-            let mut angvel = body.angvel();
-            let spin = angvel.dot(axis);
-            angvel -= axis * (spin.signum() * spin.abs().min(cut / radius));
-            if let Some(across) = axis.cross(up).try_normalize() {
-                let along = linvel.dot(across);
-                linvel -= across * (along.signum() * along.abs().min(cut));
-            }
+            let (linvel, angvel) =
+                braked_velocities(body.linvel(), body.angvel(), axis, up, radius, cut);
             if let Some(body) = self.rigid_body_set.get_mut(handle) {
                 body.set_linvel(linvel, false);
                 body.set_angvel(angvel, false);
             }
         }
     }
+
+    /// Whether the collider touches ground within `min_up_dot` of level and no contact is
+    /// deep enough to mean the solver is still separating it.
+    fn rests_on_ground(&self, collider: ColliderHandle, up: Vec3, min_up_dot: f32) -> bool {
+        let mut on_ground = false;
+        let mut separating = false;
+        for pair in self.narrow_phase.contact_pairs_with(collider) {
+            let flip = if pair.collider1 == collider {
+                -1.0
+            } else {
+                1.0
+            };
+            for manifold in pair.manifolds() {
+                let toward_body = manifold.data.normal * flip;
+                for point in &manifold.points {
+                    separating |= point.dist < -DEEP_CONTACT;
+                    on_ground |= point.dist <= 0.0 && toward_body.dot(up) >= min_up_dot;
+                }
+            }
+        }
+        on_ground && !separating
+    }
+}
+
+/// The velocities after cutting spin about `axis` by `cut / radius` and travel across `axis`
+/// (horizontal to `up`) by `cut`, neither past zero.
+fn braked_velocities(
+    mut linvel: Vec3,
+    mut angvel: Vec3,
+    axis: Vec3,
+    up: Vec3,
+    radius: f32,
+    cut: f32,
+) -> (Vec3, Vec3) {
+    let spin = angvel.dot(axis);
+    angvel -= axis * (spin.signum() * spin.abs().min(cut / radius));
+    if let Some(across) = axis.cross(up).try_normalize() {
+        let along = linvel.dot(across);
+        linvel -= across * (along.signum() * along.abs().min(cut));
+    }
+    (linvel, angvel)
 }
 
 #[cfg(test)]
