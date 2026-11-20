@@ -105,6 +105,12 @@ pub fn within_stand_window(block: BlockPos, cell: BlockPos) -> bool {
     offset.x.abs() <= 1 && offset.z.abs() <= 1 && (-1..=2).contains(&offset.y)
 }
 
+/// Whether a pawn standing in `cell` should dig `block`: inside the window, but not on the
+/// block itself, where digging would take the ground from under its feet.
+fn can_dig_from(block: BlockPos, cell: BlockPos) -> bool {
+    within_stand_window(block, cell) && cell != block + BlockPos::Y
+}
+
 /// The six faces of a block: the neighbour a face looks onto.
 const FACES: [BlockPos; 6] = [
     BlockPos::new(1, 0, 0),
@@ -213,6 +219,9 @@ fn dig(
     grid: &VoxelGrid,
 ) -> JobAction {
     let block = block_at(pos);
+    if !can_dig_from(block, feet_cell(pose.feet)) {
+        return drop_job(pawn, marks, pos);
+    }
     let eye = pose.feet + Vec3::Y * EYE_HEIGHT;
     let aim = is_exposed(grid, block)
         .then(|| {
@@ -249,7 +258,7 @@ fn claim_nearest(
         let found = route(
             grid,
             feet,
-            |cell| within_stand_window(block, cell),
+            |cell| can_dig_from(block, cell),
             block,
             ROUTE_NODE_BUDGET,
         );
@@ -588,6 +597,89 @@ mod tests {
         assert!(matches!(action, JobAction::Walk { .. }), "{action:?}");
         assert_eq!(holder(&marks, enclosed), None, "no way to it");
         assert_eq!(holder(&marks, FAR), Some(PAWN), "so the open one is taken");
+    }
+
+    #[test]
+    fn a_pawn_standing_on_its_mark_digs_from_a_neighbouring_cell() {
+        let (grid, mut marks) = marked(&[[5, 1, 5]]);
+        let mut pawn = Pawn::default();
+        let mut pose = standing_in(cell(5, 2, 5));
+        let mut dug_from = None;
+
+        for _ in 0..10 {
+            let action = tick(&mut pawn, pose, &mut marks, &grid);
+            match action {
+                JobAction::Walk { to } => pose.feet = to,
+                JobAction::Dig { .. } => {
+                    dug_from = Some(feet_cell(pose.feet));
+                    break;
+                }
+                JobAction::Wait => panic!("the pawn gave up"),
+            }
+        }
+
+        let from = dug_from.expect("the pawn digs after stepping off its mark");
+        assert_ne!(from, cell(5, 2, 5), "digging the ground under its own feet");
+        assert!(within_stand_window(cell(5, 1, 5), from), "{from}");
+    }
+
+    #[test]
+    fn a_dig_ends_the_job_and_leaves_the_mark_marked_and_free() {
+        let (mut grid, mut marks) = marked(&[NEAR]);
+        // Where the pawn digs from, so the dig is the first action.
+        grid.mutator().place(cell(7, 1, 4), 1, None);
+        let mut pawn = Pawn::default();
+
+        let action = tick(&mut pawn, standing_in(cell(7, 2, 4)), &mut marks, &grid);
+
+        assert!(matches!(action, JobAction::Dig { .. }), "{action:?}");
+        assert_eq!(pawn.job, Job::Idle, "the job ends on any dig");
+        assert!(
+            marks.contains(NEAR),
+            "the mark stays until its block is gone"
+        );
+        assert_eq!(holder(&marks, NEAR), None, "free to be claimed again");
+    }
+
+    #[test]
+    fn a_pawn_and_a_mark_at_negative_coordinates_find_each_other() {
+        let mut grid = VoxelGrid::new(16);
+        grid.mutator()
+            .fill_region(cell(-8, 0, -8), cell(7, 0, 7), 1);
+        let block = [-6, 1, -1];
+        grid.mutator().place(cell(-6, 1, -1), 1, Some(7));
+        let mut marks = MineMarks::default();
+        marks.toggle(block);
+        let mut pawn = Pawn::default();
+        let pose = Pose {
+            feet: Vec3::new(-3.2, 1.0, -0.4),
+            yaw: 0.0,
+        };
+
+        let action = tick(&mut pawn, pose, &mut marks, &grid);
+
+        assert_walks_to(action, cell(-5, 1, -1));
+        assert_eq!(holder(&marks, block), Some(PAWN));
+        let Job::Mine { route, .. } = &pawn.job else {
+            panic!("the pawn took a job: {:?}", pawn.job);
+        };
+        assert_eq!(*route, [cell(-5, 1, -1)]);
+    }
+
+    #[test]
+    fn of_two_equally_near_marks_the_lower_key_wins_every_time() {
+        let low = [6, 1, 5];
+        let high = [10, 1, 5];
+
+        for _ in 0..100 {
+            let (grid, mut marks) = marked(&[high, low]);
+            let mut pawn = Pawn::default();
+
+            tick(&mut pawn, standing_in(cell(8, 1, 5)), &mut marks, &grid);
+
+            assert_eq!(holder(&marks, low), Some(PAWN));
+            assert_eq!(holder(&marks, high), None);
+        }
     }
 
     #[test]
