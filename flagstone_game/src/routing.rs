@@ -36,10 +36,13 @@ fn neighbours(grid: &VoxelGrid, cell: BlockPos) -> impl Iterator<Item = BlockPos
     let can_climb = !grid.is_solid_at(cell + BlockPos::Y * 3);
     HORIZONTAL_STEPS.into_iter().filter_map(move |step| {
         let level = cell + step;
+        // The body passes through the target column at the current height, so a drop needs
+        // the same room there as standing would.
+        let body_fits = (0..3).all(|up| !grid.is_solid_at(level + BlockPos::Y * up));
         [
             Some(level),
             can_climb.then_some(level + BlockPos::Y),
-            Some(level - BlockPos::Y),
+            body_fits.then_some(level - BlockPos::Y),
         ]
         .into_iter()
         .flatten()
@@ -54,14 +57,21 @@ fn standing_start(grid: &VoxelGrid, start: BlockPos) -> Option<BlockPos> {
         .find(|&cell| standable(grid, cell))
 }
 
-fn manhattan(a: BlockPos, b: BlockPos) -> u32 {
-    (a - b).abs().element_sum().unsigned_abs()
+/// How far, horizontally, a goal cell may be from the point a search heads for.
+const GOAL_REACH: u32 = 2;
+
+/// A lower bound on the moves from `cell` to a goal within [`GOAL_REACH`] of `toward`. Only
+/// the horizontal distance counts: a move changes it by at most one however it climbs.
+fn moves_left(cell: BlockPos, toward: BlockPos) -> u32 {
+    let apart = cell - toward;
+    (apart.x.unsigned_abs() + apart.z.unsigned_abs()).saturating_sub(GOAL_REACH)
 }
 
 /// The cheapest walk from `start` to the nearest cell satisfying `is_goal`, as the cells to
 /// step through in order: `start` itself is not listed, the goal cell is last, and the list is
 /// empty when `start` already is a goal. Moves are to the four horizontal neighbours, up or
-/// down one block. `toward` is the point the search heads for.
+/// down one block. `toward` is the point the search heads for; the route is the shortest
+/// when every goal cell is within one column of it in x and z, as a stand cell is of its block.
 ///
 /// `None` when no goal is reachable, or when `budget` cells were expanded without finding one.
 pub fn route(
@@ -79,7 +89,7 @@ pub fn route(
     let mut parent: HashMap<BlockPos, BlockPos> = HashMap::new();
     let mut closed: HashSet<BlockPos> = HashSet::new();
     open.push(Reverse((
-        manhattan(start, toward),
+        moves_left(start, toward),
         0u32,
         inserted,
         start.to_array(),
@@ -113,7 +123,7 @@ pub fn route(
             parent.insert(next, cell);
             inserted += 1;
             open.push(Reverse((
-                next_cost + manhattan(next, toward),
+                next_cost + moves_left(next, toward),
                 next_cost,
                 inserted,
                 next.to_array(),
@@ -421,5 +431,86 @@ mod tests {
             prop_assert_eq!(&first, &again);
             prop_assert_eq!(&first, &from_reordered_build);
         }
+    }
+
+    /// Steps to the nearest cell `is_goal` accepts, found breadth-first over the same moves.
+    fn fewest_steps(
+        grid: &VoxelGrid,
+        start: BlockPos,
+        is_goal: impl Fn(BlockPos) -> bool,
+    ) -> Option<usize> {
+        let start = standing_start(grid, start)?;
+        let mut seen = HashSet::from([start]);
+        let mut frontier = vec![start];
+        let mut steps = 0;
+        while !frontier.is_empty() {
+            if frontier.iter().any(|&cell| is_goal(cell)) {
+                return Some(steps);
+            }
+            frontier = frontier
+                .iter()
+                .flat_map(|&cell| neighbours(grid, cell))
+                .filter(|&cell| seen.insert(cell))
+                .collect();
+            steps += 1;
+        }
+        None
+    }
+
+    /// A field of `side` by `side` columns, `heights[x * side + z]` blocks tall.
+    fn field(heights: &[u8], side: i32) -> VoxelGrid {
+        let mut grid = VoxelGrid::new(16);
+        for x in 0..side {
+            for z in 0..side {
+                let height = i32::from(heights[(x * side + z) as usize]);
+                put(&mut grid, (0..height).map(|y| at(x, y, z)));
+            }
+        }
+        grid
+    }
+
+    proptest! {
+        #[test]
+        fn a_route_is_as_short_as_the_nearest_goal_cell(
+            heights in proptest::collection::vec(1u8..=2, 100),
+            from in (0i32..10, 0i32..10),
+            column in (0i32..10, 0i32..10),
+        ) {
+            let grid = field(&heights, 10);
+            let start = at(from.0, i32::from(heights[(from.0 * 10 + from.1) as usize]), from.1);
+            let block = at(column.0, i32::from(heights[(column.0 * 10 + column.1) as usize]) - 1, column.1);
+            let is_goal = |cell: BlockPos| {
+                let d = cell - block;
+                d.x.abs() <= 1 && d.z.abs() <= 1 && (-1..=2).contains(&d.y)
+            };
+
+            let found = route(&grid, start, is_goal, block, ROUTE_NODE_BUDGET);
+
+            prop_assert_eq!(found.map(|cells| cells.len()), fewest_steps(&grid, start, is_goal));
+        }
+    }
+
+    #[test]
+    fn a_step_down_needs_the_body_to_fit_at_the_current_height() {
+        // Ledge columns x 0..=1 have their feet at y = 2; the ground beyond has them at y = 1.
+        let mut open = ground(6, 1);
+        put(&mut open, [at(0, 1, 0), at(1, 1, 0)]);
+        let mut overhung = ground(6, 1);
+        put(&mut overhung, [at(0, 1, 0), at(1, 1, 0)]);
+        // Two cells above the ledge's feet, in the lower column: the head would hit it.
+        put(&mut overhung, [at(2, 4, 0)]);
+
+        let free = walk(&open, at(1, 2, 0), at(3, 1, 0));
+        let blocked = walk(&overhung, at(1, 2, 0), at(3, 1, 0));
+
+        assert_eq!(free, Some(vec![at(2, 1, 0), at(3, 1, 0)]));
+        assert!(
+            standable(&overhung, at(2, 1, 0)),
+            "the lower cell itself is open"
+        );
+        assert_eq!(
+            blocked, None,
+            "the body cannot pass through the overhang to drop"
+        );
     }
 }

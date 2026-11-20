@@ -73,6 +73,11 @@ impl MineMarks {
         }
     }
 
+    /// The pawn holding the mark on `pos`; `None` for an unmarked or unclaimed block.
+    pub fn claimant(&self, pos: [i32; 3]) -> Option<PawnId> {
+        self.marks.get(&pos).and_then(|mark| mark.claimed_by)
+    }
+
     /// The marked blocks no pawn holds, in key order.
     pub fn unclaimed(&self) -> impl Iterator<Item = [i32; 3]> {
         self.iter()

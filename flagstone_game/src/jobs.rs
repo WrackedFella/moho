@@ -133,6 +133,11 @@ pub fn step(
     else {
         return JobAction::Wait;
     };
+    // A mark that was cancelled, dug by someone else, or cancelled and marked again is not
+    // this pawn's any more; whoever holds it now keeps it.
+    if marks.claimant(mark.to_array()) != Some(id) {
+        return JobAction::Wait;
+    }
     let (job, action) = follow(mark, route, next, stall, pose, marks, grid);
     pawn.job = job;
     action
@@ -244,9 +249,6 @@ fn follow(
     marks: &mut MineMarks,
     grid: &VoxelGrid,
 ) -> (Job, JobAction) {
-    if !marks.contains(mark.to_array()) {
-        return give_up(mark, marks);
-    }
     if let Some(&cell) = route.get(next)
         && flat_distance(pose.feet, waypoint(cell)) <= ARRIVE_RADIUS
     {
@@ -881,5 +883,98 @@ mod tests {
             "{walk:?}"
         );
         assert_eq!(walk.yaw_delta, 0.0);
+    }
+
+    #[test]
+    fn a_pawn_whose_mark_was_cancelled_and_marked_again_loses_its_claim() {
+        let grid = ground(12, 3);
+        let block = at(8, 0, 1);
+        let mut marks = marks_on(&[block]);
+        let mut pawn = Pawn::default();
+        let pose = pose_in(at(0, 1, 1));
+        until_it_has_a_job(&mut pawn, &pose, &mut marks, &grid, 3);
+        marks.toggle(block.to_array());
+        marks.toggle(block.to_array());
+
+        let action = step(ME, &mut pawn, &pose, &mut marks, &grid);
+        let after = (pawn.job.clone(), holder(&marks, block));
+        let second = {
+            let mut other = Pawn::default();
+            until_it_has_a_job(&mut other, &pose, &mut marks, &grid, 3);
+            mining(&other).map(|(mark, ..)| mark)
+        };
+
+        assert_eq!(
+            action,
+            JobAction::Wait,
+            "it does not walk on to a stale order"
+        );
+        assert_eq!(after, (Job::Idle, Holder::Open));
+        assert_eq!(second, Some(block), "another pawn can take the new mark");
+    }
+
+    #[test]
+    fn a_pawn_that_lost_its_claim_does_not_release_the_new_holders() {
+        let grid = ground(12, 3);
+        let block = at(8, 0, 1);
+        let mut marks = marks_on(&[block]);
+        let mut pawn = Pawn::default();
+        let mut other = Pawn::default();
+        let pose = pose_in(at(0, 1, 1));
+        until_it_has_a_job(&mut pawn, &pose, &mut marks, &grid, 3);
+        marks.toggle(block.to_array());
+        marks.toggle(block.to_array());
+        until_it_has_a_job(&mut other, &pose, &mut marks, &grid, 3);
+        assert_eq!(holder(&marks, block), Holder::Claimed(ME));
+
+        let action = step(PawnId(1), &mut pawn, &pose, &mut marks, &grid);
+
+        assert_eq!(action, JobAction::Wait);
+        assert_eq!(pawn.job, Job::Idle);
+        assert_eq!(
+            holder(&marks, block),
+            Holder::Claimed(ME),
+            "the holder keeps it"
+        );
+    }
+
+    #[test]
+    fn steer_turns_the_short_way_across_the_yaw_seam() {
+        let gap = std::f32::consts::TAU - 6.2;
+
+        let positive = steer(&facing(3.1), along(-3.1, 5.0));
+        let negative = steer(&facing(-3.1), along(3.1, 5.0));
+
+        assert!((positive.yaw_delta - gap).abs() < 1e-3, "{positive:?}");
+        assert!((negative.yaw_delta + gap).abs() < 1e-3, "{negative:?}");
+        assert_eq!(positive.forward, 1.0, "the target is almost dead ahead");
+        assert_eq!(negative.forward, 1.0);
+    }
+
+    #[test]
+    fn a_pawn_already_on_a_stand_cell_digs_in_the_claiming_call() {
+        let grid = ground(12, 4);
+        let block = at(6, 0, 1);
+        let mut marks = marks_on(&[block]);
+        let mut pawn = Pawn::default();
+        pawn.select_slot(3);
+        let pose = pose_in(at(5, 1, 1));
+
+        let action = step(ME, &mut pawn, &pose, &mut marks, &grid);
+        let claimed = (mining(&pawn), holder(&marks, block));
+        finish(&mut pawn, &mut marks);
+
+        assert!(
+            matches!(action, JobAction::Dig { block: dug, .. } if dug == block),
+            "{action:?}"
+        );
+        assert_eq!(claimed, (Some((block, Vec::new(), 0)), Holder::Claimed(ME)));
+        assert_eq!(pawn.equipped_tool, Some(crate::tools::STARTING_TOOL));
+        assert_eq!(pawn.job, Job::Idle, "finish ends the job");
+        assert_eq!(
+            holder(&marks, block),
+            Holder::Open,
+            "and frees a mark that is left"
+        );
     }
 }
