@@ -118,9 +118,7 @@ pub fn step(
         return finish_with_dig(job, mark, pose, marks, grid);
     };
     if !standable(grid, waypoint) {
-        marks.release(key);
-        *job = Job::Idle;
-        return JobAction::Wait;
+        return abandon(job, key, marks);
     }
 
     let to = cell_centre(waypoint);
@@ -142,11 +140,16 @@ pub fn step(
         stall.ticks_without_progress += 1;
     }
     if stall.ticks_without_progress >= STALL_TICKS {
-        marks.release(key);
-        *job = Job::Idle;
-        return JobAction::Wait;
+        return abandon(job, key, marks);
     }
     JobAction::Walk { to }
+}
+
+/// Drops the job and releases its claim, leaving the mark for another try.
+fn abandon(job: &mut Job, key: [i32; 3], marks: &mut MineMarks) -> JobAction {
+    marks.release(key);
+    *job = Job::Idle;
+    JobAction::Wait
 }
 
 /// Claims the nearest unclaimed, exposed mark that routes to a stand cell, trying at most
@@ -159,14 +162,13 @@ fn claim_nearest(
     grid: &VoxelGrid,
 ) -> Option<Job> {
     let feet = feet_cell(pose.feet);
-    let mut candidates: Vec<BlockPos> = marks
-        .unclaimed()
-        .map(BlockPos::from_array)
-        .filter(|&block| exposed_faces(grid, block).next().is_some())
-        .collect();
+    let mut candidates: Vec<BlockPos> = marks.unclaimed().map(BlockPos::from_array).collect();
     candidates.sort_by_key(|&block| (block - feet).length_squared());
 
-    for block in candidates.into_iter().take(MAX_ROUTE_ATTEMPTS) {
+    let exposed = candidates
+        .into_iter()
+        .filter(|&block| exposed_faces(grid, block).next().is_some());
+    for block in exposed.take(MAX_ROUTE_ATTEMPTS) {
         let is_stand_cell = |cell: BlockPos| {
             (cell.x - block.x).abs() <= 1
                 && (cell.z - block.z).abs() <= 1
