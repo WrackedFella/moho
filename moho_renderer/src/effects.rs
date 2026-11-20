@@ -404,7 +404,6 @@ fn flat_mesh(positions: Vec<[f32; 3]>, indices: Vec<u32>) -> WorldMesh {
     .expect("every channel has one entry per vertex and the indices are in range")
 }
 
-/// The mesh a slot draws.
 fn effect_mesh(slot: MeshSlot) -> WorldMesh {
     match slot {
         // A kite from the tail at the origin to the head at x = 1.
