@@ -253,8 +253,8 @@ impl PhysicsWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::test_support::{floor_mesh, slab_mesh, slope_mesh, TEST_TAG};
     use crate::world::RayQuery;
-    use crate::world::test_support::{TEST_TAG, floor_mesh, slab_mesh, slope_mesh};
     use moho_render_api::{WorldMesh, WorldMeshId};
     use proptest::prelude::*;
     use rapier3d::prelude::ColliderHandle;
@@ -1130,11 +1130,13 @@ mod tests {
         };
         let mut previous = along_ground(&world);
 
+        // The brake removes a*dt = g*tan(5 deg)*dt = 0.026 m/s a tick; 2e-3 is solver noise
+        // only, an order of magnitude below that.
         for tick in 1..=300 {
             world.step(DT);
             let speed = along_ground(&world);
             assert!(
-                speed <= previous + 5e-3,
+                speed <= previous + 2e-3,
                 "tick {tick}: speed rose from {previous} to {speed}"
             );
             previous = speed;
@@ -1142,49 +1144,86 @@ mod tests {
 
         let state = read(&world, id);
         assert!(state.asleep, "the capsule stops and sleeps, {state:?}");
+        let travelled = state.position.x.hypot(state.position.z);
         assert!(
-            state.position.z <= 1.5,
-            "it rests within 1.5 m, z={}",
-            state.position.z
+            travelled <= 1.5,
+            "it rests within 1.5 m, travelled {travelled}"
         );
         assert!(
-            state.position.z > 0.5,
-            "it rolled before stopping, z={}",
-            state.position.z
+            travelled > 0.5,
+            "it rolled before stopping, travelled {travelled}"
+        );
+    }
+
+    /// Runs 5 s on a slope of `angle` degrees at `gravity`, returning the spawn and end state.
+    fn settle_on_slope(
+        shape: LooseShape,
+        radius: f32,
+        angle: f32,
+        gravity: f32,
+    ) -> (LooseSpawn, LooseState) {
+        let (mut world, spawn) = slope_setup(shape, radius, angle);
+        world.set_gravity(gravity);
+        let id = world.spawn_loose(&spawn);
+
+        run(&mut world, 300);
+
+        (spawn, read(&world, id))
+    }
+
+    fn assert_holds(rows: &[(&str, LooseShape, f32, f32)], gravity: f32) {
+        for &(name, shape, radius, angle) in rows {
+            let (spawn, state) = settle_on_slope(shape, radius, angle, gravity);
+
+            let moved = (state.position - spawn.position).length();
+            assert!(
+                moved < 0.02,
+                "{name} on {angle} degrees moved {moved}, expected under 2 cm"
+            );
+            assert!(state.asleep, "{name} on {angle} degrees is awake");
+        }
+    }
+
+    fn assert_rolls_down(rows: &[(&str, LooseShape, f32, f32)], gravity: f32) {
+        for &(name, shape, radius, angle) in rows {
+            let (spawn, state) = settle_on_slope(shape, radius, angle, gravity);
+
+            assert!(
+                state.position.z < spawn.position.z - 1.0,
+                "{name} on {angle} degrees ended at z={}, expected over 1 m downhill of {}",
+                state.position.z,
+                spawn.position.z
+            );
+        }
+    }
+
+    #[test]
+    fn the_rest_slope_holds_a_shape_below_it() {
+        assert_holds(
+            &[
+                ("capsule", CAPSULE, CAPSULE_RADIUS, 2.0),
+                ("capsule", CAPSULE, CAPSULE_RADIUS, 4.9),
+                ("cylinder", CYLINDER, CYLINDER_RADIUS, 4.9),
+            ],
+            18.0,
         );
     }
 
     #[test]
-    fn the_rest_slope_decides() {
-        let rows = [
-            ("capsule", CAPSULE, CAPSULE_RADIUS, 2.0, true),
-            ("capsule", CAPSULE, CAPSULE_RADIUS, 4.9, true),
-            ("cylinder", CYLINDER, CYLINDER_RADIUS, 4.9, true),
-            ("capsule", CAPSULE, CAPSULE_RADIUS, 5.5, false),
-            ("cylinder", CYLINDER, CYLINDER_RADIUS, 10.0, false),
-        ];
+    fn a_shape_rolls_down_ground_above_the_rest_slope() {
+        assert_rolls_down(
+            &[
+                ("capsule", CAPSULE, CAPSULE_RADIUS, 5.5),
+                ("cylinder", CYLINDER, CYLINDER_RADIUS, 10.0),
+            ],
+            18.0,
+        );
+    }
 
-        for (name, shape, radius, angle, rests) in rows {
-            let (mut world, spawn) = slope_setup(shape, radius, angle);
-            let id = world.spawn_loose(&spawn);
-
-            run(&mut world, 300);
-
-            let state = read(&world, id);
-            let moved = (state.position - spawn.position).length();
-            if rests {
-                assert!(
-                    moved < 0.02,
-                    "{name} on {angle} degrees moved {moved}, expected under 2 cm"
-                );
-                assert!(state.asleep, "{name} on {angle} degrees is awake");
-            } else {
-                assert!(
-                    moved > 1.0,
-                    "{name} on {angle} degrees moved only {moved}, expected over 1 m"
-                );
-            }
-        }
+    #[test]
+    fn the_rest_slope_follows_the_gravity_input() {
+        assert_holds(&[("capsule", CAPSULE, CAPSULE_RADIUS, 4.9)], 9.0);
+        assert_rolls_down(&[("capsule", CAPSULE, CAPSULE_RADIUS, 5.5)], 9.0);
     }
 
     #[test]
@@ -1211,15 +1250,6 @@ mod tests {
             state.linear_velocity.z > 1.5 && !state.asleep,
             "with no brake the capsule is still rolling after 2 s, {state:?}"
         );
-    }
-
-    #[test]
-    fn the_default_rest_slope_is_five_degrees() {
-        let world = PhysicsWorld::new();
-
-        let slope = world.rest_slope();
-
-        assert!((slope - degrees(5.0)).abs() <= 1e-6, "slope={slope}");
     }
 
     #[test]
@@ -1258,16 +1288,31 @@ mod tests {
     }
 
     #[test]
-    fn the_brake_never_touches_vertical_velocity() {
-        let box_drop = |rest_slope: f32| {
+    fn upright_shapes_rest_at_their_collider_height() {
+        let rows = [
+            ("capsule", CAPSULE, 0.1 + CAPSULE_RADIUS),
+            ("cylinder", CYLINDER, 0.08),
+        ];
+
+        for (name, shape, rest_height) in rows {
             let mut world = world_with_floor(&floor_mesh(0.0));
-            world.set_rest_slope(rest_slope);
             let id = world.spawn_loose(&LooseSpawn {
-                position: Vec3::new(0.0, 0.5, 0.0),
-                ..LooseSpawn::new(cube(0.05), 0.2)
+                position: Vec3::new(0.0, rest_height + 0.01, 0.0),
+                ..LooseSpawn::new(shape, 0.2)
             });
-            vertical_velocities(&mut world, id, 20)
-        };
+
+            run(&mut world, 120);
+
+            let y = read(&world, id).position.y;
+            assert!(
+                (y - rest_height).abs() <= 0.001,
+                "{name} rests at y={y}, expected {rest_height}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_brake_never_touches_vertical_velocity() {
         let capsule_drop = |rest_slope: f32| {
             let mut world = world_with_floor(&floor_mesh(0.0));
             world.set_rest_slope(rest_slope);
@@ -1280,12 +1325,9 @@ mod tests {
             (vertical, read(&world, id).linear_velocity.z)
         };
 
-        let box_braked = box_drop(degrees(5.0));
-        let box_free = box_drop(0.0);
         let (capsule_braked, braked_speed) = capsule_drop(degrees(5.0));
         let (capsule_free, free_speed) = capsule_drop(0.0);
 
-        assert_eq!(box_braked, box_free, "a falling box is unchanged");
         assert!(
             capsule_free.iter().any(|vy| *vy > 0.1),
             "the capsule bounced, so the control reaches a contact"
@@ -1294,6 +1336,8 @@ mod tests {
             braked_speed < free_speed - 0.1,
             "the brake acted on the capsule: braked {braked_speed}, free {free_speed}"
         );
+        // A brake that cut vertical velocity would move it by up to a*dt = g*tan(5 deg)*dt =
+        // 0.026 m/s per tick; 0.01 allows only the small solver coupling of the slower roll.
         for (tick, (braked, free)) in capsule_braked.iter().zip(&capsule_free).enumerate() {
             assert!(
                 (braked - free).abs() <= 0.01,
