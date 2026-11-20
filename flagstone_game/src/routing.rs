@@ -494,6 +494,70 @@ mod tests {
     }
 
     #[test]
+    fn a_search_heads_for_its_goal_instead_of_flooding_the_ground() {
+        let grid = ground(60, 60);
+        let goal = at(40, 1, 30);
+
+        let fewest_expansions = (1..4000).find(|&budget| {
+            route(&grid, at(10, 1, 30), |cell| cell == goal, goal, budget).is_some()
+        });
+
+        assert!(
+            fewest_expansions.is_some_and(|needed| needed < 150),
+            "needed {fewest_expansions:?} expansions for a 30 step walk"
+        );
+    }
+
+    #[test]
+    fn the_heuristic_is_the_horizontal_distance_less_the_goal_reach() {
+        let toward = at(1, 7, 1);
+        let cases = [
+            (at(1, 7, 1), 0),
+            (at(2, 7, 2), 0),
+            (at(4, 7, 5), 5),
+            (at(-3, 40, -2), 5),
+            (at(-2, -9, 1), 1),
+        ];
+
+        for (cell, expected) in cases {
+            assert_eq!(moves_left(cell, toward), expected, "{cell:?}");
+        }
+    }
+
+    #[test]
+    fn no_move_lowers_the_heuristic_by_more_than_its_cost() {
+        let toward = at(0, 0, 0);
+
+        for x in -6..=6 {
+            for z in -6..=6 {
+                for step in HORIZONTAL_STEPS {
+                    for rise in [-1, 0, 1] {
+                        let from = moves_left(at(x, 3, z), toward);
+                        let to = moves_left(at(x, 3, z) + step + BlockPos::Y * rise, toward);
+                        assert!(from <= to + 1, "{x}, {z}, {step:?}, {rise}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn equal_routes_are_told_apart_by_which_cell_was_reached_first() {
+        let grid = ground(10, 10);
+        let start = at(5, 1, 5);
+
+        let found = route(
+            &grid,
+            start,
+            |cell| cell.x == 4 || cell.x == 6,
+            start,
+            ROUTE_NODE_BUDGET,
+        );
+
+        assert_eq!(found, Some(vec![at(6, 1, 5)]), "+x is tried first");
+    }
+
+    #[test]
     fn a_step_down_needs_the_body_to_fit_at_the_current_height() {
         // Ledge columns x 0..=1 have their feet at y = 2; the ground beyond has them at y = 1.
         let mut open = ground(6, 1);

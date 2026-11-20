@@ -14,6 +14,10 @@ const ROUTE_ATTEMPTS_PER_TICK: usize = 4;
 /// How far a pawn may be turned away from its target and still walk, in radians (60 degrees).
 const WALK_CONE: f32 = std::f32::consts::FRAC_PI_3;
 
+/// The squared horizontal distance, in square metres, under which a pawn is at its target and
+/// has no direction to turn toward: 2^-30, so that 2^-15 m is the first distance that has one.
+const AT_TARGET_SQUARED: f32 = 1.0 / 1_073_741_824.0;
+
 /// How much closer to the waypoint, in metres, counts as progress.
 const PROGRESS_STEP: f32 = 0.01;
 
@@ -155,7 +159,7 @@ pub fn finish(pawn: &mut Pawn, marks: &mut MineMarks) {
 pub fn steer(pose: &Pose, to: Vec3) -> WalkStep {
     use std::f32::consts::{PI, TAU};
     let (dx, dz) = (to.x - pose.feet.x, to.z - pose.feet.z);
-    if dx * dx + dz * dz < 1e-9 {
+    if dx * dx + dz * dz < AT_TARGET_SQUARED {
         return WalkStep {
             yaw_delta: 0.0,
             forward: 0.0,
@@ -976,5 +980,73 @@ mod tests {
             Holder::Open,
             "and frees a mark that is left"
         );
+    }
+
+    #[test]
+    fn a_walk_that_keeps_closing_in_never_stalls_however_long_it_takes() {
+        let mut guard = StallGuard::default();
+
+        let ever_stalled =
+            (0..400u16).any(|tick| guard.is_stalled_at(100.0 - 0.02 * f32::from(tick)));
+
+        assert!(!ever_stalled, "{guard:?}");
+        assert_eq!(guard.ticks_without_progress, 0);
+    }
+
+    #[test]
+    fn progress_is_a_whole_step_closer_than_the_best_so_far() {
+        let boundary = 1.0_f32 - PROGRESS_STEP;
+        let mut guard = StallGuard::default();
+        guard.is_stalled_at(1.0);
+
+        guard.is_stalled_at(boundary);
+        let at_the_step = (guard.ticks_without_progress, guard.best_distance);
+        guard.is_stalled_at(boundary - 0.001);
+        let past_the_step = (guard.ticks_without_progress, guard.best_distance);
+
+        assert_eq!(
+            at_the_step,
+            (1, Some(1.0)),
+            "exactly one step is not progress"
+        );
+        assert_eq!(
+            past_the_step,
+            (0, Some(boundary - 0.001)),
+            "more than one is"
+        );
+    }
+
+    #[test]
+    fn a_walk_that_stops_closing_in_stalls_after_the_limit() {
+        let mut guard = StallGuard::default();
+        guard.is_stalled_at(5.0);
+
+        let stalled_at = (1..=STALL_TICKS + 5).find(|_| guard.is_stalled_at(5.0));
+
+        assert_eq!(stalled_at, Some(STALL_TICKS));
+    }
+
+    #[test]
+    fn steer_has_a_direction_from_the_smallest_distance_it_can_resolve() {
+        let pose = facing(0.0);
+        let resolved = 1.0 / 32768.0;
+
+        let at_the_limit = steer(&pose, pose.feet + Vec3::X * resolved);
+        let inside = steer(&pose, pose.feet + Vec3::X * (resolved / 2.0));
+
+        assert!(at_the_limit.yaw_delta > 0.0, "{at_the_limit:?}");
+        assert_eq!(inside.yaw_delta, 0.0, "{inside:?}");
+    }
+
+    #[test]
+    fn the_nearest_mark_is_nearest_to_where_the_pawn_stands() {
+        let grid = ground(24, 3);
+        let (near, far) = (at(12, 0, 1), at(0, 0, 1));
+        let mut marks = marks_on(&[far, near]);
+        let mut pawn = Pawn::default();
+
+        until_it_has_a_job(&mut pawn, &pose_in(at(10, 1, 1)), &mut marks, &grid, 3);
+
+        assert_eq!(mining(&pawn).map(|(mark, ..)| mark), Some(near));
     }
 }
