@@ -1718,6 +1718,80 @@ mod tests {
     }
 
     #[test]
+    fn the_brake_cuts_spin_and_travel_at_matching_rates() {
+        for (name, shape, radius) in [
+            ("capsule", CAPSULE, CAPSULE_RADIUS),
+            ("cylinder", CYLINDER, CYLINDER_RADIUS),
+        ] {
+            let spawn = rolling_spawn(shape, radius, 2.0);
+            let (mut braked, mut free) = braked_and_free(&spawn);
+            // The worlds are identical until the brake first acts, which may take a tick or
+            // two to find ground contact.
+            let (mut b, mut f) = (read(&braked.0, braked.1), read(&free.0, free.1));
+            for _ in 0..5 {
+                braked.0.step(DT);
+                free.0.step(DT);
+                (b, f) = (read(&braked.0, braked.1), read(&free.0, free.1));
+                if bits(&b) != bits(&f) {
+                    break;
+                }
+            }
+            assert_ne!(bits(&b), bits(&f), "{name}: the brake never acted");
+
+            let axis = b.rotation * Vec3::Y;
+            let along = axis.cross(Vec3::Y).normalize();
+            let decel = braked.0.gravity() * braked.0.rest_slope().tan();
+            let spin_cut = f.angular_velocity.dot(axis).abs() - b.angular_velocity.dot(axis).abs();
+            let travel_cut =
+                f.linear_velocity.dot(along).abs() - b.linear_velocity.dot(along).abs();
+
+            let (want_spin, want_travel) = (decel * DT / radius, decel * DT);
+            assert!(
+                (spin_cut - want_spin).abs() <= 0.02 * want_spin,
+                "{name}: spin cut {spin_cut}, expected {want_spin}"
+            );
+            assert!(
+                (travel_cut - want_travel).abs() <= 0.02 * want_travel,
+                "{name}: travel cut {travel_cut}, expected {want_travel}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_braked_body_is_braked_whichever_collider_is_first() {
+        let ground_speed = |world: &PhysicsWorld, id: LooseId| {
+            let velocity = read(world, id).linear_velocity;
+            Vec3::new(velocity.x, 0.0, velocity.z).length()
+        };
+        let after_ten_ticks = |rest_slope: f32| {
+            let mut world = PhysicsWorld::new();
+            world.set_rest_slope(rest_slope);
+            let id = world.spawn_loose(&rolling_spawn(CAPSULE, CAPSULE_RADIUS, 2.0));
+            world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+            world.step(DT);
+            let own = world.rigid_body_set[world.loose[&id].body].colliders()[0];
+            let first = world
+                .narrow_phase
+                .contact_pairs_with(own)
+                .all(|pair| pair.collider1 == own);
+            assert!(
+                first,
+                "the capsule's collider is first in its contact pairs"
+            );
+            run(&mut world, 9);
+            ground_speed(&world, id)
+        };
+
+        let braked = after_ten_ticks(degrees(5.0));
+        let free = after_ten_ticks(0.0);
+
+        assert!(
+            braked < free - 0.1,
+            "braked {braked} against free {free} after 10 ticks"
+        );
+    }
+
+    #[test]
     fn zero_gravity_means_no_brake() {
         let spawn = rolling_spawn(CAPSULE, CAPSULE_RADIUS, 2.0);
         let (mut braked, mut free) = braked_and_free(&spawn);
