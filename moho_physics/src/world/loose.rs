@@ -68,8 +68,8 @@ impl LooseShape {
 /// Steepest ground, radians from level, on which loose objects are braked to rest by default.
 pub(super) const DEFAULT_REST_SLOPE: f32 = 5.0 * std::f32::consts::PI / 180.0;
 
-/// A contact point deeper than this, m, means the solver is still separating the body from what
-/// it overlaps, so the brake leaves it alone.
+/// A contact point deeper than this, m, means the solver is still separating the body from
+/// another body it overlaps, so the brake leaves it alone.
 const DEEP_CONTACT: f32 = 0.005;
 
 /// What the world keeps of a loose object: its body, and the radius it rolls on.
@@ -244,8 +244,8 @@ impl PhysicsWorld {
     /// correction is untouched. With `a = g tan(rest slope)`, the spin about the shape's axis
     /// loses `a dt / r` and the velocity along `axis x up` loses `a dt`, each down to zero, so
     /// a rolling body keeps `v = w r` while it slows. Tipping, in the plane of the axis and up,
-    /// and the velocity along up are not braked. A body with any contact point deeper than
-    /// [`DEEP_CONTACT`] is skipped, because zeroing its velocity would freeze the overlap the
+    /// and the velocity along up are not braked. A body with any contact point with another
+    /// body deeper than [`DEEP_CONTACT`] is skipped, because zeroing its velocity would freeze the overlap the
     /// solver is still pushing apart. Sleeping bodies are skipped and never woken.
     pub(super) fn brake_rolling(&mut self, dt: f32) {
         let pull = -self.gravity;
@@ -292,7 +292,8 @@ impl PhysicsWorld {
     }
 
     /// Whether the body touches some surface at or inside its skin whose normal is within the
-    /// rest slope of `up`, and no contact point is deeper than [`DEEP_CONTACT`].
+    /// rest slope of `up`, and no contact point with another body is deeper than
+    /// [`DEEP_CONTACT`].
     fn on_near_flat_ground(&self, handle: RigidBodyHandle, up: Vec3, rest_cos: f32) -> bool {
         let Some(body) = self.rigid_body_set.get(handle) else {
             return false;
@@ -306,10 +307,21 @@ impl PhysicsWorld {
                 } else {
                     1.0
                 };
+                let other = if pair.collider1 == collider {
+                    pair.collider2
+                } else {
+                    pair.collider1
+                };
+                // Only a body can be pushed apart from another; a fast roller sinks a few
+                // millimetres into static ground and must still be braked there.
+                let other_is_body = self
+                    .collider_set
+                    .get(other)
+                    .is_some_and(|other| other.parent().is_some());
                 for manifold in pair.manifolds() {
                     let normal = manifold.data.normal * into_body;
                     for point in &manifold.points {
-                        if point.dist < -DEEP_CONTACT {
+                        if other_is_body && point.dist < -DEEP_CONTACT {
                             return false;
                         }
                         if point.dist <= 0.0 && normal.dot(up) >= rest_cos {
@@ -1479,6 +1491,111 @@ mod tests {
         }
 
         assert!(peak > 0.5, "the capsule bounced, peak upward speed {peak}");
+    }
+
+    fn assert_finite(state: &LooseState, tick: u32) {
+        assert!(
+            state.position.is_finite()
+                && state.rotation.is_finite()
+                && state.linear_velocity.is_finite()
+                && state.angular_velocity.is_finite(),
+            "tick {tick}: not finite, {state:?}"
+        );
+    }
+
+    #[test]
+    fn a_cylinder_spinning_on_its_cap_stays_finite_and_comes_to_rest() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.08, 0.0),
+            angular_velocity: Vec3::new(0.0, 10.0, 0.0),
+            ..LooseSpawn::new(CYLINDER, 0.2)
+        });
+
+        for tick in 1..=300 {
+            world.step(DT);
+            assert_finite(&read(&world, id), tick);
+        }
+
+        let state = read(&world, id);
+        assert!(state.asleep, "the cylinder sleeps, state {state:?}");
+        assert!(
+            state.angular_velocity.length() <= 0.01,
+            "the spin is gone, state {state:?}"
+        );
+        assert!(
+            (state.position.y - 0.08).abs() <= 0.001,
+            "it still stands on its cap, state {state:?}"
+        );
+    }
+
+    #[test]
+    fn a_sleeping_capsule_stays_asleep_and_untouched() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.04, 0.0),
+            rotation: Quat::from_rotation_x(FRAC_PI_2),
+            ..LooseSpawn::new(CAPSULE, 0.2)
+        });
+        run(&mut world, 300);
+        let asleep = read(&world, id);
+        assert!(asleep.asleep, "the capsule sleeps, state {asleep:?}");
+
+        for tick in 1..=60 {
+            world.step(DT);
+            let state = read(&world, id);
+            assert_eq!(bits(&state), bits(&asleep), "tick {tick}: it moved");
+            assert!(state.asleep, "tick {tick}: it woke");
+        }
+    }
+
+    #[test]
+    fn a_fast_rolling_cylinder_slows_and_stops_within_theory() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&rolling_on_the_floor(CYLINDER, 5.0));
+        let mut speed = read(&world, id).linear_velocity.xz().length();
+
+        for tick in 1..=600 {
+            world.step(DT);
+            let state = read(&world, id);
+            assert_finite(&state, tick);
+            let next = state.linear_velocity.xz().length();
+            // Below 1 mm/s the solver's own noise dominates, as in the capsule test.
+            if speed >= 1e-3 {
+                assert!(
+                    next <= speed,
+                    "tick {tick}: speed rose from {speed} to {next}"
+                );
+            }
+            speed = next;
+        }
+
+        let state = read(&world, id);
+        assert!(state.asleep, "the cylinder stops, state {state:?}");
+        let rolled = state.position.xz().length();
+        assert!(rolled <= 9.0, "it rolled {rolled} m, more than 9");
+    }
+
+    #[test]
+    fn a_capsule_sliding_along_its_axis_comes_to_rest() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&LooseSpawn {
+            linear_velocity: Vec3::new(0.0, 0.0, 2.0),
+            angular_velocity: Vec3::ZERO,
+            ..rolling_on_the_floor(CAPSULE, 0.0)
+        });
+
+        for tick in 1..=300 {
+            world.step(DT);
+            assert_finite(&read(&world, id), tick);
+        }
+
+        let state = read(&world, id);
+        assert!(state.asleep, "the capsule stops, state {state:?}");
+        assert!(
+            state.linear_velocity.length() <= 0.01,
+            "it is at rest, state {state:?}"
+        );
     }
 
     #[test]
