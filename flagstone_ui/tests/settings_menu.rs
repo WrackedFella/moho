@@ -692,6 +692,32 @@ fn cancel_after_stray_key_changes_nothing() {
     assert!(!menu.has_unsaved_changes());
 }
 
+/// Escape in an egui frame while the prompt is open leaves the prompt and bindings alone.
+#[test]
+fn egui_escape_while_prompt_open_keeps_prompt_and_bindings() {
+    use flagstone_ui::screens::Screen;
+
+    let mut menu = SettingsMenu::with_prefs(Prefs::default());
+    menu.start_listening(0);
+    modifiers_frame(&mut menu, egui::Modifiers::SHIFT);
+
+    render_frame(&mut menu, vec![key_event(egui::Key::Escape, true)]);
+
+    assert!(menu.conflict_modal().is_visible());
+    assert!(!menu.is_listening());
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::W), pad_stick(StickDir::Up)]
+    );
+    assert!(!menu.has_unsaved_changes());
+    assert!(Screen::take_pending_modal(&mut menu).is_some());
+    Screen::on_modal_confirm(&mut menu);
+    assert_eq!(
+        menu.get_staged_binding(0),
+        [Binding::key(Key::Shift), pad_stick(StickDir::Up)]
+    );
+}
+
 /// Rebinding a row replaces its plain key and keeps its hold bindings, in the settings text too.
 #[test]
 fn rebinding_sprint_keeps_its_hold_bindings() {

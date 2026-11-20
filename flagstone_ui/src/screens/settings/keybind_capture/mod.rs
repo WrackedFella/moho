@@ -253,6 +253,63 @@ mod tests {
     }
 
     #[test]
+    fn raw_key_while_prompt_open_binds_nothing_and_keeps_the_prompt() {
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry(); // Sprint holds Shift
+        let mut bindings_changed = vec![];
+        handler.start_listening(0);
+        handler.apply_key_while_listening(Key::Shift, &bindings, |_, _| {});
+
+        let consumed = handler.apply_key_while_listening(Key::Alt, &bindings, |action, b| {
+            bindings_changed.push((action, b));
+        });
+
+        assert!(!consumed);
+        assert!(!handler.is_listening());
+        assert!(bindings_changed.is_empty());
+        assert_eq!(
+            handler.take_conflict_modal(),
+            Some(("Sprint".to_string(), "Shift".to_string()))
+        );
+        handler.apply_pending(&bindings, |action, b| bindings_changed.push((action, b)));
+        assert!(
+            bindings_changed
+                .iter()
+                .all(|(_, b)| !b.contains(&Binding::key(Key::Alt)))
+        );
+    }
+
+    #[test]
+    fn listening_again_after_cancelled_conflict_binds_a_free_lone_modifier() {
+        let mut handler = KeybindCaptureHandler::new();
+        let bindings = registry(); // Sprint holds Shift; Alt is free
+        let mut bindings_changed = vec![];
+        handler.start_listening(0);
+        handler.capture_modifier_if_listening(2, &bindings, |_, _| {});
+        handler.cancel_pending_binding();
+        handler.start_listening(0);
+
+        let first = handler.capture_modifier_if_listening(0, &bindings, |_, _| {});
+        let second = handler.capture_modifier_if_listening(4, &bindings, |action, b| {
+            bindings_changed.push((action, b));
+        });
+
+        assert!(!first);
+        assert!(second);
+        assert!(!handler.is_listening());
+        assert_eq!(
+            bindings_changed,
+            vec![(
+                StrategyAction::MoveForward,
+                vec![
+                    Binding::key(Key::Alt),
+                    Binding::pad(PadInput::Stick(Stick::LeftStick, StickDir::Up))
+                ]
+            )]
+        );
+    }
+
+    #[test]
     fn take_conflict_modal_returns_holder_name_then_key_description() {
         let mut handler = KeybindCaptureHandler::new();
         let bindings = registry();
