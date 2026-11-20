@@ -1,5 +1,6 @@
-//! Engine-drawn effects, placed by handle: a game starts one, places it every frame and
-//! ends it; the engine owns its life, fade, cap and unshadowed draw.
+//! Engine-drawn effects. A streak is placed by handle: a game starts it, places it every
+//! frame and ends it. A flash or a mark is spawned once and expires by itself. The engine
+//! owns life, fade, cap and unshadowed draw.
 
 use crate::WorldMeshes;
 use glam::{Affine3A, Vec3};
@@ -37,6 +38,8 @@ impl StreakStyle {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FlashStyle {
+    /// The star's tip radius, so the flash is twice this across tip to tip. Not positive
+    /// or not finite draws nothing.
     pub size: f32,
     pub material: u32,
     pub lifetime: Duration,
@@ -44,6 +47,7 @@ pub struct FlashStyle {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MarkStyle {
+    /// The square's side. Not positive or not finite draws nothing.
     pub size: f32,
     pub material: u32,
     pub lifetime: Duration,
@@ -280,14 +284,16 @@ impl Effects {
 
     /// Spawn a camera-facing flash at `at`, rolled by `roll` radians. It shrinks to
     /// nothing over its lifetime. At the cap the oldest flash or mark makes room; with
-    /// none to drop, the spawn is refused.
+    /// none to drop, the spawn is refused. A non-finite `at` or `roll` draws nothing, though
+    /// the flash still holds its slot until its lifetime ends.
     pub fn flash(&mut self, at: Vec3, roll: f32, style: FlashStyle) {
         self.spawn_timed(Timed::flash(at, roll, style));
     }
 
     /// Spawn a mark at `at` lying along `normal`, rolled by `roll` radians. It holds its
     /// size until the last `fade` of its lifetime, then shrinks out. A zero or non-finite
-    /// `normal` draws nothing. Capped like [`Effects::flash`].
+    /// `normal`, or a non-finite `at` or `roll`, draws nothing. Capped like
+    /// [`Effects::flash`].
     pub fn mark(&mut self, at: Vec3, normal: Vec3, roll: f32, style: MarkStyle) {
         self.spawn_timed(Timed::mark(at, normal, roll, style));
     }
@@ -1700,6 +1706,48 @@ mod tests {
                 mark_style(0.2, Duration::from_secs(10), ms(500)),
             );
             assert!(rig.frame(EYE).is_empty(), "mark roll {roll}");
+        }
+    }
+
+    #[test]
+    fn a_non_finite_at_draws_nothing() {
+        let mut rig = Rig::new();
+        rig.effects
+            .flash(Vec3::X, 0.5, flash_style(0.3, Duration::from_secs(10)));
+        assert_eq!(rig.frame(EYE).len(), 1, "a finite flash draws");
+
+        let mut rig = Rig::new();
+        rig.effects.mark(
+            Vec3::X,
+            Vec3::Z,
+            0.5,
+            mark_style(0.2, Duration::from_secs(10), ms(500)),
+        );
+        assert_eq!(rig.frame(EYE).len(), 1, "a finite mark draws");
+
+        let bad = [
+            Vec3::NAN,
+            Vec3::INFINITY,
+            Vec3::NEG_INFINITY,
+            Vec3::new(f32::NAN, 0.0, 0.0),
+            Vec3::new(0.0, f32::NAN, 0.0),
+            Vec3::new(0.0, 0.0, f32::NAN),
+            Vec3::new(1.0, f32::INFINITY, 1.0),
+        ];
+        for at in bad {
+            let mut rig = Rig::new();
+            rig.effects
+                .flash(at, 0.5, flash_style(0.3, Duration::from_secs(10)));
+            assert!(rig.frame(EYE).is_empty(), "flash at {at}");
+
+            let mut rig = Rig::new();
+            rig.effects.mark(
+                at,
+                Vec3::Z,
+                0.5,
+                mark_style(0.2, Duration::from_secs(10), ms(500)),
+            );
+            assert!(rig.frame(EYE).is_empty(), "mark at {at}");
         }
     }
 
