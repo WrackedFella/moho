@@ -930,7 +930,7 @@ mod tests {
     }
 
     fn assert_ccw_from_plus_z(positions: &[[f32; 3]], indices: &[u32]) {
-        assert!(!indices.is_empty() && indices.len() % 3 == 0);
+        assert!(!indices.is_empty() && indices.len().is_multiple_of(3));
         for triangle in indices.chunks(3) {
             let [a, b, c] = [0, 1, 2].map(|i| {
                 let index = triangle[i] as usize;
