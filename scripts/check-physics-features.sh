@@ -19,8 +19,9 @@ failed=0
 for crate in "${crates[@]}"; do
     if ! jq -e --arg crate "$crate" --arg feature "$feature" '
         [.packages[] | select(.name == $crate) | .id] as $ids
+        | [.resolve.nodes[]? | select(.features | index($feature) != null) | .id] as $enabled
         | ($ids | length > 0)
-        and any(.resolve.nodes[]; (.id as $id | $ids | index($id)) != null and (.features | index($feature)) != null)
+        and all($ids[]; . as $id | $enabled | index($id) != null)
     ' <<<"$metadata" >/dev/null; then
         echo "check-physics-features: $crate does not enable $feature" >&2
         failed=1

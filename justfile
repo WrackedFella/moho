@@ -60,11 +60,10 @@ deny:
     expect_failure physics-metadata-parry-missing.json parry3d
     expect_failure physics-metadata-parry-absent.json parry3d
     expect_failure physics-metadata-rapier-unresolved.json rapier3d
+    # A second version of a crate without the feature still fails, naming only that crate.
+    expect_failure physics-metadata-parry-duplicate.json parry3d
     # An empty metadata file proves nothing, so both crates are reported.
-    if MOHO_PHYSICS_METADATA=scripts/fixtures/physics-metadata-empty.json scripts/check-physics-features.sh 2>/dev/null; then
-        echo "check-physics-features: empty metadata passed" >&2
-        exit 1
-    fi
+    expect_failure physics-metadata-empty.json "rapier3d parry3d"
 
 # LCOV coverage report at lcov.info.
 cov:
