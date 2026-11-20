@@ -619,6 +619,11 @@ mod tests {
                 Vec3::new(6.5, 2.0, 2.5),
                 "from the covered west side, the top is nearest",
             ),
+            (
+                at(6.5, 1.0, 2.0),
+                Vec3::new(6.5, 2.0, 2.5),
+                "eye level at the south edge: the top is nearer than the south face",
+            ),
         ];
 
         for (pose, face, case) in cases {
@@ -733,6 +738,52 @@ mod tests {
     }
 
     #[test]
+    fn a_pawn_that_keeps_closing_in_keeps_walking_every_tick() {
+        let mut scene = Scene::new(flat_ground());
+        scene.mark(cell(6, 1, 2));
+        scene.step(at(0.5, 1.0, 2.5));
+        let first = scene.route()[0];
+
+        for tick in 0..(STALL_TICKS * 3 / 2) {
+            let action = scene.step(at(0.5 + 0.003 * tick as f32, 1.0, 2.5));
+
+            assert_eq!(action, JobAction::Walk { to: centre(first) }, "tick {tick}");
+        }
+    }
+
+    #[test]
+    fn a_waypoint_is_reached_just_inside_the_arrival_radius_and_not_just_outside() {
+        let mut scene = Scene::new(flat_ground());
+        scene.mark(cell(6, 1, 2));
+        scene.step(at(0.5, 1.0, 2.5));
+        let route = scene.route();
+        let waypoint = centre(route[0]);
+
+        let outside = scene.step(at(waypoint.x - ARRIVE_RADIUS - 0.01, 1.0, 2.5));
+        let inside = scene.step(at(waypoint.x - ARRIVE_RADIUS + 0.01, 1.0, 2.5));
+
+        assert_eq!(outside, JobAction::Walk { to: waypoint });
+        assert_eq!(
+            inside,
+            JobAction::Walk {
+                to: centre(route[1])
+            }
+        );
+    }
+
+    #[test]
+    fn a_mark_overhead_is_claimed_from_the_ground_below_it() {
+        let mut scene = Scene::new(flat_ground());
+        scene.grid.mutator().place(cell(6, 2, 2), GROUND, None);
+        scene.marks.toggle(key(cell(6, 2, 2)));
+
+        scene.step(at(0.5, 1.0, 2.5));
+
+        assert_eq!(scene.claimed_by(cell(6, 2, 2)), Some(ME));
+        assert_eq!(scene.route().last().map(|c| c.y), Some(1));
+    }
+
+    #[test]
     fn a_waypoint_that_stops_being_standable_releases_the_claim() {
         let mut scene = Scene::new(flat_ground());
         scene.mark(cell(6, 1, 2));
@@ -832,6 +883,51 @@ mod tests {
         assert_close(slight.yaw_delta, 0.02);
         assert_close(ahead.yaw_delta, 0.0);
         assert_close(wrapped.yaw_delta, limit);
+    }
+
+    #[test]
+    fn steer_measures_the_bearing_from_the_feet_not_the_origin() {
+        let feet = Vec3::new(3.0, 1.0, -2.0);
+        let cases = [
+            (0.0, 0.05, 0.05, 1.0),
+            (1.0, 1.05, 0.05, 1.0),
+            (1.0, 0.95, -0.05, 1.0),
+            (-0.5, std::f32::consts::FRAC_PI_2, per_tick_turn(), 0.0),
+            (3.1, -3.1, 2.0 * PI - 6.2, 1.0),
+        ];
+
+        for (yaw, bearing, yaw_delta, forward) in cases {
+            let step = steer(Pose { feet, yaw }, feet + along(bearing, 2.0));
+
+            assert_close(step.yaw_delta, yaw_delta);
+            assert_close(step.forward, forward);
+        }
+    }
+
+    #[test]
+    fn steer_ignores_a_target_that_is_not_measurably_away() {
+        let pose = Pose {
+            feet: Vec3::new(3.0, 1.0, -2.0),
+            yaw: 0.0,
+        };
+        let still = WalkStep {
+            yaw_delta: 0.0,
+            forward: 0.0,
+        };
+        let tiny = 1e-5;
+        let exactly_epsilon = 2.0_f32.powi(-12);
+
+        let on_it = steer(pose, pose.feet);
+        let barely_off = steer(pose, pose.feet + Vec3::new(tiny, 0.0, tiny));
+        let at_the_limit = steer(
+            pose,
+            pose.feet + Vec3::new(exactly_epsilon, 0.0, exactly_epsilon),
+        );
+
+        assert_eq!(on_it, still);
+        assert_eq!(barely_off, still);
+        assert_close(at_the_limit.yaw_delta, per_tick_turn());
+        assert_close(at_the_limit.forward, 1.0);
     }
 
     #[test]

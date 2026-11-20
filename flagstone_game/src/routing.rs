@@ -298,6 +298,119 @@ mod tests {
         assert_eq!(ROUTE_NODE_BUDGET, 4096);
     }
 
+    /// Single columns `(x, z, height)`, each solid for `y` in `0..height`.
+    fn strip(columns: &[(i32, i32, i32)]) -> VoxelGrid {
+        let mut grid = VoxelGrid::new(16);
+        for &(x, z, height) in columns {
+            grid.mutator()
+                .fill_region(cell(x, 0, z), cell(x, height - 1, z), GROUND);
+        }
+        grid
+    }
+
+    /// A route of `steps` cells needs exactly `steps` expansions when the heuristic never lures the
+    /// search off the line: one budget short of that gives up.
+    fn assert_needs_exactly(grid: &VoxelGrid, start: BlockPos, goal: BlockPos, steps: usize) {
+        let enough = route(grid, start, |c| c == goal, goal, steps);
+        let one_short = route(grid, start, |c| c == goal, goal, steps - 1);
+
+        assert_eq!(enough.map(|p| p.len()), Some(steps));
+        assert_eq!(one_short, None);
+    }
+
+    #[test]
+    fn the_search_expands_only_the_line_toward_a_goal_along_x() {
+        let columns: Vec<_> = (0..=14).map(|x| (x, 2, 1)).collect();
+        let grid = strip(&columns);
+
+        assert_needs_exactly(&grid, cell(5, 1, 2), cell(12, 1, 2), 7);
+    }
+
+    #[test]
+    fn the_search_expands_only_the_line_toward_a_goal_along_z() {
+        let columns: Vec<_> = (0..=14).map(|z| (2, z, 1)).collect();
+        let grid = strip(&columns);
+
+        assert_needs_exactly(&grid, cell(2, 1, 5), cell(2, 1, 12), 7);
+    }
+
+    #[test]
+    fn the_search_expands_only_the_line_toward_a_goal_up_a_staircase() {
+        let columns: Vec<_> = (0..=14).map(|x| (x, 2, (x - 4).max(1))).collect();
+        let grid = strip(&columns);
+
+        assert_needs_exactly(&grid, cell(5, 1, 2), cell(12, 8, 2), 7);
+    }
+
+    #[test]
+    fn equally_short_routes_take_the_first_neighbour_in_move_order() {
+        let grid = flat_ground();
+
+        let path = route_to(&grid, cell(3, 1, 2), cell(4, 1, 3));
+
+        assert_eq!(path, Some(vec![cell(4, 1, 2), cell(4, 1, 3)]));
+    }
+
+    /// Wall columns two blocks high, which a pawn cannot climb.
+    fn wall(grid: &mut VoxelGrid, x: i32, zs: std::ops::RangeInclusive<i32>) {
+        for z in zs {
+            grid.mutator()
+                .fill_region(cell(x, 1, z), cell(x, 2, z), GROUND);
+        }
+    }
+
+    fn shortest_len(grid: &VoxelGrid, start: BlockPos, goal: BlockPos) -> Option<usize> {
+        let mut dist: HashMap<[i32; 3], usize> = HashMap::from([(start.to_array(), 0)]);
+        let mut queue = std::collections::VecDeque::from([start]);
+        while let Some(current) = queue.pop_front() {
+            let here = dist[&current.to_array()];
+            if current == goal {
+                return Some(here);
+            }
+            for next in neighbours(grid, current) {
+                if let std::collections::hash_map::Entry::Vacant(slot) = dist.entry(next.to_array())
+                {
+                    slot.insert(here + 1);
+                    queue.push_back(next);
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn routes_around_walls_are_shortest() {
+        type Wall = (i32, std::ops::RangeInclusive<i32>);
+        let layouts: [(&str, &[Wall]); 4] = [
+            ("one wall, far gap", &[(4, 0..=3)]),
+            ("serpentine", &[(2, 0..=3), (5, 1..=4), (7, 0..=3)]),
+            (
+                "cup facing the start",
+                &[(6, 1..=3), (4, 1..=1), (5, 1..=1), (4, 3..=3), (5, 3..=3)],
+            ),
+            ("two gaps, near one first", &[(3, 1..=4), (6, 0..=3)]),
+        ];
+        let goals = [cell(9, 1, 0), cell(9, 1, 4), cell(9, 1, 2)];
+
+        for (name, walls) in layouts {
+            let mut grid = flat_ground();
+            for (x, zs) in walls {
+                wall(&mut grid, *x, zs.clone());
+            }
+            for goal in goals {
+                for start in [cell(0, 1, 0), cell(0, 1, 2), cell(0, 1, 4)] {
+                    let found = route_to(&grid, start, goal).map(|p| p.len());
+
+                    assert_eq!(
+                        found,
+                        shortest_len(&grid, start, goal),
+                        "{name}: {start} to {goal}"
+                    );
+                }
+            }
+        }
+    }
+
     /// A 8x8 heightmap: column `(x, z)` is solid for `y` in `0..height`.
     fn terrain(heights: &[u8]) -> VoxelGrid {
         let mut grid = VoxelGrid::new(16);
@@ -359,6 +472,30 @@ mod tests {
             prop_assert!(first.is_some(), "heights of one or two blocks are always walkable");
             prop_assert_eq!(&first, &again);
             prop_assert_eq!(&first, &rebuilt);
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(400))]
+
+        #[test]
+        fn a_route_over_flat_ground_with_walls_is_a_shortest_one(
+            walled in proptest::collection::vec(prop::bool::weighted(0.35), 64),
+            sx in 0i32..8, sz in 0i32..8, gx in 0i32..8, gz in 0i32..8,
+        ) {
+            prop_assume!(!walled[(sx * 8 + sz) as usize] && !walled[(gx * 8 + gz) as usize]);
+            let mut grid = terrain(&[1; 64]);
+            for x in 0..8 {
+                for z in (0..8).filter(|z| walled[(x * 8 + z) as usize]) {
+                    wall(&mut grid, x, z..=z);
+                }
+            }
+            let start = cell(sx, 1, sz);
+            let goal = cell(gx, 1, gz);
+
+            let found = route_to(&grid, start, goal).map(|p| p.len());
+
+            prop_assert_eq!(found, shortest_len(&grid, start, goal));
         }
     }
 }
