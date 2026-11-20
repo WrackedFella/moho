@@ -47,7 +47,6 @@ impl KeybindCaptureHandler {
             return true;
         };
         self.place_key(target, key, bindings, on_binding_changed);
-        self.listening = None;
         true
     }
 
@@ -107,7 +106,6 @@ impl KeybindCaptureHandler {
                     return false;
                 };
                 self.place_key(target, key, bindings, on_binding_changed);
-                self.listening = None;
                 return true;
             }
         }
@@ -116,6 +114,8 @@ impl KeybindCaptureHandler {
     }
 
     /// Bind `key` to `target`, or queue the conflict modal when another row holds it.
+    /// Either way the row stops listening, so no later key press can change a binding
+    /// while the prompt is open.
     fn place_key<F>(
         &mut self,
         target: StrategyAction,
@@ -138,6 +138,7 @@ impl KeybindCaptureHandler {
         } else {
             on_binding_changed(target, rebind_key(bindings.get_binding(target), key));
         }
+        self.listening = None;
     }
 
     /// Process all key events from egui input.
@@ -166,7 +167,6 @@ impl KeybindCaptureHandler {
                     continue;
                 };
                 self.place_key(target, key, bindings, &mut on_binding_changed);
-                self.listening = None;
                 return;
             }
         }
