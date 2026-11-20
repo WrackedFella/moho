@@ -48,6 +48,29 @@ deny:
     for crate in rapier3d parry3d; do
         [[ "$out" == *"$crate does not enable"* ]] || { echo "check-physics-features: failure did not name $crate" >&2; exit 1; }
     done
+    # Each fixture must fail and name exactly the listed crate (empty = no crate named, e.g. unreadable metadata).
+    expect_failure() {
+        local fixture="$1" named="$2" crate
+        if out="$(MOHO_PHYSICS_METADATA="scripts/fixtures/$fixture" scripts/check-physics-features.sh 2>&1)"; then
+            echo "check-physics-features: $fixture passed" >&2
+            exit 1
+        fi
+        for crate in rapier3d parry3d; do
+            if [[ "$crate" == "$named" ]]; then
+                [[ "$out" == *"$crate does not enable"* ]] || { echo "check-physics-features: $fixture failure did not name $crate" >&2; exit 1; }
+            else
+                [[ "$out" != *"$crate does not enable"* ]] || { echo "check-physics-features: $fixture failure wrongly named $crate" >&2; exit 1; }
+            fi
+        done
+    }
+    expect_failure physics-metadata-parry-missing.json parry3d
+    expect_failure physics-metadata-parry-absent.json parry3d
+    expect_failure physics-metadata-rapier-unresolved.json rapier3d
+    # An empty metadata file proves nothing, so both crates are reported.
+    if MOHO_PHYSICS_METADATA=scripts/fixtures/physics-metadata-empty.json scripts/check-physics-features.sh 2>/dev/null; then
+        echo "check-physics-features: empty metadata passed" >&2
+        exit 1
+    fi
 
 # LCOV coverage report at lcov.info.
 cov:
