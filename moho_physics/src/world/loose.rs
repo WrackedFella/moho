@@ -1139,14 +1139,12 @@ mod tests {
         }
     }
 
-    /// The lowest point of the object's collider, from its bounding box.
     fn bottom(world: &PhysicsWorld, id: LooseId) -> f32 {
         let body = &world.rigid_body_set[world.loose[&id].body];
         let collider = body.colliders()[0];
         world.collider_set[collider].compute_aabb().mins.y
     }
 
-    /// Rotation that lays a shape's local Y along world X.
     fn lying() -> Quat {
         Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)
     }
@@ -1555,7 +1553,6 @@ mod tests {
         (world, ids)
     }
 
-    /// The deepest penetration, in metres, between two loose objects in the last step.
     fn deepest_pair_overlap(world: &PhysicsWorld) -> f32 {
         let mut deepest = 0.0f32;
         for pair in world.narrow_phase.contact_pairs() {
