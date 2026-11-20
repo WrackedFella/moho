@@ -128,12 +128,11 @@ impl Pawn {
 
     /// Raycast from `origin` along `dir`, break the first solid voxel within
     /// `max_distance`, and deposit its resource (if any) into this pawn's
-    /// inventory. Returns `None` if nothing was in range, or if no tool is
-    /// currently equipped (a no-op — the world is left unchanged).
+    /// inventory. Returns `None`, leaving the world unchanged, if nothing was in
+    /// range or no tool is equipped.
     ///
-    /// Takes plain `glam` types rather than any player-input or camera type,
-    /// so AI-controlled pawns can call this identically with their own aim
-    /// (per the cross-cutting Controller/Pawn design goal).
+    /// Takes plain `glam` types rather than any input or camera type, so
+    /// AI-controlled pawns call it identically with their own aim.
     pub fn mine(
         &mut self,
         grid: &mut VoxelGrid,
