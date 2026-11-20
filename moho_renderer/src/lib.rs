@@ -25,7 +25,7 @@ mod ui_pass;
 pub use markers::{MARKER_INFLATE, MarkerDraws, Markers};
 mod effects;
 pub use effects::{
-    EFFECT_MESH_IDS_FROM, EffectHandle, Effects, FlashStyle, MARK_OFFSET, MarkStyle, StreakStyle,
+    EFFECT_MESH_IDS_FROM, EffectHandle, Effects, FlashStyle, MarkStyle, StreakStyle,
 };
 mod world_meshes;
 pub use world_meshes::WorldMeshes;
