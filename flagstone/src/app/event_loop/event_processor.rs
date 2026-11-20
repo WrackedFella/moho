@@ -536,8 +536,7 @@ fn spawn_sphere(app: &mut App, pos: glam::Vec3) {
     tracing::info!(pos = ?pos, "Spawned sphere");
 }
 
-/// Announces a block a pawn's job dug: the removal and the chunks to remesh, by the path the
-/// player's mining takes, and the dig cue at the block's centre.
+/// Announces a block a pawn's job dug, as player mining does, plus the dig cue.
 pub(crate) fn publish_pawn_dig(app: &App, outcome: &MineOutcome) {
     publish_removal(app, outcome);
     app.event_bus.publish(AudioEvent::PlaySoundAt {
@@ -547,8 +546,7 @@ pub(crate) fn publish_pawn_dig(app: &App, outcome: &MineOutcome) {
     });
 }
 
-/// Announces a removed block and the chunks whose meshes it changes, so marks drop, lighting
-/// updates and chunks remesh, whoever did the digging.
+/// Announces a removed block and the chunks it dirties, whoever dug it.
 fn publish_removal(app: &App, outcome: &MineOutcome) {
     let chunk_size = flagstone_voxel::LIGHT_CHUNK_SIZE;
     app.event_bus.publish(WorldEvent::BlockRemoved {
