@@ -73,7 +73,7 @@ gets that tick's advance on top.
 All gameplay steps early-return unless `GameState::Playing`. `dt` is the fixed tick length.
 
 In the strategy view (`CameraMode::Isometric`) each tick also runs the pawn's job
-(`App::run_pawn_job` in `flagstone/src/app/event_loop/frame_processor.rs`).
+(`FrameProcessor::run_pawn_job` in `flagstone/src/app/event_loop/frame_processor.rs`).
 `flagstone_game::jobs::step` claims an unclaimed mining mark, routes to a stand cell
 (`flagstone_game::routing`: A* over standable cells, one block up or down per step, bounded by
 `ROUTE_NODE_BUDGET`) and answers a `JobAction`. `Walk` is turned by `jobs::steer` into a
