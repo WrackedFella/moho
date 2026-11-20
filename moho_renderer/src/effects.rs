@@ -141,7 +141,7 @@ impl Mark {
     fn scale(&self) -> f32 {
         let fade = self.style.fade.min(self.style.lifetime);
         let remaining = self.style.lifetime.saturating_sub(self.age);
-        if fade.is_zero() || remaining >= fade {
+        if fade.is_zero() {
             return 1.0;
         }
         (remaining.as_secs_f32() / fade.as_secs_f32()).clamp(0.0, 1.0)
