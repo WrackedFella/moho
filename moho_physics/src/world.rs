@@ -83,6 +83,9 @@ impl PhysicsWorld {
     }
 
     /// Step the physics simulation (advances dynamic rigid bodies).
+    ///
+    /// After the solver, rolling loose objects on near-flat ground are braked; see
+    /// [`PhysicsWorld::set_rest_slope`].
     pub fn step(&mut self, dt: f32) {
         self.integration_parameters.dt = dt;
         self.physics_pipeline.step(

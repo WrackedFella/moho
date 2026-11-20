@@ -178,14 +178,14 @@ impl PhysicsWorld {
     ///
     /// The object advances inside [`PhysicsWorld::step`] under the world's gravity.
     ///
-    /// Characters do not ignore loose objects: a loose box blocks a character or is stepped
-    /// onto like geometry, and any overlap shoves the box because the solver treats the
-    /// character as infinitely heavy. Rays skip loose boxes because their colliders carry no
+    /// Characters do not ignore loose objects: a loose object blocks a character or is stepped
+    /// onto like geometry, and any overlap shoves the object because the solver treats the
+    /// character as infinitely heavy. Rays skip loose objects because their colliders carry no
     /// tag.
     ///
     /// # Panics
-    /// If the spawn would poison the simulation: a mass or half extent that is not positive and
-    /// finite, a friction, restitution or damping that is negative or not finite, a position or
+    /// If the spawn would poison the simulation: a mass, a box half extent, or a capsule or
+    /// cylinder half height or radius that is not positive and finite, a friction, restitution or damping that is negative or not finite, a position or
     /// velocity that is not finite, or a rotation that is not finite or whose squared length is
     /// more than 2e-4 from 1 (glam's `Quat::is_normalized`).
     pub fn spawn_loose(&mut self, spawn: &LooseSpawn) -> LooseId {
@@ -1659,6 +1659,43 @@ mod tests {
             "it rolled {} m, as on a floor registered first",
             state.position.x
         );
+    }
+
+    #[test]
+    fn a_rolling_capsule_keeps_its_vertical_velocity_through_the_first_bounce() {
+        let mut braked = world_with_floor(&floor_mesh(0.0));
+        let mut free = world_with_floor(&floor_mesh(0.0));
+        free.set_rest_slope(0.0);
+        let mut spawn = rolling_on_the_floor(CAPSULE, 2.0);
+        spawn.restitution = 0.5;
+        spawn.position.y += 0.3;
+        let braked_id = braked.spawn_loose(&spawn);
+        let free_id = free.spawn_loose(&spawn);
+        let (mut peak, mut previous, mut compared) = (0.0f32, 0.0f32, 0);
+
+        for tick in 1..=40 {
+            braked.step(DT);
+            free.step(DT);
+            let (a, b) = (read(&braked, braked_id), read(&free, free_id));
+            // The bounce ends at the next landing, as in the looser test above.
+            if peak > 0.5 && b.linear_velocity.y > previous {
+                break;
+            }
+            previous = b.linear_velocity.y;
+            peak = peak.max(a.linear_velocity.y);
+            // One brake tick takes a dt = 0.026 m/s off the roll, so a brake that touched the
+            // vertical velocity would show well above 0.01.
+            assert!(
+                (a.linear_velocity.y - b.linear_velocity.y).abs() <= 0.01,
+                "tick {tick}: vertical velocity {} against {}",
+                a.linear_velocity.y,
+                b.linear_velocity.y
+            );
+            compared += 1;
+        }
+
+        assert!(peak > 0.5, "the capsule bounced, peak upward speed {peak}");
+        assert!(compared >= 15, "only {compared} ticks compared");
     }
 
     #[test]
