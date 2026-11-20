@@ -1273,6 +1273,38 @@ mod tests {
         }
 
         #[test]
+        fn returning_to_first_person_starts_where_the_pawn_walked_to() {
+            use crate::app::event_loop::frame_processor::tests::{colony_world, pawn_state};
+            let mut app = colony_world(|_| {});
+            app.colony.marks.toggle([14, 7, 8]);
+            let start = pose(&app).0;
+            for _ in 0..60 {
+                step(&mut app);
+            }
+            let walked_to = pose(&app).0;
+
+            tap(&mut app);
+            step(&mut app);
+
+            let (resumed, _) = pose(&app);
+            let across =
+                |a: glam::Vec3, b: glam::Vec3| glam::Vec2::new(a.x - b.x, a.z - b.z).length();
+            assert!(
+                across(walked_to, start) > 0.5,
+                "the pawn walked on its own: {start:?} to {walked_to:?}"
+            );
+            assert_eq!(mode(&app), CameraMode::FirstPerson);
+            assert!(
+                across(resumed, walked_to) < 0.05,
+                "first person resumes at {resumed:?}, not where the pawn stands {walked_to:?}"
+            );
+            assert!(
+                across(pawn_state(&app).position, walked_to) < 0.05,
+                "the body is where the pawn walked to"
+            );
+        }
+
+        #[test]
         fn possess_enters_first_person_at_the_pawns_pose() {
             let mut app = app_in(CameraMode::Isometric);
             let before = pose(&app);

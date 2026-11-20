@@ -603,6 +603,51 @@ mod tests {
         );
     }
 
+    fn stocked(is_fps_mode: bool, stock: &[(u32, u32)]) -> HudData {
+        HudData {
+            is_fps_mode,
+            colony_stock: stock.to_vec(),
+            ..strategy_data(TOP)
+        }
+    }
+
+    #[test]
+    fn strategy_hud_lists_the_colony_totals() {
+        let drawn = drawn_texts(&stocked(false, &[(1, 3), (7, 12)]));
+        let more = drawn_texts(&stocked(false, &[(1, 4), (7, 12)]));
+        let none = drawn_texts(&stocked(false, &[]));
+        let place = |texts: &[String], label: &str| texts.iter().position(|t| t.contains(label));
+
+        let (first, second) = (place(&drawn, "R1 ×3"), place(&drawn, "R7 ×12"));
+
+        assert!(first.is_some(), "no line for resource 1: {drawn:?}");
+        assert!(second.is_some(), "no line for resource 7: {drawn:?}");
+        assert!(first < second, "listed in the order given: {drawn:?}");
+        assert!(place(&more, "R1 ×4").is_some(), "{more:?}");
+        assert!(place(&more, "R1 ×3").is_none(), "a stale total: {more:?}");
+        assert!(
+            !none.iter().any(|t| t.contains('×')),
+            "a colony with nothing shows no totals: {none:?}"
+        );
+    }
+
+    #[test]
+    fn no_totals_in_first_person() {
+        let stock = [(1, 3), (7, 12)];
+
+        let strategy = drawn_texts(&stocked(false, &stock));
+        let first_person = drawn_texts(&stocked(true, &stock));
+
+        assert!(
+            strategy.iter().any(|t| t.contains("R1 ×3")),
+            "the totals show in strategy"
+        );
+        assert!(
+            !first_person.iter().any(|t| t.contains('×')),
+            "{first_person:?}"
+        );
+    }
+
     #[test]
     fn render_time_of_day_shows_clock_in_top_right() {
         let ctx = egui::Context::default();

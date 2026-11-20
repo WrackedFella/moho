@@ -2,10 +2,15 @@
 
 use std::collections::BTreeSet;
 
-/// The orders a colony holds.
+use crate::inventory::Inventory;
+use crate::pawn::PawnId;
+
+/// The orders a colony holds, and what its pawns have brought in.
 #[derive(Debug, Default)]
 pub struct Colony {
     pub marks: MineMarks,
+    /// The colony total of each resource; only pawn jobs add to it.
+    pub stock: Inventory,
 }
 
 /// What a mark order does to a block that is, or is not, marked.
@@ -15,9 +20,11 @@ pub enum MarkChange {
     Cancelled,
 }
 
-/// An order to dig one block.
+/// An order to dig one block, and the pawn that has taken it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct MineMark;
+pub struct MineMark {
+    pub claimed_by: Option<PawnId>,
+}
 
 /// The blocks marked for mining, keyed by block position.
 ///
@@ -45,7 +52,25 @@ impl MineMarks {
 
     /// The marked blocks in key order.
     pub fn iter(&self) -> impl Iterator<Item = ([i32; 3], &MineMark)> {
-        self.marks.iter().map(|pos| (*pos, &MineMark))
+        self.marks
+            .iter()
+            .map(|pos| (*pos, &MineMark { claimed_by: None }))
+    }
+
+    /// Gives the mark on `pos` to `pawn`. `false` when the block is not marked or another
+    /// pawn already holds the mark.
+    pub fn claim(&mut self, _pos: [i32; 3], _pawn: PawnId) -> bool {
+        todo!("claims are not stored yet")
+    }
+
+    /// Frees the claim on `pos`; the mark stays. Does nothing for an unmarked or unclaimed block.
+    pub fn release(&mut self, _pos: [i32; 3]) {
+        todo!("claims are not stored yet")
+    }
+
+    /// The marked blocks no pawn holds, in key order.
+    pub fn unclaimed(&self) -> impl Iterator<Item = [i32; 3]> {
+        self.marks.iter().copied()
     }
 
     /// Drops the mark on a block that no longer exists; does nothing for an unmarked one.
@@ -61,6 +86,77 @@ mod tests {
 
     fn marked(marks: &MineMarks) -> Vec<[i32; 3]> {
         marks.iter().map(|(pos, _)| pos).collect()
+    }
+
+    fn holder(marks: &MineMarks, pos: [i32; 3]) -> Option<Option<PawnId>> {
+        marks
+            .iter()
+            .find(|(marked, _)| *marked == pos)
+            .map(|(_, mark)| mark.claimed_by)
+    }
+
+    #[test]
+    fn claim_and_release_round_trip() {
+        let mut marks = MineMarks::default();
+        marks.toggle([1, 2, 3]);
+        marks.toggle([4, 5, 6]);
+
+        let first = marks.claim([1, 2, 3], PawnId(0));
+        let held = holder(&marks, [1, 2, 3]);
+        let open: Vec<_> = marks.unclaimed().collect();
+        let taken = marks.claim([1, 2, 3], PawnId(1));
+        let still_held = holder(&marks, [1, 2, 3]);
+        let unmarked = marks.claim([9, 9, 9], PawnId(1));
+        marks.release([1, 2, 3]);
+        marks.release([9, 9, 9]);
+
+        assert!(first, "an unclaimed mark can be claimed");
+        assert_eq!(held, Some(Some(PawnId(0))));
+        assert_eq!(open, [[4, 5, 6]], "a claimed mark is not offered");
+        assert!(!taken, "a claimed mark cannot be claimed by another pawn");
+        assert_eq!(still_held, Some(Some(PawnId(0))), "the first pawn keeps it");
+        assert!(!unmarked, "an unmarked block cannot be claimed");
+        assert_eq!(holder(&marks, [1, 2, 3]), Some(None), "release frees it");
+        assert_eq!(
+            marked(&marks),
+            [[1, 2, 3], [4, 5, 6]],
+            "release keeps marks"
+        );
+        assert_eq!(
+            marks.unclaimed().collect::<Vec<_>>(),
+            [[1, 2, 3], [4, 5, 6]]
+        );
+        assert!(
+            marks.claim([1, 2, 3], PawnId(1)),
+            "a freed mark is open again"
+        );
+    }
+
+    #[test]
+    fn a_removed_mark_takes_its_claim_with_it() {
+        let mut marks = MineMarks::default();
+        marks.toggle([1, 2, 3]);
+        marks.claim([1, 2, 3], PawnId(0));
+
+        marks.block_removed([1, 2, 3]);
+        marks.toggle([1, 2, 3]);
+
+        assert_eq!(holder(&marks, [1, 2, 3]), Some(None));
+    }
+
+    #[test]
+    fn stock_grows_by_the_yield() {
+        let mut colony = Colony::default();
+        let empty = colony.stock.is_empty();
+
+        colony.stock.add(7, 1);
+        colony.stock.add(7, 2);
+        colony.stock.add(3, 1);
+
+        assert!(empty, "a new colony holds nothing");
+        assert_eq!(colony.stock.count(7), 3);
+        assert_eq!(colony.stock.count(3), 1);
+        assert_eq!(colony.stock.count(1), 0, "other resources stay at zero");
     }
 
     #[test]

@@ -31,6 +31,17 @@ const DEFAULT_POINT_LIGHT_RANGE: f32 = 20.0;
 /// Console markers' colour: translucent amber, linear RGBA with straight alpha.
 const MARKER_COLOR: [f32; 4] = [1.0, 0.55, 0.0, 0.35];
 
+/// Cue played at a block a pawn digs.
+const DIG_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/dig.wav");
+const DIG_VOLUME: f32 = 0.6;
+
+/// Publishes what a pawn's dig changed: the block's removal, the chunks to re-mesh and the
+/// cue at the block's centre.
+pub(crate) fn publish_pawn_dig(_app: &App, _outcome: &flagstone_game::pawn::MineOutcome) {
+    let _ = (DIG_SOUND, DIG_VOLUME);
+    todo!("pawn digs are not published yet")
+}
+
 /// Handles processing of all event types
 pub struct EventProcessor;
 
@@ -837,6 +848,78 @@ mod tests {
             .into_iter()
             .collect();
         assert_eq!(*dirty.lock().unwrap(), expected);
+    }
+
+    #[test]
+    fn a_pawn_dig_publishes_the_removal_and_the_cue() {
+        let app = App::headless();
+        let block = flagstone_voxel::BlockPos::new(16, 70, 3);
+        let removed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dirty = std::sync::Arc::new(std::sync::Mutex::new(HashSet::new()));
+        let cues = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (removed_sink, dirty_sink) = (removed.clone(), dirty.clone());
+        app.event_bus.subscribe(move |e: &WorldEvent| match e {
+            WorldEvent::BlockRemoved { position, .. } => {
+                removed_sink.lock().unwrap().push(*position);
+            }
+            WorldEvent::ChunkMeshDirty { chunk_pos, .. } => {
+                dirty_sink.lock().unwrap().insert(*chunk_pos);
+            }
+            _ => {}
+        });
+        let cue_sink = cues.clone();
+        app.event_bus.subscribe(move |e: &AudioEvent| {
+            cue_sink.lock().unwrap().push(e.clone());
+        });
+        let outcome = flagstone_game::pawn::MineOutcome {
+            block_pos: block,
+            old_material_id: 1,
+            distance: 3.0,
+            yield_: None,
+        };
+
+        publish_pawn_dig(&app, &outcome);
+        app.event_bus.process_deferred();
+
+        assert_eq!(*removed.lock().unwrap(), vec![block], "one removal");
+        let expected: HashSet<glam::IVec3> = [glam::IVec3::new(1, 4, 0), glam::IVec3::new(0, 4, 0)]
+            .into_iter()
+            .collect();
+        assert_eq!(
+            *dirty.lock().unwrap(),
+            expected,
+            "the chunks the block touches"
+        );
+        let cues = cues.lock().unwrap();
+        let [
+            AudioEvent::PlaySoundAt {
+                path,
+                volume,
+                position,
+            },
+        ] = cues.as_slice()
+        else {
+            panic!("expected one positioned cue, got {cues:?}");
+        };
+        assert_eq!(
+            std::path::Path::new(path),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/dig.wav")
+        );
+        assert!(*volume > 0.0, "audible");
+        assert_eq!(
+            *position,
+            glam::Vec3::new(16.5, 70.5, 3.5),
+            "at the block's centre"
+        );
+    }
+
+    #[test]
+    fn dig_asset_exists() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/dig.wav");
+
+        let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+
+        assert!(bytes.starts_with(b"RIFF"), "dig.wav is not a WAV file");
     }
 
     #[test]
