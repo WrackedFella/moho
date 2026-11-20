@@ -18,7 +18,6 @@ fi
 
 failed=0
 for crate in "${crates[@]}"; do
-    # Features of every resolved node whose package has this name, one line per version.
     lines="$(jq -r --arg name "$crate" --arg feature "$feature" '
         (.packages | map({key: .id, value: .name}) | from_entries) as $names
         | .resolve.nodes[]
