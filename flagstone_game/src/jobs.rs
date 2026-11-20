@@ -242,6 +242,28 @@ mod tests {
     }
 
     #[test]
+    fn at_most_four_route_attempts_are_made_in_a_tick() {
+        let mut grid = ground(24, 3);
+        let islands: Vec<BlockPos> = (2..=6).map(|x| at(x, 0, 6)).collect();
+        let reachable = at(20, 0, 0);
+        put(&mut grid, islands.iter().copied());
+        let mut marks = marks_on(&islands);
+        marks.toggle(reachable.to_array());
+        let mut pawn = Pawn::default();
+        let pose = pose_in(at(0, 1, 0));
+
+        let first = step(ME, &mut pawn, &pose, &mut marks, &grid);
+
+        assert_eq!(first, JobAction::Wait, "four failed searches use the tick");
+        assert_eq!(pawn.job, Job::Idle);
+        assert_eq!(
+            holder(&marks, reachable),
+            Some(None),
+            "the fifth attempt waits for the next tick"
+        );
+    }
+
+    #[test]
     fn an_idle_pawn_claims_the_nearest_reachable_mark_and_equips_the_tool() {
         let grid = ground(16, 4);
         let (taken, near, far) = (at(2, 0, 1), at(4, 0, 1), at(12, 0, 1));
@@ -298,7 +320,11 @@ mod tests {
         let (walks, (dug, _), pose) = walk_to_the_dig(&mut pawn, &mut marks, &grid, start);
 
         assert_eq!(dug, block, "digs the marked block");
-        assert!(walks.len() >= 4, "walked toward the block: {walks:?}");
+        assert_eq!(
+            walks.len(),
+            5,
+            "the nearest stand cell is five steps away: {walks:?}"
+        );
         let mut previous = start.feet;
         for to in &walks {
             let (dx, dz) = ((to.x - previous.x).abs(), (to.z - previous.z).abs());
@@ -314,6 +340,7 @@ mod tests {
             previous = *to;
         }
         let stood_in = crate::routing::feet_cell(pose.feet);
+        assert_eq!(stood_in, at(5, 1, 1), "the stand cell nearest by route");
         assert!(
             is_stand_cell_for(stood_in, block),
             "dug from {stood_in:?}, too far from {block:?}"
@@ -322,10 +349,16 @@ mod tests {
 
     #[test]
     fn the_dig_aims_at_the_exposed_face_nearest_the_eye() {
-        let mut grid = ground(10, 10);
         let block = at(5, 1, 5);
-        put(&mut grid, [block]);
-        let aim_from = |eye: Vec3| {
+        let world = |extra: &[BlockPos]| {
+            let mut grid = ground(10, 10);
+            put(&mut grid, [block]);
+            put(&mut grid, extra.iter().copied());
+            grid
+        };
+        let open = world(&[]);
+        let covered_on_the_west = world(&[at(4, 1, 5)]);
+        let aim_in = |grid: &VoxelGrid, eye: Vec3| {
             let mut marks = marks_on(&[block]);
             assert!(marks.claim(block.to_array(), ME));
             let mut pawn = Pawn {
@@ -342,17 +375,23 @@ mod tests {
                 eye,
                 yaw: 0.0,
             };
-            step(ME, &mut pawn, &pose, &mut marks, &grid)
+            step(ME, &mut pawn, &pose, &mut marks, grid)
         };
 
-        let from_the_west = aim_from(Vec3::new(3.5, 2.15, 5.5));
-        let from_above = aim_from(Vec3::new(5.5, 6.0, 5.5));
-        let from_the_south = aim_from(Vec3::new(5.5, 1.5, 2.0));
+        let from_the_west = aim_in(&open, Vec3::new(3.5, 2.15, 5.5));
+        let from_above = aim_in(&open, Vec3::new(5.5, 6.0, 5.5));
+        let from_the_south = aim_in(&open, Vec3::new(5.5, 1.5, 2.0));
+        // The west face is the nearest in space but a neighbour covers it.
+        let west_covered = aim_in(&covered_on_the_west, Vec3::new(3.5, 2.15, 5.5));
+        // From the eye the top face is nearer; from the feet, 1.15 m lower, the south one is.
+        let eye_not_feet = aim_in(&open, Vec3::new(5.5, 4.0, 3.5));
 
         let faces = [
             ("west", from_the_west, Vec3::new(5.0, 1.5, 5.5)),
             ("top", from_above, Vec3::new(5.5, 2.0, 5.5)),
             ("south", from_the_south, Vec3::new(5.5, 1.5, 5.0)),
+            ("covered west", west_covered, Vec3::new(5.5, 2.0, 5.5)),
+            ("eye, not feet", eye_not_feet, Vec3::new(5.5, 2.0, 5.5)),
         ];
         for (name, action, face) in faces {
             match action {
@@ -369,7 +408,6 @@ mod tests {
     fn a_cancelled_mark_releases_the_pawn_mid_walk() {
         let grid = ground(12, 3);
         let block = at(8, 0, 1);
-        let other = at(3, 0, 2);
         let mut marks = marks_on(&[block]);
         let mut pawn = Pawn::default();
         let pose = pose_in(at(0, 1, 1));
@@ -379,7 +417,7 @@ mod tests {
 
         let action = step(ME, &mut pawn, &pose, &mut marks, &grid);
         let after_cancel = (pawn.job.clone(), marks.iter().count());
-        marks.toggle(other.to_array());
+        marks.toggle(block.to_array());
         until_it_has_a_job(&mut pawn, &pose, &mut marks, &grid, 3);
 
         assert_eq!(walking, Some(block));
@@ -389,12 +427,12 @@ mod tests {
             "it does not walk on to a cancelled mark"
         );
         assert_eq!(after_cancel, (Job::Idle, 0), "free, and nothing is marked");
-        assert!(grid.is_solid_at(block), "the block is not removed");
         assert_eq!(
             mining(&pawn).map(|(mark, ..)| mark),
-            Some(other),
-            "the freed pawn takes the next mark"
+            Some(block),
+            "the freed pawn takes the same block again when it is re-marked"
         );
+        assert_eq!(holder(&marks, block), Some(Some(ME)));
     }
 
     #[test]

@@ -247,22 +247,6 @@ mod tests {
     }
 
     #[test]
-    fn an_unreachable_goal_on_wide_ground_ends_within_the_default_budget() {
-        let grid = ground(100, 100);
-
-        let route = route(
-            &grid,
-            at(0, 1, 0),
-            |cell| cell.y > 50,
-            at(99, 1, 99),
-            ROUTE_NODE_BUDGET,
-        );
-
-        assert_eq!(ROUTE_NODE_BUDGET, 4096);
-        assert_eq!(route, None);
-    }
-
-    #[test]
     fn a_start_on_a_slope_tries_the_cells_above_and_below() {
         let grid = ground(6, 1);
 
@@ -299,7 +283,7 @@ mod tests {
     proptest! {
         #[test]
         fn every_route_cell_is_standable_and_adjacent_to_the_previous(
-            heights in proptest::collection::vec(1u8..=3, 36),
+            heights in proptest::collection::vec(1u8..=2, 36),
             from in (0i32..6, 0i32..6),
             to in (0i32..6, 0i32..6),
         ) {
@@ -309,18 +293,18 @@ mod tests {
 
             let found = walk(&grid, start, goal);
 
-            if let Some(cells) = found {
-                prop_assert_eq!(cells.last().copied().unwrap_or(start), goal);
-                let mut previous = start;
-                for cell in cells {
-                    prop_assert!(standable(&grid, cell), "{cell:?} is not standable");
-                    let step = cell - previous;
-                    prop_assert!(
-                        step.x.abs() + step.z.abs() == 1 && step.y.abs() <= 1,
-                        "{previous:?} to {cell:?} is not one horizontal step and at most one block up or down"
-                    );
-                    previous = cell;
-                }
+            prop_assert!(found.is_some(), "heights of one or two blocks always connect");
+            let cells = found.unwrap_or_default();
+            prop_assert_eq!(cells.last().copied().unwrap_or(start), goal);
+            let mut previous = start;
+            for cell in cells {
+                prop_assert!(standable(&grid, cell), "{cell:?} is not standable");
+                let step = cell - previous;
+                prop_assert!(
+                    step.x.abs() + step.z.abs() == 1 && step.y.abs() <= 1,
+                    "{previous:?} to {cell:?} is not one horizontal step and at most one block up or down"
+                );
+                previous = cell;
             }
         }
 

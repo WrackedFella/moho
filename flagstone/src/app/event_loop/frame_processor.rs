@@ -1371,6 +1371,51 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_pawn_job_dig_goes_through_the_shared_publisher() {
+        use moho_core::events::AudioEvent;
+        let mut app = world_with_marked(NEAR_BLOCK, Some(ORE));
+        let removed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let dirty = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let cues = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (removed_sink, dirty_sink, cue_sink) = (removed.clone(), dirty.clone(), cues.clone());
+        app.event_bus.subscribe(move |e: &WorldEvent| match e {
+            WorldEvent::BlockRemoved { position, .. } => {
+                removed_sink.lock().unwrap().push(*position);
+            }
+            WorldEvent::ChunkMeshDirty { chunk_pos, .. } => {
+                dirty_sink.lock().unwrap().push(*chunk_pos);
+            }
+            _ => {}
+        });
+        app.event_bus.subscribe(move |e: &AudioEvent| {
+            if let AudioEvent::PlaySoundAt { path, position, .. } = e {
+                cue_sink.lock().unwrap().push((path.clone(), *position));
+            }
+        });
+
+        run_until_dug(&mut app, NEAR_BLOCK, TICK_LIMIT);
+
+        assert_eq!(
+            *removed.lock().unwrap(),
+            vec![block_pos(NEAR_BLOCK)],
+            "one removal, published once"
+        );
+        assert!(
+            dirty.lock().unwrap().contains(&glam::IVec3::ZERO),
+            "the chunk of the dug block is marked for re-meshing"
+        );
+        let dig_asset = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/dig.wav");
+        let cues = cues.lock().unwrap();
+        assert_eq!(cues.len(), 1, "one dig cue: {cues:?}");
+        assert_eq!(std::path::Path::new(&cues[0].0), dig_asset.as_path());
+        assert_eq!(
+            cues[0].1,
+            glam::Vec3::new(6.5, 7.5, 8.5),
+            "at the block's centre"
+        );
+    }
+
+    #[test]
     fn a_plain_block_is_dug_and_the_stock_is_unchanged() {
         let mut app = world_with_marked(NEAR_BLOCK, None);
         let start = pawn_state(&app).position;

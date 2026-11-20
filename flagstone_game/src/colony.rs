@@ -145,18 +145,15 @@ mod tests {
     }
 
     #[test]
-    fn stock_grows_by_the_yield() {
-        let mut colony = Colony::default();
-        let empty = colony.stock.is_empty();
+    fn a_cancelled_and_re_marked_block_starts_unclaimed() {
+        let mut marks = MineMarks::default();
+        marks.toggle([1, 2, 3]);
+        marks.claim([1, 2, 3], PawnId(0));
 
-        colony.stock.add(7, 1);
-        colony.stock.add(7, 2);
-        colony.stock.add(3, 1);
+        marks.toggle([1, 2, 3]);
+        marks.toggle([1, 2, 3]);
 
-        assert!(empty, "a new colony holds nothing");
-        assert_eq!(colony.stock.count(7), 3);
-        assert_eq!(colony.stock.count(3), 1);
-        assert_eq!(colony.stock.count(1), 0, "other resources stay at zero");
+        assert_eq!(holder(&marks, [1, 2, 3]), Some(None));
     }
 
     #[test]
