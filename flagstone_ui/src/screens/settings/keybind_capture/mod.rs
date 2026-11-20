@@ -252,7 +252,7 @@ mod tests {
             Some(("Sprint".to_string(), "Shift".to_string()))
         );
 
-        // Release, then press Alt: the leak path, since Alt is not held with Shift.
+        // Release, then press Alt, so Alt is never held with Shift.
         let released = handler.capture_modifier_if_listening(0, &bindings, |action, b| {
             bindings_changed.push((action, b));
         });
