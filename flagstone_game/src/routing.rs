@@ -117,6 +117,15 @@ mod tests {
         assert_eq!(path.and_then(|p| p.last().copied()), Some(cell(2, 1, 2)));
     }
 
+    #[test]
+    fn a_start_inside_the_ground_routes_from_the_cell_above() {
+        let grid = flat_ground();
+
+        let path = route_to(&grid, cell(0, 0, 2), cell(2, 1, 2));
+
+        assert_eq!(path.and_then(|p| p.last().copied()), Some(cell(2, 1, 2)));
+    }
+
     /// Flat ground with a plateau one block higher for `x >= 3`.
     fn rise() -> VoxelGrid {
         let mut grid = flat_ground();
@@ -229,7 +238,7 @@ mod tests {
 
         #[test]
         fn every_route_cell_is_standable_and_adjacent_to_the_previous(
-            heights in proptest::collection::vec(1u8..=3, 64),
+            heights in proptest::collection::vec(1u8..=2, 64),
             sx in 0i32..8, sz in 0i32..8, gx in 0i32..8, gz in 0i32..8,
         ) {
             let grid = terrain(&heights);
@@ -238,22 +247,22 @@ mod tests {
 
             let path = route_to(&grid, start, goal);
 
-            if let Some(path) = path {
-                prop_assert_eq!(path.last().copied().unwrap_or(start), goal);
-                let mut previous = start;
-                for step in path {
-                    prop_assert!(standable(&grid, step), "{step} is not standable");
-                    let horizontal = (step.x - previous.x).abs() + (step.z - previous.z).abs();
-                    prop_assert_eq!(horizontal, 1, "{} to {} is not one horizontal move", previous, step);
-                    prop_assert!((step.y - previous.y).abs() <= 1, "{} to {} climbs too far", previous, step);
-                    previous = step;
-                }
+            prop_assert!(path.is_some(), "heights of one or two blocks are always walkable");
+            let path = path.unwrap_or_default();
+            prop_assert_eq!(path.last().copied().unwrap_or(start), goal);
+            let mut previous = start;
+            for step in path {
+                prop_assert!(standable(&grid, step), "{step} is not standable");
+                let horizontal = (step.x - previous.x).abs() + (step.z - previous.z).abs();
+                prop_assert_eq!(horizontal, 1, "{} to {} is not one horizontal move", previous, step);
+                prop_assert!((step.y - previous.y).abs() <= 1, "{} to {} climbs too far", previous, step);
+                previous = step;
             }
         }
 
         #[test]
         fn the_same_grid_gives_the_same_route(
-            heights in proptest::collection::vec(1u8..=3, 64),
+            heights in proptest::collection::vec(1u8..=2, 64),
             sx in 0i32..8, sz in 0i32..8, gx in 0i32..8, gz in 0i32..8,
         ) {
             let start = feet_on(&heights, sx, sz);
@@ -265,6 +274,7 @@ mod tests {
             let again = route_to(&first_grid, start, goal);
             let rebuilt = route_to(&second_grid, start, goal);
 
+            prop_assert!(first.is_some(), "heights of one or two blocks are always walkable");
             prop_assert_eq!(&first, &again);
             prop_assert_eq!(&first, &rebuilt);
         }

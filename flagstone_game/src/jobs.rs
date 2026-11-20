@@ -215,15 +215,32 @@ mod tests {
         );
     }
 
+    /// Ground two blocks thick (`y` in `0..=1`) over `x` and `z` in `0..=15`.
+    fn thick_ground() -> VoxelGrid {
+        let mut grid = VoxelGrid::new(16);
+        grid.mutator()
+            .fill_region(cell(0, 0, 0), cell(15, 1, 15), GROUND);
+        grid
+    }
+
+    /// A marked block at `(x, 1, z)` that stands on a ground block (so it is exposed on top)
+    /// inside a 3x3 pit of two-high walls the pawn cannot climb: no stand cell can be routed to.
+    fn unroutable_mark(scene: &mut Scene, x: i32, z: i32) {
+        scene
+            .grid
+            .mutator()
+            .fill_region(cell(x - 1, 1, z - 1), cell(x + 1, 2, z + 1), GROUND);
+        scene.grid.mutator().remove(cell(x, 2, z));
+        scene.marks.toggle(key(cell(x, 1, z)));
+    }
+
     #[test]
     fn a_mark_with_no_exposed_face_is_not_claimed() {
-        let mut grid = flat_ground();
-        grid.mutator()
-            .fill_region(cell(5, 0, 1), cell(7, 2, 3), GROUND);
-        let mut scene = Scene::new(grid);
+        let mut scene = Scene::new(thick_ground());
+        scene.grid.mutator().place(cell(6, 2, 2), GROUND, None);
         scene.marks.toggle(key(cell(6, 1, 2)));
 
-        let action = scene.step(at(0.5, 1.0, 2.5));
+        let action = scene.step(at(0.5, 2.0, 2.5));
 
         assert_eq!(action, JobAction::Wait);
         assert!(scene.is_idle());
@@ -231,52 +248,103 @@ mod tests {
     }
 
     #[test]
-    fn an_enclosed_mark_is_skipped_for_a_farther_exposed_one() {
-        let mut grid = flat_ground();
-        grid.mutator()
-            .fill_region(cell(5, 0, 1), cell(7, 2, 3), GROUND);
-        let mut scene = Scene::new(grid);
+    fn a_mark_with_no_exposed_face_is_skipped_for_a_farther_exposed_one() {
+        let mut scene = Scene::new(thick_ground());
+        scene.grid.mutator().place(cell(6, 2, 2), GROUND, None);
         scene.marks.toggle(key(cell(6, 1, 2)));
-        scene.mark(cell(11, 1, 2));
+        scene.grid.mutator().place(cell(11, 2, 2), GROUND, None);
+        scene.marks.toggle(key(cell(11, 2, 2)));
+
+        scene.step(at(0.5, 2.0, 2.5));
+
+        assert_eq!(scene.claimed_by(cell(6, 1, 2)), None);
+        assert_eq!(scene.claimed_by(cell(11, 2, 2)), Some(ME));
+    }
+
+    #[test]
+    fn an_unroutable_nearer_mark_is_skipped_for_a_farther_reachable_one() {
+        let mut scene = Scene::new(flat_ground());
+        unroutable_mark(&mut scene, 6, 2);
+        scene.mark(cell(13, 1, 12));
 
         scene.step(at(0.5, 1.0, 2.5));
 
         assert_eq!(scene.claimed_by(cell(6, 1, 2)), None);
-        assert_eq!(scene.claimed_by(cell(11, 1, 2)), Some(ME));
+        assert_eq!(scene.claimed_by(cell(13, 1, 12)), Some(ME));
+    }
+
+    /// `pits` unroutable marks, all nearer the pawn at `(0.5, 1, 0.5)` than the one reachable
+    /// mark at `(14, 1, 14)`, so that mark is candidate number `pits + 1`.
+    fn scene_with_pits_before_a_reachable_mark(pits: usize) -> Scene {
+        let nearest_first = [(3, 3), (3, 7), (7, 7), (11, 3), (7, 11)];
+        let mut scene = Scene::new(flat_ground());
+        for &(x, z) in &nearest_first[..pits] {
+            unroutable_mark(&mut scene, x, z);
+        }
+        scene.mark(cell(14, 1, 14));
+        scene
+    }
+
+    #[test]
+    fn the_fourth_candidate_is_claimed_within_the_same_tick_after_three_failed_routes() {
+        let mut scene = scene_with_pits_before_a_reachable_mark(MAX_ROUTE_ATTEMPTS - 1);
+
+        scene.step(at(0.5, 1.0, 0.5));
+
+        assert_eq!(scene.claimed_by(cell(14, 1, 14)), Some(ME));
+    }
+
+    #[test]
+    fn at_most_four_routes_are_tried_per_tick_and_the_fifth_candidate_waits() {
+        let mut scene = scene_with_pits_before_a_reachable_mark(MAX_ROUTE_ATTEMPTS);
+
+        let first = scene.step(at(0.5, 1.0, 0.5));
+        let second = scene.step(at(0.5, 1.0, 0.5));
+
+        assert_eq!(MAX_ROUTE_ATTEMPTS, 4);
+        assert_eq!(first, JobAction::Wait);
+        assert!(scene.is_idle());
+        assert_eq!(scene.claimed_by(cell(14, 1, 14)), None);
+        assert_eq!(
+            second,
+            JobAction::Wait,
+            "no cursor across ticks: the same four nearer candidates are tried again"
+        );
+        assert!(scene.is_idle());
     }
 
     #[test]
     fn an_idle_pawn_claims_the_nearest_reachable_mark_and_equips_the_tool() {
         let mut scene = Scene::new(flat_ground());
-        scene.mark(cell(12, 1, 2));
         scene.mark(cell(6, 1, 2));
+        scene.mark(cell(12, 1, 2));
         scene.pawn.select_slot(1);
 
-        scene.step(at(0.5, 1.0, 2.5));
+        scene.step(at(13.5, 1.0, 2.5));
 
-        assert_eq!(scene.claimed_by(cell(6, 1, 2)), Some(ME));
-        assert_eq!(scene.claimed_by(cell(12, 1, 2)), None);
+        assert_eq!(scene.claimed_by(cell(12, 1, 2)), Some(ME));
+        assert_eq!(scene.claimed_by(cell(6, 1, 2)), None);
         assert_eq!(scene.pawn.selected_slot, TOOL_SLOT);
         assert_eq!(scene.pawn.equipped_tool, Some(STARTING_TOOL));
         match &scene.job {
-            Job::Mine {
-                mark, route, next, ..
-            } => {
-                assert_eq!(*mark, cell(6, 1, 2));
+            Job::Mine { mark, next, .. } => {
+                assert_eq!(*mark, cell(12, 1, 2));
                 assert_eq!(*next, 0);
-                assert_eq!(
-                    *route,
-                    [
-                        cell(1, 1, 2),
-                        cell(2, 1, 2),
-                        cell(3, 1, 2),
-                        cell(4, 1, 2),
-                        cell(5, 1, 2)
-                    ]
-                );
             }
             Job::Idle => panic!("the pawn should have taken the mark"),
         }
+    }
+
+    #[test]
+    fn equally_near_marks_go_to_the_first_in_key_order() {
+        let mut scene = Scene::new(flat_ground());
+        scene.mark(cell(11, 1, 2));
+        scene.mark(cell(7, 1, 2));
+
+        scene.step(at(9.5, 1.0, 2.5));
+
+        assert_eq!(scene.claimed_by(cell(7, 1, 2)), Some(ME));
+        assert_eq!(scene.claimed_by(cell(11, 1, 2)), None);
     }
 
     #[test]
@@ -352,17 +420,24 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_dig_aims_at_the_exposed_face_nearest_the_eye() {
+    /// A pawn standing at its stand cell with the mark at `(6, 1, 2)` claimed; the west side
+    /// of the mark is covered by a block.
+    fn digging_scene() -> Scene {
         let mut scene = Scene::new(flat_ground());
         scene.mark(cell(6, 1, 2));
         scene.grid.mutator().place(cell(5, 1, 2), GROUND, None);
+        scene.marks.claim(key(cell(6, 1, 2)), ME);
         scene.job = Job::Mine {
             mark: cell(6, 1, 2),
             route: vec![],
             next: 0,
             stall: StallGuard::default(),
         };
+        scene
+    }
+
+    #[test]
+    fn the_dig_aims_at_the_exposed_face_nearest_the_eye() {
         let cases = [
             (
                 at(6.5, 1.0, 0.5),
@@ -382,6 +457,8 @@ mod tests {
         ];
 
         for (pose, face, case) in cases {
+            let mut scene = digging_scene();
+
             let action = scene.step(pose);
 
             match action {
@@ -391,36 +468,49 @@ mod tests {
                 }
                 other => panic!("{case}: expected a dig, got {other:?}"),
             }
+            assert!(scene.is_idle(), "{case}: the dig ends the job");
+            assert_eq!(
+                scene.claimed_by(cell(6, 1, 2)),
+                None,
+                "{case}: the claim is released"
+            );
         }
     }
 
-    #[test]
-    fn a_cancelled_mark_releases_the_pawn_mid_walk() {
+    /// Walks a pawn toward the mark at `(6, 1, 2)`, then applies `withdraw`: the pawn must
+    /// drop the job and wait.
+    fn assert_withdrawn_mark_releases_the_pawn(withdraw: impl Fn(&mut Scene), case: &str) {
         let mut scene = Scene::new(flat_ground());
         scene.mark(cell(6, 1, 2));
         scene.step(at(0.5, 1.0, 2.5));
         scene.step(at(2.5, 1.0, 2.5));
 
-        scene.marks.toggle(key(cell(6, 1, 2)));
+        withdraw(&mut scene);
         let action = scene.step(at(2.5, 1.0, 2.5));
 
-        assert_eq!(action, JobAction::Wait);
-        assert!(scene.is_idle());
-        assert!(scene.grid.is_solid_at(cell(6, 1, 2)), "the block stays");
+        assert_eq!(action, JobAction::Wait, "{case}");
+        assert!(scene.is_idle(), "{case}");
+    }
+
+    #[test]
+    fn a_cancelled_mark_releases_the_pawn_mid_walk() {
+        assert_withdrawn_mark_releases_the_pawn(
+            |scene| {
+                scene.marks.toggle(key(cell(6, 1, 2)));
+            },
+            "cancelled by the player",
+        );
     }
 
     #[test]
     fn a_mark_dug_by_another_pawn_releases_the_claim() {
-        let mut scene = Scene::new(flat_ground());
-        scene.mark(cell(6, 1, 2));
-        scene.step(at(0.5, 1.0, 2.5));
-
-        scene.grid.mutator().remove(cell(6, 1, 2));
-        scene.marks.block_removed(key(cell(6, 1, 2)));
-        let action = scene.step(at(2.5, 1.0, 2.5));
-
-        assert_eq!(action, JobAction::Wait);
-        assert!(scene.is_idle());
+        assert_withdrawn_mark_releases_the_pawn(
+            |scene| {
+                scene.grid.mutator().remove(cell(6, 1, 2));
+                scene.marks.block_removed(key(cell(6, 1, 2)));
+            },
+            "dug by another pawn",
+        );
     }
 
     #[test]

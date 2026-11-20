@@ -1247,14 +1247,15 @@ pub(crate) mod tests {
     #[test]
     fn hud_data_carries_the_colony_stock() {
         let mut app = App::headless();
-        app.colony.stock.add(7, 3);
-        app.colony.stock.add(2, 5);
+        for (id, amount) in [(7, 3), (11, 1), (2, 5), (9, 6), (4, 2), (1, 8)] {
+            app.colony.stock.add(id, amount);
+        }
 
         let produced = produced_strategy_hud(&mut app);
 
         let expected = painted_strategy_hud(flagstone_ui::overlays::HudData {
             equipped_tool_label: Some("Pickaxe".to_string()),
-            colony_stock: vec![(2, 5), (7, 3)],
+            colony_stock: vec![(1, 8), (2, 5), (4, 2), (7, 3), (9, 6), (11, 1)],
             ..strategy_hud_data(&app)
         });
         let without_totals = painted_strategy_hud(flagstone_ui::overlays::HudData {
@@ -1372,9 +1373,14 @@ pub(crate) mod tests {
         false
     }
 
-    #[test]
-    fn an_idle_pawn_digs_a_marked_ore_block_and_the_stock_grows_by_one() {
-        let mut app = colony_world(false, Some((cell(NEAR), Some(ORE))));
+    /// Scenario Outline: an idle pawn digs the marked block holding `resource`; the colony
+    /// stock gains `stock_change` (resource id and amount) and the pawn's own inventory stays
+    /// empty.
+    fn assert_idle_pawn_digs_and_stock_changes(
+        resource: Option<u32>,
+        stock_change: Option<(u32, u32)>,
+    ) {
+        let mut app = colony_world(false, Some((cell(NEAR), resource)));
         let start = pawn_state(&app).position;
 
         let dug = run_until(&mut app, 600, |app| !solid(app, NEAR));
@@ -1384,10 +1390,12 @@ pub(crate) mod tests {
             !app.colony.marks.contains(NEAR),
             "the marker is still there"
         );
-        assert_eq!(app.colony.stock.count(ORE), 1);
-        assert_eq!(
-            app.pawn.inventory.count(ORE),
-            0,
+        match stock_change {
+            Some((id, amount)) => assert_eq!(app.colony.stock.count(id), amount),
+            None => assert!(app.colony.stock.is_empty(), "a plain block yields nothing"),
+        }
+        assert!(
+            app.pawn.inventory.is_empty(),
             "a pawn job feeds the colony, not the pawn's own inventory"
         );
         assert!(
@@ -1397,18 +1405,13 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn an_idle_pawn_digs_a_marked_ore_block_and_the_stock_grows_by_one() {
+        assert_idle_pawn_digs_and_stock_changes(Some(ORE), Some((ORE, 1)));
+    }
+
+    #[test]
     fn a_plain_block_is_dug_and_the_stock_is_unchanged() {
-        let mut app = colony_world(false, Some((cell(NEAR), None)));
-
-        let dug = run_until(&mut app, 600, |app| !solid(app, NEAR));
-
-        assert!(dug, "the block is never removed");
-        assert!(
-            !app.colony.marks.contains(NEAR),
-            "the marker is still there"
-        );
-        assert!(app.colony.stock.is_empty(), "a plain block yields nothing");
-        assert!(app.pawn.inventory.is_empty());
+        assert_idle_pawn_digs_and_stock_changes(None, None);
     }
 
     #[test]

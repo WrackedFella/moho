@@ -307,11 +307,12 @@ mod tests {
         assert_eq!(listed, [(7, 1)]);
     }
 
-    #[test]
-    fn dig_removes_the_block_without_depositing() {
+    /// Digs a block holding `resource` and checks the grid change, the outcome's yield and that
+    /// the pawn's own inventory and pickups stay untouched.
+    fn assert_dig_without_depositing(resource: Option<u32>, expected_yield: Option<(u32, u32)>) {
         let mut grid = VoxelGrid::new(16);
         let pos = BlockPos::new(0, 0, 0);
-        grid.mutator().place(pos, 1, Some(7));
+        grid.mutator().place(pos, 1, resource);
         let pawn = Pawn::default();
 
         let outcome = pawn
@@ -320,26 +321,23 @@ mod tests {
 
         assert_eq!(outcome.block_pos, pos);
         assert_eq!(outcome.old_material_id, 1);
-        let yielded = outcome.yield_.expect("an ore block yields");
-        assert_eq!((yielded.resource_id, yielded.amount), (7, 1));
+        assert_eq!(
+            outcome.yield_.map(|y| (y.resource_id, y.amount)),
+            expected_yield
+        );
         assert!(grid.material_at(pos).is_none());
         assert!(pawn.inventory.is_empty());
         assert!(pawn.pickups.entries().is_empty());
     }
 
     #[test]
+    fn dig_removes_the_block_without_depositing() {
+        assert_dig_without_depositing(Some(7), Some((7, 1)));
+    }
+
+    #[test]
     fn dig_of_a_plain_block_yields_nothing() {
-        let mut grid = VoxelGrid::new(16);
-        let pos = BlockPos::new(0, 0, 0);
-        grid.mutator().place(pos, 1, None);
-        let pawn = Pawn::default();
-
-        let outcome = pawn
-            .dig(&mut grid, Vec3::new(0.5, 0.5, -5.0), Vec3::Z, 10.0)
-            .expect("ray should hit the placed block");
-
-        assert!(outcome.yield_.is_none());
-        assert!(grid.material_at(pos).is_none());
+        assert_dig_without_depositing(None, None);
     }
 
     #[test]
