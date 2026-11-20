@@ -1654,4 +1654,111 @@ pub(crate) mod tests {
             "the totals are not drawn"
         );
     }
+
+    fn headless_loop() -> moho_app::HeadlessLoop<App> {
+        moho_app::HeadlessLoop::new(moho_app::LoopConfig::new(flagstone_game::TICK_HZ))
+    }
+
+    #[test]
+    fn the_pawn_digs_two_marks_one_after_another() {
+        let plain = NEAR_BLOCK;
+        let ore = [10, 7, 8];
+        let mut app = colony_world(|grid| {
+            grid.mutator().place(block_pos(plain), 1, None);
+            grid.mutator().place(block_pos(ore), 1, Some(ORE));
+        });
+        app.colony.marks.toggle(plain);
+        app.colony.marks.toggle(ore);
+        let mut sim = headless_loop();
+
+        for _ in 0..TICK_LIMIT {
+            sim.step(&mut app, 1);
+            if !is_solid(&app, plain) && !is_solid(&app, ore) {
+                break;
+            }
+        }
+
+        assert!(
+            !is_solid(&app, plain) && !is_solid(&app, ore),
+            "both blocks are dug"
+        );
+        assert_eq!(
+            app.colony.marks.iter().count(),
+            0,
+            "no marker is left, claimed or not"
+        );
+        assert_eq!(app.colony.stock.count(ORE), 1, "only the ore counts");
+        assert_eq!(app.colony.stock.iter().count(), 1);
+        assert!(app.pawn.inventory.is_empty());
+        assert_eq!(app.pawn.job, flagstone_game::jobs::Job::Idle);
+    }
+
+    #[test]
+    fn a_pawn_whose_block_was_removed_behind_its_back_takes_the_next_mark() {
+        let mut app = world_with_marked(FAR_BLOCK, None);
+        let start = pawn_state(&app).position;
+        let mut sim = headless_loop();
+        sim.step(&mut app, 60);
+        let walking = pawn_state(&app).position;
+        let second = [9, 7, 8];
+        app.colony.marks.toggle(second);
+        app.light_system
+            .as_mut()
+            .expect("light system")
+            .grid_mut()
+            .mutator()
+            .remove(block_pos(FAR_BLOCK));
+        app.colony.marks.block_removed(FAR_BLOCK);
+
+        let mut left_claimed = false;
+        for _ in 0..TICK_LIMIT {
+            sim.step(&mut app, 1);
+            left_claimed |= app.colony.marks.contains(FAR_BLOCK);
+            if !is_solid(&app, second) {
+                break;
+            }
+        }
+
+        assert!(walking.distance(start) > 0.5, "it was on its way");
+        assert!(!is_solid(&app, second), "the remaining mark is dug");
+        assert!(!left_claimed, "the removed block's mark never comes back");
+        assert_eq!(app.colony.marks.iter().count(), 0);
+        assert!(app.colony.stock.is_empty(), "plain blocks add nothing");
+        assert_eq!(app.pawn.job, flagstone_game::jobs::Job::Idle);
+    }
+
+    #[test]
+    fn a_stale_mark_on_empty_air_is_never_claimed() {
+        let mut app = world_with_marked(NEAR_BLOCK, Some(ORE));
+        app.light_system
+            .as_mut()
+            .expect("light system")
+            .grid_mut()
+            .mutator()
+            .remove(block_pos(NEAR_BLOCK));
+        let before = (pawn_state(&app).position, app.simulation.position());
+        let mut sim = headless_loop();
+
+        sim.step(&mut app, 300);
+
+        assert!(!is_solid(&app, NEAR_BLOCK));
+        assert_eq!(
+            (pawn_state(&app).position, app.simulation.position()),
+            before,
+            "the pawn stays where it is"
+        );
+        assert_eq!(app.pawn.job, flagstone_game::jobs::Job::Idle);
+        assert!(
+            app.colony.marks.contains(NEAR_BLOCK),
+            "the stale mark stays"
+        );
+        assert!(
+            app.colony
+                .marks
+                .iter()
+                .all(|(_, mark)| mark.claimed_by.is_none()),
+            "and is not claimed"
+        );
+        assert!(app.colony.stock.is_empty());
+    }
 }
