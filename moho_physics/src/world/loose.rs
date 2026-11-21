@@ -1635,6 +1635,27 @@ mod tests {
     }
 
     #[test]
+    fn a_capsule_spawned_before_the_box_it_lands_on_is_braked() {
+        let mut world = flat_world();
+        let id = world.spawn_loose(&rolling_spawn(
+            capsule_shape(),
+            Vec3::new(-2.0, 0.2 + 0.3 + CAPSULE_RADIUS, 0.0),
+            1.0,
+        ));
+        world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.1, 0.0),
+            ..LooseSpawn::new(cuboid(Vec3::new(3.0, 0.1, 1.0)), 2.0)
+        });
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        let travelled = state.position.x + 2.0;
+        assert!(state.asleep, "the capsule rests on the box, {state:?}");
+        assert!((0.15..=1.0).contains(&travelled), "it rolled {travelled} m");
+    }
+
+    #[test]
     fn a_capsule_rolling_on_a_box_top_is_braked() {
         let mut world = flat_world();
         world.spawn_loose(&LooseSpawn {
