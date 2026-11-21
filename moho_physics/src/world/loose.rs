@@ -1,6 +1,8 @@
 use super::PhysicsWorld;
 use glam::{Quat, Vec3};
-use rapier3d::prelude::{ColliderBuilder, Pose, RigidBody, RigidBodyBuilder, RigidBodyHandle};
+use rapier3d::prelude::{
+    ColliderBuilder, NarrowPhase, Pose, RigidBody, RigidBodyBuilder, RigidBodyHandle,
+};
 use std::f32::consts::{FRAC_PI_2, PI};
 
 /// Stable, engine-issued name of a loose object.
@@ -39,6 +41,36 @@ pub(super) struct Loose {
     pub(super) body: RigidBodyHandle,
     /// The radius a capsule or cylinder rolls on; `None` for a box, which is never braked.
     roll_radius: Option<f32>,
+}
+
+/// Whether `body` rests on ground within the rest slope of level and is not being pushed out
+/// of a deep overlap.
+fn on_near_flat_ground(
+    narrow_phase: &NarrowPhase,
+    body: &RigidBody,
+    up: Vec3,
+    min_up_dot: f32,
+) -> bool {
+    let mut grounded = false;
+    for &collider in body.colliders() {
+        for pair in narrow_phase.contact_pairs_with(collider) {
+            let into_body = if pair.collider2 == collider {
+                1.0
+            } else {
+                -1.0
+            };
+            for manifold in pair.manifolds() {
+                let flat = (manifold.data.normal * into_body).dot(up) >= min_up_dot;
+                for point in &manifold.points {
+                    if point.dist < -DEEP_CONTACT {
+                        return false;
+                    }
+                    grounded |= flat && point.dist <= 0.0;
+                }
+            }
+        }
+    }
+    grounded
 }
 
 /// `value` moved `amount` toward zero, stopping at zero.
@@ -258,7 +290,7 @@ impl PhysicsWorld {
     /// If `slope` is not finite or not in `[0, π/2)`.
     pub fn set_rest_slope(&mut self, slope: f32) {
         assert!(
-            slope.is_finite() && (0.0..FRAC_PI_2).contains(&slope),
+            (0.0..FRAC_PI_2).contains(&slope),
             "rest slope must be finite and in [0, pi/2) radians, got {slope}"
         );
         self.rest_slope = slope;
@@ -286,15 +318,15 @@ impl PhysicsWorld {
         let slowing = gravity * self.rest_slope.tan() * dt;
         let min_up_dot = self.rest_slope.cos();
 
-        let mut braked = Vec::new();
         for loose in self.loose.values() {
             let Some(radius) = loose.roll_radius else {
                 continue;
             };
-            let Some(body) = self.rigid_body_set.get(loose.body) else {
+            let Some(body) = self.rigid_body_set.get_mut(loose.body) else {
                 continue;
             };
-            if body.is_sleeping() || !self.on_near_flat_ground(body, up, min_up_dot) {
+            if body.is_sleeping() || !on_near_flat_ground(&self.narrow_phase, body, up, min_up_dot)
+            {
                 continue;
             }
 
@@ -307,40 +339,9 @@ impl PhysicsWorld {
                 let along = velocity.dot(rolling);
                 velocity -= rolling * (along - toward_zero(along, slowing));
             }
-            braked.push((loose.body, velocity, spin));
+            body.set_linvel(velocity, false);
+            body.set_angvel(spin, false);
         }
-
-        for (handle, velocity, spin) in braked {
-            if let Some(body) = self.rigid_body_set.get_mut(handle) {
-                body.set_linvel(velocity, false);
-                body.set_angvel(spin, false);
-            }
-        }
-    }
-
-    /// Whether `body` rests on ground within the rest slope of level and is not being pushed out
-    /// of a deep overlap.
-    fn on_near_flat_ground(&self, body: &RigidBody, up: Vec3, min_up_dot: f32) -> bool {
-        let mut grounded = false;
-        for &collider in body.colliders() {
-            for pair in self.narrow_phase.contact_pairs_with(collider) {
-                let into_body = if pair.collider2 == collider {
-                    1.0
-                } else {
-                    -1.0
-                };
-                for manifold in pair.manifolds() {
-                    let flat = (manifold.data.normal * into_body).dot(up) >= min_up_dot;
-                    for point in &manifold.points {
-                        if point.dist < -DEEP_CONTACT {
-                            return false;
-                        }
-                        grounded |= flat && point.dist <= 0.0;
-                    }
-                }
-            }
-        }
-        grounded
     }
 
     /// How many loose objects are alive.
