@@ -150,14 +150,14 @@ impl PhysicsWorld {
     ///
     /// The object advances inside [`PhysicsWorld::step`] under the world's gravity.
     ///
-    /// Characters do not ignore loose objects: a loose box blocks a character or is stepped
-    /// onto like geometry, and any overlap shoves the box because the solver treats the
-    /// character as infinitely heavy. Rays skip loose boxes because their colliders carry no
+    /// Characters do not ignore loose objects: a loose object blocks a character or is stepped
+    /// onto like geometry, and any overlap shoves the object because the solver treats the
+    /// character as infinitely heavy. Rays skip loose objects because their colliders carry no
     /// tag.
     ///
     /// # Panics
-    /// If the spawn would poison the simulation: a mass or half extent that is not positive and
-    /// finite, a friction, restitution or damping that is negative or not finite, a position or
+    /// If the spawn would poison the simulation: a mass, half extent, half height or radius that
+    /// is not positive and finite, a friction, restitution or damping that is negative or not finite, a position or
     /// velocity that is not finite, or a rotation that is not finite or whose squared length is
     /// more than 2e-4 from 1 (glam's `Quat::is_normalized`).
     pub fn spawn_loose(&mut self, spawn: &LooseSpawn) -> LooseId {
@@ -256,7 +256,7 @@ impl PhysicsWorld {
             return;
         }
         let up = -self.gravity / gravity;
-        let strength = gravity * self.rest_slope.tan();
+        let cut = gravity * self.rest_slope.tan() * dt;
         let flat = self.rest_slope.cos();
 
         for loose in self.loose.values() {
@@ -280,9 +280,10 @@ impl PhysicsWorld {
                     };
                     for manifold in pair.manifolds() {
                         let normal = manifold.data.normal * into_body;
+                        let level = normal.dot(up) >= flat;
                         for point in &manifold.points {
                             separating |= point.dist < -DEEP_CONTACT;
-                            on_ground |= point.dist <= 0.0 && normal.dot(up) >= flat;
+                            on_ground |= point.dist <= 0.0 && level;
                         }
                     }
                 }
@@ -295,13 +296,10 @@ impl PhysicsWorld {
             let mut linvel = body.linvel();
             let mut angvel = body.angvel();
             let spin = angvel.dot(axis);
-            let spin_cut = strength * dt / radius;
-            angvel += axis * (spin.signum() * (spin.abs() - spin_cut).max(0.0) - spin);
-            let roll = axis.cross(up);
-            if let Some(roll) = roll.try_normalize() {
+            angvel += axis * (shrink(spin, cut / radius) - spin);
+            if let Some(roll) = axis.cross(up).try_normalize() {
                 let along = linvel.dot(roll);
-                let cut = strength * dt;
-                linvel += roll * (along.signum() * (along.abs() - cut).max(0.0) - along);
+                linvel += roll * (shrink(along, cut) - along);
             }
             if let Some(body) = self.rigid_body_set.get_mut(loose.body) {
                 body.set_linvel(linvel, false);
@@ -309,6 +307,11 @@ impl PhysicsWorld {
             }
         }
     }
+}
+
+/// `value` moved `cut` toward zero, stopping at zero.
+fn shrink(value: f32, cut: f32) -> f32 {
+    value.signum() * (value.abs() - cut).max(0.0)
 }
 
 impl LooseShape {
