@@ -24,8 +24,9 @@ pub fn feet_cell(feet: Vec3) -> BlockPos {
 /// A shortest walk over standable cells from `start` to the first cell `is_goal` accepts, or
 /// `None` when there is none or the search expands more than `budget` cells.
 ///
-/// Moves are the four horizontal neighbours, one block up or down; `toward` steers the
-/// Manhattan heuristic.
+/// Moves are the four horizontal neighbours, one block up or down. `toward` steers the
+/// heuristic, the horizontal Manhattan distance less one cell on each axis, so it never
+/// overestimates for a goal that is `toward` itself or any cell in the ring around it.
 ///
 /// The route lists the cells to walk through and leaves out the cell the walk starts in; a
 /// start that is already a goal gives an empty route. A start that is not standable tries the
@@ -40,7 +41,13 @@ pub fn route(
     let start = [start, start + BlockPos::Y, start - BlockPos::Y]
         .into_iter()
         .find(|&cell| standable(grid, cell))?;
-    let heuristic = |cell: BlockPos| ((cell.x - toward.x).abs() + (cell.z - toward.z).abs()) as u32;
+    // Goals may sit anywhere in the column ring around `toward`, one cell off it, so the walk
+    // left can be two steps shorter than the plain Manhattan distance; the slack keeps the
+    // estimate from overshooting.
+    let heuristic = |cell: BlockPos| {
+        ((cell.x - toward.x).abs() - 1).max(0) as u32
+            + ((cell.z - toward.z).abs() - 1).max(0) as u32
+    };
 
     let mut open = BinaryHeap::new();
     let mut best: HashMap<BlockPos, u32> = HashMap::from([(start, 0)]);
@@ -332,6 +339,57 @@ mod tests {
 
     fn column() -> impl Strategy<Value = (i32, i32)> {
         (0..8i32, 0..8i32)
+    }
+
+    /// Steps of a plain breadth-first search over the same step rules, to the nearest cell
+    /// `is_goal` accepts.
+    fn nearest_goal_steps(
+        grid: &VoxelGrid,
+        start: BlockPos,
+        is_goal: impl Fn(BlockPos) -> bool,
+    ) -> Option<usize> {
+        let mut distance = std::collections::HashMap::from([(start, 0_usize)]);
+        let mut queue = std::collections::VecDeque::from([start]);
+        while let Some(at) = queue.pop_front() {
+            let steps = distance[&at];
+            if is_goal(at) {
+                return Some(steps);
+            }
+            for next in neighbours(grid, at) {
+                if let std::collections::hash_map::Entry::Vacant(slot) = distance.entry(next) {
+                    slot.insert(steps + 1);
+                    queue.push_back(next);
+                }
+            }
+        }
+        None
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        #[test]
+        fn a_route_to_a_dig_goal_is_as_short_as_a_breadth_first_search(
+            heights in proptest::collection::vec(0..=2i32, 64),
+            from in column(),
+            mark in column(),
+        ) {
+            let grid = terrain(&heights);
+            let start = feet_above(&heights, from);
+            let mark = feet_above(&heights, mark);
+            let digs_from = |c: BlockPos| {
+                (c.x - mark.x).abs() <= 1
+                    && (c.z - mark.z).abs() <= 1
+                    && (mark.y - 1..=mark.y + 2).contains(&c.y)
+            };
+
+            let route = route(&grid, start, digs_from, mark, ROUTE_NODE_BUDGET);
+
+            prop_assert_eq!(
+                route.map(|r| r.len()),
+                nearest_goal_steps(&grid, start, digs_from)
+            );
+        }
     }
 
     proptest! {

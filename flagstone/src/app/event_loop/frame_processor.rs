@@ -1538,6 +1538,130 @@ mod tests {
     }
 
     #[test]
+    fn a_pawn_moved_while_possessed_digs_only_from_within_reach_after_return() {
+        let block = IVec3::new(14, 4, 8);
+        let mut app = dig_world::world(&Layout {
+            start: Vec3::new(2.5, GROUND_TOP, 8.5),
+            block,
+            ..layout()
+        });
+        dig_world::tick(&mut app, 45);
+        assert!(
+            app.colony
+                .marks
+                .iter()
+                .any(|(_, mark)| mark.claimed_by == Some(PawnId(0))),
+            "the pawn had set out"
+        );
+        app.simulation
+            .set_camera_mode(flagstone_game::controller::CameraMode::FirstPerson);
+        app.physics
+            .teleport_character(Vec3::new(20.5, GROUND_TOP + 1.2, 14.5));
+        dig_world::tick(&mut app, 30);
+        let moved = dig_world::pawn_state(&app).position;
+        assert!(
+            horizontal(moved, Vec3::new(2.5, 0.0, 8.5)) > 5.0,
+            "the player walked the pawn away: {moved:?}"
+        );
+        assert!(dig_world::is_solid(&app, block), "no dig while possessed");
+        app.simulation
+            .set_camera_mode(flagstone_game::controller::CameraMode::Isometric);
+        let centre = block.as_vec3() + Vec3::splat(0.5);
+        let mut dug_from = None;
+
+        for _ in 0..WALK_LIMIT {
+            dig_world::tick(&mut app, 1);
+            let state = dig_world::pawn_state(&app);
+            assert!(
+                state.position.y > 0.0,
+                "fell through the terrain: {state:?}"
+            );
+            if !dig_world::is_solid(&app, block) {
+                dug_from = Some(state.position);
+                break;
+            }
+        }
+
+        let eye = dug_from.expect("the pawn never dug after the view returned");
+        assert!(
+            eye.distance(centre) <= MINE_REACH,
+            "dug from {} m",
+            eye.distance(centre)
+        );
+        dig_world::tick(&mut app, 5);
+        assert!(
+            app.colony
+                .marks
+                .iter()
+                .all(|(_, mark)| mark.claimed_by.is_none()),
+            "a claim outlived its mark"
+        );
+    }
+
+    #[test]
+    fn a_claim_is_held_only_by_a_pawn_walking_to_it_after_a_possession_round_trip() {
+        let block = IVec3::new(14, 4, 8);
+        let mut app = dig_world::world(&Layout {
+            start: Vec3::new(2.5, GROUND_TOP, 8.5),
+            block,
+            ..layout()
+        });
+        dig_world::tick(&mut app, 45);
+        app.simulation
+            .set_camera_mode(flagstone_game::controller::CameraMode::FirstPerson);
+        app.physics
+            .teleport_character(Vec3::new(20.5, GROUND_TOP + 1.2, 14.5));
+        dig_world::tick(&mut app, 30);
+        app.simulation
+            .set_camera_mode(flagstone_game::controller::CameraMode::Isometric);
+
+        for tick in 0..WALK_LIMIT {
+            dig_world::tick(&mut app, 1);
+            for (pos, mark) in app.colony.marks.iter() {
+                if mark.claimed_by.is_some() {
+                    assert!(
+                        matches!(&app.pawn.job, Job::Mine { mark, .. } if *mark == pos),
+                        "tick {tick}: {pos:?} is claimed but the pawn walks {:?}",
+                        app.pawn.job
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_dig_that_finds_nothing_ends_the_job_and_leaves_the_world_alone() {
+        let mut app = dig_world::world(&layout());
+        dig_world::tick(&mut app, 5);
+        assert!(matches!(app.pawn.job, Job::Mine { .. }), "the pawn set out");
+        app.pawn.select_slot(3);
+        let _ = app.audio_event_rx.try_iter().count();
+        let mut ended = false;
+
+        for _ in 0..WALK_LIMIT {
+            dig_world::tick(&mut app, 1);
+            if app.pawn.job == Job::Idle {
+                ended = true;
+                break;
+            }
+        }
+
+        assert!(ended, "the job never ended");
+        assert!(dig_world::is_solid(&app, BLOCK), "nothing was removed");
+        assert!(app.colony.stock.is_empty(), "nothing was stocked");
+        assert!(
+            app.colony.marks.contains(BLOCK.to_array()),
+            "the mark stays"
+        );
+        assert!(
+            app.audio_event_rx
+                .try_iter()
+                .all(|event| !matches!(event, moho_core::events::AudioEvent::PlaySoundAt { .. })),
+            "no cue for a dig that removed nothing"
+        );
+    }
+
+    #[test]
     fn hud_data_carries_the_colony_stock() {
         let mut app = App::headless();
         app.colony.stock.add(5, 2);

@@ -630,6 +630,32 @@ mod tests {
     }
 
     #[test]
+    fn a_pawn_already_at_a_stand_cell_digs_without_walking() {
+        let mut grid = flat_world(20);
+        let mut marks = MineMarks::default();
+        mark_block(&mut grid, &mut marks, [6, 1, 5], true);
+        let mut pawn = Pawn::default();
+        let pose = Pose::standing(feet_in(5, 1, 5), 0.0);
+
+        let actions: Vec<JobAction> = (0..2)
+            .map(|_| step(&mut pawn, ID, &pose, &mut marks, &grid))
+            .collect();
+
+        assert!(
+            actions
+                .iter()
+                .all(|action| !matches!(action, JobAction::Walk { .. })),
+            "no waypoint to walk to: {actions:?}"
+        );
+        assert!(
+            actions.iter().any(
+                |action| matches!(action, JobAction::Dig { block, .. } if *block == cell(6, 1, 5))
+            ),
+            "{actions:?}"
+        );
+    }
+
+    #[test]
     fn of_equally_near_marks_the_smaller_key_is_claimed() {
         let mut grid = flat_world(20);
         let mut marks = MineMarks::default();
