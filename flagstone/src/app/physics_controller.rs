@@ -78,6 +78,11 @@ impl PhysicsController {
         Some((self.previous?, current))
     }
 
+    /// The player character as the physics world holds it now.
+    pub fn player_state(&self) -> Option<moho_physics::CharacterState> {
+        self.world.as_ref()?.character(self.player?)
+    }
+
     /// Whether a kinematic character controller is active (and not in noclip).
     pub fn is_kcc_active(&self) -> bool {
         !self.noclip && self.world.is_some() && self.player.is_some()

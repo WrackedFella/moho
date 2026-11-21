@@ -77,6 +77,7 @@ impl FrameProcessor {
             };
             let (view, proj, eye) = app.simulation.apply_input(dt, ground);
             app.camera = (view, proj, eye);
+            self.update_pawn_job(app, dt);
         }
 
         // Step rigid bodies in both KCC and non-KCC paths (test spheres, etc.)
@@ -86,6 +87,89 @@ impl FrameProcessor {
 
         // Clear zoom delta after use
         app.simulation.controller_input.zoom_delta = 0.0;
+    }
+
+    /// Runs the job of the pawn the player is not possessing: it walks with the physics step and
+    /// digs with the mining action a possessed pawn uses. An idle pawn is left exactly as it is.
+    fn update_pawn_job(&self, app: &mut App, dt: f32) {
+        use flagstone_game::jobs::{JobAction, Pose, steer};
+
+        if app.simulation.camera_mode() != flagstone_game::controller::CameraMode::Isometric {
+            return;
+        }
+        let Some(state) = app.physics.player_state() else {
+            return;
+        };
+        if app.physics.noclip {
+            return;
+        }
+        let Some(light_system) = app.light_system.as_ref() else {
+            return;
+        };
+        let feet = state.position - glam::Vec3::Y * flagstone_game::selection::PAWN_HALF_EXTENTS.y;
+        let pose = Pose::standing(feet, state.yaw);
+        let action = flagstone_game::jobs::step(
+            &mut app.pawn,
+            flagstone_game::selection::PLAYER_PAWN,
+            &pose,
+            &mut app.colony.marks,
+            light_system.grid(),
+        );
+        match action {
+            JobAction::Wait => {}
+            JobAction::Walk { to } => {
+                let walk = steer(&pose, to);
+                let command = moho_physics::CharacterCommand {
+                    forward: walk.forward,
+                    yaw_delta: walk.yaw_delta,
+                    ..moho_physics::CharacterCommand::default()
+                };
+                if let Some(moved) =
+                    app.physics
+                        .move_character(&command, &STRATEGY_MOVE_SETTINGS, dt)
+                {
+                    app.simulation
+                        .set_position_yaw_pitch(moved.position, moved.yaw, moved.pitch);
+                }
+            }
+            JobAction::Dig { block, aim } => self.dig_for_colony(app, pose.eye, aim, block),
+        }
+    }
+
+    /// The pawn's dig: the mining action from the eye toward `aim`, its yield into the colony's
+    /// stock, and the removal published like the player's. The dig ends the job; the mark stays
+    /// unless the block it names is the one that went.
+    fn dig_for_colony(
+        &self,
+        app: &mut App,
+        eye: glam::Vec3,
+        aim: glam::Vec3,
+        marked: flagstone_voxel::BlockPos,
+    ) {
+        app.pawn.job = flagstone_game::jobs::Job::Idle;
+        app.colony.marks.release(marked.to_array());
+        let Some(light_system) = app.light_system.as_mut() else {
+            return;
+        };
+        let grid = light_system.grid_mut();
+        let dir = (aim - eye).normalize_or_zero();
+        let Some(outcome) = app
+            .pawn
+            .dig(grid, eye, dir, flagstone_game::pawn::MINE_REACH)
+        else {
+            tracing::debug!(block = ?marked, "pawn dig found nothing within reach");
+            return;
+        };
+        let chunk_size = grid.chunk_size();
+        if let Some(yielded) = outcome.yield_ {
+            app.colony.stock.add(yielded.resource_id, yielded.amount);
+        }
+        crate::app::event_loop::event_processor::publish_removal(
+            &app.event_bus,
+            chunk_size,
+            &outcome,
+        );
+        crate::app::event_loop::event_processor::publish_dig_cue(&app.event_bus, outcome.block_pos);
     }
 
     fn update_game_state_fps_kcc(&self, app: &mut App, dt: f32) {
@@ -436,7 +520,11 @@ impl FrameProcessor {
                 .collect(),
             selection,
             mine_designation_active: app.input.designation == Designation::Mine,
-            colony_stock: Vec::new(),
+            colony_stock: {
+                let mut stock: Vec<(u32, u32)> = app.colony.stock.iter().collect();
+                stock.sort_by_key(|(resource_id, _)| *resource_id);
+                stock
+            },
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {

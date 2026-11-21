@@ -1,5 +1,8 @@
 //! Where a pawn can stand and how it walks between standing cells.
 
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
+
 use flagstone_voxel::{BlockPos, VoxelGrid};
 use glam::Vec3;
 
@@ -8,13 +11,14 @@ pub const ROUTE_NODE_BUDGET: usize = 4096;
 
 /// Whether a pawn's feet can be in `cell`: ground below (`cell - Y` solid) and three cells of
 /// air from the feet up, the capsule's height.
-pub fn standable(_grid: &VoxelGrid, _cell: BlockPos) -> bool {
-    false
+pub fn standable(grid: &VoxelGrid, cell: BlockPos) -> bool {
+    grid.is_solid_at(cell - BlockPos::Y)
+        && (0..3).all(|up| !grid.is_solid_at(cell + BlockPos::Y * up))
 }
 
 /// The cell holding `feet`, flooring each axis.
-pub fn feet_cell(_feet: Vec3) -> BlockPos {
-    BlockPos::ZERO
+pub fn feet_cell(feet: Vec3) -> BlockPos {
+    feet.floor().as_ivec3()
 }
 
 /// A shortest walk over standable cells from `start` to the first cell `is_goal` accepts, or
@@ -22,14 +26,90 @@ pub fn feet_cell(_feet: Vec3) -> BlockPos {
 ///
 /// Moves are the four horizontal neighbours, one block up or down; `toward` steers the
 /// Manhattan heuristic.
+///
+/// The route lists the cells to walk through and leaves out the cell the walk starts in; a
+/// start that is already a goal gives an empty route. A start that is not standable tries the
+/// cell above it, then the one below, before giving up.
 pub fn route(
-    _grid: &VoxelGrid,
-    _start: BlockPos,
-    _is_goal: impl Fn(BlockPos) -> bool,
-    _toward: BlockPos,
-    _budget: usize,
+    grid: &VoxelGrid,
+    start: BlockPos,
+    is_goal: impl Fn(BlockPos) -> bool,
+    toward: BlockPos,
+    budget: usize,
 ) -> Option<Vec<BlockPos>> {
+    let start = [start, start + BlockPos::Y, start - BlockPos::Y]
+        .into_iter()
+        .find(|&cell| standable(grid, cell))?;
+    let heuristic = |cell: BlockPos| ((cell.x - toward.x).abs() + (cell.z - toward.z).abs()) as u32;
+
+    let mut open = BinaryHeap::new();
+    let mut best: HashMap<BlockPos, u32> = HashMap::from([(start, 0)]);
+    let mut parent: HashMap<BlockPos, BlockPos> = HashMap::new();
+    let mut inserted = 0_u64;
+    open.push(Reverse((
+        heuristic(start),
+        Reverse(0_u32),
+        inserted,
+        start.to_array(),
+    )));
+    let mut expanded = 0;
+    while let Some(Reverse((_, Reverse(g), _, cell))) = open.pop() {
+        let cell = BlockPos::from_array(cell);
+        if best.get(&cell).is_some_and(|&known| known < g) {
+            continue;
+        }
+        if is_goal(cell) {
+            let mut walk = vec![cell];
+            while let Some(&previous) = parent.get(walk.last().expect("walk is not empty")) {
+                walk.push(previous);
+            }
+            walk.pop();
+            walk.reverse();
+            return Some(walk);
+        }
+        if expanded == budget {
+            return None;
+        }
+        expanded += 1;
+        for next in neighbours(grid, cell) {
+            let cost = g + 1;
+            if best.get(&next).is_none_or(|&known| cost < known) {
+                best.insert(next, cost);
+                parent.insert(next, cell);
+                inserted += 1;
+                open.push(Reverse((
+                    cost + heuristic(next),
+                    Reverse(cost),
+                    inserted,
+                    next.to_array(),
+                )));
+            }
+        }
+    }
     None
+}
+
+/// The standable cells one step from `cell`: level, up one block (which needs a fourth cell of
+/// air above the feet) or down one block (which needs the head to clear the edge).
+fn neighbours(grid: &VoxelGrid, cell: BlockPos) -> impl Iterator<Item = BlockPos> + '_ {
+    const SIDES: [BlockPos; 4] = [
+        BlockPos::new(1, 0, 0),
+        BlockPos::new(-1, 0, 0),
+        BlockPos::new(0, 0, 1),
+        BlockPos::new(0, 0, -1),
+    ];
+    let can_climb = !grid.is_solid_at(cell + BlockPos::Y * 3);
+    SIDES.into_iter().flat_map(move |side| {
+        let level = cell + side;
+        let up = level + BlockPos::Y;
+        let down = level - BlockPos::Y;
+        let steps = [
+            standable(grid, level).then_some(level),
+            (can_climb && standable(grid, up)).then_some(up),
+            (standable(grid, down) && !grid.is_solid_at(level + BlockPos::Y * 2)).then_some(down),
+        ];
+        steps.into_iter().flatten()
+    })
 }
 
 #[cfg(test)]
