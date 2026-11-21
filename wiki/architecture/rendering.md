@@ -563,7 +563,8 @@ functions over `glam` types and run without a GPU.
 
 ## 10 Effects
 
-Effects are engine-owned presentation state a game starts, places and ends by handle
+Effects are engine-owned presentation state a game starts, places and ends by handle, or
+spawns at a point and forgets
 ([ADR-0031](../../_todo/adr/0031-effects-are-engine-presentation-state-placed-by-handle.md)).
 `moho_renderer::Effects` (`moho_renderer/src/effects.rs`, reached via `Scene::effects_mut`)
 issues an `EffectHandle`, monotonic and never reused; a stale, unknown or inert handle is ignored.
@@ -590,8 +591,9 @@ and the mark, which need no handle:
   `effects_quality` pref to it on start and on apply.
 
 `Scene::render` calls `Effects::draw` first: each streak becomes one placement of a shared kite
-mesh, each flash one of a star mesh and each mark one of a unit quad, uploaded on first use under `EFFECT_MESH_IDS_FROM` (`u64::MAX - 63`, reserved; games keep
-their ids below it), turned to face the camera eye. Placements go through
+mesh, each flash one of a star mesh and each mark one of a unit quad, uploaded on first use under
+`EFFECT_MESH_IDS_FROM` (`u64::MAX - 63`, reserved; games keep their ids below it). Streaks and
+flashes are turned to face the camera eye; a mark lies along its normal whatever the eye. Placements go through
 `WorldMeshes::place_unshadowed` and reach the backend via `RendererBackend::enqueue_unshadowed_draw`
 (default: `enqueue_draw`). In the renderer the draw key has `casts_shadow = false`, so
 `render_shadow_passes` skips it and the main pass draws it. A second camera sees a streak

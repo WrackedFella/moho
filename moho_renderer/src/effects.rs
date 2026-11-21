@@ -1,5 +1,6 @@
-//! Engine-drawn effects, placed by handle: a game starts one, places it every frame and
-//! ends it; the engine owns its life, fade, cap and unshadowed draw.
+//! Engine-drawn effects. A streak is placed by handle: a game starts it, places it every
+//! frame and ends it. A flash or mark is spawned at a point and forgotten. The engine owns
+//! every effect's life, fade, cap and unshadowed draw.
 
 use crate::WorldMeshes;
 use glam::{Affine3A, Vec3};
@@ -1818,6 +1819,25 @@ mod tests {
                     "vertex {i}: expected {expected:?}, got {position:?}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn the_flash_star_is_six_in_range_triangles_wound_toward_plus_z() {
+        let mut rig = Rig::new();
+        rig.effects.flash(Vec3::X, 0.0, flash_style(0.4, 50));
+
+        rig.frame(EYE);
+
+        let (positions, indices) = &rig.backend.registered[0];
+        assert_eq!(indices.len(), 18, "six triangles");
+        assert!(indices.iter().all(|i| (*i as usize) < positions.len()));
+        for triangle in indices.chunks(3) {
+            let [a, b, c] = [0, 1, 2].map(|i| Vec3::from(positions[triangle[i] as usize]));
+            assert!(
+                (b - a).cross(c - a).z > 0.0,
+                "triangle {triangle:?} is counter-clockwise seen from +Z"
+            );
         }
     }
 
