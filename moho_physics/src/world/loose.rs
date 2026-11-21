@@ -1494,6 +1494,170 @@ mod tests {
         assert_rows_rejected(&rows, "half height and radius must be positive and finite");
     }
 
+    #[test]
+    fn the_brake_leaves_a_bouncing_capsules_vertical_motion_alone() {
+        let spawn = LooseSpawn {
+            restitution: 1.0,
+            position: Vec3::new(0.0, 3.0, 0.0),
+            rotation: Quat::from_rotation_x(FRAC_PI_2),
+            linear_velocity: Vec3::new(1.0, 0.0, 0.0),
+            angular_velocity: Vec3::new(0.0, 0.0, -1.0 / CAPSULE_RADIUS),
+            ..LooseSpawn::new(CAPSULE, 0.2)
+        };
+        let mut braked = world_with_floor(&floor_mesh(0.0));
+        let mut free = world_with_floor(&floor_mesh(0.0));
+        free.set_rest_slope(0.0);
+        let braked_id = braked.spawn_loose(&spawn);
+        let free_id = free.spawn_loose(&spawn);
+        let mut rebounds = 0;
+        let mut previous_vy = 0.0_f32;
+
+        for tick in 1..=180 {
+            braked.step(DT);
+            free.step(DT);
+            let (with, without) = (read(&braked, braked_id), read(&free, free_id));
+            assert!(
+                (with.linear_velocity.y - without.linear_velocity.y).abs() <= 0.02,
+                "tick {tick}: vertical velocity {} braked, {} free",
+                with.linear_velocity.y,
+                without.linear_velocity.y
+            );
+            assert!(
+                (with.position.y - without.position.y).abs() <= 0.005,
+                "tick {tick}: height {} braked, {} free",
+                with.position.y,
+                without.position.y
+            );
+            if without.linear_velocity.y - previous_vy > 0.5 {
+                rebounds += 1;
+            }
+            previous_vy = without.linear_velocity.y;
+        }
+
+        assert!(rebounds >= 2, "the capsule bounced {rebounds} times");
+    }
+
+    #[test]
+    fn the_rest_slope_scales_with_gravity() {
+        let mut heavy = sloped_world(4.9);
+        heavy.set_gravity(36.0);
+        let (moved, asleep) = settle_on_slope(
+            &mut heavy,
+            &lying_across_slope(CAPSULE, CAPSULE_RADIUS, 4.9),
+            300,
+        );
+        assert!(moved < 0.02, "moved {moved} m on 4.9 degrees at gravity 36");
+        assert!(asleep, "the capsule sleeps on 4.9 degrees at gravity 36");
+
+        let mut light = world_with_floor(&floor_mesh(0.0));
+        light.set_gravity(9.0);
+        let spawn = rolling_capsule(2.0);
+        let id = light.spawn_loose(&spawn);
+        run(&mut light, 600);
+
+        let state = read(&light, id);
+        let travelled = (state.position - spawn.position).length();
+        assert!(
+            travelled > 1.5,
+            "at gravity 9 the capsule rolls on, travelled {travelled} m"
+        );
+        assert!(state.asleep, "it still comes to rest, {state:?}");
+    }
+
+    #[test]
+    fn a_capsule_rolling_on_a_loose_box_is_braked() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let slab_half = Vec3::new(1.0, 0.05, 1.0);
+        world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, slab_half.y, 0.0),
+            ..LooseSpawn::new(cuboid(slab_half), 50.0)
+        });
+        let spawn = LooseSpawn {
+            position: Vec3::new(0.0, 2.0 * slab_half.y + CAPSULE_RADIUS, 0.0),
+            ..rolling_capsule(1.0)
+        };
+        let id = world.spawn_loose(&spawn);
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        assert!(state.asleep, "the capsule rests on the box, {state:?}");
+        assert!(
+            state.position.x > 0.0 && state.position.x < 0.6,
+            "it stopped on the box after a short roll, {state:?}"
+        );
+        assert!(
+            (state.position.y - (2.0 * slab_half.y + CAPSULE_RADIUS)).abs() <= 0.002,
+            "it stays on top of the box, {state:?}"
+        );
+    }
+
+    #[test]
+    fn a_sliding_box_is_not_braked() {
+        let spawn = LooseSpawn {
+            position: Vec3::new(0.0, FLAT_BOX.y, 0.0),
+            linear_velocity: Vec3::new(1.5, 0.0, 0.0),
+            ..LooseSpawn::new(cuboid(FLAT_BOX), 0.2)
+        };
+        let mut braked = world_with_floor(&floor_mesh(0.0));
+        let mut free = world_with_floor(&floor_mesh(0.0));
+        free.set_rest_slope(0.0);
+        let braked_id = braked.spawn_loose(&spawn);
+        let free_id = free.spawn_loose(&spawn);
+
+        for tick in 1..=60 {
+            braked.step(DT);
+            free.step(DT);
+            assert_eq!(
+                bits(&read(&braked, braked_id)),
+                bits(&read(&free, free_id)),
+                "tick {tick}: the brake changed a box"
+            );
+        }
+
+        assert!(read(&braked, braked_id).position.x > 0.05, "the box slid");
+    }
+
+    #[test]
+    fn a_cylinder_standing_on_its_flat_end_rests_and_sleeps() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.08, 0.0),
+            ..LooseSpawn::new(CYLINDER, 0.2)
+        });
+
+        run(&mut world, 120);
+
+        let state = read(&world, id);
+        assert!(state.asleep, "{state:?}");
+        assert!(
+            (state.position.y - 0.08).abs() <= 0.001,
+            "it stands on its half height, y={}",
+            state.position.y
+        );
+    }
+
+    #[test]
+    fn a_capsule_in_zero_gravity_is_not_braked() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        world.set_gravity(0.0);
+        let id = world.spawn_loose(&rolling_capsule(1.0));
+
+        run(&mut world, 60);
+
+        let state = read(&world, id);
+        assert!(
+            state.position.is_finite()
+                && state.linear_velocity.is_finite()
+                && state.angular_velocity.is_finite(),
+            "{state:?}"
+        );
+        assert!(
+            state.linear_velocity.length() > 0.9,
+            "with no gravity there is no up to brake against, {state:?}"
+        );
+    }
+
     fn capsule_of(half_height: f32, radius: f32) -> LooseShape {
         LooseShape::Capsule {
             half_height,
