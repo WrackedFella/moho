@@ -436,6 +436,7 @@ impl FrameProcessor {
                 .collect(),
             selection,
             mine_designation_active: app.input.designation == Designation::Mine,
+            colony_stock: Vec::new(),
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {
@@ -1240,6 +1241,225 @@ mod tests {
         assert!(
             produced == painted_with(vec![(7, 2, 0.25)]),
             "a pickup with 30 of 120 ticks left is drawn at a quarter life"
+        );
+    }
+
+    #[test]
+    fn hud_data_carries_the_colony_stock() {
+        let mut app = App::headless();
+        app.colony.stock.add(7, 3);
+        app.colony.stock.add(2, 5);
+        let mut bare = App::headless();
+
+        let produced = produced_strategy_hud(&mut app);
+
+        let expected = painted_strategy_hud(flagstone_ui::overlays::HudData {
+            equipped_tool_label: Some("Pickaxe".to_string()),
+            colony_stock: vec![(2, 5), (7, 3)],
+            ..strategy_hud_data(&app)
+        });
+        assert!(produced == expected, "not the totals sorted by resource id");
+        assert!(
+            produced != produced_strategy_hud(&mut bare),
+            "the totals are not on the HUD"
+        );
+    }
+
+    use crate::app::colony_world::{
+        GROUND_TOP, character, colony_app, is_solid, marked_app, run, run_until_removed,
+    };
+    use flagstone_game::pawn::MINE_REACH;
+    use flagstone_voxel::BlockPos;
+
+    const TARGET: BlockPos = BlockPos::new(12, GROUND_TOP - 1, 16);
+    const PAWN_FEET: glam::Vec3 = glam::Vec3::new(8.5, GROUND_TOP as f32, 16.5);
+    /// Ten seconds of ticks, far more than a walk of a few metres takes.
+    const DIG_TICKS: u32 = 600;
+
+    #[test]
+    fn an_idle_pawn_digs_a_marked_ore_block_and_the_stock_grows_by_one() {
+        let mut app = marked_app(TARGET, Some(7), PAWN_FEET);
+        let start = character(&app).position;
+
+        let dug_at = run_until_removed(&mut app, TARGET, DIG_TICKS);
+        run(&mut app, 60);
+
+        assert!(dug_at.is_some(), "the block is still there");
+        assert!(
+            !app.colony.marks.contains(TARGET.to_array()),
+            "the mining marker is gone"
+        );
+        assert_eq!(app.colony.stock.count(7), 1, "the colony total of the ore");
+        assert_eq!(
+            app.pawn.inventory.count(7),
+            0,
+            "a job's yield goes to the colony, not the pawn's pockets"
+        );
+        assert!(
+            (character(&app).position - start).length() > 1.0,
+            "the pawn walked to the block"
+        );
+    }
+
+    #[test]
+    fn a_plain_block_is_dug_and_the_stock_is_unchanged() {
+        let mut app = marked_app(TARGET, None, PAWN_FEET);
+        let start = character(&app).position;
+
+        let dug_at = run_until_removed(&mut app, TARGET, DIG_TICKS);
+        run(&mut app, 60);
+
+        assert!(dug_at.is_some(), "the block is still there");
+        assert!(
+            !app.colony.marks.contains(TARGET.to_array()),
+            "the mining marker is gone"
+        );
+        assert!(app.colony.stock.is_empty(), "a plain block yields nothing");
+        assert!(
+            (character(&app).position - start).length() > 1.0,
+            "the pawn walked to the block"
+        );
+    }
+
+    #[test]
+    fn the_pawn_crosses_a_one_block_rise_without_leaving_the_ground() {
+        let ridge: Vec<(BlockPos, Option<u32>)> = (10..=11)
+            .flat_map(|x| (0..32).map(move |z| (BlockPos::new(x, GROUND_TOP, z), None)))
+            .collect();
+        let beyond = BlockPos::new(15, GROUND_TOP - 1, 16);
+        let mut edits = ridge;
+        edits.push((beyond, Some(7)));
+        let mut app = colony_app(&edits, PAWN_FEET);
+        app.colony.marks.toggle(beyond.to_array());
+        let level = character(&app).position.y;
+        let mut highest = level;
+
+        let mut removed_at = None;
+        let mut airborne_ticks = Vec::new();
+        for tick in 1..=DIG_TICKS {
+            run(&mut app, 1);
+            let state = character(&app);
+            highest = highest.max(state.position.y);
+            if tick > 1 && !state.grounded {
+                airborne_ticks.push(tick);
+            }
+            if !is_solid(&app, beyond) {
+                removed_at = Some(tick);
+                break;
+            }
+        }
+
+        assert!(
+            removed_at.is_some(),
+            "the block beyond the rise is still there"
+        );
+        assert!(
+            airborne_ticks.is_empty(),
+            "left the ground on ticks {airborne_ticks:?}"
+        );
+        assert!(
+            highest > level + 0.8,
+            "the pawn never climbed the rise: level {level}, highest {highest}"
+        );
+    }
+
+    #[test]
+    fn the_pawn_digs_within_the_mining_reach() {
+        let mut app = marked_app(TARGET, Some(7), PAWN_FEET);
+
+        let dug_at = run_until_removed(&mut app, TARGET, DIG_TICKS);
+
+        assert!(dug_at.is_some(), "the block is still there");
+        let eye = character(&app).position;
+        let block_centre = TARGET.as_vec3() + glam::Vec3::splat(0.5);
+        let distance = (eye - block_centre).length();
+        assert!(
+            distance <= MINE_REACH,
+            "dug from {distance} m, past the reach of {MINE_REACH}"
+        );
+    }
+
+    #[test]
+    fn nothing_marked_leaves_the_pawn_where_it_was() {
+        let mut idle = colony_app(&[], PAWN_FEET);
+        let mut busy = marked_app(TARGET, None, PAWN_FEET);
+        let before = character(&idle).position;
+        let simulation_before = idle.simulation.position();
+
+        run(&mut idle, 120);
+        run(&mut busy, 120);
+
+        assert_eq!(
+            character(&idle).position,
+            before,
+            "the character stood still"
+        );
+        assert_eq!(idle.simulation.position(), simulation_before);
+        assert!(
+            (character(&busy).position - before).length() > 1.0,
+            "control: the same pawn moves when a block is marked"
+        );
+    }
+
+    #[test]
+    fn cancelling_the_mark_stops_the_pawn_and_keeps_the_block() {
+        let mut app = marked_app(TARGET, Some(7), PAWN_FEET);
+        let start = character(&app).position;
+        let mut walked = false;
+        for _ in 0..DIG_TICKS {
+            run(&mut app, 1);
+            if (character(&app).position - start).length() > 1.0 {
+                walked = true;
+                break;
+            }
+        }
+        assert!(walked, "setup: the pawn walks toward the mark");
+        assert!(is_solid(&app, TARGET), "setup: not dug yet");
+
+        app.colony.marks.toggle(TARGET.to_array());
+        run(&mut app, 2);
+        let stopped = character(&app).position;
+        run(&mut app, 120);
+
+        assert_eq!(
+            character(&app).position,
+            stopped,
+            "the pawn keeps walking after the cancel"
+        );
+        assert!(is_solid(&app, TARGET), "the block is not removed");
+        assert!(app.colony.stock.is_empty());
+    }
+
+    #[test]
+    fn a_possessed_pawn_runs_no_job() {
+        let mut possessed = marked_app(TARGET, Some(7), PAWN_FEET);
+        possessed
+            .simulation
+            .set_camera_mode(flagstone_game::controller::CameraMode::FirstPerson);
+        let mut strategic = marked_app(TARGET, Some(7), PAWN_FEET);
+        run(&mut possessed, 30);
+        let settled = character(&possessed).position;
+
+        run(&mut possessed, 120);
+        run(&mut strategic, 120);
+
+        assert!(
+            (character(&possessed).position - settled).length() < 0.01,
+            "the possessed pawn walked to the mark"
+        );
+        assert!(is_solid(&possessed, TARGET), "the block is not dug");
+        assert_eq!(possessed.pawn.job, flagstone_game::jobs::Job::Idle);
+        assert!(
+            possessed
+                .colony
+                .marks
+                .iter()
+                .all(|(_, mark)| mark.claimed_by.is_none()),
+            "the mark is not claimed"
+        );
+        assert!(
+            (character(&strategic).position - settled).length() > 1.0,
+            "control: the same pawn in the strategy view goes to the mark"
         );
     }
 }

@@ -4269,4 +4269,39 @@ mod tests {
 
         assert!(outlined_markers(&mut app).is_empty());
     }
+
+    #[test]
+    fn returning_to_first_person_starts_where_the_pawn_walked_to() {
+        use crate::app::colony_world::{GROUND_TOP, character, is_solid, marked_app, run};
+        let block = flagstone_voxel::BlockPos::new(12, GROUND_TOP - 1, 16);
+        let feet = glam::Vec3::new(8.5, GROUND_TOP as f32, 16.5);
+        let mut app = marked_app(block, None, feet);
+        let start = app.simulation.position();
+        for _ in 0..300 {
+            run(&mut app, 1);
+            if (app.simulation.position() - start).length() > 1.5 {
+                break;
+            }
+        }
+        let walked_to = app.simulation.position();
+        assert!(
+            (walked_to - start).length() > 1.5,
+            "setup: the pawn walked toward the mark"
+        );
+        assert!(is_solid(&app, block), "setup: it has not dug yet");
+
+        tap_possess(&mut app);
+        step_once(&mut app);
+
+        assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+        assert!(
+            (app.simulation.position() - walked_to).length() < 0.1,
+            "first person starts at {:?}, not where the pawn walked to, {walked_to:?}",
+            app.simulation.position()
+        );
+        assert!(
+            (character(&app).position - walked_to).length() < 0.1,
+            "the character is where the view starts"
+        );
+    }
 }

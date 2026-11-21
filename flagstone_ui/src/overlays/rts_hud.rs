@@ -469,6 +469,49 @@ mod tests {
         assert!(!drawn.contains(&"Strategy".to_string()), "{drawn:?}");
     }
 
+    fn stocked_data(is_fps_mode: bool, stock: Vec<(u32, u32)>) -> HudData {
+        HudData {
+            is_fps_mode,
+            colony_stock: stock,
+            ..strategy_data(TOP)
+        }
+    }
+
+    #[test]
+    fn strategy_hud_lists_the_colony_totals() {
+        let stocked = drawn_texts(&stocked_data(false, vec![(2, 5), (7, 3)]));
+        let empty = drawn_texts(&stocked_data(false, Vec::new()));
+
+        let at = |label: &str| stocked.iter().position(|t| t == label);
+        assert!(at("R2 ×5").is_some(), "{stocked:?}");
+        assert!(at("R7 ×3").is_some(), "{stocked:?}");
+        assert!(
+            at("R2 ×5") < at("R7 ×3"),
+            "listed in the order given: {stocked:?}"
+        );
+        assert!(
+            !empty.iter().any(|t| t.contains('×')),
+            "no stock, no totals: {empty:?}"
+        );
+    }
+
+    #[test]
+    fn no_totals_in_first_person() {
+        let stock = vec![(2, 5), (7, 3)];
+
+        let strategy = drawn_texts(&stocked_data(false, stock.clone()));
+        let first_person = drawn_texts(&stocked_data(true, stock));
+
+        assert!(
+            strategy.iter().any(|t| t.contains('×')),
+            "the totals show in strategy: {strategy:?}"
+        );
+        assert!(
+            !first_person.iter().any(|t| t.contains('×')),
+            "{first_person:?}"
+        );
+    }
+
     fn pawn_panel(tool: Option<&str>, carried: &[(&str, u32)]) -> Option<SelectionHud> {
         Some(SelectionHud {
             title: "Pawn".to_owned(),

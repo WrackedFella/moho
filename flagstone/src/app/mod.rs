@@ -6,6 +6,8 @@
 pub mod autosave;
 pub mod camera;
 pub mod chunk_streamer;
+#[cfg(test)]
+pub(crate) mod colony_world;
 pub mod config;
 pub mod console;
 pub mod cut_caps;
