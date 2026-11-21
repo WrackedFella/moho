@@ -1790,4 +1790,145 @@ mod tests {
             prop_assert!((translation(&drawn[0]) - (at + normal * MARK_OFFSET)).length() < 1e-3);
         }
     }
+
+    fn xs_of(drawn: &[InstanceGpu]) -> Vec<i32> {
+        drawn
+            .iter()
+            .map(|i| translation(i).x.round() as i32)
+            .collect()
+    }
+
+    #[test]
+    fn lowering_quality_below_the_live_count_drops_exactly_the_oldest_on_the_next_spawn() {
+        let mut rig = Rig::new();
+        let marks = mark_style(0.2, Duration::from_secs(10), Duration::from_secs(1));
+        for i in 0..40u8 {
+            rig.effects
+                .mark(Vec3::new(f32::from(i), 0.0, 0.0), Vec3::Y, 0.0, marks);
+        }
+        rig.effects.set_quality(1);
+        assert_eq!(rig.effects.live(), 40);
+
+        rig.effects
+            .flash(Vec3::new(100.0, 0.0, 0.0), 0.0, flash_style(0.4, 5000));
+
+        assert_eq!(rig.effects.live(), 40, "one in, exactly one out");
+        let xs = xs_of(&rig.frame(EYE));
+        assert_eq!(xs.len(), 40);
+        assert!(!xs.contains(&0), "the oldest mark no longer draws");
+        assert!(xs.contains(&1), "the next oldest stays");
+        assert!(xs.contains(&100));
+    }
+
+    #[test]
+    fn a_flash_one_nanosecond_from_expiry_draws_finite_or_not_at_all_then_is_gone() {
+        let mut rig = Rig::new();
+        rig.effects.flash(Vec3::X, 0.0, flash_style(0.4, 50));
+
+        rig.effects.advance(ms(49) + Duration::from_nanos(999_999));
+        let nearly = rig.frame(EYE);
+
+        assert!(nearly.len() <= 1);
+        for instance in &nearly {
+            assert!(instance.model.iter().flatten().all(|v| v.is_finite()));
+            assert!(x_axis(instance).length() < 1e-6, "about size * 2e-8");
+        }
+        assert_eq!(rig.effects.live(), 1, "still live");
+
+        rig.effects.advance(Duration::from_nanos(1));
+
+        assert!(rig.frame(EYE).is_empty());
+        assert_eq!(rig.effects.live(), 0);
+    }
+
+    #[test]
+    fn many_small_advances_expire_a_flash_at_the_same_sum_as_one() {
+        let mut rig = Rig::new();
+        rig.effects.flash(Vec3::X, 0.0, flash_style(0.4, 50));
+
+        for step in 1..=4 {
+            rig.effects.advance(ms(10));
+            assert_eq!(rig.effects.live(), 1, "step {step}");
+            assert_eq!(rig.frame(EYE).len(), 1, "step {step}");
+        }
+        rig.effects.advance(ms(10));
+
+        assert_eq!(rig.effects.live(), 0);
+        assert!(rig.frame(EYE).is_empty());
+    }
+
+    #[test]
+    fn many_large_advances_expire_a_mark_at_the_same_sum_as_one() {
+        let mut rig = Rig::new();
+        rig.effects.mark(
+            Vec3::X,
+            Vec3::Y,
+            0.0,
+            mark_style(0.2, Duration::from_secs(10), Duration::from_secs(1)),
+        );
+
+        for step in 1..=3 {
+            rig.effects.advance(Duration::from_secs(3));
+            let drawn = rig.frame(EYE);
+            assert_eq!(drawn.len(), 1, "step {step}");
+            assert_size(&drawn[0], 0.2);
+        }
+        rig.effects.advance(Duration::from_secs(1));
+
+        assert_eq!(rig.effects.live(), 0);
+        assert!(rig.frame(EYE).is_empty());
+    }
+
+    #[test]
+    fn a_non_unit_mark_normal_faces_unit_and_lifts_by_exactly_the_mark_offset() {
+        let mut rig = Rig::new();
+        let at = Vec3::new(4.0, 1.0, 2.0);
+        rig.effects.mark(
+            at,
+            Vec3::new(0.0, 0.0, 5.0),
+            0.0,
+            mark_style(0.2, Duration::from_secs(10), Duration::from_secs(1)),
+        );
+
+        let drawn = rig.frame(EYE);
+
+        assert_eq!(drawn.len(), 1);
+        assert_near(z_axis(&drawn[0]), Vec3::Z);
+        assert_near(translation(&drawn[0]), at + Vec3::Z * MARK_OFFSET);
+        assert_size(&drawn[0], 0.2);
+    }
+
+    #[test]
+    fn a_full_cap_of_streaks_freed_by_one_takes_a_mark_then_a_flash_evicts_the_mark() {
+        let mut rig = Rig::new();
+        rig.effects.set_quality(1);
+        let handles: Vec<EffectHandle> = (0..32)
+            .map(|_| rig.effects.begin_streak(style(2.0, 0.1)))
+            .collect();
+        rig.effects.end(handles[5]);
+        rig.effects.advance(ms(60));
+        assert_eq!(rig.effects.live(), 31);
+
+        rig.effects.mark(
+            Vec3::new(200.0, 0.0, 0.0),
+            Vec3::Y,
+            0.0,
+            mark_style(0.2, Duration::from_secs(10), Duration::from_secs(1)),
+        );
+        assert_eq!(rig.effects.live(), 32);
+        rig.effects
+            .flash(Vec3::new(100.0, 0.0, 0.0), 0.0, flash_style(0.4, 5000));
+
+        assert_eq!(rig.effects.live(), 32);
+        for (i, handle) in handles.iter().enumerate() {
+            if i != 5 {
+                rig.effects.place_streak(*handle, Vec3::X * 5.0, Vec3::X);
+            }
+        }
+        let xs = xs_of(&rig.frame(EYE));
+        assert_eq!(xs.len(), 32);
+        assert_eq!(xs.iter().filter(|x| **x == 3).count(), 31, "every streak");
+        assert!(xs.contains(&100), "the flash took the mark's place");
+        assert!(!xs.contains(&200), "the mark was dropped");
+    }
 }
