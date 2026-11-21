@@ -1855,6 +1855,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_capsule_spawned_before_the_box_it_rests_on_is_braked() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let slab_half = Vec3::new(1.0, 0.05, 1.0);
+        let top = 2.0 * slab_half.y;
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, top + CAPSULE_RADIUS + 0.002, 0.0),
+            ..rolling_capsule(1.0)
+        });
+        world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, slab_half.y, 0.0),
+            ..LooseSpawn::new(cuboid(slab_half), 50.0)
+        });
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        assert!(state.asleep, "the capsule rests on the box, {state:?}");
+        assert!(
+            state.position.x > 0.0 && state.position.x < 0.6,
+            "it stopped on the box after a short roll, {state:?}"
+        );
+        assert!(
+            (state.position.y - (top + CAPSULE_RADIUS)).abs() <= 0.002,
+            "it stays on top of the box, {state:?}"
+        );
+    }
+
     fn capsule_of(half_height: f32, radius: f32) -> LooseShape {
         LooseShape::Capsule {
             half_height,
