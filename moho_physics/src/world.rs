@@ -82,7 +82,8 @@ impl PhysicsWorld {
         }
     }
 
-    /// Step the physics simulation (advances dynamic rigid bodies).
+    /// Step the physics simulation (advances dynamic rigid bodies), then brake rolling loose
+    /// objects at rest on near-flat ground (see [`PhysicsWorld::set_rest_slope`]).
     pub fn step(&mut self, dt: f32) {
         self.integration_parameters.dt = dt;
         self.physics_pipeline.step(
