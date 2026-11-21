@@ -866,11 +866,21 @@ mod tests {
         assert!(guard.stalled(1.0), "still tick {STALL_TICKS} is");
     }
 
+    /// The six unit offsets to the cells touching a block, written out apart from `FACES`.
+    const UNIT_OFFSETS: [BlockPos; 6] = [
+        BlockPos::new(1, 0, 0),
+        BlockPos::new(-1, 0, 0),
+        BlockPos::new(0, 1, 0),
+        BlockPos::new(0, -1, 0),
+        BlockPos::new(0, 0, 1),
+        BlockPos::new(0, 0, -1),
+    ];
+
     /// A grid with a solid block at `(4, 4, 4)` and solid on every side of it except `open`.
     fn block_open_only_toward(open: BlockPos) -> VoxelGrid {
         let mut grid = VoxelGrid::new(16);
         solid(&mut grid, 4, 4, 4);
-        for face in FACES {
+        for face in UNIT_OFFSETS {
             if face != open {
                 let at = cell(4, 4, 4) + face;
                 solid(&mut grid, at.x, at.y, at.z);
@@ -884,7 +894,7 @@ mod tests {
         let buried = block_open_only_toward(BlockPos::ZERO);
         assert!(!exposed(&buried, cell(4, 4, 4)), "no face is open");
 
-        for open in FACES {
+        for open in UNIT_OFFSETS {
             let grid = block_open_only_toward(open);
 
             assert!(exposed(&grid, cell(4, 4, 4)), "open toward {open:?}");
@@ -895,7 +905,7 @@ mod tests {
     fn the_dig_aims_at_the_one_open_face_wherever_it_is() {
         let eye = Vec3::new(4.5, 4.5, 4.5);
 
-        for open in FACES {
+        for open in UNIT_OFFSETS {
             let grid = block_open_only_toward(open);
 
             let aim = nearest_face_centre(&grid, cell(4, 4, 4), eye);
