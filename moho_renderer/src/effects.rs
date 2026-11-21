@@ -209,8 +209,7 @@ impl Effects {
     /// Start a streak. At the quality's cap the handle is inert: never stored, so placing
     /// or ending it does nothing.
     pub fn begin_streak(&mut self, style: StreakStyle) -> EffectHandle {
-        let handle = EffectHandle(self.next_handle);
-        self.next_handle += 1;
+        let handle = self.issue_handle();
         if self.live.len() < self.cap {
             self.live.insert(
                 handle,
@@ -274,8 +273,7 @@ impl Effects {
         if !usable || !self.make_room() {
             return;
         }
-        let handle = EffectHandle(self.next_handle);
-        self.next_handle += 1;
+        let handle = self.issue_handle();
         self.live.insert(
             handle,
             Effect::Timed(Timed {
@@ -300,7 +298,17 @@ impl Effects {
             .live
             .iter()
             .find_map(|(handle, effect)| matches!(effect, Effect::Timed(_)).then_some(*handle));
-        oldest.is_some_and(|handle| self.live.remove(&handle).is_some())
+        let Some(handle) = oldest else {
+            return false;
+        };
+        self.live.remove(&handle);
+        true
+    }
+
+    fn issue_handle(&mut self) -> EffectHandle {
+        let handle = EffectHandle(self.next_handle);
+        self.next_handle += 1;
+        handle
     }
 
     /// Place the streak's head for this frame. A zero-length heading keeps the last one;
