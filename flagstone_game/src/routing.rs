@@ -1,5 +1,8 @@
 //! Routing over the voxel ground: which cells a pawn can stand on and how it walks between them.
 
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
+
 use flagstone_voxel::{BlockPos, VoxelGrid};
 use glam::Vec3;
 
@@ -9,12 +12,49 @@ pub const ROUTE_NODE_BUDGET: usize = 4096;
 /// Whether a pawn can stand with its feet in `cell`: solid ground below and three cells of
 /// air from the feet up, the height of its capsule.
 pub fn standable(grid: &VoxelGrid, cell: BlockPos) -> bool {
-    todo!("standable {cell:?} in a grid of {}", grid.chunk_size())
+    grid.is_solid_at(cell - BlockPos::Y)
+        && (0..CAPSULE_CELLS).all(|up| !grid.is_solid_at(cell + BlockPos::Y * up))
 }
 
 /// The cell holding `feet`.
 pub fn feet_cell(feet: Vec3) -> BlockPos {
-    todo!("feet cell of {feet:?}")
+    feet.floor().as_ivec3()
+}
+
+/// Cells of air a standing pawn needs, from its feet up: the capsule is 2.3 m tall.
+const CAPSULE_CELLS: i32 = 3;
+
+/// The four horizontal neighbours, in the order a search tries them.
+const NEIGHBOURS: [BlockPos; 4] = [BlockPos::X, BlockPos::NEG_X, BlockPos::Z, BlockPos::NEG_Z];
+
+/// The cell a pawn standing on `from` reaches by stepping toward `side`: level, up one block
+/// (with a fourth cell of air to climb into) or down one.
+fn step_to(grid: &VoxelGrid, from: BlockPos, side: BlockPos) -> Option<BlockPos> {
+    let level = from + side;
+    if standable(grid, level) {
+        return Some(level);
+    }
+    let up = level + BlockPos::Y;
+    if standable(grid, up) && !grid.is_solid_at(from + BlockPos::Y * CAPSULE_CELLS) {
+        return Some(up);
+    }
+    let down = level - BlockPos::Y;
+    standable(grid, down).then_some(down)
+}
+
+/// The start's own cell, or the cell one below or above it when that one is standable: a pawn
+/// on a slope is a little off the cell its feet floor to.
+fn settled_start(grid: &VoxelGrid, start: BlockPos) -> Option<BlockPos> {
+    [start, start - BlockPos::Y, start + BlockPos::Y]
+        .into_iter()
+        .find(|cell| standable(grid, *cell))
+}
+
+/// A cell waiting to be expanded: estimated total cost, cost so far, insertion order, cell.
+type OpenCell = (u32, u32, u64, [i32; 3]);
+
+fn manhattan(a: BlockPos, b: BlockPos) -> u32 {
+    (a - b).abs().element_sum().unsigned_abs()
 }
 
 /// The cells to walk from `start` to the nearest cell satisfying `is_goal`, `start` first and
@@ -26,11 +66,62 @@ pub fn route(
     toward: BlockPos,
     budget: usize,
 ) -> Option<Vec<BlockPos>> {
-    let _ = is_goal(start);
-    todo!(
-        "route from {start:?} toward {toward:?} in {budget} expansions over a grid of {}",
-        grid.chunk_size()
-    )
+    let start = settled_start(grid, start)?;
+    // Best known cost and the cell it came from, per cell reached.
+    let mut reached: HashMap<BlockPos, (u32, Option<BlockPos>)> = HashMap::new();
+    // Ordered by (f, g, insertion order), so equal searches expand in equal order.
+    let mut open: BinaryHeap<Reverse<OpenCell>> = BinaryHeap::new();
+    let mut inserted = 0_u64;
+    reached.insert(start, (0, None));
+    open.push(Reverse((
+        manhattan(start, toward),
+        0,
+        inserted,
+        start.to_array(),
+    )));
+
+    let mut expansions = 0;
+    while let Some(Reverse((_, cost, _, cell))) = open.pop() {
+        let cell = BlockPos::from_array(cell);
+        if reached.get(&cell).is_some_and(|&(best, _)| cost > best) {
+            continue;
+        }
+        if is_goal(cell) {
+            let mut cells = vec![cell];
+            let mut at = cell;
+            while let Some(&(_, Some(parent))) = reached.get(&at) {
+                cells.push(parent);
+                at = parent;
+            }
+            cells.reverse();
+            return Some(cells);
+        }
+        if expansions == budget {
+            return None;
+        }
+        expansions += 1;
+        for side in NEIGHBOURS {
+            let Some(next) = step_to(grid, cell, side) else {
+                continue;
+            };
+            let next_cost = cost + 1;
+            if reached
+                .get(&next)
+                .is_some_and(|&(best, _)| best <= next_cost)
+            {
+                continue;
+            }
+            reached.insert(next, (next_cost, Some(cell)));
+            inserted += 1;
+            open.push(Reverse((
+                next_cost + manhattan(next, toward),
+                next_cost,
+                inserted,
+                next.to_array(),
+            )));
+        }
+    }
+    None
 }
 
 #[cfg(test)]

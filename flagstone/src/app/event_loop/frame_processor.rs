@@ -3,8 +3,10 @@
 //! Handles per-tick game state updates and per-frame lighting and HUD data.
 
 use crate::App;
-use crate::app::event_loop::event_processor::{lod_for_chunk, lod_player_chunk};
+use crate::app::event_loop::event_processor::{lod_for_chunk, lod_player_chunk, publish_pawn_dig};
 use crate::app::input_state::Designation;
+use flagstone_game::jobs::{self, JobAction, Pose};
+use flagstone_game::pawn::{MINE_REACH, PawnId};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -33,6 +35,9 @@ const STRATEGY_MOVE_SETTINGS: moho_physics::MoveSettings = moho_physics::MoveSet
     prone_ticks: 0,
     lean_ticks: 0,
 };
+
+/// The one pawn there is; a pawn store arrives with more pawns.
+const PAWN_ID: PawnId = PawnId(0);
 
 /// Handles frame timing and game state updates
 pub struct FrameProcessor;
@@ -77,6 +82,9 @@ impl FrameProcessor {
             };
             let (view, proj, eye) = app.simulation.apply_input(dt, ground);
             app.camera = (view, proj, eye);
+            if app.simulation.camera_mode() == flagstone_game::controller::CameraMode::Isometric {
+                self.run_pawn_job(app, dt);
+            }
         }
 
         // Step rigid bodies in both KCC and non-KCC paths (test spheres, etc.)
@@ -86,6 +94,62 @@ impl FrameProcessor {
 
         // Clear zoom delta after use
         app.simulation.controller_input.zoom_delta = 0.0;
+    }
+
+    /// Runs the unpossessed pawn's job for a tick: the walk goes through the same character
+    /// step the player's does, and the dig through the same mining action.
+    fn run_pawn_job(&self, app: &mut App, dt: f32) {
+        // The capsule is 2.3 m tall and its centre is where the eye is.
+        const CENTRE_ABOVE_FEET: f32 = 1.15;
+        let Some(state) = app.physics.player_state() else {
+            return;
+        };
+        let Some(light_system) = app.light_system.as_mut() else {
+            return;
+        };
+        let pose = Pose {
+            feet: state.position - glam::Vec3::Y * CENTRE_ABOVE_FEET,
+            eye: state.position,
+            yaw: state.yaw,
+        };
+        let action = jobs::step(
+            &mut app.pawn,
+            PAWN_ID,
+            pose,
+            &mut app.colony.marks,
+            light_system.grid(),
+        );
+        match action {
+            JobAction::Wait => {}
+            JobAction::Walk { to } => {
+                let walk = jobs::steer(pose, to);
+                let command = moho_physics::CharacterCommand {
+                    forward: walk.forward,
+                    yaw_delta: walk.yaw_delta,
+                    ..moho_physics::CharacterCommand::default()
+                };
+                if let Some(moved) =
+                    app.physics
+                        .move_character(&command, &STRATEGY_MOVE_SETTINGS, dt)
+                {
+                    app.simulation
+                        .set_position_yaw_pitch(moved.position, moved.yaw, moved.pitch);
+                }
+            }
+            JobAction::Dig { aim, .. } => {
+                let dir = (aim - pose.eye).normalize_or_zero();
+                let outcome = app
+                    .pawn
+                    .dig(light_system.grid_mut(), pose.eye, dir, MINE_REACH);
+                jobs::end_job(&mut app.pawn, &mut app.colony.marks);
+                if let Some(outcome) = outcome {
+                    if let Some(yield_) = outcome.yield_ {
+                        app.colony.stock.add(yield_.resource_id, yield_.amount);
+                    }
+                    publish_pawn_dig(app, &outcome);
+                }
+            }
+        }
     }
 
     fn update_game_state_fps_kcc(&self, app: &mut App, dt: f32) {
@@ -410,6 +474,9 @@ impl FrameProcessor {
                         .collect(),
                 });
 
+        let mut colony_stock: Vec<(u32, u32)> = app.colony.stock.iter().collect();
+        colony_stock.sort_by_key(|(resource_id, _)| *resource_id);
+
         let data = flagstone_ui::overlays::HudData {
             player_position: [pos.x, pos.y, pos.z],
             chunk_position: chunk_pos,
@@ -436,7 +503,7 @@ impl FrameProcessor {
                 .collect(),
             selection,
             mine_designation_active: app.input.designation == Designation::Mine,
-            colony_stock: Vec::new(),
+            colony_stock,
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {

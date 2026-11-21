@@ -8,6 +8,7 @@
 
 use crate::input_event::InputEvent;
 use crate::{App, RenderRequest};
+use flagstone_game::pawn::{MINE_REACH, MineOutcome};
 use flagstone_voxel::{BlockChangeReason, CRYSTAL_MATERIAL_ID, VoxelChunk, WorldEvent};
 use moho_core::events::{AudioEvent, GraphicsEvent, UiEvent};
 use moho_render_api::{Marker, MarkerId};
@@ -16,16 +17,15 @@ use std::collections::HashSet;
 /// Cue played when a mined block yields a resource.
 const PICKUP_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/pickup.wav");
 const PICKUP_VOLUME: f32 = 0.6;
+/// Cue played where a pawn's dig removes a block.
+const DIG_SOUND: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets/dig.wav");
+const DIG_VOLUME: f32 = 0.6;
 
 // ── Spawn / interaction constants ──────────────────────────────────────
 const MOUSE_WHEEL_ZOOM_FACTOR: f32 = 0.5;
 const SPAWN_RAYCAST_MAX_DISTANCE: f32 = 100.0;
 const SPAWN_NORMAL_OFFSET: f32 = 0.5;
 const SPAWN_FALLBACK_DISTANCE: f32 = 5.0;
-/// Maximum reach for the player's direct mining action — shorter than
-/// `SPAWN_RAYCAST_MAX_DISTANCE`, which is a debug-console placement aid, not
-/// a gameplay reach limit.
-const MINE_MAX_DISTANCE: f32 = 8.0;
 const DEFAULT_POINT_LIGHT_INTENSITY: f32 = 5.0;
 const DEFAULT_POINT_LIGHT_RANGE: f32 = 20.0;
 /// Console markers' colour: translucent amber, linear RGBA with straight alpha.
@@ -233,29 +233,14 @@ impl EventProcessor {
         };
         let grid = light_system.grid_mut();
 
-        let Some(outcome) = app.pawn.mine(grid, camera_pos, forward, MINE_MAX_DISTANCE) else {
+        let Some(outcome) = app.pawn.mine(grid, camera_pos, forward, MINE_REACH) else {
             tracing::debug!(
-                distance = MINE_MAX_DISTANCE,
+                distance = MINE_REACH,
                 "Mine attempt found nothing solid within range"
             );
             return;
         };
-
-        let dirty_chunks: Vec<_> =
-            flagstone_voxel::chunks_meshed_from(outcome.block_pos, grid.chunk_size()).collect();
-
-        app.event_bus.publish(WorldEvent::BlockRemoved {
-            position: outcome.block_pos,
-            old_material_id: outcome.old_material_id,
-            reason: BlockChangeReason::Player,
-        });
-        for chunk_pos in dirty_chunks {
-            app.event_bus.publish(WorldEvent::ChunkMeshDirty {
-                chunk_pos,
-                terrain_dirty: true,
-                structure_dirty: true,
-            });
-        }
+        publish_removal(app, &outcome);
 
         if let Some(y) = outcome.yield_ {
             app.event_bus.publish(AudioEvent::PlaySound {
@@ -575,12 +560,36 @@ pub(crate) fn lod_for_chunk(chunk_pos: glam::IVec3, player_chunk: glam::IVec3) -
 
 /// Publishes what a pawn's dig changed: the block's removal, the chunks that remesh for it,
 /// and the dig cue at the block's centre.
-pub(crate) fn publish_pawn_dig(app: &mut App, outcome: &flagstone_game::pawn::MineOutcome) {
-    todo!(
-        "publish the dig of {:?} on {}",
-        outcome.block_pos,
-        app.pawn.selected_slot
-    )
+pub(crate) fn publish_pawn_dig(app: &mut App, outcome: &MineOutcome) {
+    publish_removal(app, outcome);
+    app.event_bus.publish(AudioEvent::PlaySoundAt {
+        path: DIG_SOUND.to_string(),
+        volume: DIG_VOLUME,
+        position: outcome.block_pos.as_vec3() + glam::Vec3::splat(0.5),
+    });
+}
+
+/// Publishes a dug block's removal and the dirty chunks its remesh needs; the marks drop and
+/// the chunks remesh when the world events are processed.
+fn publish_removal(app: &mut App, outcome: &MineOutcome) {
+    let chunk_size = app
+        .light_system
+        .as_ref()
+        .expect("a block was dug from the light system's grid")
+        .grid()
+        .chunk_size();
+    app.event_bus.publish(WorldEvent::BlockRemoved {
+        position: outcome.block_pos,
+        old_material_id: outcome.old_material_id,
+        reason: BlockChangeReason::Player,
+    });
+    for chunk_pos in flagstone_voxel::chunks_meshed_from(outcome.block_pos, chunk_size) {
+        app.event_bus.publish(WorldEvent::ChunkMeshDirty {
+            chunk_pos,
+            terrain_dirty: true,
+            structure_dirty: true,
+        });
+    }
 }
 
 impl Default for EventProcessor {

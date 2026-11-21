@@ -66,6 +66,11 @@ impl PhysicsController {
         self.previous = pw.character(handle);
     }
 
+    /// The player's current state, if there is a player.
+    pub fn player_state(&self) -> Option<moho_physics::CharacterState> {
+        self.world.as_ref()?.character(self.player?)
+    }
+
     /// The player's state before and after the latest tick, if there is a player and no
     /// teleport or look is waiting for the next tick to apply.
     pub fn player_states(

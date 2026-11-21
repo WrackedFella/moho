@@ -3,8 +3,10 @@
 use flagstone_voxel::{BlockPos, VoxelGrid};
 use glam::Vec3;
 
+use crate::TICK_HZ;
 use crate::colony::MineMarks;
-use crate::pawn::{Pawn, PawnId};
+use crate::pawn::{Pawn, PawnId, TOOL_SLOT};
+use crate::routing::{ROUTE_NODE_BUDGET, feet_cell, route, standable};
 
 /// How close, horizontally, the feet must be to a waypoint's centre to have reached it.
 pub const ARRIVE_RADIUS: f32 = 0.35;
@@ -18,10 +20,50 @@ pub const TURN_RATE: f32 = std::f32::consts::TAU;
 /// How far off its facing a target may be, in radians, for the pawn to walk at it.
 pub const WALK_CONE: f32 = std::f32::consts::FRAC_PI_3;
 
+/// Route searches an idle pawn runs in one tick.
+const MAX_ROUTE_ATTEMPTS: usize = 4;
+
+/// How much nearer to the waypoint, in metres, counts as progress.
+const PROGRESS_EPSILON: f32 = 1e-3;
+
+/// The six directions a block's faces look.
+const FACE_DIRS: [BlockPos; 6] = [
+    BlockPos::X,
+    BlockPos::NEG_X,
+    BlockPos::Y,
+    BlockPos::NEG_Y,
+    BlockPos::Z,
+    BlockPos::NEG_Z,
+];
+
 /// Counts the ticks a walk has made no progress.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct StallGuard {
+    nearest: f32,
     idle_ticks: u32,
+}
+
+impl Default for StallGuard {
+    fn default() -> Self {
+        Self {
+            nearest: f32::INFINITY,
+            idle_ticks: 0,
+        }
+    }
+}
+
+impl StallGuard {
+    /// Records the distance left to the waypoint; false once it has stopped closing for
+    /// [`STALL_TICKS`] ticks.
+    fn progressed(&mut self, distance: f32) -> bool {
+        if distance < self.nearest - PROGRESS_EPSILON {
+            self.nearest = distance;
+            self.idle_ticks = 0;
+        } else {
+            self.idle_ticks += 1;
+        }
+        self.idle_ticks < STALL_TICKS
+    }
 }
 
 /// What a pawn is doing on its own.
@@ -77,20 +119,165 @@ pub fn step(
     marks: &mut MineMarks,
     grid: &VoxelGrid,
 ) -> JobAction {
-    todo!(
-        "step {id:?} at {pose:?} on {} marks, {:?}, in a grid of {}",
-        marks.iter().count(),
-        pawn.job,
-        grid.chunk_size()
-    )
+    if pawn.job == Job::Idle && !take_a_mark(pawn, id, pose, marks, grid) {
+        return JobAction::Wait;
+    }
+    follow(pawn, id, pose, marks, grid)
+}
+
+/// Ends the pawn's job, freeing its claim; the mark stays for any pawn to take.
+pub fn end_job(pawn: &mut Pawn, marks: &mut MineMarks) {
+    if let Job::Mine { mark, .. } = std::mem::take(&mut pawn.job) {
+        marks.release(mark);
+    }
+}
+
+/// Claims the nearest exposed mark the pawn can walk to and starts its job; false when it
+/// found none within this tick's route attempts.
+fn take_a_mark(
+    pawn: &mut Pawn,
+    id: PawnId,
+    pose: Pose,
+    marks: &mut MineMarks,
+    grid: &VoxelGrid,
+) -> bool {
+    let feet = feet_cell(pose.feet);
+    let mut candidates: Vec<[i32; 3]> = marks
+        .unclaimed()
+        .filter(|mark| is_exposed(grid, BlockPos::from_array(*mark)))
+        .collect();
+    // A stable sort keeps key order among marks at the same distance.
+    candidates.sort_by_key(|mark| (BlockPos::from_array(*mark) - feet).length_squared());
+    if pawn.route_cursor >= candidates.len() {
+        pawn.route_cursor = 0;
+    }
+    let mut attempts = 0;
+    for mark in candidates.iter().skip(pawn.route_cursor).copied() {
+        if attempts == MAX_ROUTE_ATTEMPTS {
+            break;
+        }
+        attempts += 1;
+        let block = BlockPos::from_array(mark);
+        let found = route(
+            grid,
+            feet,
+            |cell| is_stand_cell(cell, block),
+            block,
+            ROUTE_NODE_BUDGET,
+        );
+        if let Some(route) = found
+            && marks.claim(mark, id)
+        {
+            pawn.select_slot(TOOL_SLOT);
+            pawn.route_cursor = 0;
+            pawn.job = Job::Mine {
+                mark,
+                route,
+                next: 0,
+                stall: StallGuard::default(),
+            };
+            return true;
+        }
+    }
+    pawn.route_cursor += attempts;
+    false
+}
+
+/// Whether a pawn with its feet in `cell` digs `block` from within the mining reach: one
+/// column of it, from a block below to two above.
+fn is_stand_cell(cell: BlockPos, block: BlockPos) -> bool {
+    (cell.x - block.x).abs() <= 1
+        && (cell.z - block.z).abs() <= 1
+        && (block.y - 1..=block.y + 2).contains(&cell.y)
+}
+
+fn is_exposed(grid: &VoxelGrid, block: BlockPos) -> bool {
+    FACE_DIRS.iter().any(|dir| !grid.is_solid_at(block + *dir))
+}
+
+/// The centre of the exposed face of `block` nearest `eye`.
+fn aim_point(grid: &VoxelGrid, block: BlockPos, eye: Vec3) -> Option<Vec3> {
+    FACE_DIRS
+        .iter()
+        .filter(|dir| !grid.is_solid_at(block + **dir))
+        .map(|dir| block.as_vec3() + Vec3::splat(0.5) + dir.as_vec3() * 0.5)
+        .min_by(|a, b| a.distance_squared(eye).total_cmp(&b.distance_squared(eye)))
+}
+
+/// Runs the pawn's job a tick: the walk to its next waypoint, or the dig once it has arrived.
+/// A job that cannot go on ends and frees its claim.
+fn follow(
+    pawn: &mut Pawn,
+    id: PawnId,
+    pose: Pose,
+    marks: &mut MineMarks,
+    grid: &VoxelGrid,
+) -> JobAction {
+    let Job::Mine {
+        mark,
+        route,
+        mut next,
+        mut stall,
+    } = std::mem::take(&mut pawn.job)
+    else {
+        return JobAction::Wait;
+    };
+    let held = marks
+        .iter()
+        .find(|(marked, _)| *marked == mark)
+        .and_then(|(_, held)| held.claimed_by);
+    if held != Some(id) {
+        return JobAction::Wait;
+    }
+    let block = BlockPos::from_array(mark);
+    let action = loop {
+        let Some(&cell) = route.get(next) else {
+            break aim_point(grid, block, pose.eye).map(|aim| JobAction::Dig { block, aim });
+        };
+        if !standable(grid, cell) {
+            break None;
+        }
+        let centre = Vec3::new(cell.x as f32 + 0.5, cell.y as f32, cell.z as f32 + 0.5);
+        let left = Vec3::new(centre.x - pose.feet.x, 0.0, centre.z - pose.feet.z).length();
+        if left < ARRIVE_RADIUS {
+            next += 1;
+            stall = StallGuard::default();
+            continue;
+        }
+        break stall
+            .progressed(left)
+            .then_some(JobAction::Walk { to: centre });
+    };
+    if let Some(action) = action {
+        pawn.job = Job::Mine {
+            mark,
+            route,
+            next,
+            stall,
+        };
+        action
+    } else {
+        marks.release(mark);
+        JobAction::Wait
+    }
 }
 
 /// The turn and walk that take a pawn at `pose` toward `to`.
 pub fn steer(pose: Pose, to: Vec3) -> WalkStep {
-    let _ = (pose, to);
+    let across = Vec3::new(to.x - pose.feet.x, 0.0, to.z - pose.feet.z);
+    if across.length() < 1e-4 {
+        return WalkStep {
+            yaw_delta: 0.0,
+            forward: 0.0,
+        };
+    }
+    let off = (across.x.atan2(across.z) - pose.yaw + std::f32::consts::PI)
+        .rem_euclid(std::f32::consts::TAU)
+        - std::f32::consts::PI;
+    let most = TURN_RATE / TICK_HZ as f32;
     WalkStep {
-        yaw_delta: 0.0,
-        forward: 0.0,
+        yaw_delta: off.clamp(-most, most),
+        forward: if off.abs() <= WALK_CONE { 1.0 } else { 0.0 },
     }
 }
 
@@ -299,6 +486,7 @@ mod tests {
 
         let first = step_at(&mut pawn, pose, &mut marks, &grid);
         let after_first = pawn.job.clone();
+        let unclaimed_after_first = unclaimed(&marks).len();
         let mut claimed_on = None;
         for tick in 2..=4 {
             step_at(&mut pawn, pose, &mut marks, &grid);
@@ -310,7 +498,7 @@ mod tests {
 
         assert_eq!(first, JobAction::Wait, "four failed routes use the tick");
         assert_eq!(after_first, Job::Idle);
-        assert_eq!(unclaimed(&marks).len(), 5, "nothing is claimed on tick 1");
+        assert_eq!(unclaimed_after_first, 5, "nothing is claimed on tick 1");
         assert!(claimed_on.is_some(), "a later tick reaches the fifth mark");
         assert_eq!(mined_mark(&pawn), [3, 1, 6]);
     }
