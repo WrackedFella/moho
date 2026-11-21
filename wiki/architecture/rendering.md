@@ -567,7 +567,7 @@ Effects are engine-owned presentation state a game starts, places and ends by ha
 ([ADR-0031](../../_todo/adr/0031-effects-are-engine-presentation-state-placed-by-handle.md)).
 `moho_renderer::Effects` (`moho_renderer/src/effects.rs`, reached via `Scene::effects_mut`)
 issues an `EffectHandle`, monotonic and never reused; a stale, unknown or inert handle is ignored.
-Two kinds are placed by handle (the streak, a tracer) or fire and forget (the flash and the mark):
+There are three kinds: the streak (a tracer), placed by handle, and the flash and the mark, fire and forget:
 
 - `begin_streak(StreakStyle)` starts it; `place_streak(handle, head, heading)` sets its head
   every frame, already interpolated by the game; `end(handle)` starts the fade.
@@ -590,7 +590,8 @@ Two kinds are placed by handle (the streak, a tracer) or fire and forget (the fl
 `Scene::render` calls `Effects::draw` first: each streak becomes one placement of a shared kite
 mesh, each flash of a star mesh and each mark of a square mesh, uploaded on first use under
 consecutive ids from `EFFECT_MESH_IDS_FROM` (`u64::MAX - 63`, reserved; games keep their ids
-below it), turned to face the camera eye. Placements go through
+below it); streaks and flashes are turned to face the camera eye, marks lie along their surface
+normal. Placements go through
 `WorldMeshes::place_unshadowed` and reach the backend via `RendererBackend::enqueue_unshadowed_draw`
 (default: `enqueue_draw`). In the renderer the draw key has `casts_shadow = false`, so
 `render_shadow_passes` skips it and the main pass draws it. A second camera sees a streak

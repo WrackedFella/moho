@@ -1,5 +1,6 @@
-//! Engine-drawn effects, placed by handle: a game starts one, places it every frame and
-//! ends it; the engine owns its life, fade, cap and unshadowed draw.
+//! Engine-drawn effects: a game starts a streak, places it every frame by handle and ends
+//! it, or spawns a flash or mark and forgets it; the engine owns each one's life, fade, cap
+//! and unshadowed draw.
 
 use crate::WorldMeshes;
 use glam::{Affine3A, Vec3};
@@ -2001,6 +2002,25 @@ mod tests {
             "non-finite matrix {:?}",
             instance.model
         );
+    }
+
+    #[test]
+    fn a_flash_seen_from_a_non_finite_eye_draws_nothing_and_stays_live() {
+        let mut rig = Rig::new();
+        rig.effects.flash(
+            Vec3::new(1.0, 2.0, 3.0),
+            0.0,
+            flash_style(0.4, Duration::from_secs(10)),
+        );
+
+        for eye in [Vec3::splat(f32::NAN), Vec3::new(f32::INFINITY, 0.0, 0.0)] {
+            assert!(rig.frame(eye).is_empty(), "eye {eye}");
+            assert_eq!(rig.effects.live(), 1, "still live, eye {eye}");
+        }
+
+        let drawn = rig.frame(EYE);
+        assert_eq!(drawn.len(), 1, "drawn again once the eye is finite");
+        assert_finite_columns(&drawn[0]);
     }
 
     #[test]
