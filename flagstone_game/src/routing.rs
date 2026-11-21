@@ -197,6 +197,50 @@ mod tests {
     }
 
     #[test]
+    fn the_node_budget_counts_each_expanded_cell_exactly() {
+        let min_budget = |grid: &VoxelGrid, start: BlockPos, goal: BlockPos| {
+            (0..120).find(|&budget| route(grid, start, |at| at == goal, goal, budget).is_some())
+        };
+        let mut seed = 99_u32;
+        let mut next = |m: u32| {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 16) % m
+        };
+        let mut needed = Vec::new();
+        for _ in 0..60 {
+            let mut grid = VoxelGrid::new(16);
+            let mut heights = vec![0; 100];
+            for x in 0..10 {
+                for z in 0..10 {
+                    let height = if next(4) == 0 { 3 } else { next(3) as i32 };
+                    heights[(x * 10 + z) as usize] = height;
+                    fill(&mut grid, cell(x, 0, z), cell(x, height, z));
+                }
+            }
+            let from = (next(10) as i32, next(10) as i32);
+            let to = (next(10) as i32, next(10) as i32);
+            let above = |(x, z): (i32, i32)| cell(x, heights[(x * 10 + z) as usize] + 1, z);
+            needed.push(min_budget(&grid, above(from), above(to)).unwrap_or(0));
+        }
+        assert_eq!(needed, EXPANSIONS_NEEDED);
+        let flat = ground(WIDE);
+        assert_eq!(
+            min_budget(&flat, cell(1, 1, 5), cell(8, 1, 5)),
+            Some(7),
+            "seven cells are expanded on the way along a straight line"
+        );
+    }
+
+    /// Expansions the search needs for 60 pseudo-random routes over rough 10 x 10 ground, 0
+    /// where there is no route; the search counts each cell it expands once and skips
+    /// superseded queue entries.
+    const EXPANSIONS_NEEDED: [usize; 60] = [
+        0, 0, 27, 0, 11, 0, 13, 15, 13, 0, 6, 5, 0, 6, 21, 1, 0, 21, 0, 11, 20, 6, 14, 54, 0, 15,
+        9, 26, 0, 0, 7, 14, 7, 35, 66, 11, 6, 23, 13, 0, 28, 17, 11, 8, 0, 0, 4, 7, 0, 29, 0, 43,
+        32, 0, 0, 46, 17, 21, 23, 0,
+    ];
+
+    #[test]
     fn a_route_on_flat_ground_is_a_straight_line() {
         let grid = ground(WIDE);
         let start = cell(1, 1, 5);
@@ -238,6 +282,27 @@ mod tests {
             heights,
             [(2, 1), (3, 1), (4, 2), (5, 2), (6, 1), (7, 1), (8, 1)]
         );
+    }
+
+    #[test]
+    fn stepping_down_needs_the_head_to_clear_the_edge() {
+        let (start, goal) = (cell(1, 1, 5), cell(8, 1, 5));
+        for (ceiling_y, routes) in [(4, false), (5, true)] {
+            let mut grid = plateau(4, 5);
+            fill(
+                &mut grid,
+                cell(6, ceiling_y, 0),
+                cell(6, ceiling_y, WIDE - 1),
+            );
+
+            let route = route_to(&grid, start, goal);
+
+            assert_eq!(
+                route.is_some(),
+                routes,
+                "a block at height {ceiling_y} over the edge to step down off a plateau"
+            );
+        }
     }
 
     #[test]

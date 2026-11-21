@@ -827,6 +827,144 @@ mod tests {
     }
 
     #[test]
+    fn standing_puts_the_eye_a_capsule_half_height_above_the_feet() {
+        let feet = Vec3::new(3.25, 7.5, -2.75);
+
+        let pose = Pose::standing(feet, 0.4);
+
+        assert_eq!(pose.feet, feet);
+        assert_eq!(pose.eye, feet + Vec3::new(0.0, PAWN_HALF_EXTENTS.y, 0.0));
+        assert_eq!(pose.yaw, 0.4);
+    }
+
+    #[test]
+    fn the_stall_guard_counts_only_ticks_without_real_progress() {
+        let mut guard = StallGuard::default();
+        assert!(!guard.stalled(1.0), "the first distance is the baseline");
+
+        assert!(!guard.stalled(1.0 - PROGRESS_EPSILON));
+        assert_eq!(
+            guard.still_ticks, 1,
+            "progress of exactly the epsilon is none"
+        );
+        assert!(!guard.stalled(1.0 - 3.0 * PROGRESS_EPSILON));
+        assert_eq!(guard.still_ticks, 0, "progress past the epsilon resets");
+        assert_eq!(guard.nearest, Some(1.0 - 3.0 * PROGRESS_EPSILON));
+        assert!(!guard.stalled(2.0));
+        assert_eq!(guard.still_ticks, 1, "moving away is no progress");
+    }
+
+    #[test]
+    fn the_stall_guard_gives_up_on_the_stall_ticks_th_still_tick() {
+        let mut guard = StallGuard::default();
+        guard.stalled(1.0);
+
+        for tick in 1..STALL_TICKS {
+            assert!(!guard.stalled(1.0), "still tick {tick} is not yet a stall");
+        }
+
+        assert!(guard.stalled(1.0), "still tick {STALL_TICKS} is");
+    }
+
+    /// A grid with a solid block at `(4, 4, 4)` and solid on every side of it except `open`.
+    fn block_open_only_toward(open: BlockPos) -> VoxelGrid {
+        let mut grid = VoxelGrid::new(16);
+        solid(&mut grid, 4, 4, 4);
+        for face in FACES {
+            if face != open {
+                let at = cell(4, 4, 4) + face;
+                solid(&mut grid, at.x, at.y, at.z);
+            }
+        }
+        grid
+    }
+
+    #[test]
+    fn a_block_is_exposed_by_any_single_open_face() {
+        let buried = block_open_only_toward(BlockPos::ZERO);
+        assert!(!exposed(&buried, cell(4, 4, 4)), "no face is open");
+
+        for open in FACES {
+            let grid = block_open_only_toward(open);
+
+            assert!(exposed(&grid, cell(4, 4, 4)), "open toward {open:?}");
+        }
+    }
+
+    #[test]
+    fn the_dig_aims_at_the_one_open_face_wherever_it_is() {
+        let eye = Vec3::new(4.5, 4.5, 4.5);
+
+        for open in FACES {
+            let grid = block_open_only_toward(open);
+
+            let aim = nearest_face_centre(&grid, cell(4, 4, 4), eye);
+
+            assert_eq!(
+                aim,
+                Some(Vec3::new(4.5, 4.5, 4.5) + open.as_vec3() * 0.5),
+                "open toward {open:?}"
+            );
+        }
+        assert_eq!(
+            nearest_face_centre(&block_open_only_toward(BlockPos::ZERO), cell(4, 4, 4), eye),
+            None
+        );
+    }
+
+    #[test]
+    fn a_stand_cell_is_within_one_column_and_one_below_to_two_above() {
+        let mark = cell(10, 5, 10);
+        let cases = [
+            (cell(10, 4, 10), true),
+            (cell(10, 5, 10), true),
+            (cell(10, 6, 10), true),
+            (cell(10, 7, 10), true),
+            (cell(10, 3, 10), false),
+            (cell(10, 8, 10), false),
+            (cell(11, 5, 10), true),
+            (cell(9, 5, 10), true),
+            (cell(10, 5, 11), true),
+            (cell(10, 5, 9), true),
+            (cell(11, 7, 9), true),
+            (cell(12, 5, 10), false),
+            (cell(8, 5, 10), false),
+            (cell(10, 5, 12), false),
+            (cell(10, 5, 8), false),
+        ];
+
+        for (stand, allowed) in cases {
+            assert_eq!(digs_from(stand, mark), allowed, "feet in {stand:?}");
+        }
+    }
+
+    #[test]
+    fn steer_ignores_a_target_at_the_feet_but_turns_toward_one_a_step_away() {
+        let max = TURN_RATE / TICK_HZ as f32;
+        let pose = Pose::standing(Vec3::new(0.0, 1.0, 0.0), 1.0);
+
+        let on_the_spot = steer(&pose, pose.feet);
+        let at_the_threshold = steer(&pose, pose.feet + Vec3::new(PROGRESS_EPSILON, 0.0, 0.0));
+        let just_inside = steer(
+            &pose,
+            pose.feet + Vec3::new(PROGRESS_EPSILON * 0.5, 0.0, 0.0),
+        );
+        let beyond = steer(
+            &pose,
+            pose.feet + Vec3::new(PROGRESS_EPSILON * 2.0, 0.0, 0.0),
+        );
+
+        assert_eq!(on_the_spot, WalkStep::default());
+        assert_eq!(just_inside, WalkStep::default());
+        for walk in [at_the_threshold, beyond] {
+            assert!(
+                (walk.yaw_delta - max.min(std::f32::consts::FRAC_PI_2 - 1.0)).abs() < 1e-5,
+                "turns toward +x from facing 1 rad: {walk:?}"
+            );
+        }
+    }
+
+    #[test]
     fn steer_walks_only_when_facing_the_target() {
         let yaw = 0.3_f32;
         let cases = [
