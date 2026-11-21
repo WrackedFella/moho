@@ -97,9 +97,7 @@ impl Streak {
         self.ended_at
             .is_some_and(|ended_at| self.age.saturating_sub(ended_at) >= self.style.fade)
     }
-}
 
-impl Streak {
     /// Age by `dt`, starting the fade once past `max_age`.
     fn advance(&mut self, dt: Duration) {
         self.age += dt;
@@ -124,6 +122,21 @@ impl Streak {
     }
 }
 
+/// The size factor at `age` of an effect that lasts `lifetime`: 1 until `lifetime - fade`,
+/// then falling linearly to 0 at the lifetime. A fade longer than the lifetime is the whole
+/// lifetime; a zero fade holds full size until the lifetime, then is gone.
+fn fade_scale(age: Duration, lifetime: Duration, fade: Duration) -> f32 {
+    if age >= lifetime {
+        return 0.0;
+    }
+    let fade = fade.min(lifetime);
+    if fade.is_zero() || age <= lifetime.saturating_sub(fade) {
+        return 1.0;
+    }
+    let left = lifetime.saturating_sub(age);
+    (left.as_secs_f32() / fade.as_secs_f32()).clamp(0.0, 1.0)
+}
+
 #[derive(Debug)]
 struct Flash {
     at: Vec3,
@@ -133,16 +146,9 @@ struct Flash {
 }
 
 impl Flash {
-    /// The size factor: 1 at spawn, falling linearly to 0 at the lifetime.
-    fn scale(&self) -> f32 {
-        if self.style.lifetime.is_zero() {
-            return 0.0;
-        }
-        (1.0 - self.age.as_secs_f32() / self.style.lifetime.as_secs_f32()).clamp(0.0, 1.0)
-    }
-
     fn drawn(&self, eye: Vec3) -> Option<Drawn> {
-        let size = self.style.size * self.scale();
+        let lifetime = self.style.lifetime;
+        let size = self.style.size * fade_scale(self.age, lifetime, lifetime);
         Some(Drawn {
             slot: MeshSlot::Star,
             transform: flash_transform(self.at, self.roll, size, eye)?,
@@ -161,23 +167,9 @@ struct Mark {
 }
 
 impl Mark {
-    /// The size factor: 1 until `lifetime - fade`, then falling linearly to 0 at the lifetime.
-    fn scale(&self) -> f32 {
-        if self.age >= self.style.lifetime {
-            return 0.0;
-        }
-        // A fade longer than the lifetime is the whole lifetime.
-        let fade = self.style.fade.min(self.style.lifetime);
-        let fade_start = self.style.lifetime.saturating_sub(fade);
-        if self.age <= fade_start {
-            return 1.0;
-        }
-        let left = self.style.lifetime.saturating_sub(self.age);
-        (left.as_secs_f32() / fade.as_secs_f32()).clamp(0.0, 1.0)
-    }
-
     fn drawn(&self) -> Option<Drawn> {
-        let size = self.style.size * self.scale();
+        let scale = fade_scale(self.age, self.style.lifetime, self.style.fade);
+        let size = self.style.size * scale;
         Some(Drawn {
             slot: MeshSlot::Quad,
             transform: mark_transform(self.at, self.normal, self.roll, size)?,
@@ -235,10 +227,6 @@ enum MeshSlot {
 
 impl MeshSlot {
     const COUNT: usize = 3;
-
-    fn index(self) -> usize {
-        self as usize
-    }
 
     fn id(self) -> WorldMeshId {
         WorldMeshId(EFFECT_MESH_IDS_FROM + self as u64)
@@ -319,8 +307,10 @@ impl Effects {
     /// Spawn a flat mark at `at` lying on a surface with `normal`, rolled by `roll` about
     /// it. A zero lifetime spawns nothing; the cap applies as for [`Effects::flash`].
     pub fn mark(&mut self, at: Vec3, normal: Vec3, roll: f32, style: MarkStyle) {
-        let placeable = is_placeable(&[at], roll, style.size) && normal.try_normalize().is_some();
-        if style.lifetime.is_zero() || !placeable {
+        let Some(normal) = normal.try_normalize() else {
+            return;
+        };
+        if style.lifetime.is_zero() || !is_placeable(&[at], roll, style.size) {
             return;
         }
         self.spawn(Effect::Mark(Mark {
@@ -399,7 +389,7 @@ impl Effects {
             let Some(drawn) = effect.drawn(eye) else {
                 continue;
             };
-            if !std::mem::replace(&mut self.uploaded[drawn.slot.index()], true) {
+            if !std::mem::replace(&mut self.uploaded[drawn.slot as usize], true) {
                 meshes.upsert_movable(drawn.slot.id(), drawn.slot.mesh());
             }
             meshes.place_unshadowed(drawn.slot.id(), drawn.transform, drawn.material);
@@ -466,12 +456,18 @@ fn quad_mesh() -> WorldMesh {
     )
 }
 
-/// Unit X and Y axes square to the unit `z`, turned by `roll` about it.
-fn rolled_axes(z: Vec3, roll: f32) -> (Vec3, Vec3) {
+/// A frame at `pos` facing the unit `z`: X and Y scaled by `size` and turned by `roll`
+/// about `z`.
+fn oriented(z: Vec3, roll: f32, size: f32, pos: Vec3) -> Affine3A {
     let x = z.any_orthonormal_vector();
     let y = z.cross(x);
     let (sin, cos) = roll.sin_cos();
-    (x * cos + y * sin, y * cos - x * sin)
+    Affine3A::from_cols(
+        ((x * cos + y * sin) * size).into(),
+        ((y * cos - x * sin) * size).into(),
+        z.into(),
+        pos.into(),
+    )
 }
 
 /// Whether a flash or mark with these points, `roll` and `size` can ever be drawn: all
@@ -490,30 +486,16 @@ fn flash_transform(at: Vec3, roll: f32, size: f32, eye: Vec3) -> Option<Affine3A
         return None;
     }
     let z = (eye - at).try_normalize().unwrap_or(Vec3::Z);
-    let (x, y) = rolled_axes(z, roll);
-    Some(Affine3A::from_cols(
-        (x * size).into(),
-        (y * size).into(),
-        z.into(),
-        at.into(),
-    ))
+    Some(oriented(z, roll, size, at))
 }
 
-/// Where a mark of `size` on a surface with `normal` is drawn: lifted off it by
-/// `MARK_OFFSET` and rolled by `roll` about it. `None` for non-finite input, a zero normal
-/// or no size left.
+/// Where a mark of `size` on a surface with unit `normal` is drawn: lifted off it by
+/// `MARK_OFFSET` and rolled by `roll` about it. `None` for non-finite input or no size left.
 fn mark_transform(at: Vec3, normal: Vec3, roll: f32, size: f32) -> Option<Affine3A> {
     if !is_placeable(&[at], roll, size) {
         return None;
     }
-    let z = normal.try_normalize()?;
-    let (x, y) = rolled_axes(z, roll);
-    Some(Affine3A::from_cols(
-        (x * size).into(),
-        (y * size).into(),
-        z.into(),
-        (at + z * MARK_OFFSET).into(),
-    ))
+    Some(oriented(normal, roll, size, at + normal * MARK_OFFSET))
 }
 
 /// Where a streak from `head - dir * length` to `head` is drawn so that it faces `eye`.
