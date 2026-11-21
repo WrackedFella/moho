@@ -1799,6 +1799,28 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_flash_star_vertices_sit_every_forty_five_degrees_alternating_outer_and_inner() {
+        let mut rig = Rig::new();
+        rig.effects.flash(Vec3::X, 0.0, flash_style(0.4, 50));
+
+        rig.frame(EYE);
+
+        let positions = &rig.backend.registered[0].0;
+        assert_eq!(positions.len(), 8);
+        for (i, position) in positions.iter().enumerate() {
+            let angle = std::f32::consts::FRAC_PI_4 * f32::from(u8::try_from(i).expect("eight"));
+            let radius = if i % 2 == 0 { 0.5 } else { 0.1 };
+            let expected = [radius * angle.cos(), radius * angle.sin(), 0.0];
+            for axis in 0..3 {
+                assert!(
+                    (position[axis] - expected[axis]).abs() < EPS,
+                    "vertex {i}: expected {expected:?}, got {position:?}"
+                );
+            }
+        }
+    }
+
     fn xs_of(drawn: &[InstanceGpu]) -> Vec<i32> {
         drawn
             .iter()
