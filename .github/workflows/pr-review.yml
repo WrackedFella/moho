@@ -94,8 +94,9 @@ jobs:
         with:
           app-id: ${{ vars.REVIEWER_APP_ID }}
           private-key: ${{ secrets.REVIEWER_APP_KEY }}
-      # Skips a PR that is closed, has lost its head branch, changes no code, or whose head
-      # already has a review. Non-code is docs (Markdown, wiki/, _todo/, as in ci.yml's plan
+      # Skips a PR that is closed, has lost its head branch, links no work item (no
+      # `Closes #N`: the skill would stop there, after the toolchain install and a model
+      # start), changes no code, or whose head already has a review. Non-code is docs (Markdown, wiki/, _todo/, as in ci.yml's plan
       # job) plus agent, CI and editor config (.github/, .claude/, .vscode/, .mcp.json,
       # .gitignore). Build, lint, toolchain and gate config (Cargo.toml, Cargo.lock, *.toml,
       # justfile, scripts/, .cargo/, .config/) is reviewed, since it changes what ships or what
@@ -111,8 +112,9 @@ jobs:
           RUN_HEAD: ${{ github.event.workflow_run.head_sha }}
           NON_CODE: '\.md$|^wiki/|^_todo/|^\.github/|^\.claude/|^\.vscode/|^\.mcp\.json$|^\.gitignore$'
         run: |
-          read -r state repo ref head_sha author < <(gh api "repos/$GH_REPO/pulls/$PR" \
-            --jq '[.state, (.head.repo.full_name // "-"), .head.ref, .head.sha, .user.login] | @tsv')
+          read -r state repo ref head_sha author issue < <(gh api "repos/$GH_REPO/pulls/$PR" \
+            --jq '[.state, (.head.repo.full_name // "-"), .head.ref, .head.sha, .user.login,
+              ([.body // "" | scan("(?i)\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?) #([0-9]+)") | .[0]] | first // "-")] | @tsv')
           reviews=$(gh api "repos/$GH_REPO/pulls/$PR/reviews" --paginate \
             --jq ".[] | select(.user.login as \$u | $REVIEWERS | index(\$u)) | select(.body | startswith(\"Verdict:\"))" | jq -sc .)
           files=$(gh api "repos/$GH_REPO/pulls/$PR/files" --paginate --jq '.[].filename')
@@ -122,6 +124,8 @@ jobs:
             reason="PR #$PR is $state."
           elif [ "$repo" = "-" ] || ! gh api "repos/$repo/branches/$ref" --silent 2>/dev/null; then
             reason="The head branch \`$ref\` of PR #$PR no longer exists."
+          elif [ "$issue" = "-" ]; then
+            reason="PR #$PR links no work item (no \`Closes #N\` in its body)."
           elif ! grep -Evq "$NON_CODE" <<<"$files"; then
             reason="PR #$PR changes no code (docs and config only)."
           elif [ "$reviewed" -gt 0 ]; then
