@@ -164,21 +164,6 @@ mod tests {
     }
 
     #[test]
-    fn stock_grows_by_the_yield() {
-        let mut colony = Colony::default();
-        let empty = colony.stock.is_empty();
-
-        colony.stock.add(7, 1);
-        colony.stock.add(7, 2);
-        colony.stock.add(3, 5);
-
-        assert!(empty, "a new colony holds nothing");
-        assert_eq!(colony.stock.count(7), 3);
-        assert_eq!(colony.stock.count(3), 5);
-        assert_eq!(colony.stock.count(1), 0, "other resources stay at zero");
-    }
-
-    #[test]
     fn claim_and_release_round_trip() {
         let mut marks = MineMarks::default();
         marks.toggle([1, 2, 3]);

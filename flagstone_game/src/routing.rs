@@ -313,6 +313,33 @@ mod tests {
         }
 
         #[test]
+        fn a_terrain_of_one_block_steps_connects_every_pair_of_cells(
+            heights in proptest::collection::vec(proptest::collection::vec(1..=2i32, 6), 6),
+            sx in 0usize..6,
+            sz in 0usize..6,
+            gx in 0usize..6,
+            gz in 0usize..6,
+        ) {
+            let grid = terrain(&heights);
+            let start = top_cell(&heights, sx, sz);
+            let goal = top_cell(&heights, gx, gz);
+
+            let found = walk(&grid, start, goal);
+
+            let path = found.expect("every cell is a step from its neighbours");
+            prop_assert_eq!(path.first(), Some(&start));
+            prop_assert_eq!(path.last(), Some(&goal));
+            for c in &path {
+                prop_assert!(standable(&grid, *c), "{c:?} is not standable");
+            }
+            for pair in path.windows(2) {
+                let step = pair[1] - pair[0];
+                prop_assert_eq!(step.x.abs() + step.z.abs(), 1, "{:?} to {:?}", pair[0], pair[1]);
+                prop_assert!(step.y.abs() <= 1, "{:?} to {:?}", pair[0], pair[1]);
+            }
+        }
+
+        #[test]
         fn the_same_grid_gives_the_same_route(
             heights in heights(),
             sx in 0usize..6,

@@ -1732,6 +1732,19 @@ mod tests {
         assert!(bytes.starts_with(b"RIFF"), "not a WAV file");
     }
 
+    #[test]
+    fn a_possessed_mine_fills_the_pawns_inventory_and_not_the_colony_stock() {
+        let mut app = app_aimed_at_block_with(Some(7));
+
+        EventProcessor::new().handle_input_event(&mut app, InputEvent::MineRequested);
+
+        assert_eq!(app.pawn.inventory.count(7), 1, "the pawn carries the ore");
+        assert!(
+            app.colony.stock.is_empty(),
+            "the colony's stock is untouched"
+        );
+    }
+
     fn dig_asset_path() -> std::path::PathBuf {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/dig.wav")
     }

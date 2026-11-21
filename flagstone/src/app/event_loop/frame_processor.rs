@@ -1280,6 +1280,7 @@ mod tests {
     fn an_idle_pawn_digs_a_marked_ore_block_and_the_stock_grows_by_one() {
         let mut app = marked_app(TARGET, Some(7), PAWN_FEET);
         let start = character(&app).position;
+        let _ = app.audio_event_rx.try_iter().count();
 
         let dug_at = run_until_removed(&mut app, TARGET, DIG_TICKS);
         run(&mut app, 60);
@@ -1288,6 +1289,26 @@ mod tests {
         assert!(
             !app.colony.marks.contains(TARGET.to_array()),
             "the mining marker is gone"
+        );
+        let dig_asset = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/dig.wav");
+        let centre = TARGET.as_vec3() + glam::Vec3::splat(0.5);
+        let cues: Vec<glam::Vec3> = app
+            .audio_event_rx
+            .try_iter()
+            .filter_map(|event| match event {
+                moho_core::events::AudioEvent::PlaySoundAt { path, position, .. }
+                    if std::path::Path::new(&path) == dig_asset.as_path() =>
+                {
+                    Some(position)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(cues.len(), 1, "one dig cue: {cues:?}");
+        assert!(
+            (cues[0] - centre).length() < 1.5,
+            "the cue sounds near the block {centre:?}: {:?}",
+            cues[0]
         );
         assert_eq!(app.colony.stock.count(7), 1, "the colony total of the ore");
         assert_eq!(
@@ -1365,13 +1386,19 @@ mod tests {
 
     #[test]
     fn the_pawn_digs_within_the_mining_reach() {
-        let mut app = marked_app(TARGET, Some(7), PAWN_FEET);
+        let far = BlockPos::new(20, GROUND_TOP - 1, 16);
+        let mut app = marked_app(far, Some(7), PAWN_FEET);
+        let block_centre = far.as_vec3() + glam::Vec3::splat(0.5);
+        let starting_distance = (character(&app).position - block_centre).length();
 
-        let dug_at = run_until_removed(&mut app, TARGET, DIG_TICKS);
+        let dug_at = run_until_removed(&mut app, far, 2 * DIG_TICKS);
 
+        assert!(
+            starting_distance > MINE_REACH,
+            "setup: the pawn starts out of reach, {starting_distance} m away"
+        );
         assert!(dug_at.is_some(), "the block is still there");
         let eye = character(&app).position;
-        let block_centre = TARGET.as_vec3() + glam::Vec3::splat(0.5);
         let distance = (eye - block_centre).length();
         assert!(
             distance <= MINE_REACH,
