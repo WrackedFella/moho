@@ -57,7 +57,7 @@ sequenceDiagram
     T->>T: clock time scale = 1 if Playing, else 0<br/>autosave schedule and pawn pickup feed tick (Playing only)
     T->>Bus: SystemEvent::FrameStart
     T->>Sim: apply command, update_game_state (Playing only)
-    Note over Sim: KCC: command → physics character (look + move) → camera;<br/>free-fly: controller input → camera;<br/>step rigid bodies
+    Note over Sim: KCC: command → physics character (look + move) → camera;<br/>free-fly: controller input → camera, then the pawn's job (strategy view);<br/>step rigid bodies
     T->>LS: update_chunk_streaming
     Note over LS: evict / load chunks, light arrived chunks,<br/>publish WorldEvent::ChunkMeshDirty
     T->>LS: update_light_system (budgeted jobs, then sky refresh)
@@ -74,7 +74,7 @@ All gameplay steps early-return unless `GameState::Playing`. `dt` is the fixed t
 
 In the strategy view the pawn is not possessed, so after the camera step `update_pawn_job` runs its `Job` (`flagstone/src/app/event_loop/frame_processor.rs`). `jobs::step` yields a `JobAction`: `Walk` becomes a `CharacterCommand` (`jobs::steer`) for the physics character first person also uses, and `Dig` runs `Pawn::dig` from the eye, adds the yield to `Colony::stock` and publishes the removal and the dig cue (`publish_removal`, `publish_dig_cue` in `event_processor.rs`), the path the player's mine takes, so marks drop and chunks remesh as usual. A possessed pawn runs no job. The HUD lists `Colony::stock` (`HudData::colony_stock`).
 
-Mining publishes its block event while `process_input_events` drains, after
+The player's mining publishes its block event while `process_input_events` drains (a pawn's dig publishes during `update_game_state`, earlier in the tick), after
 `process_world_events`, so the light system queues the edit on the next tick and lights it in
 the tick after (two ticks, about 33 ms at 60 Hz).
 

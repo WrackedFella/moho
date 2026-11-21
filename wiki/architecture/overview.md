@@ -179,7 +179,7 @@ flowchart LR
 | Chunk meshes | `ChunkStore` in `flagstone_voxel`; the renderer holds its own copy as `WorldMeshes` ([rendering](rendering.md#2-world-geometry)) |
 | Actors (spheres, cubes) | `ActorStore` in `flagstone_game` |
 | Player orders (mining marks), colony stock | `Colony` in `flagstone_game::colony`, independent of any pawn; the binary holds it on `App`. A mark in `MineMarks` carries the `PawnId` that claimed it; `Colony::stock` totals what pawn jobs mined (a possessed pawn's own mining goes to its inventory) |
-| Pawn work | `Pawn::job` (`flagstone_game::jobs::Job`: `Idle` or `Mine` with a route and a `StallGuard`). `jobs::step` claims the first unclaimed mark, follows a route from `routing::route` (A* over standable cells, bounded by `ROUTE_NODE_BUDGET`) and returns a `JobAction` (`Wait`, `Walk`, `Dig`). Both modules are pure over `VoxelGrid` |
+| Pawn work | `Pawn::job` (`flagstone_game::jobs::Job`: `Idle` or `Mine` with a route and a `StallGuard`). `jobs::step` claims the nearest unclaimed mark that has an open face and a route (at most four route attempts a tick, ties by key order), follows a route from `routing::route` (A* over standable cells, bounded by `ROUTE_NODE_BUDGET`) and returns a `JobAction` (`Wait`, `Walk`, `Dig`). Both modules are pure over `VoxelGrid` |
 | Time of day | `moho_app::GameClock`, owned by the loop and advanced after each `Game::tick` |
 | App mode | `flagstone_ui::GameState` ([input-and-state](input-and-state.md#3-gamestate)) |
 | GPU resources | `moho_renderer`; game types reach it only through `moho_render_api` ([rendering](rendering.md)) |
