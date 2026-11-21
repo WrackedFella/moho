@@ -1,6 +1,7 @@
 use super::PhysicsWorld;
 use glam::{Quat, Vec3};
-use rapier3d::prelude::{ColliderBuilder, Pose, RigidBodyBuilder};
+use rapier3d::prelude::{ColliderBuilder, Pose, RigidBody, RigidBodyBuilder, RigidBodyHandle};
+use std::f32::consts::{FRAC_PI_2, PI};
 
 /// Stable, engine-issued name of a loose object.
 ///
@@ -27,7 +28,32 @@ pub enum LooseShape {
     Cylinder { half_height: f32, radius: f32 },
 }
 
+/// The rest slope of a world that never calls [`PhysicsWorld::set_rest_slope`]: 5 degrees.
+pub(super) const DEFAULT_REST_SLOPE: f32 = 5.0 * PI / 180.0;
+
+/// Contact depth, m, past which a body is being separated from an overlap, not resting.
+const DEEP_CONTACT: f32 = 0.005;
+
+/// A loose object's body and what the brake needs to know about its shape.
+pub(super) struct Loose {
+    pub(super) body: RigidBodyHandle,
+    /// The radius a capsule or cylinder rolls on; `None` for a box, which is never braked.
+    roll_radius: Option<f32>,
+}
+
+/// `value` moved `amount` toward zero, stopping at zero.
+fn toward_zero(value: f32, amount: f32) -> f32 {
+    value.signum() * (value.abs() - amount).max(0.0)
+}
+
 impl LooseShape {
+    fn roll_radius(self) -> Option<f32> {
+        match self {
+            Self::Box { .. } => None,
+            Self::Capsule { radius, .. } | Self::Cylinder { radius, .. } => Some(radius),
+        }
+    }
+
     fn collider(self) -> ColliderBuilder {
         match self {
             Self::Box { half_extents } => {
@@ -185,13 +211,19 @@ impl PhysicsWorld {
 
         let id = LooseId(self.next_loose);
         self.next_loose += 1;
-        self.loose.insert(id, handle);
+        self.loose.insert(
+            id,
+            Loose {
+                body: handle,
+                roll_radius: spawn.shape.roll_radius(),
+            },
+        );
         id
     }
 
     /// The object's current state; `None` for an id never spawned or removed.
     pub fn loose(&self, id: LooseId) -> Option<LooseState> {
-        let body = self.rigid_body_set.get(*self.loose.get(&id)?)?;
+        let body = self.rigid_body_set.get(self.loose.get(&id)?.body)?;
         Some(LooseState {
             position: body.translation(),
             rotation: *body.rotation(),
@@ -206,7 +238,7 @@ impl PhysicsWorld {
     /// # Errors
     /// [`UnknownLoose`] if `id` was never spawned or was already removed.
     pub fn remove_loose(&mut self, id: LooseId) -> Result<(), UnknownLoose> {
-        let handle = self.loose.remove(&id).ok_or(UnknownLoose)?;
+        let handle = self.loose.remove(&id).ok_or(UnknownLoose)?.body;
         self.rigid_body_set.remove(
             handle,
             &mut self.island_manager,
@@ -224,11 +256,91 @@ impl PhysicsWorld {
     ///
     /// # Panics
     /// If `slope` is not finite or not in `[0, π/2)`.
-    pub fn set_rest_slope(&mut self, _slope: f32) {}
+    pub fn set_rest_slope(&mut self, slope: f32) {
+        assert!(
+            slope.is_finite() && (0.0..FRAC_PI_2).contains(&slope),
+            "rest slope must be finite and in [0, pi/2) radians, got {slope}"
+        );
+        self.rest_slope = slope;
+    }
 
     /// The rest slope in radians; see [`PhysicsWorld::set_rest_slope`].
     pub fn rest_slope(&self) -> f32 {
-        todo!("ENG-F48-07: rest slope field")
+        self.rest_slope
+    }
+
+    /// Slows rolling loose objects that touch near-flat ground, by editing velocities only.
+    ///
+    /// Runs after the solver so it reads the contacts the step just computed. A body is braked
+    /// when some contact point is at or inside the surface with a normal within the rest slope
+    /// of up, and no contact point is deeper than [`DEEP_CONTACT`] (that velocity is what pushes
+    /// overlapping bodies apart). Spin about the shape's axis loses `a * dt / r` and velocity
+    /// along `axis x up` loses `a * dt`, where `a = g * tan(rest_slope)`, so rolling without
+    /// slipping stays so while it slows. Velocity along up and any tipping are untouched.
+    pub(super) fn brake_rolling(&mut self, dt: f32) {
+        let gravity = self.gravity.length();
+        if self.rest_slope <= 0.0 || gravity <= 0.0 {
+            return;
+        }
+        let up = -self.gravity / gravity;
+        let slowing = gravity * self.rest_slope.tan() * dt;
+        let min_up_dot = self.rest_slope.cos();
+
+        let mut braked = Vec::new();
+        for loose in self.loose.values() {
+            let Some(radius) = loose.roll_radius else {
+                continue;
+            };
+            let Some(body) = self.rigid_body_set.get(loose.body) else {
+                continue;
+            };
+            if body.is_sleeping() || !self.on_near_flat_ground(body, up, min_up_dot) {
+                continue;
+            }
+
+            let axis = *body.rotation() * Vec3::Y;
+            let mut spin = body.angvel();
+            let about_axis = spin.dot(axis);
+            spin -= axis * (about_axis - toward_zero(about_axis, slowing / radius));
+            let mut velocity = body.linvel();
+            if let Some(rolling) = axis.cross(up).try_normalize() {
+                let along = velocity.dot(rolling);
+                velocity -= rolling * (along - toward_zero(along, slowing));
+            }
+            braked.push((loose.body, velocity, spin));
+        }
+
+        for (handle, velocity, spin) in braked {
+            if let Some(body) = self.rigid_body_set.get_mut(handle) {
+                body.set_linvel(velocity, false);
+                body.set_angvel(spin, false);
+            }
+        }
+    }
+
+    /// Whether `body` rests on ground within the rest slope of level and is not being pushed out
+    /// of a deep overlap.
+    fn on_near_flat_ground(&self, body: &RigidBody, up: Vec3, min_up_dot: f32) -> bool {
+        let mut grounded = false;
+        for &collider in body.colliders() {
+            for pair in self.narrow_phase.contact_pairs_with(collider) {
+                let into_body = if pair.collider2 == collider {
+                    1.0
+                } else {
+                    -1.0
+                };
+                for manifold in pair.manifolds() {
+                    let flat = (manifold.data.normal * into_body).dot(up) >= min_up_dot;
+                    for point in &manifold.points {
+                        if point.dist < -DEEP_CONTACT {
+                            return false;
+                        }
+                        grounded |= flat && point.dist <= 0.0;
+                    }
+                }
+            }
+        }
+        grounded
     }
 
     /// How many loose objects are alive.
@@ -240,8 +352,8 @@ impl PhysicsWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::test_support::{floor_mesh, slab_mesh, slope_mesh, TEST_TAG};
     use crate::world::RayQuery;
-    use crate::world::test_support::{TEST_TAG, floor_mesh, slab_mesh, slope_mesh};
     use moho_render_api::{WorldMesh, WorldMeshId};
     use proptest::prelude::*;
 
@@ -1179,8 +1291,9 @@ mod tests {
         for tick in 1..=300 {
             world.step(DT);
             let speed = along_the_ground(&world);
+            // Below 1 mm/s the solver's contact jitter (about 2e-5 m/s) outweighs the brake.
             assert!(
-                speed <= previous + 1e-5,
+                speed <= previous + 1e-5 || previous < 1e-3,
                 "tick {tick}: speed rose from {previous} to {speed}"
             );
             previous = speed;
@@ -1527,10 +1640,12 @@ mod tests {
             position: Vec3::new(0.0, 0.1, 0.0),
             ..LooseSpawn::new(cuboid(Vec3::new(3.0, 0.1, 1.0)), 50.0)
         });
+        // 1 m/s: a faster roll sags 5.5 mm into the box, past `DEEP_CONTACT`, which switches the
+        // brake off. Theory `v²/2a` is 0.32 m.
         let id = world.spawn_loose(&rolling_spawn(
             capsule_shape(),
             Vec3::new(-2.0, 0.2 + CAPSULE_RADIUS, 0.0),
-            2.0,
+            1.0,
         ));
 
         run(&mut world, 300);
@@ -1539,7 +1654,7 @@ mod tests {
         let travelled = state.position.x + 2.0;
         assert!(state.asleep, "the capsule rests on the box, {state:?}");
         assert!(
-            (0.5..=1.5).contains(&travelled),
+            (0.15..=0.6).contains(&travelled),
             "it rolled {travelled} m on the box top"
         );
     }
