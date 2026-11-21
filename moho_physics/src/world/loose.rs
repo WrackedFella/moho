@@ -284,7 +284,7 @@ impl PhysicsWorld {
     }
 
     /// Steepest ground, radians from level against gravity, on which loose objects are
-    /// braked to rest. 0 turns the brake off. Default 5°.
+    /// braked to rest. 0 turns the brake off.
     ///
     /// # Panics
     /// If `slope` is not finite or not in `[0, π/2)`.
@@ -1124,8 +1124,6 @@ mod tests {
             "{state:?}"
         );
     }
-
-    // Capsule, cylinder and the rest slope.
 
     use glam::Mat3;
     use std::f32::consts::{FRAC_PI_2, PI};
