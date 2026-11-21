@@ -18,6 +18,25 @@ pub const STALL_TICKS: u32 = 120;
 /// Fastest turn, in radians per second: one full turn a second.
 pub const TURN_RATE: f32 = std::f32::consts::TAU;
 
+/// Route attempts an idle pawn makes in one tick.
+const ROUTE_ATTEMPTS: usize = 4;
+
+/// Progress toward a waypoint smaller than this, in metres a tick, is none.
+const PROGRESS_EPSILON: f32 = 1e-3;
+
+/// Widest bearing off the facing, in radians, at which a pawn still walks while turning.
+const WALK_CONE: f32 = std::f32::consts::FRAC_PI_3;
+
+/// The offsets to the six cells touching a block.
+const FACES: [BlockPos; 6] = [
+    BlockPos::new(1, 0, 0),
+    BlockPos::new(-1, 0, 0),
+    BlockPos::new(0, 1, 0),
+    BlockPos::new(0, -1, 0),
+    BlockPos::new(0, 0, 1),
+    BlockPos::new(0, 0, -1),
+];
+
 /// Where a pawn stands and which way it faces.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pose {
@@ -45,6 +64,23 @@ impl Pose {
 pub struct StallGuard {
     still_ticks: u32,
     nearest: Option<f32>,
+}
+
+impl StallGuard {
+    /// Records the distance to the waypoint this tick; whether the pawn has stood still long
+    /// enough to give up.
+    fn stalled(&mut self, distance: f32) -> bool {
+        if self
+            .nearest
+            .is_none_or(|nearest| distance < nearest - PROGRESS_EPSILON)
+        {
+            self.nearest = Some(distance);
+            self.still_ticks = 0;
+        } else {
+            self.still_ticks += 1;
+        }
+        self.still_ticks >= STALL_TICKS
+    }
 }
 
 /// What a pawn is doing.
@@ -100,28 +136,10 @@ pub fn step(
     follow(pawn, pose, marks, grid)
 }
 
-/// Route attempts an idle pawn makes in one tick.
-const ROUTE_ATTEMPTS: usize = 4;
-
-/// Progress toward a waypoint smaller than this, in metres a tick, is none.
-const PROGRESS_EPSILON: f32 = 1e-3;
-
-/// Widest bearing off the facing, in radians, at which a pawn still walks while turning.
-const WALK_CONE: f32 = std::f32::consts::FRAC_PI_3;
-
 /// Whether a block of `mark` has a face open to air.
 fn exposed(grid: &VoxelGrid, mark: BlockPos) -> bool {
     FACES.iter().any(|&face| !grid.is_solid_at(mark + face))
 }
-
-const FACES: [BlockPos; 6] = [
-    BlockPos::new(1, 0, 0),
-    BlockPos::new(-1, 0, 0),
-    BlockPos::new(0, 1, 0),
-    BlockPos::new(0, -1, 0),
-    BlockPos::new(0, 0, 1),
-    BlockPos::new(0, 0, -1),
-];
 
 /// A cell a pawn can dig `mark` from: within one column of it, with the feet from one below to
 /// two above it, so the dig is inside the mining reach.
@@ -167,23 +185,6 @@ fn claim_nearest(
             };
             return;
         }
-    }
-}
-
-impl StallGuard {
-    /// Records the distance to the waypoint this tick; whether the pawn has stood still long
-    /// enough to give up.
-    fn stalled(&mut self, distance: f32) -> bool {
-        if self
-            .nearest
-            .is_none_or(|nearest| distance < nearest - PROGRESS_EPSILON)
-        {
-            self.nearest = Some(distance);
-            self.still_ticks = 0;
-        } else {
-            self.still_ticks += 1;
-        }
-        self.still_ticks >= STALL_TICKS
     }
 }
 

@@ -3,8 +3,17 @@
 //! Handles per-tick game state updates and per-frame lighting and HUD data.
 
 use crate::App;
-use crate::app::event_loop::event_processor::{lod_for_chunk, lod_player_chunk};
+use crate::app::event_loop::event_processor::{
+    lod_for_chunk, lod_player_chunk, publish_dig_cue, publish_removal,
+};
 use crate::app::input_state::Designation;
+use flagstone_game::colony::Colony;
+use flagstone_game::controller::CameraMode;
+use flagstone_game::jobs::{self, Job, JobAction, Pose, steer};
+use flagstone_game::pawn::MINE_REACH;
+use flagstone_game::selection::{PAWN_HALF_EXTENTS, PLAYER_PAWN};
+use flagstone_voxel::BlockPos;
+use glam::Vec3;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -92,9 +101,7 @@ impl FrameProcessor {
     /// Runs the job of the pawn the player is not possessing: it walks with the physics step and
     /// digs with the mining action a possessed pawn uses. An idle pawn is left exactly as it is.
     fn update_pawn_job(&self, app: &mut App, dt: f32) {
-        use flagstone_game::jobs::{JobAction, Pose, steer};
-
-        if app.simulation.camera_mode() != flagstone_game::controller::CameraMode::Isometric {
+        if app.simulation.camera_mode() != CameraMode::Isometric {
             return;
         }
         let Some(state) = app.physics.player_state() else {
@@ -106,11 +113,11 @@ impl FrameProcessor {
         let Some(light_system) = app.light_system.as_ref() else {
             return;
         };
-        let feet = state.position - glam::Vec3::Y * flagstone_game::selection::PAWN_HALF_EXTENTS.y;
+        let feet = state.position - Vec3::Y * PAWN_HALF_EXTENTS.y;
         let pose = Pose::standing(feet, state.yaw);
-        let action = flagstone_game::jobs::step(
+        let action = jobs::step(
             &mut app.pawn,
-            flagstone_game::selection::PLAYER_PAWN,
+            PLAYER_PAWN,
             &pose,
             &mut app.colony.marks,
             light_system.grid(),
@@ -139,24 +146,15 @@ impl FrameProcessor {
     /// The pawn's dig: the mining action from the eye toward `aim`, its yield into the colony's
     /// stock, and the removal published like the player's. The dig ends the job; the mark stays
     /// unless the block it names is the one that went.
-    fn dig_for_colony(
-        &self,
-        app: &mut App,
-        eye: glam::Vec3,
-        aim: glam::Vec3,
-        marked: flagstone_voxel::BlockPos,
-    ) {
-        app.pawn.job = flagstone_game::jobs::Job::Idle;
+    fn dig_for_colony(&self, app: &mut App, eye: Vec3, aim: Vec3, marked: BlockPos) {
+        app.pawn.job = Job::Idle;
         app.colony.marks.release(marked.to_array());
         let Some(light_system) = app.light_system.as_mut() else {
             return;
         };
         let grid = light_system.grid_mut();
         let dir = (aim - eye).normalize_or_zero();
-        let Some(outcome) = app
-            .pawn
-            .dig(grid, eye, dir, flagstone_game::pawn::MINE_REACH)
-        else {
+        let Some(outcome) = app.pawn.dig(grid, eye, dir, MINE_REACH) else {
             tracing::debug!(block = ?marked, "pawn dig found nothing within reach");
             return;
         };
@@ -164,12 +162,8 @@ impl FrameProcessor {
         if let Some(yielded) = outcome.yield_ {
             app.colony.stock.add(yielded.resource_id, yielded.amount);
         }
-        crate::app::event_loop::event_processor::publish_removal(
-            &app.event_bus,
-            chunk_size,
-            &outcome,
-        );
-        crate::app::event_loop::event_processor::publish_dig_cue(&app.event_bus, outcome.block_pos);
+        publish_removal(&app.event_bus, chunk_size, &outcome);
+        publish_dig_cue(&app.event_bus, outcome.block_pos);
     }
 
     fn update_game_state_fps_kcc(&self, app: &mut App, dt: f32) {
@@ -520,17 +514,20 @@ impl FrameProcessor {
                 .collect(),
             selection,
             mine_designation_active: app.input.designation == Designation::Mine,
-            colony_stock: {
-                let mut stock: Vec<(u32, u32)> = app.colony.stock.iter().collect();
-                stock.sort_by_key(|(resource_id, _)| *resource_id);
-                stock
-            },
+            colony_stock: colony_stock_by_id(&app.colony),
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {
             adapter.update_hud_data(data);
         }
     }
+}
+
+/// The colony's totals as `(resource_id, count)`, sorted by id.
+fn colony_stock_by_id(colony: &Colony) -> Vec<(u32, u32)> {
+    let mut stock: Vec<(u32, u32)> = colony.stock.iter().collect();
+    stock.sort_by_key(|(resource_id, _)| *resource_id);
+    stock
 }
 
 impl Default for FrameProcessor {
