@@ -36,20 +36,34 @@ impl StreakStyle {
 }
 
 /// How far a mark floats off the surface along its normal, to avoid z-fighting.
-pub const MARK_OFFSET: f32 = 0.01;
+const MARK_OFFSET: f32 = 0.01;
 
+/// Mesh ids of the built-in effect meshes, as offsets from `EFFECT_MESH_IDS_FROM`.
+const KITE_SLOT: usize = 0;
+const STAR_SLOT: usize = 1;
+const QUAD_SLOT: usize = 2;
+const MESH_SLOTS: usize = 3;
+
+/// A muzzle flash: a camera-facing star that shrinks linearly to nothing over its lifetime.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FlashStyle {
+    /// Extent across the star at spawn.
     pub size: f32,
     pub material: u32,
+    /// How long it lives; it is gone once this has passed.
     pub lifetime: Duration,
 }
 
+/// An impact mark: a flat square on a surface that holds full size, then shrinks out.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MarkStyle {
+    /// Side length at full size.
     pub size: f32,
     pub material: u32,
+    /// How long it lives; it is gone once this has passed.
     pub lifetime: Duration,
+    /// The last stretch of the lifetime over which it shrinks to nothing; clamped to the
+    /// lifetime.
     pub fade: Duration,
 }
 
@@ -92,21 +106,101 @@ impl Streak {
     }
 }
 
+/// What a fixed-lifetime effect looks like and where it sits.
+#[derive(Debug)]
+enum Shape {
+    /// Faces the eye; shrinks linearly over the whole lifetime.
+    Flash,
+    /// Lies along the unit `normal`; holds full size until the last `fade` of its lifetime.
+    Mark { normal: Vec3, fade: Duration },
+}
+
+/// An effect that lives a fixed time from its spawn and needs no handle.
+#[derive(Debug)]
+struct Timed {
+    shape: Shape,
+    at: Vec3,
+    roll: f32,
+    size: f32,
+    material: u32,
+    lifetime: Duration,
+    age: Duration,
+}
+
+impl Timed {
+    /// The factor on `size`: 1 at full size, falling to 0 at the end of the lifetime.
+    fn scale(&self) -> f32 {
+        let remaining = self.lifetime.saturating_sub(self.age).as_secs_f32();
+        match self.shape {
+            Shape::Flash => remaining / self.lifetime.as_secs_f32(),
+            Shape::Mark { fade, .. } => {
+                let fade = fade.min(self.lifetime).as_secs_f32();
+                if fade == 0.0 {
+                    1.0
+                } else {
+                    (remaining / fade).min(1.0)
+                }
+            }
+        }
+    }
+
+    /// Where it is drawn, or `None` when it has no usable orientation (a flash with the eye
+    /// on it) or no size left.
+    fn transform(&self, eye: Vec3) -> Option<Affine3A> {
+        let scale = self.size * self.scale();
+        if scale <= 0.0 {
+            return None;
+        }
+        let (facing, centre) = match self.shape {
+            Shape::Flash => ((eye - self.at).try_normalize()?, self.at),
+            Shape::Mark { normal, .. } => (normal, self.at + normal * MARK_OFFSET),
+        };
+        let x = facing.any_orthonormal_vector();
+        let y = facing.cross(x);
+        let (sin, cos) = self.roll.sin_cos();
+        Some(Affine3A::from_cols(
+            ((x * cos + y * sin) * scale).into(),
+            ((y * cos - x * sin) * scale).into(),
+            facing.into(),
+            centre.into(),
+        ))
+    }
+
+    fn slot(&self) -> usize {
+        match self.shape {
+            Shape::Flash => STAR_SLOT,
+            Shape::Mark { .. } => QUAD_SLOT,
+        }
+    }
+
+    fn expired(&self) -> bool {
+        self.age >= self.lifetime
+    }
+}
+
+#[derive(Debug)]
+enum Effect {
+    /// Followed by a game through its handle.
+    Streak(Streak),
+    /// Spawned and forgotten; the oldest is dropped when the cap is full.
+    Timed(Timed),
+}
+
 #[derive(Debug)]
 pub struct Effects {
-    streaks: BTreeMap<EffectHandle, Streak>,
+    live: BTreeMap<EffectHandle, Effect>,
     next_handle: u64,
     cap: usize,
-    mesh_uploaded: bool,
+    mesh_uploaded: [bool; MESH_SLOTS],
 }
 
 impl Default for Effects {
     fn default() -> Self {
         Self {
-            streaks: BTreeMap::new(),
+            live: BTreeMap::new(),
             next_handle: 0,
             cap: CAPS[DEFAULT_QUALITY],
-            mesh_uploaded: false,
+            mesh_uploaded: [false; MESH_SLOTS],
         }
     }
 }
@@ -117,26 +211,102 @@ impl Effects {
     pub fn begin_streak(&mut self, style: StreakStyle) -> EffectHandle {
         let handle = EffectHandle(self.next_handle);
         self.next_handle += 1;
-        if self.streaks.len() < self.cap {
-            self.streaks.insert(
+        if self.live.len() < self.cap {
+            self.live.insert(
                 handle,
-                Streak {
+                Effect::Streak(Streak {
                     style,
                     head: Vec3::ZERO,
                     heading: None,
                     placed_this_frame: false,
                     age: Duration::ZERO,
                     ended_at: None,
-                },
+                }),
             );
         }
         handle
     }
 
+    /// Spawn a muzzle flash at `at`, turned by `roll` radians about the line of sight. It
+    /// needs no handle: it faces the eye, shrinks and expires on its own. Refused (nothing
+    /// stored or dropped) for a non-finite `at` or `roll`, a size that is not finite and
+    /// positive, or a zero lifetime.
+    pub fn flash(&mut self, at: Vec3, roll: f32, style: FlashStyle) {
+        self.spawn_timed(
+            Shape::Flash,
+            at,
+            roll,
+            style.size,
+            style.material,
+            style.lifetime,
+        );
+    }
+
+    /// Spawn an impact mark at `at` lying on the surface with unit-or-not `normal`, turned
+    /// by `roll` radians about it. It holds full size, shrinks over its last `fade` and
+    /// expires on its own. Refused like [`flash`](Self::flash), and also for a zero or
+    /// non-finite `normal`.
+    pub fn mark(&mut self, at: Vec3, normal: Vec3, roll: f32, style: MarkStyle) {
+        let Some(normal) = normal.try_normalize() else {
+            return;
+        };
+        let shape = Shape::Mark {
+            normal,
+            fade: style.fade,
+        };
+        self.spawn_timed(shape, at, roll, style.size, style.material, style.lifetime);
+    }
+
+    fn spawn_timed(
+        &mut self,
+        shape: Shape,
+        at: Vec3,
+        roll: f32,
+        size: f32,
+        material: u32,
+        lifetime: Duration,
+    ) {
+        let usable = at.is_finite()
+            && roll.is_finite()
+            && size.is_finite()
+            && size > 0.0
+            && !lifetime.is_zero();
+        if !usable || !self.make_room() {
+            return;
+        }
+        let handle = EffectHandle(self.next_handle);
+        self.next_handle += 1;
+        self.live.insert(
+            handle,
+            Effect::Timed(Timed {
+                shape,
+                at,
+                roll,
+                size,
+                material,
+                lifetime,
+                age: Duration::ZERO,
+            }),
+        );
+    }
+
+    /// Whether one more effect fits, dropping the oldest fixed-lifetime one when the cap is
+    /// full. Streaks are never dropped, so a cap full of them refuses.
+    fn make_room(&mut self) -> bool {
+        if self.live.len() < self.cap {
+            return true;
+        }
+        let oldest = self
+            .live
+            .iter()
+            .find_map(|(handle, effect)| matches!(effect, Effect::Timed(_)).then_some(*handle));
+        oldest.is_some_and(|handle| self.live.remove(&handle).is_some())
+    }
+
     /// Place the streak's head for this frame. A zero-length heading keeps the last one;
     /// a stale or unknown handle is ignored.
     pub fn place_streak(&mut self, handle: EffectHandle, head: Vec3, heading: Vec3) {
-        let Some(streak) = self.streaks.get_mut(&handle) else {
+        let Some(Effect::Streak(streak)) = self.live.get_mut(&handle) else {
             return;
         };
         streak.head = head;
@@ -144,13 +314,9 @@ impl Effects {
         streak.placed_this_frame = true;
     }
 
-    pub fn flash(&mut self, _at: Vec3, _roll: f32, _style: FlashStyle) {}
-
-    pub fn mark(&mut self, _at: Vec3, _normal: Vec3, _roll: f32, _style: MarkStyle) {}
-
     /// Start the fade; the streak then draws at its last placement until it is gone.
     pub fn end(&mut self, handle: EffectHandle) {
-        if let Some(streak) = self.streaks.get_mut(&handle) {
+        if let Some(Effect::Streak(streak)) = self.live.get_mut(&handle) {
             streak.ended_at.get_or_insert(streak.age);
         }
     }
@@ -158,13 +324,21 @@ impl Effects {
     /// Age every effect by the frame time, start the fade of any past its `max_age` and
     /// drop the finished ones.
     pub fn advance(&mut self, dt: Duration) {
-        for streak in self.streaks.values_mut() {
-            streak.age += dt;
-            if streak.age >= streak.style.max_age {
-                streak.ended_at.get_or_insert(streak.style.max_age);
+        for effect in self.live.values_mut() {
+            match effect {
+                Effect::Streak(streak) => {
+                    streak.age += dt;
+                    if streak.age >= streak.style.max_age {
+                        streak.ended_at.get_or_insert(streak.style.max_age);
+                    }
+                }
+                Effect::Timed(timed) => timed.age += dt,
             }
         }
-        self.streaks.retain(|_, streak| !streak.finished_fading());
+        self.live.retain(|_, effect| match effect {
+            Effect::Streak(streak) => !streak.finished_fading(),
+            Effect::Timed(timed) => !timed.expired(),
+        });
     }
 
     /// Cap new effects for `quality` (0 off to 4 ultra; higher clamps). Lowering keeps
@@ -173,40 +347,99 @@ impl Effects {
         self.cap = CAPS
             [usize::try_from(quality.min(MAX_QUALITY)).expect("a quality of at most 4 fits usize")];
         if self.cap == 0 {
-            self.streaks.clear();
+            self.live.clear();
         }
     }
 
     /// How many effects are live, fading ones included.
     pub fn live(&self) -> usize {
-        self.streaks.len()
+        self.live.len()
     }
 
-    /// Place every streak placed this frame or fading, unshadowed, facing `eye`.
+    /// Place every streak placed this frame or fading, and every flash and mark, unshadowed;
+    /// streaks and flashes face `eye`.
     pub(crate) fn draw(&mut self, meshes: &mut WorldMeshes, eye: Vec3) {
-        for streak in self.streaks.values_mut() {
-            let placed = std::mem::take(&mut streak.placed_this_frame);
-            if !placed && streak.ended_at.is_none() {
-                continue;
-            }
-            let Some(heading) = streak.heading else {
+        for effect in self.live.values_mut() {
+            let (slot, material, transform) = match effect {
+                Effect::Streak(streak) => {
+                    let placed = std::mem::take(&mut streak.placed_this_frame);
+                    if !placed && streak.ended_at.is_none() {
+                        continue;
+                    }
+                    let Some(heading) = streak.heading else {
+                        continue;
+                    };
+                    let width = streak.style.width * streak.width_scale();
+                    let transform =
+                        streak_transform(streak.head, heading, streak.style.length, width, eye);
+                    (KITE_SLOT, streak.style.material, transform)
+                }
+                Effect::Timed(timed) => (timed.slot(), timed.material, timed.transform(eye)),
+            };
+            let Some(transform) = transform else {
                 continue;
             };
-            let width = streak.style.width * streak.width_scale();
-            if let Some(transform) =
-                streak_transform(streak.head, heading, streak.style.length, width, eye)
-            {
-                if !std::mem::replace(&mut self.mesh_uploaded, true) {
-                    meshes.upsert_movable(WorldMeshId(EFFECT_MESH_IDS_FROM), streak_mesh());
-                }
-                meshes.place_unshadowed(
-                    WorldMeshId(EFFECT_MESH_IDS_FROM),
-                    transform,
-                    streak.style.material,
-                );
+            let id = WorldMeshId(EFFECT_MESH_IDS_FROM + u64::try_from(slot).expect("a slot fits"));
+            if !std::mem::replace(&mut self.mesh_uploaded[slot], true) {
+                meshes.upsert_movable(id, built_in_mesh(slot));
             }
+            meshes.place_unshadowed(id, transform, material);
         }
     }
+}
+
+/// The built-in mesh for a slot: the streak kite, the flash star or the mark quad.
+fn built_in_mesh(slot: usize) -> WorldMesh {
+    match slot {
+        KITE_SLOT => streak_mesh(),
+        STAR_SLOT => star_mesh(),
+        _ => quad_mesh(),
+    }
+}
+
+/// Eight vertices alternating between the outer radius 0.5 on the axes and an inner 0.1
+/// on the diagonals, in the XY plane, counter-clockwise seen from +Z.
+fn star_mesh() -> WorldMesh {
+    const OUTER: f32 = 0.5;
+    const INNER: f32 = 0.1;
+    let positions: Vec<[f32; 3]> = (0..8)
+        .map(|i: u8| {
+            let angle = std::f32::consts::FRAC_PI_4 * f32::from(i);
+            let radius = if i.is_multiple_of(2) { OUTER } else { INNER };
+            [radius * angle.cos(), radius * angle.sin(), 0.0]
+        })
+        .collect();
+    // The inner diamond (vertices 1, 3, 5, 7) as two triangles, then one triangle per tip.
+    let indices = vec![1, 3, 5, 1, 5, 7, 7, 0, 1, 1, 2, 3, 3, 4, 5, 5, 6, 7];
+    WorldMesh::new(
+        positions,
+        vec![[0.0, 0.0, 1.0]; 8],
+        vec![1.0; 8],
+        vec![[1.0; 3]; 8],
+        vec![1.0; 8],
+        vec![0; 8],
+        indices,
+    )
+    .expect("the star's channels are all eight vertices long and its indices are in range")
+}
+
+/// A unit square centred on the origin in the XY plane, counter-clockwise seen from +Z.
+fn quad_mesh() -> WorldMesh {
+    WorldMesh::new(
+        vec![
+            [-0.5, -0.5, 0.0],
+            [0.5, -0.5, 0.0],
+            [0.5, 0.5, 0.0],
+            [-0.5, 0.5, 0.0],
+        ],
+        vec![[0.0, 0.0, 1.0]; 4],
+        vec![1.0; 4],
+        vec![[1.0; 3]; 4],
+        vec![1.0; 4],
+        vec![0; 4],
+        vec![0, 1, 2, 0, 2, 3],
+    )
+    .expect("the quad's channels are all four vertices long and its indices are in range")
 }
 
 /// A kite from the tail at the origin to the head at x = 1, counter-clockwise seen from +Z.
@@ -1008,11 +1241,13 @@ mod tests {
         assert_eq!(rig.frame(EYE).len(), 1, "drawn again from a usable eye");
     }
 
-    fn refused_flash_and_mark_cases() -> Vec<(&'static str, Box<dyn Fn(&mut Effects)>)> {
+    type RefusedCase = (&'static str, Box<dyn Fn(&mut Effects)>);
+
+    fn refused_flash_and_mark_cases() -> Vec<RefusedCase> {
         let long = Duration::from_secs(10);
         let fade = Duration::from_secs(1);
         let at = Vec3::new(1.0, 2.0, 3.0);
-        let mut cases: Vec<(&'static str, Box<dyn Fn(&mut Effects)>)> = Vec::new();
+        let mut cases: Vec<RefusedCase> = Vec::new();
         for (name, normal) in [
             ("zero normal", Vec3::ZERO),
             ("nan normal", Vec3::new(f32::NAN, 0.0, 1.0)),
