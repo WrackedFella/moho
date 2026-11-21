@@ -24,7 +24,8 @@ cargo run -p searchlight           # the FPS prototype
 ## Workflow contract (used by devflow skills and agents)
 
 - **Base branch:** `dev`. Branch `<type>/<ID>-<slug>`, PR into `dev`. `main` only
-  receives promotions from `dev`. Never merge; a human does.
+  receives promotions from `dev`. No skill merges; `pr-review.yml` merges eligible
+  agent PRs into `dev` (`_todo/WORKFLOW.md`), and a human merges the rest.
 - **Feature integration branches:** until v1, card PRs go straight into `dev`. A
   feature gets `feature/<ID>-<slug>` off `dev` only when its cards can't land on
   their own (one would leave `dev` broken or half-moved without the others). That

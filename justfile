@@ -112,6 +112,28 @@ review-usage-test:
     diff "$f/total.md" <(scripts/review-usage.sh total - < "$f/records.jsonl")
     echo "review-usage: OK"
 
+# Self-test of the merge-eligibility rules: each case edits an eligible PR's facts and
+# expects the decision and its exit status (0 only for `eligible`).
+merge-eligibility-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    f=scripts/fixtures/merge-eligibility
+    facts="$(mktemp)"
+    trap 'rm -f "$facts"' EXIT
+    while IFS=$'\t' read -r edit want; do
+        [[ -z $edit || $edit == \#* ]] && continue
+        jq "$edit" "$f/eligible.json" > "$facts"
+        rc=0
+        got="$(scripts/merge-eligibility.sh decide "$facts" | paste -sd'|' | sed 's/|/ | /g')" || rc=$?
+        want_rc=1
+        [[ $want == eligible* ]] && want_rc=0
+        if [[ $got != "$want" || $rc != "$want_rc" ]]; then
+            echo "merge-eligibility [$edit]: expected '$want', got exit $rc and '$got'" >&2
+            exit 1
+        fi
+    done < "$f/cases.txt"
+    echo "merge-eligibility: OK"
+
 # Self-test of the orchestrate eval scoring against fixtures: review cause classes (a
 # needs-decision outside the Blockers section doesn't count), main-loop context per call,
 # and the report.
