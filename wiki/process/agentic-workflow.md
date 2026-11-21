@@ -1,7 +1,8 @@
 # Agentic workflow
 
-Humans decide what to build and merge the results; agents implement against approved
-specs behind deterministic gates. How the workflow itself works (flow, roles, agents,
+Humans decide what to build; agents implement against approved specs behind
+deterministic gates, and an agent PR merges itself once its checks and the automated
+review pass. How the workflow itself works (flow, roles, agents,
 skills, the project contract, coordination and runtimes) is documented in the
 [devflow wiki](https://github.com/WrackedFella/claude-skills/blob/main/wiki/README.md). This page holds what is specific to Moho; the
 switches and todo list are in [`_todo/WORKFLOW.md`](../../_todo/WORKFLOW.md).
@@ -22,7 +23,7 @@ The generic flow is in the devflow [overview](https://github.com/WrackedFella/cl
 | 3. Specify | You + Tech Lead | `/devflow:tech-lead <item>` | Tech spec, test map, gate class; ADR if needed |
 | 4. Queue | You approve; Tech Lead publishes | You approve the draft (a local file, or a `plan/` branch from a cloud thread). The same thread files the issue (`[ID] title`, full spec; cloud threads use `gh`) and deletes the draft. The Board sync workflow sets Ready from the tech spec and gate class; Agent-eligible comes from the card's board header | Issue |
 | 5. Implement | Orchestrator | `/devflow:orchestrate <issue>` | Branch from `dev`, PR into `dev` |
-| 6. Review and merge | You | Review the PR; merge | Board Status → Done (Board sync workflow) |
+| 6. Review and merge | PR review workflow, or you | `pr-review.yml` reviews the PR and merges an eligible agent PR; you merge the rest | Board Status → Done (Board sync workflow) |
 
 The wiki step of the orchestrator updates `wiki/` following the conventions in
 [`wiki/README.md`](../README.md); new pages are flagged in the PR for your review.

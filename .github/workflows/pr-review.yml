@@ -6,7 +6,9 @@ name: PR review
 # starts devflow:respond, which pushes a fix, and this workflow dispatches the next review
 # on the new head. The skill routes to a person when the loop stalls or passes the cap
 # (repository variable PR_REVIEW_MAX_ROUNDS, default 3); this workflow enforces the cap too.
-# A human merges.
+# An agent PR approved with `Sign-off: agent` is merged by the Merge step when the repository
+# variable PR_AUTOMERGE allows it and scripts/merge-eligibility.sh passes; any other PR is
+# merged by a person.
 #
 # Starts: a PR opened ready or marked ready; a dispatch with a PR number (orchestrate in
 # claude.yml dispatches round 1, since its PRs start no workflow, and this workflow
@@ -92,12 +94,13 @@ jobs:
         with:
           app-id: ${{ vars.REVIEWER_APP_ID }}
           private-key: ${{ secrets.REVIEWER_APP_KEY }}
-      # Skips a PR that is closed, has lost its head branch, changes no code, or whose head
-      # already has a review. Non-code is docs (Markdown, wiki/, _todo/, as in ci.yml's plan
-      # job) plus agent, CI and editor config (.github/, .claude/, .vscode/, .mcp.json,
-      # .gitignore). Build, lint, toolchain and gate config (Cargo.toml, Cargo.lock, *.toml,
-      # justfile, scripts/, .cargo/, .config/) is reviewed, since it changes what ships or what
-      # the gate checks. A green CI run resumes the loop only when ci-fix.yml commented since
+      # Skips a PR that is closed, has lost its head branch, links no work item (no
+      # `Closes #N`: the skill would stop there, after the toolchain install and a model
+      # start), changes no code, or whose head already has a review. Non-code is docs (Markdown, wiki/, _todo/, as in ci.yml's plan
+      # job) plus agent, CI and gate config (.github/, .claude/, .vscode/, .mcp.json,
+      # .gitignore, scripts/, justfile): a person reviews and merges those. Build, lint and
+      # toolchain config (Cargo.toml, Cargo.lock, *.toml, .cargo/, .config/) is reviewed,
+      # since it changes what ships. A green CI run resumes the loop only when ci-fix.yml commented since
       # the last review. Reviews count only from the identities this workflow posts with (the
       # reviewer App, or the Claude app without it): the repo is public, and anyone can post a
       # review that starts with `Verdict:`.
@@ -107,10 +110,11 @@ jobs:
           REVIEWERS: '["github-actions[bot]", "claude[bot]", "${{ steps.app.outputs.app-slug }}[bot]"]'
           EVENT: ${{ github.event_name }}
           RUN_HEAD: ${{ github.event.workflow_run.head_sha }}
-          NON_CODE: '\.md$|^wiki/|^_todo/|^\.github/|^\.claude/|^\.vscode/|^\.mcp\.json$|^\.gitignore$'
+          NON_CODE: '\.md$|^wiki/|^_todo/|^\.github/|^\.claude/|^\.vscode/|^\.mcp\.json$|^\.gitignore$|^scripts/|^justfile$'
         run: |
-          read -r state repo ref head_sha author < <(gh api "repos/$GH_REPO/pulls/$PR" \
-            --jq '[.state, (.head.repo.full_name // "-"), .head.ref, .head.sha, .user.login] | @tsv')
+          read -r state repo ref head_sha author issue < <(gh api "repos/$GH_REPO/pulls/$PR" \
+            --jq '[.state, (.head.repo.full_name // "-"), .head.ref, .head.sha, .user.login,
+              ([.body // "" | scan("(?i)\\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?) #([0-9]+)") | .[0]] | first // "-")] | @tsv')
           reviews=$(gh api "repos/$GH_REPO/pulls/$PR/reviews" --paginate \
             --jq ".[] | select(.user.login as \$u | $REVIEWERS | index(\$u)) | select(.body | startswith(\"Verdict:\"))" | jq -sc .)
           files=$(gh api "repos/$GH_REPO/pulls/$PR/files" --paginate --jq '.[].filename')
@@ -120,8 +124,10 @@ jobs:
             reason="PR #$PR is $state."
           elif [ "$repo" = "-" ] || ! gh api "repos/$repo/branches/$ref" --silent 2>/dev/null; then
             reason="The head branch \`$ref\` of PR #$PR no longer exists."
+          elif [ "$issue" = "-" ]; then
+            reason="PR #$PR links no work item (no \`Closes #N\` in its body)."
           elif ! grep -Evq "$NON_CODE" <<<"$files"; then
-            reason="PR #$PR changes no code (docs and config only)."
+            reason="PR #$PR changes only docs, agent, CI or gate config; a person reviews it."
           elif [ "$reviewed" -gt 0 ]; then
             reason="PR #$PR head $head_sha already has a review."
           elif [ "$EVENT" = "workflow_run" ]; then
@@ -304,6 +310,41 @@ jobs:
           rec=$(scripts/review-usage.sh record "$EXECUTION_FILE")
           { echo "### Review usage"; echo; scripts/review-usage.sh table <<<"$rec"; } >> "$GITHUB_STEP_SUMMARY"
           scripts/review-usage.sh post "$PR" <<<"$rec"
+      # Merges with the reviewer App token, since a merge by the default token starts no push
+      # CI or Board sync, and pins the reviewed SHA, so a push after the review makes the merge
+      # fail instead of landing unreviewed code. PR_AUTOMERGE: `glue` merges PRs that change
+      # no domain path, `all` merges domain PRs too, anything else merges nothing. The
+      # ruleset on `dev` still enforces the required checks.
+      - name: Merge
+        if: >-
+          steps.verdict.outputs.verdict == 'approve'
+          && steps.verdict.outputs.signoff == 'agent'
+          && steps.pr.outputs.agent == 'true'
+          && (vars.PR_AUTOMERGE == 'glue' || vars.PR_AUTOMERGE == 'all')
+          && steps.app.outputs.token != ''
+        env:
+          PR_AUTOMERGE: ${{ vars.PR_AUTOMERGE }}
+          REVIEWER: ${{ steps.app.outputs.app-slug }}[bot]
+          MERGE_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          just merge-eligibility-test
+          scripts/merge-eligibility.sh gather "$PR" > "$RUNNER_TEMP/merge-facts.json"
+          footer=$'\n\n---\n_Generated by [Claude Code](https://claude.ai/code)_'
+          if ! why=$(scripts/merge-eligibility.sh decide "$RUNNER_TEMP/merge-facts.json"); then
+            { echo "### Not merged"; echo; sed 's/^ineligible: /- /' <<<"$why"; } >> "$GITHUB_STEP_SUMMARY"
+            gh pr comment "$PR" --body "Not merged automatically; a person merges this PR:
+          $(sed 's/^ineligible: /- /' <<<"$why")
+          Run: $RUN_URL$footer"
+            exit 0
+          fi
+          if ! out=$(GH_TOKEN=$MERGE_TOKEN gh api -X PUT "repos/$GH_REPO/pulls/$PR/merge" \
+              -f sha="$HEAD_SHA" -f merge_method=squash 2>&1); then
+            echo "::error::Merge of $HEAD_SHA refused: $out"
+            gh pr comment "$PR" --body "Merge of $HEAD_SHA was refused: \`$out\`. A person merges this PR. Run: $RUN_URL$footer"
+            exit 1
+          fi
+          echo "Merged $HEAD_SHA ($why)." >> "$GITHUB_STEP_SUMMARY"
+          gh pr comment "$PR" --body "Merged $HEAD_SHA automatically: the review approved it with an agent sign-off and every merge rule passed ($why). Run: $RUN_URL$footer"
       # Only agent PRs get the fix loop; nothing pushes to a person's branch. The cap is
       # checked here as well as in the skill, so a miscounted round cannot loop.
       - name: Fix blockers
