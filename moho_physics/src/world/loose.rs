@@ -220,8 +220,8 @@ impl PhysicsWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::test_support::{floor_mesh, slab_mesh, slope_mesh, TEST_TAG};
     use crate::world::RayQuery;
-    use crate::world::test_support::{TEST_TAG, floor_mesh, slab_mesh, slope_mesh};
     use glam::Mat3;
     use moho_render_api::{WorldMesh, WorldMeshId};
     use proptest::prelude::*;
