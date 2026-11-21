@@ -1,6 +1,6 @@
-use super::query::{encode_tag, HitTag};
-use super::slide::{shape_of, WorldQueries};
 use super::PhysicsWorld;
+use super::query::{HitTag, encode_tag};
+use super::slide::{WorldQueries, shape_of};
 use crate::movement::{
     self, Anchor, CharacterBody, CharacterCommand, CharacterEffect, Impact, MoveSettings, Stance,
     Tuning,
@@ -740,11 +740,7 @@ mod tests {
             .expect("character is live");
         world.step(DT);
         let after = state(world, handle).velocity.y;
-        if after > 0.0 {
-            after - before
-        } else {
-            0.0
-        }
+        if after > 0.0 { after - before } else { 0.0 }
     }
 
     #[test]
