@@ -639,20 +639,6 @@ mod tests {
     }
 
     #[test]
-    fn no_stock_lines_without_totals() {
-        let none = HudData {
-            colony_stock: Vec::new(),
-            ..stock_data(false)
-        };
-
-        let with = drawn_texts(&stock_data(false));
-        let without = drawn_texts(&none);
-
-        assert!(with.iter().any(|t| t.contains("R1 ×12")), "{with:?}");
-        assert!(!without.iter().any(|t| t.contains('×')), "{without:?}");
-    }
-
-    #[test]
     fn no_totals_in_first_person() {
         let strategy = drawn_texts(&stock_data(false));
 

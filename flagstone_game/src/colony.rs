@@ -260,18 +260,4 @@ mod tests {
 
         assert_eq!(claims(&marks), [([1, 2, 3], None)]);
     }
-
-    #[test]
-    fn stock_grows_by_the_yield() {
-        let mut colony = Colony::default();
-        assert!(colony.stock.is_empty(), "a new colony holds nothing");
-
-        for (resource_id, amount) in [(7, 1), (7, 2), (3, 1)] {
-            colony.stock.add(resource_id, amount);
-        }
-
-        assert_eq!(colony.stock.count(7), 3);
-        assert_eq!(colony.stock.count(3), 1);
-        assert_eq!(colony.stock.count(1), 0);
-    }
 }

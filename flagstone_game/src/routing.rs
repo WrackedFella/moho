@@ -186,23 +186,15 @@ mod tests {
         let grid = ground(WIDE);
         let goal = cell(6, 1, 5);
 
-        let from_above = route_to(&grid, cell(2, 2, 5), goal);
-        let from_far_above = route_to(&grid, cell(2, 3, 5), goal);
+        for (offset, routes) in [(1, true), (2, false), (-1, true), (-2, false)] {
+            let route = route_to(&grid, cell(2, 1 + offset, 5), goal);
 
-        assert!(
-            from_above.is_some(),
-            "a pawn a block high rounds to the ground"
-        );
-        assert_eq!(from_far_above, None, "two blocks up is nowhere to stand");
-    }
-
-    #[test]
-    fn a_start_inside_the_ground_steps_up_to_the_surface() {
-        let grid = ground(WIDE);
-
-        let route = route_to(&grid, cell(2, 0, 5), cell(6, 1, 5));
-
-        assert!(route.is_some(), "a pawn on a slope sits a block low");
+            assert_eq!(
+                route.is_some(),
+                routes,
+                "a start {offset} blocks off the ground"
+            );
+        }
     }
 
     #[test]
@@ -300,10 +292,24 @@ mod tests {
             let first = route_to(&grid, start, goal);
             let second = route_to(&grid, start, goal);
 
-            prop_assert!(first.is_some(), "steps of one block never cut the field");
-            let steps = walked(first.clone().unwrap(), start).len() as i32;
-            prop_assert_eq!(steps, (from.0 - to.0).abs() + (from.1 - to.1).abs(), "a shortest route");
+            prop_assert!(first.is_some(), "there is a route to compare");
             prop_assert_eq!(first, second);
+        }
+
+        #[test]
+        fn a_route_is_as_short_as_the_manhattan_distance(
+            heights in proptest::collection::vec(0..=1i32, 64),
+            from in column(),
+            to in column(),
+        ) {
+            let grid = terrain(&heights);
+            let (start, goal) = (feet_above(&heights, from), feet_above(&heights, to));
+
+            let route = route_to(&grid, start, goal);
+
+            prop_assert!(route.is_some(), "steps of one block never cut the field");
+            let steps = walked(route.unwrap(), start).len() as i32;
+            prop_assert_eq!(steps, (from.0 - to.0).abs() + (from.1 - to.1).abs());
         }
     }
 }

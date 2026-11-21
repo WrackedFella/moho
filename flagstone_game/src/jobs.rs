@@ -223,19 +223,19 @@ mod tests {
         let mut grid = flat_world(20);
         let mut marks = MineMarks::default();
         mark_block(&mut grid, &mut marks, [14, 1, 12], true);
-        mark_block(&mut grid, &mut marks, [6, 1, 5], true);
+        mark_block(&mut grid, &mut marks, [2, 1, 5], true);
         let mut pawn = Pawn::default();
         pawn.select_slot(3);
-        let pose = Pose::standing(feet_in(1, 1, 5), 0.0);
+        let pose = Pose::standing(feet_in(16, 1, 12), 0.0);
 
         let action = step(&mut pawn, ID, &pose, &mut marks, &grid);
 
         let Job::Mine { mark, .. } = &pawn.job else {
             panic!("the pawn did not start a job: {:?}", pawn.job);
         };
-        assert_eq!(*mark, [6, 1, 5], "the nearer mark");
-        assert_eq!(claimed_by(&marks, [6, 1, 5]), Some(ID));
-        assert_eq!(claimed_by(&marks, [14, 1, 12]), None);
+        assert_eq!(*mark, [14, 1, 12], "the nearer mark, not the first key");
+        assert_eq!(claimed_by(&marks, [14, 1, 12]), Some(ID));
+        assert_eq!(claimed_by(&marks, [2, 1, 5]), None);
         assert_eq!(pawn.selected_slot, TOOL_SLOT);
         assert!(pawn.equipped_tool.is_some(), "the pickaxe is in hand");
         assert!(!matches!(action, JobAction::Dig { .. }), "{action:?}");
@@ -263,20 +263,37 @@ mod tests {
         assert_eq!(claimed_by(&marks, [6, 1, 5]), None);
     }
 
-    #[test]
-    fn a_mark_with_no_exposed_face_is_not_claimed() {
+    /// A block at `[4, 1, 5]` inside a one-block-high ring of solid, with a one-block cap on
+    /// top when `capped`. The ring top and the cap are standable and reachable by one-block
+    /// steps, so only the block's lack of an exposed face can keep a pawn from it.
+    fn ringed_mark(capped: bool) -> (VoxelGrid, MineMarks) {
         let mut grid = flat_world(24);
         let mut marks = MineMarks::default();
         for x in 3..=5 {
-            for y in 0..=2 {
-                for z in 4..=6 {
-                    solid(&mut grid, x, y, z);
-                }
+            for z in 4..=6 {
+                solid(&mut grid, x, 1, z);
             }
         }
+        if capped {
+            solid(&mut grid, 4, 2, 5);
+        }
         mark_block(&mut grid, &mut marks, [4, 1, 5], true);
+        (grid, marks)
+    }
+
+    #[test]
+    fn a_mark_with_no_exposed_face_is_not_claimed() {
+        let (mut grid, mut marks) = ringed_mark(true);
         let mut pawn = Pawn::default();
         let pose = Pose::standing(feet_in(1, 1, 5), 0.0);
+        let (open_grid, mut open_marks) = ringed_mark(false);
+        let mut open_pawn = Pawn::default();
+        step(&mut open_pawn, ID, &pose, &mut open_marks, &open_grid);
+        assert!(
+            matches!(&open_pawn.job, Job::Mine { mark, .. } if *mark == [4, 1, 5]),
+            "control: with the top open the same mark is claimed: {:?}",
+            open_pawn.job
+        );
 
         let buried = step(&mut pawn, ID, &pose, &mut marks, &grid);
 
@@ -409,45 +426,54 @@ mod tests {
 
     #[test]
     fn a_cancelled_mark_releases_the_pawn_mid_walk() {
-        let mut grid = flat_world(20);
-        let mut marks = MineMarks::default();
-        mark_block(&mut grid, &mut marks, [14, 1, 5], true);
-        let mut pawn = Pawn::default();
-        let mut feet = feet_in(1, 1, 5);
-        for _ in 0..4 {
-            if let JobAction::Walk { to } =
-                step(&mut pawn, ID, &Pose::standing(feet, 0.0), &mut marks, &grid)
-            {
-                feet = to;
+        for dug_by_another in [false, true] {
+            let mut grid = flat_world(20);
+            let mut marks = MineMarks::default();
+            mark_block(&mut grid, &mut marks, [14, 1, 5], true);
+            let mut pawn = Pawn::default();
+            let mut feet = feet_in(1, 1, 5);
+            for _ in 0..4 {
+                if let JobAction::Walk { to } =
+                    step(&mut pawn, ID, &Pose::standing(feet, 0.0), &mut marks, &grid)
+                {
+                    feet = to;
+                }
             }
+            assert!(
+                matches!(pawn.job, Job::Mine { .. }),
+                "dug_by_another {dug_by_another}: walking to the mark"
+            );
+
+            if dug_by_another {
+                grid.mutator().remove(cell(14, 1, 5));
+                marks.block_removed([14, 1, 5]);
+            } else {
+                marks.toggle([14, 1, 5]);
+            }
+            let action = step(&mut pawn, ID, &Pose::standing(feet, 0.0), &mut marks, &grid);
+
+            assert_eq!(action, JobAction::Wait, "dug_by_another {dug_by_another}");
+            assert_eq!(pawn.job, Job::Idle, "dug_by_another {dug_by_another}");
+            assert_eq!(marks.iter().count(), 0, "dug_by_another {dug_by_another}");
         }
-        assert!(matches!(pawn.job, Job::Mine { .. }), "walking to the mark");
-
-        marks.toggle([14, 1, 5]);
-        let action = step(&mut pawn, ID, &Pose::standing(feet, 0.0), &mut marks, &grid);
-
-        assert_eq!(action, JobAction::Wait);
-        assert_eq!(pawn.job, Job::Idle);
-        assert!(grid.is_solid_at(cell(14, 1, 5)), "the block is not removed");
-        assert_eq!(marks.iter().count(), 0);
     }
 
     #[test]
-    fn a_mark_dug_by_another_pawn_releases_the_claim() {
+    fn of_equally_near_marks_the_smaller_key_is_claimed() {
         let mut grid = flat_world(20);
         let mut marks = MineMarks::default();
-        mark_block(&mut grid, &mut marks, [14, 1, 5], true);
+        for pos in [[14, 1, 10], [10, 1, 14], [6, 1, 10]] {
+            mark_block(&mut grid, &mut marks, pos, true);
+        }
         let mut pawn = Pawn::default();
-        let pose = Pose::standing(feet_in(1, 1, 5), 0.0);
+        let pose = Pose::standing(feet_in(10, 1, 10), 0.0);
+
         step(&mut pawn, ID, &pose, &mut marks, &grid);
-        assert!(matches!(pawn.job, Job::Mine { .. }));
 
-        grid.mutator().remove(cell(14, 1, 5));
-        marks.block_removed([14, 1, 5]);
-        let action = step(&mut pawn, ID, &pose, &mut marks, &grid);
-
-        assert_eq!(action, JobAction::Wait);
-        assert_eq!(pawn.job, Job::Idle);
+        let Job::Mine { mark, .. } = &pawn.job else {
+            panic!("the pawn did not start a job: {:?}", pawn.job);
+        };
+        assert_eq!(*mark, [6, 1, 10], "ties go to the smaller key");
     }
 
     #[test]

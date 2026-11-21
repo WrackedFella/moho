@@ -1723,6 +1723,19 @@ mod tests {
     }
 
     #[test]
+    fn hand_mining_ore_fills_the_pawns_inventory_and_not_the_colony_stock() {
+        let mut app = app_aimed_at_block_with(Some(7));
+
+        EventProcessor::new().handle_input_event(&mut app, InputEvent::MineRequested);
+
+        assert_eq!(app.pawn.inventory.count(7), 1);
+        assert!(
+            app.colony.stock.is_empty(),
+            "only pawn jobs feed the colony"
+        );
+    }
+
+    #[test]
     fn dig_asset_exists() {
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/dig.wav");
 
