@@ -1820,4 +1820,74 @@ mod tests {
 
         assert_rows_rejected(&rows, "half height and radius must be positive and finite");
     }
+
+    #[test]
+    fn a_spinning_upright_cylinder_stops_without_producing_nan() {
+        let mut world = flat_world();
+        let start = Vec3::new(0.0, CYLINDER_HALF_HEIGHT + 0.0005, 0.0);
+        let id = world.spawn_loose(&LooseSpawn {
+            position: start,
+            angular_velocity: Vec3::new(0.0, 10.0, 0.0),
+            ..LooseSpawn::new(cylinder_shape(), 0.2)
+        });
+
+        for tick in 1..=300 {
+            world.step(DT);
+            let state = read(&world, id);
+            assert!(
+                state.linear_velocity.is_finite() && state.angular_velocity.is_finite(),
+                "tick {tick}: non-finite velocity, {state:?}"
+            );
+        }
+
+        let state = read(&world, id);
+        assert!(state.asleep, "the cylinder stops spinning, {state:?}");
+        assert!(
+            (state.position - start).length() < 0.01,
+            "it stays put, {state:?}"
+        );
+    }
+
+    #[test]
+    fn removing_a_rolling_capsule_mid_run_leaves_its_neighbour_braked() {
+        let mut world = flat_world();
+        let [removed, kept] = [-0.5, 0.5].map(|z| {
+            world.spawn_loose(&rolling_spawn(
+                capsule_shape(),
+                Vec3::new(0.0, CAPSULE_RADIUS, z),
+                2.0,
+            ))
+        });
+        run(&mut world, 30);
+
+        world.remove_loose(removed).expect("the capsule is alive");
+        run(&mut world, 300);
+
+        let state = read(&world, kept);
+        assert_eq!(world.loose(removed), None);
+        assert!(state.asleep, "the remaining capsule rests, {state:?}");
+        assert!(
+            (0.5..=1.5).contains(&state.position.x),
+            "it rolled to rest, x={}",
+            state.position.x
+        );
+    }
+
+    #[test]
+    fn a_sleeping_capsule_stays_asleep_while_the_brake_runs() {
+        let mut world = flat_world();
+        world.set_gravity(18.0);
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, CAPSULE_RADIUS, 0.0),
+            rotation: Quat::from_rotation_x(FRAC_PI_2),
+            ..LooseSpawn::new(capsule_shape(), 0.2)
+        });
+        run(&mut world, 300);
+        assert!(read(&world, id).asleep, "the capsule fell asleep");
+
+        for tick in 1..=120 {
+            world.step(DT);
+            assert!(read(&world, id).asleep, "tick {tick}: the capsule woke");
+        }
+    }
 }
