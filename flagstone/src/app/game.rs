@@ -767,6 +767,39 @@ mod tests {
     }
 
     #[test]
+    fn returning_to_first_person_starts_where_the_pawn_walked_to() {
+        use crate::app::dig_world::{self, GROUND_TOP, Layout};
+        let mut app = dig_world::world(&Layout {
+            start: glam::Vec3::new(2.5, GROUND_TOP, 8.5),
+            plateau: None,
+            block: glam::IVec3::new(14, 4, 8),
+            ore: true,
+            marked: true,
+        });
+        let start = dig_world::pawn_state(&app).position;
+        dig_world::tick(&mut app, 90);
+        let walked_to = dig_world::pawn_state(&app).position;
+        assert!(
+            (walked_to - start).length() > 1.5,
+            "the pawn walked on its own: {start:?} to {walked_to:?}"
+        );
+
+        app.toggle_camera_mode();
+        dig_world::tick(&mut app, 1);
+
+        let possessed = app.simulation.position();
+        assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
+        assert!(
+            (possessed.x - walked_to.x).abs() < 0.1 && (possessed.z - walked_to.z).abs() < 0.1,
+            "first person starts at {possessed:?}, the pawn stood at {walked_to:?}"
+        );
+        assert!(
+            (possessed.y - walked_to.y).abs() < 0.2,
+            "the eye is at the pawn's height: {possessed:?} against {walked_to:?}"
+        );
+    }
+
+    #[test]
     fn held_jump_binding_sets_the_command_jump_flag() {
         let mut app = playing_app();
         hold(&mut app, StrategyAction::Jump);

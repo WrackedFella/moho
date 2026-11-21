@@ -618,4 +618,57 @@ mod tests {
         );
         assert!(bounds.min.y < 100.0, "not at top: {bounds:?}");
     }
+
+    fn stock_data(is_fps_mode: bool) -> HudData {
+        HudData {
+            is_fps_mode,
+            colony_stock: vec![(1, 12), (3, 5)],
+            ..strategy_data(TOP)
+        }
+    }
+
+    #[test]
+    fn strategy_hud_lists_the_colony_totals() {
+        let drawn = drawn_texts(&stock_data(false));
+
+        let first = drawn.iter().position(|t| t.contains("R1 ×12"));
+        let second = drawn.iter().position(|t| t.contains("R3 ×5"));
+        assert!(first.is_some(), "no line for resource 1: {drawn:?}");
+        assert!(second.is_some(), "no line for resource 3: {drawn:?}");
+        assert!(first < second, "the totals keep the order given: {drawn:?}");
+    }
+
+    #[test]
+    fn no_stock_lines_without_totals() {
+        let none = HudData {
+            colony_stock: Vec::new(),
+            ..stock_data(false)
+        };
+
+        let with = drawn_texts(&stock_data(false));
+        let without = drawn_texts(&none);
+
+        assert!(with.iter().any(|t| t.contains("R1 ×12")), "{with:?}");
+        assert!(!without.iter().any(|t| t.contains('×')), "{without:?}");
+    }
+
+    #[test]
+    fn no_totals_in_first_person() {
+        let strategy = drawn_texts(&stock_data(false));
+
+        let first_person = drawn_texts(&stock_data(true));
+
+        assert!(
+            strategy.iter().any(|t| t.contains("R1 ×12")),
+            "the totals show in strategy: {strategy:?}"
+        );
+        assert!(
+            !first_person.iter().any(|t| t.contains("R1 ×12")),
+            "{first_person:?}"
+        );
+        assert!(
+            !first_person.iter().any(|t| t.contains("R3 ×5")),
+            "{first_person:?}"
+        );
+    }
 }

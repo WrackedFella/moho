@@ -436,6 +436,7 @@ impl FrameProcessor {
                 .collect(),
             selection,
             mine_designation_active: app.input.designation == Designation::Mine,
+            colony_stock: Vec::new(),
         };
 
         if let Ok(mut adapter) = ui_adapter.lock() {
@@ -1240,6 +1241,233 @@ mod tests {
         assert!(
             produced == painted_with(vec![(7, 2, 0.25)]),
             "a pickup with 30 of 120 ticks left is drawn at a quarter life"
+        );
+    }
+
+    use crate::app::dig_world::{self, GROUND_TOP, Layout};
+    use flagstone_game::jobs::Job;
+    use flagstone_game::pawn::{MINE_REACH, PawnId};
+    use glam::{IVec3, Vec3};
+
+    const BLOCK: IVec3 = IVec3::new(8, 4, 8);
+    /// Ticks, ten seconds of game time, a pawn gets to walk a few metres and dig.
+    const WALK_LIMIT: u32 = 600;
+
+    fn layout() -> Layout {
+        Layout {
+            start: Vec3::new(4.5, GROUND_TOP, 8.5),
+            plateau: None,
+            block: BLOCK,
+            ore: true,
+            marked: true,
+        }
+    }
+
+    pub(super) fn horizontal(a: Vec3, b: Vec3) -> f32 {
+        Vec3::new(a.x - b.x, 0.0, a.z - b.z).length()
+    }
+
+    fn mark_count(app: &App) -> usize {
+        app.colony.marks.iter().count()
+    }
+
+    #[test]
+    fn an_idle_pawn_digs_a_marked_ore_block_and_the_stock_grows_by_one() {
+        let mut app = dig_world::world(&layout());
+        let before = dig_world::pawn_state(&app).position;
+
+        let dug_at = dig_world::run_until_dug(&mut app, BLOCK, WALK_LIMIT);
+
+        assert!(
+            dug_at.is_some(),
+            "the block is still there after {WALK_LIMIT} ticks"
+        );
+        assert_eq!(app.colony.stock.count(1), 1, "one ore joins the colony");
+        assert!(
+            app.pawn.inventory.is_empty(),
+            "the job does not fill the pocket"
+        );
+        assert_eq!(mark_count(&app), 0, "the mining marker is gone");
+        let after = dig_world::pawn_state(&app).position;
+        assert!(
+            horizontal(before, after) > 1.5,
+            "the pawn walked toward the block: {before:?} to {after:?}"
+        );
+    }
+
+    #[test]
+    fn a_plain_block_is_dug_and_the_stock_is_unchanged() {
+        let mut app = dig_world::world(&Layout {
+            ore: false,
+            ..layout()
+        });
+
+        let dug_at = dig_world::run_until_dug(&mut app, BLOCK, WALK_LIMIT);
+
+        assert!(
+            dug_at.is_some(),
+            "the block is still there after {WALK_LIMIT} ticks"
+        );
+        assert!(app.colony.stock.is_empty(), "plain blocks yield nothing");
+        assert_eq!(mark_count(&app), 0, "the mining marker is gone");
+    }
+
+    #[test]
+    fn the_pawn_crosses_a_one_block_rise_without_leaving_the_ground() {
+        let block = IVec3::new(12, 4, 8);
+        let mut app = dig_world::world(&Layout {
+            plateau: Some(8..=9),
+            block,
+            ..layout()
+        });
+        let mut highest = f32::MIN;
+        let mut dug = false;
+
+        for tick in 0..WALK_LIMIT {
+            dig_world::tick(&mut app, 1);
+            let state = dig_world::pawn_state(&app);
+            highest = highest.max(state.position.y);
+            assert!(
+                tick == 0 || state.grounded,
+                "left the ground at tick {tick}: {state:?}"
+            );
+            if !dig_world::is_solid(&app, block) {
+                dug = true;
+                break;
+            }
+        }
+
+        assert!(dug, "the block beyond the rise is still there");
+        assert!(
+            highest > GROUND_TOP + 1.0 + 1.0,
+            "the pawn never stood on the rise, highest centre {highest}"
+        );
+    }
+
+    #[test]
+    fn the_pawn_digs_within_the_mining_reach() {
+        let block = IVec3::new(14, 4, 8);
+        let mut app = dig_world::world(&Layout {
+            start: Vec3::new(2.5, GROUND_TOP, 8.5),
+            block,
+            ..layout()
+        });
+        let centre = block.as_vec3() + Vec3::splat(0.5);
+        let at_start = dig_world::pawn_state(&app).position.distance(centre);
+
+        let dug_at = dig_world::run_until_dug(&mut app, block, WALK_LIMIT);
+
+        assert!(
+            at_start > MINE_REACH,
+            "the pawn starts out of reach: {at_start}"
+        );
+        assert!(dug_at.is_some(), "the block is still there");
+        let eye = dig_world::pawn_state(&app).position;
+        assert!(
+            eye.distance(centre) <= MINE_REACH,
+            "dug from {} m, reach is {MINE_REACH}",
+            eye.distance(centre)
+        );
+    }
+
+    #[test]
+    fn nothing_marked_leaves_the_pawn_where_it_was() {
+        let mut unmarked = dig_world::world(&Layout {
+            marked: false,
+            ..layout()
+        });
+        let mut marked = dig_world::world(&layout());
+        let before = dig_world::pawn_state(&unmarked);
+
+        dig_world::tick(&mut unmarked, 120);
+        dig_world::tick(&mut marked, 120);
+
+        let after = dig_world::pawn_state(&unmarked);
+        assert_eq!(after.position, before.position, "an idle pawn stays put");
+        assert!(dig_world::is_solid(&unmarked, BLOCK));
+        assert!(
+            horizontal(dig_world::pawn_state(&marked).position, before.position) > 0.5,
+            "control: the same world with a mark sends the pawn walking"
+        );
+    }
+
+    #[test]
+    fn cancelling_the_mark_stops_the_pawn_and_keeps_the_block() {
+        let block = IVec3::new(14, 4, 8);
+        let mut app = dig_world::world(&Layout {
+            start: Vec3::new(2.5, GROUND_TOP, 8.5),
+            block,
+            ..layout()
+        });
+        let start = dig_world::pawn_state(&app).position;
+        let walking = |app: &App| {
+            horizontal(dig_world::pawn_state(app).position, start) > 1.0
+                && app
+                    .colony
+                    .marks
+                    .iter()
+                    .any(|(_, mark)| mark.claimed_by == Some(PawnId(0)))
+        };
+        let mut ticks = 0;
+        while !walking(&app) && ticks < 300 {
+            dig_world::tick(&mut app, 1);
+            ticks += 1;
+        }
+        assert!(walking(&app), "the pawn never set out");
+
+        app.colony.marks.toggle(block.to_array());
+        dig_world::tick(&mut app, 3);
+        let stopped = dig_world::pawn_state(&app).position;
+        dig_world::tick(&mut app, 60);
+
+        let later = dig_world::pawn_state(&app).position;
+        assert!(stopped.distance(later) < 1e-3, "{stopped:?} then {later:?}");
+        assert!(dig_world::is_solid(&app, block), "the block is not removed");
+        assert_eq!(app.pawn.job, Job::Idle);
+        assert_eq!(mark_count(&app), 0);
+    }
+
+    #[test]
+    fn a_possessed_pawn_runs_no_job() {
+        let mut app = dig_world::world(&layout());
+        app.simulation
+            .set_camera_mode(flagstone_game::controller::CameraMode::FirstPerson);
+        let before = dig_world::pawn_state(&app).position;
+
+        dig_world::tick(&mut app, 120);
+
+        let after = dig_world::pawn_state(&app).position;
+        assert!(horizontal(before, after) < 1e-3, "{before:?} to {after:?}");
+        assert!(dig_world::is_solid(&app, BLOCK));
+        assert_eq!(app.pawn.job, Job::Idle);
+        assert!(
+            app.colony
+                .marks
+                .iter()
+                .all(|(_, mark)| mark.claimed_by.is_none()),
+            "a possessed pawn claims nothing"
+        );
+    }
+
+    #[test]
+    fn hud_data_carries_the_colony_stock() {
+        let mut app = App::headless();
+        app.colony.stock.add(5, 2);
+        app.colony.stock.add(1, 3);
+        let with_stock = produced_strategy_hud(&mut app);
+        let mut empty = App::headless();
+
+        let without_stock = produced_strategy_hud(&mut empty);
+
+        let expected = painted_strategy_hud(flagstone_ui::overlays::HudData {
+            equipped_tool_label: Some("Pickaxe".to_string()),
+            colony_stock: vec![(1, 3), (5, 2)],
+            ..strategy_hud_data(&app)
+        });
+        assert!(with_stock == expected, "not the totals sorted by resource");
+        assert!(
+            with_stock != without_stock,
+            "the colony's stock is not on the HUD data"
         );
     }
 }

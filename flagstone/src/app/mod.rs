@@ -10,6 +10,8 @@ pub mod config;
 pub mod console;
 pub mod cut_caps;
 pub mod designation_markers;
+#[cfg(test)]
+pub(crate) mod dig_world;
 pub mod event_loop;
 pub mod event_setup;
 pub mod game;
