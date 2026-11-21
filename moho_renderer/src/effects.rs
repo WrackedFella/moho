@@ -130,7 +130,8 @@ fn fade_scale(age: Duration, lifetime: Duration, fade: Duration) -> f32 {
         return 0.0;
     }
     let fade = fade.min(lifetime);
-    if fade.is_zero() || age <= lifetime.saturating_sub(fade) {
+    // A zero fade always lands here (age < lifetime), so the division below is never by zero.
+    if age <= lifetime.saturating_sub(fade) {
         return 1.0;
     }
     let left = lifetime.saturating_sub(age);
