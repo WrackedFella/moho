@@ -1785,6 +1785,73 @@ mod tests {
         );
     }
 
+    #[test]
+    fn raising_the_rest_slope_leaves_a_sleeper_asleep_and_unchanged() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&rolling_capsule(1.0));
+        let mut ticks = 0;
+        while ticks < 300 && !read(&world, id).asleep {
+            world.step(DT);
+            ticks += 1;
+        }
+        assert!(
+            read(&world, id).asleep,
+            "the capsule sleeps before the change"
+        );
+        let snapshot = bits(&read(&world, id));
+
+        world.set_rest_slope(10.0_f32.to_radians());
+        run(&mut world, 60);
+
+        let state = read(&world, id);
+        assert!(state.asleep, "the brake never wakes a sleeper, {state:?}");
+        assert_eq!(bits(&state), snapshot, "the brake never changes a sleeper");
+    }
+
+    #[test]
+    fn a_capsule_lying_down_the_slope_neither_rolls_nor_creeps() {
+        let degrees = 4.0_f32;
+        let angle = degrees.to_radians();
+        let mut world = sloped_world(degrees);
+        let normal = Vec3::new(0.0, angle.cos(), -angle.sin());
+        let spawn = LooseSpawn {
+            position: normal * CAPSULE_RADIUS,
+            rotation: Quat::from_rotation_x(FRAC_PI_2 - angle),
+            ..LooseSpawn::new(CAPSULE, 0.2)
+        };
+
+        let (moved, asleep) = settle_on_slope(&mut world, &spawn, 300);
+
+        assert!(moved < 0.02, "moved {moved} m lengthwise on 4 degrees");
+        assert!(asleep, "the capsule sleeps lengthwise on 4 degrees");
+    }
+
+    #[test]
+    fn a_standing_cylinder_spun_about_its_axis_comes_to_rest() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.08, 0.0),
+            angular_velocity: Vec3::new(0.0, 6.0, 0.0),
+            ..LooseSpawn::new(CYLINDER, 0.2)
+        });
+
+        run(&mut world, 300);
+
+        let state = read(&world, id);
+        assert!(
+            state.position.is_finite()
+                && state.linear_velocity.is_finite()
+                && state.angular_velocity.is_finite(),
+            "{state:?}"
+        );
+        assert!(state.asleep, "the spin dies out, {state:?}");
+        assert!(
+            (state.position.y - 0.08).abs() <= 0.001,
+            "it still stands, y={}",
+            state.position.y
+        );
+    }
+
     fn capsule_of(half_height: f32, radius: f32) -> LooseShape {
         LooseShape::Capsule {
             half_height,
