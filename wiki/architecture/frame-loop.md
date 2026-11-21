@@ -72,6 +72,8 @@ gets that tick's advance on top.
 
 All gameplay steps early-return unless `GameState::Playing`. `dt` is the fixed tick length.
 
+In the strategy view the pawn is not possessed, so after the camera step `update_pawn_job` runs its `Job` (`flagstone/src/app/event_loop/frame_processor.rs`). `jobs::step` yields a `JobAction`: `Walk` becomes a `CharacterCommand` (`jobs::steer`) for the physics character first person also uses, and `Dig` runs `Pawn::dig` from the eye, adds the yield to `Colony::stock` and publishes the removal and the dig cue (`publish_removal`, `publish_dig_cue` in `event_processor.rs`), the path the player's mine takes, so marks drop and chunks remesh as usual. A possessed pawn runs no job. The HUD lists `Colony::stock` (`HudData::colony_stock`).
+
 Mining publishes its block event while `process_input_events` drains, after
 `process_world_events`, so the light system queues the edit on the next tick and lights it in
 the tick after (two ticks, about 33 ms at 60 Hz).
