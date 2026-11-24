@@ -134,12 +134,11 @@ pub struct ActionMap<A: Action> {
     /// Inputs now down, each with the ticks it has been down and the modifier set its press
     /// resolved to.
     down: HashMap<Input, Down>,
-    /// Inputs some action binds with `Hold` or `Double`, per modifier set: their `Press`
-    /// bindings with that set wait to see which kind the input turns out to be.
-    split: HashSet<(Input, Modifiers)>,
-    /// The `Hold` part of `split`.
+    /// Inputs some action binds with `Hold`, per modifier set. Together with `doubles` these
+    /// are the split inputs: their `Press` bindings with that set wait to see which kind the
+    /// input turns out to be.
     holds: HashSet<(Input, Modifiers)>,
-    /// The `Double` part of `split`.
+    /// Inputs some action binds with `Double`, per modifier set.
     doubles: HashSet<(Input, Modifiers)>,
     /// Inputs released inside their window, waiting for a second press.
     awaiting: HashMap<Input, Awaiting>,
@@ -179,7 +178,6 @@ impl<A: Action> ActionMap<A> {
         };
         let holds = bound(Trigger::Hold);
         let doubles = bound(Trigger::Double);
-        let split = holds.union(&doubles).copied().collect();
         let toggled = A::ALL
             .iter()
             .filter(|&&action| bindings.mode(action) == ActionMode::Toggle)
@@ -187,7 +185,6 @@ impl<A: Action> ActionMap<A> {
         Self {
             bindings,
             down: HashMap::new(),
-            split,
             holds,
             doubles,
             awaiting: HashMap::new(),
@@ -322,7 +319,7 @@ impl<A: Action> ActionMap<A> {
         let mut taps = 0;
         for (input, modifiers) in closed {
             self.awaiting.remove(&input);
-            taps |= self.press_actions(input, modifiers);
+            taps |= self.actions_for(input, modifiers, Trigger::Press);
         }
         self.refresh_held(taps);
         let frame = ActionFrame {
@@ -361,7 +358,7 @@ impl<A: Action> ActionMap<A> {
                         spent: true,
                     },
                 );
-                return Some(self.double_actions(input, modifiers));
+                return Some(self.actions_for(input, modifiers, Trigger::Double));
             }
             let modifiers = self.resolve_modifiers(input);
             self.down.insert(
@@ -395,7 +392,7 @@ impl<A: Action> ActionMap<A> {
             return Some(0);
         }
         Some(if holds {
-            self.press_actions(input, modifiers)
+            self.actions_for(input, modifiers, Trigger::Press)
         } else {
             0
         })
@@ -423,16 +420,8 @@ impl<A: Action> ActionMap<A> {
             .unwrap_or(Modifiers::NONE)
     }
 
-    fn press_actions(&self, input: Input, modifiers: Modifiers) -> u64 {
-        self.actions_where(|b| {
-            b.input == input && b.modifiers == modifiers && b.trigger == Trigger::Press
-        })
-    }
-
-    fn double_actions(&self, input: Input, modifiers: Modifiers) -> u64 {
-        self.actions_where(|b| {
-            b.input == input && b.modifiers == modifiers && b.trigger == Trigger::Double
-        })
+    fn actions_for(&self, input: Input, modifiers: Modifiers, trigger: Trigger) -> u64 {
+        self.actions_where(|b| b.input == input && b.modifiers == modifiers && b.trigger == trigger)
     }
 
     fn actions_where(&self, matches: impl Fn(&Binding) -> bool) -> u64 {
@@ -449,7 +438,8 @@ impl<A: Action> ActionMap<A> {
             down.modifiers == binding.modifiers
                 && match binding.trigger {
                     Trigger::Press => {
-                        !self.split.contains(&set) || (!down.spent && self.window_closed(set, down))
+                        !(self.holds.contains(&set) || self.doubles.contains(&set))
+                            || (!down.spent && self.window_closed(set, down))
                     }
                     Trigger::Hold => !down.spent && down.ticks >= A::HOLD_TICKS,
                     Trigger::Double => false,
