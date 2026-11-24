@@ -4,14 +4,34 @@ use crate::menu::Rect;
 use crate::text::ScreenText;
 
 /// Black over the whole window while a menu screen is open.
-pub(crate) const DIM: egui::Color32 = egui::Color32::TRANSPARENT;
-/// The panel behind a screen's rows.
-pub(crate) const PANEL: egui::Color32 = egui::Color32::TRANSPARENT;
+pub(crate) const DIM: egui::Color32 = egui::Color32::from_rgba_premultiplied(0, 0, 0, 153);
+/// The panel behind a screen's rows: rgb(16, 16, 24) at alpha 240, premultiplied.
+pub(crate) const PANEL: egui::Color32 = egui::Color32::from_rgba_premultiplied(15, 15, 23, 240);
+/// Space between the outermost row or text and the panel's edge, in points.
+const PANEL_MARGIN: f32 = 16.0;
+const PANEL_ROUNDING: f32 = 8.0;
 
 /// Paints the dim over the whole window, then the panel, then `texts` on it. The panel is the
 /// union of `rows` and the painted texts' rects, grown by a margin and kept on screen; no rows
 /// and no texts paint no panel.
-pub(crate) fn paint_menu(_ctx: &egui::Context, _texts: &[ScreenText], _rows: &[Rect]) {}
+pub(crate) fn paint_menu(ctx: &egui::Context, texts: &[ScreenText], rows: &[Rect]) {
+    let painter = ctx.layer_painter(crate::text::screen_layer());
+    let window = ctx.content_rect();
+    painter.rect_filled(window, 0.0, DIM);
+    // The panel's size depends on the texts' laid-out rects, which exist only once painted, so
+    // its slot is reserved here to keep it under them.
+    let slot = painter.add(egui::Shape::Noop);
+    let painted = crate::text::paint(ctx, texts);
+    let bounds = rows
+        .iter()
+        .map(|r| egui::Rect::from_min_max(r.min.into(), r.max.into()))
+        .chain(painted)
+        .reduce(egui::Rect::union);
+    if let Some(bounds) = bounds {
+        let panel = bounds.expand(PANEL_MARGIN).intersect(window);
+        painter.set(slot, egui::Shape::rect_filled(panel, PANEL_ROUNDING, PANEL));
+    }
+}
 
 #[cfg(test)]
 mod tests {

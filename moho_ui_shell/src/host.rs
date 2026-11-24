@@ -9,6 +9,7 @@ use moho_render_api::{Rgba8Image, UiFrame, UiFrameSource};
 use winit::event::{KeyEvent, MouseScrollDelta, WindowEvent};
 use winit::window::Window;
 
+use crate::backdrop;
 use crate::console::{Console, Routing};
 use crate::image::{ScreenImage, ScreenImageError, ScreenImageId, ScreenImages};
 use crate::menu::MenuStack;
@@ -166,8 +167,11 @@ impl<G, A> UiShell<G, A> {
         // Game images, then game text, then the menu, so the console paints over all.
         self.images.paint(ctx);
         text::paint(ctx, &self.texts);
-        let screen = ctx.content_rect().size();
-        text::paint(ctx, &self.menu.texts([screen.x, screen.y]));
+        if self.menu.is_open() {
+            let screen = ctx.content_rect().size();
+            let size = [screen.x, screen.y];
+            backdrop::paint_menu(ctx, &self.menu.texts(size), &self.menu.visible_rows(size));
+        }
         if self.console.is_open() {
             self.console.show(ctx);
         }
@@ -1115,17 +1119,40 @@ mod tests {
         assert!(!colours.contains(&dim_colour()), "a dim is left behind");
         assert!(!colours.contains(&panel_colour()), "a panel is left behind");
         let expected = fresh.ui_frame([1280, 720]).expect("game text draws");
-        assert_eq!(
-            closed.meshes, expected.meshes,
-            "the game text draws as before"
+        // The uv coordinates depend on the font atlas, which the open menu's glyphs grew.
+        let placed = |frame: &UiFrame| -> Vec<([f32; 2], [u8; 4])> {
+            frame
+                .meshes
+                .iter()
+                .flat_map(|m| m.vertices.iter().map(|v| (v.pos, v.color)))
+                .collect()
+        };
+        let drawn = placed(&closed);
+        assert!(!drawn.is_empty(), "the game text is not drawn");
+        assert!(
+            drawn
+                .iter()
+                .any(|(_, color)| *color == [255, 255, 255, 255]),
+            "no white text vertices"
         );
+        assert_eq!(drawn, placed(&expected), "the game text draws as before");
     }
 
     #[test]
     fn the_console_draws_after_the_menu_backdrop() {
         let mut shell = menu_shell();
         shell.console_mut().open();
-        let console_fill = egui::Color32::from_rgba_premultiplied(20, 20, 30, 180).to_array();
+        // The console area fades in over wall-clock time, so its fill (20, 20, 30, 180) shows
+        // scaled by an opacity that differs from frame to frame: any colour in that ratio.
+        let is_console_fill = |c: &[u8; 4]| {
+            let scale = f32::from(c[3]) / 180.0;
+            c[3] > 0
+                && c[3] <= 180
+                && [20.0, 20.0, 30.0]
+                    .iter()
+                    .zip(c)
+                    .all(|(full, got)| (full * scale - f32::from(*got)).abs() <= 1.0)
+        };
 
         let frame = shell.ui_frame([1280, 720]).expect("an open menu draws");
 
@@ -1136,7 +1163,7 @@ mod tests {
             .expect("the menu backdrop is drawn");
         let first_console = colours
             .iter()
-            .position(|c| *c == console_fill)
+            .position(is_console_fill)
             .expect("the console fill is drawn");
         assert!(
             last_backdrop < first_console,
