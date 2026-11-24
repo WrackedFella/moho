@@ -54,7 +54,6 @@ issue implies. Agent-eligible is set by a human, through the card's board header
 - **devflow roadmap:** claude-skills issues labelled `roadmap` (features #93 GATE-F1, #94 SRC-F1, #95 COST-F1, #96 ACC-F2) hold the devflow work; the items below are the moho-only ones.
 - **Cloud devflow refresh (#109):** cloud threads start on current devflow; refresh per session, not per environment build; `scripts/cloud-tools.sh` prints the devflow version.
 - **`CI covers` (#106):** after the claude-skills change, set `CI covers: gate, mutation` in `CLAUDE.md`.
-- **`Standards` line (#105):** set `Standards: engineering-standards, rust-standards` in `CLAUDE.md` before claude-skills changes the unset default.
 - **Parallel parts eval:** add 1-2 closed cards with marked parts to `.github/eval/orchestrate-set.json`, so the `test-writer` and `implementer` path is measured as the builder path is (#101).
 - **Eval automation:** the change-gated eval queue (`eval-automation` proposal step c). Reopen lanes when the run-record digest has about 10 runs per gate class.
 - **Orchestrate eval:** measure each change to orchestrate's delegation (subagent folds, model or effort per role) on `.github/eval/orchestrate-set.json`; keep a change only if it scores no worse on gate, reference test names, review defects and skipped steps; conflicts score planning, not orchestrate. Grow the set toward 20 cards from real run failures.
