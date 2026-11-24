@@ -299,6 +299,11 @@ pub struct SearchlightSim {
     bounds: FlightBounds,
     /// The player's rounds in the air, in the order they were fired.
     rounds: Vec<RoundInFlight>,
+    /// The id the next round fired gets; wraps.
+    next_round_id: u32,
+    /// Each round's path over the last tick, for drawing. Derived read-out rebuilt every tick
+    /// from `rounds`; never saved (ADR-0040 rule 2).
+    traces: Vec<RoundTrace>,
     damage: u32,
     cooldown_ticks: u32,
     reload_ticks: u32,
@@ -458,6 +463,8 @@ impl SearchlightSim {
             ballistics: config.rounds.clone(),
             bounds: spawns.bounds,
             rounds: Vec::new(),
+            next_round_id: 0,
+            traces: Vec::new(),
             damage: config.damage,
             cooldown_ticks: config.cooldown_ticks,
             reload_ticks: config.reload_ticks,
@@ -502,6 +509,7 @@ impl SearchlightSim {
             }
             return;
         }
+        self.traces.clear();
         let firing = self.move_enemies(dt);
         let factor = if command.lean.is_some() {
             self.lean_tuning.speed_factor
@@ -825,7 +833,17 @@ impl SearchlightSim {
             tracing::warn!(%round, "the round has no ballistics, nothing flies");
             return;
         };
+        let id = self.next_round_id;
+        self.next_round_id = id.wrapping_add(1);
+        self.traces.push(RoundTrace {
+            id,
+            from: origin,
+            to: origin,
+            heading: direction,
+            ended: false,
+        });
         self.rounds.push(RoundInFlight {
+            id,
             flight: Flight::fired(origin, direction, &ballistics),
             ballistics,
             shooter: Some(self.player),
@@ -873,6 +891,16 @@ impl SearchlightSim {
         rounds.retain_mut(|round| {
             let origin = round.flight.position;
             let step = step_round(&self.world, round, gravity, dt);
+            let ended = step.strike.is_some()
+                || step.flight.is_spent()
+                || !self.bounds.contains(step.flight.position);
+            self.traces.push(RoundTrace {
+                id: round.id,
+                from: origin,
+                to: step.end,
+                heading: step.end - origin,
+                ended,
+            });
             self.land_player_shot(
                 origin,
                 step.end,
@@ -880,9 +908,6 @@ impl SearchlightSim {
                 round.from,
                 &mut round.near_missed,
             );
-            let ended = step.strike.is_some()
-                || step.flight.is_spent()
-                || !self.bounds.contains(step.flight.position);
             if !ended {
                 round.flight = step.flight;
             }
@@ -1201,7 +1226,7 @@ impl SearchlightSim {
     /// Every round's path over the last tick: those stepped, then those fired.
     #[must_use]
     pub fn round_traces(&self) -> &[RoundTrace] {
-        &[]
+        &self.traces
     }
 
     /// The player's rounds still in the air, in the order they were fired.

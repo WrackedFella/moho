@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
 use glam::{Mat4, Quat, Vec3};
 use moho_app::{Event, EventContext, FrameContext, Game, InitContext, TickContext, WindowMode};
@@ -17,7 +18,7 @@ use moho_render_api::{
     UiImage, UiMesh, UiRect, UiSampler, UiSource, UiTextureId, UiTextureSet, UiVertex, WorldMesh,
     WorldMeshId,
 };
-use moho_renderer::{LightingGpu, RendererBackend, Scene, WorldMeshes};
+use moho_renderer::{EffectHandle, LightingGpu, RendererBackend, Scene, StreakStyle, WorldMeshes};
 use searchlight_rules::{Grade, GravityScale, Lean, LeanSide};
 use winit::event::WindowEvent;
 use winit::window::{CursorGrabMode, Window};
@@ -44,7 +45,7 @@ use crate::menu::{
     MenuAction, controls_rows, controls_screen, main_screen, pause_screen, settings_screen,
 };
 use crate::mode::ArenaMode;
-use crate::sim::{Feedback, SearchlightSim, dummy_at, dummy_hit_volumes_of};
+use crate::sim::{Feedback, RoundTrace, SearchlightSim, dummy_at, dummy_hit_volumes_of};
 use crate::tag::SurfaceTag;
 use crate::tuning::SHIPPED_BODY;
 use crate::{TICK_HZ, hud};
@@ -99,6 +100,21 @@ const MARK_MATERIAL: &str = "mark";
 
 const ARENA_FLOOR_GLOSS: f32 = 0.6;
 
+/// How long a tracer streak is, in metres.
+const TRACER_LENGTH: f32 = 3.0;
+/// How wide a tracer streak is, in metres.
+const TRACER_WIDTH: f32 = 0.03;
+/// How long an ended tracer takes to fade, so a flight of two to four ticks still reads.
+const TRACER_FADE: Duration = Duration::from_millis(150);
+
+/// The streak a round in flight is drawn as.
+fn tracer_style(material: u32) -> StreakStyle {
+    StreakStyle {
+        fade: TRACER_FADE,
+        ..StreakStyle::new(TRACER_LENGTH, TRACER_WIDTH, material)
+    }
+}
+
 /// Surface colours of the greybox world.
 #[derive(Clone, Copy, Debug)]
 enum Paint {
@@ -109,6 +125,7 @@ enum Paint {
     Struck,
     Control,
     ArenaMark,
+    Tracer,
 }
 
 impl RenderMaterial for Paint {
@@ -129,6 +146,7 @@ impl RenderMaterial for Paint {
             Paint::Struck => ([1.0, 0.15, 0.1], [1.0, 0.15, 0.1], 1.0, 0.0),
             Paint::Control => ([0.25, 0.75, 0.35], [0.18, 0.55, 0.26], 0.0, 0.0),
             Paint::ArenaMark => ([0.95, 0.9, 0.2], [0.8, 0.75, 0.15], 0.0, 0.0),
+            Paint::Tracer => ([1.0, 0.85, 0.4], [1.0, 0.85, 0.4], 1.0, 0.0),
         };
         MaterialGpu {
             albedo: [top[0], top[1], top[2], gloss],
@@ -372,6 +390,9 @@ struct Stage {
     dummy_material: u32,
     struck_material: u32,
     enemy_material: u32,
+    tracer_material: u32,
+    /// The streak drawn for each round, by the sim's round id.
+    tracers: BTreeMap<u32, EffectHandle>,
     /// The hull and eye the dummies and enemies are drawn from, the sim's own.
     body: CharacterBody,
     dummy_count: usize,
@@ -395,11 +416,40 @@ impl Stage {
         self.scene.effects_mut().set_quality(quality);
     }
 
+    /// Draws one streak per round in `traces`, placed `alpha` of the way along this tick's step,
+    /// and ends the streak of each round that stopped or is no longer traced. An ended trace
+    /// stays in `traces` until the next tick, so its streak is kept, ended, until it goes.
+    fn show_tracers(&mut self, traces: &[RoundTrace], alpha: f32, frame_dt: Duration) {
+        let style = tracer_style(self.tracer_material);
+        let effects = self.scene.effects_mut();
+        for trace in traces {
+            let handle = *self
+                .tracers
+                .entry(trace.id)
+                .or_insert_with(|| effects.begin_streak(style));
+            if trace.ended {
+                effects.place_streak(handle, trace.to, trace.heading);
+                effects.end(handle);
+            } else {
+                effects.place_streak(handle, trace.from.lerp(trace.to, alpha), trace.heading);
+            }
+        }
+        self.tracers.retain(|id, handle| {
+            let traced = traces.iter().any(|trace| trace.id == *id);
+            if !traced {
+                effects.end(*handle);
+            }
+            traced
+        });
+        effects.advance(frame_dt);
+    }
+
     fn new() -> Self {
         let mut scene = Scene::new();
         let dummy_material = scene.material_table.find_or_push(&Paint::Dummy);
         let struck_material = scene.material_table.find_or_push(&Paint::Struck);
         let enemy_material = scene.material_table.find_or_push(&Paint::Enemy);
+        let tracer_material = scene.material_table.find_or_push(&Paint::Tracer);
         Self {
             scene,
             backdrop: Scene::new(),
@@ -407,6 +457,8 @@ impl Stage {
             dummy_material,
             struck_material,
             enemy_material,
+            tracer_material,
+            tracers: BTreeMap::new(),
             body: SHIPPED_BODY,
             dummy_count: 0,
             enemies: Vec::new(),
@@ -1378,6 +1430,8 @@ impl Game for SearchlightGame {
         }
         self.refresh_use_prompt(dead);
         self.stage.sync_enemies(self.mode.sim());
+        self.stage
+            .show_tracers(self.mode.sim().round_traces(), alpha, ctx.frame_dt);
         if let Some(renderer) = ctx.renderer() {
             let sim = self.mode.sim();
             let view = first_person_view(

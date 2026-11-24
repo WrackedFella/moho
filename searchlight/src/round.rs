@@ -10,6 +10,8 @@ use crate::shot::{ShotRay, Strike, resolve_shot};
 /// A round the sim is stepping.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RoundInFlight {
+    /// Names the round for as long as it flies; the sim hands them out in firing order.
+    pub id: u32,
     pub flight: Flight,
     pub ballistics: Ballistics,
     /// Whose own volumes never stop the round.
@@ -71,6 +73,7 @@ mod tests {
 
     fn round_at(position: Vec3, direction: Vec3) -> RoundInFlight {
         RoundInFlight {
+            id: 0,
             flight: Flight::fired(position, direction, &BALL),
             ballistics: BALL,
             shooter: None,
