@@ -142,7 +142,7 @@ jobs:
           fi
           if [ -n "$reason" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Skipped: $reason" >> "$GITHUB_STEP_SUMMARY"
+            echo "Skipped: $reason" | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           case "$author" in
@@ -173,9 +173,9 @@ jobs:
               if [ "$status" = "completed" ] && [ "$conclusion" != "success" ]; then
                 echo "skip=true" >> "$GITHUB_OUTPUT"
                 if [ "$AGENT" = "true" ]; then
-                  echo "Skipped: CI is $conclusion on $HEAD_SHA. CI fix fixes it, and its green run restarts this review." >> "$GITHUB_STEP_SUMMARY"
+                  echo "Skipped: CI is $conclusion on $HEAD_SHA. CI fix fixes it, and its green run restarts this review." | tee -a "$GITHUB_STEP_SUMMARY"
                 else
-                  echo "Skipped: CI is $conclusion on $HEAD_SHA. Fix it and dispatch this workflow with the PR number." >> "$GITHUB_STEP_SUMMARY"
+                  echo "Skipped: CI is $conclusion on $HEAD_SHA. Fix it and dispatch this workflow with the PR number." | tee -a "$GITHUB_STEP_SUMMARY"
                 fi
                 exit 0
               fi
@@ -254,12 +254,13 @@ jobs:
         env:
           EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
         run: |
+          set -o pipefail
           jq -r '
             [(if type == "array" then .[] else . end) | select(.type == "result") | .permission_denials // []] | add // []
             | if length == 0 then "Review run: no permission denials."
               else "### Review run: \(length) permission denial(s)\n" +
                    (map("- `\(.tool_name)`: `\(.tool_input | tostring | .[0:300])`") | join("\n"))
-              end' "$EXECUTION_FILE" >> "$GITHUB_STEP_SUMMARY"
+              end' "$EXECUTION_FILE" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Check the head did not move
         if: steps.review.outcome == 'success'
         run: |
