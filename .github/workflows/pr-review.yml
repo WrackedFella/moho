@@ -369,7 +369,7 @@ jobs:
             --max-turns 200
             --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Merge the base branch into the PR branch; never rebase or force-push. Act only on the blockers of the latest review whose first line starts with 'Verdict:'."
             --add-dir /home/runner/.claude/plugins/cache
-            --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue:*),Bash(gh pr:*),Bash(gh api:*),Edit,Write,Task,Skill"
+            --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue:*),Bash(gh pr:*),Bash(gh api:*),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/test-guard *),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/e2e-guard *),Edit,Write,Task,Skill"
       - name: Record fix usage
         if: always() && steps.respond.outputs.execution_file != ''
         continue-on-error: true
