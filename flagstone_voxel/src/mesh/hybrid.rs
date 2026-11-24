@@ -152,7 +152,9 @@ pub struct HybridMeshGenerator;
 impl HybridMeshGenerator {
     /// Generate a mesh for a chunk: the terrain surface from the terrain density field
     /// (structure blocks are air to it), then one cube per structure block in the chunk.
-    /// A chunk with neither gives an empty mesh.
+    /// A chunk with no blocks still draws the terrain faces its one-block padding reaches,
+    /// so the mesh is empty only when neither the chunk nor its padding holds terrain and
+    /// the chunk holds no structures.
     ///
     /// # Arguments
     /// * `grid` - The voxel grid
