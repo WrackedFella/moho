@@ -253,6 +253,7 @@ impl<A: Action> ActionMap<A> {
     pub fn pad_disconnected(&mut self) {
         self.sticks = [(0.0, 0.0); 2];
         self.down.retain(|input, _| !input.is_pad());
+        self.awaiting.retain(|input, _| !input.is_pad());
         self.refresh_held(0);
     }
 
@@ -2755,6 +2756,45 @@ mod tests {
                 assert!(!frame.held(*action), "{action:?}");
             }
         }
+    }
+
+    #[test]
+    fn pad_disconnected_drops_a_pending_pad_window_without_firing() {
+        let west = Binding::pad(PadInput::Button(PadButton::West));
+        let (mut bindings, _) = ActionBindings::<Weapon>::load(&BTreeMap::new());
+        bindings.set(Weapon::Reload, vec![west]);
+        bindings.set(Weapon::Check, vec![west.doubled()]);
+        let mut map = ActionMap::new(bindings, 1.0);
+        map.pad_button(PadButton::West, true);
+        map.pad_button(PadButton::West, false);
+        let tapped = map.end_tick();
+
+        map.pad_disconnected();
+        let after = ticks(&mut map, DOUBLE + 2);
+
+        for frame in std::iter::once(&tapped).chain(&after) {
+            for action in Weapon::ALL {
+                assert!(!frame.pressed(*action), "{action:?}");
+                assert!(!frame.released(*action), "{action:?}");
+                assert!(!frame.held(*action), "{action:?}");
+            }
+        }
+    }
+
+    /// The window of a key survives a pad disconnect: only pad bindings are released.
+    #[test]
+    fn pad_disconnected_keeps_a_pending_key_window() {
+        let mut map = inspector_map();
+        tap(&mut map, Key::Y);
+        let first = map.end_tick();
+
+        map.pad_disconnected();
+        tap(&mut map, Key::Y);
+        let second = map.end_tick();
+
+        assert!(!first.pressed(Inspector::Inspect));
+        assert!(second.pressed(Inspector::Inspect));
+        assert!(!second.pressed(Inspector::Reload));
     }
 
     /// `Weapon` with the hold action first, so the tapped action is not at index 0.
