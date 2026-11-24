@@ -6372,8 +6372,11 @@ mod item_lists_tests {
         press_keys(&mut game, &mut ctx, &[Key::ArrowRight]);
         press_keys(&mut game, &mut ctx, &vec![Key::ArrowDown; at]);
         press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        let picked_up = shown(&game);
+        press_keys(&mut game, &mut ctx, &[Key::ArrowLeft, Key::Enter]);
 
         let after = shown(&game).expect("the lists stay open");
+        assert_eq!(picked_up.as_ref(), Some(&before), "picking up moves no row");
         assert!(!before[0].contains(&rifle));
         assert_eq!(after[0].last(), Some(&rifle));
         assert!(!after[1].contains(&rifle));
@@ -6385,13 +6388,13 @@ mod item_lists_tests {
         let mut game = game_with_items_open();
         let clock = GameClock::default();
         let mut ctx = EventContext::new(&clock, None, None);
-        press_keys(&mut game, &mut ctx, &[Key::ArrowRight]);
+        let one_move = [Key::ArrowRight, Key::Enter, Key::ArrowLeft, Key::Enter];
         for _ in 0..6 {
-            press_keys(&mut game, &mut ctx, &[Key::Enter]);
+            press_keys(&mut game, &mut ctx, &one_move);
         }
         let full = shown(&game).expect("the items command opened the lists");
 
-        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        press_keys(&mut game, &mut ctx, &one_move);
 
         assert_eq!(full[0].len(), 8, "six moves filled the player's list");
         assert_eq!(shown(&game), Some(full));

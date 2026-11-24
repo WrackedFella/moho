@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use moho_input::bindings::{Binding, Input};
 use moho_input::key::{Key, MouseButton};
 
-use crate::lists::ItemLists;
+use crate::lists::{ItemLists, ListId};
 use crate::settings::{Control, EngineSetting, EngineSettings, GameSlider};
 use crate::text::{Anchor, ScreenText};
 
@@ -63,9 +63,10 @@ pub enum MenuEvent<A> {
     Captured { action: A, slot: Slot, input: Input },
     /// The player cleared `slot` of `action`.
     Cleared { action: A, slot: Slot },
-    /// The player asked to move `item` from list `from` to list `to` of the open item lists.
-    /// The game applies or refuses the move and answers with [`MenuStack::set_lists`].
-    MoveRequested { item: A, from: usize, to: usize },
+    /// The player asked to move `item` from list `from` to list `to` of the open item lists;
+    /// `from` and `to` always differ. The game applies or refuses the move and answers with
+    /// [`MenuStack::set_lists`].
+    MoveRequested { item: A, from: ListId, to: ListId },
 }
 
 /// An axis-aligned rectangle in logical points from the window's top left.
@@ -465,9 +466,13 @@ impl<A> MenuStack<A> {
         let _ = lists;
     }
 
-    /// Replaces the top lists screen's data, keeping the focused list (clamped) and each list's
-    /// focus (clamped) and scroll; does nothing when the top screen is not a lists screen.
-    pub fn set_lists(&mut self, lists: ItemLists<A>) {
+    /// Replaces the top lists screen's data, keeping each list's focused row (clamped) and scroll
+    /// by [`ListId`], the focused list while its id is present and a held row while its list and
+    /// item remain; does nothing when the top screen is not a lists screen.
+    pub fn set_lists(&mut self, lists: ItemLists<A>)
+    where
+        A: PartialEq,
+    {
         let _ = lists;
     }
 
@@ -2971,7 +2976,8 @@ mod tests {
 
     fn lists_of_acts(rows: [usize; 2]) -> crate::lists::ItemLists<Act> {
         use crate::lists::{ItemList, ItemLists, ListRow};
-        let list = |title: &str, count: usize, item: Act| ItemList {
+        let list = |id: u32, title: &str, count: usize, item: Act| ItemList {
+            id: ListId(id),
             title: title.to_owned(),
             rows: (0..count)
                 .map(|i| ListRow {
@@ -2984,8 +2990,8 @@ mod tests {
         };
         ItemLists {
             lists: vec![
-                list("Carried", rows[0], Act::Play),
-                list("Container", rows[1], Act::Quit),
+                list(10, "Carried", rows[0], Act::Play),
+                list(20, "Container", rows[1], Act::Quit),
             ],
             back: Some(Act::Back),
         }
@@ -3008,6 +3014,8 @@ mod tests {
             stack.is_open(),
         );
         press(&mut stack, Key::Enter);
+        press(&mut stack, Key::ArrowRight);
+        press(&mut stack, Key::Enter);
         let first_row_was_focused = move_requests(&mut stack);
         stack.push(settings_screen());
         let menu_over_lists = (stack.top_lists().is_some(), stack.top().is_some());
@@ -3025,8 +3033,8 @@ mod tests {
             first_row_was_focused,
             [MenuEvent::MoveRequested {
                 item: Act::Play,
-                from: 0,
-                to: 1
+                from: ListId(10),
+                to: ListId(20)
             }]
         );
         assert_eq!(menu_over_lists, (false, true));
@@ -3037,7 +3045,7 @@ mod tests {
     }
 
     #[test]
-    fn escape_on_lists_chooses_back() {
+    fn escape_with_nothing_held_chooses_back() {
         let with_back = lists_of_acts([1, 1]);
         let without_back = crate::lists::ItemLists {
             back: None,

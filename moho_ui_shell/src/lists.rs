@@ -2,10 +2,15 @@
 //! side by side, with a move action between them. The shell owns focus, keys, layout and drawing;
 //! the game decides what a move does and answers with new data.
 
+/// The name of a list on a lists screen. The game picks it (normally its container id) and keeps
+/// it for as long as that container is shown; ids are unique on a screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ListId(pub u32);
+
 /// A screen of lists side by side, and the action Escape chooses.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ItemLists<A> {
-    /// The lists, left to right; a list is named by its index here.
+    /// The lists, left to right.
     pub lists: Vec<ItemList<A>>,
     /// What Escape chooses on this screen; `None` makes Escape do nothing.
     pub back: Option<A>,
@@ -14,6 +19,7 @@ pub struct ItemLists<A> {
 /// One titled list of rows.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ItemList<A> {
+    pub id: ListId,
     pub title: String,
     pub rows: Vec<ListRow<A>>,
 }
@@ -35,14 +41,19 @@ mod tests {
     use moho_input::bindings::Input;
     use moho_input::key::Key;
     use proptest::prelude::{prop, prop_assert, proptest};
+    use proptest::test_runner::TestCaseError;
 
     use super::*;
     use crate::menu::{MenuEvent, MenuStack, TEXT_COLORS};
     use crate::text::{Anchor, ScreenText};
 
     const SIZE: [f32; 2] = [1280.0, 720.0];
+    const WIDE: [f32; 2] = [1600.0, 720.0];
     const COLOR: [u8; 4] = TEXT_COLORS[0];
     const FOCUS: [u8; 4] = TEXT_COLORS[1];
+
+    /// A requested move as `(item, from, to)`.
+    type Moved = (u32, ListId, ListId);
 
     fn row(label: &str, count: Option<u32>, tooltip: Option<&str>, item: u32) -> ListRow<u32> {
         ListRow {
@@ -53,8 +64,9 @@ mod tests {
         }
     }
 
-    fn list(title: &str, rows: Vec<ListRow<u32>>) -> ItemList<u32> {
+    fn list(id: u32, title: &str, rows: Vec<ListRow<u32>>) -> ItemList<u32> {
         ItemList {
+            id: ListId(id),
             title: title.to_owned(),
             rows,
         }
@@ -62,6 +74,13 @@ mod tests {
 
     fn lists_of(lists: Vec<ItemList<u32>>) -> ItemLists<u32> {
         ItemLists { lists, back: None }
+    }
+
+    fn with_back(lists: Vec<ItemList<u32>>, back: u32) -> ItemLists<u32> {
+        ItemLists {
+            lists,
+            back: Some(back),
+        }
     }
 
     fn stack_of(lists: Vec<ItemList<u32>>) -> MenuStack<u32> {
@@ -87,8 +106,8 @@ mod tests {
         }
     }
 
-    /// The move requests since the last call, as `(item, from, to)`.
-    fn moves(stack: &mut MenuStack<u32>) -> Vec<(u32, usize, usize)> {
+    /// The move requests since the last call; any other event fails the test.
+    fn moves(stack: &mut MenuStack<u32>) -> Vec<Moved> {
         stack
             .take_events()
             .into_iter()
@@ -124,26 +143,47 @@ mod tests {
             .collect()
     }
 
+    /// The texts of the held row: those that start with the hold marker.
+    fn marked(stack: &MenuStack<u32>) -> Vec<String> {
+        stack
+            .texts(SIZE)
+            .into_iter()
+            .filter(|t| t.text.starts_with("» "))
+            .map(|t| t.text)
+            .collect()
+    }
+
+    fn focused_labels(stack: &MenuStack<u32>) -> String {
+        focused(&stack.texts(SIZE)).join(",")
+    }
+
     /// The centre of row `index` of any list: rows start at the top band, 32 points each.
     fn row_y(index: usize) -> f32 {
         56.0 + 32.0 * index as f32 + 16.0
     }
 
-    /// The left edge of list `index` of `of` lists: 320 wide, 64 apart, centred on the window.
-    fn list_left(index: usize, of: usize) -> f32 {
+    /// The left edge of list `index` of `of` lists in a window `width` wide: 320 wide, 64 apart,
+    /// centred on the window.
+    fn list_left_in(width: f32, index: usize, of: usize) -> f32 {
         let total = 320.0 * of as f32 + 64.0 * (of as f32 - 1.0);
-        SIZE[0] / 2.0 - total / 2.0 + 384.0 * index as f32
+        width / 2.0 - total / 2.0 + 384.0 * index as f32
     }
 
-    /// A point over the middle of row `row` of list `index` of `of` lists.
+    /// A point over the middle of row `row` of list `index` of `of` lists, in a window `width`
+    /// wide.
+    fn over_in(width: f32, index: usize, of: usize, row: usize) -> [f32; 2] {
+        [list_left_in(width, index, of) + 160.0, row_y(row)]
+    }
+
     fn over(index: usize, of: usize, row: usize) -> [f32; 2] {
-        [list_left(index, of) + 160.0, row_y(row)]
+        over_in(SIZE[0], index, of, row)
     }
 
     #[test]
     fn a_row_draws_its_label_left_and_its_count_right() {
         let stack = stack_of(vec![
             list(
+                0,
                 "Carried",
                 vec![
                     row("Bandage", Some(3), None, 1),
@@ -151,7 +191,7 @@ mod tests {
                     row("Note", None, None, 3),
                 ],
             ),
-            list("Container", vec![row("Rifle", Some(1), None, 4)]),
+            list(1, "Container", vec![row("Rifle", Some(1), None, 4)]),
         ]);
 
         let texts = stack.texts(SIZE);
@@ -175,8 +215,8 @@ mod tests {
     #[test]
     fn each_title_is_centred_over_its_list_in_the_top_band() {
         let stack = stack_of(vec![
-            list("Carried", rows_named("a", 1, 1)),
-            list("Container", rows_named("b", 1, 2)),
+            list(0, "Carried", rows_named("a", 1, 1)),
+            list(1, "Container", rows_named("b", 1, 2)),
         ]);
 
         let texts = stack.texts(SIZE);
@@ -192,7 +232,7 @@ mod tests {
 
     #[test]
     fn down_to_the_last_row_scrolls_it_into_view() {
-        let mut stack = stack_of(vec![list("Carried", rows_named("Row ", 40, 0))]);
+        let mut stack = stack_of(vec![list(0, "Carried", rows_named("Row ", 40, 0))]);
 
         presses(&mut stack, Key::ArrowDown, 18);
         let at_the_bottom_edge = stack.texts(SIZE);
@@ -211,20 +251,103 @@ mod tests {
         assert!(!is_shown(&last, "Row 20"));
     }
 
-    #[derive(Clone, Copy, Debug)]
-    enum Move {
-        Up,
-        Down,
-        Left,
-        Right,
+    /// What the property test expects the shell to show: each list's id, row count and focused
+    /// row, and the focused list.
+    #[derive(Clone, Debug)]
+    struct Model {
+        lists: Vec<(u32, usize, usize)>,
+        at: usize,
+        next_id: u32,
     }
 
-    fn arrow(step: u8) -> (Move, Key) {
-        match step {
-            0 => (Move::Up, Key::ArrowUp),
-            1 => (Move::Down, Key::ArrowDown),
-            2 => (Move::Left, Key::ArrowLeft),
-            _ => (Move::Right, Key::ArrowRight),
+    impl Model {
+        fn new(counts: &[usize]) -> Self {
+            Self {
+                lists: counts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &rows)| (i as u32, rows, 0))
+                    .collect(),
+                at: 0,
+                next_id: counts.len() as u32,
+            }
+        }
+
+        fn data(&self) -> ItemLists<u32> {
+            lists_of(
+                self.lists
+                    .iter()
+                    .map(|&(id, rows, _)| {
+                        list(
+                            id,
+                            &format!("T{id}"),
+                            rows_named(&format!("L{id} R"), rows, 1000 * id),
+                        )
+                    })
+                    .collect(),
+            )
+        }
+
+        fn step_row(&mut self, forward: bool) {
+            if let Some((_, rows, at)) = self.lists.get_mut(self.at)
+                && *rows > 0
+            {
+                *at = if forward {
+                    (*at + 1) % *rows
+                } else {
+                    (*at + *rows - 1) % *rows
+                };
+            }
+        }
+
+        fn step_list(&mut self, forward: bool) {
+            let len = self.lists.len();
+            if len > 0 {
+                self.at = if forward {
+                    (self.at + 1) % len
+                } else {
+                    (self.at + len - 1) % len
+                };
+            }
+        }
+
+        fn remove(&mut self, arg: usize) {
+            if self.lists.is_empty() {
+                return;
+            }
+            let gone = arg % self.lists.len();
+            self.lists.remove(gone);
+            if gone < self.at {
+                self.at -= 1;
+            }
+            self.at = self.at.min(self.lists.len().saturating_sub(1));
+        }
+
+        fn add(&mut self, rows: usize) {
+            if self.lists.len() < 6 {
+                self.lists.push((self.next_id, rows, 0));
+                self.next_id += 1;
+            }
+        }
+
+        fn check(&self, stack: &MenuStack<u32>, size: [f32; 2]) -> Result<(), TestCaseError> {
+            let Some(&(id, rows, at)) = self.lists.get(self.at) else {
+                return Ok(());
+            };
+            if rows == 0 {
+                return Ok(());
+            }
+            let label = format!("L{id} R{at:02}");
+            let texts = stack.texts(size);
+            let shown = texts.iter().find(|t| t.text == label);
+            prop_assert!(shown.is_some(), "{label} is not drawn");
+            let y = size[1] / 2.0 + shown.map_or(0.0, |t| t.offset[1]);
+            prop_assert!(
+                (56.0 + 16.0..=size[1] - 56.0 - 16.0).contains(&y),
+                "{label} is centred at {y} in a window {} tall",
+                size[1]
+            );
+            Ok(())
         }
     }
 
@@ -232,66 +355,57 @@ mod tests {
         #[test]
         fn the_focused_row_is_always_visible(
             counts in prop::collection::vec(0usize..=100, 1..=4),
-            steps in prop::collection::vec(0u8..4, 0..80),
+            steps in prop::collection::vec((0u8..6, 0usize..=100), 0..80),
             height in 480.0f32..=1440.0,
         ) {
             let size = [1280.0, height];
-            let lists: Vec<_> = counts
-                .iter()
-                .enumerate()
-                .map(|(i, &n)| {
-                    list(&format!("T{i}"), rows_named(&format!("L{i} R"), n, 1000 * i as u32))
-                })
-                .collect();
-            let mut stack = stack_of(lists);
-            let mut list_at = 0;
-            let mut row_at = vec![0usize; counts.len()];
-            let check = |stack: &MenuStack<u32>, list_at: usize, row_at: &[usize]| {
-                if counts[list_at] == 0 {
-                    return Ok(());
-                }
-                let label = format!("L{list_at} R{:02}", row_at[list_at]);
-                let texts = stack.texts(size);
-                let shown = texts.iter().find(|t| t.text == label);
-                prop_assert!(shown.is_some(), "{label} is not drawn");
-                let y = size[1] / 2.0 + shown.map_or(0.0, |t| t.offset[1]);
-                prop_assert!(
-                    (56.0 + 16.0..=size[1] - 56.0 - 16.0).contains(&y),
-                    "{label} is centred at {y} in a window {} tall",
-                    size[1]
-                );
-                Ok(())
-            };
-            check(&stack, list_at, &row_at)?;
+            let mut model = Model::new(&counts);
+            let mut stack = MenuStack::new();
+            stack.push_lists(model.data());
+            model.check(&stack, size)?;
 
-            for step in steps {
-                let (movement, key) = arrow(step);
-                let rows = counts[list_at];
-                match movement {
-                    Move::Down if rows > 0 => row_at[list_at] = (row_at[list_at] + 1) % rows,
-                    Move::Up if rows > 0 => {
-                        row_at[list_at] = (row_at[list_at] + rows - 1) % rows;
+            for (op, arg) in steps {
+                match op {
+                    0 => {
+                        model.step_row(false);
+                        press(&mut stack, Key::ArrowUp);
                     }
-                    Move::Left => list_at = (list_at + counts.len() - 1) % counts.len(),
-                    Move::Right => list_at = (list_at + 1) % counts.len(),
-                    Move::Up | Move::Down => {}
+                    1 => {
+                        model.step_row(true);
+                        press(&mut stack, Key::ArrowDown);
+                    }
+                    2 => {
+                        model.step_list(false);
+                        press(&mut stack, Key::ArrowLeft);
+                    }
+                    3 => {
+                        model.step_list(true);
+                        press(&mut stack, Key::ArrowRight);
+                    }
+                    4 => {
+                        model.remove(arg);
+                        stack.set_lists(model.data());
+                    }
+                    _ => {
+                        model.add(arg);
+                        stack.set_lists(model.data());
+                    }
                 }
-                press(&mut stack, key);
-                check(&stack, list_at, &row_at)?;
+                model.check(&stack, size)?;
             }
         }
     }
 
     #[test]
     fn up_and_down_wrap_within_the_focused_list() {
-        let mut stack = stack_of(vec![list("Carried", rows_named("a", 3, 10))]);
+        let mut stack = stack_of(vec![list(0, "Carried", rows_named("a", 3, 10))]);
 
         press(&mut stack, Key::ArrowUp);
-        let up_from_the_first = focused(&stack.texts(SIZE)).join(",");
+        let up_from_the_first = focused_labels(&stack);
         press(&mut stack, Key::ArrowDown);
-        let down_from_the_last = focused(&stack.texts(SIZE)).join(",");
+        let down_from_the_last = focused_labels(&stack);
         stack.on_key(Input::Key(Key::ArrowDown), true, true);
-        let a_repeat_still_moves = focused(&stack.texts(SIZE)).join(",");
+        let a_repeat_still_moves = focused_labels(&stack);
 
         assert_eq!(up_from_the_first, "a02");
         assert_eq!(down_from_the_last, "a00");
@@ -299,109 +413,212 @@ mod tests {
     }
 
     #[test]
-    fn enter_or_a_click_requests_a_move_and_changes_no_rows() {
+    fn pick_up_then_place_by_key_or_click_requests_a_move_and_changes_no_rows() {
         let data = lists_of(vec![
             list(
+                5,
                 "Carried",
                 vec![
                     row("Bandage", Some(3), None, 10),
                     row("Rounds", Some(60), None, 11),
                 ],
             ),
-            list("Container", vec![row("Rifle", Some(1), None, 20)]),
+            list(6, "Container", vec![row("Rifle", Some(1), None, 20)]),
         ]);
         let mut stack = MenuStack::new();
         stack.push_lists(data.clone());
 
-        press(&mut stack, Key::Enter);
-        let first = moves(&mut stack);
-        press(&mut stack, Key::ArrowDown);
-        press(&mut stack, Key::Enter);
-        let second = moves(&mut stack);
         stack.on_key(Input::Key(Key::Enter), true, true);
         stack.on_key(Input::Key(Key::Enter), false, false);
-        let repeat_and_release = moves(&mut stack);
-        stack.click(over(1, 2, 0), SIZE);
-        let click_on_the_container = moves(&mut stack);
-        stack.click(over(0, 2, 1), SIZE);
-        let click_on_the_second_row = moves(&mut stack);
+        let repeat_and_release = (moves(&mut stack), marked(&stack));
+        press(&mut stack, Key::Enter);
+        let picked = (moves(&mut stack), marked(&stack), stack.texts(SIZE));
+        press(&mut stack, Key::ArrowRight);
+        press(&mut stack, Key::Enter);
+        let placed = (moves(&mut stack), marked(&stack));
+        press(&mut stack, Key::Enter);
+        press(&mut stack, Key::ArrowLeft);
+        press(&mut stack, Key::Enter);
+        let placed_back = (moves(&mut stack), marked(&stack));
         stack.click([640.0, row_y(0)], SIZE);
-        stack.click(over(0, 2, 5), SIZE);
         stack.click([5.0, 5.0], SIZE);
-        let misses = moves(&mut stack);
+        stack.click(over(0, 2, 5), SIZE);
+        let misses = (moves(&mut stack), marked(&stack));
+        stack.click(over(0, 2, 1), SIZE);
+        let clicked_up = (moves(&mut stack), marked(&stack));
+        stack.click(over(1, 2, 5), SIZE);
+        let clicked_down_on_the_empty_space = (moves(&mut stack), marked(&stack));
+        stack.click(over(1, 2, 0), SIZE);
+        stack.click(over(0, 2, 0), SIZE);
+        let clicked_across_rows = (moves(&mut stack), marked(&stack));
 
-        assert_eq!(first, [(10, 0, 1)]);
-        assert_eq!(second, [(11, 0, 1)]);
-        assert_eq!(repeat_and_release, []);
-        assert_eq!(click_on_the_container, [(20, 1, 0)]);
-        assert_eq!(click_on_the_second_row, [(11, 0, 1)]);
-        assert_eq!(misses, []);
+        assert_eq!(repeat_and_release, (vec![], vec![]));
+        assert_eq!(picked.0, []);
+        assert_eq!(picked.1, ["» Bandage"], "the held row's label has a prefix");
+        assert_eq!(
+            find(&picked.2, "» Bandage").anchor,
+            Anchor::Left,
+            "the held label stays a left-aligned label"
+        );
+        assert!(is_shown(&picked.2, "3"), "the count is still drawn");
+        assert_eq!(placed, (vec![(10, ListId(5), ListId(6))], vec![]));
+        assert_eq!(placed_back, (vec![(20, ListId(6), ListId(5))], vec![]));
+        assert_eq!(misses, (vec![], vec![]));
+        assert_eq!(clicked_up, (vec![], vec!["» Rounds".to_owned()]));
+        assert_eq!(
+            clicked_down_on_the_empty_space,
+            (vec![(11, ListId(5), ListId(6))], vec![])
+        );
+        assert_eq!(
+            clicked_across_rows,
+            (vec![(20, ListId(6), ListId(5))], vec![])
+        );
         assert_eq!(stack.top_lists(), Some(&data), "the shell moves no row");
     }
 
     #[test]
-    fn backspace_or_a_right_click_requests_a_move_to_the_previous_list() {
-        let mut stack = stack_of(vec![
-            list("Carried", rows_named("a", 2, 10)),
-            list("Container", rows_named("b", 1, 20)),
-        ]);
+    fn a_held_row_stays_held_while_focus_moves() {
+        let mut stack = stack_of(vec![list(0, "A", rows_named("a", 3, 10))]);
 
+        press(&mut stack, Key::Enter);
         press(&mut stack, Key::ArrowDown);
-        press(&mut stack, Key::Backspace);
-        let from_the_first = moves(&mut stack);
-        stack.on_key(Input::Key(Key::Backspace), true, true);
-        let repeat = moves(&mut stack);
-        stack.right_click(over(1, 2, 0), SIZE);
-        let right_click_on_the_container = moves(&mut stack);
-        stack.right_click(over(0, 2, 0), SIZE);
-        let right_click_on_the_carried = moves(&mut stack);
-        stack.right_click([640.0, row_y(0)], SIZE);
-        stack.right_click(over(0, 2, 5), SIZE);
-        let misses = moves(&mut stack);
+        let texts = stack.texts(SIZE);
 
-        assert_eq!(
-            from_the_first,
-            [(11, 0, 1)],
-            "the first list wraps to the last"
-        );
-        assert_eq!(repeat, []);
-        assert_eq!(right_click_on_the_container, [(20, 1, 0)]);
-        assert_eq!(right_click_on_the_carried, [(10, 0, 1)]);
-        assert_eq!(misses, []);
+        assert_eq!(marked(&stack), ["» a00"]);
+        assert_eq!(find(&texts, "» a00").color, COLOR);
+        assert_eq!(focused(&texts), ["a01"]);
     }
 
     #[test]
-    fn with_one_list_left_and_right_stay_and_a_move_names_it_twice() {
-        let mut stack = stack_of(vec![list("Carried", rows_named("a", 2, 10))]);
+    fn placing_on_its_own_list_escape_or_right_click_releases_the_hold_and_requests_nothing() {
+        let mut stack = MenuStack::new();
+        stack.push_lists(with_back(
+            vec![
+                list(1, "A", rows_named("a", 3, 10)),
+                list(2, "B", rows_named("b", 2, 20)),
+            ],
+            99,
+        ));
+        let mut after = Vec::new();
+        let mut held_then = |stack: &mut MenuStack<u32>, release: &dyn Fn(&mut MenuStack<u32>)| {
+            press(stack, Key::Enter);
+            let was_held = marked(stack).len();
+            release(stack);
+            after.push((was_held, marked(stack), stack.take_events()));
+        };
 
-        press(&mut stack, Key::ArrowRight);
-        press(&mut stack, Key::ArrowLeft);
+        held_then(&mut stack, &|s| press(s, Key::Enter));
+        held_then(&mut stack, &|s| press(s, Key::Escape));
+        held_then(&mut stack, &|s| s.right_click(over(1, 2, 0), SIZE));
+        held_then(&mut stack, &|s| s.right_click([5.0, 5.0], SIZE));
+        held_then(&mut stack, &|s| s.click(over(0, 2, 2), SIZE));
+        held_then(&mut stack, &|s| s.click(over(0, 2, 7), SIZE));
+        let nothing_held = (stack.take_events(), marked(&stack));
+        stack.right_click(over(0, 2, 0), SIZE);
+        let right_click_with_nothing_held = (stack.take_events(), marked(&stack));
+        press(&mut stack, Key::Escape);
+        let escape_with_nothing_held = stack.take_events();
+
+        for (case, (was_held, still_marked, events)) in after.iter().enumerate() {
+            assert_eq!(*was_held, 1, "case {case} held a row");
+            assert_eq!(*still_marked, Vec::<String>::new(), "case {case}");
+            assert_eq!(*events, [], "case {case} requests nothing");
+        }
+        assert_eq!(nothing_held, (vec![], vec![]));
+        assert_eq!(right_click_with_nothing_held, (vec![], vec![]));
+        assert_eq!(escape_with_nothing_held, [MenuEvent::Chosen(99)]);
+    }
+
+    #[test]
+    fn a_held_row_can_be_placed_on_an_empty_list() {
+        let mut stack = stack_of(vec![
+            list(1, "Pack", rows_named("a", 2, 10)),
+            list(2, "Ground", Vec::new()),
+        ]);
+
+        press(&mut stack, Key::ArrowDown);
         press(&mut stack, Key::Enter);
-        press(&mut stack, Key::Backspace);
+        press(&mut stack, Key::ArrowRight);
+        press(&mut stack, Key::Enter);
+        let by_key = (moves(&mut stack), marked(&stack));
+        stack.click(over(0, 2, 0), SIZE);
+        stack.click(over(1, 2, 0), SIZE);
+        let by_click = (moves(&mut stack), marked(&stack));
 
-        assert_eq!(moves(&mut stack), [(10, 0, 0), (10, 0, 0)]);
+        assert_eq!(by_key, (vec![(11, ListId(1), ListId(2))], vec![]));
+        assert_eq!(by_click, (vec![(10, ListId(1), ListId(2))], vec![]));
+    }
+
+    #[test]
+    fn set_lists_keeps_the_hold_only_while_its_list_and_item_remain() {
+        let rows_of = |items: &[u32], count: Option<u32>| -> Vec<ListRow<u32>> {
+            items
+                .iter()
+                .map(|&item| row(&format!("k{item}"), count, None, item))
+                .collect()
+        };
+        let a = |items: &[u32], count| list(1, "A", rows_of(items, count));
+        let b = || list(2, "B", rows_of(&[20, 21], None));
+        let held = || {
+            let mut stack = stack_of(vec![a(&[10, 11, 12], None), b()]);
+            press(&mut stack, Key::ArrowDown);
+            press(&mut stack, Key::Enter);
+            stack
+        };
+
+        let mut moved_and_reordered = held();
+        moved_and_reordered.set_lists(lists_of(vec![
+            list(3, "C", rows_of(&[30], None)),
+            a(&[11, 10, 12], None),
+            b(),
+        ]));
+        let still_held = marked(&moved_and_reordered);
+        press(&mut moved_and_reordered, Key::ArrowRight);
+        press(&mut moved_and_reordered, Key::Enter);
+        let placed = moves(&mut moved_and_reordered);
+
+        let mut recounted = held();
+        recounted.set_lists(lists_of(vec![a(&[10, 11, 12], Some(9)), b()]));
+        let held_with_a_new_count = marked(&recounted);
+
+        let mut list_gone = held();
+        list_gone.set_lists(lists_of(vec![b()]));
+        let after_list_gone = marked(&list_gone);
+        press(&mut list_gone, Key::Enter);
+        let picks_not_places = (moves(&mut list_gone), marked(&list_gone));
+
+        let mut item_gone = held();
+        item_gone.set_lists(lists_of(vec![a(&[10, 12], None), b()]));
+        let after_item_gone = marked(&item_gone);
+        press(&mut item_gone, Key::ArrowRight);
+        press(&mut item_gone, Key::Enter);
+        let picks_not_places_either = (moves(&mut item_gone), marked(&item_gone));
+
+        assert_eq!(still_held, ["» k11"]);
+        assert_eq!(placed, [(11, ListId(1), ListId(2))]);
+        assert_eq!(held_with_a_new_count, ["» k11"]);
+        assert_eq!(after_list_gone, Vec::<String>::new());
+        assert_eq!(picks_not_places, (vec![], vec!["» k20".to_owned()]));
+        assert_eq!(after_item_gone, Vec::<String>::new());
+        assert_eq!(picks_not_places_either, (vec![], vec!["» k20".to_owned()]));
     }
 
     #[test]
     fn three_lists_lay_out_left_to_right_and_moves_name_source_and_destination() {
         let mut stack = stack_of(vec![
-            list("Rig", vec![row("Magazine", Some(2), None, 1)]),
-            list("Backpack", vec![row("Bandage", Some(3), None, 2)]),
-            list("Body", vec![row("Pistol", Some(1), None, 3)]),
+            list(7, "Rig", vec![row("Magazine", Some(2), None, 1)]),
+            list(4, "Backpack", vec![row("Bandage", Some(3), None, 2)]),
+            list(9, "Body", vec![row("Pistol", Some(1), None, 3)]),
         ]);
 
         let texts = stack.texts(SIZE);
-        let mut requested = Vec::new();
-        for (list, expected) in [(0, 1), (1, 2), (2, 3)] {
-            press(&mut stack, Key::Enter);
-            press(&mut stack, Key::Backspace);
-            requested.extend(moves(&mut stack));
-            assert_eq!(expected, requested.last().map_or(0, |m| m.0), "list {list}");
-            press(&mut stack, Key::ArrowRight);
-        }
+        presses(&mut stack, Key::ArrowRight, 2);
+        press(&mut stack, Key::Enter);
+        press(&mut stack, Key::ArrowLeft);
+        press(&mut stack, Key::Enter);
         stack.click(over(2, 3, 0), SIZE);
-        stack.right_click(over(2, 3, 0), SIZE);
-        requested.extend(moves(&mut stack));
+        stack.click(over(0, 3, 0), SIZE);
+        let requested = moves(&mut stack);
 
         for (title, label, count, left) in [
             ("Rig", "Magazine", "2", 96.0),
@@ -424,47 +641,87 @@ mod tests {
         }
         assert_eq!(
             requested,
-            [
-                (1, 0, 1),
-                (1, 0, 2),
-                (2, 1, 2),
-                (2, 1, 0),
-                (3, 2, 0),
-                (3, 2, 1),
-                (3, 2, 0),
-                (3, 2, 1),
-            ]
+            [(3, ListId(9), ListId(4)), (3, ListId(9), ListId(7))]
         );
+    }
+
+    #[test]
+    fn with_four_lists_every_ordered_pair_is_one_pick_and_one_place() {
+        let lists = || -> Vec<ItemList<u32>> {
+            (0..4)
+                .map(|i| {
+                    list(
+                        40 + i,
+                        &format!("List {i}"),
+                        vec![row(&format!("row {i}"), None, None, i + 1)],
+                    )
+                })
+                .collect()
+        };
+        let pairs: Vec<(usize, usize)> = (0..4)
+            .flat_map(|from| (0..4).map(move |to| (from, to)))
+            .filter(|(from, to)| from != to)
+            .collect();
+        let expected: Vec<Moved> = pairs
+            .iter()
+            .map(|&(from, to)| {
+                (
+                    from as u32 + 1,
+                    ListId(40 + from as u32),
+                    ListId(40 + to as u32),
+                )
+            })
+            .collect();
+        let mut by_key = stack_of(lists());
+        let mut by_click = stack_of(lists());
+
+        let mut at = 0;
+        for &(from, to) in &pairs {
+            presses(&mut by_key, Key::ArrowRight, (from + 4 - at) % 4);
+            press(&mut by_key, Key::Enter);
+            presses(&mut by_key, Key::ArrowRight, (to + 4 - from) % 4);
+            press(&mut by_key, Key::Enter);
+            at = to;
+            by_click.click(over_in(WIDE[0], from, 4, 0), WIDE);
+            by_click.click(over_in(WIDE[0], to, 4, 0), WIDE);
+        }
+
+        assert_eq!(pairs.len(), 12);
+        assert_eq!(moves(&mut by_key), expected);
+        assert_eq!(moves(&mut by_click), expected);
+        assert_eq!(marked(&by_key), Vec::<String>::new());
     }
 
     #[test]
     fn left_and_right_switch_list_and_each_keeps_its_focus() {
         let mut stack = stack_of(vec![
-            list("A", rows_named("a", 3, 10)),
-            list("B", rows_named("b", 2, 20)),
+            list(1, "A", rows_named("a", 3, 10)),
+            list(2, "B", rows_named("b", 2, 20)),
+            list(3, "C", rows_named("c", 1, 30)),
         ]);
-        let mut shown = vec![focused(&stack.texts(SIZE)).join(",")];
-        let mut requested = Vec::new();
+        let mut shown = vec![focused_labels(&stack)];
 
-        press(&mut stack, Key::ArrowDown);
-        shown.push(focused(&stack.texts(SIZE)).join(","));
-        press(&mut stack, Key::ArrowRight);
-        shown.push(focused(&stack.texts(SIZE)).join(","));
-        press(&mut stack, Key::ArrowDown);
-        shown.push(focused(&stack.texts(SIZE)).join(","));
+        for key in [
+            Key::ArrowDown,
+            Key::ArrowRight,
+            Key::ArrowDown,
+            Key::ArrowRight,
+            Key::ArrowRight,
+            Key::ArrowLeft,
+            Key::ArrowLeft,
+        ] {
+            press(&mut stack, key);
+            shown.push(focused_labels(&stack));
+        }
         press(&mut stack, Key::Enter);
-        requested.extend(moves(&mut stack));
-        press(&mut stack, Key::ArrowRight);
-        shown.push(focused(&stack.texts(SIZE)).join(","));
-        press(&mut stack, Key::Enter);
-        requested.extend(moves(&mut stack));
         press(&mut stack, Key::ArrowLeft);
-        shown.push(focused(&stack.texts(SIZE)).join(","));
         press(&mut stack, Key::Enter);
-        requested.extend(moves(&mut stack));
 
-        assert_eq!(shown, ["a00", "a01", "b00", "b01", "a01", "b01"]);
-        assert_eq!(requested, [(21, 1, 0), (11, 0, 1), (21, 1, 0)]);
+        assert_eq!(
+            shown,
+            ["a00", "a01", "b00", "b01", "c00", "a01", "c00", "b01"]
+        );
+        assert_eq!(moves(&mut stack), [(21, ListId(2), ListId(1))]);
     }
 
     #[test]
@@ -477,6 +734,7 @@ mod tests {
         ];
         let mut stack = stack_of(vec![
             list(
+                0,
                 "Carried",
                 vec![
                     row("Bandage", Some(3), Some(TIPS[0]), 1),
@@ -485,6 +743,7 @@ mod tests {
                 ],
             ),
             list(
+                1,
                 "Container",
                 vec![
                     row("Rifle", Some(1), Some(TIPS[2]), 4),
@@ -540,9 +799,9 @@ mod tests {
     fn a_middle_lists_tooltip_grows_right_from_its_own_edge() {
         let stack = {
             let mut stack = stack_of(vec![
-                list("A", rows_named("a", 1, 1)),
-                list("B", vec![row("b", None, Some("Middle"), 2)]),
-                list("C", rows_named("c", 1, 3)),
+                list(1, "A", rows_named("a", 1, 1)),
+                list(2, "B", vec![row("b", None, Some("Middle"), 2)]),
+                list(3, "C", rows_named("c", 1, 3)),
             ]);
             press(&mut stack, Key::ArrowRight);
             stack
@@ -558,49 +817,60 @@ mod tests {
     #[test]
     fn hover_focuses_the_row_and_list_under_the_cursor_and_a_miss_keeps_it() {
         let mut stack = stack_of(vec![
-            list("A", rows_named("a", 3, 10)),
-            list("B", rows_named("b", 3, 20)),
+            list(1, "A", rows_named("a", 3, 10)),
+            list(2, "B", rows_named("b", 3, 20)),
         ]);
-        let mut requested = Vec::new();
 
         stack.hover(over(1, 2, 2), SIZE);
+        let on_b2 = focused_labels(&stack);
         press(&mut stack, Key::Enter);
-        requested.extend(moves(&mut stack));
+        let held_b2 = marked(&stack);
         stack.hover([640.0, row_y(0)], SIZE);
-        stack.hover(over(1, 2, 3), SIZE);
         stack.hover([0.0, 0.0], SIZE);
         stack.hover([448.0, 20.0], SIZE);
+        let after_misses = focused_labels(&stack);
         press(&mut stack, Key::Enter);
-        requested.extend(moves(&mut stack));
+        let own_list_releases = (moves(&mut stack), marked(&stack));
         stack.hover(over(0, 2, 1), SIZE);
+        let on_a1 = focused_labels(&stack);
         press(&mut stack, Key::Enter);
-        requested.extend(moves(&mut stack));
+        stack.hover(over(1, 2, 0), SIZE);
+        let on_b0 = focused_labels(&stack);
+        press(&mut stack, Key::Enter);
 
-        assert_eq!(requested, [(22, 1, 0), (22, 1, 0), (11, 0, 1)]);
+        assert_eq!(on_b2, "b02");
+        assert_eq!(held_b2, ["» b02"]);
+        assert_eq!(after_misses, "» b02", "a miss keeps the focus where it was");
+        assert_eq!(own_list_releases, (vec![], vec![]));
+        assert_eq!(on_a1, "a01");
+        assert_eq!(on_b0, "b00");
+        assert_eq!(moves(&mut stack), [(11, ListId(1), ListId(2))]);
     }
 
     #[test]
-    fn a_focused_empty_list_draws_no_tooltip_and_enter_requests_nothing() {
+    fn a_focused_empty_list_draws_no_tooltip_and_enter_with_nothing_held_requests_nothing() {
         let mut stack = stack_of(vec![
-            list("Empty", Vec::new()),
+            list(1, "Empty", Vec::new()),
             list(
+                2,
                 "Container",
                 vec![row("Rifle", Some(1), Some("Semi-auto."), 4)],
             ),
         ]);
 
         let on_empty = stack.texts(SIZE);
-        for key in [Key::Enter, Key::Backspace, Key::ArrowUp, Key::ArrowDown] {
+        for key in [Key::Enter, Key::ArrowUp, Key::ArrowDown] {
             press(&mut stack, key);
         }
         stack.click(over(0, 2, 0), SIZE);
         stack.right_click(over(0, 2, 0), SIZE);
         stack.scroll(3.0);
-        let after_keys = (moves(&mut stack), stack.texts(SIZE));
+        let after_keys = (moves(&mut stack), marked(&stack), stack.texts(SIZE));
         press(&mut stack, Key::ArrowRight);
         let on_rifle = stack.texts(SIZE);
         press(&mut stack, Key::ArrowLeft);
         let back_on_empty = stack.texts(SIZE);
+        press(&mut stack, Key::Enter);
 
         assert!(!is_shown(&on_empty, "Semi-auto."));
         assert!(
@@ -608,95 +878,191 @@ mod tests {
             "an empty list keeps its title"
         );
         assert_eq!(after_keys.0, []);
-        assert!(!is_shown(&after_keys.1, "Semi-auto."));
+        assert_eq!(after_keys.1, Vec::<String>::new());
+        assert!(!is_shown(&after_keys.2, "Semi-auto."));
         assert!(is_shown(&on_rifle, "Semi-auto."));
         assert!(!is_shown(&back_on_empty, "Semi-auto."));
-        press(&mut stack, Key::Enter);
         assert_eq!(moves(&mut stack), []);
+        assert_eq!(marked(&stack), Vec::<String>::new());
     }
 
     #[test]
-    fn set_lists_keeps_the_list_and_clamps_focus_and_scroll() {
-        let long = |count: usize| {
-            lists_of(vec![
-                list("A", rows_named("R", count, 100)),
-                list("B", rows_named("S", 5, 200)),
-            ])
-        };
-        let mut stack = MenuStack::new();
-        stack.push_lists(long(40));
+    fn set_lists_keeps_focus_and_scroll_by_list_id_when_lists_come_and_go() {
+        let long = |id: u32, prefix: &str| list(id, prefix, rows_named(prefix, 40, 1000 * id));
+        let rig = || long(1, "r");
+        let backpack = || long(2, "b");
+        let body = || long(3, "d");
+        let ground = || long(4, "g");
+        let mut stack = stack_of(vec![rig(), backpack(), body()]);
+        presses(&mut stack, Key::ArrowRight, 2);
+        presses(&mut stack, Key::ArrowDown, 25);
+        let before = stack.texts(SIZE);
 
-        stack.scroll(10.0);
-        let scrolled = stack.texts(SIZE);
-        stack.set_lists(long(40));
-        let kept = stack.texts(SIZE);
-        stack.set_lists(long(15));
-        let clamped = stack.texts(SIZE);
-
-        assert!(!is_shown(&scrolled, "R00"));
-        assert_eq!(y_of(find(&scrolled, "R10")), row_y(0));
-        assert_eq!(y_of(find(&kept, "R10")), row_y(0), "the scroll is kept");
-        assert!(!is_shown(&kept, "R00"));
-        assert_eq!(
-            y_of(find(&clamped, "R00")),
-            row_y(0),
-            "the scroll is clamped"
-        );
-        assert_eq!(stack.top_lists(), Some(&long(15)));
-    }
-
-    #[test]
-    fn set_lists_clamps_the_focused_row_and_the_focused_list_index() {
-        let data = |a: usize, b: usize| {
-            lists_of(vec![
-                list("A", rows_named("a", a, 10)),
-                list("B", rows_named("b", b, 20)),
-            ])
-        };
-        let mut stack = MenuStack::new();
-        stack.push_lists(data(5, 5));
-        press(&mut stack, Key::ArrowRight);
-        presses(&mut stack, Key::ArrowDown, 4);
-
-        stack.set_lists(data(5, 2));
-        let clamped_row = focused(&stack.texts(SIZE)).join(",");
+        stack.set_lists(lists_of(vec![rig(), body()]));
+        let backpack_dropped = stack.texts(SIZE);
+        stack.set_lists(lists_of(vec![rig(), ground(), body()]));
+        let ground_added = stack.texts(SIZE);
         press(&mut stack, Key::Enter);
-        let on_it = moves(&mut stack);
+        press(&mut stack, Key::ArrowLeft);
+        let new_list = stack.texts(SIZE);
+        press(&mut stack, Key::Enter);
+
+        for texts in [&before, &backpack_dropped, &ground_added] {
+            assert_eq!(focused(texts), ["d25"]);
+            assert_eq!(y_of(find(texts, "d25")), row_y(18));
+            assert_eq!(y_of(find(texts, "d07")), row_y(0), "the scroll is kept");
+        }
+        assert_eq!(focused(&new_list), ["g00"], "a new id starts on row 0");
+        assert_eq!(y_of(find(&new_list, "g00")), row_y(0), "and unscrolled");
+        assert_eq!(moves(&mut stack), [(3025, ListId(3), ListId(4))]);
+    }
+
+    #[test]
+    fn set_lists_reordering_the_lists_keeps_the_held_rows_list_by_id() {
+        let mut stack = stack_of(vec![
+            list(8, "A", rows_named("a", 1, 10)),
+            list(3, "B", rows_named("b", 1, 20)),
+        ]);
+        press(&mut stack, Key::Enter);
+
+        stack.set_lists(lists_of(vec![
+            list(3, "B", rows_named("b", 1, 20)),
+            list(8, "A", rows_named("a", 1, 10)),
+        ]));
         press(&mut stack, Key::ArrowLeft);
         press(&mut stack, Key::Enter);
-        let other_list_kept = moves(&mut stack);
-        press(&mut stack, Key::ArrowRight);
-        stack.set_lists(lists_of(vec![list("A", rows_named("a", 5, 10))]));
-        let clamped_list = focused(&stack.texts(SIZE)).join(",");
-        press(&mut stack, Key::Enter);
-        let on_the_only_list = moves(&mut stack);
 
-        assert_eq!(clamped_row, "b01");
-        assert_eq!(on_it, [(21, 1, 0)]);
-        assert_eq!(other_list_kept, [(10, 0, 1)]);
-        assert_eq!(clamped_list, "a00");
-        assert_eq!(on_the_only_list, [(10, 0, 0)]);
+        assert_eq!(moves(&mut stack), [(10, ListId(8), ListId(3))]);
     }
 
     #[test]
-    fn set_lists_keeps_a_long_lists_focused_row_in_view_after_it_shrinks() {
-        let data = |count: usize| lists_of(vec![list("A", rows_named("R", count, 100))]);
+    fn set_lists_keeps_a_wheel_scrolled_lists_scroll() {
+        let data = || lists_of(vec![list(1, "A", rows_named("R", 40, 100))]);
         let mut stack = MenuStack::new();
-        stack.push_lists(data(40));
+        stack.push_lists(data());
+
+        stack.scroll(10.0);
+        stack.set_lists(data());
+        let kept = stack.texts(SIZE);
+
+        assert!(!is_shown(&kept, "R00"));
+        assert_eq!(y_of(find(&kept, "R10")), row_y(0));
+        assert_eq!(stack.top_lists(), Some(&data()));
+    }
+
+    #[test]
+    fn set_lists_clamps_each_kept_lists_focus_and_scroll() {
+        let data = |a: usize, b: usize| {
+            lists_of(vec![
+                list(1, "A", rows_named("a", a, 100)),
+                list(2, "B", rows_named("b", b, 200)),
+            ])
+        };
+        let mut stack = MenuStack::new();
+        stack.push_lists(data(40, 40));
         presses(&mut stack, Key::ArrowDown, 30);
+        press(&mut stack, Key::ArrowRight);
+        presses(&mut stack, Key::ArrowDown, 5);
 
-        stack.set_lists(data(10));
-        let texts = stack.texts(SIZE);
+        stack.set_lists(data(25, 3));
+        let focused_list = focused_labels(&stack);
+        press(&mut stack, Key::ArrowLeft);
+        let clamped_to_the_last_row = stack.texts(SIZE);
+        stack.set_lists(data(15, 3));
+        let scroll_clamped = stack.texts(SIZE);
 
-        assert_eq!(focused(&texts), ["R09"]);
-        assert_eq!(y_of(find(&texts, "R09")), row_y(9));
+        assert_eq!(focused_list, "b02");
+        assert_eq!(focused(&clamped_to_the_last_row), ["a24"]);
+        assert_eq!(y_of(find(&clamped_to_the_last_row, "a24")), 648.0);
+        assert_eq!(y_of(find(&clamped_to_the_last_row, "a06")), row_y(0));
+        assert_eq!(focused(&scroll_clamped), ["a14"]);
+        assert_eq!(y_of(find(&scroll_clamped, "a00")), row_y(0));
+        assert_eq!(y_of(find(&scroll_clamped, "a14")), row_y(14));
+        assert_eq!(stack.top_lists(), Some(&data(15, 3)));
+    }
+
+    #[test]
+    fn set_lists_with_the_focused_list_gone_focuses_the_same_position() {
+        let list_of = |id: u32| {
+            let name = ["", "a", "b", "c", "d"][id as usize];
+            list(id, name, rows_named(name, 3, 10 * id))
+        };
+        let without = |gone: u32| lists_of((1..=4).filter(|&id| id != gone).map(list_of).collect());
+        let on = |id: u32, row: usize| {
+            let mut stack = stack_of((1..=4).map(list_of).collect());
+            presses(&mut stack, Key::ArrowRight, id as usize - 1);
+            presses(&mut stack, Key::ArrowDown, row);
+            stack
+        };
+
+        let mut middle = on(3, 1);
+        middle.set_lists(without(3));
+        let middle_gone = focused_labels(&middle);
+
+        let mut last = on(4, 2);
+        last.set_lists(without(4));
+        let last_gone = focused_labels(&last);
+
+        let mut first = on(1, 1);
+        first.set_lists(without(1));
+        let first_gone = focused_labels(&first);
+
+        let mut before_focus = on(3, 1);
+        before_focus.set_lists(without(2));
+        let earlier_gone = focused_labels(&before_focus);
+
+        assert_eq!(middle_gone, "d00", "the list now at the same position");
+        assert_eq!(last_gone, "c00", "clamped to the last list");
+        assert_eq!(first_gone, "b00");
+        assert_eq!(
+            earlier_gone, "c01",
+            "a list before the focus changes nothing"
+        );
+    }
+
+    #[test]
+    fn zero_lists_draw_nothing_and_escape_chooses_back() {
+        let mut stack = MenuStack::new();
+        stack.push_lists(with_back(Vec::new(), 99));
+
+        let drawn = stack.texts(SIZE);
+        for key in [
+            Key::ArrowUp,
+            Key::ArrowDown,
+            Key::ArrowLeft,
+            Key::ArrowRight,
+            Key::Enter,
+        ] {
+            press(&mut stack, key);
+        }
+        stack.click(over(0, 1, 0), SIZE);
+        stack.right_click(over(0, 1, 0), SIZE);
+        stack.hover(over(0, 1, 0), SIZE);
+        stack.scroll(3.0);
+        let quiet = stack.take_events();
+        press(&mut stack, Key::Escape);
+        let escaped = stack.take_events();
+        stack.set_lists(with_back(vec![list(1, "A", rows_named("a", 2, 10))], 98));
+        press(&mut stack, Key::ArrowDown);
+        stack.set_lists(with_back(Vec::new(), 97));
+        let emptied = stack.texts(SIZE);
+        press(&mut stack, Key::Escape);
+        let escaped_again = stack.take_events();
+        stack.set_lists(with_back(vec![list(1, "A", rows_named("a", 2, 10))], 98));
+
+        assert_eq!(drawn, []);
+        assert_eq!(quiet, []);
+        assert_eq!(escaped, [MenuEvent::Chosen(99)]);
+        assert_eq!(emptied, []);
+        assert_eq!(escaped_again, [MenuEvent::Chosen(97)]);
+        assert_eq!(focused_labels(&stack), "a00");
     }
 
     #[test]
     fn scroll_moves_the_focused_list_and_keeps_the_remainder() {
         let mut stack = stack_of(vec![
-            list("A", rows_named("R", 40, 100)),
-            list("B", rows_named("S", 40, 200)),
+            list(1, "A", rows_named("R", 40, 100)),
+            list(2, "B", rows_named("S", 40, 200)),
         ]);
 
         stack.scroll(0.5);

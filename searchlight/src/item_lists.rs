@@ -2,7 +2,7 @@
 //! and the game's rule for moving a row between them. Stands in until the inventory owns the
 //! screen.
 
-use moho_ui_shell::ItemLists;
+use moho_ui_shell::{ItemLists, ListId};
 
 use crate::menu::MenuAction;
 
@@ -26,8 +26,9 @@ impl DemoItems {
 
     /// Moves the whole stack of item `id` from list `from` to the end of list `to`. Refuses, and
     /// changes nothing, when the item is not in `from`, a list does not exist or the player's
-    /// list would pass 8 rows; returns whether it moved.
-    pub fn move_item(&mut self, id: u32, from: usize, to: usize) -> bool {
+    /// list would pass 8 rows; returns whether it moved. The player's list is `ListId(0)` and
+    /// the container `ListId(1)`.
+    pub fn move_item(&mut self, id: u32, from: ListId, to: ListId) -> bool {
         let _ = (id, from, to);
         false
     }
@@ -94,6 +95,8 @@ mod tests {
         );
         assert!(container.len() > 40, "{} container rows", container.len());
         assert_eq!(items.lists().back, Some(MenuAction::Back));
+        let ids: Vec<ListId> = items.lists().lists.iter().map(|list| list.id).collect();
+        assert_eq!(ids, [ListId(0), ListId(1)]);
     }
 
     #[test]
@@ -117,10 +120,10 @@ mod tests {
         let rifle = id_named(&items, 1, "Rifle");
         let rounds = id_named(&items, 0, "Rounds");
 
-        let to_player = items.move_item(rifle, 1, 0);
+        let to_player = items.move_item(rifle, ListId(1), ListId(0));
         let player = shown(&items, 0);
         let container = shown(&items, 1);
-        let to_container = items.move_item(rounds, 0, 1);
+        let to_container = items.move_item(rounds, ListId(0), ListId(1));
 
         assert!(to_player);
         assert_eq!(
@@ -151,12 +154,15 @@ mod tests {
         let mut items = DemoItems::new();
         for _ in 0..6 {
             let id = first_id(&items, 1);
-            assert!(items.move_item(id, 1, 0), "the player's list has room");
+            assert!(
+                items.move_item(id, ListId(1), ListId(0)),
+                "the player's list has room"
+            );
         }
         let before = items.lists();
         let one_more = first_id(&items, 1);
 
-        let moved = items.move_item(one_more, 1, 0);
+        let moved = items.move_item(one_more, ListId(1), ListId(0));
 
         assert_eq!(before.lists[0].rows.len(), 8);
         assert!(!moved);
@@ -168,11 +174,11 @@ mod tests {
         let mut items = DemoItems::new();
         for _ in 0..6 {
             let id = first_id(&items, 1);
-            assert!(items.move_item(id, 1, 0));
+            assert!(items.move_item(id, ListId(1), ListId(0)));
         }
         let bandage = id_named(&items, 0, "Bandage");
 
-        let moved = items.move_item(bandage, 0, 1);
+        let moved = items.move_item(bandage, ListId(0), ListId(1));
 
         assert!(moved);
         assert_eq!(shown(&items, 0).len(), 7);
@@ -189,10 +195,10 @@ mod tests {
         let rifle = id_named(&items, 1, "Rifle");
         let bandage = id_named(&items, 0, "Bandage");
 
-        let wrong_source = items.move_item(rifle, 0, 1);
-        let unknown_id = items.move_item(u32::MAX, 1, 0);
-        let unknown_from = items.move_item(bandage, 2, 0);
-        let unknown_to = items.move_item(bandage, 0, 2);
+        let wrong_source = items.move_item(rifle, ListId(0), ListId(1));
+        let unknown_id = items.move_item(u32::MAX, ListId(1), ListId(0));
+        let unknown_from = items.move_item(bandage, ListId(2), ListId(0));
+        let unknown_to = items.move_item(bandage, ListId(0), ListId(2));
 
         assert!(!(wrong_source || unknown_id || unknown_from || unknown_to));
         assert_eq!(items.lists(), before);
