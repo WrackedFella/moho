@@ -559,6 +559,60 @@ mod tests {
         assert_eq!(autosave_interval(&prefs), secs(120));
     }
 
+    /// Runs `run` and returns its result with what `tracing` wrote meanwhile.
+    fn logged<T>(run: impl FnOnce() -> T) -> (T, String) {
+        use std::io::Write;
+
+        struct Sink(Arc<Mutex<Vec<u8>>>);
+        impl Write for Sink {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().expect("log sink").extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let writer = Arc::clone(&buffer);
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || Sink(Arc::clone(&writer)))
+            .with_ansi(false)
+            .finish();
+        let result = tracing::subscriber::with_default(subscriber, run);
+        let bytes = buffer.lock().expect("log sink").clone();
+        (
+            result,
+            String::from_utf8(bytes).expect("log output is utf-8"),
+        )
+    }
+
+    #[test]
+    fn unparseable_autosave_seconds_warns_naming_the_key_and_value() {
+        for raw in ["soon", "-5"] {
+            let prefs = prefs_with_game_autosave_text(raw);
+
+            let (interval, log) = logged(|| autosave_interval(&prefs));
+
+            assert_eq!(interval, secs(120), "{raw}");
+            assert!(log.contains("WARN"), "{raw}: {log}");
+            assert!(log.contains("[game] autosave_seconds"), "{raw}: {log}");
+            assert!(log.contains(raw), "{raw}: {log}");
+        }
+    }
+
+    #[test]
+    fn valid_and_out_of_range_autosave_seconds_log_no_warning() {
+        for raw in ["300", "5", "99999", "0"] {
+            let prefs = prefs_with_game_autosave_text(raw);
+
+            let (_, log) = logged(|| autosave_interval(&prefs));
+
+            assert_eq!(log, "", "{raw}");
+        }
+    }
+
     #[test]
     fn old_world_key_does_not_set_the_interval() {
         let (prefs, _issues) = Prefs::parse("[world]\nautosave_seconds=300\n");
