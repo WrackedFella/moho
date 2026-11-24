@@ -865,13 +865,15 @@ impl SearchlightGame {
         let Some(draft) = &mut self.controls else {
             return;
         };
-        match draft.capture(action, input) {
-            Capture::Set | Capture::Reserved => self.show_controls(None),
-            Capture::InUse { by } => {
-                let note = format!("{} is used by {}", Binding::from(input).label(), label(by));
-                self.show_controls(Some((action, &note)));
-            }
-        }
+        let note = match draft.capture(action, input) {
+            Capture::InUse { by } => Some(format!(
+                "{} is used by {}",
+                Binding::from(input).label(),
+                label(by)
+            )),
+            Capture::Set | Capture::Reserved => None,
+        };
+        self.show_controls(note.as_deref().map(|note| (action, note)));
     }
 
     /// Makes the drafted bindings live, replacing the action map, and saves them; a failed save
