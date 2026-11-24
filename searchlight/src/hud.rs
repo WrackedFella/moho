@@ -89,7 +89,7 @@ pub fn arena_text(wave: u32, score: u32) -> String {
 }
 
 /// The title line: `vitals` followed by the wave and score, such as `HP 70/100 | Wave 3  Score 200`.
-/// With no `tally` (a sandbox) it is `vitals` unchanged.
+/// With no `tally` (a level without waves) it is `vitals` unchanged.
 pub fn vitals_text(vitals: &str, tally: Option<Tally>) -> String {
     match tally {
         Some(tally) => format!("{vitals} | {}", arena_text(tally.wave, tally.score)),

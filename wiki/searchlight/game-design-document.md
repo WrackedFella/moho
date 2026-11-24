@@ -47,8 +47,8 @@ Secondary loops (run away, wait it out) exist but are smaller and obvious.
 ### 3.2 Rules vs modes
 
 - **Core rules** (weapons, items, wounds, survival, economy, Director) know nothing about score, rounds, waves or match timers.
-- **Arena scaffolding** (waves, score, round timer, restart) lives in a separate **mode layer** used to test the core rules in Phases 1–5. It is retired as the default experience in Phase 6, when the arena becomes a job site.
-- **Arena as a long-term mode** stays possible on the same layer: an optional mode (an in-world fighting pit, or a standalone arena mode) with its own scoring. It is not a commitment.
+- **Arena scaffolding** (waves, score, round timer, restart) lives in a separate **wave layer** used to test the core rules in Phases 1–5. It is retired as the default experience in Phase 6, when the arena becomes a job site.
+- Wave attacks may return later as a job type; no map has a mode.
 
 ### 3.3 Micro loop (moment to moment)
 
@@ -283,7 +283,7 @@ A streamed or cell-based world, where the engine loads and unloads parts of one 
 - Not multiplayer in the prototype (co-op is a later decision; see §9 Q2).
 - Not a voxel or destructible-terrain game.
 - Not a seamless open world: a hub and missions into discrete levels loaded whole and linked by transitions (§4.13, §5); a streamed world is a later decision (§9 Q33).
-- Not a score-chasing game: score, waves and match timers exist only in the arena mode layer.
+- Not a score-chasing game: waves are a prototype test feature.
 - Not story-driven: no authored campaign, no dialogue trees in scope.
 - Not an RPG with levels: no XP levels, no stat points, no attribute that grows with use (§4.12). Skills that grow are deferred and, if they come, buff on top of gear (§9 Q14). (Enemy grades, §4.11, are not player levels.)
 - No vehicles, base building, or crafting of weapons from scratch.
@@ -333,7 +333,7 @@ Why this order:
 - **Wear before wounds:** wear is testable on a range with no AI changes; wounds need the AI to hit you meaningfully, which Phase 1–2 AI already does.
 - **Survival after wounds:** survival stats only matter once time passes and downtime exists, which healing timers create.
 - **Ledger early (Phase 3), economy later (Phase 6):** a post-round cost report tests pillar 3 cheaply before building traders and jobs.
-- **Arena scaffolding is disposable:** score, waves and timers sit in the mode layer (§3), so dropping them in Phase 6 touches no core rules.
+- **Arena scaffolding is disposable:** score, waves and timers sit in the wave layer (§3), so dropping them in Phase 6 touches no core rules.
 - **Director last:** it needs zones, factions and AI to sim; it's also the system most at risk from a pivot (§9 Q2).
 
 ## 8 Rough content plan

@@ -3,15 +3,17 @@
 | File | What it is |
 |---|---|
 | `arena.glb` | Greybox arena: floor, perimeter walls, hip-high crates, two full-height screen walls that break line of sight (no cover marker), and the named marker nodes the game reads (`player_spawn`, `dummy_NN`, `enemy_spawn_NN`, `waypoint_NN`, `cover_NN`, `control_NN`). |
-| `proving_ground.glb` | Sandbox range, +Z downrange from a firing line at z = 0 (the player spawn): dummies at 25, 50, 100 and 200 m, each distance marked on the floor by a strip and its number in block digits (1 cm high, material `mark`); 0.6, 1.0 and 1.4 m cover blocks beside the firing line; a 3 m platform behind it, reached by stairs (0.2 m rise, 0.3 m run) or a 30 degree slope, whose front edge is a ledge over a marked drop area. No enemy spawns, waypoints or covers. |
+| `proving_ground.glb` | Test range, +Z downrange from a firing line at z = 0 (the player spawn): dummies at 25, 50, 100 and 200 m, each distance marked on the floor by a strip and its number in block digits (1 cm high, material `mark`); 0.6, 1.0 and 1.4 m cover blocks beside the firing line; a 3 m platform behind it, reached by stairs (0.2 m rise, 0.3 m run) or a 30 degree slope, whose front edge is a ledge over a marked drop area. No enemy spawns, waypoints or covers. |
 | `rifle_shot.wav` | A short synthesized gunshot (22.05 kHz, mono, 16-bit). |
 
-## Level mode and local maps
+## Waves and local maps
 
-A level file names its mode in a marker node called `searchlight_level` with the extra
-`mode`: `arena` (waves and a score) or `sandbox` (neither). A file with no such marker, such
-as a borrowed map, is a sandbox; a sandbox needs no `player_spawn` (the player starts at the
-origin and the console says so) and no `dummy_NN`.
+Waves and a score run on a level that places at least one `enemy_spawn_NN`, and only there;
+such a level also needs numbered `waypoint_NN` markers an enemy can reach. Every level,
+borrowed maps included, needs exactly one `player_spawn`; a file without one fails to load
+with an error naming it. `dummy_NN` is optional, and without an enemy spawn a navmesh failure
+is a console notice. A node named `searchlight_level`
+is ignored.
 
 Launch a level by name (`arena`, the default, or `proving_ground`) or by the path of a `.glb`
 or `.gltf` file: `cargo run -p searchlight -- proving_ground`. Put borrowed maps in

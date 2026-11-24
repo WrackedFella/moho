@@ -56,13 +56,8 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
     };
     let (level, markers) = arena::load(&choice.path(&assets_root()))?;
     let arena = Arc::new(Arena::from_level(&level, &markers)?);
-    let notices = levels::load_notices(&markers, &arena);
-    let mode = ArenaMode::for_level(
-        arena.clone(),
-        markers.mode,
-        tuning(start_kit),
-        WaveTuning::default(),
-    );
+    let notices = levels::load_notices(&arena);
+    let mode = ArenaMode::for_level(arena.clone(), tuning(start_kit), WaveTuning::default());
     let (toggle_keys, bindings_section) = split_fullscreen_binding(prefs.bindings());
     let (console_section, game_section) = split_console_binding(&bindings_section);
     let (bindings, warnings) = ActionBindings::load(&game_section);
@@ -73,7 +68,7 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
     let window_mode = start_window_mode(prefs.window_mode());
     let debug_settings = DebugSettings::new(prefs, prefs_path());
     let (mut console, console_warnings) =
-        console_commands::console_for(&console_section, markers.mode);
+        console_commands::console_for(&console_section, mode.has_waves());
     for warning in console_warnings {
         tracing::warn!(?warning, "console binding");
     }

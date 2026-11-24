@@ -1,5 +1,5 @@
-//! The baked arena: its meshes become world colliders, its named markers become
-//! spawn, dummy, enemy, waypoint and cover points.
+//! A level as the game plays it: its meshes become world colliders, its named markers become
+//! spawn, dummy, enemy, waypoint, cover and control points.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -17,7 +17,6 @@ use crate::tag::SurfaceTag;
 /// One nominal tick, enough for a step to index freshly added colliders.
 pub(crate) const SETTLE_DT: f32 = 1.0 / 60.0;
 
-const LEVEL_MARKER: &str = "searchlight_level";
 /// Metres of room around the level geometry that rounds may still fly in.
 pub const FLIGHT_MARGIN: f32 = 100.0;
 
@@ -33,7 +32,7 @@ const CONTROL_MESH_BASE: u64 = 3 << 32;
 /// Width, height and depth of a control's post, in metres.
 const CONTROL_POST_SIZE: Vec3 = Vec3::new(0.4, 1.2, 0.4);
 
-/// Why an arena level cannot be used.
+/// Why a level cannot be used.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ArenaError {
@@ -41,43 +40,31 @@ pub enum ArenaError {
     #[error(transparent)]
     Level(#[from] LevelError),
     /// A marker the game cannot start without is absent.
-    #[error("arena has no `{marker}` marker")]
+    #[error("level has no `{marker}` marker")]
     MissingMarker { marker: String },
     /// A marker that must be unique appears more than once.
-    #[error("arena has more than one `{marker}` marker")]
+    #[error("level has more than one `{marker}` marker")]
     DuplicateMarker { marker: String },
     /// A waypoint's suffix is not a number, or repeats an earlier waypoint's number.
-    #[error("arena waypoint `{marker}` needs a unique numeric suffix")]
+    #[error("level waypoint `{marker}` needs a unique numeric suffix")]
     BadWaypoint { marker: String },
     /// The walkable area could not be built from the level's meshes.
     #[error(transparent)]
     Nav(#[from] NavBuildError),
-    /// The arena has enemy spawns, but no enemy spawn has a path to any waypoint.
+    /// The level has enemy spawns, but no enemy spawn has a path to any waypoint.
     #[error("no path from any enemy spawn reaches a waypoint")]
     NoReachableWaypoint,
     /// A `control_NN` marker names no action, or one not on the list.
-    #[error("arena control `{marker}` needs an `action` on the list")]
+    #[error("level control `{marker}` needs an `action` on the list")]
     BadControl { marker: String },
-    /// The `searchlight_level` marker's `mode` is missing or is neither `arena` nor `sandbox`.
-    #[error("level mode `{value}` is not `arena` or `sandbox`")]
-    BadMode { value: String },
 }
 
-/// What a level plays as: waves and a score, or a sandbox with neither.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LevelMode {
-    Arena,
-    Sandbox,
-}
-
-/// The arena's markers, grouped by kind. Within a kind, markers keep file order.
+/// The level's markers, grouped by kind. Within a kind, markers keep file order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArenaMarkers {
-    /// How the level plays, from its `searchlight_level` marker.
-    pub mode: LevelMode,
-    /// Where the player starts; exactly one in an arena, at most one in a sandbox.
-    pub player_spawn: Option<LevelMarker>,
-    /// `dummy_NN`: training dummy positions; at least one in an arena.
+    /// Where the player starts; exactly one on every level.
+    pub player_spawn: LevelMarker,
+    /// `dummy_NN`: training dummy positions.
     pub dummies: Vec<LevelMarker>,
     /// `enemy_spawn_NN`.
     pub enemy_spawns: Vec<LevelMarker>,
@@ -90,20 +77,18 @@ pub struct ArenaMarkers {
 }
 
 impl ArenaMarkers {
-    /// Sorts `level`'s markers by kind. A file with no `searchlight_level` marker is a sandbox.
+    /// Sorts `level`'s markers by kind. A node that matches no marker name is skipped.
     ///
-    /// An arena needs a `player_spawn`, a `dummy_NN`, and a `waypoint_NN` when it has an enemy
-    /// spawn, and its waypoint suffixes must be unique numbers. A sandbox needs none of these:
-    /// its markers are only what a borrowed map happens to name.
+    /// Every level needs exactly one `player_spawn`; `dummy_NN` is optional. A level that
+    /// places an enemy spawn needs a `waypoint_NN`, and its waypoint suffixes must be unique
+    /// numbers; a level without one takes whatever a borrowed map happens to name.
     ///
     /// # Errors
-    /// [`ArenaError::DuplicateMarker`] naming `searchlight_level` or `player_spawn`;
-    /// [`ArenaError::BadMode`] when the `searchlight_level` marker's `mode` is missing or unknown.
-    /// In an arena also: [`ArenaError::MissingMarker`] naming `player_spawn`, `dummy_NN` or
-    /// `waypoint_NN`; [`ArenaError::BadWaypoint`] naming a waypoint whose suffix is not
-    /// a number or repeats an earlier one's value.
+    /// [`ArenaError::MissingMarker`] or [`ArenaError::DuplicateMarker`] naming `player_spawn`.
+    /// With an enemy spawn also:
+    /// [`ArenaError::MissingMarker`] naming `waypoint_NN`; [`ArenaError::BadWaypoint`] naming
+    /// a waypoint whose suffix is not a number or repeats an earlier one's value.
     pub fn from_level(level: &Level) -> Result<Self, ArenaError> {
-        let mode = level_mode(level)?;
         let mut spawns = Vec::new();
         let mut dummies = Vec::new();
         let mut enemy_spawns = Vec::new();
@@ -131,18 +116,16 @@ impl ArenaMarkers {
         }
         let marker = PLAYER_SPAWN.to_owned();
         let mut spawns = spawns.into_iter();
-        let player_spawn = spawns.next();
+        let player_spawn = spawns.next().ok_or_else(|| ArenaError::MissingMarker {
+            marker: marker.clone(),
+        })?;
         if spawns.next().is_some() {
             return Err(ArenaError::DuplicateMarker { marker });
         }
-        if mode == LevelMode::Arena {
-            if player_spawn.is_none() {
-                return Err(ArenaError::MissingMarker { marker });
-            }
-            validate_arena_rules(&dummies, &enemy_spawns, &waypoints)?;
+        if !enemy_spawns.is_empty() {
+            validate_enemy_spawn_rules(&waypoints)?;
         }
         Ok(Self {
-            mode,
             player_spawn,
             dummies,
             enemy_spawns,
@@ -153,19 +136,10 @@ impl ArenaMarkers {
     }
 }
 
-/// The marker rules only an arena enforces: a dummy, waypoints for any enemy spawn, and
-/// numeric, distinct waypoint suffixes.
-fn validate_arena_rules(
-    dummies: &[LevelMarker],
-    enemy_spawns: &[LevelMarker],
-    waypoints: &[LevelMarker],
-) -> Result<(), ArenaError> {
-    if dummies.is_empty() {
-        return Err(ArenaError::MissingMarker {
-            marker: format!("{DUMMY_PREFIX}NN"),
-        });
-    }
-    if !enemy_spawns.is_empty() && waypoints.is_empty() {
+/// The rules for a level that places an enemy spawn: a waypoint, and numeric, distinct
+/// waypoint suffixes.
+fn validate_enemy_spawn_rules(waypoints: &[LevelMarker]) -> Result<(), ArenaError> {
+    if waypoints.is_empty() {
         return Err(ArenaError::MissingMarker {
             marker: format!("{WAYPOINT_PREFIX}NN"),
         });
@@ -178,26 +152,6 @@ fn validate_arena_rules(
         })?);
     }
     Ok(())
-}
-
-/// The mode `level`'s `searchlight_level` marker names; a sandbox when it has none.
-fn level_mode(level: &Level) -> Result<LevelMode, ArenaError> {
-    let mut found = level.markers.iter().filter(|m| m.name == LEVEL_MARKER);
-    let Some(marker) = found.next() else {
-        return Ok(LevelMode::Sandbox);
-    };
-    if found.next().is_some() {
-        return Err(ArenaError::DuplicateMarker {
-            marker: LEVEL_MARKER.to_owned(),
-        });
-    }
-    match marker.properties.get("mode").map(String::as_str) {
-        Some("arena") => Ok(LevelMode::Arena),
-        Some("sandbox") => Ok(LevelMode::Sandbox),
-        other => Err(ArenaError::BadMode {
-            value: other.unwrap_or_default().to_owned(),
-        }),
-    }
 }
 
 /// The `NN` of a `waypoint_NN` marker, `None` when it is not a number.
@@ -248,7 +202,7 @@ pub struct Arena {
     pub controls: Vec<ArenaControl>,
     /// Where an enemy of [`nav_profile`] size can walk.
     pub nav: Arc<NavMesh>,
-    /// Whether the navmesh could not be built and `nav` is empty (sandbox levels only).
+    /// Whether the navmesh could not be built and `nav` is empty (levels without enemy spawns only).
     pub nav_fallback: bool,
 }
 
@@ -268,14 +222,14 @@ pub fn nav_profile() -> AgentProfile {
 impl Arena {
     /// The arena `level` and its `markers` describe.
     ///
-    /// In a sandbox a navmesh that cannot be built is a warning and an empty navmesh
-    /// ([`Arena::nav_fallback`]), and an unreachable route is not an error.
+    /// On a level without enemy spawns a navmesh that cannot be built is a warning and an
+    /// empty navmesh ([`Arena::nav_fallback`]).
     ///
     /// # Errors
     /// [`ArenaError::BadControl`] naming a control marker with no `action` on the list;
-    /// [`ArenaError::Nav`] when the walkable area cannot be built (arena only);
+    /// [`ArenaError::Nav`] when the walkable area cannot be built and there are enemy spawns;
     /// [`ArenaError::NoReachableWaypoint`] when there are enemy spawns but no waypoint is
-    /// reachable from any of them (arena only). A waypoint no enemy spawn reaches is dropped
+    /// reachable from any of them. A waypoint no enemy spawn reaches is dropped
     /// from the route with a warning.
     pub fn from_level(level: &Level, markers: &ArenaMarkers) -> Result<Self, ArenaError> {
         let positions = |list: &[LevelMarker]| list.iter().map(|marker| marker.position).collect();
@@ -305,8 +259,8 @@ impl Arena {
             .collect();
         let (nav, nav_fallback) = match NavMesh::build(&solids, nav_profile()) {
             Ok(nav) => (nav, false),
-            Err(error) if markers.mode == LevelMode::Sandbox => {
-                tracing::warn!(%error, "no walkable area; the sandbox runs without a navmesh");
+            Err(error) if markers.enemy_spawns.is_empty() => {
+                tracing::warn!(%error, "no walkable area; the level runs without a navmesh");
                 (NavMesh::default(), true)
             }
             Err(error) => return Err(error.into()),
@@ -328,7 +282,7 @@ impl Arena {
                 );
             }
         }
-        if markers.mode == LevelMode::Arena && !enemy_spawns.is_empty() && route.is_empty() {
+        if !enemy_spawns.is_empty() && route.is_empty() {
             return Err(ArenaError::NoReachableWaypoint);
         }
         Ok(Self {
@@ -336,10 +290,7 @@ impl Arena {
             material_names,
             nav,
             nav_fallback,
-            player_spawn: markers
-                .player_spawn
-                .as_ref()
-                .map_or(Vec3::ZERO, |marker| marker.position),
+            player_spawn: markers.player_spawn.position,
             dummy_spawns: positions(&markers.dummies),
             enemy_spawns,
             route,
@@ -487,24 +438,16 @@ mod tests {
         }
     }
 
-    /// A level file whose `searchlight_level` marker says `mode`, with `names` as markers.
-    fn level_in_mode(mode: &str, names: &[&str]) -> Level {
-        let mut markers = vec![mode_marker(mode)];
-        markers.extend(
-            names
-                .iter()
-                .enumerate()
-                .map(|(i, n)| marker(n, Vec3::new(i as f32, 0.0, 0.0))),
-        );
+    /// A level file with `names` as markers.
+    fn level_of(names: &[&str]) -> Level {
         Level {
             meshes: Vec::new(),
-            markers,
+            markers: names
+                .iter()
+                .enumerate()
+                .map(|(i, n)| marker(n, Vec3::new(i as f32, 0.0, 0.0)))
+                .collect(),
         }
-    }
-
-    /// An arena-mode level file with `names` as markers.
-    fn level_of(names: &[&str]) -> Level {
-        level_in_mode("arena", names)
     }
 
     fn shipped_arena() -> PathBuf {
@@ -583,8 +526,7 @@ mod tests {
     fn the_shipped_arena_has_one_player_spawn_and_dummies() {
         let (level, markers) = load(&shipped_arena()).expect("the shipped arena loads");
 
-        let spawn = markers.player_spawn.as_ref().expect("a player spawn");
-        assert_eq!(spawn.name, "player_spawn");
+        assert_eq!(markers.player_spawn.name, "player_spawn");
         assert!(!markers.dummies.is_empty(), "no dummies");
         assert!(!markers.enemy_spawns.is_empty(), "no enemy spawns");
         assert!(!markers.waypoints.is_empty(), "no waypoints");
@@ -704,35 +646,101 @@ mod tests {
 
     #[test]
     fn missing_or_duplicate_spawn_is_an_error_naming_it() {
-        let none = level_of(&["dummy_01"]);
         let twice = level_of(&["player_spawn", "player_spawn", "dummy_01"]);
+        let empty = level_of(&[]);
+        let waves_without_a_spawn = level_of(&["enemy_spawn_01", "waypoint_01"]);
 
-        let missing = ArenaMarkers::from_level(&none).unwrap_err();
         let duplicate = ArenaMarkers::from_level(&twice).unwrap_err();
+        let missing = ArenaMarkers::from_level(&empty).unwrap_err();
+        let missing_with_waves = ArenaMarkers::from_level(&waves_without_a_spawn).unwrap_err();
 
-        assert!(
-            matches!(&missing, ArenaError::MissingMarker { marker } if marker == "player_spawn"),
-            "{missing:?}"
-        );
-        assert!(missing.to_string().contains("player_spawn"));
         assert!(
             matches!(&duplicate, ArenaError::DuplicateMarker { marker } if marker == "player_spawn"),
             "{duplicate:?}"
         );
+        for error in [&missing, &missing_with_waves] {
+            assert!(
+                matches!(error, ArenaError::MissingMarker { marker } if marker == "player_spawn"),
+                "{error:?}"
+            );
+            assert!(error.to_string().contains("player_spawn"), "{error}");
+        }
         assert!(duplicate.to_string().contains("player_spawn"));
     }
 
     #[test]
-    fn an_arena_without_dummies_is_an_error_naming_them() {
-        let level = level_of(&["player_spawn", "enemy_spawn_01"]);
+    fn two_player_spawns_on_a_level_with_enemy_spawns_are_a_duplicate_error() {
+        let level = level_of(&[
+            "player_spawn",
+            "player_spawn",
+            "enemy_spawn_01",
+            "waypoint_01",
+        ]);
 
         let error = ArenaMarkers::from_level(&level).unwrap_err();
 
         assert!(
-            matches!(&error, ArenaError::MissingMarker { marker } if marker.starts_with("dummy_")),
+            matches!(&error, ArenaError::DuplicateMarker { marker } if marker == "player_spawn"),
             "{error:?}"
         );
-        assert!(error.to_string().contains("dummy_"));
+    }
+
+    #[test]
+    fn a_stale_level_node_does_not_stand_in_for_a_missing_player_spawn() {
+        let mut level = level_of(&["enemy_spawn_01", "waypoint_01"]);
+        level.markers.push(stale_marker(Some("arena")));
+        level.markers.push(stale_marker(None));
+
+        let error = ArenaMarkers::from_level(&level).unwrap_err();
+
+        assert!(
+            matches!(&error, ArenaError::MissingMarker { marker } if marker == "player_spawn"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_bad_waypoint_among_enemy_spawns_is_a_bad_waypoint_error_naming_the_first_offender() {
+        let level = level_of(&[
+            "player_spawn",
+            "enemy_spawn_01",
+            "waypoint_01",
+            "waypoint_a",
+            "waypoint_1",
+        ]);
+
+        let error = ArenaMarkers::from_level(&level).unwrap_err();
+
+        assert!(
+            matches!(&error, ArenaError::BadWaypoint { marker } if marker == "waypoint_a"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_duplicate_waypoint_number_is_a_bad_waypoint_error_naming_the_later_one() {
+        let level = level_of(&[
+            "player_spawn",
+            "enemy_spawn_01",
+            "waypoint_1",
+            "waypoint_01",
+        ]);
+
+        let error = ArenaMarkers::from_level(&level).unwrap_err();
+
+        assert!(
+            matches!(&error, ArenaError::BadWaypoint { marker } if marker == "waypoint_01"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_level_without_dummies_loads() {
+        let level = level_of(&["player_spawn", "enemy_spawn_01", "waypoint_01"]);
+
+        let markers = ArenaMarkers::from_level(&level).expect("a level needs no dummy");
+
+        assert!(markers.dummies.is_empty());
     }
 
     #[test]
@@ -753,8 +761,7 @@ mod tests {
 
         let names =
             |list: &[LevelMarker]| -> Vec<String> { list.iter().map(|m| m.name.clone()).collect() };
-        let spawn = markers.player_spawn.as_ref().expect("a player spawn");
-        assert_eq!(spawn.name, "player_spawn");
+        assert_eq!(markers.player_spawn.name, "player_spawn");
         assert_eq!(names(&markers.dummies), ["dummy_02", "dummy_01"]);
         assert_eq!(names(&markers.waypoints), ["waypoint_02", "waypoint_01"]);
         assert_eq!(
@@ -764,179 +771,97 @@ mod tests {
         assert_eq!(names(&markers.covers), ["cover_01"]);
     }
 
-    fn the_level_marker_of(path: &Path) -> Option<String> {
-        let level = moho_level::load(path).expect("the shipped level loads");
-        level
-            .markers
-            .iter()
-            .find(|m| m.name == "searchlight_level")
-            .and_then(|m| m.properties.get("mode").cloned())
-    }
-
     #[test]
-    fn the_shipped_arena_is_in_arena_mode() {
-        let (_, markers) = load(&shipped_arena()).expect("the shipped arena loads");
-
-        assert_eq!(
-            the_level_marker_of(&shipped_arena()).as_deref(),
-            Some("arena")
-        );
-        assert_eq!(markers.mode, LevelMode::Arena);
-    }
-
-    #[test]
-    fn the_shipped_proving_ground_is_a_sandbox() {
+    fn the_shipped_proving_ground_has_a_firing_line_and_places_no_enemy_spawn() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets/proving_ground.glb");
 
         let (level, markers) = load(&path).expect("the shipped proving ground loads");
 
-        assert_eq!(markers.mode, LevelMode::Sandbox);
         assert!(!level.meshes.is_empty(), "no geometry");
-        assert!(markers.player_spawn.is_some(), "no firing line spawn");
-        assert!(markers.enemy_spawns.is_empty(), "a sandbox attacks no one");
+        assert_eq!(markers.player_spawn.name, "player_spawn");
+        let player_spawns = level
+            .markers
+            .iter()
+            .filter(|m| m.name == "player_spawn")
+            .count();
+        assert_eq!(player_spawns, 1, "one firing line spawn");
+        assert!(markers.enemy_spawns.is_empty(), "no one attacks here");
         assert!(markers.waypoints.is_empty());
         assert!(markers.covers.is_empty());
     }
 
     #[test]
-    fn a_file_without_a_level_marker_is_a_sandbox() {
-        let level = Level {
-            meshes: Vec::new(),
-            markers: vec![marker("player_spawn", Vec3::ZERO)],
-        };
+    fn without_enemy_spawns_a_non_numeric_waypoint_loads() {
+        let level = level_of(&["player_spawn", "waypoint_a", "waypoint_b"]);
 
-        let markers = ArenaMarkers::from_level(&level).expect("an unmarked file loads");
+        let markers = ArenaMarkers::from_level(&level).expect("a borrowed node name is fine");
 
-        assert_eq!(markers.mode, LevelMode::Sandbox);
+        assert_eq!(markers.waypoints.len(), 2);
+    }
+
+    /// A `searchlight_level` node as an older level file carries it; `mode` is its `mode` extra.
+    fn stale_marker(mode: Option<&str>) -> LevelMarker {
+        match mode {
+            Some(mode) => mode_marker(mode),
+            None => marker("searchlight_level", Vec3::ZERO),
+        }
     }
 
     #[test]
-    fn a_sandbox_without_player_spawn_starts_at_the_origin() {
-        let mut level = level_in_mode("sandbox", &[]);
-        level.meshes.push(LevelMesh {
-            mesh: box_mesh(Vec3::new(5.0, -1.0, 5.0), Vec3::new(15.0, 0.0, 15.0)),
-            material: None,
-        });
+    fn an_old_mode_marker_has_no_effect() {
+        let variants: [(&str, Vec<Option<&str>>); 5] = [
+            ("arena", vec![Some("arena")]),
+            ("sandbox", vec![Some("sandbox")]),
+            ("an unknown value", vec![Some("creative")]),
+            ("no mode extra", vec![None]),
+            ("two nodes", vec![Some("arena"), Some("sandbox")]),
+        ];
 
-        let markers = ArenaMarkers::from_level(&level).expect("a sandbox needs no spawn");
-        let arena = Arena::from_level(&level, &markers).expect("the sandbox builds");
+        for (name, stale) in variants {
+            let mut level = level_of(&["player_spawn"]);
+            level.markers.extend(stale.into_iter().map(stale_marker));
 
-        assert_eq!(markers.mode, LevelMode::Sandbox);
-        assert_eq!(markers.player_spawn, None);
-        assert_eq!(arena.player_spawn, Vec3::ZERO);
+            let mut loaded = None;
+            let log = logged(|| loaded = Some(ArenaMarkers::from_level(&level)));
+
+            let markers = loaded
+                .expect("from_level ran")
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(markers.player_spawn.name, "player_spawn", "{name}");
+            assert!(!log.contains("WARN"), "{name}: {log}");
+        }
+    }
+
+    #[test]
+    fn an_old_arena_marker_without_a_dummy_still_loads() {
+        let mut level = level_of(&["player_spawn"]);
+        level.markers.push(stale_marker(Some("arena")));
+
+        let markers = ArenaMarkers::from_level(&level).expect("the marker has no effect");
+
         assert!(markers.dummies.is_empty());
     }
 
     #[test]
-    fn a_sandbox_with_two_player_spawns_is_an_error() {
-        let level = level_in_mode("sandbox", &["player_spawn", "player_spawn"]);
+    fn an_old_sandbox_marker_with_an_enemy_spawn_keeps_the_route_and_still_checks_it() {
+        let mut reachable = island_level(&[("waypoint_01", ON_FLOOR)]);
+        reachable.markers.push(stale_marker(Some("sandbox")));
+        let mut stranded = island_level(&[("waypoint_01", ON_ISLAND)]);
+        stranded.markers.push(stale_marker(Some("sandbox")));
 
-        let error = ArenaMarkers::from_level(&level).unwrap_err();
+        let kept = build(&reachable).expect("the route is built despite the marker");
+        let error = build(&stranded).unwrap_err();
 
+        assert_eq!(kept.route, [ON_FLOOR]);
         assert!(
-            matches!(&error, ArenaError::DuplicateMarker { marker } if marker == "player_spawn"),
+            matches!(error, ArenaError::NoReachableWaypoint),
             "{error:?}"
         );
-    }
-
-    #[test]
-    fn a_sandbox_with_a_waypoint_a_node_loads() {
-        let level = level_in_mode(
-            "sandbox",
-            &["player_spawn", "enemy_spawn_01", "waypoint_a", "waypoint_b"],
-        );
-
-        let markers = ArenaMarkers::from_level(&level).expect("a borrowed node name is fine");
-
-        assert_eq!(markers.mode, LevelMode::Sandbox);
-        assert_eq!(markers.waypoints.len(), 2);
-    }
-
-    #[test]
-    fn a_sandbox_enemy_spawn_without_waypoints_loads_with_an_empty_route() {
-        let mut level = level_in_mode("sandbox", &["player_spawn", "enemy_spawn_01"]);
-        level.meshes.push(LevelMesh {
-            mesh: box_mesh(Vec3::new(-10.0, -1.0, -10.0), Vec3::new(10.0, 0.0, 10.0)),
-            material: None,
-        });
-
-        let markers = ArenaMarkers::from_level(&level).expect("a sandbox needs no waypoint");
-        let arena = Arena::from_level(&level, &markers).expect("the sandbox builds");
-
-        assert_eq!(markers.enemy_spawns.len(), 1);
-        assert!(markers.waypoints.is_empty());
-        assert!(arena.route.is_empty(), "{:?}", arena.route);
-    }
-
-    #[test]
-    fn a_sandbox_whose_waypoints_no_spawn_reaches_builds_with_an_empty_route() {
-        let mut level = island_level(&[("waypoint_01", ON_ISLAND)]);
-        level.markers[0] = mode_marker("sandbox");
-
-        let arena = build(&level).expect("a sandbox does not need a reachable waypoint");
-
-        assert!(
-            arena.nav.path(arena.enemy_spawns[0], ON_ISLAND).is_none(),
-            "the island must be unreachable for this test to mean anything"
-        );
-        assert!(arena.route.is_empty(), "{:?}", arena.route);
-    }
-
-    #[test]
-    fn a_node_named_level_is_not_the_mode_marker() {
-        let mut borrowed = marker("level", Vec3::ZERO);
-        borrowed
-            .properties
-            .insert("mode".to_owned(), "arena".to_owned());
-        let level = Level {
-            meshes: Vec::new(),
-            markers: vec![borrowed],
-        };
-
-        let markers = ArenaMarkers::from_level(&level).expect("a borrowed group node loads");
-
-        assert_eq!(markers.mode, LevelMode::Sandbox);
-    }
-
-    #[test]
-    fn two_level_markers_are_an_error() {
-        let mut level = level_of(&["player_spawn", "dummy_01"]);
-        level.markers.push(mode_marker("sandbox"));
-
-        let error = ArenaMarkers::from_level(&level).unwrap_err();
-
-        assert!(
-            matches!(&error, ArenaError::DuplicateMarker { marker } if marker == "searchlight_level"),
-            "{error:?}"
-        );
-    }
-
-    #[test]
-    fn an_unknown_mode_is_an_error() {
-        let level = level_in_mode("creative", &["player_spawn", "dummy_01"]);
-
-        let error = ArenaMarkers::from_level(&level).unwrap_err();
-
-        assert!(
-            matches!(&error, ArenaError::BadMode { value } if value == "creative"),
-            "{error:?}"
-        );
-        assert!(error.to_string().contains("creative"), "{error}");
-    }
-
-    #[test]
-    fn a_level_marker_without_a_mode_is_an_error() {
-        let mut level = level_of(&["player_spawn", "dummy_01"]);
-        level.markers[0].properties.clear();
-
-        let error = ArenaMarkers::from_level(&level).unwrap_err();
-
-        assert!(matches!(&error, ArenaError::BadMode { .. }), "{error:?}");
     }
 
     /// A level whose floor is wider than the navmesh's cell budget allows.
-    fn too_wide_for_a_navmesh(mode: &str, names: &[&str]) -> Level {
-        let mut level = level_in_mode(mode, names);
+    fn too_wide_for_a_navmesh(names: &[&str]) -> Level {
+        let mut level = level_of(names);
         level.meshes.push(LevelMesh {
             mesh: box_mesh(
                 Vec3::new(-500.0, -1.0, -500.0),
@@ -948,16 +873,16 @@ mod tests {
     }
 
     #[test]
-    fn a_sandbox_whose_navmesh_fails_loads_with_no_walkable_area() {
-        let level = too_wide_for_a_navmesh("sandbox", &["player_spawn"]);
-        let markers = ArenaMarkers::from_level(&level).expect("a valid sandbox");
+    fn without_enemy_spawns_a_failed_navmesh_loads_with_no_walkable_area() {
+        let level = too_wide_for_a_navmesh(&["player_spawn"]);
+        let markers = ArenaMarkers::from_level(&level).expect("valid markers");
 
         let mut arena = None;
         let log = logged(|| arena = Some(Arena::from_level(&level, &markers)));
 
         let arena = arena
             .expect("from_level ran")
-            .expect("a sandbox survives a navmesh failure");
+            .expect("a level without enemy spawns survives a navmesh failure");
         assert!(arena.nav_fallback);
         assert!(
             arena
@@ -971,9 +896,10 @@ mod tests {
     }
 
     #[test]
-    fn an_arena_whose_navmesh_fails_is_an_error() {
-        let level = too_wide_for_a_navmesh("arena", &["player_spawn", "dummy_01"]);
-        let markers = ArenaMarkers::from_level(&level).expect("valid arena markers");
+    fn with_enemy_spawns_a_failed_navmesh_is_an_error() {
+        let level =
+            too_wide_for_a_navmesh(&["player_spawn", "dummy_01", "enemy_spawn_01", "waypoint_01"]);
+        let markers = ArenaMarkers::from_level(&level).expect("valid markers");
 
         let error = Arena::from_level(&level, &markers).unwrap_err();
 
@@ -997,7 +923,6 @@ mod tests {
             material: None,
         };
         let mut markers = vec![
-            mode_marker("arena"),
             marker("player_spawn", Vec3::new(-5.0, 0.0, -5.0)),
             marker("dummy_01", Vec3::new(-5.0, 0.0, 5.0)),
             marker("enemy_spawn_01", Vec3::new(0.0, 0.0, 0.0)),
@@ -1083,7 +1008,7 @@ mod tests {
     }
 
     #[test]
-    fn an_arena_whose_waypoints_no_spawn_reaches_is_an_error() {
+    fn with_enemy_spawns_unreachable_waypoints_are_an_error() {
         let level = island_level(&[("waypoint_01", ON_ISLAND)]);
 
         let error = build(&level).unwrap_err();
@@ -1386,7 +1311,7 @@ mod shipped_cover_tests {
             .chain(&markers.enemy_spawns)
             .chain(&markers.waypoints)
             .chain(&markers.covers)
-            .chain(&markers.player_spawn);
+            .chain(std::iter::once(&markers.player_spawn));
 
         for marker in all {
             let down = world.cast_ray(&RayQuery {

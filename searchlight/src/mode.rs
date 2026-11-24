@@ -1,11 +1,11 @@
-//! The arena as a game mode: waves of enemies that spawn at the enemy markers, and a score for
-//! the kills. The sim underneath knows neither.
+//! The waves of a level that places enemy spawns: enemies that spawn at the enemy markers, and
+//! a score for the kills. The sim underneath knows neither.
 
 use std::sync::Arc;
 
 use searchlight_rules::Grade;
 
-use crate::arena::{Arena, LevelMode};
+use crate::arena::Arena;
 use crate::control::ControlAction;
 use crate::input::SearchlightCommand;
 use crate::sim::{Feedback, SearchlightSim, SimConfig, Start};
@@ -30,13 +30,13 @@ struct Waves {
     seen_kills: u32,
 }
 
-/// A sim that starts empty and, in an arena, is fed waves of enemies as the player clears them.
+/// A sim that starts empty and, on a level with waves, is fed enemies as the player clears them.
 #[derive(Debug)]
 pub struct ArenaMode {
     sim: SearchlightSim,
     /// Read for what each placed control does.
     arena: Arc<Arena>,
-    /// `None` in a sandbox: nothing spawns and nothing is scored.
+    /// `None` on a level without waves: nothing spawns and nothing is scored.
     waves: Option<Waves>,
 }
 
@@ -59,7 +59,7 @@ impl ArenaMode {
 
     /// Scores the sim's new kills and spawns the wave's enemies at the first free markers, each
     /// of `forced` or else the grade the wave's mix gives its place in the wave; none while the
-    /// player is dead. Does nothing in a sandbox.
+    /// player is dead. Does nothing on a level without waves.
     fn step_waves(&mut self, forced: Option<Grade>) {
         let Some(waves) = self.waves.as_mut() else {
             return;
@@ -150,7 +150,7 @@ impl ArenaMode {
         self.sim.drain_feedback()
     }
 
-    /// The wave and score, or `None` in a sandbox, which has neither.
+    /// The wave and score, or `None` on a level without waves, which has neither.
     pub fn tally(&self) -> Option<Tally> {
         self.waves.as_ref().map(|waves| Tally {
             wave: waves.state.wave(),
@@ -159,7 +159,7 @@ impl ArenaMode {
     }
 
     /// A mode over `arena` with no waves: nothing spawns and nothing is scored.
-    pub fn sandbox(arena: Arc<Arena>, config: SimConfig) -> Self {
+    pub fn without_waves(arena: Arc<Arena>, config: SimConfig) -> Self {
         Self {
             sim: SearchlightSim::with_start(Arc::clone(&arena), config, Start::Empty),
             arena,
@@ -167,18 +167,19 @@ impl ArenaMode {
         }
     }
 
-    /// The mode a level of `mode` plays as: [`ArenaMode::new`] for an arena,
-    /// [`ArenaMode::sandbox`] for a sandbox.
-    pub fn for_level(
-        arena: Arc<Arena>,
-        mode: LevelMode,
-        config: SimConfig,
-        waves: WaveTuning,
-    ) -> Self {
-        match mode {
-            LevelMode::Arena => Self::new(arena, config, waves),
-            LevelMode::Sandbox => Self::sandbox(arena, config),
+    /// The waves `arena` earns: [`ArenaMode::new`] when the level places an enemy spawn,
+    /// [`ArenaMode::without_waves`] otherwise.
+    pub fn for_level(arena: Arc<Arena>, config: SimConfig, waves: WaveTuning) -> Self {
+        if arena.enemy_spawns.is_empty() {
+            Self::without_waves(arena, config)
+        } else {
+            Self::new(arena, config, waves)
         }
+    }
+
+    /// Whether this level runs waves and keeps a score.
+    pub fn has_waves(&self) -> bool {
+        self.waves.is_some()
     }
 
     #[cfg(test)]
@@ -895,10 +896,10 @@ mod tests {
     }
 
     #[test]
-    fn a_sandbox_spawns_no_enemy_in_sixty_seconds() {
+    fn a_mode_without_waves_spawns_no_enemy_in_sixty_seconds() {
         let arena = arena_with_enemy_markers();
         let waves_mode = ArenaMode::new(arena.clone(), calm_config(), tuning(3, 1, 100));
-        let mut mode = ArenaMode::sandbox(arena, calm_config());
+        let mut mode = ArenaMode::without_waves(arena, calm_config());
 
         for _ in 0..3600 {
             mode.tick(&idle(), DT);
@@ -914,8 +915,8 @@ mod tests {
     }
 
     #[test]
-    fn a_sandbox_has_no_tally() {
-        let mut mode = ArenaMode::sandbox(arena_with_enemy_markers(), calm_config());
+    fn a_mode_without_waves_has_no_tally() {
+        let mut mode = ArenaMode::without_waves(arena_with_enemy_markers(), calm_config());
         let at_start = mode.tally();
 
         mode.tick(&idle(), DT);
@@ -924,35 +925,74 @@ mod tests {
         assert_eq!(mode.tally(), None);
     }
 
+    /// A level that places no enemy spawn.
+    fn arena_without_enemy_spawns() -> Arc<Arena> {
+        arena_with(&[], Vec3::ZERO, &[], &[])
+    }
+
     #[test]
-    fn a_sandbox_level_builds_a_mode_with_no_tally() {
-        let mode = ArenaMode::for_level(
-            arena_with_enemy_markers(),
-            LevelMode::Sandbox,
+    fn a_level_without_enemy_spawns_builds_no_waves() {
+        let mut mode = ArenaMode::for_level(
+            arena_without_enemy_spawns(),
             calm_config(),
             tuning(3, 1, 100),
         );
 
+        mode.tick(&idle(), DT);
+
+        assert!(!mode.has_waves());
         assert_eq!(mode.tally(), None);
         assert_eq!(mode.sim().enemy_count(), 0);
     }
 
     #[test]
-    fn an_arena_level_builds_a_mode_on_wave_one() {
-        let mode = ArenaMode::for_level(
-            arena_with_enemy_markers(),
-            LevelMode::Arena,
-            calm_config(),
-            tuning(3, 1, 100),
-        );
+    fn a_level_with_enemy_spawns_builds_waves_on_wave_one() {
+        let mode =
+            ArenaMode::for_level(arena_with_enemy_markers(), calm_config(), tuning(3, 1, 100));
 
+        assert!(mode.has_waves());
         assert_eq!(mode.tally(), Some(Tally { wave: 1, score: 0 }));
         assert_eq!(mode.sim().enemy_count(), 3);
     }
 
     #[test]
-    fn a_dead_player_restarts_in_the_sandbox() {
-        let mut mode = ArenaMode::sandbox(arena_with_enemy_markers(), calm_config());
+    fn a_dead_player_restarts_a_level_with_enemy_spawns_on_wave_one_with_no_score() {
+        let arena = arena_with_controls(
+            &[],
+            Vec3::ZERO,
+            &markers(4),
+            &[Vec3::new(0.0, 0.0, 25.0)],
+            &[button()],
+        );
+        let mut mode = ArenaMode::for_level(arena, calm_config(), tuning(1, 1, 100));
+        mode.sim_mut().kill_enemy(0);
+        mode.tick(&idle(), DT);
+        mode.tick(&using(), DT);
+        mode.sim_mut().kill_player();
+        mode.tick(&idle(), DT);
+        let before = mode.tally();
+
+        mode.tick(&restart(), DT);
+        mode.tick(&idle(), DT);
+
+        assert_eq!(
+            before,
+            Some(Tally {
+                wave: 2,
+                score: 100
+            })
+        );
+        assert_eq!(mode.tally(), Some(Tally { wave: 1, score: 0 }));
+        assert!(!mode.sim().player_body().is_dead());
+    }
+
+    #[test]
+    fn a_dead_player_restarts_on_a_level_without_waves() {
+        let mut mode = ArenaMode::for_level(
+            arena_without_enemy_spawns(),
+            calm_config(),
+            tuning(3, 1, 100),
+        );
         mode.sim_mut().kill_player();
         mode.tick(&idle(), DT);
         let dead = mode.sim().player_body().is_dead();

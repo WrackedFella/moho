@@ -3,7 +3,7 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use crate::arena::{Arena, ArenaMarkers};
+use crate::arena::Arena;
 
 /// A shipped level: the name the tester launches it by and its file under the assets folder.
 #[derive(Debug, PartialEq, Eq)]
@@ -81,11 +81,8 @@ fn level_names() -> String {
 }
 
 /// The lines to show the tester about a loaded level, in the order they apply.
-pub fn load_notices(markers: &ArenaMarkers, arena: &Arena) -> Vec<&'static str> {
+pub fn load_notices(arena: &Arena) -> Vec<&'static str> {
     let mut notices = Vec::new();
-    if markers.player_spawn.is_none() {
-        notices.push("No player_spawn marker; starting at the origin");
-    }
     if arena.nav_fallback {
         notices.push("No walkable area; enemies cannot path here");
     }
@@ -95,6 +92,7 @@ pub fn load_notices(markers: &ArenaMarkers, arena: &Arena) -> Vec<&'static str> 
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
+    use std::sync::Arc;
 
     use glam::Vec3;
     use moho_core::content::ContentRoots;
@@ -103,12 +101,15 @@ mod tests {
     use searchlight_rules::{BodyPart, MIN_SPEED};
 
     use super::*;
-    use crate::arena::{self, LevelMode};
+    use crate::arena::{self, ArenaMarkers};
+    use crate::input::SearchlightCommand;
     use crate::kit::{self, START_KIT_ID};
+    use crate::mode::{ArenaMode, Tally};
     use crate::sim::{STAND_HEIGHT, dummy_hit_volumes};
     use crate::tag::SurfaceTag;
-    use crate::test_support::{box_mesh, level_marker, mode_marker};
+    use crate::test_support::{DT, box_mesh, level_marker, mag, rifle_from, test_config};
     use crate::tuning::SHIPPED_BODY;
+    use crate::wave::WaveTuning;
     use crate::{assets_root, content_root};
 
     fn chosen(arg: &str) -> Result<LevelChoice, UnknownLevel> {
@@ -209,29 +210,88 @@ mod tests {
         for level in LEVELS {
             let (loaded, _) = shipped(level.file);
 
-            let mode_markers: Vec<&str> = loaded
+            assert!(!loaded.meshes.is_empty(), "{}: no geometry", level.file);
+        }
+    }
+
+    #[test]
+    fn no_shipped_level_names_a_mode() {
+        for level in LEVELS {
+            let (loaded, _) = shipped(level.file);
+
+            let stale: Vec<&str> = loaded
                 .markers
                 .iter()
                 .filter(|marker| marker.name == "searchlight_level")
-                .map(|marker| marker.properties.get("mode").map_or("", String::as_str))
+                .map(|marker| marker.name.as_str())
                 .collect();
-            assert_eq!(mode_markers.len(), 1, "{}: one mode marker", level.file);
-            assert!(
-                ["arena", "sandbox"].contains(&mode_markers[0]),
-                "{}: mode {:?}",
-                level.file,
-                mode_markers[0]
-            );
+
+            assert!(stale.is_empty(), "{}: {stale:?}", level.file);
         }
+    }
+
+    /// The mode a shipped level plays as, built with the tuning the tests share.
+    fn shipped_mode(file: &str) -> ArenaMode {
+        let (level, markers) = shipped(file);
+        let arena = Arc::new(Arena::from_level(&level, &markers).expect("the level builds"));
+        ArenaMode::for_level(
+            arena,
+            test_config(rifle_from(mag(30, 30)), vec![]),
+            WaveTuning::default(),
+        )
+    }
+
+    #[test]
+    fn the_shipped_arena_starts_on_wave_one_with_enemies() {
+        let mode = shipped_mode("arena.glb");
+
+        assert_eq!(mode.tally(), Some(Tally { wave: 1, score: 0 }));
+        assert!(mode.sim().enemy_count() > 0, "no enemy spawned");
+    }
+
+    #[test]
+    fn the_proving_ground_spawns_no_enemy_in_sixty_seconds() {
+        let mut mode = shipped_mode("proving_ground.glb");
+
+        for _ in 0..3600 {
+            mode.tick(&SearchlightCommand::default(), DT);
+        }
+
+        assert_eq!(mode.tally(), None);
+        assert_eq!(mode.sim().enemy_count(), 0);
+        assert_eq!(mode.sim().enemies_alive(), 0);
+    }
+
+    #[test]
+    fn a_level_with_only_a_player_spawn_loads_there_without_waves() {
+        let spawn = Vec3::new(2.0, 0.0, -3.0);
+        let level = Level {
+            meshes: vec![LevelMesh {
+                mesh: box_mesh(Vec3::new(-5.0, -1.0, -5.0), Vec3::new(5.0, 0.0, 5.0)),
+                material: None,
+            }],
+            markers: vec![level_marker("player_spawn", spawn)],
+        };
+        let markers = ArenaMarkers::from_level(&level).expect("a floor and a spawn load");
+        let arena = Arc::new(Arena::from_level(&level, &markers).expect("the level builds"));
+
+        let notices = load_notices(&arena);
+        let mode = ArenaMode::for_level(
+            arena.clone(),
+            test_config(rifle_from(mag(30, 30)), vec![]),
+            WaveTuning::default(),
+        );
+
+        assert_eq!(arena.player_spawn, spawn);
+        assert!(notices.is_empty(), "{notices:?}");
+        assert_eq!(mode.tally(), None);
+        assert_eq!(mode.sim().enemy_count(), 0);
     }
 
     #[test]
     fn the_proving_ground_has_dummies_at_25_50_100_and_200_m() {
         let (_, markers) = shipped("proving_ground.glb");
-        let spawn = markers
-            .player_spawn
-            .as_ref()
-            .expect("the proving ground has a firing line spawn");
+        let spawn = &markers.player_spawn;
 
         let mut distances: Vec<f32> = markers
             .dummies
@@ -293,7 +353,7 @@ mod tests {
         // Linear drag sheds speed at `drag` m/s per metre, so a round is spent after this far.
         let range = (ballistics.muzzle_velocity - MIN_SPEED) / ballistics.drag;
         let (_, markers) = shipped("proving_ground.glb");
-        let spawn = markers.player_spawn.as_ref().expect("a firing line spawn");
+        let spawn = &markers.player_spawn;
         let far = markers
             .dummies
             .iter()
@@ -323,38 +383,26 @@ mod tests {
         );
     }
 
-    /// A 10 m floor and a sandbox marker, plus `names` as markers at the origin.
-    fn sandbox_level(names: &[&str]) -> Level {
-        let mut markers = vec![mode_marker("sandbox")];
-        markers.extend(names.iter().map(|n| level_marker(n, Vec3::ZERO)));
+    /// A 10 m floor, plus `names` as markers at the origin.
+    fn floor_level(names: &[&str]) -> Level {
         Level {
             meshes: vec![LevelMesh {
                 mesh: box_mesh(Vec3::new(-5.0, -1.0, -5.0), Vec3::new(5.0, 0.0, 5.0)),
                 material: Some("floor".to_owned()),
             }],
-            markers,
+            markers: names.iter().map(|n| level_marker(n, Vec3::ZERO)).collect(),
         }
     }
 
     fn notices_of(level: &Level) -> Vec<&'static str> {
-        let markers = ArenaMarkers::from_level(level).expect("a valid sandbox");
-        let arena = Arena::from_level(level, &markers).expect("the sandbox builds");
-        assert_eq!(markers.mode, LevelMode::Sandbox);
-        load_notices(&markers, &arena)
-    }
-
-    #[test]
-    fn a_level_without_a_spawn_has_the_origin_notice() {
-        let level = sandbox_level(&[]);
-
-        let notices = notices_of(&level);
-
-        assert_eq!(notices, ["No player_spawn marker; starting at the origin"]);
+        let markers = ArenaMarkers::from_level(level).expect("valid markers");
+        let arena = Arena::from_level(level, &markers).expect("the level builds");
+        load_notices(&arena)
     }
 
     #[test]
     fn a_level_with_a_spawn_and_a_navmesh_has_no_notices() {
-        let level = sandbox_level(&["player_spawn"]);
+        let level = floor_level(&["player_spawn"]);
 
         let notices = notices_of(&level);
 
@@ -363,7 +411,7 @@ mod tests {
 
     #[test]
     fn a_navmesh_fallback_has_its_notice() {
-        let mut level = sandbox_level(&["player_spawn"]);
+        let mut level = floor_level(&["player_spawn"]);
         level.meshes.push(LevelMesh {
             mesh: box_mesh(
                 Vec3::new(-500.0, -1.0, -500.0),

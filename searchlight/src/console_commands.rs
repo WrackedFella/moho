@@ -8,8 +8,6 @@ use moho_ui_shell::Console;
 use moho_ui_shell::console::registry::{CommandSpec, ParseFn};
 use searchlight_rules::{Grade, GravityScale, MAX_GRAVITY_SCALE};
 
-use crate::arena::LevelMode;
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ConsoleCommand {
     GodMode(GodModeArg),
@@ -172,21 +170,23 @@ fn console_with_grade(
     (console, warnings)
 }
 
-/// [`console`] for a level of `mode`: in a sandbox `grade` replies that there are no waves.
+/// [`console`] for a level that has waves or not: without waves `grade` replies that there are
+/// none.
 pub fn console_for(
     bindings: &BTreeMap<String, String>,
-    mode: LevelMode,
+    has_waves: bool,
 ) -> (Console<ConsoleCommand>, Vec<BindingWarning>) {
-    let grade = match mode {
-        LevelMode::Arena => parse_grade,
-        LevelMode::Sandbox => parse_grade_in_sandbox,
+    let grade = if has_waves {
+        parse_grade
+    } else {
+        parse_grade_without_waves
     };
     console_with_grade(bindings, grade)
 }
 
-/// `grade` in a sandbox: the force acts through the wave step, which a sandbox does not have.
-fn parse_grade_in_sandbox(_args: &[&str]) -> Result<(ConsoleCommand, String), String> {
-    Err("No waves in a sandbox".to_owned())
+/// `grade` on a level without waves: the force acts through the wave step, which it lacks.
+fn parse_grade_without_waves(_args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    Err("No waves on this level".to_owned())
 }
 
 #[cfg(test)]
@@ -306,12 +306,13 @@ mod tests {
     }
 
     #[test]
-    fn grade_in_a_sandbox_says_there_are_no_waves() {
-        let (mut console, _) = console_for(&BTreeMap::new(), LevelMode::Sandbox);
+    fn grade_without_waves_says_there_are_no_waves_on_this_level() {
+        let (mut console, _) = console_for(&BTreeMap::new(), false);
 
         console.submit("grade rookie");
 
-        assert_eq!(last_line(&console), "No waves in a sandbox");
+        assert_eq!(last_line(&console), "No waves on this level");
+        assert!(console.take_commands().is_empty());
         assert!(
             !printed(&console)
                 .iter()
@@ -322,8 +323,8 @@ mod tests {
     }
 
     #[test]
-    fn grade_in_an_arena_level_still_forces_the_grade() {
-        let (mut console, _) = console_for(&BTreeMap::new(), LevelMode::Arena);
+    fn grade_with_waves_still_forces_the_grade() {
+        let (mut console, _) = console_for(&BTreeMap::new(), true);
 
         console.submit("grade rookie");
 
