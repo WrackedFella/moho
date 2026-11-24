@@ -1,20 +1,48 @@
-pub const DEFAULT_AUTOSAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(120);
+use std::time::Duration;
+
+/// The interval used when `[game] autosave_seconds` is missing or malformed.
+const DEFAULT_AUTOSAVE_INTERVAL: Duration = Duration::from_secs(120);
+const MIN_AUTOSAVE_SECONDS: u32 = 30;
+const MAX_AUTOSAVE_SECONDS: u32 = 3600;
 
 /// The `[game]` key holding the autosave interval in seconds.
 const AUTOSAVE_SECONDS: &str = "autosave_seconds";
 
 /// The autosave interval a `[game] autosave_seconds` value asks for.
-pub fn interval_from_setting(
-    raw: Option<&str>,
-) -> Result<Option<std::time::Duration>, std::num::ParseIntError> {
-    let _ = raw;
-    Ok(Some(DEFAULT_AUTOSAVE_INTERVAL))
+///
+/// A missing value gives the default; `0` turns periodic autosave off (`None`); any other
+/// number is clamped to 30 through 3600 seconds.
+///
+/// # Errors
+///
+/// Returns the parse error when the value is not an unsigned integer.
+fn interval_from_setting(raw: Option<&str>) -> Result<Option<Duration>, std::num::ParseIntError> {
+    let Some(raw) = raw else {
+        return Ok(Some(DEFAULT_AUTOSAVE_INTERVAL));
+    };
+    let seconds: u32 = raw.parse()?;
+    if seconds == 0 {
+        return Ok(None);
+    }
+    let clamped = seconds.clamp(MIN_AUTOSAVE_SECONDS, MAX_AUTOSAVE_SECONDS);
+    Ok(Some(Duration::from_secs(u64::from(clamped))))
 }
 
-/// The autosave interval flagstone runs with, read from `prefs`.
-pub fn autosave_interval(prefs: &moho_core::prefs::Prefs) -> Option<std::time::Duration> {
-    let _ = (prefs, AUTOSAVE_SECONDS);
-    Some(DEFAULT_AUTOSAVE_INTERVAL)
+/// The autosave interval flagstone runs with, read from `[game] autosave_seconds`;
+/// `None` when autosave is off.
+///
+/// A malformed value logs a warning and gives the default.
+pub fn autosave_interval(prefs: &moho_core::prefs::Prefs) -> Option<Duration> {
+    let raw = prefs.game_value(AUTOSAVE_SECONDS);
+    interval_from_setting(raw).unwrap_or_else(|error| {
+        tracing::warn!(
+            key = "[game] autosave_seconds",
+            value = raw,
+            %error,
+            "Autosave interval is not a whole number of seconds; using the default"
+        );
+        Some(DEFAULT_AUTOSAVE_INTERVAL)
+    })
 }
 
 /// When an edited world is next due an autosave, counted in simulation ticks.

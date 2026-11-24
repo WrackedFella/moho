@@ -68,8 +68,11 @@ menu and periodically. With no world loaded (`App::generation.last_spec` is `Non
 - It advances once per tick, only in `GameState::Playing`; a paused game, a menu or the
   console does not count toward the interval.
 - A world is due when it has been edited since the last save and the interval
-  (`App::autosave_interval`, from the `[world] autosave_seconds` pref via `Prefs::autosave_interval`,
-  default 120 s of play; see [prefs format](prefs-format.md)) has passed. An idle world is never due.
+  (`App::autosave_interval`, from the `[game] autosave_seconds` pref via
+  `app::autosave::autosave_interval`, default 120 s of play; see [prefs format](prefs-format.md))
+  has passed. The value is whole seconds of play, read at startup only: `0` is off, any other
+  value is clamped to 30 to 3600 without a warning, and text or a negative number logs a warning
+  naming `[game] autosave_seconds` and gives the default. An idle world is never due.
   With autosave off (`0`) the schedule is never due (`AutosaveSchedule::off`); the exit and
   main-menu saves still run.
 - `process_world_events` marks it edited on `BlockPlaced`, `BlockRemoved` and
