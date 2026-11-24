@@ -5,6 +5,8 @@ use crate::App;
 use crate::app::world_geometry::insert_chunk;
 use crate::game_state::GameState;
 use flagstone_game::controller::CameraMode;
+use flagstone_game::crew::Crew;
+use flagstone_game::pawn::{Pawn, PawnId};
 use flagstone_voxel::{BlockPos, VoxelChunk};
 use glam::{IVec3, Vec3};
 use moho_app::{HeadlessLoop, LoopConfig};
@@ -34,6 +36,41 @@ pub(crate) fn rise(x_range: std::ops::RangeInclusive<i32>) -> Vec<Block> {
 /// `blocks` on top of it, all meshed into the physics world, and the pawn's character
 /// standing in `PAWN_CELL` and facing +Z.
 pub(crate) fn dig_site(blocks: &[Block]) -> App {
+    let mut app = field(blocks);
+    let start = pawn_start();
+    app.simulation.set_camera_mode(CameraMode::Isometric);
+    app.simulation.set_position_yaw_pitch(start, 0.0, 0.0);
+    app.physics.spawn_player(start);
+    app.physics.step(1.0 / 60.0);
+    app
+}
+
+/// [`dig_site`] with one pawn standing in each of `cells` (feet cells, in crew order) instead
+/// of the one in [`PAWN_CELL`]. The first is the possessed pawn: the player's body and the
+/// simulation's position are its.
+pub(crate) fn dig_site_with_pawns(blocks: &[Block], cells: &[[i32; 3]]) -> App {
+    let mut app = field(blocks);
+    app.simulation.set_camera_mode(CameraMode::Isometric);
+    app.crew = Crew::default();
+    for (index, cell) in cells.iter().enumerate() {
+        let id = app.crew.spawn(Pawn::default());
+        let start = standing_at(*cell);
+        if index == 0 {
+            app.possessed = id;
+            app.simulation.set_position_yaw_pitch(start, 0.0, 0.0);
+            app.physics.spawn_player(start);
+            let player = app.physics.player.expect("the player was just spawned");
+            app.physics.pawns.insert(id, player);
+        } else {
+            app.physics.spawn_pawn(id, start);
+        }
+    }
+    app.physics.step(1.0 / 60.0);
+    app
+}
+
+/// The field and its collision meshes, without a pawn.
+fn field(blocks: &[Block]) -> App {
     let mut app = App::headless();
     app.game_state = GameState::Playing;
     let grid = app.light_system.as_mut().expect("light system").grid_mut();
@@ -50,19 +87,19 @@ pub(crate) fn dig_site(blocks: &[Block]) -> App {
     for chunk in chunks {
         insert_chunk(&mut app, chunk);
     }
-    let start = pawn_start();
-    app.simulation.set_camera_mode(CameraMode::Isometric);
-    app.simulation.set_position_yaw_pitch(start, 0.0, 0.0);
-    app.physics.spawn_player(start);
-    app.physics.step(1.0 / 60.0);
     app
 }
 
 pub(crate) fn pawn_start() -> Vec3 {
+    standing_at(PAWN_CELL)
+}
+
+/// The capsule centre of a pawn that has just been placed standing in the feet cell `cell`.
+fn standing_at(cell: [i32; 3]) -> Vec3 {
     Vec3::new(
-        PAWN_CELL[0] as f32 + 0.5,
-        PAWN_CELL[1] as f32 + CENTRE_HEIGHT + START_CLEARANCE,
-        PAWN_CELL[2] as f32 + 0.5,
+        cell[0] as f32 + 0.5,
+        cell[1] as f32 + CENTRE_HEIGHT + START_CLEARANCE,
+        cell[2] as f32 + 0.5,
     )
 }
 
@@ -72,6 +109,16 @@ pub(crate) fn pawn_state(app: &App) -> moho_physics::CharacterState {
         .as_ref()
         .expect("physics world")
         .character(app.physics.player.expect("the site spawns the pawn"))
+        .expect("the pawn resolves")
+}
+
+/// The body of crew pawn `id`.
+pub(crate) fn pawn_state_of(app: &App, id: PawnId) -> moho_physics::CharacterState {
+    app.physics
+        .world
+        .as_ref()
+        .expect("physics world")
+        .character(*app.physics.pawns.get(&id).expect("the pawn has a body"))
         .expect("the pawn resolves")
 }
 

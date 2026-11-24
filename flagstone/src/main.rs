@@ -165,6 +165,13 @@ struct App {
     /// see `flagstone_game::pawn::Pawn`'s doc comment.
     pawn: flagstone_game::pawn::Pawn,
 
+    /// The colony's pawns. Test-only until the job loop and the HUD read it instead of `pawn`.
+    #[cfg(test)]
+    crew: flagstone_game::crew::Crew,
+    /// The pawn the player possesses; test-only for as long as `crew` is.
+    #[cfg(test)]
+    possessed: flagstone_game::pawn::PawnId,
+
     /// The window's physical size, which pointer positions are measured in.
     viewport: glam::UVec2,
     /// The surface under the last strategy-view click, `None` when it hit nothing.
@@ -179,6 +186,18 @@ struct App {
 }
 
 impl App {
+    /// The pawn the player possesses. Test-only until the crew replaces `pawn`.
+    #[cfg(test)]
+    fn possessed_pawn(&self) -> &flagstone_game::pawn::Pawn {
+        &self.pawn
+    }
+
+    /// The pawn the player possesses, mutably. Test-only until the crew replaces `pawn`.
+    #[cfg(test)]
+    fn possessed_pawn_mut(&mut self) -> &mut flagstone_game::pawn::Pawn {
+        &mut self.pawn
+    }
+
     /// Writes the running prefs to `prefs_path`; does nothing without one. A failed
     /// write is logged: the running prefs stay in effect either way.
     fn save_prefs(&self) {
@@ -311,6 +330,10 @@ impl App {
             lod_player_chunk_cache: glam::IVec3::splat(i32::MIN),
 
             pawn: flagstone_game::pawn::Pawn::default(),
+            #[cfg(test)]
+            crew: flagstone_game::crew::Crew::default(),
+            #[cfg(test)]
+            possessed: flagstone_game::selection::FIRST_PAWN,
 
             viewport: glam::UVec2::ZERO,
             pointer_hit: None,

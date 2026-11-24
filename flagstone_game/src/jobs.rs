@@ -3,7 +3,7 @@
 //! The loop reads the marks, the grid and the pawn's pose and answers with a plain action;
 //! the caller applies it through the pawn's own movement and mining.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::f32::consts::{FRAC_PI_3, PI, TAU};
 
 use flagstone_voxel::{BlockPos, VoxelGrid};
@@ -11,6 +11,7 @@ use glam::Vec3;
 
 use crate::TICK_HZ;
 use crate::colony::MineMarks;
+use crate::crew::Crew;
 use crate::pawn::{Pawn, PawnId, TOOL_SLOT};
 use crate::routing::{
     ROUTE_NODE_BUDGET, feet_cell, is_step, route, standable, standing_cell, walkable,
@@ -373,6 +374,18 @@ pub fn step(
         return JobAction::Wait;
     }
     JobAction::Walk { to }
+}
+
+/// Advances every pawn of `crew` one tick, in id order, each at its pose in `poses`, and
+/// answers with what each does. The pawns take their marks one after another, so a mark one
+/// of them has claimed is already taken when the next looks.
+pub fn step_crew(
+    _crew: &mut Crew,
+    _poses: &BTreeMap<PawnId, Pose>,
+    _marks: &mut MineMarks,
+    _grid: &VoxelGrid,
+) -> Vec<(PawnId, JobAction)> {
+    todo!("step_crew")
 }
 
 fn waypoint_centre(cell: BlockPos) -> Vec3 {
@@ -1842,6 +1855,306 @@ mod tests {
                 }
                 if off.abs() > FRAC_PI_3 + 0.02 {
                     prop_assert_eq!(step.forward, 0.0);
+                }
+            }
+        }
+    }
+
+    mod crew {
+        use super::*;
+
+        /// Several pawns sharing one flat field and one set of marks, driven a tick at a time.
+        struct CrewSite {
+            grid: VoxelGrid,
+            marks: MineMarks,
+            crew: Crew,
+            poses: BTreeMap<PawnId, Pose>,
+            ids: Vec<PawnId>,
+        }
+
+        impl CrewSite {
+            /// The flat field with one idle pawn standing in each of `starts`.
+            fn flat(starts: &[BlockPos]) -> Self {
+                let Site { grid, marks, .. } = Site::flat();
+                let mut crew = Crew::default();
+                let mut poses = BTreeMap::new();
+                let mut ids = Vec::new();
+                for &start in starts {
+                    let id = crew.spawn(Pawn::default());
+                    poses.insert(
+                        id,
+                        Pose {
+                            feet: centre(start),
+                            yaw: 0.0,
+                        },
+                    );
+                    ids.push(id);
+                }
+                Self {
+                    grid,
+                    marks,
+                    crew,
+                    poses,
+                    ids,
+                }
+            }
+
+            fn mark_block(&mut self, c: BlockPos) {
+                place(&mut self.grid, c);
+                self.marks.toggle(c.to_array());
+            }
+
+            /// One crew tick. Each pawn that is sent walking stands on its target next, and
+            /// each block dug is removed the way the colony does it.
+            fn tick(&mut self) -> Vec<(PawnId, JobAction)> {
+                let actions = step_crew(&mut self.crew, &self.poses, &mut self.marks, &self.grid);
+                for &(id, action) in &actions {
+                    match action {
+                        JobAction::Wait => {}
+                        JobAction::Walk { to } => {
+                            self.poses
+                                .get_mut(&id)
+                                .expect("only pawns with a pose are stepped")
+                                .feet = to;
+                        }
+                        JobAction::Dig { block, .. } => {
+                            assert!(self.grid.mutator().remove(block), "{block} holds no block");
+                            self.marks.block_removed(block.to_array());
+                        }
+                    }
+                }
+                actions
+            }
+
+            fn claimed_by(&self, mark: [i32; 3]) -> Option<PawnId> {
+                self.marks
+                    .iter()
+                    .find(|(pos, _)| *pos == mark)
+                    .and_then(|(_, m)| m.claimed_by)
+            }
+
+            /// The mark each pawn holds, by pawn.
+            fn held(&self) -> Vec<(PawnId, [i32; 3])> {
+                self.crew
+                    .iter()
+                    .filter_map(|(id, pawn)| match &pawn.job {
+                        Job::Mine { mark, .. } => Some((id, *mark)),
+                        Job::Idle { .. } => None,
+                    })
+                    .collect()
+            }
+        }
+
+        fn walk_target(actions: &[(PawnId, JobAction)], id: PawnId) -> Option<Vec3> {
+            actions.iter().find_map(|&(who, action)| match action {
+                JobAction::Walk { to } if who == id => Some(to),
+                _ => None,
+            })
+        }
+
+        #[test]
+        fn two_idle_pawns_and_one_mark_one_claims_and_the_other_waits() {
+            // The second pawn is nearer the block, but the first takes its turn first.
+            let mut site = CrewSite::flat(&[cell(0, 1, 0), cell(3, 1, 0)]);
+            site.mark_block(cell(6, 1, 0));
+            let [first, second] = site.ids[..] else {
+                panic!("two pawns were spawned: {:?}", site.ids);
+            };
+
+            let actions = site.tick();
+
+            assert_eq!(actions.len(), 2, "{actions:?}");
+            assert!(
+                matches!(actions[0], (id, JobAction::Walk { .. }) if id == first),
+                "{actions:?}"
+            );
+            assert_eq!(actions[1], (second, JobAction::Wait));
+            assert_eq!(site.claimed_by([6, 1, 0]), Some(first));
+            assert_eq!(site.held(), [(first, [6, 1, 0])]);
+            assert!(matches!(
+                site.crew.get(second).map(|pawn| &pawn.job),
+                Some(Job::Idle { .. })
+            ));
+        }
+
+        #[test]
+        fn three_pawns_and_three_marks_each_pawn_digs_one() {
+            let mut site = CrewSite::flat(&[cell(0, 1, -8), cell(0, 1, 0), cell(0, 1, 8)]);
+            for z in [-8, 0, 8] {
+                site.mark_block(cell(4, 1, z));
+            }
+            let mut digs: Vec<(PawnId, BlockPos)> = Vec::new();
+
+            for _ in 0..60 {
+                for (id, action) in site.tick() {
+                    if let JobAction::Dig { block, .. } = action {
+                        digs.push((id, block));
+                    }
+                }
+            }
+
+            let expected: Vec<(PawnId, BlockPos)> = site
+                .ids
+                .iter()
+                .copied()
+                .zip([cell(4, 1, -8), cell(4, 1, 0), cell(4, 1, 8)])
+                .collect();
+            let mut dug = digs.clone();
+            dug.sort_by_key(|&(id, _)| id);
+            assert_eq!(site.ids.len(), 3);
+            assert_eq!(
+                dug, expected,
+                "each pawn digs the block of its own row, once"
+            );
+            assert_eq!(digs.len(), 3, "no block is dug twice: {digs:?}");
+            assert_eq!(site.marks.iter().count(), 0, "every mark is worked off");
+        }
+
+        #[test]
+        fn each_pawn_takes_the_mark_nearest_itself() {
+            for (west_pawn, east_pawn) in [(0, 1), (1, 0)] {
+                let mut starts = [cell(-10, 1, 0), cell(10, 1, 0)];
+                if west_pawn == 1 {
+                    starts.reverse();
+                }
+                let mut site = CrewSite::flat(&starts);
+                site.mark_block(cell(-6, 1, 0));
+                site.mark_block(cell(6, 1, 0));
+
+                let actions = site.tick();
+
+                let (west, east) = (site.ids[west_pawn], site.ids[east_pawn]);
+                assert_eq!(actions.len(), 2, "{actions:?}");
+                assert_eq!(site.claimed_by([-6, 1, 0]), Some(west), "{starts:?}");
+                assert_eq!(site.claimed_by([6, 1, 0]), Some(east), "{starts:?}");
+                assert!(
+                    walk_target(&actions, west).is_some_and(|to| to.x > starts[west_pawn].x as f32),
+                    "the western pawn walks east, toward its mark: {actions:?}"
+                );
+                assert!(
+                    walk_target(&actions, east).is_some_and(|to| to.x < starts[east_pawn].x as f32),
+                    "the eastern pawn walks west, toward its mark: {actions:?}"
+                );
+            }
+        }
+
+        #[test]
+        fn two_pawns_beside_one_mark_dig_it_once() {
+            // Both stand where the block is within reach; the first digs it and lets go of
+            // the claim, which must not hand it to the second in the same tick.
+            let mut site = CrewSite::flat(&[cell(3, 1, 0), cell(3, 1, 1)]);
+            site.mark_block(cell(4, 1, 0));
+            let [first, second] = site.ids[..] else {
+                panic!("two pawns were spawned: {:?}", site.ids);
+            };
+
+            let actions = site.tick();
+
+            let digs: Vec<PawnId> = actions
+                .iter()
+                .filter(|(_, action)| matches!(action, JobAction::Dig { .. }))
+                .map(|&(id, _)| id)
+                .collect();
+            assert_eq!(digs, [first], "{actions:?}");
+            assert_eq!(actions.len(), 2);
+            assert_eq!(actions[1], (second, JobAction::Wait));
+        }
+
+        #[test]
+        fn a_pawn_freed_by_a_cancel_walks_to_the_pending_mark() {
+            let mut site = CrewSite::flat(&[cell(0, 1, 0)]);
+            site.mark_block(cell(5, 1, 0));
+            site.mark_block(cell(0, 1, 9));
+            let pawn = site.ids[0];
+            site.tick();
+            assert_eq!(
+                site.claimed_by([5, 1, 0]),
+                Some(pawn),
+                "walking to the nearer"
+            );
+            assert_eq!(site.claimed_by([0, 1, 9]), None, "the other is pending");
+            let before = site.poses[&pawn].feet;
+
+            site.marks.toggle([5, 1, 0]);
+            let mut walked_to = None;
+            for _ in 0..3 {
+                let actions = site.tick();
+                if let Some(to) = walk_target(&actions, pawn) {
+                    walked_to = Some(to);
+                    break;
+                }
+            }
+
+            assert_eq!(site.claimed_by([5, 1, 0]), None);
+            assert_eq!(site.claimed_by([0, 1, 9]), Some(pawn));
+            let to = walked_to.expect("the freed pawn walks again within three ticks");
+            assert!(
+                to.x <= before.x + EPS,
+                "toward the pending mark, not on toward the cancelled one: {to} from {before}"
+            );
+        }
+
+        #[test]
+        fn step_crew_steps_pawns_in_id_order() {
+            let mut site = CrewSite::flat(&[cell(0, 1, 0), cell(2, 1, 0), cell(-2, 1, 0)]);
+
+            let actions = site.tick();
+
+            let waiting: Vec<(PawnId, JobAction)> =
+                site.ids.iter().map(|&id| (id, JobAction::Wait)).collect();
+            assert_eq!(site.ids, [PawnId(0), PawnId(1), PawnId(2)]);
+            assert_eq!(actions, waiting, "one answer per pawn, in id order");
+        }
+
+        proptest! {
+            #[test]
+            fn no_mark_is_ever_claimed_by_two_pawns(
+                starts in proptest::collection::btree_set((-8..=8i32, -8..=-1i32), 1..=4),
+                marked in proptest::collection::btree_set((-8..=8i32, 3..=8i32), 1..=6),
+                cancels in proptest::collection::vec(
+                    proptest::collection::vec(0..6usize, 0..3),
+                    1..6,
+                ),
+            ) {
+                let starts: Vec<BlockPos> =
+                    starts.into_iter().map(|(x, z)| cell(x, 1, z)).collect();
+                let marked: Vec<[i32; 3]> = marked
+                    .into_iter()
+                    .map(|(x, z)| cell(x, 1, z).to_array())
+                    .collect();
+                let mut site = CrewSite::flat(&starts);
+                for mark in &marked {
+                    site.mark_block(BlockPos::from_array(*mark));
+                }
+
+                site.tick();
+
+                prop_assert_eq!(
+                    site.held().len(),
+                    starts.len().min(marked.len()),
+                    "every pawn takes a mark while there are marks to take"
+                );
+                for cancel in &cancels {
+                    for &index in cancel {
+                        site.marks.toggle(marked[index % marked.len()]);
+                    }
+                    let actions = site.tick();
+
+                    let held = site.held();
+                    let distinct: BTreeSet<[i32; 3]> = held.iter().map(|&(_, mark)| mark).collect();
+                    prop_assert_eq!(distinct.len(), held.len(), "two pawns hold one mark: {:?}", held);
+                    for (id, mark) in held {
+                        prop_assert_eq!(site.claimed_by(mark), Some(id));
+                    }
+                    let digs: Vec<BlockPos> = actions
+                        .iter()
+                        .filter_map(|&(_, action)| match action {
+                            JobAction::Dig { block, .. } => Some(block),
+                            _ => None,
+                        })
+                        .collect();
+                    let dug: BTreeSet<[i32; 3]> = digs.iter().map(BlockPos::to_array).collect();
+                    prop_assert_eq!(dug.len(), digs.len(), "one block dug twice: {:?}", digs);
                 }
             }
         }

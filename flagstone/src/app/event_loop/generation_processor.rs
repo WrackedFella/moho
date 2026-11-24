@@ -436,18 +436,132 @@ mod tests {
         assert_eq!(
             terrain_collider_count(&app),
             with_geometry + 3,
-            "terrain plus the three spheres, character aside"
+            "terrain plus the three spheres, pawns aside"
         );
         assert_eq!(
             pw.collider_set.len(),
-            with_geometry + 1 + 3,
-            "terrain, one character and three spheres"
+            with_geometry + flagstone_game::crew::CREW_SIZE + 3,
+            "terrain, one body per pawn and three spheres"
         );
         assert_eq!(
             pw.rigid_body_set.len(),
-            1 + 3,
-            "one character, three spheres"
+            flagstone_game::crew::CREW_SIZE + 3,
+            "one body per pawn, three spheres"
         );
+    }
+
+    /// Walking settings that keep a pawn on the ground; the same numbers as the strategy view's.
+    const SETTLE_SETTINGS: moho_physics::MoveSettings = moho_physics::MoveSettings {
+        max_speed: 4.0,
+        ground_accel: 360.0,
+        friction: 60.0,
+        stop_speed: 1.0,
+        air_accel: 360.0,
+        air_speed_cap: 4.0,
+        gravity: None,
+        jump_speed: 8.0,
+        max_velocity: 90.0,
+        autohop: true,
+        crouch_ticks: 0,
+        prone_ticks: 0,
+        lean_ticks: 0,
+    };
+
+    #[test]
+    fn a_new_world_spawns_three_pawns_standing_on_solid_ground() {
+        use flagstone_game::crew::CREW_SIZE;
+        use flagstone_game::routing::standable;
+        use flagstone_game::selection::FIRST_PAWN;
+        const DT: f32 = 1.0 / 60.0;
+        const CENTRE_HEIGHT: f32 = 1.15;
+        let mut app = App::headless();
+        let spec = flagstone_game::scene_builders::WorldSpec {
+            name: "headless-test-three-pawns".to_string(),
+            seed: Some(7),
+            size_xz: 64,
+            day_length_seconds: 600.0,
+            night_length_seconds: 420.0,
+            initial_time_of_day: 6.0,
+        };
+        let scene_bytes = flagstone_game::scene_persistence::encode_to_bytes(
+            &flagstone_game::scene::SceneEntities::default(),
+            None,
+            &[],
+        )
+        .expect("encode empty scene");
+
+        GenerationProcessor::new().handle_completed(
+            &mut app,
+            scene_bytes,
+            spec,
+            flagstone_game::scene_builders::TerrainConfig::default(),
+            flagstone_voxel::VoxelGrid::new(16),
+        );
+
+        let bodies: Vec<_> = app
+            .physics
+            .pawns
+            .iter()
+            .map(|(&id, &handle)| (id, handle))
+            .collect();
+        assert_eq!(app.crew.len(), CREW_SIZE, "the crew of a new world");
+        assert_eq!(bodies.len(), CREW_SIZE, "a body for each pawn");
+        assert_eq!(app.possessed, FIRST_PAWN);
+        assert_eq!(
+            app.physics.player,
+            app.physics.pawns.get(&app.possessed).copied(),
+            "the player's body is the possessed pawn's"
+        );
+        let possessed_at = app
+            .physics
+            .world
+            .as_ref()
+            .and_then(|pw| pw.character(app.physics.player.expect("a player body")))
+            .expect("the possessed pawn's body resolves")
+            .position;
+        assert!(
+            app.simulation.position().distance(possessed_at) < 1e-3,
+            "the view follows the possessed pawn"
+        );
+
+        for _ in 0..60 {
+            let pw = app.physics.world.as_mut().expect("physics world");
+            for &(id, handle) in &bodies {
+                let moved = pw.move_character(
+                    handle,
+                    &moho_physics::CharacterCommand::default(),
+                    &SETTLE_SETTINGS,
+                    DT,
+                );
+                assert!(moved.is_ok(), "pawn {id:?}: the body is not in the world");
+            }
+            app.physics.step(DT);
+        }
+
+        let grid = app.light_system.as_ref().expect("light system").grid();
+        let pw = app.physics.world.as_ref().expect("physics world");
+        let mut columns = std::collections::BTreeSet::new();
+        for &(id, handle) in &bodies {
+            let state = pw.character(handle).expect("the pawn's body resolves");
+            let feet = state.position - glam::Vec3::Y * CENTRE_HEIGHT;
+            let cell = glam::IVec3::new(
+                feet.x.floor() as i32,
+                feet.y.round() as i32,
+                feet.z.floor() as i32,
+            );
+            assert!(state.grounded, "pawn {id:?} is airborne at {feet}");
+            assert!(
+                standable(grid, cell),
+                "pawn {id:?} at {feet} is not on solid ground"
+            );
+            assert!(
+                (feet.y - cell.y as f32).abs() <= 0.05,
+                "pawn {id:?}: feet at {} over the floor of {cell}",
+                feet.y
+            );
+            columns.insert((cell.x, cell.z));
+        }
+        assert_eq!(columns.len(), CREW_SIZE, "the pawns share a column");
     }
 
     #[test]

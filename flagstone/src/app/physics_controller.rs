@@ -19,6 +19,10 @@ pub struct PhysicsController {
     pub test_bodies: Vec<(moho_physics::RigidBodyHandle, ActorId)>,
     pub jump_pressed: bool,
     pub player: Option<moho_physics::CharacterHandle>,
+    /// Every pawn's body, the possessed one included. Test-only until the job loop drives them.
+    #[cfg(test)]
+    pub pawns:
+        std::collections::BTreeMap<flagstone_game::pawn::PawnId, moho_physics::CharacterHandle>,
     pub noclip: bool,
     /// The player's state before the latest tick, for blending the view.
     previous: Option<moho_physics::CharacterState>,
@@ -35,10 +39,26 @@ impl PhysicsController {
             test_bodies: Vec::new(),
             jump_pressed: false,
             player: None,
+            #[cfg(test)]
+            pawns: std::collections::BTreeMap::new(),
             noclip: false,
             previous: None,
             snap_view: false,
         }
+    }
+
+    /// Adds the body of pawn `id` at `spawn`. Test-only until the job loop drives the crew.
+    #[cfg(test)]
+    pub fn spawn_pawn(
+        &mut self,
+        id: flagstone_game::pawn::PawnId,
+        spawn: impl Into<moho_physics::CharacterSpawn>,
+    ) {
+        let Some(pw) = self.world.as_mut() else {
+            return;
+        };
+        let handle = pw.add_character(spawn);
+        self.pawns.insert(id, handle);
     }
 
     /// Clear and recreate the physics world, removing all colliders and bodies.
@@ -362,6 +382,27 @@ mod tests {
         assert_eq!(controller.player, None);
         assert!(!controller.noclip);
         assert!(!controller.is_kcc_active());
+    }
+
+    #[test]
+    fn reset_drops_every_pawn_body() {
+        use flagstone_game::pawn::PawnId;
+        let mut controller = PhysicsController::new();
+        controller.spawn_player(glam::Vec3::new(0.0, 10.0, 0.0));
+        for (index, x) in [0.0_f32, 3.0, 6.0].into_iter().enumerate() {
+            controller.spawn_pawn(PawnId(index as u32), glam::Vec3::new(x, 10.0, 0.0));
+        }
+        assert_eq!(controller.pawns.len(), 3, "setup: a body for each pawn");
+        let stale: Vec<_> = controller.pawns.values().copied().collect();
+
+        controller.reset();
+
+        let pw = controller.world.as_ref().expect("a fresh world");
+        assert!(controller.pawns.is_empty(), "the old handles are kept");
+        for handle in stale {
+            assert!(pw.character(handle).is_none(), "an old body is still alive");
+        }
+        assert_eq!(pw.rigid_body_set.len(), 0, "no body outlives the reset");
     }
 
     #[test]

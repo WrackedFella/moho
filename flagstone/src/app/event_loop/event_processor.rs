@@ -718,7 +718,8 @@ mod tests {
         app.game_state = crate::game_state::GameState::Playing;
         app.simulation
             .set_camera_mode(flagstone_game::controller::CameraMode::FirstPerson);
-        app.pawn.select_slot(flagstone_game::pawn::TOOL_SLOT);
+        app.possessed_pawn_mut()
+            .select_slot(flagstone_game::pawn::TOOL_SLOT);
         // Identity rotation: the camera looks down -Z from just in front of the wall.
         app.camera.0 = glam::Mat4::from_translation(glam::Vec3::new(4.5, 70.5, 6.5)).inverse();
         let aimed = flagstone_voxel::BlockPos::new(4, 70, 3);
@@ -766,7 +767,8 @@ mod tests {
         app.game_state = crate::game_state::GameState::Playing;
         app.simulation
             .set_camera_mode(flagstone_game::controller::CameraMode::FirstPerson);
-        app.pawn.select_slot(flagstone_game::pawn::TOOL_SLOT);
+        app.possessed_pawn_mut()
+            .select_slot(flagstone_game::pawn::TOOL_SLOT);
         // The camera looks down -Z at block (16, 70, 3): local x 0 of chunk (1, 4, 0).
         app.camera.0 = glam::Mat4::from_translation(glam::Vec3::new(16.5, 70.5, 6.5)).inverse();
         let grid = app
@@ -815,7 +817,8 @@ mod tests {
         app.game_state = crate::game_state::GameState::Playing;
         app.simulation
             .set_camera_mode(flagstone_game::controller::CameraMode::FirstPerson);
-        app.pawn.select_slot(flagstone_game::pawn::TOOL_SLOT);
+        app.possessed_pawn_mut()
+            .select_slot(flagstone_game::pawn::TOOL_SLOT);
         app.camera.0 = glam::Mat4::from_translation(glam::Vec3::new(4.5, 70.5, 6.5)).inverse();
         let grid = app
             .light_system
@@ -1035,7 +1038,8 @@ mod tests {
         app.game_state = crate::game_state::GameState::Playing;
         app.simulation
             .set_camera_mode(flagstone_game::controller::CameraMode::Isometric);
-        app.pawn.select_slot(flagstone_game::pawn::TOOL_SLOT);
+        app.possessed_pawn_mut()
+            .select_slot(flagstone_game::pawn::TOOL_SLOT);
         // Identity rotation: the camera looks down -Z from just in front of the wall.
         app.camera.0 = glam::Mat4::from_translation(glam::Vec3::new(4.5, 70.5, 6.5)).inverse();
         let aimed = flagstone_voxel::BlockPos::new(4, 70, 3);
@@ -1625,7 +1629,8 @@ mod tests {
         app.game_state = crate::game_state::GameState::Playing;
         app.simulation
             .set_camera_mode(flagstone_game::controller::CameraMode::FirstPerson);
-        app.pawn.select_slot(flagstone_game::pawn::TOOL_SLOT);
+        app.possessed_pawn_mut()
+            .select_slot(flagstone_game::pawn::TOOL_SLOT);
         app.camera.0 = glam::Mat4::from_translation(glam::Vec3::new(4.5, 70.5, 6.5)).inverse();
         let grid = app
             .light_system
@@ -1762,12 +1767,12 @@ mod tests {
     }
 
     #[test]
-    fn hand_mining_fills_the_pawn_not_the_colony() {
+    fn hand_mining_fills_the_possessed_pawn() {
         let mut app = app_aimed_at_block_with(Some(7));
 
         EventProcessor::new().handle_input_event(&mut app, InputEvent::MineRequested);
 
-        assert_eq!(app.pawn.inventory.count(7), 1);
+        assert_eq!(app.possessed_pawn().inventory.count(7), 1);
         assert!(
             app.colony.stock.is_empty(),
             "only pawn jobs feed the colony"
