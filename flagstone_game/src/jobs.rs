@@ -3,6 +3,7 @@
 //! The loop reads the marks, the grid and the pawn's pose and answers with a plain action;
 //! the caller applies it through the pawn's own movement and mining.
 
+use std::collections::BTreeSet;
 use std::f32::consts::{FRAC_PI_3, PI, TAU};
 
 use flagstone_voxel::{BlockPos, VoxelGrid};
@@ -11,7 +12,9 @@ use glam::Vec3;
 use crate::TICK_HZ;
 use crate::colony::MineMarks;
 use crate::pawn::{Pawn, PawnId, TOOL_SLOT};
-use crate::routing::{ROUTE_NODE_BUDGET, feet_cell, route, standable};
+use crate::routing::{
+    ROUTE_NODE_BUDGET, feet_cell, is_step, route, standable, standing_cell, walkable,
+};
 
 /// How close to a waypoint's centre, horizontally in metres, the feet count as arrived.
 pub const ARRIVE_RADIUS: f32 = 0.35;
@@ -48,12 +51,37 @@ pub struct StallGuard {
     pub closest: Option<f32>,
 }
 
+/// The marks that failed to route from `from` at grid `revision`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Unreachable {
+    pub revision: u64,
+    pub from: BlockPos,
+    pub marks: BTreeSet<[i32; 3]>,
+}
+
+impl Unreachable {
+    fn new(revision: u64, from: BlockPos) -> Self {
+        Self {
+            revision,
+            from,
+            marks: BTreeSet::new(),
+        }
+    }
+
+    /// Empties the memo unless it was recorded at this `revision` from this cell.
+    fn refresh(&mut self, revision: u64, from: BlockPos) {
+        if self.revision != revision || self.from != from {
+            *self = Self::new(revision, from);
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Job {
     Idle {
-        /// Candidate marks earlier ticks already tried to route to, so a capped search
-        /// resumes past them.
-        tried: usize,
+        /// The marks this idle pawn has found no route to, so it does not search for them
+        /// again until the terrain or its cell changes.
+        unreachable: Unreachable,
     },
     Mine {
         mark: [i32; 3],
@@ -61,12 +89,16 @@ pub enum Job {
         route: Vec<BlockPos>,
         next: usize,
         stall: StallGuard,
+        /// The grid revision the route was last checked at.
+        revision: u64,
     },
 }
 
 impl Default for Job {
     fn default() -> Self {
-        Self::Idle { tried: 0 }
+        Self::Idle {
+            unreachable: Unreachable::default(),
+        }
     }
 }
 
@@ -141,43 +173,34 @@ fn nearest_exposed_face(grid: &VoxelGrid, block: BlockPos, eye: Vec3) -> Vec3 {
         .unwrap_or(centre)
 }
 
-/// Takes the nearest routable unclaimed mark, trying at most [`ROUTE_ATTEMPTS_PER_TICK`]
-/// routes. `tried` counts the candidates already attempted by earlier ticks.
+/// Takes the nearest routable unclaimed mark the memo does not hold, trying at most
+/// [`ROUTE_ATTEMPTS_PER_TICK`] routes and memoising each failure. The memo is emptied first
+/// when the terrain or the pawn's cell is not what it recorded.
 fn claim_nearest(
-    tried: &mut usize,
+    unreachable: &mut Unreachable,
     pawn: &mut Pawn,
     id: PawnId,
     pose: Pose,
     marks: &mut MineMarks,
     grid: &VoxelGrid,
 ) -> Option<Job> {
-    let start = feet_cell(pose.feet);
+    let start = start_cell(grid, pose);
+    unreachable.refresh(grid.revision(), start);
     let mut candidates: Vec<BlockPos> = marks
         .unclaimed()
+        .filter(|mark| !unreachable.marks.contains(mark))
         .map(BlockPos::from_array)
         .filter(|&block| grid.is_solid_at(block) && has_exposed_face(grid, block))
         .collect();
     // Stable, so equal distances keep key order.
     candidates.sort_by_key(|&block| (block - start).length_squared());
 
-    let attempts = candidates
-        .iter()
-        .skip(*tried)
-        .take(ROUTE_ATTEMPTS_PER_TICK)
-        .copied();
-    let mut attempted = 0;
-    for block in attempts {
-        attempted += 1;
-        let Some(route) = route(
-            grid,
-            start,
-            |cell| is_stand_cell(block, cell),
-            block,
-            ROUTE_NODE_BUDGET,
-        ) else {
+    for block in candidates.into_iter().take(ROUTE_ATTEMPTS_PER_TICK) {
+        let mark = block.to_array();
+        let Some(route) = route_to_stand_cell(grid, start, block) else {
+            unreachable.marks.insert(mark);
             continue;
         };
-        let mark = block.to_array();
         if marks.claim(mark, id) {
             pawn.select_slot(TOOL_SLOT);
             return Some(Job::Mine {
@@ -185,15 +208,107 @@ fn claim_nearest(
                 route,
                 next: 0,
                 stall: StallGuard::default(),
+                revision: grid.revision(),
             });
         }
     }
-    *tried = if *tried + attempted >= candidates.len() {
-        0
-    } else {
-        *tried + attempted
-    };
     None
+}
+
+/// The cell routes from the pawn start in: the one it stands in (see [`standing_cell`]), or
+/// its raw feet cell when it stands nowhere, which no route starts from either.
+fn start_cell(grid: &VoxelGrid, pose: Pose) -> BlockPos {
+    let feet = feet_cell(pose.feet);
+    standing_cell(grid, feet).unwrap_or(feet)
+}
+
+/// Moves `next` past the waypoints the feet have reached.
+fn advance(job: &mut Job, pose: Pose) {
+    let Job::Mine {
+        route, next, stall, ..
+    } = job
+    else {
+        return;
+    };
+    let reached = route[*next..]
+        .iter()
+        .take_while(|&&cell| horizontal_distance(pose.feet, waypoint_centre(cell)) <= ARRIVE_RADIUS)
+        .count();
+    if reached > 0 {
+        *next += reached;
+        *stall = StallGuard::default();
+    }
+}
+
+/// Whether the grid changed since the job's route was last checked. Records the grid's
+/// revision as the one checked, so each change reports once.
+fn terrain_changed_since_check(job: &mut Job, grid: &VoxelGrid) -> bool {
+    let Job::Mine { revision, .. } = job else {
+        return false;
+    };
+    let changed = *revision != grid.revision();
+    *revision = grid.revision();
+    changed
+}
+
+/// Whether the pawn can no longer walk from where it stands along the rest of its route.
+fn route_broken(job: &Job, pose: Pose, grid: &VoxelGrid) -> bool {
+    let Job::Mine { route, next, .. } = job else {
+        return false;
+    };
+    let start = start_cell(grid, pose);
+    let rest = &route[*next..];
+    let rest = rest.strip_prefix(&[start]).unwrap_or(rest);
+    !(standable(grid, start)
+        && rest
+            .first()
+            .is_none_or(|&first| is_step(grid, start, first))
+        && walkable(grid, rest))
+}
+
+/// Routes the pawn from its feet cell to a stand cell of the mark it holds, keeping the
+/// claim. With no route the claim is released and the pawn goes idle with the mark
+/// remembered as unreachable from here. Returns whether the job goes on.
+fn replan(job: &mut Job, marks: &mut MineMarks, pose: Pose, grid: &VoxelGrid) -> bool {
+    let Job::Mine {
+        mark,
+        route: planned,
+        next,
+        stall,
+        ..
+    } = job
+    else {
+        return false;
+    };
+    let held = *mark;
+    let block = BlockPos::from_array(held);
+    let feet = start_cell(grid, pose);
+    if let Some(found) = route_to_stand_cell(grid, feet, block) {
+        *planned = found;
+        *next = 0;
+        *stall = StallGuard::default();
+        return true;
+    }
+    release(job, marks, held);
+    let mut unreachable = Unreachable::new(grid.revision(), feet);
+    unreachable.marks.insert(held);
+    *job = Job::Idle { unreachable };
+    false
+}
+
+/// The route from `start` to a cell from which `block` is within mining reach.
+fn route_to_stand_cell(
+    grid: &VoxelGrid,
+    start: BlockPos,
+    block: BlockPos,
+) -> Option<Vec<BlockPos>> {
+    route(
+        grid,
+        start,
+        |cell| is_stand_cell(block, cell),
+        block,
+        ROUTE_NODE_BUDGET,
+    )
 }
 
 /// Advances `job` one tick for the pawn `id` at `pose`.
@@ -205,19 +320,13 @@ pub fn step(
     marks: &mut MineMarks,
     grid: &VoxelGrid,
 ) -> JobAction {
-    if let Job::Idle { tried } = job {
-        match claim_nearest(tried, pawn, id, pose, marks, grid) {
+    if let Job::Idle { unreachable } = job {
+        match claim_nearest(unreachable, pawn, id, pose, marks, grid) {
             Some(claimed) => *job = claimed,
             None => return JobAction::Wait,
         }
     }
-    let Job::Mine {
-        mark,
-        route,
-        next,
-        stall,
-    } = job
-    else {
+    let Job::Mine { mark, .. } = job else {
         return JobAction::Wait;
     };
     let held = *mark;
@@ -228,27 +337,26 @@ pub fn step(
         return JobAction::Wait;
     }
 
-    let arrived =
-        |cell: BlockPos| horizontal_distance(pose.feet, waypoint_centre(cell)) <= ARRIVE_RADIUS;
-    let reached = route[*next..]
-        .iter()
-        .take_while(|&&cell| arrived(cell))
-        .count();
-    if reached > 0 {
-        *next += reached;
-        *stall = StallGuard::default();
+    advance(job, pose);
+    if terrain_changed_since_check(job, grid) && route_broken(job, pose, grid) {
+        if !replan(job, marks, pose, grid) {
+            return JobAction::Wait;
+        }
+        advance(job, pose);
     }
 
+    let Job::Mine {
+        route, next, stall, ..
+    } = job
+    else {
+        return JobAction::Wait;
+    };
     let Some(&waypoint) = route.get(*next) else {
         let aim = nearest_exposed_face(grid, block, eye(pose.feet));
         release(job, marks, held);
         return JobAction::Dig { block, aim };
     };
     let to = waypoint_centre(waypoint);
-    if !standable(grid, waypoint) {
-        release(job, marks, held);
-        return JobAction::Wait;
-    }
 
     let distance = horizontal_distance(pose.feet, to);
     if stall
@@ -288,7 +396,7 @@ pub fn steer(pose: Pose, to: Vec3) -> WalkStep {
 mod tests {
     use super::*;
     use crate::pawn::MINE_REACH;
-    use crate::routing::{feet_cell, standable};
+    use crate::routing::{feet_cell, is_step, standable};
     use crate::tools::STARTING_TOOL;
     use proptest::prelude::*;
 
@@ -382,6 +490,58 @@ mod tests {
 
         fn is_marked(&self, mark: [i32; 3]) -> bool {
             self.marks.contains(mark)
+        }
+
+        /// Removes the block at `c` the way a dig does: the grid change, then the marker.
+        fn dig(&mut self, c: BlockPos) {
+            let before = self.grid.revision();
+            let removed = self.grid.mutator().remove(c);
+            self.marks.block_removed(c.to_array());
+            assert!(removed, "{c} holds no block to dig");
+            assert_ne!(self.grid.revision(), before, "a dig moves the revision");
+        }
+
+        fn memo(&self) -> &Unreachable {
+            match &self.job {
+                Job::Idle { unreachable } => unreachable,
+                other @ Job::Mine { .. } => panic!("the pawn is not idle: {other:?}"),
+            }
+        }
+
+        /// Cuts the whole ground column at (x, z) so no pawn can stand there or cross it.
+        fn cut_ground(&mut self, x: i32, z: i32) {
+            self.dig(cell(x, 0, z));
+        }
+
+        /// Moves the pawn onto each waypoint it is sent to until its feet are in `at`;
+        /// at most `limit` ticks.
+        fn walk_until_at(&mut self, at: BlockPos, limit: usize) {
+            for _ in 0..limit {
+                if feet_cell(self.pose.feet) == at {
+                    return;
+                }
+                if let JobAction::Walk { to } = self.tick() {
+                    self.pose.feet = to;
+                }
+            }
+            panic!("never reached {at}: {:?}", self.job);
+        }
+
+        /// The flat field with a trench across it at x 3 to 6, crossed only by one-cell-wide
+        /// causeways along x at each of `bridge_zs`.
+        fn trench_with_causeways(bridge_zs: &[i32]) -> Self {
+            let mut site = Self::flat();
+            for x in 3..=6 {
+                for z in -12..=12 {
+                    site.grid.mutator().remove(cell(x, 0, z));
+                }
+            }
+            for &z in bridge_zs {
+                for x in 3..=6 {
+                    place(&mut site.grid, cell(x, 0, z));
+                }
+            }
+            site
         }
     }
 
@@ -502,38 +662,6 @@ mod tests {
             assert_eq!(with_a_free_one.claimed_by([-8, 1, 0]), Some(ME));
             assert_eq!(with_a_free_one.claimed_by([4, 1, 0]), Some(OTHER));
         }
-
-        #[test]
-        fn route_attempts_are_capped_per_tick_and_resume_next_tick() {
-            let mut site = Site::flat();
-            // Five marks nearer than the reachable one, each a block floating where no
-            // ground lets the pawn stand beside it.
-            for x in 1..=5 {
-                site.mark_block(cell(x, 5, 0));
-            }
-            site.mark_block(cell(11, 1, 0));
-
-            let first = site.tick();
-            let claimed_after_first = site.claimed_by([11, 1, 0]);
-            let second = site.tick();
-
-            assert_eq!(first, JobAction::Wait, "four failed routes use the tick up");
-            assert_eq!(claimed_after_first, None);
-            assert!(
-                matches!(
-                    site.job,
-                    Job::Mine {
-                        mark: [11, 1, 0],
-                        ..
-                    }
-                ),
-                "{second:?}"
-            );
-            assert_eq!(site.claimed_by([11, 1, 0]), Some(ME));
-            for x in 1..=5 {
-                assert_eq!(site.claimed_by([x, 5, 0]), None);
-            }
-        }
     }
 
     mod claiming_order {
@@ -553,19 +681,23 @@ mod tests {
         }
 
         #[test]
-        fn marks_that_all_failed_to_route_are_tried_again_from_the_nearest_next_tick() {
+        fn a_new_mark_is_routed_while_failed_ones_stay_memoised() {
             let mut site = Site::flat();
             // Two floating blocks no ground lets the pawn stand beside.
             site.mark_block(cell(1, 5, 0));
             site.mark_block(cell(2, 5, 0));
 
             let first = site.tick();
-            site.mark_block(cell(4, 1, 0));
+            let revision = site.grid.revision();
+            // A new mark on ground that is already there: the terrain, and so the memo,
+            // stays as it was.
+            site.marks.toggle([4, 0, 0]);
             let second = site.tick();
 
             assert_eq!(first, JobAction::Wait);
+            assert_eq!(site.grid.revision(), revision);
             assert_ne!(second, JobAction::Wait);
-            assert_eq!(site.claimed_by([4, 1, 0]), Some(ME));
+            assert_eq!(site.claimed_by([4, 0, 0]), Some(ME));
         }
     }
 
@@ -872,6 +1004,12 @@ mod tests {
         #[test]
         fn a_waypoint_that_stops_being_standable_releases_the_claim() {
             let mut site = Site::flat();
+            // A corridor one cell wide: with another way round the job re-plans instead.
+            for x in -12..=12 {
+                for z in (-12..=12).filter(|&z| z != 0) {
+                    site.grid.mutator().remove(cell(x, 0, z));
+                }
+            }
             site.mark_block(cell(8, 1, 0));
             site.tick();
             assert!(matches!(site.job, Job::Mine { .. }), "the walk began");
@@ -889,6 +1027,610 @@ mod tests {
             assert!(released, "a blocked waypoint ends the job");
             assert!(site.is_marked([8, 1, 0]), "the mark stays");
             assert_eq!(site.claimed_by([8, 1, 0]), None);
+        }
+    }
+
+    mod waiting {
+        use super::*;
+
+        /// A marked block floating where no ground lets the pawn stand beside it.
+        fn float(site: &mut Site, x: i32, z: i32) {
+            site.mark_block(cell(x, 5, z));
+        }
+
+        /// Eight floating marks; the four nearest the pawn at (0, 1, 0) are (1, 0), (2, 0),
+        /// (3, 0) and (1, 3) in x and z.
+        fn site_with_eight_unreachable_marks() -> Site {
+            let mut site = Site::flat();
+            for x in 1..=5 {
+                float(&mut site, x, 0);
+            }
+            for x in 1..=3 {
+                float(&mut site, x, 3);
+            }
+            site
+        }
+
+        #[test]
+        fn a_mark_in_a_sealed_pocket_is_never_claimed() {
+            let mut site = Site::flat();
+            site.grid
+                .mutator()
+                .fill_region(cell(2, 1, -3), cell(8, 5, 3), STONE);
+            for x in 4..=6 {
+                for y in 2..=4 {
+                    for z in -1..=1 {
+                        site.grid.mutator().remove(cell(x, y, z));
+                    }
+                }
+            }
+            site.marks.toggle([5, 1, 0]);
+            assert!(
+                standable(&site.grid, cell(4, 2, 0)),
+                "the pocket has a stand cell, only no way in"
+            );
+
+            for tick in 0..300 {
+                let action = site.tick();
+
+                assert_eq!(action, JobAction::Wait, "tick {tick}");
+            }
+
+            assert!(matches!(site.job, Job::Idle { .. }));
+            assert_eq!(site.claimed_by([5, 1, 0]), None);
+            assert!(site.is_marked([5, 1, 0]), "the mark stays");
+            assert!(site.memo().marks.contains(&[5, 1, 0]), "remembered");
+
+            // A way in opens: a tunnel with headroom through the wall, into the pocket.
+            for x in 2..=3 {
+                for y in 1..=4 {
+                    site.dig(cell(x, y, 0));
+                }
+            }
+            let after_the_way_opens = site.tick();
+
+            assert_ne!(after_the_way_opens, JobAction::Wait);
+            assert_eq!(site.claimed_by([5, 1, 0]), Some(ME), "workable at once");
+        }
+
+        #[test]
+        fn digging_the_upper_mark_opens_the_lower_one() {
+            let mut site = Site::flat();
+            site.grid
+                .mutator()
+                .fill_region(cell(-12, -2, -12), cell(12, 0, 12), STONE);
+            site.marks.toggle([4, 0, 0]);
+            site.marks.toggle([4, -1, 0]);
+
+            let first = site.run_to_the_dig(30);
+            let (upper, _, _) = first.dig.expect("the exposed upper block is dug first");
+            let lower_claimed_early = site.claimed_by([4, -1, 0]);
+            site.dig(upper);
+            let second = site.run_to_the_dig(30);
+            let (lower, _, feet) = second.dig.expect("the lower block is dug once exposed");
+
+            assert_eq!(upper, cell(4, 0, 0));
+            assert_eq!(lower_claimed_early, None, "buried until the upper is gone");
+            assert_eq!(lower, cell(4, -1, 0));
+            assert!(is_stand_cell(lower, feet_cell(feet)));
+            assert_ne!(
+                feet_cell(feet),
+                cell(4, 0, 0),
+                "not from on top of the lower block"
+            );
+            assert!(
+                site.is_marked([4, -1, 0]),
+                "the dig, not the job, drops the mark"
+            );
+        }
+
+        #[test]
+        fn unreachable_marks_are_not_searched_again_until_the_terrain_changes() {
+            let mut site = site_with_eight_unreachable_marks();
+            let start = feet_cell(site.pose.feet);
+
+            site.tick();
+            let after_one = site.memo().clone();
+            site.tick();
+            let after_two = site.memo().clone();
+            let third = site.tick();
+            let after_three = site.memo().clone();
+            place(&mut site.grid, cell(-11, 1, -11));
+            site.tick();
+            let after_the_edit = site.memo().clone();
+
+            let nearest_four: BTreeSet<[i32; 3]> =
+                [[1, 5, 0], [2, 5, 0], [3, 5, 0], [1, 5, 3]].into();
+            assert_eq!(after_one.marks, nearest_four, "four searches in a tick");
+            assert_eq!(after_one.from, start);
+            assert_eq!(after_two.marks.len(), 8, "the next four, not the same four");
+            assert!(after_two.marks.is_superset(&after_one.marks));
+            assert_eq!(third, JobAction::Wait);
+            assert_eq!(
+                after_three, after_two,
+                "nothing left to search, nothing new"
+            );
+            assert_eq!(
+                after_the_edit.marks, nearest_four,
+                "an edit anywhere empties the memo and the search starts over"
+            );
+            assert_eq!(after_the_edit.revision, site.grid.revision());
+        }
+
+        #[test]
+        fn a_pawn_behind_five_unreachable_marks_reaches_the_sixth() {
+            let mut site = Site::flat();
+            for x in 1..=5 {
+                float(&mut site, x, 0);
+            }
+            site.mark_block(cell(11, 1, 0));
+
+            let first = site.tick();
+            let claimed_after_first = site.claimed_by([11, 1, 0]);
+            let memo_after_first = site.memo().marks.clone();
+            let second = site.tick();
+
+            assert_eq!(first, JobAction::Wait, "four failed routes use the tick up");
+            assert_eq!(claimed_after_first, None);
+            assert_eq!(
+                memo_after_first,
+                BTreeSet::from([[1, 5, 0], [2, 5, 0], [3, 5, 0], [4, 5, 0]])
+            );
+            assert!(
+                matches!(
+                    site.job,
+                    Job::Mine {
+                        mark: [11, 1, 0],
+                        ..
+                    }
+                ),
+                "{second:?}"
+            );
+            assert_eq!(site.claimed_by([11, 1, 0]), Some(ME));
+            for x in 1..=5 {
+                assert_eq!(site.claimed_by([x, 5, 0]), None);
+                assert!(site.is_marked([x, 5, 0]));
+            }
+        }
+
+        #[test]
+        fn the_memo_empties_when_the_pawn_moves() {
+            let mut site = site_with_eight_unreachable_marks();
+            site.tick();
+            site.tick();
+            assert_eq!(site.memo().marks.len(), 8, "all remembered where it stood");
+
+            site.pose.feet += Vec3::new(0.2, 0.0, -0.2);
+            site.tick();
+            assert_eq!(site.memo().marks.len(), 8, "the same cell keeps the memo");
+            assert_eq!(site.memo().from, cell(0, 1, 0));
+
+            site.pose.feet = centre(cell(5, 1, 5));
+            site.tick();
+
+            assert_eq!(site.memo().from, cell(5, 1, 5));
+            assert_eq!(
+                site.memo().marks.len(),
+                4,
+                "searched afresh from the new cell"
+            );
+        }
+    }
+
+    mod replanning {
+        use super::*;
+
+        const MARK: [i32; 3] = [9, 1, 0];
+
+        #[test]
+        fn a_hole_cut_in_the_only_route_stops_the_pawn_before_it() {
+            let mut site = Site::trench_with_causeways(&[0]);
+            site.mark_block(cell(9, 1, 0));
+            site.walk_until_at(cell(2, 1, 0), 10);
+            assert!(matches!(site.job, Job::Mine { .. }), "the walk is on");
+
+            site.cut_ground(4, 0);
+            let first = site.tick();
+
+            assert_eq!(first, JobAction::Wait, "stops at once");
+            assert!(matches!(site.job, Job::Idle { .. }), "{:?}", site.job);
+            assert_eq!(site.claimed_by(MARK), None, "released at once");
+            assert_eq!(site.memo().marks, BTreeSet::from([MARK]));
+            assert_eq!(site.memo().from, cell(2, 1, 0));
+            assert_eq!(site.memo().revision, site.grid.revision());
+
+            let mut actions = vec![first];
+            actions.extend((0..19).map(|_| site.tick()));
+            assert!(
+                actions.iter().all(|action| *action == JobAction::Wait),
+                "{actions:?}"
+            );
+            assert!(matches!(site.job, Job::Idle { .. }), "{:?}", site.job);
+            assert_eq!(site.claimed_by(MARK), None, "the claim is released");
+            assert!(site.is_marked(MARK), "the mark stays");
+            assert_eq!(feet_cell(site.pose.feet), cell(2, 1, 0));
+            assert!(
+                site.memo().marks.contains(&MARK),
+                "and is not searched again"
+            );
+            assert_eq!(site.memo().from, cell(2, 1, 0));
+        }
+
+        #[test]
+        fn a_cut_route_is_replaced_by_the_other_way_to_the_same_mark() {
+            let mut site = Site::trench_with_causeways(&[0, 6]);
+            site.mark_block(cell(9, 1, 2));
+            site.walk_until_at(cell(2, 1, 0), 10);
+            let Job::Mine { route, .. } = &site.job else {
+                panic!("the walk is on: {:?}", site.job);
+            };
+            assert!(
+                route.contains(&cell(4, 1, 0)),
+                "the near causeway is chosen"
+            );
+
+            // A nearer mark on ground that stays put: only a release and re-claim takes it.
+            site.marks.toggle([2, 0, -2]);
+            site.cut_ground(4, 0);
+            let mut targets = Vec::new();
+            let mut dug = None;
+            for tick in 0..120 {
+                assert_eq!(site.claimed_by([2, 0, -2]), None, "tick {tick}");
+                match site.tick() {
+                    JobAction::Walk { to } => {
+                        assert_eq!(site.claimed_by([9, 1, 2]), Some(ME), "tick {tick}");
+                        targets.push(to);
+                        site.pose.feet = to;
+                    }
+                    JobAction::Dig { block, .. } => {
+                        dug = Some(block);
+                        break;
+                    }
+                    JobAction::Wait => panic!("waited at tick {tick}: {:?}", site.job),
+                }
+            }
+
+            assert_eq!(dug, Some(cell(9, 1, 2)), "the same mark is dug");
+            assert_eq!(site.claimed_by([2, 0, -2]), None, "the nearer mark waits");
+            assert!(site.is_marked([2, 0, -2]));
+            let on_the_trench: Vec<BlockPos> = targets
+                .iter()
+                .map(|&to| feet_cell(to))
+                .filter(|c| (3..=6).contains(&c.x))
+                .collect();
+            assert!(!on_the_trench.is_empty(), "it crossed");
+            assert!(
+                on_the_trench.iter().all(|c| c.z == 6),
+                "crossed by the far causeway: {on_the_trench:?}"
+            );
+        }
+
+        #[test]
+        fn an_unchanged_grid_never_rechecks_the_route() {
+            let mut site = Site::flat();
+            site.mark_block(cell(9, 1, 0));
+            site.tick();
+            let Job::Mine {
+                revision: claimed_at,
+                route: planned,
+                ..
+            } = site.job.clone()
+            else {
+                panic!("the walk began: {:?}", site.job);
+            };
+
+            for _ in 0..3 {
+                if let JobAction::Walk { to } = site.tick() {
+                    site.pose.feet = to;
+                }
+            }
+            let before_the_edit = site.grid.revision();
+            let Job::Mine {
+                next: next_before, ..
+            } = &site.job
+            else {
+                panic!("still walking: {:?}", site.job);
+            };
+            let next_before = *next_before;
+            site.dig(cell(-11, 0, 11));
+            site.tick();
+
+            let Job::Mine {
+                revision,
+                route,
+                next,
+                ..
+            } = &site.job
+            else {
+                panic!("an edit far away does not end the walk: {:?}", site.job);
+            };
+            assert_eq!(claimed_at, before_the_edit, "the claim checked the grid");
+            assert_ne!(*revision, claimed_at);
+            assert_eq!(*revision, site.grid.revision(), "checked after the edit");
+            assert_eq!(*route, planned, "a route still walkable is kept");
+            assert!(next_before >= 3, "the pawn had walked on: {next_before}");
+            assert_eq!(*next, next_before + 1, "the walk went on, not back to 0");
+        }
+
+        /// A site with a one-block rise across x 3, the pawn walking to a mark beyond it and
+        /// standing with its feet inside the rise column.
+        fn mid_climb() -> Site {
+            let mut site = Site::flat();
+            for z in -12..=12 {
+                place(&mut site.grid, cell(3, 1, z));
+            }
+            site.mark_block(cell(9, 1, 0));
+            site.walk_until_at(cell(2, 1, 0), 10);
+            site.pose.feet = Vec3::new(3.5, 1.4, 0.5);
+            site
+        }
+
+        /// Places or clears a block far from every route, one revision per call.
+        fn churn(site: &mut Site, tick: usize) {
+            let far = cell(-11, 1, 11);
+            if tick.is_multiple_of(2) {
+                site.dig(far);
+            } else {
+                place(&mut site.grid, far);
+            }
+        }
+
+        #[test]
+        fn feet_inside_a_rise_keep_the_route_when_the_terrain_far_away_changes() {
+            let mut site = mid_climb();
+            assert!(
+                site.grid.is_solid_at(feet_cell(site.pose.feet)),
+                "the feet are inside the rise"
+            );
+            let before = site.tick();
+            let Job::Mine {
+                route: planned,
+                next: planned_next,
+                ..
+            } = site.job.clone()
+            else {
+                panic!("walking: {:?}", site.job);
+            };
+
+            site.dig(cell(-11, 0, 11));
+            let after = site.tick();
+
+            let Job::Mine { route, next, .. } = &site.job else {
+                panic!("an unrelated edit ends the job: {:?}", site.job);
+            };
+            assert!(matches!(before, JobAction::Walk { .. }), "{before:?}");
+            assert_eq!(after, before, "the same waypoint");
+            assert_eq!(*route, planned, "no re-plan");
+            assert_eq!(*next, planned_next);
+            assert_eq!(site.claimed_by([9, 1, 0]), Some(ME));
+        }
+
+        #[test]
+        fn a_stalled_pawn_still_gives_up_while_the_terrain_keeps_changing() {
+            let stand_still = |mut site: Site| {
+                site.tick();
+                for ticks in 1..=STALL_TICKS + 2 {
+                    churn(&mut site, ticks as usize);
+                    site.tick();
+                    if matches!(site.job, Job::Idle { .. }) {
+                        return (Some(ticks), site);
+                    }
+                }
+                (None, site)
+            };
+            let mut level = Site::flat();
+            level.mark_block(cell(9, 1, 0));
+
+            let (on_the_level, level) = stand_still(level);
+            let (mid_climb, climbing) = stand_still(mid_climb());
+
+            for (name, ticks, site) in [
+                ("level", on_the_level, level),
+                ("mid-climb", mid_climb, climbing),
+            ] {
+                let ticks = ticks.unwrap_or_else(|| panic!("{name}: never gave up"));
+                assert!(
+                    (STALL_TICKS - 1..=STALL_TICKS + 2).contains(&ticks),
+                    "{name}: gave up after {ticks} ticks"
+                );
+                assert!(site.is_marked([9, 1, 0]), "{name}: the mark stays");
+                assert_eq!(site.claimed_by([9, 1, 0]), None, "{name}");
+            }
+        }
+
+        #[test]
+        fn a_block_placed_over_a_waypoint_sends_the_pawn_round_it_to_the_same_mark() {
+            let mut site = Site::flat();
+            site.mark_block(cell(8, 1, 0));
+            site.walk_until_at(cell(1, 1, 0), 10);
+
+            place(&mut site.grid, cell(3, 2, 0));
+            let mut dug = None;
+            for tick in 0..100 {
+                match site.tick() {
+                    JobAction::Walk { to } => {
+                        assert_eq!(site.claimed_by([8, 1, 0]), Some(ME), "tick {tick}");
+                        assert_ne!(feet_cell(to), cell(3, 1, 0), "walked into the block");
+                        site.pose.feet = to;
+                    }
+                    JobAction::Dig { block, .. } => {
+                        dug = Some(block);
+                        break;
+                    }
+                    JobAction::Wait => panic!("waited at tick {tick}: {:?}", site.job),
+                }
+            }
+
+            assert_eq!(dug, Some(cell(8, 1, 0)));
+        }
+
+        #[test]
+        fn a_walk_over_a_raised_stretch_survives_terrain_changing_every_tick() {
+            let mut site = Site::flat();
+            for x in 3..=5 {
+                for z in -12..=12 {
+                    place(&mut site.grid, cell(x, 1, z));
+                }
+            }
+            site.mark_block(cell(9, 1, 0));
+            let pace = 4.0 / crate::TICK_HZ as f32;
+            let mut planned = None;
+            let mut dug = None;
+
+            for tick in 0..STALL_TICKS * 4 {
+                if planned.is_some() {
+                    churn(&mut site, tick as usize);
+                }
+                let action = site.tick();
+                if planned.is_none() {
+                    let Job::Mine { route, .. } = &site.job else {
+                        panic!("the claim tick: {:?}", site.job);
+                    };
+                    planned = Some(route.clone());
+                }
+                match action {
+                    JobAction::Walk { to } => {
+                        assert_eq!(site.claimed_by([9, 1, 0]), Some(ME), "tick {tick}");
+                        let Job::Mine { route, .. } = &site.job else {
+                            panic!("tick {tick}: {:?}", site.job);
+                        };
+                        assert_eq!(Some(route), planned.as_ref(), "re-planned on tick {tick}");
+                        let mut toward = to - site.pose.feet;
+                        toward.y = 0.0;
+                        site.pose.feet += toward.clamp_length_max(pace);
+                        let climb = (to.y - site.pose.feet.y).clamp(-0.1, 0.1);
+                        site.pose.feet.y += climb;
+                    }
+                    JobAction::Dig { block, .. } => {
+                        dug = Some(block);
+                        break;
+                    }
+                    JobAction::Wait => panic!("lapsed on tick {tick}: {:?}", site.job),
+                }
+            }
+
+            assert_eq!(dug, Some(cell(9, 1, 0)));
+        }
+
+        #[test]
+        fn the_idle_memo_holds_while_the_feet_stay_over_the_same_standing_cell() {
+            let mut site = Site::flat();
+            for z in -12..=12 {
+                place(&mut site.grid, cell(3, 1, z));
+            }
+            for x in 1..=5 {
+                site.mark_block(cell(x, 5, 6));
+            }
+            for x in 1..=3 {
+                site.mark_block(cell(x, 5, 8));
+            }
+            site.pose.feet = Vec3::new(3.5, 1.4, 0.5);
+            assert!(site.grid.is_solid_at(feet_cell(site.pose.feet)));
+
+            site.tick();
+            let first = site.memo().clone();
+            site.pose.feet.x += 0.1;
+            site.tick();
+            let same_raw_cell = site.memo().clone();
+            site.pose.feet.y = 2.2;
+            site.tick();
+            let other_raw_cell = site.memo().clone();
+
+            assert_eq!(first.marks.len(), 4);
+            assert_eq!(same_raw_cell.marks.len(), 8, "no search again");
+            assert_eq!(same_raw_cell.from, first.from);
+            assert_eq!(other_raw_cell.marks.len(), 8, "the same standing cell");
+            assert_eq!(other_raw_cell.from, first.from);
+        }
+
+        #[test]
+        fn a_failed_replan_mid_climb_remembers_the_standing_cell() {
+            let mut site = Site::flat();
+            for x in -12..=12 {
+                for z in (-12..=12).filter(|&z| z != 0) {
+                    site.grid.mutator().remove(cell(x, 0, z));
+                }
+            }
+            place(&mut site.grid, cell(3, 1, 0));
+            site.mark_block(cell(9, 1, 0));
+            site.walk_until_at(cell(2, 1, 0), 10);
+            site.pose.feet = Vec3::new(3.5, 1.4, 0.5);
+            assert!(site.grid.is_solid_at(feet_cell(site.pose.feet)));
+            site.tick();
+
+            site.dig(cell(6, 0, 0));
+            let cut = site.tick();
+            let after_the_cut = site.memo().clone();
+            let again = site.tick();
+            let next_tick = site.memo().clone();
+
+            assert_eq!(cut, JobAction::Wait);
+            assert_eq!(again, JobAction::Wait);
+            assert_eq!(after_the_cut.marks, BTreeSet::from([[9, 1, 0]]));
+            assert_eq!(after_the_cut.from, cell(3, 2, 0), "where the pawn stands");
+            assert_eq!(next_tick, after_the_cut, "no search again");
+        }
+
+        #[test]
+        fn a_far_edit_short_of_the_stand_cell_does_not_end_the_walk() {
+            let mut site = Site::flat();
+            site.mark_block(cell(8, 1, 0));
+            site.walk_until_at(cell(6, 1, 0), 20);
+            site.tick();
+            // In the stand cell but not yet within the arrival radius of its centre.
+            site.pose.feet = Vec3::new(7.0, 1.0, 0.5);
+            let before = site.tick();
+            let planned = site.job.clone();
+
+            site.dig(cell(-11, 0, 11));
+            let after = site.tick();
+            let Job::Mine { mark, route, .. } = &site.job else {
+                panic!("the walk ended: {:?}", site.job);
+            };
+            let (mark, route) = (*mark, route.clone());
+            site.pose.feet = centre(cell(7, 1, 0));
+            let last = site.tick();
+
+            assert!(
+                matches!(before, JobAction::Walk { to } if feet_cell(to) == cell(7, 1, 0)),
+                "{before:?}"
+            );
+            assert_eq!(after, before, "still on its way to the stand cell");
+            assert_eq!(mark, [8, 1, 0]);
+            assert!(matches!(&planned, Job::Mine { route: r, .. } if *r == route));
+            assert!(
+                matches!(last, JobAction::Dig { block, .. } if block == cell(8, 1, 0)),
+                "{last:?}"
+            );
+        }
+
+        proptest! {
+            #[test]
+            fn every_walk_target_is_a_step_from_the_feet_cell(
+                cuts in proptest::collection::vec((1..=9i32, -3..=3i32), 1..8),
+            ) {
+                let mut site = Site::flat();
+                site.mark_block(cell(11, 1, 0));
+
+                for (x, z) in cuts {
+                    let under_feet = feet_cell(site.pose.feet) - BlockPos::Y;
+                    let ground = cell(x, 0, z);
+                    if ground != under_feet && site.grid.is_solid_at(ground) {
+                        site.dig(ground);
+                    }
+                    for _ in 0..3 {
+                        let from = feet_cell(site.pose.feet);
+                        let JobAction::Walk { to } = site.tick() else {
+                            break;
+                        };
+                        prop_assert!(
+                            is_step(&site.grid, from, feet_cell(to)),
+                            "{from} to {to}"
+                        );
+                        site.pose.feet = to;
+                    }
+                }
+            }
         }
     }
 

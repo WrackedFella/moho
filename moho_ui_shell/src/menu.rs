@@ -1949,7 +1949,7 @@ mod tests {
             drawn(&stack, "Back"),
         );
 
-        assert_eq!(top, (true, false, false), "ten of the thirteen rows fit");
+        assert_eq!(top, (true, false, false), "ten of the fourteen rows fit");
         assert_eq!(
             end,
             (false, false, false, true),
@@ -1969,6 +1969,7 @@ mod tests {
             mouse_sensitivity: 2.5,
             mouse_smoothing: false,
             invert_mouse_y: false,
+            master_volume: 10.0,
             sound_effect_volume: 5.0,
             music_volume: 6.0,
             ui_volume: 7.0,
@@ -1980,7 +1981,7 @@ mod tests {
         }
     }
 
-    /// Thirteen settings-screen rows at 720 points, scrolled to the end: rows 3 to 12 are in view.
+    /// Fourteen settings-screen rows at 720 points, scrolled to the end: rows 4 to 13 are in view.
     fn scrolled_settings_stack() -> MenuStack<Act> {
         let mut items: Vec<MenuItem<Act>> = EngineSetting::ALL
             .into_iter()
@@ -2165,7 +2166,7 @@ mod tests {
 
         use super::*;
 
-        /// Tall enough that the thirteen 56-point rows of `screen_of` need no scrolling.
+        /// Tall enough that the fourteen 56-point rows of `screen_of` need no scrolling.
         const SIZE: [f32; 2] = [1280.0, 1000.0];
 
         fn base() -> EngineSettings {
@@ -2173,6 +2174,7 @@ mod tests {
                 mouse_sensitivity: 2.5,
                 mouse_smoothing: false,
                 invert_mouse_y: false,
+                master_volume: 10.0,
                 sound_effect_volume: 8.0,
                 music_volume: 6.0,
                 ui_volume: 7.0,
@@ -2184,7 +2186,7 @@ mod tests {
             }
         }
 
-        /// The eleven rows, Apply, then Back: thirteen rows, so the whole column fits on this
+        /// The twelve rows, Apply, then Back: fourteen rows, so the whole column fits on this
         /// module's `SIZE`.
         fn screen_of(settings: EngineSettings) -> MenuScreen<Act> {
             let mut items: Vec<MenuItem<Act>> = EngineSetting::ALL
@@ -2294,11 +2296,18 @@ mod tests {
             step(&mut stack, EngineSetting::InvertMouseY, &[Key::Enter]);
             step(&mut stack, EngineSetting::ShadowQuality, &[Key::ArrowLeft]);
             step(&mut stack, EngineSetting::EffectsQuality, &[Key::ArrowLeft]);
+            step(
+                &mut stack,
+                EngineSetting::MasterVolume,
+                &[Key::ArrowLeft, Key::ArrowLeft],
+            );
+            let drawn: Vec<String> = stack.texts(SIZE).into_iter().map(|t| t.text).collect();
 
             stack.pop();
             stack.push(screen_of(base()));
             let applied = apply(&mut stack);
 
+            assert!(drawn.contains(&"9.0".to_owned()), "{drawn:?}");
             assert_eq!(applied, base());
             assert_eq!(stack.take_events(), []);
         }
@@ -2586,6 +2595,7 @@ mod tests {
                 mouse_sensitivity: 2.5,
                 mouse_smoothing: false,
                 invert_mouse_y: false,
+                master_volume: 10.0,
                 sound_effect_volume: 8.0,
                 music_volume: 6.0,
                 ui_volume: 7.0,
