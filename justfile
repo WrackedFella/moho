@@ -184,6 +184,9 @@ run-record-test:
     diff "$f/records.jsonl" <(
         ISSUE=7 GATE_CLASS=domain HEAD_SHA=abc DEVFLOW_SHA=f20ec3e45100 RUN_URL= \
             scripts/run-record.sh record "$f/execution.json" | jq -c 'del(.at)')
+    for c in heading:glue line:domain header:glue none:; do
+        [[ "$(scripts/run-record.sh gate-class < "$f/gate/${c%%:*}.md")" == "${c#*:}" ]] || { echo "gate-class ${c%%:*}: expected '${c#*:}'"; exit 1; }
+    done
     diff "$f/table.md" <(scripts/run-record.sh table < "$f/records.jsonl")
     diff "$f/digest.md" <(scripts/run-record.sh digest < "$f/records.jsonl")
     echo "run-record: OK"

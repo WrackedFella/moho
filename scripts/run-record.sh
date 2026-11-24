@@ -15,6 +15,7 @@
 #                                           environment: ISSUE, GATE_CLASS, HEAD_SHA,
 #                                           DEVFLOW_SHA (default: read from the plugin
 #                                           install), RUN_URL (any may be empty)
+#   run-record.sh gate-class                issue body on stdin -> its gate class, or nothing
 #   run-record.sh table                     records on stdin -> markdown, for the job summary
 #   run-record.sh digest                    records on stdin -> markdown: per gate class,
 #                                           runs and tokens per model, and per step the runs
@@ -63,17 +64,22 @@ steps_of() {
             elif ($calls[$p] // null) == null then "unknown"
             elif $calls[$p].parent == null then lbl($calls[$p])
             else root($calls[$p].parent) end;
-        # A message split over several log entries repeats its usage: count it once.
+        # A message split over several log entries repeats its usage, and the early entries carry
+        # a partial output count: count each message once, from the entry with the most output.
         [ $all[] | select(.type == "assistant" and .message.usage != null)
           | {id: (.message.id // ""), step: root(.parent_tool_use_id), model: (.message.model // "unknown"),
              u: .message.usage, p: .parent_tool_use_id, n: .message.content}
         ] as $turns
-        | ($turns | unique_by(.id) | map(select(.id != ""))) as $counted
+        | ($turns | map(select(.id != "")) | group_by(.id) | map(max_by(.u.output_tokens // 0))) as $counted
         | def edits($step): [ $all[] | select(.type == "assistant")
               | select(root(.parent_tool_use_id) == $step)
               | .message.content[]? | select(.type == "tool_use" and (.name | IN("Edit", "Write", "MultiEdit", "NotebookEdit")))
-              | (.input.file_path // .input.notebook_path // "") ] | map(select(. != "")) | unique;
-          def is_test: test("(^|/)tests?/|_tests?\\.rs$|(^|/)tests?\\.rs$");
+              | {path: (.input.file_path // .input.notebook_path // ""),
+                 text: ([.input.new_string, .input.content, (.input.edits[]?.new_string)] | map(select(. != null)) | join("\n"))} ]
+            | map(select(.path != "")) | group_by(.path) | map({path: .[0].path, text: (map(.text) | join("\n"))});
+          # A test file by path, or any file an edit added a Rust test to (tests are inline modules).
+          def is_test: (.path | test("(^|/)tests?/|_tests?\\.rs$|(^|/)tests?\\.rs$"))
+            or (.text | test("#\\[(cfg\\(test\\)|test|tokio::test)\\]"));
           ($counted | group_by(.step) | map({
               step: .[0].step,
               calls: length,
@@ -101,6 +107,17 @@ steps_of() {
                  unviable: (($mut | capture("(?<n>[0-9]+) unviable").n // "0") | tonumber),
                  timeout: (($mut | capture("(?<n>[0-9]+) timeout").n // "0") | tonumber)} end)
           }' "$1"
+}
+
+# The gate class an issue body declares: a `gate=` board header, a `Gate class:` line, or the
+# value under a `### Gate class` heading (backticks and a full stop allowed).
+gate_class() {
+    awk '
+        match($0, /gate=[a-z]+/) { print substr($0, RSTART + 5, RLENGTH - 5); exit }
+        match(tolower($0), /^gate class: *[a-z]+/) { v = substr(tolower($0), RSTART, RLENGTH); sub(/^gate class: */, "", v); print v; exit }
+        tolower($0) ~ /^#+ *gate class *$/ { want = 1; next }
+        want && /[^[:space:]]/ { if (match(tolower($0), /[a-z]+/)) { print substr(tolower($0), RSTART, RLENGTH); exit } want = 0 }
+    '
 }
 
 record() {
@@ -179,6 +196,7 @@ collect() {
 
 case "${1:-}" in
     record) record "${2:?execution file}" ;;
+    gate-class) gate_class ;;
     table) table ;;
     digest) digest ;;
     collect) collect ;;
