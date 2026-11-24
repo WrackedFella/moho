@@ -36,16 +36,17 @@ impl AudioSettings {
         Self::default()
     }
 
-    /// Levels from saved prefs: each category is its 0..=10 pref divided by ten.
+    /// Levels from saved prefs: the master and each category are their 0..=10 prefs divided by ten.
     pub fn from_prefs(prefs: &moho_core::prefs::Prefs) -> Self {
         Self {
-            master_volume: 1.0,
+            master_volume: 0.0,
             sound_effects_volume: 0.0,
             music_volume: 0.0,
             ui_volume: 0.0,
             voice_volume: 0.0,
             muted: false,
         }
+        .with_master_volume(prefs.master_volume() / 10.0)
         .with_sound_effects_volume(prefs.sound_effect_volume() / 10.0)
         .with_music_volume(prefs.music_volume() / 10.0)
         .with_ui_volume(prefs.ui_volume() / 10.0)

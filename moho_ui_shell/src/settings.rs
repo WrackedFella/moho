@@ -169,7 +169,7 @@ impl EngineSettings {
             mouse_sensitivity: prefs.mouse_sensitivity(),
             mouse_smoothing: prefs.mouse_smoothing(),
             invert_mouse_y: prefs.invert_mouse_y(),
-            master_volume: 10.0,
+            master_volume: prefs.master_volume(),
             sound_effect_volume: prefs.sound_effect_volume(),
             music_volume: prefs.music_volume(),
             ui_volume: prefs.ui_volume(),
@@ -186,6 +186,7 @@ impl EngineSettings {
         *prefs.mouse_sensitivity_mut() = self.mouse_sensitivity;
         *prefs.mouse_smoothing_mut() = self.mouse_smoothing;
         *prefs.invert_mouse_y_mut() = self.invert_mouse_y;
+        *prefs.master_volume_mut() = self.master_volume;
         *prefs.sound_effect_volume_mut() = self.sound_effect_volume;
         *prefs.music_volume_mut() = self.music_volume;
         *prefs.ui_volume_mut() = self.ui_volume;
@@ -248,12 +249,12 @@ impl EngineSettings {
     pub fn value_text(&self, setting: EngineSetting) -> String {
         match setting {
             EngineSetting::MouseSensitivity => format!("{:.1}", self.mouse_sensitivity),
+            EngineSetting::MasterVolume => format!("{:.1}", self.master_volume),
             EngineSetting::SoundEffectVolume => format!("{:.1}", self.sound_effect_volume),
             EngineSetting::MusicVolume => format!("{:.1}", self.music_volume),
             EngineSetting::UiVolume => format!("{:.1}", self.ui_volume),
             EngineSetting::MouseSmoothing => on_off(self.mouse_smoothing).to_owned(),
             EngineSetting::InvertMouseY => on_off(self.invert_mouse_y).to_owned(),
-            EngineSetting::MasterVolume => String::new(),
             EngineSetting::ShadowQuality
             | EngineSetting::SsaoQuality
             | EngineSetting::EffectsQuality
@@ -275,6 +276,7 @@ impl EngineSettings {
     pub(crate) fn slider_value(&self, setting: EngineSetting) -> f32 {
         match setting {
             EngineSetting::MouseSensitivity => self.mouse_sensitivity,
+            EngineSetting::MasterVolume => self.master_volume,
             EngineSetting::SoundEffectVolume => self.sound_effect_volume,
             EngineSetting::MusicVolume => self.music_volume,
             EngineSetting::UiVolume => self.ui_volume,
@@ -291,6 +293,7 @@ impl EngineSettings {
         let snapped = (min + ((value - min) / step).round() * step).clamp(min, max);
         match setting {
             EngineSetting::MouseSensitivity => self.mouse_sensitivity = snapped,
+            EngineSetting::MasterVolume => self.master_volume = snapped,
             EngineSetting::SoundEffectVolume => self.sound_effect_volume = snapped,
             EngineSetting::MusicVolume => self.music_volume = snapped,
             EngineSetting::UiVolume => self.ui_volume = snapped,

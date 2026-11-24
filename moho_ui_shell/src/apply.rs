@@ -80,11 +80,12 @@ pub fn runtime_window_mode(mode: SavedMode) -> WindowMode {
     }
 }
 
-/// `current` with the sound-effect, music and UI volumes of `settings`; the master and voice
-/// levels and the mute stay as they were.
+/// `current` with the master, sound-effect, music and UI volumes of `settings`; the voice level
+/// and the mute stay as they were.
 pub fn audio_settings_for(settings: &EngineSettings, current: &AudioSettings) -> AudioSettings {
     current
         .clone()
+        .with_master_volume(settings.master_volume / VOLUME_SCALE)
         .with_sound_effects_volume(settings.sound_effect_volume / VOLUME_SCALE)
         .with_music_volume(settings.music_volume / VOLUME_SCALE)
         .with_ui_volume(settings.ui_volume / VOLUME_SCALE)

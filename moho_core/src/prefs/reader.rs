@@ -112,6 +112,9 @@ const KNOWN_KEYS: &[(&str, &str, Setter)] = &[
     ("prefs", "mouse_acceleration_strength", |p, s| {
         set(&mut p.mouse_acceleration_strength, parse_f32(s))
     }),
+    ("audio", "master_volume", |p, s| {
+        set(&mut p.audio_master_volume, parse_f32(s))
+    }),
     ("audio", "sound_effect_volume", |p, s| {
         set(&mut p.audio_sound_effect_volume, parse_f32(s))
     }),
@@ -1090,6 +1093,7 @@ mod tests {
              mouse_acceleration=false\n\
              mouse_acceleration_strength=0.04\n\
              \n[audio]\n\
+             master_volume=10.0\n\
              sound_effect_volume=8.0\n\
              music_volume=6.0\n\
              ui_volume=7.0\n\

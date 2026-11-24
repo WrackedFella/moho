@@ -431,6 +431,7 @@ impl Prefs {
              mouse_acceleration={mouse_acceleration}\n\
              mouse_acceleration_strength={mouse_acceleration_strength}\n\
              \n[audio]\n\
+             master_volume={master:.1}\n\
              sound_effect_volume={sfx:.1}\n\
              music_volume={music:.1}\n\
              ui_volume={ui:.1}\n\
@@ -456,6 +457,7 @@ impl Prefs {
             invert_mouse_y = self.invert_mouse_y,
             mouse_acceleration = self.mouse_acceleration,
             mouse_acceleration_strength = self.mouse_acceleration_strength,
+            master = self.audio_master_volume,
             sfx = self.audio_sound_effect_volume,
             music = self.audio_music_volume,
             ui = self.audio_ui_volume,
