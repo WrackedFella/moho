@@ -177,7 +177,7 @@ impl HybridMeshGenerator {
         mesh
     }
 
-    /// Generate mesh using Marching Cubes for the terrain surface, in world space.
+    /// Marching Cubes terrain surface, in world space.
     fn generate_terrain_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
         let density_field = Self::terrain_density_field(grid, chunk_pos, chunk_size);
         let base = chunk_pos * chunk_size;
