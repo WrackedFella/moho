@@ -1742,6 +1742,339 @@ mod tests {
         SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
     }
 
+    /// Keeps the unshadowed instances of the last frame, which is where the engine draws streaks.
+    #[derive(Default)]
+    struct TracerRenderer {
+        tracers: Vec<InstanceGpu>,
+    }
+
+    impl RendererBackend for TracerRenderer {
+        fn resize(&mut self, _width: u32, _height: u32) {}
+        fn register_mesh(&mut self, _vertices: &[[f32; 3]]) -> u32 {
+            0
+        }
+        fn register_indexed_mesh(
+            &mut self,
+            _vertices: &[[f32; 3]],
+            _normals: &[[f32; 3]],
+            _ao: &[f32],
+            _geometry_type: &[u32],
+            _light_level: &[f32],
+            _block_light_rgb: &[[f32; 3]],
+            _sky_exposed: &[f32],
+            _material: &[u32],
+            _indices: &[u32],
+        ) -> u32 {
+            0
+        }
+        fn unregister_mesh(&mut self, _mesh: u32) {}
+        fn begin_frame(
+            &mut self,
+            _camera: (Mat4, Mat4, Vec3),
+        ) -> Result<(), moho_renderer::FrameError> {
+            self.tracers.clear();
+            Ok(())
+        }
+        fn enqueue_draw(&mut self, _mesh: u32, _instances: &[InstanceGpu]) {}
+        fn enqueue_unshadowed_draw(&mut self, _mesh: u32, instances: &[InstanceGpu]) {
+            self.tracers.extend_from_slice(instances);
+        }
+        fn submit_frame(&mut self) {}
+        fn set_materials(&mut self, _materials: &[MaterialGpu]) {}
+        fn update_lighting(&mut self, _lighting: LightingGpu) {}
+        fn add_point_light(&mut self, _p: Vec3, _c: Vec3, _intensity: f32, _range: f32) -> u32 {
+            0
+        }
+        fn remove_light(&mut self, _id: u32) -> bool {
+            true
+        }
+        fn set_light_position(&mut self, _id: u32, _position: Vec3) {}
+        fn set_light_enabled(&mut self, _id: u32, _enabled: bool) {}
+        fn set_shadow_quality(&mut self, quality: u8) -> u8 {
+            quality
+        }
+        fn set_ssao_quality(&mut self, _quality: u8) {}
+    }
+
+    /// Frames enough to outlast a tracer's fade at `TICK` a frame.
+    const FADE_FRAMES: usize = 20;
+
+    /// A game on a floor with `boxes` on it, the player at the origin facing +Z, and no waves.
+    fn tracer_game(boxes: &[(Vec3, Vec3)], config: crate::sim::SimConfig) -> SearchlightGame {
+        let mode = ArenaMode::without_waves(arena_with(boxes, Vec3::ZERO, &[], &[]), config);
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
+    }
+
+    fn tracer_config() -> crate::sim::SimConfig {
+        test_config(rifle_from(mag(30, 30)), vec![])
+    }
+
+    fn pull_command() -> SearchlightCommand {
+        SearchlightCommand {
+            fire: true,
+            ..SearchlightCommand::default()
+        }
+    }
+
+    fn tracer_frame(game: &mut SearchlightGame, renderer: &mut TracerRenderer, alpha: f32) {
+        let clock = GameClock::default();
+        let backend: &mut dyn RendererBackend = renderer;
+        let mut ctx = FrameContext::new(TICK, &clock, Some(backend), None);
+        game.frame(&mut ctx, alpha);
+    }
+
+    /// Draws `count` frames with no tick between; returns the most effects live in any of them.
+    fn tracer_frames(
+        game: &mut SearchlightGame,
+        renderer: &mut TracerRenderer,
+        count: usize,
+    ) -> usize {
+        let mut most = 0;
+        for _ in 0..count {
+            tracer_frame(game, renderer, 0.5);
+            most = most.max(live_effects(game));
+        }
+        most
+    }
+
+    fn live_effects(game: &mut SearchlightGame) -> usize {
+        game.stage.scene.effects_mut().live()
+    }
+
+    fn column(instance: &InstanceGpu, index: usize) -> Vec3 {
+        let [x, y, z, _] = instance.model[index];
+        Vec3::new(x, y, z)
+    }
+
+    /// Where the drawn streak's head is: its tail plus its length along its heading.
+    fn tracer_head(instance: &InstanceGpu) -> Vec3 {
+        column(instance, 3) + column(instance, 0)
+    }
+
+    #[test]
+    fn a_round_in_flight_has_one_tracer_at_its_interpolated_position() {
+        let mut game = tracer_game(&[], tracer_config());
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let mut renderer = TracerRenderer::default();
+        tick_with(&mut game, &mut clock, &pull_command());
+
+        tracer_frame(&mut game, &mut renderer, 0.5);
+
+        let muzzle = game.sim().player_eye();
+        let [at_muzzle] = renderer.tracers.as_slice() else {
+            panic!("{} tracers after the shot", renderer.tracers.len());
+        };
+        assert!(tracer_head(at_muzzle).distance(muzzle) < 1e-3);
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        let &[trace] = game.sim().round_traces() else {
+            panic!("expected one trace: {:?}", game.sim().round_traces());
+        };
+        assert!(
+            trace.from.distance(trace.to) > 5.0,
+            "the round did not move: {trace:?}"
+        );
+        for alpha in [0.0, 0.25, 0.5, 1.0] {
+            tracer_frame(&mut game, &mut renderer, alpha);
+
+            let [tracer] = renderer.tracers.as_slice() else {
+                panic!("alpha {alpha}: {} tracers", renderer.tracers.len());
+            };
+            let expected = trace.from.lerp(trace.to, alpha);
+            assert!(
+                tracer_head(tracer).distance(expected) < 1e-3,
+                "alpha {alpha}: head {}, expected {expected}",
+                tracer_head(tracer)
+            );
+            let along = column(tracer, 0);
+            assert!((along.length() - 3.0).abs() < 1e-3, "length {along}");
+            assert!(along.normalize().distance(trace.heading.normalize()) < 1e-3);
+            assert!((column(tracer, 1).length() - 0.03).abs() < 1e-4);
+            assert_eq!(live_effects(&mut game), 1, "alpha {alpha}");
+        }
+    }
+
+    #[test]
+    fn a_tracer_ends_when_its_round_hits() {
+        let wall = (Vec3::new(-5.0, 0.0, 3.0), Vec3::new(5.0, 4.0, 3.2));
+        for frame_between in [false, true] {
+            let mut game = tracer_game(&[wall], tracer_config());
+            let mut clock = GameClock::new(0.0, 1.0, 1.0);
+            let mut renderer = TracerRenderer::default();
+            tick_with(&mut game, &mut clock, &pull_command());
+            if frame_between {
+                tracer_frame(&mut game, &mut renderer, 0.5);
+                assert_eq!(renderer.tracers.len(), 1, "no tracer flew before the hit");
+            }
+
+            tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+            tracer_frame(&mut game, &mut renderer, 0.5);
+
+            let &[trace] = game.sim().round_traces() else {
+                panic!("expected one trace: {:?}", game.sim().round_traces());
+            };
+            assert!(trace.ended, "the round did not hit the wall");
+            let [tracer] = renderer.tracers.as_slice() else {
+                panic!(
+                    "between {frame_between}: {} tracers on the hit",
+                    renderer.tracers.len()
+                );
+            };
+            assert!(
+                tracer_head(tracer).distance(trace.to) < 1e-3,
+                "between {frame_between}: the tracer ended at {}, not on the wall at {}",
+                tracer_head(tracer),
+                trace.to
+            );
+            let most = tracer_frames(&mut game, &mut renderer, FADE_FRAMES);
+            assert!(most <= 1, "between {frame_between}: {most} tracers lived");
+            assert!(renderer.tracers.is_empty(), "between {frame_between}");
+            assert_eq!(live_effects(&mut game), 0, "between {frame_between}");
+        }
+    }
+
+    #[test]
+    fn a_tracer_ends_when_it_is_spent_or_leaves() {
+        let spent_at_once = searchlight_rules::Ballistics {
+            muzzle_velocity: 150.0,
+            drag: 30.0,
+        };
+        for (label, ballistics) in [
+            ("leaves the level", crate::test_support::TEST_BALLISTICS),
+            ("slows too far", spent_at_once),
+        ] {
+            let mut config = tracer_config();
+            config.rounds =
+                BTreeMap::from([(searchlight_rules::ItemId::new("test_round"), ballistics)]);
+            let mut game = tracer_game(&[], config);
+            let mut clock = GameClock::new(0.0, 1.0, 1.0);
+            let mut renderer = TracerRenderer::default();
+            let look_up = SearchlightCommand {
+                movement: moho_physics::CharacterCommand {
+                    pitch_delta: 0.3,
+                    ..moho_physics::CharacterCommand::default()
+                },
+                ..SearchlightCommand::default()
+            };
+            tick_with(&mut game, &mut clock, &look_up);
+            tick_with(&mut game, &mut clock, &pull_command());
+            tracer_frame(&mut game, &mut renderer, 0.5);
+            let mut flew = !renderer.tracers.is_empty();
+
+            for _ in 0..40 {
+                tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+                tracer_frame(&mut game, &mut renderer, 0.5);
+                flew |= !renderer.tracers.is_empty();
+                if game.sim().round_traces().is_empty() {
+                    break;
+                }
+            }
+
+            assert!(flew, "{label}: no tracer was drawn in flight");
+            assert!(
+                game.sim().round_traces().is_empty(),
+                "{label}: the round never ended"
+            );
+            let most = tracer_frames(&mut game, &mut renderer, FADE_FRAMES);
+            assert!(most <= 1, "{label}: {most} tracers lived");
+            assert!(renderer.tracers.is_empty(), "{label}");
+            assert_eq!(live_effects(&mut game), 0, "{label}");
+        }
+    }
+
+    #[test]
+    fn restart_ends_every_tracer() {
+        let mut game = tracer_game(&[], tracer_config());
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let mut renderer = TracerRenderer::default();
+        for tick in 0..6 {
+            let command = if tick % 4 == 0 {
+                pull_command()
+            } else {
+                SearchlightCommand::default()
+            };
+            tick_with(&mut game, &mut clock, &command);
+            tracer_frame(&mut game, &mut renderer, 0.5);
+        }
+        assert_eq!(renderer.tracers.len(), 2, "two rounds are in flight");
+        game.mode.sim_mut().kill_player();
+
+        tick_with(&mut game, &mut clock, &restart_command());
+        let most = tracer_frames(&mut game, &mut renderer, FADE_FRAMES);
+
+        assert!(game.sim().round_traces().is_empty());
+        assert!(most <= 2, "{most} tracers lived");
+        assert!(renderer.tracers.is_empty());
+        assert_eq!(live_effects(&mut game), 0);
+    }
+
+    #[test]
+    fn under_simple_no_tracer_starts() {
+        let wall = (Vec3::new(-5.0, 0.0, 30.0), Vec3::new(5.0, 4.0, 30.2));
+        let mut control = tracer_game(&[wall], tracer_config());
+        let mut simple = tracer_game(&[wall], tracer_config());
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let mut renderer = TracerRenderer::default();
+        let simple_pull = SearchlightCommand {
+            simple: true,
+            ..pull_command()
+        };
+
+        tick_with(&mut control, &mut clock, &pull_command());
+        tracer_frame(&mut control, &mut renderer, 0.5);
+        let control_tracers = renderer.tracers.len();
+        let mut drawn = 0;
+        let mut most = 0;
+        tick_with(&mut simple, &mut clock, &simple_pull);
+        for _ in 0..4 {
+            tracer_frame(&mut simple, &mut renderer, 0.5);
+            drawn += renderer.tracers.len();
+            most = most.max(live_effects(&mut simple));
+            tick_with(&mut simple, &mut clock, &SearchlightCommand::default());
+        }
+
+        assert_eq!(control_tracers, 1, "a round in flight has no tracer");
+        assert_eq!(drawn, 0);
+        assert_eq!(most, 0);
+        assert!(simple.sim().round_traces().is_empty());
+    }
+
+    #[test]
+    fn an_effects_quality_of_off_draws_no_tracer_and_breaks_nothing() {
+        let wall = (Vec3::new(-5.0, 0.0, 20.0), Vec3::new(5.0, 4.0, 20.2));
+        let mut off = tracer_game(&[wall], tracer_config());
+        let mut on = tracer_game(&[wall], tracer_config());
+        off.stage.set_effects_quality(0);
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let mut off_renderer = TracerRenderer::default();
+        let mut on_renderer = TracerRenderer::default();
+        let (mut off_drawn, mut on_drawn) = (0, 0);
+
+        for tick in 0..6 {
+            let command = if tick == 0 {
+                pull_command()
+            } else {
+                SearchlightCommand::default()
+            };
+            tick_with(&mut off, &mut clock, &command);
+            tick_with(&mut on, &mut clock, &command);
+            tracer_frame(&mut off, &mut off_renderer, 0.5);
+            tracer_frame(&mut on, &mut on_renderer, 0.5);
+            off_drawn += off_renderer.tracers.len();
+            on_drawn += on_renderer.tracers.len();
+
+            assert_eq!(
+                off.sim().round_traces(),
+                on.sim().round_traces(),
+                "tick {tick}: the flight changed"
+            );
+            assert_eq!(live_effects(&mut off), 0, "tick {tick}");
+        }
+
+        assert!(on_drawn > 0, "the control drew no tracer");
+        assert_eq!(off_drawn, 0);
+    }
+
     #[test]
     fn an_open_console_freezes_the_simulation() {
         let mut game = game_with_a_moving_enemy();

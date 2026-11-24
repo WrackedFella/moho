@@ -270,6 +270,21 @@ fn next_signed(rng: &mut SimRng) -> f32 {
     rng.next_f32() * 2.0 - 1.0
 }
 
+/// One round's path over the last tick, for drawing it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RoundTrace {
+    /// Names the round for as long as it flies.
+    pub id: u32,
+    /// Where the round was at the start of the tick.
+    pub from: Vec3,
+    /// Where the tick left it: the new position, or the strike or bounce point.
+    pub to: Vec3,
+    /// The direction the round travelled.
+    pub heading: Vec3,
+    /// Whether the round stopped this tick.
+    pub ended: bool,
+}
+
 /// The world, the player, the rifle, the dummies and the enemies.
 #[derive(Debug)]
 pub struct SearchlightSim {
@@ -1181,6 +1196,12 @@ impl SearchlightSim {
         let target = u16::try_from(self.dummy_count + index).expect("target numbers fit a u16");
         let from = self.player().position;
         self.apply_player_hit(target, BodyPart::Torso, 1_000_000, from, from);
+    }
+
+    /// Every round's path over the last tick: those stepped, then those fired.
+    #[must_use]
+    pub fn round_traces(&self) -> &[RoundTrace] {
+        &[]
     }
 
     /// The player's rounds still in the air, in the order they were fired.
@@ -2618,6 +2639,154 @@ mod tests {
             );
             assert!(hits_in(&[after]).is_empty(), "{label}");
         }
+    }
+
+    #[test]
+    fn a_round_fired_this_tick_is_traced_at_the_muzzle() {
+        let mut sim = dummy_ahead(300.0, BodyPart::Torso, with_ball(BALL));
+
+        sim.tick(&pull(), DT);
+
+        let muzzle = sim.player_eye();
+        let &[trace] = sim.round_traces() else {
+            panic!("expected one trace: {:?}", sim.round_traces());
+        };
+        assert_eq!(trace.from, muzzle);
+        assert_eq!(trace.to, muzzle);
+        assert!(!trace.ended);
+        assert!(
+            trace.heading.normalize().distance(Vec3::Z) < 1e-3,
+            "{:?}",
+            trace.heading
+        );
+    }
+
+    #[test]
+    fn a_round_in_the_air_is_traced_from_where_it_was_to_where_it_got_under_one_id() {
+        let mut sim = dummy_ahead(300.0, BodyPart::Torso, with_ball(BALL));
+        sim.tick(&pull(), DT);
+        let &[fired] = sim.round_traces() else {
+            panic!("expected one trace: {:?}", sim.round_traces());
+        };
+
+        let mut previous = fired;
+        for tick in 1..=3 {
+            sim.tick(&idle(), DT);
+
+            let &[step] = sim.round_traces() else {
+                panic!("tick {tick}: {:?}", sim.round_traces());
+            };
+            assert_eq!(step.id, fired.id, "tick {tick}");
+            assert_eq!(step.from, previous.to, "tick {tick}");
+            let travelled = step.to.z - step.from.z;
+            assert!(
+                (10.0..20.0).contains(&travelled),
+                "tick {tick}: {travelled}"
+            );
+            assert!(!step.ended, "tick {tick}");
+            assert!(
+                step.heading.normalize().distance(Vec3::Z) < 1e-2,
+                "tick {tick}: {:?}",
+                step.heading
+            );
+            previous = step;
+        }
+    }
+
+    #[test]
+    fn two_rounds_in_the_air_are_traced_under_different_ids() {
+        let mut sim = dummy_ahead(300.0, BodyPart::Torso, with_ball(BALL));
+        let mut script = vec![pull()];
+        script.extend([idle(); 4]);
+        script.push(pull());
+
+        run(&mut sim, &script);
+
+        let &[older, newer] = sim.round_traces() else {
+            panic!("expected two traces: {:?}", sim.round_traces());
+        };
+        assert_ne!(older.id, newer.id);
+        assert_ne!(older.from, older.to, "the older round was stepped");
+        assert_eq!(newer.from, newer.to, "the newer round was just fired");
+    }
+
+    #[test]
+    fn a_round_that_hits_on_its_first_step_still_leaves_an_ended_trace() {
+        let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
+        let wall = (Vec3::new(-5.0, 0.0, 3.0), Vec3::new(5.0, 4.0, 3.2));
+        let mut sim =
+            SearchlightSim::new(world_with(&[floor, wall]), Vec3::ZERO, &[], with_ball(BALL));
+        sim.tick(&pull(), DT);
+        let muzzle = sim.player_eye();
+
+        sim.tick(&idle(), DT);
+
+        let &[trace] = sim.round_traces() else {
+            panic!("expected one trace: {:?}", sim.round_traces());
+        };
+        assert!(trace.ended);
+        assert_eq!(trace.from, muzzle);
+        assert!(
+            (trace.to.z - 3.0).abs() < 1e-2,
+            "ended at {:?}, not on the wall's face",
+            trace.to
+        );
+        assert!(trace.heading.normalize().distance(Vec3::Z) < 1e-2);
+        sim.tick(&idle(), DT);
+        assert_eq!(sim.round_traces(), [], "the trace outlived its tick");
+    }
+
+    #[test]
+    fn a_round_that_is_spent_or_leaves_ends_its_trace_once_and_then_none_remains() {
+        let look_up = SearchlightCommand {
+            movement: CharacterCommand {
+                pitch_delta: 0.3,
+                ..CharacterCommand::default()
+            },
+            ..idle()
+        };
+        let spent_at_once = Ballistics {
+            muzzle_velocity: 150.0,
+            drag: 30.0,
+        };
+        for (label, ballistics) in [("leaves the level", BALL), ("slows too far", spent_at_once)] {
+            let mut sim = SearchlightSim::new(flat_floor(), Vec3::ZERO, &[], with_ball(ballistics));
+            sim.tick(&look_up, DT);
+            sim.tick(&pull(), DT);
+            let mut seen = sim.round_traces().to_vec();
+
+            for _ in 0..12 {
+                sim.tick(&idle(), DT);
+                seen.extend_from_slice(sim.round_traces());
+            }
+
+            let ended = seen.iter().filter(|trace| trace.ended).count();
+            assert_eq!(ended, 1, "{label}: {seen:?}");
+            assert!(seen.last().is_some_and(|trace| trace.ended), "{label}");
+            assert!(seen.len() >= 2, "{label}: never traced in flight");
+            assert!(
+                seen.iter().all(|trace| trace.id == seen[0].id),
+                "{label}: {seen:?}"
+            );
+            assert_eq!(sim.round_traces(), [], "{label}");
+        }
+    }
+
+    #[test]
+    fn a_restart_leaves_no_trace() {
+        let mut sim = dummy_ahead(300.0, BodyPart::Torso, with_ball(BALL));
+        sim.tick(&pull(), DT);
+        sim.tick(&idle(), DT);
+        assert_eq!(sim.round_traces().len(), 1, "no round was traced");
+        sim.kill_player();
+        let restart = SearchlightCommand {
+            restart: true,
+            ..idle()
+        };
+
+        sim.tick(&restart, DT);
+
+        assert_eq!(sim.round_traces(), []);
     }
 
     /// A standing veteran-proof setup: nothing in sight, nobody walks, nothing kills.
