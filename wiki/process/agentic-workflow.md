@@ -22,7 +22,7 @@ The generic flow is in the devflow [overview](https://github.com/WrackedFella/cl
 | 2. Write work items | You + Business Analyst | same session | Cards with Gherkin acceptance criteria |
 | 3. Specify | You + Tech Lead | `/devflow:tech-lead <item>` | Tech spec, test map, gate class; ADR if needed |
 | 4. Queue | You approve; Tech Lead publishes | You approve the draft (a local file, or a `plan/` branch from a cloud thread). The same thread files the issue (`[ID] title`, full spec; cloud threads use `gh`) and deletes the draft. The Board sync workflow sets Ready from the tech spec and gate class; Agent-eligible comes from the card's board header | Issue |
-| 5. Implement | Orchestrator | `/devflow:orchestrate <issue>` | Branch from `dev`, PR into `dev` |
+| 5. Implement | Orchestrator | `/devflow:orchestrate <issue>`; `devflow:builder` builds a single-part card, `test-writer` and `implementer` a card with marked parts | Branch from `dev`, PR into `dev` |
 | 6. Review and merge | PR review workflow, or you | `pr-review.yml` reviews the PR and merges an eligible agent PR; you merge the rest | Board Status → Done (Board sync workflow) |
 
 The wiki step of the orchestrator updates `wiki/` following the conventions in
@@ -40,8 +40,9 @@ Switch settings and where runs happen: [`_todo/WORKFLOW.md`](../../_todo/WORKFLO
 | Format on edit | Every Rust edit in a single-repo session | PostToolUse hook |
 | CI matrix | Linux on PRs into `dev`; three OSes on `main` and manual runs | CI |
 | Test review | Domain tests, before implementation | `devflow:test-critic` (or you under `required`) |
-| PR review | Every PR that changes code (not only docs or agent, CI and editor config) when `PR_REVIEW_ENABLED` is on: verdict, route and sign-off; fix loop on agent PRs | `pr-review.yml` (devflow `pr-review`) |
-| Human review | Every PR, including the tests; every PR the review routes to `needs-human` | You |
+| PR review | Every PR with a linked work item that changes code (not only docs or agent, CI and editor config) when `PR_REVIEW_ENABLED` is on: verdict, route and sign-off; fix loop on agent PRs | `pr-review.yml` (devflow `pr-review`) |
+| Test guard | Fix loop and `respond`: no edit to an existing test | `test-guard`, `e2e-guard` |
+| Human review | PRs the review routes to a person, that fail merge eligibility, or that skip review (docs, config, no linked work item); promotions into `main` | You |
 
 ## Coordinating lanes
 
