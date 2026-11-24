@@ -1,5 +1,5 @@
-//! The baked arena: its meshes become world colliders, its named markers become
-//! spawn, dummy, enemy, waypoint and cover points.
+//! A level as the game plays it: its meshes become world colliders, its named markers become
+//! spawn, dummy, enemy, waypoint, cover and control points.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -17,7 +17,6 @@ use crate::tag::SurfaceTag;
 /// One nominal tick, enough for a step to index freshly added colliders.
 pub(crate) const SETTLE_DT: f32 = 1.0 / 60.0;
 
-const LEVEL_MARKER: &str = "searchlight_level";
 /// Metres of room around the level geometry that rounds may still fly in.
 pub const FLIGHT_MARGIN: f32 = 100.0;
 
@@ -33,7 +32,7 @@ const CONTROL_MESH_BASE: u64 = 3 << 32;
 /// Width, height and depth of a control's post, in metres.
 const CONTROL_POST_SIZE: Vec3 = Vec3::new(0.4, 1.2, 0.4);
 
-/// Why an arena level cannot be used.
+/// Why a level cannot be used.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ArenaError {
@@ -41,43 +40,31 @@ pub enum ArenaError {
     #[error(transparent)]
     Level(#[from] LevelError),
     /// A marker the game cannot start without is absent.
-    #[error("arena has no `{marker}` marker")]
+    #[error("level has no `{marker}` marker")]
     MissingMarker { marker: String },
     /// A marker that must be unique appears more than once.
-    #[error("arena has more than one `{marker}` marker")]
+    #[error("level has more than one `{marker}` marker")]
     DuplicateMarker { marker: String },
     /// A waypoint's suffix is not a number, or repeats an earlier waypoint's number.
-    #[error("arena waypoint `{marker}` needs a unique numeric suffix")]
+    #[error("level waypoint `{marker}` needs a unique numeric suffix")]
     BadWaypoint { marker: String },
     /// The walkable area could not be built from the level's meshes.
     #[error(transparent)]
     Nav(#[from] NavBuildError),
-    /// The arena has enemy spawns, but no enemy spawn has a path to any waypoint.
+    /// The level has enemy spawns, but no enemy spawn has a path to any waypoint.
     #[error("no path from any enemy spawn reaches a waypoint")]
     NoReachableWaypoint,
     /// A `control_NN` marker names no action, or one not on the list.
-    #[error("arena control `{marker}` needs an `action` on the list")]
+    #[error("level control `{marker}` needs an `action` on the list")]
     BadControl { marker: String },
-    /// The `searchlight_level` marker's `mode` is missing or is neither `arena` nor `sandbox`.
-    #[error("level mode `{value}` is not `arena` or `sandbox`")]
-    BadMode { value: String },
 }
 
-/// What a level plays as: waves and a score, or a sandbox with neither.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LevelMode {
-    Arena,
-    Sandbox,
-}
-
-/// The arena's markers, grouped by kind. Within a kind, markers keep file order.
+/// The level's markers, grouped by kind. Within a kind, markers keep file order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArenaMarkers {
-    /// How the level plays, from its `searchlight_level` marker.
-    pub mode: LevelMode,
-    /// Where the player starts; exactly one in an arena, at most one in a sandbox.
+    /// Where the player starts; at most one.
     pub player_spawn: Option<LevelMarker>,
-    /// `dummy_NN`: training dummy positions; at least one in an arena.
+    /// `dummy_NN`: training dummy positions.
     pub dummies: Vec<LevelMarker>,
     /// `enemy_spawn_NN`.
     pub enemy_spawns: Vec<LevelMarker>,
@@ -90,20 +77,17 @@ pub struct ArenaMarkers {
 }
 
 impl ArenaMarkers {
-    /// Sorts `level`'s markers by kind. A file with no `searchlight_level` marker is a sandbox.
+    /// Sorts `level`'s markers by kind. A node that matches no marker name is skipped.
     ///
-    /// An arena needs a `player_spawn`, a `dummy_NN`, and a `waypoint_NN` when it has an enemy
-    /// spawn, and its waypoint suffixes must be unique numbers. A sandbox needs none of these:
-    /// its markers are only what a borrowed map happens to name.
+    /// `player_spawn` and `dummy_NN` are optional. A level that places an enemy spawn needs a
+    /// `waypoint_NN`, and its waypoint suffixes must be unique numbers; a level without one
+    /// takes whatever a borrowed map happens to name.
     ///
     /// # Errors
-    /// [`ArenaError::DuplicateMarker`] naming `searchlight_level` or `player_spawn`;
-    /// [`ArenaError::BadMode`] when the `searchlight_level` marker's `mode` is missing or unknown.
-    /// In an arena also: [`ArenaError::MissingMarker`] naming `player_spawn`, `dummy_NN` or
-    /// `waypoint_NN`; [`ArenaError::BadWaypoint`] naming a waypoint whose suffix is not
-    /// a number or repeats an earlier one's value.
+    /// [`ArenaError::DuplicateMarker`] naming `player_spawn`. With an enemy spawn also:
+    /// [`ArenaError::MissingMarker`] naming `waypoint_NN`; [`ArenaError::BadWaypoint`] naming
+    /// a waypoint whose suffix is not a number or repeats an earlier one's value.
     pub fn from_level(level: &Level) -> Result<Self, ArenaError> {
-        let mode = level_mode(level)?;
         let mut spawns = Vec::new();
         let mut dummies = Vec::new();
         let mut enemy_spawns = Vec::new();
@@ -135,14 +119,10 @@ impl ArenaMarkers {
         if spawns.next().is_some() {
             return Err(ArenaError::DuplicateMarker { marker });
         }
-        if mode == LevelMode::Arena {
-            if player_spawn.is_none() {
-                return Err(ArenaError::MissingMarker { marker });
-            }
-            validate_arena_rules(&dummies, &enemy_spawns, &waypoints)?;
+        if !enemy_spawns.is_empty() {
+            validate_enemy_spawn_rules(&waypoints)?;
         }
         Ok(Self {
-            mode,
             player_spawn,
             dummies,
             enemy_spawns,
@@ -153,19 +133,10 @@ impl ArenaMarkers {
     }
 }
 
-/// The marker rules only an arena enforces: a dummy, waypoints for any enemy spawn, and
-/// numeric, distinct waypoint suffixes.
-fn validate_arena_rules(
-    dummies: &[LevelMarker],
-    enemy_spawns: &[LevelMarker],
-    waypoints: &[LevelMarker],
-) -> Result<(), ArenaError> {
-    if dummies.is_empty() {
-        return Err(ArenaError::MissingMarker {
-            marker: format!("{DUMMY_PREFIX}NN"),
-        });
-    }
-    if !enemy_spawns.is_empty() && waypoints.is_empty() {
+/// The rules for a level that places an enemy spawn: a waypoint, and numeric, distinct
+/// waypoint suffixes.
+fn validate_enemy_spawn_rules(waypoints: &[LevelMarker]) -> Result<(), ArenaError> {
+    if waypoints.is_empty() {
         return Err(ArenaError::MissingMarker {
             marker: format!("{WAYPOINT_PREFIX}NN"),
         });
@@ -178,26 +149,6 @@ fn validate_arena_rules(
         })?);
     }
     Ok(())
-}
-
-/// The mode `level`'s `searchlight_level` marker names; a sandbox when it has none.
-fn level_mode(level: &Level) -> Result<LevelMode, ArenaError> {
-    let mut found = level.markers.iter().filter(|m| m.name == LEVEL_MARKER);
-    let Some(marker) = found.next() else {
-        return Ok(LevelMode::Sandbox);
-    };
-    if found.next().is_some() {
-        return Err(ArenaError::DuplicateMarker {
-            marker: LEVEL_MARKER.to_owned(),
-        });
-    }
-    match marker.properties.get("mode").map(String::as_str) {
-        Some("arena") => Ok(LevelMode::Arena),
-        Some("sandbox") => Ok(LevelMode::Sandbox),
-        other => Err(ArenaError::BadMode {
-            value: other.unwrap_or_default().to_owned(),
-        }),
-    }
 }
 
 /// The `NN` of a `waypoint_NN` marker, `None` when it is not a number.
@@ -248,7 +199,7 @@ pub struct Arena {
     pub controls: Vec<ArenaControl>,
     /// Where an enemy of [`nav_profile`] size can walk.
     pub nav: Arc<NavMesh>,
-    /// Whether the navmesh could not be built and `nav` is empty (sandbox levels only).
+    /// Whether the navmesh could not be built and `nav` is empty (levels without enemy spawns only).
     pub nav_fallback: bool,
 }
 
@@ -268,14 +219,14 @@ pub fn nav_profile() -> AgentProfile {
 impl Arena {
     /// The arena `level` and its `markers` describe.
     ///
-    /// In a sandbox a navmesh that cannot be built is a warning and an empty navmesh
-    /// ([`Arena::nav_fallback`]), and an unreachable route is not an error.
+    /// On a level without enemy spawns a navmesh that cannot be built is a warning and an
+    /// empty navmesh ([`Arena::nav_fallback`]).
     ///
     /// # Errors
     /// [`ArenaError::BadControl`] naming a control marker with no `action` on the list;
-    /// [`ArenaError::Nav`] when the walkable area cannot be built (arena only);
+    /// [`ArenaError::Nav`] when the walkable area cannot be built and there are enemy spawns;
     /// [`ArenaError::NoReachableWaypoint`] when there are enemy spawns but no waypoint is
-    /// reachable from any of them (arena only). A waypoint no enemy spawn reaches is dropped
+    /// reachable from any of them. A waypoint no enemy spawn reaches is dropped
     /// from the route with a warning.
     pub fn from_level(level: &Level, markers: &ArenaMarkers) -> Result<Self, ArenaError> {
         let positions = |list: &[LevelMarker]| list.iter().map(|marker| marker.position).collect();
@@ -305,8 +256,8 @@ impl Arena {
             .collect();
         let (nav, nav_fallback) = match NavMesh::build(&solids, nav_profile()) {
             Ok(nav) => (nav, false),
-            Err(error) if markers.mode == LevelMode::Sandbox => {
-                tracing::warn!(%error, "no walkable area; the sandbox runs without a navmesh");
+            Err(error) if markers.enemy_spawns.is_empty() => {
+                tracing::warn!(%error, "no walkable area; the level runs without a navmesh");
                 (NavMesh::default(), true)
             }
             Err(error) => return Err(error.into()),
@@ -328,7 +279,7 @@ impl Arena {
                 );
             }
         }
-        if markers.mode == LevelMode::Arena && !enemy_spawns.is_empty() && route.is_empty() {
+        if !enemy_spawns.is_empty() && route.is_empty() {
             return Err(ArenaError::NoReachableWaypoint);
         }
         Ok(Self {

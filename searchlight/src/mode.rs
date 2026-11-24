@@ -1,5 +1,5 @@
-//! The arena as a game mode: waves of enemies that spawn at the enemy markers, and a score for
-//! the kills. The sim underneath knows neither.
+//! The waves of a level that places enemy spawns: enemies that spawn at the enemy markers, and
+//! a score for the kills. The sim underneath knows neither.
 
 use std::sync::Arc;
 
@@ -30,13 +30,13 @@ struct Waves {
     seen_kills: u32,
 }
 
-/// A sim that starts empty and, in an arena, is fed waves of enemies as the player clears them.
+/// A sim that starts empty and, on a level with waves, is fed enemies as the player clears them.
 #[derive(Debug)]
 pub struct ArenaMode {
     sim: SearchlightSim,
     /// Read for what each placed control does.
     arena: Arc<Arena>,
-    /// `None` in a sandbox: nothing spawns and nothing is scored.
+    /// `None` on a level without waves: nothing spawns and nothing is scored.
     waves: Option<Waves>,
 }
 
@@ -59,7 +59,7 @@ impl ArenaMode {
 
     /// Scores the sim's new kills and spawns the wave's enemies at the first free markers, each
     /// of `forced` or else the grade the wave's mix gives its place in the wave; none while the
-    /// player is dead. Does nothing in a sandbox.
+    /// player is dead. Does nothing on a level without waves.
     fn step_waves(&mut self, forced: Option<Grade>) {
         let Some(waves) = self.waves.as_mut() else {
             return;
@@ -150,7 +150,7 @@ impl ArenaMode {
         self.sim.drain_feedback()
     }
 
-    /// The wave and score, or `None` in a sandbox, which has neither.
+    /// The wave and score, or `None` on a level without waves, which has neither.
     pub fn tally(&self) -> Option<Tally> {
         self.waves.as_ref().map(|waves| Tally {
             wave: waves.state.wave(),
@@ -167,16 +167,19 @@ impl ArenaMode {
         }
     }
 
-    /// The mode a level plays as: [`ArenaMode::new`] when the level places an enemy spawn,
+    /// The waves `arena` earns: [`ArenaMode::new`] when the level places an enemy spawn,
     /// [`ArenaMode::without_waves`] otherwise.
     pub fn for_level(arena: Arc<Arena>, config: SimConfig, waves: WaveTuning) -> Self {
-        let _ = (arena, config, waves);
-        todo!("waves run exactly when the level places an enemy spawn")
+        if arena.enemy_spawns.is_empty() {
+            Self::without_waves(arena, config)
+        } else {
+            Self::new(arena, config, waves)
+        }
     }
 
-    /// Whether this mode runs waves and keeps a score.
+    /// Whether this level runs waves and keeps a score.
     pub fn has_waves(&self) -> bool {
-        todo!("true exactly when the mode keeps a tally")
+        self.waves.is_some()
     }
 
     #[cfg(test)]

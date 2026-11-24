@@ -179,14 +179,14 @@ pub fn console_for(
     let grade = if has_waves {
         parse_grade
     } else {
-        parse_grade_in_sandbox
+        parse_grade_without_waves
     };
     console_with_grade(bindings, grade)
 }
 
 /// `grade` on a level without waves: the force acts through the wave step, which it lacks.
-fn parse_grade_in_sandbox(_args: &[&str]) -> Result<(ConsoleCommand, String), String> {
-    Err("No waves in a sandbox".to_owned())
+fn parse_grade_without_waves(_args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    Err("No waves on this level".to_owned())
 }
 
 #[cfg(test)]

@@ -13,8 +13,7 @@ Units are metres, Y up, the player stands at the player spawn facing +Z.
 
 Markers are empty, named glTF nodes that the game reads by name (see searchlight::arena):
 
-    searchlight_level exactly one; its `mode` extra is "arena" (waves, score) or "sandbox"
-    player_spawn      exactly one
+    player_spawn      at most one
     dummy_NN          training dummy, a floor point
     enemy_spawn_NN    where an enemy starts, a floor point
     waypoint_NN       a patrol point, a floor point
@@ -208,7 +207,6 @@ def markers():
                     {"shielded_from": direction_name(block[4])}))
     for index, (x, z, action) in enumerate(CONTROLS, start=1):
         out.append((f"control_{index:02d}", (x, 0.0, z), {"action": action}))
-    out.append(("searchlight_level", (0.0, 0.0, 0.0), {"mode": "arena"}))
     return out
 
 
@@ -319,7 +317,6 @@ def proving_ground_markers():
     out = [("player_spawn", (0.0, 0.0, 0.0), None)]
     for index, distance in enumerate(DUMMY_DISTANCES, start=1):
         out.append((f"dummy_{index:02d}", (0.0, 0.0, float(distance)), None))
-    out.append(("searchlight_level", (0.0, 0.0, 0.0), {"mode": "sandbox"}))
     return out
 
 
