@@ -1811,4 +1811,28 @@ mod tests {
         );
         assert!(far.iter().all(|&ao| ao == 1.0), "open ground {far:?}");
     }
+
+    /// A chunk holding only terrain meshes a neighbouring chunk's structure block as air, so
+    /// its walls close on the same cell the neighbour's own mesh leaves open. Ambient
+    /// occlusion still sees the structure, so only geometry is compared.
+    #[test]
+    fn an_all_terrain_chunk_meshes_a_neighbours_structure_as_air() {
+        let structure = [16, 4, 8];
+        let ground = || solid_box([0, 0, 0], [31, 7, 15], 1);
+        let mut with_structure = ground();
+        with_structure.push((structure, 100, None));
+        let with_structure = grid_with(with_structure);
+        let mut without_structure = grid_with(ground());
+        assert!(without_structure.clear_block(IVec3::from(structure)));
+
+        let meshed = chunk_mesh(&with_structure);
+        let reference = chunk_mesh(&without_structure);
+
+        assert!(
+            !reference.indices.is_empty(),
+            "the all-terrain chunk is meshed"
+        );
+        assert_eq!(meshed.vertices, reference.vertices, "vertices");
+        assert_eq!(meshed.indices, reference.indices, "indices");
+    }
 }

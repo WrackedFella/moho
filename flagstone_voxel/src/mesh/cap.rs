@@ -1109,6 +1109,33 @@ mod tests {
         }
     }
 
+    /// An all-terrain chunk draws a neighbouring chunk's structure block as air, so its cap
+    /// must treat that cell as open exactly as its walls do.
+    #[test]
+    fn an_all_terrain_chunk_caps_a_neighbours_structure_as_air() {
+        let structure = IVec3::new(16, 4, 8);
+        let ground = || {
+            let mut grid = VoxelGrid::new(CHUNK);
+            fill(&mut grid, [0, 0, 0], [31, 7, 15], STONE);
+            grid
+        };
+        let mut with_structure = ground();
+        with_structure.place_block(structure, BLOCKY, None);
+        let mut without_structure = ground();
+        assert!(without_structure.clear_block(structure));
+
+        let capped = cap(&with_structure, 4.5);
+        let reference = cap(&without_structure, 4.5);
+
+        assert!(
+            !reference.indices.is_empty(),
+            "the all-terrain chunk is capped at the cut"
+        );
+        assert_eq!(capped.vertices, reference.vertices, "cap vertices");
+        assert_eq!(capped.indices, reference.indices, "cap indices");
+        assert_eq!(capped.material, reference.material, "cap materials");
+    }
+
     #[test]
     fn a_probe_on_the_surface_of_flat_ground_caps_nothing() {
         let mut grid = VoxelGrid::new(CHUNK);
@@ -1760,19 +1787,6 @@ mod tests {
         fn caps_tile_across_chunk_borders((field, blocky, cut) in tiling_cases()) {
             let grid = field.grid(if blocky { BLOCKY } else { STONE });
             let h = f64::from(cut) + f64::from(CAP_PROBE);
-            // The mesher draws nothing for an Empty chunk even when its padding holds
-            // solid, a crack at -x/-y/-z faces that caps do not repair.
-            if !blocky {
-                let owner_layer = ((h - 0.5) / 16.0).floor() as i32;
-                for (x, z) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
-                    let pos = IVec3::new(x, owner_layer, z);
-                    let (content, _, _) = HybridMeshGenerator::analyze_chunk(&grid, pos, CHUNK);
-                    let padding_solid = (0..18).any(|i| (0..18).any(|j| (0..18).any(|k| {
-                        grid.is_solid_at(pos * CHUNK + IVec3::new(i, j, k) - IVec3::ONE)
-                    })));
-                    prop_assume!(content != ChunkContent::Empty || !padding_solid);
-                }
-            }
             let expected = if blocky {
                 let layer = h.floor() as i32;
                 (0..32).flat_map(|x| (0..32).map(move |z| (x, z)))
