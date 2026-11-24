@@ -61,6 +61,10 @@ cargo run -p searchlight           # the FPS prototype
   - `moho_input/src/action_map.rs`
   - `moho_input/src/bindings.rs`
   Adapters, UI wiring and config are glue: the weekly full run mutates them, PRs don't.
+- **CI covers:** gate (`^Gate`), mutation (`^Mutants`). CI's `Gate` job runs `just check` and
+  its `Mutants (diff)` job runs `just mutants` (exit 2 on a survivor fails the job), so
+  devflow's defect finder does not rerun a command whose check passed on the head. Keep
+  these job names in step with `.github/workflows/ci.yml`.
 - **Human review points:** `Card review: required`, `Domain-test review: agent` (values: `required`,
   `agent`, `not required`; `agent` = no pause, `devflow:test-critic` attacks the failing
   tests before implementation and the PR carries its findings). Switches and runtimes: `_todo/WORKFLOW.md`.
