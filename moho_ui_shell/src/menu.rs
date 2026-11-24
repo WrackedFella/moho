@@ -159,27 +159,23 @@ impl Column {
 }
 
 /// The columns `item` has, left to right; none for a row that is not a `Control` or `Details`.
-fn columns<A>(item: &MenuItem<A>) -> Vec<Column> {
+fn columns<A>(item: &MenuItem<A>) -> &'static [Column] {
+    use Column::{Chevron, First, Mode, Second};
     match item {
-        MenuItem::Control { chevron, mode, .. } => {
-            let mut columns = Vec::with_capacity(4);
-            if chevron.is_some() {
-                columns.push(Column::Chevron);
-            }
-            columns.extend([Column::First, Column::Second]);
-            if mode.is_some() {
-                columns.push(Column::Mode);
-            }
-            columns
-        }
-        MenuItem::Details { .. } => vec![Column::First, Column::Second],
-        _ => Vec::new(),
+        MenuItem::Control { chevron, mode, .. } => match (chevron.is_some(), mode.is_some()) {
+            (true, true) => &[Chevron, First, Second, Mode],
+            (true, false) => &[Chevron, First, Second],
+            (false, true) => &[First, Second, Mode],
+            (false, false) => &[First, Second],
+        },
+        MenuItem::Details { .. } => &[First, Second],
+        _ => &[],
     }
 }
 
 /// `wanted` if the row has it, else the nearest column it has; a row with no columns keeps it.
 fn nearest_column<A>(item: Option<&MenuItem<A>>, wanted: Column) -> Column {
-    let has = item.map(columns).unwrap_or_default();
+    let has = item.map_or(&[][..], columns);
     if has.is_empty() || has.contains(&wanted) {
         wanted
     } else if wanted == Column::Chevron {
@@ -964,14 +960,19 @@ impl<A: PartialEq> MenuStack<A> {
     /// else the nearest row that is, else the old index clamped to the new rows.
     pub fn set_items(&mut self, items: Vec<MenuItem<A>>) {
         if let Some(open) = self.screens.last_mut() {
-            let focus = refound_focus(open.screen.items.get(open.focus), open.focus, &items);
+            let old = open.screen.items.get(open.focus);
+            let focus = refound_focus(old, open.focus, &items);
+            let same = old
+                .zip(items.get(focus))
+                .is_some_and(|(old, new)| same_row(old, new));
             if focus != open.focus {
                 open.reveal.set(true);
             }
             open.focus = focus;
             open.column = nearest_column(items.get(focus), open.column);
             open.screen.items = items;
-            if !(open.focused_is_control() && open.column.slot().is_some()) {
+            // A capture belongs to the row it started on and ends when that row is gone.
+            if !(same && open.focused_is_control() && open.column.slot().is_some()) {
                 open.capturing = false;
             }
             open.shell_note = None;
