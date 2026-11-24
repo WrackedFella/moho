@@ -2,6 +2,7 @@
 
 use crate::app::event_loop::{EventProcessor, FrameProcessor, GenerationProcessor};
 use crate::app::input_state::Designation;
+use crate::app::view_level;
 use crate::game_state::GameState;
 use crate::{App, RenderRequest};
 use flagstone_game::actors::Cube;
@@ -9,7 +10,9 @@ use flagstone_game::colony::MarkChange;
 use flagstone_game::controller::{
     CameraMode, ControllerInput, EDGE_PAN_MARGIN_PX, controller_to_camera, edge_pan_axes,
 };
+#[cfg(test)]
 use flagstone_game::raycast::raycast_surface;
+use flagstone_game::raycast::raycast_surface_below;
 use flagstone_game::selection::{PAWN_HALF_EXTENTS, PLAYER_PAWN, pawn_aabb, pick_pawn};
 use flagstone_ui::actions::StrategyAction;
 use flagstone_ui::console_commands::StrategyConsoleCommand;
@@ -141,10 +144,17 @@ impl App {
             toggle_view: frame.pressed(StrategyAction::Possess),
             select,
             mark,
-            ceiling: None,
+            ceiling: self.view_ceiling(),
             console: Vec::new(),
             engine: Vec::new(),
         }
+    }
+
+    /// The live view ceiling; `None` without a world or without a cut in the strategy view.
+    fn view_ceiling(&self) -> Option<i32> {
+        let extent = view_level::layer_extent(self)?;
+        self.view_level
+            .ceiling(self.simulation.camera_mode(), extent)
     }
 
     /// Where one key or mouse button press or release goes. The console sees it before egui or
@@ -218,11 +228,12 @@ impl App {
         if let Some(ray) = command.select
             && let Some(light_system) = &self.light_system
         {
-            self.pointer_hit = raycast_surface(
+            self.pointer_hit = raycast_surface_below(
                 light_system.grid(),
                 ray.origin,
                 ray.direction,
                 POINTER_RAY_RANGE,
+                command.ceiling,
             );
             tracing::debug!(hit = ?self.pointer_hit, "Pointer ray cast");
             let pawn = (PLAYER_PAWN, pawn_aabb(self.simulation.position()));
@@ -234,7 +245,7 @@ impl App {
             }
         }
         if let Some(ray) = command.mark {
-            self.apply_mark(ray);
+            self.apply_mark(ray, command.ceiling);
         }
     }
 
@@ -260,15 +271,16 @@ impl App {
 
     /// Toggles the mining mark on the block the ray hits and plays the cue for it; a ray that
     /// hits nothing changes nothing. Uses no `dt`, so it can run while the simulation is paused.
-    fn apply_mark(&mut self, ray: Ray) {
+    fn apply_mark(&mut self, ray: Ray, ceiling: Option<i32>) {
         let Some(light_system) = &self.light_system else {
             return;
         };
-        let Some(hit) = raycast_surface(
+        let Some(hit) = raycast_surface_below(
             light_system.grid(),
             ray.origin,
             ray.direction,
             POINTER_RAY_RANGE,
+            ceiling,
         ) else {
             return;
         };
@@ -695,8 +707,9 @@ impl moho_app::Game for App {
         let clock = ctx.clock();
         frame_processor.update_hud_data(self, clock, ctx.tick_length);
         frame_processor.update_cut_caps(self);
+        let ceiling = self.view_ceiling();
         self.designation_markers
-            .sync(&self.colony.marks, None, self.scene.markers_mut());
+            .sync(&self.colony.marks, ceiling, self.scene.markers_mut());
         if let Some(renderer) = ctx.renderer() {
             frame_processor.update_lighting(self, clock, &mut *renderer);
             self.render_scene(renderer, camera);

@@ -43,10 +43,10 @@ fn corner_block(base: IVec3, i: usize) -> BlockPos {
 }
 
 /// Which of the eight corner blocks of the cell at `base` are solid, in the corner order
-/// of the mesher (bit `i` set when corner `i` is solid).
-fn cube_index(grid: &VoxelGrid, base: IVec3) -> u8 {
+/// of the mesher (bit `i` set when `solid` holds for corner `i`).
+fn cube_index(solid: &impl Fn(BlockPos) -> bool, base: IVec3) -> u8 {
     (0..8)
-        .filter(|&i| grid.material_at(corner_block(base, i)).is_some())
+        .filter(|&i| solid(corner_block(base, i)))
         .fold(0, |index, i| index | (1 << i))
 }
 
@@ -107,6 +107,33 @@ pub fn raycast_surface(
     direction: Vec3,
     max_distance: f32,
 ) -> Option<SurfaceHit> {
+    raycast_surface_below(grid, origin, direction, max_distance, None)
+}
+
+/// [`raycast_surface`] with every block at `y >= ceiling` read as air; `None` hides nothing.
+///
+/// Used when the view is cut at a layer: the hit is the first crossing of the surface of
+/// the kept ground, which tops out on the cut plane, and its block is always below
+/// `ceiling` because only solid corners can own a hit.
+pub fn raycast_surface_below(
+    grid: &VoxelGrid,
+    origin: Vec3,
+    direction: Vec3,
+    max_distance: f32,
+    ceiling: Option<i32>,
+) -> Option<SurfaceHit> {
+    let solid = |block: BlockPos| {
+        ceiling.is_none_or(|ceiling| block.y < ceiling) && grid.material_at(block).is_some()
+    };
+    walk_surface(&solid, origin, direction, max_distance)
+}
+
+fn walk_surface(
+    solid: &impl Fn(BlockPos) -> bool,
+    origin: Vec3,
+    direction: Vec3,
+    max_distance: f32,
+) -> Option<SurfaceHit> {
     let dir = direction.normalize_or_zero();
     if dir == Vec3::ZERO {
         return None;
@@ -121,7 +148,7 @@ pub fn raycast_surface(
         let t_exit = walk.next_crossing();
         let cell = walk.cell;
 
-        let index = cube_index(grid, cell);
+        let index = cube_index(solid, cell);
         let cell_origin = cell.as_vec3() + Vec3::splat(0.5);
         let nearest = MarchingCubes::cell_triangles(index)
             .filter_map(|tri| triangle_crossing(origin, dir, &tri.map(|v| v + cell_origin)))
@@ -146,20 +173,6 @@ pub fn raycast_surface(
     }
 
     None
-}
-
-/// [`raycast_surface`] with every block at `y >= ceiling` read as air.
-///
-/// Stub: ignores the ceiling until implemented.
-pub fn raycast_surface_below(
-    grid: &VoxelGrid,
-    origin: Vec3,
-    direction: Vec3,
-    max_distance: f32,
-    ceiling: Option<i32>,
-) -> Option<SurfaceHit> {
-    let _ = ceiling;
-    raycast_surface(grid, origin, direction, max_distance)
 }
 
 /// Distance to the next voxel boundary and the distance to cross one voxel,

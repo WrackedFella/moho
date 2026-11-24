@@ -97,12 +97,14 @@ impl ViewLevel {
         }
     }
 
-    /// The level whose layers and above are hidden in `mode`; `None` with no cut.
-    ///
-    /// Stub: always `None` until implemented.
+    /// The level whose layer and those above are hidden in `mode`; `None` with no cut.
+    /// Read through the same clamp as [`Self::renderer_height`], so a pick and the picture
+    /// cannot disagree.
     pub fn ceiling(&self, mode: CameraMode, extent: LayerExtent) -> Option<i32> {
-        let _ = (mode, extent);
-        None
+        match mode {
+            CameraMode::FirstPerson => None,
+            CameraMode::Isometric => extent.clamp(self.cut),
+        }
     }
 
     /// The renderer height, only when it differs from the last one returned.

@@ -16,11 +16,12 @@ pub struct DesignationMarkers {
 }
 
 impl DesignationMarkers {
-    /// Adds a marker for each new mark and removes the marker of each cancelled one.
+    /// Adds a marker for each new mark and removes the marker of each cancelled one. Marks at
+    /// `y >= ceiling` (the hidden layers) have no marker; `None` hides nothing.
     /// Markers it did not place are left alone.
     pub fn sync(&mut self, marks: &MineMarks, ceiling: Option<i32>, markers: &mut Markers) {
-        let _ = ceiling;
-        for (pos, _) in marks.iter() {
+        let visible = |pos: [i32; 3]| ceiling.is_none_or(|ceiling| pos[1] < ceiling);
+        for (pos, _) in marks.iter().filter(|&(pos, _)| visible(pos)) {
             if self.shown.insert(pos) {
                 let min = pos.map(|c| c as f32);
                 let max = pos.map(|c| c as f32 + 1.0);
@@ -28,7 +29,7 @@ impl DesignationMarkers {
             }
         }
         self.shown.retain(|&pos| {
-            let keep = marks.contains(pos);
+            let keep = marks.contains(pos) && visible(pos);
             if !keep {
                 markers.remove(marker_id(pos));
             }
