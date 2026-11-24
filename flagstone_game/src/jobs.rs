@@ -12,7 +12,7 @@ use glam::Vec3;
 use crate::TICK_HZ;
 use crate::colony::MineMarks;
 use crate::pawn::{Pawn, PawnId, TOOL_SLOT};
-use crate::routing::{ROUTE_NODE_BUDGET, feet_cell, route, walkable};
+use crate::routing::{ROUTE_NODE_BUDGET, feet_cell, route, standing_cell, walkable};
 
 /// How close to a waypoint's centre, horizontally in metres, the feet count as arrived.
 pub const ARRIVE_RADIUS: f32 = 0.35;
@@ -240,7 +240,9 @@ fn route_broken(job: &mut Job, pose: Pose, grid: &VoxelGrid) -> bool {
         return false;
     }
     *revision = grid.revision();
-    let feet = feet_cell(pose.feet);
+    let Some(feet) = standing_cell(grid, feet_cell(pose.feet)) else {
+        return true;
+    };
     let ahead = route[*next..]
         .iter()
         .copied()
@@ -1329,6 +1331,151 @@ mod tests {
             assert_eq!(*route, planned, "a route still walkable is kept");
             assert!(next_before >= 3, "the pawn had walked on: {next_before}");
             assert_eq!(*next, next_before + 1, "the walk went on, not back to 0");
+        }
+
+        /// A site with a one-block rise across x 3, the pawn walking to a mark beyond it and
+        /// standing with its feet inside the rise column.
+        fn mid_climb() -> Site {
+            let mut site = Site::flat();
+            for z in -12..=12 {
+                place(&mut site.grid, cell(3, 1, z));
+            }
+            site.mark_block(cell(9, 1, 0));
+            site.walk_until_at(cell(2, 1, 0), 10);
+            site.pose.feet = Vec3::new(3.5, 1.4, 0.5);
+            site
+        }
+
+        /// Places or clears a block far from every route, one revision per call.
+        fn churn(site: &mut Site, tick: usize) {
+            let far = cell(-11, 1, 11);
+            if tick.is_multiple_of(2) {
+                site.dig(far);
+            } else {
+                place(&mut site.grid, far);
+            }
+        }
+
+        #[test]
+        fn feet_inside_a_rise_keep_the_route_when_the_terrain_far_away_changes() {
+            let mut site = mid_climb();
+            assert!(
+                site.grid.is_solid_at(feet_cell(site.pose.feet)),
+                "the feet are inside the rise"
+            );
+            let before = site.tick();
+            let Job::Mine {
+                route: planned,
+                next: planned_next,
+                ..
+            } = site.job.clone()
+            else {
+                panic!("walking: {:?}", site.job);
+            };
+
+            site.dig(cell(-11, 0, 11));
+            let after = site.tick();
+
+            let Job::Mine { route, next, .. } = &site.job else {
+                panic!("an unrelated edit ends the job: {:?}", site.job);
+            };
+            assert!(matches!(before, JobAction::Walk { .. }), "{before:?}");
+            assert_eq!(after, before, "the same waypoint");
+            assert_eq!(*route, planned, "no re-plan");
+            assert_eq!(*next, planned_next);
+            assert_eq!(site.claimed_by([9, 1, 0]), Some(ME));
+        }
+
+        #[test]
+        fn a_stalled_pawn_still_gives_up_while_the_terrain_keeps_changing() {
+            let stand_still = |mut site: Site| {
+                site.tick();
+                for ticks in 1..=STALL_TICKS + 2 {
+                    churn(&mut site, ticks as usize);
+                    site.tick();
+                    if matches!(site.job, Job::Idle { .. }) {
+                        return (Some(ticks), site);
+                    }
+                }
+                (None, site)
+            };
+            let mut level = Site::flat();
+            level.mark_block(cell(9, 1, 0));
+
+            let (on_the_level, level) = stand_still(level);
+            let (mid_climb, climbing) = stand_still(mid_climb());
+
+            for (name, ticks, site) in [
+                ("level", on_the_level, level),
+                ("mid-climb", mid_climb, climbing),
+            ] {
+                let ticks = ticks.unwrap_or_else(|| panic!("{name}: never gave up"));
+                assert!(
+                    (STALL_TICKS - 1..=STALL_TICKS + 2).contains(&ticks),
+                    "{name}: gave up after {ticks} ticks"
+                );
+                assert!(site.is_marked([9, 1, 0]), "{name}: the mark stays");
+                assert_eq!(site.claimed_by([9, 1, 0]), None, "{name}");
+            }
+        }
+
+        #[test]
+        fn a_block_placed_over_a_waypoint_sends_the_pawn_round_it_to_the_same_mark() {
+            let mut site = Site::flat();
+            site.mark_block(cell(8, 1, 0));
+            site.walk_until_at(cell(1, 1, 0), 10);
+
+            place(&mut site.grid, cell(3, 2, 0));
+            let mut dug = None;
+            for tick in 0..100 {
+                match site.tick() {
+                    JobAction::Walk { to } => {
+                        assert_eq!(site.claimed_by([8, 1, 0]), Some(ME), "tick {tick}");
+                        assert_ne!(feet_cell(to), cell(3, 1, 0), "walked into the block");
+                        site.pose.feet = to;
+                    }
+                    JobAction::Dig { block, .. } => {
+                        dug = Some(block);
+                        break;
+                    }
+                    JobAction::Wait => panic!("waited at tick {tick}: {:?}", site.job),
+                }
+            }
+
+            assert_eq!(dug, Some(cell(8, 1, 0)));
+        }
+
+        #[test]
+        fn a_far_edit_short_of_the_stand_cell_does_not_end_the_walk() {
+            let mut site = Site::flat();
+            site.mark_block(cell(8, 1, 0));
+            site.walk_until_at(cell(6, 1, 0), 20);
+            site.tick();
+            // In the stand cell but not yet within the arrival radius of its centre.
+            site.pose.feet = Vec3::new(7.0, 1.0, 0.5);
+            let before = site.tick();
+            let planned = site.job.clone();
+
+            site.dig(cell(-11, 0, 11));
+            let after = site.tick();
+            let Job::Mine { mark, route, .. } = &site.job else {
+                panic!("the walk ended: {:?}", site.job);
+            };
+            let (mark, route) = (*mark, route.clone());
+            site.pose.feet = centre(cell(7, 1, 0));
+            let last = site.tick();
+
+            assert!(
+                matches!(before, JobAction::Walk { to } if feet_cell(to) == cell(7, 1, 0)),
+                "{before:?}"
+            );
+            assert_eq!(after, before, "still on its way to the stand cell");
+            assert_eq!(mark, [8, 1, 0]);
+            assert!(matches!(&planned, Job::Mine { route: r, .. } if *r == route));
+            assert!(
+                matches!(last, JobAction::Dig { block, .. } if block == cell(8, 1, 0)),
+                "{last:?}"
+            );
         }
 
         proptest! {

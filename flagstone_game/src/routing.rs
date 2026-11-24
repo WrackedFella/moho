@@ -20,6 +20,14 @@ pub fn standable(grid: &VoxelGrid, cell: BlockPos) -> bool {
         && (0..BODY_CELLS).all(|up| !grid.is_solid_at(cell + BlockPos::Y * up))
 }
 
+/// The cell a pawn with its feet in `feet` stands in: `feet` itself when standable, else the
+/// cell above, then the one below, for feet sitting slightly in or off a slope.
+pub fn standing_cell(grid: &VoxelGrid, feet: BlockPos) -> Option<BlockPos> {
+    [feet, feet + BlockPos::Y, feet - BlockPos::Y]
+        .into_iter()
+        .find(|&cell| standable(grid, cell))
+}
+
 pub fn feet_cell(feet: Vec3) -> BlockPos {
     feet.floor().as_ivec3()
 }
@@ -72,9 +80,7 @@ pub fn route(
     toward: BlockPos,
     budget: usize,
 ) -> Option<Vec<BlockPos>> {
-    let start = [start, start + BlockPos::Y, start - BlockPos::Y]
-        .into_iter()
-        .find(|&cell| standable(grid, cell))?;
+    let start = standing_cell(grid, start)?;
 
     // Ordered by (f, g, insertion order) for a deterministic tie-break.
     let mut open = BinaryHeap::new();
