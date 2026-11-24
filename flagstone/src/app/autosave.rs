@@ -1,3 +1,48 @@
+use std::time::Duration;
+
+/// The interval used when `[game] autosave_seconds` is missing or malformed.
+const DEFAULT_AUTOSAVE_INTERVAL: Duration = Duration::from_secs(120);
+const MIN_AUTOSAVE_SECONDS: u32 = 30;
+const MAX_AUTOSAVE_SECONDS: u32 = 3600;
+
+const AUTOSAVE_SECONDS: &str = "autosave_seconds";
+
+/// The autosave interval a `[game] autosave_seconds` value asks for.
+///
+/// A missing value gives the default; `0` turns periodic autosave off (`None`); any other
+/// number is clamped to 30 through 3600 seconds.
+///
+/// # Errors
+///
+/// Returns the parse error when the value is not an unsigned integer.
+fn interval_from_setting(raw: Option<&str>) -> Result<Option<Duration>, std::num::ParseIntError> {
+    let Some(raw) = raw else {
+        return Ok(Some(DEFAULT_AUTOSAVE_INTERVAL));
+    };
+    let seconds: u32 = raw.parse()?;
+    if seconds == 0 {
+        return Ok(None);
+    }
+    let clamped = seconds.clamp(MIN_AUTOSAVE_SECONDS, MAX_AUTOSAVE_SECONDS);
+    Ok(Some(Duration::from_secs(u64::from(clamped))))
+}
+
+/// The autosave interval from `[game] autosave_seconds`; `None` when autosave is off.
+///
+/// A malformed value logs a warning and gives the default.
+pub fn autosave_interval(prefs: &moho_core::prefs::Prefs) -> Option<Duration> {
+    let raw = prefs.game_value(AUTOSAVE_SECONDS);
+    interval_from_setting(raw).unwrap_or_else(|error| {
+        tracing::warn!(
+            key = "[game] autosave_seconds",
+            value = raw,
+            %error,
+            "Autosave interval is not a whole number of seconds; using the default"
+        );
+        Some(DEFAULT_AUTOSAVE_INTERVAL)
+    })
+}
+
 /// When an edited world is next due an autosave, counted in simulation ticks.
 ///
 /// A world is due once it has been edited since the last save and at least
@@ -403,9 +448,176 @@ mod tests {
     }
 
     fn prefs_with_autosave_seconds(seconds: u32) -> Prefs {
-        let (prefs, issues) = Prefs::parse(&format!("[world]\nautosave_seconds={seconds}\n"));
+        prefs_with_game_autosave_text(&seconds.to_string())
+    }
+
+    fn prefs_with_game_autosave_text(raw: &str) -> Prefs {
+        let (prefs, issues) = Prefs::parse(&format!("[game]\nautosave_seconds={raw}\n"));
         assert_eq!(issues, vec![], "test setup: the prefs text is valid");
         prefs
+    }
+
+    fn secs(n: u64) -> Option<Duration> {
+        Some(Duration::from_secs(n))
+    }
+
+    #[test]
+    fn setting_300_is_300_seconds() {
+        assert_eq!(interval_from_setting(Some("300")), Ok(secs(300)));
+        assert_eq!(
+            autosave_interval(&prefs_with_game_autosave_text("300")),
+            secs(300)
+        );
+    }
+
+    #[test]
+    fn unparseable_setting_is_an_error() {
+        for raw in ["soon", "-5"] {
+            assert!(interval_from_setting(Some(raw)).is_err(), "{raw}");
+        }
+    }
+
+    #[test]
+    fn unparseable_autosave_seconds_falls_back_to_120() {
+        for raw in ["soon", "-5"] {
+            let prefs = prefs_with_game_autosave_text(raw);
+
+            assert_eq!(autosave_interval(&prefs), secs(120), "{raw}");
+        }
+    }
+
+    #[test]
+    fn out_of_range_setting_clamps() {
+        for (raw, expected) in [("5", 30), ("99999", 3600), ("4294967295", 3600)] {
+            assert_eq!(
+                interval_from_setting(Some(raw)),
+                Ok(secs(expected)),
+                "{raw}"
+            );
+            assert_eq!(
+                autosave_interval(&prefs_with_game_autosave_text(raw)),
+                secs(expected),
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn bounds_are_kept() {
+        for bound in [30, 3600] {
+            assert_eq!(
+                interval_from_setting(Some(&bound.to_string())),
+                Ok(secs(bound)),
+                "{bound}"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_setting_is_120() {
+        assert_eq!(interval_from_setting(None), Ok(secs(120)));
+        assert_eq!(autosave_interval(&Prefs::default()), secs(120));
+    }
+
+    #[test]
+    fn zero_setting_is_off() {
+        assert_eq!(interval_from_setting(Some("0")), Ok(None));
+        assert_eq!(autosave_interval(&prefs_with_game_autosave_text("0")), None);
+    }
+
+    #[test]
+    fn empty_setting_falls_back_to_120() {
+        let (prefs, _issues) = Prefs::parse("[game]\nautosave_seconds=\n");
+
+        assert_eq!(autosave_interval(&prefs), secs(120));
+    }
+
+    #[test]
+    fn padded_setting_is_trimmed() {
+        let (prefs, _issues) = Prefs::parse("[game]\n autosave_seconds = 300 \n");
+
+        assert_eq!(autosave_interval(&prefs), secs(300));
+    }
+
+    #[test]
+    fn bounds_neighbours_clamp_and_one_is_not_off() {
+        for (raw, expected) in [("30", 30), ("29", 30), ("3601", 3600), ("1", 30)] {
+            assert_eq!(
+                interval_from_setting(Some(raw)),
+                Ok(secs(expected)),
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn u32_overflow_setting_is_an_error_and_falls_back_to_120() {
+        assert!(interval_from_setting(Some("4294967296")).is_err());
+
+        let prefs = prefs_with_game_autosave_text("4294967296");
+
+        assert_eq!(autosave_interval(&prefs), secs(120));
+    }
+
+    /// Runs `run` and returns its result with what `tracing` wrote meanwhile.
+    fn logged<T>(run: impl FnOnce() -> T) -> (T, String) {
+        use std::io::Write;
+
+        struct Sink(Arc<Mutex<Vec<u8>>>);
+        impl Write for Sink {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().expect("log sink").extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let writer = Arc::clone(&buffer);
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || Sink(Arc::clone(&writer)))
+            .with_ansi(false)
+            .finish();
+        let result = tracing::subscriber::with_default(subscriber, run);
+        let bytes = buffer.lock().expect("log sink").clone();
+        (
+            result,
+            String::from_utf8(bytes).expect("log output is utf-8"),
+        )
+    }
+
+    #[test]
+    fn unparseable_autosave_seconds_warns_naming_the_key_and_value() {
+        for raw in ["soon", "-5"] {
+            let prefs = prefs_with_game_autosave_text(raw);
+
+            let (interval, log) = logged(|| autosave_interval(&prefs));
+
+            assert_eq!(interval, secs(120), "{raw}");
+            assert!(log.contains("WARN"), "{raw}: {log}");
+            assert!(log.contains("[game] autosave_seconds"), "{raw}: {log}");
+            assert!(log.contains(raw), "{raw}: {log}");
+        }
+    }
+
+    #[test]
+    fn valid_and_out_of_range_autosave_seconds_log_no_warning() {
+        for raw in ["300", "5", "99999", "0"] {
+            let prefs = prefs_with_game_autosave_text(raw);
+
+            let (_, log) = logged(|| autosave_interval(&prefs));
+
+            assert_eq!(log, "", "{raw}");
+        }
+    }
+
+    #[test]
+    fn old_world_key_does_not_set_the_interval() {
+        let (prefs, _issues) = Prefs::parse("[world]\nautosave_seconds=300\n");
+
+        assert_eq!(autosave_interval(&prefs), secs(120));
     }
 
     #[test]

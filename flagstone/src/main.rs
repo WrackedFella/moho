@@ -254,7 +254,7 @@ impl App {
         );
         tracing::info!("Created LightSystem for frame loop integration");
 
-        let autosave_interval = initialized.prefs.autosave_interval();
+        let autosave_interval = app::autosave::autosave_interval(&initialized.prefs);
 
         Self {
             entities: initialized.entities,
