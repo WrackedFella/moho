@@ -1,4 +1,4 @@
-//! Platform-free rules for the FPS line: items, magazine, rifle, loadout, body damage, lean,
+//! Platform-free rules for the FPS line: items, magazine, rifle, loadout, body damage, lean, accuracy,
 //! enemy grades and the grade mix of each wave.
 
 mod accuracy;

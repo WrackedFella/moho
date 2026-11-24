@@ -258,6 +258,13 @@ const SPREAD_STREAM: StreamId = StreamId::named("searchlight.enemy_spread");
 /// stay as they were.
 const PLAYER_SPREAD_STREAM: StreamId = StreamId::named("searchlight.player_spread");
 
+/// The right and up axes across `forward` that an aim error turns a shot along; looking straight
+/// up or down, where right is undefined, takes +X.
+fn aim_basis(forward: Vec3) -> (Vec3, Vec3) {
+    let right = forward.cross(Vec3::Y).normalize_or(Vec3::X);
+    (right, right.cross(forward))
+}
+
 /// The next draw of `rng`, uniform in `[-1, 1)`.
 fn next_signed(rng: &mut SimRng) -> f32 {
     rng.next_f32() * 2.0 - 1.0
@@ -735,8 +742,7 @@ impl SearchlightSim {
     /// `direction` turned off by up to `aim_error` radians either way across and up.
     fn with_spread(&mut self, direction: Vec3, aim_error: f32) -> Vec3 {
         let forward = direction.normalize_or_zero();
-        let right = forward.cross(Vec3::Y).normalize_or(Vec3::X);
-        let up = right.cross(forward);
+        let (right, up) = aim_basis(forward);
         let across = next_signed(&mut self.rng) * aim_error;
         let rise = next_signed(&mut self.rng) * aim_error;
         forward + right * across + up * rise
@@ -821,8 +827,7 @@ impl SearchlightSim {
         let u = self.player_rng.next_f32();
         let v = self.player_rng.next_f32();
         let (across, rise) = disc_offset(u, v, spread);
-        let right = forward.cross(Vec3::Y).normalize_or(Vec3::X);
-        let up = right.cross(forward);
+        let (right, up) = aim_basis(forward);
         forward + right * across + up * rise
     }
 
