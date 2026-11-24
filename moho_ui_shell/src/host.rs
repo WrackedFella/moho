@@ -334,12 +334,14 @@ mod tests {
     use std::collections::BTreeMap;
 
     use moho_input::bindings::Binding;
+    use moho_input::bindings::{ActionMode, Modifiers, Trigger};
     use moho_input::key::Key;
     use winit::dpi::PhysicalPosition;
     use winit::event::{DeviceId, MouseScrollDelta, TouchPhase};
 
     use super::*;
     use crate::console::tests::Cmd;
+    use crate::menu::Chevron;
     use crate::menu::{MenuEvent, MenuItem, MenuScreen, Slot};
     use crate::settings::{EngineSetting, EngineSettings};
 
@@ -400,6 +402,9 @@ mod tests {
                 MenuEvent::SettingsApplied(_)
                 | MenuEvent::GameSettingsApplied(_)
                 | MenuEvent::Captured { .. }
+                | MenuEvent::DetailsToggled { .. }
+                | MenuEvent::Picked { .. }
+                | MenuEvent::ModeChosen { .. }
                 | MenuEvent::Cleared { .. } => None,
             })
             .collect()
@@ -881,6 +886,8 @@ mod tests {
                 action: actions[index % 3],
                 slots: [Some(Binding::key(Key::R)), None],
                 note: None,
+                chevron: None,
+                mode: None,
             })
             .collect();
         let mut shell = shell();
@@ -1026,6 +1033,73 @@ mod tests {
         assert!(!scrolled.meshes.is_empty());
         assert!(scrolled.meshes.iter().all(|m| !m.vertices.is_empty()));
         assert_ne!(top.meshes, scrolled.meshes, "the rows moved");
+    }
+
+    #[test]
+    fn an_expanded_controls_page_with_a_checkbox_draws_a_frame() {
+        let control = |label: &str, action, chevron, mode| MenuItem::Control {
+            label: label.to_owned(),
+            action,
+            slots: [Some(Binding::key(Key::R)), None],
+            note: None,
+            chevron: Some(chevron),
+            mode: Some(mode),
+        };
+        let details = |slot, trigger, modifiers| MenuItem::Details {
+            action: Choice::Play,
+            slot,
+            trigger,
+            modifiers,
+        };
+        let mut shell = shell();
+        shell.menu_mut().push(MenuScreen {
+            title: Some("Controls".to_owned()),
+            items: vec![
+                control("Crouch", Choice::Play, Chevron::Open, ActionMode::Toggle),
+                details(Slot::Primary, Trigger::Hold, Modifiers::CTRL),
+                details(Slot::Secondary, Trigger::Press, Modifiers::NONE),
+                MenuItem::Button {
+                    label: "Reset".to_owned(),
+                    action: Choice::Quit,
+                },
+                control(
+                    "Sprint",
+                    Choice::Settings,
+                    Chevron::Closed,
+                    ActionMode::Hold,
+                ),
+            ],
+            back: None,
+            settings: None,
+        });
+
+        let frame = shell.ui_frame([1280, 720]).expect("an open menu draws");
+
+        let texts: Vec<String> = shell
+            .menu_mut()
+            .texts([1280.0, 720.0])
+            .into_iter()
+            .map(|t| t.text)
+            .collect();
+        for expected in [
+            "v",
+            ">",
+            "[x] Toggle",
+            "[ ] Toggle",
+            "Kind: Hold",
+            "Mod: Ctrl",
+            "Kind: Press",
+            "Mod: None",
+            "Primary",
+            "Secondary",
+        ] {
+            assert!(
+                texts.iter().any(|t| t.contains(expected)),
+                "{expected:?} is not drawn: {texts:?}"
+            );
+        }
+        assert!(!frame.meshes.is_empty());
+        assert!(frame.meshes.iter().all(|m| !m.vertices.is_empty()));
     }
 
     #[test]

@@ -256,6 +256,8 @@ mod tests {
                 action: (),
                 slots: [None, None],
                 note: None,
+                chevron: None,
+                mode: None,
             })
             .collect();
         MenuScreen {

@@ -824,7 +824,11 @@ impl SearchlightGame {
                         self.save_head_bob();
                     }
                 }
-                MenuEvent::Captured { .. } | MenuEvent::Cleared { .. } => {}
+                MenuEvent::Captured { .. }
+                | MenuEvent::Cleared { .. }
+                | MenuEvent::DetailsToggled { .. }
+                | MenuEvent::Picked { .. }
+                | MenuEvent::ModeChosen { .. } => {}
             }
         }
     }
@@ -3010,6 +3014,9 @@ mod tests {
                 MenuEvent::SettingsApplied(_)
                 | MenuEvent::GameSettingsApplied(_)
                 | MenuEvent::Captured { .. }
+                | MenuEvent::DetailsToggled { .. }
+                | MenuEvent::Picked { .. }
+                | MenuEvent::ModeChosen { .. }
                 | MenuEvent::Cleared { .. } => None,
             })
     }
@@ -3026,6 +3033,7 @@ mod tests {
                 MenuItem::Setting(_)
                 | MenuItem::Apply
                 | MenuItem::Control { .. }
+                | MenuItem::Details { .. }
                 | MenuItem::GameSlider(_) => None,
             })
             .collect()
@@ -4305,6 +4313,7 @@ mod menu_tests {
                 MenuItem::Setting(_)
                 | MenuItem::Apply
                 | MenuItem::Control { .. }
+                | MenuItem::Details { .. }
                 | MenuItem::GameSlider(_) => None,
             })
             .collect()
@@ -4757,6 +4766,7 @@ mod settings_tests {
                 MenuItem::Setting(_)
                 | MenuItem::Apply
                 | MenuItem::Control { .. }
+                | MenuItem::Details { .. }
                 | MenuItem::GameSlider(_) => None,
             })
             .collect()
