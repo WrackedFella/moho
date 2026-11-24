@@ -659,13 +659,15 @@ fn init_logging() {
 
 /// Window, loop rate and audio settings for the strategy game, with the window opening in
 /// the mode `prefs` saved.
-fn app_config_for(_prefs: &Prefs) -> moho_app::AppConfig {
+fn app_config_for(prefs: &Prefs) -> moho_app::AppConfig {
     moho_app::AppConfig {
         window_title: "Flagstone".into(),
         loop_config: moho_app::LoopConfig::new(flagstone_game::TICK_HZ),
         init_audio: true,
-        toggle_keys: None,
-        window_mode: moho_app::WindowMode::Windowed,
+        toggle_keys: Some(vec![moho_input::bindings::Input::Key(
+            moho_input::key::Key::F11,
+        )]),
+        window_mode: moho_ui_shell::runtime_window_mode(prefs.window_mode()),
     }
 }
 

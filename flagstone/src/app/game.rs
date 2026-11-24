@@ -501,6 +501,20 @@ impl App {
         self.input.actions.discard_edges();
     }
 
+    /// The window is now in `mode`. The platform drops held keys' releases and the cursor
+    /// grab across a mode change, so release the keys, drop the look and grab or free the
+    /// cursor for the state. Saved prefs stay as they are.
+    fn window_mode_applied(&mut self, mode: moho_app::WindowMode) {
+        self.drop_pending_input();
+        self.input.actions.reset_look();
+        if let Some(adapter) = &self.ui_adapter
+            && let Ok(mut adapter) = adapter.lock()
+        {
+            adapter.window_mode_changed(mode);
+        }
+        self.apply_cursor();
+    }
+
     fn toggle_camera_mode(&mut self) {
         // Placeholder cues until the mode switch has its own clips.
         let cue = match self.simulation.camera_mode() {
@@ -598,8 +612,26 @@ impl moho_app::Game for App {
         }
     }
 
+    fn window_mode_changed(
+        &mut self,
+        _ctx: &mut moho_app::EventContext<'_>,
+        mode: moho_app::WindowMode,
+    ) {
+        self.window_mode_applied(mode);
+    }
+
     fn frame(&mut self, ctx: &mut moho_app::FrameContext<'_>, alpha: f32) {
         let frame_processor = FrameProcessor::new();
+
+        let requested = self
+            .ui_adapter
+            .as_ref()
+            .and_then(|adapter| adapter.lock().ok())
+            .and_then(|mut adapter| adapter.take_requested_window_mode());
+        if let Some(mode) = requested {
+            ctx.set_window_mode(mode);
+            self.window_mode_applied(mode);
+        }
 
         if std::mem::take(&mut self.frame_cap_changed) {
             ctx.set_frame_cap(self.pending_frame_cap);

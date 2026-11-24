@@ -227,16 +227,10 @@ pub fn apply_saved_render_settings(
 pub fn apply_video_settings(prefs: &moho_core::prefs::Prefs, window: &Window) {
     use moho_core::prefs::WindowMode;
     use winit::dpi::PhysicalSize;
-    use winit::window::Fullscreen;
 
-    match prefs.window_mode() {
-        WindowMode::Fullscreen | WindowMode::Borderless => {
-            window.set_fullscreen(Some(Fullscreen::Borderless(None)));
-        }
-        WindowMode::Windowed => {
-            let (w, h) = prefs.window_resolution();
-            let _ = window.request_inner_size(PhysicalSize::new(w, h));
-        }
+    if prefs.window_mode() == WindowMode::Windowed {
+        let (w, h) = prefs.window_resolution();
+        let _ = window.request_inner_size(PhysicalSize::new(w, h));
     }
 }
 

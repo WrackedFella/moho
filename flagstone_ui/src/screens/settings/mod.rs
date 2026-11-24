@@ -176,6 +176,11 @@ impl SettingsMenu {
         self.is_dirty()
     }
 
+    /// Shows `live`, the mode the window is in, on the Video tab without marking it unsaved.
+    pub fn follow_window_mode(&mut self, live: moho_app::WindowMode) {
+        self.state.follow_window_mode(live);
+    }
+
     /// The window mode the Video tab shows: the staged one.
     pub fn staged_window_mode(&self) -> crate::prefs::WindowMode {
         self.state.staged().window_mode()

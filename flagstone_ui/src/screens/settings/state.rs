@@ -32,6 +32,9 @@ pub struct SettingsState {
     dirty_fields: HashSet<SettingsField>,
     /// Where `apply_changes` writes the preferences
     path: PathBuf,
+    /// The window mode the window is in when a key put it there, which differs from the
+    /// saved mode; staging it is not an unsaved change.
+    live_window_mode: Option<WindowMode>,
 }
 
 impl SettingsState {
@@ -52,7 +55,32 @@ impl SettingsState {
             staged_bindings: bindings,
             dirty_fields: HashSet::new(),
             path,
+            live_window_mode: None,
         }
+    }
+
+    /// Makes the staged window mode the one the window is in, `live`, without marking it
+    /// unsaved. Both fullscreen kinds run borderless, so a saved Fullscreen stays Fullscreen.
+    pub(super) fn follow_window_mode(&mut self, live: moho_app::WindowMode) {
+        let shown = match live {
+            moho_app::WindowMode::Windowed => WindowMode::Windowed,
+            moho_app::WindowMode::Borderless
+                if self.prefs.window_mode() == WindowMode::Fullscreen =>
+            {
+                WindowMode::Fullscreen
+            }
+            moho_app::WindowMode::Borderless => WindowMode::Borderless,
+        };
+        self.staged.set_window_mode(shown);
+        self.live_window_mode = Some(shown);
+        self.dirty_fields.remove(&SettingsField::WindowMode);
+    }
+
+    /// The window mode a staged mode is compared against to tell it changed: what the window
+    /// was last put in by a key, else the saved mode.
+    pub(super) fn window_mode_baseline(&self) -> WindowMode {
+        self.live_window_mode
+            .unwrap_or_else(|| self.prefs.window_mode())
     }
 
     /// Check if there are any unsaved changes.
@@ -117,6 +145,7 @@ impl SettingsState {
         self.prefs = self.staged.clone();
         self.saved_bindings = self.staged_bindings.clone();
         self.dirty_fields.clear();
+        self.live_window_mode = None;
         Ok(())
     }
 
@@ -125,6 +154,7 @@ impl SettingsState {
     /// Discards all uncommitted changes and clears dirty flags.
     pub fn revert_changes(&mut self) {
         self.staged = self.prefs.clone();
+        self.staged.set_window_mode(self.window_mode_baseline());
         self.staged_bindings = self.saved_bindings.clone();
         self.dirty_fields.clear();
     }

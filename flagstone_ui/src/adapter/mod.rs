@@ -85,6 +85,9 @@ pub struct EguiAdapter {
 
     // The window mode the Settings screen asked for, until the app takes it.
     requested_window_mode: Option<moho_app::WindowMode>,
+
+    // The mode the window is in, once a key or a Settings apply has set it.
+    live_window_mode: Option<moho_app::WindowMode>,
 }
 
 /// Lightweight progress state used by the adapter to render an overlay.
@@ -140,6 +143,7 @@ impl EguiAdapter {
             menu_music_exists: std::path::Path::new(event_routing::MENU_MUSIC_PATH).exists(),
             saved_prefs: None,
             requested_window_mode: None,
+            live_window_mode: None,
         }
     }
 
@@ -173,6 +177,11 @@ impl EguiAdapter {
             Box::new(SettingsMenu::with_prefs_at(prefs, save_path)),
         );
         self.ui_state.show_screen("settings");
+        if let Some(live) = self.live_window_mode
+            && let Some(menu) = self.settings_menu_mut()
+        {
+            menu.follow_window_mode(live);
+        }
     }
 
     /// The registered settings screen, if it is a `SettingsMenu`.
@@ -192,8 +201,13 @@ impl EguiAdapter {
     }
 
     /// Tells the adapter the window now runs in `mode`, however it got there (a key, or an
-    /// applied Settings change). Not implemented yet: the adapter ignores it.
-    pub fn window_mode_changed(&mut self, _mode: moho_app::WindowMode) {}
+    /// applied Settings change). Saved prefs are untouched.
+    pub fn window_mode_changed(&mut self, mode: moho_app::WindowMode) {
+        self.live_window_mode = Some(mode);
+        if let Some(menu) = self.settings_menu_mut() {
+            menu.follow_window_mode(mode);
+        }
+    }
 
     /// Hand over the window mode the last applied Settings save asked for, once.
     pub fn take_requested_window_mode(&mut self) -> Option<moho_app::WindowMode> {
@@ -205,6 +219,9 @@ impl EguiAdapter {
     pub fn record_menu_action(&mut self, action: &MenuAction) {
         if let MenuAction::SettingsSaved(prefs) = action {
             self.saved_prefs = Some(prefs.clone());
+            let mode = moho_ui_shell::runtime_window_mode(prefs.window_mode());
+            self.requested_window_mode = Some(mode);
+            self.live_window_mode = Some(mode);
         }
     }
 

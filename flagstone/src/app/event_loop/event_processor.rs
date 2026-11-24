@@ -115,20 +115,10 @@ impl EventProcessor {
                 height,
             } => {
                 tracing::info!(mode = ?mode, width, height, "Window settings changed");
-                if let Some(window) = &app.window {
-                    use moho_core::events::WindowMode;
-                    use winit::dpi::PhysicalSize;
-                    use winit::window::Fullscreen;
-
-                    match mode {
-                        WindowMode::Fullscreen | WindowMode::Borderless => {
-                            window.set_fullscreen(Some(Fullscreen::Borderless(None)));
-                        }
-                        WindowMode::Windowed => {
-                            window.set_fullscreen(None);
-                            let _ = window.request_inner_size(PhysicalSize::new(width, height));
-                        }
-                    }
+                if mode == moho_core::events::WindowMode::Windowed
+                    && let Some(window) = &app.window
+                {
+                    let _ = window.request_inner_size(winit::dpi::PhysicalSize::new(width, height));
                 }
             }
         }
