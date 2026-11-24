@@ -5,7 +5,7 @@
 use std::cell::Cell;
 use std::collections::BTreeMap;
 
-use moho_input::bindings::{Binding, Input};
+use moho_input::bindings::{ActionMode, Binding, Input, Modifiers, Trigger};
 use moho_input::key::{Key, MouseButton};
 
 use crate::settings::{Control, EngineSetting, EngineSettings, GameSlider};
@@ -37,9 +37,27 @@ pub enum MenuItem<A> {
         action: A,
         slots: [Option<Binding>; 2],
         note: Option<String>,
+        /// The details chevron; `None` draws no chevron and shows every binding.
+        chevron: Option<Chevron>,
+        /// The hold/toggle checkbox state; `None` draws no checkbox.
+        mode: Option<ActionMode>,
+    },
+    /// One slot's kind and modifier pickers, shown under an open action.
+    Details {
+        action: A,
+        slot: Slot,
+        trigger: Trigger,
+        modifiers: Modifiers,
     },
     /// A game's own slider row, staged and applied beside the engine's rows.
     GameSlider(GameSlider),
+}
+
+/// Whether a [`MenuItem::Control`] row's details are shown under it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Chevron {
+    Closed,
+    Open,
 }
 
 /// A column of a [`MenuItem::Control`] row.
@@ -62,6 +80,17 @@ pub enum MenuEvent<A> {
     Captured { action: A, slot: Slot, input: Input },
     /// The player cleared `slot` of `action`.
     Cleared { action: A, slot: Slot },
+    /// The player toggled the details chevron of `action`.
+    DetailsToggled { action: A },
+    /// The player stepped a picker of `slot` of `action`; the slot's new kind and modifiers.
+    Picked {
+        action: A,
+        slot: Slot,
+        trigger: Trigger,
+        modifiers: Modifiers,
+    },
+    /// The player flipped the hold/toggle checkbox of `action` to `mode`.
+    ModeChosen { action: A, mode: ActionMode },
 }
 
 /// An axis-aligned rectangle in logical points from the window's top left.
@@ -103,6 +132,154 @@ const PROTECTED_NOTE: &str = "That input can't be bound";
 /// Window size assumed until a screen has been laid out once.
 const DEFAULT_SIZE: [f32; 2] = [1280.0, 720.0];
 
+/// Width of the chevron cell at the start of a row's label column.
+const CHEVRON_WIDTH: f32 = 24.0;
+/// Width of the hold/toggle checkbox column right of the secondary cell.
+const MODE_WIDTH: f32 = 128.0;
+
+/// A place the focus can be on a row. On a `Control` row `First` and `Second` are its slots;
+/// on a `Details` row they are the kind and the modifier pickers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Column {
+    Chevron,
+    First,
+    Second,
+    Mode,
+}
+
+impl Column {
+    /// The slot a `Control` row's cell in this column holds.
+    fn slot(self) -> Option<Slot> {
+        match self {
+            Self::First => Some(Slot::Primary),
+            Self::Second => Some(Slot::Secondary),
+            Self::Chevron | Self::Mode => None,
+        }
+    }
+}
+
+/// The columns `item` has, left to right; none for a row that is not a `Control` or `Details`.
+fn columns<A>(item: &MenuItem<A>) -> &'static [Column] {
+    use Column::{Chevron, First, Mode, Second};
+    match item {
+        MenuItem::Control { chevron, mode, .. } => match (chevron.is_some(), mode.is_some()) {
+            (true, true) => &[Chevron, First, Second, Mode],
+            (true, false) => &[Chevron, First, Second],
+            (false, true) => &[First, Second, Mode],
+            (false, false) => &[First, Second],
+        },
+        MenuItem::Details { .. } => &[First, Second],
+        _ => &[],
+    }
+}
+
+/// `wanted` if the row has it, else the nearest column it has; a row with no columns keeps it.
+fn nearest_column<A>(item: Option<&MenuItem<A>>, wanted: Column) -> Column {
+    let has = item.map_or(&[][..], columns);
+    if has.is_empty() || has.contains(&wanted) {
+        wanted
+    } else if wanted == Column::Chevron {
+        Column::First
+    } else {
+        Column::Second
+    }
+}
+
+/// The next kind a picker steps to.
+fn next_kind(kind: Trigger) -> Trigger {
+    match kind {
+        Trigger::Press => Trigger::Hold,
+        Trigger::Hold => Trigger::Double,
+        Trigger::Double => Trigger::Press,
+    }
+}
+
+/// The next modifiers a picker steps to: None, Ctrl, Shift, Alt, then None; a set of two or
+/// more steps to None.
+fn next_modifiers(modifiers: Modifiers) -> Modifiers {
+    if modifiers == Modifiers::NONE {
+        Modifiers::CTRL
+    } else if modifiers == Modifiers::CTRL {
+        Modifiers::SHIFT
+    } else if modifiers == Modifiers::SHIFT {
+        Modifiers::ALT
+    } else {
+        Modifiers::NONE
+    }
+}
+
+fn kind_text(kind: Trigger) -> &'static str {
+    match kind {
+        Trigger::Press => "Press",
+        Trigger::Hold => "Hold",
+        Trigger::Double => "Double",
+    }
+}
+
+fn modifiers_text(modifiers: Modifiers) -> String {
+    let names: Vec<&str> = [
+        (Modifiers::CTRL, "Ctrl"),
+        (Modifiers::SHIFT, "Shift"),
+        (Modifiers::ALT, "Alt"),
+    ]
+    .into_iter()
+    .filter(|(modifier, _)| modifiers.contains(*modifier))
+    .map(|(_, name)| name)
+    .collect();
+    if names.is_empty() {
+        "None".to_owned()
+    } else {
+        names.join("+")
+    }
+}
+
+/// Whether two rows are the same row of a game's screen across a `set_items`.
+fn same_row<A: PartialEq>(old: &MenuItem<A>, new: &MenuItem<A>) -> bool {
+    match (old, new) {
+        (MenuItem::Control { action: was, .. }, MenuItem::Control { action: now, .. })
+        | (MenuItem::Button { action: was, .. }, MenuItem::Button { action: now, .. }) => {
+            was == now
+        }
+        (
+            MenuItem::Details {
+                action: was_action,
+                slot: was_slot,
+                ..
+            },
+            MenuItem::Details {
+                action: now_action,
+                slot: now_slot,
+                ..
+            },
+        ) => was_action == now_action && was_slot == now_slot,
+        (MenuItem::Setting(was), MenuItem::Setting(now)) => was == now,
+        (MenuItem::GameSlider(was), MenuItem::GameSlider(now)) => was.key == now.key,
+        _ => false,
+    }
+}
+
+/// Where the focus goes when `items` replace the rows it was on at `focus`: the same index if
+/// that row is the same one, else the nearest row that is, else the index clamped to the rows.
+fn refound_focus<A: PartialEq>(
+    old: Option<&MenuItem<A>>,
+    focus: usize,
+    items: &[MenuItem<A>],
+) -> usize {
+    let clamped = focus.min(items.len().saturating_sub(1));
+    let Some(old) = old else {
+        return clamped;
+    };
+    if items.get(focus).is_some_and(|item| same_row(old, item)) {
+        return focus;
+    }
+    items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| same_row(old, item))
+        .min_by_key(|(row, _)| row.abs_diff(focus))
+        .map_or(clamped, |(row, _)| row)
+}
+
 /// A screen, the row that has the focus on it and the settings values staged on it.
 #[derive(Debug)]
 struct Open<A> {
@@ -112,8 +289,8 @@ struct Open<A> {
     staged: Option<EngineSettings>,
     /// The game rows the player changed, by key; a row without an entry shows its own `value`.
     game_staged: BTreeMap<String, i32>,
-    /// The slot of a `Control` row the focus is on.
-    slot: Slot,
+    /// The column of the focused row the focus is on.
+    column: Column,
     /// Whether the next press is a binding for the focused slot.
     capturing: bool,
     /// The shell's refusal of a captured input, shown on the focused row.
@@ -138,7 +315,7 @@ impl<A> Open<A> {
             focus: 0,
             staged,
             game_staged: BTreeMap::new(),
-            slot: Slot::Primary,
+            column: Column::First,
             capturing: false,
             shell_note: None,
             notes_hidden: false,
@@ -150,10 +327,11 @@ impl<A> Open<A> {
     }
 
     /// Moves the focus, hiding the notes when it moved.
-    fn set_focus(&mut self, row: usize, slot: Slot) {
-        if (row, slot) != (self.focus, self.slot) {
+    fn set_focus(&mut self, row: usize, column: Column) {
+        let column = nearest_column(self.screen.items.get(row), column);
+        if (row, column) != (self.focus, self.column) {
             self.focus = row;
-            self.slot = slot;
+            self.column = column;
             self.shell_note = None;
             self.notes_hidden = true;
             self.reveal.set(true);
@@ -167,9 +345,9 @@ impl<A> Open<A> {
         )
     }
 
-    /// Starts capturing the focused slot when the focus is on a `Control` row.
+    /// Starts capturing the focused slot when the focus is on a slot of a `Control` row.
     fn start_capture(&mut self) {
-        if self.focused_is_control() {
+        if self.focused_is_control() && self.column.slot().is_some() {
             self.capturing = true;
             self.shell_note = None;
             self.notes_hidden = true;
@@ -222,33 +400,40 @@ impl<A> Open<A> {
             })
     }
 
-    /// The slot of a `Control` row `rect` whose cell holds `x`; `None` over its label or on
-    /// another kind of row.
-    fn slot_at(&self, row: usize, rect: Rect, x: f32) -> Option<Slot> {
-        if !matches!(self.screen.items.get(row), Some(MenuItem::Control { .. })) {
-            return None;
-        }
+    /// The column of row `row` (laid out in `rect`) that holds `x`; `None` over a label or on a
+    /// row without columns.
+    fn column_at(&self, row: usize, rect: Rect, x: f32) -> Option<Column> {
+        let item = self.screen.items.get(row)?;
+        let has = columns(item);
         let across = x - rect.min[0];
-        if across < LABEL_WIDTH {
-            None
+        let column = if across < CHEVRON_WIDTH && has.contains(&Column::Chevron) {
+            Column::Chevron
+        } else if across < LABEL_WIDTH {
+            return None;
         } else if across < LABEL_WIDTH + CELL_WIDTH {
-            Some(Slot::Primary)
+            Column::First
+        } else if across < CONTROL_WIDTH {
+            Column::Second
         } else {
-            Some(Slot::Secondary)
-        }
+            Column::Mode
+        };
+        has.contains(&column).then_some(column)
     }
 
-    /// Left and Right: pick a `Control` row's slot, or step a settings row.
+    /// Left and Right: walk the focused row's columns, or step a settings row.
     fn step(&mut self, direction: i8) {
-        if self.focused_is_control() {
-            let slot = if direction < 0 {
-                Slot::Primary
-            } else {
-                Slot::Secondary
-            };
-            self.set_focus(self.focus, slot);
-        } else {
-            self.nudge(self.focus, direction);
+        let has = self.screen.items.get(self.focus).map(columns);
+        match has {
+            Some(has) if !has.is_empty() => {
+                let at = has.iter().position(|c| *c == self.column).unwrap_or(0);
+                let to = if direction < 0 {
+                    at.saturating_sub(1)
+                } else {
+                    (at + 1).min(has.len() - 1)
+                };
+                self.set_focus(self.focus, has[to]);
+            }
+            _ => self.nudge(self.focus, direction),
         }
     }
 }
@@ -269,21 +454,67 @@ impl<A: Clone> Open<A> {
         match self.screen.items.get(self.focus)? {
             MenuItem::Control { action, .. } => Some(MenuEvent::Captured {
                 action: action.clone(),
-                slot: self.slot,
+                slot: self.column.slot()?,
                 input,
             }),
             _ => None,
         }
     }
 
-    /// Clears the focused slot, if the focus is on a `Control` row.
+    /// Clears the focused slot, if the focus is on a slot of a `Control` row.
     fn clear(&self) -> Option<MenuEvent<A>> {
         match self.screen.items.get(self.focus)? {
             MenuItem::Control { action, .. } => Some(MenuEvent::Cleared {
                 action: action.clone(),
-                slot: self.slot,
+                slot: self.column.slot()?,
             }),
             _ => None,
+        }
+    }
+
+    /// What Enter or a click does on the focused column: the chevron toggles the details, a slot
+    /// of a `Control` row starts capture, a picker steps, the checkbox reports the other mode;
+    /// any other row is chosen.
+    fn activate(&mut self) -> Vec<MenuEvent<A>> {
+        match (self.screen.items.get(self.focus), self.column) {
+            (Some(MenuItem::Control { action, .. }), Column::Chevron) => {
+                vec![MenuEvent::DetailsToggled {
+                    action: action.clone(),
+                }]
+            }
+            (Some(MenuItem::Control { action, mode, .. }), Column::Mode) => mode
+                .map(|mode| MenuEvent::ModeChosen {
+                    action: action.clone(),
+                    mode: ActionMode::from_toggle(!mode.is_toggle()),
+                })
+                .into_iter()
+                .collect(),
+            (Some(MenuItem::Control { .. }), Column::First | Column::Second) => {
+                self.start_capture();
+                Vec::new()
+            }
+            (
+                Some(MenuItem::Details {
+                    action,
+                    slot,
+                    trigger,
+                    modifiers,
+                }),
+                column,
+            ) => {
+                let (trigger, modifiers) = if column == Column::First {
+                    (next_kind(*trigger), *modifiers)
+                } else {
+                    (*trigger, next_modifiers(*modifiers))
+                };
+                vec![MenuEvent::Picked {
+                    action: action.clone(),
+                    slot: *slot,
+                    trigger,
+                    modifiers,
+                }]
+            }
+            _ => self.choose(self.focus),
         }
     }
 }
@@ -301,7 +532,8 @@ impl<A: Clone> Open<A> {
                 Vec::new()
             }
             Some(MenuItem::Apply) => self.apply(),
-            Some(MenuItem::Control { .. } | MenuItem::GameSlider(_)) | None => Vec::new(),
+            Some(MenuItem::Control { .. } | MenuItem::Details { .. } | MenuItem::GameSlider(_))
+            | None => Vec::new(),
         }
     }
 
@@ -342,6 +574,128 @@ impl<A> Open<A> {
             .get(&slider.key)
             .copied()
             .unwrap_or(slider.value)
+    }
+
+    /// The color of the cell in `column` of row `row`: focused when the focus is on it.
+    fn cell_color(&self, row: usize, column: Column) -> [u8; 4] {
+        if row == self.focus && column == self.column {
+            FOCUS_COLOR
+        } else {
+            COLOR
+        }
+    }
+
+    /// The texts of the `Control` row `row` in `rect`: chevron, label, two slot cells and the
+    /// checkbox, each only if the row has it.
+    fn control_texts(
+        &self,
+        row: usize,
+        rect: Rect,
+        color: [u8; 4],
+        size: [f32; 2],
+    ) -> Vec<ScreenText> {
+        let Some(MenuItem::Control {
+            label,
+            slots,
+            note,
+            chevron,
+            mode,
+            ..
+        }) = self.screen.items.get(row)
+        else {
+            return Vec::new();
+        };
+        let (y, left) = (centre_y(rect), rect.min[0]);
+        let at = |text: &str, x: f32, color| left_text(text, x, y, color, size);
+        let collapsed = *chevron == Some(Chevron::Closed);
+        let shown_note = if row == self.focus {
+            self.shell_note.as_deref()
+        } else {
+            None
+        }
+        .or_else(|| note.as_deref().filter(|_| !self.notes_hidden));
+        let (label_text, label_color) = match shown_note {
+            Some(note) => (note.to_owned(), WARNING_COLOR),
+            None if slots.iter().all(Option::is_none) => (format!("! {label}"), color),
+            None if collapsed && slots.iter().flatten().any(|b| !b.is_plain()) => {
+                (format!("{label} +"), color)
+            }
+            None => (label.clone(), color),
+        };
+        let mut texts = Vec::with_capacity(5);
+        let mut label_x = left;
+        if let Some(chevron) = chevron {
+            let glyph = match chevron {
+                Chevron::Closed => ">",
+                Chevron::Open => "v",
+            };
+            texts.push(at(glyph, left, self.cell_color(row, Column::Chevron)));
+            label_x += CHEVRON_WIDTH;
+        }
+        texts.push(at(&label_text, label_x, label_color));
+        for (column, cell_x, binding) in [
+            (Column::First, LABEL_WIDTH, slots[0]),
+            (Column::Second, LABEL_WIDTH + CELL_WIDTH, slots[1]),
+        ] {
+            let shown = match binding {
+                None => "Unbound".to_owned(),
+                Some(binding) if collapsed && !binding.is_plain() => "...".to_owned(),
+                Some(binding) => binding.label(),
+            };
+            texts.push(at(&shown, left + cell_x, self.cell_color(row, column)));
+        }
+        if let Some(mode) = mode {
+            let box_text = if mode.is_toggle() {
+                "[x] Toggle"
+            } else {
+                "[ ] Toggle"
+            };
+            let color = self.cell_color(row, Column::Mode);
+            texts.push(at(box_text, left + CONTROL_WIDTH, color));
+        }
+        texts
+    }
+
+    /// The texts of the `Details` row `row` in `rect`: the slot's name, indented, then the kind
+    /// and modifier pickers.
+    fn details_texts(
+        &self,
+        row: usize,
+        rect: Rect,
+        color: [u8; 4],
+        size: [f32; 2],
+    ) -> Vec<ScreenText> {
+        let Some(MenuItem::Details {
+            slot,
+            trigger,
+            modifiers,
+            ..
+        }) = self.screen.items.get(row)
+        else {
+            return Vec::new();
+        };
+        let (y, left) = (centre_y(rect), rect.min[0]);
+        let name = match slot {
+            Slot::Primary => "Primary",
+            Slot::Secondary => "Secondary",
+        };
+        vec![
+            left_text(name, left + CHEVRON_WIDTH, y, color, size),
+            left_text(
+                &format!("Kind: {}", kind_text(*trigger)),
+                left + LABEL_WIDTH,
+                y,
+                self.cell_color(row, Column::First),
+                size,
+            ),
+            left_text(
+                &format!("Mod: {}", modifiers_text(*modifiers)),
+                left + LABEL_WIDTH + CELL_WIDTH,
+                y,
+                self.cell_color(row, Column::Second),
+                size,
+            ),
+        ]
     }
 
     /// Moves the staged value of the settings row `row` one step towards `direction`.
@@ -446,16 +800,6 @@ impl<A> MenuStack<A> {
         self.screens.clear();
     }
 
-    /// Replaces the top screen's items, keeping its focus, slot, capture and scroll.
-    pub fn set_items(&mut self, items: Vec<MenuItem<A>>) {
-        if let Some(open) = self.screens.last_mut() {
-            open.focus = open.focus.min(items.len().saturating_sub(1));
-            open.screen.items = items;
-            open.shell_note = None;
-            open.notes_hidden = false;
-        }
-    }
-
     /// Ends a capture in progress without an event.
     pub fn cancel_capture(&mut self) {
         if let Some(open) = self.screens.last_mut() {
@@ -513,8 +857,8 @@ impl<A> MenuStack<A> {
             && !open.capturing
             && let Some((row, rect)) = open.row_at(point, size)
         {
-            let slot = open.slot_at(row, rect, point[0]).unwrap_or(open.slot);
-            open.set_focus(row, slot);
+            let column = open.column_at(row, rect, point[0]).unwrap_or(open.column);
+            open.set_focus(row, column);
         }
     }
 
@@ -560,7 +904,7 @@ impl<A> MenuStack<A> {
             let mut title_centre = first_centre - ROW_PITCH;
             if matches!(
                 open.screen.items.get(visible.start),
-                Some(MenuItem::Control { .. })
+                Some(MenuItem::Control { .. } | MenuItem::Details { .. })
             ) {
                 // Control rows are short, so the title band above them is too thin to hold it.
                 title_centre = title_centre.max(ROW_SIZE / 2.0);
@@ -577,48 +921,11 @@ impl<A> MenuStack<A> {
             match item {
                 MenuItem::Button { label, .. } => texts.push(centred(label, centre_y(rect), color)),
                 MenuItem::Apply => texts.push(centred("Apply", centre_y(rect), color)),
-                MenuItem::Control {
-                    label, slots, note, ..
-                } => {
-                    let y = centre_y(rect);
-                    let shown_note = if row == open.focus {
-                        open.shell_note.as_deref()
-                    } else {
-                        None
-                    }
-                    .or_else(|| note.as_deref().filter(|_| !open.notes_hidden));
-                    let (label_text, label_color) = match shown_note {
-                        Some(note) => (note.to_owned(), WARNING_COLOR),
-                        None if slots.iter().all(Option::is_none) => (format!("! {label}"), color),
-                        None => (label.clone(), color),
-                    };
-                    texts.push(text(
-                        &label_text,
-                        Anchor::Left,
-                        rect.min[0],
-                        y,
-                        SETTING_SIZE,
-                        label_color,
-                    ));
-                    for (slot, cell_x, binding) in [
-                        (Slot::Primary, LABEL_WIDTH, slots[0]),
-                        (Slot::Secondary, LABEL_WIDTH + CELL_WIDTH, slots[1]),
-                    ] {
-                        let cell_color = if row == open.focus && slot == open.slot {
-                            FOCUS_COLOR
-                        } else {
-                            COLOR
-                        };
-                        let label = binding.map_or_else(|| "Unbound".to_owned(), Binding::label);
-                        texts.push(text(
-                            &label,
-                            Anchor::Left,
-                            rect.min[0] + cell_x,
-                            y,
-                            SETTING_SIZE,
-                            cell_color,
-                        ));
-                    }
+                MenuItem::Control { .. } => {
+                    texts.extend(open.control_texts(row, rect, color, size));
+                }
+                MenuItem::Details { .. } => {
+                    texts.extend(open.details_texts(row, rect, color, size));
                 }
                 MenuItem::GameSlider(slider) => {
                     let value = slider.value_text(open.game_value(slider));
@@ -647,9 +954,39 @@ impl<A> MenuStack<A> {
     }
 }
 
+impl<A: PartialEq> MenuStack<A> {
+    /// Replaces the top screen's items, keeping its column and scroll; a capture goes on only
+    /// while the same `Control` row has the focus, else it ends without an event. The focus stays
+    /// on the same row: the same index if the row there is the same one (see `same_row`),
+    /// else the nearest row that is, else the old index clamped to the new rows.
+    pub fn set_items(&mut self, items: Vec<MenuItem<A>>) {
+        if let Some(open) = self.screens.last_mut() {
+            let old = open.screen.items.get(open.focus);
+            let focus = refound_focus(old, open.focus, &items);
+            let same = old
+                .zip(items.get(focus))
+                .is_some_and(|(old, new)| same_row(old, new));
+            if focus != open.focus {
+                open.reveal.set(true);
+            }
+            open.focus = focus;
+            open.column = nearest_column(items.get(focus), open.column);
+            open.screen.items = items;
+            // A capture belongs to the row it started on and ends when that row is gone.
+            if !(same && open.focused_is_control() && open.column.slot().is_some()) {
+                open.capturing = false;
+            }
+            open.shell_note = None;
+            open.notes_hidden = false;
+        }
+    }
+}
+
 impl<A: Clone> MenuStack<A> {
-    /// Up and Down move the focus and wrap; Left and Right step the focused settings row; a
-    /// non-repeat Enter press chooses the focused item (flipping or cycling a settings row);
+    /// Up and Down move the focus and wrap; Left and Right walk a `Control` or `Details` row's
+    /// columns (stopping at the ends) or step a settings row; a non-repeat Enter press acts on
+    /// the focused column (toggle details, start a capture, step a picker, report the other
+    /// mode) or chooses the focused item (flipping or cycling a settings row);
     /// a non-repeat Escape press chooses the top screen's back action, if any. Releasing the
     /// left mouse button ends a slider drag; other releases and inputs do nothing.
     pub fn on_key(&mut self, input: Input, pressed: bool, repeat: bool) {
@@ -671,19 +1008,15 @@ impl<A: Clone> MenuStack<A> {
         let count = open.screen.items.len();
         match input {
             Input::Key(Key::ArrowDown) if count > 0 => {
-                open.set_focus((open.focus + 1) % count, open.slot);
+                open.set_focus((open.focus + 1) % count, open.column);
             }
             Input::Key(Key::ArrowUp) if count > 0 => {
-                open.set_focus((open.focus + count - 1) % count, open.slot);
+                open.set_focus((open.focus + count - 1) % count, open.column);
             }
             Input::Key(Key::ArrowLeft) => open.step(-1),
             Input::Key(Key::ArrowRight) => open.step(1),
             Input::Key(Key::Enter) if !repeat => {
-                if open.focused_is_control() {
-                    open.start_capture();
-                } else {
-                    self.events.extend(open.choose(open.focus));
-                }
+                self.events.extend(open.activate());
             }
             Input::Key(Key::Backspace) | Input::Mouse(MouseButton::Right) if !repeat => {
                 self.events.extend(open.clear());
@@ -707,7 +1040,7 @@ impl<A: Clone> MenuStack<A> {
             self.on_key(Input::Mouse(MouseButton::Right), true, false);
         } else if let Some((row, rect)) = open.row_at(point, size)
             && row == open.focus
-            && open.slot_at(row, rect, point[0]) == Some(open.slot)
+            && open.column_at(row, rect, point[0]) == Some(open.column)
         {
             self.events.extend(open.clear());
         }
@@ -730,9 +1063,9 @@ impl<A: Clone> MenuStack<A> {
                 MenuItem::GameSlider(_) => true,
                 _ => false,
             };
-            if let Some(slot) = open.slot_at(row, rect, point[0]) {
-                open.set_focus(row, slot);
-                open.start_capture();
+            if let Some(column) = open.column_at(row, rect, point[0]) {
+                open.set_focus(row, column);
+                self.events.extend(open.activate());
             } else if on_slider {
                 self.dragging = Some(row);
                 open.set_slider_from(row, point[0], size);
@@ -747,6 +1080,17 @@ fn centre_y(rect: Rect) -> f32 {
     (rect.min[1] + rect.max[1]) / 2.0
 }
 
+/// A left-anchored row text at `x` and `centre_y` on a window `size` points across.
+fn left_text(text: &str, x: f32, centre_y: f32, color: [u8; 4], size: [f32; 2]) -> ScreenText {
+    ScreenText {
+        text: text.to_owned(),
+        anchor: Anchor::Left,
+        offset: [x, centre_y - size[1] / 2.0],
+        size: SETTING_SIZE,
+        color,
+    }
+}
+
 /// Height available to rows: the window less a title band above and below.
 fn viewport(size: [f32; 2]) -> f32 {
     size[1] - 2.0 * BAND
@@ -754,14 +1098,19 @@ fn viewport(size: [f32; 2]) -> f32 {
 
 fn item_height<A>(item: &MenuItem<A>) -> f32 {
     match item {
-        MenuItem::Control { .. } => CONTROL_HEIGHT,
+        MenuItem::Control { .. } | MenuItem::Details { .. } => CONTROL_HEIGHT,
         _ => ROW_PITCH,
     }
 }
 
-fn item_width<A>(item: &MenuItem<A>) -> f32 {
+/// The width of `item`'s row; `with_checkbox` is whether some `Control` row of the screen has
+/// the checkbox column, which widens every `Control` and `Details` row to hold it.
+fn item_width<A>(item: &MenuItem<A>, with_checkbox: bool) -> f32 {
     match item {
-        MenuItem::Control { .. } => CONTROL_WIDTH,
+        MenuItem::Control { .. } | MenuItem::Details { .. } if with_checkbox => {
+            CONTROL_WIDTH + MODE_WIDTH
+        }
+        MenuItem::Control { .. } | MenuItem::Details { .. } => CONTROL_WIDTH,
         _ => ROW_WIDTH,
     }
 }
@@ -802,11 +1151,14 @@ fn rects<A>(items: &[MenuItem<A>], scroll: usize, size: [f32; 2]) -> Vec<Rect> {
     } else {
         BAND - items.iter().take(scroll).map(item_height).sum::<f32>()
     };
+    let with_checkbox = items
+        .iter()
+        .any(|item| matches!(item, MenuItem::Control { mode: Some(_), .. }));
     let mut y = top;
     items
         .iter()
         .map(|item| {
-            let (height, width) = (item_height(item), item_width(item));
+            let (height, width) = (item_height(item), item_width(item, with_checkbox));
             let rect = Rect {
                 min: [size[0] / 2.0 - width / 2.0, y],
                 max: [size[0] / 2.0 + width / 2.0, y + height],
@@ -818,8 +1170,9 @@ fn rects<A>(items: &[MenuItem<A>], scroll: usize, size: [f32; 2]) -> Vec<Rect> {
 }
 
 /// The row rectangles of `screen` on a window `size` points across at scroll 0, top to bottom:
-/// buttons and settings 240 by 56 points, control rows 640 by 32, centred on the window, the
-/// column centred vertically when it fits and starting at the title band when it does not.
+/// buttons and settings 240 by 56 points, control and details rows 640 by 32 (768 when a control
+/// row has the checkbox column), centred on the window. The column is centred vertically when it
+/// fits and starts at the title band when it does not.
 pub fn layout<A>(screen: &MenuScreen<A>, size: [f32; 2]) -> Vec<Rect> {
     rects(&screen.items, 0, size)
 }
@@ -890,6 +1243,9 @@ mod tests {
                 MenuEvent::SettingsApplied(_)
                 | MenuEvent::GameSettingsApplied(_)
                 | MenuEvent::Captured { .. }
+                | MenuEvent::DetailsToggled { .. }
+                | MenuEvent::Picked { .. }
+                | MenuEvent::ModeChosen { .. }
                 | MenuEvent::Cleared { .. } => None,
             })
             .collect()
@@ -1231,6 +1587,8 @@ mod tests {
             action: Bind::Row(index),
             slots,
             note: None,
+            chevron: None,
+            mode: None,
         }
     }
 
@@ -1240,6 +1598,8 @@ mod tests {
             action: Bind::Row(index),
             slots: [R, None],
             note: Some(note.to_owned()),
+            chevron: None,
+            mode: None,
         }
     }
 
@@ -2078,6 +2438,1199 @@ mod tests {
                 .expect("the title is drawn");
             let top = SIZE[1] / 2.0 + title.offset[1] - title.size / 2.0;
             assert!(top >= 0.0, "scrolled {scrolled}: title top at {top}");
+        }
+    }
+
+    fn row_with(
+        index: usize,
+        slots: [Option<Binding>; 2],
+        chevron: Option<Chevron>,
+        mode: Option<ActionMode>,
+    ) -> MenuItem<Bind> {
+        MenuItem::Control {
+            label: format!("Action {index:02}"),
+            action: Bind::Row(index),
+            slots,
+            note: None,
+            chevron,
+            mode,
+        }
+    }
+
+    fn labelled(label: &str, action: Bind) -> MenuItem<Bind> {
+        MenuItem::Control {
+            label: label.to_owned(),
+            action,
+            slots: [R, None],
+            note: None,
+            chevron: None,
+            mode: None,
+        }
+    }
+
+    fn details(index: usize, slot: Slot, trigger: Trigger, modifiers: Modifiers) -> MenuItem<Bind> {
+        MenuItem::Details {
+            action: Bind::Row(index),
+            slot,
+            trigger,
+            modifiers,
+        }
+    }
+
+    fn picked(index: usize, slot: Slot, trigger: Trigger, modifiers: Modifiers) -> MenuEvent<Bind> {
+        MenuEvent::Picked {
+            action: Bind::Row(index),
+            slot,
+            trigger,
+            modifiers,
+        }
+    }
+
+    fn toggled(index: usize) -> MenuEvent<Bind> {
+        MenuEvent::DetailsToggled {
+            action: Bind::Row(index),
+        }
+    }
+
+    fn mode_chosen(index: usize, mode: ActionMode) -> MenuEvent<Bind> {
+        MenuEvent::ModeChosen {
+            action: Bind::Row(index),
+            mode,
+        }
+    }
+
+    /// Enter on the focused column; a capture it starts is answered with Q. Returns the events.
+    fn act(stack: &mut MenuStack<Bind>) -> Vec<MenuEvent<Bind>> {
+        key_c(stack, Key::Enter);
+        if stack.is_capturing() {
+            key_c(stack, Key::Q);
+        }
+        stack.take_events()
+    }
+
+    /// A click at `point`; a capture it starts is answered with Q. Returns the events.
+    fn click_and_settle(stack: &mut MenuStack<Bind>, point: [f32; 2]) -> Vec<MenuEvent<Bind>> {
+        stack.click(point, SIZE);
+        if stack.is_capturing() {
+            key_c(stack, Key::Q);
+        }
+        stack.take_events()
+    }
+
+    fn press_all(stack: &mut MenuStack<Bind>, keys: &[Key]) {
+        for &key in keys {
+            key_c(stack, key);
+        }
+    }
+
+    fn row_left(stack: &MenuStack<Bind>, row: usize) -> f32 {
+        cell_point(stack, row, 0.0)[0]
+    }
+
+    /// The first row whose texts include the focus colour.
+    fn focused_row(stack: &MenuStack<Bind>) -> Option<usize> {
+        let rows = stack.top().expect("a screen is open").items.len();
+        (0..rows).find(|&row| row_texts(stack, row).iter().any(|t| t.color == FOCUS))
+    }
+
+    /// The chevron cell's width, pinned independently of the production constant.
+    const CHEVRON_WIDTH: f32 = 24.0;
+    /// Where the checkbox column starts in a row, and a point inside it.
+    const MODE_START: f32 = 640.0;
+    const MODE_X: f32 = 700.0;
+
+    #[test]
+    fn enter_or_a_click_on_the_chevron_reports_details_toggled_and_moves_nothing() {
+        let rows = || {
+            vec![
+                row_with(0, [R, R], Some(Chevron::Closed), None),
+                row_with(1, [R, R], Some(Chevron::Closed), None),
+            ]
+        };
+        let original = controls_screen(rows());
+        let mut by_enter = controls_stack(rows());
+        let mut by_click = controls_stack(rows());
+
+        key_c(&mut by_enter, Key::ArrowLeft);
+        key_c(&mut by_enter, Key::Enter);
+        let after_enter = by_enter.take_events();
+        let enter_capturing = by_enter.is_capturing();
+        key_c(&mut by_enter, Key::Enter);
+        let enter_again = by_enter.take_events();
+        let point = cell_point(&by_click, 1, 10.0);
+        by_click.click(point, SIZE);
+        let after_click = by_click.take_events();
+        let click_capturing = by_click.is_capturing();
+        key_c(&mut by_click, Key::Q);
+
+        assert_eq!(after_enter, [toggled(0)]);
+        assert!(!enter_capturing, "the chevron starts no capture");
+        assert_eq!(enter_again, [toggled(0)], "the focus stayed on the chevron");
+        assert_eq!(by_enter.top(), Some(&original), "the shell moves no rows");
+        assert_eq!(after_click, [toggled(1)]);
+        assert!(!click_capturing);
+        assert_eq!(by_click.take_events(), [], "no capture followed the click");
+        assert_eq!(by_click.top(), Some(&original));
+    }
+
+    #[test]
+    fn set_items_keeps_the_focus_on_the_same_row_when_rows_above_it_open_or_close() {
+        let closed = || -> Vec<MenuItem<Bind>> {
+            (0..30)
+                .map(|index| row_with(index, [R, R], Some(Chevron::Closed), None))
+                .collect()
+        };
+        let opened = || -> Vec<MenuItem<Bind>> {
+            let mut items = closed();
+            items.splice(
+                3..3,
+                [
+                    details(2, Slot::Primary, Trigger::Press, Modifiers::NONE),
+                    details(2, Slot::Secondary, Trigger::Press, Modifiers::NONE),
+                ],
+            );
+            items
+        };
+        let mut stack = controls_stack(closed());
+        press_all(&mut stack, &[Key::ArrowDown; 22]);
+        key_c(&mut stack, Key::ArrowRight);
+
+        stack.set_items(opened());
+        let shown_open = row_shown(&stack, 22);
+        let after_open = act(&mut stack);
+        stack.set_items(closed());
+        let shown_closed = row_shown(&stack, 22);
+        let after_close = act(&mut stack);
+
+        let captured_22 = [captured(Bind::Row(22), Slot::Secondary, Input::Key(Key::Q))];
+        assert!(shown_open, "the row is scrolled back into view");
+        assert_eq!(after_open, captured_22, "two rows opened above the focus");
+        assert!(shown_closed);
+        assert_eq!(after_close, captured_22, "and closed again");
+    }
+
+    #[test]
+    fn set_items_keeps_the_focus_on_a_details_row_or_a_button_by_identity() {
+        let items = || {
+            vec![
+                row_with(3, [R, R], Some(Chevron::Open), None),
+                details(3, Slot::Primary, Trigger::Press, Modifiers::NONE),
+                details(3, Slot::Secondary, Trigger::Press, Modifiers::NONE),
+                bind_button("Reset", Bind::Reset),
+            ]
+        };
+        let mut above = vec![control(8, [R, R]), control(9, [R, R])];
+        above.extend(items());
+        let mut on_details = controls_stack(items());
+        let mut on_button = controls_stack(items());
+        press_all(&mut on_details, &[Key::ArrowDown, Key::ArrowDown]);
+        press_all(&mut on_button, &[Key::ArrowDown; 3]);
+
+        on_details.set_items(above.clone());
+        on_button.set_items(above);
+
+        assert_eq!(
+            act(&mut on_details),
+            [picked(3, Slot::Secondary, Trigger::Hold, Modifiers::NONE)]
+        );
+        assert_eq!(act(&mut on_button), [MenuEvent::Chosen(Bind::Reset)]);
+    }
+
+    #[test]
+    fn enter_on_the_kind_cell_steps_press_to_hold_and_back_and_reports_the_slot() {
+        let rows = |trigger: Trigger| {
+            vec![
+                row_with(0, [R, R], Some(Chevron::Open), None),
+                details(0, Slot::Primary, trigger, Modifiers::NONE),
+                details(0, Slot::Secondary, Trigger::Hold, Modifiers::CTRL),
+                bind_button("Reset", Bind::Reset),
+            ]
+        };
+        for (from, to) in [
+            (Trigger::Press, Trigger::Hold),
+            (Trigger::Hold, Trigger::Double),
+            (Trigger::Double, Trigger::Press),
+        ] {
+            let mut by_enter = controls_stack(rows(from));
+            let mut by_click = controls_stack(rows(from));
+
+            key_c(&mut by_enter, Key::ArrowDown);
+            let first = act(&mut by_enter);
+            let again = act(&mut by_enter);
+            let point = cell_point(&by_click, 1, PRIMARY_X);
+            let clicked = click_and_settle(&mut by_click, point);
+
+            let step = [picked(0, Slot::Primary, to, Modifiers::NONE)];
+            assert_eq!(first, step, "{from:?} steps to {to:?}");
+            assert_eq!(again, step, "the game owns the result: nothing moved on");
+            assert_eq!(clicked, step, "a click steps it too");
+        }
+        let mut second = controls_stack(rows(Trigger::Press));
+
+        press_all(&mut second, &[Key::ArrowDown, Key::ArrowDown]);
+        let events = act(&mut second);
+
+        assert_eq!(
+            events,
+            [picked(0, Slot::Secondary, Trigger::Double, Modifiers::CTRL)],
+            "the slot's own modifiers are reported with its new kind"
+        );
+    }
+
+    #[test]
+    fn the_modifier_cell_steps_none_ctrl_shift_alt_none() {
+        let rows = |modifiers: Modifiers| {
+            vec![
+                row_with(0, [R, R], Some(Chevron::Open), None),
+                details(0, Slot::Secondary, Trigger::Hold, modifiers),
+            ]
+        };
+        for (from, to) in [
+            (Modifiers::NONE, Modifiers::CTRL),
+            (Modifiers::CTRL, Modifiers::SHIFT),
+            (Modifiers::SHIFT, Modifiers::ALT),
+            (Modifiers::ALT, Modifiers::NONE),
+        ] {
+            let mut by_enter = controls_stack(rows(from));
+            let mut by_click = controls_stack(rows(from));
+
+            press_all(&mut by_enter, &[Key::ArrowDown, Key::ArrowRight]);
+            let entered = act(&mut by_enter);
+            let point = cell_point(&by_click, 1, SECONDARY_X);
+            let clicked = click_and_settle(&mut by_click, point);
+
+            let step = [picked(0, Slot::Secondary, Trigger::Hold, to)];
+            assert_eq!(entered, step, "{from:?} steps to {to:?}");
+            assert_eq!(clicked, step, "{from:?} by click");
+        }
+    }
+
+    #[test]
+    fn a_multi_modifier_set_steps_to_none() {
+        let sets = [
+            Modifiers::CTRL.and(Modifiers::SHIFT),
+            Modifiers::CTRL.and(Modifiers::ALT),
+            Modifiers::SHIFT.and(Modifiers::ALT),
+            Modifiers::CTRL.and(Modifiers::SHIFT).and(Modifiers::ALT),
+        ];
+        for set in sets {
+            let mut stack = controls_stack(vec![
+                row_with(0, [R, R], Some(Chevron::Open), None),
+                details(0, Slot::Primary, Trigger::Press, set),
+            ]);
+
+            press_all(&mut stack, &[Key::ArrowDown, Key::ArrowRight]);
+            let events = act(&mut stack);
+
+            assert_eq!(
+                events,
+                [picked(0, Slot::Primary, Trigger::Press, Modifiers::NONE)],
+                "{set:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn capturing_on_an_expanded_row_still_reports_the_input_only() {
+        let original = controls_screen(vec![
+            row_with(0, [R, R], Some(Chevron::Open), Some(ActionMode::Hold)),
+            details(0, Slot::Primary, Trigger::Press, Modifiers::NONE),
+            details(0, Slot::Secondary, Trigger::Hold, Modifiers::CTRL),
+        ]);
+        let mut stack = MenuStack::new();
+        stack.push(original.clone());
+
+        let primary = act(&mut stack);
+        key_c(&mut stack, Key::ArrowRight);
+        key_c(&mut stack, Key::Enter);
+        key_c(&mut stack, Key::Ctrl);
+        let secondary = stack.take_events();
+
+        assert_eq!(
+            primary,
+            [captured(Bind::Row(0), Slot::Primary, Input::Key(Key::Q))]
+        );
+        assert_eq!(
+            secondary,
+            [captured(
+                Bind::Row(0),
+                Slot::Secondary,
+                Input::Key(Key::Ctrl)
+            )],
+            "no kind or modifier rides along with the input"
+        );
+        assert_eq!(stack.top(), Some(&original));
+    }
+
+    #[test]
+    fn a_button_among_detail_rows_is_chosen_as_any_button() {
+        let rows = || {
+            vec![
+                row_with(0, [R, R], Some(Chevron::Open), None),
+                details(0, Slot::Primary, Trigger::Press, Modifiers::NONE),
+                details(0, Slot::Secondary, Trigger::Press, Modifiers::NONE),
+                bind_button("Reset", Bind::Reset),
+            ]
+        };
+        let mut by_key = controls_stack(rows());
+        let mut by_click = controls_stack(rows());
+
+        press_all(&mut by_key, &[Key::ArrowDown; 3]);
+        key_c(&mut by_key, Key::Enter);
+        let point = cell_point(&by_click, 3, 120.0);
+        by_click.click(point, SIZE);
+
+        assert_eq!(by_key.take_events(), [MenuEvent::Chosen(Bind::Reset)]);
+        assert_eq!(by_click.take_events(), [MenuEvent::Chosen(Bind::Reset)]);
+    }
+
+    #[test]
+    fn a_closed_chevron_hides_hold_and_chord_slots_and_marks_the_label() {
+        let closed = Some(Chevron::Closed);
+        let ctrl_r = Binding::key(Key::R).with(Modifiers::CTRL);
+        let stack = controls_stack(vec![
+            row_with(0, [R, Some(Binding::key(Key::R).held())], closed, None),
+            row_with(1, [Some(ctrl_r), R], closed, None),
+            row_with(2, [R, None], closed, None),
+            row_with(3, [None, None], closed, None),
+            row_with(
+                4,
+                [None, Some(Binding::key(Key::R).doubled())],
+                closed,
+                None,
+            ),
+        ]);
+
+        let held = row_strings(&stack, 0);
+        let chord = row_strings(&stack, 1);
+        let plain = row_strings(&stack, 2);
+        let unbound = row_strings(&stack, 3);
+        let double = row_strings(&stack, 4);
+
+        assert!(held.contains(&"Action 00 +".to_owned()), "{held:?}");
+        assert!(held.contains(&"R".to_owned()), "{held:?}");
+        assert!(held.contains(&"...".to_owned()), "{held:?}");
+        assert!(!held.iter().any(|t| t.contains("Hold")), "{held:?}");
+        assert!(chord.contains(&"Action 01 +".to_owned()), "{chord:?}");
+        assert!(chord.contains(&"...".to_owned()), "{chord:?}");
+        assert!(!chord.iter().any(|t| t.contains("Ctrl")), "{chord:?}");
+        assert!(plain.contains(&"Action 02".to_owned()), "{plain:?}");
+        assert!(!plain.iter().any(|t| t.contains('+') || t == "..."));
+        assert!(unbound.contains(&"! Action 03".to_owned()), "{unbound:?}");
+        assert!(double.contains(&"Action 04 +".to_owned()), "{double:?}");
+        assert!(double.contains(&"Unbound".to_owned()), "{double:?}");
+        assert!(!double.iter().any(|t| t.contains('!')), "{double:?}");
+        let glyph = row_texts(&stack, 0)
+            .into_iter()
+            .find(|t| t.text == ">")
+            .expect("a closed chevron is drawn as >");
+        let label = row_texts(&stack, 0)
+            .into_iter()
+            .find(|t| t.text == "Action 00 +")
+            .expect("the label is drawn");
+        let left = row_left(&stack, 0);
+        assert!(
+            glyph.offset[0] >= left && glyph.offset[0] < left + CHEVRON_WIDTH,
+            "the chevron sits in the first 24 points"
+        );
+        assert_eq!(label.offset[0], left + CHEVRON_WIDTH, "the label shifts");
+    }
+
+    #[test]
+    fn an_open_or_absent_chevron_shows_every_binding() {
+        let hold = Some(Binding::key(Key::R).held());
+        let chord = Some(Binding::key(Key::R).with(Modifiers::CTRL));
+        let stack = controls_stack(vec![
+            row_with(0, [hold, chord], Some(Chevron::Open), None),
+            row_with(1, [hold, chord], None, None),
+        ]);
+
+        let open = row_strings(&stack, 0);
+        let absent = row_strings(&stack, 1);
+
+        for (name, strings) in [("open", &open), ("absent", &absent)] {
+            assert!(
+                strings.contains(&"Hold R".to_owned()),
+                "{name}: {strings:?}"
+            );
+            assert!(
+                strings.contains(&"Ctrl+R".to_owned()),
+                "{name}: {strings:?}"
+            );
+            assert!(!strings.iter().any(|t| t == "..."), "{name}: {strings:?}");
+            assert!(
+                !strings
+                    .iter()
+                    .any(|t| t.contains('+') && t.contains("Action"))
+            );
+        }
+        assert!(open.contains(&"v".to_owned()), "an open chevron is v");
+        assert!(open.contains(&"Action 00".to_owned()), "{open:?}");
+        assert!(absent.contains(&"Action 01".to_owned()), "{absent:?}");
+        assert!(
+            !absent.iter().any(|t| t == "v" || t == ">"),
+            "no chevron is drawn: {absent:?}"
+        );
+        let open_label = row_texts(&stack, 0)
+            .into_iter()
+            .find(|t| t.text == "Action 00")
+            .expect("the label is drawn");
+        let absent_label = row_texts(&stack, 1)
+            .into_iter()
+            .find(|t| t.text == "Action 01")
+            .expect("the label is drawn");
+        assert_eq!(open_label.offset[0], row_left(&stack, 0) + CHEVRON_WIDTH);
+        assert_eq!(absent_label.offset[0], row_left(&stack, 1));
+    }
+
+    #[test]
+    fn the_mode_column_shows_the_checkbox_and_reports_the_other_mode() {
+        let rows = || {
+            vec![
+                row_with(0, [R, R], Some(Chevron::Closed), Some(ActionMode::Hold)),
+                row_with(1, [R, R], None, Some(ActionMode::Toggle)),
+            ]
+        };
+        let mut by_key = controls_stack(rows());
+        let mut by_click = controls_stack(rows());
+
+        let off = row_texts(&by_key, 0)
+            .into_iter()
+            .find(|t| t.text == "[ ] Toggle")
+            .expect("a held action shows an empty box");
+        let on = row_strings(&by_key, 1);
+        press_all(&mut by_key, &[Key::ArrowRight, Key::ArrowRight]);
+        let focused = row_texts(&by_key, 0)
+            .into_iter()
+            .find(|t| t.text == "[ ] Toggle")
+            .expect("the box is still drawn");
+        let secondary_focused = row_texts(&by_key, 0)
+            .iter()
+            .any(|t| t.text == "R" && t.color == FOCUS);
+        let first = act(&mut by_key);
+        press_all(&mut by_key, &[Key::ArrowDown]);
+        let second = act(&mut by_key);
+        let point = cell_point(&by_click, 1, MODE_X);
+        let clicked = click_and_settle(&mut by_click, point);
+
+        assert_eq!(off.offset[0], row_left(&by_key, 0) + MODE_START);
+        assert!(on.contains(&"[x] Toggle".to_owned()), "{on:?}");
+        assert_eq!(focused.color, FOCUS, "the mode column has the focus");
+        assert!(!secondary_focused, "and the slot cell does not");
+        assert_eq!(first, [mode_chosen(0, ActionMode::Toggle)]);
+        assert_eq!(second, [mode_chosen(1, ActionMode::Hold)]);
+        assert_eq!(clicked, [mode_chosen(1, ActionMode::Hold)]);
+    }
+
+    #[test]
+    fn a_row_without_mode_has_no_checkbox_column() {
+        let rows = || {
+            vec![
+                row_with(0, [R, R], None, Some(ActionMode::Hold)),
+                row_with(1, [R, R], None, None),
+            ]
+        };
+        let mut by_keys = controls_stack(rows());
+        let mut by_click = controls_stack(rows());
+        let plain = controls_stack(vec![row_with(0, [R, R], None, None)]);
+
+        key_c(&mut by_keys, Key::ArrowDown);
+        let drawn = row_strings(&by_keys, 1);
+        press_all(&mut by_keys, &[Key::ArrowRight, Key::ArrowRight]);
+        let by_keys_events = act(&mut by_keys);
+        let point = cell_point(&by_click, 1, MODE_X);
+        by_click.click(point, SIZE);
+        let click_capturing = by_click.is_capturing();
+        let by_click_events = by_click.take_events();
+        let plain_point = cell_point(&plain, 0, MODE_X);
+        let widths: Vec<f32> = layout(by_click.top().expect("a screen is open"), SIZE)
+            .iter()
+            .map(|r| r.max[0] - r.min[0])
+            .collect();
+        let mut with_mode = controls_stack(rows());
+        press_all(&mut with_mode, &[Key::ArrowRight, Key::ArrowRight]);
+        let mode_events = act(&mut with_mode);
+
+        assert_eq!(widths, [768.0, 768.0], "the click below lands inside row 1");
+        assert_eq!(
+            mode_events,
+            [mode_chosen(0, ActionMode::Toggle)],
+            "the row with a mode has the column"
+        );
+        assert!(!drawn.iter().any(|t| t.contains("Toggle")), "{drawn:?}");
+        assert_eq!(
+            by_keys_events,
+            [captured(Bind::Row(1), Slot::Secondary, Input::Key(Key::Q))],
+            "Right stops at the secondary slot"
+        );
+        assert!(!click_capturing, "the empty column starts no capture");
+        assert_eq!(by_click_events, []);
+        let mut plain = plain;
+        plain.click(plain_point, SIZE);
+        assert!(!plain.is_capturing());
+        assert_eq!(plain.take_events(), [], "outside the row of a plain screen");
+    }
+
+    #[test]
+    fn left_and_right_walk_chevron_slots_and_mode_and_skip_missing_columns() {
+        let both = row_with(0, [R, R], Some(Chevron::Closed), Some(ActionMode::Hold));
+        let chevron_only = row_with(0, [R, R], Some(Chevron::Closed), None);
+        let mode_only = row_with(0, [R, R], None, Some(ActionMode::Hold));
+        let neither = row_with(0, [R, R], None, None);
+        let to_toggle = mode_chosen(0, ActionMode::Toggle);
+        let primary = captured(Bind::Row(0), Slot::Primary, Input::Key(Key::Q));
+        let secondary = captured(Bind::Row(0), Slot::Secondary, Input::Key(Key::Q));
+        let (left, right) = (Key::ArrowLeft, Key::ArrowRight);
+        let cases = vec![
+            ("both: Left", &both, vec![left], toggled(0)),
+            ("both: Left Left", &both, vec![left, left], toggled(0)),
+            (
+                "both: Left Right",
+                &both,
+                vec![left, right],
+                primary.clone(),
+            ),
+            ("both: Right", &both, vec![right], secondary.clone()),
+            (
+                "both: Right Right",
+                &both,
+                vec![right, right],
+                to_toggle.clone(),
+            ),
+            (
+                "both: Right x3",
+                &both,
+                vec![right, right, right],
+                to_toggle.clone(),
+            ),
+            (
+                "both: Right Right Left",
+                &both,
+                vec![right, right, left],
+                secondary.clone(),
+            ),
+            (
+                "chevron only: Right Right",
+                &chevron_only,
+                vec![right, right],
+                secondary.clone(),
+            ),
+            ("chevron only: Left", &chevron_only, vec![left], toggled(0)),
+            ("mode only: Left", &mode_only, vec![left], primary.clone()),
+            (
+                "mode only: Right Right",
+                &mode_only,
+                vec![right, right],
+                to_toggle.clone(),
+            ),
+            (
+                "mode only: Right x3",
+                &mode_only,
+                vec![right, right, right],
+                to_toggle.clone(),
+            ),
+            ("neither: Left", &neither, vec![left], primary.clone()),
+            ("neither: Right", &neither, vec![right], secondary.clone()),
+            (
+                "neither: Right Right",
+                &neither,
+                vec![right, right],
+                secondary.clone(),
+            ),
+            (
+                "neither: Right Left",
+                &neither,
+                vec![right, left],
+                primary.clone(),
+            ),
+        ];
+
+        for (name, row, keys, expected) in cases {
+            let mut stack = controls_stack(vec![row.clone()]);
+
+            press_all(&mut stack, &keys);
+            let events = act(&mut stack);
+
+            assert_eq!(events, [expected], "{name}");
+        }
+    }
+
+    #[test]
+    fn left_and_right_on_a_details_row_walk_kind_and_modifier_only() {
+        let rows = || {
+            vec![
+                row_with(0, [R, R], Some(Chevron::Open), Some(ActionMode::Hold)),
+                details(0, Slot::Primary, Trigger::Press, Modifiers::NONE),
+            ]
+        };
+        let kind = picked(0, Slot::Primary, Trigger::Hold, Modifiers::NONE);
+        let modifier = picked(0, Slot::Primary, Trigger::Press, Modifiers::CTRL);
+        let (left, right) = (Key::ArrowLeft, Key::ArrowRight);
+        let down = Key::ArrowDown;
+        let cases = [
+            ("Down", vec![down], kind.clone()),
+            ("Down Left", vec![down, left], kind.clone()),
+            ("Down Right", vec![down, right], modifier.clone()),
+            ("Down Right Right", vec![down, right, right], modifier),
+            ("Down Right Left", vec![down, right, left], kind),
+        ];
+
+        for (name, keys, expected) in cases {
+            let mut stack = controls_stack(rows());
+
+            press_all(&mut stack, &keys);
+            let events = act(&mut stack);
+
+            assert_eq!(events, [expected], "{name}");
+        }
+    }
+
+    #[test]
+    fn up_and_down_keep_the_column_clamped_to_the_new_row() {
+        let rows = || {
+            vec![
+                row_with(0, [R, R], Some(Chevron::Closed), Some(ActionMode::Hold)),
+                row_with(1, [R, R], Some(Chevron::Closed), None),
+                row_with(2, [R, R], None, None),
+                row_with(3, [R, R], None, Some(ActionMode::Hold)),
+                details(4, Slot::Primary, Trigger::Press, Modifiers::NONE),
+            ]
+        };
+        let kind = picked(4, Slot::Primary, Trigger::Hold, Modifiers::NONE);
+        let modifier = picked(4, Slot::Primary, Trigger::Press, Modifiers::CTRL);
+        let (left, right, down, up) = (
+            Key::ArrowLeft,
+            Key::ArrowRight,
+            Key::ArrowDown,
+            Key::ArrowUp,
+        );
+        let cases = [
+            (
+                "Chevron kept on a row with one",
+                vec![left, down],
+                toggled(1),
+            ),
+            (
+                "Chevron clamps to First",
+                vec![left, down, down],
+                captured(Bind::Row(2), Slot::Primary, Input::Key(Key::Q)),
+            ),
+            (
+                "Mode clamps to Second",
+                vec![right, right, down],
+                captured(Bind::Row(1), Slot::Secondary, Input::Key(Key::Q)),
+            ),
+            (
+                "Second kept down the page",
+                vec![right, right, down, down, down],
+                captured(Bind::Row(3), Slot::Secondary, Input::Key(Key::Q)),
+            ),
+            (
+                "First kept across a row with a mode",
+                vec![down, down, down],
+                captured(Bind::Row(3), Slot::Primary, Input::Key(Key::Q)),
+            ),
+            ("Up wraps and Chevron clamps to First", vec![left, up], kind),
+            (
+                "Up wraps and Mode clamps to Second",
+                vec![right, right, up],
+                modifier,
+            ),
+        ];
+
+        for (name, keys, expected) in cases {
+            let mut stack = controls_stack(rows());
+
+            press_all(&mut stack, &keys);
+            let events = act(&mut stack);
+
+            assert_eq!(events, [expected], "{name}");
+        }
+        let mut modes = controls_stack(vec![
+            row_with(0, [R, R], Some(Chevron::Closed), Some(ActionMode::Hold)),
+            row_with(1, [R, R], None, Some(ActionMode::Toggle)),
+        ]);
+        press_all(&mut modes, &[right, right, down]);
+        assert_eq!(
+            act(&mut modes),
+            [mode_chosen(1, ActionMode::Hold)],
+            "Mode kept on a row that has it"
+        );
+    }
+
+    #[test]
+    fn backspace_on_the_chevron_mode_or_a_picker_clears_nothing() {
+        let right = Input::Mouse(MouseButton::Right);
+        let fresh = || {
+            controls_stack(vec![
+                row_with(0, [R, R], Some(Chevron::Open), Some(ActionMode::Hold)),
+                details(0, Slot::Primary, Trigger::Press, Modifiers::NONE),
+                details(0, Slot::Secondary, Trigger::Press, Modifiers::NONE),
+            ])
+        };
+        let columns: [(&str, Vec<Key>, usize, f32); 4] = [
+            ("chevron", vec![Key::ArrowLeft], 0, 10.0),
+            ("mode", vec![Key::ArrowRight, Key::ArrowRight], 0, MODE_X),
+            ("kind", vec![Key::ArrowDown], 1, PRIMARY_X),
+            (
+                "modifier",
+                vec![Key::ArrowDown, Key::ArrowRight],
+                1,
+                SECONDARY_X,
+            ),
+        ];
+
+        for (name, keys, row, x) in columns {
+            let mut by_key = fresh();
+            let mut by_button = fresh();
+            let mut by_click = fresh();
+            press_all(&mut by_key, &keys);
+            press_all(&mut by_button, &keys);
+            press_all(&mut by_click, &keys);
+
+            key_c(&mut by_key, Key::Backspace);
+            by_button.on_key(right, true, false);
+            let point = cell_point(&by_click, row, x);
+            by_click.hover(point, SIZE);
+            by_click.right_click(point, SIZE);
+
+            assert_eq!(by_key.take_events(), [], "{name}: Backspace");
+            assert_eq!(by_button.take_events(), [], "{name}: right button");
+            assert_eq!(by_click.take_events(), [], "{name}: right click");
+        }
+        let mut first = fresh();
+        let mut second = fresh();
+        key_c(&mut first, Key::Backspace);
+        press_all(&mut second, &[Key::ArrowRight, Key::Backspace]);
+        assert_eq!(
+            first.take_events(),
+            [MenuEvent::Cleared {
+                action: Bind::Row(0),
+                slot: Slot::Primary
+            }],
+            "a slot column still clears"
+        );
+        assert_eq!(
+            second.take_events(),
+            [MenuEvent::Cleared {
+                action: Bind::Row(0),
+                slot: Slot::Secondary
+            }]
+        );
+    }
+
+    #[test]
+    fn hover_and_click_pick_the_column_under_the_point() {
+        let fresh = || {
+            controls_stack(vec![
+                row_with(0, [R, R], Some(Chevron::Closed), Some(ActionMode::Hold)),
+                details(0, Slot::Primary, Trigger::Press, Modifiers::NONE),
+            ])
+        };
+        let hovered = |x: f32| {
+            let mut stack = fresh();
+            let point = cell_point(&stack, 0, x);
+            stack.hover(point, SIZE);
+            act(&mut stack)
+        };
+        let clicked = |row: usize, x: f32| {
+            let mut stack = fresh();
+            let point = cell_point(&stack, row, x);
+            click_and_settle(&mut stack, point)
+        };
+
+        assert_eq!(hovered(10.0), [toggled(0)]);
+        assert_eq!(
+            hovered(PRIMARY_X),
+            [captured(Bind::Row(0), Slot::Primary, Input::Key(Key::Q))]
+        );
+        assert_eq!(
+            hovered(SECONDARY_X),
+            [captured(Bind::Row(0), Slot::Secondary, Input::Key(Key::Q))]
+        );
+        assert_eq!(hovered(MODE_X), [mode_chosen(0, ActionMode::Toggle)]);
+        assert_eq!(clicked(0, 10.0), [toggled(0)]);
+        assert_eq!(
+            clicked(0, 639.5),
+            [captured(Bind::Row(0), Slot::Secondary, Input::Key(Key::Q))],
+            "the secondary cell ends at 640"
+        );
+        assert_eq!(
+            clicked(0, 640.0),
+            [mode_chosen(0, ActionMode::Toggle)],
+            "and the checkbox column starts there"
+        );
+        assert_eq!(
+            clicked(1, PRIMARY_X),
+            [picked(0, Slot::Primary, Trigger::Hold, Modifiers::NONE)]
+        );
+        assert_eq!(
+            clicked(1, SECONDARY_X),
+            [picked(0, Slot::Primary, Trigger::Press, Modifiers::CTRL)]
+        );
+    }
+
+    #[test]
+    fn a_screen_with_a_checkbox_widens_every_control_and_details_row() {
+        let items = |mode: Option<ActionMode>| {
+            vec![
+                row_with(0, [R, R], Some(Chevron::Open), mode),
+                details(0, Slot::Primary, Trigger::Press, Modifiers::NONE),
+                control(2, [R, R]),
+                bind_button("Reset", Bind::Reset),
+            ]
+        };
+        let narrow = layout(&controls_screen(items(None)), SIZE);
+        let wide = layout(&controls_screen(items(Some(ActionMode::Hold))), SIZE);
+
+        let widths =
+            |rects: &[Rect]| -> Vec<f32> { rects.iter().map(|r| r.max[0] - r.min[0]).collect() };
+        assert_eq!(widths(&narrow), [640.0, 640.0, 640.0, 240.0]);
+        assert_eq!(widths(&wide), [768.0, 768.0, 768.0, 240.0]);
+        for rects in [&narrow, &wide] {
+            for rect in rects {
+                assert_eq!(rect_centre(rect)[0], 640.0, "rows stay centred");
+            }
+            assert_eq!(rects[0].max[1] - rects[0].min[1], 32.0);
+            assert_eq!(rects[1].max[1] - rects[1].min[1], 32.0, "same height");
+        }
+    }
+
+    #[test]
+    fn a_details_row_reads_its_slot_kind_and_modifiers() {
+        let rows = vec![
+            row_with(0, [R, R], Some(Chevron::Open), None),
+            details(0, Slot::Primary, Trigger::Press, Modifiers::NONE),
+            details(0, Slot::Secondary, Trigger::Hold, Modifiers::CTRL),
+            details(0, Slot::Primary, Trigger::Double, Modifiers::SHIFT),
+            details(0, Slot::Secondary, Trigger::Press, Modifiers::ALT),
+            details(
+                0,
+                Slot::Primary,
+                Trigger::Press,
+                Modifiers::CTRL.and(Modifiers::SHIFT),
+            ),
+        ];
+        let stack = controls_stack(rows);
+
+        let expected = [
+            (1, "Primary", "Kind: Press", "Mod: None"),
+            (2, "Secondary", "Kind: Hold", "Mod: Ctrl"),
+            (3, "Primary", "Kind: Double", "Mod: Shift"),
+            (4, "Secondary", "Kind: Press", "Mod: Alt"),
+            (5, "Primary", "Kind: Press", "Mod: Ctrl+Shift"),
+        ];
+        for (row, slot, kind, modifier) in expected {
+            let strings = row_strings(&stack, row);
+            assert!(strings.iter().any(|t| t.trim() == slot), "{strings:?}");
+            assert!(strings.contains(&kind.to_owned()), "{strings:?}");
+            assert!(strings.contains(&modifier.to_owned()), "{strings:?}");
+            let label = row_texts(&stack, row)
+                .into_iter()
+                .find(|t| t.text.trim() == slot)
+                .expect("the slot label is drawn");
+            assert!(
+                label.offset[0] > row_left(&stack, row),
+                "the slot label is indented"
+            );
+        }
+    }
+
+    #[test]
+    fn set_items_that_removes_the_capturing_row_ends_capture_without_an_event() {
+        let answers: [(&str, Vec<MenuItem<Bind>>); 2] = [
+            (
+                "details",
+                vec![details(5, Slot::Primary, Trigger::Press, Modifiers::NONE)],
+            ),
+            ("button", vec![bind_button("Reset", Bind::Reset)]),
+        ];
+        for (name, answer) in answers {
+            let mut escaped = controls_stack(vec![control(0, [R, R])]);
+            let mut entered = controls_stack(vec![control(0, [R, R])]);
+            for stack in [&mut escaped, &mut entered] {
+                key_c(stack, Key::ArrowRight);
+                key_c(stack, Key::Enter);
+                stack.set_items(answer.clone());
+            }
+            let still_capturing = escaped.is_capturing();
+
+            key_c(&mut escaped, Key::Escape);
+            key_c(&mut entered, Key::Enter);
+
+            assert!(!still_capturing, "{name}: capture ended with the row");
+            assert_eq!(
+                escaped.take_events(),
+                [MenuEvent::Chosen(Bind::Back)],
+                "{name}: Escape is a normal key"
+            );
+            let expected = if name == "details" {
+                vec![picked(5, Slot::Primary, Trigger::Press, Modifiers::CTRL)]
+            } else {
+                vec![MenuEvent::Chosen(Bind::Reset)]
+            };
+            assert_eq!(
+                entered.take_events(),
+                expected,
+                "{name}: Enter acts as usual"
+            );
+        }
+    }
+
+    #[test]
+    fn set_items_that_keeps_the_capturing_row_keeps_capture_and_its_slot_column() {
+        let mut stack = controls_stack(vec![control(0, [R, R]), control(1, [R, R])]);
+        key_c(&mut stack, Key::ArrowRight);
+        key_c(&mut stack, Key::Enter);
+
+        stack.set_items(vec![
+            bind_button("Reset", Bind::Reset),
+            control(0, [R, R]),
+            control(1, [R, R]),
+        ]);
+        let capturing = stack.is_capturing();
+        key_c(&mut stack, Key::Q);
+
+        assert!(capturing);
+        assert_eq!(
+            stack.take_events(),
+            [captured(Bind::Row(0), Slot::Secondary, Input::Key(Key::Q))]
+        );
+    }
+
+    #[test]
+    fn a_repeated_enter_on_a_picker_chevron_or_checkbox_emits_nothing() {
+        let rows = || {
+            vec![
+                row_with(0, [R, R], Some(Chevron::Open), Some(ActionMode::Hold)),
+                details(0, Slot::Primary, Trigger::Press, Modifiers::NONE),
+            ]
+        };
+        let (left, right, down) = (Key::ArrowLeft, Key::ArrowRight, Key::ArrowDown);
+        let columns = [
+            ("chevron", vec![left]),
+            ("mode", vec![right, right]),
+            ("kind", vec![down]),
+            ("modifier", vec![down, right]),
+        ];
+        for (name, keys) in columns {
+            let mut stack = controls_stack(rows());
+            press_all(&mut stack, &keys);
+
+            stack.on_key(Input::Key(Key::Enter), true, true);
+            let repeated = stack.take_events();
+            let capturing = stack.is_capturing();
+            key_c(&mut stack, Key::Enter);
+            let first = stack.take_events();
+
+            assert_eq!(repeated, [], "{name}: a repeat does nothing");
+            assert!(!capturing, "{name}");
+            assert_eq!(first.len(), 1, "{name}: the real press still acts");
+        }
+    }
+
+    #[test]
+    fn set_items_with_no_rows_and_then_rows_again_keeps_the_stack_working() {
+        let mut stack = controls_stack(vec![
+            row_with(0, [R, R], Some(Chevron::Open), Some(ActionMode::Hold)),
+            details(0, Slot::Primary, Trigger::Press, Modifiers::NONE),
+        ]);
+        press_all(&mut stack, &[Key::ArrowDown, Key::ArrowRight]);
+
+        stack.set_items(Vec::new());
+        let point = [640.0, 360.0];
+        press_all(
+            &mut stack,
+            &[
+                Key::Enter,
+                Key::ArrowLeft,
+                Key::ArrowRight,
+                Key::ArrowUp,
+                Key::ArrowDown,
+                Key::Backspace,
+            ],
+        );
+        stack.click(point, SIZE);
+        stack.hover(point, SIZE);
+        stack.right_click(point, SIZE);
+        let capturing = stack.is_capturing();
+        let drawn = stack.texts(SIZE);
+        let on_empty = stack.take_events();
+        stack.set_items(vec![control(0, [R, R]), control(1, [R, R])]);
+        let events = act(&mut stack);
+
+        assert_eq!(on_empty, [], "an empty screen reports nothing");
+        assert!(!capturing);
+        assert_eq!(drawn, []);
+        assert_eq!(
+            events,
+            [captured(Bind::Row(0), Slot::Secondary, Input::Key(Key::Q))],
+            "focus 0, and the column fits the row now there"
+        );
+    }
+
+    #[test]
+    fn a_click_on_a_label_area_emits_nothing_steps_nothing_and_starts_no_capture() {
+        let rows = || {
+            vec![
+                row_with(0, [R, R], Some(Chevron::Open), None),
+                details(0, Slot::Primary, Trigger::Press, Modifiers::NONE),
+                details(0, Slot::Secondary, Trigger::Press, Modifiers::NONE),
+            ]
+        };
+        let original = controls_screen(rows());
+        for (row, offset) in [
+            (0, 24.5),
+            (0, 100.0),
+            (0, 239.5),
+            (1, 1.0),
+            (1, 100.0),
+            (1, 239.5),
+            (2, 100.0),
+        ] {
+            let mut stack = controls_stack(rows());
+            let point = cell_point(&stack, row, offset);
+
+            stack.click(point, SIZE);
+            let capturing = stack.is_capturing();
+            key_c(&mut stack, Key::Q);
+
+            assert!(!capturing, "row {row} at {offset}");
+            assert_eq!(stack.take_events(), [], "row {row} at {offset}");
+            assert_eq!(stack.top(), Some(&original), "row {row} at {offset}");
+        }
+    }
+
+    #[test]
+    fn hovering_a_details_label_keeps_the_column_and_the_chevron_cell_picks_the_chevron() {
+        let rows = || {
+            vec![
+                row_with(0, [R, R], Some(Chevron::Open), None),
+                details(0, Slot::Primary, Trigger::Press, Modifiers::NONE),
+            ]
+        };
+        let kind = picked(0, Slot::Primary, Trigger::Hold, Modifiers::NONE);
+        let modifier = picked(0, Slot::Primary, Trigger::Press, Modifiers::CTRL);
+        let mut second = controls_stack(rows());
+        let mut from_chevron = controls_stack(rows());
+        let mut to_chevron = controls_stack(rows());
+        press_all(&mut second, &[Key::ArrowDown, Key::ArrowRight]);
+        key_c(&mut from_chevron, Key::ArrowLeft);
+        press_all(&mut to_chevron, &[Key::ArrowDown, Key::ArrowRight]);
+
+        let label = cell_point(&second, 1, 100.0);
+        second.hover(label, SIZE);
+        from_chevron.hover(label, SIZE);
+        let chevron = cell_point(&to_chevron, 0, 10.0);
+        to_chevron.hover(chevron, SIZE);
+
+        assert_eq!(act(&mut second), [modifier], "Second is kept");
+        assert_eq!(act(&mut from_chevron), [kind], "Chevron clamps to First");
+        assert_eq!(act(&mut to_chevron), [toggled(0)]);
+    }
+
+    #[test]
+    fn a_click_in_the_checkbox_column_reports_the_mode_only_on_a_row_that_has_one() {
+        let rows = || {
+            vec![
+                row_with(0, [R, R], Some(Chevron::Closed), Some(ActionMode::Toggle)),
+                row_with(1, [R, R], Some(Chevron::Closed), None),
+            ]
+        };
+        for offset in [640.0, 700.0, 767.0] {
+            let mut with_mode = controls_stack(rows());
+            let mut without = controls_stack(rows());
+            let on_mode = cell_point(&with_mode, 0, offset);
+            let on_empty = cell_point(&without, 1, offset);
+
+            let reported = click_and_settle(&mut with_mode, on_mode);
+            without.click(on_empty, SIZE);
+            let capturing = without.is_capturing();
+
+            assert_eq!(
+                reported,
+                [mode_chosen(0, ActionMode::Hold)],
+                "offset {offset}"
+            );
+            assert!(!capturing, "offset {offset}");
+            assert_eq!(without.take_events(), [], "offset {offset}");
+        }
+    }
+
+    #[test]
+    fn set_items_prefers_the_same_index_when_actions_repeat() {
+        let (a, b) = (Bind::Row(0), Bind::Row(1));
+        let repeated = |labels: &[&str]| -> Vec<MenuItem<Bind>> {
+            labels
+                .iter()
+                .enumerate()
+                .map(|(at, label)| labelled(label, if at % 2 == 0 { a } else { b }))
+                .collect()
+        };
+        let mut same = controls_stack(repeated(&["L0", "L1", "L2", "L3", "L4"]));
+        press_all(&mut same, &[Key::ArrowDown, Key::ArrowDown]);
+        let mut nearest = controls_stack(repeated(&["L0", "L1", "L2", "L3", "L4"]));
+        press_all(&mut nearest, &[Key::ArrowDown, Key::ArrowDown]);
+
+        same.set_items(repeated(&["M0", "M1", "M2", "M3", "M4"]));
+        nearest.set_items(vec![
+            labelled("N0", a),
+            labelled("N1", a),
+            labelled("N2", b),
+            labelled("N3", b),
+            labelled("N4", b),
+            labelled("N5", b),
+            labelled("N6", a),
+        ]);
+
+        assert_eq!(focused_row(&same), Some(2), "index 2 is still action A");
+        assert_eq!(
+            focused_row(&nearest),
+            Some(1),
+            "index 2 is B now; the nearest A is at 1, not the first or the last"
+        );
+    }
+
+    mod set_items_properties {
+        use proptest::prelude::prop_assert_eq;
+
+        use super::*;
+
+        proptest! {
+            #[test]
+            fn set_items_with_the_focused_row_moved_keeps_the_focus_on_it(
+                count in 2_usize..40,
+                focus_seed in 0_usize..40,
+                removed_seed in 0_usize..40,
+                inserted in 0_usize..4,
+                at_seed in 0_usize..60,
+            ) {
+                let focus = focus_seed % count;
+                let removed = removed_seed % (focus + 1);
+                let mut moved: Vec<MenuItem<Bind>> =
+                    controls_of(count).into_iter().skip(removed).collect();
+                let at = at_seed % (moved.len() + 1);
+                for extra in 0..inserted {
+                    moved.insert(
+                        at,
+                        details(1000 + extra, Slot::Primary, Trigger::Press, Modifiers::NONE),
+                    );
+                }
+                let mut stack = controls_stack(controls_of(count));
+                for _ in 0..focus {
+                    key_c(&mut stack, Key::ArrowDown);
+                }
+
+                stack.set_items(moved);
+                let drawn = row_shown(&stack, focus);
+                let events = act(&mut stack);
+
+                prop_assert!(drawn, "the focused row is scrolled into view");
+                prop_assert_eq!(
+                    events,
+                    vec![captured(Bind::Row(focus), Slot::Primary, Input::Key(Key::Q))]
+                );
+            }
         }
     }
 

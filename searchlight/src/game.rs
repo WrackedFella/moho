@@ -866,6 +866,9 @@ impl SearchlightGame {
                     input,
                 } => self.captured(action, input),
                 MenuEvent::Captured { .. } | MenuEvent::Cleared { .. } => self.show_controls(None),
+                MenuEvent::DetailsToggled { .. }
+                | MenuEvent::Picked { .. }
+                | MenuEvent::ModeChosen { .. } => {}
             }
         }
     }
@@ -3095,6 +3098,9 @@ mod tests {
                 MenuEvent::SettingsApplied(_)
                 | MenuEvent::GameSettingsApplied(_)
                 | MenuEvent::Captured { .. }
+                | MenuEvent::DetailsToggled { .. }
+                | MenuEvent::Picked { .. }
+                | MenuEvent::ModeChosen { .. }
                 | MenuEvent::Cleared { .. } => None,
             })
     }
@@ -3111,6 +3117,7 @@ mod tests {
                 MenuItem::Setting(_)
                 | MenuItem::Apply
                 | MenuItem::Control { .. }
+                | MenuItem::Details { .. }
                 | MenuItem::GameSlider(_) => None,
             })
             .collect()
@@ -4712,6 +4719,7 @@ mod menu_tests {
                 MenuItem::Setting(_)
                 | MenuItem::Apply
                 | MenuItem::Control { .. }
+                | MenuItem::Details { .. }
                 | MenuItem::GameSlider(_) => None,
             })
             .collect()
@@ -5164,6 +5172,7 @@ mod settings_tests {
                 MenuItem::Setting(_)
                 | MenuItem::Apply
                 | MenuItem::Control { .. }
+                | MenuItem::Details { .. }
                 | MenuItem::GameSlider(_) => None,
             })
             .collect()
