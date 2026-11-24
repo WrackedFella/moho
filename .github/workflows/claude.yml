@@ -165,6 +165,26 @@ jobs:
             echo "### Denied commands"
             jq -r '.[] | select(.type == "result") | .permission_denials[]? | "- `\(.tool_name)`: \((.tool_input.command // .tool_input.file_path // "") | tostring | .[0:200])"' "$EXECUTION_FILE"
           } >> "$GITHUB_STEP_SUMMARY"
+      # One RUN-RECORD line per run, so real card runs build the per-step data that lane
+      # decisions need (D0012). The execution log is not uploaded: the repository is public
+      # and artifacts are not secret-masked.
+      - name: Run record
+        if: always()
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+          ISSUE: ${{ github.event.issue.number || inputs.issue }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [ -f "$EXECUTION_FILE" ] || exit 0
+          # Never fail the run over its own bookkeeping.
+          {
+            gate=$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE" --jq '.body // ""' |
+              sed -nE 's/.*gate=([a-z]+).*/\1/p; s/^Gate class: *([a-z]+).*/\1/p' | head -n1)
+            record=$(GATE_CLASS="$gate" HEAD_SHA=$(git rev-parse HEAD) scripts/run-record.sh record "$EXECUTION_FILE")
+            echo "RUN-RECORD $record"
+            scripts/run-record.sh table <<<"$record" >> "$GITHUB_STEP_SUMMARY"
+          } || echo "::warning::run record failed"
       # PRs opened with the default token start no workflow, so start the review loop here. A
       # PR the Claude app opened starts it through its own opened event; dispatching it too
       # would queue a duplicate.
