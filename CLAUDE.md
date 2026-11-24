@@ -47,6 +47,7 @@ cargo run -p searchlight           # the FPS prototype
   picking up work.
 - **Environment setup command:** `bash scripts/cloud-tools.sh` (cloud threads only;
   text-only threads skip it).
+- **Standards:** `engineering-standards, rust-standards`.
 - **Implement a ready item:** `/devflow:orchestrate <issue>`.
 - **Domain-logic paths** (gate class `domain`; also the scope of `just mutants` and CI's
   `Mutants (diff)`, which read the globs below through `scripts/domain-paths.sh`):
