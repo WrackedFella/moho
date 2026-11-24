@@ -18,7 +18,8 @@ pub struct DesignationMarkers {
 impl DesignationMarkers {
     /// Adds a marker for each new mark and removes the marker of each cancelled one.
     /// Markers it did not place are left alone.
-    pub fn sync(&mut self, marks: &MineMarks, markers: &mut Markers) {
+    pub fn sync(&mut self, marks: &MineMarks, ceiling: Option<i32>, markers: &mut Markers) {
+        let _ = ceiling;
         for (pos, _) in marks.iter() {
             if self.shown.insert(pos) {
                 let min = pos.map(|c| c as f32);
@@ -83,13 +84,13 @@ mod tests {
         let mut shown = DesignationMarkers::default();
         let mut marks = marks_at(&[[1, 2, 3], [4, 5, 6]]);
 
-        shown.sync(&marks, &mut markers);
+        shown.sync(&marks, None, &mut markers);
         let after_marking = fills(&markers).len();
         let first = fill_at(&markers, [1, 2, 3]);
         let second = fill_at(&markers, [4, 5, 6]);
         marks.toggle([1, 2, 3]);
         marks.toggle([7, 8, 9]);
-        shown.sync(&marks, &mut markers);
+        shown.sync(&marks, None, &mut markers);
 
         assert_eq!(after_marking, 3, "two marks and the console's marker");
         let first = first.expect("a marker spans the first marked block's cell");
@@ -124,11 +125,11 @@ mod tests {
         let mut markers = Markers::new();
         let mut shown = DesignationMarkers::default();
         let marks = marks_at(&[[1, 2, 3]]);
-        shown.sync(&marks, &mut markers);
+        shown.sync(&marks, None, &mut markers);
         let sentinel = Marker::new([0.0; 3], [1.0; 3], [0.0, 1.0, 0.0, 0.5]);
         markers.upsert(marker_id([1, 2, 3]), sentinel);
 
-        shown.sync(&marks, &mut markers);
+        shown.sync(&marks, None, &mut markers);
 
         assert_eq!(
             fills(&markers)[0].color,
@@ -138,14 +139,86 @@ mod tests {
     }
 
     #[test]
+    fn a_mark_below_the_ceiling_keeps_its_marker() {
+        let mut markers = Markers::new();
+        let mut shown = DesignationMarkers::default();
+        let marks = marks_at(&[[1, 2, 3], [1, 7, 3]]);
+
+        shown.sync(&marks, Some(5), &mut markers);
+
+        assert!(fill_at(&markers, [1, 2, 3]).is_some(), "below the cut");
+        assert_eq!(fills(&markers).len(), 1, "the mark above the cut is not drawn");
+    }
+
+    #[test]
+    fn a_mark_at_or_above_the_ceiling_has_no_marker() {
+        let mut markers = Markers::new();
+        let mut shown = DesignationMarkers::default();
+        let marks = marks_at(&[[0, 3, 0], [0, 4, 0], [0, 5, 0]]);
+
+        shown.sync(&marks, Some(4), &mut markers);
+
+        assert!(fill_at(&markers, [0, 3, 0]).is_some(), "the top kept layer");
+        assert!(fill_at(&markers, [0, 4, 0]).is_none(), "y == ceiling is hidden");
+        assert!(fill_at(&markers, [0, 5, 0]).is_none(), "y > ceiling is hidden");
+        assert_eq!(fills(&markers).len(), 1);
+    }
+
+    #[test]
+    fn raising_the_ceiling_shows_the_mark_again_and_lowering_hides_it() {
+        let mut markers = Markers::new();
+        let mut shown = DesignationMarkers::default();
+        let marks = marks_at(&[[1, 2, 3], [1, 6, 3]]);
+        let sentinel = Marker::new([0.0; 3], [1.0; 3], [0.0, 1.0, 0.0, 0.5]);
+        shown.sync(&marks, Some(5), &mut markers);
+        markers.upsert(marker_id([1, 2, 3]), sentinel);
+
+        shown.sync(&marks, Some(5), &mut markers);
+        let unchanged = fill_at_id(&markers, sentinel);
+        shown.sync(&marks, None, &mut markers);
+        let raised = fill_at(&markers, [1, 6, 3]);
+        let kept_untouched = fill_at_id(&markers, sentinel);
+        shown.sync(&marks, Some(5), &mut markers);
+        let lowered = fill_at(&markers, [1, 6, 3]);
+        let still_untouched = fill_at_id(&markers, sentinel);
+
+        assert!(unchanged, "an unchanged ceiling wrote a marker again");
+        assert!(raised.is_some(), "raising the ceiling shows the mark");
+        assert!(kept_untouched, "raising rewrote a marker that stayed");
+        assert!(lowered.is_none(), "lowering the ceiling hides it");
+        assert!(still_untouched, "lowering rewrote a marker that stayed");
+    }
+
+    #[test]
+    fn a_mark_cancelled_while_hidden_does_not_return_with_the_ceiling() {
+        let mut markers = Markers::new();
+        let mut shown = DesignationMarkers::default();
+        let mut marks = marks_at(&[[1, 6, 3]]);
+        shown.sync(&marks, Some(5), &mut markers);
+        marks.toggle([1, 6, 3]);
+        shown.sync(&marks, Some(5), &mut markers);
+
+        shown.sync(&marks, None, &mut markers);
+
+        assert!(fills(&markers).is_empty());
+    }
+
+    /// Whether the sentinel-coloured fill is still on the scene.
+    fn fill_at_id(markers: &Markers, sentinel: Marker) -> bool {
+        fills(markers)
+            .iter()
+            .any(|fill| fill.color == sentinel.color)
+    }
+
+    #[test]
     fn sync_with_no_marks_leaves_the_scene_empty() {
         let mut markers = Markers::new();
         let mut shown = DesignationMarkers::default();
         let mut marks = marks_at(&[[1, 2, 3]]);
-        shown.sync(&marks, &mut markers);
+        shown.sync(&marks, None, &mut markers);
         marks.block_removed([1, 2, 3]);
 
-        shown.sync(&marks, &mut markers);
+        shown.sync(&marks, None, &mut markers);
 
         assert!(fills(&markers).is_empty());
     }

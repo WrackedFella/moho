@@ -55,6 +55,9 @@ pub struct StrategyCommand {
     /// The world ray under the pointer when the same press ordered a mining mark, in place of
     /// `select`, because the mining designation was active.
     pub mark: Option<Ray>,
+    /// The view-height ceiling the click was made under: the pick treats blocks at or above
+    /// it as air. Travels in the command so a replayed click marks what the player saw.
+    pub ceiling: Option<i32>,
     /// Strategy console commands typed since the last tick.
     pub console: Vec<StrategyConsoleCommand>,
     /// Engine console commands typed since the last tick.
@@ -138,6 +141,7 @@ impl App {
             toggle_view: frame.pressed(StrategyAction::Possess),
             select,
             mark,
+            ceiling: None,
             console: Vec::new(),
             engine: Vec::new(),
         }
@@ -692,7 +696,7 @@ impl moho_app::Game for App {
         frame_processor.update_hud_data(self, clock, ctx.tick_length);
         frame_processor.update_cut_caps(self);
         self.designation_markers
-            .sync(&self.colony.marks, self.scene.markers_mut());
+            .sync(&self.colony.marks, None, self.scene.markers_mut());
         if let Some(renderer) = ctx.renderer() {
             frame_processor.update_lighting(self, clock, &mut *renderer);
             self.render_scene(renderer, camera);
@@ -3390,6 +3394,138 @@ mod tests {
             assert_eq!(marked(&app).len(), 74, "the mined block's mark is gone");
             assert_eq!(solid_left, 74, "every remaining mark is still a block");
             assert_eq!(fills(&mut app).len(), 74, "and so is its marker");
+        }
+    }
+
+    mod view_ceiling {
+        use super::pointer_select::{VIEWPORT, click_on};
+        use super::*;
+        use crate::app::cut_caps::tests::ground_app;
+        use crate::app::input_state::Designation;
+        use crate::app::view_level;
+        use glam::Vec3;
+
+        /// The loaded extent's top: choosing it clears the cut.
+        const TOP: i32 = 32;
+        const LEVEL: i32 = 4;
+
+        /// Ground over blocks y `0..=27`, in the strategy view, the view lowered to `LEVEL`.
+        fn lowered_app() -> App {
+            let mut app = ground_app();
+            app.game_state = GameState::Playing;
+            app.simulation.set_camera_mode(CameraMode::Isometric);
+            view_level::update(&mut app, Some(LEVEL));
+            let eye = Vec3::new(8.0, 50.0, 30.0);
+            let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::new(8.0, 27.0, 8.0), Vec3::Y);
+            let proj = glam::camera::rh::proj::directx::perspective(
+                std::f32::consts::FRAC_PI_3,
+                16.0 / 9.0,
+                0.1,
+                500.0,
+            );
+            app.camera = (view, proj, eye);
+            app.viewport = VIEWPORT;
+            app
+        }
+
+        fn down_at(x: f32, z: f32) -> Ray {
+            Ray {
+                origin: Vec3::new(x, 60.0, z),
+                direction: Vec3::NEG_Y,
+            }
+        }
+
+        fn marked(app: &App) -> Vec<[i32; 3]> {
+            app.colony.marks.iter().map(|(pos, _)| pos).collect()
+        }
+
+        fn mark_with(ceiling: Option<i32>) -> StrategyCommand {
+            StrategyCommand {
+                mark: Some(down_at(8.3, 9.1)),
+                ceiling,
+                ..StrategyCommand::default()
+            }
+        }
+
+        fn click_and_sample(app: &mut App) -> StrategyCommand {
+            click_on(app, Vec3::new(8.0, 27.0, 8.0));
+            Game::command(app)
+        }
+
+        #[test]
+        fn with_the_view_lowered_a_mark_click_marks_the_visible_layer() {
+            let mut app = lowered_app();
+
+            tick_app(&mut app, &mark_with(Some(LEVEL)));
+
+            assert_eq!(marked(&app), [[8, LEVEL - 1, 9]]);
+        }
+
+        #[test]
+        fn with_the_view_lowered_a_second_click_cancels_the_mark_below() {
+            let mut app = lowered_app();
+            tick_app(&mut app, &mark_with(Some(LEVEL)));
+            let after_first = marked(&app);
+
+            tick_app(&mut app, &mark_with(Some(LEVEL)));
+
+            assert_eq!(after_first, [[8, LEVEL - 1, 9]]);
+            assert!(marked(&app).is_empty(), "the second click cancels it");
+        }
+
+        #[test]
+        fn with_the_view_lowered_the_pointer_hit_is_below_the_cut() {
+            let mut app = lowered_app();
+            let command = StrategyCommand {
+                select: Some(down_at(8.3, 9.1)),
+                ceiling: Some(LEVEL),
+                ..StrategyCommand::default()
+            };
+
+            tick_app(&mut app, &command);
+
+            let hit = app.pointer_hit.expect("the click found the kept ground");
+            assert_eq!(hit.block_pos.to_array(), [8, LEVEL - 1, 9]);
+            assert!((hit.position.y - LEVEL as f32).abs() < 0.01, "{hit:?}");
+        }
+
+        #[test]
+        fn a_mark_uses_the_ceiling_its_command_carries_not_the_live_slider() {
+            let mut app = lowered_app();
+            let command = mark_with(Some(LEVEL));
+            view_level::update(&mut app, Some(TOP));
+
+            tick_app(&mut app, &command);
+
+            assert_eq!(marked(&app), [[8, LEVEL - 1, 9]]);
+        }
+
+        #[test]
+        fn a_mark_without_a_ceiling_ignores_a_lowered_live_slider() {
+            let mut app = lowered_app();
+
+            tick_app(&mut app, &mark_with(None));
+
+            assert_eq!(marked(&app), [[8, 27, 9]]);
+        }
+
+        #[test]
+        fn sampling_a_click_records_the_view_ceiling() {
+            let mut app = lowered_app();
+            let select = click_and_sample(&mut app);
+            app.input.designation = Designation::Mine;
+            let mark = click_and_sample(&mut app);
+            view_level::update(&mut app, Some(TOP));
+            let uncut = click_and_sample(&mut app);
+            view_level::update(&mut app, Some(LEVEL));
+            app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            let possessed = Game::command(&mut app);
+
+            assert!(select.select.is_some() && mark.mark.is_some() && uncut.mark.is_some());
+            assert_eq!(select.ceiling, Some(LEVEL), "a select click");
+            assert_eq!(mark.ceiling, Some(LEVEL), "a mark click");
+            assert_eq!(uncut.ceiling, None, "no cut");
+            assert_eq!(possessed.ceiling, None, "first person");
         }
     }
 

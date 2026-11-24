@@ -97,6 +97,14 @@ impl ViewLevel {
         }
     }
 
+    /// The level whose layers and above are hidden in `mode`; `None` with no cut.
+    ///
+    /// Stub: always `None` until implemented.
+    pub fn ceiling(&self, mode: CameraMode, extent: LayerExtent) -> Option<i32> {
+        let _ = (mode, extent);
+        None
+    }
+
     /// The renderer height, only when it differs from the last one returned.
     pub fn take_change(&mut self, mode: CameraMode, extent: LayerExtent) -> Option<RendererCut> {
         let height = RendererCut::from(self.renderer_height(mode, extent));
@@ -179,6 +187,39 @@ mod tests {
             );
             assert_eq!(level.hud(EXTENT).level, EXTENT.top - steps);
         }
+    }
+
+    #[test]
+    fn ceiling_is_the_clamped_level_in_strategy_view_and_none_in_first_person() {
+        let mut level = ViewLevel::default();
+        let no_cut = level.ceiling(CameraMode::Isometric, EXTENT);
+        level.choose(100, EXTENT);
+
+        let strategy = level.ceiling(CameraMode::Isometric, EXTENT);
+        let possessed = level.ceiling(CameraMode::FirstPerson, EXTENT);
+        let reclamped_up = level.ceiling(
+            CameraMode::Isometric,
+            LayerExtent { floor: 10, top: 50 },
+        );
+        let reclamped_down = level.ceiling(
+            CameraMode::Isometric,
+            LayerExtent {
+                floor: 110,
+                top: 200,
+            },
+        );
+        level.choose(EXTENT.floor - 10, EXTENT);
+        let at_floor = level.ceiling(CameraMode::Isometric, EXTENT);
+        level.choose(EXTENT.top, EXTENT);
+        let at_top = level.ceiling(CameraMode::Isometric, EXTENT);
+
+        assert_eq!(no_cut, None);
+        assert_eq!(strategy, Some(100));
+        assert_eq!(possessed, None);
+        assert_eq!(reclamped_up, None, "a level above the extent's top is no cut");
+        assert_eq!(reclamped_down, Some(111), "a level below the floor clamps");
+        assert_eq!(at_floor, Some(EXTENT.floor + 1));
+        assert_eq!(at_top, None);
     }
 
     #[test]
