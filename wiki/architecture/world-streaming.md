@@ -49,6 +49,17 @@ so a chunk reads one block further than its padded density field, which reaches
 set (1, 2, 4 or 8 chunks, on either side of each axis). Placing a block keeps its previous
 dirty set.
 
+## Full-detail meshing rule
+
+Every LOD 0 chunk meshes the same way, whatever it holds
+([ADR-0037](../../_todo/adr/0037-structure-blocks-stay-out-of-the-terrain-surface.md)): the
+terrain surface from the padded terrain density field
+(`HybridMeshGenerator::terrain_density_field`), plus one closed cube per structure block
+(material >= 100). Structure blocks read as air in that field, so two chunks never disagree
+about a block in their overlap and seams close by construction. The cut caps
+(`cut_cap_mesh`) follow the same rule. Solidity queries (light, sky exposure, collision,
+coarse LOD) still treat a structure as solid.
+
 ## Scene load
 
 `scene_loader::load_scene` makes the area around the saved position solid before the pawn
