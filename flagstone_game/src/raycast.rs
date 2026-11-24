@@ -519,6 +519,18 @@ mod tests {
     }
 
     #[test]
+    fn a_ray_starting_inside_hidden_terrain_hits_the_kept_ground() {
+        let grid = slab();
+        let origin = Vec3::new(5.3, 8.5, 5.7);
+
+        for dir in [Vec3::NEG_Y, Vec3::new(1.0, -1.0, 0.0)] {
+            let hit = raycast_surface_below(&grid, origin, dir, 40.0, Some(6));
+
+            assert_eq!(hit.map(|h| h.block_pos.y), Some(5), "{dir}: {hit:?}");
+        }
+    }
+
+    #[test]
     fn a_ceiling_over_a_cave_hits_the_cave_floor() {
         let grid = capped_cave();
         let origin = Vec3::new(5.5, 20.5, 5.5);
