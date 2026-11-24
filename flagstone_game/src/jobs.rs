@@ -182,8 +182,7 @@ fn claim_nearest(
     marks: &mut MineMarks,
     grid: &VoxelGrid,
 ) -> Option<Job> {
-    let feet = feet_cell(pose.feet);
-    let start = standing_cell(grid, feet).unwrap_or(feet);
+    let start = start_cell(grid, pose);
     unreachable.refresh(grid.revision(), start);
     let mut candidates: Vec<BlockPos> = marks
         .unclaimed()
@@ -212,6 +211,13 @@ fn claim_nearest(
         }
     }
     None
+}
+
+/// The cell routes from the pawn start in: the one it stands in (see [`standing_cell`]), or
+/// its raw feet cell when it stands nowhere, which no route starts from either.
+fn start_cell(grid: &VoxelGrid, pose: Pose) -> BlockPos {
+    let feet = feet_cell(pose.feet);
+    standing_cell(grid, feet).unwrap_or(feet)
 }
 
 /// Moves `next` past the waypoints the feet have reached.
@@ -248,9 +254,7 @@ fn route_broken(job: &mut Job, pose: Pose, grid: &VoxelGrid) -> bool {
         return false;
     }
     *revision = grid.revision();
-    let Some(feet) = standing_cell(grid, feet_cell(pose.feet)) else {
-        return true;
-    };
+    let feet = start_cell(grid, pose);
     let ahead = route[*next..]
         .iter()
         .copied()
@@ -275,7 +279,7 @@ fn replan(job: &mut Job, marks: &mut MineMarks, pose: Pose, grid: &VoxelGrid) ->
     };
     let held = *mark;
     let block = BlockPos::from_array(held);
-    let feet = feet_cell(pose.feet);
+    let feet = start_cell(grid, pose);
     if let Some(found) = route_to_stand_cell(grid, feet, block) {
         *planned = found;
         *next = 0;
@@ -1535,6 +1539,34 @@ mod tests {
             assert_eq!(same_raw_cell.from, first.from);
             assert_eq!(other_raw_cell.marks.len(), 8, "the same standing cell");
             assert_eq!(other_raw_cell.from, first.from);
+        }
+
+        #[test]
+        fn a_failed_replan_mid_climb_remembers_the_standing_cell() {
+            let mut site = Site::flat();
+            for x in -12..=12 {
+                for z in (-12..=12).filter(|&z| z != 0) {
+                    site.grid.mutator().remove(cell(x, 0, z));
+                }
+            }
+            place(&mut site.grid, cell(3, 1, 0));
+            site.mark_block(cell(9, 1, 0));
+            site.walk_until_at(cell(2, 1, 0), 10);
+            site.pose.feet = Vec3::new(3.5, 1.4, 0.5);
+            assert!(site.grid.is_solid_at(feet_cell(site.pose.feet)));
+            site.tick();
+
+            site.dig(cell(6, 0, 0));
+            let cut = site.tick();
+            let after_the_cut = site.memo().clone();
+            let again = site.tick();
+            let next_tick = site.memo().clone();
+
+            assert_eq!(cut, JobAction::Wait);
+            assert_eq!(again, JobAction::Wait);
+            assert_eq!(after_the_cut.marks, BTreeSet::from([[9, 1, 0]]));
+            assert_eq!(after_the_cut.from, cell(3, 2, 0), "where the pawn stands");
+            assert_eq!(next_tick, after_the_cut, "no search again");
         }
 
         #[test]
