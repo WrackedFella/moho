@@ -3,6 +3,7 @@
   "repo": "WrackedFella/moho",
   "reviewer": "moho-reviewer[bot]",
   "domain": ["moho_core/**", "moho_physics/src/movement.rs"],
+  "advisory": ["copilot-pull-request-reviewer[bot]", "Copilot"],
   "pr": {
     "number": 900,
     "state": "open",

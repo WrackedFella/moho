@@ -75,6 +75,9 @@ cargo run -p searchlight           # the FPS prototype
 - **PR review:** `PR approval: off`, `PR follow-ups: issue` (devflow `pr-review`: `off` posts
   an approve as a comment; follow-ups are filed as issues labelled `follow-up`, never
   `agent-ready`).
+- **Advisory reviewers:** `copilot-pull-request-reviewer[bot]`, `Copilot`
+  (the automatic Copilot review: devflow pr-review sends its comments to the refuter as
+  candidates, respond ignores them, and they don't block an agent merge; D0025).
 - **Local planning files are drafts.** A card or feature in `_todo/` exists only until
   it is approved; the approving thread files the issue and deletes the file
   (`_todo/_STANDARDS.md`, Drafts).
