@@ -13,7 +13,7 @@ Units are metres, Y up, the player stands at the player spawn facing +Z.
 
 Markers are empty, named glTF nodes that the game reads by name (see searchlight::arena):
 
-    player_spawn      at most one
+    player_spawn      exactly one
     dummy_NN          training dummy, a floor point
     enemy_spawn_NN    where an enemy starts, a floor point
     waypoint_NN       a patrol point, a floor point

@@ -694,7 +694,7 @@ pub fn start_window_mode(mode: moho_core::prefs::WindowMode) -> WindowMode {
     moho_ui_shell::runtime_window_mode(mode)
 }
 
-/// The FPS prototype's game: one arena mode and the input that drives it.
+/// The FPS prototype's game: one level's rules and the input that drives it.
 #[derive(Debug)]
 pub struct SearchlightGame {
     screen: Screen,
