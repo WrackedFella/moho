@@ -378,12 +378,12 @@ fn a_structure_on_a_chunks_first_layer_leaves_the_ground_closed() {
     let (lo, hi) = ([-0.5, -0.5, -0.5], [31.5, 31.5, 31.5]);
 
     let mut open = Vec::new();
-    for (face, block) in [
-        ("low z", IVec3::new(8, 2, 16)),
-        ("low x", IVec3::new(16, 2, 8)),
-        ("low y", IVec3::new(8, 16, 8)),
+    for (face, block, height) in [
+        ("low z", IVec3::new(8, 2, 16), 5),
+        ("low x", IVec3::new(16, 2, 8), 5),
+        ("low y", IVec3::new(8, 16, 8), 16),
     ] {
-        let mut grid = flat_ground(5);
+        let mut grid = flat_ground(height);
         grid.mutator().place(block, STRUCTURE, None);
 
         let meshes = mesh_all(&grid, region.clone());
@@ -434,12 +434,32 @@ fn ground_beside_a_mined_out_chunk_keeps_its_face() {
     let mut grid = ground_in_the_far_chunks();
     let mined = IVec3::new(4, 0, 4);
     grid.mutator().place(mined, SOIL, None);
-    let region = chunk_box([0, 0, 0], [2, 1, 2]);
-    let (lo, hi) = ([-0.5, -0.5, -0.5], [31.5, 15.5, 31.5]);
+    let region = chunk_box([0, 0, 0], [2, 1, 1]);
+    let (lo, hi) = ([-0.5, -0.5, -0.5], [31.5, 15.5, 15.5]);
     let mut meshes = mesh_all(&grid, region);
+    assert_eq!(open_edges(&meshes, lo, hi), 0, "closed before the mining");
     assert!(grid.clear_block(mined));
 
     remesh(&grid, &mut meshes, chunks_meshed_from(mined, CHUNK));
+
+    assert_eq!(open_edges(&meshes, lo, hi), 0);
+}
+
+/// Removing the last structure block of a chunk leaves the ground around it closed.
+#[test]
+fn removing_a_chunks_last_structure_leaves_the_ground_closed() {
+    let mut grid = flat_ground(5);
+    let last = IVec3::new(0, 0, 23);
+    for block in [last, IVec3::new(16, 0, 17)] {
+        grid.mutator().place(block, STRUCTURE, None);
+    }
+    let region = chunk_box([0, 0, 0], [2, 2, 2]);
+    let (lo, hi) = ([-0.5, -0.5, -0.5], [31.5, 31.5, 31.5]);
+    let mut meshes = mesh_all(&grid, region);
+    assert_eq!(open_edges(&meshes, lo, hi), 0, "closed before the removal");
+    assert!(grid.clear_block(last));
+
+    remesh(&grid, &mut meshes, chunks_meshed_from(last, CHUNK));
 
     assert_eq!(open_edges(&meshes, lo, hi), 0);
 }

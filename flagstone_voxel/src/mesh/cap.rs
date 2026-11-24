@@ -1136,6 +1136,26 @@ mod tests {
         assert_eq!(capped.material, reference.material, "cap materials");
     }
 
+    /// A chunk holding only a structure block still caps the terrain cells it owns at its
+    /// high-x face, where the ground of the next chunk starts.
+    #[test]
+    fn an_all_structure_chunk_caps_the_ground_beside_it() {
+        let mut grid = VoxelGrid::new(CHUNK);
+        fill(&mut grid, [16, 0, 0], [31, 7, 15], STONE);
+        grid.place_block(IVec3::new(4, 0, 4), BLOCKY, None);
+
+        let mesh = cap(&grid, 4.5);
+
+        let strip: Vec<usize> = (0..mesh.vertices.len())
+            .filter(|&i| mesh.vertices[i][0] > 15.0)
+            .collect();
+        assert!(!strip.is_empty(), "the ground beside the chunk is capped");
+        assert!(
+            strip.iter().all(|&i| mesh.material[i] == STONE),
+            "the strip is terrain"
+        );
+    }
+
     #[test]
     fn a_probe_on_the_surface_of_flat_ground_caps_nothing() {
         let mut grid = VoxelGrid::new(CHUNK);
