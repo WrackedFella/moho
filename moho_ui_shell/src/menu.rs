@@ -508,11 +508,10 @@ impl<A> MenuStack<A> {
             Some(Layer::Menu(open)) => {
                 let size = open.size.get();
                 open.settle(size);
-                let last = max_scroll(&open.screen.items, viewport(size)) as f32;
-                let target = (open.scroll.get() as f32 + open.remainder + rows).clamp(0.0, last);
-                let whole = target.floor();
-                open.scroll.set(whole as usize);
-                open.remainder = target - whole;
+                let last = max_scroll(&open.screen.items, viewport(size));
+                let (scroll, remainder) = wheel(open.scroll.get(), open.remainder, rows, last);
+                open.scroll.set(scroll);
+                open.remainder = remainder;
             }
             Some(Layer::Lists(open)) => open.scroll(rows),
             None => {}
@@ -813,6 +812,14 @@ impl<A: Clone> MenuStack<A> {
             }
         }
     }
+}
+
+/// The first visible row and the unshown fraction of a row after the wheel scrolls `rows` rows
+/// from `scroll` with `remainder` pending, kept within `0..=last`.
+pub(crate) fn wheel(scroll: usize, remainder: f32, rows: f32, last: usize) -> (usize, f32) {
+    let target = (scroll as f32 + remainder + rows).clamp(0.0, last as f32);
+    let whole = target.floor();
+    (whole as usize, target - whole)
 }
 
 fn centre_y(rect: Rect) -> f32 {

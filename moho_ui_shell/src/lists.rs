@@ -10,7 +10,7 @@ use moho_input::key::{Key, MouseButton};
 
 use crate::menu::{
     BAND, COLOR, CONTROL_HEIGHT, DEFAULT_SIZE, FOCUS_COLOR, MenuEvent, ROW_SIZE, Rect,
-    SETTING_SIZE, viewport,
+    SETTING_SIZE, viewport, wheel,
 };
 use crate::text::{Anchor, ScreenText};
 
@@ -99,6 +99,20 @@ fn left_of(index: usize, count: usize, width: f32) -> f32 {
     width / 2.0 - total / 2.0 + (LIST_WIDTH + LIST_GAP) * index as f32
 }
 
+/// The list named `id` and its index.
+fn list_by_id<A>(lists: &[ItemList<A>], id: ListId) -> Option<(usize, &ItemList<A>)> {
+    lists.iter().enumerate().find(|(_, list)| list.id == id)
+}
+
+/// The index one step on from `at` among `count`, wrapping at either end; `count` is not 0.
+fn wrap(at: usize, count: usize, forward: bool) -> usize {
+    if forward {
+        (at + 1) % count
+    } else {
+        (at + count - 1) % count
+    }
+}
+
 fn ids_are_unique<A>(data: &ItemLists<A>) -> bool {
     data.lists
         .iter()
@@ -137,48 +151,30 @@ impl<A> OpenLists<A> {
             .data
             .lists
             .iter()
-            .map(
-                |list| match old.lists.iter().position(|before| before.id == list.id) {
-                    Some(at) => {
-                        let before = &old_views[at];
-                        View {
-                            focus: before.focus.min(list.rows.len().saturating_sub(1)),
-                            scroll: Cell::new(before.scroll.get()),
-                            reveal: Cell::new(before.reveal.get()),
-                            remainder: before.remainder,
-                        }
+            .map(|list| match list_by_id(&old.lists, list.id) {
+                Some((at, _)) => {
+                    let before = &old_views[at];
+                    View {
+                        focus: before.focus.min(list.rows.len().saturating_sub(1)),
+                        scroll: Cell::new(before.scroll.get()),
+                        reveal: Cell::new(before.reveal.get()),
+                        remainder: before.remainder,
                     }
-                    None => View::default(),
-                },
-            )
+                }
+                None => View::default(),
+            })
             .collect();
         let last = self.data.lists.len().saturating_sub(1);
         self.focus = old
             .lists
             .get(self.focus)
-            .and_then(|focused| {
-                self.data
-                    .lists
-                    .iter()
-                    .position(|list| list.id == focused.id)
-            })
-            .unwrap_or_else(|| self.focus.min(last));
+            .and_then(|focused| list_by_id(&self.data.lists, focused.id))
+            .map_or_else(|| self.focus.min(last), |(at, _)| at);
         self.held = self.held.and_then(|held| {
-            let item = &old
-                .lists
-                .iter()
-                .find(|list| list.id == held.list)?
-                .rows
-                .get(held.row)?
-                .item;
-            let row = self
-                .data
-                .lists
-                .iter()
-                .find(|list| list.id == held.list)?
-                .rows
-                .iter()
-                .position(|row| row.item == *item)?;
+            let (_, before) = list_by_id(&old.lists, held.list)?;
+            let item = &before.rows.get(held.row)?.item;
+            let (_, now) = list_by_id(&self.data.lists, held.list)?;
+            let row = now.rows.iter().position(|row| row.item == *item)?;
             Some(Held {
                 list: held.list,
                 row,
@@ -260,11 +256,10 @@ impl<A> OpenLists<A> {
         ) else {
             return;
         };
-        let last = list.rows.len().saturating_sub(fitting(size)) as f32;
-        let target = (view.scroll.get() as f32 + view.remainder + rows).clamp(0.0, last);
-        let whole = target.floor();
-        view.scroll.set(whole as usize);
-        view.remainder = target - whole;
+        let last = list.rows.len().saturating_sub(fitting(size));
+        let (scroll, remainder) = wheel(view.scroll.get(), view.remainder, rows, last);
+        view.scroll.set(scroll);
+        view.remainder = remainder;
     }
 
     /// Lets go of the held row.
@@ -408,11 +403,7 @@ impl<A: Clone> OpenLists<A> {
         };
         if len > 0 {
             let view = &mut self.views[self.focus];
-            view.focus = if forward {
-                (view.focus + 1) % len
-            } else {
-                (view.focus + len - 1) % len
-            };
+            view.focus = wrap(view.focus, len, forward);
             view.reveal.set(true);
         }
     }
@@ -420,11 +411,7 @@ impl<A: Clone> OpenLists<A> {
     fn step_list(&mut self, forward: bool) {
         let count = self.data.lists.len();
         if count > 0 {
-            self.focus = if forward {
-                (self.focus + 1) % count
-            } else {
-                (self.focus + count - 1) % count
-            };
+            self.focus = wrap(self.focus, count, forward);
             self.views[self.focus].reveal.set(true);
         }
     }
@@ -444,15 +431,8 @@ impl<A: Clone> OpenLists<A> {
         if held.list == id {
             return None;
         }
-        let item = self
-            .data
-            .lists
-            .iter()
-            .find(|list| list.id == held.list)?
-            .rows
-            .get(held.row)?
-            .item
-            .clone();
+        let (_, from) = list_by_id(&self.data.lists, held.list)?;
+        let item = from.rows.get(held.row)?.item.clone();
         Some(MenuEvent::MoveRequested {
             item,
             from: held.list,

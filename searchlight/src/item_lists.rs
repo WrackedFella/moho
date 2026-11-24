@@ -100,14 +100,15 @@ impl DemoItems {
     }
 
     /// Moves the whole stack of item `id` from list `from` to the end of list `to`. Refuses, and
-    /// changes nothing, when the item is not in `from`, a list does not exist or the player's
-    /// list would pass 8 rows; returns whether it moved. The player's list is `ListId(0)` and
-    /// the container `ListId(1)`.
+    /// changes nothing, when the item is not in `from`, `from` is `to`, a list does not exist or
+    /// the destination is full; returns whether it moved.
     pub fn move_item(&mut self, id: u32, from: ListId, to: ListId) -> bool {
-        if from == to || self.items_mut(to).is_none() {
-            return false;
-        }
-        if to == PLAYER && self.player.len() >= PLAYER_ROWS {
+        let has_room = match to {
+            PLAYER => self.player.len() < PLAYER_ROWS,
+            CONTAINER => true,
+            _ => false,
+        };
+        if from == to || !has_room {
             return false;
         }
         let Some(source) = self.items_mut(from) else {
