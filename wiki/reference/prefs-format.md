@@ -138,7 +138,7 @@ lowercase letters, digits and underscores. Values are non-empty, have no leading
 trailing whitespace, and contain no `;`, `#` or line break. The Settings screen's save
 keeps them.
 
-A `Hold ` prefix (any case) makes a binding fire only after the input has been held for the game's hold threshold, e.g. `Hold R`, `Hold Pad West`; without it the binding fires on press, or on a quick release when the same input also has a `Hold` binding ([input](../architecture/input-and-state.md)). `Binding::name` writes the prefix back.
+A `Hold ` prefix (any case) makes a binding fire only after the input has been held for the game's hold threshold, e.g. `Hold R`, `Hold Pad West`; without it the binding fires on press, or on a quick release when the same input also has a `Hold` binding ([input](../architecture/input-and-state.md)). `Binding::name` writes the prefix back. A `Double ` prefix (any case) makes a binding fire on a second press within the game's double-press window, e.g. `Double Y`; a pad input takes none, and the prefix is outermost with at most one (`Double Ctrl+Y`).
 
 Gamepad bindings are written `Pad <name>` and mix freely with keys in one list
 (`jump=Spacebar, Pad South`). Buttons (`PadButton`): `South` `East` `North` `West`

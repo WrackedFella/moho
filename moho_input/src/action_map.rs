@@ -114,6 +114,17 @@ struct Down {
     ticks: u32,
     /// Fixed at the press and not re-read until release.
     modifiers: Modifiers,
+    /// The second press of a double: it already fired, so neither its press nor its hold does.
+    spent: bool,
+}
+
+/// An input released inside its double-press window, waiting for a second press.
+#[derive(Copy, Clone, Debug)]
+struct Awaiting {
+    /// Ticks since the first press.
+    age: u32,
+    /// Fixed at the first press; the second press acts under it.
+    modifiers: Modifiers,
 }
 
 /// Collects input events; frames sample look, and each tick reports it with the edges.
@@ -123,9 +134,14 @@ pub struct ActionMap<A: Action> {
     /// Inputs now down, each with the ticks it has been down and the modifier set its press
     /// resolved to.
     down: HashMap<Input, Down>,
-    /// Inputs some action binds with `Hold`, per modifier set: their `Press` bindings with
-    /// that set fire on a quick release.
-    split: HashSet<(Input, Modifiers)>,
+    /// Inputs some action binds with `Hold`, per modifier set. Together with `doubles` these
+    /// are the split inputs: their `Press` bindings with that set wait to see which kind the
+    /// input turns out to be.
+    holds: HashSet<(Input, Modifiers)>,
+    /// Inputs some action binds with `Double`, per modifier set.
+    doubles: HashSet<(Input, Modifiers)>,
+    /// Inputs released inside their window, waiting for a second press.
+    awaiting: HashMap<Input, Awaiting>,
     /// Actions in toggle mode, fixed at construction.
     toggled: u64,
     /// Held mask resolved from the inputs, before toggle actions are latched.
@@ -151,12 +167,17 @@ impl<A: Action> ActionMap<A> {
     pub fn new(bindings: ActionBindings<A>, look_per_count: f32) -> Self {
         const { assert!(A::ALL.len() <= 64, "frame masks hold at most 64 actions") };
         const { assert!(A::HOLD_TICKS >= 1, "a hold lasts at least one tick") };
-        let split = A::ALL
-            .iter()
-            .flat_map(|&action| bindings.get(action))
-            .filter(|binding| binding.trigger == Trigger::Hold)
-            .map(|binding| (binding.input, binding.modifiers))
-            .collect();
+        const { assert!(A::DOUBLE_TICKS >= 1, "a window lasts at least one tick") };
+        let bound = |trigger| -> HashSet<(Input, Modifiers)> {
+            A::ALL
+                .iter()
+                .flat_map(|&action| bindings.get(action))
+                .filter(|binding| binding.trigger == trigger)
+                .map(|binding| (binding.input, binding.modifiers))
+                .collect()
+        };
+        let holds = bound(Trigger::Hold);
+        let doubles = bound(Trigger::Double);
         let toggled = A::ALL
             .iter()
             .filter(|&&action| bindings.mode(action) == ActionMode::Toggle)
@@ -164,7 +185,9 @@ impl<A: Action> ActionMap<A> {
         Self {
             bindings,
             down: HashMap::new(),
-            split,
+            holds,
+            doubles,
+            awaiting: HashMap::new(),
             toggled,
             raw_held: 0,
             latched: 0,
@@ -230,6 +253,7 @@ impl<A: Action> ActionMap<A> {
     pub fn pad_disconnected(&mut self) {
         self.sticks = [(0.0, 0.0); 2];
         self.down.retain(|input, _| !input.is_pad());
+        self.awaiting.retain(|input, _| !input.is_pad());
         self.refresh_held(0);
     }
 
@@ -237,6 +261,7 @@ impl<A: Action> ActionMap<A> {
     pub fn release_all(&mut self) {
         self.sticks = [(0.0, 0.0); 2];
         self.down.clear();
+        self.awaiting.clear();
         self.latched = 0;
         self.refresh_held(0);
     }
@@ -283,7 +308,21 @@ impl<A: Action> ActionMap<A> {
         for down in self.down.values_mut() {
             down.ticks = down.ticks.saturating_add(1);
         }
-        self.refresh_held(0);
+        for waiting in self.awaiting.values_mut() {
+            waiting.age = waiting.age.saturating_add(1);
+        }
+        let closed: Vec<(Input, Modifiers)> = self
+            .awaiting
+            .iter()
+            .filter(|(_, waiting)| waiting.age >= A::DOUBLE_TICKS)
+            .map(|(&input, waiting)| (input, waiting.modifiers))
+            .collect();
+        let mut taps = 0;
+        for (input, modifiers) in closed {
+            self.awaiting.remove(&input);
+            taps |= self.actions_for(input, modifiers, Trigger::Press);
+        }
+        self.refresh_held(taps);
         let frame = ActionFrame {
             held: self.held,
             pressed: self.pressed,
@@ -303,12 +342,24 @@ impl<A: Action> ActionMap<A> {
         }
     }
 
-    /// Records the change; `None` if nothing changed (OS key repeat), else the `Press`
-    /// actions of an input released before its hold matured.
+    /// Records the change; `None` if nothing changed (OS key repeat), else the actions that
+    /// press and release in this tick: the `Press` actions of an input released before its
+    /// hold matured and with no window to wait out, or the `Double` actions of a second press.
     fn apply(&mut self, input: Input, down: bool) -> Option<u64> {
         if down {
             if self.down.contains_key(&input) {
                 return None;
+            }
+            if let Some(Awaiting { modifiers, .. }) = self.awaiting.remove(&input) {
+                self.down.insert(
+                    input,
+                    Down {
+                        ticks: 0,
+                        modifiers,
+                        spent: true,
+                    },
+                );
+                return Some(self.actions_for(input, modifiers, Trigger::Double));
             }
             let modifiers = self.resolve_modifiers(input);
             self.down.insert(
@@ -316,14 +367,33 @@ impl<A: Action> ActionMap<A> {
                 Down {
                     ticks: 0,
                     modifiers,
+                    spent: false,
                 },
             );
             return Some(0);
         }
-        let Down { ticks, modifiers } = self.down.remove(&input)?;
-        let quick = self.split.contains(&(input, modifiers)) && ticks < A::HOLD_TICKS;
-        Some(if quick {
-            self.press_actions(input, modifiers)
+        let Down {
+            ticks,
+            modifiers,
+            spent,
+        } = self.down.remove(&input)?;
+        let set = (input, modifiers);
+        let holds = self.holds.contains(&set);
+        if spent || (holds && ticks >= A::HOLD_TICKS) {
+            return Some(0);
+        }
+        if self.doubles.contains(&set) && ticks < A::DOUBLE_TICKS {
+            self.awaiting.insert(
+                input,
+                Awaiting {
+                    age: ticks,
+                    modifiers,
+                },
+            );
+            return Some(0);
+        }
+        Some(if holds {
+            self.actions_for(input, modifiers, Trigger::Press)
         } else {
             0
         })
@@ -351,10 +421,8 @@ impl<A: Action> ActionMap<A> {
             .unwrap_or(Modifiers::NONE)
     }
 
-    fn press_actions(&self, input: Input, modifiers: Modifiers) -> u64 {
-        self.actions_where(|b| {
-            b.input == input && b.modifiers == modifiers && b.trigger == Trigger::Press
-        })
+    fn actions_for(&self, input: Input, modifiers: Modifiers, trigger: Trigger) -> u64 {
+        self.actions_where(|b| b.input == input && b.modifiers == modifiers && b.trigger == trigger)
     }
 
     fn actions_where(&self, matches: impl Fn(&Binding) -> bool) -> u64 {
@@ -370,10 +438,20 @@ impl<A: Action> ActionMap<A> {
         self.down.get(&binding.input).is_some_and(|down| {
             down.modifiers == binding.modifiers
                 && match binding.trigger {
-                    Trigger::Press => !self.split.contains(&set),
-                    Trigger::Hold => down.ticks >= A::HOLD_TICKS,
+                    Trigger::Press => {
+                        !(self.holds.contains(&set) || self.doubles.contains(&set))
+                            || (!down.spent && self.window_closed(set, down))
+                    }
+                    Trigger::Hold => !down.spent && down.ticks >= A::HOLD_TICKS,
+                    Trigger::Double => false,
                 }
         })
+    }
+
+    /// A key with a double binding and no hold binding that is still down once its window
+    /// closes: its `Press` actions are held until it is released.
+    fn window_closed(&self, set: (Input, Modifiers), down: &Down) -> bool {
+        self.doubles.contains(&set) && !self.holds.contains(&set) && down.ticks >= A::DOUBLE_TICKS
     }
 
     /// Recomputes the held mask; `taps` are actions that press and release in this tick.
@@ -2680,6 +2758,45 @@ mod tests {
         }
     }
 
+    #[test]
+    fn pad_disconnected_drops_a_pending_pad_window_without_firing() {
+        let west = Binding::pad(PadInput::Button(PadButton::West));
+        let (mut bindings, _) = ActionBindings::<Weapon>::load(&BTreeMap::new());
+        bindings.set(Weapon::Reload, vec![west]);
+        bindings.set(Weapon::Check, vec![west.doubled()]);
+        let mut map = ActionMap::new(bindings, 1.0);
+        map.pad_button(PadButton::West, true);
+        map.pad_button(PadButton::West, false);
+        let tapped = map.end_tick();
+
+        map.pad_disconnected();
+        let after = ticks(&mut map, DOUBLE + 2);
+
+        for frame in std::iter::once(&tapped).chain(&after) {
+            for action in Weapon::ALL {
+                assert!(!frame.pressed(*action), "{action:?}");
+                assert!(!frame.released(*action), "{action:?}");
+                assert!(!frame.held(*action), "{action:?}");
+            }
+        }
+    }
+
+    /// The window of a key survives a pad disconnect: only pad bindings are released.
+    #[test]
+    fn pad_disconnected_keeps_a_pending_key_window() {
+        let mut map = inspector_map();
+        tap(&mut map, Key::Y);
+        let first = map.end_tick();
+
+        map.pad_disconnected();
+        tap(&mut map, Key::Y);
+        let second = map.end_tick();
+
+        assert!(!first.pressed(Inspector::Inspect));
+        assert!(second.pressed(Inspector::Inspect));
+        assert!(!second.pressed(Inspector::Reload));
+    }
+
     /// `Weapon` with the hold action first, so the tapped action is not at index 0.
     #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
     enum HoldFirst {
@@ -3275,6 +3392,797 @@ mod tests {
                 prop_assert_eq!(a.pressed(Weapon::Reload), tapped, "tick {}", tick);
                 prop_assert_eq!(a.released(Weapon::Reload), tapped, "tick {}", tick);
                 prop_assert!(!a.held(Weapon::Reload), "tick {}", tick);
+            }
+        }
+    }
+
+    const DOUBLE: usize = crate::bindings::DEFAULT_DOUBLE_TICKS as usize;
+
+    /// Reload on `Y`, check on `Hold Y` and inspect on `Double Y`, with jump on Space.
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+    enum Inspector {
+        Reload,
+        Check,
+        Inspect,
+        Jump,
+    }
+
+    impl Action for Inspector {
+        const ALL: &'static [Self] = &[
+            Inspector::Reload,
+            Inspector::Check,
+            Inspector::Inspect,
+            Inspector::Jump,
+        ];
+
+        fn name(self) -> &'static str {
+            match self {
+                Inspector::Reload => "reload",
+                Inspector::Check => "check",
+                Inspector::Inspect => "inspect",
+                Inspector::Jump => "jump",
+            }
+        }
+
+        fn default_bindings(self) -> &'static [Binding] {
+            match self {
+                Inspector::Reload => const { &[Binding::key(Key::Y)] },
+                Inspector::Check => const { &[Binding::key(Key::Y).held()] },
+                Inspector::Inspect => const { &[Binding::key(Key::Y).doubled()] },
+                Inspector::Jump => const { &[Binding::key(Key::Space)] },
+            }
+        }
+    }
+
+    fn inspector_map() -> ActionMap<Inspector> {
+        let (bindings, warnings) = ActionBindings::<Inspector>::load(&BTreeMap::new());
+        assert_eq!(warnings, vec![]);
+        ActionMap::new(bindings, 1.0)
+    }
+
+    /// `Inspector` with no `Hold Y`, so a key held past the window has nothing to wait for.
+    fn inspector_map_without_hold() -> ActionMap<Inspector> {
+        let (mut bindings, _) = ActionBindings::<Inspector>::load(&BTreeMap::new());
+        bindings.set(Inspector::Check, vec![]);
+        ActionMap::new(bindings, 1.0)
+    }
+
+    fn tap<A: Action>(map: &mut ActionMap<A>, key: Key) {
+        map.key(key, true);
+        map.key(key, false);
+    }
+
+    fn where_frame<A: Action>(
+        frames: &[ActionFrame<A>],
+        test: impl Fn(&ActionFrame<A>) -> bool,
+    ) -> Vec<usize> {
+        frames
+            .iter()
+            .enumerate()
+            .filter(|&(_, frame)| test(frame))
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    fn pressed_at<A: Action>(frames: &[ActionFrame<A>], action: A) -> Vec<usize> {
+        where_frame(frames, |frame| frame.pressed(action))
+    }
+
+    fn released_at<A: Action>(frames: &[ActionFrame<A>], action: A) -> Vec<usize> {
+        where_frame(frames, |frame| frame.released(action))
+    }
+
+    fn held_at<A: Action>(frames: &[ActionFrame<A>], action: A) -> Vec<usize> {
+        where_frame(frames, |frame| frame.held(action))
+    }
+
+    #[test]
+    fn taps_once_and_waits_out_the_window_presses_in_tick_15() {
+        let mut map = inspector_map();
+
+        map.key(Key::Y, true);
+        let mut frames = vec![map.end_tick()];
+        map.key(Key::Y, false);
+        frames.extend(ticks(&mut map, DOUBLE + 4));
+
+        assert_eq!(pressed_at(&frames, Inspector::Reload), [DOUBLE - 1]);
+        assert_eq!(released_at(&frames, Inspector::Reload), [DOUBLE - 1]);
+        assert_eq!(held_at(&frames, Inspector::Reload), Vec::<usize>::new());
+        for other in [Inspector::Check, Inspector::Inspect, Inspector::Jump] {
+            assert_eq!(pressed_at(&frames, other), Vec::<usize>::new(), "{other:?}");
+            assert_eq!(held_at(&frames, other), Vec::<usize>::new(), "{other:?}");
+        }
+    }
+
+    #[test]
+    fn holding_past_the_threshold_fires_only_the_hold() {
+        let mut map = inspector_map();
+
+        map.key(Key::Y, true);
+        let mut frames = ticks(&mut map, HOLD + 3);
+        map.key(Key::Y, false);
+        let released = frames.len();
+        frames.extend(ticks(&mut map, DOUBLE + 5));
+
+        assert_eq!(pressed_at(&frames, Inspector::Check), [HOLD - 1]);
+        assert_eq!(
+            held_at(&frames, Inspector::Check),
+            (HOLD - 1..released).collect::<Vec<_>>()
+        );
+        assert_eq!(released_at(&frames, Inspector::Check), [released]);
+        for other in [Inspector::Reload, Inspector::Inspect] {
+            assert_eq!(pressed_at(&frames, other), Vec::<usize>::new(), "{other:?}");
+            assert_eq!(held_at(&frames, other), Vec::<usize>::new(), "{other:?}");
+        }
+    }
+
+    #[test]
+    fn two_taps_inside_the_window_fire_only_the_double_in_the_second_taps_tick() {
+        let mut map = inspector_map();
+
+        tap(&mut map, Key::Y);
+        let mut frames = ticks(&mut map, 3);
+        tap(&mut map, Key::Y);
+        frames.extend(ticks(&mut map, DOUBLE + 5));
+
+        assert_eq!(pressed_at(&frames, Inspector::Inspect), [3]);
+        assert_eq!(released_at(&frames, Inspector::Inspect), [3]);
+        assert_eq!(held_at(&frames, Inspector::Inspect), Vec::<usize>::new());
+        for other in [Inspector::Reload, Inspector::Check] {
+            assert_eq!(pressed_at(&frames, other), Vec::<usize>::new(), "{other:?}");
+            assert_eq!(held_at(&frames, other), Vec::<usize>::new(), "{other:?}");
+        }
+    }
+
+    #[test]
+    fn second_press_at_age_14_is_a_double_at_age_15_it_is_a_new_first_press() {
+        let mut inside = inspector_map();
+        tap(&mut inside, Key::Y);
+        let mut inside_frames = ticks(&mut inside, DOUBLE - 1);
+        tap(&mut inside, Key::Y);
+        inside_frames.extend(ticks(&mut inside, DOUBLE + 5));
+        let mut outside = inspector_map();
+        tap(&mut outside, Key::Y);
+        let mut outside_frames = ticks(&mut outside, DOUBLE);
+        tap(&mut outside, Key::Y);
+        outside_frames.extend(ticks(&mut outside, DOUBLE + 5));
+
+        assert_eq!(pressed_at(&inside_frames, Inspector::Inspect), [DOUBLE - 1]);
+        assert_eq!(
+            pressed_at(&inside_frames, Inspector::Reload),
+            Vec::<usize>::new()
+        );
+        assert_eq!(
+            pressed_at(&outside_frames, Inspector::Inspect),
+            Vec::<usize>::new()
+        );
+        assert_eq!(
+            pressed_at(&outside_frames, Inspector::Reload),
+            [DOUBLE - 1, 2 * DOUBLE - 1]
+        );
+    }
+
+    #[test]
+    fn second_press_then_hold_adds_nothing() {
+        let mut map = inspector_map();
+
+        tap(&mut map, Key::Y);
+        let mut frames = vec![map.end_tick()];
+        map.key(Key::Y, true);
+        frames.extend(ticks(&mut map, HOLD + DOUBLE + 3));
+        map.key(Key::Y, false);
+        frames.extend(ticks(&mut map, DOUBLE + 3));
+
+        assert_eq!(pressed_at(&frames, Inspector::Inspect), [1]);
+        assert_eq!(held_at(&frames, Inspector::Inspect), Vec::<usize>::new());
+        for other in [Inspector::Reload, Inspector::Check] {
+            assert_eq!(pressed_at(&frames, other), Vec::<usize>::new(), "{other:?}");
+            assert_eq!(held_at(&frames, other), Vec::<usize>::new(), "{other:?}");
+        }
+    }
+
+    #[test]
+    fn inputs_without_a_double_binding_are_unaffected_when_another_input_has_one() {
+        let mut map = inspector_map();
+
+        map.key(Key::Space, true);
+        let down = map.end_tick();
+        let later = ticks(&mut map, 3);
+        map.key(Key::Space, false);
+        let up = map.end_tick();
+        tap(&mut map, Key::Space);
+        let again = map.end_tick();
+        tap(&mut map, Key::Space);
+        let third = map.end_tick();
+
+        assert!(down.pressed(Inspector::Jump));
+        assert!(down.held(Inspector::Jump));
+        assert!(
+            later
+                .iter()
+                .all(|f| f.held(Inspector::Jump) && !f.pressed(Inspector::Jump))
+        );
+        assert!(up.released(Inspector::Jump));
+        assert!(!up.held(Inspector::Jump));
+        assert!(again.pressed(Inspector::Jump));
+        assert!(again.released(Inspector::Jump));
+        assert!(third.pressed(Inspector::Jump));
+        for frame in [down, up, again, third] {
+            assert!(!frame.pressed(Inspector::Inspect));
+            assert!(!frame.pressed(Inspector::Reload));
+        }
+    }
+
+    #[test]
+    fn double_modifiers_are_fixed_at_the_first_press() {
+        let bound = [
+            (Gun::Reload, vec![Binding::key(Key::Y)]),
+            (Gun::Check, vec![Binding::key(Key::Y).doubled()]),
+            (Gun::Unjam, vec![Binding::key(Key::Y).with(CTRL)]),
+            (Gun::Bash, vec![Binding::key(Key::Y).with(CTRL).doubled()]),
+        ];
+        let mut chorded = gun_map(&bound);
+        let mut plain = gun_map(&bound);
+
+        chorded.key(Key::Ctrl, true);
+        chorded.key(Key::Y, true);
+        let mut chorded_frames = vec![chorded.end_tick()];
+        chorded.key(Key::Y, false);
+        chorded.key(Key::Ctrl, false);
+        chorded_frames.push(chorded.end_tick());
+        chorded.key(Key::Y, true);
+        chorded_frames.push(chorded.end_tick());
+        chorded.key(Key::Y, false);
+        chorded_frames.extend(ticks(&mut chorded, DOUBLE + 5));
+        tap(&mut plain, Key::Y);
+        let mut plain_frames = vec![plain.end_tick()];
+        plain.key(Key::Ctrl, true);
+        plain.key(Key::Y, true);
+        plain_frames.push(plain.end_tick());
+        plain.key(Key::Y, false);
+        plain.key(Key::Ctrl, false);
+        plain_frames.extend(ticks(&mut plain, DOUBLE + 5));
+
+        assert_eq!(pressed_at(&chorded_frames, Gun::Bash), [2]);
+        assert_eq!(pressed_at(&plain_frames, Gun::Check), [1]);
+        for other in [Gun::Reload, Gun::Check, Gun::Unjam] {
+            assert_eq!(
+                pressed_at(&chorded_frames, other),
+                Vec::<usize>::new(),
+                "chorded first press: {other:?}"
+            );
+        }
+        for other in [Gun::Reload, Gun::Unjam, Gun::Bash] {
+            assert_eq!(
+                pressed_at(&plain_frames, other),
+                Vec::<usize>::new(),
+                "plain first press: {other:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn another_key_inside_the_window_does_not_cancel_the_double() {
+        let mut map = inspector_map();
+
+        tap(&mut map, Key::Y);
+        let mut frames = vec![map.end_tick()];
+        tap(&mut map, Key::Space);
+        frames.push(map.end_tick());
+        tap(&mut map, Key::Y);
+        frames.extend(ticks(&mut map, DOUBLE + 5));
+
+        assert_eq!(pressed_at(&frames, Inspector::Jump), [1]);
+        assert_eq!(pressed_at(&frames, Inspector::Inspect), [2]);
+        assert_eq!(pressed_at(&frames, Inspector::Reload), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn held_past_the_window_with_no_hold_binding_presses_at_window_close_and_releases_with_the_key()
+    {
+        let mut map = inspector_map_without_hold();
+
+        map.key(Key::Y, true);
+        let mut frames = ticks(&mut map, DOUBLE + 3);
+        map.key(Key::Y, false);
+        let up = map.end_tick();
+        frames.extend(ticks(&mut map, DOUBLE + 3));
+
+        assert_eq!(pressed_at(&frames, Inspector::Reload), [DOUBLE - 1]);
+        assert_eq!(
+            held_at(&frames, Inspector::Reload),
+            (DOUBLE - 1..DOUBLE + 3).collect::<Vec<_>>()
+        );
+        assert!(up.released(Inspector::Reload));
+        assert!(!up.held(Inspector::Reload));
+        assert!(!up.pressed(Inspector::Reload), "no second tap on release");
+        assert_eq!(pressed_at(&frames, Inspector::Inspect), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn release_after_the_window_closed_but_before_hold_taps_at_the_release() {
+        let mut map = inspector_map();
+
+        map.key(Key::Y, true);
+        let mut frames = ticks(&mut map, DOUBLE + 1);
+        map.key(Key::Y, false);
+        frames.extend(ticks(&mut map, DOUBLE + 5));
+
+        assert_eq!(pressed_at(&frames, Inspector::Reload), [DOUBLE + 1]);
+        assert_eq!(released_at(&frames, Inspector::Reload), [DOUBLE + 1]);
+        assert_eq!(held_at(&frames, Inspector::Reload), Vec::<usize>::new());
+        for other in [Inspector::Check, Inspector::Inspect] {
+            assert_eq!(pressed_at(&frames, other), Vec::<usize>::new(), "{other:?}");
+        }
+    }
+
+    #[test]
+    fn release_all_drops_a_pending_window_without_firing() {
+        let mut map = inspector_map_without_hold();
+
+        tap(&mut map, Key::Y);
+        let mut frames = vec![map.end_tick()];
+        map.release_all();
+        frames.push(map.end_tick());
+        map.key(Key::Y, true);
+        let fresh = ticks(&mut map, DOUBLE);
+
+        for action in [Inspector::Reload, Inspector::Inspect] {
+            assert_eq!(
+                pressed_at(&frames, action),
+                Vec::<usize>::new(),
+                "{action:?}"
+            );
+        }
+        assert_eq!(pressed_at(&fresh, Inspector::Inspect), Vec::<usize>::new());
+        assert_eq!(
+            pressed_at(&fresh, Inspector::Reload),
+            [DOUBLE - 1],
+            "the press after release_all is a first press, not a double"
+        );
+    }
+
+    /// `Inspector`'s Y bindings with a five-tick double-press window.
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+    enum Quick {
+        Reload,
+        Inspect,
+    }
+
+    impl Action for Quick {
+        const ALL: &'static [Self] = &[Quick::Reload, Quick::Inspect];
+        const DOUBLE_TICKS: u32 = 5;
+
+        fn name(self) -> &'static str {
+            match self {
+                Quick::Reload => "reload",
+                Quick::Inspect => "inspect",
+            }
+        }
+
+        fn default_bindings(self) -> &'static [Binding] {
+            match self {
+                Quick::Reload => const { &[Binding::key(Key::Y)] },
+                Quick::Inspect => const { &[Binding::key(Key::Y).doubled()] },
+            }
+        }
+    }
+
+    fn quick_map() -> ActionMap<Quick> {
+        let (bindings, warnings) = ActionBindings::<Quick>::load(&BTreeMap::new());
+        assert_eq!(warnings, vec![]);
+        ActionMap::new(bindings, 1.0)
+    }
+
+    #[test]
+    fn custom_double_ticks_override_moves_the_window() {
+        let mut waited = quick_map();
+        tap(&mut waited, Key::Y);
+        let waited_frames = ticks(&mut waited, 12);
+        let mut inside = quick_map();
+        tap(&mut inside, Key::Y);
+        let mut inside_frames = ticks(&mut inside, 4);
+        tap(&mut inside, Key::Y);
+        inside_frames.extend(ticks(&mut inside, 12));
+        let mut outside = quick_map();
+        tap(&mut outside, Key::Y);
+        let mut outside_frames = ticks(&mut outside, 5);
+        tap(&mut outside, Key::Y);
+        outside_frames.extend(ticks(&mut outside, 12));
+
+        assert_eq!(pressed_at(&waited_frames, Quick::Reload), [4]);
+        assert_eq!(pressed_at(&inside_frames, Quick::Inspect), [4]);
+        assert_eq!(
+            pressed_at(&inside_frames, Quick::Reload),
+            Vec::<usize>::new()
+        );
+        assert_eq!(
+            pressed_at(&outside_frames, Quick::Inspect),
+            Vec::<usize>::new()
+        );
+        assert_eq!(pressed_at(&outside_frames, Quick::Reload), [4, 9]);
+    }
+
+    #[test]
+    fn a_double_on_a_chord_only_splits_that_modifier_set() {
+        let mut map = gun_map(&[
+            (Gun::Reload, vec![Binding::key(Key::Y)]),
+            (Gun::Bash, vec![Binding::key(Key::Y).with(CTRL).doubled()]),
+        ]);
+
+        map.key(Key::Y, true);
+        let frames = ticks(&mut map, 3);
+
+        assert_eq!(pressed_at(&frames, Gun::Reload), [0]);
+        assert_eq!(held_at(&frames, Gun::Reload), [0, 1, 2]);
+        assert_eq!(pressed_at(&frames, Gun::Bash), Vec::<usize>::new());
+    }
+
+    /// A hold threshold of 3 ticks, well inside the 15-tick double-press window.
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+    enum Brisk {
+        Reload,
+        Check,
+        Inspect,
+    }
+
+    impl Action for Brisk {
+        const ALL: &'static [Self] = &[Brisk::Reload, Brisk::Check, Brisk::Inspect];
+        const HOLD_TICKS: u32 = 3;
+
+        fn name(self) -> &'static str {
+            match self {
+                Brisk::Reload => "reload",
+                Brisk::Check => "check",
+                Brisk::Inspect => "inspect",
+            }
+        }
+
+        fn default_bindings(self) -> &'static [Binding] {
+            match self {
+                Brisk::Reload => const { &[Binding::key(Key::Y)] },
+                Brisk::Check => const { &[Binding::key(Key::Y).held()] },
+                Brisk::Inspect => const { &[Binding::key(Key::Y).doubled()] },
+            }
+        }
+    }
+
+    #[test]
+    fn a_matured_hold_opens_no_window_for_a_second_press() {
+        let (bindings, warnings) = ActionBindings::<Brisk>::load(&BTreeMap::new());
+        assert_eq!(warnings, vec![]);
+        let mut map = ActionMap::new(bindings, 1.0);
+
+        map.key(Key::Y, true);
+        let mut frames = ticks(&mut map, 5);
+        map.key(Key::Y, false);
+        frames.extend(ticks(&mut map, 3));
+        map.key(Key::Y, true);
+        frames.extend(ticks(&mut map, DOUBLE + 5));
+
+        assert_eq!(pressed_at(&frames, Brisk::Check), [2, 10]);
+        assert_eq!(pressed_at(&frames, Brisk::Inspect), Vec::<usize>::new());
+        assert_eq!(pressed_at(&frames, Brisk::Reload), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn a_third_tap_is_a_new_first_press_not_a_second_double() {
+        let mut map = inspector_map();
+
+        tap(&mut map, Key::Y);
+        let mut frames = ticks(&mut map, 3);
+        tap(&mut map, Key::Y);
+        frames.push(map.end_tick());
+        frames.extend(ticks(&mut map, 2));
+        tap(&mut map, Key::Y);
+        frames.extend(ticks(&mut map, DOUBLE + 3));
+
+        assert_eq!(pressed_at(&frames, Inspector::Inspect), [3]);
+        assert_eq!(pressed_at(&frames, Inspector::Reload), [6 + DOUBLE - 1]);
+        assert_eq!(pressed_at(&frames, Inspector::Check), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn a_release_past_the_window_opens_none_and_the_next_press_is_a_first_press() {
+        const { assert!(crate::bindings::DEFAULT_HOLD_TICKS > crate::bindings::DEFAULT_DOUBLE_TICKS) };
+        let mut map = inspector_map();
+
+        map.key(Key::Y, true);
+        let mut frames = ticks(&mut map, DOUBLE + 1);
+        map.key(Key::Y, false);
+        frames.push(map.end_tick());
+        tap(&mut map, Key::Y);
+        frames.extend(ticks(&mut map, DOUBLE + 5));
+
+        assert_eq!(
+            pressed_at(&frames, Inspector::Reload),
+            [DOUBLE + 1, DOUBLE + 2 + DOUBLE - 1]
+        );
+        assert_eq!(pressed_at(&frames, Inspector::Inspect), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn release_at_exactly_the_window_length_taps_and_opens_no_window_with_a_hold_binding() {
+        let mut quick = inspector_map();
+        quick.key(Key::Y, true);
+        let mut again_frames = ticks(&mut quick, DOUBLE);
+        quick.key(Key::Y, false);
+        tap(&mut quick, Key::Y);
+        again_frames.extend(ticks(&mut quick, DOUBLE + 5));
+        let mut alone = inspector_map();
+        alone.key(Key::Y, true);
+        let mut alone_frames = ticks(&mut alone, DOUBLE);
+        alone.key(Key::Y, false);
+        alone_frames.extend(ticks(&mut alone, DOUBLE + 5));
+
+        assert_eq!(
+            pressed_at(&again_frames, Inspector::Reload),
+            [DOUBLE, DOUBLE + DOUBLE - 1]
+        );
+        assert_eq!(
+            pressed_at(&again_frames, Inspector::Inspect),
+            Vec::<usize>::new()
+        );
+        assert_eq!(pressed_at(&alone_frames, Inspector::Reload), [DOUBLE]);
+        assert_eq!(released_at(&alone_frames, Inspector::Reload), [DOUBLE]);
+    }
+
+    #[test]
+    fn release_at_exactly_the_window_length_opens_no_window_without_a_hold_binding() {
+        let mut map = inspector_map_without_hold();
+
+        map.key(Key::Y, true);
+        let mut frames = ticks(&mut map, DOUBLE);
+        map.key(Key::Y, false);
+        tap(&mut map, Key::Y);
+        frames.extend(ticks(&mut map, DOUBLE + 5));
+
+        assert_eq!(
+            pressed_at(&frames, Inspector::Reload),
+            [DOUBLE - 1, DOUBLE + DOUBLE - 1]
+        );
+        assert_eq!(released_at(&frames, Inspector::Reload)[0], DOUBLE);
+        assert_eq!(pressed_at(&frames, Inspector::Inspect), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn release_one_tick_before_the_window_length_opens_a_window() {
+        for mut map in [inspector_map(), inspector_map_without_hold()] {
+            map.key(Key::Y, true);
+            let mut frames = ticks(&mut map, DOUBLE - 1);
+            map.key(Key::Y, false);
+            tap(&mut map, Key::Y);
+            frames.extend(ticks(&mut map, DOUBLE + 5));
+
+            assert_eq!(pressed_at(&frames, Inspector::Inspect), [DOUBLE - 1]);
+            assert_eq!(pressed_at(&frames, Inspector::Reload), Vec::<usize>::new());
+        }
+    }
+
+    /// Only `Double Y`: no plain or hold binding on the key.
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+    enum DoubleOnly {
+        Inspect,
+    }
+
+    impl Action for DoubleOnly {
+        const ALL: &'static [Self] = &[DoubleOnly::Inspect];
+
+        fn name(self) -> &'static str {
+            "inspect"
+        }
+
+        fn default_bindings(self) -> &'static [Binding] {
+            const { &[Binding::key(Key::Y).doubled()] }
+        }
+    }
+
+    fn double_only_map() -> ActionMap<DoubleOnly> {
+        let (bindings, warnings) = ActionBindings::<DoubleOnly>::load(&BTreeMap::new());
+        assert_eq!(warnings, vec![]);
+        ActionMap::new(bindings, 1.0)
+    }
+
+    #[test]
+    fn with_only_a_double_binding_a_single_tap_or_a_hold_fires_nothing() {
+        let mut single = double_only_map();
+        tap(&mut single, Key::Y);
+        let single_frames = ticks(&mut single, DOUBLE + 5);
+        let mut held = double_only_map();
+        held.key(Key::Y, true);
+        let mut held_frames = ticks(&mut held, DOUBLE + HOLD + 5);
+        held.key(Key::Y, false);
+        held_frames.extend(ticks(&mut held, DOUBLE + 5));
+        let mut twice = double_only_map();
+        tap(&mut twice, Key::Y);
+        let mut twice_frames = ticks(&mut twice, 2);
+        tap(&mut twice, Key::Y);
+        twice_frames.extend(ticks(&mut twice, DOUBLE + 5));
+
+        for frames in [&single_frames, &held_frames] {
+            assert_eq!(pressed_at(frames, DoubleOnly::Inspect), Vec::<usize>::new());
+            assert_eq!(held_at(frames, DoubleOnly::Inspect), Vec::<usize>::new());
+        }
+        assert_eq!(pressed_at(&twice_frames, DoubleOnly::Inspect), [2]);
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+    enum TwoKeys {
+        InspectY,
+        InspectU,
+    }
+
+    impl Action for TwoKeys {
+        const ALL: &'static [Self] = &[TwoKeys::InspectY, TwoKeys::InspectU];
+
+        fn name(self) -> &'static str {
+            match self {
+                TwoKeys::InspectY => "inspect_y",
+                TwoKeys::InspectU => "inspect_u",
+            }
+        }
+
+        fn default_bindings(self) -> &'static [Binding] {
+            match self {
+                TwoKeys::InspectY => const { &[Binding::key(Key::Y).doubled()] },
+                TwoKeys::InspectU => const { &[Binding::key(Key::U).doubled()] },
+            }
+        }
+    }
+
+    #[test]
+    fn interleaved_doubles_on_two_inputs_each_fire_once_in_their_own_tick() {
+        let (bindings, warnings) = ActionBindings::<TwoKeys>::load(&BTreeMap::new());
+        assert_eq!(warnings, vec![]);
+        let mut map = ActionMap::new(bindings, 1.0);
+
+        tap(&mut map, Key::Y);
+        let mut frames = vec![map.end_tick()];
+        tap(&mut map, Key::U);
+        frames.push(map.end_tick());
+        tap(&mut map, Key::Y);
+        frames.push(map.end_tick());
+        tap(&mut map, Key::U);
+        frames.push(map.end_tick());
+        frames.extend(ticks(&mut map, DOUBLE + 5));
+
+        assert_eq!(pressed_at(&frames, TwoKeys::InspectY), [2]);
+        assert_eq!(pressed_at(&frames, TwoKeys::InspectU), [3]);
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+    enum Click {
+        Fire,
+        Inspect,
+    }
+
+    impl Action for Click {
+        const ALL: &'static [Self] = &[Click::Fire, Click::Inspect];
+
+        fn name(self) -> &'static str {
+            match self {
+                Click::Fire => "fire",
+                Click::Inspect => "inspect",
+            }
+        }
+
+        fn default_bindings(self) -> &'static [Binding] {
+            match self {
+                Click::Fire => const { &[Binding::mouse(MouseButton::Left)] },
+                Click::Inspect => const { &[Binding::mouse(MouseButton::Left).doubled()] },
+            }
+        }
+    }
+
+    #[test]
+    fn a_double_click_fires_in_the_second_clicks_tick() {
+        let (bindings, warnings) = ActionBindings::<Click>::load(&BTreeMap::new());
+        assert_eq!(warnings, vec![]);
+        let mut map = ActionMap::new(bindings, 1.0);
+
+        map.mouse_button(MouseButton::Left, true);
+        map.mouse_button(MouseButton::Left, false);
+        let mut frames = vec![map.end_tick()];
+        map.mouse_button(MouseButton::Left, true);
+        map.mouse_button(MouseButton::Left, false);
+        frames.push(map.end_tick());
+        frames.extend(ticks(&mut map, DOUBLE + 5));
+
+        assert_eq!(pressed_at(&frames, Click::Inspect), [1]);
+        assert_eq!(released_at(&frames, Click::Inspect), [1]);
+        assert_eq!(pressed_at(&frames, Click::Fire), Vec::<usize>::new());
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+    enum Latch {
+        Scan,
+    }
+
+    impl Action for Latch {
+        const ALL: &'static [Self] = &[Latch::Scan];
+
+        fn name(self) -> &'static str {
+            "scan"
+        }
+
+        fn default_bindings(self) -> &'static [Binding] {
+            const { &[Binding::key(Key::Y).doubled()] }
+        }
+
+        fn toggleable(self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn double_on_a_toggleable_action_flips_the_latch() {
+        let (mut bindings, _) = ActionBindings::<Latch>::load(&BTreeMap::new());
+        bindings.set_mode(Latch::Scan, ActionMode::Toggle);
+        let mut map = ActionMap::new(bindings, 1.0);
+
+        tap(&mut map, Key::Y);
+        let single = ticks(&mut map, DOUBLE + 2);
+        tap(&mut map, Key::Y);
+        let wait_on = ticks(&mut map, 3);
+        tap(&mut map, Key::Y);
+        let first = map.end_tick();
+        let latched = ticks(&mut map, 4);
+        tap(&mut map, Key::Y);
+        let wait_off = ticks(&mut map, 3);
+        tap(&mut map, Key::Y);
+        let second = map.end_tick();
+        let after = ticks(&mut map, 3);
+
+        for frame in single.iter().chain(&wait_on) {
+            assert!(!frame.pressed(Latch::Scan));
+            assert!(!frame.held(Latch::Scan));
+        }
+        assert!(first.pressed(Latch::Scan));
+        assert!(first.held(Latch::Scan));
+        for frame in latched.iter().chain(&wait_off) {
+            assert!(frame.held(Latch::Scan));
+            assert!(!frame.released(Latch::Scan));
+        }
+        assert!(second.released(Latch::Scan));
+        assert!(!second.held(Latch::Scan));
+        for frame in &after {
+            assert!(!frame.held(Latch::Scan));
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn frames_are_identical_whatever_sample_frame_calls_interleave(
+            script in proptest::collection::vec(
+                prop_oneof![
+                    3 => Just(Vec::new()),
+                    2 => proptest::collection::vec((any::<bool>(), any::<bool>()), 1..3),
+                ],
+                1..90,
+            ),
+            reads in proptest::collection::vec(0usize..4, 90),
+        ) {
+            let mut plain = inspector_map();
+            let mut batched = inspector_map();
+
+            for (tick, events) in script.iter().enumerate() {
+                for &(space, down) in events {
+                    let key = if space { Key::Space } else { Key::Y };
+                    plain.key(key, down);
+                    batched.sample_frame(FRAME);
+                    batched.key(key, down);
+                }
+                for _ in 0..reads[tick] {
+                    batched.sample_frame(FRAME);
+                }
+                let a = plain.end_tick();
+                let b = batched.end_tick();
+
+                for action in Inspector::ALL {
+                    prop_assert_eq!(a.held(*action), b.held(*action), "tick {} {:?}", tick, action);
+                    prop_assert_eq!(a.pressed(*action), b.pressed(*action), "tick {} {:?}", tick, action);
+                    prop_assert_eq!(a.released(*action), b.released(*action), "tick {} {:?}", tick, action);
+                }
             }
         }
     }
