@@ -490,3 +490,63 @@ proptest! {
         prop_assert_eq!(open_edges(&meshes, lo, hi), 0, "removing {} opened an edge", block);
     }
 }
+
+/// Structures at chunk corners, buried on a seam, or in columns and walls across a seam
+/// leave the ground's surface closed.
+#[test]
+fn structures_at_chunk_corners_and_buried_on_seams_leave_the_ground_closed() {
+    let region = chunk_box([0, 0, 0], [2, 2, 2]);
+    let (lo, hi) = ([-0.5; 3], [31.5; 3]);
+    let column: Vec<IVec3> = (14..=17).map(|y| IVec3::new(8, y, 8)).collect();
+    let wall: Vec<IVec3> = [15, 16]
+        .into_iter()
+        .flat_map(|x| (0..=6).map(move |y| IVec3::new(x, y, 8)))
+        .collect();
+    let cases: [(&str, i32, Vec<IVec3>); 5] = [
+        ("corner of four chunks", 5, vec![IVec3::new(16, 2, 16)]),
+        ("corner of eight chunks", 16, vec![IVec3::new(16, 16, 16)]),
+        ("buried on a seam", 8, vec![IVec3::new(16, 2, 8)]),
+        ("column straddling the y seam", 16, column),
+        ("wall straddling the x seam", 5, wall),
+    ];
+
+    let mut open = Vec::new();
+    for (name, height, structures) in cases {
+        let mut grid = flat_ground(height);
+        for &block in &structures {
+            grid.mutator().place(block, STRUCTURE, None);
+        }
+
+        let meshes = mesh_all(&grid, region.clone());
+
+        let edges = open_edges(&meshes, lo, hi);
+        if edges > 0 {
+            open.push(format!("{name}: {edges} open edges"));
+        }
+    }
+
+    assert!(open.is_empty(), "{open:#?}");
+}
+
+/// Removing structures at a chunk corner one after another keeps the ground closed.
+#[test]
+fn removing_a_structure_at_a_chunk_corner_leaves_the_ground_closed() {
+    let mut grid = flat_ground(5);
+    let first = IVec3::new(16, 2, 16);
+    let second = IVec3::new(15, 2, 15);
+    for block in [first, second] {
+        grid.mutator().place(block, STRUCTURE, None);
+    }
+    let region = chunk_box([0, 0, 0], [2, 2, 2]);
+    let (lo, hi) = ([-0.5; 3], [31.5; 3]);
+    let mut meshes = mesh_all(&grid, region);
+    assert_eq!(open_edges(&meshes, lo, hi), 0, "closed before the removals");
+
+    assert!(grid.clear_block(first));
+    remesh(&grid, &mut meshes, chunks_meshed_from(first, CHUNK));
+    assert_eq!(open_edges(&meshes, lo, hi), 0, "after removing {first}");
+
+    assert!(grid.clear_block(second));
+    remesh(&grid, &mut meshes, chunks_meshed_from(second, CHUNK));
+    assert_eq!(open_edges(&meshes, lo, hi), 0, "after removing {second}");
+}
