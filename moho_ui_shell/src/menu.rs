@@ -3425,6 +3425,134 @@ mod tests {
     }
 
     #[test]
+    fn set_items_with_no_rows_and_then_rows_again_keeps_the_stack_working() {
+        let mut stack = controls_stack(vec![
+            row_with(0, [R, R], Some(Chevron::Open), Some(ActionMode::Hold)),
+            details(0, Slot::Primary, Trigger::Press, Modifiers::NONE),
+        ]);
+        press_all(&mut stack, &[Key::ArrowDown, Key::ArrowRight]);
+
+        stack.set_items(Vec::new());
+        let point = [640.0, 360.0];
+        press_all(
+            &mut stack,
+            &[
+                Key::Enter,
+                Key::ArrowLeft,
+                Key::ArrowRight,
+                Key::ArrowUp,
+                Key::ArrowDown,
+                Key::Backspace,
+            ],
+        );
+        stack.click(point, SIZE);
+        stack.hover(point, SIZE);
+        stack.right_click(point, SIZE);
+        let capturing = stack.is_capturing();
+        let drawn = stack.texts(SIZE);
+        let on_empty = stack.take_events();
+        stack.set_items(vec![control(0, [R, R]), control(1, [R, R])]);
+        let events = act(&mut stack);
+
+        assert_eq!(on_empty, [], "an empty screen reports nothing");
+        assert!(!capturing);
+        assert_eq!(drawn, []);
+        assert_eq!(
+            events,
+            [captured(Bind::Row(0), Slot::Secondary, Input::Key(Key::Q))],
+            "focus 0, and the column fits the row now there"
+        );
+    }
+
+    #[test]
+    fn a_click_on_a_label_area_emits_nothing_steps_nothing_and_starts_no_capture() {
+        let rows = || {
+            vec![
+                row_with(0, [R, R], Some(Chevron::Open), None),
+                details(0, Slot::Primary, Trigger::Press, Modifiers::NONE),
+                details(0, Slot::Secondary, Trigger::Press, Modifiers::NONE),
+            ]
+        };
+        let original = controls_screen(rows());
+        for (row, offset) in [
+            (0, 24.5),
+            (0, 100.0),
+            (0, 239.5),
+            (1, 1.0),
+            (1, 100.0),
+            (1, 239.5),
+            (2, 100.0),
+        ] {
+            let mut stack = controls_stack(rows());
+            let point = cell_point(&stack, row, offset);
+
+            stack.click(point, SIZE);
+            let capturing = stack.is_capturing();
+            key_c(&mut stack, Key::Q);
+
+            assert!(!capturing, "row {row} at {offset}");
+            assert_eq!(stack.take_events(), [], "row {row} at {offset}");
+            assert_eq!(stack.top(), Some(&original), "row {row} at {offset}");
+        }
+    }
+
+    #[test]
+    fn hovering_a_details_label_keeps_the_column_and_the_chevron_cell_picks_the_chevron() {
+        let rows = || {
+            vec![
+                row_with(0, [R, R], Some(Chevron::Open), None),
+                details(0, Slot::Primary, Trigger::Press, Modifiers::NONE),
+            ]
+        };
+        let kind = picked(0, Slot::Primary, Trigger::Hold, Modifiers::NONE);
+        let modifier = picked(0, Slot::Primary, Trigger::Press, Modifiers::CTRL);
+        let mut second = controls_stack(rows());
+        let mut from_chevron = controls_stack(rows());
+        let mut to_chevron = controls_stack(rows());
+        press_all(&mut second, &[Key::ArrowDown, Key::ArrowRight]);
+        key_c(&mut from_chevron, Key::ArrowLeft);
+        press_all(&mut to_chevron, &[Key::ArrowDown, Key::ArrowRight]);
+
+        let label = cell_point(&second, 1, 100.0);
+        second.hover(label, SIZE);
+        from_chevron.hover(label, SIZE);
+        let chevron = cell_point(&to_chevron, 0, 10.0);
+        to_chevron.hover(chevron, SIZE);
+
+        assert_eq!(act(&mut second), [modifier], "Second is kept");
+        assert_eq!(act(&mut from_chevron), [kind], "Chevron clamps to First");
+        assert_eq!(act(&mut to_chevron), [toggled(0)]);
+    }
+
+    #[test]
+    fn a_click_in_the_checkbox_column_reports_the_mode_only_on_a_row_that_has_one() {
+        let rows = || {
+            vec![
+                row_with(0, [R, R], Some(Chevron::Closed), Some(ActionMode::Toggle)),
+                row_with(1, [R, R], Some(Chevron::Closed), None),
+            ]
+        };
+        for offset in [640.0, 700.0, 767.0] {
+            let mut with_mode = controls_stack(rows());
+            let mut without = controls_stack(rows());
+            let on_mode = cell_point(&with_mode, 0, offset);
+            let on_empty = cell_point(&without, 1, offset);
+
+            let reported = click_and_settle(&mut with_mode, on_mode);
+            without.click(on_empty, SIZE);
+            let capturing = without.is_capturing();
+
+            assert_eq!(
+                reported,
+                [mode_chosen(0, ActionMode::Hold)],
+                "offset {offset}"
+            );
+            assert!(!capturing, "offset {offset}");
+            assert_eq!(without.take_events(), [], "offset {offset}");
+        }
+    }
+
+    #[test]
     fn set_items_prefers_the_same_index_when_actions_repeat() {
         let (a, b) = (Bind::Row(0), Bind::Row(1));
         let repeated = |labels: &[&str]| -> Vec<MenuItem<Bind>> {
