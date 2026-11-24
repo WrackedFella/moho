@@ -1168,8 +1168,8 @@ fn rects<A>(items: &[MenuItem<A>], scroll: usize, size: [f32; 2]) -> Vec<Rect> {
 
 /// The row rectangles of `screen` on a window `size` points across at scroll 0, top to bottom:
 /// buttons and settings 240 by 56 points, control and details rows 640 by 32 (768 when a control
-/// row has the checkbox column), centred on the window, the
-/// column centred vertically when it fits and starting at the title band when it does not.
+/// row has the checkbox column), centred on the window. The column is centred vertically when it
+/// fits and starts at the title band when it does not.
 pub fn layout<A>(screen: &MenuScreen<A>, size: [f32; 2]) -> Vec<Rect> {
     rects(&screen.items, 0, size)
 }
@@ -2529,7 +2529,7 @@ mod tests {
         (0..rows).find(|&row| row_texts(stack, row).iter().any(|t| t.color == FOCUS))
     }
 
-    /// Beside the first 24 points a chevron takes, the label column's width.
+    /// The chevron cell's width, pinned independently of the production constant.
     const CHEVRON_WIDTH: f32 = 24.0;
     /// Where the checkbox column starts in a row, and a point inside it.
     const MODE_START: f32 = 640.0;
