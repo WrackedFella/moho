@@ -42,7 +42,7 @@ pub fn parse_head_bob(args: &[&str]) -> Result<(ConsoleCommand, String), String>
                 .ok_or_else(usage)?;
             Ok((
                 ConsoleCommand::HeadBob(HeadBobArg::Set(level)),
-                format!("Head bob: {} %", level.percent()),
+                format!("Head bob: {level}"),
             ))
         }
         _ => Err(usage()),

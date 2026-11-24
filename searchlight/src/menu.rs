@@ -68,9 +68,9 @@ pub fn head_bob_row(level: HeadBobLevel) -> MenuItem<MenuAction> {
     MenuItem::GameSlider(GameSlider {
         key: HeadBobLevel::KEY.to_owned(),
         label: "Head bob".to_owned(),
-        min: 0,
-        max: 100,
-        step: 5,
+        min: HeadBobLevel::MIN,
+        max: HeadBobLevel::MAX,
+        step: HeadBobLevel::STEP,
         unit: "%".to_owned(),
         value: level.percent(),
     })

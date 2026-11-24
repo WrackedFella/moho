@@ -32,20 +32,26 @@ impl HeadBobLevel {
     pub const DEFAULT: Self = Self(50);
     /// The name of the saved entry and of the Settings slider.
     pub const KEY: &'static str = "head_bob";
+    /// The lowest percentage.
+    pub const MIN: i32 = 0;
+    /// The highest percentage.
+    pub const MAX: i32 = 100;
+    /// The grid the percentage sits on.
+    pub const STEP: i32 = 5;
 
     /// The level for `percent`, which must be 0 to 100 and a multiple of 5.
     pub fn new(percent: i32) -> Result<Self, HeadBobOutOfRange> {
         match u8::try_from(percent) {
-            Ok(value) if value <= 100 && value % 5 == 0 => Ok(Self(value)),
+            Ok(value) if percent <= Self::MAX && percent % Self::STEP == 0 => Ok(Self(value)),
             _ => Err(HeadBobOutOfRange),
         }
     }
 
     /// The level nearest `percent`, clamped to 0 to 100 and snapped to the grid of 5.
     pub fn nearest(percent: i32) -> Self {
-        let clamped = percent.clamp(0, 100);
+        let clamped = percent.clamp(Self::MIN, Self::MAX);
         // Halves round up, so 22 snaps to 20 and 23 to 25.
-        let snapped = (clamped + 2) / 5 * 5;
+        let snapped = (clamped + Self::STEP / 2) / Self::STEP * Self::STEP;
         Self(u8::try_from(snapped).expect("a clamped percentage fits in a byte"))
     }
 
@@ -57,6 +63,12 @@ impl HeadBobLevel {
     /// The level as a percentage.
     pub fn percent(self) -> i32 {
         i32::from(self.0)
+    }
+}
+
+impl std::fmt::Display for HeadBobLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} %", self.0)
     }
 }
 
@@ -91,7 +103,7 @@ impl Bob {
     #[must_use]
     pub fn offset(self, level: HeadBobLevel, yaw: f32) -> Vec3 {
         let scale = self.amplitude * level.fraction();
-        let (sin, _) = self.phase.sin_cos();
+        let sin = self.phase.sin();
         Vec3::new(0.0, -DIP * scale * sin * sin, 0.0) + lean_offset(yaw, SWAY * scale * sin)
     }
 

@@ -924,7 +924,7 @@ impl SearchlightGame {
                 ConsoleCommand::Simple(SimpleArg::Set(on)) => self.simple = on,
                 ConsoleCommand::RoundGravity(scale) => self.round_gravity = scale,
                 ConsoleCommand::HeadBob(HeadBobArg::Show) => {
-                    let text = format!("Head bob: {} %", self.head_bob.percent());
+                    let text = format!("Head bob: {}", self.head_bob);
                     self.stage.shell().console_mut().print(&text);
                 }
                 ConsoleCommand::HeadBob(HeadBobArg::Set(level)) => {
