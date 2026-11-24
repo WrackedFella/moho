@@ -10,8 +10,6 @@ use flagstone_game::colony::MarkChange;
 use flagstone_game::controller::{
     CameraMode, ControllerInput, EDGE_PAN_MARGIN_PX, controller_to_camera, edge_pan_axes,
 };
-#[cfg(test)]
-use flagstone_game::raycast::raycast_surface;
 use flagstone_game::raycast::raycast_surface_below;
 use flagstone_game::selection::{PAWN_HALF_EXTENTS, PLAYER_PAWN, pawn_aabb, pick_pawn};
 use flagstone_ui::actions::StrategyAction;
@@ -3073,6 +3071,7 @@ mod tests {
         use super::pointer_select::{app_over_flat_ground, click_on, ground_at};
         use super::*;
         use crate::app::input_state::Designation;
+        use flagstone_game::raycast::raycast_surface;
         use flagstone_ui::overlays::HudIntents;
         use glam::Vec3;
         use moho_core::events::AudioEvent;
