@@ -559,6 +559,24 @@ mod tests {
     }
 
     #[test]
+    fn a_master_volume_overwrites_the_stored_one_and_survives_the_ini_text() {
+        let mut prefs = Prefs::default();
+        *prefs.master_volume_mut() = 3.0;
+        let mut staged = EngineSettings::from_prefs(&prefs);
+        staged.set_slider(EngineSetting::MasterVolume, 10.0);
+        staged.write_to(&mut prefs);
+        let overwritten = prefs.master_volume();
+        staged.set_slider(EngineSetting::MasterVolume, 7.5);
+        staged.write_to(&mut prefs);
+
+        let (reloaded, issues) = Prefs::parse(&prefs.to_ini_string());
+
+        assert_eq!(overwritten, 10.0);
+        assert_eq!(issues, vec![]);
+        assert_eq!(EngineSettings::from_prefs(&reloaded).master_volume, 7.5);
+    }
+
+    #[test]
     fn a_staged_master_volume_snaps_shows_and_is_written_to_prefs() {
         let mut prefs = Prefs::default();
         let mut staged = EngineSettings::from_prefs(&prefs);

@@ -199,6 +199,26 @@ mod tests {
     }
 
     #[test]
+    fn from_prefs_clamps_a_master_volume_above_the_scale_to_full() {
+        let mut prefs = prefs_with(8.0, 8.0, 8.0, 8.0);
+        *prefs.master_volume_mut() = 25.0;
+
+        let settings = AudioSettings::from_prefs(&prefs);
+
+        assert_volumes(&settings, [0.8, 0.8, 0.8, 0.8]);
+    }
+
+    #[test]
+    fn from_prefs_clamps_a_negative_master_volume_to_silence() {
+        let mut prefs = prefs_with(8.0, 8.0, 8.0, 8.0);
+        *prefs.master_volume_mut() = -3.0;
+
+        let settings = AudioSettings::from_prefs(&prefs);
+
+        assert_volumes(&settings, [0.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
     fn from_prefs_clamps_out_of_range_values() {
         let settings = AudioSettings::from_prefs(&prefs_with(25.0, -3.0, 11.0, 100.0));
 
