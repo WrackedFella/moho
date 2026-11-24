@@ -23,3 +23,7 @@
 .pr.base = "main"	ineligible: base is main, not dev
 .pr.draft = true	ineligible: PR is open, draft
 .files = []	ineligible: no changed files listed
+.reviews += [{"login": "copilot-pull-request-reviewer[bot]", "assoc": "NONE", "state": "COMMENTED", "commit_id": "aaa", "submitted_at": "2026-11-21T09:00:00Z", "head": "Pull request overview"}] | .comments += [{"login": "Copilot", "assoc": "NONE", "created_at": "2026-11-21T09:00:00Z"}]	eligible glue
+.comments += [{"login": "Copilot", "assoc": "NONE", "created_at": "2026-11-21T12:00:00Z"}]	ineligible: advisory comment from Copilot after the review
+.comments += [{"login": "Copilot", "assoc": "NONE", "created_at": "2026-11-21T09:00:00Z"}] | .advisory = []	ineligible: comment from Copilot (NONE), not a repository member
+.comments += [{"login": "Copilot", "assoc": "NONE"}]	ineligible: advisory comment from Copilot after the review
