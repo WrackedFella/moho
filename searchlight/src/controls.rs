@@ -31,7 +31,8 @@ pub struct ControlsDraft {
 /// What happened to a captured input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Capture {
-    /// The action's primary slot now holds the plain press of the input.
+    /// The action's primary slot now holds the plain press of the input, or the action already
+    /// held it and keeps it where it was.
     Set,
     /// Another action already holds that binding; nothing changed.
     InUse { by: SearchlightAction },
@@ -76,8 +77,8 @@ impl ControlsDraft {
             .map_or([None, None], |row| row.slots)
     }
 
-    /// Puts the plain press of `input` in `action`'s primary slot unless it is reserved or another
-    /// action holds it.
+    /// Puts the plain press of `input` in `action`'s primary slot unless it is reserved, another
+    /// action holds it, or `action` already holds it in any slot.
     pub fn capture(&mut self, action: SearchlightAction, input: Input) -> Capture {
         let binding = Binding::from(input);
         if binding.is_protected() {
@@ -90,11 +91,11 @@ impl ControlsDraft {
         {
             return Capture::InUse { by: other.action };
         }
-        if let Some(row) = self.rows.iter_mut().find(|row| row.action == action) {
-            if row.slots[1] == Some(binding) {
-                row.slots[1] = None;
-            }
-            row.rest.retain(|held| *held != binding);
+        if let Some(row) = self
+            .rows
+            .iter_mut()
+            .find(|row| row.action == action && !row.holds(binding))
+        {
             row.slots[0] = Some(binding);
         }
         Capture::Set
@@ -262,16 +263,14 @@ mod tests {
     }
 
     #[test]
-    fn capturing_an_input_the_action_holds_in_another_slot_never_duplicates_it() {
+    fn capturing_an_input_the_action_already_holds_changes_nothing() {
         let mut bindings = defaults();
-        bindings.set(
-            SearchlightAction::Jump,
-            vec![
-                Binding::key(Key::Space),
-                Binding::key(Key::X),
-                Binding::key(Key::Y),
-            ],
-        );
+        let held = vec![
+            Binding::key(Key::Space),
+            Binding::key(Key::X),
+            Binding::key(Key::Y),
+        ];
+        bindings.set(SearchlightAction::Jump, held.clone());
         let mut from_secondary = ControlsDraft::new(&bindings);
         let mut from_rest = ControlsDraft::new(&bindings);
 
@@ -279,16 +278,8 @@ mod tests {
         let by_rest = from_rest.capture(SearchlightAction::Jump, Input::Key(Key::Y));
 
         assert_eq!((by_secondary, by_rest), (Capture::Set, Capture::Set));
-        let after_secondary = from_secondary.bindings();
-        let after_rest = from_rest.bindings();
-        assert_eq!(
-            after_secondary.get(SearchlightAction::Jump),
-            [Binding::key(Key::X), Binding::key(Key::Y)]
-        );
-        assert_eq!(
-            after_rest.get(SearchlightAction::Jump),
-            [Binding::key(Key::Y), Binding::key(Key::X)]
-        );
+        assert_eq!(from_secondary.bindings().get(SearchlightAction::Jump), held);
+        assert_eq!(from_rest.bindings().get(SearchlightAction::Jump), held);
     }
 
     #[test]
