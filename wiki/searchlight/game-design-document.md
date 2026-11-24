@@ -247,6 +247,8 @@ Each system states the question its prototype must answer, the design, and its c
 | 4 (ceiling) | **Marksman** | Heart rate and breath sway the aim, steadied by holding breath and by posture (Sniper Elite's realistic preset without its assists) | Phase 5 |
 
 - **Where it is felt:** in the arena a rifle round drops about 6 cm at 100 m, so tier 1 shows as leading a runner (about 0.7 m at 100 m), ricochets and weak pistols at range. Drop becomes a decision past 200 m, on the range and on the larger hand-made mission maps (§4.13), where long sightlines make tiers 2 and 3 matter. A **gravity scale** is a tuning knob so drop can be read on short maps.
+- **Impacts are seen:** from Phase 1.3 a round in flight is drawn as a tracer and leaves a plain mark where it strikes a world surface, so spread, drop and a bounce can be read. Later: marks and impact sounds by surface material (tier 2, Phase 3), and visible wound sites on characters where they were hit (with the wounds work, §4.7, Phase 4).
+- **Friendly fire:** an enemy round wounds anyone it reaches, other enemies included, and an enemy holds fire while an ally blocks its line to the target (Phase 1.3).
 - **Cut lines:** spin drift, Coriolis, temperature and altitude; fragmentation and deformation; more than one ricochet; ricochet off bodies; visible bullet meshes (a tracer is drawn instead); bullets that move loose objects or hit other bullets; rewinding time for shots in co-op.
 
 ## 5 Modes and levels: how maps are made

@@ -1,6 +1,6 @@
 # 0033 — A fired round is sim data stepped once a tick as a cast segment
 
-**Status:** Accepted (Justin, 2026-10-31); lands with the FPS-F15-01 PR, #754
+**Status:** Accepted (Justin, 2026-10-31); lands with the FPS-F15-01 PR, #754. Amended 2026-11-24 (Justin) to follow [0040](0040-a-loaded-save-plays-on-as-if-never-saved.md): rounds in flight are saved
 
 ## Context
 
@@ -47,7 +47,9 @@ ray on the firing tick; from then on Simple is the only hitscan, for every shoot
 - A tracer (FPS-F15-05) reads the rounds' positions after the tick; the sim exposes them then.
 - Penetration (tier 2) continues a step past a strike instead of ending it.
 - Point-blank shots land one tick (16.7 ms) later than hitscan did.
-- Rounds in flight are not saved; a save (Phase 6) taken mid-flight drops them.
+- Rounds in flight, their ids and the ricochet stream are simulation state. Searchlight's first
+  mid-play save (Phase 6) puts them in its state root ([ADR-0040](0040-a-loaded-save-plays-on-as-if-never-saved.md)).
+  A round holds no engine handle: its shooter is a line id.
 - Replays stay exact on one platform. Across platforms they also depend on the aim's `sin`
   and `cos` and on rapier's casts, as hitscan shots already do; this ADR adds no new source.
 - Cost: each round costs one ray a tick while it flies: 2 to 4 ticks to a target in the arena,
