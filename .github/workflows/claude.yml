@@ -180,7 +180,7 @@ jobs:
           # Never fail the run over its own bookkeeping.
           {
             gate=$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE" --jq '.body // ""' |
-              sed -nE 's/.*gate=([a-z]+).*/\1/p; s/^Gate class: *([a-z]+).*/\1/p' | head -n1)
+              scripts/run-record.sh gate-class)
             record=$(GATE_CLASS="$gate" HEAD_SHA=$(git rev-parse HEAD) scripts/run-record.sh record "$EXECUTION_FILE")
             echo "RUN-RECORD $record"
             scripts/run-record.sh table <<<"$record" >> "$GITHUB_STEP_SUMMARY"
