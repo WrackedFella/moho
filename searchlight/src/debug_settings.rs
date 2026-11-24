@@ -3,10 +3,13 @@
 use std::io;
 use std::path::PathBuf;
 
+use moho_app::FULLSCREEN_BINDING;
 use moho_core::prefs::{Prefs, WindowMode};
-use moho_ui_shell::EngineSettings;
+use moho_input::bindings::ActionBindings;
+use moho_ui_shell::{CONSOLE_BINDING, EngineSettings};
 
 use crate::head_bob::HeadBobLevel;
+use crate::input::SearchlightAction;
 
 const GOD_MODE: &str = "god_mode";
 const SIMPLE: &str = "simple";
@@ -91,6 +94,22 @@ impl DebugSettings {
         self.prefs.save_to(&self.path)
     }
 
+    /// Stores the game's action bindings under `[bindings]` and saves the prefs file; the
+    /// `console` and `fullscreen` entries the file holds are kept.
+    ///
+    /// # Errors
+    /// The I/O error if the file cannot be written.
+    pub fn set_bindings(&mut self, bindings: &ActionBindings<SearchlightAction>) -> io::Result<()> {
+        let mut section = bindings.to_section();
+        for reserved in [CONSOLE_BINDING, FULLSCREEN_BINDING] {
+            if let Some(value) = self.prefs.bindings().get(reserved) {
+                section.insert(reserved.to_owned(), value.clone());
+            }
+        }
+        self.prefs.set_bindings(section);
+        self.prefs.save_to(&self.path)
+    }
+
     /// The window mode the prefs hold.
     pub fn window_mode(&self) -> WindowMode {
         self.prefs.window_mode()
@@ -110,7 +129,12 @@ impl DebugSettings {
 mod tests {
     use std::path::Path;
 
+    use moho_app::split_fullscreen_binding;
+    use moho_input::bindings::{Binding, Input, Modifiers};
+    use moho_input::key::{Key, MouseButton};
+
     use super::*;
+    use crate::split_console_binding;
 
     fn settings_at(path: &Path) -> DebugSettings {
         let (prefs, warnings) = Prefs::load_from(path);
@@ -404,6 +428,83 @@ mod tests {
 
         assert!(saved.is_err());
         assert_eq!(settings.head_bob(), level(15));
+    }
+
+    fn rebound() -> ActionBindings<SearchlightAction> {
+        let (mut bindings, warnings) = ActionBindings::load(&std::collections::BTreeMap::new());
+        assert!(warnings.is_empty());
+        bindings.set(SearchlightAction::Reload, vec![Binding::key(Key::T)]);
+        bindings.set(
+            SearchlightAction::Fire,
+            vec![Binding::mouse(MouseButton::Right)],
+        );
+        bindings.set(
+            SearchlightAction::Jump,
+            vec![
+                Binding::key(Key::Space),
+                Binding::key(Key::X).with(Modifiers::CTRL),
+            ],
+        );
+        bindings
+    }
+
+    #[test]
+    fn applied_bindings_load_back_as_main_loads_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config/searchlight.ini");
+        let mut settings = settings_at(&path);
+        let bindings = rebound();
+
+        settings.set_bindings(&bindings).unwrap();
+        let (prefs, warnings) = Prefs::load_from(&path);
+        let (_toggle_keys, without_fullscreen) = split_fullscreen_binding(prefs.bindings());
+        let (_console, game_section) = split_console_binding(&without_fullscreen);
+        let (loaded, game_warnings) = ActionBindings::<SearchlightAction>::load(&game_section);
+
+        assert_eq!(warnings, vec![]);
+        assert_eq!(game_warnings, vec![]);
+        assert_eq!(loaded, bindings);
+    }
+
+    #[test]
+    fn set_bindings_keeps_the_console_and_fullscreen_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("searchlight.ini");
+        let mut prefs = Prefs::default().with_mouse_sensitivity(2.5);
+        prefs.set_bindings(std::collections::BTreeMap::from([
+            ("console".to_owned(), "Backslash".to_owned()),
+            ("fullscreen".to_owned(), "F10".to_owned()),
+            ("jump".to_owned(), "F".to_owned()),
+        ]));
+        prefs.set_debug_value("other_value", "kept").unwrap();
+        let mut settings = DebugSettings::new(prefs, path.clone());
+        let bindings = rebound();
+
+        settings.set_bindings(&bindings).unwrap();
+        let (saved, warnings) = Prefs::load_from(&path);
+        let (toggle_keys, without_fullscreen) = split_fullscreen_binding(saved.bindings());
+        let (console_section, game_section) = split_console_binding(&without_fullscreen);
+        let (loaded, game_warnings) = ActionBindings::<SearchlightAction>::load(&game_section);
+
+        assert_eq!(warnings, vec![]);
+        assert_eq!(toggle_keys, Some(vec![Input::Key(Key::F10)]));
+        assert_eq!(
+            console_section.get("console").map(String::as_str),
+            Some("Backslash")
+        );
+        assert_eq!(game_warnings, vec![]);
+        assert_eq!(loaded, bindings, "the old jump line is replaced");
+        assert_eq!(saved.debug_value("other_value"), Some("kept"));
+        assert_eq!(saved.mouse_sensitivity(), 2.5);
+        assert_eq!(
+            settings
+                .prefs()
+                .bindings()
+                .get("console")
+                .map(String::as_str),
+            Some("Backslash"),
+            "the session keeps the console key too"
+        );
     }
 
     #[test]

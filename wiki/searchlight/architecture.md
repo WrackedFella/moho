@@ -1,12 +1,12 @@
 # Searchlight
 
-**Source:** `searchlight/src/`, `searchlight_rules/src/posture.rs`, `moho_level/src/nav.rs`, `searchlight/assets/`, `searchlight/content/`, `moho_ui_shell/src/`.
+**Source:** `searchlight/src/`, `searchlight_rules/src/posture.rs`, `searchlight_rules/src/accuracy.rs`, `moho_level/src/nav.rs`, `searchlight/assets/`, `searchlight/content/`, `moho_ui_shell/src/`.
 **Decisions:** [ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md),
 [ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md),
 [ADR-0019](../../_todo/adr/0019-navigation-is-an-engine-seam.md).
 
 `searchlight` is the FPS line's engine adapter: a library and the `searchlight` binary. Rules
-(`Rifle`, `Magazine`, `Rig`, `Loadout`, `Body`, `BodyProfile`, `Grade`, `Lean`, `LeanTuning`) and item and kit definitions come from `searchlight_rules`; windowing, loop,
+(`Rifle`, `Magazine`, `Rig`, `Loadout`, `Body`, `BodyProfile`, `Grade`, `Lean`, `LeanTuning`, `Accuracy`, `AccuracyTuning`) and item and kit definitions come from `searchlight_rules`; windowing, loop,
 physics, level loading, input, audio and rendering come from engine crates. It depends on no
 strategy crate ([overview](../architecture/overview.md#2-lines-and-rules)).
 
@@ -25,6 +25,7 @@ flowchart LR
     game --> bob["head_bob.rs<br/>HeadBobLevel, Bob"]
     game --> hud["hud.rs<br/>status wording"]
     game --> menu["menu.rs<br/>Menu, MenuAction"]
+    game --> controls["controls.rs<br/>ControlsDraft"]
     sim --> brain["brain.rs<br/>enemy Brain"]
     sim --> cover["cover.rs<br/>cover choice"]
     sim --> shot["shot.rs<br/>resolve_shot"]
@@ -51,10 +52,11 @@ flowchart LR
 | `wave` | `WaveTuning` (first wave size, growth per wave, points per kill, grade mix; zero size or growth is refused) and `WaveState` (running wave, enemies still to spawn, the wave's grades, score) as plain numbers, no physics; `step` scores and spawns, `call_next` begins the next wave |
 | `mode` | `ArenaMode`: the wave layer over a loaded level. Owns a `SearchlightSim` started empty; on a level that places an enemy spawn it scores kills, applies the use of a control and spawns each wave's enemies, graded by the wave's mix, at free enemy markers; on any other level (`ArenaMode::without_waves`) it has no waves, a use does nothing and `tally()` is `None`. `ArenaMode::for_level` picks by whether the arena has enemy spawns; `has_waves` reports which |
 | `hud` | Text for rifle state, hits, health, death and the wave and score line (omitted without a `Tally`), the use prompt (`use_prompt`); the hit-edge direction; the death overlay |
-| `menu` | The main (Play, Settings, Quit), pause (Resume, Settings, Quit) and settings (the engine's setting rows, the `Head bob` game slider from `head_bob_row`, Apply, Back) screens as `moho_ui_shell::MenuScreen` values (`main_screen`, `pause_screen`, `settings_screen(EngineSettings, HeadBobLevel)`); `MenuAction` is what choosing an item asks the game to do. Focus, hit-testing and drawing belong to the shell's `MenuStack` |
+| `menu` | The main (Play, Settings, Quit), pause (Resume, Settings, Quit) settings (the engine's setting rows, the `Head bob` game slider from `head_bob_row`, Apply, Controls, Back) and Controls (`controls_screen`: one `MenuItem::Control` row per action with its two slots, Apply, Back) screens as `moho_ui_shell::MenuScreen` values (`main_screen`, `pause_screen`, `settings_screen(EngineSettings, HeadBobLevel)`); `MenuAction` is what choosing an item asks the game to do. Focus, hit-testing and drawing belong to the shell's `MenuStack` |
+| `controls` | `ControlsDraft`: the bindings the Controls page edits, as two positional slots per action plus any beyond them, seeded from the live `ActionBindings`. `capture` puts the plain press of an input in an action's primary slot, refusing a protected input (`Capture::Reserved`) or one another action holds (`Capture::InUse`); `bindings` folds the draft back into `ActionBindings`, keeping toggle modes; `label` is an action's player-facing name |
 | `head_bob` | `HeadBobLevel` (the setting: 0 to 100 % on a grid of 5, 50 % by default, stored under `[game]` as `head_bob`) and `Bob`, the view-only footstep state: the phase advances by distance walked (`STEP_LENGTH`), the eye dips (`DIP`) each footstep and sways (`SWAY`) each stride, scaled by walking speed (capped at `MAX_AMPLITUDE`) and the level. The game steps it after the sim, so it never moves the aim ray or the player's hit volumes |
 | `console_commands` | Builds the FPS `Console` from the game's `[bindings]`; the game's own commands register here (`tgm`, `fullscreen`, `grade`, `head_bob`, `simple` and `round_gravity`, parsed into `ConsoleCommand`); `console_for` takes whether the level has waves, and without them `grade` replies "No waves on this level" |
-| `debug_settings` | `DebugSettings`: the loaded `Prefs` and its path; reads and saves the game's `[debug]` values (`god_mode`, `simple`) and the `[game]` head bob (`head_bob`, `set_head_bob`; an absent or unparsable value reads 50 %, an off-grid or out-of-range one snaps to the nearest step); `set_engine_settings` writes the applied `EngineSettings` rows into the prefs and saves, keeping every other value |
+| `debug_settings` | `DebugSettings`: the loaded `Prefs` and its path; reads and saves the game's `[debug]` values (`god_mode`, `simple`) and the `[game]` head bob (`head_bob`, `set_head_bob`; an absent or unparsable value reads 50 %, an off-grid or out-of-range one snaps to the nearest step); `set_engine_settings` writes the applied `EngineSettings` rows into the prefs and saves, keeping every other value; `set_bindings` writes the game's `[bindings]` and saves, keeping the reserved `console` and `fullscreen` entries |
 | `game` | `SearchlightGame`, the `moho_app::Game` implementation: samples look every frame while focused, playing and the console is closed (the camera draws the sim turned by the pending look, and `input::look_to_turn` is the one look mapping for command and camera), samples input, ticks the `ArenaMode`, turns `Feedback` into sound, title status line, hit flash, damage-direction edge, death tint and crosshair; asks the loop to pause while the shell captures input (console open) or a menu shows (main, pause or settings), so the sim freezes instead of ticking with an ignored command; while it does, `command()` still applies console commands but does not end the action-map tick, so the look already shown stays pending and is not lost |
 
 `SearchlightSim` holds no renderer, audio or UI handle, so it runs under `moho_app::HeadlessLoop`.
@@ -95,6 +97,8 @@ row chooses it, hovering focuses, and the wheel scrolls. A choice becomes a `Men
 look, and capture the cursor; `Quit` exits; `Settings` pushes the settings screen, seeded from the saved prefs, and `Back` pops it, discarding unapplied changes. Apply arrives as `MenuEvent::SettingsApplied`: `settings_applied` saves the prefs (a failed save is logged; the values stay for the session), sets the mouse look from them and queues them in `pending_settings`; the next `frame()` runs `apply_engine_settings` (renderer qualities, audio volumes) and switches the window mode through `window_mode_applied` if it differs. The saved settings are queued the same way at construction, so they apply on the first frame. Each main-menu frame hides the HUD and
 title status and draws the stage backdrop instead of the
 arena scene, so the dormant sim is untouched.
+
+Controls (from the settings screen) pushes the Controls page over a `ControlsDraft` of the live bindings; a draft is dropped on Back. Choosing an action's row captures the next input into its primary slot (`captured`); an input another action holds leaves both unchanged and puts a note on the row. `ApplyControls` (`apply_controls`) saves the draft's bindings through `DebugSettings::set_bindings` (a failed save is logged; the bindings stay live for the session) and rebuilds the `ActionMap` with `build_action_map`, so they apply without a restart. Escape and the console key never reach capture.
 
 Escape in play (when the console did not take it) switches to `Paused`: it swaps in the pause menu, drops held
 input, pending edges and look, and frees the cursor. The paused frame keeps the arena scene, hides the HUD and
@@ -190,6 +194,20 @@ outside the `FlightBounds` (the arena's mesh box plus `FLIGHT_MARGIN`). Nothing 
 the edge of the bounds; `round_gravity` (console, session only, 1 at launch) scales round gravity and
 never the world's. Rounds in flight are not saved, and a restart clears them. Enemy shots stay one ray on
 the firing tick until FPS-F15-03.
+
+The player's shot leaves in a cone, not exactly along the view. `searchlight_rules::accuracy` owns the rules:
+`AccuracyTuning` (`walk_spread` radians at walking speed, `settle_seconds`; set in `tuning::tuning`) and
+`Accuracy`, stepped once per tick by `SearchlightSim::step_accuracy` from the ground speed over `max_speed`
+(capped at 1.5; an airborne player reads at least 1.0). The spread is `walk_spread * ratio`, rising at once and
+falling linearly, so it closes from `walk_spread` to nothing in `settle_seconds`. `SearchlightSim::player_spread`
+gives the half-angle. On a pull, `SearchlightSim::scattered` draws two values from the `searchlight.player_spread`
+`SimRng` stream and `disc_offset` turns them into a point uniform in a disc of radius `tan(spread)`, applied along
+the right and up of `aim_basis` (shared with enemy aim error); a spread of zero leaves along the view and draws
+nothing. Both the round and the `simple` ray use the scattered direction.
+
+`SearchlightGame::frame` hands `player_spread` to the crosshair, whose gap is the resting gap plus the cone's
+circle on screen by a pinhole projection (`Crosshair::gap`), so a settled crosshair is unchanged and the gap
+opens with spread.
 
 Each ray or step segment goes through one route:
 

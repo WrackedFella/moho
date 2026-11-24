@@ -2,6 +2,7 @@
 
 use crate::app::event_loop::{EventProcessor, FrameProcessor, GenerationProcessor};
 use crate::app::input_state::Designation;
+use crate::app::view_level;
 use crate::game_state::GameState;
 use crate::{App, RenderRequest};
 use flagstone_game::actors::Cube;
@@ -9,10 +10,11 @@ use flagstone_game::colony::MarkChange;
 use flagstone_game::controller::{
     CameraMode, ControllerInput, EDGE_PAN_MARGIN_PX, controller_to_camera, edge_pan_axes,
 };
-use flagstone_game::raycast::raycast_surface;
+use flagstone_game::raycast::{SurfaceHit, raycast_surface_below};
 use flagstone_game::selection::{PAWN_HALF_EXTENTS, PLAYER_PAWN, pawn_aabb, pick_pawn};
 use flagstone_ui::actions::StrategyAction;
 use flagstone_ui::console_commands::StrategyConsoleCommand;
+use flagstone_voxel::VoxelGrid;
 use moho_core::pointer::{Ray, screen_ray};
 use moho_input::action_map;
 use moho_input::bindings::Input;
@@ -55,10 +57,39 @@ pub struct StrategyCommand {
     /// The world ray under the pointer when the same press ordered a mining mark, in place of
     /// `select`, because the mining designation was active.
     pub mark: Option<Ray>,
+    /// The view-height ceiling the click was made under: the pick treats blocks at or above
+    /// it as air. Travels in the command so a replayed click marks what the player saw.
+    pub ceiling: Option<i32>,
     /// Strategy console commands typed since the last tick.
     pub console: Vec<StrategyConsoleCommand>,
     /// Engine console commands typed since the last tick.
     pub engine: Vec<EngineCommand>,
+}
+
+/// How far a pointer ray reaches, measured from its origin.
+///
+/// Under a ceiling the reach counts from where the ray gets down to the cut plane, because
+/// the camera follows the uncut ground and the kept ground can lie far below it. The extra
+/// reach is capped at `POINTER_RAY_RANGE`, so a near-horizontal ray cannot make the walk
+/// cross millions of empty cells. The cap covers the world's tallest cut: terrain reaches
+/// 144 blocks and the strategy camera's rays descend 1 in √3, so at most about 250 units.
+fn pointer_range(ray: Ray, ceiling: Option<i32>) -> f32 {
+    let descent = ceiling
+        .filter(|&ceiling| ray.direction.y < 0.0 && ray.origin.y > ceiling as f32)
+        .map_or(0.0, |ceiling| {
+            (ray.origin.y - ceiling as f32) / -ray.direction.y
+        });
+    POINTER_RAY_RANGE + descent.min(POINTER_RAY_RANGE)
+}
+
+fn pick_surface(grid: &VoxelGrid, ray: Ray, ceiling: Option<i32>) -> Option<SurfaceHit> {
+    raycast_surface_below(
+        grid,
+        ray.origin,
+        ray.direction,
+        pointer_range(ray, ceiling),
+        ceiling,
+    )
 }
 
 /// Yaw and pitch deltas for a look. Mouse motion is fed unnegated, so look is inverted here.
@@ -138,9 +169,20 @@ impl App {
             toggle_view: frame.pressed(StrategyAction::Possess),
             select,
             mark,
+            // Only a click reads the ceiling; sampling it walks every loaded chunk.
+            ceiling: (select.is_some() || mark.is_some())
+                .then(|| self.view_ceiling())
+                .flatten(),
             console: Vec::new(),
             engine: Vec::new(),
         }
+    }
+
+    /// The live view ceiling; `None` without a world or without a cut in the strategy view.
+    fn view_ceiling(&self) -> Option<i32> {
+        let extent = view_level::layer_extent(self)?;
+        self.view_level
+            .ceiling(self.simulation.camera_mode(), extent)
     }
 
     /// Where one key or mouse button press or release goes. The console sees it before egui or
@@ -214,12 +256,7 @@ impl App {
         if let Some(ray) = command.select
             && let Some(light_system) = &self.light_system
         {
-            self.pointer_hit = raycast_surface(
-                light_system.grid(),
-                ray.origin,
-                ray.direction,
-                POINTER_RAY_RANGE,
-            );
+            self.pointer_hit = pick_surface(light_system.grid(), ray, command.ceiling);
             tracing::debug!(hit = ?self.pointer_hit, "Pointer ray cast");
             let pawn = (PLAYER_PAWN, pawn_aabb(self.simulation.position()));
             let picked = pick_pawn(ray, [pawn], self.pointer_hit.map(|hit| hit.distance));
@@ -230,7 +267,7 @@ impl App {
             }
         }
         if let Some(ray) = command.mark {
-            self.apply_mark(ray);
+            self.apply_mark(ray, command.ceiling);
         }
     }
 
@@ -256,16 +293,11 @@ impl App {
 
     /// Toggles the mining mark on the block the ray hits and plays the cue for it; a ray that
     /// hits nothing changes nothing. Uses no `dt`, so it can run while the simulation is paused.
-    fn apply_mark(&mut self, ray: Ray) {
+    fn apply_mark(&mut self, ray: Ray, ceiling: Option<i32>) {
         let Some(light_system) = &self.light_system else {
             return;
         };
-        let Some(hit) = raycast_surface(
-            light_system.grid(),
-            ray.origin,
-            ray.direction,
-            POINTER_RAY_RANGE,
-        ) else {
+        let Some(hit) = pick_surface(light_system.grid(), ray, ceiling) else {
             return;
         };
         let pos = hit.block_pos.to_array();
@@ -691,8 +723,9 @@ impl moho_app::Game for App {
         let clock = ctx.clock();
         frame_processor.update_hud_data(self, clock, ctx.tick_length);
         frame_processor.update_cut_caps(self);
+        let ceiling = self.view_ceiling();
         self.designation_markers
-            .sync(&self.colony.marks, self.scene.markers_mut());
+            .sync(&self.colony.marks, ceiling, self.scene.markers_mut());
         if let Some(renderer) = ctx.renderer() {
             frame_processor.update_lighting(self, clock, &mut *renderer);
             self.render_scene(renderer, camera);
@@ -3040,6 +3073,7 @@ mod tests {
         use super::pointer_select::{app_over_flat_ground, click_on, ground_at};
         use super::*;
         use crate::app::input_state::Designation;
+        use flagstone_game::raycast::raycast_surface;
         use flagstone_ui::overlays::HudIntents;
         use glam::Vec3;
         use moho_core::events::AudioEvent;
@@ -3390,6 +3424,225 @@ mod tests {
             assert_eq!(marked(&app).len(), 74, "the mined block's mark is gone");
             assert_eq!(solid_left, 74, "every remaining mark is still a block");
             assert_eq!(fills(&mut app).len(), 74, "and so is its marker");
+        }
+    }
+
+    mod view_ceiling {
+        use super::pointer_select::{VIEWPORT, click_on};
+        use super::*;
+        use crate::app::cut_caps::tests::ground_app;
+        use crate::app::input_state::Designation;
+        use crate::app::view_level;
+        use glam::Vec3;
+
+        /// The loaded extent's top: choosing it clears the cut.
+        const TOP: i32 = 32;
+        const LEVEL: i32 = 4;
+
+        /// Ground over blocks y `0..=27`, in the strategy view, the view lowered to `LEVEL`.
+        fn lowered_app() -> App {
+            let mut app = ground_app();
+            app.game_state = GameState::Playing;
+            app.simulation.set_camera_mode(CameraMode::Isometric);
+            view_level::update(&mut app, Some(LEVEL));
+            let eye = Vec3::new(8.0, 50.0, 30.0);
+            let view =
+                glam::camera::rh::view::look_at_mat4(eye, Vec3::new(8.0, 27.0, 8.0), Vec3::Y);
+            let proj = glam::camera::rh::proj::directx::perspective(
+                std::f32::consts::FRAC_PI_3,
+                16.0 / 9.0,
+                0.1,
+                500.0,
+            );
+            app.camera = (view, proj, eye);
+            app.viewport = VIEWPORT;
+            app
+        }
+
+        fn down_at(x: f32, z: f32) -> Ray {
+            Ray {
+                origin: Vec3::new(x, 60.0, z),
+                direction: Vec3::NEG_Y,
+            }
+        }
+
+        fn marked(app: &App) -> Vec<[i32; 3]> {
+            app.colony.marks.iter().map(|(pos, _)| pos).collect()
+        }
+
+        fn mark_with(ceiling: Option<i32>) -> StrategyCommand {
+            StrategyCommand {
+                mark: Some(down_at(8.3, 9.1)),
+                ceiling,
+                ..StrategyCommand::default()
+            }
+        }
+
+        fn click_and_sample(app: &mut App) -> StrategyCommand {
+            click_on(app, Vec3::new(8.0, 27.0, 8.0));
+            Game::command(app)
+        }
+
+        #[test]
+        fn with_the_view_lowered_a_mark_click_marks_the_visible_layer() {
+            let mut app = lowered_app();
+
+            tick_app(&mut app, &mark_with(Some(LEVEL)));
+
+            assert_eq!(marked(&app), [[8, LEVEL - 1, 9]]);
+        }
+
+        #[test]
+        fn with_the_view_lowered_a_second_click_cancels_the_mark_below() {
+            let mut app = lowered_app();
+            tick_app(&mut app, &mark_with(Some(LEVEL)));
+            let after_first = marked(&app);
+
+            tick_app(&mut app, &mark_with(Some(LEVEL)));
+
+            assert_eq!(after_first, [[8, LEVEL - 1, 9]]);
+            assert!(marked(&app).is_empty(), "the second click cancels it");
+        }
+
+        #[test]
+        fn with_the_view_lowered_the_pointer_hit_is_below_the_cut() {
+            let mut app = lowered_app();
+            let command = StrategyCommand {
+                select: Some(down_at(8.3, 9.1)),
+                ceiling: Some(LEVEL),
+                ..StrategyCommand::default()
+            };
+            view_level::update(&mut app, Some(TOP));
+
+            tick_app(&mut app, &command);
+
+            let hit = app.pointer_hit.expect("the click found the kept ground");
+            assert_eq!(hit.block_pos.to_array(), [8, LEVEL - 1, 9]);
+            assert!((hit.position.y - LEVEL as f32).abs() < 0.01, "{hit:?}");
+        }
+
+        #[test]
+        fn a_mark_uses_the_ceiling_its_command_carries_not_the_live_slider() {
+            let cases = [
+                (Some(LEVEL), TOP, [8, LEVEL - 1, 9]),
+                (None, LEVEL, [8, 27, 9]),
+            ];
+
+            for (carried, live, expected) in cases {
+                let mut app = lowered_app();
+                view_level::update(&mut app, Some(live));
+
+                tick_app(&mut app, &mark_with(carried));
+
+                assert_eq!(marked(&app), [expected], "carried {carried:?}, live {live}");
+            }
+        }
+
+        #[test]
+        fn the_frame_hides_marks_above_the_live_cut_and_shows_them_again() {
+            let mut app = lowered_app();
+            app.colony.marks.toggle([8, 27, 9]);
+            let drawn = |app: &mut App| app.scene.markers_mut().draws(Vec3::ZERO).fills.len();
+            view_level::update(&mut app, Some(LEVEL));
+
+            run_frame(&mut app, &mut FakeRenderer::default());
+            let lowered = drawn(&mut app);
+            view_level::update(&mut app, Some(TOP));
+            run_frame(&mut app, &mut FakeRenderer::default());
+            let raised = drawn(&mut app);
+
+            assert_eq!(lowered, 0, "the mark above the cut is not drawn");
+            assert_eq!(raised, 1, "raising the view draws it again");
+        }
+
+        #[test]
+        fn a_deep_cut_is_still_in_pointer_range_of_the_camera_above_the_surface() {
+            let mut app = lowered_app();
+            app.light_system
+                .as_mut()
+                .expect("light system")
+                .grid_mut()
+                .mutator()
+                .fill_region(glam::IVec3::new(0, 28, 0), glam::IVec3::new(15, 170, 15), 0);
+            let direction = Vec3::new(-1.0, -1.0, -1.0).normalize();
+            let target = Vec3::new(8.3, LEVEL as f32, 9.1);
+            let origin = target - direction * ((195.0 - LEVEL as f32) / -direction.y);
+            let command = StrategyCommand {
+                mark: Some(Ray { origin, direction }),
+                ceiling: Some(LEVEL),
+                ..StrategyCommand::default()
+            };
+
+            tick_app(&mut app, &command);
+
+            assert_eq!(marked(&app), [[8, LEVEL - 1, 9]]);
+        }
+
+        #[test]
+        fn a_near_horizontal_ray_under_a_ceiling_has_a_bounded_reach() {
+            let at = |origin_y: f32, dir_y: f32| Ray {
+                origin: Vec3::new(0.0, origin_y, 0.0),
+                direction: Vec3::new(1.0, dir_y, 0.0),
+            };
+            let rays = [
+                at(100.0, -1e-6),
+                at(100.0, -f32::MIN_POSITIVE),
+                at(100.0, -0.0),
+                at(100.0, 0.0),
+                at(100.0, f32::NAN),
+                at(f32::NAN, -1.0),
+                at(f32::INFINITY, -1e-6),
+                at(100.0, f32::NEG_INFINITY),
+            ];
+
+            for ray in rays {
+                let range = pointer_range(ray, Some(4));
+
+                assert!(range.is_finite(), "{ray:?}: {range}");
+                assert!(
+                    (POINTER_RAY_RANGE..=2.0 * POINTER_RAY_RANGE).contains(&range),
+                    "{ray:?}: {range}"
+                );
+            }
+        }
+
+        #[test]
+        fn a_ray_without_a_ceiling_or_above_the_cut_keeps_the_plain_range() {
+            let down = Ray {
+                origin: Vec3::new(0.0, 3.0, 0.0),
+                direction: Vec3::NEG_Y,
+            };
+
+            assert_eq!(pointer_range(down, Some(4)), POINTER_RAY_RANGE);
+            assert_eq!(
+                pointer_range(
+                    Ray {
+                        origin: Vec3::splat(50.0),
+                        ..down
+                    },
+                    None
+                ),
+                POINTER_RAY_RANGE
+            );
+        }
+
+        #[test]
+        fn sampling_a_click_records_the_view_ceiling() {
+            let mut app = lowered_app();
+            let select = click_and_sample(&mut app);
+            app.input.designation = Designation::Mine;
+            let mark = click_and_sample(&mut app);
+            view_level::update(&mut app, Some(TOP));
+            let uncut = click_and_sample(&mut app);
+            view_level::update(&mut app, Some(LEVEL));
+            app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            let possessed = Game::command(&mut app);
+
+            assert!(select.select.is_some() && mark.mark.is_some() && uncut.mark.is_some());
+            assert_eq!(select.ceiling, Some(LEVEL), "a select click");
+            assert_eq!(mark.ceiling, Some(LEVEL), "a mark click");
+            assert_eq!(uncut.ceiling, None, "no cut");
+            assert_eq!(possessed.ceiling, None, "first person");
         }
     }
 

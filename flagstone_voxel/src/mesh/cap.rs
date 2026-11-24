@@ -7,9 +7,8 @@ use super::super::face::FaceDirection;
 use super::super::grid::VoxelGrid;
 use super::VoxelMesh;
 use super::hybrid::{
-    COARSE_STRIDE, ChunkContent, DENSITY_SAMPLE_TO_WORLD, HybridMeshGenerator, MeshPlan,
-    coarse_cell_solid, coarse_face_material, is_meshed_blocky_in_mixed, mesh_plan,
-    sample_face_material,
+    COARSE_STRIDE, DENSITY_SAMPLE_TO_WORLD, HybridMeshGenerator, coarse_cell_solid,
+    coarse_face_material, is_fine_lod, is_structure_at, sample_face_material,
 };
 use super::marching_cubes::{MarchingCubes, cube_index, nearest_solid_corner};
 use glam::{IVec3, Vec2, Vec3};
@@ -49,31 +48,21 @@ pub fn cut_cap_mesh(grid: &VoxelGrid, chunk_pos: IVec3, lod: u8, cut: f32) -> Vo
     let base = chunk_pos * chunk_size;
     let probe = cut + CAP_PROBE;
     let mut cap = CapBuilder::new(cut);
-    match mesh_plan(grid, chunk_pos, chunk_size, lod) {
-        MeshPlan::Fine(ChunkContent::Empty) => {}
-        MeshPlan::Fine(ChunkContent::AllSmooth) => {
-            cap_smooth_cells(grid, chunk_pos, chunk_size, false, probe, &mut cap);
-        }
-        MeshPlan::Fine(ChunkContent::AllBlocky) => {
-            cap_blocks(grid, base, chunk_size, probe, |_| true, &mut cap);
-        }
-        MeshPlan::Fine(ChunkContent::Mixed) => {
-            cap_smooth_cells(grid, chunk_pos, chunk_size, true, probe, &mut cap);
-            let blocky = |pos| is_meshed_blocky_in_mixed(grid, pos);
-            cap_blocks(grid, base, chunk_size, probe, blocky, &mut cap);
-        }
-        MeshPlan::Coarse => cap_coarse_cells(grid, base, chunk_size, probe, &mut cap),
+    if is_fine_lod(lod) {
+        cap_terrain_cells(grid, chunk_pos, chunk_size, probe, &mut cap);
+        cap_structures(grid, base, chunk_size, probe, &mut cap);
+    } else {
+        cap_coarse_cells(grid, base, chunk_size, probe, &mut cap);
     }
     cap.mesh
 }
 
 /// Caps the marching-cubes cells of the one cell row whose height span `(bottom, top]`
-/// holds `probe`, from the same density field the chunk's smooth mesh was built from.
-fn cap_smooth_cells(
+/// holds `probe`, from the same density field the chunk's terrain mesh was built from.
+fn cap_terrain_cells(
     grid: &VoxelGrid,
     chunk_pos: IVec3,
     chunk_size: i32,
-    only_smooth: bool,
     probe: f32,
     cap: &mut CapBuilder,
 ) {
@@ -89,12 +78,7 @@ fn cap_smooth_cells(
     }
     let height = field_y - row;
     let y = row as usize;
-    let field = HybridMeshGenerator::create_selective_density_field(
-        grid,
-        chunk_pos,
-        chunk_size,
-        only_smooth,
-    );
+    let field = HybridMeshGenerator::terrain_density_field(grid, chunk_pos, chunk_size);
     for x in 1..=chunk_size as usize {
         for z in 1..=chunk_size as usize {
             let cube_index = cube_index(&field, x, y, z);
@@ -118,13 +102,12 @@ fn cap_smooth_cells(
     }
 }
 
-/// Caps every block in the chunk's range that spans `probe` and passes `meshed_blocky`.
-fn cap_blocks(
+/// Caps every structure block in the chunk's range that spans `probe`.
+fn cap_structures(
     grid: &VoxelGrid,
     base: IVec3,
     chunk_size: i32,
     probe: f32,
-    meshed_blocky: impl Fn(IVec3) -> bool,
     cap: &mut CapBuilder,
 ) {
     let y = probe.floor() as i32;
@@ -134,8 +117,10 @@ fn cap_blocks(
     for x in base.x..base.x + chunk_size {
         for z in base.z..base.z + chunk_size {
             let pos = IVec3::new(x, y, z);
-            if grid.is_solid_at(pos) && meshed_blocky(pos) {
-                let material = grid.face_material_at(pos).expect("guarded by is_solid_at");
+            if is_structure_at(grid, pos) {
+                let material = grid
+                    .face_material_at(pos)
+                    .expect("is_structure_at implies a block is stored at pos");
                 cap.square(Vec2::new(x as f32, z as f32), 1, material);
             }
         }
@@ -1109,6 +1094,53 @@ mod tests {
         }
     }
 
+    /// An all-terrain chunk draws a neighbouring chunk's structure block as air, so its cap
+    /// must treat that cell as open exactly as its walls do.
+    #[test]
+    fn an_all_terrain_chunk_caps_a_neighbours_structure_as_air() {
+        let structure = IVec3::new(16, 4, 8);
+        let ground = || {
+            let mut grid = VoxelGrid::new(CHUNK);
+            fill(&mut grid, [0, 0, 0], [31, 7, 15], STONE);
+            grid
+        };
+        let mut with_structure = ground();
+        with_structure.place_block(structure, BLOCKY, None);
+        let mut without_structure = ground();
+        assert!(without_structure.clear_block(structure));
+
+        let capped = cap(&with_structure, 4.5);
+        let reference = cap(&without_structure, 4.5);
+
+        assert!(
+            !reference.indices.is_empty(),
+            "the all-terrain chunk is capped at the cut"
+        );
+        assert_eq!(capped.vertices, reference.vertices, "cap vertices");
+        assert_eq!(capped.indices, reference.indices, "cap indices");
+        assert_eq!(capped.material, reference.material, "cap materials");
+    }
+
+    /// A chunk holding only a structure block still caps the terrain cells it owns at its
+    /// high-x face, where the ground of the next chunk starts.
+    #[test]
+    fn an_all_structure_chunk_caps_the_ground_beside_it() {
+        let mut grid = VoxelGrid::new(CHUNK);
+        fill(&mut grid, [16, 0, 0], [31, 7, 15], STONE);
+        grid.place_block(IVec3::new(4, 0, 4), BLOCKY, None);
+
+        let mesh = cap(&grid, 4.5);
+
+        let strip: Vec<usize> = (0..mesh.vertices.len())
+            .filter(|&i| mesh.vertices[i][0] > 15.0)
+            .collect();
+        assert!(!strip.is_empty(), "the ground beside the chunk is capped");
+        assert!(
+            strip.iter().all(|&i| mesh.material[i] == STONE),
+            "the strip is terrain"
+        );
+    }
+
     #[test]
     fn a_probe_on_the_surface_of_flat_ground_caps_nothing() {
         let mut grid = VoxelGrid::new(CHUNK);
@@ -1760,19 +1792,6 @@ mod tests {
         fn caps_tile_across_chunk_borders((field, blocky, cut) in tiling_cases()) {
             let grid = field.grid(if blocky { BLOCKY } else { STONE });
             let h = f64::from(cut) + f64::from(CAP_PROBE);
-            // The mesher draws nothing for an Empty chunk even when its padding holds
-            // solid, a crack at -x/-y/-z faces that caps do not repair.
-            if !blocky {
-                let owner_layer = ((h - 0.5) / 16.0).floor() as i32;
-                for (x, z) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
-                    let pos = IVec3::new(x, owner_layer, z);
-                    let (content, _, _) = HybridMeshGenerator::analyze_chunk(&grid, pos, CHUNK);
-                    let padding_solid = (0..18).any(|i| (0..18).any(|j| (0..18).any(|k| {
-                        grid.is_solid_at(pos * CHUNK + IVec3::new(i, j, k) - IVec3::ONE)
-                    })));
-                    prop_assume!(content != ChunkContent::Empty || !padding_solid);
-                }
-            }
             let expected = if blocky {
                 let layer = h.floor() as i32;
                 (0..32).flat_map(|x| (0..32).map(move |z| (x, z)))

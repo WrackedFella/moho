@@ -9,7 +9,7 @@ use glam::{Mat4, Quat, Vec3};
 use moho_app::{Event, EventContext, FrameContext, Game, InitContext, TickContext, WindowMode};
 use moho_audio::AudioSystem;
 use moho_input::action_map::{ActionMap, handle_device_event, handle_window_event};
-use moho_input::bindings::Input;
+use moho_input::bindings::{Binding, Input};
 use moho_input::key::Key;
 use moho_physics::{CharacterBody, CharacterState, first_person_view};
 use moho_render_api::{
@@ -25,18 +25,23 @@ use winit::window::{CursorGrabMode, Window};
 use moho_core::prefs::Prefs;
 use moho_ui_shell::host::input_of;
 use moho_ui_shell::{
-    Anchor, EngineSettings, MenuEvent, Routing, ScreenText, UiLayers, UiShell,
+    Anchor, EngineSettings, MenuEvent, Routing, ScreenText, Slot, UiLayers, UiShell,
     apply_engine_command, apply_engine_settings,
 };
 
 use crate::arena::{box_mesh, control_mesh_id, oriented_box_mesh};
 use crate::console_commands::{self, ConsoleCommand, GodModeArg, HeadBobArg, SimpleArg};
+use crate::controls::{Capture, ControlsDraft, label};
 use crate::debug_settings::DebugSettings;
 use crate::head_bob::{Bob, HeadBobLevel};
 use crate::hud::Edge;
-use crate::input::{SearchlightAction, SearchlightCommand, look_from, look_to_turn, resolve_lean};
+use crate::input::{
+    SearchlightAction, SearchlightCommand, build_action_map, look_from, look_to_turn, resolve_lean,
+};
 use crate::lean::{lean_offset, rolled_view_matrix};
-use crate::menu::{MenuAction, main_screen, pause_screen, settings_screen};
+use crate::menu::{
+    MenuAction, controls_rows, controls_screen, main_screen, pause_screen, settings_screen,
+};
 use crate::mode::ArenaMode;
 use crate::sim::{Feedback, SearchlightSim, dummy_at, dummy_hit_volumes_of};
 use crate::tag::SurfaceTag;
@@ -247,6 +252,8 @@ struct Crosshair {
     edges: [u8; 4],
     /// Whether a menu owns the view's overlay: nothing is drawn.
     hidden: bool,
+    /// Half-angle in radians of the cone the next shot leaves in; the gap opens to mark it.
+    spread: f32,
 }
 
 impl Crosshair {
@@ -254,6 +261,13 @@ impl Crosshair {
     const GAP: f32 = 4.0;
     const LENGTH: f32 = 9.0;
     const THICKNESS: f32 = 2.0;
+
+    /// Pixels from the screen centre to the inner end of each bar, for a view `fov_y` radians
+    /// tall drawn `height` pixels high: the resting gap plus the cone's circle on screen, by a
+    /// pinhole projection.
+    fn gap(spread: f32, fov_y: f32, height: f32) -> f32 {
+        Self::GAP + spread.tan() / (fov_y / 2.0).tan() * (height / 2.0)
+    }
 }
 
 impl UiFrameSource for Crosshair {
@@ -263,7 +277,8 @@ impl UiFrameSource for Crosshair {
         }
         let size = [size_in_pixels[0] as f32, size_in_pixels[1] as f32];
         let (cx, cy) = (size[0] / 2.0, size[1] / 2.0);
-        let (near, far, half) = (Self::GAP, Self::GAP + Self::LENGTH, Self::THICKNESS / 2.0);
+        let gap = Self::gap(self.spread, FOV_DEGREES.to_radians(), size[1]);
+        let (near, far, half) = (gap, gap + Self::LENGTH, Self::THICKNESS / 2.0);
         let bars = [
             ([cx - far, cy - half], [cx - near, cy + half]),
             ([cx + near, cy - half], [cx + far, cy + half]),
@@ -582,6 +597,14 @@ impl Stage {
             .map(|left| (EDGE_ALPHA * left / EDGE_TICKS) as u8);
     }
 
+    /// Hands the crosshair the cone its next shot leaves in, so the gap can mark it.
+    fn show_spread(&self, spread: f32) {
+        self.crosshair
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .spread = spread;
+    }
+
     fn hide_hud(&self) {
         self.crosshair
             .lock()
@@ -733,6 +756,8 @@ pub struct SearchlightGame {
     /// Engine settings waiting for a frame, the first place the renderer, audio and window can
     /// be reached.
     pending_settings: Option<EngineSettings>,
+    /// The bindings being edited while the Controls page is open.
+    controls: Option<ControlsDraft>,
 }
 
 impl SearchlightGame {
@@ -758,6 +783,7 @@ impl SearchlightGame {
             debug_settings: None,
             flip_window_pending: false,
             pending_settings: None,
+            controls: None,
         }
     }
 
@@ -815,7 +841,17 @@ impl SearchlightGame {
                         .menu_mut()
                         .push(settings_screen(settings, self.head_bob));
                 }
-                MenuEvent::Chosen(MenuAction::Back) => self.stage.shell().menu_mut().pop(),
+                MenuEvent::Chosen(MenuAction::Controls) => {
+                    let draft = ControlsDraft::new(self.input.bindings());
+                    self.stage.shell().menu_mut().push(controls_screen(&draft));
+                    self.controls = Some(draft);
+                }
+                MenuEvent::Chosen(MenuAction::ApplyControls) => self.apply_controls(),
+                MenuEvent::Chosen(MenuAction::Rebind(_)) => {}
+                MenuEvent::Chosen(MenuAction::Back) => {
+                    self.controls = None;
+                    self.stage.shell().menu_mut().pop();
+                }
                 MenuEvent::Chosen(MenuAction::Quit) => ctx.request_exit(),
                 MenuEvent::SettingsApplied(settings) => self.settings_applied(settings),
                 MenuEvent::GameSettingsApplied(values) => {
@@ -824,13 +860,60 @@ impl SearchlightGame {
                         self.save_head_bob();
                     }
                 }
-                MenuEvent::Captured { .. }
-                | MenuEvent::Cleared { .. }
-                | MenuEvent::DetailsToggled { .. }
+                MenuEvent::Captured {
+                    action: MenuAction::Rebind(action),
+                    slot: Slot::Primary,
+                    input,
+                } => self.captured(action, input),
+                MenuEvent::Captured { .. } | MenuEvent::Cleared { .. } => self.show_controls(None),
+                MenuEvent::DetailsToggled { .. }
                 | MenuEvent::Picked { .. }
                 | MenuEvent::ModeChosen { .. } => {}
             }
         }
+    }
+
+    /// Shows the Controls page's rows from the draft, with `refusal` noted on one action's row.
+    fn show_controls(&mut self, refusal: Option<(SearchlightAction, &str)>) {
+        if let Some(draft) = &self.controls {
+            let rows = controls_rows(draft, refusal);
+            self.stage.shell().menu_mut().set_items(rows);
+        }
+    }
+
+    /// Stages a captured `input` for `action` on the Controls page, or notes why it was refused.
+    fn captured(&mut self, action: SearchlightAction, input: Input) {
+        let Some(draft) = &mut self.controls else {
+            return;
+        };
+        let note = match draft.capture(action, input) {
+            Capture::InUse { by } => Some(format!(
+                "{} is used by {}",
+                Binding::from(input).label(),
+                label(by)
+            )),
+            Capture::Set | Capture::Reserved => None,
+        };
+        self.show_controls(note.as_deref().map(|note| (action, note)));
+    }
+
+    /// Makes the drafted bindings live, replacing the action map, and saves them; a failed save
+    /// warns and the bindings stay live for the session.
+    fn apply_controls(&mut self) {
+        let Some(draft) = &self.controls else {
+            return;
+        };
+        let bindings = draft.bindings();
+        let prefs = self
+            .debug_settings
+            .as_ref()
+            .map_or_else(Prefs::default, |saved| saved.prefs().clone());
+        if let Some(saved) = &mut self.debug_settings
+            && let Err(error) = saved.set_bindings(&bindings)
+        {
+            tracing::warn!(%error, "bindings not saved");
+        }
+        self.input = build_action_map(bindings, &prefs);
     }
 
     /// Saves the head bob; a failed save warns and the value stays for the session.
@@ -1264,6 +1347,7 @@ impl Game for SearchlightGame {
         let vitals = self.vitals_line();
         self.stage.refresh_title(&vitals);
         self.stage.refresh_hud(dead);
+        self.stage.show_spread(self.mode.sim().player_spread());
         if self.screen == Screen::Paused {
             self.stage.hide_hud();
         }
@@ -4251,6 +4335,328 @@ mod tests {
             );
         }
     }
+
+    use moho_input::bindings::Binding;
+
+    use crate::controls::label;
+
+    type ControlRow = ([Option<Binding>; 2], Option<String>);
+
+    fn is_button(wanted: &'static str) -> impl Fn(&MenuItem<MenuAction>) -> bool {
+        move |item| matches!(item, MenuItem::Button { label, .. } if label == wanted)
+    }
+
+    fn is_apply(item: &MenuItem<MenuAction>) -> bool {
+        matches!(item, MenuItem::Apply) || is_button("Apply")(item)
+    }
+
+    /// Focuses the first row `wanted` picks on the top screen and presses Enter on it.
+    fn press_item(
+        game: &mut SearchlightGame,
+        ctx: &mut EventContext<'_>,
+        what: &str,
+        wanted: impl Fn(&MenuItem<MenuAction>) -> bool,
+    ) {
+        focus_row(game, what, wanted);
+        press_keys(game, ctx, &[Key::Enter]);
+    }
+
+    fn focus_control(game: &SearchlightGame, action: SearchlightAction) {
+        focus_row(
+            game,
+            "control",
+            |item| matches!(item, MenuItem::Control { label: shown, .. } if shown == label(action)),
+        );
+    }
+
+    /// The slots and refusal note the top screen shows on `action`'s row.
+    fn control_row(game: &SearchlightGame, action: SearchlightAction) -> ControlRow {
+        let mut shell = game.stage.shell();
+        let screen = shell.menu_mut().top().expect("a menu screen is open");
+        screen
+            .items
+            .iter()
+            .find_map(|item| match item {
+                MenuItem::Control {
+                    label: shown,
+                    slots,
+                    note,
+                    ..
+                } if shown == label(action) => Some((*slots, note.clone())),
+                _ => None,
+            })
+            .expect("the screen lists the action")
+    }
+
+    fn lists_controls(game: &SearchlightGame) -> bool {
+        let mut shell = game.stage.shell();
+        let screen = shell.menu_mut().top().expect("a menu screen is open");
+        screen
+            .items
+            .iter()
+            .any(|item| matches!(item, MenuItem::Control { .. }))
+    }
+
+    /// Opens the Controls page from the Settings screen on top.
+    fn open_controls_from_settings(game: &mut SearchlightGame, ctx: &mut EventContext<'_>) {
+        press_item(game, ctx, "Controls", is_button("Controls"));
+        assert!(lists_controls(game), "Controls did not open");
+    }
+
+    /// Opens Controls from a game on its main menu.
+    fn open_controls(game: &mut SearchlightGame, ctx: &mut EventContext<'_>) {
+        open_settings(game, ctx);
+        open_controls_from_settings(game, ctx);
+    }
+
+    /// Starts a capture on `action`'s primary slot and presses `input` for it.
+    fn capture_input(
+        game: &mut SearchlightGame,
+        ctx: &mut EventContext<'_>,
+        action: SearchlightAction,
+        input: Input,
+    ) {
+        focus_control(game, action);
+        press_keys(game, ctx, &[Key::Enter]);
+        game.route_input(ctx, input, true, false);
+        game.route_input(ctx, input, false, false);
+    }
+
+    /// Presses and releases `input` in play; returns the commands of the tick after the press and
+    /// of the tick after the release.
+    fn tap(
+        game: &mut SearchlightGame,
+        ctx: &mut EventContext<'_>,
+        input: Input,
+    ) -> [SearchlightCommand; 2] {
+        game.route_input(ctx, input, true, false);
+        let pressed = game.command();
+        game.route_input(ctx, input, false, false);
+        let released = game.command();
+        [pressed, released]
+    }
+
+    fn reloads(commands: [SearchlightCommand; 2]) -> bool {
+        commands.iter().any(|command| command.reload)
+    }
+
+    fn fires(commands: [SearchlightCommand; 2]) -> bool {
+        commands.iter().any(|command| command.fire)
+    }
+
+    const KEY_R: Input = Input::Key(Key::R);
+    const KEY_T: Input = Input::Key(Key::T);
+    const KEY_Q: Input = Input::Key(Key::Q);
+    const RIGHT_BUTTON: Input = Input::Mouse(MouseButton::Right);
+    const LEFT_BUTTON: Input = Input::Mouse(MouseButton::Left);
+
+    #[test]
+    fn an_applied_rebinding_does_the_action_and_the_old_input_does_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        capture_input(&mut game, &mut ctx, SearchlightAction::Reload, KEY_T);
+        capture_input(&mut game, &mut ctx, SearchlightAction::Fire, RIGHT_BUTTON);
+        press_item(&mut game, &mut ctx, "Apply", is_apply);
+        game.enter_play();
+
+        let reload_on_t = reloads(tap(&mut game, &mut ctx, KEY_T));
+        let reload_on_r = reloads(tap(&mut game, &mut ctx, KEY_R));
+        let fire_on_right = fires(tap(&mut game, &mut ctx, RIGHT_BUTTON));
+        let fire_on_left = fires(tap(&mut game, &mut ctx, LEFT_BUTTON));
+
+        assert!(reload_on_t, "T reloads");
+        assert!(!reload_on_r, "R no longer reloads");
+        assert!(fire_on_right, "the right button fires");
+        assert!(!fire_on_left, "the left button no longer fires");
+        let (prefs, warnings) = Prefs::load_from(&path);
+        let (_toggle_keys, without_fullscreen) =
+            moho_app::split_fullscreen_binding(prefs.bindings());
+        let (_console, section) = crate::split_console_binding(&without_fullscreen);
+        let (saved, game_warnings) = ActionBindings::<SearchlightAction>::load(&section);
+        assert_eq!((warnings, game_warnings), (vec![], vec![]));
+        assert_eq!(
+            saved.get(SearchlightAction::Reload),
+            [Binding::key(Key::T)],
+            "Apply saved the rebinding"
+        );
+        assert_eq!(
+            saved.get(SearchlightAction::Fire),
+            [Binding::mouse(MouseButton::Right)]
+        );
+    }
+
+    #[test]
+    fn back_from_controls_keeps_the_old_binding_live_and_shown() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        capture_input(&mut game, &mut ctx, SearchlightAction::Reload, KEY_T);
+        let staged = control_row(&game, SearchlightAction::Reload);
+
+        press_item(&mut game, &mut ctx, "Back", is_button("Back"));
+        press_item(&mut game, &mut ctx, "Back", is_button("Back"));
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        open_controls_from_settings(&mut game, &mut ctx);
+        let reopened = control_row(&game, SearchlightAction::Reload);
+        game.enter_play();
+        let reload_on_r = reloads(tap(&mut game, &mut ctx, KEY_R));
+        let reload_on_t = reloads(tap(&mut game, &mut ctx, KEY_T));
+
+        assert_eq!(staged.0, [Some(Binding::key(Key::T)), None]);
+        assert_eq!(reopened, ([Some(Binding::key(Key::R)), None], None));
+        assert!(reload_on_r, "R still reloads");
+        assert!(!reload_on_t, "T never became a binding");
+        assert!(!path.exists(), "Back saved the discarded capture");
+    }
+
+    #[test]
+    fn escape_and_the_console_key_never_reach_capture() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, _) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let unchanged: ControlRow = ([Some(Binding::key(Key::R)), None], None);
+        open_controls(&mut game, &mut ctx);
+
+        focus_control(&game, SearchlightAction::Reload);
+        press_keys(&mut game, &mut ctx, &[Key::Enter, Key::Escape, Key::T]);
+        let after_escape = control_row(&game, SearchlightAction::Reload);
+        let still_on_controls = lists_controls(&game);
+        focus_control(&game, SearchlightAction::Reload);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        let opening = game.route_input(&mut ctx, BACKTICK, true, false);
+        let closing = game.route_input(&mut ctx, BACKTICK, true, false);
+        press_keys(&mut game, &mut ctx, &[Key::T]);
+        let after_console = control_row(&game, SearchlightAction::Reload);
+        press_item(&mut game, &mut ctx, "Apply", is_apply);
+        game.enter_play();
+        let reload_on_r = reloads(tap(&mut game, &mut ctx, KEY_R));
+        let reload_on_t = reloads(tap(&mut game, &mut ctx, KEY_T));
+
+        assert_eq!(after_escape, unchanged, "Escape cancelled the capture");
+        assert!(still_on_controls, "Escape did not leave the page");
+        assert_eq!((opening, closing), (Routing::Opened, Routing::Closed));
+        assert_eq!(after_console, unchanged, "the console key was not captured");
+        assert!(reload_on_r, "Reload keeps R");
+        assert!(!reload_on_t);
+    }
+
+    #[test]
+    fn an_input_in_use_is_refused_with_a_note_and_neither_action_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, _) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+
+        capture_input(&mut game, &mut ctx, SearchlightAction::Reload, KEY_Q);
+
+        assert_eq!(
+            control_row(&game, SearchlightAction::Reload),
+            (
+                [Some(Binding::key(Key::R)), None],
+                Some("Q is used by Lean left".to_owned())
+            )
+        );
+        assert_eq!(
+            control_row(&game, SearchlightAction::LeanLeft),
+            ([Some(Binding::key(Key::Q)), None], None)
+        );
+    }
+
+    #[test]
+    fn a_secondary_capture_and_a_clear_leave_the_draft_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, _) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let unchanged: ControlRow = ([Some(Binding::key(Key::R)), None], None);
+        open_controls(&mut game, &mut ctx);
+
+        focus_control(&game, SearchlightAction::Reload);
+        press_keys(&mut game, &mut ctx, &[Key::ArrowRight, Key::Enter, Key::T]);
+        let after_secondary = control_row(&game, SearchlightAction::Reload);
+        press_keys(
+            &mut game,
+            &mut ctx,
+            &[Key::Backspace, Key::ArrowLeft, Key::Backspace],
+        );
+        let after_clears = control_row(&game, SearchlightAction::Reload);
+
+        assert_eq!(after_secondary, unchanged);
+        assert_eq!(after_clears, unchanged);
+    }
+
+    #[test]
+    fn a_failed_bindings_save_keeps_the_rebinding_live_for_the_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, "a file, not a directory").unwrap();
+        let settings = DebugSettings::new(Prefs::default(), blocker.join("searchlight.ini"));
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        capture_input(&mut game, &mut ctx, SearchlightAction::Reload, KEY_T);
+        press_item(&mut game, &mut ctx, "Apply", is_apply);
+        game.enter_play();
+
+        let reload_on_t = reloads(tap(&mut game, &mut ctx, KEY_T));
+        let reload_on_r = reloads(tap(&mut game, &mut ctx, KEY_R));
+
+        assert!(reload_on_t, "T reloads although the save failed");
+        assert!(!reload_on_r, "R no longer reloads");
+    }
+
+    #[test]
+    fn a_capture_after_apply_is_discarded_by_back_and_the_applied_binding_stays() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        capture_input(&mut game, &mut ctx, SearchlightAction::Reload, KEY_T);
+        press_item(&mut game, &mut ctx, "Apply", is_apply);
+        capture_input(
+            &mut game,
+            &mut ctx,
+            SearchlightAction::Reload,
+            Input::Key(Key::Z),
+        );
+        let staged = control_row(&game, SearchlightAction::Reload).0;
+
+        press_item(&mut game, &mut ctx, "Back", is_button("Back"));
+        press_item(&mut game, &mut ctx, "Back", is_button("Back"));
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        open_controls_from_settings(&mut game, &mut ctx);
+        let reopened = control_row(&game, SearchlightAction::Reload).0;
+        game.enter_play();
+        let reload_on_t = reloads(tap(&mut game, &mut ctx, KEY_T));
+        let reload_on_z = reloads(tap(&mut game, &mut ctx, Input::Key(Key::Z)));
+        let reload_on_r = reloads(tap(&mut game, &mut ctx, KEY_R));
+
+        assert_eq!(staged, [Some(Binding::key(Key::Z)), None]);
+        assert_eq!(reopened, [Some(Binding::key(Key::T)), None]);
+        assert!(reload_on_t, "the applied T still reloads");
+        assert!(!reload_on_z && !reload_on_r);
+        let (prefs, _) = Prefs::load_from(&path);
+        assert_eq!(
+            prefs.bindings().get("reload").map(String::as_str),
+            Some("T"),
+            "the saved file keeps the applied binding"
+        );
+    }
 }
 
 /// The menus, observed through the shell's screen stack and the game's outward behavior.
@@ -4465,7 +4871,7 @@ mod menu_tests {
                 settings,
                 (
                     Some("Settings".to_owned()),
-                    ["Back"].map(String::from).to_vec()
+                    ["Controls", "Back"].map(String::from).to_vec()
                 )
             );
             assert_eq!(after_back.0, None);
@@ -4807,10 +5213,14 @@ mod settings_tests {
             .collect();
         expected.push(crate::menu::head_bob_row(HeadBobLevel::DEFAULT));
         expected.push(MenuItem::Apply);
+        expected.push(MenuItem::Button {
+            label: "Controls".to_owned(),
+            action: MenuAction::Controls,
+        });
         expected.push(back_button());
         assert_eq!(
             screen.items, expected,
-            "the eleven rows, Head bob, Apply and Back"
+            "the eleven rows, Head bob, Apply, Controls and Back"
         );
         assert_eq!(screen.back, Some(MenuAction::Back));
         assert_eq!(
@@ -6293,5 +6703,131 @@ mod enemy_and_hud_tests {
         assert_eq!(mesh.vertices.len(), 4 + 16);
         assert_eq!(mesh.vertices[0].color, [120, 0, 0, 140]);
         assert_eq!(mesh.vertices[2].pos, [800.0, 600.0]);
+    }
+}
+
+#[cfg(test)]
+mod crosshair_spread_tests {
+    use super::*;
+
+    /// Hand-computed as 4 + tan(spread) / tan(fov / 2) * height / 2: tan(0.03) = 0.030009,
+    /// tan(37.5 deg) = 0.76733, tan(15 deg) = 0.26795. The 30 deg row is a narrow aimed view.
+    #[test]
+    fn the_crosshair_gap_is_today_s_gap_when_settled_and_opens_with_spread() {
+        let table = [
+            (0.0, 75.0_f32, 600.0, 4.0),
+            (0.03, 75.0, 600.0, 15.73),
+            (0.03, 30.0, 600.0, 37.60),
+            (0.03, 75.0, 300.0, 9.87),
+            (0.03, 75.0, 1200.0, 27.47),
+        ];
+
+        for (spread, fov_degrees, height, expected) in table {
+            let gap = Crosshair::gap(spread, fov_degrees.to_radians(), height);
+
+            assert!(
+                (gap - expected).abs() < 1e-2,
+                "spread {spread}, fov {fov_degrees}, height {height}: gap {gap}, expected {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_crosshair_with_spread_draws_its_bars_out_at_the_gap() {
+        let spread = 0.03;
+        let mut crosshair = Crosshair {
+            spread,
+            ..Crosshair::default()
+        };
+        let gap = Crosshair::gap(spread, FOV_DEGREES.to_radians(), 600.0);
+
+        let frame = crosshair.ui_frame([800, 600]).expect("a frame");
+
+        let vertices = &frame.meshes[0].vertices;
+        assert!(gap > Crosshair::GAP);
+        assert_eq!(
+            vertices[0].pos[0],
+            400.0 - gap - Crosshair::LENGTH,
+            "left bar outer"
+        );
+        assert_eq!(vertices[4].pos[0], 400.0 + gap, "right bar inner");
+        assert_eq!(
+            vertices[8].pos[1],
+            300.0 - gap - Crosshair::LENGTH,
+            "top bar outer"
+        );
+        assert_eq!(vertices[12].pos[1], 300.0 + gap, "bottom bar inner");
+    }
+
+    /// The right bar's inner edge on an 800 by 600 target, whose centre is at x = 400.
+    fn right_bar_inner(game: &SearchlightGame) -> f32 {
+        let mut crosshair = game
+            .stage
+            .crosshair
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let frame = crosshair.ui_frame([800, 600]).expect("a frame");
+        frame.meshes[0].vertices[4].pos[0]
+    }
+
+    #[test]
+    fn a_frame_while_walking_opens_the_crosshair_and_it_closes_after_the_settle_time() {
+        // `test_config` friction coasts a walking player to rest in about 36 ticks; the
+        // spread follows that speed down, then settles.
+        const COAST_TICKS: usize = 40;
+        let config = crate::test_support::test_config(
+            crate::test_support::rifle_from(crate::test_support::mag(30, 5)),
+            vec![],
+        );
+        let settle_ticks = (config.accuracy.settle_seconds * 60.0).ceil() as usize;
+        let mode = ArenaMode::new(
+            crate::test_support::arena_with(&[], Vec3::ZERO, &[], &[]),
+            config,
+            crate::test_support::wave_tuning(1),
+        );
+        let (bindings, _) = moho_input::bindings::ActionBindings::load(&BTreeMap::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0));
+        let mut clock = moho_app::GameClock::new(0.0, 1.0, 1.0);
+        let walk = SearchlightCommand {
+            movement: moho_physics::CharacterCommand {
+                forward: 1.0,
+                ..moho_physics::CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        let mut step = |game: &mut SearchlightGame, command: &SearchlightCommand, ticks: usize| {
+            for _ in 0..ticks {
+                let mut ctx = TickContext {
+                    tick: 0,
+                    tick_length: std::time::Duration::from_secs_f32(1.0 / 60.0),
+                    clock: &mut clock,
+                };
+                game.tick(&mut ctx, command);
+            }
+            let frame_clock = moho_app::GameClock::default();
+            let mut ctx = FrameContext::new(
+                std::time::Duration::from_millis(16),
+                &frame_clock,
+                None,
+                None,
+            );
+            game.frame(&mut ctx, 0.5);
+            right_bar_inner(game)
+        };
+
+        let settled = step(&mut game, &SearchlightCommand::default(), 2);
+        let walking = step(&mut game, &walk, 10);
+        let stopped = step(
+            &mut game,
+            &SearchlightCommand::default(),
+            COAST_TICKS + settle_ticks + 3,
+        );
+
+        assert_eq!(settled, 400.0 + Crosshair::GAP);
+        assert!(
+            walking > 400.0 + Crosshair::GAP + 1.0,
+            "the bar is at {walking} while walking"
+        );
+        assert_eq!(stopped, 400.0 + Crosshair::GAP);
     }
 }
