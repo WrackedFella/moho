@@ -163,7 +163,8 @@ fn claim_nearest(
     marks: &mut MineMarks,
     grid: &VoxelGrid,
 ) -> Option<Job> {
-    let start = feet_cell(pose.feet);
+    let feet = feet_cell(pose.feet);
+    let start = standing_cell(grid, feet).unwrap_or(feet);
     if unreachable.revision != grid.revision() || unreachable.from != start {
         *unreachable = Unreachable {
             revision: grid.revision(),
@@ -1443,6 +1444,85 @@ mod tests {
             }
 
             assert_eq!(dug, Some(cell(8, 1, 0)));
+        }
+
+        #[test]
+        fn a_walk_over_a_raised_stretch_survives_terrain_changing_every_tick() {
+            let mut site = Site::flat();
+            for x in 3..=5 {
+                for z in -12..=12 {
+                    place(&mut site.grid, cell(x, 1, z));
+                }
+            }
+            site.mark_block(cell(9, 1, 0));
+            let pace = 4.0 / crate::TICK_HZ as f32;
+            let mut planned = None;
+            let mut dug = None;
+
+            for tick in 0..STALL_TICKS * 4 {
+                if planned.is_some() {
+                    churn(&mut site, tick as usize);
+                }
+                let action = site.tick();
+                if planned.is_none() {
+                    let Job::Mine { route, .. } = &site.job else {
+                        panic!("the claim tick: {:?}", site.job);
+                    };
+                    planned = Some(route.clone());
+                }
+                match action {
+                    JobAction::Walk { to } => {
+                        assert_eq!(site.claimed_by([9, 1, 0]), Some(ME), "tick {tick}");
+                        let Job::Mine { route, .. } = &site.job else {
+                            panic!("tick {tick}: {:?}", site.job);
+                        };
+                        assert_eq!(Some(route), planned.as_ref(), "re-planned on tick {tick}");
+                        let mut toward = to - site.pose.feet;
+                        toward.y = 0.0;
+                        site.pose.feet += toward.clamp_length_max(pace);
+                        let climb = (to.y - site.pose.feet.y).clamp(-0.1, 0.1);
+                        site.pose.feet.y += climb;
+                    }
+                    JobAction::Dig { block, .. } => {
+                        dug = Some(block);
+                        break;
+                    }
+                    JobAction::Wait => panic!("lapsed on tick {tick}: {:?}", site.job),
+                }
+            }
+
+            assert_eq!(dug, Some(cell(9, 1, 0)));
+        }
+
+        #[test]
+        fn the_idle_memo_holds_while_the_feet_stay_over_the_same_standing_cell() {
+            let mut site = Site::flat();
+            for z in -12..=12 {
+                place(&mut site.grid, cell(3, 1, z));
+            }
+            for x in 1..=5 {
+                site.mark_block(cell(x, 5, 6));
+            }
+            for x in 1..=3 {
+                site.mark_block(cell(x, 5, 8));
+            }
+            site.pose.feet = Vec3::new(3.5, 1.4, 0.5);
+            assert!(site.grid.is_solid_at(feet_cell(site.pose.feet)));
+
+            site.tick();
+            let first = site.memo().clone();
+            site.pose.feet.x += 0.1;
+            site.tick();
+            let same_raw_cell = site.memo().clone();
+            site.pose.feet.y = 2.2;
+            site.tick();
+            let other_raw_cell = site.memo().clone();
+
+            assert_eq!(first.marks.len(), 4);
+            assert_eq!(same_raw_cell.marks.len(), 8, "no search again");
+            assert_eq!(same_raw_cell.from, first.from);
+            assert_eq!(other_raw_cell.marks.len(), 8, "the same standing cell");
+            assert_eq!(other_raw_cell.from, first.from);
         }
 
         #[test]
