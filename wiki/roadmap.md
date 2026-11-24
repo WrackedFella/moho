@@ -46,7 +46,7 @@ Engine item numbers are those of the [engine roadmap](engine/roadmap.md).
 | FPS-M1.1 controls | Controls page with rebinding; double-press bindings | 2.11.6 ENG-F18-13 #747, -14 #749 (cut line); 2.14 ENG-F26-04 #748 |
 | FPS-M1.2 slice 2 | Crouch and clearance; lean and stance transitions | ENG-F43 #642, crouch, prone and lean, answering #544 (2.25, ENG-M2 wave 5) |
 | FPS-M1.2 slice 3 | Skinned animated characters | #543 through ENG-F39 slices 1 to 3 (2.22, ENG-M2 wave 5) |
-| FPS-M2 | On-screen text; layered content; tap and hold keys; item lists | 2.11.3 ENG-F18-09 #407; 2.12 ENG-F19 #231; 2.14 ENG-F26 #359; 2.11.6 ENG-F18-18 #698 |
+| FPS-M2 | On-screen text; layered content; tap and hold keys; item lists; actions on an item | 2.11.3 ENG-F18-09 #407; 2.12 ENG-F19 #231; 2.14 ENG-F26 #359; 2.11.6 ENG-F18-18 #698, -22 #898 (answers #893) |
 | FPS-M2 | Moving meshes; loose objects; models, sockets and rig; flash, tracer and impact marks; marker size | 2.20 ENG-F38; 2.21 ENG-F48 (#600); 2.22 ENG-F39; 2.23 ENG-F40; 2.24 ENG-F14-03 |
 | FPS-M2 | Unload a level and load another by name | 2.27 ENG-F14-04 #750, -05 #752 |
 | FPS-M3 | Large level load budget, loading screen, authored boundary | 3.4i ENG-F46 #746; ENG-F14-06 #751 |
