@@ -125,6 +125,8 @@ pub fn controls_rows(
             note: refusal
                 .filter(|(refused, _)| *refused == action)
                 .map(|(_, note)| note.to_owned()),
+            chevron: None,
+            mode: None,
         })
         .collect();
     items.push(MenuAction::ApplyControls.button());
