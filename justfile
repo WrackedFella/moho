@@ -13,7 +13,7 @@ fmt:
     cargo fmt --all
 
 # Gate: formatting, lints, tests, doctests, comment refs and layering. Must pass before any commit.
-check: fmt-check lint test test-doc comment-refs layering
+check: fmt-check lint test test-doc comment-refs layering run-record-test assets-check
 
 fmt-check:
     cargo fmt --all --check
@@ -146,6 +146,47 @@ eval-score-test:
     diff "$f/context.json" <(scripts/eval-score.sh context "$f/execution.json")
     diff "$f/report.md" <(scripts/eval-score.sh report < "$f/records.jsonl")
     echo "eval-score: OK"
+
+# Self-test of the production run record against fixtures: per-step tokens and yield,
+# mutation counts, the job-summary table and the digest.
+# Rerun every asset generator in place (`scripts/assets.sh`); commit what changes.
+assets:
+    scripts/assets.sh write
+
+# Committed generated assets match their generators. Linux only: the committed bytes come
+# from Linux, and another platform's libm may round the generators' floats differently.
+# Self-test: a copy of the assets with one byte changed is rejected and named.
+[linux]
+assets-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    scripts/assets.sh check
+    copy="$(mktemp -d)"
+    trap 'rm -rf "$copy"' EXIT
+    mkdir -p "$copy/searchlight" "$copy/flagstone"
+    cp -r searchlight/assets "$copy/searchlight/"
+    cp -r flagstone/assets "$copy/flagstone/"
+    printf '\x00' | dd of="$copy/flagstone/assets/dig.wav" bs=1 seek=100 conv=notrunc status=none
+    if out=$(MOHO_ASSETS_ROOT="$copy" scripts/assets.sh check 2>&1); then
+        echo "assets check accepted a changed dig.wav" >&2
+        exit 1
+    fi
+    grep -q 'flagstone/assets/dig.wav' <<<"$out" || { echo "assets check did not name dig.wav: $out" >&2; exit 1; }
+
+[macos, windows]
+assets-check:
+    @echo "assets-check: skipped, Linux only"
+
+run-record-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    f=scripts/fixtures/run-record
+    diff "$f/records.jsonl" <(
+        ISSUE=7 GATE_CLASS=domain HEAD_SHA=abc DEVFLOW_SHA=f20ec3e45100 RUN_URL= \
+            scripts/run-record.sh record "$f/execution.json" | jq -c 'del(.at)')
+    diff "$f/table.md" <(scripts/run-record.sh table < "$f/records.jsonl")
+    diff "$f/digest.md" <(scripts/run-record.sh digest < "$f/records.jsonl")
+    echo "run-record: OK"
 
 # Layering check on the real crate graph, plus self-tests that each rule rejects its fixture.
 layering:

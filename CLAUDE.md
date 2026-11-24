@@ -15,6 +15,7 @@ just check                         # the gate
 just test -E 'package(moho_core)'  # one crate; -E 'test(name)' for one test
 just mutants                       # mutation-test domain-path changes since origin/dev; exit 2 = survivor
 just deny                          # licenses, advisories, sources
+just assets                        # regenerate generated assets (.glb, .wav); never run their python directly
 bash scripts/cloud-tools.sh        # cloud threads only, before the first build
 gh workflow run CI --ref <branch>  # all three OSes on a branch (PRs into dev run Linux only)
 cargo run -p flagstone             # RUST_LOG=debug for logging
@@ -45,8 +46,11 @@ cargo run -p searchlight           # the FPS prototype
 - **Planning:** index `_todo/README.md`, rules `_todo/_STANDARDS.md` (features first,
   IDs like `SG-F1-04`, card lifecycle). Check `wiki/roadmap.md` (cross-line) and your line's roadmap (`wiki/{engine,flagstone,searchlight}/roadmap.md`) for order before
   picking up work.
+- **Generate command:** `just assets` (rebuilds every committed generated file; `just check`
+  fails while one is stale).
 - **Environment setup command:** `bash scripts/cloud-tools.sh` (cloud threads only;
   text-only threads skip it).
+- **Standards:** `engineering-standards, rust-standards`.
 - **Implement a ready item:** `/devflow:orchestrate <issue>`.
 - **Domain-logic paths** (gate class `domain`; also the scope of `just mutants` and CI's
   `Mutants (diff)`, which read the globs below through `scripts/domain-paths.sh`):
@@ -61,6 +65,10 @@ cargo run -p searchlight           # the FPS prototype
   - `moho_input/src/action_map.rs`
   - `moho_input/src/bindings.rs`
   Adapters, UI wiring and config are glue: the weekly full run mutates them, PRs don't.
+- **CI covers:** gate (`^Gate`), mutation (`^Mutants`). CI's `Gate` job runs `just check` and
+  its `Mutants (diff)` job runs `just mutants` (exit 2 on a survivor fails the job), so
+  devflow's defect finder does not rerun a command whose check passed on the head. Keep
+  these job names in step with `.github/workflows/ci.yml`.
 - **Human review points:** `Card review: required`, `Domain-test review: agent` (values: `required`,
   `agent`, `not required`; `agent` = no pause, `devflow:test-critic` attacks the failing
   tests before implementation and the PR carries its findings). Switches and runtimes: `_todo/WORKFLOW.md`.
