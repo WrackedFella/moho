@@ -955,7 +955,8 @@ impl<A> MenuStack<A> {
 }
 
 impl<A: PartialEq> MenuStack<A> {
-    /// Replaces the top screen's items, keeping its column, capture and scroll. The focus stays
+    /// Replaces the top screen's items, keeping its column and scroll; a capture goes on only
+    /// while the same `Control` row has the focus, else it ends without an event. The focus stays
     /// on the same row: the same index if the row there is the same one (see `same_row`),
     /// else the nearest row that is, else the old index clamped to the new rows.
     pub fn set_items(&mut self, items: Vec<MenuItem<A>>) {
@@ -982,8 +983,10 @@ impl<A: PartialEq> MenuStack<A> {
 }
 
 impl<A: Clone> MenuStack<A> {
-    /// Up and Down move the focus and wrap; Left and Right step the focused settings row; a
-    /// non-repeat Enter press chooses the focused item (flipping or cycling a settings row);
+    /// Up and Down move the focus and wrap; Left and Right walk a `Control` or `Details` row's
+    /// columns (stopping at the ends) or step a settings row; a non-repeat Enter press acts on
+    /// the focused column (toggle details, start a capture, step a picker, report the other
+    /// mode) or chooses the focused item (flipping or cycling a settings row);
     /// a non-repeat Escape press chooses the top screen's back action, if any. Releasing the
     /// left mouse button ends a slider drag; other releases and inputs do nothing.
     pub fn on_key(&mut self, input: Input, pressed: bool, repeat: bool) {
