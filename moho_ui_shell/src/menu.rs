@@ -1901,7 +1901,7 @@ mod tests {
         }
     }
 
-    /// Thirteen settings-screen rows at 720 points, scrolled to the end: rows 3 to 12 are in view.
+    /// Fourteen settings-screen rows at 720 points, scrolled to the end: rows 4 to 13 are in view.
     fn scrolled_settings_stack() -> MenuStack<Act> {
         let mut items: Vec<MenuItem<Act>> = EngineSetting::ALL
             .into_iter()
@@ -2086,7 +2086,7 @@ mod tests {
 
         use super::*;
 
-        /// Tall enough that the thirteen 56-point rows of `screen_of` need no scrolling.
+        /// Tall enough that the fourteen 56-point rows of `screen_of` need no scrolling.
         const SIZE: [f32; 2] = [1280.0, 1000.0];
 
         fn base() -> EngineSettings {
@@ -2106,7 +2106,7 @@ mod tests {
             }
         }
 
-        /// The eleven rows, Apply, then Back: thirteen rows, so the whole column fits on this
+        /// The twelve rows, Apply, then Back: fourteen rows, so the whole column fits on this
         /// module's `SIZE`.
         fn screen_of(settings: EngineSettings) -> MenuScreen<Act> {
             let mut items: Vec<MenuItem<Act>> = EngineSetting::ALL
