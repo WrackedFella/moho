@@ -681,7 +681,7 @@ mod tests {
         }
 
         #[test]
-        fn marks_that_all_failed_to_route_are_tried_again_from_the_nearest_next_tick() {
+        fn a_new_mark_is_routed_while_failed_ones_stay_memoised() {
             let mut site = Site::flat();
             // Two floating blocks no ground lets the pawn stand beside.
             site.mark_block(cell(1, 5, 0));
