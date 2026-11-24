@@ -1,8 +1,8 @@
 #### Run record: #7 (domain), devflow f20ec3e45100
 
-success, 9 turns, 120s, cost $1.5 at API rates. Tokens per model, never summed:
+success, 9 turns, 120s, cost $1.5 at API rates. Tokens per model, never summed. Step output is an estimate (the run total shared by size of what each step wrote); other counts are exact:
 
-| Step | Calls | Model | Input | Output | Cache read | Cache write | Files edited | Test files |
+| Step | Calls | Model | Input | Output (est.) | Cache read | Cache write | Files edited | Test files |
 |---|--:|---|--:|--:|--:|--:|--:|--:|
 | devflow:builder (tests) | 1 | claude-sonnet-5-5 | 20 | 180 | 2000 | 100 | 2 | 2 |
 | orchestrator | 3 | claude-sonnet-5-5 | 20 | 230 | 7500 | 500 | 0 | 0 |

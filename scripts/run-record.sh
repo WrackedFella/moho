@@ -3,7 +3,8 @@
 # yielded anything, computed in the job from the action's execution log and printed as
 # one `RUN-RECORD {json}` line. The log itself is never uploaded: Actions masks secrets in
 # job logs but not in artifacts, and the repository is public. Tokens are four counts per
-# model, never summed across models or kinds; cost is the API-rate equivalent, last.
+# model, never summed across models or kinds, except per-step output, which is an estimate
+# (`output_est`); cost is the API-rate equivalent, last.
 #
 # A step is the subagent or skill the main loop called (`devflow:builder (tests)`,
 # `skill devflow:wiki`); `orchestrator` is the main loop itself. Subagent messages carry a
@@ -111,7 +112,7 @@ steps_of() {
         | ($shared | group_by(.step) | map({
               step: .[0].step,
               calls: (map(.calls) | add),
-              models: (map({key: .model, value: {input, output, cache_read, cache_write}}) | from_entries)
+              models: (map({key: .model, value: {input, output_est: .output, cache_read, cache_write}}) | from_entries)
             })) as $steps
         | ([ $all[] | select(.type == "assistant" and .parent_tool_use_id == null)
              | .message.content[]? | select(.type == "tool_use" and .name == "Bash")
@@ -167,12 +168,12 @@ table() {
         def usd: if . == null then "?" else "$\(. * 100 | round / 100)" end;
         .[] as $r
         | "#### Run record: #\($r.issue | fmt) (\($r.gate_class // "?")), devflow \($r.devflow // "?")", "",
-          "\($r.subtype // "?"), \($r.turns | fmt) turns, \($r.duration_ms | secs), cost \($r.cost_usd | usd) at API rates. Tokens per model, never summed:", "",
-          "| Step | Calls | Model | Input | Output | Cache read | Cache write | Files edited | Test files |",
+          "\($r.subtype // "?"), \($r.turns | fmt) turns, \($r.duration_ms | secs), cost \($r.cost_usd | usd) at API rates. Tokens per model, never summed. Step output is an estimate (the run total shared by size of what each step wrote); other counts are exact:", "",
+          "| Step | Calls | Model | Input | Output (est.) | Cache read | Cache write | Files edited | Test files |",
           "|---|--:|---|--:|--:|--:|--:|--:|--:|",
           ($r.steps[] as $s | ($s.models | to_entries) as $m
            | $m | to_entries[] | .key as $i | .value as $e
-           | "| \(if $i == 0 then $s.step else "" end) | \(if $i == 0 then $s.calls else "" end) | \($e.key) | \($e.value.input) | \($e.value.output) | \($e.value.cache_read) | \($e.value.cache_write) | \(if $i == 0 then $s.edits.files else "" end) | \(if $i == 0 then $s.edits.tests else "" end) |"),
+           | "| \(if $i == 0 then $s.step else "" end) | \(if $i == 0 then $s.calls else "" end) | \($e.key) | \($e.value.input) | \($e.value.output_est) | \($e.value.cache_read) | \($e.value.cache_write) | \(if $i == 0 then $s.edits.files else "" end) | \(if $i == 0 then $s.edits.tests else "" end) |"),
           "",
           (if $r.mutants then "Mutants: \($r.mutants.caught) caught, \($r.mutants.missed) missed, \($r.mutants.unviable) unviable, \($r.mutants.timeout) timeout." else "Mutants: no mutation run read." end)'
 }

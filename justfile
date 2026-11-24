@@ -197,7 +197,7 @@ run-record-test:
             .models as $m | [.steps[] | .models | to_entries[]] | group_by(.key) | all(
                 . as $g | $g[0].key as $k
                 | ["input", "output", "cache_read", "cache_write"] | all(. as $c
-                    | ($g | map(.value[$c]) | add) as $s | $m[$k][$c] as $t
+                    | ($g | map(.value[if $c == "output" then "output_est" else $c end]) | add) as $s | $m[$k][$c] as $t
                     | ($s - $t | fabs) <= $t * (if $c == "output" then 0 else 0.2 end)))' > /dev/null \
             || { echo "run-record $x: step tokens do not reconcile with model totals"; exit 1; }
     done
