@@ -30,8 +30,9 @@ use moho_ui_shell::{
 };
 
 use crate::arena::{box_mesh, control_mesh_id, oriented_box_mesh};
-use crate::console_commands::{self, ConsoleCommand, GodModeArg, SimpleArg};
+use crate::console_commands::{self, ConsoleCommand, GodModeArg, HeadBobArg, SimpleArg};
 use crate::debug_settings::DebugSettings;
+use crate::head_bob::{Bob, HeadBobLevel};
 use crate::hud::Edge;
 use crate::input::{SearchlightAction, SearchlightCommand, look_from, look_to_turn, resolve_lean};
 use crate::lean::{lean_offset, rolled_view_matrix};
@@ -720,6 +721,11 @@ pub struct SearchlightGame {
     /// How hard gravity pulls on rounds; session state, standard at every launch. A host action
     /// like `god_mode`.
     round_gravity: GravityScale,
+    /// How much the view bobs while moving. Saved with the game's settings.
+    head_bob: HeadBobLevel,
+    /// The view bob after the last tick, and the tick before it for blending.
+    bob: Bob,
+    previous_bob: Bob,
     debug_settings: Option<DebugSettings>,
     /// A `fullscreen` command waiting for a frame, the first place a window mode can be
     /// requested.
@@ -746,6 +752,9 @@ impl SearchlightGame {
             forced_grade: None,
             simple: false,
             round_gravity: GravityScale::default(),
+            head_bob: HeadBobLevel::DEFAULT,
+            bob: Bob::REST,
+            previous_bob: Bob::REST,
             debug_settings: None,
             flip_window_pending: false,
             pending_settings: None,
@@ -804,15 +813,28 @@ impl SearchlightGame {
                     self.stage
                         .shell()
                         .menu_mut()
-                        .push(settings_screen(settings));
+                        .push(settings_screen(settings, self.head_bob));
                 }
                 MenuEvent::Chosen(MenuAction::Back) => self.stage.shell().menu_mut().pop(),
                 MenuEvent::Chosen(MenuAction::Quit) => ctx.request_exit(),
                 MenuEvent::SettingsApplied(settings) => self.settings_applied(settings),
-                MenuEvent::GameSettingsApplied(_)
-                | MenuEvent::Captured { .. }
-                | MenuEvent::Cleared { .. } => {}
+                MenuEvent::GameSettingsApplied(values) => {
+                    if let Some(&percent) = values.get(HeadBobLevel::KEY) {
+                        self.head_bob = HeadBobLevel::nearest(percent);
+                        self.save_head_bob();
+                    }
+                }
+                MenuEvent::Captured { .. } | MenuEvent::Cleared { .. } => {}
             }
+        }
+    }
+
+    /// Saves the head bob; a failed save warns and the value stays for the session.
+    fn save_head_bob(&mut self) {
+        if let Some(saved) = &mut self.debug_settings
+            && let Err(error) = saved.set_head_bob(self.head_bob)
+        {
+            tracing::warn!(%error, head_bob = self.head_bob.percent(), "head bob not saved");
         }
     }
 
@@ -848,6 +870,7 @@ impl SearchlightGame {
     pub fn with_debug_settings(mut self, settings: DebugSettings) -> Self {
         self.god_mode = settings.god_mode();
         self.simple = settings.simple();
+        self.head_bob = settings.head_bob();
         self.pending_settings = Some(EngineSettings::from_prefs(settings.prefs()));
         self.debug_settings = Some(settings);
         self
@@ -900,6 +923,14 @@ impl SearchlightGame {
                 }
                 ConsoleCommand::Simple(SimpleArg::Set(on)) => self.simple = on,
                 ConsoleCommand::RoundGravity(scale) => self.round_gravity = scale,
+                ConsoleCommand::HeadBob(HeadBobArg::Show) => {
+                    let text = format!("Head bob: {}", self.head_bob);
+                    self.stage.shell().console_mut().print(&text);
+                }
+                ConsoleCommand::HeadBob(HeadBobArg::Set(level)) => {
+                    self.head_bob = level;
+                    self.save_head_bob();
+                }
             }
         }
         if self.simple != simple_before
@@ -1116,10 +1147,26 @@ impl Game for SearchlightGame {
         self.previous = self.mode.sim().player();
         self.previous_lean = self.mode.sim().player_lean();
         let was_dead = self.mode.sim().player_body().is_dead();
-        self.mode.tick(command, ctx.tick_length.as_secs_f32());
+        let dt = ctx.tick_length.as_secs_f32();
+        self.mode.tick(command, dt);
+        self.previous_bob = self.bob;
+        let player = self.mode.sim().player();
+        // A dead player's sim stops moving them, so their last velocity must not keep the view bobbing.
+        self.bob = if self.mode.sim().player_body().is_dead() {
+            Bob::REST
+        } else {
+            self.bob.step(
+                player.grounded,
+                player.velocity.x.hypot(player.velocity.z),
+                self.mode.sim().max_speed(),
+                dt,
+            )
+        };
         if was_dead && !self.mode.sim().player_body().is_dead() {
             self.previous = self.mode.sim().player();
             self.previous_lean = self.mode.sim().player_lean();
+            self.previous_bob = Bob::REST;
+            self.bob = Bob::REST;
             self.stage.status.clear();
         }
         self.stage.tick_flashes();
@@ -1230,7 +1277,9 @@ impl Game for SearchlightGame {
             let from = self.previous_lean.amount();
             let amount = from + alpha * (sim.player_lean().amount() - from);
             let yaw = view.forward.x.atan2(view.forward.z);
-            let eye = view.eye + lean_offset(yaw, amount * tuning.shift);
+            let bob = self.previous_bob.blend(self.bob, alpha);
+            let eye =
+                view.eye + lean_offset(yaw, amount * tuning.shift) + bob.offset(self.head_bob, yaw);
             self.stage.draw(
                 renderer,
                 (
@@ -3669,6 +3718,531 @@ mod tests {
         assert!(restart.restart, "F8 restarts once playing again");
         assert!(!ctx.exit_requested());
     }
+
+    fn head_bob_level(percent: i32) -> HeadBobLevel {
+        HeadBobLevel::new(percent).expect("a percentage on the grid")
+    }
+
+    /// The flat arena with no enemies, on its main menu, so no enemy walks into the player.
+    fn quiet_menu_game() -> SearchlightGame {
+        game().with_main_menu()
+    }
+
+    /// A game on the flat arena at `percent` head bob, standing at the origin facing +Z.
+    fn bobbing_game(percent: i32) -> SearchlightGame {
+        let mut game = game();
+        game.head_bob = head_bob_level(percent);
+        game
+    }
+
+    fn walk_command() -> SearchlightCommand {
+        SearchlightCommand {
+            movement: moho_physics::CharacterCommand {
+                forward: 1.0,
+                ..moho_physics::CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        }
+    }
+
+    /// Lets the player fall onto the floor and stand still.
+    fn settle(game: &mut SearchlightGame, clock: &mut GameClock) {
+        for _ in 0..90 {
+            tick_with(game, clock, &SearchlightCommand::default());
+        }
+        assert!(game.sim().player().grounded, "{:?}", game.sim().player());
+    }
+
+    fn eye_of(view: Mat4) -> Vec3 {
+        view.inverse().w_axis.truncate()
+    }
+
+    /// Draws a frame at `ALPHA` and returns how far its eye is from the unbobbed eye: the sim's
+    /// player blended between the last two ticks, with no lean on these games.
+    fn bob_of(game: &mut SearchlightGame, renderer: &mut SettingsRenderer) -> f32 {
+        let drawn = eye_of(draw_frame(game, renderer));
+        let unbobbed = eye_of(expected_view(game));
+        drawn.distance(unbobbed)
+    }
+
+    fn horizontal_speed(player: &CharacterState) -> f32 {
+        Vec3::new(player.velocity.x, 0.0, player.velocity.z).length()
+    }
+
+    #[test]
+    fn walking_at_full_head_bob_moves_the_drawn_eye_over_a_step_cycle() {
+        let mut game = bobbing_game(100);
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let mut renderer = SettingsRenderer::default();
+        settle(&mut game, &mut clock);
+
+        let mut most = 0.0_f32;
+        for _ in 0..120 {
+            tick_with(&mut game, &mut clock, &walk_command());
+            most = most.max(bob_of(&mut game, &mut renderer));
+        }
+
+        let player = game.sim().player();
+        assert!(
+            player.grounded && horizontal_speed(&player) > 3.0,
+            "the player is walking: {player:?}"
+        );
+        assert!(most > 0.01, "the eye never left the unbobbed eye: {most} m");
+        assert!(most < 0.1, "the bob is {most} m, far from a footstep");
+    }
+
+    #[test]
+    fn a_dead_player_draws_the_unbobbed_eye_even_after_walking_when_killed() {
+        let mut game = bobbing_game(100);
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let mut renderer = SettingsRenderer::default();
+        settle(&mut game, &mut clock);
+        for _ in 0..40 {
+            tick_with(&mut game, &mut clock, &walk_command());
+        }
+        game.mode.sim_mut().kill_player();
+        tick_with(&mut game, &mut clock, &walk_command());
+        assert!(game.sim().player_body().is_dead());
+
+        let mut most = 0.0_f32;
+        for _ in 0..60 {
+            tick_with(&mut game, &mut clock, &walk_command());
+            most = most.max(bob_of(&mut game, &mut renderer));
+        }
+
+        assert!(most < 1e-4, "the dead view bobbed {most} m");
+    }
+
+    #[test]
+    fn a_jumping_player_draws_the_unbobbed_eye_while_airborne() {
+        let mut game = bobbing_game(100);
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let mut renderer = SettingsRenderer::default();
+        settle(&mut game, &mut clock);
+        for _ in 0..40 {
+            tick_with(&mut game, &mut clock, &walk_command());
+        }
+        let jump = SearchlightCommand {
+            movement: moho_physics::CharacterCommand {
+                jump: true,
+                ..walk_command().movement
+            },
+            ..SearchlightCommand::default()
+        };
+
+        let (mut judged, mut most, mut slowest) = (0, 0.0_f32, f32::MAX);
+        let mut airborne_before = false;
+        for tick in 0..120 {
+            let command = if tick == 0 { jump } else { walk_command() };
+            tick_with(&mut game, &mut clock, &command);
+            let player = game.sim().player();
+            let airborne = !player.grounded;
+            let bob = bob_of(&mut game, &mut renderer);
+            // The first airborne frame still blends from the last footstep, and the landing
+            // frame blends toward the next; only frames between two airborne ticks are pure.
+            if airborne && airborne_before {
+                judged += 1;
+                most = most.max(bob);
+                slowest = slowest.min(horizontal_speed(&player));
+            }
+            airborne_before = airborne;
+        }
+
+        assert!(judged > 20, "the jump only had {judged} airborne frames");
+        assert!(
+            slowest > 3.0,
+            "the jumper slowed to {slowest} m/s in the air"
+        );
+        assert!(most < 1e-4, "the airborne eye bobbed {most} m");
+    }
+
+    /// Opens Settings from the main menu, whose Settings row is its second.
+    fn open_settings(game: &mut SearchlightGame, ctx: &mut EventContext<'_>) {
+        press_keys(game, ctx, &[Key::ArrowDown, Key::Enter]);
+        assert_eq!(title(game).as_deref(), Some("Settings"));
+    }
+
+    /// Focuses the first row of the top screen that `wanted` picks, scrolling it into view.
+    fn focus_row(
+        game: &SearchlightGame,
+        what: &str,
+        wanted: impl Fn(&MenuItem<MenuAction>) -> bool,
+    ) {
+        const SIZE: [f32; 2] = [1280.0, 720.0];
+        let mut shell = game.stage.shell();
+        let menu = shell.menu_mut();
+        let screen = menu.top().expect("a menu screen is open");
+        let row = screen
+            .items
+            .iter()
+            .position(wanted)
+            .unwrap_or_else(|| panic!("the screen lists no {what} row"));
+        let first = moho_ui_shell::menu::layout(screen, SIZE)[0];
+        let centre = [
+            (first.min[0] + first.max[0]) / 2.0,
+            (first.min[1] + first.max[1]) / 2.0,
+        ];
+        menu.scroll(-1000.0);
+        menu.hover(centre, SIZE);
+        for _ in 0..row {
+            menu.on_key(Input::Key(Key::ArrowDown), true, false);
+        }
+    }
+
+    fn focus_head_bob_slider(game: &SearchlightGame) {
+        focus_row(
+            game,
+            "Head bob",
+            |item| matches!(item, MenuItem::GameSlider(slider) if slider.key == HeadBobLevel::KEY),
+        );
+    }
+
+    fn focus_apply(game: &SearchlightGame) {
+        focus_row(game, "Apply", |item| matches!(item, MenuItem::Apply));
+    }
+
+    fn focus_back(game: &SearchlightGame) {
+        focus_row(
+            game,
+            "Back",
+            |item| matches!(item, MenuItem::Button { label, .. } if label == "Back"),
+        );
+    }
+
+    /// The value the Head bob slider on the top screen starts from, `None` without that row.
+    fn head_bob_on_the_settings_screen(game: &SearchlightGame) -> Option<i32> {
+        let mut shell = game.stage.shell();
+        let screen = shell.menu_mut().top().expect("a menu screen is open");
+        screen.items.iter().find_map(|item| match item {
+            MenuItem::GameSlider(slider) if slider.key == HeadBobLevel::KEY => Some(slider.value),
+            _ => None,
+        })
+    }
+
+    /// A game started fresh on its main menu from the prefs file at `path`.
+    fn relaunched(path: &Path) -> SearchlightGame {
+        let (prefs, warnings) = Prefs::load_from(path);
+        assert_eq!(warnings, vec![]);
+        quiet_menu_game().with_debug_settings(DebugSettings::new(prefs, path.to_path_buf()))
+    }
+
+    #[test]
+    fn head_bob_slider_at_zero_applied_keeps_the_walking_view_still() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, _) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_settings(&mut game, &mut ctx);
+        focus_head_bob_slider(&game);
+        press_keys(&mut game, &mut ctx, &[Key::ArrowLeft; 10]);
+        focus_apply(&game);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        game.enter_play();
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let mut renderer = SettingsRenderer::default();
+        settle(&mut game, &mut clock);
+
+        let mut most = 0.0_f32;
+        for _ in 0..120 {
+            tick_with(&mut game, &mut clock, &walk_command());
+            most = most.max(bob_of(&mut game, &mut renderer));
+        }
+
+        assert_eq!(game.head_bob, head_bob_level(0));
+        assert!(horizontal_speed(&game.sim().player()) > 3.0, "walking");
+        assert!(most < 1e-4, "the view bobbed {most} m at 0 %");
+    }
+
+    /// A game with a dummy 20 m down the +Z range, at `percent` head bob.
+    fn range_game(percent: i32) -> SearchlightGame {
+        let mut arena = (*arena_with(&[], Vec3::ZERO, &[], &[])).clone();
+        arena.dummy_spawns = vec![Vec3::new(0.0, 0.0, 20.0)];
+        let mode = ArenaMode::without_waves(
+            Arc::new(arena),
+            test_config(rifle_from(mag(30, 30)), vec![]),
+        );
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0));
+        game.head_bob = head_bob_level(percent);
+        game
+    }
+
+    /// Every hit of a walk toward the dummy that fires every sixth tick, with the tick it
+    /// landed on, and the most the drawn eye left the unbobbed eye.
+    fn walk_and_fire(percent: i32) -> (Vec<(usize, Feedback)>, f32) {
+        let mut game = range_game(percent);
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let mut renderer = SettingsRenderer::default();
+        settle(&mut game, &mut clock);
+        game.mode.drain_feedback();
+
+        let mut hits = Vec::new();
+        let mut most = 0.0_f32;
+        for tick in 0..90 {
+            let command = SearchlightCommand {
+                fire: tick % 6 == 0,
+                simple: true,
+                ..walk_command()
+            };
+            tick_with(&mut game, &mut clock, &command);
+            hits.extend(
+                game.mode
+                    .drain_feedback()
+                    .into_iter()
+                    .filter(|feedback| matches!(feedback, Feedback::Hit { .. }))
+                    .map(|feedback| (tick, feedback)),
+            );
+            most = most.max(bob_of(&mut game, &mut renderer));
+        }
+        (hits, most)
+    }
+
+    #[test]
+    fn shots_and_hits_match_at_zero_and_full_head_bob() {
+        let (still_hits, still_bob) = walk_and_fire(0);
+        let (bobbing_hits, bobbing_bob) = walk_and_fire(100);
+
+        assert!(!bobbing_hits.is_empty(), "no shot ever hit the dummy");
+        assert_eq!(still_hits, bobbing_hits);
+        assert!(still_bob < 1e-4, "the view bobbed {still_bob} m at 0 %");
+        assert!(bobbing_bob > 0.01, "the view never bobbed at 100 %");
+    }
+
+    #[test]
+    fn bob_moves_only_the_drawn_eye_never_the_view_direction() {
+        let mut game = turning_game(false);
+        game.head_bob = head_bob_level(100);
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let mut renderer = SettingsRenderer::default();
+        settle(&mut game, &mut clock);
+
+        let (mut turned, mut off_course, mut bobbed) = (0.0_f32, 0.0_f32, 0.0_f32);
+        for _ in 0..120 {
+            tick_with(&mut game, &mut clock, &walk_command());
+            mouse(&mut game, 5.0, 2.0);
+            let drawn = draw_frame(&mut game, &mut renderer);
+            let unbobbed = expected_view(&game);
+            turned = turned.max(forward_of(drawn).distance(Vec3::Z));
+            off_course = off_course.max(forward_of(drawn).distance(forward_of(unbobbed)));
+            bobbed = bobbed.max(eye_of(drawn).distance(eye_of(unbobbed)));
+        }
+
+        assert!(turned > 0.01, "the view never turned");
+        assert!(bobbed > 0.01, "the eye never bobbed");
+        assert!(off_course < 1e-4, "the bob turned the view by {off_course}");
+    }
+
+    #[test]
+    fn head_bob_set_from_the_console_loads_after_a_relaunch_and_shows_in_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        type_into_console(&game, "head_bob 25");
+        game.command();
+
+        let mut relaunched = relaunched(&path);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_settings(&mut relaunched, &mut ctx);
+
+        assert_eq!(relaunched.head_bob, head_bob_level(25));
+        assert_eq!(head_bob_on_the_settings_screen(&relaunched), Some(25));
+    }
+
+    #[test]
+    fn head_bob_applied_from_settings_loads_after_a_relaunch_and_shows_in_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_settings(&mut game, &mut ctx);
+        focus_head_bob_slider(&game);
+        press_keys(&mut game, &mut ctx, &[Key::ArrowLeft; 5]);
+        focus_apply(&game);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+
+        let mut relaunched = relaunched(&path);
+        open_settings(&mut relaunched, &mut ctx);
+
+        assert_eq!(game.head_bob, head_bob_level(25));
+        assert_eq!(relaunched.head_bob, head_bob_level(25));
+        assert_eq!(head_bob_on_the_settings_screen(&relaunched), Some(25));
+    }
+
+    #[test]
+    fn back_after_moving_the_head_bob_slider_keeps_the_saved_value_and_reopens_at_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_settings(&mut game, &mut ctx);
+        focus_head_bob_slider(&game);
+        press_keys(&mut game, &mut ctx, &[Key::ArrowLeft; 10]);
+
+        focus_back(&game);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        let after_back = (title(&game), game.head_bob);
+        let saved_by_back = path.exists();
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        let reopened = head_bob_on_the_settings_screen(&game);
+
+        assert_eq!(after_back, (None, head_bob_level(50)));
+        assert!(!saved_by_back, "Back saved the discarded change");
+        assert_eq!(reopened, Some(50));
+    }
+
+    #[test]
+    fn a_head_bob_set_from_the_console_shows_on_the_slider() {
+        let mut game = quiet_menu_game();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        type_into_console(&game, "head_bob 30");
+        game.command();
+        open_settings(&mut game, &mut ctx);
+
+        assert_eq!(game.head_bob, head_bob_level(30));
+        assert_eq!(head_bob_on_the_settings_screen(&game), Some(30));
+    }
+
+    #[test]
+    fn a_refused_head_bob_keeps_the_previous_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = game().with_debug_settings(settings);
+        type_into_console(&game, "head_bob 25");
+        game.command();
+
+        for line in ["head_bob 150", "head_bob 23", "head_bob x", "head_bob 5 10"] {
+            type_into_console(&game, line);
+            game.command();
+
+            let lines = console_lines(&game);
+            assert_eq!(
+                lines.last().map(String::as_str),
+                Some("Usage: head_bob [percent] (0 to 100, steps of 5)"),
+                "{line}"
+            );
+            assert_eq!(game.head_bob, head_bob_level(25), "{line}");
+        }
+
+        let (saved, _) = Prefs::load_from(&path);
+        assert_eq!(saved.game_value("head_bob"), Some("25"));
+    }
+
+    #[test]
+    fn bare_head_bob_prints_the_current_percent() {
+        let mut game = game();
+
+        type_into_console(&game, "head_bob");
+        game.command();
+        type_into_console(&game, "head_bob 25");
+        game.command();
+        type_into_console(&game, "head_bob");
+        game.command();
+
+        let lines = console_lines(&game);
+        assert_eq!(
+            lines[lines.len() - 6..],
+            [
+                "> head_bob",
+                "Head bob: 50 %",
+                "> head_bob 25",
+                "Head bob: 25 %",
+                "> head_bob",
+                "Head bob: 25 %"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_failed_head_bob_save_keeps_the_value_for_the_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, "a file, not a directory").unwrap();
+        let settings = DebugSettings::new(Prefs::default(), blocker.join("searchlight.ini"));
+        let mut game = game().with_debug_settings(settings);
+
+        type_into_console(&game, "head_bob 15");
+        game.command();
+
+        assert_eq!(game.head_bob, head_bob_level(15));
+    }
+
+    #[test]
+    fn game_settings_applied_without_head_bob_leaves_it_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        type_into_console(&game, "head_bob 25");
+        game.command();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        game.stage
+            .shell()
+            .menu_mut()
+            .push(moho_ui_shell::MenuScreen {
+                title: Some("Other".to_owned()),
+                items: vec![
+                    MenuItem::GameSlider(moho_ui_shell::GameSlider {
+                        key: "sway".to_owned(),
+                        label: "Sway".to_owned(),
+                        min: 0,
+                        max: 100,
+                        step: 5,
+                        unit: "%".to_owned(),
+                        value: 20,
+                    }),
+                    MenuItem::Apply,
+                ],
+                back: None,
+                settings: None,
+            });
+
+        focus_apply(&game);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+
+        assert_eq!(game.head_bob, head_bob_level(25));
+        let (saved, _) = Prefs::load_from(&path);
+        assert_eq!(saved.game_value("head_bob"), Some("25"));
+    }
+
+    #[test]
+    fn respawn_resets_the_bob() {
+        let mut game = bobbing_game(100);
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let mut renderer = SettingsRenderer::default();
+        settle(&mut game, &mut clock);
+        let mut most = 0.0_f32;
+        for _ in 0..60 {
+            tick_with(&mut game, &mut clock, &walk_command());
+            most = most.max(bob_of(&mut game, &mut renderer));
+        }
+        assert!(most > 0.01, "the walk never bobbed before the death");
+        game.mode.sim_mut().kill_player();
+        tick_with(&mut game, &mut clock, &walk_command());
+        assert!(game.sim().player_body().is_dead());
+
+        tick_with(&mut game, &mut clock, &restart_command());
+
+        assert!(!game.sim().player_body().is_dead());
+        let standing = game.sim().player().eye_position();
+        for alpha in [0.0, 0.5] {
+            let mut renderer = SettingsRenderer::default();
+            let ctx_clock = GameClock::default();
+            let mut ctx = FrameContext::new(TICK, &ctx_clock, Some(&mut renderer), None);
+            game.frame(&mut ctx, alpha);
+            let eye = eye_of(*renderer.views.last().expect("a frame began"));
+
+            assert!(
+                eye.distance(standing) < 1e-3,
+                "alpha {alpha}: the eye is {eye:?}, standing is {standing:?}"
+            );
+        }
+    }
 }
 
 /// The menus, observed through the shell's screen stack and the game's outward behavior.
@@ -4221,9 +4795,13 @@ mod settings_tests {
             .into_iter()
             .map(MenuItem::Setting)
             .collect();
+        expected.push(crate::menu::head_bob_row(HeadBobLevel::DEFAULT));
         expected.push(MenuItem::Apply);
         expected.push(back_button());
-        assert_eq!(screen.items, expected, "the eleven rows, Apply and Back");
+        assert_eq!(
+            screen.items, expected,
+            "the eleven rows, Head bob, Apply and Back"
+        );
         assert_eq!(screen.back, Some(MenuAction::Back));
         assert_eq!(
             screen.settings.map(|settings| settings.mouse_sensitivity),

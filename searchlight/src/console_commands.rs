@@ -8,6 +8,8 @@ use moho_ui_shell::Console;
 use moho_ui_shell::console::registry::{CommandSpec, ParseFn};
 use searchlight_rules::{Grade, GravityScale, MAX_GRAVITY_SCALE};
 
+use crate::head_bob::HeadBobLevel;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ConsoleCommand {
     GodMode(GodModeArg),
@@ -17,6 +19,34 @@ pub enum ConsoleCommand {
     Simple(SimpleArg),
     /// Set how hard gravity pulls on rounds.
     RoundGravity(GravityScale),
+    /// Show or set how much the view bobs while moving.
+    HeadBob(HeadBobArg),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HeadBobArg {
+    Show,
+    Set(HeadBobLevel),
+}
+
+/// Parses `head_bob [percent]`; no argument shows the level.
+pub fn parse_head_bob(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    let usage = || "Usage: head_bob [percent] (0 to 100, steps of 5)".to_owned();
+    match args {
+        [] => Ok((ConsoleCommand::HeadBob(HeadBobArg::Show), String::new())),
+        [text] => {
+            let level = text
+                .parse::<i32>()
+                .ok()
+                .and_then(|percent| HeadBobLevel::new(percent).ok())
+                .ok_or_else(usage)?;
+            Ok((
+                ConsoleCommand::HeadBob(HeadBobArg::Set(level)),
+                format!("Head bob: {level}"),
+            ))
+        }
+        _ => Err(usage()),
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -167,6 +197,14 @@ fn console_with_grade(
             parse: parse_round_gravity,
         })
         .expect("\"round_gravity\" is not an engine command and is registered once");
+    console
+        .register(CommandSpec {
+            name: "head_bob".to_owned(),
+            usage: "head_bob [percent]".to_owned(),
+            help: "view bob while moving (0 to 100 %)".to_owned(),
+            parse: parse_head_bob,
+        })
+        .expect("\"head_bob\" is not an engine command and is registered once");
     (console, warnings)
 }
 
@@ -480,5 +518,75 @@ mod tests {
                 .any(|line| line.starts_with("  fullscreen - toggle")),
             "{lines:?}"
         );
+    }
+
+    const HEAD_BOB_USAGE: &str = "Usage: head_bob [percent] (0 to 100, steps of 5)";
+
+    fn head_bob_level(percent: i32) -> HeadBobLevel {
+        HeadBobLevel::new(percent).expect("a percentage on the grid")
+    }
+
+    #[test]
+    fn bare_head_bob_shows_and_a_grid_value_sets() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        console.submit("head_bob");
+        let shown = (console.take_commands(), last_line(&console));
+        for percent in [0, 5, 25, 50, 95, 100] {
+            console.submit(&format!("head_bob {percent}"));
+
+            assert_eq!(
+                console.take_commands(),
+                vec![ConsoleCommand::HeadBob(HeadBobArg::Set(head_bob_level(
+                    percent
+                )))],
+                "{percent}"
+            );
+            assert_eq!(last_line(&console), format!("Head bob: {percent} %"));
+        }
+
+        assert_eq!(
+            shown,
+            (
+                vec![ConsoleCommand::HeadBob(HeadBobArg::Show)],
+                "> head_bob".to_owned()
+            ),
+            "a bare head_bob queues a show and prints nothing itself"
+        );
+    }
+
+    #[test]
+    fn head_bob_outside_zero_to_a_hundred_or_off_the_grid_is_refused_naming_the_range() {
+        for line in [
+            "head_bob 150",
+            "head_bob 105",
+            "head_bob -5",
+            "head_bob -1",
+            "head_bob 23",
+            "head_bob 1",
+            "head_bob 2.5",
+            "head_bob x",
+            "head_bob 50%",
+            "head_bob 25 50",
+            "head_bob 99999999999",
+        ] {
+            let (mut console, _) = console(&BTreeMap::new());
+
+            console.submit(line);
+
+            assert!(console.take_commands().is_empty(), "{line}");
+            assert_eq!(last_line(&console), HEAD_BOB_USAGE, "{line}");
+        }
+    }
+
+    #[test]
+    fn help_lists_head_bob() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        console.submit("help");
+
+        let lines = printed(&console);
+        let expected = "  head_bob [percent] - view bob while moving (0 to 100 %)".to_owned();
+        assert!(lines.contains(&expected), "{lines:?}");
     }
 }

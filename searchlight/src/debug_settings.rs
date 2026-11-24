@@ -6,6 +6,8 @@ use std::path::PathBuf;
 use moho_core::prefs::{Prefs, WindowMode};
 use moho_ui_shell::EngineSettings;
 
+use crate::head_bob::HeadBobLevel;
+
 const GOD_MODE: &str = "god_mode";
 const SIMPLE: &str = "simple";
 
@@ -55,6 +57,27 @@ impl DebugSettings {
         self.prefs
             .set_debug_value(SIMPLE, if on { "1" } else { "0" })
             .expect("\"simple\" with \"1\" or \"0\" is a name and value prefs always accepts");
+        self.prefs.save_to(&self.path)
+    }
+
+    /// The head bob the prefs hold under `[game]`: 50 % when absent or unparsable, and a stored
+    /// value out of range or off the grid snaps to the nearest step.
+    pub fn head_bob(&self) -> HeadBobLevel {
+        self.prefs
+            .game_value(HeadBobLevel::KEY)
+            .and_then(|text| text.parse::<i32>().ok())
+            .map_or(HeadBobLevel::DEFAULT, HeadBobLevel::nearest)
+    }
+
+    /// Stores the head bob under `[game]` and saves the prefs file; the value is kept if the save
+    /// fails.
+    ///
+    /// # Errors
+    /// The I/O error if the file cannot be written.
+    pub fn set_head_bob(&mut self, level: HeadBobLevel) -> io::Result<()> {
+        self.prefs
+            .set_game_value(HeadBobLevel::KEY, &level.percent().to_string())
+            .expect("\"head_bob\" with a number is a name and value prefs always accepts");
         self.prefs.save_to(&self.path)
     }
 
@@ -317,6 +340,70 @@ mod tests {
 
         assert!(saved.is_err());
         assert_eq!(settings.window_mode(), WindowMode::Borderless);
+    }
+
+    fn level(percent: i32) -> HeadBobLevel {
+        HeadBobLevel::new(percent).expect("a percentage on the grid")
+    }
+
+    #[test]
+    fn head_bob_reads_fifty_when_absent_or_unparsable_and_snaps_bad_values() {
+        let read = |value: Option<&str>| {
+            let mut prefs = Prefs::default();
+            if let Some(value) = value {
+                prefs.set_game_value("head_bob", value).unwrap();
+            }
+            DebugSettings::new(prefs, PathBuf::from("unused.ini")).head_bob()
+        };
+
+        assert_eq!(read(None), level(50));
+        for unparsable in ["x", "fifty", "2.5", "5%", "--5"] {
+            assert_eq!(read(Some(unparsable)), level(50), "{unparsable:?}");
+        }
+        for (stored, expected) in [
+            ("0", 0),
+            ("25", 25),
+            ("100", 100),
+            ("23", 25),
+            ("22", 20),
+            ("150", 100),
+            ("-20", 0),
+        ] {
+            assert_eq!(read(Some(stored)), level(expected), "{stored:?}");
+        }
+    }
+
+    #[test]
+    fn head_bob_is_stored_under_game_and_survives_save_and_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config/searchlight.ini");
+        let mut settings = settings_at(&path);
+        settings.set_god_mode(true).unwrap();
+
+        settings.set_head_bob(level(25)).unwrap();
+        let after_25 = settings_at(&path);
+        settings.set_head_bob(level(0)).unwrap();
+        let after_0 = settings_at(&path);
+
+        assert_eq!(after_25.head_bob(), level(25));
+        assert_eq!(after_25.prefs().game_value("head_bob"), Some("25"));
+        assert_eq!(after_25.prefs().debug_value("head_bob"), None);
+        assert_eq!(after_0.head_bob(), level(0));
+        assert_eq!(settings.head_bob(), level(0));
+        assert!(after_0.god_mode(), "saving head bob keeps other values");
+    }
+
+    #[test]
+    fn a_failed_save_keeps_the_head_bob_for_the_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, "a file, not a directory").unwrap();
+        let mut settings = DebugSettings::new(Prefs::default(), blocker.join("searchlight.ini"));
+
+        let saved = settings.set_head_bob(level(15));
+
+        assert!(saved.is_err());
+        assert_eq!(settings.head_bob(), level(15));
     }
 
     #[test]

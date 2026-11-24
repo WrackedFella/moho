@@ -979,6 +979,11 @@ impl SearchlightSim {
         }
     }
 
+    /// The player's walking speed in m/s, before a lean slows it.
+    pub fn max_speed(&self) -> f32 {
+        self.move_settings.max_speed
+    }
+
     /// How far the player leans after the last tick.
     pub fn player_lean(&self) -> Lean {
         self.lean
@@ -1966,6 +1971,21 @@ mod tests {
 
     fn open_sim() -> SearchlightSim {
         arena_sim(rifle_with(5), vec![])
+    }
+
+    #[test]
+    fn max_speed_is_the_unleaned_walking_speed_even_while_leaning() {
+        let config = test_config(rifle_with(5), vec![]);
+        let walking_speed = config.move_settings.max_speed;
+        let mut sim = open_sim();
+
+        let at_rest = sim.max_speed();
+        hold(&mut sim, &walking(Some(LeanSide::Left)), SETTLE_TICKS);
+        let leaning = sim.max_speed();
+
+        assert_eq!(walking_speed, 4.0, "the test tuning walks at 4 m/s");
+        assert_eq!(at_rest, walking_speed);
+        assert_eq!(leaning, walking_speed);
     }
 
     #[test]

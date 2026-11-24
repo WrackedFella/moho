@@ -8,6 +8,7 @@ pub mod control;
 pub mod cover;
 pub mod debug_settings;
 pub mod game;
+pub mod head_bob;
 pub mod hud;
 pub mod input;
 pub mod kit;
