@@ -294,4 +294,50 @@ mod tests {
         assert_eq!(items.lists(), before);
         assert_eq!(before.lists.len(), 2);
     }
+
+    #[test]
+    fn a_move_to_the_same_list_or_of_an_unknown_item_or_list_changes_nothing() {
+        let mut items = DemoItems::new();
+        let before = items.lists();
+        let bandage = id_named(&items, 0, "Bandage");
+        let rifle = id_named(&items, 1, "Rifle");
+
+        let same_player = items.move_item(bandage, ListId(0), ListId(0));
+        let same_container = items.move_item(rifle, ListId(1), ListId(1));
+        let unknown_item = items.move_item(u32::MAX, ListId(0), ListId(1));
+        let unknown_list = items.move_item(bandage, ListId(0), ListId(7));
+        let both_unknown = items.move_item(bandage, ListId(7), ListId(8));
+
+        assert!(!(same_player || same_container || unknown_item || unknown_list || both_unknown));
+        assert_eq!(items.lists(), before);
+    }
+
+    #[test]
+    fn the_player_list_takes_an_eighth_row_and_refuses_a_ninth_and_the_container_never_refuses() {
+        let mut items = DemoItems::new();
+        for _ in 0..5 {
+            let id = first_id(&items, 1);
+            assert!(items.move_item(id, ListId(1), ListId(0)));
+        }
+        let seventh_full = shown(&items, 0).len();
+        let id = first_id(&items, 1);
+        let eighth = items.move_item(id, ListId(1), ListId(0));
+        let after_eighth = items.lists();
+        let id = first_id(&items, 1);
+        let ninth = items.move_item(id, ListId(1), ListId(0));
+
+        assert_eq!(seventh_full, 7);
+        assert!(eighth);
+        assert_eq!(after_eighth.lists[0].rows.len(), 8);
+        assert!(!ninth);
+        assert_eq!(items.lists(), after_eighth);
+        let mut back = DemoItems::new();
+        assert!(shown(&back, 1).len() > 40);
+        for _ in 0..2 {
+            let id = first_id(&back, 0);
+            assert!(back.move_item(id, ListId(0), ListId(1)));
+        }
+        assert_eq!(shown(&back, 0), []);
+        assert!(shown(&back, 1).len() > 40);
+    }
 }

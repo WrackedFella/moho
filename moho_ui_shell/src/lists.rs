@@ -1484,6 +1484,60 @@ mod tests {
     }
 
     #[test]
+    fn set_lists_with_two_rows_sharing_an_item_moves_the_hold_to_the_first() {
+        let data = || {
+            lists_of(vec![
+                list(
+                    1,
+                    "A",
+                    vec![row("first", None, None, 7), row("second", None, None, 7)],
+                ),
+                list(2, "B", rows_named("b", 1, 20)),
+            ])
+        };
+        let mut stack = MenuStack::new();
+        stack.push_lists(data());
+        press(&mut stack, Key::ArrowDown);
+        press(&mut stack, Key::Enter);
+        let before = marked(&stack);
+
+        stack.set_lists(data());
+        let after = marked(&stack);
+        press(&mut stack, Key::ArrowRight);
+        press(&mut stack, Key::Enter);
+
+        assert_eq!(before, ["» second"]);
+        assert_eq!(after, ["» first"]);
+        assert_eq!(moves(&mut stack), [(7, ListId(1), ListId(2))]);
+    }
+
+    #[test]
+    fn set_lists_dropping_the_held_list_and_an_earlier_one_keeps_focus_on_the_focused_id() {
+        let list_of = |id: u32| {
+            list(
+                id,
+                &format!("T{id}"),
+                rows_named(&format!("r{id}_"), 3, id * 10),
+            )
+        };
+        let mut stack = stack_of([10, 20, 30, 40].map(list_of).to_vec());
+        press(&mut stack, Key::Enter);
+        presses(&mut stack, Key::ArrowRight, 2);
+        press(&mut stack, Key::ArrowDown);
+
+        stack.set_lists(lists_of([20, 30].map(list_of).to_vec()));
+        let released = marked(&stack);
+        let on_30 = focused_labels(&stack);
+        press(&mut stack, Key::Enter);
+        press(&mut stack, Key::ArrowRight);
+        press(&mut stack, Key::Enter);
+
+        assert_eq!(released, Vec::<String>::new());
+        assert_eq!(on_30, "r30_01");
+        assert_eq!(moves(&mut stack), [(301, ListId(30), ListId(20))]);
+    }
+
+    #[test]
     fn scroll_moves_the_focused_list_and_keeps_the_remainder() {
         let mut stack = stack_of(vec![
             list(1, "A", rows_named("R", 40, 100)),
