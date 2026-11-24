@@ -302,6 +302,7 @@ mod tests {
                 mouse_sensitivity: 2.5,
                 mouse_smoothing: true,
                 invert_mouse_y: true,
+                master_volume: 5.0,
                 sound_effect_volume: 4.0,
                 music_volume: 10.0,
                 ui_volume: 2.5,
@@ -349,6 +350,75 @@ mod tests {
                 AudioCategory::Voice,
             ] {
                 assert_eq!(volume(&silenced, category), 0.0, "the mute is kept");
+            }
+        }
+
+        const CATEGORIES: [AudioCategory; 4] = [
+            AudioCategory::SoundEffect,
+            AudioCategory::Music,
+            AudioCategory::UserInterface,
+            AudioCategory::Voice,
+        ];
+
+        /// Every category at 8 on the prefs scale and the master at 10.
+        fn eights_at_full_master() -> (EngineSettings, AudioSettings) {
+            let settings = EngineSettings {
+                master_volume: 10.0,
+                sound_effect_volume: 8.0,
+                music_volume: 8.0,
+                ui_volume: 8.0,
+                ..settings()
+            };
+            let current = AudioSettings::new()
+                .with_master_volume(1.0)
+                .with_voice_volume(0.8);
+            (settings, audio_settings_for(&settings, &current))
+        }
+
+        #[test]
+        fn audio_settings_for_takes_the_master_and_halves_every_category() {
+            let (full, earlier) = eights_at_full_master();
+            let halved = EngineSettings {
+                master_volume: 5.0,
+                ..full
+            };
+            let current = AudioSettings::new()
+                .with_master_volume(1.0)
+                .with_voice_volume(0.8);
+
+            let later = audio_settings_for(&halved, &current);
+
+            for category in CATEGORIES {
+                let before = volume(&earlier, category.clone());
+                let after = volume(&later, category.clone());
+                assert!(close(before, 0.8), "{category:?} before {before}");
+                assert!(close(after, 0.4), "{category:?} after {after}");
+            }
+        }
+
+        #[test]
+        fn master_zero_silences_every_category_and_keeps_each_category_value() {
+            let (full, _) = eights_at_full_master();
+            let silent = EngineSettings {
+                master_volume: 0.0,
+                ..full
+            };
+            let current = AudioSettings::new()
+                .with_master_volume(1.0)
+                .with_voice_volume(0.8);
+
+            let audio = audio_settings_for(&silent, &current);
+
+            for category in CATEGORIES {
+                assert_eq!(volume(&audio, category.clone()), 0.0, "{category:?}");
+            }
+            assert_eq!(silent.sound_effect_volume, 8.0);
+            assert_eq!(silent.music_volume, 8.0);
+            assert_eq!(silent.ui_volume, 8.0);
+            let restored = audio_settings_for(&full, &audio);
+            for category in CATEGORIES {
+                let back = volume(&restored, category.clone());
+                assert!(close(back, 0.8), "{category:?} back at {back}");
             }
         }
 

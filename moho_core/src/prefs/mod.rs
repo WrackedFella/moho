@@ -57,6 +57,7 @@ pub struct Prefs {
     mouse_acceleration: bool,
     mouse_acceleration_strength: f32,
     // Audio settings (values 0.0 to 10.0)
+    audio_master_volume: f32,
     audio_sound_effect_volume: f32,
     audio_music_volume: f32,
     audio_ui_volume: f32,
@@ -194,6 +195,9 @@ impl Prefs {
     pub fn mouse_acceleration_strength(&self) -> f32 {
         self.mouse_acceleration_strength
     }
+    pub fn master_volume(&self) -> f32 {
+        self.audio_master_volume
+    }
     pub fn sound_effect_volume(&self) -> f32 {
         self.audio_sound_effect_volume
     }
@@ -269,6 +273,9 @@ impl Prefs {
     }
     pub fn mouse_acceleration_strength_mut(&mut self) -> &mut f32 {
         &mut self.mouse_acceleration_strength
+    }
+    pub fn master_volume_mut(&mut self) -> &mut f32 {
+        &mut self.audio_master_volume
     }
     pub fn sound_effect_volume_mut(&mut self) -> &mut f32 {
         &mut self.audio_sound_effect_volume
@@ -372,6 +379,7 @@ impl Default for Prefs {
             mouse_acceleration: false,
             mouse_acceleration_strength: 0.04,
             // Audio volumes use a 0 to 10 scale
+            audio_master_volume: 10.0,
             audio_sound_effect_volume: 8.0,
             audio_music_volume: 6.0,
             audio_ui_volume: 7.0,
@@ -1113,6 +1121,35 @@ mod tests {
             proptest::prop_assert_eq!(parsed.game_value(&name), Some(value.as_str()));
             proptest::prop_assert_eq!(parsed, prefs);
         }
+    }
+
+    #[test]
+    fn master_volume_round_trips_through_save_and_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config").join("prefs.ini");
+        let mut prefs = Prefs::default();
+        *prefs.master_volume_mut() = 3.0;
+
+        prefs.save_to(&path).unwrap();
+        let (loaded, warnings) = Prefs::load_from(&path);
+
+        assert_eq!(warnings, vec![]);
+        assert_eq!(loaded.master_volume(), 3.0);
+        assert_eq!(loaded, prefs);
+    }
+
+    #[test]
+    fn master_volume_is_written_first_in_audio_with_one_decimal() {
+        let mut prefs = Prefs::default();
+        *prefs.master_volume_mut() = 3.0;
+
+        let text = prefs.to_ini_string();
+
+        assert!(
+            text.contains("\n[audio]\nmaster_volume=3.0\nsound_effect_volume=8.0\n"),
+            "{text}"
+        );
+        assert_eq!(Prefs::default().master_volume(), 10.0);
     }
 
     #[test]

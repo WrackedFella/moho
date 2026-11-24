@@ -1167,6 +1167,36 @@ mod tests {
         assert_eq!(resaved, prefs);
     }
 
+    #[test]
+    fn a_file_without_master_volume_loads_10_with_no_issue_and_keeps_the_rest() {
+        let older = base_ini_with(None);
+        assert!(!older.contains("master_volume"), "test setup");
+        let newer = older.replace("[audio]\n", "[audio]\nmaster_volume=4.0\n");
+
+        let (from_older, older_issues) = Prefs::parse(&older);
+        let (from_newer, newer_issues) = Prefs::parse(&newer);
+
+        assert_eq!(older_issues, vec![]);
+        assert_eq!(from_older.master_volume(), 10.0);
+        assert_eq!(snapshot(&from_older), snapshot(&base_prefs()));
+        assert_eq!(newer_issues, vec![]);
+        assert_eq!(from_newer.master_volume(), 4.0);
+        assert_eq!(snapshot(&from_newer), snapshot(&base_prefs()));
+    }
+
+    #[test]
+    fn a_malformed_master_volume_warns_and_falls_back_to_10() {
+        let content = base_ini_with(None).replace("[audio]\n", "[audio]\nmaster_volume=loud\n");
+
+        let (prefs, issues) = Prefs::parse(&content);
+
+        assert_eq!(
+            issues,
+            vec![malformed("audio", "master_volume", Some("loud"))]
+        );
+        assert_eq!(prefs.master_volume(), 10.0);
+    }
+
     fn volume_strategy() -> impl Strategy<Value = f32> {
         (0u32..=100).prop_map(|n| n as f32 / 10.0)
     }
@@ -1216,6 +1246,21 @@ mod tests {
     }
 
     proptest! {
+        #[test]
+        fn saved_prefs_with_any_master_volume_parse_back_unchanged(
+            mut prefs in prefs_strategy(),
+            master in volume_strategy(),
+        ) {
+            *prefs.master_volume_mut() = master;
+            let text = prefs.to_ini_string();
+
+            let (parsed, issues) = Prefs::parse(&text);
+
+            prop_assert_eq!(issues, vec![], "text:\n{}", text);
+            prop_assert_eq!(parsed.master_volume(), master);
+            prop_assert_eq!(parsed, prefs);
+        }
+
         #[test]
         fn saved_prefs_parse_back_unchanged_without_warnings(prefs in prefs_strategy()) {
             let text = prefs.to_ini_string();

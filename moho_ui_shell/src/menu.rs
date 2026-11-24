@@ -1889,6 +1889,7 @@ mod tests {
             mouse_sensitivity: 2.5,
             mouse_smoothing: false,
             invert_mouse_y: false,
+            master_volume: 10.0,
             sound_effect_volume: 5.0,
             music_volume: 6.0,
             ui_volume: 7.0,
@@ -2093,6 +2094,7 @@ mod tests {
                 mouse_sensitivity: 2.5,
                 mouse_smoothing: false,
                 invert_mouse_y: false,
+                master_volume: 10.0,
                 sound_effect_volume: 8.0,
                 music_volume: 6.0,
                 ui_volume: 7.0,
@@ -2221,6 +2223,36 @@ mod tests {
 
             assert_eq!(applied, base());
             assert_eq!(stack.take_events(), []);
+        }
+
+        #[test]
+        fn moving_master_volume_then_popping_emits_no_settings() {
+            let mut stack = stack_of(main_screen());
+            stack.push(MenuScreen {
+                title: Some("Settings".to_owned()),
+                items: vec![
+                    MenuItem::Setting(EngineSetting::MasterVolume),
+                    MenuItem::Apply,
+                    button("Back", Act::Back),
+                ],
+                back: Some(Act::Back),
+                settings: Some(base()),
+            });
+
+            step(
+                &mut stack,
+                EngineSetting::MasterVolume,
+                &[Key::ArrowLeft, Key::ArrowLeft],
+            );
+            let drawn: Vec<String> = stack.texts(SIZE).into_iter().map(|t| t.text).collect();
+            stack.pop();
+            let after_back = stack.take_events();
+            stack.push(screen_of(base()));
+            let reopened = apply(&mut stack);
+
+            assert!(drawn.contains(&"9.0".to_owned()), "{drawn:?}");
+            assert_eq!(after_back, []);
+            assert_eq!(reopened, base());
         }
 
         #[test]
@@ -2506,6 +2538,7 @@ mod tests {
                 mouse_sensitivity: 2.5,
                 mouse_smoothing: false,
                 invert_mouse_y: false,
+                master_volume: 10.0,
                 sound_effect_volume: 8.0,
                 music_volume: 6.0,
                 ui_volume: 7.0,

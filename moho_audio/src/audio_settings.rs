@@ -188,6 +188,16 @@ mod tests {
     }
 
     #[test]
+    fn from_prefs_takes_the_master_volume() {
+        let mut prefs = prefs_with(5.0, 10.0, 3.0, 1.0);
+        *prefs.master_volume_mut() = 4.0;
+
+        let settings = AudioSettings::from_prefs(&prefs);
+
+        assert_volumes(&settings, [0.2, 0.4, 0.12, 0.04]);
+    }
+
+    #[test]
     fn from_prefs_clamps_out_of_range_values() {
         let settings = AudioSettings::from_prefs(&prefs_with(25.0, -3.0, 11.0, 100.0));
 

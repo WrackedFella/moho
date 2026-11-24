@@ -404,6 +404,20 @@ mod tests {
     }
 
     #[test]
+    fn set_settings_with_a_lower_master_lowers_playing_music() {
+        let (mut system, output) = system(full_volume().with_music_volume(0.8));
+        system.handle_event(music_start(MENU_MUSIC, 1.0)).unwrap();
+        assert_volume_eq(output.voices()[0].volume, 0.8);
+
+        system.set_settings(full_volume().with_music_volume(0.8).with_master_volume(0.4));
+
+        let voices = output.voices();
+        assert_eq!(voices.len(), 1, "the music was not restarted");
+        assert!(!voices[0].stopped);
+        assert_volume_eq(voices[0].volume, 0.32);
+    }
+
+    #[test]
     fn stop_events_stop_music() {
         for event in [AudioEvent::MusicStop, AudioEvent::StopAll] {
             let (mut system, output) = system(full_volume());

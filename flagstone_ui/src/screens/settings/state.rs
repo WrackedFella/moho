@@ -278,6 +278,27 @@ mod tests {
     }
 
     #[test]
+    fn saving_strategy_settings_keeps_the_master_volume() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("prefs.ini");
+        let mut prefs = Prefs::default();
+        *prefs.master_volume_mut() = 4.0;
+        prefs.save_to(&path).unwrap();
+        let (loaded, warnings) = Prefs::load_from(&path);
+        let mut state = SettingsState::from_prefs_at(loaded, path.clone());
+        *state.staged_mut().music_volume_mut() = 2.5;
+
+        state.apply_changes().unwrap();
+        let (reloaded, reload_warnings) = Prefs::load_from(&path);
+
+        assert_eq!(warnings, vec![]);
+        assert_eq!(reload_warnings, vec![]);
+        assert_eq!(state.prefs().master_volume(), 4.0);
+        assert_eq!(reloaded.master_volume(), 4.0);
+        assert_eq!(reloaded.music_volume(), 2.5);
+    }
+
+    #[test]
     fn video_setting_change_marks_dirty_and_reverts() {
         use crate::prefs::WindowMode;
         let mut state = SettingsState::from_prefs(Prefs::default());
