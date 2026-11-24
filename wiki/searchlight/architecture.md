@@ -197,6 +197,18 @@ the edge of the bounds; `round_gravity` (console, session only, 1 at launch) sca
 never the world's. Rounds in flight are not saved, and a restart clears them. Enemy shots stay one ray on
 the firing tick until FPS-F15-03.
 
+Each round is drawn as a tracer, a streak from the engine's effects ([section 10 of the rendering
+page](../architecture/rendering.md)). `SearchlightSim` rebuilds `round_traces` every tick, one
+`RoundTrace` per round stepped or fired (id, `from`, `to`, `heading`, `ended`); it is a read-out and is never
+saved. A round fired this tick is traced at the muzzle with `from == to`. Each `SearchlightGame::tick`
+hands the traces to `Stage::absorb_traces`, which merges the ticks no frame has drawn yet by round id (the
+later tick wins, so a round that stopped between two frames keeps its end). Each `SearchlightGame::frame`
+calls `show_tracers` with the interpolation alpha, which places one streak per held trace `alpha` of the
+way along its step and ends the streak of a round that stopped or is no longer traced, then advances the
+effects by the frame time. While the player is dead, and on the restart tick, every tracer is ended and the
+held traces are dropped, because rounds are frozen and ids restart from 0. The simple ray draws no tracer,
+nor does an effects quality of off.
+
 The player's shot leaves in a cone, not exactly along the view. `searchlight_rules::accuracy` owns the rules:
 `AccuracyTuning` (`walk_spread` radians at walking speed, `settle_seconds`; set in `tuning::tuning`) and
 `Accuracy`, stepped once per tick by `SearchlightSim::step_accuracy` from the ground speed over `max_speed`
