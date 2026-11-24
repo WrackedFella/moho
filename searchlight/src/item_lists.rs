@@ -2,25 +2,100 @@
 //! and the game's rule for moving a row between them. Stands in until the inventory owns the
 //! screen.
 
-use moho_ui_shell::{ItemLists, ListId};
+use moho_ui_shell::{ItemList, ItemLists, ListId, ListRow};
 
 use crate::menu::MenuAction;
 
+const PLAYER: ListId = ListId(0);
+const CONTAINER: ListId = ListId(1);
+/// The most rows the player's list holds.
+const PLAYER_ROWS: usize = 8;
+/// How many filler rows follow the rifle in the container.
+const FILLER_ROWS: u32 = 45;
+
+/// One stack of an item: its stable id, label, count and description.
+#[derive(Clone, Debug)]
+struct Item {
+    id: u32,
+    label: String,
+    count: u32,
+    description: String,
+}
+
+impl Item {
+    fn new(id: u32, label: &str, count: u32, description: &str) -> Self {
+        Self {
+            id,
+            label: label.to_owned(),
+            count,
+            description: description.to_owned(),
+        }
+    }
+}
+
 /// The player's list and the test container.
-#[derive(Clone, Debug, Default)]
-pub struct DemoItems;
+#[derive(Clone, Debug)]
+pub struct DemoItems {
+    player: Vec<Item>,
+    container: Vec<Item>,
+}
+
+impl Default for DemoItems {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl DemoItems {
     /// The player's list with Bandage 3 and Rounds 60, and the container with Rifle 1 and filler.
     pub fn new() -> Self {
-        Self
+        let mut container = vec![Item::new(10, "Rifle", 1, "Semi-auto.\nNeeds rounds.")];
+        container.extend((1..=FILLER_ROWS).map(|n| {
+            Item::new(
+                100 + n,
+                &format!("Scrap {n:02}"),
+                1 + n % 5,
+                "Spare parts of no use.",
+            )
+        }));
+        Self {
+            player: vec![
+                Item::new(1, "Bandage", 3, "Clean cloth.\nStops bleeding."),
+                Item::new(2, "Rounds", 60, "Loose rifle rounds."),
+            ],
+            container,
+        }
     }
 
     /// The two lists, the player's first, as the shell draws them; Escape is Back.
     pub fn lists(&self) -> ItemLists<MenuAction> {
+        let list = |id, title: &str, items: &[Item]| ItemList {
+            id,
+            title: title.to_owned(),
+            rows: items
+                .iter()
+                .map(|item| ListRow {
+                    label: item.label.clone(),
+                    count: Some(item.count),
+                    tooltip: Some(item.description.clone()),
+                    item: MenuAction::Item(item.id),
+                })
+                .collect(),
+        };
         ItemLists {
-            lists: Vec::new(),
-            back: None,
+            lists: vec![
+                list(PLAYER, "Carried", &self.player),
+                list(CONTAINER, "Container", &self.container),
+            ],
+            back: Some(MenuAction::Back),
+        }
+    }
+
+    fn items_mut(&mut self, list: ListId) -> Option<&mut Vec<Item>> {
+        match list {
+            PLAYER => Some(&mut self.player),
+            CONTAINER => Some(&mut self.container),
+            _ => None,
         }
     }
 
@@ -29,8 +104,23 @@ impl DemoItems {
     /// list would pass 8 rows; returns whether it moved. The player's list is `ListId(0)` and
     /// the container `ListId(1)`.
     pub fn move_item(&mut self, id: u32, from: ListId, to: ListId) -> bool {
-        let _ = (id, from, to);
-        false
+        if from == to || self.items_mut(to).is_none() {
+            return false;
+        }
+        if to == PLAYER && self.player.len() >= PLAYER_ROWS {
+            return false;
+        }
+        let Some(source) = self.items_mut(from) else {
+            return false;
+        };
+        let Some(at) = source.iter().position(|item| item.id == id) else {
+            return false;
+        };
+        let item = source.remove(at);
+        if let Some(target) = self.items_mut(to) {
+            target.push(item);
+        }
+        true
     }
 }
 

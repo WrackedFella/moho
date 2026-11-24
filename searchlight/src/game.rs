@@ -35,6 +35,7 @@ use crate::debug_settings::DebugSettings;
 use crate::head_bob::{Bob, HeadBobLevel};
 use crate::hud::Edge;
 use crate::input::{SearchlightAction, SearchlightCommand, look_from, look_to_turn, resolve_lean};
+use crate::item_lists::DemoItems;
 use crate::lean::{lean_offset, rolled_view_matrix};
 use crate::menu::{MenuAction, main_screen, pause_screen, settings_screen};
 use crate::mode::ArenaMode;
@@ -733,6 +734,8 @@ pub struct SearchlightGame {
     /// Engine settings waiting for a frame, the first place the renderer, audio and window can
     /// be reached.
     pending_settings: Option<EngineSettings>,
+    /// The rows of the demo item lists the `items` command opens.
+    items: DemoItems,
 }
 
 impl SearchlightGame {
@@ -758,6 +761,7 @@ impl SearchlightGame {
             debug_settings: None,
             flip_window_pending: false,
             pending_settings: None,
+            items: DemoItems::new(),
         }
     }
 
@@ -799,6 +803,15 @@ impl SearchlightGame {
         self.stage.release_cursor();
     }
 
+    /// Opens the demo item lists over the pause menu, pausing first when in play.
+    fn open_items(&mut self) {
+        if self.screen == Screen::Playing {
+            self.pause();
+        }
+        let lists = self.items.lists();
+        self.stage.shell().menu_mut().push_lists(lists);
+    }
+
     /// Answers what the player chose on the menu screens since the last call.
     fn answer_menu(&mut self, ctx: &mut EventContext<'_>) {
         let events = self.stage.shell().menu_mut().take_events();
@@ -823,6 +836,16 @@ impl SearchlightGame {
                         self.head_bob = HeadBobLevel::nearest(percent);
                         self.save_head_bob();
                     }
+                }
+                MenuEvent::MoveRequested {
+                    item: MenuAction::Item(id),
+                    from,
+                    to,
+                } => {
+                    // A refused move leaves the rows as they were, and the answer is the same.
+                    self.items.move_item(id, from, to);
+                    let lists = self.items.lists();
+                    self.stage.shell().menu_mut().set_lists(lists);
                 }
                 MenuEvent::Captured { .. }
                 | MenuEvent::Cleared { .. }
@@ -934,7 +957,7 @@ impl SearchlightGame {
                     self.head_bob = level;
                     self.save_head_bob();
                 }
-                ConsoleCommand::Items => {}
+                ConsoleCommand::Items => self.open_items(),
             }
         }
         if self.simple != simple_before

@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use moho_input::bindings::{Binding, Input};
 use moho_input::key::{Key, MouseButton};
 
-use crate::lists::{ItemLists, ListId};
+use crate::lists::{ItemLists, ListId, OpenLists};
 use crate::settings::{Control, EngineSetting, EngineSettings, GameSlider};
 use crate::text::{Anchor, ScreenText};
 
@@ -77,25 +77,25 @@ pub struct Rect {
 }
 
 /// Font size of every row and title.
-const ROW_SIZE: f32 = 36.0;
+pub(crate) const ROW_SIZE: f32 = 36.0;
 /// Distance between row centres, in logical points; the bands are this tall and touch.
 const ROW_PITCH: f32 = 56.0;
 /// Width of a row's clickable band, centred on the window.
 const ROW_WIDTH: f32 = 240.0;
-const FOCUS_COLOR: [u8; 4] = TEXT_COLORS[1];
-const COLOR: [u8; 4] = TEXT_COLORS[0];
+pub(crate) const FOCUS_COLOR: [u8; 4] = TEXT_COLORS[1];
+pub(crate) const COLOR: [u8; 4] = TEXT_COLORS[0];
 
 /// Font size of a settings row's label and value, which share a 240-point band.
-const SETTING_SIZE: f32 = 18.0;
+pub(crate) const SETTING_SIZE: f32 = 18.0;
 
 /// Height of a [`MenuItem::Control`] row.
-const CONTROL_HEIGHT: f32 = 32.0;
+pub(crate) const CONTROL_HEIGHT: f32 = 32.0;
 /// Width of a [`MenuItem::Control`] row: a label column, then two equal slot cells.
 const CONTROL_WIDTH: f32 = 640.0;
 const LABEL_WIDTH: f32 = 240.0;
 const CELL_WIDTH: f32 = (CONTROL_WIDTH - LABEL_WIDTH) / 2.0;
 /// Free space kept above and below the rows of a column that scrolls; the title sits in the top.
-const BAND: f32 = ROW_PITCH;
+pub(crate) const BAND: f32 = ROW_PITCH;
 const WARNING_COLOR: [u8; 4] = TEXT_COLORS[2];
 /// Every colour a menu text can have: normal, focused, warning. The backdrop's contrast test
 /// covers each, so a colour added later has to go through this list.
@@ -106,7 +106,7 @@ pub(crate) const TEXT_COLORS: [[u8; 4]; 3] = [
 ];
 const PROTECTED_NOTE: &str = "That input can't be bound";
 /// Window size assumed until a screen has been laid out once.
-const DEFAULT_SIZE: [f32; 2] = [1280.0, 720.0];
+pub(crate) const DEFAULT_SIZE: [f32; 2] = [1280.0, 720.0];
 
 /// A screen, the row that has the focus on it and the settings values staged on it.
 #[derive(Debug)]
@@ -407,10 +407,17 @@ fn cycle(staged: &mut EngineSettings, setting: EngineSetting) {
     }
 }
 
+/// One entry of the stack: a menu screen or an item lists screen.
+#[derive(Debug)]
+enum Layer<A> {
+    Menu(Open<A>),
+    Lists(OpenLists<A>),
+}
+
 /// The open screens, bottom to top, and the events not yet taken.
 #[derive(Debug)]
 pub struct MenuStack<A> {
-    screens: Vec<Open<A>>,
+    screens: Vec<Layer<A>>,
     events: Vec<MenuEvent<A>>,
     /// The slider row of the top screen a held mouse button is dragging.
     dragging: Option<usize>,
@@ -435,7 +442,7 @@ impl<A> MenuStack<A> {
     /// settings values.
     pub fn push(&mut self, screen: MenuScreen<A>) {
         self.dragging = None;
-        self.screens.push(Open::new(screen));
+        self.screens.push(Layer::Menu(Open::new(screen)));
     }
 
     /// Closes the top screen, discarding the values staged on it; the one below keeps the focus
@@ -453,7 +460,7 @@ impl<A> MenuStack<A> {
 
     /// Replaces the top screen's items, keeping its focus, slot, capture and scroll.
     pub fn set_items(&mut self, items: Vec<MenuItem<A>>) {
-        if let Some(open) = self.screens.last_mut() {
+        if let Some(Layer::Menu(open)) = self.screens.last_mut() {
             open.focus = open.focus.min(items.len().saturating_sub(1));
             open.screen.items = items;
             open.shell_note = None;
@@ -463,7 +470,8 @@ impl<A> MenuStack<A> {
 
     /// Opens `lists` over the current screen, the first list focused on its first row.
     pub fn push_lists(&mut self, lists: ItemLists<A>) {
-        let _ = lists;
+        self.dragging = None;
+        self.screens.push(Layer::Lists(OpenLists::new(lists)));
     }
 
     /// Replaces the top lists screen's data, keeping each list's focused row (clamped) and scroll
@@ -473,17 +481,22 @@ impl<A> MenuStack<A> {
     where
         A: PartialEq,
     {
-        let _ = lists;
+        if let Some(Layer::Lists(open)) = self.screens.last_mut() {
+            open.replace(lists);
+        }
     }
 
     /// The data of the top screen when it is an item lists screen.
     pub fn top_lists(&self) -> Option<&ItemLists<A>> {
-        None
+        match self.screens.last() {
+            Some(Layer::Lists(open)) => Some(open.data()),
+            _ => None,
+        }
     }
 
     /// Ends a capture in progress without an event.
     pub fn cancel_capture(&mut self) {
-        if let Some(open) = self.screens.last_mut() {
+        if let Some(Layer::Menu(open)) = self.screens.last_mut() {
             open.capturing = false;
             open.shell_note = None;
         }
@@ -491,14 +504,18 @@ impl<A> MenuStack<A> {
 
     /// Scrolls the top screen by `rows` rows, keeping a fractional remainder.
     pub fn scroll(&mut self, rows: f32) {
-        if let Some(open) = self.screens.last_mut() {
-            let size = open.size.get();
-            open.settle(size);
-            let last = max_scroll(&open.screen.items, viewport(size)) as f32;
-            let target = (open.scroll.get() as f32 + open.remainder + rows).clamp(0.0, last);
-            let whole = target.floor();
-            open.scroll.set(whole as usize);
-            open.remainder = target - whole;
+        match self.screens.last_mut() {
+            Some(Layer::Menu(open)) => {
+                let size = open.size.get();
+                open.settle(size);
+                let last = max_scroll(&open.screen.items, viewport(size)) as f32;
+                let target = (open.scroll.get() as f32 + open.remainder + rows).clamp(0.0, last);
+                let whole = target.floor();
+                open.scroll.set(whole as usize);
+                open.remainder = target - whole;
+            }
+            Some(Layer::Lists(open)) => open.scroll(rows),
+            None => {}
         }
     }
 
@@ -508,22 +525,26 @@ impl<A> MenuStack<A> {
 
     /// Moves the dragged slider to `point`, in logical points on a window `size` points across.
     pub fn drag(&mut self, point: [f32; 2], size: [f32; 2]) {
-        if let (Some(open), Some(row)) = (self.screens.last_mut(), self.dragging) {
+        if let (Some(Layer::Menu(open)), Some(row)) = (self.screens.last_mut(), self.dragging) {
             open.set_slider_from(row, point[0], size);
         }
     }
 
     /// Whether the top screen is waiting for a key or button to bind.
     pub(crate) fn is_capturing(&self) -> bool {
-        self.screens.last().is_some_and(|open| open.capturing)
+        matches!(self.screens.last(), Some(Layer::Menu(open)) if open.capturing)
     }
 
     pub fn is_open(&self) -> bool {
         !self.screens.is_empty()
     }
 
+    /// The top screen when it is a menu screen; `None` while an item lists screen is on top.
     pub fn top(&self) -> Option<&MenuScreen<A>> {
-        self.screens.last().map(|open| &open.screen)
+        match self.screens.last() {
+            Some(Layer::Menu(open)) => Some(&open.screen),
+            _ => None,
+        }
     }
 
     /// The events since the last call, oldest first.
@@ -534,20 +555,27 @@ impl<A> MenuStack<A> {
     /// Focuses the row under `point`, in logical points on a window `size` points across;
     /// a point over no row keeps the focus.
     pub fn hover(&mut self, point: [f32; 2], size: [f32; 2]) {
-        if let Some(open) = self.screens.last_mut()
-            && !open.capturing
-            && let Some((row, rect)) = open.row_at(point, size)
-        {
-            let slot = open.slot_at(row, rect, point[0]).unwrap_or(open.slot);
-            open.set_focus(row, slot);
+        match self.screens.last_mut() {
+            Some(Layer::Menu(open)) => {
+                if !open.capturing
+                    && let Some((row, rect)) = open.row_at(point, size)
+                {
+                    let slot = open.slot_at(row, rect, point[0]).unwrap_or(open.slot);
+                    open.set_focus(row, slot);
+                }
+            }
+            Some(Layer::Lists(open)) => open.hover(point, size),
+            None => {}
         }
     }
 
     /// The text of the top screen on a window `size` points across: its title above the rows,
     /// then one centre-anchored text per row with the focused one in its own colour.
     pub(crate) fn texts(&self, size: [f32; 2]) -> Vec<ScreenText> {
-        let Some(open) = self.screens.last() else {
-            return Vec::new();
+        let open = match self.screens.last() {
+            Some(Layer::Menu(open)) => open,
+            Some(Layer::Lists(open)) => return open.texts(size),
+            None => return Vec::new(),
         };
         let rows = open.rects(size);
         let visible = open.visible(size);
@@ -664,8 +692,10 @@ impl<A> MenuStack<A> {
     /// The rectangles of the top screen's rows fully in view on a window `size` points across;
     /// empty with no screen open.
     pub(crate) fn visible_rows(&self, size: [f32; 2]) -> Vec<Rect> {
-        let Some(open) = self.screens.last() else {
-            return Vec::new();
+        let open = match self.screens.last() {
+            Some(Layer::Menu(open)) => open,
+            Some(Layer::Lists(open)) => return open.visible_rows(size),
+            None => return Vec::new(),
         };
         let rows = open.rects(size);
         rows[open.visible(size)].to_vec()
@@ -678,7 +708,7 @@ impl<A: Clone> MenuStack<A> {
     /// a non-repeat Escape press chooses the top screen's back action, if any. Releasing the
     /// left mouse button ends a slider drag; other releases and inputs do nothing.
     pub fn on_key(&mut self, input: Input, pressed: bool, repeat: bool) {
-        let Some(open) = self.screens.last_mut() else {
+        let Some(layer) = self.screens.last_mut() else {
             return;
         };
         if !pressed {
@@ -687,6 +717,13 @@ impl<A: Clone> MenuStack<A> {
             }
             return;
         }
+        let open = match layer {
+            Layer::Menu(open) => open,
+            Layer::Lists(open) => {
+                self.events.extend(open.on_key(input, repeat));
+                return;
+            }
+        };
         if open.capturing {
             if !repeat {
                 self.events.extend(open.capture(input));
@@ -725,8 +762,13 @@ impl<A: Clone> MenuStack<A> {
     /// A right press at `point`: while capturing it is the binding; otherwise it clears the
     /// focused slot only when `point` is over that slot's cell.
     pub fn right_click(&mut self, point: [f32; 2], size: [f32; 2]) {
-        let Some(open) = self.screens.last_mut() else {
-            return;
+        let open = match self.screens.last_mut() {
+            Some(Layer::Menu(open)) => open,
+            Some(Layer::Lists(open)) => {
+                open.release();
+                return;
+            }
+            None => return,
         };
         if open.capturing {
             self.on_key(Input::Mouse(MouseButton::Right), true, false);
@@ -742,8 +784,13 @@ impl<A: Clone> MenuStack<A> {
     /// nothing. A press on a slider row sets it from `point` and starts a drag that
     /// [`MenuStack::drag`] follows until the left button is released.
     pub fn click(&mut self, point: [f32; 2], size: [f32; 2]) {
-        let Some(open) = self.screens.last_mut() else {
-            return;
+        let open = match self.screens.last_mut() {
+            Some(Layer::Menu(open)) => open,
+            Some(Layer::Lists(open)) => {
+                self.events.extend(open.click(point, size));
+                return;
+            }
+            None => return,
         };
         if open.capturing {
             self.dragging = None;
@@ -773,7 +820,7 @@ fn centre_y(rect: Rect) -> f32 {
 }
 
 /// Height available to rows: the window less a title band above and below.
-fn viewport(size: [f32; 2]) -> f32 {
+pub(crate) fn viewport(size: [f32; 2]) -> f32 {
     size[1] - 2.0 * BAND
 }
 

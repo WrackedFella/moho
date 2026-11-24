@@ -2,6 +2,18 @@
 //! side by side, with a move action between them. The shell owns focus, keys, layout and drawing;
 //! the game decides what a move does and answers with new data.
 
+use std::cell::Cell;
+use std::ops::Range;
+
+use moho_input::bindings::Input;
+use moho_input::key::{Key, MouseButton};
+
+use crate::menu::{
+    BAND, COLOR, CONTROL_HEIGHT, DEFAULT_SIZE, FOCUS_COLOR, MenuEvent, ROW_SIZE, Rect,
+    SETTING_SIZE, viewport,
+};
+use crate::text::{Anchor, ScreenText};
+
 /// The name of a list on a lists screen. The game picks it (normally its container id) and keeps
 /// it for as long as that container is shown; ids are unique on a screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -34,6 +46,419 @@ pub struct ListRow<A> {
     pub tooltip: Option<String>,
     /// What the game is told when the row is moved.
     pub item: A,
+}
+
+const LIST_WIDTH: f32 = 320.0;
+const LIST_GAP: f32 = 64.0;
+/// Space between a list and the tooltip beside it.
+const TOOLTIP_GAP: f32 = 16.0;
+const ROW_HEIGHT: f32 = CONTROL_HEIGHT;
+/// Starts the label of the row the player has picked up.
+const HELD_MARK: &str = "» ";
+
+/// What the shell keeps for one list: its focused row and how far it is scrolled.
+#[derive(Debug, Default)]
+struct View {
+    focus: usize,
+    /// The first visible row. A cell so that laying out, which sees the window size, can settle it.
+    scroll: Cell<usize>,
+    /// Set by a focus change; the next layout scrolls the focused row into view.
+    reveal: Cell<bool>,
+    /// The fraction of a row the wheel has scrolled and not yet shown.
+    remainder: f32,
+}
+
+/// The row the player has picked up: its list and its index there.
+#[derive(Clone, Copy, Debug)]
+struct Held {
+    list: ListId,
+    row: usize,
+}
+
+/// An item lists screen: the game's data, and the focus, scroll and held row the shell keeps.
+#[derive(Debug)]
+pub(crate) struct OpenLists<A> {
+    data: ItemLists<A>,
+    /// One per list of `data`, in the same order.
+    views: Vec<View>,
+    /// The index of the focused list.
+    focus: usize,
+    held: Option<Held>,
+    /// The window size of the last layout, for the wheel, which knows none.
+    size: Cell<[f32; 2]>,
+}
+
+/// How many whole rows fit in a window `size` points tall; at least one.
+fn fitting(size: [f32; 2]) -> usize {
+    (viewport(size) / ROW_HEIGHT).floor().max(1.0) as usize
+}
+
+/// The left edge of list `index` of `count` in a window `width` points across.
+fn left_of(index: usize, count: usize, width: f32) -> f32 {
+    let total = LIST_WIDTH * count as f32 + LIST_GAP * (count as f32 - 1.0);
+    width / 2.0 - total / 2.0 + (LIST_WIDTH + LIST_GAP) * index as f32
+}
+
+fn ids_are_unique<A>(data: &ItemLists<A>) -> bool {
+    data.lists
+        .iter()
+        .enumerate()
+        .all(|(at, list)| data.lists[..at].iter().all(|other| other.id != list.id))
+}
+
+impl<A> OpenLists<A> {
+    pub(crate) fn new(data: ItemLists<A>) -> Self {
+        debug_assert!(ids_are_unique(&data), "list ids are unique on a screen");
+        let views = data.lists.iter().map(|_| View::default()).collect();
+        Self {
+            data,
+            views,
+            focus: 0,
+            held: None,
+            size: Cell::new(DEFAULT_SIZE),
+        }
+    }
+
+    pub(crate) fn data(&self) -> &ItemLists<A> {
+        &self.data
+    }
+
+    /// Replaces the data. Each list keeps its focused row (clamped) and scroll by id, the focus
+    /// stays on its list while the id is present, and the hold stays while its list and a row
+    /// with the held item remain.
+    pub(crate) fn replace(&mut self, data: ItemLists<A>)
+    where
+        A: PartialEq,
+    {
+        debug_assert!(ids_are_unique(&data), "list ids are unique on a screen");
+        let old = std::mem::replace(&mut self.data, data);
+        let old_views = std::mem::take(&mut self.views);
+        self.views = self
+            .data
+            .lists
+            .iter()
+            .map(
+                |list| match old.lists.iter().position(|before| before.id == list.id) {
+                    Some(at) => {
+                        let before = &old_views[at];
+                        View {
+                            focus: before.focus.min(list.rows.len().saturating_sub(1)),
+                            scroll: Cell::new(before.scroll.get()),
+                            reveal: Cell::new(before.reveal.get()),
+                            remainder: before.remainder,
+                        }
+                    }
+                    None => View::default(),
+                },
+            )
+            .collect();
+        let last = self.data.lists.len().saturating_sub(1);
+        self.focus = old
+            .lists
+            .get(self.focus)
+            .and_then(|focused| {
+                self.data
+                    .lists
+                    .iter()
+                    .position(|list| list.id == focused.id)
+            })
+            .unwrap_or_else(|| self.focus.min(last));
+        self.held = self.held.and_then(|held| {
+            let item = &old
+                .lists
+                .iter()
+                .find(|list| list.id == held.list)?
+                .rows
+                .get(held.row)?
+                .item;
+            let row = self
+                .data
+                .lists
+                .iter()
+                .find(|list| list.id == held.list)?
+                .rows
+                .iter()
+                .position(|row| row.item == *item)?;
+            Some(Held {
+                list: held.list,
+                row,
+            })
+        });
+    }
+
+    /// Clamps the scroll of list `index` for a window `size` points across, then brings its
+    /// focused row into view if the focus moved.
+    fn settle(&self, index: usize, size: [f32; 2]) {
+        let (Some(list), Some(view)) = (self.data.lists.get(index), self.views.get(index)) else {
+            return;
+        };
+        let fit = fitting(size);
+        let last = list.rows.len().saturating_sub(fit);
+        let mut scroll = view.scroll.get().min(last);
+        if view.reveal.take() {
+            if view.focus < scroll {
+                scroll = view.focus;
+            } else if view.focus >= scroll + fit {
+                scroll = view.focus + 1 - fit;
+            }
+        }
+        view.scroll.set(scroll);
+    }
+
+    fn settle_all(&self, size: [f32; 2]) {
+        self.size.set(size);
+        for index in 0..self.data.lists.len() {
+            self.settle(index, size);
+        }
+    }
+
+    /// The rows of list `index` fully in view, after `settle_all`.
+    fn visible(&self, index: usize, size: [f32; 2]) -> Range<usize> {
+        let scroll = self.views[index].scroll.get();
+        scroll..(scroll + fitting(size)).min(self.data.lists[index].rows.len())
+    }
+
+    /// The list column under `point` and the visible row there, if any.
+    fn hit(&self, point: [f32; 2], size: [f32; 2]) -> Option<(usize, Option<usize>)> {
+        self.settle_all(size);
+        if point[1] <= BAND || point[1] >= size[1] - BAND {
+            return None;
+        }
+        let count = self.data.lists.len();
+        let index = (0..count).find(|&index| {
+            let left = left_of(index, count, size[0]);
+            point[0] > left && point[0] < left + LIST_WIDTH
+        })?;
+        let row = self.views[index].scroll.get() + ((point[1] - BAND) / ROW_HEIGHT) as usize;
+        Some((
+            index,
+            self.visible(index, size).contains(&row).then_some(row),
+        ))
+    }
+
+    fn set_focus(&mut self, list: usize, row: usize) {
+        self.focus = list;
+        let view = &mut self.views[list];
+        view.focus = row;
+        view.reveal.set(true);
+    }
+
+    /// Focuses the row under `point`; a point over no row keeps the focus.
+    pub(crate) fn hover(&mut self, point: [f32; 2], size: [f32; 2]) {
+        if let Some((list, Some(row))) = self.hit(point, size) {
+            self.set_focus(list, row);
+        }
+    }
+
+    /// Scrolls the focused list by `rows` rows, keeping a fractional remainder.
+    pub(crate) fn scroll(&mut self, rows: f32) {
+        let size = self.size.get();
+        self.settle(self.focus, size);
+        let (Some(list), Some(view)) = (
+            self.data.lists.get(self.focus),
+            self.views.get_mut(self.focus),
+        ) else {
+            return;
+        };
+        let last = list.rows.len().saturating_sub(fitting(size)) as f32;
+        let target = (view.scroll.get() as f32 + view.remainder + rows).clamp(0.0, last);
+        let whole = target.floor();
+        view.scroll.set(whole as usize);
+        view.remainder = target - whole;
+    }
+
+    /// Lets go of the held row.
+    pub(crate) fn release(&mut self) {
+        self.held = None;
+    }
+
+    /// The text of every list on a window `size` points across: each title in the top band, the
+    /// visible rows and the focused row's tooltip.
+    pub(crate) fn texts(&self, size: [f32; 2]) -> Vec<ScreenText> {
+        self.settle_all(size);
+        let count = self.data.lists.len();
+        let text = |text: String, anchor, x: f32, y: f32, text_size, color| ScreenText {
+            text,
+            anchor,
+            offset: [x, y - size[1] / 2.0],
+            size: text_size,
+            color,
+        };
+        let mut texts = Vec::new();
+        let mut tooltip = None;
+        for (index, list) in self.data.lists.iter().enumerate() {
+            let left = left_of(index, count, size[0]);
+            let view = &self.views[index];
+            texts.push(text(
+                list.title.clone(),
+                Anchor::Center,
+                left + LIST_WIDTH / 2.0 - size[0] / 2.0,
+                BAND / 2.0,
+                ROW_SIZE,
+                COLOR,
+            ));
+            for row in self.visible(index, size) {
+                let y = BAND + ROW_HEIGHT * (row - view.scroll.get()) as f32 + ROW_HEIGHT / 2.0;
+                let focused = index == self.focus && row == view.focus;
+                let color = if focused { FOCUS_COLOR } else { COLOR };
+                let held = self
+                    .held
+                    .is_some_and(|held| held.list == list.id && held.row == row);
+                let item = &list.rows[row];
+                let label = if held {
+                    format!("{HELD_MARK}{}", item.label)
+                } else {
+                    item.label.clone()
+                };
+                texts.push(text(label, Anchor::Left, left, y, SETTING_SIZE, color));
+                if let Some(count) = item.count {
+                    texts.push(text(
+                        count.to_string(),
+                        Anchor::Right,
+                        left + LIST_WIDTH - size[0],
+                        y,
+                        SETTING_SIZE,
+                        color,
+                    ));
+                }
+                if focused && let Some(tip) = &item.tooltip {
+                    tooltip = Some((index == 0, left, y, tip.clone()));
+                }
+            }
+        }
+        if let Some((first, left, y, tip)) = tooltip {
+            let (anchor, x) = if first {
+                (Anchor::Right, left - TOOLTIP_GAP - size[0])
+            } else {
+                (Anchor::Left, left + LIST_WIDTH + TOOLTIP_GAP)
+            };
+            texts.push(text(tip, anchor, x, y, SETTING_SIZE, COLOR));
+        }
+        texts
+    }
+
+    /// The rectangles of every list's title and visible rows, list by list.
+    pub(crate) fn visible_rows(&self, size: [f32; 2]) -> Vec<Rect> {
+        self.settle_all(size);
+        let count = self.data.lists.len();
+        let mut rects = Vec::new();
+        for index in 0..count {
+            let left = left_of(index, count, size[0]);
+            rects.push(Rect {
+                min: [left, 0.0],
+                max: [left + LIST_WIDTH, BAND],
+            });
+            let scroll = self.views[index].scroll.get();
+            for row in self.visible(index, size) {
+                let top = BAND + ROW_HEIGHT * (row - scroll) as f32;
+                rects.push(Rect {
+                    min: [left, top],
+                    max: [left + LIST_WIDTH, top + ROW_HEIGHT],
+                });
+            }
+        }
+        rects
+    }
+}
+
+impl<A: Clone> OpenLists<A> {
+    /// Up and Down move the focus in the focused list and wrap; Left and Right switch list and
+    /// wrap; a non-repeat Enter picks up or places; a non-repeat Escape lets go of the held row
+    /// or chooses the back action; a non-repeat right click lets go.
+    pub(crate) fn on_key(&mut self, input: Input, repeat: bool) -> Option<MenuEvent<A>> {
+        match input {
+            Input::Key(Key::ArrowDown) => self.step_row(true),
+            Input::Key(Key::ArrowUp) => self.step_row(false),
+            Input::Key(Key::ArrowLeft) => self.step_list(false),
+            Input::Key(Key::ArrowRight) => self.step_list(true),
+            Input::Key(Key::Enter) if !repeat => {
+                let row = self
+                    .views
+                    .get(self.focus)
+                    .map(|view| view.focus)
+                    .filter(|&row| row < self.data.lists[self.focus].rows.len());
+                return self.press_on(self.focus, row);
+            }
+            Input::Key(Key::Escape) if !repeat => {
+                return if self.held.take().is_some() {
+                    None
+                } else {
+                    self.data.back.clone().map(MenuEvent::Chosen)
+                };
+            }
+            Input::Mouse(MouseButton::Right) if !repeat => self.release(),
+            _ => {}
+        }
+        None
+    }
+
+    /// A left press at `point`: picks up the row under it, or places the held row on the list
+    /// column under it.
+    pub(crate) fn click(&mut self, point: [f32; 2], size: [f32; 2]) -> Option<MenuEvent<A>> {
+        let (list, row) = self.hit(point, size)?;
+        if self.held.is_none() {
+            self.set_focus(list, row?);
+        }
+        self.press_on(list, row)
+    }
+
+    fn step_row(&mut self, forward: bool) {
+        let Some(len) = self.data.lists.get(self.focus).map(|list| list.rows.len()) else {
+            return;
+        };
+        if len > 0 {
+            let view = &mut self.views[self.focus];
+            view.focus = if forward {
+                (view.focus + 1) % len
+            } else {
+                (view.focus + len - 1) % len
+            };
+            view.reveal.set(true);
+        }
+    }
+
+    fn step_list(&mut self, forward: bool) {
+        let count = self.data.lists.len();
+        if count > 0 {
+            self.focus = if forward {
+                (self.focus + 1) % count
+            } else {
+                (self.focus + count - 1) % count
+            };
+            self.views[self.focus].reveal.set(true);
+        }
+    }
+
+    /// Enter or a click on list `index`, over `row` if any: picks `row` up with nothing held,
+    /// lets go on the held row's own list, and otherwise asks to move the held row here.
+    fn press_on(&mut self, index: usize, row: Option<usize>) -> Option<MenuEvent<A>> {
+        let id = self.data.lists.get(index)?.id;
+        let Some(held) = self.held else {
+            self.held = Some(Held {
+                list: id,
+                row: row?,
+            });
+            return None;
+        };
+        self.held = None;
+        if held.list == id {
+            return None;
+        }
+        let item = self
+            .data
+            .lists
+            .iter()
+            .find(|list| list.id == held.list)?
+            .rows
+            .get(held.row)?
+            .item
+            .clone();
+        Some(MenuEvent::MoveRequested {
+            item,
+            from: held.list,
+            to: id,
+        })
+    }
 }
 
 #[cfg(test)]
