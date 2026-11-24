@@ -1151,12 +1151,17 @@ impl Game for SearchlightGame {
         self.mode.tick(command, dt);
         self.previous_bob = self.bob;
         let player = self.mode.sim().player();
-        self.bob = self.bob.step(
-            player.grounded,
-            player.velocity.x.hypot(player.velocity.z),
-            self.mode.sim().max_speed(),
-            dt,
-        );
+        // A dead player's sim stops moving them, so their last velocity must not keep the view bobbing.
+        self.bob = if self.mode.sim().player_body().is_dead() {
+            Bob::REST
+        } else {
+            self.bob.step(
+                player.grounded,
+                player.velocity.x.hypot(player.velocity.z),
+                self.mode.sim().max_speed(),
+                dt,
+            )
+        };
         if was_dead && !self.mode.sim().player_body().is_dead() {
             self.previous = self.mode.sim().player();
             self.previous_lean = self.mode.sim().player_lean();
@@ -3784,6 +3789,28 @@ mod tests {
         );
         assert!(most > 0.01, "the eye never left the unbobbed eye: {most} m");
         assert!(most < 0.1, "the bob is {most} m, far from a footstep");
+    }
+
+    #[test]
+    fn a_dead_player_draws_the_unbobbed_eye_even_after_walking_when_killed() {
+        let mut game = bobbing_game(100);
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let mut renderer = SettingsRenderer::default();
+        settle(&mut game, &mut clock);
+        for _ in 0..40 {
+            tick_with(&mut game, &mut clock, &walk_command());
+        }
+        game.mode.sim_mut().kill_player();
+        tick_with(&mut game, &mut clock, &walk_command());
+        assert!(game.sim().player_body().is_dead());
+
+        let mut most = 0.0_f32;
+        for _ in 0..60 {
+            tick_with(&mut game, &mut clock, &walk_command());
+            most = most.max(bob_of(&mut game, &mut renderer));
+        }
+
+        assert!(most < 1e-4, "the dead view bobbed {most} m");
     }
 
     #[test]
