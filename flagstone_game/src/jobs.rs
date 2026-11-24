@@ -12,7 +12,7 @@ use glam::Vec3;
 use crate::TICK_HZ;
 use crate::colony::MineMarks;
 use crate::pawn::{Pawn, PawnId, TOOL_SLOT};
-use crate::routing::{ROUTE_NODE_BUDGET, feet_cell, route, standable};
+use crate::routing::{ROUTE_NODE_BUDGET, feet_cell, route, walkable};
 
 /// How close to a waypoint's centre, horizontally in metres, the feet count as arrived.
 pub const ARRIVE_RADIUS: f32 = 0.35;
@@ -152,10 +152,11 @@ fn nearest_exposed_face(grid: &VoxelGrid, block: BlockPos, eye: Vec3) -> Vec3 {
         .unwrap_or(centre)
 }
 
-/// Takes the nearest routable unclaimed mark, trying at most [`ROUTE_ATTEMPTS_PER_TICK`]
-/// routes. `tried` counts the candidates already attempted by earlier ticks.
+/// Takes the nearest routable unclaimed mark the memo does not hold, trying at most
+/// [`ROUTE_ATTEMPTS_PER_TICK`] routes and memoising each failure. The memo is emptied first
+/// when the terrain or the pawn's cell is not what it recorded.
 fn claim_nearest(
-    _unreachable: &mut Unreachable,
+    unreachable: &mut Unreachable,
     pawn: &mut Pawn,
     id: PawnId,
     pose: Pose,
@@ -163,23 +164,24 @@ fn claim_nearest(
     grid: &VoxelGrid,
 ) -> Option<Job> {
     let start = feet_cell(pose.feet);
+    if unreachable.revision != grid.revision() || unreachable.from != start {
+        *unreachable = Unreachable {
+            revision: grid.revision(),
+            from: start,
+            marks: BTreeSet::new(),
+        };
+    }
     let mut candidates: Vec<BlockPos> = marks
         .unclaimed()
+        .filter(|mark| !unreachable.marks.contains(mark))
         .map(BlockPos::from_array)
         .filter(|&block| grid.is_solid_at(block) && has_exposed_face(grid, block))
         .collect();
     // Stable, so equal distances keep key order.
     candidates.sort_by_key(|&block| (block - start).length_squared());
 
-    let mut tried = 0_usize;
-    let attempts = candidates
-        .iter()
-        .skip(tried)
-        .take(ROUTE_ATTEMPTS_PER_TICK)
-        .copied();
-    let mut attempted = 0;
-    for block in attempts {
-        attempted += 1;
+    for block in candidates.into_iter().take(ROUTE_ATTEMPTS_PER_TICK) {
+        let mark = block.to_array();
         let Some(route) = route(
             grid,
             start,
@@ -187,9 +189,9 @@ fn claim_nearest(
             block,
             ROUTE_NODE_BUDGET,
         ) else {
+            unreachable.marks.insert(mark);
             continue;
         };
-        let mark = block.to_array();
         if marks.claim(mark, id) {
             pawn.select_slot(TOOL_SLOT);
             return Some(Job::Mine {
@@ -201,9 +203,90 @@ fn claim_nearest(
             });
         }
     }
-    tried += attempted;
-    let _ = tried;
     None
+}
+
+/// Moves `next` past the waypoints the feet have reached.
+fn advance(job: &mut Job, pose: Pose) {
+    let Job::Mine {
+        route, next, stall, ..
+    } = job
+    else {
+        return;
+    };
+    let reached = route[*next..]
+        .iter()
+        .take_while(|&&cell| horizontal_distance(pose.feet, waypoint_centre(cell)) <= ARRIVE_RADIUS)
+        .count();
+    if reached > 0 {
+        *next += reached;
+        *stall = StallGuard::default();
+    }
+}
+
+/// Whether the terrain changed since the route was last checked and the walk from the feet
+/// cell along the rest of it is no longer possible. Records the revision it checked.
+fn route_broken(job: &mut Job, pose: Pose, grid: &VoxelGrid) -> bool {
+    let Job::Mine {
+        route,
+        next,
+        revision,
+        ..
+    } = job
+    else {
+        return false;
+    };
+    if *revision == grid.revision() {
+        return false;
+    }
+    *revision = grid.revision();
+    let feet = feet_cell(pose.feet);
+    let ahead = route[*next..]
+        .iter()
+        .copied()
+        .skip_while(|&cell| cell == feet);
+    let walk: Vec<BlockPos> = std::iter::once(feet).chain(ahead).collect();
+    !walkable(grid, &walk)
+}
+
+/// Routes the pawn from its feet cell to a stand cell of the mark it holds, keeping the
+/// claim. With no route the claim is released and the pawn goes idle with the mark
+/// remembered as unreachable from here. Returns whether the job goes on.
+fn replan(job: &mut Job, marks: &mut MineMarks, pose: Pose, grid: &VoxelGrid) -> bool {
+    let Job::Mine {
+        mark,
+        route: planned,
+        next,
+        stall,
+        ..
+    } = job
+    else {
+        return false;
+    };
+    let held = *mark;
+    let block = BlockPos::from_array(held);
+    let feet = feet_cell(pose.feet);
+    if let Some(found) = route(
+        grid,
+        feet,
+        |cell| is_stand_cell(block, cell),
+        block,
+        ROUTE_NODE_BUDGET,
+    ) {
+        *planned = found;
+        *next = 0;
+        *stall = StallGuard::default();
+        return true;
+    }
+    marks.release(held);
+    *job = Job::Idle {
+        unreachable: Unreachable {
+            revision: grid.revision(),
+            from: feet,
+            marks: BTreeSet::from([held]),
+        },
+    };
+    false
 }
 
 /// Advances `job` one tick for the pawn `id` at `pose`.
@@ -221,14 +304,7 @@ pub fn step(
             None => return JobAction::Wait,
         }
     }
-    let Job::Mine {
-        mark,
-        route,
-        next,
-        stall,
-        ..
-    } = job
-    else {
+    let Job::Mine { mark, .. } = job else {
         return JobAction::Wait;
     };
     let held = *mark;
@@ -239,27 +315,26 @@ pub fn step(
         return JobAction::Wait;
     }
 
-    let arrived =
-        |cell: BlockPos| horizontal_distance(pose.feet, waypoint_centre(cell)) <= ARRIVE_RADIUS;
-    let reached = route[*next..]
-        .iter()
-        .take_while(|&&cell| arrived(cell))
-        .count();
-    if reached > 0 {
-        *next += reached;
-        *stall = StallGuard::default();
+    advance(job, pose);
+    if route_broken(job, pose, grid) {
+        if !replan(job, marks, pose, grid) {
+            return JobAction::Wait;
+        }
+        advance(job, pose);
     }
 
+    let Job::Mine {
+        route, next, stall, ..
+    } = job
+    else {
+        return JobAction::Wait;
+    };
     let Some(&waypoint) = route.get(*next) else {
         let aim = nearest_exposed_face(grid, block, eye(pose.feet));
         release(job, marks, held);
         return JobAction::Dig { block, aim };
     };
     let to = waypoint_centre(waypoint);
-    if !standable(grid, waypoint) {
-        release(job, marks, held);
-        return JobAction::Wait;
-    }
 
     let distance = horizontal_distance(pose.feet, to);
     if stall
@@ -408,7 +483,7 @@ mod tests {
         fn memo(&self) -> &Unreachable {
             match &self.job {
                 Job::Idle { unreachable } => unreachable,
-                other => panic!("the pawn is not idle: {other:?}"),
+                other @ Job::Mine { .. } => panic!("the pawn is not idle: {other:?}"),
             }
         }
 
@@ -566,7 +641,6 @@ mod tests {
             assert_eq!(with_a_free_one.claimed_by([-8, 1, 0]), Some(ME));
             assert_eq!(with_a_free_one.claimed_by([4, 1, 0]), Some(OTHER));
         }
-
     }
 
     mod claiming_order {
@@ -1051,7 +1125,10 @@ mod tests {
             assert_eq!(after_two.marks.len(), 8, "the next four, not the same four");
             assert!(after_two.marks.is_superset(&after_one.marks));
             assert_eq!(third, JobAction::Wait);
-            assert_eq!(after_three, after_two, "nothing left to search, nothing new");
+            assert_eq!(
+                after_three, after_two,
+                "nothing left to search, nothing new"
+            );
             assert_eq!(
                 after_the_edit.marks, nearest_four,
                 "an edit anywhere empties the memo and the search starts over"
@@ -1111,7 +1188,11 @@ mod tests {
             site.tick();
 
             assert_eq!(site.memo().from, cell(5, 1, 5));
-            assert_eq!(site.memo().marks.len(), 4, "searched afresh from the new cell");
+            assert_eq!(
+                site.memo().marks.len(),
+                4,
+                "searched afresh from the new cell"
+            );
         }
     }
 
@@ -1147,7 +1228,10 @@ mod tests {
             assert_eq!(site.claimed_by(MARK), None, "the claim is released");
             assert!(site.is_marked(MARK), "the mark stays");
             assert_eq!(feet_cell(site.pose.feet), cell(2, 1, 0));
-            assert!(site.memo().marks.contains(&MARK), "and is not searched again");
+            assert!(
+                site.memo().marks.contains(&MARK),
+                "and is not searched again"
+            );
             assert_eq!(site.memo().from, cell(2, 1, 0));
         }
 
@@ -1159,7 +1243,10 @@ mod tests {
             let Job::Mine { route, .. } = &site.job else {
                 panic!("the walk is on: {:?}", site.job);
             };
-            assert!(route.contains(&cell(4, 1, 0)), "the near causeway is chosen");
+            assert!(
+                route.contains(&cell(4, 1, 0)),
+                "the near causeway is chosen"
+            );
 
             // A nearer mark on ground that stays put: only a release and re-claim takes it.
             site.marks.toggle([2, 0, -2]);
@@ -1217,7 +1304,10 @@ mod tests {
                 }
             }
             let before_the_edit = site.grid.revision();
-            let Job::Mine { next: next_before, .. } = &site.job else {
+            let Job::Mine {
+                next: next_before, ..
+            } = &site.job
+            else {
                 panic!("still walking: {:?}", site.job);
             };
             let next_before = *next_before;

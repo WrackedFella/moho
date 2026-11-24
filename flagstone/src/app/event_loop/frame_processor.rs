@@ -1562,7 +1562,8 @@ mod tests {
             for x in TRENCH_X {
                 for z in (0..32).filter(|z| bridges.iter().all(|b| (z - b).abs() > 1)) {
                     for y in 0..=GROUND_TOP {
-                        grid.mutator().remove(flagstone_voxel::BlockPos::new(x, y, z));
+                        grid.mutator()
+                            .remove(flagstone_voxel::BlockPos::new(x, y, z));
                     }
                 }
             }
@@ -1612,9 +1613,7 @@ mod tests {
         fn a_hole_cut_in_the_route_stops_the_pawn_on_the_ground() {
             let mut app = trench_site(&[12], BEYOND);
             let mut sim = crate::app::dig_site::headless_loop();
-            let walking = run_until(&mut app, GIVE_UP, |app| {
-                pawn_state(app).position.x > 15.5
-            });
+            let walking = run_until(&mut app, GIVE_UP, |app| pawn_state(app).position.x > 15.5);
             assert!(walking, "the pawn never set out along the causeway");
             assert!(claimed(&app, BEYOND), "the walk is under way");
 
@@ -1653,9 +1652,7 @@ mod tests {
             let mark = [24, 8, 16];
             let mut app = trench_site(&[12, 20], mark);
             let mut sim = crate::app::dig_site::headless_loop();
-            let walking = run_until(&mut app, GIVE_UP, |app| {
-                pawn_state(app).position.x > 15.5
-            });
+            let walking = run_until(&mut app, GIVE_UP, |app| pawn_state(app).position.x > 15.5);
             assert!(walking, "the pawn never set out along the near causeway");
             let mut over_the_trench = Vec::new();
             let z_at_the_cut = pawn_state(&app).position.z;

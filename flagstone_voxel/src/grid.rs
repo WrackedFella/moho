@@ -213,7 +213,8 @@ pub struct VoxelGrid {
 }
 
 impl VoxelGrid {
-    /// Counts every change to which cells are solid.
+    /// Counts every change to which cells are solid: placing a block, clearing one,
+    /// removing a chunk and loading one. Light changes do not move it. Not serialised.
     pub fn revision(&self) -> u64 {
         self.revision
     }
@@ -335,6 +336,7 @@ impl VoxelGrid {
         chunk.set_block(idx, material_id, resource_id);
         chunk.mesh_dirty = true;
         chunk.light_dirty = true;
+        self.revision += 1;
         self.note_block_change(pos, true);
     }
 
@@ -352,6 +354,7 @@ impl VoxelGrid {
             false
         };
         if removed {
+            self.revision += 1;
             self.note_block_change(pos, false);
         }
         removed
@@ -411,6 +414,7 @@ impl VoxelGrid {
     pub fn remove_chunk(&mut self, pos: IVec3) {
         self.chunks.remove(&pos);
         self.chunk_lights.remove(&pos);
+        self.revision += 1;
     }
 
     /// Iterate over the positions of all currently-loaded chunks.
@@ -450,6 +454,7 @@ impl VoxelGrid {
     ) -> Result<(), moho_core::persist::PersistError> {
         let chunk = PalettedChunk::from_bytes(data)?;
         self.chunks.insert(pos, chunk);
+        self.revision += 1;
         // Ensure a ChunkLight entry exists for the lighting pipeline.
         self.chunk_lights.entry(pos).or_default().light_dirty = true;
         Ok(())
@@ -686,7 +691,10 @@ mod tests {
 
         assert!(after_place, "place");
         assert!(after_clear, "clear of a block");
-        assert!(!cleared_air && !after_clear_of_air, "clear of an empty cell");
+        assert!(
+            !cleared_air && !after_clear_of_air,
+            "clear of an empty cell"
+        );
         assert!(!after_light, "light is not terrain");
         assert!(after_deserialise, "deserialise");
         assert!(rejected.is_err() && !after_rejected, "a rejected chunk");

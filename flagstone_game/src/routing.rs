@@ -45,15 +45,14 @@ fn steps(grid: &VoxelGrid, from: BlockPos) -> impl Iterator<Item = BlockPos> + '
 
 /// Whether `to` is one of the cells [`route`] can step to from `from`.
 pub fn is_step(grid: &VoxelGrid, from: BlockPos, to: BlockPos) -> bool {
-    let _ = (grid, from, to);
-    todo!()
+    steps(grid, from).any(|step| step == to)
 }
 
 /// Whether a pawn can walk `cells` in order: each cell standable and each consecutive pair a
 /// step.
 pub fn walkable(grid: &VoxelGrid, cells: &[BlockPos]) -> bool {
-    let _ = (grid, cells);
-    todo!()
+    cells.iter().all(|&cell| standable(grid, cell))
+        && cells.windows(2).all(|pair| is_step(grid, pair[0], pair[1]))
 }
 
 fn manhattan_xz(a: BlockPos, b: BlockPos) -> i32 {
@@ -465,10 +464,7 @@ mod tests {
 
             let open = walkable(&flat, &line);
             let missing_floor = walkable(&no_floor, &line);
-            let one_block_rise = walkable(
-                &rise,
-                &[cell(2, 1, 0), cell(3, 2, 0), cell(4, 1, 0)],
-            );
+            let one_block_rise = walkable(&rise, &[cell(2, 1, 0), cell(3, 2, 0), cell(4, 1, 0)]);
             let lost_step = walkable(&two_high, &[cell(2, 1, 0), cell(3, 3, 0)]);
             let skipped_cell = walkable(&flat, &[cell(0, 1, 0), cell(2, 1, 0)]);
             let diagonal = walkable(&flat, &[cell(0, 1, 0), cell(1, 1, 1)]);
