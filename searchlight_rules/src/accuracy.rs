@@ -43,11 +43,9 @@ impl Accuracy {
             speed_ratio.clamp(0.0, Self::MAX_SPEED_RATIO)
         };
         let ratio = if grounded { capped } else { capped.max(1.0) };
-        let fall = if tuning.settle_seconds > 0.0 {
-            tuning.walk_spread / tuning.settle_seconds * dt.max(0.0)
-        } else {
-            f32::INFINITY
-        };
+        // A settle time not above zero divides to an infinite (or, over no time, NaN) fall,
+        // and `max` below then takes the target either way.
+        let fall = tuning.walk_spread / tuning.settle_seconds.max(0.0) * dt.max(0.0);
         Accuracy {
             movement: (tuning.walk_spread * ratio).max(self.movement - fall),
         }
