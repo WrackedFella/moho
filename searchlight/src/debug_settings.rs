@@ -3,9 +3,10 @@
 use std::io;
 use std::path::PathBuf;
 
+use moho_app::FULLSCREEN_BINDING;
 use moho_core::prefs::{Prefs, WindowMode};
 use moho_input::bindings::ActionBindings;
-use moho_ui_shell::EngineSettings;
+use moho_ui_shell::{CONSOLE_BINDING, EngineSettings};
 
 use crate::head_bob::HeadBobLevel;
 use crate::input::SearchlightAction;
@@ -98,11 +99,15 @@ impl DebugSettings {
     ///
     /// # Errors
     /// The I/O error if the file cannot be written.
-    pub fn set_bindings(
-        &mut self,
-        _bindings: &ActionBindings<SearchlightAction>,
-    ) -> io::Result<()> {
-        todo!()
+    pub fn set_bindings(&mut self, bindings: &ActionBindings<SearchlightAction>) -> io::Result<()> {
+        let mut section = bindings.to_section();
+        for reserved in [CONSOLE_BINDING, FULLSCREEN_BINDING] {
+            if let Some(value) = self.prefs.bindings().get(reserved) {
+                section.insert(reserved.to_owned(), value.clone());
+            }
+        }
+        self.prefs.set_bindings(section);
+        self.prefs.save_to(&self.path)
     }
 
     /// The window mode the prefs hold.

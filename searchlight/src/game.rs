@@ -9,7 +9,7 @@ use glam::{Mat4, Quat, Vec3};
 use moho_app::{Event, EventContext, FrameContext, Game, InitContext, TickContext, WindowMode};
 use moho_audio::AudioSystem;
 use moho_input::action_map::{ActionMap, handle_device_event, handle_window_event};
-use moho_input::bindings::Input;
+use moho_input::bindings::{Binding, Input};
 use moho_input::key::Key;
 use moho_physics::{CharacterBody, CharacterState, first_person_view};
 use moho_render_api::{
@@ -25,18 +25,23 @@ use winit::window::{CursorGrabMode, Window};
 use moho_core::prefs::Prefs;
 use moho_ui_shell::host::input_of;
 use moho_ui_shell::{
-    Anchor, EngineSettings, MenuEvent, Routing, ScreenText, UiLayers, UiShell,
+    Anchor, EngineSettings, MenuEvent, Routing, ScreenText, Slot, UiLayers, UiShell,
     apply_engine_command, apply_engine_settings,
 };
 
 use crate::arena::{box_mesh, control_mesh_id, oriented_box_mesh};
 use crate::console_commands::{self, ConsoleCommand, GodModeArg, HeadBobArg, SimpleArg};
+use crate::controls::{Capture, ControlsDraft, label};
 use crate::debug_settings::DebugSettings;
 use crate::head_bob::{Bob, HeadBobLevel};
 use crate::hud::Edge;
-use crate::input::{SearchlightAction, SearchlightCommand, look_from, look_to_turn, resolve_lean};
+use crate::input::{
+    SearchlightAction, SearchlightCommand, build_action_map, look_from, look_to_turn, resolve_lean,
+};
 use crate::lean::{lean_offset, rolled_view_matrix};
-use crate::menu::{MenuAction, main_screen, pause_screen, settings_screen};
+use crate::menu::{
+    MenuAction, controls_rows, controls_screen, main_screen, pause_screen, settings_screen,
+};
 use crate::mode::ArenaMode;
 use crate::sim::{Feedback, SearchlightSim, dummy_at, dummy_hit_volumes_of};
 use crate::tag::SurfaceTag;
@@ -733,6 +738,8 @@ pub struct SearchlightGame {
     /// Engine settings waiting for a frame, the first place the renderer, audio and window can
     /// be reached.
     pending_settings: Option<EngineSettings>,
+    /// The bindings being edited while the Controls page is open.
+    controls: Option<ControlsDraft>,
 }
 
 impl SearchlightGame {
@@ -758,6 +765,7 @@ impl SearchlightGame {
             debug_settings: None,
             flip_window_pending: false,
             pending_settings: None,
+            controls: None,
         }
     }
 
@@ -815,8 +823,17 @@ impl SearchlightGame {
                         .menu_mut()
                         .push(settings_screen(settings, self.head_bob));
                 }
-                MenuEvent::Chosen(MenuAction::Controls) => {}
-                MenuEvent::Chosen(MenuAction::Back) => self.stage.shell().menu_mut().pop(),
+                MenuEvent::Chosen(MenuAction::Controls) => {
+                    let draft = ControlsDraft::new(self.input.bindings());
+                    self.stage.shell().menu_mut().push(controls_screen(&draft));
+                    self.controls = Some(draft);
+                }
+                MenuEvent::Chosen(MenuAction::ApplyControls) => self.apply_controls(),
+                MenuEvent::Chosen(MenuAction::Rebind(_)) => {}
+                MenuEvent::Chosen(MenuAction::Back) => {
+                    self.controls = None;
+                    self.stage.shell().menu_mut().pop();
+                }
                 MenuEvent::Chosen(MenuAction::Quit) => ctx.request_exit(),
                 MenuEvent::SettingsApplied(settings) => self.settings_applied(settings),
                 MenuEvent::GameSettingsApplied(values) => {
@@ -825,9 +842,55 @@ impl SearchlightGame {
                         self.save_head_bob();
                     }
                 }
-                MenuEvent::Captured { .. } | MenuEvent::Cleared { .. } => {}
+                MenuEvent::Captured {
+                    action: MenuAction::Rebind(action),
+                    slot: Slot::Primary,
+                    input,
+                } => self.captured(action, input),
+                MenuEvent::Captured { .. } | MenuEvent::Cleared { .. } => self.show_controls(None),
             }
         }
+    }
+
+    /// Shows the Controls page's rows from the draft, with `refusal` noted on one action's row.
+    fn show_controls(&mut self, refusal: Option<(SearchlightAction, &str)>) {
+        if let Some(draft) = &self.controls {
+            let rows = controls_rows(draft, refusal);
+            self.stage.shell().menu_mut().set_items(rows);
+        }
+    }
+
+    /// Stages a captured `input` for `action` on the Controls page, or notes why it was refused.
+    fn captured(&mut self, action: SearchlightAction, input: Input) {
+        let Some(draft) = &mut self.controls else {
+            return;
+        };
+        match draft.capture(action, input) {
+            Capture::Set | Capture::Reserved => self.show_controls(None),
+            Capture::InUse { by } => {
+                let note = format!("{} is used by {}", Binding::from(input).label(), label(by));
+                self.show_controls(Some((action, &note)));
+            }
+        }
+    }
+
+    /// Makes the drafted bindings live, replacing the action map, and saves them; a failed save
+    /// warns and the bindings stay live for the session.
+    fn apply_controls(&mut self) {
+        let Some(draft) = &self.controls else {
+            return;
+        };
+        let bindings = draft.bindings();
+        let prefs = self
+            .debug_settings
+            .as_ref()
+            .map_or_else(Prefs::default, |saved| saved.prefs().clone());
+        if let Some(saved) = &mut self.debug_settings
+            && let Err(error) = saved.set_bindings(&bindings)
+        {
+            tracing::warn!(%error, "bindings not saved");
+        }
+        self.input = build_action_map(bindings, &prefs);
     }
 
     /// Saves the head bob; a failed save warns and the value stays for the session.
@@ -4718,7 +4781,7 @@ mod menu_tests {
                 settings,
                 (
                     Some("Settings".to_owned()),
-                    ["Back"].map(String::from).to_vec()
+                    ["Controls", "Back"].map(String::from).to_vec()
                 )
             );
             assert_eq!(after_back.0, None);

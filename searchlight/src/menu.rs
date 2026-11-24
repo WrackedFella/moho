@@ -1,10 +1,12 @@
 //! The main, pause and settings menus as data for the engine's menu screens: which items they
 //! list and what choosing each one asks of the game. The shell draws and drives them.
 
+use moho_input::Action;
 use moho_ui_shell::{EngineSetting, EngineSettings, GameSlider, MenuItem, MenuScreen};
 
-use crate::controls::ControlsDraft;
+use crate::controls::{ControlsDraft, label};
 use crate::head_bob::HeadBobLevel;
+use crate::input::SearchlightAction;
 
 /// What choosing a menu item asks the game to do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,6 +19,10 @@ pub enum MenuAction {
     Back,
     /// Opens the Controls page.
     Controls,
+    /// Makes the Controls page's drafted bindings live and saves them.
+    ApplyControls,
+    /// The Controls row of an action, which captures its bindings and is never chosen.
+    Rebind(SearchlightAction),
 }
 
 impl MenuAction {
@@ -35,6 +41,8 @@ impl MenuAction {
             MenuAction::Quit => "Quit",
             MenuAction::Back => "Back",
             MenuAction::Controls => "Controls",
+            MenuAction::ApplyControls => "Apply",
+            MenuAction::Rebind(action) => label(action),
         }
     }
 }
@@ -89,6 +97,7 @@ pub fn settings_screen(settings: EngineSettings, head_bob: HeadBobLevel) -> Menu
         .collect();
     items.push(head_bob_row(head_bob));
     items.push(MenuItem::Apply);
+    items.push(MenuAction::Controls.button());
     items.push(MenuAction::Back.button());
     MenuScreen {
         title: Some("Settings".to_owned()),
@@ -98,9 +107,36 @@ pub fn settings_screen(settings: EngineSettings, head_bob: HeadBobLevel) -> Menu
     }
 }
 
-/// The Controls page for `draft`: one row per action with its two slots, then Apply and Back.
-pub fn controls_screen(_draft: &ControlsDraft) -> MenuScreen<MenuAction> {
-    todo!()
+/// The Controls page's rows for `draft`: one per action with its two slots, then Apply and Back.
+/// `refusal` puts a note on one action's row.
+pub fn controls_rows(
+    draft: &ControlsDraft,
+    refusal: Option<(SearchlightAction, &str)>,
+) -> Vec<MenuItem<MenuAction>> {
+    let mut items: Vec<MenuItem<MenuAction>> = SearchlightAction::ALL
+        .iter()
+        .map(|&action| MenuItem::Control {
+            label: label(action).to_owned(),
+            action: MenuAction::Rebind(action),
+            slots: draft.slots(action),
+            note: refusal
+                .filter(|(refused, _)| *refused == action)
+                .map(|(_, note)| note.to_owned()),
+        })
+        .collect();
+    items.push(MenuAction::ApplyControls.button());
+    items.push(MenuAction::Back.button());
+    items
+}
+
+/// The titled Controls page for `draft`; Escape is Back.
+pub fn controls_screen(draft: &ControlsDraft) -> MenuScreen<MenuAction> {
+    MenuScreen {
+        title: Some("Controls".to_owned()),
+        items: controls_rows(draft, None),
+        back: Some(MenuAction::Back),
+        settings: None,
+    }
 }
 
 #[cfg(test)]
