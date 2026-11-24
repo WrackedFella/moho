@@ -12,9 +12,9 @@ use moho_physics::{
     MoveSettings, PhysicsWorld, first_person_view,
 };
 use searchlight_rules::{
-    AccuracyTuning, Ballistics, Body, BodyPart, BodyProfile, Flight, FlightBounds, Grade,
+    Accuracy, AccuracyTuning, Ballistics, Body, BodyPart, BodyProfile, Flight, FlightBounds, Grade,
     HitReport, ItemId, Lean, LeanReach, LeanSide, LeanTuning, Loadout, MagazineLevel, Rifle, Rig,
-    Shot,
+    Shot, disc_offset,
 };
 
 use crate::arena::{Arena, FLIGHT_MARGIN, SETTLE_DT};
@@ -254,6 +254,10 @@ struct Enemy {
 /// The engine stream enemy aim error draws from; later draws add streams of their own.
 const SPREAD_STREAM: StreamId = StreamId::named("searchlight.enemy_spread");
 
+/// The engine stream the player's shot scatter draws from, apart from the enemies' so theirs
+/// stay as they were.
+const PLAYER_SPREAD_STREAM: StreamId = StreamId::named("searchlight.player_spread");
+
 /// The next draw of `rng`, uniform in `[-1, 1)`.
 fn next_signed(rng: &mut SimRng) -> f32 {
     rng.next_f32() * 2.0 - 1.0
@@ -295,6 +299,10 @@ pub struct SearchlightSim {
     weapon: Weapon,
     lean: Lean,
     lean_tuning: LeanTuning,
+    accuracy: Accuracy,
+    accuracy_tuning: AccuracyTuning,
+    /// Draws the direction of each of the player's shots within the cone of `accuracy`.
+    player_rng: SimRng,
     outbox: Vec<Feedback>,
     /// Lethal player shots on enemies since the sim was built or last restarted.
     kills: u32,
@@ -415,7 +423,17 @@ impl SearchlightSim {
                 config.character_body,
             ));
         }
-        // Index the new hit volumes so the first tick's rays can strike them.
+        // Let the player settle onto the floor, so the first tick starts grounded rather than
+        // reading as a jump, then index the new hit volumes so the first tick's rays can strike
+        // them.
+        world
+            .move_character(
+                player,
+                &CharacterCommand::default(),
+                &config.move_settings,
+                SETTLE_DT,
+            )
+            .expect("the player was added a moment ago");
         world.step(SETTLE_DT);
         Self {
             world,
@@ -443,6 +461,9 @@ impl SearchlightSim {
             weapon: Weapon::Ready,
             lean: Lean::default(),
             lean_tuning: config.lean,
+            accuracy: Accuracy::default(),
+            accuracy_tuning: config.accuracy,
+            player_rng: SimRng::new(config.enemy.seed, PLAYER_SPREAD_STREAM),
             outbox: Vec::new(),
             kills: 0,
             origin: (spawns, config),
@@ -480,6 +501,7 @@ impl SearchlightSim {
             .expect("the sim never removes the player");
         self.world.step(dt);
         self.step_lean(command.lean, dt);
+        self.step_accuracy(dt);
         self.step_rounds(command.round_gravity.gravity(), dt);
 
         self.advance_weapon();
@@ -499,6 +521,17 @@ impl SearchlightSim {
         if self.player_body.is_dead() {
             self.outbox.push(Feedback::PlayerDied);
         }
+    }
+
+    /// Moves the player's spread by how fast they ran this tick, against the unleaned walking
+    /// speed.
+    fn step_accuracy(&mut self, dt: f32) {
+        let state = self.player();
+        let ground_speed = Vec3::new(state.velocity.x, 0.0, state.velocity.z).length();
+        let ratio = ground_speed / self.max_speed();
+        self.accuracy = self
+            .accuracy
+            .step(ratio, state.grounded, dt, &self.accuracy_tuning);
     }
 
     /// Blends the lean toward `want`, held short of any wall beside the player.
@@ -760,8 +793,9 @@ impl SearchlightSim {
         let state = self.player();
         let view = first_person_view(&state, &state, 1.0, (0.0, 0.0));
         let origin = self.leaned_eye(&state);
+        let direction = self.scattered(view.forward);
         if simple {
-            self.hitscan(origin, view.forward, state.position);
+            self.hitscan(origin, direction, state.position);
             return;
         }
         let Some(&ballistics) = self.ballistics.get(round) else {
@@ -769,12 +803,27 @@ impl SearchlightSim {
             return;
         };
         self.rounds.push(RoundInFlight {
-            flight: Flight::fired(origin, view.forward, &ballistics),
+            flight: Flight::fired(origin, direction, &ballistics),
             ballistics,
             shooter: Some(self.player),
             from: state.position,
             near_missed: Vec::new(),
         });
+    }
+
+    /// `forward` turned off by a draw uniform in the cone of the player's spread. A spread of
+    /// nothing leaves it as it is and draws nothing.
+    fn scattered(&mut self, forward: Vec3) -> Vec3 {
+        let spread = self.player_spread();
+        if spread <= 0.0 {
+            return forward;
+        }
+        let u = self.player_rng.next_f32();
+        let v = self.player_rng.next_f32();
+        let (across, rise) = disc_offset(u, v, spread);
+        let right = forward.cross(Vec3::Y).normalize_or(Vec3::X);
+        let up = right.cross(forward);
+        forward + right * across + up * rise
     }
 
     /// One ray from `origin` along `direction` to the edge of the flight bounds, resolved on
@@ -989,7 +1038,7 @@ impl SearchlightSim {
 
     /// The half-angle in radians of the cone the player's next shot leaves in.
     pub fn player_spread(&self) -> f32 {
-        0.0
+        self.accuracy.spread(&self.accuracy_tuning)
     }
 
     /// How far the player leans after the last tick.

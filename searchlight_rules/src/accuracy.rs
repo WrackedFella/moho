@@ -20,28 +20,46 @@ pub struct Accuracy {
 }
 
 impl Accuracy {
+    /// The speed ratio beyond which more speed adds no spread.
+    const MAX_SPEED_RATIO: f32 = 1.5;
+
     /// This state after `dt` seconds at `speed_ratio` times walking speed.
+    ///
+    /// The ratio is capped at 1.5 and an airborne player reads at least 1.0. The movement spread
+    /// rises at once to `walk_spread * ratio` and falls linearly, closing from `walk_spread` to
+    /// nothing in `settle_seconds`; a settle time not above zero closes at once.
     #[must_use]
     pub fn step(
         self,
-        _speed_ratio: f32,
-        _grounded: bool,
-        _dt: f32,
-        _tuning: &AccuracyTuning,
+        speed_ratio: f32,
+        grounded: bool,
+        dt: f32,
+        tuning: &AccuracyTuning,
     ) -> Accuracy {
-        self
+        let capped = speed_ratio.min(Self::MAX_SPEED_RATIO);
+        let ratio = if grounded { capped } else { capped.max(1.0) };
+        let fall = if tuning.settle_seconds > 0.0 {
+            tuning.walk_spread / tuning.settle_seconds * dt.max(0.0)
+        } else {
+            f32::INFINITY
+        };
+        Accuracy {
+            movement: (tuning.walk_spread * ratio).max(self.movement - fall),
+        }
     }
 
     /// The cone's half-angle for the next shot, in radians.
     pub fn spread(self, _tuning: &AccuracyTuning) -> f32 {
-        self.movement * 0.0
+        self.movement
     }
 }
 
 /// The sideways and upward offsets `(a, b)` of a shot, as tangents off the view direction, from
 /// two unit draws `u` and `v` in `[0, 1)`: uniform in a disc of radius `tan(spread)`.
-pub fn disc_offset(_u: f32, _v: f32, spread: f32) -> (f32, f32) {
-    (2.0 * spread.tan(), 0.0)
+pub fn disc_offset(u: f32, v: f32, spread: f32) -> (f32, f32) {
+    let radius = spread.tan() * u.sqrt();
+    let angle = std::f32::consts::TAU * v;
+    (radius * angle.cos(), radius * angle.sin())
 }
 
 #[cfg(test)]

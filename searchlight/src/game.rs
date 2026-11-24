@@ -258,9 +258,10 @@ impl Crosshair {
     const THICKNESS: f32 = 2.0;
 
     /// Pixels from the screen centre to the inner end of each bar, for a view `fov_y` radians
-    /// tall drawn `height` pixels high.
-    fn gap(_spread: f32, _fov_y: f32, _height: f32) -> f32 {
-        Self::GAP
+    /// tall drawn `height` pixels high: the resting gap plus the cone's circle on screen, by a
+    /// pinhole projection.
+    fn gap(spread: f32, fov_y: f32, height: f32) -> f32 {
+        Self::GAP + spread.tan() / (fov_y / 2.0).tan() * (height / 2.0)
     }
 }
 
@@ -592,7 +593,12 @@ impl Stage {
     }
 
     /// Hands the crosshair the cone its next shot leaves in, so the gap can mark it.
-    fn show_spread(&self, _spread: f32) {}
+    fn show_spread(&self, spread: f32) {
+        self.crosshair
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .spread = spread;
+    }
 
     fn hide_hud(&self) {
         self.crosshair
