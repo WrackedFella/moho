@@ -67,6 +67,19 @@ pub struct StrategyCommand {
     pub engine: Vec<EngineCommand>,
 }
 
+/// How far a pointer ray reaches, measured from its origin.
+///
+/// Under a ceiling the reach counts from where the ray gets down to the cut plane, because
+/// the camera follows the uncut ground and the kept ground can lie far below it.
+fn pointer_range(ray: Ray, ceiling: Option<i32>) -> f32 {
+    let descent = ceiling
+        .filter(|&ceiling| ray.direction.y < 0.0 && ray.origin.y > ceiling as f32)
+        .map_or(0.0, |ceiling| {
+            (ray.origin.y - ceiling as f32) / -ray.direction.y
+        });
+    POINTER_RAY_RANGE + descent
+}
+
 /// Yaw and pitch deltas for a look. Mouse motion is fed unnegated, so look is inverted here.
 ///
 /// The one mapping, shared by the command and the camera so a tick lands where the frame drew.
@@ -232,7 +245,7 @@ impl App {
                 light_system.grid(),
                 ray.origin,
                 ray.direction,
-                POINTER_RAY_RANGE,
+                pointer_range(ray, command.ceiling),
                 command.ceiling,
             );
             tracing::debug!(hit = ?self.pointer_hit, "Pointer ray cast");
@@ -279,7 +292,7 @@ impl App {
             light_system.grid(),
             ray.origin,
             ray.direction,
-            POINTER_RAY_RANGE,
+            pointer_range(ray, ceiling),
             ceiling,
         ) else {
             return;
@@ -3536,6 +3549,29 @@ mod tests {
 
             assert_eq!(lowered, 0, "the mark above the cut is not drawn");
             assert_eq!(raised, 1, "raising the view draws it again");
+        }
+
+        #[test]
+        fn a_deep_cut_is_still_in_pointer_range_of_the_camera_above_the_surface() {
+            let mut app = lowered_app();
+            app.light_system
+                .as_mut()
+                .expect("light system")
+                .grid_mut()
+                .mutator()
+                .fill_region(glam::IVec3::new(0, 28, 0), glam::IVec3::new(15, 170, 15), 0);
+            let direction = Vec3::new(-1.0, -1.0, -1.0).normalize();
+            let target = Vec3::new(8.3, LEVEL as f32, 9.1);
+            let origin = target - direction * ((195.0 - LEVEL as f32) / -direction.y);
+            let command = StrategyCommand {
+                mark: Some(Ray { origin, direction }),
+                ceiling: Some(LEVEL),
+                ..StrategyCommand::default()
+            };
+
+            tick_app(&mut app, &command);
+
+            assert_eq!(marked(&app), [[8, LEVEL - 1, 9]]);
         }
 
         #[test]
