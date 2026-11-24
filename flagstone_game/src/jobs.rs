@@ -12,7 +12,9 @@ use glam::Vec3;
 use crate::TICK_HZ;
 use crate::colony::MineMarks;
 use crate::pawn::{Pawn, PawnId, TOOL_SLOT};
-use crate::routing::{ROUTE_NODE_BUDGET, feet_cell, route, standing_cell, walkable};
+use crate::routing::{
+    ROUTE_NODE_BUDGET, feet_cell, is_step, route, standable, standing_cell, walkable,
+};
 
 /// How close to a waypoint's centre, horizontally in metres, the feet count as arrived.
 pub const ARRIVE_RADIUS: f32 = 0.35;
@@ -238,29 +240,30 @@ fn advance(job: &mut Job, pose: Pose) {
     }
 }
 
-/// Whether the terrain changed since the route was last checked and the walk from the feet
-/// cell along the rest of it is no longer possible. Records the revision it checked.
-fn route_broken(job: &mut Job, pose: Pose, grid: &VoxelGrid) -> bool {
-    let Job::Mine {
-        route,
-        next,
-        revision,
-        ..
-    } = job
-    else {
+/// Whether the grid changed since the job's route was last checked. Records the grid's
+/// revision as the one checked, so each change reports once.
+fn terrain_changed_since_check(job: &mut Job, grid: &VoxelGrid) -> bool {
+    let Job::Mine { revision, .. } = job else {
         return false;
     };
-    if *revision == grid.revision() {
-        return false;
-    }
+    let changed = *revision != grid.revision();
     *revision = grid.revision();
-    let feet = start_cell(grid, pose);
-    let ahead = route[*next..]
-        .iter()
-        .copied()
-        .skip_while(|&cell| cell == feet);
-    let walk: Vec<BlockPos> = std::iter::once(feet).chain(ahead).collect();
-    !walkable(grid, &walk)
+    changed
+}
+
+/// Whether the pawn can no longer walk from where it stands along the rest of its route.
+fn route_broken(job: &Job, pose: Pose, grid: &VoxelGrid) -> bool {
+    let Job::Mine { route, next, .. } = job else {
+        return false;
+    };
+    let start = start_cell(grid, pose);
+    let rest = &route[*next..];
+    let rest = rest.strip_prefix(&[start]).unwrap_or(rest);
+    !(standable(grid, start)
+        && rest
+            .first()
+            .is_none_or(|&first| is_step(grid, start, first))
+        && walkable(grid, rest))
 }
 
 /// Routes the pawn from its feet cell to a stand cell of the mark it holds, keeping the
@@ -286,7 +289,7 @@ fn replan(job: &mut Job, marks: &mut MineMarks, pose: Pose, grid: &VoxelGrid) ->
         *stall = StallGuard::default();
         return true;
     }
-    marks.release(held);
+    release(job, marks, held);
     let mut unreachable = Unreachable::new(grid.revision(), feet);
     unreachable.marks.insert(held);
     *job = Job::Idle { unreachable };
@@ -335,7 +338,7 @@ pub fn step(
     }
 
     advance(job, pose);
-    if route_broken(job, pose, grid) {
+    if terrain_changed_since_check(job, grid) && route_broken(job, pose, grid) {
         if !replan(job, marks, pose, grid) {
             return JobAction::Wait;
         }
