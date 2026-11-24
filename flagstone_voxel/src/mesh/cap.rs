@@ -7,8 +7,8 @@ use super::super::face::FaceDirection;
 use super::super::grid::VoxelGrid;
 use super::VoxelMesh;
 use super::hybrid::{
-    COARSE_STRIDE, DENSITY_SAMPLE_TO_WORLD, HybridMeshGenerator, MeshPlan, coarse_cell_solid,
-    coarse_face_material, is_structure_at, mesh_plan, sample_face_material,
+    COARSE_STRIDE, DENSITY_SAMPLE_TO_WORLD, HybridMeshGenerator, coarse_cell_solid,
+    coarse_face_material, is_fine_lod, is_structure_at, sample_face_material,
 };
 use super::marching_cubes::{MarchingCubes, cube_index, nearest_solid_corner};
 use glam::{IVec3, Vec2, Vec3};
@@ -48,20 +48,18 @@ pub fn cut_cap_mesh(grid: &VoxelGrid, chunk_pos: IVec3, lod: u8, cut: f32) -> Vo
     let base = chunk_pos * chunk_size;
     let probe = cut + CAP_PROBE;
     let mut cap = CapBuilder::new(cut);
-    match mesh_plan(lod) {
-        MeshPlan::Fine => {
-            cap_smooth_cells(grid, chunk_pos, chunk_size, probe, &mut cap);
-            let structure = |pos| is_structure_at(grid, pos);
-            cap_blocks(grid, base, chunk_size, probe, structure, &mut cap);
-        }
-        MeshPlan::Coarse => cap_coarse_cells(grid, base, chunk_size, probe, &mut cap),
+    if is_fine_lod(lod) {
+        cap_terrain_cells(grid, chunk_pos, chunk_size, probe, &mut cap);
+        cap_structures(grid, base, chunk_size, probe, &mut cap);
+    } else {
+        cap_coarse_cells(grid, base, chunk_size, probe, &mut cap);
     }
     cap.mesh
 }
 
 /// Caps the marching-cubes cells of the one cell row whose height span `(bottom, top]`
-/// holds `probe`, from the same density field the chunk's smooth mesh was built from.
-fn cap_smooth_cells(
+/// holds `probe`, from the same density field the chunk's terrain mesh was built from.
+fn cap_terrain_cells(
     grid: &VoxelGrid,
     chunk_pos: IVec3,
     chunk_size: i32,
@@ -104,13 +102,12 @@ fn cap_smooth_cells(
     }
 }
 
-/// Caps every block in the chunk's range that spans `probe` and passes `is_structure`.
-fn cap_blocks(
+/// Caps every structure block in the chunk's range that spans `probe`.
+fn cap_structures(
     grid: &VoxelGrid,
     base: IVec3,
     chunk_size: i32,
     probe: f32,
-    is_structure: impl Fn(IVec3) -> bool,
     cap: &mut CapBuilder,
 ) {
     let y = probe.floor() as i32;
@@ -120,8 +117,10 @@ fn cap_blocks(
     for x in base.x..base.x + chunk_size {
         for z in base.z..base.z + chunk_size {
             let pos = IVec3::new(x, y, z);
-            if grid.is_solid_at(pos) && is_structure(pos) {
-                let material = grid.face_material_at(pos).expect("guarded by is_solid_at");
+            if is_structure_at(grid, pos) {
+                let material = grid
+                    .face_material_at(pos)
+                    .expect("is_structure_at implies a block is stored at pos");
                 cap.square(Vec2::new(x as f32, z as f32), 1, material);
             }
         }

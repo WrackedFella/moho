@@ -1,7 +1,5 @@
-//! Hybrid mesh generation for chunks containing both smooth and blocky geometry.
-//!
-//! This module detects mixed chunks and generates appropriate meshes for each
-//! geometry type, then concatenates them into a unified mesh for rendering.
+//! Full-detail chunk meshing: the terrain surface from a density field in which structure
+//! blocks are air, plus one cube per structure block (ADR-0037).
 
 use super::super::face::FaceDirection;
 use super::super::grid::{BlockPos, VoxelGrid};
@@ -136,29 +134,16 @@ pub(crate) fn is_fine_lod(lod: u8) -> bool {
     lod == 0
 }
 
-/// How the cut caps follow a chunk meshed at a level of detail, so they cover the same
-/// cells as the mesh.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MeshPlan {
-    /// Full-detail meshing: the terrain surface plus one cube per structure block.
-    Fine,
-    /// Coarse blocky meshing, whatever the content.
-    Coarse,
-}
-
-/// The plan for a chunk meshed at `lod`.
-pub(crate) fn mesh_plan(lod: u8) -> MeshPlan {
-    if is_fine_lod(lod) {
-        MeshPlan::Fine
-    } else {
-        MeshPlan::Coarse
-    }
-}
-
 /// Whether the block at `pos` is a structure block, drawn as a cube. Structure blocks are
 /// air to the terrain surface wherever they sit.
 pub(crate) fn is_structure_at(grid: &VoxelGrid, pos: IVec3) -> bool {
     grid.is_smooth_at(pos) == Some(false)
+}
+
+/// Whether the block at `pos` is a terrain block, the only kind solid to the terrain
+/// surface.
+fn is_terrain_at(grid: &VoxelGrid, pos: IVec3) -> bool {
+    grid.is_smooth_at(pos) == Some(true)
 }
 
 /// Hybrid mesh generator: a smooth terrain surface plus blocky structures.
@@ -174,7 +159,7 @@ impl HybridMeshGenerator {
     /// * `chunk_pos` - Chunk position in chunk coordinates
     /// * `chunk_size` - Size of chunks (typically 16)
     pub fn generate_chunk_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
-        let mut mesh = Self::generate_smooth_mesh(grid, chunk_pos, chunk_size);
+        let mut mesh = Self::generate_terrain_mesh(grid, chunk_pos, chunk_size);
         let base_pos = chunk_pos * chunk_size;
 
         for x in 0..chunk_size {
@@ -193,7 +178,7 @@ impl HybridMeshGenerator {
     }
 
     /// Generate mesh using Marching Cubes for the terrain surface, in world space.
-    fn generate_smooth_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
+    fn generate_terrain_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
         let density_field = Self::terrain_density_field(grid, chunk_pos, chunk_size);
         let base = chunk_pos * chunk_size;
         // Cells sharing an edge ask for the same air sample; occlusion costs 26 lookups.
@@ -242,7 +227,7 @@ impl HybridMeshGenerator {
                 for (z, col) in row.iter_mut().enumerate() {
                     let world_pos = sample_block(base_pos, [x, y, z]);
 
-                    *col = if grid.is_smooth_at(world_pos) == Some(true) {
+                    *col = if is_terrain_at(grid, world_pos) {
                         1.0
                     } else {
                         0.0
