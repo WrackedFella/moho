@@ -77,21 +77,25 @@ pub(crate) fn screen_layer() -> egui::LayerId {
     )
 }
 
-/// Paints `texts`, which passed `validate`, on the background layer, under the console.
-pub(crate) fn paint(ctx: &egui::Context, texts: &[ScreenText]) {
+/// Paints `texts`, which passed `validate`, on the background layer, under the console, and
+/// returns the rectangle each one occupies.
+pub(crate) fn paint(ctx: &egui::Context, texts: &[ScreenText]) -> Vec<egui::Rect> {
     let painter = ctx.layer_painter(screen_layer());
     let screen = ctx.content_rect();
-    for t in texts {
-        let [r, g, b, a] = t.color;
-        let align = align(t.anchor);
-        painter.text(
-            align.pos_in_rect(&screen) + egui::Vec2::from(t.offset),
-            align,
-            &t.text,
-            egui::FontId::proportional(t.size),
-            egui::Color32::from_rgba_unmultiplied(r, g, b, a),
-        );
-    }
+    texts
+        .iter()
+        .map(|t| {
+            let [r, g, b, a] = t.color;
+            let align = align(t.anchor);
+            painter.text(
+                align.pos_in_rect(&screen) + egui::Vec2::from(t.offset),
+                align,
+                &t.text,
+                egui::FontId::proportional(t.size),
+                egui::Color32::from_rgba_unmultiplied(r, g, b, a),
+            )
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -170,7 +174,9 @@ mod tests {
     }
 
     fn pass(ctx: &egui::Context, size: egui::Rect, texts: &[ScreenText]) -> Vec<Painted> {
-        let mut output = ctx.run_ui(input(size), |ui| paint(ui.ctx(), texts));
+        let mut output = ctx.run_ui(input(size), |ui| {
+            paint(ui.ctx(), texts);
+        });
         let shapes = painted(&output);
         output.textures_delta.clear();
         shapes

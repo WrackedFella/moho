@@ -6,6 +6,7 @@
 //! never in a Settings screen.
 
 pub mod apply;
+mod backdrop;
 pub mod console;
 pub mod host;
 pub mod image;

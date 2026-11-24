@@ -92,6 +92,8 @@ const CELL_WIDTH: f32 = (CONTROL_WIDTH - LABEL_WIDTH) / 2.0;
 /// Free space kept above and below the rows of a column that scrolls; the title sits in the top.
 const BAND: f32 = ROW_PITCH;
 const WARNING_COLOR: [u8; 4] = [255, 120, 80, 255];
+/// Every colour a menu text can have, for the backdrop's contrast guarantee.
+pub(crate) const TEXT_COLORS: [[u8; 4]; 3] = [COLOR, FOCUS_COLOR, WARNING_COLOR];
 const PROTECTED_NOTE: &str = "That input can't be bound";
 /// Window size assumed until a screen has been laid out once.
 const DEFAULT_SIZE: [f32; 2] = [1280.0, 720.0];
@@ -627,6 +629,16 @@ impl<A> MenuStack<A> {
             }
         }
         texts
+    }
+
+    /// The rectangles of the top screen's rows fully in view on a window `size` points across;
+    /// empty with no screen open.
+    pub(crate) fn visible_rows(&self, size: [f32; 2]) -> Vec<Rect> {
+        let Some(open) = self.screens.last() else {
+            return Vec::new();
+        };
+        let rows = open.rects(size);
+        rows[open.visible(size)].to_vec()
     }
 }
 

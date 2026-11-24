@@ -1054,6 +1054,96 @@ mod tests {
         assert_eq!(in_space, [], "empty space is not the focused slot");
     }
 
+    fn dim_colour() -> [u8; 4] {
+        egui::Color32::from_rgba_unmultiplied(0, 0, 0, 153).to_array()
+    }
+
+    fn panel_colour() -> [u8; 4] {
+        egui::Color32::from_rgba_unmultiplied(16, 16, 24, 240).to_array()
+    }
+
+    /// Every vertex colour of the frame in draw order.
+    fn vertex_colours(frame: &UiFrame) -> Vec<[u8; 4]> {
+        frame
+            .meshes
+            .iter()
+            .flat_map(|m| m.vertices.iter().map(|v| v.color))
+            .collect()
+    }
+
+    #[test]
+    fn the_backdrop_is_drawn_on_every_frame_a_menu_is_open() {
+        let mut shell = menu_shell();
+        shell.set_texts(vec![ammo()]).expect("valid texts");
+        let first = shell.ui_frame([1280, 720]).expect("an open menu draws");
+        shell
+            .set_texts(vec![ScreenText {
+                text: "29 / 30".to_owned(),
+                ..ammo()
+            }])
+            .expect("valid texts");
+
+        let second = shell.ui_frame([1280, 720]).expect("an open menu draws");
+
+        for (name, frame) in [("first", &first), ("second", &second)] {
+            let colours = vertex_colours(frame);
+            assert!(colours.contains(&dim_colour()), "{name} frame has no dim");
+            assert!(
+                colours.contains(&panel_colour()),
+                "{name} frame has no panel"
+            );
+        }
+    }
+
+    #[test]
+    fn popping_the_last_screen_draws_no_dim_and_keeps_game_text() {
+        let mut shell = menu_shell();
+        shell.set_texts(vec![ammo()]).expect("valid texts");
+        let open = shell.ui_frame([1280, 720]).expect("an open menu draws");
+        shell.set_texts(vec![ammo()]).expect("valid texts");
+        shell.menu_mut().pop();
+        let mut fresh = self::shell();
+        fresh.set_texts(vec![ammo()]).expect("valid texts");
+
+        let closed = shell.ui_frame([1280, 720]).expect("game text draws");
+
+        assert!(
+            vertex_colours(&open).contains(&dim_colour()),
+            "the open menu drew no dim"
+        );
+        let colours = vertex_colours(&closed);
+        assert!(!colours.contains(&dim_colour()), "a dim is left behind");
+        assert!(!colours.contains(&panel_colour()), "a panel is left behind");
+        let expected = fresh.ui_frame([1280, 720]).expect("game text draws");
+        assert_eq!(
+            closed.meshes, expected.meshes,
+            "the game text draws as before"
+        );
+    }
+
+    #[test]
+    fn the_console_draws_after_the_menu_backdrop() {
+        let mut shell = menu_shell();
+        shell.console_mut().open();
+        let console_fill = egui::Color32::from_rgba_premultiplied(20, 20, 30, 180).to_array();
+
+        let frame = shell.ui_frame([1280, 720]).expect("an open menu draws");
+
+        let colours = vertex_colours(&frame);
+        let last_backdrop = colours
+            .iter()
+            .rposition(|c| *c == dim_colour() || *c == panel_colour())
+            .expect("the menu backdrop is drawn");
+        let first_console = colours
+            .iter()
+            .position(|c| *c == console_fill)
+            .expect("the console fill is drawn");
+        assert!(
+            last_backdrop < first_console,
+            "backdrop ends at vertex {last_backdrop}, console starts at {first_console}"
+        );
+    }
+
     #[test]
     fn the_console_shell_debug_names_the_shell_and_whether_the_console_is_open() {
         let mut shell = shell();
