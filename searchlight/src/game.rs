@@ -419,7 +419,7 @@ impl Stage {
     /// Draws one streak per round in `traces`, placed `alpha` of the way along this tick's step,
     /// and ends the streak of each round that stopped or is no longer traced. An ended trace
     /// stays in `traces` until the next tick, so its streak is kept, ended, until it goes.
-    fn show_tracers(&mut self, traces: &[RoundTrace], alpha: f32, frame_dt: Duration) {
+    fn show_tracers(&mut self, traces: &[RoundTrace], alpha: f32) {
         let style = tracer_style(self.tracer_material);
         let effects = self.scene.effects_mut();
         for trace in traces {
@@ -427,11 +427,14 @@ impl Stage {
                 .tracers
                 .entry(trace.id)
                 .or_insert_with(|| effects.begin_streak(style));
-            if trace.ended {
-                effects.place_streak(handle, trace.to, trace.heading);
-                effects.end(handle);
+            let at = if trace.ended {
+                trace.to
             } else {
-                effects.place_streak(handle, trace.from.lerp(trace.to, alpha), trace.heading);
+                trace.from.lerp(trace.to, alpha)
+            };
+            effects.place_streak(handle, at, trace.heading);
+            if trace.ended {
+                effects.end(handle);
             }
         }
         self.tracers.retain(|id, handle| {
@@ -441,7 +444,6 @@ impl Stage {
             }
             traced
         });
-        effects.advance(frame_dt);
     }
 
     fn new() -> Self {
@@ -1431,7 +1433,8 @@ impl Game for SearchlightGame {
         self.refresh_use_prompt(dead);
         self.stage.sync_enemies(self.mode.sim());
         self.stage
-            .show_tracers(self.mode.sim().round_traces(), alpha, ctx.frame_dt);
+            .show_tracers(self.mode.sim().round_traces(), alpha);
+        self.stage.scene.effects_mut().advance(ctx.frame_dt);
         if let Some(renderer) = ctx.renderer() {
             let sim = self.mode.sim();
             let view = first_person_view(
