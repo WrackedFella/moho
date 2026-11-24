@@ -1658,6 +1658,11 @@ mod tests {
             });
             assert!(walking, "the pawn never set out along the near causeway");
             let mut over_the_trench = Vec::new();
+            let z_at_the_cut = pawn_state(&app).position.z;
+            assert!(
+                (11.0..14.0).contains(&z_at_the_cut),
+                "the pawn is not on the near causeway's line: z {z_at_the_cut}"
+            );
 
             cut_ground(&mut app, 18, 11..=13);
             for _ in 0..1500 {

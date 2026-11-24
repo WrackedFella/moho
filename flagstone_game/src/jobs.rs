@@ -593,12 +593,16 @@ mod tests {
             site.mark_block(cell(2, 5, 0));
 
             let first = site.tick();
-            site.mark_block(cell(4, 1, 0));
+            let revision = site.grid.revision();
+            // A new mark on ground that is already there: the terrain, and so the memo,
+            // stays as it was.
+            site.marks.toggle([4, 0, 0]);
             let second = site.tick();
 
             assert_eq!(first, JobAction::Wait);
+            assert_eq!(site.grid.revision(), revision);
             assert_ne!(second, JobAction::Wait);
-            assert_eq!(site.claimed_by([4, 1, 0]), Some(ME));
+            assert_eq!(site.claimed_by([4, 0, 0]), Some(ME));
         }
     }
 
@@ -966,7 +970,6 @@ mod tests {
                 }
             }
             site.marks.toggle([5, 1, 0]);
-            let start = site.pose;
             assert!(
                 standable(&site.grid, cell(4, 2, 0)),
                 "the pocket has a stand cell, only no way in"
@@ -981,8 +984,18 @@ mod tests {
             assert!(matches!(site.job, Job::Idle { .. }));
             assert_eq!(site.claimed_by([5, 1, 0]), None);
             assert!(site.is_marked([5, 1, 0]), "the mark stays");
-            assert_eq!(site.pose, start, "the pawn never moved");
             assert!(site.memo().marks.contains(&[5, 1, 0]), "remembered");
+
+            // A way in opens: a tunnel with headroom through the wall, into the pocket.
+            for x in 2..=3 {
+                for y in 1..=4 {
+                    site.dig(cell(x, y, 0));
+                }
+            }
+            let after_the_way_opens = site.tick();
+
+            assert_ne!(after_the_way_opens, JobAction::Wait);
+            assert_eq!(site.claimed_by([5, 1, 0]), Some(ME), "workable at once");
         }
 
         #[test]
@@ -1089,6 +1102,11 @@ mod tests {
             site.tick();
             assert_eq!(site.memo().marks.len(), 8, "all remembered where it stood");
 
+            site.pose.feet += Vec3::new(0.2, 0.0, -0.2);
+            site.tick();
+            assert_eq!(site.memo().marks.len(), 8, "the same cell keeps the memo");
+            assert_eq!(site.memo().from, cell(0, 1, 0));
+
             site.pose.feet = centre(cell(5, 1, 5));
             site.tick();
 
@@ -1110,8 +1128,17 @@ mod tests {
             assert!(matches!(site.job, Job::Mine { .. }), "the walk is on");
 
             site.cut_ground(4, 0);
-            let actions: Vec<JobAction> = (0..20).map(|_| site.tick()).collect();
+            let first = site.tick();
 
+            assert_eq!(first, JobAction::Wait, "stops at once");
+            assert!(matches!(site.job, Job::Idle { .. }), "{:?}", site.job);
+            assert_eq!(site.claimed_by(MARK), None, "released at once");
+            assert_eq!(site.memo().marks, BTreeSet::from([MARK]));
+            assert_eq!(site.memo().from, cell(2, 1, 0));
+            assert_eq!(site.memo().revision, site.grid.revision());
+
+            let mut actions = vec![first];
+            actions.extend((0..19).map(|_| site.tick()));
             assert!(
                 actions.iter().all(|action| *action == JobAction::Wait),
                 "{actions:?}"
@@ -1134,10 +1161,13 @@ mod tests {
             };
             assert!(route.contains(&cell(4, 1, 0)), "the near causeway is chosen");
 
+            // A nearer mark on ground that stays put: only a release and re-claim takes it.
+            site.marks.toggle([2, 0, -2]);
             site.cut_ground(4, 0);
             let mut targets = Vec::new();
             let mut dug = None;
             for tick in 0..120 {
+                assert_eq!(site.claimed_by([2, 0, -2]), None, "tick {tick}");
                 match site.tick() {
                     JobAction::Walk { to } => {
                         assert_eq!(site.claimed_by([9, 1, 2]), Some(ME), "tick {tick}");
@@ -1153,6 +1183,8 @@ mod tests {
             }
 
             assert_eq!(dug, Some(cell(9, 1, 2)), "the same mark is dug");
+            assert_eq!(site.claimed_by([2, 0, -2]), None, "the nearer mark waits");
+            assert!(site.is_marked([2, 0, -2]));
             let on_the_trench: Vec<BlockPos> = targets
                 .iter()
                 .map(|&to| feet_cell(to))
@@ -1179,28 +1211,34 @@ mod tests {
                 panic!("the walk began: {:?}", site.job);
             };
 
-            for _ in 0..5 {
-                site.tick();
+            for _ in 0..3 {
+                if let JobAction::Walk { to } = site.tick() {
+                    site.pose.feet = to;
+                }
             }
             let before_the_edit = site.grid.revision();
-            let unchanged = site.job.clone();
+            let Job::Mine { next: next_before, .. } = &site.job else {
+                panic!("still walking: {:?}", site.job);
+            };
+            let next_before = *next_before;
             site.dig(cell(-11, 0, 11));
             site.tick();
 
             let Job::Mine {
-                revision, route, ..
+                revision,
+                route,
+                next,
+                ..
             } = &site.job
             else {
                 panic!("an edit far away does not end the walk: {:?}", site.job);
             };
             assert_eq!(claimed_at, before_the_edit, "the claim checked the grid");
-            assert!(
-                matches!(&unchanged, Job::Mine { revision, .. } if *revision == claimed_at),
-                "no change, no new check"
-            );
             assert_ne!(*revision, claimed_at);
             assert_eq!(*revision, site.grid.revision(), "checked after the edit");
             assert_eq!(*route, planned, "a route still walkable is kept");
+            assert!(next_before >= 3, "the pawn had walked on: {next_before}");
+            assert_eq!(*next, next_before + 1, "the walk went on, not back to 0");
         }
 
         proptest! {

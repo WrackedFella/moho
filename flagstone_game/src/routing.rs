@@ -508,7 +508,9 @@ mod tests {
             assert!(up_a_block, "one up");
             assert!(down_a_block, "one down");
             assert!(!west_into_a_hole, "no floor there");
-            assert!(!diagonal && !two_away && !itself);
+            assert!(!diagonal, "a diagonal is not a step");
+            assert!(!two_away, "two cells away is not a step");
+            assert!(!itself, "staying put is not a step");
         }
 
         proptest! {
