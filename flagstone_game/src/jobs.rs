@@ -501,7 +501,6 @@ mod tests {
             assert_ne!(self.grid.revision(), before, "a dig moves the revision");
         }
 
-        /// The unreachable memo of an idle pawn.
         fn memo(&self) -> &Unreachable {
             match &self.job {
                 Job::Idle { unreachable } => unreachable,
