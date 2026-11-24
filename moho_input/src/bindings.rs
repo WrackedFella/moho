@@ -43,6 +43,7 @@ impl Input {
 pub enum Trigger {
     Press,
     Hold,
+    Double,
 }
 
 /// A set of Ctrl, Shift and Alt that must be held with a binding's input.
@@ -134,6 +135,14 @@ impl Binding {
         }
     }
 
+    /// The same input, firing on a second press inside the action's double-press window.
+    pub const fn doubled(self) -> Self {
+        Self {
+            trigger: Trigger::Double,
+            ..self
+        }
+    }
+
     pub fn is_pad(self) -> bool {
         self.input.is_pad()
     }
@@ -195,6 +204,10 @@ impl From<Input> for Binding {
 /// Ticks an input must stay down before a `Hold` binding fires, unless the game overrides it.
 pub const DEFAULT_HOLD_TICKS: u32 = 18;
 
+/// Ticks a second press may follow the first and still count as a `Double` binding, unless
+/// the game overrides it.
+pub const DEFAULT_DOUBLE_TICKS: u32 = 15;
+
 /// A game's action enum: stable names and default bindings, as data.
 pub trait Action: Copy + Eq + Hash + Debug + 'static {
     const ALL: &'static [Self];
@@ -207,6 +220,10 @@ pub trait Action: Copy + Eq + Hash + Debug + 'static {
 
     /// Ticks an input must stay down before a `Hold` binding fires, one value per game; at least 1.
     const HOLD_TICKS: u32 = DEFAULT_HOLD_TICKS;
+
+    /// Ticks a second press may follow the first and still be a `Double` binding, one value
+    /// per game; at least 1.
+    const DOUBLE_TICKS: u32 = DEFAULT_DOUBLE_TICKS;
 
     /// Whether the player may choose between holding the input and toggling the action.
     fn toggleable(self) -> bool {
@@ -1224,6 +1241,146 @@ mod tests {
             assert_eq!(warnings, vec![], "{name}");
             assert!(frame.pressed(TestAction::Jump), "{name}");
             assert!(!frame.pressed(TestAction::MoveForward), "{name}");
+        }
+    }
+
+    #[test]
+    fn double_bindings_round_trip_and_label_with_the_prefix() {
+        let ctrl = Modifiers::CTRL;
+        let cases = [
+            (Binding::key(Key::Y).doubled(), "Double Y", "Double Y"),
+            (
+                Binding::key(Key::Y).with(ctrl).doubled(),
+                "Double Ctrl+Y",
+                "Double Ctrl+Y",
+            ),
+            (
+                Binding::key(Key::Space).doubled(),
+                "Double Spacebar",
+                "Double Spacebar",
+            ),
+            (
+                Binding::mouse(MouseButton::Left).doubled(),
+                "Double Mouse Left",
+                "Double Mouse Left",
+            ),
+        ];
+
+        for (binding, name, label) in cases {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("prefs.ini");
+            let (mut bindings, _) = ActionBindings::<TestAction>::load(&BTreeMap::new());
+            bindings.set(TestAction::Jump, vec![Binding::key(Key::F), binding]);
+            let mut prefs = Prefs::default();
+            prefs.set_bindings(bindings.to_section());
+            std::fs::write(&path, prefs.to_ini_string()).unwrap();
+
+            let (reloaded, prefs_warnings) = Prefs::load_from(&path);
+            let (restored, binding_warnings) =
+                ActionBindings::<TestAction>::load(reloaded.bindings());
+
+            assert_eq!(binding.name(), name);
+            assert_eq!(binding.label(), label);
+            assert_eq!(bindings.to_section()["jump"], format!("F, {name}"));
+            assert_eq!(prefs_warnings, vec![], "{name}");
+            assert_eq!(binding_warnings, vec![], "{name}");
+            assert_eq!(
+                restored.get(TestAction::Jump),
+                [Binding::key(Key::F), binding],
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn double_prefix_is_case_insensitive_and_distinct_from_press_and_hold() {
+        let ctrl = Modifiers::CTRL;
+        let cases = [
+            ("double y", Binding::key(Key::Y).doubled(), "Double Y"),
+            ("DOUBLE Y", Binding::key(Key::Y).doubled(), "Double Y"),
+            (
+                "dOuBlE ctrl+y",
+                Binding::key(Key::Y).with(ctrl).doubled(),
+                "Double Ctrl+Y",
+            ),
+        ];
+
+        for (written, binding, canonical) in cases {
+            let (bindings, warnings) =
+                ActionBindings::<TestAction>::load(&section(&[("jump", written)]));
+
+            assert_eq!(warnings, vec![], "{written}");
+            assert_eq!(bindings.get(TestAction::Jump), [binding], "{written}");
+            assert_eq!(bindings.to_section()["jump"], canonical, "{written}");
+        }
+        assert_ne!(Binding::key(Key::Y).doubled(), Binding::key(Key::Y));
+        assert_ne!(Binding::key(Key::Y).doubled(), Binding::key(Key::Y).held());
+    }
+
+    #[test]
+    fn bad_double_value_warns_and_keeps_default() {
+        let (valid, valid_warnings) =
+            ActionBindings::<TestAction>::load(&section(&[("jump", "Double Y")]));
+        assert_eq!(valid_warnings, vec![]);
+        assert_eq!(
+            valid.get(TestAction::Jump),
+            [Binding::key(Key::Y).doubled()]
+        );
+
+        for bad in [
+            "Double Pad West",
+            "Hold Double Y",
+            "Double Double Y",
+            "Double Hold Y",
+            "Double",
+            "Double Ctrl+Pad West",
+        ] {
+            let (bindings, warnings) =
+                ActionBindings::<TestAction>::load(&section(&[("jump", bad)]));
+
+            let names: Vec<_> = warnings.iter().map(|w| w.name.as_str()).collect();
+            assert_eq!(names, ["jump"], "{bad}");
+            assert_defaults_except(&bindings, &[]);
+        }
+    }
+
+    #[test]
+    fn a_double_binding_is_not_plain_and_a_double_on_a_protected_key_is_refused() {
+        let y = Binding::key(Key::Y);
+        assert!(y.is_plain());
+        assert!(!y.doubled().is_plain());
+        assert!(!y.with(Modifiers::CTRL).doubled().is_plain());
+        for key in PROTECTED_KEYS {
+            let plain = Binding::key(key);
+
+            assert!(plain.doubled().is_protected(), "{}", plain.name());
+            assert!(
+                !plain.with(Modifiers::CTRL).doubled().is_protected(),
+                "Double Ctrl+{}",
+                plain.name()
+            );
+        }
+
+        let (chord, chord_warnings) =
+            ActionBindings::<TestAction>::load(&section(&[("jump", "Double Ctrl+Enter")]));
+        assert_eq!(chord_warnings, vec![]);
+        assert_eq!(
+            chord.get(TestAction::Jump),
+            [Binding::key(Key::Enter).with(Modifiers::CTRL).doubled()]
+        );
+        for value in ["Double Enter", "F, Double Escape", "Double ArrowUp"] {
+            let (bindings, warnings) =
+                ActionBindings::<TestAction>::load(&section(&[("jump", value)]));
+
+            assert_eq!(
+                warnings,
+                vec![BindingWarning {
+                    name: "jump".to_owned(),
+                    value: value.to_owned(),
+                }],
+                "{value}"
+            );
+            assert_defaults_except(&bindings, &[]);
         }
     }
 }

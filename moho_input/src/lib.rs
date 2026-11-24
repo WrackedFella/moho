@@ -9,4 +9,6 @@ pub mod key;
 pub mod pad;
 
 pub use action_map::LookSettings;
-pub use bindings::{Action, ActionMode, DEFAULT_HOLD_TICKS, Input, Modifiers, Trigger};
+pub use bindings::{
+    Action, ActionMode, DEFAULT_DOUBLE_TICKS, DEFAULT_HOLD_TICKS, Input, Modifiers, Trigger,
+};
