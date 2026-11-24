@@ -60,7 +60,7 @@ opened there still saves to the default path).
   invert-Y, mouse smoothing and mouse acceleration apply without a restart. It also queues `AudioSettings::from_prefs`
   (`moho_audio`), which the next frame applies to the audio engine. It does not write the file.
 - **Startup** builds the same `AudioSettings` from the loaded prefs and applies it on the
-  first frame. Each category volume is its pref divided by ten and clamped to 0..=1; 0 is silent.
+  first frame. The master and each category volume are their prefs divided by ten and clamped to 0..=1; 0 is silent. The master level scales every category, including music already playing.
 
 ## 2 Keys
 
@@ -72,7 +72,7 @@ opened there still saves to the default path).
 | | `mouse_acceleration` | `true` `false` `1` `0` (any case) | `false` |
 | | `mouse_acceleration_strength` | finite float, Source `m_customaccel_scale` scale; negatives load unchanged and act as 0; the Settings screen clamps the value to 0 to 1 when shown | `0.04` |
 | `[bindings]` | one key per action id | binding list | per action, below |
-| `[audio]` | `sound_effect_volume` `music_volume` `ui_volume` `voice_volume` | finite float on a 0 to 10 scale (the UI offers 0.0 to 10.0), written with 1 decimal | `8.0` `6.0` `7.0` `9.0` |
+| `[audio]` | `master_volume` `sound_effect_volume` `music_volume` `ui_volume` `voice_volume` | finite float on a 0 to 10 scale (the UI offers 0.0 to 10.0), written with 1 decimal; `master_volume` is written first and a file without it loads 10.0 with no warning | `10.0` `8.0` `6.0` `7.0` `9.0` |
 | `[graphics]` | `shadow_quality` `ssao_quality` | unsigned integer; the UI offers 0 (off) to 4 (ultra) | `3` `3` |
 | | `effects_quality` | unsigned integer, clamped to 0 (off) to 4 (ultra); the Settings screen stores it; each game hands it to `Effects::set_quality` on its `Scene` (Searchlight and Flagstone at start, Searchlight when Apply is pressed, Flagstone when the Settings screen saves) | `3` |
 | | `bloom` | unsigned integer, clamped to 0 (Off) to 2 (High); 1 is Low | `2` |
