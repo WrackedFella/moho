@@ -21,6 +21,8 @@ pub enum ConsoleCommand {
     RoundGravity(GravityScale),
     /// Show or set how much the view bobs while moving.
     HeadBob(HeadBobArg),
+    /// Open the demo item lists.
+    Items,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -588,5 +590,31 @@ mod tests {
         let lines = printed(&console);
         let expected = "  head_bob [percent] - view bob while moving (0 to 100 %)".to_owned();
         assert!(lines.contains(&expected), "{lines:?}");
+    }
+
+    #[test]
+    fn items_takes_no_arguments_and_rejects_extra_ones() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        console.submit("items");
+        let queued = console.take_commands();
+        console.submit("items now");
+        let refused = (console.take_commands(), last_line(&console));
+
+        assert_eq!(queued, vec![ConsoleCommand::Items]);
+        assert_eq!(refused, (vec![], "Usage: items".to_owned()));
+    }
+
+    #[test]
+    fn help_lists_items() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        console.submit("help");
+
+        let lines = printed(&console);
+        assert!(
+            lines.iter().any(|line| line.starts_with("  items - ")),
+            "{lines:?}"
+        );
     }
 }

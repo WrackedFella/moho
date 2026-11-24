@@ -11,6 +11,7 @@ pub mod game;
 pub mod head_bob;
 pub mod hud;
 pub mod input;
+pub mod item_lists;
 pub mod kit;
 pub mod lean;
 pub mod levels;

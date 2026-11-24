@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use moho_input::bindings::{Binding, Input};
 use moho_input::key::{Key, MouseButton};
 
+use crate::lists::ItemLists;
 use crate::settings::{Control, EngineSetting, EngineSettings, GameSlider};
 use crate::text::{Anchor, ScreenText};
 
@@ -62,6 +63,9 @@ pub enum MenuEvent<A> {
     Captured { action: A, slot: Slot, input: Input },
     /// The player cleared `slot` of `action`.
     Cleared { action: A, slot: Slot },
+    /// The player asked to move `item` from list `from` to list `to` of the open item lists.
+    /// The game applies or refuses the move and answers with [`MenuStack::set_lists`].
+    MoveRequested { item: A, from: usize, to: usize },
 }
 
 /// An axis-aligned rectangle in logical points from the window's top left.
@@ -454,6 +458,22 @@ impl<A> MenuStack<A> {
             open.shell_note = None;
             open.notes_hidden = false;
         }
+    }
+
+    /// Opens `lists` over the current screen, the first list focused on its first row.
+    pub fn push_lists(&mut self, lists: ItemLists<A>) {
+        let _ = lists;
+    }
+
+    /// Replaces the top lists screen's data, keeping the focused list (clamped) and each list's
+    /// focus (clamped) and scroll; does nothing when the top screen is not a lists screen.
+    pub fn set_lists(&mut self, lists: ItemLists<A>) {
+        let _ = lists;
+    }
+
+    /// The data of the top screen when it is an item lists screen.
+    pub fn top_lists(&self) -> Option<&ItemLists<A>> {
+        None
     }
 
     /// Ends a capture in progress without an event.
@@ -891,6 +911,7 @@ mod tests {
                 | MenuEvent::GameSettingsApplied(_)
                 | MenuEvent::Captured { .. }
                 | MenuEvent::Cleared { .. } => None,
+                MenuEvent::MoveRequested { .. } => None,
             })
             .collect()
     }
@@ -2946,5 +2967,143 @@ mod tests {
             assert_eq!(second, game_values(&[("head_bob", 0)]));
             assert_eq!(third, game_values(&[("head_bob", 5)]));
         }
+    }
+
+    fn lists_of_acts(rows: [usize; 2]) -> crate::lists::ItemLists<Act> {
+        use crate::lists::{ItemList, ItemLists, ListRow};
+        let list = |title: &str, count: usize, item: Act| ItemList {
+            title: title.to_owned(),
+            rows: (0..count)
+                .map(|i| ListRow {
+                    label: format!("{title} {i}"),
+                    count: Some(1),
+                    tooltip: None,
+                    item,
+                })
+                .collect(),
+        };
+        ItemLists {
+            lists: vec![
+                list("Carried", rows[0], Act::Play),
+                list("Container", rows[1], Act::Quit),
+            ],
+            back: Some(Act::Back),
+        }
+    }
+
+    fn move_requests(stack: &mut MenuStack<Act>) -> Vec<MenuEvent<Act>> {
+        stack.take_events()
+    }
+
+    #[test]
+    fn lists_push_over_a_menu_and_pop_back_to_its_focus() {
+        let lists = lists_of_acts([2, 1]);
+        let mut stack = stack_of(main_screen());
+        press(&mut stack, Key::ArrowDown);
+
+        stack.push_lists(lists.clone());
+        let (menu_on_top, lists_on_top, open) = (
+            stack.top().is_some(),
+            stack.top_lists().cloned(),
+            stack.is_open(),
+        );
+        press(&mut stack, Key::Enter);
+        let first_row_was_focused = move_requests(&mut stack);
+        stack.push(settings_screen());
+        let menu_over_lists = (stack.top_lists().is_some(), stack.top().is_some());
+        stack.pop();
+        let lists_again = stack.top_lists().cloned();
+        stack.pop();
+        let menu_again = stack.top().cloned();
+        press(&mut stack, Key::Enter);
+        let chosen_after = chosen(&mut stack);
+
+        assert!(!menu_on_top, "top() is None while a lists screen is on top");
+        assert_eq!(lists_on_top, Some(lists.clone()));
+        assert!(open);
+        assert_eq!(
+            first_row_was_focused,
+            [MenuEvent::MoveRequested {
+                item: Act::Play,
+                from: 0,
+                to: 1
+            }]
+        );
+        assert_eq!(menu_over_lists, (false, true));
+        assert_eq!(lists_again, Some(lists));
+        assert_eq!(menu_again, Some(main_screen()));
+        assert_eq!(chosen_after, [Act::Settings], "the menu kept its focus");
+        assert_eq!(stack.top_lists(), None);
+    }
+
+    #[test]
+    fn escape_on_lists_chooses_back() {
+        let with_back = lists_of_acts([1, 1]);
+        let without_back = crate::lists::ItemLists {
+            back: None,
+            ..lists_of_acts([1, 1])
+        };
+        let mut stack = MenuStack::new();
+        stack.push_lists(with_back.clone());
+
+        press(&mut stack, Key::Escape);
+        let escaped = move_requests(&mut stack);
+        stack.on_key(Input::Key(Key::Escape), true, true);
+        stack.on_key(Input::Key(Key::Escape), false, false);
+        let repeat_and_release = move_requests(&mut stack);
+        stack.pop();
+        stack.push_lists(without_back);
+        press(&mut stack, Key::Escape);
+        let no_back = move_requests(&mut stack);
+
+        assert_eq!(escaped, [MenuEvent::Chosen(Act::Back)]);
+        assert_eq!(repeat_and_release, []);
+        assert_eq!(no_back, []);
+        assert!(stack.top_lists().is_some(), "no hidden pop");
+    }
+
+    #[test]
+    fn set_lists_with_a_menu_on_top_changes_nothing() {
+        let mut stack = stack_of(main_screen());
+
+        stack.set_lists(lists_of_acts([1, 1]));
+
+        assert_eq!(stack.top(), Some(&main_screen()));
+        assert_eq!(stack.top_lists(), None);
+        stack.pop();
+        assert!(!stack.is_open());
+    }
+
+    #[test]
+    fn visible_rows_of_a_lists_screen_cover_every_title_and_visible_rows() {
+        let mut stack = MenuStack::new();
+        stack.push_lists(lists_of_acts([2, 40]));
+        press(&mut stack, Key::ArrowRight);
+        stack.scroll(5.0);
+
+        let rects = stack.visible_rows(SIZE);
+
+        let rows = |left: f32, count: usize| -> Vec<Rect> {
+            (0..count)
+                .map(|i| Rect {
+                    min: [left, 56.0 + 32.0 * i as f32],
+                    max: [left + 320.0, 88.0 + 32.0 * i as f32],
+                })
+                .collect()
+        };
+        let in_band = |left: f32| {
+            rects
+                .iter()
+                .filter(|r| r.min[0] >= left && r.max[0] <= left + 320.0 && r.max[1] <= 56.0)
+                .count()
+        };
+        let below_band: Vec<Rect> = rects.iter().copied().filter(|r| r.max[1] > 56.0).collect();
+        assert_eq!(rects.len(), 2 + 2 + 19);
+        assert_eq!(in_band(288.0), 1, "the first list's title");
+        assert_eq!(in_band(672.0), 1, "the second list's title");
+        let mut expected = rows(288.0, 2);
+        expected.extend(rows(672.0, 19));
+        assert_eq!(below_band, expected);
+        assert_eq!(MenuStack::<Act>::new().visible_rows(SIZE), []);
     }
 }

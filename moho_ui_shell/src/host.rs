@@ -401,6 +401,7 @@ mod tests {
                 | MenuEvent::GameSettingsApplied(_)
                 | MenuEvent::Captured { .. }
                 | MenuEvent::Cleared { .. } => None,
+                MenuEvent::MoveRequested { .. } => None,
             })
             .collect()
     }

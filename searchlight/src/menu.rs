@@ -14,6 +14,8 @@ pub enum MenuAction {
     Quit,
     /// Closes the top screen.
     Back,
+    /// The item with this id in the item lists.
+    Item(u32),
 }
 
 impl MenuAction {
@@ -31,6 +33,7 @@ impl MenuAction {
             MenuAction::Settings => "Settings",
             MenuAction::Quit => "Quit",
             MenuAction::Back => "Back",
+            MenuAction::Item(_) => "Item",
         }
     }
 }
