@@ -30,8 +30,23 @@ pub enum HeadBobArg {
 }
 
 /// Parses `head_bob [percent]`; no argument shows the level.
-pub fn parse_head_bob(_args: &[&str]) -> Result<(ConsoleCommand, String), String> {
-    todo!("parse_head_bob")
+pub fn parse_head_bob(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    let usage = || "Usage: head_bob [percent] (0 to 100, steps of 5)".to_owned();
+    match args {
+        [] => Ok((ConsoleCommand::HeadBob(HeadBobArg::Show), String::new())),
+        [text] => {
+            let level = text
+                .parse::<i32>()
+                .ok()
+                .and_then(|percent| HeadBobLevel::new(percent).ok())
+                .ok_or_else(usage)?;
+            Ok((
+                ConsoleCommand::HeadBob(HeadBobArg::Set(level)),
+                format!("Head bob: {} %", level.percent()),
+            ))
+        }
+        _ => Err(usage()),
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

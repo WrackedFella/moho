@@ -30,9 +30,9 @@ use moho_ui_shell::{
 };
 
 use crate::arena::{box_mesh, control_mesh_id, oriented_box_mesh};
-use crate::console_commands::{self, ConsoleCommand, GodModeArg, SimpleArg};
+use crate::console_commands::{self, ConsoleCommand, GodModeArg, HeadBobArg, SimpleArg};
 use crate::debug_settings::DebugSettings;
-use crate::head_bob::HeadBobLevel;
+use crate::head_bob::{Bob, HeadBobLevel};
 use crate::hud::Edge;
 use crate::input::{SearchlightAction, SearchlightCommand, look_from, look_to_turn, resolve_lean};
 use crate::lean::{lean_offset, rolled_view_matrix};
@@ -723,6 +723,9 @@ pub struct SearchlightGame {
     round_gravity: GravityScale,
     /// How much the view bobs while moving. Saved with the game's settings.
     head_bob: HeadBobLevel,
+    /// The view bob after the last tick, and the tick before it for blending.
+    bob: Bob,
+    previous_bob: Bob,
     debug_settings: Option<DebugSettings>,
     /// A `fullscreen` command waiting for a frame, the first place a window mode can be
     /// requested.
@@ -750,6 +753,8 @@ impl SearchlightGame {
             simple: false,
             round_gravity: GravityScale::default(),
             head_bob: HeadBobLevel::DEFAULT,
+            bob: Bob::REST,
+            previous_bob: Bob::REST,
             debug_settings: None,
             flip_window_pending: false,
             pending_settings: None,
@@ -813,10 +818,23 @@ impl SearchlightGame {
                 MenuEvent::Chosen(MenuAction::Back) => self.stage.shell().menu_mut().pop(),
                 MenuEvent::Chosen(MenuAction::Quit) => ctx.request_exit(),
                 MenuEvent::SettingsApplied(settings) => self.settings_applied(settings),
-                MenuEvent::GameSettingsApplied(_)
-                | MenuEvent::Captured { .. }
-                | MenuEvent::Cleared { .. } => {}
+                MenuEvent::GameSettingsApplied(values) => {
+                    if let Some(&percent) = values.get(HeadBobLevel::KEY) {
+                        self.head_bob = HeadBobLevel::nearest(percent);
+                        self.save_head_bob();
+                    }
+                }
+                MenuEvent::Captured { .. } | MenuEvent::Cleared { .. } => {}
             }
+        }
+    }
+
+    /// Saves the head bob; a failed save warns and the value stays for the session.
+    fn save_head_bob(&mut self) {
+        if let Some(saved) = &mut self.debug_settings
+            && let Err(error) = saved.set_head_bob(self.head_bob)
+        {
+            tracing::warn!(%error, head_bob = self.head_bob.percent(), "head bob not saved");
         }
     }
 
@@ -852,6 +870,7 @@ impl SearchlightGame {
     pub fn with_debug_settings(mut self, settings: DebugSettings) -> Self {
         self.god_mode = settings.god_mode();
         self.simple = settings.simple();
+        self.head_bob = settings.head_bob();
         self.pending_settings = Some(EngineSettings::from_prefs(settings.prefs()));
         self.debug_settings = Some(settings);
         self
@@ -904,7 +923,14 @@ impl SearchlightGame {
                 }
                 ConsoleCommand::Simple(SimpleArg::Set(on)) => self.simple = on,
                 ConsoleCommand::RoundGravity(scale) => self.round_gravity = scale,
-                ConsoleCommand::HeadBob(_) => {}
+                ConsoleCommand::HeadBob(HeadBobArg::Show) => {
+                    let text = format!("Head bob: {} %", self.head_bob.percent());
+                    self.stage.shell().console_mut().print(&text);
+                }
+                ConsoleCommand::HeadBob(HeadBobArg::Set(level)) => {
+                    self.head_bob = level;
+                    self.save_head_bob();
+                }
             }
         }
         if self.simple != simple_before
@@ -1121,10 +1147,21 @@ impl Game for SearchlightGame {
         self.previous = self.mode.sim().player();
         self.previous_lean = self.mode.sim().player_lean();
         let was_dead = self.mode.sim().player_body().is_dead();
-        self.mode.tick(command, ctx.tick_length.as_secs_f32());
+        let dt = ctx.tick_length.as_secs_f32();
+        self.mode.tick(command, dt);
+        self.previous_bob = self.bob;
+        let player = self.mode.sim().player();
+        self.bob = self.bob.step(
+            player.grounded,
+            player.velocity.x.hypot(player.velocity.z),
+            self.mode.sim().max_speed(),
+            dt,
+        );
         if was_dead && !self.mode.sim().player_body().is_dead() {
             self.previous = self.mode.sim().player();
             self.previous_lean = self.mode.sim().player_lean();
+            self.previous_bob = Bob::REST;
+            self.bob = Bob::REST;
             self.stage.status.clear();
         }
         self.stage.tick_flashes();
@@ -1235,7 +1272,9 @@ impl Game for SearchlightGame {
             let from = self.previous_lean.amount();
             let amount = from + alpha * (sim.player_lean().amount() - from);
             let yaw = view.forward.x.atan2(view.forward.z);
-            let eye = view.eye + lean_offset(yaw, amount * tuning.shift);
+            let bob = self.previous_bob.blend(self.bob, alpha);
+            let eye =
+                view.eye + lean_offset(yaw, amount * tuning.shift) + bob.offset(self.head_bob, yaw);
             self.stage.draw(
                 renderer,
                 (

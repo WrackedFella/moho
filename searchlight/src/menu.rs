@@ -1,7 +1,7 @@
 //! The main, pause and settings menus as data for the engine's menu screens: which items they
 //! list and what choosing each one asks of the game. The shell draws and drives them.
 
-use moho_ui_shell::{EngineSetting, EngineSettings, MenuItem, MenuScreen};
+use moho_ui_shell::{EngineSetting, EngineSettings, GameSlider, MenuItem, MenuScreen};
 
 use crate::head_bob::HeadBobLevel;
 
@@ -64,20 +64,26 @@ pub fn pause_screen() -> MenuScreen<MenuAction> {
 }
 
 /// The Head bob slider row, starting at `level`.
-pub fn head_bob_row(_level: HeadBobLevel) -> MenuItem<MenuAction> {
-    todo!("head_bob_row")
+pub fn head_bob_row(level: HeadBobLevel) -> MenuItem<MenuAction> {
+    MenuItem::GameSlider(GameSlider {
+        key: HeadBobLevel::KEY.to_owned(),
+        label: "Head bob".to_owned(),
+        min: 0,
+        max: 100,
+        step: 5,
+        unit: "%".to_owned(),
+        value: level.percent(),
+    })
 }
 
 /// Titled Settings, with the engine's rows starting from `settings`, the Head bob row starting
 /// at `head_bob`, then Apply and a Back button; Escape is Back.
-pub fn settings_screen(
-    settings: EngineSettings,
-    _head_bob: HeadBobLevel,
-) -> MenuScreen<MenuAction> {
+pub fn settings_screen(settings: EngineSettings, head_bob: HeadBobLevel) -> MenuScreen<MenuAction> {
     let mut items: Vec<MenuItem<MenuAction>> = EngineSetting::ALL
         .into_iter()
         .map(MenuItem::Setting)
         .collect();
+    items.push(head_bob_row(head_bob));
     items.push(MenuItem::Apply);
     items.push(MenuAction::Back.button());
     MenuScreen {

@@ -1,7 +1,11 @@
 //! Head bob: the view dips with each footstep and sways with each stride. It is view-only state
 //! the game steps after the sim, so it never moves the aim ray or the player's hit volumes.
 
+use std::f32::consts::{PI, TAU};
+
 use glam::Vec3;
+
+use crate::lean::lean_offset;
 
 /// Metres walked per footstep; one footstep is half a turn of the phase.
 pub const STEP_LENGTH: f32 = 1.5;
@@ -30,23 +34,29 @@ impl HeadBobLevel {
     pub const KEY: &'static str = "head_bob";
 
     /// The level for `percent`, which must be 0 to 100 and a multiple of 5.
-    pub fn new(_percent: i32) -> Result<Self, HeadBobOutOfRange> {
-        todo!("HeadBobLevel::new")
+    pub fn new(percent: i32) -> Result<Self, HeadBobOutOfRange> {
+        match u8::try_from(percent) {
+            Ok(value) if value <= 100 && value % 5 == 0 => Ok(Self(value)),
+            _ => Err(HeadBobOutOfRange),
+        }
     }
 
     /// The level nearest `percent`, clamped to 0 to 100 and snapped to the grid of 5.
-    pub fn nearest(_percent: i32) -> Self {
-        todo!("HeadBobLevel::nearest")
+    pub fn nearest(percent: i32) -> Self {
+        let clamped = percent.clamp(0, 100);
+        // Halves round up, so 22 snaps to 20 and 23 to 25.
+        let snapped = (clamped + 2) / 5 * 5;
+        Self(u8::try_from(snapped).expect("a clamped percentage fits in a byte"))
     }
 
     /// The level as a share of full bob, 0.0 to 1.0.
     pub fn fraction(self) -> f32 {
-        todo!("HeadBobLevel::fraction")
+        f32::from(self.0) / 100.0
     }
 
     /// The level as a percentage.
     pub fn percent(self) -> i32 {
-        todo!("HeadBobLevel::percent")
+        i32::from(self.0)
     }
 }
 
@@ -69,21 +79,31 @@ impl Bob {
     /// The bob one tick of `dt` seconds later for a player moving `horizontal_speed` m/s along
     /// the ground, where `max_speed` m/s is a full walk. An airborne player has no bob.
     #[must_use]
-    pub fn step(self, _grounded: bool, _horizontal_speed: f32, _max_speed: f32, _dt: f32) -> Self {
-        todo!("Bob::step")
+    pub fn step(self, grounded: bool, horizontal_speed: f32, max_speed: f32, dt: f32) -> Self {
+        let speed = if grounded { horizontal_speed } else { 0.0 };
+        Self {
+            phase: (self.phase + PI * speed * dt / STEP_LENGTH) % TAU,
+            amplitude: (speed / max_speed).min(MAX_AMPLITUDE),
+        }
     }
 
     /// Where the eye moves from the unbobbed eye of a player facing `yaw`, at `level`.
     #[must_use]
-    pub fn offset(self, _level: HeadBobLevel, _yaw: f32) -> Vec3 {
-        todo!("Bob::offset")
+    pub fn offset(self, level: HeadBobLevel, yaw: f32) -> Vec3 {
+        let scale = self.amplitude * level.fraction();
+        let (sin, _) = self.phase.sin_cos();
+        Vec3::new(0.0, -DIP * scale * sin * sin, 0.0) + lean_offset(yaw, SWAY * scale * sin)
     }
 
     /// The bob `alpha` (0 to 1) of the way from `self` to `next`, the phase moving forward
     /// around the stride.
     #[must_use]
-    pub fn blend(self, _next: Self, _alpha: f32) -> Self {
-        todo!("Bob::blend")
+    pub fn blend(self, next: Self, alpha: f32) -> Self {
+        let forward = (next.phase - self.phase).rem_euclid(TAU);
+        Self {
+            phase: (self.phase + alpha * forward) % TAU,
+            amplitude: self.amplitude + (next.amplitude - self.amplitude) * alpha,
+        }
     }
 }
 

@@ -63,7 +63,10 @@ impl DebugSettings {
     /// The head bob the prefs hold under `[game]`: 50 % when absent or unparsable, and a stored
     /// value out of range or off the grid snaps to the nearest step.
     pub fn head_bob(&self) -> HeadBobLevel {
-        todo!("DebugSettings::head_bob")
+        self.prefs
+            .game_value(HeadBobLevel::KEY)
+            .and_then(|text| text.parse::<i32>().ok())
+            .map_or(HeadBobLevel::DEFAULT, HeadBobLevel::nearest)
     }
 
     /// Stores the head bob under `[game]` and saves the prefs file; the value is kept if the save
@@ -71,8 +74,11 @@ impl DebugSettings {
     ///
     /// # Errors
     /// The I/O error if the file cannot be written.
-    pub fn set_head_bob(&mut self, _level: HeadBobLevel) -> io::Result<()> {
-        todo!("DebugSettings::set_head_bob")
+    pub fn set_head_bob(&mut self, level: HeadBobLevel) -> io::Result<()> {
+        self.prefs
+            .set_game_value(HeadBobLevel::KEY, &level.percent().to_string())
+            .expect("\"head_bob\" with a number is a name and value prefs always accepts");
+        self.prefs.save_to(&self.path)
     }
 
     /// Stores the engine's settings rows and saves the prefs file; every other value in the

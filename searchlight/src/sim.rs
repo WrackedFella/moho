@@ -981,7 +981,7 @@ impl SearchlightSim {
 
     /// The player's walking speed in m/s, before a lean slows it.
     pub fn max_speed(&self) -> f32 {
-        todo!("SearchlightSim::max_speed")
+        self.move_settings.max_speed
     }
 
     /// How far the player leans after the last tick.
