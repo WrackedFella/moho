@@ -66,7 +66,8 @@ pub fn process_menu_action(action: &MenuAction, game_state: GameState, event_bus
             emit_audio_event(event_bus, UiAudioEvent::Confirm);
             event_bus.publish(CoreUiEvent::SettingsSaved);
 
-            // Emit window settings change so main.rs can apply them
+            // Announces the new window settings; the engine is asked for them through
+            // `EguiAdapter::record_menu_action`, which `App::frame` reads.
             let mode = match prefs.window_mode() {
                 crate::prefs::WindowMode::Windowed => moho_core::events::WindowMode::Windowed,
                 crate::prefs::WindowMode::Fullscreen => moho_core::events::WindowMode::Fullscreen,

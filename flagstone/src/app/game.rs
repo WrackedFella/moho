@@ -2205,6 +2205,32 @@ mod tests {
         }
 
         #[test]
+        fn the_frame_after_a_settings_apply_releases_held_actions_and_resets_look() {
+            use flagstone_ui::screens::MenuAction;
+            let mut app = possessing_app_mid_turn();
+            let adapter = attach_adapter(&mut app);
+            let mut prefs = app.prefs.clone();
+            prefs.set_window_mode(moho_core::prefs::WindowMode::Fullscreen);
+            adapter
+                .lock()
+                .expect("adapter lock")
+                .record_menu_action(&MenuAction::SettingsSaved(prefs));
+            let clock = GameClock::default();
+            let mut ctx = moho_app::FrameContext::new(tick(), &clock, None, None);
+
+            Game::frame(&mut app, &mut ctx, 0.0);
+
+            assert_eq!(app.input.actions.pending_look(), (0.0, 0.0));
+            assert!(
+                !app.input
+                    .actions
+                    .end_tick()
+                    .held(StrategyAction::MoveForward)
+            );
+            assert!(app.cursor_grabbed);
+        }
+
+        #[test]
         fn applying_a_fullscreen_mode_asks_for_no_size() {
             for mode in [
                 moho_core::prefs::WindowMode::Fullscreen,
