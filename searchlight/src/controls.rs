@@ -91,6 +91,10 @@ impl ControlsDraft {
             return Capture::InUse { by: other.action };
         }
         if let Some(row) = self.rows.iter_mut().find(|row| row.action == action) {
+            if row.slots[1] == Some(binding) {
+                row.slots[1] = None;
+            }
+            row.rest.retain(|held| *held != binding);
             row.slots[0] = Some(binding);
         }
         Capture::Set
@@ -254,6 +258,36 @@ mod tests {
                 Binding::key(Key::X),
                 Binding::key(Key::Y)
             ]
+        );
+    }
+
+    #[test]
+    fn capturing_an_input_the_action_holds_in_another_slot_never_duplicates_it() {
+        let mut bindings = defaults();
+        bindings.set(
+            SearchlightAction::Jump,
+            vec![
+                Binding::key(Key::Space),
+                Binding::key(Key::X),
+                Binding::key(Key::Y),
+            ],
+        );
+        let mut from_secondary = ControlsDraft::new(&bindings);
+        let mut from_rest = ControlsDraft::new(&bindings);
+
+        let by_secondary = from_secondary.capture(SearchlightAction::Jump, Input::Key(Key::X));
+        let by_rest = from_rest.capture(SearchlightAction::Jump, Input::Key(Key::Y));
+
+        assert_eq!((by_secondary, by_rest), (Capture::Set, Capture::Set));
+        let after_secondary = from_secondary.bindings();
+        let after_rest = from_rest.bindings();
+        assert_eq!(
+            after_secondary.get(SearchlightAction::Jump),
+            [Binding::key(Key::X), Binding::key(Key::Y)]
+        );
+        assert_eq!(
+            after_rest.get(SearchlightAction::Jump),
+            [Binding::key(Key::Y), Binding::key(Key::X)]
         );
     }
 

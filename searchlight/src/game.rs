@@ -4568,6 +4568,67 @@ mod tests {
         assert_eq!(after_secondary, unchanged);
         assert_eq!(after_clears, unchanged);
     }
+
+    #[test]
+    fn a_failed_bindings_save_keeps_the_rebinding_live_for_the_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, "a file, not a directory").unwrap();
+        let settings = DebugSettings::new(Prefs::default(), blocker.join("searchlight.ini"));
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        capture_input(&mut game, &mut ctx, SearchlightAction::Reload, KEY_T);
+        press_item(&mut game, &mut ctx, "Apply", is_apply);
+        game.enter_play();
+
+        let reload_on_t = reloads(tap(&mut game, &mut ctx, KEY_T));
+        let reload_on_r = reloads(tap(&mut game, &mut ctx, KEY_R));
+
+        assert!(reload_on_t, "T reloads although the save failed");
+        assert!(!reload_on_r, "R no longer reloads");
+    }
+
+    #[test]
+    fn a_capture_after_apply_is_discarded_by_back_and_the_applied_binding_stays() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        capture_input(&mut game, &mut ctx, SearchlightAction::Reload, KEY_T);
+        press_item(&mut game, &mut ctx, "Apply", is_apply);
+        capture_input(
+            &mut game,
+            &mut ctx,
+            SearchlightAction::Reload,
+            Input::Key(Key::Z),
+        );
+        let staged = control_row(&game, SearchlightAction::Reload).0;
+
+        press_item(&mut game, &mut ctx, "Back", is_button("Back"));
+        press_item(&mut game, &mut ctx, "Back", is_button("Back"));
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        open_controls_from_settings(&mut game, &mut ctx);
+        let reopened = control_row(&game, SearchlightAction::Reload).0;
+        game.enter_play();
+        let reload_on_t = reloads(tap(&mut game, &mut ctx, KEY_T));
+        let reload_on_z = reloads(tap(&mut game, &mut ctx, Input::Key(Key::Z)));
+        let reload_on_r = reloads(tap(&mut game, &mut ctx, KEY_R));
+
+        assert_eq!(staged, [Some(Binding::key(Key::Z)), None]);
+        assert_eq!(reopened, [Some(Binding::key(Key::T)), None]);
+        assert!(reload_on_t, "the applied T still reloads");
+        assert!(!reload_on_z && !reload_on_r);
+        let (prefs, _) = Prefs::load_from(&path);
+        assert_eq!(
+            prefs.bindings().get("reload").map(String::as_str),
+            Some("T"),
+            "the saved file keeps the applied binding"
+        );
+    }
 }
 
 /// The menus, observed through the shell's screen stack and the game's outward behavior.
