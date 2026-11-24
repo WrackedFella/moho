@@ -1,6 +1,6 @@
 # 0040 — A loaded save plays on as if it had never been saved
 
-**Status:** Accepted (2026-11-24); extends [0011](0011-simulation-stays-network-ready.md) and [0016](0016-game-lines-own-their-save-kinds.md)
+**Status:** Approved; extends [0011](0011-simulation-stays-network-ready.md) and [0016](0016-game-lines-own-their-save-kinds.md)
 
 ## Context
 
