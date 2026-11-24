@@ -3416,7 +3416,8 @@ mod tests {
             app.simulation.set_camera_mode(CameraMode::Isometric);
             view_level::update(&mut app, Some(LEVEL));
             let eye = Vec3::new(8.0, 50.0, 30.0);
-            let view = glam::camera::rh::view::look_at_mat4(eye, Vec3::new(8.0, 27.0, 8.0), Vec3::Y);
+            let view =
+                glam::camera::rh::view::look_at_mat4(eye, Vec3::new(8.0, 27.0, 8.0), Vec3::Y);
             let proj = glam::camera::rh::proj::directx::perspective(
                 std::f32::consts::FRAC_PI_3,
                 16.0 / 9.0,

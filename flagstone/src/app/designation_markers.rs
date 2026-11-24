@@ -147,7 +147,11 @@ mod tests {
         shown.sync(&marks, Some(5), &mut markers);
 
         assert!(fill_at(&markers, [1, 2, 3]).is_some(), "below the cut");
-        assert_eq!(fills(&markers).len(), 1, "the mark above the cut is not drawn");
+        assert_eq!(
+            fills(&markers).len(),
+            1,
+            "the mark above the cut is not drawn"
+        );
     }
 
     #[test]
@@ -159,8 +163,14 @@ mod tests {
         shown.sync(&marks, Some(4), &mut markers);
 
         assert!(fill_at(&markers, [0, 3, 0]).is_some(), "the top kept layer");
-        assert!(fill_at(&markers, [0, 4, 0]).is_none(), "y == ceiling is hidden");
-        assert!(fill_at(&markers, [0, 5, 0]).is_none(), "y > ceiling is hidden");
+        assert!(
+            fill_at(&markers, [0, 4, 0]).is_none(),
+            "y == ceiling is hidden"
+        );
+        assert!(
+            fill_at(&markers, [0, 5, 0]).is_none(),
+            "y > ceiling is hidden"
+        );
         assert_eq!(fills(&markers).len(), 1);
     }
 

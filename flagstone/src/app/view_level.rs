@@ -197,10 +197,7 @@ mod tests {
 
         let strategy = level.ceiling(CameraMode::Isometric, EXTENT);
         let possessed = level.ceiling(CameraMode::FirstPerson, EXTENT);
-        let reclamped_up = level.ceiling(
-            CameraMode::Isometric,
-            LayerExtent { floor: 10, top: 50 },
-        );
+        let reclamped_up = level.ceiling(CameraMode::Isometric, LayerExtent { floor: 10, top: 50 });
         let reclamped_down = level.ceiling(
             CameraMode::Isometric,
             LayerExtent {
@@ -216,7 +213,10 @@ mod tests {
         assert_eq!(no_cut, None);
         assert_eq!(strategy, Some(100));
         assert_eq!(possessed, None);
-        assert_eq!(reclamped_up, None, "a level above the extent's top is no cut");
+        assert_eq!(
+            reclamped_up, None,
+            "a level above the extent's top is no cut"
+        );
         assert_eq!(reclamped_down, Some(111), "a level below the floor clamps");
         assert_eq!(at_floor, Some(EXTENT.floor + 1));
         assert_eq!(at_top, None);
