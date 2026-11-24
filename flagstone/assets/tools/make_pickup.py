@@ -1,10 +1,13 @@
 """Generate flagstone/assets/pickup.wav from arithmetic (standard library only).
 
-Run: python3 -I flagstone/assets/tools/make_pickup.py
+Run: python3 -I flagstone/assets/tools/make_pickup.py [output-directory]
+
+The output directory defaults to flagstone/assets. `just assets` runs every generator.
 """
 
 import math
 import struct
+import sys
 import wave
 from pathlib import Path
 
@@ -33,8 +36,9 @@ def build_pickup(path):
 
 
 def main():
-    target = Path(__file__).resolve().parent.parent / "pickup.wav"
-    build_pickup(target)
+    target = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent.parent
+    target.mkdir(parents=True, exist_ok=True)
+    build_pickup(target / "pickup.wav")
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@
       "Bash(just mutants)",
       "Bash(just comment-refs *)",
       "Bash(just deny)",
+      "Bash(just assets)",
       "Bash(git fetch *)",
       "Bash(git merge-base *)",
       "Bash(git rev-parse *)",
