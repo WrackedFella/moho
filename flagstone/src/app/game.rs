@@ -10,10 +10,11 @@ use flagstone_game::colony::MarkChange;
 use flagstone_game::controller::{
     CameraMode, ControllerInput, EDGE_PAN_MARGIN_PX, controller_to_camera, edge_pan_axes,
 };
-use flagstone_game::raycast::raycast_surface_below;
+use flagstone_game::raycast::{SurfaceHit, raycast_surface_below};
 use flagstone_game::selection::{PAWN_HALF_EXTENTS, PLAYER_PAWN, pawn_aabb, pick_pawn};
 use flagstone_ui::actions::StrategyAction;
 use flagstone_ui::console_commands::StrategyConsoleCommand;
+use flagstone_voxel::VoxelGrid;
 use moho_core::pointer::{Ray, screen_ray};
 use moho_input::action_map;
 use moho_input::bindings::Input;
@@ -79,6 +80,17 @@ fn pointer_range(ray: Ray, ceiling: Option<i32>) -> f32 {
             (ray.origin.y - ceiling as f32) / -ray.direction.y
         });
     POINTER_RAY_RANGE + descent.min(POINTER_RAY_RANGE)
+}
+
+/// The visible surface a pointer ray hits, with layers at or above `ceiling` hidden.
+fn pick_surface(grid: &VoxelGrid, ray: Ray, ceiling: Option<i32>) -> Option<SurfaceHit> {
+    raycast_surface_below(
+        grid,
+        ray.origin,
+        ray.direction,
+        pointer_range(ray, ceiling),
+        ceiling,
+    )
 }
 
 /// Yaw and pitch deltas for a look. Mouse motion is fed unnegated, so look is inverted here.
@@ -158,7 +170,10 @@ impl App {
             toggle_view: frame.pressed(StrategyAction::Possess),
             select,
             mark,
-            ceiling: self.view_ceiling(),
+            // Only a click reads the ceiling; sampling it walks every loaded chunk.
+            ceiling: (select.is_some() || mark.is_some())
+                .then(|| self.view_ceiling())
+                .flatten(),
             console: Vec::new(),
             engine: Vec::new(),
         }
@@ -242,13 +257,7 @@ impl App {
         if let Some(ray) = command.select
             && let Some(light_system) = &self.light_system
         {
-            self.pointer_hit = raycast_surface_below(
-                light_system.grid(),
-                ray.origin,
-                ray.direction,
-                pointer_range(ray, command.ceiling),
-                command.ceiling,
-            );
+            self.pointer_hit = pick_surface(light_system.grid(), ray, command.ceiling);
             tracing::debug!(hit = ?self.pointer_hit, "Pointer ray cast");
             let pawn = (PLAYER_PAWN, pawn_aabb(self.simulation.position()));
             let picked = pick_pawn(ray, [pawn], self.pointer_hit.map(|hit| hit.distance));
@@ -289,13 +298,7 @@ impl App {
         let Some(light_system) = &self.light_system else {
             return;
         };
-        let Some(hit) = raycast_surface_below(
-            light_system.grid(),
-            ray.origin,
-            ray.direction,
-            pointer_range(ray, ceiling),
-            ceiling,
-        ) else {
+        let Some(hit) = pick_surface(light_system.grid(), ray, ceiling) else {
             return;
         };
         let pos = hit.block_pos.to_array();

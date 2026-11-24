@@ -89,17 +89,13 @@ impl ViewLevel {
 
     /// The height the renderer should cut at in `mode`.
     pub fn renderer_height(&self, mode: CameraMode, extent: LayerExtent) -> Option<f32> {
-        match mode {
-            CameraMode::FirstPerson => None,
-            CameraMode::Isometric => extent
-                .clamp(self.cut)
-                .map(|cut| cut as f32 + CUT_ABOVE_LAYER),
-        }
+        self.ceiling(mode, extent)
+            .map(|cut| cut as f32 + CUT_ABOVE_LAYER)
     }
 
     /// The level whose layer and those above are hidden in `mode`; `None` with no cut.
-    /// Read through the same clamp as [`Self::renderer_height`], so a pick and the picture
-    /// cannot disagree.
+    /// [`Self::renderer_height`] is derived from it, so a pick and the picture cannot
+    /// disagree.
     pub fn ceiling(&self, mode: CameraMode, extent: LayerExtent) -> Option<i32> {
         match mode {
             CameraMode::FirstPerson => None,
