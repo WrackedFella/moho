@@ -150,6 +150,7 @@ jobs:
             *) echo "agent=false" >> "$GITHUB_OUTPUT" ;;
           esac
           echo "reviewers=$REVIEWERS" >> "$GITHUB_OUTPUT"
+          [ "$repo" = "$GH_REPO" ] && echo "same_repo=true" >> "$GITHUB_OUTPUT"
           echo "HEAD_SHA=$head_sha" >> "$GITHUB_ENV"
       # The review reads CI as evidence, and a pending check ends it without a verdict, so
       # wait until every check on the head has finished (this job's own excepted). A head
@@ -234,6 +235,10 @@ jobs:
           # a green CI run after a ci-fix push by the Claude app has actor claude[bot]. The
           # repo is public, so no wildcard.
           allowed_bots: claude,github-actions
+          # The action denies commands that run checkout code (cargo, just) on a PR whose author
+          # it cannot confirm has write access, and claude[bot] is a CONTRIBUTOR. A head branch
+          # in this repository was pushed by a writer, so only a fork head stays restricted.
+          restrict_untrusted_prs: ${{ steps.pr.outputs.same_repo != 'true' }}
           display_report: true
           prompt: /devflow:pr-review ${{ env.PR }}
           claude_args: |
@@ -363,6 +368,10 @@ jobs:
           plugin_marketplaces: https://github.com/WrackedFella/claude-skills.git
           plugins: devflow@claude-skills
           allowed_bots: claude,github-actions
+          # The action denies commands that run checkout code (cargo, just) on a PR whose author
+          # it cannot confirm has write access, and claude[bot] is a CONTRIBUTOR. A head branch
+          # in this repository was pushed by a writer, so only a fork head stays restricted.
+          restrict_untrusted_prs: ${{ steps.pr.outputs.same_repo != 'true' }}
           display_report: true
           prompt: /devflow:respond ${{ env.PR }}
           claude_args: |
