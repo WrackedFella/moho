@@ -5,7 +5,6 @@ const DEFAULT_AUTOSAVE_INTERVAL: Duration = Duration::from_secs(120);
 const MIN_AUTOSAVE_SECONDS: u32 = 30;
 const MAX_AUTOSAVE_SECONDS: u32 = 3600;
 
-/// The `[game]` key holding the autosave interval in seconds.
 const AUTOSAVE_SECONDS: &str = "autosave_seconds";
 
 /// The autosave interval a `[game] autosave_seconds` value asks for.
@@ -28,8 +27,7 @@ fn interval_from_setting(raw: Option<&str>) -> Result<Option<Duration>, std::num
     Ok(Some(Duration::from_secs(u64::from(clamped))))
 }
 
-/// The autosave interval flagstone runs with, read from `[game] autosave_seconds`;
-/// `None` when autosave is off.
+/// The autosave interval from `[game] autosave_seconds`; `None` when autosave is off.
 ///
 /// A malformed value logs a warning and gives the default.
 pub fn autosave_interval(prefs: &moho_core::prefs::Prefs) -> Option<Duration> {
