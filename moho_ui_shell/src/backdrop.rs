@@ -27,8 +27,10 @@ pub(crate) fn paint_menu(ctx: &egui::Context, texts: &[ScreenText], rows: &[Rect
         .map(|r| egui::Rect::from_min_max(r.min.into(), r.max.into()))
         .chain(painted)
         .reduce(egui::Rect::union);
-    if let Some(bounds) = bounds {
-        let panel = bounds.expand(PANEL_MARGIN).intersect(window);
+    // Clamping to the window leaves nothing to draw when everything lies off screen or the window
+    // has no area.
+    let panel = bounds.map(|b| b.expand(PANEL_MARGIN).intersect(window));
+    if let Some(panel) = panel.filter(egui::Rect::is_positive) {
         painter.set(slot, egui::Shape::rect_filled(panel, PANEL_ROUNDING, PANEL));
     }
 }
@@ -262,6 +264,97 @@ mod tests {
             back: Some(()),
             settings: None,
         }
+    }
+
+    fn row(min: [f32; 2], max: [f32; 2]) -> Rect {
+        Rect { min, max }
+    }
+
+    fn rects_of(shapes: &[egui::Shape]) -> Vec<(egui::Rect, egui::Color32)> {
+        shapes.iter().filter_map(filled).collect()
+    }
+
+    #[test]
+    fn rows_and_texts_wholly_outside_the_window_draw_the_dim_and_no_panel() {
+        let window = screen(1280.0, 720.0);
+        let rows = [row([5000.0, 100.0], [5240.0, 156.0])];
+        let texts = [label("Far", [6000.0, 0.0])];
+
+        let (shapes, _) = shapes_of(window, |ctx| paint_menu(ctx, &texts, &rows));
+        let (row_only, _) = shapes_of(window, |ctx| paint_menu(ctx, &[], &rows));
+
+        for shapes in [shapes, row_only] {
+            let fills = rects_of(&shapes);
+            assert_eq!(fills.len(), 1, "only the dim is filled: {fills:?}");
+            assert_eq!(fills[0].0, window);
+        }
+    }
+
+    #[test]
+    fn rows_without_texts_get_a_panel_of_the_rows_grown_by_the_margin() {
+        let window = screen(1280.0, 720.0);
+        let rows = [
+            row([520.0, 300.0], [760.0, 356.0]),
+            row([520.0, 356.0], [760.0, 412.0]),
+        ];
+
+        let (shapes, _) = shapes_of(window, |ctx| paint_menu(ctx, &[], &rows));
+
+        let fills = rects_of(&shapes);
+        assert_eq!(fills.len(), 2, "{fills:?}");
+        assert_eq!(
+            fills[1].0,
+            egui::Rect::from_min_max(egui::pos2(504.0, 284.0), egui::pos2(776.0, 428.0))
+        );
+    }
+
+    #[test]
+    fn texts_without_rows_get_a_panel_of_the_texts_grown_by_the_margin() {
+        let window = screen(1280.0, 720.0);
+        let texts = [label("Play", [0.0, -56.0]), label("Settings", [0.0, 0.0])];
+        let mut painted = Vec::new();
+        shapes_of(window, |ctx| painted = crate::text::paint(ctx, &texts));
+        let union = painted
+            .iter()
+            .copied()
+            .reduce(egui::Rect::union)
+            .expect("two texts");
+
+        let (shapes, _) = shapes_of(window, |ctx| paint_menu(ctx, &texts, &[]));
+
+        let fills = rects_of(&shapes);
+        assert_eq!(fills.len(), 2, "{fills:?}");
+        assert_eq!(fills[1].0, union.expand(16.0));
+    }
+
+    #[test]
+    fn a_zero_size_window_draws_no_panel_and_does_not_panic() {
+        let window = screen(0.0, 0.0);
+        let rows = [row([520.0, 300.0], [760.0, 356.0])];
+        let texts = [label("Play", [0.0, 0.0])];
+
+        let (shapes, _) = shapes_of(window, |ctx| paint_menu(ctx, &texts, &rows));
+
+        let panels = rects_of(&shapes)
+            .into_iter()
+            .filter(|(_, fill)| *fill == PANEL)
+            .count();
+        assert_eq!(panels, 0, "{shapes:?}");
+    }
+
+    #[test]
+    fn a_panel_never_extends_past_any_side_of_the_window() {
+        let window = screen(1280.0, 720.0);
+        let rows = [
+            row([0.0, 0.0], [1280.0, 56.0]),
+            row([0.0, 664.0], [1280.0, 720.0]),
+        ];
+
+        let (shapes, _) = shapes_of(window, |ctx| paint_menu(ctx, &[], &rows));
+
+        let fills = rects_of(&shapes);
+        assert_eq!(fills.len(), 2, "{fills:?}");
+        assert_eq!(fills[1].0, window, "the panel is clamped to the window");
     }
 
     #[test]
