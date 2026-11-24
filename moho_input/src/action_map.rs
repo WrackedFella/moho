@@ -3835,6 +3835,176 @@ mod tests {
         assert_eq!(pressed_at(&frames, Brisk::Reload), Vec::<usize>::new());
     }
 
+    #[test]
+    fn a_third_tap_is_a_new_first_press_not_a_second_double() {
+        let mut map = inspector_map();
+
+        tap(&mut map, Key::Y);
+        let mut frames = ticks(&mut map, 3);
+        tap(&mut map, Key::Y);
+        frames.push(map.end_tick());
+        frames.extend(ticks(&mut map, 2));
+        tap(&mut map, Key::Y);
+        frames.extend(ticks(&mut map, DOUBLE + 3));
+
+        assert_eq!(pressed_at(&frames, Inspector::Inspect), [3]);
+        assert_eq!(pressed_at(&frames, Inspector::Reload), [6 + DOUBLE - 1]);
+        assert_eq!(pressed_at(&frames, Inspector::Check), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn a_release_past_the_window_opens_none_and_the_next_press_is_a_first_press() {
+        const { assert!(crate::bindings::DEFAULT_HOLD_TICKS > crate::bindings::DEFAULT_DOUBLE_TICKS) };
+        let mut map = inspector_map();
+
+        map.key(Key::Y, true);
+        let mut frames = ticks(&mut map, DOUBLE + 1);
+        map.key(Key::Y, false);
+        frames.push(map.end_tick());
+        tap(&mut map, Key::Y);
+        frames.extend(ticks(&mut map, DOUBLE + 5));
+
+        assert_eq!(
+            pressed_at(&frames, Inspector::Reload),
+            [DOUBLE + 1, DOUBLE + 2 + DOUBLE - 1]
+        );
+        assert_eq!(pressed_at(&frames, Inspector::Inspect), Vec::<usize>::new());
+    }
+
+    /// Only `Double Y`: no plain or hold binding on the key.
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+    enum DoubleOnly {
+        Inspect,
+    }
+
+    impl Action for DoubleOnly {
+        const ALL: &'static [Self] = &[DoubleOnly::Inspect];
+
+        fn name(self) -> &'static str {
+            "inspect"
+        }
+
+        fn default_bindings(self) -> &'static [Binding] {
+            const { &[Binding::key(Key::Y).doubled()] }
+        }
+    }
+
+    fn double_only_map() -> ActionMap<DoubleOnly> {
+        let (bindings, warnings) = ActionBindings::<DoubleOnly>::load(&BTreeMap::new());
+        assert_eq!(warnings, vec![]);
+        ActionMap::new(bindings, 1.0)
+    }
+
+    #[test]
+    fn with_only_a_double_binding_a_single_tap_or_a_hold_fires_nothing() {
+        let mut single = double_only_map();
+        tap(&mut single, Key::Y);
+        let single_frames = ticks(&mut single, DOUBLE + 5);
+        let mut held = double_only_map();
+        held.key(Key::Y, true);
+        let mut held_frames = ticks(&mut held, DOUBLE + HOLD + 5);
+        held.key(Key::Y, false);
+        held_frames.extend(ticks(&mut held, DOUBLE + 5));
+        let mut twice = double_only_map();
+        tap(&mut twice, Key::Y);
+        let mut twice_frames = ticks(&mut twice, 2);
+        tap(&mut twice, Key::Y);
+        twice_frames.extend(ticks(&mut twice, DOUBLE + 5));
+
+        for frames in [&single_frames, &held_frames] {
+            assert_eq!(pressed_at(frames, DoubleOnly::Inspect), Vec::<usize>::new());
+            assert_eq!(held_at(frames, DoubleOnly::Inspect), Vec::<usize>::new());
+        }
+        assert_eq!(pressed_at(&twice_frames, DoubleOnly::Inspect), [2]);
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+    enum TwoKeys {
+        InspectY,
+        InspectU,
+    }
+
+    impl Action for TwoKeys {
+        const ALL: &'static [Self] = &[TwoKeys::InspectY, TwoKeys::InspectU];
+
+        fn name(self) -> &'static str {
+            match self {
+                TwoKeys::InspectY => "inspect_y",
+                TwoKeys::InspectU => "inspect_u",
+            }
+        }
+
+        fn default_bindings(self) -> &'static [Binding] {
+            match self {
+                TwoKeys::InspectY => const { &[Binding::key(Key::Y).doubled()] },
+                TwoKeys::InspectU => const { &[Binding::key(Key::U).doubled()] },
+            }
+        }
+    }
+
+    #[test]
+    fn interleaved_doubles_on_two_inputs_each_fire_once_in_their_own_tick() {
+        let (bindings, warnings) = ActionBindings::<TwoKeys>::load(&BTreeMap::new());
+        assert_eq!(warnings, vec![]);
+        let mut map = ActionMap::new(bindings, 1.0);
+
+        tap(&mut map, Key::Y);
+        let mut frames = vec![map.end_tick()];
+        tap(&mut map, Key::U);
+        frames.push(map.end_tick());
+        tap(&mut map, Key::Y);
+        frames.push(map.end_tick());
+        tap(&mut map, Key::U);
+        frames.push(map.end_tick());
+        frames.extend(ticks(&mut map, DOUBLE + 5));
+
+        assert_eq!(pressed_at(&frames, TwoKeys::InspectY), [2]);
+        assert_eq!(pressed_at(&frames, TwoKeys::InspectU), [3]);
+    }
+
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+    enum Click {
+        Fire,
+        Inspect,
+    }
+
+    impl Action for Click {
+        const ALL: &'static [Self] = &[Click::Fire, Click::Inspect];
+
+        fn name(self) -> &'static str {
+            match self {
+                Click::Fire => "fire",
+                Click::Inspect => "inspect",
+            }
+        }
+
+        fn default_bindings(self) -> &'static [Binding] {
+            match self {
+                Click::Fire => const { &[Binding::mouse(MouseButton::Left)] },
+                Click::Inspect => const { &[Binding::mouse(MouseButton::Left).doubled()] },
+            }
+        }
+    }
+
+    #[test]
+    fn a_double_click_fires_in_the_second_clicks_tick() {
+        let (bindings, warnings) = ActionBindings::<Click>::load(&BTreeMap::new());
+        assert_eq!(warnings, vec![]);
+        let mut map = ActionMap::new(bindings, 1.0);
+
+        map.mouse_button(MouseButton::Left, true);
+        map.mouse_button(MouseButton::Left, false);
+        let mut frames = vec![map.end_tick()];
+        map.mouse_button(MouseButton::Left, true);
+        map.mouse_button(MouseButton::Left, false);
+        frames.push(map.end_tick());
+        frames.extend(ticks(&mut map, DOUBLE + 5));
+
+        assert_eq!(pressed_at(&frames, Click::Inspect), [1]);
+        assert_eq!(released_at(&frames, Click::Inspect), [1]);
+        assert_eq!(pressed_at(&frames, Click::Fire), Vec::<usize>::new());
+    }
+
     #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
     enum Latch {
         Scan,
