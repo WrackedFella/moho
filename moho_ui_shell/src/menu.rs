@@ -132,6 +132,158 @@ const PROTECTED_NOTE: &str = "That input can't be bound";
 /// Window size assumed until a screen has been laid out once.
 const DEFAULT_SIZE: [f32; 2] = [1280.0, 720.0];
 
+/// Width of the chevron cell at the start of a row's label column.
+const CHEVRON_WIDTH: f32 = 24.0;
+/// Width of the hold/toggle checkbox column right of the secondary cell.
+const MODE_WIDTH: f32 = 128.0;
+
+/// A place the focus can be on a row. On a `Control` row `First` and `Second` are its slots;
+/// on a `Details` row they are the kind and the modifier pickers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Column {
+    Chevron,
+    First,
+    Second,
+    Mode,
+}
+
+impl Column {
+    /// The slot a `Control` row's cell in this column holds.
+    fn slot(self) -> Option<Slot> {
+        match self {
+            Self::First => Some(Slot::Primary),
+            Self::Second => Some(Slot::Secondary),
+            Self::Chevron | Self::Mode => None,
+        }
+    }
+}
+
+/// The columns `item` has, left to right; none for a row that is not a `Control` or `Details`.
+fn columns<A>(item: &MenuItem<A>) -> Vec<Column> {
+    match item {
+        MenuItem::Control { chevron, mode, .. } => {
+            let mut columns = Vec::with_capacity(4);
+            if chevron.is_some() {
+                columns.push(Column::Chevron);
+            }
+            columns.extend([Column::First, Column::Second]);
+            if mode.is_some() {
+                columns.push(Column::Mode);
+            }
+            columns
+        }
+        MenuItem::Details { .. } => vec![Column::First, Column::Second],
+        _ => Vec::new(),
+    }
+}
+
+/// `wanted` if the row has it, else the nearest column it has; a row with no columns keeps it.
+fn nearest_column<A>(item: Option<&MenuItem<A>>, wanted: Column) -> Column {
+    let has = item.map(columns).unwrap_or_default();
+    if has.is_empty() || has.contains(&wanted) {
+        wanted
+    } else if wanted == Column::Chevron {
+        Column::First
+    } else {
+        Column::Second
+    }
+}
+
+/// The next kind a picker steps to.
+fn next_kind(kind: Trigger) -> Trigger {
+    match kind {
+        Trigger::Press => Trigger::Hold,
+        Trigger::Hold => Trigger::Double,
+        Trigger::Double => Trigger::Press,
+    }
+}
+
+/// The next modifiers a picker steps to: None, Ctrl, Shift, Alt, then None; a set of two or
+/// more steps to None.
+fn next_modifiers(modifiers: Modifiers) -> Modifiers {
+    if modifiers == Modifiers::NONE {
+        Modifiers::CTRL
+    } else if modifiers == Modifiers::CTRL {
+        Modifiers::SHIFT
+    } else if modifiers == Modifiers::SHIFT {
+        Modifiers::ALT
+    } else {
+        Modifiers::NONE
+    }
+}
+
+fn kind_text(kind: Trigger) -> &'static str {
+    match kind {
+        Trigger::Press => "Press",
+        Trigger::Hold => "Hold",
+        Trigger::Double => "Double",
+    }
+}
+
+fn modifiers_text(modifiers: Modifiers) -> String {
+    let names: Vec<&str> = [
+        (Modifiers::CTRL, "Ctrl"),
+        (Modifiers::SHIFT, "Shift"),
+        (Modifiers::ALT, "Alt"),
+    ]
+    .into_iter()
+    .filter(|(modifier, _)| modifiers.contains(*modifier))
+    .map(|(_, name)| name)
+    .collect();
+    if names.is_empty() {
+        "None".to_owned()
+    } else {
+        names.join("+")
+    }
+}
+
+/// Whether two rows are the same row of a game's screen across a `set_items`.
+fn same_row<A: PartialEq>(old: &MenuItem<A>, new: &MenuItem<A>) -> bool {
+    match (old, new) {
+        (MenuItem::Control { action: was, .. }, MenuItem::Control { action: now, .. })
+        | (MenuItem::Button { action: was, .. }, MenuItem::Button { action: now, .. }) => {
+            was == now
+        }
+        (
+            MenuItem::Details {
+                action: was_action,
+                slot: was_slot,
+                ..
+            },
+            MenuItem::Details {
+                action: now_action,
+                slot: now_slot,
+                ..
+            },
+        ) => was_action == now_action && was_slot == now_slot,
+        (MenuItem::Setting(was), MenuItem::Setting(now)) => was == now,
+        (MenuItem::GameSlider(was), MenuItem::GameSlider(now)) => was.key == now.key,
+        _ => false,
+    }
+}
+
+/// Where the focus goes when `items` replace the rows it was on at `focus`: the same index if
+/// that row is the same one, else the nearest row that is, else the index clamped to the rows.
+fn refound_focus<A: PartialEq>(
+    old: Option<&MenuItem<A>>,
+    focus: usize,
+    items: &[MenuItem<A>],
+) -> usize {
+    let clamped = focus.min(items.len().saturating_sub(1));
+    let Some(old) = old else {
+        return clamped;
+    };
+    if items.get(focus).is_some_and(|item| same_row(old, item)) {
+        return focus;
+    }
+    items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| same_row(old, item))
+        .min_by_key(|(row, _)| row.abs_diff(focus))
+        .map_or(clamped, |(row, _)| row)
+}
+
 /// A screen, the row that has the focus on it and the settings values staged on it.
 #[derive(Debug)]
 struct Open<A> {
@@ -141,8 +293,8 @@ struct Open<A> {
     staged: Option<EngineSettings>,
     /// The game rows the player changed, by key; a row without an entry shows its own `value`.
     game_staged: BTreeMap<String, i32>,
-    /// The slot of a `Control` row the focus is on.
-    slot: Slot,
+    /// The column of the focused row the focus is on.
+    column: Column,
     /// Whether the next press is a binding for the focused slot.
     capturing: bool,
     /// The shell's refusal of a captured input, shown on the focused row.
@@ -167,7 +319,7 @@ impl<A> Open<A> {
             focus: 0,
             staged,
             game_staged: BTreeMap::new(),
-            slot: Slot::Primary,
+            column: Column::First,
             capturing: false,
             shell_note: None,
             notes_hidden: false,
@@ -179,10 +331,11 @@ impl<A> Open<A> {
     }
 
     /// Moves the focus, hiding the notes when it moved.
-    fn set_focus(&mut self, row: usize, slot: Slot) {
-        if (row, slot) != (self.focus, self.slot) {
+    fn set_focus(&mut self, row: usize, column: Column) {
+        let column = nearest_column(self.screen.items.get(row), column);
+        if (row, column) != (self.focus, self.column) {
             self.focus = row;
-            self.slot = slot;
+            self.column = column;
             self.shell_note = None;
             self.notes_hidden = true;
             self.reveal.set(true);
@@ -196,9 +349,9 @@ impl<A> Open<A> {
         )
     }
 
-    /// Starts capturing the focused slot when the focus is on a `Control` row.
+    /// Starts capturing the focused slot when the focus is on a slot of a `Control` row.
     fn start_capture(&mut self) {
-        if self.focused_is_control() {
+        if self.focused_is_control() && self.column.slot().is_some() {
             self.capturing = true;
             self.shell_note = None;
             self.notes_hidden = true;
@@ -251,33 +404,40 @@ impl<A> Open<A> {
             })
     }
 
-    /// The slot of a `Control` row `rect` whose cell holds `x`; `None` over its label or on
-    /// another kind of row.
-    fn slot_at(&self, row: usize, rect: Rect, x: f32) -> Option<Slot> {
-        if !matches!(self.screen.items.get(row), Some(MenuItem::Control { .. })) {
-            return None;
-        }
+    /// The column of row `row` (laid out in `rect`) that holds `x`; `None` over a label or on a
+    /// row without columns.
+    fn column_at(&self, row: usize, rect: Rect, x: f32) -> Option<Column> {
+        let item = self.screen.items.get(row)?;
+        let has = columns(item);
         let across = x - rect.min[0];
-        if across < LABEL_WIDTH {
-            None
+        let column = if across < CHEVRON_WIDTH && has.contains(&Column::Chevron) {
+            Column::Chevron
+        } else if across < LABEL_WIDTH {
+            return None;
         } else if across < LABEL_WIDTH + CELL_WIDTH {
-            Some(Slot::Primary)
+            Column::First
+        } else if across < CONTROL_WIDTH {
+            Column::Second
         } else {
-            Some(Slot::Secondary)
-        }
+            Column::Mode
+        };
+        has.contains(&column).then_some(column)
     }
 
-    /// Left and Right: pick a `Control` row's slot, or step a settings row.
+    /// Left and Right: walk the focused row's columns, or step a settings row.
     fn step(&mut self, direction: i8) {
-        if self.focused_is_control() {
-            let slot = if direction < 0 {
-                Slot::Primary
-            } else {
-                Slot::Secondary
-            };
-            self.set_focus(self.focus, slot);
-        } else {
-            self.nudge(self.focus, direction);
+        let has = self.screen.items.get(self.focus).map(columns);
+        match has {
+            Some(has) if !has.is_empty() => {
+                let at = has.iter().position(|c| *c == self.column).unwrap_or(0);
+                let to = if direction < 0 {
+                    at.saturating_sub(1)
+                } else {
+                    (at + 1).min(has.len() - 1)
+                };
+                self.set_focus(self.focus, has[to]);
+            }
+            _ => self.nudge(self.focus, direction),
         }
     }
 }
@@ -298,21 +458,67 @@ impl<A: Clone> Open<A> {
         match self.screen.items.get(self.focus)? {
             MenuItem::Control { action, .. } => Some(MenuEvent::Captured {
                 action: action.clone(),
-                slot: self.slot,
+                slot: self.column.slot()?,
                 input,
             }),
             _ => None,
         }
     }
 
-    /// Clears the focused slot, if the focus is on a `Control` row.
+    /// Clears the focused slot, if the focus is on a slot of a `Control` row.
     fn clear(&self) -> Option<MenuEvent<A>> {
         match self.screen.items.get(self.focus)? {
             MenuItem::Control { action, .. } => Some(MenuEvent::Cleared {
                 action: action.clone(),
-                slot: self.slot,
+                slot: self.column.slot()?,
             }),
             _ => None,
+        }
+    }
+
+    /// What Enter or a click does on the focused column: the chevron toggles the details, a slot
+    /// of a `Control` row starts capture, a picker steps, the checkbox reports the other mode;
+    /// any other row is chosen.
+    fn activate(&mut self) -> Vec<MenuEvent<A>> {
+        match (self.screen.items.get(self.focus), self.column) {
+            (Some(MenuItem::Control { action, .. }), Column::Chevron) => {
+                vec![MenuEvent::DetailsToggled {
+                    action: action.clone(),
+                }]
+            }
+            (Some(MenuItem::Control { action, mode, .. }), Column::Mode) => mode
+                .map(|mode| MenuEvent::ModeChosen {
+                    action: action.clone(),
+                    mode: ActionMode::from_toggle(!mode.is_toggle()),
+                })
+                .into_iter()
+                .collect(),
+            (Some(MenuItem::Control { .. }), Column::First | Column::Second) => {
+                self.start_capture();
+                Vec::new()
+            }
+            (
+                Some(MenuItem::Details {
+                    action,
+                    slot,
+                    trigger,
+                    modifiers,
+                }),
+                column,
+            ) => {
+                let (trigger, modifiers) = if column == Column::First {
+                    (next_kind(*trigger), *modifiers)
+                } else {
+                    (*trigger, next_modifiers(*modifiers))
+                };
+                vec![MenuEvent::Picked {
+                    action: action.clone(),
+                    slot: *slot,
+                    trigger,
+                    modifiers,
+                }]
+            }
+            _ => self.choose(self.focus),
         }
     }
 }
@@ -372,6 +578,128 @@ impl<A> Open<A> {
             .get(&slider.key)
             .copied()
             .unwrap_or(slider.value)
+    }
+
+    /// The color of the cell in `column` of row `row`: focused when the focus is on it.
+    fn cell_color(&self, row: usize, column: Column) -> [u8; 4] {
+        if row == self.focus && column == self.column {
+            FOCUS_COLOR
+        } else {
+            COLOR
+        }
+    }
+
+    /// The texts of the `Control` row `row` in `rect`: chevron, label, two slot cells and the
+    /// checkbox, each only if the row has it.
+    fn control_texts(
+        &self,
+        row: usize,
+        rect: Rect,
+        color: [u8; 4],
+        size: [f32; 2],
+    ) -> Vec<ScreenText> {
+        let Some(MenuItem::Control {
+            label,
+            slots,
+            note,
+            chevron,
+            mode,
+            ..
+        }) = self.screen.items.get(row)
+        else {
+            return Vec::new();
+        };
+        let (y, left) = (centre_y(rect), rect.min[0]);
+        let at = |text: &str, x: f32, color| left_text(text, x, y, color, size);
+        let collapsed = *chevron == Some(Chevron::Closed);
+        let shown_note = if row == self.focus {
+            self.shell_note.as_deref()
+        } else {
+            None
+        }
+        .or_else(|| note.as_deref().filter(|_| !self.notes_hidden));
+        let (label_text, label_color) = match shown_note {
+            Some(note) => (note.to_owned(), WARNING_COLOR),
+            None if slots.iter().all(Option::is_none) => (format!("! {label}"), color),
+            None if collapsed && slots.iter().flatten().any(|b| !b.is_plain()) => {
+                (format!("{label} +"), color)
+            }
+            None => (label.clone(), color),
+        };
+        let mut texts = Vec::with_capacity(5);
+        let mut label_x = left;
+        if let Some(chevron) = chevron {
+            let glyph = match chevron {
+                Chevron::Closed => ">",
+                Chevron::Open => "v",
+            };
+            texts.push(at(glyph, left, self.cell_color(row, Column::Chevron)));
+            label_x += CHEVRON_WIDTH;
+        }
+        texts.push(at(&label_text, label_x, label_color));
+        for (column, cell_x, binding) in [
+            (Column::First, LABEL_WIDTH, slots[0]),
+            (Column::Second, LABEL_WIDTH + CELL_WIDTH, slots[1]),
+        ] {
+            let shown = match binding {
+                None => "Unbound".to_owned(),
+                Some(binding) if collapsed && !binding.is_plain() => "...".to_owned(),
+                Some(binding) => binding.label(),
+            };
+            texts.push(at(&shown, left + cell_x, self.cell_color(row, column)));
+        }
+        if let Some(mode) = mode {
+            let box_text = if mode.is_toggle() {
+                "[x] Toggle"
+            } else {
+                "[ ] Toggle"
+            };
+            let color = self.cell_color(row, Column::Mode);
+            texts.push(at(box_text, left + CONTROL_WIDTH, color));
+        }
+        texts
+    }
+
+    /// The texts of the `Details` row `row` in `rect`: the slot's name, indented, then the kind
+    /// and modifier pickers.
+    fn details_texts(
+        &self,
+        row: usize,
+        rect: Rect,
+        color: [u8; 4],
+        size: [f32; 2],
+    ) -> Vec<ScreenText> {
+        let Some(MenuItem::Details {
+            slot,
+            trigger,
+            modifiers,
+            ..
+        }) = self.screen.items.get(row)
+        else {
+            return Vec::new();
+        };
+        let (y, left) = (centre_y(rect), rect.min[0]);
+        let name = match slot {
+            Slot::Primary => "Primary",
+            Slot::Secondary => "Secondary",
+        };
+        vec![
+            left_text(name, left + CHEVRON_WIDTH, y, color, size),
+            left_text(
+                &format!("Kind: {}", kind_text(*trigger)),
+                left + LABEL_WIDTH,
+                y,
+                self.cell_color(row, Column::First),
+                size,
+            ),
+            left_text(
+                &format!("Mod: {}", modifiers_text(*modifiers)),
+                left + LABEL_WIDTH + CELL_WIDTH,
+                y,
+                self.cell_color(row, Column::Second),
+                size,
+            ),
+        ]
     }
 
     /// Moves the staged value of the settings row `row` one step towards `direction`.
@@ -476,16 +804,6 @@ impl<A> MenuStack<A> {
         self.screens.clear();
     }
 
-    /// Replaces the top screen's items, keeping its focus, slot, capture and scroll.
-    pub fn set_items(&mut self, items: Vec<MenuItem<A>>) {
-        if let Some(open) = self.screens.last_mut() {
-            open.focus = open.focus.min(items.len().saturating_sub(1));
-            open.screen.items = items;
-            open.shell_note = None;
-            open.notes_hidden = false;
-        }
-    }
-
     /// Ends a capture in progress without an event.
     pub fn cancel_capture(&mut self) {
         if let Some(open) = self.screens.last_mut() {
@@ -543,8 +861,8 @@ impl<A> MenuStack<A> {
             && !open.capturing
             && let Some((row, rect)) = open.row_at(point, size)
         {
-            let slot = open.slot_at(row, rect, point[0]).unwrap_or(open.slot);
-            open.set_focus(row, slot);
+            let column = open.column_at(row, rect, point[0]).unwrap_or(open.column);
+            open.set_focus(row, column);
         }
     }
 
@@ -590,7 +908,7 @@ impl<A> MenuStack<A> {
             let mut title_centre = first_centre - ROW_PITCH;
             if matches!(
                 open.screen.items.get(visible.start),
-                Some(MenuItem::Control { .. })
+                Some(MenuItem::Control { .. } | MenuItem::Details { .. })
             ) {
                 // Control rows are short, so the title band above them is too thin to hold it.
                 title_centre = title_centre.max(ROW_SIZE / 2.0);
@@ -607,50 +925,12 @@ impl<A> MenuStack<A> {
             match item {
                 MenuItem::Button { label, .. } => texts.push(centred(label, centre_y(rect), color)),
                 MenuItem::Apply => texts.push(centred("Apply", centre_y(rect), color)),
-                MenuItem::Control {
-                    label, slots, note, ..
-                } => {
-                    let y = centre_y(rect);
-                    let shown_note = if row == open.focus {
-                        open.shell_note.as_deref()
-                    } else {
-                        None
-                    }
-                    .or_else(|| note.as_deref().filter(|_| !open.notes_hidden));
-                    let (label_text, label_color) = match shown_note {
-                        Some(note) => (note.to_owned(), WARNING_COLOR),
-                        None if slots.iter().all(Option::is_none) => (format!("! {label}"), color),
-                        None => (label.clone(), color),
-                    };
-                    texts.push(text(
-                        &label_text,
-                        Anchor::Left,
-                        rect.min[0],
-                        y,
-                        SETTING_SIZE,
-                        label_color,
-                    ));
-                    for (slot, cell_x, binding) in [
-                        (Slot::Primary, LABEL_WIDTH, slots[0]),
-                        (Slot::Secondary, LABEL_WIDTH + CELL_WIDTH, slots[1]),
-                    ] {
-                        let cell_color = if row == open.focus && slot == open.slot {
-                            FOCUS_COLOR
-                        } else {
-                            COLOR
-                        };
-                        let label = binding.map_or_else(|| "Unbound".to_owned(), Binding::label);
-                        texts.push(text(
-                            &label,
-                            Anchor::Left,
-                            rect.min[0] + cell_x,
-                            y,
-                            SETTING_SIZE,
-                            cell_color,
-                        ));
-                    }
+                MenuItem::Control { .. } => {
+                    texts.extend(open.control_texts(row, rect, color, size));
                 }
-                MenuItem::Details { .. } => {}
+                MenuItem::Details { .. } => {
+                    texts.extend(open.details_texts(row, rect, color, size));
+                }
                 MenuItem::GameSlider(slider) => {
                     let value = slider.value_text(open.game_value(slider));
                     texts.extend(setting_row(&slider.label, Some(&value), rect, color));
@@ -678,6 +958,25 @@ impl<A> MenuStack<A> {
     }
 }
 
+impl<A: PartialEq> MenuStack<A> {
+    /// Replaces the top screen's items, keeping its column, capture and scroll. The focus stays
+    /// on the same row: the same index if the row there is the same one (see `same_row`),
+    /// else the nearest row that is, else the old index clamped to the new rows.
+    pub fn set_items(&mut self, items: Vec<MenuItem<A>>) {
+        if let Some(open) = self.screens.last_mut() {
+            let focus = refound_focus(open.screen.items.get(open.focus), open.focus, &items);
+            if focus != open.focus {
+                open.reveal.set(true);
+            }
+            open.focus = focus;
+            open.column = nearest_column(items.get(focus), open.column);
+            open.screen.items = items;
+            open.shell_note = None;
+            open.notes_hidden = false;
+        }
+    }
+}
+
 impl<A: Clone> MenuStack<A> {
     /// Up and Down move the focus and wrap; Left and Right step the focused settings row; a
     /// non-repeat Enter press chooses the focused item (flipping or cycling a settings row);
@@ -702,19 +1001,15 @@ impl<A: Clone> MenuStack<A> {
         let count = open.screen.items.len();
         match input {
             Input::Key(Key::ArrowDown) if count > 0 => {
-                open.set_focus((open.focus + 1) % count, open.slot);
+                open.set_focus((open.focus + 1) % count, open.column);
             }
             Input::Key(Key::ArrowUp) if count > 0 => {
-                open.set_focus((open.focus + count - 1) % count, open.slot);
+                open.set_focus((open.focus + count - 1) % count, open.column);
             }
             Input::Key(Key::ArrowLeft) => open.step(-1),
             Input::Key(Key::ArrowRight) => open.step(1),
             Input::Key(Key::Enter) if !repeat => {
-                if open.focused_is_control() {
-                    open.start_capture();
-                } else {
-                    self.events.extend(open.choose(open.focus));
-                }
+                self.events.extend(open.activate());
             }
             Input::Key(Key::Backspace) | Input::Mouse(MouseButton::Right) if !repeat => {
                 self.events.extend(open.clear());
@@ -738,7 +1033,7 @@ impl<A: Clone> MenuStack<A> {
             self.on_key(Input::Mouse(MouseButton::Right), true, false);
         } else if let Some((row, rect)) = open.row_at(point, size)
             && row == open.focus
-            && open.slot_at(row, rect, point[0]) == Some(open.slot)
+            && open.column_at(row, rect, point[0]) == Some(open.column)
         {
             self.events.extend(open.clear());
         }
@@ -761,9 +1056,9 @@ impl<A: Clone> MenuStack<A> {
                 MenuItem::GameSlider(_) => true,
                 _ => false,
             };
-            if let Some(slot) = open.slot_at(row, rect, point[0]) {
-                open.set_focus(row, slot);
-                open.start_capture();
+            if let Some(column) = open.column_at(row, rect, point[0]) {
+                open.set_focus(row, column);
+                self.events.extend(open.activate());
             } else if on_slider {
                 self.dragging = Some(row);
                 open.set_slider_from(row, point[0], size);
@@ -778,6 +1073,17 @@ fn centre_y(rect: Rect) -> f32 {
     (rect.min[1] + rect.max[1]) / 2.0
 }
 
+/// A left-anchored row text at `x` and `centre_y` on a window `size` points across.
+fn left_text(text: &str, x: f32, centre_y: f32, color: [u8; 4], size: [f32; 2]) -> ScreenText {
+    ScreenText {
+        text: text.to_owned(),
+        anchor: Anchor::Left,
+        offset: [x, centre_y - size[1] / 2.0],
+        size: SETTING_SIZE,
+        color,
+    }
+}
+
 /// Height available to rows: the window less a title band above and below.
 fn viewport(size: [f32; 2]) -> f32 {
     size[1] - 2.0 * BAND
@@ -785,14 +1091,19 @@ fn viewport(size: [f32; 2]) -> f32 {
 
 fn item_height<A>(item: &MenuItem<A>) -> f32 {
     match item {
-        MenuItem::Control { .. } => CONTROL_HEIGHT,
+        MenuItem::Control { .. } | MenuItem::Details { .. } => CONTROL_HEIGHT,
         _ => ROW_PITCH,
     }
 }
 
-fn item_width<A>(item: &MenuItem<A>) -> f32 {
+/// The width of `item`'s row; `with_checkbox` is whether some `Control` row of the screen has
+/// the checkbox column, which widens every `Control` and `Details` row to hold it.
+fn item_width<A>(item: &MenuItem<A>, with_checkbox: bool) -> f32 {
     match item {
-        MenuItem::Control { .. } => CONTROL_WIDTH,
+        MenuItem::Control { .. } | MenuItem::Details { .. } if with_checkbox => {
+            CONTROL_WIDTH + MODE_WIDTH
+        }
+        MenuItem::Control { .. } | MenuItem::Details { .. } => CONTROL_WIDTH,
         _ => ROW_WIDTH,
     }
 }
@@ -833,11 +1144,14 @@ fn rects<A>(items: &[MenuItem<A>], scroll: usize, size: [f32; 2]) -> Vec<Rect> {
     } else {
         BAND - items.iter().take(scroll).map(item_height).sum::<f32>()
     };
+    let with_checkbox = items
+        .iter()
+        .any(|item| matches!(item, MenuItem::Control { mode: Some(_), .. }));
     let mut y = top;
     items
         .iter()
         .map(|item| {
-            let (height, width) = (item_height(item), item_width(item));
+            let (height, width) = (item_height(item), item_width(item, with_checkbox));
             let rect = Rect {
                 min: [size[0] / 2.0 - width / 2.0, y],
                 max: [size[0] / 2.0 + width / 2.0, y + height],
@@ -849,7 +1163,8 @@ fn rects<A>(items: &[MenuItem<A>], scroll: usize, size: [f32; 2]) -> Vec<Rect> {
 }
 
 /// The row rectangles of `screen` on a window `size` points across at scroll 0, top to bottom:
-/// buttons and settings 240 by 56 points, control rows 640 by 32, centred on the window, the
+/// buttons and settings 240 by 56 points, control and details rows 640 by 32 (768 when a control
+/// row has the checkbox column), centred on the window, the
 /// column centred vertically when it fits and starting at the title band when it does not.
 pub fn layout<A>(screen: &MenuScreen<A>, size: [f32; 2]) -> Vec<Rect> {
     rects(&screen.items, 0, size)
@@ -2658,7 +2973,7 @@ mod tests {
         let primary = captured(Bind::Row(0), Slot::Primary, Input::Key(Key::Q));
         let secondary = captured(Bind::Row(0), Slot::Secondary, Input::Key(Key::Q));
         let (left, right) = (Key::ArrowLeft, Key::ArrowRight);
-        let cases: Vec<(&str, &MenuItem<Bind>, Vec<Key>, MenuEvent<Bind>)> = vec![
+        let cases = vec![
             ("both: Left", &both, vec![left], toggled(0)),
             ("both: Left Left", &both, vec![left, left], toggled(0)),
             (
