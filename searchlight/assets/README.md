@@ -9,9 +9,10 @@
 ## Waves and local maps
 
 Waves and a score run on a level that places at least one `enemy_spawn_NN`, and only there;
-such a level also needs numbered `waypoint_NN` markers an enemy can reach. Without an enemy
-spawn, `player_spawn` and `dummy_NN` are optional (the player starts at the origin and the
-console says so), and a navmesh failure is a console notice. A node named `searchlight_level`
+such a level also needs numbered `waypoint_NN` markers an enemy can reach. Every level,
+borrowed maps included, needs exactly one `player_spawn`; a file without one fails to load
+with an error naming it. `dummy_NN` is optional, and without an enemy spawn a navmesh failure
+is a console notice. A node named `searchlight_level`
 is ignored.
 
 Launch a level by name (`arena`, the default, or `proving_ground`) or by the path of a `.glb`

@@ -62,8 +62,8 @@ pub enum ArenaError {
 /// The level's markers, grouped by kind. Within a kind, markers keep file order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArenaMarkers {
-    /// Where the player starts; at most one.
-    pub player_spawn: Option<LevelMarker>,
+    /// Where the player starts; exactly one on every level.
+    pub player_spawn: LevelMarker,
     /// `dummy_NN`: training dummy positions.
     pub dummies: Vec<LevelMarker>,
     /// `enemy_spawn_NN`.
@@ -79,12 +79,13 @@ pub struct ArenaMarkers {
 impl ArenaMarkers {
     /// Sorts `level`'s markers by kind. A node that matches no marker name is skipped.
     ///
-    /// `player_spawn` and `dummy_NN` are optional. A level that places an enemy spawn needs a
-    /// `waypoint_NN`, and its waypoint suffixes must be unique numbers; a level without one
-    /// takes whatever a borrowed map happens to name.
+    /// Every level needs exactly one `player_spawn`; `dummy_NN` is optional. A level that
+    /// places an enemy spawn needs a `waypoint_NN`, and its waypoint suffixes must be unique
+    /// numbers; a level without one takes whatever a borrowed map happens to name.
     ///
     /// # Errors
-    /// [`ArenaError::DuplicateMarker`] naming `player_spawn`. With an enemy spawn also:
+    /// [`ArenaError::MissingMarker`] or [`ArenaError::DuplicateMarker`] naming `player_spawn`.
+    /// With an enemy spawn also:
     /// [`ArenaError::MissingMarker`] naming `waypoint_NN`; [`ArenaError::BadWaypoint`] naming
     /// a waypoint whose suffix is not a number or repeats an earlier one's value.
     pub fn from_level(level: &Level) -> Result<Self, ArenaError> {
@@ -115,7 +116,9 @@ impl ArenaMarkers {
         }
         let marker = PLAYER_SPAWN.to_owned();
         let mut spawns = spawns.into_iter();
-        let player_spawn = spawns.next();
+        let player_spawn = spawns.next().ok_or_else(|| ArenaError::MissingMarker {
+            marker: marker.clone(),
+        })?;
         if spawns.next().is_some() {
             return Err(ArenaError::DuplicateMarker { marker });
         }
@@ -287,10 +290,7 @@ impl Arena {
             material_names,
             nav,
             nav_fallback,
-            player_spawn: markers
-                .player_spawn
-                .as_ref()
-                .map_or(Vec3::ZERO, |marker| marker.position),
+            player_spawn: markers.player_spawn.position,
             dummy_spawns: positions(&markers.dummies),
             enemy_spawns,
             route,
@@ -526,8 +526,7 @@ mod tests {
     fn the_shipped_arena_has_one_player_spawn_and_dummies() {
         let (level, markers) = load(&shipped_arena()).expect("the shipped arena loads");
 
-        let spawn = markers.player_spawn.as_ref().expect("a player spawn");
-        assert_eq!(spawn.name, "player_spawn");
+        assert_eq!(markers.player_spawn.name, "player_spawn");
         assert!(!markers.dummies.is_empty(), "no dummies");
         assert!(!markers.enemy_spawns.is_empty(), "no enemy spawns");
         assert!(!markers.waypoints.is_empty(), "no waypoints");
@@ -646,25 +645,35 @@ mod tests {
     }
 
     #[test]
-    fn a_level_with_two_player_spawns_is_an_error() {
-        let level = level_of(&["player_spawn", "player_spawn", "dummy_01"]);
+    fn missing_or_duplicate_spawn_is_an_error_naming_it() {
+        let twice = level_of(&["player_spawn", "player_spawn", "dummy_01"]);
+        let empty = level_of(&[]);
+        let waves_without_a_spawn = level_of(&["enemy_spawn_01", "waypoint_01"]);
 
-        let error = ArenaMarkers::from_level(&level).unwrap_err();
+        let duplicate = ArenaMarkers::from_level(&twice).unwrap_err();
+        let missing = ArenaMarkers::from_level(&empty).unwrap_err();
+        let missing_with_waves = ArenaMarkers::from_level(&waves_without_a_spawn).unwrap_err();
 
         assert!(
-            matches!(&error, ArenaError::DuplicateMarker { marker } if marker == "player_spawn"),
-            "{error:?}"
+            matches!(&duplicate, ArenaError::DuplicateMarker { marker } if marker == "player_spawn"),
+            "{duplicate:?}"
         );
-        assert!(error.to_string().contains("player_spawn"));
+        for error in [&missing, &missing_with_waves] {
+            assert!(
+                matches!(error, ArenaError::MissingMarker { marker } if marker == "player_spawn"),
+                "{error:?}"
+            );
+            assert!(error.to_string().contains("player_spawn"), "{error}");
+        }
+        assert!(duplicate.to_string().contains("player_spawn"));
     }
 
     #[test]
-    fn a_level_without_dummies_or_player_spawn_loads() {
-        let level = level_of(&["enemy_spawn_01", "waypoint_01"]);
+    fn a_level_without_dummies_loads() {
+        let level = level_of(&["player_spawn", "enemy_spawn_01", "waypoint_01"]);
 
-        let markers = ArenaMarkers::from_level(&level).expect("a level needs neither");
+        let markers = ArenaMarkers::from_level(&level).expect("a level needs no dummy");
 
-        assert_eq!(markers.player_spawn, None);
         assert!(markers.dummies.is_empty());
     }
 
@@ -686,8 +695,7 @@ mod tests {
 
         let names =
             |list: &[LevelMarker]| -> Vec<String> { list.iter().map(|m| m.name.clone()).collect() };
-        let spawn = markers.player_spawn.as_ref().expect("a player spawn");
-        assert_eq!(spawn.name, "player_spawn");
+        assert_eq!(markers.player_spawn.name, "player_spawn");
         assert_eq!(names(&markers.dummies), ["dummy_02", "dummy_01"]);
         assert_eq!(names(&markers.waypoints), ["waypoint_02", "waypoint_01"]);
         assert_eq!(
@@ -704,26 +712,16 @@ mod tests {
         let (level, markers) = load(&path).expect("the shipped proving ground loads");
 
         assert!(!level.meshes.is_empty(), "no geometry");
-        assert!(markers.player_spawn.is_some(), "no firing line spawn");
+        assert_eq!(markers.player_spawn.name, "player_spawn");
+        let player_spawns = level
+            .markers
+            .iter()
+            .filter(|m| m.name == "player_spawn")
+            .count();
+        assert_eq!(player_spawns, 1, "one firing line spawn");
         assert!(markers.enemy_spawns.is_empty(), "no one attacks here");
         assert!(markers.waypoints.is_empty());
         assert!(markers.covers.is_empty());
-    }
-
-    #[test]
-    fn a_level_without_a_player_spawn_starts_at_the_origin() {
-        let mut level = level_of(&[]);
-        level.meshes.push(LevelMesh {
-            mesh: box_mesh(Vec3::new(5.0, -1.0, 5.0), Vec3::new(15.0, 0.0, 15.0)),
-            material: None,
-        });
-
-        let markers = ArenaMarkers::from_level(&level).expect("a level needs no spawn");
-        let arena = Arena::from_level(&level, &markers).expect("the level builds");
-
-        assert_eq!(markers.player_spawn, None);
-        assert_eq!(arena.player_spawn, Vec3::ZERO);
-        assert!(markers.dummies.is_empty());
     }
 
     #[test]
@@ -763,19 +761,18 @@ mod tests {
             let markers = loaded
                 .expect("from_level ran")
                 .unwrap_or_else(|e| panic!("{name}: {e}"));
-            assert!(markers.player_spawn.is_some(), "{name}");
+            assert_eq!(markers.player_spawn.name, "player_spawn", "{name}");
             assert!(!log.contains("WARN"), "{name}: {log}");
         }
     }
 
     #[test]
-    fn an_old_arena_marker_without_a_dummy_or_player_spawn_still_loads() {
-        let mut level = level_of(&[]);
+    fn an_old_arena_marker_without_a_dummy_still_loads() {
+        let mut level = level_of(&["player_spawn"]);
         level.markers.push(stale_marker(Some("arena")));
 
         let markers = ArenaMarkers::from_level(&level).expect("the marker has no effect");
 
-        assert_eq!(markers.player_spawn, None);
         assert!(markers.dummies.is_empty());
     }
 
@@ -1248,7 +1245,7 @@ mod shipped_cover_tests {
             .chain(&markers.enemy_spawns)
             .chain(&markers.waypoints)
             .chain(&markers.covers)
-            .chain(&markers.player_spawn);
+            .chain(std::iter::once(&markers.player_spawn));
 
         for marker in all {
             let down = world.cast_ray(&RayQuery {

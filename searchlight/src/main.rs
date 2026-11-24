@@ -56,7 +56,7 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
     };
     let (level, markers) = arena::load(&choice.path(&assets_root()))?;
     let arena = Arc::new(Arena::from_level(&level, &markers)?);
-    let notices = levels::load_notices(&markers, &arena);
+    let notices = levels::load_notices(&arena);
     let mode = ArenaMode::for_level(arena.clone(), tuning(start_kit), WaveTuning::default());
     let (toggle_keys, bindings_section) = split_fullscreen_binding(prefs.bindings());
     let (console_section, game_section) = split_console_binding(&bindings_section);
