@@ -1,12 +1,12 @@
 # Searchlight
 
-**Source:** `searchlight/src/`, `searchlight_rules/src/posture.rs`, `moho_level/src/nav.rs`, `searchlight/assets/`, `searchlight/content/`, `moho_ui_shell/src/`.
+**Source:** `searchlight/src/`, `searchlight_rules/src/posture.rs`, `searchlight_rules/src/accuracy.rs`, `moho_level/src/nav.rs`, `searchlight/assets/`, `searchlight/content/`, `moho_ui_shell/src/`.
 **Decisions:** [ADR-0015](../../_todo/adr/0015-fps-rules-are-a-platform-free-crate.md),
 [ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md),
 [ADR-0019](../../_todo/adr/0019-navigation-is-an-engine-seam.md).
 
 `searchlight` is the FPS line's engine adapter: a library and the `searchlight` binary. Rules
-(`Rifle`, `Magazine`, `Rig`, `Loadout`, `Body`, `BodyProfile`, `Grade`, `Lean`, `LeanTuning`) and item and kit definitions come from `searchlight_rules`; windowing, loop,
+(`Rifle`, `Magazine`, `Rig`, `Loadout`, `Body`, `BodyProfile`, `Grade`, `Lean`, `LeanTuning`, `Accuracy`, `AccuracyTuning`) and item and kit definitions come from `searchlight_rules`; windowing, loop,
 physics, level loading, input, audio and rendering come from engine crates. It depends on no
 strategy crate ([overview](../architecture/overview.md#2-lines-and-rules)).
 
@@ -194,6 +194,20 @@ outside the `FlightBounds` (the arena's mesh box plus `FLIGHT_MARGIN`). Nothing 
 the edge of the bounds; `round_gravity` (console, session only, 1 at launch) scales round gravity and
 never the world's. Rounds in flight are not saved, and a restart clears them. Enemy shots stay one ray on
 the firing tick until FPS-F15-03.
+
+The player's shot leaves in a cone, not exactly along the view. `searchlight_rules::accuracy` owns the rules:
+`AccuracyTuning` (`walk_spread` radians at walking speed, `settle_seconds`; set in `tuning::tuning`) and
+`Accuracy`, stepped once per tick by `SearchlightSim::step_accuracy` from the ground speed over `max_speed`
+(capped at 1.5; an airborne player reads at least 1.0). The spread is `walk_spread * ratio`, rising at once and
+falling linearly, so it closes from `walk_spread` to nothing in `settle_seconds`. `SearchlightSim::player_spread`
+gives the half-angle. On a pull, `SearchlightSim::scattered` draws two values from the `searchlight.player_spread`
+`SimRng` stream and `disc_offset` turns them into a point uniform in a disc of radius `tan(spread)`, applied along
+the right and up of `aim_basis` (shared with enemy aim error); a spread of zero leaves along the view and draws
+nothing. Both the round and the `simple` ray use the scattered direction.
+
+`SearchlightGame::frame` hands `player_spread` to the crosshair, whose gap is the resting gap plus the cone's
+circle on screen by a pinhole projection (`Crosshair::gap`), so a settled crosshair is unchanged and the gap
+opens with spread.
 
 Each ray or step segment goes through one route:
 

@@ -252,6 +252,8 @@ struct Crosshair {
     edges: [u8; 4],
     /// Whether a menu owns the view's overlay: nothing is drawn.
     hidden: bool,
+    /// Half-angle in radians of the cone the next shot leaves in; the gap opens to mark it.
+    spread: f32,
 }
 
 impl Crosshair {
@@ -259,6 +261,13 @@ impl Crosshair {
     const GAP: f32 = 4.0;
     const LENGTH: f32 = 9.0;
     const THICKNESS: f32 = 2.0;
+
+    /// Pixels from the screen centre to the inner end of each bar, for a view `fov_y` radians
+    /// tall drawn `height` pixels high: the resting gap plus the cone's circle on screen, by a
+    /// pinhole projection.
+    fn gap(spread: f32, fov_y: f32, height: f32) -> f32 {
+        Self::GAP + spread.tan() / (fov_y / 2.0).tan() * (height / 2.0)
+    }
 }
 
 impl UiFrameSource for Crosshair {
@@ -268,7 +277,8 @@ impl UiFrameSource for Crosshair {
         }
         let size = [size_in_pixels[0] as f32, size_in_pixels[1] as f32];
         let (cx, cy) = (size[0] / 2.0, size[1] / 2.0);
-        let (near, far, half) = (Self::GAP, Self::GAP + Self::LENGTH, Self::THICKNESS / 2.0);
+        let gap = Self::gap(self.spread, FOV_DEGREES.to_radians(), size[1]);
+        let (near, far, half) = (gap, gap + Self::LENGTH, Self::THICKNESS / 2.0);
         let bars = [
             ([cx - far, cy - half], [cx - near, cy + half]),
             ([cx + near, cy - half], [cx + far, cy + half]),
@@ -585,6 +595,14 @@ impl Stage {
         hud.edges = self
             .edge_left
             .map(|left| (EDGE_ALPHA * left / EDGE_TICKS) as u8);
+    }
+
+    /// Hands the crosshair the cone its next shot leaves in, so the gap can mark it.
+    fn show_spread(&self, spread: f32) {
+        self.crosshair
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .spread = spread;
     }
 
     fn hide_hud(&self) {
@@ -1326,6 +1344,7 @@ impl Game for SearchlightGame {
         let vitals = self.vitals_line();
         self.stage.refresh_title(&vitals);
         self.stage.refresh_hud(dead);
+        self.stage.show_spread(self.mode.sim().player_spread());
         if self.screen == Screen::Paused {
             self.stage.hide_hud();
         }
@@ -6675,5 +6694,131 @@ mod enemy_and_hud_tests {
         assert_eq!(mesh.vertices.len(), 4 + 16);
         assert_eq!(mesh.vertices[0].color, [120, 0, 0, 140]);
         assert_eq!(mesh.vertices[2].pos, [800.0, 600.0]);
+    }
+}
+
+#[cfg(test)]
+mod crosshair_spread_tests {
+    use super::*;
+
+    /// Hand-computed as 4 + tan(spread) / tan(fov / 2) * height / 2: tan(0.03) = 0.030009,
+    /// tan(37.5 deg) = 0.76733, tan(15 deg) = 0.26795. The 30 deg row is a narrow aimed view.
+    #[test]
+    fn the_crosshair_gap_is_today_s_gap_when_settled_and_opens_with_spread() {
+        let table = [
+            (0.0, 75.0_f32, 600.0, 4.0),
+            (0.03, 75.0, 600.0, 15.73),
+            (0.03, 30.0, 600.0, 37.60),
+            (0.03, 75.0, 300.0, 9.87),
+            (0.03, 75.0, 1200.0, 27.47),
+        ];
+
+        for (spread, fov_degrees, height, expected) in table {
+            let gap = Crosshair::gap(spread, fov_degrees.to_radians(), height);
+
+            assert!(
+                (gap - expected).abs() < 1e-2,
+                "spread {spread}, fov {fov_degrees}, height {height}: gap {gap}, expected {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_crosshair_with_spread_draws_its_bars_out_at_the_gap() {
+        let spread = 0.03;
+        let mut crosshair = Crosshair {
+            spread,
+            ..Crosshair::default()
+        };
+        let gap = Crosshair::gap(spread, FOV_DEGREES.to_radians(), 600.0);
+
+        let frame = crosshair.ui_frame([800, 600]).expect("a frame");
+
+        let vertices = &frame.meshes[0].vertices;
+        assert!(gap > Crosshair::GAP);
+        assert_eq!(
+            vertices[0].pos[0],
+            400.0 - gap - Crosshair::LENGTH,
+            "left bar outer"
+        );
+        assert_eq!(vertices[4].pos[0], 400.0 + gap, "right bar inner");
+        assert_eq!(
+            vertices[8].pos[1],
+            300.0 - gap - Crosshair::LENGTH,
+            "top bar outer"
+        );
+        assert_eq!(vertices[12].pos[1], 300.0 + gap, "bottom bar inner");
+    }
+
+    /// The right bar's inner edge on an 800 by 600 target, whose centre is at x = 400.
+    fn right_bar_inner(game: &SearchlightGame) -> f32 {
+        let mut crosshair = game
+            .stage
+            .crosshair
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let frame = crosshair.ui_frame([800, 600]).expect("a frame");
+        frame.meshes[0].vertices[4].pos[0]
+    }
+
+    #[test]
+    fn a_frame_while_walking_opens_the_crosshair_and_it_closes_after_the_settle_time() {
+        // `test_config` friction coasts a walking player to rest in about 36 ticks; the
+        // spread follows that speed down, then settles.
+        const COAST_TICKS: usize = 40;
+        let config = crate::test_support::test_config(
+            crate::test_support::rifle_from(crate::test_support::mag(30, 5)),
+            vec![],
+        );
+        let settle_ticks = (config.accuracy.settle_seconds * 60.0).ceil() as usize;
+        let mode = ArenaMode::new(
+            crate::test_support::arena_with(&[], Vec3::ZERO, &[], &[]),
+            config,
+            crate::test_support::wave_tuning(1),
+        );
+        let (bindings, _) = moho_input::bindings::ActionBindings::load(&BTreeMap::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0));
+        let mut clock = moho_app::GameClock::new(0.0, 1.0, 1.0);
+        let walk = SearchlightCommand {
+            movement: moho_physics::CharacterCommand {
+                forward: 1.0,
+                ..moho_physics::CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        let mut step = |game: &mut SearchlightGame, command: &SearchlightCommand, ticks: usize| {
+            for _ in 0..ticks {
+                let mut ctx = TickContext {
+                    tick: 0,
+                    tick_length: std::time::Duration::from_secs_f32(1.0 / 60.0),
+                    clock: &mut clock,
+                };
+                game.tick(&mut ctx, command);
+            }
+            let frame_clock = moho_app::GameClock::default();
+            let mut ctx = FrameContext::new(
+                std::time::Duration::from_millis(16),
+                &frame_clock,
+                None,
+                None,
+            );
+            game.frame(&mut ctx, 0.5);
+            right_bar_inner(game)
+        };
+
+        let settled = step(&mut game, &SearchlightCommand::default(), 2);
+        let walking = step(&mut game, &walk, 10);
+        let stopped = step(
+            &mut game,
+            &SearchlightCommand::default(),
+            COAST_TICKS + settle_ticks + 3,
+        );
+
+        assert_eq!(settled, 400.0 + Crosshair::GAP);
+        assert!(
+            walking > 400.0 + Crosshair::GAP + 1.0,
+            "the bar is at {walking} while walking"
+        );
+        assert_eq!(stopped, 400.0 + Crosshair::GAP);
     }
 }
