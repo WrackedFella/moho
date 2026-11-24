@@ -702,6 +702,40 @@ mod tests {
     }
 
     #[test]
+    fn revision_never_returns_to_an_earlier_value() {
+        let mut grid = VoxelGrid::new(16);
+        let pos = BlockPos::new(1, 1, 1);
+        let mut source = VoxelGrid::new(16);
+        source.place_block(BlockPos::new(2, 2, 2), 3, None);
+        let bytes = source
+            .serialize_chunk(IVec3::ZERO)
+            .expect("modified chunk serializes");
+        let mut seen = vec![grid.revision()];
+        let mut record = |grid: &VoxelGrid| seen.push(grid.revision());
+
+        grid.place_block(pos, 1, None);
+        record(&grid);
+        grid.clear_block(pos);
+        record(&grid);
+        grid.place_block(pos, 1, None);
+        record(&grid);
+        grid.place_block(pos, 2, None);
+        record(&grid);
+        grid.clear_block(pos);
+        record(&grid);
+        grid.deserialize_chunk_into(IVec3::ZERO, &bytes)
+            .expect("valid chunk");
+        record(&grid);
+        grid.remove_chunk(IVec3::ZERO);
+        record(&grid);
+
+        assert!(
+            seen.windows(2).all(|pair| pair[0] < pair[1]),
+            "every solid change moves the revision forward: {seen:?}"
+        );
+    }
+
+    #[test]
     fn test_place_and_query() {
         let mut grid = VoxelGrid::new(16);
         let pos = BlockPos::new(0, 0, 0);
