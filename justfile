@@ -189,6 +189,21 @@ run-record-test:
     done
     diff "$f/table.md" <(scripts/run-record.sh table < "$f/records.jsonl")
     diff "$f/digest.md" <(scripts/run-record.sh digest < "$f/records.jsonl")
+    # Entries of a split message carry a partial output count: step outputs must still add up to the
+    # result's per-model output exactly, and input and cache counts to within 20% (a real run
+    # showed 2-16% unattributed, from calls the log does not hold).
+    for x in execution execution-partial; do
+        scripts/run-record.sh record "$f/$x.json" | jq -e '
+            .models as $m | [.steps[] | .models | to_entries[]] | group_by(.key) | all(
+                . as $g | $g[0].key as $k
+                | ["input", "output", "cache_read", "cache_write"] | all(. as $c
+                    | ($g | map(.value[if $c == "output" then "output_est" else $c end]) | add) as $s | $m[$k][$c] as $t
+                    | ($s - $t | fabs) <= $t * (if $c == "output" then 0 else 0.2 end)))' > /dev/null \
+            || { echo "run-record $x: step tokens do not reconcile with model totals"; exit 1; }
+    done
+    diff "$f/record-partial.jsonl" <(
+        ISSUE=9 GATE_CLASS=glue HEAD_SHA=abc DEVFLOW_SHA=f20ec3e45100 RUN_URL= \
+            scripts/run-record.sh record "$f/execution-partial.json" | jq -c 'del(.at)')
     echo "run-record: OK"
 
 # Layering check on the real crate graph, plus self-tests that each rule rejects its fixture.

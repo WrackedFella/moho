@@ -56,7 +56,7 @@ jobs:
           fi
           if [ -n "$reason" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Skipped: $reason" >> "$GITHUB_STEP_SUMMARY"
+            echo "Skipped: $reason" | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           rounds=$(gh api "repos/$GITHUB_REPOSITORY/issues/$pr/comments" --paginate \

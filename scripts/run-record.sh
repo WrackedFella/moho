@@ -3,11 +3,15 @@
 # yielded anything, computed in the job from the action's execution log and printed as
 # one `RUN-RECORD {json}` line. The log itself is never uploaded: Actions masks secrets in
 # job logs but not in artifacts, and the repository is public. Tokens are four counts per
-# model, never summed across models or kinds; cost is the API-rate equivalent, last.
+# model, never summed across models or kinds, except per-step output, which is an estimate
+# (`output_est`); cost is the API-rate equivalent, last.
 #
 # A step is the subagent or skill the main loop called (`devflow:builder (tests)`,
 # `skill devflow:wiki`); `orchestrator` is the main loop itself. Subagent messages carry a
-# parent_tool_use_id that leads to the call that started them. Yield is what a step left
+# parent_tool_use_id that leads to the call that started them. Per-step input and cache counts
+# are exact per message; per-step output is the result's per-model output shared across that
+# model's steps by the size of what each step wrote, since the log's own per-message output
+# counts are partial. Yield is what a step left
 # behind that the log shows: files it edited (and how many were test files), and the
 # mutation counts the main loop read. Inline unit tests in a source file count as source.
 #
@@ -64,13 +68,26 @@ steps_of() {
             elif ($calls[$p] // null) == null then "unknown"
             elif $calls[$p].parent == null then lbl($calls[$p])
             else root($calls[$p].parent) end;
-        # A message split over several log entries repeats its usage, and the early entries carry
-        # a partial output count: count each message once, from the entry with the most output.
-        [ $all[] | select(.type == "assistant" and .message.usage != null)
+        # A message split over several log entries repeats its usage: count each message once.
+        # Input and cache counts are complete in every entry; the output count is only what the
+        # stream held when the entry was written, a few tokens (about 1/25 of the real total on
+        # run 45474158961), and the log carries no later correction per message. The `result`
+        # entry has the true output per model, so that total is shared across the steps of that model
+        # in proportion to the size of what each step wrote (text, thinking, tool input).
+        def size: [.[]? | (.text // .thinking // (.input | tojson) // "") | length / 4 + 10] | add // 0;
+        def alloc($t): (add // 0) as $w
+            | if $w == 0 then null else
+              map(. * $t / $w) as $x | ($x | map(floor)) as $f | ($t - ($f | add)) as $r
+              | ([range(0; length)] | sort_by(-($x[.] - $f[.]), .) | .[:$r]) as $up
+              | [range(0; length) | . as $i | $f[$i] + (if $up | index($i) then 1 else 0 end)] end;
+        ([ $all[] | select(.type == "result") ] | last // {} | .modelUsage // {}
+         | with_entries(.value |= (.outputTokens // .output_tokens))) as $truth
+        | [ $all[] | select(.type == "assistant" and .message.usage != null)
           | {id: (.message.id // ""), step: root(.parent_tool_use_id), model: (.message.model // "unknown"),
-             u: .message.usage, p: .parent_tool_use_id, n: .message.content}
+             u: .message.usage, w: (.message.content | size)}
         ] as $turns
-        | ($turns | map(select(.id != "")) | group_by(.id) | map(max_by(.u.output_tokens // 0))) as $counted
+        | ($turns | map(select(.id != "")) | group_by(.id)
+           | map(.[0] + {u: (max_by(.u.output_tokens // 0) | .u), w: (map(.w) | add)})) as $counted
         | def edits($step): [ $all[] | select(.type == "assistant")
               | select(root(.parent_tool_use_id) == $step)
               | .message.content[]? | select(.type == "tool_use" and (.name | IN("Edit", "Write", "MultiEdit", "NotebookEdit")))
@@ -80,14 +97,22 @@ steps_of() {
           # A test file by path, or any file an edit added a Rust test to (tests are inline modules).
           def is_test: (.path | test("(^|/)tests?/|_tests?\\.rs$|(^|/)tests?\\.rs$"))
             or (.text | test("#\\[(cfg\\(test\\)|test|tokio::test)\\]"));
-          ($counted | group_by(.step) | map({
+          # One row per step and model, then the true output of each model shared across its rows.
+          ($counted | group_by([.step, .model]) | map({
+              step: .[0].step, model: .[0].model, calls: length, w: (map(.w) | add),
+              input: (map(.u.input_tokens // 0) | add),
+              output: (map(.u.output_tokens // 0) | add),
+              cache_read: (map(.u.cache_read_input_tokens // 0) | add),
+              cache_write: (map(.u.cache_creation_input_tokens // 0) | add)})) as $rows
+        | ($rows | group_by(.model) | map(
+              (.[0].model) as $m
+              | (if $truth[$m] == null then null else (map(.w) | alloc($truth[$m])) end) as $out
+              | to_entries | map(.value + (if $out == null then {} else {output: $out[.key]} end)))
+              | add // []) as $shared
+        | ($shared | group_by(.step) | map({
               step: .[0].step,
-              calls: length,
-              models: (group_by(.model) | map({key: .[0].model, value: {
-                  input: (map(.u.input_tokens // 0) | add),
-                  output: (map(.u.output_tokens // 0) | add),
-                  cache_read: (map(.u.cache_read_input_tokens // 0) | add),
-                  cache_write: (map(.u.cache_creation_input_tokens // 0) | add)}}) | from_entries)
+              calls: (map(.calls) | add),
+              models: (map({key: .model, value: {input, output_est: .output, cache_read, cache_write}}) | from_entries)
             })) as $steps
         | ([ $all[] | select(.type == "assistant" and .parent_tool_use_id == null)
              | .message.content[]? | select(.type == "tool_use" and .name == "Bash")
@@ -143,12 +168,12 @@ table() {
         def usd: if . == null then "?" else "$\(. * 100 | round / 100)" end;
         .[] as $r
         | "#### Run record: #\($r.issue | fmt) (\($r.gate_class // "?")), devflow \($r.devflow // "?")", "",
-          "\($r.subtype // "?"), \($r.turns | fmt) turns, \($r.duration_ms | secs), cost \($r.cost_usd | usd) at API rates. Tokens per model, never summed:", "",
-          "| Step | Calls | Model | Input | Output | Cache read | Cache write | Files edited | Test files |",
+          "\($r.subtype // "?"), \($r.turns | fmt) turns, \($r.duration_ms | secs), cost \($r.cost_usd | usd) at API rates. Tokens per model, never summed. Step output is an estimate (the run total shared by size of what each step wrote); other counts are exact:", "",
+          "| Step | Calls | Model | Input | Output (est.) | Cache read | Cache write | Files edited | Test files |",
           "|---|--:|---|--:|--:|--:|--:|--:|--:|",
           ($r.steps[] as $s | ($s.models | to_entries) as $m
            | $m | to_entries[] | .key as $i | .value as $e
-           | "| \(if $i == 0 then $s.step else "" end) | \(if $i == 0 then $s.calls else "" end) | \($e.key) | \($e.value.input) | \($e.value.output) | \($e.value.cache_read) | \($e.value.cache_write) | \(if $i == 0 then $s.edits.files else "" end) | \(if $i == 0 then $s.edits.tests else "" end) |"),
+           | "| \(if $i == 0 then $s.step else "" end) | \(if $i == 0 then $s.calls else "" end) | \($e.key) | \($e.value.input) | \($e.value.output_est) | \($e.value.cache_read) | \($e.value.cache_write) | \(if $i == 0 then $s.edits.files else "" end) | \(if $i == 0 then $s.edits.tests else "" end) |"),
           "",
           (if $r.mutants then "Mutants: \($r.mutants.caught) caught, \($r.mutants.missed) missed, \($r.mutants.unviable) unviable, \($r.mutants.timeout) timeout." else "Mutants: no mutation run read." end)'
 }

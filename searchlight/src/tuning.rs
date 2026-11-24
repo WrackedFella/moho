@@ -1,7 +1,7 @@
 //! The simulation's tuning, with the rifle's numbers taken from its definition.
 
 use moho_physics::{CharacterBody, Hull, HullShape, MoveSettings, Stature};
-use searchlight_rules::{BodyPart, BodyProfile, Kit, LeanTuning};
+use searchlight_rules::{AccuracyTuning, BodyPart, BodyProfile, Kit, LeanTuning};
 
 use crate::brain::EnemyTuning;
 use crate::sim::SimConfig;
@@ -76,6 +76,10 @@ pub fn tuning(kit: Kit) -> SimConfig {
             roll: 12.0_f32.to_radians(),
             blend_seconds: 0.25,
             speed_factor: 0.5,
+        },
+        accuracy: AccuracyTuning {
+            walk_spread: 0.03,
+            settle_seconds: 0.35,
         },
     }
 }

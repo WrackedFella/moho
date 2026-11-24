@@ -11,8 +11,8 @@ use moho_level::{LevelMarker, NavMesh};
 use moho_physics::{MoveSettings, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshId};
 use searchlight_rules::{
-    Ballistics, BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId, LeanTuning, Loadout,
-    Magazine, MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
+    AccuracyTuning, Ballistics, BodyPart, BodyProfile, Caliber, Grade, GradeMix, ItemId,
+    LeanTuning, Loadout, Magazine, MagazineSpec, MagazineWell, Rifle, Rig, RigSpec,
 };
 
 use crate::arena::{Arena, ArenaControl, nav_profile};
@@ -194,6 +194,10 @@ pub(crate) fn test_config(rifle: Rifle, spares: Vec<Magazine>) -> SimConfig {
             roll: 12.0_f32.to_radians(),
             blend_seconds: 0.25,
             speed_factor: 0.5,
+        },
+        accuracy: AccuracyTuning {
+            walk_spread: 0.03,
+            settle_seconds: 0.35,
         },
     }
 }

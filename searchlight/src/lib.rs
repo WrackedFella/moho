@@ -5,6 +5,7 @@ pub mod arena;
 pub mod brain;
 pub mod console_commands;
 pub mod control;
+pub mod controls;
 pub mod cover;
 pub mod debug_settings;
 pub mod game;

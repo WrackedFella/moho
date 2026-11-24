@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 1f93d7fd04b0af78a60ffce7d8201971ced8ed6d439bd4bbd256f593e13b182f # shrinks to cube_index = 239, sixty_fourths = 41
+cc 7190acc6dff32b71e2e407faa69bc7928eceb512ae2f9a8f6480f3442b9bcaa2 # shrinks to (field, blocky, cut) = (Field { lo: [10, 11, 10], hi: [22, 21, 22], normal: [-3, 3, -2], offset: -29 }, false, 16.5)

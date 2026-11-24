@@ -3,8 +3,8 @@ name: Claude
 # Runs devflow on one issue. Labeling a work item `agent-ready` starts the orchestrator;
 # labeling a `feature` issue starts refinement into work items. A manual dispatch with an
 # issue number runs the orchestrator, for testing. A run that needs a person's answer
-# comments its questions and labels the issue `agent-paused`; a reply from an owner, member
-# or collaborator on a paused issue starts the same skill again. The default
+# comments its questions and labels the issue `agent-paused`; a comment starting with Resume
+# from an owner, member or collaborator on a paused issue starts the same skill again. The default
 # GitHub token is enough: board Status is moved by the Board sync workflow, not here.
 on:
   issues:
@@ -41,7 +41,7 @@ jobs:
           || (github.event_name == 'issue_comment' && !github.event.issue.pull_request
               && contains(github.event.issue.labels.*.name, 'agent-paused')
               && github.event.comment.user.type != 'Bot'
-              && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)))
+              && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) && (startsWith(github.event.comment.body, 'Resume') || startsWith(github.event.comment.body, '**Resume'))))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -52,7 +52,7 @@ jobs:
       - name: Ensure pause label
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh label create agent-paused --repo "$GITHUB_REPOSITORY" --color FBCA04 --description "Run waiting for a human answer; reply on the issue to resume" || true
+        run: gh label create agent-paused --repo "$GITHUB_REPOSITORY" --color FBCA04 --description "Run waiting for a human answer; comment starting with Resume to resume" || true
       - name: Note existing cards
         run: gh api "repos/$GITHUB_REPOSITORY/issues/$FEATURE/sub_issues" --paginate --jq '.[].number' > "$RUNNER_TEMP/cards-before"
       - uses: anthropics/claude-code-action@v1
@@ -79,12 +79,13 @@ jobs:
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
         run: |
           [ -f "$EXECUTION_FILE" ] || exit 0
+          set -o pipefail
           {
             echo "### Run result"
             jq -r '.[] | select(.type == "result") | "- subtype `\(.subtype)`, turns \(.num_turns)"' "$EXECUTION_FILE"
             echo "### Denied commands"
             jq -r '.[] | select(.type == "result") | .permission_denials[]? | "- `\(.tool_name)`: \((.tool_input.command // .tool_input.file_path // "") | tostring | .[0:200])"' "$EXECUTION_FILE"
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Start runs for new labeled cards
         run: |
           gh api "repos/$GITHUB_REPOSITORY/issues/$FEATURE/sub_issues" --paginate \
@@ -104,7 +105,7 @@ jobs:
               || (github.event_name == 'issue_comment' && !github.event.issue.pull_request
                   && contains(github.event.issue.labels.*.name, 'agent-paused')
                   && github.event.comment.user.type != 'Bot'
-                  && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))))
+                  && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) && (startsWith(github.event.comment.body, 'Resume') || startsWith(github.event.comment.body, '**Resume')))))
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -112,7 +113,7 @@ jobs:
       - name: Ensure pause label
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh label create agent-paused --repo "$GITHUB_REPOSITORY" --color FBCA04 --description "Run waiting for a human answer; reply on the issue to resume" || true
+        run: gh label create agent-paused --repo "$GITHUB_REPOSITORY" --color FBCA04 --description "Run waiting for a human answer; comment starting with Resume to resume" || true
       # Installs the pinned Rust toolchain and the gate's tools (just, nextest, ...).
       - name: Install toolchain
         run: |
@@ -165,12 +166,13 @@ jobs:
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
         run: |
           [ -f "$EXECUTION_FILE" ] || exit 0
+          set -o pipefail
           {
             echo "### Run result"
             jq -r '.[] | select(.type == "result") | "- subtype `\(.subtype)`, turns \(.num_turns)"' "$EXECUTION_FILE"
             echo "### Denied commands"
             jq -r '.[] | select(.type == "result") | .permission_denials[]? | "- `\(.tool_name)`: \((.tool_input.command // .tool_input.file_path // "") | tostring | .[0:200])"' "$EXECUTION_FILE"
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
       # One RUN-RECORD line per run, so real card runs build the per-step data that lane
       # decisions need (D0012). The execution log is not uploaded: the repository is public
       # and artifacts are not secret-masked.
