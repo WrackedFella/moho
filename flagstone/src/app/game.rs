@@ -632,6 +632,14 @@ impl moho_app::Game for App {
             ctx.set_window_mode(mode);
             self.window_mode_applied(mode);
         }
+        let size = self
+            .ui_adapter
+            .as_ref()
+            .and_then(|adapter| adapter.lock().ok())
+            .and_then(|mut adapter| adapter.take_requested_window_size());
+        if let Some((width, height)) = size {
+            ctx.set_window_size(width, height);
+        }
 
         if std::mem::take(&mut self.frame_cap_changed) {
             ctx.set_frame_cap(self.pending_frame_cap);
@@ -2152,6 +2160,64 @@ mod tests {
             let mut again = moho_app::FrameContext::new(tick(), &clock, None, None);
             Game::frame(&mut app, &mut again, 0.0);
             assert_eq!(again.requested_window_mode(), None, "asked once");
+        }
+
+        fn frame_after_applying(mode: moho_core::prefs::WindowMode, size: (u32, u32)) -> Requests {
+            use flagstone_ui::screens::MenuAction;
+            let mut app = playing_app();
+            let adapter = attach_adapter(&mut app);
+            let mut prefs = app.prefs.clone();
+            prefs.set_window_mode(mode);
+            prefs.set_window_resolution(size.0, size.1);
+            adapter
+                .lock()
+                .expect("adapter lock")
+                .record_menu_action(&MenuAction::SettingsSaved(prefs));
+            let clock = GameClock::default();
+            let mut ctx = moho_app::FrameContext::new(tick(), &clock, None, None);
+
+            Game::frame(&mut app, &mut ctx, 0.0);
+            let first = (ctx.requested_window_mode(), ctx.requested_window_size());
+            let mut again = moho_app::FrameContext::new(tick(), &clock, None, None);
+            Game::frame(&mut app, &mut again, 0.0);
+
+            Requests {
+                first,
+                again: (again.requested_window_mode(), again.requested_window_size()),
+            }
+        }
+
+        struct Requests {
+            first: (Option<WindowMode>, Option<(u32, u32)>),
+            again: (Option<WindowMode>, Option<(u32, u32)>),
+        }
+
+        #[test]
+        fn applying_windowed_asks_for_the_mode_and_the_size_in_the_same_frame() {
+            let requests =
+                frame_after_applying(moho_core::prefs::WindowMode::Windowed, (1280, 720));
+
+            assert_eq!(
+                requests.first,
+                (Some(WindowMode::Windowed), Some((1280, 720)))
+            );
+            assert_eq!(requests.again, (None, None), "asked once");
+        }
+
+        #[test]
+        fn applying_a_fullscreen_mode_asks_for_no_size() {
+            for mode in [
+                moho_core::prefs::WindowMode::Fullscreen,
+                moho_core::prefs::WindowMode::Borderless,
+            ] {
+                let requests = frame_after_applying(mode, (1280, 720));
+
+                assert_eq!(
+                    requests.first,
+                    (Some(WindowMode::Borderless), None),
+                    "{mode:?}"
+                );
+            }
         }
 
         #[test]

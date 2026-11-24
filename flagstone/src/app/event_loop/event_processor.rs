@@ -114,12 +114,8 @@ impl EventProcessor {
                 width,
                 height,
             } => {
+                // The engine applies the mode and size when `App::frame` asks for them.
                 tracing::info!(mode = ?mode, width, height, "Window settings changed");
-                if mode == moho_core::events::WindowMode::Windowed
-                    && let Some(window) = &app.window
-                {
-                    let _ = window.request_inner_size(winit::dpi::PhysicalSize::new(width, height));
-                }
             }
         }
     }
