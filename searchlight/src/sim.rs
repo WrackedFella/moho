@@ -6662,6 +6662,62 @@ mod player_spread_tests {
     }
 
     #[test]
+    fn a_sim_that_cannot_walk_reads_a_standing_player_as_settled() {
+        let mut config = config();
+        config.move_settings.max_speed = 0.0;
+        let mut sim = sim_with(config);
+
+        walk(&mut sim, 0.0, WARM_UP);
+        let spread = sim.player_spread();
+        let offsets = volley(&mut sim, 0.0, 5);
+
+        assert_eq!(sim.max_speed(), 0.0);
+        assert_eq!(spread, 0.0);
+        assert!(
+            offsets.iter().all(|&offset| offset == (0.0, 0.0)),
+            "{offsets:?}"
+        );
+    }
+
+    #[test]
+    fn a_walking_shot_looking_straight_up_or_down_stays_in_the_cone_of_the_view() {
+        for (row, pitch) in [("up", 3.0), ("down", -3.0)] {
+            let mut sim = sim_with(config());
+            let mut look = stride(1.0, false, false);
+            look.movement.pitch_delta = pitch;
+            sim.tick(&look, DT);
+            walk(&mut sim, 1.0, WARM_UP);
+            let command = stride(1.0, true, false);
+            let mut shots = 0;
+
+            for _ in 0..60 {
+                sim.tick(&command, DT);
+                if !sim.drain_feedback().contains(&Feedback::Fired) {
+                    continue;
+                }
+                shots += 1;
+                let state = sim.player();
+                let view = first_person_view(&state, &state, 1.0, (0.0, 0.0)).forward;
+                let shot = sim
+                    .rounds_in_flight()
+                    .last()
+                    .expect("a round fired this tick is in the air")
+                    .flight
+                    .velocity;
+
+                assert!(shot.is_finite() && shot.length() > 0.0, "{row}: {shot:?}");
+                let angle = shot.normalize().dot(view).clamp(-1.0, 1.0).acos();
+                assert!(
+                    angle <= sim.player_spread() + 1e-4,
+                    "{row}: {angle} rad off the view, spread {}",
+                    sim.player_spread()
+                );
+            }
+            assert!(shots >= 5, "{row}: only {shots} shots fired");
+        }
+    }
+
+    #[test]
     fn the_speed_ratio_comes_from_ground_speed_over_the_unleaned_walking_speed() {
         let config = config();
         let walk_spread = config.accuracy.walk_spread;

@@ -6371,6 +6371,9 @@ mod crosshair_spread_tests {
 
     #[test]
     fn a_frame_while_walking_opens_the_crosshair_and_it_closes_after_the_settle_time() {
+        // `test_config` friction coasts a walking player to rest in about 36 ticks; the
+        // spread follows that speed down, then settles.
+        const COAST_TICKS: usize = 40;
         let config = crate::test_support::test_config(
             crate::test_support::rifle_from(crate::test_support::mag(30, 5)),
             vec![],
@@ -6413,9 +6416,6 @@ mod crosshair_spread_tests {
 
         let settled = step(&mut game, &SearchlightCommand::default(), 2);
         let walking = step(&mut game, &walk, 10);
-        // `test_config` friction coasts a walking player to rest in about 36 ticks; the
-        // spread follows that speed down, then settles.
-        const COAST_TICKS: usize = 40;
         let stopped = step(
             &mut game,
             &SearchlightCommand::default(),

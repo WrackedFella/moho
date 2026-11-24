@@ -36,7 +36,12 @@ impl Accuracy {
         dt: f32,
         tuning: &AccuracyTuning,
     ) -> Accuracy {
-        let capped = speed_ratio.min(Self::MAX_SPEED_RATIO);
+        // A ratio that is not a number (0 / 0 for a player who cannot walk) reads as no movement.
+        let capped = if speed_ratio.is_nan() {
+            0.0
+        } else {
+            speed_ratio.clamp(0.0, Self::MAX_SPEED_RATIO)
+        };
         let ratio = if grounded { capped } else { capped.max(1.0) };
         let fall = if tuning.settle_seconds > 0.0 {
             tuning.walk_spread / tuning.settle_seconds * dt.max(0.0)
@@ -175,6 +180,34 @@ mod tests {
         assert_close(b1, radius * 0.5);
         assert_close(a2, -radius * 0.5);
         assert_close(b2, 0.0);
+    }
+
+    #[test]
+    fn a_ratio_that_is_not_a_number_reads_as_no_movement_and_an_infinite_one_as_the_cap() {
+        let tuning = tuning();
+        let from_settled = |ratio: f32, grounded: bool| {
+            Accuracy::default()
+                .step(ratio, grounded, 1.0 / 60.0, &tuning)
+                .spread(&tuning)
+        };
+
+        assert_eq!(from_settled(f32::NAN, true), 0.0, "grounded");
+        assert_close(from_settled(f32::NAN, false), tuning.walk_spread);
+        assert_close(from_settled(f32::INFINITY, true), tuning.walk_spread * 1.5);
+    }
+
+    #[test]
+    fn a_negative_step_never_grows_the_spread() {
+        let tuning = tuning();
+        let walking = Accuracy::default().step(1.0, true, 1.0 / 60.0, &tuning);
+
+        let stepped = walking.step(0.0, true, -1.0, &tuning);
+
+        let spread = stepped.spread(&tuning);
+        assert!(
+            (0.0..=tuning.walk_spread).contains(&spread),
+            "spread {spread} after a negative step"
+        );
     }
 
     proptest! {
