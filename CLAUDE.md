@@ -15,6 +15,7 @@ just check                         # the gate
 just test -E 'package(moho_core)'  # one crate; -E 'test(name)' for one test
 just mutants                       # mutation-test domain-path changes since origin/dev; exit 2 = survivor
 just deny                          # licenses, advisories, sources
+just assets                        # regenerate generated assets (.glb, .wav); never run their python directly
 bash scripts/cloud-tools.sh        # cloud threads only, before the first build
 gh workflow run CI --ref <branch>  # all three OSes on a branch (PRs into dev run Linux only)
 cargo run -p flagstone             # RUST_LOG=debug for logging
@@ -45,6 +46,8 @@ cargo run -p searchlight           # the FPS prototype
 - **Planning:** index `_todo/README.md`, rules `_todo/_STANDARDS.md` (features first,
   IDs like `SG-F1-04`, card lifecycle). Check `wiki/roadmap.md` (cross-line) and your line's roadmap (`wiki/{engine,flagstone,searchlight}/roadmap.md`) for order before
   picking up work.
+- **Generate command:** `just assets` (rebuilds every committed generated file; `just check`
+  fails while one is stale).
 - **Environment setup command:** `bash scripts/cloud-tools.sh` (cloud threads only;
   text-only threads skip it).
 - **Standards:** `engineering-standards, rust-standards`.
