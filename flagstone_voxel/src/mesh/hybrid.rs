@@ -15,7 +15,7 @@ use std::cell::Cell;
 // Shift from marching-cubes field-index space to world space (excluding the chunk origin).
 // Without it smooth terrain sits half a unit off-centre, misaligned with the blocky
 // path and the grid used by raycasting. Two offsets fold into one `-0.5`:
-// 1. `create_selective_density_field` pads by one cell, so index `i` is block `base + i - 1`.
+// 1. `terrain_density_field` pads by one cell, so index `i` is block `base + i - 1`.
 // 2. A density sample stands for the whole block, so it belongs at the block centre (`+ 0.5`).
 pub(crate) const DENSITY_SAMPLE_TO_WORLD: f32 = -0.5;
 
@@ -130,19 +130,6 @@ pub fn chunks_meshed_from(block: BlockPos, chunk_size: i32) -> impl Iterator<Ite
     })
 }
 
-/// Classifies the content of a chunk
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ChunkContent {
-    /// All blocks are empty (no mesh needed)
-    Empty,
-    /// All blocks are smooth terrain
-    AllSmooth,
-    /// All blocks are blocky structures
-    AllBlocky,
-    /// Contains both smooth and blocky blocks
-    Mixed,
-}
-
 /// Whether `lod` is meshed at full detail (LOD 0) rather than coarse; the one LOD rule
 /// shared by chunk meshing and the cut caps.
 pub(crate) fn is_fine_lod(lod: u8) -> bool {
@@ -153,109 +140,61 @@ pub(crate) fn is_fine_lod(lod: u8) -> bool {
 /// cells as the mesh.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MeshPlan {
-    /// Full-detail meshing of the content found in the chunk.
-    Fine(ChunkContent),
+    /// Full-detail meshing: the terrain surface plus one cube per structure block.
+    Fine,
     /// Coarse blocky meshing, whatever the content.
     Coarse,
 }
 
-/// The plan for chunk `chunk_pos` meshed at `lod`.
-pub(crate) fn mesh_plan(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32, lod: u8) -> MeshPlan {
+/// The plan for a chunk meshed at `lod`.
+pub(crate) fn mesh_plan(lod: u8) -> MeshPlan {
     if is_fine_lod(lod) {
-        let (content, _, _) = HybridMeshGenerator::analyze_chunk(grid, chunk_pos, chunk_size);
-        MeshPlan::Fine(content)
+        MeshPlan::Fine
     } else {
         MeshPlan::Coarse
     }
 }
 
-/// Whether the blocky mesher draws the block at `pos` in a `Mixed` chunk, where the
-/// smooth mesher leaves blocky blocks out.
-pub(crate) fn is_meshed_blocky_in_mixed(grid: &VoxelGrid, pos: IVec3) -> bool {
+/// Whether the block at `pos` is a structure block, drawn as a cube. Structure blocks are
+/// air to the terrain surface wherever they sit.
+pub(crate) fn is_structure_at(grid: &VoxelGrid, pos: IVec3) -> bool {
     grid.is_smooth_at(pos) == Some(false)
 }
 
-/// Hybrid mesh generator supporting both smooth and blocky geometry
+/// Hybrid mesh generator: a smooth terrain surface plus blocky structures.
 pub struct HybridMeshGenerator;
 
 impl HybridMeshGenerator {
-    /// Analyze chunk content to determine mesh generation strategy
+    /// Generate a mesh for a chunk: the terrain surface from the terrain density field
+    /// (structure blocks are air to it), then one cube per structure block in the chunk.
+    /// A chunk with neither gives an empty mesh.
     ///
     /// # Arguments
     /// * `grid` - The voxel grid
     /// * `chunk_pos` - Chunk position in chunk coordinates
     /// * `chunk_size` - Size of chunks (typically 16)
-    ///
-    /// # Returns
-    /// Classification of chunk content and counts of each type
-    pub fn analyze_chunk(
-        grid: &VoxelGrid,
-        chunk_pos: IVec3,
-        chunk_size: i32,
-    ) -> (ChunkContent, usize, usize) {
+    pub fn generate_chunk_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
+        let mut mesh = Self::generate_smooth_mesh(grid, chunk_pos, chunk_size);
         let base_pos = chunk_pos * chunk_size;
-        let mut smooth_count = 0;
-        let mut blocky_count = 0;
 
-        // Scan all blocks in chunk
         for x in 0..chunk_size {
             for y in 0..chunk_size {
                 for z in 0..chunk_size {
                     let pos = base_pos + IVec3::new(x, y, z);
-                    match grid.is_smooth_at(pos) {
-                        Some(true) => smooth_count += 1,
-                        Some(false) => blocky_count += 1,
-                        None => {}
+                    if is_structure_at(grid, pos) {
+                        let block_mesh = BlockyMeshGenerator::generate_mesh(grid, pos);
+                        Self::append_mesh(&mut mesh, &block_mesh, pos);
                     }
                 }
             }
         }
 
-        let content = if smooth_count == 0 && blocky_count == 0 {
-            ChunkContent::Empty
-        } else if blocky_count == 0 {
-            ChunkContent::AllSmooth
-        } else if smooth_count == 0 {
-            ChunkContent::AllBlocky
-        } else {
-            ChunkContent::Mixed
-        };
-
-        (content, smooth_count, blocky_count)
+        mesh
     }
 
-    /// Generate a mesh for a chunk, automatically selecting appropriate strategy
-    ///
-    /// # Arguments
-    /// * `grid` - The voxel grid
-    /// * `chunk_pos` - Chunk position in chunk coordinates
-    /// * `chunk_size` - Size of chunks (typically 16)
-    ///
-    /// # Returns
-    /// A VoxelMesh combining smooth and blocky geometry as appropriate
-    pub fn generate_chunk_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
-        match Self::analyze_chunk(grid, chunk_pos, chunk_size).0 {
-            ChunkContent::Empty => VoxelMesh::empty(),
-            ChunkContent::AllSmooth => {
-                Self::generate_smooth_mesh(grid, chunk_pos, chunk_size, false)
-            }
-            ChunkContent::AllBlocky => Self::generate_blocky_mesh(grid, chunk_pos, chunk_size),
-            ChunkContent::Mixed => Self::generate_mixed_mesh(grid, chunk_pos, chunk_size),
-        }
-    }
-
-    /// Generate mesh using Marching Cubes for smooth terrain, in world space.
-    ///
-    /// With `only_smooth`, blocky blocks are left out of the density field so a
-    /// mixed chunk's terrain doesn't wrap its structures.
-    fn generate_smooth_mesh(
-        grid: &VoxelGrid,
-        chunk_pos: IVec3,
-        chunk_size: i32,
-        only_smooth: bool,
-    ) -> VoxelMesh {
-        let density_field =
-            Self::create_selective_density_field(grid, chunk_pos, chunk_size, only_smooth);
+    /// Generate mesh using Marching Cubes for the terrain surface, in world space.
+    fn generate_smooth_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
+        let density_field = Self::terrain_density_field(grid, chunk_pos, chunk_size);
         let base = chunk_pos * chunk_size;
         // Cells sharing an edge ask for the same air sample; occlusion costs 26 lookups.
         let occlusion: Vec<Cell<Option<f32>>> = vec![Cell::new(None); 18 * 18 * 18];
@@ -287,57 +226,12 @@ impl HybridMeshGenerator {
         mesh
     }
 
-    /// Generate mesh using greedy meshing for blocky structures
-    fn generate_blocky_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
-        let mut mesh = VoxelMesh::empty();
-        let base_pos = chunk_pos * chunk_size;
-
-        // Generate mesh for each block in chunk
-        for x in 0..chunk_size {
-            for y in 0..chunk_size {
-                for z in 0..chunk_size {
-                    let pos = base_pos + IVec3::new(x, y, z);
-                    if grid.is_solid_at(pos) {
-                        let block_mesh = BlockyMeshGenerator::generate_mesh(grid, pos);
-                        Self::append_mesh(&mut mesh, &block_mesh, pos);
-                    }
-                }
-            }
-        }
-
-        mesh
-    }
-
-    /// Generate mesh for mixed chunk (smooth + blocky)
-    fn generate_mixed_mesh(grid: &VoxelGrid, chunk_pos: IVec3, chunk_size: i32) -> VoxelMesh {
-        let mut final_mesh = Self::generate_smooth_mesh(grid, chunk_pos, chunk_size, true);
-        let base_pos = chunk_pos * chunk_size;
-
-        // Generate blocky structure meshes (only for blocky blocks)
-        for x in 0..chunk_size {
-            for y in 0..chunk_size {
-                for z in 0..chunk_size {
-                    let pos = base_pos + IVec3::new(x, y, z);
-                    if is_meshed_blocky_in_mixed(grid, pos) {
-                        let block_mesh = BlockyMeshGenerator::generate_mesh(grid, pos);
-                        Self::append_mesh(&mut final_mesh, &block_mesh, pos);
-                    }
-                }
-            }
-        }
-
-        final_mesh
-    }
-
-    /// Create density field with optional filtering
-    ///
-    /// # Arguments
-    /// * `only_smooth` - If true, only include smooth blocks in density
-    pub(crate) fn create_selective_density_field(
+    /// The density field of the chunk's terrain blocks, padded by one block on every side.
+    /// Structure blocks are air to it, inside the chunk and in its padding.
+    pub(crate) fn terrain_density_field(
         grid: &VoxelGrid,
         chunk_pos: IVec3,
         chunk_size: i32,
-        only_smooth: bool,
     ) -> [[[f32; DENSITY_FIELD_SIZE]; DENSITY_FIELD_SIZE]; DENSITY_FIELD_SIZE] {
         let mut field = [[[0.0f32; DENSITY_FIELD_SIZE]; DENSITY_FIELD_SIZE]; DENSITY_FIELD_SIZE];
         let base_pos = chunk_pos * chunk_size;
@@ -348,12 +242,11 @@ impl HybridMeshGenerator {
                 for (z, col) in row.iter_mut().enumerate() {
                     let world_pos = sample_block(base_pos, [x, y, z]);
 
-                    let is_solid = match grid.is_smooth_at(world_pos) {
-                        Some(smooth) => !only_smooth || smooth,
-                        None => false,
+                    *col = if grid.is_smooth_at(world_pos) == Some(true) {
+                        1.0
+                    } else {
+                        0.0
                     };
-
-                    *col = if is_solid { 1.0 } else { 0.0 };
                 }
             }
         }
@@ -596,43 +489,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_analyze_empty_chunk() {
-        let grid = VoxelGrid::new(16);
-        let (content, smooth, blocky) = HybridMeshGenerator::analyze_chunk(&grid, IVec3::ZERO, 16);
-
-        assert_eq!(content, ChunkContent::Empty);
-        assert_eq!(smooth, 0);
-        assert_eq!(blocky, 0);
-    }
-
-    #[test]
-    fn analyze_chunk_classifies_uniform_chunks() {
-        let rows = [
-            (0, ChunkContent::AllSmooth, 64, 0),
-            (99, ChunkContent::AllSmooth, 64, 0),
-            (100, ChunkContent::AllBlocky, 0, 64),
-        ];
-
-        for (material, expected_content, expected_smooth, expected_blocky) in rows {
-            let mut grid = VoxelGrid::new(16);
-            for x in 0..4 {
-                for y in 0..4 {
-                    for z in 0..4 {
-                        grid.place_block(IVec3::new(x, y, z), material, None);
-                    }
-                }
-            }
-
-            let (content, smooth, blocky) =
-                HybridMeshGenerator::analyze_chunk(&grid, IVec3::ZERO, 16);
-
-            assert_eq!(content, expected_content, "material {material}");
-            assert_eq!(smooth, expected_smooth, "material {material}");
-            assert_eq!(blocky, expected_blocky, "material {material}");
-        }
-    }
-
     fn meshed_from_sized(block: [i32; 3], chunk_size: i32) -> Vec<[i32; 3]> {
         let mut chunks: Vec<[i32; 3]> = chunks_meshed_from(IVec3::from(block), chunk_size)
             .map(|chunk| chunk.to_array())
@@ -797,36 +653,6 @@ mod tests {
             meshed_from([-16, -11, -32]),
             vec![[-2, -1, -3], [-2, -1, -2], [-1, -1, -3], [-1, -1, -2]]
         );
-    }
-
-    #[test]
-    fn test_analyze_mixed_chunk() {
-        let mut grid = VoxelGrid::new(16);
-
-        // Add mix of smooth and blocky blocks
-        for x in 0..2 {
-            for y in 0..2 {
-                for z in 0..2 {
-                    let pos = IVec3::new(x, y, z);
-                    grid.place_block(pos, 0, None); // Smooth
-                }
-            }
-        }
-
-        for x in 2..4 {
-            for y in 2..4 {
-                for z in 2..4 {
-                    let pos = IVec3::new(x, y, z);
-                    grid.place_block(pos, 100, None); // Blocky
-                }
-            }
-        }
-
-        let (content, smooth, blocky) = HybridMeshGenerator::analyze_chunk(&grid, IVec3::ZERO, 16);
-
-        assert_eq!(content, ChunkContent::Mixed);
-        assert_eq!(smooth, 8);
-        assert_eq!(blocky, 8);
     }
 
     #[test]

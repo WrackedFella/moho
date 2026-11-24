@@ -7,9 +7,8 @@ use super::super::face::FaceDirection;
 use super::super::grid::VoxelGrid;
 use super::VoxelMesh;
 use super::hybrid::{
-    COARSE_STRIDE, ChunkContent, DENSITY_SAMPLE_TO_WORLD, HybridMeshGenerator, MeshPlan,
-    coarse_cell_solid, coarse_face_material, is_meshed_blocky_in_mixed, mesh_plan,
-    sample_face_material,
+    COARSE_STRIDE, DENSITY_SAMPLE_TO_WORLD, HybridMeshGenerator, MeshPlan, coarse_cell_solid,
+    coarse_face_material, is_structure_at, mesh_plan, sample_face_material,
 };
 use super::marching_cubes::{MarchingCubes, cube_index, nearest_solid_corner};
 use glam::{IVec3, Vec2, Vec3};
@@ -49,18 +48,11 @@ pub fn cut_cap_mesh(grid: &VoxelGrid, chunk_pos: IVec3, lod: u8, cut: f32) -> Vo
     let base = chunk_pos * chunk_size;
     let probe = cut + CAP_PROBE;
     let mut cap = CapBuilder::new(cut);
-    match mesh_plan(grid, chunk_pos, chunk_size, lod) {
-        MeshPlan::Fine(ChunkContent::Empty) => {}
-        MeshPlan::Fine(ChunkContent::AllSmooth) => {
-            cap_smooth_cells(grid, chunk_pos, chunk_size, false, probe, &mut cap);
-        }
-        MeshPlan::Fine(ChunkContent::AllBlocky) => {
-            cap_blocks(grid, base, chunk_size, probe, |_| true, &mut cap);
-        }
-        MeshPlan::Fine(ChunkContent::Mixed) => {
-            cap_smooth_cells(grid, chunk_pos, chunk_size, true, probe, &mut cap);
-            let blocky = |pos| is_meshed_blocky_in_mixed(grid, pos);
-            cap_blocks(grid, base, chunk_size, probe, blocky, &mut cap);
+    match mesh_plan(lod) {
+        MeshPlan::Fine => {
+            cap_smooth_cells(grid, chunk_pos, chunk_size, probe, &mut cap);
+            let structure = |pos| is_structure_at(grid, pos);
+            cap_blocks(grid, base, chunk_size, probe, structure, &mut cap);
         }
         MeshPlan::Coarse => cap_coarse_cells(grid, base, chunk_size, probe, &mut cap),
     }
@@ -73,7 +65,6 @@ fn cap_smooth_cells(
     grid: &VoxelGrid,
     chunk_pos: IVec3,
     chunk_size: i32,
-    only_smooth: bool,
     probe: f32,
     cap: &mut CapBuilder,
 ) {
@@ -89,12 +80,7 @@ fn cap_smooth_cells(
     }
     let height = field_y - row;
     let y = row as usize;
-    let field = HybridMeshGenerator::create_selective_density_field(
-        grid,
-        chunk_pos,
-        chunk_size,
-        only_smooth,
-    );
+    let field = HybridMeshGenerator::terrain_density_field(grid, chunk_pos, chunk_size);
     for x in 1..=chunk_size as usize {
         for z in 1..=chunk_size as usize {
             let cube_index = cube_index(&field, x, y, z);
@@ -118,13 +104,13 @@ fn cap_smooth_cells(
     }
 }
 
-/// Caps every block in the chunk's range that spans `probe` and passes `meshed_blocky`.
+/// Caps every block in the chunk's range that spans `probe` and passes `is_structure`.
 fn cap_blocks(
     grid: &VoxelGrid,
     base: IVec3,
     chunk_size: i32,
     probe: f32,
-    meshed_blocky: impl Fn(IVec3) -> bool,
+    is_structure: impl Fn(IVec3) -> bool,
     cap: &mut CapBuilder,
 ) {
     let y = probe.floor() as i32;
@@ -134,7 +120,7 @@ fn cap_blocks(
     for x in base.x..base.x + chunk_size {
         for z in base.z..base.z + chunk_size {
             let pos = IVec3::new(x, y, z);
-            if grid.is_solid_at(pos) && meshed_blocky(pos) {
+            if grid.is_solid_at(pos) && is_structure(pos) {
                 let material = grid.face_material_at(pos).expect("guarded by is_solid_at");
                 cap.square(Vec2::new(x as f32, z as f32), 1, material);
             }

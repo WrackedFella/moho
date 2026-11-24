@@ -13,7 +13,7 @@ mod marching_cubes;
 pub use blocky::BlockyMeshGenerator;
 pub use cap::{CAP_PROBE, cap_chunk_layers, cut_cap_mesh};
 pub(crate) use hybrid::is_fine_lod;
-pub use hybrid::{ChunkContent, HybridMeshGenerator, chunks_meshed_from};
+pub use hybrid::{HybridMeshGenerator, chunks_meshed_from};
 pub use marching_cubes::{MarchingCubes, SurfaceSample};
 
 /// Intermediate mesh data produced by mesh generators and consumed by `VoxelChunk`.
