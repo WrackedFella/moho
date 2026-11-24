@@ -43,10 +43,10 @@ fn corner_block(base: IVec3, i: usize) -> BlockPos {
 }
 
 /// Which of the eight corner blocks of the cell at `base` are solid, in the corner order
-/// of the mesher (bit `i` set when corner `i` is solid).
-fn cube_index(grid: &VoxelGrid, base: IVec3) -> u8 {
+/// of the mesher (bit `i` set when `solid` holds for corner `i`).
+fn cube_index(solid: &impl Fn(BlockPos) -> bool, base: IVec3) -> u8 {
     (0..8)
-        .filter(|&i| grid.material_at(corner_block(base, i)).is_some())
+        .filter(|&i| solid(corner_block(base, i)))
         .fold(0, |index, i| index | (1 << i))
 }
 
@@ -107,6 +107,33 @@ pub fn raycast_surface(
     direction: Vec3,
     max_distance: f32,
 ) -> Option<SurfaceHit> {
+    raycast_surface_below(grid, origin, direction, max_distance, None)
+}
+
+/// [`raycast_surface`] with every block at `y >= ceiling` read as air; `None` hides nothing.
+///
+/// Used when the view is cut at a layer: the hit is the first crossing of the surface of
+/// the kept ground, which tops out on the cut plane, and its block is always below
+/// `ceiling` because only solid corners can own a hit.
+pub fn raycast_surface_below(
+    grid: &VoxelGrid,
+    origin: Vec3,
+    direction: Vec3,
+    max_distance: f32,
+    ceiling: Option<i32>,
+) -> Option<SurfaceHit> {
+    let solid = |block: BlockPos| {
+        ceiling.is_none_or(|ceiling| block.y < ceiling) && grid.material_at(block).is_some()
+    };
+    walk_surface(&solid, origin, direction, max_distance)
+}
+
+fn walk_surface(
+    solid: &impl Fn(BlockPos) -> bool,
+    origin: Vec3,
+    direction: Vec3,
+    max_distance: f32,
+) -> Option<SurfaceHit> {
     let dir = direction.normalize_or_zero();
     if dir == Vec3::ZERO {
         return None;
@@ -121,7 +148,7 @@ pub fn raycast_surface(
         let t_exit = walk.next_crossing();
         let cell = walk.cell;
 
-        let index = cube_index(grid, cell);
+        let index = cube_index(solid, cell);
         let cell_origin = cell.as_vec3() + Vec3::splat(0.5);
         let nearest = MarchingCubes::cell_triangles(index)
             .filter_map(|tri| triangle_crossing(origin, dir, &tri.map(|v| v + cell_origin)))
@@ -266,6 +293,10 @@ pub fn raycast(
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Range;
+
+    use proptest::prelude::*;
+
     use super::*;
 
     #[test]
@@ -434,6 +465,144 @@ mod tests {
                 "{} vs {entry}",
                 hit.distance
             );
+        }
+    }
+
+    fn fill(grid: &mut VoxelGrid, x: Range<i32>, y: Range<i32>, z: Range<i32>) {
+        for (x, y, z) in iproduct3(x, y, z) {
+            grid.mutator().place(BlockPos::new(x, y, z), 1, None);
+        }
+    }
+
+    fn iproduct3(
+        x: Range<i32>,
+        y: Range<i32>,
+        z: Range<i32>,
+    ) -> impl Iterator<Item = (i32, i32, i32)> {
+        x.flat_map(move |x| {
+            let z = z.clone();
+            y.clone()
+                .flat_map(move |y| z.clone().map(move |z| (x, y, z)))
+        })
+    }
+
+    /// Solid slab covering layers 0..=10.
+    fn slab() -> VoxelGrid {
+        let mut grid = VoxelGrid::new(16);
+        fill(&mut grid, 0..12, 0..11, 0..12);
+        grid
+    }
+
+    /// Floor on layers 0..=2, open cave on 3..=5, roof on 6..=7.
+    fn capped_cave() -> VoxelGrid {
+        let mut grid = VoxelGrid::new(16);
+        fill(&mut grid, 0..12, 0..3, 0..12);
+        fill(&mut grid, 0..12, 6..8, 0..12);
+        grid
+    }
+
+    #[test]
+    fn under_a_ceiling_a_ray_passes_hidden_layers_and_hits_the_top_kept_layer() {
+        let grid = slab();
+        let rays = [
+            (Vec3::new(5.5, 20.5, 5.5), Vec3::NEG_Y),
+            (Vec3::new(0.5, 12.0, 5.5), Vec3::new(1.0, -1.0, 0.0)),
+        ];
+
+        for (origin, dir) in rays {
+            let cut = raycast_surface_below(&grid, origin, dir, 40.0, Some(6));
+            let uncut = raycast_surface_below(&grid, origin, dir, 40.0, None);
+
+            assert_eq!(cut.map(|h| h.block_pos.y), Some(5), "{dir}: {cut:?}");
+            assert_eq!(uncut.map(|h| h.block_pos.y), Some(10), "{dir}: {uncut:?}");
+        }
+    }
+
+    #[test]
+    fn a_ray_starting_inside_hidden_terrain_hits_the_kept_ground() {
+        let grid = slab();
+        let origin = Vec3::new(5.3, 8.5, 5.7);
+
+        for dir in [Vec3::NEG_Y, Vec3::new(1.0, -1.0, 0.0)] {
+            let hit = raycast_surface_below(&grid, origin, dir, 40.0, Some(6));
+
+            assert_eq!(hit.map(|h| h.block_pos.y), Some(5), "{dir}: {hit:?}");
+        }
+    }
+
+    #[test]
+    fn a_ceiling_over_a_cave_hits_the_cave_floor() {
+        let grid = capped_cave();
+        let origin = Vec3::new(5.5, 20.5, 5.5);
+
+        let cut = raycast_surface_below(&grid, origin, Vec3::NEG_Y, 40.0, Some(6));
+        let uncut = raycast_surface_below(&grid, origin, Vec3::NEG_Y, 40.0, None);
+
+        assert_eq!(cut.map(|h| h.block_pos.y), Some(2), "{cut:?}");
+        assert_eq!(uncut.map(|h| h.block_pos.y), Some(7), "{uncut:?}");
+    }
+
+    #[test]
+    fn a_ray_from_below_the_ceiling_is_unaffected() {
+        let grid = capped_cave();
+        let from_cave = Vec3::new(5.5, 4.5, 5.5);
+        let rays = [
+            (from_cave, Vec3::NEG_Y),
+            (Vec3::new(-3.5, 4.5, 5.5), Vec3::new(1.0, -0.2, 0.0)),
+        ];
+
+        for (origin, dir) in rays {
+            let cut = raycast_surface_below(&grid, origin, dir, 40.0, Some(6));
+            let uncut = raycast_surface(&grid, origin, dir, 40.0);
+
+            assert!(cut.is_some(), "{dir}");
+            assert_eq!(cut, uncut, "{dir}");
+        }
+    }
+
+    #[test]
+    fn a_ray_rising_from_below_the_ceiling_passes_the_hidden_roof() {
+        let grid = capped_cave();
+        let origin = Vec3::new(5.5, 4.5, 5.5);
+
+        let cut = raycast_surface_below(&grid, origin, Vec3::Y, 40.0, Some(6));
+        let uncut = raycast_surface_below(&grid, origin, Vec3::Y, 40.0, None);
+
+        assert_eq!(cut, None);
+        assert_eq!(uncut.map(|h| h.block_pos.y), Some(6));
+    }
+
+    fn arbitrary_scene() -> impl Strategy<Value = (Vec<bool>, Vec3, Vec3, i32)> {
+        (
+            proptest::collection::vec(any::<bool>(), 216),
+            (-2.0f32..8.0, -2.0f32..8.0, -2.0f32..8.0).prop_map(|(x, y, z)| Vec3::new(x, y, z)),
+            (-1.0f32..1.0, -1.0f32..1.0, -1.0f32..1.0).prop_map(|(x, y, z)| Vec3::new(x, y, z)),
+            0..8i32,
+        )
+    }
+
+    fn scatter(cells: &[bool]) -> VoxelGrid {
+        let mut grid = VoxelGrid::new(16);
+        for (i, solid) in cells.iter().enumerate() {
+            if *solid {
+                let i = i as i32;
+                grid.mutator()
+                    .place(BlockPos::new(i % 6, i / 36, (i / 6) % 6), 1, None);
+            }
+        }
+        grid
+    }
+
+    proptest! {
+        #[test]
+        fn a_hit_under_a_ceiling_is_always_below_it((cells, origin, dir, ceiling) in arbitrary_scene()) {
+            let grid = scatter(&cells);
+
+            let hit = raycast_surface_below(&grid, origin, dir, 20.0, Some(ceiling));
+
+            if let Some(hit) = hit {
+                prop_assert!(hit.block_pos.y < ceiling, "{hit:?} under ceiling {ceiling}");
+            }
         }
     }
 
