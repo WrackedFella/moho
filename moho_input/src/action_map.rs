@@ -114,6 +114,17 @@ struct Down {
     ticks: u32,
     /// Fixed at the press and not re-read until release.
     modifiers: Modifiers,
+    /// The second press of a double: it already fired, so neither its press nor its hold does.
+    spent: bool,
+}
+
+/// An input released inside its double-press window, waiting for a second press.
+#[derive(Copy, Clone, Debug)]
+struct Awaiting {
+    /// Ticks since the first press.
+    age: u32,
+    /// Fixed at the first press; the second press acts under it.
+    modifiers: Modifiers,
 }
 
 /// Collects input events; frames sample look, and each tick reports it with the edges.
@@ -123,9 +134,15 @@ pub struct ActionMap<A: Action> {
     /// Inputs now down, each with the ticks it has been down and the modifier set its press
     /// resolved to.
     down: HashMap<Input, Down>,
-    /// Inputs some action binds with `Hold`, per modifier set: their `Press` bindings with
-    /// that set fire on a quick release.
+    /// Inputs some action binds with `Hold` or `Double`, per modifier set: their `Press`
+    /// bindings with that set wait to see which kind the input turns out to be.
     split: HashSet<(Input, Modifiers)>,
+    /// The `Hold` part of `split`.
+    holds: HashSet<(Input, Modifiers)>,
+    /// The `Double` part of `split`.
+    doubles: HashSet<(Input, Modifiers)>,
+    /// Inputs released inside their window, waiting for a second press.
+    awaiting: HashMap<Input, Awaiting>,
     /// Actions in toggle mode, fixed at construction.
     toggled: u64,
     /// Held mask resolved from the inputs, before toggle actions are latched.
@@ -151,12 +168,18 @@ impl<A: Action> ActionMap<A> {
     pub fn new(bindings: ActionBindings<A>, look_per_count: f32) -> Self {
         const { assert!(A::ALL.len() <= 64, "frame masks hold at most 64 actions") };
         const { assert!(A::HOLD_TICKS >= 1, "a hold lasts at least one tick") };
-        let split = A::ALL
-            .iter()
-            .flat_map(|&action| bindings.get(action))
-            .filter(|binding| binding.trigger == Trigger::Hold)
-            .map(|binding| (binding.input, binding.modifiers))
-            .collect();
+        const { assert!(A::DOUBLE_TICKS >= 1, "a window lasts at least one tick") };
+        let bound = |trigger| -> HashSet<(Input, Modifiers)> {
+            A::ALL
+                .iter()
+                .flat_map(|&action| bindings.get(action))
+                .filter(|binding| binding.trigger == trigger)
+                .map(|binding| (binding.input, binding.modifiers))
+                .collect()
+        };
+        let holds = bound(Trigger::Hold);
+        let doubles = bound(Trigger::Double);
+        let split = holds.union(&doubles).copied().collect();
         let toggled = A::ALL
             .iter()
             .filter(|&&action| bindings.mode(action) == ActionMode::Toggle)
@@ -165,6 +188,9 @@ impl<A: Action> ActionMap<A> {
             bindings,
             down: HashMap::new(),
             split,
+            holds,
+            doubles,
+            awaiting: HashMap::new(),
             toggled,
             raw_held: 0,
             latched: 0,
@@ -237,6 +263,7 @@ impl<A: Action> ActionMap<A> {
     pub fn release_all(&mut self) {
         self.sticks = [(0.0, 0.0); 2];
         self.down.clear();
+        self.awaiting.clear();
         self.latched = 0;
         self.refresh_held(0);
     }
@@ -283,7 +310,21 @@ impl<A: Action> ActionMap<A> {
         for down in self.down.values_mut() {
             down.ticks = down.ticks.saturating_add(1);
         }
-        self.refresh_held(0);
+        for waiting in self.awaiting.values_mut() {
+            waiting.age = waiting.age.saturating_add(1);
+        }
+        let closed: Vec<(Input, Modifiers)> = self
+            .awaiting
+            .iter()
+            .filter(|(_, waiting)| waiting.age >= A::DOUBLE_TICKS)
+            .map(|(&input, waiting)| (input, waiting.modifiers))
+            .collect();
+        let mut taps = 0;
+        for (input, modifiers) in closed {
+            self.awaiting.remove(&input);
+            taps |= self.press_actions(input, modifiers);
+        }
+        self.refresh_held(taps);
         let frame = ActionFrame {
             held: self.held,
             pressed: self.pressed,
@@ -303,12 +344,24 @@ impl<A: Action> ActionMap<A> {
         }
     }
 
-    /// Records the change; `None` if nothing changed (OS key repeat), else the `Press`
-    /// actions of an input released before its hold matured.
+    /// Records the change; `None` if nothing changed (OS key repeat), else the actions that
+    /// press and release in this tick: the `Press` actions of an input released before its
+    /// hold matured and with no window to wait out, or the `Double` actions of a second press.
     fn apply(&mut self, input: Input, down: bool) -> Option<u64> {
         if down {
             if self.down.contains_key(&input) {
                 return None;
+            }
+            if let Some(Awaiting { modifiers, .. }) = self.awaiting.remove(&input) {
+                self.down.insert(
+                    input,
+                    Down {
+                        ticks: 0,
+                        modifiers,
+                        spent: true,
+                    },
+                );
+                return Some(self.double_actions(input, modifiers));
             }
             let modifiers = self.resolve_modifiers(input);
             self.down.insert(
@@ -316,13 +369,32 @@ impl<A: Action> ActionMap<A> {
                 Down {
                     ticks: 0,
                     modifiers,
+                    spent: false,
                 },
             );
             return Some(0);
         }
-        let Down { ticks, modifiers } = self.down.remove(&input)?;
-        let quick = self.split.contains(&(input, modifiers)) && ticks < A::HOLD_TICKS;
-        Some(if quick {
+        let Down {
+            ticks,
+            modifiers,
+            spent,
+        } = self.down.remove(&input)?;
+        let set = (input, modifiers);
+        let holds = self.holds.contains(&set);
+        if spent || (holds && ticks >= A::HOLD_TICKS) {
+            return Some(0);
+        }
+        if self.doubles.contains(&set) && ticks < A::DOUBLE_TICKS {
+            self.awaiting.insert(
+                input,
+                Awaiting {
+                    age: ticks,
+                    modifiers,
+                },
+            );
+            return Some(0);
+        }
+        Some(if holds {
             self.press_actions(input, modifiers)
         } else {
             0
@@ -357,6 +429,12 @@ impl<A: Action> ActionMap<A> {
         })
     }
 
+    fn double_actions(&self, input: Input, modifiers: Modifiers) -> u64 {
+        self.actions_where(|b| {
+            b.input == input && b.modifiers == modifiers && b.trigger == Trigger::Double
+        })
+    }
+
     fn actions_where(&self, matches: impl Fn(&Binding) -> bool) -> u64 {
         A::ALL
             .iter()
@@ -370,11 +448,19 @@ impl<A: Action> ActionMap<A> {
         self.down.get(&binding.input).is_some_and(|down| {
             down.modifiers == binding.modifiers
                 && match binding.trigger {
-                    Trigger::Press => !self.split.contains(&set),
-                    Trigger::Hold => down.ticks >= A::HOLD_TICKS,
+                    Trigger::Press => {
+                        !self.split.contains(&set) || (!down.spent && self.window_closed(set, down))
+                    }
+                    Trigger::Hold => !down.spent && down.ticks >= A::HOLD_TICKS,
                     Trigger::Double => false,
                 }
         })
+    }
+
+    /// A key with a double binding and no hold binding that is still down once its window
+    /// closes: its `Press` actions are held until it is released.
+    fn window_closed(&self, set: (Input, Modifiers), down: &Down) -> bool {
+        self.doubles.contains(&set) && !self.holds.contains(&set) && down.ticks >= A::DOUBLE_TICKS
     }
 
     /// Recomputes the held mask; `taps` are actions that press and release in this tick.

@@ -169,20 +169,22 @@ impl Binding {
             )
     }
 
-    /// Persisted name: the input's, prefixed by `Hold ` for a hold binding.
+    /// Persisted name: the input's, prefixed by `Hold ` or `Double ` for those bindings.
     pub fn name(self) -> String {
         self.decorate(self.input.name())
     }
 
-    /// Text shown to the player: the input's label, prefixed by `Hold ` for a hold binding.
+    /// Text shown to the player: the input's label, prefixed by `Hold ` or `Double ` for those bindings.
     pub fn label(self) -> String {
         self.decorate(self.input.label())
     }
 
     fn decorate(self, text: &str) -> String {
         let mut out = String::new();
-        if self.trigger == Trigger::Hold {
-            out.push_str(HOLD_PREFIX);
+        match self.trigger {
+            Trigger::Press => {}
+            Trigger::Hold => out.push_str(HOLD_PREFIX),
+            Trigger::Double => out.push_str(DOUBLE_PREFIX),
         }
         for (modifier, name) in MODIFIER_NAMES {
             if self.modifiers.contains(modifier) {
@@ -383,7 +385,7 @@ impl<A: Action> ActionBindings<A> {
 
 const UNBOUND: &str = "Unbound";
 
-/// `None` if any item is not a known input, optionally after `Hold `; empty or `Unbound` is an empty list.
+/// `None` if any item is not a known input, optionally after `Hold ` or `Double `; empty or `Unbound` is an empty list.
 fn parse_list(value: &str) -> Option<Vec<Binding>> {
     let value = value.trim();
     if value.is_empty() || value.eq_ignore_ascii_case(UNBOUND) {
@@ -396,12 +398,24 @@ fn parse_list(value: &str) -> Option<Vec<Binding>> {
 }
 
 const HOLD_PREFIX: &str = "Hold ";
+const DOUBLE_PREFIX: &str = "Double ";
 
+/// `item` after `prefix`, ignoring case, when it starts with it.
+fn strip_prefix_ignore_case<'a>(item: &'a str, prefix: &str) -> Option<&'a str> {
+    let head = item.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix)
+        .then(|| item[prefix.len()..].trim_start())
+}
+
+/// The prefix is outermost and there is at most one. A pad input has no double press.
 fn parse_binding(item: &str) -> Option<Binding> {
-    if let Some(prefix) = item.get(..HOLD_PREFIX.len())
-        && prefix.eq_ignore_ascii_case(HOLD_PREFIX)
-    {
-        return parse_chord(item[HOLD_PREFIX.len()..].trim_start()).map(Binding::held);
+    if let Some(rest) = strip_prefix_ignore_case(item, HOLD_PREFIX) {
+        return parse_chord(rest).map(Binding::held);
+    }
+    if let Some(rest) = strip_prefix_ignore_case(item, DOUBLE_PREFIX) {
+        return parse_chord(rest)
+            .filter(|binding| !binding.is_pad())
+            .map(Binding::doubled);
     }
     parse_chord(item)
 }
