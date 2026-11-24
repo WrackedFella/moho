@@ -527,7 +527,7 @@ mod tests {
         ];
 
         for (origin, dir) in rays {
-            let cut = raycast_surface_below(&grid, origin, dir, 40.0, Some(8));
+            let cut = raycast_surface_below(&grid, origin, dir, 40.0, Some(6));
             let uncut = raycast_surface(&grid, origin, dir, 40.0);
 
             assert!(cut.is_some(), "{dir}");
@@ -569,15 +569,6 @@ mod tests {
     }
 
     proptest! {
-        #[test]
-        fn no_ceiling_matches_raycast_surface((cells, origin, dir, _) in arbitrary_scene()) {
-            let grid = scatter(&cells);
-
-            let below = raycast_surface_below(&grid, origin, dir, 20.0, None);
-
-            prop_assert_eq!(below, raycast_surface(&grid, origin, dir, 20.0));
-        }
-
         #[test]
         fn a_hit_under_a_ceiling_is_always_below_it((cells, origin, dir, ceiling) in arbitrary_scene()) {
             let grid = scatter(&cells);

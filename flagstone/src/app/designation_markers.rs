@@ -139,30 +139,19 @@ mod tests {
     }
 
     #[test]
-    fn a_mark_below_the_ceiling_keeps_its_marker() {
+    fn only_marks_below_the_ceiling_have_markers() {
         let mut markers = Markers::new();
         let mut shown = DesignationMarkers::default();
-        let marks = marks_at(&[[1, 2, 3], [1, 7, 3]]);
-
-        shown.sync(&marks, Some(5), &mut markers);
-
-        assert!(fill_at(&markers, [1, 2, 3]).is_some(), "below the cut");
-        assert_eq!(
-            fills(&markers).len(),
-            1,
-            "the mark above the cut is not drawn"
-        );
-    }
-
-    #[test]
-    fn a_mark_at_or_above_the_ceiling_has_no_marker() {
-        let mut markers = Markers::new();
-        let mut shown = DesignationMarkers::default();
-        let marks = marks_at(&[[0, 3, 0], [0, 4, 0], [0, 5, 0]]);
+        let marks = marks_at(&[[1, 2, 3], [0, 3, 0], [0, 4, 0], [0, 5, 0], [1, 7, 3]]);
 
         shown.sync(&marks, Some(4), &mut markers);
 
+        assert!(fill_at(&markers, [1, 2, 3]).is_some(), "below the cut");
         assert!(fill_at(&markers, [0, 3, 0]).is_some(), "the top kept layer");
+        assert!(
+            fill_at(&markers, [1, 7, 3]).is_none(),
+            "far above the cut is not drawn"
+        );
         assert!(
             fill_at(&markers, [0, 4, 0]).is_none(),
             "y == ceiling is hidden"
@@ -171,7 +160,7 @@ mod tests {
             fill_at(&markers, [0, 5, 0]).is_none(),
             "y > ceiling is hidden"
         );
-        assert_eq!(fills(&markers).len(), 1);
+        assert_eq!(fills(&markers).len(), 2);
     }
 
     #[test]

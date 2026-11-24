@@ -3482,6 +3482,7 @@ mod tests {
                 ceiling: Some(LEVEL),
                 ..StrategyCommand::default()
             };
+            view_level::update(&mut app, Some(TOP));
 
             tick_app(&mut app, &command);
 
@@ -3492,22 +3493,36 @@ mod tests {
 
         #[test]
         fn a_mark_uses_the_ceiling_its_command_carries_not_the_live_slider() {
-            let mut app = lowered_app();
-            let command = mark_with(Some(LEVEL));
-            view_level::update(&mut app, Some(TOP));
+            let cases = [
+                (Some(LEVEL), TOP, [8, LEVEL - 1, 9]),
+                (None, LEVEL, [8, 27, 9]),
+            ];
 
-            tick_app(&mut app, &command);
+            for (carried, live, expected) in cases {
+                let mut app = lowered_app();
+                view_level::update(&mut app, Some(live));
 
-            assert_eq!(marked(&app), [[8, LEVEL - 1, 9]]);
+                tick_app(&mut app, &mark_with(carried));
+
+                assert_eq!(marked(&app), [expected], "carried {carried:?}, live {live}");
+            }
         }
 
         #[test]
-        fn a_mark_without_a_ceiling_ignores_a_lowered_live_slider() {
+        fn the_frame_hides_marks_above_the_live_cut_and_shows_them_again() {
             let mut app = lowered_app();
+            app.colony.marks.toggle([8, 27, 9]);
+            let drawn = |app: &mut App| app.scene.markers_mut().draws(Vec3::ZERO).fills.len();
+            view_level::update(&mut app, Some(LEVEL));
 
-            tick_app(&mut app, &mark_with(None));
+            run_frame(&mut app, &mut FakeRenderer::default());
+            let lowered = drawn(&mut app);
+            view_level::update(&mut app, Some(TOP));
+            run_frame(&mut app, &mut FakeRenderer::default());
+            let raised = drawn(&mut app);
 
-            assert_eq!(marked(&app), [[8, 27, 9]]);
+            assert_eq!(lowered, 0, "the mark above the cut is not drawn");
+            assert_eq!(raised, 1, "raising the view draws it again");
         }
 
         #[test]
