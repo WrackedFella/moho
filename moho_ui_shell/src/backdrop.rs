@@ -220,6 +220,7 @@ mod tests {
             mouse_sensitivity: 2.5,
             mouse_smoothing: false,
             invert_mouse_y: false,
+            master_volume: 10.0,
             sound_effect_volume: 8.0,
             music_volume: 6.0,
             ui_volume: 7.0,

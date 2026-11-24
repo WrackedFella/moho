@@ -36,16 +36,17 @@ impl AudioSettings {
         Self::default()
     }
 
-    /// Levels from saved prefs: each category is its 0..=10 pref divided by ten.
+    /// Levels from saved prefs: the master and each category are their 0..=10 prefs divided by ten.
     pub fn from_prefs(prefs: &moho_core::prefs::Prefs) -> Self {
         Self {
-            master_volume: 1.0,
+            master_volume: 0.0,
             sound_effects_volume: 0.0,
             music_volume: 0.0,
             ui_volume: 0.0,
             voice_volume: 0.0,
             muted: false,
         }
+        .with_master_volume(prefs.master_volume() / 10.0)
         .with_sound_effects_volume(prefs.sound_effect_volume() / 10.0)
         .with_music_volume(prefs.music_volume() / 10.0)
         .with_ui_volume(prefs.ui_volume() / 10.0)
@@ -185,6 +186,36 @@ mod tests {
         let settings = AudioSettings::from_prefs(&prefs_with(5.0, 10.0, 3.0, 1.0));
 
         assert_volumes(&settings, [0.5, 1.0, 0.3, 0.1]);
+    }
+
+    #[test]
+    fn from_prefs_takes_the_master_volume() {
+        let mut prefs = prefs_with(5.0, 10.0, 3.0, 1.0);
+        *prefs.master_volume_mut() = 4.0;
+
+        let settings = AudioSettings::from_prefs(&prefs);
+
+        assert_volumes(&settings, [0.2, 0.4, 0.12, 0.04]);
+    }
+
+    #[test]
+    fn from_prefs_clamps_a_master_volume_above_the_scale_to_full() {
+        let mut prefs = prefs_with(8.0, 8.0, 8.0, 8.0);
+        *prefs.master_volume_mut() = 25.0;
+
+        let settings = AudioSettings::from_prefs(&prefs);
+
+        assert_volumes(&settings, [0.8, 0.8, 0.8, 0.8]);
+    }
+
+    #[test]
+    fn from_prefs_clamps_a_negative_master_volume_to_silence() {
+        let mut prefs = prefs_with(8.0, 8.0, 8.0, 8.0);
+        *prefs.master_volume_mut() = -3.0;
+
+        let settings = AudioSettings::from_prefs(&prefs);
+
+        assert_volumes(&settings, [0.0, 0.0, 0.0, 0.0]);
     }
 
     #[test]
