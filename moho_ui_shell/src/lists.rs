@@ -169,7 +169,16 @@ impl<A> OpenLists<A> {
             .lists
             .get(self.focus)
             .and_then(|focused| list_by_id(&self.data.lists, focused.id))
-            .map_or_else(|| self.focus.min(last), |(at, _)| at);
+            .map_or_else(
+                || {
+                    let moved = self.focus.min(last);
+                    if let Some(view) = self.views.get(moved) {
+                        view.reveal.set(true);
+                    }
+                    moved
+                },
+                |(at, _)| at,
+            );
         self.held = self.held.and_then(|held| {
             let (_, before) = list_by_id(&old.lists, held.list)?;
             let item = &before.rows.get(held.row)?.item;
@@ -1515,6 +1524,22 @@ mod tests {
         assert_eq!(released, Vec::<String>::new());
         assert_eq!(on_30, "r30_01");
         assert_eq!(moves(&mut stack), [(301, ListId(30), ListId(20))]);
+    }
+
+    #[test]
+    fn set_lists_moving_focus_to_a_wheel_scrolled_list_reveals_its_focused_row() {
+        let a = || list(1, "A", rows_named("a", 40, 100));
+        let b = || list(2, "B", rows_named("b", 40, 200));
+        let mut stack = stack_of(vec![a(), b()]);
+        press(&mut stack, Key::ArrowRight);
+        stack.scroll(10.0);
+        press(&mut stack, Key::ArrowLeft);
+
+        stack.set_lists(lists_of(vec![b()]));
+        let texts = stack.texts(SIZE);
+
+        assert_eq!(focused(&texts), ["b00"]);
+        assert_eq!(y_of(find(&texts, "b00")), row_y(0));
     }
 
     #[test]
