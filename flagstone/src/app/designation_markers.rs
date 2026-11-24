@@ -203,7 +203,6 @@ mod tests {
         assert!(fills(&markers).is_empty());
     }
 
-    /// Whether the sentinel-coloured fill is still on the scene.
     fn fill_at_id(markers: &Markers, sentinel: Marker) -> bool {
         fills(markers)
             .iter()

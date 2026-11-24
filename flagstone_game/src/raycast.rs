@@ -128,8 +128,6 @@ pub fn raycast_surface_below(
     walk_surface(&solid, origin, direction, max_distance)
 }
 
-/// The surface walk over the blocks `solid` accepts: the shared body of [`raycast_surface`]
-/// and [`raycast_surface_below`].
 fn walk_surface(
     solid: &impl Fn(BlockPos) -> bool,
     origin: Vec3,

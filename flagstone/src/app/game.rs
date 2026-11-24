@@ -82,7 +82,6 @@ fn pointer_range(ray: Ray, ceiling: Option<i32>) -> f32 {
     POINTER_RAY_RANGE + descent.min(POINTER_RAY_RANGE)
 }
 
-/// The visible surface a pointer ray hits, with layers at or above `ceiling` hidden.
 fn pick_surface(grid: &VoxelGrid, ray: Ray, ceiling: Option<i32>) -> Option<SurfaceHit> {
     raycast_surface_below(
         grid,
