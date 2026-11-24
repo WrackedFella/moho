@@ -50,6 +50,15 @@ issue implies. Agent-eligible is set by a human, through the card's board header
 - **PR agent merges:** `PR_AUTOMERGE=glue` until 10 glue merges land with green CI on `dev`
   and no revert, then `all`. Open: whether the moho-reviewer App has Issues write to file
   follow-ups.
+- **devflow roadmap:** claude-skills issues labelled `roadmap` (features #93 GATE-F1, #94 SRC-F1, #95 COST-F1, #96 ACC-F2) hold the devflow work; the items below are the moho-only ones.
+- **Production intake allow-list (#108):** `claude.yml` allows `intake-agree` and `e2e-guard`; drop the nonexistent `run-log` from both workflows; CI check that every script a skill calls is on the allow-list (D0018).
+- **Cloud devflow refresh (#109):** cloud threads start on current devflow; refresh per session, not per environment build; `scripts/cloud-tools.sh` prints the devflow version.
+- **Fix-loop guard (#97):** after the claude-skills change, add `test-guard` and `e2e-guard` to `pr-review.yml`'s fix-job allow-list.
+- **`CI covers` (#106):** after the claude-skills change, set `CI covers: gate, mutation` in `CLAUDE.md`.
+- **`Standards` line (#105):** set `Standards: engineering-standards, rust-standards` in `CLAUDE.md` before claude-skills changes the unset default.
+- **Process-doc drift:** line 4 (agents merge eligible PRs), line 29 (orchestrate 180 min), `wiki/process/agentic-workflow.md:44` (human review covers PRs routed to a person).
+- **Parallel parts eval:** add 1-2 closed cards with marked parts to `.github/eval/orchestrate-set.json`; measure before deciding whether `devflow:builder` replaces `test-writer` and `implementer` (#101).
+- **Eval automation:** production run records (compact, no transcript uploads), then the change-gated eval queue (`eval-automation` proposal steps b and c).
 - **Orchestrate eval:** run the baseline (`label=baseline`, 2 replays of the 10 cards), then measure each change to orchestrate's delegation (subagent folds, model or effort per role) on the same set; keep a change only if it scores no worse on gate, reference test names, review defects and skipped steps; conflicts score planning, not orchestrate. Baseline 2026-11-17 (Sonnet, 10/20 pass); Opus with step-check 2026-11-18 (7/20, 2.4x replay tokens: not adopted). Grow the set toward 20 cards from real run failures.
 - Confirm in Actions and threads that the Skill-tool calls inside `orchestrate`
   (`/simplify`, `/devflow:comment-audit`, `/devflow:wiki`) succeed.
