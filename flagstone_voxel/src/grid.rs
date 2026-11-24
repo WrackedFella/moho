@@ -209,9 +209,15 @@ pub struct VoxelGrid {
     pub material_registry: MaterialRegistry,
     /// Per-chunk lighting state (Stage 4C). Only populated for chunk_size == 16.
     chunk_lights: HashMap<IVec3, ChunkLight>,
+    revision: u64,
 }
 
 impl VoxelGrid {
+    /// Counts every change to which cells are solid.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
     /// Create a new empty voxel grid.
     ///
     /// `chunk_size` must be 16; the paletted storage and lighting system are
@@ -226,6 +232,7 @@ impl VoxelGrid {
             chunk_size,
             material_registry: MaterialRegistry::new(),
             chunk_lights: HashMap::new(),
+            revision: 0,
         }
     }
 
@@ -641,6 +648,49 @@ mod tests {
         assert_eq!(grid.block_count(), 1);
         assert_eq!(grid.material_at(BlockPos::new(0, 0, 0)), Some(7));
         assert!(!grid.has_chunk(IVec3::new(5, 0, 0)));
+    }
+
+    #[test]
+    fn revision_moves_on_every_solid_change_and_only_then() {
+        let mut grid = VoxelGrid::new(16);
+        let pos = BlockPos::new(1, 1, 1);
+        let mut source = VoxelGrid::new(16);
+        source.place_block(BlockPos::new(2, 2, 2), 3, None);
+        let bytes = source
+            .serialize_chunk(IVec3::ZERO)
+            .expect("modified chunk serializes");
+        let mut seen = grid.revision();
+        let mut moved = |grid: &VoxelGrid| {
+            let now = grid.revision();
+            let did = now != seen;
+            seen = now;
+            did
+        };
+
+        grid.place_block(pos, 1, None);
+        let after_place = moved(&grid);
+        grid.clear_block(pos);
+        let after_clear = moved(&grid);
+        let cleared_air = grid.clear_block(pos);
+        let after_clear_of_air = moved(&grid);
+        grid.set_block_light_rgb(pos, [1, 2, 3]);
+        grid.set_sky_exposed(pos, true);
+        let after_light = moved(&grid);
+        grid.deserialize_chunk_into(IVec3::ZERO, &bytes)
+            .expect("valid chunk");
+        let after_deserialise = moved(&grid);
+        let rejected = grid.deserialize_chunk_into(IVec3::new(5, 0, 0), b"junk");
+        let after_rejected = moved(&grid);
+        grid.remove_chunk(IVec3::ZERO);
+        let after_remove_chunk = moved(&grid);
+
+        assert!(after_place, "place");
+        assert!(after_clear, "clear of a block");
+        assert!(!cleared_air && !after_clear_of_air, "clear of an empty cell");
+        assert!(!after_light, "light is not terrain");
+        assert!(after_deserialise, "deserialise");
+        assert!(rejected.is_err() && !after_rejected, "a rejected chunk");
+        assert!(after_remove_chunk, "remove a chunk");
     }
 
     #[test]
