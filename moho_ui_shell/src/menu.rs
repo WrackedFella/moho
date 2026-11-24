@@ -971,6 +971,9 @@ impl<A: PartialEq> MenuStack<A> {
             open.focus = focus;
             open.column = nearest_column(items.get(focus), open.column);
             open.screen.items = items;
+            if !(open.focused_is_control() && open.column.slot().is_some()) {
+                open.capturing = false;
+            }
             open.shell_note = None;
             open.notes_hidden = false;
         }
@@ -3325,6 +3328,99 @@ mod tests {
                 label.offset[0] > row_left(&stack, row),
                 "the slot label is indented"
             );
+        }
+    }
+
+    #[test]
+    fn set_items_that_removes_the_capturing_row_ends_capture_without_an_event() {
+        let answers: [(&str, Vec<MenuItem<Bind>>); 2] = [
+            (
+                "details",
+                vec![details(5, Slot::Primary, Trigger::Press, Modifiers::NONE)],
+            ),
+            ("button", vec![bind_button("Reset", Bind::Reset)]),
+        ];
+        for (name, answer) in answers {
+            let mut escaped = controls_stack(vec![control(0, [R, R])]);
+            let mut entered = controls_stack(vec![control(0, [R, R])]);
+            for stack in [&mut escaped, &mut entered] {
+                key_c(stack, Key::ArrowRight);
+                key_c(stack, Key::Enter);
+                stack.set_items(answer.clone());
+            }
+            let still_capturing = escaped.is_capturing();
+
+            key_c(&mut escaped, Key::Escape);
+            key_c(&mut entered, Key::Enter);
+
+            assert!(!still_capturing, "{name}: capture ended with the row");
+            assert_eq!(
+                escaped.take_events(),
+                [MenuEvent::Chosen(Bind::Back)],
+                "{name}: Escape is a normal key"
+            );
+            let expected = if name == "details" {
+                vec![picked(5, Slot::Primary, Trigger::Press, Modifiers::CTRL)]
+            } else {
+                vec![MenuEvent::Chosen(Bind::Reset)]
+            };
+            assert_eq!(
+                entered.take_events(),
+                expected,
+                "{name}: Enter acts as usual"
+            );
+        }
+    }
+
+    #[test]
+    fn set_items_that_keeps_the_capturing_row_keeps_capture_and_its_slot_column() {
+        let mut stack = controls_stack(vec![control(0, [R, R]), control(1, [R, R])]);
+        key_c(&mut stack, Key::ArrowRight);
+        key_c(&mut stack, Key::Enter);
+
+        stack.set_items(vec![
+            bind_button("Reset", Bind::Reset),
+            control(0, [R, R]),
+            control(1, [R, R]),
+        ]);
+        let capturing = stack.is_capturing();
+        key_c(&mut stack, Key::Q);
+
+        assert!(capturing);
+        assert_eq!(
+            stack.take_events(),
+            [captured(Bind::Row(0), Slot::Secondary, Input::Key(Key::Q))]
+        );
+    }
+
+    #[test]
+    fn a_repeated_enter_on_a_picker_chevron_or_checkbox_emits_nothing() {
+        let rows = || {
+            vec![
+                row_with(0, [R, R], Some(Chevron::Open), Some(ActionMode::Hold)),
+                details(0, Slot::Primary, Trigger::Press, Modifiers::NONE),
+            ]
+        };
+        let (left, right, down) = (Key::ArrowLeft, Key::ArrowRight, Key::ArrowDown);
+        let columns = [
+            ("chevron", vec![left]),
+            ("mode", vec![right, right]),
+            ("kind", vec![down]),
+            ("modifier", vec![down, right]),
+        ];
+        for (name, keys) in columns {
+            let mut stack = controls_stack(rows());
+            press_all(&mut stack, &keys);
+
+            stack.on_key(Input::Key(Key::Enter), true, true);
+            let repeated = stack.take_events();
+            let capturing = stack.is_capturing();
+            key_c(&mut stack, Key::Enter);
+            let first = stack.take_events();
+
+            assert_eq!(repeated, [], "{name}: a repeat does nothing");
+            assert!(!capturing, "{name}");
+            assert_eq!(first.len(), 1, "{name}: the real press still acts");
         }
     }
 
