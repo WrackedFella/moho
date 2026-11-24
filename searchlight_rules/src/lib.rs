@@ -1,6 +1,7 @@
 //! Platform-free rules for the FPS line: items, magazine, rifle, loadout, body damage, lean,
 //! enemy grades and the grade mix of each wave.
 
+mod accuracy;
 mod ballistics;
 mod body;
 mod grade;
@@ -16,6 +17,7 @@ mod rig;
 mod test_support;
 mod weapon;
 
+pub use accuracy::{Accuracy, AccuracyTuning, disc_offset};
 pub use ballistics::{
     Ballistics, Flight, FlightBounds, GravityScale, GravityScaleError, MAX_GRAVITY_SCALE,
     MIN_SPEED, STANDARD_GRAVITY,

@@ -12,8 +12,9 @@ use moho_physics::{
     MoveSettings, PhysicsWorld, first_person_view,
 };
 use searchlight_rules::{
-    Ballistics, Body, BodyPart, BodyProfile, Flight, FlightBounds, Grade, HitReport, ItemId, Lean,
-    LeanReach, LeanSide, LeanTuning, Loadout, MagazineLevel, Rifle, Rig, Shot,
+    AccuracyTuning, Ballistics, Body, BodyPart, BodyProfile, Flight, FlightBounds, Grade,
+    HitReport, ItemId, Lean, LeanReach, LeanSide, LeanTuning, Loadout, MagazineLevel, Rifle, Rig,
+    Shot,
 };
 
 use crate::arena::{Arena, FLIGHT_MARGIN, SETTLE_DT};
@@ -128,6 +129,8 @@ pub struct SimConfig {
     pub enemy_aim_at: BodyPart,
     /// How far and how fast the player leans, and how much it slows walking.
     pub lean: LeanTuning,
+    /// How wide the player's shots scatter while moving and how quickly that settles.
+    pub accuracy: AccuracyTuning,
 }
 
 /// Something the player should see, hear or read, in the order it happened.
@@ -982,6 +985,11 @@ impl SearchlightSim {
     /// The player's walking speed in m/s, before a lean slows it.
     pub fn max_speed(&self) -> f32 {
         self.move_settings.max_speed
+    }
+
+    /// The half-angle in radians of the cone the player's next shot leaves in.
+    pub fn player_spread(&self) -> f32 {
+        0.0
     }
 
     /// How far the player leans after the last tick.
@@ -6207,5 +6215,318 @@ mod grade_tests {
             "a 5 m radius did not count a shot 4 m wide"
         );
         assert_eq!(ignored_at, None, "a 0.5 m radius counted a shot 1 m wide");
+    }
+}
+
+#[cfg(test)]
+mod player_spread_tests {
+    use moho_physics::CharacterCommand;
+
+    use super::*;
+    use crate::test_support::{DT, long_floor, mag, rifle_from, set_eye_above_centre, test_config};
+
+    /// Slow walking, so a long volley stays near where it began; ratios are of this speed.
+    const WALK_SPEED: f32 = 1.0;
+
+    /// Ticks walked before a volley so the speed and the spread have settled.
+    const WARM_UP: usize = 10;
+
+    fn config() -> SimConfig {
+        let mut config = test_config(rifle_from(mag(400, 400)), vec![]);
+        config.move_settings.max_speed = WALK_SPEED;
+        config.move_settings.friction = 100.0;
+        config
+    }
+
+    fn sim_with(config: SimConfig) -> SearchlightSim {
+        SearchlightSim::new(long_floor(), Vec3::ZERO, &[], config)
+    }
+
+    /// Walks forward at `forward` of walking speed, with the trigger held or not.
+    fn stride(forward: f32, fire: bool, simple: bool) -> SearchlightCommand {
+        SearchlightCommand {
+            movement: CharacterCommand {
+                forward,
+                ..CharacterCommand::default()
+            },
+            fire,
+            simple,
+            ..SearchlightCommand::default()
+        }
+    }
+
+    fn walk(sim: &mut SearchlightSim, forward: f32, ticks: usize) {
+        for _ in 0..ticks {
+            sim.tick(&stride(forward, false, false), DT);
+        }
+    }
+
+    /// Holds the trigger while walking at `forward` until `count` rounds have left; returns each
+    /// round's direction as `(x, y)` tangents off the view direction (+Z).
+    fn volley(sim: &mut SearchlightSim, forward: f32, count: usize) -> Vec<(f32, f32)> {
+        let command = stride(forward, true, false);
+        let mut offsets = Vec::new();
+        for _ in 0..count * 10 {
+            sim.tick(&command, DT);
+            if sim.drain_feedback().contains(&Feedback::Fired) {
+                let velocity = sim
+                    .rounds_in_flight()
+                    .last()
+                    .expect("a round fired this tick is in the air")
+                    .flight
+                    .velocity;
+                offsets.push((velocity.x / velocity.z, velocity.y / velocity.z));
+                if offsets.len() == count {
+                    break;
+                }
+            }
+        }
+        assert_eq!(offsets.len(), count, "the volley ran out of ticks");
+        offsets
+    }
+
+    fn rms(offsets: &[(f32, f32)]) -> f32 {
+        let sum: f32 = offsets.iter().map(|(a, b)| a * a + b * b).sum();
+        (sum / offsets.len() as f32).sqrt()
+    }
+
+    fn farthest(offsets: &[(f32, f32)]) -> f32 {
+        offsets.iter().map(|(a, b)| a.hypot(*b)).fold(0.0, f32::max)
+    }
+
+    /// The rms radius of a disc of radius `radius` drawn uniformly.
+    fn disc_rms(radius: f32) -> f32 {
+        radius / 2.0_f32.sqrt()
+    }
+
+    #[test]
+    fn a_settled_shot_leaves_exactly_along_the_view() {
+        let mut sim = sim_with(config());
+
+        let offsets = volley(&mut sim, 0.0, 5);
+
+        assert!(
+            offsets.iter().all(|&offset| offset == (0.0, 0.0)),
+            "{offsets:?}"
+        );
+        assert_eq!(sim.player_spread(), 0.0);
+    }
+
+    #[test]
+    fn walking_shots_land_wider_than_half_speed_and_half_speed_wider_than_standing() {
+        let config = config();
+        let walk_spread = config.accuracy.walk_spread;
+        let group_at = |forward: f32| {
+            let mut sim = sim_with(config.clone());
+            walk(&mut sim, forward, WARM_UP);
+            let spread = sim.player_spread();
+            (spread, volley(&mut sim, forward, 50))
+        };
+
+        let (standing_spread, standing) = group_at(0.0);
+        let (half_spread, half) = group_at(0.5);
+        let (walking_spread, walking) = group_at(1.0);
+
+        assert_eq!(standing_spread, 0.0);
+        assert!(
+            (half_spread - walk_spread * 0.5).abs() < walk_spread * 0.05,
+            "{half_spread}"
+        );
+        assert!(
+            (walking_spread - walk_spread).abs() < walk_spread * 0.05,
+            "{walking_spread}"
+        );
+        assert_eq!(rms(&standing), 0.0);
+        assert!(rms(&half) > 0.0, "half speed does not scatter");
+        assert!(
+            rms(&half) < rms(&walking),
+            "{} {}",
+            rms(&half),
+            rms(&walking)
+        );
+        let full = disc_rms(walk_spread.tan());
+        assert!(
+            (0.7 * full..1.3 * full).contains(&rms(&walking)),
+            "{}",
+            rms(&walking)
+        );
+        let half_full = disc_rms((walk_spread * 0.5).tan());
+        assert!(
+            (0.7 * half_full..1.3 * half_full).contains(&rms(&half)),
+            "{}",
+            rms(&half)
+        );
+        assert!(
+            farthest(&walking) <= walk_spread.tan() * 1.001,
+            "{}",
+            farthest(&walking)
+        );
+        assert!(
+            farthest(&half) <= (walk_spread * 0.5).tan() * 1.01,
+            "{}",
+            farthest(&half)
+        );
+    }
+
+    #[test]
+    fn a_walking_group_centres_on_the_crosshair() {
+        let config = config();
+        let radius = config.accuracy.walk_spread.tan();
+        let mut sim = sim_with(config);
+        walk(&mut sim, 1.0, WARM_UP);
+
+        let offsets = volley(&mut sim, 1.0, 200);
+
+        let count = offsets.len() as f32;
+        let mean_a = offsets.iter().map(|o| o.0).sum::<f32>() / count;
+        let mean_b = offsets.iter().map(|o| o.1).sum::<f32>() / count;
+        assert!(
+            mean_a.abs() < 0.25 * radius,
+            "mean across {mean_a} of {radius}"
+        );
+        assert!(mean_b.abs() < 0.25 * radius, "mean up {mean_b} of {radius}");
+        assert!(farthest(&offsets) > 0.5 * radius, "the group is not spread");
+    }
+
+    #[test]
+    fn a_shot_after_stopping_and_settling_is_exact() {
+        let config = config();
+        let settle_ticks = (config.accuracy.settle_seconds / DT).ceil() as usize;
+        let mut sim = sim_with(config);
+        walk(&mut sim, 1.0, WARM_UP);
+        let walking = sim.player_spread();
+
+        walk(&mut sim, 0.0, settle_ticks / 2);
+        let midway = sim.player_spread();
+        walk(&mut sim, 0.0, settle_ticks / 2 + 3);
+        let settled = sim.player_spread();
+        let offsets = volley(&mut sim, 0.0, 5);
+
+        assert!(walking > 0.0, "walking opened no spread");
+        assert!(midway > 0.0 && midway < walking, "{midway} of {walking}");
+        assert_eq!(settled, 0.0);
+        assert!(
+            offsets.iter().all(|&offset| offset == (0.0, 0.0)),
+            "{offsets:?}"
+        );
+    }
+
+    #[test]
+    fn simple_and_simulated_shots_both_scatter_while_walking() {
+        let mut config = config();
+        config.move_settings.max_speed = 0.1;
+        set_eye_above_centre(&mut config, 0.25);
+        let walk_spread = config.accuracy.walk_spread;
+        let hits_at = |forward: f32| {
+            let mut sim = SearchlightSim::new(
+                long_floor(),
+                Vec3::ZERO,
+                &[Vec3::new(0.0, 0.0, 20.0)],
+                config.clone(),
+            );
+            walk(&mut sim, forward, WARM_UP);
+            let command = stride(forward, true, true);
+            let (mut fired, mut hits) = (0, 0);
+            for _ in 0..500 {
+                sim.tick(&command, DT);
+                for feedback in sim.drain_feedback() {
+                    match feedback {
+                        Feedback::Fired => fired += 1,
+                        Feedback::Hit { .. } => hits += 1,
+                        _ => {}
+                    }
+                }
+                if fired == 50 {
+                    break;
+                }
+            }
+            (fired, hits)
+        };
+        let mut simulated = sim_with(config.clone());
+        walk(&mut simulated, 1.0, WARM_UP);
+
+        let standing = hits_at(0.0);
+        let walking = hits_at(1.0);
+        let rounds = volley(&mut simulated, 1.0, 50);
+
+        assert_eq!(
+            standing,
+            (50, 50),
+            "a settled hitscan shot misses the dummy it aims at"
+        );
+        assert_eq!(walking.0, 50);
+        assert!(
+            walking.1 > 0 && walking.1 < 50,
+            "{} of 50 hit while walking",
+            walking.1
+        );
+        let full = disc_rms(walk_spread.tan());
+        assert!(
+            (0.7 * full..1.3 * full).contains(&rms(&rounds)),
+            "{}",
+            rms(&rounds)
+        );
+    }
+
+    #[test]
+    fn walking_and_firing_replays_land_every_round_in_the_same_place() {
+        let run = || {
+            let mut sim = sim_with(config());
+            walk(&mut sim, 1.0, WARM_UP);
+            volley(&mut sim, 1.0, 40)
+        };
+
+        let first = run();
+        let second = run();
+
+        assert_eq!(first, second);
+        assert!(
+            first.iter().any(|&offset| offset != first[0]),
+            "no scatter to compare"
+        );
+    }
+
+    #[test]
+    fn a_settled_shot_consumes_no_randomness() {
+        let walking_group = |settled_shots: usize| {
+            let mut sim = sim_with(config());
+            if settled_shots > 0 {
+                volley(&mut sim, 0.0, settled_shots);
+            }
+            walk(&mut sim, 1.0, WARM_UP);
+            volley(&mut sim, 1.0, 20)
+        };
+
+        let after_standing_shots = walking_group(5);
+        let fresh = walking_group(0);
+
+        assert_eq!(after_standing_shots, fresh);
+        assert!(rms(&fresh) > 0.0, "walking did not scatter");
+    }
+
+    #[test]
+    fn restart_clears_the_player_spread() {
+        let mut sim = sim_with(config());
+        walk(&mut sim, 1.0, WARM_UP);
+        let walking = sim.player_spread();
+        volley(&mut sim, 1.0, 7);
+        sim.kill_player();
+        let restart = SearchlightCommand {
+            restart: true,
+            ..SearchlightCommand::default()
+        };
+
+        sim.tick(&restart, DT);
+        let after = sim.player_spread();
+        walk(&mut sim, 1.0, WARM_UP);
+        let restarted = volley(&mut sim, 1.0, 20);
+
+        let mut fresh = sim_with(config());
+        walk(&mut fresh, 1.0, WARM_UP);
+        let expected = volley(&mut fresh, 1.0, 20);
+        assert!(walking > 0.0, "walking opened no spread");
+        assert_eq!(after, 0.0);
+        assert_eq!(restarted, expected, "the draws start over with the sim");
+        assert!(rms(&expected) > 0.0, "walking did not scatter");
     }
 }

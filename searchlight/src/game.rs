@@ -247,6 +247,8 @@ struct Crosshair {
     edges: [u8; 4],
     /// Whether a menu owns the view's overlay: nothing is drawn.
     hidden: bool,
+    /// Half-angle in radians of the cone the next shot leaves in; the gap opens to mark it.
+    spread: f32,
 }
 
 impl Crosshair {
@@ -254,6 +256,12 @@ impl Crosshair {
     const GAP: f32 = 4.0;
     const LENGTH: f32 = 9.0;
     const THICKNESS: f32 = 2.0;
+
+    /// Pixels from the screen centre to the inner end of each bar, for a view `fov_y` radians
+    /// tall drawn `height` pixels high.
+    fn gap(_spread: f32, _fov_y: f32, _height: f32) -> f32 {
+        Self::GAP
+    }
 }
 
 impl UiFrameSource for Crosshair {
@@ -263,7 +271,8 @@ impl UiFrameSource for Crosshair {
         }
         let size = [size_in_pixels[0] as f32, size_in_pixels[1] as f32];
         let (cx, cy) = (size[0] / 2.0, size[1] / 2.0);
-        let (near, far, half) = (Self::GAP, Self::GAP + Self::LENGTH, Self::THICKNESS / 2.0);
+        let gap = Self::gap(self.spread, FOV_DEGREES.to_radians(), size[1]);
+        let (near, far, half) = (gap, gap + Self::LENGTH, Self::THICKNESS / 2.0);
         let bars = [
             ([cx - far, cy - half], [cx - near, cy + half]),
             ([cx + near, cy - half], [cx + far, cy + half]),
@@ -581,6 +590,9 @@ impl Stage {
             .edge_left
             .map(|left| (EDGE_ALPHA * left / EDGE_TICKS) as u8);
     }
+
+    /// Hands the crosshair the cone its next shot leaves in, so the gap can mark it.
+    fn show_spread(&self, _spread: f32) {}
 
     fn hide_hud(&self) {
         self.crosshair
@@ -1260,6 +1272,7 @@ impl Game for SearchlightGame {
         let vitals = self.vitals_line();
         self.stage.refresh_title(&vitals);
         self.stage.refresh_hud(dead);
+        self.stage.show_spread(self.mode.sim().player_spread());
         if self.screen == Screen::Paused {
             self.stage.hide_hud();
         }
@@ -6283,5 +6296,97 @@ mod enemy_and_hud_tests {
         assert_eq!(mesh.vertices.len(), 4 + 16);
         assert_eq!(mesh.vertices[0].color, [120, 0, 0, 140]);
         assert_eq!(mesh.vertices[2].pos, [800.0, 600.0]);
+    }
+}
+
+#[cfg(test)]
+mod crosshair_spread_tests {
+    use super::*;
+
+    /// Pixels the cone's circle reaches from the centre, by a pinhole projection.
+    fn cone_radius_px(spread: f32, fov_y: f32, height: f32) -> f32 {
+        spread.tan() / (fov_y / 2.0).tan() * (height / 2.0)
+    }
+
+    #[test]
+    fn the_crosshair_gap_is_today_s_gap_when_settled_and_opens_with_spread() {
+        let fov = FOV_DEGREES.to_radians();
+
+        let settled = Crosshair::gap(0.0, fov, 600.0);
+        let small = Crosshair::gap(0.01, fov, 600.0);
+        let walking = Crosshair::gap(0.03, fov, 600.0);
+
+        assert_eq!(settled, Crosshair::GAP);
+        assert!(
+            small > settled && walking > small,
+            "{settled} {small} {walking}"
+        );
+        let expected = Crosshair::GAP + cone_radius_px(0.03, fov, 600.0);
+        assert!((walking - expected).abs() < 1e-3, "{walking} vs {expected}");
+    }
+
+    #[test]
+    fn the_gap_bounds_the_cones_screen_circle_for_a_narrow_aimed_field_of_view() {
+        let narrow = 30.0_f32.to_radians();
+        let wide = FOV_DEGREES.to_radians();
+
+        let aimed = Crosshair::gap(0.03, narrow, 600.0);
+        let normal = Crosshair::gap(0.03, wide, 600.0);
+
+        assert!(
+            aimed >= Crosshair::GAP + cone_radius_px(0.03, narrow, 600.0) - 1e-3,
+            "the gap {aimed} lies inside the cone's circle"
+        );
+        assert!(
+            aimed > normal,
+            "zoomed in the same cone looks bigger: {aimed} {normal}"
+        );
+    }
+
+    #[test]
+    fn the_gap_scales_with_the_height_of_the_view() {
+        let fov = FOV_DEGREES.to_radians();
+
+        let short = Crosshair::gap(0.03, fov, 300.0) - Crosshair::GAP;
+        let tall = Crosshair::gap(0.03, fov, 1200.0) - Crosshair::GAP;
+
+        assert!((tall - 4.0 * short).abs() < 1e-2, "{short} {tall}");
+    }
+
+    #[test]
+    fn a_crosshair_with_spread_draws_its_bars_out_at_the_gap() {
+        let spread = 0.03;
+        let mut crosshair = Crosshair {
+            spread,
+            ..Crosshair::default()
+        };
+        let gap = Crosshair::gap(spread, FOV_DEGREES.to_radians(), 600.0);
+
+        let frame = crosshair.ui_frame([800, 600]).expect("a frame");
+
+        let vertices = &frame.meshes[0].vertices;
+        assert!(gap > Crosshair::GAP);
+        assert_eq!(
+            vertices[0].pos[0],
+            400.0 - gap - Crosshair::LENGTH,
+            "left bar outer"
+        );
+        assert_eq!(vertices[4].pos[0], 400.0 + gap, "right bar inner");
+        assert_eq!(
+            vertices[8].pos[1],
+            300.0 - gap - Crosshair::LENGTH,
+            "top bar outer"
+        );
+        assert_eq!(vertices[12].pos[1], 300.0 + gap, "bottom bar inner");
+    }
+
+    #[test]
+    fn showing_the_spread_hands_the_crosshair_the_cone() {
+        let stage = Stage::new();
+
+        stage.show_spread(0.021);
+
+        let hud = stage.crosshair.lock().expect("not poisoned");
+        assert_eq!(hud.spread, 0.021);
     }
 }
