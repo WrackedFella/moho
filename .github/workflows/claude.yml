@@ -146,11 +146,17 @@ jobs:
           allowed_bots: github-actions
           display_report: true
           prompt: /devflow:orchestrate ${{ github.event.issue.number || inputs.issue }}
+          # Allowed: what a run needs inside the checkout. `rm` removes one scratch file at a
+          # time (a probe test); Bash paths outside the working directories are still denied.
+          # Denied, and denials win over the allow-list: recursive rm, force pushes and
+          # branch deletes (rulesets guard dev and main, not card branches), merging (only
+          # pr-review.yml or a person merges).
           claude_args: |
             --max-turns 200
             --append-system-prompt "This is a headless run that ends when you stop. Run every subagent in the foreground and never end your turn while one is running. Never end your turn with a status message: after a skill or subagent returns, continue with the next step. Stop only after the final report, or after pausing with a comment and the agent-paused label."
             --add-dir /home/runner/.claude/plugins/cache /tmp
-            --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue:*),Bash(gh pr:*),Bash(gh api:*),Bash(gh run list:*),Bash(gh run view:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(rg:*),Bash(grep:*),Bash(jq:*),Bash(mkdir:*),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/board *),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/pr-facts *),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/intake-agree *),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/e2e-guard *),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/test-guard *),Edit,Write,Task,SendMessage,Skill"
+            --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh issue:*),Bash(gh pr:*),Bash(gh api:*),Bash(gh run list:*),Bash(gh run view:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(rg:*),Bash(grep:*),Bash(jq:*),Bash(mkdir:*),Bash(rm:*),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/board *),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/pr-facts *),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/intake-agree *),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/e2e-guard *),Bash(/home/runner/.claude/plugins/cache/claude-skills/devflow/*/scripts/test-guard *),Edit,Write,Task,SendMessage,Skill"
+            --disallowedTools "Bash(rm -r:*),Bash(rm -R:*),Bash(rm -rf:*),Bash(rm -fr:*),Bash(rm -Rf:*),Bash(rm -fR:*),Bash(rm --recursive:*),Bash(git push --force:*),Bash(git push -f:*),Bash(git push --force-with-lease:*),Bash(git push --delete:*),Bash(git push -d:*),Bash(git push origin --force:*),Bash(git push origin -f:*),Bash(git push origin --force-with-lease:*),Bash(git push origin --delete:*),Bash(git push origin -d:*),Bash(git push -u origin --force:*),Bash(git push -u origin -f:*),Bash(gh pr merge:*)"
       # The action hides the run's output, so a denial shows only as a count. List what was
       # denied, so the allow-list can be tuned from evidence.
       - name: List denied commands
