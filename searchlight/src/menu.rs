@@ -3,6 +3,8 @@
 
 use moho_ui_shell::{EngineSetting, EngineSettings, MenuItem, MenuScreen};
 
+use crate::head_bob::HeadBobLevel;
+
 /// What choosing a menu item asks the game to do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuAction {
@@ -61,9 +63,17 @@ pub fn pause_screen() -> MenuScreen<MenuAction> {
     }
 }
 
-/// Titled Settings, with the engine's rows starting from `settings`, then Apply and a Back
-/// button; Escape is Back.
-pub fn settings_screen(settings: EngineSettings) -> MenuScreen<MenuAction> {
+/// The Head bob slider row, starting at `level`.
+pub fn head_bob_row(_level: HeadBobLevel) -> MenuItem<MenuAction> {
+    todo!("head_bob_row")
+}
+
+/// Titled Settings, with the engine's rows starting from `settings`, the Head bob row starting
+/// at `head_bob`, then Apply and a Back button; Escape is Back.
+pub fn settings_screen(
+    settings: EngineSettings,
+    _head_bob: HeadBobLevel,
+) -> MenuScreen<MenuAction> {
     let mut items: Vec<MenuItem<MenuAction>> = EngineSetting::ALL
         .into_iter()
         .map(MenuItem::Setting)
@@ -75,5 +85,66 @@ pub fn settings_screen(settings: EngineSettings) -> MenuScreen<MenuAction> {
         items,
         back: Some(MenuAction::Back),
         settings: Some(settings),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use moho_core::prefs::Prefs;
+    use moho_ui_shell::GameSlider;
+
+    use super::*;
+
+    fn level(percent: i32) -> HeadBobLevel {
+        HeadBobLevel::new(percent).expect("a percentage on the grid")
+    }
+
+    #[test]
+    fn the_head_bob_row_is_a_zero_to_a_hundred_percent_slider_in_steps_of_five() {
+        let row = head_bob_row(level(35));
+
+        assert_eq!(
+            row,
+            MenuItem::GameSlider(GameSlider {
+                key: "head_bob".to_owned(),
+                label: "Head bob".to_owned(),
+                min: 0,
+                max: 100,
+                step: 5,
+                unit: "%".to_owned(),
+                value: 35,
+            })
+        );
+    }
+
+    #[test]
+    fn the_head_bob_row_starts_at_each_level_it_is_given() {
+        for percent in [0, 5, 50, 100] {
+            let MenuItem::GameSlider(slider) = head_bob_row(level(percent)) else {
+                panic!("the Head bob row is a game slider");
+            };
+
+            assert_eq!(slider.value, percent);
+            assert_eq!(slider.key, HeadBobLevel::KEY);
+        }
+    }
+
+    #[test]
+    fn settings_puts_the_head_bob_row_after_the_engine_rows_and_before_apply() {
+        let settings = EngineSettings::from_prefs(&Prefs::default());
+
+        let screen = settings_screen(settings, level(30));
+
+        let mut expected: Vec<MenuItem<MenuAction>> = EngineSetting::ALL
+            .into_iter()
+            .map(MenuItem::Setting)
+            .collect();
+        expected.push(head_bob_row(level(30)));
+        expected.push(MenuItem::Apply);
+        expected.push(MenuAction::Back.button());
+        assert_eq!(screen.items, expected);
+        assert_eq!(screen.title.as_deref(), Some("Settings"));
+        assert_eq!(screen.back, Some(MenuAction::Back));
+        assert_eq!(screen.settings, Some(settings));
     }
 }
