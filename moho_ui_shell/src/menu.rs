@@ -77,8 +77,8 @@ const ROW_SIZE: f32 = 36.0;
 const ROW_PITCH: f32 = 56.0;
 /// Width of a row's clickable band, centred on the window.
 const ROW_WIDTH: f32 = 240.0;
-const FOCUS_COLOR: [u8; 4] = [255, 220, 80, 255];
-const COLOR: [u8; 4] = [220, 220, 220, 255];
+const FOCUS_COLOR: [u8; 4] = TEXT_COLORS[1];
+const COLOR: [u8; 4] = TEXT_COLORS[0];
 
 /// Font size of a settings row's label and value, which share a 240-point band.
 const SETTING_SIZE: f32 = 18.0;
@@ -91,7 +91,14 @@ const LABEL_WIDTH: f32 = 240.0;
 const CELL_WIDTH: f32 = (CONTROL_WIDTH - LABEL_WIDTH) / 2.0;
 /// Free space kept above and below the rows of a column that scrolls; the title sits in the top.
 const BAND: f32 = ROW_PITCH;
-const WARNING_COLOR: [u8; 4] = [255, 120, 80, 255];
+const WARNING_COLOR: [u8; 4] = TEXT_COLORS[2];
+/// Every colour a menu text can have: normal, focused, warning. The backdrop's contrast test
+/// covers each, so a colour added later has to go through this list.
+pub(crate) const TEXT_COLORS: [[u8; 4]; 3] = [
+    [220, 220, 220, 255],
+    [255, 220, 80, 255],
+    [255, 120, 80, 255],
+];
 const PROTECTED_NOTE: &str = "That input can't be bound";
 /// Window size assumed until a screen has been laid out once.
 const DEFAULT_SIZE: [f32; 2] = [1280.0, 720.0];
@@ -627,6 +634,16 @@ impl<A> MenuStack<A> {
             }
         }
         texts
+    }
+
+    /// The rectangles of the top screen's rows fully in view on a window `size` points across;
+    /// empty with no screen open.
+    pub(crate) fn visible_rows(&self, size: [f32; 2]) -> Vec<Rect> {
+        let Some(open) = self.screens.last() else {
+            return Vec::new();
+        };
+        let rows = open.rects(size);
+        rows[open.visible(size)].to_vec()
     }
 }
 
@@ -2015,6 +2032,27 @@ mod tests {
             below_cell_edge.take_events(),
             [captured(Bind::Row(0), Slot::Primary, q)]
         );
+    }
+
+    #[test]
+    fn visible_rows_are_empty_with_no_screen_and_only_the_slice_in_view_when_scrolled() {
+        let mut stack = MenuStack::<Bind>::new();
+        let closed = stack.visible_rows(SIZE);
+        stack.push(controls_screen(controls_of(30)));
+        stack.scroll(3.0);
+        assert!(!row_shown(&stack, 0), "the page must be scrolled");
+
+        let rows = stack.visible_rows(SIZE);
+
+        assert_eq!(closed, []);
+        let texts = stack.texts(SIZE);
+        let drawn = texts.len() / 3;
+        assert!(drawn > 0 && drawn < 30, "{drawn} rows in view");
+        assert_eq!(rows.len(), drawn, "one rect per row in view");
+        for (index, rect) in rows.iter().enumerate() {
+            let label_y = SIZE[1] / 2.0 + texts[index * 3].offset[1];
+            assert_eq!(centre_y(*rect), label_y, "row {index} is the one in view");
+        }
     }
 
     #[test]
