@@ -980,6 +980,19 @@ mod tests {
     }
 
     #[test]
+    fn world_autosave_seconds_is_an_unknown_key() {
+        let (_prefs, issues) = Prefs::parse("[world]\nautosave_seconds=300\n");
+
+        assert_eq!(
+            issues,
+            vec![PrefsIssue::UnknownKey {
+                section: "world".to_string(),
+                key: "autosave_seconds".to_string(),
+            }]
+        );
+    }
+
+    #[test]
     fn old_key_lines_are_unknown_keys() {
         let (prefs, issues) = Prefs::parse("[prefs]\nkey_w = Z\n");
 

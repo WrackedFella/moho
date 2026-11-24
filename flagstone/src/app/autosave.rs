@@ -1,3 +1,22 @@
+pub const DEFAULT_AUTOSAVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// The `[game]` key holding the autosave interval in seconds.
+const AUTOSAVE_SECONDS: &str = "autosave_seconds";
+
+/// The autosave interval a `[game] autosave_seconds` value asks for.
+pub fn interval_from_setting(
+    raw: Option<&str>,
+) -> Result<Option<std::time::Duration>, std::num::ParseIntError> {
+    let _ = raw;
+    Ok(Some(DEFAULT_AUTOSAVE_INTERVAL))
+}
+
+/// The autosave interval flagstone runs with, read from `prefs`.
+pub fn autosave_interval(prefs: &moho_core::prefs::Prefs) -> Option<std::time::Duration> {
+    let _ = (prefs, AUTOSAVE_SECONDS);
+    Some(DEFAULT_AUTOSAVE_INTERVAL)
+}
+
 /// When an edited world is next due an autosave, counted in simulation ticks.
 ///
 /// A world is due once it has been edited since the last save and at least
@@ -403,9 +422,81 @@ mod tests {
     }
 
     fn prefs_with_autosave_seconds(seconds: u32) -> Prefs {
-        let (prefs, issues) = Prefs::parse(&format!("[world]\nautosave_seconds={seconds}\n"));
+        prefs_with_game_autosave_text(&seconds.to_string())
+    }
+
+    fn prefs_with_game_autosave_text(raw: &str) -> Prefs {
+        let (prefs, issues) = Prefs::parse(&format!("[game]\nautosave_seconds={raw}\n"));
         assert_eq!(issues, vec![], "test setup: the prefs text is valid");
         prefs
+    }
+
+    fn secs(n: u64) -> Option<Duration> {
+        Some(Duration::from_secs(n))
+    }
+
+    #[test]
+    fn setting_300_is_300_seconds() {
+        assert_eq!(interval_from_setting(Some("300")), Ok(secs(300)));
+        assert_eq!(
+            autosave_interval(&prefs_with_game_autosave_text("300")),
+            secs(300)
+        );
+    }
+
+    #[test]
+    fn unparseable_setting_is_an_error() {
+        for raw in ["soon", "-5"] {
+            assert!(interval_from_setting(Some(raw)).is_err(), "{raw}");
+        }
+    }
+
+    #[test]
+    fn unparseable_autosave_seconds_falls_back_to_120() {
+        for raw in ["soon", "-5"] {
+            let prefs = prefs_with_game_autosave_text(raw);
+
+            assert_eq!(autosave_interval(&prefs), secs(120), "{raw}");
+        }
+    }
+
+    #[test]
+    fn out_of_range_setting_clamps() {
+        for (raw, expected) in [("5", 30), ("99999", 3600), ("4294967295", 3600)] {
+            assert_eq!(
+                interval_from_setting(Some(raw)),
+                Ok(secs(expected)),
+                "{raw}"
+            );
+            assert_eq!(
+                autosave_interval(&prefs_with_game_autosave_text(raw)),
+                secs(expected),
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn bounds_are_kept() {
+        for bound in [30, 3600] {
+            assert_eq!(
+                interval_from_setting(Some(&bound.to_string())),
+                Ok(secs(bound)),
+                "{bound}"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_setting_is_120() {
+        assert_eq!(interval_from_setting(None), Ok(secs(120)));
+        assert_eq!(autosave_interval(&Prefs::default()), secs(120));
+    }
+
+    #[test]
+    fn zero_setting_is_off() {
+        assert_eq!(interval_from_setting(Some("0")), Ok(None));
+        assert_eq!(autosave_interval(&prefs_with_game_autosave_text("0")), None);
     }
 
     #[test]
