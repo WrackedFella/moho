@@ -57,9 +57,28 @@ pub struct Unreachable {
     pub marks: BTreeSet<[i32; 3]>,
 }
 
+impl Unreachable {
+    fn new(revision: u64, from: BlockPos) -> Self {
+        Self {
+            revision,
+            from,
+            marks: BTreeSet::new(),
+        }
+    }
+
+    /// Empties the memo unless it was recorded at this `revision` from this cell.
+    fn refresh(&mut self, revision: u64, from: BlockPos) {
+        if self.revision != revision || self.from != from {
+            *self = Self::new(revision, from);
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Job {
     Idle {
+        /// The marks this idle pawn has found no route to, so it does not search for them
+        /// again until the terrain or its cell changes.
         unreachable: Unreachable,
     },
     Mine {
@@ -165,13 +184,7 @@ fn claim_nearest(
 ) -> Option<Job> {
     let feet = feet_cell(pose.feet);
     let start = standing_cell(grid, feet).unwrap_or(feet);
-    if unreachable.revision != grid.revision() || unreachable.from != start {
-        *unreachable = Unreachable {
-            revision: grid.revision(),
-            from: start,
-            marks: BTreeSet::new(),
-        };
-    }
+    unreachable.refresh(grid.revision(), start);
     let mut candidates: Vec<BlockPos> = marks
         .unclaimed()
         .filter(|mark| !unreachable.marks.contains(mark))
@@ -183,13 +196,7 @@ fn claim_nearest(
 
     for block in candidates.into_iter().take(ROUTE_ATTEMPTS_PER_TICK) {
         let mark = block.to_array();
-        let Some(route) = route(
-            grid,
-            start,
-            |cell| is_stand_cell(block, cell),
-            block,
-            ROUTE_NODE_BUDGET,
-        ) else {
+        let Some(route) = route_to_stand_cell(grid, start, block) else {
             unreachable.marks.insert(mark);
             continue;
         };
@@ -269,27 +276,32 @@ fn replan(job: &mut Job, marks: &mut MineMarks, pose: Pose, grid: &VoxelGrid) ->
     let held = *mark;
     let block = BlockPos::from_array(held);
     let feet = feet_cell(pose.feet);
-    if let Some(found) = route(
-        grid,
-        feet,
-        |cell| is_stand_cell(block, cell),
-        block,
-        ROUTE_NODE_BUDGET,
-    ) {
+    if let Some(found) = route_to_stand_cell(grid, feet, block) {
         *planned = found;
         *next = 0;
         *stall = StallGuard::default();
         return true;
     }
     marks.release(held);
-    *job = Job::Idle {
-        unreachable: Unreachable {
-            revision: grid.revision(),
-            from: feet,
-            marks: BTreeSet::from([held]),
-        },
-    };
+    let mut unreachable = Unreachable::new(grid.revision(), feet);
+    unreachable.marks.insert(held);
+    *job = Job::Idle { unreachable };
     false
+}
+
+/// The route from `start` to a cell from which `block` is within mining reach.
+fn route_to_stand_cell(
+    grid: &VoxelGrid,
+    start: BlockPos,
+    block: BlockPos,
+) -> Option<Vec<BlockPos>> {
+    route(
+        grid,
+        start,
+        |cell| is_stand_cell(block, cell),
+        block,
+        ROUTE_NODE_BUDGET,
+    )
 }
 
 /// Advances `job` one tick for the pawn `id` at `pose`.
