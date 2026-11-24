@@ -1263,7 +1263,7 @@ mod tests {
     use searchlight_rules::{Grade, LeanSide};
 
     #[test]
-    fn a_sandbox_title_line_has_no_wave() {
+    fn a_title_line_without_waves_has_no_wave() {
         let arena = arena_with(&[], Vec3::ZERO, &[], &[]);
         let config = || test_config(rifle_from(mag(30, 30)), vec![]);
         let actions = || {
@@ -1274,12 +1274,12 @@ mod tests {
             ArenaMode::new(arena.clone(), config(), wave_tuning(1)),
             actions(),
         );
-        let sandbox = SearchlightGame::new(ArenaMode::sandbox(arena, config()), actions());
+        let quiet = SearchlightGame::new(ArenaMode::without_waves(arena, config()), actions());
 
-        let sandbox_line = sandbox.vitals_line();
+        let quiet_line = quiet.vitals_line();
 
         assert_eq!(waves.vitals_line(), "HP 100/100 | Wave 1  Score 0");
-        assert_eq!(sandbox_line, "HP 100/100");
+        assert_eq!(quiet_line, "HP 100/100");
     }
 
     fn game() -> SearchlightGame {

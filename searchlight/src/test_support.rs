@@ -380,7 +380,7 @@ pub(crate) fn level_marker(name: &str, position: Vec3) -> LevelMarker {
     }
 }
 
-/// The `searchlight_level` marker whose `mode` is `value`.
+/// A `searchlight_level` node with a `mode` extra of `value`, which levels ignore.
 pub(crate) fn mode_marker(value: &str) -> LevelMarker {
     let mut marker = level_marker("searchlight_level", Vec3::ZERO);
     marker
