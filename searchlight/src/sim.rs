@@ -501,13 +501,13 @@ impl SearchlightSim {
     /// or under `command.simple` hits at once), then the enemies that decided to fire do, and
     /// enemies that died leave the world.
     pub fn tick(&mut self, command: &SearchlightCommand, dt: f32) {
+        self.traces.clear();
         if self.player_body.is_dead() {
             if command.restart {
                 self.restart();
             }
             return;
         }
-        self.traces.clear();
         let firing = self.move_enemies(dt);
         let factor = if command.lean.is_some() {
             self.lean_tuning.speed_factor
@@ -2808,6 +2808,19 @@ mod tests {
         };
 
         sim.tick(&restart, DT);
+
+        assert_eq!(sim.round_traces(), []);
+    }
+
+    #[test]
+    fn a_dead_players_ticks_leave_no_stale_trace() {
+        let mut sim = dummy_ahead(300.0, BodyPart::Torso, with_ball(BALL));
+        sim.tick(&pull(), DT);
+        sim.tick(&idle(), DT);
+        assert_eq!(sim.round_traces().len(), 1, "no round was traced");
+        sim.kill_player();
+
+        sim.tick(&idle(), DT);
 
         assert_eq!(sim.round_traces(), []);
     }

@@ -393,6 +393,11 @@ struct Stage {
     tracer_material: u32,
     /// The streak drawn for each round, by the sim's round id.
     tracers: BTreeMap<u32, EffectHandle>,
+    /// The traces of the ticks since the last frame, or of the last tick if a frame has drawn
+    /// them.
+    traces: Vec<RoundTrace>,
+    /// Whether a frame has drawn `traces`.
+    traces_shown: bool,
     /// The hull and eye the dummies and enemies are drawn from, the sim's own.
     body: CharacterBody,
     dummy_count: usize,
@@ -416,12 +421,39 @@ impl Stage {
         self.scene.effects_mut().set_quality(quality);
     }
 
-    /// Draws one streak per round in `traces`, placed `alpha` of the way along this tick's step,
-    /// and ends the streak of each round that stopped or is no longer traced. An ended trace
-    /// stays in `traces` until the next tick, so its streak is kept, ended, until it goes.
-    fn show_tracers(&mut self, traces: &[RoundTrace], alpha: f32) {
+    /// Takes in the traces of one tick. Those of ticks no frame has drawn yet merge by round id,
+    /// the later tick winning, so a round that stopped between two frames keeps its end; the
+    /// first tick after a frame starts afresh.
+    fn absorb_traces(&mut self, traces: &[RoundTrace]) {
+        if std::mem::take(&mut self.traces_shown) {
+            self.traces.clear();
+        }
+        for trace in traces {
+            match self.traces.iter_mut().find(|held| held.id == trace.id) {
+                Some(held) => *held = *trace,
+                None => self.traces.push(*trace),
+            }
+        }
+    }
+
+    /// Ends every tracer and forgets the traces, for a sim whose rounds are gone or frozen.
+    fn end_tracers(&mut self) {
+        let effects = self.scene.effects_mut();
+        for handle in std::mem::take(&mut self.tracers).into_values() {
+            effects.end(handle);
+        }
+        self.traces.clear();
+        self.traces_shown = false;
+    }
+
+    /// Draws one streak per absorbed trace, placed `alpha` of the way along its step, and ends
+    /// the streak of each round that stopped or is no longer traced. An ended trace stays held
+    /// until the next tick, so its streak is kept, ended, until it goes.
+    fn show_tracers(&mut self, alpha: f32) {
         let style = tracer_style(self.tracer_material);
         let effects = self.scene.effects_mut();
+        let traces = &self.traces;
+        self.traces_shown = true;
         for trace in traces {
             let handle = *self
                 .tracers
@@ -461,6 +493,8 @@ impl Stage {
             enemy_material,
             tracer_material,
             tracers: BTreeMap::new(),
+            traces: Vec::new(),
+            traces_shown: false,
             body: SHIPPED_BODY,
             dummy_count: 0,
             enemies: Vec::new(),
@@ -1335,6 +1369,13 @@ impl Game for SearchlightGame {
             self.bob = Bob::REST;
             self.stage.status.clear();
         }
+        // A dead player's rounds are frozen and a restart numbers rounds from 0 again, so the
+        // tracers of either end rather than keep a trace to place.
+        if was_dead || self.mode.sim().player_body().is_dead() {
+            self.stage.end_tracers();
+        } else {
+            self.stage.absorb_traces(self.mode.sim().round_traces());
+        }
         self.stage.tick_flashes();
     }
 
@@ -1432,8 +1473,7 @@ impl Game for SearchlightGame {
         }
         self.refresh_use_prompt(dead);
         self.stage.sync_enemies(self.mode.sim());
-        self.stage
-            .show_tracers(self.mode.sim().round_traces(), alpha);
+        self.stage.show_tracers(alpha);
         self.stage.scene.effects_mut().advance(ctx.frame_dt);
         if let Some(renderer) = ctx.renderer() {
             let sim = self.mode.sim();
@@ -2063,6 +2103,98 @@ mod tests {
         assert!(most <= 2, "{most} tracers lived");
         assert!(renderer.tracers.is_empty());
         assert_eq!(live_effects(&mut game), 0);
+    }
+
+    #[test]
+    fn a_dead_players_tracer_holds_still_where_it_was_last_placed() {
+        let mut game = tracer_game(&[], tracer_config());
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let mut renderer = TracerRenderer::default();
+        tick_with(&mut game, &mut clock, &pull_command());
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        tracer_frame(&mut game, &mut renderer, 0.5);
+        let placed = tracer_head(&renderer.tracers[0]);
+        game.mode.sim_mut().kill_player();
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+
+        for alpha in [0.0, 1.0, 0.25, 0.75] {
+            tracer_frame(&mut game, &mut renderer, alpha);
+
+            for tracer in &renderer.tracers {
+                assert!(
+                    tracer_head(tracer).distance(placed) < 1e-3,
+                    "alpha {alpha}: the head moved to {}",
+                    tracer_head(tracer)
+                );
+            }
+        }
+        assert!(game.sim().round_traces().is_empty());
+    }
+
+    #[test]
+    fn a_tracer_ends_at_the_strike_when_later_ticks_pass_before_the_next_frame() {
+        let wall = (Vec3::new(-5.0, 0.0, 3.0), Vec3::new(5.0, 4.0, 3.2));
+        for frame_before_hit in [false, true] {
+            let mut game = tracer_game(&[wall], tracer_config());
+            let mut clock = GameClock::new(0.0, 1.0, 1.0);
+            let mut renderer = TracerRenderer::default();
+            tick_with(&mut game, &mut clock, &pull_command());
+            if frame_before_hit {
+                tracer_frame(&mut game, &mut renderer, 0.5);
+            }
+            tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+            let &[trace] = game.sim().round_traces() else {
+                panic!("expected one trace: {:?}", game.sim().round_traces());
+            };
+            assert!(trace.ended, "the round did not hit the wall");
+            tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+            tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+
+            tracer_frame(&mut game, &mut renderer, 0.5);
+
+            let [tracer] = renderer.tracers.as_slice() else {
+                panic!(
+                    "before {frame_before_hit}: {} tracers",
+                    renderer.tracers.len()
+                );
+            };
+            assert!(
+                tracer_head(tracer).distance(trace.to) < 1e-3,
+                "before {frame_before_hit}: ended at {}, not at the strike {}",
+                tracer_head(tracer),
+                trace.to
+            );
+        }
+    }
+
+    #[test]
+    fn a_round_fired_after_a_restart_gets_a_fresh_tracer_not_its_predecessors() {
+        let wall = (Vec3::new(-5.0, 0.0, 3.0), Vec3::new(5.0, 4.0, 3.2));
+        let mut game = tracer_game(&[wall], tracer_config());
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let mut renderer = TracerRenderer::default();
+        tick_with(&mut game, &mut clock, &pull_command());
+        tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        tracer_frames(&mut game, &mut renderer, 4);
+        game.mode.sim_mut().kill_player();
+        tick_with(&mut game, &mut clock, &restart_command());
+
+        tick_with(&mut game, &mut clock, &pull_command());
+        tracer_frame(&mut game, &mut renderer, 0.5);
+
+        let muzzle = game.sim().player_eye();
+        let fresh: Vec<&InstanceGpu> = renderer
+            .tracers
+            .iter()
+            .filter(|tracer| tracer_head(tracer).distance(muzzle) < 1e-3)
+            .collect();
+        let [tracer] = fresh.as_slice() else {
+            panic!("{} tracers at the muzzle", fresh.len());
+        };
+        assert!(
+            (column(tracer, 1).length() - 0.03).abs() < 1e-4,
+            "the new round's tracer is fading"
+        );
     }
 
     #[test]
