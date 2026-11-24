@@ -2035,6 +2035,27 @@ mod tests {
     }
 
     #[test]
+    fn visible_rows_are_empty_with_no_screen_and_only_the_slice_in_view_when_scrolled() {
+        let mut stack = MenuStack::<Bind>::new();
+        let closed = stack.visible_rows(SIZE);
+        stack.push(controls_screen(controls_of(30)));
+        stack.scroll(3.0);
+        assert!(!row_shown(&stack, 0), "the page must be scrolled");
+
+        let rows = stack.visible_rows(SIZE);
+
+        assert_eq!(closed, []);
+        let texts = stack.texts(SIZE);
+        let drawn = texts.len() / 3;
+        assert!(drawn > 0 && drawn < 30, "{drawn} rows in view");
+        assert_eq!(rows.len(), drawn, "one rect per row in view");
+        for (index, rect) in rows.iter().enumerate() {
+            let label_y = SIZE[1] / 2.0 + texts[index * 3].offset[1];
+            assert_eq!(centre_y(*rect), label_y, "row {index} is the one in view");
+        }
+    }
+
+    #[test]
     fn the_title_stays_on_screen_above_a_scrolled_control_page() {
         let screen = MenuScreen {
             title: Some("Controls".to_owned()),

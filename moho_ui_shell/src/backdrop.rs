@@ -358,6 +358,71 @@ mod tests {
     }
 
     #[test]
+    fn short_labels_on_wide_rows_still_get_a_panel_as_wide_as_the_row_column() {
+        let size = [1280.0, 720.0];
+        let mut stack = MenuStack::new();
+        stack.push(MenuScreen {
+            title: None,
+            items: ["A", "B"]
+                .map(|label| MenuItem::Button {
+                    label: label.to_owned(),
+                    action: (),
+                })
+                .to_vec(),
+            back: None,
+            settings: None,
+        });
+        let texts = stack.texts(size);
+        let rows = stack.visible_rows(size);
+
+        let (shapes, _) = shapes_of(screen(size[0], size[1]), |ctx| {
+            paint_menu(ctx, &texts, &rows);
+        });
+
+        let panel = rects_of(&shapes).get(1).expect("a panel").0;
+        assert!(
+            panel.width() >= 240.0 + 32.0,
+            "the panel is {} wide",
+            panel.width()
+        );
+    }
+
+    #[test]
+    fn the_panel_spans_only_the_rows_in_view_on_a_long_controls_screen() {
+        let size = [1280.0, 720.0];
+        let window = screen(size[0], size[1]);
+        for scrolled_to_end in [false, true] {
+            let mut stack = MenuStack::new();
+            stack.push(controls_screen());
+            let _ = stack.texts(size);
+            if scrolled_to_end {
+                stack.scroll(1000.0);
+            }
+            let texts = stack.texts(size);
+            let rows = stack.visible_rows(size);
+            let mut painted = Vec::new();
+            shapes_of(window, |ctx| painted = crate::text::paint(ctx, &texts));
+            // A row band is 32 tall around its text, well inside the margin, so the panel's
+            // height tracks the texts in view unless rows out of view are included.
+            let in_view = painted
+                .into_iter()
+                .reduce(egui::Rect::union)
+                .expect("texts in view")
+                .expand(16.0)
+                .intersect(window);
+
+            let (shapes, _) = shapes_of(window, |ctx| paint_menu(ctx, &texts, &rows));
+
+            let panel = rects_of(&shapes).get(1).expect("a panel").0;
+            // A row band reaches a few points past its text, so allow that much slack.
+            assert!(
+                panel.top() >= in_view.top() - 8.0 && panel.bottom() <= in_view.bottom() + 8.0,
+                "scrolled to end {scrolled_to_end}: panel {panel:?}, texts in view {in_view:?}"
+            );
+        }
+    }
+
+    #[test]
     fn the_panel_holds_every_row_text() {
         let windows = [
             [1280.0, 720.0],
