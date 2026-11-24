@@ -7,10 +7,10 @@
 #
 # A step is the subagent or skill the main loop called (`devflow:builder (tests)`,
 # `skill devflow:wiki`); `orchestrator` is the main loop itself. Subagent messages carry a
-# parent_tool_use_id that leads to the call that started them. Yield is what a step left
-# Per-step output tokens are the result's per-model output shared across that model's steps by
-# the size of what each step wrote (the log's own per-message counts are partial); input and
-# cache counts are exact per message. Yield is what a step left
+# parent_tool_use_id that leads to the call that started them. Per-step input and cache counts
+# are exact per message; per-step output is the result's per-model output shared across that
+# model's steps by the size of what each step wrote, since the log's own per-message output
+# counts are partial. Yield is what a step left
 # behind that the log shows: files it edited (and how many were test files), and the
 # mutation counts the main loop read. Inline unit tests in a source file count as source.
 #
