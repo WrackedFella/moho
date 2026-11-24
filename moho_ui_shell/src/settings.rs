@@ -101,10 +101,11 @@ impl GameSlider {
 
 impl EngineSetting {
     /// Every row, in the order a Settings screen lists them.
-    pub const ALL: [EngineSetting; 11] = [
+    pub const ALL: [EngineSetting; 12] = [
         EngineSetting::MouseSensitivity,
         EngineSetting::MouseSmoothing,
         EngineSetting::InvertMouseY,
+        EngineSetting::MasterVolume,
         EngineSetting::SoundEffectVolume,
         EngineSetting::MusicVolume,
         EngineSetting::UiVolume,
@@ -120,7 +121,7 @@ impl EngineSetting {
             EngineSetting::MouseSensitivity => "Mouse sensitivity",
             EngineSetting::MouseSmoothing => "Mouse smoothing",
             EngineSetting::InvertMouseY => "Invert mouse Y",
-            EngineSetting::MasterVolume => "",
+            EngineSetting::MasterVolume => "Master volume",
             EngineSetting::SoundEffectVolume => "Sound-effect volume",
             EngineSetting::MusicVolume => "Music volume",
             EngineSetting::UiVolume => "UI volume",
@@ -145,15 +146,15 @@ impl EngineSetting {
                 step: 0.1,
             },
             EngineSetting::MouseSmoothing | EngineSetting::InvertMouseY => Control::Toggle,
-            EngineSetting::SoundEffectVolume
+            EngineSetting::MasterVolume
+            | EngineSetting::SoundEffectVolume
             | EngineSetting::MusicVolume
             | EngineSetting::UiVolume => VOLUME,
             EngineSetting::ShadowQuality
             | EngineSetting::SsaoQuality
             | EngineSetting::EffectsQuality
             | EngineSetting::WindowMode
-            | EngineSetting::Resolution
-            | EngineSetting::MasterVolume => Control::Choice,
+            | EngineSetting::Resolution => Control::Choice,
         }
     }
 }
@@ -373,6 +374,7 @@ mod tests {
         *prefs.mouse_sensitivity_mut() = 2.5;
         *prefs.mouse_smoothing_mut() = true;
         *prefs.invert_mouse_y_mut() = true;
+        *prefs.master_volume_mut() = 3.0;
         *prefs.sound_effect_volume_mut() = 1.5;
         *prefs.music_volume_mut() = 2.5;
         *prefs.ui_volume_mut() = 3.5;
@@ -415,7 +417,7 @@ mod tests {
                 mouse_sensitivity: 2.5,
                 mouse_smoothing: true,
                 invert_mouse_y: true,
-                master_volume: 10.0,
+                master_volume: 3.0,
                 sound_effect_volume: 1.5,
                 music_volume: 2.5,
                 ui_volume: 3.5,
@@ -446,6 +448,7 @@ mod tests {
         *expected.mouse_sensitivity_mut() = 4.5;
         *expected.mouse_smoothing_mut() = false;
         *expected.invert_mouse_y_mut() = false;
+        *expected.master_volume_mut() = 10.0;
         *expected.sound_effect_volume_mut() = 9.5;
         *expected.music_volume_mut() = 0.5;
         *expected.ui_volume_mut() = 10.0;
@@ -539,6 +542,7 @@ mod tests {
                 "Mouse sensitivity",
                 "Mouse smoothing",
                 "Invert mouse Y",
+                "Master volume",
                 "Sound-effect volume",
                 "Music volume",
                 "UI volume",
@@ -552,63 +556,18 @@ mod tests {
     }
 
     #[test]
-    fn master_volume_row_is_labelled_and_uses_the_volume_slider() {
-        let volume = Control::Slider {
-            min: 0.0,
-            max: 10.0,
-            step: 0.5,
-        };
-
-        assert_eq!(EngineSetting::MasterVolume.label(), "Master volume");
-        assert_eq!(EngineSetting::MasterVolume.control(), volume);
-        assert_eq!(
-            EngineSetting::MasterVolume.control(),
-            EngineSetting::SoundEffectVolume.control()
-        );
-    }
-
-    #[test]
-    fn master_volume_is_listed_just_before_the_sound_effect_volume() {
-        let position = |wanted| EngineSetting::ALL.iter().position(|row| *row == wanted);
-
-        let master = position(EngineSetting::MasterVolume);
-        let effects = position(EngineSetting::SoundEffectVolume);
-
-        assert_eq!(EngineSetting::ALL.len(), 12);
-        assert!(master.is_some(), "the master row is listed");
-        assert_eq!(master.map(|at| at + 1), effects);
-    }
-
-    #[test]
-    fn engine_settings_read_and_write_master_volume() {
+    fn a_staged_master_volume_snaps_shows_and_is_written_to_prefs() {
         let mut prefs = Prefs::default();
-        *prefs.master_volume_mut() = 3.0;
         let mut staged = EngineSettings::from_prefs(&prefs);
 
         staged.set_slider(EngineSetting::MasterVolume, 4.4);
-        let shown = staged.value_text(EngineSetting::MasterVolume);
         let slider = staged.slider_value(EngineSetting::MasterVolume);
+        let shown = staged.value_text(EngineSetting::MasterVolume);
         staged.write_to(&mut prefs);
 
-        assert_eq!(
-            EngineSettings::from_prefs(&Prefs::default()).master_volume,
-            10.0
-        );
         assert_eq!(slider, 4.5);
         assert_eq!(shown, "4.5");
         assert_eq!(prefs.master_volume(), 4.5);
-        assert_eq!(EngineSettings::from_prefs(&prefs).master_volume, 4.5);
-    }
-
-    #[test]
-    fn from_prefs_shows_the_stored_master_volume() {
-        let mut prefs = Prefs::default();
-        *prefs.master_volume_mut() = 3.0;
-
-        let settings = EngineSettings::from_prefs(&prefs);
-
-        assert_eq!(settings.master_volume, 3.0);
-        assert_eq!(settings.value_text(EngineSetting::MasterVolume), "3.0");
     }
 
     #[test]
@@ -671,6 +630,7 @@ mod tests {
                 volume,
                 volume,
                 volume,
+                volume,
                 Control::Choice,
                 Control::Choice,
                 Control::Choice,
@@ -697,6 +657,7 @@ mod tests {
             (0u32..=20).prop_map(|n| n as f32 / 2.0),
             (0u32..=20).prop_map(|n| n as f32 / 2.0),
             (0u32..=20).prop_map(|n| n as f32 / 2.0),
+            (0u32..=20).prop_map(|n| n as f32 / 2.0),
             0u32..=4,
             0u32..=4,
             0u32..=4,
@@ -704,12 +665,25 @@ mod tests {
             (1u32..=8192, 1u32..=8192),
         )
             .prop_map(
-                |(sens, smooth, invert, sfx, music, ui, shadow, ssao, effects, mode, size)| {
+                |(
+                    sens,
+                    smooth,
+                    invert,
+                    master,
+                    sfx,
+                    music,
+                    ui,
+                    shadow,
+                    ssao,
+                    effects,
+                    mode,
+                    size,
+                )| {
                     EngineSettings {
                         mouse_sensitivity: sens,
                         mouse_smoothing: smooth,
                         invert_mouse_y: invert,
-                        master_volume: 10.0,
+                        master_volume: master,
                         sound_effect_volume: sfx,
                         music_volume: music,
                         ui_volume: ui,

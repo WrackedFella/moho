@@ -1171,17 +1171,12 @@ mod tests {
     fn a_file_without_master_volume_loads_10_with_no_issue_and_keeps_the_rest() {
         let older = base_ini_with(None);
         assert!(!older.contains("master_volume"), "test setup");
-        let newer = older.replace("[audio]\n", "[audio]\nmaster_volume=4.0\n");
 
         let (from_older, older_issues) = Prefs::parse(&older);
-        let (from_newer, newer_issues) = Prefs::parse(&newer);
 
         assert_eq!(older_issues, vec![]);
         assert_eq!(from_older.master_volume(), 10.0);
         assert_eq!(snapshot(&from_older), snapshot(&base_prefs()));
-        assert_eq!(newer_issues, vec![]);
-        assert_eq!(from_newer.master_volume(), 4.0);
-        assert_eq!(snapshot(&from_newer), snapshot(&base_prefs()));
     }
 
     #[test]
@@ -1218,6 +1213,7 @@ mod tests {
                 volume_strategy(),
                 volume_strategy(),
                 volume_strategy(),
+                volume_strategy(),
             ],
             (0u32..=4, 0u32..=4),
             (window_mode_strategy(), any::<u32>(), any::<u32>()),
@@ -1232,6 +1228,7 @@ mod tests {
                 *p.music_volume_mut() = vols[1];
                 *p.ui_volume_mut() = vols[2];
                 *p.voice_volume_mut() = vols[3];
+                *p.master_volume_mut() = vols[4];
                 p.set_shadow_quality(quality.0);
                 p.set_ssao_quality(quality.1);
                 p.set_window_mode(video.0);
@@ -1246,21 +1243,6 @@ mod tests {
     }
 
     proptest! {
-        #[test]
-        fn saved_prefs_with_any_master_volume_parse_back_unchanged(
-            mut prefs in prefs_strategy(),
-            master in volume_strategy(),
-        ) {
-            *prefs.master_volume_mut() = master;
-            let text = prefs.to_ini_string();
-
-            let (parsed, issues) = Prefs::parse(&text);
-
-            prop_assert_eq!(issues, vec![], "text:\n{}", text);
-            prop_assert_eq!(parsed.master_volume(), master);
-            prop_assert_eq!(parsed, prefs);
-        }
-
         #[test]
         fn saved_prefs_parse_back_unchanged_without_warnings(prefs in prefs_strategy()) {
             let text = prefs.to_ini_string();

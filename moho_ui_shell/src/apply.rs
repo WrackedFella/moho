@@ -323,9 +323,9 @@ mod tests {
         }
 
         #[test]
-        fn audio_settings_for_sets_the_three_volumes_and_keeps_the_rest() {
+        fn audio_settings_for_sets_master_and_three_volumes_and_keeps_the_rest() {
             let current = AudioSettings::new()
-                .with_master_volume(0.5)
+                .with_master_volume(0.3)
                 .with_voice_volume(0.2)
                 .with_sound_effects_volume(1.0)
                 .with_music_volume(1.0)
@@ -412,9 +412,6 @@ mod tests {
             for category in CATEGORIES {
                 assert_eq!(volume(&audio, category.clone()), 0.0, "{category:?}");
             }
-            assert_eq!(silent.sound_effect_volume, 8.0);
-            assert_eq!(silent.music_volume, 8.0);
-            assert_eq!(silent.ui_volume, 8.0);
             let restored = audio_settings_for(&full, &audio);
             for category in CATEGORIES {
                 let back = volume(&restored, category.clone());

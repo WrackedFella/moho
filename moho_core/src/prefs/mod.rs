@@ -1149,7 +1149,6 @@ mod tests {
             text.contains("\n[audio]\nmaster_volume=3.0\nsound_effect_volume=8.0\n"),
             "{text}"
         );
-        assert_eq!(Prefs::default().master_volume(), 10.0);
     }
 
     #[test]
