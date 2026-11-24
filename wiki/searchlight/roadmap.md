@@ -67,6 +67,7 @@ Runs in slices parallel to FPS-M2; needs no items or UI beyond one slider in the
 - **Placeholder body before the rig:** slice 1 adds a segmented player body (one box per body part, as the enemies have) that follows lean and stance and casts a shadow, plus a console toggle that draws the hit volumes ([FPS-F4-04](https://github.com/WrackedFella/moho/issues/611)). It needs no engine work and gives visual feedback until #543 lands; slice 3 replaces it.
 - **Exit:** in the arena a player crouched behind the 1.4 m crates is hit only when leaning, on head or arm; a prone player behind the same crate is not seen at all. The shadow follows the lean (slice 1); looking down shows the legs (slice 3).
 - **Cut lines:** weapon collision against the ground, prone dive, enemies going prone, variable crouch height, side-step, blind fire, mantle, slide, vault. If #543 can't give the sim deterministic bone poses, hit volumes follow a per-stance pose table instead of the bones and the rig only shows things; cover behaves the same.
+- **Settled shots ([FPS-F18](https://github.com/WrackedFella/moho/issues/877)):** movement and rapid fire widen the player's spread, the crosshair's gap shows it, and settling closes it; the crosshair is always the shot centre. Runs beside FPS-F4 and needs no engine work. Slice 2's crouch and prone tighten it; arm wounds (FPS-M4) and barrel wear (FPS-M3) widen it later.
 - **Held actions:** hold or toggle per keybinding lands with ENG-F26 and its checkbox with FPS-F14-07 (#725); until then lean is hold and crouch is toggle.
 
 ## 5.1 FPS-M1.3 Bullets fly (FPS-F15)
@@ -122,7 +123,7 @@ Ballistics is a core feature (Justin, 2026-10-26; GDD §4.14, §9 Q7). This mile
 - **Exit goal:** a leg or arm wound changes what the player does next, and treating it costs time and items.
 - **To taste, in order:** enemy debuffs, painkiller masking, tourniquet, temporary head statuses, arm compounding and left or right arms, surgical kit and med crafting.
 - **Cut lines:** radiation; disease and wasting injuries until the core proves out.
-- **Screen and audio effects** driven by wound state (vignette, blur, sway, muffling) and a ground clip for a leg-broken character (forced prone, §4.7) are part of the milestone.
+- **Screen and audio effects** driven by wound state (vignette, blur, sway, muffling, a limp in the head bob: the wounded leg's loop shortens and the sideways swing narrows, GDD §4.7) and a ground clip for a leg-broken character (forced prone, §4.7) are part of the milestone.
 
 ## 8.1 FPS-M4.1 Grenades, mocked (GDD Phase 4.1)
 
