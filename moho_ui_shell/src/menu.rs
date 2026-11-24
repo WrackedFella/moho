@@ -1869,7 +1869,7 @@ mod tests {
             drawn(&stack, "Back"),
         );
 
-        assert_eq!(top, (true, false, false), "ten of the thirteen rows fit");
+        assert_eq!(top, (true, false, false), "ten of the fourteen rows fit");
         assert_eq!(
             end,
             (false, false, false, true),

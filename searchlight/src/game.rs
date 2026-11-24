@@ -4800,7 +4800,7 @@ mod settings_tests {
         expected.push(back_button());
         assert_eq!(
             screen.items, expected,
-            "the eleven rows, Head bob, Apply and Back"
+            "the twelve rows, Head bob, Apply and Back"
         );
         assert_eq!(screen.back, Some(MenuAction::Back));
         assert_eq!(

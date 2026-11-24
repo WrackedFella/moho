@@ -413,6 +413,11 @@ mod tests {
             for category in CATEGORIES {
                 assert_eq!(volume(&audio, category.clone()), 0.0, "{category:?}");
             }
+            let at_full_master = audio.clone().with_master_volume(1.0);
+            for category in CATEGORIES {
+                let kept = volume(&at_full_master, category.clone());
+                assert!(close(kept, 0.8), "{category:?} kept at {kept}");
+            }
             let restored = audio_settings_for(&full, &audio);
             for category in CATEGORIES {
                 let back = volume(&restored, category.clone());
