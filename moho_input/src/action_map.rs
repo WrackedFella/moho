@@ -3861,6 +3861,64 @@ mod tests {
         assert_eq!(pressed_at(&frames, Inspector::Inspect), Vec::<usize>::new());
     }
 
+    #[test]
+    fn release_at_exactly_the_window_length_taps_and_opens_no_window_with_a_hold_binding() {
+        let mut quick = inspector_map();
+        quick.key(Key::Y, true);
+        let mut again_frames = ticks(&mut quick, DOUBLE);
+        quick.key(Key::Y, false);
+        tap(&mut quick, Key::Y);
+        again_frames.extend(ticks(&mut quick, DOUBLE + 5));
+        let mut alone = inspector_map();
+        alone.key(Key::Y, true);
+        let mut alone_frames = ticks(&mut alone, DOUBLE);
+        alone.key(Key::Y, false);
+        alone_frames.extend(ticks(&mut alone, DOUBLE + 5));
+
+        assert_eq!(
+            pressed_at(&again_frames, Inspector::Reload),
+            [DOUBLE, DOUBLE + DOUBLE - 1]
+        );
+        assert_eq!(
+            pressed_at(&again_frames, Inspector::Inspect),
+            Vec::<usize>::new()
+        );
+        assert_eq!(pressed_at(&alone_frames, Inspector::Reload), [DOUBLE]);
+        assert_eq!(released_at(&alone_frames, Inspector::Reload), [DOUBLE]);
+    }
+
+    #[test]
+    fn release_at_exactly_the_window_length_opens_no_window_without_a_hold_binding() {
+        let mut map = inspector_map_without_hold();
+
+        map.key(Key::Y, true);
+        let mut frames = ticks(&mut map, DOUBLE);
+        map.key(Key::Y, false);
+        tap(&mut map, Key::Y);
+        frames.extend(ticks(&mut map, DOUBLE + 5));
+
+        assert_eq!(
+            pressed_at(&frames, Inspector::Reload),
+            [DOUBLE - 1, DOUBLE + DOUBLE - 1]
+        );
+        assert_eq!(released_at(&frames, Inspector::Reload)[0], DOUBLE);
+        assert_eq!(pressed_at(&frames, Inspector::Inspect), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn release_one_tick_before_the_window_length_opens_a_window() {
+        for mut map in [inspector_map(), inspector_map_without_hold()] {
+            map.key(Key::Y, true);
+            let mut frames = ticks(&mut map, DOUBLE - 1);
+            map.key(Key::Y, false);
+            tap(&mut map, Key::Y);
+            frames.extend(ticks(&mut map, DOUBLE + 5));
+
+            assert_eq!(pressed_at(&frames, Inspector::Inspect), [DOUBLE - 1]);
+            assert_eq!(pressed_at(&frames, Inspector::Reload), Vec::<usize>::new());
+        }
+    }
+
     /// Only `Double Y`: no plain or hold binding on the key.
     #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
     enum DoubleOnly {
