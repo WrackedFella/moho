@@ -20,6 +20,14 @@ pub fn standable(grid: &VoxelGrid, cell: BlockPos) -> bool {
         && (0..BODY_CELLS).all(|up| !grid.is_solid_at(cell + BlockPos::Y * up))
 }
 
+/// The cell a pawn with its feet in `feet` stands in: `feet` itself when standable, else the
+/// cell above, then the one below, for feet sitting slightly in or off a slope.
+pub fn standing_cell(grid: &VoxelGrid, feet: BlockPos) -> Option<BlockPos> {
+    [feet, feet + BlockPos::Y, feet - BlockPos::Y]
+        .into_iter()
+        .find(|&cell| standable(grid, cell))
+}
+
 pub fn feet_cell(feet: Vec3) -> BlockPos {
     feet.floor().as_ivec3()
 }
@@ -43,6 +51,18 @@ fn steps(grid: &VoxelGrid, from: BlockPos) -> impl Iterator<Item = BlockPos> + '
     })
 }
 
+/// Whether `to` is one of the cells [`route`] can step to from `from`.
+pub fn is_step(grid: &VoxelGrid, from: BlockPos, to: BlockPos) -> bool {
+    steps(grid, from).any(|step| step == to)
+}
+
+/// Whether a pawn can walk `cells` in order: each cell standable and each consecutive pair a
+/// step.
+pub fn walkable(grid: &VoxelGrid, cells: &[BlockPos]) -> bool {
+    cells.iter().all(|&cell| standable(grid, cell))
+        && cells.windows(2).all(|pair| is_step(grid, pair[0], pair[1]))
+}
+
 fn manhattan_xz(a: BlockPos, b: BlockPos) -> i32 {
     (a.x - b.x).abs() + (a.z - b.z).abs()
 }
@@ -60,9 +80,7 @@ pub fn route(
     toward: BlockPos,
     budget: usize,
 ) -> Option<Vec<BlockPos>> {
-    let start = [start, start + BlockPos::Y, start - BlockPos::Y]
-        .into_iter()
-        .find(|&cell| standable(grid, cell))?;
+    let start = standing_cell(grid, start)?;
 
     // Ordered by (f, g, insertion order) for a deterministic tie-break.
     let mut open = BinaryHeap::new();
@@ -430,6 +448,98 @@ mod tests {
 
             assert_eq!(along_x.and_then(|w| w.last().copied()), Some(cell(3, 1, 0)));
             assert_eq!(along_z.and_then(|w| w.last().copied()), Some(cell(0, 1, 3)));
+        }
+    }
+
+    mod walkability {
+        use super::*;
+
+        #[test]
+        fn walkable_rejects_a_missing_floor_a_lost_step_and_a_gap() {
+            let line: Vec<BlockPos> = (0..=4).map(|x| cell(x, 1, 0)).collect();
+            let flat = flat_ground(6);
+            let mut no_floor = flat_ground(6);
+            no_floor.mutator().remove(cell(2, 0, 0));
+            let mut rise = flat_ground(6);
+            fill(&mut rise, (3, 1, -6), (3, 1, 6));
+            let mut two_high = flat_ground(6);
+            fill(&mut two_high, (3, 1, -6), (3, 2, 6));
+            let mut low_ceiling = flat_ground(6);
+            fill(&mut low_ceiling, (3, 1, -6), (3, 1, 6));
+            fill(&mut low_ceiling, (2, 4, -6), (2, 4, 6));
+
+            let open = walkable(&flat, &line);
+            let missing_floor = walkable(&no_floor, &line);
+            let one_block_rise = walkable(&rise, &[cell(2, 1, 0), cell(3, 2, 0), cell(4, 1, 0)]);
+            let lost_step = walkable(&two_high, &[cell(2, 1, 0), cell(3, 3, 0)]);
+            let skipped_cell = walkable(&flat, &[cell(0, 1, 0), cell(2, 1, 0)]);
+            let diagonal = walkable(&flat, &[cell(0, 1, 0), cell(1, 1, 1)]);
+            let repeated = walkable(&flat, &[cell(0, 1, 0), cell(0, 1, 0)]);
+            let no_headroom = walkable(&low_ceiling, &[cell(2, 1, 0), cell(3, 2, 0)]);
+            let single = walkable(&flat, &[cell(0, 1, 0)]);
+            let single_in_the_air = walkable(&flat, &[cell(0, 3, 0)]);
+
+            assert!(open, "a level line of ground is walkable");
+            assert!(!missing_floor, "a cell with no floor");
+            assert!(one_block_rise, "a one-block climb and descent");
+            assert!(!lost_step, "a climb of two blocks");
+            assert!(!skipped_cell, "a gap of one cell");
+            assert!(!diagonal, "a diagonal is two steps");
+            assert!(!repeated, "standing still is not a step");
+            assert!(!no_headroom, "a climb without headroom");
+            assert!(single, "one standable cell is a walk");
+            assert!(!single_in_the_air, "one cell with no floor is not");
+        }
+
+        #[test]
+        fn is_step_accepts_the_four_level_neighbours_and_rises_and_drops_of_one() {
+            let mut grid = flat_ground(6);
+            fill(&mut grid, (2, 1, 0), (2, 1, 0));
+            grid.mutator().remove(cell(-1, 0, 0));
+            let from = cell(0, 1, 0);
+
+            let east = is_step(&grid, from, cell(1, 1, 0));
+            let up_a_block = is_step(&grid, cell(1, 1, 0), cell(2, 2, 0));
+            let down_a_block = is_step(&grid, cell(2, 2, 0), cell(1, 1, 0));
+            let west_into_a_hole = is_step(&grid, from, cell(-1, 1, 0));
+            let diagonal = is_step(&grid, from, cell(1, 1, 1));
+            let two_away = is_step(&grid, from, cell(2, 1, 0));
+            let itself = is_step(&grid, from, from);
+
+            assert!(east);
+            assert!(up_a_block, "one up");
+            assert!(down_a_block, "one down");
+            assert!(!west_into_a_hole, "no floor there");
+            assert!(!diagonal, "a diagonal is not a step");
+            assert!(!two_away, "two cells away is not a step");
+            assert!(!itself, "staying put is not a step");
+        }
+
+        proptest! {
+            #[test]
+            fn is_step_agrees_with_route(
+                heights in proptest::collection::vec(0..=2i32, 49),
+                gx in 0..7i32,
+                gz in 0..7i32,
+                probe in (0..7i32, 0..7i32, -1..=1i32, -2..=2i32, -1..=1i32),
+            ) {
+                let grid = terrain(&heights);
+
+                let (_, walk) = terrain_route(&grid, &heights, (gx, gz));
+
+                if let Some(walk) = walk {
+                    for pair in walk.windows(2) {
+                        prop_assert!(is_step(&grid, pair[0], pair[1]), "{:?}", pair);
+                    }
+                    prop_assert!(walkable(&grid, &walk));
+                }
+                let from = cell(probe.0, column_top(&heights, probe.0, probe.1), probe.1);
+                let to = from + cell(probe.2, probe.3, probe.4);
+                prop_assert_eq!(
+                    is_step(&grid, from, to),
+                    steps(&grid, from).any(|c| c == to)
+                );
+            }
         }
     }
 

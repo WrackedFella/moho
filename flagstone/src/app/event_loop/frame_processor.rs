@@ -1536,6 +1536,152 @@ mod tests {
             assert!(app.colony.stock.is_empty());
         }
 
+        /// The trench's columns: the ground is gone across the whole field here except under
+        /// the causeways.
+        const TRENCH_X: std::ops::RangeInclusive<i32> = 18..=19;
+        /// The pawn crosses the trench; the block is beyond it.
+        const BEYOND: [i32; 3] = [24, 8, 12];
+
+        fn rebuild_collision(app: &mut App) {
+            let grid = app.light_system.as_ref().expect("light system").grid();
+            let chunks: Vec<flagstone_voxel::VoxelChunk> = (0..2)
+                .flat_map(|x| (0..2).map(move |z| glam::IVec3::new(x, 0, z)))
+                .map(|pos| flagstone_voxel::VoxelChunk::from_grid_lod(grid, pos, 0))
+                .collect();
+            for chunk in chunks {
+                crate::app::world_geometry::insert_chunk(app, chunk);
+            }
+            app.physics.step(1.0 / 60.0);
+        }
+
+        /// A site whose ground is cut by a trench at x 18 and 19, crossed only by causeways
+        /// three blocks wide centred on each of `bridges` (z), with `mark` marked beyond it.
+        fn trench_site(bridges: &[i32], mark: [i32; 3]) -> App {
+            let mut app = site_with_mark(&[(mark, None)], mark);
+            let grid = app.light_system.as_mut().expect("light system").grid_mut();
+            for x in TRENCH_X {
+                for z in (0..32).filter(|z| bridges.iter().all(|b| (z - b).abs() > 1)) {
+                    for y in 0..=GROUND_TOP {
+                        grid.mutator()
+                            .remove(flagstone_voxel::BlockPos::new(x, y, z));
+                    }
+                }
+            }
+            rebuild_collision(&mut app);
+            app
+        }
+
+        /// Removes the ground at column `x` over `zs` the way a player's edit does: the grid,
+        /// then `BlockRemoved` and a remesh for each block.
+        fn cut_ground(app: &mut App, x: i32, zs: std::ops::RangeInclusive<i32>) {
+            use flagstone_voxel::{BlockChangeReason, BlockPos, WorldEvent};
+            let grid = app.light_system.as_mut().expect("light system").grid_mut();
+            let chunk_size = grid.chunk_size();
+            let mut removed = Vec::new();
+            for z in zs {
+                for y in 0..=GROUND_TOP {
+                    let position = BlockPos::new(x, y, z);
+                    if grid.mutator().remove(position) {
+                        removed.push(position);
+                    }
+                }
+            }
+            for position in removed {
+                app.event_bus.publish(WorldEvent::BlockRemoved {
+                    position,
+                    old_material_id: 0,
+                    reason: BlockChangeReason::Player,
+                });
+                for chunk_pos in flagstone_voxel::chunks_meshed_from(position, chunk_size) {
+                    app.event_bus.publish(WorldEvent::ChunkMeshDirty {
+                        chunk_pos,
+                        terrain_dirty: true,
+                        structure_dirty: true,
+                    });
+                }
+            }
+        }
+
+        fn claimed(app: &App, mark: [i32; 3]) -> bool {
+            app.colony
+                .marks
+                .iter()
+                .any(|(pos, m)| pos == mark && m.claimed_by.is_some())
+        }
+
+        #[test]
+        fn a_hole_cut_in_the_route_stops_the_pawn_on_the_ground() {
+            let mut app = trench_site(&[12], BEYOND);
+            let mut sim = crate::app::dig_site::headless_loop();
+            let walking = run_until(&mut app, GIVE_UP, |app| pawn_state(app).position.x > 15.5);
+            assert!(walking, "the pawn never set out along the causeway");
+            assert!(claimed(&app, BEYOND), "the walk is under way");
+
+            let x_at_the_cut = pawn_state(&app).position.x;
+            cut_ground(&mut app, 18, 11..=13);
+            let ground_feet = (GROUND_TOP + 1) as f32;
+            for tick in 0..120 {
+                sim.step(&mut app, 1);
+
+                let state = pawn_state(&app);
+                let feet = state.position.y - 1.15;
+                let centre = state.position.floor().as_ivec3();
+                assert!(state.grounded, "airborne on tick {tick}: {state:?}");
+                assert!(
+                    (feet - ground_feet).abs() <= 0.05,
+                    "feet at {feet}, ground at {ground_feet}, tick {tick}"
+                );
+                assert!(
+                    !block_exists(&app, centre.to_array()),
+                    "inside a solid cell {centre} on tick {tick}"
+                );
+                assert!(
+                    (state.position.x - x_at_the_cut).abs() < 0.5,
+                    "kept walking toward the hole: from {x_at_the_cut} to {} on tick {tick}",
+                    state.position.x
+                );
+            }
+
+            assert!(block_exists(&app, BEYOND), "nothing dug the block");
+            assert!(app.colony.marks.contains(BEYOND), "the mark stays");
+            assert!(!claimed(&app, BEYOND), "and is free to take");
+        }
+
+        #[test]
+        fn a_cut_route_is_walked_around_and_the_block_dug() {
+            let mark = [24, 8, 16];
+            let mut app = trench_site(&[12, 20], mark);
+            let mut sim = crate::app::dig_site::headless_loop();
+            let walking = run_until(&mut app, GIVE_UP, |app| pawn_state(app).position.x > 15.5);
+            assert!(walking, "the pawn never set out along the near causeway");
+            let mut over_the_trench = Vec::new();
+            let z_at_the_cut = pawn_state(&app).position.z;
+            assert!(
+                (11.0..14.0).contains(&z_at_the_cut),
+                "the pawn is not on the near causeway's line: z {z_at_the_cut}"
+            );
+
+            cut_ground(&mut app, 18, 11..=13);
+            for _ in 0..1500 {
+                if !block_exists(&app, mark) {
+                    break;
+                }
+                sim.step(&mut app, 1);
+                let position = pawn_state(&app).position;
+                if position.x > 18.1 && position.x < 19.9 {
+                    over_the_trench.push(position.z);
+                }
+            }
+
+            assert!(!block_exists(&app, mark), "the block was never dug");
+            assert!(!over_the_trench.is_empty(), "the pawn never crossed");
+            assert!(
+                over_the_trench.iter().all(|z| (19.0..22.0).contains(z)),
+                "crossed away from the far causeway: {over_the_trench:?}"
+            );
+            assert!(!app.colony.marks.contains(mark), "the marker is gone");
+        }
+
         #[test]
         fn hud_data_carries_the_colony_stock() {
             let mut stocked = App::headless();

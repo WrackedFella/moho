@@ -3446,7 +3446,7 @@ mod tests {
 
         press_keys(&mut game, &mut ctx, &[Key::ArrowDown, Key::Enter]);
         let settings_title = title(&game);
-        // Back is the last of Settings' thirteen rows; Up wraps to it and scrolls it into the
+        // Back is the last of Settings' sixteen rows; Up wraps to it and scrolls it into the
         // last of the ten rows that fit at 720 points.
         press_keys(&mut game, &mut ctx, &[Key::ArrowUp]);
         let back = [640.0, 588.0];
@@ -5120,7 +5120,7 @@ mod settings_tests {
             (first.min[0] + first.max[0]) / 2.0,
             (first.min[1] + first.max[1]) / 2.0,
         ];
-        // The thirteen-row Settings screen scrolls at this window size, so a row below the fold
+        // The sixteen-row Settings screen scrolls at this window size, so a row below the fold
         // has no point to hover: go to the first row, then step down to `row`.
         menu.scroll(-1000.0);
         menu.hover(centre, SIZE);
@@ -5220,7 +5220,7 @@ mod settings_tests {
         expected.push(back_button());
         assert_eq!(
             screen.items, expected,
-            "the eleven rows, Head bob, Apply, Controls and Back"
+            "the twelve rows, Head bob, Apply, Controls and Back"
         );
         assert_eq!(screen.back, Some(MenuAction::Back));
         assert_eq!(

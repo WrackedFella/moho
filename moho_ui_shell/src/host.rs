@@ -796,6 +796,7 @@ mod tests {
             mouse_sensitivity: 2.5,
             mouse_smoothing: false,
             invert_mouse_y: false,
+            master_volume: 10.0,
             sound_effect_volume: 8.0,
             music_volume: 6.0,
             ui_volume: 7.0,
@@ -831,7 +832,11 @@ mod tests {
         let centre_y = |setting_row: usize| {
             f64::from((rows[setting_row].min[1] + rows[setting_row].max[1]) / 2.0)
         };
-        let slider_y = centre_y(3);
+        let sound_effect_row = EngineSetting::ALL
+            .iter()
+            .position(|row| *row == EngineSetting::SoundEffectVolume)
+            .expect("the sound-effect row is listed");
+        let slider_y = centre_y(sound_effect_row);
         let left = Input::Mouse(MouseButton::Left);
         let mut shell = shell();
         shell.menu_mut().push(screen);
@@ -845,7 +850,7 @@ mod tests {
         for &x in free_xs {
             cursor_at(&mut shell, [x, slider_y]);
         }
-        for _ in 3..EngineSetting::ALL.len() {
+        for _ in sound_effect_row..EngineSetting::ALL.len() {
             shell.route(Input::Key(Key::ArrowDown), true, false);
         }
         shell.route(Input::Key(Key::Enter), true, false);

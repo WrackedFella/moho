@@ -112,6 +112,9 @@ const KNOWN_KEYS: &[(&str, &str, Setter)] = &[
     ("prefs", "mouse_acceleration_strength", |p, s| {
         set(&mut p.mouse_acceleration_strength, parse_f32(s))
     }),
+    ("audio", "master_volume", |p, s| {
+        set(&mut p.audio_master_volume, parse_f32(s))
+    }),
     ("audio", "sound_effect_volume", |p, s| {
         set(&mut p.audio_sound_effect_volume, parse_f32(s))
     }),
@@ -1090,6 +1093,7 @@ mod tests {
              mouse_acceleration=false\n\
              mouse_acceleration_strength=0.04\n\
              \n[audio]\n\
+             master_volume=10.0\n\
              sound_effect_volume=8.0\n\
              music_volume=6.0\n\
              ui_volume=7.0\n\
@@ -1167,6 +1171,31 @@ mod tests {
         assert_eq!(resaved, prefs);
     }
 
+    #[test]
+    fn a_file_without_master_volume_loads_10_with_no_issue_and_keeps_the_rest() {
+        let older = base_ini_with(None);
+        assert!(!older.contains("master_volume"), "test setup");
+
+        let (from_older, older_issues) = Prefs::parse(&older);
+
+        assert_eq!(older_issues, vec![]);
+        assert_eq!(from_older.master_volume(), 10.0);
+        assert_eq!(snapshot(&from_older), snapshot(&base_prefs()));
+    }
+
+    #[test]
+    fn a_malformed_master_volume_warns_and_falls_back_to_10() {
+        let content = base_ini_with(None).replace("[audio]\n", "[audio]\nmaster_volume=loud\n");
+
+        let (prefs, issues) = Prefs::parse(&content);
+
+        assert_eq!(
+            issues,
+            vec![malformed("audio", "master_volume", Some("loud"))]
+        );
+        assert_eq!(prefs.master_volume(), 10.0);
+    }
+
     fn volume_strategy() -> impl Strategy<Value = f32> {
         (0u32..=100).prop_map(|n| n as f32 / 10.0)
     }
@@ -1188,6 +1217,7 @@ mod tests {
                 volume_strategy(),
                 volume_strategy(),
                 volume_strategy(),
+                volume_strategy(),
             ],
             (0u32..=4, 0u32..=4),
             (window_mode_strategy(), any::<u32>(), any::<u32>()),
@@ -1202,6 +1232,7 @@ mod tests {
                 *p.music_volume_mut() = vols[1];
                 *p.ui_volume_mut() = vols[2];
                 *p.voice_volume_mut() = vols[3];
+                *p.master_volume_mut() = vols[4];
                 p.set_shadow_quality(quality.0);
                 p.set_ssao_quality(quality.1);
                 p.set_window_mode(video.0);
