@@ -23,6 +23,8 @@ pub enum MenuAction {
     ApplyControls,
     /// The Controls row of an action, which captures its bindings and is never chosen.
     Rebind(SearchlightAction),
+    /// The item with this id in the item lists.
+    Item(u32),
 }
 
 impl MenuAction {
@@ -43,6 +45,7 @@ impl MenuAction {
             MenuAction::Controls => "Controls",
             MenuAction::ApplyControls => "Apply",
             MenuAction::Rebind(action) => label(action),
+            MenuAction::Item(_) => "Item",
         }
     }
 }

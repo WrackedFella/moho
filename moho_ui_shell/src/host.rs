@@ -406,6 +406,7 @@ mod tests {
                 | MenuEvent::Picked { .. }
                 | MenuEvent::ModeChosen { .. }
                 | MenuEvent::Cleared { .. } => None,
+                MenuEvent::MoveRequested { .. } => None,
             })
             .collect()
     }

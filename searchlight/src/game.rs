@@ -38,6 +38,7 @@ use crate::hud::Edge;
 use crate::input::{
     SearchlightAction, SearchlightCommand, build_action_map, look_from, look_to_turn, resolve_lean,
 };
+use crate::item_lists::DemoItems;
 use crate::lean::{lean_offset, rolled_view_matrix};
 use crate::menu::{
     MenuAction, controls_rows, controls_screen, main_screen, pause_screen, settings_screen,
@@ -756,6 +757,8 @@ pub struct SearchlightGame {
     /// Engine settings waiting for a frame, the first place the renderer, audio and window can
     /// be reached.
     pending_settings: Option<EngineSettings>,
+    /// The rows of the demo item lists the `items` command opens.
+    items: DemoItems,
     /// The bindings being edited while the Controls page is open.
     controls: Option<ControlsDraft>,
 }
@@ -783,6 +786,7 @@ impl SearchlightGame {
             debug_settings: None,
             flip_window_pending: false,
             pending_settings: None,
+            items: DemoItems::new(),
             controls: None,
         }
     }
@@ -825,6 +829,15 @@ impl SearchlightGame {
         self.stage.release_cursor();
     }
 
+    /// Opens the demo item lists over the pause menu, pausing first when in play.
+    fn open_items(&mut self) {
+        if self.screen == Screen::Playing {
+            self.pause();
+        }
+        let lists = self.items.lists();
+        self.stage.shell().menu_mut().push_lists(lists);
+    }
+
     /// Answers what the player chose on the menu screens since the last call.
     fn answer_menu(&mut self, ctx: &mut EventContext<'_>) {
         let events = self.stage.shell().menu_mut().take_events();
@@ -860,6 +873,16 @@ impl SearchlightGame {
                         self.save_head_bob();
                     }
                 }
+                MenuEvent::MoveRequested {
+                    item: MenuAction::Item(id),
+                    from,
+                    to,
+                } => {
+                    // A refused move leaves the rows as they were, and the answer is the same.
+                    self.items.move_item(id, from, to);
+                    let lists = self.items.lists();
+                    self.stage.shell().menu_mut().set_lists(lists);
+                }
                 MenuEvent::Captured {
                     action: MenuAction::Rebind(action),
                     slot: Slot::Primary,
@@ -869,6 +892,7 @@ impl SearchlightGame {
                 MenuEvent::DetailsToggled { .. }
                 | MenuEvent::Picked { .. }
                 | MenuEvent::ModeChosen { .. } => {}
+                MenuEvent::MoveRequested { .. } | MenuEvent::Chosen(MenuAction::Item(_)) => {}
             }
         }
     }
@@ -1018,6 +1042,7 @@ impl SearchlightGame {
                     self.head_bob = level;
                     self.save_head_bob();
                 }
+                ConsoleCommand::Items => self.open_items(),
             }
         }
         if self.simple != simple_before
@@ -3102,6 +3127,7 @@ mod tests {
                 | MenuEvent::Picked { .. }
                 | MenuEvent::ModeChosen { .. }
                 | MenuEvent::Cleared { .. } => None,
+                MenuEvent::MoveRequested { .. } => None,
             })
     }
 
@@ -6703,6 +6729,116 @@ mod enemy_and_hud_tests {
         assert_eq!(mesh.vertices.len(), 4 + 16);
         assert_eq!(mesh.vertices[0].color, [120, 0, 0, 140]);
         assert_eq!(mesh.vertices[2].pos, [800.0, 600.0]);
+    }
+}
+
+/// The item lists screen opened by the `items` command, observed through the shell's screen
+/// stack and the keys the player presses.
+#[cfg(test)]
+mod item_lists_tests {
+    use moho_app::GameClock;
+
+    use super::tests::game_with_a_moving_enemy;
+    use super::*;
+
+    type Shown = Vec<Vec<(String, Option<u32>)>>;
+
+    /// The label and count of every row of every list on top, or `None` with no lists screen.
+    fn shown(game: &SearchlightGame) -> Option<Shown> {
+        let mut shell = game.stage.shell();
+        shell.menu_mut().top_lists().map(|lists| {
+            lists
+                .lists
+                .iter()
+                .map(|list| {
+                    list.rows
+                        .iter()
+                        .map(|row| (row.label.clone(), row.count))
+                        .collect()
+                })
+                .collect()
+        })
+    }
+
+    fn press_keys(game: &mut SearchlightGame, ctx: &mut EventContext<'_>, keys: &[Key]) {
+        for &key in keys {
+            game.route_input(ctx, Input::Key(key), true, false);
+            game.route_input(ctx, Input::Key(key), false, false);
+        }
+    }
+
+    /// A game in play whose player has typed `items` and let the game answer it.
+    fn game_with_items_open() -> SearchlightGame {
+        let mut game = game_with_a_moving_enemy();
+        game.stage.shell().console_mut().submit("items");
+        game.command();
+        game
+    }
+
+    #[test]
+    fn the_items_command_shows_bandage_3_and_rounds_60() {
+        let mut game = game_with_items_open();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+
+        let lists = shown(&game).expect("the items command opened the lists");
+        let paused = game.screen;
+        press_keys(&mut game, &mut ctx, &[Key::Escape]);
+
+        assert_eq!(
+            lists[0],
+            [
+                ("Bandage".to_owned(), Some(3)),
+                ("Rounds".to_owned(), Some(60))
+            ]
+        );
+        assert_eq!(paused, Screen::Paused, "the command pauses first");
+        assert_eq!(shown(&game), None, "Escape goes back to the pause menu");
+        assert!(game.stage.shell().menu_mut().top().is_some());
+        assert_eq!(game.screen, Screen::Paused);
+    }
+
+    #[test]
+    fn moving_the_rifle_puts_it_in_the_players_list_and_not_the_containers() {
+        let mut game = game_with_items_open();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let before = shown(&game).expect("the items command opened the lists");
+        let rifle = ("Rifle".to_owned(), Some(1));
+        let at = before[1]
+            .iter()
+            .position(|row| *row == rifle)
+            .expect("the container holds a rifle");
+
+        press_keys(&mut game, &mut ctx, &[Key::ArrowRight]);
+        press_keys(&mut game, &mut ctx, &vec![Key::ArrowDown; at]);
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        let picked_up = shown(&game);
+        press_keys(&mut game, &mut ctx, &[Key::ArrowLeft, Key::Enter]);
+
+        let after = shown(&game).expect("the lists stay open");
+        assert_eq!(picked_up.as_ref(), Some(&before), "picking up moves no row");
+        assert!(!before[0].contains(&rifle));
+        assert_eq!(after[0].last(), Some(&rifle));
+        assert!(!after[1].contains(&rifle));
+        assert_eq!(after[1].len(), before[1].len() - 1);
+    }
+
+    #[test]
+    fn a_move_the_game_refuses_leaves_both_lists_as_they_were() {
+        let mut game = game_with_items_open();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let one_move = [Key::ArrowRight, Key::Enter, Key::ArrowLeft, Key::Enter];
+        for _ in 0..6 {
+            press_keys(&mut game, &mut ctx, &one_move);
+        }
+        let full = shown(&game).expect("the items command opened the lists");
+
+        press_keys(&mut game, &mut ctx, &one_move);
+
+        assert_eq!(full[0].len(), 8, "six moves filled the player's list");
+        assert_eq!(shown(&game), Some(full));
     }
 }
 

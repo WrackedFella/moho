@@ -21,6 +21,8 @@ pub enum ConsoleCommand {
     RoundGravity(GravityScale),
     /// Show or set how much the view bobs while moving.
     HeadBob(HeadBobArg),
+    /// Open the demo item lists.
+    Items,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -118,6 +120,14 @@ pub fn parse_fullscreen(args: &[&str]) -> Result<(ConsoleCommand, String), Strin
     }
 }
 
+/// Parses `items`; it takes no arguments.
+pub fn parse_items(args: &[&str]) -> Result<(ConsoleCommand, String), String> {
+    match args {
+        [] => Ok((ConsoleCommand::Items, String::new())),
+        _ => Err("Usage: items".to_owned()),
+    }
+}
+
 /// The `grade` usage line, listing every grade in ladder order.
 fn grade_usage() -> String {
     let names: Vec<&str> = Grade::LADDER.into_iter().map(Grade::name).collect();
@@ -205,6 +215,14 @@ fn console_with_grade(
             parse: parse_head_bob,
         })
         .expect("\"head_bob\" is not an engine command and is registered once");
+    console
+        .register(CommandSpec {
+            name: "items".to_owned(),
+            usage: "items".to_owned(),
+            help: "open the demo item lists".to_owned(),
+            parse: parse_items,
+        })
+        .expect("\"items\" is not an engine command and is registered once");
     (console, warnings)
 }
 
@@ -588,5 +606,31 @@ mod tests {
         let lines = printed(&console);
         let expected = "  head_bob [percent] - view bob while moving (0 to 100 %)".to_owned();
         assert!(lines.contains(&expected), "{lines:?}");
+    }
+
+    #[test]
+    fn items_takes_no_arguments_and_rejects_extra_ones() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        console.submit("items");
+        let queued = console.take_commands();
+        console.submit("items now");
+        let refused = (console.take_commands(), last_line(&console));
+
+        assert_eq!(queued, vec![ConsoleCommand::Items]);
+        assert_eq!(refused, (vec![], "Usage: items".to_owned()));
+    }
+
+    #[test]
+    fn help_lists_items() {
+        let (mut console, _) = console(&BTreeMap::new());
+
+        console.submit("help");
+
+        let lines = printed(&console);
+        assert!(
+            lines.iter().any(|line| line.starts_with("  items - ")),
+            "{lines:?}"
+        );
     }
 }
