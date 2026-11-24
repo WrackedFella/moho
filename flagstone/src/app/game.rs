@@ -70,14 +70,17 @@ pub struct StrategyCommand {
 /// How far a pointer ray reaches, measured from its origin.
 ///
 /// Under a ceiling the reach counts from where the ray gets down to the cut plane, because
-/// the camera follows the uncut ground and the kept ground can lie far below it.
+/// the camera follows the uncut ground and the kept ground can lie far below it. The extra
+/// reach is capped at `POINTER_RAY_RANGE`, so a near-horizontal ray cannot make the walk
+/// cross millions of empty cells. The cap covers the world's tallest cut: terrain reaches
+/// 144 blocks and the strategy camera's rays descend 1 in √3, so at most about 250 units.
 fn pointer_range(ray: Ray, ceiling: Option<i32>) -> f32 {
     let descent = ceiling
         .filter(|&ceiling| ray.direction.y < 0.0 && ray.origin.y > ceiling as f32)
         .map_or(0.0, |ceiling| {
             (ray.origin.y - ceiling as f32) / -ray.direction.y
         });
-    POINTER_RAY_RANGE + descent
+    POINTER_RAY_RANGE + descent.min(POINTER_RAY_RANGE)
 }
 
 /// Yaw and pitch deltas for a look. Mouse motion is fed unnegated, so look is inverted here.
@@ -3572,6 +3575,54 @@ mod tests {
             tick_app(&mut app, &command);
 
             assert_eq!(marked(&app), [[8, LEVEL - 1, 9]]);
+        }
+
+        #[test]
+        fn a_near_horizontal_ray_under_a_ceiling_has_a_bounded_reach() {
+            let at = |origin_y: f32, dir_y: f32| Ray {
+                origin: Vec3::new(0.0, origin_y, 0.0),
+                direction: Vec3::new(1.0, dir_y, 0.0),
+            };
+            let rays = [
+                at(100.0, -1e-6),
+                at(100.0, -f32::MIN_POSITIVE),
+                at(100.0, -0.0),
+                at(100.0, 0.0),
+                at(100.0, f32::NAN),
+                at(f32::NAN, -1.0),
+                at(f32::INFINITY, -1e-6),
+                at(100.0, f32::NEG_INFINITY),
+            ];
+
+            for ray in rays {
+                let range = pointer_range(ray, Some(4));
+
+                assert!(range.is_finite(), "{ray:?}: {range}");
+                assert!(
+                    (POINTER_RAY_RANGE..=2.0 * POINTER_RAY_RANGE).contains(&range),
+                    "{ray:?}: {range}"
+                );
+            }
+        }
+
+        #[test]
+        fn a_ray_without_a_ceiling_or_above_the_cut_keeps_the_plain_range() {
+            let down = Ray {
+                origin: Vec3::new(0.0, 3.0, 0.0),
+                direction: Vec3::NEG_Y,
+            };
+
+            assert_eq!(pointer_range(down, Some(4)), POINTER_RAY_RANGE);
+            assert_eq!(
+                pointer_range(
+                    Ray {
+                        origin: Vec3::splat(50.0),
+                        ..down
+                    },
+                    None
+                ),
+                POINTER_RAY_RANGE
+            );
         }
 
         #[test]
