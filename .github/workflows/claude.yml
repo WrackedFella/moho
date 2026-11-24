@@ -79,12 +79,13 @@ jobs:
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
         run: |
           [ -f "$EXECUTION_FILE" ] || exit 0
+          set -o pipefail
           {
             echo "### Run result"
             jq -r '.[] | select(.type == "result") | "- subtype `\(.subtype)`, turns \(.num_turns)"' "$EXECUTION_FILE"
             echo "### Denied commands"
             jq -r '.[] | select(.type == "result") | .permission_denials[]? | "- `\(.tool_name)`: \((.tool_input.command // .tool_input.file_path // "") | tostring | .[0:200])"' "$EXECUTION_FILE"
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Start runs for new labeled cards
         run: |
           gh api "repos/$GITHUB_REPOSITORY/issues/$FEATURE/sub_issues" --paginate \
@@ -165,12 +166,13 @@ jobs:
           EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
         run: |
           [ -f "$EXECUTION_FILE" ] || exit 0
+          set -o pipefail
           {
             echo "### Run result"
             jq -r '.[] | select(.type == "result") | "- subtype `\(.subtype)`, turns \(.num_turns)"' "$EXECUTION_FILE"
             echo "### Denied commands"
             jq -r '.[] | select(.type == "result") | .permission_denials[]? | "- `\(.tool_name)`: \((.tool_input.command // .tool_input.file_path // "") | tostring | .[0:200])"' "$EXECUTION_FILE"
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
       # One RUN-RECORD line per run, so real card runs build the per-step data that lane
       # decisions need (D0012). The execution log is not uploaded: the repository is public
       # and artifacts are not secret-masked.
