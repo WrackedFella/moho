@@ -307,6 +307,9 @@ pub struct SearchlightSim {
     lean: Lean,
     lean_tuning: LeanTuning,
     accuracy: Accuracy,
+    /// Whether the player has touched ground since spawning: a fresh spawn reads airborne until
+    /// its first move, and that is not a jump.
+    landed: bool,
     accuracy_tuning: AccuracyTuning,
     /// Draws the direction of each of the player's shots within the cone of `accuracy`.
     player_rng: SimRng,
@@ -430,17 +433,7 @@ impl SearchlightSim {
                 config.character_body,
             ));
         }
-        // Let the player settle onto the floor, so the first tick starts grounded rather than
-        // reading as a jump, then index the new hit volumes so the first tick's rays can strike
-        // them.
-        world
-            .move_character(
-                player,
-                &CharacterCommand::default(),
-                &config.move_settings,
-                SETTLE_DT,
-            )
-            .expect("the player was added a moment ago");
+        // Index the new hit volumes so the first tick's rays can strike them.
         world.step(SETTLE_DT);
         Self {
             world,
@@ -469,6 +462,7 @@ impl SearchlightSim {
             lean: Lean::default(),
             lean_tuning: config.lean,
             accuracy: Accuracy::default(),
+            landed: false,
             accuracy_tuning: config.accuracy,
             player_rng: SimRng::new(config.enemy.seed, PLAYER_SPREAD_STREAM),
             outbox: Vec::new(),
@@ -508,7 +502,6 @@ impl SearchlightSim {
             .expect("the sim never removes the player");
         self.world.step(dt);
         self.step_lean(command.lean, dt);
-        self.step_accuracy(dt);
         self.step_rounds(command.round_gravity.gravity(), dt);
 
         self.advance_weapon();
@@ -518,6 +511,8 @@ impl SearchlightSim {
         if command.reload {
             self.begin_reload();
         }
+        // After the weapon acts, so a shot leaves in the cone the crosshair last showed.
+        self.step_accuracy(dt);
         if command.check {
             self.outbox
                 .push(Feedback::MagazineLevel(self.rifle().magazine().level()));
@@ -535,10 +530,17 @@ impl SearchlightSim {
     fn step_accuracy(&mut self, dt: f32) {
         let state = self.player();
         let ground_speed = Vec3::new(state.velocity.x, 0.0, state.velocity.z).length();
-        let ratio = ground_speed / self.max_speed();
+        // A sim that cannot walk reads any drift as standing still rather than dividing by zero.
+        let ratio = if self.max_speed() > 0.0 {
+            ground_speed / self.max_speed()
+        } else {
+            0.0
+        };
+        self.landed |= state.grounded;
+        let grounded = state.grounded || !self.landed;
         self.accuracy = self
             .accuracy
-            .step(ratio, state.grounded, dt, &self.accuracy_tuning);
+            .step(ratio, grounded, dt, &self.accuracy_tuning);
     }
 
     /// Blends the lean toward `want`, held short of any wall beside the player.
@@ -6755,6 +6757,8 @@ mod player_spread_tests {
 
         for (row, command, ticks, ratio) in rows {
             let mut sim = sim_with(config.clone());
+            // A fresh spawn is not grounded until its first move, so it cannot jump yet.
+            sim.tick(&SearchlightCommand::default(), DT);
 
             for _ in 0..ticks {
                 sim.tick(&command, DT);
@@ -6765,6 +6769,61 @@ mod player_spread_tests {
                 (spread - walk_spread * ratio).abs() <= walk_spread * 0.02,
                 "{row}: spread {spread}, expected {}",
                 walk_spread * ratio
+            );
+        }
+    }
+
+    #[test]
+    fn a_shot_on_the_first_tick_of_a_jump_or_a_walk_leaves_in_the_cone_the_crosshair_showed() {
+        let fire_and = |movement: CharacterCommand| SearchlightCommand {
+            movement,
+            fire: true,
+            ..SearchlightCommand::default()
+        };
+        let rows = [
+            (
+                "jump",
+                CharacterCommand {
+                    jump: true,
+                    ..CharacterCommand::default()
+                },
+            ),
+            (
+                "walk",
+                CharacterCommand {
+                    forward: 1.0,
+                    ..CharacterCommand::default()
+                },
+            ),
+        ];
+
+        for (row, movement) in rows {
+            let mut sim = sim_with(config());
+            walk(&mut sim, 0.0, WARM_UP);
+            let shown = sim.player_spread();
+            sim.drain_feedback();
+
+            sim.tick(&fire_and(movement), DT);
+
+            assert_eq!(shown, 0.0, "{row}: settled before the shot");
+            assert!(
+                sim.drain_feedback().contains(&Feedback::Fired),
+                "{row}: the rifle fired"
+            );
+            let velocity = sim
+                .rounds_in_flight()
+                .last()
+                .expect("a round fired this tick is in the air")
+                .flight
+                .velocity;
+            assert_eq!(
+                (velocity.x / velocity.z, velocity.y / velocity.z),
+                (0.0, 0.0),
+                "{row}: the shot left outside the settled cone"
+            );
+            assert!(
+                sim.player_spread() > 0.0,
+                "{row}: the move opens the next shot"
             );
         }
     }
