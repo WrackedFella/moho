@@ -181,7 +181,7 @@ impl SettingsMenu {
         self.state.follow_window_mode(live);
     }
 
-    /// The window mode the Video tab shows: the staged one.
+    /// The window mode staged in Settings, which the Video tab shows.
     pub fn staged_window_mode(&self) -> crate::prefs::WindowMode {
         self.state.staged().window_mode()
     }
