@@ -96,6 +96,9 @@ struct App {
 
     // Runtime state (initialized after window creation)
     window: Option<Arc<Window>>,
+    /// Whether the cursor was last grabbed (true) or released (false), kept whether or
+    /// not a window exists to carry it out.
+    cursor_grabbed: bool,
     mesh_handle: u32,
     cube_mesh_handle: u32,
 
@@ -270,6 +273,7 @@ impl App {
 
             game_state: crate::game_state::GameState::Menu, // Start in menu
             window: None,
+            cursor_grabbed: false,
             mesh_handle: 0,
             cube_mesh_handle: 0,
             pending_render: Vec::new(),
@@ -509,6 +513,7 @@ impl App {
 
     /// Grab and hide the cursor for game mode
     fn grab_cursor(&mut self) {
+        self.cursor_grabbed = true;
         if let Some(window) = &self.window {
             window.set_cursor_visible(false);
 
@@ -521,6 +526,7 @@ impl App {
 
     /// Release the cursor for menu mode
     fn release_cursor(&mut self) {
+        self.cursor_grabbed = false;
         if let Some(window) = &self.window {
             window.set_cursor_visible(true);
             let _ = window.set_cursor_grab(CursorGrabMode::None);
@@ -651,8 +657,9 @@ fn init_logging() {
         .init();
 }
 
-/// Window, loop rate and audio settings for the strategy game.
-fn app_config() -> moho_app::AppConfig {
+/// Window, loop rate and audio settings for the strategy game, with the window opening in
+/// the mode `prefs` saved.
+fn app_config_for(_prefs: &Prefs) -> moho_app::AppConfig {
     moho_app::AppConfig {
         window_title: "Flagstone".into(),
         loop_config: moho_app::LoopConfig::new(flagstone_game::TICK_HZ),
@@ -662,12 +669,19 @@ fn app_config() -> moho_app::AppConfig {
     }
 }
 
+/// The config for default prefs, which tests use so they never read the user's file.
+#[cfg(test)]
+fn app_config() -> moho_app::AppConfig {
+    app_config_for(&Prefs::default())
+}
+
 fn main() {
     init_logging();
     let mut app = App::from_config(crate::app::config::AppConfig::from_prefs());
     app.input.gamepads = moho_input::gamepad::Gamepads::new();
+    let config = app_config_for(&app.prefs);
 
-    if let Err(e) = moho_app::run(app, app_config()) {
+    if let Err(e) = moho_app::run(app, config) {
         tracing::error!(error = %e, "Application failed");
         std::process::exit(1);
     }
@@ -821,5 +835,36 @@ mod tests {
     #[test]
     fn app_config_window_is_titled_flagstone() {
         assert_eq!(app_config().window_title, "Flagstone");
+    }
+
+    #[test]
+    fn app_config_toggles_with_f11() {
+        use moho_input::bindings::Input;
+        use moho_input::key::Key;
+
+        let config = app_config();
+
+        assert_eq!(config.toggle_keys, Some(vec![Input::Key(Key::F11)]));
+    }
+
+    #[test]
+    fn saved_modes_map_to_the_engine_mode() {
+        use moho_app::WindowMode as Engine;
+        use moho_core::prefs::WindowMode as Saved;
+
+        let rows = [
+            (Saved::Windowed, Engine::Windowed),
+            (Saved::Fullscreen, Engine::Borderless),
+            (Saved::Borderless, Engine::Borderless),
+        ];
+
+        for (saved, opens_in) in rows {
+            let mut prefs = Prefs::default();
+            prefs.set_window_mode(saved);
+
+            let config = app_config_for(&prefs);
+
+            assert_eq!(config.window_mode, opens_in, "saved {saved:?}");
+        }
     }
 }

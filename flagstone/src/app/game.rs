@@ -1994,6 +1994,150 @@ mod tests {
         }
     }
 
+    mod window_mode {
+        use super::*;
+        use moho_app::WindowMode;
+        use std::sync::{Arc, Mutex};
+        use winit::event::DeviceEvent;
+
+        /// A first-person app holding forward, with mouse look not yet taken by a tick.
+        fn possessing_app_mid_turn() -> App {
+            let mut app = playing_app();
+            app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            hold(&mut app, StrategyAction::MoveForward);
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+            Game::event(
+                &mut app,
+                &mut ctx,
+                moho_app::Event::Device(DeviceEvent::MouseMotion {
+                    delta: (40.0, 30.0),
+                }),
+            );
+            frame_without_renderer(&mut app);
+            assert_ne!(app.input.actions.pending_look(), (0.0, 0.0));
+            app
+        }
+
+        fn mode_changed(app: &mut App, mode: WindowMode) {
+            let clock = GameClock::default();
+            let mut ctx = EventContext::new(&clock, None, None);
+            Game::window_mode_changed(app, &mut ctx, mode);
+        }
+
+        #[test]
+        fn window_mode_changed_releases_keys_and_recaptures_cursor_in_play() {
+            for mode in [WindowMode::Borderless, WindowMode::Windowed] {
+                let mut app = possessing_app_mid_turn();
+                assert!(!app.cursor_grabbed, "the platform dropped the grab");
+
+                mode_changed(&mut app, mode);
+
+                assert_eq!(app.input.actions.pending_look(), (0.0, 0.0), "{mode:?}");
+                let frame = app.input.actions.end_tick();
+                assert!(!frame.held(StrategyAction::MoveForward), "{mode:?}");
+                assert!(app.cursor_grabbed, "{mode:?}");
+                assert_eq!(Game::command(&mut app).input.forward, 0.0, "{mode:?}");
+            }
+        }
+
+        #[test]
+        fn leaves_the_cursor_free_in_the_pause_menu() {
+            for state in [GameState::Paused, GameState::Menu, GameState::ConsoleOpen] {
+                let mut app = possessing_app_mid_turn();
+                app.game_state = state;
+                app.grab_cursor();
+
+                mode_changed(&mut app, WindowMode::Borderless);
+
+                assert!(!app.cursor_grabbed, "{state:?}");
+                assert_eq!(app.input.actions.pending_look(), (0.0, 0.0), "{state:?}");
+                assert!(
+                    !app.input
+                        .actions
+                        .end_tick()
+                        .held(StrategyAction::MoveForward)
+                );
+            }
+        }
+
+        #[test]
+        fn window_mode_changed_in_the_strategy_view_leaves_the_cursor_free() {
+            let mut app = playing_app();
+            app.simulation.set_camera_mode(CameraMode::Isometric);
+            app.grab_cursor();
+
+            mode_changed(&mut app, WindowMode::Borderless);
+
+            assert!(!app.cursor_grabbed);
+        }
+
+        fn attach_adapter(app: &mut App) -> Arc<Mutex<flagstone_ui::EguiAdapter>> {
+            let adapter = Arc::new(Mutex::new(flagstone_ui::EguiAdapter::new(
+                None,
+                app.event_bus.clone(),
+                app.prefs.clone(),
+            )));
+            app.ui_adapter = Some(adapter.clone());
+            adapter
+        }
+
+        #[test]
+        fn window_mode_changed_tells_the_ui_so_the_video_tab_opens_on_it() {
+            let dir = tempfile::tempdir().unwrap();
+            let mut app = playing_app();
+            let adapter = attach_adapter(&mut app);
+            mode_changed(&mut app, WindowMode::Borderless);
+
+            let mut adapter = adapter.lock().expect("adapter lock");
+            adapter.open_settings(app.prefs.clone(), dir.path().join("prefs.ini"));
+            let menu = adapter.settings_menu_mut().expect("Settings is open");
+
+            assert_eq!(
+                menu.staged_window_mode(),
+                moho_core::prefs::WindowMode::Borderless
+            );
+            assert!(!menu.has_unsaved_changes());
+        }
+
+        #[test]
+        fn a_mode_applied_in_settings_is_requested_from_the_engine_by_the_next_frame() {
+            use flagstone_ui::screens::MenuAction;
+            let mut app = playing_app();
+            let adapter = attach_adapter(&mut app);
+            let mut prefs = app.prefs.clone();
+            prefs.set_window_mode(moho_core::prefs::WindowMode::Fullscreen);
+            adapter
+                .lock()
+                .expect("adapter lock")
+                .record_menu_action(&MenuAction::SettingsSaved(prefs));
+            let clock = GameClock::default();
+            let mut ctx = moho_app::FrameContext::new(tick(), &clock, None, None);
+
+            Game::frame(&mut app, &mut ctx, 0.0);
+
+            assert_eq!(ctx.requested_window_mode(), Some(WindowMode::Borderless));
+            let mut again = moho_app::FrameContext::new(tick(), &clock, None, None);
+            Game::frame(&mut app, &mut again, 0.0);
+            assert_eq!(again.requested_window_mode(), None, "asked once");
+        }
+
+        #[test]
+        fn window_mode_changed_leaves_saved_prefs_and_the_world_alone() {
+            let mut app = possessing_app_mid_turn();
+            let prefs = app.prefs.clone();
+            let position = app.simulation.position();
+            let state = app.game_state;
+
+            mode_changed(&mut app, WindowMode::Borderless);
+            mode_changed(&mut app, WindowMode::Windowed);
+
+            assert_eq!(app.prefs, prefs);
+            assert_eq!(app.simulation.position(), position);
+            assert_eq!(app.game_state, state);
+        }
+    }
+
     mod events {
         use super::*;
         use winit::event::DeviceEvent;

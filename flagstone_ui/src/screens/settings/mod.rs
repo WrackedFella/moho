@@ -176,6 +176,16 @@ impl SettingsMenu {
         self.is_dirty()
     }
 
+    /// The window mode the Video tab shows: the staged one.
+    pub fn staged_window_mode(&self) -> crate::prefs::WindowMode {
+        self.state.staged().window_mode()
+    }
+
+    /// The window mode last saved, which the staged one is compared against.
+    pub fn saved_window_mode(&self) -> crate::prefs::WindowMode {
+        self.state.prefs().window_mode()
+    }
+
     /// Get the staged bindings for a specific binding ID.
     /// For testing purposes only - allows tests to verify binding state.
     /// Empty for an unbound action or an unknown ID.

@@ -13,6 +13,7 @@ egui-winit = { workspace = true }
 tracing = { workspace = true }
 moho_input = { path = "../moho_input" }
 moho_ui_shell = { path = "../moho_ui_shell" }
+moho_app = { path = "../moho_app" }
 moho_core = { path = "../moho_core" }
 flagstone_game = { path = "../flagstone_game" }
 rand = { workspace = true }

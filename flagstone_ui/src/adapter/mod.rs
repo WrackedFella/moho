@@ -82,6 +82,9 @@ pub struct EguiAdapter {
 
     // Prefs from the last `SettingsSaved` action, until the app takes them.
     saved_prefs: Option<Prefs>,
+
+    // The window mode the Settings screen asked for, until the app takes it.
+    requested_window_mode: Option<moho_app::WindowMode>,
 }
 
 /// Lightweight progress state used by the adapter to render an overlay.
@@ -136,6 +139,7 @@ impl EguiAdapter {
             menu_music_playing: false,
             menu_music_exists: std::path::Path::new(event_routing::MENU_MUSIC_PATH).exists(),
             saved_prefs: None,
+            requested_window_mode: None,
         }
     }
 
@@ -185,6 +189,15 @@ impl EguiAdapter {
     /// `UiEvent::SettingsSaved`.
     pub fn take_saved_prefs(&mut self) -> Option<Prefs> {
         self.saved_prefs.take()
+    }
+
+    /// Tells the adapter the window now runs in `mode`, however it got there (a key, or an
+    /// applied Settings change). Not implemented yet: the adapter ignores it.
+    pub fn window_mode_changed(&mut self, _mode: moho_app::WindowMode) {}
+
+    /// Hand over the window mode the last applied Settings save asked for, once.
+    pub fn take_requested_window_mode(&mut self) -> Option<moho_app::WindowMode> {
+        self.requested_window_mode.take()
     }
 
     /// Keep what a menu action means for the adapter itself: a Settings save's prefs,

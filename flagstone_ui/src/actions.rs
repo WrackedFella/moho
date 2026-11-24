@@ -196,6 +196,22 @@ mod tests {
     }
 
     #[test]
+    fn no_default_binding_sits_on_a_protected_key() {
+        let protected: Vec<_> = StrategyAction::ALL
+            .iter()
+            .flat_map(|action| {
+                action
+                    .default_bindings()
+                    .iter()
+                    .filter(|binding| binding.is_protected())
+                    .map(|binding| (action.name(), binding.name()))
+            })
+            .collect();
+
+        assert_eq!(protected, vec![]);
+    }
+
+    #[test]
     fn only_sprint_is_toggleable() {
         for &action in StrategyAction::ALL {
             assert_eq!(
