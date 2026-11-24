@@ -956,6 +956,37 @@ mod tests {
     }
 
     #[test]
+    fn a_dead_player_restarts_a_level_with_enemy_spawns_on_wave_one_with_no_score() {
+        let arena = arena_with_controls(
+            &[],
+            Vec3::ZERO,
+            &markers(4),
+            &[Vec3::new(0.0, 0.0, 25.0)],
+            &[button()],
+        );
+        let mut mode = ArenaMode::for_level(arena, calm_config(), tuning(1, 1, 100));
+        mode.sim_mut().kill_enemy(0);
+        mode.tick(&idle(), DT);
+        mode.tick(&using(), DT);
+        mode.sim_mut().kill_player();
+        mode.tick(&idle(), DT);
+        let before = mode.tally();
+
+        mode.tick(&restart(), DT);
+        mode.tick(&idle(), DT);
+
+        assert_eq!(
+            before,
+            Some(Tally {
+                wave: 2,
+                score: 100
+            })
+        );
+        assert_eq!(mode.tally(), Some(Tally { wave: 1, score: 0 }));
+        assert!(!mode.sim().player_body().is_dead());
+    }
+
+    #[test]
     fn a_dead_player_restarts_on_a_level_without_waves() {
         let mut mode = ArenaMode::for_level(
             arena_without_enemy_spawns(),

@@ -669,6 +669,72 @@ mod tests {
     }
 
     #[test]
+    fn two_player_spawns_on_a_level_with_enemy_spawns_are_a_duplicate_error() {
+        let level = level_of(&[
+            "player_spawn",
+            "player_spawn",
+            "enemy_spawn_01",
+            "waypoint_01",
+        ]);
+
+        let error = ArenaMarkers::from_level(&level).unwrap_err();
+
+        assert!(
+            matches!(&error, ArenaError::DuplicateMarker { marker } if marker == "player_spawn"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_stale_level_node_does_not_stand_in_for_a_missing_player_spawn() {
+        let mut level = level_of(&["enemy_spawn_01", "waypoint_01"]);
+        level.markers.push(stale_marker(Some("arena")));
+        level.markers.push(stale_marker(None));
+
+        let error = ArenaMarkers::from_level(&level).unwrap_err();
+
+        assert!(
+            matches!(&error, ArenaError::MissingMarker { marker } if marker == "player_spawn"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_bad_waypoint_among_enemy_spawns_is_a_bad_waypoint_error_naming_the_first_offender() {
+        let level = level_of(&[
+            "player_spawn",
+            "enemy_spawn_01",
+            "waypoint_01",
+            "waypoint_a",
+            "waypoint_1",
+        ]);
+
+        let error = ArenaMarkers::from_level(&level).unwrap_err();
+
+        assert!(
+            matches!(&error, ArenaError::BadWaypoint { marker } if marker == "waypoint_a"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_duplicate_waypoint_number_is_a_bad_waypoint_error_naming_the_later_one() {
+        let level = level_of(&[
+            "player_spawn",
+            "enemy_spawn_01",
+            "waypoint_1",
+            "waypoint_01",
+        ]);
+
+        let error = ArenaMarkers::from_level(&level).unwrap_err();
+
+        assert!(
+            matches!(&error, ArenaError::BadWaypoint { marker } if marker == "waypoint_01"),
+            "{error:?}"
+        );
+    }
+
+    #[test]
     fn a_level_without_dummies_loads() {
         let level = level_of(&["player_spawn", "enemy_spawn_01", "waypoint_01"]);
 
