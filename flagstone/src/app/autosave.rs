@@ -528,6 +528,47 @@ mod tests {
     }
 
     #[test]
+    fn empty_setting_falls_back_to_120() {
+        let (prefs, _issues) = Prefs::parse("[game]\nautosave_seconds=\n");
+
+        assert_eq!(autosave_interval(&prefs), secs(120));
+    }
+
+    #[test]
+    fn padded_setting_is_trimmed() {
+        let (prefs, _issues) = Prefs::parse("[game]\n autosave_seconds = 300 \n");
+
+        assert_eq!(autosave_interval(&prefs), secs(300));
+    }
+
+    #[test]
+    fn bounds_neighbours_clamp_and_one_is_not_off() {
+        for (raw, expected) in [("30", 30), ("29", 30), ("3601", 3600), ("1", 30)] {
+            assert_eq!(
+                interval_from_setting(Some(raw)),
+                Ok(secs(expected)),
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn u32_overflow_setting_is_an_error_and_falls_back_to_120() {
+        assert!(interval_from_setting(Some("4294967296")).is_err());
+
+        let prefs = prefs_with_game_autosave_text("4294967296");
+
+        assert_eq!(autosave_interval(&prefs), secs(120));
+    }
+
+    #[test]
+    fn old_world_key_does_not_set_the_interval() {
+        let (prefs, _issues) = Prefs::parse("[world]\nautosave_seconds=300\n");
+
+        assert_eq!(autosave_interval(&prefs), secs(120));
+    }
+
+    #[test]
     fn autosave_off_writes_nothing_after_ten_minutes() {
         let temp = tempfile::tempdir().expect("temp dir");
         let saves = saves_dir(&temp);
