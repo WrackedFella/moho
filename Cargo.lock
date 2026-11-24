@@ -1226,6 +1226,7 @@ dependencies = [
  "egui-winit",
  "flagstone_game",
  "glam 0.33.12",
+ "moho_app",
  "moho_core",
  "moho_input",
  "moho_render_api",

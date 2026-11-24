@@ -23,7 +23,7 @@ pub fn render(menu: &mut SettingsMenu, ui: &mut egui::Ui) {
 
         // Window Mode
         {
-            let saved_mode = menu.state.prefs().window_mode();
+            let saved_mode = menu.state.window_mode_baseline();
             let staged_mode = menu.state.staged().window_mode();
             let is_dirty = staged_mode != saved_mode;
 

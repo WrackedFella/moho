@@ -259,6 +259,33 @@ mod tests {
         );
     }
 
+    /// The key the engine reserves for the window-mode toggle.
+    const TOGGLE_KEY: Key = Key::F11;
+
+    #[test]
+    fn no_action_binds_the_toggle_key() {
+        let registry = registry();
+
+        let binders: Vec<_> = <StrategyAction as moho_input::Action>::ALL
+            .iter()
+            .filter(|&&action| {
+                registry
+                    .get_binding(action)
+                    .contains(&Binding::key(TOGGLE_KEY))
+            })
+            .collect();
+        let capturable: Vec<_> = egui::Key::ALL
+            .iter()
+            .filter(|&&key| super::super::key_mapping::egui_key_to_key(key) == Some(TOGGLE_KEY))
+            .collect();
+
+        assert!(binders.is_empty(), "bound by {binders:?}");
+        assert!(capturable.is_empty(), "Settings can capture {capturable:?}");
+        for row in BINDING_ROWS {
+            assert_eq!(registry.find_conflict(TOGGLE_KEY, row), None, "{row:?}");
+        }
+    }
+
     #[test]
     fn writing_bindings_adds_no_console_entry_when_the_prefs_have_none() {
         let mut prefs = Prefs::default();
