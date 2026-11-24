@@ -13,7 +13,7 @@ fmt:
     cargo fmt --all
 
 # Gate: formatting, lints, tests, doctests, comment refs and layering. Must pass before any commit.
-check: fmt-check lint test test-doc comment-refs layering
+check: fmt-check lint test test-doc comment-refs layering run-record-test
 
 fmt-check:
     cargo fmt --all --check
@@ -146,6 +146,19 @@ eval-score-test:
     diff "$f/context.json" <(scripts/eval-score.sh context "$f/execution.json")
     diff "$f/report.md" <(scripts/eval-score.sh report < "$f/records.jsonl")
     echo "eval-score: OK"
+
+# Self-test of the production run record against fixtures: per-step tokens and yield,
+# mutation counts, the job-summary table and the digest.
+run-record-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    f=scripts/fixtures/run-record
+    diff "$f/records.jsonl" <(
+        ISSUE=7 GATE_CLASS=domain HEAD_SHA=abc DEVFLOW_SHA=f20ec3e45100 RUN_URL= \
+            scripts/run-record.sh record "$f/execution.json" | jq -c 'del(.at)')
+    diff "$f/table.md" <(scripts/run-record.sh table < "$f/records.jsonl")
+    diff "$f/digest.md" <(scripts/run-record.sh digest < "$f/records.jsonl")
+    echo "run-record: OK"
 
 # Layering check on the real crate graph, plus self-tests that each rule rejects its fixture.
 layering:
