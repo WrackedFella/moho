@@ -6235,7 +6235,15 @@ mod player_spread_tests {
         let mut config = test_config(rifle_from(mag(400, 400)), vec![]);
         config.move_settings.max_speed = WALK_SPEED;
         config.move_settings.friction = 100.0;
+        // Enough to reach full speed in one tick, so a ratio is the one asked for from tick 1.
+        config.move_settings.ground_accel = 1000.0;
         config
+    }
+
+    /// The player's horizontal speed in m/s.
+    fn ground_speed(sim: &SearchlightSim) -> f32 {
+        let velocity = sim.player().velocity;
+        Vec3::new(velocity.x, 0.0, velocity.z).length()
     }
 
     fn sim_with(config: SimConfig) -> SearchlightSim {
@@ -6313,58 +6321,68 @@ mod player_spread_tests {
     }
 
     #[test]
+    fn the_speed_ratio_sets_the_player_spread() {
+        let config = config();
+        let walk_spread = config.accuracy.walk_spread;
+        let rows = [("standing", 0.0), ("half speed", 0.5), ("walking", 1.0)];
+
+        for (row, ratio) in rows {
+            let mut sim = sim_with(config.clone());
+            walk(&mut sim, ratio, WARM_UP);
+
+            let reached = ground_speed(&sim);
+            let spread = sim.player_spread();
+
+            assert!(
+                (reached - ratio * WALK_SPEED).abs() < 1e-3,
+                "{row}: the fixture reached {reached} m/s, not {} m/s",
+                ratio * WALK_SPEED
+            );
+            assert!(
+                (spread - walk_spread * ratio).abs() <= walk_spread * 0.01,
+                "{row}: spread {spread}, expected {}",
+                walk_spread * ratio
+            );
+        }
+    }
+
+    #[test]
     fn walking_shots_land_wider_than_half_speed_and_half_speed_wider_than_standing() {
         let config = config();
         let walk_spread = config.accuracy.walk_spread;
         let group_at = |forward: f32| {
             let mut sim = sim_with(config.clone());
             walk(&mut sim, forward, WARM_UP);
-            let spread = sim.player_spread();
-            (spread, volley(&mut sim, forward, 50))
+            volley(&mut sim, forward, 50)
         };
 
-        let (standing_spread, standing) = group_at(0.0);
-        let (half_spread, half) = group_at(0.5);
-        let (walking_spread, walking) = group_at(1.0);
+        let standing = group_at(0.0);
+        let half = group_at(0.5);
+        let walking = group_at(1.0);
 
-        assert_eq!(standing_spread, 0.0);
-        assert!(
-            (half_spread - walk_spread * 0.5).abs() < walk_spread * 0.05,
-            "{half_spread}"
-        );
-        assert!(
-            (walking_spread - walk_spread).abs() < walk_spread * 0.05,
-            "{walking_spread}"
-        );
-        assert_eq!(rms(&standing), 0.0);
-        assert!(rms(&half) > 0.0, "half speed does not scatter");
+        assert_eq!(rms(&standing), 0.0, "standing: shots left the crosshair");
+        for (row, group, spread) in [
+            ("half speed", &half, walk_spread * 0.5),
+            ("walking", &walking, walk_spread),
+        ] {
+            let expected = disc_rms(spread.tan());
+            assert!(
+                (0.7 * expected..1.3 * expected).contains(&rms(group)),
+                "{row}: rms {} outside the band around {expected}",
+                rms(group)
+            );
+            assert!(
+                farthest(group) <= spread.tan() * 1.001,
+                "{row}: a shot left the cone, {} past {}",
+                farthest(group),
+                spread.tan()
+            );
+        }
         assert!(
             rms(&half) < rms(&walking),
-            "{} {}",
+            "half speed {} is not narrower than walking {}",
             rms(&half),
             rms(&walking)
-        );
-        let full = disc_rms(walk_spread.tan());
-        assert!(
-            (0.7 * full..1.3 * full).contains(&rms(&walking)),
-            "{}",
-            rms(&walking)
-        );
-        let half_full = disc_rms((walk_spread * 0.5).tan());
-        assert!(
-            (0.7 * half_full..1.3 * half_full).contains(&rms(&half)),
-            "{}",
-            rms(&half)
-        );
-        assert!(
-            farthest(&walking) <= walk_spread.tan() * 1.001,
-            "{}",
-            farthest(&walking)
-        );
-        assert!(
-            farthest(&half) <= (walk_spread * 0.5).tan() * 1.01,
-            "{}",
-            farthest(&half)
         );
     }
 
@@ -6417,22 +6435,30 @@ mod player_spread_tests {
         config.move_settings.max_speed = 0.1;
         set_eye_above_centre(&mut config, 0.25);
         let walk_spread = config.accuracy.walk_spread;
-        let hits_at = |forward: f32| {
+        // The dummy's torso is 0.4 m wide and 0.7 m tall around the eye, so at 5 m the whole
+        // cone (radius 0.15 m at the shipped spread) lands on its front face.
+        let hitscan_group = |forward: f32| {
             let mut sim = SearchlightSim::new(
                 long_floor(),
                 Vec3::ZERO,
-                &[Vec3::new(0.0, 0.0, 20.0)],
+                &[Vec3::new(0.0, 0.0, 5.0)],
                 config.clone(),
             );
             walk(&mut sim, forward, WARM_UP);
             let command = stride(forward, true, true);
-            let (mut fired, mut hits) = (0, 0);
+            let (mut fired, mut offsets) = (0, Vec::new());
             for _ in 0..500 {
                 sim.tick(&command, DT);
+                let eye = sim.player_eye();
                 for feedback in sim.drain_feedback() {
                     match feedback {
                         Feedback::Fired => fired += 1,
-                        Feedback::Hit { .. } => hits += 1,
+                        Feedback::Hit { point, .. } => {
+                            // The ray runs from the eye along the shot, so the hit point's
+                            // offset over its depth is the shot's tangent off +Z, exactly.
+                            let depth = point.z - eye.z;
+                            offsets.push(((point.x - eye.x) / depth, (point.y - eye.y) / depth));
+                        }
                         _ => {}
                     }
                 }
@@ -6440,31 +6466,36 @@ mod player_spread_tests {
                     break;
                 }
             }
-            (fired, hits)
+            (fired, offsets)
         };
         let mut simulated = sim_with(config.clone());
         walk(&mut simulated, 1.0, WARM_UP);
 
-        let standing = hits_at(0.0);
-        let walking = hits_at(1.0);
+        let (standing_fired, standing) = hitscan_group(0.0);
+        let (walking_fired, walking) = hitscan_group(1.0);
         let rounds = volley(&mut simulated, 1.0, 50);
 
+        assert_eq!(standing_fired, 50);
         assert_eq!(
-            standing,
-            (50, 50),
-            "a settled hitscan shot misses the dummy it aims at"
+            standing.len(),
+            50,
+            "a settled hitscan shot missed the dummy"
         );
-        assert_eq!(walking.0, 50);
-        assert!(
-            walking.1 > 0 && walking.1 < 50,
-            "{} of 50 hit while walking",
-            walking.1
-        );
+        assert!(rms(&standing) < 1e-4, "standing: {}", rms(&standing));
+        assert_eq!(walking_fired, 50);
+        assert_eq!(walking.len(), 50, "a walking shot left the torso's face");
         let full = disc_rms(walk_spread.tan());
+        for (model, group) in [("Simple", &walking), ("simulated", &rounds)] {
+            assert!(
+                (0.7 * full..1.3 * full).contains(&rms(group)),
+                "{model}: rms {} outside the band around {full}",
+                rms(group)
+            );
+        }
         assert!(
-            (0.7 * full..1.3 * full).contains(&rms(&rounds)),
-            "{}",
-            rms(&rounds)
+            farthest(&walking) <= walk_spread.tan() * 1.001,
+            "a Simple shot left the cone: {}",
+            farthest(&walking)
         );
     }
 
@@ -6528,5 +6559,103 @@ mod player_spread_tests {
         assert_eq!(after, 0.0);
         assert_eq!(restarted, expected, "the draws start over with the sim");
         assert!(rms(&expected) > 0.0, "walking did not scatter");
+    }
+
+    #[test]
+    fn the_players_shots_leave_the_enemy_spread_draws_untouched() {
+        let enemy_outcomes = |fire: bool| {
+            let arena = crate::test_support::arena_with(
+                &[],
+                Vec3::ZERO,
+                &[Vec3::new(0.0, 0.0, 10.0)],
+                &[Vec3::new(0.0, 0.0, 6.0)],
+            );
+            let mut config = config();
+            config.body = BodyProfile {
+                max_health: 1_000_000,
+                head_status: 1_000_000,
+                arm_status: 1_000_000,
+                leg_status: 1_000_000,
+            };
+            config.enemy.aim_error = 0.05;
+            config.enemy.damage = 1;
+            config.move_settings.max_speed = 4.0;
+            let mut sim = SearchlightSim::start(arena, config);
+            let (mut enemy_fired, mut player_hit) = (Vec::new(), Vec::new());
+            for tick in 0..300 {
+                // Turned about on the first tick, then walking and shooting away from the enemy.
+                let mut command = stride(1.0, fire, false);
+                if tick == 0 {
+                    command.movement.yaw_delta = std::f32::consts::PI;
+                }
+                sim.tick(&command, DT);
+                for feedback in sim.drain_feedback() {
+                    match feedback {
+                        Feedback::EnemyFired { .. } => enemy_fired.push(tick),
+                        Feedback::PlayerHit { .. } => player_hit.push(tick),
+                        _ => {}
+                    }
+                }
+            }
+            (enemy_fired, player_hit)
+        };
+
+        let silent = enemy_outcomes(false);
+        let shooting = enemy_outcomes(true);
+
+        assert_eq!(shooting, silent);
+        assert!(!silent.0.is_empty(), "the enemy never fired");
+        assert!(!silent.1.is_empty(), "no enemy shot was on target");
+        assert!(
+            silent.1.len() < silent.0.len(),
+            "no enemy shot was off target"
+        );
+    }
+
+    #[test]
+    fn the_speed_ratio_comes_from_ground_speed_over_the_unleaned_walking_speed() {
+        let config = config();
+        let walk_spread = config.accuracy.walk_spread;
+        let lean_factor = config.lean.speed_factor;
+        let jump = SearchlightCommand {
+            movement: CharacterCommand {
+                jump: true,
+                ..CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        let lean_walk = SearchlightCommand {
+            lean: Some(LeanSide::Left),
+            ..stride(1.0, false, false)
+        };
+        let rows = [
+            (
+                "a jump from standing reads walking while airborne",
+                jump,
+                4,
+                1.0,
+            ),
+            (
+                "a lean-walk reads the lean's speed factor",
+                lean_walk,
+                40,
+                lean_factor,
+            ),
+        ];
+
+        for (row, command, ticks, ratio) in rows {
+            let mut sim = sim_with(config.clone());
+
+            for _ in 0..ticks {
+                sim.tick(&command, DT);
+            }
+
+            let spread = sim.player_spread();
+            assert!(
+                (spread - walk_spread * ratio).abs() <= walk_spread * 0.02,
+                "{row}: spread {spread}, expected {}",
+                walk_spread * ratio
+            );
+        }
     }
 }

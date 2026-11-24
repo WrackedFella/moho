@@ -6303,54 +6303,26 @@ mod enemy_and_hud_tests {
 mod crosshair_spread_tests {
     use super::*;
 
-    /// Pixels the cone's circle reaches from the centre, by a pinhole projection.
-    fn cone_radius_px(spread: f32, fov_y: f32, height: f32) -> f32 {
-        spread.tan() / (fov_y / 2.0).tan() * (height / 2.0)
-    }
-
+    /// Hand-computed as 4 + tan(spread) / tan(fov / 2) * height / 2: tan(0.03) = 0.030009,
+    /// tan(37.5 deg) = 0.76733, tan(15 deg) = 0.26795. The 30 deg row is a narrow aimed view.
     #[test]
     fn the_crosshair_gap_is_today_s_gap_when_settled_and_opens_with_spread() {
-        let fov = FOV_DEGREES.to_radians();
+        let table = [
+            (0.0, 75.0_f32, 600.0, 4.0),
+            (0.03, 75.0, 600.0, 15.73),
+            (0.03, 30.0, 600.0, 37.60),
+            (0.03, 75.0, 300.0, 9.87),
+            (0.03, 75.0, 1200.0, 27.47),
+        ];
 
-        let settled = Crosshair::gap(0.0, fov, 600.0);
-        let small = Crosshair::gap(0.01, fov, 600.0);
-        let walking = Crosshair::gap(0.03, fov, 600.0);
+        for (spread, fov_degrees, height, expected) in table {
+            let gap = Crosshair::gap(spread, fov_degrees.to_radians(), height);
 
-        assert_eq!(settled, Crosshair::GAP);
-        assert!(
-            small > settled && walking > small,
-            "{settled} {small} {walking}"
-        );
-        let expected = Crosshair::GAP + cone_radius_px(0.03, fov, 600.0);
-        assert!((walking - expected).abs() < 1e-3, "{walking} vs {expected}");
-    }
-
-    #[test]
-    fn the_gap_bounds_the_cones_screen_circle_for_a_narrow_aimed_field_of_view() {
-        let narrow = 30.0_f32.to_radians();
-        let wide = FOV_DEGREES.to_radians();
-
-        let aimed = Crosshair::gap(0.03, narrow, 600.0);
-        let normal = Crosshair::gap(0.03, wide, 600.0);
-
-        assert!(
-            aimed >= Crosshair::GAP + cone_radius_px(0.03, narrow, 600.0) - 1e-3,
-            "the gap {aimed} lies inside the cone's circle"
-        );
-        assert!(
-            aimed > normal,
-            "zoomed in the same cone looks bigger: {aimed} {normal}"
-        );
-    }
-
-    #[test]
-    fn the_gap_scales_with_the_height_of_the_view() {
-        let fov = FOV_DEGREES.to_radians();
-
-        let short = Crosshair::gap(0.03, fov, 300.0) - Crosshair::GAP;
-        let tall = Crosshair::gap(0.03, fov, 1200.0) - Crosshair::GAP;
-
-        assert!((tall - 4.0 * short).abs() < 1e-2, "{short} {tall}");
+            assert!(
+                (gap - expected).abs() < 1e-2,
+                "spread {spread}, fov {fov_degrees}, height {height}: gap {gap}, expected {expected}"
+            );
+        }
     }
 
     #[test]
@@ -6380,13 +6352,68 @@ mod crosshair_spread_tests {
         assert_eq!(vertices[12].pos[1], 300.0 + gap, "bottom bar inner");
     }
 
+    /// The right bar's inner edge on an 800 by 600 target, whose centre is at x = 400.
+    fn right_bar_inner(game: &SearchlightGame) -> f32 {
+        let mut crosshair = game
+            .stage
+            .crosshair
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let frame = crosshair.ui_frame([800, 600]).expect("a frame");
+        frame.meshes[0].vertices[4].pos[0]
+    }
+
     #[test]
-    fn showing_the_spread_hands_the_crosshair_the_cone() {
-        let stage = Stage::new();
+    fn a_frame_while_walking_opens_the_crosshair_and_it_closes_after_the_settle_time() {
+        let config = crate::test_support::test_config(
+            crate::test_support::rifle_from(crate::test_support::mag(30, 5)),
+            vec![],
+        );
+        let settle_ticks = (config.accuracy.settle_seconds * 60.0).ceil() as usize;
+        let mode = ArenaMode::new(
+            crate::test_support::arena_with(&[], Vec3::ZERO, &[], &[]),
+            config,
+            crate::test_support::wave_tuning(1),
+        );
+        let (bindings, _) = moho_input::bindings::ActionBindings::load(&BTreeMap::new());
+        let mut game = SearchlightGame::new(mode, ActionMap::new(bindings, 1.0));
+        let mut clock = moho_app::GameClock::new(0.0, 1.0, 1.0);
+        let walk = SearchlightCommand {
+            movement: moho_physics::CharacterCommand {
+                forward: 1.0,
+                ..moho_physics::CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        let mut step = |game: &mut SearchlightGame, command: &SearchlightCommand, ticks: usize| {
+            for _ in 0..ticks {
+                let mut ctx = TickContext {
+                    tick: 0,
+                    tick_length: std::time::Duration::from_secs_f32(1.0 / 60.0),
+                    clock: &mut clock,
+                };
+                game.tick(&mut ctx, command);
+            }
+            let frame_clock = moho_app::GameClock::default();
+            let mut ctx = FrameContext::new(
+                std::time::Duration::from_millis(16),
+                &frame_clock,
+                None,
+                None,
+            );
+            game.frame(&mut ctx, 0.5);
+            right_bar_inner(game)
+        };
 
-        stage.show_spread(0.021);
+        let settled = step(&mut game, &SearchlightCommand::default(), 2);
+        let walking = step(&mut game, &walk, 10);
+        let stopped = step(&mut game, &SearchlightCommand::default(), settle_ticks + 3);
 
-        let hud = stage.crosshair.lock().expect("not poisoned");
-        assert_eq!(hud.spread, 0.021);
+        assert_eq!(settled, 400.0 + Crosshair::GAP);
+        assert!(
+            walking > 400.0 + Crosshair::GAP + 1.0,
+            "the bar is at {walking} while walking"
+        );
+        assert_eq!(stopped, 400.0 + Crosshair::GAP);
     }
 }

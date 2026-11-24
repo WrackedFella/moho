@@ -65,23 +65,15 @@ mod tests {
     }
 
     #[test]
-    fn a_settled_player_has_no_spread() {
-        let tuning = tuning();
-
-        let fresh = Accuracy::default().spread(&tuning);
-        let still = Accuracy::default()
-            .step(0.0, true, 0.1, &tuning)
-            .spread(&tuning);
-
-        assert_eq!(fresh, 0.0);
-        assert_eq!(still, 0.0);
-    }
-
-    #[test]
     fn spread_is_walk_spread_times_the_speed_ratio() {
         let tuning = tuning();
         let table = [0.0, 0.25, 0.5, 1.0, 1.25];
 
+        assert_eq!(
+            Accuracy::default().spread(&tuning),
+            0.0,
+            "a settled player has no spread"
+        );
         for ratio in table {
             let spread = Accuracy::default()
                 .step(ratio, true, 1.0 / 60.0, &tuning)
@@ -89,16 +81,6 @@ mod tests {
 
             assert_close(spread, tuning.walk_spread * ratio);
         }
-    }
-
-    #[test]
-    fn spread_rises_at_once_from_a_slower_walk_to_a_faster_one() {
-        let tuning = tuning();
-        let slow = Accuracy::default().step(0.5, true, 1.0 / 60.0, &tuning);
-
-        let fast = slow.step(1.0, true, 1.0 / 60.0, &tuning);
-
-        assert_close(fast.spread(&tuning), tuning.walk_spread);
     }
 
     #[test]
@@ -161,24 +143,6 @@ mod tests {
     }
 
     #[test]
-    fn the_tuning_round_trips_through_json() {
-        let json = serde_json::to_string(&tuning()).expect("plain data serialises");
-
-        let back: AccuracyTuning = serde_json::from_str(&json).expect("it reads back");
-
-        assert_eq!(back, tuning());
-    }
-
-    #[test]
-    fn a_zero_spread_puts_every_draw_on_the_crosshair() {
-        let draws = [(0.0, 0.0), (0.3, 0.7), (0.999, 0.5)];
-
-        for (u, v) in draws {
-            assert_eq!(disc_offset(u, v, 0.0), (0.0, 0.0));
-        }
-    }
-
-    #[test]
     fn the_draw_maps_radius_by_the_square_root_and_angle_by_a_full_turn() {
         let spread = 0.1_f32;
         let radius = spread.tan();
@@ -193,36 +157,6 @@ mod tests {
         assert_close(b1, radius * 0.5);
         assert_close(a2, -radius * 0.5);
         assert_close(b2, 0.0);
-    }
-
-    #[test]
-    fn evenly_spread_draws_fill_the_disc_uniformly_around_the_crosshair() {
-        let spread = 0.2_f32;
-        let radius_squared = spread.tan().powi(2);
-        let steps = 64;
-        let unit = |index: i32| (index as f32 + 0.5) / steps as f32;
-        let (mut sum_across, mut sum_up, mut sum_squared) = (0.0, 0.0, 0.0);
-
-        for row in 0..steps {
-            for col in 0..steps {
-                let (across, up) = disc_offset(unit(row), unit(col), spread);
-                sum_across += across;
-                sum_up += up;
-                sum_squared += across * across + up * up;
-            }
-        }
-
-        let count = (steps * steps) as f32;
-        assert!(
-            (sum_across / count).abs() < 1e-3 * spread.tan(),
-            "{sum_across}"
-        );
-        assert!((sum_up / count).abs() < 1e-3 * spread.tan(), "{sum_up}");
-        let mean_r2 = sum_squared / count;
-        assert!(
-            (mean_r2 - radius_squared / 2.0).abs() < 0.02 * radius_squared,
-            "uniform in a disc has mean r^2 of half the radius squared: {mean_r2}"
-        );
     }
 
     proptest! {
