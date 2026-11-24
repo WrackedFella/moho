@@ -3466,32 +3466,12 @@ mod tests {
     }
 
     #[test]
-    fn no_double_binding_means_no_delay() {
-        let mut map = gun_map(&[(Gun::Sprint, vec![Binding::key(Key::Space)])]);
-
-        map.key(Key::Space, true);
-        let down = map.end_tick();
-        let later = ticks(&mut map, 3);
-        map.key(Key::Space, false);
-        let up = map.end_tick();
-
-        assert!(down.pressed(Gun::Sprint));
-        assert!(down.held(Gun::Sprint));
-        assert!(
-            later
-                .iter()
-                .all(|f| f.held(Gun::Sprint) && !f.pressed(Gun::Sprint))
-        );
-        assert!(up.released(Gun::Sprint));
-        assert!(!up.held(Gun::Sprint));
-    }
-
-    #[test]
     fn inputs_without_a_double_binding_are_unaffected_when_another_input_has_one() {
         let mut map = inspector_map();
 
         map.key(Key::Space, true);
         let down = map.end_tick();
+        let later = ticks(&mut map, 3);
         map.key(Key::Space, false);
         let up = map.end_tick();
         tap(&mut map, Key::Space);
@@ -3501,6 +3481,11 @@ mod tests {
 
         assert!(down.pressed(Inspector::Jump));
         assert!(down.held(Inspector::Jump));
+        assert!(
+            later
+                .iter()
+                .all(|f| f.held(Inspector::Jump) && !f.pressed(Inspector::Jump))
+        );
         assert!(up.released(Inspector::Jump));
         assert!(!up.held(Inspector::Jump));
         assert!(again.pressed(Inspector::Jump));
@@ -3622,7 +3607,7 @@ mod tests {
         tap(&mut map, Key::Y);
         let mut frames = vec![map.end_tick()];
         map.release_all();
-        frames.extend(ticks(&mut map, DOUBLE + 5));
+        frames.push(map.end_tick());
         map.key(Key::Y, true);
         let fresh = ticks(&mut map, DOUBLE);
 
@@ -3702,6 +3687,68 @@ mod tests {
         assert_eq!(pressed_at(&outside_frames, Quick::Reload), [4, 9]);
     }
 
+    #[test]
+    fn a_double_on_a_chord_only_splits_that_modifier_set() {
+        let mut map = gun_map(&[
+            (Gun::Reload, vec![Binding::key(Key::Y)]),
+            (Gun::Bash, vec![Binding::key(Key::Y).with(CTRL).doubled()]),
+        ]);
+
+        map.key(Key::Y, true);
+        let frames = ticks(&mut map, 3);
+
+        assert_eq!(pressed_at(&frames, Gun::Reload), [0]);
+        assert_eq!(held_at(&frames, Gun::Reload), [0, 1, 2]);
+        assert_eq!(pressed_at(&frames, Gun::Bash), Vec::<usize>::new());
+    }
+
+    /// A hold threshold of 3 ticks, well inside the 15-tick double-press window.
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+    enum Brisk {
+        Reload,
+        Check,
+        Inspect,
+    }
+
+    impl Action for Brisk {
+        const ALL: &'static [Self] = &[Brisk::Reload, Brisk::Check, Brisk::Inspect];
+        const HOLD_TICKS: u32 = 3;
+
+        fn name(self) -> &'static str {
+            match self {
+                Brisk::Reload => "reload",
+                Brisk::Check => "check",
+                Brisk::Inspect => "inspect",
+            }
+        }
+
+        fn default_bindings(self) -> &'static [Binding] {
+            match self {
+                Brisk::Reload => const { &[Binding::key(Key::Y)] },
+                Brisk::Check => const { &[Binding::key(Key::Y).held()] },
+                Brisk::Inspect => const { &[Binding::key(Key::Y).doubled()] },
+            }
+        }
+    }
+
+    #[test]
+    fn a_matured_hold_opens_no_window_for_a_second_press() {
+        let (bindings, warnings) = ActionBindings::<Brisk>::load(&BTreeMap::new());
+        assert_eq!(warnings, vec![]);
+        let mut map = ActionMap::new(bindings, 1.0);
+
+        map.key(Key::Y, true);
+        let mut frames = ticks(&mut map, 5);
+        map.key(Key::Y, false);
+        frames.extend(ticks(&mut map, 3));
+        map.key(Key::Y, true);
+        frames.extend(ticks(&mut map, DOUBLE + 5));
+
+        assert_eq!(pressed_at(&frames, Brisk::Check), [2, 10]);
+        assert_eq!(pressed_at(&frames, Brisk::Inspect), Vec::<usize>::new());
+        assert_eq!(pressed_at(&frames, Brisk::Reload), Vec::<usize>::new());
+    }
+
     #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
     enum Latch {
         Scan,
@@ -3732,21 +3779,23 @@ mod tests {
         tap(&mut map, Key::Y);
         let single = ticks(&mut map, DOUBLE + 2);
         tap(&mut map, Key::Y);
-        let first = map.end_tick();
-        let between = ticks(&mut map, 3);
+        let wait_on = ticks(&mut map, 3);
         tap(&mut map, Key::Y);
-        let waiting = map.end_tick();
+        let first = map.end_tick();
+        let latched = ticks(&mut map, 4);
+        tap(&mut map, Key::Y);
+        let wait_off = ticks(&mut map, 3);
         tap(&mut map, Key::Y);
         let second = map.end_tick();
         let after = ticks(&mut map, 3);
 
-        for frame in &single {
+        for frame in single.iter().chain(&wait_on) {
             assert!(!frame.pressed(Latch::Scan));
             assert!(!frame.held(Latch::Scan));
         }
         assert!(first.pressed(Latch::Scan));
         assert!(first.held(Latch::Scan));
-        for frame in between.iter().chain([&waiting]) {
+        for frame in latched.iter().chain(&wait_off) {
             assert!(frame.held(Latch::Scan));
             assert!(!frame.released(Latch::Scan));
         }
