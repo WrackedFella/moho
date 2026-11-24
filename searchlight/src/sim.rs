@@ -273,13 +273,11 @@ fn next_signed(rng: &mut SimRng) -> f32 {
 /// One round's path over the last tick, for drawing it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RoundTrace {
-    /// Names the round for as long as it flies.
     pub id: u32,
     /// Where the round was at the start of the tick.
     pub from: Vec3,
     /// Where the tick left it: the new position, or the strike or bounce point.
     pub to: Vec3,
-    /// The direction the round travelled.
     pub heading: Vec3,
     /// Whether the round stopped this tick.
     pub ended: bool,
