@@ -209,6 +209,13 @@ effects by the frame time. While the player is dead, and on the restart tick, ev
 held traces are dropped, because rounds are frozen and ids restart from 0. The simple ray draws no tracer,
 nor does an effects quality of off.
 
+A round that strikes level geometry or a control leaves a bullet mark. `resolve_shot` returns the surface
+normal with the strike point, and `SearchlightSim` queues `Feedback::Impact { point, normal }` for a strike
+tagged `SurfaceTag::World` or `SurfaceTag::Control`; a strike on a player queues none. The stage turns each
+impact into an engine `mark` effect ([section 10 of the rendering page](../architecture/rendering.md)) in the
+`Paint::ImpactMark` material: 0.05 m across, 20 s lifetime, fading over the last 2 s. Successive marks
+roll by the golden angle so a row of them does not line up. An effects quality of off places no mark.
+
 The player's shot leaves in a cone, not exactly along the view. `searchlight_rules::accuracy` owns the rules:
 `AccuracyTuning` (`walk_spread` radians at walking speed, `settle_seconds`; set in `tuning::tuning`) and
 `Accuracy`, stepped once per tick by `SearchlightSim::step_accuracy` from the ground speed over `max_speed`
