@@ -74,7 +74,13 @@ pub struct HumanoidSpec {
     pub duplicate: Vec<&'static str>,
     /// `(bone, name)`: the bone's node is written under `name` instead.
     pub rename: Vec<(&'static str, &'static str)>,
+    /// Adds the `reload` clip after `walk` and `crouch`.
+    pub reload: bool,
 }
+
+/// `reload` lasts this many seconds when the spec asks for it; `spine_01` rises and `hand_r`
+/// moves up, linearly from the first key to the last.
+pub const RELOAD_DURATION: f32 = 2.0;
 
 /// `(name, parent name, local translation)` in walk order.
 const NODES: [(&str, Option<&str>, [f32; 3]); 17] = [
@@ -272,6 +278,26 @@ fn build(spec: &HumanoidSpec) -> (Value, Vec<u8>) {
         })
     };
 
+    let mut animations = vec![walk, crouch];
+    if spec.reload {
+        let times = [0.0, RELOAD_DURATION];
+        let spine = [0.0, 0.2, 0.0, 0.0, 0.5, 0.0];
+        let hand = [0.25, 0.0, 0.0, 0.25, 0.3, 0.0];
+        let (spine_in, spine_out) = blob.keys(&times, &spine, "VEC3", 3);
+        let (hand_in, hand_out) = blob.keys(&times, &hand, "VEC3", 3);
+        animations.push(json!({
+            "name": "reload",
+            "samplers": [
+                { "input": spine_in, "output": spine_out, "interpolation": "LINEAR" },
+                { "input": hand_in, "output": hand_out, "interpolation": "LINEAR" },
+            ],
+            "channels": [
+                { "sampler": 0, "target": { "node": file(1), "path": "translation" } },
+                { "sampler": 1, "target": { "node": file(HAND_R), "path": "translation" } },
+            ],
+        }));
+    }
+
     let mut nodes = Vec::new();
     for walk_index in (0..count).rev() {
         let def = &defs[walk_index];
@@ -316,7 +342,7 @@ fn build(spec: &HumanoidSpec) -> (Value, Vec<u8>) {
             }}]},
         ],
         "skins": [{ "joints": skin_joints, "inverseBindMatrices": inverse_binds }],
-        "animations": [walk, crouch],
+        "animations": animations,
         "accessors": blob.accessors,
         "bufferViews": blob.views,
         "buffers": [{ "byteLength": blob.bytes.len(), "uri": "humanoid.bin" }],
