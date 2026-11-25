@@ -31,10 +31,11 @@ pub struct ControlsDraft {
     pending: Option<Pending>,
 }
 
-/// A captured input another action holds: `target` would take `binding` from `by`.
+/// A captured input another action holds: `target` would take `binding` from `by` into `slot`.
 #[derive(Clone, Copy, Debug)]
 struct Pending {
     target: SearchlightAction,
+    slot: Slot,
     binding: Binding,
     by: SearchlightAction,
 }
@@ -42,10 +43,9 @@ struct Pending {
 /// What happened to a captured input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Capture {
-    /// The action's primary slot now holds the plain press of the input, or the action already
-    /// held it and keeps it where it was.
+    /// The requested slot now holds the plain press of the input.
     Set,
-    /// The action already holds the input in some slot; nothing changed.
+    /// The action already holds the input in a slot or beyond them; nothing changed.
     Unchanged,
     /// Another action holds that binding in `slot` (`None` when beyond its two slots); nothing
     /// changed and the capture is pending until `replace` or `cancel`.
@@ -103,8 +103,8 @@ impl ControlsDraft {
             .is_some_and(|row| row.slots == [None, None] && row.rest.is_empty())
     }
 
-    /// Answers a pending conflict: the capturing action takes the input in its primary slot and
-    /// the action that held it loses it from the slot it was in. Does nothing with none pending.
+    /// Answers a pending conflict: the capturing action takes the input in the requested slot and
+    /// the input leaves every other position, in both actions. Does nothing with none pending.
     pub fn replace(&mut self) {
         let Some(pending) = self.pending.take() else {
             return;
@@ -128,7 +128,7 @@ impl ControlsDraft {
                 }
             }
             row.rest.retain(|held| *held != pending.binding);
-            row.slots[0] = Some(pending.binding);
+            row.slots[index(pending.slot)] = Some(pending.binding);
         }
     }
 
@@ -137,10 +137,10 @@ impl ControlsDraft {
         self.pending = None;
     }
 
-    /// Puts the plain press of `input` in `action`'s primary slot unless it is reserved, another
-    /// action holds it, or `action` already holds it in any slot. A conflict stays pending until
+    /// Puts the plain press of `input` in `action`'s `slot` unless it is reserved, another action
+    /// holds it, or `action` already holds it in any position. A conflict stays pending until
     /// `replace` or `cancel`; any later capture drops it.
-    pub fn capture(&mut self, action: SearchlightAction, _slot: Slot, input: Input) -> Capture {
+    pub fn capture(&mut self, action: SearchlightAction, requested: Slot, input: Input) -> Capture {
         self.pending = None;
         let binding = Binding::from(input);
         if binding.is_protected() {
@@ -158,24 +158,30 @@ impl ControlsDraft {
             } else {
                 None
             };
+            let by = other.action;
             self.pending = Some(Pending {
                 target: action,
+                slot: requested,
                 binding,
-                by: other.action,
+                by,
             });
-            return Capture::Conflict {
-                by: other.action,
-                slot,
-            };
+            return Capture::Conflict { by, slot };
         }
-        if let Some(row) = self
-            .rows
-            .iter_mut()
-            .find(|row| row.action == action && !row.holds(binding))
-        {
-            row.slots[0] = Some(binding);
+        match self.rows.iter_mut().find(|row| row.action == action) {
+            Some(row) if row.holds(binding) => Capture::Unchanged,
+            Some(row) => {
+                row.slots[index(requested)] = Some(binding);
+                Capture::Set
+            }
+            None => Capture::Unchanged,
         }
-        Capture::Set
+    }
+}
+
+fn index(slot: Slot) -> usize {
+    match slot {
+        Slot::Primary => 0,
+        Slot::Secondary => 1,
     }
 }
 

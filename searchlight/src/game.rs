@@ -1005,9 +1005,9 @@ impl SearchlightGame {
                 }
                 MenuEvent::Captured {
                     action: MenuAction::Rebind(action),
-                    slot: Slot::Primary,
+                    slot,
                     input,
-                } => self.captured(action, input),
+                } => self.captured(action, slot, input),
                 MenuEvent::Captured { .. } | MenuEvent::Cleared { .. } => self.show_controls(),
                 MenuEvent::DetailsToggled { .. }
                 | MenuEvent::Picked { .. }
@@ -1042,13 +1042,13 @@ impl SearchlightGame {
         }
     }
 
-    /// Stages a captured `input` for `action` on the Controls page, or asks about the action that
-    /// holds it.
-    fn captured(&mut self, action: SearchlightAction, input: Input) {
+    /// Stages a captured `input` for `action`'s `slot` on the Controls page, or asks about the
+    /// action that holds it.
+    fn captured(&mut self, action: SearchlightAction, slot: Slot, input: Input) {
         let Some(draft) = &mut self.controls else {
             return;
         };
-        if let Capture::Conflict { by, .. } = draft.capture(action, Slot::Primary, input) {
+        if let Capture::Conflict { by, .. } = draft.capture(action, slot, input) {
             let dialog = conflict_screen(&Binding::from(input).label(), label(by));
             self.stage.shell().menu_mut().push(dialog);
             return;
@@ -5566,7 +5566,7 @@ mod tests {
     }
 
     #[test]
-    fn a_secondary_capture_and_a_clear_leave_the_draft_unchanged() {
+    fn a_clear_leaves_the_draft_unchanged() {
         let dir = tempfile::tempdir().unwrap();
         let (settings, _) = settings_in(&dir);
         let mut game = quiet_menu_game().with_debug_settings(settings);
@@ -5576,8 +5576,6 @@ mod tests {
         open_controls(&mut game, &mut ctx);
 
         focus_control(&game, SearchlightAction::Reload);
-        press_keys(&mut game, &mut ctx, &[Key::ArrowRight, Key::Enter, Key::T]);
-        let after_secondary = control_row(&game, SearchlightAction::Reload);
         press_keys(
             &mut game,
             &mut ctx,
@@ -5585,7 +5583,6 @@ mod tests {
         );
         let after_clears = control_row(&game, SearchlightAction::Reload);
 
-        assert_eq!(after_secondary, unchanged);
         assert_eq!(after_clears, unchanged);
     }
 
