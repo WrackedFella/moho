@@ -35,8 +35,8 @@ concurrency:
 jobs:
   # A feature is refined into work items, not implemented. The refine skill publishes the
   # cards as sub-issues and escalates open questions as a comment. It labels a card
-  # `agent-ready` only when the project's `Card review` is `not required`; labels set with
-  # the default token start no workflow, so this job dispatches a run per new labeled card.
+  # `agent-queued` only when the project's `Card review` is `not required`; the Chain
+  # workflow starts each one once its blockers are closed.
   refine:
     name: Refine feature
     if: >-
@@ -50,15 +50,12 @@ jobs:
     timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
-      FEATURE: ${{ github.event.issue.number }}
     steps:
       - uses: actions/checkout@v4
       - name: Ensure pause label
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh label create agent-paused --repo "$GITHUB_REPOSITORY" --color FBCA04 --description "Run waiting for a human answer; comment starting with Resume to resume" || true
-      - name: Note existing cards
-        run: gh api "repos/$GITHUB_REPOSITORY/issues/$FEATURE/sub_issues" --paginate --jq '.[].number' > "$RUNNER_TEMP/cards-before"
       - uses: anthropics/claude-code-action@v1
         id: claude
         env:
@@ -90,15 +87,11 @@ jobs:
             echo "### Denied commands"
             jq -r '.[] | select(.type == "result") | .permission_denials[]? | "- `\(.tool_name)`: \((.tool_input.command // .tool_input.file_path // "") | tostring | .[0:200])"' "$EXECUTION_FILE"
           } | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Start runs for new labeled cards
-        run: |
-          gh api "repos/$GITHUB_REPOSITORY/issues/$FEATURE/sub_issues" --paginate \
-            --jq '.[] | select(any(.labels[]; .name == "agent-ready")) | .number' |
-          while read -r card; do
-            grep -qx "$card" "$RUNNER_TEMP/cards-before" && continue
-            gh workflow run claude.yml --repo "$GITHUB_REPOSITORY" \
-              --ref "${{ github.event.repository.default_branch }}" -f issue="$card"
-          done
+      # Promoted cards carry the queue label (`Queue label` in CLAUDE.md). Labels set with
+      # the default token start no workflow, so the chain is started here; it starts each
+      # card once every card blocking it is closed.
+      - name: Start the chain
+        run: gh workflow run chain.yml --repo "$GITHUB_REPOSITORY" --ref "${{ github.event.repository.default_branch }}"
 
   orchestrate:
     name: Orchestrate

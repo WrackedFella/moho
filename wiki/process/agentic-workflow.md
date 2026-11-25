@@ -136,3 +136,5 @@ How cloud threads and Actions runs differ from a local session is in the devflow
 - **Unattended runs** use `claude-code-action` (`.github/workflows/claude.yml`) with the
   default token; the `agent-ready` routing is described in
   [`_todo/WORKFLOW.md`](../../_todo/WORKFLOW.md#run-options).
+- **Chains.** Order between cards is `blocked by` on the issues; `agent-queued` opts a
+  card into running unattended once those close (`.github/workflows/chain.yml`).

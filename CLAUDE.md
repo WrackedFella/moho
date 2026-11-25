@@ -69,6 +69,8 @@ cargo run -p searchlight           # the FPS prototype
   its `Mutants (diff)` job runs `just mutants` (exit 2 on a survivor fails the job), so
   devflow's defect finder does not rerun a command whose check passed on the head. Keep
   these job names in step with `.github/workflows/ci.yml`.
+- **Queue label:** `agent-queued` (promotion applies it instead of `agent-ready`; `chain.yml`
+  starts each queued item once every item blocking it is closed, up to `AGENT_MAX_RUNS`).
 - **Human review points:** `Card review: required`, `Domain-test review: agent` (values: `required`,
   `agent`, `not required`; `agent` = no pause, `devflow:test-critic` attacks the failing
   tests before implementation and the PR carries its findings). Switches and runtimes: `_todo/WORKFLOW.md`.
