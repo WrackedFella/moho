@@ -2702,6 +2702,198 @@ mod tests {
         }
     }
 
+    /// `(min, max)` of the box `turn` carries the box `(min, max)` to; `turn` is a quarter or
+    /// half turn about +Y, so the result stays axis aligned.
+    fn turned_box(turn: Quat, (min, max): (Vec3, Vec3)) -> (Vec3, Vec3) {
+        let a = turn * min;
+        let b = turn * max;
+        (a.min(b), a.max(b))
+    }
+
+    /// [`corner_scene`] turned `yaw` radians about the player, who is turned to face along the
+    /// turned scene's +Z. The enemy is not spawned.
+    fn turned_corner_scene(yaw: f32, aim_at: BodyPart) -> SearchlightSim {
+        let turn = Quat::from_rotation_y(yaw);
+        let wall = turned_box(turn, (Vec3::new(-0.44, 0.0, 0.6), Vec3::new(6.0, 3.0, 0.9)));
+        let enemy = turn * Vec3::new(-3.0, 0.0, 8.0);
+        let toward_player = turn * Vec3::new(-2.9, 0.0, 7.72);
+        let arena = arena_with(&[wall], Vec3::ZERO, &[enemy], &[toward_player]);
+        let mut config = test_config(rifle_with(30), vec![]);
+        crate::test_support::set_eye_above_centre(&mut config, 0.72);
+        config.enemy.patrol_speed = 0.0;
+        config.enemy_aim_at = aim_at;
+        let mut sim = SearchlightSim::with_start(arena, config, Start::Empty);
+        let face = SearchlightCommand {
+            movement: CharacterCommand {
+                yaw_delta: yaw,
+                ..CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        sim.tick(&face, DT);
+        let facing = Quat::from_rotation_y(sim.player().yaw) * Vec3::Z;
+        assert!(
+            facing.distance(turn * Vec3::Z) < 1e-3,
+            "the player faces {facing:?}, not {:?}",
+            turn * Vec3::Z
+        );
+        sim
+    }
+
+    const TURNS: [f32; 2] = [FRAC_PI_2, std::f32::consts::PI];
+
+    #[test]
+    fn an_upright_player_behind_a_turned_corner_is_unseen() {
+        for yaw in TURNS {
+            let mut sim = turned_corner_scene(yaw, BodyPart::Torso);
+            hold(&mut sim, &leaning(Some(LeanSide::Right)), SETTLE_TICKS);
+            hold(&mut sim, &leaning(None), SETTLE_TICKS);
+            sim.spawn_enemy(0, Grade::Experienced)
+                .expect("the marker is free");
+
+            let feedback = run_leaning(&mut sim, None, 60);
+
+            assert_eq!(enemy_fired_count(&feedback), 0, "yaw {yaw}: {feedback:?}");
+            assert!(parts_hit(&feedback).is_empty(), "yaw {yaw}: {feedback:?}");
+        }
+    }
+
+    #[test]
+    fn leaning_past_a_turned_corner_is_seen() {
+        for yaw in TURNS {
+            let mut sim = turned_corner_scene(yaw, BodyPart::LeftLeg);
+            hold(&mut sim, &leaning(Some(LeanSide::Right)), SETTLE_TICKS);
+            sim.spawn_enemy(0, Grade::Experienced)
+                .expect("the marker is free");
+
+            let feedback = run_leaning(&mut sim, Some(LeanSide::Right), 60);
+
+            assert!(
+                enemy_fired_count(&feedback) >= 1,
+                "yaw {yaw}: the enemy never saw the player lean out: {feedback:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn enemy_shots_past_a_turned_corner_hit_only_the_exposed_part() {
+        let cases = [
+            (BodyPart::Head, Some(BodyPart::Head)),
+            (BodyPart::LeftArm, None),
+        ];
+        for yaw in TURNS {
+            for (aim_at, outcome) in cases {
+                let mut sim = turned_corner_scene(yaw, aim_at);
+                hold(&mut sim, &leaning(Some(LeanSide::Right)), SETTLE_TICKS);
+                sim.spawn_enemy(0, Grade::Experienced)
+                    .expect("the marker is free");
+
+                let feedback = run_leaning(&mut sim, Some(LeanSide::Right), 30);
+
+                assert!(
+                    enemy_fired_count(&feedback) >= 1,
+                    "yaw {yaw}, {aim_at:?}: the enemy never fired: {feedback:?}"
+                );
+                let hits = parts_hit(&feedback);
+                match outcome {
+                    Some(part) => assert!(
+                        !hits.is_empty() && hits.iter().all(|&struck| struck == part),
+                        "yaw {yaw}, {aim_at:?}: struck {hits:?}, expected only {part:?}"
+                    ),
+                    None => assert!(
+                        hits.is_empty(),
+                        "yaw {yaw}, {aim_at:?}: a shot reached the player: {hits:?}"
+                    ),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn restarting_while_leaning_stands_the_hit_volumes_upright() {
+        let mut sim = leaned_player(0.0, LeanSide::Right);
+        sim.kill_player();
+
+        sim.tick(
+            &SearchlightCommand {
+                restart: true,
+                ..SearchlightCommand::default()
+            },
+            DT,
+        );
+
+        assert_eq!(sim.player_lean().amount(), 0.0);
+        assert_eq!(
+            struck_at(&sim, upright_centre(BodyPart::Head)),
+            Some(SurfaceTag::Player(BodyPart::Head)),
+            "a ray at the upright head"
+        );
+        assert_eq!(
+            struck_at(&sim, leaned_centre(BodyPart::Head, LeanSide::Right)),
+            None,
+            "a ray where the leaned head was"
+        );
+    }
+
+    /// Where the player's `part` centre sits leaning `amount` of a full lean to the right
+    /// (negative leans left), in the body frame.
+    fn leaned_centre_by(part: BodyPart, amount: f32) -> Vec3 {
+        let hip = Vec3::new(0.0, -0.10, 0.0);
+        let roll = Quat::from_rotation_z(amount * 12.0_f32.to_radians());
+        let rolled = |point: Vec3| hip + roll * (point - hip);
+        let slide = -amount * 0.35 - rolled(upright_centre(BodyPart::Head)).x;
+        rolled(upright_centre(part)) + Vec3::new(slide, 0.0, 0.0)
+    }
+
+    #[test]
+    fn a_partial_lean_holds_the_hit_volumes_at_that_amount() {
+        const FACE: f32 = 0.45;
+        let floor = (Vec3::new(-30.0, -1.0, -30.0), Vec3::new(30.0, 0.0, 30.0));
+        let wall = (
+            Vec3::new(-FACE - 1.0, 0.0, -5.0),
+            Vec3::new(-FACE, 4.0, 5.0),
+        );
+        let mut sim = SearchlightSim::new(
+            world_with(&[floor, wall]),
+            Vec3::ZERO,
+            &[],
+            test_config(rifle_with(5), vec![]),
+        );
+        hold(&mut sim, &leaning(Some(LeanSide::Right)), SETTLE_TICKS);
+        let amount = sim.player_lean().amount();
+        assert!(
+            (amount - (FACE - 0.15) / 0.35).abs() < 0.02,
+            "the wall should hold the lean part way, got {amount}"
+        );
+
+        let partial = struck_at(&sim, leaned_centre_by(BodyPart::Head, amount));
+        let mut full = leaned_centre_by(BodyPart::Head, 1.0);
+        // Inside the head of a full lean, 0.02 m clear of the head of this one.
+        full.x -= 0.09;
+        let beyond = struck_at(&sim, full);
+
+        assert_eq!(partial, Some(SurfaceTag::Player(BodyPart::Head)));
+        assert_ne!(beyond, Some(SurfaceTag::Player(BodyPart::Head)));
+    }
+
+    #[test]
+    fn a_ray_at_the_head_as_leaned_last_tick_hits_it_throughout_the_blend() {
+        let mut sim = open_sim();
+        let mut previous = sim.player_lean().amount();
+
+        for tick in 0..SETTLE_TICKS {
+            sim.tick(&leaning(Some(LeanSide::Right)), DT);
+
+            let struck = struck_at(&sim, leaned_centre_by(BodyPart::Head, previous));
+            assert_eq!(
+                struck,
+                Some(SurfaceTag::Player(BodyPart::Head)),
+                "tick {tick}: a ray at the head as leaned {previous} after the tick before"
+            );
+            previous = sim.player_lean().amount();
+        }
+    }
+
     /// The cover point the first enemy has claimed, if any.
     fn first_enemy_claim(sim: &SearchlightSim) -> Option<usize> {
         sim.targets[sim.dummy_count]
