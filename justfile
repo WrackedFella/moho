@@ -239,12 +239,42 @@ run-record-test:
 sim-math:
     #!/usr/bin/env bash
     set -euo pipefail
-    # Forward slashes: bash strips the backslashes of an unquoted Windows path.
-    rejects() { "{{replace(just_executable(), '\', '/')}}" _sim-math-rejects "$@"; }
-    accepts() { "{{replace(just_executable(), '\', '/')}}" _sim-math-accepts "$@"; }
+    run() { status=0; out=$(scripts/check-sim-math.sh "scripts/fixtures/$1.txt" 2>&1) || status=$?; }
+    fail() {
+        echo "sim-math self-test failed: $1" >&2
+        echo "  expected: $2" >&2
+        echo "  got: exit $status, output:" >&2
+        sed 's/^/    /' <<<"$out" >&2
+        exit 1
+    }
+    # rejects <fixture> <expected>...: non-zero exit; every word containing ':<digits>' is a
+    # file:line and the flagged file:line set must equal those exactly; every other word must
+    # appear in the output.
+    rejects() {
+        local fixture=$1 e ok=1 want=()
+        shift
+        run "$fixture"
+        [ "$status" -ne 0 ] || ok=0
+        for e in "$@"; do
+            if [[ "$e" =~ :[0-9]+$ ]]; then
+                want+=("$e")
+            else
+                grep -qF -- "$e" <<<"$out" || ok=0
+            fi
+        done
+        if [ "${#want[@]}" -gt 0 ]; then
+            [ "$(grep -oE '[A-Za-z0-9_./-]+:[0-9]+' <<<"$out" | sort -u)" = "$(printf '%s\n' "${want[@]}" | sort -u)" ] || ok=0
+        fi
+        [ "$ok" -eq 1 ] || fail "$fixture" "non-zero exit, exactly these file:line flags, and these words: $*"
+    }
+    # accepts <fixture>: exit 0.
+    accepts() {
+        run "$1"
+        [ "$status" -eq 0 ] || fail "$1" "exit 0"
+    }
     scripts/check-sim-math.sh scripts/sim-math.txt
     c=scripts/fixtures/sim-math-call.rs
-    rejects sim-math-call moho_core::sim_math $c:2 $c:3 $c:4 $c:5 $c:6 $c:7 $c:8 $c:9 $c:10 $c:11 $c:12 $c:13 $c:14 $c:15 $c:16 $c:17 $c:18 $c:19 $c:20 $c:21
+    rejects sim-math-call moho_core::sim_math "$c":{2..21}
     rejects sim-math-gated-decl scripts/fixtures/sim-math-gated-decl.rs:5
     rejects sim-math-qualified scripts/fixtures/sim-math-qualified.rs:2 scripts/fixtures/sim-math-qualified.rs:3
     rejects sim-math-paths scripts/fixtures/sim-math-paths.rs:2 scripts/fixtures/sim-math-paths.rs:3 scripts/fixtures/sim-math-paths.rs:4
@@ -255,55 +285,6 @@ sim-math:
     accepts sim-math-gated-item
     # Per package, so glam's own feature set is checked: --workspace --all-features lets rapier's glamx enable glam/libm.
     cargo nextest run -p moho_core -E 'test(glam_rotation_uses_libm_sin_and_cos)'
-
-# Fails unless the sim-math check exits non-zero on the fixture's file list. Each expected word containing
-# ':<digits>' is a file:line that must be flagged, and the flagged file:line set must equal those exactly;
-# every other word must appear in the output.
-[private]
-_sim-math-rejects fixture +expected:
-    #!/usr/bin/env bash
-    set -uo pipefail
-    out=$(scripts/check-sim-math.sh scripts/fixtures/{{fixture}}.txt 2>&1)
-    status=$?
-    ok=1
-    [ "$status" -ne 0 ] || ok=0
-    want=()
-    for e in {{expected}}; do
-        if [[ "$e" =~ :[0-9]+$ ]]; then
-            want+=("$e")
-        else
-            grep -qF -- "$e" <<<"$out" || ok=0
-        fi
-    done
-    if [ "${#want[@]}" -gt 0 ]; then
-        got=$(grep -oE '[A-Za-z0-9_./-]+:[0-9]+' <<<"$out" | sort -u)
-        exp=$(printf '%s\n' "${want[@]}" | sort -u)
-        [ "$got" = "$exp" ] || ok=0
-    fi
-    if [ "$ok" -eq 1 ]; then
-        exit 0
-    fi
-    echo "sim-math self-test failed: {{fixture}}" >&2
-    echo "  expected: non-zero exit, exactly these file:line flags, and these words: {{expected}}" >&2
-    echo "  got: exit $status, output:" >&2
-    sed 's/^/    /' <<<"$out" >&2
-    exit 1
-
-# Fails unless the sim-math check exits 0 on the fixture's file list.
-[private]
-_sim-math-accepts fixture:
-    #!/usr/bin/env bash
-    set -uo pipefail
-    out=$(scripts/check-sim-math.sh scripts/fixtures/{{fixture}}.txt 2>&1)
-    status=$?
-    if [ "$status" -eq 0 ]; then
-        exit 0
-    fi
-    echo "sim-math self-test failed: {{fixture}}" >&2
-    echo "  expected: exit 0" >&2
-    echo "  got: exit $status, output:" >&2
-    sed 's/^/    /' <<<"$out" >&2
-    exit 1
 
 # Layering check on the real crate graph, plus self-tests that each rule rejects its fixture.
 layering:

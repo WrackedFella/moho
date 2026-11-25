@@ -1,17 +1,15 @@
 #!/usr/bin/env bash
-# Fails when an engine sim file calls a platform transcendental. The files are the
-# paths listed in the file named by the first argument (default scripts/sim-math.txt),
-# one per line, relative to the repository root; '#' starts a comment. A listed file
-# that does not exist fails the check and is named. In each file the check flags method
-# calls (.sin(), .sin_cos(), .powf(), ...) and f32:: / f64:: / <f32>:: / <f64>:: paths of
-# the names below, called or passed as a function value (.map(f32::sin)), and prints
-# file:line with the replacement, moho_core::sim_math. sqrt, abs,
-# to_radians, powi and glam vector ops are not flagged. Test code is exempt: a
-# #[cfg(test)] followed by an inline `mod name {` ends the scan of the file, and any
-# other #[cfg(test)] exempts only the item on the next line. The list is the boundary:
-# files absent from it (camera, rendering, UI) are never scanned. A grep-level check:
-# calls through a trait or an alias are not seen. Plain POSIX awk, so it runs the same
-# on Linux, macOS and Windows git-bash.
+# Fails when an engine sim file calls a platform transcendental, which can differ per OS
+# and libm; sim code uses moho_core::sim_math instead. The files to scan are listed in the
+# file named by the first argument (default scripts/sim-math.txt): one repo-relative path
+# per line, '#' starts a comment, and a listed file that does not exist fails the check.
+# Flagged, as file:line with the replacement: method calls (.name(...)) and f32::, f64::,
+# <f32>:: and <f64>:: paths (called or passed as a function value) of the names in
+# `names=` below. Test code is exempt: #[cfg(test)] followed by an inline `mod name {`
+# ends the scan of the file, and any other #[cfg(test)] exempts only the next line. The
+# list is the boundary: files outside it (camera, rendering, UI) are never scanned. It is
+# a textual check, so calls through a trait or an alias go unseen. Plain POSIX awk, so it
+# runs the same on Linux, macOS and Windows git-bash.
 set -euo pipefail
 
 list="${1:-scripts/sim-math.txt}"
