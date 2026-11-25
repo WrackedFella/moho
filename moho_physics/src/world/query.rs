@@ -63,6 +63,14 @@ fn decode_loose(user_data: u128) -> Option<LooseId> {
         .map(LooseId::from_raw)
 }
 
+/// What a ray reached first, before the caller reads the collider's identity.
+struct FirstHit {
+    collider: ColliderHandle,
+    point: Vec3,
+    normal: Vec3,
+    distance: f32,
+}
+
 impl PhysicsWorld {
     /// The loose object `query` reaches first, ahead of any tagged surface; `None` when a tagged
     /// surface is nearer or nothing is in range. Reads the world as the last `step` left it.
@@ -70,19 +78,14 @@ impl PhysicsWorld {
     /// Characters' capsules and other untagged colliders never stop the look; their hit volumes
     /// do, unless `query.ignore` names them. Invalid queries are as for [`PhysicsWorld::cast_ray`].
     pub fn pick_loose(&self, query: &RayQuery) -> Option<LooseId> {
-        let (collider, _, _) = self.first_hit(query, |user_data| {
+        let hit = self.first_hit(query, |user_data| {
             decode_tag(user_data).is_some() || decode_loose(user_data).is_some()
         })?;
-        decode_loose(self.collider_set.get(collider)?.user_data)
+        decode_loose(self.collider_set.get(hit.collider)?.user_data)
     }
 
-    /// The first collider whose `user_data` satisfies `accepts` along `query`, with the distance
-    /// to it and the surface normal there.
-    fn first_hit(
-        &self,
-        query: &RayQuery,
-        accepts: impl Fn(u128) -> bool,
-    ) -> Option<(ColliderHandle, f32, Vec3)> {
+    /// The first collider whose `user_data` satisfies `accepts` along `query`.
+    fn first_hit(&self, query: &RayQuery, accepts: impl Fn(u128) -> bool) -> Option<FirstHit> {
         let direction = query.direction.try_normalize()?;
         let ray = Ray::new(query.origin, direction);
         let accepted = |_: ColliderHandle, collider: &Collider| accepts(collider.user_data);
@@ -98,7 +101,12 @@ impl PhysicsWorld {
         );
 
         let (collider, hit) = queries.cast_ray_and_get_normal(&ray, query.max_distance, true)?;
-        Some((collider, hit.time_of_impact, hit.normal))
+        Some(FirstHit {
+            collider,
+            point: query.origin + direction * hit.time_of_impact,
+            normal: hit.normal,
+            distance: hit.time_of_impact,
+        })
     }
 
     /// The nearest tagged surface along `query`.
@@ -109,15 +117,12 @@ impl PhysicsWorld {
     /// the ray. A zero or non-finite direction, or a `max_distance` that is not positive, hits
     /// nothing.
     pub fn cast_ray(&self, query: &RayQuery) -> Option<RayHit> {
-        let (collider, distance, normal) =
-            self.first_hit(query, |user_data| decode_tag(user_data).is_some())?;
-        let tag = self.collider_tag(collider)?;
-        let direction = query.direction.try_normalize()?;
+        let hit = self.first_hit(query, |user_data| decode_tag(user_data).is_some())?;
         Some(RayHit {
-            point: query.origin + direction * distance,
-            normal,
-            distance,
-            tag,
+            point: hit.point,
+            normal: hit.normal,
+            distance: hit.distance,
+            tag: self.collider_tag(hit.collider)?,
         })
     }
 
