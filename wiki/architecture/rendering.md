@@ -72,6 +72,12 @@ frame skipped for a lost surface consumes them too. Placed meshes cast and recei
 and take part in SSAO like static ones, and never touch physics. Normals use the cofactor
 of the placement's upper 3x3 (`normal_to_world`, 2.2), so non-uniform scale lights correctly.
 
+`WorldMeshes::place_shadow_only(id, transform)` adds a copy that casts a shadow and is not
+drawn in view (material 0, no texture). `Scene::render` groups these per mesh and hands them to
+`RendererBackend::enqueue_shadow_only_draw`, whose default draws nothing. Each queued draw's
+`DrawKey` carries a `Passes` value (`Both`, `MainOnly`, `ShadowOnly`) that the main and shadow
+passes filter on.
+
 A rigged mesh carries a skin: `WorldMesh::with_skin` adds four joint indices and weights per
 vertex (`skin()` reads them back). `WorldMeshes::place_skinned(id, transform, material,
 texture, palette)` adds a placement for the frame posed by a model-space palette, one
@@ -383,7 +389,7 @@ sequenceDiagram
     participant S as Scene::render
     participant B as RendererBackend
     S->>S: prepare: collect instances, dedup materials,<br/>split opaque / transparent
-    S->>S: place effects, flush world meshes, group placements<br/>per mesh (shadowed and unshadowed), clear placements
+    S->>S: place effects, flush world meshes, group placements<br/>per mesh (shadowed, unshadowed and shadow-only), clear placements
     S->>B: begin_frame(camera)<br/>upload camera, cull lights, update shadow matrices,<br/>acquire surface
     S->>B: enqueue_draw(cubes, spheres, each world mesh<br/>with all its instances)
     S->>B: enqueue_unshadowed_draw(effects)
