@@ -191,6 +191,24 @@ mod tests {
     }
 
     #[test]
+    fn a_named_level_found_in_no_folder_is_not_found_naming_where_it_looked() {
+        let empty = tempfile::tempdir().unwrap();
+        let roots = AssetRoots::placeholders(empty.path()).unwrap();
+        let choice = chosen("arena").unwrap();
+
+        let error = choice.path(&roots).unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                AssetError::NotFound { name, searched }
+                    if name == Path::new("arena.glb") && searched == &[empty.path().to_owned()]
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[test]
     fn a_path_argument_is_returned_as_given() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("arena.glb"), "x").unwrap();

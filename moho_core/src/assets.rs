@@ -144,11 +144,83 @@ mod tests {
         let file = holder.path().join("plain.txt");
         let base = AssetRoots::placeholders(placeholders.path()).unwrap();
 
-        let error = base.with_folder(&file).unwrap_err();
+        let as_placeholders = AssetRoots::placeholders(&file).unwrap_err();
+        let as_folder = base.with_folder(&file).unwrap_err();
 
+        for error in [as_placeholders, as_folder] {
+            assert!(
+                matches!(&error, AssetError::MissingFolder { path } if path == &file),
+                "{error:?}"
+            );
+        }
+    }
+
+    /// Collects what `tracing` writes while `run` executes.
+    fn logged(run: impl FnOnce()) -> String {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+
+        struct Sink(Arc<Mutex<Vec<u8>>>);
+        impl Write for Sink {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().expect("log sink").extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let writer = Arc::clone(&buffer);
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || Sink(Arc::clone(&writer)))
+            .with_ansi(false)
+            .finish();
+        tracing::subscriber::with_default(subscriber, run);
+        let bytes = buffer.lock().expect("log sink").clone();
+        String::from_utf8(bytes).expect("log output is utf-8")
+    }
+
+    #[test]
+    fn resolve_logs_one_info_line_naming_asset_layer_and_folder() {
+        let placeholders = folder_with(&["rifle_shot.wav"]);
+        let folder = folder_with(&["arena.glb"]);
+        let roots = roots(placeholders.path(), &[folder.path()]);
+
+        let from_folder = logged(|| {
+            roots.resolve(Path::new("arena.glb")).unwrap();
+        });
+        let from_placeholders = logged(|| {
+            roots.resolve(Path::new("rifle_shot.wav")).unwrap();
+        });
+
+        assert_eq!(from_folder.lines().count(), 1, "{from_folder}");
+        assert!(from_folder.contains("INFO"), "{from_folder}");
+        assert!(from_folder.contains("arena.glb"), "{from_folder}");
+        assert!(from_folder.contains("assets folder"), "{from_folder}");
+        assert!(!from_folder.contains("placeholders"), "{from_folder}");
         assert!(
-            matches!(&error, AssetError::MissingFolder { path } if path == &file),
-            "{error:?}"
+            from_folder.contains(&folder.path().display().to_string()),
+            "{from_folder}"
+        );
+        assert_eq!(from_placeholders.lines().count(), 1, "{from_placeholders}");
+        assert!(from_placeholders.contains("INFO"), "{from_placeholders}");
+        assert!(
+            from_placeholders.contains("rifle_shot.wav"),
+            "{from_placeholders}"
+        );
+        assert!(
+            from_placeholders.contains("placeholders"),
+            "{from_placeholders}"
+        );
+        assert!(
+            !from_placeholders.contains("assets folder"),
+            "{from_placeholders}"
+        );
+        assert!(
+            from_placeholders.contains(&placeholders.path().display().to_string()),
+            "{from_placeholders}"
         );
     }
 

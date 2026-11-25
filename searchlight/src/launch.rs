@@ -206,13 +206,11 @@ mod tests {
 
     #[test]
     fn no_assets_option_searches_placeholders_only() {
-        let beside = folder_with(&["arena.glb"]);
         let roots = asset_roots(&Launch::default()).unwrap();
 
         let arena = roots.resolve(Path::new("arena.glb")).unwrap();
 
         assert_eq!(arena, assets_root().join("arena.glb"));
-        assert_ne!(arena, beside.path().join("arena.glb"));
         assert_eq!(roots, placeholder_assets());
     }
 }
