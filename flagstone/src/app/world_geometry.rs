@@ -222,15 +222,8 @@ fn remesh_unstored_behind(app: &mut App, pos: IVec3) {
             .collect();
     for (behind, chunk) in behind {
         if let Some(chunk) = chunk {
-            upsert_chunk_mesh(
-                &mut app.scene,
-                app.physics.world.as_mut(),
-                &mut app.cut_caps,
-                app.terrain_material_idx,
-                &app.terrain_palette,
-                &chunk,
-            );
-            app.entities.chunks.insert(chunk);
+            // Unstored in the grid, so this does not recurse into the pass.
+            insert_chunk(app, chunk);
         } else if app.entities.chunks.remove(behind).is_some() {
             remove_chunk_mesh(
                 &mut app.scene,
@@ -933,14 +926,6 @@ pub(crate) mod tests {
         let grid = app.light_system.as_ref().expect("light system").grid();
         let chunk = VoxelChunk::from_grid_lod(grid, pos, 0);
         insert_chunk(app, chunk);
-    }
-
-    fn grid_stores(app: &App, pos: IVec3) -> bool {
-        app.light_system
-            .as_ref()
-            .expect("light system")
-            .grid()
-            .has_chunk(pos)
     }
 
     fn has_geometry_at(app: &App, pos: IVec3) -> bool {
