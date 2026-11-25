@@ -62,7 +62,7 @@ pub enum Stance {
 
 /// Which end of the hull a stance leg keeps still: the feet of a grounded character, the top
 /// of an airborne one (Source's duck-jump).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Anchor {
     #[default]
     Feet,
@@ -3431,7 +3431,10 @@ mod tests {
                 walker.position
             );
             assert!(
-                (asked.y - (4.0 - settings.gravity.expect("test settings set gravity") * DT / 2.0) * DT).abs() < 1e-6,
+                (asked.y
+                    - (4.0 - settings.gravity.expect("test settings set gravity") * DT / 2.0) * DT)
+                    .abs()
+                    < 1e-6,
                 "a grounded character given upward speed runs airborne, so half a tick of gravity acts: asked y = {}",
                 asked.y
             );
