@@ -2522,8 +2522,9 @@ mod tests {
             let sim = leaned_player(yaw, LeanSide::Right);
 
             let head = struck_at(&sim, leaned_centre(BodyPart::Head, LeanSide::Right));
-            let legs = [BodyPart::LeftLeg, BodyPart::RightLeg]
-                .map(|leg| struck_at(&sim, upright_centre(leg)));
+            // 0.05 m below the torso's bottom: legs that rolled with the upper body would be
+            // about 0.17 m off here.
+            let legs = [0.12, -0.12].map(|x| struck_at(&sim, Vec3::new(x, -0.15, 0.0)));
 
             assert_eq!(
                 head,
@@ -2536,7 +2537,7 @@ mod tests {
                     Some(SurfaceTag::Player(BodyPart::LeftLeg)),
                     Some(SurfaceTag::Player(BodyPart::RightLeg)),
                 ],
-                "yaw {yaw}: rays at the standing legs"
+                "yaw {yaw}: rays at the tops of the standing legs"
             );
         }
     }
@@ -2566,6 +2567,15 @@ mod tests {
     /// aiming at `aim_at`. Seen from the enemy, a point on the player's line of x -0.35 or
     /// further right clears the corner and one at x -0.12 or further left is behind the wall.
     fn corner_duel(side: Option<LeanSide>, aim_at: BodyPart) -> SearchlightSim {
+        let mut sim = corner_scene(aim_at);
+        hold(&mut sim, &leaning(side), SETTLE_TICKS);
+        sim.spawn_enemy(0, Grade::Experienced)
+            .expect("the marker is free");
+        sim
+    }
+
+    /// [`corner_duel`]'s scene before the player moves and with the enemy not yet spawned.
+    fn corner_scene(aim_at: BodyPart) -> SearchlightSim {
         let wall = (Vec3::new(-0.44, 0.0, 0.6), Vec3::new(6.0, 3.0, 0.9));
         let enemy = Vec3::new(-3.0, 0.0, 8.0);
         let toward_player = enemy + Vec3::new(0.1, 0.0, -0.28);
@@ -2574,11 +2584,7 @@ mod tests {
         crate::test_support::set_eye_above_centre(&mut config, 0.72);
         config.enemy.patrol_speed = 0.0;
         config.enemy_aim_at = aim_at;
-        let mut sim = SearchlightSim::with_start(arena, config, Start::Empty);
-        hold(&mut sim, &leaning(side), SETTLE_TICKS);
-        sim.spawn_enemy(0, Grade::Experienced)
-            .expect("the marker is free");
-        sim
+        SearchlightSim::with_start(arena, config, Start::Empty)
     }
 
     fn enemy_fired_count(feedback: &[Feedback]) -> usize {
@@ -2600,7 +2606,12 @@ mod tests {
 
     #[test]
     fn an_upright_player_behind_a_corner_is_unseen() {
-        let mut sim = corner_duel(None, BodyPart::Torso);
+        let mut sim = corner_scene(BodyPart::Torso);
+        hold(&mut sim, &leaning(Some(LeanSide::Right)), SETTLE_TICKS);
+        hold(&mut sim, &leaning(None), SETTLE_TICKS);
+        assert_eq!(sim.player_lean().amount(), 0.0, "the lean never released");
+        sim.spawn_enemy(0, Grade::Experienced)
+            .expect("the marker is free");
 
         let feedback = run_leaning(&mut sim, None, 60);
 
@@ -2610,7 +2621,7 @@ mod tests {
 
     #[test]
     fn leaning_past_the_corner_is_seen() {
-        let mut sim = corner_duel(Some(LeanSide::Right), BodyPart::Torso);
+        let mut sim = corner_duel(Some(LeanSide::Right), BodyPart::LeftLeg);
 
         let feedback = run_leaning(&mut sim, Some(LeanSide::Right), 60);
 
@@ -2654,6 +2665,51 @@ mod tests {
                 ),
             }
         }
+    }
+
+    /// The cover point the first enemy has claimed, if any.
+    fn first_enemy_claim(sim: &SearchlightSim) -> Option<usize> {
+        sim.targets[sim.dummy_count]
+            .enemy
+            .expect("the target is an enemy")
+            .brain
+            .claim()
+    }
+
+    /// The player at the origin facing +Z, a cover point 10 m ahead of the player and an enemy
+    /// beside it, and a 3 m post across z in [2, 2.2] and x in [-0.35, -0.14]. Seen from the
+    /// cover point, the post hides an eye leaned fully right (x -0.35) but neither an upright
+    /// eye (x 0) nor a right arm leaned fully right (x -0.55), the part the enemies aim at.
+    /// The enemy is put under fire while the player holds `side`; returns the cover point it
+    /// then claims.
+    fn cover_claimed_while(side: Option<LeanSide>) -> Option<usize> {
+        let post = (Vec3::new(-0.35, 0.0, 2.0), Vec3::new(-0.14, 3.0, 2.2));
+        let enemy = Vec3::new(4.0, 0.0, 10.0);
+        let mut arena = (*arena_with(&[post], Vec3::ZERO, &[enemy], &[enemy])).clone();
+        arena.covers = vec![Vec3::new(0.0, 0.0, 10.0)];
+        let mut config = test_config(rifle_with(30), vec![]);
+        crate::test_support::set_eye_above_centre(&mut config, 0.72);
+        config.enemy.patrol_speed = 0.0;
+        config.enemy_aim_at = BodyPart::RightArm;
+        let mut sim = SearchlightSim::with_start(Arc::new(arena), config, Start::Empty);
+        hold(&mut sim, &leaning(side), SETTLE_TICKS);
+        sim.spawn_enemy(0, Grade::Experienced)
+            .expect("the marker is free");
+        let from = sim.player().position;
+        sim.apply_player_hit(0, BodyPart::Head, 1, from, from);
+
+        sim.tick(&leaning(side), DT);
+
+        first_enemy_claim(&sim)
+    }
+
+    #[test]
+    fn cover_hides_from_the_leaned_eye() {
+        let upright = cover_claimed_while(None);
+        let leaned = cover_claimed_while(Some(LeanSide::Right));
+
+        assert_eq!(upright, None, "the post leaves an upright eye a view");
+        assert_eq!(leaned, Some(0), "the post hides the leaned eye");
     }
 
     use searchlight_rules::GravityScale;
