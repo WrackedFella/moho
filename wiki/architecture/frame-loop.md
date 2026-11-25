@@ -138,3 +138,18 @@ band `EDGE_PAN_MARGIN_PX`) added only while Playing, focused and isometric, then
 ground under the focus, then the focus is raised so the eye stays `CAMERA_CLEARANCE` above
 the surface under the eye. A column that is not loaded skips its rule. Pan speed scales with
 the zoom height (`rts_height`).
+
+### 4.2 Saving and resuming the loop
+
+A save reads `loop_record()` from a `FrameContext` or `EventContext` (or
+`HeadlessLoop::record`): a `LoopRecord` of the next tick's index and the whole `GameClock`
+(time of day, elapsed seconds, time scale, day and night lengths), plain serde data
+(`moho_app/src/clock.rs`). Pause, speed and the sub-tick remainder are not in it. The
+contexts run after the frame's ticks, so the record is the state at a tick boundary.
+
+A load calls `resume_loop(record)` in a frame or event, or `HeadlessLoop::restore` on a
+loop. The request is applied when the callback returns, before pause and speed, so the next
+tick has the saved index and clock; no tick runs and no `Game` method is called for it.
+`GameClock::from_record` applies the constructor and `set_time_scale` rules, which leave a
+record a live clock wrote unchanged. The clock is stored, not computed, because the
+day/night rate and the time scale change during play.

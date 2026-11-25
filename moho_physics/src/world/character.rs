@@ -1,3 +1,4 @@
+use super::loose::LOOSE;
 use super::query::{encode_tag, HitTag};
 use super::slide::{shape_of, WorldQueries};
 use super::PhysicsWorld;
@@ -7,10 +8,18 @@ use crate::movement::{
 };
 use glam::{Quat, Vec3};
 use rapier3d::prelude::{
-    ColliderBuilder, ColliderHandle, InteractionGroups, Pose, QueryFilter, RigidBodyBuilder,
-    RigidBodyHandle, SharedShape,
+    ColliderBuilder, ColliderHandle, Group, InteractionGroups, InteractionTestMode, Pose,
+    QueryFilter, RigidBodyBuilder, RigidBodyHandle, SharedShape,
 };
 use serde::{Deserialize, Serialize};
+
+/// Collision filter of a character's capsule and of its movement queries: it meets every
+/// collider except loose objects, which it neither blocks on nor pushes.
+const CHARACTER_GROUPS: InteractionGroups = InteractionGroups::new(
+    Group::ALL,
+    Group::ALL.difference(LOOSE),
+    InteractionTestMode::And,
+);
 
 /// Opaque identity of one character in a [`PhysicsWorld`].
 ///
@@ -315,6 +324,7 @@ impl PhysicsWorld {
         // Transient QueryPipeline view without this character's capsule and hit volumes, nor
         // any other character's hit volumes; capsules still meet capsules.
         let filter = QueryFilter::default()
+            .groups(CHARACTER_GROUPS)
             .exclude_rigid_body(handle.0)
             .exclude_sensors();
         let queries = self.broad_phase.as_query_pipeline(
@@ -445,6 +455,7 @@ impl PhysicsWorld {
             .build();
         let body_handle = self.rigid_body_set.insert(rigid_body);
         let collider = ColliderBuilder::new(shape_of(body.pose(stance)))
+            .collision_groups(CHARACTER_GROUPS)
             .friction(0.0)
             .build();
         let collider =
@@ -6560,5 +6571,34 @@ mod tests {
                 "the box went through the restored character: reached x = {furthest}"
             );
         }
+    }
+
+    #[test]
+    fn a_dynamic_prop_still_blocks_a_character() {
+        let walk_forward = |prop: bool| {
+            let (mut world, h) = standing_on_floor();
+            if prop {
+                world.add_dynamic_cuboid(Vec3::new(0.0, 0.5, 2.0), 0.5, 0.5, 0.25);
+            }
+            let forward = CharacterCommand {
+                forward: 1.0,
+                ..idle()
+            };
+            for _ in 0..90 {
+                world
+                    .move_character(h, &forward, &test_settings(), DT)
+                    .expect("character is live");
+                world.step(DT);
+            }
+            state(&world, h).position.z
+        };
+
+        let free = walk_forward(false);
+        let blocked = walk_forward(true);
+
+        assert!(
+            blocked < free - 1.0,
+            "the prop should stop the walk short: free {free}, with the prop {blocked}"
+        );
     }
 }

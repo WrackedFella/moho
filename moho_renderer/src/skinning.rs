@@ -410,7 +410,7 @@ pub(crate) fn skin_vertex(
 #[cfg(test)]
 mod tests {
     use super::skin_vertex;
-    use crate::types::{DrawKey, Vertex, VertexSource};
+    use crate::types::{DrawKey, Passes, Vertex, VertexSource};
     use glam::{Affine3A, Quat, Vec3};
     use proptest::prelude::*;
     use std::mem::size_of;
@@ -616,7 +616,7 @@ mod tests {
             mesh: 3,
             texture: 9,
             source: VertexSource::Mesh,
-            casts_shadow: true,
+            passes: Passes::Both,
         };
 
         assert_eq!(posed.source, VertexSource::Arena { first_vertex: 10 });

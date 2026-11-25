@@ -101,7 +101,7 @@ pub fn render_shadow_passes(
         shadow_pass.set_immediates(0, bytemuck::bytes_of(&layer));
 
         for (i, (key, insts)) in pending_draws.iter().enumerate() {
-            if !key.casts_shadow {
+            if !key.passes.in_shadow_pass() {
                 continue;
             }
             let idx = key.mesh as usize;

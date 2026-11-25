@@ -72,6 +72,12 @@ frame skipped for a lost surface consumes them too. Placed meshes cast and recei
 and take part in SSAO like static ones, and never touch physics. Normals use the cofactor
 of the placement's upper 3x3 (`normal_to_world`, 2.2), so non-uniform scale lights correctly.
 
+`WorldMeshes::place_shadow_only(id, transform)` adds a copy that casts a shadow and is not
+drawn in view (material 0, no texture). `Scene::render` groups these per mesh and hands them to
+`RendererBackend::enqueue_shadow_only_draw`, whose default draws nothing. Each queued draw's
+`DrawKey` carries a `Passes` value (`Both`, `MainOnly`, `ShadowOnly`) that the main and shadow
+passes filter on.
+
 A rigged mesh carries a skin: `WorldMesh::with_skin` adds four joint indices and weights per
 vertex (`skin()` reads them back). `WorldMeshes::place_skinned(id, transform, material,
 texture, palette)` adds a placement for the frame posed by a model-space palette, one
@@ -263,10 +269,19 @@ model, a clip and a time; it never changes the model.
 - `Model::pose(clip, time)` and `rest_pose()` give a `Pose`: every node's model-space transform
   in walk order. Untargeted nodes keep their `local` exactly; globals compose parent-first. The
   same model, clip and times give bit-identical poses on the same build.
-- `ClipPlayer` is the game's per-character clock: `new` or `play` a clip by name (`Loop` or
-  `Once`; an unknown name is `ClipError::UnknownClip` and changes nothing), `set_speed`
+- `ClipPlayer` is the game's per-character clock: `new` or `play` a clip by name (`Loop`, `Once`
+  or `Ticks(n)`; an unknown name is `ClipError::UnknownClip` and changes nothing), `set_speed`
   (negative plays backwards), `advance(dt)`, `pose`. `Loop` wraps into `[0, duration)`, `Once`
-  clamps to `[0, duration]`.
+  clamps to `[0, duration]`, `Ticks(n)` ignores `dt` and speed and reaches exactly the duration
+  on the n-th `advance` (counted, so it does not drift). `is_finished(model)` is true once a
+  `Ticks` or `Once` clip is at its end; `Loop` never finishes.
+- `Animator` (`moho_level/src/anim.rs`) is one character's playback: a base `ClipPlayer`
+  (locomotion) and an optional action player (a reload) that poses the whole body while it
+  runs. `play_action` replaces any action and restarts it at 0 (unknown clip: `UnknownClip`,
+  nothing changes); `cancel_action` drops it. The base keeps advancing under an action. Call
+  `advance` once per tick before that tick's commands: an action finished before the call is
+  dropped, so its last pose is read on the tick it is reached and the base returns on the next.
+  `pose` is the action's if one runs, else the base's.
 - `posed_placements(root, &pose)` is `placements` with posed nodes, so a rigid mesh on an
   animated node (a magazine) draws through 2.2's path; it lists skinned meshes too, which the
   game places with `place_skinned` instead (section 2, 5.2). `joint_palette(skin, &pose)` is
@@ -396,10 +411,11 @@ sequenceDiagram
     participant S as Scene::render
     participant B as RendererBackend
     S->>S: prepare: collect instances, dedup materials,<br/>split opaque / transparent
-    S->>S: place effects, flush world meshes, group placements<br/>per mesh (shadowed and unshadowed), clear placements
+    S->>S: place effects, flush world meshes, group placements<br/>per mesh (shadowed, unshadowed and shadow-only), clear placements
     S->>B: begin_frame(camera)<br/>upload camera, cull lights, update shadow matrices,<br/>acquire surface
     S->>B: enqueue_draw(cubes, spheres, each world mesh<br/>with all its instances)
     S->>B: enqueue_unshadowed_draw(effects)
+    S->>B: enqueue_shadow_only_draw(shadow-only placements)
     S->>B: enqueue_draw(transparent, sorted back-to-front)
     S->>B: enqueue_markers(fills, outlines, each sorted far to near)
     S->>B: submit_frame()
@@ -636,6 +652,6 @@ built-in mesh (kite for streaks, star for flashes, quad for marks), uploaded on 
 `EFFECT_MESH_IDS_FROM` (kite), `+ 1` (star) and `+ 2` (quad) (`u64::MAX - 63` up is reserved; games keep their ids below it). Streaks and
 flashes are turned to face the camera eye; a mark keeps its surface orientation. Placements go through
 `WorldMeshes::place_unshadowed` and reach the backend via `RendererBackend::enqueue_unshadowed_draw`
-(default: `enqueue_draw`). In the renderer the draw key has `casts_shadow = false`, so
+(default: `enqueue_draw`). In the renderer the draw key has `passes = Passes::MainOnly`, so
 `render_shadow_passes` skips it and the main pass draws it. A second camera sees a streak or flash
 turned toward the first eye.
