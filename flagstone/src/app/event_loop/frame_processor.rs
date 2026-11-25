@@ -1942,6 +1942,119 @@ mod tests {
             );
         }
 
+        /// A crew of two: the first near `near_first`, which it takes; the second near
+        /// `near_second`, which it takes; `pending` is left for whoever frees up first.
+        fn two_pawns_three_marks(
+            near_first: [i32; 3],
+            near_second: [i32; 3],
+            pending: [i32; 3],
+        ) -> App {
+            let cells = [PAWN_CELL, [PAWN_CELL[0], PAWN_CELL[1], 24]];
+            let blocks: Vec<Block> = [near_first, near_second, pending]
+                .into_iter()
+                .map(|mark| (mark, Some(ORE)))
+                .collect();
+            let mut app = dig_site_with_pawns(&blocks, &cells);
+            for mark in [near_first, near_second, pending] {
+                app.colony.marks.toggle(mark);
+            }
+            app
+        }
+
+        #[test]
+        fn a_claimed_block_mined_by_hand_frees_its_pawn() {
+            use flagstone_voxel::{BlockChangeReason, BlockPos, WorldEvent};
+            let (near_first, near_second, pending) = ([16, 8, 12], [12, 8, 28], [24, 8, 28]);
+            let mut app = two_pawns_three_marks(near_first, near_second, pending);
+            let solid_before = solid_blocks(&app);
+            let mut sim = crate::app::dig_site::headless_loop();
+            sim.step(&mut app, 30);
+            assert_eq!(claimant(&app, near_second), Some(PawnId(1)), "setup");
+            assert_eq!(claimant(&app, pending), None, "setup: the third mark waits");
+
+            app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            sim.step(&mut app, 1);
+            let position = BlockPos::from_array(near_second);
+            let grid = app.light_system.as_mut().expect("light system").grid_mut();
+            let chunk_size = grid.chunk_size();
+            assert!(grid.mutator().remove(position), "setup: the block stands");
+            app.event_bus.publish(WorldEvent::BlockRemoved {
+                position,
+                old_material_id: 0,
+                reason: BlockChangeReason::Player,
+            });
+            for chunk_pos in flagstone_voxel::chunks_meshed_from(position, chunk_size) {
+                app.event_bus.publish(WorldEvent::ChunkMeshDirty {
+                    chunk_pos,
+                    terrain_dirty: true,
+                    structure_dirty: true,
+                });
+            }
+            sim.step(&mut app, 1);
+            app.simulation.set_camera_mode(CameraMode::Isometric);
+            let done = run_until(&mut app, GIVE_UP, |app| {
+                !block_exists(app, pending) && !block_exists(app, near_first)
+            });
+            sim.step(&mut app, 120);
+
+            assert!(done, "the pending block was never dug");
+            assert!(
+                !block_exists(&app, near_second),
+                "the hand-mined cell is air"
+            );
+            assert_eq!(
+                solid_blocks(&app),
+                solid_before - 3,
+                "a block was dug twice"
+            );
+            assert_eq!(
+                ore_total(&app),
+                2,
+                "the two pawn digs, not the hand-mined block"
+            );
+            assert!(
+                app.crew
+                    .get(PawnId(1))
+                    .is_some_and(|p| p.inventory.is_empty()),
+                "the freed pawn took the block's yield"
+            );
+            assert!(
+                pawn_state_of(&app, PawnId(1)).position.x > 18.0,
+                "the freed pawn did not go on to the pending block"
+            );
+            assert!(!is_mining(&app, PawnId(1)) && !is_mining(&app, PawnId(0)));
+        }
+
+        #[test]
+        fn pawns_hold_still_in_first_person_view_and_resume_after() {
+            let (near_first, near_second) = ([16, 8, 12], [12, 8, 28]);
+            let mut app = two_pawns_three_marks(near_first, near_second, [24, 8, 4]);
+            let mut sim = crate::app::dig_site::headless_loop();
+            sim.step(&mut app, 40);
+            let walker = PawnId(1);
+            assert!(is_mining(&app, walker), "setup: the pawn is under way");
+            assert!(distance_walked(&app, walker, [12, 8, 24]) > 0.5, "setup");
+            let frozen_at = pawn_state_of(&app, walker);
+
+            app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            sim.step(&mut app, 120);
+
+            let held = pawn_state_of(&app, walker);
+            assert!(
+                held.position.distance(frozen_at.position) < 0.1,
+                "drifted from {:?} to {:?}",
+                frozen_at.position,
+                held.position
+            );
+            assert!(held.grounded, "the frozen pawn left the ground: {held:?}");
+            assert!(block_exists(&app, near_second), "dug while frozen");
+
+            app.simulation.set_camera_mode(CameraMode::Isometric);
+            let dug = run_until(&mut app, GIVE_UP, |app| !block_exists(app, near_second));
+
+            assert!(dug, "the pawn never resumed its work");
+        }
+
         #[test]
         fn hud_data_carries_the_colony_stock() {
             let mut stocked = App::headless();
