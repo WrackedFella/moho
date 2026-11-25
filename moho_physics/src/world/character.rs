@@ -6339,5 +6339,163 @@ mod tests {
 
             world.restore_character(&fixture(), impossible);
         }
+
+        fn airborne_record() -> CharacterRecord {
+            let (world, h) = saved(&walk, 15, &[]);
+            CharacterRecord {
+                state: CharacterState {
+                    position: Vec3::new(0.5, 3.0, -0.5),
+                    yaw: 2.5,
+                    pitch: 0.7,
+                    grounded: false,
+                    ..state(&world, h)
+                },
+                effects: vec![
+                    CharacterEffect::SetVelocity(Vec3::new(0.0, 1.0, 2.0)),
+                    CharacterEffect::AddVelocity(Vec3::new(1.0, 0.0, 0.0)),
+                    CharacterEffect::SetLook {
+                        yaw: -1.0,
+                        pitch: 0.2,
+                    },
+                ],
+            }
+        }
+
+        #[test]
+        fn a_turned_restore_with_pending_effects_records_back_and_drains_on_the_next_move() {
+            let record = airborne_record();
+            let mut second = geometry_world();
+            let h = second.restore_character(&record, body());
+            assert_eq!(second.character_record(h), Some(record.clone()));
+
+            second
+                .move_character(h, &tail(0), &settings(), DT)
+                .expect("character is live");
+            second.step(DT);
+
+            let drained = second.character_record(h).expect("character is live");
+            assert_eq!(drained.effects, Vec::new());
+            let mut third = geometry_world();
+            let again = third.restore_character(&drained, body());
+            for t in 1..61 {
+                tick(&mut second, h, &tail(t));
+                tick(&mut third, again, &tail(t));
+                assert_eq!(state(&third, again), state(&second, h), "tick {t} diverged");
+            }
+        }
+
+        #[test]
+        fn removing_a_restored_character_frees_its_body_and_a_second_restore_reads_back() {
+            let record = airborne_record();
+            let mut world = geometry_world();
+            let bodies = world.rigid_body_set.len();
+            let colliders = world.collider_set.len();
+            let h = world.restore_character(&record, body());
+            assert_eq!(world.rigid_body_set.len(), bodies + 1);
+            assert_eq!(world.collider_set.len(), colliders + 1);
+
+            world.remove_character(h).expect("character is live");
+
+            assert_eq!(world.rigid_body_set.len(), bodies);
+            assert_eq!(world.collider_set.len(), colliders);
+            assert_eq!(world.character_record(h), None);
+            let again = world.restore_character(&record, body());
+            assert_ne!(again, h);
+            assert_eq!(world.character_record(again), Some(record));
+            assert_eq!(world.character_record(h), None, "the old handle stays dead");
+        }
+
+        #[test]
+        fn restoring_one_record_twice_gives_two_characters_that_step_finite() {
+            let record = airborne_record();
+            let mut world = geometry_world();
+
+            let first = world.restore_character(&record, body());
+            let second = world.restore_character(&record, body());
+
+            assert_ne!(first, second);
+            assert_eq!(world.character_record(first), Some(record.clone()));
+            assert_eq!(world.character_record(second), Some(record));
+            for t in 0..60 {
+                tick(&mut world, first, &tail(t));
+                tick(&mut world, second, &tail(t));
+                for h in [first, second] {
+                    let now = state(&world, h);
+                    assert!(
+                        now.position.is_finite() && now.velocity.is_finite(),
+                        "tick {t}: {now:?}"
+                    );
+                }
+            }
+        }
+
+        /// A body whose every stance fits under the 1.3 m ceiling of [`geometry_world`].
+        fn short_body() -> CharacterBody {
+            let capsule = |radius, length, eye_height| Stature {
+                hull: Hull {
+                    shape: HullShape::Capsule,
+                    radius,
+                    length,
+                },
+                eye_height,
+            };
+            CharacterBody {
+                standing: capsule(0.3, 1.1, 0.9),
+                crouched: Some(capsule(0.3, 1.0, 0.8)),
+                prone: Some(capsule(0.25, 1.6, 0.3)),
+                lean: Lean::default(),
+            }
+        }
+
+        #[test]
+        fn the_hull_given_to_restore_drives_the_capsule_in_every_stance() {
+            for (stance, centre) in [
+                (Stance::Stand, 0.55),
+                (Stance::Crouch, 0.5),
+                (Stance::Prone, 0.25),
+            ] {
+                let record = CharacterRecord {
+                    state: CharacterState {
+                        position: Vec3::new(0.0, centre + 0.05, -7.0),
+                        velocity: Vec3::ZERO,
+                        yaw: 0.0,
+                        pitch: 0.0,
+                        grounded: true,
+                        jump_held: false,
+                        eye: Vec3::ZERO,
+                        stance,
+                        from: stance,
+                        progress: 12,
+                        anchor: Anchor::Feet,
+                        lean: 0.0,
+                        roll: 0.0,
+                    },
+                    effects: vec![CharacterEffect::AddVelocity(Vec3::new(0.0, 0.0, 1.0))],
+                };
+                let mut world = geometry_world();
+
+                let h = world.restore_character(&record, short_body());
+
+                assert_eq!(
+                    world.character_record(h),
+                    Some(record),
+                    "{stance:?} reads back"
+                );
+                let command = CharacterCommand {
+                    forward: 1.0,
+                    stance,
+                    ..idle()
+                };
+                for _ in 0..30 {
+                    tick(&mut world, h, &command);
+                }
+                let end = state(&world, h);
+                assert_eq!(end.stance, stance);
+                assert!(
+                    end.position.z > -6.0 && end.position.y < 1.2 && end.grounded,
+                    "{stance:?} did not walk under the ceiling: {end:?}"
+                );
+            }
+        }
     }
 }
