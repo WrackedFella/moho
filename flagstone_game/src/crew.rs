@@ -63,7 +63,7 @@ const SPAWN_REACH: i32 = 8;
 /// returns fewer cells when fewer exist. Of a column's standable cells it takes the one
 /// nearest `around`'s height, the lower one on a tie.
 pub fn spawn_cells(grid: &VoxelGrid, around: BlockPos, count: usize) -> Vec<BlockPos> {
-    let mut found: Vec<(i32, [i32; 3])> = (-SPAWN_REACH..=SPAWN_REACH)
+    let mut found: Vec<(i32, BlockPos)> = (-SPAWN_REACH..=SPAWN_REACH)
         .flat_map(|dx| (-SPAWN_REACH..=SPAWN_REACH).map(move |dz| (dx, dz)))
         .filter_map(|(dx, dz)| {
             let (x, z) = (around.x + dx, around.z + dz);
@@ -71,14 +71,14 @@ pub fn spawn_cells(grid: &VoxelGrid, around: BlockPos, count: usize) -> Vec<Bloc
                 .map(|y| BlockPos::new(x, y, z))
                 .filter(|&cell| standable(grid, cell))
                 .min_by_key(|cell| ((cell.y - around.y).abs(), cell.y))
-                .map(|cell| (dx * dx + dz * dz, cell.to_array()))
+                .map(|cell| (dx * dx + dz * dz, cell))
         })
         .collect();
-    found.sort_unstable();
+    found.sort_unstable_by_key(|&(distance, cell)| (distance, cell.to_array()));
     found
         .into_iter()
         .take(count)
-        .map(|(_, cell)| BlockPos::from_array(cell))
+        .map(|(_, cell)| cell)
         .collect()
 }
 

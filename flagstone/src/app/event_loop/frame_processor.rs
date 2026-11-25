@@ -490,12 +490,7 @@ impl FrameProcessor {
             .unwrap_or_default();
 
         let possessed = app.possessed_pawn();
-        let sorted_inventory = |pawn: &flagstone_game::pawn::Pawn| {
-            let mut counts: Vec<(u32, u32)> = pawn.inventory.iter().collect();
-            counts.sort_by_key(|(resource_id, _)| *resource_id);
-            counts
-        };
-        let hotbar = sorted_inventory(possessed);
+        let hotbar = possessed.inventory.sorted();
 
         // Only one tool exists today (`flagstone_game::tools::STARTING_TOOL`); the
         // label is a fixed string until a real tool-name lookup exists.
@@ -510,14 +505,15 @@ impl FrameProcessor {
             .map(|selected| flagstone_ui::overlays::SelectionHud {
                 title: "Pawn".to_string(),
                 tool: tool_label(selected),
-                carried: sorted_inventory(selected)
+                carried: selected
+                    .inventory
+                    .sorted()
                     .into_iter()
                     .map(|(id, count)| (flagstone_game::inventory::resource_name(id), count))
                     .collect(),
             });
 
-        let mut colony_stock: Vec<(u32, u32)> = app.colony.stock.iter().collect();
-        colony_stock.sort_by_key(|(resource_id, _)| *resource_id);
+        let colony_stock = app.colony.stock.sorted();
 
         let data = flagstone_ui::overlays::HudData {
             player_position: [pos.x, pos.y, pos.z],

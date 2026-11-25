@@ -278,12 +278,11 @@ impl App {
     /// frame so the mark follows the pawn and survives a console marker clear.
     fn sync_selection_mark(&mut self) {
         let strategy = self.simulation.camera_mode() == CameraMode::Isometric;
-        let selected = self.selection.selected().and_then(|id| {
-            self.pawn_centres()
-                .into_iter()
-                .find_map(|(pawn, centre)| (pawn == id).then_some(centre))
-        });
-        if strategy && let Some(centre) = selected {
+        let selected = strategy
+            .then(|| self.selection.selected())
+            .flatten()
+            .and_then(|id| self.pawn_centre(id));
+        if let Some(centre) = selected {
             let aabb = pawn_aabb(centre);
             self.scene.markers_mut().upsert(
                 SELECTION_MARKER_ID,
@@ -415,15 +414,18 @@ impl App {
     fn pawn_centres(&self) -> Vec<(flagstone_game::pawn::PawnId, glam::Vec3)> {
         self.crew
             .ids()
-            .filter_map(|id| {
-                if id == self.possessed {
-                    return Some((id, self.simulation.position()));
-                }
-                let handle = *self.physics.pawns.get(&id)?;
-                let state = self.physics.world.as_ref()?.character(handle)?;
-                Some((id, state.position))
-            })
+            .filter_map(|id| Some((id, self.pawn_centre(id)?)))
             .collect()
+    }
+
+    /// Where pawn `id`'s body box stands, as [`App::pawn_centres`] places it; `None` for a
+    /// pawn without a body.
+    fn pawn_centre(&self, id: flagstone_game::pawn::PawnId) -> Option<glam::Vec3> {
+        if id == self.possessed {
+            return Some(self.simulation.position());
+        }
+        let handle = *self.physics.pawns.get(&id)?;
+        Some(self.physics.world.as_ref()?.character(handle)?.position)
     }
 
     fn render_scene(
@@ -433,17 +435,18 @@ impl App {
     ) {
         self.sync_selection_mark();
         let with_bodies;
-        let cubes = if self.simulation.camera_mode() == CameraMode::Isometric {
-            let size = PAWN_HALF_EXTENTS * 2.0;
-            let bodies = self
-                .pawn_centres()
-                .into_iter()
-                .map(|(_, centre)| Cube::new(centre, size.x, size.z, size.y, PAWN_BODY_MATERIAL));
-            with_bodies = [self.entities.actors.cubes(), &bodies.collect::<Vec<_>>()].concat();
-            with_bodies.as_slice()
-        } else {
-            self.entities.actors.cubes()
-        };
+        let cubes =
+            if self.simulation.camera_mode() == CameraMode::Isometric {
+                let size = PAWN_HALF_EXTENTS * 2.0;
+                let mut all = self.entities.actors.cubes().to_vec();
+                all.extend(self.pawn_centres().into_iter().map(|(_, centre)| {
+                    Cube::new(centre, size.x, size.z, size.y, PAWN_BODY_MATERIAL)
+                }));
+                with_bodies = all;
+                with_bodies.as_slice()
+            } else {
+                self.entities.actors.cubes()
+            };
         if let Err(e) = self.scene.render(
             renderer,
             self.entities.actors.spheres(),

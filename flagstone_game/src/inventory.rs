@@ -39,6 +39,13 @@ impl Inventory {
         self.counts.iter().map(|(&id, &amount)| (id, amount))
     }
 
+    /// The `(resource_id, count)` pairs in ascending resource id order.
+    pub fn sorted(&self) -> Vec<(u32, u32)> {
+        let mut counts: Vec<(u32, u32)> = self.iter().collect();
+        counts.sort_unstable_by_key(|&(resource_id, _)| resource_id);
+        counts
+    }
+
     pub fn is_empty(&self) -> bool {
         self.counts.is_empty()
     }

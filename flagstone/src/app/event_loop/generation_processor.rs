@@ -14,6 +14,43 @@ const CELL_FLOOR_TO_CENTRE: f32 = flagstone_game::selection::PAWN_HALF_EXTENTS.y
 /// level there.
 const LEVEL_RADIUS: i32 = 2;
 
+/// The surface cell a new world's crew spawns around: the top of a column found by a
+/// spiral outward from the origin. Ground that is level around the column wins over the
+/// first column found, because the terrain's smoothed meshes lean a body standing beside a
+/// step. `None` when the spiral finds no column.
+fn spawn_surface(grid: &flagstone_voxel::VoxelGrid) -> Option<glam::IVec3> {
+    let columns = (0..=4i32)
+        .flat_map(|r| {
+            (-r..=r)
+                .flat_map(move |dx| (-r..=r).map(move |dz| (dx, dz)))
+                .filter(move |&(dx, dz)| dx.abs() == r || dz.abs() == r)
+        })
+        .filter_map(|(dx, dz)| grid.get_height(dx, dz).map(|h| glam::IVec3::new(dx, h, dz)));
+    let level = |top: &glam::IVec3| {
+        (-LEVEL_RADIUS..=LEVEL_RADIUS).all(|ox| {
+            (-LEVEL_RADIUS..=LEVEL_RADIUS)
+                .all(|oz| grid.get_height(top.x + ox, top.z + oz) == Some(top.y))
+        })
+    };
+    let mut first = None;
+    let level_column = columns
+        .inspect(|&top| {
+            first.get_or_insert(top);
+        })
+        .find(level);
+    level_column.or(first)
+}
+
+/// Where a pawn's capsule centre starts when it stands in `cell`: the cell's centre
+/// horizontally, a gap above its floor.
+fn cell_spawn_position(cell: glam::IVec3) -> glam::Vec3 {
+    glam::Vec3::new(
+        cell.x as f32 + 0.5,
+        cell.y as f32 + CELL_FLOOR_TO_CENTRE,
+        cell.z as f32 + 0.5,
+    )
+}
+
 /// Handles async generation task polling
 pub struct GenerationProcessor;
 
@@ -255,73 +292,41 @@ impl GenerationProcessor {
         // Perlin returns exactly 0 at integer grid points, so (0,0) may land on a
         // zero-density boundary with no block; a small spiral search finds the real
         // surface. Fall back to 64 (BASE_ELEVATION) when preload produced nothing.
-        let surface = app.light_system.as_ref().and_then(|ls| {
-            let grid = ls.grid();
-            let columns: Vec<glam::IVec3> = (0..=4i32)
-                .flat_map(|r| {
-                    (-r..=r)
-                        .flat_map(move |dx| (-r..=r).map(move |dz| (dx, dz)))
-                        .filter(move |&(dx, dz)| dx.abs() == r || dz.abs() == r)
-                })
-                .filter_map(|(dx, dz)| grid.get_height(dx, dz).map(|h| glam::IVec3::new(dx, h, dz)))
-                .collect();
-            // A crew spawns on level ground when the spiral meets any: the terrain's
-            // smoothed meshes lean a body standing beside a step.
-            let level = |top: &glam::IVec3| {
-                (-LEVEL_RADIUS..=LEVEL_RADIUS).all(|ox| {
-                    (-LEVEL_RADIUS..=LEVEL_RADIUS)
-                        .all(|oz| grid.get_height(top.x + ox, top.z + oz) == Some(top.y))
-                })
-            };
-            columns
-                .iter()
-                .copied()
-                .find(level)
-                .or_else(|| columns.first().copied())
-        });
+        let grid = app
+            .light_system
+            .as_ref()
+            .map(flagstone_voxel::LightSystem::grid);
+        let surface = grid.and_then(spawn_surface);
         let terrain_y = surface.map_or(64, |top| top.y) as f32;
 
         // The crew stands on the standable cells nearest the surface cell, each body on its
         // cell's floor; with no ground to stand on, one pawn drops onto the origin.
         let standing = surface
-            .zip(app.light_system.as_ref())
-            .map(|(top, ls)| {
+            .zip(grid)
+            .map(|(top, grid)| {
                 flagstone_game::crew::spawn_cells(
-                    ls.grid(),
+                    grid,
                     top + glam::IVec3::Y,
                     flagstone_game::crew::CREW_SIZE,
                 )
             })
             .unwrap_or_default();
-        let mut cells: Vec<glam::Vec3> = standing
-            .into_iter()
-            .map(|cell| {
-                glam::Vec3::new(
-                    cell.x as f32 + 0.5,
-                    cell.y as f32 + CELL_FLOOR_TO_CENTRE,
-                    cell.z as f32 + 0.5,
-                )
-            })
-            .collect();
-        if cells.is_empty() {
-            cells.push(glam::Vec3::new(0.0, terrain_y + 3.0, 0.0));
-        }
-        let spawn_pos = cells[0];
+        let mut positions = standing.into_iter().map(cell_spawn_position);
+        let first = positions
+            .next()
+            .unwrap_or(glam::Vec3::new(0.0, terrain_y + 3.0, 0.0));
 
         let (yaw, pitch) = app.simulation.yaw_pitch();
-        app.spawn_crew(
-            cells
-                .into_iter()
-                .map(|position| moho_physics::CharacterSpawn {
-                    position,
-                    yaw,
-                    pitch,
-                    body: moho_physics::CharacterBody::default(),
-                }),
-        );
+        let character = |position| moho_physics::CharacterSpawn {
+            position,
+            yaw,
+            pitch,
+            body: moho_physics::CharacterBody::default(),
+        };
+        app.spawn_crew(character(first), positions.map(character));
 
         // Sync simulation camera to spawn position
-        app.simulation.set_position_yaw_pitch(spawn_pos, yaw, pitch);
+        app.simulation.set_position_yaw_pitch(first, yaw, pitch);
 
         // Spawn 3 test spheres above the center
         for i in 0..3 {
@@ -352,7 +357,7 @@ impl GenerationProcessor {
         tracing::info!(
             chunks = app.entities.chunks.len(),
             test_spheres = app.physics.test_bodies.len(),
-            pos = ?spawn_pos,
+            pos = ?first,
             "Physics world ready"
         );
     }

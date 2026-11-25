@@ -45,8 +45,21 @@ impl PhysicsController {
         }
     }
 
+    /// Places the possessed pawn `id`'s body at `spawn`: the player's body, also recorded
+    /// in `pawns`. The other pawns' bodies are added with [`PhysicsController::spawn_pawn`].
+    pub fn spawn_possessed(
+        &mut self,
+        id: flagstone_game::pawn::PawnId,
+        spawn: impl Into<moho_physics::CharacterSpawn>,
+    ) {
+        self.spawn_player(spawn);
+        if let Some(player) = self.player {
+            self.pawns.insert(id, player);
+        }
+    }
+
     /// Adds the body of pawn `id` at `spawn`. The possessed pawn's body is placed with
-    /// [`PhysicsController::spawn_player`] instead and recorded in `pawns` by the caller.
+    /// [`PhysicsController::spawn_possessed`] instead.
     pub fn spawn_pawn(
         &mut self,
         id: flagstone_game::pawn::PawnId,

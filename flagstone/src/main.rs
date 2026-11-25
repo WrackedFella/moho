@@ -195,26 +195,22 @@ impl App {
             .expect("the possessed pawn is in the crew")
     }
 
-    /// Starts the crew over with one pawn standing at each of `spawns`, each with a body of
-    /// its own. The first is possessed: its body is the player's. Expects physics to be
-    /// already reset.
-    fn spawn_crew(&mut self, spawns: impl IntoIterator<Item = moho_physics::CharacterSpawn>) {
+    /// Starts the crew over with one pawn standing at `first` and one at each of `rest`,
+    /// each with a body of its own. The first is possessed: its body is the player's. The
+    /// crew is never empty. Expects physics to be already reset.
+    fn spawn_crew(
+        &mut self,
+        first: moho_physics::CharacterSpawn,
+        rest: impl IntoIterator<Item = moho_physics::CharacterSpawn>,
+    ) {
         self.crew = flagstone_game::crew::Crew::default();
         // Selection names a pawn of the old crew; the new one's ids mean other pawns.
         self.selection = flagstone_game::selection::Selection::default();
-        for (index, spawn) in spawns.into_iter().enumerate() {
+        self.possessed = self.crew.spawn(flagstone_game::pawn::Pawn::default());
+        self.physics.spawn_possessed(self.possessed, first);
+        for spawn in rest {
             let id = self.crew.spawn(flagstone_game::pawn::Pawn::default());
-            if index == 0 {
-                self.possessed = id;
-                self.physics.spawn_player(spawn);
-                let player = self
-                    .physics
-                    .player
-                    .expect("the player body was just spawned");
-                self.physics.pawns.insert(id, player);
-            } else {
-                self.physics.spawn_pawn(id, spawn);
-            }
+            self.physics.spawn_pawn(id, spawn);
         }
     }
 
@@ -430,12 +426,15 @@ impl App {
             saved_pos
         };
         let (yaw, pitch) = self.simulation.yaw_pitch();
-        self.spawn_crew([moho_physics::CharacterSpawn {
-            position: spawn_pos,
-            yaw,
-            pitch,
-            body: moho_physics::CharacterBody::default(),
-        }]);
+        self.spawn_crew(
+            moho_physics::CharacterSpawn {
+                position: spawn_pos,
+                yaw,
+                pitch,
+                body: moho_physics::CharacterBody::default(),
+            },
+            [],
+        );
 
         // Align the simulation Y to match physics spawn (avoids terrain clipping).
         self.simulation
