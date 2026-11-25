@@ -256,6 +256,8 @@ the patrol route follows the waypoint numbers, not file order. A waypoint that n
 `assets/tools/make_arena.py`; see [`assets/README.md`](../../searchlight/assets/README.md) for
 licence; `just assets` regenerates them and `just check` fails when they are stale. A replacement arena must keep the marker names. The binary takes an optional level name or path (`cargo run -p searchlight -- proving_ground`); borrowed maps go in the git-ignored `assets/local/`.
 
+Shipped files resolve one at a time through `moho_core::assets::AssetRoots` (`moho_core/src/assets.rs`): the placeholders folder (`assets/`) is the lowest layer, and `--assets <folder>` (parsed by `launch::parse`, turned into roots by `launch::asset_roots`) adds a layer above it. The highest layer holding a file supplies it, so a folder can replace `arena.glb` or `rifle_shot.wav` alone. A missing folder, a repeated `--assets` or a file no layer holds stops the start with an error; a level given as a path is loaded as given. Content definitions are not layered. Rationale: [ADR-0042](../../_todo/adr/0042-shipped-assets-resolve-per-file-through-named-folders.md).
+
 ## 8 Posture
 
 Lean is the one posture so far. `searchlight_rules::posture` owns the rules: `LeanSide`, `LeanTuning`
