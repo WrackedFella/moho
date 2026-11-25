@@ -102,7 +102,7 @@ Ballistics is a core feature (Justin, 2026-10-26; GDD §4.14, §9 Q7). This mile
 
 ## 7 FPS-M3 Wear, repair, ledger (Phase 3)
 
-- **Outcome:** wear on weapons and armor only (magazines never wear): four components per weapon with condition, jams, repair parts, a workbench, dismantling, limited-use cleaning kits, armor items with wear, the toolkit, and an end-of-round ledger valuing rounds and wear.
+- **Outcome:** wear on weapons and armor only (magazine wear is a later option, GDD §4.15): four components per weapon with condition (averaged into the weapon's; below 60 % a component counts double), jams, repair parts, a workbench, dismantling, limited-use cleaning kits, armor items with wear, the toolkit, and an end-of-round ledger valuing rounds and wear.
 - **Entry gate:** FPS-M2 approved. Needs the first large map: a second baked level on the modular kit, larger than the arena, with 300 m plus sightlines and a range with targets at known distances (GDD §5). Authoring, not engine: built in Blender with the FPS-F16 add-on, which is done before this map starts; it fixes the kit's metrics (GDD §9 Q31) and replaces the arena as the home map, the arena staying as a test level.
 - **Exit goal:** after a fight the ledger shows a cost, and a player chooses to scavenge for parts because of it.
 - **Added to scope (2026-10-23):** armor items give base rig slots and heavier armor slows the player further (GDD §4.1, §4.6, open question Q27: settle it when armor is carded, together with FPS-F7-02 [#604](https://github.com/WrackedFella/moho/issues/604)); a tube-fed shotgun, so the line shows several reload styles (GDD §4.2); surface materials and round penetration through cover and armor by penetration against resistance and condition (ballistics tier 2, GDD §4.14); weapon components are items that swap by fit rules.
@@ -136,12 +136,12 @@ Ballistics is a core feature (Justin, 2026-10-26; GDD §4.14, §9 Q7). This mile
 
 - **Outcome:** game clock scaling and skipping, hunger, thirst, fatigue, sleep at a safe room with healing timers advancing. Heart rate and breath sway the aim (ballistics tier 4).
 - **Entry gate:** game clock scaled over the tick (GDD §10 item 8; pause and speed #334). Save and load for world state (§10 item 9; ENG-F25 #346) is not needed for the prototype gate, which has no continue; it gates FPS-M6.
-- **Decisions due:** GDD §9 Q8 (difficulty as complexity toggles; the ballistics tiers are the first), Q2 (co-op timing) and Q32 (breath and heart rate).
+- **Decisions due:** Q2 (co-op timing) and Q32 (breath and heart rate). Q8 (difficulty) is settled by GDD §4.15.
 - **Cut lines:** temperature, disease, spoilage.
 
 ## 10 FPS-M6 Hub and missions (Phase 6)
 
-- **Outcome:** trader hub, job board offering missions with their conditions shown, currency, full per-job ledger; the arena becomes the job site and waves and score retire from the default experience. Missions play on hand-made maps built on the modular kit, with random starts, exits, spawns and building slots, and loot by the GDD §4.13 rule (the place decides the pool, difficulty decides amount and ceiling).
+- **Outcome:** trader hub, job board offering missions with their conditions shown, currency, full per-job ledger, each mission rated by Threat (GDD §4.13); the arena becomes the job site and waves and score retire from the default experience. Missions play on hand-made maps built on the modular kit, with random starts, exits, spawns and building slots, and loot by the GDD §4.13 rule (the place decides the pool, difficulty decides amount and ceiling).
 - **Entry gate:** level switching carrying player state (§10 item 10), save and load. Needs a hub and two mission maps, blocked out by hand on the kit in Blender, with their loot points and building slots added to the FPS-F16 add-on; the kit's metrics are fixed with the first map (GDD §9 Q31).
 - **Decisions due:** GDD §9 Q1 (setting), Q3 (pivot point), Q15 (starting backgrounds), Q28 (mission persistence), Q29 (failed mission cost), Q30 (hub upgrades).
 - **Cut lines:** generated geometry (the later phase below), free parameter sliders, hub upgrades that raise stats, bespoke art.
@@ -187,6 +187,20 @@ The engine lane designs the answers.
 | #615 ragdoll bodies | #615 | after FPS-M2: FPS-F9-05 (deferred) |
 
 New requests come from FPS-M3 onward (workbench interaction, save kinds, level switching). File them when a milestone's feature is drafted.
+
+## 12.1 Difficulty settings (GDD §4.15)
+
+Difficulty is a set of per-system complexity settings (FPS-F21, not yet filed). It is not a block of work: the prototype builds Hard, and each system's feature carries the pluggable shapes of GDD §4.15 as Tech Lead notes, because they are cheap now and costly to retrofit.
+
+| Milestone | Carries now (Hard) | After the prototype gate |
+|---|---|---|
+| FPS-M2 items | Run settings read from one place (every run Hard); loot tables per setting; reload asks one source for its feed; a magazine may carry a condition | Ammunition Pooled (the dearest setting) |
+| FPS-M2 follow-up | The wheel that picks among filled magazines (Medium and Hard) | — |
+| FPS-M1.3 ballistics | Hitscan already a toggle | The ballistics row |
+| FPS-M3 wear | Condition asked per effect; one jam formula over named inputs; broken and missing components; magazine wear and armor parts stubbed | Jams Off and Forgiving, repair None and Simple, magazine wear On |
+| FPS-M4 wounds | Hits resolve in two steps; meds as aid roles; med crafting stubbed | Damage Health bar and Limbs |
+| FPS-M6 hub | Run settings in the save; missions rated by Threat | — |
+| FPS-F21 | — | The Difficulty page (also the New Game screen), presets in data, HUD preset row, permadeath toggle |
 
 ## 13 Prototype gate
 
