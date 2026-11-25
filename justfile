@@ -144,7 +144,7 @@ chain-test:
     trap 'rm -f "$facts"' EXIT
     while IFS=$'\t' read -r edit want; do
         [[ -z $edit || $edit == \#* ]] && continue
-        want="${want%$'\r'}"
+        want=${want%$'\r'}
         jq "$edit" "$f/queued.json" > "$facts"
         got="$(scripts/chain.sh decide "$facts" | tr -d '\r' | tr '\t' ':' | awk '{ printf "%s%s", (NR > 1 ? " | " : ""), $0 }')"
         if [[ $got != "$want" ]]; then
