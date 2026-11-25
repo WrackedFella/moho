@@ -1299,9 +1299,9 @@ impl SearchlightGame {
         self
     }
 
-    /// Shows the prompt of the control in reach below the crosshair, only while playing and
-    /// alive; otherwise shows no game text.
-    fn refresh_use_prompt(&mut self, dead: bool) {
+    /// Shows the game's screen text: the prompt of the control in reach below the crosshair, and
+    /// the rig strip while it is up. Only while playing and alive; otherwise shows none.
+    fn refresh_screen_texts(&mut self, dead: bool) {
         let action = (self.screen == Screen::Playing && !dead)
             .then(|| self.mode.sim().control_in_reach())
             .flatten()
@@ -1331,7 +1331,7 @@ impl SearchlightGame {
             });
         }
         if let Err(error) = self.stage.shell().set_texts(texts) {
-            tracing::warn!(%error, "use prompt not shown");
+            tracing::warn!(%error, "screen text not shown");
         }
     }
 
@@ -1584,7 +1584,7 @@ impl Game for SearchlightGame {
         if self.screen == Screen::Paused {
             self.stage.hide_hud();
         }
-        self.refresh_use_prompt(dead);
+        self.refresh_screen_texts(dead);
         self.stage.sync_enemies(self.mode.sim());
         self.stage.show_tracers(alpha);
         self.stage.scene.effects_mut().advance(ctx.frame_dt);
@@ -3371,6 +3371,63 @@ mod tests {
             "hidden while held: {while_held:?}"
         );
         assert_eq!(after_release, None, "still showing after the release");
+    }
+
+    /// What a fresh shell paints for the rig strip reading `text`, on a twin game's shell.
+    fn painted_strip_reading(text: &str) -> Option<Vec<UiMesh>> {
+        let twin = game_with_controls(&[]);
+        twin.stage
+            .shell()
+            .set_texts(vec![ScreenText {
+                text: text.to_owned(),
+                anchor: Anchor::Bottom,
+                offset: [0.0, STRIP_OFFSET_Y],
+                size: STRIP_SIZE,
+                color: STRIP_COLOR,
+            }])
+            .expect("a valid strip");
+        let frame = twin.stage.shell().ui_frame([800, 600]);
+        frame.map(|frame| frame.meshes)
+    }
+
+    #[test]
+    fn the_strip_is_painted_after_a_reload_while_playing() {
+        let mut game = game_with_a_full_rig();
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let before = prompt_shows(&mut game);
+        finish_a_reload(&mut game, &mut clock);
+
+        let paint = painted(&mut game);
+
+        let expected = painted_strip_reading("[empty] [mag] [mag]");
+        assert!(!before, "something painted before any reload");
+        assert!(expected.as_ref().is_some_and(|meshes| !meshes.is_empty()));
+        assert_eq!(paint, expected);
+        assert_ne!(paint, painted_strip_reading("[mag] [mag] [mag]"));
+    }
+
+    #[test]
+    fn the_strip_is_not_painted_for_a_dead_player() {
+        let mut reloaded = game_with_a_full_rig();
+        let mut checking = game_with_a_full_rig();
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        finish_a_reload(&mut reloaded, &mut clock);
+        let alive = prompt_shows(&mut reloaded);
+        let hold = SearchlightCommand {
+            check_gear: true,
+            ..SearchlightCommand::default()
+        };
+
+        reloaded.mode.sim_mut().kill_player();
+        idle_ticks(&mut reloaded, &mut clock, 1);
+        checking.mode.sim_mut().kill_player();
+        tick_with(&mut checking, &mut clock, &hold);
+
+        assert!(alive, "no strip to take away");
+        assert!(reloaded.sim().player_body().is_dead());
+        assert!(checking.sim().player_body().is_dead());
+        assert!(!prompt_shows(&mut reloaded), "painted after a reload");
+        assert!(!prompt_shows(&mut checking), "painted for held check gear");
     }
 
     #[test]

@@ -246,6 +246,16 @@ mod tests {
     }
 
     #[test]
+    fn the_strip_text_of_a_part_full_rig_holds_no_digit() {
+        let rig = rig_holding(3, vec![mag(30, 15), mag(30, 1), mag(30, 0)]);
+
+        let text = strip_text(&rig_strip(&rig));
+
+        assert_eq!(text, "[mag] [mag] [empty]");
+        assert!(!text.chars().any(|c| c.is_ascii_digit()), "{text}");
+    }
+
+    #[test]
     fn an_unfilled_rig_slot_reads_empty() {
         let rig = rig_holding(3, vec![mag(30, 30)]);
 
