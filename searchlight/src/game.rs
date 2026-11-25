@@ -980,7 +980,9 @@ impl SearchlightGame {
                 MenuEvent::DetailsToggled { .. }
                 | MenuEvent::Picked { .. }
                 | MenuEvent::ModeChosen { .. } => {}
-                MenuEvent::MoveRequested { .. } | MenuEvent::Chosen(MenuAction::Item(_)) => {}
+                MenuEvent::MoveRequested { .. }
+                | MenuEvent::ActionPicked { .. }
+                | MenuEvent::Chosen(MenuAction::Item(_) | MenuAction::ItemAction(_)) => {}
             }
         }
     }
@@ -3650,6 +3652,7 @@ mod tests {
                 | MenuEvent::ModeChosen { .. }
                 | MenuEvent::Cleared { .. } => None,
                 MenuEvent::MoveRequested { .. } => None,
+                MenuEvent::ActionPicked { .. } => None,
             })
     }
 
@@ -7361,6 +7364,55 @@ mod item_lists_tests {
 
         assert_eq!(full[0].len(), 8, "six moves filled the player's list");
         assert_eq!(shown(&game), Some(full));
+    }
+
+    #[test]
+    fn using_a_bandage_lowers_its_count() {
+        let mut game = game_with_items_open();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let before = shown(&game).expect("the items command opened the lists");
+
+        press_keys(&mut game, &mut ctx, &[Key::Space, Key::Enter]);
+
+        let after = shown(&game).expect("the lists stay open");
+        assert_eq!(before[0][0], ("Bandage".to_owned(), Some(3)));
+        assert_eq!(after[0][0], ("Bandage".to_owned(), Some(2)));
+        assert_eq!(after[0][1..], before[0][1..], "no other player row changes");
+        assert_eq!(after[1], before[1], "the container does not change");
+    }
+
+    #[test]
+    fn loading_the_magazine_from_the_players_rounds_moves_them() {
+        let mut game = game_with_items_open();
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        let before = shown(&game).expect("the items command opened the lists");
+        let at = before[1]
+            .iter()
+            .position(|row| row.0 == "Magazine")
+            .expect("the container holds a magazine");
+
+        press_keys(&mut game, &mut ctx, &[Key::ArrowRight]);
+        press_keys(&mut game, &mut ctx, &vec![Key::ArrowDown; at]);
+        press_keys(&mut game, &mut ctx, &[Key::Space, Key::Enter]);
+        let picking = shown(&game);
+        press_keys(
+            &mut game,
+            &mut ctx,
+            &[Key::ArrowLeft, Key::ArrowDown, Key::Enter],
+        );
+
+        let after = shown(&game).expect("the lists stay open");
+        assert_eq!(before[1][at], ("Magazine".to_owned(), Some(0)));
+        assert_eq!(before[0][1], ("Rounds".to_owned(), Some(60)));
+        assert_eq!(
+            picking.as_ref(),
+            Some(&before),
+            "asking for a target moves nothing"
+        );
+        assert_eq!(after[1][at], ("Magazine".to_owned(), Some(30)));
+        assert_eq!(after[0][1], ("Rounds".to_owned(), Some(30)));
     }
 }
 

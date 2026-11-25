@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use moho_input::bindings::{ActionMode, Binding, Input, Modifiers, Trigger};
 use moho_input::key::{Key, MouseButton};
 
-use crate::lists::{ItemLists, ListId, OpenLists};
+use crate::lists::{ItemLists, ListId, OpenLists, RowRef};
 use crate::settings::{Control, EngineSetting, EngineSettings, GameSlider};
 use crate::text::{Anchor, ScreenText};
 
@@ -85,6 +85,15 @@ pub enum MenuEvent<A> {
     /// `from` and `to` always differ. The game applies or refuses the move and answers with
     /// [`MenuStack::set_lists`].
     MoveRequested { item: A, from: ListId, to: ListId },
+    /// The player picked `action` on the row `item` of list `list`. `target` is the second row
+    /// the player picked, `Some` exactly when the action needs another row. The game applies or
+    /// refuses it and answers with [`MenuStack::set_lists`].
+    ActionPicked {
+        action: A,
+        item: A,
+        list: ListId,
+        target: Option<RowRef<A>>,
+    },
     /// The player toggled the details chevron of `action`.
     DetailsToggled { action: A },
     /// The player stepped a picker of `slot` of `action`; the slot's new kind and modifiers.
@@ -1327,6 +1336,7 @@ mod tests {
                 | MenuEvent::ModeChosen { .. }
                 | MenuEvent::Cleared { .. } => None,
                 MenuEvent::MoveRequested { .. } => None,
+                MenuEvent::ActionPicked { .. } => None,
             })
             .collect()
     }
@@ -4602,6 +4612,7 @@ mod tests {
                     count: Some(1),
                     tooltip: None,
                     item,
+                    actions: vec![],
                 })
                 .collect(),
         };
@@ -4730,5 +4741,69 @@ mod tests {
         expected.extend(rows(672.0, 19));
         assert_eq!(below_band, expected);
         assert_eq!(MenuStack::<Act>::new().visible_rows(SIZE), []);
+    }
+
+    #[test]
+    fn visible_rows_of_a_lists_screen_include_the_open_action_list() {
+        use crate::lists::{ActionTarget, ItemList, ItemLists, ListRow, RowAction};
+        let action = |label: &str, action| RowAction {
+            label: label.to_owned(),
+            action,
+            target: ActionTarget::Itself,
+        };
+        let mut stack = MenuStack::new();
+        stack.push_lists(ItemLists {
+            lists: vec![ItemList {
+                id: ListId(10),
+                title: "Rig".to_owned(),
+                rows: vec![ListRow {
+                    label: "Magazine".to_owned(),
+                    count: Some(2),
+                    tooltip: None,
+                    item: Act::Play,
+                    actions: vec![action("Unload", Act::Quit), action("Load", Act::Settings)],
+                }],
+            }],
+            back: Some(Act::Back),
+        });
+        let closed = stack.visible_rows(SIZE);
+
+        press(&mut stack, Key::Space);
+        let open = stack.visible_rows(SIZE);
+        press(&mut stack, Key::Escape);
+        let closed_again = stack.visible_rows(SIZE);
+
+        let extra: Vec<Rect> = open
+            .iter()
+            .copied()
+            .filter(|rect| !closed.contains(rect))
+            .collect();
+        let first = Rect {
+            min: [264.0, 56.0],
+            max: [464.0, 88.0],
+        };
+        let second = Rect {
+            min: [264.0, 88.0],
+            max: [464.0, 120.0],
+        };
+        assert_eq!(closed.len(), 2, "the title and the one row");
+        assert!(closed.iter().all(|rect| open.contains(rect)));
+        for action_rect in [first, second] {
+            assert!(
+                extra.iter().any(|rect| rect.min[0] <= action_rect.min[0]
+                    && rect.min[1] <= action_rect.min[1]
+                    && rect.max[0] >= action_rect.max[0]
+                    && rect.max[1] >= action_rect.max[1]),
+                "{action_rect:?} is not covered by {extra:?}"
+            );
+        }
+        assert!(
+            extra.iter().all(|rect| rect.min[0] >= 264.0
+                && rect.min[1] >= 56.0
+                && rect.max[0] <= 464.0
+                && rect.max[1] <= 120.0),
+            "only the action list is added: {extra:?}"
+        );
+        assert_eq!(closed_again, closed);
     }
 }
