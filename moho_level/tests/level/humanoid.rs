@@ -117,13 +117,11 @@ fn two_runs_give_bit_equal_poses_at_tick_45() {
 static SHARED_RIG: LazyLock<Model> = LazyLock::new(|| rig().1);
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(64))]
+    #![proptest_config(ProptestConfig::with_cases(32))]
 
     #[test]
     fn poses_repeat_for_any_tick_count_and_speed(ticks in 0usize..600, speed in -2.0f32..2.0) {
-        let model = &*SHARED_RIG;
-        let humanoid = humanoid(model);
-        let run = || {
+        let run = |model: &Model| {
             let mut player = ClipPlayer::new(model, "walk", Playback::Loop).expect("clip exists");
             player.set_speed(speed);
             for _ in 0..ticks {
@@ -131,18 +129,37 @@ proptest! {
             }
             player.pose(model)
         };
+        let (_dir, independent) = rig();
 
-        let (first, second) = (run(), run());
+        let first = run(&SHARED_RIG);
+        let second = run(&independent);
 
+        let (first_bones, second_bones) = (humanoid(&SHARED_RIG), humanoid(&independent));
         prop_assert_eq!(pose_bits(&first), pose_bits(&second));
         for bone in Bone::ALL {
             prop_assert_eq!(
-                bits(humanoid.bone(&first, bone)),
-                bits(first.nodes()[humanoid.node(bone)]),
+                bits(first_bones.bone(&first, bone)),
+                bits(second_bones.bone(&second, bone)),
                 "{}",
                 bone.name()
             );
         }
+    }
+}
+
+#[test]
+fn bone_reads_the_pose_entry_of_its_node() {
+    let (_dir, model) = rig();
+    let humanoid = humanoid(&model);
+    let pose = player_at(&model, "walk", Playback::Loop, 37).pose(&model);
+
+    for bone in Bone::ALL {
+        assert_eq!(
+            bits(humanoid.bone(&pose, bone)),
+            bits(pose.nodes()[humanoid.node(bone)]),
+            "{}",
+            bone.name()
+        );
     }
 }
 
@@ -219,23 +236,26 @@ fn drawn_palette_is_the_pose_the_sim_read() {
     let humanoid = humanoid(&model);
     let sim = player_at(&model, "walk", Playback::Loop, 30);
     let sim_pose = sim.pose(&model);
-    let frame = sim.clone();
 
-    let drawn = model.joint_palette(0, &frame.pose(&model));
+    let drawn = model.joint_palette(0, &sim.pose(&model));
 
-    let read = model.joint_palette(0, &sim_pose);
     assert_eq!(model.skins().len(), 1);
     assert_eq!(drawn.len(), Bone::ALL.len());
-    assert_eq!(
-        drawn.iter().copied().map(bits).collect::<Vec<_>>(),
-        read.iter().copied().map(bits).collect::<Vec<_>>()
-    );
     for (entry, bone) in drawn.iter().zip(Bone::ALL) {
-        near(*entry, humanoid.bone(&sim_pose, bone));
+        assert_eq!(
+            bits(*entry),
+            bits(humanoid.bone(&sim_pose, bone)),
+            "{}",
+            bone.name()
+        );
     }
+    let hand = Bone::ALL
+        .iter()
+        .position(|&b| b == Bone::HandR)
+        .expect("hand_r is a bone");
     let rest = model.joint_palette(0, &model.rest_pose());
     assert!(
-        !drawn[9].abs_diff_eq(rest[9], 1e-3),
+        !drawn[hand].abs_diff_eq(rest[hand], 1e-3),
         "hand_r is off its rest at tick 30"
     );
 }

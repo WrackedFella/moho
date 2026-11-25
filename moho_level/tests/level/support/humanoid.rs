@@ -21,6 +21,13 @@ use tempfile::TempDir;
 /// Walk indices of the nodes `Humanoid::node` resolves, in `Bone::ALL` order.
 pub const BONE_NODES: [usize; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16];
 
+/// Index in `Model::meshes` of the rigid triangle on `hand_r` (the nodes are walked
+/// before `body`, so it comes first).
+pub const HAND_MESH: usize = 0;
+
+/// Index in `Model::meshes` of the skinned triangle on `body`.
+pub const BODY_MESH: usize = 1;
+
 /// Walk index of the extra node under `hand_r`.
 pub const IK_HAND_GUN: usize = 10;
 
@@ -278,6 +285,9 @@ fn build(spec: &HumanoidSpec) -> (Value, Vec<u8>) {
             node["mesh"] = json!(0);
             node["skin"] = json!(0);
         }
+        if walk_index == HAND_R {
+            node["mesh"] = json!(1);
+        }
         nodes.push(node);
     }
     let roots: Vec<usize> = defs
@@ -292,10 +302,15 @@ fn build(spec: &HumanoidSpec) -> (Value, Vec<u8>) {
         "scene": 0,
         "scenes": [{ "nodes": roots }],
         "nodes": nodes,
-        "meshes": [{ "primitives": [{ "attributes": {
-            "POSITION": positions, "NORMAL": normals,
-            "JOINTS_0": joints, "WEIGHTS_0": weights,
-        }}]}],
+        "meshes": [
+            { "primitives": [{ "attributes": {
+                "POSITION": positions, "NORMAL": normals,
+                "JOINTS_0": joints, "WEIGHTS_0": weights,
+            }}]},
+            { "primitives": [{ "attributes": {
+                "POSITION": positions, "NORMAL": normals,
+            }}]},
+        ],
         "skins": [{ "joints": skin_joints, "inverseBindMatrices": inverse_binds }],
         "animations": [walk, crouch],
         "accessors": blob.accessors,
