@@ -945,11 +945,13 @@ impl SearchlightGame {
         self.input.release_all();
         self.input.discard_edges();
         self.input.reset_look();
+        self.check_gear_held = false;
         self.stage.capture_cursor();
     }
 
     fn pause(&mut self) {
         self.screen = Screen::Paused;
+        self.check_gear_held = false;
         self.stage.shell().menu_mut().push(pause_screen());
         self.input.release_all();
         self.input.discard_edges();
@@ -1387,7 +1389,10 @@ impl SearchlightGame {
         match routing {
             // A key held as the console opened would otherwise stay held: its release goes to
             // the console.
-            Routing::Opened => self.input.release_all(),
+            Routing::Opened => {
+                self.input.release_all();
+                self.check_gear_held = false;
+            }
             Routing::Console | Routing::Closed => {}
             Routing::Menu => self.answer_menu(ctx),
             Routing::Game if self.screen != Screen::Playing => {}
@@ -1471,6 +1476,7 @@ impl Game for SearchlightGame {
             self.previous_bob = Bob::REST;
             self.bob = Bob::REST;
             self.stage.status.clear();
+            self.strip_ticks_left = 0;
         }
         // A dead player's rounds are frozen and a restart numbers rounds from 0 again, so the
         // tracers of either end rather than keep a trace to place.
@@ -3364,6 +3370,71 @@ mod tests {
             "hidden while held: {while_held:?}"
         );
         assert_eq!(after_release, None, "still showing after the release");
+    }
+
+    #[test]
+    fn a_restart_hides_the_strip_the_last_life_left_up() {
+        let mut game = game_with_a_full_rig();
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        finish_a_reload(&mut game, &mut clock);
+        let showing = game.strip_marks().is_some();
+        game.mode.sim_mut().kill_player();
+        idle_ticks(&mut game, &mut clock, 1);
+        let restart = SearchlightCommand {
+            restart: true,
+            ..SearchlightCommand::default()
+        };
+
+        tick_with(&mut game, &mut clock, &restart);
+
+        assert!(showing, "no strip to take away");
+        assert!(
+            !game.sim().player_body().is_dead(),
+            "the restart did not run"
+        );
+        assert_eq!(game.strip_marks(), None);
+    }
+
+    #[test]
+    fn a_second_reload_restarts_the_fade_in_full() {
+        let mut game = game_with_a_full_rig();
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        finish_a_reload(&mut game, &mut clock);
+        idle_ticks(&mut game, &mut clock, crate::tuning::STRIP_FADE_TICKS - 40);
+
+        finish_a_reload(&mut game, &mut clock);
+        idle_ticks(&mut game, &mut clock, crate::tuning::STRIP_FADE_TICKS - 1);
+        let just_before = game.strip_marks();
+        idle_ticks(&mut game, &mut clock, 1);
+        let at_the_fade = game.strip_marks();
+
+        assert!(
+            just_before.is_some(),
+            "the second reload did not renew the fade"
+        );
+        assert_eq!(at_the_fade, None, "the fades added up");
+    }
+
+    #[test]
+    fn check_gear_held_into_a_menu_does_not_show_the_strip_on_return() {
+        let mut paused = game_with_a_full_rig();
+        let mut console = game_with_a_full_rig();
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let hold = SearchlightCommand {
+            check_gear: true,
+            ..SearchlightCommand::default()
+        };
+        tick_with(&mut paused, &mut clock, &hold);
+        tick_with(&mut console, &mut clock, &hold);
+        let held = paused.strip_marks().is_some();
+
+        paused.pause();
+        paused.enter_play();
+        open_the_console(&mut console, &clock);
+
+        assert!(held, "no strip to take away");
+        assert_eq!(paused.strip_marks(), None, "pause leaked the hold");
+        assert_eq!(console.strip_marks(), None, "the console leaked the hold");
     }
 
     #[test]
