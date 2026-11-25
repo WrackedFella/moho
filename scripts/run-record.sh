@@ -19,6 +19,8 @@
 #                                           environment: ISSUE, GATE_CLASS, HEAD_SHA,
 #                                           DEVFLOW_SHA (default: read from the plugin
 #                                           install), RUN_URL (any may be empty)
+#   run-record.sh limit-reset <file>        the time a usage-limit cut-off says the limit resets
+#                                           ("3:50am"), or nothing when the run was not cut off
 #   run-record.sh gate-class                issue body on stdin -> its gate class, or nothing
 #   run-record.sh table                     records on stdin -> markdown, for the job summary
 #   run-record.sh digest                    records on stdin -> markdown: per gate class,
@@ -146,11 +148,12 @@ gate_class() {
 }
 
 record() {
-    local file=$1 usage steps
+    local file=$1 usage steps err=false
+    is_error "$file" && err=true
     usage=$(STEP=orchestrate PR="" "$here/review-usage.sh" record "$file")
     steps=$(steps_of "$file")
     jq -c --arg issue "${ISSUE:-}" --arg gate_class "${GATE_CLASS:-}" --arg head "${HEAD_SHA:-}" \
-        --arg devflow "${DEVFLOW_SHA:-$(devflow_sha)}" --arg run "${RUN_URL:-}" --argjson extra "$steps" '
+        --arg devflow "${DEVFLOW_SHA:-$(devflow_sha)}" --arg run "${RUN_URL:-}" --argjson err "$err" --argjson extra "$steps" '
         {v: 1, at, issue: ($issue | if . == "" then null else tonumber end),
          gate_class: (if $gate_class == "" then null else $gate_class end),
          head: (if $head == "" then null else $head end),
@@ -158,7 +161,18 @@ record() {
          run: (if $run == "" then null else $run end),
          subtype, turns, duration_ms, models, cost_usd}
         + (if .unsplit then {unsplit} else {} end)
-        + $extra' <<<"$usage"
+        + $extra
+        | if $err then .subtype = "error" else . end' <<<"$usage"
+}
+
+# A result the action reports as is_error carries subtype "success"; the record says "error".
+is_error() {
+    jq -e '[.[] | select(.type == "result")] | last | .is_error == true' "$1" >/dev/null 2>&1
+}
+
+limit_reset() {
+    jq -r '[.[] | select(.type == "result")] | last | .result // ""' "$1" |
+        grep -oiE "hit your .*limit.*resets [^(]+\(UTC\)" | head -n1 | sed -E 's/.*resets +//; s/ *\(UTC\)//' || true
 }
 
 table() {
@@ -183,6 +197,8 @@ digest() {
         def k: if . == null then "-" elif . >= 1000000 then "\(. / 100000 | round / 10)M"
                elif . >= 1000 then "\(. / 1000 | round)k" else tostring end;
         def median: sort | if length == 0 then null else .[(length - 1) / 2 | floor] end;
+        # A run that did no model work (cut off before its first call) says nothing about a step.
+        map(select((.models | length) > 0)) |
         if length == 0 then "No run records." else
         group_by(.gate_class // "unknown")[] as $g
         | "### \($g[0].gate_class // "unknown"): \($g | length) runs", "",
@@ -221,9 +237,10 @@ collect() {
 
 case "${1:-}" in
     record) record "${2:?execution file}" ;;
+    limit-reset) limit_reset "${2:?execution file}" ;;
     gate-class) gate_class ;;
     table) table ;;
     digest) digest ;;
     collect) collect ;;
-    *) sed -n '2,26p' "$0" >&2; exit 2 ;;
+    *) sed -n '2,28p' "$0" >&2; exit 2 ;;
 esac

@@ -204,6 +204,15 @@ run-record-test:
     diff "$f/record-partial.jsonl" <(
         ISSUE=9 GATE_CLASS=glue HEAD_SHA=abc DEVFLOW_SHA=f20ec3e45100 RUN_URL= \
             scripts/run-record.sh record "$f/execution-partial.json" | jq -c 'del(.at)')
+    # A result the action reports as is_error is an error record; a run cut off by the usage limit
+    # names its reset, and a record with no model work stays out of the digest.
+    [[ "$(scripts/run-record.sh record "$f/execution-limit.json" | jq -r .subtype)" == error ]] \
+        || { echo "run-record: an is_error result must record subtype error"; exit 1; }
+    [[ "$(scripts/run-record.sh limit-reset "$f/execution-limit.json")" == 3:50am ]] \
+        || { echo "run-record: limit-reset must read the reset time"; exit 1; }
+    [[ -z "$(scripts/run-record.sh limit-reset "$f/execution.json")" ]] \
+        || { echo "run-record: a run that was not cut off has no reset time"; exit 1; }
+    diff "$f/digest.md" <(cat "$f/records.jsonl" <(scripts/run-record.sh record "$f/execution-limit.json") | scripts/run-record.sh digest)
     echo "run-record: OK"
 
 # Layering check on the real crate graph, plus self-tests that each rule rejects its fixture.

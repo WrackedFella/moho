@@ -16,6 +16,10 @@ on:
       issue:
         description: Issue number to orchestrate
         required: true
+      attempt:
+        description: Run number after a usage-limit cut-off (set by the Resume job)
+        required: false
+        default: "1"
 
 permissions:
   contents: write
@@ -82,7 +86,7 @@ jobs:
           set -o pipefail
           {
             echo "### Run result"
-            jq -r '.[] | select(.type == "result") | "- subtype `\(.subtype)`, turns \(.num_turns)"' "$EXECUTION_FILE"
+            jq -r '.[] | select(.type == "result") | "- subtype `\(.subtype)`, turns \(.num_turns)", (select(.is_error == true) | "- error result: \((.result // "(none)") | tostring | .[0:300])")' "$EXECUTION_FILE"
             echo "### Denied commands"
             jq -r '.[] | select(.type == "result") | .permission_denials[]? | "- `\(.tool_name)`: \((.tool_input.command // .tool_input.file_path // "") | tostring | .[0:200])"' "$EXECUTION_FILE"
           } | tee -a "$GITHUB_STEP_SUMMARY"
@@ -108,6 +112,8 @@ jobs:
                   && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) && (startsWith(github.event.comment.body, 'Resume') || startsWith(github.event.comment.body, '**Resume')))))
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    outputs:
+      limit_resets: ${{ steps.limit.outputs.resets }}
     steps:
       - uses: actions/checkout@v4
       - name: Ensure pause label
@@ -173,6 +179,20 @@ jobs:
             echo "### Denied commands"
             jq -r '.[] | select(.type == "result") | .permission_denials[]? | "- `\(.tool_name)`: \((.tool_input.command // .tool_input.file_path // "") | tostring | .[0:200])"' "$EXECUTION_FILE"
           } | tee -a "$GITHUB_STEP_SUMMARY"
+      # The subscription's usage limit ends a run mid-card. Its last result says when the limit
+      # resets; the Resume job waits for that and starts the run again from the pushed branch.
+      - name: Detect a usage-limit cut-off
+        id: limit
+        if: always()
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+        run: |
+          [ -f "$EXECUTION_FILE" ] || exit 0
+          resets=$(scripts/run-record.sh limit-reset "$EXECUTION_FILE" || true)
+          [ -n "$resets" ] || exit 0
+          echo "resets=$resets" >> "$GITHUB_OUTPUT"
+          echo "### Usage limit" >> "$GITHUB_STEP_SUMMARY"
+          echo "The run hit the usage limit, which resets at $resets UTC. The Resume job starts it again after the reset." >> "$GITHUB_STEP_SUMMARY"
       # One RUN-RECORD line per run, so real card runs build the per-step data that lane
       # decisions need (D0012). The execution log is not uploaded: the repository is public
       # and artifacts are not secret-masked.
@@ -211,6 +231,11 @@ jobs:
               --ref "${{ github.event.repository.default_branch }}" -f pr="$pr"
           done
           [ -n "$prs" ] && exit 0
+          # A usage-limit cut-off is picked up by the Resume job.
+          if [ -n "${{ steps.limit.outputs.resets }}" ]; then
+            echo "::warning::Orchestrate #$ISSUE hit the usage limit; Resume restarts it"
+            exit 0
+          fi
           # No PR is fine only when the run paused for an answer.
           if gh issue view "$ISSUE" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name' |
             grep -qx agent-paused; then
@@ -221,3 +246,34 @@ jobs:
           echo "### Outcome" >> "$GITHUB_STEP_SUMMARY"
           echo "$msg. Resume with: gh workflow run claude.yml --ref dev -f issue=$ISSUE" >> "$GITHUB_STEP_SUMMARY"
           exit 1
+
+  # A run the usage limit cut off starts again once it resets. The job sleeps on the runner
+  # (minutes are free on a public repository) and gives up after three runs. The new run
+  # queues behind this one in the issue's concurrency group, and continues from the pushed
+  # branch like any manual Resume.
+  resume:
+    name: Resume after usage limit
+    needs: orchestrate
+    if: always() && needs.orchestrate.outputs.limit_resets != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE: ${{ github.event.issue.number || inputs.issue }}
+      ATTEMPT: ${{ inputs.attempt }}
+      RESETS: ${{ needs.orchestrate.outputs.limit_resets }}
+    steps:
+      - name: Dispatch the run after the reset
+        run: |
+          [[ $ATTEMPT =~ ^[0-9]+$ ]] || ATTEMPT=1
+          if [ "$ATTEMPT" -ge 3 ]; then echo "::warning::#$ISSUE still limited after $ATTEMPT runs"; exit 0; fi
+          # "3:50am": the next such time, plus a 5-minute margin.
+          target=$(date -u -d "$RESETS" +%s 2>/dev/null || date -u -d "+5 hours" +%s)
+          now=$(date -u +%s)
+          [ "$target" -le "$now" ] && target=$((target + 86400))
+          wait=$((target - now + 300))
+          [ "$wait" -gt 18900 ] && wait=18900
+          echo "Waiting $((wait / 60)) minutes for the limit to reset, then running #$ISSUE again"
+          sleep "$wait"
+          gh workflow run claude.yml --repo "$GITHUB_REPOSITORY" \
+            --ref "${{ github.event.repository.default_branch }}" -f issue="$ISSUE" -f attempt="$((ATTEMPT + 1))"
