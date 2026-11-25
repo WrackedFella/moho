@@ -283,7 +283,7 @@ sim-math:
     accepts sim-math-unlisted
     accepts sim-math-after-tests
     accepts sim-math-gated-item
-    # Per package, so glam's own feature set is checked: --workspace --all-features lets rapier's glamx enable glam/libm.
+    # Per package: `--workspace --all-features` lets rapier's glamx enable glam/libm and mask a missing feature.
     cargo nextest run -p moho_core -E 'test(glam_rotation_uses_libm_sin_and_cos)'
 
 # Layering check on the real crate graph, plus self-tests that each rule rejects its fixture.

@@ -5,7 +5,7 @@ pub fn sin_cos(angle: f32) -> (f32, f32) {
     (libm::sinf(angle), libm::cosf(angle))
 }
 
-/// Angle in radians of the point `(x, y)`, as `libm::atan2f(y, x)`.
+/// Angle in radians of the point `(x, y)` from the positive x axis, in `[-pi, pi]`.
 pub fn atan2(y: f32, x: f32) -> f32 {
     libm::atan2f(y, x)
 }
