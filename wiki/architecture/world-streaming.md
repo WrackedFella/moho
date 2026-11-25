@@ -32,6 +32,12 @@ flowchart TD
 Neighbours are re-meshed on load because a neighbour meshed before this chunk existed
 has an exposed edge face; it must re-sample to close the seam.
 
+An all-air chunk is never stored, yet the chunks behind it (negative side) draw their
+boundary faces against it. When a chunk is inserted or evicted, `world_geometry` re-meshes
+each unstored chunk behind it (above the world floor): one with geometry is stored, drawn
+and solid; one without leaves the store, renderer and physics. Ground beside an empty
+chunk therefore keeps its face.
+
 A mined block dirties every chunk whose geometry reads it, not only its own. Smooth
 vertices take contact ambient occlusion from the 26 voxels around the air sample they lie
 on (`contact_ao` in
