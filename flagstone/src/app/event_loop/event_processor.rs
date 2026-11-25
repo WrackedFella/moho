@@ -188,7 +188,9 @@ impl EventProcessor {
                 self.handle_mine_requested(app);
             }
             InputEvent::SlotSelected { slot } => {
-                app.possessed_pawn_mut().select_slot(slot);
+                if app.possessed.is_some() {
+                    app.possessed_pawn_mut().select_slot(slot);
+                }
             }
         }
     }
@@ -203,6 +205,9 @@ impl EventProcessor {
             return;
         }
 
+        let Some(possessed_id) = app.possessed else {
+            return;
+        };
         let (view_matrix, _, _) = app.camera;
         let camera_pos = view_matrix.inverse().col(3).truncate();
         let forward = -view_matrix.inverse().col(2).truncate().normalize();
@@ -219,7 +224,7 @@ impl EventProcessor {
 
         let possessed = app
             .crew
-            .get_mut(app.possessed.expect("a pawn is possessed"))
+            .get_mut(possessed_id)
             .expect("the possessed pawn is in the crew");
         let Some(outcome) = possessed.mine(grid, camera_pos, forward, MINE_REACH) else {
             tracing::debug!(

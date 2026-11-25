@@ -170,7 +170,7 @@ impl App {
             },
             jump,
             toggle_view: frame.pressed(StrategyAction::Possess),
-            possess: None,
+            possess: self.selection.selected(),
             select,
             mark,
             // Only a click reads the ceiling; sampling it walks every loaded chunk.
@@ -254,7 +254,7 @@ impl App {
         *self.simulation.controller_input_mut() = command.input;
         self.physics.jump_pressed = command.jump;
         if command.toggle_view {
-            self.toggle_camera_mode();
+            self.toggle_camera_mode(command.possess);
             self.apply_cursor();
         }
         if let Some(ray) = command.select
@@ -576,21 +576,51 @@ impl App {
         self.apply_cursor();
     }
 
-    fn toggle_camera_mode(&mut self) {
+    /// Hands the player's controls to pawn `id`: its job is suspended (the mark stays for
+    /// another pawn), its body becomes the player's, and the view takes the body's position
+    /// and yaw with the pitch level.
+    fn possess(&mut self, id: flagstone_game::pawn::PawnId) {
+        if let Some(pawn) = self.crew.get_mut(id) {
+            flagstone_game::jobs::suspend(&mut pawn.job, &mut self.colony.marks);
+        }
+        self.possessed = Some(id);
+        self.physics.possess(id);
+        let body = self
+            .physics
+            .pawns
+            .get(&id)
+            .zip(self.physics.world.as_ref())
+            .and_then(|(&handle, world)| world.character(handle));
+        if let Some(body) = body {
+            self.simulation
+                .set_position_yaw_pitch(body.position, body.yaw, 0.0);
+            self.physics.set_player_look(body.yaw, 0.0);
+        }
+    }
+
+    /// Switches the view. From the strategy view it possesses `target`, the pawn that was
+    /// selected when the command was sampled; with no such pawn in the crew the view stays and
+    /// the rejection cue plays. From first person it returns to the strategy view and `target`
+    /// is ignored.
+    fn toggle_camera_mode(&mut self, target: Option<flagstone_game::pawn::PawnId>) {
         // Placeholder cues until the mode switch has its own clips.
-        let cue = match self.simulation.camera_mode() {
-            CameraMode::FirstPerson => moho_core::events::AudioEvent::Cancel,
-            CameraMode::Isometric => moho_core::events::AudioEvent::Confirm,
-        };
-        self.event_bus.publish(cue);
+        use moho_core::events::AudioEvent;
         match self.simulation.camera_mode() {
             CameraMode::FirstPerson => {
+                self.event_bus.publish(AudioEvent::Cancel);
+                self.possessed = None;
                 // Switch to RTS first so look_at runs in Isometric mode,
                 // setting rts_look_target without touching FPS yaw/pitch.
                 self.simulation.set_camera_mode(CameraMode::Isometric);
                 self.simulation.look_at(self.simulation.position());
             }
             CameraMode::Isometric => {
+                let Some(id) = target.filter(|&id| self.crew.get(id).is_some()) else {
+                    self.event_bus.publish(AudioEvent::Cancel);
+                    return;
+                };
+                self.event_bus.publish(AudioEvent::Confirm);
+                self.possess(id);
                 self.simulation.set_camera_mode(CameraMode::FirstPerson);
             }
         }

@@ -102,9 +102,7 @@ impl FrameProcessor {
             app.camera = (view, proj, eye);
         }
 
-        if app.simulation.camera_mode() == flagstone_game::controller::CameraMode::Isometric {
-            self.run_pawn_job(app, dt);
-        }
+        self.run_pawn_job(app, dt);
 
         // Step rigid bodies in both KCC and non-KCC paths (test spheres, etc.)
         if !use_kcc {
@@ -117,7 +115,8 @@ impl FrameProcessor {
 
     /// Runs every pawn's job for one tick: each walk goes through the same character step as
     /// the first-person path, each dig through the same mining action from that pawn's eye. An
-    /// idle pawn is not moved at all, and only the possessed pawn's walk moves the view.
+    /// idle pawn is not moved at all. The possessed pawn, if any, takes no job: the player
+    /// moves it, after which the others work on.
     fn run_pawn_job(&self, app: &mut App, dt: f32) {
         use flagstone_game::jobs::{self, EYE_HEIGHT, JobAction, Pose};
         use flagstone_game::pawn::{MINE_REACH, PawnId};
@@ -150,7 +149,7 @@ impl FrameProcessor {
             &poses,
             &mut app.colony.marks,
             light_system.grid(),
-            None,
+            app.possessed,
         );
 
         for (id, action) in actions {
@@ -158,16 +157,8 @@ impl FrameProcessor {
                 JobAction::Wait => {}
                 JobAction::Walk { to } => {
                     let (command, settings) = job_walk_command(jobs::steer(poses[&id], to));
-                    let Some(moved) = app.physics.move_pawn(id, &command, &settings, dt) else {
+                    if app.physics.move_pawn(id, &command, &settings, dt).is_none() {
                         tracing::warn!(pawn = ?id, "Pawn job walked but the character did not move");
-                        continue;
-                    };
-                    if Some(id) == app.possessed {
-                        app.simulation.set_position_yaw_pitch(
-                            moved.position,
-                            moved.yaw,
-                            moved.pitch,
-                        );
                     }
                 }
                 JobAction::Dig { aim, .. } => {
@@ -490,14 +481,15 @@ impl FrameProcessor {
             })
             .unwrap_or_default();
 
-        let possessed = app.possessed_pawn();
-        let hotbar = possessed.inventory.sorted();
+        // Nothing is possessed in the strategy view: no hotbar, tool or pickups to show.
+        let possessed = app.possessed.and_then(|id| app.crew.get(id));
+        let hotbar = possessed.map_or_else(Vec::new, |pawn| pawn.inventory.sorted());
 
         // Only one tool exists today (`flagstone_game::tools::STARTING_TOOL`); the
         // label is a fixed string until a real tool-name lookup exists.
         let tool_label =
             |pawn: &flagstone_game::pawn::Pawn| pawn.equipped_tool.map(|_| "Pickaxe".to_string());
-        let equipped_tool_label = tool_label(possessed);
+        let equipped_tool_label = possessed.and_then(tool_label);
 
         let selection = app
             .selection
@@ -530,15 +522,18 @@ impl FrameProcessor {
             loaded_chunk_xz,
             hotbar,
             equipped_tool_label,
-            selected_slot: possessed.selected_slot,
+            selected_slot: possessed.map(|pawn| pawn.selected_slot).unwrap_or_default(),
             view_height: crate::app::view_level::layer_extent(app)
                 .map(|extent| app.view_level.hud(extent)),
             pickups: possessed
-                .pickups
-                .entries()
-                .iter()
-                .map(|e| (e.resource_id, e.amount, e.life()))
-                .collect(),
+                .map(|pawn| {
+                    pawn.pickups
+                        .entries()
+                        .iter()
+                        .map(|e| (e.resource_id, e.amount, e.life()))
+                        .collect()
+                })
+                .unwrap_or_default(),
             selection,
             mine_designation_active: app.input.designation == Designation::Mine,
             colony_stock,

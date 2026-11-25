@@ -160,8 +160,11 @@ fn horizontal_distance(a: Vec3, b: Vec3) -> f32 {
 
 /// Stops `job` without finishing it: a `Mine` job lets go of its claim (the mark stays) and
 /// the job becomes `Idle` with an empty memo. An idle job is left as it is.
-pub fn suspend(_job: &mut Job, _marks: &mut MineMarks) {
-    todo!("suspend")
+pub fn suspend(job: &mut Job, marks: &mut MineMarks) {
+    if let Job::Mine { mark, .. } = job {
+        let held = *mark;
+        release(job, marks, held);
+    }
 }
 
 fn release(job: &mut Job, marks: &mut MineMarks, mark: [i32; 3]) {
@@ -392,17 +395,21 @@ pub fn step(
 /// answers with what each does. The pawns take their marks one after another, so a mark one
 /// of them has claimed is already taken when the next looks. A pawn with no entry in `poses`
 /// is skipped this tick: it gets no answer and keeps whatever mark it holds, so no other pawn
-/// takes it meanwhile.
+/// takes it meanwhile. The `possessed` pawn, which answers to the player, is skipped the same
+/// way: it takes no mark and gets no action.
 pub fn step_crew(
     crew: &mut Crew,
     poses: &BTreeMap<PawnId, Pose>,
     marks: &mut MineMarks,
     grid: &VoxelGrid,
-    _possessed: Option<PawnId>,
+    possessed: Option<PawnId>,
 ) -> Vec<(PawnId, JobAction)> {
     let mut actions = Vec::new();
     let mut being_dug = Vec::new();
     for (id, pawn) in crew.iter_mut() {
+        if Some(id) == possessed {
+            continue;
+        }
         let Some(&pose) = poses.get(&id) else {
             continue;
         };

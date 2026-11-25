@@ -75,8 +75,12 @@ impl PhysicsController {
     /// Makes pawn `id`'s body the player's, so the character step and the first-person view
     /// follow it, and queues a view snap so the view does not blend from the previous body.
     /// Does nothing for a pawn without a body.
-    pub fn possess(&mut self, _id: flagstone_game::pawn::PawnId) {
-        todo!("possess")
+    pub fn possess(&mut self, id: flagstone_game::pawn::PawnId) {
+        let Some(&handle) = self.pawns.get(&id) else {
+            return;
+        };
+        self.player = Some(handle);
+        self.snap_view = true;
     }
 
     /// Clear and recreate the physics world, removing all colliders and bodies.
