@@ -100,13 +100,8 @@ impl Scene {
                 (mesh, texture, instance, rows)
             })
             .collect();
-        let mut unshadowed_draws: Vec<(u32, Vec<InstanceGpu>)> = Vec::new();
-        for (mesh, instance) in self.world_meshes.unshadowed_draws() {
-            match unshadowed_draws.last_mut() {
-                Some((last, instances)) if *last == mesh => instances.push(instance),
-                _ => unshadowed_draws.push((mesh, vec![instance])),
-            }
-        }
+        let unshadowed_draws = group_by_mesh(self.world_meshes.unshadowed_draws());
+        let shadow_only_draws = group_by_mesh(self.world_meshes.shadow_only_draws());
         // Cleared before begin_frame so a skipped frame consumes its placements too.
         self.world_meshes.clear_placements();
 
@@ -126,6 +121,10 @@ impl Scene {
 
         for (mesh, instances) in &unshadowed_draws {
             renderer.enqueue_unshadowed_draw(*mesh, instances);
+        }
+
+        for (mesh, instances) in &shadow_only_draws {
+            renderer.enqueue_shadow_only_draw(*mesh, instances);
         }
 
         // Render transparent instances (back-to-front sorted)
@@ -175,6 +174,18 @@ impl Scene {
             renderer.enqueue_draw(*mesh_h, insts);
         }
     }
+}
+
+/// Batch consecutive draws of the same mesh into one instance list each.
+fn group_by_mesh(draws: impl Iterator<Item = (u32, InstanceGpu)>) -> Vec<(u32, Vec<InstanceGpu>)> {
+    let mut grouped: Vec<(u32, Vec<InstanceGpu>)> = Vec::new();
+    for (mesh, instance) in draws {
+        match grouped.last_mut() {
+            Some((last, instances)) if *last == mesh => instances.push(instance),
+            _ => grouped.push((mesh, vec![instance])),
+        }
+    }
+    grouped
 }
 
 /// A joint matrix as the GPU palette holds it: three rows of `[m_r0, m_r1, m_r2, t_r]`.
