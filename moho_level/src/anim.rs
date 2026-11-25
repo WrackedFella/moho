@@ -421,7 +421,7 @@ mod tests {
     use glam::{Affine3A, Quat, Vec3};
     use proptest::prelude::*;
 
-    use super::{Channel, Clip, ClipError, ClipPlayer, Interpolation, Playback, Track};
+    use super::{Animator, Channel, Clip, ClipError, ClipPlayer, Interpolation, Playback, Track};
     use crate::{Model, ModelNode};
 
     fn track_x(times: &[f32], xs: &[f32]) -> Track {
@@ -967,6 +967,92 @@ mod tests {
         player.set_speed(1.0);
         player.advance(&model, 4.0);
         assert!(player.is_finished(&model));
+    }
+
+    /// A 2-second clip moving node 0 along x from 0 to `to`.
+    fn moving(name: &str, to: f32) -> Clip {
+        clip(
+            name,
+            vec![channel(
+                Interpolation::Linear,
+                track_x(&[0.0, 2.0], &[0.0, to]),
+            )],
+        )
+    }
+
+    fn animator_on(model: &Model) -> Animator {
+        Animator::new(ClipPlayer::new(model, "ramp", Playback::Loop).expect("clip exists"))
+    }
+
+    #[test]
+    fn a_one_tick_action_shows_its_last_pose_at_once_and_is_dropped_on_the_next_advance() {
+        let model = model_with(vec![ramp(), moving("act", 9.0)]);
+        let mut animator = animator_on(&model);
+        animator
+            .play_action(&model, "act", ticks(1))
+            .expect("clip exists");
+
+        animator.advance(&model, 0.5);
+
+        let action = animator.action().expect("held on its last tick");
+        assert!(action.is_finished(&model));
+        assert_eq!(action.time(), 2.0);
+        assert_eq!(animator.pose(&model), model.pose(1, 2.0));
+        animator.advance(&model, 0.5);
+        assert!(animator.action().is_none());
+        assert_eq!(animator.pose(&model), animator.base().pose(&model));
+        assert_eq!(animator.base().time(), 1.0);
+    }
+
+    #[test]
+    fn ticks_playback_at_the_end_of_a_maximal_count_holds_without_overflow() {
+        let model = model_with(vec![ramp()]);
+        let mut player = ClipPlayer::new(&model, "ramp", ticks(u32::MAX)).expect("clip exists");
+        player.elapsed = u32::MAX;
+
+        player.advance(&model, 1.0);
+
+        assert_eq!(player.elapsed, u32::MAX);
+        assert_eq!(player.time(), 4.0);
+        assert!(player.is_finished(&model));
+    }
+
+    #[test]
+    fn a_once_action_on_a_zero_length_clip_is_finished_and_dropped_on_the_next_advance() {
+        let model = model_with(vec![ramp(), clip("still", Vec::new())]);
+        let mut animator = animator_on(&model);
+
+        animator
+            .play_action(&model, "still", Playback::Once)
+            .expect("clip exists");
+
+        assert!(animator.action().expect("playing").is_finished(&model));
+        animator.advance(&model, 0.5);
+        assert!(animator.action().is_none());
+        assert_eq!(animator.pose(&model), animator.base().pose(&model));
+    }
+
+    #[test]
+    fn switching_the_base_clip_under_an_action_leaves_the_action_alone() {
+        let model = model_with(vec![ramp(), moving("act", 9.0), moving("other", 5.0)]);
+        let mut animator = animator_on(&model);
+        animator
+            .play_action(&model, "act", ticks(10))
+            .expect("clip exists");
+        for _ in 0..3 {
+            animator.advance(&model, 0.5);
+        }
+        let action_before = animator.action().expect("playing").clone();
+
+        animator
+            .base_mut()
+            .play(&model, "other", Playback::Loop)
+            .expect("clip exists");
+
+        assert_eq!(animator.action(), Some(&action_before));
+        assert_eq!(animator.pose(&model), action_before.pose(&model));
+        animator.cancel_action();
+        assert_eq!(animator.pose(&model), model.pose(2, 0.0));
     }
 
     #[test]
