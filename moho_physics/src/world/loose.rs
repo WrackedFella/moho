@@ -5,8 +5,11 @@ use rapier3d::prelude::{
     Pose, RigidBodyBuilder, RigidBodyHandle,
 };
 
-/// Membership bit carried only by loose colliders, so a collider that takes it becomes
-/// invisible to characters, which filter it out.
+/// Membership bit that marks a loose collider. A collider whose only membership is this bit is
+/// ignored by characters: their filter tests with `And`, so it hides only colliders whose every
+/// membership bit is `LOOSE`. The character capsule, world meshes and props carry `Group::ALL`,
+/// which includes this bit but also others, so they stay visible. Give another collider this
+/// bit alone and characters stop seeing it.
 pub(super) const LOOSE: Group = Group::GROUP_32;
 
 /// Collision filter of a loose collider: it carries [`LOOSE`] and meets every collider.
@@ -2210,17 +2213,41 @@ mod tests {
             (position.x - PILE_CENTRE.x).abs() <= 0.5 && (position.z - PILE_CENTRE.z).abs() <= 0.5
         }
 
+        /// Fewest ticks the walker's capsule must overlap a pile object: without that overlap
+        /// the walk would pass the pile by and say nothing about the filter. The walk
+        /// measures 201 ticks; half of that leaves room for a changed script.
+        const MIN_TOUCHING: usize = 100;
+
+        /// Whether the walker's capsule intersects any of `ids`, ignoring collision groups.
+        fn touches_pile(world: &PhysicsWorld, walker: CharacterHandle, ids: &[LooseId]) -> bool {
+            let capsule = &world.collider_set[world.rigid_body_set[walker.0].colliders()[0]];
+            ids.iter().any(|&id| {
+                let object = collider_of(world, id);
+                rapier3d::parry::query::contact(
+                    capsule.position(),
+                    capsule.shape(),
+                    object.position(),
+                    object.shape(),
+                    0.0,
+                )
+                .expect("both shapes support contact queries")
+                .is_some()
+            })
+        }
+
         #[test]
         fn a_character_walking_through_a_pile_moves_as_without_it() {
-            let (mut with_pile, _) = settled(true);
+            let (mut with_pile, pile_ids) = settled(true);
             let (mut without, _) = settled(false);
             let (walker, lone_walker) = (add_walker(&mut with_pile), add_walker(&mut without));
             let mut inside = 0;
             let mut prone_inside = false;
             let mut stood_up_inside = false;
+            let mut touching = 0;
 
             for t in 0..WALK_TICKS {
                 let among = walk_tick(&mut with_pile, walker, t);
+                touching += usize::from(touches_pile(&with_pile, walker, &pile_ids));
                 let alone = walk_tick(&mut without, lone_walker, t);
 
                 assert_eq!(
@@ -2237,6 +2264,10 @@ mod tests {
             assert!(
                 inside >= 15,
                 "the walk covers the pile for only {inside} ticks"
+            );
+            assert!(
+                touching >= MIN_TOUCHING,
+                "the walker's capsule overlaps the pile for only {touching} ticks"
             );
             assert!(prone_inside, "the walker never lay prone inside the pile");
             assert!(
@@ -2255,10 +2286,12 @@ mod tests {
                 "both piles are asleep before the walk starts"
             );
             let mut inside = 0;
+            let mut touching = 0;
 
             for t in 0..WALK_TICKS {
                 let walked = walk_tick(&mut walked_through, walker, t);
                 inside += usize::from(in_footprint(walked.position));
+                touching += usize::from(touches_pile(&walked_through, walker, &ids));
                 left_alone.step(DT);
 
                 for (i, (&a, &b)) in ids.iter().zip(&lone_ids).enumerate() {
@@ -2275,6 +2308,10 @@ mod tests {
             assert!(
                 inside >= 15,
                 "the walk covers the pile for only {inside} ticks"
+            );
+            assert!(
+                touching >= MIN_TOUCHING,
+                "the walker's capsule overlaps the pile for only {touching} ticks"
             );
         }
 
@@ -2329,16 +2366,18 @@ mod tests {
                 world.remove_character(saved).expect("the walker is alive");
                 world.restore_character(&record, body())
             };
-            let (mut with_pile, _) = settled(true);
+            let (mut with_pile, pile_ids) = settled(true);
             let (mut without, _) = settled(false);
             let (walker, lone_walker) = (
                 restored_walker(&mut with_pile),
                 restored_walker(&mut without),
             );
             let mut inside = 0;
+            let mut touching = 0;
 
             for t in 0..WALK_TICKS {
                 let among = walk_tick(&mut with_pile, walker, t);
+                touching += usize::from(touches_pile(&with_pile, walker, &pile_ids));
                 let alone = walk_tick(&mut without, lone_walker, t);
 
                 assert_eq!(
@@ -2352,6 +2391,10 @@ mod tests {
             assert!(
                 inside >= 15,
                 "the walk covers the pile for only {inside} ticks"
+            );
+            assert!(
+                touching >= MIN_TOUCHING,
+                "the walker's capsule overlaps the pile for only {touching} ticks"
             );
         }
     }
