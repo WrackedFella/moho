@@ -2614,4 +2614,84 @@ mod tests {
         assert_eq!(world.loose_count(), count);
         assert_eq!(count, 1);
     }
+
+    #[test]
+    fn a_look_finds_every_shape_at_rest_by_its_own_id() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let shapes = every_shape().into_iter().chain([("sphere", SPHERE)]);
+        let ids: Vec<(&str, LooseId)> = shapes
+            .enumerate()
+            .map(|(i, (name, shape))| {
+                let spawn = LooseSpawn {
+                    position: Vec3::new(i as f32 * 2.0, 0.5, 0.0),
+                    ..LooseSpawn::new(shape, 0.2)
+                };
+                (name, world.spawn_loose(&spawn))
+            })
+            .collect();
+        run(&mut world, 300);
+
+        for (i, &(name, id)) in ids.iter().enumerate() {
+            let centre = read(&world, id).position;
+            let found = world.pick_loose(&look(centre + Vec3::Y, Vec3::NEG_Y));
+
+            assert_eq!(found, Some(id), "{name} (object {i})");
+        }
+        let distinct: std::collections::HashSet<LooseId> = ids.iter().map(|&(_, id)| id).collect();
+        assert_eq!(distinct.len(), ids.len(), "every object has its own id");
+    }
+
+    #[test]
+    fn a_look_from_inside_a_box_finds_it() {
+        let mut world = PhysicsWorld::new();
+        world.set_gravity(0.0);
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(1.0, 2.0, 3.0),
+            ..LooseSpawn::new(cube(0.2), 1.0)
+        });
+        world.step(DT);
+        let centre = read(&world, id).position;
+        let directions = [
+            Vec3::X,
+            Vec3::NEG_X,
+            Vec3::Y,
+            Vec3::NEG_Y,
+            Vec3::Z,
+            Vec3::NEG_Z,
+            Vec3::new(1.0, 2.0, -3.0),
+        ];
+
+        for direction in directions {
+            let found = world.pick_loose(&look(centre, direction));
+
+            assert_eq!(found, Some(id), "direction {direction:?}");
+        }
+    }
+
+    #[test]
+    fn a_wall_orders_a_look_by_distance_to_the_box() {
+        let box_at = |x: f32| {
+            let mut world = PhysicsWorld::new();
+            world.set_gravity(0.0);
+            world.set_world_mesh(WorldMeshId(1), &x_wall_mesh(3.0), WALL_TAG);
+            let id = world.spawn_loose(&LooseSpawn {
+                position: Vec3::new(x, 0.0, 0.0),
+                ..LooseSpawn::new(cube(0.2), 1.0)
+            });
+            world.step(DT);
+            (world, id)
+        };
+        let query = look(Vec3::ZERO, Vec3::X);
+        let (in_front, front_id) = box_at(2.0);
+        let (behind, _) = box_at(4.0);
+
+        let seen = in_front.pick_loose(&query);
+        let ray = in_front.cast_ray(&query).expect("the wall is in range");
+        let hidden = behind.pick_loose(&query);
+
+        assert_eq!(seen, Some(front_id));
+        assert_eq!(ray.tag, WALL_TAG);
+        assert!((ray.distance - 3.0).abs() <= 0.001, "{ray:?}");
+        assert_eq!(hidden, None);
+    }
 }
