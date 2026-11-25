@@ -128,11 +128,22 @@ impl PartOffset {
 /// Head, torso and arms roll rigidly by the lean's roll about the hips, then slide sideways so the
 /// head centre, `head_rise` metres above the hips, ends up exactly the lean's shift to the side.
 /// The legs stay.
-// Not yet implemented: every part stays where it stands.
 #[must_use]
 pub fn leaned_parts(lean: Lean, tuning: &LeanTuning, head_rise: f32) -> [PartOffset; 6] {
-    let _ = (lean, tuning, head_rise);
-    [PartOffset::NONE; 6]
+    let rotation = Quat::from_rotation_z(lean.roll(tuning));
+    let rolled_head = rotation * Vec3::new(0.0, head_rise, 0.0);
+    let upper = PartOffset {
+        rotation,
+        translation: Vec3::new(-lean.shift(tuning) - rolled_head.x, 0.0, 0.0),
+    };
+    [
+        upper,
+        upper,
+        upper,
+        upper,
+        PartOffset::NONE,
+        PartOffset::NONE,
+    ]
 }
 
 #[cfg(test)]

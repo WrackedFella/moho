@@ -14,7 +14,7 @@ use moho_physics::{
 use searchlight_rules::{
     Accuracy, AccuracyTuning, Ballistics, Body, BodyPart, BodyProfile, Flight, FlightBounds, Grade,
     HitReport, ItemId, Lean, LeanReach, LeanSide, LeanTuning, Loadout, MagazineLevel, Rifle, Rig,
-    Shot, disc_offset,
+    Shot, disc_offset, leaned_parts,
 };
 
 use crate::arena::{Arena, FLIGHT_MARGIN, SETTLE_DT};
@@ -319,9 +319,10 @@ pub struct SearchlightSim {
     /// The arena's walkable area; empty for a sim without enemies.
     nav: Arc<NavMesh>,
     enemy: EnemyTuning,
-    /// Offset from the player's capsule centre to the part the enemies aim at, before the
-    /// player's yaw is applied.
-    aim_offset: Vec3,
+    /// The player's six hit volumes standing upright, which the lean is laid over.
+    upright_volumes: [HitVolume; 6],
+    /// The part of the player the enemies aim at.
+    aim_part: BodyPart,
     rng: SimRng,
     weapon: Weapon,
     lean: Lean,
@@ -435,11 +436,6 @@ impl SearchlightSim {
         world
             .set_hit_volumes(player, &player_volumes)
             .expect("the player was added a moment ago");
-        let aim_offset = player_volumes
-            .iter()
-            .find(|volume| volume.tag == SurfaceTag::Player(config.enemy_aim_at).into())
-            .expect("the player has a hit volume for every part")
-            .offset;
         let mut targets = Vec::new();
         for (index, &spawn) in spawns.dummies.iter().chain(&spawns.enemies).enumerate() {
             let enemy = (index >= spawns.dummies.len())
@@ -478,7 +474,8 @@ impl SearchlightSim {
             covers: spawns.covers.clone(),
             nav: spawns.nav.clone(),
             enemy: config.enemy,
-            aim_offset,
+            upright_volumes: player_volumes,
+            aim_part: config.enemy_aim_at,
             rng: SimRng::new(config.enemy.seed, SPREAD_STREAM),
             weapon: Weapon::Ready,
             lean: Lean::default(),
@@ -522,6 +519,9 @@ impl SearchlightSim {
         };
         self.world
             .move_character(self.player, &command.movement, &settings, dt)
+            .expect("the sim never removes the player");
+        self.world
+            .set_hit_volumes(self.player, &self.leaned_volumes())
             .expect("the sim never removes the player");
         self.world.step(dt);
         self.step_lean(command.lean, dt);
@@ -623,10 +623,38 @@ impl SearchlightSim {
         *self = Self::assemble(world, spawns, config);
     }
 
+    /// The player's hit volumes as the lean has them: head, torso and arms rolled about the
+    /// hips and slid so the head follows the leaned eye; the legs stay.
+    fn leaned_volumes(&self) -> [HitVolume; 6] {
+        let upright = &self.upright_volumes;
+        let [head, torso, ..] = upright;
+        let hip = Vec3::new(0.0, torso.offset.y - torso.half_extents.y, 0.0);
+        let head_rise = head.offset.y - hip.y;
+        let offsets = leaned_parts(self.lean, &self.lean_tuning, head_rise);
+        std::array::from_fn(|i| {
+            let (point, rotation) = offsets[i].apply(upright[i].offset - hip, upright[i].rotation);
+            HitVolume {
+                offset: point + hip,
+                rotation,
+                ..upright[i]
+            }
+        })
+    }
+
+    /// Where the centre of `part` is in the world, with the lean as it stands now.
+    fn leaned_centre(&self, part: BodyPart) -> Vec3 {
+        let state = self.player();
+        let volumes = self.leaned_volumes();
+        let volume = volumes
+            .iter()
+            .find(|volume| volume.tag == SurfaceTag::Player(part).into())
+            .expect("the player has a hit volume for every part");
+        state.position + Quat::from_rotation_y(state.yaw) * volume.offset
+    }
+
     /// Where the enemies aim: the chosen part of the player's body as it stands now.
     fn player_aim_point(&self) -> Vec3 {
-        let state = self.player();
-        state.position + Quat::from_rotation_y(state.yaw) * self.aim_offset
+        self.leaned_centre(self.aim_part)
     }
 
     /// Lets every living enemy look for the player, think and move; returns the indices of
@@ -634,9 +662,14 @@ impl SearchlightSim {
     fn move_enemies(&mut self, dt: f32) -> Vec<usize> {
         let aim = self.player_aim_point();
         let threat = Threat {
-            eye: self.player().eye_position(),
+            eye: self.player_eye(),
             aim,
         };
+        let sight_points = [
+            self.player_eye(),
+            self.leaned_centre(BodyPart::Head),
+            self.leaned_centre(BodyPart::Torso),
+        ];
         let mut claims: Vec<Option<usize>> = self
             .targets
             .iter()
@@ -660,16 +693,18 @@ impl SearchlightSim {
                 .character(handle)
                 .expect("a living enemy is in the world");
             let eye = state.eye_position();
-            let sees_player = resolve_shot(
-                &self.world,
-                ShotRay {
-                    origin: eye,
-                    direction: aim - eye,
-                    range: tuning.sight_range,
-                    ignore: Some(handle),
-                },
-            )
-            .is_some_and(|strike| matches!(strike.tag, SurfaceTag::Player(_)));
+            let sees_player = sight_points.iter().any(|&point| {
+                resolve_shot(
+                    &self.world,
+                    ShotRay {
+                        origin: eye,
+                        direction: point - eye,
+                        range: tuning.sight_range,
+                        ignore: Some(handle),
+                    },
+                )
+                .is_some_and(|strike| matches!(strike.tag, SurfaceTag::Player(_)))
+            });
             let under_fire = target.under_fire.take();
             let offer = under_fire.and_then(|_| {
                 let taken: Vec<usize> = claims
