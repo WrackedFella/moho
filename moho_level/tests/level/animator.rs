@@ -10,7 +10,6 @@ use tempfile::TempDir;
 
 use crate::support::humanoid::{HumanoidSpec, RELOAD_DURATION, write_humanoid};
 
-/// One simulation tick.
 const TICK: f32 = 1.0 / 60.0;
 
 /// A reload of 2.6 s at 60 Hz.
