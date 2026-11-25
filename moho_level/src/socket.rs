@@ -148,10 +148,8 @@ impl<K: Copy> Assembly<K> {
         let node = |index: usize| pose.map_or(model.nodes()[index].rest, |p| p.nodes()[index]);
         out.extend(
             model
-                .meshes()
-                .iter()
-                .enumerate()
-                .map(|(mesh, m)| (self.model, mesh, root * node(m.node))),
+                .placed(root, &node)
+                .map(|(mesh, transform)| (self.model, mesh, transform)),
         );
         for part in &self.parts {
             part.assembly

@@ -324,7 +324,7 @@ impl Model {
     }
 
     /// For each mesh in order, its index and `root * transform(mesh.node)`.
-    fn placed<'a>(
+    pub(crate) fn placed<'a>(
         &'a self,
         root: Affine3A,
         transform: impl Fn(usize) -> Affine3A + 'a,
