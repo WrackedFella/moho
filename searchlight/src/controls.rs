@@ -18,6 +18,16 @@ impl Row {
     fn holds(&self, binding: Binding) -> bool {
         self.slots.contains(&Some(binding)) || self.rest.contains(&binding)
     }
+
+    /// Empties every position holding `binding`.
+    fn remove(&mut self, binding: Binding) {
+        for slot in &mut self.slots {
+            if *slot == Some(binding) {
+                *slot = None;
+            }
+        }
+        self.rest.retain(|held| *held != binding);
+    }
 }
 
 /// The bindings the Controls page edits: every action's two slots, and any bindings beyond them.
@@ -110,24 +120,14 @@ impl ControlsDraft {
             return;
         };
         if let Some(row) = self.rows.iter_mut().find(|row| row.action == pending.by) {
-            for slot in &mut row.slots {
-                if *slot == Some(pending.binding) {
-                    *slot = None;
-                }
-            }
-            row.rest.retain(|held| *held != pending.binding);
+            row.remove(pending.binding);
         }
         if let Some(row) = self
             .rows
             .iter_mut()
             .find(|row| row.action == pending.target)
         {
-            for slot in &mut row.slots {
-                if *slot == Some(pending.binding) {
-                    *slot = None;
-                }
-            }
-            row.rest.retain(|held| *held != pending.binding);
+            row.remove(pending.binding);
             row.slots[index(pending.slot)] = Some(pending.binding);
         }
     }
