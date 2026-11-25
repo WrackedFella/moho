@@ -1,9 +1,11 @@
 //! Shared builders for the crate's tests: small hand-made worlds and tuning values.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::io::Write;
+use std::sync::{Arc, Mutex};
 
 use glam::{Quat, Vec3};
+use moho_core::assets::AssetRoots;
 use moho_input::Action;
 use moho_input::action_map::ActionMap;
 use moho_input::bindings::Input;
@@ -16,6 +18,7 @@ use searchlight_rules::{
 };
 
 use crate::arena::{Arena, ArenaControl, nav_profile};
+use crate::assets_root;
 use crate::brain::EnemyTuning;
 use crate::control::ControlAction;
 use crate::input::{SearchlightAction, SearchlightCommand};
@@ -371,6 +374,35 @@ pub(crate) fn run_until_settled(
         command = &rest;
     }
     panic!("a round was still in flight after {FLIGHT_TICK_CAP} ticks");
+}
+
+/// The asset roots every test uses: the committed placeholders alone, never a named folder.
+pub(crate) fn placeholder_assets() -> AssetRoots {
+    AssetRoots::placeholders(&assets_root()).expect("the committed placeholder folder exists")
+}
+
+/// Collects what `tracing` writes while `run` executes.
+pub(crate) fn logged(run: impl FnOnce()) -> String {
+    struct Sink(Arc<Mutex<Vec<u8>>>);
+    impl Write for Sink {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("log sink").extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let writer = Arc::clone(&buffer);
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || Sink(Arc::clone(&writer)))
+        .with_ansi(false)
+        .finish();
+    tracing::subscriber::with_default(subscriber, run);
+    let bytes = buffer.lock().expect("log sink").clone();
+    String::from_utf8(bytes).expect("log output is utf-8")
 }
 
 /// A level marker named `name` at `position`, with no properties.
