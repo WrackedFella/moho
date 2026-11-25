@@ -311,6 +311,13 @@ impl GenerationProcessor {
                 )
             })
             .unwrap_or_default();
+        if standing.len() < flagstone_game::crew::CREW_SIZE {
+            tracing::warn!(
+                wanted = flagstone_game::crew::CREW_SIZE,
+                found = standing.len(),
+                "Too little ground for a full crew"
+            );
+        }
         let mut positions = standing.into_iter().map(cell_spawn_position);
         let first = positions
             .next()
@@ -647,6 +654,80 @@ mod tests {
             None,
             "a new world's second pawn is not the old world's"
         );
+    }
+
+    #[test]
+    fn a_new_world_releases_the_claims_of_the_old_crew() {
+        let mut app = App::headless();
+        let spec = flagstone_game::scene_builders::WorldSpec {
+            name: "headless-test-new-world-claims".to_string(),
+            seed: Some(7),
+            size_xz: 64,
+            day_length_seconds: 600.0,
+            night_length_seconds: 420.0,
+            initial_time_of_day: 6.0,
+        };
+        let scene_bytes = flagstone_game::scene_persistence::encode_to_bytes(
+            &flagstone_game::scene::SceneEntities::default(),
+            None,
+            &[],
+        )
+        .expect("encode empty scene");
+        app.colony.marks.toggle([2, 3, 4]);
+        assert!(
+            app.colony
+                .marks
+                .claim([2, 3, 4], flagstone_game::pawn::PawnId(0)),
+            "setup"
+        );
+
+        GenerationProcessor::new().handle_completed(
+            &mut app,
+            scene_bytes,
+            spec,
+            flagstone_game::scene_builders::TerrainConfig::default(),
+            flagstone_voxel::VoxelGrid::new(16),
+        );
+
+        assert_eq!(
+            app.colony.marks.unclaimed().collect::<Vec<_>>(),
+            [[2, 3, 4]],
+            "the old crew's claim outlives it"
+        );
+    }
+
+    #[test]
+    fn spawn_surface_prefers_level_ground_over_the_first_column_beside_a_step() {
+        let mut grid = flagstone_voxel::VoxelGrid::new(16);
+        grid.mutator().fill_region(
+            flagstone_voxel::BlockPos::new(-8, 0, -8),
+            flagstone_voxel::BlockPos::new(8, 0, 8),
+            1,
+        );
+        grid.mutator()
+            .place(flagstone_voxel::BlockPos::new(0, 1, 0), 1, None);
+
+        let surface = spawn_surface(&grid);
+
+        assert_eq!(
+            surface,
+            Some(glam::IVec3::new(-3, 0, -3)),
+            "the first column whose 5x5 neighbourhood misses the step"
+        );
+    }
+
+    #[test]
+    fn spawn_surface_falls_back_to_the_first_column_found_without_level_ground() {
+        let mut grid = flagstone_voxel::VoxelGrid::new(16);
+        for x in [-1, 1] {
+            grid.mutator()
+                .place(flagstone_voxel::BlockPos::new(x, 0, 0), 1, None);
+        }
+
+        let surface = spawn_surface(&grid);
+
+        assert_eq!(surface, Some(glam::IVec3::new(-1, 0, 0)));
+        assert_eq!(spawn_surface(&flagstone_voxel::VoxelGrid::new(16)), None);
     }
 
     #[test]

@@ -70,6 +70,13 @@ impl MineMarks {
         }
     }
 
+    /// Frees every claim; the marks stay.
+    pub fn release_all(&mut self) {
+        for mark in self.marks.values_mut() {
+            mark.claimed_by = None;
+        }
+    }
+
     /// The marks nobody holds, in key order.
     pub fn unclaimed(&self) -> impl Iterator<Item = [i32; 3]> + '_ {
         self.iter()
@@ -160,6 +167,24 @@ mod tests {
             .iter()
             .find(|(p, _)| *p == pos)
             .and_then(|(_, mark)| mark.claimed_by)
+    }
+
+    #[test]
+    fn release_all_frees_every_claim_and_keeps_every_mark() {
+        let mut marks = MineMarks::default();
+        for pos in [[1, 1, 1], [3, 4, 5], [9, 0, 0]] {
+            marks.toggle(pos);
+        }
+        marks.claim([1, 1, 1], PawnId(0));
+        marks.claim([9, 0, 0], PawnId(2));
+
+        marks.release_all();
+
+        assert_eq!(
+            marks.unclaimed().collect::<Vec<_>>(),
+            [[1, 1, 1], [3, 4, 5], [9, 0, 0]]
+        );
+        assert_eq!(marked(&marks).len(), 3, "the marks stay");
     }
 
     #[test]

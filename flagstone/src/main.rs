@@ -204,6 +204,8 @@ impl App {
         self.crew = flagstone_game::crew::Crew::default();
         // Selection names a pawn of the old crew; the new one's ids mean other pawns.
         self.selection = flagstone_game::selection::Selection::default();
+        // The old crew's claims name pawns that no longer exist; new pawns reuse their ids.
+        self.colony.marks.release_all();
         self.possessed = self.crew.spawn(flagstone_game::pawn::Pawn::default());
         self.physics.spawn_possessed(self.possessed, first);
         for spawn in rest {

@@ -447,6 +447,43 @@ mod tests {
         assert_eq!(app.selection.selected(), None, "a pawn of the old world");
     }
 
+    #[test]
+    fn a_load_releases_the_claims_of_the_old_crew() {
+        use flagstone_game::pawn::PawnId;
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut saved = crate::App::headless();
+        saved.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
+        saved
+            .entities
+            .chunks
+            .insert(crate::app::world_geometry::tests::chunk_at(
+                glam::IVec3::new(7, 0, 7),
+            ));
+        crate::app::autosave::auto_save_on_shutdown(
+            &mut saved,
+            &moho_app::GameClock::default(),
+            temp.path(),
+            &[],
+        )
+        .expect("autosave");
+        let mut app = crate::App::headless();
+        app.colony.marks.toggle([2, 3, 4]);
+        assert!(app.colony.marks.claim([2, 3, 4], PawnId(0)), "setup");
+
+        crate::app::scene_loader::load_scene(
+            &mut app,
+            &mut moho_app::GameClock::default(),
+            &temp.path().join("scene.bin"),
+        )
+        .expect("load");
+
+        assert_eq!(
+            app.colony.marks.unclaimed().collect::<Vec<_>>(),
+            [[2, 3, 4]],
+            "the old crew's claim outlives it, and the new pawn 0 can never take the mark"
+        );
+    }
+
     fn stale_floor_mesh() -> moho_render_api::WorldMesh {
         moho_render_api::WorldMesh::new(
             vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
