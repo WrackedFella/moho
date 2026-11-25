@@ -382,12 +382,16 @@ pub(crate) mod tests {
         app.scene.world_meshes_mut().flush(&mut backend);
         let terrain_draws = app.scene.world_meshes_mut().draws().count();
         cut_and_draw(&mut app, &mut backend, Some(18.0));
-        let mut cap_handles: Vec<u32> = drawn_caps(&mut app, &backend)
+        let mut cap_handles: Vec<u32> = every_drawn_cap(&mut app, &backend)
             .iter()
             .map(|c| c.handle)
             .collect();
         cap_handles.sort_unstable();
-        assert_eq!(cap_handles.len(), 2, "the caps exist before the cut clears");
+        assert_eq!(
+            drawn_caps(&mut app, &backend).len(),
+            2,
+            "the caps exist before the cut clears"
+        );
 
         cut_and_draw(&mut app, &mut backend, None);
 

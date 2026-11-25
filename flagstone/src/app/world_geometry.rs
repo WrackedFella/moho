@@ -1,8 +1,12 @@
 //! Hands voxel chunk meshes to the renderer through the world-geometry contract.
 
 use crate::App;
+use crate::app::chunk_streamer::MIN_CHUNK_Y;
 use crate::app::cut_caps::CutCaps;
-use flagstone_voxel::{DIRT, GRASS, MaterialRegistry, MaterialType, VoxelChunk};
+use crate::app::event_loop::event_processor::{lod_for_chunk, lod_player_chunk};
+use flagstone_voxel::{
+    DIRT, GRASS, MaterialRegistry, MaterialType, VoxelChunk, chunks_meshed_from,
+};
 use glam::IVec3;
 use moho_physics::{HitTag, PhysicsWorld};
 use moho_render_api::{WorldMesh, WorldMeshError, WorldMeshId};
@@ -157,7 +161,11 @@ fn drop_chunk_mesh(scene: &mut Scene, physics: Option<&mut PhysicsWorld>, id: Wo
 /// Put `chunk` in the store and hand its mesh to the renderer and physics,
 /// replacing any previous chunk at that position. Its cut-face cap is rebuilt on the
 /// next cap refresh.
+///
+/// A chunk the grid stores also draws the faces it owes the empty chunks behind it; see
+/// [`remesh_unstored_behind`].
 pub fn insert_chunk(app: &mut App, chunk: VoxelChunk) -> Option<VoxelChunk> {
+    let pos = chunk.chunk_pos();
     upsert_chunk_mesh(
         &mut app.scene,
         app.physics.world.as_mut(),
@@ -166,10 +174,15 @@ pub fn insert_chunk(app: &mut App, chunk: VoxelChunk) -> Option<VoxelChunk> {
         &app.terrain_palette,
         &chunk,
     );
-    app.entities.chunks.insert(chunk)
+    let previous = app.entities.chunks.insert(chunk);
+    if grid_stores(app, pos) {
+        remesh_unstored_behind(app, pos);
+    }
+    previous
 }
 
 /// Take the chunk at `pos` out of the store, the renderer and physics, with its cap.
+/// The empty chunks behind it are remeshed, so a face it owed them leaves with it.
 pub fn remove_chunk(app: &mut App, pos: IVec3) -> Option<VoxelChunk> {
     remove_chunk_mesh(
         &mut app.scene,
@@ -177,7 +190,56 @@ pub fn remove_chunk(app: &mut App, pos: IVec3) -> Option<VoxelChunk> {
         &mut app.cut_caps,
         pos,
     );
-    app.entities.chunks.remove(pos)
+    let removed = app.entities.chunks.remove(pos);
+    remesh_unstored_behind(app, pos);
+    removed
+}
+
+fn grid_stores(app: &App, pos: IVec3) -> bool {
+    app.light_system
+        .as_ref()
+        .is_some_and(|light| light.grid().has_chunk(pos))
+}
+
+/// A chunk's first-layer faces are drawn by the chunks behind it, and the game meshes only
+/// chunks the grid stores. So mesh each chunk behind `pos` that the grid does not store,
+/// and not below the world floor: with geometry it is drawn and solid, without it leaves
+/// the store, the renderer and physics.
+fn remesh_unstored_behind(app: &mut App, pos: IVec3) {
+    let Some(light) = app.light_system.as_ref() else {
+        return;
+    };
+    let grid = light.grid();
+    let player_chunk = lod_player_chunk(app.simulation.position());
+    let behind: Vec<(IVec3, Option<VoxelChunk>)> =
+        chunks_meshed_from(pos * grid.chunk_size(), grid.chunk_size())
+            .filter(|&behind| behind != pos && behind.y >= MIN_CHUNK_Y && !grid.has_chunk(behind))
+            .map(|behind| {
+                let lod = lod_for_chunk(behind, player_chunk);
+                let chunk = VoxelChunk::from_grid_lod(grid, behind, lod);
+                (behind, chunk.has_geometry().then_some(chunk))
+            })
+            .collect();
+    for (behind, chunk) in behind {
+        if let Some(chunk) = chunk {
+            upsert_chunk_mesh(
+                &mut app.scene,
+                app.physics.world.as_mut(),
+                &mut app.cut_caps,
+                app.terrain_material_idx,
+                &app.terrain_palette,
+                &chunk,
+            );
+            app.entities.chunks.insert(chunk);
+        } else if app.entities.chunks.remove(behind).is_some() {
+            remove_chunk_mesh(
+                &mut app.scene,
+                app.physics.world.as_mut(),
+                &mut app.cut_caps,
+                behind,
+            );
+        }
+    }
 }
 
 /// Hand every stored chunk's mesh to the renderer and physics; their cut-face caps
