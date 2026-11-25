@@ -1,13 +1,13 @@
 //! Deterministic math for simulation code: transcendentals computed by `libm`, never by the platform.
 
 /// Sine and cosine of `angle` radians, as `(sin, cos)`.
-pub fn sin_cos(_angle: f32) -> (f32, f32) {
-    todo!()
+pub fn sin_cos(angle: f32) -> (f32, f32) {
+    (libm::sinf(angle), libm::cosf(angle))
 }
 
 /// Angle in radians of the point `(x, y)`, as `libm::atan2f(y, x)`.
-pub fn atan2(_y: f32, _x: f32) -> f32 {
-    todo!()
+pub fn atan2(y: f32, x: f32) -> f32 {
+    libm::atan2f(y, x)
 }
 
 #[cfg(test)]
