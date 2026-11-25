@@ -265,24 +265,29 @@ impl ClipPlayer {
     /// When `model` has fewer clips than the one this player was made on.
     pub fn advance(&mut self, model: &Model, dt: f32) {
         let duration = model.clips()[self.clip].duration();
-        if let Playback::Ticks(total) = self.playback {
-            self.elapsed = (self.elapsed + 1).min(total.get());
-            self.time = duration * (self.elapsed as f32 / total.get() as f32);
-            return;
+        match self.playback {
+            Playback::Ticks(total) => {
+                self.elapsed = (self.elapsed + 1).min(total.get());
+                self.time = duration * (self.elapsed as f32 / total.get() as f32);
+            }
+            Playback::Loop => self.step(dt, duration, true),
+            Playback::Once => self.step(dt, duration, false),
         }
+    }
+
+    /// Add `dt * speed` to the time, wrapping when `wrap` and clamping otherwise.
+    fn step(&mut self, dt: f32, duration: f32, wrap: bool) {
         let step = dt * self.speed;
         if !step.is_finite() || duration <= 0.0 {
             return;
         }
         let time = self.time + step;
-        self.time = match self.playback {
+        self.time = if wrap {
             // A tiny negative time rounds up to exactly `duration`, which is the next loop's 0.
-            Playback::Loop => {
-                let wrapped = time.rem_euclid(duration);
-                if wrapped < duration { wrapped } else { 0.0 }
-            }
-            Playback::Once => time.clamp(0.0, duration),
-            Playback::Ticks(_) => unreachable!("Ticks playback returned above"),
+            let wrapped = time.rem_euclid(duration);
+            if wrapped < duration { wrapped } else { 0.0 }
+        } else {
+            time.clamp(0.0, duration)
         };
     }
 
