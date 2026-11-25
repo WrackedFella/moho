@@ -42,7 +42,7 @@ pub struct AssetRoots {
 }
 
 impl AssetRoots {
-    /// The bottom layer.
+    /// Starts the search order with `path` as the lowest layer.
     ///
     /// # Errors
     /// [`AssetError::MissingFolder`] when `path` is not a folder.
