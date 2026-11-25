@@ -54,7 +54,7 @@ sequenceDiagram
     participant Bus as EventBus
     participant Sim as Simulation + Physics
     participant LS as LightSystem
-    T->>T: clock time scale = 1 if Playing, else 0<br/>autosave schedule and pawn pickup feed tick (Playing only)
+    T->>T: clock time scale = 1 if Playing, else 0<br/>autosave schedule and possessed pawn's pickup feed tick (Playing only)
     T->>Bus: SystemEvent::FrameStart
     T->>Sim: apply command, update_game_state (Playing only)
     Note over Sim: KCC: command → physics character (look + move) → camera;<br/>free-fly: controller input → camera;<br/>step rigid bodies
@@ -72,7 +72,7 @@ gets that tick's advance on top.
 
 All gameplay steps early-return unless `GameState::Playing`. `dt` is the fixed tick length.
 
-In the strategy view the unpossessed pawn's job runs in the tick right after the camera input is applied ([input](input-and-state.md#2-pointer-picking)); its dig publishes the same block events, from the tick rather than the input drain.
+In the strategy view every pawn's job runs (`jobs::step_crew`, pawns in id order) in the tick right after the camera input is applied ([input](input-and-state.md#2-pointer-picking)); their digs publish the same block events, from the tick rather than the input drain.
 
 Mining publishes its block event while `process_input_events` drains, after
 `process_world_events`, so the light system queues the edit on the next tick and lights it in

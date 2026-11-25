@@ -74,7 +74,7 @@ exists, whatever the save holds (block records, saved meshes, or neither):
 3. The grid is lit (`light_arrived_chunks`), the spawn-area chunks are meshed with
    `VoxelChunk::from_grid_hybrid` and inserted through `world_geometry::insert_chunk`, so
    their colliders exist when physics initialises.
-4. `App::setup_physics_for_loaded_world` (`flagstone/src/main.rs`) places the pawn 3 blocks
+4. `App::setup_physics_for_loaded_world` (`flagstone/src/main.rs`) places the possessed pawn, the only one a loaded save has, 3 blocks
    above the surface at the saved column, searching outward up to 4 columns in rings for the
    nearest column with a block. With no terrain in range it keeps the saved position and
    logs a warning.
@@ -125,5 +125,9 @@ Chunks are 16³ voxels; columns span chunk Y 0..=8.
 
 - New-world generation runs as a background job polled by `GenerationProcessor`
   (`poll_generation`); on completion it publishes `ChunkMeshDirty` for the preloaded
-  area and enters `Playing`.
+  area and enters `Playing`. It also spawns the crew (`App::spawn_crew`): `spawn_surface`
+  (`generation_processor.rs`) picks the surface cell, preferring a column whose surrounding
+  heights (`LEVEL_RADIUS`) are level, `flagstone_game::crew::spawn_cells` picks the `CREW_SIZE`
+  standable cells nearest it (one per column), and each pawn gets a body at its cell. The
+  first pawn is possessed. The selection is cleared.
 - Chunk meshing runs on the main thread in `process_world_events`; there is no background mesh job queue.
