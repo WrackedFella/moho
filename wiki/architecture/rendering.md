@@ -259,7 +259,8 @@ model, a clip and a time; it never changes the model.
   game places with `place_skinned` instead (section 2, 5.2). `joint_palette(skin, &pose)` is
   `pose[joint] * inverse_bind` per joint in model space, the palette a skinned placement takes.
 
-The game glue, one player per character, each tick or frame:
+The game glue, one player per character. The fixed tick advances the player (ADR-0039); the
+frame only poses it, so the drawn pose is the one the sim read:
 
 ```rust
 // Load time: a skinned mesh uploads once with its skin.
@@ -271,8 +272,10 @@ for (mesh, &id) in model.meshes().iter().zip(&ids) {
     world_meshes.upsert_movable(id, upload);
 }
 
+// Each fixed tick (the sim owns the player; rules read bones from this pose):
+player.advance(&model, TICK);
+
 // Each frame:
-player.advance(&model, dt);
 let pose = player.pose(&model);
 // Rigid meshes on their posed nodes; skinned meshes at the root with their palette.
 for (i, t) in model.posed_placements(root, &pose) {
