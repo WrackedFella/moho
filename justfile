@@ -13,7 +13,7 @@ fmt:
     cargo fmt --all
 
 # Gate: formatting, lints, tests, doctests, comment refs and layering. Must pass before any commit.
-check: fmt-check lint test test-doc comment-refs layering run-record-test assets-check
+check: fmt-check lint test test-doc comment-refs layering run-record-test chain-test assets-check
 
 fmt-check:
     cargo fmt --all --check
@@ -133,6 +133,25 @@ merge-eligibility-test:
         fi
     done < "$f/cases.txt"
     echo "merge-eligibility: OK"
+
+# Self-test of the chain rules: each case edits two queued items' facts and expects
+# decide's lines (tabs shown as ":").
+chain-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    f=scripts/fixtures/chain
+    facts="$(mktemp)"
+    trap 'rm -f "$facts"' EXIT
+    while IFS=$'\t' read -r edit want; do
+        [[ -z $edit || $edit == \#* ]] && continue
+        jq "$edit" "$f/queued.json" > "$facts"
+        got="$(scripts/chain.sh decide "$facts" | tr '\t' ':' | paste -sd'|' | sed 's/|/ | /g')"
+        if [[ $got != "$want" ]]; then
+            echo "chain [$edit]: expected '$want', got '$got'" >&2
+            exit 1
+        fi
+    done < "$f/cases.txt"
+    echo "chain: OK"
 
 # Self-test of the orchestrate eval scoring against fixtures: review cause classes (a
 # needs-decision outside the Blockers section doesn't count), main-loop context per call,

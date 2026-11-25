@@ -1,0 +1,17 @@
+# <jq edit of queued.json> <TAB> <expected decide output, lines joined by " | ", tabs as ":">
+.	start:721:-:no open blocker | wait:722:blocked:1 open blocker(s)
+.items |= reverse	start:721:-:no open blocker | wait:722:blocked:1 open blocker(s)
+.active = 1	wait:721:cap:run cap reached (1) | wait:722:blocked:1 open blocker(s)
+.active = 3	wait:721:cap:run cap reached (1) | wait:722:blocked:1 open blocker(s)
+.items[1].open_blockers = 0 | .cap = 2	start:721:-:no open blocker | start:722:-:no open blocker
+.items[1].open_blockers = 0	start:721:-:no open blocker | wait:722:cap:run cap reached (1)
+.items[0].labels += ["agent-ready"]	wait:721:running:already agent-ready | wait:722:blocked:1 open blocker(s)
+.items[0].labels += ["agent-paused"]	wait:721:paused:labelled agent-paused | wait:722:blocked:1 open blocker(s)
+.items[0].labels += ["needs-human"]	wait:721:needs-human:labelled needs-human | wait:722:blocked:1 open blocker(s)
+.items[0].eligible = "no"	comment:721:human-driven:The chain stops here: this item is human-driven (`eligible=no`). Run it in a session; the chain continues when it closes. | wait:722:blocked:1 open blocker(s)
+.items[0].eligible = "no" | .items[0].markers = ["human-driven"]	wait:721:human-driven:reported | wait:722:blocked:1 open blocker(s)
+.items[0].eligible = null	start:721:-:no open blocker | wait:722:blocked:1 open blocker(s)
+.items[0].blockers[0].state_reason = "not_planned"	comment:721:blocker-dropped:The chain stops here: blocker #720 closed without completing. A person decides whether this item still runs; remove the dependency to let it start. | wait:722:blocked:1 open blocker(s)
+.items[0].blockers[0].state_reason = "duplicate" | .items[0].markers = ["blocker-dropped"]	wait:721:blocker-dropped:reported | wait:722:blocked:1 open blocker(s)
+.items[0].open_blockers = null	wait:721:blocked:unknown open blocker(s) | wait:722:blocked:1 open blocker(s)
+.items = []	
