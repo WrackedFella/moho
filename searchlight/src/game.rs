@@ -1048,7 +1048,7 @@ impl SearchlightGame {
         let Some(draft) = &mut self.controls else {
             return;
         };
-        if let Capture::Conflict { by, .. } = draft.capture(action, input) {
+        if let Capture::Conflict { by, .. } = draft.capture(action, Slot::Primary, input) {
             let dialog = conflict_screen(&Binding::from(input).label(), label(by));
             self.stage.shell().menu_mut().push(dialog);
             return;
@@ -5376,6 +5376,43 @@ mod tests {
         assert_eq!(
             saved.get(SearchlightAction::Fire),
             [Binding::mouse(MouseButton::Right)]
+        );
+    }
+
+    #[test]
+    fn an_applied_secondary_does_the_action_beside_the_primary() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        focus_control(&game, SearchlightAction::Reload);
+        press_keys(&mut game, &mut ctx, &[Key::ArrowRight, Key::Enter]);
+        game.route_input(&mut ctx, KEY_T, true, false);
+        game.route_input(&mut ctx, KEY_T, false, false);
+        let staged = control_row(&game, SearchlightAction::Reload);
+        press_item(&mut game, &mut ctx, "Apply", is_apply);
+        game.enter_play();
+
+        let reload_on_r = reloads(tap(&mut game, &mut ctx, KEY_R));
+        let reload_on_t = reloads(tap(&mut game, &mut ctx, KEY_T));
+
+        assert_eq!(
+            staged.0,
+            [Some(Binding::key(Key::R)), Some(Binding::key(Key::T))]
+        );
+        assert!(reload_on_r, "the primary still reloads");
+        assert!(reload_on_t, "the secondary reloads");
+        let (prefs, _warnings) = Prefs::load_from(&path);
+        let (_toggle_keys, without_fullscreen) =
+            moho_app::split_fullscreen_binding(prefs.bindings());
+        let (_console, section) = crate::split_console_binding(&without_fullscreen);
+        let (saved, _game_warnings) = ActionBindings::<SearchlightAction>::load(&section);
+        assert_eq!(
+            saved.get(SearchlightAction::Reload),
+            [Binding::key(Key::R), Binding::key(Key::T)],
+            "Apply saved both"
         );
     }
 

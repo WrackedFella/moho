@@ -165,7 +165,7 @@ mod tests {
     use moho_core::prefs::Prefs;
     use moho_input::bindings::{Action, ActionBindings, Binding, Input};
     use moho_input::key::{Key, MouseButton};
-    use moho_ui_shell::GameSlider;
+    use moho_ui_shell::{GameSlider, Slot};
 
     use super::*;
     use crate::controls::label;
@@ -330,10 +330,33 @@ mod tests {
     }
 
     #[test]
+    fn check_magazine_shows_hold_r_as_its_secondary() {
+        let draft = ControlsDraft::new(&default_bindings());
+
+        let rows = control_rows(&controls_screen(&draft));
+
+        let at = SearchlightAction::ALL
+            .iter()
+            .position(|&a| a == SearchlightAction::CheckMagazine)
+            .expect("the action is listed");
+        assert_eq!(
+            rows[at].1,
+            [
+                Some(Binding::key(Key::C)),
+                Some(Binding::key(Key::R).held())
+            ]
+        );
+    }
+
+    #[test]
     fn controls_shows_the_input_a_draft_holds() {
         let mut draft = ControlsDraft::new(&default_bindings());
-        draft.capture(SearchlightAction::Reload, Input::Key(Key::T));
-        draft.capture(SearchlightAction::Fire, Input::Mouse(MouseButton::Right));
+        draft.capture(SearchlightAction::Reload, Slot::Primary, Input::Key(Key::T));
+        draft.capture(
+            SearchlightAction::Fire,
+            Slot::Primary,
+            Input::Mouse(MouseButton::Right),
+        );
 
         let rows = control_rows(&controls_screen(&draft));
 

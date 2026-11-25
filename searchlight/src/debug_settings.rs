@@ -455,7 +455,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config/searchlight.ini");
         let mut settings = settings_at(&path);
-        let bindings = rebound();
+        let mut bindings = rebound();
+        bindings.set(
+            SearchlightAction::Reload,
+            vec![Binding::key(Key::T), Binding::key(Key::Y)],
+        );
 
         settings.set_bindings(&bindings).unwrap();
         let (prefs, warnings) = Prefs::load_from(&path);
