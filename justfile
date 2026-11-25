@@ -145,7 +145,7 @@ chain-test:
     while IFS=$'\t' read -r edit want; do
         [[ -z $edit || $edit == \#* ]] && continue
         jq "$edit" "$f/queued.json" > "$facts"
-        got="$(scripts/chain.sh decide "$facts" | tr '\t' ':' | paste -sd'|' | sed 's/|/ | /g')"
+        got="$(scripts/chain.sh decide "$facts" | tr -d '\r' | tr '\t' ':' | awk '{ printf "%s%s", (NR > 1 ? " | " : ""), $0 }')"
         if [[ $got != "$want" ]]; then
             echo "chain [$edit]: expected '$want', got '$got'" >&2
             exit 1
