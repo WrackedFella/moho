@@ -2553,6 +2553,12 @@ mod tests {
                 with.step(DT);
                 without.step(DT);
                 if tick == 40 {
+                    for &(kept_id, _) in &kept {
+                        assert!(
+                            !read(&with, kept_id).asleep,
+                            "removed {removed}: a kept object is awake at tick 40"
+                        );
+                    }
                     with.remove_loose(ids[removed])
                         .expect("the object is alive");
                 }
@@ -2597,8 +2603,14 @@ mod tests {
         let other = world.spawn_loose(&spawns[1]);
         run(&mut world, 40);
         world.remove_loose(gone).expect("the object is alive");
+        let mut ticks = 0;
+        while ticks < 600 && !read(&world, other).asleep {
+            world.step(DT);
+            ticks += 1;
+        }
         let state = read(&world, other);
         let count = world.loose_count();
+        assert!(state.asleep, "the other object sleeps within 600 ticks");
 
         let second = world.remove_loose(gone);
 

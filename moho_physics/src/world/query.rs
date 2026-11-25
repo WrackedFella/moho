@@ -463,9 +463,91 @@ mod tests {
             ..look
         });
 
-        assert_eq!(past_a_capsule, Some(id));
-        assert_eq!(behind_a_hit_volume, None);
-        assert_eq!(ignoring_the_character, Some(id));
+        assert_eq!(
+            past_a_capsule,
+            Some(id),
+            "an untagged capsule between eye and box must not hide the box"
+        );
+        assert_eq!(
+            behind_a_hit_volume, None,
+            "a tagged hit volume between eye and box must hide the box"
+        );
+        assert_eq!(
+            ignoring_the_character,
+            Some(id),
+            "ignoring the character must let the look through its hit volumes"
+        );
+    }
+
+    fn spawn_box_at(world: &mut PhysicsWorld, x: f32) -> LooseId {
+        world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(x, 0.0, 0.0),
+            ..LooseSpawn::new(
+                LooseShape::Box {
+                    half_extents: Vec3::splat(0.2),
+                },
+                1.0,
+            )
+        })
+    }
+
+    #[test]
+    fn a_degenerate_look_finds_nothing_though_a_good_one_finds_the_box() {
+        let (world, id) = weightless_world_with_box_at_x5();
+        let good = along_x(20.0);
+        let directions = [
+            Vec3::ZERO,
+            Vec3::new(f32::NAN, 0.0, 0.0),
+            Vec3::new(f32::INFINITY, 0.0, 0.0),
+            Vec3::new(1.0, f32::NEG_INFINITY, 0.0),
+            Vec3::new(1.0, 0.0, f32::NAN),
+        ];
+
+        let control = world.pick_loose(&good);
+
+        assert_eq!(control, Some(id), "a good look finds the box");
+        for direction in directions {
+            let picked = world.pick_loose(&RayQuery { direction, ..good });
+            assert_eq!(picked, None, "direction {direction:?}");
+        }
+        for max_distance in [0.0, -1.0, f32::NEG_INFINITY, f32::NAN] {
+            let picked = world.pick_loose(&along_x(max_distance));
+            assert_eq!(picked, None, "max_distance {max_distance}");
+        }
+    }
+
+    #[test]
+    fn a_look_reports_the_nearer_of_two_boxes() {
+        let mut world = PhysicsWorld::new();
+        world.set_gravity(0.0);
+        let near = spawn_box_at(&mut world, 3.0);
+        let far = spawn_box_at(&mut world, 6.0);
+        world.step(DT);
+
+        let both = world.pick_loose(&along_x(20.0));
+        let far_only = world.pick_loose(&RayQuery {
+            origin: Vec3::new(4.0, 0.0, 0.0),
+            ..along_x(20.0)
+        });
+
+        assert_eq!(both, Some(near), "the nearer box hides the farther");
+        assert_eq!(
+            far_only,
+            Some(far),
+            "past the near box the far one is found"
+        );
+        assert_ne!(near, far);
+    }
+
+    #[test]
+    fn max_distance_bounds_a_look() {
+        let (world, id) = weightless_world_with_box_at_x5();
+
+        let within = world.pick_loose(&along_x(6.0));
+        let short = world.pick_loose(&along_x(4.0));
+
+        assert_eq!(within, Some(id), "the box is within reach");
+        assert_eq!(short, None, "the box is beyond max_distance");
     }
 
     proptest! {
