@@ -609,6 +609,42 @@ mod tests {
     }
 
     #[test]
+    fn a_new_world_clears_the_selection() {
+        let mut app = App::headless();
+        let spec = flagstone_game::scene_builders::WorldSpec {
+            name: "headless-test-new-world-selection".to_string(),
+            seed: Some(7),
+            size_xz: 64,
+            day_length_seconds: 600.0,
+            night_length_seconds: 420.0,
+            initial_time_of_day: 6.0,
+        };
+        let scene_bytes = flagstone_game::scene_persistence::encode_to_bytes(
+            &flagstone_game::scene::SceneEntities::default(),
+            None,
+            &[],
+        )
+        .expect("encode empty scene");
+        app.crew.spawn(flagstone_game::pawn::Pawn::default());
+        app.selection.click(Some(flagstone_game::pawn::PawnId(1)));
+
+        GenerationProcessor::new().handle_completed(
+            &mut app,
+            scene_bytes,
+            spec,
+            flagstone_game::scene_builders::TerrainConfig::default(),
+            flagstone_voxel::VoxelGrid::new(16),
+        );
+
+        assert_eq!(app.crew.len(), flagstone_game::crew::CREW_SIZE);
+        assert_eq!(
+            app.selection.selected(),
+            None,
+            "a new world's second pawn is not the old world's"
+        );
+    }
+
+    #[test]
     fn completed_generation_replaces_the_previous_worlds_meshes_with_spawn_chunks() {
         use crate::app::world_geometry::tests::{RecordingBackend, chunk_at};
         let mut app = App::headless();

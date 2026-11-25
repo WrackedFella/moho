@@ -200,6 +200,8 @@ impl App {
     /// already reset.
     fn spawn_crew(&mut self, spawns: impl IntoIterator<Item = moho_physics::CharacterSpawn>) {
         self.crew = flagstone_game::crew::Crew::default();
+        // Selection names a pawn of the old crew; the new one's ids mean other pawns.
+        self.selection = flagstone_game::selection::Selection::default();
         for (index, spawn) in spawns.into_iter().enumerate() {
             let id = self.crew.spawn(flagstone_game::pawn::Pawn::default());
             if index == 0 {

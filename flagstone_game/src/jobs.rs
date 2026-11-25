@@ -384,7 +384,9 @@ pub fn step(
 
 /// Advances every pawn of `crew` one tick, in id order, each at its pose in `poses`, and
 /// answers with what each does. The pawns take their marks one after another, so a mark one
-/// of them has claimed is already taken when the next looks.
+/// of them has claimed is already taken when the next looks. A pawn with no entry in `poses`
+/// is skipped this tick: it gets no answer and keeps whatever mark it holds, so no other pawn
+/// takes it meanwhile.
 pub fn step_crew(
     crew: &mut Crew,
     poses: &BTreeMap<PawnId, Pose>,
@@ -2132,6 +2134,55 @@ mod tests {
                 site.ids.iter().map(|&id| (id, JobAction::Wait)).collect();
             assert_eq!(site.ids, [PawnId(0), PawnId(1), PawnId(2)]);
             assert_eq!(actions, waiting, "one answer per pawn, in id order");
+        }
+
+        /// A crew of two, the second holding the mark at (8, 1, 0) while the first has no pose
+        /// (and so takes no turn).
+        fn second_pawn_holding_a_mark() -> CrewSite {
+            let mut site = CrewSite::flat(&[cell(-6, 1, 0), cell(6, 1, 0)]);
+            site.mark_block(cell(8, 1, 0));
+            let first_pose = site
+                .poses
+                .remove(&site.ids[0])
+                .expect("a pose to set aside");
+            site.tick();
+            assert_eq!(site.held(), [(site.ids[1], [8, 1, 0])], "setup");
+            site.poses.insert(site.ids[0], first_pose);
+            site
+        }
+
+        #[test]
+        fn a_mark_ordered_again_is_held_by_exactly_one_pawn() {
+            let mut site = second_pawn_holding_a_mark();
+            site.marks.toggle([8, 1, 0]);
+            site.marks.toggle([8, 1, 0]);
+
+            site.tick();
+
+            let held = site.held();
+            let holders: Vec<PawnId> = held
+                .iter()
+                .filter(|&&(_, mark)| mark == [8, 1, 0])
+                .map(|&(id, _)| id)
+                .collect();
+            assert_eq!(holders.len(), 1, "{held:?}");
+            for (id, mark) in held {
+                assert_eq!(site.claimed_by(mark), Some(id), "pawn {id:?}");
+            }
+        }
+
+        #[test]
+        fn a_pawn_without_a_pose_keeps_its_claim_and_is_skipped() {
+            let mut site = second_pawn_holding_a_mark();
+            let (first, second) = (site.ids[0], site.ids[1]);
+            site.poses.remove(&second);
+
+            let actions = site.tick();
+
+            assert_eq!(actions.len(), 1, "{actions:?}");
+            assert_eq!(actions[0], (first, JobAction::Wait));
+            assert_eq!(site.claimed_by([8, 1, 0]), Some(second));
+            assert_eq!(site.held(), [(second, [8, 1, 0])]);
         }
 
         proptest! {
