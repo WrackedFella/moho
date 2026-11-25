@@ -393,6 +393,7 @@ sequenceDiagram
     S->>B: begin_frame(camera)<br/>upload camera, cull lights, update shadow matrices,<br/>acquire surface
     S->>B: enqueue_draw(cubes, spheres, each world mesh<br/>with all its instances)
     S->>B: enqueue_unshadowed_draw(effects)
+    S->>B: enqueue_shadow_only_draw(shadow-only placements)
     S->>B: enqueue_draw(transparent, sorted back-to-front)
     S->>B: enqueue_markers(fills, outlines, each sorted far to near)
     S->>B: submit_frame()
@@ -629,6 +630,6 @@ built-in mesh (kite for streaks, star for flashes, quad for marks), uploaded on 
 `EFFECT_MESH_IDS_FROM` (kite), `+ 1` (star) and `+ 2` (quad) (`u64::MAX - 63` up is reserved; games keep their ids below it). Streaks and
 flashes are turned to face the camera eye; a mark keeps its surface orientation. Placements go through
 `WorldMeshes::place_unshadowed` and reach the backend via `RendererBackend::enqueue_unshadowed_draw`
-(default: `enqueue_draw`). In the renderer the draw key has `casts_shadow = false`, so
+(default: `enqueue_draw`). In the renderer the draw key has `passes = Passes::MainOnly`, so
 `render_shadow_passes` skips it and the main pass draws it. A second camera sees a streak or flash
 turned toward the first eye.
