@@ -22,7 +22,7 @@ mod tests {
 
     #[test]
     fn sin_cos_matches_libm_at_an_angle_where_the_platform_differs() {
-        let angle = 0.8876718_f32;
+        let angle = 0.887_671_8_f32;
 
         let (sin, cos) = sin_cos(angle);
 
