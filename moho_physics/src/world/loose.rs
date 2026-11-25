@@ -1,8 +1,13 @@
 use super::PhysicsWorld;
 use glam::{Quat, Vec3};
 use rapier3d::prelude::{
-    ColliderBuilder, ColliderHandle, NarrowPhase, Pose, RigidBodyBuilder, RigidBodyHandle,
+    ColliderBuilder, ColliderHandle, Group, InteractionGroups, InteractionTestMode, NarrowPhase,
+    Pose, RigidBodyBuilder, RigidBodyHandle,
 };
+
+/// Membership bit carried only by loose colliders, so a collider that takes it becomes
+/// invisible to characters, which filter it out.
+pub(super) const LOOSE: Group = Group::GROUP_32;
 
 /// Steepest ground, radians from level, that a new world brakes loose objects on: 5°.
 pub(super) const DEFAULT_REST_SLOPE: f32 = 5.0_f32.to_radians();
@@ -29,9 +34,18 @@ impl LooseId {
 /// What the world keeps per loose object besides its body.
 pub(super) struct Loose {
     body: RigidBodyHandle,
-    /// Radius, metres, of the round cross-section that rolls about the body's local Y; `None`
-    /// for a shape that does not roll.
-    roll_radius: Option<f32>,
+    roll: Roll,
+}
+
+/// How a shape rolls, which decides what the rest brake cuts.
+#[derive(Clone, Copy)]
+enum Roll {
+    /// A shape that does not roll.
+    None,
+    /// A round cross-section of `radius` metres that rolls about the body's local Y.
+    About { radius: f32 },
+    /// A ball of `radius` metres that rolls about any axis.
+    Ball { radius: f32 },
 }
 
 /// The collision shape of a loose object.
@@ -48,11 +62,11 @@ pub enum LooseShape {
 }
 
 impl LooseShape {
-    /// Radius of the round cross-section that rolls about local Y; a box does not roll.
-    fn roll_radius(self) -> Option<f32> {
+    fn roll(self) -> Roll {
         match self {
-            Self::Box { .. } | Self::Sphere { .. } => None,
-            Self::Capsule { radius, .. } | Self::Cylinder { radius, .. } => Some(radius),
+            Self::Box { .. } => Roll::None,
+            Self::Capsule { radius, .. } | Self::Cylinder { radius, .. } => Roll::About { radius },
+            Self::Sphere { radius } => Roll::Ball { radius },
         }
     }
 
@@ -130,7 +144,10 @@ impl LooseSpawn {
                 half_height.is_finite() && half_height > 0.0 && radius.is_finite() && radius > 0.0,
                 "half height and radius must be positive and finite, got {half_height} and {radius}"
             ),
-            LooseShape::Sphere { .. } => {}
+            LooseShape::Sphere { radius } => assert!(
+                radius.is_finite() && radius > 0.0,
+                "radius must be positive and finite, got {radius}"
+            ),
         }
         assert!(
             self.linear_velocity.is_finite() && self.angular_velocity.is_finite(),
@@ -182,13 +199,12 @@ impl PhysicsWorld {
     ///
     /// The object advances inside [`PhysicsWorld::step`] under the world's gravity.
     ///
-    /// Boxes, capsules and cylinders are supported. Resting on ground within the world's
-    /// [rest slope](PhysicsWorld::set_rest_slope) of level, the object is braked until it stops.
+    /// Boxes, capsules, cylinders and spheres are supported. Resting on ground within the
+    /// world's [rest slope](PhysicsWorld::set_rest_slope) of level, the object is braked until
+    /// it stops.
     ///
-    /// Characters do not ignore loose objects: a loose object blocks a character or is stepped
-    /// onto like geometry, and any overlap shoves the object because the solver treats the
-    /// character as infinitely heavy. Rays skip loose objects because their colliders carry no
-    /// tag.
+    /// Characters ignore loose objects: a loose object neither blocks a character nor is pushed
+    /// by one. Rays skip loose objects because their colliders carry no tag.
     ///
     /// # Panics
     /// If the spawn would poison the simulation: a mass, half extent, half height or radius that
@@ -211,6 +227,11 @@ impl PhysicsWorld {
             .mass(spawn.mass)
             .friction(spawn.friction)
             .restitution(spawn.restitution)
+            .collision_groups(InteractionGroups::new(
+                LOOSE,
+                Group::ALL,
+                InteractionTestMode::And,
+            ))
             .build();
         self.collider_set
             .insert_with_parent(collider, handle, &mut self.rigid_body_set);
@@ -221,7 +242,7 @@ impl PhysicsWorld {
             id,
             Loose {
                 body: handle,
-                roll_radius: spawn.shape.roll_radius(),
+                roll: spawn.shape.roll(),
             },
         );
         id
@@ -296,13 +317,22 @@ impl PhysicsWorld {
         let cos_slope = self.rest_slope.cos();
 
         for loose in self.loose.values() {
-            let Some(radius) = loose.roll_radius else {
+            let (Roll::About { radius } | Roll::Ball { radius }) = loose.roll else {
                 continue;
             };
             let body = &mut self.rigid_body_set[loose.body];
             if body.is_sleeping()
                 || !rests_on_flat_ground(&self.narrow_phase, body.colliders()[0], up, cos_slope)
             {
+                continue;
+            }
+            if matches!(loose.roll, Roll::Ball { .. }) {
+                // A ball rolls about any axis and cannot tip, so all its spin and all its
+                // travel across up is braked.
+                body.set_angvel(shrink(body.angvel(), cut / radius), false);
+                let velocity = body.linvel();
+                let vertical = up * velocity.dot(up);
+                body.set_linvel(vertical + shrink(velocity - vertical, cut), false);
                 continue;
             }
             // Only the rolling motion is braked: spin about the shape's axis and travel across
