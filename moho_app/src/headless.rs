@@ -890,6 +890,122 @@ mod tests {
         assert_eq!(seen, sim.record());
     }
 
+    /// Asks, in its first frame, for a resume and the given pause and speed.
+    struct FrameAsker {
+        resume: LoopRecord,
+        paused: Option<bool>,
+        speed: Option<SimSpeed>,
+        asked: bool,
+        ticks: Vec<u64>,
+    }
+
+    impl FrameAsker {
+        fn new(resume: LoopRecord, paused: Option<bool>, speed: Option<SimSpeed>) -> Self {
+            Self {
+                resume,
+                paused,
+                speed,
+                asked: false,
+                ticks: Vec::new(),
+            }
+        }
+    }
+
+    impl Game for FrameAsker {
+        type Command = ();
+
+        fn command(&mut self) {}
+
+        fn tick(&mut self, ctx: &mut TickContext<'_>, _command: &()) {
+            self.ticks.push(ctx.tick);
+        }
+
+        fn frame(&mut self, ctx: &mut FrameContext<'_>, _alpha: f32) {
+            if self.asked {
+                return;
+            }
+            self.asked = true;
+            ctx.resume_loop(self.resume);
+            if let Some(paused) = self.paused {
+                ctx.set_paused(paused);
+            }
+            if let Some(speed) = self.speed {
+                ctx.set_speed(speed);
+            }
+        }
+    }
+
+    fn record_at_300() -> LoopRecord {
+        loop_after_300_scaled_ticks().0.record()
+    }
+
+    #[test]
+    fn a_resume_into_a_paused_loop_keeps_it_paused_and_ticks_from_the_record() {
+        let record = record_at_300();
+        let mut game = FrameAsker::new(record, None, None);
+        let mut sim = HeadlessLoop::new(dusk_config());
+        sim.step(&mut game, 40);
+        sim.set_paused(true);
+        game.ticks.clear();
+
+        let ran = sim.advance(&mut game, Duration::ZERO);
+        sim.step(&mut game, 1);
+
+        assert_eq!(ran, 0);
+        assert_eq!(game.ticks, vec![300]);
+        assert!(sim.paused());
+    }
+
+    #[test]
+    fn a_resume_with_a_pause_and_a_speed_in_one_frame_applies_all_three() {
+        let record = record_at_300();
+        let mut game = FrameAsker::new(record, Some(true), Some(SimSpeed::X3));
+        let mut sim = HeadlessLoop::new(dusk_config());
+        sim.step(&mut game, 40);
+        game.ticks.clear();
+
+        sim.advance(&mut game, Duration::ZERO);
+
+        assert_eq!(sim.record(), record);
+        assert!(sim.paused());
+        assert_eq!(sim.speed(), SimSpeed::X3);
+    }
+
+    #[test]
+    fn a_resume_after_ticks_in_the_same_advance_wins_over_their_count() {
+        let record = record_at_300();
+        let mut game = FrameAsker::new(record, None, None);
+        let mut sim = HeadlessLoop::new(dusk_config());
+
+        let ran = sim.advance(&mut game, Duration::from_nanos(3 * NS / 60));
+
+        assert_eq!(ran, 3);
+        assert_eq!(game.ticks, vec![0, 1, 2]);
+        assert_eq!(sim.next_tick(), 300);
+        assert_eq!(sim.record(), record);
+    }
+
+    #[test]
+    fn restore_takes_the_records_day_and_night_lengths_not_the_configured_ones() {
+        let config = LoopConfig::new(60).with_clock(GameClock::new(16.5, 240.0, 30.0));
+        let mut original_game = ClockProbe {
+            scale_on_first_tick: Some(2.0),
+            ..ClockProbe::default()
+        };
+        let mut original = HeadlessLoop::new(config);
+        original.step(&mut original_game, 300);
+        original_game.seen.clear();
+        let mut resumed_game = ClockProbe::default();
+        let mut resumed = HeadlessLoop::new(dusk_config());
+
+        resumed.restore(original.record());
+        original.step(&mut original_game, 600);
+        resumed.step(&mut resumed_game, 600);
+
+        assert_eq!(resumed_game.seen, original_game.seen);
+        assert_eq!(resumed.record(), original.record());
+    }
+
     #[test]
     fn step_runs_its_ticks_even_while_paused() {
         let mut game = Recorder::default();

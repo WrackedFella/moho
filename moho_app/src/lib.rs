@@ -669,6 +669,21 @@ mod tests {
     }
 
     #[test]
+    fn event_context_reports_its_tick_and_the_last_resume_wins() {
+        let clock = GameClock::new(9.0, 120.0, 60.0);
+        let first = GameClock::new(10.0, 120.0, 60.0).record(300);
+        let second = GameClock::new(11.0, 120.0, 60.0).record(500);
+        let mut ctx = EventContext::new(&clock, None, None).with_next_tick(7);
+
+        ctx.resume_loop(first);
+        ctx.resume_loop(second);
+
+        assert_eq!(ctx.loop_record().next_tick, 7);
+        assert_eq!(ctx.requested_resume(), Some(second));
+        assert_eq!(ctx.loop_requests().resume, Some(second));
+    }
+
+    #[test]
     fn event_context_hands_its_requests_to_the_loop() {
         let clock = GameClock::default();
         let mut ctx = EventContext::new(&clock, None, None);
