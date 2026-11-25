@@ -24,6 +24,10 @@ pub enum MenuAction {
     ApplyControls,
     /// The Controls row of an action, which captures its bindings and is never chosen.
     Rebind(SearchlightAction),
+    /// Answers the conflict dialog by moving the input to the capturing action.
+    Replace,
+    /// Answers the conflict dialog by keeping both actions as they were.
+    Cancel,
     /// The item with this id in the item lists.
     Item(u32),
     /// An action a row of the item lists offers.
@@ -48,6 +52,8 @@ impl MenuAction {
             MenuAction::Controls => "Controls",
             MenuAction::ApplyControls => "Apply",
             MenuAction::Rebind(action) => label(action),
+            MenuAction::Replace => "Replace",
+            MenuAction::Cancel => "Cancel",
             MenuAction::Item(_) => "Item",
             MenuAction::ItemAction(_) => "Item action",
         }
@@ -144,6 +150,16 @@ pub fn controls_screen(draft: &ControlsDraft) -> MenuScreen<MenuAction> {
         title: Some("Controls".to_owned()),
         items: controls_rows(draft, None),
         back: Some(MenuAction::Back),
+        settings: None,
+    }
+}
+
+/// The dialog asking whether `input_label` moves from `by_label`'s action; Escape is Cancel.
+pub fn conflict_screen(_input_label: &str, _by_label: &str) -> MenuScreen<MenuAction> {
+    MenuScreen {
+        title: None,
+        items: Vec::new(),
+        back: None,
         settings: None,
     }
 }
@@ -287,6 +303,36 @@ mod tests {
             )),
             "the page has a Back button"
         );
+    }
+
+    #[test]
+    fn an_action_with_no_binding_is_marked_unbound() {
+        let mut bindings = default_bindings();
+        bindings.set(SearchlightAction::LeanLeft, vec![]);
+        let draft = ControlsDraft::new(&bindings);
+
+        let rows = control_rows(&controls_screen(&draft));
+
+        let slots = |action| {
+            let at = SearchlightAction::ALL.iter().position(|&a| a == action);
+            rows[at.expect("the action is listed")].1
+        };
+        assert_eq!(slots(SearchlightAction::LeanLeft), [None, None]);
+        assert!(draft.is_unbound(SearchlightAction::LeanLeft));
+        assert!(!draft.is_unbound(SearchlightAction::LeanRight));
+        assert_ne!(slots(SearchlightAction::LeanRight), [None, None]);
+    }
+
+    #[test]
+    fn the_conflict_dialog_names_both_and_offers_replace_or_cancel() {
+        let screen = conflict_screen("Q", "Lean left");
+
+        assert_eq!(screen.title.as_deref(), Some("Q is used by Lean left"));
+        assert_eq!(
+            screen.items,
+            vec![MenuAction::Replace.button(), MenuAction::Cancel.button()]
+        );
+        assert_eq!(screen.back, Some(MenuAction::Cancel), "Escape cancels");
     }
 
     #[test]

@@ -1026,7 +1026,12 @@ impl SearchlightGame {
                 }
                 MenuEvent::MoveRequested { .. }
                 | MenuEvent::ActionPicked { .. }
-                | MenuEvent::Chosen(MenuAction::Item(_) | MenuAction::ItemAction(_)) => {}
+                | MenuEvent::Chosen(
+                    MenuAction::Item(_)
+                    | MenuAction::ItemAction(_)
+                    | MenuAction::Replace
+                    | MenuAction::Cancel,
+                ) => {}
             }
         }
     }
@@ -1050,7 +1055,7 @@ impl SearchlightGame {
                 Binding::from(input).label(),
                 label(by)
             )),
-            Capture::Set | Capture::Reserved => None,
+            Capture::Set | Capture::Reserved | Capture::Conflict { .. } => None,
         };
         self.show_controls(note.as_deref().map(|note| (action, note)));
     }
@@ -5425,8 +5430,23 @@ mod tests {
         assert!(!reload_on_t);
     }
 
+    /// The title and button labels of the screen on top.
+    fn top_dialog(game: &SearchlightGame) -> (Option<String>, Vec<String>) {
+        let mut shell = game.stage.shell();
+        let screen = shell.menu_mut().top().expect("a menu screen is open");
+        let buttons = screen
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                MenuItem::Button { label, .. } => Some(label.clone()),
+                _ => None,
+            })
+            .collect();
+        (screen.title.clone(), buttons)
+    }
+
     #[test]
-    fn an_input_in_use_is_refused_with_a_note_and_neither_action_changes() {
+    fn capturing_an_input_in_use_pushes_a_dialog_naming_its_action() {
         let dir = tempfile::tempdir().unwrap();
         let (settings, _) = settings_in(&dir);
         let mut game = quiet_menu_game().with_debug_settings(settings);
@@ -5436,16 +5456,66 @@ mod tests {
 
         capture_input(&mut game, &mut ctx, SearchlightAction::Reload, KEY_Q);
 
+        let (title, buttons) = top_dialog(&game);
+        assert_eq!(title.as_deref(), Some("Q is used by Lean left"));
+        assert_eq!(buttons, ["Replace", "Cancel"]);
+        assert!(!lists_controls(&game), "the dialog is on top of Controls");
+    }
+
+    #[test]
+    fn an_applied_replace_moves_the_input_in_play() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, _) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        capture_input(&mut game, &mut ctx, SearchlightAction::Reload, KEY_Q);
+        press_item(&mut game, &mut ctx, "Replace", is_button("Replace"));
+        let reload_row = control_row(&game, SearchlightAction::Reload).0;
+        let lean_row = control_row(&game, SearchlightAction::LeanLeft).0;
+        press_item(&mut game, &mut ctx, "Apply", is_apply);
+        game.enter_play();
+
+        let on_q = tap(&mut game, &mut ctx, KEY_Q);
+
+        assert_eq!(reload_row, [Some(Binding::key(Key::Q)), None]);
+        assert_eq!(lean_row, [None, None], "Lean left shows Unbound");
+        assert!(reloads(on_q), "Q reloads");
+        assert!(
+            on_q.iter().all(|command| command.lean.is_none()),
+            "Q no longer leans"
+        );
+    }
+
+    #[test]
+    fn escape_on_the_dialog_cancels_and_returns_to_the_same_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, _) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        capture_input(&mut game, &mut ctx, SearchlightAction::Reload, KEY_Q);
+
+        press_keys(&mut game, &mut ctx, &[Key::Escape]);
+
+        assert!(lists_controls(&game), "Escape popped the dialog");
         assert_eq!(
             control_row(&game, SearchlightAction::Reload),
-            (
-                [Some(Binding::key(Key::R)), None],
-                Some("Q is used by Lean left".to_owned())
-            )
+            ([Some(Binding::key(Key::R)), None], None)
         );
         assert_eq!(
             control_row(&game, SearchlightAction::LeanLeft),
             ([Some(Binding::key(Key::Q)), None], None)
+        );
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        game.route_input(&mut ctx, KEY_T, true, false);
+        game.route_input(&mut ctx, KEY_T, false, false);
+        assert_eq!(
+            control_row(&game, SearchlightAction::Reload).0,
+            [Some(Binding::key(Key::T)), None],
+            "focus stayed on the Reload row"
         );
     }
 
