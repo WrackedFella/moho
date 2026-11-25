@@ -918,7 +918,8 @@ impl SearchlightSim {
 
     /// Resolves the player's shot along `origin` to `end`, which stopped at `strike`: counts
     /// near misses on the enemies it passed, once each per `near_missed`, and lands a hit on
-    /// a part it struck.
+    /// a part it struck. A strike on level geometry or a control queues a `Feedback::Impact`
+    /// with the strike's point and normal.
     fn land_player_shot(
         &mut self,
         origin: Vec3,
