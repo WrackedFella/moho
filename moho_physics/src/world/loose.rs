@@ -2278,5 +2278,133 @@ mod tests {
                 "the walk covers the pile for only {inside} ticks"
             );
         }
+
+        #[test]
+        fn a_box_dropped_over_a_standing_character_falls_as_without_it() {
+            let drop = Vec3::new(0.0, 3.0, 0.0);
+            let spawn = LooseSpawn {
+                position: drop,
+                ..LooseSpawn::new(cube(0.1), 0.5)
+            };
+            let mut both = world_with_floor(&floor_mesh(0.0));
+            let mut box_only = world_with_floor(&floor_mesh(0.0));
+            let mut walker_only = world_with_floor(&floor_mesh(0.0));
+            let walker = add_walker(&mut both);
+            let lone_walker = add_walker(&mut walker_only);
+            let (dropped, lone_drop) = (both.spawn_loose(&spawn), box_only.spawn_loose(&spawn));
+            let still = CharacterCommand::default();
+
+            for tick in 0..300 {
+                for (world, handle) in [(&mut both, walker), (&mut walker_only, lone_walker)] {
+                    world
+                        .move_character(handle, &still, &settings(), DT)
+                        .expect("the walker is alive");
+                }
+                both.step(DT);
+                box_only.step(DT);
+                walker_only.step(DT);
+
+                assert_eq!(
+                    bits(&read(&both, dropped)),
+                    bits(&read(&box_only, lone_drop)),
+                    "tick {tick}: the character changed the box's fall"
+                );
+                assert_eq!(
+                    character_key(&both.character(walker).expect("the walker is alive")),
+                    character_key(&walker_only.character(lone_walker).expect("alive")),
+                    "tick {tick}: the box changed the character"
+                );
+            }
+            let landed = read(&both, dropped);
+            assert!(
+                landed.position.y < 0.2,
+                "the box fell through to the floor, {landed:?}"
+            );
+        }
+
+        #[test]
+        fn a_restored_character_walking_through_a_pile_moves_as_without_it() {
+            let restored_walker = |world: &mut PhysicsWorld| {
+                let saved = add_walker(world);
+                let record = world.character_record(saved).expect("the walker is alive");
+                world.remove_character(saved).expect("the walker is alive");
+                world.restore_character(&record, body())
+            };
+            let (mut with_pile, _) = settled(true);
+            let (mut without, _) = settled(false);
+            let (walker, lone_walker) = (
+                restored_walker(&mut with_pile),
+                restored_walker(&mut without),
+            );
+            let mut inside = 0;
+
+            for t in 0..WALK_TICKS {
+                let among = walk_tick(&mut with_pile, walker, t);
+                let alone = walk_tick(&mut without, lone_walker, t);
+
+                assert_eq!(
+                    character_key(&among),
+                    character_key(&alone),
+                    "tick {t}: the restored character differs, with {among:?}, without {alone:?}"
+                );
+                inside += usize::from(in_footprint(among.position));
+            }
+
+            assert!(
+                inside >= 15,
+                "the walk covers the pile for only {inside} ticks"
+            );
+        }
+    }
+
+    #[test]
+    fn a_spinning_sphere_comes_to_rest_on_a_resting_box() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let slab = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.1, 0.0),
+            ..LooseSpawn::new(cuboid(Vec3::new(1.0, 0.1, 1.0)), 5.0)
+        });
+        run(&mut world, 120);
+        assert!(read(&world, slab).asleep, "the slab sleeps before the drop");
+        let ball = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.2, 1.0, 0.1),
+            angular_velocity: Vec3::new(13.0, -17.0, 19.0),
+            ..LooseSpawn::new(SPHERE, 0.2)
+        });
+
+        run(&mut world, 300);
+
+        let state = read(&world, ball);
+        let height = bottom_of(&world, ball) - 0.2;
+        assert!(
+            height.abs() <= 0.001,
+            "the sphere's bottom is {height} from the slab top, state {state:?}"
+        );
+        assert!(state.asleep, "the sphere is awake, state {state:?}");
+    }
+
+    #[test]
+    fn two_spheres_rolling_head_on_come_to_rest_asleep() {
+        let radius = cross_section(SPHERE);
+        let rolling = |x: f32, direction: f32| LooseSpawn {
+            position: Vec3::new(x, radius, 1.0),
+            linear_velocity: Vec3::new(2.0 * direction, 0.0, 0.0),
+            angular_velocity: Vec3::new(0.0, 0.0, -2.0 * direction / radius),
+            ..LooseSpawn::new(SPHERE, 0.2)
+        };
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let ids = [
+            world.spawn_loose(&rolling(-0.5, 1.0)),
+            world.spawn_loose(&rolling(0.5, -1.0)),
+        ];
+
+        run(&mut world, 300);
+
+        for id in ids {
+            let state = read(&world, id);
+            assert!(state.asleep, "a sphere is awake, state {state:?}");
+        }
+        let depth = overlap(&world, ids[0], ids[1]);
+        assert!(depth <= 0.005, "the spheres end {depth} m into each other");
     }
 }
