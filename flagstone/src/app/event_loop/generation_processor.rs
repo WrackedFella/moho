@@ -5,6 +5,15 @@
 use crate::App;
 use crate::GenerationMsg;
 
+/// How far above the floor of its cell a new pawn's capsule centre starts: the capsule's
+/// half-height plus a gap, because a character resting exactly on a mesh does not move and
+/// the first walking tick settles it.
+const CELL_FLOOR_TO_CENTRE: f32 = flagstone_game::selection::PAWN_HALF_EXTENTS.y + 0.05;
+
+/// How many columns around a spawn column must have its height for the ground to count as
+/// level there.
+const LEVEL_RADIUS: i32 = 2;
+
 /// Handles async generation task polling
 pub struct GenerationProcessor;
 
@@ -246,35 +255,70 @@ impl GenerationProcessor {
         // Perlin returns exactly 0 at integer grid points, so (0,0) may land on a
         // zero-density boundary with no block; a small spiral search finds the real
         // surface. Fall back to 64 (BASE_ELEVATION) when preload produced nothing.
-        let terrain_y = {
-            let found = app.light_system.as_ref().and_then(|ls| {
-                let grid = ls.grid();
-                for r in 0..=4i32 {
-                    for dx in -r..=r {
-                        for dz in -r..=r {
-                            if dx.abs() != r && dz.abs() != r {
-                                continue;
-                            }
-                            if let Some(h) = grid.get_height(dx, dz) {
-                                return Some(h);
-                            }
-                        }
-                    }
-                }
-                None
-            });
-            found.unwrap_or(64)
-        } as f32;
+        let surface = app.light_system.as_ref().and_then(|ls| {
+            let grid = ls.grid();
+            let columns: Vec<glam::IVec3> = (0..=4i32)
+                .flat_map(|r| {
+                    (-r..=r)
+                        .flat_map(move |dx| (-r..=r).map(move |dz| (dx, dz)))
+                        .filter(move |&(dx, dz)| dx.abs() == r || dz.abs() == r)
+                })
+                .filter_map(|(dx, dz)| grid.get_height(dx, dz).map(|h| glam::IVec3::new(dx, h, dz)))
+                .collect();
+            // A crew spawns on level ground when the spiral meets any: the terrain's
+            // smoothed meshes lean a body standing beside a step.
+            let level = |top: &glam::IVec3| {
+                (-LEVEL_RADIUS..=LEVEL_RADIUS).all(|ox| {
+                    (-LEVEL_RADIUS..=LEVEL_RADIUS)
+                        .all(|oz| grid.get_height(top.x + ox, top.z + oz) == Some(top.y))
+                })
+            };
+            columns
+                .iter()
+                .copied()
+                .find(level)
+                .or_else(|| columns.first().copied())
+        });
+        let terrain_y = surface.map_or(64, |top| top.y) as f32;
 
-        let spawn_pos = glam::Vec3::new(0.0, terrain_y + 3.0, 0.0);
+        // The crew stands on the standable cells nearest the surface cell, each body on its
+        // cell's floor; with no ground to stand on, one pawn drops onto the origin.
+        let standing = surface
+            .zip(app.light_system.as_ref())
+            .map(|(top, ls)| {
+                flagstone_game::crew::spawn_cells(
+                    ls.grid(),
+                    top + glam::IVec3::Y,
+                    flagstone_game::crew::CREW_SIZE,
+                )
+            })
+            .unwrap_or_default();
+        let mut cells: Vec<glam::Vec3> = standing
+            .into_iter()
+            .map(|cell| {
+                glam::Vec3::new(
+                    cell.x as f32 + 0.5,
+                    cell.y as f32 + CELL_FLOOR_TO_CENTRE,
+                    cell.z as f32 + 0.5,
+                )
+            })
+            .collect();
+        if cells.is_empty() {
+            cells.push(glam::Vec3::new(0.0, terrain_y + 3.0, 0.0));
+        }
+        let spawn_pos = cells[0];
 
         let (yaw, pitch) = app.simulation.yaw_pitch();
-        app.physics.spawn_player(moho_physics::CharacterSpawn {
-            position: spawn_pos,
-            yaw,
-            pitch,
-            body: moho_physics::CharacterBody::default(),
-        });
+        app.spawn_crew(
+            cells
+                .into_iter()
+                .map(|position| moho_physics::CharacterSpawn {
+                    position,
+                    yaw,
+                    pitch,
+                    body: moho_physics::CharacterBody::default(),
+                }),
+        );
 
         // Sync simulation camera to spawn position
         app.simulation.set_position_yaw_pitch(spawn_pos, yaw, pitch);

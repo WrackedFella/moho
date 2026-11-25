@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use flagstone_voxel::{BlockPos, VoxelGrid};
 
 use crate::pawn::{Pawn, PawnId};
+use crate::routing::standable;
 
 /// How many pawns a new world starts with.
 pub const CREW_SIZE: usize = 3;
@@ -13,13 +14,14 @@ pub const CREW_SIZE: usize = 3;
 #[derive(Debug, Default)]
 pub struct Crew {
     pawns: BTreeMap<PawnId, Pawn>,
+    next: u32,
 }
 
 impl Crew {
-    /// Adds `pawn` under the next id; ids ascend from `PawnId(0)`.
+    /// Adds `pawn` under the next id; ids ascend from `PawnId(0)` and are never reused.
     pub fn spawn(&mut self, pawn: Pawn) -> PawnId {
-        // TODO: issue ascending ids; this keeps one pawn under id 0.
-        let id = PawnId(0);
+        let id = PawnId(self.next);
+        self.next += 1;
         self.pawns.insert(id, pawn);
         id
     }
@@ -53,11 +55,31 @@ impl Crew {
     }
 }
 
+/// How far from `around`, in columns and in blocks of height, [`spawn_cells`] looks.
+const SPAWN_REACH: i32 = 8;
+
 /// The `count` standable cells nearest `around`, one per column, ordered by horizontal
 /// distance and then by key. Looks at columns within 8 blocks and heights within 8 of `around`;
-/// returns fewer cells when fewer exist.
-pub fn spawn_cells(_grid: &VoxelGrid, _around: BlockPos, _count: usize) -> Vec<BlockPos> {
-    todo!("spawn_cells")
+/// returns fewer cells when fewer exist. Of a column's standable cells it takes the one
+/// nearest `around`'s height, the lower one on a tie.
+pub fn spawn_cells(grid: &VoxelGrid, around: BlockPos, count: usize) -> Vec<BlockPos> {
+    let mut found: Vec<(i32, [i32; 3])> = (-SPAWN_REACH..=SPAWN_REACH)
+        .flat_map(|dx| (-SPAWN_REACH..=SPAWN_REACH).map(move |dz| (dx, dz)))
+        .filter_map(|(dx, dz)| {
+            let (x, z) = (around.x + dx, around.z + dz);
+            (around.y - SPAWN_REACH..=around.y + SPAWN_REACH)
+                .map(|y| BlockPos::new(x, y, z))
+                .filter(|&cell| standable(grid, cell))
+                .min_by_key(|cell| ((cell.y - around.y).abs(), cell.y))
+                .map(|cell| (dx * dx + dz * dz, cell.to_array()))
+        })
+        .collect();
+    found.sort_unstable();
+    found
+        .into_iter()
+        .take(count)
+        .map(|(_, cell)| BlockPos::from_array(cell))
+        .collect()
 }
 
 #[cfg(test)]

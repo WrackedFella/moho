@@ -11,7 +11,7 @@ use flagstone_game::controller::{
     CameraMode, ControllerInput, EDGE_PAN_MARGIN_PX, controller_to_camera, edge_pan_axes,
 };
 use flagstone_game::raycast::{SurfaceHit, raycast_surface_below};
-use flagstone_game::selection::{FIRST_PAWN, PAWN_HALF_EXTENTS, pawn_aabb, pick_pawn};
+use flagstone_game::selection::{PAWN_HALF_EXTENTS, pawn_aabb, pick_pawn};
 use flagstone_ui::actions::StrategyAction;
 use flagstone_ui::console_commands::StrategyConsoleCommand;
 use flagstone_voxel::VoxelGrid;
@@ -258,8 +258,11 @@ impl App {
         {
             self.pointer_hit = pick_surface(light_system.grid(), ray, command.ceiling);
             tracing::debug!(hit = ?self.pointer_hit, "Pointer ray cast");
-            let pawn = (FIRST_PAWN, pawn_aabb(self.simulation.position()));
-            let picked = pick_pawn(ray, [pawn], self.pointer_hit.map(|hit| hit.distance));
+            let boxes = self
+                .pawn_centres()
+                .into_iter()
+                .map(|(id, centre)| (id, pawn_aabb(centre)));
+            let picked = pick_pawn(ray, boxes, self.pointer_hit.map(|hit| hit.distance));
             self.selection.click(picked);
             if picked.is_some() {
                 self.event_bus
@@ -275,8 +278,13 @@ impl App {
     /// frame so the mark follows the pawn and survives a console marker clear.
     fn sync_selection_mark(&mut self) {
         let strategy = self.simulation.camera_mode() == CameraMode::Isometric;
-        if strategy && self.selection.selected().is_some() {
-            let aabb = pawn_aabb(self.simulation.position());
+        let selected = self.selection.selected().and_then(|id| {
+            self.pawn_centres()
+                .into_iter()
+                .find_map(|(pawn, centre)| (pawn == id).then_some(centre))
+        });
+        if strategy && let Some(centre) = selected {
+            let aabb = pawn_aabb(centre);
             self.scene.markers_mut().upsert(
                 SELECTION_MARKER_ID,
                 Marker::new(
@@ -401,24 +409,38 @@ impl App {
             && self.physics.is_kcc_active()
     }
 
+    /// Where each pawn's body box stands, in id order. The possessed pawn stands where the
+    /// view does, which is its body once a tick has synced them; the others stand at their
+    /// bodies. A pawn without a body is not drawn or picked.
+    fn pawn_centres(&self) -> Vec<(flagstone_game::pawn::PawnId, glam::Vec3)> {
+        self.crew
+            .ids()
+            .filter_map(|id| {
+                if id == self.possessed {
+                    return Some((id, self.simulation.position()));
+                }
+                let handle = *self.physics.pawns.get(&id)?;
+                let state = self.physics.world.as_ref()?.character(handle)?;
+                Some((id, state.position))
+            })
+            .collect()
+    }
+
     fn render_scene(
         &mut self,
         renderer: &mut dyn moho_renderer::RendererBackend,
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     ) {
         self.sync_selection_mark();
-        let with_body;
+        let with_bodies;
         let cubes = if self.simulation.camera_mode() == CameraMode::Isometric {
             let size = PAWN_HALF_EXTENTS * 2.0;
-            let body = Cube::new(
-                self.simulation.position(),
-                size.x,
-                size.z,
-                size.y,
-                PAWN_BODY_MATERIAL,
-            );
-            with_body = [self.entities.actors.cubes(), &[body]].concat();
-            with_body.as_slice()
+            let bodies = self
+                .pawn_centres()
+                .into_iter()
+                .map(|(_, centre)| Cube::new(centre, size.x, size.z, size.y, PAWN_BODY_MATERIAL));
+            with_bodies = [self.entities.actors.cubes(), &bodies.collect::<Vec<_>>()].concat();
+            with_bodies.as_slice()
         } else {
             self.entities.actors.cubes()
         };
@@ -595,7 +617,7 @@ impl moho_app::Game for App {
             .set_time_scale(f32::from(self.game_state == GameState::Playing));
         if self.game_state == GameState::Playing {
             self.autosave.tick();
-            self.pawn.pickups.tick();
+            self.possessed_pawn_mut().pickups.tick();
         }
         let frame_processor = FrameProcessor::new();
         let event_processor = EventProcessor::new();

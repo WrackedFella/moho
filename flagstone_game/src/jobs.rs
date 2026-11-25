@@ -337,6 +337,12 @@ pub fn step(
         release(job, marks, held);
         return JobAction::Wait;
     }
+    // A mark cancelled and ordered again between two ticks comes back unclaimed: take it
+    // back, or let go of it when another pawn has meanwhile.
+    if !marks.claim(held, id) {
+        *job = Job::default();
+        return JobAction::Wait;
+    }
 
     advance(job, pose);
     if terrain_changed_since_check(job, grid) && route_broken(job, pose, grid) {
@@ -380,12 +386,34 @@ pub fn step(
 /// answers with what each does. The pawns take their marks one after another, so a mark one
 /// of them has claimed is already taken when the next looks.
 pub fn step_crew(
-    _crew: &mut Crew,
-    _poses: &BTreeMap<PawnId, Pose>,
-    _marks: &mut MineMarks,
-    _grid: &VoxelGrid,
+    crew: &mut Crew,
+    poses: &BTreeMap<PawnId, Pose>,
+    marks: &mut MineMarks,
+    grid: &VoxelGrid,
 ) -> Vec<(PawnId, JobAction)> {
-    todo!("step_crew")
+    let mut actions = Vec::new();
+    let mut being_dug = Vec::new();
+    for (id, pawn) in crew.iter_mut() {
+        let Some(&pose) = poses.get(&id) else {
+            continue;
+        };
+        let mut job = std::mem::take(&mut pawn.job);
+        let action = step(&mut job, pawn, id, pose, marks, grid);
+        pawn.job = job;
+        if let JobAction::Dig { block, .. } = action {
+            // A dig lets go of its mark, but the block stands until the caller applies the
+            // dig: keep the mark taken so no later pawn claims it this tick.
+            let mark = block.to_array();
+            let kept = marks.claim(mark, id);
+            debug_assert!(kept, "the digger's mark was just released");
+            being_dug.push(mark);
+        }
+        actions.push((id, action));
+    }
+    for mark in being_dug {
+        marks.release(mark);
+    }
+    actions
 }
 
 fn waypoint_centre(cell: BlockPos) -> Vec3 {

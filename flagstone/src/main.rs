@@ -160,16 +160,11 @@ struct App {
     /// Cached player chunk position used to gate per-frame LOD transition scans.
     lod_player_chunk_cache: glam::IVec3,
 
-    /// The player's gameplay pawn (inventory, mining). Deliberately separate
-    /// from `simulation.player_controller`, which is camera/movement-only —
-    /// see `flagstone_game::pawn::Pawn`'s doc comment.
-    pawn: flagstone_game::pawn::Pawn,
-
-    /// The colony's pawns. Test-only until the job loop and the HUD read it instead of `pawn`.
-    #[cfg(test)]
+    /// The colony's pawns (inventory, mining, job). Deliberately separate from
+    /// `simulation.player_controller`, which is camera/movement-only — see
+    /// `flagstone_game::pawn::Pawn`'s doc comment. Not saved yet.
     crew: flagstone_game::crew::Crew,
-    /// The pawn the player possesses; test-only for as long as `crew` is.
-    #[cfg(test)]
+    /// The pawn the player possesses: the one whose body is `physics.player`.
     possessed: flagstone_game::pawn::PawnId,
 
     /// The window's physical size, which pointer positions are measured in.
@@ -186,16 +181,39 @@ struct App {
 }
 
 impl App {
-    /// The pawn the player possesses. Test-only until the crew replaces `pawn`.
-    #[cfg(test)]
+    /// The pawn the player possesses.
     fn possessed_pawn(&self) -> &flagstone_game::pawn::Pawn {
-        &self.pawn
+        self.crew
+            .get(self.possessed)
+            .expect("the possessed pawn is in the crew")
     }
 
-    /// The pawn the player possesses, mutably. Test-only until the crew replaces `pawn`.
-    #[cfg(test)]
+    /// The pawn the player possesses, mutably.
     fn possessed_pawn_mut(&mut self) -> &mut flagstone_game::pawn::Pawn {
-        &mut self.pawn
+        self.crew
+            .get_mut(self.possessed)
+            .expect("the possessed pawn is in the crew")
+    }
+
+    /// Starts the crew over with one pawn standing at each of `spawns`, each with a body of
+    /// its own. The first is possessed: its body is the player's. Expects physics to be
+    /// already reset.
+    fn spawn_crew(&mut self, spawns: impl IntoIterator<Item = moho_physics::CharacterSpawn>) {
+        self.crew = flagstone_game::crew::Crew::default();
+        for (index, spawn) in spawns.into_iter().enumerate() {
+            let id = self.crew.spawn(flagstone_game::pawn::Pawn::default());
+            if index == 0 {
+                self.possessed = id;
+                self.physics.spawn_player(spawn);
+                let player = self
+                    .physics
+                    .player
+                    .expect("the player body was just spawned");
+                self.physics.pawns.insert(id, player);
+            } else {
+                self.physics.spawn_pawn(id, spawn);
+            }
+        }
     }
 
     /// Writes the running prefs to `prefs_path`; does nothing without one. A failed
@@ -277,6 +295,8 @@ impl App {
         tracing::info!("Created LightSystem for frame loop integration");
 
         let autosave_interval = app::autosave::autosave_interval(&initialized.prefs);
+        let mut crew = flagstone_game::crew::Crew::default();
+        let possessed = crew.spawn(flagstone_game::pawn::Pawn::default());
 
         Self {
             entities: initialized.entities,
@@ -329,11 +349,8 @@ impl App {
             chunk_streamer: None,
             lod_player_chunk_cache: glam::IVec3::splat(i32::MIN),
 
-            pawn: flagstone_game::pawn::Pawn::default(),
-            #[cfg(test)]
-            crew: flagstone_game::crew::Crew::default(),
-            #[cfg(test)]
-            possessed: flagstone_game::selection::FIRST_PAWN,
+            crew,
+            possessed,
 
             viewport: glam::UVec2::ZERO,
             pointer_hit: None,
@@ -411,12 +428,12 @@ impl App {
             saved_pos
         };
         let (yaw, pitch) = self.simulation.yaw_pitch();
-        self.physics.spawn_player(moho_physics::CharacterSpawn {
+        self.spawn_crew([moho_physics::CharacterSpawn {
             position: spawn_pos,
             yaw,
             pitch,
             body: moho_physics::CharacterBody::default(),
-        });
+        }]);
 
         // Align the simulation Y to match physics spawn (avoids terrain clipping).
         self.simulation

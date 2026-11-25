@@ -19,8 +19,7 @@ pub struct PhysicsController {
     pub test_bodies: Vec<(moho_physics::RigidBodyHandle, ActorId)>,
     pub jump_pressed: bool,
     pub player: Option<moho_physics::CharacterHandle>,
-    /// Every pawn's body, the possessed one included. Test-only until the job loop drives them.
-    #[cfg(test)]
+    /// Every pawn's body, the possessed one included (its handle is also `player`).
     pub pawns:
         std::collections::BTreeMap<flagstone_game::pawn::PawnId, moho_physics::CharacterHandle>,
     pub noclip: bool,
@@ -39,7 +38,6 @@ impl PhysicsController {
             test_bodies: Vec::new(),
             jump_pressed: false,
             player: None,
-            #[cfg(test)]
             pawns: std::collections::BTreeMap::new(),
             noclip: false,
             previous: None,
@@ -47,8 +45,8 @@ impl PhysicsController {
         }
     }
 
-    /// Adds the body of pawn `id` at `spawn`. Test-only until the job loop drives the crew.
-    #[cfg(test)]
+    /// Adds the body of pawn `id` at `spawn`. The possessed pawn's body is placed with
+    /// [`PhysicsController::spawn_player`] instead and recorded in `pawns` by the caller.
     pub fn spawn_pawn(
         &mut self,
         id: flagstone_game::pawn::PawnId,
@@ -66,6 +64,7 @@ impl PhysicsController {
         self.world = Some(new_world());
         self.test_bodies.clear();
         self.player = None;
+        self.pawns.clear();
         self.previous = None;
         self.snap_view = false;
         self.noclip = false;
@@ -79,6 +78,7 @@ impl PhysicsController {
         if let Some(previous) = self.player.take() {
             pw.remove_character(previous)
                 .expect("the player handle belongs to the current world");
+            self.pawns.retain(|_, handle| *handle != previous);
         }
         let handle = pw.add_character(spawn);
         self.player = Some(handle);
@@ -122,6 +122,26 @@ impl PhysicsController {
             self.previous = moved;
         }
         moved
+    }
+
+    /// Move pawn `id`'s body for one tick of `command` under `settings`. The possessed pawn's
+    /// body moves as the player's, so the view keeps blending across it.
+    ///
+    /// Returns the body's state afterwards, or `None` if the pawn has no body in the world.
+    pub fn move_pawn(
+        &mut self,
+        id: flagstone_game::pawn::PawnId,
+        command: &moho_physics::CharacterCommand,
+        settings: &moho_physics::MoveSettings,
+        dt: f32,
+    ) -> Option<moho_physics::CharacterState> {
+        let handle = *self.pawns.get(&id)?;
+        if self.player == Some(handle) {
+            return self.move_character(command, settings, dt);
+        }
+        let pw = self.world.as_mut()?;
+        pw.move_character(handle, command, settings, dt).ok()?;
+        pw.character(handle)
     }
 
     /// Queue facing the player character `yaw`/`pitch`, so the next tick turns from the view on

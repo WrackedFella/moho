@@ -115,60 +115,74 @@ impl FrameProcessor {
         app.simulation.controller_input.zoom_delta = 0.0;
     }
 
-    /// Runs the unpossessed pawn's job for one tick: the walk goes through the same character
-    /// step as the first-person path, the dig through the same mining action. An idle pawn is
-    /// not moved at all.
+    /// Runs every pawn's job for one tick: each walk goes through the same character step as
+    /// the first-person path, each dig through the same mining action from that pawn's eye. An
+    /// idle pawn is not moved at all, and only the possessed pawn's walk moves the view.
     fn run_pawn_job(&self, app: &mut App, dt: f32) {
         use flagstone_game::jobs::{self, EYE_HEIGHT, JobAction, Pose};
         use flagstone_game::pawn::{MINE_REACH, PawnId};
+        use std::collections::BTreeMap;
 
-        let Some(state) = app
-            .physics
-            .world
-            .as_ref()
-            .zip(app.physics.player)
-            .and_then(|(world, handle)| world.character(handle))
-        else {
+        let Some(world) = app.physics.world.as_ref() else {
             return;
         };
+        let bodies: BTreeMap<PawnId, moho_physics::CharacterState> = app
+            .physics
+            .pawns
+            .iter()
+            .filter_map(|(&id, &handle)| world.character(handle).map(|state| (id, state)))
+            .collect();
+        let poses: BTreeMap<PawnId, Pose> = bodies
+            .iter()
+            .map(|(&id, state)| {
+                let pose = Pose {
+                    feet: state.eye_position() - glam::Vec3::Y * EYE_HEIGHT,
+                    yaw: state.yaw,
+                };
+                (id, pose)
+            })
+            .collect();
         let Some(light_system) = app.light_system.as_mut() else {
             return;
         };
-        let eye = state.eye_position();
-        let pose = Pose {
-            feet: eye - glam::Vec3::Y * EYE_HEIGHT,
-            yaw: state.yaw,
-        };
-        let mut job = std::mem::take(&mut app.pawn.job);
-        let action = jobs::step(
-            &mut job,
-            &mut app.pawn,
-            PawnId(0),
-            pose,
+        let actions = jobs::step_crew(
+            &mut app.crew,
+            &poses,
             &mut app.colony.marks,
             light_system.grid(),
         );
-        app.pawn.job = job;
 
-        match action {
-            JobAction::Wait => {}
-            JobAction::Walk { to } => {
-                let (command, settings) = job_walk_command(jobs::steer(pose, to));
-                let Some(moved) = app.physics.move_character(&command, &settings, dt) else {
-                    tracing::warn!("Pawn job walked but the character did not move");
-                    return;
-                };
-                app.simulation
-                    .set_position_yaw_pitch(moved.position, moved.yaw, moved.pitch);
-            }
-            JobAction::Dig { aim, .. } => {
-                let grid = light_system.grid_mut();
-                let Some(outcome) = app.pawn.dig(grid, eye, (aim - eye).normalize(), MINE_REACH)
-                else {
-                    tracing::debug!(?aim, "Pawn dig found nothing solid within reach");
-                    return;
-                };
-                apply_pawn_dig(&app.event_bus, &mut app.colony.stock, grid, &outcome);
+        for (id, action) in actions {
+            match action {
+                JobAction::Wait => {}
+                JobAction::Walk { to } => {
+                    let (command, settings) = job_walk_command(jobs::steer(poses[&id], to));
+                    let Some(moved) = app.physics.move_pawn(id, &command, &settings, dt) else {
+                        tracing::warn!(pawn = ?id, "Pawn job walked but the character did not move");
+                        continue;
+                    };
+                    if id == app.possessed {
+                        app.simulation.set_position_yaw_pitch(
+                            moved.position,
+                            moved.yaw,
+                            moved.pitch,
+                        );
+                    }
+                }
+                JobAction::Dig { aim, .. } => {
+                    let eye = bodies[&id].eye_position();
+                    let grid = light_system.grid_mut();
+                    let pawn = app
+                        .crew
+                        .get_mut(id)
+                        .expect("step_crew answers only for pawns of the crew");
+                    let Some(outcome) = pawn.dig(grid, eye, (aim - eye).normalize(), MINE_REACH)
+                    else {
+                        tracing::debug!(pawn = ?id, ?aim, "Pawn dig found nothing solid within reach");
+                        continue;
+                    };
+                    apply_pawn_dig(&app.event_bus, &mut app.colony.stock, grid, &outcome);
+                }
             }
         }
     }
@@ -475,25 +489,32 @@ impl FrameProcessor {
             })
             .unwrap_or_default();
 
-        let mut hotbar: Vec<(u32, u32)> = app.pawn.inventory.iter().collect();
-        hotbar.sort_by_key(|(resource_id, _)| *resource_id);
+        let possessed = app.possessed_pawn();
+        let sorted_inventory = |pawn: &flagstone_game::pawn::Pawn| {
+            let mut counts: Vec<(u32, u32)> = pawn.inventory.iter().collect();
+            counts.sort_by_key(|(resource_id, _)| *resource_id);
+            counts
+        };
+        let hotbar = sorted_inventory(possessed);
 
         // Only one tool exists today (`flagstone_game::tools::STARTING_TOOL`); the
         // label is a fixed string until a real tool-name lookup exists.
-        let equipped_tool_label = app.pawn.equipped_tool.map(|_| "Pickaxe".to_string());
+        let tool_label =
+            |pawn: &flagstone_game::pawn::Pawn| pawn.equipped_tool.map(|_| "Pickaxe".to_string());
+        let equipped_tool_label = tool_label(possessed);
 
-        let selection =
-            app.selection
-                .selected()
-                .is_some()
-                .then(|| flagstone_ui::overlays::SelectionHud {
-                    title: "Pawn".to_string(),
-                    tool: equipped_tool_label.clone(),
-                    carried: hotbar
-                        .iter()
-                        .map(|&(id, count)| (flagstone_game::inventory::resource_name(id), count))
-                        .collect(),
-                });
+        let selection = app
+            .selection
+            .selected()
+            .and_then(|id| app.crew.get(id))
+            .map(|selected| flagstone_ui::overlays::SelectionHud {
+                title: "Pawn".to_string(),
+                tool: tool_label(selected),
+                carried: sorted_inventory(selected)
+                    .into_iter()
+                    .map(|(id, count)| (flagstone_game::inventory::resource_name(id), count))
+                    .collect(),
+            });
 
         let mut colony_stock: Vec<(u32, u32)> = app.colony.stock.iter().collect();
         colony_stock.sort_by_key(|(resource_id, _)| *resource_id);
@@ -512,11 +533,10 @@ impl FrameProcessor {
             loaded_chunk_xz,
             hotbar,
             equipped_tool_label,
-            selected_slot: app.pawn.selected_slot,
+            selected_slot: possessed.selected_slot,
             view_height: crate::app::view_level::layer_extent(app)
                 .map(|extent| app.view_level.hud(extent)),
-            pickups: app
-                .pawn
+            pickups: possessed
                 .pickups
                 .entries()
                 .iter()
