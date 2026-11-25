@@ -202,9 +202,9 @@ fn grid_stores(app: &App, pos: IVec3) -> bool {
 }
 
 /// A chunk's first-layer faces are drawn by the chunks behind it, and the game meshes only
-/// chunks the grid stores. So mesh each chunk behind `pos` that the grid does not store,
-/// and not below the world floor: with geometry it is drawn and solid, without it leaves
-/// the store, the renderer and physics.
+/// chunks the grid stores. So remesh each unstored chunk behind `pos`, above the world
+/// floor: with geometry it is drawn and solid, without it leaves the store, renderer and
+/// physics.
 fn remesh_unstored_behind(app: &mut App, pos: IVec3) {
     let Some(light) = app.light_system.as_ref() else {
         return;
@@ -911,7 +911,6 @@ pub(crate) mod tests {
         assert_eq!(terrain_collider_count(&app), 0);
     }
 
-    /// Fills the blocks `min..=max` with grass-height smooth ground, in the grid only.
     fn fill_ground(app: &mut App, min: IVec3, max: IVec3) {
         app.light_system
             .as_mut()
@@ -921,7 +920,6 @@ pub(crate) mod tests {
             .fill_region(min, max, 0);
     }
 
-    /// Meshes the chunk at `pos` from the grid at full detail and hands it to the world.
     fn insert_grid_chunk(app: &mut App, pos: IVec3) {
         let grid = app.light_system.as_ref().expect("light system").grid();
         let chunk = VoxelChunk::from_grid_lod(grid, pos, 0);
@@ -935,7 +933,6 @@ pub(crate) mod tests {
             .is_some_and(VoxelChunk::has_geometry)
     }
 
-    /// The chunk's vertices on the plane `axis = at`.
     fn vertices_on(app: &App, pos: IVec3, axis: usize, at: f32) -> usize {
         app.entities.chunks.get(pos).map_or(0, |chunk| {
             chunk
