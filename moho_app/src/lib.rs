@@ -86,18 +86,17 @@ impl<'a> FrameContext<'a> {
 
     /// The loop's tick index and clock, for a save.
     pub fn loop_record(&self) -> LoopRecord {
-        todo!("FrameContext::loop_record")
+        self.clock.record(self.next_tick)
     }
 
     /// Asks the loop to resume from `record` before its next tick.
     pub fn resume_loop(&mut self, record: LoopRecord) {
-        let _ = record;
-        todo!("FrameContext::resume_loop")
+        self.requests.resume = Some(record);
     }
 
     /// The last resume the game asked for, if it asked.
     pub fn requested_resume(&self) -> Option<LoopRecord> {
-        todo!("FrameContext::requested_resume")
+        self.requests.resume
     }
 
     /// Sets the window mode [`FrameContext::window_mode`] reports.
@@ -245,18 +244,17 @@ impl<'a> EventContext<'a> {
 
     /// The loop's tick index and clock, for a save.
     pub fn loop_record(&self) -> LoopRecord {
-        todo!("EventContext::loop_record")
+        self.clock.record(self.next_tick)
     }
 
     /// Asks the loop to resume from `record` before its next tick.
     pub fn resume_loop(&mut self, record: LoopRecord) {
-        let _ = record;
-        todo!("EventContext::resume_loop")
+        self.requests.resume = Some(record);
     }
 
     /// The last resume the game asked for, if it asked.
     pub fn requested_resume(&self) -> Option<LoopRecord> {
-        todo!("EventContext::requested_resume")
+        self.requests.resume
     }
 
     /// Sets the window mode [`EventContext::window_mode`] reports.

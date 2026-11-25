@@ -45,7 +45,8 @@ impl<G: Game> HeadlessLoop<G> {
     pub fn advance(&mut self, game: &mut G, frame_dt: Duration) -> u32 {
         let n = self.run_ticks(game, frame_dt);
         self.apply_paused_command(game);
-        let mut ctx = FrameContext::headless(self.tick_length, &self.clock);
+        let mut ctx =
+            FrameContext::headless(self.tick_length, &self.clock).with_next_tick(self.next_tick);
         ctx.frame_dt = self.capped_frame_dt(frame_dt);
         game.frame(&mut ctx, self.step.alpha());
         self.apply_requests(ctx.loop_requests());
@@ -58,8 +59,11 @@ impl<G: Game> HeadlessLoop<G> {
         elapsed.min(self.tick_length * self.max_catch_up_ticks)
     }
 
-    /// Applies the pause and speed a game asked for, from the next tick.
+    /// Applies the resume, pause and speed a game asked for, from the next tick.
     pub(crate) fn apply_requests(&mut self, requests: LoopRequests) {
+        if let Some(record) = requests.resume {
+            self.restore(record);
+        }
         if let Some(paused) = requests.paused {
             self.set_paused(paused);
         }
@@ -118,14 +122,14 @@ impl<G: Game> HeadlessLoop<G> {
 
     /// The tick index and clock a save keeps.
     pub fn record(&self) -> LoopRecord {
-        todo!("HeadlessLoop::record")
+        self.clock.record(self.next_tick)
     }
 
     /// Resumes from `record`: sets the next tick and the clock, and keeps pause, speed, the
     /// sub-tick remainder and the tick length. Runs no tick and calls no [`Game`] method.
     pub fn restore(&mut self, record: LoopRecord) {
-        let _ = record;
-        todo!("HeadlessLoop::restore")
+        self.next_tick = record.next_tick;
+        self.clock = GameClock::from_record(&record);
     }
 
     /// Real time until the next tick is due; one tick length while paused.
@@ -848,6 +852,9 @@ mod tests {
         assert_eq!(sim.alpha(), alpha);
     }
 
+    /// Slightly over one tick: `NS / 60` truncates to just under a tick and runs none.
+    const ONE_TICK_OF_FRAME: Duration = Duration::from_nanos(NS / 60 + 1);
+
     #[test]
     fn resume_requested_in_a_frame_applies_before_the_next_tick() {
         let (source, _) = loop_after_300_scaled_ticks();
@@ -861,7 +868,7 @@ mod tests {
         game.seen.clear();
 
         let first = sim.advance(&mut game, Duration::ZERO);
-        let second = sim.advance(&mut game, Duration::from_nanos(NS / 60));
+        let second = sim.advance(&mut game, ONE_TICK_OF_FRAME);
 
         assert_eq!(first, 0);
         assert_eq!(second, 1);
@@ -876,7 +883,7 @@ mod tests {
     fn frame_loop_record_matches_the_loops_record() {
         let (mut sim, mut game) = loop_after_300_scaled_ticks();
 
-        sim.advance(&mut game, Duration::from_nanos(NS / 60));
+        sim.advance(&mut game, ONE_TICK_OF_FRAME);
 
         let seen = game.frame_record.expect("the frame ran");
         assert_eq!(seen.next_tick, 301);

@@ -71,14 +71,26 @@ impl GameClock {
 
     /// The record of this clock with `next_tick` as the next tick's index.
     pub fn record(&self, next_tick: u64) -> LoopRecord {
-        let _ = (self, next_tick);
-        todo!("GameClock::record")
+        LoopRecord {
+            next_tick,
+            time_of_day: self.time_of_day,
+            elapsed_seconds: self.elapsed_seconds,
+            time_scale: self.time_scale,
+            day_length_seconds: self.day_length_seconds,
+            night_length_seconds: self.night_length_seconds,
+        }
     }
 
     /// The clock `record` describes, with the constructor's and setter's rules applied.
     pub fn from_record(record: &LoopRecord) -> Self {
-        let _ = record;
-        todo!("GameClock::from_record")
+        let mut clock = Self::new(
+            record.time_of_day,
+            record.day_length_seconds,
+            record.night_length_seconds,
+        );
+        clock.elapsed_seconds = record.elapsed_seconds;
+        clock.set_time_scale(record.time_scale);
+        clock
     }
 
     /// Advance the clock by `dt` seconds of simulated time, scaled by the time scale.
