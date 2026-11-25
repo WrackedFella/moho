@@ -36,6 +36,10 @@ impl LooseId {
     pub fn get(self) -> u64 {
         self.0
     }
+
+    pub(super) fn from_raw(raw: u64) -> Self {
+        Self(raw)
+    }
 }
 
 /// What the world keeps per loose object besides its body.
@@ -395,8 +399,8 @@ fn shrink(v: Vec3, cut: f32) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::test_support::{floor_mesh, slab_mesh, slope_mesh, TEST_TAG};
-    use crate::world::RayQuery;
+    use crate::world::test_support::{TEST_TAG, floor_mesh, slab_mesh, slope_mesh, x_wall_mesh};
+    use crate::world::{HitTag, RayQuery};
     use moho_render_api::{WorldMesh, WorldMeshId};
     use proptest::prelude::*;
     use rapier3d::prelude::{Collider, RigidBody};
@@ -2448,5 +2452,159 @@ mod tests {
         }
         let depth = overlap(&world, ids[0], ids[1]);
         assert!(depth <= 0.005, "the spheres end {depth} m into each other");
+    }
+
+    fn look(origin: Vec3, direction: Vec3) -> RayQuery {
+        RayQuery {
+            origin,
+            direction,
+            max_distance: 10.0,
+            ignore: None,
+        }
+    }
+
+    fn resting_box_world() -> (PhysicsWorld, LooseId) {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(0.0, 0.2, 0.0),
+            ..LooseSpawn::new(cube(0.2), 1.0)
+        });
+        (world, id)
+    }
+
+    #[test]
+    fn a_look_finds_a_resting_box() {
+        let (mut world, id) = resting_box_world();
+        run(&mut world, 300);
+        let centre = read(&world, id).position;
+
+        let found = world.pick_loose(&look(centre + Vec3::Y * 1.6, Vec3::NEG_Y));
+
+        assert_eq!(found, Some(id));
+    }
+
+    #[test]
+    fn a_wall_hides_a_box_from_a_look() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        world.set_world_mesh(WorldMeshId(1), &x_wall_mesh(3.0), WALL_TAG);
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(4.0, 0.2, 0.0),
+            ..LooseSpawn::new(cube(0.2), 1.0)
+        });
+        run(&mut world, 60);
+        let height = read(&world, id).position.y;
+        let query = look(Vec3::new(2.0, height, 0.0), Vec3::X);
+        let beyond_the_wall = world.pick_loose(&RayQuery {
+            origin: Vec3::new(3.5, height, 0.0),
+            ..query
+        });
+
+        let found = world.pick_loose(&query);
+        let ray = world.cast_ray(&query).expect("the wall is in range");
+
+        assert_eq!(beyond_the_wall, Some(id), "the box is there to be seen");
+        assert_eq!(found, None);
+        assert_eq!(ray.tag, WALL_TAG);
+    }
+
+    const WALL_TAG: HitTag = HitTag(7);
+
+    #[test]
+    fn looking_for_600_ticks_removes_nothing() {
+        let (mut world, id) = resting_box_world();
+        run(&mut world, 60);
+        let query = look(Vec3::new(0.0, 1.8, 0.0), Vec3::NEG_Y);
+
+        for tick in 1..=600 {
+            world.step(DT);
+            assert_eq!(world.pick_loose(&query), Some(id), "tick {tick}");
+        }
+
+        assert!(world.loose(id).is_some());
+        assert_eq!(world.loose_count(), 1);
+        assert_eq!(world.pick_loose(&query), Some(id));
+    }
+
+    fn three_apart() -> [LooseSpawn; 3] {
+        let at = |z: f32, spin: Vec3| LooseSpawn {
+            position: Vec3::new(0.0, 1.0, z),
+            ..tumbling_spawn(spin, Vec3::new(1.0, 0.0, 0.0), 2.0)
+        };
+        [
+            at(-3.0, Vec3::new(7.0, -3.0, 11.0)),
+            at(0.0, Vec3::new(-5.0, 9.0, 2.0)),
+            at(3.0, Vec3::new(3.0, 4.0, -8.0)),
+        ]
+    }
+
+    #[test]
+    fn removing_one_of_three_leaves_the_others_bit_equal() {
+        let spawns = three_apart();
+        for removed in 0..3 {
+            let mut with = world_with_floor(&floor_mesh(0.0));
+            let ids: Vec<LooseId> = spawns.iter().map(|s| with.spawn_loose(s)).collect();
+            let mut without = world_with_floor(&floor_mesh(0.0));
+            let kept: Vec<(LooseId, LooseId)> = (0..3)
+                .filter(|&i| i != removed)
+                .map(|i| (ids[i], without.spawn_loose(&spawns[i])))
+                .collect();
+
+            for tick in 1..=400 {
+                with.step(DT);
+                without.step(DT);
+                if tick == 40 {
+                    with.remove_loose(ids[removed])
+                        .expect("the object is alive");
+                }
+                for &(a, b) in &kept {
+                    let (a, b) = (read(&with, a), read(&without, b));
+                    assert_eq!(
+                        bits(&a),
+                        bits(&b),
+                        "removed {removed}, tick {tick}: state bits differ"
+                    );
+                    assert_eq!(a.asleep, b.asleep, "removed {removed}, tick {tick}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_look_at_a_removed_box_finds_the_floor() {
+        let (mut world, id) = resting_box_world();
+        run(&mut world, 60);
+        let query = look(Vec3::new(0.0, 1.8, 0.0), Vec3::NEG_Y);
+        let before = world.pick_loose(&query);
+
+        world.remove_loose(id).expect("the box is alive");
+        let at_once = world.pick_loose(&query);
+        world.step(DT);
+        let after_a_step = world.pick_loose(&query);
+        let ray = world.cast_ray(&query).expect("the floor is in range");
+
+        assert_eq!(before, Some(id), "the box is there to be seen");
+        assert_eq!(at_once, None);
+        assert_eq!(after_a_step, None);
+        assert_eq!(ray.tag, TEST_TAG);
+        assert!(ray.point.y.abs() <= 0.001, "hit the floor: {ray:?}");
+    }
+
+    #[test]
+    fn removing_twice_changes_nothing() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let spawns = three_apart();
+        let gone = world.spawn_loose(&spawns[0]);
+        let other = world.spawn_loose(&spawns[1]);
+        run(&mut world, 40);
+        world.remove_loose(gone).expect("the object is alive");
+        let state = read(&world, other);
+        let count = world.loose_count();
+
+        let second = world.remove_loose(gone);
+
+        assert_eq!(second, Err(UnknownLoose));
+        assert_eq!(read(&world, other), state);
+        assert_eq!(world.loose_count(), count);
+        assert_eq!(count, 1);
     }
 }

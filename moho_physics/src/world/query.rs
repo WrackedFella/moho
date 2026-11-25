@@ -1,4 +1,4 @@
-use super::{CharacterHandle, PhysicsWorld};
+use super::{CharacterHandle, LooseId, PhysicsWorld};
 use glam::Vec3;
 use rapier3d::prelude::{Collider, ColliderHandle, QueryFilter, Ray};
 
@@ -40,7 +40,23 @@ fn decode_tag(user_data: u128) -> Option<HitTag> {
         .map(HitTag)
 }
 
+/// Stub: the real encoding sets a loose bit and puts the id in the upper 64 bits.
+pub(super) fn encode_loose(_id: LooseId) -> u128 {
+    0
+}
+
+/// Stub: the real decoding is the inverse of [`encode_loose`].
+fn decode_loose(_user_data: u128) -> Option<LooseId> {
+    None
+}
+
 impl PhysicsWorld {
+    /// The loose object `query` reaches first, ahead of any tagged surface; `None` when a tagged
+    /// surface is nearer or nothing is in range. Reads the world as the last `step` left it.
+    pub fn pick_loose(&self, _query: &RayQuery) -> Option<LooseId> {
+        None
+    }
+
     /// The nearest tagged surface along `query`.
     ///
     /// Reads the world as the last `step` left it, so a tick moves characters, steps, then
@@ -84,6 +100,7 @@ impl PhysicsWorld {
 mod tests {
     use super::super::test_support::{x_wall_mesh, x_wall_mesh_reversed};
     use super::*;
+    use crate::world::{HitVolume, LooseShape, LooseSpawn};
     use moho_render_api::WorldMeshId;
     use proptest::prelude::*;
 
@@ -401,6 +418,84 @@ mod tests {
             );
             assert_vec_near(hit.normal, Vec3::new(1.0, 0.0, 0.0));
             assert_vec_near(hit.point, Vec3::new(5.0, 0.0, 0.0));
+        }
+    }
+
+    fn weightless_world_with_box_at_x5() -> (PhysicsWorld, LooseId) {
+        let mut world = PhysicsWorld::new();
+        world.set_gravity(0.0);
+        let id = world.spawn_loose(&LooseSpawn {
+            position: Vec3::new(5.0, 0.0, 0.0),
+            ..LooseSpawn::new(
+                LooseShape::Box {
+                    half_extents: Vec3::splat(0.2),
+                },
+                1.0,
+            )
+        });
+        world.step(DT);
+        (world, id)
+    }
+
+    #[test]
+    fn a_look_skips_untagged_colliders_and_honours_ignore() {
+        let (mut world, id) = weightless_world_with_box_at_x5();
+        let character = world.add_character(Vec3::new(2.0, 0.0, 0.0));
+        world.step(DT);
+        let look = along_x(20.0);
+
+        let past_a_capsule = world.pick_loose(&look);
+        world
+            .set_hit_volumes(
+                character,
+                &[HitVolume {
+                    offset: Vec3::ZERO,
+                    rotation: glam::Quat::IDENTITY,
+                    half_extents: Vec3::splat(0.5),
+                    tag: HitTag(3),
+                }],
+            )
+            .expect("the character is alive");
+        world.step(DT);
+        let behind_a_hit_volume = world.pick_loose(&look);
+        let ignoring_the_character = world.pick_loose(&RayQuery {
+            ignore: Some(character),
+            ..look
+        });
+
+        assert_eq!(past_a_capsule, Some(id));
+        assert_eq!(behind_a_hit_volume, None);
+        assert_eq!(ignoring_the_character, Some(id));
+    }
+
+    proptest! {
+        #[test]
+        fn a_look_in_an_empty_world_finds_nothing(
+            origin in prop::array::uniform3(-100.0f32..100.0),
+            direction in prop::array::uniform3(-1.0f32..1.0),
+            max_distance in 0.0f32..1000.0,
+        ) {
+            let mut world = PhysicsWorld::new();
+            world.step(DT);
+
+            let picked = world.pick_loose(&RayQuery {
+                origin: Vec3::from(origin),
+                direction: Vec3::from(direction),
+                max_distance,
+                ignore: None,
+            });
+
+            prop_assert_eq!(picked, None);
+        }
+
+        #[test]
+        fn loose_and_tag_encodings_never_collide(tag in any::<u32>(), id in any::<u64>()) {
+            let loose = LooseId::from_raw(id);
+
+            prop_assert_eq!(decode_loose(encode_tag(HitTag(tag))), None);
+            prop_assert_eq!(decode_tag(encode_loose(loose)), None);
+            prop_assert_eq!(decode_loose(encode_loose(loose)), Some(loose));
+            prop_assert_eq!(decode_tag(encode_tag(HitTag(tag))), Some(HitTag(tag)));
         }
     }
 
