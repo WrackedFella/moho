@@ -2040,6 +2040,7 @@ dependencies = [
  "criterion",
  "glam 0.33.12",
  "ini",
+ "libm",
  "moho_render_api",
  "postcard",
  "proptest",

@@ -13,7 +13,7 @@ fmt:
     cargo fmt --all
 
 # Gate: formatting, lints, tests, doctests, comment refs and layering. Must pass before any commit.
-check: fmt-check lint test test-doc comment-refs layering run-record-test chain-test assets-check
+check: fmt-check lint test test-doc comment-refs layering sim-math run-record-test chain-test assets-check
 
 fmt-check:
     cargo fmt --all --check
@@ -233,6 +233,52 @@ run-record-test:
         || { echo "run-record: a run that was not cut off has no reset time"; exit 1; }
     diff "$f/digest.md" <(cat "$f/records.jsonl" <(scripts/run-record.sh record "$f/execution-limit.json") | scripts/run-record.sh digest)
     echo "run-record: OK"
+
+# Platform-transcendental check on the engine sim files in scripts/sim-math.txt, plus
+# self-tests that the script rejects and accepts its fixtures (each fixture's list is scripts/fixtures/<name>.txt).
+sim-math:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Forward slashes: bash strips the backslashes of an unquoted Windows path.
+    rejects() { "{{replace(just_executable(), '\', '/')}}" _sim-math-rejects "$@"; }
+    accepts() { "{{replace(just_executable(), '\', '/')}}" _sim-math-accepts "$@"; }
+    scripts/check-sim-math.sh scripts/sim-math.txt
+    rejects sim-math-call scripts/fixtures/sim-math-call.rs:3
+    rejects sim-math-gated-decl scripts/fixtures/sim-math-gated-decl.rs:5
+    accepts sim-math-unlisted
+    accepts sim-math-after-tests
+
+# Fails unless the sim-math check exits non-zero on the fixture's file list and prints the expected file:line.
+[private]
+_sim-math-rejects fixture expected:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    out=$(scripts/check-sim-math.sh scripts/fixtures/{{fixture}}.txt 2>&1)
+    status=$?
+    if [ "$status" -ne 0 ] && grep -qF -- '{{expected}}' <<<"$out"; then
+        exit 0
+    fi
+    echo "sim-math self-test failed: {{fixture}}" >&2
+    echo "  expected: non-zero exit and line: {{expected}}" >&2
+    echo "  got: exit $status, output:" >&2
+    sed 's/^/    /' <<<"$out" >&2
+    exit 1
+
+# Fails unless the sim-math check exits 0 on the fixture's file list.
+[private]
+_sim-math-accepts fixture:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    out=$(scripts/check-sim-math.sh scripts/fixtures/{{fixture}}.txt 2>&1)
+    status=$?
+    if [ "$status" -eq 0 ]; then
+        exit 0
+    fi
+    echo "sim-math self-test failed: {{fixture}}" >&2
+    echo "  expected: exit 0" >&2
+    echo "  got: exit $status, output:" >&2
+    sed 's/^/    /' <<<"$out" >&2
+    exit 1
 
 # Layering check on the real crate graph, plus self-tests that each rule rejects its fixture.
 layering:

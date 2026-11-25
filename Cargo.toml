@@ -6,6 +6,7 @@ members = ["flagstone", "moho_app", "moho_core", "flagstone_game", "flagstone_vo
 bytemuck = "1.24"
 gilrs = "0.11"
 glam = "0.33"
+libm = "0.2"
 naga = "30.0.1"
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 crc32fast = "1"

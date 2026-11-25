@@ -6,5 +6,6 @@ pub mod persist;
 pub mod pointer;
 pub mod prefs;
 pub mod rng;
+pub mod sim_math;
 
 pub use events::{Event, EventBus};
