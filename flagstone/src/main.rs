@@ -165,7 +165,7 @@ struct App {
     /// `flagstone_game::pawn::Pawn`'s doc comment. Not saved yet.
     crew: flagstone_game::crew::Crew,
     /// The pawn the player possesses: the one whose body is `physics.player`.
-    possessed: flagstone_game::pawn::PawnId,
+    possessed: Option<flagstone_game::pawn::PawnId>,
 
     /// The window's physical size, which pointer positions are measured in.
     viewport: glam::UVec2,
@@ -183,13 +183,13 @@ struct App {
 impl App {
     fn possessed_pawn(&self) -> &flagstone_game::pawn::Pawn {
         self.crew
-            .get(self.possessed)
+            .get(self.possessed.expect("a pawn is possessed"))
             .expect("the possessed pawn is in the crew")
     }
 
     fn possessed_pawn_mut(&mut self) -> &mut flagstone_game::pawn::Pawn {
         self.crew
-            .get_mut(self.possessed)
+            .get_mut(self.possessed.expect("a pawn is possessed"))
             .expect("the possessed pawn is in the crew")
     }
 
@@ -206,8 +206,9 @@ impl App {
         self.selection = flagstone_game::selection::Selection::default();
         // The old crew's claims name pawns that no longer exist; new pawns reuse their ids.
         self.colony.marks.release_all();
-        self.possessed = self.crew.spawn(flagstone_game::pawn::Pawn::default());
-        self.physics.spawn_possessed(self.possessed, first);
+        let first_id = self.crew.spawn(flagstone_game::pawn::Pawn::default());
+        self.possessed = Some(first_id);
+        self.physics.spawn_possessed(first_id, first);
         for spawn in rest {
             let id = self.crew.spawn(flagstone_game::pawn::Pawn::default());
             self.physics.spawn_pawn(id, spawn);
@@ -348,7 +349,7 @@ impl App {
             lod_player_chunk_cache: glam::IVec3::splat(i32::MIN),
 
             crew,
-            possessed,
+            possessed: Some(possessed),
 
             viewport: glam::UVec2::ZERO,
             pointer_hit: None,

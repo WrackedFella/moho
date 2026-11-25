@@ -50,7 +50,7 @@ pub(crate) fn dig_site_with_pawns(blocks: &[Block], cells: &[[i32; 3]]) -> App {
         let id = app.crew.spawn(Pawn::default());
         let start = standing_at(*cell);
         if index == 0 {
-            app.possessed = id;
+            app.possessed = Some(id);
             app.simulation.set_position_yaw_pitch(start, 0.0, 0.0);
             app.physics.spawn_player(start);
             let player = app.physics.player.expect("the player was just spawned");

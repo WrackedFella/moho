@@ -219,7 +219,7 @@ impl EventProcessor {
 
         let possessed = app
             .crew
-            .get_mut(app.possessed)
+            .get_mut(app.possessed.expect("a pawn is possessed"))
             .expect("the possessed pawn is in the crew");
         let Some(outcome) = possessed.mine(grid, camera_pos, forward, MINE_REACH) else {
             tracing::debug!(

@@ -150,6 +150,7 @@ impl FrameProcessor {
             &poses,
             &mut app.colony.marks,
             light_system.grid(),
+            None,
         );
 
         for (id, action) in actions {
@@ -161,7 +162,7 @@ impl FrameProcessor {
                         tracing::warn!(pawn = ?id, "Pawn job walked but the character did not move");
                         continue;
                     };
-                    if id == app.possessed {
+                    if Some(id) == app.possessed {
                         app.simulation.set_position_yaw_pitch(
                             moved.position,
                             moved.yaw,
@@ -1584,20 +1585,59 @@ mod tests {
 
         #[test]
         fn a_possessed_pawn_runs_no_job() {
-            let mut app = site_with_mark(&[(NEAR, Some(ORE))], NEAR);
+            let idle_cell = [PAWN_CELL[0], PAWN_CELL[1], 18];
+            let mut app = dig_site_with_pawns(&[(NEAR, Some(ORE))], &[PAWN_CELL, idle_cell]);
+            app.colony.marks.toggle(NEAR);
             app.simulation.set_camera_mode(CameraMode::FirstPerson);
             let before = pawn_state(&app).position;
+            let mut sim = crate::app::dig_site::headless_loop();
+            let mut took_work = false;
 
-            crate::app::dig_site::headless_loop().step(&mut app, 240);
+            for _ in 0..240 {
+                sim.step(&mut app, 1);
+                took_work |=
+                    is_mining(&app, FIRST_PAWN) || claimant(&app, NEAR) == Some(FIRST_PAWN);
+            }
 
             let after = pawn_state(&app).position;
             assert!(
                 (after.x - before.x).abs() < 1e-3 && (after.z - before.z).abs() < 1e-3,
                 "the possessed pawn walked from {before:?} to {after:?}"
             );
-            assert!(block_exists(&app, NEAR));
-            assert!(app.colony.marks.contains(NEAR));
-            assert!(app.colony.stock.is_empty());
+            assert!(!took_work, "the possessed pawn took the mark");
+            assert!(
+                app.possessed_pawn().inventory.is_empty(),
+                "the possessed pawn dug"
+            );
+            assert!(
+                !block_exists(&app, NEAR),
+                "the others did not work the mark either"
+            );
+        }
+
+        #[test]
+        fn while_one_pawn_is_possessed_another_digs_the_mark() {
+            // The possessed pawn stands nearer the block, so it would take the mark if it worked.
+            let idle_cell = [PAWN_CELL[0], PAWN_CELL[1], 18];
+            let mut app = dig_site_with_pawns(&[(NEAR, Some(ORE))], &[PAWN_CELL, idle_cell]);
+            app.colony.marks.toggle(NEAR);
+            app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            let possessed_at = pawn_state(&app).position;
+
+            let removed = run_until(&mut app, GIVE_UP, |app| !block_exists(app, NEAR));
+
+            assert!(removed, "the block is still standing after {GIVE_UP} ticks");
+            assert!(
+                distance_walked(&app, PawnId(1), idle_cell) > 1.5,
+                "the other pawn dug where it stood"
+            );
+            assert_eq!(ore_total(&app), 1, "the block was dug once");
+            assert!(!app.colony.marks.contains(NEAR), "the marker is gone");
+            let after = pawn_state(&app).position;
+            assert!(
+                (after.x - possessed_at.x).abs() < 1e-3 && (after.z - possessed_at.z).abs() < 1e-3,
+                "the possessed pawn moved from {possessed_at:?} to {after:?}"
+            );
         }
 
         /// The trench's columns: the ground is gone across the whole field here except under

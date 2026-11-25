@@ -72,6 +72,13 @@ impl PhysicsController {
         self.pawns.insert(id, handle);
     }
 
+    /// Makes pawn `id`'s body the player's, so the character step and the first-person view
+    /// follow it, and queues a view snap so the view does not blend from the previous body.
+    /// Does nothing for a pawn without a body.
+    pub fn possess(&mut self, _id: flagstone_game::pawn::PawnId) {
+        todo!("possess")
+    }
+
     /// Clear and recreate the physics world, removing all colliders and bodies.
     pub fn reset(&mut self) {
         self.world = Some(new_world());
@@ -404,7 +411,9 @@ mod tests {
         let player = app.physics.player.expect("a player body is placed");
         assert_eq!(app.crew.len(), 1, "a save holds no crew, only the camera");
         assert_eq!(
-            app.physics.pawns.get(&app.possessed),
+            app.physics
+                .pawns
+                .get(&app.possessed.expect("a pawn is possessed")),
             Some(&player),
             "the possessed pawn's body is the player's"
         );
@@ -546,6 +555,53 @@ mod tests {
             assert!(pw.character(handle).is_none(), "an old body is still alive");
         }
         assert_eq!(pw.rigid_body_set.len(), 0, "no body outlives the reset");
+    }
+
+    #[test]
+    fn possess_makes_the_pawns_body_the_players_and_the_view_does_not_blend() {
+        use flagstone_game::pawn::PawnId;
+        let mut controller = PhysicsController::new();
+        controller.spawn_possessed(PawnId(0), glam::Vec3::new(0.0, 50.0, 0.0));
+        controller.spawn_pawn(PawnId(1), glam::Vec3::new(8.0, 50.0, 0.0));
+        let second = controller.pawns[&PawnId(1)];
+        for _ in 0..10 {
+            controller.move_character(&idle(), &strategy_settings(), DT);
+        }
+        assert_ne!(
+            controller.player,
+            Some(second),
+            "setup: the first is the player"
+        );
+        assert!(controller.player_states().is_some(), "setup");
+
+        controller.possess(PawnId(1));
+
+        assert_eq!(controller.player, Some(second));
+        assert_eq!(
+            controller.player_states(),
+            None,
+            "no blend from the old body"
+        );
+        let moved = controller
+            .move_character(&idle(), &strategy_settings(), DT)
+            .expect("the possessed body is live");
+        assert!(
+            (moved.position.x - 8.0).abs() < 0.5,
+            "the step moved the second pawn's body: {moved:?}"
+        );
+        assert_eq!(controller.player_states(), Some((moved, moved)));
+    }
+
+    #[test]
+    fn possessing_a_pawn_without_a_body_changes_nothing() {
+        use flagstone_game::pawn::PawnId;
+        let mut controller = PhysicsController::new();
+        controller.spawn_possessed(PawnId(0), glam::Vec3::new(0.0, 50.0, 0.0));
+        let player = controller.player;
+
+        controller.possess(PawnId(7));
+
+        assert_eq!(controller.player, player);
     }
 
     #[test]

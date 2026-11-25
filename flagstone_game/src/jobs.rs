@@ -158,6 +158,12 @@ fn horizontal_distance(a: Vec3, b: Vec3) -> f32 {
     (a.x - b.x).hypot(a.z - b.z)
 }
 
+/// Stops `job` without finishing it: a `Mine` job lets go of its claim (the mark stays) and
+/// the job becomes `Idle` with an empty memo. An idle job is left as it is.
+pub fn suspend(_job: &mut Job, _marks: &mut MineMarks) {
+    todo!("suspend")
+}
+
 fn release(job: &mut Job, marks: &mut MineMarks, mark: [i32; 3]) {
     marks.release(mark);
     *job = Job::default();
@@ -392,6 +398,7 @@ pub fn step_crew(
     poses: &BTreeMap<PawnId, Pose>,
     marks: &mut MineMarks,
     grid: &VoxelGrid,
+    _possessed: Option<PawnId>,
 ) -> Vec<(PawnId, JobAction)> {
     let mut actions = Vec::new();
     let mut being_dug = Vec::new();
@@ -1937,7 +1944,18 @@ mod tests {
             /// One crew tick. Each pawn that is sent walking stands on its target next, and
             /// each block dug is removed the way the colony does it.
             fn tick(&mut self) -> Vec<(PawnId, JobAction)> {
-                let actions = step_crew(&mut self.crew, &self.poses, &mut self.marks, &self.grid);
+                self.tick_without(None)
+            }
+
+            /// A crew tick with `possessed` under the player's control.
+            fn tick_without(&mut self, possessed: Option<PawnId>) -> Vec<(PawnId, JobAction)> {
+                let actions = step_crew(
+                    &mut self.crew,
+                    &self.poses,
+                    &mut self.marks,
+                    &self.grid,
+                    possessed,
+                );
                 for &(id, action) in &actions {
                     match action {
                         JobAction::Wait => {}
@@ -2183,6 +2201,95 @@ mod tests {
             assert_eq!(actions[0], (first, JobAction::Wait));
             assert_eq!(site.claimed_by([8, 1, 0]), Some(second));
             assert_eq!(site.held(), [(second, [8, 1, 0])]);
+        }
+
+        #[test]
+        fn suspend_releases_the_claim_keeps_the_mark_and_idles() {
+            let mut site = Site::flat();
+            site.mark_block(cell(6, 1, 0));
+            site.tick();
+            assert_eq!(
+                site.claimed_by([6, 1, 0]),
+                Some(ME),
+                "setup: the pawn holds it"
+            );
+
+            suspend(&mut site.job, &mut site.marks);
+
+            assert_eq!(site.claimed_by([6, 1, 0]), None, "the claim is let go");
+            assert!(site.is_marked([6, 1, 0]), "the mark stays");
+            assert_eq!(site.job, Job::default());
+
+            suspend(&mut site.job, &mut site.marks);
+
+            assert_eq!(
+                site.job,
+                Job::default(),
+                "suspending twice changes nothing more"
+            );
+            assert!(site.is_marked([6, 1, 0]));
+        }
+
+        #[test]
+        fn suspend_of_an_idle_job_changes_nothing() {
+            let mut site = Site::flat();
+            site.mark_block(cell(6, 1, 0));
+            assert!(
+                site.marks.claim([6, 1, 0], OTHER),
+                "setup: another pawn holds it"
+            );
+
+            suspend(&mut site.job, &mut site.marks);
+
+            assert_eq!(site.job, Job::default());
+            assert_eq!(site.claimed_by([6, 1, 0]), Some(OTHER));
+            assert!(site.is_marked([6, 1, 0]));
+        }
+
+        #[test]
+        fn step_crew_gives_the_possessed_pawn_no_action_and_lets_another_take_its_mark() {
+            let mut site = CrewSite::flat(&[cell(0, 1, 0), cell(3, 1, 0)]);
+            site.mark_block(cell(6, 1, 0));
+            let [first, second] = site.ids[..] else {
+                panic!("two pawns were spawned: {:?}", site.ids);
+            };
+            site.tick();
+            assert_eq!(
+                site.claimed_by([6, 1, 0]),
+                Some(first),
+                "setup: the first holds it"
+            );
+            let first_pose = site.poses[&first];
+            let first_job = site.crew.get_mut(first).expect("the first pawn");
+            suspend(&mut first_job.job, &mut site.marks);
+
+            let actions = site.tick_without(Some(first));
+
+            assert_eq!(actions.len(), 1, "only the other pawn answers: {actions:?}");
+            assert!(
+                matches!(actions[0], (id, JobAction::Walk { .. }) if id == second),
+                "{actions:?}"
+            );
+            assert_eq!(site.claimed_by([6, 1, 0]), Some(second));
+            assert_eq!(site.held(), [(second, [6, 1, 0])]);
+            assert_eq!(
+                site.poses[&first], first_pose,
+                "the possessed pawn is not moved"
+            );
+        }
+
+        #[test]
+        fn step_crew_skips_a_possessed_pawn_that_has_a_mark_in_reach() {
+            let mut site = CrewSite::flat(&[cell(3, 1, 0)]);
+            site.mark_block(cell(4, 1, 0));
+            let pawn = site.ids[0];
+
+            let actions = site.tick_without(Some(pawn));
+
+            assert!(actions.is_empty(), "{actions:?}");
+            assert_eq!(site.claimed_by([4, 1, 0]), None, "it takes no mark");
+            assert!(site.marks.contains([4, 1, 0]));
+            assert!(site.grid.is_solid_at(cell(4, 1, 0)), "and digs nothing");
         }
 
         proptest! {
