@@ -49,7 +49,7 @@ pub fn resolve_shot(world: &PhysicsWorld, ray: ShotRay) -> Option<Strike> {
     Some(Strike {
         tag,
         point: hit.point,
-        normal: Vec3::ZERO,
+        normal: hit.normal,
         distance: hit.distance,
     })
 }

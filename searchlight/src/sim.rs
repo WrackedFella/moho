@@ -927,6 +927,14 @@ impl SearchlightSim {
         from: Vec3,
         near_missed: &mut Vec<u16>,
     ) {
+        if let Some(strike) = strike
+            && matches!(strike.tag, SurfaceTag::World | SurfaceTag::Control(_))
+        {
+            self.outbox.push(Feedback::Impact {
+                point: strike.point,
+                normal: strike.normal,
+            });
+        }
         let hit = strike.and_then(|strike| match strike.tag {
             SurfaceTag::Part { target, part } => Some((target, part)),
             _ => None,
@@ -3087,7 +3095,11 @@ mod tests {
         }
         let held = holding.drain_feedback();
 
-        assert_eq!(impacts_in(&[drained.clone()]).len(), 4, "{drained:?}");
+        assert_eq!(
+            impacts_in(std::slice::from_ref(&drained)).len(),
+            4,
+            "{drained:?}"
+        );
         assert_eq!(drained, held);
         assert_eq!(draining.player(), holding.player());
     }
@@ -3761,7 +3773,15 @@ mod adversarial_tests {
             } else {
                 assert!(strike.is_none(), "{strike:?}");
             }
-            assert_eq!(run_until_settled(&mut sim, &pull()), [Feedback::Fired]);
+            let feedback = run_until_settled(&mut sim, &pull());
+            if pitch_delta < 0.0 {
+                assert!(
+                    matches!(feedback[..], [Feedback::Fired, Feedback::Impact { .. }]),
+                    "{feedback:?}"
+                );
+            } else {
+                assert_eq!(feedback, [Feedback::Fired]);
+            }
         }
     }
 

@@ -18,7 +18,9 @@ use moho_render_api::{
     UiImage, UiMesh, UiRect, UiSampler, UiSource, UiTextureId, UiTextureSet, UiVertex, WorldMesh,
     WorldMeshId,
 };
-use moho_renderer::{EffectHandle, LightingGpu, RendererBackend, Scene, StreakStyle, WorldMeshes};
+use moho_renderer::{
+    EffectHandle, LightingGpu, MarkStyle, RendererBackend, Scene, StreakStyle, WorldMeshes,
+};
 use searchlight_rules::{Grade, GravityScale, Lean, LeanSide};
 use winit::event::WindowEvent;
 use winit::window::{CursorGrabMode, Window};
@@ -115,6 +117,21 @@ fn tracer_style(material: u32) -> StreakStyle {
     }
 }
 
+/// How a bullet mark is laid: 5 cm across, lasting 20 s with the last 2 s fading. The
+/// material is the stage's own.
+fn impact_style(material: u32) -> MarkStyle {
+    MarkStyle {
+        size: 0.05,
+        material,
+        lifetime: Duration::from_secs(20),
+        fade: Duration::from_secs(2),
+    }
+}
+
+/// The turn between one mark's roll and the next, the golden angle in radians, so marks
+/// laid in a row never line up.
+const IMPACT_ROLL_STEP: f32 = 2.399_963_2;
+
 /// Surface colours of the greybox world.
 #[derive(Clone, Copy, Debug)]
 enum Paint {
@@ -126,6 +143,7 @@ enum Paint {
     Control,
     ArenaMark,
     Tracer,
+    ImpactMark,
 }
 
 impl RenderMaterial for Paint {
@@ -147,6 +165,7 @@ impl RenderMaterial for Paint {
             Paint::Control => ([0.25, 0.75, 0.35], [0.18, 0.55, 0.26], 0.0, 0.0),
             Paint::ArenaMark => ([0.95, 0.9, 0.2], [0.8, 0.75, 0.15], 0.0, 0.0),
             Paint::Tracer => ([1.0, 0.85, 0.4], [1.0, 0.85, 0.4], 1.0, 0.0),
+            Paint::ImpactMark => ([0.05, 0.05, 0.05], [0.05, 0.05, 0.05], 0.0, 0.0),
         };
         MaterialGpu {
             albedo: [top[0], top[1], top[2], gloss],
@@ -391,6 +410,9 @@ struct Stage {
     struck_material: u32,
     enemy_material: u32,
     tracer_material: u32,
+    impact_material: u32,
+    /// The roll of the next bullet mark, in radians.
+    impact_roll: f32,
     /// The streak drawn for each round, by the sim's round id.
     tracers: BTreeMap<u32, EffectHandle>,
     /// The traces of the ticks since the last frame, or of the last tick if a frame has drawn
@@ -484,6 +506,7 @@ impl Stage {
         let struck_material = scene.material_table.find_or_push(&Paint::Struck);
         let enemy_material = scene.material_table.find_or_push(&Paint::Enemy);
         let tracer_material = scene.material_table.find_or_push(&Paint::Tracer);
+        let impact_material = scene.material_table.find_or_push(&Paint::ImpactMark);
         Self {
             scene,
             backdrop: Scene::new(),
@@ -492,6 +515,8 @@ impl Stage {
             struck_material,
             enemy_material,
             tracer_material,
+            impact_material,
+            impact_roll: 0.0,
             tracers: BTreeMap::new(),
             traces: Vec::new(),
             traces_shown: false,
@@ -603,6 +628,13 @@ impl Stage {
                         self.struck_material,
                     );
                 }
+            }
+            Feedback::Impact { point, normal } => {
+                let style = impact_style(self.impact_material);
+                self.scene
+                    .effects_mut()
+                    .mark(*point, *normal, self.impact_roll, style);
+                self.impact_roll = (self.impact_roll + IMPACT_ROLL_STEP) % std::f32::consts::TAU;
             }
             _ => {}
         }
@@ -1947,9 +1979,30 @@ mod tests {
         let mut most = 0;
         for _ in 0..count {
             tracer_frame(game, renderer, 0.5);
-            most = most.max(live_effects(game));
+            most = most.max(live_tracers(game, renderer));
         }
         most
+    }
+
+    /// Whether `instance` is a bullet mark, a quad centimetres across, not a tracer streak.
+    fn is_mark(instance: &InstanceGpu) -> bool {
+        column(instance, 0).length() < 1.0
+    }
+
+    /// The instances of the last frame that are tracer streaks.
+    fn tracers_in(renderer: &TracerRenderer) -> Vec<InstanceGpu> {
+        renderer
+            .tracers
+            .iter()
+            .filter(|instance| !is_mark(instance))
+            .copied()
+            .collect()
+    }
+
+    /// The live effects that are not marks, which are those the last frame did not draw as one.
+    fn live_tracers(game: &mut SearchlightGame, renderer: &TracerRenderer) -> usize {
+        let marks = renderer.tracers.iter().filter(|i| is_mark(i)).count();
+        live_effects(game).saturating_sub(marks)
     }
 
     fn live_effects(game: &mut SearchlightGame) -> usize {
@@ -2018,7 +2071,11 @@ mod tests {
             tick_with(&mut game, &mut clock, &pull_command());
             if frame_between {
                 tracer_frame(&mut game, &mut renderer, 0.5);
-                assert_eq!(renderer.tracers.len(), 1, "no tracer flew before the hit");
+                assert_eq!(
+                    tracers_in(&renderer).len(),
+                    1,
+                    "no tracer flew before the hit"
+                );
             }
 
             tick_with(&mut game, &mut clock, &SearchlightCommand::default());
@@ -2028,10 +2085,11 @@ mod tests {
                 panic!("expected one trace: {:?}", game.sim().round_traces());
             };
             assert!(trace.ended, "the round did not hit the wall");
-            let [tracer] = renderer.tracers.as_slice() else {
+            let tracers = tracers_in(&renderer);
+            let [tracer] = tracers.as_slice() else {
                 panic!(
                     "between {frame_between}: {} tracers on the hit",
-                    renderer.tracers.len()
+                    tracers.len()
                 );
             };
             assert!(
@@ -2042,8 +2100,12 @@ mod tests {
             );
             let most = tracer_frames(&mut game, &mut renderer, FADE_FRAMES);
             assert!(most <= 1, "between {frame_between}: {most} tracers lived");
-            assert!(renderer.tracers.is_empty(), "between {frame_between}");
-            assert_eq!(live_effects(&mut game), 0, "between {frame_between}");
+            assert!(tracers_in(&renderer).is_empty(), "between {frame_between}");
+            assert_eq!(
+                live_tracers(&mut game, &renderer),
+                0,
+                "between {frame_between}"
+            );
         }
     }
 
@@ -2169,11 +2231,9 @@ mod tests {
 
             tracer_frame(&mut game, &mut renderer, 0.5);
 
-            let [tracer] = renderer.tracers.as_slice() else {
-                panic!(
-                    "before {frame_before_hit}: {} tracers",
-                    renderer.tracers.len()
-                );
+            let tracers = tracers_in(&renderer);
+            let [tracer] = tracers.as_slice() else {
+                panic!("before {frame_before_hit}: {} tracers", tracers.len());
             };
             assert!(
                 tracer_head(tracer).distance(trace.to) < 1e-3,
@@ -2234,8 +2294,8 @@ mod tests {
         tick_with(&mut simple, &mut clock, &simple_pull);
         for _ in 0..4 {
             tracer_frame(&mut simple, &mut renderer, 0.5);
-            drawn += renderer.tracers.len();
-            most = most.max(live_effects(&mut simple));
+            drawn += tracers_in(&renderer).len();
+            most = most.max(live_tracers(&mut simple, &renderer));
             tick_with(&mut simple, &mut clock, &SearchlightCommand::default());
         }
 
