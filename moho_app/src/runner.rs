@@ -187,7 +187,8 @@ impl<G: Game> Runner<G> {
             self.renderer.as_deref_mut(),
             self.audio.as_mut(),
         )
-        .with_window_mode(self.mode);
+        .with_window_mode(self.mode)
+        .with_next_tick(self.sim.next_tick());
         self.game.window_mode_changed(&mut ctx, self.mode);
         let requests = ctx.loop_requests();
         let exit = ctx.exit_requested();
@@ -312,7 +313,8 @@ impl<G: Game> ApplicationHandler for Runner<G> {
                     self.renderer.as_deref_mut(),
                     self.audio.as_mut(),
                 )
-                .with_window_mode(mode);
+                .with_window_mode(mode)
+                .with_next_tick(self.sim.next_tick());
                 ctx.frame_dt = frame_dt;
                 self.game.frame(&mut ctx, self.sim.alpha());
                 let requests = ctx.loop_requests();
@@ -347,7 +349,8 @@ impl<G: Game> ApplicationHandler for Runner<G> {
             self.renderer.as_deref_mut(),
             self.audio.as_mut(),
         )
-        .with_window_mode(mode);
+        .with_window_mode(mode)
+        .with_next_tick(self.sim.next_tick());
         self.game.event(&mut ctx, Event::Window(event));
         let requests = ctx.loop_requests();
         let exit = ctx.exit_requested();
@@ -370,7 +373,8 @@ impl<G: Game> ApplicationHandler for Runner<G> {
             self.renderer.as_deref_mut(),
             self.audio.as_mut(),
         )
-        .with_window_mode(mode);
+        .with_window_mode(mode)
+        .with_next_tick(self.sim.next_tick());
         self.game.event(&mut ctx, Event::Device(event));
         let requests = ctx.loop_requests();
         let exit = ctx.exit_requested();

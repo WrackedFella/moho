@@ -4,7 +4,22 @@
 //! and calculates sun and moon positions for realistic day/night transitions.
 
 use glam::Vec3;
+use serde::{Deserialize, Serialize};
 use std::f32::consts::PI;
+
+/// The loop state a save keeps: the next tick's index and the whole [`GameClock`].
+///
+/// Pause, speed and the sub-tick remainder are not part of it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct LoopRecord {
+    /// Index of the next tick to run.
+    pub next_tick: u64,
+    pub time_of_day: f32,
+    pub elapsed_seconds: f64,
+    pub time_scale: f32,
+    pub day_length_seconds: f32,
+    pub night_length_seconds: f32,
+}
 
 /// In-game clock tracking time of day and celestial mechanics.
 ///
@@ -52,6 +67,30 @@ impl GameClock {
             elapsed_seconds: 0.0,
             time_scale: 1.0,
         }
+    }
+
+    /// The record of this clock with `next_tick` as the next tick's index.
+    pub fn record(&self, next_tick: u64) -> LoopRecord {
+        LoopRecord {
+            next_tick,
+            time_of_day: self.time_of_day,
+            elapsed_seconds: self.elapsed_seconds,
+            time_scale: self.time_scale,
+            day_length_seconds: self.day_length_seconds,
+            night_length_seconds: self.night_length_seconds,
+        }
+    }
+
+    /// The clock `record` describes, with the constructor's and setter's rules applied.
+    pub fn from_record(record: &LoopRecord) -> Self {
+        let mut clock = Self::new(
+            record.time_of_day,
+            record.day_length_seconds,
+            record.night_length_seconds,
+        );
+        clock.elapsed_seconds = record.elapsed_seconds;
+        clock.set_time_scale(record.time_scale);
+        clock
     }
 
     /// Advance the clock by `dt` seconds of simulated time, scaled by the time scale.
@@ -477,5 +516,109 @@ mod tests {
 
         let clock = GameClock::new(9.0, 600.0, 300.0);
         assert_eq!(clock.time_string(), "09:00");
+    }
+
+    fn pinned_record() -> LoopRecord {
+        LoopRecord {
+            next_tick: 300,
+            time_of_day: 13.5,
+            elapsed_seconds: 5.0,
+            time_scale: 2.0,
+            day_length_seconds: 600.0,
+            night_length_seconds: 420.0,
+        }
+    }
+
+    /// `next_tick` as a varint, then each field little-endian in declaration order.
+    const PINNED_BYTES: [u8; 26] = [
+        0xAC, 0x02, // next_tick 300
+        0x00, 0x00, 0x58, 0x41, // time_of_day 13.5
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x14, 0x40, // elapsed_seconds 5.0
+        0x00, 0x00, 0x00, 0x40, // time_scale 2.0
+        0x00, 0x00, 0x16, 0x44, // day_length_seconds 600.0
+        0x00, 0x00, 0xD2, 0x43, // night_length_seconds 420.0
+    ];
+
+    #[test]
+    fn loop_record_bytes_are_pinned() {
+        let fixture = pinned_record();
+
+        let encoded = postcard::to_allocvec(&fixture).expect("a record encodes");
+        let decoded: LoopRecord = postcard::from_bytes(&PINNED_BYTES).expect("the bytes decode");
+
+        assert_eq!(encoded, PINNED_BYTES);
+        assert_eq!(decoded, fixture);
+    }
+
+    #[test]
+    fn record_carries_every_clock_field_and_the_tick() {
+        let mut clock = GameClock::new(13.5, 600.0, 420.0);
+        clock.set_time_scale(2.0);
+        clock.advance(2.5);
+
+        let record = clock.record(300);
+
+        assert_eq!(record.next_tick, 300);
+        assert_eq!(record.time_of_day, clock.time_of_day());
+        assert_eq!(record.elapsed_seconds, 5.0);
+        assert_eq!(record.time_scale, 2.0);
+        assert_eq!(record.day_length_seconds, 600.0);
+        assert_eq!(record.night_length_seconds, 420.0);
+    }
+
+    #[test]
+    fn from_record_freezes_a_non_finite_scale() {
+        for scale in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -1.0] {
+            let record = LoopRecord {
+                time_scale: scale,
+                ..pinned_record()
+            };
+
+            let clock = GameClock::from_record(&record);
+
+            assert_eq!(clock.time_scale(), 0.0, "scale {scale}");
+        }
+    }
+
+    #[test]
+    fn from_record_wraps_time_of_day_into_a_day() {
+        for (stored, expected) in [(25.0, 1.0), (-1.0, 23.0), (24.0, 0.0)] {
+            let record = LoopRecord {
+                time_of_day: stored,
+                ..pinned_record()
+            };
+
+            let clock = GameClock::from_record(&record);
+
+            assert_eq!(clock.time_of_day(), expected, "stored {stored}");
+        }
+    }
+
+    mod round_trip {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn from_record_of_a_record_is_the_same_clock(
+                start in 0.0_f32..24.0,
+                day in 1.0_f32..2000.0,
+                night in 1.0_f32..2000.0,
+                scale in 0.0_f32..10.0,
+                steps in prop::collection::vec(0.0_f32..2.0, 0..20),
+                next_tick in any::<u64>(),
+            ) {
+                let mut clock = GameClock::new(start, day, night);
+                clock.set_time_scale(scale);
+                for dt in steps {
+                    clock.advance(dt);
+                }
+
+                let restored = GameClock::from_record(&clock.record(next_tick));
+
+                prop_assert_eq!(restored, clock);
+                prop_assert_eq!(clock.record(next_tick).next_tick, next_tick);
+            }
+        }
     }
 }
