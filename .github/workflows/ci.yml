@@ -39,6 +39,7 @@ jobs:
     outputs:
       os: ${{ steps.os.outputs.os }}
       code: ${{ steps.code.outputs.code }}
+      multi_os: ${{ steps.os.outputs.multi_os }}
     steps:
       - id: code
         env:
@@ -58,8 +59,10 @@ jobs:
           target="${GITHUB_BASE_REF:-$GITHUB_REF_NAME}"
           if [[ "$target" == "dev" || "$target" == feature/* ]]; then
             echo 'os=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
+            echo 'multi_os=false' >> "$GITHUB_OUTPUT"
           else
             echo 'os=["ubuntu-latest","macos-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
+            echo 'multi_os=true' >> "$GITHUB_OUTPUT"
           fi
 
   # `just check`: fmt, clippy, nextest, doctests, comment refs, layering. The same gate agents run.
@@ -110,7 +113,7 @@ jobs:
   replay-hashes:
     name: Replay hashes (${{ matrix.os }})
     needs: plan
-    if: fromJSON(needs.plan.outputs.os)[1] != null
+    if: needs.plan.outputs.multi_os == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -140,15 +143,18 @@ jobs:
           shared-key: replay-${{ matrix.os }}
           cache-on-failure: true
 
+      # The artifact holds <os>/hashes.txt, so downloads merge into the layout the comparison reads.
+      - run: mkdir -p "$RUNNER_TEMP/replay-hashes/${{ matrix.os }}"
+
       - run: cargo nextest run -p moho_physics --test replay
         env:
-          MOHO_REPLAY_HASH_OUT: ${{ runner.temp }}/hashes.txt
+          MOHO_REPLAY_HASH_OUT: ${{ runner.temp }}/replay-hashes/${{ matrix.os }}/hashes.txt
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: replay-hashes-${{ matrix.os }}
-          path: ${{ runner.temp }}/hashes.txt
+          path: ${{ runner.temp }}/replay-hashes
           if-no-files-found: ignore
 
   # Compares the platforms' replay hashes in the run summary. A disagreement or a missing
@@ -156,7 +162,7 @@ jobs:
   replay-compare:
     name: Replay hash comparison
     needs: [plan, replay-hashes]
-    if: always() && fromJSON(needs.plan.outputs.os)[1] != null
+    if: always() && needs.plan.outputs.multi_os == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -164,22 +170,18 @@ jobs:
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           pattern: replay-hashes-*
-          path: replay-artifacts
+          merge-multiple: true
+          path: replay-hashes
 
       - run: scripts/compare-replay-hashes.sh --self-test
 
-      # Each artifact lands in replay-artifacts/replay-hashes-<os>/; the script wants <os>/.
+      # Tee to the log too, for readers (and agents) that only see job logs.
       - name: Compare
         env:
           OS_LIST: ${{ needs.plan.outputs.os }}
         run: |
-          mkdir -p replay-hashes
-          for dir in replay-artifacts/replay-hashes-*; do
-            [[ -d $dir ]] || continue
-            mv "$dir" "replay-hashes/${dir#replay-artifacts/replay-hashes-}"
-          done
           mapfile -t platforms < <(jq -r '.[]' <<< "$OS_LIST")
-          scripts/compare-replay-hashes.sh replay-hashes "${platforms[@]}" >> "$GITHUB_STEP_SUMMARY"
+          scripts/compare-replay-hashes.sh replay-hashes "${platforms[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
 
   # Licenses, advisories, sources. Separate so a new advisory doesn't mask gate results.
   deny:

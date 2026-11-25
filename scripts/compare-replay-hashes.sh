@@ -33,7 +33,7 @@ compare() {
     local dir=$1 platform tick line
     shift
     local -a expected=("$@") present=() missing=() ticks=()
-    local -A hash=() seen=()
+    local -A hash=() seen=() final_tick=() final_hash=()
     if ((${#expected[@]} == 0)); then
         expected=("${DEFAULT_PLATFORMS[@]}")
     fi
@@ -45,6 +45,8 @@ compare() {
             while read -r tick line; do
                 hash[$platform,$tick]=$line
                 seen[$tick]=1
+                final_tick[$platform]=$tick
+                final_hash[$platform]=$line
             done < "$dir/$platform/hashes.txt"
         else
             missing+=("$platform")
@@ -54,14 +56,15 @@ compare() {
         mapfile -t ticks < <(printf '%s\n' "${!seen[@]}" | sort -n)
     fi
 
-    local first_bad=''
+    # A platform without the tick counts as differing from one that has it.
+    local first_bad='' reference=${present[0]:-}
     for tick in "${ticks[@]}"; do
-        local distinct
-        distinct=$(for platform in "${present[@]}"; do echo "${hash[$platform,$tick]:--}"; done | sort -u | wc -l)
-        if ((distinct > 1)); then
-            first_bad=$tick
-            break
-        fi
+        for platform in "${present[@]:1}"; do
+            if [[ ${hash[$platform,$tick]:--} != "${hash[$reference,$tick]:--}" ]]; then
+                first_bad=$tick
+                break 2
+            fi
+        done
     done
 
     echo '## Replay state hashes'
@@ -69,9 +72,7 @@ compare() {
     echo '| Platform | Final tick | Final-tick hash |'
     echo '|---|---|---|'
     for platform in "${present[@]}"; do
-        local last
-        last=$(tail -n 1 "$dir/$platform/hashes.txt")
-        echo "| $platform | ${last% *} | ${last#* } |"
+        echo "| $platform | ${final_tick[$platform]} | ${final_hash[$platform]} |"
     done
     echo
     if [[ -z $first_bad ]]; then
@@ -80,31 +81,28 @@ compare() {
         echo 'agree: no'
     fi
     if ((${#missing[@]})); then
-        local names=${missing[0]} m
-        for m in "${missing[@]:1}"; do
-            names+=", $m"
-        done
-        echo "missing: $names"
+        local names
+        printf -v names '%s, ' "${missing[@]}"
+        echo "missing: ${names%, }"
     else
         echo 'missing: none'
     fi
     if [[ -n $first_bad ]]; then
         echo
         echo "first disagreement: tick $first_bad"
-        local -A group=()
-        local -a order=()
-        local h
+        local -A printed=()
+        local h members other
         for platform in "${present[@]}"; do
             h=${hash[$platform,$first_bad]:-(none)}
-            if [[ -z ${group[$h]:-} ]]; then
-                order+=("$h")
-                group[$h]=$platform
-            else
-                group[$h]+=", $platform"
-            fi
-        done
-        for h in "${order[@]}"; do
-            echo "- $h: ${group[$h]}"
+            [[ -z ${printed[$h]:-} ]] || continue
+            printed[$h]=1
+            members=''
+            for other in "${present[@]}"; do
+                if [[ ${hash[$other,$first_bad]:-(none)} == "$h" ]]; then
+                    members+="${members:+, }$other"
+                fi
+            done
+            echo "- $h: $members"
         done
     fi
 }
