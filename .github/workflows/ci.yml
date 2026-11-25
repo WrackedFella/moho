@@ -39,6 +39,7 @@ jobs:
     outputs:
       os: ${{ steps.os.outputs.os }}
       code: ${{ steps.code.outputs.code }}
+      multi_os: ${{ steps.os.outputs.multi_os }}
     steps:
       - id: code
         env:
@@ -58,8 +59,10 @@ jobs:
           target="${GITHUB_BASE_REF:-$GITHUB_REF_NAME}"
           if [[ "$target" == "dev" || "$target" == feature/* ]]; then
             echo 'os=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
+            echo 'multi_os=false' >> "$GITHUB_OUTPUT"
           else
             echo 'os=["ubuntu-latest","macos-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
+            echo 'multi_os=true' >> "$GITHUB_OUTPUT"
           fi
 
   # `just check`: fmt, clippy, nextest, doctests, comment refs, layering. The same gate agents run.
@@ -104,6 +107,80 @@ jobs:
 
       - run: just check
         if: needs.plan.outputs.code == 'true'
+
+  # Skipped on a single-OS plan: nothing to compare.
+  replay-hashes:
+    name: Replay hashes (${{ matrix.os }})
+    needs: plan
+    if: needs.plan.outputs.multi_os == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.plan.outputs.os) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install system deps (Linux)
+        timeout-minutes: 5
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
+            pkg-config libudev-dev libasound2-dev libssl-dev
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install
+
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: cargo-nextest
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: replay-${{ matrix.os }}
+          cache-on-failure: true
+
+      # The artifact holds <os>/hashes.txt, so downloads merge into the layout the comparison reads.
+      - run: mkdir -p "$RUNNER_TEMP/replay-hashes/${{ matrix.os }}"
+
+      - run: cargo nextest run -p moho_physics --test replay
+        env:
+          MOHO_REPLAY_HASH_OUT: ${{ runner.temp }}/replay-hashes/${{ matrix.os }}/hashes.txt
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: replay-hashes-${{ matrix.os }}
+          path: ${{ runner.temp }}/replay-hashes
+          if-no-files-found: ignore
+
+  # A disagreement or a missing platform is reported in the run summary, never a failure.
+  replay-compare:
+    name: Replay hash comparison
+    needs: [plan, replay-hashes]
+    if: always() && needs.plan.outputs.multi_os == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: replay-hashes-*
+          merge-multiple: true
+          path: replay-hashes
+
+      - run: scripts/compare-replay-hashes.sh --self-test
+
+      # Tee to the log too, for readers (and agents) that only see job logs.
+      - name: Compare
+        env:
+          OS_LIST: ${{ needs.plan.outputs.os }}
+        run: |
+          mkdir -p replay-hashes # absent when no platform uploaded, so all are reported missing
+          mapfile -t platforms < <(jq -r '.[]' <<< "$OS_LIST")
+          scripts/compare-replay-hashes.sh replay-hashes "${platforms[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
 
   # Licenses, advisories, sources. Separate so a new advisory doesn't mask gate results.
   deny:

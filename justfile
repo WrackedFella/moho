@@ -13,7 +13,7 @@ fmt:
     cargo fmt --all
 
 # Gate: formatting, lints, tests, doctests, comment refs and layering. Must pass before any commit.
-check: fmt-check lint test test-doc comment-refs layering run-record-test chain-test assets-check
+check: fmt-check lint test test-doc comment-refs layering run-record-test chain-test replay-hashes-test assets-check
 
 fmt-check:
     cargo fmt --all --check
@@ -152,6 +152,10 @@ chain-test:
         fi
     done < "$f/cases.txt"
     echo "chain: OK"
+
+# Self-test of the replay hash comparison against fixtures.
+replay-hashes-test:
+    scripts/compare-replay-hashes.sh --self-test
 
 # Self-test of the orchestrate eval scoring against fixtures: review cause classes (a
 # needs-decision outside the Blockers section doesn't count), main-loop context per call,
