@@ -117,8 +117,7 @@ fn tracer_style(material: u32) -> StreakStyle {
     }
 }
 
-/// How a bullet mark is laid: 5 cm across, lasting 20 s with the last 2 s fading. The
-/// material is the stage's own.
+/// Bullet mark appearance; `material` is the stage's own.
 fn impact_style(material: u32) -> MarkStyle {
     MarkStyle {
         size: 0.05,
@@ -128,8 +127,7 @@ fn impact_style(material: u32) -> MarkStyle {
     }
 }
 
-/// The turn between one mark's roll and the next, the golden angle in radians, so marks
-/// laid in a row never line up.
+/// Roll step between marks: the golden angle (radians), so marks in a row never line up.
 const IMPACT_ROLL_STEP: f32 = 2.399_963_2;
 
 /// Surface colours of the greybox world.
@@ -411,7 +409,6 @@ struct Stage {
     enemy_material: u32,
     tracer_material: u32,
     impact_material: u32,
-    /// The roll of the next bullet mark, in radians.
     impact_roll: f32,
     /// The streak drawn for each round, by the sim's round id.
     tracers: BTreeMap<u32, EffectHandle>,
@@ -1990,7 +1987,6 @@ mod tests {
         instance.material == Stage::new().impact_material
     }
 
-    /// The instances of the last frame that are tracer streaks.
     fn tracers_in(renderer: &TracerRenderer) -> Vec<InstanceGpu> {
         renderer
             .tracers
