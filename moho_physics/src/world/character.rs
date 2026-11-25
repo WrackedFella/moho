@@ -6228,7 +6228,11 @@ mod tests {
                     pa.position.with_y(0.0).distance(pb.position.with_y(0.0))
                 })
                 .fold(f32::MAX, f32::min);
-            assert!(closest < 0.95, "the capsules never met: {closest} m");
+            let touching = 2.0 * body().standing.hull.radius;
+            assert!(
+                closest <= touching + 0.05,
+                "the capsules never touched: {closest} m apart, touching at {touching} m"
+            );
             let records = handles.map(|h| original.character_record(h).expect("live"));
             let mut fresh = geometry_world();
             let mut restored = Vec::new();
@@ -6496,6 +6500,65 @@ mod tests {
                     "{stance:?} did not walk under the ceiling: {end:?}"
                 );
             }
+        }
+
+        /// A world with a box sliding along the floor toward x = 0 at 3 m/s, stepped `steps`.
+        fn world_with_sliding_box(steps: usize) -> (PhysicsWorld, LooseId) {
+            let mut world = geometry_world();
+            let id = world.spawn_loose(&LooseSpawn {
+                position: Vec3::new(-4.0, 0.3, 6.0),
+                linear_velocity: Vec3::new(3.0, 0.0, 0.0),
+                ..LooseSpawn::new(
+                    LooseShape::Box {
+                        half_extents: Vec3::splat(0.25),
+                    },
+                    1.0,
+                )
+            });
+            for _ in 0..steps {
+                world.step(DT);
+            }
+            (world, id)
+        }
+
+        #[test]
+        fn a_restored_character_stops_a_sliding_box_exactly_as_an_unsaved_one_does() {
+            let (mut unsaved, unsaved_box) = world_with_sliding_box(0);
+            let walker = spawn_at(&mut unsaved, Vec3::new(0.0, 0.95, 6.0));
+            for _ in 0..20 {
+                tick(&mut unsaved, walker, &idle());
+            }
+            let record = unsaved.character_record(walker).expect("character is live");
+            let (mut restored_world, restored_box) = world_with_sliding_box(20);
+            let restored = restored_world.restore_character(&record, body());
+            assert_eq!(
+                unsaved.loose(unsaved_box),
+                restored_world.loose(restored_box),
+                "the boxes were alike before the restore"
+            );
+
+            let mut furthest = f32::MIN;
+            for t in 0..120 {
+                tick(&mut unsaved, walker, &idle());
+                tick(&mut restored_world, restored, &idle());
+                assert_eq!(
+                    restored_world.loose(restored_box),
+                    unsaved.loose(unsaved_box),
+                    "tick {t}: the box diverged"
+                );
+                assert_eq!(
+                    state(&restored_world, restored),
+                    state(&unsaved, walker),
+                    "tick {t}: the character diverged"
+                );
+                let at = restored_world.loose(restored_box).expect("box is live");
+                furthest = furthest.max(at.position.x);
+            }
+
+            assert!(
+                furthest < -0.4,
+                "the box went through the restored character: reached x = {furthest}"
+            );
         }
     }
 }
