@@ -491,6 +491,33 @@ mod tests {
     }
 
     #[test]
+    fn a_leaned_part_keeps_its_own_pose_turned_by_the_roll() {
+        let tuning = tuning();
+        let offsets = leaned_parts(settled(LeanSide::Right), &tuning, HEAD_RISE);
+        let posed = Quat::from_rotation_x(0.4);
+        let roll = Quat::from_rotation_z(12.0_f32.to_radians());
+
+        for i in [HEAD, TORSO, LEFT_ARM, RIGHT_ARM] {
+            let (_, turned) = offsets[i].apply(Vec3::ZERO, posed);
+
+            assert!(
+                turned.abs_diff_eq(roll * posed, 1e-5),
+                "part {i}: {turned:?} vs {:?}",
+                roll * posed
+            );
+            assert!(
+                !turned.abs_diff_eq(posed * roll, 1e-3),
+                "part {i}: the roll must come first, not last"
+            );
+        }
+        for i in [LEFT_LEG, RIGHT_LEG] {
+            let (_, turned) = offsets[i].apply(Vec3::ZERO, posed);
+
+            assert!(turned.abs_diff_eq(posed, 1e-6), "part {i}: {turned:?}");
+        }
+    }
+
+    #[test]
     fn a_full_left_lean_mirrors_the_right() {
         let tuning = tuning();
         let upright = upper_body(HEAD_RISE, TORSO_RISE, ARM_REACH);
