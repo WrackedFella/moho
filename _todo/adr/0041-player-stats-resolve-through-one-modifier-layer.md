@@ -1,6 +1,6 @@
 # 0041 — Player stats resolve through one modifier layer, recomputed each tick from what is true now
 
-**Status:** Proposed (FPS-F7-03, #606)
+**Status:** Accepted (Justin, 2026-11-24); lands with FPS-F7-03, #606
 
 ## Context
 
