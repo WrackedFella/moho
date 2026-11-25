@@ -6561,4 +6561,33 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn a_dynamic_prop_still_blocks_a_character() {
+        let walk_forward = |prop: bool| {
+            let (mut world, h) = standing_on_floor();
+            if prop {
+                world.add_dynamic_cuboid(Vec3::new(0.0, 0.5, 2.0), 0.5, 0.5, 0.25);
+            }
+            let forward = CharacterCommand {
+                forward: 1.0,
+                ..idle()
+            };
+            for _ in 0..90 {
+                world
+                    .move_character(h, &forward, &test_settings(), DT)
+                    .expect("character is live");
+                world.step(DT);
+            }
+            state(&world, h).position.z
+        };
+
+        let free = walk_forward(false);
+        let blocked = walk_forward(true);
+
+        assert!(
+            blocked < free - 1.0,
+            "the prop should stop the walk short: free {free}, with the prop {blocked}"
+        );
+    }
 }

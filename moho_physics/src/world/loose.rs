@@ -43,13 +43,15 @@ pub enum LooseShape {
     Capsule { half_height: f32, radius: f32 },
     /// A cylinder along the body's local Y.
     Cylinder { half_height: f32, radius: f32 },
+    /// A sphere centred on the body.
+    Sphere { radius: f32 },
 }
 
 impl LooseShape {
     /// Radius of the round cross-section that rolls about local Y; a box does not roll.
     fn roll_radius(self) -> Option<f32> {
         match self {
-            Self::Box { .. } => None,
+            Self::Box { .. } | Self::Sphere { .. } => None,
             Self::Capsule { radius, .. } | Self::Cylinder { radius, .. } => Some(radius),
         }
     }
@@ -67,6 +69,7 @@ impl LooseShape {
                 half_height,
                 radius,
             } => ColliderBuilder::cylinder(half_height, radius),
+            Self::Sphere { radius } => ColliderBuilder::ball(radius),
         }
     }
 }
@@ -127,6 +130,7 @@ impl LooseSpawn {
                 half_height.is_finite() && half_height > 0.0 && radius.is_finite() && radius > 0.0,
                 "half height and radius must be positive and finite, got {half_height} and {radius}"
             ),
+            LooseShape::Sphere { .. } => {}
         }
         assert!(
             self.linear_velocity.is_finite() && self.angular_velocity.is_finite(),
@@ -432,6 +436,7 @@ mod tests {
         match shape {
             LooseShape::Capsule { radius, .. } | LooseShape::Cylinder { radius, .. } => radius,
             LooseShape::Box { half_extents } => half_extents.min_element(),
+            LooseShape::Sphere { radius } => radius,
         }
     }
 
@@ -824,6 +829,7 @@ mod tests {
                 half_height,
                 radius,
             } => Vec3::new(radius, half_height, radius),
+            LooseShape::Sphere { radius } => Vec3::splat(radius),
         }
     }
 
@@ -1819,5 +1825,462 @@ mod tests {
             all_asleep(&first, &first_ids),
             "the pile came to rest, so the comparison covered the whole settle"
         );
+    }
+
+    const SPHERE: LooseShape = LooseShape::Sphere { radius: 0.05 };
+
+    /// Twenty undamped objects, a sphere and a box in turn, dropped 0.3 m apart above a 1 m
+    /// square around `centre`.
+    fn sphere_box_spawns(seed: u32, centre: Vec3) -> Vec<LooseSpawn> {
+        let shapes = [SPHERE, cuboid(FLAT_BOX)];
+        let mut dice = Dice::seeded(seed);
+        (0..20)
+            .map(|i| {
+                let position =
+                    centre + Vec3::new(dice.signed(0.5), 0.2 + i as f32 * 0.3, dice.signed(0.5));
+                LooseSpawn {
+                    position,
+                    rotation: dice.rotation(),
+                    ..LooseSpawn::new(shapes[i % 2], 0.2)
+                }
+            })
+            .collect()
+    }
+
+    fn sphere_box_pile(seed: u32, centre: Vec3) -> (PhysicsWorld, Vec<LooseId>) {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let ids = sphere_box_spawns(seed, centre)
+            .iter()
+            .map(|spawn| world.spawn_loose(spawn))
+            .collect();
+        (world, ids)
+    }
+
+    /// A sphere on the floor rolling along +Z without slipping.
+    fn rolling_sphere(speed: f32) -> LooseSpawn {
+        let radius = cross_section(SPHERE);
+        LooseSpawn {
+            position: Vec3::new(0.0, radius, 0.0),
+            linear_velocity: Vec3::new(0.0, 0.0, speed),
+            angular_velocity: Vec3::new(speed / radius, 0.0, 0.0),
+            ..LooseSpawn::new(SPHERE, 0.2)
+        }
+    }
+
+    #[test]
+    fn a_sphere_and_a_box_each_come_to_rest_asleep_after_a_tilted_drop() {
+        let rows = [("sphere", SPHERE), ("box", cuboid(FLAT_BOX))];
+
+        for (name, shape) in rows {
+            let mut world = world_with_floor(&floor_mesh(0.0));
+            let id = world.spawn_loose(&LooseSpawn {
+                position: Vec3::new(0.0, 1.0, 0.0),
+                rotation: Quat::from_rotation_x(0.7),
+                ..LooseSpawn::new(shape, 0.2)
+            });
+
+            run(&mut world, 300);
+
+            let state = read(&world, id);
+            let bottom = bottom_of(&world, id);
+            assert!(
+                bottom.abs() <= 0.001,
+                "{name}: bottom is {bottom} from the floor, state {state:?}"
+            );
+            assert!(state.asleep, "{name}: awake, state {state:?}");
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 16,
+            rng_seed: proptest::test_runner::RngSeed::Fixed(0x777),
+            ..ProptestConfig::default()
+        })]
+
+        #[test]
+        fn a_spinning_sphere_comes_to_rest(
+            spin in (-20.0f32..20.0, -20.0f32..20.0, -20.0f32..20.0),
+        ) {
+            let mut world = world_with_floor(&floor_mesh(0.0));
+            let id = world.spawn_loose(&LooseSpawn {
+                position: Vec3::new(0.0, 1.0, 0.0),
+                angular_velocity: Vec3::new(spin.0, spin.1, spin.2),
+                ..LooseSpawn::new(SPHERE, 0.2)
+            });
+
+            run(&mut world, 300);
+
+            let state = world
+                .loose(id)
+                .ok_or_else(|| TestCaseError::fail("the spawned sphere reads back"))?;
+            prop_assert!(state.asleep, "asleep after 5 s, state {state:?}");
+            let bottom = bottom_of(&world, id);
+            prop_assert!(bottom.abs() <= 0.001, "bottom is {bottom} from the floor");
+        }
+    }
+
+    #[test]
+    fn a_rolling_sphere_slows_every_tick_and_stops() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let id = world.spawn_loose(&rolling_sphere(2.0));
+        let mut previous = read(&world, id).linear_velocity.length();
+
+        for tick in 1..=300 {
+            world.step(DT);
+            let speed = read(&world, id).linear_velocity.length();
+            assert!(
+                speed <= previous + 1e-3,
+                "tick {tick}: speed rose from {previous} to {speed}"
+            );
+            previous = speed;
+        }
+
+        let state = read(&world, id);
+        assert!(
+            (1.0..=1.5).contains(&state.position.z),
+            "the sphere rolls about v^2/2a = 1.27 m before it stops, z={}",
+            state.position.z
+        );
+        assert!(state.asleep, "the sphere is at rest, state {state:?}");
+    }
+
+    #[test]
+    fn a_sphere_spawns_with_its_stated_size() {
+        let mut world = PhysicsWorld::new();
+
+        let id = world.spawn_loose(&LooseSpawn::new(LooseShape::Sphere { radius: 0.12 }, 1.0));
+
+        let aabb = collider_of(&world, id).compute_aabb();
+        let half = (aabb.maxs - aabb.mins) * 0.5;
+        assert!(
+            half.abs_diff_eq(Vec3::splat(0.12), 1e-5),
+            "bounding box half {half}"
+        );
+    }
+
+    #[test]
+    fn a_sphere_spawn_reads_back_as_given_before_any_step() {
+        let mut world = PhysicsWorld::new();
+        let spawn = LooseSpawn {
+            friction: 0.3,
+            restitution: 0.2,
+            linear_damping: 0.1,
+            angular_damping: 0.4,
+            position: Vec3::new(1.0, 2.0, 3.0),
+            rotation: Quat::from_axis_angle(Vec3::new(1.0, 2.0, 3.0).normalize(), 0.7),
+            linear_velocity: Vec3::new(0.5, -1.0, 2.0),
+            angular_velocity: Vec3::new(0.1, 0.2, 0.3),
+            ..LooseSpawn::new(LooseShape::Sphere { radius: 0.1 }, 3.5)
+        };
+
+        let id = world.spawn_loose(&spawn);
+
+        let state = read(&world, id);
+        assert!(
+            state.position.abs_diff_eq(spawn.position, 1e-6),
+            "{state:?}"
+        );
+        assert!(
+            state.rotation.abs_diff_eq(spawn.rotation, 1e-6),
+            "{state:?}"
+        );
+        assert!(
+            state
+                .linear_velocity
+                .abs_diff_eq(spawn.linear_velocity, 1e-6),
+            "{state:?}"
+        );
+        assert!(
+            state
+                .angular_velocity
+                .abs_diff_eq(spawn.angular_velocity, 1e-6),
+            "{state:?}"
+        );
+        assert!(!state.asleep, "a fresh object is awake");
+        let body = body_of(&world, id);
+        assert!(
+            (body.mass() - 3.5).abs() <= 1e-4,
+            "the body weighs the stated mass, mass={}",
+            body.mass()
+        );
+        let collider = collider_of(&world, id);
+        assert!(
+            (collider.friction() - 0.3).abs() <= 1e-6
+                && (collider.restitution() - 0.2).abs() <= 1e-6,
+            "the collider carries the stated material"
+        );
+    }
+
+    #[test]
+    fn spawn_rejects_a_bad_radius() {
+        let rows: Vec<_> = BAD_POSITIVE
+            .iter()
+            .map(|&(name, radius)| {
+                (
+                    format!("{name} radius"),
+                    LooseSpawn::new(LooseShape::Sphere { radius }, 1.0),
+                )
+            })
+            .collect();
+
+        assert_rows_rejected(&rows, "radius must be positive and finite");
+    }
+
+    #[test]
+    fn a_pile_of_spheres_and_boxes_settles() {
+        for seed in [1, 5, 8, 14] {
+            let (mut world, ids) = sphere_box_pile(seed, Vec3::ZERO);
+
+            run(&mut world, 600);
+
+            for (i, &id) in ids.iter().enumerate() {
+                let state = read(&world, id);
+                assert!(state.asleep, "seed {seed} object {i} is awake, {state:?}");
+                let depth = -bottom_of(&world, id);
+                assert!(
+                    depth <= 0.001,
+                    "seed {seed} object {i} is {depth} m into the floor"
+                );
+                for (j, &other) in ids.iter().enumerate().skip(i + 1) {
+                    let depth = overlap(&world, id, other);
+                    assert!(
+                        depth <= 0.005,
+                        "seed {seed} objects {i} and {j} overlap by {depth} m"
+                    );
+                }
+            }
+            assert!(
+                ids.iter().any(|&id| bottom_of(&world, id) > 0.01),
+                "seed {seed}: no object rests on another, the pile is flat"
+            );
+        }
+    }
+
+    #[test]
+    fn three_stacked_boxes_stay_stacked() {
+        let mut world = world_with_floor(&floor_mesh(0.0));
+        let ids: Vec<_> = [0.05, 0.2, 0.35]
+            .into_iter()
+            .map(|y| {
+                world.spawn_loose(&LooseSpawn {
+                    position: Vec3::new(0.0, y, 0.0),
+                    ..LooseSpawn::new(cuboid(FLAT_BOX), 0.2)
+                })
+            })
+            .collect();
+
+        run(&mut world, 300);
+
+        let heights: Vec<f32> = ids.iter().map(|&id| read(&world, id).position.y).collect();
+        for (layer, pair) in heights.windows(2).enumerate() {
+            let rise = pair[1] - pair[0];
+            assert!(
+                (rise - 2.0 * FLAT_BOX.y).abs() <= 0.004,
+                "box {} rests a full height above box {layer}, centres {heights:?}",
+                layer + 1
+            );
+        }
+        assert!(
+            (heights[2] - 5.0 * FLAT_BOX.y).abs() <= 0.008,
+            "the top box centre is five half-heights up, centres {heights:?}"
+        );
+        assert!(all_asleep(&world, &ids), "all three boxes sleep");
+    }
+
+    #[test]
+    fn the_same_sphere_and_box_pile_twice_ends_bit_equal() {
+        let (mut first, first_ids) = sphere_box_pile(3, Vec3::ZERO);
+        let (mut second, second_ids) = sphere_box_pile(3, Vec3::ZERO);
+
+        for tick in 1..=600 {
+            first.step(DT);
+            second.step(DT);
+            for (i, (&a, &b)) in first_ids.iter().zip(&second_ids).enumerate() {
+                let (a, b) = (read(&first, a), read(&second, b));
+                assert_eq!(
+                    bits(&a),
+                    bits(&b),
+                    "tick {tick} object {i}: state bits differ"
+                );
+                assert_eq!(a.asleep, b.asleep, "tick {tick} object {i}: asleep differs");
+            }
+        }
+        assert!(
+            all_asleep(&first, &first_ids),
+            "the pile came to rest, so the comparison covered the whole settle"
+        );
+    }
+
+    mod walking_through_a_pile {
+        use super::*;
+        use crate::movement::{
+            CharacterBody, CharacterCommand, Lean, LeanReach, MoveSettings, Stance,
+        };
+        use crate::world::test_support::{prone_body, test_settings};
+        use crate::world::{CharacterHandle, CharacterSpawn, CharacterState};
+
+        const WALK_TICKS: usize = 400;
+
+        const PILE_CENTRE: Vec3 = Vec3::new(0.0, 0.0, 3.0);
+
+        /// A body that crouches, goes prone and leans.
+        fn body() -> CharacterBody {
+            CharacterBody {
+                lean: Lean {
+                    upright: LeanReach {
+                        distance: 0.3,
+                        roll: 0.2,
+                    },
+                    prone: LeanReach {
+                        distance: 0.2,
+                        roll: 0.15,
+                    },
+                    head_radius: 0.1,
+                },
+                ..prone_body()
+            }
+        }
+
+        fn settings() -> MoveSettings {
+            MoveSettings {
+                crouch_ticks: 12,
+                prone_ticks: 12,
+                lean_ticks: 8,
+                ..test_settings()
+            }
+        }
+
+        /// Along +Z: stand, crouch, prone with a lean, stand up, jump twice, turn each way.
+        fn command(t: usize) -> CharacterCommand {
+            let (stance, lean) = match t {
+                0..40 => (Stance::Stand, 0.0),
+                40..100 => (Stance::Crouch, 0.0),
+                100..180 => (Stance::Prone, 1.0),
+                _ => (Stance::Stand, 0.0),
+            };
+            CharacterCommand {
+                forward: 0.5,
+                yaw_delta: match t {
+                    300..340 => 0.02,
+                    340..380 => -0.02,
+                    _ => 0.0,
+                },
+                jump: t == 230 || t == 290,
+                stance,
+                lean,
+                ..CharacterCommand::default()
+            }
+        }
+
+        /// The world after 600 settling ticks, with the pile in it or not.
+        fn settled(pile: bool) -> (PhysicsWorld, Vec<LooseId>) {
+            let mut world = world_with_floor(&floor_mesh(0.0));
+            let ids = if pile {
+                sphere_box_spawns(3, PILE_CENTRE)
+                    .iter()
+                    .map(|spawn| world.spawn_loose(spawn))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            run(&mut world, 600);
+            (world, ids)
+        }
+
+        fn add_walker(world: &mut PhysicsWorld) -> CharacterHandle {
+            world.add_character(CharacterSpawn {
+                position: Vec3::new(0.0, 1.0, 0.0),
+                yaw: 0.0,
+                pitch: 0.0,
+                body: body(),
+            })
+        }
+
+        fn walk_tick(
+            world: &mut PhysicsWorld,
+            walker: CharacterHandle,
+            t: usize,
+        ) -> CharacterState {
+            world
+                .move_character(walker, &command(t), &settings(), DT)
+                .expect("the walker is alive");
+            world.step(DT);
+            world.character(walker).expect("the walker is alive")
+        }
+
+        /// Every field of the state, floats as bits.
+        fn character_key(
+            state: &CharacterState,
+        ) -> (Vec<u32>, [bool; 2], [Stance; 2], u16, String) {
+            let floats = [
+                state.position.to_array().to_vec(),
+                state.velocity.to_array().to_vec(),
+                state.eye.to_array().to_vec(),
+                vec![state.yaw, state.pitch, state.lean, state.roll],
+            ]
+            .concat()
+            .into_iter()
+            .map(f32::to_bits)
+            .collect();
+            (
+                floats,
+                [state.grounded, state.jump_held],
+                [state.stance, state.from],
+                state.progress,
+                format!("{:?}", state.anchor),
+            )
+        }
+
+        fn in_footprint(position: Vec3) -> bool {
+            (position.x - PILE_CENTRE.x).abs() <= 0.5 && (position.z - PILE_CENTRE.z).abs() <= 0.5
+        }
+
+        #[test]
+        fn a_character_walking_through_a_pile_moves_as_without_it() {
+            let (mut with_pile, _) = settled(true);
+            let (mut without, _) = settled(false);
+            let (walker, lone_walker) = (add_walker(&mut with_pile), add_walker(&mut without));
+            let mut inside = 0;
+
+            for t in 0..WALK_TICKS {
+                let among = walk_tick(&mut with_pile, walker, t);
+                let alone = walk_tick(&mut without, lone_walker, t);
+
+                assert_eq!(
+                    character_key(&among),
+                    character_key(&alone),
+                    "tick {t}: the character differs, with {among:?}, without {alone:?}"
+                );
+                inside += usize::from(in_footprint(among.position));
+            }
+
+            assert!(
+                inside >= 15,
+                "the walk covers the pile for only {inside} ticks"
+            );
+        }
+
+        #[test]
+        fn a_character_walking_through_a_pile_leaves_it_untouched() {
+            let (mut walked_through, ids) = settled(true);
+            let (mut left_alone, lone_ids) = settled(true);
+            let walker = add_walker(&mut walked_through);
+
+            for t in 0..WALK_TICKS {
+                walk_tick(&mut walked_through, walker, t);
+                left_alone.step(DT);
+
+                for (i, (&a, &b)) in ids.iter().zip(&lone_ids).enumerate() {
+                    let (touched, untouched) = (read(&walked_through, a), read(&left_alone, b));
+                    assert_eq!(
+                        bits(&touched),
+                        bits(&untouched),
+                        "tick {t} object {i}: the walker moved it"
+                    );
+                    assert!(touched.asleep, "tick {t} object {i}: the walker woke it");
+                }
+            }
+        }
     }
 }
