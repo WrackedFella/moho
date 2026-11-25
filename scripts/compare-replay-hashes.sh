@@ -25,86 +25,81 @@
 # Disagreement and a missing platform are reported, never a failure: exits 0. Exits 2
 # on a usage error. `--self-test` runs every case under scripts/fixtures/replay-hashes
 # and diffs the output against the case's expected.md.
+#
+# Runs on the macOS gate too: bash 3.2 and BSD tools, so no associative arrays, mapfile
+# or GNU-only flags; the comparison is one POSIX awk program.
 set -euo pipefail
 
-DEFAULT_PLATFORMS=(ubuntu-latest macos-latest windows-latest)
+DEFAULT_PLATFORMS='ubuntu-latest macos-latest windows-latest'
+
+# A platform without a tick counts as differing from one that has it.
+COMPARE_AWK='
+BEGIN { n = split(names, P, " ") }
+FNR == 1 { idx++ }
+NF >= 2 {
+    h[idx, $1] = $2
+    if (!($1 in seen)) { seen[$1] = 1; ticks[++nt] = $1 }
+    ft[idx] = $1
+    fh[idx] = $2
+}
+function val(i, t) { return ((i, t) in h) ? h[i, t] : "-" }
+END {
+    for (i = 2; i <= nt; i++) {
+        t = ticks[i]
+        for (j = i - 1; j >= 1 && ticks[j] + 0 > t + 0; j--) ticks[j + 1] = ticks[j]
+        ticks[j + 1] = t
+    }
+    first_bad = ""
+    for (k = 1; k <= nt && first_bad == ""; k++)
+        for (i = 2; i <= n; i++)
+            if (val(i, ticks[k]) != val(1, ticks[k])) { first_bad = ticks[k]; break }
+
+    print "## Replay state hashes"
+    print ""
+    print "| Platform | Final tick | Final-tick hash |"
+    print "|---|---|---|"
+    for (i = 1; i <= n; i++) print "| " P[i] " | " ft[i] " | " fh[i] " |"
+    print ""
+    agree = (first_bad == "") ? "yes" : "no"
+    print "agree: " agree
+    print "missing: " missing
+    if (first_bad != "") {
+        print ""
+        print "first disagreement: tick " first_bad
+        for (i = 1; i <= n; i++) {
+            v = ((i, first_bad) in h) ? h[i, first_bad] : "(none)"
+            if (v in printed) continue
+            printed[v] = 1
+            members = ""
+            for (j = 1; j <= n; j++) {
+                w = ((j, first_bad) in h) ? h[j, first_bad] : "(none)"
+                if (w == v) members = members (members == "" ? "" : ", ") P[j]
+            }
+            print "- " v ": " members
+        }
+    }
+}'
 
 compare() {
-    local dir=$1 platform tick line
+    local dir=$1 platform sorted present='' missing=''
     shift
-    local -a expected=("$@") present=() missing=() ticks=()
-    local -A hash=() seen=() final_tick=() final_hash=()
-    if ((${#expected[@]} == 0)); then
-        expected=("${DEFAULT_PLATFORMS[@]}")
+    if [ $# -eq 0 ]; then
+        # shellcheck disable=SC2086 # the default is a space-separated list
+        set -- $DEFAULT_PLATFORMS
     fi
-    mapfile -t expected < <(printf '%s\n' "${expected[@]}" | sort)
-
-    for platform in "${expected[@]}"; do
-        if [[ -s $dir/$platform/hashes.txt ]]; then
-            present+=("$platform")
-            while read -r tick line; do
-                hash[$platform,$tick]=$line
-                seen[$tick]=1
-                final_tick[$platform]=$tick
-                final_hash[$platform]=$line
-            done < "$dir/$platform/hashes.txt"
+    sorted=$(printf '%s\n' "$@" | sort)
+    set --
+    while read -r platform; do
+        if [ -s "$dir/$platform/hashes.txt" ]; then
+            present="$present $platform"
+            set -- "$@" "$dir/$platform/hashes.txt"
         else
-            missing+=("$platform")
+            missing="$missing, $platform"
         fi
-    done
-    if ((${#seen[@]})); then
-        mapfile -t ticks < <(printf '%s\n' "${!seen[@]}" | sort -n)
-    fi
-
-    # A platform without the tick counts as differing from one that has it.
-    local first_bad='' reference=${present[0]:-}
-    for tick in "${ticks[@]}"; do
-        for platform in "${present[@]:1}"; do
-            if [[ ${hash[$platform,$tick]:--} != "${hash[$reference,$tick]:--}" ]]; then
-                first_bad=$tick
-                break 2
-            fi
-        done
-    done
-
-    echo '## Replay state hashes'
-    echo
-    echo '| Platform | Final tick | Final-tick hash |'
-    echo '|---|---|---|'
-    for platform in "${present[@]}"; do
-        echo "| $platform | ${final_tick[$platform]} | ${final_hash[$platform]} |"
-    done
-    echo
-    if [[ -z $first_bad ]]; then
-        echo 'agree: yes'
-    else
-        echo 'agree: no'
-    fi
-    if ((${#missing[@]})); then
-        local names
-        printf -v names '%s, ' "${missing[@]}"
-        echo "missing: ${names%, }"
-    else
-        echo 'missing: none'
-    fi
-    if [[ -n $first_bad ]]; then
-        echo
-        echo "first disagreement: tick $first_bad"
-        local -A printed=()
-        local h members other
-        for platform in "${present[@]}"; do
-            h=${hash[$platform,$first_bad]:-(none)}
-            [[ -z ${printed[$h]:-} ]] || continue
-            printed[$h]=1
-            members=''
-            for other in "${present[@]}"; do
-                if [[ ${hash[$other,$first_bad]:-(none)} == "$h" ]]; then
-                    members+="${members:+, }$other"
-                fi
-            done
-            echo "- $h: $members"
-        done
-    fi
+    done <<< "$sorted"
+    missing=${missing#, }
+    # /dev/null keeps awk off stdin when no platform has hashes.
+    awk -v names="$present" -v missing="${missing:-none}" "$COMPARE_AWK" "$@" /dev/null
 }
 
 self_test() {

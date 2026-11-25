@@ -178,6 +178,7 @@ jobs:
         env:
           OS_LIST: ${{ needs.plan.outputs.os }}
         run: |
+          mkdir -p replay-hashes # absent when no platform uploaded, so all are reported missing
           mapfile -t platforms < <(jq -r '.[]' <<< "$OS_LIST")
           scripts/compare-replay-hashes.sh replay-hashes "${platforms[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
 
