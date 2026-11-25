@@ -13,7 +13,7 @@ fmt:
     cargo fmt --all
 
 # Gate: formatting, lints, tests, doctests, comment refs and layering. Must pass before any commit.
-check: fmt-check lint test test-doc comment-refs layering sim-math run-record-test chain-test assets-check
+check: fmt-check lint test test-doc comment-refs layering sim-math run-record-test chain-test replay-hashes-test assets-check
 
 fmt-check:
     cargo fmt --all --check
@@ -146,13 +146,17 @@ chain-test:
         [[ -z $edit || $edit == \#* ]] && continue
         want="${want%$'\r'}"
         jq "$edit" "$f/queued.json" > "$facts"
-        got="$(scripts/chain.sh decide "$facts" | tr -d '\r' | tr '\t' ':' | paste -sd'|' - | sed 's/|/ | /g')"
+        got="$(scripts/chain.sh decide "$facts" | tr -d '\r' | tr '\t' ':' | awk '{ printf "%s%s", (NR > 1 ? " | " : ""), $0 }')"
         if [[ $got != "$want" ]]; then
             echo "chain [$edit]: expected '$want', got '$got'" >&2
             exit 1
         fi
     done < "$f/cases.txt"
     echo "chain: OK"
+
+# Self-test of the replay hash comparison against fixtures.
+replay-hashes-test:
+    scripts/compare-replay-hashes.sh --self-test
 
 # Self-test of the orchestrate eval scoring against fixtures: review cause classes (a
 # needs-decision outside the Blockers section doesn't count), main-loop context per call,

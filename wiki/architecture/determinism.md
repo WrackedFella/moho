@@ -29,8 +29,8 @@ are removed:
   unless rapier3d and parry3d resolve it.
 - Character movement takes sine and cosine from `moho_core::sim_math`.
 
-This is the groundwork for L1; nothing yet shows L1 or above, since no cross-OS check
-exists (section 6).
+This is the groundwork for L1. Cross-OS agreement is reported per CI run, not gated
+(section 6).
 
 ## 3 Rules
 
@@ -68,9 +68,11 @@ method call or `f32::`/`f64::` path of a platform transcendental and fails.
   ([flagstone](../flagstone/README.md#determinism-call-sites),
   [searchlight](../searchlight/README.md#determinism-call-sites)).
 
-## 6 Cross-OS report (planned)
+## 6 Cross-OS report
 
-ENG-F45-01 ([#733](https://github.com/WrackedFella/moho/issues/733)) is not built. The
-plan: CI replays the recorded run on each OS and posts a hash of every tick's state;
-equal hashes across the OSes mean L1 holds for that run, and a diverging tick names the
-first difference.
+`moho_physics/tests/replay.rs` hashes each tick's compared state (FNV-1a 64) and, when
+`MOHO_REPLAY_HASH_OUT` is set, writes one `<tick> <hash>` line per tick. On the three-OS CI
+plan the `Replay hashes` jobs upload those files and `Replay hash comparison`
+(`scripts/compare-replay-hashes.sh`) reports, in the run summary, agreement, the first
+disagreeing tick or a missing platform. Equal hashes on every OS mean L1 held for that run.
+The report is measured, not gated: it never fails the run.
