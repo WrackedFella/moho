@@ -1984,9 +1984,10 @@ mod tests {
         most
     }
 
-    /// Whether `instance` is a bullet mark, a quad centimetres across, not a tracer streak.
+    /// Whether `instance` is a bullet mark: drawn in the stage's mark material, not a tracer's.
+    /// A fresh stage hands out its materials in the same order as every other.
     fn is_mark(instance: &InstanceGpu) -> bool {
-        column(instance, 0).length() < 1.0
+        instance.material == Stage::new().impact_material
     }
 
     /// The instances of the last frame that are tracer streaks.
@@ -2309,12 +2310,16 @@ mod tests {
         Feedback::Impact { point, normal }
     }
 
-    /// The marks among the last frame's unshadowed instances: the quads 5 cm across.
+    /// The marks among the last frame's unshadowed instances: those at full size, as
+    /// [`impact_style`] sets it.
     fn drawn_marks(renderer: &TracerRenderer) -> Vec<InstanceGpu> {
         renderer
             .tracers
             .iter()
-            .filter(|instance| (column(instance, 0).length() - 0.05).abs() < 1e-3)
+            .filter(|instance| {
+                is_mark(instance)
+                    && (column(instance, 0).length() - impact_style(0).size).abs() < 1e-3
+            })
             .copied()
             .collect()
     }

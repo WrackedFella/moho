@@ -927,17 +927,16 @@ impl SearchlightSim {
         from: Vec3,
         near_missed: &mut Vec<u16>,
     ) {
-        if let Some(strike) = strike
-            && matches!(strike.tag, SurfaceTag::World | SurfaceTag::Control(_))
-        {
-            self.outbox.push(Feedback::Impact {
-                point: strike.point,
-                normal: strike.normal,
-            });
-        }
         let hit = strike.and_then(|strike| match strike.tag {
             SurfaceTag::Part { target, part } => Some((target, part)),
-            _ => None,
+            SurfaceTag::World | SurfaceTag::Control(_) => {
+                self.outbox.push(Feedback::Impact {
+                    point: strike.point,
+                    normal: strike.normal,
+                });
+                None
+            }
+            SurfaceTag::Player(_) => None,
         });
         let struck = hit.map(|(target, _)| usize::from(target));
         self.record_near_misses(origin, end, struck, from, near_missed);
