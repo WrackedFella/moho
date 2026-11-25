@@ -663,3 +663,672 @@ fn a_part_two_deep_under_a_posed_hand_sees_the_pose_only_at_the_first_socket() {
             * rest(&models, SCOPE, "tube")
     );
 }
+
+use std::fs;
+use std::path::Path;
+
+use moho_level::{Posed, Released};
+use moho_physics::{LooseShape, LooseSpawn, PhysicsWorld};
+use serde_json::{Value, json};
+
+const RELOAD_CHARACTER: usize = 0;
+const RELOAD_RIFLE: usize = 1;
+const MAGAZINE: usize = 2;
+
+/// Seconds `reload_fast` runs; the left hand moves along local +Z and turns about +Y.
+const RELOAD_SECONDS: f32 = 4.0;
+
+fn append_accessor(
+    doc: &mut Value,
+    bin: &mut Vec<u8>,
+    values: &[f32],
+    count: usize,
+    kind: &str,
+    bounds: Option<(f32, f32)>,
+) -> usize {
+    let start = bin.len();
+    bin.extend(values.iter().flat_map(|f| f.to_le_bytes()));
+    let views = doc["bufferViews"].as_array_mut().expect("buffer views");
+    views.push(json!({ "buffer": 0, "byteOffset": start, "byteLength": values.len() * 4 }));
+    let view = views.len() - 1;
+    let mut accessor =
+        json!({ "bufferView": view, "componentType": 5126, "count": count, "type": kind });
+    if let Some((min, max)) = bounds {
+        accessor["min"] = json!([min]);
+        accessor["max"] = json!([max]);
+    }
+    let accessors = doc["accessors"].as_array_mut().expect("accessors");
+    accessors.push(accessor);
+    accessors.len() - 1
+}
+
+/// Add a `reload_fast` clip that moves `hand_l` to the humanoid written at `path`.
+fn add_reload_fast(path: &Path) {
+    let bin_path = path.with_file_name("humanoid.bin");
+    let mut bin = fs::read(&bin_path).expect("read bin");
+    let mut doc: Value = serde_json::from_slice(&fs::read(path).expect("read gltf")).expect("json");
+    let hand_l = doc["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .position(|n| n["name"] == "hand_l")
+        .expect("hand_l is written");
+    let times = append_accessor(
+        &mut doc,
+        &mut bin,
+        &[0.0, RELOAD_SECONDS],
+        2,
+        "SCALAR",
+        Some((0.0, RELOAD_SECONDS)),
+    );
+    let moves = append_accessor(
+        &mut doc,
+        &mut bin,
+        &[-0.25, 0.0, 0.0, -0.25, 0.0, 2.4],
+        2,
+        "VEC3",
+        None,
+    );
+    let (sin, cos) = 1.0_f32.sin_cos();
+    let turns = append_accessor(
+        &mut doc,
+        &mut bin,
+        &[0.0, 0.0, 0.0, 1.0, 0.0, sin, 0.0, cos],
+        2,
+        "VEC4",
+        None,
+    );
+    doc["buffers"][0]["byteLength"] = json!(bin.len());
+    doc["animations"]
+        .as_array_mut()
+        .expect("animations")
+        .push(json!({
+            "name": "reload_fast",
+            "samplers": [
+                { "input": times, "output": moves, "interpolation": "LINEAR" },
+                { "input": times, "output": turns, "interpolation": "LINEAR" },
+            ],
+            "channels": [
+                { "sampler": 0, "target": { "node": hand_l, "path": "translation" } },
+                { "sampler": 1, "target": { "node": hand_l, "path": "rotation" } },
+            ],
+        }));
+    fs::write(&bin_path, bin).expect("write bin");
+    fs::write(path, serde_json::to_vec_pretty(&doc).expect("json")).expect("write gltf");
+}
+
+/// Index = key: the humanoid with `reload_fast`, a rifle with a `magazine` node and a `rail`
+/// node, a magazine.
+fn reload_models() -> Vec<Model> {
+    let (_dir, path) = write_humanoid(&HumanoidSpec::default());
+    add_reload_fast(&path);
+    let character = load_model(&path).expect("humanoid loads");
+    let rifle = load(
+        vec![vec![cube_prim()]],
+        vec![
+            named(
+                "body",
+                Xform::translate([0.0, 0.0, 3.0]),
+                Some(0),
+                vec![1, 2],
+            ),
+            named(
+                "magazine",
+                Xform::translate([0.0, -0.1, 0.05]),
+                None,
+                vec![],
+            ),
+            named("rail", Xform::translate([0.0, 0.1, 0.0]), None, vec![]),
+        ],
+    );
+    let magazine = load(
+        vec![vec![cube_prim()]],
+        vec![named(
+            "mag",
+            Xform::translate([0.0, 0.0, 0.02]),
+            Some(0),
+            vec![],
+        )],
+    );
+    vec![character, rifle, magazine]
+}
+
+fn rifle_offset() -> Affine3A {
+    offset()
+}
+
+fn magazine_offset() -> Affine3A {
+    Affine3A::from_rotation_translation(Quat::from_rotation_z(0.2), Vec3::new(0.02, -0.03, 0.01))
+}
+
+fn grip() -> Affine3A {
+    Affine3A::from_rotation_translation(Quat::from_rotation_y(0.5), Vec3::new(0.03, 0.01, -0.02))
+}
+
+/// The character with the rifle on `hand_r` and the magazine in the rifle.
+fn armed<'m>(lookup: &impl Fn(usize) -> &'m Model) -> Assembly<usize> {
+    let mut character = Assembly::new(RELOAD_CHARACTER);
+    character
+        .attach(
+            lookup,
+            "hand_r",
+            Assembly::new(RELOAD_RIFLE),
+            rifle_offset(),
+        )
+        .expect("hand_r exists");
+    character
+        .part_mut(lookup, "hand_r")
+        .expect("hand_r exists")
+        .expect("rifle is attached")
+        .attach(
+            lookup,
+            "magazine",
+            Assembly::new(MAGAZINE),
+            magazine_offset(),
+        )
+        .expect("magazine exists");
+    character
+}
+
+/// The character's `reload_fast` playback after `ticks` ticks from tick 0.
+fn reload_player(models: &[Model], ticks: usize) -> ClipPlayer {
+    let model = &models[RELOAD_CHARACTER];
+    let mut player = ClipPlayer::new(model, "reload_fast", Playback::Once).expect("reload_fast");
+    for _ in 0..ticks {
+        player.advance(model, TICK);
+    }
+    player
+}
+
+fn reload_pose(models: &[Model], ticks: usize) -> Pose {
+    reload_player(models, ticks).pose(&models[RELOAD_CHARACTER])
+}
+
+fn within(actual: Affine3A, expected: Affine3A, epsilon: f32) {
+    assert!(
+        actual.abs_diff_eq(expected, epsilon),
+        "{actual:?} != {expected:?}"
+    );
+}
+
+fn vec_near(actual: Vec3, expected: Vec3, epsilon: f32) {
+    assert!(
+        actual.abs_diff_eq(expected, epsilon),
+        "{actual} != {expected}"
+    );
+}
+
+fn placed_transform(placed: &[(usize, usize, Affine3A)], key: usize) -> Affine3A {
+    placed
+        .iter()
+        .find(|p| p.0 == key)
+        .expect("the part is placed")
+        .2
+}
+
+fn empty_socket(err: &SocketError) -> &str {
+    let SocketError::EmptySocket { socket } = err else {
+        panic!("expected EmptySocket, got {err:?}");
+    };
+    socket
+}
+
+#[test]
+fn magazine_moved_to_hand_l_at_tick_110_stays_put_then_follows_hand_l() {
+    let models = reload_models();
+    let lookup = |k: usize| &models[k];
+    let mut character = armed(&lookup);
+    let root = moved_and_turned();
+    let hand_r = node_index(&models, RELOAD_CHARACTER, "hand_r");
+    let hand_l = node_index(&models, RELOAD_CHARACTER, "hand_l");
+    let at_110 = reload_pose(&models, 110);
+    let held = root
+        * at_110.nodes()[hand_r]
+        * rifle_offset()
+        * rest(&models, RELOAD_RIFLE, "magazine")
+        * magazine_offset();
+    let new_offset = at_110.nodes()[hand_l].inverse()
+        * at_110.nodes()[hand_r]
+        * rifle_offset()
+        * rest(&models, RELOAD_RIFLE, "magazine")
+        * magazine_offset();
+    let mag_node = rest(&models, MAGAZINE, "mag");
+
+    let displaced = character
+        .move_part(&lookup, &["hand_r", "magazine"], &["hand_l"], &at_110)
+        .expect("both sockets exist");
+
+    assert_eq!(displaced, None);
+    let at_move = character.posed_placements(&lookup, root, &at_110);
+    within(placed_transform(&at_move, MAGAZINE), held * mag_node, 1e-5);
+    let mut seen = vec![];
+    for tick in 110..=130 {
+        let pose = reload_pose(&models, tick);
+        let expected = root * pose.nodes()[hand_l] * new_offset;
+
+        let placed = character.posed_placements(&lookup, root, &pose);
+
+        within(
+            placed_transform(&placed, MAGAZINE),
+            expected * mag_node,
+            1e-5,
+        );
+        within(
+            character
+                .part_transform(&lookup, &["hand_l"], root, &pose)
+                .expect("hand_l holds the magazine"),
+            expected,
+            1e-5,
+        );
+        seen.push(placed_transform(&placed, MAGAZINE));
+    }
+    assert!(
+        !seen[0].abs_diff_eq(seen[20], 0.05),
+        "the magazine follows the moving hand"
+    );
+    let rifle = character
+        .part_mut(&lookup, "hand_r")
+        .expect("hand_r exists")
+        .expect("rifle is still on hand_r");
+    assert_eq!(*rifle, Assembly::new(RELOAD_RIFLE));
+}
+
+#[test]
+fn moving_a_part_between_nested_sockets_keeps_its_transform() {
+    let models = reload_models();
+    let lookup = |k: usize| &models[k];
+    let mut character = armed(&lookup);
+    let root = moved_and_turned();
+    let hand_r = node_index(&models, RELOAD_CHARACTER, "hand_r");
+    let pose = reload_pose(&models, 40);
+    let held = root
+        * pose.nodes()[hand_r]
+        * rifle_offset()
+        * rest(&models, RELOAD_RIFLE, "magazine")
+        * magazine_offset();
+    let new_offset = rest(&models, RELOAD_RIFLE, "rail").inverse()
+        * rest(&models, RELOAD_RIFLE, "magazine")
+        * magazine_offset();
+
+    let displaced = character
+        .move_part(&lookup, &["hand_r", "magazine"], &["hand_r", "rail"], &pose)
+        .expect("both sockets exist");
+
+    assert_eq!(displaced, None);
+    let moved = character
+        .part_transform(&lookup, &["hand_r", "rail"], root, &pose)
+        .expect("rail holds the magazine");
+    within(moved, held, 1e-5);
+    let later = reload_pose(&models, 90);
+    within(
+        character
+            .part_transform(&lookup, &["hand_r", "rail"], root, &later)
+            .expect("rail holds the magazine"),
+        root * later.nodes()[hand_r]
+            * rifle_offset()
+            * rest(&models, RELOAD_RIFLE, "rail")
+            * new_offset,
+        1e-5,
+    );
+}
+
+#[test]
+fn released_magazine_spawns_a_loose_object_at_its_pose_and_velocity() {
+    let models = reload_models();
+    let lookup = |k: usize| &models[k];
+    let mut character = Assembly::new(RELOAD_CHARACTER);
+    character
+        .attach(&lookup, "hand_l", Assembly::new(MAGAZINE), grip())
+        .expect("hand_l exists");
+    let root = moved_and_turned();
+    let hand = node_index(&models, RELOAD_CHARACTER, "hand_l");
+    let last_tick = reload_player(&models, 114);
+    let mut this_tick = last_tick.clone();
+    this_tick.advance(&models[RELOAD_CHARACTER], TICK);
+    let before_pose = last_tick.pose(&models[RELOAD_CHARACTER]);
+    let now_pose = this_tick.pose(&models[RELOAD_CHARACTER]);
+    let at = |pose: &Pose| root * pose.nodes()[hand] * grip();
+    let (expected_now, expected_before) = (at(&now_pose), at(&before_pose));
+    let rotation_of = |a: Affine3A| Quat::from_mat3a(&a.matrix3).normalize();
+    let mut turn = (rotation_of(expected_now) * rotation_of(expected_before).inverse()).normalize();
+    if turn.w < 0.0 {
+        turn = -turn;
+    }
+    let expected_linear = Vec3::from(expected_now.translation - expected_before.translation) / TICK;
+    let expected_angular = turn.to_scaled_axis() / TICK;
+
+    let released = character
+        .release(
+            &lookup,
+            &["hand_l"],
+            Posed {
+                root,
+                pose: &now_pose,
+            },
+            Posed {
+                root,
+                pose: &before_pose,
+            },
+            TICK,
+        )
+        .expect("hand_l holds the magazine");
+
+    let spawn = LooseSpawn {
+        position: Vec3::from(released.transform.translation),
+        rotation: rotation_of(released.transform),
+        linear_velocity: released.linear_velocity,
+        angular_velocity: released.angular_velocity,
+        ..LooseSpawn::new(
+            LooseShape::Box {
+                half_extents: Vec3::splat(0.05),
+            },
+            0.2,
+        )
+    };
+    let mut world = PhysicsWorld::new();
+    let id = world.spawn_loose(&spawn);
+    let state = world.loose(id).expect("spawned");
+    vec_near(state.position, Vec3::from(expected_now.translation), 1e-4);
+    assert!(
+        state.rotation.angle_between(rotation_of(expected_now)) < 1e-4,
+        "{:?} != {:?}",
+        state.rotation,
+        rotation_of(expected_now)
+    );
+    vec_near(state.linear_velocity, expected_linear, 1e-4);
+    vec_near(state.angular_velocity, expected_angular, 1e-4);
+    assert!(
+        expected_linear.length() > 0.1,
+        "the hand is moving at the release tick"
+    );
+    let angular = state.angular_velocity;
+    assert!(
+        angular.length() > 0.3 && angular.length() < 0.7,
+        "the hand turns about half a radian a second, got {angular}"
+    );
+    vec_near(angular.normalize(), Vec3::Y, 1e-3);
+}
+
+#[test]
+fn released_magazine_is_no_longer_placed() {
+    let models = reload_models();
+    let lookup = |k: usize| &models[k];
+    let mut character = Assembly::new(RELOAD_CHARACTER);
+    character
+        .attach(&lookup, "hand_l", Assembly::new(MAGAZINE), grip())
+        .expect("hand_l exists");
+    let root = moved_and_turned();
+    let before_pose = reload_pose(&models, 114);
+    let now_pose = reload_pose(&models, 115);
+    let held = character.placements(&lookup, root);
+    assert!(held.iter().any(|p| p.0 == MAGAZINE));
+
+    let Released { part, .. } = character
+        .release(
+            &lookup,
+            &["hand_l"],
+            Posed {
+                root,
+                pose: &now_pose,
+            },
+            Posed {
+                root,
+                pose: &before_pose,
+            },
+            TICK,
+        )
+        .expect("hand_l holds the magazine");
+
+    assert_eq!(part, Assembly::new(MAGAZINE));
+    assert_eq!(character, Assembly::new(RELOAD_CHARACTER));
+    let keys: Vec<usize> = character
+        .posed_placements(&lookup, root, &now_pose)
+        .iter()
+        .map(|p| p.0)
+        .collect();
+    assert_eq!(keys, vec![RELOAD_CHARACTER, RELOAD_CHARACTER]);
+}
+
+#[test]
+fn released_velocity_includes_the_character_root_moving() {
+    let models = reload_models();
+    let lookup = |k: usize| &models[k];
+    let mut character = Assembly::new(RELOAD_CHARACTER);
+    character
+        .attach(&lookup, "hand_l", Assembly::new(MAGAZINE), grip())
+        .expect("hand_l exists");
+    let rest_pose = models[RELOAD_CHARACTER].rest_pose();
+    let hand = node_index(&models, RELOAD_CHARACTER, "hand_l");
+    let root_before =
+        Affine3A::from_rotation_translation(Quat::from_rotation_y(0.4), Vec3::new(5.0, -2.0, 1.0));
+    let root_now = Affine3A::from_rotation_translation(
+        Quat::from_rotation_y(0.41),
+        Vec3::new(5.05, -2.0, 1.02),
+    );
+    let at = |root: Affine3A| root * rest_pose.nodes()[hand] * grip();
+    let expected_linear = Vec3::from(at(root_now).translation - at(root_before).translation) / TICK;
+
+    let released = character
+        .release(
+            &lookup,
+            &["hand_l"],
+            Posed {
+                root: root_now,
+                pose: &rest_pose,
+            },
+            Posed {
+                root: root_before,
+                pose: &rest_pose,
+            },
+            TICK,
+        )
+        .expect("hand_l holds the magazine");
+
+    within(released.transform, at(root_now), 1e-5);
+    vec_near(released.linear_velocity, expected_linear, 1e-3);
+    assert!(expected_linear.length() > 1.0, "the root is moving");
+    vec_near(released.angular_velocity, Vec3::new(0.0, 0.6, 0.0), 1e-2);
+}
+
+#[test]
+fn move_to_a_node_under_the_part_is_refused_and_changes_nothing() {
+    let models = reload_models();
+    let lookup = |k: usize| &models[k];
+    let mut character = armed(&lookup);
+    let before = character.clone();
+    let pose = reload_pose(&models, 110);
+
+    for to in [["hand_r", "magazine"], ["hand_r", "rail"]] {
+        let err = character
+            .move_part(&lookup, &["hand_r"], &to, &pose)
+            .expect_err("the rifle cannot go into itself");
+
+        assert!(matches!(err, SocketError::IntoItself), "{to:?}: {err:?}");
+        assert_eq!(character, before, "{to:?}");
+    }
+}
+
+#[test]
+fn move_from_an_empty_socket_is_refused_naming_it() {
+    let models = reload_models();
+    let lookup = |k: usize| &models[k];
+    let mut character = armed(&lookup);
+    let before = character.clone();
+    let pose = reload_pose(&models, 110);
+
+    let empty_hand = character
+        .move_part(&lookup, &["hand_l"], &["hand_r", "rail"], &pose)
+        .expect_err("hand_l holds nothing");
+    let empty_rail = character
+        .move_part(&lookup, &["hand_r", "rail"], &["hand_l"], &pose)
+        .expect_err("the rail holds nothing");
+
+    assert_eq!(empty_socket(&empty_hand), "hand_l");
+    assert_eq!(empty_socket(&empty_rail), "rail");
+    assert_eq!(character, before);
+}
+
+#[test]
+fn move_to_an_unknown_or_empty_destination_is_refused_and_changes_nothing() {
+    let models = reload_models();
+    let lookup = |k: usize| &models[k];
+    let mut character = armed(&lookup);
+    let before = character.clone();
+    let pose = reload_pose(&models, 110);
+
+    let unknown = character
+        .move_part(&lookup, &["hand_r", "magazine"], &["bayonet"], &pose)
+        .expect_err("the character has no bayonet node");
+    let unknown_from = character
+        .move_part(&lookup, &["bayonet"], &["hand_l"], &pose)
+        .expect_err("the character has no bayonet node");
+    let through_empty = character
+        .move_part(&lookup, &["hand_r", "magazine"], &["hand_l", "rail"], &pose)
+        .expect_err("hand_l holds no rifle to carry a rail");
+
+    assert_eq!(unknown_socket(&unknown), "bayonet");
+    assert_eq!(unknown_socket(&unknown_from), "bayonet");
+    assert_eq!(empty_socket(&through_empty), "hand_l");
+    assert_eq!(character, before);
+}
+
+#[test]
+fn move_to_an_occupied_socket_returns_the_displaced_part() {
+    let models = reload_models();
+    let lookup = |k: usize| &models[k];
+    let mut character = armed(&lookup);
+    character
+        .attach(
+            &lookup,
+            "hand_l",
+            Assembly::new(RELOAD_RIFLE),
+            Affine3A::IDENTITY,
+        )
+        .expect("hand_l exists");
+    let root = moved_and_turned();
+    let hand_r = node_index(&models, RELOAD_CHARACTER, "hand_r");
+    let pose = reload_pose(&models, 110);
+    let held = root
+        * pose.nodes()[hand_r]
+        * rifle_offset()
+        * rest(&models, RELOAD_RIFLE, "magazine")
+        * magazine_offset();
+
+    let displaced = character
+        .move_part(&lookup, &["hand_r", "magazine"], &["hand_l"], &pose)
+        .expect("both sockets exist");
+
+    assert_eq!(displaced, Some(Assembly::new(RELOAD_RIFLE)));
+    let placed = character.posed_placements(&lookup, root, &pose);
+    let keys: Vec<usize> = placed.iter().map(|p| p.0).collect();
+    assert_eq!(
+        keys,
+        vec![RELOAD_CHARACTER, RELOAD_CHARACTER, RELOAD_RIFLE, MAGAZINE]
+    );
+    within(
+        placed_transform(&placed, MAGAZINE),
+        held * rest(&models, MAGAZINE, "mag"),
+        1e-5,
+    );
+}
+
+#[test]
+fn part_transform_at_rest_pose_matches_placements() {
+    let models = reload_models();
+    let lookup = |k: usize| &models[k];
+    let character = armed(&lookup);
+    let root = moved_and_turned();
+    let rest_pose = models[RELOAD_CHARACTER].rest_pose();
+    let placed = character.placements(&lookup, root);
+    let mag_node = rest(&models, MAGAZINE, "mag");
+
+    let magazine = character
+        .part_transform(&lookup, &["hand_r", "magazine"], root, &rest_pose)
+        .expect("the magazine is attached");
+    let rifle = character
+        .part_transform(&lookup, &["hand_r"], root, &rest_pose)
+        .expect("the rifle is attached");
+
+    within(
+        magazine * mag_node,
+        placed_transform(&placed, MAGAZINE),
+        1e-4,
+    );
+    within(
+        rifle * rest(&models, RELOAD_RIFLE, "body"),
+        placed_transform(&placed, RELOAD_RIFLE),
+        1e-4,
+    );
+}
+
+#[test]
+fn part_transform_under_a_pose_poses_only_the_first_socket() {
+    let models = reload_models();
+    let lookup = |k: usize| &models[k];
+    let character = armed(&lookup);
+    let root = moved_and_turned();
+    let hand_r = node_index(&models, RELOAD_CHARACTER, "hand_r");
+    let pose = reload_pose(&models, 60);
+
+    let magazine = character
+        .part_transform(&lookup, &["hand_r", "magazine"], root, &pose)
+        .expect("the magazine is attached");
+
+    within(
+        magazine,
+        root * pose.nodes()[hand_r]
+            * rifle_offset()
+            * rest(&models, RELOAD_RIFLE, "magazine")
+            * magazine_offset(),
+        1e-5,
+    );
+    let placed = character.posed_placements(&lookup, root, &pose);
+    within(
+        magazine * rest(&models, MAGAZINE, "mag"),
+        placed_transform(&placed, MAGAZINE),
+        1e-4,
+    );
+}
+
+#[test]
+fn part_transform_names_the_step_that_fails() {
+    let models = reload_models();
+    let lookup = |k: usize| &models[k];
+    let character = armed(&lookup);
+    let pose = reload_pose(&models, 60);
+    let root = Affine3A::IDENTITY;
+
+    let empty = character
+        .part_transform(&lookup, &["hand_r", "rail"], root, &pose)
+        .expect_err("the rail holds nothing");
+    let unknown = character
+        .part_transform(&lookup, &["hand_r", "bayonet"], root, &pose)
+        .expect_err("the rifle has no bayonet node");
+
+    assert_eq!(empty_socket(&empty), "rail");
+    assert_eq!(unknown_socket(&unknown), "bayonet");
+}
+
+#[test]
+fn release_from_an_empty_or_unknown_socket_is_refused_and_changes_nothing() {
+    let models = reload_models();
+    let lookup = |k: usize| &models[k];
+    let mut character = armed(&lookup);
+    let before = character.clone();
+    let pose = reload_pose(&models, 110);
+    let posed = Posed {
+        root: Affine3A::IDENTITY,
+        pose: &pose,
+    };
+
+    let empty = character
+        .release(&lookup, &["hand_l"], posed, posed, TICK)
+        .expect_err("hand_l holds nothing");
+    let unknown = character
+        .release(&lookup, &["hand_r", "bayonet"], posed, posed, TICK)
+        .expect_err("the rifle has no bayonet node");
+
+    assert_eq!(empty_socket(&empty), "hand_l");
+    assert_eq!(unknown_socket(&unknown), "bayonet");
+    assert_eq!(character, before);
+}

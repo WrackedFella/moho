@@ -1,6 +1,6 @@
 //! Sockets: one model attached at another model's named node, per drawn copy.
 
-use glam::Affine3A;
+use glam::{Affine3A, Vec3};
 
 use crate::Model;
 use crate::anim::Pose;
@@ -34,6 +34,40 @@ pub enum SocketError {
         /// The requested node name.
         socket: String,
     },
+    /// A step of the path holds no part.
+    #[error("no part at `{socket}`")]
+    EmptySocket {
+        /// The node name that holds nothing.
+        socket: String,
+    },
+    /// The destination lies under the part being moved.
+    #[error("a part cannot be moved into itself")]
+    IntoItself,
+}
+
+/// One tick's character root and pose.
+#[derive(Clone, Copy, Debug)]
+pub struct Posed<'a> {
+    pub root: Affine3A,
+    pub pose: &'a Pose,
+}
+
+/// A part taken off an assembly, with the motion it had at that moment.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Released<K> {
+    pub part: Assembly<K>,
+    /// The part's root transform at the release tick.
+    pub transform: Affine3A,
+    /// World frame, metres per second.
+    pub linear_velocity: Vec3,
+    /// World frame, radians per second.
+    pub angular_velocity: Vec3,
+}
+
+/// Linear and angular velocity that carry `before` to `now` over `dt` seconds.
+fn velocities(before: Affine3A, now: Affine3A, dt: f32) -> (Vec3, Vec3) {
+    let _ = (before, now, dt);
+    todo!("velocities")
 }
 
 impl<K: Copy> Assembly<K> {
@@ -99,6 +133,60 @@ impl<K: Copy> Assembly<K> {
     ) -> Result<Option<&mut Assembly<K>>, SocketError> {
         let node = self.node_of(models, socket)?;
         Ok(self.slot(node).map(|i| &mut self.parts[i].assembly))
+    }
+
+    /// The part at `path` (socket names from this assembly down), as a root transform:
+    /// `root * pose[n0] * offset0 * rest[n1] * offset1 ...`.
+    ///
+    /// # Errors
+    /// [`SocketError::UnknownSocket`] or [`SocketError::EmptySocket`] along the path.
+    pub fn part_transform<'m>(
+        &self,
+        models: &impl Fn(K) -> &'m Model,
+        path: &[&str],
+        root: Affine3A,
+        pose: &Pose,
+    ) -> Result<Affine3A, SocketError> {
+        let _ = (models, path, root, pose);
+        todo!("part_transform")
+    }
+
+    /// Move the part at `from` to `to`, keeping its transform at `pose`; returns the part
+    /// displaced at `to`. On error the assembly is unchanged.
+    ///
+    /// # Errors
+    /// [`SocketError`] along either path, or [`SocketError::IntoItself`].
+    pub fn move_part<'m>(
+        &mut self,
+        models: &impl Fn(K) -> &'m Model,
+        from: &[&str],
+        to: &[&str],
+        pose: &Pose,
+    ) -> Result<Option<Assembly<K>>, SocketError> {
+        let _ = (models, from, to, pose);
+        todo!("move_part")
+    }
+
+    /// Remove the part at `path` with its transform and velocities at `now`.
+    ///
+    /// # Errors
+    /// [`SocketError`] along the path; the assembly is unchanged.
+    pub fn release<'m>(
+        &mut self,
+        models: &impl Fn(K) -> &'m Model,
+        path: &[&str],
+        now: Posed<'_>,
+        before: Posed<'_>,
+        dt: f32,
+    ) -> Result<Released<K>, SocketError> {
+        let _ = (
+            models,
+            path,
+            now,
+            before,
+            velocities(before.root, now.root, dt),
+        );
+        todo!("release")
     }
 
     fn slot(&self, node: usize) -> Option<usize> {
@@ -170,5 +258,50 @@ impl<K: Copy> Assembly<K> {
             .ok_or_else(|| SocketError::UnknownSocket {
                 socket: socket.to_owned(),
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use glam::{Affine3A, Quat, Vec3};
+
+    use super::velocities;
+
+    fn near(actual: Vec3, expected: Vec3) {
+        assert!(actual.abs_diff_eq(expected, 1e-3), "{actual} != {expected}");
+    }
+
+    #[test]
+    fn velocity_of_a_pure_translation() {
+        let before = Affine3A::from_translation(Vec3::new(1.0, 2.0, 3.0));
+        let now = Affine3A::from_translation(Vec3::new(1.5, 2.0, 2.0));
+
+        let (linear, angular) = velocities(before, now, 0.5);
+
+        near(linear, Vec3::new(1.0, 0.0, -2.0));
+        near(angular, Vec3::ZERO);
+    }
+
+    #[test]
+    fn velocity_of_a_turn_about_y() {
+        let tilted = Quat::from_rotation_x(0.4);
+        let before = Affine3A::from_quat(tilted);
+        let now = Affine3A::from_quat(Quat::from_rotation_y(0.3) * tilted);
+
+        let (linear, angular) = velocities(before, now, 0.1);
+
+        near(linear, Vec3::ZERO);
+        near(angular, Vec3::new(0.0, 3.0, 0.0));
+    }
+
+    #[test]
+    fn angular_velocity_takes_the_shortest_arc_for_a_negated_quaternion() {
+        let before = Affine3A::from_quat(Quat::from_rotation_y(-2.0));
+        let now = Affine3A::from_quat(Quat::from_rotation_y(-2.4));
+
+        let (linear, angular) = velocities(before, now, 0.1);
+
+        near(linear, Vec3::ZERO);
+        near(angular, Vec3::new(0.0, -4.0, 0.0));
     }
 }
