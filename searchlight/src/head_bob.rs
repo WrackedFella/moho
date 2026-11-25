@@ -516,4 +516,93 @@ mod tests {
         assert!(close(quarter.phase, 1.1), "{quarter:?}");
         assert!(close(quarter.amplitude, 0.25), "{quarter:?}");
     }
+
+    #[test]
+    fn double_walking_speed_loops_no_more_than_one_and_a_half_times_the_walk() {
+        let walking = Bob::REST.step(true, WALK, WALK, DT);
+        let sprinting = Bob::REST.step(true, 2.0 * WALK, WALK, DT);
+
+        for phase in phases() {
+            let walk = Bob { phase, ..walking }.offset(level(100), 0.0);
+            let fast = Bob { phase, ..sprinting }.offset(level(100), 0.0);
+
+            assert!(fast.x.abs() <= 1.5 * walk.x.abs() + 1e-6, "phase {phase}");
+            assert!(fast.y.abs() <= 1.5 * walk.y.abs() + 1e-6, "phase {phase}");
+        }
+        let walk = Bob {
+            phase: PI / 4.0,
+            ..walking
+        }
+        .offset(level(100), 0.0);
+        let fast = Bob {
+            phase: PI / 4.0,
+            ..sprinting
+        }
+        .offset(level(100), 0.0);
+        assert!(near(fast, walk * 1.5), "{fast:?} vs {walk:?}");
+        assert!(walk.length() > 0.01, "{walk:?}");
+    }
+
+    proptest! {
+        #[test]
+        fn the_second_footstep_mirrors_the_first(
+            phase in 0.0f32..PI,
+            yaw in -TAU..TAU,
+            amplitude in 0.1f32..1.5,
+        ) {
+            let right = lean_offset(yaw, 1.0);
+            let first = Bob { phase, amplitude }.offset(level(100), yaw);
+            let second = Bob { phase: phase + PI, amplitude }.offset(level(100), yaw);
+
+            prop_assert!((second.dot(right) + first.dot(right)).abs() < 1e-5, "{first:?} {second:?}");
+            prop_assert!((second.y - first.y).abs() < 1e-5, "{first:?} {second:?}");
+        }
+    }
+
+    #[test]
+    fn the_second_footstep_mirrors_the_first_at_a_fixed_yaw() {
+        let yaw = 0.7;
+        let right = lean_offset(yaw, 1.0);
+
+        for phase in phases().filter(|phase| *phase < PI) {
+            let first = Bob {
+                phase,
+                amplitude: 1.0,
+            }
+            .offset(level(100), yaw);
+            let second = Bob {
+                phase: phase + PI,
+                amplitude: 1.0,
+            }
+            .offset(level(100), yaw);
+
+            assert!(close(second.dot(right), -first.dot(right)), "phase {phase}");
+            assert!(close(second.y, first.y), "phase {phase}");
+        }
+    }
+
+    #[test]
+    fn a_stride_spans_twice_the_sway_sideways_and_twice_the_rise_vertically() {
+        let right = lean_offset(0.7, 1.0);
+        let offsets: Vec<Vec3> = (0..3600)
+            .map(|i| {
+                Bob {
+                    phase: i as f32 * TAU / 3600.0,
+                    amplitude: 1.0,
+                }
+                .offset(level(100), 0.7)
+            })
+            .collect();
+
+        let range = |values: Vec<f32>| {
+            let high = values.iter().copied().fold(f32::MIN, f32::max);
+            let low = values.iter().copied().fold(f32::MAX, f32::min);
+            high - low
+        };
+        let sideways = range(offsets.iter().map(|o| o.dot(right)).collect());
+        let vertical = range(offsets.iter().map(|o| o.y).collect());
+
+        assert!((sideways - 2.0 * SWAY).abs() < 1e-4, "{sideways}");
+        assert!((vertical - 2.0 * RISE).abs() < 1e-4, "{vertical}");
+    }
 }
