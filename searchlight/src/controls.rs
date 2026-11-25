@@ -15,6 +15,14 @@ struct Row {
 }
 
 impl Row {
+    fn from_bindings(action: SearchlightAction, held: &[Binding]) -> Self {
+        Self {
+            action,
+            slots: [held.first().copied(), held.get(1).copied()],
+            rest: held.iter().skip(2).copied().collect(),
+        }
+    }
+
     fn holds(&self, binding: Binding) -> bool {
         self.slots.contains(&Some(binding)) || self.rest.contains(&binding)
     }
@@ -71,14 +79,7 @@ impl ControlsDraft {
     pub fn new(bindings: &ActionBindings<SearchlightAction>) -> Self {
         let rows = SearchlightAction::ALL
             .iter()
-            .map(|&action| {
-                let held = bindings.get(action);
-                Row {
-                    action,
-                    slots: [held.first().copied(), held.get(1).copied()],
-                    rest: held.iter().skip(2).copied().collect(),
-                }
-            })
+            .map(|&action| Row::from_bindings(action, bindings.get(action)))
             .collect();
         Self {
             base: bindings.clone(),
@@ -111,6 +112,20 @@ impl ControlsDraft {
             .iter()
             .find(|row| row.action == action)
             .is_some_and(|row| row.slots == [None, None] && row.rest.is_empty())
+    }
+
+    /// Empties `action`'s `slot`, leaving the other slot and any bindings beyond two alone.
+    pub fn clear(&mut self, action: SearchlightAction, slot: Slot) {
+        if let Some(row) = self.rows.iter_mut().find(|row| row.action == action) {
+            row.slots[index(slot)] = None;
+        }
+    }
+
+    /// Puts every action back on its default bindings.
+    pub fn reset_all(&mut self) {
+        for row in &mut self.rows {
+            *row = Row::from_bindings(row.action, row.action.default_bindings());
+        }
     }
 
     /// Answers a pending conflict: the capturing action takes the input in the requested slot and
@@ -741,6 +756,157 @@ mod tests {
 
         assert!(draft.is_unbound(SearchlightAction::Jump));
         assert!(!draft.is_unbound(SearchlightAction::Fire));
+    }
+
+    #[test]
+    fn clearing_both_slots_leaves_the_action_unbound() {
+        let mut draft = draft();
+
+        draft.clear(SearchlightAction::MoveForward, Slot::Primary);
+        draft.clear(SearchlightAction::MoveForward, Slot::Secondary);
+
+        assert!(draft.is_unbound(SearchlightAction::MoveForward));
+        assert_eq!(draft.slots(SearchlightAction::MoveForward), [None, None]);
+        assert!(
+            draft
+                .bindings()
+                .get(SearchlightAction::MoveForward)
+                .is_empty()
+        );
+        assert_eq!(
+            draft.bindings().get(SearchlightAction::MoveBack),
+            SearchlightAction::MoveBack.default_bindings(),
+            "another action is untouched"
+        );
+    }
+
+    #[test]
+    fn clearing_one_slot_leaves_the_other_and_those_beyond_two() {
+        let mut bindings = defaults();
+        bindings.set(
+            SearchlightAction::Jump,
+            vec![
+                Binding::key(Key::Space),
+                Binding::key(Key::X),
+                Binding::key(Key::Y),
+            ],
+        );
+        let mut draft = ControlsDraft::new(&bindings);
+
+        draft.clear(SearchlightAction::Jump, Slot::Secondary);
+
+        assert_eq!(
+            draft.slots(SearchlightAction::Jump),
+            [Some(Binding::key(Key::Space)), None]
+        );
+        assert_eq!(
+            draft.bindings().get(SearchlightAction::Jump),
+            [Binding::key(Key::Space), Binding::key(Key::Y)]
+        );
+        assert!(!draft.is_unbound(SearchlightAction::Jump));
+    }
+
+    #[test]
+    fn clearing_an_empty_slot_changes_nothing() {
+        let mut draft = draft();
+
+        draft.clear(SearchlightAction::Reload, Slot::Secondary);
+
+        assert_eq!(
+            draft.slots(SearchlightAction::Reload),
+            [Some(Binding::key(Key::R)), None]
+        );
+        assert_eq!(draft.bindings(), defaults());
+
+        draft.clear(SearchlightAction::Reload, Slot::Primary);
+        let once = draft.bindings();
+        draft.clear(SearchlightAction::Reload, Slot::Primary);
+
+        assert_eq!(draft.slots(SearchlightAction::Reload), [None, None]);
+        assert_eq!(draft.bindings(), once, "clearing twice is clearing once");
+    }
+
+    #[test]
+    fn reset_all_restores_check_magazines_two_defaults() {
+        let mut draft = draft();
+        draft.capture(
+            SearchlightAction::CheckMagazine,
+            Slot::Primary,
+            Input::Key(Key::Z),
+        );
+        draft.capture(SearchlightAction::Reload, Slot::Primary, Input::Key(Key::T));
+        draft.clear(SearchlightAction::Jump, Slot::Primary);
+
+        draft.reset_all();
+
+        assert_eq!(
+            draft.bindings().get(SearchlightAction::CheckMagazine),
+            [Binding::key(Key::C), Binding::key(Key::R).held()]
+        );
+        assert_eq!(draft.bindings(), defaults());
+        assert!(!draft.is_unbound(SearchlightAction::Jump));
+    }
+
+    #[test]
+    fn resetting_twice_is_resetting_once() {
+        let mut draft = draft();
+        draft.clear(SearchlightAction::Reload, Slot::Primary);
+        draft.capture(SearchlightAction::Fire, Slot::Primary, Input::Key(Key::T));
+
+        draft.reset_all();
+        let once = draft.bindings();
+        draft.reset_all();
+
+        assert_eq!(once, defaults());
+        assert_eq!(draft.bindings(), defaults());
+    }
+
+    #[test]
+    fn reset_all_rebinds_an_action_left_unbound() {
+        let mut draft = draft();
+        draft.clear(SearchlightAction::MoveForward, Slot::Primary);
+        draft.clear(SearchlightAction::MoveForward, Slot::Secondary);
+
+        draft.reset_all();
+
+        assert!(!draft.is_unbound(SearchlightAction::MoveForward));
+        assert_eq!(
+            draft.bindings().get(SearchlightAction::MoveForward),
+            SearchlightAction::MoveForward.default_bindings()
+        );
+    }
+
+    #[test]
+    fn a_cleared_primary_takes_a_free_input_again() {
+        let mut draft = draft();
+        draft.clear(SearchlightAction::Reload, Slot::Primary);
+
+        let outcome = draft.capture(SearchlightAction::Reload, Slot::Primary, Input::Key(Key::G));
+
+        assert_eq!(outcome, Capture::Set);
+        assert_eq!(
+            draft.slots(SearchlightAction::Reload),
+            [Some(Binding::key(Key::G)), None]
+        );
+    }
+
+    #[test]
+    fn clearing_the_only_binding_leaves_the_action_unbound_and_the_rest_alone() {
+        let mut draft = draft();
+
+        draft.clear(SearchlightAction::Reload, Slot::Primary);
+
+        assert!(draft.is_unbound(SearchlightAction::Reload));
+        assert!(draft.bindings().get(SearchlightAction::Reload).is_empty());
+        for &other in SearchlightAction::ALL {
+            if other != SearchlightAction::Reload {
+                assert_eq!(
+                    draft.bindings().get(other),
+                    other.default_bindings(),
+                    "{other:?} is untouched"
+                );
+            }
+        }
     }
 
     #[test]

@@ -22,6 +22,8 @@ pub enum MenuAction {
     Controls,
     /// Makes the Controls page's drafted bindings live and saves them.
     ApplyControls,
+    /// Puts the Controls page's draft back on every action's defaults; nothing is live until Apply.
+    ResetControls,
     /// The Controls row of an action, which captures its bindings and is never chosen.
     Rebind(SearchlightAction),
     /// Answers the conflict dialog by moving the input to the capturing action.
@@ -51,6 +53,7 @@ impl MenuAction {
             MenuAction::Back => "Back",
             MenuAction::Controls => "Controls",
             MenuAction::ApplyControls => "Apply",
+            MenuAction::ResetControls => "Reset",
             MenuAction::Rebind(action) => label(action),
             MenuAction::Replace => "Replace",
             MenuAction::Cancel => "Cancel",
@@ -120,7 +123,7 @@ pub fn settings_screen(settings: EngineSettings, head_bob: HeadBobLevel) -> Menu
     }
 }
 
-/// The Controls page's rows for `draft`: one per action with its two slots, then Apply and Back.
+/// The Controls page's rows for `draft`: one per action with its two slots, then Apply, Reset and Back.
 pub fn controls_rows(draft: &ControlsDraft) -> Vec<MenuItem<MenuAction>> {
     let mut items: Vec<MenuItem<MenuAction>> = SearchlightAction::ALL
         .iter()
@@ -134,6 +137,7 @@ pub fn controls_rows(draft: &ControlsDraft) -> Vec<MenuItem<MenuAction>> {
         })
         .collect();
     items.push(MenuAction::ApplyControls.button());
+    items.push(MenuAction::ResetControls.button());
     items.push(MenuAction::Back.button());
     items
 }
