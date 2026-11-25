@@ -1040,6 +1040,27 @@ mod tests {
     }
 
     #[test]
+    fn a_mesh_placed_normally_and_shadow_only_is_listed_once_in_each() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.flush(&mut backend);
+
+        meshes.place(A, at(1.0), 3);
+        meshes.place_shadow_only(A, at(2.0));
+
+        let textured = textured(&meshes);
+        assert_eq!(textured.len(), 1);
+        assert_eq!(textured[0].2.model, model_of(at(1.0)));
+        assert_eq!(draws(&meshes).len(), 1);
+        let shadow_only: Vec<[[f32; 4]; 4]> = meshes
+            .shadow_only_draws()
+            .map(|(_, instance)| instance.model)
+            .collect();
+        assert_eq!(shadow_only, vec![model_of(at(2.0))]);
+    }
+
+    #[test]
     fn placement_material_reaches_the_instance_and_vertices_defer() {
         let mut meshes = WorldMeshes::new();
         let mut backend = RecordingBackend::default();

@@ -506,3 +506,67 @@ fn the_default_backend_drops_a_shadow_only_draw() {
         "the default must not fall back to a drawn enqueue"
     );
 }
+
+#[test]
+fn a_shadow_only_placement_lasts_one_frame() {
+    let mut scene = moho_renderer::Scene::new();
+    let mut mock = MockRenderer::new();
+    let sphere_handle = mock.register_mesh(&[[0.0f32; 3]]);
+    let cube_handle = mock.register_mesh(&[[0.0f32; 3]]);
+    scene.world_meshes_mut().upsert_movable(BOX, box_mesh());
+
+    scene.world_meshes_mut().place_shadow_only(BOX, at(2.0));
+    scene
+        .render::<Prop, Prop>(&mut mock, &[], &[], sphere_handle, cube_handle, camera())
+        .expect("mock renderer's begin_frame always succeeds");
+    let after_first = mock.shadow_only.len();
+    scene
+        .render::<Prop, Prop>(&mut mock, &[], &[], sphere_handle, cube_handle, camera())
+        .expect("mock renderer's begin_frame always succeeds");
+
+    assert_eq!(after_first, 1, "one enqueue in the placed frame");
+    assert_eq!(
+        mock.shadow_only.len(),
+        after_first,
+        "none in the frame without a placement"
+    );
+}
+
+#[test]
+fn interleaved_shadow_only_placements_enqueue_per_id_in_id_then_call_order() {
+    let (first, second) = (WorldMeshId(1), WorldMeshId(2));
+    let mut scene = moho_renderer::Scene::new();
+    let mut mock = MockRenderer::new();
+    let sphere_handle = mock.register_mesh(&[[0.0f32; 3]]);
+    let cube_handle = mock.register_mesh(&[[0.0f32; 3]]);
+    scene.world_meshes_mut().upsert_movable(first, box_mesh());
+    scene.world_meshes_mut().upsert_movable(second, box_mesh());
+    scene.world_meshes_mut().place_shadow_only(second, at(1.0));
+    scene.world_meshes_mut().place_shadow_only(first, at(2.0));
+    scene.world_meshes_mut().place_shadow_only(second, at(3.0));
+
+    scene
+        .render::<Prop, Prop>(&mut mock, &[], &[], sphere_handle, cube_handle, camera())
+        .expect("mock renderer's begin_frame always succeeds");
+
+    let enqueued: Vec<(u32, Vec<(f32, u32)>)> = mock
+        .shadow_only
+        .iter()
+        .map(|(mesh, instances)| {
+            (
+                *mesh,
+                instances
+                    .iter()
+                    .map(|i| (i.model[3][0], i.material))
+                    .collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        enqueued,
+        vec![
+            (FIRST_UPLOAD_HANDLE, vec![(2.0, 0)]),
+            (FIRST_UPLOAD_HANDLE + 1, vec![(1.0, 0), (3.0, 0)]),
+        ]
+    );
+}
