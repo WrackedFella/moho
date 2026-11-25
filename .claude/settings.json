@@ -24,6 +24,7 @@
       "Bash(gh pr view *)",
       "Bash(gh pr list *)",
       "Bash(gh pr checks *)",
+      "Bash(*/devflow/*/scripts/card link *)",
       "mcp__gitnexus__context",
       "mcp__gitnexus__query"
     ]

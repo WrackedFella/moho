@@ -6,6 +6,7 @@ pub mod anim;
 mod buffers;
 mod error;
 mod hash;
+pub mod humanoid;
 mod image;
 mod loaded;
 mod marker;

@@ -62,6 +62,28 @@ impl VertexSource {
     }
 }
 
+/// Which passes a draw is in. An enum rather than two flags, so "in no pass" cannot be
+/// expressed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Passes {
+    /// Drawn in view and casts a shadow.
+    Both,
+    /// Drawn in view, casts no shadow.
+    MainOnly,
+    /// Casts a shadow, not drawn in view.
+    ShadowOnly,
+}
+
+impl Passes {
+    pub(crate) fn in_main_pass(self) -> bool {
+        matches!(self, Self::Both | Self::MainOnly)
+    }
+
+    pub(crate) fn in_shadow_pass(self) -> bool {
+        matches!(self, Self::Both | Self::ShadowOnly)
+    }
+}
+
 /// What a queued draw binds: its mesh (always the index buffer), the vertex source and the
 /// base-colour texture of the main pass.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,7 +91,7 @@ pub struct DrawKey {
     pub(crate) mesh: u32,
     pub(crate) texture: u32,
     pub(crate) source: VertexSource,
-    pub(crate) casts_shadow: bool,
+    pub(crate) passes: Passes,
 }
 
 impl DrawKey {
@@ -79,7 +101,7 @@ impl DrawKey {
             mesh,
             texture,
             source: VertexSource::Arena { first_vertex },
-            casts_shadow: true,
+            passes: Passes::Both,
         }
     }
 
@@ -111,6 +133,24 @@ mod tests {
     use super::*;
     use crate::pipeline::MAIN_VERTEX_ATTRIBUTES;
     use std::mem::{offset_of, size_of};
+
+    #[test]
+    fn shadow_only_is_in_the_shadow_pass_and_not_the_main_pass() {
+        let passes = [
+            (Passes::Both, true, true),
+            (Passes::MainOnly, true, false),
+            (Passes::ShadowOnly, false, true),
+        ];
+
+        for (variant, main, shadow) in passes {
+            assert_eq!(variant.in_main_pass(), main, "{variant:?} in the main pass");
+            assert_eq!(
+                variant.in_shadow_pass(),
+                shadow,
+                "{variant:?} in the shadow pass"
+            );
+        }
+    }
 
     #[test]
     fn vertex_layout_matches_the_main_pipeline_attributes() {

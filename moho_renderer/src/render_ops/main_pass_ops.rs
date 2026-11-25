@@ -87,6 +87,9 @@ pub fn render_main_pass(
     // Iterate draws and issue draw calls
     let mut bound_texture = None;
     for (i, (key, insts)) in pending_draws.iter().enumerate() {
+        if !key.passes.in_main_pass() {
+            continue;
+        }
         let idx = key.mesh as usize;
         if idx >= mesh_table.len() {
             continue;

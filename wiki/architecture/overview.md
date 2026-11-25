@@ -96,7 +96,7 @@ flowchart TD
     renderer["moho_renderer<br/>wgpu backend"]:::engine
     physics["moho_physics<br/>rapier3d"]:::engine
     audio["moho_audio<br/>rodio"]:::engine
-    core["moho_core<br/>event bus, engine events, prefs,<br/>content roots, save envelope,<br/>seeded RNG"]:::engine
+    core["moho_core<br/>event bus, engine events, prefs,<br/>content roots, asset roots,<br/>save envelope, seeded RNG"]:::engine
     rapi["moho_render_api<br/>engine/game contract"]:::engine
     level["moho_level<br/>glTF level loader"]:::engine
 
@@ -134,7 +134,8 @@ The public APIs the [ENG-F5](https://github.com/WrackedFella/moho/issues/232)
 gate holds fixed: game plug-in interface, world-geometry contract, action map, physics
 queries, spatial audio, content roots, save envelope, scene import ([ADR-0012](../../_todo/adr/0012-engine-crate-map-for-m2.md), seams 1 to 8),
 the UI shell and debug values ([ADR-0017](../../_todo/adr/0017-ui-shell-and-debug-values-are-engine-seams.md), seams 9 and 10; menus and settings controls join them in [ADR-0026](../../_todo/adr/0026-menus-and-settings-controls-are-ui-shell-seams.md)), and navigation
-([ADR-0019](../../_todo/adr/0019-navigation-is-an-engine-seam.md), seam 11). Adding or changing
+([ADR-0019](../../_todo/adr/0019-navigation-is-an-engine-seam.md), seam 11), and asset roots
+([ADR-0042](../../_todo/adr/0042-shipped-assets-resolve-per-file-through-named-folders.md)). Adding or changing
 one is an ADR-level change.
 
 ## 4 Fixed-step loop (`moho_app`)

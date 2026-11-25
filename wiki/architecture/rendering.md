@@ -72,6 +72,12 @@ frame skipped for a lost surface consumes them too. Placed meshes cast and recei
 and take part in SSAO like static ones, and never touch physics. Normals use the cofactor
 of the placement's upper 3x3 (`normal_to_world`, 2.2), so non-uniform scale lights correctly.
 
+`WorldMeshes::place_shadow_only(id, transform)` adds a copy that casts a shadow and is not
+drawn in view (material 0, no texture). `Scene::render` groups these per mesh and hands them to
+`RendererBackend::enqueue_shadow_only_draw`, whose default draws nothing. Each queued draw's
+`DrawKey` carries a `Passes` value (`Both`, `MainOnly`, `ShadowOnly`) that the main and shadow
+passes filter on.
+
 A rigged mesh carries a skin: `WorldMesh::with_skin` adds four joint indices and weights per
 vertex (`skin()` reads them back). `WorldMeshes::place_skinned(id, transform, material,
 texture, palette)` adds a placement for the frame posed by a model-space palette, one
@@ -207,7 +213,18 @@ parts, so two rifles from one model can carry different scopes; the shared `Mode
   unchanged.
 - `placements(models, root)` yields `(model key, mesh index, transform)`: this copy's meshes
   first, then each part in attach order, depth-first, the part's root being
-  `root * socket_node.rest * offset`. Sockets use rest transforms, not posed ones.
+  `root * socket_node.rest * offset`.
+- `posed_placements(models, root, &pose)` poses this copy's own model: its meshes at
+  `root * pose[mesh.node]` and each part rooted at `root * pose[socket_node] * offset`, so a part
+  follows an animated bone. Parts keep their own rest transforms. `pose` must be of this copy's
+  model.
+- `moho_level::humanoid` (`moho_level/src/humanoid.rs`) is the bone naming both game lines key
+  off: `Bone` lists the 16 required bones by Unreal mannequin node name (`pelvis`, `spine_01`,
+  `neck_01`, `head`, `upperarm_*`, `lowerarm_*`, `hand_*`, `thigh_*`, `calf_*`, `foot_*`).
+  `Humanoid::of(model)` resolves each to the first node of that name or fails with `MissingBones`
+  listing every absent one; `load_humanoid(path)` loads and resolves in one step
+  (`LevelErrorKind::NotHumanoid`). `Humanoid::node(bone)` is a node index and `Humanoid::bone(&pose,
+  bone)` the bone's model-space transform in a pose.
 
 The game glue keeps one `Assembly` per drawn copy and the per-model ids and materials of 2.2,
 indexed by key. A swap shows on the next frame drawn:
@@ -248,7 +265,8 @@ model, a clip and a time; it never changes the model.
   game places with `place_skinned` instead (section 2, 5.2). `joint_palette(skin, &pose)` is
   `pose[joint] * inverse_bind` per joint in model space, the palette a skinned placement takes.
 
-The game glue, one player per character, each tick or frame:
+The game glue, one player per character. The fixed tick advances the player (ADR-0039); the
+frame only poses it, so the drawn pose is the one the sim read:
 
 ```rust
 // Load time: a skinned mesh uploads once with its skin.
@@ -260,8 +278,10 @@ for (mesh, &id) in model.meshes().iter().zip(&ids) {
     world_meshes.upsert_movable(id, upload);
 }
 
+// Each fixed tick (the sim owns the player; rules read bones from this pose):
+player.advance(&model, TICK);
+
 // Each frame:
-player.advance(&model, dt);
 let pose = player.pose(&model);
 // Rigid meshes on their posed nodes; skinned meshes at the root with their palette.
 for (i, t) in model.posed_placements(root, &pose) {
@@ -369,10 +389,11 @@ sequenceDiagram
     participant S as Scene::render
     participant B as RendererBackend
     S->>S: prepare: collect instances, dedup materials,<br/>split opaque / transparent
-    S->>S: place effects, flush world meshes, group placements<br/>per mesh (shadowed and unshadowed), clear placements
+    S->>S: place effects, flush world meshes, group placements<br/>per mesh (shadowed, unshadowed and shadow-only), clear placements
     S->>B: begin_frame(camera)<br/>upload camera, cull lights, update shadow matrices,<br/>acquire surface
     S->>B: enqueue_draw(cubes, spheres, each world mesh<br/>with all its instances)
     S->>B: enqueue_unshadowed_draw(effects)
+    S->>B: enqueue_shadow_only_draw(shadow-only placements)
     S->>B: enqueue_draw(transparent, sorted back-to-front)
     S->>B: enqueue_markers(fills, outlines, each sorted far to near)
     S->>B: submit_frame()
@@ -609,6 +630,6 @@ built-in mesh (kite for streaks, star for flashes, quad for marks), uploaded on 
 `EFFECT_MESH_IDS_FROM` (kite), `+ 1` (star) and `+ 2` (quad) (`u64::MAX - 63` up is reserved; games keep their ids below it). Streaks and
 flashes are turned to face the camera eye; a mark keeps its surface orientation. Placements go through
 `WorldMeshes::place_unshadowed` and reach the backend via `RendererBackend::enqueue_unshadowed_draw`
-(default: `enqueue_draw`). In the renderer the draw key has `casts_shadow = false`, so
+(default: `enqueue_draw`). In the renderer the draw key has `passes = Passes::MainOnly`, so
 `render_shadow_passes` skips it and the main pass draws it. A second camera sees a streak or flash
 turned toward the first eye.

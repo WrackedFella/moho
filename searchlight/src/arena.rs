@@ -426,7 +426,7 @@ mod tests {
 
     use super::*;
     use crate::tag::SurfaceTag;
-    use crate::test_support::{box_mesh, mode_marker};
+    use crate::test_support::{box_mesh, logged, mode_marker};
 
     fn marker(name: &str, position: Vec3) -> LevelMarker {
         LevelMarker {
@@ -1027,33 +1027,6 @@ mod tests {
         let arena = build(&level).expect("nothing walks the route");
 
         assert_eq!(arena.route, [ON_ISLAND]);
-    }
-
-    /// Collects what `tracing` writes while `run` executes.
-    fn logged(run: impl FnOnce()) -> String {
-        use std::io::Write;
-        use std::sync::Mutex;
-
-        struct Sink(Arc<Mutex<Vec<u8>>>);
-        impl Write for Sink {
-            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().expect("log sink").extend_from_slice(buf);
-                Ok(buf.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-
-        let buffer = Arc::new(Mutex::new(Vec::new()));
-        let writer = Arc::clone(&buffer);
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || Sink(Arc::clone(&writer)))
-            .with_ansi(false)
-            .finish();
-        tracing::subscriber::with_default(subscriber, run);
-        let bytes = buffer.lock().expect("log sink").clone();
-        String::from_utf8(bytes).expect("log output is utf-8")
     }
 
     /// A 20 m floor, a player spawn, a dummy and one `control_NN` marker per entry of

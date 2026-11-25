@@ -21,6 +21,7 @@ toml = { version = "1.1", default-features = false, features = ["std", "serde", 
 criterion = { version = "0.8", features = ["html_reports"] }
 proptest = { workspace = true }
 tempfile = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [[bench]]
 name = "event_bus_bench"

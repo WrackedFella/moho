@@ -125,6 +125,12 @@ pub trait RendererBackend {
     fn enqueue_unshadowed_draw(&mut self, mesh: u32, instances: &[InstanceGpu]) {
         self.enqueue_draw(mesh, instances);
     }
+    /// Queue a previously-registered mesh for the shadow pass only: it casts a shadow and is
+    /// not drawn in view. The default draws nothing, as a backend with no shadow pass has
+    /// nothing to cast into; it must not fall back to `enqueue_draw`.
+    fn enqueue_shadow_only_draw(&mut self, mesh: u32, instances: &[InstanceGpu]) {
+        let _ = (mesh, instances);
+    }
     /// Upload the skin (four joints and weights per vertex) of the mesh under `mesh`,
     /// registered by [`register_world_mesh`](Self::register_world_mesh). No-op by default.
     fn register_skin(&mut self, mesh: u32, joints: &[[u16; 4]], weights: &[[f32; 4]]) {
@@ -276,6 +282,9 @@ impl RendererBackend for Renderer<'_> {
     }
     fn enqueue_unshadowed_draw(&mut self, mesh: u32, instances: &[InstanceGpu]) {
         self.enqueue_unshadowed_draw(mesh, instances);
+    }
+    fn enqueue_shadow_only_draw(&mut self, mesh: u32, instances: &[InstanceGpu]) {
+        self.enqueue_shadow_only_draw(mesh, instances);
     }
     fn register_skin(&mut self, mesh: u32, joints: &[[u16; 4]], weights: &[[f32; 4]]) {
         self.register_skin(mesh, joints, weights);

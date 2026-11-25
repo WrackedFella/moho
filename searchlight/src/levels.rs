@@ -3,6 +3,8 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
+use moho_core::assets::{AssetError, AssetRoots};
+
 use crate::arena::Arena;
 
 /// A shipped level: the name the tester launches it by and its file under the assets folder.
@@ -32,11 +34,14 @@ pub enum LevelChoice {
 }
 
 impl LevelChoice {
-    /// The file to load: a named level under `assets`, a path as given.
-    pub fn path(&self, assets: &Path) -> PathBuf {
+    /// The file to load: a named level resolved through `assets`, a path as given.
+    ///
+    /// # Errors
+    /// [`AssetError`] when a named level's file is in no asset folder.
+    pub fn path(&self, assets: &AssetRoots) -> Result<PathBuf, AssetError> {
         match self {
-            Self::Named(level) => assets.join(level.file),
-            Self::Path(path) => path.clone(),
+            Self::Named(level) => assets.resolve(Path::new(level.file)),
+            Self::Path(path) => Ok(path.clone()),
         }
     }
 }
@@ -107,7 +112,9 @@ mod tests {
     use crate::mode::{ArenaMode, Tally};
     use crate::sim::{STAND_HEIGHT, dummy_hit_volumes};
     use crate::tag::SurfaceTag;
-    use crate::test_support::{DT, box_mesh, level_marker, mag, rifle_from, test_config};
+    use crate::test_support::{
+        DT, box_mesh, level_marker, mag, placeholder_assets, rifle_from, test_config,
+    };
     use crate::tuning::SHIPPED_BODY;
     use crate::wave::WaveTuning;
     use crate::{assets_root, content_root};
@@ -128,8 +135,8 @@ mod tests {
         let choice = chosen("arena").expect("`arena` is a level");
 
         assert_eq!(
-            choice.path(Path::new("assets")),
-            Path::new("assets/arena.glb")
+            choice.path(&placeholder_assets()).unwrap(),
+            assets_root().join("arena.glb")
         );
         assert_eq!(named(choice).name, "arena");
     }
@@ -139,8 +146,8 @@ mod tests {
         let choice = chosen("proving_ground").expect("`proving_ground` is a level");
 
         assert_eq!(
-            choice.path(Path::new("assets")),
-            Path::new("assets/proving_ground.glb")
+            choice.path(&placeholder_assets()).unwrap(),
+            assets_root().join("proving_ground.glb")
         );
         assert_eq!(named(choice).name, "proving_ground");
     }
@@ -178,11 +185,44 @@ mod tests {
 
             assert_eq!(choice, LevelChoice::Path(PathBuf::from(arg)), "{arg}");
             assert_eq!(
-                choice.path(Path::new("assets")),
+                choice.path(&placeholder_assets()).unwrap(),
                 Path::new(arg),
                 "a path is loaded as given, not under the assets folder"
             );
         }
+    }
+
+    #[test]
+    fn a_named_level_found_in_no_folder_is_not_found_naming_where_it_looked() {
+        let empty = tempfile::tempdir().unwrap();
+        let roots = AssetRoots::placeholders(empty.path()).unwrap();
+        let choice = chosen("arena").unwrap();
+
+        let error = choice.path(&roots).unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                AssetError::NotFound { name, searched }
+                    if name == Path::new("arena.glb") && searched == &[empty.path().to_owned()]
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_path_argument_is_returned_as_given() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("arena.glb"), "x").unwrap();
+        let folder = AssetRoots::placeholders(&assets_root())
+            .unwrap()
+            .with_folder(dir.path())
+            .unwrap();
+        let choice = chosen("arena.glb").unwrap();
+
+        let path = choice.path(&folder).unwrap();
+
+        assert_eq!(path, Path::new("arena.glb"));
     }
 
     #[test]
