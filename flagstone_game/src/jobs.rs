@@ -2278,20 +2278,6 @@ mod tests {
             );
         }
 
-        #[test]
-        fn step_crew_skips_a_possessed_pawn_that_has_a_mark_in_reach() {
-            let mut site = CrewSite::flat(&[cell(3, 1, 0)]);
-            site.mark_block(cell(4, 1, 0));
-            let pawn = site.ids[0];
-
-            let actions = site.tick_without(Some(pawn));
-
-            assert!(actions.is_empty(), "{actions:?}");
-            assert_eq!(site.claimed_by([4, 1, 0]), None, "it takes no mark");
-            assert!(site.marks.contains([4, 1, 0]));
-            assert!(site.grid.is_solid_at(cell(4, 1, 0)), "and digs nothing");
-        }
-
         proptest! {
             #[test]
             fn no_mark_is_ever_claimed_by_two_pawns(

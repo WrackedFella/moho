@@ -420,6 +420,100 @@ mod tests {
         assert_eq!(app.physics.pawns.len(), 1);
     }
 
+    /// An app in `mode` that has just loaded a one-chunk save.
+    fn app_loaded_in(mode: flagstone_game::controller::CameraMode) -> crate::App {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut saved = crate::App::headless();
+        saved.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
+        saved
+            .entities
+            .chunks
+            .insert(crate::app::world_geometry::tests::chunk_at(
+                glam::IVec3::new(7, 0, 7),
+            ));
+        crate::app::autosave::auto_save_on_shutdown(
+            &mut saved,
+            &moho_app::GameClock::default(),
+            temp.path(),
+            &[],
+        )
+        .expect("autosave");
+        let mut app = crate::App::headless();
+        app.simulation.set_camera_mode(mode);
+
+        crate::app::scene_loader::load_scene(
+            &mut app,
+            &mut moho_app::GameClock::default(),
+            &temp.path().join("scene.bin"),
+        )
+        .expect("load");
+
+        assert_eq!(
+            app.simulation.camera_mode(),
+            mode,
+            "setup: the load keeps the view"
+        );
+        app
+    }
+
+    #[test]
+    fn a_load_in_the_strategy_view_leaves_nobody_possessed_and_the_app_runs() {
+        use flagstone_game::controller::CameraMode;
+        use moho_render_api::UiFrameSource;
+        let mut app = app_loaded_in(CameraMode::Isometric);
+        app.game_state = crate::game_state::GameState::Playing;
+        let adapter = std::sync::Arc::new(std::sync::Mutex::new({
+            let mut adapter = flagstone_ui::build_adapter(
+                None,
+                std::sync::Arc::new(moho_core::events::EventBus::new()),
+                moho_core::prefs::Prefs::default(),
+            );
+            adapter.set_game_state(flagstone_ui::GameState::Playing);
+            adapter
+        }));
+        app.ui_adapter = Some(std::sync::Arc::clone(&adapter));
+
+        moho_app::HeadlessLoop::<crate::App>::new(moho_app::LoopConfig::new(
+            flagstone_game::TICK_HZ,
+        ))
+        .step(&mut app, 3);
+        crate::app::event_loop::FrameProcessor::new().update_hud_data(
+            &app,
+            &moho_app::GameClock::default(),
+            std::time::Duration::from_millis(16),
+        );
+
+        assert_eq!(
+            app.possessed, None,
+            "nobody is possessed in the strategy view"
+        );
+        assert_eq!(app.crew.len(), 1);
+        assert_eq!(app.physics.pawns.len(), 1, "the pawn still has its body");
+        assert!(
+            adapter
+                .lock()
+                .expect("adapter")
+                .ui_frame([800, 600])
+                .is_some(),
+            "the HUD paints"
+        );
+    }
+
+    #[test]
+    fn a_load_in_first_person_possesses_the_first_pawn() {
+        use flagstone_game::controller::CameraMode;
+        let app = app_loaded_in(CameraMode::FirstPerson);
+
+        assert_eq!(app.possessed, Some(flagstone_game::selection::FIRST_PAWN));
+        assert_eq!(
+            app.physics.player,
+            app.physics
+                .pawns
+                .get(&flagstone_game::selection::FIRST_PAWN)
+                .copied()
+        );
+    }
+
     #[test]
     fn a_load_clears_the_selection() {
         use flagstone_game::pawn::{Pawn, PawnId};

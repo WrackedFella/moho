@@ -1342,6 +1342,43 @@ mod tests {
     }
 
     #[test]
+    fn the_strategy_hud_after_stepping_out_carries_no_hotbar_and_no_tool() {
+        use moho_app::{Game, TickContext};
+        let mut app = App::headless();
+        app.game_state = crate::game_state::GameState::Playing;
+        app.possessed_pawn_mut()
+            .deposit(flagstone_game::inventory::ResourceYield {
+                resource_id: 1,
+                amount: 12,
+            });
+        let step_out = crate::app::game::StrategyCommand {
+            toggle_view: true,
+            ..Default::default()
+        };
+        let mut clock = moho_app::GameClock::default();
+        let mut ctx = TickContext {
+            tick: 0,
+            tick_length: Duration::from_secs_f32(DT),
+            clock: &mut clock,
+        };
+
+        Game::tick(&mut app, &mut ctx, &step_out);
+
+        assert_eq!(
+            app.simulation.camera_mode(),
+            flagstone_game::controller::CameraMode::Isometric,
+            "setup: the player stepped out"
+        );
+        assert_eq!(app.possessed, None, "setup: nothing is possessed");
+        let produced = produced_strategy_hud(&mut app);
+        let expected = painted_strategy_hud(strategy_hud_data(&app));
+        assert!(
+            produced == expected,
+            "the strategy HUD shows a pawn's pockets"
+        );
+    }
+
+    #[test]
     fn hud_data_carries_the_player_pawns_pickups() {
         use moho_render_api::UiFrameSource;
         let mut app = App::headless();
@@ -1443,7 +1480,9 @@ mod tests {
                 "nothing else is counted"
             );
             assert!(
-                app.possessed_pawn().inventory.is_empty(),
+                app.crew
+                    .get(FIRST_PAWN)
+                    .is_some_and(|pawn| pawn.inventory.is_empty()),
                 "a pawn at work fills the colony, not its pockets"
             );
         }
@@ -1458,7 +1497,11 @@ mod tests {
             assert!(walked(&app) > 1.5, "the pawn dug from where it started");
             assert!(!app.colony.marks.contains(NEAR), "the marker is gone");
             assert!(app.colony.stock.is_empty());
-            assert!(app.possessed_pawn().inventory.is_empty());
+            assert!(
+                app.crew
+                    .get(FIRST_PAWN)
+                    .is_some_and(|pawn| pawn.inventory.is_empty())
+            );
         }
 
         #[test]
@@ -1584,48 +1627,32 @@ mod tests {
         }
 
         #[test]
-        fn a_possessed_pawn_runs_no_job() {
-            let idle_cell = [PAWN_CELL[0], PAWN_CELL[1], 18];
-            let mut app = dig_site_with_pawns(&[(NEAR, Some(ORE))], &[PAWN_CELL, idle_cell]);
-            app.colony.marks.toggle(NEAR);
-            app.simulation.set_camera_mode(CameraMode::FirstPerson);
-            let before = pawn_state(&app).position;
-            let mut sim = crate::app::dig_site::headless_loop();
-            let mut took_work = false;
-
-            for _ in 0..240 {
-                sim.step(&mut app, 1);
-                took_work |=
-                    is_mining(&app, FIRST_PAWN) || claimant(&app, NEAR) == Some(FIRST_PAWN);
-            }
-
-            let after = pawn_state(&app).position;
-            assert!(
-                (after.x - before.x).abs() < 1e-3 && (after.z - before.z).abs() < 1e-3,
-                "the possessed pawn walked from {before:?} to {after:?}"
-            );
-            assert!(!took_work, "the possessed pawn took the mark");
-            assert!(
-                app.possessed_pawn().inventory.is_empty(),
-                "the possessed pawn dug"
-            );
-            assert!(
-                !block_exists(&app, NEAR),
-                "the others did not work the mark either"
-            );
-        }
-
-        #[test]
         fn while_one_pawn_is_possessed_another_digs_the_mark() {
             // The possessed pawn stands nearer the block, so it would take the mark if it worked.
             let idle_cell = [PAWN_CELL[0], PAWN_CELL[1], 18];
             let mut app = dig_site_with_pawns(&[(NEAR, Some(ORE))], &[PAWN_CELL, idle_cell]);
             app.colony.marks.toggle(NEAR);
             app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            app.possessed = Some(FIRST_PAWN);
             let possessed_at = pawn_state(&app).position;
+            let possessed_worked = std::cell::Cell::new(false);
 
-            let removed = run_until(&mut app, GIVE_UP, |app| !block_exists(app, NEAR));
+            let removed = run_until(&mut app, GIVE_UP, |app| {
+                possessed_worked.set(
+                    possessed_worked.get()
+                        || is_mining(app, FIRST_PAWN)
+                        || claimant(app, NEAR) == Some(FIRST_PAWN),
+                );
+                !block_exists(app, NEAR)
+            });
 
+            assert!(!possessed_worked.get(), "the possessed pawn took the mark");
+            assert!(
+                app.crew
+                    .get(FIRST_PAWN)
+                    .is_some_and(|pawn| pawn.inventory.is_empty()),
+                "the possessed pawn dug"
+            );
             assert!(removed, "the block is still standing after {GIVE_UP} ticks");
             assert!(
                 distance_walked(&app, PawnId(1), idle_cell) > 1.5,
@@ -2009,6 +2036,7 @@ mod tests {
             assert_eq!(claimant(&app, pending), None, "setup: the third mark waits");
 
             app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            app.possessed = Some(PawnId(0));
             sim.step(&mut app, 1);
             let position = BlockPos::from_array(near_second);
             let grid = app.light_system.as_mut().expect("light system").grid_mut();
@@ -2028,6 +2056,7 @@ mod tests {
             }
             sim.step(&mut app, 1);
             app.simulation.set_camera_mode(CameraMode::Isometric);
+            app.possessed = None;
             let done = run_until(&mut app, GIVE_UP, |app| {
                 !block_exists(app, pending) && !block_exists(app, near_first)
             });
@@ -2059,36 +2088,6 @@ mod tests {
                 "the freed pawn did not go on to the pending block"
             );
             assert!(!is_mining(&app, PawnId(1)) && !is_mining(&app, PawnId(0)));
-        }
-
-        #[test]
-        fn pawns_hold_still_in_first_person_view_and_resume_after() {
-            let (near_first, near_second) = ([16, 8, 12], [12, 8, 28]);
-            let mut app = two_pawns_three_marks(near_first, near_second, [24, 8, 4]);
-            let mut sim = crate::app::dig_site::headless_loop();
-            sim.step(&mut app, 40);
-            let walker = PawnId(1);
-            assert!(is_mining(&app, walker), "setup: the pawn is under way");
-            assert!(distance_walked(&app, walker, [12, 8, 24]) > 0.5, "setup");
-            let frozen_at = pawn_state_of(&app, walker);
-
-            app.simulation.set_camera_mode(CameraMode::FirstPerson);
-            sim.step(&mut app, 120);
-
-            let held = pawn_state_of(&app, walker);
-            assert!(
-                held.position.distance(frozen_at.position) < 0.1,
-                "drifted from {:?} to {:?}",
-                frozen_at.position,
-                held.position
-            );
-            assert!(held.grounded, "the frozen pawn left the ground: {held:?}");
-            assert!(block_exists(&app, near_second), "dug while frozen");
-
-            app.simulation.set_camera_mode(CameraMode::Isometric);
-            let dug = run_until(&mut app, GIVE_UP, |app| !block_exists(app, near_second));
-
-            assert!(dug, "the pawn never resumed its work");
         }
 
         #[test]

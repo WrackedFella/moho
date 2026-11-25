@@ -624,7 +624,9 @@ impl moho_app::Game for App {
             .set_time_scale(f32::from(self.game_state == GameState::Playing));
         if self.game_state == GameState::Playing {
             self.autosave.tick();
-            self.possessed_pawn_mut().pickups.tick();
+            if self.possessed.is_some() {
+                self.possessed_pawn_mut().pickups.tick();
+            }
         }
         let frame_processor = FrameProcessor::new();
         let event_processor = EventProcessor::new();
@@ -1313,13 +1315,18 @@ mod tests {
             tick_app(&mut app, &toggle);
             assert_eq!(app.simulation.camera_mode(), CameraMode::Isometric);
 
-            tick_app(&mut app, &toggle);
+            let possess = StrategyCommand {
+                possess: Some(FIRST_PAWN),
+                ..toggle
+            };
+            tick_app(&mut app, &possess);
             assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
         }
     }
 
     mod possess {
         use super::*;
+        use crate::app::dig_site::pawn_state_of;
         use moho_core::events::AudioEvent;
         use std::sync::mpsc::Receiver;
 
@@ -1358,6 +1365,9 @@ mod tests {
             app.simulation
                 .set_position_yaw_pitch(glam::Vec3::new(10.0, 20.0, 30.0), 0.7, 0.2);
             app.simulation.set_camera_mode(camera_mode);
+            if camera_mode == CameraMode::Isometric {
+                app.possessed = None;
+            }
             app
         }
 
@@ -1376,22 +1386,60 @@ mod tests {
 
         #[test]
         fn possess_enters_first_person_at_the_pawns_pose() {
-            let mut app = app_in(CameraMode::Isometric);
-            app.selection.click(Some(FIRST_PAWN));
-            let before = pose(&app);
+            let (mut app, pawns) = app_with_three_pawns_in_view();
+            let (id, _) = pawns[1];
+            app.selection.click(Some(id));
+            app.simulation
+                .set_position_yaw_pitch(glam::Vec3::new(10.0, 20.0, 30.0), 0.7, 0.2);
+            let view_before = app.simulation.position();
+            let body_before = pawn_state_of(&app, id);
             tap(&mut app);
 
             step(&mut app);
 
             assert_eq!(mode(&app), CameraMode::FirstPerson);
-            assert_eq!(pose(&app), before);
+            let (position, (yaw, pitch)) = pose(&app);
+            let body = pawn_state_of(&app, id);
+            assert!(
+                position.distance(body.position) < 1e-3,
+                "the view stands at {position:?}, the body at {:?}",
+                body.position
+            );
+            assert!(
+                position.distance(body_before.position) < 0.05,
+                "the body was not where the view started"
+            );
+            assert!(
+                view_before.distance(position) > 1.0,
+                "the view did not move"
+            );
+            assert!((yaw - body_before.yaw).abs() < 1e-4, "yaw {yaw}");
+            assert!(pitch.abs() < 1e-4, "pitch {pitch} is not level");
         }
 
         #[test]
         fn possess_return_possess_restores_the_same_pawn_pose() {
-            let mut app = app_in(CameraMode::FirstPerson);
-            app.selection.click(Some(FIRST_PAWN));
-            let before = pose(&app);
+            let (mut app, pawns) = app_with_three_pawns_in_view();
+            let (id, _) = pawns[1];
+            app.selection.click(Some(id));
+            tap(&mut app);
+            step(&mut app);
+            let first_entry = pose(&app).0;
+            let walk = StrategyCommand {
+                input: ControllerInput {
+                    forward: 1.0,
+                    yaw_delta: 0.03,
+                    pitch_delta: 0.02,
+                    ..ControllerInput::default()
+                },
+                ..StrategyCommand::default()
+            };
+            for _ in 0..20 {
+                tick_app(&mut app, &walk);
+            }
+            let (_, (walked_yaw, walked_pitch)) = pose(&app);
+            assert!(walked_pitch.abs() > 0.1, "setup: the look pitched up");
+            let walked_to = pawn_state_of(&app, id);
 
             tap(&mut app);
             step(&mut app);
@@ -1401,7 +1449,26 @@ mod tests {
 
             assert_eq!(in_strategy, CameraMode::Isometric);
             assert_eq!(mode(&app), CameraMode::FirstPerson);
-            assert_eq!(pose(&app), before);
+            let (position, (yaw, pitch)) = pose(&app);
+            let body = pawn_state_of(&app, id);
+            assert!(
+                first_entry.distance(walked_to.position) > 1.0,
+                "setup: it walked"
+            );
+            assert!(
+                position.distance(body.position) < 1e-3,
+                "the view stands at {position:?}, the body at {:?}",
+                body.position
+            );
+            assert!(
+                position.distance(walked_to.position) < 0.05,
+                "the second possession starts away from where the pawn was left"
+            );
+            assert!(
+                (yaw - walked_yaw).abs() < 1e-3,
+                "yaw {yaw}, walked {walked_yaw}"
+            );
+            assert!(pitch.abs() < 1e-4, "pitch {pitch} is not level");
         }
 
         #[test]
@@ -1468,39 +1535,16 @@ mod tests {
 
         #[test]
         fn the_sampled_command_carries_the_selected_pawn() {
-            let mut app = app_in(CameraMode::Isometric);
-            app.selection.click(Some(FIRST_PAWN));
-            tap(&mut app);
+            for selected in [Some(FIRST_PAWN), None] {
+                let mut app = app_in(CameraMode::Isometric);
+                app.selection.click(selected);
+                tap(&mut app);
 
-            let command = Game::command(&mut app);
+                let command = Game::command(&mut app);
 
-            assert!(command.toggle_view);
-            assert_eq!(command.possess, Some(FIRST_PAWN));
-        }
-
-        #[test]
-        fn the_sampled_command_carries_no_pawn_when_nothing_is_selected() {
-            let mut app = app_in(CameraMode::Isometric);
-            tap(&mut app);
-
-            let command = Game::command(&mut app);
-
-            assert!(command.toggle_view);
-            assert_eq!(command.possess, None);
-        }
-
-        #[test]
-        fn the_selection_is_sampled_every_tick_not_only_on_the_press() {
-            let mut app = app_in(CameraMode::Isometric);
-            app.selection.click(Some(FIRST_PAWN));
-
-            let held_back = Game::command(&mut app);
-            app.selection.click(None);
-            let cleared = Game::command(&mut app);
-
-            assert!(!held_back.toggle_view);
-            assert_eq!(held_back.possess, Some(FIRST_PAWN));
-            assert_eq!(cleared.possess, None);
+                assert!(command.toggle_view, "{selected:?}");
+                assert_eq!(command.possess, selected);
+            }
         }
 
         #[test]
@@ -1532,11 +1576,6 @@ mod tests {
                 step(&mut app);
             }
             let walked_to = pawn_state(&app).position;
-            assert!(
-                app.simulation.position().distance(walked_to) < 1e-3,
-                "the simulation pose {:?} lags the pawn at {walked_to:?}",
-                app.simulation.position()
-            );
             let focus_after = app.simulation.player_controller.rts_look_target;
             assert!(
                 (focus_after.x - focus.x).abs() < 1e-6 && (focus_after.z - focus.z).abs() < 1e-6,
@@ -1552,7 +1591,7 @@ mod tests {
             step(&mut app);
 
             assert_eq!(mode(&app), CameraMode::FirstPerson);
-            let (position, _) = pose(&app);
+            let (position, (yaw, pitch)) = pose(&app);
             assert!(
                 position.distance(pawn_state(&app).position) < 1e-3,
                 "possession starts at {position:?}, the pawn stands at {:?}",
@@ -1562,11 +1601,18 @@ mod tests {
                 position.distance(pawn_start()) > 1.5,
                 "possession starts back at the spawn: {position:?}"
             );
+            assert!(
+                (yaw - pawn_state(&app).yaw).abs() < 1e-4,
+                "the view faces {yaw}, the pawn {}",
+                pawn_state(&app).yaw
+            );
+            assert!(pitch.abs() < 1e-4, "pitch {pitch} is not level");
         }
 
         #[test]
         fn switch_publishes_the_placeholder_cue() {
             let mut app = app_in(CameraMode::Isometric);
+            app.selection.click(Some(FIRST_PAWN));
             let audio = record_audio(&app);
 
             tap(&mut app);
@@ -4511,6 +4557,8 @@ mod tests {
         }
         let standing = floor_point(&app, 8.0, 8.0) + glam::Vec3::Y * PAWN_HALF_EXTENTS.y;
         app.simulation.set_position_yaw_pitch(standing, 0.7, 0.0);
+        app.possessed = None;
+        app.physics.spawn_possessed(FIRST_PAWN, standing);
         app.viewport = SELECTION_VIEWPORT;
         look_at_the_floor(&mut app);
         app
@@ -4567,7 +4615,7 @@ mod tests {
 
     /// Clicks the pawn and ticks, so the pawn is selected.
     fn select_the_pawn(app: &mut App) {
-        let centre = app.simulation.position();
+        let centre = body_centre(app, FIRST_PAWN);
         click_world(app, centre);
         step_once(app);
         assert_eq!(
@@ -4585,7 +4633,7 @@ mod tests {
     fn assert_outlines_the_pawn(app: &mut App, case: &str) {
         let outlines = outlined_markers(app);
         assert_eq!(outlines.len(), 1, "{case}: one outline over the pawn");
-        let aabb = pawn_aabb(app.simulation.position());
+        let aabb = pawn_aabb(body_centre(app, FIRST_PAWN));
         let grow = moho_renderer::MARKER_INFLATE;
         for axis in 0..3 {
             assert!(
@@ -4629,7 +4677,7 @@ mod tests {
         let fake = frame_of(&mut app);
 
         assert!(
-            draws_the_pawn_body(&fake, app.simulation.position()),
+            draws_the_pawn_body(&fake, body_centre(&app, FIRST_PAWN)),
             "no pawn-sized box at the pawn among {} instances",
             fake.drawn.len()
         );
@@ -4645,10 +4693,11 @@ mod tests {
         let mut app = app_with_pawn_in_view();
         let strategy = frame_of(&mut app);
         app.simulation.set_camera_mode(CameraMode::FirstPerson);
+        app.possessed = Some(FIRST_PAWN);
 
         let first_person = frame_of(&mut app);
 
-        let at = app.simulation.position();
+        let at = body_centre(&app, FIRST_PAWN);
         assert!(
             draws_the_pawn_body(&strategy, at),
             "the strategy view draws the body"
@@ -4659,7 +4708,7 @@ mod tests {
     #[test]
     fn strategy_click_on_the_pawn_selects_it() {
         let mut app = app_with_pawn_in_view();
-        let centre = app.simulation.position();
+        let centre = body_centre(&app, FIRST_PAWN);
         click_world(&mut app, centre);
 
         step_once(&mut app);
@@ -4693,7 +4742,7 @@ mod tests {
     #[test]
     fn strategy_click_on_a_pawn_hidden_by_a_hill_does_not_select_it() {
         let mut open = app_with_pawn_in_view();
-        let centre = open.simulation.position();
+        let centre = body_centre(&open, FIRST_PAWN);
         click_world(&mut open, centre);
         step_once(&mut open);
         let mut hidden = app_with_pawn_in_view();
@@ -4714,7 +4763,8 @@ mod tests {
     fn first_person_click_does_not_select() {
         let mut app = app_with_pawn_in_view();
         app.simulation.set_camera_mode(CameraMode::FirstPerson);
-        let centre = app.simulation.position();
+        app.possessed = Some(FIRST_PAWN);
+        let centre = body_centre(&app, FIRST_PAWN);
         click_world(&mut app, centre);
 
         step_once(&mut app);
@@ -4727,6 +4777,7 @@ mod tests {
         let mut app = app_with_pawn_in_view();
         select_the_pawn(&mut app);
         app.simulation.set_camera_mode(CameraMode::FirstPerson);
+        app.possessed = Some(FIRST_PAWN);
         let ground = floor_point(&app, 4.5, 5.5);
         click_world(&mut app, ground);
 
@@ -4739,17 +4790,28 @@ mod tests {
     fn possessing_with_a_selection_keeps_it_and_enters_first_person() {
         let mut app = app_with_pawn_in_view();
         select_the_pawn(&mut app);
-        let before = (app.simulation.position(), app.simulation.yaw_pitch());
+        app.simulation
+            .set_position_yaw_pitch(glam::Vec3::new(3.0, 30.0, 3.0), 0.7, 0.2);
+        let body_before = crate::app::dig_site::pawn_state_of(&app, FIRST_PAWN);
         tap_possess(&mut app);
 
         step_once(&mut app);
 
         assert_eq!(app.simulation.camera_mode(), CameraMode::FirstPerson);
-        assert_eq!(
-            (app.simulation.position(), app.simulation.yaw_pitch()),
-            before,
-            "first person starts from the pawn's pose"
+        let body = crate::app::dig_site::pawn_state_of(&app, FIRST_PAWN);
+        let (yaw, pitch) = app.simulation.yaw_pitch();
+        assert!(
+            app.simulation.position().distance(body.position) < 1e-3,
+            "first person starts at {:?}, the pawn stands at {:?}",
+            app.simulation.position(),
+            body.position
         );
+        assert!(
+            body.position.distance(body_before.position) < 0.05,
+            "the pawn moved to meet the view"
+        );
+        assert!((yaw - body_before.yaw).abs() < 1e-4, "yaw {yaw}");
+        assert!(pitch.abs() < 1e-4, "pitch {pitch} is not level");
         assert_eq!(app.selection.selected(), Some(FIRST_PAWN));
     }
 
@@ -4771,7 +4833,7 @@ mod tests {
     #[test]
     fn the_click_selects_on_the_next_tick_not_on_the_event() {
         let mut app = app_with_pawn_in_view();
-        let centre = app.simulation.position();
+        let centre = body_centre(&app, FIRST_PAWN);
 
         click_world(&mut app, centre);
         let on_the_event = app.selection.selected();
@@ -4792,7 +4854,7 @@ mod tests {
         app.event_bus.subscribe(move |event: &AudioEvent| {
             let _ = tx.send(event.clone());
         });
-        let centre = app.simulation.position();
+        let centre = body_centre(&app, FIRST_PAWN);
         click_world(&mut app, centre);
 
         step_once(&mut app);
@@ -4852,8 +4914,8 @@ mod tests {
         frame_of(&mut app);
         assert_outlines_the_pawn(&mut app, "before the move");
 
-        app.simulation
-            .set_position_yaw_pitch(glam::Vec3::new(9.0, 7.0, 6.0), 0.7, 0.0);
+        app.physics
+            .spawn_possessed(FIRST_PAWN, glam::Vec3::new(9.0, 7.0, 6.0));
         frame_of(&mut app);
 
         assert_outlines_the_pawn(&mut app, "after the move");
@@ -4911,9 +4973,11 @@ mod tests {
     type CrewInView = [(flagstone_game::pawn::PawnId, glam::Vec3); 3];
 
     /// The strategy view over the floor with a crew of three, each pawn standing apart from the
-    /// others in view of the camera with a body of its own. The first is the possessed pawn:
-    /// its body is the player's, as in the running app, and the simulation stands where it does.
+    /// others in view of the camera with a body of its own, each facing its own way. Nobody is
+    /// possessed; the first pawn's body is the one the character step moves, as in the running
+    /// app.
     fn app_with_three_pawns_in_view() -> (App, CrewInView) {
+        const YAWS: [f32; 3] = [0.0, 1.1, -0.6];
         let mut app = app_with_pawn_in_view();
         app.crew = flagstone_game::crew::Crew::default();
         let pawns = [(4.5, 7.5), (8.5, 5.5), (11.5, 7.5)].map(|(x, z)| {
@@ -4921,14 +4985,17 @@ mod tests {
             let id = app.crew.spawn(flagstone_game::pawn::Pawn::default());
             (id, centre)
         });
-        let (possessed, at) = pawns[0];
-        app.possessed = Some(possessed);
-        app.simulation.set_position_yaw_pitch(at, 0.7, 0.0);
-        app.physics.spawn_player(at);
+        let spawn_at = |index: usize| moho_physics::CharacterSpawn {
+            yaw: YAWS[index],
+            ..moho_physics::CharacterSpawn::from(pawns[index].1)
+        };
+        app.possessed = None;
+        app.simulation.set_position_yaw_pitch(pawns[0].1, 0.7, 0.0);
+        app.physics.spawn_player(spawn_at(0));
         let player = app.physics.player.expect("the player was just spawned");
-        app.physics.pawns.insert(possessed, player);
-        for (id, centre) in &pawns[1..] {
-            app.physics.spawn_pawn(*id, *centre);
+        app.physics.pawns.insert(pawns[0].0, player);
+        for (index, (id, _)) in pawns.iter().enumerate().skip(1) {
+            app.physics.spawn_pawn(*id, spawn_at(index));
         }
         (app, pawns)
     }
@@ -5316,6 +5383,34 @@ mod tests {
     }
 
     #[test]
+    fn a_command_naming_a_pawn_outside_the_crew_does_not_possess_it() {
+        let (mut app, _) = app_with_three_pawns_in_view();
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.event_bus.subscribe(move |event: &AudioEvent| {
+            let _ = tx.send(event.clone());
+        });
+        let command = StrategyCommand {
+            toggle_view: true,
+            possess: Some(PawnId(99)),
+            ..StrategyCommand::default()
+        };
+
+        tick_app(&mut app, &command);
+        app.event_bus.process_deferred();
+
+        let cues: Vec<AudioEvent> = rx
+            .try_iter()
+            .filter(|event| matches!(event, AudioEvent::Cancel | AudioEvent::Confirm))
+            .collect();
+        assert_eq!(app.simulation.camera_mode(), CameraMode::Isometric);
+        assert_eq!(app.possessed, None, "nobody is possessed");
+        assert!(
+            matches!(cues.as_slice(), [AudioEvent::Cancel]),
+            "the rejection cue: {cues:?}"
+        );
+    }
+
+    #[test]
     fn a_possess_pawn_in_the_command_is_ignored_in_first_person() {
         let (mut app, pawns) = app_with_three_pawns_in_view();
         let command = StrategyCommand {
@@ -5329,6 +5424,7 @@ mod tests {
             CameraMode::FirstPerson,
             "setup"
         );
+        assert_eq!(app.possessed, Some(pawns[0].0), "setup: it is possessed");
         let again = StrategyCommand {
             toggle_view: true,
             possess: Some(pawns[1].0),
