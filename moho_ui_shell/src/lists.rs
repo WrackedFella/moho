@@ -2716,4 +2716,167 @@ mod tests {
         assert_eq!(on_load, (FOCUS, COLOR, true));
         assert_eq!(stack.take_events(), [action_picked(UNLOAD, 10, 7, None)]);
     }
+
+    fn new_row() -> ListRow<u32> {
+        row("New", None, None, 12)
+    }
+
+    #[test]
+    fn a_row_inserted_before_the_magazine_keeps_its_actions_open_on_the_magazine() {
+        let mut stack = rb_stack();
+        press(&mut stack, Key::Space);
+
+        stack.set_lists(rig_with(vec![
+            new_row(),
+            magazine(vec![load(), unload()]),
+            bandage(),
+        ]));
+        let texts = stack.texts(SIZE);
+        press(&mut stack, Key::ArrowDown);
+        press(&mut stack, Key::Enter);
+
+        assert_eq!(
+            shape(&texts, LOAD_LABEL),
+            (
+                Anchor::Right,
+                [LEFT_OF_FIRST, row_y(1) - 360.0],
+                18.0,
+                FOCUS
+            ),
+            "the actions follow the magazine to its new row"
+        );
+        assert_eq!(stack.take_events(), [action_picked(UNLOAD, 10, 7, None)]);
+    }
+
+    #[test]
+    fn a_row_inserted_before_the_source_row_keeps_the_target_pick_on_the_magazine() {
+        let inserted = || rig_with(vec![new_row(), magazine(vec![load(), unload()]), bandage()]);
+        let mut cancelled = rb_stack();
+        press(&mut cancelled, Key::Space);
+        press(&mut cancelled, Key::Enter);
+        cancelled.set_lists(inserted());
+        let still_picking = marked(&cancelled);
+        press(&mut cancelled, Key::Escape);
+        let after_escape = (focused_labels(&cancelled), cancelled.take_events());
+        let mut placed = rb_stack();
+        press(&mut placed, Key::Space);
+        press(&mut placed, Key::Enter);
+        placed.set_lists(inserted());
+        press(&mut placed, Key::ArrowRight);
+        press(&mut placed, Key::Enter);
+
+        assert_eq!(still_picking, [PICKING_LOAD_FROM_MAGAZINE]);
+        assert_eq!(after_escape, ("Magazine,2".to_owned(), vec![]));
+        assert_eq!(
+            placed.take_events(),
+            [action_picked(LOAD, 10, 7, Some((20, 8)))]
+        );
+    }
+
+    #[test]
+    fn a_right_click_over_another_list_during_a_target_pick_focuses_the_source_row() {
+        let mut stack = rb_stack();
+        press(&mut stack, Key::Space);
+        press(&mut stack, Key::Enter);
+        let picking = marked(&stack);
+
+        stack.right_click(over(1, 2, 1), SIZE);
+
+        assert_eq!(picking, [PICKING_LOAD_FROM_MAGAZINE]);
+        assert_eq!(stack.take_events(), []);
+        assert_eq!(marked(&stack), Vec::<String>::new());
+        assert_eq!(focused_labels(&stack), "Magazine,2");
+        assert!(!is_shown(&stack.texts(SIZE), LOAD_LABEL), "nothing opened");
+    }
+
+    #[test]
+    fn repeats_do_not_open_pick_or_place() {
+        let repeat = |stack: &mut MenuStack<u32>, key| stack.on_key(Input::Key(key), true, true);
+        let mut stack = rb_stack();
+
+        repeat(&mut stack, Key::Space);
+        let repeat_space = is_shown(&stack.texts(SIZE), LOAD_LABEL);
+        press(&mut stack, Key::Space);
+        repeat(&mut stack, Key::Enter);
+        let open_after_repeat = (
+            is_shown(&stack.texts(SIZE), LOAD_LABEL),
+            marked(&stack),
+            stack.take_events(),
+        );
+        press(&mut stack, Key::Enter);
+        press(&mut stack, Key::ArrowRight);
+        repeat(&mut stack, Key::Enter);
+        let picking_after_repeat = (marked(&stack), stack.take_events());
+        press(&mut stack, Key::Enter);
+
+        assert!(!repeat_space);
+        assert_eq!(open_after_repeat, (true, vec![], vec![]));
+        assert_eq!(
+            picking_after_repeat,
+            (vec![PICKING_LOAD_FROM_MAGAZINE.to_owned()], vec![])
+        );
+        assert_eq!(
+            stack.take_events(),
+            [action_picked(LOAD, 10, 7, Some((20, 8)))],
+            "a real Enter still places"
+        );
+    }
+
+    #[test]
+    fn a_right_click_on_a_row_without_actions_focuses_it_and_on_empty_space_changes_nothing() {
+        let mut stack = rb_stack();
+
+        stack.right_click(over(0, 2, 1), SIZE);
+        let on_bandage = (focused_labels(&stack), stack.texts(SIZE));
+        stack.right_click(over(1, 2, 7), SIZE);
+        let on_space = (focused_labels(&stack), stack.texts(SIZE));
+        stack.right_click(over(0, 2, 0), SIZE);
+        let on_magazine = is_shown(&stack.texts(SIZE), LOAD_LABEL);
+
+        assert_eq!(on_bandage.0, "Bandage,3");
+        assert!(!is_shown(&on_bandage.1, LOAD_LABEL));
+        assert!(!is_shown(&on_bandage.1, "Unload"));
+        assert_eq!(on_space, on_bandage);
+        assert!(on_magazine, "a row with actions still opens them");
+        assert_eq!(stack.take_events(), []);
+    }
+
+    #[test]
+    fn actions_on_a_row_in_a_scrolled_list_lie_inside_the_band() {
+        let mut stack = stack_of(vec![list(
+            1,
+            "A",
+            (0..40)
+                .map(|i| {
+                    acting(
+                        row(&format!("r{i:02}"), None, None, i),
+                        vec![load(), unload()],
+                    )
+                })
+                .collect(),
+        )]);
+        stack.scroll(30.0);
+        let closed = stack.visible_rows(SIZE);
+
+        let mut extras = Vec::new();
+        for visible_row in [0, 9, 18] {
+            stack.hover(over(0, 1, visible_row), SIZE);
+            press(&mut stack, Key::Space);
+            let open = stack.visible_rows(SIZE);
+            press(&mut stack, Key::Escape);
+            let added: Vec<Rect> = open
+                .into_iter()
+                .filter(|rect| !closed.contains(rect))
+                .collect();
+            extras.push((visible_row, added));
+        }
+
+        for (visible_row, added) in extras {
+            assert_eq!(added.len(), 2, "row {visible_row}");
+            for rect in added {
+                assert!(rect.min[1] >= 56.0, "row {visible_row}: {rect:?}");
+                assert!(rect.max[1] <= SIZE[1] - 56.0, "row {visible_row}: {rect:?}");
+            }
+        }
+    }
 }
