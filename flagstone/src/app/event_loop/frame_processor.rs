@@ -1374,6 +1374,84 @@ mod tests {
     }
 
     #[test]
+    fn the_first_person_hud_lists_the_possessed_pawns_inventory() {
+        use moho_app::{Game, TickContext};
+        use moho_render_api::UiFrameSource;
+        let mut app = App::headless();
+        app.game_state = crate::game_state::GameState::Playing;
+        app.simulation
+            .set_camera_mode(flagstone_game::controller::CameraMode::Isometric);
+        app.possessed = None;
+        let second = app.crew.spawn(flagstone_game::pawn::Pawn::default());
+        app.crew
+            .get_mut(second)
+            .expect("the pawn is in the crew")
+            .inventory
+            .add(3, 5);
+        let possess = crate::app::game::StrategyCommand {
+            toggle_view: true,
+            possess: Some(second),
+            ..Default::default()
+        };
+        let mut clock = moho_app::GameClock::default();
+        let mut ctx = TickContext {
+            tick: 0,
+            tick_length: Duration::from_secs_f32(DT),
+            clock: &mut clock,
+        };
+        Game::tick(&mut app, &mut ctx, &possess);
+        assert_eq!(app.possessed, Some(second), "setup: possessed");
+        let adapter = std::sync::Arc::new(std::sync::Mutex::new(hud_adapter()));
+        app.ui_adapter = Some(std::sync::Arc::clone(&adapter));
+
+        FrameProcessor::new().update_hud_data(&app, &clock, Duration::from_secs_f32(DT));
+        let produced = adapter
+            .lock()
+            .unwrap()
+            .ui_frame([800, 600])
+            .expect("playing paints");
+
+        let pos = app.simulation.position();
+        let cp = lod_player_chunk(pos);
+        let loaded_chunk_xz: Vec<[i32; 2]> = app
+            .light_system
+            .as_ref()
+            .map(|ls| {
+                let mut seen = std::collections::HashSet::new();
+                ls.grid()
+                    .chunk_positions()
+                    .filter(|p| seen.insert((p.x, p.z)))
+                    .map(|p| [p.x, p.z])
+                    .collect()
+            })
+            .unwrap_or_default();
+        let painted_with = |hotbar: Vec<(u32, u32)>| {
+            let mut reference = hud_adapter();
+            reference.update_hud_data(flagstone_ui::overlays::HudData {
+                loaded_chunk_xz: loaded_chunk_xz.clone(),
+                view_height: crate::app::view_level::layer_extent(&app)
+                    .map(|extent| app.view_level.hud(extent)),
+                player_position: [pos.x, pos.y, pos.z],
+                chunk_position: [cp.x, cp.y, cp.z],
+                camera_mode: "FirstPerson".to_string(),
+                is_fps_mode: true,
+                frame_time_secs: DT,
+                time_of_day: clock.time_of_day(),
+                camera_yaw: app.simulation.yaw_pitch().0,
+                equipped_tool_label: Some("Pickaxe".to_string()),
+                hotbar,
+                ..Default::default()
+            });
+            reference.ui_frame([800, 600]).expect("playing paints")
+        };
+        assert!(produced != painted_with(Vec::new()), "the hotbar is empty");
+        assert!(
+            produced == painted_with(vec![(3, 5)]),
+            "the hotbar is not the possessed pawn's inventory"
+        );
+    }
+
+    #[test]
     fn hud_data_carries_the_player_pawns_pickups() {
         use moho_render_api::UiFrameSource;
         let mut app = App::headless();

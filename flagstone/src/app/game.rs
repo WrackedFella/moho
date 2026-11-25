@@ -654,8 +654,10 @@ impl moho_app::Game for App {
             .set_time_scale(f32::from(self.game_state == GameState::Playing));
         if self.game_state == GameState::Playing {
             self.autosave.tick();
-            if self.possessed.is_some() {
-                self.possessed_pawn_mut().pickups.tick();
+            // Every pawn's feed runs, so a popup does not outlive its time while its pawn
+            // is not the one the player is in.
+            for (_, pawn) in self.crew.iter_mut() {
+                pawn.pickups.tick();
             }
         }
         let frame_processor = FrameProcessor::new();
@@ -5465,5 +5467,126 @@ mod tests {
 
         assert_eq!(app.simulation.camera_mode(), CameraMode::Isometric);
         assert_eq!(app.possessed, None, "the pawn is released");
+    }
+
+    /// Feeds `events` to the input handling, as the window would.
+    fn send_input(app: &mut App, events: impl IntoIterator<Item = crate::input_event::InputEvent>) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.input.unconsumed_rx = Some(rx);
+        for event in events {
+            tx.send(event).expect("the receiver is held by the app");
+        }
+        EventProcessor::new().process_input_events(app);
+    }
+
+    /// A wall of ore blocks in front of a first-person camera standing at (4.5, 70.5, 6.5),
+    /// and that camera.
+    fn aim_at_an_ore_wall(app: &mut App) {
+        let grid = app
+            .light_system
+            .as_mut()
+            .expect("App starts with a light system")
+            .grid_mut();
+        for x in 2..=6 {
+            for y in 68..=72 {
+                for z in 1..=3 {
+                    grid.mutator()
+                        .place(flagstone_voxel::BlockPos::new(x, y, z), 1, Some(7));
+                }
+            }
+        }
+        app.camera.0 = glam::Mat4::from_translation(glam::Vec3::new(4.5, 70.5, 6.5)).inverse();
+    }
+
+    fn pawn_of(app: &App, id: PawnId) -> &flagstone_game::pawn::Pawn {
+        app.crew.get(id).expect("the pawn is in the crew")
+    }
+
+    #[test]
+    fn a_pickup_feed_expires_while_its_pawn_is_not_possessed() {
+        use crate::input_event::InputEvent;
+        let (mut app, pawns) = app_with_three_pawns_in_view();
+        let id = pawns[0].0;
+        app.selection.click(Some(id));
+        tap_possess(&mut app);
+        step_once(&mut app);
+        aim_at_an_ore_wall(&mut app);
+        send_input(
+            &mut app,
+            [
+                InputEvent::SlotSelected {
+                    slot: flagstone_game::pawn::TOOL_SLOT,
+                },
+                InputEvent::MineRequested,
+            ],
+        );
+        assert_eq!(
+            pawn_of(&app, id).pickups.entries().len(),
+            1,
+            "setup: the hand-mined block shows in the feed"
+        );
+        tap_possess(&mut app);
+        step_once(&mut app);
+        assert_eq!(app.possessed, None, "setup: stepped out");
+        for _ in 0..300 {
+            step_once(&mut app);
+        }
+
+        tap_possess(&mut app);
+        step_once(&mut app);
+
+        assert_eq!(app.possessed, Some(id), "setup: possessed again");
+        assert!(
+            pawn_of(&app, id).pickups.entries().is_empty(),
+            "a popup from before the player stepped out is still shown"
+        );
+    }
+
+    #[test]
+    fn possessing_a_second_pawn_hands_it_the_players_tools() {
+        use crate::input_event::InputEvent;
+        use flagstone_game::pawn::TOOL_SLOT;
+        let (mut app, pawns) = app_with_three_pawns_in_view();
+        let (first, second) = (pawns[0].0, pawns[1].0);
+        app.crew
+            .get_mut(second)
+            .expect("the pawn is in the crew")
+            .deposit(flagstone_game::inventory::ResourceYield {
+                resource_id: 3,
+                amount: 5,
+            });
+        app.selection.click(Some(second));
+        tap_possess(&mut app);
+        step_once(&mut app);
+        assert_eq!(
+            app.possessed,
+            Some(second),
+            "setup: the second is possessed"
+        );
+
+        send_input(&mut app, [InputEvent::SlotSelected { slot: 3 }]);
+
+        assert_eq!(pawn_of(&app, second).selected_slot, 3);
+        assert_eq!(
+            pawn_of(&app, first).selected_slot,
+            TOOL_SLOT,
+            "the slot select went to the other pawn"
+        );
+
+        aim_at_an_ore_wall(&mut app);
+        send_input(
+            &mut app,
+            [
+                InputEvent::SlotSelected { slot: TOOL_SLOT },
+                InputEvent::MineRequested,
+            ],
+        );
+
+        assert_eq!(pawn_of(&app, second).inventory.count(7), 1);
+        assert_eq!(pawn_of(&app, second).inventory.count(3), 5);
+        assert!(
+            pawn_of(&app, first).inventory.is_empty(),
+            "the first pawn's pockets took the ore"
+        );
     }
 }
