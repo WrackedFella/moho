@@ -8,7 +8,8 @@
 #   <!-- board: gate=domain; eligible=yes; priority=P2 -->
 # Keys: gate -> Gate class, eligible -> Agent-eligible, priority -> Priority. Values match
 # the board's option names case-insensitively. Unknown keys and values are errors, so a
-# typo fails the run instead of silently leaving a field unset. Status moves to Ready when
+# typo fails the run instead of silently leaving a field unset. `gate=unset` (a card whose
+# gate class the Tech Lead has not set) leaves Gate class alone. Status moves to Ready when
 # the body carries a tech spec and the header a gate (board-lib.sh), and to Backlog when
 # the item has none; it never moves back, and every later Status stays with board-sync.sh.
 # Three requests per card at most: project, add-and-read, one batched update.
@@ -33,7 +34,7 @@ for pair in "${pairs[@]}"; do
   key=$(sed -E 's/^[[:space:]]*([^=[:space:]]+)[[:space:]]*=.*/\1/' <<<"$pair")
   val=$(sed -E 's/^[^=]*=[[:space:]]*(.*[^[:space:]])[[:space:]]*$/\1/' <<<"$pair")
   case $key in
-    gate) want["Gate class"]=$val ;;
+    gate) [[ ${val,,} == unset ]] || want["Gate class"]=$val ;;
     eligible) want["Agent-eligible"]=$val ;;
     priority) want["Priority"]=$val ;;
     *) echo "board-fields: unknown key '$key'" >&2; exit 1 ;;
