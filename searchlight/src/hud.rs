@@ -1,7 +1,7 @@
 //! Wording the player reads for rifle state.
 
 use glam::Vec3;
-use searchlight_rules::{BodyPart, MagazineLevel};
+use searchlight_rules::{BodyPart, MagazineLevel, Rig};
 
 use crate::control::ControlAction;
 use crate::mode::Tally;
@@ -121,6 +121,19 @@ pub fn use_prompt(key: &str, action: ControlAction) -> String {
     format!("[{key}] {what}")
 }
 
+/// What one rig slot holds, as the strip shows it: never a round count.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlotMark {
+    Empty,
+    Present,
+}
+
+/// One mark per slot of `rig`, in slot order: a free slot or an empty magazine is `Empty`, any
+/// other magazine `Present`.
+pub fn rig_strip(rig: &Rig) -> Vec<SlotMark> {
+    rig.slots().iter().map(|_| SlotMark::Empty).collect()
+}
+
 /// A translucent rectangle in screen pixels, colour as straight RGBA.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Overlay {
@@ -141,6 +154,7 @@ pub fn death_overlay(dead: bool, screen: [u32; 2]) -> Option<Overlay> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::mag;
 
     #[test]
     fn magazine_levels_read_as_the_acceptance_wording() {
@@ -159,6 +173,58 @@ mod tests {
 
         let expected: Vec<&str> = levels.iter().map(|&(_, w)| w).collect();
         assert_eq!(words, expected);
+    }
+
+    fn rig_holding(slots: u32, magazines: Vec<searchlight_rules::Magazine>) -> Rig {
+        let mut rig = Rig::new(
+            searchlight_rules::ItemId::new("test_rig"),
+            &searchlight_rules::RigSpec {
+                magazine_slots: slots,
+            },
+        );
+        for magazine in magazines {
+            rig.stow(magazine).expect("the rig has a slot per magazine");
+        }
+        rig
+    }
+
+    #[test]
+    fn the_strip_marks_two_present_one_empty() {
+        let rig = rig_holding(3, vec![mag(30, 30), mag(30, 30), mag(30, 0)]);
+
+        let strip = rig_strip(&rig);
+
+        assert_eq!(
+            strip,
+            [SlotMark::Present, SlotMark::Present, SlotMark::Empty]
+        );
+    }
+
+    #[test]
+    fn a_half_magazine_reads_present_with_no_number() {
+        let rig = rig_holding(3, vec![mag(30, 15), mag(30, 1), mag(30, 29)]);
+
+        let strip = rig_strip(&rig);
+
+        assert_eq!(strip, [SlotMark::Present; 3]);
+        assert_eq!(strip[0], rig_strip(&rig_holding(1, vec![mag(30, 30)]))[0]);
+        assert_eq!(format!("{:?}", strip[0]), "Present");
+    }
+
+    #[test]
+    fn an_unfilled_rig_slot_reads_empty() {
+        let rig = rig_holding(3, vec![mag(30, 30)]);
+
+        let strip = rig_strip(&rig);
+
+        assert_eq!(strip, [SlotMark::Present, SlotMark::Empty, SlotMark::Empty]);
+    }
+
+    #[test]
+    fn a_rig_with_no_slots_has_an_empty_strip() {
+        let rig = rig_holding(0, vec![]);
+
+        assert_eq!(rig_strip(&rig), []);
     }
 }
 

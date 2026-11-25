@@ -1321,6 +1321,12 @@ impl SearchlightGame {
         self.mode.sim()
     }
 
+    /// The marks the rig strip shows, or `None` while it is hidden.
+    #[cfg(test)]
+    fn strip_marks(&self) -> Option<Vec<hud::SlotMark>> {
+        None
+    }
+
     /// The input map, for feeding it device events.
     pub fn input_mut(&mut self) -> &mut ActionMap<SearchlightAction> {
         &mut self.input
@@ -3235,6 +3241,104 @@ mod tests {
         assert_eq!(rebound_paint, painted_prompt_reading("[G] Next wave"));
         assert_eq!(unbound_paint, expected_unbound);
         assert_ne!(rebound_paint, unbound_paint);
+    }
+
+    /// A game whose rifle holds an empty magazine and whose three-slot rig holds full ones.
+    fn game_with_a_full_rig() -> SearchlightGame {
+        let mode = ArenaMode::new(
+            arena_with(&[], Vec3::ZERO, &[], &[]),
+            test_config(
+                rifle_from(mag(30, 0)),
+                vec![mag(30, 30), mag(30, 30), mag(30, 30)],
+            ),
+            wave_tuning(1),
+        );
+        let (bindings, _) = ActionBindings::load(&BTreeMap::new());
+        SearchlightGame::new(mode, ActionMap::new(bindings, 1.0))
+    }
+
+    /// Ticks `game` through a whole reload, then draws the frame that sees it finish. The
+    /// rig is left holding the ejected empty magazine in slot 0 and two full ones.
+    fn finish_a_reload(game: &mut SearchlightGame, clock: &mut GameClock) {
+        let reload = SearchlightCommand {
+            reload: true,
+            ..SearchlightCommand::default()
+        };
+        tick_with(game, clock, &reload);
+        for _ in 0..10 {
+            tick_with(game, clock, &SearchlightCommand::default());
+        }
+        assert_eq!(game.sim().pending_feedback(), [Feedback::ReloadDone]);
+        draw_frame(game, &mut SettingsRenderer::default());
+    }
+
+    fn idle_ticks(game: &mut SearchlightGame, clock: &mut GameClock, count: u32) {
+        for _ in 0..count {
+            tick_with(game, clock, &SearchlightCommand::default());
+        }
+    }
+
+    #[test]
+    fn reload_done_shows_the_strip() {
+        let mut game = game_with_a_full_rig();
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let before = game.strip_marks();
+
+        finish_a_reload(&mut game, &mut clock);
+
+        assert_eq!(before, None, "the strip starts hidden");
+        assert_eq!(
+            game.strip_marks(),
+            Some(vec![
+                hud::SlotMark::Empty,
+                hud::SlotMark::Present,
+                hud::SlotMark::Present
+            ])
+        );
+    }
+
+    #[test]
+    fn the_strip_hides_after_the_fade_ticks() {
+        let mut game = game_with_a_full_rig();
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        finish_a_reload(&mut game, &mut clock);
+
+        idle_ticks(&mut game, &mut clock, crate::tuning::STRIP_FADE_TICKS - 1);
+        let just_before = game.strip_marks();
+        idle_ticks(&mut game, &mut clock, 1);
+        let at_the_fade = game.strip_marks();
+        idle_ticks(&mut game, &mut clock, 30);
+        let long_after = game.strip_marks();
+
+        assert!(just_before.is_some(), "hidden one tick early");
+        assert_eq!(at_the_fade, None, "still showing at the fade time");
+        assert_eq!(long_after, None);
+    }
+
+    #[test]
+    fn holding_check_gear_keeps_the_strip_until_release() {
+        let mut game = game_with_a_full_rig();
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let hold = SearchlightCommand {
+            check_gear: true,
+            ..SearchlightCommand::default()
+        };
+        let before = game.strip_marks();
+
+        let mut while_held = Vec::new();
+        for _ in 0..crate::tuning::STRIP_FADE_TICKS + 30 {
+            tick_with(&mut game, &mut clock, &hold);
+            while_held.push(game.strip_marks().is_some());
+        }
+        idle_ticks(&mut game, &mut clock, 1);
+        let after_release = game.strip_marks();
+
+        assert_eq!(before, None, "the strip starts hidden");
+        assert!(
+            while_held.iter().all(|&showing| showing),
+            "hidden while held: {while_held:?}"
+        );
+        assert_eq!(after_release, None, "still showing after the release");
     }
 
     #[test]

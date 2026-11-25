@@ -146,6 +146,8 @@ pub struct SearchlightCommand {
     pub lean: Option<LeanSide>,
     /// The use input went down this tick.
     pub use_pressed: bool,
+    /// The check-gear key is held this tick.
+    pub check_gear: bool,
 }
 
 /// The lean side held this tick: a side pressed this tick wins (right on a same-tick tie),
@@ -206,6 +208,7 @@ impl SearchlightCommand {
             round_gravity: GravityScale::default(),
             lean: None,
             use_pressed: frame.pressed(SearchlightAction::Use),
+            check_gear: false,
         }
     }
 }
