@@ -2,6 +2,7 @@
 
 mod collide;
 mod hash;
+mod humanoid;
 mod load;
 mod marker;
 mod model;

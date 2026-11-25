@@ -3,6 +3,7 @@
 use glam::Affine3A;
 
 use crate::Model;
+use crate::anim::Pose;
 
 /// One drawn copy of a model with the parts attached at its named nodes, nested.
 ///
@@ -113,26 +114,46 @@ impl<K: Copy> Assembly<K> {
         root: Affine3A,
     ) -> Vec<(K, usize, Affine3A)> {
         let mut out = Vec::new();
-        self.collect(models, root, &mut out);
+        self.collect(models, root, None, &mut out);
         out
     }
 
+    /// [`Assembly::placements`] with this copy's model posed by `pose`: its meshes at
+    /// `root * pose[mesh.node]` and each part rooted at `root * pose[socket] * offset`.
+    /// Parts keep their own rest.
+    ///
+    /// # Panics
+    /// When `pose` is not of this copy's model.
+    pub fn posed_placements<'m>(
+        &self,
+        models: &impl Fn(K) -> &'m Model,
+        root: Affine3A,
+        pose: &Pose,
+    ) -> Vec<(K, usize, Affine3A)> {
+        let mut out = Vec::new();
+        self.collect(models, root, Some(pose), &mut out);
+        out
+    }
+
+    /// Walk this copy and its parts. `pose` poses this copy's own model (`None` is its
+    /// rest); parts always sit at their own rest.
     fn collect<'m>(
         &self,
         models: &impl Fn(K) -> &'m Model,
         root: Affine3A,
+        pose: Option<&Pose>,
         out: &mut Vec<(K, usize, Affine3A)>,
     ) {
         let model = models(self.model);
+        let node = |index: usize| pose.map_or(model.nodes()[index].rest, |p| p.nodes()[index]);
         out.extend(
             model
-                .placements(root)
+                .placed(root, &node)
                 .map(|(mesh, transform)| (self.model, mesh, transform)),
         );
         for part in &self.parts {
-            let socket = model.nodes()[part.node].rest;
             part.assembly
-                .collect(models, root * socket * part.offset, out);
+                .collect(models, root * node(part.node) * part.offset, None, out);
         }
     }
 

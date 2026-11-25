@@ -82,4 +82,7 @@ pub enum LevelErrorKind {
         expected: LevelHash,
         found: LevelHash,
     },
+    /// The model loaded but lacks bones a humanoid needs; see [`crate::humanoid`].
+    #[error(transparent)]
+    NotHumanoid(#[from] crate::humanoid::MissingBones),
 }

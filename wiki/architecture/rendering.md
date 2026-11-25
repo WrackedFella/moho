@@ -207,7 +207,18 @@ parts, so two rifles from one model can carry different scopes; the shared `Mode
   unchanged.
 - `placements(models, root)` yields `(model key, mesh index, transform)`: this copy's meshes
   first, then each part in attach order, depth-first, the part's root being
-  `root * socket_node.rest * offset`. Sockets use rest transforms, not posed ones.
+  `root * socket_node.rest * offset`.
+- `posed_placements(models, root, &pose)` poses this copy's own model: its meshes at
+  `root * pose[mesh.node]` and each part rooted at `root * pose[socket_node] * offset`, so a part
+  follows an animated bone. Parts keep their own rest transforms. `pose` must be of this copy's
+  model.
+- `moho_level::humanoid` (`moho_level/src/humanoid.rs`) is the bone naming both game lines key
+  off: `Bone` lists the 16 required bones by Unreal mannequin node name (`pelvis`, `spine_01`,
+  `neck_01`, `head`, `upperarm_*`, `lowerarm_*`, `hand_*`, `thigh_*`, `calf_*`, `foot_*`).
+  `Humanoid::of(model)` resolves each to the first node of that name or fails with `MissingBones`
+  listing every absent one; `load_humanoid(path)` loads and resolves in one step
+  (`LevelErrorKind::NotHumanoid`). `Humanoid::node(bone)` is a node index and `Humanoid::bone(&pose,
+  bone)` the bone's model-space transform in a pose.
 
 The game glue keeps one `Assembly` per drawn copy and the per-model ids and materials of 2.2,
 indexed by key. A swap shows on the next frame drawn:
@@ -248,7 +259,8 @@ model, a clip and a time; it never changes the model.
   game places with `place_skinned` instead (section 2, 5.2). `joint_palette(skin, &pose)` is
   `pose[joint] * inverse_bind` per joint in model space, the palette a skinned placement takes.
 
-The game glue, one player per character, each tick or frame:
+The game glue, one player per character. The fixed tick advances the player (ADR-0039); the
+frame only poses it, so the drawn pose is the one the sim read:
 
 ```rust
 // Load time: a skinned mesh uploads once with its skin.
@@ -260,8 +272,10 @@ for (mesh, &id) in model.meshes().iter().zip(&ids) {
     world_meshes.upsert_movable(id, upload);
 }
 
+// Each fixed tick (the sim owns the player; rules read bones from this pose):
+player.advance(&model, TICK);
+
 // Each frame:
-player.advance(&model, dt);
 let pose = player.pose(&model);
 // Rigid meshes on their posed nodes; skinned meshes at the root with their palette.
 for (i, t) in model.posed_placements(root, &pose) {
