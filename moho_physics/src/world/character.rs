@@ -5944,6 +5944,8 @@ mod tests {
             let (mut world, h) = saved(&setup, 50, &[]);
             let at_k = state(&world, h);
             assert_eq!(at_k.stance, Stance::Prone);
+            assert_eq!(at_k.from, Stance::Prone, "the leg into prone is over");
+            assert_eq!(at_k.progress, settings().prone_ticks);
             assert!(at_k.grounded, "{at_k:?}");
 
             assert_steps_on_bit_equal(&mut world, h, &tail);
@@ -6224,46 +6226,58 @@ mod tests {
         #[test]
         fn restoring_beside_loose_objects_leaves_them_untouched() {
             let (source, source_h) = saved(&walk, 15, &[]);
-            let record = source
-                .character_record(source_h)
-                .expect("character is live");
-            let mut world = geometry_world();
-            let pile: Vec<LooseId> = [0.25, 0.75, 1.25]
-                .into_iter()
-                .map(|y| {
-                    world.spawn_loose(&LooseSpawn {
-                        position: Vec3::new(-6.0, y, 6.0),
-                        ..LooseSpawn::new(
-                            LooseShape::Box {
-                                half_extents: Vec3::splat(0.25),
-                            },
-                            1.0,
-                        )
+            let record = CharacterRecord {
+                state: state(&source, source_h),
+                effects: Vec::new(),
+            };
+            let drop_pile = || {
+                let mut world = geometry_world();
+                let ids: Vec<LooseId> = [0.5, 1.5, 2.5]
+                    .into_iter()
+                    .map(|y| {
+                        world.spawn_loose(&LooseSpawn {
+                            position: Vec3::new(-6.0, y, 6.0),
+                            ..LooseSpawn::new(
+                                LooseShape::Box {
+                                    half_extents: Vec3::splat(0.25),
+                                },
+                                1.0,
+                            )
+                        })
                     })
-                })
-                .collect();
-            for _ in 0..240 {
-                world.step(DT);
-            }
-            let rest: Vec<LooseState> = pile.iter().map(|&id| world.loose(id).unwrap()).collect();
+                    .collect();
+                for _ in 0..10 {
+                    world.step(DT);
+                }
+                (world, ids)
+            };
+            let loose_states = |world: &PhysicsWorld, ids: &[LooseId]| -> Vec<LooseState> {
+                ids.iter().map(|&id| world.loose(id).unwrap()).collect()
+            };
+            let (mut world, pile) = drop_pile();
+            let (mut twin, twin_pile) = drop_pile();
+            let before = loose_states(&world, &pile);
+            assert!(
+                before.iter().any(|s| !s.asleep),
+                "a loose body is awake at the restore: {before:?}"
+            );
 
             let h = world.restore_character(&record, body());
 
-            let after: Vec<LooseState> = pile.iter().map(|&id| world.loose(id).unwrap()).collect();
-            assert_eq!(after, rest, "the restore moved or woke a loose object");
+            assert_eq!(
+                loose_states(&world, &pile),
+                before,
+                "the restore moved or woke a loose object"
+            );
             assert_eq!(world.character(h), Some(record.state));
             for t in 0..60 {
                 tick(&mut world, h, &idle());
-                if t == 0 {
-                    assert!(state(&world, h).grounded, "the first move saw the floor");
-                }
-                for (&id, before) in pile.iter().zip(&rest) {
-                    let now = world.loose(id).unwrap();
-                    assert!(
-                        now.position.distance(before.position) < 5e-3,
-                        "tick {t}: the pile moved, {now:?} from {before:?}"
-                    );
-                }
+                twin.step(DT);
+                assert_eq!(
+                    loose_states(&world, &pile),
+                    loose_states(&twin, &twin_pile),
+                    "tick {t}: the restore changed the pile"
+                );
             }
         }
 
