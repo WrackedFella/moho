@@ -35,6 +35,7 @@ DEFAULT_PLATFORMS='ubuntu-latest macos-latest windows-latest'
 # A platform without a tick counts as differing from one that has it.
 COMPARE_AWK='
 BEGIN { n = split(names, P, " ") }
+{ sub(/\r$/, "") }
 FNR == 1 { idx++ }
 NF >= 2 {
     h[idx, $1] = $2
@@ -110,7 +111,7 @@ self_test() {
         if ! actual=$(compare "$case_dir"); then
             echo "FAIL $name: compare exited non-zero" >&2
             failed=1
-        elif ! diff <(printf '%s\n' "$actual") "$case_dir/expected.md"; then
+        elif ! diff <(printf '%s\n' "$actual") <(tr -d '\r' < "$case_dir/expected.md"); then
             echo "FAIL $name: output differs from expected.md" >&2
             failed=1
         else
@@ -121,7 +122,7 @@ self_test() {
     if ! actual=$(compare "$case_dir" ubuntu-latest windows-latest); then
         echo "FAIL platform-list: compare exited non-zero" >&2
         failed=1
-    elif ! diff <(printf '%s\n' "$actual") "$case_dir/expected-ubuntu-windows.md"; then
+    elif ! diff <(printf '%s\n' "$actual") <(tr -d '\r' < "$case_dir/expected-ubuntu-windows.md"); then
         echo "FAIL platform-list: output differs from expected-ubuntu-windows.md" >&2
         failed=1
     else
