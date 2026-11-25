@@ -602,3 +602,64 @@ fn the_characters_own_meshes_follow_the_pose() {
     let body = node_index(&models, CHARACTER, "body");
     assert_eq!(placed[BODY_MESH].2, root * pose.nodes()[body]);
 }
+
+#[test]
+fn a_yawed_and_moved_root_gives_exact_products_for_meshes_and_a_part() {
+    let models = with_character();
+    let lookup = |k: usize| &models[k];
+    let mut character = Assembly::new(CHARACTER);
+    character
+        .attach(&lookup, "hand_r", Assembly::new(LASER), offset())
+        .expect("hand_r exists");
+    let root = Affine3A::from_rotation_translation(
+        Quat::from_rotation_y(FRAC_PI_2),
+        Vec3::new(-4.0, 0.5, 7.0),
+    );
+    let pose = walk_pose(&models, 30);
+    let hand = node_index(&models, CHARACTER, "hand_r");
+    let body = node_index(&models, CHARACTER, "body");
+
+    let placed = character.posed_placements(&lookup, root, &pose);
+
+    assert_eq!(placed.len(), 3);
+    assert_eq!(placed[HAND_MESH].2, root * pose.nodes()[hand]);
+    assert_eq!(placed[BODY_MESH].2, root * pose.nodes()[body]);
+    assert_eq!(
+        placed[2].2,
+        root * pose.nodes()[hand] * offset() * rest(&models, LASER, "beam")
+    );
+}
+
+#[test]
+fn a_part_two_deep_under_a_posed_hand_sees_the_pose_only_at_the_first_socket() {
+    let models = with_character();
+    let lookup = |k: usize| &models[k];
+    let mut character = Assembly::new(CHARACTER);
+    let off_rifle = Affine3A::from_translation(Vec3::new(0.0, 0.2, 0.0));
+    let off_scope = Affine3A::from_rotation_translation(Quat::from_rotation_z(0.4), Vec3::Y);
+    character
+        .attach(&lookup, "hand_r", Assembly::new(RIFLE), off_rifle)
+        .expect("hand_r exists");
+    character
+        .part_mut(&lookup, "hand_r")
+        .expect("hand_r exists")
+        .expect("rifle is attached")
+        .attach(&lookup, "rail", Assembly::new(SCOPE), off_scope)
+        .expect("rail exists");
+    let root = moved_and_turned();
+    let hand = node_index(&models, CHARACTER, "hand_r");
+    let pose = walk_pose(&models, 30);
+
+    let placed = character.posed_placements(&lookup, root, &pose);
+
+    let (key, mesh, scope_tube) = *placed.last().expect("placements");
+    assert_eq!((key, mesh), (SCOPE, 0));
+    assert_eq!(
+        scope_tube,
+        root * pose.nodes()[hand]
+            * off_rifle
+            * rest(&models, RIFLE, "rail")
+            * off_scope
+            * rest(&models, SCOPE, "tube")
+    );
+}

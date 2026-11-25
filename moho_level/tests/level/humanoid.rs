@@ -369,3 +369,39 @@ fn a_file_that_cannot_be_read_fails_as_a_load_error_not_as_not_humanoid() {
         err.kind()
     );
 }
+
+#[test]
+fn bone_names_match_exactly() {
+    for (bone, name) in [
+        ("head", "Head"),
+        ("head", "head "),
+        ("hand_r", "hand_r.001"),
+        ("pelvis", "mixamorig:pelvis"),
+    ] {
+        let spec = HumanoidSpec {
+            rename: vec![(bone, name)],
+            ..HumanoidSpec::default()
+        };
+        let (_dir, model) = load(&spec);
+
+        let err = Humanoid::of(&model).expect_err("the name is not the mannequin's");
+
+        assert_eq!(err.bones, vec![bone], "{name:?}");
+    }
+}
+
+#[test]
+fn a_rig_with_no_named_bones_is_refused_listing_all_sixteen() {
+    let all: Vec<&'static str> = Bone::ALL.iter().map(|b| b.name()).collect();
+    let (_dir, model) = load(&omitting(&all));
+
+    let err = Humanoid::of(&model).expect_err("no bone is named");
+
+    assert_eq!(err.bones, all);
+    assert_eq!(
+        err.to_string(),
+        "missing humanoid bones: pelvis, spine_01, neck_01, head, upperarm_l, lowerarm_l, \
+         hand_l, upperarm_r, lowerarm_r, hand_r, thigh_l, calf_l, foot_l, thigh_r, calf_r, \
+         foot_r"
+    );
+}

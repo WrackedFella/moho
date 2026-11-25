@@ -72,6 +72,8 @@ pub struct HumanoidSpec {
     /// Bones that get a second node of the same name, a child of the pelvis walked after
     /// the real bone and written before it in the file.
     pub duplicate: Vec<&'static str>,
+    /// `(bone, name)`: the bone's node is written under `name` instead.
+    pub rename: Vec<(&'static str, &'static str)>,
 }
 
 /// `(name, parent name, local translation)` in walk order.
@@ -110,7 +112,9 @@ fn defs(spec: &HumanoidSpec) -> Vec<Def> {
     let mut defs: Vec<Def> = NODES
         .iter()
         .map(|&(name, parent, translation)| Def {
-            name: if spec.omit.contains(&name) {
+            name: if let Some((_, renamed)) = spec.rename.iter().find(|(bone, _)| *bone == name) {
+                (*renamed).to_owned()
+            } else if spec.omit.contains(&name) {
                 format!("unnamed_{name}")
             } else {
                 name.to_owned()
