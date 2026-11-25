@@ -44,7 +44,8 @@ use crate::input::{
 use crate::item_lists::DemoItems;
 use crate::lean::{lean_offset, rolled_view_matrix};
 use crate::menu::{
-    MenuAction, controls_rows, controls_screen, main_screen, pause_screen, settings_screen,
+    MenuAction, conflict_screen, controls_rows, controls_screen, main_screen, pause_screen,
+    settings_screen,
 };
 use crate::mode::ArenaMode;
 use crate::sim::{Feedback, RoundTrace, SearchlightSim, dummy_at, dummy_hit_volumes_of};
@@ -982,6 +983,8 @@ impl SearchlightGame {
                     self.controls = None;
                     self.stage.shell().menu_mut().pop();
                 }
+                MenuEvent::Chosen(MenuAction::Replace) => self.answer_conflict(true),
+                MenuEvent::Chosen(MenuAction::Cancel) => self.answer_conflict(false),
                 MenuEvent::Chosen(MenuAction::Quit) => ctx.request_exit(),
                 MenuEvent::SettingsApplied(settings) => self.settings_applied(settings),
                 MenuEvent::GameSettingsApplied(values) => {
@@ -1005,7 +1008,7 @@ impl SearchlightGame {
                     slot: Slot::Primary,
                     input,
                 } => self.captured(action, input),
-                MenuEvent::Captured { .. } | MenuEvent::Cleared { .. } => self.show_controls(None),
+                MenuEvent::Captured { .. } | MenuEvent::Cleared { .. } => self.show_controls(),
                 MenuEvent::DetailsToggled { .. }
                 | MenuEvent::Picked { .. }
                 | MenuEvent::ModeChosen { .. } => {}
@@ -1031,28 +1034,39 @@ impl SearchlightGame {
         }
     }
 
-    /// Shows the Controls page's rows from the draft, with `refusal` noted on one action's row.
-    fn show_controls(&mut self, refusal: Option<(SearchlightAction, &str)>) {
+    /// Shows the Controls page's rows from the draft.
+    fn show_controls(&mut self) {
         if let Some(draft) = &self.controls {
-            let rows = controls_rows(draft, refusal);
+            let rows = controls_rows(draft);
             self.stage.shell().menu_mut().set_items(rows);
         }
     }
 
-    /// Stages a captured `input` for `action` on the Controls page, or notes why it was refused.
+    /// Stages a captured `input` for `action` on the Controls page, or asks about the action that
+    /// holds it.
     fn captured(&mut self, action: SearchlightAction, input: Input) {
         let Some(draft) = &mut self.controls else {
             return;
         };
-        let note = match draft.capture(action, input) {
-            Capture::InUse { by } => Some(format!(
-                "{} is used by {}",
-                Binding::from(input).label(),
-                label(by)
-            )),
-            Capture::Set | Capture::Reserved => None,
-        };
-        self.show_controls(note.as_deref().map(|note| (action, note)));
+        if let Capture::Conflict { by, .. } = draft.capture(action, input) {
+            let dialog = conflict_screen(&Binding::from(input).label(), label(by));
+            self.stage.shell().menu_mut().push(dialog);
+            return;
+        }
+        self.show_controls();
+    }
+
+    /// Closes the conflict dialog, answers it through the draft and refreshes the Controls rows.
+    fn answer_conflict(&mut self, replace: bool) {
+        if let Some(draft) = &mut self.controls {
+            if replace {
+                draft.replace();
+            } else {
+                draft.cancel();
+            }
+        }
+        self.stage.shell().menu_mut().pop();
+        self.show_controls();
     }
 
     /// Makes the drafted bindings live, replacing the action map, and saves them; a failed save
@@ -5425,8 +5439,23 @@ mod tests {
         assert!(!reload_on_t);
     }
 
+    /// The title and button labels of the screen on top.
+    fn top_dialog(game: &SearchlightGame) -> (Option<String>, Vec<String>) {
+        let mut shell = game.stage.shell();
+        let screen = shell.menu_mut().top().expect("a menu screen is open");
+        let buttons = screen
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                MenuItem::Button { label, .. } => Some(label.clone()),
+                _ => None,
+            })
+            .collect();
+        (screen.title.clone(), buttons)
+    }
+
     #[test]
-    fn an_input_in_use_is_refused_with_a_note_and_neither_action_changes() {
+    fn capturing_an_input_in_use_pushes_a_dialog_naming_its_action() {
         let dir = tempfile::tempdir().unwrap();
         let (settings, _) = settings_in(&dir);
         let mut game = quiet_menu_game().with_debug_settings(settings);
@@ -5436,16 +5465,66 @@ mod tests {
 
         capture_input(&mut game, &mut ctx, SearchlightAction::Reload, KEY_Q);
 
+        let (title, buttons) = top_dialog(&game);
+        assert_eq!(title.as_deref(), Some("Q is used by Lean left"));
+        assert_eq!(buttons, ["Replace", "Cancel"]);
+        assert!(!lists_controls(&game), "the dialog is on top of Controls");
+    }
+
+    #[test]
+    fn an_applied_replace_moves_the_input_in_play() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, _) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        capture_input(&mut game, &mut ctx, SearchlightAction::Reload, KEY_Q);
+        press_item(&mut game, &mut ctx, "Replace", is_button("Replace"));
+        let reload_row = control_row(&game, SearchlightAction::Reload).0;
+        let lean_row = control_row(&game, SearchlightAction::LeanLeft).0;
+        press_item(&mut game, &mut ctx, "Apply", is_apply);
+        game.enter_play();
+
+        let on_q = tap(&mut game, &mut ctx, KEY_Q);
+
+        assert_eq!(reload_row, [Some(Binding::key(Key::Q)), None]);
+        assert_eq!(lean_row, [None, None], "Lean left shows Unbound");
+        assert!(reloads(on_q), "Q reloads");
+        assert!(
+            on_q.iter().all(|command| command.lean.is_none()),
+            "Q no longer leans"
+        );
+    }
+
+    #[test]
+    fn escape_on_the_dialog_cancels_and_returns_to_the_same_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, _) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        capture_input(&mut game, &mut ctx, SearchlightAction::Reload, KEY_Q);
+
+        press_keys(&mut game, &mut ctx, &[Key::Escape]);
+
+        assert!(lists_controls(&game), "Escape popped the dialog");
         assert_eq!(
             control_row(&game, SearchlightAction::Reload),
-            (
-                [Some(Binding::key(Key::R)), None],
-                Some("Q is used by Lean left".to_owned())
-            )
+            ([Some(Binding::key(Key::R)), None], None)
         );
         assert_eq!(
             control_row(&game, SearchlightAction::LeanLeft),
             ([Some(Binding::key(Key::Q)), None], None)
+        );
+        press_keys(&mut game, &mut ctx, &[Key::Enter]);
+        game.route_input(&mut ctx, KEY_T, true, false);
+        game.route_input(&mut ctx, KEY_T, false, false);
+        assert_eq!(
+            control_row(&game, SearchlightAction::Reload).0,
+            [Some(Binding::key(Key::T)), None],
+            "focus stayed on the Reload row"
         );
     }
 
