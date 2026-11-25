@@ -46,6 +46,32 @@ pub struct ListRow<A> {
     pub tooltip: Option<String>,
     /// What the game is told when the row is moved.
     pub item: A,
+    /// The actions the player can pick on this row; empty when the row has none.
+    pub actions: Vec<RowAction<A>>,
+}
+
+/// One action a row offers: its label, what the game is told and whether it needs a second row.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RowAction<A> {
+    pub label: String,
+    pub action: A,
+    pub target: ActionTarget,
+}
+
+/// What an action needs besides its own row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActionTarget {
+    /// Nothing: picking the action is enough.
+    Itself,
+    /// A second row, picked after the action.
+    AnotherRow,
+}
+
+/// A row named by its item and the list it is in.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RowRef<A> {
+    pub item: A,
+    pub list: ListId,
 }
 
 const LIST_WIDTH: f32 = 320.0;
@@ -68,12 +94,33 @@ struct View {
     remainder: f32,
 }
 
-/// The row the player has picked up: its list and its index there.
-#[derive(Clone, Copy, Debug)]
-struct Held {
+/// The row the player has picked up: its list and its index there, and why.
+#[derive(Clone, Debug)]
+struct Held<A> {
     list: ListId,
     row: usize,
+    purpose: Purpose<A>,
 }
+
+/// What a held row is for.
+#[derive(Clone, Debug)]
+enum Purpose<A> {
+    /// To be placed on another list.
+    Move,
+    /// A target pick for `action`, whose label is `label`.
+    Action { action: A, label: String },
+}
+
+/// The open action list of a row: its list, its row index there and its focused action.
+#[derive(Clone, Copy, Debug)]
+struct OpenActions {
+    list: ListId,
+    row: usize,
+    focus: usize,
+}
+
+/// Width of the action list.
+const ACTION_WIDTH: f32 = 200.0;
 
 /// An item lists screen: the game's data, and the focus, scroll and held row the shell keeps.
 #[derive(Debug)]
@@ -83,7 +130,8 @@ pub(crate) struct OpenLists<A> {
     views: Vec<View>,
     /// The index of the focused list.
     focus: usize,
-    held: Option<Held>,
+    held: Option<Held<A>>,
+    actions: Option<OpenActions>,
     /// The window size of the last layout, for the wheel, which knows none.
     size: Cell<[f32; 2]>,
 }
@@ -129,6 +177,7 @@ impl<A> OpenLists<A> {
             views,
             focus: 0,
             held: None,
+            actions: None,
             size: Cell::new(DEFAULT_SIZE),
         }
     }
@@ -179,16 +228,119 @@ impl<A> OpenLists<A> {
                 },
                 |(at, _)| at,
             );
-        self.held = self.held.and_then(|held| {
+        let held = self.held.take();
+        self.held = held.and_then(|held| {
             let (_, before) = list_by_id(&old.lists, held.list)?;
             let item = &before.rows.get(held.row)?.item;
             let (_, now) = list_by_id(&self.data.lists, held.list)?;
             let row = now.rows.iter().position(|row| row.item == *item)?;
+            let mut purpose = held.purpose;
+            if let Purpose::Action { action, label } = &mut purpose {
+                let current = now.rows[row].actions.iter().find(|a| a.action == *action)?;
+                label.clone_from(&current.label);
+            }
             Some(Held {
-                list: held.list,
                 row,
+                purpose,
+                ..held
             })
         });
+        let open = self.actions.take();
+        self.actions = open.and_then(|open| {
+            let (_, before) = list_by_id(&old.lists, open.list)?;
+            let old_row = before.rows.get(open.row)?;
+            let focused = &old_row.actions.get(open.focus)?.action;
+            let (_, now) = list_by_id(&self.data.lists, open.list)?;
+            let row = now
+                .rows
+                .iter()
+                .position(|row| row.item == old_row.item && !row.actions.is_empty())?;
+            let actions = &now.rows[row].actions;
+            let focus = actions
+                .iter()
+                .position(|a| a.action == *focused)
+                .unwrap_or_else(|| open.focus.min(actions.len() - 1));
+            Some(OpenActions {
+                list: open.list,
+                row,
+                focus,
+            })
+        });
+    }
+
+    /// Where the open action list is on a window `size` points across: the left edge of its
+    /// column, the top of its first action and how many actions it has.
+    fn action_layout(&self, size: [f32; 2]) -> Option<(f32, f32, usize)> {
+        let open = self.actions?;
+        let (index, list) = list_by_id(&self.data.lists, open.list)?;
+        let count = list.rows.get(open.row)?.actions.len();
+        let left = left_of(index, self.data.lists.len(), size[0]);
+        let x = if index == 0 {
+            left - TOOLTIP_GAP - ACTION_WIDTH
+        } else {
+            left + LIST_WIDTH + TOOLTIP_GAP
+        };
+        let scroll = self.views[index].scroll.get();
+        let top = BAND + ROW_HEIGHT * (open.row as f32 - scroll as f32);
+        let height = ROW_HEIGHT * count as f32;
+        let bottom = size[1] - BAND;
+        Some((x, top.min(bottom - height).max(BAND), count))
+    }
+
+    /// The rectangles of the open action list's actions, if one is open.
+    fn action_rects(&self, size: [f32; 2]) -> Vec<Rect> {
+        let Some((x, top, count)) = self.action_layout(size) else {
+            return Vec::new();
+        };
+        (0..count)
+            .map(|i| Rect {
+                min: [x, top + ROW_HEIGHT * i as f32],
+                max: [x + ACTION_WIDTH, top + ROW_HEIGHT * (i + 1) as f32],
+            })
+            .collect()
+    }
+
+    /// The action under `point` in the open action list.
+    fn action_at(&self, point: [f32; 2], size: [f32; 2]) -> Option<usize> {
+        self.settle_all(size);
+        self.action_rects(size).iter().position(|r| {
+            point[0] > r.min[0] && point[0] < r.max[0] && point[1] > r.min[1] && point[1] < r.max[1]
+        })
+    }
+
+    /// Opens the actions of the focused row, if it has any.
+    fn open_actions(&mut self) {
+        let Some(list) = self.data.lists.get(self.focus) else {
+            return;
+        };
+        let row = self.views[self.focus].focus;
+        if list
+            .rows
+            .get(row)
+            .is_some_and(|row| !row.actions.is_empty())
+        {
+            self.actions = Some(OpenActions {
+                list: list.id,
+                row,
+                focus: 0,
+            });
+        }
+    }
+
+    /// A right press at `point`: closes the actions, lets go of a held row, or focuses the row
+    /// under `point` and opens its actions.
+    pub(crate) fn right_click(&mut self, point: [f32; 2], size: [f32; 2]) {
+        if self.actions.take().is_some() {
+            return;
+        }
+        if self.held.is_some() {
+            self.release();
+            return;
+        }
+        if let Some((list, Some(row))) = self.hit(point, size) {
+            self.set_focus(list, row);
+            self.open_actions();
+        }
     }
 
     /// Clamps the scroll of list `index` for a window `size` points across, then brings its
@@ -250,6 +402,14 @@ impl<A> OpenLists<A> {
 
     /// Focuses the row under `point`; a point over no row keeps the focus.
     pub(crate) fn hover(&mut self, point: [f32; 2], size: [f32; 2]) {
+        if self.actions.is_some() {
+            if let Some(at) = self.action_at(point, size)
+                && let Some(open) = &mut self.actions
+            {
+                open.focus = at;
+            }
+            return;
+        }
         if let Some((list, Some(row))) = self.hit(point, size) {
             self.set_focus(list, row);
         }
@@ -257,6 +417,9 @@ impl<A> OpenLists<A> {
 
     /// Scrolls the focused list by `rows` rows, keeping a fractional remainder.
     pub(crate) fn scroll(&mut self, rows: f32) {
+        if self.actions.is_some() {
+            return;
+        }
         let size = self.size.get();
         self.settle(self.focus, size);
         let (Some(list), Some(view)) = (
@@ -271,9 +434,14 @@ impl<A> OpenLists<A> {
         view.remainder = remainder;
     }
 
-    /// Lets go of the held row.
+    /// Lets go of the held row; a target pick focuses its source row again.
     pub(crate) fn release(&mut self) {
-        self.held = None;
+        if let Some(held) = self.held.take()
+            && matches!(held.purpose, Purpose::Action { .. })
+            && let Some((index, _)) = list_by_id(&self.data.lists, held.list)
+        {
+            self.set_focus(index, held.row);
+        }
     }
 
     /// The text of every list on a window `size` points across: each title in the top band, the
@@ -307,12 +475,15 @@ impl<A> OpenLists<A> {
                 let color = if focused { FOCUS_COLOR } else { COLOR };
                 let held = self
                     .held
-                    .is_some_and(|held| held.list == list.id && held.row == row);
+                    .as_ref()
+                    .filter(|held| held.list == list.id && held.row == row);
                 let item = &list.rows[row];
-                let label = if held {
-                    format!("{HELD_MARK}{}", item.label)
-                } else {
-                    item.label.clone()
+                let label = match held.map(|held| &held.purpose) {
+                    Some(Purpose::Action { label: action, .. }) => {
+                        format!("{HELD_MARK}{action}: {}", item.label)
+                    }
+                    Some(Purpose::Move) => format!("{HELD_MARK}{}", item.label),
+                    None => item.label.clone(),
                 };
                 texts.push(text(label, Anchor::Left, left, y, SETTING_SIZE, color));
                 if let Some(count) = item.count {
@@ -325,7 +496,10 @@ impl<A> OpenLists<A> {
                         color,
                     ));
                 }
-                if focused && let Some(tip) = &item.tooltip {
+                if focused
+                    && self.actions.is_none()
+                    && let Some(tip) = &item.tooltip
+                {
                     tooltip = Some((index == 0, left, y, tip.clone()));
                 }
             }
@@ -337,6 +511,28 @@ impl<A> OpenLists<A> {
                 (Anchor::Left, left + LIST_WIDTH + TOOLTIP_GAP)
             };
             texts.push(text(tip, anchor, x, y, SETTING_SIZE, COLOR));
+        }
+        if let (Some(open), Some((x, top, _))) = (self.actions, self.action_layout(size))
+            && let Some((index, list)) = list_by_id(&self.data.lists, open.list)
+            && let Some(row) = list.rows.get(open.row)
+        {
+            let (anchor, x) = if index == 0 {
+                (Anchor::Right, x + ACTION_WIDTH - size[0])
+            } else {
+                (Anchor::Left, x)
+            };
+            for (at, action) in row.actions.iter().enumerate() {
+                let color = if at == open.focus { FOCUS_COLOR } else { COLOR };
+                let y = top + ROW_HEIGHT * at as f32 + ROW_HEIGHT / 2.0;
+                texts.push(text(
+                    action.label.clone(),
+                    anchor,
+                    x,
+                    y,
+                    SETTING_SIZE,
+                    color,
+                ));
+            }
         }
         texts
     }
@@ -361,6 +557,7 @@ impl<A> OpenLists<A> {
                 });
             }
         }
+        rects.extend(self.action_rects(size));
         rects
     }
 }
@@ -370,7 +567,11 @@ impl<A: Clone> OpenLists<A> {
     /// wrap; a non-repeat Enter picks up or places; a non-repeat Escape lets go of the held row
     /// or chooses the back action; a non-repeat right click lets go.
     pub(crate) fn on_key(&mut self, input: Input, repeat: bool) -> Option<MenuEvent<A>> {
+        if self.actions.is_some() {
+            return self.on_key_in_actions(input, repeat);
+        }
         match input {
+            Input::Key(Key::Space) if !repeat && self.held.is_none() => self.open_actions(),
             Input::Key(Key::ArrowDown) => self.step_row(true),
             Input::Key(Key::ArrowUp) => self.step_row(false),
             Input::Key(Key::ArrowLeft) => self.step_list(false),
@@ -384,7 +585,8 @@ impl<A: Clone> OpenLists<A> {
                 return self.press_on(self.focus, row);
             }
             Input::Key(Key::Escape) if !repeat => {
-                return if self.held.take().is_some() {
+                return if self.held.is_some() {
+                    self.release();
                     None
                 } else {
                     self.data.back.clone().map(MenuEvent::Chosen)
@@ -399,11 +601,78 @@ impl<A: Clone> OpenLists<A> {
     /// A left press at `point`: picks up the row under it, or places the held row on the list
     /// column under it.
     pub(crate) fn click(&mut self, point: [f32; 2], size: [f32; 2]) -> Option<MenuEvent<A>> {
+        if self.actions.is_some() {
+            let at = self.action_at(point, size);
+            if let (Some(at), Some(open)) = (at, &mut self.actions) {
+                open.focus = at;
+                return self.pick_action();
+            }
+            self.actions = None;
+            return None;
+        }
         let (list, row) = self.hit(point, size)?;
         if self.held.is_none() {
             self.set_focus(list, row?);
         }
         self.press_on(list, row)
+    }
+
+    /// The keys while the action list is open: Up and Down move among the actions and wrap, a
+    /// non-repeat Enter picks the focused one, and a non-repeat Escape, Space or right click
+    /// closes the list. Nothing else does anything.
+    fn on_key_in_actions(&mut self, input: Input, repeat: bool) -> Option<MenuEvent<A>> {
+        let count = self.action_count();
+        match input {
+            Input::Key(Key::ArrowDown | Key::ArrowUp) if count > 0 => {
+                if let Some(open) = &mut self.actions {
+                    open.focus = wrap(open.focus, count, input == Input::Key(Key::ArrowDown));
+                }
+            }
+            Input::Key(Key::Enter) if !repeat => return self.pick_action(),
+            Input::Key(Key::Escape | Key::Space) | Input::Mouse(MouseButton::Right) if !repeat => {
+                self.actions = None;
+            }
+            _ => {}
+        }
+        None
+    }
+
+    /// How many actions the open action list has.
+    fn action_count(&self) -> usize {
+        self.actions
+            .and_then(|open| {
+                let (_, list) = list_by_id(&self.data.lists, open.list)?;
+                Some(list.rows.get(open.row)?.actions.len())
+            })
+            .unwrap_or(0)
+    }
+
+    /// Picks the focused action and closes the list: an `Itself` action is sent at once, an
+    /// `AnotherRow` action holds the row to ask for a second one.
+    fn pick_action(&mut self) -> Option<MenuEvent<A>> {
+        let open = self.actions.take()?;
+        let (_, list) = list_by_id(&self.data.lists, open.list)?;
+        let row = list.rows.get(open.row)?;
+        let picked = row.actions.get(open.focus)?;
+        match picked.target {
+            ActionTarget::Itself => Some(MenuEvent::ActionPicked {
+                action: picked.action.clone(),
+                item: row.item.clone(),
+                list: open.list,
+                target: None,
+            }),
+            ActionTarget::AnotherRow => {
+                self.held = Some(Held {
+                    list: open.list,
+                    row: open.row,
+                    purpose: Purpose::Action {
+                        action: picked.action.clone(),
+                        label: picked.label.clone(),
+                    },
+                });
+                None
+            }
+        }
     }
 
     fn step_row(&mut self, forward: bool) {
@@ -429,14 +698,36 @@ impl<A: Clone> OpenLists<A> {
     /// lets go on the held row's own list, and otherwise asks to move the held row here.
     fn press_on(&mut self, index: usize, row: Option<usize>) -> Option<MenuEvent<A>> {
         let id = self.data.lists.get(index)?.id;
-        let Some(held) = self.held else {
+        let Some(held) = self.held.take() else {
             self.held = Some(Held {
                 list: id,
                 row: row?,
+                purpose: Purpose::Move,
             });
             return None;
         };
-        self.held = None;
+        if matches!(held.purpose, Purpose::Action { .. }) && row.is_none() {
+            self.held = Some(held);
+            return None;
+        }
+        if let Purpose::Action { action, .. } = held.purpose {
+            let row = row?;
+            if (held.list, held.row) == (id, row) {
+                return None;
+            }
+            let (_, from) = list_by_id(&self.data.lists, held.list)?;
+            let item = from.rows.get(held.row)?.item.clone();
+            let target = RowRef {
+                item: self.data.lists[index].rows[row].item.clone(),
+                list: id,
+            };
+            return Some(MenuEvent::ActionPicked {
+                action,
+                item,
+                list: held.list,
+                target: Some(target),
+            });
+        }
         if held.list == id {
             return None;
         }
@@ -475,6 +766,7 @@ mod tests {
             count,
             tooltip: tooltip.map(str::to_owned),
             item,
+            actions: vec![],
         }
     }
 
@@ -1571,5 +1863,1073 @@ mod tests {
         assert_eq!(y_of(find(&at_the_end, "S21")), row_y(0));
         assert!(!is_shown(&at_the_end, "S20"));
         assert_eq!(y_of(find(&at_the_end, "S39")), 648.0);
+    }
+
+    use proptest::prelude::{any, prop_assert_eq, prop_assume};
+    use proptest::strategy::Strategy;
+
+    /// Needs a second row.
+    const LOAD: u32 = 1;
+    /// Needs nothing else.
+    const UNLOAD: u32 = 2;
+    const LOAD_LABEL: &str = "Load from stack";
+    const PICKING_LOAD_FROM_MAGAZINE: &str = "» Load from stack: Magazine";
+
+    fn action(label: &str, action: u32, target: ActionTarget) -> RowAction<u32> {
+        RowAction {
+            label: label.to_owned(),
+            action,
+            target,
+        }
+    }
+
+    fn load() -> RowAction<u32> {
+        action(LOAD_LABEL, LOAD, ActionTarget::AnotherRow)
+    }
+
+    fn unload() -> RowAction<u32> {
+        action("Unload", UNLOAD, ActionTarget::Itself)
+    }
+
+    fn acting(mut row: ListRow<u32>, actions: Vec<RowAction<u32>>) -> ListRow<u32> {
+        row.actions = actions;
+        row
+    }
+
+    fn magazine(actions: Vec<RowAction<u32>>) -> ListRow<u32> {
+        acting(row("Magazine", Some(2), Some("Holds 30."), 10), actions)
+    }
+
+    fn bandage() -> ListRow<u32> {
+        row("Bandage", Some(3), None, 11)
+    }
+
+    /// The rig, list 7: the magazine with both actions, then a bandage with none.
+    fn rig(rows: Vec<ListRow<u32>>) -> ItemList<u32> {
+        list(7, "Rig", rows)
+    }
+
+    /// The backpack, list 8: rounds with no actions, then a flask that can be unloaded.
+    fn backpack() -> ItemList<u32> {
+        list(
+            8,
+            "Backpack",
+            vec![
+                row("Rounds", Some(60), None, 20),
+                acting(row("Flask", Some(1), Some("Water."), 21), vec![unload()]),
+            ],
+        )
+    }
+
+    fn rig_and_backpack() -> Vec<ItemList<u32>> {
+        vec![
+            rig(vec![magazine(vec![load(), unload()]), bandage()]),
+            backpack(),
+        ]
+    }
+
+    fn rig_with(rows: Vec<ListRow<u32>>) -> ItemLists<u32> {
+        lists_of(vec![rig(rows), backpack()])
+    }
+
+    fn rb_stack() -> MenuStack<u32> {
+        stack_of(rig_and_backpack())
+    }
+
+    fn action_picked(
+        action: u32,
+        item: u32,
+        list: u32,
+        target: Option<(u32, u32)>,
+    ) -> MenuEvent<u32> {
+        MenuEvent::ActionPicked {
+            action,
+            item,
+            list: ListId(list),
+            target: target.map(|(item, list)| RowRef {
+                item,
+                list: ListId(list),
+            }),
+        }
+    }
+
+    /// What of a text the shell decides: its anchor, offset, font size and colour.
+    fn shape(texts: &[ScreenText], text: &str) -> (Anchor, [f32; 2], f32, [u8; 4]) {
+        let t = find(texts, text);
+        (t.anchor, t.offset, t.size, t.color)
+    }
+
+    /// The left of the first list's action list is 16 points off the list: 288 - 16 - 1280.
+    const LEFT_OF_FIRST: f32 = -1008.0;
+    /// The second of two lists starts at 672 and is 320 wide: 672 + 320 + 16.
+    const RIGHT_OF_SECOND: f32 = 1008.0;
+
+    #[test]
+    fn space_or_a_right_click_shows_the_rows_actions_in_the_tooltips_place() {
+        let mut by_space = rb_stack();
+        let closed = by_space.texts(SIZE);
+        press(&mut by_space, Key::Space);
+        let by_space_texts = by_space.texts(SIZE);
+        let mut by_click = rb_stack();
+        by_click.right_click(over(0, 2, 0), SIZE);
+        let by_click_texts = by_click.texts(SIZE);
+        let mut on_the_flask = rb_stack();
+        on_the_flask.right_click(over(1, 2, 1), SIZE);
+        let flask = on_the_flask.texts(SIZE);
+
+        assert!(!is_shown(&closed, LOAD_LABEL));
+        assert!(
+            is_shown(&closed, "Holds 30."),
+            "the tooltip shows while closed"
+        );
+        for texts in [&by_space_texts, &by_click_texts] {
+            assert_eq!(
+                shape(texts, LOAD_LABEL),
+                (
+                    Anchor::Right,
+                    [LEFT_OF_FIRST, row_y(0) - 360.0],
+                    18.0,
+                    FOCUS
+                )
+            );
+            assert_eq!(
+                shape(texts, "Unload"),
+                (
+                    Anchor::Right,
+                    [LEFT_OF_FIRST, row_y(1) - 360.0],
+                    18.0,
+                    COLOR
+                )
+            );
+        }
+        assert_eq!(
+            shape(&flask, "Unload"),
+            (
+                Anchor::Left,
+                [RIGHT_OF_SECOND, row_y(1) - 360.0],
+                18.0,
+                FOCUS
+            )
+        );
+        assert!(
+            focused(&flask).contains(&"Flask"),
+            "the right click focused the row"
+        );
+        assert_eq!(by_space.take_events(), []);
+        assert_eq!(by_click.take_events(), []);
+    }
+
+    #[test]
+    fn a_row_with_no_actions_or_an_empty_list_opens_nothing() {
+        let mut stack = stack_of(vec![
+            rig(vec![magazine(vec![load(), unload()]), bandage()]),
+            list(9, "Ground", Vec::new()),
+        ]);
+        press(&mut stack, Key::ArrowDown);
+        let on_bandage = stack.texts(SIZE);
+
+        press(&mut stack, Key::Space);
+        let after_space = stack.texts(SIZE);
+        stack.right_click(over(0, 2, 1), SIZE);
+        let after_right_click = stack.texts(SIZE);
+        stack.right_click([5.0, 5.0], SIZE);
+        stack.right_click(over(0, 2, 7), SIZE);
+        let after_no_row = stack.texts(SIZE);
+        press(&mut stack, Key::ArrowRight);
+        let on_empty = stack.texts(SIZE);
+        press(&mut stack, Key::Space);
+        stack.right_click(over(1, 2, 0), SIZE);
+        let after_empty = stack.texts(SIZE);
+        let silent = stack.take_events();
+        press(&mut stack, Key::ArrowLeft);
+        press(&mut stack, Key::ArrowUp);
+        press(&mut stack, Key::Space);
+        let on_magazine = stack.texts(SIZE);
+
+        assert_eq!(after_space, on_bandage);
+        assert_eq!(after_right_click, on_bandage);
+        assert_eq!(after_no_row, on_bandage);
+        assert_eq!(after_empty, on_empty);
+        assert_eq!(silent, []);
+        assert!(
+            is_shown(&on_magazine, LOAD_LABEL),
+            "the magazine row does open its actions"
+        );
+    }
+
+    #[test]
+    fn picking_an_itself_action_by_key_or_click_sends_action_row_and_list_and_changes_no_rows() {
+        let data = lists_of(rig_and_backpack());
+        let mut by_key = MenuStack::new();
+        by_key.push_lists(data.clone());
+        press(&mut by_key, Key::Space);
+        press(&mut by_key, Key::ArrowDown);
+        let on_unload = find(&by_key.texts(SIZE), "Unload").color;
+        by_key.on_key(Input::Key(Key::Enter), true, true);
+        let after_repeat = (
+            by_key.take_events(),
+            is_shown(&by_key.texts(SIZE), "Unload"),
+        );
+        press(&mut by_key, Key::Enter);
+        let by_key_texts = by_key.texts(SIZE);
+        let by_key_events = by_key.take_events();
+        let mut by_click = MenuStack::new();
+        by_click.push_lists(data.clone());
+        by_click.right_click(over(0, 2, 0), SIZE);
+        by_click.click([172.0, row_y(1)], SIZE);
+        let by_click_texts = by_click.texts(SIZE);
+        let by_click_events = by_click.take_events();
+        let mut on_the_flask = MenuStack::new();
+        on_the_flask.push_lists(data.clone());
+        on_the_flask.right_click(over(1, 2, 1), SIZE);
+        on_the_flask.click([1108.0, row_y(1)], SIZE);
+        let flask_events = on_the_flask.take_events();
+
+        assert_eq!(on_unload, FOCUS);
+        assert_eq!(after_repeat, (vec![], true), "a repeat picks nothing");
+        assert_eq!(by_key_events, [action_picked(UNLOAD, 10, 7, None)]);
+        assert_eq!(by_click_events, [action_picked(UNLOAD, 10, 7, None)]);
+        assert_eq!(flask_events, [action_picked(UNLOAD, 21, 8, None)]);
+        for texts in [&by_key_texts, &by_click_texts] {
+            assert!(!is_shown(texts, "Unload"), "picking closes the list");
+            assert!(!is_shown(texts, LOAD_LABEL));
+        }
+        assert_eq!(marked(&by_key), Vec::<String>::new());
+        assert_eq!(by_key.top_lists(), Some(&data), "the shell moves no row");
+        assert_eq!(by_click.top_lists(), Some(&data));
+    }
+
+    #[test]
+    fn an_another_row_action_then_a_row_in_another_list_sends_both_rows_and_lists() {
+        let data = lists_of(rig_and_backpack());
+        let mut by_key = MenuStack::new();
+        by_key.push_lists(data.clone());
+        press(&mut by_key, Key::Space);
+        press(&mut by_key, Key::Enter);
+        let started = (
+            by_key.take_events(),
+            marked(&by_key),
+            is_shown(&by_key.texts(SIZE), "Unload"),
+        );
+        by_key.on_key(Input::Key(Key::Enter), true, true);
+        let after_repeat = (by_key.take_events(), marked(&by_key));
+        press(&mut by_key, Key::ArrowRight);
+        press(&mut by_key, Key::Enter);
+        let by_key_done = (by_key.take_events(), marked(&by_key));
+        let mut by_click = MenuStack::new();
+        by_click.push_lists(data.clone());
+        by_click.right_click(over(0, 2, 0), SIZE);
+        by_click.click([172.0, row_y(0)], SIZE);
+        let click_started = (by_click.take_events(), marked(&by_click));
+        by_click.click(over(1, 2, 0), SIZE);
+        let by_click_done = (by_click.take_events(), marked(&by_click));
+
+        let picking = vec![PICKING_LOAD_FROM_MAGAZINE.to_owned()];
+        assert_eq!(started, (vec![], picking.clone(), false));
+        assert_eq!(after_repeat, (vec![], picking.clone()));
+        assert_eq!(click_started, (vec![], picking));
+        let expected = vec![action_picked(LOAD, 10, 7, Some((20, 8)))];
+        assert_eq!(by_key_done, (expected.clone(), vec![]));
+        assert_eq!(by_click_done, (expected, vec![]));
+        assert_eq!(by_key.top_lists(), Some(&data), "the shell moves no row");
+    }
+
+    #[test]
+    fn escape_or_right_click_during_a_target_pick_sends_nothing_and_focuses_the_source_row() {
+        let cancelled_by = |cancel: &dyn Fn(&mut MenuStack<u32>)| {
+            let mut stack = MenuStack::new();
+            stack.push_lists(with_back(rig_and_backpack(), 99));
+            press(&mut stack, Key::Space);
+            press(&mut stack, Key::Enter);
+            press(&mut stack, Key::ArrowRight);
+            press(&mut stack, Key::ArrowDown);
+            let picking = marked(&stack);
+            cancel(&mut stack);
+            (
+                picking,
+                marked(&stack),
+                stack.take_events(),
+                focused_labels(&stack),
+            )
+        };
+
+        let by_escape = cancelled_by(&|stack| press(stack, Key::Escape));
+        let by_right_click = cancelled_by(&|stack| stack.right_click(over(1, 2, 1), SIZE));
+
+        let expected = (
+            vec![PICKING_LOAD_FROM_MAGAZINE.to_owned()],
+            Vec::<String>::new(),
+            vec![],
+            "Magazine,2".to_owned(),
+        );
+        assert_eq!(by_escape, expected);
+        assert_eq!(by_right_click, expected);
+    }
+
+    /// A row's label, count and tooltip as the property test varies them.
+    type Spec = (String, Option<u32>, Option<String>);
+
+    fn specs() -> impl Strategy<Value = Vec<Spec>> {
+        prop::collection::vec(
+            (
+                "[a-z0-9 ]{0,10}",
+                prop::option::of(any::<u32>()),
+                prop::option::of("[a-z0-9 ]{0,10}"),
+            ),
+            160,
+        )
+    }
+
+    /// Lists `0..` of `sizes` rows, every row offering "Act1" (itself) and "Act2" (another row),
+    /// whose label, count and tooltip are read from `specs` by position. Items are
+    /// `list * 100 + row`.
+    fn acting_lists(sizes: &[usize], specs: &[Spec]) -> ItemLists<u32> {
+        lists_of(
+            sizes
+                .iter()
+                .enumerate()
+                .map(|(at, &rows)| {
+                    list(
+                        at as u32,
+                        &format!("T{at}"),
+                        (0..rows)
+                            .map(|index| {
+                                let (label, count, tip) = &specs[at * 40 + index];
+                                let tip = tip.as_ref().map(|tip| format!("t{tip}"));
+                                acting(
+                                    row(
+                                        &format!("r{label}"),
+                                        *count,
+                                        tip.as_deref(),
+                                        (at * 100 + index) as u32,
+                                    ),
+                                    vec![
+                                        action("Act1", 1, ActionTarget::Itself),
+                                        action("Act2", 2, ActionTarget::AnotherRow),
+                                    ],
+                                )
+                            })
+                            .collect(),
+                    )
+                })
+                .collect(),
+        )
+    }
+
+    proptest! {
+        #[test]
+        fn set_lists_with_changed_counts_keeps_an_open_action_list_or_target_pick_and_its_focus(
+            sizes in prop::collection::vec(0usize..=40, 1..=4),
+            before in specs(),
+            after in specs(),
+            source in (0usize..4, 0usize..40),
+            picking in any::<bool>(),
+            moved in (0usize..4, 0usize..45),
+        ) {
+            let lists = sizes.len();
+            let source_list = source.0 % lists;
+            prop_assume!(sizes[source_list] > 0);
+            let source_row = source.1 % sizes[source_list];
+            let source_item = (source_list * 100 + source_row) as u32;
+            let mut stack = MenuStack::new();
+            stack.push_lists(acting_lists(&sizes, &before));
+            presses(&mut stack, Key::ArrowRight, source_list);
+            presses(&mut stack, Key::ArrowDown, source_row);
+            press(&mut stack, Key::Space);
+            press(&mut stack, Key::ArrowDown);
+            let mut pick_focus = None;
+            if picking {
+                press(&mut stack, Key::Enter);
+                let to = (source_list + moved.0) % lists;
+                presses(&mut stack, Key::ArrowRight, moved.0);
+                presses(&mut stack, Key::ArrowDown, moved.1);
+                let rows = sizes[to];
+                let was = if to == source_list { source_row } else { 0 };
+                pick_focus = (rows > 0).then(|| (to, (was + moved.1) % rows));
+            }
+            let settled = stack.texts(SIZE);
+            if !picking {
+                prop_assert!(is_shown(&settled, "Act2"), "the action list is open");
+                prop_assert_eq!(find(&settled, "Act2").color, FOCUS);
+            }
+            prop_assert_eq!(stack.take_events(), vec![]);
+
+            stack.set_lists(acting_lists(&sizes, &after));
+
+            prop_assert_eq!(stack.take_events(), vec![]);
+            if picking {
+                press(&mut stack, Key::Enter);
+                let events = stack.take_events();
+                match pick_focus {
+                    Some((list_at, row_at)) if (list_at, row_at) != (source_list, source_row) => {
+                        prop_assert_eq!(
+                            events,
+                            vec![action_picked(
+                                2,
+                                source_item,
+                                source_list as u32,
+                                Some(((list_at * 100 + row_at) as u32, list_at as u32)),
+                            )]
+                        );
+                    }
+                    Some(_) => prop_assert_eq!(events, vec![]),
+                    None => {
+                        prop_assert_eq!(events, vec![]);
+                        press(&mut stack, Key::Escape);
+                        let label = format!("r{}", after[source_list * 40 + source_row].0);
+                        prop_assert!(
+                            focused(&stack.texts(SIZE)).contains(&label.as_str()),
+                            "Escape focuses the source row, so the pick was still on"
+                        );
+                    }
+                }
+            } else {
+                let texts = stack.texts(SIZE);
+                prop_assert!(is_shown(&texts, "Act1") && is_shown(&texts, "Act2"));
+                prop_assert_eq!(find(&texts, "Act2").color, FOCUS);
+                press(&mut stack, Key::Enter);
+                prop_assert_eq!(stack.take_events(), vec![]);
+                let label = format!("r{}", after[source_list * 40 + source_row].0);
+                prop_assert_eq!(marked(&stack), vec![format!("» Act2: {label}")]);
+            }
+        }
+    }
+
+    #[test]
+    fn set_lists_without_the_source_row_or_its_action_ends_the_pick_and_sends_nothing() {
+        let picking = || {
+            let mut stack = rb_stack();
+            press(&mut stack, Key::Space);
+            press(&mut stack, Key::Enter);
+            stack
+        };
+        let cases = [
+            ("the list is gone", lists_of(vec![backpack()])),
+            ("the row is gone", rig_with(vec![bandage()])),
+            (
+                "the action is gone",
+                rig_with(vec![magazine(vec![unload()]), bandage()]),
+            ),
+            (
+                "the row has no actions",
+                rig_with(vec![magazine(vec![]), bandage()]),
+            ),
+        ];
+
+        let mut kept = picking();
+        kept.set_lists(rig_with(vec![magazine(vec![load(), unload()]), bandage()]));
+        let kept_marks = marked(&kept);
+        for (case, data) in cases {
+            let mut stack = picking();
+            let before = marked(&stack);
+            stack.set_lists(data);
+            let after = (marked(&stack), stack.take_events());
+            press(&mut stack, Key::Enter);
+            press(&mut stack, Key::Enter);
+            let later = stack.take_events();
+
+            assert_eq!(before, [PICKING_LOAD_FROM_MAGAZINE], "{case}");
+            assert_eq!(after, (vec![], vec![]), "{case}");
+            assert_eq!(later, [], "{case}: no later key sends the action");
+        }
+        assert_eq!(kept_marks, [PICKING_LOAD_FROM_MAGAZINE]);
+    }
+
+    #[test]
+    fn while_actions_are_open_up_down_wrap_and_left_right_wheel_and_escape_back_do_nothing() {
+        let mut stack = MenuStack::new();
+        stack.push_lists(with_back(rig_and_backpack(), 99));
+        let on_action = |stack: &MenuStack<u32>| -> String {
+            let texts = stack.texts(SIZE);
+            [LOAD_LABEL, "Unload"]
+                .into_iter()
+                .filter(|label| find(&texts, label).color == FOCUS)
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        press(&mut stack, Key::Space);
+        let mut seen = vec![on_action(&stack)];
+
+        for key in [Key::ArrowUp, Key::ArrowDown, Key::ArrowDown, Key::ArrowDown] {
+            press(&mut stack, key);
+            seen.push(on_action(&stack));
+        }
+        press(&mut stack, Key::ArrowLeft);
+        press(&mut stack, Key::ArrowRight);
+        stack.scroll(5.0);
+        let after_inert_keys = (
+            on_action(&stack),
+            focused(&stack.texts(SIZE)).contains(&"Magazine"),
+        );
+        let silent = stack.take_events();
+        press(&mut stack, Key::Escape);
+        let after_escape = (
+            is_shown(&stack.texts(SIZE), LOAD_LABEL),
+            stack.take_events(),
+        );
+        let mut long = MenuStack::new();
+        long.push_lists(lists_of(vec![list(
+            1,
+            "A",
+            (0..40)
+                .map(|i| acting(row(&format!("r{i:02}"), None, None, i), vec![unload()]))
+                .collect(),
+        )]));
+        press(&mut long, Key::Space);
+        long.scroll(5.0);
+        let after_wheel = long.texts(SIZE);
+
+        assert_eq!(
+            seen,
+            [LOAD_LABEL, "Unload", LOAD_LABEL, "Unload", LOAD_LABEL]
+        );
+        assert_eq!(after_inert_keys, (LOAD_LABEL.to_owned(), true));
+        assert_eq!(silent, []);
+        assert_eq!(
+            after_escape,
+            (false, vec![]),
+            "Escape closes and is not back"
+        );
+        assert_eq!(
+            y_of(find(&after_wheel, "r00")),
+            row_y(0),
+            "the rows did not scroll"
+        );
+        assert!(is_shown(&after_wheel, "Unload"));
+    }
+
+    #[test]
+    fn escape_space_right_click_or_a_click_outside_closes_the_actions_and_sends_nothing() {
+        let closed_by = |close: &dyn Fn(&mut MenuStack<u32>)| {
+            let mut stack = MenuStack::new();
+            stack.push_lists(with_back(rig_and_backpack(), 99));
+            press(&mut stack, Key::Space);
+            let was_open = is_shown(&stack.texts(SIZE), LOAD_LABEL);
+            close(&mut stack);
+            let texts = stack.texts(SIZE);
+            (
+                was_open,
+                is_shown(&texts, LOAD_LABEL) || is_shown(&texts, "Unload"),
+                stack.take_events(),
+                marked(&stack),
+                focused_labels(&stack),
+            )
+        };
+        let expected = (
+            true,
+            false,
+            vec![],
+            Vec::<String>::new(),
+            "Magazine,2".to_owned(),
+        );
+
+        let by_escape = closed_by(&|stack| press(stack, Key::Escape));
+        let by_space = closed_by(&|stack| press(stack, Key::Space));
+        let by_right_click = closed_by(&|stack| stack.right_click(over(0, 2, 0), SIZE));
+        let by_right_click_elsewhere = closed_by(&|stack| stack.right_click(over(1, 2, 1), SIZE));
+        let by_click_on_a_row = closed_by(&|stack| stack.click(over(1, 2, 0), SIZE));
+        let by_click_on_nothing = closed_by(&|stack| stack.click([5.0, 5.0], SIZE));
+
+        assert_eq!(by_escape, expected);
+        assert_eq!(by_space, expected);
+        assert_eq!(by_right_click, expected);
+        assert_eq!(by_right_click_elsewhere, expected);
+        assert_eq!(by_click_on_a_row, expected);
+        assert_eq!(by_click_on_nothing, expected);
+    }
+
+    #[test]
+    fn set_lists_keeps_the_focused_action_by_value_and_closes_when_the_row_loses_its_actions() {
+        let colour_of = |stack: &MenuStack<u32>, label: &str| find(&stack.texts(SIZE), label).color;
+        let mut stack = rb_stack();
+        press(&mut stack, Key::Space);
+        press(&mut stack, Key::ArrowDown);
+
+        stack.set_lists(rig_with(vec![magazine(vec![unload(), load()]), bandage()]));
+        let reordered = (
+            colour_of(&stack, "Unload"),
+            colour_of(&stack, LOAD_LABEL),
+            find(&stack.texts(SIZE), "Unload").offset[1],
+        );
+        stack.set_lists(rig_with(vec![magazine(vec![load()]), bandage()]));
+        let clamped = (
+            colour_of(&stack, LOAD_LABEL),
+            is_shown(&stack.texts(SIZE), "Unload"),
+        );
+        stack.set_lists(rig_with(vec![magazine(vec![]), bandage()]));
+        let lost_actions = is_shown(&stack.texts(SIZE), LOAD_LABEL);
+        stack.set_lists(rig_with(vec![magazine(vec![load(), unload()]), bandage()]));
+        let not_reopened = is_shown(&stack.texts(SIZE), LOAD_LABEL);
+        let mut closed_by_the_data = Vec::new();
+        for data in [lists_of(vec![backpack()]), rig_with(vec![bandage()])] {
+            let mut other = rb_stack();
+            press(&mut other, Key::Space);
+            other.set_lists(data);
+            closed_by_the_data.push((
+                is_shown(&other.texts(SIZE), LOAD_LABEL),
+                other.take_events(),
+            ));
+        }
+
+        assert_eq!(reordered, (FOCUS, COLOR, row_y(0) - 360.0));
+        assert_eq!(clamped, (FOCUS, false));
+        assert!(!lost_actions);
+        assert!(!not_reopened);
+        assert_eq!(closed_by_the_data, [(false, vec![]), (false, vec![])]);
+        assert_eq!(stack.take_events(), []);
+    }
+
+    #[test]
+    fn a_target_in_the_source_rows_own_list_is_valid() {
+        let data = lists_of(rig_and_backpack());
+        let mut by_key = MenuStack::new();
+        by_key.push_lists(data.clone());
+        press(&mut by_key, Key::Space);
+        press(&mut by_key, Key::Enter);
+        press(&mut by_key, Key::ArrowDown);
+        press(&mut by_key, Key::Enter);
+        let mut by_click = MenuStack::new();
+        by_click.push_lists(data);
+        by_click.right_click(over(0, 2, 0), SIZE);
+        by_click.click([172.0, row_y(0)], SIZE);
+        by_click.click(over(0, 2, 1), SIZE);
+
+        let expected = vec![action_picked(LOAD, 10, 7, Some((11, 7)))];
+        assert_eq!(by_key.take_events(), expected);
+        assert_eq!(by_click.take_events(), expected);
+        assert_eq!(marked(&by_key), Vec::<String>::new());
+    }
+
+    #[test]
+    fn picking_the_source_row_itself_releases_and_sends_nothing() {
+        let released_by = |release: &dyn Fn(&mut MenuStack<u32>)| {
+            let mut stack = rb_stack();
+            press(&mut stack, Key::Space);
+            press(&mut stack, Key::Enter);
+            let was = marked(&stack);
+            release(&mut stack);
+            (
+                was,
+                marked(&stack),
+                stack.take_events(),
+                is_shown(&stack.texts(SIZE), LOAD_LABEL),
+            )
+        };
+        let expected = (
+            vec![PICKING_LOAD_FROM_MAGAZINE.to_owned()],
+            Vec::<String>::new(),
+            vec![],
+            false,
+        );
+
+        let by_enter = released_by(&|stack| press(stack, Key::Enter));
+        let by_click = released_by(&|stack| stack.click(over(0, 2, 0), SIZE));
+
+        assert_eq!(by_enter, expected);
+        assert_eq!(by_click, expected);
+    }
+
+    #[test]
+    fn enter_on_an_empty_list_or_a_click_on_no_row_keeps_picking() {
+        let mut stack = stack_of(vec![
+            rig(vec![magazine(vec![load()]), bandage()]),
+            list(9, "Ground", Vec::new()),
+        ]);
+        press(&mut stack, Key::Space);
+        press(&mut stack, Key::Enter);
+        let started = marked(&stack);
+        press(&mut stack, Key::ArrowRight);
+        press(&mut stack, Key::Enter);
+        let on_empty_list = (marked(&stack), stack.take_events());
+        stack.click(over(1, 2, 0), SIZE);
+        stack.click([5.0, 5.0], SIZE);
+        stack.click(over(0, 2, 7), SIZE);
+        let on_no_row = (marked(&stack), stack.take_events());
+        stack.click(over(0, 2, 1), SIZE);
+        let placed = (marked(&stack), stack.take_events());
+
+        let picking = vec![PICKING_LOAD_FROM_MAGAZINE.to_owned()];
+        assert_eq!(started, picking);
+        assert_eq!(on_empty_list, (picking.clone(), vec![]));
+        assert_eq!(on_no_row, (picking, vec![]));
+        assert_eq!(
+            placed,
+            (vec![], vec![action_picked(LOAD, 10, 7, Some((11, 7)))])
+        );
+    }
+
+    #[test]
+    fn with_a_move_hold_space_does_nothing_and_a_right_click_releases() {
+        let mut stack = rb_stack();
+        press(&mut stack, Key::Enter);
+        let held = marked(&stack);
+
+        press(&mut stack, Key::Space);
+        let after_space = (
+            marked(&stack),
+            is_shown(&stack.texts(SIZE), LOAD_LABEL),
+            stack.take_events(),
+        );
+        stack.right_click(over(0, 2, 0), SIZE);
+        let after_right_click = (
+            marked(&stack),
+            is_shown(&stack.texts(SIZE), LOAD_LABEL),
+            stack.take_events(),
+        );
+        press(&mut stack, Key::Space);
+        let reopened = is_shown(&stack.texts(SIZE), LOAD_LABEL);
+
+        assert_eq!(held, ["» Magazine"]);
+        assert_eq!(after_space, (vec!["» Magazine".to_owned()], false, vec![]));
+        assert_eq!(after_right_click, (vec![], false, vec![]));
+        assert!(reopened, "with nothing held, Space opens the actions");
+    }
+
+    #[test]
+    fn the_held_row_shows_the_action_label_only_during_a_target_pick() {
+        let mut stack = rb_stack();
+
+        press(&mut stack, Key::Enter);
+        let moving = marked(&stack);
+        press(&mut stack, Key::Enter);
+        press(&mut stack, Key::Space);
+        press(&mut stack, Key::Enter);
+        let picking = marked(&stack);
+        let texts = stack.texts(SIZE);
+
+        assert_eq!(moving, ["» Magazine"]);
+        assert_eq!(picking, [PICKING_LOAD_FROM_MAGAZINE]);
+        let held = find(&texts, PICKING_LOAD_FROM_MAGAZINE);
+        assert_eq!(held.anchor, Anchor::Left, "still a left-aligned label");
+        assert_eq!(
+            held.color, FOCUS,
+            "the focused held row keeps the focus colour"
+        );
+        assert!(is_shown(&texts, "2"), "the count is still drawn");
+    }
+
+    #[test]
+    fn actions_draw_left_of_the_first_list_and_right_of_others_and_hide_the_tooltip() {
+        let three = || {
+            stack_of(
+                [("a", 1), ("b", 2), ("c", 3)]
+                    .map(|(name, item)| {
+                        list(
+                            item,
+                            name,
+                            vec![acting(
+                                row(name, None, Some(&format!("tip {name}")), item),
+                                vec![unload()],
+                            )],
+                        )
+                    })
+                    .to_vec(),
+            )
+        };
+        let places = [
+            (Anchor::Right, -1200.0, "tip a"),
+            (Anchor::Left, 816.0, "tip b"),
+            (Anchor::Left, 1200.0, "tip c"),
+        ];
+
+        for (at, (anchor, x, tip)) in places.into_iter().enumerate() {
+            let mut stack = three();
+            presses(&mut stack, Key::ArrowRight, at);
+            let closed = stack.texts(SIZE);
+            press(&mut stack, Key::Space);
+            let open = stack.texts(SIZE);
+            press(&mut stack, Key::Escape);
+            let again = stack.texts(SIZE);
+
+            assert!(is_shown(&closed, tip), "{tip} shows while closed");
+            assert_eq!(
+                shape(&open, "Unload"),
+                (anchor, [x, row_y(0) - 360.0], 18.0, FOCUS),
+                "list {at}"
+            );
+            assert!(!is_shown(&open, tip), "{tip} is hidden while open");
+            assert!(is_shown(&again, tip), "{tip} returns when closed");
+        }
+    }
+
+    #[test]
+    fn an_action_list_near_the_bottom_moves_up_inside_the_band() {
+        let mut stack = stack_of(vec![list(
+            1,
+            "A",
+            (0..20)
+                .map(|i| {
+                    acting(
+                        row(&format!("r{i:02}"), None, None, i),
+                        vec![load(), unload()],
+                    )
+                })
+                .collect(),
+        )]);
+        // A single list starts at 480: 480 - 16 - 1280.
+        let left = -816.0;
+        presses(&mut stack, Key::ArrowDown, 16);
+        press(&mut stack, Key::Space);
+        let fits = stack.texts(SIZE);
+        press(&mut stack, Key::Escape);
+        presses(&mut stack, Key::ArrowDown, 2);
+        press(&mut stack, Key::Space);
+        let too_low = stack.texts(SIZE);
+
+        assert_eq!(
+            shape(&fits, LOAD_LABEL),
+            (Anchor::Right, [left, 584.0 - 360.0], 18.0, FOCUS)
+        );
+        assert_eq!(y_of(find(&fits, "Unload")), 616.0);
+        assert_eq!(
+            shape(&too_low, LOAD_LABEL),
+            (Anchor::Right, [left, 616.0 - 360.0], 18.0, FOCUS)
+        );
+        assert_eq!(
+            y_of(find(&too_low, "Unload")),
+            648.0,
+            "the last action ends at the band's bottom, 664"
+        );
+        assert_eq!(y_of(find(&too_low, "r18")), row_y(18), "the rows stay put");
+    }
+
+    #[test]
+    fn hover_focuses_an_action_and_elsewhere_changes_nothing_while_open() {
+        let mut stack = rb_stack();
+        press(&mut stack, Key::Space);
+        let colours = |stack: &MenuStack<u32>| {
+            let texts = stack.texts(SIZE);
+            (
+                find(&texts, LOAD_LABEL).color,
+                find(&texts, "Unload").color,
+                focused(&texts).contains(&"Magazine"),
+            )
+        };
+
+        stack.hover([172.0, row_y(1)], SIZE);
+        let on_unload = colours(&stack);
+        stack.hover(over(1, 2, 1), SIZE);
+        stack.hover([5.0, 5.0], SIZE);
+        stack.hover(over(0, 2, 7), SIZE);
+        let elsewhere = colours(&stack);
+        stack.hover([172.0, row_y(0)], SIZE);
+        let on_load = colours(&stack);
+        stack.hover([172.0, row_y(1)], SIZE);
+        press(&mut stack, Key::Enter);
+
+        assert_eq!(on_unload, (COLOR, FOCUS, true));
+        assert_eq!(elsewhere, (COLOR, FOCUS, true));
+        assert_eq!(on_load, (FOCUS, COLOR, true));
+        assert_eq!(stack.take_events(), [action_picked(UNLOAD, 10, 7, None)]);
+    }
+
+    #[test]
+    fn actions_of_a_row_moved_above_the_scroll_stay_inside_the_band() {
+        let rows = |order: Vec<u32>| -> Vec<ListRow<u32>> {
+            order
+                .into_iter()
+                .map(|i| {
+                    acting(
+                        row(&format!("r{i:02}"), None, None, i),
+                        vec![load(), unload()],
+                    )
+                })
+                .collect()
+        };
+        let mut stack = stack_of(vec![list(1, "A", rows((0..40).collect()))]);
+        presses(&mut stack, Key::ArrowDown, 39);
+        press(&mut stack, Key::Space);
+        stack.texts(SIZE);
+        let moved: Vec<u32> = std::iter::once(39).chain(0..39).collect();
+
+        stack.set_lists(lists_of(vec![list(1, "A", rows(moved))]));
+        let open = stack.visible_rows(SIZE);
+        press(&mut stack, Key::Escape);
+        let closed = stack.visible_rows(SIZE);
+
+        let added: Vec<Rect> = open
+            .into_iter()
+            .filter(|rect| !closed.contains(rect))
+            .collect();
+        assert_eq!(added.len(), 2, "the action list is still open");
+        for rect in added {
+            assert!(rect.min[1] >= 56.0, "{rect:?} is above the top band");
+            assert!(rect.max[1] <= SIZE[1] - 56.0, "{rect:?} is below the band");
+        }
+    }
+
+    #[test]
+    fn renaming_the_pending_action_changes_the_held_rows_mark() {
+        let mut stack = rb_stack();
+        press(&mut stack, Key::Space);
+        press(&mut stack, Key::Enter);
+        let renamed = action("Load rounds", LOAD, ActionTarget::AnotherRow);
+
+        stack.set_lists(rig_with(vec![magazine(vec![renamed, unload()]), bandage()]));
+
+        assert_eq!(marked(&stack), ["» Load rounds: Magazine"]);
+    }
+
+    fn new_row() -> ListRow<u32> {
+        row("New", None, None, 12)
+    }
+
+    #[test]
+    fn a_row_inserted_before_the_magazine_keeps_its_actions_open_on_the_magazine() {
+        let mut stack = rb_stack();
+        press(&mut stack, Key::Space);
+
+        stack.set_lists(rig_with(vec![
+            new_row(),
+            magazine(vec![load(), unload()]),
+            bandage(),
+        ]));
+        let texts = stack.texts(SIZE);
+        press(&mut stack, Key::ArrowDown);
+        press(&mut stack, Key::Enter);
+
+        assert_eq!(
+            shape(&texts, LOAD_LABEL),
+            (
+                Anchor::Right,
+                [LEFT_OF_FIRST, row_y(1) - 360.0],
+                18.0,
+                FOCUS
+            ),
+            "the actions follow the magazine to its new row"
+        );
+        assert_eq!(stack.take_events(), [action_picked(UNLOAD, 10, 7, None)]);
+    }
+
+    #[test]
+    fn a_row_inserted_before_the_source_row_keeps_the_target_pick_on_the_magazine() {
+        let inserted = || rig_with(vec![new_row(), magazine(vec![load(), unload()]), bandage()]);
+        let mut cancelled = rb_stack();
+        press(&mut cancelled, Key::Space);
+        press(&mut cancelled, Key::Enter);
+        cancelled.set_lists(inserted());
+        let still_picking = marked(&cancelled);
+        press(&mut cancelled, Key::Escape);
+        let after_escape = (focused_labels(&cancelled), cancelled.take_events());
+        let mut placed = rb_stack();
+        press(&mut placed, Key::Space);
+        press(&mut placed, Key::Enter);
+        placed.set_lists(inserted());
+        press(&mut placed, Key::ArrowRight);
+        press(&mut placed, Key::Enter);
+
+        assert_eq!(still_picking, [PICKING_LOAD_FROM_MAGAZINE]);
+        assert_eq!(after_escape, ("Magazine,2".to_owned(), vec![]));
+        assert_eq!(
+            placed.take_events(),
+            [action_picked(LOAD, 10, 7, Some((20, 8)))]
+        );
+    }
+
+    #[test]
+    fn a_right_click_over_another_list_during_a_target_pick_focuses_the_source_row() {
+        let mut stack = rb_stack();
+        press(&mut stack, Key::Space);
+        press(&mut stack, Key::Enter);
+        let picking = marked(&stack);
+
+        stack.right_click(over(1, 2, 1), SIZE);
+
+        assert_eq!(picking, [PICKING_LOAD_FROM_MAGAZINE]);
+        assert_eq!(stack.take_events(), []);
+        assert_eq!(marked(&stack), Vec::<String>::new());
+        assert_eq!(focused_labels(&stack), "Magazine,2");
+        assert!(!is_shown(&stack.texts(SIZE), LOAD_LABEL), "nothing opened");
+    }
+
+    #[test]
+    fn repeats_do_not_open_pick_or_place() {
+        let repeat = |stack: &mut MenuStack<u32>, key| stack.on_key(Input::Key(key), true, true);
+        let mut stack = rb_stack();
+
+        repeat(&mut stack, Key::Space);
+        let repeat_space = is_shown(&stack.texts(SIZE), LOAD_LABEL);
+        press(&mut stack, Key::Space);
+        repeat(&mut stack, Key::Enter);
+        let open_after_repeat = (
+            is_shown(&stack.texts(SIZE), LOAD_LABEL),
+            marked(&stack),
+            stack.take_events(),
+        );
+        press(&mut stack, Key::Enter);
+        press(&mut stack, Key::ArrowRight);
+        repeat(&mut stack, Key::Enter);
+        let picking_after_repeat = (marked(&stack), stack.take_events());
+        press(&mut stack, Key::Enter);
+
+        assert!(!repeat_space);
+        assert_eq!(open_after_repeat, (true, vec![], vec![]));
+        assert_eq!(
+            picking_after_repeat,
+            (vec![PICKING_LOAD_FROM_MAGAZINE.to_owned()], vec![])
+        );
+        assert_eq!(
+            stack.take_events(),
+            [action_picked(LOAD, 10, 7, Some((20, 8)))],
+            "a real Enter still places"
+        );
+    }
+
+    #[test]
+    fn a_right_click_on_a_row_without_actions_focuses_it_and_on_empty_space_changes_nothing() {
+        let mut stack = rb_stack();
+
+        stack.right_click(over(0, 2, 1), SIZE);
+        let on_bandage = (focused_labels(&stack), stack.texts(SIZE));
+        stack.right_click(over(1, 2, 7), SIZE);
+        let on_space = (focused_labels(&stack), stack.texts(SIZE));
+        stack.right_click(over(0, 2, 0), SIZE);
+        let on_magazine = is_shown(&stack.texts(SIZE), LOAD_LABEL);
+
+        assert_eq!(on_bandage.0, "Bandage,3");
+        assert!(!is_shown(&on_bandage.1, LOAD_LABEL));
+        assert!(!is_shown(&on_bandage.1, "Unload"));
+        assert_eq!(on_space, on_bandage);
+        assert!(on_magazine, "a row with actions still opens them");
+        assert_eq!(stack.take_events(), []);
+    }
+
+    #[test]
+    fn actions_on_a_row_in_a_scrolled_list_lie_inside_the_band() {
+        let mut stack = stack_of(vec![list(
+            1,
+            "A",
+            (0..40)
+                .map(|i| {
+                    acting(
+                        row(&format!("r{i:02}"), None, None, i),
+                        vec![load(), unload()],
+                    )
+                })
+                .collect(),
+        )]);
+        stack.scroll(30.0);
+        let closed = stack.visible_rows(SIZE);
+
+        let mut extras = Vec::new();
+        for visible_row in [0, 9, 18] {
+            stack.hover(over(0, 1, visible_row), SIZE);
+            press(&mut stack, Key::Space);
+            let open = stack.visible_rows(SIZE);
+            press(&mut stack, Key::Escape);
+            let added: Vec<Rect> = open
+                .into_iter()
+                .filter(|rect| !closed.contains(rect))
+                .collect();
+            extras.push((visible_row, added));
+        }
+
+        for (visible_row, added) in extras {
+            assert_eq!(added.len(), 2, "row {visible_row}");
+            for rect in added {
+                assert!(rect.min[1] >= 56.0, "row {visible_row}: {rect:?}");
+                assert!(rect.max[1] <= SIZE[1] - 56.0, "row {visible_row}: {rect:?}");
+            }
+        }
     }
 }

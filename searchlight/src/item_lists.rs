@@ -2,7 +2,7 @@
 //! and the game's rule for moving a row between them. Stands in until the inventory owns the
 //! screen.
 
-use moho_ui_shell::{ItemList, ItemLists, ListId, ListRow};
+use moho_ui_shell::{ActionTarget, ItemList, ItemLists, ListId, ListRow, RowAction};
 
 use crate::menu::MenuAction;
 
@@ -13,13 +13,28 @@ const PLAYER_ROWS: usize = 8;
 /// How many filler rows follow the rifle in the container.
 const FILLER_ROWS: u32 = 45;
 
-/// One stack of an item: its stable id, label, count and description.
+/// What a row of the demo lists can be asked to do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ItemAction {
+    /// Uses one of the item (a bandage).
+    Use,
+    /// Loads a magazine from a stack of rounds.
+    LoadFromStack,
+}
+
+/// The rounds a magazine holds.
+const MAGAZINE_CAPACITY: u32 = 30;
+/// The id of the player's rounds, the only valid target of loading a magazine.
+const ROUNDS: u32 = 2;
+
+/// One stack of an item: its stable id, label, count, description and the action it offers.
 #[derive(Clone, Debug)]
 struct Item {
     id: u32,
     label: String,
     count: u32,
     description: String,
+    action: Option<ItemAction>,
 }
 
 impl Item {
@@ -29,7 +44,29 @@ impl Item {
             label: label.to_owned(),
             count,
             description: description.to_owned(),
+            action: None,
         }
+    }
+
+    fn offering(mut self, action: ItemAction) -> Self {
+        self.action = Some(action);
+        self
+    }
+
+    /// The row action this item offers, if any.
+    fn row_actions(&self) -> Vec<RowAction<MenuAction>> {
+        let Some(action) = self.action else {
+            return Vec::new();
+        };
+        let (label, target) = match action {
+            ItemAction::Use => ("Use", ActionTarget::Itself),
+            ItemAction::LoadFromStack => ("Load from stack", ActionTarget::AnotherRow),
+        };
+        vec![RowAction {
+            label: label.to_owned(),
+            action: MenuAction::ItemAction(action),
+            target,
+        }]
     }
 }
 
@@ -49,7 +86,10 @@ impl Default for DemoItems {
 impl DemoItems {
     /// The player's list with Bandage 3 and Rounds 60, and the container with Rifle 1 and filler.
     pub fn new() -> Self {
-        let mut container = vec![Item::new(10, "Rifle", 1, "Semi-auto.\nNeeds rounds.")];
+        let mut container = vec![
+            Item::new(10, "Rifle", 1, "Semi-auto.\nNeeds rounds."),
+            Item::new(11, "Magazine", 0, "Holds 30 rounds.").offering(ItemAction::LoadFromStack),
+        ];
         container.extend((1..=FILLER_ROWS).map(|n| {
             Item::new(
                 100 + n,
@@ -60,8 +100,9 @@ impl DemoItems {
         }));
         Self {
             player: vec![
-                Item::new(1, "Bandage", 3, "Clean cloth.\nStops bleeding."),
-                Item::new(2, "Rounds", 60, "Loose rifle rounds."),
+                Item::new(1, "Bandage", 3, "Clean cloth.\nStops bleeding.")
+                    .offering(ItemAction::Use),
+                Item::new(ROUNDS, "Rounds", 60, "Loose rifle rounds."),
             ],
             container,
         }
@@ -79,6 +120,7 @@ impl DemoItems {
                     count: Some(item.count),
                     tooltip: Some(item.description.clone()),
                     item: MenuAction::Item(item.id),
+                    actions: item.row_actions(),
                 })
                 .collect(),
         };
@@ -88,6 +130,60 @@ impl DemoItems {
                 list(CONTAINER, "Container", &self.container),
             ],
             back: Some(MenuAction::Back),
+        }
+    }
+
+    /// Applies `action` to item `id` of list `list`, with `target` (the item id and list of a
+    /// second row) when the action asked for one. Refuses, and changes nothing, when the rule
+    /// does not hold; returns whether it applied.
+    pub fn act(
+        &mut self,
+        action: ItemAction,
+        id: u32,
+        list: ListId,
+        target: Option<(u32, ListId)>,
+    ) -> bool {
+        let offers = |items: &[Item]| {
+            items
+                .iter()
+                .position(|item| item.id == id && item.action == Some(action))
+        };
+        match action {
+            ItemAction::Use => {
+                let Some(items) = self.items_mut(list) else {
+                    return false;
+                };
+                let Some(at) = offers(items) else {
+                    return false;
+                };
+                items[at].count -= 1;
+                if items[at].count == 0 {
+                    items.remove(at);
+                }
+                true
+            }
+            ItemAction::LoadFromStack => {
+                if list != CONTAINER || target != Some((ROUNDS, PLAYER)) {
+                    return false;
+                }
+                let (Some(magazine), Some(rounds)) = (
+                    offers(&self.container),
+                    self.player.iter().position(|item| item.id == ROUNDS),
+                ) else {
+                    return false;
+                };
+                let moved = (MAGAZINE_CAPACITY - self.container[magazine].count)
+                    .min(self.player[rounds].count);
+                if moved == 0 {
+                    return false;
+                }
+                self.container[magazine].count += moved;
+                self.player[rounds].count -= moved;
+                if self.player[rounds].count == 0 {
+                    self.player.remove(rounds);
+                }
+                true
+            }
         }
     }
 
@@ -164,6 +260,152 @@ mod tests {
         let lists = items.lists();
         assert_eq!(lists.lists.len(), 2, "the player's list and the container");
         id_of(&lists.lists[list].rows[0])
+    }
+
+    fn actions_of(items: &DemoItems, list: usize, label: &str) -> Vec<(String, MenuAction, bool)> {
+        items.lists().lists[list]
+            .rows
+            .iter()
+            .find(|row| row.label == label)
+            .unwrap_or_else(|| panic!("no row {label:?} in list {list}"))
+            .actions
+            .iter()
+            .map(|action| {
+                (
+                    action.label.clone(),
+                    action.action,
+                    action.target == moho_ui_shell::ActionTarget::AnotherRow,
+                )
+            })
+            .collect()
+    }
+
+    fn count_of(items: &DemoItems, list: usize, label: &str) -> Option<u32> {
+        shown(items, list)
+            .into_iter()
+            .find(|(shown, _)| shown == label)
+            .and_then(|(_, count)| count)
+    }
+
+    /// Demo items whose magazine holds `loaded` and whose player has `rounds` rounds.
+    fn stocked(loaded: u32, rounds: u32) -> DemoItems {
+        let mut items = DemoItems::new();
+        items
+            .container
+            .iter_mut()
+            .find(|item| item.label == "Magazine")
+            .expect("the container holds a magazine")
+            .count = loaded;
+        items
+            .player
+            .iter_mut()
+            .find(|item| item.label == "Rounds")
+            .expect("the player has rounds")
+            .count = rounds;
+        items
+    }
+
+    #[test]
+    fn the_bandage_offers_use_and_the_magazine_offers_load_from_stack_for_another_row() {
+        let items = DemoItems::new();
+
+        let bandage = actions_of(&items, 0, "Bandage");
+        let magazine = actions_of(&items, 1, "Magazine");
+
+        assert_eq!(bandage.len(), 1);
+        assert_eq!(
+            (bandage[0].1, bandage[0].2),
+            (MenuAction::ItemAction(ItemAction::Use), false)
+        );
+        assert_eq!(
+            magazine,
+            [(
+                "Load from stack".to_owned(),
+                MenuAction::ItemAction(ItemAction::LoadFromStack),
+                true
+            )]
+        );
+        assert_eq!(actions_of(&items, 0, "Rounds"), []);
+        assert_eq!(actions_of(&items, 1, "Rifle"), []);
+        assert_eq!(count_of(&items, 1, "Magazine"), Some(0));
+    }
+
+    #[test]
+    fn using_a_bandage_lowers_its_count_and_the_last_one_removes_the_row() {
+        let mut items = DemoItems::new();
+        let bandage = id_named(&items, 0, "Bandage");
+
+        let first = items.act(ItemAction::Use, bandage, ListId(0), None);
+        let second = items.act(ItemAction::Use, bandage, ListId(0), None);
+        let after_two = count_of(&items, 0, "Bandage");
+        let last = items.act(ItemAction::Use, bandage, ListId(0), None);
+        let after_last = shown(&items, 0);
+        let none_left = items.act(ItemAction::Use, bandage, ListId(0), None);
+
+        assert!(first && second && last);
+        assert_eq!(after_two, Some(1));
+        assert_eq!(after_last, [("Rounds".to_owned(), Some(60))]);
+        assert!(!none_left, "there is no bandage to use");
+    }
+
+    #[test]
+    fn loading_from_anything_but_rounds_changes_nothing() {
+        let mut items = DemoItems::new();
+        let magazine = id_named(&items, 1, "Magazine");
+        let bandage = id_named(&items, 0, "Bandage");
+        let rifle = id_named(&items, 1, "Rifle");
+        let rounds = id_named(&items, 0, "Rounds");
+        let before = items.lists();
+        let load = ItemAction::LoadFromStack;
+
+        let refused = [
+            items.act(load, magazine, ListId(1), Some((bandage, ListId(0)))),
+            items.act(load, magazine, ListId(1), Some((rifle, ListId(1)))),
+            items.act(load, magazine, ListId(1), Some((magazine, ListId(1)))),
+            items.act(load, magazine, ListId(1), None),
+            items.act(load, magazine, ListId(1), Some((u32::MAX, ListId(0)))),
+            items.act(load, magazine, ListId(1), Some((rounds, ListId(1)))),
+            items.act(load, magazine, ListId(0), Some((rounds, ListId(0)))),
+            items.act(load, bandage, ListId(0), Some((rounds, ListId(0)))),
+        ];
+        let unchanged = items.lists();
+        let accepted = items.act(load, magazine, ListId(1), Some((rounds, ListId(0))));
+
+        assert_eq!(refused, [false; 8]);
+        assert_eq!(unchanged, before);
+        assert!(accepted, "the player's rounds are the valid target");
+        assert_eq!(count_of(&items, 1, "Magazine"), Some(30));
+    }
+
+    #[test]
+    fn the_magazine_stops_at_30_and_a_spent_stack_is_removed() {
+        let load = |loaded, rounds| {
+            let mut items = stocked(loaded, rounds);
+            let magazine = id_named(&items, 1, "Magazine");
+            let stack = id_named(&items, 0, "Rounds");
+            let moved = items.act(
+                ItemAction::LoadFromStack,
+                magazine,
+                ListId(1),
+                Some((stack, ListId(0))),
+            );
+            (
+                moved,
+                count_of(&items, 1, "Magazine"),
+                count_of(&items, 0, "Rounds"),
+                shown(&items, 0).len(),
+            )
+        };
+
+        let from_empty = load(0, 60);
+        let topped_up = load(25, 60);
+        let short_stack = load(0, 10);
+        let exact_stack = load(0, 30);
+
+        assert_eq!(from_empty, (true, Some(30), Some(30), 2));
+        assert_eq!(topped_up, (true, Some(30), Some(55), 2));
+        assert_eq!(short_stack, (true, Some(10), None, 1), "a spent stack goes");
+        assert_eq!(exact_stack, (true, Some(30), None, 1));
     }
 
     #[test]

@@ -407,6 +407,7 @@ mod tests {
                 | MenuEvent::ModeChosen { .. }
                 | MenuEvent::Cleared { .. } => None,
                 MenuEvent::MoveRequested { .. } => None,
+                MenuEvent::ActionPicked { .. } => None,
             })
             .collect()
     }
@@ -1136,6 +1137,56 @@ mod tests {
         );
         assert_eq!(on_label, [], "a label is not the focused slot");
         assert_eq!(in_space, [], "empty space is not the focused slot");
+    }
+
+    #[test]
+    fn a_right_click_on_a_list_row_opens_its_actions() {
+        use crate::lists::{ActionTarget, ItemList, ItemLists, ListId, ListRow, RowAction};
+        let right = Input::Mouse(MouseButton::Right);
+        let size = [1280.0, 720.0];
+        let lists_shell = || {
+            let mut shell = shell();
+            shell.menu_mut().push_lists(ItemLists {
+                lists: vec![ItemList {
+                    id: ListId(1),
+                    title: "Rig".to_owned(),
+                    rows: vec![ListRow {
+                        label: "Magazine".to_owned(),
+                        count: None,
+                        tooltip: None,
+                        item: Choice::Play,
+                        actions: vec![RowAction {
+                            label: "Unload".to_owned(),
+                            action: Choice::Quit,
+                            target: ActionTarget::Itself,
+                        }],
+                    }],
+                }],
+                back: None,
+            });
+            shell
+        };
+        let shows_unload = |shell: &mut UiShell<Cmd, Choice>| {
+            shell
+                .menu_mut()
+                .texts(size)
+                .iter()
+                .any(|text| text.text == "Unload")
+        };
+        // One list is 320 wide, centred on x 640; its first row is 32 tall from y 56.
+        let mut on_the_row = lists_shell();
+        let mut off_the_row = lists_shell();
+        cursor_at(&mut on_the_row, [640.0, 72.0]);
+        cursor_at(&mut off_the_row, [5.0, 5.0]);
+
+        let routed = on_the_row.route(right, true, false);
+        on_the_row.route(right, false, false);
+        off_the_row.route(right, true, false);
+
+        assert_eq!(routed, Routing::Menu);
+        assert!(shows_unload(&mut on_the_row));
+        assert!(!shows_unload(&mut off_the_row));
+        assert_eq!(on_the_row.menu_mut().take_events(), []);
     }
 
     fn dim_colour() -> [u8; 4] {

@@ -7,6 +7,7 @@ use moho_ui_shell::{EngineSetting, EngineSettings, GameSlider, MenuItem, MenuScr
 use crate::controls::{ControlsDraft, label};
 use crate::head_bob::HeadBobLevel;
 use crate::input::SearchlightAction;
+use crate::item_lists::ItemAction;
 
 /// What choosing a menu item asks the game to do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,6 +26,8 @@ pub enum MenuAction {
     Rebind(SearchlightAction),
     /// The item with this id in the item lists.
     Item(u32),
+    /// An action a row of the item lists offers.
+    ItemAction(ItemAction),
 }
 
 impl MenuAction {
@@ -46,6 +49,7 @@ impl MenuAction {
             MenuAction::ApplyControls => "Apply",
             MenuAction::Rebind(action) => label(action),
             MenuAction::Item(_) => "Item",
+            MenuAction::ItemAction(_) => "Item action",
         }
     }
 }
