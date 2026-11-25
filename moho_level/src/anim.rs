@@ -192,7 +192,8 @@ impl Pose {
 pub enum Playback {
     Loop,
     Once,
-    /// Play once, reaching the clip's end on the n-th advance.
+    /// Play once, reaching the clip's end on the n-th advance. Exact for n up to 2^24
+    /// (the time is an `f32` ratio of counts).
     Ticks(NonZeroU32),
 }
 
@@ -267,7 +268,7 @@ impl ClipPlayer {
         let duration = model.clips()[self.clip].duration();
         match self.playback {
             Playback::Ticks(total) => {
-                self.elapsed = (self.elapsed + 1).min(total.get());
+                self.elapsed = self.elapsed.saturating_add(1).min(total.get());
                 self.time = duration * (self.elapsed as f32 / total.get() as f32);
             }
             Playback::Loop => self.step(dt, duration, true),

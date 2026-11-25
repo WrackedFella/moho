@@ -250,8 +250,8 @@ model, a clip and a time; it never changes the model.
 - `Model::pose(clip, time)` and `rest_pose()` give a `Pose`: every node's model-space transform
   in walk order. Untargeted nodes keep their `local` exactly; globals compose parent-first. The
   same model, clip and times give bit-identical poses on the same build.
-- `ClipPlayer` is the game's per-character clock: `new` or `play` a clip by name (`Loop` or
-  `Once`; an unknown name is `ClipError::UnknownClip` and changes nothing), `set_speed`
+- `ClipPlayer` is the game's per-character clock: `new` or `play` a clip by name (`Loop`, `Once`
+  or `Ticks(n)`; an unknown name is `ClipError::UnknownClip` and changes nothing), `set_speed`
   (negative plays backwards), `advance(dt)`, `pose`. `Loop` wraps into `[0, duration)`, `Once`
   clamps to `[0, duration]`, `Ticks(n)` ignores `dt` and speed and reaches exactly the duration
   on the n-th `advance` (counted, so it does not drift). `is_finished(model)` is true once a
