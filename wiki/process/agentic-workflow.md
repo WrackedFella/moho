@@ -85,10 +85,18 @@ Action for the receiving lane: <FYI only | update <card or feature> | re-plan <I
 
 1. File the *Engine request* issue (`engine-request` + line label). State what the game
    must be able to do, not a solution. Name the consumer (feature or card ID), when it is
-   needed (milestone), and the fallback if it doesn't come (cut line or stopgap).
+   needed (milestone), and the fallback if it doesn't come (cut line or stopgap). Say
+   whether it blocks a feature the lane is building now, and name that card.
 2. Mark the dependent card as blocked by the request. Don't work around a missing engine
    feature inside engine crates, and don't copy engine code into game crates.
 3. End the reply with a relay note to the Engine project.
+
+**Blocking requests are fast-tracked.** When a game lane meets an engine requirement that
+blocks a feature it is building, the Engine lane schedules the smallest engine work that
+unblocks that card into its current milestone, ahead of engine work no game is waiting on,
+and answers with the order it runs in. It may still answer with a smaller seam than asked.
+The roadmap change still needs the user's go-ahead: fast-tracking changes priority, not
+approval.
 
 **Engine → game lanes (decision).** Decisions that need a notice: accepting, rejecting,
 deferring or reshaping a request; adding or changing a seam or public API; accepting or
