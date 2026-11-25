@@ -1,6 +1,6 @@
 //! Shipped asset files, resolved one file at a time through folders the game names.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use thiserror::Error;
 
@@ -47,17 +47,21 @@ impl AssetRoots {
     /// # Errors
     /// [`AssetError::MissingFolder`] when `path` is not a folder.
     pub fn placeholders(path: &Path) -> Result<Self, AssetError> {
-        let _ = (path, Vec::<PathBuf>::new());
-        todo!("AssetRoots::placeholders")
+        Self { layers: Vec::new() }.with_folder(path)
     }
 
     /// Adds `path` as a layer above every existing one.
     ///
     /// # Errors
     /// [`AssetError::MissingFolder`] when `path` is not a folder.
-    pub fn with_folder(self, path: &Path) -> Result<Self, AssetError> {
-        let _ = (&self.layers, path);
-        todo!("AssetRoots::with_folder")
+    pub fn with_folder(mut self, path: &Path) -> Result<Self, AssetError> {
+        if !path.is_dir() {
+            return Err(AssetError::MissingFolder {
+                path: path.to_owned(),
+            });
+        }
+        self.layers.push(path.to_owned());
+        Ok(self)
     }
 
     /// The file `name` in the highest layer that holds it, logging which layer supplied it.
@@ -66,8 +70,36 @@ impl AssetRoots {
     /// [`AssetError::InvalidName`] for an absolute name or one with a `..`, `.`, root or prefix
     /// component; [`AssetError::NotFound`] listing every folder searched.
     pub fn resolve(&self, name: &Path) -> Result<PathBuf, AssetError> {
-        let _ = (&self.layers, name);
-        todo!("AssetRoots::resolve")
+        let plain = name.components().next().is_some()
+            && name
+                .components()
+                .all(|part| matches!(part, Component::Normal(_)));
+        if !plain {
+            return Err(AssetError::InvalidName {
+                name: name.to_owned(),
+            });
+        }
+        for (index, folder) in self.layers.iter().enumerate().rev() {
+            let file = folder.join(name);
+            if file.is_file() {
+                let layer = if index == 0 {
+                    "placeholders"
+                } else {
+                    "assets folder"
+                };
+                tracing::info!(
+                    asset = %name.display(),
+                    layer,
+                    folder = %folder.display(),
+                    "asset resolved"
+                );
+                return Ok(file);
+            }
+        }
+        Err(AssetError::NotFound {
+            name: name.to_owned(),
+            searched: self.layers.iter().rev().cloned().collect(),
+        })
     }
 }
 
@@ -350,22 +382,19 @@ mod tests {
 
             let result = roots.resolve(Path::new("thing.bin"));
 
-            match present.iter().rposition(|has| *has) {
-                Some(top) => {
-                    proptest::prop_assert_eq!(
-                        result.unwrap(),
-                        dirs[top].path().join("thing.bin")
-                    );
-                }
-                None => {
-                    let searched: Vec<PathBuf> =
-                        dirs.iter().rev().map(|d| d.path().to_owned()).collect();
-                    let is_listing = matches!(
-                        &result,
-                        Err(AssetError::NotFound { searched: s, .. }) if s == &searched
-                    );
-                    proptest::prop_assert!(is_listing, "{result:?}");
-                }
+            if let Some(top) = present.iter().rposition(|has| *has) {
+                proptest::prop_assert_eq!(
+                    result.unwrap(),
+                    dirs[top].path().join("thing.bin")
+                );
+            } else {
+                let searched: Vec<PathBuf> =
+                    dirs.iter().rev().map(|d| d.path().to_owned()).collect();
+                let is_listing = matches!(
+                    &result,
+                    Err(AssetError::NotFound { searched: s, .. }) if s == &searched
+                );
+                proptest::prop_assert!(is_listing, "{result:?}");
             }
         }
     }

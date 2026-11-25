@@ -39,8 +39,10 @@ impl LevelChoice {
     /// # Errors
     /// [`AssetError`] when a named level's file is in no asset folder.
     pub fn path(&self, assets: &AssetRoots) -> Result<PathBuf, AssetError> {
-        let _ = (self, assets);
-        todo!("LevelChoice::path")
+        match self {
+            Self::Named(level) => assets.resolve(Path::new(level.file)),
+            Self::Path(path) => Ok(path.clone()),
+        }
     }
 }
 
