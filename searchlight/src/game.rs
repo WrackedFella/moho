@@ -980,6 +980,21 @@ impl SearchlightGame {
                 MenuEvent::DetailsToggled { .. }
                 | MenuEvent::Picked { .. }
                 | MenuEvent::ModeChosen { .. } => {}
+                MenuEvent::ActionPicked {
+                    action: MenuAction::ItemAction(action),
+                    item: MenuAction::Item(id),
+                    list,
+                    target,
+                } => {
+                    let target = target.and_then(|target| match target.item {
+                        MenuAction::Item(id) => Some((id, target.list)),
+                        _ => None,
+                    });
+                    // A refused action leaves the rows as they were, and the answer is the same.
+                    self.items.act(action, id, list, target);
+                    let lists = self.items.lists();
+                    self.stage.shell().menu_mut().set_lists(lists);
+                }
                 MenuEvent::MoveRequested { .. }
                 | MenuEvent::ActionPicked { .. }
                 | MenuEvent::Chosen(MenuAction::Item(_) | MenuAction::ItemAction(_)) => {}

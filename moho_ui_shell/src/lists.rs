@@ -94,12 +94,33 @@ struct View {
     remainder: f32,
 }
 
-/// The row the player has picked up: its list and its index there.
-#[derive(Clone, Copy, Debug)]
-struct Held {
+/// The row the player has picked up: its list and its index there, and why.
+#[derive(Clone, Debug)]
+struct Held<A> {
     list: ListId,
     row: usize,
+    purpose: Purpose<A>,
 }
+
+/// What a held row is for.
+#[derive(Clone, Debug)]
+enum Purpose<A> {
+    /// To be placed on another list.
+    Move,
+    /// A target pick for `action`, whose label is `label`.
+    Action { action: A, label: String },
+}
+
+/// The open action list of a row: its list, its row index there and its focused action.
+#[derive(Clone, Copy, Debug)]
+struct OpenActions {
+    list: ListId,
+    row: usize,
+    focus: usize,
+}
+
+/// Width of the action list.
+const ACTION_WIDTH: f32 = 200.0;
 
 /// An item lists screen: the game's data, and the focus, scroll and held row the shell keeps.
 #[derive(Debug)]
@@ -109,7 +130,8 @@ pub(crate) struct OpenLists<A> {
     views: Vec<View>,
     /// The index of the focused list.
     focus: usize,
-    held: Option<Held>,
+    held: Option<Held<A>>,
+    actions: Option<OpenActions>,
     /// The window size of the last layout, for the wheel, which knows none.
     size: Cell<[f32; 2]>,
 }
@@ -155,6 +177,7 @@ impl<A> OpenLists<A> {
             views,
             focus: 0,
             held: None,
+            actions: None,
             size: Cell::new(DEFAULT_SIZE),
         }
     }
@@ -205,16 +228,115 @@ impl<A> OpenLists<A> {
                 },
                 |(at, _)| at,
             );
-        self.held = self.held.and_then(|held| {
+        let held = self.held.take();
+        self.held = held.and_then(|held| {
             let (_, before) = list_by_id(&old.lists, held.list)?;
             let item = &before.rows.get(held.row)?.item;
             let (_, now) = list_by_id(&self.data.lists, held.list)?;
             let row = now.rows.iter().position(|row| row.item == *item)?;
-            Some(Held {
-                list: held.list,
+            if let Purpose::Action { action, .. } = &held.purpose
+                && !now.rows[row].actions.iter().any(|a| a.action == *action)
+            {
+                return None;
+            }
+            Some(Held { row, ..held })
+        });
+        let open = self.actions.take();
+        self.actions = open.and_then(|open| {
+            let (_, before) = list_by_id(&old.lists, open.list)?;
+            let old_row = before.rows.get(open.row)?;
+            let focused = &old_row.actions.get(open.focus)?.action;
+            let (_, now) = list_by_id(&self.data.lists, open.list)?;
+            let row = now
+                .rows
+                .iter()
+                .position(|row| row.item == old_row.item && !row.actions.is_empty())?;
+            let actions = &now.rows[row].actions;
+            let focus = actions
+                .iter()
+                .position(|a| a.action == *focused)
+                .unwrap_or_else(|| open.focus.min(actions.len() - 1));
+            Some(OpenActions {
+                list: open.list,
                 row,
+                focus,
             })
         });
+    }
+
+    /// Where the open action list is on a window `size` points across: the left edge of its
+    /// column, the top of its first action and how many actions it has.
+    fn action_layout(&self, size: [f32; 2]) -> Option<(f32, f32, usize)> {
+        let open = self.actions?;
+        let (index, list) = list_by_id(&self.data.lists, open.list)?;
+        let count = list.rows.get(open.row)?.actions.len();
+        let left = left_of(index, self.data.lists.len(), size[0]);
+        let x = if index == 0 {
+            left - TOOLTIP_GAP - ACTION_WIDTH
+        } else {
+            left + LIST_WIDTH + TOOLTIP_GAP
+        };
+        let scroll = self.views[index].scroll.get();
+        let top = BAND + ROW_HEIGHT * (open.row as f32 - scroll as f32);
+        let height = ROW_HEIGHT * count as f32;
+        let bottom = size[1] - BAND;
+        Some((x, top.min(bottom - height), count))
+    }
+
+    /// The rectangles of the open action list's actions, if one is open.
+    fn action_rects(&self, size: [f32; 2]) -> Vec<Rect> {
+        let Some((x, top, count)) = self.action_layout(size) else {
+            return Vec::new();
+        };
+        (0..count)
+            .map(|i| Rect {
+                min: [x, top + ROW_HEIGHT * i as f32],
+                max: [x + ACTION_WIDTH, top + ROW_HEIGHT * (i + 1) as f32],
+            })
+            .collect()
+    }
+
+    /// The action under `point` in the open action list.
+    fn action_at(&self, point: [f32; 2], size: [f32; 2]) -> Option<usize> {
+        self.settle_all(size);
+        self.action_rects(size).iter().position(|r| {
+            point[0] > r.min[0] && point[0] < r.max[0] && point[1] > r.min[1] && point[1] < r.max[1]
+        })
+    }
+
+    /// Opens the actions of the focused row, if it has any.
+    fn open_actions(&mut self) {
+        let Some(list) = self.data.lists.get(self.focus) else {
+            return;
+        };
+        let row = self.views[self.focus].focus;
+        if list
+            .rows
+            .get(row)
+            .is_some_and(|row| !row.actions.is_empty())
+        {
+            self.actions = Some(OpenActions {
+                list: list.id,
+                row,
+                focus: 0,
+            });
+        }
+    }
+
+    /// A right press at `point`: closes the actions, lets go of a held row, or focuses the row
+    /// under `point` and opens its actions.
+    pub(crate) fn right_click(&mut self, point: [f32; 2], size: [f32; 2]) {
+        if self.actions.take().is_some() {
+            return;
+        }
+        if self.held.is_some() {
+            self.release();
+            return;
+        }
+        if let Some((list, Some(row))) = self.hit(point, size) {
+            self.set_focus(list, row);
+            self.open_actions();
+        }
     }
 
     /// Clamps the scroll of list `index` for a window `size` points across, then brings its
@@ -276,6 +398,14 @@ impl<A> OpenLists<A> {
 
     /// Focuses the row under `point`; a point over no row keeps the focus.
     pub(crate) fn hover(&mut self, point: [f32; 2], size: [f32; 2]) {
+        if self.actions.is_some() {
+            if let Some(at) = self.action_at(point, size)
+                && let Some(open) = &mut self.actions
+            {
+                open.focus = at;
+            }
+            return;
+        }
         if let Some((list, Some(row))) = self.hit(point, size) {
             self.set_focus(list, row);
         }
@@ -283,6 +413,9 @@ impl<A> OpenLists<A> {
 
     /// Scrolls the focused list by `rows` rows, keeping a fractional remainder.
     pub(crate) fn scroll(&mut self, rows: f32) {
+        if self.actions.is_some() {
+            return;
+        }
         let size = self.size.get();
         self.settle(self.focus, size);
         let (Some(list), Some(view)) = (
@@ -297,9 +430,14 @@ impl<A> OpenLists<A> {
         view.remainder = remainder;
     }
 
-    /// Lets go of the held row.
+    /// Lets go of the held row; a target pick focuses its source row again.
     pub(crate) fn release(&mut self) {
-        self.held = None;
+        if let Some(held) = self.held.take()
+            && matches!(held.purpose, Purpose::Action { .. })
+            && let Some((index, _)) = list_by_id(&self.data.lists, held.list)
+        {
+            self.set_focus(index, held.row);
+        }
     }
 
     /// The text of every list on a window `size` points across: each title in the top band, the
@@ -333,12 +471,15 @@ impl<A> OpenLists<A> {
                 let color = if focused { FOCUS_COLOR } else { COLOR };
                 let held = self
                     .held
-                    .is_some_and(|held| held.list == list.id && held.row == row);
+                    .as_ref()
+                    .filter(|held| held.list == list.id && held.row == row);
                 let item = &list.rows[row];
-                let label = if held {
-                    format!("{HELD_MARK}{}", item.label)
-                } else {
-                    item.label.clone()
+                let label = match held.map(|held| &held.purpose) {
+                    Some(Purpose::Action { label: action, .. }) => {
+                        format!("{HELD_MARK}{action}: {}", item.label)
+                    }
+                    Some(Purpose::Move) => format!("{HELD_MARK}{}", item.label),
+                    None => item.label.clone(),
                 };
                 texts.push(text(label, Anchor::Left, left, y, SETTING_SIZE, color));
                 if let Some(count) = item.count {
@@ -351,7 +492,10 @@ impl<A> OpenLists<A> {
                         color,
                     ));
                 }
-                if focused && let Some(tip) = &item.tooltip {
+                if focused
+                    && self.actions.is_none()
+                    && let Some(tip) = &item.tooltip
+                {
                     tooltip = Some((index == 0, left, y, tip.clone()));
                 }
             }
@@ -363,6 +507,28 @@ impl<A> OpenLists<A> {
                 (Anchor::Left, left + LIST_WIDTH + TOOLTIP_GAP)
             };
             texts.push(text(tip, anchor, x, y, SETTING_SIZE, COLOR));
+        }
+        if let (Some(open), Some((x, top, _))) = (self.actions, self.action_layout(size))
+            && let Some((index, list)) = list_by_id(&self.data.lists, open.list)
+            && let Some(row) = list.rows.get(open.row)
+        {
+            let (anchor, x) = if index == 0 {
+                (Anchor::Right, x + ACTION_WIDTH - size[0])
+            } else {
+                (Anchor::Left, x)
+            };
+            for (at, action) in row.actions.iter().enumerate() {
+                let color = if at == open.focus { FOCUS_COLOR } else { COLOR };
+                let y = top + ROW_HEIGHT * at as f32 + ROW_HEIGHT / 2.0;
+                texts.push(text(
+                    action.label.clone(),
+                    anchor,
+                    x,
+                    y,
+                    SETTING_SIZE,
+                    color,
+                ));
+            }
         }
         texts
     }
@@ -387,6 +553,7 @@ impl<A> OpenLists<A> {
                 });
             }
         }
+        rects.extend(self.action_rects(size));
         rects
     }
 }
@@ -396,7 +563,11 @@ impl<A: Clone> OpenLists<A> {
     /// wrap; a non-repeat Enter picks up or places; a non-repeat Escape lets go of the held row
     /// or chooses the back action; a non-repeat right click lets go.
     pub(crate) fn on_key(&mut self, input: Input, repeat: bool) -> Option<MenuEvent<A>> {
+        if self.actions.is_some() {
+            return self.on_key_in_actions(input, repeat);
+        }
         match input {
+            Input::Key(Key::Space) if !repeat && self.held.is_none() => self.open_actions(),
             Input::Key(Key::ArrowDown) => self.step_row(true),
             Input::Key(Key::ArrowUp) => self.step_row(false),
             Input::Key(Key::ArrowLeft) => self.step_list(false),
@@ -410,7 +581,8 @@ impl<A: Clone> OpenLists<A> {
                 return self.press_on(self.focus, row);
             }
             Input::Key(Key::Escape) if !repeat => {
-                return if self.held.take().is_some() {
+                return if self.held.is_some() {
+                    self.release();
                     None
                 } else {
                     self.data.back.clone().map(MenuEvent::Chosen)
@@ -425,11 +597,78 @@ impl<A: Clone> OpenLists<A> {
     /// A left press at `point`: picks up the row under it, or places the held row on the list
     /// column under it.
     pub(crate) fn click(&mut self, point: [f32; 2], size: [f32; 2]) -> Option<MenuEvent<A>> {
+        if self.actions.is_some() {
+            let at = self.action_at(point, size);
+            if let (Some(at), Some(open)) = (at, &mut self.actions) {
+                open.focus = at;
+                return self.pick_action();
+            }
+            self.actions = None;
+            return None;
+        }
         let (list, row) = self.hit(point, size)?;
         if self.held.is_none() {
             self.set_focus(list, row?);
         }
         self.press_on(list, row)
+    }
+
+    /// The keys while the action list is open: Up and Down move among the actions and wrap, a
+    /// non-repeat Enter picks the focused one, and a non-repeat Escape, Space or right click
+    /// closes the list. Nothing else does anything.
+    fn on_key_in_actions(&mut self, input: Input, repeat: bool) -> Option<MenuEvent<A>> {
+        let count = self.action_count();
+        match input {
+            Input::Key(Key::ArrowDown | Key::ArrowUp) if count > 0 => {
+                if let Some(open) = &mut self.actions {
+                    open.focus = wrap(open.focus, count, input == Input::Key(Key::ArrowDown));
+                }
+            }
+            Input::Key(Key::Enter) if !repeat => return self.pick_action(),
+            Input::Key(Key::Escape | Key::Space) | Input::Mouse(MouseButton::Right) if !repeat => {
+                self.actions = None;
+            }
+            _ => {}
+        }
+        None
+    }
+
+    /// How many actions the open action list has.
+    fn action_count(&self) -> usize {
+        self.actions
+            .and_then(|open| {
+                let (_, list) = list_by_id(&self.data.lists, open.list)?;
+                Some(list.rows.get(open.row)?.actions.len())
+            })
+            .unwrap_or(0)
+    }
+
+    /// Picks the focused action and closes the list: an `Itself` action is sent at once, an
+    /// `AnotherRow` action holds the row to ask for a second one.
+    fn pick_action(&mut self) -> Option<MenuEvent<A>> {
+        let open = self.actions.take()?;
+        let (_, list) = list_by_id(&self.data.lists, open.list)?;
+        let row = list.rows.get(open.row)?;
+        let picked = row.actions.get(open.focus)?;
+        match picked.target {
+            ActionTarget::Itself => Some(MenuEvent::ActionPicked {
+                action: picked.action.clone(),
+                item: row.item.clone(),
+                list: open.list,
+                target: None,
+            }),
+            ActionTarget::AnotherRow => {
+                self.held = Some(Held {
+                    list: open.list,
+                    row: open.row,
+                    purpose: Purpose::Action {
+                        action: picked.action.clone(),
+                        label: picked.label.clone(),
+                    },
+                });
+                None
+            }
+        }
     }
 
     fn step_row(&mut self, forward: bool) {
@@ -455,13 +694,33 @@ impl<A: Clone> OpenLists<A> {
     /// lets go on the held row's own list, and otherwise asks to move the held row here.
     fn press_on(&mut self, index: usize, row: Option<usize>) -> Option<MenuEvent<A>> {
         let id = self.data.lists.get(index)?.id;
-        let Some(held) = self.held else {
+        let Some(held) = self.held.clone() else {
             self.held = Some(Held {
                 list: id,
                 row: row?,
+                purpose: Purpose::Move,
             });
             return None;
         };
+        if let Purpose::Action { action, .. } = held.purpose {
+            let row = row?;
+            self.held = None;
+            if (held.list, held.row) == (id, row) {
+                return None;
+            }
+            let (_, from) = list_by_id(&self.data.lists, held.list)?;
+            let item = from.rows.get(held.row)?.item.clone();
+            let target = RowRef {
+                item: self.data.lists[index].rows[row].item.clone(),
+                list: id,
+            };
+            return Some(MenuEvent::ActionPicked {
+                action,
+                item,
+                list: held.list,
+                target: Some(target),
+            });
+        }
         self.held = None;
         if held.list == id {
             return None;

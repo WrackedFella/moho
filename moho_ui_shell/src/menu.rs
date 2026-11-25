@@ -1106,7 +1106,7 @@ impl<A: Clone> MenuStack<A> {
         let open = match self.screens.last_mut() {
             Some(Layer::Menu(open)) => open,
             Some(Layer::Lists(open)) => {
-                open.release();
+                open.right_click(point, size);
                 return;
             }
             None => return,

@@ -2,7 +2,7 @@
 //! and the game's rule for moving a row between them. Stands in until the inventory owns the
 //! screen.
 
-use moho_ui_shell::{ItemList, ItemLists, ListId, ListRow};
+use moho_ui_shell::{ActionTarget, ItemList, ItemLists, ListId, ListRow, RowAction};
 
 use crate::menu::MenuAction;
 
@@ -22,13 +22,19 @@ pub enum ItemAction {
     LoadFromStack,
 }
 
-/// One stack of an item: its stable id, label, count and description.
+/// The rounds a magazine holds.
+const MAGAZINE_CAPACITY: u32 = 30;
+/// The id of the player's rounds, the only valid target of loading a magazine.
+const ROUNDS: u32 = 2;
+
+/// One stack of an item: its stable id, label, count, description and the action it offers.
 #[derive(Clone, Debug)]
 struct Item {
     id: u32,
     label: String,
     count: u32,
     description: String,
+    action: Option<ItemAction>,
 }
 
 impl Item {
@@ -38,7 +44,29 @@ impl Item {
             label: label.to_owned(),
             count,
             description: description.to_owned(),
+            action: None,
         }
+    }
+
+    fn offering(mut self, action: ItemAction) -> Self {
+        self.action = Some(action);
+        self
+    }
+
+    /// The row action this item offers, if any.
+    fn row_actions(&self) -> Vec<RowAction<MenuAction>> {
+        let Some(action) = self.action else {
+            return Vec::new();
+        };
+        let (label, target) = match action {
+            ItemAction::Use => ("Use", ActionTarget::Itself),
+            ItemAction::LoadFromStack => ("Load from stack", ActionTarget::AnotherRow),
+        };
+        vec![RowAction {
+            label: label.to_owned(),
+            action: MenuAction::ItemAction(action),
+            target,
+        }]
     }
 }
 
@@ -58,7 +86,10 @@ impl Default for DemoItems {
 impl DemoItems {
     /// The player's list with Bandage 3 and Rounds 60, and the container with Rifle 1 and filler.
     pub fn new() -> Self {
-        let mut container = vec![Item::new(10, "Rifle", 1, "Semi-auto.\nNeeds rounds.")];
+        let mut container = vec![
+            Item::new(10, "Rifle", 1, "Semi-auto.\nNeeds rounds."),
+            Item::new(11, "Magazine", 0, "Holds 30 rounds.").offering(ItemAction::LoadFromStack),
+        ];
         container.extend((1..=FILLER_ROWS).map(|n| {
             Item::new(
                 100 + n,
@@ -69,8 +100,9 @@ impl DemoItems {
         }));
         Self {
             player: vec![
-                Item::new(1, "Bandage", 3, "Clean cloth.\nStops bleeding."),
-                Item::new(2, "Rounds", 60, "Loose rifle rounds."),
+                Item::new(1, "Bandage", 3, "Clean cloth.\nStops bleeding.")
+                    .offering(ItemAction::Use),
+                Item::new(ROUNDS, "Rounds", 60, "Loose rifle rounds."),
             ],
             container,
         }
@@ -88,7 +120,7 @@ impl DemoItems {
                     count: Some(item.count),
                     tooltip: Some(item.description.clone()),
                     item: MenuAction::Item(item.id),
-                    actions: vec![],
+                    actions: item.row_actions(),
                 })
                 .collect(),
         };
@@ -111,8 +143,48 @@ impl DemoItems {
         list: ListId,
         target: Option<(u32, ListId)>,
     ) -> bool {
-        let _ = (action, id, list, target);
-        false
+        let offers = |items: &[Item]| {
+            items
+                .iter()
+                .position(|item| item.id == id && item.action == Some(action))
+        };
+        match action {
+            ItemAction::Use => {
+                let Some(items) = self.items_mut(list) else {
+                    return false;
+                };
+                let Some(at) = offers(items) else {
+                    return false;
+                };
+                items[at].count -= 1;
+                if items[at].count == 0 {
+                    items.remove(at);
+                }
+                true
+            }
+            ItemAction::LoadFromStack => {
+                if list != CONTAINER || target != Some((ROUNDS, PLAYER)) {
+                    return false;
+                }
+                let (Some(magazine), Some(rounds)) = (
+                    offers(&self.container),
+                    self.player.iter().position(|item| item.id == ROUNDS),
+                ) else {
+                    return false;
+                };
+                let moved = (MAGAZINE_CAPACITY - self.container[magazine].count)
+                    .min(self.player[rounds].count);
+                if moved == 0 {
+                    return false;
+                }
+                self.container[magazine].count += moved;
+                self.player[rounds].count -= moved;
+                if self.player[rounds].count == 0 {
+                    self.player.remove(rounds);
+                }
+                true
+            }
+        }
     }
 
     fn items_mut(&mut self, list: ListId) -> Option<&mut Vec<Item>> {
