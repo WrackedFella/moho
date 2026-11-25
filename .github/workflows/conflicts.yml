@@ -1,0 +1,130 @@
+name: Conflicts
+
+# Keeps open agent PRs mergeable as `dev` moves. On every push to `dev`, a script asks
+# GitHub whether each open agent PR still merges (one REST read per PR, no model call). A
+# PR that merges cleanly is left alone: required checks are not strict and the agent merge
+# is pinned to the reviewed SHA, so a stale but clean branch needs nothing. Only a PR in
+# conflict starts a run, which merges `dev` into its branch, resolves the conflict, runs
+# the gate and pushes; the PR review then runs again on the new head. A conflict that
+# needs a decision is handed to a person with `needs-human`. Decision: claude-skills D0031.
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: write
+  id-token: write
+
+concurrency:
+  group: conflicts
+  cancel-in-progress: false
+
+jobs:
+  find:
+    name: Find conflicts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      prs: ${{ steps.find.outputs.prs }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      # GitHub computes `mergeable` in the background after a push to the base, so a read
+      # can return null; read again until it settles.
+      - name: Find agent PRs in conflict
+        id: find
+        run: |
+          dirty=()
+          for pr in $(gh api "repos/$GH_REPO/pulls?state=open&base=dev&per_page=100" --paginate \
+              --jq '.[] | select(.user.login == "claude[bot]" or .user.login == "github-actions[bot]")
+                    | select([.labels[].name] | any(. == "needs-human" or . == "agent-paused") | not) | .number'); do
+            state=unknown
+            for _ in 1 2 3 4 5 6; do
+              state=$(gh api "repos/$GH_REPO/pulls/$pr" --jq '.mergeable_state')
+              [ "$state" != unknown ] && break
+              sleep 10
+            done
+            echo "#$pr: $state" | tee -a "$GITHUB_STEP_SUMMARY"
+            [ "$state" = dirty ] && dirty+=("$pr")
+          done
+          echo "prs=$(printf '%s\n' "${dirty[@]}" | jq -Rsc 'split("\n") | map(select(length > 0) | tonumber)')" >> "$GITHUB_OUTPUT"
+
+  resolve:
+    name: Resolve
+    needs: find
+    if: needs.find.outputs.prs != '[]' && needs.find.outputs.prs != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        pr: ${{ fromJSON(needs.find.outputs.prs) }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PR: ${{ matrix.pr }}
+    steps:
+      - name: Read the PR
+        id: pr
+        run: |
+          read -r ref sha < <(gh api "repos/$GH_REPO/pulls/$PR" --jq '[.head.ref, .head.sha] | @tsv')
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.ref }}
+          fetch-depth: 0
+      - name: Install toolchain
+        run: |
+          bash scripts/cloud-tools.sh --force
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        env:
+          CARGO_TERM_COLOR: always
+          CARGO_INCREMENTAL: 0
+          RUST_BACKTRACE: 1
+        with:
+          shared-key: gate-ubuntu-latest
+          save-if: false
+      - uses: anthropics/claude-code-action@v1
+        id: claude
+        env:
+          CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # A push to dev is usually the reviewer App's merge, so it is the actor.
+          allowed_bots: github-actions,moho-reviewer
+          display_report: true
+          prompt: |
+            PR #${{ matrix.pr }} (branch `${{ steps.pr.outputs.ref }}`, checked out) no longer merges into `dev`.
+            1. `git fetch origin dev` and `git merge origin/dev`.
+            2. Resolve each conflict so both sides' intent survives. Read the PR's linked issue and the dev commits that touched the file when the intent is unclear. If a conflict needs a product or design decision, or would change what a test asserts, run `git merge --abort`, comment on the PR naming each file and why (`gh pr comment`), and stop.
+            3. Run `just check` and fix only what the merge broke.
+            4. Commit the merge with a body line per resolved file, and `git push`. Never rebase, amend or force-push.
+          claude_args: |
+            --max-turns 60
+            --append-system-prompt "This is a headless run that ends when you stop. Never end your turn with a status message."
+            --allowedTools "Bash(git:*),Bash(just:*),Bash(cargo:*),Bash(gh pr:*),Bash(gh issue view:*),Bash(gh api:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(rg:*),Bash(grep:*),Edit,Write"
+            --disallowedTools "Bash(git push --force:*),Bash(git push -f:*),Bash(git push --force-with-lease:*),Bash(git push origin --force:*),Bash(git push origin -f:*),Bash(git rebase:*),Bash(git commit --amend:*),Bash(gh pr merge:*)"
+      # A new head gets a fresh review (reviews are pinned to the reviewed SHA); no new head
+      # means the run stopped on a conflict that needs a person.
+      - name: Review again or hand over
+        if: always()
+        run: |
+          now=$(gh api "repos/$GH_REPO/pulls/$PR" --jq .head.sha)
+          if [ "$now" != "${{ steps.pr.outputs.sha }}" ]; then
+            echo "PR #$PR moved to $now; dispatching its review." >> "$GITHUB_STEP_SUMMARY"
+            gh workflow run pr-review.yml --ref "$(gh api "repos/$GH_REPO" --jq .default_branch)" -f pr="$PR"
+          else
+            gh label create needs-human --color D93F0B --description "Agent work stopped; a person decides" 2>/dev/null || true
+            gh pr edit "$PR" --add-label needs-human
+            gh pr comment "$PR" --body "This PR conflicts with \`dev\` and the conflict was not resolved automatically; a person resolves it. Run: $GITHUB_SERVER_URL/$GH_REPO/actions/runs/$GITHUB_RUN_ID"$'\n\n---\n_Generated by [Claude Code](https://claude.ai/code)_'
+            echo "PR #$PR still conflicts; labelled needs-human." >> "$GITHUB_STEP_SUMMARY"
+          fi
