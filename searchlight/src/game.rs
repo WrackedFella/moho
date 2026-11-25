@@ -1008,7 +1008,7 @@ impl SearchlightGame {
                     slot: Slot::Primary,
                     input,
                 } => self.captured(action, input),
-                MenuEvent::Captured { .. } | MenuEvent::Cleared { .. } => self.show_controls(None),
+                MenuEvent::Captured { .. } | MenuEvent::Cleared { .. } => self.show_controls(),
                 MenuEvent::DetailsToggled { .. }
                 | MenuEvent::Picked { .. }
                 | MenuEvent::ModeChosen { .. } => {}
@@ -1034,10 +1034,10 @@ impl SearchlightGame {
         }
     }
 
-    /// Shows the Controls page's rows from the draft, with `refusal` noted on one action's row.
-    fn show_controls(&mut self, refusal: Option<(SearchlightAction, &str)>) {
+    /// Shows the Controls page's rows from the draft.
+    fn show_controls(&mut self) {
         if let Some(draft) = &self.controls {
-            let rows = controls_rows(draft, refusal);
+            let rows = controls_rows(draft);
             self.stage.shell().menu_mut().set_items(rows);
         }
     }
@@ -1053,7 +1053,7 @@ impl SearchlightGame {
             self.stage.shell().menu_mut().push(dialog);
             return;
         }
-        self.show_controls(None);
+        self.show_controls();
     }
 
     /// Closes the conflict dialog, answers it through the draft and refreshes the Controls rows.
@@ -1066,7 +1066,7 @@ impl SearchlightGame {
             }
         }
         self.stage.shell().menu_mut().pop();
-        self.show_controls(None);
+        self.show_controls();
     }
 
     /// Makes the drafted bindings live, replacing the action map, and saves them; a failed save

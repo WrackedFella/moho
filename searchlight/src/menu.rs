@@ -121,20 +121,14 @@ pub fn settings_screen(settings: EngineSettings, head_bob: HeadBobLevel) -> Menu
 }
 
 /// The Controls page's rows for `draft`: one per action with its two slots, then Apply and Back.
-/// `refusal` puts a note on one action's row.
-pub fn controls_rows(
-    draft: &ControlsDraft,
-    refusal: Option<(SearchlightAction, &str)>,
-) -> Vec<MenuItem<MenuAction>> {
+pub fn controls_rows(draft: &ControlsDraft) -> Vec<MenuItem<MenuAction>> {
     let mut items: Vec<MenuItem<MenuAction>> = SearchlightAction::ALL
         .iter()
         .map(|&action| MenuItem::Control {
             label: label(action).to_owned(),
             action: MenuAction::Rebind(action),
             slots: draft.slots(action),
-            note: refusal
-                .filter(|(refused, _)| *refused == action)
-                .map(|(_, note)| note.to_owned()),
+            note: None,
             chevron: None,
             mode: None,
         })
@@ -148,7 +142,7 @@ pub fn controls_rows(
 pub fn controls_screen(draft: &ControlsDraft) -> MenuScreen<MenuAction> {
     MenuScreen {
         title: Some("Controls".to_owned()),
-        items: controls_rows(draft, None),
+        items: controls_rows(draft),
         back: Some(MenuAction::Back),
         settings: None,
     }
