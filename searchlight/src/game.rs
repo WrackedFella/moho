@@ -942,18 +942,22 @@ impl SearchlightGame {
         self.screen = Screen::Playing;
         self.stage.shell().menu_mut().clear();
         // Whatever was pressed or moved over the menu must not act in the arena.
-        self.input.release_all();
+        self.release_held_input();
         self.input.discard_edges();
         self.input.reset_look();
-        self.check_gear_held = false;
         self.stage.capture_cursor();
+    }
+
+    /// Lets go of every held input and the check-gear hold that mirrors it.
+    fn release_held_input(&mut self) {
+        self.input.release_all();
+        self.check_gear_held = false;
     }
 
     fn pause(&mut self) {
         self.screen = Screen::Paused;
-        self.check_gear_held = false;
         self.stage.shell().menu_mut().push(pause_screen());
-        self.input.release_all();
+        self.release_held_input();
         self.input.discard_edges();
         self.input.reset_look();
         self.stage.release_cursor();
@@ -1389,10 +1393,7 @@ impl SearchlightGame {
         match routing {
             // A key held as the console opened would otherwise stay held: its release goes to
             // the console.
-            Routing::Opened => {
-                self.input.release_all();
-                self.check_gear_held = false;
-            }
+            Routing::Opened => self.release_held_input(),
             Routing::Console | Routing::Closed => {}
             Routing::Menu => self.answer_menu(ctx),
             Routing::Game if self.screen != Screen::Playing => {}
