@@ -161,6 +161,33 @@ mod tests {
     }
 
     #[test]
+    fn the_assets_value_is_never_taken_as_the_level() {
+        let value_only = parse(os(&["--assets", "arena"])).unwrap();
+        let mixed = parse(os(&["a", "--assets", "d", "b"])).unwrap();
+
+        assert_eq!(
+            value_only,
+            Launch {
+                level: None,
+                assets: Some(PathBuf::from("arena"))
+            }
+        );
+        assert_eq!(
+            mixed,
+            Launch {
+                level: Some("a".into()),
+                assets: Some(PathBuf::from("d"))
+            }
+        );
+    }
+
+    #[test]
+    fn launch_errors_name_the_option() {
+        assert!(LaunchError::MissingValue.to_string().contains("--assets"));
+        assert!(LaunchError::Repeated.to_string().contains("--assets"));
+    }
+
+    #[test]
     fn named_folder_supplies_its_arena_and_placeholders_the_shot() {
         let dir = folder_with(&["arena.glb"]);
         let launch = launch_naming(dir.path());

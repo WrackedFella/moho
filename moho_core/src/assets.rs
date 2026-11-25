@@ -215,6 +215,50 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_name_is_invalid_not_the_layer_folder() {
+        let placeholders = folder_with(&["arena.glb"]);
+        let roots = roots(placeholders.path(), &[]);
+
+        let error = roots.resolve(Path::new("")).unwrap_err();
+
+        assert!(
+            matches!(&error, AssetError::InvalidName { name } if name == Path::new("")),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_trailing_slash_name_resolves_to_nothing() {
+        let placeholders = folder_with(&["models/rifle.glb", "plain"]);
+        let roots = roots(placeholders.path(), &[]);
+
+        for name in ["models/", "plain/"] {
+            let result = roots.resolve(Path::new(name));
+
+            assert!(
+                matches!(
+                    result,
+                    Err(AssetError::NotFound { .. } | AssetError::InvalidName { .. })
+                ),
+                "{name}: {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_failed_resolve_logs_nothing() {
+        let placeholders = folder_with(&[]);
+        let roots = roots(placeholders.path(), &[]);
+
+        let log = logged(|| {
+            roots.resolve(Path::new("../x.glb")).unwrap_err();
+            roots.resolve(Path::new("nope.glb")).unwrap_err();
+        });
+
+        assert_eq!(log, "");
+    }
+
+    #[test]
     fn resolve_logs_one_info_line_naming_asset_layer_and_folder() {
         let placeholders = folder_with(&["rifle_shot.wav"]);
         let folder = folder_with(&["arena.glb"]);
