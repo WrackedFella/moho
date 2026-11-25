@@ -46,6 +46,7 @@ pub fn status_text(feedback: &Feedback) -> Option<String> {
         Feedback::ReloadDone => Some("reloaded".to_owned()),
         Feedback::EnemyFired { .. }
         | Feedback::PlayerHit { .. }
+        | Feedback::Impact { .. }
         | Feedback::EnemyDied { .. }
         | Feedback::PlayerDied => None,
     }

@@ -157,6 +157,8 @@ pub enum Feedback {
     PlayerHit { part: BodyPart, from: Vec3 },
     /// The enemy numbered `target` died and left the arena.
     EnemyDied { target: u16 },
+    /// A shot struck level geometry or a control at `point`, whose surface faces along `normal`.
+    Impact { point: Vec3, normal: Vec3 },
     /// The player died.
     PlayerDied,
 }
@@ -916,7 +918,8 @@ impl SearchlightSim {
 
     /// Resolves the player's shot along `origin` to `end`, which stopped at `strike`: counts
     /// near misses on the enemies it passed, once each per `near_missed`, and lands a hit on
-    /// a part it struck.
+    /// a part it struck. A strike on level geometry or a control queues a `Feedback::Impact`
+    /// with the strike's point and normal.
     fn land_player_shot(
         &mut self,
         origin: Vec3,
@@ -927,7 +930,14 @@ impl SearchlightSim {
     ) {
         let hit = strike.and_then(|strike| match strike.tag {
             SurfaceTag::Part { target, part } => Some((target, part)),
-            _ => None,
+            SurfaceTag::World | SurfaceTag::Control(_) => {
+                self.outbox.push(Feedback::Impact {
+                    point: strike.point,
+                    normal: strike.normal,
+                });
+                None
+            }
+            SurfaceTag::Player(_) => None,
         });
         let struck = hit.map(|(target, _)| usize::from(target));
         self.record_near_misses(origin, end, struck, from, near_missed);
@@ -3005,6 +3015,137 @@ mod tests {
         assert!(sim.rounds_in_flight().is_empty());
     }
 
+    /// Every impact in `ticks`: its tick, point and normal.
+    fn impacts_in(ticks: &[Vec<Feedback>]) -> Vec<(usize, Vec3, Vec3)> {
+        ticks
+            .iter()
+            .enumerate()
+            .flat_map(|(tick, feedback)| {
+                feedback.iter().filter_map(move |fb| match fb {
+                    Feedback::Impact { point, normal } => Some((tick, *point, *normal)),
+                    _ => None,
+                })
+            })
+            .collect()
+    }
+
+    /// A wall 3 m ahead of the player at the origin, facing the player.
+    const WALL_AHEAD: (Vec3, Vec3) = (Vec3::new(-5.0, 0.0, 3.0), Vec3::new(5.0, 4.0, 3.2));
+
+    #[test]
+    fn a_round_striking_a_wall_reports_an_impact_with_the_wall_s_normal() {
+        let mut sim = control_sim(&[WALL_AHEAD], &[]);
+
+        let ticks = fire_and_wait(&mut sim, pull(), 30);
+
+        let impacts = impacts_in(&ticks);
+        let &[(_, point, normal)] = &impacts[..] else {
+            panic!("expected one impact: {ticks:?}");
+        };
+        assert!((point.z - 3.0).abs() < 0.05, "{point}");
+        assert!(point.x.abs() < 0.05, "{point}");
+        assert!(normal.distance(Vec3::NEG_Z) < 1e-3, "{normal}");
+    }
+
+    #[test]
+    fn a_floor_impact_and_a_body_hit_on_one_tick_report_one_impact() {
+        let mut sim = dummy_ahead(60.0, BodyPart::Torso, with_ball(BALL));
+        let look_down_and_pull = SearchlightCommand {
+            fire: true,
+            movement: CharacterCommand {
+                pitch_delta: -1.0,
+                ..CharacterCommand::default()
+            },
+            ..idle()
+        };
+        let mut script = vec![pull(), idle(), idle(), look_down_and_pull];
+        script.extend([idle(); 10]);
+
+        let ticks = run(&mut sim, &script);
+
+        let hits: Vec<_> = hits_in(&ticks).iter().map(|hit| hit.0).collect();
+        let impacts: Vec<_> = impacts_in(&ticks).iter().map(|hit| hit.0).collect();
+        assert_eq!(hits, [4], "{ticks:?}");
+        assert_eq!(impacts, [4], "{ticks:?}");
+    }
+
+    #[test]
+    fn a_strike_on_a_control_reports_an_impact_with_its_point_and_normal() {
+        for simple in [false, true] {
+            let mut sim = control_sim(&[], &[post_at(3.0)]);
+            let first = SearchlightCommand { simple, ..pull() };
+
+            let ticks = fire_and_wait(&mut sim, first, 30);
+
+            let impacts = impacts_in(&ticks);
+            let &[(_, point, normal)] = &impacts[..] else {
+                panic!("simple {simple}: expected one impact: {ticks:?}");
+            };
+            assert!((point.z - 3.0).abs() < 0.05, "simple {simple}: {point}");
+            assert!(
+                normal.distance(Vec3::NEG_Z) < 1e-3,
+                "simple {simple}: {normal}"
+            );
+        }
+    }
+
+    #[test]
+    fn under_simple_a_wall_strike_reports_an_impact() {
+        let mut sim = control_sim(&[WALL_AHEAD], &[]);
+        let simple = SearchlightCommand {
+            simple: true,
+            ..pull()
+        };
+
+        let ticks = fire_and_wait(&mut sim, simple, 1);
+
+        let impacts = impacts_in(&ticks);
+        let &[(0, point, normal)] = &impacts[..] else {
+            panic!("expected one impact on the firing tick: {ticks:?}");
+        };
+        assert!((point.z - 3.0).abs() < 0.05, "{point}");
+        assert!(normal.distance(Vec3::NEG_Z) < 1e-3, "{normal}");
+    }
+
+    #[test]
+    fn a_body_strike_reports_no_impact() {
+        for simple in [false, true] {
+            let mut sim = dummy_ahead(10.0, BodyPart::Torso, with_ball(BALL));
+            let first = SearchlightCommand { simple, ..pull() };
+
+            let ticks = fire_and_wait(&mut sim, first, 30);
+
+            assert!(
+                !hits_in(&ticks).is_empty(),
+                "simple {simple}: the dummy was never hit: {ticks:?}"
+            );
+            assert_eq!(impacts_in(&ticks), [], "simple {simple}");
+        }
+    }
+
+    #[test]
+    fn impacts_do_not_change_a_replay() {
+        let script: Vec<_> = (0..40)
+            .map(|tick| if tick % 10 == 0 { pull() } else { idle() })
+            .collect();
+        let mut draining = control_sim(&[WALL_AHEAD], &[]);
+        let mut holding = control_sim(&[WALL_AHEAD], &[]);
+
+        let drained: Vec<Feedback> = run(&mut draining, &script).into_iter().flatten().collect();
+        for command in &script {
+            holding.tick(command, DT);
+        }
+        let held = holding.drain_feedback();
+
+        assert_eq!(
+            impacts_in(std::slice::from_ref(&drained)).len(),
+            4,
+            "{drained:?}"
+        );
+        assert_eq!(drained, held);
+        assert_eq!(draining.player(), holding.player());
+    }
+
     #[test]
     fn under_simple_a_dummy_250_m_away_is_hit_on_the_firing_tick() {
         let mut sim = dummy_ahead(250.0, BodyPart::Torso, with_ball(BALL));
@@ -3674,7 +3815,15 @@ mod adversarial_tests {
             } else {
                 assert!(strike.is_none(), "{strike:?}");
             }
-            assert_eq!(run_until_settled(&mut sim, &pull()), [Feedback::Fired]);
+            let feedback = run_until_settled(&mut sim, &pull());
+            if pitch_delta < 0.0 {
+                assert!(
+                    matches!(feedback[..], [Feedback::Fired, Feedback::Impact { .. }]),
+                    "{feedback:?}"
+                );
+            } else {
+                assert_eq!(feedback, [Feedback::Fired]);
+            }
         }
     }
 

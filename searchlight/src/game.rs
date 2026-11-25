@@ -18,7 +18,9 @@ use moho_render_api::{
     UiImage, UiMesh, UiRect, UiSampler, UiSource, UiTextureId, UiTextureSet, UiVertex, WorldMesh,
     WorldMeshId,
 };
-use moho_renderer::{EffectHandle, LightingGpu, RendererBackend, Scene, StreakStyle, WorldMeshes};
+use moho_renderer::{
+    EffectHandle, LightingGpu, MarkStyle, RendererBackend, Scene, StreakStyle, WorldMeshes,
+};
 use searchlight_rules::{Grade, GravityScale, Lean, LeanSide};
 use winit::event::WindowEvent;
 use winit::window::{CursorGrabMode, Window};
@@ -115,6 +117,19 @@ fn tracer_style(material: u32) -> StreakStyle {
     }
 }
 
+/// Bullet mark appearance; `material` is the stage's own.
+fn impact_style(material: u32) -> MarkStyle {
+    MarkStyle {
+        size: 0.05,
+        material,
+        lifetime: Duration::from_secs(20),
+        fade: Duration::from_secs(2),
+    }
+}
+
+/// Roll step between marks: the golden angle (radians), so marks in a row never line up.
+const IMPACT_ROLL_STEP: f32 = 2.399_963_2;
+
 /// Surface colours of the greybox world.
 #[derive(Clone, Copy, Debug)]
 enum Paint {
@@ -126,6 +141,7 @@ enum Paint {
     Control,
     ArenaMark,
     Tracer,
+    ImpactMark,
 }
 
 impl RenderMaterial for Paint {
@@ -147,6 +163,7 @@ impl RenderMaterial for Paint {
             Paint::Control => ([0.25, 0.75, 0.35], [0.18, 0.55, 0.26], 0.0, 0.0),
             Paint::ArenaMark => ([0.95, 0.9, 0.2], [0.8, 0.75, 0.15], 0.0, 0.0),
             Paint::Tracer => ([1.0, 0.85, 0.4], [1.0, 0.85, 0.4], 1.0, 0.0),
+            Paint::ImpactMark => ([0.05, 0.05, 0.05], [0.05, 0.05, 0.05], 0.0, 0.0),
         };
         MaterialGpu {
             albedo: [top[0], top[1], top[2], gloss],
@@ -391,6 +408,8 @@ struct Stage {
     struck_material: u32,
     enemy_material: u32,
     tracer_material: u32,
+    impact_material: u32,
+    impact_roll: f32,
     /// The streak drawn for each round, by the sim's round id.
     tracers: BTreeMap<u32, EffectHandle>,
     /// The traces of the ticks since the last frame, or of the last tick if a frame has drawn
@@ -484,6 +503,7 @@ impl Stage {
         let struck_material = scene.material_table.find_or_push(&Paint::Struck);
         let enemy_material = scene.material_table.find_or_push(&Paint::Enemy);
         let tracer_material = scene.material_table.find_or_push(&Paint::Tracer);
+        let impact_material = scene.material_table.find_or_push(&Paint::ImpactMark);
         Self {
             scene,
             backdrop: Scene::new(),
@@ -492,6 +512,8 @@ impl Stage {
             struck_material,
             enemy_material,
             tracer_material,
+            impact_material,
+            impact_roll: 0.0,
             tracers: BTreeMap::new(),
             traces: Vec::new(),
             traces_shown: false,
@@ -603,6 +625,13 @@ impl Stage {
                         self.struck_material,
                     );
                 }
+            }
+            Feedback::Impact { point, normal } => {
+                let style = impact_style(self.impact_material);
+                self.scene
+                    .effects_mut()
+                    .mark(*point, *normal, self.impact_roll, style);
+                self.impact_roll = (self.impact_roll + IMPACT_ROLL_STEP) % std::f32::consts::TAU;
             }
             _ => {}
         }
@@ -1947,9 +1976,30 @@ mod tests {
         let mut most = 0;
         for _ in 0..count {
             tracer_frame(game, renderer, 0.5);
-            most = most.max(live_effects(game));
+            most = most.max(live_tracers(game, renderer));
         }
         most
+    }
+
+    /// Whether `instance` is a bullet mark: drawn in the stage's mark material, not a tracer's.
+    /// A fresh stage hands out its materials in the same order as every other.
+    fn is_mark(instance: &InstanceGpu) -> bool {
+        instance.material == Stage::new().impact_material
+    }
+
+    fn tracers_in(renderer: &TracerRenderer) -> Vec<InstanceGpu> {
+        renderer
+            .tracers
+            .iter()
+            .filter(|instance| !is_mark(instance))
+            .copied()
+            .collect()
+    }
+
+    /// The live effects that are not marks, which are those the last frame did not draw as one.
+    fn live_tracers(game: &mut SearchlightGame, renderer: &TracerRenderer) -> usize {
+        let marks = renderer.tracers.iter().filter(|i| is_mark(i)).count();
+        live_effects(game).saturating_sub(marks)
     }
 
     fn live_effects(game: &mut SearchlightGame) -> usize {
@@ -2018,7 +2068,11 @@ mod tests {
             tick_with(&mut game, &mut clock, &pull_command());
             if frame_between {
                 tracer_frame(&mut game, &mut renderer, 0.5);
-                assert_eq!(renderer.tracers.len(), 1, "no tracer flew before the hit");
+                assert_eq!(
+                    tracers_in(&renderer).len(),
+                    1,
+                    "no tracer flew before the hit"
+                );
             }
 
             tick_with(&mut game, &mut clock, &SearchlightCommand::default());
@@ -2028,10 +2082,11 @@ mod tests {
                 panic!("expected one trace: {:?}", game.sim().round_traces());
             };
             assert!(trace.ended, "the round did not hit the wall");
-            let [tracer] = renderer.tracers.as_slice() else {
+            let tracers = tracers_in(&renderer);
+            let [tracer] = tracers.as_slice() else {
                 panic!(
                     "between {frame_between}: {} tracers on the hit",
-                    renderer.tracers.len()
+                    tracers.len()
                 );
             };
             assert!(
@@ -2042,8 +2097,12 @@ mod tests {
             );
             let most = tracer_frames(&mut game, &mut renderer, FADE_FRAMES);
             assert!(most <= 1, "between {frame_between}: {most} tracers lived");
-            assert!(renderer.tracers.is_empty(), "between {frame_between}");
-            assert_eq!(live_effects(&mut game), 0, "between {frame_between}");
+            assert!(tracers_in(&renderer).is_empty(), "between {frame_between}");
+            assert_eq!(
+                live_tracers(&mut game, &renderer),
+                0,
+                "between {frame_between}"
+            );
         }
     }
 
@@ -2169,11 +2228,9 @@ mod tests {
 
             tracer_frame(&mut game, &mut renderer, 0.5);
 
-            let [tracer] = renderer.tracers.as_slice() else {
-                panic!(
-                    "before {frame_before_hit}: {} tracers",
-                    renderer.tracers.len()
-                );
+            let tracers = tracers_in(&renderer);
+            let [tracer] = tracers.as_slice() else {
+                panic!("before {frame_before_hit}: {} tracers", tracers.len());
             };
             assert!(
                 tracer_head(tracer).distance(trace.to) < 1e-3,
@@ -2234,8 +2291,8 @@ mod tests {
         tick_with(&mut simple, &mut clock, &simple_pull);
         for _ in 0..4 {
             tracer_frame(&mut simple, &mut renderer, 0.5);
-            drawn += renderer.tracers.len();
-            most = most.max(live_effects(&mut simple));
+            drawn += tracers_in(&renderer).len();
+            most = most.max(live_tracers(&mut simple, &renderer));
             tick_with(&mut simple, &mut clock, &SearchlightCommand::default());
         }
 
@@ -2243,6 +2300,259 @@ mod tests {
         assert_eq!(drawn, 0);
         assert_eq!(most, 0);
         assert!(simple.sim().round_traces().is_empty());
+    }
+
+    fn impact_at(point: Vec3, normal: Vec3) -> Feedback {
+        Feedback::Impact { point, normal }
+    }
+
+    /// The marks among the last frame's unshadowed instances: those at full size, as
+    /// [`impact_style`] sets it.
+    fn drawn_marks(renderer: &TracerRenderer) -> Vec<InstanceGpu> {
+        renderer
+            .tracers
+            .iter()
+            .filter(|instance| {
+                is_mark(instance)
+                    && (column(instance, 0).length() - impact_style(0).size).abs() < 1e-3
+            })
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn an_impact_places_one_mark_at_its_point_along_its_normal() {
+        let point = Vec3::new(1.0, 2.0, 3.0);
+        let cases = [Vec3::NEG_Z, Vec3::Y, Vec3::new(1.0, 1.0, 0.0).normalize()];
+        for normal in cases {
+            let mut game = tracer_game(&[], tracer_config());
+            let mut renderer = TracerRenderer::default();
+
+            game.stage.react(&impact_at(point, normal), None);
+            tracer_frame(&mut game, &mut renderer, 0.5);
+
+            let [mark] = renderer.tracers.as_slice() else {
+                panic!(
+                    "normal {normal}: {} instances drawn",
+                    renderer.tracers.len()
+                );
+            };
+            assert_eq!(live_effects(&mut game), 1, "normal {normal}");
+            assert!(
+                column(mark, 2).distance(normal) < 1e-3,
+                "normal {normal}: faces {}",
+                column(mark, 2)
+            );
+            assert!(
+                column(mark, 0).dot(normal).abs() < 1e-3
+                    && column(mark, 1).dot(normal).abs() < 1e-3,
+                "normal {normal}: the mark does not lie flat on its surface"
+            );
+            assert!(
+                column(mark, 3).distance(point) < 0.05
+                    && (column(mark, 3) - point).dot(normal) > 0.0,
+                "normal {normal}: at {}, not on {point}",
+                column(mark, 3)
+            );
+            assert!(
+                (column(mark, 0).length() - 0.05).abs() < 1e-4,
+                "normal {normal}"
+            );
+            let dark = game
+                .stage
+                .scene
+                .material_table
+                .find_or_push(&Paint::ArenaMark);
+            assert_ne!(
+                mark.material, dark,
+                "normal {normal}: drawn in the arena's mark paint"
+            );
+        }
+    }
+
+    #[test]
+    fn consecutive_impacts_turn_each_mark_by_the_golden_angle() {
+        let mut game = tracer_game(&[], tracer_config());
+        let mut renderer = TracerRenderer::default();
+
+        game.stage
+            .react(&impact_at(Vec3::new(0.0, 1.0, 3.0), Vec3::NEG_Z), None);
+        game.stage
+            .react(&impact_at(Vec3::new(1.0, 1.0, 3.0), Vec3::NEG_Z), None);
+        tracer_frame(&mut game, &mut renderer, 0.5);
+
+        let marks = drawn_marks(&renderer);
+        let [first, second] = marks.as_slice() else {
+            panic!("{} marks", marks.len());
+        };
+        let turn = (column(first, 0).dot(column(second, 0)) / (0.05 * 0.05)).acos();
+        let step = IMPACT_ROLL_STEP.rem_euclid(std::f32::consts::TAU);
+        let expected = if step > std::f32::consts::PI {
+            std::f32::consts::TAU - step
+        } else {
+            step
+        };
+        assert!(
+            (turn - expected).abs() < 1e-2,
+            "turned {turn}, not {expected}"
+        );
+    }
+
+    #[test]
+    fn the_roll_stays_within_a_turn_over_many_impacts() {
+        let mut game = tracer_game(&[], tracer_config());
+
+        for _ in 0..100 {
+            game.stage
+                .react(&impact_at(Vec3::new(0.0, 1.0, 3.0), Vec3::NEG_Z), None);
+
+            let roll = game.stage.impact_roll;
+            assert!((0.0..std::f32::consts::TAU).contains(&roll), "roll {roll}");
+        }
+    }
+
+    #[test]
+    fn an_impact_with_no_normal_draws_no_mark_and_no_bad_numbers() {
+        let mut game = tracer_game(&[], tracer_config());
+        let mut renderer = TracerRenderer::default();
+
+        game.stage
+            .react(&impact_at(Vec3::new(0.0, 1.0, 3.0), Vec3::ZERO), None);
+        tracer_frame(&mut game, &mut renderer, 0.5);
+
+        assert_eq!(live_effects(&mut game), 0);
+        for instance in &renderer.tracers {
+            for index in 0..4 {
+                assert!(column(instance, index).is_finite(), "column {index}");
+            }
+        }
+    }
+
+    #[test]
+    fn five_impacts_leave_five_marks() {
+        let points = [
+            Vec3::new(-2.0, 1.0, 3.0),
+            Vec3::new(-1.0, 1.5, 3.0),
+            Vec3::new(0.0, 2.0, 3.0),
+            Vec3::new(1.0, 1.5, 3.0),
+            Vec3::new(2.0, 1.0, 3.0),
+        ];
+        let mut game = tracer_game(&[], tracer_config());
+        let mut renderer = TracerRenderer::default();
+
+        for point in points {
+            game.stage.react(&impact_at(point, Vec3::NEG_Z), None);
+        }
+        tracer_frame(&mut game, &mut renderer, 0.5);
+
+        let marks = drawn_marks(&renderer);
+        assert_eq!(marks.len(), 5, "{} instances", renderer.tracers.len());
+        assert_eq!(live_effects(&mut game), 5);
+        for point in points {
+            let at_point = marks
+                .iter()
+                .filter(|mark| column(mark, 3).distance(point) < 0.05)
+                .count();
+            assert_eq!(at_point, 1, "marks at {point}");
+        }
+    }
+
+    #[test]
+    fn a_round_striking_a_wall_leaves_a_mark_at_the_strike_lying_flat() {
+        let wall = (Vec3::new(-5.0, 0.0, 3.0), Vec3::new(5.0, 4.0, 3.2));
+        let mut game = tracer_game(&[wall], tracer_config());
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let mut renderer = TracerRenderer::default();
+
+        tick_with(&mut game, &mut clock, &pull_command());
+        for _ in 0..10 {
+            tick_with(&mut game, &mut clock, &SearchlightCommand::default());
+        }
+        tracer_frame(&mut game, &mut renderer, 0.5);
+
+        let marks = drawn_marks(&renderer);
+        let [mark] = marks.as_slice() else {
+            panic!("{} marks on the wall", marks.len());
+        };
+        assert!(column(mark, 2).distance(Vec3::NEG_Z) < 1e-3);
+        assert!(
+            (column(mark, 3).z - 3.0).abs() < 0.05,
+            "{}",
+            column(mark, 3)
+        );
+    }
+
+    #[test]
+    fn marks_use_the_impact_style_lifetime() {
+        let mut game = tracer_game(&[], tracer_config());
+        let mut renderer = TracerRenderer::default();
+        game.stage
+            .react(&impact_at(Vec3::new(0.0, 1.0, 3.0), Vec3::NEG_Z), None);
+
+        game.stage
+            .scene
+            .effects_mut()
+            .advance(Duration::from_secs(17));
+        tracer_frame(&mut game, &mut renderer, 0.5);
+        let before_fade = drawn_marks(&renderer);
+        game.stage
+            .scene
+            .effects_mut()
+            .advance(Duration::from_secs(2));
+        tracer_frame(&mut game, &mut renderer, 0.5);
+        let fading = renderer.tracers.clone();
+        game.stage
+            .scene
+            .effects_mut()
+            .advance(Duration::from_millis(1100));
+
+        assert_eq!(before_fade.len(), 1, "the mark did not last 17 s");
+        assert!((column(&before_fade[0], 0).length() - 0.05).abs() < 1e-4);
+        let [fading] = fading.as_slice() else {
+            panic!("{} marks in the last 2 s", fading.len());
+        };
+        assert!(
+            (column(fading, 0).length() - 0.025).abs() < 0.003,
+            "half faded at 19 s, drawn {}",
+            column(fading, 0).length()
+        );
+        assert_eq!(live_effects(&mut game), 0, "the mark outlived 20 s");
+    }
+
+    #[test]
+    fn with_effects_off_an_impact_places_nothing_and_play_goes_on() {
+        let wall = (Vec3::new(-5.0, 0.0, 3.0), Vec3::new(5.0, 4.0, 3.2));
+        let mut game = tracer_game(&[wall], tracer_config());
+        let mut on = tracer_game(&[wall], tracer_config());
+        game.stage.set_effects_quality(0);
+        let mut clock = GameClock::new(0.0, 1.0, 1.0);
+        let mut renderer = TracerRenderer::default();
+        let mut on_renderer = TracerRenderer::default();
+
+        for played in [&mut game, &mut on] {
+            played
+                .stage
+                .react(&impact_at(Vec3::new(0.0, 1.0, 3.0), Vec3::NEG_Z), None);
+            tick_with(played, &mut clock, &pull_command());
+            for _ in 0..10 {
+                tick_with(played, &mut clock, &SearchlightCommand::default());
+            }
+        }
+        tracer_frame(&mut game, &mut renderer, 0.5);
+        tracer_frame(&mut on, &mut on_renderer, 0.5);
+
+        assert_eq!(
+            drawn_marks(&on_renderer).len(),
+            2,
+            "the control drew no marks"
+        );
+        assert_eq!(live_effects(&mut game), 0);
+        assert!(renderer.tracers.is_empty());
+        assert_eq!(
+            game.sim().rifle().magazine().rounds(),
+            on.sim().rifle().magazine().rounds()
+        );
+        assert!(game.sim().round_traces().is_empty());
     }
 
     #[test]

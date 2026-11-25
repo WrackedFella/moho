@@ -22,6 +22,8 @@ pub struct ShotRay {
 pub struct Strike {
     pub tag: SurfaceTag,
     pub point: Vec3,
+    /// The struck surface's unit normal.
+    pub normal: Vec3,
     /// Metres from the shot's origin.
     pub distance: f32,
 }
@@ -47,6 +49,7 @@ pub fn resolve_shot(world: &PhysicsWorld, ray: ShotRay) -> Option<Strike> {
     Some(Strike {
         tag,
         point: hit.point,
+        normal: hit.normal,
         distance: hit.distance,
     })
 }
@@ -175,6 +178,24 @@ mod tests {
         assert!(
             (strike.point - Vec3::new(0.0, 1.5, 6.0)).length() < 1e-3,
             "{strike:?}"
+        );
+    }
+
+    #[test]
+    fn a_strike_carries_the_surface_normal() {
+        let world = world_with(&[(Vec3::new(-5.0, 0.0, 6.0), Vec3::new(5.0, 4.0, 6.5))]);
+        let ray = ShotRay {
+            origin: Vec3::new(0.0, 1.5, 0.0),
+            direction: Vec3::Z,
+            range: 50.0,
+            ignore: None,
+        };
+
+        let strike = resolve_shot(&world, ray).expect("the wall stops the shot");
+
+        assert!(
+            (strike.normal - Vec3::NEG_Z).length() < 1e-3,
+            "the wall faces the shooter: {strike:?}"
         );
     }
 
