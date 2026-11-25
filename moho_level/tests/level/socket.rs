@@ -702,7 +702,7 @@ fn append_accessor(
     accessors.len() - 1
 }
 
-/// Add a `reload_fast` clip that moves `hand_l` to the humanoid written at `path`.
+/// Add a `reload_fast` clip that moves `hand_l` and `hand_r` to the humanoid written at `path`.
 fn add_reload_fast(path: &Path) {
     let bin_path = path.with_file_name("humanoid.bin");
     let mut bin = fs::read(&bin_path).expect("read bin");
@@ -713,6 +713,12 @@ fn add_reload_fast(path: &Path) {
         .iter()
         .position(|n| n["name"] == "hand_l")
         .expect("hand_l is written");
+    let hand_r = doc["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .position(|n| n["name"] == "hand_r")
+        .expect("hand_r is written");
     let times = append_accessor(
         &mut doc,
         &mut bin,
@@ -738,6 +744,23 @@ fn add_reload_fast(path: &Path) {
         "VEC4",
         None,
     );
+    let right_moves = append_accessor(
+        &mut doc,
+        &mut bin,
+        &[0.25, 0.0, 0.0, 0.25, 0.3, 0.8],
+        2,
+        "VEC3",
+        None,
+    );
+    let (right_sin, right_cos) = 0.4_f32.sin_cos();
+    let right_turns = append_accessor(
+        &mut doc,
+        &mut bin,
+        &[0.0, 0.0, 0.0, 1.0, right_sin, 0.0, 0.0, right_cos],
+        2,
+        "VEC4",
+        None,
+    );
     doc["buffers"][0]["byteLength"] = json!(bin.len());
     doc["animations"]
         .as_array_mut()
@@ -747,10 +770,14 @@ fn add_reload_fast(path: &Path) {
             "samplers": [
                 { "input": times, "output": moves, "interpolation": "LINEAR" },
                 { "input": times, "output": turns, "interpolation": "LINEAR" },
+                { "input": times, "output": right_moves, "interpolation": "LINEAR" },
+                { "input": times, "output": right_turns, "interpolation": "LINEAR" },
             ],
             "channels": [
                 { "sampler": 0, "target": { "node": hand_l, "path": "translation" } },
                 { "sampler": 1, "target": { "node": hand_l, "path": "rotation" } },
+                { "sampler": 2, "target": { "node": hand_r, "path": "translation" } },
+                { "sampler": 3, "target": { "node": hand_r, "path": "rotation" } },
             ],
         }));
     fs::write(&bin_path, bin).expect("write bin");
@@ -1135,16 +1162,28 @@ fn move_to_a_node_under_the_part_is_refused_and_changes_nothing() {
     let models = reload_models();
     let lookup = |k: usize| &models[k];
     let mut character = armed(&lookup);
+    character
+        .attach(&lookup, "hand_l", Assembly::new(MAGAZINE), grip())
+        .expect("hand_l exists");
     let before = character.clone();
     let pose = reload_pose(&models, 110);
 
-    for to in [["hand_r", "magazine"], ["hand_r", "rail"]] {
+    let cases: [(&[&str], &[&str]); 4] = [
+        (&["hand_r"], &["hand_r", "magazine"]),
+        (&["hand_r"], &["hand_r", "rail"]),
+        (&["hand_l"], &["hand_l"]),
+        (&["hand_r"], &["hand_r"]),
+    ];
+    for (from, to) in cases {
         let err = character
-            .move_part(&lookup, &["hand_r"], &to, &pose)
-            .expect_err("the rifle cannot go into itself");
+            .move_part(&lookup, from, to, &pose)
+            .expect_err("a part cannot go into itself");
 
-        assert!(matches!(err, SocketError::IntoItself), "{to:?}: {err:?}");
-        assert_eq!(character, before, "{to:?}");
+        assert!(
+            matches!(err, SocketError::IntoItself),
+            "{from:?} to {to:?}: {err:?}"
+        );
+        assert_eq!(character, before, "{from:?} to {to:?}");
     }
 }
 
@@ -1269,6 +1308,11 @@ fn part_transform_under_a_pose_poses_only_the_first_socket() {
     let root = moved_and_turned();
     let hand_r = node_index(&models, RELOAD_CHARACTER, "hand_r");
     let pose = reload_pose(&models, 60);
+    let at_rest = models[RELOAD_CHARACTER].rest_pose();
+    assert!(
+        !pose.nodes()[hand_r].abs_diff_eq(at_rest.nodes()[hand_r], 0.05),
+        "hand_r is off its rest at this tick"
+    );
 
     let magazine = character
         .part_transform(&lookup, &["hand_r", "magazine"], root, &pose)
@@ -1331,4 +1375,54 @@ fn release_from_an_empty_or_unknown_socket_is_refused_and_changes_nothing() {
     assert_eq!(empty_socket(&empty), "hand_l");
     assert_eq!(unknown_socket(&unknown), "bayonet");
     assert_eq!(character, before);
+}
+
+#[test]
+fn released_nested_magazine_leaves_the_rifle_on_the_hand() {
+    let models = reload_models();
+    let lookup = |k: usize| &models[k];
+    let mut character = armed(&lookup);
+    let root = moved_and_turned();
+    let before_pose = reload_pose(&models, 114);
+    let now_pose = reload_pose(&models, 115);
+    let path = ["hand_r", "magazine"];
+    let at_now = character
+        .part_transform(&lookup, &path, root, &now_pose)
+        .expect("the magazine is attached");
+    let at_before = character
+        .part_transform(&lookup, &path, root, &before_pose)
+        .expect("the magazine is attached");
+
+    let released = character
+        .release(
+            &lookup,
+            &path,
+            Posed {
+                root,
+                pose: &now_pose,
+            },
+            Posed {
+                root,
+                pose: &before_pose,
+            },
+            TICK,
+        )
+        .expect("the magazine is attached");
+
+    within(released.transform, at_now, 1e-5);
+    assert_eq!(released.part, Assembly::new(MAGAZINE));
+    let expected_linear = Vec3::from(at_now.translation - at_before.translation) / TICK;
+    assert!(expected_linear.length() > 0.05, "hand_r is moving");
+    vec_near(released.linear_velocity, expected_linear, 1e-3);
+    let rifle = character
+        .part_mut(&lookup, "hand_r")
+        .expect("hand_r exists")
+        .expect("the rifle stays on hand_r");
+    assert_eq!(*rifle, Assembly::new(RELOAD_RIFLE));
+    let keys: Vec<usize> = character
+        .posed_placements(&lookup, root, &now_pose)
+        .iter()
+        .map(|p| p.0)
+        .collect();
+    assert_eq!(keys, vec![RELOAD_CHARACTER, RELOAD_CHARACTER, RELOAD_RIFLE]);
 }

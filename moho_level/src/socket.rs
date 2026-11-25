@@ -296,12 +296,17 @@ mod tests {
 
     #[test]
     fn angular_velocity_takes_the_shortest_arc_for_a_negated_quaternion() {
-        let before = Affine3A::from_quat(Quat::from_rotation_y(-2.0));
-        let now = Affine3A::from_quat(Quat::from_rotation_y(-2.4));
+        let before = Affine3A::from_quat(Quat::from_rotation_y(-1.5));
+        let now = Affine3A::from_quat(Quat::from_rotation_y(-2.0));
+        let raw = Quat::from_mat3a(&now.matrix3) * Quat::from_mat3a(&before.matrix3).inverse();
+        assert!(
+            raw.w < 0.0,
+            "the fixture must exercise the negated case: {raw}"
+        );
 
         let (linear, angular) = velocities(before, now, 0.1);
 
         near(linear, Vec3::ZERO);
-        near(angular, Vec3::new(0.0, -4.0, 0.0));
+        near(angular, Vec3::new(0.0, -5.0, 0.0));
     }
 }
