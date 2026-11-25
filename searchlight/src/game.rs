@@ -5226,6 +5226,7 @@ mod tests {
         }
     }
 
+    use moho_input::Action;
     use moho_input::bindings::Binding;
 
     use crate::controls::label;
@@ -5441,6 +5442,137 @@ mod tests {
         assert!(reload_on_r, "R still reloads");
         assert!(!reload_on_t, "T never became a binding");
         assert!(!path.exists(), "Back saved the discarded capture");
+    }
+
+    /// Backs out of Controls and Settings to the main menu, then reopens Controls from a fresh
+    /// draft of what is live.
+    fn reopen_controls(game: &mut SearchlightGame, ctx: &mut EventContext<'_>) {
+        press_item(game, ctx, "Back", is_button("Back"));
+        press_item(game, ctx, "Back", is_button("Back"));
+        press_keys(game, ctx, &[Key::Enter]);
+        open_controls_from_settings(game, ctx);
+    }
+
+    /// The bindings the saved prefs at `path` hold, with defaults for what they leave out.
+    fn saved_bindings(path: &std::path::Path) -> ActionBindings<SearchlightAction> {
+        let (prefs, _warnings) = Prefs::load_from(path);
+        let (_toggle_keys, without_fullscreen) =
+            moho_app::split_fullscreen_binding(prefs.bindings());
+        let (_console, section) = crate::split_console_binding(&without_fullscreen);
+        ActionBindings::<SearchlightAction>::load(&section).0
+    }
+
+    fn default_slots(action: SearchlightAction) -> [Option<Binding>; 2] {
+        let held = action.default_bindings();
+        [held.first().copied(), held.get(1).copied()]
+    }
+
+    #[test]
+    fn a_cleared_secondary_stops_working_and_the_primary_still_does() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        focus_control(&game, SearchlightAction::Reload);
+        press_keys(&mut game, &mut ctx, &[Key::ArrowRight, Key::Enter]);
+        game.route_input(&mut ctx, KEY_T, true, false);
+        game.route_input(&mut ctx, KEY_T, false, false);
+        press_item(&mut game, &mut ctx, "Apply", is_apply);
+        reopen_controls(&mut game, &mut ctx);
+        focus_control(&game, SearchlightAction::Reload);
+
+        press_keys(&mut game, &mut ctx, &[Key::ArrowRight, Key::Backspace]);
+        let cleared = control_row(&game, SearchlightAction::Reload);
+        press_item(&mut game, &mut ctx, "Apply", is_apply);
+        game.enter_play();
+        let reload_on_t = reloads(tap(&mut game, &mut ctx, KEY_T));
+        let reload_on_r = reloads(tap(&mut game, &mut ctx, KEY_R));
+
+        assert_eq!(cleared, ([Some(Binding::key(Key::R)), None], None));
+        assert!(!reload_on_t, "the cleared secondary does nothing");
+        assert!(reload_on_r, "the primary still reloads");
+        assert_eq!(
+            saved_bindings(&path).get(SearchlightAction::Reload),
+            [Binding::key(Key::R)],
+            "Apply saved the cleared slot"
+        );
+    }
+
+    #[test]
+    fn an_applied_reset_puts_every_action_on_its_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        capture_input(&mut game, &mut ctx, SearchlightAction::Reload, KEY_T);
+        capture_input(&mut game, &mut ctx, SearchlightAction::Fire, RIGHT_BUTTON);
+        focus_control(&game, SearchlightAction::Jump);
+        press_keys(&mut game, &mut ctx, &[Key::Backspace]);
+        press_item(&mut game, &mut ctx, "Apply", is_apply);
+
+        press_item(&mut game, &mut ctx, "Reset", is_button("Reset"));
+        let shown: Vec<_> = SearchlightAction::ALL
+            .iter()
+            .map(|&action| control_row(&game, action).0)
+            .collect();
+        press_item(&mut game, &mut ctx, "Apply", is_apply);
+        game.enter_play();
+        let reload_on_r = reloads(tap(&mut game, &mut ctx, KEY_R));
+        let reload_on_t = reloads(tap(&mut game, &mut ctx, KEY_T));
+        let fire_on_left = fires(tap(&mut game, &mut ctx, LEFT_BUTTON));
+        let fire_on_right = fires(tap(&mut game, &mut ctx, RIGHT_BUTTON));
+
+        let expected: Vec<_> = SearchlightAction::ALL
+            .iter()
+            .map(|&action| default_slots(action))
+            .collect();
+        assert_eq!(shown, expected, "Controls shows every default");
+        assert!(reload_on_r, "Reload is back on R");
+        assert!(!reload_on_t, "T no longer reloads");
+        assert!(fire_on_left, "Fire is back on the left button");
+        assert!(!fire_on_right, "the right button no longer fires");
+        let saved = saved_bindings(&path);
+        for &action in SearchlightAction::ALL {
+            assert_eq!(
+                saved.get(action),
+                action.default_bindings(),
+                "{action:?} saved on its defaults"
+            );
+        }
+    }
+
+    #[test]
+    fn reset_then_back_keeps_the_applied_bindings() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        capture_input(&mut game, &mut ctx, SearchlightAction::Reload, KEY_T);
+        press_item(&mut game, &mut ctx, "Apply", is_apply);
+
+        press_item(&mut game, &mut ctx, "Reset", is_button("Reset"));
+        let after_reset = control_row(&game, SearchlightAction::Reload);
+        reopen_controls(&mut game, &mut ctx);
+        let reopened = control_row(&game, SearchlightAction::Reload);
+        game.enter_play();
+        let reload_on_t = reloads(tap(&mut game, &mut ctx, KEY_T));
+        let reload_on_r = reloads(tap(&mut game, &mut ctx, KEY_R));
+
+        assert_eq!(after_reset, ([Some(Binding::key(Key::R)), None], None));
+        assert_eq!(reopened, ([Some(Binding::key(Key::T)), None], None));
+        assert!(reload_on_t, "Reload keeps the player's T");
+        assert!(!reload_on_r, "the unapplied reset did not put R back");
+        assert_eq!(
+            saved_bindings(&path).get(SearchlightAction::Reload),
+            [Binding::key(Key::T)],
+            "Back saved nothing"
+        );
     }
 
     #[test]
