@@ -1,5 +1,7 @@
-//! Head bob: the view dips with each footstep and sways with each stride. It is view-only state
-//! the game steps after the sim, so it never moves the aim ray or the player's hit volumes.
+//! Head bob: each footstep swings the eye out to that foot's side and back through its resting
+//! point, rising then falling on the way, so a stride traces a figure-8 lying on its side. It is
+//! view-only state the game steps after the sim, so it never moves the aim ray or the player's hit
+//! volumes.
 
 use std::f32::consts::{PI, TAU};
 
@@ -9,17 +11,15 @@ use crate::lean::lean_offset;
 
 /// Metres walked per footstep; one footstep is half a turn of the phase.
 pub const STEP_LENGTH: f32 = 1.5;
-/// How far the eye dips at the bottom of a footstep, in metres, at full level and walking speed.
-pub const DIP: f32 = 0.04;
-/// How far the eye sways sideways at the peak of a stride, in metres, at full level and walking
+/// How far the eye swings to the side of the foot stepping, in metres, at full level and walking
 /// speed.
-pub const SWAY: f32 = 0.025;
-/// How far the eye rises at the top of a footstep's loop, in metres, at full level and walking
-/// speed.
+pub const SWAY: f32 = 0.03;
+/// How far the eye rises above its resting point within a footstep's loop, in metres, at full
+/// level and walking speed. It falls the same distance below.
 pub const RISE: f32 = 0.015;
-/// The most the amplitude reaches, as a multiple of walking speed; a guard against a landing
-/// spike.
-pub const MAX_AMPLITUDE: f32 = 2.0;
+/// The most the amplitude reaches, as a multiple of walking speed; it keeps a fast mover's loop
+/// restrained and guards against a landing spike.
+pub const MAX_AMPLITUDE: f32 = 1.5;
 
 /// The head-bob setting: a percentage from 0 to 100 on a grid of 5.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -106,8 +106,9 @@ impl Bob {
     #[must_use]
     pub fn offset(self, level: HeadBobLevel, yaw: f32) -> Vec3 {
         let scale = self.amplitude * level.fraction();
-        let sin = self.phase.sin();
-        Vec3::new(0.0, -DIP * scale * sin * sin, 0.0) + lean_offset(yaw, SWAY * scale * sin)
+        let sideways = SWAY * scale * self.phase.sin();
+        let vertical = RISE * scale * (2.0 * self.phase).sin();
+        Vec3::new(0.0, vertical, 0.0) + lean_offset(yaw, sideways)
     }
 
     /// The bob `alpha` (0 to 1) of the way from `self` to `next`, the phase moving forward
