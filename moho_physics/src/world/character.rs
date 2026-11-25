@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 pub struct CharacterHandle(pub(super) RigidBodyHandle);
 
 /// Snapshot of one character's simulation state.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CharacterState {
     /// Capsule centre, world space.
     pub position: Vec3,
@@ -49,6 +49,15 @@ pub struct CharacterState {
     pub lean: f32,
     /// The view roll after the wall clamp, radians, positive to the right.
     pub roll: f32,
+}
+
+/// One character's simulation state as plain data, for a line's save (ADR-0040 rule 4).
+/// Holds no engine handle: the line keys it by its own id.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CharacterRecord {
+    pub state: CharacterState,
+    /// Effects queued for the next step, in queue order.
+    pub effects: Vec<CharacterEffect>,
 }
 
 /// A character's starting state and shape: where it stands, which way it faces, its hull.
@@ -374,6 +383,37 @@ impl PhysicsWorld {
     pub fn character(&self, handle: CharacterHandle) -> Option<CharacterState> {
         let character = self.characters.get(&handle)?;
         Some(character.state(self.rigid_body_set[handle.0].position().translation))
+    }
+
+    /// Compile-only stand-in: always a zeroed record.
+    pub fn character_record(&self, _handle: CharacterHandle) -> Option<CharacterRecord> {
+        Some(CharacterRecord {
+            state: CharacterState {
+                position: Vec3::ZERO,
+                velocity: Vec3::ZERO,
+                yaw: 0.0,
+                pitch: 0.0,
+                grounded: false,
+                jump_held: false,
+                eye: Vec3::ZERO,
+                stance: Stance::Stand,
+                from: Stance::Stand,
+                progress: 0,
+                anchor: Anchor::Feet,
+                lean: 0.0,
+                roll: 0.0,
+            },
+            effects: Vec::new(),
+        })
+    }
+
+    /// Compile-only stand-in: spawns a fresh standing character at the record's position.
+    pub fn restore_character(
+        &mut self,
+        record: &CharacterRecord,
+        _body: CharacterBody,
+    ) -> CharacterHandle {
+        self.add_character(record.state.position)
     }
 }
 
@@ -5700,6 +5740,553 @@ mod tests {
                     && (0.2..0.34).contains(&s.eye.x)),
                 "the wall never clamped a full left lean"
             );
+        }
+    }
+
+    mod restore {
+        use super::*;
+        use crate::movement::{Lean, LeanReach};
+        use crate::world::{LooseId, LooseShape, LooseSpawn, LooseState};
+        use proptest::prelude::*;
+
+        type Pattern<'a> = &'a dyn Fn(usize) -> CharacterCommand;
+
+        const TICKS: usize = 300;
+
+        /// A body that crouches, goes prone and leans.
+        fn body() -> CharacterBody {
+            CharacterBody {
+                lean: Lean {
+                    upright: LeanReach {
+                        distance: 0.3,
+                        roll: 0.2,
+                    },
+                    prone: LeanReach {
+                        distance: 0.2,
+                        roll: 0.15,
+                    },
+                    head_radius: 0.1,
+                },
+                ..prone_body()
+            }
+        }
+
+        fn settings() -> MoveSettings {
+            MoveSettings {
+                autohop: false,
+                crouch_ticks: 12,
+                prone_ticks: 12,
+                lean_ticks: 8,
+                ..strategy_settings()
+            }
+        }
+
+        /// A floor, a low step, a wall ahead and a ceiling too low to stand under, behind.
+        fn geometry_world() -> PhysicsWorld {
+            let mut world = PhysicsWorld::new();
+            world.set_world_mesh(WorldMeshId(0), &floor_mesh(0.0), TEST_TAG);
+            world.set_world_mesh(WorldMeshId(1), &step_box_mesh(2.0, 2.0, 0.45), TEST_TAG);
+            world.set_world_mesh(WorldMeshId(2), &wall_mesh(9.0), TEST_TAG);
+            world.set_world_mesh(WorldMeshId(3), &ceiling_mesh(1.3, -8.0, -1.0), TEST_TAG);
+            world
+        }
+
+        fn spawn_at(world: &mut PhysicsWorld, position: Vec3) -> CharacterHandle {
+            world.add_character(CharacterSpawn {
+                position,
+                yaw: 0.0,
+                pitch: 0.0,
+                body: body(),
+            })
+        }
+
+        fn tick(world: &mut PhysicsWorld, handle: CharacterHandle, command: &CharacterCommand) {
+            world
+                .move_character(handle, command, &settings(), DT)
+                .expect("character is live");
+            world.step(DT);
+        }
+
+        fn walk(_: usize) -> CharacterCommand {
+            CharacterCommand {
+                forward: 1.0,
+                ..idle()
+            }
+        }
+
+        /// Walks, turns, jumps, changes stance and leans, so the 300 ticks meet the step, the
+        /// wall and the ceiling.
+        fn tail(t: usize) -> CharacterCommand {
+            CharacterCommand {
+                forward: if t % 150 < 120 { 1.0 } else { -0.5 },
+                right: if t % 70 < 15 { 0.6 } else { 0.0 },
+                yaw_delta: if t % 90 < 30 { 0.05 } else { -0.02 },
+                pitch_delta: 0.0,
+                jump: t % 61 == 7,
+                stance: [Stance::Stand, Stance::Crouch, Stance::Stand, Stance::Prone][(t / 40) % 4],
+                lean: [0.0, 1.0, -1.0, 0.5][(t / 25) % 4],
+            }
+        }
+
+        /// A world with the geometry and one character that ran `setup` for `ticks` and then had
+        /// `effects` queued.
+        fn saved(
+            setup: Pattern,
+            ticks: usize,
+            effects: &[CharacterEffect],
+        ) -> (PhysicsWorld, CharacterHandle) {
+            let mut world = geometry_world();
+            let h = spawn_at(&mut world, Vec3::new(0.0, 0.95, 0.0));
+            for t in 0..ticks {
+                tick(&mut world, h, &setup(t));
+            }
+            for effect in effects {
+                world.queue_effect(h, *effect).expect("character is live");
+            }
+            (world, h)
+        }
+
+        /// Restores the character's record into a fresh world and runs both worlds for
+        /// `TICKS` ticks of `commands`, requiring equal state after every tick.
+        fn assert_steps_on_bit_equal(
+            original: &mut PhysicsWorld,
+            handle: CharacterHandle,
+            commands: Pattern,
+        ) {
+            let record = original
+                .character_record(handle)
+                .expect("character is live");
+            let mut fresh = geometry_world();
+            let restored = fresh.restore_character(&record, body());
+            assert_eq!(
+                fresh.character_record(restored),
+                Some(record),
+                "the restore reads back the record"
+            );
+
+            let mut travelled = 0.0;
+            for t in 0..TICKS {
+                let before = state(original, handle).position;
+                tick(original, handle, &commands(t));
+                tick(&mut fresh, restored, &commands(t));
+                let expected = state(original, handle);
+                assert_eq!(state(&fresh, restored), expected, "tick {t} diverged");
+                travelled += expected.position.distance(before);
+            }
+
+            assert!(travelled > 10.0, "the run went nowhere: {travelled} m");
+        }
+
+        fn horizontal_speed(state: &CharacterState) -> f32 {
+            state.velocity.with_y(0.0).length()
+        }
+
+        #[test]
+        fn restored_walking_character_steps_on_bit_equal() {
+            let (mut world, h) = saved(&walk, 15, &[]);
+            let at_k = state(&world, h);
+            assert!(at_k.grounded, "{at_k:?}");
+            assert!(horizontal_speed(&at_k) > 1.0, "{at_k:?}");
+
+            assert_steps_on_bit_equal(&mut world, h, &tail);
+        }
+
+        #[test]
+        fn restored_airborne_character_with_jump_held_steps_on_bit_equal() {
+            let setup = |t: usize| CharacterCommand {
+                jump: t >= 10,
+                forward: 1.0,
+                ..idle()
+            };
+            let (mut world, h) = saved(&setup, 16, &[]);
+            let at_k = state(&world, h);
+            assert!(!at_k.grounded, "{at_k:?}");
+            assert!(at_k.jump_held, "{at_k:?}");
+            let held = |t: usize| CharacterCommand {
+                jump: t < 90 || tail(t).jump,
+                ..tail(t)
+            };
+
+            assert_steps_on_bit_equal(&mut world, h, &held);
+        }
+
+        #[test]
+        fn restored_mid_crouch_character_steps_on_bit_equal() {
+            let setup = |t: usize| CharacterCommand {
+                stance: if t >= 10 {
+                    Stance::Crouch
+                } else {
+                    Stance::Stand
+                },
+                ..idle()
+            };
+            let (mut world, h) = saved(&setup, 15, &[]);
+            let at_k = state(&world, h);
+            assert_eq!(at_k.stance, Stance::Crouch);
+            assert!(
+                0 < at_k.progress && at_k.progress < settings().crouch_ticks,
+                "{at_k:?}"
+            );
+
+            assert_steps_on_bit_equal(&mut world, h, &tail);
+        }
+
+        #[test]
+        fn restored_prone_character_steps_on_bit_equal() {
+            let setup = |t: usize| CharacterCommand {
+                stance: if t >= 10 {
+                    Stance::Prone
+                } else {
+                    Stance::Stand
+                },
+                ..idle()
+            };
+            let (mut world, h) = saved(&setup, 50, &[]);
+            let at_k = state(&world, h);
+            assert_eq!(at_k.stance, Stance::Prone);
+            assert!(at_k.grounded, "{at_k:?}");
+
+            assert_steps_on_bit_equal(&mut world, h, &tail);
+        }
+
+        #[test]
+        fn restored_leaning_character_steps_on_bit_equal() {
+            let setup = |t: usize| CharacterCommand {
+                lean: if t >= 10 { 1.0 } else { 0.0 },
+                ..idle()
+            };
+            let (mut world, h) = saved(&setup, 14, &[]);
+            let at_k = state(&world, h);
+            assert!(at_k.lean != 0.0, "{at_k:?}");
+
+            assert_steps_on_bit_equal(&mut world, h, &tail);
+        }
+
+        #[test]
+        fn restored_character_with_queued_effects_steps_on_bit_equal() {
+            let queued = [
+                CharacterEffect::SetVelocity(Vec3::new(0.0, 0.0, -3.0)),
+                CharacterEffect::AddVelocity(Vec3::new(2.0, 0.0, 0.0)),
+            ];
+            let (mut world, h) = saved(&walk, 15, &queued);
+            let record = world.character_record(h).expect("character is live");
+            assert_eq!(record.effects, queued, "two effects, in queue order");
+
+            assert_steps_on_bit_equal(&mut world, h, &tail);
+        }
+
+        #[test]
+        fn restored_crouched_character_keeps_its_hull_under_a_low_ceiling() {
+            let mut world = geometry_world();
+            let h = spawn_at(&mut world, Vec3::new(0.0, 0.95, -9.5));
+            let crouched_walk = CharacterCommand {
+                forward: 1.0,
+                stance: Stance::Crouch,
+                ..idle()
+            };
+            for _ in 0..60 {
+                tick(&mut world, h, &crouched_walk);
+            }
+            let saved = state(&world, h);
+            assert_eq!(saved.stance, Stance::Crouch);
+            assert!(
+                (-7.0..-2.0).contains(&saved.position.z) && saved.position.y < 1.0,
+                "not under the ceiling: {saved:?}"
+            );
+            let record = world.character_record(h).expect("character is live");
+            let mut fresh = geometry_world();
+            let restored = fresh.restore_character(&record, body());
+
+            for t in 0..40 {
+                tick(&mut world, h, &crouched_walk);
+                tick(&mut fresh, restored, &crouched_walk);
+                assert_eq!(
+                    state(&fresh, restored),
+                    state(&world, h),
+                    "tick {t} diverged"
+                );
+            }
+
+            let end = state(&fresh, restored);
+            assert_eq!(end.stance, Stance::Crouch);
+            assert!(end.position.z - saved.position.z > 1.0, "{end:?}");
+            assert!(end.position.y < 1.0, "{end:?}");
+        }
+
+        #[test]
+        fn restored_character_stays_grounded_on_its_first_tick() {
+            let (mut world, h) = saved(&|_| idle(), 60, &[]);
+            let standing = state(&world, h);
+            assert!(standing.grounded, "{standing:?}");
+            let record = world.character_record(h).expect("character is live");
+            let mut fresh = geometry_world();
+            let restored = fresh.restore_character(&record, body());
+
+            fresh
+                .move_character(restored, &idle(), &settings(), DT)
+                .expect("character is live");
+            world
+                .move_character(h, &idle(), &settings(), DT)
+                .expect("character is live");
+
+            let after = state(&fresh, restored);
+            assert!(after.grounded, "{after:?}");
+            assert!(after.position.y >= standing.position.y - 1e-3, "{after:?}");
+            assert_eq!(after, state(&world, h));
+        }
+
+        fn fixture() -> CharacterRecord {
+            CharacterRecord {
+                state: CharacterState {
+                    position: Vec3::new(1.5, 2.25, -3.0),
+                    velocity: Vec3::new(0.5, -1.0, 2.0),
+                    yaw: 0.75,
+                    pitch: -0.25,
+                    grounded: true,
+                    jump_held: true,
+                    eye: Vec3::new(0.125, 0.5, -0.0625),
+                    stance: Stance::Prone,
+                    from: Stance::Crouch,
+                    progress: 7,
+                    anchor: Anchor::Head,
+                    lean: -0.5,
+                    roll: 0.125,
+                },
+                effects: vec![
+                    CharacterEffect::AddVelocity(Vec3::new(1.0, 2.0, 3.0)),
+                    CharacterEffect::Teleport {
+                        position: Vec3::new(4.0, 5.0, 6.0),
+                        keep_velocity: true,
+                    },
+                ],
+            }
+        }
+
+        const PINNED: &[u8] = &[
+            0, 0, 192, 63, 0, 0, 16, 64, 0, 0, 64, 192, 0, 0, 0, 63, 0, 0, 128, 191, 0, 0, 0, 64,
+            0, 0, 64, 63, 0, 0, 128, 190, 1, 1, 0, 0, 0, 62, 0, 0, 0, 63, 0, 0, 128, 189, 2, 1, 7,
+            1, 0, 0, 0, 191, 0, 0, 0, 62, 2, 0, 0, 0, 128, 63, 0, 0, 0, 64, 0, 0, 64, 64, 2, 0, 0,
+            128, 64, 0, 0, 160, 64, 0, 0, 192, 64, 1,
+        ];
+
+        #[test]
+        fn character_record_bytes_are_pinned() {
+            let bytes = postcard::to_allocvec(&fixture()).expect("the record serialises");
+
+            assert_eq!(bytes, PINNED);
+            let decoded: CharacterRecord =
+                postcard::from_bytes(PINNED).expect("the pinned bytes deserialise");
+            assert_eq!(decoded, fixture());
+        }
+
+        fn vec3() -> impl Strategy<Value = Vec3> {
+            (-50.0f32..50.0, -50.0f32..50.0, -50.0f32..50.0)
+                .prop_map(|(x, y, z)| Vec3::new(x, y, z))
+        }
+
+        fn any_stance() -> impl Strategy<Value = Stance> {
+            prop_oneof![
+                Just(Stance::Stand),
+                Just(Stance::Crouch),
+                Just(Stance::Prone)
+            ]
+        }
+
+        fn any_effect() -> impl Strategy<Value = CharacterEffect> {
+            prop_oneof![
+                vec3().prop_map(CharacterEffect::AddVelocity),
+                vec3().prop_map(CharacterEffect::SetVelocity),
+                (vec3(), any::<bool>()).prop_map(|(position, keep_velocity)| {
+                    CharacterEffect::Teleport {
+                        position,
+                        keep_velocity,
+                    }
+                }),
+                (-7.0f32..7.0, -3.0f32..3.0)
+                    .prop_map(|(yaw, pitch)| CharacterEffect::SetLook { yaw, pitch }),
+            ]
+        }
+
+        /// Finite fields, some outside what a step would leave: the restore copies verbatim.
+        fn any_record() -> impl Strategy<Value = CharacterRecord> {
+            let motion = (vec3(), vec3(), vec3());
+            let look = (-7.0f32..7.0, -3.0f32..3.0);
+            let flags = (any::<bool>(), any::<bool>());
+            let leg = (any_stance(), any_stance(), any::<u16>());
+            let anchor = prop_oneof![Just(Anchor::Feet), Just(Anchor::Head)];
+            let lean = (-2.0f32..2.0, -1.0f32..1.0);
+            let effects = proptest::collection::vec(any_effect(), 0..4);
+            (motion, look, flags, leg, anchor, lean, effects).prop_map(
+                |(
+                    (position, velocity, eye),
+                    (yaw, pitch),
+                    (grounded, jump_held),
+                    (stance, from, progress),
+                    anchor,
+                    (lean, roll),
+                    effects,
+                )| CharacterRecord {
+                    state: CharacterState {
+                        position,
+                        velocity,
+                        yaw,
+                        pitch,
+                        grounded,
+                        jump_held,
+                        eye,
+                        stance,
+                        from,
+                        progress,
+                        anchor,
+                        lean,
+                        roll,
+                    },
+                    effects,
+                },
+            )
+        }
+
+        proptest! {
+            #[test]
+            fn restore_then_record_round_trips(record in any_record()) {
+                let mut world = PhysicsWorld::new();
+
+                let h = world.restore_character(&record, body());
+
+                prop_assert_eq!(world.character(h), Some(record.state));
+                prop_assert_eq!(world.character_record(h), Some(record));
+            }
+        }
+
+        #[test]
+        fn characters_restored_in_reverse_order_step_on_bit_equal() {
+            let positions = [
+                Vec3::new(-1.6, 0.95, 6.0),
+                Vec3::new(0.0, 0.95, 6.0),
+                Vec3::new(1.6, 0.95, 6.0),
+            ];
+            let sideways = [-1.0_f32, 0.0, 1.0];
+            let command = |who: usize, t: usize| CharacterCommand {
+                right: sideways[who],
+                forward: if who == 1 { 0.5 } else { 0.0 },
+                yaw_delta: if t % 80 < 20 { 0.03 * who as f32 } else { 0.0 },
+                ..idle()
+            };
+            let mut original = geometry_world();
+            let handles = positions.map(|position| spawn_at(&mut original, position));
+            for t in 0..30 {
+                for (who, &h) in handles.iter().enumerate() {
+                    original
+                        .move_character(h, &command(who, t), &settings(), DT)
+                        .expect("character is live");
+                }
+                original.step(DT);
+            }
+            let closest = (0..3)
+                .flat_map(|a| (a + 1..3).map(move |b| (a, b)))
+                .map(|(a, b)| {
+                    let (pa, pb) = (state(&original, handles[a]), state(&original, handles[b]));
+                    pa.position.with_y(0.0).distance(pb.position.with_y(0.0))
+                })
+                .fold(f32::MAX, f32::min);
+            assert!(closest < 0.95, "the capsules never met: {closest} m");
+            let records = handles.map(|h| original.character_record(h).expect("live"));
+            let mut fresh = geometry_world();
+            let mut restored = Vec::new();
+            for record in records.iter().rev() {
+                restored.push(fresh.restore_character(record, body()));
+            }
+            restored.reverse();
+
+            for t in 30..30 + TICKS {
+                for who in 0..3 {
+                    original
+                        .move_character(handles[who], &command(who, t), &settings(), DT)
+                        .expect("character is live");
+                }
+                original.step(DT);
+                for who in 0..3 {
+                    fresh
+                        .move_character(restored[who], &command(who, t), &settings(), DT)
+                        .expect("character is live");
+                }
+                fresh.step(DT);
+                for who in 0..3 {
+                    assert_eq!(
+                        state(&fresh, restored[who]),
+                        state(&original, handles[who]),
+                        "character {who} diverged at tick {t}"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn restoring_beside_loose_objects_leaves_them_untouched() {
+            let (source, source_h) = saved(&walk, 15, &[]);
+            let record = source
+                .character_record(source_h)
+                .expect("character is live");
+            let mut world = geometry_world();
+            let pile: Vec<LooseId> = [0.25, 0.75, 1.25]
+                .into_iter()
+                .map(|y| {
+                    world.spawn_loose(&LooseSpawn {
+                        position: Vec3::new(-6.0, y, 6.0),
+                        ..LooseSpawn::new(
+                            LooseShape::Box {
+                                half_extents: Vec3::splat(0.25),
+                            },
+                            1.0,
+                        )
+                    })
+                })
+                .collect();
+            for _ in 0..240 {
+                world.step(DT);
+            }
+            let rest: Vec<LooseState> = pile.iter().map(|&id| world.loose(id).unwrap()).collect();
+
+            let h = world.restore_character(&record, body());
+
+            let after: Vec<LooseState> = pile.iter().map(|&id| world.loose(id).unwrap()).collect();
+            assert_eq!(after, rest, "the restore moved or woke a loose object");
+            assert_eq!(world.character(h), Some(record.state));
+            for t in 0..60 {
+                tick(&mut world, h, &idle());
+                if t == 0 {
+                    assert!(state(&world, h).grounded, "the first move saw the floor");
+                }
+                for (&id, before) in pile.iter().zip(&rest) {
+                    let now = world.loose(id).unwrap();
+                    assert!(
+                        now.position.distance(before.position) < 5e-3,
+                        "tick {t}: the pile moved, {now:?} from {before:?}"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn character_record_of_a_removed_character_is_none() {
+            let mut world = PhysicsWorld::new();
+            let h = world.add_character(Vec3::new(0.0, 10.0, 0.0));
+            assert!(world.character_record(h).is_some(), "live to start with");
+            world.remove_character(h).expect("character is live");
+
+            let record = world.character_record(h);
+
+            assert_eq!(record, None);
+        }
+
+        #[test]
+        #[should_panic(expected = "hull")]
+        fn restore_character_panics_on_an_impossible_hull() {
+            let mut impossible = body();
+            impossible.standing.hull.radius = 0.0;
+            let mut world = PhysicsWorld::new();
+
+            world.restore_character(&fixture(), impossible);
         }
     }
 }
