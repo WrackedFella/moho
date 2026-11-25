@@ -1266,6 +1266,44 @@ pub(crate) mod tests {
         assert!(drawn_handles(&mut app).is_empty(), "nothing is drawn");
     }
 
+    #[test]
+    fn evicting_a_chunk_then_the_ground_in_front_of_it_leaves_nothing_drawn() {
+        let mut app = App::headless();
+        let evicted_first = IVec3::ZERO;
+        let in_front = IVec3::new(1, 0, 0);
+        fill_ground(&mut app, IVec3::ZERO, IVec3::splat(15));
+        fill_ground(&mut app, IVec3::new(16, 0, 0), IVec3::new(31, 15, 15));
+        insert_grid_chunk(&mut app, evicted_first);
+        insert_grid_chunk(&mut app, in_front);
+        assert!(
+            app.entities.chunks.get(evicted_first).is_some(),
+            "drawn while stored"
+        );
+        for pos in [evicted_first, in_front] {
+            app.light_system
+                .as_mut()
+                .expect("light system")
+                .grid_mut()
+                .remove_chunk(pos);
+
+            remove_chunk(&mut app, pos);
+        }
+
+        assert!(
+            app.entities.chunks.get(evicted_first).is_none(),
+            "the evicted chunk is not redrawn as an empty chunk"
+        );
+        assert_eq!(app.entities.chunks.len(), 0, "no chunk is left");
+        assert!(
+            collider_of(&app, evicted_first).is_none(),
+            "its collider is gone"
+        );
+        assert_eq!(terrain_collider_count(&app), 0, "nothing is solid");
+        let mut backend = RecordingBackend::default();
+        app.scene.world_meshes_mut().flush(&mut backend);
+        assert!(drawn_handles(&mut app).is_empty(), "nothing is drawn");
+    }
+
     /// Stone with soil on part of its top and an iron-ore block in it, meshed as a chunk.
     fn stone_soil_ore_chunk() -> VoxelChunk {
         let mut grid = flagstone_voxel::VoxelGrid::new(16);
