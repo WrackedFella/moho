@@ -5589,4 +5589,137 @@ mod tests {
             "the first pawn's pockets took the ore"
         );
     }
+
+    #[test]
+    fn a_possessed_pawn_with_collision_off_stays_put_and_resumes_from_its_body() {
+        let cells = [[12, GROUND_TOP + 1, 8], [12, GROUND_TOP + 1, 16]];
+        let first_mark = [20, GROUND_TOP + 1, 8];
+        let mut app = dig_site_with_pawns(&[(first_mark, Some(ORE))], &cells);
+        app.colony.marks.toggle(first_mark);
+        let possessed = PawnId(1);
+        let mut sim = headless_loop();
+        app.selection.click(Some(possessed));
+        press_possess(&mut app, &mut sim);
+        assert_eq!(app.possessed, Some(possessed), "setup: possessed");
+        app.physics.noclip = true;
+        let body_before = body_centre(&app, possessed);
+        let view_before = app.simulation.position();
+
+        hold(&mut app, StrategyAction::MoveForward);
+        sim.step(&mut app, 60);
+        release_key(&mut app, StrategyAction::MoveForward);
+
+        assert!(
+            app.simulation.position().distance(view_before) > 2.0,
+            "setup: the view did not fly"
+        );
+        assert!(
+            body_centre(&app, possessed).distance(body_before) < 1e-3,
+            "the body moved with the view"
+        );
+        assert!(!is_mining(&app, possessed));
+        assert_ne!(claimant(&app, first_mark), Some(possessed));
+        let dug = run_until(&mut app, GIVE_UP, |app| !block_exists(app, first_mark));
+        assert!(dug, "the other pawn never dug the mark");
+        assert_eq!(app.colony.stock.count(ORE), 1);
+        assert!(
+            body_centre(&app, possessed).distance(body_before) < 1e-3,
+            "a job moved the possessed body"
+        );
+
+        press_possess(&mut app, &mut sim);
+        assert_eq!(app.possessed, None, "setup: stepped out");
+        let second_mark = [20, GROUND_TOP + 1, 18];
+        let grid = app
+            .light_system
+            .as_mut()
+            .expect("App starts with a light system")
+            .grid_mut();
+        for mark in [first_mark, second_mark] {
+            grid.mutator()
+                .place(flagstone_voxel::BlockPos::from_array(mark), 0, None);
+            app.colony.marks.toggle(mark);
+        }
+        let left_at = feet_of(&app, possessed);
+        sim.step(&mut app, 1);
+
+        assert_eq!(
+            claimant(&app, second_mark),
+            Some(possessed),
+            "the stepped-out pawn takes the mark the other pawn leaves"
+        );
+        let Some(Job::Mine { route, .. }) = app.crew.get(possessed).map(|pawn| &pawn.job) else {
+            panic!("the stepped-out pawn takes the free mark");
+        };
+        assert_eq!(
+            (route[0].x, route[0].z),
+            (left_at.x.floor() as i32, left_at.z.floor() as i32),
+            "the walk starts away from the pawn's body, at {:?} (the view is at {:?})",
+            route[0],
+            app.simulation.position()
+        );
+    }
+
+    #[test]
+    fn possess_on_the_tick_a_dig_would_finish_digs_nothing() {
+        let mark = [16, GROUND_TOP + 1, 12];
+        let cells = [[12, GROUND_TOP + 1, 12], [12, GROUND_TOP + 1, 24]];
+        let site = || {
+            let mut app = dig_site_with_pawns(&[(mark, Some(ORE))], &cells);
+            app.colony.marks.toggle(mark);
+            app
+        };
+        let (digger, other) = (PawnId(0), PawnId(1));
+        let mut probe = site();
+        let mut probe_loop = headless_loop();
+        let mut dig_tick = 0;
+        while block_exists(&probe, mark) {
+            probe_loop.step(&mut probe, 1);
+            dig_tick += 1;
+            assert!(dig_tick < GIVE_UP, "setup: the pawn never digs");
+        }
+        let mut app = site();
+        let mut sim = headless_loop();
+        sim.step(&mut app, dig_tick - 1);
+        assert!(block_exists(&app, mark), "setup: the dig is still to come");
+        assert_eq!(
+            claimant(&app, mark),
+            Some(digger),
+            "setup: it holds the mark"
+        );
+        app.selection.click(Some(digger));
+
+        press_possess(&mut app, &mut sim);
+
+        assert_eq!(app.possessed, Some(digger));
+        assert!(block_exists(&app, mark), "the possessed pawn dug");
+        assert!(
+            app.colony.marks.contains(mark),
+            "the mark went with the dig"
+        );
+        assert_ne!(claimant(&app, mark), Some(digger));
+        assert!(!is_mining(&app, digger));
+        assert!(app.colony.stock.is_empty(), "the dig was applied");
+        assert!(pawn_of(&app, digger).inventory.is_empty());
+        let dug = run_until(&mut app, GIVE_UP, |app| !block_exists(app, mark));
+        assert!(dug, "nobody dug the mark afterwards");
+        assert_eq!(
+            app.colony.stock.count(ORE),
+            1,
+            "dug once, by the other pawn"
+        );
+        assert!(
+            pawn_state_of_pawn_walked(&app, other),
+            "the other pawn did not do the digging"
+        );
+    }
+
+    fn pawn_of_walked_from(app: &App, id: PawnId, from: [i32; 3]) -> f32 {
+        let start = glam::Vec3::new(from[0] as f32 + 0.5, from[1] as f32, from[2] as f32 + 0.5);
+        feet_of(app, id).distance(start)
+    }
+
+    fn pawn_state_of_pawn_walked(app: &App, id: PawnId) -> bool {
+        pawn_of_walked_from(app, id, [12, GROUND_TOP + 1, 24]) > 1.5
+    }
 }
