@@ -124,7 +124,7 @@ merge-eligibility-test:
         [[ -z $edit || $edit == \#* ]] && continue
         jq "$edit" "$f/eligible.json" > "$facts"
         rc=0
-        got="$(scripts/merge-eligibility.sh decide "$facts" | paste -sd'|' | sed 's/|/ | /g')" || rc=$?
+        got="$(scripts/merge-eligibility.sh decide "$facts" | tr -d '\r' | paste -sd'|' - | sed 's/|/ | /g')" || rc=$?
         want_rc=1
         [[ $want == eligible* ]] && want_rc=0
         if [[ $got != "$want" || $rc != "$want_rc" ]]; then
@@ -144,8 +144,9 @@ chain-test:
     trap 'rm -f "$facts"' EXIT
     while IFS=$'\t' read -r edit want; do
         [[ -z $edit || $edit == \#* ]] && continue
+        want="${want%$'\r'}"
         jq "$edit" "$f/queued.json" > "$facts"
-        got="$(scripts/chain.sh decide "$facts" | tr '\t' ':' | paste -sd'|' | sed 's/|/ | /g')"
+        got="$(scripts/chain.sh decide "$facts" | tr -d '\r' | tr '\t' ':' | paste -sd'|' - | sed 's/|/ | /g')"
         if [[ $got != "$want" ]]; then
             echo "chain [$edit]: expected '$want', got '$got'" >&2
             exit 1
