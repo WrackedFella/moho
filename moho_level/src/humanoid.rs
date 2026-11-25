@@ -52,7 +52,24 @@ impl Bone {
 
     /// The node name a rig gives this bone.
     pub fn name(self) -> &'static str {
-        todo!("bone names")
+        match self {
+            Bone::Pelvis => "pelvis",
+            Bone::Spine => "spine_01",
+            Bone::Neck => "neck_01",
+            Bone::Head => "head",
+            Bone::UpperArmL => "upperarm_l",
+            Bone::LowerArmL => "lowerarm_l",
+            Bone::HandL => "hand_l",
+            Bone::UpperArmR => "upperarm_r",
+            Bone::LowerArmR => "lowerarm_r",
+            Bone::HandR => "hand_r",
+            Bone::ThighL => "thigh_l",
+            Bone::CalfL => "calf_l",
+            Bone::FootL => "foot_l",
+            Bone::ThighR => "thigh_r",
+            Bone::CalfR => "calf_r",
+            Bone::FootR => "foot_r",
+        }
     }
 }
 
@@ -76,20 +93,36 @@ impl Humanoid {
     /// # Errors
     /// [`MissingBones`] listing every bone with no node.
     pub fn of(model: &Model) -> Result<Humanoid, MissingBones> {
-        let _ = model;
-        todo!("resolve bones")
+        let mut nodes = [0; 16];
+        let mut missing = Vec::new();
+        for (slot, bone) in nodes.iter_mut().zip(Bone::ALL) {
+            let found = model
+                .nodes()
+                .iter()
+                .position(|n| n.name.as_deref() == Some(bone.name()));
+            match found {
+                Some(index) => *slot = index,
+                None => missing.push(bone.name()),
+            }
+        }
+        if missing.is_empty() {
+            Ok(Humanoid { nodes })
+        } else {
+            Err(MissingBones { bones: missing })
+        }
     }
 
     /// The index in [`Model::nodes`] of `bone`.
     pub fn node(self, bone: Bone) -> usize {
-        let _ = (self.nodes, bone);
-        todo!("bone node")
+        self.nodes[bone as usize]
     }
 
     /// The model-space transform of `bone` in `pose`.
+    ///
+    /// # Panics
+    /// When `pose` is not of the model this was resolved on.
     pub fn bone(self, pose: &Pose, bone: Bone) -> Affine3A {
-        let _ = (self.nodes, pose, bone);
-        todo!("bone pose")
+        pose.nodes()[self.node(bone)]
     }
 }
 
@@ -98,8 +131,11 @@ impl Humanoid {
 /// # Errors
 /// As [`load_model`]; [`crate::LevelErrorKind::NotHumanoid`] when a required bone is missing.
 pub fn load_humanoid(path: &Path) -> Result<(Model, Humanoid), LevelError> {
-    let _ = (path, load_model);
-    todo!("load humanoid")
+    let model = load_model(path)?;
+    match Humanoid::of(&model) {
+        Ok(humanoid) => Ok((model, humanoid)),
+        Err(missing) => Err(LevelError::new(path, missing.into())),
+    }
 }
 
 #[cfg(test)]

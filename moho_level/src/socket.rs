@@ -114,7 +114,7 @@ impl<K: Copy> Assembly<K> {
         root: Affine3A,
     ) -> Vec<(K, usize, Affine3A)> {
         let mut out = Vec::new();
-        self.collect(models, root, &mut out);
+        self.collect(models, root, None, &mut out);
         out
     }
 
@@ -130,26 +130,32 @@ impl<K: Copy> Assembly<K> {
         root: Affine3A,
         pose: &Pose,
     ) -> Vec<(K, usize, Affine3A)> {
-        let _ = (models, root, pose);
-        todo!("posed placements")
+        let mut out = Vec::new();
+        self.collect(models, root, Some(pose), &mut out);
+        out
     }
 
+    /// Walk this copy and its parts. `pose` poses this copy's own model (`None` is its
+    /// rest); parts always sit at their own rest.
     fn collect<'m>(
         &self,
         models: &impl Fn(K) -> &'m Model,
         root: Affine3A,
+        pose: Option<&Pose>,
         out: &mut Vec<(K, usize, Affine3A)>,
     ) {
         let model = models(self.model);
+        let node = |index: usize| pose.map_or(model.nodes()[index].rest, |p| p.nodes()[index]);
         out.extend(
             model
-                .placements(root)
-                .map(|(mesh, transform)| (self.model, mesh, transform)),
+                .meshes()
+                .iter()
+                .enumerate()
+                .map(|(mesh, m)| (self.model, mesh, root * node(m.node))),
         );
         for part in &self.parts {
-            let socket = model.nodes()[part.node].rest;
             part.assembly
-                .collect(models, root * socket * part.offset, out);
+                .collect(models, root * node(part.node) * part.offset, None, out);
         }
     }
 
