@@ -105,6 +105,20 @@ impl PhysicsWorld {
         self.brake_rolling(dt);
     }
 
+    /// Put every enabled collider into the query BVH at its current pose, so a query before
+    /// the next step sees it. Leaves the colliders' modified flags and every body's sleep
+    /// state alone, so the next step registers new colliders' pairs as usual.
+    pub(super) fn index_for_queries(&mut self) {
+        let params = self.integration_parameters;
+        for (handle, collider) in self.collider_set.iter_enabled() {
+            self.broad_phase.set_aabb(
+                &params,
+                handle,
+                collider.compute_broad_phase_aabb(&params, &self.rigid_body_set),
+            );
+        }
+    }
+
     /// Set the downward acceleration, m/s², positive down, that pulls rigid bodies and
     /// characters whose `MoveSettings::gravity` is `None`.
     pub fn set_gravity(&mut self, gravity: f32) {

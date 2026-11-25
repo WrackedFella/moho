@@ -188,16 +188,8 @@ impl PhysicsWorld {
         let spawn = spawn.into();
         spawn.body.validate();
         let position = spawn.position;
-        let body = RigidBodyBuilder::kinematic_position_based()
-            .pose(Pose::from_parts(position, Quat::from_rotation_y(spawn.yaw)))
-            .build();
-        let body_handle = self.rigid_body_set.insert(body);
-
-        let shape = ColliderBuilder::new(shape_of(spawn.body.pose(Stance::Stand)));
-        let collider = shape.friction(0.0).build();
-        let collider =
-            self.collider_set
-                .insert_with_parent(collider, body_handle, &mut self.rigid_body_set);
+        let (body_handle, collider) =
+            self.insert_character_body(position, spawn.yaw, &spawn.body, Stance::Stand);
 
         let handle = CharacterHandle(body_handle);
         self.characters.insert(
@@ -385,35 +377,80 @@ impl PhysicsWorld {
         Some(character.state(self.rigid_body_set[handle.0].position().translation))
     }
 
-    /// Compile-only stand-in: always a zeroed record.
-    pub fn character_record(&self, _handle: CharacterHandle) -> Option<CharacterRecord> {
+    /// The character's record, or `None` for an unknown handle.
+    pub fn character_record(&self, handle: CharacterHandle) -> Option<CharacterRecord> {
+        let character = self.characters.get(&handle)?;
         Some(CharacterRecord {
-            state: CharacterState {
-                position: Vec3::ZERO,
-                velocity: Vec3::ZERO,
-                yaw: 0.0,
-                pitch: 0.0,
-                grounded: false,
-                jump_held: false,
-                eye: Vec3::ZERO,
-                stance: Stance::Stand,
-                from: Stance::Stand,
-                progress: 0,
-                anchor: Anchor::Feet,
-                lean: 0.0,
-                roll: 0.0,
-            },
-            effects: Vec::new(),
+            state: self.character(handle)?,
+            effects: character.effects.clone(),
         })
     }
 
-    /// Compile-only stand-in: spawns a fresh standing character at the record's position.
+    /// Put a character back from its record, with the hull `body` it had when saved, and
+    /// return its new handle. The world is ready for the next tick: the character reads back
+    /// `record` exactly, and its first move sees every collider already in the world. Counts
+    /// no tick and moves no dynamic body.
+    ///
+    /// Set the world's geometry first; a mesh set after the restore enters at the next step,
+    /// as it does today. Hit volumes are not in the record: set them again after the restore.
+    ///
+    /// # Panics
+    /// On an impossible hull ([`CharacterBody::validate`]), as `add_character` does.
     pub fn restore_character(
         &mut self,
         record: &CharacterRecord,
-        _body: CharacterBody,
+        body: CharacterBody,
     ) -> CharacterHandle {
-        self.add_character(record.state.position)
+        body.validate();
+        let state = &record.state;
+        let (body_handle, collider) =
+            self.insert_character_body(state.position, state.yaw, &body, state.stance);
+        let handle = CharacterHandle(body_handle);
+        self.characters.insert(
+            handle,
+            Character {
+                collider,
+                body,
+                volumes: Vec::new(),
+                velocity: state.velocity,
+                yaw: state.yaw,
+                pitch: state.pitch,
+                grounded: state.grounded,
+                jump_held: state.jump_held,
+                eye: state.eye,
+                stance: state.stance,
+                from: state.from,
+                progress: state.progress,
+                anchor: state.anchor,
+                lean: state.lean,
+                roll: state.roll,
+                effects: record.effects.clone(),
+            },
+        );
+        self.index_for_queries();
+        handle
+    }
+
+    /// Insert a kinematic body at `position` facing `yaw`, with a frictionless capsule of the
+    /// hull `body` has in `stance`.
+    fn insert_character_body(
+        &mut self,
+        position: Vec3,
+        yaw: f32,
+        body: &CharacterBody,
+        stance: Stance,
+    ) -> (RigidBodyHandle, ColliderHandle) {
+        let rigid_body = RigidBodyBuilder::kinematic_position_based()
+            .pose(Pose::from_parts(position, Quat::from_rotation_y(yaw)))
+            .build();
+        let body_handle = self.rigid_body_set.insert(rigid_body);
+        let collider = ColliderBuilder::new(shape_of(body.pose(stance)))
+            .friction(0.0)
+            .build();
+        let collider =
+            self.collider_set
+                .insert_with_parent(collider, body_handle, &mut self.rigid_body_set);
+        (body_handle, collider)
     }
 }
 
@@ -6201,15 +6238,15 @@ mod tests {
             restored.reverse();
 
             for t in 30..30 + TICKS {
-                for who in 0..3 {
+                for (who, &handle) in handles.iter().enumerate() {
                     original
-                        .move_character(handles[who], &command(who, t), &settings(), DT)
+                        .move_character(handle, &command(who, t), &settings(), DT)
                         .expect("character is live");
                 }
                 original.step(DT);
-                for who in 0..3 {
+                for (who, &handle) in restored.iter().enumerate() {
                     fresh
-                        .move_character(restored[who], &command(who, t), &settings(), DT)
+                        .move_character(handle, &command(who, t), &settings(), DT)
                         .expect("character is live");
                 }
                 fresh.step(DT);

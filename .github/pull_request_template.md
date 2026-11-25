@@ -22,3 +22,4 @@ Closes #
 
 ## Risk and manual verification
 <!-- Blast radius, anything a human must check in-game, unresolved items. -->
+New simulation state: in the line's state root or an engine record, or named as derived with what rebuilds it (ADR-0040)?
