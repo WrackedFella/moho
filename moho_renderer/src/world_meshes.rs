@@ -183,6 +183,18 @@ impl WorldMeshes {
         })
     }
 
+    /// Append a placement of the mesh under `id` for this frame that casts a shadow and is
+    /// not drawn in view, listed by [`shadow_only_draws`](Self::shadow_only_draws) only.
+    pub fn place_shadow_only(&mut self, id: WorldMeshId, transform: glam::Affine3A) {
+        let _ = (id, transform);
+    }
+
+    /// Shadow-only placements of live ids as `(backend handle, instance)`, in id order and
+    /// call order.
+    pub fn shadow_only_draws(&self) -> impl Iterator<Item = (u32, InstanceGpu)> + '_ {
+        std::iter::empty()
+    }
+
     /// Drop every placement; the renderer calls this each frame.
     pub fn clear_placements(&mut self) {
         self.placements.clear();
@@ -920,6 +932,95 @@ mod tests {
         meshes.clear_placements();
 
         assert_eq!(meshes.unshadowed_draws().count(), 0);
+    }
+
+    #[test]
+    fn shadow_only_placements_are_listed_apart_from_drawn_and_unshadowed() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.flush(&mut backend);
+
+        meshes.place_shadow_only(A, at(2.0));
+
+        let handle = backend.handle_with_index_count(3);
+        assert_eq!(draws(&meshes).len(), 0, "not in draws");
+        assert_eq!(meshes.textured_draws().count(), 0, "not in textured_draws");
+        assert_eq!(
+            meshes.unshadowed_draws().count(),
+            0,
+            "not in unshadowed_draws"
+        );
+        let shadow_only: Vec<(u32, InstanceGpu)> = meshes.shadow_only_draws().collect();
+        assert_eq!(shadow_only.len(), 1);
+        assert_eq!(shadow_only[0].0, handle);
+        assert_eq!(shadow_only[0].1.model, model_of(at(2.0)));
+        assert_eq!(shadow_only[0].1.material, 0, "no material is named");
+    }
+
+    #[test]
+    fn shadow_only_placements_keep_id_order_then_call_order() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.upsert_movable(B, mesh(2));
+        meshes.flush(&mut backend);
+
+        meshes.place_shadow_only(B, at(1.0));
+        meshes.place_shadow_only(A, at(2.0));
+        meshes.place_shadow_only(A, at(3.0));
+
+        let drawn: Vec<(u32, [[f32; 4]; 4])> = meshes
+            .shadow_only_draws()
+            .map(|(handle, instance)| (handle, instance.model))
+            .collect();
+        let (a, b) = (
+            backend.handle_with_index_count(3),
+            backend.handle_with_index_count(6),
+        );
+        assert_eq!(
+            drawn,
+            vec![
+                (a, model_of(at(2.0))),
+                (a, model_of(at(3.0))),
+                (b, model_of(at(1.0)))
+            ]
+        );
+    }
+
+    #[test]
+    fn a_shadow_only_placement_on_a_missing_id_is_skipped() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.flush(&mut backend);
+
+        meshes.place_shadow_only(B, at(1.0));
+        meshes.place_shadow_only(A, at(2.0));
+
+        let drawn: Vec<[[f32; 4]; 4]> = meshes
+            .shadow_only_draws()
+            .map(|(_, instance)| instance.model)
+            .collect();
+        assert_eq!(
+            drawn,
+            vec![model_of(at(2.0))],
+            "only the live id's placement"
+        );
+    }
+
+    #[test]
+    fn clear_placements_clears_shadow_only_placements() {
+        let mut meshes = WorldMeshes::new();
+        let mut backend = RecordingBackend::default();
+        meshes.upsert_movable(A, mesh(1));
+        meshes.flush(&mut backend);
+        meshes.place_shadow_only(A, at(1.0));
+        assert_eq!(meshes.shadow_only_draws().count(), 1);
+
+        meshes.clear_placements();
+
+        assert_eq!(meshes.shadow_only_draws().count(), 0);
     }
 
     #[test]
