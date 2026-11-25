@@ -453,6 +453,14 @@ fn first_divergence(recorded: &[Snapshot], replayed: &[Snapshot]) -> Option<Dive
     None
 }
 
+fn state_hash(_snapshot: &Snapshot) -> u64 {
+    todo!("state_hash is not implemented")
+}
+
+fn hashes(snapshots: &[Snapshot]) -> Vec<u64> {
+    snapshots.iter().map(state_hash).collect()
+}
+
 fn encode(script: &[TickInput]) -> Vec<u8> {
     postcard::to_allocvec(script).expect("the script serialises")
 }
@@ -803,4 +811,40 @@ fn a_one_ulp_change_to_the_box_launch_velocity_breaks_the_replay() {
     let divergence = first_divergence(&recorded, &replayed)
         .expect("a one-ulp change to the box must show in the replay");
     assert_eq!(divergence.entity, "box", "{divergence:?}");
+}
+
+#[test]
+fn the_state_hash_is_identical_across_two_runs() {
+    let script = make_script();
+
+    let first = hashes(&run(&script));
+    let second = hashes(&run(&script));
+
+    assert_eq!(first.len(), TICKS);
+    assert_eq!(first, second);
+    let distinct: std::collections::HashSet<u64> = first.iter().copied().collect();
+    assert!(
+        distinct.len() > TICKS / 2,
+        "the hash barely changes across ticks: {} distinct of {TICKS}",
+        distinct.len()
+    );
+}
+
+#[test]
+fn a_one_ulp_change_to_the_box_launch_velocity_changes_the_state_hash() {
+    let script = make_script();
+    let recorded = hashes(&run(&script));
+    let nudged = Vec3::new(
+        flip_lowest_bit(BOX_VELOCITY.x),
+        BOX_VELOCITY.y,
+        BOX_VELOCITY.z,
+    );
+
+    let replayed = hashes(&run_in(build_scene(nudged), &script));
+
+    assert_eq!(recorded.len(), replayed.len());
+    assert!(
+        recorded.iter().zip(&replayed).any(|(a, b)| a != b),
+        "a one-ulp change to the box left every tick's hash unchanged"
+    );
 }
