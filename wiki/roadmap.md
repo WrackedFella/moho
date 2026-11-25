@@ -50,7 +50,7 @@ Engine item numbers are those of the [engine roadmap](engine/roadmap.md).
 | FPS-M2 | Moving meshes; loose objects; models, sockets and rig; flash, tracer and impact marks; marker size | 2.20 ENG-F38; 2.21 ENG-F48 (#600); 2.22 ENG-F39; 2.23 ENG-F40; 2.24 ENG-F14-03 |
 | FPS-M2 (fast-tracked) | Reload clips the sim times and cancels, over the legs' clip; magazine moves bone to bone and leaves the hand; a shadow-only body | 2.22.1 ENG-F39-07 #943, -08 #944, -09 #945 (#543); 2.20 ENG-F38-02 #946 (#917) |
 | FPS-M2 | Unload a level and load another by name | 2.27 ENG-F14-04 #750, -05 #752 |
-| FPS-M3 | Large level load budget, loading screen, authored boundary | 3.4i ENG-F46 #746; ENG-F14-06 #751 |
+| FPS-M3 | Large level load budget, loading screen, authored boundary; scatter and distant detail levels | 3.4i ENG-F46 #746; ENG-F14-06 #751; 3.4j ENG-F52 #962; 3.4k ENG-F53 #963 |
 | FPS enemy AI slice 2 | Positional audio; hidden routes and cover | 2.4 ENG-F16; 3.4c ENG-F42 |
 | FPS-M3.1 | Beam and dot; first-person view | 3.4d ENG-F40; 3.4b ENG-F39 |
 | FPS-M4 | Screen and sound follow game values; clips blended by speed and direction | 3.4e ENG-F41; 3.4b ENG-F39 |
