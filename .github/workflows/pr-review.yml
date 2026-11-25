@@ -155,7 +155,8 @@ jobs:
       # The review reads CI as evidence, and a pending check ends it without a verdict, so
       # wait until every check on the head has finished (this job's own excepted). A head
       # with no CI run (a push by the default token starts none) is reviewed after five
-      # minutes. Polling costs no tokens.
+      # minutes. A push while waiting moves the wait to the new head: its CI cancels the old
+      # head's, and the resume path skips a PR that was never reviewed. Polling costs no tokens.
       - name: Wait for checks
         id: ci
         if: steps.pr.outputs.skip != 'true'
@@ -164,6 +165,12 @@ jobs:
         run: |
           deadline=$((SECONDS + 2700))
           while [ "$SECONDS" -lt "$deadline" ]; do
+            head=$(gh api "repos/$GH_REPO/pulls/$PR" --jq .head.sha)
+            if [ "$head" != "$HEAD_SHA" ]; then
+              echo "PR #$PR moved from $HEAD_SHA to $head; waiting on the new head." | tee -a "$GITHUB_STEP_SUMMARY"
+              HEAD_SHA=$head
+              echo "HEAD_SHA=$head" >> "$GITHUB_ENV"
+            fi
             read -r status conclusion < <(gh run list --workflow ci.yml --commit "$HEAD_SHA" \
               --limit 1 --json status,conclusion --jq '.[0] // {} | [(.status // "none"), (.conclusion // "-")] | @tsv')
             pending=$(gh api "repos/$GH_REPO/commits/$HEAD_SHA/check-runs?per_page=100" --paginate \

@@ -1,5 +1,7 @@
-//! Head bob: the view dips with each footstep and sways with each stride. It is view-only state
-//! the game steps after the sim, so it never moves the aim ray or the player's hit volumes.
+//! Head bob: each footstep swings the eye out to that foot's side and back through its resting
+//! point, rising then falling on the way, so a stride traces a figure-8 lying on its side. It is
+//! view-only state the game steps after the sim, so it never moves the aim ray or the player's hit
+//! volumes.
 
 use std::f32::consts::{PI, TAU};
 
@@ -9,14 +11,15 @@ use crate::lean::lean_offset;
 
 /// Metres walked per footstep; one footstep is half a turn of the phase.
 pub const STEP_LENGTH: f32 = 1.5;
-/// How far the eye dips at the bottom of a footstep, in metres, at full level and walking speed.
-pub const DIP: f32 = 0.04;
-/// How far the eye sways sideways at the peak of a stride, in metres, at full level and walking
+/// How far the eye swings to the side of the foot stepping, in metres, at full level and walking
 /// speed.
-pub const SWAY: f32 = 0.025;
-/// The most the amplitude reaches, as a multiple of walking speed; a guard against a landing
-/// spike.
-pub const MAX_AMPLITUDE: f32 = 2.0;
+pub const SWAY: f32 = 0.03;
+/// How far the eye rises above its resting point within a footstep's loop, in metres, at full
+/// level and walking speed. It falls the same distance below.
+pub const RISE: f32 = 0.015;
+/// The most the amplitude reaches, as a multiple of walking speed; it keeps a fast mover's loop
+/// restrained and guards against a landing spike.
+pub const MAX_AMPLITUDE: f32 = 1.5;
 
 /// The head-bob setting: a percentage from 0 to 100 on a grid of 5.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,8 +106,9 @@ impl Bob {
     #[must_use]
     pub fn offset(self, level: HeadBobLevel, yaw: f32) -> Vec3 {
         let scale = self.amplitude * level.fraction();
-        let sin = self.phase.sin();
-        Vec3::new(0.0, -DIP * scale * sin * sin, 0.0) + lean_offset(yaw, SWAY * scale * sin)
+        let sideways = SWAY * scale * self.phase.sin();
+        let vertical = RISE * scale * (2.0 * self.phase).sin();
+        Vec3::new(0.0, vertical, 0.0) + lean_offset(yaw, sideways)
     }
 
     /// The bob `alpha` (0 to 1) of the way from `self` to `next`, the phase moving forward
@@ -146,6 +150,19 @@ mod tests {
     /// Phases around a whole stride, from 0 up to just short of a turn.
     fn phases() -> impl Iterator<Item = f32> {
         (0..64).map(|i| i as f32 * TAU / 64.0)
+    }
+
+    /// How far `offsets` reach along `right` and up and down.
+    fn extents(offsets: &[Vec3], right: Vec3) -> (f32, f32) {
+        let range = |values: Vec<f32>| {
+            let high = values.iter().copied().fold(f32::MIN, f32::max);
+            let low = values.iter().copied().fold(f32::MAX, f32::min);
+            high - low
+        };
+        (
+            range(offsets.iter().map(|o| o.dot(right)).collect()),
+            range(offsets.iter().map(|o| o.y).collect()),
+        )
     }
 
     #[test]
@@ -276,12 +293,14 @@ mod tests {
     }
 
     #[test]
-    fn amplitude_is_capped_at_twice_a_full_walk() {
+    fn amplitude_is_capped_at_one_and_a_half_walks() {
+        let brisk = Bob::REST.step(true, 1.25 * WALK, WALK, DT);
         let fast = Bob::REST.step(true, 2.0 * WALK, WALK, DT);
         let faster = Bob::REST.step(true, 10.0 * WALK, WALK, DT);
 
-        assert!(close(fast.amplitude, MAX_AMPLITUDE), "{fast:?}");
-        assert!(close(faster.amplitude, MAX_AMPLITUDE), "{faster:?}");
+        assert!(close(brisk.amplitude, 1.25), "{brisk:?}");
+        assert!(close(fast.amplitude, 1.5), "{fast:?}");
+        assert!(close(faster.amplitude, 1.5), "{faster:?}");
     }
 
     #[test]
@@ -311,81 +330,121 @@ mod tests {
         }
     }
 
-    #[test]
-    fn offset_is_zero_at_phase_zero_and_never_above_the_eye() {
-        for yaw in [0.0, 0.7, 3.0] {
-            let start = Bob {
-                phase: 0.0,
-                amplitude: 1.0,
-            };
+    proptest! {
+        #[test]
+        fn each_footstep_sways_only_to_its_own_side(
+            phase in 0.01f32..(PI - 0.01),
+            yaw in -TAU..TAU,
+            amplitude in 0.1f32..1.5,
+        ) {
+            let right = lean_offset(yaw, 1.0);
+            let first = Bob { phase, amplitude }.offset(level(100), yaw);
+            let second = Bob { phase: phase + PI, amplitude }.offset(level(100), yaw);
 
-            assert!(
-                start.offset(level(100), yaw).length() < 1e-6,
-                "yaw {yaw}: {:?}",
-                start.offset(level(100), yaw)
-            );
+            prop_assert!(first.dot(right) > 0.0, "first footstep {first:?}");
+            prop_assert!(second.dot(right) < 0.0, "second footstep {second:?}");
         }
-        for phase in phases() {
-            let offset = Bob {
-                phase,
-                amplitude: 2.0,
-            }
-            .offset(level(100), 0.4);
 
-            assert!(
-                offset.y <= 1e-6,
-                "phase {phase}: the eye rose to {offset:?}"
-            );
+        #[test]
+        fn the_eye_is_at_rest_at_the_start_of_each_footstep(
+            yaw in -TAU..TAU,
+            amplitude in 0.0f32..1.5,
+        ) {
+            for phase in [0.0, PI] {
+                let offset = Bob { phase, amplitude }.offset(level(100), yaw);
+
+                prop_assert!(offset.length() < 1e-5, "phase {phase}: {offset:?}");
+            }
         }
     }
 
     #[test]
-    fn a_full_bob_dips_once_per_step_and_sways_once_per_stride_in_the_view_frame() {
+    fn each_footstep_loop_rises_then_falls() {
+        let height = |phase| {
+            Bob {
+                phase,
+                amplitude: 1.0,
+            }
+            .offset(level(100), 0.4)
+            .y
+        };
+
+        assert!(height(PI / 4.0) > 0.0, "{}", height(PI / 4.0));
+        assert!(height(5.0 * PI / 4.0) > 0.0, "{}", height(5.0 * PI / 4.0));
+        assert!(height(3.0 * PI / 4.0) < 0.0, "{}", height(3.0 * PI / 4.0));
+        assert!(height(7.0 * PI / 4.0) < 0.0, "{}", height(7.0 * PI / 4.0));
+    }
+
+    #[test]
+    fn the_figure_eight_is_wider_than_tall() {
+        let yaw = 0.7;
+        let right = lean_offset(yaw, 1.0);
+        let offsets: Vec<Vec3> = phases()
+            .map(|phase| {
+                Bob {
+                    phase,
+                    amplitude: 1.0,
+                }
+                .offset(level(100), yaw)
+            })
+            .collect();
+
+        let (sideways, vertical) = extents(&offsets, right);
+
+        assert!(vertical > 0.0, "the eye must move up and down");
+        assert!(sideways > vertical, "{sideways} wide, {vertical} tall");
+    }
+
+    #[test]
+    fn a_full_bob_traces_the_figure_eight_in_the_view_frame() {
         let bob = |phase| Bob {
             phase,
             amplitude: 1.0,
         };
+        let expected = |yaw, phase: f32| {
+            lean_offset(yaw, SWAY * phase.sin()) + Vec3::new(0.0, RISE * (2.0 * phase).sin(), 0.0)
+        };
 
         for yaw in [0.0, 0.7, 3.0] {
-            let quarter = bob(FRAC_PI_2).offset(level(100), yaw);
-            let half = bob(PI).offset(level(100), yaw);
-            let three_quarters = bob(3.0 * FRAC_PI_2).offset(level(100), yaw);
+            for phase in [PI / 4.0, FRAC_PI_2, 3.0 * PI / 4.0, PI, 3.0 * FRAC_PI_2] {
+                let actual = bob(phase).offset(level(100), yaw);
 
-            assert!(
-                near(quarter, lean_offset(yaw, SWAY) + Vec3::new(0.0, -DIP, 0.0)),
-                "yaw {yaw}: {quarter:?}"
-            );
-            assert!(near(half, Vec3::ZERO), "yaw {yaw}: {half:?}");
-            assert!(
-                near(
-                    three_quarters,
-                    lean_offset(yaw, -SWAY) + Vec3::new(0.0, -DIP, 0.0)
-                ),
-                "yaw {yaw}: {three_quarters:?}"
-            );
+                assert!(
+                    near(actual, expected(yaw, phase)),
+                    "yaw {yaw}, phase {phase}: {actual:?}"
+                );
+            }
+            let top = bob(PI / 4.0).offset(level(100), yaw);
+            assert!(close(top.y, RISE), "{top:?}");
+            assert!(close(
+                top.dot(lean_offset(yaw, 1.0)),
+                SWAY * (PI / 4.0).sin()
+            ));
         }
+        assert!(close(SWAY, 0.03), "SWAY is {SWAY}");
+        assert!(close(RISE, 0.015), "RISE is {RISE}");
     }
 
     #[test]
     fn the_amplitude_and_the_level_scale_the_offset_linearly() {
         let full = Bob {
-            phase: FRAC_PI_2,
+            phase: PI / 4.0,
             amplitude: 1.0,
         }
         .offset(level(100), 0.3);
         let half_amplitude = Bob {
-            phase: FRAC_PI_2,
+            phase: PI / 4.0,
             amplitude: 0.5,
         }
         .offset(level(100), 0.3);
 
         let quarter_level = Bob {
-            phase: FRAC_PI_2,
+            phase: PI / 4.0,
             amplitude: 1.0,
         }
         .offset(level(25), 0.3);
         let half_level = Bob {
-            phase: FRAC_PI_2,
+            phase: PI / 4.0,
             amplitude: 1.0,
         }
         .offset(level(50), 0.3);
@@ -463,5 +522,88 @@ mod tests {
 
         assert!(close(quarter.phase, 1.1), "{quarter:?}");
         assert!(close(quarter.amplitude, 0.25), "{quarter:?}");
+    }
+
+    #[test]
+    fn double_walking_speed_loops_no_more_than_one_and_a_half_times_the_walk() {
+        let walking = Bob::REST.step(true, WALK, WALK, DT);
+        let sprinting = Bob::REST.step(true, 2.0 * WALK, WALK, DT);
+
+        for phase in phases() {
+            let walk = Bob { phase, ..walking }.offset(level(100), 0.0);
+            let fast = Bob { phase, ..sprinting }.offset(level(100), 0.0);
+
+            assert!(fast.x.abs() <= 1.5 * walk.x.abs() + 1e-6, "phase {phase}");
+            assert!(fast.y.abs() <= 1.5 * walk.y.abs() + 1e-6, "phase {phase}");
+        }
+        let walk = Bob {
+            phase: PI / 4.0,
+            ..walking
+        }
+        .offset(level(100), 0.0);
+        let fast = Bob {
+            phase: PI / 4.0,
+            ..sprinting
+        }
+        .offset(level(100), 0.0);
+        assert!(near(fast, walk * 1.5), "{fast:?} vs {walk:?}");
+        assert!(walk.length() > 0.01, "{walk:?}");
+    }
+
+    proptest! {
+        #[test]
+        fn the_second_footstep_mirrors_the_first(
+            phase in 0.0f32..PI,
+            yaw in -TAU..TAU,
+            amplitude in 0.1f32..1.5,
+        ) {
+            let right = lean_offset(yaw, 1.0);
+            let first = Bob { phase, amplitude }.offset(level(100), yaw);
+            let second = Bob { phase: phase + PI, amplitude }.offset(level(100), yaw);
+
+            prop_assert!((second.dot(right) + first.dot(right)).abs() < 1e-5, "{first:?} {second:?}");
+            prop_assert!((second.y - first.y).abs() < 1e-5, "{first:?} {second:?}");
+        }
+    }
+
+    #[test]
+    fn the_second_footstep_mirrors_the_first_at_a_fixed_yaw() {
+        let yaw = 0.7;
+        let right = lean_offset(yaw, 1.0);
+
+        for phase in phases().filter(|phase| *phase < PI) {
+            let first = Bob {
+                phase,
+                amplitude: 1.0,
+            }
+            .offset(level(100), yaw);
+            let second = Bob {
+                phase: phase + PI,
+                amplitude: 1.0,
+            }
+            .offset(level(100), yaw);
+
+            assert!(close(second.dot(right), -first.dot(right)), "phase {phase}");
+            assert!(close(second.y, first.y), "phase {phase}");
+        }
+    }
+
+    #[test]
+    fn a_stride_spans_twice_the_sway_sideways_and_twice_the_rise_vertically() {
+        let right = lean_offset(0.7, 1.0);
+        let offsets: Vec<Vec3> = (0..3600)
+            .map(|i| {
+                Bob {
+                    phase: i as f32 * TAU / 3600.0,
+                    amplitude: 1.0,
+                }
+                .offset(level(100), 0.7)
+            })
+            .collect();
+
+        let (sideways, vertical) = extents(&offsets, right);
+
+        assert!((sideways - 2.0 * SWAY).abs() < 1e-4, "{sideways}");
+        assert!((vertical - 2.0 * RISE).abs() < 1e-4, "{vertical}");
     }
 }
