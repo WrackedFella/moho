@@ -2426,6 +2426,236 @@ mod tests {
         );
     }
 
+    /// Where the player's `part` centre stands upright, in the body frame around the capsule
+    /// centre.
+    fn upright_centre(part: BodyPart) -> Vec3 {
+        player_hit_volumes()
+            .into_iter()
+            .find(|v| v.tag == SurfaceTag::Player(part).into())
+            .expect("the player has a volume for every part")
+            .offset
+    }
+
+    /// Where the player's `part` centre sits when fully leaning `side`, in the body frame
+    /// (right is -X): head, torso and arms roll 12 degrees about the hips (0.10 m below the
+    /// capsule centre) and slide so the head centre is 0.35 m toward `side`; the legs stay.
+    fn leaned_centre(part: BodyPart, side: LeanSide) -> Vec3 {
+        let sign = match side {
+            LeanSide::Right => 1.0,
+            LeanSide::Left => -1.0,
+        };
+        let hip = Vec3::new(0.0, -0.10, 0.0);
+        let roll = Quat::from_rotation_z(sign * 12.0_f32.to_radians());
+        let rolled = |point: Vec3| hip + roll * (point - hip);
+        if matches!(part, BodyPart::LeftLeg | BodyPart::RightLeg) {
+            return upright_centre(part);
+        }
+        let slide = -sign * 0.35 - rolled(upright_centre(BodyPart::Head)).x;
+        rolled(upright_centre(part)) + Vec3::new(slide, 0.0, 0.0)
+    }
+
+    /// What a ray cast from 3 m in front of the player at the body-frame point `centre`, straight
+    /// at it, strikes first.
+    fn struck_at(sim: &SearchlightSim, centre: Vec3) -> Option<SurfaceTag> {
+        let state = sim.player();
+        let facing = Quat::from_rotation_y(state.yaw);
+        let aim = state.position + facing * centre;
+        let forward = facing * Vec3::Z;
+        resolve_shot(
+            &sim.world,
+            ShotRay {
+                origin: aim + forward * 3.0,
+                direction: -forward,
+                range: 10.0,
+                ignore: None,
+            },
+        )
+        .map(|strike| strike.tag)
+    }
+
+    /// A sim on open ground whose player has turned `yaw` radians and settled a full lean to
+    /// `side`.
+    fn leaned_player(yaw: f32, side: LeanSide) -> SearchlightSim {
+        let mut sim = open_sim();
+        let turn = SearchlightCommand {
+            movement: CharacterCommand {
+                yaw_delta: yaw,
+                ..CharacterCommand::default()
+            },
+            ..SearchlightCommand::default()
+        };
+        sim.tick(&turn, DT);
+        hold(&mut sim, &leaning(Some(side)), SETTLE_TICKS);
+        assert!(
+            (sim.player_lean().amount().abs() - 1.0).abs() < 1e-4,
+            "the lean never settled"
+        );
+        sim
+    }
+
+    #[test]
+    fn a_ray_at_the_leaned_part_hits_it() {
+        let cases = [
+            (LeanSide::Left, BodyPart::Head),
+            (LeanSide::Left, BodyPart::LeftArm),
+            (LeanSide::Right, BodyPart::Head),
+            (LeanSide::Right, BodyPart::RightArm),
+        ];
+        for yaw in [0.0, FRAC_PI_2] {
+            for (side, part) in cases {
+                let sim = leaned_player(yaw, side);
+
+                let struck = struck_at(&sim, leaned_centre(part, side));
+
+                assert_eq!(
+                    struck,
+                    Some(SurfaceTag::Player(part)),
+                    "leaning {side:?} at yaw {yaw}: a ray at the {part:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn legs_stay_at_the_standing_position_while_leaning() {
+        for yaw in [0.0, FRAC_PI_2] {
+            let sim = leaned_player(yaw, LeanSide::Right);
+
+            let head = struck_at(&sim, leaned_centre(BodyPart::Head, LeanSide::Right));
+            let legs = [BodyPart::LeftLeg, BodyPart::RightLeg]
+                .map(|leg| struck_at(&sim, upright_centre(leg)));
+
+            assert_eq!(
+                head,
+                Some(SurfaceTag::Player(BodyPart::Head)),
+                "yaw {yaw}: the head did not follow the lean"
+            );
+            assert_eq!(
+                legs,
+                [
+                    Some(SurfaceTag::Player(BodyPart::LeftLeg)),
+                    Some(SurfaceTag::Player(BodyPart::RightLeg)),
+                ],
+                "yaw {yaw}: rays at the standing legs"
+            );
+        }
+    }
+
+    /// Ticks `sim` for `ticks` ticks holding `side` with god mode on, and returns all feedback.
+    fn run_leaning(
+        sim: &mut SearchlightSim,
+        side: Option<LeanSide>,
+        ticks: usize,
+    ) -> Vec<Feedback> {
+        let command = SearchlightCommand {
+            lean: side,
+            god_mode: true,
+            ..SearchlightCommand::default()
+        };
+        let mut feedback = Vec::new();
+        for _ in 0..ticks {
+            sim.tick(&command, DT);
+            feedback.extend(sim.drain_feedback());
+        }
+        feedback
+    }
+
+    /// The player at the origin facing +Z behind a 3 m wall across z in [0.6, 0.9] whose corner
+    /// edge is at x = -0.44 (the wall runs off toward +X), the lean already settled toward
+    /// `side`, and then an enemy 8 m ahead and 3 m to the right, facing the player and
+    /// aiming at `aim_at`. Seen from the enemy, a point on the player's line of x -0.35 or
+    /// further right clears the corner and one at x -0.12 or further left is behind the wall.
+    fn corner_duel(side: Option<LeanSide>, aim_at: BodyPart) -> SearchlightSim {
+        let wall = (Vec3::new(-0.44, 0.0, 0.6), Vec3::new(6.0, 3.0, 0.9));
+        let enemy = Vec3::new(-3.0, 0.0, 8.0);
+        let toward_player = enemy + Vec3::new(0.1, 0.0, -0.28);
+        let arena = arena_with(&[wall], Vec3::ZERO, &[enemy], &[toward_player]);
+        let mut config = test_config(rifle_with(30), vec![]);
+        crate::test_support::set_eye_above_centre(&mut config, 0.72);
+        config.enemy.patrol_speed = 0.0;
+        config.enemy_aim_at = aim_at;
+        let mut sim = SearchlightSim::with_start(arena, config, Start::Empty);
+        hold(&mut sim, &leaning(side), SETTLE_TICKS);
+        sim.spawn_enemy(0, Grade::Experienced)
+            .expect("the marker is free");
+        sim
+    }
+
+    fn enemy_fired_count(feedback: &[Feedback]) -> usize {
+        feedback
+            .iter()
+            .filter(|fb| matches!(fb, Feedback::EnemyFired { .. }))
+            .count()
+    }
+
+    fn parts_hit(feedback: &[Feedback]) -> Vec<BodyPart> {
+        feedback
+            .iter()
+            .filter_map(|fb| match fb {
+                Feedback::PlayerHit { part, .. } => Some(*part),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn an_upright_player_behind_a_corner_is_unseen() {
+        let mut sim = corner_duel(None, BodyPart::Torso);
+
+        let feedback = run_leaning(&mut sim, None, 60);
+
+        assert_eq!(enemy_fired_count(&feedback), 0, "{feedback:?}");
+        assert!(parts_hit(&feedback).is_empty(), "{feedback:?}");
+    }
+
+    #[test]
+    fn leaning_past_the_corner_is_seen() {
+        let mut sim = corner_duel(Some(LeanSide::Right), BodyPart::Torso);
+
+        let feedback = run_leaning(&mut sim, Some(LeanSide::Right), 60);
+
+        assert!(
+            enemy_fired_count(&feedback) >= 1,
+            "the enemy never saw the player lean out: {feedback:?}"
+        );
+    }
+
+    #[test]
+    fn enemy_shots_at_hidden_parts_strike_the_wall() {
+        // `None`: the shot is fired but strikes the wall, never the player.
+        let cases = [
+            (BodyPart::Head, Some(BodyPart::Head)),
+            (BodyPart::RightArm, Some(BodyPart::RightArm)),
+            (BodyPart::LeftLeg, None),
+            (BodyPart::RightLeg, None),
+            (BodyPart::LeftArm, None),
+        ];
+        for (aim_at, outcome) in cases {
+            let mut sim = corner_duel(Some(LeanSide::Right), aim_at);
+
+            let feedback = run_leaning(&mut sim, Some(LeanSide::Right), 30);
+
+            assert!(
+                enemy_fired_count(&feedback) >= 1,
+                "{aim_at:?}: the enemy never fired: {feedback:?}"
+            );
+            let hits = parts_hit(&feedback);
+            match outcome {
+                Some(part) => {
+                    assert!(!hits.is_empty(), "{aim_at:?}: no shot landed: {feedback:?}");
+                    assert!(
+                        hits.iter().all(|&struck| struck == part),
+                        "{aim_at:?}: struck {hits:?}, expected only {part:?}"
+                    );
+                }
+                None => assert!(
+                    hits.is_empty(),
+                    "{aim_at:?}: a shot reached the player past the wall: {hits:?}"
+                ),
+            }
+        }
+    }
+
     use searchlight_rules::GravityScale;
 
     /// The hit volume of dummy 0's `part`, in the body frame.

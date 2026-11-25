@@ -1,5 +1,6 @@
 //! Posture rules: how far the player leans around a corner and how fast the lean blends.
 
+use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
 /// The side a lean is held toward.
@@ -93,6 +94,45 @@ impl Lean {
     pub fn roll(self, tuning: &LeanTuning) -> f32 {
         self.amount * tuning.roll
     }
+}
+
+/// A rigid change laid over a posed body part, in the body frame (faces +Z at yaw 0, right is
+/// -X): `rotation` about the hip pivot, then `translation`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PartOffset {
+    pub rotation: Quat,
+    pub translation: Vec3,
+}
+
+impl PartOffset {
+    /// Leaves a part where it was posed.
+    pub const NONE: Self = Self {
+        rotation: Quat::IDENTITY,
+        translation: Vec3::ZERO,
+    };
+
+    /// Where a part posed at `point` (relative to the hip pivot) with orientation `rotation`
+    /// ends up: the point and the orientation, both relative to the hip pivot.
+    #[must_use]
+    pub fn apply(self, point: Vec3, rotation: Quat) -> (Vec3, Quat) {
+        (
+            self.rotation * point + self.translation,
+            self.rotation * rotation,
+        )
+    }
+}
+
+/// The offsets of the six body parts, in [`crate::BodyPart`] declaration order (head, torso,
+/// left arm, right arm, left leg, right leg), for a body leaning by `lean`.
+///
+/// Head, torso and arms roll rigidly by the lean's roll about the hips, then slide sideways so the
+/// head centre, `head_rise` metres above the hips, ends up exactly the lean's shift to the side.
+/// The legs stay.
+// Not yet implemented: every part stays where it stands.
+#[must_use]
+pub fn leaned_parts(lean: Lean, tuning: &LeanTuning, head_rise: f32) -> [PartOffset; 6] {
+    let _ = (lean, tuning, head_rise);
+    [PartOffset::NONE; 6]
 }
 
 #[cfg(test)]
@@ -366,6 +406,141 @@ mod tests {
             }
 
             prop_assert_eq!(lean.amount(), 0.0);
+        }
+    }
+
+    const HEAD_RISE: f32 = 0.82;
+    const TORSO_RISE: f32 = 0.35;
+    const ARM_REACH: f32 = 0.3;
+    const HEAD: usize = 0;
+    const TORSO: usize = 1;
+    const LEFT_ARM: usize = 2;
+    const RIGHT_ARM: usize = 3;
+    const LEFT_LEG: usize = 4;
+    const RIGHT_LEG: usize = 5;
+
+    /// A lean of exactly `amount`, however `tuning` blends.
+    fn lean_of(amount: f32, tuning: &LeanTuning) -> Lean {
+        let side = if amount < 0.0 {
+            LeanSide::Left
+        } else {
+            LeanSide::Right
+        };
+        let blend = LeanTuning {
+            blend_seconds: 1.0,
+            ..*tuning
+        };
+        Lean::default().step(Some(side), LeanReach::FULL, amount.abs(), &blend)
+    }
+
+    /// Head, torso, left arm and right arm centres relative to the hips, standing upright.
+    fn upper_body(head_rise: f32, torso_rise: f32, arm_reach: f32) -> [Vec3; 4] {
+        [
+            Vec3::new(0.0, head_rise, 0.0),
+            Vec3::new(0.0, torso_rise, 0.0),
+            Vec3::new(arm_reach, torso_rise, 0.0),
+            Vec3::new(-arm_reach, torso_rise, 0.0),
+        ]
+    }
+
+    fn placed(offsets: &[PartOffset; 6], upright: [Vec3; 4]) -> [Vec3; 4] {
+        std::array::from_fn(|i| offsets[i].apply(upright[i], Quat::IDENTITY).0)
+    }
+
+    #[test]
+    fn an_upright_body_has_no_offsets() {
+        let offsets = leaned_parts(Lean::default(), &tuning(), HEAD_RISE);
+
+        assert_eq!(offsets, [PartOffset::NONE; 6]);
+    }
+
+    #[test]
+    fn a_full_right_lean_rolls_the_upper_body_about_the_hips_and_slides_it_to_the_head() {
+        let tuning = tuning();
+        let offsets = leaned_parts(settled(LeanSide::Right), &tuning, HEAD_RISE);
+
+        let at = placed(&offsets, upper_body(HEAD_RISE, TORSO_RISE, ARM_REACH));
+
+        let expected = [
+            Vec3::new(-0.35, 0.8021, 0.0),
+            Vec3::new(-0.2523, 0.3424, 0.0),
+            Vec3::new(0.0412, 0.4047, 0.0),
+            Vec3::new(-0.5457, 0.2800, 0.0),
+        ];
+        for (i, (got, want)) in at.iter().zip(expected).enumerate() {
+            assert!(got.distance(want) < 1e-3, "part {i}: {got:?} vs {want:?}");
+        }
+        let roll = Quat::from_rotation_z(12.0_f32.to_radians());
+        for i in [HEAD, TORSO, LEFT_ARM, RIGHT_ARM] {
+            let turned = offsets[i].apply(Vec3::ZERO, Quat::IDENTITY).1;
+            assert!(turned.angle_between(roll) < 1e-4, "part {i}: {turned:?}");
+        }
+        assert_eq!(offsets[LEFT_LEG], PartOffset::NONE);
+        assert_eq!(offsets[RIGHT_LEG], PartOffset::NONE);
+    }
+
+    #[test]
+    fn a_full_left_lean_mirrors_the_right() {
+        let tuning = tuning();
+        let upright = upper_body(HEAD_RISE, TORSO_RISE, ARM_REACH);
+        let mirrored = upright.map(|p| Vec3::new(-p.x, p.y, p.z));
+        let right = placed(
+            &leaned_parts(settled(LeanSide::Right), &tuning, HEAD_RISE),
+            upright,
+        );
+
+        let left = placed(
+            &leaned_parts(settled(LeanSide::Left), &tuning, HEAD_RISE),
+            mirrored,
+        );
+
+        for (i, (l, r)) in left.iter().zip(right).enumerate() {
+            let flipped = Vec3::new(-r.x, r.y, r.z);
+            assert!(l.distance(flipped) < 1e-3, "part {i}: {l:?} vs {flipped:?}");
+        }
+        assert!(left[HEAD].x > 0.34, "left is +X: {:?}", left[HEAD]);
+    }
+
+    proptest! {
+        #[test]
+        fn leaned_parts_keep_their_distances(
+            amount in -1.0f32..=1.0,
+            shift in 0.0f32..0.6,
+            roll in 0.0f32..0.5,
+            head_rise in 0.2f32..1.5,
+            torso_share in 0.1f32..0.9,
+            arm_reach in 0.1f32..0.6,
+        ) {
+            let tuning = LeanTuning { shift, roll, ..tuning() };
+            let lean = lean_of(amount, &tuning);
+            let upright = upper_body(head_rise, head_rise * torso_share, arm_reach);
+
+            let offsets = leaned_parts(lean, &tuning, head_rise);
+
+            let at = placed(&offsets, upright);
+            for i in 0..4 {
+                for j in (i + 1)..4 {
+                    let before = upright[i].distance(upright[j]);
+                    let after = at[i].distance(at[j]);
+                    prop_assert!(
+                        (before - after).abs() < 1e-3,
+                        "parts {i} and {j} moved from {before} apart to {after}"
+                    );
+                }
+            }
+            prop_assert!(
+                (at[HEAD].x + lean.shift(&tuning)).abs() < 1e-4,
+                "the head centre should sit {} to the right, at {:?}",
+                lean.shift(&tuning),
+                at[HEAD]
+            );
+            prop_assert!(
+                (at[HEAD].y - head_rise * lean.roll(&tuning).cos()).abs() < 1e-3,
+                "the slide is sideways only: {:?}",
+                at[HEAD]
+            );
+            prop_assert_eq!(offsets[LEFT_LEG], PartOffset::NONE);
+            prop_assert_eq!(offsets[RIGHT_LEG], PartOffset::NONE);
         }
     }
 }
