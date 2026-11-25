@@ -1426,3 +1426,53 @@ fn released_nested_magazine_leaves_the_rifle_on_the_hand() {
         .collect();
     assert_eq!(keys, vec![RELOAD_CHARACTER, RELOAD_CHARACTER, RELOAD_RIFLE]);
 }
+
+#[test]
+fn release_under_a_scaled_root_reports_the_unscaled_turn_and_an_unscaled_transform() {
+    let models = reload_models();
+    let lookup = |k: usize| &models[k];
+    let before_pose = reload_pose(&models, 114);
+    let now_pose = reload_pose(&models, 115);
+    // Scaling along Y commutes with the hand's turn about Y, so the turn stays readable.
+    let root_with = |scale: Vec3| {
+        Affine3A::from_scale_rotation_translation(
+            scale,
+            Quat::from_rotation_y(0.3),
+            Vec3::new(5.0, -2.0, 1.0),
+        )
+    };
+    let released_under = |root: Affine3A| {
+        let mut character = Assembly::new(RELOAD_CHARACTER);
+        character
+            .attach(&lookup, "hand_l", Assembly::new(MAGAZINE), grip())
+            .expect("hand_l exists");
+        character
+            .release(
+                &lookup,
+                &["hand_l"],
+                Posed {
+                    root,
+                    pose: &now_pose,
+                },
+                Posed {
+                    root,
+                    pose: &before_pose,
+                },
+                TICK,
+            )
+            .expect("hand_l holds the magazine")
+    };
+
+    let plain = released_under(root_with(Vec3::ONE));
+    let scaled = released_under(root_with(Vec3::new(1.0, 2.0, 1.0)));
+
+    assert!(plain.angular_velocity.length() > 0.3, "the hand is turning");
+    vec_near(scaled.angular_velocity, plain.angular_velocity, 1e-4);
+    let columns = scaled.transform.matrix3;
+    for column in [columns.x_axis, columns.y_axis, columns.z_axis] {
+        assert!(
+            (column.length() - 1.0).abs() < 1e-5,
+            "{column} is not a unit axis"
+        );
+    }
+}
