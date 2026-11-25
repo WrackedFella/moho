@@ -153,8 +153,7 @@ chain-test:
     done < "$f/cases.txt"
     echo "chain: OK"
 
-# Self-test of the replay hash comparison against fixtures: agreement, the first
-# disagreeing tick and a missing platform, none of them a failure.
+# Self-test of the replay hash comparison against fixtures.
 replay-hashes-test:
     scripts/compare-replay-hashes.sh --self-test
 

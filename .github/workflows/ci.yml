@@ -108,8 +108,7 @@ jobs:
       - run: just check
         if: needs.plan.outputs.code == 'true'
 
-  # Runs the replay test on every platform and uploads its per-tick state hashes. Skipped
-  # when the plan has a single OS, since there is nothing to compare.
+  # Skipped on a single-OS plan: nothing to compare.
   replay-hashes:
     name: Replay hashes (${{ matrix.os }})
     needs: plan
@@ -157,8 +156,7 @@ jobs:
           path: ${{ runner.temp }}/replay-hashes
           if-no-files-found: ignore
 
-  # Compares the platforms' replay hashes in the run summary. A disagreement or a missing
-  # platform is reported there and does not fail the job.
+  # A disagreement or a missing platform is reported in the run summary, never a failure.
   replay-compare:
     name: Replay hash comparison
     needs: [plan, replay-hashes]
