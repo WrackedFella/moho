@@ -106,7 +106,6 @@ pub(crate) fn pawn_state(app: &App) -> moho_physics::CharacterState {
         .expect("the pawn resolves")
 }
 
-/// The body of crew pawn `id`.
 pub(crate) fn pawn_state_of(app: &App, id: PawnId) -> moho_physics::CharacterState {
     app.physics
         .world

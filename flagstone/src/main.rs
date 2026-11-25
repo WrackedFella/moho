@@ -181,14 +181,12 @@ struct App {
 }
 
 impl App {
-    /// The pawn the player possesses.
     fn possessed_pawn(&self) -> &flagstone_game::pawn::Pawn {
         self.crew
             .get(self.possessed)
             .expect("the possessed pawn is in the crew")
     }
 
-    /// The pawn the player possesses, mutably.
     fn possessed_pawn_mut(&mut self) -> &mut flagstone_game::pawn::Pawn {
         self.crew
             .get_mut(self.possessed)
