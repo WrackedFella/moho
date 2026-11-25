@@ -345,7 +345,6 @@ pub struct SearchlightSim {
     upright_volumes: [HitVolume; 6],
     /// `upright_volumes` with the lean as it stands now, in the body frame.
     leaned_volumes: [HitVolume; 6],
-    /// The part of the player the enemies aim at.
     aim_part: BodyPart,
     rng: SimRng,
     weapon: Weapon,
@@ -2910,7 +2909,6 @@ mod tests {
         }
     }
 
-    /// The cover point the first enemy has claimed, if any.
     fn first_enemy_claim(sim: &SearchlightSim) -> Option<usize> {
         sim.targets[sim.dummy_count]
             .enemy
