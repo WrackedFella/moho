@@ -247,6 +247,7 @@ sim-math:
     rejects sim-math-call moho_core::sim_math $c:2 $c:3 $c:4 $c:5 $c:6 $c:7 $c:8 $c:9 $c:10 $c:11 $c:12 $c:13 $c:14 $c:15 $c:16 $c:17 $c:18 $c:19 $c:20 $c:21
     rejects sim-math-gated-decl scripts/fixtures/sim-math-gated-decl.rs:5
     rejects sim-math-qualified scripts/fixtures/sim-math-qualified.rs:2 scripts/fixtures/sim-math-qualified.rs:3
+    rejects sim-math-paths scripts/fixtures/sim-math-paths.rs:2 scripts/fixtures/sim-math-paths.rs:3 scripts/fixtures/sim-math-paths.rs:4
     rejects sim-math-missing scripts/fixtures/sim-math-nonexistent.rs
     accepts sim-math-clean
     accepts sim-math-unlisted
