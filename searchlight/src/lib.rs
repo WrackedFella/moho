@@ -14,6 +14,7 @@ pub mod hud;
 pub mod input;
 pub mod item_lists;
 pub mod kit;
+pub mod launch;
 pub mod lean;
 pub mod levels;
 pub mod menu;

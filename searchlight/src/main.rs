@@ -15,6 +15,7 @@ use searchlight::debug_settings::DebugSettings;
 use searchlight::game::{SearchlightGame, WINDOW_TITLE, start_window_mode};
 use searchlight::input::build_action_map;
 use searchlight::kit::{self, START_KIT_ID};
+use searchlight::launch::{self, Launch};
 use searchlight::levels;
 use searchlight::mode::ArenaMode;
 use searchlight::tuning::tuning;
@@ -54,7 +55,8 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
             return Ok(ExitCode::FAILURE);
         }
     };
-    let (level, markers) = arena::load(&choice.path(&assets_root()))?;
+    let assets = launch::asset_roots(&Launch::default())?;
+    let (level, markers) = arena::load(&choice.path(&assets)?)?;
     let arena = Arc::new(Arena::from_level(&level, &markers)?);
     let notices = levels::load_notices(&arena);
     let mode = ArenaMode::for_level(arena.clone(), tuning(start_kit), WaveTuning::default());
