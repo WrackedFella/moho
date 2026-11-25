@@ -1,6 +1,7 @@
 //! A hand-built humanoid written as glTF from code: the sixteen mannequin bones in a
 //! tree, one extra node (`ik_hand_gun`) under `hand_r`, a skinned triangle over all
-//! sixteen bones with identity inverse binds, and the clips `walk` and `crouch`.
+//! sixteen bones with identity inverse binds, and the clips `walk` and `crouch` (plus
+//! `reload` when the spec asks for it).
 //!
 //! Made for this repository from the numbers below; there is no third-party source and
 //! no licence to record. The glTF node array is written in reverse walk order, so a node's

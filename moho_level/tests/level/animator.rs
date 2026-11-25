@@ -161,8 +161,8 @@ fn play_action_replaces_a_running_action() {
     }
 
     assert_eq!(states[130].action().expect("restarted").time(), 0.0);
-    for tick in 131..286 {
-        let action = states[tick].action().expect("still playing");
+    for (tick, state) in states.iter().enumerate().take(286).skip(131) {
+        let action = state.action().expect("still playing");
         assert!(!action.is_finished(&model), "tick {tick}");
         assert!(action.time() < duration, "tick {tick}");
     }

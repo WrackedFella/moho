@@ -236,6 +236,7 @@ impl ClipPlayer {
     pub fn play(&mut self, model: &Model, clip: &str, playback: Playback) -> Result<(), ClipError> {
         self.clip = find(model, clip)?;
         self.time = 0.0;
+        self.elapsed = 0;
         self.playback = playback;
         Ok(())
     }
@@ -256,14 +257,20 @@ impl ClipPlayer {
     /// Add `dt * speed` to the time; `Loop` wraps into `[0, duration)`, `Once` clamps to
     /// `[0, duration]`. A non-finite step or a zero-length clip leaves the time unchanged.
     ///
+    /// `Ticks(n)` ignores `dt` and speed: the n-th call sets the time to exactly the clip's
+    /// duration (computed from the call count, so it does not drift) and later calls hold it.
+    /// A zero-length clip still counts its calls.
+    ///
     /// # Panics
     /// When `model` has fewer clips than the one this player was made on.
     pub fn advance(&mut self, model: &Model, dt: f32) {
-        if matches!(self.playback, Playback::Ticks(_)) {
-            unimplemented!("Ticks playback")
+        let duration = model.clips()[self.clip].duration();
+        if let Playback::Ticks(total) = self.playback {
+            self.elapsed = (self.elapsed + 1).min(total.get());
+            self.time = duration * (self.elapsed as f32 / total.get() as f32);
+            return;
         }
         let step = dt * self.speed;
-        let duration = model.clips()[self.clip].duration();
         if !step.is_finite() || duration <= 0.0 {
             return;
         }
@@ -275,14 +282,23 @@ impl ClipPlayer {
                 if wrapped < duration { wrapped } else { 0.0 }
             }
             Playback::Once => time.clamp(0.0, duration),
-            Playback::Ticks(_) => unimplemented!("Ticks playback"),
+            Playback::Ticks(_) => unreachable!("Ticks playback returned above"),
         };
     }
 
-    /// Whether the clip has reached its end and will not move again.
+    /// Whether the clip has reached its end and will not move again: `Ticks` after its
+    /// n-th advance, `Once` at its clamp end (the duration for speed >= 0, 0 for a negative
+    /// speed), `Loop` never.
+    ///
+    /// # Panics
+    /// When `model` has fewer clips than the one this player was made on.
     pub fn is_finished(&self, model: &Model) -> bool {
-        let _ = (model, self.elapsed);
-        unimplemented!("is_finished")
+        match self.playback {
+            Playback::Loop => false,
+            Playback::Once if self.speed < 0.0 => self.time <= 0.0,
+            Playback::Once => self.time >= model.clips()[self.clip].duration(),
+            Playback::Ticks(total) => self.elapsed >= total.get(),
+        }
     }
 
     /// Index into [`Model::clips`].
@@ -304,7 +320,16 @@ impl ClipPlayer {
     }
 }
 
-/// One character's playback: a base clip and an optional action clip over it.
+/// One character's playback: a base clip (locomotion) and an optional action clip (a
+/// reload) that poses the whole body while it plays.
+///
+/// The base keeps advancing under an action, so cancelling or finishing the action returns
+/// the pose the character would have had with no action.
+///
+/// Tick order: call [`Animator::advance`] once per tick, before that tick's commands. A clip
+/// started on a tick then shows its first pose on that tick. An action started on tick 100
+/// as `Playback::Ticks(156)` (2.6 s at 60 Hz) shows its last pose on tick 256, and the base
+/// returns on tick 257. Advancing after the commands makes a timed clip end one tick early.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Animator {
     base: ClipPlayer,
@@ -312,25 +337,25 @@ pub struct Animator {
 }
 
 impl Animator {
+    /// An animator playing `base` with no action.
     pub fn new(base: ClipPlayer) -> Self {
-        let _ = base;
-        unimplemented!("Animator::new")
+        Self { base, action: None }
     }
 
     pub fn base(&self) -> &ClipPlayer {
-        let _ = &self.base;
-        unimplemented!("Animator::base")
+        &self.base
     }
 
     pub fn base_mut(&mut self) -> &mut ClipPlayer {
-        unimplemented!("Animator::base_mut")
+        &mut self.base
     }
 
     pub fn action(&self) -> Option<&ClipPlayer> {
-        let _ = &self.action;
-        unimplemented!("Animator::action")
+        self.action.as_ref()
     }
 
+    /// Replace any running action with `clip`, restarted at time 0.
+    ///
     /// # Errors
     /// [`ClipError::UnknownClip`] when the model has no such clip; nothing changes.
     pub fn play_action(
@@ -339,22 +364,40 @@ impl Animator {
         clip: &str,
         playback: Playback,
     ) -> Result<(), ClipError> {
-        let _ = (model, clip, playback);
-        unimplemented!("Animator::play_action")
+        self.action = Some(ClipPlayer::new(model, clip, playback)?);
+        Ok(())
     }
 
+    /// Drop the action; the pose is the base's from now on.
     pub fn cancel_action(&mut self) {
-        unimplemented!("Animator::cancel_action")
+        self.action = None;
     }
 
+    /// Advance the base by `dt`. An action that was already finished before this call is
+    /// dropped; otherwise it advances too. So an action's last pose is read on the tick it
+    /// is reached and the base returns on the next. See the type docs for tick order.
+    ///
+    /// # Panics
+    /// When `model` has fewer clips than a player was made on.
     pub fn advance(&mut self, model: &Model, dt: f32) {
-        let _ = (model, dt);
-        unimplemented!("Animator::advance")
+        self.base.advance(model, dt);
+        if self
+            .action
+            .as_ref()
+            .is_some_and(|action| action.is_finished(model))
+        {
+            self.action = None;
+        } else if let Some(action) = &mut self.action {
+            action.advance(model, dt);
+        }
     }
 
+    /// The action's pose if one is running, else the base's.
+    ///
+    /// # Panics
+    /// When `model` has fewer clips than a player was made on.
     pub fn pose(&self, model: &Model) -> Pose {
-        let _ = model;
-        unimplemented!("Animator::pose")
+        self.action.as_ref().unwrap_or(&self.base).pose(model)
     }
 }
 
