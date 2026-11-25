@@ -978,6 +978,12 @@ impl SearchlightGame {
                     self.controls = Some(draft);
                 }
                 MenuEvent::Chosen(MenuAction::ApplyControls) => self.apply_controls(),
+                MenuEvent::Chosen(MenuAction::ResetControls) => {
+                    if let Some(draft) = &mut self.controls {
+                        draft.reset_all();
+                    }
+                    self.show_controls();
+                }
                 MenuEvent::Chosen(MenuAction::Rebind(_)) => {}
                 MenuEvent::Chosen(MenuAction::Back) => {
                     self.controls = None;
@@ -1008,6 +1014,15 @@ impl SearchlightGame {
                     slot,
                     input,
                 } => self.captured(action, slot, input),
+                MenuEvent::Cleared {
+                    action: MenuAction::Rebind(action),
+                    slot,
+                } => {
+                    if let Some(draft) = &mut self.controls {
+                        draft.clear(action, slot);
+                    }
+                    self.show_controls();
+                }
                 MenuEvent::Captured { .. } | MenuEvent::Cleared { .. } => self.show_controls(),
                 MenuEvent::DetailsToggled { .. }
                 | MenuEvent::Picked { .. }
@@ -5695,27 +5710,6 @@ mod tests {
             [Some(Binding::key(Key::T)), None],
             "focus stayed on the Reload row"
         );
-    }
-
-    #[test]
-    fn a_clear_leaves_the_draft_unchanged() {
-        let dir = tempfile::tempdir().unwrap();
-        let (settings, _) = settings_in(&dir);
-        let mut game = quiet_menu_game().with_debug_settings(settings);
-        let clock = GameClock::default();
-        let mut ctx = EventContext::new(&clock, None, None);
-        let unchanged: ControlRow = ([Some(Binding::key(Key::R)), None], None);
-        open_controls(&mut game, &mut ctx);
-
-        focus_control(&game, SearchlightAction::Reload);
-        press_keys(
-            &mut game,
-            &mut ctx,
-            &[Key::Backspace, Key::ArrowLeft, Key::Backspace],
-        );
-        let after_clears = control_row(&game, SearchlightAction::Reload);
-
-        assert_eq!(after_clears, unchanged);
     }
 
     #[test]

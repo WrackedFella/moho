@@ -15,6 +15,14 @@ struct Row {
 }
 
 impl Row {
+    fn from_bindings(action: SearchlightAction, held: &[Binding]) -> Self {
+        Self {
+            action,
+            slots: [held.first().copied(), held.get(1).copied()],
+            rest: held.iter().skip(2).copied().collect(),
+        }
+    }
+
     fn holds(&self, binding: Binding) -> bool {
         self.slots.contains(&Some(binding)) || self.rest.contains(&binding)
     }
@@ -71,14 +79,7 @@ impl ControlsDraft {
     pub fn new(bindings: &ActionBindings<SearchlightAction>) -> Self {
         let rows = SearchlightAction::ALL
             .iter()
-            .map(|&action| {
-                let held = bindings.get(action);
-                Row {
-                    action,
-                    slots: [held.first().copied(), held.get(1).copied()],
-                    rest: held.iter().skip(2).copied().collect(),
-                }
-            })
+            .map(|&action| Row::from_bindings(action, bindings.get(action)))
             .collect();
         Self {
             base: bindings.clone(),
@@ -114,10 +115,18 @@ impl ControlsDraft {
     }
 
     /// Empties `action`'s `slot`, leaving the other slot and any bindings beyond two alone.
-    pub fn clear(&mut self, _action: SearchlightAction, _slot: Slot) {}
+    pub fn clear(&mut self, action: SearchlightAction, slot: Slot) {
+        if let Some(row) = self.rows.iter_mut().find(|row| row.action == action) {
+            row.slots[index(slot)] = None;
+        }
+    }
 
     /// Puts every action back on its default bindings.
-    pub fn reset_all(&mut self) {}
+    pub fn reset_all(&mut self) {
+        for row in &mut self.rows {
+            *row = Row::from_bindings(row.action, row.action.default_bindings());
+        }
+    }
 
     /// Answers a pending conflict: the capturing action takes the input in the requested slot and
     /// the input leaves every other position, in both actions. Does nothing with none pending.
