@@ -341,6 +341,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn loading_a_save_gives_a_crew_of_one_possessed_pawn() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut saved = crate::App::headless();
+        saved.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
+        saved
+            .entities
+            .chunks
+            .insert(crate::app::world_geometry::tests::chunk_at(
+                glam::IVec3::new(7, 0, 7),
+            ));
+        crate::app::autosave::auto_save_on_shutdown(
+            &mut saved,
+            &moho_app::GameClock::default(),
+            temp.path(),
+            &[],
+        )
+        .expect("autosave");
+        let mut app = crate::App::headless();
+
+        crate::app::scene_loader::load_scene(
+            &mut app,
+            &mut moho_app::GameClock::default(),
+            &temp.path().join("scene.bin"),
+        )
+        .expect("load");
+
+        let player = app.physics.player.expect("a player body is placed");
+        assert_eq!(app.crew.len(), 1, "a save holds no crew, only the camera");
+        assert_eq!(
+            app.physics.pawns.get(&app.possessed),
+            Some(&player),
+            "the possessed pawn's body is the player's"
+        );
+        assert_eq!(app.physics.pawns.len(), 1);
+    }
+
     fn stale_floor_mesh() -> moho_render_api::WorldMesh {
         moho_render_api::WorldMesh::new(
             vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],

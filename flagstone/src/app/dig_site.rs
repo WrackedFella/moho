@@ -36,13 +36,7 @@ pub(crate) fn rise(x_range: std::ops::RangeInclusive<i32>) -> Vec<Block> {
 /// `blocks` on top of it, all meshed into the physics world, and the pawn's character
 /// standing in `PAWN_CELL` and facing +Z.
 pub(crate) fn dig_site(blocks: &[Block]) -> App {
-    let mut app = field(blocks);
-    let start = pawn_start();
-    app.simulation.set_camera_mode(CameraMode::Isometric);
-    app.simulation.set_position_yaw_pitch(start, 0.0, 0.0);
-    app.physics.spawn_player(start);
-    app.physics.step(1.0 / 60.0);
-    app
+    dig_site_with_pawns(blocks, &[PAWN_CELL])
 }
 
 /// [`dig_site`] with one pawn standing in each of `cells` (feet cells, in crew order) instead

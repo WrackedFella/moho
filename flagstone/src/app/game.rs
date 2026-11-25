@@ -4842,19 +4842,25 @@ mod tests {
     type CrewInView = [(flagstone_game::pawn::PawnId, glam::Vec3); 3];
 
     /// The strategy view over the floor with a crew of three, each pawn standing apart from the
-    /// others in view of the camera with a body of its own, the view's own pawn put out of the
-    /// way.
+    /// others in view of the camera with a body of its own. The first is the possessed pawn:
+    /// its body is the player's, as in the running app, and the simulation stands where it does.
     fn app_with_three_pawns_in_view() -> (App, CrewInView) {
         let mut app = app_with_pawn_in_view();
-        app.simulation
-            .set_position_yaw_pitch(glam::Vec3::new(2.0, 30.0, 13.5), 0.7, 0.0);
         app.crew = flagstone_game::crew::Crew::default();
         let pawns = [(4.5, 7.5), (8.5, 5.5), (11.5, 7.5)].map(|(x, z)| {
             let centre = floor_point(&app, x, z) + glam::Vec3::Y * PAWN_HALF_EXTENTS.y;
             let id = app.crew.spawn(flagstone_game::pawn::Pawn::default());
-            app.physics.spawn_pawn(id, centre);
             (id, centre)
         });
+        let (possessed, at) = pawns[0];
+        app.possessed = possessed;
+        app.simulation.set_position_yaw_pitch(at, 0.7, 0.0);
+        app.physics.spawn_player(at);
+        let player = app.physics.player.expect("the player was just spawned");
+        app.physics.pawns.insert(possessed, player);
+        for (id, centre) in &pawns[1..] {
+            app.physics.spawn_pawn(*id, *centre);
+        }
         (app, pawns)
     }
 
@@ -4883,65 +4889,14 @@ mod tests {
         }
     }
 
-    /// The overlay frame the HUD data of `app` paints, once egui has sized its areas.
-    fn hud_frame(app: &mut App) -> moho_render_api::UiFrame {
-        use moho_render_api::UiFrameSource;
-        let mut adapter = flagstone_ui::build_adapter(
-            None,
-            app.event_bus.clone(),
-            moho_core::prefs::Prefs::default(),
-        );
-        adapter.set_game_state(flagstone_ui::GameState::Playing);
-        let adapter = std::sync::Arc::new(std::sync::Mutex::new(adapter));
-        app.ui_adapter = Some(std::sync::Arc::clone(&adapter));
-        FrameProcessor::new().update_hud_data(app, &GameClock::default(), tick());
-        let mut adapter = adapter.lock().expect("adapter lock");
-        let _sizing = adapter.ui_frame([800, 600]);
-        adapter.ui_frame([800, 600]).expect("playing paints")
-    }
-
-    /// A crew in view whose second and third pawns carry `holdings`, as (resource, amount).
-    fn crew_carrying(holdings: [(u32, u32); 2]) -> (App, CrewInView) {
-        let (mut app, pawns) = app_with_three_pawns_in_view();
-        for ((id, _), (resource_id, amount)) in pawns[1..].iter().zip(holdings) {
-            app.crew
-                .get_mut(*id)
-                .expect("the pawn is in the crew")
-                .deposit(flagstone_game::inventory::ResourceYield {
-                    resource_id,
-                    amount,
-                });
-        }
-        (app, pawns)
-    }
-
     #[test]
-    fn clicking_any_pawn_selects_it_and_the_panel_shows_its_inventory() {
-        const IRON: (u32, u32) = (1, 9);
-        const OTHER: (u32, u32) = (2, 5);
-        let (mut app, pawns) = crew_carrying([OTHER, IRON]);
-        let (mut swapped, swapped_pawns) = crew_carrying([IRON, OTHER]);
+    fn clicking_any_pawn_selects_it() {
+        let (mut app, pawns) = app_with_three_pawns_in_view();
 
-        for (id, centre) in pawns {
+        for (id, centre) in pawns.into_iter().rev().chain(pawns) {
             select_pawn_by_click(&mut app, centre);
             assert_eq!(app.selection.selected(), Some(id), "a click on pawn {id:?}");
         }
-        select_pawn_by_click(&mut app, pawns[2].1);
-        let iron_panel = hud_frame(&mut app);
-        select_pawn_by_click(&mut app, pawns[1].1);
-        let other_panel = hud_frame(&mut app);
-        select_pawn_by_click(&mut swapped, swapped_pawns[1].1);
-        let iron_panel_of_another_pawn = hud_frame(&mut swapped);
-
-        assert_eq!(swapped.selection.selected(), Some(swapped_pawns[1].0));
-        assert!(
-            iron_panel == iron_panel_of_another_pawn,
-            "the panel is not the selected pawn's inventory"
-        );
-        assert!(
-            iron_panel != other_panel,
-            "the panel does not change with the selected pawn"
-        );
     }
 
     /// Whether exactly one outline marker is drawn and it spans the pawn box around `centre`.

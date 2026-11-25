@@ -2109,36 +2109,56 @@ mod tests {
         proptest! {
             #[test]
             fn no_mark_is_ever_claimed_by_two_pawns(
-                starts in proptest::collection::btree_set((-8..=8i32, -8..=-1i32), 1..=4),
+                // Starts reach into the marks' rows, so some pawns begin beside a mark.
+                starts in proptest::collection::btree_set((-8..=8i32, 0..=9i32), 1..=4),
                 marked in proptest::collection::btree_set((-8..=8i32, 3..=8i32), 1..=6),
                 cancels in proptest::collection::vec(
                     proptest::collection::vec(0..6usize, 0..3),
-                    1..6,
+                    20,
                 ),
             ) {
-                let starts: Vec<BlockPos> =
-                    starts.into_iter().map(|(x, z)| cell(x, 1, z)).collect();
                 let marked: Vec<[i32; 3]> = marked
                     .into_iter()
                     .map(|(x, z)| cell(x, 1, z).to_array())
                     .collect();
+                let starts: Vec<BlockPos> = starts
+                    .into_iter()
+                    .map(|(x, z)| cell(x, 1, z))
+                    .filter(|start| !marked.contains(&start.to_array()))
+                    .collect();
+                prop_assume!(!starts.is_empty());
                 let mut site = CrewSite::flat(&starts);
                 for mark in &marked {
                     site.mark_block(BlockPos::from_array(*mark));
                 }
+                let mut dug_per_block: BTreeMap<[i32; 3], usize> = BTreeMap::new();
 
-                site.tick();
+                let first = site.tick();
 
-                prop_assert_eq!(
-                    site.held().len(),
-                    starts.len().min(marked.len()),
-                    "every pawn takes a mark while there are marks to take"
+                let first_digs = first
+                    .iter()
+                    .filter(|(_, action)| matches!(action, JobAction::Dig { .. }))
+                    .count();
+                prop_assert!(
+                    site.held().len() + first_digs >= starts.len().min(marked.len()),
+                    "every pawn takes or digs a mark while there are marks to take: {:?}",
+                    first
                 );
+                for (_, action) in &first {
+                    if let JobAction::Dig { block, .. } = action {
+                        *dug_per_block.entry(block.to_array()).or_default() += 1;
+                    }
+                }
                 for cancel in &cancels {
                     for &index in cancel {
                         site.marks.toggle(marked[index % marked.len()]);
                     }
                     let actions = site.tick();
+                    for (_, action) in &actions {
+                        if let JobAction::Dig { block, .. } = action {
+                            *dug_per_block.entry(block.to_array()).or_default() += 1;
+                        }
+                    }
 
                     let held = site.held();
                     let distinct: BTreeSet<[i32; 3]> = held.iter().map(|&(_, mark)| mark).collect();
@@ -2156,6 +2176,11 @@ mod tests {
                     let dug: BTreeSet<[i32; 3]> = digs.iter().map(BlockPos::to_array).collect();
                     prop_assert_eq!(dug.len(), digs.len(), "one block dug twice: {:?}", digs);
                 }
+                prop_assert!(
+                    dug_per_block.values().all(|&times| times == 1),
+                    "a block was dug more than once: {:?}",
+                    dug_per_block
+                );
             }
         }
     }

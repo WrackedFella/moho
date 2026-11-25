@@ -1280,6 +1280,51 @@ mod tests {
     }
 
     #[test]
+    fn the_selection_panel_shows_the_selected_pawns_inventory() {
+        use flagstone_ui::overlays::SelectionHud;
+        let mut app = App::headless();
+        app.crew = flagstone_game::crew::Crew::default();
+        let ids: Vec<_> = (0..3)
+            .map(|_| app.crew.spawn(flagstone_game::pawn::Pawn::default()))
+            .collect();
+        for (id, (resource_id, amount)) in [(ids[1], (2, 5)), (ids[2], (1, 9))] {
+            app.crew
+                .get_mut(id)
+                .expect("the pawn is in the crew")
+                .deposit(flagstone_game::inventory::ResourceYield {
+                    resource_id,
+                    amount,
+                });
+        }
+        let panel_of = |carried: Vec<(String, u32)>| SelectionHud {
+            title: "Pawn".to_string(),
+            tool: Some("Pickaxe".to_string()),
+            carried,
+        };
+        let expected_with = |app: &App, panel: SelectionHud| {
+            painted_strategy_hud(flagstone_ui::overlays::HudData {
+                equipped_tool_label: Some("Pickaxe".to_string()),
+                selection: Some(panel),
+                ..strategy_hud_data(app)
+            })
+        };
+
+        app.selection.click(Some(ids[2]));
+        let iron_selected = produced_strategy_hud(&mut app);
+        app.selection.click(Some(ids[1]));
+        let other_selected = produced_strategy_hud(&mut app);
+
+        assert!(
+            iron_selected == expected_with(&app, panel_of(vec![("Iron ore".to_string(), 9)])),
+            "the panel is not the iron pawn's inventory"
+        );
+        assert!(
+            other_selected == expected_with(&app, panel_of(vec![("Resource 2".to_string(), 5)])),
+            "the panel is not the other pawn's inventory"
+        );
+    }
+
+    #[test]
     fn hud_data_carries_the_player_pawns_pickups() {
         use moho_render_api::UiFrameSource;
         let mut app = App::headless();

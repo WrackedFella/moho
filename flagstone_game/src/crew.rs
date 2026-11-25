@@ -116,31 +116,14 @@ mod tests {
     }
 
     #[test]
-    fn get_mut_changes_only_the_pawn_asked_for() {
-        let mut crew = Crew::default();
-        let first = crew.spawn(Pawn::default());
-        let second = crew.spawn(Pawn::default());
-
-        crew.get_mut(second)
-            .expect("the second pawn is in the crew")
-            .select_slot(4);
-
-        assert_ne!(first, second);
-        assert_eq!(crew.get(second).map(|p| p.selected_slot), Some(4));
-        assert_eq!(
-            crew.get(first).map(|p| p.selected_slot),
-            Some(crate::pawn::TOOL_SLOT)
-        );
-    }
-
-    #[test]
     fn spawn_cells_are_standable_distinct_columns_nearest_first() {
         let mut grid = ground((-6, -6), (6, 6));
-        // A platform over column (1, 0) makes two cells standable there: one column, one cell.
+        // A platform over column (1, 0) makes two cells standable there: y 1 and y 5.
         grid.mutator()
             .fill_region(cell(1, 4, 0), cell(1, 4, 0), STONE);
 
         let cells = spawn_cells(&grid, cell(0, 1, 0), 5);
+        let from_between = spawn_cells(&grid, cell(0, 3, 0), 5);
 
         assert_eq!(
             columns(&cells),
@@ -150,6 +133,20 @@ mod tests {
         for c in &cells {
             assert!(standable(&grid, *c), "{c} is not ground to stand on");
         }
+        assert_eq!(
+            cells[4],
+            cell(1, 1, 0),
+            "of a column's standable cells, the one nearest around's height"
+        );
+        let platform_column: Vec<BlockPos> = from_between
+            .into_iter()
+            .filter(|c| (c.x, c.z) == (1, 0))
+            .collect();
+        assert_eq!(
+            platform_column,
+            [cell(1, 1, 0)],
+            "two cells equally near around's height: the lower one"
+        );
     }
 
     #[test]
@@ -238,6 +235,15 @@ mod tests {
             prop_assert_eq!(distinct.len(), cells.len(), "one cell per column: {:?}", cells);
             for c in &cells {
                 prop_assert!(standable(&grid, *c), "{} is not standable", c);
+                let nearer = (around.y - 8..=around.y + 8)
+                    .filter(|&y| standable(&grid, cell(c.x, y, c.z)))
+                    .find(|&y| (y - around.y).abs() < (c.y - around.y).abs()
+                        || ((y - around.y).abs() == (c.y - around.y).abs() && y < c.y));
+                prop_assert!(
+                    nearer.is_none(),
+                    "{} is chosen but y {:?} in its column is nearer around's height",
+                    c, nearer
+                );
             }
             let order: Vec<(i32, [i32; 3])> = cells
                 .iter()
