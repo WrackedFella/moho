@@ -70,7 +70,7 @@ impl AssetRoots {
     /// [`AssetError::InvalidName`] for an absolute name or one with a `..`, `.`, root or prefix
     /// component; [`AssetError::NotFound`] listing every folder searched.
     pub fn resolve(&self, name: &Path) -> Result<PathBuf, AssetError> {
-        let plain = name.components().next().is_some()
+        let plain = !name.as_os_str().is_empty()
             && name
                 .components()
                 .all(|part| matches!(part, Component::Normal(_)));
