@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use crate::clock::GameClock;
+use crate::clock::{GameClock, LoopRecord};
 use crate::fixed_step::{FixedStep, LoopConfig, SimSpeed};
 use crate::{FrameContext, Game, LoopRequests, TickContext};
 
@@ -114,6 +114,18 @@ impl<G: Game> HeadlessLoop<G> {
     /// Index of the next tick to run.
     pub fn next_tick(&self) -> u64 {
         self.next_tick
+    }
+
+    /// The tick index and clock a save keeps.
+    pub fn record(&self) -> LoopRecord {
+        todo!("HeadlessLoop::record")
+    }
+
+    /// Resumes from `record`: sets the next tick and the clock, and keeps pause, speed, the
+    /// sub-tick remainder and the tick length. Runs no tick and calls no [`Game`] method.
+    pub fn restore(&mut self, record: LoopRecord) {
+        let _ = record;
+        todo!("HeadlessLoop::restore")
     }
 
     /// Real time until the next tick is due; one tick length while paused.
@@ -710,6 +722,165 @@ mod tests {
         assert_close(waits[2], tick / 3);
         assert_close(half_done, tick / 4);
         assert_close(paused, tick);
+    }
+
+    /// Sets the time scale once, on tick 0, and records the clock every tick sees.
+    #[derive(Default)]
+    struct ClockProbe {
+        scale_on_first_tick: Option<f32>,
+        resume_in_frame: Option<LoopRecord>,
+        seen: Vec<(u64, u32, u64)>,
+        frame_record: Option<LoopRecord>,
+    }
+
+    impl Game for ClockProbe {
+        type Command = ();
+
+        fn command(&mut self) {}
+
+        fn tick(&mut self, ctx: &mut TickContext<'_>, _command: &()) {
+            if ctx.tick == 0
+                && let Some(scale) = self.scale_on_first_tick
+            {
+                ctx.clock.set_time_scale(scale);
+            }
+            self.seen.push((
+                ctx.tick,
+                ctx.clock.time_of_day().to_bits(),
+                ctx.clock.elapsed_seconds().to_bits(),
+            ));
+        }
+
+        fn frame(&mut self, ctx: &mut FrameContext<'_>, _alpha: f32) {
+            self.frame_record = Some(ctx.loop_record());
+            if let Some(record) = self.resume_in_frame.take() {
+                ctx.resume_loop(record);
+            }
+        }
+    }
+
+    fn dusk_config() -> LoopConfig {
+        LoopConfig::new(60).with_clock(GameClock::new(16.5, 120.0, 60.0))
+    }
+
+    /// A loop that ran 300 ticks at time scale 2, and the game that drove it.
+    fn loop_after_300_scaled_ticks() -> (HeadlessLoop<ClockProbe>, ClockProbe) {
+        let mut game = ClockProbe {
+            scale_on_first_tick: Some(2.0),
+            ..ClockProbe::default()
+        };
+        let mut sim = HeadlessLoop::new(dusk_config());
+        sim.step(&mut game, 300);
+        (sim, game)
+    }
+
+    #[test]
+    fn restored_loop_first_tick_is_the_recorded_tick() {
+        let (original, _) = loop_after_300_scaled_ticks();
+        let mut game = ClockProbe::default();
+        let mut resumed = HeadlessLoop::new(dusk_config());
+
+        resumed.restore(original.record());
+        resumed.step(&mut game, 1);
+
+        assert_eq!(game.seen.len(), 1, "restore must run no tick");
+        assert_eq!(game.seen[0].0, 300);
+        assert_eq!(resumed.next_tick(), 301);
+    }
+
+    #[test]
+    fn restored_loop_clock_is_bit_equal_for_600_ticks() {
+        let (mut original, mut original_game) = loop_after_300_scaled_ticks();
+        let mut resumed_game = ClockProbe::default();
+        let mut resumed = HeadlessLoop::new(dusk_config());
+        resumed.restore(original.record());
+        original_game.seen.clear();
+
+        original.step(&mut original_game, 600);
+        resumed.step(&mut resumed_game, 600);
+
+        assert_eq!(original_game.seen.len(), 600);
+        assert_eq!(resumed_game.seen, original_game.seen);
+        assert_eq!(
+            resumed.clock().time_of_day().to_bits(),
+            original.clock().time_of_day().to_bits()
+        );
+        assert_eq!(
+            resumed.clock().elapsed_seconds().to_bits(),
+            original.clock().elapsed_seconds().to_bits()
+        );
+        assert_eq!(resumed.clock().time_scale(), 2.0);
+    }
+
+    #[test]
+    fn restore_keeps_the_loops_own_pause_and_speed() {
+        let (mut saved, _) = loop_after_300_scaled_ticks();
+        saved.set_paused(true);
+        saved.set_speed(SimSpeed::X3);
+        let record = saved.record();
+        let mut running = HeadlessLoop::<ClockProbe>::new(dusk_config());
+        running.set_speed(SimSpeed::X2);
+        let mut paused = HeadlessLoop::<ClockProbe>::new(dusk_config());
+        paused.set_paused(true);
+
+        running.restore(record);
+        paused.restore(record);
+
+        assert!(!running.paused());
+        assert_eq!(running.speed(), SimSpeed::X2);
+        assert!(paused.paused());
+        assert_eq!(paused.speed(), SimSpeed::X1);
+        assert_eq!(running.next_tick(), 300);
+        assert_eq!(paused.next_tick(), 300);
+    }
+
+    #[test]
+    fn restore_keeps_the_sub_tick_remainder() {
+        let mut game = ClockProbe::default();
+        let mut sim = HeadlessLoop::new(dusk_config());
+        sim.advance(&mut game, Duration::from_nanos(NS / 144));
+        let alpha = sim.alpha();
+        let (source, _) = loop_after_300_scaled_ticks();
+
+        sim.restore(source.record());
+
+        assert!(alpha > 0.0);
+        assert_eq!(sim.alpha(), alpha);
+    }
+
+    #[test]
+    fn resume_requested_in_a_frame_applies_before_the_next_tick() {
+        let (source, _) = loop_after_300_scaled_ticks();
+        let record = source.record();
+        let mut game = ClockProbe {
+            resume_in_frame: Some(record),
+            ..ClockProbe::default()
+        };
+        let mut sim = HeadlessLoop::new(dusk_config());
+        sim.step(&mut game, 40);
+        game.seen.clear();
+
+        let first = sim.advance(&mut game, Duration::ZERO);
+        let second = sim.advance(&mut game, Duration::from_nanos(NS / 60));
+
+        assert_eq!(first, 0);
+        assert_eq!(second, 1);
+        assert_eq!(game.seen.len(), 1);
+        assert_eq!(game.seen[0].0, 300);
+        assert_eq!(game.seen[0].1, record.time_of_day.to_bits());
+        assert_eq!(game.seen[0].2, record.elapsed_seconds.to_bits());
+        assert_eq!(sim.clock().time_scale(), 2.0);
+    }
+
+    #[test]
+    fn frame_loop_record_matches_the_loops_record() {
+        let (mut sim, mut game) = loop_after_300_scaled_ticks();
+
+        sim.advance(&mut game, Duration::from_nanos(NS / 60));
+
+        let seen = game.frame_record.expect("the frame ran");
+        assert_eq!(seen.next_tick, 301);
+        assert_eq!(seen, sim.record());
     }
 
     #[test]

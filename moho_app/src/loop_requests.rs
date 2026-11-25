@@ -1,11 +1,13 @@
 //! What a game asks of the loop during a callback, applied by the loop afterwards.
 
+use crate::clock::LoopRecord;
 use crate::{SimSpeed, WindowMode};
 
-/// Pause, speed and window-mode changes a game asked for, applied by the loop after the
-/// callback returns.
+/// Pause, speed, resume and window-mode changes a game asked for, applied by the loop after
+/// the callback returns.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct LoopRequests {
+    pub(crate) resume: Option<LoopRecord>,
     pub(crate) paused: Option<bool>,
     pub(crate) speed: Option<SimSpeed>,
     pub(crate) window_mode: Option<WindowMode>,
