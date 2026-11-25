@@ -160,10 +160,12 @@ struct App {
     /// Cached player chunk position used to gate per-frame LOD transition scans.
     lod_player_chunk_cache: glam::IVec3,
 
-    /// The player's gameplay pawn (inventory, mining). Deliberately separate
-    /// from `simulation.player_controller`, which is camera/movement-only —
-    /// see `flagstone_game::pawn::Pawn`'s doc comment.
-    pawn: flagstone_game::pawn::Pawn,
+    /// The colony's pawns (inventory, mining, job). Deliberately separate from
+    /// `simulation.player_controller`, which is camera/movement-only — see
+    /// `flagstone_game::pawn::Pawn`'s doc comment. Not saved yet.
+    crew: flagstone_game::crew::Crew,
+    /// The pawn the player possesses: the one whose body is `physics.player`.
+    possessed: flagstone_game::pawn::PawnId,
 
     /// The window's physical size, which pointer positions are measured in.
     viewport: glam::UVec2,
@@ -179,6 +181,39 @@ struct App {
 }
 
 impl App {
+    fn possessed_pawn(&self) -> &flagstone_game::pawn::Pawn {
+        self.crew
+            .get(self.possessed)
+            .expect("the possessed pawn is in the crew")
+    }
+
+    fn possessed_pawn_mut(&mut self) -> &mut flagstone_game::pawn::Pawn {
+        self.crew
+            .get_mut(self.possessed)
+            .expect("the possessed pawn is in the crew")
+    }
+
+    /// Starts the crew over with one pawn standing at `first` and one at each of `rest`,
+    /// each with a body of its own. The first is possessed: its body is the player's. The
+    /// crew is never empty. Expects physics to be already reset.
+    fn spawn_crew(
+        &mut self,
+        first: moho_physics::CharacterSpawn,
+        rest: impl IntoIterator<Item = moho_physics::CharacterSpawn>,
+    ) {
+        self.crew = flagstone_game::crew::Crew::default();
+        // Selection names a pawn of the old crew; the new one's ids mean other pawns.
+        self.selection = flagstone_game::selection::Selection::default();
+        // The old crew's claims name pawns that no longer exist; new pawns reuse their ids.
+        self.colony.marks.release_all();
+        self.possessed = self.crew.spawn(flagstone_game::pawn::Pawn::default());
+        self.physics.spawn_possessed(self.possessed, first);
+        for spawn in rest {
+            let id = self.crew.spawn(flagstone_game::pawn::Pawn::default());
+            self.physics.spawn_pawn(id, spawn);
+        }
+    }
+
     /// Writes the running prefs to `prefs_path`; does nothing without one. A failed
     /// write is logged: the running prefs stay in effect either way.
     fn save_prefs(&self) {
@@ -258,6 +293,8 @@ impl App {
         tracing::info!("Created LightSystem for frame loop integration");
 
         let autosave_interval = app::autosave::autosave_interval(&initialized.prefs);
+        let mut crew = flagstone_game::crew::Crew::default();
+        let possessed = crew.spawn(flagstone_game::pawn::Pawn::default());
 
         Self {
             entities: initialized.entities,
@@ -310,7 +347,8 @@ impl App {
             chunk_streamer: None,
             lod_player_chunk_cache: glam::IVec3::splat(i32::MIN),
 
-            pawn: flagstone_game::pawn::Pawn::default(),
+            crew,
+            possessed,
 
             viewport: glam::UVec2::ZERO,
             pointer_hit: None,
@@ -388,12 +426,15 @@ impl App {
             saved_pos
         };
         let (yaw, pitch) = self.simulation.yaw_pitch();
-        self.physics.spawn_player(moho_physics::CharacterSpawn {
-            position: spawn_pos,
-            yaw,
-            pitch,
-            body: moho_physics::CharacterBody::default(),
-        });
+        self.spawn_crew(
+            moho_physics::CharacterSpawn {
+                position: spawn_pos,
+                yaw,
+                pitch,
+                body: moho_physics::CharacterBody::default(),
+            },
+            [],
+        );
 
         // Align the simulation Y to match physics spawn (avoids terrain clipping).
         self.simulation

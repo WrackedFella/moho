@@ -11,7 +11,7 @@ use flagstone_game::controller::{
     CameraMode, ControllerInput, EDGE_PAN_MARGIN_PX, controller_to_camera, edge_pan_axes,
 };
 use flagstone_game::raycast::{SurfaceHit, raycast_surface_below};
-use flagstone_game::selection::{PAWN_HALF_EXTENTS, PLAYER_PAWN, pawn_aabb, pick_pawn};
+use flagstone_game::selection::{PAWN_HALF_EXTENTS, pawn_aabb, pick_pawn};
 use flagstone_ui::actions::StrategyAction;
 use flagstone_ui::console_commands::StrategyConsoleCommand;
 use flagstone_voxel::VoxelGrid;
@@ -258,8 +258,11 @@ impl App {
         {
             self.pointer_hit = pick_surface(light_system.grid(), ray, command.ceiling);
             tracing::debug!(hit = ?self.pointer_hit, "Pointer ray cast");
-            let pawn = (PLAYER_PAWN, pawn_aabb(self.simulation.position()));
-            let picked = pick_pawn(ray, [pawn], self.pointer_hit.map(|hit| hit.distance));
+            let boxes = self
+                .pawn_centres()
+                .into_iter()
+                .map(|(id, centre)| (id, pawn_aabb(centre)));
+            let picked = pick_pawn(ray, boxes, self.pointer_hit.map(|hit| hit.distance));
             self.selection.click(picked);
             if picked.is_some() {
                 self.event_bus
@@ -275,8 +278,12 @@ impl App {
     /// frame so the mark follows the pawn and survives a console marker clear.
     fn sync_selection_mark(&mut self) {
         let strategy = self.simulation.camera_mode() == CameraMode::Isometric;
-        if strategy && self.selection.selected().is_some() {
-            let aabb = pawn_aabb(self.simulation.position());
+        let selected = strategy
+            .then(|| self.selection.selected())
+            .flatten()
+            .and_then(|id| self.pawn_centre(id));
+        if let Some(centre) = selected {
+            let aabb = pawn_aabb(centre);
             self.scene.markers_mut().upsert(
                 SELECTION_MARKER_ID,
                 Marker::new(
@@ -401,27 +408,45 @@ impl App {
             && self.physics.is_kcc_active()
     }
 
+    /// Where each pawn's body box stands, in id order. The possessed pawn stands where the
+    /// view does, which is its body once a tick has synced them; the others stand at their
+    /// bodies. A pawn without a body is not drawn or picked.
+    fn pawn_centres(&self) -> Vec<(flagstone_game::pawn::PawnId, glam::Vec3)> {
+        self.crew
+            .ids()
+            .filter_map(|id| Some((id, self.pawn_centre(id)?)))
+            .collect()
+    }
+
+    /// Where pawn `id`'s body box stands, as [`App::pawn_centres`] places it; `None` for a
+    /// pawn without a body.
+    fn pawn_centre(&self, id: flagstone_game::pawn::PawnId) -> Option<glam::Vec3> {
+        if id == self.possessed {
+            return Some(self.simulation.position());
+        }
+        let handle = *self.physics.pawns.get(&id)?;
+        Some(self.physics.world.as_ref()?.character(handle)?.position)
+    }
+
     fn render_scene(
         &mut self,
         renderer: &mut dyn moho_renderer::RendererBackend,
         camera: (glam::Mat4, glam::Mat4, glam::Vec3),
     ) {
         self.sync_selection_mark();
-        let with_body;
-        let cubes = if self.simulation.camera_mode() == CameraMode::Isometric {
-            let size = PAWN_HALF_EXTENTS * 2.0;
-            let body = Cube::new(
-                self.simulation.position(),
-                size.x,
-                size.z,
-                size.y,
-                PAWN_BODY_MATERIAL,
-            );
-            with_body = [self.entities.actors.cubes(), &[body]].concat();
-            with_body.as_slice()
-        } else {
-            self.entities.actors.cubes()
-        };
+        let with_bodies;
+        let cubes =
+            if self.simulation.camera_mode() == CameraMode::Isometric {
+                let size = PAWN_HALF_EXTENTS * 2.0;
+                let mut all = self.entities.actors.cubes().to_vec();
+                all.extend(self.pawn_centres().into_iter().map(|(_, centre)| {
+                    Cube::new(centre, size.x, size.z, size.y, PAWN_BODY_MATERIAL)
+                }));
+                with_bodies = all;
+                with_bodies.as_slice()
+            } else {
+                self.entities.actors.cubes()
+            };
         if let Err(e) = self.scene.render(
             renderer,
             self.entities.actors.spheres(),
@@ -595,7 +620,7 @@ impl moho_app::Game for App {
             .set_time_scale(f32::from(self.game_state == GameState::Playing));
         if self.game_state == GameState::Playing {
             self.autosave.tick();
-            self.pawn.pickups.tick();
+            self.possessed_pawn_mut().pickups.tick();
         }
         let frame_processor = FrameProcessor::new();
         let event_processor = EventProcessor::new();
@@ -1859,7 +1884,7 @@ mod tests {
         }
 
         fn push_pickup(app: &mut App) {
-            app.pawn
+            app.possessed_pawn_mut()
                 .pickups
                 .push(flagstone_game::inventory::ResourceYield {
                     resource_id: 7,
@@ -1875,10 +1900,14 @@ mod tests {
             let mut sim = HeadlessLoop::<App>::new(LoopConfig::new(TICK_HZ));
 
             sim.step(&mut app, PICKUP_POPUP_TICKS - 1);
-            assert_eq!(app.pawn.pickups.entries().len(), 1, "expired a tick early");
+            assert_eq!(
+                app.possessed_pawn().pickups.entries().len(),
+                1,
+                "expired a tick early"
+            );
             sim.step(&mut app, 1);
 
-            assert!(app.pawn.pickups.entries().is_empty());
+            assert!(app.possessed_pawn().pickups.entries().is_empty());
         }
 
         #[test]
@@ -1893,7 +1922,7 @@ mod tests {
                 sim.step(&mut app, PICKUP_POPUP_TICKS);
 
                 let ticks_left: Vec<u32> = app
-                    .pawn
+                    .possessed_pawn()
                     .pickups
                     .entries()
                     .iter()
@@ -3376,7 +3405,8 @@ mod tests {
                 std::f32::consts::PI,
                 0.0,
             );
-            app.pawn.select_slot(flagstone_game::pawn::TOOL_SLOT);
+            app.possessed_pawn_mut()
+                .select_slot(flagstone_game::pawn::TOOL_SLOT);
             let grid = app
                 .light_system
                 .as_mut()
@@ -4074,7 +4104,8 @@ mod tests {
         #[test]
         fn play_input_does_not_reach_the_world_while_paused() {
             let mut app = first_person_app();
-            app.pawn.select_slot(flagstone_game::pawn::TOOL_SLOT);
+            app.possessed_pawn_mut()
+                .select_slot(flagstone_game::pawn::TOOL_SLOT);
             // Identity rotation: the camera looks down -Z from just in front of the wall.
             app.camera.0 = glam::Mat4::from_translation(glam::Vec3::new(4.5, 70.5, 6.5)).inverse();
             let aimed = flagstone_voxel::BlockPos::new(4, 70, 3);
@@ -4381,7 +4412,7 @@ mod tests {
         }
     }
 
-    use flagstone_game::selection::{PAWN_HALF_EXTENTS, PLAYER_PAWN, pawn_aabb};
+    use flagstone_game::selection::{FIRST_PAWN, PAWN_HALF_EXTENTS, pawn_aabb};
     use moho_core::events::{AudioEvent, DebugEvent};
 
     const SELECTION_VIEWPORT: glam::UVec2 = glam::UVec2::new(1280, 720);
@@ -4497,7 +4528,7 @@ mod tests {
         step_once(app);
         assert_eq!(
             app.selection.selected(),
-            Some(PLAYER_PAWN),
+            Some(FIRST_PAWN),
             "setup: the click on the pawn selects it"
         );
     }
@@ -4589,7 +4620,7 @@ mod tests {
 
         step_once(&mut app);
 
-        assert_eq!(app.selection.selected(), Some(PLAYER_PAWN));
+        assert_eq!(app.selection.selected(), Some(FIRST_PAWN));
     }
 
     #[test]
@@ -4629,7 +4660,7 @@ mod tests {
 
         assert_eq!(
             open.selection.selected(),
-            Some(PLAYER_PAWN),
+            Some(FIRST_PAWN),
             "without the hill the same click selects the pawn"
         );
         assert_eq!(hidden.selection.selected(), None);
@@ -4657,7 +4688,7 @@ mod tests {
 
         step_once(&mut app);
 
-        assert_eq!(app.selection.selected(), Some(PLAYER_PAWN));
+        assert_eq!(app.selection.selected(), Some(FIRST_PAWN));
     }
 
     #[test]
@@ -4675,7 +4706,7 @@ mod tests {
             before,
             "first person starts from the pawn's pose"
         );
-        assert_eq!(app.selection.selected(), Some(PLAYER_PAWN));
+        assert_eq!(app.selection.selected(), Some(FIRST_PAWN));
     }
 
     #[test]
@@ -4690,7 +4721,7 @@ mod tests {
         step_once(&mut app);
 
         assert_eq!(app.simulation.camera_mode(), CameraMode::Isometric);
-        assert_eq!(app.selection.selected(), Some(PLAYER_PAWN));
+        assert_eq!(app.selection.selected(), Some(FIRST_PAWN));
     }
 
     #[test]
@@ -4707,7 +4738,7 @@ mod tests {
         assert!(command.select.is_some(), "the click is in the command");
         assert_eq!(on_the_event, None);
         assert_eq!(before_the_tick, None);
-        assert_eq!(app.selection.selected(), Some(PLAYER_PAWN));
+        assert_eq!(app.selection.selected(), Some(FIRST_PAWN));
     }
 
     #[test]
@@ -4831,5 +4862,104 @@ mod tests {
         frame_of(&mut app);
 
         assert!(outlined_markers(&mut app).is_empty());
+    }
+
+    type CrewInView = [(flagstone_game::pawn::PawnId, glam::Vec3); 3];
+
+    /// The strategy view over the floor with a crew of three, each pawn standing apart from the
+    /// others in view of the camera with a body of its own. The first is the possessed pawn:
+    /// its body is the player's, as in the running app, and the simulation stands where it does.
+    fn app_with_three_pawns_in_view() -> (App, CrewInView) {
+        let mut app = app_with_pawn_in_view();
+        app.crew = flagstone_game::crew::Crew::default();
+        let pawns = [(4.5, 7.5), (8.5, 5.5), (11.5, 7.5)].map(|(x, z)| {
+            let centre = floor_point(&app, x, z) + glam::Vec3::Y * PAWN_HALF_EXTENTS.y;
+            let id = app.crew.spawn(flagstone_game::pawn::Pawn::default());
+            (id, centre)
+        });
+        let (possessed, at) = pawns[0];
+        app.possessed = possessed;
+        app.simulation.set_position_yaw_pitch(at, 0.7, 0.0);
+        app.physics.spawn_player(at);
+        let player = app.physics.player.expect("the player was just spawned");
+        app.physics.pawns.insert(possessed, player);
+        for (id, centre) in &pawns[1..] {
+            app.physics.spawn_pawn(*id, *centre);
+        }
+        (app, pawns)
+    }
+
+    fn body_centre(app: &App, id: flagstone_game::pawn::PawnId) -> glam::Vec3 {
+        crate::app::dig_site::pawn_state_of(app, id).position
+    }
+
+    fn select_pawn_by_click(app: &mut App, centre: glam::Vec3) {
+        click_world(app, centre);
+        step_once(app);
+    }
+
+    #[test]
+    fn strategy_view_draws_a_body_per_pawn() {
+        let (mut app, pawns) = app_with_three_pawns_in_view();
+
+        let fake = frame_of(&mut app);
+
+        for (id, _) in pawns {
+            let body = body_centre(&app, id);
+            assert!(
+                draws_the_pawn_body(&fake, body),
+                "no pawn-sized box at the body of pawn {id:?} at {body} among {} instances",
+                fake.drawn.len()
+            );
+        }
+    }
+
+    #[test]
+    fn clicking_any_pawn_selects_it() {
+        let (mut app, pawns) = app_with_three_pawns_in_view();
+
+        for (id, centre) in pawns.into_iter().rev().chain(pawns) {
+            select_pawn_by_click(&mut app, centre);
+            assert_eq!(app.selection.selected(), Some(id), "a click on pawn {id:?}");
+        }
+    }
+
+    /// Whether exactly one outline marker is drawn and it spans the pawn box around `centre`.
+    fn assert_outlines_the_box_at(app: &mut App, centre: glam::Vec3, case: &str) {
+        let outlines = outlined_markers(app);
+        assert_eq!(outlines.len(), 1, "{case}: one outline over the pawn");
+        let aabb = pawn_aabb(centre);
+        let grow = moho_renderer::MARKER_INFLATE;
+        for axis in 0..3 {
+            assert!(
+                (outlines[0].min[axis] - (aabb.min[axis] - grow)).abs() < 1e-4
+                    && (outlines[0].max[axis] - (aabb.max[axis] + grow)).abs() < 1e-4,
+                "{case}: outline {:?} to {:?} is not the box {:?} to {:?}",
+                outlines[0].min,
+                outlines[0].max,
+                aabb.min,
+                aabb.max
+            );
+        }
+    }
+
+    #[test]
+    fn the_selection_outline_follows_the_selected_pawn() {
+        let (mut app, pawns) = app_with_three_pawns_in_view();
+        frame_of(&mut app);
+        let unselected = outlined_markers(&mut app).len();
+
+        select_pawn_by_click(&mut app, pawns[2].1);
+        frame_of(&mut app);
+        let first_outline = outlined_markers(&mut app).len();
+        let third = body_centre(&app, pawns[2].0);
+        assert_outlines_the_box_at(&mut app, third, "the third pawn");
+        select_pawn_by_click(&mut app, pawns[0].1);
+        frame_of(&mut app);
+
+        assert_eq!(unselected, 0, "a mark with nothing selected");
+        assert_eq!(first_outline, 1);
+        let first = body_centre(&app, pawns[0].0);
+        assert_outlines_the_box_at(&mut app, first, "the first pawn");
     }
 }

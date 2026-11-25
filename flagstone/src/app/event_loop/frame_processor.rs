@@ -115,60 +115,74 @@ impl FrameProcessor {
         app.simulation.controller_input.zoom_delta = 0.0;
     }
 
-    /// Runs the unpossessed pawn's job for one tick: the walk goes through the same character
-    /// step as the first-person path, the dig through the same mining action. An idle pawn is
-    /// not moved at all.
+    /// Runs every pawn's job for one tick: each walk goes through the same character step as
+    /// the first-person path, each dig through the same mining action from that pawn's eye. An
+    /// idle pawn is not moved at all, and only the possessed pawn's walk moves the view.
     fn run_pawn_job(&self, app: &mut App, dt: f32) {
         use flagstone_game::jobs::{self, EYE_HEIGHT, JobAction, Pose};
         use flagstone_game::pawn::{MINE_REACH, PawnId};
+        use std::collections::BTreeMap;
 
-        let Some(state) = app
-            .physics
-            .world
-            .as_ref()
-            .zip(app.physics.player)
-            .and_then(|(world, handle)| world.character(handle))
-        else {
+        let Some(world) = app.physics.world.as_ref() else {
             return;
         };
+        let bodies: BTreeMap<PawnId, moho_physics::CharacterState> = app
+            .physics
+            .pawns
+            .iter()
+            .filter_map(|(&id, &handle)| world.character(handle).map(|state| (id, state)))
+            .collect();
+        let poses: BTreeMap<PawnId, Pose> = bodies
+            .iter()
+            .map(|(&id, state)| {
+                let pose = Pose {
+                    feet: state.eye_position() - glam::Vec3::Y * EYE_HEIGHT,
+                    yaw: state.yaw,
+                };
+                (id, pose)
+            })
+            .collect();
         let Some(light_system) = app.light_system.as_mut() else {
             return;
         };
-        let eye = state.eye_position();
-        let pose = Pose {
-            feet: eye - glam::Vec3::Y * EYE_HEIGHT,
-            yaw: state.yaw,
-        };
-        let mut job = std::mem::take(&mut app.pawn.job);
-        let action = jobs::step(
-            &mut job,
-            &mut app.pawn,
-            PawnId(0),
-            pose,
+        let actions = jobs::step_crew(
+            &mut app.crew,
+            &poses,
             &mut app.colony.marks,
             light_system.grid(),
         );
-        app.pawn.job = job;
 
-        match action {
-            JobAction::Wait => {}
-            JobAction::Walk { to } => {
-                let (command, settings) = job_walk_command(jobs::steer(pose, to));
-                let Some(moved) = app.physics.move_character(&command, &settings, dt) else {
-                    tracing::warn!("Pawn job walked but the character did not move");
-                    return;
-                };
-                app.simulation
-                    .set_position_yaw_pitch(moved.position, moved.yaw, moved.pitch);
-            }
-            JobAction::Dig { aim, .. } => {
-                let grid = light_system.grid_mut();
-                let Some(outcome) = app.pawn.dig(grid, eye, (aim - eye).normalize(), MINE_REACH)
-                else {
-                    tracing::debug!(?aim, "Pawn dig found nothing solid within reach");
-                    return;
-                };
-                apply_pawn_dig(&app.event_bus, &mut app.colony.stock, grid, &outcome);
+        for (id, action) in actions {
+            match action {
+                JobAction::Wait => {}
+                JobAction::Walk { to } => {
+                    let (command, settings) = job_walk_command(jobs::steer(poses[&id], to));
+                    let Some(moved) = app.physics.move_pawn(id, &command, &settings, dt) else {
+                        tracing::warn!(pawn = ?id, "Pawn job walked but the character did not move");
+                        continue;
+                    };
+                    if id == app.possessed {
+                        app.simulation.set_position_yaw_pitch(
+                            moved.position,
+                            moved.yaw,
+                            moved.pitch,
+                        );
+                    }
+                }
+                JobAction::Dig { aim, .. } => {
+                    let eye = bodies[&id].eye_position();
+                    let grid = light_system.grid_mut();
+                    let pawn = app
+                        .crew
+                        .get_mut(id)
+                        .expect("step_crew answers only for pawns of the crew");
+                    let Some(outcome) = pawn.dig(grid, eye, (aim - eye).normalize(), MINE_REACH)
+                    else {
+                        tracing::debug!(pawn = ?id, ?aim, "Pawn dig found nothing solid within reach");
+                        continue;
+                    };
+                    apply_pawn_dig(&app.event_bus, &mut app.colony.stock, grid, &outcome);
+                }
             }
         }
     }
@@ -475,28 +489,31 @@ impl FrameProcessor {
             })
             .unwrap_or_default();
 
-        let mut hotbar: Vec<(u32, u32)> = app.pawn.inventory.iter().collect();
-        hotbar.sort_by_key(|(resource_id, _)| *resource_id);
+        let possessed = app.possessed_pawn();
+        let hotbar = possessed.inventory.sorted();
 
         // Only one tool exists today (`flagstone_game::tools::STARTING_TOOL`); the
         // label is a fixed string until a real tool-name lookup exists.
-        let equipped_tool_label = app.pawn.equipped_tool.map(|_| "Pickaxe".to_string());
+        let tool_label =
+            |pawn: &flagstone_game::pawn::Pawn| pawn.equipped_tool.map(|_| "Pickaxe".to_string());
+        let equipped_tool_label = tool_label(possessed);
 
-        let selection =
-            app.selection
-                .selected()
-                .is_some()
-                .then(|| flagstone_ui::overlays::SelectionHud {
-                    title: "Pawn".to_string(),
-                    tool: equipped_tool_label.clone(),
-                    carried: hotbar
-                        .iter()
-                        .map(|&(id, count)| (flagstone_game::inventory::resource_name(id), count))
-                        .collect(),
-                });
+        let selection = app
+            .selection
+            .selected()
+            .and_then(|id| app.crew.get(id))
+            .map(|selected| flagstone_ui::overlays::SelectionHud {
+                title: "Pawn".to_string(),
+                tool: tool_label(selected),
+                carried: selected
+                    .inventory
+                    .sorted()
+                    .into_iter()
+                    .map(|(id, count)| (flagstone_game::inventory::resource_name(id), count))
+                    .collect(),
+            });
 
-        let mut colony_stock: Vec<(u32, u32)> = app.colony.stock.iter().collect();
-        colony_stock.sort_by_key(|(resource_id, _)| *resource_id);
+        let colony_stock = app.colony.stock.sorted();
 
         let data = flagstone_ui::overlays::HudData {
             player_position: [pos.x, pos.y, pos.z],
@@ -512,11 +529,10 @@ impl FrameProcessor {
             loaded_chunk_xz,
             hotbar,
             equipped_tool_label,
-            selected_slot: app.pawn.selected_slot,
+            selected_slot: possessed.selected_slot,
             view_height: crate::app::view_level::layer_extent(app)
                 .map(|extent| app.view_level.hud(extent)),
-            pickups: app
-                .pawn
+            pickups: possessed
                 .pickups
                 .entries()
                 .iter()
@@ -1197,13 +1213,14 @@ mod tests {
 
     fn app_carrying_iron_ore(selected: bool) -> App {
         let mut app = App::headless();
-        app.pawn.deposit(flagstone_game::inventory::ResourceYield {
-            resource_id: 1,
-            amount: 12,
-        });
+        app.possessed_pawn_mut()
+            .deposit(flagstone_game::inventory::ResourceYield {
+                resource_id: 1,
+                amount: 12,
+            });
         if selected {
             app.selection
-                .click(Some(flagstone_game::selection::PLAYER_PAWN));
+                .click(Some(flagstone_game::selection::FIRST_PAWN));
         }
         app
     }
@@ -1238,7 +1255,7 @@ mod tests {
     fn selection_panel_omits_the_tool_when_unequipped() {
         use flagstone_ui::overlays::SelectionHud;
         let mut app = app_carrying_iron_ore(true);
-        app.pawn.select_slot(3);
+        app.possessed_pawn_mut().select_slot(3);
 
         let produced = produced_strategy_hud(&mut app);
 
@@ -1279,19 +1296,64 @@ mod tests {
     }
 
     #[test]
+    fn the_selection_panel_shows_the_selected_pawns_inventory() {
+        use flagstone_ui::overlays::SelectionHud;
+        let mut app = App::headless();
+        app.crew = flagstone_game::crew::Crew::default();
+        let ids: Vec<_> = (0..3)
+            .map(|_| app.crew.spawn(flagstone_game::pawn::Pawn::default()))
+            .collect();
+        for (id, (resource_id, amount)) in [(ids[1], (2, 5)), (ids[2], (1, 9))] {
+            app.crew
+                .get_mut(id)
+                .expect("the pawn is in the crew")
+                .deposit(flagstone_game::inventory::ResourceYield {
+                    resource_id,
+                    amount,
+                });
+        }
+        let panel_of = |carried: Vec<(String, u32)>| SelectionHud {
+            title: "Pawn".to_string(),
+            tool: Some("Pickaxe".to_string()),
+            carried,
+        };
+        let expected_with = |app: &App, panel: SelectionHud| {
+            painted_strategy_hud(flagstone_ui::overlays::HudData {
+                equipped_tool_label: Some("Pickaxe".to_string()),
+                selection: Some(panel),
+                ..strategy_hud_data(app)
+            })
+        };
+
+        app.selection.click(Some(ids[2]));
+        let iron_selected = produced_strategy_hud(&mut app);
+        app.selection.click(Some(ids[1]));
+        let other_selected = produced_strategy_hud(&mut app);
+
+        assert!(
+            iron_selected == expected_with(&app, panel_of(vec![("Iron ore".to_string(), 9)])),
+            "the panel is not the iron pawn's inventory"
+        );
+        assert!(
+            other_selected == expected_with(&app, panel_of(vec![("Resource 2".to_string(), 5)])),
+            "the panel is not the other pawn's inventory"
+        );
+    }
+
+    #[test]
     fn hud_data_carries_the_player_pawns_pickups() {
         use moho_render_api::UiFrameSource;
         let mut app = App::headless();
         app.simulation
             .set_camera_mode(flagstone_game::controller::CameraMode::FirstPerson);
-        app.pawn
+        app.possessed_pawn_mut()
             .pickups
             .push(flagstone_game::inventory::ResourceYield {
                 resource_id: 7,
                 amount: 2,
             });
         for _ in 0..90 {
-            app.pawn.pickups.tick();
+            app.possessed_pawn_mut().pickups.tick();
         }
         let clock = moho_app::GameClock::default();
         let adapter = std::sync::Arc::new(std::sync::Mutex::new(hud_adapter()));
@@ -1335,11 +1397,13 @@ mod tests {
     mod colony_work {
         use super::*;
         use crate::app::dig_site::{
-            Block, GROUND_TOP, PAWN_CELL, block_exists, dig_site, pawn_start, pawn_state, rise,
-            run_until,
+            Block, GROUND_TOP, PAWN_CELL, block_exists, dig_site, dig_site_with_pawns, pawn_start,
+            pawn_state, pawn_state_of, rise, run_until,
         };
         use flagstone_game::controller::CameraMode;
-        use flagstone_game::pawn::MINE_REACH;
+        use flagstone_game::jobs::Job;
+        use flagstone_game::pawn::{MINE_REACH, PawnId};
+        use flagstone_game::selection::FIRST_PAWN;
 
         const ORE: u32 = 7;
         /// Four metres east of the pawn, on flat ground.
@@ -1378,7 +1442,7 @@ mod tests {
                 "nothing else is counted"
             );
             assert!(
-                app.pawn.inventory.is_empty(),
+                app.possessed_pawn().inventory.is_empty(),
                 "a pawn at work fills the colony, not its pockets"
             );
         }
@@ -1393,7 +1457,7 @@ mod tests {
             assert!(walked(&app) > 1.5, "the pawn dug from where it started");
             assert!(!app.colony.marks.contains(NEAR), "the marker is gone");
             assert!(app.colony.stock.is_empty());
-            assert!(app.pawn.inventory.is_empty());
+            assert!(app.possessed_pawn().inventory.is_empty());
         }
 
         #[test]
@@ -1680,6 +1744,311 @@ mod tests {
                 "crossed away from the far causeway: {over_the_trench:?}"
             );
             assert!(!app.colony.marks.contains(mark), "the marker is gone");
+        }
+
+        /// How many blocks of the field, ground and everything placed on it, are standing.
+        fn solid_blocks(app: &App) -> usize {
+            (0..32)
+                .flat_map(|x| {
+                    (0..=GROUND_TOP + 2).flat_map(move |y| (0..32).map(move |z| [x, y, z]))
+                })
+                .filter(|&pos| block_exists(app, pos))
+                .count()
+        }
+
+        fn claimant(app: &App, mark: [i32; 3]) -> Option<PawnId> {
+            app.colony
+                .marks
+                .iter()
+                .find(|(pos, _)| *pos == mark)
+                .and_then(|(_, m)| m.claimed_by)
+        }
+
+        fn is_mining(app: &App, id: PawnId) -> bool {
+            matches!(
+                app.crew.get(id).map(|pawn| &pawn.job),
+                Some(Job::Mine { .. })
+            )
+        }
+
+        fn distance_walked(app: &App, id: PawnId, from: [i32; 3]) -> f32 {
+            let start = glam::Vec3::new(from[0] as f32 + 0.5, from[1] as f32, from[2] as f32 + 0.5);
+            let feet = pawn_state_of(app, id).position - glam::Vec3::Y * 1.15;
+            feet.distance(start)
+        }
+
+        #[test]
+        fn two_pawns_one_mark_the_block_is_dug_once_and_one_pawn_never_moves() {
+            let idle_cell = [PAWN_CELL[0], PAWN_CELL[1], 18];
+            let mut app = dig_site_with_pawns(&[(NEAR, Some(ORE))], &[PAWN_CELL, idle_cell]);
+            app.colony.marks.toggle(NEAR);
+            let second = PawnId(1);
+            let idle_before = pawn_state_of(&app, second);
+            let solid_before = solid_blocks(&app);
+            let mut sim = crate::app::dig_site::headless_loop();
+            let mut first_worked_it = false;
+            let mut second_took_work = false;
+
+            for _ in 0..GIVE_UP {
+                if !block_exists(&app, NEAR) {
+                    break;
+                }
+                sim.step(&mut app, 1);
+                first_worked_it |=
+                    claimant(&app, NEAR) == Some(FIRST_PAWN) && is_mining(&app, FIRST_PAWN);
+                second_took_work |= is_mining(&app, second);
+            }
+            sim.step(&mut app, 120);
+
+            assert!(!block_exists(&app, NEAR), "the block is still standing");
+            assert!(first_worked_it, "the first pawn never held the mark");
+            assert!(
+                !second_took_work,
+                "the second pawn took a mark that was claimed"
+            );
+            assert_eq!(
+                pawn_state_of(&app, second),
+                idle_before,
+                "the idle pawn moved"
+            );
+            assert!(
+                distance_walked(&app, FIRST_PAWN, PAWN_CELL) > 1.5,
+                "the first pawn dug where it stood"
+            );
+            assert_eq!(ore_total(&app), 1, "the block was dug once");
+            assert_eq!(
+                solid_blocks(&app),
+                solid_before - 1,
+                "only the marked block went"
+            );
+        }
+
+        #[test]
+        fn a_crew_of_three_digs_a_row_of_three_marks_once_each() {
+            let rows = [8, 12, 16];
+            let cells = rows.map(|z| [12, GROUND_TOP + 1, z]);
+            let marks = rows.map(|z| [20, GROUND_TOP + 1, z]);
+            let blocks: Vec<Block> = marks.iter().map(|&mark| (mark, Some(ORE))).collect();
+            let mut app = dig_site_with_pawns(&blocks, &cells);
+            for mark in marks {
+                app.colony.marks.toggle(mark);
+            }
+            let solid_before = solid_blocks(&app);
+
+            let removed = run_until(&mut app, GIVE_UP, |app| {
+                marks.iter().all(|&mark| !block_exists(app, mark))
+            });
+            crate::app::dig_site::headless_loop().step(&mut app, 120);
+
+            assert!(removed, "a block is still standing after {GIVE_UP} ticks");
+            assert_eq!(ore_total(&app), 3, "each block was dug once");
+            assert_eq!(
+                solid_blocks(&app),
+                solid_before - 3,
+                "only the marked blocks went"
+            );
+            assert_eq!(
+                app.colony.marks.iter().count(),
+                0,
+                "every mark is worked off"
+            );
+            let mut columns = Vec::new();
+            for (index, row) in rows.into_iter().enumerate() {
+                let id = PawnId(index as u32);
+                let position = pawn_state_of(&app, id).position;
+                assert!(
+                    (position.z - (row as f32 + 0.5)).abs() < 1.5,
+                    "pawn {index} dug in another pawn's row: {position:?}"
+                );
+                assert!(
+                    position.x > 17.0,
+                    "pawn {index} never walked to its block: {position:?}"
+                );
+                assert!(!is_mining(&app, id), "pawn {index} is still at work");
+                columns.push((position.x.floor() as i32, position.z.floor() as i32));
+            }
+            columns.sort_unstable();
+            columns.dedup();
+            assert_eq!(columns.len(), 3, "the pawns piled onto one spot");
+        }
+
+        #[test]
+        fn cancelling_a_mark_sends_its_pawn_to_the_pending_one() {
+            let (first_mark, second_mark, pending) = (
+                [22, GROUND_TOP + 1, 4],
+                [22, GROUND_TOP + 1, 28],
+                [12, GROUND_TOP + 1, 16],
+            );
+            let cells = [
+                [PAWN_CELL[0], PAWN_CELL[1], 4],
+                [PAWN_CELL[0], PAWN_CELL[1], 28],
+            ];
+            let blocks: Vec<Block> = [first_mark, second_mark, pending]
+                .into_iter()
+                .map(|mark| (mark, Some(ORE)))
+                .collect();
+            let mut app = dig_site_with_pawns(&blocks, &cells);
+            for mark in [first_mark, second_mark, pending] {
+                app.colony.marks.toggle(mark);
+            }
+            let mut sim = crate::app::dig_site::headless_loop();
+            sim.step(&mut app, 30);
+            assert_eq!(
+                claimant(&app, first_mark),
+                Some(PawnId(0)),
+                "setup: each walks to its own"
+            );
+            assert_eq!(
+                claimant(&app, second_mark),
+                Some(PawnId(1)),
+                "setup: each walks to its own"
+            );
+            assert_eq!(claimant(&app, pending), None, "setup: the third mark waits");
+            assert!(
+                distance_walked(&app, PawnId(0), cells[0]) > 1.0,
+                "setup: the first pawn is under way"
+            );
+
+            app.colony.marks.toggle(first_mark);
+            let done = run_until(&mut app, GIVE_UP, |app| {
+                !block_exists(app, pending) && !block_exists(app, second_mark)
+            });
+
+            assert!(done, "the freed pawn never dug the pending block");
+            assert!(
+                block_exists(&app, first_mark),
+                "the cancelled block was dug"
+            );
+            assert_eq!(
+                ore_total(&app),
+                2,
+                "the pending and the second block, once each"
+            );
+            assert!(
+                pawn_state_of(&app, PawnId(0)).position.z > 12.0,
+                "the freed pawn did not go to the pending block"
+            );
+            assert!(
+                pawn_state_of(&app, PawnId(1)).position.z > 24.0,
+                "the second pawn left its own block"
+            );
+            assert!(
+                !app.colony.marks.contains(first_mark),
+                "the cancelled mark came back"
+            );
+        }
+
+        /// A crew of two: the first near `near_first`, which it takes; the second near
+        /// `near_second`, which it takes; `pending` is left for whoever frees up first.
+        fn two_pawns_three_marks(
+            near_first: [i32; 3],
+            near_second: [i32; 3],
+            pending: [i32; 3],
+        ) -> App {
+            let cells = [PAWN_CELL, [PAWN_CELL[0], PAWN_CELL[1], 24]];
+            let blocks: Vec<Block> = [near_first, near_second, pending]
+                .into_iter()
+                .map(|mark| (mark, Some(ORE)))
+                .collect();
+            let mut app = dig_site_with_pawns(&blocks, &cells);
+            for mark in [near_first, near_second, pending] {
+                app.colony.marks.toggle(mark);
+            }
+            app
+        }
+
+        #[test]
+        fn a_claimed_block_mined_by_hand_frees_its_pawn() {
+            use flagstone_voxel::{BlockChangeReason, BlockPos, WorldEvent};
+            let (near_first, near_second, pending) = ([16, 8, 12], [12, 8, 28], [24, 8, 28]);
+            let mut app = two_pawns_three_marks(near_first, near_second, pending);
+            let solid_before = solid_blocks(&app);
+            let mut sim = crate::app::dig_site::headless_loop();
+            sim.step(&mut app, 30);
+            assert_eq!(claimant(&app, near_second), Some(PawnId(1)), "setup");
+            assert_eq!(claimant(&app, pending), None, "setup: the third mark waits");
+
+            app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            sim.step(&mut app, 1);
+            let position = BlockPos::from_array(near_second);
+            let grid = app.light_system.as_mut().expect("light system").grid_mut();
+            let chunk_size = grid.chunk_size();
+            assert!(grid.mutator().remove(position), "setup: the block stands");
+            app.event_bus.publish(WorldEvent::BlockRemoved {
+                position,
+                old_material_id: 0,
+                reason: BlockChangeReason::Player,
+            });
+            for chunk_pos in flagstone_voxel::chunks_meshed_from(position, chunk_size) {
+                app.event_bus.publish(WorldEvent::ChunkMeshDirty {
+                    chunk_pos,
+                    terrain_dirty: true,
+                    structure_dirty: true,
+                });
+            }
+            sim.step(&mut app, 1);
+            app.simulation.set_camera_mode(CameraMode::Isometric);
+            let done = run_until(&mut app, GIVE_UP, |app| {
+                !block_exists(app, pending) && !block_exists(app, near_first)
+            });
+            sim.step(&mut app, 120);
+
+            assert!(done, "the pending block was never dug");
+            assert!(
+                !block_exists(&app, near_second),
+                "the hand-mined cell is air"
+            );
+            assert_eq!(
+                solid_blocks(&app),
+                solid_before - 3,
+                "a block was dug twice"
+            );
+            assert_eq!(
+                ore_total(&app),
+                2,
+                "the two pawn digs, not the hand-mined block"
+            );
+            assert!(
+                app.crew
+                    .get(PawnId(1))
+                    .is_some_and(|p| p.inventory.is_empty()),
+                "the freed pawn took the block's yield"
+            );
+            assert!(
+                pawn_state_of(&app, PawnId(1)).position.x > 18.0,
+                "the freed pawn did not go on to the pending block"
+            );
+            assert!(!is_mining(&app, PawnId(1)) && !is_mining(&app, PawnId(0)));
+        }
+
+        #[test]
+        fn pawns_hold_still_in_first_person_view_and_resume_after() {
+            let (near_first, near_second) = ([16, 8, 12], [12, 8, 28]);
+            let mut app = two_pawns_three_marks(near_first, near_second, [24, 8, 4]);
+            let mut sim = crate::app::dig_site::headless_loop();
+            sim.step(&mut app, 40);
+            let walker = PawnId(1);
+            assert!(is_mining(&app, walker), "setup: the pawn is under way");
+            assert!(distance_walked(&app, walker, [12, 8, 24]) > 0.5, "setup");
+            let frozen_at = pawn_state_of(&app, walker);
+
+            app.simulation.set_camera_mode(CameraMode::FirstPerson);
+            sim.step(&mut app, 120);
+
+            let held = pawn_state_of(&app, walker);
+            assert!(
+                held.position.distance(frozen_at.position) < 0.1,
+                "drifted from {:?} to {:?}",
+                frozen_at.position,
+                held.position
+            );
+            assert!(held.grounded, "the frozen pawn left the ground: {held:?}");
+            assert!(block_exists(&app, near_second), "dug while frozen");
+
+            app.simulation.set_camera_mode(CameraMode::Isometric);
+            let dug = run_until(&mut app, GIVE_UP, |app| !block_exists(app, near_second));
+
+            assert!(dug, "the pawn never resumed its work");
         }
 
         #[test]

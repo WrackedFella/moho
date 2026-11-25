@@ -3,11 +3,10 @@
 use glam::Vec3;
 use moho_core::pointer::Ray;
 
-/// Which pawn. One value is in use today, [`PLAYER_PAWN`].
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub struct PawnId(pub u32);
+use crate::pawn::PawnId;
 
-pub const PLAYER_PAWN: PawnId = PawnId(0);
+/// The first id a crew issues.
+pub const FIRST_PAWN: PawnId = PawnId(0);
 
 /// Half extents of the pawn's box: the character capsule's footprint and height.
 pub const PAWN_HALF_EXTENTS: Vec3 = Vec3::new(0.3, 1.15, 0.3);
@@ -100,7 +99,7 @@ mod tests {
     }
 
     fn pawn_at(center: Vec3) -> Vec<(PawnId, Aabb)> {
-        vec![(PLAYER_PAWN, pawn_aabb(center))]
+        vec![(FIRST_PAWN, pawn_aabb(center))]
     }
 
     /// A ray along +Z from 10 m in front of a pawn standing at the origin, shifted by `offset`.
@@ -133,7 +132,7 @@ mod tests {
 
         let picked = pick_pawn(ray_at_the_origin_pawn(Vec3::ZERO), pawns, None);
 
-        assert_eq!(picked, Some(PLAYER_PAWN));
+        assert_eq!(picked, Some(FIRST_PAWN));
     }
 
     #[test]
@@ -170,7 +169,7 @@ mod tests {
             let hit = pick_pawn(inside, pawn_at(Vec3::ZERO), None);
 
             assert_eq!(missed, None, "{face}: 1 mm outside");
-            assert_eq!(hit, Some(PLAYER_PAWN), "{face}: 1 mm inside");
+            assert_eq!(hit, Some(FIRST_PAWN), "{face}: 1 mm inside");
         }
     }
 
@@ -189,7 +188,7 @@ mod tests {
 
         let picked = pick_pawn(ray_at_the_origin_pawn(Vec3::ZERO), pawns, Some(20.0));
 
-        assert_eq!(picked, Some(PLAYER_PAWN));
+        assert_eq!(picked, Some(FIRST_PAWN));
     }
 
     #[test]
@@ -198,7 +197,7 @@ mod tests {
 
         let picked = pick_pawn(ray_at_the_origin_pawn(Vec3::ZERO), pawns, None);
 
-        assert_eq!(picked, Some(PLAYER_PAWN));
+        assert_eq!(picked, Some(FIRST_PAWN));
     }
 
     #[test]
@@ -209,7 +208,7 @@ mod tests {
         let just_beyond = pick_pawn(aim, pawn_at(Vec3::ZERO), Some(9.71));
 
         assert_eq!(at_entry, None);
-        assert_eq!(just_beyond, Some(PLAYER_PAWN));
+        assert_eq!(just_beyond, Some(FIRST_PAWN));
     }
 
     #[test]
@@ -228,7 +227,7 @@ mod tests {
 
         let picked = pick_pawn(aim, pawn_at(Vec3::ZERO), Some(3.0));
 
-        assert_eq!(picked, Some(PLAYER_PAWN));
+        assert_eq!(picked, Some(FIRST_PAWN));
         assert_eq!(ray_box_entry(aim, pawn_aabb(Vec3::ZERO)), Some(0.0));
     }
 
@@ -306,15 +305,15 @@ mod tests {
     fn a_click_on_a_pawn_selects_it() {
         let mut selection = Selection::default();
 
-        selection.click(Some(PLAYER_PAWN));
+        selection.click(Some(FIRST_PAWN));
 
-        assert_eq!(selection.selected(), Some(PLAYER_PAWN));
+        assert_eq!(selection.selected(), Some(FIRST_PAWN));
     }
 
     #[test]
     fn a_click_that_hits_nothing_clears_the_selection() {
         let mut selection = Selection::default();
-        selection.click(Some(PLAYER_PAWN));
+        selection.click(Some(FIRST_PAWN));
 
         selection.click(None);
 
@@ -323,7 +322,7 @@ mod tests {
 
     #[test]
     fn a_click_on_a_pawn_when_one_is_selected_reselects_or_replaces() {
-        let (a, b) = (PLAYER_PAWN, PawnId(5));
+        let (a, b) = (FIRST_PAWN, PawnId(5));
         let table = [("re-select", a, a), ("replace", a, b)];
 
         for (case, selected, clicked) in table {

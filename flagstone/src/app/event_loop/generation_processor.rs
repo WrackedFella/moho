@@ -5,6 +5,52 @@
 use crate::App;
 use crate::GenerationMsg;
 
+/// How far above the floor of its cell a new pawn's capsule centre starts: the capsule's
+/// half-height plus a gap, because a character resting exactly on a mesh does not move and
+/// the first walking tick settles it.
+const CELL_FLOOR_TO_CENTRE: f32 = flagstone_game::selection::PAWN_HALF_EXTENTS.y + 0.05;
+
+/// How many columns around a spawn column must have its height for the ground to count as
+/// level there.
+const LEVEL_RADIUS: i32 = 2;
+
+/// The surface cell a new world's crew spawns around: the top of a column found by a
+/// spiral outward from the origin. Ground that is level around the column wins over the
+/// first column found, because the terrain's smoothed meshes lean a body standing beside a
+/// step. `None` when the spiral finds no column.
+fn spawn_surface(grid: &flagstone_voxel::VoxelGrid) -> Option<glam::IVec3> {
+    let columns = (0..=4i32)
+        .flat_map(|r| {
+            (-r..=r)
+                .flat_map(move |dx| (-r..=r).map(move |dz| (dx, dz)))
+                .filter(move |&(dx, dz)| dx.abs() == r || dz.abs() == r)
+        })
+        .filter_map(|(dx, dz)| grid.get_height(dx, dz).map(|h| glam::IVec3::new(dx, h, dz)));
+    let level = |top: &glam::IVec3| {
+        (-LEVEL_RADIUS..=LEVEL_RADIUS).all(|ox| {
+            (-LEVEL_RADIUS..=LEVEL_RADIUS)
+                .all(|oz| grid.get_height(top.x + ox, top.z + oz) == Some(top.y))
+        })
+    };
+    let mut first = None;
+    let level_column = columns
+        .inspect(|&top| {
+            first.get_or_insert(top);
+        })
+        .find(level);
+    level_column.or(first)
+}
+
+/// Where a pawn's capsule centre starts when it stands in `cell`: the cell's centre
+/// horizontally, a gap above its floor.
+fn cell_spawn_position(cell: glam::IVec3) -> glam::Vec3 {
+    glam::Vec3::new(
+        cell.x as f32 + 0.5,
+        cell.y as f32 + CELL_FLOOR_TO_CENTRE,
+        cell.z as f32 + 0.5,
+    )
+}
+
 /// Handles async generation task polling
 pub struct GenerationProcessor;
 
@@ -246,38 +292,48 @@ impl GenerationProcessor {
         // Perlin returns exactly 0 at integer grid points, so (0,0) may land on a
         // zero-density boundary with no block; a small spiral search finds the real
         // surface. Fall back to 64 (BASE_ELEVATION) when preload produced nothing.
-        let terrain_y = {
-            let found = app.light_system.as_ref().and_then(|ls| {
-                let grid = ls.grid();
-                for r in 0..=4i32 {
-                    for dx in -r..=r {
-                        for dz in -r..=r {
-                            if dx.abs() != r && dz.abs() != r {
-                                continue;
-                            }
-                            if let Some(h) = grid.get_height(dx, dz) {
-                                return Some(h);
-                            }
-                        }
-                    }
-                }
-                None
-            });
-            found.unwrap_or(64)
-        } as f32;
+        let grid = app
+            .light_system
+            .as_ref()
+            .map(flagstone_voxel::LightSystem::grid);
+        let surface = grid.and_then(spawn_surface);
+        let terrain_y = surface.map_or(64, |top| top.y) as f32;
 
-        let spawn_pos = glam::Vec3::new(0.0, terrain_y + 3.0, 0.0);
+        // The crew stands on the standable cells nearest the surface cell, each body on its
+        // cell's floor; with no ground to stand on, one pawn drops onto the origin.
+        let standing = surface
+            .zip(grid)
+            .map(|(top, grid)| {
+                flagstone_game::crew::spawn_cells(
+                    grid,
+                    top + glam::IVec3::Y,
+                    flagstone_game::crew::CREW_SIZE,
+                )
+            })
+            .unwrap_or_default();
+        if standing.len() < flagstone_game::crew::CREW_SIZE {
+            tracing::warn!(
+                wanted = flagstone_game::crew::CREW_SIZE,
+                found = standing.len(),
+                "Too little ground for a full crew"
+            );
+        }
+        let mut positions = standing.into_iter().map(cell_spawn_position);
+        let first = positions
+            .next()
+            .unwrap_or(glam::Vec3::new(0.0, terrain_y + 3.0, 0.0));
 
         let (yaw, pitch) = app.simulation.yaw_pitch();
-        app.physics.spawn_player(moho_physics::CharacterSpawn {
-            position: spawn_pos,
+        let character = |position| moho_physics::CharacterSpawn {
+            position,
             yaw,
             pitch,
             body: moho_physics::CharacterBody::default(),
-        });
+        };
+        app.spawn_crew(character(first), positions.map(character));
 
         // Sync simulation camera to spawn position
-        app.simulation.set_position_yaw_pitch(spawn_pos, yaw, pitch);
+        app.simulation.set_position_yaw_pitch(first, yaw, pitch);
 
         // Spawn 3 test spheres above the center
         for i in 0..3 {
@@ -308,7 +364,7 @@ impl GenerationProcessor {
         tracing::info!(
             chunks = app.entities.chunks.len(),
             test_spheres = app.physics.test_bodies.len(),
-            pos = ?spawn_pos,
+            pos = ?first,
             "Physics world ready"
         );
     }
@@ -436,18 +492,242 @@ mod tests {
         assert_eq!(
             terrain_collider_count(&app),
             with_geometry + 3,
-            "terrain plus the three spheres, character aside"
+            "terrain plus the three spheres, pawns aside"
         );
         assert_eq!(
             pw.collider_set.len(),
-            with_geometry + 1 + 3,
-            "terrain, one character and three spheres"
+            with_geometry + flagstone_game::crew::CREW_SIZE + 3,
+            "terrain, one body per pawn and three spheres"
         );
         assert_eq!(
             pw.rigid_body_set.len(),
-            1 + 3,
-            "one character, three spheres"
+            flagstone_game::crew::CREW_SIZE + 3,
+            "one body per pawn, three spheres"
         );
+    }
+
+    /// Walking settings that keep a pawn on the ground; the same numbers as the strategy view's.
+    const SETTLE_SETTINGS: moho_physics::MoveSettings = moho_physics::MoveSettings {
+        max_speed: 4.0,
+        ground_accel: 360.0,
+        friction: 60.0,
+        stop_speed: 1.0,
+        air_accel: 360.0,
+        air_speed_cap: 4.0,
+        gravity: None,
+        jump_speed: 8.0,
+        max_velocity: 90.0,
+        autohop: true,
+        crouch_ticks: 0,
+        prone_ticks: 0,
+        lean_ticks: 0,
+    };
+
+    #[test]
+    fn a_new_world_spawns_three_pawns_standing_on_solid_ground() {
+        use flagstone_game::crew::CREW_SIZE;
+        use flagstone_game::routing::standable;
+        use flagstone_game::selection::FIRST_PAWN;
+        const DT: f32 = 1.0 / 60.0;
+        const CENTRE_HEIGHT: f32 = 1.15;
+        let mut app = App::headless();
+        let spec = flagstone_game::scene_builders::WorldSpec {
+            name: "headless-test-three-pawns".to_string(),
+            seed: Some(7),
+            size_xz: 64,
+            day_length_seconds: 600.0,
+            night_length_seconds: 420.0,
+            initial_time_of_day: 6.0,
+        };
+        let scene_bytes = flagstone_game::scene_persistence::encode_to_bytes(
+            &flagstone_game::scene::SceneEntities::default(),
+            None,
+            &[],
+        )
+        .expect("encode empty scene");
+
+        GenerationProcessor::new().handle_completed(
+            &mut app,
+            scene_bytes,
+            spec,
+            flagstone_game::scene_builders::TerrainConfig::default(),
+            flagstone_voxel::VoxelGrid::new(16),
+        );
+
+        let bodies: Vec<_> = app
+            .physics
+            .pawns
+            .iter()
+            .map(|(&id, &handle)| (id, handle))
+            .collect();
+        assert_eq!(app.crew.len(), CREW_SIZE, "the crew of a new world");
+        assert_eq!(bodies.len(), CREW_SIZE, "a body for each pawn");
+        assert_eq!(app.possessed, FIRST_PAWN);
+        assert_eq!(
+            app.physics.player,
+            app.physics.pawns.get(&app.possessed).copied(),
+            "the player's body is the possessed pawn's"
+        );
+        let possessed_at = app
+            .physics
+            .world
+            .as_ref()
+            .and_then(|pw| pw.character(app.physics.player.expect("a player body")))
+            .expect("the possessed pawn's body resolves")
+            .position;
+        assert!(
+            app.simulation.position().distance(possessed_at) < 1e-3,
+            "the view follows the possessed pawn"
+        );
+
+        for _ in 0..60 {
+            let pw = app.physics.world.as_mut().expect("physics world");
+            for &(id, handle) in &bodies {
+                let moved = pw.move_character(
+                    handle,
+                    &moho_physics::CharacterCommand::default(),
+                    &SETTLE_SETTINGS,
+                    DT,
+                );
+                assert!(moved.is_ok(), "pawn {id:?}: the body is not in the world");
+            }
+            app.physics.step(DT);
+        }
+
+        let grid = app.light_system.as_ref().expect("light system").grid();
+        let pw = app.physics.world.as_ref().expect("physics world");
+        let mut columns = std::collections::BTreeSet::new();
+        for &(id, handle) in &bodies {
+            let state = pw.character(handle).expect("the pawn's body resolves");
+            let feet = state.position - glam::Vec3::Y * CENTRE_HEIGHT;
+            let cell = glam::IVec3::new(
+                feet.x.floor() as i32,
+                feet.y.round() as i32,
+                feet.z.floor() as i32,
+            );
+            assert!(state.grounded, "pawn {id:?} is airborne at {feet}");
+            assert!(
+                standable(grid, cell),
+                "pawn {id:?} at {feet} is not on solid ground"
+            );
+            assert!(
+                (feet.y - cell.y as f32).abs() <= 0.05,
+                "pawn {id:?}: feet at {} over the floor of {cell}",
+                feet.y
+            );
+            columns.insert((cell.x, cell.z));
+        }
+        assert_eq!(columns.len(), CREW_SIZE, "the pawns share a column");
+    }
+
+    #[test]
+    fn a_new_world_clears_the_selection() {
+        let mut app = App::headless();
+        let spec = flagstone_game::scene_builders::WorldSpec {
+            name: "headless-test-new-world-selection".to_string(),
+            seed: Some(7),
+            size_xz: 64,
+            day_length_seconds: 600.0,
+            night_length_seconds: 420.0,
+            initial_time_of_day: 6.0,
+        };
+        let scene_bytes = flagstone_game::scene_persistence::encode_to_bytes(
+            &flagstone_game::scene::SceneEntities::default(),
+            None,
+            &[],
+        )
+        .expect("encode empty scene");
+        app.crew.spawn(flagstone_game::pawn::Pawn::default());
+        app.selection.click(Some(flagstone_game::pawn::PawnId(1)));
+
+        GenerationProcessor::new().handle_completed(
+            &mut app,
+            scene_bytes,
+            spec,
+            flagstone_game::scene_builders::TerrainConfig::default(),
+            flagstone_voxel::VoxelGrid::new(16),
+        );
+
+        assert_eq!(app.crew.len(), flagstone_game::crew::CREW_SIZE);
+        assert_eq!(
+            app.selection.selected(),
+            None,
+            "a new world's second pawn is not the old world's"
+        );
+    }
+
+    #[test]
+    fn a_new_world_releases_the_claims_of_the_old_crew() {
+        let mut app = App::headless();
+        let spec = flagstone_game::scene_builders::WorldSpec {
+            name: "headless-test-new-world-claims".to_string(),
+            seed: Some(7),
+            size_xz: 64,
+            day_length_seconds: 600.0,
+            night_length_seconds: 420.0,
+            initial_time_of_day: 6.0,
+        };
+        let scene_bytes = flagstone_game::scene_persistence::encode_to_bytes(
+            &flagstone_game::scene::SceneEntities::default(),
+            None,
+            &[],
+        )
+        .expect("encode empty scene");
+        app.colony.marks.toggle([2, 3, 4]);
+        assert!(
+            app.colony
+                .marks
+                .claim([2, 3, 4], flagstone_game::pawn::PawnId(0)),
+            "setup"
+        );
+
+        GenerationProcessor::new().handle_completed(
+            &mut app,
+            scene_bytes,
+            spec,
+            flagstone_game::scene_builders::TerrainConfig::default(),
+            flagstone_voxel::VoxelGrid::new(16),
+        );
+
+        assert_eq!(
+            app.colony.marks.unclaimed().collect::<Vec<_>>(),
+            [[2, 3, 4]],
+            "the old crew's claim outlives it"
+        );
+    }
+
+    #[test]
+    fn spawn_surface_prefers_level_ground_over_the_first_column_beside_a_step() {
+        let mut grid = flagstone_voxel::VoxelGrid::new(16);
+        grid.mutator().fill_region(
+            flagstone_voxel::BlockPos::new(-8, 0, -8),
+            flagstone_voxel::BlockPos::new(8, 0, 8),
+            1,
+        );
+        grid.mutator()
+            .place(flagstone_voxel::BlockPos::new(0, 1, 0), 1, None);
+
+        let surface = spawn_surface(&grid);
+
+        assert_eq!(
+            surface,
+            Some(glam::IVec3::new(-3, 0, -3)),
+            "the first column whose 5x5 neighbourhood misses the step"
+        );
+    }
+
+    #[test]
+    fn spawn_surface_falls_back_to_the_first_column_found_without_level_ground() {
+        let mut grid = flagstone_voxel::VoxelGrid::new(16);
+        for x in [-1, 1] {
+            grid.mutator()
+                .place(flagstone_voxel::BlockPos::new(x, 0, 0), 1, None);
+        }
+
+        let surface = spawn_surface(&grid);
+
+        assert_eq!(surface, Some(glam::IVec3::new(-1, 0, 0)));
+        assert_eq!(spawn_surface(&flagstone_voxel::VoxelGrid::new(16)), None);
     }
 
     #[test]

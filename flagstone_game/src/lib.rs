@@ -5,6 +5,7 @@ pub mod actors;
 pub mod biome;
 pub mod colony;
 pub mod controller;
+pub mod crew;
 pub mod events;
 pub mod inventory;
 pub mod jobs;

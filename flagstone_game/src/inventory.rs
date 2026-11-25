@@ -39,6 +39,13 @@ impl Inventory {
         self.counts.iter().map(|(&id, &amount)| (id, amount))
     }
 
+    /// The `(resource_id, count)` pairs in ascending resource id order.
+    pub fn sorted(&self) -> Vec<(u32, u32)> {
+        let mut counts: Vec<(u32, u32)> = self.iter().collect();
+        counts.sort_unstable_by_key(|&(resource_id, _)| resource_id);
+        counts
+    }
+
     pub fn is_empty(&self) -> bool {
         self.counts.is_empty()
     }
@@ -54,6 +61,18 @@ mod tests {
         assert_eq!(resource_name(0), "Resource 0");
         assert_eq!(resource_name(7), "Resource 7");
         assert_eq!(resource_name(4000), "Resource 4000");
+    }
+
+    #[test]
+    fn sorted_lists_every_resource_in_ascending_id_order() {
+        let mut inventory = Inventory::default();
+        inventory.add(7, 3);
+        inventory.add(2, 5);
+        inventory.add(7, 1);
+        inventory.add(4, 9);
+
+        assert_eq!(inventory.sorted(), [(2, 5), (4, 9), (7, 4)]);
+        assert!(Inventory::default().sorted().is_empty());
     }
 
     #[test]

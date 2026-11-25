@@ -19,6 +19,9 @@ pub struct PhysicsController {
     pub test_bodies: Vec<(moho_physics::RigidBodyHandle, ActorId)>,
     pub jump_pressed: bool,
     pub player: Option<moho_physics::CharacterHandle>,
+    /// Every pawn's body, the possessed one included (its handle is also `player`).
+    pub pawns:
+        std::collections::BTreeMap<flagstone_game::pawn::PawnId, moho_physics::CharacterHandle>,
     pub noclip: bool,
     /// The player's state before the latest tick, for blending the view.
     previous: Option<moho_physics::CharacterState>,
@@ -35,10 +38,38 @@ impl PhysicsController {
             test_bodies: Vec::new(),
             jump_pressed: false,
             player: None,
+            pawns: std::collections::BTreeMap::new(),
             noclip: false,
             previous: None,
             snap_view: false,
         }
+    }
+
+    /// Places the possessed pawn `id`'s body at `spawn`: the player's body, also recorded
+    /// in `pawns`. The other pawns' bodies are added with [`PhysicsController::spawn_pawn`].
+    pub fn spawn_possessed(
+        &mut self,
+        id: flagstone_game::pawn::PawnId,
+        spawn: impl Into<moho_physics::CharacterSpawn>,
+    ) {
+        self.spawn_player(spawn);
+        if let Some(player) = self.player {
+            self.pawns.insert(id, player);
+        }
+    }
+
+    /// Adds the body of pawn `id` at `spawn`. The possessed pawn's body is placed with
+    /// [`PhysicsController::spawn_possessed`] instead.
+    pub fn spawn_pawn(
+        &mut self,
+        id: flagstone_game::pawn::PawnId,
+        spawn: impl Into<moho_physics::CharacterSpawn>,
+    ) {
+        let Some(pw) = self.world.as_mut() else {
+            return;
+        };
+        let handle = pw.add_character(spawn);
+        self.pawns.insert(id, handle);
     }
 
     /// Clear and recreate the physics world, removing all colliders and bodies.
@@ -46,6 +77,7 @@ impl PhysicsController {
         self.world = Some(new_world());
         self.test_bodies.clear();
         self.player = None;
+        self.pawns.clear();
         self.previous = None;
         self.snap_view = false;
         self.noclip = false;
@@ -59,6 +91,7 @@ impl PhysicsController {
         if let Some(previous) = self.player.take() {
             pw.remove_character(previous)
                 .expect("the player handle belongs to the current world");
+            self.pawns.retain(|_, handle| *handle != previous);
         }
         let handle = pw.add_character(spawn);
         self.player = Some(handle);
@@ -102,6 +135,26 @@ impl PhysicsController {
             self.previous = moved;
         }
         moved
+    }
+
+    /// Move pawn `id`'s body for one tick of `command` under `settings`. The possessed pawn's
+    /// body moves as the player's, so the view keeps blending across it.
+    ///
+    /// Returns the body's state afterwards, or `None` if the pawn has no body in the world.
+    pub fn move_pawn(
+        &mut self,
+        id: flagstone_game::pawn::PawnId,
+        command: &moho_physics::CharacterCommand,
+        settings: &moho_physics::MoveSettings,
+        dt: f32,
+    ) -> Option<moho_physics::CharacterState> {
+        let handle = *self.pawns.get(&id)?;
+        if self.player == Some(handle) {
+            return self.move_character(command, settings, dt);
+        }
+        let pw = self.world.as_mut()?;
+        pw.move_character(handle, command, settings, dt).ok()?;
+        pw.character(handle)
     }
 
     /// Queue facing the player character `yaw`/`pitch`, so the next tick turns from the view on
@@ -321,6 +374,116 @@ mod tests {
         );
     }
 
+    #[test]
+    fn loading_a_save_gives_a_crew_of_one_possessed_pawn() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut saved = crate::App::headless();
+        saved.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
+        saved
+            .entities
+            .chunks
+            .insert(crate::app::world_geometry::tests::chunk_at(
+                glam::IVec3::new(7, 0, 7),
+            ));
+        crate::app::autosave::auto_save_on_shutdown(
+            &mut saved,
+            &moho_app::GameClock::default(),
+            temp.path(),
+            &[],
+        )
+        .expect("autosave");
+        let mut app = crate::App::headless();
+
+        crate::app::scene_loader::load_scene(
+            &mut app,
+            &mut moho_app::GameClock::default(),
+            &temp.path().join("scene.bin"),
+        )
+        .expect("load");
+
+        let player = app.physics.player.expect("a player body is placed");
+        assert_eq!(app.crew.len(), 1, "a save holds no crew, only the camera");
+        assert_eq!(
+            app.physics.pawns.get(&app.possessed),
+            Some(&player),
+            "the possessed pawn's body is the player's"
+        );
+        assert_eq!(app.physics.pawns.len(), 1);
+    }
+
+    #[test]
+    fn a_load_clears_the_selection() {
+        use flagstone_game::pawn::{Pawn, PawnId};
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut saved = crate::App::headless();
+        saved.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
+        saved
+            .entities
+            .chunks
+            .insert(crate::app::world_geometry::tests::chunk_at(
+                glam::IVec3::new(7, 0, 7),
+            ));
+        crate::app::autosave::auto_save_on_shutdown(
+            &mut saved,
+            &moho_app::GameClock::default(),
+            temp.path(),
+            &[],
+        )
+        .expect("autosave");
+        let mut app = crate::App::headless();
+        app.crew.spawn(Pawn::default());
+        app.crew.spawn(Pawn::default());
+        app.selection.click(Some(PawnId(2)));
+        assert_eq!(app.crew.len(), 3, "setup: a crew of three");
+
+        crate::app::scene_loader::load_scene(
+            &mut app,
+            &mut moho_app::GameClock::default(),
+            &temp.path().join("scene.bin"),
+        )
+        .expect("load");
+
+        assert_eq!(app.crew.len(), 1);
+        assert_eq!(app.selection.selected(), None, "a pawn of the old world");
+    }
+
+    #[test]
+    fn a_load_releases_the_claims_of_the_old_crew() {
+        use flagstone_game::pawn::PawnId;
+        let temp = tempfile::tempdir().expect("temp dir");
+        let mut saved = crate::App::headless();
+        saved.generation.last_spec = Some(flagstone_game::scene_builders::WorldSpec::default());
+        saved
+            .entities
+            .chunks
+            .insert(crate::app::world_geometry::tests::chunk_at(
+                glam::IVec3::new(7, 0, 7),
+            ));
+        crate::app::autosave::auto_save_on_shutdown(
+            &mut saved,
+            &moho_app::GameClock::default(),
+            temp.path(),
+            &[],
+        )
+        .expect("autosave");
+        let mut app = crate::App::headless();
+        app.colony.marks.toggle([2, 3, 4]);
+        assert!(app.colony.marks.claim([2, 3, 4], PawnId(0)), "setup");
+
+        crate::app::scene_loader::load_scene(
+            &mut app,
+            &mut moho_app::GameClock::default(),
+            &temp.path().join("scene.bin"),
+        )
+        .expect("load");
+
+        assert_eq!(
+            app.colony.marks.unclaimed().collect::<Vec<_>>(),
+            [[2, 3, 4]],
+            "the old crew's claim outlives it, and the new pawn 0 can never take the mark"
+        );
+    }
+
     fn stale_floor_mesh() -> moho_render_api::WorldMesh {
         moho_render_api::WorldMesh::new(
             vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
@@ -362,6 +525,27 @@ mod tests {
         assert_eq!(controller.player, None);
         assert!(!controller.noclip);
         assert!(!controller.is_kcc_active());
+    }
+
+    #[test]
+    fn reset_drops_every_pawn_body() {
+        use flagstone_game::pawn::PawnId;
+        let mut controller = PhysicsController::new();
+        controller.spawn_player(glam::Vec3::new(0.0, 10.0, 0.0));
+        for (index, x) in [0.0_f32, 3.0, 6.0].into_iter().enumerate() {
+            controller.spawn_pawn(PawnId(index as u32), glam::Vec3::new(x, 10.0, 0.0));
+        }
+        assert_eq!(controller.pawns.len(), 3, "setup: a body for each pawn");
+        let stale: Vec<_> = controller.pawns.values().copied().collect();
+
+        controller.reset();
+
+        let pw = controller.world.as_ref().expect("a fresh world");
+        assert!(controller.pawns.is_empty(), "the old handles are kept");
+        for handle in stale {
+            assert!(pw.character(handle).is_none(), "an old body is still alive");
+        }
+        assert_eq!(pw.rigid_body_set.len(), 0, "no body outlives the reset");
     }
 
     #[test]
