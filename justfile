@@ -243,23 +243,47 @@ sim-math:
     rejects() { "{{replace(just_executable(), '\', '/')}}" _sim-math-rejects "$@"; }
     accepts() { "{{replace(just_executable(), '\', '/')}}" _sim-math-accepts "$@"; }
     scripts/check-sim-math.sh scripts/sim-math.txt
-    rejects sim-math-call scripts/fixtures/sim-math-call.rs:3
+    c=scripts/fixtures/sim-math-call.rs
+    rejects sim-math-call moho_core::sim_math $c:2 $c:3 $c:4 $c:5 $c:6 $c:7 $c:8 $c:9 $c:10 $c:11 $c:12 $c:13 $c:14 $c:15 $c:16 $c:17 $c:18 $c:19 $c:20 $c:21
     rejects sim-math-gated-decl scripts/fixtures/sim-math-gated-decl.rs:5
+    rejects sim-math-qualified scripts/fixtures/sim-math-qualified.rs:2 scripts/fixtures/sim-math-qualified.rs:3
+    rejects sim-math-missing scripts/fixtures/sim-math-nonexistent.rs
+    accepts sim-math-clean
     accepts sim-math-unlisted
     accepts sim-math-after-tests
+    accepts sim-math-gated-item
+    # Per package, so glam's own feature set is checked: --workspace --all-features lets rapier's glamx enable glam/libm.
+    cargo nextest run -p moho_core -E 'test(glam_rotation_uses_libm_sin_and_cos)'
 
-# Fails unless the sim-math check exits non-zero on the fixture's file list and prints the expected file:line.
+# Fails unless the sim-math check exits non-zero on the fixture's file list. Each expected word containing
+# ':<digits>' is a file:line that must be flagged, and the flagged file:line set must equal those exactly;
+# every other word must appear in the output.
 [private]
-_sim-math-rejects fixture expected:
+_sim-math-rejects fixture +expected:
     #!/usr/bin/env bash
     set -uo pipefail
     out=$(scripts/check-sim-math.sh scripts/fixtures/{{fixture}}.txt 2>&1)
     status=$?
-    if [ "$status" -ne 0 ] && grep -qF -- '{{expected}}' <<<"$out"; then
+    ok=1
+    [ "$status" -ne 0 ] || ok=0
+    want=()
+    for e in {{expected}}; do
+        if [[ "$e" =~ :[0-9]+$ ]]; then
+            want+=("$e")
+        else
+            grep -qF -- "$e" <<<"$out" || ok=0
+        fi
+    done
+    if [ "${#want[@]}" -gt 0 ]; then
+        got=$(grep -oE '[A-Za-z0-9_./-]+:[0-9]+' <<<"$out" | sort -u)
+        exp=$(printf '%s\n' "${want[@]}" | sort -u)
+        [ "$got" = "$exp" ] || ok=0
+    fi
+    if [ "$ok" -eq 1 ]; then
         exit 0
     fi
     echo "sim-math self-test failed: {{fixture}}" >&2
-    echo "  expected: non-zero exit and line: {{expected}}" >&2
+    echo "  expected: non-zero exit, exactly these file:line flags, and these words: {{expected}}" >&2
     echo "  got: exit $status, output:" >&2
     sed 's/^/    /' <<<"$out" >&2
     exit 1

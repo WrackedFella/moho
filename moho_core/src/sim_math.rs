@@ -20,7 +20,19 @@ mod tests {
         any::<f32>().prop_filter("finite", |v| v.is_finite())
     }
 
+    #[test]
+    fn sin_cos_matches_libm_at_an_angle_where_the_platform_differs() {
+        let angle = 0.8876718_f32;
+
+        let (sin, cos) = sin_cos(angle);
+
+        assert_eq!(sin.to_bits(), libm::sinf(angle).to_bits());
+        assert_eq!(cos.to_bits(), libm::cosf(angle).to_bits());
+    }
+
     proptest! {
+        #![proptest_config(ProptestConfig::with_cases(2_000))]
+
         #[test]
         fn sin_cos_equals_libm_bit_for_bit(angle in finite()) {
             let (sin, cos) = sin_cos(angle);
