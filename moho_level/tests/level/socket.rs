@@ -6,6 +6,9 @@ use moho_level::{Assembly, Model, SocketError, load_model};
 use proptest::prelude::*;
 
 use crate::support::{Node, Scene, Xform, cube_prim, floor_prim, write_gltf};
+use moho_level::anim::{ClipPlayer, Playback, Pose};
+
+use crate::support::humanoid::{HumanoidSpec, IK_HAND_GUN, write_humanoid};
 
 const RIFLE: usize = 0;
 const SCOPE: usize = 1;
@@ -443,4 +446,166 @@ proptest! {
             );
         }
     }
+}
+
+const CHARACTER: usize = 5;
+
+const TICK: f32 = 1.0 / 60.0;
+
+/// [`models`] plus the humanoid at key [`CHARACTER`].
+fn with_character() -> Vec<Model> {
+    let mut all = models();
+    let (_dir, path) = write_humanoid(&HumanoidSpec::default());
+    all.push(load_model(&path).expect("humanoid loads"));
+    all
+}
+
+/// The character's `walk` pose after `ticks` ticks from tick 0.
+fn walk_pose(models: &[Model], ticks: usize) -> Pose {
+    let model = &models[CHARACTER];
+    let mut player = ClipPlayer::new(model, "walk", Playback::Loop).expect("walk exists");
+    for _ in 0..ticks {
+        player.advance(model, TICK);
+    }
+    player.pose(model)
+}
+
+fn node_index(models: &[Model], key: usize, name: &str) -> usize {
+    models[key]
+        .nodes()
+        .iter()
+        .position(|n| n.name.as_deref() == Some(name))
+        .expect("node exists")
+}
+
+#[test]
+fn rifle_rides_hand_r_through_walk() {
+    let models = with_character();
+    let lookup = |k: usize| &models[k];
+    let mut character = Assembly::new(CHARACTER);
+    character
+        .attach(&lookup, "hand_r", Assembly::new(RIFLE), offset())
+        .expect("hand_r exists");
+    let root = moved_and_turned();
+    let hand = node_index(&models, CHARACTER, "hand_r");
+    let body = node_index(&models, CHARACTER, "body");
+    let mut rifle_at = Vec::new();
+
+    for ticks in [0, 30, 60] {
+        let pose = walk_pose(&models, ticks);
+
+        let placed = character.posed_placements(&lookup, root, &pose);
+
+        assert_eq!(placed.len(), 3, "tick {ticks}");
+        assert_eq!(placed[0].0, CHARACTER);
+        assert_eq!(placed[0].2, root * pose.nodes()[body], "tick {ticks}");
+        let (key, mesh, rifle_body) = placed[1];
+        assert_eq!((key, mesh), (RIFLE, 0));
+        assert_eq!(
+            rifle_body,
+            root * pose.nodes()[hand] * offset() * rest(&models, RIFLE, "body"),
+            "tick {ticks}"
+        );
+        rifle_at.push(rifle_body);
+    }
+
+    assert_ne!(rifle_at[0], rifle_at[1]);
+    assert_ne!(rifle_at[1], rifle_at[2]);
+    assert_ne!(rifle_at[0], rifle_at[2]);
+}
+
+#[test]
+fn posed_placements_at_rest_pose_equal_placements() {
+    let models = with_character();
+    let lookup = |k: usize| &models[k];
+    let mut character = Assembly::new(CHARACTER);
+    character
+        .attach(&lookup, "hand_r", Assembly::new(RIFLE), offset())
+        .expect("hand_r exists");
+    character
+        .part_mut(&lookup, "hand_r")
+        .expect("hand_r exists")
+        .expect("rifle is attached")
+        .attach(&lookup, "rail", Assembly::new(SCOPE), offset())
+        .expect("rail exists");
+    let root = moved_and_turned();
+
+    let posed = character.posed_placements(&lookup, root, &models[CHARACTER].rest_pose());
+
+    let rested = character.placements(&lookup, root);
+    assert_eq!(rested.len(), 4);
+    assert_eq!(posed, rested);
+}
+
+#[test]
+fn part_on_a_posed_bone_keeps_its_own_parts_at_rest() {
+    let models = with_character();
+    let lookup = |k: usize| &models[k];
+    let mut character = Assembly::new(CHARACTER);
+    let off_scope = Affine3A::from_translation(Vec3::new(0.0, 0.1, 0.0));
+    character
+        .attach(&lookup, "hand_r", Assembly::new(RIFLE), offset())
+        .expect("hand_r exists");
+    character
+        .part_mut(&lookup, "hand_r")
+        .expect("hand_r exists")
+        .expect("rifle is attached")
+        .attach(&lookup, "rail", Assembly::new(SCOPE), off_scope)
+        .expect("rail exists");
+    let root = moved_and_turned();
+    let hand = node_index(&models, CHARACTER, "hand_r");
+    let at_start = walk_pose(&models, 0);
+    let at_30 = walk_pose(&models, 30);
+
+    let start = character.posed_placements(&lookup, root, &at_start);
+    let placed = character.posed_placements(&lookup, root, &at_30);
+
+    let (key, mesh, scope_tube) = *placed.last().expect("placements");
+    assert_eq!((key, mesh), (SCOPE, 0));
+    let expected = root
+        * at_30.nodes()[hand]
+        * offset()
+        * rest(&models, RIFLE, "rail")
+        * off_scope
+        * rest(&models, SCOPE, "tube");
+    near(scope_tube, expected);
+    assert!(
+        !start
+            .last()
+            .expect("placements")
+            .2
+            .abs_diff_eq(scope_tube, 1e-3),
+        "the scope moves with the hand"
+    );
+}
+
+#[test]
+fn rifle_on_the_extra_ik_node_follows_it_through_walk() {
+    let models = with_character();
+    let lookup = |k: usize| &models[k];
+    let mut character = Assembly::new(CHARACTER);
+    character
+        .attach(
+            &lookup,
+            "ik_hand_gun",
+            Assembly::new(RIFLE),
+            Affine3A::IDENTITY,
+        )
+        .expect("ik_hand_gun exists");
+    let root = moved_and_turned();
+    let at_30 = walk_pose(&models, 30);
+
+    let placed = character.posed_placements(&lookup, root, &at_30);
+
+    let (key, mesh, rifle_body) = placed[1];
+    assert_eq!((key, mesh), (RIFLE, 0));
+    near(
+        rifle_body,
+        root * at_30.nodes()[IK_HAND_GUN] * rest(&models, RIFLE, "body"),
+    );
+    let at_rest = models[CHARACTER].nodes()[IK_HAND_GUN].rest;
+    assert!(
+        !at_30.nodes()[IK_HAND_GUN].abs_diff_eq(at_rest, 1e-3),
+        "the extra node is carried off its rest by the hand"
+    );
 }

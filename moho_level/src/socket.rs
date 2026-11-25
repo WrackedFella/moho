@@ -3,6 +3,7 @@
 use glam::Affine3A;
 
 use crate::Model;
+use crate::anim::Pose;
 
 /// One drawn copy of a model with the parts attached at its named nodes, nested.
 ///
@@ -115,6 +116,22 @@ impl<K: Copy> Assembly<K> {
         let mut out = Vec::new();
         self.collect(models, root, &mut out);
         out
+    }
+
+    /// [`Assembly::placements`] with this copy's model posed by `pose`: its meshes at
+    /// `root * pose[mesh.node]` and each part rooted at `root * pose[socket] * offset`.
+    /// Parts keep their own rest.
+    ///
+    /// # Panics
+    /// When `pose` is not of this copy's model.
+    pub fn posed_placements<'m>(
+        &self,
+        models: &impl Fn(K) -> &'m Model,
+        root: Affine3A,
+        pose: &Pose,
+    ) -> Vec<(K, usize, Affine3A)> {
+        let _ = (models, root, pose);
+        todo!("posed placements")
     }
 
     fn collect<'m>(
