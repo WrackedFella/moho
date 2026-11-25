@@ -131,7 +131,41 @@ pub enum SlotMark {
 /// One mark per slot of `rig`, in slot order: a free slot or an empty magazine is `Empty`, any
 /// other magazine `Present`.
 pub fn rig_strip(rig: &Rig) -> Vec<SlotMark> {
-    rig.slots().iter().map(|_| SlotMark::Empty).collect()
+    rig.slots()
+        .iter()
+        .map(|slot| match slot {
+            Some(magazine) if magazine.rounds() > 0 => SlotMark::Present,
+            Some(_) | None => SlotMark::Empty,
+        })
+        .collect()
+}
+
+/// Whether `feedback` puts the rig strip up for the fade time.
+pub fn shows_strip(feedback: &Feedback) -> bool {
+    match feedback {
+        Feedback::ReloadDone => true,
+        Feedback::Fired
+        | Feedback::Dry
+        | Feedback::Hit { .. }
+        | Feedback::MagazineLevel(_)
+        | Feedback::EnemyFired { .. }
+        | Feedback::PlayerHit { .. }
+        | Feedback::Impact { .. }
+        | Feedback::EnemyDied { .. }
+        | Feedback::PlayerDied => false,
+    }
+}
+
+/// The strip's text, one word per slot such as `[mag] [mag] [empty]`.
+pub fn strip_text(marks: &[SlotMark]) -> String {
+    marks
+        .iter()
+        .map(|mark| match mark {
+            SlotMark::Present => "[mag]",
+            SlotMark::Empty => "[empty]",
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// A translucent rectangle in screen pixels, colour as straight RGBA.
@@ -218,6 +252,21 @@ mod tests {
         let strip = rig_strip(&rig);
 
         assert_eq!(strip, [SlotMark::Present, SlotMark::Empty, SlotMark::Empty]);
+    }
+
+    #[test]
+    fn the_strip_reads_one_word_per_slot() {
+        let marks = [SlotMark::Present, SlotMark::Empty, SlotMark::Present];
+
+        assert_eq!(strip_text(&marks), "[mag] [empty] [mag]");
+        assert_eq!(strip_text(&[]), "");
+    }
+
+    #[test]
+    fn only_a_finished_reload_puts_the_strip_up() {
+        assert!(shows_strip(&Feedback::ReloadDone));
+        assert!(!shows_strip(&Feedback::Fired));
+        assert!(!shows_strip(&Feedback::Dry));
     }
 
     #[test]

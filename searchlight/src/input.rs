@@ -19,6 +19,7 @@ pub enum SearchlightAction {
     Fire,
     Reload,
     CheckMagazine,
+    CheckGear,
     Restart,
     LeanLeft,
     LeanRight,
@@ -35,6 +36,7 @@ impl Action for SearchlightAction {
         SearchlightAction::Fire,
         SearchlightAction::Reload,
         SearchlightAction::CheckMagazine,
+        SearchlightAction::CheckGear,
         SearchlightAction::Restart,
         SearchlightAction::LeanLeft,
         SearchlightAction::LeanRight,
@@ -51,6 +53,7 @@ impl Action for SearchlightAction {
             SearchlightAction::Fire => "fire",
             SearchlightAction::Reload => "reload",
             SearchlightAction::CheckMagazine => "check_magazine",
+            SearchlightAction::CheckGear => "check_gear",
             SearchlightAction::Restart => "restart",
             SearchlightAction::LeanLeft => "lean_left",
             SearchlightAction::LeanRight => "lean_right",
@@ -70,6 +73,7 @@ impl Action for SearchlightAction {
             SearchlightAction::CheckMagazine => {
                 const { &[Binding::key(Key::C), Binding::key(Key::R).held()] }
             }
+            SearchlightAction::CheckGear => const { &[Binding::key(Key::C).held()] },
             SearchlightAction::Restart => const { &[Binding::key(Key::F8)] },
             SearchlightAction::LeanLeft => const { &[Binding::key(Key::Q)] },
             SearchlightAction::LeanRight => const { &[Binding::key(Key::E)] },
@@ -146,7 +150,7 @@ pub struct SearchlightCommand {
     pub lean: Option<LeanSide>,
     /// The use input went down this tick.
     pub use_pressed: bool,
-    /// The check-gear key is held this tick.
+    /// The check-gear key has been held past the hold threshold and is still down this tick.
     pub check_gear: bool,
 }
 
@@ -208,7 +212,7 @@ impl SearchlightCommand {
             round_gravity: GravityScale::default(),
             lean: None,
             use_pressed: frame.pressed(SearchlightAction::Use),
-            check_gear: false,
+            check_gear: frame.held(SearchlightAction::CheckGear),
         }
     }
 }
@@ -348,13 +352,42 @@ mod tests {
     #[test]
     fn c_still_checks_on_press() {
         let mut map = fresh_map();
-        press(&mut map, SearchlightAction::CheckMagazine);
+        map.key(Key::C, true);
+        let down = SearchlightCommand::from_frame(&map.end_tick());
 
-        let pressed = SearchlightCommand::from_frame(&map.end_tick());
-        let held = SearchlightCommand::from_frame(&map.end_tick());
+        map.key(Key::C, false);
+        let up = SearchlightCommand::from_frame(&map.end_tick());
+        let after = SearchlightCommand::from_frame(&map.end_tick());
 
-        assert!(pressed.check && !pressed.reload);
-        assert!(!held.check);
+        assert!(
+            !down.check && !down.check_gear,
+            "a press alone fires nothing"
+        );
+        assert!(
+            up.check && !up.reload && !up.check_gear,
+            "the tap checks on release"
+        );
+        assert!(!after.check);
+    }
+
+    #[test]
+    fn hold_c_checks_gear_until_release_and_never_checks_the_magazine() {
+        let mut map = fresh_map();
+        map.key(Key::C, true);
+
+        let frames: Vec<_> = (0..20)
+            .map(|_| SearchlightCommand::from_frame(&map.end_tick()))
+            .collect();
+        map.key(Key::C, false);
+        let released = SearchlightCommand::from_frame(&map.end_tick());
+
+        assert!(frames[..17].iter().all(|f| !f.check_gear));
+        assert!(
+            frames[17..].iter().all(|f| f.check_gear),
+            "held from tick 18"
+        );
+        assert!(frames.iter().all(|f| !f.check));
+        assert!(!released.check && !released.check_gear);
     }
 
     #[test]

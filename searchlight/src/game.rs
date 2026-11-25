@@ -50,7 +50,7 @@ use crate::menu::{
 use crate::mode::ArenaMode;
 use crate::sim::{Feedback, RoundTrace, SearchlightSim, dummy_at, dummy_hit_volumes_of};
 use crate::tag::SurfaceTag;
-use crate::tuning::SHIPPED_BODY;
+use crate::tuning::{SHIPPED_BODY, STRIP_FADE_TICKS};
 use crate::{TICK_HZ, hud};
 
 /// Ticks a struck dummy segment stays lit.
@@ -83,6 +83,10 @@ const SHOT_VOLUME: f32 = 0.8;
 const PROMPT_OFFSET_Y: f32 = 48.0;
 const PROMPT_SIZE: f32 = 20.0;
 const PROMPT_COLOR: [u8; 4] = [255, 255, 255, 230];
+/// The rig strip's distance from the bottom edge, in logical points, and its size and colour.
+const STRIP_OFFSET_Y: f32 = -96.0;
+const STRIP_SIZE: f32 = 20.0;
+const STRIP_COLOR: [u8; 4] = [220, 220, 220, 230];
 
 /// Width over height, treating a zero height as one so a minimised window cannot divide by zero.
 fn aspect_ratio(width: u32, height: u32) -> f32 {
@@ -879,6 +883,10 @@ pub struct SearchlightGame {
     items: DemoItems,
     /// The bindings being edited while the Controls page is open.
     controls: Option<ControlsDraft>,
+    /// Ticks the rig strip stays up after the last trigger.
+    strip_ticks_left: u32,
+    /// The check-gear key was held on the last tick, which keeps the strip up.
+    check_gear_held: bool,
 }
 
 impl SearchlightGame {
@@ -906,6 +914,8 @@ impl SearchlightGame {
             pending_settings: None,
             items: DemoItems::new(),
             controls: None,
+            strip_ticks_left: 0,
+            check_gear_held: false,
         }
     }
 
@@ -1290,7 +1300,7 @@ impl SearchlightGame {
             .then(|| self.mode.sim().control_in_reach())
             .flatten()
             .and_then(|index| self.mode.control_action(index));
-        let texts = action.map_or_else(Vec::new, |action| {
+        let mut texts = action.map_or_else(Vec::new, |action| {
             let key = self
                 .input
                 .bindings()
@@ -1305,9 +1315,25 @@ impl SearchlightGame {
                 color: PROMPT_COLOR,
             }]
         });
+        if let Some(marks) = self.strip_marks().filter(|_| !dead) {
+            texts.push(ScreenText {
+                text: hud::strip_text(&marks),
+                anchor: Anchor::Bottom,
+                offset: [0.0, STRIP_OFFSET_Y],
+                size: STRIP_SIZE,
+                color: STRIP_COLOR,
+            });
+        }
         if let Err(error) = self.stage.shell().set_texts(texts) {
             tracing::warn!(%error, "use prompt not shown");
         }
+    }
+
+    /// The marks the rig strip shows, or `None` while it is hidden: shown for the fade ticks
+    /// after a trigger and while check gear is held, and never off the playing screen.
+    fn strip_marks(&self) -> Option<Vec<hud::SlotMark>> {
+        let up = self.strip_ticks_left > 0 || self.check_gear_held;
+        (self.screen == Screen::Playing && up).then(|| hud::rig_strip(self.mode.sim().rig()))
     }
 
     /// Plays the sound file at `path` for every shot fired.
@@ -1319,12 +1345,6 @@ impl SearchlightGame {
 
     pub fn sim(&self) -> &SearchlightSim {
         self.mode.sim()
-    }
-
-    /// The marks the rig strip shows, or `None` while it is hidden.
-    #[cfg(test)]
-    fn strip_marks(&self) -> Option<Vec<hud::SlotMark>> {
-        None
     }
 
     /// The input map, for feeding it device events.
@@ -1428,6 +1448,8 @@ impl Game for SearchlightGame {
         self.previous = self.mode.sim().player();
         self.previous_lean = self.mode.sim().player_lean();
         let was_dead = self.mode.sim().player_body().is_dead();
+        self.strip_ticks_left = self.strip_ticks_left.saturating_sub(1);
+        self.check_gear_held = command.check_gear;
         let dt = ctx.tick_length.as_secs_f32();
         self.mode.tick(command, dt);
         self.previous_bob = self.bob;
@@ -1537,6 +1559,9 @@ impl Game for SearchlightGame {
                 let player = self.mode.sim().player();
                 self.stage
                     .show_hit_edge(hud::hit_edge(player.position, player.yaw, from));
+            }
+            if hud::shows_strip(&feedback) {
+                self.strip_ticks_left = STRIP_FADE_TICKS;
             }
             self.stage.react(&feedback, ctx.audio());
         }
