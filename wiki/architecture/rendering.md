@@ -256,10 +256,19 @@ model, a clip and a time; it never changes the model.
 - `Model::pose(clip, time)` and `rest_pose()` give a `Pose`: every node's model-space transform
   in walk order. Untargeted nodes keep their `local` exactly; globals compose parent-first. The
   same model, clip and times give bit-identical poses on the same build.
-- `ClipPlayer` is the game's per-character clock: `new` or `play` a clip by name (`Loop` or
-  `Once`; an unknown name is `ClipError::UnknownClip` and changes nothing), `set_speed`
+- `ClipPlayer` is the game's per-character clock: `new` or `play` a clip by name (`Loop`, `Once`
+  or `Ticks(n)`; an unknown name is `ClipError::UnknownClip` and changes nothing), `set_speed`
   (negative plays backwards), `advance(dt)`, `pose`. `Loop` wraps into `[0, duration)`, `Once`
-  clamps to `[0, duration]`.
+  clamps to `[0, duration]`, `Ticks(n)` ignores `dt` and speed and reaches exactly the duration
+  on the n-th `advance` (counted, so it does not drift). `is_finished(model)` is true once a
+  `Ticks` or `Once` clip is at its end; `Loop` never finishes.
+- `Animator` (`moho_level/src/anim.rs`) is one character's playback: a base `ClipPlayer`
+  (locomotion) and an optional action player (a reload) that poses the whole body while it
+  runs. `play_action` replaces any action and restarts it at 0 (unknown clip: `UnknownClip`,
+  nothing changes); `cancel_action` drops it. The base keeps advancing under an action. Call
+  `advance` once per tick before that tick's commands: an action finished before the call is
+  dropped, so its last pose is read on the tick it is reached and the base returns on the next.
+  `pose` is the action's if one runs, else the base's.
 - `posed_placements(root, &pose)` is `placements` with posed nodes, so a rigid mesh on an
   animated node (a magazine) draws through 2.2's path; it lists skinned meshes too, which the
   game places with `place_skinned` instead (section 2, 5.2). `joint_palette(skin, &pose)` is

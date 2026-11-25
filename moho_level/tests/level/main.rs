@@ -1,5 +1,6 @@
 //! Integration tests for loading glTF levels.
 
+mod animator;
 mod collide;
 mod hash;
 mod humanoid;

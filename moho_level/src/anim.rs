@@ -1,6 +1,7 @@
 //! Animation clips and the player that poses a [`Model`] from them. A pose is a value
 //! computed from a model, a clip and a time; it never changes the model.
 
+use std::num::NonZeroU32;
 use std::ops::{Add, Mul};
 
 use glam::{Affine3A, Quat, Vec3};
@@ -191,6 +192,9 @@ impl Pose {
 pub enum Playback {
     Loop,
     Once,
+    /// Play once, reaching the clip's end on the n-th advance. Exact for n up to 2^24
+    /// (the time is an `f32` ratio of counts).
+    Ticks(NonZeroU32),
 }
 
 /// Why a clip could not be played.
@@ -202,12 +206,13 @@ pub enum ClipError {
 }
 
 /// One character's playback position in one clip of a model.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ClipPlayer {
     clip: usize,
     time: f32,
     speed: f32,
     playback: Playback,
+    elapsed: u32,
 }
 
 impl ClipPlayer {
@@ -221,6 +226,7 @@ impl ClipPlayer {
             time: 0.0,
             speed: 1.0,
             playback,
+            elapsed: 0,
         })
     }
 
@@ -231,6 +237,7 @@ impl ClipPlayer {
     pub fn play(&mut self, model: &Model, clip: &str, playback: Playback) -> Result<(), ClipError> {
         self.clip = find(model, clip)?;
         self.time = 0.0;
+        self.elapsed = 0;
         self.playback = playback;
         Ok(())
     }
@@ -251,23 +258,53 @@ impl ClipPlayer {
     /// Add `dt * speed` to the time; `Loop` wraps into `[0, duration)`, `Once` clamps to
     /// `[0, duration]`. A non-finite step or a zero-length clip leaves the time unchanged.
     ///
+    /// `Ticks(n)` ignores `dt` and speed: the n-th call sets the time to exactly the clip's
+    /// duration (computed from the call count, so it does not drift) and later calls hold it.
+    /// A zero-length clip still counts its calls.
+    ///
     /// # Panics
     /// When `model` has fewer clips than the one this player was made on.
     pub fn advance(&mut self, model: &Model, dt: f32) {
-        let step = dt * self.speed;
         let duration = model.clips()[self.clip].duration();
+        match self.playback {
+            Playback::Ticks(total) => {
+                self.elapsed = self.elapsed.saturating_add(1).min(total.get());
+                self.time = duration * (self.elapsed as f32 / total.get() as f32);
+            }
+            Playback::Loop => self.step(dt, duration, true),
+            Playback::Once => self.step(dt, duration, false),
+        }
+    }
+
+    /// Add `dt * speed` to the time, wrapping when `wrap` and clamping otherwise.
+    fn step(&mut self, dt: f32, duration: f32, wrap: bool) {
+        let step = dt * self.speed;
         if !step.is_finite() || duration <= 0.0 {
             return;
         }
         let time = self.time + step;
-        self.time = match self.playback {
+        self.time = if wrap {
             // A tiny negative time rounds up to exactly `duration`, which is the next loop's 0.
-            Playback::Loop => {
-                let wrapped = time.rem_euclid(duration);
-                if wrapped < duration { wrapped } else { 0.0 }
-            }
-            Playback::Once => time.clamp(0.0, duration),
+            let wrapped = time.rem_euclid(duration);
+            if wrapped < duration { wrapped } else { 0.0 }
+        } else {
+            time.clamp(0.0, duration)
         };
+    }
+
+    /// Whether the clip has reached its end and will not move again: `Ticks` after its
+    /// n-th advance, `Once` at its clamp end (the duration for speed >= 0, 0 for a negative
+    /// speed), `Loop` never.
+    ///
+    /// # Panics
+    /// When `model` has fewer clips than the one this player was made on.
+    pub fn is_finished(&self, model: &Model) -> bool {
+        match self.playback {
+            Playback::Loop => false,
+            Playback::Once if self.speed < 0.0 => self.time <= 0.0,
+            Playback::Once => self.time >= model.clips()[self.clip].duration(),
+            Playback::Ticks(total) => self.elapsed >= total.get(),
+        }
     }
 
     /// Index into [`Model::clips`].
@@ -289,6 +326,87 @@ impl ClipPlayer {
     }
 }
 
+/// One character's playback: a base clip (locomotion) and an optional action clip (a
+/// reload) that poses the whole body while it plays.
+///
+/// The base keeps advancing under an action, so cancelling or finishing the action returns
+/// the pose the character would have had with no action.
+///
+/// Tick order: call [`Animator::advance`] once per tick, before that tick's commands. A clip
+/// started on a tick then shows its first pose on that tick. An action started on tick 100
+/// as `Playback::Ticks(156)` (2.6 s at 60 Hz) shows its last pose on tick 256, and the base
+/// returns on tick 257. Advancing after the commands makes a timed clip end one tick early.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Animator {
+    base: ClipPlayer,
+    action: Option<ClipPlayer>,
+}
+
+impl Animator {
+    /// An animator playing `base` with no action.
+    pub fn new(base: ClipPlayer) -> Self {
+        Self { base, action: None }
+    }
+
+    pub fn base(&self) -> &ClipPlayer {
+        &self.base
+    }
+
+    pub fn base_mut(&mut self) -> &mut ClipPlayer {
+        &mut self.base
+    }
+
+    pub fn action(&self) -> Option<&ClipPlayer> {
+        self.action.as_ref()
+    }
+
+    /// Replace any running action with `clip`, restarted at time 0.
+    ///
+    /// # Errors
+    /// [`ClipError::UnknownClip`] when the model has no such clip; nothing changes.
+    pub fn play_action(
+        &mut self,
+        model: &Model,
+        clip: &str,
+        playback: Playback,
+    ) -> Result<(), ClipError> {
+        self.action = Some(ClipPlayer::new(model, clip, playback)?);
+        Ok(())
+    }
+
+    /// Drop the action; the pose is the base's from now on.
+    pub fn cancel_action(&mut self) {
+        self.action = None;
+    }
+
+    /// Advance the base by `dt`. An action that was already finished before this call is
+    /// dropped; otherwise it advances too. So an action's last pose is read on the tick it
+    /// is reached and the base returns on the next. See the type docs for tick order.
+    ///
+    /// # Panics
+    /// When `model` has fewer clips than a player was made on.
+    pub fn advance(&mut self, model: &Model, dt: f32) {
+        self.base.advance(model, dt);
+        if self
+            .action
+            .as_ref()
+            .is_some_and(|action| action.is_finished(model))
+        {
+            self.action = None;
+        } else if let Some(action) = &mut self.action {
+            action.advance(model, dt);
+        }
+    }
+
+    /// The action's pose if one is running, else the base's.
+    ///
+    /// # Panics
+    /// When `model` has fewer clips than a player was made on.
+    pub fn pose(&self, model: &Model) -> Pose {
+        self.action.as_ref().unwrap_or(&self.base).pose(model)
+    }
+}
+
 /// The index of `model`'s first clip called `name`.
 fn find(model: &Model, name: &str) -> Result<usize, ClipError> {
     model.clip(name).ok_or_else(|| ClipError::UnknownClip {
@@ -298,10 +416,12 @@ fn find(model: &Model, name: &str) -> Result<usize, ClipError> {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU32;
+
     use glam::{Affine3A, Quat, Vec3};
     use proptest::prelude::*;
 
-    use super::{Channel, Clip, ClipError, ClipPlayer, Interpolation, Playback, Track};
+    use super::{Animator, Channel, Clip, ClipError, ClipPlayer, Interpolation, Playback, Track};
     use crate::{Model, ModelNode};
 
     fn track_x(times: &[f32], xs: &[f32]) -> Track {
@@ -781,7 +901,226 @@ mod tests {
         assert_eq!(empty_once.time(), 0.0);
     }
 
+    fn ticks(n: u32) -> Playback {
+        Playback::Ticks(NonZeroU32::new(n).expect("n is positive"))
+    }
+
+    #[test]
+    fn ticks_playback_ignores_dt_and_speed() {
+        let model = model_with(vec![ramp()]);
+        let mut player = ClipPlayer::new(&model, "ramp", ticks(4)).expect("clip exists");
+        player.set_speed(-3.0);
+        let mut times = Vec::new();
+
+        for dt in [100.0, f32::NAN, 0.0, -5.0] {
+            player.advance(&model, dt);
+            times.push(player.time());
+        }
+        player.advance(&model, 1.0);
+
+        assert_eq!(times, [1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(player.time(), 4.0);
+        assert_eq!(player.speed(), -3.0);
+        assert!(player.is_finished(&model));
+    }
+
+    #[test]
+    fn play_resets_ticks_elapsed() {
+        let model = model_with(vec![ramp()]);
+        let mut player = ClipPlayer::new(&model, "ramp", ticks(4)).expect("clip exists");
+        for _ in 0..3 {
+            player.advance(&model, 0.0);
+        }
+
+        player.play(&model, "ramp", ticks(4)).expect("clip exists");
+
+        assert_eq!(player.time(), 0.0);
+        assert!(!player.is_finished(&model));
+        for _ in 0..3 {
+            player.advance(&model, 0.0);
+        }
+        assert_eq!(player.time(), 3.0);
+        assert!(!player.is_finished(&model));
+        player.advance(&model, 0.0);
+        assert_eq!(player.time(), 4.0);
+        assert!(player.is_finished(&model));
+    }
+
+    #[test]
+    fn once_backwards_is_finished_at_zero() {
+        let model = model_with(vec![ramp()]);
+        let mut player = ClipPlayer::new(&model, "ramp", Playback::Once).expect("clip exists");
+
+        assert!(!player.is_finished(&model));
+        player.set_speed(-1.0);
+        assert!(player.is_finished(&model));
+
+        player.set_speed(1.0);
+        player.advance(&model, 2.0);
+        assert!(!player.is_finished(&model));
+        player.set_speed(-1.0);
+        assert!(!player.is_finished(&model));
+        player.advance(&model, 2.0);
+        assert_eq!(player.time(), 0.0);
+        assert!(player.is_finished(&model));
+
+        player.set_speed(1.0);
+        player.advance(&model, 4.0);
+        assert!(player.is_finished(&model));
+    }
+
+    /// A 2-second clip moving node 0 along x from 0 to `to`.
+    fn moving(name: &str, to: f32) -> Clip {
+        clip(
+            name,
+            vec![channel(
+                Interpolation::Linear,
+                track_x(&[0.0, 2.0], &[0.0, to]),
+            )],
+        )
+    }
+
+    fn animator_on(model: &Model) -> Animator {
+        Animator::new(ClipPlayer::new(model, "ramp", Playback::Loop).expect("clip exists"))
+    }
+
+    #[test]
+    fn a_one_tick_action_shows_its_last_pose_at_once_and_is_dropped_on_the_next_advance() {
+        let model = model_with(vec![ramp(), moving("act", 9.0)]);
+        let mut animator = animator_on(&model);
+        animator
+            .play_action(&model, "act", ticks(1))
+            .expect("clip exists");
+
+        animator.advance(&model, 0.5);
+
+        let action = animator.action().expect("held on its last tick");
+        assert!(action.is_finished(&model));
+        assert_eq!(action.time(), 2.0);
+        assert_eq!(animator.pose(&model), model.pose(1, 2.0));
+        animator.advance(&model, 0.5);
+        assert!(animator.action().is_none());
+        assert_eq!(animator.pose(&model), animator.base().pose(&model));
+        assert_eq!(animator.base().time(), 1.0);
+    }
+
+    #[test]
+    fn ticks_playback_at_the_end_of_a_maximal_count_holds_without_overflow() {
+        let model = model_with(vec![ramp()]);
+        let mut player = ClipPlayer::new(&model, "ramp", ticks(u32::MAX)).expect("clip exists");
+        player.elapsed = u32::MAX;
+
+        player.advance(&model, 1.0);
+
+        assert_eq!(player.elapsed, u32::MAX);
+        assert_eq!(player.time(), 4.0);
+        assert!(player.is_finished(&model));
+    }
+
+    #[test]
+    fn a_once_action_on_a_zero_length_clip_is_finished_and_dropped_on_the_next_advance() {
+        let model = model_with(vec![ramp(), clip("still", Vec::new())]);
+        let mut animator = animator_on(&model);
+
+        animator
+            .play_action(&model, "still", Playback::Once)
+            .expect("clip exists");
+
+        assert!(animator.action().expect("playing").is_finished(&model));
+        animator.advance(&model, 0.5);
+        assert!(animator.action().is_none());
+        assert_eq!(animator.pose(&model), animator.base().pose(&model));
+    }
+
+    #[test]
+    fn switching_the_base_clip_under_an_action_leaves_the_action_alone() {
+        let model = model_with(vec![ramp(), moving("act", 9.0), moving("other", 5.0)]);
+        let mut animator = animator_on(&model);
+        animator
+            .play_action(&model, "act", ticks(10))
+            .expect("clip exists");
+        for _ in 0..3 {
+            animator.advance(&model, 0.5);
+        }
+        let action_before = animator.action().expect("playing").clone();
+
+        animator
+            .base_mut()
+            .play(&model, "other", Playback::Loop)
+            .expect("clip exists");
+
+        assert_eq!(animator.action(), Some(&action_before));
+        assert_eq!(animator.pose(&model), action_before.pose(&model));
+        animator.cancel_action();
+        assert_eq!(animator.pose(&model), model.pose(2, 0.0));
+    }
+
+    #[test]
+    fn a_looping_player_is_never_finished() {
+        let model = model_with(vec![ramp()]);
+        let mut player = ClipPlayer::new(&model, "ramp", Playback::Loop).expect("clip exists");
+
+        for _ in 0..3 {
+            player.advance(&model, 4.0);
+            assert!(!player.is_finished(&model));
+        }
+
+        let mut backwards = ClipPlayer::new(&model, "ramp", Playback::Loop).expect("clip exists");
+        backwards.set_speed(-1.0);
+        assert_eq!(backwards.time(), 0.0);
+        assert!(!backwards.is_finished(&model));
+    }
+
+    #[test]
+    fn a_once_player_at_speed_zero_and_time_zero_is_not_finished() {
+        let model = model_with(vec![ramp()]);
+        let mut player = ClipPlayer::new(&model, "ramp", Playback::Once).expect("clip exists");
+
+        player.set_speed(0.0);
+
+        assert_eq!(player.time(), 0.0);
+        assert!(!player.is_finished(&model));
+    }
+
+    #[test]
+    fn ticks_playback_on_a_zero_length_clip_still_finishes_on_the_nth_advance() {
+        let model = model_with(vec![clip("still", Vec::new())]);
+        let mut player = ClipPlayer::new(&model, "still", ticks(3)).expect("clip exists");
+
+        for _ in 0..2 {
+            player.advance(&model, 0.0);
+            assert!(!player.is_finished(&model));
+        }
+        player.advance(&model, 0.0);
+
+        assert!(player.is_finished(&model));
+        assert_eq!(player.time(), 0.0);
+    }
+
     proptest! {
+        #[test]
+        fn ticks_playback_ends_on_the_nth_advance_for_any_n_and_duration(
+            n in 1_u32..10_000,
+            duration in 0.01_f32..120.0,
+        ) {
+            let long = clip(
+                "long",
+                vec![channel(Interpolation::Linear, track_x(&[0.0, duration], &[0.0, 1.0]))],
+            );
+            let model = model_with(vec![long]);
+            let mut player = ClipPlayer::new(&model, "long", ticks(n)).expect("clip exists");
+
+            for _ in 1..n {
+                player.advance(&model, 1.0 / 60.0);
+                prop_assert!(player.time() < duration, "{} >= {duration}", player.time());
+                prop_assert!(!player.is_finished(&model));
+            }
+            player.advance(&model, 1.0 / 60.0);
+
+            prop_assert_eq!(player.time(), duration);
+            prop_assert!(player.is_finished(&model));
+        }
+
         #[test]
         fn linear_translation_stays_between_neighbouring_keys(
             a in -100.0_f32..100.0,
