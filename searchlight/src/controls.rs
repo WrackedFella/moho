@@ -617,6 +617,122 @@ mod tests {
     }
 
     #[test]
+    fn a_secondary_capture_replaces_check_magazines_hold_r() {
+        let mut draft = draft();
+
+        let outcome = draft.capture(
+            SearchlightAction::CheckMagazine,
+            Slot::Secondary,
+            Input::Key(Key::Z),
+        );
+
+        assert_eq!(outcome, Capture::Set);
+        assert_eq!(
+            draft.bindings().get(SearchlightAction::CheckMagazine),
+            [Binding::key(Key::C), Binding::key(Key::Z)]
+        );
+    }
+
+    #[test]
+    fn a_secondary_capture_keeps_the_bindings_beyond_two() {
+        let mut bindings = defaults();
+        bindings.set(
+            SearchlightAction::Jump,
+            vec![
+                Binding::key(Key::Space),
+                Binding::key(Key::X),
+                Binding::key(Key::Y),
+            ],
+        );
+        let mut draft = ControlsDraft::new(&bindings);
+
+        let outcome = draft.capture(SearchlightAction::Jump, Slot::Secondary, Input::Key(Key::Z));
+
+        assert_eq!(outcome, Capture::Set);
+        assert_eq!(
+            draft.bindings().get(SearchlightAction::Jump),
+            [
+                Binding::key(Key::Space),
+                Binding::key(Key::Z),
+                Binding::key(Key::Y)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_secondary_replace_takes_an_input_held_beyond_two() {
+        let mut bindings = defaults();
+        bindings.set(
+            SearchlightAction::Jump,
+            vec![
+                Binding::key(Key::Space),
+                Binding::key(Key::X),
+                Binding::key(Key::Y),
+            ],
+        );
+        let mut draft = ControlsDraft::new(&bindings);
+
+        let outcome = draft.capture(
+            SearchlightAction::Reload,
+            Slot::Secondary,
+            Input::Key(Key::Y),
+        );
+        draft.replace();
+
+        assert_eq!(
+            outcome,
+            Capture::Conflict {
+                by: SearchlightAction::Jump,
+                slot: None
+            }
+        );
+        assert_eq!(
+            draft.slots(SearchlightAction::Reload),
+            [Some(Binding::key(Key::R)), Some(Binding::key(Key::Y))]
+        );
+        assert_eq!(
+            draft.bindings().get(SearchlightAction::Jump),
+            [Binding::key(Key::Space), Binding::key(Key::X)]
+        );
+    }
+
+    #[test]
+    fn a_protected_input_in_the_secondary_slot_is_reserved() {
+        let mut draft = draft();
+
+        let outcome = draft.capture(
+            SearchlightAction::Reload,
+            Slot::Secondary,
+            Input::Key(Key::Escape),
+        );
+
+        assert_eq!(outcome, Capture::Reserved);
+        assert_eq!(draft.bindings(), defaults());
+    }
+
+    #[test]
+    fn recapturing_the_primarys_input_as_the_secondary_keeps_both_slots() {
+        let mut bindings = defaults();
+        bindings.set(
+            SearchlightAction::Reload,
+            vec![Binding::key(Key::R), Binding::key(Key::T)],
+        );
+        let mut draft = ControlsDraft::new(&bindings);
+
+        let outcome = draft.capture(
+            SearchlightAction::Reload,
+            Slot::Secondary,
+            Input::Key(Key::R),
+        );
+
+        assert_eq!(outcome, Capture::Unchanged);
+        assert_eq!(
+            draft.slots(SearchlightAction::Reload),
+            [Some(Binding::key(Key::R)), Some(Binding::key(Key::T))]
+        );
+    }
+
+    #[test]
     fn an_action_with_every_slot_empty_is_unbound() {
         let mut bindings = defaults();
         bindings.set(SearchlightAction::Jump, vec![]);
