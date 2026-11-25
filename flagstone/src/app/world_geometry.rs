@@ -213,8 +213,8 @@ pub(crate) mod tests {
     use crate::App;
     use crate::app::cut_caps::cap_mesh_id;
     use crate::app::cut_caps::tests::{
-        CaptureBackend, assert_ground_capped_at, cut_and_draw, drawn_caps, ground_app,
-        offset_palette, refresh_caps,
+        CaptureBackend, assert_ground_capped_at, cut_and_draw, drawn_caps, every_drawn_cap,
+        ground_app, offset_palette, refresh_caps,
     };
     use crate::app::event_loop::event_processor::EventProcessor;
     use crate::app::event_loop::frame_processor::FrameProcessor;
@@ -702,7 +702,10 @@ pub(crate) mod tests {
         remove_all_chunk_meshes(&mut app);
         app.scene.world_meshes_mut().flush(&mut backend);
 
-        assert!(drawn_caps(&mut app, &backend).is_empty(), "no cap is drawn");
+        assert!(
+            every_drawn_cap(&mut app, &backend).is_empty(),
+            "no cap is drawn"
+        );
         assert_eq!(
             app.scene.world_meshes_mut().draws().count(),
             0,
@@ -717,7 +720,10 @@ pub(crate) mod tests {
         cut_and_draw(&mut app, &mut backend, Some(18.0));
         remove_all_chunk_meshes(&mut app);
         app.scene.world_meshes_mut().flush(&mut backend);
-        assert!(drawn_caps(&mut app, &backend).is_empty(), "caps removed");
+        assert!(
+            every_drawn_cap(&mut app, &backend).is_empty(),
+            "caps removed"
+        );
 
         upsert_all_chunks(&mut app);
         refresh_caps(&mut app);
@@ -848,6 +854,238 @@ pub(crate) mod tests {
         assert!(drawn_handles(&mut app).is_empty(), "nothing is drawn");
         assert!(collider_of(&app, far).is_none(), "its collider was freed");
         assert_eq!(terrain_collider_count(&app), 0);
+    }
+
+    /// Fills the blocks `min..=max` with grass-height smooth ground, in the grid only.
+    fn fill_ground(app: &mut App, min: IVec3, max: IVec3) {
+        app.light_system
+            .as_mut()
+            .expect("light system")
+            .grid_mut()
+            .mutator()
+            .fill_region(min, max, 0);
+    }
+
+    /// Meshes the chunk at `pos` from the grid at full detail and hands it to the world.
+    fn insert_grid_chunk(app: &mut App, pos: IVec3) {
+        let grid = app.light_system.as_ref().expect("light system").grid();
+        let chunk = VoxelChunk::from_grid_lod(grid, pos, 0);
+        insert_chunk(app, chunk);
+    }
+
+    fn grid_stores(app: &App, pos: IVec3) -> bool {
+        app.light_system
+            .as_ref()
+            .expect("light system")
+            .grid()
+            .has_chunk(pos)
+    }
+
+    fn has_geometry_at(app: &App, pos: IVec3) -> bool {
+        app.entities
+            .chunks
+            .get(pos)
+            .is_some_and(VoxelChunk::has_geometry)
+    }
+
+    /// The chunk's vertices on the plane `axis = at`.
+    fn vertices_on(app: &App, pos: IVec3, axis: usize, at: f32) -> usize {
+        app.entities.chunks.get(pos).map_or(0, |chunk| {
+            chunk
+                .vertices()
+                .iter()
+                .filter(|v| (v[axis] - at).abs() < 1e-3)
+                .count()
+        })
+    }
+
+    #[test]
+    fn drawing_ground_draws_its_face_in_the_empty_chunk_behind_it() {
+        let mut app = App::headless();
+        fill_ground(&mut app, IVec3::new(16, 0, 0), IVec3::new(31, 31, 31));
+        assert!(!grid_stores(&app, IVec3::ZERO), "the chunk behind is empty");
+
+        insert_grid_chunk(&mut app, IVec3::new(1, 0, 0));
+
+        assert!(
+            has_geometry_at(&app, IVec3::ZERO),
+            "the empty chunk draws the ground's face"
+        );
+        let chunk = app.entities.chunks.get(IVec3::ZERO).expect("chunk stored");
+        let on_seam = vertices_on(&app, IVec3::ZERO, 0, 16.0);
+        assert_eq!(
+            on_seam,
+            chunk.vertices().len(),
+            "every vertex lies on the seam"
+        );
+        assert!(
+            collider_of(&app, IVec3::ZERO).is_some(),
+            "the face is solid"
+        );
+        assert!(
+            !grid_stores(&app, IVec3::ZERO),
+            "the grid still holds no block there"
+        );
+    }
+
+    #[test]
+    fn a_remeshed_chunk_draws_its_face_in_the_empty_chunk_behind_it() {
+        let mut app = App::headless();
+        app.game_state = GameState::Playing;
+        let ground = IVec3::new(1, 0, 0);
+        fill_ground(&mut app, IVec3::new(16, 0, 0), IVec3::new(31, 15, 15));
+        app.light_system
+            .as_mut()
+            .expect("light system")
+            .grid_mut()
+            .clear_chunk_modified(ground);
+        let _ = app.world_event_rx.try_iter().count();
+        app.event_bus.publish(WorldEvent::ChunkMeshDirty {
+            chunk_pos: ground,
+            terrain_dirty: true,
+            structure_dirty: false,
+        });
+
+        EventProcessor::new().process_world_events(&mut app);
+
+        assert!(has_geometry_at(&app, ground), "the ground is drawn");
+        assert!(
+            has_geometry_at(&app, IVec3::ZERO),
+            "the empty chunk draws the ground's face"
+        );
+        assert!(
+            vertices_on(&app, IVec3::ZERO, 0, 16.0) > 0,
+            "the face sits on the seam"
+        );
+        assert!(
+            collider_of(&app, IVec3::ZERO).is_some(),
+            "the face is solid"
+        );
+    }
+
+    #[test]
+    fn removing_ground_takes_its_face_out_of_the_empty_chunk_behind_it() {
+        let mut app = App::headless();
+        let ground = IVec3::new(1, 0, 0);
+        fill_ground(&mut app, IVec3::new(16, 0, 0), IVec3::new(31, 15, 15));
+        insert_grid_chunk(&mut app, ground);
+        assert!(
+            has_geometry_at(&app, IVec3::ZERO),
+            "the face is drawn first"
+        );
+        assert!(collider_of(&app, IVec3::ZERO).is_some(), "and solid");
+        app.light_system
+            .as_mut()
+            .expect("light system")
+            .grid_mut()
+            .remove_chunk(ground);
+
+        remove_chunk(&mut app, ground);
+
+        assert!(
+            app.entities.chunks.get(IVec3::ZERO).is_none(),
+            "the empty chunk left the store"
+        );
+        assert!(
+            collider_of(&app, IVec3::ZERO).is_none(),
+            "its collider is gone"
+        );
+        let mut backend = RecordingBackend::default();
+        app.scene.world_meshes_mut().flush(&mut backend);
+        assert!(drawn_handles(&mut app).is_empty(), "nothing is drawn");
+        assert_eq!(terrain_collider_count(&app), 0, "nothing is solid");
+    }
+
+    #[test]
+    fn nothing_is_drawn_below_the_world_floor() {
+        let mut app = App::headless();
+        fill_ground(&mut app, IVec3::ZERO, IVec3::splat(15));
+
+        insert_grid_chunk(&mut app, IVec3::ZERO);
+
+        assert!(
+            has_geometry_at(&app, IVec3::new(-1, 0, 0)),
+            "the empty chunk beside the ground draws its face"
+        );
+        let floor = crate::app::chunk_streamer::MIN_CHUNK_Y;
+        for x in -1..=0 {
+            for z in -1..=0 {
+                let below = IVec3::new(x, floor - 1, z);
+                assert!(
+                    app.entities.chunks.get(below).is_none(),
+                    "{below} is below the floor"
+                );
+                assert!(collider_of(&app, below).is_none(), "{below} is solid");
+            }
+        }
+    }
+
+    #[test]
+    fn an_empty_chunk_draws_the_faces_of_every_chunk_in_front_of_it() {
+        let mut app = App::headless();
+        fill_ground(&mut app, IVec3::new(16, 0, 0), IVec3::new(31, 31, 31));
+        insert_grid_chunk(&mut app, IVec3::new(1, 0, 0));
+        let before = app
+            .entities
+            .chunks
+            .get(IVec3::ZERO)
+            .map_or(0, |c| c.vertices().len());
+        assert!(before > 0, "the face of the chunk in +x is drawn first");
+        assert_eq!(
+            vertices_on(&app, IVec3::ZERO, 0, 16.0),
+            before,
+            "only the +x face so far"
+        );
+        fill_ground(&mut app, IVec3::new(0, 0, 16), IVec3::new(15, 31, 31));
+
+        insert_grid_chunk(&mut app, IVec3::new(0, 0, 1));
+
+        assert!(!grid_stores(&app, IVec3::ZERO), "the chunk behind is empty");
+        assert!(
+            vertices_on(&app, IVec3::ZERO, 0, 16.0) > 0,
+            "the face of the chunk in +x is kept"
+        );
+        assert!(
+            vertices_on(&app, IVec3::ZERO, 2, 16.0) > 0,
+            "the face of the chunk in +z is added"
+        );
+    }
+
+    #[test]
+    fn an_empty_chunk_with_nothing_left_to_draw_leaves_the_store() {
+        let mut app = App::headless();
+        let ground = IVec3::new(1, 0, 0);
+        fill_ground(&mut app, IVec3::new(16, 0, 0), IVec3::new(17, 15, 15));
+        insert_grid_chunk(&mut app, ground);
+        assert!(
+            has_geometry_at(&app, IVec3::ZERO),
+            "the face is drawn first"
+        );
+        assert!(collider_of(&app, IVec3::ZERO).is_some(), "and solid");
+        let grid = app.light_system.as_mut().expect("light system").grid_mut();
+        for y in 0..16 {
+            for z in 0..16 {
+                assert!(
+                    grid.mutator().remove(IVec3::new(16, y, z)),
+                    "block was there"
+                );
+            }
+        }
+
+        insert_grid_chunk(&mut app, ground);
+
+        assert!(
+            grid_stores(&app, ground),
+            "the ground's chunk still holds blocks"
+        );
+        assert!(
+            app.entities.chunks.get(IVec3::ZERO).is_none(),
+            "the empty chunk left the store"
+        );
+        assert!(
+            collider_of(&app, IVec3::ZERO).is_none(),
+            "its collider is gone"
+        );
     }
 
     /// Stone with soil on part of its top and an iron-ore block in it, meshed as a chunk.
