@@ -2,7 +2,7 @@
 
 **Source:** `moho_core/src/sim_math.rs`, `moho_core/src/rng.rs`, `scripts/check-sim-math.sh`, `scripts/sim-math.txt`,
 `scripts/check-physics-features.sh`, `deny.toml`, workspace `Cargo.toml` (`glam`, `rapier3d`), `moho_physics/tests/replay.rs`.
-**Rationale:** feature [#714](https://github.com/WrackedFella/moho/issues/714).
+**Decision:** [ADR-0043](../../_todo/adr/0043-simulation-transcendentals-come-from-one-libm-source.md). **Rationale:** feature [#714](https://github.com/WrackedFella/moho/issues/714).
 
 Simulation state must replay from its inputs. How far a replay holds depends on what
 may differ between two runs; the levels name that.
