@@ -105,6 +105,82 @@ jobs:
       - run: just check
         if: needs.plan.outputs.code == 'true'
 
+  # Runs the replay test on every platform and uploads its per-tick state hashes. Skipped
+  # when the plan has a single OS, since there is nothing to compare.
+  replay-hashes:
+    name: Replay hashes (${{ matrix.os }})
+    needs: plan
+    if: fromJSON(needs.plan.outputs.os)[1] != null
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.plan.outputs.os) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install system deps (Linux)
+        timeout-minutes: 5
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
+            pkg-config libudev-dev libasound2-dev libssl-dev
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install
+
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        with:
+          tool: cargo-nextest
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: replay-${{ matrix.os }}
+          cache-on-failure: true
+
+      - run: cargo nextest run -p moho_physics --test replay
+        env:
+          MOHO_REPLAY_HASH_OUT: ${{ runner.temp }}/hashes.txt
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: replay-hashes-${{ matrix.os }}
+          path: ${{ runner.temp }}/hashes.txt
+          if-no-files-found: ignore
+
+  # Compares the platforms' replay hashes in the run summary. A disagreement or a missing
+  # platform is reported there and does not fail the job.
+  replay-compare:
+    name: Replay hash comparison
+    needs: [plan, replay-hashes]
+    if: always() && fromJSON(needs.plan.outputs.os)[1] != null
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: replay-hashes-*
+          path: replay-artifacts
+
+      - run: scripts/compare-replay-hashes.sh --self-test
+
+      # Each artifact lands in replay-artifacts/replay-hashes-<os>/; the script wants <os>/.
+      - name: Compare
+        env:
+          OS_LIST: ${{ needs.plan.outputs.os }}
+        run: |
+          mkdir -p replay-hashes
+          for dir in replay-artifacts/replay-hashes-*; do
+            [[ -d $dir ]] || continue
+            mv "$dir" "replay-hashes/${dir#replay-artifacts/replay-hashes-}"
+          done
+          mapfile -t platforms < <(jq -r '.[]' <<< "$OS_LIST")
+          scripts/compare-replay-hashes.sh replay-hashes "${platforms[@]}" >> "$GITHUB_STEP_SUMMARY"
+
   # Licenses, advisories, sources. Separate so a new advisory doesn't mask gate results.
   deny:
     name: Deny

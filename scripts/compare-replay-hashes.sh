@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Compare the replay state hashes the three CI platforms wrote.
 #
-#   compare-replay-hashes.sh <hashes-dir>
+#   compare-replay-hashes.sh <hashes-dir> [platform...]
 #   compare-replay-hashes.sh --self-test
 #
-# <hashes-dir> holds one `<platform>/hashes.txt` per platform (ubuntu-latest,
-# macos-latest, windows-latest), each line `<tick> <hash:016x>`. Prints a Markdown
-# summary on stdout:
+# <hashes-dir> holds one `<platform>/hashes.txt` per platform, each line
+# `<tick> <hash:016x>`. The platforms expected are the arguments, by default
+# ubuntu-latest macos-latest windows-latest; one with no or an empty hashes.txt is
+# reported as missing and the rest are compared. Prints a Markdown summary on stdout:
 #
 #   ## Replay state hashes
 #
@@ -26,9 +27,86 @@
 # and diffs the output against the case's expected.md.
 set -euo pipefail
 
+DEFAULT_PLATFORMS=(ubuntu-latest macos-latest windows-latest)
+
 compare() {
-    echo "compare-replay-hashes: not implemented" >&2
-    return 1
+    local dir=$1 platform tick line
+    shift
+    local -a expected=("$@") present=() missing=() ticks=()
+    local -A hash=() seen=()
+    if ((${#expected[@]} == 0)); then
+        expected=("${DEFAULT_PLATFORMS[@]}")
+    fi
+    mapfile -t expected < <(printf '%s\n' "${expected[@]}" | sort)
+
+    for platform in "${expected[@]}"; do
+        if [[ -s $dir/$platform/hashes.txt ]]; then
+            present+=("$platform")
+            while read -r tick line; do
+                hash[$platform,$tick]=$line
+                seen[$tick]=1
+            done < "$dir/$platform/hashes.txt"
+        else
+            missing+=("$platform")
+        fi
+    done
+    if ((${#seen[@]})); then
+        mapfile -t ticks < <(printf '%s\n' "${!seen[@]}" | sort -n)
+    fi
+
+    local first_bad=''
+    for tick in "${ticks[@]}"; do
+        local distinct
+        distinct=$(for platform in "${present[@]}"; do echo "${hash[$platform,$tick]:--}"; done | sort -u | wc -l)
+        if ((distinct > 1)); then
+            first_bad=$tick
+            break
+        fi
+    done
+
+    echo '## Replay state hashes'
+    echo
+    echo '| Platform | Final tick | Final-tick hash |'
+    echo '|---|---|---|'
+    for platform in "${present[@]}"; do
+        local last
+        last=$(tail -n 1 "$dir/$platform/hashes.txt")
+        echo "| $platform | ${last% *} | ${last#* } |"
+    done
+    echo
+    if [[ -z $first_bad ]]; then
+        echo 'agree: yes'
+    else
+        echo 'agree: no'
+    fi
+    if ((${#missing[@]})); then
+        local names=${missing[0]} m
+        for m in "${missing[@]:1}"; do
+            names+=", $m"
+        done
+        echo "missing: $names"
+    else
+        echo 'missing: none'
+    fi
+    if [[ -n $first_bad ]]; then
+        echo
+        echo "first disagreement: tick $first_bad"
+        local -A group=()
+        local -a order=()
+        local h
+        for platform in "${present[@]}"; do
+            h=${hash[$platform,$first_bad]:-(none)}
+            if [[ -z ${group[$h]:-} ]]; then
+                order+=("$h")
+                group[$h]=$platform
+            else
+                group[$h]+=", $platform"
+            fi
+        done
+        for h in "${order[@]}"; do
+            echo "- $h: ${group[$h]}"
+        done
+    fi
 }
 
 self_test() {
@@ -57,9 +135,9 @@ self_test() {
 
 if [[ ${1:-} == --self-test && $# -eq 1 ]]; then
     self_test
-elif [[ $# -eq 1 && -d $1 ]]; then
-    compare "$1"
+elif [[ $# -ge 1 && -d $1 ]]; then
+    compare "$@"
 else
-    echo "usage: compare-replay-hashes.sh <hashes-dir> | --self-test" >&2
+    echo "usage: compare-replay-hashes.sh <hashes-dir> [platform...] | --self-test" >&2
     exit 2
 fi

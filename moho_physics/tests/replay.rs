@@ -4,6 +4,8 @@
 //! The tick loop is fixed: queue the tick's effects, `move_character` for each character in
 //! handle-creation order, then `PhysicsWorld::step`.
 
+use std::fmt::Write as _;
+
 use glam::{Quat, Vec3};
 use moho_physics::{
     CharacterBody, CharacterCommand, CharacterEffect, CharacterHandle, CharacterSpawn,
@@ -453,8 +455,28 @@ fn first_divergence(recorded: &[Snapshot], replayed: &[Snapshot]) -> Option<Dive
     None
 }
 
-fn state_hash(_snapshot: &Snapshot) -> u64 {
-    todo!("state_hash is not implemented")
+/// FNV-1a 64 over the bits `first_divergence` compares: both characters' fields, then the
+/// box's translation and rotation. Hand-written so the hash is the same on every platform.
+fn state_hash(snapshot: &Snapshot) -> u64 {
+    const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    let box_words = bits3(snapshot.box_translation)
+        .into_iter()
+        .chain(snapshot.box_rotation.to_array().map(f32::to_bits));
+    let words = snapshot
+        .characters
+        .iter()
+        .flat_map(|state| {
+            character_fields(state)
+                .into_iter()
+                .flat_map(|(_, bits)| bits)
+        })
+        .chain(box_words);
+    words
+        .flat_map(u32::to_le_bytes)
+        .fold(OFFSET_BASIS, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(PRIME)
+        })
 }
 
 fn hashes(snapshots: &[Snapshot]) -> Vec<u64> {
@@ -847,4 +869,19 @@ fn a_one_ulp_change_to_the_box_launch_velocity_changes_the_state_hash() {
         recorded.iter().zip(&replayed).any(|(a, b)| a != b),
         "a one-ulp change to the box left every tick's hash unchanged"
     );
+}
+
+/// CI sets `MOHO_REPLAY_HASH_OUT` so each platform leaves its per-tick hashes for comparison.
+#[test]
+fn the_recorded_run_writes_its_per_tick_hashes_when_asked() {
+    let recorded = hashes(&run(&make_script()));
+
+    assert_eq!(recorded.len(), TICKS);
+    if let Some(path) = std::env::var_os("MOHO_REPLAY_HASH_OUT") {
+        let mut lines = String::new();
+        for (tick, hash) in recorded.iter().enumerate() {
+            writeln!(lines, "{tick} {hash:016x}").expect("writing to a String cannot fail");
+        }
+        std::fs::write(&path, lines).expect("the replay hash file is writable");
+    }
 }
