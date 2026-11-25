@@ -120,6 +120,12 @@ impl ControlsDraft {
             .iter_mut()
             .find(|row| row.action == pending.target)
         {
+            for slot in &mut row.slots {
+                if *slot == Some(pending.binding) {
+                    *slot = None;
+                }
+            }
+            row.rest.retain(|held| *held != pending.binding);
             row.slots[0] = Some(pending.binding);
         }
     }
@@ -499,6 +505,29 @@ mod tests {
         assert_eq!(
             draft.slots(SearchlightAction::LeanLeft),
             [Some(Binding::key(Key::Q)), None]
+        );
+    }
+
+    #[test]
+    fn replace_leaves_the_input_once_when_the_capturing_action_already_held_it() {
+        let mut bindings = defaults();
+        bindings.set(
+            SearchlightAction::Reload,
+            vec![Binding::key(Key::R), Binding::key(Key::Q)],
+        );
+        let mut draft = ControlsDraft::new(&bindings);
+        let outcome = draft.capture(SearchlightAction::Reload, Input::Key(Key::Q));
+
+        draft.replace();
+
+        assert!(matches!(outcome, Capture::Conflict { .. }));
+        assert_eq!(
+            draft.slots(SearchlightAction::Reload),
+            [Some(Binding::key(Key::Q)), None]
+        );
+        assert_eq!(
+            draft.bindings().get(SearchlightAction::Reload),
+            [Binding::key(Key::Q)]
         );
     }
 
