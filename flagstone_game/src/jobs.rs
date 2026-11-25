@@ -395,8 +395,9 @@ pub fn step(
 /// answers with what each does. The pawns take their marks one after another, so a mark one
 /// of them has claimed is already taken when the next looks. A pawn with no entry in `poses`
 /// is skipped this tick: it gets no answer and keeps whatever mark it holds, so no other pawn
-/// takes it meanwhile. The `possessed` pawn, which answers to the player, is skipped the same
-/// way: it takes no mark and gets no action.
+/// takes it meanwhile. The `possessed` pawn, which answers to the player, gets no action and
+/// takes no mark; it also lets go of any mark it holds (see [`suspend`]), so another pawn,
+/// stepped in this call or the next, can take it.
 pub fn step_crew(
     crew: &mut Crew,
     poses: &BTreeMap<PawnId, Pose>,
@@ -408,6 +409,7 @@ pub fn step_crew(
     let mut being_dug = Vec::new();
     for (id, pawn) in crew.iter_mut() {
         if Some(id) == possessed {
+            suspend(&mut pawn.job, marks);
             continue;
         }
         let Some(&pose) = poses.get(&id) else {
@@ -2283,6 +2285,41 @@ mod tests {
                 site.poses[&first], first_pose,
                 "the possessed pawn is not moved"
             );
+        }
+
+        #[test]
+        fn step_crew_releases_the_claim_of_a_possessed_pawn_that_was_not_suspended() {
+            for holder_index in [0, 1] {
+                let mut site = CrewSite::flat(&[cell(0, 1, 0), cell(3, 1, 0)]);
+                site.mark_block(cell(6, 1, 0));
+                let holder = site.ids[holder_index];
+                let other = site.ids[1 - holder_index];
+                let other_pose = site.poses.remove(&other).expect("a pose to set aside");
+                site.tick();
+                site.poses.insert(other, other_pose);
+                assert_eq!(
+                    site.claimed_by([6, 1, 0]),
+                    Some(holder),
+                    "setup: {holder_index}"
+                );
+
+                site.tick_without(Some(holder));
+
+                assert!(
+                    matches!(
+                        site.crew.get(holder).map(|pawn| &pawn.job),
+                        Some(Job::Idle { .. })
+                    ),
+                    "the possessed pawn still has its job: {holder_index}"
+                );
+                assert!(site.marks.contains([6, 1, 0]), "the mark stays");
+                site.tick_without(Some(holder));
+                assert_eq!(
+                    site.claimed_by([6, 1, 0]),
+                    Some(other),
+                    "the other pawn could not take the mark: {holder_index}"
+                );
+            }
         }
 
         proptest! {

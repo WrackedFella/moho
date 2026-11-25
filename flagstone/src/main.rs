@@ -164,8 +164,9 @@ struct App {
     /// `simulation.player_controller`, which is camera/movement-only — see
     /// `flagstone_game::pawn::Pawn`'s doc comment. Not saved yet.
     crew: flagstone_game::crew::Crew,
-    /// The pawn the player possesses: the one whose body is `physics.player`. `Some` only in
-    /// first person.
+    /// The pawn the player possesses. `Some` only in first person, and while `Some` its body is
+    /// `physics.player`; in the strategy view `physics.player` still names the body last
+    /// possessed.
     possessed: Option<flagstone_game::pawn::PawnId>,
 
     /// The window's physical size, which pointer positions are measured in.
