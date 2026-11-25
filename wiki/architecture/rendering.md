@@ -207,7 +207,18 @@ parts, so two rifles from one model can carry different scopes; the shared `Mode
   unchanged.
 - `placements(models, root)` yields `(model key, mesh index, transform)`: this copy's meshes
   first, then each part in attach order, depth-first, the part's root being
-  `root * socket_node.rest * offset`. Sockets use rest transforms, not posed ones.
+  `root * socket_node.rest * offset`.
+- `posed_placements(models, root, &pose)` poses this copy's own model: its meshes at
+  `root * pose[mesh.node]` and each part rooted at `root * pose[socket_node] * offset`, so a part
+  follows an animated bone. Parts keep their own rest transforms. `pose` must be of this copy's
+  model.
+- `moho_level::humanoid` (`moho_level/src/humanoid.rs`) is the bone naming both game lines key
+  off: `Bone` lists the 16 required bones by Unreal mannequin node name (`pelvis`, `spine_01`,
+  `neck_01`, `head`, `upperarm_*`, `lowerarm_*`, `hand_*`, `thigh_*`, `calf_*`, `foot_*`).
+  `Humanoid::of(model)` resolves each to the first node of that name or fails with `MissingBones`
+  listing every absent one; `load_humanoid(path)` loads and resolves in one step
+  (`LevelErrorKind::NotHumanoid`). `Humanoid::node(bone)` is a node index and `Humanoid::bone(&pose,
+  bone)` the bone's model-space transform in a pose.
 
 The game glue keeps one `Assembly` per drawn copy and the per-model ids and materials of 2.2,
 indexed by key. A swap shows on the next frame drawn:
