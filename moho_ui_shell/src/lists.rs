@@ -234,12 +234,16 @@ impl<A> OpenLists<A> {
             let item = &before.rows.get(held.row)?.item;
             let (_, now) = list_by_id(&self.data.lists, held.list)?;
             let row = now.rows.iter().position(|row| row.item == *item)?;
-            if let Purpose::Action { action, .. } = &held.purpose
-                && !now.rows[row].actions.iter().any(|a| a.action == *action)
-            {
-                return None;
+            let mut purpose = held.purpose;
+            if let Purpose::Action { action, label } = &mut purpose {
+                let current = now.rows[row].actions.iter().find(|a| a.action == *action)?;
+                label.clone_from(&current.label);
             }
-            Some(Held { row, ..held })
+            Some(Held {
+                row,
+                purpose,
+                ..held
+            })
         });
         let open = self.actions.take();
         self.actions = open.and_then(|open| {
@@ -280,7 +284,7 @@ impl<A> OpenLists<A> {
         let top = BAND + ROW_HEIGHT * (open.row as f32 - scroll as f32);
         let height = ROW_HEIGHT * count as f32;
         let bottom = size[1] - BAND;
-        Some((x, top.min(bottom - height), count))
+        Some((x, top.min(bottom - height).max(BAND), count))
     }
 
     /// The rectangles of the open action list's actions, if one is open.
@@ -2717,6 +2721,53 @@ mod tests {
         assert_eq!(elsewhere, (COLOR, FOCUS, true));
         assert_eq!(on_load, (FOCUS, COLOR, true));
         assert_eq!(stack.take_events(), [action_picked(UNLOAD, 10, 7, None)]);
+    }
+
+    #[test]
+    fn actions_of_a_row_moved_above_the_scroll_stay_inside_the_band() {
+        let rows = |order: Vec<u32>| -> Vec<ListRow<u32>> {
+            order
+                .into_iter()
+                .map(|i| {
+                    acting(
+                        row(&format!("r{i:02}"), None, None, i),
+                        vec![load(), unload()],
+                    )
+                })
+                .collect()
+        };
+        let mut stack = stack_of(vec![list(1, "A", rows((0..40).collect()))]);
+        presses(&mut stack, Key::ArrowDown, 39);
+        press(&mut stack, Key::Space);
+        stack.texts(SIZE);
+        let moved: Vec<u32> = std::iter::once(39).chain(0..39).collect();
+
+        stack.set_lists(lists_of(vec![list(1, "A", rows(moved))]));
+        let open = stack.visible_rows(SIZE);
+        press(&mut stack, Key::Escape);
+        let closed = stack.visible_rows(SIZE);
+
+        let added: Vec<Rect> = open
+            .into_iter()
+            .filter(|rect| !closed.contains(rect))
+            .collect();
+        assert_eq!(added.len(), 2, "the action list is still open");
+        for rect in added {
+            assert!(rect.min[1] >= 56.0, "{rect:?} is above the top band");
+            assert!(rect.max[1] <= SIZE[1] - 56.0, "{rect:?} is below the band");
+        }
+    }
+
+    #[test]
+    fn renaming_the_pending_action_changes_the_held_rows_mark() {
+        let mut stack = rb_stack();
+        press(&mut stack, Key::Space);
+        press(&mut stack, Key::Enter);
+        let renamed = action("Load rounds", LOAD, ActionTarget::AnotherRow);
+
+        stack.set_lists(rig_with(vec![magazine(vec![renamed, unload()]), bandage()]));
+
+        assert_eq!(marked(&stack), ["» Load rounds: Magazine"]);
     }
 
     fn new_row() -> ListRow<u32> {
