@@ -3048,6 +3048,48 @@ mod tests {
     }
 
     #[test]
+    fn a_floor_impact_and_a_body_hit_on_one_tick_report_one_impact() {
+        let mut sim = dummy_ahead(60.0, BodyPart::Torso, with_ball(BALL));
+        let look_down_and_pull = SearchlightCommand {
+            fire: true,
+            movement: CharacterCommand {
+                pitch_delta: -1.0,
+                ..CharacterCommand::default()
+            },
+            ..idle()
+        };
+        let mut script = vec![pull(), idle(), idle(), look_down_and_pull];
+        script.extend([idle(); 10]);
+
+        let ticks = run(&mut sim, &script);
+
+        let hits: Vec<_> = hits_in(&ticks).iter().map(|hit| hit.0).collect();
+        let impacts: Vec<_> = impacts_in(&ticks).iter().map(|hit| hit.0).collect();
+        assert_eq!(hits, [4], "{ticks:?}");
+        assert_eq!(impacts, [4], "{ticks:?}");
+    }
+
+    #[test]
+    fn a_strike_on_a_control_reports_an_impact_with_its_point_and_normal() {
+        for simple in [false, true] {
+            let mut sim = control_sim(&[], &[post_at(3.0)]);
+            let first = SearchlightCommand { simple, ..pull() };
+
+            let ticks = fire_and_wait(&mut sim, first, 30);
+
+            let impacts = impacts_in(&ticks);
+            let &[(_, point, normal)] = &impacts[..] else {
+                panic!("simple {simple}: expected one impact: {ticks:?}");
+            };
+            assert!((point.z - 3.0).abs() < 0.05, "simple {simple}: {point}");
+            assert!(
+                normal.distance(Vec3::NEG_Z) < 1e-3,
+                "simple {simple}: {normal}"
+            );
+        }
+    }
+
+    #[test]
     fn under_simple_a_wall_strike_reports_an_impact() {
         let mut sim = control_sim(&[WALL_AHEAD], &[]);
         let simple = SearchlightCommand {

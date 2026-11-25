@@ -2370,6 +2370,64 @@ mod tests {
     }
 
     #[test]
+    fn consecutive_impacts_turn_each_mark_by_the_golden_angle() {
+        let mut game = tracer_game(&[], tracer_config());
+        let mut renderer = TracerRenderer::default();
+
+        game.stage
+            .react(&impact_at(Vec3::new(0.0, 1.0, 3.0), Vec3::NEG_Z), None);
+        game.stage
+            .react(&impact_at(Vec3::new(1.0, 1.0, 3.0), Vec3::NEG_Z), None);
+        tracer_frame(&mut game, &mut renderer, 0.5);
+
+        let marks = drawn_marks(&renderer);
+        let [first, second] = marks.as_slice() else {
+            panic!("{} marks", marks.len());
+        };
+        let turn = (column(first, 0).dot(column(second, 0)) / (0.05 * 0.05)).acos();
+        let step = IMPACT_ROLL_STEP.rem_euclid(std::f32::consts::TAU);
+        let expected = if step > std::f32::consts::PI {
+            std::f32::consts::TAU - step
+        } else {
+            step
+        };
+        assert!(
+            (turn - expected).abs() < 1e-2,
+            "turned {turn}, not {expected}"
+        );
+    }
+
+    #[test]
+    fn the_roll_stays_within_a_turn_over_many_impacts() {
+        let mut game = tracer_game(&[], tracer_config());
+
+        for _ in 0..100 {
+            game.stage
+                .react(&impact_at(Vec3::new(0.0, 1.0, 3.0), Vec3::NEG_Z), None);
+
+            let roll = game.stage.impact_roll;
+            assert!((0.0..std::f32::consts::TAU).contains(&roll), "roll {roll}");
+        }
+    }
+
+    #[test]
+    fn an_impact_with_no_normal_draws_no_mark_and_no_bad_numbers() {
+        let mut game = tracer_game(&[], tracer_config());
+        let mut renderer = TracerRenderer::default();
+
+        game.stage
+            .react(&impact_at(Vec3::new(0.0, 1.0, 3.0), Vec3::ZERO), None);
+        tracer_frame(&mut game, &mut renderer, 0.5);
+
+        assert_eq!(live_effects(&mut game), 0);
+        for instance in &renderer.tracers {
+            for index in 0..4 {
+                assert!(column(instance, index).is_finite(), "column {index}");
+            }
+        }
+    }
+
+    #[test]
     fn five_impacts_leave_five_marks() {
         let points = [
             Vec3::new(-2.0, 1.0, 3.0),
