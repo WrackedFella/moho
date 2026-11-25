@@ -3,8 +3,9 @@
 # paths listed in the file named by the first argument (default scripts/sim-math.txt),
 # one per line, relative to the repository root; '#' starts a comment. A listed file
 # that does not exist fails the check and is named. In each file the check flags method
-# calls (.sin(), .sin_cos(), .powf(), ...) and f32:: / f64:: path calls of the names
-# below, and prints file:line with the replacement, moho_core::sim_math. sqrt, abs,
+# calls (.sin(), .sin_cos(), .powf(), ...) and f32:: / f64:: / <f32>:: / <f64>:: paths of
+# the names below, called or passed as a function value (.map(f32::sin)), and prints
+# file:line with the replacement, moho_core::sim_math. sqrt, abs,
 # to_radians, powi and glam vector ops are not flagged. Test code is exempt: a
 # #[cfg(test)] followed by an inline `mod name {` ends the scan of the file, and any
 # other #[cfg(test)] exempts only the item on the next line. The list is the boundary:
@@ -35,7 +36,8 @@ while IFS= read -r raw || [[ -n "$raw" ]]; do
     fi
     hits=$(awk -v file="$path" -v names="$names" '
         BEGIN {
-            call = "(\\.|(^|[^A-Za-z0-9_])(f32|f64)::)(" names ")[[:space:]]*\\("
+            method = "\\.(" names ")[[:space:]]*\\("
+            path = "((^|[^A-Za-z0-9_])(f32|f64)|<(f32|f64)>)::(" names ")([^A-Za-z0-9_]|$)"
             gate = "^[[:space:]]*#\\[cfg\\(test\\)\\][[:space:]]*$"
             inline_mod = "^[[:space:]]*(pub(\\([^)]*\\))?[[:space:]]+)?mod[[:space:]]+[A-Za-z0-9_]+[[:space:]]*\\{"
             pending = 0
@@ -51,7 +53,7 @@ while IFS= read -r raw || [[ -n "$raw" ]]; do
             }
             if (line ~ gate) { pending = 1; next }
             sub(/\/\/.*/, "", line)
-            if (line ~ call) printf "%s:%d: platform transcendental; use moho_core::sim_math\n", file, NR
+            if (line ~ method || line ~ path) printf "%s:%d: platform transcendental; use moho_core::sim_math\n", file, NR
         }
     ' "$path")
     if [[ -n "$hits" ]]; then
