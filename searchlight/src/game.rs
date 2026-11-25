@@ -5591,6 +5591,96 @@ mod tests {
     }
 
     #[test]
+    fn clear_then_back_keeps_the_applied_secondary() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        focus_control(&game, SearchlightAction::Reload);
+        press_keys(&mut game, &mut ctx, &[Key::ArrowRight, Key::Enter]);
+        game.route_input(&mut ctx, KEY_T, true, false);
+        game.route_input(&mut ctx, KEY_T, false, false);
+        press_item(&mut game, &mut ctx, "Apply", is_apply);
+        reopen_controls(&mut game, &mut ctx);
+        focus_control(&game, SearchlightAction::Reload);
+        press_keys(&mut game, &mut ctx, &[Key::ArrowRight, Key::Backspace]);
+        let staged = control_row(&game, SearchlightAction::Reload);
+
+        reopen_controls(&mut game, &mut ctx);
+        let reopened = control_row(&game, SearchlightAction::Reload);
+        game.enter_play();
+        let reload_on_t = reloads(tap(&mut game, &mut ctx, KEY_T));
+        let reload_on_r = reloads(tap(&mut game, &mut ctx, KEY_R));
+
+        assert_eq!(staged.0, [Some(Binding::key(Key::R)), None]);
+        assert_eq!(
+            reopened.0,
+            [Some(Binding::key(Key::R)), Some(Binding::key(Key::T))]
+        );
+        assert!(reload_on_t, "the applied secondary still reloads");
+        assert!(reload_on_r);
+        assert_eq!(
+            saved_bindings(&path).get(SearchlightAction::Reload),
+            [Binding::key(Key::R), Binding::key(Key::T)]
+        );
+    }
+
+    #[test]
+    fn a_cleared_primary_is_reusable_and_applies() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, _) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        focus_control(&game, SearchlightAction::Reload);
+        press_keys(&mut game, &mut ctx, &[Key::Backspace]);
+        let cleared = control_row(&game, SearchlightAction::Reload);
+
+        capture_input(
+            &mut game,
+            &mut ctx,
+            SearchlightAction::Reload,
+            Input::Key(Key::G),
+        );
+        let recaptured = control_row(&game, SearchlightAction::Reload);
+        press_item(&mut game, &mut ctx, "Apply", is_apply);
+        game.enter_play();
+        let reload_on_g = reloads(tap(&mut game, &mut ctx, Input::Key(Key::G)));
+        let reload_on_r = reloads(tap(&mut game, &mut ctx, KEY_R));
+
+        assert_eq!(cleared.0, [None, None]);
+        assert_eq!(recaptured.0, [Some(Binding::key(Key::G)), None]);
+        assert!(reload_on_g, "G reloads");
+        assert!(!reload_on_r, "R does nothing");
+    }
+
+    #[test]
+    fn a_cleared_slot_then_reset_then_apply_is_on_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let (settings, path) = settings_in(&dir);
+        let mut game = quiet_menu_game().with_debug_settings(settings);
+        let clock = GameClock::default();
+        let mut ctx = EventContext::new(&clock, None, None);
+        open_controls(&mut game, &mut ctx);
+        focus_control(&game, SearchlightAction::Reload);
+        press_keys(&mut game, &mut ctx, &[Key::Backspace]);
+
+        press_item(&mut game, &mut ctx, "Reset", is_button("Reset"));
+        press_item(&mut game, &mut ctx, "Apply", is_apply);
+        game.enter_play();
+        let reload_on_r = reloads(tap(&mut game, &mut ctx, KEY_R));
+
+        assert!(reload_on_r, "the cleared primary is back");
+        let saved = saved_bindings(&path);
+        for &action in SearchlightAction::ALL {
+            assert_eq!(saved.get(action), action.default_bindings(), "{action:?}");
+        }
+    }
+
+    #[test]
     fn escape_and_the_console_key_never_reach_capture() {
         let dir = tempfile::tempdir().unwrap();
         let (settings, _) = settings_in(&dir);

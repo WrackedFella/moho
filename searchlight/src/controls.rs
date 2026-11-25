@@ -848,6 +848,68 @@ mod tests {
     }
 
     #[test]
+    fn resetting_twice_is_resetting_once() {
+        let mut draft = draft();
+        draft.clear(SearchlightAction::Reload, Slot::Primary);
+        draft.capture(SearchlightAction::Fire, Slot::Primary, Input::Key(Key::T));
+
+        draft.reset_all();
+        let once = draft.bindings();
+        draft.reset_all();
+
+        assert_eq!(once, defaults());
+        assert_eq!(draft.bindings(), defaults());
+    }
+
+    #[test]
+    fn reset_all_rebinds_an_action_left_unbound() {
+        let mut draft = draft();
+        draft.clear(SearchlightAction::MoveForward, Slot::Primary);
+        draft.clear(SearchlightAction::MoveForward, Slot::Secondary);
+
+        draft.reset_all();
+
+        assert!(!draft.is_unbound(SearchlightAction::MoveForward));
+        assert_eq!(
+            draft.bindings().get(SearchlightAction::MoveForward),
+            SearchlightAction::MoveForward.default_bindings()
+        );
+    }
+
+    #[test]
+    fn a_cleared_primary_takes_a_free_input_again() {
+        let mut draft = draft();
+        draft.clear(SearchlightAction::Reload, Slot::Primary);
+
+        let outcome = draft.capture(SearchlightAction::Reload, Slot::Primary, Input::Key(Key::G));
+
+        assert_eq!(outcome, Capture::Set);
+        assert_eq!(
+            draft.slots(SearchlightAction::Reload),
+            [Some(Binding::key(Key::G)), None]
+        );
+    }
+
+    #[test]
+    fn clearing_the_only_binding_leaves_the_action_unbound_and_the_rest_alone() {
+        let mut draft = draft();
+
+        draft.clear(SearchlightAction::Reload, Slot::Primary);
+
+        assert!(draft.is_unbound(SearchlightAction::Reload));
+        assert!(draft.bindings().get(SearchlightAction::Reload).is_empty());
+        for &other in SearchlightAction::ALL {
+            if other != SearchlightAction::Reload {
+                assert_eq!(
+                    draft.bindings().get(other),
+                    other.default_bindings(),
+                    "{other:?} is untouched"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn every_action_has_a_distinct_label() {
         let labels: Vec<&str> = SearchlightAction::ALL.iter().map(|&a| label(a)).collect();
 
