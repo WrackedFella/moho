@@ -190,8 +190,30 @@ const TORSO_CENTRE_Y: f32 = 0.25;
 /// Torso box half height, in metres.
 const TORSO_HALF_Y: f32 = 0.35;
 
-/// The six hit volumes every body shares, each tagged by `tag_of` for its part. The legs run
-/// from the torso's bottom to the feet of `body`'s hull.
+/// Head box centre height above the capsule centre, in metres.
+const HEAD_CENTRE_Y: f32 = 0.72;
+
+/// The hip pivot height above the capsule centre, in metres: the bottom of the torso box. The
+/// lean rolls the upper body about it.
+const HIP_Y: f32 = TORSO_CENTRE_Y - TORSO_HALF_Y;
+
+/// `upright` (the player's volumes in [`BodyPart::ALL`] order) with `lean` laid over them: head,
+/// torso and arms rolled about the hips and slid so the head follows the leaned eye; the legs
+/// stay.
+fn lean_volumes(upright: &[HitVolume; 6], lean: Lean, tuning: &LeanTuning) -> [HitVolume; 6] {
+    let hip = Vec3::new(0.0, HIP_Y, 0.0);
+    let offsets = leaned_parts(lean, tuning, HEAD_CENTRE_Y - HIP_Y);
+    let mut leaned = *upright;
+    for (volume, offset) in leaned.iter_mut().zip(offsets) {
+        let (point, rotation) = offset.apply(volume.offset - hip, volume.rotation);
+        volume.offset = point + hip;
+        volume.rotation = rotation;
+    }
+    leaned
+}
+
+/// The six hit volumes every body shares, in [`BodyPart::ALL`] order, each tagged by `tag_of`
+/// for its part. The legs run from the torso's bottom to the feet of `body`'s hull.
 fn body_volumes(body: &CharacterBody, tag_of: impl Fn(BodyPart) -> SurfaceTag) -> [HitVolume; 6] {
     let volume = |part, offset: Vec3, half_extents: Vec3| HitVolume {
         offset,
@@ -200,14 +222,14 @@ fn body_volumes(body: &CharacterBody, tag_of: impl Fn(BodyPart) -> SurfaceTag) -
         tag: tag_of(part).into(),
     };
     let arm = Vec3::new(0.1, 0.3, 0.1);
-    let torso_bottom = TORSO_CENTRE_Y - TORSO_HALF_Y;
+    let torso_bottom = HIP_Y;
     let feet = -body.standing.hull.length / 2.0;
     let leg_centre_y = (torso_bottom + feet) / 2.0;
     let leg = Vec3::new(0.1, (torso_bottom - feet) / 2.0, 0.1);
     [
         volume(
             BodyPart::Head,
-            Vec3::new(0.0, 0.72, 0.0),
+            Vec3::new(0.0, HEAD_CENTRE_Y, 0.0),
             Vec3::new(0.12, 0.12, 0.12),
         ),
         volume(
@@ -321,6 +343,8 @@ pub struct SearchlightSim {
     enemy: EnemyTuning,
     /// The player's six hit volumes standing upright, which the lean is laid over.
     upright_volumes: [HitVolume; 6],
+    /// `upright_volumes` with the lean as it stands now, in the body frame.
+    leaned_volumes: [HitVolume; 6],
     /// The part of the player the enemies aim at.
     aim_part: BodyPart,
     rng: SimRng,
@@ -475,6 +499,7 @@ impl SearchlightSim {
             nav: spawns.nav.clone(),
             enemy: config.enemy,
             upright_volumes: player_volumes,
+            leaned_volumes: player_volumes,
             aim_part: config.enemy_aim_at,
             rng: SimRng::new(config.enemy.seed, SPREAD_STREAM),
             weapon: Weapon::Ready,
@@ -519,9 +544,6 @@ impl SearchlightSim {
         };
         self.world
             .move_character(self.player, &command.movement, &settings, dt)
-            .expect("the sim never removes the player");
-        self.world
-            .set_hit_volumes(self.player, &self.leaned_volumes())
             .expect("the sim never removes the player");
         self.world.step(dt);
         self.step_lean(command.lean, dt);
@@ -573,7 +595,16 @@ impl SearchlightSim {
         } else {
             self.lean_reach()
         };
-        self.lean = self.lean.step(want, reach, dt, &self.lean_tuning);
+        let lean = self.lean.step(want, reach, dt, &self.lean_tuning);
+        if lean != self.lean {
+            self.lean = lean;
+            self.leaned_volumes = lean_volumes(&self.upright_volumes, lean, &self.lean_tuning);
+            // Takes effect at the next world step, so a tick's rays meet the lean of the tick
+            // before.
+            self.world
+                .set_hit_volumes(self.player, &self.leaned_volumes)
+                .expect("the sim never removes the player");
+        }
     }
 
     /// How much of a full lean each side has room for, from one level ray per side out of the
@@ -623,33 +654,14 @@ impl SearchlightSim {
         *self = Self::assemble(world, spawns, config);
     }
 
-    /// The player's hit volumes as the lean has them: head, torso and arms rolled about the
-    /// hips and slid so the head follows the leaned eye; the legs stay.
-    fn leaned_volumes(&self) -> [HitVolume; 6] {
-        let upright = &self.upright_volumes;
-        let [head, torso, ..] = upright;
-        let hip = Vec3::new(0.0, torso.offset.y - torso.half_extents.y, 0.0);
-        let head_rise = head.offset.y - hip.y;
-        let offsets = leaned_parts(self.lean, &self.lean_tuning, head_rise);
-        std::array::from_fn(|i| {
-            let (point, rotation) = offsets[i].apply(upright[i].offset - hip, upright[i].rotation);
-            HitVolume {
-                offset: point + hip,
-                rotation,
-                ..upright[i]
-            }
-        })
-    }
-
-    /// Where the centre of `part` is in the world, with the lean as it stands now.
+    /// Where the centre of the player's `part` is in the world, with the lean as it stands now.
     fn leaned_centre(&self, part: BodyPart) -> Vec3 {
         let state = self.player();
-        let volumes = self.leaned_volumes();
-        let volume = volumes
+        let slot = BodyPart::ALL
             .iter()
-            .find(|volume| volume.tag == SurfaceTag::Player(part).into())
-            .expect("the player has a hit volume for every part");
-        state.position + Quat::from_rotation_y(state.yaw) * volume.offset
+            .position(|&p| p == part)
+            .expect("BodyPart::ALL lists every part");
+        state.position + Quat::from_rotation_y(state.yaw) * self.leaned_volumes[slot].offset
     }
 
     /// Where the enemies aim: the chosen part of the player's body as it stands now.
@@ -666,7 +678,7 @@ impl SearchlightSim {
             aim,
         };
         let sight_points = [
-            self.player_eye(),
+            threat.eye,
             self.leaned_centre(BodyPart::Head),
             self.leaned_centre(BodyPart::Torso),
         ];
@@ -758,6 +770,10 @@ impl SearchlightSim {
     /// Fires the enemies in `firing`, in order, skipping any that died this tick and all of
     /// them once the player is dead.
     fn fire_enemies(&mut self, firing: &[usize], god_mode: bool) {
+        if firing.is_empty() {
+            return;
+        }
+        let aim = self.player_aim_point();
         for &index in firing {
             if self.player_body.is_dead() {
                 break;
@@ -773,7 +789,7 @@ impl SearchlightSim {
                 .character(handle)
                 .expect("a living enemy is in the world");
             let eye = state.eye_position();
-            let direction = self.with_spread(self.player_aim_point() - eye, tuning.aim_error);
+            let direction = self.with_spread(aim - eye, tuning.aim_error);
             self.outbox.push(Feedback::EnemyFired {
                 target: u16::try_from(index).expect("target numbers fit a u16"),
             });

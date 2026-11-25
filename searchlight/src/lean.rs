@@ -1,12 +1,12 @@
 //! View maths for a lean: the sideways eye offset and the rolled view matrix.
 
 use glam::{Mat4, Quat, Vec3};
+use searchlight_rules::BODY_RIGHT;
 
 /// The horizontal eye offset for a lean of `shift` metres (positive right) at `yaw`.
 /// Right is `-X` at yaw 0.
 pub fn lean_offset(yaw: f32, shift: f32) -> Vec3 {
-    let (sin, cos) = yaw.sin_cos();
-    Vec3::new(-cos, 0.0, sin) * shift
+    Quat::from_rotation_y(yaw) * BODY_RIGHT * shift
 }
 
 /// A right-handed view matrix looking from `eye` along `forward`, with up tipped about

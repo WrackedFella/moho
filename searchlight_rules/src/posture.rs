@@ -3,6 +3,8 @@
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
+use crate::BodyPart;
+
 /// The side a lean is held toward.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LeanSide {
@@ -122,8 +124,10 @@ impl PartOffset {
     }
 }
 
-/// The offsets of the six body parts, in [`crate::BodyPart`] declaration order (head, torso,
-/// left arm, right arm, left leg, right leg), for a body leaning by `lean`.
+/// The player's right in the body frame, which faces +Z at yaw 0.
+pub const BODY_RIGHT: Vec3 = Vec3::NEG_X;
+
+/// The offsets of the six body parts, in [`BodyPart::ALL`] order, for a body leaning by `lean`.
 ///
 /// Head, torso and arms roll rigidly by the lean's roll about the hips, then slide sideways so the
 /// head centre, `head_rise` metres above the hips, ends up exactly the lean's shift to the side.
@@ -134,16 +138,12 @@ pub fn leaned_parts(lean: Lean, tuning: &LeanTuning, head_rise: f32) -> [PartOff
     let rolled_head = rotation * Vec3::new(0.0, head_rise, 0.0);
     let upper = PartOffset {
         rotation,
-        translation: Vec3::new(-lean.shift(tuning) - rolled_head.x, 0.0, 0.0),
+        translation: BODY_RIGHT * lean.shift(tuning) - Vec3::new(rolled_head.x, 0.0, 0.0),
     };
-    [
-        upper,
-        upper,
-        upper,
-        upper,
-        PartOffset::NONE,
-        PartOffset::NONE,
-    ]
+    BodyPart::ALL.map(|part| match part {
+        BodyPart::Head | BodyPart::Torso | BodyPart::LeftArm | BodyPart::RightArm => upper,
+        BodyPart::LeftLeg | BodyPart::RightLeg => PartOffset::NONE,
+    })
 }
 
 #[cfg(test)]
