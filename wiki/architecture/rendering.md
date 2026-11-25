@@ -212,6 +212,19 @@ parts, so two rifles from one model can carry different scopes; the shared `Mode
   `root * pose[mesh.node]` and each part rooted at `root * pose[socket_node] * offset`, so a part
   follows an animated bone. Parts keep their own rest transforms. `pose` must be of this copy's
   model.
+- A part at depth is addressed by a path of socket names from this assembly down
+  (`&["hand_r", "magazine"]`). `part_transform(models, path, root, &pose)` is that part's root
+  transform; only this copy's own model is posed, nested parts keep their rest.
+- `move_part(models, from, to, &pose)` re-seats a part on another node with the offset that
+  keeps its `part_transform` unchanged at that pose, then it follows the new node. It returns the
+  part displaced at `to`. Checks run first, so an error leaves the assembly unchanged;
+  `SocketError::EmptySocket` is a step holding no part, `SocketError::IntoItself` a `to` under
+  `from`.
+- `release(models, path, now, before, dt)` takes a part off and returns `Released`: the part, its
+  root transform at `now` with scale dropped, and world-frame linear (m/s) and angular (rad/s,
+  scaled axis, shortest arc) velocity from the backward difference to `before`, a `Posed` (root and
+  pose) one tick `dt` earlier. Take `before` from a clone of the `ClipPlayer` made before advancing
+  it. The game builds the loose object from the result.
 - `moho_level::humanoid` (`moho_level/src/humanoid.rs`) is the bone naming both game lines key
   off: `Bone` lists the 16 required bones by Unreal mannequin node name (`pelvis`, `spine_01`,
   `neck_01`, `head`, `upperarm_*`, `lowerarm_*`, `hand_*`, `thigh_*`, `calf_*`, `foot_*`).
