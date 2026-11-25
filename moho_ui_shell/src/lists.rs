@@ -694,7 +694,7 @@ impl<A: Clone> OpenLists<A> {
     /// lets go on the held row's own list, and otherwise asks to move the held row here.
     fn press_on(&mut self, index: usize, row: Option<usize>) -> Option<MenuEvent<A>> {
         let id = self.data.lists.get(index)?.id;
-        let Some(held) = self.held.clone() else {
+        let Some(held) = self.held.take() else {
             self.held = Some(Held {
                 list: id,
                 row: row?,
@@ -702,9 +702,12 @@ impl<A: Clone> OpenLists<A> {
             });
             return None;
         };
+        if matches!(held.purpose, Purpose::Action { .. }) && row.is_none() {
+            self.held = Some(held);
+            return None;
+        }
         if let Purpose::Action { action, .. } = held.purpose {
             let row = row?;
-            self.held = None;
             if (held.list, held.row) == (id, row) {
                 return None;
             }
@@ -721,7 +724,6 @@ impl<A: Clone> OpenLists<A> {
                 target: Some(target),
             });
         }
-        self.held = None;
         if held.list == id {
             return None;
         }
